@@ -134,6 +134,7 @@ import * as Diff2Html from 'diff2html'
 import { createPatch } from 'diff'
 import _ from 'lodash'
 import gql from 'graphql-tag'
+import { getPageDownloadPath, getPageSourcePath } from '../helpers/page-actions'
 
 export default {
   i18nOptions: { namespaces: 'history' },
@@ -371,10 +372,10 @@ export default {
       }
     },
     viewSource (versionId) {
-      window.location.assign(`/s/${this.locale}/${this.path}?v=${versionId}`)
+      window.location.assign(getPageSourcePath(this.locale, this.path, versionId))
     },
     download (versionId) {
-      window.location.assign(`/d/${this.locale}/${this.path}?v=${versionId}`)
+      window.location.assign(getPageDownloadPath(this.locale, this.path, versionId))
     },
     restore (versionId, versionDate) {
       this.restoreTarget = {
