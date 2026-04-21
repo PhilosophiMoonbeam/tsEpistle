@@ -268,7 +268,7 @@
     "filepond-plugin-file-validate-type": "1.2.9",
     "filesize.js": "2.0.0",
     "graphql-persisted-document-loader": "2.0.0",
-    "graphql-tag": "2.11.0",
+    "graphql-tag": "2.12.6",
     "hammerjs": "2.0.8",
     "html-webpack-plugin": "4.5.0",
     "html-webpack-pug-plugin": "2.0.0",
