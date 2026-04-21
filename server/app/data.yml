@@ -31,6 +31,8 @@ defaults:
     # DB defaults
     api:
       isEnabled: false
+    metrics:
+      isEnabled: false
     graphEndpoint: 'https://graph.requarks.io'
     lang:
       code: en

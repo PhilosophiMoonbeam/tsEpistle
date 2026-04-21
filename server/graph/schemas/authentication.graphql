@@ -19,6 +19,8 @@ type AuthenticationQuery {
 
   apiState: Boolean! @auth(requires: ["manage:system", "manage:api"])
 
+  metricsState: Boolean! @auth(requires: ["manage:system"])
+
   strategies: [AuthenticationStrategy] @auth(requires: ["manage:system"])
 
   activeStrategies(
@@ -72,6 +74,10 @@ type AuthenticationMutation {
   setApiState(
     enabled: Boolean!
   ): DefaultResponse @auth(requires: ["manage:system", "manage:api"])
+
+  setMetricsState(
+    enabled: Boolean!
+  ): DefaultResponse @auth(requires: ["manage:system"])
 
   updateStrategies(
     strategies: [AuthenticationStrategyInput]!

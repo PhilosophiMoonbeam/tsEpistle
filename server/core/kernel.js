@@ -34,6 +34,7 @@ module.exports = {
       await this.initTelemetry()
       WIKI.sideloader = await require('./sideloader').init()
       WIKI.cache = require('./cache').init()
+      WIKI.metrics = await require('./metrics').init()
       WIKI.scheduler = require('./scheduler').init()
       WIKI.servers = require('./servers')
       WIKI.events = {

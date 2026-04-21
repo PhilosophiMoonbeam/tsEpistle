@@ -34,6 +34,21 @@ router.get('/healthz', (req, res, next) => {
 })
 
 /**
+ * Metrics (Prometheus)
+ */
+router.get('/metrics', async (req, res, next) => {
+  if (!WIKI.auth.checkAccess(req.user, ['manage:system'])) {
+    return res.sendStatus(403)
+  }
+
+  if (WIKI.config.metrics.isEnabled) {
+    return WIKI.metrics.render(res)
+  }
+
+  return next()
+})
+
+/**
  * Administration
  */
 router.get(['/a', '/a/*'], (req, res, next) => {

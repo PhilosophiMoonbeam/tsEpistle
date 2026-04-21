@@ -34,6 +34,9 @@ module.exports = {
     apiState () {
       return WIKI.config.api.isEnabled
     },
+    metricsState () {
+      return WIKI.config.metrics.isEnabled
+    },
     async strategies () {
       return WIKI.data.authentication.map(stg => ({
         ...stg,
@@ -174,6 +177,36 @@ module.exports = {
           responseResult: graphHelper.generateSuccess('API State changed successfully')
         }
       } catch (err) {
+        return graphHelper.generateError(err)
+      }
+    },
+    /**
+     * Set Metrics state
+     */
+    async setMetricsState (obj, args, context) {
+      const previousState = WIKI.config.metrics.isEnabled
+
+      try {
+        WIKI.config.metrics.isEnabled = args.enabled
+        await WIKI.metrics.init()
+
+        const configSaved = await WIKI.configSvc.saveToDb(['metrics'])
+        if (!configSaved) {
+          throw new Error('Failed to persist metrics state change')
+        }
+
+        return {
+          responseResult: graphHelper.generateSuccess('Metrics state changed successfully')
+        }
+      } catch (err) {
+        WIKI.config.metrics.isEnabled = previousState
+
+        try {
+          await WIKI.metrics.init()
+        } catch (rollbackErr) {
+          return graphHelper.generateError(new Error(`Failed to rollback metrics runtime state: ${rollbackErr.message}`))
+        }
+
         return graphHelper.generateError(err)
       }
     },
