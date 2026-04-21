@@ -13,3 +13,20 @@ globals:
   document: false
   navigator: false
   window: false
+rules:
+  vue/custom-event-name-casing:
+    - error
+    - ignores:
+        - searchEnter
+        - searchMove
+        - saveConflict
+        - resetEditorConflict
+        - overwriteEditorContent
+        - editorInsert
+        - pageEdit
+        - pageHistory
+        - pageSource
+        - pageConvert
+        - pageDuplicate
+        - pageMove
+        - pageDelete

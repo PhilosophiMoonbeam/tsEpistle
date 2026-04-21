@@ -1,5 +1,7 @@
 const request = require('request-promise')
 
+/* global WIKI */
+
 const prefetch = async (element) => {
   const url = element.attr(`src`)
   let response
