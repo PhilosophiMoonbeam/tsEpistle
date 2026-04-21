@@ -17,8 +17,12 @@ extend type Mutation {
 type UserQuery {
   list(
     filter: String
+    providerKey: String
+    page: Int
+    pageSize: Int
     orderBy: String
-  ): [UserMinimal] @auth(requires: ["write:users", "manage:users", "manage:system"])
+    orderByDirection: String
+  ): UserResults @auth(requires: ["write:users", "manage:users", "manage:system"])
 
   search(
     query: String!
@@ -118,6 +122,11 @@ type UserLastLogin {
   id: Int!
   name: String!
   lastLoginAt: Date!
+}
+
+type UserResults {
+  users: [UserMinimal]!
+  total: Int!
 }
 
 type UserMinimal {

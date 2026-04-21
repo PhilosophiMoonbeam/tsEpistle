@@ -41,13 +41,13 @@
           v-divider
           v-data-table(
             v-model='selected'
-            :items='usersFiltered',
-            :headers='headers',
-            :search='search',
+            :items='users'
+            :headers='headers'
             :page.sync='pagination'
+            :sort-by.sync='sortBy'
+            :sort-desc.sync='sortDesc'
             :items-per-page='15'
             :loading='loading'
-            @page-count='pageCount = $event'
             hide-default-footer
             )
             template(slot='item', slot-scope='props')
@@ -95,6 +95,8 @@ export default {
       selected: [],
       pagination: 1,
       pageCount: 0,
+      sortBy: 'name',
+      sortDesc: false,
       users: [],
       headers: [
         { text: 'ID', value: 'id', width: 80, sortable: true },
@@ -109,21 +111,108 @@ export default {
       filterStrategy: 'all',
       search: '',
       loading: false,
+      loadRequestId: 0,
+      searchDebounce: null,
       isCreateDialogShown: false
     }
   },
-  computed: {
-    usersFiltered () {
-      const all = this.filterStrategy === 'all' || this.filterStrategy === ''
-      return _.filter(this.users, u => all || u.providerKey === this.filterStrategy)
+  watch: {
+    search () {
+      clearTimeout(this.searchDebounce)
+      this.searchDebounce = setTimeout(() => {
+        if (this.pagination !== 1) {
+          this.pagination = 1
+        } else {
+          this.loadUsers()
+        }
+      }, 300)
+    },
+    filterStrategy () {
+      if (this.pagination !== 1) {
+        this.pagination = 1
+      } else {
+        this.loadUsers()
+      }
+    },
+    sortBy () {
+      this.loadUsers()
+    },
+    sortDesc () {
+      this.loadUsers()
+    },
+    pagination () {
+      this.loadUsers()
     }
   },
   methods: {
     createUser() {
       this.isCreateDialogShown = true
     },
+    async loadUsers () {
+      const requestId = ++this.loadRequestId
+      if (!this.loading) {
+        this.loading = true
+        this.$store.commit('loadingStart', 'admin-users-refresh')
+      }
+
+      try {
+        const resp = await this.$apollo.query({
+          query: gql`
+            query ($page: Int, $pageSize: Int, $filter: String, $providerKey: String, $orderBy: String, $orderByDirection: String) {
+              users {
+                list(page: $page, pageSize: $pageSize, filter: $filter, providerKey: $providerKey, orderBy: $orderBy, orderByDirection: $orderByDirection) {
+                  total
+                  users {
+                    id
+                    name
+                    email
+                    providerKey
+                    isSystem
+                    isActive
+                    createdAt
+                    lastLoginAt
+                  }
+                }
+              }
+            }
+          `,
+          fetchPolicy: 'network-only',
+          variables: {
+            page: this.pagination,
+            pageSize: 15,
+            filter: this.search,
+            providerKey: this.filterStrategy,
+            orderBy: this.sortBy,
+            orderByDirection: this.sortDesc ? 'desc' : 'asc'
+          }
+        })
+
+        if (requestId !== this.loadRequestId) {
+          return
+        }
+
+        const result = _.get(resp, 'data.users.list', { users: [], total: 0 })
+        this.users = result.users
+        this.pageCount = Math.max(1, Math.ceil(result.total / 15))
+      } catch (err) {
+        if (requestId === this.loadRequestId) {
+          this.users = []
+          this.pageCount = 0
+          this.$store.commit('showNotification', {
+            message: 'Failed to load users list.',
+            style: 'error',
+            icon: 'alert'
+          })
+        }
+      } finally {
+        if (requestId === this.loadRequestId) {
+          this.loading = false
+          this.$store.commit('loadingStop', 'admin-users-refresh')
+        }
+      }
+    },
     async refresh(notify = true) {
-      await this.$apollo.queries.users.refetch()
+      await this.loadUsers()
       if (notify) {
         this.$store.commit('showNotification', {
           message: 'Users list has been refreshed.',
@@ -137,30 +226,6 @@ export default {
     }
   },
   apollo: {
-    users: {
-      query: gql`
-        query {
-          users {
-            list {
-              id
-              name
-              email
-              providerKey
-              isSystem
-              isActive
-              createdAt
-              lastLoginAt
-            }
-          }
-        }
-      `,
-      fetchPolicy: 'network-only',
-      update: (data) => data.users.list,
-      watchLoading (isLoading) {
-        this.loading = isLoading
-        this.$store.commit(`loading${isLoading ? 'Start' : 'Stop'}`, 'admin-users-refresh')
-      }
-    },
     strategies: {
       query: gql`
         query {
@@ -183,6 +248,12 @@ export default {
         this.$store.commit(`loading${isLoading ? 'Start' : 'Stop'}`, 'admin-users-strategies-refresh')
       }
     }
+  },
+  mounted () {
+    this.loadUsers()
+  },
+  beforeDestroy () {
+    clearTimeout(this.searchDebounce)
   }
 }
 </script>

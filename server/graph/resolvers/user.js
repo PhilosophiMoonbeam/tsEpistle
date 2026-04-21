@@ -12,8 +12,44 @@ module.exports = {
   },
   UserQuery: {
     async list(obj, args, context, info) {
-      return WIKI.models.users.query()
+      const page = Math.max(_.toSafeInteger(args.page) || 1, 1)
+      const pageSize = Math.max(_.toSafeInteger(args.pageSize) || 15, 1)
+      const offset = (page - 1) * pageSize
+      const orderBy = _.includes(['id', 'name', 'email', 'providerKey', 'createdAt', 'lastLoginAt'], args.orderBy) ? args.orderBy : 'name'
+      const orderByDirection = _.toLower(args.orderByDirection) === 'desc' ? 'desc' : 'asc'
+
+      const applyFilters = (queryBuilder) => {
+        if (args.filter) {
+          queryBuilder.where(builder => {
+            builder.where('email', 'like', `%${args.filter}%`)
+              .orWhere('name', 'like', `%${args.filter}%`)
+          })
+        }
+        if (args.providerKey && args.providerKey !== 'all') {
+          queryBuilder.andWhere('providerKey', args.providerKey)
+        }
+      }
+
+      const totalResult = await WIKI.models.users.query()
+        .where(builder => {
+          applyFilters(builder)
+        })
+        .count('* as total')
+        .first()
+
+      const users = await WIKI.models.users.query()
         .select('id', 'email', 'name', 'providerKey', 'isSystem', 'isActive', 'createdAt', 'lastLoginAt')
+        .where(builder => {
+          applyFilters(builder)
+        })
+        .orderBy(orderBy, orderByDirection)
+        .offset(offset)
+        .limit(pageSize)
+
+      return {
+        users,
+        total: _.toSafeInteger(totalResult.total)
+      }
     },
     async search(obj, args, context, info) {
       return WIKI.models.users.query()
