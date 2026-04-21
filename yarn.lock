@@ -5570,15 +5570,14 @@ babel-literal-to-ast@^2.1.0:
     "@babel/traverse" "^7.1.6"
     "@babel/types" "^7.1.6"
 
-babel-loader@^8.1.0:
-  version "8.1.0"
-  resolved "https://registry.yarnpkg.com/babel-loader/-/babel-loader-8.1.0.tgz#c611d5112bd5209abe8b9fa84c3e4da25275f1c3"
-  integrity sha512-7q7nC1tYOrqvUrN3LQK4GwSk/TQorZSOlO9C+RZDZpODgyN4ZlCqE5q9cDsyWOliN+aU9B4JX01xK9eJXowJLw==
+babel-loader@8.4.1:
+  version "8.4.1"
+  resolved "https://registry.yarnpkg.com/babel-loader/-/babel-loader-8.4.1.tgz#6ccb75c66e62c3b144e1c5f2eaec5b8f6c08c675"
+  integrity sha512-nXzRChX+Z1GoE6yWavBQg6jDslyFF3SDjl2paADuoQtQW10JqShJt62R6eJQ5m/pjJFDT8xgKIWSP85OY8eXeA==
   dependencies:
-    find-cache-dir "^2.1.0"
-    loader-utils "^1.4.0"
-    mkdirp "^0.5.3"
-    pify "^4.0.1"
+    find-cache-dir "^3.3.1"
+    loader-utils "^2.0.4"
+    make-dir "^3.1.0"
     schema-utils "^2.6.5"
 
 babel-plugin-dynamic-import-node@^2.3.3:
@@ -5588,10 +5587,10 @@ babel-plugin-dynamic-import-node@^2.3.3:
   dependencies:
     object.assign "^4.1.0"
 
-babel-plugin-graphql-tag@3.1.0:
-  version "3.1.0"
-  resolved "https://registry.yarnpkg.com/babel-plugin-graphql-tag/-/babel-plugin-graphql-tag-3.1.0.tgz#8c8e61fdfc976654a4924ffdd223ce5c964e10b7"
-  integrity sha512-NuFBZ0Gr7zmf5dbImFBkYIxhu8VriU/86MRYxjShlldleiRVjcZ+rYEzanQAQlH2Q7kNGqaeXvpM7uqUForsng==
+babel-plugin-graphql-tag@3.3.0:
+  version "3.3.0"
+  resolved "https://registry.yarnpkg.com/babel-plugin-graphql-tag/-/babel-plugin-graphql-tag-3.3.0.tgz#77d8ce04fb8f2ca56bce9af0ca7d5ad2b91f53bc"
+  integrity sha512-27qfJhFJ2jQg+ktcC3cdppE2RrXZ5uiDz+39YC5lhkmftWPuJW8ET9Ehskwv7ujScZ1jSKhs5/JZKlESCkwIBg==
   dependencies:
     "@babel/helper-plugin-utils" "^7.0.0"
     "@babel/parser" "^7.3.2"
@@ -5630,10 +5629,10 @@ babel-plugin-lodash@3.3.4:
     lodash "^4.17.10"
     require-package-name "^2.0.1"
 
-babel-plugin-prismjs@2.0.1:
-  version "2.0.1"
-  resolved "https://registry.yarnpkg.com/babel-plugin-prismjs/-/babel-plugin-prismjs-2.0.1.tgz#b56095f423926662259de8f5ee50a7afbcf0fd92"
-  integrity sha512-GqQGa3xX3Z2ft97oDbGvEFoxD8nKqb3ZVszrOc5H7icnEUA56BIjVYm86hfZZA82uuHLwTIfCXbEKzKG1BzKzg==
+babel-plugin-prismjs@2.1.0:
+  version "2.1.0"
+  resolved "https://registry.yarnpkg.com/babel-plugin-prismjs/-/babel-plugin-prismjs-2.1.0.tgz#ade627896106326ad04d6d77fba92877618de571"
+  integrity sha512-ehzSKYfeAz4U78zi/sfwsjDPlq0LvDKxNefcZTJ/iKBu+plsHsLqZhUeGf1+82LAcA35UZGbU6ksEx2Utphc/g==
 
 babel-plugin-syntax-trailing-function-commas@^7.0.0-beta.0:
   version "7.0.0-beta.0"
@@ -13218,6 +13217,15 @@ loader-utils@^2.0.0:
     emojis-list "^3.0.0"
     json5 "^2.1.2"
 
+loader-utils@^2.0.4:
+  version "2.0.4"
+  resolved "https://registry.yarnpkg.com/loader-utils/-/loader-utils-2.0.4.tgz#8b5cb38b5c34a9a018ee1fc0e6a066d1dfcc528c"
+  integrity sha512-xXqpXoINfFhgua9xiqD8fPFHgkoq1mmmpE92WlDbm9rNRd/EbRb+Gqf908T2DMfuHjjJlksiK2RbHVOdD/MqSw==
+  dependencies:
+    big.js "^5.2.2"
+    emojis-list "^3.0.0"
+    json5 "^2.1.2"
+
 locate-path@^2.0.0:
   version "2.0.0"
   resolved "https://registry.yarnpkg.com/locate-path/-/locate-path-2.0.0.tgz#2b568b265eec944c6d9c0de9c3dbbbca0354cd8e"
@@ -13472,7 +13480,7 @@ make-dir@^3.0.0:
   dependencies:
     semver "^6.0.0"
 
-make-dir@^3.0.2:
+make-dir@^3.0.2, make-dir@^3.1.0:
   version "3.1.0"
   resolved "https://registry.yarnpkg.com/make-dir/-/make-dir-3.1.0.tgz#415e967046b3a7f1d185277d84aa58203726a13f"
   integrity sha512-g3FeP20LNwhALb/6Cz6Dd4F2ngze0jz7tbzrD2wAV+o9FeNHe4rL+yK2md0J/fiSf1sa1ADhXqi5+oVwOM/eGw==
