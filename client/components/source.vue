@@ -14,6 +14,9 @@
           .caption.blue--text.text--lighten-3.ml-4(v-if='versionId > 0') {{$t('common:page.versionId', { id: versionId })}}
           v-btn.ml-4(v-if='versionId > 0', depressed, color='blue darken-1', @click='goHistory')
             v-icon mdi-history
+          v-btn.ml-4(depressed, color='blue darken-1', @click='goDownload')
+            v-icon(left) mdi-download
+            span {{$t('common:actions.download')}}
           v-btn.ml-4(depressed, color='blue darken-1', @click='goLive') {{$t('common:page.returnNormalView')}}
       v-card(tile)
         v-card-text
@@ -28,6 +31,8 @@
 </template>
 
 <script>
+import { getPageDownloadPath } from '../helpers/page-actions'
+
 export default {
   props: {
     pageId: {
@@ -72,6 +77,9 @@ export default {
   methods: {
     goLive() {
       window.location.assign(`/${this.locale}/${this.path}`)
+    },
+    goDownload () {
+      window.location.assign(getPageDownloadPath(this.locale, this.path, this.versionId))
     },
     goHistory () {
       window.location.assign(`/h/${this.locale}/${this.path}`)
