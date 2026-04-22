@@ -1,5 +1,5 @@
 const _ = require('lodash')
-const cheerio = require('cheerio')
+const { buildTocFromHtml } = require('./render-page-toc')
 
 /* global WIKI */
 
@@ -37,43 +37,13 @@ module.exports = async (pageId) => {
     }
 
     // Parse TOC
-    const $ = cheerio.load(output)
-    let isStrict = $('h1').length > 0 // <- Allows for documents using H2 as top level
-    let toc = { root: [] }
-
-    $('h1,h2,h3,h4,h5,h6').each((idx, el) => {
-      const depth = _.toSafeInteger(el.name.substring(1)) - (isStrict ? 1 : 2)
-      let leafPathError = false
-
-      const leafPath = _.reduce(_.times(depth), (curPath, curIdx) => {
-        if (_.has(toc, curPath)) {
-          const lastLeafIdx = _.get(toc, curPath).length - 1
-          if (lastLeafIdx >= 0) {
-            curPath = `${curPath}[${lastLeafIdx}].children`
-          } else {
-            leafPathError = true
-          }
-        }
-        return curPath
-      }, 'root')
-
-      if (leafPathError) { return }
-
-      const leafSlug = $('.toc-anchor', el).first().attr('href')
-      $('.toc-anchor', el).remove()
-
-      _.get(toc, leafPath).push({
-        title: _.trim($(el).text()),
-        anchor: leafSlug,
-        children: []
-      })
-    })
+    const toc = buildTocFromHtml(output)
 
     // Save to DB
     await WIKI.models.pages.query()
       .patch({
         render: output,
-        toc: JSON.stringify(toc.root)
+        toc: JSON.stringify(toc)
       })
       .where('id', pageId)
 
@@ -81,7 +51,7 @@ module.exports = async (pageId) => {
     await WIKI.models.pages.savePageToCache({
       ...page,
       render: output,
-      toc: JSON.stringify(toc.root)
+      toc: JSON.stringify(toc)
     })
 
     await WIKI.models.knex.destroy()
