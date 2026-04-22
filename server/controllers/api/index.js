@@ -5,6 +5,7 @@ const router = express.Router()
 router.use('/system', require('./system'))
 router.use('/locales', require('./locales'))
 router.use('/users', require('./users'))
+router.use('/auth', require('./auth'))
 
 router.use((req, res) => {
   res.status(404).json({ error: 'Not Found' })
