@@ -1,4 +1,4 @@
-const { fetchAuthStrategies, submitAuthRequest } = require('./auth-api')
+const { fetchAuthStrategies, submitAuthRequest, submitStatusRequest } = require('./auth-api')
 
 function createJsonResponse (payload, ok = true, status = ok ? 200 : 400) {
   return {
@@ -106,5 +106,33 @@ describe('auth api helper', () => {
     await expect(submitAuthRequest(fetchImpl, '/_api/auth/login', {
       strategy: 'local'
     }, 'Generic auth error')).rejects.toThrow('Generic auth error')
+  })
+
+  test('submits status request as JSON and returns parsed body', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ message: 'Password reset request processed.' }))
+
+    await expect(submitStatusRequest(fetchImpl, '/_api/auth/forgot-password', {
+      email: 'alice@example.com'
+    }, 'Generic status error')).resolves.toEqual({ message: 'Password reset request processed.' })
+
+    expect(fetchImpl).toHaveBeenCalledWith('/_api/auth/forgot-password', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        email: 'alice@example.com'
+      })
+    })
+  })
+
+  test('rejects malformed successful status payloads', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ success: true }))
+
+    await expect(submitStatusRequest(fetchImpl, '/_api/auth/forgot-password', {
+      email: 'alice@example.com'
+    }, 'Generic status error')).rejects.toThrow('Generic status error')
   })
 })

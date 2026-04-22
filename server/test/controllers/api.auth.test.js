@@ -96,7 +96,8 @@ describe('controllers/api auth endpoints', () => {
         users: {
           login: jest.fn(),
           loginTFA: jest.fn(),
-          loginChangePassword: jest.fn()
+          loginChangePassword: jest.fn(),
+          loginForgotPassword: jest.fn()
         }
       }
     }
@@ -112,6 +113,7 @@ describe('controllers/api auth endpoints', () => {
     }
     return {
       strategies: getRouteHandler('/strategies'),
+      forgotPassword: postRouteHandler('/forgot-password'),
       login: postRouteHandler('/login'),
       loginTFA: postRouteHandler('/login/tfa'),
       loginChangePassword: postRouteHandler('/login/change-password')
@@ -122,6 +124,7 @@ describe('controllers/api auth endpoints', () => {
     const handlers = loadHandlers()
 
     expect(typeof handlers.strategies).toBe('function')
+    expect(typeof handlers.forgotPassword).toBe('function')
     expect(typeof handlers.login).toBe('function')
     expect(typeof handlers.loginTFA).toBe('function')
     expect(typeof handlers.loginChangePassword).toBe('function')
@@ -179,6 +182,70 @@ describe('controllers/api auth endpoints', () => {
     expect(res.json).not.toHaveBeenCalled()
     expect(next).toHaveBeenCalledWith(expect.any(Error))
     expect(next.mock.calls[0][0].message).toBe('db failed')
+  })
+
+  it('returns a generic success payload for forgot-password requests', async () => {
+    const { forgotPassword } = loadHandlers()
+    const req = {
+      body: { email: 'alice@example.com' },
+      brute: { reset: jest.fn() }
+    }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await forgotPassword(req, res, jest.fn())
+
+    expect(global.WIKI.models.users.loginForgotPassword).toHaveBeenCalledWith({
+      email: 'alice@example.com'
+    }, { req, res })
+    expect(req.brute.reset).not.toHaveBeenCalled()
+    expect(res.json).toHaveBeenCalledWith({ message: 'Password reset request processed.' })
+  })
+
+  it('rejects missing forgot-password input with 400', async () => {
+    const { forgotPassword } = loadHandlers()
+    const req = {
+      body: { email: '' },
+      brute: { reset: jest.fn() }
+    }
+    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+
+    await forgotPassword(req, res, jest.fn())
+
+    expect(global.WIKI.models.users.loginForgotPassword).not.toHaveBeenCalled()
+    expect(res.status).toHaveBeenCalledWith(400)
+    expect(res.json).toHaveBeenCalledWith({ error: 'email is required' })
+  })
+
+  it('rejects malformed forgot-password input with 400', async () => {
+    const { forgotPassword } = loadHandlers()
+    const req = {
+      body: { email: { nested: true } },
+      brute: { reset: jest.fn() }
+    }
+    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+
+    await forgotPassword(req, res, jest.fn())
+
+    expect(global.WIKI.models.users.loginForgotPassword).not.toHaveBeenCalled()
+    expect(res.status).toHaveBeenCalledWith(400)
+    expect(res.json).toHaveBeenCalledWith({ error: 'email must be a string' })
+  })
+
+  it('forwards unexpected forgot-password failures to next', async () => {
+    global.WIKI.models.users.loginForgotPassword.mockRejectedValueOnce(new Error('mail failed'))
+    const { forgotPassword } = loadHandlers()
+    const req = {
+      body: { email: 'alice@example.com' },
+      brute: { reset: jest.fn() }
+    }
+    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+    const next = jest.fn()
+
+    await forgotPassword(req, res, next)
+
+    expect(res.json).not.toHaveBeenCalled()
+    expect(next).toHaveBeenCalledWith(expect.any(Error))
+    expect(next.mock.calls[0][0].message).toBe('mail failed')
   })
 
   it('rejects non-form auth strategies for REST login', async () => {

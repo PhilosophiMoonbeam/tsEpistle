@@ -254,10 +254,9 @@
 
 import _ from 'lodash'
 import Cookies from 'js-cookie'
-import gql from 'graphql-tag'
 import { sync } from 'vuex-pathify'
 
-const { fetchAuthStrategies, submitAuthRequest } = require('../helpers/auth-api')
+const { fetchAuthStrategies, submitAuthRequest, submitStatusRequest } = require('../helpers/auth-api')
 
 export default {
   i18nOptions: { namespaces: 'auth' },
@@ -490,44 +489,15 @@ export default {
       this.loaderTitle = this.$t('auth:forgotPasswordLoading')
       this.isLoading = true
       try {
-        const resp = await this.$apollo.mutate({
-          mutation: gql`
-            mutation (
-              $email: String!
-            ) {
-              authentication {
-                forgotPassword (
-                  email: $email
-                ) {
-                  responseResult {
-                    succeeded
-                    errorCode
-                    slug
-                    message
-                  }
-                }
-              }
-            }
-          `,
-          variables: {
-            email: this.username
-          }
+        await submitStatusRequest(window.fetch.bind(window), '/_api/auth/forgot-password', {
+          email: this.username
+        }, this.$t('auth:genericError'))
+        this.$store.commit('showNotification', {
+          style: 'success',
+          message: this.$t('auth:forgotPasswordSuccess'),
+          icon: 'email'
         })
-        if (_.has(resp, 'data.authentication.forgotPassword.responseResult')) {
-          let respObj = _.get(resp, 'data.authentication.forgotPassword.responseResult', {})
-          if (respObj.succeeded === true) {
-            this.$store.commit('showNotification', {
-              style: 'success',
-              message: this.$t('auth:forgotPasswordSuccess'),
-              icon: 'email'
-            })
-            this.screen = 'login'
-          } else {
-            throw new Error(respObj.message)
-          }
-        } else {
-          throw new Error(this.$t('auth:genericError'))
-        }
+        this.screen = 'login'
       } catch (err) {
         console.error(err)
         this.$store.commit('showNotification', {

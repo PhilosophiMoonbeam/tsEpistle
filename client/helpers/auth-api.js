@@ -64,7 +64,7 @@ async function fetchAuthStrategies (fetchImpl, fallbackMessage = 'Authentication
   })
 }
 
-async function submitAuthRequest (fetchImpl, path, body, fallbackMessage = 'Authentication request failed') {
+async function postJson (fetchImpl, path, body, fallbackMessage) {
   const response = await fetchImpl(path, {
     method: 'POST',
     credentials: 'same-origin',
@@ -75,8 +75,21 @@ async function submitAuthRequest (fetchImpl, path, body, fallbackMessage = 'Auth
     body: JSON.stringify(body)
   })
 
-  const payload = await parseJsonResponse(response, fallbackMessage)
+  return parseJsonResponse(response, fallbackMessage)
+}
+
+async function submitAuthRequest (fetchImpl, path, body, fallbackMessage = 'Authentication request failed') {
+  const payload = await postJson(fetchImpl, path, body, fallbackMessage)
   if (!isValidAuthResponse(payload)) {
+    throw new Error(fallbackMessage)
+  }
+
+  return payload
+}
+
+async function submitStatusRequest (fetchImpl, path, body, fallbackMessage = 'Authentication request failed') {
+  const payload = await postJson(fetchImpl, path, body, fallbackMessage)
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload) || typeof payload.message !== 'string' || payload.message.length < 1) {
     throw new Error(fallbackMessage)
   }
 
@@ -85,5 +98,6 @@ async function submitAuthRequest (fetchImpl, path, body, fallbackMessage = 'Auth
 
 module.exports = {
   fetchAuthStrategies,
-  submitAuthRequest
+  submitAuthRequest,
+  submitStatusRequest
 }

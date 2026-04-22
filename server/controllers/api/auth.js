@@ -79,6 +79,27 @@ router.get('/strategies', async (req, res, next) => {
   }
 })
 
+router.post('/forgot-password', bruteforce.prevent, async (req, res, next) => {
+  try {
+    const email = _.get(req, 'body.email')
+
+    if (!email) {
+      return res.status(400).json({ error: 'email is required' })
+    }
+    if (!_.isString(email)) {
+      return res.status(400).json({ error: 'email must be a string' })
+    }
+
+    await WIKI.models.users.loginForgotPassword({
+      email
+    }, { req, res })
+
+    res.json({ message: 'Password reset request processed.' })
+  } catch (err) {
+    next(err)
+  }
+})
+
 router.post('/login', bruteforce.prevent, async (req, res, next) => {
   try {
     const strategyKey = _.get(req, 'body.strategy')
