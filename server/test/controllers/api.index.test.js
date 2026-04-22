@@ -1,3 +1,13 @@
+jest.mock('express-brute', () => {
+  return jest.fn().mockImplementation(() => ({
+    prevent: jest.fn((req, res, next) => next())
+  }))
+})
+
+jest.mock('../../helpers/brute-knex', () => {
+  return jest.fn().mockImplementation(() => ({}))
+})
+
 jest.mock('express', () => {
   const routers = []
 
@@ -20,6 +30,11 @@ describe('controllers/api route shell', () => {
     jest.resetModules()
     const express = require('express')
     express.__routers.length = 0
+    global.WIKI = {
+      models: {
+        knex: {}
+      }
+    }
   })
 
   const loadRouter = () => {
