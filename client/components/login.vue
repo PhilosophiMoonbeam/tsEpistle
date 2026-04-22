@@ -21,7 +21,7 @@
         //-------------------------------------------------
         //- PROVIDERS LIST
         //-------------------------------------------------
-        template(v-if='screen === `login` && strategies.length > 1')
+        template(v-if='screen === `login` && filteredStrategies.length > 1')
           .login-subtitle
             .text-subtitle-1 {{$t('auth:selectAuthProvider')}}
           .login-list
@@ -257,6 +257,8 @@ import Cookies from 'js-cookie'
 import gql from 'graphql-tag'
 import { sync } from 'vuex-pathify'
 
+const { fetchAuthStrategies, submitAuthRequest } = require('../helpers/auth-api')
+
 export default {
   i18nOptions: { namespaces: 'auth' },
   props: {
@@ -321,12 +323,13 @@ export default {
   },
   watch: {
     filteredStrategies (newValue, oldValue) {
-      if (_.head(newValue).strategy.useForm) {
+      const firstStrategy = _.head(newValue)
+      if (firstStrategy && _.get(firstStrategy, 'strategy.useForm')) {
         this.selectedStrategyKey = _.head(newValue).key
       }
     },
     selectedStrategyKey (newValue, oldValue) {
-      this.selectedStrategy = _.find(this.strategies, ['key', newValue])
+      this.selectedStrategy = _.find(this.strategies, ['key', newValue]) || { key: 'unselected', strategy: { useForm: false, usernameType: 'email' } }
       if (this.screen === 'changePwd') {
         return
       }
@@ -347,8 +350,31 @@ export default {
       this.screen = 'changePwd'
       this.continuationToken = this.changePwdContinuationToken
     }
+    this.loadStrategies()
   },
   methods: {
+    async loadStrategies () {
+      this.$store.commit('loadingStart', 'login-strategies-refresh')
+      try {
+        this.strategies = await fetchAuthStrategies(window.fetch.bind(window), this.$t('auth:genericError'))
+
+        if (this.filteredStrategies.length === 0) {
+          this.errorMessage = this.$t('auth:genericError')
+          this.errorShown = true
+        } else if (this.screen !== 'changePwd' && this.filteredStrategies.length === 1) {
+          this.selectedStrategyKey = this.filteredStrategies[0].key
+        }
+      } catch (err) {
+        console.error(err)
+        this.$store.commit('showNotification', {
+          style: 'red',
+          message: err.message,
+          icon: 'alert'
+        })
+      } finally {
+        this.$store.commit('loadingStop', 'login-strategies-refresh')
+      }
+    },
     /**
      * LOGIN
      */
@@ -367,44 +393,12 @@ export default {
         this.loaderTitle = this.$t('auth:signingIn')
         this.isLoading = true
         try {
-          const resp = await this.$apollo.mutate({
-            mutation: gql`
-              mutation($username: String!, $password: String!, $strategy: String!) {
-                authentication {
-                  login(username: $username, password: $password, strategy: $strategy) {
-                    responseResult {
-                      succeeded
-                      errorCode
-                      slug
-                      message
-                    }
-                    jwt
-                    mustChangePwd
-                    mustProvideTFA
-                    mustSetupTFA
-                    continuationToken
-                    redirect
-                    tfaQRImage
-                  }
-                }
-              }
-            `,
-            variables: {
-              username: this.username,
-              password: this.password,
-              strategy: this.selectedStrategy.key
-            }
-          })
-          if (_.has(resp, 'data.authentication.login')) {
-            const respObj = _.get(resp, 'data.authentication.login', {})
-            if (respObj.responseResult.succeeded === true) {
-              this.handleLoginResponse(respObj)
-            } else {
-              throw new Error(respObj.responseResult.message)
-            }
-          } else {
-            throw new Error(this.$t('auth:genericError'))
-          }
+          const respObj = await submitAuthRequest(window.fetch.bind(window), '/_api/auth/login', {
+            username: this.username,
+            password: this.password,
+            strategy: this.selectedStrategy.key
+          }, this.$t('auth:genericError'))
+          this.handleLoginResponse(respObj)
         } catch (err) {
           console.error(err)
           this.$store.commit('showNotification', {
@@ -436,53 +430,16 @@ export default {
         this.loaderTitle = this.$t('auth:signingIn')
         this.isLoading = true
         try {
-          const resp = await this.$apollo.mutate({
-            mutation: gql`
-              mutation(
-                $continuationToken: String!
-                $securityCode: String!
-                $setup: Boolean
-                ) {
-                authentication {
-                  loginTFA(
-                    continuationToken: $continuationToken
-                    securityCode: $securityCode
-                    setup: $setup
-                    ) {
-                    responseResult {
-                      succeeded
-                      errorCode
-                      slug
-                      message
-                    }
-                    jwt
-                    mustChangePwd
-                    continuationToken
-                    redirect
-                  }
-                }
-              }
-            `,
-            variables: {
-              continuationToken: this.continuationToken,
-              securityCode: this.securityCode,
-              setup
-            }
-          })
-          if (_.has(resp, 'data.authentication.loginTFA')) {
-            let respObj = _.get(resp, 'data.authentication.loginTFA', {})
-            if (respObj.responseResult.succeeded === true) {
-              this.handleLoginResponse(respObj)
-            } else {
-              if (!setup) {
-                this.isTFAShown = false
-              }
-              throw new Error(respObj.responseResult.message)
-            }
-          } else {
-            throw new Error(this.$t('auth:genericError'))
-          }
+          const respObj = await submitAuthRequest(window.fetch.bind(window), '/_api/auth/login/tfa', {
+            continuationToken: this.continuationToken,
+            securityCode: this.securityCode,
+            setup
+          }, this.$t('auth:genericError'))
+          this.handleLoginResponse(respObj)
         } catch (err) {
+          if (!setup) {
+            this.isTFAShown = false
+          }
           console.error(err)
           this.$store.commit('showNotification', {
             style: 'red',
@@ -501,45 +458,11 @@ export default {
       this.loaderTitle = this.$t('auth:changePwd.loading')
       this.isLoading = true
       try {
-        const resp = await this.$apollo.mutate({
-          mutation: gql`
-            mutation (
-              $continuationToken: String!
-              $newPassword: String!
-            ) {
-              authentication {
-                loginChangePassword (
-                  continuationToken: $continuationToken
-                  newPassword: $newPassword
-                ) {
-                  responseResult {
-                    succeeded
-                    errorCode
-                    slug
-                    message
-                  }
-                  jwt
-                  continuationToken
-                  redirect
-                }
-              }
-            }
-          `,
-          variables: {
-            continuationToken: this.continuationToken,
-            newPassword: this.newPassword
-          }
-        })
-        if (_.has(resp, 'data.authentication.loginChangePassword')) {
-          let respObj = _.get(resp, 'data.authentication.loginChangePassword', {})
-          if (respObj.responseResult.succeeded === true) {
-            this.handleLoginResponse(respObj)
-          } else {
-            throw new Error(respObj.responseResult.message)
-          }
-        } else {
-          throw new Error(this.$t('auth:genericError'))
-        }
+        const respObj = await submitAuthRequest(window.fetch.bind(window), '/_api/auth/login/change-password', {
+          continuationToken: this.continuationToken,
+          newPassword: this.newPassword
+        }, this.$t('auth:genericError'))
+        this.handleLoginResponse(respObj)
       } catch (err) {
         console.error(err)
         this.$store.commit('showNotification', {
@@ -662,34 +585,6 @@ export default {
             }
           }
         }, 1000)
-      }
-    }
-  },
-  apollo: {
-    strategies: {
-      query: gql`
-        {
-          authentication {
-            activeStrategies(enabledOnly: true) {
-              key
-              strategy {
-                key
-                logo
-                color
-                icon
-                useForm
-                usernameType
-              }
-              displayName
-              order
-              selfRegistration
-            }
-          }
-        }
-      `,
-      update: (data) => _.sortBy(data.authentication.activeStrategies, ['order']),
-      watchLoading (isLoading) {
-        this.$store.commit(`loading${isLoading ? 'Start' : 'Stop'}`, 'login-strategies-refresh')
       }
     }
   }
