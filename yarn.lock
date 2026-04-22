@@ -10026,10 +10026,10 @@ filepond-plugin-file-validate-type@1.2.9:
   resolved "https://registry.yarnpkg.com/filepond-plugin-file-validate-type/-/filepond-plugin-file-validate-type-1.2.9.tgz#84787c027354a459d91382e77adc9463ceb0182d"
   integrity sha512-Tzv07aNdZvjUXDRA3XL16QMEvh6llDrXlcZ6W0eTHQ+taHaVg/JKJTFs/AViO+6ZcpPCcQStbhYEL2HoS+vldw==
 
-filepond@4.21.1:
-  version "4.21.1"
-  resolved "https://registry.yarnpkg.com/filepond/-/filepond-4.21.1.tgz#b92dfa654732d504864cc770c6f9407429df6626"
-  integrity sha512-mVCc4lR63dSP6a0LW9bRlRGIrAgRuuQAWDxdDJzAXQ9JWtUQtyvFlxgaU/02jYrBIBYvnQV+AJ/dgG9HOKfCKw==
+filepond@4.32.12:
+  version "4.32.12"
+  resolved "https://registry.yarnpkg.com/filepond/-/filepond-4.32.12.tgz#ddc6551401d0ee1602c577affa75409daf6a21ce"
+  integrity sha512-wro0/deLwua9CkL7HJygOlDaPo1c7Ov8kfzbZjH7m4hdi56gdHGDeRWnYa+qXnRm3Lty69gUGVFb3JZy/9vT8g==
 
 filesize.js@2.0.0:
   version "2.0.0"
