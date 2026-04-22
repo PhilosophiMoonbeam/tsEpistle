@@ -28,6 +28,7 @@ module.exports = async () => {
 
   const mw = autoload(path.join(WIKI.SERVERPATH, '/middlewares'))
   const ctrl = autoload(path.join(WIKI.SERVERPATH, '/controllers'))
+  const apiCtrl = require('./controllers/api')
 
   // ----------------------------------------
   // Define Express App
@@ -93,6 +94,8 @@ module.exports = async () => {
 
   app.use(bodyParser.json({ limit: WIKI.config.bodyParserLimit || '1mb' }))
   await WIKI.servers.startGraphQL()
+
+  app.use('/_api', apiCtrl)
 
   // ----------------------------------------
   // SEO

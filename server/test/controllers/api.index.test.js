@@ -1,0 +1,61 @@
+jest.mock('express', () => {
+  const routers = []
+
+  return {
+    Router: () => {
+      const router = {
+        get: jest.fn(),
+        post: jest.fn(),
+        use: jest.fn()
+      }
+      routers.push(router)
+      return router
+    },
+    __routers: routers
+  }
+})
+
+describe('controllers/api route shell', () => {
+  beforeEach(() => {
+    jest.resetModules()
+    const express = require('express')
+    express.__routers.length = 0
+  })
+
+  const loadRouter = () => {
+    const express = require('express')
+    expect(() => require('../../controllers/api')).not.toThrow()
+    return express.__routers[0]
+  }
+
+  it('mounts system, locales, and users subrouters', () => {
+    const apiRouter = loadRouter()
+
+    expect(apiRouter.use).toHaveBeenCalledWith('/system', expect.any(Object))
+    expect(apiRouter.use).toHaveBeenCalledWith('/locales', expect.any(Object))
+    expect(apiRouter.use).toHaveBeenCalledWith('/users', expect.any(Object))
+  })
+
+  it('returns a JSON 404 for unknown API routes', () => {
+    const apiRouter = loadRouter()
+    const notFoundHandler = apiRouter.use.mock.calls[3][0]
+    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+
+    notFoundHandler({}, res)
+
+    expect(res.status).toHaveBeenCalledWith(404)
+    expect(res.json).toHaveBeenCalledWith({ error: 'Not Found' })
+  })
+
+  it('returns a generic JSON 500 for unexpected API failures', () => {
+    const apiRouter = loadRouter()
+    const errorHandler = apiRouter.use.mock.calls[4][0]
+    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+    const err = new Error('boom')
+
+    errorHandler(err, {}, res, jest.fn())
+
+    expect(res.status).toHaveBeenCalledWith(500)
+    expect(res.json).toHaveBeenCalledWith({ error: 'Internal Server Error' })
+  })
+})
