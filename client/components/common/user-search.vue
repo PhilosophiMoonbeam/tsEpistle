@@ -50,7 +50,8 @@
 
 <script>
 import _ from 'lodash'
-import gql from 'graphql-tag'
+
+import { searchUsers } from '../../helpers/users-api'
 
 export default {
   filters: {
@@ -73,7 +74,8 @@ export default {
       loading: false,
       searchLoading: false,
       search: '',
-      items: []
+      items: [],
+      searchRequestId: 0
     }
   },
   computed: {
@@ -86,12 +88,47 @@ export default {
     value(newValue, oldValue) {
       if (newValue && !oldValue) {
         this.search = ''
+        this.items = []
         this.selectedItems = null
         _.delay(() => { this.$refs.searchIpt.focus() }, 100)
       }
+    },
+    search () {
+      this.loadUsers()
     }
   },
   methods: {
+    async loadUsers () {
+      const requestId = ++this.searchRequestId
+      const query = this.search
+
+      if (!query || query.trim().length < 2) {
+        this.items = []
+        this.searchLoading = false
+        return []
+      }
+
+      this.searchLoading = true
+      try {
+        const items = await searchUsers(window.fetch.bind(window), query, this.$t('common:error.generic'))
+        if (requestId !== this.searchRequestId || query !== this.search) {
+          return []
+        }
+        this.items = items
+        return items
+      } catch (err) {
+        if (requestId !== this.searchRequestId || query !== this.search) {
+          return []
+        }
+        this.items = []
+        this.$store.commit('pushGraphError', err)
+        return []
+      } finally {
+        if (requestId === this.searchRequestId) {
+          this.searchLoading = false
+        }
+      }
+    },
     close() {
       this.$emit('input', false)
     },
@@ -101,35 +138,6 @@ export default {
     },
     searchFilter(item, queryText, itemText) {
       return _.includes(_.toLower(item.email), _.toLower(queryText)) || _.includes(_.toLower(item.name), _.toLower(queryText))
-    }
-  },
-  apollo: {
-    items: {
-      query: gql`
-        query ($query: String!) {
-          users {
-            search(query:$query) {
-              id
-              name
-              email
-              providerKey
-            }
-          }
-        }
-      `,
-      variables() {
-        return {
-          query: this.search
-        }
-      },
-      fetchPolicy: 'cache-and-network',
-      skip() {
-        return !this.search || this.search.length < 2
-      },
-      update: (data) => data.users.search,
-      watchLoading (isLoading) {
-        this.searchLoading = isLoading
-      }
     }
   }
 }
