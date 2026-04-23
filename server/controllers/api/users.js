@@ -5,9 +5,20 @@ const router = express.Router()
 
 /* global WIKI */
 
+const userActivityAccessPermissions = ['write:groups', 'manage:groups', 'write:users', 'manage:users', 'manage:system']
+
 const requireUserSearchAccess = (req, res) => {
-  if (!WIKI.auth.checkAccess(req.user, ['write:groups', 'manage:groups', 'write:users', 'manage:users', 'manage:system'])) {
+  if (!WIKI.auth.checkAccess(req.user, userActivityAccessPermissions)) {
     res.status(403).json({ error: 'a user search admin permission is required' })
+    return false
+  }
+
+  return true
+}
+
+const requireUserLastLoginsAccess = (req, res) => {
+  if (!WIKI.auth.checkAccess(req.user, userActivityAccessPermissions)) {
+    res.status(403).json({ error: 'a dashboard user activity permission is required' })
     return false
   }
 
@@ -45,6 +56,28 @@ router.get('/search', async (req, res, next) => {
       name: user.name,
       email: user.email,
       providerKey: user.providerKey
+    })))
+  } catch (err) {
+    return next(err)
+  }
+})
+
+router.get('/last-logins', async (req, res, next) => {
+  if (!requireUserLastLoginsAccess(req, res)) {
+    return
+  }
+
+  try {
+    const users = await WIKI.models.users.query()
+      .select('id', 'name', 'lastLoginAt')
+      .whereNotNull('lastLoginAt')
+      .orderBy('lastLoginAt', 'desc')
+      .limit(10)
+
+    return res.json(users.map(user => ({
+      id: user.id,
+      name: user.name,
+      lastLoginAt: user.lastLoginAt
     })))
   } catch (err) {
     return next(err)

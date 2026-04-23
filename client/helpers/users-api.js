@@ -41,6 +41,22 @@ function normalizeUserSearchRow (row, fallbackMessage) {
   }
 }
 
+function normalizeLastLoginRow (row, fallbackMessage) {
+  if (!row || typeof row !== 'object' || Array.isArray(row)) {
+    throw new Error(fallbackMessage)
+  }
+
+  if (!Number.isInteger(row.id) || typeof row.name !== 'string' || row.name.length < 1 || typeof row.lastLoginAt !== 'string' || row.lastLoginAt.length < 1) {
+    throw new Error(fallbackMessage)
+  }
+
+  return {
+    id: row.id,
+    name: row.name,
+    lastLoginAt: row.lastLoginAt
+  }
+}
+
 function normalizeUserGroupRow (row, fallbackMessage) {
   if (!row || typeof row !== 'object' || Array.isArray(row)) {
     throw new Error(fallbackMessage)
@@ -144,6 +160,22 @@ async function searchUsers (fetchImpl, query, fallbackMessage = 'User search res
   return payload.map(row => normalizeUserSearchRow(row, fallbackMessage))
 }
 
+async function fetchLastLogins (fetchImpl, fallbackMessage = 'Last logins response is invalid') {
+  const response = await fetchImpl('/_api/users/last-logins', {
+    credentials: 'same-origin',
+    headers: {
+      Accept: 'application/json'
+    }
+  })
+
+  const payload = await parseJsonResponse(response, fallbackMessage)
+  if (!Array.isArray(payload)) {
+    throw new Error(fallbackMessage)
+  }
+
+  return payload.map(row => normalizeLastLoginRow(row, fallbackMessage))
+}
+
 async function fetchUserDetails (fetchImpl, id, fallbackMessage = 'User detail response is invalid') {
   const normalizedId = normalizePositiveIntegerId(id, fallbackMessage)
   const response = await fetchImpl(`/_api/users/${normalizedId}`, {
@@ -158,5 +190,6 @@ async function fetchUserDetails (fetchImpl, id, fallbackMessage = 'User detail r
 
 module.exports = {
   searchUsers,
+  fetchLastLogins,
   fetchUserDetails
 }

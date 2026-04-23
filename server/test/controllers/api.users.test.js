@@ -34,7 +34,7 @@ describe('controllers/api users endpoints', () => {
       },
       models: {
         users: {
-          query: jest.fn().mockReturnValue({
+          query: jest.fn().mockImplementation(() => ({
             where: jest.fn().mockReturnValue({
               orWhere: jest.fn().mockReturnValue({
                 limit: jest.fn().mockReturnValue({
@@ -51,6 +51,25 @@ describe('controllers/api users endpoints', () => {
                       email: 'bob@example.com',
                       providerKey: 'ldap',
                       createdAt: '2026-01-01T00:00:00.000Z'
+                    }
+                  ])
+                })
+              })
+            }),
+            select: jest.fn().mockReturnValue({
+              whereNotNull: jest.fn().mockReturnValue({
+                orderBy: jest.fn().mockReturnValue({
+                  limit: jest.fn().mockResolvedValue([
+                    {
+                      id: 42,
+                      name: 'Alice',
+                      lastLoginAt: '2026-01-03T00:00:00.000Z',
+                      email: 'hidden@example.com'
+                    },
+                    {
+                      id: 77,
+                      name: 'Bob',
+                      lastLoginAt: '2026-01-02T00:00:00.000Z'
                     }
                   ])
                 })
@@ -82,7 +101,7 @@ describe('controllers/api users endpoints', () => {
                 ])
               })
             })
-          })
+          }))
         }
       }
     }
@@ -93,6 +112,7 @@ describe('controllers/api users endpoints', () => {
     require('../../controllers/api/users')
     return {
       search: express.__router.get.mock.calls.find(([path]) => path === '/search')[1],
+      lastLogins: express.__router.get.mock.calls.find(([path]) => path === '/last-logins')[1],
       whoami: express.__router.get.mock.calls.find(([path]) => path === '/whoami')[1],
       detail: express.__router.get.mock.calls.find(([path]) => path === '/:id')[1]
     }
@@ -102,8 +122,18 @@ describe('controllers/api users endpoints', () => {
     const handlers = loadHandler()
 
     expect(typeof handlers.search).toBe('function')
+    expect(typeof handlers.lastLogins).toBe('function')
     expect(typeof handlers.whoami).toBe('function')
     expect(typeof handlers.detail).toBe('function')
+  })
+
+  it('registers the last-logins route before the detail route', () => {
+    loadHandler()
+    const express = require('express')
+    const registeredGetPaths = express.__router.get.mock.calls.map(([path]) => path)
+
+    expect(registeredGetPaths.indexOf('/last-logins')).toBeGreaterThanOrEqual(0)
+    expect(registeredGetPaths.indexOf('/:id')).toBeGreaterThan(registeredGetPaths.indexOf('/last-logins'))
   })
 
   it('returns the minimal admin user search payload for authorized requests', async () => {
@@ -124,6 +154,59 @@ describe('controllers/api users endpoints', () => {
       { id: 42, name: 'Alice', email: 'alice@example.com', providerKey: 'local' },
       { id: 77, name: 'Bob', email: 'bob@example.com', providerKey: 'ldap' }
     ])
+  })
+
+  it('returns the minimal dashboard last-logins payload for authorized requests', async () => {
+    const { lastLogins } = loadHandler()
+    const req = { user: { permissions: ['write:users'] } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await lastLogins(req, res, jest.fn())
+
+    expect(global.WIKI.auth.checkAccess).toHaveBeenCalledWith({ permissions: ['write:users'] }, ['write:groups', 'manage:groups', 'write:users', 'manage:users', 'manage:system'])
+    expect(global.WIKI.models.users.query).toHaveBeenCalled()
+    const queryBuilder = global.WIKI.models.users.query.mock.results[0].value
+    expect(queryBuilder.select).toHaveBeenCalledWith('id', 'name', 'lastLoginAt')
+    expect(queryBuilder.select.mock.results[0].value.whereNotNull).toHaveBeenCalledWith('lastLoginAt')
+    expect(queryBuilder.select.mock.results[0].value.whereNotNull.mock.results[0].value.orderBy).toHaveBeenCalledWith('lastLoginAt', 'desc')
+    expect(queryBuilder.select.mock.results[0].value.whereNotNull.mock.results[0].value.orderBy.mock.results[0].value.limit).toHaveBeenCalledWith(10)
+    expect(res.json).toHaveBeenCalledWith([
+      { id: 42, name: 'Alice', lastLoginAt: '2026-01-03T00:00:00.000Z' },
+      { id: 77, name: 'Bob', lastLoginAt: '2026-01-02T00:00:00.000Z' }
+    ])
+  })
+
+  it('returns 403 for unauthorized dashboard last-logins requests', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValueOnce(false)
+    const { lastLogins } = loadHandler()
+    const req = { user: { permissions: ['manage:api'] } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await lastLogins(req, res, jest.fn())
+
+    expect(res.status).toHaveBeenCalledWith(403)
+    expect(res.json).toHaveBeenCalledWith({ error: 'a dashboard user activity permission is required' })
+  })
+
+  it('forwards unexpected dashboard last-logins failures to next', async () => {
+    const next = jest.fn()
+    global.WIKI.models.users.query.mockReturnValueOnce({
+      select: jest.fn().mockReturnValue({
+        whereNotNull: jest.fn().mockReturnValue({
+          orderBy: jest.fn().mockReturnValue({
+            limit: jest.fn().mockRejectedValue(new Error('last logins db down'))
+          })
+        })
+      })
+    })
+    const { lastLogins } = loadHandler()
+    const req = { user: { permissions: ['manage:system'] } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await lastLogins(req, res, next)
+
+    expect(next).toHaveBeenCalledWith(expect.any(Error))
+    expect(next.mock.calls[0][0].message).toBe('last logins db down')
   })
 
   it('returns the sanitized admin user detail payload for authorized requests', async () => {

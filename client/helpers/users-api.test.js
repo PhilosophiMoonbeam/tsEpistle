@@ -1,4 +1,4 @@
-const { searchUsers, fetchUserDetails } = require('./users-api')
+const { searchUsers, fetchLastLogins, fetchUserDetails } = require('./users-api')
 
 function createJsonResponse (payload, ok = true) {
   return {
@@ -43,6 +43,33 @@ describe('users api helper', () => {
     ]))
 
     await expect(searchUsers(fetchImpl, 'alice', 'Bad user search payload')).rejects.toThrow('Bad user search payload')
+  })
+
+  test('fetches and validates dashboard last-logins payloads', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse([
+      { id: 42, name: 'Alice', lastLoginAt: '2026-01-03T00:00:00.000Z', email: 'hidden@example.com' },
+      { id: 77, name: 'Bob', lastLoginAt: '2026-01-02T00:00:00.000Z' }
+    ]))
+
+    await expect(fetchLastLogins(fetchImpl)).resolves.toEqual([
+      { id: 42, name: 'Alice', lastLoginAt: '2026-01-03T00:00:00.000Z' },
+      { id: 77, name: 'Bob', lastLoginAt: '2026-01-02T00:00:00.000Z' }
+    ])
+
+    expect(fetchImpl).toHaveBeenCalledWith('/_api/users/last-logins', {
+      credentials: 'same-origin',
+      headers: {
+        Accept: 'application/json'
+      }
+    })
+  })
+
+  test('rejects malformed dashboard last-logins payloads', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse([
+      { id: 42, name: 'Alice', lastLoginAt: null }
+    ]))
+
+    await expect(fetchLastLogins(fetchImpl, 'Bad last logins payload')).rejects.toThrow('Bad last logins payload')
   })
 
   test('fetches and validates user detail payloads', async () => {

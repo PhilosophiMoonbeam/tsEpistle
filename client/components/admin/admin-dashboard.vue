@@ -111,6 +111,7 @@ import AnimatedNumber from 'animated-number-vue'
 import { get } from 'vuex-pathify'
 import gql from 'graphql-tag'
 import semverLte from 'semver/functions/lte'
+import { fetchLastLogins } from '../../helpers/users-api'
 
 export default {
   components: {
@@ -150,6 +151,20 @@ export default {
     info: get('admin/info'),
     permissions: get('user/permissions')
   },
+  watch: {
+    canViewLastLogins(newValue, oldValue) {
+      if (newValue && !oldValue) {
+        this.loadLastLogins()
+      } else if (!newValue) {
+        this.lastLogins = []
+      }
+    }
+  },
+  created() {
+    if (this.canViewLastLogins) {
+      this.loadLastLogins()
+    }
+  },
   methods: {
     round(val) { return Math.round(val) },
     hasPermission(prm) {
@@ -159,6 +174,26 @@ export default {
         })
       } else {
         return _.includes(this.permissions, prm)
+      }
+    },
+    async loadLastLogins() {
+      this.lastLoginsLoading = true
+      this.$store.commit('loadingStart', 'admin-dashboard-lastlogins')
+
+      try {
+        this.lastLogins = await fetchLastLogins(window.fetch.bind(window), 'Last logins response is invalid')
+        return true
+      } catch (err) {
+        this.lastLogins = []
+        this.$store.commit('showNotification', {
+          message: err.message,
+          style: 'error',
+          icon: 'alert'
+        })
+        return false
+      } finally {
+        this.lastLoginsLoading = false
+        this.$store.commit('loadingStop', 'admin-dashboard-lastlogins')
       }
     }
   },
@@ -190,28 +225,6 @@ export default {
       watchLoading (isLoading) {
         this.recentPagesLoading = isLoading
         this.$store.commit(`loading${isLoading ? 'Start' : 'Stop'}`, 'admin-dashboard-recentpages')
-      }
-    },
-    lastLogins: {
-      query: gql`
-        query {
-          users {
-            lastLogins {
-              id
-              name
-              lastLoginAt
-            }
-          }
-        }
-      `,
-      skip() {
-        return !this.canViewLastLogins
-      },
-      fetchPolicy: 'network-only',
-      update: (data) => data.users.lastLogins,
-      watchLoading (isLoading) {
-        this.lastLoginsLoading = isLoading
-        this.$store.commit(`loading${isLoading ? 'Start' : 'Stop'}`, 'admin-dashboard-lastlogins')
       }
     }
   }
