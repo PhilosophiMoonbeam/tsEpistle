@@ -1,4 +1,4 @@
-const { fetchAuthStrategies, submitAuthRequest, submitStatusRequest } = require('./auth-api')
+const { fetchAuthStrategies, fetchAdminAuthProviders, submitAuthRequest, submitStatusRequest } = require('./auth-api')
 
 function createJsonResponse (payload, ok = true, status = ok ? 200 : 400) {
   return {
@@ -31,6 +31,33 @@ describe('auth api helper', () => {
         Accept: 'application/json'
       }
     })
+  })
+
+  test('fetches and sorts admin auth providers by order', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse([
+      { key: 'github', displayName: 'GitHub Login', order: 2, isEnabled: false },
+      { key: 'local', displayName: 'Local Login', order: 1, isEnabled: true }
+    ]))
+
+    await expect(fetchAdminAuthProviders(fetchImpl)).resolves.toEqual([
+      { key: 'local', displayName: 'Local Login', order: 1, isEnabled: true },
+      { key: 'github', displayName: 'GitHub Login', order: 2, isEnabled: false }
+    ])
+
+    expect(fetchImpl).toHaveBeenCalledWith('/_api/auth/providers', {
+      credentials: 'same-origin',
+      headers: {
+        Accept: 'application/json'
+      }
+    })
+  })
+
+  test('rejects malformed admin auth providers payload', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse([
+      { key: 'local', displayName: 'Local Login', order: '1', isEnabled: true }
+    ]))
+
+    await expect(fetchAdminAuthProviders(fetchImpl, 'Bad providers payload')).rejects.toThrow('Bad providers payload')
   })
 
   test('submits auth request as JSON and returns parsed body', async () => {

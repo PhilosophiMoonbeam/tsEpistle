@@ -10,7 +10,7 @@
           span Bulk Import
       v-card-text.pt-5
         v-select(
-          :items='providers'
+          :items='availableProviders'
           item-text='displayName'
           item-value='key'
           outlined
@@ -80,10 +80,10 @@
       v-card-chin
         v-spacer
         v-btn(text, @click='isShown = false') Cancel
-        v-btn.px-3(depressed, color='primary', @click='newUser(false)')
+        v-btn.px-3(depressed, color='primary', @click='newUser(false)', :disabled='!providersLoaded || availableProviders.length < 1')
           v-icon(left) mdi-chevron-right
           span Create
-        v-btn.px-3(depressed, color='primary', @click='newUser(true)')
+        v-btn.px-3(depressed, color='primary', @click='newUser(true)', :disabled='!providersLoaded || availableProviders.length < 1')
           v-icon(left) mdi-chevron-double-right
           span Create and Close
 </template>
@@ -91,10 +91,10 @@
 <script>
 import _ from 'lodash'
 import validate from 'validate.js'
-import gql from 'graphql-tag'
 
 import createUserMutation from 'gql/admin/users/users-mutation-create.gql'
 
+import { fetchAdminAuthProviders } from '../../helpers/auth-api'
 import { fetchGroupOptions } from '../../helpers/groups-api'
 
 export default {
@@ -114,10 +114,14 @@ export default {
       groups: [],
       group: [],
       mustChangePwd: false,
-      sendWelcomeEmail: false
+      sendWelcomeEmail: false,
+      providersLoaded: false
     }
   },
   computed: {
+    availableProviders() {
+      return this.providers.filter(provider => provider.isEnabled === true)
+    },
     isShown: {
       get() { return this.value },
       set(val) { this.$emit('input', val) }
@@ -126,6 +130,9 @@ export default {
   watch: {
     value(newValue, oldValue) {
       if (newValue) {
+        if (!this.providersLoaded) {
+          this.loadProviders()
+        }
         this.$nextTick(() => {
           this.$refs.emailInput.focus()
         })
@@ -133,6 +140,29 @@ export default {
     }
   },
   methods: {
+    async loadProviders() {
+      this.$store.commit('loadingStart', 'admin-users-strategies-refresh')
+      try {
+        this.providers = (await fetchAdminAuthProviders(window.fetch.bind(window), 'Admin authentication providers response is invalid')).map(strategy => ({
+          key: strategy.key,
+          displayName: strategy.displayName,
+          isEnabled: strategy.isEnabled
+        }))
+
+        if (!this.availableProviders.some(strategy => strategy.key === this.provider) && this.availableProviders.length > 0) {
+          this.provider = this.availableProviders[0].key
+        }
+        this.providersLoaded = true
+      } catch (err) {
+        this.providersLoaded = false
+        this.$store.commit('showNotification', {
+          style: 'red',
+          message: err.message,
+          icon: 'alert'
+        })
+      }
+      this.$store.commit('loadingStop', 'admin-users-strategies-refresh')
+    },
     async loadGroups() {
       this.$store.commit('loadingStart', 'admin-auth-groups-refresh')
       try {
@@ -147,6 +177,15 @@ export default {
       this.$store.commit('loadingStop', 'admin-auth-groups-refresh')
     },
     async newUser(close = false) {
+      if (!this.providersLoaded || this.availableProviders.length < 1) {
+        this.$store.commit('showNotification', {
+          style: 'red',
+          message: 'Authentication providers are not available.',
+          icon: 'alert'
+        })
+        return
+      }
+
       let rules = {
         email: {
           presence: {
@@ -240,26 +279,8 @@ export default {
     }
   },
   created() {
+    this.loadProviders()
     this.loadGroups()
-  },
-  apollo: {
-    providers: {
-      query: gql`
-        query {
-          authentication {
-            activeStrategies {
-              key
-              displayName
-            }
-          }
-        }
-      `,
-      fetchPolicy: 'network-only',
-      update: (data) => data.authentication.activeStrategies,
-      watchLoading (isLoading) {
-        this.$store.commit(`loading${isLoading ? 'Start' : 'Stop'}`, 'admin-users-strategies-refresh')
-      }
-    }
   }
 }
 </script>

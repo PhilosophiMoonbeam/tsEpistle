@@ -64,6 +64,32 @@ async function fetchAuthStrategies (fetchImpl, fallbackMessage = 'Authentication
   })
 }
 
+async function fetchAdminAuthProviders (fetchImpl, fallbackMessage = 'Admin authentication providers response is invalid') {
+  const response = await fetchImpl('/_api/auth/providers', {
+    credentials: 'same-origin',
+    headers: {
+      Accept: 'application/json'
+    }
+  })
+
+  const payload = await parseJsonResponse(response, fallbackMessage)
+  if (!Array.isArray(payload)) {
+    throw new Error(fallbackMessage)
+  }
+
+  return payload.slice().sort((left, right) => {
+    const leftOrder = Number.isFinite(left.order) ? left.order : 0
+    const rightOrder = Number.isFinite(right.order) ? right.order : 0
+    return leftOrder - rightOrder
+  }).map(provider => {
+    if (!provider || typeof provider.key !== 'string' || provider.key.length < 1 || typeof provider.displayName !== 'string' || provider.displayName.length < 1 || !Number.isFinite(provider.order) || typeof provider.isEnabled !== 'boolean') {
+      throw new Error(fallbackMessage)
+    }
+
+    return provider
+  })
+}
+
 async function postJson (fetchImpl, path, body, fallbackMessage) {
   const response = await fetchImpl(path, {
     method: 'POST',
@@ -98,6 +124,7 @@ async function submitStatusRequest (fetchImpl, path, body, fallbackMessage = 'Au
 
 module.exports = {
   fetchAuthStrategies,
+  fetchAdminAuthProviders,
   submitAuthRequest,
   submitStatusRequest
 }

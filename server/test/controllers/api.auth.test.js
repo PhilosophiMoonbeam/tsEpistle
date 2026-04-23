@@ -50,6 +50,7 @@ describe('controllers/api auth endpoints', () => {
         ]
       },
       auth: {
+        checkAccess: jest.fn().mockReturnValue(true),
         strategies: {
           local: {
             key: 'local',
@@ -113,6 +114,7 @@ describe('controllers/api auth endpoints', () => {
     }
     return {
       strategies: getRouteHandler('/strategies'),
+      providers: getRouteHandler('/providers'),
       forgotPassword: postRouteHandler('/forgot-password'),
       login: postRouteHandler('/login'),
       loginTFA: postRouteHandler('/login/tfa'),
@@ -124,6 +126,7 @@ describe('controllers/api auth endpoints', () => {
     const handlers = loadHandlers()
 
     expect(typeof handlers.strategies).toBe('function')
+    expect(typeof handlers.providers).toBe('function')
     expect(typeof handlers.forgotPassword).toBe('function')
     expect(typeof handlers.login).toBe('function')
     expect(typeof handlers.loginTFA).toBe('function')
@@ -154,6 +157,42 @@ describe('controllers/api auth endpoints', () => {
         }
       }
     ])
+  })
+
+  it('returns all configured providers for admin user bootstrap when authorized', async () => {
+    const { providers } = loadHandlers()
+    const req = { user: { permissions: ['manage:users'] } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await providers(req, res, jest.fn())
+
+    expect(global.WIKI.auth.checkAccess).toHaveBeenCalledWith({ permissions: ['manage:users'] }, ['manage:system', 'write:users', 'manage:users'])
+    expect(res.json).toHaveBeenCalledWith([
+      {
+        key: 'local',
+        displayName: 'Local Login',
+        order: 1,
+        isEnabled: true
+      },
+      {
+        key: 'github',
+        displayName: 'GitHub Login',
+        order: 2,
+        isEnabled: false
+      }
+    ])
+  })
+
+  it('returns 403 for unauthorized admin provider bootstrap requests', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValueOnce(false)
+    const { providers } = loadHandlers()
+    const req = { user: { permissions: ['manage:api'] } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await providers(req, res, jest.fn())
+
+    expect(res.status).toHaveBeenCalledWith(403)
+    expect(res.json).toHaveBeenCalledWith({ error: 'manage:system, write:users, or manage:users is required' })
   })
 
   it('does not expose internal configuration or admin-only auth metadata', async () => {

@@ -79,6 +79,24 @@ router.get('/strategies', async (req, res, next) => {
   }
 })
 
+router.get('/providers', async (req, res, next) => {
+  try {
+    if (!WIKI.auth.checkAccess(req.user, ['manage:system', 'write:users', 'manage:users'])) {
+      return res.status(403).json({ error: 'manage:system, write:users, or manage:users is required' })
+    }
+
+    const strategies = await WIKI.models.authentication.getStrategies()
+    res.json(strategies.map(stg => ({
+      key: stg.key,
+      displayName: stg.displayName,
+      order: stg.order,
+      isEnabled: stg.isEnabled === true
+    })))
+  } catch (err) {
+    next(err)
+  }
+})
+
 router.post('/forgot-password', bruteforce.prevent, async (req, res, next) => {
   try {
     const email = _.get(req, 'body.email')
