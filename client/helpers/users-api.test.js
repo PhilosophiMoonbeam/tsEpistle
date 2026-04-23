@@ -1,4 +1,4 @@
-const { searchUsers } = require('./users-api')
+const { searchUsers, fetchUserDetails } = require('./users-api')
 
 function createJsonResponse (payload, ok = true) {
   return {
@@ -43,6 +43,97 @@ describe('users api helper', () => {
     ]))
 
     await expect(searchUsers(fetchImpl, 'alice', 'Bad user search payload')).rejects.toThrow('Bad user search payload')
+  })
+
+  test('fetches and validates user detail payloads', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+      id: 42,
+      name: 'Alice',
+      email: 'alice@example.com',
+      providerKey: 'local',
+      providerName: 'Local',
+      providerId: 'provider-42',
+      providerIs2FACapable: true,
+      location: 'Tallinn',
+      jobTitle: 'Architect',
+      timezone: 'Europe/Tallinn',
+      isSystem: false,
+      isActive: true,
+      isVerified: true,
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-02T00:00:00.000Z',
+      lastLoginAt: '2026-01-03T00:00:00.000Z',
+      tfaIsActive: true,
+      groups: [
+        { id: 1, name: 'Administrators', description: 'hidden' },
+        { id: 3, name: 'Editors' }
+      ]
+    }))
+
+    await expect(fetchUserDetails(fetchImpl, '42')).resolves.toEqual({
+      id: 42,
+      name: 'Alice',
+      email: 'alice@example.com',
+      providerKey: 'local',
+      providerName: 'Local',
+      providerId: 'provider-42',
+      providerIs2FACapable: true,
+      location: 'Tallinn',
+      jobTitle: 'Architect',
+      timezone: 'Europe/Tallinn',
+      isSystem: false,
+      isActive: true,
+      isVerified: true,
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-02T00:00:00.000Z',
+      lastLoginAt: '2026-01-03T00:00:00.000Z',
+      tfaIsActive: true,
+      groups: [
+        { id: 1, name: 'Administrators' },
+        { id: 3, name: 'Editors' }
+      ]
+    })
+
+    expect(fetchImpl).toHaveBeenCalledWith('/_api/users/42', {
+      credentials: 'same-origin',
+      headers: {
+        Accept: 'application/json'
+      }
+    })
+  })
+
+  test('rejects invalid user detail ids before fetching', async () => {
+    const fetchImpl = jest.fn()
+
+    await expect(fetchUserDetails(fetchImpl, '42abc', 'Bad user detail payload')).rejects.toThrow('Bad user detail payload')
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
+  test('rejects malformed user detail payloads', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+      id: 42,
+      name: 'Alice',
+      email: 'alice@example.com',
+      providerKey: 'local',
+      providerName: 'Local',
+      providerId: 'provider-42',
+      providerIs2FACapable: 'yes',
+      location: 'Tallinn',
+      jobTitle: 'Architect',
+      timezone: 'Europe/Tallinn',
+      isSystem: false,
+      isActive: true,
+      isVerified: true,
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-02T00:00:00.000Z',
+      lastLoginAt: '2026-01-03T00:00:00.000Z',
+      tfaIsActive: true,
+      groups: [
+        { id: 1, name: 'Administrators' }
+      ]
+    }))
+
+    await expect(fetchUserDetails(fetchImpl, 42, 'Bad user detail payload')).rejects.toThrow('Bad user detail payload')
   })
 
   test('surfaces API error messages for failed searches', async () => {

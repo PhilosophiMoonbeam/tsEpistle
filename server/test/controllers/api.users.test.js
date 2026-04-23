@@ -19,7 +19,18 @@ describe('controllers/api users endpoints', () => {
 
     global.WIKI = {
       auth: {
-        checkAccess: jest.fn().mockReturnValue(true)
+        checkAccess: jest.fn().mockReturnValue(true),
+        strategies: {
+          local: {
+            displayName: 'Local',
+            strategyKey: 'local'
+          }
+        }
+      },
+      data: {
+        authentication: [
+          { key: 'local', useForm: true }
+        ]
       },
       models: {
         users: {
@@ -44,6 +55,32 @@ describe('controllers/api users endpoints', () => {
                   ])
                 })
               })
+            }),
+            findById: jest.fn().mockResolvedValue({
+              id: 42,
+              name: 'Alice',
+              email: 'alice@example.com',
+              providerKey: 'local',
+              providerId: 'provider-42',
+              location: 'Tallinn',
+              jobTitle: 'Architect',
+              timezone: 'Europe/Tallinn',
+              isSystem: false,
+              isActive: true,
+              isVerified: true,
+              createdAt: '2026-01-01T00:00:00.000Z',
+              updatedAt: '2026-01-02T00:00:00.000Z',
+              lastLoginAt: '2026-01-03T00:00:00.000Z',
+              tfaIsActive: true,
+              password: 'secret',
+              tfaSecret: 'hidden',
+              permissions: ['manage:system'],
+              $relatedQuery: jest.fn().mockReturnValue({
+                select: jest.fn().mockResolvedValue([
+                  { id: 1, name: 'Administrators', isSystem: true },
+                  { id: 3, name: 'Editors', description: 'hidden' }
+                ])
+              })
             })
           })
         }
@@ -56,7 +93,8 @@ describe('controllers/api users endpoints', () => {
     require('../../controllers/api/users')
     return {
       search: express.__router.get.mock.calls.find(([path]) => path === '/search')[1],
-      whoami: express.__router.get.mock.calls.find(([path]) => path === '/whoami')[1]
+      whoami: express.__router.get.mock.calls.find(([path]) => path === '/whoami')[1],
+      detail: express.__router.get.mock.calls.find(([path]) => path === '/:id')[1]
     }
   }
 
@@ -65,6 +103,7 @@ describe('controllers/api users endpoints', () => {
 
     expect(typeof handlers.search).toBe('function')
     expect(typeof handlers.whoami).toBe('function')
+    expect(typeof handlers.detail).toBe('function')
   })
 
   it('returns the minimal admin user search payload for authorized requests', async () => {
@@ -85,6 +124,114 @@ describe('controllers/api users endpoints', () => {
       { id: 42, name: 'Alice', email: 'alice@example.com', providerKey: 'local' },
       { id: 77, name: 'Bob', email: 'bob@example.com', providerKey: 'ldap' }
     ])
+  })
+
+  it('returns the sanitized admin user detail payload for authorized requests', async () => {
+    const { detail } = loadHandler()
+    const req = { user: { permissions: ['manage:users'] }, params: { id: '42' } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await detail(req, res, jest.fn())
+
+    expect(global.WIKI.auth.checkAccess).toHaveBeenCalledWith({ permissions: ['manage:users'] }, ['manage:users', 'manage:system'])
+    expect(global.WIKI.models.users.query).toHaveBeenCalled()
+    const queryBuilder = global.WIKI.models.users.query.mock.results[0].value
+    expect(queryBuilder.findById).toHaveBeenCalledWith(42)
+    const user = await queryBuilder.findById.mock.results[0].value
+    expect(user.$relatedQuery).toHaveBeenCalledWith('groups')
+    expect(user.$relatedQuery.mock.results[0].value.select).toHaveBeenCalledWith('id', 'name')
+    const payload = res.json.mock.calls[0][0]
+    expect(payload).toEqual({
+      id: 42,
+      name: 'Alice',
+      email: 'alice@example.com',
+      providerKey: 'local',
+      providerName: 'Local',
+      providerId: 'provider-42',
+      providerIs2FACapable: true,
+      location: 'Tallinn',
+      jobTitle: 'Architect',
+      timezone: 'Europe/Tallinn',
+      isSystem: false,
+      isActive: true,
+      isVerified: true,
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-02T00:00:00.000Z',
+      lastLoginAt: '2026-01-03T00:00:00.000Z',
+      tfaIsActive: true,
+      groups: [
+        { id: 1, name: 'Administrators' },
+        { id: 3, name: 'Editors' }
+      ]
+    })
+    expect(payload.password).toBeUndefined()
+    expect(payload.tfaSecret).toBeUndefined()
+    expect(payload.permissions).toBeUndefined()
+    expect(payload.groups[1].description).toBeUndefined()
+  })
+
+  it('returns unknown provider metadata when the strategy is missing', async () => {
+    delete global.WIKI.auth.strategies.local
+    const { detail } = loadHandler()
+    const req = { user: { permissions: ['manage:system'] }, params: { id: '42' } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await detail(req, res, jest.fn())
+
+    expect(res.json.mock.calls[0][0].providerName).toBe('Unknown')
+    expect(res.json.mock.calls[0][0].providerIs2FACapable).toBe(false)
+  })
+
+  it('returns 400 for malformed user detail ids', async () => {
+    const { detail } = loadHandler()
+    const req = { user: { permissions: ['manage:users'] }, params: { id: '42abc' } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await detail(req, res, jest.fn())
+
+    expect(res.status).toHaveBeenCalledWith(400)
+    expect(res.json).toHaveBeenCalledWith({ error: 'user id must be a positive integer' })
+  })
+
+  it('returns 404 when the requested user detail is missing', async () => {
+    global.WIKI.models.users.query.mockReturnValueOnce({
+      findById: jest.fn().mockResolvedValue(null)
+    })
+    const { detail } = loadHandler()
+    const req = { user: { permissions: ['manage:users'] }, params: { id: '999' } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await detail(req, res, jest.fn())
+
+    expect(res.status).toHaveBeenCalledWith(404)
+    expect(res.json).toHaveBeenCalledWith({ error: 'user not found' })
+  })
+
+  it('returns 403 for unauthorized user detail requests', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValueOnce(false)
+    const { detail } = loadHandler()
+    const req = { user: { permissions: ['manage:api'] }, params: { id: '42' } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await detail(req, res, jest.fn())
+
+    expect(res.status).toHaveBeenCalledWith(403)
+    expect(res.json).toHaveBeenCalledWith({ error: 'manage:users or manage:system is required' })
+  })
+
+  it('forwards unexpected user detail failures to next', async () => {
+    const next = jest.fn()
+    global.WIKI.models.users.query.mockReturnValueOnce({
+      findById: jest.fn().mockRejectedValue(new Error('detail db down'))
+    })
+    const { detail } = loadHandler()
+    const req = { user: { permissions: ['manage:system'] }, params: { id: '42' } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await detail(req, res, next)
+
+    expect(next).toHaveBeenCalledWith(expect.any(Error))
+    expect(next.mock.calls[0][0].message).toBe('detail db down')
   })
 
   it('returns an empty list for short search queries', async () => {

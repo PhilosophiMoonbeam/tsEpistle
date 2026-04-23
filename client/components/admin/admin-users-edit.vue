@@ -377,6 +377,28 @@ import { StatusIndicator } from 'vue-status-indicator'
 import UserSearch from '../common/user-search.vue'
 
 import { fetchGroupOptions } from '../../helpers/groups-api'
+import { fetchUserDetails } from '../../helpers/users-api'
+
+const createEmptyUser = () => ({
+  id: 0,
+  email: '',
+  name: '',
+  location: '',
+  jobTitle: '',
+  timezone: '',
+  groups: [],
+  isActive: false,
+  isVerified: false,
+  providerKey: '',
+  providerName: '',
+  providerId: null,
+  providerIs2FACapable: false,
+  isSystem: false,
+  createdAt: null,
+  updatedAt: null,
+  lastLoginAt: null,
+  tfaIsActive: false
+})
 
 export default {
   i18nOptions: {
@@ -388,6 +410,7 @@ export default {
   },
   data () {
     return {
+      userLoadRequestId: 0,
       deleteUserDialog: false,
       deleteSearchUserDialog: false,
       deleteReplaceUser: {
@@ -407,16 +430,7 @@ export default {
       },
       newGroup: 0,
       newPassword: '',
-      user: {
-        email: '',
-        name: '',
-        location: '',
-        jobTitle: '',
-        timezone: '',
-        groups: [],
-        isActive: false,
-        isVerified: false
-      },
+      user: createEmptyUser(),
       timezones: [
         { text: '(GMT-11:00) Niue', value: 'Pacific/Niue' },
         { text: '(GMT-11:00) Pago Pago', value: 'Pacific/Pago_Pago' },
@@ -674,7 +688,60 @@ export default {
   computed: {
     currentUserId: get('user/id')
   },
+  watch: {
+    '$route.params.id' () {
+      this.resetUserEditorState()
+      this.user = createEmptyUser()
+      this.loadUser()
+    }
+  },
   methods: {
+    resetUserEditorState () {
+      this.newPassword = ''
+      this.newGroup = 0
+      this.deleteUserDialog = false
+      this.deleteSearchUserDialog = false
+      this.deleteReplaceUser = {
+        id: 1,
+        name: '',
+        email: ''
+      }
+      this.editPop = {
+        email: false,
+        name: false,
+        pwd: false,
+        location: false,
+        jobTitle: false,
+        timezone: false,
+        newPassword: false,
+        assignGroup: false
+      }
+    },
+    async loadUser () {
+      const requestId = ++this.userLoadRequestId
+      const routeUserId = this.$route.params.id
+
+      this.$store.commit('loadingStart', 'admin-users-refresh')
+      try {
+        const user = await fetchUserDetails(window.fetch.bind(window), routeUserId, 'User detail response is invalid')
+        if (requestId !== this.userLoadRequestId || routeUserId !== this.$route.params.id) {
+          return false
+        }
+        this.user = user
+        return true
+      } catch (err) {
+        if (requestId !== this.userLoadRequestId || routeUserId !== this.$route.params.id) {
+          return false
+        }
+        this.user = createEmptyUser()
+        this.$store.commit('pushGraphError', err)
+        return false
+      } finally {
+        if (requestId === this.userLoadRequestId) {
+          this.$store.commit('loadingStop', 'admin-users-refresh')
+        }
+      }
+    },
     async loadGroups() {
       this.$store.commit('loadingStart', 'admin-groups-refresh')
       try {
@@ -1033,49 +1100,7 @@ export default {
   },
   created() {
     this.loadGroups()
-  },
-  apollo: {
-    user: {
-      query: gql`
-        query ($id: Int!) {
-          users {
-            single(id: $id) {
-              id
-              name
-              email
-              providerKey
-              providerName
-              providerId
-              providerIs2FACapable
-              location
-              jobTitle
-              timezone
-              isSystem
-              isActive
-              isVerified
-              createdAt
-              updatedAt
-              lastLoginAt
-              tfaIsActive
-              groups {
-                id
-                name
-              }
-            }
-          }
-        }
-      `,
-      variables() {
-        return {
-          id: _.toSafeInteger(this.$route.params.id)
-        }
-      },
-      fetchPolicy: 'network-only',
-      update: (data) => data.users.single,
-      watchLoading (isLoading) {
-        this.$store.commit(`loading${isLoading ? 'Start' : 'Stop'}`, 'admin-users-refresh')
-      }
-    }
+    this.loadUser()
   }
 }
 </script>
