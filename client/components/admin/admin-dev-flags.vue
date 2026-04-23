@@ -8,7 +8,7 @@
             .headline.primary--text Developer Tools
             .subtitle-1.grey--text Flags
           v-spacer
-          v-btn(color='success', depressed, @click='save', large)
+          v-btn(color='success', depressed, @click='save', large, :disabled='!flagsLoaded')
             v-icon(left) mdi-check
             span {{$t('common:actions.apply')}}
 
@@ -37,53 +37,52 @@
 </template>
 
 <script>
-import _ from 'lodash'
-
-import flagsQuery from 'gql/admin/dev/dev-query-flags.gql'
-import flagsMutation from 'gql/admin/dev/dev-mutation-save-flags.gql'
+import { fetchSystemFlags, updateSystemFlags } from '../../helpers/system-api'
 
 export default {
   data() {
     return {
       flags: {
         sqllog: false
-      }
+      },
+      flagsLoaded: false
     }
+  },
+  async mounted() {
+    this.$store.commit('loadingStart', 'admin-dev-flags-refresh')
+    try {
+      this.flags = await fetchSystemFlags(window.fetch.bind(window), 'System flags response is invalid')
+      this.flagsLoaded = true
+    } catch (err) {
+      this.$store.commit('showNotification', {
+        style: 'red',
+        message: err.message,
+        icon: 'alert'
+      })
+    }
+    this.$store.commit('loadingStop', 'admin-dev-flags-refresh')
   },
   methods: {
     async save() {
+      if (!this.flagsLoaded) {
+        return
+      }
+      this.$store.commit('loadingStart', 'admin-dev-flags-update')
       try {
-        await this.$apollo.mutate({
-          mutation: flagsMutation,
-          variables: {
-            flags: _.transform(this.flags, (result, value, key) => {
-              result.push({ key, value })
-            }, [])
-          },
-          watchLoading (isLoading) {
-            this.$store.commit(`loading${isLoading ? 'Start' : 'Stop'}`, 'admin-dev-flags-update')
-          }
-        })
+        await updateSystemFlags(window.fetch.bind(window), this.flags, 'System flags update failed')
         this.$store.commit('showNotification', {
           style: 'success',
           message: 'Flags applied successfully.',
           icon: 'check'
         })
       } catch (err) {
-        this.$store.commit('pushGraphError', err)
+        this.$store.commit('showNotification', {
+          style: 'red',
+          message: err.message,
+          icon: 'alert'
+        })
       }
-    }
-  },
-  apollo: {
-    flags: {
-      query: flagsQuery,
-      fetchPolicy: 'network-only',
-      update: (data) => _.transform(data.system.flags, (result, row) => {
-        _.set(result, row.key, row.value)
-      }, {}),
-      watchLoading (isLoading) {
-        this.$store.commit(`loading${isLoading ? 'Start' : 'Stop'}`, 'admin-dev-flags-refresh')
-      }
+      this.$store.commit('loadingStop', 'admin-dev-flags-update')
     }
   }
 }

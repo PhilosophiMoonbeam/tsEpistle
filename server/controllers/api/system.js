@@ -43,6 +43,49 @@ router.get('/flags', async (req, res) => {
   }, []))
 })
 
+router.post('/flags', async (req, res, next) => {
+  if (!requireSystemAccess(req, res)) {
+    return
+  }
+
+  const flags = _.get(req, 'body.flags')
+  if (!Array.isArray(flags)) {
+    return res.status(400).json({ error: 'flags must be an array' })
+  }
+  if (_.some(flags, row => !row || !_.isString(row.key) || !_.isBoolean(row.value))) {
+    return res.status(400).json({ error: 'flags entries must contain string keys and boolean values' })
+  }
+
+  const allowedKeys = Object.keys(WIKI.config.flags)
+  if (_.some(flags, row => !allowedKeys.includes(row.key))) {
+    return res.status(400).json({ error: 'flags entries must use known flag keys' })
+  }
+  if (_.uniq(flags.map(row => row.key)).length !== flags.length) {
+    return res.status(400).json({ error: 'flags entries must not contain duplicate keys' })
+  }
+  if (flags.length !== allowedKeys.length || _.some(allowedKeys, key => !flags.find(row => row.key === key))) {
+    return res.status(400).json({ error: 'flags payload must include the full known flag set' })
+  }
+
+  const previousFlags = _.cloneDeep(WIKI.config.flags)
+
+  try {
+    WIKI.config.flags = _.transform(flags, (result, row) => {
+      result[row.key] = row.value
+    }, {})
+    await WIKI.configSvc.applyFlags()
+    const saved = await WIKI.configSvc.saveToDb(['flags'])
+    if (saved === false) {
+      throw new Error('System flags could not be persisted.')
+    }
+    res.json({ message: 'System flags applied successfully.' })
+  } catch (err) {
+    WIKI.config.flags = previousFlags
+    await WIKI.configSvc.applyFlags()
+    next(err)
+  }
+})
+
 router.post('/check-for-update', async (req, res, next) => {
   if (!requireSystemAccess(req, res)) {
     return
