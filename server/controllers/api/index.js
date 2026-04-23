@@ -6,6 +6,7 @@ router.use('/system', require('./system'))
 router.use('/locales', require('./locales'))
 router.use('/groups', require('./groups'))
 router.use('/users', require('./users'))
+router.use('/pages', require('./pages'))
 router.use('/auth', require('./auth'))
 
 router.use((req, res) => {

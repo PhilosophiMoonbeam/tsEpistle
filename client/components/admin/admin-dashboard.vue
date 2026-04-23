@@ -109,8 +109,8 @@
 import _ from 'lodash'
 import AnimatedNumber from 'animated-number-vue'
 import { get } from 'vuex-pathify'
-import gql from 'graphql-tag'
 import semverLte from 'semver/functions/lte'
+import { fetchRecentPages } from '../../helpers/pages-api'
 import { fetchLastLogins } from '../../helpers/users-api'
 
 export default {
@@ -152,6 +152,13 @@ export default {
     permissions: get('user/permissions')
   },
   watch: {
+    canViewRecentPages(newValue, oldValue) {
+      if (newValue && !oldValue) {
+        this.loadRecentPages()
+      } else if (!newValue) {
+        this.recentPages = []
+      }
+    },
     canViewLastLogins(newValue, oldValue) {
       if (newValue && !oldValue) {
         this.loadLastLogins()
@@ -161,6 +168,9 @@ export default {
     }
   },
   created() {
+    if (this.canViewRecentPages) {
+      this.loadRecentPages()
+    }
     if (this.canViewLastLogins) {
       this.loadLastLogins()
     }
@@ -174,6 +184,26 @@ export default {
         })
       } else {
         return _.includes(this.permissions, prm)
+      }
+    },
+    async loadRecentPages() {
+      this.recentPagesLoading = true
+      this.$store.commit('loadingStart', 'admin-dashboard-recentpages')
+
+      try {
+        this.recentPages = await fetchRecentPages(window.fetch.bind(window), 'Recent pages response is invalid')
+        return true
+      } catch (err) {
+        this.recentPages = []
+        this.$store.commit('showNotification', {
+          message: err.message,
+          style: 'error',
+          icon: 'alert'
+        })
+        return false
+      } finally {
+        this.recentPagesLoading = false
+        this.$store.commit('loadingStop', 'admin-dashboard-recentpages')
       }
     },
     async loadLastLogins() {
@@ -194,37 +224,6 @@ export default {
       } finally {
         this.lastLoginsLoading = false
         this.$store.commit('loadingStop', 'admin-dashboard-lastlogins')
-      }
-    }
-  },
-  apollo: {
-    recentPages: {
-      query: gql`
-        query {
-          pages {
-            list(limit: 10, orderBy: UPDATED, orderByDirection: DESC) {
-              id
-              locale
-              path
-              title
-              description
-              contentType
-              isPublished
-              isPrivate
-              privateNS
-              createdAt
-              updatedAt
-            }
-          }
-        }
-      `,
-      skip() {
-        return !this.canViewRecentPages
-      },
-      update: (data) => data.pages.list,
-      watchLoading (isLoading) {
-        this.recentPagesLoading = isLoading
-        this.$store.commit(`loading${isLoading ? 'Start' : 'Stop'}`, 'admin-dashboard-recentpages')
       }
     }
   }
