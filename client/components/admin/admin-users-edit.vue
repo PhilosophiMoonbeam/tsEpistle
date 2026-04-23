@@ -376,7 +376,7 @@ import { StatusIndicator } from 'vue-status-indicator'
 
 import UserSearch from '../common/user-search.vue'
 
-import groupsQuery from 'gql/admin/users/users-query-groups.gql'
+import { fetchGroupOptions } from '../../helpers/groups-api'
 
 export default {
   i18nOptions: {
@@ -675,6 +675,19 @@ export default {
     currentUserId: get('user/id')
   },
   methods: {
+    async loadGroups() {
+      this.$store.commit('loadingStart', 'admin-groups-refresh')
+      try {
+        this.groups = await fetchGroupOptions(window.fetch.bind(window), 'Groups response is invalid')
+      } catch (err) {
+        this.$store.commit('showNotification', {
+          style: 'red',
+          message: err.message,
+          icon: 'alert'
+        })
+      }
+      this.$store.commit('loadingStop', 'admin-groups-refresh')
+    },
     /**
      * Activate a user (if previously deactivated)
      */
@@ -1018,6 +1031,9 @@ export default {
       this.$store.commit(`loadingStop`, 'admin-users-toggle2fa')
     }
   },
+  created() {
+    this.loadGroups()
+  },
   apollo: {
     user: {
       query: gql`
@@ -1058,14 +1074,6 @@ export default {
       update: (data) => data.users.single,
       watchLoading (isLoading) {
         this.$store.commit(`loading${isLoading ? 'Start' : 'Stop'}`, 'admin-users-refresh')
-      }
-    },
-    groups: {
-      query: groupsQuery,
-      fetchPolicy: 'network-only',
-      update: (data) => data.groups.list,
-      watchLoading (isLoading) {
-        this.$store.commit(`loading${isLoading ? 'Start' : 'Stop'}`, 'admin-groups-refresh')
       }
     }
   }

@@ -96,7 +96,7 @@
 import _ from 'lodash'
 import gql from 'graphql-tag'
 
-import groupsQuery from 'gql/admin/users/users-query-groups.gql'
+import { fetchGroupOptions } from '../../helpers/groups-api'
 
 export default {
   props: {
@@ -142,6 +142,19 @@ export default {
     }
   },
   methods: {
+    async loadGroups() {
+      this.$store.commit('loadingStart', 'admin-api-groups-refresh')
+      try {
+        this.groups = await fetchGroupOptions(window.fetch.bind(window), 'Groups response is invalid')
+      } catch (err) {
+        this.$store.commit('showNotification', {
+          style: 'red',
+          message: err.message,
+          icon: 'alert'
+        })
+      }
+      this.$store.commit('loadingStop', 'admin-api-groups-refresh')
+    },
     async generate () {
       try {
         if (_.trim(this.name).length < 2 || this.name.length > 255) {
@@ -222,15 +235,8 @@ export default {
       this.loading = false
     }
   },
-  apollo: {
-    groups: {
-      query: groupsQuery,
-      fetchPolicy: 'network-only',
-      update: (data) => data.groups.list,
-      watchLoading (isLoading) {
-        this.$store.commit(`loading${isLoading ? 'Start' : 'Stop'}`, 'admin-api-groups-refresh')
-      }
-    }
+  created() {
+    this.loadGroups()
   }
 }
 </script>

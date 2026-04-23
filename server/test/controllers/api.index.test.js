@@ -43,18 +43,19 @@ describe('controllers/api route shell', () => {
     return express.__routers[0]
   }
 
-  it('mounts system, locales, and users subrouters', () => {
+  it('mounts system, locales, groups, and users subrouters', () => {
     const apiRouter = loadRouter()
 
     expect(apiRouter.use).toHaveBeenCalledWith('/system', expect.any(Object))
     expect(apiRouter.use).toHaveBeenCalledWith('/locales', expect.any(Object))
+    expect(apiRouter.use).toHaveBeenCalledWith('/groups', expect.any(Object))
     expect(apiRouter.use).toHaveBeenCalledWith('/users', expect.any(Object))
     expect(apiRouter.use).toHaveBeenCalledWith('/auth', expect.any(Object))
   })
 
   it('returns a JSON 404 for unknown API routes', () => {
     const apiRouter = loadRouter()
-    const notFoundHandler = apiRouter.use.mock.calls[4][0]
+    const notFoundHandler = apiRouter.use.mock.calls[5][0]
     const res = { status: jest.fn().mockReturnThis(), json: jest.fn() }
 
     notFoundHandler({}, res)
@@ -65,7 +66,7 @@ describe('controllers/api route shell', () => {
 
   it('returns a generic JSON 500 for unexpected API failures', () => {
     const apiRouter = loadRouter()
-    const errorHandler = apiRouter.use.mock.calls[5][0]
+    const errorHandler = apiRouter.use.mock.calls[6][0]
     const res = { status: jest.fn().mockReturnThis(), json: jest.fn() }
     const err = new Error('boom')
 

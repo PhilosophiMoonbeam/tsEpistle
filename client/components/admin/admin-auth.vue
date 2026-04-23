@@ -223,7 +223,7 @@ import _ from 'lodash'
 import gql from 'graphql-tag'
 import { v4 as uuid } from 'uuid'
 
-import groupsQuery from 'gql/admin/auth/auth-query-groups.gql'
+import { fetchGroupOptions } from '../../helpers/groups-api'
 import hostQuery from 'gql/admin/auth/auth-query-host.gql'
 
 import draggable from 'vuedraggable'
@@ -256,6 +256,19 @@ export default {
     }
   },
   methods: {
+    async loadGroups() {
+      this.$store.commit('loadingStart', 'admin-auth-groups-refresh')
+      try {
+        this.groups = await fetchGroupOptions(window.fetch.bind(window), 'Groups response is invalid')
+      } catch (err) {
+        this.$store.commit('showNotification', {
+          style: 'red',
+          message: err.message,
+          icon: 'alert'
+        })
+      }
+      this.$store.commit('loadingStop', 'admin-auth-groups-refresh')
+    },
     async refresh() {
       await this.$apollo.queries.strategies.refetch()
       await this.$apollo.queries.activeStrategies.refetch()
@@ -338,6 +351,9 @@ export default {
       this.$store.commit(`loadingStop`, 'admin-auth-savestrategies')
     }
   },
+  created() {
+    this.loadGroups()
+  },
   apollo: {
     strategies: {
       query: gql`
@@ -410,14 +426,6 @@ export default {
       })), ['order']),
       watchLoading (isLoading) {
         this.$store.commit(`loading${isLoading ? 'Start' : 'Stop'}`, 'admin-auth-activestrategies-refresh')
-      }
-    },
-    groups: {
-      query: groupsQuery,
-      fetchPolicy: 'network-only',
-      update: (data) => data.groups.list,
-      watchLoading (isLoading) {
-        this.$store.commit(`loading${isLoading ? 'Start' : 'Stop'}`, 'admin-auth-groups-refresh')
       }
     },
     host: {

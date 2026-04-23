@@ -94,7 +94,8 @@ import validate from 'validate.js'
 import gql from 'graphql-tag'
 
 import createUserMutation from 'gql/admin/users/users-mutation-create.gql'
-import groupsQuery from 'gql/admin/users/users-query-groups.gql'
+
+import { fetchGroupOptions } from '../../helpers/groups-api'
 
 export default {
   props: {
@@ -132,6 +133,19 @@ export default {
     }
   },
   methods: {
+    async loadGroups() {
+      this.$store.commit('loadingStart', 'admin-auth-groups-refresh')
+      try {
+        this.groups = await fetchGroupOptions(window.fetch.bind(window), 'Groups response is invalid')
+      } catch (err) {
+        this.$store.commit('showNotification', {
+          style: 'red',
+          message: err.message,
+          icon: 'alert'
+        })
+      }
+      this.$store.commit('loadingStop', 'admin-auth-groups-refresh')
+    },
     async newUser(close = false) {
       let rules = {
         email: {
@@ -225,6 +239,9 @@ export default {
       this.password = _.sampleSize(pwdChars, 12).join('')
     }
   },
+  created() {
+    this.loadGroups()
+  },
   apollo: {
     providers: {
       query: gql`
@@ -241,14 +258,6 @@ export default {
       update: (data) => data.authentication.activeStrategies,
       watchLoading (isLoading) {
         this.$store.commit(`loading${isLoading ? 'Start' : 'Stop'}`, 'admin-users-strategies-refresh')
-      }
-    },
-    groups: {
-      query: groupsQuery,
-      fetchPolicy: 'network-only',
-      update: (data) => data.groups.list,
-      watchLoading (isLoading) {
-        this.$store.commit(`loading${isLoading ? 'Start' : 'Stop'}`, 'admin-auth-groups-refresh')
       }
     }
   }

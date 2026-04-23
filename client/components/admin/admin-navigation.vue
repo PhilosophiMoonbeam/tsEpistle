@@ -277,8 +277,7 @@ import _ from 'lodash'
 import gql from 'graphql-tag'
 import { v4 as uuid } from 'uuid'
 
-import groupsQuery from 'gql/admin/users/users-query-groups.gql'
-
+import { fetchGroupOptions } from '../../helpers/groups-api'
 import { fetchLocales } from '../../helpers/locales-api'
 
 import draggable from 'vuedraggable'
@@ -358,6 +357,19 @@ export default {
         })
       }
       this.$store.commit('loadingStop', 'admin-navigation-locales')
+    },
+    async loadGroups() {
+      this.$store.commit('loadingStart', 'admin-navigation-groups')
+      try {
+        this.groups = await fetchGroupOptions(window.fetch.bind(window), 'Groups response is invalid')
+      } catch (err) {
+        this.$store.commit('showNotification', {
+          style: 'red',
+          message: err.message,
+          icon: 'alert'
+        })
+      }
+      this.$store.commit('loadingStop', 'admin-navigation-groups')
     },
     addItem(kind) {
       let newItem = {
@@ -457,6 +469,7 @@ export default {
   },
   created() {
     this.loadAllLocales()
+    this.loadGroups()
   },
   apollo: {
     config: {
@@ -499,14 +512,6 @@ export default {
       update: (data) => _.cloneDeep(data.navigation.tree),
       watchLoading (isLoading) {
         this.$store.commit(`loading${isLoading ? 'Start' : 'Stop'}`, 'admin-navigation-tree')
-      }
-    },
-    groups: {
-      query: groupsQuery,
-      fetchPolicy: 'network-only',
-      update: (data) => data.groups.list,
-      watchLoading (isLoading) {
-        this.$store.commit(`loading${isLoading ? 'Start' : 'Stop'}`, 'admin-navigation-groups')
       }
     }
   }
