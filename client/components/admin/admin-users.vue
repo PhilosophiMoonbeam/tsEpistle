@@ -31,7 +31,7 @@
               flat
               hide-details
               label='Identity Provider'
-              :items='strategies'
+              :items='strategyOptions'
               v-model='filterStrategy'
               item-text='displayName'
               item-value='key'
@@ -82,6 +82,8 @@
 import _ from 'lodash'
 import gql from 'graphql-tag'
 
+import { fetchAdminAuthProviders } from '../../helpers/auth-api'
+
 import { StatusIndicator } from 'vue-status-indicator'
 import UserCreate from './admin-users-create.vue'
 
@@ -116,6 +118,14 @@ export default {
       isCreateDialogShown: false
     }
   },
+  computed: {
+    strategyOptions() {
+      return this.strategies.map(strategy => ({
+        ...strategy,
+        displayName: strategy.key !== 'all' && strategy.isEnabled === false ? `${strategy.displayName} (disabled)` : strategy.displayName
+      }))
+    }
+  },
   watch: {
     search () {
       clearTimeout(this.searchDebounce)
@@ -147,6 +157,34 @@ export default {
   methods: {
     createUser() {
       this.isCreateDialogShown = true
+    },
+    async loadStrategies() {
+      this.$store.commit('loadingStart', 'admin-users-strategies-refresh')
+      try {
+        const providers = await fetchAdminAuthProviders(window.fetch.bind(window), 'Admin authentication providers response is invalid')
+        this.strategies = _.concat({
+          key: 'all',
+          displayName: 'All Providers'
+        }, providers.map(provider => ({
+          key: provider.key,
+          displayName: provider.displayName,
+          isEnabled: provider.isEnabled
+        })))
+
+        if (!this.strategies.some(strategy => strategy.key === this.filterStrategy)) {
+          this.filterStrategy = 'all'
+        }
+        return true
+      } catch (err) {
+        this.$store.commit('showNotification', {
+          style: 'red',
+          message: err.message,
+          icon: 'alert'
+        })
+        return false
+      } finally {
+        this.$store.commit('loadingStop', 'admin-users-strategies-refresh')
+      }
     },
     async loadUsers () {
       const requestId = ++this.loadRequestId
@@ -212,8 +250,9 @@ export default {
       }
     },
     async refresh(notify = true) {
+      const strategiesLoaded = await this.loadStrategies()
       await this.loadUsers()
-      if (notify) {
+      if (notify && strategiesLoaded) {
         this.$store.commit('showNotification', {
           message: 'Users list has been refreshed.',
           style: 'success',
@@ -225,31 +264,8 @@ export default {
       return (_.find(this.strategies, ['key', key]) || {}).displayName || key
     }
   },
-  apollo: {
-    strategies: {
-      query: gql`
-        query {
-          authentication {
-            activeStrategies {
-              key
-              displayName
-            }
-          }
-        }
-      `,
-      fetchPolicy: 'network-only',
-      update: (data) => {
-        return _.concat({
-          key: 'all',
-          displayName: 'All Providers'
-        }, data.authentication.activeStrategies)
-      },
-      watchLoading (isLoading) {
-        this.$store.commit(`loading${isLoading ? 'Start' : 'Stop'}`, 'admin-users-strategies-refresh')
-      }
-    }
-  },
   mounted () {
+    this.loadStrategies()
     this.loadUsers()
   },
   beforeDestroy () {
