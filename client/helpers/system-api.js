@@ -38,6 +38,46 @@ function normalizeFlagsPayload (payload, fallbackMessage) {
   }, {})
 }
 
+function normalizeSystemInfoPayload (payload, fallbackMessage) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    throw new Error(fallbackMessage)
+  }
+
+  const requiredStringFields = ['currentVersion', 'latestVersion']
+  const requiredNumberFields = ['groupsTotal', 'pagesTotal', 'usersTotal', 'tagsTotal']
+
+  if (requiredStringFields.some(field => typeof payload[field] !== 'string')) {
+    throw new Error(fallbackMessage)
+  }
+  if (requiredNumberFields.some(field => !Number.isFinite(payload[field]))) {
+    throw new Error(fallbackMessage)
+  }
+
+  return payload
+}
+
+async function fetchSystemSummary (fetchImpl, fallbackMessage = 'System summary response is invalid') {
+  const response = await fetchImpl('/_api/system/summary', {
+    credentials: 'same-origin',
+    headers: {
+      Accept: 'application/json'
+    }
+  })
+
+  return normalizeSystemInfoPayload(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
+}
+
+async function fetchSystemInfo (fetchImpl, fallbackMessage = 'System info response is invalid') {
+  const response = await fetchImpl('/_api/system/info', {
+    credentials: 'same-origin',
+    headers: {
+      Accept: 'application/json'
+    }
+  })
+
+  return normalizeSystemInfoPayload(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
+}
+
 async function fetchSystemFlags (fetchImpl, fallbackMessage = 'System flags response is invalid') {
   const response = await fetchImpl('/_api/system/flags', {
     credentials: 'same-origin',
@@ -71,6 +111,8 @@ async function updateSystemFlags (fetchImpl, flags, fallbackMessage = 'System fl
 }
 
 module.exports = {
+  fetchSystemSummary,
+  fetchSystemInfo,
   fetchSystemFlags,
   updateSystemFlags
 }

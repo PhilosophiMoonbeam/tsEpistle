@@ -131,7 +131,7 @@ import _ from 'lodash'
 import VueRouter from 'vue-router'
 import { get, sync } from 'vuex-pathify'
 
-import statsQuery from 'gql/admin/dashboard/dashboard-query-stats.gql'
+import { fetchSystemSummary } from '../helpers/system-api'
 
 import adminStore from '../store/admin'
 
@@ -213,8 +213,22 @@ export default {
   router,
   created() {
     this.$store.commit('page/SET_MODE', 'admin')
+    this.loadInfo()
   },
   methods: {
+    async loadInfo() {
+      this.$store.commit('loadingStart', 'admin-stats-refresh')
+      try {
+        this.info = await fetchSystemSummary(window.fetch.bind(window), 'System summary response is invalid')
+      } catch (err) {
+        this.$store.commit('showNotification', {
+          style: 'red',
+          message: err.message,
+          icon: 'alert'
+        })
+      }
+      this.$store.commit('loadingStop', 'admin-stats-refresh')
+    },
     hasPermission(prm) {
       if (_.isArray(prm)) {
         return _.some(prm, p => {
@@ -222,19 +236,6 @@ export default {
         })
       } else {
         return _.includes(this.permissions, prm)
-      }
-    }
-  },
-  apollo: {
-    info: {
-      query: statsQuery,
-      fetchPolicy: 'network-only',
-      manual: true,
-      result({ data, loading, networkStatus }) {
-        this.info = data.system.info
-      },
-      watchLoading (isLoading) {
-        this.$store.commit(`loading${isLoading ? 'Start' : 'Stop'}`, 'admin-stats-refresh')
       }
     }
   }

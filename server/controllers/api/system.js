@@ -14,23 +14,67 @@ const requireSystemAccess = (req, res) => {
   return true
 }
 
-const buildSystemInfo = () => ({
-  currentVersion: WIKI.version,
-  latestVersion: _.get(WIKI.system, 'updates.version', WIKI.version),
-  latestVersionReleaseDate: _.get(WIKI.system, 'updates.releaseDate', null),
-  telemetry: _.get(WIKI.telemetry, 'enabled', false),
-  telemetryClientId: _.get(WIKI.config, 'telemetry.clientId', null),
-  httpPort: WIKI.servers.servers.http ? _.get(WIKI.servers.servers.http.address(), 'port', 0) : 0,
-  httpsPort: WIKI.servers.servers.https ? _.get(WIKI.servers.servers.https.address(), 'port', 0) : 0,
-  upgradeCapable: !_.isNil(process.env.UPGRADE_COMPANION)
-})
+const requireSystemSummaryAccess = (req, res) => {
+  if (!WIKI.auth.checkAccess(req.user, ['manage:system', 'manage:navigation', 'manage:groups', 'write:groups', 'manage:users', 'write:users', 'manage:theme', 'manage:api'])) {
+    res.sendStatus(403)
+    return false
+  }
 
-router.get('/info', async (req, res) => {
+  return true
+}
+
+const buildSystemSummary = async () => {
+  const groupsTotal = await WIKI.models.groups.query().count('* as total').first()
+  const pagesTotal = await WIKI.models.pages.query().count('* as total').first()
+  const usersTotal = await WIKI.models.users.query().count('* as total').first()
+  const tagsTotal = await WIKI.models.tags.query().count('* as total').first()
+
+  return {
+    currentVersion: WIKI.version,
+    latestVersion: _.get(WIKI.system, 'updates.version', WIKI.version),
+    latestVersionReleaseDate: _.get(WIKI.system, 'updates.releaseDate', null),
+    groupsTotal: _.toSafeInteger(groupsTotal.total),
+    pagesTotal: _.toSafeInteger(pagesTotal.total),
+    usersTotal: _.toSafeInteger(usersTotal.total),
+    tagsTotal: _.toSafeInteger(tagsTotal.total)
+  }
+}
+
+const buildSystemInfo = async () => {
+  const summary = await buildSystemSummary()
+
+  return {
+    ...summary,
+    telemetry: _.get(WIKI.telemetry, 'enabled', false),
+    telemetryClientId: _.get(WIKI.config, 'telemetry.clientId', null),
+    httpPort: WIKI.servers.servers.http ? _.get(WIKI.servers.servers.http.address(), 'port', 0) : 0,
+    httpsPort: WIKI.servers.servers.https ? _.get(WIKI.servers.servers.https.address(), 'port', 0) : 0,
+    upgradeCapable: !_.isNil(process.env.UPGRADE_COMPANION)
+  }
+}
+
+router.get('/info', async (req, res, next) => {
   if (!requireSystemAccess(req, res)) {
     return
   }
 
-  res.json(buildSystemInfo())
+  try {
+    res.json(await buildSystemInfo())
+  } catch (err) {
+    next(err)
+  }
+})
+
+router.get('/summary', async (req, res, next) => {
+  if (!requireSystemSummaryAccess(req, res)) {
+    return
+  }
+
+  try {
+    res.json(await buildSystemSummary())
+  } catch (err) {
+    next(err)
+  }
 })
 
 router.get('/flags', async (req, res) => {

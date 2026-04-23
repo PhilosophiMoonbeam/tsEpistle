@@ -141,6 +141,12 @@ export default {
         return semverLte(this.info.latestVersion, this.info.currentVersion)
       }
     },
+    canViewRecentPages() {
+      return this.hasPermission(['manage:system', 'read:pages'])
+    },
+    canViewLastLogins() {
+      return this.hasPermission(['manage:system', 'manage:groups', 'write:groups', 'manage:users', 'write:users'])
+    },
     info: get('admin/info'),
     permissions: get('user/permissions')
   },
@@ -177,6 +183,9 @@ export default {
           }
         }
       `,
+      skip() {
+        return !this.canViewRecentPages
+      },
       update: (data) => data.pages.list,
       watchLoading (isLoading) {
         this.recentPagesLoading = isLoading
@@ -195,6 +204,9 @@ export default {
           }
         }
       `,
+      skip() {
+        return !this.canViewLastLogins
+      },
       fetchPolicy: 'network-only',
       update: (data) => data.users.lastLogins,
       watchLoading (isLoading) {

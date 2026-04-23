@@ -6,7 +6,8 @@ const state = {
     latestVersion: 'n/a',
     groupsTotal: 0,
     pagesTotal: 0,
-    usersTotal: 0
+    usersTotal: 0,
+    tagsTotal: 0
   }
 }
 
