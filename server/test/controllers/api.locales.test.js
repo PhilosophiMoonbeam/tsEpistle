@@ -18,8 +18,19 @@ describe('controllers/api locales endpoints', () => {
     express.__router.get.mockClear()
 
     global.WIKI = {
+      auth: {
+        checkAccess: jest.fn().mockReturnValue(true)
+      },
       cache: {
         get: jest.fn().mockResolvedValue(null)
+      },
+      config: {
+        lang: {
+          code: 'en',
+          autoUpdate: true,
+          namespacing: false,
+          namespaces: ['en', 'fr']
+        }
       },
       models: {
         locales: {
@@ -51,6 +62,7 @@ describe('controllers/api locales endpoints', () => {
     require('../../controllers/api/locales')
     return {
       list: express.__router.get.mock.calls.find(([path]) => path === '/')[1],
+      config: express.__router.get.mock.calls.find(([path]) => path === '/config')[1],
       strings: express.__router.get.mock.calls.find(([path]) => path === '/:code/strings')[1]
     }
   }
@@ -59,6 +71,7 @@ describe('controllers/api locales endpoints', () => {
     const handlers = loadHandlers()
 
     expect(typeof handlers.list).toBe('function')
+    expect(typeof handlers.config).toBe('function')
     expect(typeof handlers.strings).toBe('function')
   })
 
@@ -75,6 +88,33 @@ describe('controllers/api locales endpoints', () => {
         nativeName: 'English'
       })
     ])
+  })
+
+  it('returns locale config payload for manage system users', async () => {
+    const { config } = loadHandlers()
+    const res = { json: jest.fn(), sendStatus: jest.fn() }
+
+    await config({ user: { permissions: ['manage:system'] } }, res)
+
+    expect(global.WIKI.auth.checkAccess).toHaveBeenCalledWith({ permissions: ['manage:system'] }, ['manage:system'])
+    expect(res.json).toHaveBeenCalledWith({
+      locale: 'en',
+      autoUpdate: true,
+      namespacing: false,
+      namespaces: ['en', 'fr']
+    })
+  })
+
+  it('returns 403 for locale config without manage system access', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValueOnce(false)
+    const { config } = loadHandlers()
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis(), sendStatus: jest.fn() }
+
+    await config({ user: { permissions: [] } }, res)
+
+    expect(res.status).toHaveBeenCalledWith(403)
+    expect(res.json).toHaveBeenCalledWith({ error: 'manage:system is required' })
+    expect(res.sendStatus).not.toHaveBeenCalled()
   })
 
   it('returns namespace strings payload when namespace is provided', async () => {

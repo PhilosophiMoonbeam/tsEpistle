@@ -4,6 +4,15 @@ const router = express.Router()
 
 /* global WIKI */
 
+const requireSystemAccess = (req, res) => {
+  if (!WIKI.auth.checkAccess(req.user, ['manage:system'])) {
+    res.status(403).json({ error: 'manage:system is required' })
+    return false
+  }
+
+  return true
+}
+
 router.get('/', async (req, res, next) => {
   try {
     let remoteLocales = await WIKI.cache.get('locales')
@@ -21,6 +30,19 @@ router.get('/', async (req, res, next) => {
   } catch (err) {
     next(err)
   }
+})
+
+router.get('/config', (req, res) => {
+  if (!requireSystemAccess(req, res)) {
+    return
+  }
+
+  return res.json({
+    locale: WIKI.config.lang.code,
+    autoUpdate: WIKI.config.lang.autoUpdate,
+    namespacing: WIKI.config.lang.namespacing,
+    namespaces: WIKI.config.lang.namespaces
+  })
 })
 
 router.get('/:code/strings', async (req, res) => {

@@ -10,7 +10,7 @@
           v-spacer
           v-btn.animated.fadeInDown.wait-p3s(icon, outlined, color='grey', href='https://docs.requarks.io/locales', target='_blank')
             v-icon mdi-help-circle
-          v-btn.animated.fadeInDown.ml-3(color='success', depressed, @click='save', large, :loading='loading')
+          v-btn.animated.fadeInDown.ml-3(color='success', depressed, @click='save', large, :loading='loading', :disabled='!configLoaded')
             v-icon(left) mdi-check
             span {{$t('common:actions.apply')}}
         v-form.pt-3
@@ -142,9 +142,10 @@ import _ from 'lodash'
 
 /* global WIKI */
 
-import localesQuery from 'gql/admin/locale/locale-query-list.gql'
 import localesDownloadMutation from 'gql/admin/locale/locale-mutation-download.gql'
 import localesSaveMutation from 'gql/admin/locale/locale-mutation-save.gql'
+
+import { fetchLocales, fetchLocaleConfig } from '../../helpers/locales-api'
 
 export default {
   data() {
@@ -154,7 +155,8 @@ export default {
       selectedLocale: 'en',
       autoUpdate: false,
       namespacing: false,
-      namespaces: []
+      namespaces: [],
+      configLoaded: false
     }
   },
   computed: {
@@ -204,6 +206,41 @@ export default {
     }
   },
   methods: {
+    async loadBootstrap() {
+      this.$store.commit('loadingStart', 'admin-locale-refresh')
+
+      const [localesResult, configResult] = await Promise.allSettled([
+        fetchLocales(window.fetch.bind(window), 'Locales response is invalid'),
+        fetchLocaleConfig(window.fetch.bind(window), 'Locale config response is invalid')
+      ])
+
+      if (localesResult.status === 'fulfilled') {
+        this.locales = localesResult.value.map(lc => ({ ...lc, isDownloading: false }))
+      } else {
+        this.$store.commit('showNotification', {
+          style: 'red',
+          message: localesResult.reason.message,
+          icon: 'alert'
+        })
+      }
+
+      if (configResult.status === 'fulfilled') {
+        this.selectedLocale = configResult.value.locale
+        this.autoUpdate = configResult.value.autoUpdate
+        this.namespacing = configResult.value.namespacing
+        this.namespaces = configResult.value.namespaces
+        this.configLoaded = true
+      } else {
+        this.configLoaded = false
+        this.$store.commit('showNotification', {
+          style: 'red',
+          message: configResult.reason.message,
+          icon: 'alert'
+        })
+      }
+
+      this.$store.commit('loadingStop', 'admin-locale-refresh')
+    },
     async download(lc) {
       lc.isDownloading = true
       const respRaw = await this.$apollo.mutate({
@@ -233,6 +270,10 @@ export default {
       this.isDownloading = false
     },
     async save() {
+      if (!this.configLoaded) {
+        return
+      }
+
       this.loading = true
       const respRaw = await this.$apollo.mutate({
         mutation: localesSaveMutation,
@@ -272,31 +313,8 @@ export default {
       this.loading = false
     }
   },
-  apollo: {
-    locales: {
-      query: localesQuery,
-      fetchPolicy: 'network-only',
-      update: (data) => data.localization.locales.map(lc => ({ ...lc, isDownloading: false })),
-      watchLoading (isLoading) {
-        this.$store.commit(`loading${isLoading ? 'Start' : 'Stop'}`, 'admin-locale-refresh')
-      }
-    },
-    selectedLocale: {
-      query: localesQuery,
-      update: (data) => data.localization.config.locale
-    },
-    autoUpdate: {
-      query: localesQuery,
-      update: (data) => data.localization.config.autoUpdate
-    },
-    namespacing: {
-      query: localesQuery,
-      update: (data) => data.localization.config.namespacing
-    },
-    namespaces: {
-      query: localesQuery,
-      update: (data) => data.localization.config.namespaces
-    }
+  created() {
+    this.loadBootstrap()
   }
 }
 </script>

@@ -279,6 +279,8 @@ import { v4 as uuid } from 'uuid'
 
 import groupsQuery from 'gql/admin/users/users-query-groups.gql'
 
+import { fetchLocales } from '../../helpers/locales-api'
+
 import draggable from 'vuedraggable'
 
 /* global siteConfig, siteLangs */
@@ -344,6 +346,19 @@ export default {
     }
   },
   methods: {
+    async loadAllLocales() {
+      this.$store.commit('loadingStart', 'admin-navigation-locales')
+      try {
+        this.allLocales = await fetchLocales(window.fetch.bind(window), 'Locales response is invalid')
+      } catch (err) {
+        this.$store.commit('showNotification', {
+          style: 'red',
+          message: err.message,
+          icon: 'alert'
+        })
+      }
+      this.$store.commit('loadingStop', 'admin-navigation-locales')
+    },
     addItem(kind) {
       let newItem = {
         id: uuid(),
@@ -440,6 +455,9 @@ export default {
       })
     }
   },
+  created() {
+    this.loadAllLocales()
+  },
   apollo: {
     config: {
       query: gql`
@@ -489,24 +507,6 @@ export default {
       update: (data) => data.groups.list,
       watchLoading (isLoading) {
         this.$store.commit(`loading${isLoading ? 'Start' : 'Stop'}`, 'admin-navigation-groups')
-      }
-    },
-    allLocales: {
-      query: gql`
-        {
-          localization {
-            locales {
-              code
-              name
-              nativeName
-            }
-          }
-        }
-      `,
-      fetchPolicy: 'network-only',
-      update: (data) => data.localization.locales,
-      watchLoading (isLoading) {
-        this.$store.commit(`loading${isLoading ? 'Start' : 'Stop'}`, 'admin-navigation-locales')
       }
     }
   }
