@@ -67,8 +67,9 @@
 <script>
 import _ from 'lodash'
 
-import groupsQuery from 'gql/admin/groups/groups-query-list.gql'
 import createGroupMutation from 'gql/admin/groups/groups-mutation-create.gql'
+
+import { fetchGroupsList } from '../../helpers/groups-api'
 
 export default {
   data() {
@@ -101,13 +102,32 @@ export default {
     }
   },
   methods: {
+    async loadGroups() {
+      this.loading = true
+      this.$store.commit('loadingStart', 'admin-groups-refresh')
+      try {
+        this.groups = await fetchGroupsList(window.fetch.bind(window), 'Groups list response is invalid')
+        return true
+      } catch (err) {
+        this.$store.commit('showNotification', {
+          style: 'red',
+          message: err.message,
+          icon: 'alert'
+        })
+        return false
+      } finally {
+        this.loading = false
+        this.$store.commit('loadingStop', 'admin-groups-refresh')
+      }
+    },
     async refresh() {
-      await this.$apollo.queries.groups.refetch()
-      this.$store.commit('showNotification', {
-        message: 'Groups have been refreshed.',
-        style: 'success',
-        icon: 'cached'
-      })
+      if (await this.loadGroups()) {
+        this.$store.commit('showNotification', {
+          message: 'Groups have been refreshed.',
+          style: 'success',
+          icon: 'cached'
+        })
+      }
     },
     async createGroup() {
       if (_.trim(this.newGroupName).length < 1) {
@@ -120,47 +140,35 @@ export default {
       }
       this.newGroupDialog = false
       try {
-        await this.$apollo.mutate({
+        const resp = await this.$apollo.mutate({
           mutation: createGroupMutation,
           variables: {
             name: this.newGroupName
-          },
-          update (store, resp) {
-            const data = _.get(resp, 'data.groups.create', { responseResult: {} })
-            if (data.responseResult.succeeded === true) {
-              const apolloData = store.readQuery({ query: groupsQuery })
-              data.group.userCount = 0
-              apolloData.groups.list.push(data.group)
-              store.writeQuery({ query: groupsQuery, data: apolloData })
-            } else {
-              throw new Error(data.responseResult.message)
-            }
           },
           watchLoading (isLoading) {
             this.$store.commit(`loading${isLoading ? 'Start' : 'Stop'}`, 'admin-groups-create')
           }
         })
-        this.newGroupName = ''
-        this.$store.commit('showNotification', {
-          style: 'success',
-          message: `Group has been created successfully.`,
-          icon: 'check'
-        })
+        const data = _.get(resp, 'data.groups.create', { responseResult: {} })
+        if (data.responseResult.succeeded === true) {
+          this.newGroupName = ''
+          if (await this.loadGroups()) {
+            this.$store.commit('showNotification', {
+              style: 'success',
+              message: 'Group has been created successfully.',
+              icon: 'check'
+            })
+          }
+        } else {
+          throw new Error(data.responseResult.message || 'An unexpected error occurred.')
+        }
       } catch (err) {
         this.$store.commit('pushGraphError', err)
       }
     }
   },
-  apollo: {
-    groups: {
-      query: groupsQuery,
-      fetchPolicy: 'network-only',
-      update: (data) => data.groups.list,
-      watchLoading (isLoading) {
-        this.loading = isLoading
-        this.$store.commit(`loading${isLoading ? 'Start' : 'Stop'}`, 'admin-groups-refresh')
-      }
-    }
+  created() {
+    this.loadGroups()
   }
 }
 </script>

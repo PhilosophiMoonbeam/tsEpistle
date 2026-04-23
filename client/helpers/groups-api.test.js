@@ -1,4 +1,4 @@
-const { fetchGroupOptions } = require('./groups-api')
+const { fetchGroupOptions, fetchGroupsList } = require('./groups-api')
 
 function createJsonResponse (payload, ok = true) {
   return {
@@ -36,6 +36,52 @@ describe('groups api helper', () => {
     ]))
 
     await expect(fetchGroupOptions(fetchImpl, 'Bad groups payload')).rejects.toThrow('Bad groups payload')
+  })
+
+  test('fetches and validates groups list', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse([
+      {
+        id: 1,
+        name: 'Administrators',
+        isSystem: true,
+        userCount: 2,
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-02T00:00:00.000Z'
+      }
+    ]))
+
+    await expect(fetchGroupsList(fetchImpl)).resolves.toEqual([
+      {
+        id: 1,
+        name: 'Administrators',
+        isSystem: true,
+        userCount: 2,
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-02T00:00:00.000Z'
+      }
+    ])
+
+    expect(fetchImpl).toHaveBeenCalledWith('/_api/groups/list', {
+      credentials: 'same-origin',
+      headers: {
+        Accept: 'application/json'
+      }
+    })
+  })
+
+  test('rejects malformed groups list rows', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse([
+      {
+        id: 1,
+        name: 'Administrators',
+        isSystem: true,
+        userCount: '2',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-02T00:00:00.000Z'
+      }
+    ]))
+
+    await expect(fetchGroupsList(fetchImpl, 'Bad groups list payload')).rejects.toThrow('Bad groups list payload')
   })
 
   test('surfaces API error messages for group fetch failures', async () => {
