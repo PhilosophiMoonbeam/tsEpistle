@@ -67,4 +67,50 @@ router.get('/list', async (req, res, next) => {
   }
 })
 
+router.get('/:id', async (req, res, next) => {
+  if (!requireGroupsListAccess(req, res)) {
+    return
+  }
+
+  if (!/^[1-9]\d*$/.test(req.params.id)) {
+    return res.status(400).json({ error: 'group id must be a positive integer' })
+  }
+
+  const groupId = Number.parseInt(req.params.id, 10)
+
+  try {
+    const group = await WIKI.models.groups.query().findById(groupId)
+    if (!group) {
+      return res.status(404).json({ error: 'group not found' })
+    }
+
+    const users = await group.$relatedQuery('users').select('id', 'name', 'email')
+
+    res.json({
+      id: group.id,
+      name: group.name,
+      redirectOnLogin: group.redirectOnLogin,
+      isSystem: group.isSystem,
+      permissions: Array.isArray(group.permissions) ? group.permissions.filter(permission => typeof permission === 'string') : [],
+      pageRules: (Array.isArray(group.pageRules) ? group.pageRules : []).map(rule => ({
+        id: rule.id,
+        path: rule.path,
+        roles: Array.isArray(rule.roles) ? rule.roles.filter(role => typeof role === 'string') : [],
+        match: rule.match,
+        deny: rule.deny,
+        locales: Array.isArray(rule.locales) ? rule.locales.filter(locale => typeof locale === 'string') : []
+      })),
+      users: users.map(user => ({
+        id: user.id,
+        name: user.name,
+        email: user.email
+      })),
+      createdAt: group.createdAt,
+      updatedAt: group.updatedAt
+    })
+  } catch (err) {
+    next(err)
+  }
+})
+
 module.exports = router

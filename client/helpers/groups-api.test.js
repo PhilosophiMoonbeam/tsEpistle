@@ -1,4 +1,4 @@
-const { fetchGroupOptions, fetchGroupsList } = require('./groups-api')
+const { fetchGroupOptions, fetchGroupsList, fetchGroupDetails } = require('./groups-api')
 
 function createJsonResponse (payload, ok = true) {
   return {
@@ -82,6 +82,88 @@ describe('groups api helper', () => {
     ]))
 
     await expect(fetchGroupsList(fetchImpl, 'Bad groups list payload')).rejects.toThrow('Bad groups list payload')
+  })
+
+  test('fetches and validates group detail payloads', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+      id: 3,
+      name: 'Editors',
+      redirectOnLogin: '/en/home',
+      isSystem: false,
+      permissions: ['read:pages', 'write:pages'],
+      pageRules: [
+        {
+          id: 'rule-1',
+          path: 'docs',
+          roles: ['read:pages'],
+          match: 'START',
+          deny: false,
+          locales: ['en']
+        }
+      ],
+      users: [
+        { id: 10, name: 'Alice', email: 'alice@example.com' }
+      ],
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-02T00:00:00.000Z'
+    }))
+
+    await expect(fetchGroupDetails(fetchImpl, 3)).resolves.toEqual({
+      id: 3,
+      name: 'Editors',
+      redirectOnLogin: '/en/home',
+      isSystem: false,
+      permissions: ['read:pages', 'write:pages'],
+      pageRules: [
+        {
+          id: 'rule-1',
+          path: 'docs',
+          roles: ['read:pages'],
+          match: 'START',
+          deny: false,
+          locales: ['en']
+        }
+      ],
+      users: [
+        { id: 10, name: 'Alice', email: 'alice@example.com' }
+      ],
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-02T00:00:00.000Z'
+    })
+
+    expect(fetchImpl).toHaveBeenCalledWith('/_api/groups/3', {
+      credentials: 'same-origin',
+      headers: {
+        Accept: 'application/json'
+      }
+    })
+  })
+
+  test('rejects malformed group detail payloads', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+      id: 3,
+      name: 'Editors',
+      redirectOnLogin: '/en/home',
+      isSystem: false,
+      permissions: ['read:pages'],
+      pageRules: [
+        {
+          id: 'rule-1',
+          path: 'docs',
+          roles: ['read:pages'],
+          match: 'INVALID',
+          deny: false,
+          locales: ['en']
+        }
+      ],
+      users: [
+        { id: 10, name: 'Alice', email: 'alice@example.com' }
+      ],
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-02T00:00:00.000Z'
+    }))
+
+    await expect(fetchGroupDetails(fetchImpl, 3, 'Bad group detail payload')).rejects.toThrow('Bad group detail payload')
   })
 
   test('surfaces API error messages for group fetch failures', async () => {

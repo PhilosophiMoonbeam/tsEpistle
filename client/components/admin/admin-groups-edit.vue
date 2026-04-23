@@ -97,9 +97,21 @@
 import _ from 'lodash'
 import gql from 'graphql-tag'
 
+import { fetchGroupDetails } from '../../helpers/groups-api'
+
 import GroupPermissions from './admin-groups-edit-permissions.vue'
 import GroupRules from './admin-groups-edit-rules.vue'
 import GroupUsers from './admin-groups-edit-users.vue'
+
+const createEmptyGroup = () => ({
+  id: 0,
+  name: '',
+  isSystem: false,
+  permissions: [],
+  pageRules: [],
+  users: [],
+  redirectOnLogin: '/'
+})
 
 /* global siteConfig */
 
@@ -111,22 +123,46 @@ export default {
   },
   data() {
     return {
-      group: {
-        id: 0,
-        name: '',
-        isSystem: false,
-        permissions: [],
-        pageRules: [],
-        users: [],
-        redirectOnLogin: '/'
-      },
+      group: createEmptyGroup(),
+      groupLoadRequestId: 0,
       deleteGroupDialog: false,
       tab: null,
       selectPageModal: false,
       currentLang: siteConfig.lang
     }
   },
+  watch: {
+    '$route.params.id' () {
+      this.group = createEmptyGroup()
+      this.loadGroup()
+    }
+  },
   methods: {
+    async loadGroup () {
+      const requestId = ++this.groupLoadRequestId
+      const routeGroupId = _.toSafeInteger(this.$route.params.id)
+
+      this.$store.commit('loadingStart', 'admin-groups-refresh')
+      try {
+        const group = await fetchGroupDetails(window.fetch.bind(window), routeGroupId, 'Group detail response is invalid')
+        if (requestId !== this.groupLoadRequestId || routeGroupId !== _.toSafeInteger(this.$route.params.id)) {
+          return false
+        }
+        this.group = group
+        return true
+      } catch (err) {
+        if (requestId !== this.groupLoadRequestId || routeGroupId !== _.toSafeInteger(this.$route.params.id)) {
+          return false
+        }
+        this.group = createEmptyGroup()
+        this.$store.commit('pushGraphError', err)
+        return false
+      } finally {
+        if (requestId === this.groupLoadRequestId) {
+          this.$store.commit('loadingStop', 'admin-groups-refresh')
+        }
+      }
+    },
     selectPage () {
       this.selectPageModal = true
     },
@@ -218,50 +254,11 @@ export default {
       }
     },
     async refresh() {
-      return this.$apollo.queries.group.refetch()
+      return this.loadGroup()
     }
   },
-  apollo: {
-    group: {
-      query: gql`
-        query ($id: Int!) {
-          groups {
-            single(id: $id) {
-              id
-              name
-              redirectOnLogin
-              isSystem
-              permissions
-              pageRules {
-                id
-                path
-                roles
-                match
-                deny
-                locales
-              }
-              users {
-                id
-                name
-                email
-              }
-              createdAt
-              updatedAt
-            }
-          }
-        }
-      `,
-      variables() {
-        return {
-          id: _.toSafeInteger(this.$route.params.id)
-        }
-      },
-      fetchPolicy: 'network-only',
-      update: (data) => _.cloneDeep(data.groups.single),
-      watchLoading (isLoading) {
-        this.$store.commit(`loading${isLoading ? 'Start' : 'Stop'}`, 'admin-groups-refresh')
-      }
-    }
+  created () {
+    this.loadGroup()
   }
 }
 </script>

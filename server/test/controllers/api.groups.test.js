@@ -35,7 +35,33 @@ describe('controllers/api groups endpoints', () => {
                 name: 'Editors',
                 isSystem: false
               }
-            ])
+            ]),
+            findById: jest.fn().mockResolvedValue({
+              id: 3,
+              name: 'Editors',
+              redirectOnLogin: '/en/home',
+              isSystem: false,
+              permissions: ['read:pages', 'write:pages'],
+              pageRules: [
+                {
+                  id: 'rule-1',
+                  path: 'docs',
+                  roles: ['read:pages'],
+                  match: 'START',
+                  deny: false,
+                  locales: ['en'],
+                  extra: 'nope'
+                }
+              ],
+              createdAt: '2026-01-01T00:00:00.000Z',
+              updatedAt: '2026-01-02T00:00:00.000Z',
+              $relatedQuery: jest.fn().mockReturnValue({
+                select: jest.fn().mockResolvedValue([
+                  { id: 10, name: 'Alice', email: 'alice@example.com', providerKey: 'local' },
+                  { id: 11, name: 'Bob', email: 'bob@example.com', extra: 'nope' }
+                ])
+              })
+            })
           })
         }
       }
@@ -47,7 +73,8 @@ describe('controllers/api groups endpoints', () => {
     require('../../controllers/api/groups')
     return {
       picker: express.__router.get.mock.calls.find(([path]) => path === '/')[1],
-      list: express.__router.get.mock.calls.find(([path]) => path === '/list')[1]
+      list: express.__router.get.mock.calls.find(([path]) => path === '/list')[1],
+      detail: express.__router.get.mock.calls.find(([path]) => path === '/:id')[1]
     }
   }
 
@@ -56,6 +83,7 @@ describe('controllers/api groups endpoints', () => {
 
     expect(typeof handlers.picker).toBe('function')
     expect(typeof handlers.list).toBe('function')
+    expect(typeof handlers.detail).toBe('function')
   })
 
   it('returns the minimal groups picker payload for authorized users', async () => {
@@ -183,6 +211,100 @@ describe('controllers/api groups endpoints', () => {
 
     expect(res.status).toHaveBeenCalledWith(403)
     expect(res.json).toHaveBeenCalledWith({ error: 'write:groups, manage:groups, or manage:system is required' })
+  })
+
+  it('returns the admin group detail payload for group admins', async () => {
+    const { detail } = loadHandler()
+    const req = { user: { permissions: ['manage:groups'] }, params: { id: '3' } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await detail(req, res, jest.fn())
+
+    expect(global.WIKI.auth.checkAccess).toHaveBeenCalledWith({ permissions: ['manage:groups'] }, ['write:groups', 'manage:groups', 'manage:system'])
+    expect(global.WIKI.models.groups.query).toHaveBeenCalled()
+    expect(global.WIKI.models.groups.query.mock.results[0].value.findById).toHaveBeenCalledWith(3)
+    const group = await global.WIKI.models.groups.query.mock.results[0].value.findById.mock.results[0].value
+    expect(group.$relatedQuery).toHaveBeenCalledWith('users')
+    expect(group.$relatedQuery.mock.results[0].value.select).toHaveBeenCalledWith('id', 'name', 'email')
+    const payload = res.json.mock.calls[0][0]
+    expect(payload).toEqual({
+      id: 3,
+      name: 'Editors',
+      redirectOnLogin: '/en/home',
+      isSystem: false,
+      permissions: ['read:pages', 'write:pages'],
+      pageRules: [
+        {
+          id: 'rule-1',
+          path: 'docs',
+          roles: ['read:pages'],
+          match: 'START',
+          deny: false,
+          locales: ['en']
+        }
+      ],
+      users: [
+        { id: 10, name: 'Alice', email: 'alice@example.com' },
+        { id: 11, name: 'Bob', email: 'bob@example.com' }
+      ],
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-02T00:00:00.000Z'
+    })
+    expect(payload.pageRules[0].extra).toBeUndefined()
+    expect(payload.users[0].providerKey).toBeUndefined()
+    expect(payload.users[1].extra).toBeUndefined()
+  })
+
+  it('returns 400 for malformed group detail ids', async () => {
+    const { detail } = loadHandler()
+    const req = { user: { permissions: ['manage:groups'] }, params: { id: '3abc' } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await detail(req, res, jest.fn())
+
+    expect(res.status).toHaveBeenCalledWith(400)
+    expect(res.json).toHaveBeenCalledWith({ error: 'group id must be a positive integer' })
+  })
+
+  it('returns 404 when the requested group detail is missing', async () => {
+    global.WIKI.models.groups.query.mockReturnValueOnce({
+      findById: jest.fn().mockResolvedValue(null)
+    })
+    const { detail } = loadHandler()
+    const req = { user: { permissions: ['manage:groups'] }, params: { id: '999' } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await detail(req, res, jest.fn())
+
+    expect(res.status).toHaveBeenCalledWith(404)
+    expect(res.json).toHaveBeenCalledWith({ error: 'group not found' })
+  })
+
+  it('returns 403 for detail requests without group admin access', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValueOnce(false)
+    const { detail } = loadHandler()
+    const req = { user: { permissions: ['manage:api'] }, params: { id: '3' } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await detail(req, res, jest.fn())
+
+    expect(res.status).toHaveBeenCalledWith(403)
+    expect(res.json).toHaveBeenCalledWith({ error: 'write:groups, manage:groups, or manage:system is required' })
+  })
+
+  it('forwards unexpected detail query failures to next', async () => {
+    const next = jest.fn()
+    global.WIKI.models.groups.query.mockReturnValueOnce({
+      findById: jest.fn().mockRejectedValue(new Error('detail db down'))
+    })
+    const { detail } = loadHandler()
+    const req = { user: { permissions: ['manage:groups'] }, params: { id: '3' } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await detail(req, res, next)
+
+    expect(next).toHaveBeenCalledWith(expect.any(Error))
+    expect(next.mock.calls[0][0].message).toBe('detail db down')
   })
 
   it('forwards unexpected query failures to next', async () => {
