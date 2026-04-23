@@ -134,8 +134,9 @@ import _ from 'lodash'
 
 import { SelfBuildingSquareSpinner } from 'epic-spinners'
 
-import systemInfoQuery from 'gql/admin/system/system-query-info.gql'
 import performUpgradeMutation from 'gql/admin/system/system-mutation-upgrade.gql'
+
+import { fetchSystemInfo } from '../../helpers/system-api'
 
 export default {
   components: {
@@ -179,13 +180,29 @@ export default {
     }
   },
   methods: {
+    async loadInfo () {
+      this.$store.commit('loadingStart', 'admin-system-refresh')
+      try {
+        this.info = await fetchSystemInfo(window.fetch.bind(window), 'System info response is invalid')
+        return true
+      } catch (err) {
+        this.$store.commit('pushGraphError', err)
+        return false
+      } finally {
+        this.$store.commit('loadingStop', 'admin-system-refresh')
+      }
+    },
     async refresh () {
-      await this.$apollo.queries.info.refetch()
+      const loaded = await this.loadInfo()
+      if (!loaded) {
+        return false
+      }
       this.$store.commit('showNotification', {
         message: this.$t('admin:system.refreshSuccess'),
         style: 'success',
         icon: 'cached'
       })
+      return true
     },
     async performUpgrade () {
       this.isUpgrading = true
@@ -216,15 +233,8 @@ export default {
       }
     }
   },
-  apollo: {
-    info: {
-      query: systemInfoQuery,
-      fetchPolicy: 'network-only',
-      update: (data) => data.system.info,
-      watchLoading (isLoading) {
-        this.$store.commit(`loading${isLoading ? 'Start' : 'Stop'}`, 'admin-system-refresh')
-      }
-    }
+  created () {
+    this.loadInfo()
   }
 }
 </script>

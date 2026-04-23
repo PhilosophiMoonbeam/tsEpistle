@@ -40,25 +40,41 @@ describe('system api helper', () => {
     })
   })
 
-  test('fetches and validates system info summary', async () => {
+  test('fetches and validates rich system info payloads', async () => {
     const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+      configFile: '/wiki/config.yml',
+      cpuCores: 8,
       currentVersion: '2.0.0',
+      dbHost: 'postgres.example.com',
+      dbType: 'PostgreSQL',
+      dbVersion: '15.4',
+      hostname: 'wiki-host',
       latestVersion: '2.1.0',
       latestVersionReleaseDate: '2026-01-01T00:00:00.000Z',
-      groupsTotal: 3,
-      pagesTotal: 42,
-      usersTotal: 11,
-      tagsTotal: 7
+      nodeVersion: '18.19.0',
+      operatingSystem: 'Ubuntu 24.04 LTS',
+      platform: 'linux',
+      ramTotal: '16 GB',
+      upgradeCapable: true,
+      workingDirectory: '/srv/wiki'
     }))
 
     await expect(fetchSystemInfo(fetchImpl)).resolves.toEqual({
+      configFile: '/wiki/config.yml',
+      cpuCores: 8,
       currentVersion: '2.0.0',
+      dbHost: 'postgres.example.com',
+      dbType: 'PostgreSQL',
+      dbVersion: '15.4',
+      hostname: 'wiki-host',
       latestVersion: '2.1.0',
       latestVersionReleaseDate: '2026-01-01T00:00:00.000Z',
-      groupsTotal: 3,
-      pagesTotal: 42,
-      usersTotal: 11,
-      tagsTotal: 7
+      nodeVersion: '18.19.0',
+      operatingSystem: 'Ubuntu 24.04 LTS',
+      platform: 'linux',
+      ramTotal: '16 GB',
+      upgradeCapable: true,
+      workingDirectory: '/srv/wiki'
     })
 
     expect(fetchImpl).toHaveBeenCalledWith('/_api/system/info', {
@@ -71,9 +87,21 @@ describe('system api helper', () => {
 
   test('rejects malformed system info payloads', async () => {
     const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+      configFile: '/wiki/config.yml',
+      cpuCores: '8',
       currentVersion: '2.0.0',
+      dbHost: 'postgres.example.com',
+      dbType: 'PostgreSQL',
+      dbVersion: '15.4',
+      hostname: 'wiki-host',
       latestVersion: '2.1.0',
-      groupsTotal: '3'
+      latestVersionReleaseDate: '2026-01-01T00:00:00.000Z',
+      nodeVersion: '18.19.0',
+      operatingSystem: 'Ubuntu 24.04 LTS',
+      platform: 'linux',
+      ramTotal: '16 GB',
+      upgradeCapable: true,
+      workingDirectory: '/srv/wiki'
     }))
 
     await expect(fetchSystemInfo(fetchImpl, 'Bad system info')).rejects.toThrow('Bad system info')

@@ -12,6 +12,24 @@ jest.mock('express', () => {
 })
 
 jest.mock('../../jobs/sync-graph-updates', () => jest.fn().mockResolvedValue(true))
+jest.mock('getos', () => jest.fn((cb) => cb(null, {
+  dist: 'Ubuntu',
+  codename: 'noble',
+  release: '24.04.1'
+})))
+jest.mock('os', () => ({
+  cpus: jest.fn(() => Array.from({ length: 8 }, () => ({ model: 'Mock CPU' }))),
+  hostname: jest.fn(() => 'wiki-host'),
+  type: jest.fn(() => 'Linux'),
+  platform: jest.fn(() => 'linux'),
+  release: jest.fn(() => '6.8.0'),
+  arch: jest.fn(() => 'x64'),
+  totalmem: jest.fn(() => 16 * 1024 * 1024 * 1024)
+}))
+jest.mock('filesize', () => jest.fn(() => '16 GB'))
+jest.mock('fs-extra', () => ({
+  pathExists: jest.fn().mockResolvedValue(false)
+}))
 
 describe('controllers/api system endpoints', () => {
   beforeEach(() => {
@@ -26,6 +44,10 @@ describe('controllers/api system endpoints', () => {
         checkAccess: jest.fn()
       },
       config: {
+        db: {
+          type: 'postgres',
+          host: 'postgres.example.com'
+        },
         flags: {
           alpha: true,
           beta: false
@@ -35,6 +57,12 @@ describe('controllers/api system endpoints', () => {
         }
       },
       models: {
+        knex: {
+          client: {
+            version: '15.4'
+          },
+          raw: jest.fn()
+        },
         groups: {
           query: jest.fn(() => ({
             count: jest.fn(() => ({
@@ -345,14 +373,25 @@ describe('controllers/api system endpoints', () => {
     await info(req, res)
 
     expect(res.json).toHaveBeenCalledWith({
+      configFile: `${process.cwd()}/config.yml`,
+      cpuCores: 8,
       currentVersion: '2.0.0',
+      dbHost: 'postgres.example.com',
+      dbType: 'PostgreSQL',
+      dbVersion: '15.4',
+      hostname: 'wiki-host',
       latestVersion: '2.1.0',
       latestVersionReleaseDate: '2026-01-01T00:00:00.000Z',
+      nodeVersion: process.version.substr(1),
+      operatingSystem: 'Linux - Ubuntu (noble) 24.04.1 x64',
+      platform: 'linux',
+      ramTotal: '16 GB',
       telemetry: true,
       telemetryClientId: 'client-123',
       httpPort: 3000,
       httpsPort: 3443,
       upgradeCapable: false,
+      workingDirectory: process.cwd(),
       groupsTotal: 3,
       pagesTotal: 42,
       usersTotal: 11,

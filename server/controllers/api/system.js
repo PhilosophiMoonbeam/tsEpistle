@@ -1,5 +1,12 @@
 const express = require('express')
 const _ = require('lodash')
+const getos = require('getos')
+const os = require('os')
+const filesize = require('filesize')
+const path = require('path')
+const fs = require('fs-extra')
+
+const getosAsync = require('util').promisify(getos)
 
 const router = express.Router()
 
@@ -40,16 +47,68 @@ const buildSystemSummary = async () => {
   }
 }
 
+const getSystemDbVersion = async () => {
+  switch (WIKI.config.db.type) {
+    case 'mariadb':
+    case 'mysql': {
+      const result = await WIKI.models.knex.raw('SELECT VERSION() as version;')
+      return _.get(result, '[0][0].version', 'Unknown Version')
+    }
+    case 'mssql': {
+      const result = await WIKI.models.knex.raw('SELECT @@VERSION as version;')
+      return _.get(result, '[0].version', 'Unknown Version')
+    }
+    case 'postgres':
+      return _.get(WIKI.models, 'knex.client.version', 'Unknown Version')
+    case 'sqlite':
+      return _.get(WIKI.models, 'knex.client.driver.VERSION', 'Unknown Version')
+    default:
+      return 'Unknown Version'
+  }
+}
+
 const buildSystemInfo = async () => {
   const summary = await buildSystemSummary()
+  const platform = await (async () => {
+    const isDockerized = await fs.pathExists('/.dockerenv')
+    return isDockerized ? 'docker' : os.platform()
+  })()
+  const operatingSystem = await (async () => {
+    if (os.platform() !== 'linux') {
+      return `${os.type()} (${os.platform()}) ${os.release()} ${os.arch()}`
+    }
+
+    const osInfo = await getosAsync()
+    return `${os.type()} - ${osInfo.dist} (${osInfo.codename || os.platform()}) ${osInfo.release || os.release()} ${os.arch()}`
+  })()
 
   return {
     ...summary,
+    configFile: path.join(process.cwd(), 'config.yml'),
+    cpuCores: os.cpus().length,
+    currentVersion: WIKI.version,
+    dbHost: WIKI.config.db.type === 'sqlite' ? WIKI.config.db.storage : WIKI.config.db.host,
+    dbType: _.get({
+      mysql: 'MySQL',
+      mariadb: 'MariaDB',
+      postgres: 'PostgreSQL',
+      sqlite: 'SQLite',
+      mssql: 'MS SQL Server'
+    }, WIKI.config.db.type, 'Unknown DB'),
+    dbVersion: await getSystemDbVersion(),
+    hostname: os.hostname(),
+    latestVersion: _.get(WIKI.system, 'updates.version', WIKI.version),
+    latestVersionReleaseDate: _.get(WIKI.system, 'updates.releaseDate', null),
+    nodeVersion: process.version.substr(1),
+    operatingSystem,
+    platform,
+    ramTotal: filesize(os.totalmem()),
     telemetry: _.get(WIKI.telemetry, 'enabled', false),
     telemetryClientId: _.get(WIKI.config, 'telemetry.clientId', null),
     httpPort: WIKI.servers.servers.http ? _.get(WIKI.servers.servers.http.address(), 'port', 0) : 0,
     httpsPort: WIKI.servers.servers.https ? _.get(WIKI.servers.servers.https.address(), 'port', 0) : 0,
-    upgradeCapable: !_.isNil(process.env.UPGRADE_COMPANION)
+    upgradeCapable: !_.isNil(process.env.UPGRADE_COMPANION),
+    workingDirectory: process.cwd()
   }
 }
 

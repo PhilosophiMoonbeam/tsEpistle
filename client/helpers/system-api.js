@@ -38,7 +38,7 @@ function normalizeFlagsPayload (payload, fallbackMessage) {
   }, {})
 }
 
-function normalizeSystemInfoPayload (payload, fallbackMessage) {
+function normalizeSystemSummaryPayload (payload, fallbackMessage) {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
     throw new Error(fallbackMessage)
   }
@@ -56,6 +56,43 @@ function normalizeSystemInfoPayload (payload, fallbackMessage) {
   return payload
 }
 
+function normalizeSystemInfoPayload (payload, fallbackMessage) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    throw new Error(fallbackMessage)
+  }
+
+  const requiredStringFields = [
+    'configFile',
+    'currentVersion',
+    'dbHost',
+    'dbType',
+    'dbVersion',
+    'hostname',
+    'latestVersion',
+    'nodeVersion',
+    'operatingSystem',
+    'platform',
+    'ramTotal',
+    'workingDirectory'
+  ]
+  const requiredNumberFields = ['cpuCores']
+
+  if (requiredStringFields.some(field => typeof payload[field] !== 'string')) {
+    throw new Error(fallbackMessage)
+  }
+  if (requiredNumberFields.some(field => !Number.isFinite(payload[field]))) {
+    throw new Error(fallbackMessage)
+  }
+  if (typeof payload.upgradeCapable !== 'boolean') {
+    throw new Error(fallbackMessage)
+  }
+  if (typeof payload.latestVersionReleaseDate !== 'string' && payload.latestVersionReleaseDate !== null) {
+    throw new Error(fallbackMessage)
+  }
+
+  return payload
+}
+
 async function fetchSystemSummary (fetchImpl, fallbackMessage = 'System summary response is invalid') {
   const response = await fetchImpl('/_api/system/summary', {
     credentials: 'same-origin',
@@ -64,7 +101,7 @@ async function fetchSystemSummary (fetchImpl, fallbackMessage = 'System summary 
     }
   })
 
-  return normalizeSystemInfoPayload(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
+  return normalizeSystemSummaryPayload(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
 }
 
 async function fetchSystemInfo (fetchImpl, fallbackMessage = 'System info response is invalid') {
