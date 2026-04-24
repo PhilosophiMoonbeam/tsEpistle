@@ -1,4 +1,4 @@
-const { fetchSystemSummary, fetchSystemInfo, fetchSystemFlags, fetchSystemExtensions, updateSystemFlags } = require('./system-api')
+const { fetchSystemSummary, fetchSystemInfo, fetchSystemTelemetry, fetchSystemFlags, fetchSystemExtensions, updateSystemFlags } = require('./system-api')
 
 function createJsonResponse (payload, ok = true) {
   return {
@@ -105,6 +105,58 @@ describe('system api helper', () => {
     }))
 
     await expect(fetchSystemInfo(fetchImpl, 'Bad system info')).rejects.toThrow('Bad system info')
+  })
+
+  test('fetches and validates system telemetry', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+      telemetry: true,
+      telemetryClientId: 'client-123',
+      privateValue: 'must not be returned by helper'
+    }))
+
+    await expect(fetchSystemTelemetry(fetchImpl)).resolves.toEqual({
+      telemetry: true,
+      telemetryClientId: 'client-123'
+    })
+    expect(fetchImpl).toHaveBeenCalledWith('/_api/system/telemetry', {
+      credentials: 'same-origin',
+      headers: {
+        Accept: 'application/json'
+      }
+    })
+  })
+
+  test('accepts null system telemetry client IDs', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+      telemetry: false,
+      telemetryClientId: null
+    }))
+
+    await expect(fetchSystemTelemetry(fetchImpl)).resolves.toEqual({
+      telemetry: false,
+      telemetryClientId: null
+    })
+  })
+
+  test('rejects malformed system telemetry payloads', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+      telemetry: 'yes',
+      telemetryClientId: 'client-123'
+    }))
+
+    await expect(fetchSystemTelemetry(fetchImpl, 'Bad telemetry payload')).rejects.toThrow('Bad telemetry payload')
+  })
+
+  test('surfaces API error messages for failed telemetry loads', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue({
+      ok: false,
+      headers: {
+        get: () => 'application/json; charset=utf-8'
+      },
+      json: async () => ({ error: 'manage:system is required' })
+    })
+
+    await expect(fetchSystemTelemetry(fetchImpl, 'Bad telemetry load')).rejects.toThrow('manage:system is required')
   })
 
   test('fetches and normalizes system flags', async () => {

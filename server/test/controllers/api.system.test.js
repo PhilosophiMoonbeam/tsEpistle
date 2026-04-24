@@ -145,6 +145,7 @@ describe('controllers/api system endpoints', () => {
       summary: express.__router.get.mock.calls.find(([path]) => path === '/summary')[1],
       flags: express.__router.get.mock.calls.find(([path]) => path === '/flags')[1],
       extensions: express.__router.get.mock.calls.find(([path]) => path === '/extensions')[1],
+      telemetry: express.__router.get.mock.calls.find(([path]) => path === '/telemetry')[1],
       saveFlags: express.__router.post.mock.calls.find(([path]) => path === '/flags')[1],
       checkForUpdate: express.__router.post.mock.calls.find(([path]) => path === '/check-for-update')[1]
     }
@@ -157,13 +158,14 @@ describe('controllers/api system endpoints', () => {
     expect(typeof handlers.summary).toBe('function')
     expect(typeof handlers.flags).toBe('function')
     expect(typeof handlers.extensions).toBe('function')
+    expect(typeof handlers.telemetry).toBe('function')
     expect(typeof handlers.saveFlags).toBe('function')
     expect(typeof handlers.checkForUpdate).toBe('function')
   })
 
   it('returns 403 for unauthorized system requests', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(false)
-    const { info, summary, flags, extensions, saveFlags, checkForUpdate } = loadHandlers()
+    const { info, summary, flags, extensions, telemetry, saveFlags, checkForUpdate } = loadHandlers()
     const req = { user: { permissions: [] }, get: jest.fn() }
     const res = { sendStatus: jest.fn(), json: jest.fn() }
 
@@ -171,16 +173,18 @@ describe('controllers/api system endpoints', () => {
     await summary(req, res)
     await flags(req, res)
     await extensions(req, res)
+    await telemetry(req, res)
     await saveFlags(req, res)
     await checkForUpdate(req, res)
 
-    expect(res.sendStatus).toHaveBeenCalledTimes(6)
+    expect(res.sendStatus).toHaveBeenCalledTimes(7)
     expect(res.sendStatus).toHaveBeenNthCalledWith(1, 403)
     expect(res.sendStatus).toHaveBeenNthCalledWith(2, 403)
     expect(res.sendStatus).toHaveBeenNthCalledWith(3, 403)
     expect(res.sendStatus).toHaveBeenNthCalledWith(4, 403)
     expect(res.sendStatus).toHaveBeenNthCalledWith(5, 403)
     expect(res.sendStatus).toHaveBeenNthCalledWith(6, 403)
+    expect(res.sendStatus).toHaveBeenNthCalledWith(7, 403)
     expect(res.json).not.toHaveBeenCalled()
   })
 
@@ -278,6 +282,36 @@ describe('controllers/api system endpoints', () => {
     expect(res.json).not.toHaveBeenCalled()
     expect(next).toHaveBeenCalledWith(expect.any(Error))
     expect(next.mock.calls[0][0].message).toBe('compatibility failed')
+  })
+
+  it('returns system telemetry JSON for authorized requests', () => {
+    global.WIKI.auth.checkAccess.mockReturnValue(true)
+    const { telemetry } = loadHandlers()
+    const req = { user: { permissions: ['manage:system'] } }
+    const res = { json: jest.fn(), sendStatus: jest.fn() }
+
+    telemetry(req, res)
+
+    expect(res.sendStatus).not.toHaveBeenCalled()
+    expect(res.json).toHaveBeenCalledWith({
+      telemetry: true,
+      telemetryClientId: 'client-123'
+    })
+  })
+
+  it('returns a null telemetry client ID when none is configured', () => {
+    global.WIKI.auth.checkAccess.mockReturnValue(true)
+    global.WIKI.config.telemetry.clientId = null
+    const { telemetry } = loadHandlers()
+    const req = { user: { permissions: ['manage:system'] } }
+    const res = { json: jest.fn(), sendStatus: jest.fn() }
+
+    telemetry(req, res)
+
+    expect(res.json).toHaveBeenCalledWith({
+      telemetry: true,
+      telemetryClientId: null
+    })
   })
 
   it('returns 400 when the system flags update receives a non-array payload', async () => {

@@ -55,6 +55,11 @@ const buildSystemExtensions = async () => {
   return exts
 }
 
+const buildSystemTelemetry = () => ({
+  telemetry: _.get(WIKI.telemetry, 'enabled', false),
+  telemetryClientId: _.get(WIKI.config, 'telemetry.clientId', null)
+})
+
 const getSystemDbVersion = async () => {
   switch (WIKI.config.db.type) {
     case 'mariadb':
@@ -164,6 +169,14 @@ router.get('/extensions', async (req, res, next) => {
   } catch (err) {
     next(err)
   }
+})
+
+router.get('/telemetry', (req, res) => {
+  if (!requireSystemAccess(req, res)) {
+    return
+  }
+
+  res.json(buildSystemTelemetry())
 })
 
 router.post('/flags', async (req, res, next) => {

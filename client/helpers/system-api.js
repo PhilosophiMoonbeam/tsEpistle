@@ -93,6 +93,23 @@ function normalizeSystemInfoPayload (payload, fallbackMessage) {
   return payload
 }
 
+function normalizeSystemTelemetryPayload (payload, fallbackMessage) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    throw new Error(fallbackMessage)
+  }
+  if (typeof payload.telemetry !== 'boolean') {
+    throw new Error(fallbackMessage)
+  }
+  if (typeof payload.telemetryClientId !== 'string' && payload.telemetryClientId !== null) {
+    throw new Error(fallbackMessage)
+  }
+
+  return {
+    telemetry: payload.telemetry,
+    telemetryClientId: payload.telemetryClientId
+  }
+}
+
 function normalizeSystemExtension (row, fallbackMessage) {
   if (!row || typeof row !== 'object' || Array.isArray(row)) {
     throw new Error(fallbackMessage)
@@ -145,6 +162,17 @@ async function fetchSystemInfo (fetchImpl, fallbackMessage = 'System info respon
   return normalizeSystemInfoPayload(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
 }
 
+async function fetchSystemTelemetry (fetchImpl, fallbackMessage = 'System telemetry response is invalid') {
+  const response = await fetchImpl('/_api/system/telemetry', {
+    credentials: 'same-origin',
+    headers: {
+      Accept: 'application/json'
+    }
+  })
+
+  return normalizeSystemTelemetryPayload(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
+}
+
 async function fetchSystemFlags (fetchImpl, fallbackMessage = 'System flags response is invalid') {
   const response = await fetchImpl('/_api/system/flags', {
     credentials: 'same-origin',
@@ -191,6 +219,7 @@ async function updateSystemFlags (fetchImpl, flags, fallbackMessage = 'System fl
 module.exports = {
   fetchSystemSummary,
   fetchSystemInfo,
+  fetchSystemTelemetry,
   fetchSystemFlags,
   fetchSystemExtensions,
   updateSystemFlags

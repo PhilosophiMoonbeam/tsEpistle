@@ -75,7 +75,7 @@ import _ from 'lodash'
 
 import utilityTelemetryResetIdMutation from 'gql/admin/utilities/utilities-mutation-telemetry-resetid.gql'
 import utilityTelemetrySetMutation from 'gql/admin/utilities/utilities-mutation-telemetry-set.gql'
-import utilityTelemetryQuery from 'gql/admin/utilities/utilities-query-telemetry.gql'
+import { fetchSystemTelemetry } from '../../helpers/system-api'
 
 export default {
   data() {
@@ -85,6 +85,22 @@ export default {
     }
   },
   methods: {
+    async loadTelemetry({ notifyError = true } = {}) {
+      this.$store.commit(`loadingStart`, 'admin-utilities-telemetry-refresh')
+
+      try {
+        const telemetryState = await fetchSystemTelemetry(window.fetch.bind(window))
+        this.telemetry = telemetryState.telemetry
+        this.clientId = telemetryState.telemetryClientId || 'N/A'
+      } catch (err) {
+        if (notifyError) {
+          this.$store.commit('pushGraphError', err)
+        }
+        throw err
+      } finally {
+        this.$store.commit(`loadingStop`, 'admin-utilities-telemetry-refresh')
+      }
+    },
     async updateTelemetry() {
       this.loading = true
       this.$store.commit(`loadingStart`, 'admin-utilities-telemetry-set')
@@ -123,7 +139,7 @@ export default {
         })
         const resp = _.get(respRaw, 'data.system.resetTelemetryClientId.responseResult', {})
         if (resp.succeeded) {
-          this.$apollo.queries.telemetry.refetch()
+          await this.loadTelemetry({ notifyError: false })
           this.$store.commit('showNotification', {
             message: 'Telemetry Client ID reset successfully.',
             style: 'success',
@@ -140,19 +156,8 @@ export default {
       this.loading = false
     }
   },
-  apollo: {
-    telemetry: {
-      query: utilityTelemetryQuery,
-      fetchPolicy: 'network-only',
-      manual: true,
-      result ({ data }) {
-        this.telemetry = _.get(data, 'system.info.telemetry', false)
-        this.clientId = _.get(data, 'system.info.telemetryClientId', 'N/A')
-      },
-      watchLoading (isLoading) {
-        this.$store.commit(`loading${isLoading ? 'Start' : 'Stop'}`, 'admin-utilities-telemetry-refresh')
-      }
-    }
+  created () {
+    this.loadTelemetry().catch(() => {})
   }
 }
 </script>
