@@ -3,6 +3,7 @@ const express = require('express')
 const router = express.Router()
 
 router.use('/system', require('./system'))
+router.use('/analytics', require('./analytics'))
 router.use('/locales', require('./locales'))
 router.use('/groups', require('./groups'))
 router.use('/users', require('./users'))

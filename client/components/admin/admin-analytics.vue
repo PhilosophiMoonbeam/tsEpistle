@@ -109,8 +109,9 @@
 <script>
 import _ from 'lodash'
 
-import providersQuery from 'gql/admin/analytics/analytics-query-providers.gql'
 import providersSaveMutation from 'gql/admin/analytics/analytics-mutation-save-providers.gql'
+
+import { fetchAnalyticsProviders } from '../../helpers/analytics-api'
 
 export default {
   data() {
@@ -128,9 +129,30 @@ export default {
       this.selectedProvider = 'google'
     }
   },
+  created() {
+    this.loadProviders().catch(() => {})
+  },
   methods: {
+    async loadProviders({ notifyError = true } = {}) {
+      this.$store.commit(`loadingStart`, 'admin-analytics-refresh')
+      try {
+        this.providers = await fetchAnalyticsProviders(window.fetch.bind(window), 'Analytics providers response is invalid')
+        return true
+      } catch (err) {
+        if (notifyError) {
+          this.$store.commit('showNotification', {
+            message: err.message,
+            style: 'red',
+            icon: 'alert'
+          })
+        }
+        throw err
+      } finally {
+        this.$store.commit(`loadingStop`, 'admin-analytics-refresh')
+      }
+    },
     async refresh() {
-      await this.$apollo.queries.providers.refetch()
+      await this.loadProviders()
       this.$store.commit('showNotification', {
         message: this.$t('admin:analytics.refreshSuccess'),
         style: 'success',
@@ -150,6 +172,7 @@ export default {
             ])).map(str => ({...str, config: str.config.map(cfg => ({...cfg, value: JSON.stringify({ v: cfg.value.value })}))}))
           }
         })
+        await this.loadProviders({ notifyError: false })
         this.$store.commit('showNotification', {
           message: this.$t('admin:analytics.saveSuccess'),
           style: 'success',
@@ -159,22 +182,6 @@ export default {
         this.$store.commit('pushGraphError', err)
       }
       this.$store.commit(`loadingStop`, 'admin-analytics-saveproviders')
-    }
-  },
-  apollo: {
-    providers: {
-      query: providersQuery,
-      fetchPolicy: 'network-only',
-      update: (data) => _.cloneDeep(data.analytics.providers).map(str => ({
-        ...str,
-        config: _.sortBy(str.config.map(cfg => ({
-          ...cfg,
-          value: JSON.parse(cfg.value)
-        })), [t => t.value.order])
-      })),
-      watchLoading (isLoading) {
-        this.$store.commit(`loading${isLoading ? 'Start' : 'Stop'}`, 'admin-analytics-refresh')
-      }
     }
   }
 }
