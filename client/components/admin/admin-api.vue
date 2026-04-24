@@ -48,7 +48,7 @@
           v-card-text(v-else)
             v-alert.mb-0(icon='mdi-information', :value='true', outlined, color='info') {{$t('admin:api.noKeyInfo')}}
 
-    create-api-key(v-model='isCreateDialogShown', @refresh='refresh(false)')
+    create-api-key(v-model='isCreateDialogShown', :refresh-api-keys='refresh')
 
     v-dialog(v-model='isRevokeConfirmDialogShown', max-width='500', persistent)
       v-card
@@ -68,6 +68,7 @@ import gql from 'graphql-tag'
 import { StatusIndicator } from 'vue-status-indicator'
 
 import CreateApiKey from './admin-api-create.vue'
+import { fetchAdminApiBootstrap } from '../../helpers/auth-api'
 
 export default {
   components: {
@@ -86,17 +87,41 @@ export default {
     }
   },
   methods: {
+    async loadApiBootstrap () {
+      this.$store.commit('loadingStart', 'admin-api-state-refresh')
+      this.$store.commit('loadingStart', 'admin-api-keys-refresh')
+      try {
+        const bootstrap = await fetchAdminApiBootstrap(window.fetch.bind(window), 'Admin API bootstrap response is invalid')
+        this.enabled = bootstrap.enabled
+        this.keys = bootstrap.keys
+        return true
+      } catch (err) {
+        this.enabled = false
+        this.keys = []
+        this.$store.commit('showNotification', {
+          style: 'red',
+          message: err.message,
+          icon: 'alert'
+        })
+        return false
+      } finally {
+        this.$store.commit('loadingStop', 'admin-api-state-refresh')
+        this.$store.commit('loadingStop', 'admin-api-keys-refresh')
+      }
+    },
     async refresh (notify = true) {
-      this.$apollo.queries.keys.refetch()
-      if (notify) {
+      const loaded = await this.loadApiBootstrap()
+      if (notify && loaded) {
         this.$store.commit('showNotification', {
           message: this.$t('admin:api.refreshSuccess'),
           style: 'success',
           icon: 'cached'
         })
       }
+      return loaded
     },
     async globalSwitch () {
+      const wasEnabled = this.enabled
       this.isToggleLoading = true
       try {
         const resp = await this.$apollo.mutate({
@@ -122,12 +147,14 @@ export default {
           }
         })
         if (_.get(resp, 'data.authentication.setApiState.responseResult.succeeded', false)) {
-          this.$store.commit('showNotification', {
-            style: 'success',
-            message: this.enabled ? this.$t('admin:api.toggleStateDisabledSuccess') : this.$t('admin:api.toggleStateEnabledSuccess'),
-            icon: 'check'
-          })
-          await this.$apollo.queries.enabled.refetch()
+          const loaded = await this.refresh(false)
+          if (loaded) {
+            this.$store.commit('showNotification', {
+              style: 'success',
+              message: wasEnabled ? this.$t('admin:api.toggleStateDisabledSuccess') : this.$t('admin:api.toggleStateEnabledSuccess'),
+              icon: 'check'
+            })
+          }
         } else {
           this.$store.commit('showNotification', {
             style: 'red',
@@ -173,12 +200,14 @@ export default {
           }
         })
         if (_.get(resp, 'data.authentication.revokeApiKey.responseResult.succeeded', false)) {
-          this.$store.commit('showNotification', {
-            style: 'success',
-            message: this.$t('admin:api.revokeSuccess'),
-            icon: 'check'
-          })
-          this.refresh(false)
+          const loaded = await this.refresh(false)
+          if (loaded) {
+            this.$store.commit('showNotification', {
+              style: 'success',
+              message: this.$t('admin:api.revokeSuccess'),
+              icon: 'check'
+            })
+          }
         } else {
           this.$store.commit('showNotification', {
             style: 'red',
@@ -193,43 +222,8 @@ export default {
       this.revokeLoading = false
     }
   },
-  apollo: {
-    enabled: {
-      query: gql`
-        {
-          authentication {
-            apiState
-          }
-        }
-      `,
-      fetchPolicy: 'network-only',
-      update: (data) => data.authentication.apiState,
-      watchLoading (isLoading) {
-        this.$store.commit(`loading${isLoading ? 'Start' : 'Stop'}`, 'admin-api-state-refresh')
-      }
-    },
-    keys: {
-      query: gql`
-        {
-          authentication {
-            apiKeys {
-              id
-              name
-              keyShort
-              expiration
-              isRevoked
-              createdAt
-              updatedAt
-            }
-          }
-        }
-      `,
-      fetchPolicy: 'network-only',
-      update: (data) => data.authentication.apiKeys,
-      watchLoading (isLoading) {
-        this.$store.commit(`loading${isLoading ? 'Start' : 'Stop'}`, 'admin-api-keys-refresh')
-      }
-    }
+  created () {
+    this.loadApiBootstrap()
   }
 }
 </script>

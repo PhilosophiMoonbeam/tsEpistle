@@ -59,6 +59,33 @@ const handleExpectedAuthError = (err, res) => {
   return true
 }
 
+const requireAdminApiAccess = (req, res) => {
+  if (WIKI.auth.checkAccess(req.user, ['manage:system', 'manage:api'])) {
+    return true
+  }
+
+  res.status(403).json({ error: 'manage:system or manage:api is required' })
+  return false
+}
+
+const getRedactedApiKeySuffix = (key) => {
+  if (!_.isString(key) || key.length <= 20) {
+    return '...[redacted]'
+  }
+
+  return '...' + key.substring(key.length - 20)
+}
+
+const toApiKeyResponse = (apiKey) => ({
+  id: apiKey.id,
+  name: apiKey.name,
+  keyShort: getRedactedApiKeySuffix(apiKey.key),
+  isRevoked: apiKey.isRevoked,
+  expiration: apiKey.expiration,
+  createdAt: apiKey.createdAt,
+  updatedAt: apiKey.updatedAt
+})
+
 router.get('/strategies', async (req, res, next) => {
   try {
     const strategies = await WIKI.models.authentication.getStrategies()
@@ -92,6 +119,22 @@ router.get('/providers', async (req, res, next) => {
       order: stg.order,
       isEnabled: stg.isEnabled === true
     })))
+  } catch (err) {
+    next(err)
+  }
+})
+
+router.get('/api', async (req, res, next) => {
+  try {
+    if (!requireAdminApiAccess(req, res)) {
+      return
+    }
+
+    const keys = await WIKI.models.apiKeys.query().orderBy(['isRevoked', 'name'])
+    res.json({
+      enabled: WIKI.config.api.isEnabled === true,
+      keys: keys.map(toApiKeyResponse)
+    })
   } catch (err) {
     next(err)
   }

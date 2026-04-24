@@ -103,6 +103,10 @@ export default {
     value: {
       type: Boolean,
       default: false
+    },
+    refreshApiKeys: {
+      type: Function,
+      default: null
     }
   },
   data() {
@@ -202,21 +206,25 @@ export default {
           }
         })
         if (_.get(resp, 'data.authentication.createApiKey.responseResult.succeeded', false)) {
-          this.$store.commit('showNotification', {
-            style: 'success',
-            message: this.$t('admin:api.newKeySuccess'),
-            icon: 'check'
-          })
+          const createdKey = _.get(resp, 'data.authentication.createApiKey.key', '???')
+          const refreshed = this.refreshApiKeys ? await this.refreshApiKeys(false) : true
 
           this.name = ''
           this.expiration = '1y'
           this.fullAccess = true
           this.group = null
           this.isShown = false
-          this.$emit('refresh')
 
-          this.key = _.get(resp, 'data.authentication.createApiKey.key', '???')
+          this.key = createdKey
           this.isCopyKeyDialogShown = true
+
+          if (refreshed) {
+            this.$store.commit('showNotification', {
+              style: 'success',
+              message: this.$t('admin:api.newKeySuccess'),
+              icon: 'check'
+            })
+          }
 
           setTimeout(() => {
             this.$refs.keyContentsIpt.$refs.input.select()

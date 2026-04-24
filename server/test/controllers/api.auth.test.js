@@ -29,6 +29,11 @@ describe('controllers/api auth endpoints', () => {
     express.__router.post.mockClear()
 
     global.WIKI = {
+      config: {
+        api: {
+          isEnabled: true
+        }
+      },
       data: {
         authentication: [
           {
@@ -94,6 +99,11 @@ describe('controllers/api auth endpoints', () => {
             }
           ])
         },
+        apiKeys: {
+          query: jest.fn(() => ({
+            orderBy: jest.fn().mockResolvedValue([])
+          }))
+        },
         users: {
           login: jest.fn(),
           loginTFA: jest.fn(),
@@ -115,6 +125,7 @@ describe('controllers/api auth endpoints', () => {
     return {
       strategies: getRouteHandler('/strategies'),
       providers: getRouteHandler('/providers'),
+      api: getRouteHandler('/api'),
       forgotPassword: postRouteHandler('/forgot-password'),
       login: postRouteHandler('/login'),
       loginTFA: postRouteHandler('/login/tfa'),
@@ -127,6 +138,7 @@ describe('controllers/api auth endpoints', () => {
 
     expect(typeof handlers.strategies).toBe('function')
     expect(typeof handlers.providers).toBe('function')
+    expect(typeof handlers.api).toBe('function')
     expect(typeof handlers.forgotPassword).toBe('function')
     expect(typeof handlers.login).toBe('function')
     expect(typeof handlers.loginTFA).toBe('function')
@@ -193,6 +205,155 @@ describe('controllers/api auth endpoints', () => {
 
     expect(res.status).toHaveBeenCalledWith(403)
     expect(res.json).toHaveBeenCalledWith({ error: 'manage:system, write:users, or manage:users is required' })
+  })
+
+  it('returns admin api bootstrap payload when authorized', async () => {
+    const fullKey = '123456789012345678901234567890'
+    const orderBy = jest.fn().mockResolvedValueOnce([
+      {
+        id: 7,
+        name: 'Deploy',
+        key: fullKey,
+        isRevoked: false,
+        expiration: '2026-01-01T00:00:00.000Z',
+        createdAt: '2025-01-01T00:00:00.000Z',
+        updatedAt: '2025-02-01T00:00:00.000Z',
+        extraSecret: 'do-not-return'
+      }
+    ])
+    global.WIKI.models.apiKeys.query.mockReturnValueOnce({ orderBy })
+    const { api } = loadHandlers()
+    const req = { user: { permissions: ['manage:api'] } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await api(req, res, jest.fn())
+
+    expect(global.WIKI.auth.checkAccess).toHaveBeenCalledWith({ permissions: ['manage:api'] }, ['manage:system', 'manage:api'])
+    expect(global.WIKI.models.apiKeys.query).toHaveBeenCalledTimes(1)
+    expect(orderBy).toHaveBeenCalledWith(['isRevoked', 'name'])
+    expect(res.json).toHaveBeenCalledWith({
+      enabled: true,
+      keys: [
+        {
+          id: 7,
+          name: 'Deploy',
+          keyShort: '...' + fullKey.substring(fullKey.length - 20),
+          isRevoked: false,
+          expiration: '2026-01-01T00:00:00.000Z',
+          createdAt: '2025-01-01T00:00:00.000Z',
+          updatedAt: '2025-02-01T00:00:00.000Z'
+        }
+      ]
+    })
+    const payload = res.json.mock.calls[0][0]
+    expect(payload.keys[0].key).toBeUndefined()
+    expect(payload.keys[0].extraSecret).toBeUndefined()
+    expect(JSON.stringify(payload)).not.toContain(fullKey)
+  })
+
+  it('redacts malformed short admin api keys instead of exposing key material', async () => {
+    const shortKey = 'abc'
+    const boundaryKey = 'x'.repeat(20)
+    const orderBy = jest.fn().mockResolvedValueOnce([
+      {
+        id: 8,
+        name: 'Legacy',
+        key: shortKey,
+        isRevoked: false,
+        expiration: '2026-01-01T00:00:00.000Z',
+        createdAt: '2025-01-01T00:00:00.000Z',
+        updatedAt: '2025-02-01T00:00:00.000Z'
+      },
+      {
+        id: 9,
+        name: 'Boundary',
+        key: boundaryKey,
+        isRevoked: false,
+        expiration: '2026-01-01T00:00:00.000Z',
+        createdAt: '2025-01-01T00:00:00.000Z',
+        updatedAt: '2025-02-01T00:00:00.000Z'
+      },
+      {
+        id: 10,
+        name: 'Corrupt',
+        key: null,
+        isRevoked: false,
+        expiration: '2026-01-01T00:00:00.000Z',
+        createdAt: '2025-01-01T00:00:00.000Z',
+        updatedAt: '2025-02-01T00:00:00.000Z'
+      }
+    ])
+    global.WIKI.models.apiKeys.query.mockReturnValueOnce({ orderBy })
+    const { api } = loadHandlers()
+    const req = { user: { permissions: ['manage:api'] } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await api(req, res, jest.fn())
+
+    const payload = res.json.mock.calls[0][0]
+    expect(payload.keys[0].keyShort).toBe('...[redacted]')
+    expect(payload.keys[1].keyShort).toBe('...[redacted]')
+    expect(payload.keys[2].keyShort).toBe('...[redacted]')
+    expect(JSON.stringify(payload)).not.toContain(shortKey)
+    expect(JSON.stringify(payload)).not.toContain(boundaryKey)
+  })
+
+  it('normalizes admin api enabled state with strict true semantics', async () => {
+    global.WIKI.config.api.isEnabled = 'true'
+    const { api } = loadHandlers()
+    const req = { user: { permissions: ['manage:api'] } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await api(req, res, jest.fn())
+
+    expect(res.json).toHaveBeenCalledWith({
+      enabled: false,
+      keys: []
+    })
+  })
+
+  it('returns 403 for unauthorized admin api bootstrap requests', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValueOnce(false)
+    const { api } = loadHandlers()
+    const req = { user: { permissions: ['manage:users'] } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await api(req, res, jest.fn())
+
+    expect(res.status).toHaveBeenCalledWith(403)
+    expect(res.json).toHaveBeenCalledWith({ error: 'manage:system or manage:api is required' })
+    expect(global.WIKI.models.apiKeys.query).not.toHaveBeenCalled()
+  })
+
+  it('allows manage:api users to request admin api bootstrap', async () => {
+    global.WIKI.auth.checkAccess.mockImplementationOnce((user, permissions) => user.permissions.includes('manage:api') && permissions.includes('manage:api'))
+    const { api } = loadHandlers()
+    const req = { user: { permissions: ['manage:api'] } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await api(req, res, jest.fn())
+
+    expect(res.status).not.toHaveBeenCalledWith(403)
+    expect(res.json).toHaveBeenCalledWith({
+      enabled: true,
+      keys: []
+    })
+  })
+
+  it('forwards admin api bootstrap query failures to next', async () => {
+    const orderBy = jest.fn().mockRejectedValueOnce(new Error('db failed'))
+    global.WIKI.models.apiKeys.query.mockReturnValueOnce({ orderBy })
+    const { api } = loadHandlers()
+    const req = { user: { permissions: ['manage:api'] } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const next = jest.fn()
+
+    await api(req, res, next)
+
+    expect(res.json).not.toHaveBeenCalled()
+    expect(res.status).not.toHaveBeenCalled()
+    expect(next).toHaveBeenCalledWith(expect.any(Error))
+    expect(next.mock.calls[0][0].message).toBe('db failed')
   })
 
   it('does not expose internal configuration or admin-only auth metadata', async () => {

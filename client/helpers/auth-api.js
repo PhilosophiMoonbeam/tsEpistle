@@ -90,6 +90,45 @@ async function fetchAdminAuthProviders (fetchImpl, fallbackMessage = 'Admin auth
   })
 }
 
+function isValidAdminApiKeyShort (keyShort) {
+  return /^\.\.\..{20}$/.test(keyShort) || keyShort === '...[redacted]'
+}
+
+function normalizeAdminApiKey (key, fallbackMessage) {
+  if (!key || typeof key !== 'object' || Array.isArray(key) || !Number.isFinite(key.id) || typeof key.name !== 'string' || key.name.length < 1 || typeof key.keyShort !== 'string' || !isValidAdminApiKeyShort(key.keyShort) || typeof key.isRevoked !== 'boolean' || typeof key.expiration !== 'string' || key.expiration.length < 1 || typeof key.createdAt !== 'string' || key.createdAt.length < 1 || typeof key.updatedAt !== 'string' || key.updatedAt.length < 1) {
+    throw new Error(fallbackMessage)
+  }
+
+  return {
+    id: key.id,
+    name: key.name,
+    keyShort: key.keyShort,
+    isRevoked: key.isRevoked,
+    expiration: key.expiration,
+    createdAt: key.createdAt,
+    updatedAt: key.updatedAt
+  }
+}
+
+async function fetchAdminApiBootstrap (fetchImpl, fallbackMessage = 'Admin API bootstrap response is invalid') {
+  const response = await fetchImpl('/_api/auth/api', {
+    credentials: 'same-origin',
+    headers: {
+      Accept: 'application/json'
+    }
+  })
+
+  const payload = await parseJsonResponse(response, fallbackMessage)
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload) || typeof payload.enabled !== 'boolean' || !Array.isArray(payload.keys)) {
+    throw new Error(fallbackMessage)
+  }
+
+  return {
+    enabled: payload.enabled,
+    keys: payload.keys.map(key => normalizeAdminApiKey(key, fallbackMessage))
+  }
+}
+
 async function postJson (fetchImpl, path, body, fallbackMessage) {
   const response = await fetchImpl(path, {
     method: 'POST',
@@ -125,6 +164,7 @@ async function submitStatusRequest (fetchImpl, path, body, fallbackMessage = 'Au
 module.exports = {
   fetchAuthStrategies,
   fetchAdminAuthProviders,
+  fetchAdminApiBootstrap,
   submitAuthRequest,
   submitStatusRequest
 }

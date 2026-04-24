@@ -1,4 +1,4 @@
-const { fetchAuthStrategies, fetchAdminAuthProviders, submitAuthRequest, submitStatusRequest } = require('./auth-api')
+const { fetchAuthStrategies, fetchAdminAuthProviders, fetchAdminApiBootstrap, submitAuthRequest, submitStatusRequest } = require('./auth-api')
 
 function createJsonResponse (payload, ok = true, status = ok ? 200 : 400) {
   return {
@@ -58,6 +58,142 @@ describe('auth api helper', () => {
     ]))
 
     await expect(fetchAdminAuthProviders(fetchImpl, 'Bad providers payload')).rejects.toThrow('Bad providers payload')
+  })
+
+  test('fetches admin API bootstrap with sanitized key rows', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+      enabled: true,
+      extraRoot: 'ignored',
+      keys: [
+        {
+          id: 7,
+          name: 'Deploy',
+          keyShort: '...12345678901234567890',
+          key: '[REDACTED]',
+          isRevoked: false,
+          expiration: '2026-01-01T00:00:00.000Z',
+          createdAt: '2025-01-01T00:00:00.000Z',
+          updatedAt: '2025-02-01T00:00:00.000Z',
+          extraSecret: 'ignored'
+        }
+      ]
+    }))
+
+    await expect(fetchAdminApiBootstrap(fetchImpl)).resolves.toEqual({
+      enabled: true,
+      keys: [
+        {
+          id: 7,
+          name: 'Deploy',
+          keyShort: '...12345678901234567890',
+          isRevoked: false,
+          expiration: '2026-01-01T00:00:00.000Z',
+          createdAt: '2025-01-01T00:00:00.000Z',
+          updatedAt: '2025-02-01T00:00:00.000Z'
+        }
+      ]
+    })
+
+    expect(fetchImpl).toHaveBeenCalledWith('/_api/auth/api', {
+      credentials: 'same-origin',
+      headers: {
+        Accept: 'application/json'
+      }
+    })
+  })
+
+  test('rejects malformed admin API bootstrap root payloads', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ enabled: 'true', keys: [] }))
+
+    await expect(fetchAdminApiBootstrap(fetchImpl, 'Bad API bootstrap payload')).rejects.toThrow('Bad API bootstrap payload')
+  })
+
+  test('rejects malformed admin API key rows', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+      enabled: false,
+      keys: [
+        {
+          id: 7,
+          name: 'Deploy',
+          keyShort: '',
+          isRevoked: false,
+          expiration: '2026-01-01T00:00:00.000Z',
+          createdAt: '2025-01-01T00:00:00.000Z',
+          updatedAt: '2025-02-01T00:00:00.000Z'
+        }
+      ]
+    }))
+
+    await expect(fetchAdminApiBootstrap(fetchImpl, 'Bad API key row')).rejects.toThrow('Bad API key row')
+  })
+
+  test('rejects admin API key rows with unredacted keyShort values', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+      enabled: false,
+      keys: [
+        {
+          id: 7,
+          name: 'Deploy',
+          keyShort: 'visible-key-material',
+          isRevoked: false,
+          expiration: '2026-01-01T00:00:00.000Z',
+          createdAt: '2025-01-01T00:00:00.000Z',
+          updatedAt: '2025-02-01T00:00:00.000Z'
+        }
+      ]
+    }))
+
+    await expect(fetchAdminApiBootstrap(fetchImpl, 'Bad API key row')).rejects.toThrow('Bad API key row')
+  })
+
+  test('accepts intentionally redacted admin API key placeholders', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+      enabled: false,
+      keys: [
+        {
+          id: 7,
+          name: 'Legacy',
+          keyShort: '...[redacted]',
+          isRevoked: false,
+          expiration: '2026-01-01T00:00:00.000Z',
+          createdAt: '2025-01-01T00:00:00.000Z',
+          updatedAt: '2025-02-01T00:00:00.000Z'
+        }
+      ]
+    }))
+
+    await expect(fetchAdminApiBootstrap(fetchImpl)).resolves.toEqual({
+      enabled: false,
+      keys: [
+        {
+          id: 7,
+          name: 'Legacy',
+          keyShort: '...[redacted]',
+          isRevoked: false,
+          expiration: '2026-01-01T00:00:00.000Z',
+          createdAt: '2025-01-01T00:00:00.000Z',
+          updatedAt: '2025-02-01T00:00:00.000Z'
+        }
+      ]
+    })
+  })
+
+  test('throws API JSON error messages for admin API bootstrap failures', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ error: 'manage:api required' }, false, 403))
+
+    await expect(fetchAdminApiBootstrap(fetchImpl, 'Generic API bootstrap error')).rejects.toThrow('manage:api required')
+  })
+
+  test('falls back to generic error when admin API bootstrap success is not JSON', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 204,
+      headers: {
+        get: () => ''
+      }
+    })
+
+    await expect(fetchAdminApiBootstrap(fetchImpl, 'Generic API bootstrap error')).rejects.toThrow('Generic API bootstrap error')
   })
 
   test('submits auth request as JSON and returns parsed body', async () => {
