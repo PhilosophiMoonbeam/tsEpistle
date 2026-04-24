@@ -37,8 +37,7 @@
 </template>
 
 <script>
-import _ from 'lodash'
-import gql from 'graphql-tag'
+import { fetchSystemExtensions } from '../../helpers/system-api'
 
 export default {
   data() {
@@ -47,6 +46,19 @@ export default {
     }
   },
   methods: {
+    async loadExtensions () {
+      this.$store.commit('loadingStart', 'admin-extensions-refresh')
+      try {
+        this.extensions = await fetchSystemExtensions(window.fetch.bind(window), 'System extensions response is invalid')
+        return true
+      } catch (err) {
+        this.extensions = []
+        this.$store.commit('pushGraphError', err)
+        return false
+      } finally {
+        this.$store.commit('loadingStop', 'admin-extensions-refresh')
+      }
+    },
     async save () {
       // try {
       //   await this.$apollo.mutate({
@@ -85,27 +97,8 @@ export default {
       // }
     }
   },
-  apollo: {
-    extensions: {
-      query: gql`
-        {
-          system {
-            extensions {
-              key
-              title
-              description
-              isInstalled
-              isCompatible
-            }
-          }
-        }
-      `,
-      fetchPolicy: 'network-only',
-      update: (data) => _.cloneDeep(data.system.extensions),
-      watchLoading (isLoading) {
-        this.$store.commit(`loading${isLoading ? 'Start' : 'Stop'}`, 'admin-extensions-refresh')
-      }
-    }
+  created () {
+    this.loadExtensions()
   }
 }
 </script>

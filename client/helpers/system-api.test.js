@@ -1,4 +1,4 @@
-const { fetchSystemSummary, fetchSystemInfo, fetchSystemFlags, updateSystemFlags } = require('./system-api')
+const { fetchSystemSummary, fetchSystemInfo, fetchSystemFlags, fetchSystemExtensions, updateSystemFlags } = require('./system-api')
 
 function createJsonResponse (payload, ok = true) {
   return {
@@ -130,6 +130,72 @@ describe('system api helper', () => {
     const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse([{ key: 'ldapdebug', value: 'yes' }]))
 
     await expect(fetchSystemFlags(fetchImpl, 'Bad flags payload')).rejects.toThrow('Bad flags payload')
+  })
+
+  test('fetches and validates system extensions', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse([
+      {
+        key: 'alpha',
+        title: 'Alpha Extension',
+        description: 'Alpha extension description.',
+        isInstalled: true,
+        isCompatible: false,
+        privateValue: 'must not be returned by helper'
+      }
+    ]))
+
+    await expect(fetchSystemExtensions(fetchImpl)).resolves.toEqual([
+      {
+        key: 'alpha',
+        title: 'Alpha Extension',
+        description: 'Alpha extension description.',
+        isInstalled: true,
+        isCompatible: false
+      }
+    ])
+    expect(fetchImpl).toHaveBeenCalledWith('/_api/system/extensions', {
+      credentials: 'same-origin',
+      headers: {
+        Accept: 'application/json'
+      }
+    })
+  })
+
+  test('rejects malformed system extensions payloads', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse([
+      {
+        key: 'alpha',
+        title: 'Alpha Extension',
+        description: 'Alpha extension description.',
+        isInstalled: true,
+        isCompatible: 'yes'
+      }
+    ]))
+
+    await expect(fetchSystemExtensions(fetchImpl, 'Bad extensions payload')).rejects.toThrow('Bad extensions payload')
+  })
+
+  test('surfaces API error messages for failed extension loads', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue({
+      ok: false,
+      headers: {
+        get: () => 'application/json; charset=utf-8'
+      },
+      json: async () => ({ message: 'manage:system is required' })
+    })
+
+    await expect(fetchSystemExtensions(fetchImpl, 'Bad extension load')).rejects.toThrow('manage:system is required')
+  })
+
+  test('rejects non-JSON successful extension responses', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue({
+      ok: true,
+      headers: {
+        get: () => 'text/plain'
+      }
+    })
+
+    await expect(fetchSystemExtensions(fetchImpl, 'Bad extension load')).rejects.toThrow('Bad extension load')
   })
 
   test('submits system flags update as xhr JSON and returns parsed message', async () => {

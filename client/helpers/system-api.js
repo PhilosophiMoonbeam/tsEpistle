@@ -93,6 +93,36 @@ function normalizeSystemInfoPayload (payload, fallbackMessage) {
   return payload
 }
 
+function normalizeSystemExtension (row, fallbackMessage) {
+  if (!row || typeof row !== 'object' || Array.isArray(row)) {
+    throw new Error(fallbackMessage)
+  }
+
+  const requiredStringFields = ['key', 'title', 'description']
+  if (requiredStringFields.some(field => typeof row[field] !== 'string')) {
+    throw new Error(fallbackMessage)
+  }
+  if (typeof row.isInstalled !== 'boolean' || typeof row.isCompatible !== 'boolean') {
+    throw new Error(fallbackMessage)
+  }
+
+  return {
+    key: row.key,
+    title: row.title,
+    description: row.description,
+    isInstalled: row.isInstalled,
+    isCompatible: row.isCompatible
+  }
+}
+
+function normalizeSystemExtensionsPayload (payload, fallbackMessage) {
+  if (!Array.isArray(payload)) {
+    throw new Error(fallbackMessage)
+  }
+
+  return payload.map(row => normalizeSystemExtension(row, fallbackMessage))
+}
+
 async function fetchSystemSummary (fetchImpl, fallbackMessage = 'System summary response is invalid') {
   const response = await fetchImpl('/_api/system/summary', {
     credentials: 'same-origin',
@@ -126,6 +156,17 @@ async function fetchSystemFlags (fetchImpl, fallbackMessage = 'System flags resp
   return normalizeFlagsPayload(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
 }
 
+async function fetchSystemExtensions (fetchImpl, fallbackMessage = 'System extensions response is invalid') {
+  const response = await fetchImpl('/_api/system/extensions', {
+    credentials: 'same-origin',
+    headers: {
+      Accept: 'application/json'
+    }
+  })
+
+  return normalizeSystemExtensionsPayload(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
+}
+
 async function updateSystemFlags (fetchImpl, flags, fallbackMessage = 'System flags update failed') {
   const response = await fetchImpl('/_api/system/flags', {
     method: 'POST',
@@ -151,5 +192,6 @@ module.exports = {
   fetchSystemSummary,
   fetchSystemInfo,
   fetchSystemFlags,
+  fetchSystemExtensions,
   updateSystemFlags
 }

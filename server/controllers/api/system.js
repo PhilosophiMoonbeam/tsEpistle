@@ -47,6 +47,14 @@ const buildSystemSummary = async () => {
   }
 }
 
+const buildSystemExtensions = async () => {
+  const exts = Object.values(WIKI.extensions.ext).map(ext => _.pick(ext, ['key', 'title', 'description', 'isInstalled']))
+  for (const ext of exts) {
+    ext.isCompatible = await WIKI.extensions.ext[ext.key].isCompatible()
+  }
+  return exts
+}
+
 const getSystemDbVersion = async () => {
   switch (WIKI.config.db.type) {
     case 'mariadb':
@@ -144,6 +152,18 @@ router.get('/flags', async (req, res) => {
   res.json(_.transform(WIKI.config.flags, (result, value, key) => {
     result.push({ key, value })
   }, []))
+})
+
+router.get('/extensions', async (req, res, next) => {
+  if (!requireSystemAccess(req, res)) {
+    return
+  }
+
+  try {
+    res.json(await buildSystemExtensions())
+  } catch (err) {
+    next(err)
+  }
 })
 
 router.post('/flags', async (req, res, next) => {
