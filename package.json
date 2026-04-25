@@ -332,7 +332,7 @@
     "vuedraggable": "2.24.3",
     "vuescroll": "4.16.1",
     "vuetify": "2.3.15",
-    "vuetify-loader": "1.6.0",
+    "vuetify-loader": "1.7.3",
     "vuex": "3.5.1",
     "vuex-pathify": "1.4.5",
     "vuex-persistedstate": "3.1.0",
