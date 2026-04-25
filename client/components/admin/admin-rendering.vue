@@ -138,8 +138,8 @@ import { DepGraph } from 'dependency-graph'
 
 import { StatusIndicator } from 'vue-status-indicator'
 
-import renderersQuery from 'gql/admin/rendering/rendering-query-renderers.gql'
 import renderersSaveMutation from 'gql/admin/rendering/rendering-mutation-save-renderers.gql'
+import { fetchRenderingRenderers } from '../../helpers/rendering-api'
 
 export default {
   components: {
@@ -160,7 +160,54 @@ export default {
       }, 500)
     }
   },
+  created () {
+    this.loadRenderers().catch(() => {})
+  },
   methods: {
+    buildRendererTree (flatRenderers) {
+      let renderers = _.cloneDeep(flatRenderers)
+      // Build tree
+      const graph = new DepGraph({ circular: true })
+      const rawCores = _.filter(renderers, ['dependsOn', null]).map(core => {
+        core.children = _.concat([_.cloneDeep(core)], _.filter(renderers, ['dependsOn', core.key]))
+        return core
+      })
+      // Build dependency graph
+      rawCores.map(core => { graph.addNode(core.key) })
+      rawCores.map(core => {
+        rawCores.map(coreTarget => {
+          if (core.key !== coreTarget.key) {
+            if (core.output === coreTarget.input) {
+              graph.addDependency(core.key, coreTarget.key)
+            }
+          }
+        })
+      })
+      // Reorder cores in reverse dependency order
+      let orderedCores = []
+      _.reverse(graph.overallOrder()).map(coreKey => {
+        orderedCores.push(_.find(rawCores, ['key', coreKey]))
+      })
+      return orderedCores
+    },
+    async loadRenderers ({ notifyError = true } = {}) {
+      this.$store.commit('loadingStart', 'admin-rendering-refresh')
+      try {
+        const flatRenderers = await fetchRenderingRenderers(window.fetch.bind(window), 'Rendering renderers response is invalid')
+        this.renderers = this.buildRendererTree(flatRenderers)
+      } catch (err) {
+        if (notifyError) {
+          this.$store.commit('showNotification', {
+            message: err.message,
+            style: 'red',
+            icon: 'alert'
+          })
+        }
+        throw err
+      } finally {
+        this.$store.commit('loadingStop', 'admin-rendering-refresh')
+      }
+    },
     selectRenderer (key) {
       this.renderers.map(rdr => {
         if (_.some(rdr.children, ['key', key])) {
@@ -169,7 +216,7 @@ export default {
       })
     },
     async refresh () {
-      await this.$apollo.queries.renderers.refetch()
+      await this.loadRenderers()
       this.$store.commit('showNotification', {
         message: 'Rendering active configuration has been reloaded.',
         style: 'success',
@@ -178,65 +225,28 @@ export default {
     },
     async save () {
       this.$store.commit(`loadingStart`, 'admin-rendering-saverenderers')
-      await this.$apollo.mutate({
-        mutation: renderersSaveMutation,
-        variables: {
-          renderers: _.reduce(this.renderers, (result, core) => {
-            result = _.concat(result, core.children.map(rd => ({
-              key: rd.key,
-              isEnabled: rd.isEnabled,
-              config: rd.config.map(cfg => ({ key: cfg.key, value: JSON.stringify({ v: cfg.value.value }) }))
-            })))
-            return result
-          }, [])
-        }
-      })
-      this.$store.commit('showNotification', {
-        message: 'Rendering configuration saved successfully.',
-        style: 'success',
-        icon: 'check'
-      })
-      this.$store.commit(`loadingStop`, 'admin-rendering-saverenderers')
-    }
-  },
-  apollo: {
-    renderers: {
-      query: renderersQuery,
-      fetchPolicy: 'network-only',
-      update: (data) => {
-        let renderers = _.cloneDeep(data.rendering.renderers).map(str => ({
-          ...str,
-          config: _.sortBy(str.config.map(cfg => ({
-            ...cfg,
-            value: JSON.parse(cfg.value)
-          })), [t => t.value.order])
-        }))
-        // Build tree
-        const graph = new DepGraph({ circular: true })
-        const rawCores = _.filter(renderers, ['dependsOn', null]).map(core => {
-          core.children = _.concat([_.cloneDeep(core)], _.filter(renderers, ['dependsOn', core.key]))
-          return core
+      try {
+        await this.$apollo.mutate({
+          mutation: renderersSaveMutation,
+          variables: {
+            renderers: _.reduce(this.renderers, (result, core) => {
+              result = _.concat(result, core.children.map(rd => ({
+                key: rd.key,
+                isEnabled: rd.isEnabled,
+                config: rd.config.map(cfg => ({ key: cfg.key, value: JSON.stringify({ v: cfg.value.value }) }))
+              })))
+              return result
+            }, [])
+          }
         })
-        // Build dependency graph
-        rawCores.map(core => { graph.addNode(core.key) })
-        rawCores.map(core => {
-          rawCores.map(coreTarget => {
-            if (core.key !== coreTarget.key) {
-              if (core.output === coreTarget.input) {
-                graph.addDependency(core.key, coreTarget.key)
-              }
-            }
-          })
+        await this.loadRenderers({ notifyError: false })
+        this.$store.commit('showNotification', {
+          message: 'Rendering configuration saved successfully.',
+          style: 'success',
+          icon: 'check'
         })
-        // Reorder cores in reverse dependency order
-        let orderedCores = []
-        _.reverse(graph.overallOrder()).map(coreKey => {
-          orderedCores.push(_.find(rawCores, ['key', coreKey]))
-        })
-        return orderedCores
-      },
-      watchLoading (isLoading) {
-        this.$store.commit(`loading${isLoading ? 'Start' : 'Stop'}`, 'admin-rendering-refresh')
+      } finally {
+        this.$store.commit(`loadingStop`, 'admin-rendering-saverenderers')
       }
     }
   }
