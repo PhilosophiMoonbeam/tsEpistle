@@ -190,7 +190,7 @@
 </template>
 
 <script>
-import gql from 'graphql-tag'
+import { fetchContributors } from '../../helpers/contribute-api'
 
 export default {
   data() {
@@ -198,27 +198,27 @@ export default {
       backers: []
     }
   },
-  apollo: {
-    backers: {
-      query: gql`
-        {
-          contribute {
-            contributors {
-              id
-              source
-              name
-              joined
-              website
-              twitter
-              avatar
-            }
-          }
+  created() {
+    this.loadBackers().catch(() => {})
+  },
+  methods: {
+    async loadBackers({ notifyError = true } = {}) {
+      this.$store.commit(`loadingStart`, 'admin-contribute-refresh')
+      try {
+        this.backers = await fetchContributors(window.fetch.bind(window), 'Contributors response is invalid')
+        return true
+      } catch (err) {
+        this.backers = []
+        if (notifyError) {
+          this.$store.commit('showNotification', {
+            message: err.message,
+            style: 'red',
+            icon: 'alert'
+          })
         }
-      `,
-      fetchPolicy: 'network-only',
-      update: (data) => data.contribute.contributors,
-      watchLoading (isLoading) {
-        this.$store.commit(`loading${isLoading ? 'Start' : 'Stop'}`, 'admin-contribute-refresh')
+        throw err
+      } finally {
+        this.$store.commit(`loadingStop`, 'admin-contribute-refresh')
       }
     }
   }
