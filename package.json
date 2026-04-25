@@ -51,7 +51,7 @@
   "dependencies": {
     "@azure/storage-blob": "12.29.1",
     "@exlinc/keycloak-passport": "1.0.2",
-    "@joplin/turndown-plugin-gfm": "1.0.45",
+    "@joplin/turndown-plugin-gfm": "1.0.64",
     "@root/csr": "0.8.1",
     "@root/keypairs": "0.10.3",
     "@root/pem": "1.0.4",
@@ -129,7 +129,7 @@
     "markdown-it-imsize": "2.0.1",
     "markdown-it-mark": "3.0.1",
     "markdown-it-mathjax": "2.0.0",
-    "markdown-it-multimd-table": "4.0.3",
+    "markdown-it-multimd-table": "4.2.3",
     "markdown-it-pivot-table": "1.0.5",
     "markdown-it-sub": "1.0.0",
     "markdown-it-sup": "1.0.0",

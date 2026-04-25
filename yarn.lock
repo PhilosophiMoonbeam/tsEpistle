@@ -2114,10 +2114,10 @@
     "@types/yargs" "^16.0.0"
     chalk "^4.0.0"
 
-"@joplin/turndown-plugin-gfm@1.0.45":
-  version "1.0.45"
-  resolved "https://registry.yarnpkg.com/@joplin/turndown-plugin-gfm/-/turndown-plugin-gfm-1.0.45.tgz#c37cb58ecad97a6385fc27350b7aead8236e30c6"
-  integrity sha512-RUQfMrFqFp2wB0mOZPGOTq6LVUVBOhQg87+ecv1+qF2gTHZm3jQd77iV5Eddbg2WjCj06eCG99et3kdPf0YwVw==
+"@joplin/turndown-plugin-gfm@1.0.64":
+  version "1.0.64"
+  resolved "https://registry.yarnpkg.com/@joplin/turndown-plugin-gfm/-/turndown-plugin-gfm-1.0.64.tgz#237b7bcb742ade38294c1eeb50f8ec6a31203f87"
+  integrity sha512-8GJ7f9OenE3zkSVII5B6qzIkvgF7C/a20gaASEjM6jWPLPJFFQ2nQ3Ou/kXH1mPUTs9dC9VYs8QXVPvZabKXBQ==
 
 "@josephg/resolvable@^1.0.0":
   version "1.0.1"
@@ -12518,12 +12518,10 @@ markdown-it-mathjax@2.0.0:
   resolved "https://registry.yarnpkg.com/markdown-it-mathjax/-/markdown-it-mathjax-2.0.0.tgz#ae2b4f4c5c719a03f9e475c664f7b2685231d9e9"
   integrity sha512-Fafv7TnMENccWYTNjMZzV4BzONPxpK9Mknr1iMEK6m7PI5a5UTCOFctPzx7Nhv81fFzYEY8WHDkSu9n43fTV9g==
 
-markdown-it-multimd-table@4.0.3:
-  version "4.0.3"
-  resolved "https://registry.yarnpkg.com/markdown-it-multimd-table/-/markdown-it-multimd-table-4.0.3.tgz#abd12fa7383677f2ee50545776e9ffcd168a1154"
-  integrity sha512-uVLriNj6doq1dGyJppQdwbaGcK6uSzbrk7osxRHjOmZBeShgMtPS6/d+pnIKkohOjaRyP9e5kwTAlAIe/lEaIQ==
-  dependencies:
-    markdown-it "^11.0.0"
+markdown-it-multimd-table@4.2.3:
+  version "4.2.3"
+  resolved "https://registry.yarnpkg.com/markdown-it-multimd-table/-/markdown-it-multimd-table-4.2.3.tgz#b81ac1f6c26482ddf0504c9e25583ad126c03dec"
+  integrity sha512-KepCr2OMJqm7IT6sOIbuqHGe+NERhgy66XMrc5lo6dHW7oaPzMDtYwR1EGwK16/blb6mCSg4jqityOe0o/H7HA==
 
 markdown-it-pivot-table@1.0.5:
   version "1.0.5"
@@ -12549,7 +12547,7 @@ markdown-it-task-lists@2.1.1:
   resolved "https://registry.yarnpkg.com/markdown-it-task-lists/-/markdown-it-task-lists-2.1.1.tgz#f68f4d2ac2bad5a2c373ba93081a1a6848417088"
   integrity sha512-TxFAc76Jnhb2OUu+n3yz9RMu4CwGfaT788br6HhEDlvWfdeJcLUsxk1Hgw2yJio0OXsxv7pyIPmvECY7bMbluA==
 
-markdown-it@11.0.1, markdown-it@^11.0.0:
+markdown-it@11.0.1:
   version "11.0.1"
   resolved "https://registry.yarnpkg.com/markdown-it/-/markdown-it-11.0.1.tgz#b54f15ec2a2193efa66dda1eb4173baea08993d6"
   integrity sha512-aU1TzmBKcWNNYvH9pjq6u92BML+Hz3h5S/QpfTFwiQF852pLT+9qHsrhM9JYipkOXZxGn+sGH8oyJE9FD9WezQ==
