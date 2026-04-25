@@ -110,7 +110,7 @@ import _ from 'lodash'
 
 import LoggingConsole from './admin-logging-console.vue'
 
-import loggersQuery from 'gql/admin/logging/logging-query-loggers.gql'
+import { fetchLoggingLoggers } from '../../helpers/logging-api'
 import loggersSaveMutation from 'gql/admin/logging/logging-mutation-save-loggers.gql'
 
 export default {
@@ -129,9 +129,30 @@ export default {
       return _.filter(this.loggers, 'isEnabled')
     }
   },
+  created() {
+    this.loadLoggers().catch(() => {})
+  },
   methods: {
+    async loadLoggers({ notifyError = true } = {}) {
+      this.$store.commit(`loadingStart`, 'admin-logging-refresh')
+      try {
+        this.loggers = await fetchLoggingLoggers(window.fetch.bind(window), 'Logging loggers response is invalid')
+        return true
+      } catch (err) {
+        if (notifyError) {
+          this.$store.commit('showNotification', {
+            message: err.message,
+            style: 'red',
+            icon: 'warning'
+          })
+        }
+        throw err
+      } finally {
+        this.$store.commit(`loadingStop`, 'admin-logging-refresh')
+      }
+    },
     async refresh() {
-      await this.$apollo.queries.loggers.refetch()
+      await this.loadLoggers()
       this.$store.commit('showNotification', {
         message: 'List of loggers has been refreshed.',
         style: 'success',
@@ -140,36 +161,31 @@ export default {
     },
     async save() {
       this.$store.commit(`loadingStart`, 'admin-logging-saveloggers')
-      await this.$apollo.mutate({
-        mutation: loggersSaveMutation,
-        variables: {
-          loggers: this.loggers.map(tgt => _.pick(tgt, [
-            'isEnabled',
-            'key',
-            'config',
-            'level'
-          ])).map(str => ({...str, config: str.config.map(cfg => ({...cfg, value: JSON.stringify({ v: cfg.value.value })}))}))
-        }
-      })
-      this.$store.commit('showNotification', {
-        message: 'Logging configuration saved successfully.',
-        style: 'success',
-        icon: 'check'
-      })
+      try {
+        await this.$apollo.mutate({
+          mutation: loggersSaveMutation,
+          variables: {
+            loggers: this.loggers.map(tgt => _.pick(tgt, [
+              'isEnabled',
+              'key',
+              'config',
+              'level'
+            ])).map(str => ({...str, config: str.config.map(cfg => ({...cfg, value: JSON.stringify({ v: cfg.value.value })}))}))
+          }
+        })
+        await this.loadLoggers({ notifyError: false })
+        this.$store.commit('showNotification', {
+          message: 'Logging configuration saved successfully.',
+          style: 'success',
+          icon: 'check'
+        })
+      } catch (err) {
+        this.$store.commit('pushGraphError', err)
+      }
       this.$store.commit(`loadingStop`, 'admin-logging-saveloggers')
     },
     toggleConsole() {
       this.showConsole = !this.showConsole
-    }
-  },
-  apollo: {
-    loggers: {
-      query: loggersQuery,
-      fetchPolicy: 'network-only',
-      update: (data) => _.cloneDeep(data.logging.loggers).map(str => ({...str, config: str.config.map(cfg => ({...cfg, value: JSON.parse(cfg.value)}))})),
-      watchLoading (isLoading) {
-        this.$store.commit(`loading${isLoading ? 'Start' : 'Stop'}`, 'admin-logging-refresh')
-      }
     }
   }
 }
