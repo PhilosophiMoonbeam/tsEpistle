@@ -49,7 +49,7 @@
     "node": ">=20"
   },
   "dependencies": {
-    "@azure/storage-blob": "12.29.1",
+    "@azure/storage-blob": "12.31.0",
     "@exlinc/keycloak-passport": "1.0.2",
     "@joplin/turndown-plugin-gfm": "1.0.64",
     "@root/csr": "0.8.1",
