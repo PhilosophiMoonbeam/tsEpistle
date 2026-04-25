@@ -110,6 +110,19 @@ function normalizeSystemTelemetryPayload (payload, fallbackMessage) {
   }
 }
 
+function normalizeSystemHostPayload (payload, fallbackMessage) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    throw new Error(fallbackMessage)
+  }
+  if (typeof payload.host !== 'string') {
+    throw new Error(fallbackMessage)
+  }
+
+  return {
+    host: payload.host
+  }
+}
+
 function normalizeSystemSslPayload (payload, fallbackMessage) {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
     throw new Error(fallbackMessage)
@@ -203,6 +216,17 @@ async function fetchSystemTelemetry (fetchImpl, fallbackMessage = 'System teleme
   return normalizeSystemTelemetryPayload(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
 }
 
+async function fetchSystemHost (fetchImpl, fallbackMessage = 'Site host response is invalid') {
+  const response = await fetchImpl('/_api/system/host', {
+    credentials: 'same-origin',
+    headers: {
+      Accept: 'application/json'
+    }
+  })
+
+  return normalizeSystemHostPayload(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
+}
+
 async function fetchSystemSsl (fetchImpl, fallbackMessage = 'SSL status response is invalid') {
   const response = await fetchImpl('/_api/system/ssl', {
     credentials: 'same-origin',
@@ -261,6 +285,7 @@ module.exports = {
   fetchSystemSummary,
   fetchSystemInfo,
   fetchSystemTelemetry,
+  fetchSystemHost,
   fetchSystemSsl,
   fetchSystemFlags,
   fetchSystemExtensions,

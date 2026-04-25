@@ -224,7 +224,7 @@ import gql from 'graphql-tag'
 import { v4 as uuid } from 'uuid'
 
 import { fetchGroupOptions } from '../../helpers/groups-api'
-import hostQuery from 'gql/admin/auth/auth-query-host.gql'
+import { fetchSystemHost } from '../../helpers/system-api'
 
 import draggable from 'vuedraggable'
 
@@ -269,9 +269,30 @@ export default {
       }
       this.$store.commit('loadingStop', 'admin-auth-groups-refresh')
     },
+    async loadHost({ notifyError = true } = {}) {
+      this.$store.commit('loadingStart', 'admin-auth-host-refresh')
+      try {
+        const response = await fetchSystemHost(window.fetch.bind(window), 'Site host response is invalid')
+        this.host = response.host
+        return response
+      } catch (err) {
+        this.host = ''
+        if (notifyError) {
+          this.$store.commit('showNotification', {
+            style: 'red',
+            message: err.message,
+            icon: 'alert'
+          })
+        }
+        throw err
+      } finally {
+        this.$store.commit('loadingStop', 'admin-auth-host-refresh')
+      }
+    },
     async refresh() {
       await this.$apollo.queries.strategies.refetch()
       await this.$apollo.queries.activeStrategies.refetch()
+      await this.loadHost()
       this.$store.commit('showNotification', {
         message: this.$t('admin:auth.refreshSuccess'),
         style: 'success',
@@ -353,6 +374,7 @@ export default {
   },
   created() {
     this.loadGroups()
+    this.loadHost().catch(() => {})
   },
   apollo: {
     strategies: {
@@ -426,14 +448,6 @@ export default {
       })), ['order']),
       watchLoading (isLoading) {
         this.$store.commit(`loading${isLoading ? 'Start' : 'Stop'}`, 'admin-auth-activestrategies-refresh')
-      }
-    },
-    host: {
-      query: hostQuery,
-      fetchPolicy: 'network-only',
-      update: (data) => _.cloneDeep(data.site.config.host),
-      watchLoading (isLoading) {
-        this.$store.commit(`loading${isLoading ? 'Start' : 'Stop'}`, 'admin-auth-host-refresh')
       }
     }
   }

@@ -44,6 +44,7 @@ describe('controllers/api system endpoints', () => {
         checkAccess: jest.fn()
       },
       config: {
+        host: 'https://wiki.example.test',
         server: {
           sslRedir: false
         },
@@ -152,6 +153,7 @@ describe('controllers/api system endpoints', () => {
       info: express.__router.get.mock.calls.find(([path]) => path === '/info')[1],
       summary: express.__router.get.mock.calls.find(([path]) => path === '/summary')[1],
       flags: express.__router.get.mock.calls.find(([path]) => path === '/flags')[1],
+      host: express.__router.get.mock.calls.find(([path]) => path === '/host')[1],
       extensions: express.__router.get.mock.calls.find(([path]) => path === '/extensions')[1],
       telemetry: express.__router.get.mock.calls.find(([path]) => path === '/telemetry')[1],
       ssl: express.__router.get.mock.calls.find(([path]) => path === '/ssl')[1],
@@ -166,6 +168,7 @@ describe('controllers/api system endpoints', () => {
     expect(typeof handlers.info).toBe('function')
     expect(typeof handlers.summary).toBe('function')
     expect(typeof handlers.flags).toBe('function')
+    expect(typeof handlers.host).toBe('function')
     expect(typeof handlers.extensions).toBe('function')
     expect(typeof handlers.telemetry).toBe('function')
     expect(typeof handlers.ssl).toBe('function')
@@ -175,20 +178,21 @@ describe('controllers/api system endpoints', () => {
 
   it('returns 403 for unauthorized system requests', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(false)
-    const { info, summary, flags, extensions, telemetry, ssl, saveFlags, checkForUpdate } = loadHandlers()
+    const { info, summary, flags, host, extensions, telemetry, ssl, saveFlags, checkForUpdate } = loadHandlers()
     const req = { user: { permissions: [] }, get: jest.fn() }
     const res = { sendStatus: jest.fn(), json: jest.fn() }
 
     await info(req, res)
     await summary(req, res)
     await flags(req, res)
+    await host(req, res)
     await extensions(req, res)
     await telemetry(req, res)
     await ssl(req, res)
     await saveFlags(req, res)
     await checkForUpdate(req, res)
 
-    expect(res.sendStatus).toHaveBeenCalledTimes(8)
+    expect(res.sendStatus).toHaveBeenCalledTimes(9)
     expect(res.sendStatus).toHaveBeenNthCalledWith(1, 403)
     expect(res.sendStatus).toHaveBeenNthCalledWith(2, 403)
     expect(res.sendStatus).toHaveBeenNthCalledWith(3, 403)
@@ -197,6 +201,7 @@ describe('controllers/api system endpoints', () => {
     expect(res.sendStatus).toHaveBeenNthCalledWith(6, 403)
     expect(res.sendStatus).toHaveBeenNthCalledWith(7, 403)
     expect(res.sendStatus).toHaveBeenNthCalledWith(8, 403)
+    expect(res.sendStatus).toHaveBeenNthCalledWith(9, 403)
     expect(res.json).not.toHaveBeenCalled()
   })
 
@@ -251,6 +256,22 @@ describe('controllers/api system endpoints', () => {
       { key: 'alpha', value: true },
       { key: 'beta', value: false }
     ])
+  })
+
+  it('returns only system host JSON for authorized requests', () => {
+    global.WIKI.auth.checkAccess.mockReturnValue(true)
+    global.WIKI.config.host = 'https://docs.example.test'
+    const { host } = loadHandlers()
+    const req = { user: { permissions: ['manage:system'] } }
+    const res = { json: jest.fn(), sendStatus: jest.fn() }
+
+    host(req, res)
+
+    expect(res.sendStatus).not.toHaveBeenCalled()
+    expect(res.json).toHaveBeenCalledWith({
+      host: 'https://docs.example.test'
+    })
+    expect(Object.keys(res.json.mock.calls[0][0])).toEqual(['host'])
   })
 
   it('returns system extensions JSON for authorized requests', async () => {

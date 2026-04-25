@@ -1,4 +1,4 @@
-const { fetchSystemSummary, fetchSystemInfo, fetchSystemTelemetry, fetchSystemSsl, fetchSystemFlags, fetchSystemExtensions, updateSystemFlags } = require('./system-api')
+const { fetchSystemSummary, fetchSystemInfo, fetchSystemTelemetry, fetchSystemHost, fetchSystemSsl, fetchSystemFlags, fetchSystemExtensions, updateSystemFlags } = require('./system-api')
 
 function createJsonResponse (payload, ok = true) {
   return {
@@ -157,6 +157,57 @@ describe('system api helper', () => {
     })
 
     await expect(fetchSystemTelemetry(fetchImpl, 'Bad telemetry load')).rejects.toThrow('manage:system is required')
+  })
+
+  test('fetches and validates system host', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+      host: 'https://docs.example.test',
+      title: 'must not be returned by helper'
+    }))
+
+    await expect(fetchSystemHost(fetchImpl)).resolves.toEqual({
+      host: 'https://docs.example.test'
+    })
+
+    expect(fetchImpl).toHaveBeenCalledWith('/_api/system/host', {
+      credentials: 'same-origin',
+      headers: {
+        Accept: 'application/json'
+      }
+    })
+  })
+
+  test.each([
+    ['missing host', {}],
+    ['non-string host', { host: null }],
+    ['array root', []]
+  ])('rejects malformed system host payloads: %s', async (label, payload) => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse(payload))
+
+    await expect(fetchSystemHost(fetchImpl, 'Bad host payload')).rejects.toThrow('Bad host payload')
+  })
+
+  test('surfaces API error messages for failed system host loads', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue({
+      ok: false,
+      headers: {
+        get: () => 'application/json; charset=utf-8'
+      },
+      json: async () => ({ error: 'manage:system is required' })
+    })
+
+    await expect(fetchSystemHost(fetchImpl, 'Bad host load')).rejects.toThrow('manage:system is required')
+  })
+
+  test('rejects non-JSON successful system host responses', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue({
+      ok: true,
+      headers: {
+        get: () => 'text/plain'
+      }
+    })
+
+    await expect(fetchSystemHost(fetchImpl, 'Bad host load')).rejects.toThrow('Bad host load')
   })
 
   test('fetches and validates SSL status payloads', async () => {

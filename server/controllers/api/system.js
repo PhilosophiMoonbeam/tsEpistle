@@ -60,6 +60,10 @@ const buildSystemTelemetry = () => ({
   telemetryClientId: _.get(WIKI.config, 'telemetry.clientId', null)
 })
 
+const buildSystemHost = () => ({
+  host: WIKI.config.host
+})
+
 const buildSystemSslInfo = () => ({
   httpPort: WIKI.servers.servers.http ? _.get(WIKI.servers.servers.http.address(), 'port', 0) : 0,
   httpRedirection: _.get(WIKI.config, 'server.sslRedir', false),
@@ -168,6 +172,14 @@ router.get('/flags', async (req, res) => {
   res.json(_.transform(WIKI.config.flags, (result, value, key) => {
     result.push({ key, value })
   }, []))
+})
+
+router.get('/host', (req, res) => {
+  if (!requireSystemAccess(req, res)) {
+    return
+  }
+
+  res.json(buildSystemHost())
 })
 
 router.get('/extensions', async (req, res, next) => {
