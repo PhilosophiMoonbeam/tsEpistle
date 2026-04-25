@@ -43,11 +43,12 @@ describe('controllers/api route shell', () => {
     return express.__routers[0]
   }
 
-  it('mounts system, analytics, logging, rendering, comments, contribute, locales, groups, and users subrouters', () => {
+  it('mounts system, analytics, search, logging, rendering, comments, contribute, locales, groups, and users subrouters', () => {
     const apiRouter = loadRouter()
 
     expect(apiRouter.use).toHaveBeenCalledWith('/system', expect.any(Object))
     expect(apiRouter.use).toHaveBeenCalledWith('/analytics', expect.any(Object))
+    expect(apiRouter.use).toHaveBeenCalledWith('/search', expect.any(Object))
     expect(apiRouter.use).toHaveBeenCalledWith('/logging', expect.any(Object))
     expect(apiRouter.use).toHaveBeenCalledWith('/rendering', expect.any(Object))
     expect(apiRouter.use).toHaveBeenCalledWith('/comments', expect.any(Object))

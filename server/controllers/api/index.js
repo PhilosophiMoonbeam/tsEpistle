@@ -4,6 +4,7 @@ const router = express.Router()
 
 router.use('/system', require('./system'))
 router.use('/analytics', require('./analytics'))
+router.use('/search', require('./search'))
 router.use('/logging', require('./logging'))
 router.use('/rendering', require('./rendering'))
 router.use('/comments', require('./comments'))

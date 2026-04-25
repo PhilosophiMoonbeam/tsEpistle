@@ -102,9 +102,9 @@
 <script>
 import _ from 'lodash'
 
-import enginesQuery from 'gql/admin/search/search-query-engines.gql'
 import enginesSaveMutation from 'gql/admin/search/search-mutation-save-engines.gql'
 import enginesRebuildMutation from 'gql/admin/search/search-mutation-rebuild-index.gql'
+import { fetchSearchEngines } from '../../helpers/search-api'
 
 export default {
   data() {
@@ -122,9 +122,30 @@ export default {
       this.selectedEngine = _.get(_.find(this.engines, 'isEnabled'), 'key', 'db')
     }
   },
+  created() {
+    this.loadEngines().catch(() => {})
+  },
   methods: {
+    async loadEngines({ notifyError = true } = {}) {
+      this.$store.commit(`loadingStart`, 'admin-search-refresh')
+      try {
+        this.engines = await fetchSearchEngines(window.fetch.bind(window), 'Search engines response is invalid')
+      } catch (err) {
+        this.engines = []
+        if (notifyError) {
+          this.$store.commit('showNotification', {
+            message: err.message,
+            style: 'error',
+            icon: 'alert'
+          })
+        }
+        throw err
+      } finally {
+        this.$store.commit(`loadingStop`, 'admin-search-refresh')
+      }
+    },
     async refresh() {
-      await this.$apollo.queries.engines.refetch()
+      await this.loadEngines()
       this.$store.commit('showNotification', {
         message: this.$t('admin:search.listRefreshSuccess'),
         style: 'success',
@@ -145,6 +166,7 @@ export default {
           }
         })
         if (_.get(resp, 'data.search.updateSearchEngines.responseResult.succeeded', false)) {
+          await this.loadEngines({ notifyError: false })
           this.$store.commit('showNotification', {
             message: this.$t('admin:search.configSaveSuccess'),
             style: 'success',
@@ -177,22 +199,6 @@ export default {
         this.$store.commit('pushGraphError', err)
       }
       this.$store.commit(`loadingStop`, 'admin-search-rebuildindex')
-    }
-  },
-  apollo: {
-    engines: {
-      query: enginesQuery,
-      fetchPolicy: 'network-only',
-      update: (data) => _.cloneDeep(data.search.searchEngines).map(str => ({
-        ...str,
-        config: _.sortBy(str.config.map(cfg => ({
-          ...cfg,
-          value: JSON.parse(cfg.value)
-        })), [t => t.value.order])
-      })),
-      watchLoading (isLoading) {
-        this.$store.commit(`loading${isLoading ? 'Start' : 'Stop'}`, 'admin-search-refresh')
-      }
     }
   }
 }
