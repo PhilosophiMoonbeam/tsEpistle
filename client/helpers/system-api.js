@@ -110,6 +110,36 @@ function normalizeSystemTelemetryPayload (payload, fallbackMessage) {
   }
 }
 
+function normalizeSystemSslPayload (payload, fallbackMessage) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    throw new Error(fallbackMessage)
+  }
+
+  const requiredNumberFields = ['httpPort', 'httpsPort']
+  const nullableStringFields = ['sslDomain', 'sslExpirationDate', 'sslProvider', 'sslSubscriberEmail']
+
+  if (requiredNumberFields.some(field => !Number.isFinite(payload[field]))) {
+    throw new Error(fallbackMessage)
+  }
+  if (typeof payload.httpRedirection !== 'boolean' || typeof payload.sslStatus !== 'string') {
+    throw new Error(fallbackMessage)
+  }
+  if (nullableStringFields.some(field => typeof payload[field] !== 'string' && payload[field] !== null)) {
+    throw new Error(fallbackMessage)
+  }
+
+  return {
+    httpPort: payload.httpPort,
+    httpRedirection: payload.httpRedirection,
+    httpsPort: payload.httpsPort,
+    sslDomain: payload.sslDomain,
+    sslExpirationDate: payload.sslExpirationDate,
+    sslProvider: payload.sslProvider,
+    sslStatus: payload.sslStatus,
+    sslSubscriberEmail: payload.sslSubscriberEmail
+  }
+}
+
 function normalizeSystemExtension (row, fallbackMessage) {
   if (!row || typeof row !== 'object' || Array.isArray(row)) {
     throw new Error(fallbackMessage)
@@ -173,6 +203,17 @@ async function fetchSystemTelemetry (fetchImpl, fallbackMessage = 'System teleme
   return normalizeSystemTelemetryPayload(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
 }
 
+async function fetchSystemSsl (fetchImpl, fallbackMessage = 'SSL status response is invalid') {
+  const response = await fetchImpl('/_api/system/ssl', {
+    credentials: 'same-origin',
+    headers: {
+      Accept: 'application/json'
+    }
+  })
+
+  return normalizeSystemSslPayload(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
+}
+
 async function fetchSystemFlags (fetchImpl, fallbackMessage = 'System flags response is invalid') {
   const response = await fetchImpl('/_api/system/flags', {
     credentials: 'same-origin',
@@ -220,6 +261,7 @@ module.exports = {
   fetchSystemSummary,
   fetchSystemInfo,
   fetchSystemTelemetry,
+  fetchSystemSsl,
   fetchSystemFlags,
   fetchSystemExtensions,
   updateSystemFlags

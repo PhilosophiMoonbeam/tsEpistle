@@ -60,6 +60,17 @@ const buildSystemTelemetry = () => ({
   telemetryClientId: _.get(WIKI.config, 'telemetry.clientId', null)
 })
 
+const buildSystemSslInfo = () => ({
+  httpPort: WIKI.servers.servers.http ? _.get(WIKI.servers.servers.http.address(), 'port', 0) : 0,
+  httpRedirection: _.get(WIKI.config, 'server.sslRedir', false),
+  httpsPort: WIKI.servers.servers.https ? _.get(WIKI.servers.servers.https.address(), 'port', 0) : 0,
+  sslDomain: WIKI.config.ssl.enabled && WIKI.config.ssl.provider === 'letsencrypt' ? WIKI.config.ssl.domain : null,
+  sslExpirationDate: WIKI.config.ssl.enabled && WIKI.config.ssl.provider === 'letsencrypt' ? _.get(WIKI.config.letsencrypt, 'payload.expires', null) : null,
+  sslProvider: WIKI.config.ssl.enabled ? WIKI.config.ssl.provider : null,
+  sslStatus: 'OK',
+  sslSubscriberEmail: WIKI.config.ssl.enabled && WIKI.config.ssl.provider === 'letsencrypt' ? WIKI.config.ssl.subscriberEmail : null
+})
+
 const getSystemDbVersion = async () => {
   switch (WIKI.config.db.type) {
     case 'mariadb':
@@ -177,6 +188,14 @@ router.get('/telemetry', (req, res) => {
   }
 
   res.json(buildSystemTelemetry())
+})
+
+router.get('/ssl', (req, res) => {
+  if (!requireSystemAccess(req, res)) {
+    return
+  }
+
+  res.json(buildSystemSslInfo())
 })
 
 router.post('/flags', async (req, res, next) => {

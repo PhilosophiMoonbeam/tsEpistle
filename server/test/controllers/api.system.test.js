@@ -44,10 +44,18 @@ describe('controllers/api system endpoints', () => {
         checkAccess: jest.fn()
       },
       config: {
+        server: {
+          sslRedir: false
+        },
         db: {
           type: 'postgres',
           host: 'postgres.example.com'
         },
+        ssl: {
+          enabled: false,
+          provider: null
+        },
+        letsencrypt: {},
         flags: {
           alpha: true,
           beta: false
@@ -146,6 +154,7 @@ describe('controllers/api system endpoints', () => {
       flags: express.__router.get.mock.calls.find(([path]) => path === '/flags')[1],
       extensions: express.__router.get.mock.calls.find(([path]) => path === '/extensions')[1],
       telemetry: express.__router.get.mock.calls.find(([path]) => path === '/telemetry')[1],
+      ssl: express.__router.get.mock.calls.find(([path]) => path === '/ssl')[1],
       saveFlags: express.__router.post.mock.calls.find(([path]) => path === '/flags')[1],
       checkForUpdate: express.__router.post.mock.calls.find(([path]) => path === '/check-for-update')[1]
     }
@@ -159,13 +168,14 @@ describe('controllers/api system endpoints', () => {
     expect(typeof handlers.flags).toBe('function')
     expect(typeof handlers.extensions).toBe('function')
     expect(typeof handlers.telemetry).toBe('function')
+    expect(typeof handlers.ssl).toBe('function')
     expect(typeof handlers.saveFlags).toBe('function')
     expect(typeof handlers.checkForUpdate).toBe('function')
   })
 
   it('returns 403 for unauthorized system requests', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(false)
-    const { info, summary, flags, extensions, telemetry, saveFlags, checkForUpdate } = loadHandlers()
+    const { info, summary, flags, extensions, telemetry, ssl, saveFlags, checkForUpdate } = loadHandlers()
     const req = { user: { permissions: [] }, get: jest.fn() }
     const res = { sendStatus: jest.fn(), json: jest.fn() }
 
@@ -174,10 +184,11 @@ describe('controllers/api system endpoints', () => {
     await flags(req, res)
     await extensions(req, res)
     await telemetry(req, res)
+    await ssl(req, res)
     await saveFlags(req, res)
     await checkForUpdate(req, res)
 
-    expect(res.sendStatus).toHaveBeenCalledTimes(7)
+    expect(res.sendStatus).toHaveBeenCalledTimes(8)
     expect(res.sendStatus).toHaveBeenNthCalledWith(1, 403)
     expect(res.sendStatus).toHaveBeenNthCalledWith(2, 403)
     expect(res.sendStatus).toHaveBeenNthCalledWith(3, 403)
@@ -185,6 +196,7 @@ describe('controllers/api system endpoints', () => {
     expect(res.sendStatus).toHaveBeenNthCalledWith(5, 403)
     expect(res.sendStatus).toHaveBeenNthCalledWith(6, 403)
     expect(res.sendStatus).toHaveBeenNthCalledWith(7, 403)
+    expect(res.sendStatus).toHaveBeenNthCalledWith(8, 403)
     expect(res.json).not.toHaveBeenCalled()
   })
 
@@ -311,6 +323,114 @@ describe('controllers/api system endpoints', () => {
     expect(res.json).toHaveBeenCalledWith({
       telemetry: true,
       telemetryClientId: null
+    })
+  })
+
+  it('returns SSL status JSON for authorized letsencrypt requests', () => {
+    global.WIKI.auth.checkAccess.mockReturnValue(true)
+    global.WIKI.config.server.sslRedir = true
+    global.WIKI.config.ssl = {
+      enabled: true,
+      provider: 'letsencrypt',
+      domain: 'docs.example.test',
+      subscriberEmail: 'ops@example.test',
+      internalField: 'must-not-return'
+    }
+    global.WIKI.config.letsencrypt = {
+      payload: {
+        expires: '2026-06-01T00:00:00.000Z',
+        internalField: 'must-not-return'
+      }
+    }
+    const { ssl } = loadHandlers()
+    const req = { user: { permissions: ['manage:system'] } }
+    const res = { json: jest.fn(), sendStatus: jest.fn() }
+
+    ssl(req, res)
+
+    expect(res.sendStatus).not.toHaveBeenCalled()
+    expect(res.json).toHaveBeenCalledWith({
+      httpPort: 3000,
+      httpRedirection: true,
+      httpsPort: 3443,
+      sslDomain: 'docs.example.test',
+      sslExpirationDate: '2026-06-01T00:00:00.000Z',
+      sslProvider: 'letsencrypt',
+      sslStatus: 'OK',
+      sslSubscriberEmail: 'ops@example.test'
+    })
+    expect(Object.keys(res.json.mock.calls[0][0]).sort()).toEqual([
+      'httpPort',
+      'httpRedirection',
+      'httpsPort',
+      'sslDomain',
+      'sslExpirationDate',
+      'sslProvider',
+      'sslStatus',
+      'sslSubscriberEmail'
+    ].sort())
+  })
+
+  it('returns null SSL fields and zero ports when SSL and servers are disabled', () => {
+    global.WIKI.auth.checkAccess.mockReturnValue(true)
+    global.WIKI.config.ssl = {
+      enabled: false,
+      provider: 'custom',
+      domain: 'docs.example.test',
+      subscriberEmail: 'ops@example.test'
+    }
+    global.WIKI.config.letsencrypt = {
+      payload: {
+        expires: '2026-06-01T00:00:00.000Z'
+      }
+    }
+    global.WIKI.servers.servers = {}
+    const { ssl } = loadHandlers()
+    const req = { user: { permissions: ['manage:system'] } }
+    const res = { json: jest.fn(), sendStatus: jest.fn() }
+
+    ssl(req, res)
+
+    expect(res.json).toHaveBeenCalledWith({
+      httpPort: 0,
+      httpRedirection: false,
+      httpsPort: 0,
+      sslDomain: null,
+      sslExpirationDate: null,
+      sslProvider: null,
+      sslStatus: 'OK',
+      sslSubscriberEmail: null
+    })
+  })
+
+  it('returns custom SSL provider without letsencrypt-only fields', () => {
+    global.WIKI.auth.checkAccess.mockReturnValue(true)
+    global.WIKI.config.ssl = {
+      enabled: true,
+      provider: 'custom',
+      domain: 'docs.example.test',
+      subscriberEmail: 'ops@example.test'
+    }
+    global.WIKI.config.letsencrypt = {
+      payload: {
+        expires: '2026-06-01T00:00:00.000Z'
+      }
+    }
+    const { ssl } = loadHandlers()
+    const req = { user: { permissions: ['manage:system'] } }
+    const res = { json: jest.fn(), sendStatus: jest.fn() }
+
+    ssl(req, res)
+
+    expect(res.json).toHaveBeenCalledWith({
+      httpPort: 3000,
+      httpRedirection: false,
+      httpsPort: 3443,
+      sslDomain: null,
+      sslExpirationDate: null,
+      sslProvider: 'custom',
+      sslStatus: 'OK',
+      sslSubscriberEmail: null
     })
   })
 

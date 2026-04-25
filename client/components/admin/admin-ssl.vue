@@ -127,6 +127,18 @@ import _ from 'lodash'
 import gql from 'graphql-tag'
 
 import { SemipolarSpinner } from 'epic-spinners'
+import { fetchSystemSsl } from '../../helpers/system-api'
+
+const makeDefaultSslInfo = () => ({
+  sslDomain: null,
+  sslProvider: null,
+  sslSubscriberEmail: null,
+  sslExpirationDate: null,
+  sslStatus: '',
+  httpPort: 0,
+  httpRedirection: false,
+  httpsPort: 0
+})
 
 export default {
   components: {
@@ -136,17 +148,11 @@ export default {
     return {
       loadingRenew: false,
       loadingRedir: false,
-      info: {
-        sslDomain: '',
-        sslProvider: '',
-        sslSubscriberEmail: '',
-        sslExpirationDate: false,
-        sslStatus: '',
-        httpPort: 0,
-        httpRedirection: false,
-        httpsPort: 0
-      }
+      info: makeDefaultSslInfo()
     }
+  },
+  created () {
+    this.loadInfo().catch(() => {})
   },
   computed: {
     providerTitle () {
@@ -161,6 +167,20 @@ export default {
     }
   },
   methods: {
+    async loadInfo ({ notifyError = true } = {}) {
+      this.$store.commit('loadingStart', 'admin-ssl-refresh')
+      try {
+        this.info = await fetchSystemSsl(window.fetch.bind(window), 'SSL status response is invalid')
+      } catch (err) {
+        this.info = makeDefaultSslInfo()
+        if (notifyError) {
+          this.$store.commit('pushGraphError', err)
+        }
+        throw err
+      } finally {
+        this.$store.commit('loadingStop', 'admin-ssl-refresh')
+      }
+    },
     async toggleRedir () {
       this.loadingRedir = true
       try {
@@ -234,31 +254,6 @@ export default {
         this.$store.commit('pushGraphError', err)
       }
       this.loadingRenew = false
-    }
-  },
-  apollo: {
-    info: {
-      query: gql`
-        {
-          system {
-            info {
-              httpPort
-              httpRedirection
-              httpsPort
-              sslDomain
-              sslExpirationDate
-              sslProvider
-              sslStatus
-              sslSubscriberEmail
-            }
-          }
-        }
-      `,
-      fetchPolicy: 'network-only',
-      update: (data) => _.cloneDeep(data.system.info),
-      watchLoading (isLoading) {
-        this.$store.commit(`loading${isLoading ? 'Start' : 'Stop'}`, 'admin-ssl-refresh')
-      }
     }
   }
 }
