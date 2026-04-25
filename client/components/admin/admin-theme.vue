@@ -132,8 +132,8 @@
 import _ from 'lodash'
 import { sync } from 'vuex-pathify'
 
-import themeConfigQuery from 'gql/admin/theme/theme-query-config.gql'
 import themeSaveMutation from 'gql/admin/theme/theme-mutation-save.gql'
+import { fetchThemeConfig } from '../../helpers/theming-api'
 
 export default {
   data() {
@@ -197,12 +197,24 @@ export default {
   },
   mounted() {
     this.darkModeInitial = this.darkMode
+    this.loadConfig().catch(() => {})
   },
   beforeDestroy() {
     this.darkMode = this.darkModeInitial
     this.$vuetify.theme.dark = this.darkModeInitial
   },
   methods: {
+    async loadConfig () {
+      this.$store.commit(`loadingStart`, 'admin-theme-refresh')
+      try {
+        this.config = await fetchThemeConfig(window.fetch.bind(window), 'Theme config response is invalid')
+      } catch (err) {
+        this.$store.commit('pushGraphError', err)
+        throw err
+      } finally {
+        this.$store.commit(`loadingStop`, 'admin-theme-refresh')
+      }
+    },
     async save () {
       this.loading = true
       this.$store.commit(`loadingStart`, 'admin-theme-save')
@@ -235,16 +247,6 @@ export default {
       }
       this.$store.commit(`loadingStop`, 'admin-theme-save')
       this.loading = false
-    }
-  },
-  apollo: {
-    config: {
-      query: themeConfigQuery,
-      fetchPolicy: 'network-only',
-      update: (data) => data.theming.config,
-      watchLoading (isLoading) {
-        this.$store.commit(`loading${isLoading ? 'Start' : 'Stop'}`, 'admin-theme-refresh')
-      }
     }
   }
 }
