@@ -60,6 +60,13 @@ const buildSystemTelemetry = () => ({
   telemetryClientId: _.get(WIKI.config, 'telemetry.clientId', null)
 })
 
+const buildSystemExportStatus = () => ({
+  status: _.get(WIKI.system, 'exportStatus.status', 'notrunning'),
+  progress: Math.ceil(_.get(WIKI.system, 'exportStatus.progress', 0)),
+  message: _.get(WIKI.system, 'exportStatus.message', ''),
+  startedAt: _.get(WIKI.system, 'exportStatus.startedAt', null)
+})
+
 const buildSystemHost = () => ({
   host: WIKI.config.host
 })
@@ -200,6 +207,17 @@ router.get('/telemetry', (req, res) => {
   }
 
   res.json(buildSystemTelemetry())
+})
+
+router.get('/export-status', (req, res) => {
+  if (!requireSystemAccess(req, res)) {
+    return
+  }
+
+  if (typeof res.set === 'function') {
+    res.set('Cache-Control', 'no-store')
+  }
+  res.json(buildSystemExportStatus())
 })
 
 router.get('/ssl', (req, res) => {

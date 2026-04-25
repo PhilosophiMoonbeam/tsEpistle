@@ -110,6 +110,31 @@ function normalizeSystemTelemetryPayload (payload, fallbackMessage) {
   }
 }
 
+function normalizeSystemExportStatusPayload (payload, fallbackMessage) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    throw new Error(fallbackMessage)
+  }
+  if (typeof payload.status !== 'string') {
+    throw new Error(fallbackMessage)
+  }
+  if (!Number.isFinite(payload.progress)) {
+    throw new Error(fallbackMessage)
+  }
+  if (typeof payload.message !== 'string' && payload.message !== null) {
+    throw new Error(fallbackMessage)
+  }
+  if (typeof payload.startedAt !== 'string' && payload.startedAt !== null) {
+    throw new Error(fallbackMessage)
+  }
+
+  return {
+    status: payload.status,
+    progress: payload.progress,
+    message: payload.message,
+    startedAt: payload.startedAt
+  }
+}
+
 function normalizeSystemHostPayload (payload, fallbackMessage) {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
     throw new Error(fallbackMessage)
@@ -216,6 +241,17 @@ async function fetchSystemTelemetry (fetchImpl, fallbackMessage = 'System teleme
   return normalizeSystemTelemetryPayload(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
 }
 
+async function fetchSystemExportStatus (fetchImpl, fallbackMessage = 'Export status response is invalid') {
+  const response = await fetchImpl('/_api/system/export-status', {
+    credentials: 'same-origin',
+    headers: {
+      Accept: 'application/json'
+    }
+  })
+
+  return normalizeSystemExportStatusPayload(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
+}
+
 async function fetchSystemHost (fetchImpl, fallbackMessage = 'Site host response is invalid') {
   const response = await fetchImpl('/_api/system/host', {
     credentials: 'same-origin',
@@ -285,6 +321,7 @@ module.exports = {
   fetchSystemSummary,
   fetchSystemInfo,
   fetchSystemTelemetry,
+  fetchSystemExportStatus,
   fetchSystemHost,
   fetchSystemSsl,
   fetchSystemFlags,

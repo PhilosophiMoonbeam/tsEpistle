@@ -1,4 +1,4 @@
-const { fetchSystemSummary, fetchSystemInfo, fetchSystemTelemetry, fetchSystemHost, fetchSystemSsl, fetchSystemFlags, fetchSystemExtensions, updateSystemFlags } = require('./system-api')
+const { fetchSystemSummary, fetchSystemInfo, fetchSystemTelemetry, fetchSystemExportStatus, fetchSystemHost, fetchSystemSsl, fetchSystemFlags, fetchSystemExtensions, updateSystemFlags } = require('./system-api')
 
 function createJsonResponse (payload, ok = true) {
   return {
@@ -157,6 +157,98 @@ describe('system api helper', () => {
     })
 
     await expect(fetchSystemTelemetry(fetchImpl, 'Bad telemetry load')).rejects.toThrow('manage:system is required')
+  })
+
+  test('fetches and validates export status payloads', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+      status: 'running',
+      progress: 42,
+      message: 'Export is running',
+      startedAt: '2026-04-25T12:00:00.000Z'
+    }))
+
+    await expect(fetchSystemExportStatus(fetchImpl)).resolves.toEqual({
+      status: 'running',
+      progress: 42,
+      message: 'Export is running',
+      startedAt: '2026-04-25T12:00:00.000Z'
+    })
+    expect(fetchImpl).toHaveBeenCalledWith('/_api/system/export-status', {
+      credentials: 'same-origin',
+      headers: {
+        Accept: 'application/json'
+      }
+    })
+  })
+
+  test('strips extra fields from export status payloads', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+      status: 'success',
+      progress: 100,
+      message: null,
+      startedAt: null,
+      archivePath: '/private/export.tar.gz',
+      entities: ['pages'],
+      privateNote: 'must not be returned by helper'
+    }))
+
+    await expect(fetchSystemExportStatus(fetchImpl)).resolves.toEqual({
+      status: 'success',
+      progress: 100,
+      message: null,
+      startedAt: null
+    })
+  })
+
+  test.each([
+    ['missing root', null],
+    ['array root', []]
+  ])('rejects malformed export status roots: %s', async (label, payload) => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse(payload))
+
+    await expect(fetchSystemExportStatus(fetchImpl, 'Bad export status')).rejects.toThrow('Bad export status')
+  })
+
+  test.each([
+    ['status', null],
+    ['progress', '42'],
+    ['progress', Infinity],
+    ['message', false],
+    ['startedAt', 123]
+  ])('rejects malformed export status field %s', async (field, value) => {
+    const payload = {
+      status: 'running',
+      progress: 42,
+      message: 'Export is running',
+      startedAt: '2026-04-25T12:00:00.000Z'
+    }
+    payload[field] = value
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse(payload))
+
+    await expect(fetchSystemExportStatus(fetchImpl, 'Bad export status')).rejects.toThrow('Bad export status')
+  })
+
+  test('surfaces API error messages for failed export status loads', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue({
+      ok: false,
+      headers: {
+        get: () => 'application/json; charset=utf-8'
+      },
+      json: async () => ({ error: 'manage:system is required' })
+    })
+
+    await expect(fetchSystemExportStatus(fetchImpl, 'Bad export status load')).rejects.toThrow('manage:system is required')
+  })
+
+  test('rejects non-JSON successful export status responses', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue({
+      ok: true,
+      headers: {
+        get: () => 'text/plain'
+      }
+    })
+
+    await expect(fetchSystemExportStatus(fetchImpl, 'Bad export status load')).rejects.toThrow('Bad export status load')
   })
 
   test('fetches and validates system host', async () => {

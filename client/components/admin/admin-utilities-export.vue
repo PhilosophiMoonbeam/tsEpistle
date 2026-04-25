@@ -101,6 +101,8 @@ import { SelfBuildingSquareSpinner } from 'epic-spinners'
 import gql from 'graphql-tag'
 import _get from 'lodash/get'
 
+import { fetchSystemExportStatus } from '../../helpers/system-api'
+
 export default {
   components: {
     SelfBuildingSquareSpinner
@@ -165,46 +167,27 @@ export default {
   methods: {
     async checkProgress () {
       try {
-        const respStatus = await this.$apollo.query({
-          query: gql`
-            {
-              system {
-                exportStatus {
-                  status
-                  progress
-                  message
-                  startedAt
-                }
-              }
-            }
-          `,
-          fetchPolicy: 'network-only'
-        })
-        const respStatusObj = _get(respStatus, 'data.system.exportStatus', {})
-        if (!respStatusObj) {
-          throw new Error('An unexpected error occured.')
-        } else {
-          switch (respStatusObj.status) {
-            case 'error': {
-              throw new Error(respStatusObj.message || 'An unexpected error occured.')
-            }
-            case 'running': {
-              this.progress = respStatusObj.progress || 0
-              window.requestAnimationFrame(() => {
-                setTimeout(() => {
-                  this.checkProgress()
-                }, 5000)
-              })
-              break
-            }
-            case 'success': {
-              this.isLoading = false
-              this.isSuccess = true
-              break
-            }
-            default: {
-              throw new Error('Invalid export status.')
-            }
+        const respStatusObj = await fetchSystemExportStatus(window.fetch.bind(window), 'Export status response is invalid')
+        switch (respStatusObj.status) {
+          case 'error': {
+            throw new Error(respStatusObj.message || 'An unexpected error occured.')
+          }
+          case 'running': {
+            this.progress = respStatusObj.progress || 0
+            window.requestAnimationFrame(() => {
+              setTimeout(() => {
+                this.checkProgress()
+              }, 5000)
+            })
+            break
+          }
+          case 'success': {
+            this.isLoading = false
+            this.isSuccess = true
+            break
+          }
+          default: {
+            throw new Error('Invalid export status.')
           }
         }
       } catch (err) {

@@ -128,6 +128,12 @@ describe('controllers/api system endpoints', () => {
         updates: {
           version: '2.1.0',
           releaseDate: '2026-01-01T00:00:00.000Z'
+        },
+        exportStatus: {
+          status: 'idle',
+          progress: 0,
+          message: null,
+          startedAt: null
         }
       },
       telemetry: {
@@ -156,6 +162,7 @@ describe('controllers/api system endpoints', () => {
       host: express.__router.get.mock.calls.find(([path]) => path === '/host')[1],
       extensions: express.__router.get.mock.calls.find(([path]) => path === '/extensions')[1],
       telemetry: express.__router.get.mock.calls.find(([path]) => path === '/telemetry')[1],
+      exportStatus: express.__router.get.mock.calls.find(([path]) => path === '/export-status')[1],
       ssl: express.__router.get.mock.calls.find(([path]) => path === '/ssl')[1],
       saveFlags: express.__router.post.mock.calls.find(([path]) => path === '/flags')[1],
       checkForUpdate: express.__router.post.mock.calls.find(([path]) => path === '/check-for-update')[1]
@@ -171,6 +178,7 @@ describe('controllers/api system endpoints', () => {
     expect(typeof handlers.host).toBe('function')
     expect(typeof handlers.extensions).toBe('function')
     expect(typeof handlers.telemetry).toBe('function')
+    expect(typeof handlers.exportStatus).toBe('function')
     expect(typeof handlers.ssl).toBe('function')
     expect(typeof handlers.saveFlags).toBe('function')
     expect(typeof handlers.checkForUpdate).toBe('function')
@@ -178,7 +186,7 @@ describe('controllers/api system endpoints', () => {
 
   it('returns 403 for unauthorized system requests', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(false)
-    const { info, summary, flags, host, extensions, telemetry, ssl, saveFlags, checkForUpdate } = loadHandlers()
+    const { info, summary, flags, host, extensions, telemetry, exportStatus, ssl, saveFlags, checkForUpdate } = loadHandlers()
     const req = { user: { permissions: [] }, get: jest.fn() }
     const res = { sendStatus: jest.fn(), json: jest.fn() }
 
@@ -188,11 +196,12 @@ describe('controllers/api system endpoints', () => {
     await host(req, res)
     await extensions(req, res)
     await telemetry(req, res)
+    await exportStatus(req, res)
     await ssl(req, res)
     await saveFlags(req, res)
     await checkForUpdate(req, res)
 
-    expect(res.sendStatus).toHaveBeenCalledTimes(9)
+    expect(res.sendStatus).toHaveBeenCalledTimes(10)
     expect(res.sendStatus).toHaveBeenNthCalledWith(1, 403)
     expect(res.sendStatus).toHaveBeenNthCalledWith(2, 403)
     expect(res.sendStatus).toHaveBeenNthCalledWith(3, 403)
@@ -202,6 +211,7 @@ describe('controllers/api system endpoints', () => {
     expect(res.sendStatus).toHaveBeenNthCalledWith(7, 403)
     expect(res.sendStatus).toHaveBeenNthCalledWith(8, 403)
     expect(res.sendStatus).toHaveBeenNthCalledWith(9, 403)
+    expect(res.sendStatus).toHaveBeenNthCalledWith(10, 403)
     expect(res.json).not.toHaveBeenCalled()
   })
 
@@ -344,6 +354,61 @@ describe('controllers/api system endpoints', () => {
     expect(res.json).toHaveBeenCalledWith({
       telemetry: true,
       telemetryClientId: null
+    })
+  })
+
+  it('returns the safe export status JSON for authorized requests', () => {
+    global.WIKI.auth.checkAccess.mockReturnValue(true)
+    global.WIKI.system.exportStatus = {
+      status: 'running',
+      progress: 42.1,
+      message: 'Export is running',
+      startedAt: '2026-04-25T12:00:00.000Z',
+      archivePath: '/private/export.tar.gz',
+      entities: ['pages'],
+      internalField: 'must-not-return'
+    }
+    const { exportStatus } = loadHandlers()
+    const req = { user: { permissions: ['manage:system'] } }
+    const res = { json: jest.fn(), sendStatus: jest.fn(), set: jest.fn() }
+
+    exportStatus(req, res)
+
+    expect(res.sendStatus).not.toHaveBeenCalled()
+    expect(res.set).toHaveBeenCalledWith('Cache-Control', 'no-store')
+    expect(res.json).toHaveBeenCalledWith({
+      status: 'running',
+      progress: 43,
+      message: 'Export is running',
+      startedAt: '2026-04-25T12:00:00.000Z'
+    })
+    expect(Object.keys(res.json.mock.calls[0][0]).sort()).toEqual([
+      'message',
+      'progress',
+      'startedAt',
+      'status'
+    ].sort())
+  })
+
+  it('returns the default not-running export status when optional fields are absent', () => {
+    global.WIKI.auth.checkAccess.mockReturnValue(true)
+    global.WIKI.system.exportStatus = {
+      status: 'notrunning',
+      progress: 0,
+      message: '',
+      updatedAt: null
+    }
+    const { exportStatus } = loadHandlers()
+    const req = { user: { permissions: ['manage:system'] } }
+    const res = { json: jest.fn(), sendStatus: jest.fn(), set: jest.fn() }
+
+    exportStatus(req, res)
+
+    expect(res.json).toHaveBeenCalledWith({
+      status: 'notrunning',
+      progress: 0,
+      message: '',
+      startedAt: null
     })
   })
 
