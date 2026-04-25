@@ -1,0 +1,202 @@
+const { fetchCommentProviders } = require('./comments-api')
+
+function createJsonResponse (payload, ok = true) {
+  return {
+    ok,
+    headers: {
+      get: () => 'application/json; charset=utf-8'
+    },
+    json: async () => payload
+  }
+}
+
+describe('comments api helper', () => {
+  test('requests comment providers with same-origin JSON options', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse([]))
+
+    await expect(fetchCommentProviders(fetchImpl)).resolves.toEqual([])
+
+    expect(fetchImpl).toHaveBeenCalledWith('/_api/comments/providers', {
+      credentials: 'same-origin',
+      headers: {
+        Accept: 'application/json'
+      }
+    })
+  })
+
+  test('validates, sanitizes, parses config JSON, and sorts by parsed value order', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse([
+      {
+        isEnabled: true,
+        key: 'default',
+        title: 'Default Comments',
+        description: 'Built-in comments provider.',
+        logo: '/_assets/comments/default.svg',
+        website: 'https://example.invalid/comments/default',
+        isAvailable: true,
+        config: [
+          {
+            key: 'displayMode',
+            value: JSON.stringify({ type: 'string', title: 'Display Mode', order: 2, value: 'compact' })
+          },
+          {
+            key: 'requireApproval',
+            value: JSON.stringify({ type: 'boolean', title: 'Require Approval', order: 1, value: true })
+          },
+          {
+            key: 'label',
+            value: JSON.stringify({ type: 'string', title: 'Label', value: 'Public' })
+          }
+        ],
+        privateField: 'must-not-return'
+      }
+    ]))
+
+    await expect(fetchCommentProviders(fetchImpl)).resolves.toEqual([
+      {
+        isEnabled: true,
+        key: 'default',
+        title: 'Default Comments',
+        description: 'Built-in comments provider.',
+        logo: '/_assets/comments/default.svg',
+        website: 'https://example.invalid/comments/default',
+        isAvailable: true,
+        config: [
+          {
+            key: 'requireApproval',
+            value: { type: 'boolean', title: 'Require Approval', order: 1, value: true }
+          },
+          {
+            key: 'displayMode',
+            value: { type: 'string', title: 'Display Mode', order: 2, value: 'compact' }
+          },
+          {
+            key: 'label',
+            value: { type: 'string', title: 'Label', value: 'Public' }
+          }
+        ]
+      }
+    ])
+  })
+
+  test('strips extra provider and config fields', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse([
+      {
+        isEnabled: false,
+        key: 'external',
+        title: 'External Comments',
+        description: 'External comments provider.',
+        logo: '/_assets/comments/external.svg',
+        website: 'https://example.invalid/comments/external',
+        isAvailable: false,
+        privateField: 'must-not-return',
+        props: { raw: true },
+        config: [
+          {
+            key: 'label',
+            value: JSON.stringify({ type: 'string', title: 'Label', order: 1, value: 'Public' }),
+            rawValue: 'must-not-return'
+          }
+        ]
+      }
+    ]))
+
+    await expect(fetchCommentProviders(fetchImpl)).resolves.toEqual([
+      {
+        isEnabled: false,
+        key: 'external',
+        title: 'External Comments',
+        description: 'External comments provider.',
+        logo: '/_assets/comments/external.svg',
+        website: 'https://example.invalid/comments/external',
+        isAvailable: false,
+        config: [
+          {
+            key: 'label',
+            value: { type: 'string', title: 'Label', order: 1, value: 'Public' }
+          }
+        ]
+      }
+    ])
+  })
+
+  test('rejects malformed root payloads', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ providers: [] }))
+
+    await expect(fetchCommentProviders(fetchImpl, 'Bad comments payload')).rejects.toThrow('Bad comments payload')
+  })
+
+  test('rejects malformed provider rows', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse([
+      {
+        isEnabled: 'yes',
+        key: 'default',
+        title: 'Default Comments',
+        description: 'Built-in comments provider.',
+        logo: '/_assets/comments/default.svg',
+        website: 'https://example.invalid/comments/default',
+        isAvailable: true,
+        config: []
+      }
+    ]))
+
+    await expect(fetchCommentProviders(fetchImpl, 'Bad comments row')).rejects.toThrow('Bad comments row')
+  })
+
+  test('rejects malformed config rows', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse([
+      {
+        isEnabled: true,
+        key: 'default',
+        title: 'Default Comments',
+        description: 'Built-in comments provider.',
+        logo: '/_assets/comments/default.svg',
+        website: 'https://example.invalid/comments/default',
+        isAvailable: true,
+        config: [{ key: 12, value: '{}' }]
+      }
+    ]))
+
+    await expect(fetchCommentProviders(fetchImpl, 'Bad comments config')).rejects.toThrow('Bad comments config')
+  })
+
+  test('rejects malformed config JSON', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse([
+      {
+        isEnabled: true,
+        key: 'default',
+        title: 'Default Comments',
+        description: 'Built-in comments provider.',
+        logo: '/_assets/comments/default.svg',
+        website: 'https://example.invalid/comments/default',
+        isAvailable: true,
+        config: [{ key: 'label', value: '{not-json' }]
+      }
+    ]))
+
+    await expect(fetchCommentProviders(fetchImpl, 'Bad comments JSON')).rejects.toThrow('Bad comments JSON')
+  })
+
+  test('propagates API JSON errors', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue({
+      ok: false,
+      headers: {
+        get: () => 'application/json; charset=utf-8'
+      },
+      json: async () => ({ error: 'manage:system is required' })
+    })
+
+    await expect(fetchCommentProviders(fetchImpl, 'Bad comments load')).rejects.toThrow('manage:system is required')
+  })
+
+  test('rejects non-JSON successful responses', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue({
+      ok: true,
+      headers: {
+        get: () => 'text/plain'
+      }
+    })
+
+    await expect(fetchCommentProviders(fetchImpl, 'Bad comments content type')).rejects.toThrow('Bad comments content type')
+  })
+})

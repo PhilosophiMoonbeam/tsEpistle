@@ -101,6 +101,7 @@
 <script>
 import _ from 'lodash'
 import gql from 'graphql-tag'
+import { fetchCommentProviders } from '../../helpers/comments-api'
 
 export default {
   data() {
@@ -118,9 +119,29 @@ export default {
       this.selectedProvider = _.get(_.find(this.providers, 'isEnabled'), 'key', 'db')
     }
   },
+  created() {
+    this.loadProviders().catch(() => {})
+  },
   methods: {
+    async loadProviders({ notifyError = true } = {}) {
+      this.$store.commit(`loadingStart`, 'admin-comments-refresh')
+      try {
+        this.providers = await fetchCommentProviders(window.fetch.bind(window), 'Comment providers response is invalid')
+      } catch (err) {
+        if (notifyError) {
+          this.$store.commit('showNotification', {
+            message: err.message || this.$t('common:error.unexpected'),
+            style: 'red',
+            icon: 'alert'
+          })
+        }
+        throw err
+      } finally {
+        this.$store.commit(`loadingStop`, 'admin-comments-refresh')
+      }
+    },
     async refresh() {
-      await this.$apollo.queries.providers.refetch()
+      await this.loadProviders()
       this.$store.commit('showNotification', {
         message: this.$t('admin:comments.listRefreshSuccess'),
         style: 'success',
@@ -154,6 +175,7 @@ export default {
           }
         })
         if (_.get(resp, 'data.comments.updateProviders.responseResult.succeeded', false)) {
+          await this.loadProviders({ notifyError: false })
           this.$store.commit('showNotification', {
             message: this.$t('admin:comments.configSaveSuccess'),
             style: 'success',
@@ -166,40 +188,6 @@ export default {
         this.$store.commit('pushGraphError', err)
       }
       this.$store.commit(`loadingStop`, 'admin-comments-saveproviders')
-    }
-  },
-  apollo: {
-    providers: {
-      query: gql`
-        query {
-          comments {
-            providers {
-              isEnabled
-              key
-              title
-              description
-              logo
-              website
-              isAvailable
-              config {
-                key
-                value
-              }
-            }
-          }
-        }
-      `,
-      fetchPolicy: 'network-only',
-      update: (data) => _.cloneDeep(data.comments.providers).map(str => ({
-        ...str,
-        config: _.sortBy(str.config.map(cfg => ({
-          ...cfg,
-          value: JSON.parse(cfg.value)
-        })), [t => t.value.order])
-      })),
-      watchLoading (isLoading) {
-        this.$store.commit(`loading${isLoading ? 'Start' : 'Stop'}`, 'admin-comments-refresh')
-      }
     }
   }
 }
