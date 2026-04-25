@@ -252,7 +252,7 @@
     "codemirror": "5.58.2",
     "codemirror-asciidoc": "1.0.4",
     "copy-webpack-plugin": "6.2.1",
-    "core-js": "3.6.5",
+    "core-js": "3.49.0",
     "cross-env": "10.1.0",
     "css-loader": "4.3.0",
     "cssnano": "4.1.10",
