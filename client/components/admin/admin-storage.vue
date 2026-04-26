@@ -270,7 +270,7 @@ export default {
   methods: {
     async refresh() {
       await this.$apollo.queries.targets.refetch()
-      this.$store.commit('showNotification', {
+      showNotification(this.$store, {
         message: 'List of storage targets has been refreshed.',
         style: 'success',
         icon: 'cached'
