@@ -37,6 +37,7 @@
 import _ from 'lodash'
 import * as d3 from 'd3'
 import gql from 'graphql-tag'
+import { setLoading } from '../../helpers/root-ui-store'
 
 /* global siteConfig, siteLangs */
 
@@ -384,7 +385,7 @@ export default {
       fetchPolicy: 'network-only',
       update: (data) => data.pages.links,
       watchLoading (isLoading) {
-        this.$store.commit(`loading${isLoading ? 'Start' : 'Stop'}`, 'admin-pages-refresh')
+        setLoading(this.$store, 'admin-pages-refresh', isLoading)
       }
     }
   }
