@@ -95,6 +95,18 @@ describe('markdown core renderer plugin behavior', () => {
         { key: 'markdownSupsub', config: { subEnabled: true, supEnabled: false } }
       ]
     })).resolves.toBe('<p>H<sub>2</sub>O and x^2^</p>\n')
+
+    await expect(renderMarkdown('H~2~O and x^2^', {
+      children: [
+        { key: 'markdownSupsub', config: { subEnabled: false, supEnabled: true } }
+      ]
+    })).resolves.toBe('<p>H~2~O and x<sup>2</sup></p>\n')
+
+    await expect(renderMarkdown('H~2~O and x^2^', {
+      children: [
+        { key: 'markdownSupsub', config: { subEnabled: false, supEnabled: false } }
+      ]
+    })).resolves.toBe('<p>H~2~O and x^2^</p>\n')
   })
 
   it('pins task list and image size plugin output', async () => {
