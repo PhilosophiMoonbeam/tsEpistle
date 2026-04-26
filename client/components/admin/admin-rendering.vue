@@ -140,6 +140,7 @@ import { StatusIndicator } from 'vue-status-indicator'
 
 import renderersSaveMutation from 'gql/admin/rendering/rendering-mutation-save-renderers.gql'
 import { fetchRenderingRenderers } from '../../helpers/rendering-api'
+import { loadingStart, loadingStop, showNotification } from '../../helpers/root-ui-store'
 
 export default {
   components: {
@@ -191,13 +192,13 @@ export default {
       return orderedCores
     },
     async loadRenderers ({ notifyError = true } = {}) {
-      this.$store.commit('loadingStart', 'admin-rendering-refresh')
+      loadingStart(this.$store, 'admin-rendering-refresh')
       try {
         const flatRenderers = await fetchRenderingRenderers(window.fetch.bind(window), 'Rendering renderers response is invalid')
         this.renderers = this.buildRendererTree(flatRenderers)
       } catch (err) {
         if (notifyError) {
-          this.$store.commit('showNotification', {
+          showNotification(this.$store, {
             message: err.message,
             style: 'red',
             icon: 'alert'
@@ -205,7 +206,7 @@ export default {
         }
         throw err
       } finally {
-        this.$store.commit('loadingStop', 'admin-rendering-refresh')
+        loadingStop(this.$store, 'admin-rendering-refresh')
       }
     },
     selectRenderer (key) {
@@ -217,14 +218,14 @@ export default {
     },
     async refresh () {
       await this.loadRenderers()
-      this.$store.commit('showNotification', {
+      showNotification(this.$store, {
         message: 'Rendering active configuration has been reloaded.',
         style: 'success',
         icon: 'cached'
       })
     },
     async save () {
-      this.$store.commit(`loadingStart`, 'admin-rendering-saverenderers')
+      loadingStart(this.$store, 'admin-rendering-saverenderers')
       try {
         await this.$apollo.mutate({
           mutation: renderersSaveMutation,
@@ -240,13 +241,13 @@ export default {
           }
         })
         await this.loadRenderers({ notifyError: false })
-        this.$store.commit('showNotification', {
+        showNotification(this.$store, {
           message: 'Rendering configuration saved successfully.',
           style: 'success',
           icon: 'check'
         })
       } finally {
-        this.$store.commit(`loadingStop`, 'admin-rendering-saverenderers')
+        loadingStop(this.$store, 'admin-rendering-saverenderers')
       }
     }
   }
