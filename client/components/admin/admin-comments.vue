@@ -102,6 +102,7 @@
 import _ from 'lodash'
 import gql from 'graphql-tag'
 import { fetchCommentProviders } from '../../helpers/comments-api'
+import { loadingStart, loadingStop, showNotification, pushGraphError } from '../../helpers/root-ui-store'
 
 export default {
   data() {
@@ -124,12 +125,12 @@ export default {
   },
   methods: {
     async loadProviders({ notifyError = true } = {}) {
-      this.$store.commit(`loadingStart`, 'admin-comments-refresh')
+      loadingStart(this.$store, 'admin-comments-refresh')
       try {
         this.providers = await fetchCommentProviders(window.fetch.bind(window), 'Comment providers response is invalid')
       } catch (err) {
         if (notifyError) {
-          this.$store.commit('showNotification', {
+          showNotification(this.$store, {
             message: err.message || this.$t('common:error.unexpected'),
             style: 'red',
             icon: 'alert'
@@ -137,19 +138,19 @@ export default {
         }
         throw err
       } finally {
-        this.$store.commit(`loadingStop`, 'admin-comments-refresh')
+        loadingStop(this.$store, 'admin-comments-refresh')
       }
     },
     async refresh() {
       await this.loadProviders()
-      this.$store.commit('showNotification', {
+      showNotification(this.$store, {
         message: this.$t('admin:comments.listRefreshSuccess'),
         style: 'success',
         icon: 'cached'
       })
     },
     async save() {
-      this.$store.commit(`loadingStart`, 'admin-comments-saveproviders')
+      loadingStart(this.$store, 'admin-comments-saveproviders')
       try {
         const resp = await this.$apollo.mutate({
           mutation: gql`
@@ -176,7 +177,7 @@ export default {
         })
         if (_.get(resp, 'data.comments.updateProviders.responseResult.succeeded', false)) {
           await this.loadProviders({ notifyError: false })
-          this.$store.commit('showNotification', {
+          showNotification(this.$store, {
             message: this.$t('admin:comments.configSaveSuccess'),
             style: 'success',
             icon: 'check'
@@ -185,9 +186,9 @@ export default {
           throw new Error(_.get(resp, 'data.comments.updateProviders.responseResult.message', this.$t('common:error.unexpected')))
         }
       } catch (err) {
-        this.$store.commit('pushGraphError', err)
+        pushGraphError(this.$store, err)
       }
-      this.$store.commit(`loadingStop`, 'admin-comments-saveproviders')
+      loadingStop(this.$store, 'admin-comments-saveproviders')
     }
   }
 }
