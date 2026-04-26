@@ -302,7 +302,7 @@ export default {
       return moment.duration(val).format('y [years], M [months], d [days], h [hours], m [minutes]')
     },
     async executeAction(targetKey, handler) {
-      this.$store.commit(`loadingStart`, 'admin-storage-executeaction')
+      loadingStart(this.$store, 'admin-storage-executeaction')
       this.runningAction = true
       this.runningActionHandler = handler
       try {
@@ -313,7 +313,7 @@ export default {
             handler
           }
         })
-        this.$store.commit('showNotification', {
+        showNotification(this.$store, {
           message: 'Action completed.',
           style: 'success',
           icon: 'check'
@@ -323,7 +323,7 @@ export default {
       }
       this.runningAction = false
       this.runningActionHandler = ''
-      this.$store.commit(`loadingStop`, 'admin-storage-executeaction')
+      loadingStop(this.$store, 'admin-storage-executeaction')
     }
   },
   apollo: {
