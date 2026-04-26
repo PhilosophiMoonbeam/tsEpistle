@@ -43,6 +43,68 @@ describe('markdown core renderer plugin behavior', () => {
     )
   })
 
+  it('pins attrs allowlist behavior on links and images', async () => {
+    await expect(renderMarkdown('[x](/url){#lnk .primary target=_blank rel=noopener onclick=alert(1)}\n\n![alt](img.png){#img .thumb target=_blank onload=alert(1) style="color:red"}')).resolves.toBe(
+      '<p><a href="/url" id="lnk" class="primary" target="_blank">x</a></p>\n' +
+      '<p><img src="img.png" alt="alt" id="img" class="thumb" target="_blank"></p>\n'
+    )
+  })
+
+  it('pins attrs behavior on lists, code, and malformed declarations', async () => {
+    await expect(renderMarkdown('- item {#li .entry target=_blank onclick=evil}\n- second\n{#lst .list onclick=evil}\n\n`code`{#c .kbd target=_blank onclick=evil}\n\nbad {.}\n\nbad {key}\n\nx {.a .b #one #two target=_blank onclick=evil}')).resolves.toBe(
+      '<ul id="lst" class="list">\n' +
+      '<li id="li" class="entry" target="_blank">item</li>\n' +
+      '<li>second</li>\n' +
+      '</ul>\n' +
+      '<p><code id="c" class="kbd" target="_blank">code</code></p>\n' +
+      '<p>bad {.}</p>\n' +
+      '<p>bad</p>\n' +
+      '<p class="a b" id="one" id="two" target="_blank">x</p>\n'
+    )
+  })
+
+  it('pins attrs behavior on tables, blockquotes, and horizontal rules', async () => {
+    await expect(renderMarkdown('A | B\n--|--\n1 {#cell .hot target=_blank onclick=evil colspan=2} | 2\n\n{#tbl .striped target=_blank onclick=evil border=1}\n\n> quote {#q .quote onclick=evil}\n\n--- {#hr .rule onclick=evil}')).resolves.toBe(
+      '<table id="tbl" class="striped" target="_blank">\n' +
+      '<thead>\n' +
+      '<tr>\n' +
+      '<th>A</th>\n' +
+      '<th>B</th>\n' +
+      '</tr>\n' +
+      '</thead>\n' +
+      '<tbody>\n' +
+      '<tr>\n' +
+      '<td id="cell" class="hot" target="_blank">1</td>\n' +
+      '<td>2</td>\n' +
+      '</tr>\n' +
+      '</tbody>\n' +
+      '</table>\n' +
+      '<blockquote id="q" class="quote">\n' +
+      '<p>quote</p>\n' +
+      '</blockquote>\n' +
+      '<hr id="hr" class="rule">\n'
+    )
+  })
+
+  it('pins attrs behavior around rejected javascript links and footnotes', async () => {
+    await expect(renderMarkdown('[x](javascript:alert(1)){target=_blank onclick=alert(1)}\n\n[x](https://example.test){target=_blank rel=noopener onclick=evil}\n\nRef[^1]{.ref onclick=evil}\n\n[^1]: foot body {.fnbody onclick=evil}', {
+      children: [
+        { key: 'markdownFootnotes', config: {} }
+      ]
+    })).resolves.toBe(
+      '<p target="_blank">[x](javascript:alert(1))</p>\n' +
+      '<p><a href="https://example.test" target="_blank">x</a></p>\n' +
+      '<p class="ref">Ref<sup class="footnote-ref"><a href="#fn1" id="fnref1">[1]</a></sup></p>\n' +
+      '<hr class="footnotes-sep">\n' +
+      '<section class="footnotes">\n' +
+      '<ol class="footnotes-list">\n' +
+      '<li id="fn1" class="footnote-item"><p>foot body <a href="#fnref1" class="footnote-backref">↩︎</a></p>\n' +
+      '</li>\n' +
+      '</ol>\n' +
+      '</section>\n'
+    )
+  })
+
   it('allows raw HTML only when allowHTML is enabled', async () => {
     await expect(renderMarkdown('<strong>ok</strong>', {
       config: {
