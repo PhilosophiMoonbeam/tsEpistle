@@ -16,7 +16,8 @@ router.post('/u', (req, res, next) => {
     limits: {
       fileSize: WIKI.config.uploads.maxFileSize,
       files: WIKI.config.uploads.maxFiles
-    }
+    },
+    defParamCharset: 'utf8'
   }).array('mediaUpload')(req, res, next)
 }, async (req, res, next) => {
   if (!_.some(req.user.permissions, pm => _.includes(['write:assets', 'manage:system'], pm))) {

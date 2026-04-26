@@ -134,7 +134,8 @@ describe('controllers/upload endpoints', () => {
       limits: {
         fileSize: 12345,
         files: 7
-      }
+      },
+      defParamCharset: 'utf8'
     })
     expect(multer.__array).toHaveBeenCalledWith('mediaUpload')
     expect(multer.__arrayHandler).toHaveBeenCalledWith(req, res, next)
