@@ -53,6 +53,7 @@ import _ from 'lodash'
 // import { get } from 'vuex-pathify'
 import mailConfigQuery from 'gql/admin/mail/mail-query-config.gql'
 import mailUpdateConfigMutation from 'gql/admin/mail/mail-mutation-save-config.gql'
+import { setLoading, showNotification, pushGraphError } from '../../helpers/root-ui-store'
 
 export default {
   data() {
@@ -85,16 +86,16 @@ export default {
             dkimPrivateKey: this.config.dkimPrivateKey || ''
           },
           watchLoading (isLoading) {
-            this.$store.commit(`loading${isLoading ? 'Start' : 'Stop'}`, 'admin-mail-update')
+            setLoading(this.$store, 'admin-mail-update', isLoading)
           }
         })
-        this.$store.commit('showNotification', {
+        showNotification(this.$store, {
           style: 'success',
           message: 'Configuration saved successfully.',
           icon: 'check'
         })
       } catch (err) {
-        this.$store.commit('pushGraphError', err)
+        pushGraphError(this.$store, err)
       }
     }
   },
@@ -104,7 +105,7 @@ export default {
       fetchPolicy: 'network-only',
       update: (data) => _.cloneDeep(data.mail.config),
       watchLoading (isLoading) {
-        this.$store.commit(`loading${isLoading ? 'Start' : 'Stop'}`, 'admin-mail-refresh')
+        setLoading(this.$store, 'admin-mail-refresh', isLoading)
       }
     }
   }
