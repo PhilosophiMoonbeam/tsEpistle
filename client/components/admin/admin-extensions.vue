@@ -38,6 +38,7 @@
 
 <script>
 import { fetchSystemExtensions } from '../../helpers/system-api'
+import { loadingStart, loadingStop, pushGraphError } from '../../helpers/root-ui-store'
 
 export default {
   data() {
@@ -47,16 +48,16 @@ export default {
   },
   methods: {
     async loadExtensions () {
-      this.$store.commit('loadingStart', 'admin-extensions-refresh')
+      loadingStart(this.$store, 'admin-extensions-refresh')
       try {
         this.extensions = await fetchSystemExtensions(window.fetch.bind(window), 'System extensions response is invalid')
         return true
       } catch (err) {
         this.extensions = []
-        this.$store.commit('pushGraphError', err)
+        pushGraphError(this.$store, err)
         return false
       } finally {
-        this.$store.commit('loadingStop', 'admin-extensions-refresh')
+        loadingStop(this.$store, 'admin-extensions-refresh')
       }
     },
     async save () {
