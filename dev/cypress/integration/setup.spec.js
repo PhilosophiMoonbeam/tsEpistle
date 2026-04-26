@@ -6,14 +6,23 @@ describe('Setup', () => {
     cy.contains('You are about to install Wiki.js').should('exist')
   })
   it('Enter administrator email address', () => {
-    cy.get('.v-input').contains('Administrator Email').next('input').click().type('test@example.com')
+    cy.get('.v-input').contains('Administrator Email').next('input').as('administratorEmail')
+    cy.get('@administratorEmail').click()
+    cy.get('@administratorEmail').type('test@example.com')
   })
   it('Enter a password', () => {
-    cy.get('.v-input').contains('Password').next('input').click().type('12345678')
-    cy.get('.v-input').contains('Confirm Password').next('input').click().type('12345678')
+    cy.get('.v-input').contains('Password').next('input').as('password')
+    cy.get('@password').click()
+    cy.get('@password').type('12345678')
+    cy.get('.v-input').contains('Confirm Password').next('input').as('confirmPassword')
+    cy.get('@confirmPassword').click()
+    cy.get('@confirmPassword').type('12345678')
   })
   it('Enter a Site URL', () => {
-    cy.get('.v-input').contains('Site URL').next('input').click().clear().type('http://localhost:3000')
+    cy.get('.v-input').contains('Site URL').next('input').as('siteUrl')
+    cy.get('@siteUrl').click()
+    cy.get('@siteUrl').clear()
+    cy.get('@siteUrl').type('http://localhost:3000')
   })
   it('Disable Telemetry', () => {
     cy.contains('Telemetry').next('.v-input').click()
