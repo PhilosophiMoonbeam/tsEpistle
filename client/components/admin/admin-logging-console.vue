@@ -27,6 +27,7 @@ import _ from 'lodash'
 // import * as fit from 'xterm/lib/addons/fit/fit'
 
 import livetrailSubscription from 'gql/admin/logging/logging-subscription-livetrail.gql'
+import { showNotification } from '../../helpers/root-ui-store'
 
 // Terminal.applyAddon(fit)
 
@@ -82,7 +83,7 @@ export default {
           self.term.writeln(`${item.level}: ${item.output}`)
         },
         error(error) {
-          self.$store.commit('showNotification', {
+          showNotification(self.$store, {
             style: 'red',
             message: error.message,
             icon: 'warning'
