@@ -33,6 +33,7 @@
 
 <script>
 import VueRouter from 'vue-router'
+import { loadingStart, loadingStop } from '../helpers/root-ui-store'
 
 /* global WIKI */
 
@@ -48,12 +49,12 @@ const router = new VueRouter({
 })
 
 router.beforeEach((to, from, next) => {
-  WIKI.$store.commit('loadingStart', 'profile')
+  loadingStart(WIKI.$store, 'profile')
   next()
 })
 
 router.afterEach((to, from) => {
-  WIKI.$store.commit('loadingStop', 'profile')
+  loadingStop(WIKI.$store, 'profile')
 })
 
 export default {
