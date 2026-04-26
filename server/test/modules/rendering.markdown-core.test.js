@@ -79,8 +79,8 @@ describe('markdown core renderer plugin behavior', () => {
       '</tr>\n' +
       '</tbody>\n' +
       '</table>\n' +
-      '<blockquote id="q" class="quote">\n' +
-      '<p>quote</p>\n' +
+      '<blockquote>\n' +
+      '<p id="q" class="quote">quote</p>\n' +
       '</blockquote>\n' +
       '<hr id="hr" class="rule">\n'
     )
@@ -98,7 +98,7 @@ describe('markdown core renderer plugin behavior', () => {
       '<hr class="footnotes-sep">\n' +
       '<section class="footnotes">\n' +
       '<ol class="footnotes-list">\n' +
-      '<li id="fn1" class="footnote-item"><p>foot body <a href="#fnref1" class="footnote-backref">↩︎</a></p>\n' +
+      '<li id="fn1" class="footnote-item"><p class="fnbody">foot body <a href="#fnref1" class="footnote-backref">↩︎</a></p>\n' +
       '</li>\n' +
       '</ol>\n' +
       '</section>\n'
