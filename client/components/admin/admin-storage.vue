@@ -225,7 +225,7 @@ import momentDurationFormatSetup from 'moment-duration-format'
 
 import DurationPicker from '../common/duration-picker.vue'
 import { LoopingRhombusesSpinner } from 'epic-spinners'
-import { setLoading } from '../../helpers/root-ui-store'
+import { loadingStart, loadingStop, showNotification, setLoading } from '../../helpers/root-ui-store'
 
 import statusQuery from 'gql/admin/storage/storage-query-status.gql'
 import targetsQuery from 'gql/admin/storage/storage-query-targets.gql'
@@ -277,7 +277,7 @@ export default {
       })
     },
     async save() {
-      this.$store.commit(`loadingStart`, 'admin-storage-savetargets')
+      loadingStart(this.$store, 'admin-storage-savetargets')
       await this.$apollo.mutate({
         mutation: targetsSaveMutation,
         variables: {
@@ -290,12 +290,12 @@ export default {
           ])).map(str => ({...str, config: str.config.map(cfg => ({...cfg, value: JSON.stringify({ v: cfg.value.value })}))}))
         }
       })
-      this.$store.commit('showNotification', {
+      showNotification(this.$store, {
         message: 'Storage configuration saved successfully.',
         style: 'success',
         icon: 'check'
       })
-      this.$store.commit(`loadingStop`, 'admin-storage-savetargets')
+      loadingStop(this.$store, 'admin-storage-savetargets')
     },
     getDefaultSchedule(val) {
       if (!val) { return 'N/A' }
