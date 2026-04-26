@@ -38,6 +38,7 @@
 
 <script>
 import { fetchSystemFlags, updateSystemFlags } from '../../helpers/system-api'
+import { loadingStart, loadingStop, showNotification } from '../../helpers/root-ui-store'
 
 export default {
   data() {
@@ -49,40 +50,40 @@ export default {
     }
   },
   async mounted() {
-    this.$store.commit('loadingStart', 'admin-dev-flags-refresh')
+    loadingStart(this.$store, 'admin-dev-flags-refresh')
     try {
       this.flags = await fetchSystemFlags(window.fetch.bind(window), 'System flags response is invalid')
       this.flagsLoaded = true
     } catch (err) {
-      this.$store.commit('showNotification', {
+      showNotification(this.$store, {
         style: 'red',
         message: err.message,
         icon: 'alert'
       })
     }
-    this.$store.commit('loadingStop', 'admin-dev-flags-refresh')
+    loadingStop(this.$store, 'admin-dev-flags-refresh')
   },
   methods: {
     async save() {
       if (!this.flagsLoaded) {
         return
       }
-      this.$store.commit('loadingStart', 'admin-dev-flags-update')
+      loadingStart(this.$store, 'admin-dev-flags-update')
       try {
         await updateSystemFlags(window.fetch.bind(window), this.flags, 'System flags update failed')
-        this.$store.commit('showNotification', {
+        showNotification(this.$store, {
           style: 'success',
           message: 'Flags applied successfully.',
           icon: 'check'
         })
       } catch (err) {
-        this.$store.commit('showNotification', {
+        showNotification(this.$store, {
           style: 'red',
           message: err.message,
           icon: 'alert'
         })
       }
-      this.$store.commit('loadingStop', 'admin-dev-flags-update')
+      loadingStop(this.$store, 'admin-dev-flags-update')
     }
   }
 }
