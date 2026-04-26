@@ -84,6 +84,8 @@
 import _ from 'lodash'
 import pagesQuery from 'gql/admin/pages/pages-query-list.gql'
 
+import { showNotification, setLoading } from '../../helpers/root-ui-store'
+
 export default {
   data() {
     return {
@@ -134,7 +136,7 @@ export default {
   methods: {
     async refresh() {
       await this.$apollo.queries.pages.refetch()
-      this.$store.commit('showNotification', {
+      showNotification(this.$store, {
         message: 'Page list has been refreshed.',
         style: 'success',
         icon: 'cached'
@@ -152,7 +154,7 @@ export default {
       update: (data) => data.pages.list,
       watchLoading (isLoading) {
         this.loading = isLoading
-        this.$store.commit(`loading${isLoading ? 'Start' : 'Stop'}`, 'admin-pages-refresh')
+        setLoading(this.$store, 'admin-pages-refresh', isLoading)
       }
     }
   }
