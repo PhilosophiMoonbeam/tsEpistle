@@ -42,6 +42,7 @@
 
 <script>
 import gql from 'graphql-tag'
+import { showNotification, setLoading } from '../../helpers/root-ui-store'
 
 export default {
   data() {
@@ -68,7 +69,7 @@ export default {
   methods: {
     async refresh() {
       await this.$apollo.queries.pages.refetch()
-      this.$store.commit('showNotification', {
+      showNotification(this.$store, {
         message: this.$t('profile:pages.refreshSuccess'),
         style: 'success',
         icon: 'cached'
@@ -109,7 +110,7 @@ export default {
       update: (data) => data.pages.list,
       watchLoading (isLoading) {
         this.loading = isLoading
-        this.$store.commit(`loading${isLoading ? 'Start' : 'Stop'}`, 'profile-pages-refresh')
+        setLoading(this.$store, 'profile-pages-refresh', isLoading)
       }
     }
   }
