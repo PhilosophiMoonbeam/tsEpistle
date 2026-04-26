@@ -157,6 +157,7 @@ import _ from 'lodash'
 
 import tagsQuery from 'gql/common/common-pages-query-tags.gql'
 import pagesQuery from 'gql/common/common-pages-query-list.gql'
+import { setLoading } from '../helpers/root-ui-store'
 
 /* global siteLangs */
 
@@ -303,7 +304,7 @@ export default {
       fetchPolicy: 'cache-and-network',
       update: (data) => _.cloneDeep(data.pages.tags),
       watchLoading (isLoading) {
-        this.$store.commit(`loading${isLoading ? 'Start' : 'Stop'}`, 'tags-refresh')
+        setLoading(this.$store, 'tags-refresh', isLoading)
       }
     },
     pages: {
@@ -312,7 +313,7 @@ export default {
       update: (data) => _.cloneDeep(data.pages.list),
       watchLoading (isLoading) {
         this.isLoading = isLoading
-        this.$store.commit(`loading${isLoading ? 'Start' : 'Stop'}`, 'pages-refresh')
+        setLoading(this.$store, 'pages-refresh', isLoading)
       },
       variables () {
         return {
