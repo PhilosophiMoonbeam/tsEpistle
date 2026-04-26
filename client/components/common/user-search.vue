@@ -52,6 +52,7 @@
 import _ from 'lodash'
 
 import { searchUsers } from '../../helpers/users-api'
+import { pushGraphError } from '../../helpers/root-ui-store'
 
 export default {
   filters: {
@@ -121,7 +122,7 @@ export default {
           return []
         }
         this.items = []
-        this.$store.commit('pushGraphError', err)
+        pushGraphError(this.$store, err)
         return []
       } finally {
         if (requestId === this.searchRequestId) {
