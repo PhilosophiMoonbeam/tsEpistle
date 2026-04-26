@@ -275,6 +275,7 @@ import storageTargetsQuery from 'gql/admin/storage/storage-query-targets.gql'
 import storageStatusQuery from 'gql/admin/storage/storage-query-status.gql'
 import targetExecuteActionMutation from 'gql/admin/storage/storage-mutation-executeaction.gql'
 import targetsSaveMutation from 'gql/admin/storage/storage-mutation-save-targets.gql'
+import { pushGraphError } from '../../helpers/root-ui-store'
 
 export default {
   components: {
@@ -352,7 +353,7 @@ export default {
             this.failedUsers = _.get(respObj, 'failed', [])
             this.progress += 50
           } catch (err) {
-            this.$store.commit('pushGraphError', err)
+            pushGraphError(this.$store, err)
             this.isLoading = false
             return
           }
@@ -488,7 +489,7 @@ export default {
               throw new Error('Failed to fetch storage targets.')
             }
           } catch (err) {
-            this.$store.commit('pushGraphError', err)
+            pushGraphError(this.$store, err)
             this.isLoading = false
             return
           }
