@@ -191,6 +191,7 @@
 
 <script>
 import { fetchContributors } from '../../helpers/contribute-api'
+import { loadingStart, loadingStop, showNotification } from '../../helpers/root-ui-store'
 
 export default {
   data() {
@@ -203,14 +204,14 @@ export default {
   },
   methods: {
     async loadBackers({ notifyError = true } = {}) {
-      this.$store.commit(`loadingStart`, 'admin-contribute-refresh')
+      loadingStart(this.$store, 'admin-contribute-refresh')
       try {
         this.backers = await fetchContributors(window.fetch.bind(window), 'Contributors response is invalid')
         return true
       } catch (err) {
         this.backers = []
         if (notifyError) {
-          this.$store.commit('showNotification', {
+          showNotification(this.$store, {
             message: err.message,
             style: 'red',
             icon: 'alert'
@@ -218,7 +219,7 @@ export default {
         }
         throw err
       } finally {
-        this.$store.commit(`loadingStop`, 'admin-contribute-refresh')
+        loadingStop(this.$store, 'admin-contribute-refresh')
       }
     }
   }
