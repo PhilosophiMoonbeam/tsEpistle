@@ -34,6 +34,7 @@
 
 <script>
 import ClipboardJS from 'clipboard'
+import { showNotification } from '../../helpers/root-ui-store'
 
 export default {
   props: {
@@ -75,14 +76,14 @@ export default {
     })
 
     clip.on('success', () => {
-      this.$store.commit('showNotification', {
+      showNotification(this.$store, {
         style: 'success',
         message: `URL copied successfully`,
         icon: 'content-copy'
       })
     })
     clip.on('error', () => {
-      this.$store.commit('showNotification', {
+      showNotification(this.$store, {
         style: 'red',
         message: `Failed to copy to clipboard`,
         icon: 'alert'
