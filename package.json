@@ -94,7 +94,7 @@
     "express-brute": "1.0.1",
     "express-session": "1.19.0",
     "file-type": "15.0.1",
-    "filesize": "6.1.0",
+    "filesize": "6.4.0",
     "fs-extra": "11.3.4",
     "getos": "3.2.1",
     "graphql": "15.3.0",
