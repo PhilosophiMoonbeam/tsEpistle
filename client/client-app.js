@@ -32,6 +32,7 @@ import localization from './modules/localization'
 // ====================================
 
 import helpers from './helpers'
+import { showNotification } from './helpers/root-ui-store'
 
 // ====================================
 // Initialize Global Vars
@@ -62,7 +63,7 @@ const graphQLLink = ApolloLink.from([
         }
         console.error(`[GraphQL error]: Message: ${message}, Location: ${locations}, Path: ${path}`)
       })
-      store.commit('showNotification', {
+      showNotification(store, {
         style: 'red',
         message: isAuthError ? `You are not authorized to access this resource.` : `An unexpected error occurred.`,
         icon: 'alert'
@@ -70,7 +71,7 @@ const graphQLLink = ApolloLink.from([
     }
     if (networkError) {
       console.error(networkError)
-      store.commit('showNotification', {
+      showNotification(store, {
         style: 'red',
         message: `Network Error: ${networkError.message}`,
         icon: 'alert'
