@@ -199,6 +199,8 @@
 import _ from 'lodash'
 import { customAlphabet } from 'nanoid/non-secure'
 
+import { showNotification } from '../../helpers/root-ui-store'
+
 /* global siteLangs */
 
 const nanoid = customAlphabet('1234567890abcdef', 10)
@@ -259,7 +261,7 @@ export default {
       this.group.pageRules.splice(_.findIndex(this.group.pageRules, ['id', ruleId]), 1)
     },
     comingSoon() {
-      this.$store.commit('showNotification', {
+      showNotification(this.$store, {
         style: 'indigo',
         message: `Coming soon...`,
         icon: 'directions_boat'
