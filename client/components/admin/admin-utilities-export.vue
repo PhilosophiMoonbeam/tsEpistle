@@ -102,6 +102,7 @@ import gql from 'graphql-tag'
 import _get from 'lodash/get'
 
 import { fetchSystemExportStatus } from '../../helpers/system-api'
+import { pushGraphError } from '../../helpers/root-ui-store'
 
 export default {
   components: {
@@ -241,7 +242,7 @@ export default {
           // -> Check for progress
           this.checkProgress()
         } catch (err) {
-          this.$store.commit('pushGraphError', err)
+          pushGraphError(this.$store, err)
           this.isLoading = false
         }
       }, 1500)
