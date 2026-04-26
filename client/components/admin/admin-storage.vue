@@ -225,6 +225,7 @@ import momentDurationFormatSetup from 'moment-duration-format'
 
 import DurationPicker from '../common/duration-picker.vue'
 import { LoopingRhombusesSpinner } from 'epic-spinners'
+import { setLoading } from '../../helpers/root-ui-store'
 
 import statusQuery from 'gql/admin/storage/storage-query-status.gql'
 import targetsQuery from 'gql/admin/storage/storage-query-targets.gql'
@@ -337,7 +338,7 @@ export default {
         })), [t => t.value.order])
       })),
       watchLoading (isLoading) {
-        this.$store.commit(`loading${isLoading ? 'Start' : 'Stop'}`, 'admin-storage-targets-refresh')
+        setLoading(this.$store, 'admin-storage-targets-refresh', isLoading)
       }
     },
     status: {
@@ -345,7 +346,7 @@ export default {
       fetchPolicy: 'network-only',
       update: (data) => data.storage.status,
       watchLoading (isLoading) {
-        this.$store.commit(`loading${isLoading ? 'Start' : 'Stop'}`, 'admin-storage-status-refresh')
+        setLoading(this.$store, 'admin-storage-status-refresh', isLoading)
       },
       pollInterval: 3000
     }
