@@ -112,6 +112,7 @@ import _ from 'lodash'
 import providersSaveMutation from 'gql/admin/analytics/analytics-mutation-save-providers.gql'
 
 import { fetchAnalyticsProviders } from '../../helpers/analytics-api'
+import { loadingStart, loadingStop, showNotification, pushGraphError } from '../../helpers/root-ui-store'
 
 export default {
   data() {
@@ -134,13 +135,13 @@ export default {
   },
   methods: {
     async loadProviders({ notifyError = true } = {}) {
-      this.$store.commit(`loadingStart`, 'admin-analytics-refresh')
+      loadingStart(this.$store, 'admin-analytics-refresh')
       try {
         this.providers = await fetchAnalyticsProviders(window.fetch.bind(window), 'Analytics providers response is invalid')
         return true
       } catch (err) {
         if (notifyError) {
-          this.$store.commit('showNotification', {
+          showNotification(this.$store, {
             message: err.message,
             style: 'red',
             icon: 'alert'
@@ -148,19 +149,19 @@ export default {
         }
         throw err
       } finally {
-        this.$store.commit(`loadingStop`, 'admin-analytics-refresh')
+        loadingStop(this.$store, 'admin-analytics-refresh')
       }
     },
     async refresh() {
       await this.loadProviders()
-      this.$store.commit('showNotification', {
+      showNotification(this.$store, {
         message: this.$t('admin:analytics.refreshSuccess'),
         style: 'success',
         icon: 'cached'
       })
     },
     async save() {
-      this.$store.commit(`loadingStart`, 'admin-analytics-saveproviders')
+      loadingStart(this.$store, 'admin-analytics-saveproviders')
       try {
         await this.$apollo.mutate({
           mutation: providersSaveMutation,
@@ -173,15 +174,15 @@ export default {
           }
         })
         await this.loadProviders({ notifyError: false })
-        this.$store.commit('showNotification', {
+        showNotification(this.$store, {
           message: this.$t('admin:analytics.saveSuccess'),
           style: 'success',
           icon: 'check'
         })
       } catch (err) {
-        this.$store.commit('pushGraphError', err)
+        pushGraphError(this.$store, err)
       }
-      this.$store.commit(`loadingStop`, 'admin-analytics-saveproviders')
+      loadingStop(this.$store, 'admin-analytics-saveproviders')
     }
   }
 }
