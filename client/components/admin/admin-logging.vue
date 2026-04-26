@@ -111,6 +111,7 @@ import _ from 'lodash'
 import LoggingConsole from './admin-logging-console.vue'
 
 import { fetchLoggingLoggers } from '../../helpers/logging-api'
+import { loadingStart, loadingStop, showNotification, pushGraphError } from '../../helpers/root-ui-store'
 import loggersSaveMutation from 'gql/admin/logging/logging-mutation-save-loggers.gql'
 
 export default {
@@ -134,13 +135,13 @@ export default {
   },
   methods: {
     async loadLoggers({ notifyError = true } = {}) {
-      this.$store.commit(`loadingStart`, 'admin-logging-refresh')
+      loadingStart(this.$store, 'admin-logging-refresh')
       try {
         this.loggers = await fetchLoggingLoggers(window.fetch.bind(window), 'Logging loggers response is invalid')
         return true
       } catch (err) {
         if (notifyError) {
-          this.$store.commit('showNotification', {
+          showNotification(this.$store, {
             message: err.message,
             style: 'red',
             icon: 'warning'
@@ -148,19 +149,19 @@ export default {
         }
         throw err
       } finally {
-        this.$store.commit(`loadingStop`, 'admin-logging-refresh')
+        loadingStop(this.$store, 'admin-logging-refresh')
       }
     },
     async refresh() {
       await this.loadLoggers()
-      this.$store.commit('showNotification', {
+      showNotification(this.$store, {
         message: 'List of loggers has been refreshed.',
         style: 'success',
         icon: 'cached'
       })
     },
     async save() {
-      this.$store.commit(`loadingStart`, 'admin-logging-saveloggers')
+      loadingStart(this.$store, 'admin-logging-saveloggers')
       try {
         await this.$apollo.mutate({
           mutation: loggersSaveMutation,
@@ -174,15 +175,15 @@ export default {
           }
         })
         await this.loadLoggers({ notifyError: false })
-        this.$store.commit('showNotification', {
+        showNotification(this.$store, {
           message: 'Logging configuration saved successfully.',
           style: 'success',
           icon: 'check'
         })
       } catch (err) {
-        this.$store.commit('pushGraphError', err)
+        pushGraphError(this.$store, err)
       }
-      this.$store.commit(`loadingStop`, 'admin-logging-saveloggers')
+      loadingStop(this.$store, 'admin-logging-saveloggers')
     },
     toggleConsole() {
       this.showConsole = !this.showConsole
