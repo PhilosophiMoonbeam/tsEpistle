@@ -78,6 +78,7 @@
 import _ from 'lodash'
 import gql from 'graphql-tag'
 import { sync, get } from 'vuex-pathify'
+import { showNotification } from '../../helpers/root-ui-store'
 
 /* global siteConfig */
 
@@ -180,7 +181,7 @@ export default {
     resp = _.get(resp, 'data.pages.conflictLatest', false)
 
     if (!resp) {
-      return this.$store.commit('showNotification', {
+      return showNotification(this.$store, {
         message: 'Failed to fetch latest version.',
         style: 'warning',
         icon: 'warning'
