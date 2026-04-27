@@ -76,6 +76,7 @@ import _ from 'lodash'
 import utilityTelemetryResetIdMutation from 'gql/admin/utilities/utilities-mutation-telemetry-resetid.gql'
 import utilityTelemetrySetMutation from 'gql/admin/utilities/utilities-mutation-telemetry-set.gql'
 import { fetchSystemTelemetry } from '../../helpers/system-api'
+import { loadingStart, loadingStop, showNotification, pushGraphError } from '../../helpers/root-ui-store'
 
 export default {
   data() {
@@ -86,7 +87,7 @@ export default {
   },
   methods: {
     async loadTelemetry({ notifyError = true } = {}) {
-      this.$store.commit(`loadingStart`, 'admin-utilities-telemetry-refresh')
+      loadingStart(this.$store, 'admin-utilities-telemetry-refresh')
 
       try {
         const telemetryState = await fetchSystemTelemetry(window.fetch.bind(window))
@@ -94,16 +95,16 @@ export default {
         this.clientId = telemetryState.telemetryClientId || 'N/A'
       } catch (err) {
         if (notifyError) {
-          this.$store.commit('pushGraphError', err)
+          pushGraphError(this.$store, err)
         }
         throw err
       } finally {
-        this.$store.commit(`loadingStop`, 'admin-utilities-telemetry-refresh')
+        loadingStop(this.$store, 'admin-utilities-telemetry-refresh')
       }
     },
     async updateTelemetry() {
       this.loading = true
-      this.$store.commit(`loadingStart`, 'admin-utilities-telemetry-set')
+      loadingStart(this.$store, 'admin-utilities-telemetry-set')
 
       try {
         const respRaw = await this.$apollo.mutate({
@@ -114,7 +115,7 @@ export default {
         })
         const resp = _.get(respRaw, 'data.system.setTelemetry.responseResult', {})
         if (resp.succeeded) {
-          this.$store.commit('showNotification', {
+          showNotification(this.$store, {
             message: 'Telemetry updated successfully.',
             style: 'success',
             icon: 'check'
@@ -123,15 +124,15 @@ export default {
           throw new Error(resp.message)
         }
       } catch (err) {
-        this.$store.commit('pushGraphError', err)
+        pushGraphError(this.$store, err)
       }
 
-      this.$store.commit(`loadingStop`, 'admin-utilities-telemetry-set')
+      loadingStop(this.$store, 'admin-utilities-telemetry-set')
       this.loading = false
     },
     async resetClientId() {
       this.loading = true
-      this.$store.commit(`loadingStart`, 'admin-utilities-telemetry-resetid')
+      loadingStart(this.$store, 'admin-utilities-telemetry-resetid')
 
       try {
         const respRaw = await this.$apollo.mutate({
@@ -140,7 +141,7 @@ export default {
         const resp = _.get(respRaw, 'data.system.resetTelemetryClientId.responseResult', {})
         if (resp.succeeded) {
           await this.loadTelemetry({ notifyError: false })
-          this.$store.commit('showNotification', {
+          showNotification(this.$store, {
             message: 'Telemetry Client ID reset successfully.',
             style: 'success',
             icon: 'check'
@@ -149,10 +150,10 @@ export default {
           throw new Error(resp.message)
         }
       } catch (err) {
-        this.$store.commit('pushGraphError', err)
+        pushGraphError(this.$store, err)
       }
 
-      this.$store.commit(`loadingStop`, 'admin-utilities-telemetry-resetid')
+      loadingStop(this.$store, 'admin-utilities-telemetry-resetid')
       this.loading = false
     }
   },
