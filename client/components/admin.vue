@@ -132,6 +132,7 @@ import VueRouter from 'vue-router'
 import { get, sync } from 'vuex-pathify'
 
 import { fetchSystemSummary } from '../helpers/system-api'
+import { loadingStart, loadingStop, showNotification } from '../helpers/root-ui-store'
 
 import adminStore from '../store/admin'
 
@@ -217,17 +218,17 @@ export default {
   },
   methods: {
     async loadInfo() {
-      this.$store.commit('loadingStart', 'admin-stats-refresh')
+      loadingStart(this.$store, 'admin-stats-refresh')
       try {
         this.info = await fetchSystemSummary(window.fetch.bind(window), 'System summary response is invalid')
       } catch (err) {
-        this.$store.commit('showNotification', {
+        showNotification(this.$store, {
           style: 'red',
           message: err.message,
           icon: 'alert'
         })
       }
-      this.$store.commit('loadingStop', 'admin-stats-refresh')
+      loadingStop(this.$store, 'admin-stats-refresh')
     },
     hasPermission(prm) {
       if (_.isArray(prm)) {
