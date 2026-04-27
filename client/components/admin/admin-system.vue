@@ -137,6 +137,7 @@ import { SelfBuildingSquareSpinner } from 'epic-spinners'
 import performUpgradeMutation from 'gql/admin/system/system-mutation-upgrade.gql'
 
 import { fetchSystemInfo } from '../../helpers/system-api'
+import { loadingStart, loadingStop, showNotification, pushGraphError } from '../../helpers/root-ui-store'
 
 export default {
   components: {
@@ -181,15 +182,15 @@ export default {
   },
   methods: {
     async loadInfo () {
-      this.$store.commit('loadingStart', 'admin-system-refresh')
+      loadingStart(this.$store, 'admin-system-refresh')
       try {
         this.info = await fetchSystemInfo(window.fetch.bind(window), 'System info response is invalid')
         return true
       } catch (err) {
-        this.$store.commit('pushGraphError', err)
+        pushGraphError(this.$store, err)
         return false
       } finally {
-        this.$store.commit('loadingStop', 'admin-system-refresh')
+        loadingStop(this.$store, 'admin-system-refresh')
       }
     },
     async refresh () {
@@ -197,7 +198,7 @@ export default {
       if (!loaded) {
         return false
       }
-      this.$store.commit('showNotification', {
+      showNotification(this.$store, {
         message: this.$t('admin:system.refreshSuccess'),
         style: 'success',
         icon: 'cached'
