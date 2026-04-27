@@ -112,6 +112,7 @@ import { get } from 'vuex-pathify'
 import semverLte from 'semver/functions/lte'
 import { fetchRecentPages } from '../../helpers/pages-api'
 import { fetchLastLogins } from '../../helpers/users-api'
+import { loadingStart, loadingStop, showNotification } from '../../helpers/root-ui-store'
 
 export default {
   components: {
@@ -188,14 +189,14 @@ export default {
     },
     async loadRecentPages() {
       this.recentPagesLoading = true
-      this.$store.commit('loadingStart', 'admin-dashboard-recentpages')
+      loadingStart(this.$store, 'admin-dashboard-recentpages')
 
       try {
         this.recentPages = await fetchRecentPages(window.fetch.bind(window), 'Recent pages response is invalid')
         return true
       } catch (err) {
         this.recentPages = []
-        this.$store.commit('showNotification', {
+        showNotification(this.$store, {
           message: err.message,
           style: 'error',
           icon: 'alert'
@@ -203,19 +204,19 @@ export default {
         return false
       } finally {
         this.recentPagesLoading = false
-        this.$store.commit('loadingStop', 'admin-dashboard-recentpages')
+        loadingStop(this.$store, 'admin-dashboard-recentpages')
       }
     },
     async loadLastLogins() {
       this.lastLoginsLoading = true
-      this.$store.commit('loadingStart', 'admin-dashboard-lastlogins')
+      loadingStart(this.$store, 'admin-dashboard-lastlogins')
 
       try {
         this.lastLogins = await fetchLastLogins(window.fetch.bind(window), 'Last logins response is invalid')
         return true
       } catch (err) {
         this.lastLogins = []
-        this.$store.commit('showNotification', {
+        showNotification(this.$store, {
           message: err.message,
           style: 'error',
           icon: 'alert'
@@ -223,7 +224,7 @@ export default {
         return false
       } finally {
         this.lastLoginsLoading = false
-        this.$store.commit('loadingStop', 'admin-dashboard-lastlogins')
+        loadingStop(this.$store, 'admin-dashboard-lastlogins')
       }
     }
   }
