@@ -128,6 +128,7 @@ import gql from 'graphql-tag'
 
 import { SemipolarSpinner } from 'epic-spinners'
 import { fetchSystemSsl } from '../../helpers/system-api'
+import { loadingStart, loadingStop, pushGraphError } from '../../helpers/root-ui-store'
 
 const makeDefaultSslInfo = () => ({
   sslDomain: null,
@@ -168,17 +169,17 @@ export default {
   },
   methods: {
     async loadInfo ({ notifyError = true } = {}) {
-      this.$store.commit('loadingStart', 'admin-ssl-refresh')
+      loadingStart(this.$store, 'admin-ssl-refresh')
       try {
         this.info = await fetchSystemSsl(window.fetch.bind(window), 'SSL status response is invalid')
       } catch (err) {
         this.info = makeDefaultSslInfo()
         if (notifyError) {
-          this.$store.commit('pushGraphError', err)
+          pushGraphError(this.$store, err)
         }
         throw err
       } finally {
-        this.$store.commit('loadingStop', 'admin-ssl-refresh')
+        loadingStop(this.$store, 'admin-ssl-refresh')
       }
     },
     async toggleRedir () {
