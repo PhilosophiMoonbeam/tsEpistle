@@ -70,7 +70,7 @@ import _ from 'lodash'
 import createGroupMutation from 'gql/admin/groups/groups-mutation-create.gql'
 
 import { fetchGroupsList } from '../../helpers/groups-api'
-import { loadingStart, loadingStop, showNotification } from '../../helpers/root-ui-store'
+import { loadingStart, loadingStop, showNotification, pushGraphError } from '../../helpers/root-ui-store'
 
 export default {
   data() {
@@ -132,7 +132,7 @@ export default {
     },
     async createGroup() {
       if (_.trim(this.newGroupName).length < 1) {
-        this.$store.commit('showNotification', {
+        showNotification(this.$store, {
           style: 'red',
           message: 'Enter a group name.',
           icon: 'warning'
@@ -147,14 +147,18 @@ export default {
             name: this.newGroupName
           },
           watchLoading (isLoading) {
-            this.$store.commit(`loading${isLoading ? 'Start' : 'Stop'}`, 'admin-groups-create')
+            if (isLoading) {
+              loadingStart(this.$store, 'admin-groups-create')
+            } else {
+              loadingStop(this.$store, 'admin-groups-create')
+            }
           }
         })
         const data = _.get(resp, 'data.groups.create', { responseResult: {} })
         if (data.responseResult.succeeded === true) {
           this.newGroupName = ''
           if (await this.loadGroups()) {
-            this.$store.commit('showNotification', {
+            showNotification(this.$store, {
               style: 'success',
               message: 'Group has been created successfully.',
               icon: 'check'
@@ -164,7 +168,7 @@ export default {
           throw new Error(data.responseResult.message || 'An unexpected error occurred.')
         }
       } catch (err) {
-        this.$store.commit('pushGraphError', err)
+        pushGraphError(this.$store, err)
       }
     }
   },

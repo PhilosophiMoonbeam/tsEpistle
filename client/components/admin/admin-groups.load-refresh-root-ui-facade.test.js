@@ -51,19 +51,19 @@ const extractMethod = (script, name) => {
   return null
 }
 
-describe('admin-groups load/refresh root UI facade migration guard', () => {
+describe('admin-groups root UI facade migration guard', () => {
   const componentPath = path.join(process.cwd(), 'client/components/admin/admin-groups.vue')
   const source = fs.readFileSync(componentPath, 'utf8')
   const script = extractScript(source)
   const loadGroups = script && extractMethod(script, 'loadGroups')
   const refresh = script && extractMethod(script, 'refresh')
   const createGroup = script && extractMethod(script, 'createGroup')
-  const directRootUiCommit = /\bthis\.\$store\.commit\s*\(\s*(?:`loading(?:Start|Stop)`|['"]loading(?:Start|Stop)['"]|`showNotification`|['"]showNotification['"]|`pushGraphError`|['"]pushGraphError['"])\s*,/
+  const directRootUiCommit = /\bthis\.\$store\.commit\s*\(\s*(?:`loading(?:Start|Stop)`|`loading\$\{[^}]+\}`|['"]loading(?:Start|Stop)['"]|`showNotification`|['"]showNotification['"]|`pushGraphError`|['"]pushGraphError['"])\s*,/
 
-  test('admin-groups.vue imports only the root UI facades needed by loadGroups() and refresh()', () => {
+  test('admin-groups.vue imports the root UI facades needed by loadGroups(), refresh(), and createGroup()', () => {
     expect(script).not.toBeNull()
     expect(script).toMatch(
-      /import\s+\{(?=[^}]*\bloadingStart\b)(?=[^}]*\bloadingStop\b)(?=[^}]*\bshowNotification\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/root-ui-store['"]/
+      /import\s+\{(?=[^}]*\bloadingStart\b)(?=[^}]*\bloadingStop\b)(?=[^}]*\bshowNotification\b)(?=[^}]*\bpushGraphError\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/root-ui-store['"]/
     )
     expect(script).toMatch(/import\s+_\s+from\s+['"]lodash['"]/)
     expect(script).toMatch(/import\s+createGroupMutation\s+from\s+['"]gql\/admin\/groups\/groups-mutation-create\.gql['"]/)
@@ -90,19 +90,26 @@ describe('admin-groups load/refresh root UI facade migration guard', () => {
     expect(refresh.match(/\bshowNotification\s*\(/g) || []).toHaveLength(1)
   })
 
-  test('createGroup() mutation, validation, Apollo loading, success notification, and graph error stay out of scope', () => {
+  test('createGroup() routes validation, Apollo loading, success notification, and graph error through facades', () => {
     expect(createGroup).not.toBeNull()
 
-    expect(createGroup).toMatch(/if\s*\(\s*_\.trim\s*\(\s*this\.newGroupName\s*\)\.length\s*<\s*1\s*\)\s*\{\s*this\.\$store\.commit\s*\(\s*['"]showNotification['"]\s*,\s*\{\s*style:\s*['"]red['"]\s*,\s*message:\s*['"]Enter a group name\.['"]\s*,\s*icon:\s*['"]warning['"]\s*\}\s*\)\s*return\s*\}/)
+    expect(createGroup).toMatch(/if\s*\(\s*_\.trim\s*\(\s*this\.newGroupName\s*\)\.length\s*<\s*1\s*\)\s*\{\s*showNotification\s*\(\s*this\.\$store\s*,\s*\{\s*style:\s*['"]red['"]\s*,\s*message:\s*['"]Enter a group name\.['"]\s*,\s*icon:\s*['"]warning['"]\s*\}\s*\)\s*return\s*\}/)
     expect(createGroup).toMatch(/this\.newGroupDialog\s*=\s*false/)
     expect(createGroup).toMatch(/this\.\$apollo\.mutate\s*\(\s*\{[\s\S]*mutation:\s*createGroupMutation[\s\S]*variables:\s*\{\s*name:\s*this\.newGroupName\s*\}/)
-    expect(createGroup).toMatch(/this\.\$store\.commit\s*\(\s*`loading\$\{isLoading \? 'Start' : 'Stop'\}`\s*,\s*['"]admin-groups-create['"]\s*\)/)
+    expect(createGroup).toMatch(/watchLoading\s*\(\s*isLoading\s*\)\s*\{\s*if\s*\(\s*isLoading\s*\)\s*\{\s*loadingStart\s*\(\s*this\.\$store\s*,\s*['"]admin-groups-create['"]\s*\)\s*\}\s*else\s*\{\s*loadingStop\s*\(\s*this\.\$store\s*,\s*['"]admin-groups-create['"]\s*\)\s*\}\s*\}/)
     expect(createGroup).toMatch(/const\s+data\s*=\s*_\.get\s*\(\s*resp\s*,\s*['"]data\.groups\.create['"]\s*,\s*\{\s*responseResult:\s*\{\}\s*\}\s*\)/)
     expect(createGroup).toMatch(/data\.responseResult\.succeeded\s*===\s*true/)
     expect(createGroup).toMatch(/this\.newGroupName\s*=\s*['"]['"]/)
     expect(createGroup).toMatch(/if\s*\(\s*await\s+this\.loadGroups\s*\(\s*\)\s*\)/)
-    expect(createGroup).toMatch(/this\.\$store\.commit\s*\(\s*['"]showNotification['"]\s*,\s*\{\s*style:\s*['"]success['"]\s*,\s*message:\s*['"]Group has been created successfully\.['"]\s*,\s*icon:\s*['"]check['"]\s*\}\s*\)/)
+    expect(createGroup).toMatch(/showNotification\s*\(\s*this\.\$store\s*,\s*\{\s*style:\s*['"]success['"]\s*,\s*message:\s*['"]Group has been created successfully\.['"]\s*,\s*icon:\s*['"]check['"]\s*\}\s*\)/)
     expect(createGroup).toMatch(/throw\s+new\s+Error\s*\(\s*data\.responseResult\.message\s*\|\|\s*['"]An unexpected error occurred\.['"]\s*\)/)
-    expect(createGroup).toMatch(/this\.\$store\.commit\s*\(\s*['"]pushGraphError['"]\s*,\s*err\s*\)/)
+    expect(createGroup).toMatch(/pushGraphError\s*\(\s*this\.\$store\s*,\s*err\s*\)/)
+    expect(createGroup).not.toMatch(directRootUiCommit)
+
+    expect(createGroup.match(/\bshowNotification\s*\(/g) || []).toHaveLength(2)
+    expect(createGroup.match(/\bloadingStart\s*\(/g) || []).toHaveLength(1)
+    expect(createGroup.match(/\bloadingStop\s*\(/g) || []).toHaveLength(1)
+    expect(createGroup.match(/\bpushGraphError\s*\(/g) || []).toHaveLength(1)
+    expect(createGroup.match(/\bthis\.loadGroups\s*\(/g) || []).toHaveLength(1)
   })
 })
