@@ -53,4 +53,15 @@ describe('admin-extensions root UI facade migration guard', () => {
     const loadingStopCalls = loadExtensions.match(/\bloadingStop\s*\(/g) || []
     expect(loadingStopCalls).toHaveLength(1)
   })
+
+  test('admin-extensions.vue does not keep stale commented save/Apollo root UI code', () => {
+    expect(script).not.toMatch(/\basync\s+save\s*\(/)
+    expect(script).not.toMatch(/\bthis\.\$store\.commit\s*\(/)
+    expect(source).not.toMatch(/\bthis\.\$apollo\b/)
+    expect(source).not.toMatch(/\bmutation\s*:\s*gql`/)
+    expect(source).not.toMatch(/\bupdateConfig\s*\(/)
+    expect(source).not.toMatch(/\bwatchLoading\s*\(/)
+    expect(source).not.toMatch(/\bshowNotification\b/)
+    expect(source).not.toMatch(/\$store\.commit\(\s*['"]pushGraphError['"]\s*,/)
+  })
 })

@@ -59,43 +59,6 @@ export default {
       } finally {
         loadingStop(this.$store, 'admin-extensions-refresh')
       }
-    },
-    async save () {
-      // try {
-      //   await this.$apollo.mutate({
-      //     mutation: gql`
-      //       mutation (
-      //         $host: String!
-      //       ) {
-      //         site {
-      //           updateConfig(
-      //             host: $host
-      //           ) {
-      //             responseResult {
-      //               succeeded
-      //               errorCode
-      //               slug
-      //               message
-      //             }
-      //           }
-      //         }
-      //       }
-      //     `,
-      //     variables: {
-      //       host: _.get(this.config, 'host', '')
-      //     },
-      //     watchLoading (isLoading) {
-      //       this.$store.commit(`loading${isLoading ? 'Start' : 'Stop'}`, 'admin-extensions-update')
-      //     }
-      //   })
-      //   this.$store.commit('showNotification', {
-      //     style: 'success',
-      //     message: 'Configuration saved successfully.',
-      //     icon: 'check'
-      //   })
-      // } catch (err) {
-      //   this.$store.commit('pushGraphError', err)
-      // }
     }
   },
   created () {
