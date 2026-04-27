@@ -341,7 +341,6 @@
     "webpack-cli": "3.3.12",
     "webpack-dev-middleware": "3.7.2",
     "webpack-hot-middleware": "2.26.1",
-    "webpack-merge": "5.2.0",
     "webpack-modernizr-loader": "5.0.0",
     "webpack-subresource-integrity": "1.5.1",
     "webpackbar": "4.0.0",
