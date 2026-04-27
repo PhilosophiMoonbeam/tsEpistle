@@ -128,7 +128,7 @@ import gql from 'graphql-tag'
 
 import { SemipolarSpinner } from 'epic-spinners'
 import { fetchSystemSsl } from '../../helpers/system-api'
-import { loadingStart, loadingStop, pushGraphError } from '../../helpers/root-ui-store'
+import { loadingStart, loadingStop, setLoading, showNotification, pushGraphError } from '../../helpers/root-ui-store'
 
 const makeDefaultSslInfo = () => ({
   sslDomain: null,
@@ -205,17 +205,17 @@ export default {
             enabled: _.get(this.info, 'httpRedirection', false)
           },
           watchLoading (isLoading) {
-            this.$store.commit(`loading${isLoading ? 'Start' : 'Stop'}`, 'admin-ssl-toggleRedirection')
+            setLoading(this.$store, 'admin-ssl-toggleRedirection', isLoading)
           }
         })
-        this.$store.commit('showNotification', {
+        showNotification(this.$store, {
           style: 'success',
           message: this.$t('admin:ssl.httpPortRedirectSaveSuccess'),
           icon: 'check'
         })
       } catch (err) {
         this.info.httpRedirection = !this.info.httpRedirection
-        this.$store.commit('pushGraphError', err)
+        pushGraphError(this.$store, err)
       }
       this.loadingRedir = false
     },
@@ -238,12 +238,12 @@ export default {
             }
           `,
           watchLoading (isLoading) {
-            this.$store.commit(`loading${isLoading ? 'Start' : 'Stop'}`, 'admin-ssl-renew')
+            setLoading(this.$store, 'admin-ssl-renew', isLoading)
           }
         })
         const resp = _.get(respRaw, 'data.system.renewHTTPSCertificate.responseResult', {})
         if (resp.succeeded) {
-          this.$store.commit('showNotification', {
+          showNotification(this.$store, {
             style: 'success',
             message: this.$t('admin:ssl.renewCertificateSuccess'),
             icon: 'check'
@@ -252,7 +252,7 @@ export default {
           throw new Error(resp.message)
         }
       } catch (err) {
-        this.$store.commit('pushGraphError', err)
+        pushGraphError(this.$store, err)
       }
       this.loadingRenew = false
     }
