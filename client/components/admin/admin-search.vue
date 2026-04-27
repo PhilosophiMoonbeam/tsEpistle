@@ -105,7 +105,7 @@ import _ from 'lodash'
 import enginesSaveMutation from 'gql/admin/search/search-mutation-save-engines.gql'
 import enginesRebuildMutation from 'gql/admin/search/search-mutation-rebuild-index.gql'
 import { fetchSearchEngines } from '../../helpers/search-api'
-import { loadingStart, loadingStop, showNotification } from '../../helpers/root-ui-store'
+import { loadingStart, loadingStop, showNotification, pushGraphError } from '../../helpers/root-ui-store'
 
 export default {
   data() {
@@ -154,7 +154,7 @@ export default {
       })
     },
     async save() {
-      this.$store.commit(`loadingStart`, 'admin-search-saveengines')
+      loadingStart(this.$store, 'admin-search-saveengines')
       try {
         const resp = await this.$apollo.mutate({
           mutation: enginesSaveMutation,
@@ -168,7 +168,7 @@ export default {
         })
         if (_.get(resp, 'data.search.updateSearchEngines.responseResult.succeeded', false)) {
           await this.loadEngines({ notifyError: false })
-          this.$store.commit('showNotification', {
+          showNotification(this.$store, {
             message: this.$t('admin:search.configSaveSuccess'),
             style: 'success',
             icon: 'check'
@@ -177,9 +177,9 @@ export default {
           throw new Error(_.get(resp, 'data.search.updateSearchEngines.responseResult.message', this.$t('common:error.unexpected')))
         }
       } catch (err) {
-        this.$store.commit('pushGraphError', err)
+        pushGraphError(this.$store, err)
       }
-      this.$store.commit(`loadingStop`, 'admin-search-saveengines')
+      loadingStop(this.$store, 'admin-search-saveengines')
     },
     async rebuild () {
       this.$store.commit(`loadingStart`, 'admin-search-rebuildindex')

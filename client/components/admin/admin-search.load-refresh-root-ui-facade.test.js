@@ -51,7 +51,7 @@ const extractMethod = (script, name) => {
   return null
 }
 
-describe('admin-search load/refresh root UI facade migration guard', () => {
+describe('admin-search load/refresh/save root UI facade migration guard', () => {
   const componentPath = path.join(process.cwd(), 'client/components/admin/admin-search.vue')
   const source = fs.readFileSync(componentPath, 'utf8')
   const script = extractScript(source)
@@ -61,10 +61,10 @@ describe('admin-search load/refresh root UI facade migration guard', () => {
   const rebuild = script && extractMethod(script, 'rebuild')
   const directRootUiCommit = /\bthis\.\$store\.commit\s*\(\s*(?:`loading(?:Start|Stop)`|['"]loading(?:Start|Stop)['"]|`showNotification`|['"]showNotification['"]|`pushGraphError`|['"]pushGraphError['"])\s*,/
 
-  test('admin-search.vue imports only the root UI facades needed by loadEngines() and refresh()', () => {
+  test('admin-search.vue imports only the root UI facades needed by loadEngines(), refresh(), and save()', () => {
     expect(script).not.toBeNull()
     expect(script).toMatch(
-      /import\s+\{(?=[^}]*\bloadingStart\b)(?=[^}]*\bloadingStop\b)(?=[^}]*\bshowNotification\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/root-ui-store['"]/
+      /import\s+\{(?=[^}]*\bloadingStart\b)(?=[^}]*\bloadingStop\b)(?=[^}]*\bshowNotification\b)(?=[^}]*\bpushGraphError\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/root-ui-store['"]/
     )
     expect(script).toMatch(/import\s+_\s+from\s+['"]lodash['"]/)
     expect(script).toMatch(/import\s+enginesSaveMutation\s+from\s+['"]gql\/admin\/search\/search-mutation-save-engines\.gql['"]/)
@@ -92,17 +92,27 @@ describe('admin-search load/refresh root UI facade migration guard', () => {
     expect(refresh.match(/\bshowNotification\s*\(/g) || []).toHaveLength(1)
   })
 
-  test('save() and rebuild() GraphQL mutations, loading keys, and direct commits stay out of scope', () => {
+  test('save() uses root UI facades while preserving mutation payload, response handling, silent reload, fallback error, and trailing cleanup', () => {
     expect(save).not.toBeNull()
-    expect(rebuild).not.toBeNull()
 
-    expect(save).toMatch(/this\.\$store\.commit\s*\(\s*`loadingStart`\s*,\s*['"]admin-search-saveengines['"]\s*\)/)
-    expect(save).toMatch(/mutation:\s*enginesSaveMutation/)
-    expect(save).toMatch(/engines:\s*this\.engines\.map\s*\(\s*tgt\s*=>\s*\(\{[\s\S]*isEnabled:\s*tgt\.key\s*===\s*this\.selectedEngine[\s\S]*key:\s*tgt\.key[\s\S]*config:\s*tgt\.config\.map\s*\(\s*cfg\s*=>\s*\(\{\.\.\.cfg,\s*value:\s*JSON\.stringify\s*\(\s*\{\s*v:\s*cfg\.value\.value\s*\}\s*\)\s*\}\)\)/)
+    expect(save).toMatch(/async\s+save\s*\(\s*\)\s*\{\s*loadingStart\s*\(\s*this\.\$store\s*,\s*['"]admin-search-saveengines['"]\s*\)\s*try\s*\{\s*const\s+resp\s*=\s*await\s+this\.\$apollo\.mutate\s*\(\s*\{\s*mutation:\s*enginesSaveMutation/)
+    expect(save).toMatch(/variables:\s*\{\s*engines:\s*this\.engines\.map\s*\(\s*tgt\s*=>\s*\(\{[\s\S]*isEnabled:\s*tgt\.key\s*===\s*this\.selectedEngine[\s\S]*key:\s*tgt\.key[\s\S]*config:\s*tgt\.config\.map\s*\(\s*cfg\s*=>\s*\(\{\.\.\.cfg,\s*value:\s*JSON\.stringify\s*\(\s*\{\s*v:\s*cfg\.value\.value\s*\}\s*\)\s*\}\)\)/)
+    expect(save).toMatch(/if\s*\(\s*_\.get\s*\(\s*resp\s*,\s*['"]data\.search\.updateSearchEngines\.responseResult\.succeeded['"]\s*,\s*false\s*\)\s*\)/)
     expect(save).toMatch(/await\s+this\.loadEngines\s*\(\s*\{\s*notifyError:\s*false\s*\}\s*\)/)
-    expect(save).toMatch(/this\.\$store\.commit\s*\(\s*['"]showNotification['"]\s*,\s*\{\s*message:\s*this\.\$t\s*\(\s*['"]admin:search\.configSaveSuccess['"]\s*\)/)
-    expect(save).toMatch(/this\.\$store\.commit\s*\(\s*['"]pushGraphError['"]\s*,\s*err\s*\)/)
-    expect(save).toMatch(/this\.\$store\.commit\s*\(\s*`loadingStop`\s*,\s*['"]admin-search-saveengines['"]\s*\)/)
+    expect(save).toMatch(/showNotification\s*\(\s*this\.\$store\s*,\s*\{\s*message:\s*this\.\$t\s*\(\s*['"]admin:search\.configSaveSuccess['"]\s*\)\s*,\s*style:\s*['"]success['"]\s*,\s*icon:\s*['"]check['"]\s*\}\s*\)/)
+    expect(save).toMatch(/throw\s+new\s+Error\s*\(\s*_\.get\s*\(\s*resp\s*,\s*['"]data\.search\.updateSearchEngines\.responseResult\.message['"]\s*,\s*this\.\$t\s*\(\s*['"]common:error\.unexpected['"]\s*\)\s*\)\s*\)/)
+    expect(save).toMatch(/catch\s*\(\s*err\s*\)\s*\{\s*pushGraphError\s*\(\s*this\.\$store\s*,\s*err\s*\)\s*\}\s*loadingStop\s*\(\s*this\.\$store\s*,\s*['"]admin-search-saveengines['"]\s*\)\s*\}/)
+    expect(save).not.toMatch(directRootUiCommit)
+
+    expect(save.match(/\bloadingStart\s*\(/g) || []).toHaveLength(1)
+    expect(save.match(/\bshowNotification\s*\(/g) || []).toHaveLength(1)
+    expect(save.match(/\bpushGraphError\s*\(/g) || []).toHaveLength(1)
+    expect(save.match(/\bloadingStop\s*\(/g) || []).toHaveLength(1)
+    expect(save.match(/\bthis\.loadEngines\s*\(/g) || []).toHaveLength(1)
+  })
+
+  test('rebuild() GraphQL mutation, loading key, and direct commits stay out of scope', () => {
+    expect(rebuild).not.toBeNull()
 
     expect(rebuild).toMatch(/this\.\$store\.commit\s*\(\s*`loadingStart`\s*,\s*['"]admin-search-rebuildindex['"]\s*\)/)
     expect(rebuild).toMatch(/mutation:\s*enginesRebuildMutation/)
