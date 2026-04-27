@@ -182,13 +182,13 @@ export default {
       loadingStop(this.$store, 'admin-search-saveengines')
     },
     async rebuild () {
-      this.$store.commit(`loadingStart`, 'admin-search-rebuildindex')
+      loadingStart(this.$store, 'admin-search-rebuildindex')
       try {
         const resp = await this.$apollo.mutate({
           mutation: enginesRebuildMutation
         })
         if (_.get(resp, 'data.search.rebuildIndex.responseResult.succeeded', false)) {
-          this.$store.commit('showNotification', {
+          showNotification(this.$store, {
             message: this.$t('admin:search.indexRebuildSuccess'),
             style: 'success',
             icon: 'check'
@@ -197,9 +197,9 @@ export default {
           throw new Error(_.get(resp, 'data.search.rebuildIndex.responseResult.message', this.$t('common:error.unexpected')))
         }
       } catch (err) {
-        this.$store.commit('pushGraphError', err)
+        pushGraphError(this.$store, err)
       }
-      this.$store.commit(`loadingStop`, 'admin-search-rebuildindex')
+      loadingStop(this.$store, 'admin-search-rebuildindex')
     }
   }
 }
