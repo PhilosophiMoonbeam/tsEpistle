@@ -90,11 +90,17 @@ describe('admin-system loadInfo/refresh root UI facade migration guard', () => {
     expect(refresh.match(/\bshowNotification\s*\(/g) || []).toHaveLength(1)
   })
 
-  test('performUpgrade() direct store commits are intentionally out of scope for this narrow slice', () => {
+  test('performUpgrade() uses loading and error facades while preserving upgrade flow behavior', () => {
     expect(performUpgrade).not.toBeNull()
 
-    expect(performUpgrade).toMatch(/this\.\$store\.commit\s*\(\s*`loadingStart`\s*,\s*['"]admin-system-upgrade['"]\s*\)/)
-    expect(performUpgrade).toMatch(/this\.\$store\.commit\s*\(\s*['"]pushGraphError['"]\s*,\s*err\s*\)/)
-    expect(performUpgrade).toMatch(/this\.\$store\.commit\s*\(\s*`loadingStop`\s*,\s*['"]admin-system-upgrade['"]\s*\)/)
+    const directUpgradeRootUiCommit = /\bthis\.\$store\.commit\s*\(\s*(?:`loading(?:Start|Stop)`|['"]loading(?:Start|Stop)['"]|`pushGraphError`|['"]pushGraphError['"])\s*,/
+
+    expect(performUpgrade).toMatch(/async\s+performUpgrade\s*\(\s*\)\s*\{\s*this\.isUpgrading\s*=\s*true\s*this\.isUpgradingStarted\s*=\s*false\s*this\.upgradeProgress\s*=\s*0\s*loadingStart\s*\(\s*this\.\$store\s*,\s*['"]admin-system-upgrade['"]\s*\)\s*try\s*\{\s*const\s+respRaw\s*=\s*await\s+this\.\$apollo\.mutate\s*\(\s*\{\s*mutation:\s*performUpgradeMutation\s*\}\s*\)\s*const\s+resp\s*=\s*_\.get\s*\(\s*respRaw\s*,\s*['"]data\.system\.performUpgrade\.responseResult['"]\s*,\s*\{\s*\}\s*\)\s*if\s*\(\s*resp\.succeeded\s*\)\s*\{\s*this\.isUpgradingStarted\s*=\s*true\s*let\s+progressInterval\s*=\s*setInterval\s*\(\s*\(\s*\)\s*=>\s*\{\s*this\.upgradeProgress\s*\+=\s*0\.83\s*\}\s*,\s*500\s*\)\s*_\.delay\s*\(\s*\(\s*\)\s*=>\s*\{\s*clearInterval\s*\(\s*progressInterval\s*\)\s*window\.location\.reload\s*\(\s*true\s*\)\s*\}\s*,\s*60000\s*\)\s*\}\s*else\s*\{\s*throw\s+new\s+Error\s*\(\s*resp\.message\s*\)\s*\}\s*\}\s*catch\s*\(\s*err\s*\)\s*\{\s*pushGraphError\s*\(\s*this\.\$store\s*,\s*err\s*\)\s*loadingStop\s*\(\s*this\.\$store\s*,\s*['"]admin-system-upgrade['"]\s*\)\s*this\.isUpgrading\s*=\s*false\s*\}\s*\}/)
+    expect(performUpgrade).not.toMatch(directUpgradeRootUiCommit)
+    expect(performUpgrade).not.toMatch(/\bfinally\s*\{/)
+
+    expect(performUpgrade.match(/\bloadingStart\s*\(/g) || []).toHaveLength(1)
+    expect(performUpgrade.match(/\bpushGraphError\s*\(/g) || []).toHaveLength(1)
+    expect(performUpgrade.match(/\bloadingStop\s*\(/g) || []).toHaveLength(1)
   })
 })

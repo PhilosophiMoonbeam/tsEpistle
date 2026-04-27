@@ -209,7 +209,7 @@ export default {
       this.isUpgrading = true
       this.isUpgradingStarted = false
       this.upgradeProgress = 0
-      this.$store.commit(`loadingStart`, 'admin-system-upgrade')
+      loadingStart(this.$store, 'admin-system-upgrade')
       try {
         const respRaw = await this.$apollo.mutate({
           mutation: performUpgradeMutation
@@ -228,8 +228,8 @@ export default {
           throw new Error(resp.message)
         }
       } catch (err) {
-        this.$store.commit('pushGraphError', err)
-        this.$store.commit(`loadingStop`, 'admin-system-upgrade')
+        pushGraphError(this.$store, err)
+        loadingStop(this.$store, 'admin-system-upgrade')
         this.isUpgrading = false
       }
     }
