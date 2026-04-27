@@ -26,6 +26,7 @@
 
 <script>
 import _ from 'lodash'
+import { loadingStart, loadingStop, showNotification, pushGraphError } from '../../helpers/root-ui-store'
 import utilityCacheFlushCacheMutation from 'gql/admin/utilities/utilities-mutation-cache-flushcache.gql'
 import utilityCacheFlushUploadsMutation from 'gql/admin/utilities/utilities-mutation-cache-flushuploads.gql'
 
@@ -38,7 +39,7 @@ export default {
   methods: {
     async flushCache() {
       this.loading = true
-      this.$store.commit(`loadingStart`, 'admin-utilities-cache-flushCache')
+      loadingStart(this.$store, 'admin-utilities-cache-flushCache')
 
       try {
         const respRaw = await this.$apollo.mutate({
@@ -46,7 +47,7 @@ export default {
         })
         const resp = _.get(respRaw, 'data.pages.flushCache.responseResult', {})
         if (resp.succeeded) {
-          this.$store.commit('showNotification', {
+          showNotification(this.$store, {
             message: 'Cache flushed successfully.',
             style: 'success',
             icon: 'check'
@@ -55,15 +56,15 @@ export default {
           throw new Error(resp.message)
         }
       } catch (err) {
-        this.$store.commit('pushGraphError', err)
+        pushGraphError(this.$store, err)
       }
 
-      this.$store.commit(`loadingStop`, 'admin-utilities-cache-flushCache')
+      loadingStop(this.$store, 'admin-utilities-cache-flushCache')
       this.loading = false
     },
     async flushUploads() {
       this.loading = true
-      this.$store.commit(`loadingStart`, 'admin-utilities-cache-flushUploads')
+      loadingStart(this.$store, 'admin-utilities-cache-flushUploads')
 
       try {
         const respRaw = await this.$apollo.mutate({
@@ -71,7 +72,7 @@ export default {
         })
         const resp = _.get(respRaw, 'data.assets.flushTempUploads.responseResult', {})
         if (resp.succeeded) {
-          this.$store.commit('showNotification', {
+          showNotification(this.$store, {
             message: 'Temporary Uploads flushed successfully.',
             style: 'success',
             icon: 'check'
@@ -80,10 +81,10 @@ export default {
           throw new Error(resp.message)
         }
       } catch (err) {
-        this.$store.commit('pushGraphError', err)
+        pushGraphError(this.$store, err)
       }
 
-      this.$store.commit(`loadingStop`, 'admin-utilities-cache-flushUploads')
+      loadingStop(this.$store, 'admin-utilities-cache-flushUploads')
       this.loading = false
     },
     async flushClientLocaleCache () {
@@ -93,7 +94,7 @@ export default {
           window.localStorage.removeItem(lsKey)
         }
       }
-      this.$store.commit('showNotification', {
+      showNotification(this.$store, {
         message: 'Locale Client-Side Cache flushed successfully.',
         style: 'success',
         icon: 'check'
