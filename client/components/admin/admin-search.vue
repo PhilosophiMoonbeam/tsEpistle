@@ -105,6 +105,7 @@ import _ from 'lodash'
 import enginesSaveMutation from 'gql/admin/search/search-mutation-save-engines.gql'
 import enginesRebuildMutation from 'gql/admin/search/search-mutation-rebuild-index.gql'
 import { fetchSearchEngines } from '../../helpers/search-api'
+import { loadingStart, loadingStop, showNotification } from '../../helpers/root-ui-store'
 
 export default {
   data() {
@@ -127,13 +128,13 @@ export default {
   },
   methods: {
     async loadEngines({ notifyError = true } = {}) {
-      this.$store.commit(`loadingStart`, 'admin-search-refresh')
+      loadingStart(this.$store, 'admin-search-refresh')
       try {
         this.engines = await fetchSearchEngines(window.fetch.bind(window), 'Search engines response is invalid')
       } catch (err) {
         this.engines = []
         if (notifyError) {
-          this.$store.commit('showNotification', {
+          showNotification(this.$store, {
             message: err.message,
             style: 'error',
             icon: 'alert'
@@ -141,12 +142,12 @@ export default {
         }
         throw err
       } finally {
-        this.$store.commit(`loadingStop`, 'admin-search-refresh')
+        loadingStop(this.$store, 'admin-search-refresh')
       }
     },
     async refresh() {
       await this.loadEngines()
-      this.$store.commit('showNotification', {
+      showNotification(this.$store, {
         message: this.$t('admin:search.listRefreshSuccess'),
         style: 'success',
         icon: 'cached'
