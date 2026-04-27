@@ -262,7 +262,7 @@
     "epic-spinners": "1.1.0",
     "eslint": "7.12.0",
     "eslint-config-requarks": "1.0.7",
-    "eslint-config-standard": "15.0.0",
+    "eslint-config-standard": "15.0.1",
     "eslint-plugin-cypress": "2.15.2",
     "eslint-plugin-import": "2.29.1",
     "eslint-plugin-node": "11.1.0",
