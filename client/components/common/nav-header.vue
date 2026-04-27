@@ -455,14 +455,6 @@ export default {
     pageDelete () {
       this.deletePageModal = true
     },
-    assets () {
-      // window.location.assign(`/f`)
-      this.$store.commit('showNotification', {
-        style: 'indigo',
-        message: `Coming soon...`,
-        icon: 'ferry'
-      })
-    },
     async changeLocale (locale) {
       await this.$i18n.i18next.changeLanguage(locale.code)
       switch (this.mode) {
