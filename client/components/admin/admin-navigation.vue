@@ -279,6 +279,7 @@ import { v4 as uuid } from 'uuid'
 
 import { fetchGroupOptions } from '../../helpers/groups-api'
 import { fetchLocales } from '../../helpers/locales-api'
+import { loadingStart, loadingStop, showNotification } from '../../helpers/root-ui-store'
 
 import draggable from 'vuedraggable'
 
@@ -346,30 +347,30 @@ export default {
   },
   methods: {
     async loadAllLocales() {
-      this.$store.commit('loadingStart', 'admin-navigation-locales')
+      loadingStart(this.$store, 'admin-navigation-locales')
       try {
         this.allLocales = await fetchLocales(window.fetch.bind(window), 'Locales response is invalid')
       } catch (err) {
-        this.$store.commit('showNotification', {
+        showNotification(this.$store, {
           style: 'red',
           message: err.message,
           icon: 'alert'
         })
       }
-      this.$store.commit('loadingStop', 'admin-navigation-locales')
+      loadingStop(this.$store, 'admin-navigation-locales')
     },
     async loadGroups() {
-      this.$store.commit('loadingStart', 'admin-navigation-groups')
+      loadingStart(this.$store, 'admin-navigation-groups')
       try {
         this.groups = await fetchGroupOptions(window.fetch.bind(window), 'Groups response is invalid')
       } catch (err) {
-        this.$store.commit('showNotification', {
+        showNotification(this.$store, {
           style: 'red',
           message: err.message,
           icon: 'alert'
         })
       }
-      this.$store.commit('loadingStop', 'admin-navigation-groups')
+      loadingStop(this.$store, 'admin-navigation-groups')
     },
     addItem(kind) {
       let newItem = {
