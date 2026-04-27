@@ -71,6 +71,7 @@
 import _ from 'lodash'
 import gql from 'graphql-tag'
 import { get } from 'vuex-pathify'
+import { loadingStart, loadingStop } from '../../../helpers/root-ui-store'
 
 /* global siteLangs */
 
@@ -118,7 +119,7 @@ export default {
       }
     },
     async fetchBrowseItems (item) {
-      this.$store.commit(`loadingStart`, 'browse-load')
+      loadingStart(this.$store, 'browse-load')
       if (!item) {
         item = this.currentParent
       }
@@ -166,10 +167,10 @@ export default {
       })
       this.loadedCache = _.union(this.loadedCache, [item.id])
       this.currentItems = _.get(resp, 'data.pages.tree', [])
-      this.$store.commit(`loadingStop`, 'browse-load')
+      loadingStop(this.$store, 'browse-load')
     },
     async loadFromCurrentPath() {
-      this.$store.commit(`loadingStart`, 'browse-load')
+      loadingStart(this.$store, 'browse-load')
       const resp = await this.$apollo.query({
         query: gql`
           query ($path: String, $locale: String!) {
@@ -215,7 +216,7 @@ export default {
 
       this.loadedCache = [curPage.parent]
       this.currentItems = _.filter(items, ['parent', curPage.parent])
-      this.$store.commit(`loadingStop`, 'browse-load')
+      loadingStop(this.$store, 'browse-load')
     },
     goHome () {
       window.location.assign(siteLangs.length > 0 ? `/${this.locale}/home` : '/')
