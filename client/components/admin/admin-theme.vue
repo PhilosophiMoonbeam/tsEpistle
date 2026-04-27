@@ -134,6 +134,7 @@ import { sync } from 'vuex-pathify'
 
 import themeSaveMutation from 'gql/admin/theme/theme-mutation-save.gql'
 import { fetchThemeConfig } from '../../helpers/theming-api'
+import { loadingStart, loadingStop, pushGraphError } from '../../helpers/root-ui-store'
 
 export default {
   data() {
@@ -205,14 +206,14 @@ export default {
   },
   methods: {
     async loadConfig () {
-      this.$store.commit(`loadingStart`, 'admin-theme-refresh')
+      loadingStart(this.$store, 'admin-theme-refresh')
       try {
         this.config = await fetchThemeConfig(window.fetch.bind(window), 'Theme config response is invalid')
       } catch (err) {
-        this.$store.commit('pushGraphError', err)
+        pushGraphError(this.$store, err)
         throw err
       } finally {
-        this.$store.commit(`loadingStop`, 'admin-theme-refresh')
+        loadingStop(this.$store, 'admin-theme-refresh')
       }
     },
     async save () {
