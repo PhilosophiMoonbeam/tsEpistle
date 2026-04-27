@@ -134,7 +134,7 @@ import { sync } from 'vuex-pathify'
 
 import themeSaveMutation from 'gql/admin/theme/theme-mutation-save.gql'
 import { fetchThemeConfig } from '../../helpers/theming-api'
-import { loadingStart, loadingStop, pushGraphError } from '../../helpers/root-ui-store'
+import { loadingStart, loadingStop, showNotification, pushGraphError } from '../../helpers/root-ui-store'
 
 export default {
   data() {
@@ -218,7 +218,7 @@ export default {
     },
     async save () {
       this.loading = true
-      this.$store.commit(`loadingStart`, 'admin-theme-save')
+      loadingStart(this.$store, 'admin-theme-save')
       try {
         const respRaw = await this.$apollo.mutate({
           mutation: themeSaveMutation,
@@ -235,7 +235,7 @@ export default {
         const resp = _.get(respRaw, 'data.theming.setConfig.responseResult', {})
         if (resp.succeeded) {
           this.darkModeInitial = this.darkMode
-          this.$store.commit('showNotification', {
+          showNotification(this.$store, {
             message: 'Theme settings updated successfully.',
             style: 'success',
             icon: 'check'
@@ -244,9 +244,9 @@ export default {
           throw new Error(resp.message)
         }
       } catch (err) {
-        this.$store.commit('pushGraphError', err)
+        pushGraphError(this.$store, err)
       }
-      this.$store.commit(`loadingStop`, 'admin-theme-save')
+      loadingStop(this.$store, 'admin-theme-save')
       this.loading = false
     }
   }
