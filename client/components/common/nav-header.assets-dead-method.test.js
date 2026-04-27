@@ -79,10 +79,12 @@ describe('nav-header assets dead method cleanup guard', () => {
     expect(script).not.toMatch(/this\.\$store\.commit\s*\(\s*['"]showNotification['"]\s*,\s*\{[\s\S]*icon:\s*['"]ferry['"]/)
   })
 
-  test('pageMoveRename direct root UI commits remain intentionally out of scope', () => {
+  test('pageMoveRename routes root UI commits through the facade', () => {
+    expect(script).toMatch(/import\s+\{\s*loadingStart\s*,\s*loadingStop\s*,\s*pushGraphError\s*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/root-ui-store['"]/)
     expect(pageMoveRename).not.toBeNull()
-    expect(pageMoveRename).toMatch(/this\.\$store\.commit\s*\(\s*`loadingStart`\s*,\s*['"]page-move['"]\s*\)/)
-    expect(pageMoveRename).toMatch(/this\.\$store\.commit\s*\(\s*['"]pushGraphError['"]\s*,\s*err\s*\)/)
-    expect(pageMoveRename).toMatch(/this\.\$store\.commit\s*\(\s*`loadingStop`\s*,\s*['"]page-move['"]\s*\)/)
+    expect(pageMoveRename).toMatch(/loadingStart\s*\(\s*this\.\$store\s*,\s*['"]page-move['"]\s*\)/)
+    expect(pageMoveRename).toMatch(/pushGraphError\s*\(\s*this\.\$store\s*,\s*err\s*\)/)
+    expect(pageMoveRename).toMatch(/loadingStop\s*\(\s*this\.\$store\s*,\s*['"]page-move['"]\s*\)/)
+    expect(pageMoveRename).not.toMatch(/this\.\$store\.commit\s*\(\s*[`'"](?:loadingStart|loadingStop|pushGraphError)[`'"]/)
   })
 })

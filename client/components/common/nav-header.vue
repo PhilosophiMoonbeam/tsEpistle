@@ -253,6 +253,7 @@
 import { get, sync } from 'vuex-pathify'
 import _ from 'lodash'
 
+import { loadingStart, loadingStop, pushGraphError } from '../../helpers/root-ui-store'
 import movePageMutation from 'gql/common/common-pages-mutation-move.gql'
 
 /* global siteConfig, siteLangs */
@@ -432,7 +433,7 @@ export default {
       this.movePageModal = true
     },
     async pageMoveRename ({ path, locale }) {
-      this.$store.commit(`loadingStart`, 'page-move')
+      loadingStart(this.$store, 'page-move')
       try {
         const resp = await this.$apollo.mutate({
           mutation: movePageMutation,
@@ -448,8 +449,8 @@ export default {
           throw new Error(_.get(resp, 'data.pages.move.responseResult.message', this.$t('common:error.unexpected')))
         }
       } catch (err) {
-        this.$store.commit('pushGraphError', err)
-        this.$store.commit(`loadingStop`, 'page-move')
+        pushGraphError(this.$store, err)
+        loadingStop(this.$store, 'page-move')
       }
     },
     pageDelete () {
