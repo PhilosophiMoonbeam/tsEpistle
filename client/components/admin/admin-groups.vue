@@ -70,6 +70,7 @@ import _ from 'lodash'
 import createGroupMutation from 'gql/admin/groups/groups-mutation-create.gql'
 
 import { fetchGroupsList } from '../../helpers/groups-api'
+import { loadingStart, loadingStop, showNotification } from '../../helpers/root-ui-store'
 
 export default {
   data() {
@@ -104,12 +105,12 @@ export default {
   methods: {
     async loadGroups() {
       this.loading = true
-      this.$store.commit('loadingStart', 'admin-groups-refresh')
+      loadingStart(this.$store, 'admin-groups-refresh')
       try {
         this.groups = await fetchGroupsList(window.fetch.bind(window), 'Groups list response is invalid')
         return true
       } catch (err) {
-        this.$store.commit('showNotification', {
+        showNotification(this.$store, {
           style: 'red',
           message: err.message,
           icon: 'alert'
@@ -117,12 +118,12 @@ export default {
         return false
       } finally {
         this.loading = false
-        this.$store.commit('loadingStop', 'admin-groups-refresh')
+        loadingStop(this.$store, 'admin-groups-refresh')
       }
     },
     async refresh() {
       if (await this.loadGroups()) {
-        this.$store.commit('showNotification', {
+        showNotification(this.$store, {
           message: 'Groups have been refreshed.',
           style: 'success',
           icon: 'cached'
