@@ -135,6 +135,7 @@ import { createPatch } from 'diff'
 import _ from 'lodash'
 import gql from 'graphql-tag'
 import { getPageDownloadPath, getPageSourcePath } from '../helpers/page-actions'
+import { loadingStart, loadingStop } from '../helpers/root-ui-store'
 
 export default {
   i18nOptions: { namespaces: 'history' },
@@ -328,7 +329,7 @@ export default {
   },
   methods: {
     async loadVersion (versionId) {
-      this.$store.commit(`loadingStart`, 'history-version-' + versionId)
+      loadingStart(this.$store, 'history-version-' + versionId)
       const resp = await this.$apollo.query({
         query: gql`
           query ($pageId: Int!, $versionId: Int!) {
@@ -362,7 +363,7 @@ export default {
           pageId: this.pageId
         }
       })
-      this.$store.commit(`loadingStop`, 'history-version-' + versionId)
+      loadingStop(this.$store, 'history-version-' + versionId)
       const page = _.get(resp, 'data.pages.version', null)
       if (page) {
         this.cache.push(page)
