@@ -35,6 +35,7 @@
 import _ from 'lodash'
 import { get } from 'vuex-pathify'
 import gql from 'graphql-tag'
+import { loadingStart, loadingStop, pushGraphError } from '../../helpers/root-ui-store'
 
 export default {
   props: {
@@ -69,7 +70,7 @@ export default {
     },
     async convertPage() {
       this.loading = true
-      this.$store.commit(`loadingStart`, 'page-convert')
+      loadingStart(this.$store, 'page-convert')
       this.$nextTick(async () => {
         try {
           const resp = await this.$apollo.mutate({
@@ -105,9 +106,9 @@ export default {
             throw new Error(_.get(resp, 'data.pages.convert.responseResult.message', this.$t('common:error.unexpected')))
           }
         } catch (err) {
-          this.$store.commit('pushGraphError', err)
+          pushGraphError(this.$store, err)
         }
-        this.$store.commit(`loadingStop`, 'page-convert')
+        loadingStop(this.$store, 'page-convert')
         this.loading = false
       })
     }
