@@ -461,7 +461,7 @@ export default {
     async refresh() {
       await this.$apollo.queries.trees.refetch()
       this.current = {}
-      this.$store.commit('showNotification', {
+      showNotification(this.$store, {
         message: 'Navigation has been refreshed.',
         style: 'success',
         icon: 'cached'

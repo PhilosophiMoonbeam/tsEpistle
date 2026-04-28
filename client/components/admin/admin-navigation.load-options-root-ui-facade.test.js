@@ -11,16 +11,22 @@ const extractMethod = (name) => {
 
   const rest = source.slice(start)
   const match = rest.match(/\n {4}(?:async )?[a-zA-Z0-9_]+\s*\(/)
-  expect(match).not.toBeNull()
+  if (match) {
+    return rest.slice(0, match.index)
+  }
 
-  return rest.slice(0, match.index)
+  const methodsEnd = rest.indexOf('\n    }\n  },')
+  expect(methodsEnd).toBeGreaterThan(-1)
+
+  return rest.slice(0, methodsEnd + '\n    }'.length)
 }
 
-describe('admin-navigation root UI facade for read-only option loaders', () => {
+describe('admin-navigation root UI facade for read-only option loaders and refresh notification', () => {
   const loadAllLocales = extractMethod('loadAllLocales')
   const loadGroups = extractMethod('loadGroups')
+  const refresh = extractMethod('refresh')
 
-  test('imports only the root UI helpers needed by the option loaders', () => {
+  test('imports only the root UI helpers needed by the option loaders and refresh notification', () => {
     expect(source).toContain("import { loadingStart, loadingStop, showNotification } from '../../helpers/root-ui-store'")
   })
 
@@ -57,11 +63,21 @@ describe('admin-navigation root UI facade for read-only option loaders', () => {
     }
   })
 
-  test('keeps broader navigation save, refresh, Apollo watchers, and template out of this slice', () => {
+  test('refresh routes only its success notification through the facade', () => {
+    expect(refresh).toContain('await this.$apollo.queries.trees.refetch()')
+    expect(refresh).toContain('this.current = {}')
+    expect(refresh).toContain('showNotification(this.$store, {')
+    expect(refresh).toContain("message: 'Navigation has been refreshed.'")
+    expect(refresh).toContain("style: 'success'")
+    expect(refresh).toContain("icon: 'cached'")
+
+    expect(refresh).not.toContain("this.$store.commit('showNotification'")
+  })
+
+  test('keeps broader navigation save, Apollo watchers, and template out of this slice', () => {
     expect(source).toContain("this.$store.commit(`loadingStart`, 'admin-navigation-save')")
     expect(source).toContain("this.$store.commit('pushGraphError', err)")
     expect(source).toContain("this.$store.commit(`loadingStop`, 'admin-navigation-save')")
-    expect(source).toContain("this.$store.commit('showNotification', {\n        message: 'Navigation has been refreshed.'")
     expect(source).toContain('this.$store.commit(`loading' + '$' + "{isLoading ? 'Start' : 'Stop'}`, 'admin-navigation-config')")
     expect(source).toContain('this.$store.commit(`loading' + '$' + "{isLoading ? 'Start' : 'Stop'}`, 'admin-navigation-tree')")
     expect(source).toContain("v-btn.animated.fadeInDown(color='success', depressed, @click='save', large)")
