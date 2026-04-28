@@ -130,6 +130,7 @@
 <script>
 import gql from 'graphql-tag'
 import { get, sync } from 'vuex-pathify'
+import { setLoading } from '../../helpers/root-ui-store'
 
 export default {
   data() {
@@ -171,7 +172,7 @@ export default {
       fetchPolicy: 'network-only',
       update: (data) => data.groups.list,
       watchLoading (isLoading) {
-        this.$store.commit(`loading${isLoading ? 'Start' : 'Stop'}`, 'editor-redirect-groups')
+        setLoading(this.$store, 'editor-redirect-groups', isLoading)
       }
     }
   }
