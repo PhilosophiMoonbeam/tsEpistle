@@ -19,8 +19,8 @@ const extractMethod = (name) => {
 describe('history loadVersion root UI facade migration guard', () => {
   const loadVersion = extractMethod('loadVersion')
 
-  test('imports the root UI loading helpers for loadVersion', () => {
-    expect(source).toContain("import { loadingStart, loadingStop } from '../helpers/root-ui-store'")
+  test('imports the root UI loading helpers for loadVersion and trail watcher', () => {
+    expect(source).toContain("import { loadingStart, loadingStop, setLoading } from '../helpers/root-ui-store'")
   })
 
   test('loadVersion routes version loading through the facade', () => {
@@ -42,13 +42,17 @@ describe('history loadVersion root UI facade migration guard', () => {
     expect(loadVersion).toContain("return { content: '' }")
   })
 
-  test('keeps restore flow, page state commits, and Apollo trail watcher out of this slice', () => {
+  test('trail watcher routes history trail loading through the facade', () => {
+    expect(source).toContain('watchLoading (isLoading) {\n        setLoading(this.$store, \'history-trail-refresh\', isLoading)\n      }')
+    expect(source).not.toContain('this.$store.commit(`loading' + '$' + "{isLoading ? 'Start' : 'Stop'}`, 'history-trail-refresh')")
+  })
+
+  test('keeps restore flow, page state commits, and history template out of this slice', () => {
     expect(source).toContain("this.$store.commit('page/SET_ID', this.id)")
     expect(source).toContain("this.$store.commit('page/SET_MODE', 'history')")
     expect(source).toContain("this.$store.commit(`loadingStart`, 'history-restore')")
     expect(source).toContain("this.$store.commit('showNotification', {")
     expect(source).toContain("this.$store.commit(`loadingStop`, 'history-restore')")
-    expect(source).toContain('this.$store.commit(`loading' + '$' + "{isLoading ? 'Start' : 'Stop'}`, 'history-trail-refresh')")
     expect(source).toContain("v-btn(color='orange darken-2', dark, @click='restoreConfirm', :loading='restoreLoading')")
   })
 })

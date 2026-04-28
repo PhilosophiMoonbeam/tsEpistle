@@ -135,7 +135,7 @@ import { createPatch } from 'diff'
 import _ from 'lodash'
 import gql from 'graphql-tag'
 import { getPageDownloadPath, getPageSourcePath } from '../helpers/page-actions'
-import { loadingStart, loadingStop } from '../helpers/root-ui-store'
+import { loadingStart, loadingStop, setLoading } from '../helpers/root-ui-store'
 
 export default {
   i18nOptions: { namespaces: 'history' },
@@ -552,7 +552,7 @@ export default {
         this.trail = data.pages.history.trail
       },
       watchLoading (isLoading) {
-        this.$store.commit(`loading${isLoading ? 'Start' : 'Stop'}`, 'history-trail-refresh')
+        setLoading(this.$store, 'history-trail-refresh', isLoading)
       }
     }
   }
