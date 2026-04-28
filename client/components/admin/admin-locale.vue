@@ -146,6 +146,7 @@ import localesDownloadMutation from 'gql/admin/locale/locale-mutation-download.g
 import localesSaveMutation from 'gql/admin/locale/locale-mutation-save.gql'
 
 import { fetchLocales, fetchLocaleConfig } from '../../helpers/locales-api'
+import { loadingStart, loadingStop, showNotification } from '../../helpers/root-ui-store'
 
 export default {
   data() {
@@ -207,7 +208,7 @@ export default {
   },
   methods: {
     async loadBootstrap() {
-      this.$store.commit('loadingStart', 'admin-locale-refresh')
+      loadingStart(this.$store, 'admin-locale-refresh')
 
       const [localesResult, configResult] = await Promise.allSettled([
         fetchLocales(window.fetch.bind(window), 'Locales response is invalid'),
@@ -217,7 +218,7 @@ export default {
       if (localesResult.status === 'fulfilled') {
         this.locales = localesResult.value.map(lc => ({ ...lc, isDownloading: false }))
       } else {
-        this.$store.commit('showNotification', {
+        showNotification(this.$store, {
           style: 'red',
           message: localesResult.reason.message,
           icon: 'alert'
@@ -232,14 +233,14 @@ export default {
         this.configLoaded = true
       } else {
         this.configLoaded = false
-        this.$store.commit('showNotification', {
+        showNotification(this.$store, {
           style: 'red',
           message: configResult.reason.message,
           icon: 'alert'
         })
       }
 
-      this.$store.commit('loadingStop', 'admin-locale-refresh')
+      loadingStop(this.$store, 'admin-locale-refresh')
     },
     async download(lc) {
       lc.isDownloading = true
