@@ -138,6 +138,7 @@ import gql from 'graphql-tag'
 import { get } from 'vuex-pathify'
 import validate from 'validate.js'
 import _ from 'lodash'
+import { showNotification } from '../helpers/root-ui-store'
 
 export default {
   data () {
@@ -207,7 +208,7 @@ export default {
       } catch (err) {
         console.warn(err)
         if (!silent) {
-          this.$store.commit('showNotification', {
+          showNotification(this.$store, {
             style: 'red',
             message: err.message,
             icon: 'alert'
