@@ -17901,11 +17901,6 @@ tweetnacl@^0.14.3, tweetnacl@~0.14.0:
   resolved "https://registry.yarnpkg.com/tweetnacl/-/tweetnacl-0.14.5.tgz#5ae68177f192d4456269d108afa93ff8743f4f64"
   integrity sha512-KXXFFdAbFXY4geFIwoyNK+f5Z1b7swfXABfL7HXCmoIWMKU3dmS26672A4EeQtDzLKy7SXmfBu51JolvEKwtGA==
 
-twemoji-awesome@1.0.6:
-  version "1.0.6"
-  resolved "https://registry.yarnpkg.com/twemoji-awesome/-/twemoji-awesome-1.0.6.tgz#3167c3abb95753da997291f8f1c53cbac61852a5"
-  integrity sha512-Hn5gC8kWWE5U+2T6lhkjFgdvVdeCDtIA8w2TsnNNVtapH6SlPFvAgQ3qO6FqqmEhCYpT1OoBZFO3vBXvkQWVZw==
-
 twemoji-parser@14.0.0:
   version "14.0.0"
   resolved "https://registry.yarnpkg.com/twemoji-parser/-/twemoji-parser-14.0.0.tgz#13dabcb6d3a261d9efbf58a1666b182033bf2b62"
