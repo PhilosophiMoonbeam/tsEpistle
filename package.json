@@ -69,7 +69,7 @@
     "bcryptjs-then": "1.0.1",
     "bluebird": "3.7.2",
     "body-parser": "1.20.5",
-    "chalk": "4.1.0",
+    "chalk": "4.1.2",
     "cheerio": "1.2.0",
     "chokidar": "3.5.3",
     "chromium-pickle-js": "0.2.0",
