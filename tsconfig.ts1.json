@@ -18,7 +18,8 @@
   "include": [
     "client/helpers/*-api.js",
     "client/helpers/page-actions.js",
-    "client/helpers/root-ui-store.js"
+    "client/helpers/root-ui-store.js",
+    "client/helpers/search-navigation-events.js"
   ],
   "exclude": [
     "node_modules",

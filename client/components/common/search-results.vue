@@ -59,6 +59,7 @@ import _ from 'lodash'
 import { sync } from 'vuex-pathify'
 import { OrbitSpinner } from 'epic-spinners'
 
+import { onSearchEnter, onSearchMove, offSearchEnter, offSearchMove } from '../../helpers/search-navigation-events'
 import searchPagesQuery from 'gql/common/common-pages-query-search.gql'
 
 export default {
@@ -111,15 +112,23 @@ export default {
     }
   },
   mounted() {
-    this.$root.$on('searchMove', (dir) => {
+    onSearchMove(this.$root, this.handleSearchMove)
+    onSearchEnter(this.$root, this.handleSearchEnter)
+  },
+  beforeDestroy() {
+    offSearchMove(this.$root, this.handleSearchMove)
+    offSearchEnter(this.$root, this.handleSearchEnter)
+  },
+  methods: {
+    handleSearchMove(dir) {
       this.cursor += ((dir === 'up') ? -1 : 1)
       if (this.cursor < -1) {
         this.cursor = -1
       } else if (this.cursor > this.results.length + this.suggestions.length - 1) {
         this.cursor = this.results.length + this.suggestions.length - 1
       }
-    })
-    this.$root.$on('searchEnter', () => {
+    },
+    handleSearchEnter() {
       if (!this.results) {
         return
       }
@@ -129,9 +138,7 @@ export default {
       } else if (this.cursor >= 0) {
         this.setSearchTerm(_.nth(this.suggestions, this.cursor - this.results.length))
       }
-    })
-  },
-  methods: {
+    },
     setSearchTerm(term) {
       this.search = term
     },

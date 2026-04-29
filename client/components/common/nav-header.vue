@@ -254,6 +254,7 @@ import { get, sync } from 'vuex-pathify'
 import _ from 'lodash'
 
 import { loadingStart, loadingStop, pushGraphError } from '../../helpers/root-ui-store'
+import { emitSearchEnter, emitSearchMove } from '../../helpers/search-navigation-events'
 import movePageMutation from 'gql/common/common-pages-mutation-move.gql'
 
 /* global siteConfig, siteLangs */
@@ -392,10 +393,10 @@ export default {
       }
     },
     searchEnter () {
-      this.$root.$emit('searchEnter', true)
+      emitSearchEnter(this.$root)
     },
     searchMove(dir) {
-      this.$root.$emit('searchMove', dir)
+      emitSearchMove(this.$root, dir)
     },
     pageNew () {
       this.newPageModal = true
