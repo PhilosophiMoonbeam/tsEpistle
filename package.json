@@ -94,7 +94,6 @@
     "express": "4.18.2",
     "express-brute": "1.0.1",
     "express-session": "1.19.0",
-    "file-type": "16.5.4",
     "filesize": "6.4.0",
     "fs-extra": "11.3.4",
     "getos": "3.2.1",
@@ -181,7 +180,6 @@
     "punycode": "2.3.1",
     "qr-image": "3.2.0",
     "raven": "2.6.4",
-    "remove-markdown": "0.6.3",
     "request": "2.88.2",
     "request-promise": "4.2.6",
     "safe-regex": "2.1.1",
@@ -190,7 +188,6 @@
     "semver": "7.7.4",
     "serve-favicon": "2.5.1",
     "simple-git": "3.36.0",
-    "solr-node": "1.2.1",
     "sqlite3": "5.1.7",
     "ssh2": "1.17.0",
     "ssh2-promise": "1.0.3",
@@ -203,7 +200,6 @@
     "uuid": "9.0.1",
     "validate.js": "0.13.1",
     "winston": "3.19.0",
-    "xss": "1.0.15",
     "yargs": "17.7.2"
   },
   "devDependencies": {
