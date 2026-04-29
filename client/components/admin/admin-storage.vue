@@ -239,9 +239,6 @@ export default {
     DurationPicker,
     LoopingRhombusesSpinner
   },
-  filters: {
-    startCase(val) { return _.startCase(val) }
-  },
   data() {
     return {
       runningAction: false,

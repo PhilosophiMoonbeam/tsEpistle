@@ -75,7 +75,7 @@
                     td.text-xs-center(v-if='$vuetify.breakpoint.lgAndUp')
                       v-chip.ma-0(x-small, :color='$vuetify.theme.dark ? `grey darken-4` : `grey lighten-4`')
                         .overline {{props.item.ext.toUpperCase().substring(1)}}
-                    td.caption(v-if='$vuetify.breakpoint.mdAndUp') {{ props.item.fileSize | prettyBytes }}
+                    td.caption(v-if='$vuetify.breakpoint.mdAndUp') {{ prettyBytes(props.item.fileSize) }}
                     td.caption(v-if='$vuetify.breakpoint.mdAndUp') {{ $helpers.formatMoment(props.item.createdAt, 'from') }}
                     td(v-if='$vuetify.breakpoint.smAndUp')
                       v-menu(offset-x, min-width='200')
@@ -335,7 +335,7 @@ export default {
       }
     }
   },
-  filters: {
+  methods: {
     prettyBytes(num) {
       if (typeof num !== 'number' || isNaN(num)) {
         throw new TypeError('Expected a number')
@@ -357,9 +357,7 @@ export default {
       unit = units[exponent]
 
       return (neg ? '-' : '') + num + ' ' + unit
-    }
-  },
-  methods: {
+    },
     async refresh() {
       await this.$apollo.queries.assets.refetch()
       this.$store.commit('showNotification', {

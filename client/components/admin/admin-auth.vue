@@ -232,9 +232,6 @@ export default {
   components: {
     draggable
   },
-  filters: {
-    startCase(val) { return _.startCase(val) }
-  },
   data() {
     return {
       groups: [],
