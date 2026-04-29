@@ -366,6 +366,15 @@ import { get, sync } from 'vuex-pathify'
 import _ from 'lodash'
 import ClipboardJS from 'clipboard'
 import Vue from 'vue'
+import {
+  emitPageConvert,
+  emitPageDelete,
+  emitPageDuplicate,
+  emitPageEdit,
+  emitPageHistory,
+  emitPageMove,
+  emitPageSource
+} from '../../../helpers/page-action-events'
 
 /* global siteLangs */
 
@@ -677,25 +686,25 @@ export default {
       }
     },
     pageEdit () {
-      this.$root.$emit('pageEdit')
+      emitPageEdit(this.$root)
     },
     pageHistory () {
-      this.$root.$emit('pageHistory')
+      emitPageHistory(this.$root)
     },
     pageSource () {
-      this.$root.$emit('pageSource')
+      emitPageSource(this.$root)
     },
     pageConvert () {
-      this.$root.$emit('pageConvert')
+      emitPageConvert(this.$root)
     },
     pageDuplicate () {
-      this.$root.$emit('pageDuplicate')
+      emitPageDuplicate(this.$root)
     },
     pageMove () {
-      this.$root.$emit('pageMove')
+      emitPageMove(this.$root)
     },
     pageDelete () {
-      this.$root.$emit('pageDelete')
+      emitPageDelete(this.$root)
     },
     handleSideNavVisibility () {
       if (window.innerWidth === this.winWidth) { return }

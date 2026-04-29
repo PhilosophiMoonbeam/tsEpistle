@@ -253,6 +253,22 @@
 import { get, sync } from 'vuex-pathify'
 import _ from 'lodash'
 
+import {
+  offPageConvert,
+  offPageDelete,
+  offPageDuplicate,
+  offPageEdit,
+  offPageHistory,
+  offPageMove,
+  offPageSource,
+  onPageConvert,
+  onPageDelete,
+  onPageDuplicate,
+  onPageEdit,
+  onPageHistory,
+  onPageMove,
+  onPageSource
+} from '../../helpers/page-action-events'
 import { loadingStart, loadingStop, pushGraphError } from '../../helpers/root-ui-store'
 import { emitSearchEnter, emitSearchMove } from '../../helpers/search-navigation-events'
 import movePageMutation from 'gql/common/common-pages-mutation-move.gql'
@@ -350,28 +366,23 @@ export default {
     }
   },
   mounted () {
-    this.$root.$on('pageEdit', () => {
-      this.pageEdit()
-    })
-    this.$root.$on('pageHistory', () => {
-      this.pageHistory()
-    })
-    this.$root.$on('pageSource', () => {
-      this.pageSource()
-    })
-    this.$root.$on('pageMove', () => {
-      this.pageMove()
-    })
-    this.$root.$on('pageConvert', () => {
-      this.pageConvert()
-    })
-    this.$root.$on('pageDuplicate', () => {
-      this.pageDuplicate()
-    })
-    this.$root.$on('pageDelete', () => {
-      this.pageDelete()
-    })
+    onPageEdit(this.$root, this.pageEdit)
+    onPageHistory(this.$root, this.pageHistory)
+    onPageSource(this.$root, this.pageSource)
+    onPageMove(this.$root, this.pageMove)
+    onPageConvert(this.$root, this.pageConvert)
+    onPageDuplicate(this.$root, this.pageDuplicate)
+    onPageDelete(this.$root, this.pageDelete)
     this.isDevMode = siteConfig.devMode === true
+  },
+  beforeDestroy () {
+    offPageEdit(this.$root, this.pageEdit)
+    offPageHistory(this.$root, this.pageHistory)
+    offPageSource(this.$root, this.pageSource)
+    offPageMove(this.$root, this.pageMove)
+    offPageConvert(this.$root, this.pageConvert)
+    offPageDuplicate(this.$root, this.pageDuplicate)
+    offPageDelete(this.$root, this.pageDelete)
   },
   methods: {
     searchFocus () {
