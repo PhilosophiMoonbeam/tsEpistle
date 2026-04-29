@@ -20,7 +20,8 @@
     "client/helpers/page-actions.js",
     "client/helpers/root-ui-store.js",
     "client/helpers/search-navigation-events.js",
-    "client/helpers/page-action-events.js"
+    "client/helpers/page-action-events.js",
+    "client/helpers/compatibility.js"
   ],
   "exclude": [
     "node_modules",

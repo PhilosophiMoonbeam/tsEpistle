@@ -98,7 +98,6 @@
     "fs-extra": "11.3.4",
     "getos": "3.2.1",
     "graphql": "15.3.0",
-    "graphql-list-fields": "2.0.4",
     "graphql-rate-limit-directive": "1.2.1",
     "graphql-subscriptions": "1.1.0",
     "graphql-tools": "7.0.0",
