@@ -3642,18 +3642,6 @@ anymatch@^3.0.0, anymatch@^3.0.3, anymatch@~3.1.2:
     json-bignum "^0.0.3"
     tslib "^2.6.2"
 
-apg-conv-api@1.0.x:
-  version "1.0.1"
-  resolved "https://registry.yarnpkg.com/apg-conv-api/-/apg-conv-api-1.0.1.tgz#fe239ae98b9472caa24ebca76d3caecfd4d006af"
-  integrity sha512-1h4LB3N/4+FcujMGQIp0OIKdNNlwyXF8e4duy6ACjBUdHSUT4z5PVyFaf9+ego52IpgNAAdQCl6Up9vTM9cvqg==
-
-apg-lib@^3.2.0:
-  version "3.2.0"
-  resolved "https://registry.yarnpkg.com/apg-lib/-/apg-lib-3.2.0.tgz#fb6015df5eef42c57b140e41d843539853d3d4aa"
-  integrity sha512-igSp4Zoq47Brp9B2mKXXE7tleC+bLWgMTgYSGCb5UIs3w+xz/qwCh2drtp7kyRtTN6GFcAwD3pXtqwtdfg+EHw==
-  dependencies:
-    apg-conv-api "1.0.x"
-
 apollo-cache-control@^0.15.0:
   version "0.15.0"
   resolved "https://registry.yarnpkg.com/apollo-cache-control/-/apollo-cache-control-0.15.0.tgz#45897ed318b883bf964960e6fcd7516a50b4e4d4"
@@ -9755,14 +9743,6 @@ i18next-localstorage-backend@3.1.3:
   dependencies:
     "@babel/runtime" "^7.14.6"
 
-i18next-node-fs-backend@2.1.3:
-  version "2.1.3"
-  resolved "https://registry.yarnpkg.com/i18next-node-fs-backend/-/i18next-node-fs-backend-2.1.3.tgz#483fa9eda4c152d62a3a55bcae2a5727ba887559"
-  integrity sha512-CreMFiVl3ChlMc5ys/e0QfuLFOZyFcL40Jj6jaKD6DxZ/GCUMxPI9BpU43QMWUgC7r+PClpxg2cGXAl0CjG04g==
-  dependencies:
-    js-yaml "3.13.1"
-    json5 "2.0.0"
-
 i18next-xhr-backend@3.2.2:
   version "3.2.2"
   resolved "https://registry.yarnpkg.com/i18next-xhr-backend/-/i18next-xhr-backend-3.2.2.tgz#769124441461b085291f539d91864e3691199178"
@@ -9836,11 +9816,6 @@ ignore@^5.1.1, ignore@^5.1.4, ignore@^5.2.0:
   version "5.3.2"
   resolved "https://registry.yarnpkg.com/ignore/-/ignore-5.3.2.tgz#3cd40e729f3643fd87cb04e50bf0eb722bc596f5"
   integrity sha512-hsBTNUqQTDwkWtcdYI2i06Y/nUBEsNEDJKjWdigLvegy8kDuJAS8uRlpkkcQpyEXL0Z/pjDy5HBmMjRCJ2gq+g==
-
-image-size@2.0.2:
-  version "2.0.2"
-  resolved "https://registry.yarnpkg.com/image-size/-/image-size-2.0.2.tgz#84a7b43704db5736f364bf0d1b029821299b4bdc"
-  integrity sha512-IRqXKlaXwgSMAMtpNzZa1ZAe8m+Sa1770Dhk8VkSsP9LS+iHD62Zd8FQKs8fbPiagBE7BzoFX23cxFnwshpV6w==
 
 immutable@~3.7.6:
   version "3.7.6"
@@ -11065,14 +11040,6 @@ js-stringify@^1.0.1, js-stringify@^1.0.2:
   resolved "https://registry.yarnpkg.com/js-tokens/-/js-tokens-4.0.0.tgz#19203fb59991df98e3a287050d4647cdeaf32499"
   integrity sha512-RdJUflcE3cUzKiMqQgsCu06FPu9UdIJO0beYbPhHN4k6apgJtifcoCtT9bcxOpYBtpD2kCM6Sbzg4CausW/PKQ==
 
-js-yaml@3.13.1:
-  version "3.13.1"
-  resolved "https://registry.yarnpkg.com/js-yaml/-/js-yaml-3.13.1.tgz#aff151b30bfdfa8e49e05da22e7415e9dfa37847"
-  integrity sha512-YfbcO7jXDdyj0DGxYVSlSeQNHbD7XPWvrVWeVUujrQEoZzWJIRrCPoyk6kL6IAjAG2IolMK4T0hNUe0HOUs5Jw==
-  dependencies:
-    argparse "^1.0.7"
-    esprima "^4.0.0"
-
 js-yaml@4.1.1:
   version "4.1.1"
   resolved "https://registry.yarnpkg.com/js-yaml/-/js-yaml-4.1.1.tgz#854c292467705b699476e1a2decc0c8a3458806b"
@@ -11218,13 +11185,6 @@ json-stringify-safe@~5.0.1:
   version "5.0.1"
   resolved "https://registry.yarnpkg.com/json-stringify-safe/-/json-stringify-safe-5.0.1.tgz#1296a2d58fd45f19a0f6ce01d65701e2c735b6eb"
   integrity sha512-ZClg6AaYvamvYEE82d3Iyd3vSSIjQ+odgjaTzRuO3s7toCdFKczob2i0zCh7JE8kWn17yvAWhUVxvqGwUalsRA==
-
-json5@2.0.0:
-  version "2.0.0"
-  resolved "https://registry.yarnpkg.com/json5/-/json5-2.0.0.tgz#b61abf97aa178c4b5853a66cc8eecafd03045d78"
-  integrity sha512-0EdQvHuLm7yJ7lyG5dp7Q3X2ku++BG5ZHaJ5FTnaXpKqDrw4pMxel5Bt3oAYMthnrthFBdnZ1FcsXTPyrQlV0w==
-  dependencies:
-    minimist "^1.2.0"
 
 json5@^1.0.1, json5@^1.0.2:
   version "1.0.2"
@@ -15535,13 +15495,6 @@ schema-utils@^3.0.0:
     ajv "^6.12.5"
     ajv-keywords "^3.5.2"
 
-scim-query-filter-parser@2.0.4:
-  version "2.0.4"
-  resolved "https://registry.yarnpkg.com/scim-query-filter-parser/-/scim-query-filter-parser-2.0.4.tgz#02ed85343b4de59d78101a3eb36b1b309f370e72"
-  integrity sha512-RVzPHmmnqz36dhSRbyFCDBhU43p3h+UK5JItUI8CzxGTQrX/cSUvBPh/Qy9dbQdXVK79/0hYTqhdJPfDP0ZAcA==
-  dependencies:
-    apg-lib "^3.2.0"
-
 script-ext-html-webpack-plugin@2.1.5:
   version "2.1.5"
   resolved "https://registry.yarnpkg.com/script-ext-html-webpack-plugin/-/script-ext-html-webpack-plugin-2.1.5.tgz#d4a57e43b04aaf531f675c935688c3971bfafc6c"
@@ -15750,11 +15703,6 @@ shebang-regex@^3.0.0:
   version "3.0.0"
   resolved "https://registry.yarnpkg.com/shebang-regex/-/shebang-regex-3.0.0.tgz#ae16f1644d873ecad843b0307b143362d4c42172"
   integrity sha512-7++dFhtcx3353uBaq8DDR4NuxBetBzC7ZQOhmTQInHEd6bSrXdiEyzCvG07Z44UYdLShWUyXt5M/yhz8ekcb1A==
-
-shvl@^2.0.0:
-  version "2.0.3"
-  resolved "https://registry.yarnpkg.com/shvl/-/shvl-2.0.3.tgz#eb4bd37644f5684bba1fc52c3010c96fb5e6afd1"
-  integrity sha512-V7C6S9Hlol6SzOJPnQ7qzOVEWUQImt3BNmmzh40wObhla3XOYMe4gGiYzLrJd5TFa+cI2f9LKIRJTTKZSTbWgw==
 
 side-channel-list@^1.0.0:
   version "1.0.1"
@@ -17774,14 +17722,6 @@ vuex-pathify@1.4.5:
   integrity sha512-i21nW9cEt3Qx3ieTk9lLxDfBkOEEB1nL9tQDRsSOkOYWZuJ+KiX/1RL+/Yb85EODsuKS9tHWJ5EHI5MImThmgg==
   dependencies:
     vue-class-component "^7.2.6"
-
-vuex-persistedstate@3.1.0:
-  version "3.1.0"
-  resolved "https://registry.yarnpkg.com/vuex-persistedstate/-/vuex-persistedstate-3.1.0.tgz#a710d01000bff8336bc3b03fa3ef42e376094b71"
-  integrity sha512-nRiCe1qDdDrcveFQzTw0QGEj3dRpwN19BailSSwfhe4eUNNQ+9S/ApKnDEAuyw95cigOtSPciMEhdsC0qNUiKQ==
-  dependencies:
-    deepmerge "^4.2.2"
-    shvl "^2.0.0"
 
 vuex@3.5.1:
   version "3.5.1"
