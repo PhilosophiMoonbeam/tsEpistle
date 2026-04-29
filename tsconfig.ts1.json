@@ -16,7 +16,9 @@
     "types": []
   },
   "include": [
-    "client/helpers/*-api.js"
+    "client/helpers/*-api.js",
+    "client/helpers/page-actions.js",
+    "client/helpers/root-ui-store.js"
   ],
   "exclude": [
     "node_modules",
