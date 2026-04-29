@@ -242,7 +242,6 @@
     "babel-plugin-graphql-tag": "3.3.0",
     "babel-plugin-lodash": "3.3.4",
     "babel-plugin-prismjs": "2.1.0",
-    "babel-plugin-transform-imports": "2.0.0",
     "cache-loader": "4.1.0",
     "canvas-confetti": "1.9.4",
     "cash-dom": "8.1.5",
