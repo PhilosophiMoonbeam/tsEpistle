@@ -267,7 +267,6 @@
     "eslint-plugin-vue": "7.20.0",
     "file-loader": "6.2.0",
     "filepond": "4.32.12",
-    "filepond-plugin-file-validate-type": "1.2.9",
     "filesize.js": "2.0.0",
     "graphql-persisted-document-loader": "2.0.0",
     "graphql-tag": "2.12.6",
