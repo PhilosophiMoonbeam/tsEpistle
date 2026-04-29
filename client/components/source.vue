@@ -4,7 +4,7 @@
     v-content
       v-toolbar(color='primary', dark)
         i18next.subheading(v-if='versionId > 0', path='common:page.viewingSourceVersion', tag='div')
-          strong(place='date', :title='$options.filters.moment(versionDate, `LLL`)') {{versionDate | moment('lll')}}
+          strong(place='date', :title='$helpers.formatMoment(versionDate, `LLL`)') {{ $helpers.formatMoment(versionDate, 'lll') }}
           strong(place='path') /{{path}}
         i18next.subheading(v-else, path='common:page.viewingSource', tag='div')
           strong(place='path') /{{path}}

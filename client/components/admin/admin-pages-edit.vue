@@ -143,7 +143,7 @@
                 v-list-item-title: .overline.grey--text Creator
                 v-list-item-subtitle.body-2(:class='$vuetify.theme.dark ? `grey--text text--lighten-2` : `grey--text text--darken-3`') {{ page.creatorName }} #[em.caption ({{ page.creatorEmail }})]
               v-list-item-action
-                v-list-item-action-text {{ page.createdAt | moment('calendar') }}
+                v-list-item-action-text {{ $helpers.formatMoment(page.createdAt, 'calendar') }}
             v-divider
             v-list-item
               v-list-item-avatar(size='24')
@@ -153,7 +153,7 @@
                 v-list-item-title: .overline.grey--text Last Editor
                 v-list-item-subtitle.body-2(:class='$vuetify.theme.dark ? `grey--text text--lighten-2` : `grey--text text--darken-3`') {{ page.authorName }} #[em.caption ({{ page.authorEmail }})]
               v-list-item-action
-                v-list-item-action-text {{ page.updatedAt | moment('calendar') }}
+                v-list-item-action-text {{ $helpers.formatMoment(page.updatedAt, 'calendar') }}
 
     v-layout(row, align-center, v-else)
       v-progress-circular(indeterminate, width='2', color='grey')

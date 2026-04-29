@@ -73,8 +73,8 @@
                     )
                   v-card-chin
                     i18next.caption.pl-3(path='admin:tags.date', tag='div')
-                      strong(place='created') {{current.createdAt | moment('from')}}
-                      strong(place='updated') {{current.updatedAt | moment('from')}}
+                      strong(place='created') {{ $helpers.formatMoment(current.createdAt, 'from') }}
+                      strong(place='updated') {{ $helpers.formatMoment(current.updatedAt, 'from') }}
                     v-spacer
                     v-dialog(v-model='deleteTagDialog', max-width='500')
                       template(v-slot:activator='{ on }')

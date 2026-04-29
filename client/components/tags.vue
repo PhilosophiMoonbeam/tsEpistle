@@ -137,7 +137,7 @@
                       .body-1: strong.primary--text {{item.title}}
                       v-spacer
                       i18next.caption(tag='div', path='tags:pageLastUpdated')
-                        span(place='date') {{item.updatedAt | moment('from')}}
+                        span(place='date') {{ $helpers.formatMoment(item.updatedAt, 'from') }}
                     .body-2.grey--text {{item.description || '---'}}
                     v-divider.my-2
                     .d-flex.flex-row.align-center

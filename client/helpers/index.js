@@ -1,5 +1,6 @@
 import filesize from 'filesize.js'
 import _ from 'lodash'
+import moment from 'moment-timezone'
 
 /* global siteConfig */
 
@@ -49,16 +50,54 @@ const helpers = {
       range.moveStart('character', startPos)
       range.select()
     }
+  },
+  /**
+   * Format a value using the app moment-timezone instance.
+   * @param {*} input Date/time input
+   * @param {string} method Moment format token or supported method
+   * @returns {*} Formatted value or original invalid input
+   */
+  formatMoment (input, method) {
+    let date
+
+    if (_.isArray(input) && _.isString(input[0])) {
+      date = moment(input[0], input[1], true)
+    } else if (_.isNumber(input)) {
+      date = input.toString().length < 12 ? moment.unix(input) : moment(input)
+    } else {
+      date = moment(input)
+    }
+
+    if (!input || !date.isValid()) {
+      console.warn('Could not build a valid `moment` object from input.')
+      return input
+    }
+
+    switch (method) {
+      case 'from':
+        return date.fromNow(false)
+      case 'calendar':
+        return date.calendar(moment(), {})
+      default:
+        return date.format(method)
+    }
   }
 }
 
 export default {
   install(Vue) {
     Vue.$helpers = helpers
+    Vue.$moment = moment
+    Vue.moment = moment
     Object.defineProperties(Vue.prototype, {
       $helpers: {
         get() {
           return helpers
+        }
+      },
+      $moment: {
+        get() {
+          return moment
         }
       }
     })

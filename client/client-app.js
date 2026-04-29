@@ -16,7 +16,6 @@ import Velocity from 'velocity-animate'
 import Vuescroll from 'vuescroll/dist/vuescroll-native'
 import Hammer from 'hammerjs'
 import moment from 'moment-timezone'
-import VueMoment from 'vue-moment'
 import store from './store'
 import Cookies from 'js-cookie'
 
@@ -144,7 +143,6 @@ Vue.use(VueClipboards)
 Vue.use(localization.VueI18Next)
 Vue.use(helpers)
 Vue.use(Vuetify)
-Vue.use(VueMoment, { moment })
 Vue.use(Vuescroll)
 
 Vue.prototype.Velocity = Velocity

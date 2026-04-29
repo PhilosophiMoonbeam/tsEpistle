@@ -51,8 +51,8 @@
                 td {{ props.item.id }}
                 td: strong {{ props.item.name }}
                 td {{ props.item.userCount }}
-                td {{ props.item.createdAt | moment('calendar') }}
-                td {{ props.item.updatedAt | moment('calendar') }}
+                td {{ $helpers.formatMoment(props.item.createdAt, 'calendar') }}
+                td {{ $helpers.formatMoment(props.item.updatedAt, 'calendar') }}
                 td
                   v-tooltip(left, v-if='props.item.isSystem')
                     template(v-slot:activator='{ on }')

@@ -107,7 +107,7 @@
                         span.white--text.subtitle-1 {{backer.name[0].toUpperCase()}}
                     v-list-item-content
                       v-list-item-title {{backer.name}}
-                      v-list-item-subtitle: .caption Since {{backer.joined | moment('MMMM DD, YYYY')}} on {{backer.source}}
+                      v-list-item-subtitle: .caption Since {{ $helpers.formatMoment(backer.joined, 'MMMM DD, YYYY') }} on {{backer.source}}
                     v-list-item-action(v-if='backer.twitter')
                       v-btn(icon, :href='backer.twitter', target='_blank')
                         v-icon(color='grey') mdi-twitter

@@ -180,7 +180,7 @@
                         v-icon(color='indigo', dense) mdi-history
                     span {{$t('common:header.history')}}
                 .page-author-card-name.body-2.grey--text(:class='$vuetify.theme.dark ? `` : `text--darken-3`') {{ authorName }}
-                .page-author-card-date.caption.grey--text.text--darken-1 {{ updatedAt | moment('calendar') }}
+                .page-author-card-date.caption.grey--text.text--darken-1 {{ $helpers.formatMoment(updatedAt, 'calendar') }}
 
             //- v-card.mb-5
             //-   .pa-5
