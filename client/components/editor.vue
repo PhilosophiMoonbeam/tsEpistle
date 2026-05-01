@@ -62,6 +62,7 @@ import { get, sync } from 'vuex-pathify'
 import { AtomSpinner } from 'epic-spinners'
 import { Base64 } from 'js-base64'
 import { StatusIndicator } from 'vue-status-indicator'
+import { emitEditorSaveConflict, onEditorConflictReset, offEditorConflictReset } from '../helpers/editor-conflict-events'
 
 import editorStore from '../store/editor'
 
@@ -256,12 +257,13 @@ export default {
       }
     }
 
-    this.$root.$on('resetEditorConflict', () => {
-      this.isConflict = false
-    })
+    onEditorConflictReset(this.$root, this.handleEditorConflictReset)
 
     // this.$store.set('editor/mode', 'edit')
     // this.currentEditor = `editorApi`
+  },
+  beforeDestroy() {
+    offEditorConflictReset(this.$root, this.handleEditorConflictReset)
   },
   methods: {
     openPropsModal(name) {
@@ -273,8 +275,11 @@ export default {
     hideProgressDialog() {
       this.dialogProgress = false
     },
+    handleEditorConflictReset() {
+      this.isConflict = false
+    },
     openConflict() {
-      this.$root.$emit('saveConflict')
+      emitEditorSaveConflict(this.$root)
     },
     async save({ rethrow = false, overwrite = false } = {}) {
       this.showProgressDialog('saving')
@@ -389,7 +394,7 @@ export default {
             }
           })
           if (_.get(conflictResp, 'data.pages.checkConflicts', false)) {
-            this.$root.$emit('saveConflict')
+            emitEditorSaveConflict(this.$root)
             throw new Error(this.$t('editor:conflict.warning'))
           }
 

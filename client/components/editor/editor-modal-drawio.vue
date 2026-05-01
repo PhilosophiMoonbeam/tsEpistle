@@ -9,6 +9,7 @@
 
 <script>
 import { sync, get } from 'vuex-pathify'
+import { emitEditorConflictResolved } from '../../helpers/editor-conflict-events'
 
 // const xmlTest = `<?xml version="1.0" encoding="UTF-8"?>
 // <mxfile version="13.4.2">
@@ -41,8 +42,7 @@ export default {
       this.activeModal = ''
     },
     overwriteAndClose() {
-      this.$root.$emit('overwriteEditorContent')
-      this.$root.$emit('resetEditorConflict')
+      emitEditorConflictResolved(this.$root)
       this.close()
     },
     send (msg) {

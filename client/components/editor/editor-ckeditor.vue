@@ -21,6 +21,7 @@ import DecoupledEditor from '@requarks/ckeditor5'
 // import DecoupledEditor from '../../../../wiki-ckeditor5/build/ckeditor'
 import EditorConflict from './ckeditor/conflict.vue'
 import { html as beautify } from 'js-beautify/js/lib/beautifier.min.js'
+import { onEditorSaveConflict, onEditorContentOverwrite, offEditorSaveConflict, offEditorContentOverwrite } from '../../helpers/editor-conflict-events'
 
 /* global siteLangs */
 
@@ -60,6 +61,12 @@ export default {
     },
     insertLinkHandler ({ locale, path }) {
       this.editor.execute('link', siteLangs.length > 0 ? `/${locale}/${path}` : `/${path}`)
+    },
+    handleEditorSaveConflict () {
+      this.isConflict = true
+    },
+    handleEditorContentOverwrite () {
+      this.editor.setData(this.$store.get('editor/content'))
     }
   },
   async mounted () {
@@ -124,14 +131,12 @@ export default {
     })
 
     // Handle save conflict
-    this.$root.$on('saveConflict', () => {
-      this.isConflict = true
-    })
-    this.$root.$on('overwriteEditorContent', () => {
-      this.editor.setData(this.$store.get('editor/content'))
-    })
+    onEditorSaveConflict(this.$root, this.handleEditorSaveConflict)
+    onEditorContentOverwrite(this.$root, this.handleEditorContentOverwrite)
   },
   beforeDestroy () {
+    offEditorSaveConflict(this.$root, this.handleEditorSaveConflict)
+    offEditorContentOverwrite(this.$root, this.handleEditorContentOverwrite)
     if (this.editor) {
       this.editor.destroy()
       this.editor = null

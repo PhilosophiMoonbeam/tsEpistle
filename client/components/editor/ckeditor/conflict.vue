@@ -52,6 +52,7 @@
 import _ from 'lodash'
 import gql from 'graphql-tag'
 import { showNotification } from '../../../helpers/root-ui-store'
+import { emitEditorConflictReset, emitEditorConflictResolved } from '../../../helpers/editor-conflict-events'
 
 export default {
   props: {
@@ -84,14 +85,13 @@ export default {
     },
     useLocal () {
       this.$store.set('editor/checkoutDateActive', this.latest.updatedAt)
-      this.$root.$emit('resetEditorConflict')
+      emitEditorConflictReset(this.$root)
       this.close()
     },
     useRemote () {
       this.$store.set('editor/checkoutDateActive', this.latest.updatedAt)
       this.$store.set('editor/content', this.latest.content)
-      this.$root.$emit('overwriteEditorContent')
-      this.$root.$emit('resetEditorConflict')
+      emitEditorConflictResolved(this.$root)
       this.close()
     }
   },

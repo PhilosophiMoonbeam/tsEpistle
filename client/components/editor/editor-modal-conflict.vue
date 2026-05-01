@@ -78,6 +78,7 @@
 import _ from 'lodash'
 import gql from 'graphql-tag'
 import { sync, get } from 'vuex-pathify'
+import { emitEditorConflictResolved } from '../../helpers/editor-conflict-events'
 import { showNotification } from '../../helpers/root-ui-store'
 
 /* global siteConfig */
@@ -130,8 +131,7 @@ export default {
     },
     overwriteAndClose() {
       this.checkoutDateActive = this.latest.updatedAt
-      this.$root.$emit('overwriteEditorContent')
-      this.$root.$emit('resetEditorConflict')
+      emitEditorConflictResolved(this.$root)
       this.close()
     },
     useLocal () {

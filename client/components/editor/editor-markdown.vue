@@ -168,6 +168,7 @@
 <script>
 import _ from 'lodash'
 import { get, sync } from 'vuex-pathify'
+import { onEditorSaveConflict, onEditorContentOverwrite, offEditorSaveConflict, offEditorContentOverwrite } from '../../helpers/editor-conflict-events'
 import markdownHelp from './markdown/help.vue'
 import gql from 'graphql-tag'
 import DOMPurify from 'dompurify'
@@ -424,6 +425,12 @@ export default {
     toggleModal(key) {
       this.activeModal = (this.activeModal === key) ? '' : key
       this.helpShown = false
+    },
+    handleEditorSaveConflict() {
+      this.toggleModal(`editorModalConflict`)
+    },
+    handleEditorContentOverwrite() {
+      this.cm.setValue(this.$store.get('editor/content'))
     },
     closeAllModal() {
       this.activeModal = ''
@@ -848,15 +855,13 @@ export default {
     })
 
     // Handle save conflict
-    this.$root.$on('saveConflict', () => {
-      this.toggleModal(`editorModalConflict`)
-    })
-    this.$root.$on('overwriteEditorContent', () => {
-      this.cm.setValue(this.$store.get('editor/content'))
-    })
+    onEditorSaveConflict(this.$root, this.handleEditorSaveConflict)
+    onEditorContentOverwrite(this.$root, this.handleEditorContentOverwrite)
   },
   beforeDestroy() {
     this.$root.$off('editorInsert')
+    offEditorSaveConflict(this.$root, this.handleEditorSaveConflict)
+    offEditorContentOverwrite(this.$root, this.handleEditorContentOverwrite)
   }
 }
 </script>
