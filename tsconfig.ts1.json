@@ -28,7 +28,9 @@
     "client/components/editor/common/katex.js",
     "client/components/editor/markdown/tabset.js",
     "client/components/editor/common/cmFold.js",
-    "client/components/editor/markdown/plantuml.js"
+    "client/components/editor/markdown/plantuml.js",
+    "client/index-legacy.js",
+    "client/.modernizrrc.js"
   ],
   "exclude": [
     "node_modules",
