@@ -404,10 +404,10 @@ export default {
       }
     },
     searchEnter () {
-      emitSearchEnter(this.$root)
+      emitSearchEnter()
     },
     searchMove(dir) {
-      emitSearchMove(this.$root, dir)
+      emitSearchMove(dir)
     },
     pageNew () {
       this.newPageModal = true

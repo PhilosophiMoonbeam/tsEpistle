@@ -1,34 +1,37 @@
+const Vue = require('vue')
+
 const SEARCH_ENTER_EVENT = 'searchEnter'
 const SEARCH_MOVE_EVENT = 'searchMove'
+const searchNavigationBus = new Vue()
 
-function emitSearchEnter (root) {
-  root.$emit(SEARCH_ENTER_EVENT, true)
+function emitSearchEnter () {
+  searchNavigationBus.$emit(SEARCH_ENTER_EVENT, true)
 }
 
-function emitSearchMove (root, dir) {
-  root.$emit(SEARCH_MOVE_EVENT, dir)
+function emitSearchMove (dir) {
+  searchNavigationBus.$emit(SEARCH_MOVE_EVENT, dir)
 }
 
-function onSearchEnter (root, handler) {
-  root.$on(SEARCH_ENTER_EVENT, handler)
+function onSearchEnter (handler) {
+  searchNavigationBus.$on(SEARCH_ENTER_EVENT, handler)
 }
 
-function onSearchMove (root, handler) {
-  root.$on(SEARCH_MOVE_EVENT, handler)
+function onSearchMove (handler) {
+  searchNavigationBus.$on(SEARCH_MOVE_EVENT, handler)
 }
 
-function offSearchEnter (root, handler) {
+function offSearchEnter (handler) {
   if (!handler) {
     return
   }
-  root.$off(SEARCH_ENTER_EVENT, handler)
+  searchNavigationBus.$off(SEARCH_ENTER_EVENT, handler)
 }
 
-function offSearchMove (root, handler) {
+function offSearchMove (handler) {
   if (!handler) {
     return
   }
-  root.$off(SEARCH_MOVE_EVENT, handler)
+  searchNavigationBus.$off(SEARCH_MOVE_EVENT, handler)
 }
 
 module.exports = {

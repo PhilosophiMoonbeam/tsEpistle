@@ -13,18 +13,11 @@ const {
 } = require('./search-navigation-events')
 
 const repoRoot = path.resolve(__dirname, '../..')
+const helperPath = path.join(repoRoot, 'client/helpers/search-navigation-events.js')
 const guardedFiles = [
   'client/components/common/nav-header.vue',
   'client/components/common/search-results.vue'
 ]
-
-function createRoot () {
-  return {
-    $emit: jest.fn(),
-    $on: jest.fn(),
-    $off: jest.fn()
-  }
-}
 
 function getLineNumber (content, index) {
   return content.slice(0, index).split(/\r?\n/).length
@@ -39,71 +32,65 @@ function directRootEventPattern (eventName) {
 
 describe('search navigation events', () => {
   test('emitSearchEnter emits the shared search enter event with the legacy payload', () => {
-    const root = createRoot()
+    const handler = jest.fn()
+    onSearchEnter(handler)
 
-    emitSearchEnter(root)
+    emitSearchEnter()
 
-    expect(root.$emit).toHaveBeenCalledWith(SEARCH_ENTER_EVENT, true)
+    expect(handler).toHaveBeenCalledWith(true)
+    offSearchEnter(handler)
   })
 
   test('emitSearchMove emits the shared search move event with the direction', () => {
-    const root = createRoot()
-
-    emitSearchMove(root, 'down')
-
-    expect(root.$emit).toHaveBeenCalledWith(SEARCH_MOVE_EVENT, 'down')
-  })
-
-  test('onSearchEnter subscribes to the shared search enter event', () => {
-    const root = createRoot()
     const handler = jest.fn()
+    onSearchMove(handler)
 
-    onSearchEnter(root, handler)
+    emitSearchMove('down')
 
-    expect(root.$on).toHaveBeenCalledWith(SEARCH_ENTER_EVENT, handler)
-  })
-
-  test('onSearchMove subscribes to the shared search move event', () => {
-    const root = createRoot()
-    const handler = jest.fn()
-
-    onSearchMove(root, handler)
-
-    expect(root.$on).toHaveBeenCalledWith(SEARCH_MOVE_EVENT, handler)
+    expect(handler).toHaveBeenCalledWith('down')
+    offSearchMove(handler)
   })
 
   test('offSearchEnter unsubscribes from the shared search enter event with the same handler', () => {
-    const root = createRoot()
     const handler = jest.fn()
+    onSearchEnter(handler)
+    offSearchEnter(handler)
 
-    offSearchEnter(root, handler)
+    emitSearchEnter()
 
-    expect(root.$off).toHaveBeenCalledWith(SEARCH_ENTER_EVENT, handler)
+    expect(handler).not.toHaveBeenCalled()
   })
 
   test('offSearchMove unsubscribes from the shared search move event with the same handler', () => {
-    const root = createRoot()
     const handler = jest.fn()
+    onSearchMove(handler)
+    offSearchMove(handler)
 
-    offSearchMove(root, handler)
+    emitSearchMove('up')
 
-    expect(root.$off).toHaveBeenCalledWith(SEARCH_MOVE_EVENT, handler)
+    expect(handler).not.toHaveBeenCalled()
   })
 
   test('offSearchEnter does not broadly unsubscribe without a handler', () => {
-    const root = createRoot()
+    const handler = jest.fn()
+    onSearchEnter(handler)
+    offSearchEnter()
 
-    offSearchEnter(root)
+    emitSearchEnter()
 
-    expect(root.$off).not.toHaveBeenCalled()
+    expect(handler).toHaveBeenCalledWith(true)
+    offSearchEnter(handler)
   })
 
   test('offSearchMove does not broadly unsubscribe without a handler', () => {
-    const root = createRoot()
+    const handler = jest.fn()
+    onSearchMove(handler)
+    offSearchMove()
 
-    offSearchMove(root)
+    emitSearchMove('down')
 
-    expect(root.$off).not.toHaveBeenCalled()
+    expect(handler).toHaveBeenCalledWith('down')
+    offSearchMove(handler)
   })
 })
 
@@ -123,8 +110,21 @@ describe('search navigation event usage', () => {
           offenders.push(`${relPath}:${getLineNumber(content, match.index)}: direct this.$root event for ${eventName}`)
         }
       }
+
+      expect(content).not.toMatch(/emitSearch(?:Enter|Move)\s*\(\s*this\.\$root/)
+      expect(content).not.toMatch(/onSearch(?:Enter|Move)\s*\(\s*this\.\$root/)
+      expect(content).not.toMatch(/offSearch(?:Enter|Move)\s*\(\s*this\.\$root/)
     }
 
     expect(offenders).toEqual([])
+  })
+
+  test('search navigation helper owns its bus instead of requiring caller root instances', () => {
+    const source = fs.readFileSync(helperPath, 'utf8')
+
+    expect(source).toMatch(/const\s+Vue\s*=\s*require\(\s*['"]vue['"]\s*\)/)
+    expect(source).toMatch(/new\s+Vue\s*\(\s*\)/)
+    expect(source).not.toMatch(/function\s+\w+\s*\(\s*root\b/)
+    expect(source).not.toMatch(/\broot\s*\.\s*\$(?:emit|on|off)\b/)
   })
 })

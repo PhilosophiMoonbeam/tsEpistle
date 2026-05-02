@@ -112,12 +112,12 @@ export default {
     }
   },
   mounted() {
-    onSearchMove(this.$root, this.handleSearchMove)
-    onSearchEnter(this.$root, this.handleSearchEnter)
+    onSearchMove(this.handleSearchMove)
+    onSearchEnter(this.handleSearchEnter)
   },
   beforeDestroy() {
-    offSearchMove(this.$root, this.handleSearchMove)
-    offSearchEnter(this.$root, this.handleSearchEnter)
+    offSearchMove(this.handleSearchMove)
+    offSearchEnter(this.handleSearchEnter)
   },
   methods: {
     handleSearchMove(dir) {
