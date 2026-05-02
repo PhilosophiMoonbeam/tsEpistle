@@ -217,7 +217,7 @@ export default {
   computed: {
     group: {
       get() { return this.value },
-      set(val) { this.$set('input', val) }
+      set(val) { this.$emit('input', val) }
     }
   }
 }
