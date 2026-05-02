@@ -33,9 +33,8 @@
 
 <script>
 import VueRouter from 'vue-router'
+import store from '../store'
 import { loadingStart, loadingStop } from '../helpers/root-ui-store'
-
-/* global WIKI */
 
 const router = new VueRouter({
   mode: 'history',
@@ -49,12 +48,12 @@ const router = new VueRouter({
 })
 
 router.beforeEach((to, from, next) => {
-  loadingStart(WIKI.$store, 'profile')
+  loadingStart(store, 'profile')
   next()
 })
 
 router.afterEach((to, from) => {
-  loadingStop(WIKI.$store, 'profile')
+  loadingStop(store, 'profile')
 })
 
 export default {
