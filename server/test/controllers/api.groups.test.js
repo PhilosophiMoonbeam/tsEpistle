@@ -16,14 +16,34 @@ describe('controllers/api groups endpoints', () => {
     jest.resetModules()
     const express = require('express')
     express.__router.get.mockClear()
+    express.__router.post.mockClear()
 
     global.WIKI = {
       auth: {
-        checkAccess: jest.fn().mockReturnValue(true)
+        checkAccess: jest.fn().mockReturnValue(true),
+        reloadGroups: jest.fn().mockResolvedValue(undefined)
+      },
+      events: {
+        outbound: {
+          emit: jest.fn()
+        }
+      },
+      data: {
+        groups: {
+          defaultPermissions: ['read:pages'],
+          defaultPageRules: [{ id: 'default', path: '', roles: ['read:pages'], match: 'START', deny: false, locales: [] }]
+        }
       },
       models: {
         groups: {
           query: jest.fn().mockReturnValue({
+            insertAndFetch: jest.fn().mockResolvedValue({
+              id: 3,
+              name: 'Editors',
+              isSystem: false,
+              permissions: ['read:pages'],
+              pageRules: []
+            }),
             select: jest.fn().mockResolvedValue([
               {
                 id: 1,
@@ -72,6 +92,7 @@ describe('controllers/api groups endpoints', () => {
     const express = require('express')
     require('../../controllers/api/groups')
     return {
+      create: express.__router.post.mock.calls.find(([path]) => path === '/')[1],
       picker: express.__router.get.mock.calls.find(([path]) => path === '/')[1],
       list: express.__router.get.mock.calls.find(([path]) => path === '/list')[1],
       detail: express.__router.get.mock.calls.find(([path]) => path === '/:id')[1]
@@ -81,9 +102,77 @@ describe('controllers/api groups endpoints', () => {
   it('registers the groups routes', () => {
     const handlers = loadHandler()
 
+    expect(typeof handlers.create).toBe('function')
     expect(typeof handlers.picker).toBe('function')
     expect(typeof handlers.list).toBe('function')
     expect(typeof handlers.detail).toBe('function')
+  })
+
+  it('creates groups with default permissions for group admins', async () => {
+    const { create } = loadHandler()
+    const req = { user: { permissions: ['write:groups'] }, body: { name: ' Editors ' } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await create(req, res, jest.fn())
+
+    expect(global.WIKI.auth.checkAccess).toHaveBeenCalledWith({ permissions: ['write:groups'] }, ['write:groups', 'manage:groups', 'manage:system'])
+    expect(global.WIKI.models.groups.query.mock.results[0].value.insertAndFetch).toHaveBeenCalledWith({
+      name: 'Editors',
+      permissions: JSON.stringify(global.WIKI.data.groups.defaultPermissions),
+      pageRules: JSON.stringify(global.WIKI.data.groups.defaultPageRules),
+      isSystem: false
+    })
+    expect(global.WIKI.auth.reloadGroups).toHaveBeenCalled()
+    expect(global.WIKI.events.outbound.emit).toHaveBeenCalledWith('reloadGroups')
+    expect(res.json).toHaveBeenCalledWith({
+      succeeded: true,
+      message: 'Group created successfully.',
+      group: {
+        id: 3,
+        name: 'Editors',
+        isSystem: false,
+        permissions: ['read:pages'],
+        pageRules: []
+      }
+    })
+  })
+
+  it('returns 403 for group create requests without group admin access', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValueOnce(false)
+    const { create } = loadHandler()
+    const req = { user: { permissions: ['manage:api'] }, body: { name: 'Editors' } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await create(req, res, jest.fn())
+
+    expect(res.status).toHaveBeenCalledWith(403)
+    expect(res.json).toHaveBeenCalledWith({ error: 'write:groups, manage:groups, or manage:system is required' })
+  })
+
+  it('returns 400 for blank group names', async () => {
+    const { create } = loadHandler()
+    const req = { user: { permissions: ['manage:groups'] }, body: { name: '   ' } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await create(req, res, jest.fn())
+
+    expect(res.status).toHaveBeenCalledWith(400)
+    expect(res.json).toHaveBeenCalledWith({ error: 'group name is required' })
+  })
+
+  it('forwards unexpected group create failures to next', async () => {
+    const next = jest.fn()
+    global.WIKI.models.groups.query.mockReturnValueOnce({
+      insertAndFetch: jest.fn().mockRejectedValue(new Error('create db down'))
+    })
+    const { create } = loadHandler()
+    const req = { user: { permissions: ['manage:groups'] }, body: { name: 'Editors' } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await create(req, res, next)
+
+    expect(next).toHaveBeenCalledWith(expect.any(Error))
+    expect(next.mock.calls[0][0].message).toBe('create db down')
   })
 
   it('returns the minimal groups picker payload for authorized users', async () => {

@@ -67,9 +67,7 @@
 <script>
 import _ from 'lodash'
 
-import createGroupMutation from 'gql/admin/groups/groups-mutation-create.gql'
-
-import { fetchGroupsList } from '../../helpers/groups-api'
+import { createGroup, fetchGroupsList } from '../../helpers/groups-api'
 import { loadingStart, loadingStop, showNotification, pushGraphError } from '../../helpers/root-ui-store'
 
 export default {
@@ -140,22 +138,10 @@ export default {
         return
       }
       this.newGroupDialog = false
+      loadingStart(this.$store, 'admin-groups-create')
       try {
-        const resp = await this.$apollo.mutate({
-          mutation: createGroupMutation,
-          variables: {
-            name: this.newGroupName
-          },
-          watchLoading (isLoading) {
-            if (isLoading) {
-              loadingStart(this.$store, 'admin-groups-create')
-            } else {
-              loadingStop(this.$store, 'admin-groups-create')
-            }
-          }
-        })
-        const data = _.get(resp, 'data.groups.create', { responseResult: {} })
-        if (data.responseResult.succeeded === true) {
+        const data = await createGroup(window.fetch.bind(window), this.newGroupName)
+        if (data.succeeded === true) {
           this.newGroupName = ''
           if (await this.loadGroups()) {
             showNotification(this.$store, {
@@ -165,10 +151,12 @@ export default {
             })
           }
         } else {
-          throw new Error(data.responseResult.message || 'An unexpected error occurred.')
+          throw new Error(data.message || 'An unexpected error occurred.')
         }
       } catch (err) {
         pushGraphError(this.$store, err)
+      } finally {
+        loadingStop(this.$store, 'admin-groups-create')
       }
     }
   },

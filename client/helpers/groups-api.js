@@ -164,8 +164,35 @@ async function fetchGroupDetails (fetchImpl, id, fallbackMessage = 'Group detail
   return normalizeGroupDetail(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
 }
 
+function normalizeGroupMutationResponse (payload, fallbackMessage) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    throw new Error(fallbackMessage)
+  }
+
+  if (payload.succeeded !== true || typeof payload.message !== 'string' || payload.message.length < 1) {
+    throw new Error(fallbackMessage)
+  }
+
+  return payload
+}
+
+async function createGroup (fetchImpl, name, fallbackMessage = 'Group create response is invalid') {
+  const response = await fetchImpl('/_api/groups', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ name })
+  })
+
+  return normalizeGroupMutationResponse(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
+}
+
 module.exports = {
   fetchGroupOptions,
   fetchGroupsList,
-  fetchGroupDetails
+  fetchGroupDetails,
+  createGroup
 }

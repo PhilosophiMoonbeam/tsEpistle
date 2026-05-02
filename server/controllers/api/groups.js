@@ -22,6 +22,35 @@ const requireGroupsListAccess = (req, res) => {
   return true
 }
 
+router.post('/', async (req, res, next) => {
+  if (!requireGroupsListAccess(req, res)) {
+    return
+  }
+
+  const name = req.body && typeof req.body.name === 'string' ? req.body.name.trim() : ''
+  if (name.length < 1) {
+    return res.status(400).json({ error: 'group name is required' })
+  }
+
+  try {
+    const group = await WIKI.models.groups.query().insertAndFetch({
+      name,
+      permissions: JSON.stringify(WIKI.data.groups.defaultPermissions),
+      pageRules: JSON.stringify(WIKI.data.groups.defaultPageRules),
+      isSystem: false
+    })
+    await WIKI.auth.reloadGroups()
+    WIKI.events.outbound.emit('reloadGroups')
+    res.json({
+      succeeded: true,
+      message: 'Group created successfully.',
+      group
+    })
+  } catch (err) {
+    next(err)
+  }
+})
+
 router.get('/', async (req, res, next) => {
   if (!requireGroupsPickerAccess(req, res)) {
     return

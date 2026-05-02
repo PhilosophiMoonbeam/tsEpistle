@@ -1,4 +1,4 @@
-const { fetchGroupOptions, fetchGroupsList, fetchGroupDetails } = require('./groups-api')
+const { fetchGroupOptions, fetchGroupsList, fetchGroupDetails, createGroup } = require('./groups-api')
 
 function createJsonResponse (payload, ok = true) {
   return {
@@ -176,5 +176,46 @@ describe('groups api helper', () => {
     })
 
     await expect(fetchGroupOptions(fetchImpl, 'Bad groups fetch')).rejects.toThrow('manage:groups is required')
+  })
+
+  test('creates groups through the REST endpoint', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+      succeeded: true,
+      message: 'Group created successfully.',
+      group: { id: 3, name: 'Editors', isSystem: false }
+    }))
+
+    await expect(createGroup(fetchImpl, 'Editors')).resolves.toEqual({
+      succeeded: true,
+      message: 'Group created successfully.',
+      group: { id: 3, name: 'Editors', isSystem: false }
+    })
+
+    expect(fetchImpl).toHaveBeenCalledWith('/_api/groups', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ name: 'Editors' })
+    })
+  })
+
+  test('rejects malformed group create responses', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+      succeeded: false,
+      message: 'Nope'
+    }))
+
+    await expect(createGroup(fetchImpl, 'Editors', 'Bad group create payload')).rejects.toThrow('Bad group create payload')
+  })
+
+  test('surfaces API error messages for failed group creates', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+      error: 'write:groups, manage:groups, or manage:system is required'
+    }, false))
+
+    await expect(createGroup(fetchImpl, 'Editors', 'Bad group create')).rejects.toThrow('write:groups, manage:groups, or manage:system is required')
   })
 })
