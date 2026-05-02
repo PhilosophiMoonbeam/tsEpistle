@@ -180,8 +180,8 @@ describe('controllers/api users endpoints', () => {
           email: 'alice@example.com',
           name: 'Alice',
           providerKey: 'local',
-          isSystem: false,
-          isActive: true,
+          isSystem: 0,
+          isActive: 1,
           createdAt: '2026-01-01T00:00:00.000Z',
           lastLoginAt: '2026-01-03T00:00:00.000Z',
           password: 'hidden'
@@ -191,8 +191,8 @@ describe('controllers/api users endpoints', () => {
           email: 'bob@example.com',
           name: 'Bob',
           providerKey: 'ldap',
-          isSystem: false,
-          isActive: false,
+          isSystem: 1,
+          isActive: 0,
           createdAt: '2026-01-02T00:00:00.000Z',
           lastLoginAt: null,
           tfaSecret: 'hidden'
@@ -250,7 +250,7 @@ describe('controllers/api users endpoints', () => {
           email: 'bob@example.com',
           name: 'Bob',
           providerKey: 'ldap',
-          isSystem: false,
+          isSystem: true,
           isActive: false,
           createdAt: '2026-01-02T00:00:00.000Z',
           lastLoginAt: null

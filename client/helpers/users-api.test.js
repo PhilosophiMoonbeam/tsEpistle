@@ -1,4 +1,4 @@
-const { searchUsers, fetchLastLogins, fetchUserDetails } = require('./users-api')
+const { searchUsers, fetchLastLogins, fetchAdminUsersList, fetchUserDetails } = require('./users-api')
 
 function createJsonResponse (payload, ok = true) {
   return {
@@ -70,6 +70,103 @@ describe('users api helper', () => {
     ]))
 
     await expect(fetchLastLogins(fetchImpl, 'Bad last logins payload')).rejects.toThrow('Bad last logins payload')
+  })
+
+  test('fetches and validates admin users list payloads', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+      total: 2,
+      users: [
+        {
+          id: 42,
+          name: 'Alice',
+          email: 'alice@example.com',
+          providerKey: 'local',
+          isSystem: false,
+          isActive: true,
+          createdAt: '2026-01-01T00:00:00.000Z',
+          lastLoginAt: '2026-01-03T00:00:00.000Z',
+          password: 'hidden'
+        },
+        {
+          id: 77,
+          name: 'Bob',
+          email: 'bob@example.com',
+          providerKey: 'ldap',
+          isSystem: false,
+          isActive: false,
+          createdAt: '2026-01-02T00:00:00.000Z',
+          lastLoginAt: null,
+          tfaSecret: 'hidden'
+        }
+      ]
+    }))
+
+    await expect(fetchAdminUsersList(fetchImpl, {
+      page: 3,
+      pageSize: 15,
+      filter: 'ali',
+      providerKey: 'local',
+      orderBy: 'lastLoginAt',
+      orderByDirection: 'desc'
+    })).resolves.toEqual({
+      total: 2,
+      users: [
+        {
+          id: 42,
+          name: 'Alice',
+          email: 'alice@example.com',
+          providerKey: 'local',
+          isSystem: false,
+          isActive: true,
+          createdAt: '2026-01-01T00:00:00.000Z',
+          lastLoginAt: '2026-01-03T00:00:00.000Z'
+        },
+        {
+          id: 77,
+          name: 'Bob',
+          email: 'bob@example.com',
+          providerKey: 'ldap',
+          isSystem: false,
+          isActive: false,
+          createdAt: '2026-01-02T00:00:00.000Z',
+          lastLoginAt: null
+        }
+      ]
+    })
+
+    expect(fetchImpl).toHaveBeenCalledWith('/_api/users?page=3&pageSize=15&filter=ali&providerKey=local&orderBy=lastLoginAt&orderByDirection=desc', {
+      credentials: 'same-origin',
+      headers: {
+        Accept: 'application/json'
+      }
+    })
+  })
+
+  test('rejects malformed admin users list payloads', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+      total: 1,
+      users: [
+        {
+          id: 42,
+          name: 'Alice',
+          email: 'alice@example.com',
+          providerKey: 'local',
+          isSystem: false,
+          createdAt: '2026-01-01T00:00:00.000Z',
+          lastLoginAt: null
+        }
+      ]
+    }))
+
+    await expect(fetchAdminUsersList(fetchImpl, {}, 'Bad users list payload')).rejects.toThrow('Bad users list payload')
+  })
+
+  test('surfaces API error messages for failed admin users lists', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+      error: 'manage:users or manage:system is required'
+    }, false))
+
+    await expect(fetchAdminUsersList(fetchImpl, {}, 'Bad users list')).rejects.toThrow('manage:users or manage:system is required')
   })
 
   test('fetches and validates user detail payloads', async () => {

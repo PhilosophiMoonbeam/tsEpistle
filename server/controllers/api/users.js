@@ -8,7 +8,16 @@ const router = express.Router()
 const userActivityAccessPermissions = ['write:groups', 'manage:groups', 'write:users', 'manage:users', 'manage:system']
 const userListOrderFields = ['id', 'name', 'email', 'providerKey', 'createdAt', 'lastLoginAt']
 
-const pickListUser = user => _.pick(user, ['id', 'email', 'name', 'providerKey', 'isSystem', 'isActive', 'createdAt', 'lastLoginAt'])
+const pickListUser = user => ({
+  id: user.id,
+  email: user.email,
+  name: user.name,
+  providerKey: user.providerKey,
+  isSystem: Boolean(user.isSystem),
+  isActive: Boolean(user.isActive),
+  createdAt: user.createdAt,
+  lastLoginAt: user.lastLoginAt || null
+})
 
 const normalizeUserListQuery = query => {
   const page = Math.max(_.toSafeInteger(_.get(query, 'page')) || 1, 1)

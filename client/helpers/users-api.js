@@ -72,6 +72,33 @@ function normalizeUserGroupRow (row, fallbackMessage) {
   }
 }
 
+function normalizeAdminUserListRow (row, fallbackMessage) {
+  if (!row || typeof row !== 'object' || Array.isArray(row)) {
+    throw new Error(fallbackMessage)
+  }
+
+  if (!Number.isInteger(row.id) || typeof row.name !== 'string' || row.name.length < 1 || typeof row.email !== 'string' || row.email.length < 1 || typeof row.providerKey !== 'string' || row.providerKey.length < 1) {
+    throw new Error(fallbackMessage)
+  }
+  if (typeof row.isSystem !== 'boolean' || typeof row.isActive !== 'boolean' || typeof row.createdAt !== 'string') {
+    throw new Error(fallbackMessage)
+  }
+  if (row.lastLoginAt !== null && typeof row.lastLoginAt !== 'string') {
+    throw new Error(fallbackMessage)
+  }
+
+  return {
+    id: row.id,
+    name: row.name,
+    email: row.email,
+    providerKey: row.providerKey,
+    isSystem: row.isSystem,
+    isActive: row.isActive,
+    createdAt: row.createdAt,
+    lastLoginAt: row.lastLoginAt
+  }
+}
+
 function normalizeUserDetail (payload, fallbackMessage) {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
     throw new Error(fallbackMessage)
@@ -176,6 +203,33 @@ async function fetchLastLogins (fetchImpl, fallbackMessage = 'Last logins respon
   return payload.map(row => normalizeLastLoginRow(row, fallbackMessage))
 }
 
+async function fetchAdminUsersList (fetchImpl, options = {}, fallbackMessage = 'Users list response is invalid') {
+  const params = new URLSearchParams()
+  params.set('page', String(options.page || 1))
+  params.set('pageSize', String(options.pageSize || 15))
+  params.set('filter', typeof options.filter === 'string' ? options.filter : '')
+  params.set('providerKey', options.providerKey || 'all')
+  params.set('orderBy', options.orderBy || 'name')
+  params.set('orderByDirection', options.orderByDirection === 'desc' ? 'desc' : 'asc')
+
+  const response = await fetchImpl(`/_api/users?${params.toString()}`, {
+    credentials: 'same-origin',
+    headers: {
+      Accept: 'application/json'
+    }
+  })
+
+  const payload = await parseJsonResponse(response, fallbackMessage)
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload) || !Number.isInteger(payload.total) || payload.total < 0 || !Array.isArray(payload.users)) {
+    throw new Error(fallbackMessage)
+  }
+
+  return {
+    total: payload.total,
+    users: payload.users.map(row => normalizeAdminUserListRow(row, fallbackMessage))
+  }
+}
+
 async function fetchUserDetails (fetchImpl, id, fallbackMessage = 'User detail response is invalid') {
   const normalizedId = normalizePositiveIntegerId(id, fallbackMessage)
   const response = await fetchImpl(`/_api/users/${normalizedId}`, {
@@ -191,5 +245,6 @@ async function fetchUserDetails (fetchImpl, id, fallbackMessage = 'User detail r
 module.exports = {
   searchUsers,
   fetchLastLogins,
+  fetchAdminUsersList,
   fetchUserDetails
 }

@@ -80,9 +80,9 @@
 
 <script>
 import _ from 'lodash'
-import gql from 'graphql-tag'
 
 import { fetchAdminAuthProviders } from '../../helpers/auth-api'
+import { fetchAdminUsersList } from '../../helpers/users-api'
 
 import { StatusIndicator } from 'vue-status-indicator'
 import UserCreate from './admin-users-create.vue'
@@ -104,7 +104,7 @@ export default {
         { text: 'ID', value: 'id', width: 80, sortable: true },
         { text: 'Name', value: 'name', sortable: true },
         { text: 'Email', value: 'email', sortable: true },
-        { text: 'Provider', value: 'provider', sortable: true },
+        { text: 'Provider', value: 'providerKey', sortable: true },
         { text: 'Created', value: 'createdAt', sortable: true },
         { text: 'Last Login', value: 'lastLoginAt', sortable: true },
         { text: '', value: 'actions', sortable: false, width: 80 }
@@ -194,42 +194,19 @@ export default {
       }
 
       try {
-        const resp = await this.$apollo.query({
-          query: gql`
-            query ($page: Int, $pageSize: Int, $filter: String, $providerKey: String, $orderBy: String, $orderByDirection: String) {
-              users {
-                list(page: $page, pageSize: $pageSize, filter: $filter, providerKey: $providerKey, orderBy: $orderBy, orderByDirection: $orderByDirection) {
-                  total
-                  users {
-                    id
-                    name
-                    email
-                    providerKey
-                    isSystem
-                    isActive
-                    createdAt
-                    lastLoginAt
-                  }
-                }
-              }
-            }
-          `,
-          fetchPolicy: 'network-only',
-          variables: {
-            page: this.pagination,
-            pageSize: 15,
-            filter: this.search,
-            providerKey: this.filterStrategy,
-            orderBy: this.sortBy,
-            orderByDirection: this.sortDesc ? 'desc' : 'asc'
-          }
-        })
+        const result = await fetchAdminUsersList(window.fetch.bind(window), {
+          page: this.pagination,
+          pageSize: 15,
+          filter: this.search,
+          providerKey: this.filterStrategy,
+          orderBy: this.sortBy,
+          orderByDirection: this.sortDesc ? 'desc' : 'asc'
+        }, 'Users list response is invalid')
 
         if (requestId !== this.loadRequestId) {
           return
         }
 
-        const result = _.get(resp, 'data.users.list', { users: [], total: 0 })
         this.users = result.users
         this.pageCount = Math.max(1, Math.ceil(result.total / 15))
       } catch (err) {
