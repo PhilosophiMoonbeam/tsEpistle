@@ -64,11 +64,10 @@ import { Base64 } from 'js-base64'
 import { StatusIndicator } from 'vue-status-indicator'
 import { emitEditorSaveConflict, onEditorConflictReset, offEditorConflictReset } from '../helpers/editor-conflict-events'
 
+import store from '../store'
 import editorStore from '../store/editor'
 
-/* global WIKI */
-
-WIKI.$store.registerModule('editor', editorStore)
+store.registerModule('editor', editorStore)
 
 export default {
   i18nOptions: { namespaces: 'editor' },

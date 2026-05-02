@@ -134,11 +134,10 @@ import { get, sync } from 'vuex-pathify'
 import { fetchSystemSummary } from '../helpers/system-api'
 import { loadingStart, loadingStop, showNotification } from '../helpers/root-ui-store'
 
+import store from '../store'
 import adminStore from '../store/admin'
 
-/* global WIKI */
-
-WIKI.$store.registerModule('admin', adminStore)
+store.registerModule('admin', adminStore)
 
 const router = new VueRouter({
   mode: 'history',

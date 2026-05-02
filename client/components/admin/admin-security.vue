@@ -245,11 +245,10 @@ import { sync } from 'vuex-pathify'
 import gql from 'graphql-tag'
 import { onEditorInsert, offEditorInsert } from '../../helpers/editor-insert-events'
 
+import store from '../../store'
 import editorStore from '../../store/editor'
 
-/* global WIKI */
-
-WIKI.$store.registerModule('editor', editorStore)
+store.registerModule('editor', editorStore)
 
 export default {
   i18nOptions: { namespaces: 'editor' },
