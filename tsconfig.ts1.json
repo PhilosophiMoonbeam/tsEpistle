@@ -34,7 +34,8 @@
     "client/index-legacy.js",
     "client/.modernizrrc.js",
     "client/index-setup.js",
-    "client/client-setup.js"
+    "client/client-setup.js",
+    "client/client-app.js"
   ],
   "exclude": [
     "node_modules",
