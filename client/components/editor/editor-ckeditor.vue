@@ -22,6 +22,7 @@ import DecoupledEditor from '@requarks/ckeditor5'
 import EditorConflict from './ckeditor/conflict.vue'
 import { html as beautify } from 'js-beautify/js/lib/beautifier.min.js'
 import { onEditorSaveConflict, onEditorContentOverwrite, offEditorSaveConflict, offEditorContentOverwrite } from '../../helpers/editor-conflict-events'
+import { onEditorInsert, offEditorInsert } from '../../helpers/editor-insert-events'
 
 /* global siteLangs */
 
@@ -67,6 +68,25 @@ export default {
     },
     handleEditorContentOverwrite () {
       this.editor.setData(this.$store.get('editor/content'))
+    },
+    handleEditorInsert (opts) {
+      switch (opts.kind) {
+        case 'IMAGE':
+          this.editor.execute('imageInsert', {
+            source: opts.path
+          })
+          break
+        case 'BINARY':
+          this.editor.execute('link', opts.path, {
+            linkIsDownloadable: true
+          })
+          break
+        case 'DIAGRAM':
+          this.editor.execute('imageInsert', {
+            source: `data:image/svg+xml;base64,${opts.text}`
+          })
+          break
+      }
     }
   },
   async mounted () {
@@ -106,25 +126,7 @@ export default {
       this.$store.set('editor/content', beautify(this.editor.getData(), { indent_size: 2, end_with_newline: true }))
     }, 300))
 
-    this.$root.$on('editorInsert', opts => {
-      switch (opts.kind) {
-        case 'IMAGE':
-          this.editor.execute('imageInsert', {
-            source: opts.path
-          })
-          break
-        case 'BINARY':
-          this.editor.execute('link', opts.path, {
-            linkIsDownloadable: true
-          })
-          break
-        case 'DIAGRAM':
-          this.editor.execute('imageInsert', {
-            source: `data:image/svg+xml;base64,${opts.text}`
-          })
-          break
-      }
-    })
+    onEditorInsert(this.$root, this.handleEditorInsert)
 
     this.$root.$on('editorLinkToPage', opts => {
       this.insertLink()
@@ -135,6 +137,7 @@ export default {
     onEditorContentOverwrite(this.$root, this.handleEditorContentOverwrite)
   },
   beforeDestroy () {
+    offEditorInsert(this.$root, this.handleEditorInsert)
     offEditorSaveConflict(this.$root, this.handleEditorSaveConflict)
     offEditorContentOverwrite(this.$root, this.handleEditorContentOverwrite)
     if (this.editor) {
