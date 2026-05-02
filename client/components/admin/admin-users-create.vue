@@ -92,10 +92,9 @@
 import _ from 'lodash'
 import validate from 'validate.js'
 
-import createUserMutation from 'gql/admin/users/users-mutation-create.gql'
-
 import { fetchAdminAuthProviders } from '../../helpers/auth-api'
 import { fetchGroupOptions } from '../../helpers/groups-api'
+import { createAdminUser } from '../../helpers/users-api'
 
 export default {
   props: {
@@ -230,22 +229,18 @@ export default {
       }
 
       try {
-        const resp = await this.$apollo.mutate({
-          mutation: createUserMutation,
-          variables: {
-            providerKey: this.provider,
-            email: this.email,
-            passwordRaw: this.password,
-            name: this.name,
-            groups: this.group,
-            mustChangePassword: this.mustChangePwd,
-            sendWelcomeEmail: this.sendWelcomeEmail
-          },
-          watchLoading (isLoading) {
-            this.$store.commit(`loading${isLoading ? 'Start' : 'Stop'}`, 'admin-users-create')
-          }
-        })
-        if (_.get(resp, 'data.users.create.responseResult.succeeded', false)) {
+        this.$store.commit('loadingStart', 'admin-users-create')
+        const resp = await createAdminUser(window.fetch.bind(window), {
+          providerKey: this.provider,
+          email: this.email,
+          passwordRaw: this.password,
+          name: this.name,
+          groups: this.group,
+          mustChangePassword: this.mustChangePwd,
+          sendWelcomeEmail: this.sendWelcomeEmail
+        }, 'User create response is invalid')
+
+        if (resp.succeeded) {
           this.$store.commit('showNotification', {
             style: 'success',
             message: 'New user created successfully.',
@@ -265,12 +260,18 @@ export default {
         } else {
           this.$store.commit('showNotification', {
             style: 'red',
-            message: _.get(resp, 'data.users.create.responseResult.message', 'An unexpected error occurred.'),
+            message: resp.message || 'An unexpected error occurred.',
             icon: 'alert'
           })
         }
       } catch (err) {
-        this.$store.commit('pushGraphError', err)
+        this.$store.commit('showNotification', {
+          style: 'red',
+          message: err.message,
+          icon: 'alert'
+        })
+      } finally {
+        this.$store.commit('loadingStop', 'admin-users-create')
       }
     },
     generatePwd() {

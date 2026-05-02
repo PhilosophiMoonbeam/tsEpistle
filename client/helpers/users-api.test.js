@@ -1,4 +1,4 @@
-const { searchUsers, fetchLastLogins, fetchAdminUsersList, fetchUserDetails } = require('./users-api')
+const { searchUsers, fetchLastLogins, fetchAdminUsersList, createAdminUser, fetchUserDetails } = require('./users-api')
 
 function createJsonResponse (payload, ok = true) {
   return {
@@ -167,6 +167,53 @@ describe('users api helper', () => {
     }, false))
 
     await expect(fetchAdminUsersList(fetchImpl, {}, 'Bad users list')).rejects.toThrow('manage:users or manage:system is required')
+  })
+
+  test('creates admin users with the expected REST payload', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+      succeeded: true,
+      message: 'User created successfully'
+    }))
+    const payload = {
+      providerKey: 'local',
+      email: 'alice@example.com',
+      passwordRaw: 'temporary-secret',
+      name: 'Alice',
+      groups: [3, 4],
+      mustChangePassword: true,
+      sendWelcomeEmail: false
+    }
+
+    await expect(createAdminUser(fetchImpl, payload)).resolves.toEqual({
+      succeeded: true,
+      message: 'User created successfully'
+    })
+
+    expect(fetchImpl).toHaveBeenCalledWith('/_api/users', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(payload)
+    })
+  })
+
+  test('rejects malformed admin user create payloads', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+      message: 'User created successfully'
+    }))
+
+    await expect(createAdminUser(fetchImpl, {}, 'Bad user create payload')).rejects.toThrow('Bad user create payload')
+  })
+
+  test('surfaces API error messages for failed admin user creates', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+      error: 'You are not authorized to assign a user to a group with elevated permissions.'
+    }, false))
+
+    await expect(createAdminUser(fetchImpl, {}, 'Bad user create')).rejects.toThrow('You are not authorized to assign a user to a group with elevated permissions.')
   })
 
   test('fetches and validates user detail payloads', async () => {

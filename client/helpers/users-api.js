@@ -166,6 +166,17 @@ function normalizePositiveIntegerId (id, fallbackMessage) {
   throw new Error(fallbackMessage)
 }
 
+function normalizeSuccessResult (payload, fallbackMessage) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload) || payload.succeeded !== true || typeof payload.message !== 'string') {
+    throw new Error(fallbackMessage)
+  }
+
+  return {
+    succeeded: true,
+    message: payload.message
+  }
+}
+
 async function searchUsers (fetchImpl, query, fallbackMessage = 'User search response is invalid') {
   const normalizedQuery = typeof query === 'string' ? query.trim() : ''
   if (normalizedQuery.length < 2) {
@@ -230,6 +241,20 @@ async function fetchAdminUsersList (fetchImpl, options = {}, fallbackMessage = '
   }
 }
 
+async function createAdminUser (fetchImpl, payload, fallbackMessage = 'User create response is invalid') {
+  const response = await fetchImpl('/_api/users', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(payload)
+  })
+
+  return normalizeSuccessResult(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
+}
+
 async function fetchUserDetails (fetchImpl, id, fallbackMessage = 'User detail response is invalid') {
   const normalizedId = normalizePositiveIntegerId(id, fallbackMessage)
   const response = await fetchImpl(`/_api/users/${normalizedId}`, {
@@ -246,5 +271,6 @@ module.exports = {
   searchUsers,
   fetchLastLogins,
   fetchAdminUsersList,
+  createAdminUser,
   fetchUserDetails
 }

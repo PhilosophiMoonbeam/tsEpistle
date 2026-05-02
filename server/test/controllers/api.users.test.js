@@ -16,10 +16,12 @@ describe('controllers/api users endpoints', () => {
     jest.resetModules()
     const express = require('express')
     express.__router.get.mockClear()
+    express.__router.post.mockClear()
 
     global.WIKI = {
       auth: {
         checkAccess: jest.fn().mockReturnValue(true),
+        checkAssignUserToGroupAccess: jest.fn().mockResolvedValue(true),
         strategies: {
           local: {
             displayName: 'Local',
@@ -34,6 +36,7 @@ describe('controllers/api users endpoints', () => {
       },
       models: {
         users: {
+          createNewUser: jest.fn().mockResolvedValue(undefined),
           query: jest.fn().mockImplementation(() => ({
             where: jest.fn().mockReturnValue({
               orWhere: jest.fn().mockReturnValue({
@@ -111,6 +114,7 @@ describe('controllers/api users endpoints', () => {
     const express = require('express')
     require('../../controllers/api/users')
     return {
+      create: express.__router.post.mock.calls.find(([path]) => path === '/')[1],
       list: express.__router.get.mock.calls.find(([path]) => path === '/')[1],
       search: express.__router.get.mock.calls.find(([path]) => path === '/search')[1],
       lastLogins: express.__router.get.mock.calls.find(([path]) => path === '/last-logins')[1],
@@ -122,11 +126,98 @@ describe('controllers/api users endpoints', () => {
   it('registers the users routes', () => {
     const handlers = loadHandler()
 
+    expect(typeof handlers.create).toBe('function')
     expect(typeof handlers.list).toBe('function')
     expect(typeof handlers.search).toBe('function')
     expect(typeof handlers.lastLogins).toBe('function')
     expect(typeof handlers.whoami).toBe('function')
     expect(typeof handlers.detail).toBe('function')
+  })
+
+  it('creates admin users for authorized requests', async () => {
+    const { create } = loadHandler()
+    const req = {
+      user: { permissions: ['write:users'] },
+      body: {
+        providerKey: 'local',
+        email: 'alice@example.com',
+        passwordRaw: 'temporary-secret',
+        name: 'Alice',
+        groups: [3, 4],
+        mustChangePassword: true,
+        sendWelcomeEmail: false,
+        ignored: 'not forwarded'
+      }
+    }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await create(req, res, jest.fn())
+
+    expect(global.WIKI.auth.checkAccess).toHaveBeenCalledWith({ permissions: ['write:users'] }, ['write:users', 'manage:users', 'manage:system'])
+    expect(global.WIKI.auth.checkAssignUserToGroupAccess).toHaveBeenCalledWith({ permissions: ['write:users'] }, [3, 4])
+    expect(global.WIKI.models.users.createNewUser).toHaveBeenCalledWith({
+      providerKey: 'local',
+      email: 'alice@example.com',
+      passwordRaw: 'temporary-secret',
+      name: 'Alice',
+      groups: [3, 4],
+      mustChangePassword: true,
+      sendWelcomeEmail: false
+    })
+    expect(res.json).toHaveBeenCalledWith({
+      succeeded: true,
+      message: 'User created successfully'
+    })
+  })
+
+  it('returns 400 when admin user create groups is not an array', async () => {
+    const { create } = loadHandler()
+    const req = { user: { permissions: ['manage:users'] }, body: { groups: '3' } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await create(req, res, jest.fn())
+
+    expect(res.status).toHaveBeenCalledWith(400)
+    expect(res.json).toHaveBeenCalledWith({ error: 'groups must be an array' })
+    expect(global.WIKI.models.users.createNewUser).not.toHaveBeenCalled()
+  })
+
+  it('returns 403 for unauthorized admin user create requests', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValueOnce(false)
+    const { create } = loadHandler()
+    const req = { user: { permissions: ['manage:api'] }, body: { groups: [] } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await create(req, res, jest.fn())
+
+    expect(res.status).toHaveBeenCalledWith(403)
+    expect(res.json).toHaveBeenCalledWith({ error: 'write:users, manage:users or manage:system is required' })
+    expect(global.WIKI.models.users.createNewUser).not.toHaveBeenCalled()
+  })
+
+  it('returns 403 when admin user create assigns disallowed elevated groups', async () => {
+    global.WIKI.auth.checkAssignUserToGroupAccess.mockResolvedValueOnce(false)
+    const { create } = loadHandler()
+    const req = { user: { permissions: ['write:users'] }, body: { groups: [1] } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await create(req, res, jest.fn())
+
+    expect(res.status).toHaveBeenCalledWith(403)
+    expect(res.json).toHaveBeenCalledWith({ error: 'You are not authorized to assign a user to a group with elevated permissions.' })
+    expect(global.WIKI.models.users.createNewUser).not.toHaveBeenCalled()
+  })
+
+  it('returns model validation errors for admin user create failures', async () => {
+    global.WIKI.models.users.createNewUser.mockRejectedValueOnce(new Error('An account already exists using this email address.'))
+    const { create } = loadHandler()
+    const req = { user: { permissions: ['manage:system'] }, body: { groups: [] } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await create(req, res, jest.fn())
+
+    expect(res.status).toHaveBeenCalledWith(400)
+    expect(res.json).toHaveBeenCalledWith({ error: 'An account already exists using this email address.' })
   })
 
   it('registers the last-logins route before the detail route', () => {

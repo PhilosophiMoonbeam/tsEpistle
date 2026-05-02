@@ -6,6 +6,7 @@ const router = express.Router()
 /* global WIKI */
 
 const userActivityAccessPermissions = ['write:groups', 'manage:groups', 'write:users', 'manage:users', 'manage:system']
+const userMutationAccessPermissions = ['write:users', 'manage:users', 'manage:system']
 const userListOrderFields = ['id', 'name', 'email', 'providerKey', 'createdAt', 'lastLoginAt']
 
 const pickListUser = user => ({
@@ -77,6 +78,41 @@ const requireUserDetailAccess = (req, res) => {
 
   return true
 }
+
+const requireUserMutationAccess = (req, res) => {
+  if (!WIKI.auth.checkAccess(req.user, userMutationAccessPermissions)) {
+    res.status(403).json({ error: 'write:users, manage:users or manage:system is required' })
+    return false
+  }
+
+  return true
+}
+
+router.post('/', async (req, res, next) => {
+  if (!requireUserMutationAccess(req, res)) {
+    return
+  }
+
+  const payload = _.pick(req.body, ['providerKey', 'email', 'passwordRaw', 'name', 'groups', 'mustChangePassword', 'sendWelcomeEmail'])
+  if (!Array.isArray(payload.groups)) {
+    return res.status(400).json({ error: 'groups must be an array' })
+  }
+
+  try {
+    if (!(await WIKI.auth.checkAssignUserToGroupAccess(req.user, payload.groups))) {
+      return res.status(403).json({ error: 'You are not authorized to assign a user to a group with elevated permissions.' })
+    }
+
+    await WIKI.models.users.createNewUser(payload)
+
+    return res.json({
+      succeeded: true,
+      message: 'User created successfully'
+    })
+  } catch (err) {
+    return res.status(400).json({ error: err.message || 'User could not be created.' })
+  }
+})
 
 router.get('/', async (req, res, next) => {
   if (!requireUserDetailAccess(req, res)) {
