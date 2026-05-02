@@ -36,7 +36,8 @@
     "client/index-setup.js",
     "client/client-setup.js",
     "client/client-app.js",
-    "client/index-app.js"
+    "client/index-app.js",
+    "client/store/index.js"
   ],
   "exclude": [
     "node_modules",
@@ -49,7 +50,6 @@
     "client/graph/**/*",
     "client/libs/**/*",
     "client/modules/**/*",
-    "client/store/**/*",
     "client/themes/**/*",
     "client/scss/**/*"
   ]
