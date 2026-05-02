@@ -10,6 +10,7 @@
 <script>
 import { sync, get } from 'vuex-pathify'
 import { emitEditorConflictResolved } from '../../helpers/editor-conflict-events'
+import { emitEditorInsert } from '../../helpers/editor-insert-events'
 
 // const xmlTest = `<?xml version="1.0" encoding="UTF-8"?>
 // <mxfile version="13.4.2">
@@ -77,7 +78,7 @@ export default {
           }
           case 'export': {
             const svgDataStart = msg.data.indexOf('base64,') + 7
-            this.$root.$emit('editorInsert', {
+            emitEditorInsert(this.$root, {
               kind: 'DIAGRAM',
               text: msg.data.slice(svgDataStart)
               // text: msg.xml.replace(/ agent="(.*?)"/, '').replace(/ host="(.*?)"/, '').replace(/ etag="(.*?)"/, '')

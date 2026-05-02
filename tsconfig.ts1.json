@@ -22,6 +22,7 @@
     "client/helpers/search-navigation-events.js",
     "client/helpers/page-action-events.js",
     "client/helpers/editor-conflict-events.js",
+    "client/helpers/editor-insert-events.js",
     "client/helpers/compatibility.js",
     "client/helpers/index.js",
     "client/polyfills/array-from.js",
@@ -30,7 +31,8 @@
     "client/components/editor/common/cmFold.js",
     "client/components/editor/markdown/plantuml.js",
     "client/index-legacy.js",
-    "client/.modernizrrc.js"
+    "client/.modernizrrc.js",
+    "client/index-setup.js"
   ],
   "exclude": [
     "node_modules",
