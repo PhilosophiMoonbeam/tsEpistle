@@ -15,7 +15,8 @@ const guardedEmitterFiles = [
 ]
 const guardedListenerFiles = [
   'client/components/admin/admin-general.vue',
-  'client/components/admin/admin-security.vue'
+  'client/components/admin/admin-security.vue',
+  'client/components/editor/editor-api.vue'
 ]
 
 function createRoot () {
@@ -100,7 +101,7 @@ describe('editor insert event emitter usage', () => {
 })
 
 describe('editor insert event listener usage', () => {
-  test('migrated admin listeners use the helper instead of direct root bus listeners', () => {
+  test('migrated and cleaned-up listeners avoid direct root bus listeners', () => {
     const offenders = []
 
     for (const relPath of guardedListenerFiles) {

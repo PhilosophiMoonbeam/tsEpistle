@@ -382,9 +382,6 @@ export default {
     if (this.mode === 'create') {
       this.$store.set('editor/content', '<h1>Title</h1>\n\n<p>Some text here</p>')
     }
-  },
-  beforeDestroy() {
-    this.$root.$off('editorInsert')
   }
 }
 </script>
