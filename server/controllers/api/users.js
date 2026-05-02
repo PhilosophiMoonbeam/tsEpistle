@@ -6,6 +6,41 @@ const router = express.Router()
 /* global WIKI */
 
 const userActivityAccessPermissions = ['write:groups', 'manage:groups', 'write:users', 'manage:users', 'manage:system']
+const userListOrderFields = ['id', 'name', 'email', 'providerKey', 'createdAt', 'lastLoginAt']
+
+const pickListUser = user => _.pick(user, ['id', 'email', 'name', 'providerKey', 'isSystem', 'isActive', 'createdAt', 'lastLoginAt'])
+
+const normalizeUserListQuery = query => {
+  const page = Math.max(_.toSafeInteger(_.get(query, 'page')) || 1, 1)
+  const pageSize = Math.max(_.toSafeInteger(_.get(query, 'pageSize')) || 15, 1)
+  const orderBy = _.includes(userListOrderFields, _.get(query, 'orderBy')) ? query.orderBy : 'name'
+  const orderByDirection = _.toLower(_.get(query, 'orderByDirection')) === 'desc' ? 'desc' : 'asc'
+
+  return {
+    page,
+    pageSize,
+    offset: (page - 1) * pageSize,
+    filter: _.trim(_.get(query, 'filter', '')),
+    providerKey: _.get(query, 'providerKey', 'all'),
+    orderBy,
+    orderByDirection
+  }
+}
+
+const applyUserListFilters = (queryBuilder, options) => {
+  if (options.filter) {
+    queryBuilder.where(builder => {
+      builder.where('email', 'like', `%${options.filter}%`)
+        .orWhere('name', 'like', `%${options.filter}%`)
+    })
+  }
+
+  if (options.providerKey && options.providerKey !== 'all') {
+    queryBuilder.andWhere('providerKey', options.providerKey)
+  }
+
+  return queryBuilder
+}
 
 const requireUserSearchAccess = (req, res) => {
   if (!WIKI.auth.checkAccess(req.user, userActivityAccessPermissions)) {
@@ -33,6 +68,33 @@ const requireUserDetailAccess = (req, res) => {
 
   return true
 }
+
+router.get('/', async (req, res, next) => {
+  if (!requireUserDetailAccess(req, res)) {
+    return
+  }
+
+  const options = normalizeUserListQuery(req.query)
+
+  try {
+    const totalResult = await applyUserListFilters(WIKI.models.users.query(), options)
+      .count('* as total')
+      .first()
+
+    const users = await applyUserListFilters(WIKI.models.users.query(), options)
+      .select('id', 'email', 'name', 'providerKey', 'isSystem', 'isActive', 'createdAt', 'lastLoginAt')
+      .orderBy(options.orderBy, options.orderByDirection)
+      .offset(options.offset)
+      .limit(options.pageSize)
+
+    return res.json({
+      total: _.toSafeInteger(_.get(totalResult, 'total')),
+      users: users.map(pickListUser)
+    })
+  } catch (err) {
+    return next(err)
+  }
+})
 
 router.get('/search', async (req, res, next) => {
   if (!requireUserSearchAccess(req, res)) {

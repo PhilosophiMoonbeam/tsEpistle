@@ -111,6 +111,7 @@ describe('controllers/api users endpoints', () => {
     const express = require('express')
     require('../../controllers/api/users')
     return {
+      list: express.__router.get.mock.calls.find(([path]) => path === '/')[1],
       search: express.__router.get.mock.calls.find(([path]) => path === '/search')[1],
       lastLogins: express.__router.get.mock.calls.find(([path]) => path === '/last-logins')[1],
       whoami: express.__router.get.mock.calls.find(([path]) => path === '/whoami')[1],
@@ -121,6 +122,7 @@ describe('controllers/api users endpoints', () => {
   it('registers the users routes', () => {
     const handlers = loadHandler()
 
+    expect(typeof handlers.list).toBe('function')
     expect(typeof handlers.search).toBe('function')
     expect(typeof handlers.lastLogins).toBe('function')
     expect(typeof handlers.whoami).toBe('function')
@@ -134,6 +136,193 @@ describe('controllers/api users endpoints', () => {
 
     expect(registeredGetPaths.indexOf('/last-logins')).toBeGreaterThanOrEqual(0)
     expect(registeredGetPaths.indexOf('/:id')).toBeGreaterThan(registeredGetPaths.indexOf('/last-logins'))
+  })
+
+  it('registers the list route before the detail route', () => {
+    loadHandler()
+    const express = require('express')
+    const registeredGetPaths = express.__router.get.mock.calls.map(([path]) => path)
+
+    expect(registeredGetPaths.indexOf('/')).toBeGreaterThanOrEqual(0)
+    expect(registeredGetPaths.indexOf('/:id')).toBeGreaterThan(registeredGetPaths.indexOf('/'))
+  })
+
+  it('returns the paginated admin users list for authorized requests', async () => {
+    const countFilterBuilder = {
+      where: jest.fn().mockReturnThis(),
+      orWhere: jest.fn().mockReturnThis()
+    }
+    const listFilterBuilder = {
+      where: jest.fn().mockReturnThis(),
+      orWhere: jest.fn().mockReturnThis()
+    }
+    const countBuilder = {
+      where: jest.fn(callback => {
+        callback(countFilterBuilder)
+        return countBuilder
+      }),
+      andWhere: jest.fn().mockReturnThis(),
+      count: jest.fn().mockReturnThis(),
+      first: jest.fn().mockResolvedValue({ total: '2' })
+    }
+    const listBuilder = {
+      where: jest.fn(callback => {
+        callback(listFilterBuilder)
+        return listBuilder
+      }),
+      andWhere: jest.fn().mockReturnThis(),
+      select: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      offset: jest.fn().mockReturnThis(),
+      limit: jest.fn().mockResolvedValue([
+        {
+          id: 42,
+          email: 'alice@example.com',
+          name: 'Alice',
+          providerKey: 'local',
+          isSystem: false,
+          isActive: true,
+          createdAt: '2026-01-01T00:00:00.000Z',
+          lastLoginAt: '2026-01-03T00:00:00.000Z',
+          password: 'hidden'
+        },
+        {
+          id: 77,
+          email: 'bob@example.com',
+          name: 'Bob',
+          providerKey: 'ldap',
+          isSystem: false,
+          isActive: false,
+          createdAt: '2026-01-02T00:00:00.000Z',
+          lastLoginAt: null,
+          tfaSecret: 'hidden'
+        }
+      ])
+    }
+    global.WIKI.models.users.query
+      .mockReturnValueOnce(countBuilder)
+      .mockReturnValueOnce(listBuilder)
+    const { list } = loadHandler()
+    const req = {
+      user: { permissions: ['manage:users'] },
+      query: {
+        page: '3',
+        pageSize: '25',
+        filter: ' ali ',
+        providerKey: 'local',
+        orderBy: 'lastLoginAt',
+        orderByDirection: 'DESC'
+      }
+    }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await list(req, res, jest.fn())
+
+    expect(global.WIKI.auth.checkAccess).toHaveBeenCalledWith({ permissions: ['manage:users'] }, ['manage:users', 'manage:system'])
+    expect(global.WIKI.models.users.query).toHaveBeenCalledTimes(2)
+    expect(countFilterBuilder.where).toHaveBeenCalledWith('email', 'like', '%ali%')
+    expect(countFilterBuilder.orWhere).toHaveBeenCalledWith('name', 'like', '%ali%')
+    expect(countBuilder.andWhere).toHaveBeenCalledWith('providerKey', 'local')
+    expect(countBuilder.count).toHaveBeenCalledWith('* as total')
+    expect(countBuilder.first).toHaveBeenCalled()
+    expect(listFilterBuilder.where).toHaveBeenCalledWith('email', 'like', '%ali%')
+    expect(listFilterBuilder.orWhere).toHaveBeenCalledWith('name', 'like', '%ali%')
+    expect(listBuilder.andWhere).toHaveBeenCalledWith('providerKey', 'local')
+    expect(listBuilder.select).toHaveBeenCalledWith('id', 'email', 'name', 'providerKey', 'isSystem', 'isActive', 'createdAt', 'lastLoginAt')
+    expect(listBuilder.orderBy).toHaveBeenCalledWith('lastLoginAt', 'desc')
+    expect(listBuilder.offset).toHaveBeenCalledWith(50)
+    expect(listBuilder.limit).toHaveBeenCalledWith(25)
+    expect(res.json).toHaveBeenCalledWith({
+      total: 2,
+      users: [
+        {
+          id: 42,
+          email: 'alice@example.com',
+          name: 'Alice',
+          providerKey: 'local',
+          isSystem: false,
+          isActive: true,
+          createdAt: '2026-01-01T00:00:00.000Z',
+          lastLoginAt: '2026-01-03T00:00:00.000Z'
+        },
+        {
+          id: 77,
+          email: 'bob@example.com',
+          name: 'Bob',
+          providerKey: 'ldap',
+          isSystem: false,
+          isActive: false,
+          createdAt: '2026-01-02T00:00:00.000Z',
+          lastLoginAt: null
+        }
+      ]
+    })
+  })
+
+  it('uses safe defaults for invalid admin users list query options', async () => {
+    const countBuilder = {
+      count: jest.fn().mockReturnThis(),
+      first: jest.fn().mockResolvedValue({ total: 0 })
+    }
+    const listBuilder = {
+      select: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      offset: jest.fn().mockReturnThis(),
+      limit: jest.fn().mockResolvedValue([])
+    }
+    global.WIKI.models.users.query
+      .mockReturnValueOnce(countBuilder)
+      .mockReturnValueOnce(listBuilder)
+    const { list } = loadHandler()
+    const req = {
+      user: { permissions: ['manage:system'] },
+      query: {
+        page: '-9',
+        pageSize: '0',
+        providerKey: 'all',
+        orderBy: 'password',
+        orderByDirection: 'sideways'
+      }
+    }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await list(req, res, jest.fn())
+
+    expect(countBuilder.where).toBeUndefined()
+    expect(countBuilder.andWhere).toBeUndefined()
+    expect(listBuilder.orderBy).toHaveBeenCalledWith('name', 'asc')
+    expect(listBuilder.offset).toHaveBeenCalledWith(0)
+    expect(listBuilder.limit).toHaveBeenCalledWith(15)
+    expect(res.json).toHaveBeenCalledWith({ total: 0, users: [] })
+  })
+
+  it('returns 403 for unauthorized admin users list requests', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValueOnce(false)
+    const { list } = loadHandler()
+    const req = { user: { permissions: ['manage:api'] }, query: {} }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await list(req, res, jest.fn())
+
+    expect(res.status).toHaveBeenCalledWith(403)
+    expect(res.json).toHaveBeenCalledWith({ error: 'manage:users or manage:system is required' })
+    expect(global.WIKI.models.users.query).not.toHaveBeenCalled()
+  })
+
+  it('forwards unexpected admin users list failures to next', async () => {
+    const next = jest.fn()
+    global.WIKI.models.users.query.mockReturnValueOnce({
+      count: jest.fn().mockReturnThis(),
+      first: jest.fn().mockRejectedValue(new Error('list db down'))
+    })
+    const { list } = loadHandler()
+    const req = { user: { permissions: ['manage:system'] }, query: {} }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await list(req, res, next)
+
+    expect(next).toHaveBeenCalledWith(expect.any(Error))
+    expect(next.mock.calls[0][0].message).toBe('list db down')
   })
 
   it('returns the minimal admin user search payload for authorized requests', async () => {
