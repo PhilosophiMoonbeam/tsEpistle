@@ -371,13 +371,12 @@
 <script>
 import _ from 'lodash'
 import { get } from 'vuex-pathify'
-import gql from 'graphql-tag'
 import { StatusIndicator } from 'vue-status-indicator'
 
 import UserSearch from '../common/user-search.vue'
 
 import { fetchGroupOptions } from '../../helpers/groups-api'
-import { fetchUserDetails, setAdminUserActive, setAdminUserTfa, updateAdminUser, verifyAdminUser } from '../../helpers/users-api'
+import { deleteAdminUser, fetchUserDetails, setAdminUserActive, setAdminUserTfa, updateAdminUser, verifyAdminUser } from '../../helpers/users-api'
 
 const createEmptyUser = () => ({
   id: 0,
@@ -812,42 +811,24 @@ export default {
     },
     async deleteUser () {
       this.$store.commit(`loadingStart`, 'admin-users-delete')
-      const resp = await this.$apollo.mutate({
-        mutation: gql`
-          mutation ($id: Int!, $replaceId: Int!) {
-            users {
-              delete(id: $id, replaceId: $replaceId) {
-                responseResult {
-                  succeeded
-                  errorCode
-                  slug
-                  message
-                }
-              }
-            }
-          }
-        `,
-        variables: {
-          id: this.user.id,
-          replaceId: this.deleteReplaceUser.id
-        }
-      })
-      if (_.get(resp, 'data.users.delete.responseResult.succeeded', false)) {
+      try {
+        await deleteAdminUser(window.fetch.bind(window), this.user.id, this.deleteReplaceUser.id)
         this.$store.commit('showNotification', {
           style: 'success',
           message: this.$t('admin:users.userDeleteSuccess'),
           icon: 'check'
         })
         this.$router.push('/users')
-      } else {
+      } catch (err) {
         this.$store.commit('showNotification', {
           style: 'red',
-          message: _.get(resp, 'data.users.delete.responseResult.message', 'An unexpected error occurred.'),
+          message: err.message,
           icon: 'warning'
         })
+      } finally {
+        this.deleteUserDialog = false
+        this.$store.commit(`loadingStop`, 'admin-users-delete')
       }
-      this.deleteUserDialog = false
-      this.$store.commit(`loadingStop`, 'admin-users-delete')
     },
     assignDeleteUser (selUsr) {
       if (selUsr.id === this.user.id) {

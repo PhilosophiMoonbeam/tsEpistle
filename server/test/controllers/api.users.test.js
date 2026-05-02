@@ -3,6 +3,7 @@ jest.mock('express', () => {
     get: jest.fn(),
     post: jest.fn(),
     put: jest.fn(),
+    delete: jest.fn(),
     patch: jest.fn(),
     use: jest.fn()
   }
@@ -20,6 +21,7 @@ describe('controllers/api users endpoints', () => {
     express.__router.get.mockClear()
     express.__router.post.mockClear()
     express.__router.put.mockClear()
+    express.__router.delete.mockClear()
     express.__router.patch.mockClear()
 
     global.WIKI = {
@@ -48,6 +50,7 @@ describe('controllers/api users endpoints', () => {
         users: {
           createNewUser: jest.fn().mockResolvedValue(undefined),
           updateUser: jest.fn().mockResolvedValue(undefined),
+          deleteUser: jest.fn().mockResolvedValue(undefined),
           query: jest.fn().mockImplementation(() => ({
             where: jest.fn().mockReturnValue({
               orWhere: jest.fn().mockReturnValue({
@@ -131,6 +134,7 @@ describe('controllers/api users endpoints', () => {
       lastLogins: express.__router.get.mock.calls.find(([path]) => path === '/last-logins')[1],
       whoami: express.__router.get.mock.calls.find(([path]) => path === '/whoami')[1],
       update: express.__router.put.mock.calls.find(([path]) => path === '/:id')[1],
+      delete: express.__router.delete.mock.calls.find(([path]) => path === '/:id')[1],
       status: express.__router.patch.mock.calls.find(([path]) => path === '/:id/status')[1],
       verification: express.__router.patch.mock.calls.find(([path]) => path === '/:id/verification')[1],
       tfa: express.__router.patch.mock.calls.find(([path]) => path === '/:id/tfa')[1],
@@ -147,6 +151,7 @@ describe('controllers/api users endpoints', () => {
     expect(typeof handlers.lastLogins).toBe('function')
     expect(typeof handlers.whoami).toBe('function')
     expect(typeof handlers.update).toBe('function')
+    expect(typeof handlers.delete).toBe('function')
     expect(typeof handlers.status).toBe('function')
     expect(typeof handlers.verification).toBe('function')
     expect(typeof handlers.tfa).toBe('function')
@@ -331,6 +336,86 @@ describe('controllers/api users endpoints', () => {
 
     expect(res.status).toHaveBeenCalledWith(400)
     expect(res.json).toHaveBeenCalledWith({ error: 'Password must be at least 6 characters!' })
+  })
+
+  it('deletes admin users for authorized requests and revokes tokens', async () => {
+    const { delete: deleteHandler } = loadHandler()
+    const req = { user: { permissions: ['manage:users'] }, params: { id: '42' }, body: { replaceId: 7 } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await deleteHandler(req, res, jest.fn())
+
+    expect(global.WIKI.auth.checkAccess).toHaveBeenCalledWith({ permissions: ['manage:users'] }, ['manage:users', 'manage:system'])
+    expect(global.WIKI.models.users.deleteUser).toHaveBeenCalledWith(42, 7)
+    expect(global.WIKI.auth.revokeUserTokens).toHaveBeenCalledWith({ id: 42, kind: 'u' })
+    expect(global.WIKI.events.outbound.emit).toHaveBeenCalledWith('addAuthRevoke', { id: 42, kind: 'u' })
+    expect(res.json).toHaveBeenCalledWith({
+      succeeded: true,
+      message: 'User deleted successfully'
+    })
+  })
+
+  it('returns 400 for malformed admin user delete ids and replacement ids', async () => {
+    const { delete: deleteHandler } = loadHandler()
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await deleteHandler({ user: { permissions: ['manage:users'] }, params: { id: '42abc' }, body: { replaceId: 7 } }, res, jest.fn())
+    await deleteHandler({ user: { permissions: ['manage:users'] }, params: { id: '42' }, body: { replaceId: '7abc' } }, res, jest.fn())
+
+    expect(res.status).toHaveBeenNthCalledWith(1, 400)
+    expect(res.json).toHaveBeenNthCalledWith(1, { error: 'user id must be a positive integer' })
+    expect(res.status).toHaveBeenNthCalledWith(2, 400)
+    expect(res.json).toHaveBeenNthCalledWith(2, { error: 'user id must be a positive integer' })
+    expect(global.WIKI.models.users.deleteUser).not.toHaveBeenCalled()
+  })
+
+  it('returns 403 for unauthorized admin user delete requests', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValueOnce(false)
+    const { delete: deleteHandler } = loadHandler()
+    const req = { user: { permissions: ['manage:api'] }, params: { id: '42' }, body: { replaceId: 7 } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await deleteHandler(req, res, jest.fn())
+
+    expect(res.status).toHaveBeenCalledWith(403)
+    expect(res.json).toHaveBeenCalledWith({ error: 'manage:users or manage:system is required' })
+    expect(global.WIKI.models.users.deleteUser).not.toHaveBeenCalled()
+  })
+
+  it('rejects protected admin user deletes before calling the model', async () => {
+    const { delete: deleteHandler } = loadHandler()
+    const req = { user: { permissions: ['manage:users'] }, params: { id: '2' }, body: { replaceId: 7 } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await deleteHandler(req, res, jest.fn())
+
+    expect(res.status).toHaveBeenCalledWith(400)
+    expect(res.json).toHaveBeenCalledWith({ error: 'Cannot delete a protected system account.' })
+    expect(global.WIKI.models.users.deleteUser).not.toHaveBeenCalled()
+  })
+
+  it('maps foreign constraint admin user delete failures', async () => {
+    global.WIKI.models.users.deleteUser.mockRejectedValueOnce(new Error('SQLITE_CONSTRAINT: foreign key constraint failed'))
+    const { delete: deleteHandler } = loadHandler()
+    const req = { user: { permissions: ['manage:system'] }, params: { id: '42' }, body: { replaceId: 7 } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await deleteHandler(req, res, jest.fn())
+
+    expect(res.status).toHaveBeenCalledWith(400)
+    expect(res.json).toHaveBeenCalledWith({ error: 'Cannot delete user because of content relational constraints.' })
+  })
+
+  it('returns model errors for admin user delete failures', async () => {
+    global.WIKI.models.users.deleteUser.mockRejectedValueOnce(new Error('This user does not exist.'))
+    const { delete: deleteHandler } = loadHandler()
+    const req = { user: { permissions: ['manage:system'] }, params: { id: '42' }, body: { replaceId: 7 } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await deleteHandler(req, res, jest.fn())
+
+    expect(res.status).toHaveBeenCalledWith(400)
+    expect(res.json).toHaveBeenCalledWith({ error: 'This user does not exist.' })
   })
 
   it('registers the last-logins route before the detail route', () => {

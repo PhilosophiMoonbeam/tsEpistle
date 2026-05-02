@@ -270,6 +270,22 @@ async function updateAdminUser (fetchImpl, id, payload, fallbackMessage = 'User 
   return normalizeSuccessResult(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
 }
 
+async function deleteAdminUser (fetchImpl, id, replaceId, fallbackMessage = 'User delete response is invalid') {
+  const normalizedId = normalizePositiveIntegerId(id, fallbackMessage)
+  const normalizedReplaceId = normalizePositiveIntegerId(replaceId, fallbackMessage)
+  const response = await fetchImpl(`/_api/users/${normalizedId}`, {
+    method: 'DELETE',
+    credentials: 'same-origin',
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ replaceId: normalizedReplaceId })
+  })
+
+  return normalizeSuccessResult(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
+}
+
 async function patchAdminUserAction (fetchImpl, id, path, payload, fallbackMessage) {
   const normalizedId = normalizePositiveIntegerId(id, fallbackMessage)
   const response = await fetchImpl(`/_api/users/${normalizedId}/${path}`, {
@@ -315,6 +331,7 @@ module.exports = {
   fetchAdminUsersList,
   createAdminUser,
   updateAdminUser,
+  deleteAdminUser,
   setAdminUserActive,
   verifyAdminUser,
   setAdminUserTfa,

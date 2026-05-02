@@ -1,4 +1,4 @@
-const { searchUsers, fetchLastLogins, fetchAdminUsersList, createAdminUser, updateAdminUser, setAdminUserActive, verifyAdminUser, setAdminUserTfa, fetchUserDetails } = require('./users-api')
+const { searchUsers, fetchLastLogins, fetchAdminUsersList, createAdminUser, updateAdminUser, deleteAdminUser, setAdminUserActive, verifyAdminUser, setAdminUserTfa, fetchUserDetails } = require('./users-api')
 
 function createJsonResponse (payload, ok = true) {
   return {
@@ -268,6 +268,52 @@ describe('users api helper', () => {
     }, false))
 
     await expect(updateAdminUser(fetchImpl, 42, {}, 'Bad user update')).rejects.toThrow('Password must be at least 6 characters!')
+  })
+
+  test('deletes admin users with the expected REST payload', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+      succeeded: true,
+      message: 'User deleted successfully'
+    }))
+
+    await expect(deleteAdminUser(fetchImpl, '42', 7)).resolves.toEqual({
+      succeeded: true,
+      message: 'User deleted successfully'
+    })
+
+    expect(fetchImpl).toHaveBeenCalledWith('/_api/users/42', {
+      method: 'DELETE',
+      credentials: 'same-origin',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ replaceId: 7 })
+    })
+  })
+
+  test('rejects invalid admin user delete ids before fetching', async () => {
+    const fetchImpl = jest.fn()
+
+    await expect(deleteAdminUser(fetchImpl, '42abc', 7, 'Bad user delete')).rejects.toThrow('Bad user delete')
+    await expect(deleteAdminUser(fetchImpl, 42, '7abc', 'Bad user delete')).rejects.toThrow('Bad user delete')
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
+  test('rejects malformed admin user delete payloads', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+      succeeded: true
+    }))
+
+    await expect(deleteAdminUser(fetchImpl, 42, 7, 'Bad user delete')).rejects.toThrow('Bad user delete')
+  })
+
+  test('surfaces API error messages for failed admin user deletes', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+      error: 'Cannot delete a protected system account.'
+    }, false))
+
+    await expect(deleteAdminUser(fetchImpl, 1, 7, 'Bad user delete')).rejects.toThrow('Cannot delete a protected system account.')
   })
 
   test('patches admin user active state with the expected REST payload', async () => {

@@ -255,6 +255,44 @@ router.put('/:id', async (req, res, next) => {
   }
 })
 
+router.delete('/:id', async (req, res, next) => {
+  if (!requireUserDetailAccess(req, res)) {
+    return
+  }
+
+  const id = normalizeUserIdParam(req.params.id, res)
+  if (id === null) {
+    return
+  }
+
+  const replaceId = normalizeUserIdParam(_.toString(_.get(req, ['body', 'replaceId'], '')), res)
+  if (replaceId === null) {
+    return
+  }
+
+  if (id <= 2) {
+    return res.status(400).json({ error: 'Cannot delete a protected system account.' })
+  }
+
+  try {
+    await WIKI.models.users.deleteUser(id, replaceId)
+
+    WIKI.auth.revokeUserTokens({ id, kind: 'u' })
+    WIKI.events.outbound.emit('addAuthRevoke', { id, kind: 'u' })
+
+    return res.json({
+      succeeded: true,
+      message: 'User deleted successfully'
+    })
+  } catch (err) {
+    if (_.includes(_.toLower(err.message), 'foreign')) {
+      return res.status(400).json({ error: 'Cannot delete user because of content relational constraints.' })
+    }
+
+    return res.status(400).json({ error: err.message || 'User could not be deleted.' })
+  }
+})
+
 router.patch('/:id/status', async (req, res, next) => {
   if (!requireUserDetailAccess(req, res)) {
     return
