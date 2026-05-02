@@ -377,7 +377,7 @@ import { StatusIndicator } from 'vue-status-indicator'
 import UserSearch from '../common/user-search.vue'
 
 import { fetchGroupOptions } from '../../helpers/groups-api'
-import { fetchUserDetails, setAdminUserActive, setAdminUserTfa, verifyAdminUser } from '../../helpers/users-api'
+import { fetchUserDetails, setAdminUserActive, setAdminUserTfa, updateAdminUser, verifyAdminUser } from '../../helpers/users-api'
 
 const createEmptyUser = () => ({
   id: 0,
@@ -871,23 +871,8 @@ export default {
      */
     async updateUser() {
       this.$store.commit(`loadingStart`, 'admin-users-update')
-      const resp = await this.$apollo.mutate({
-        mutation: gql`
-          mutation ($id: Int!, $email: String, $name: String, $newPassword: String, $groups: [Int], $location: String, $jobTitle: String, $timezone: String) {
-            users {
-              update(id: $id, email: $email, name: $name, newPassword: $newPassword, groups: $groups, location: $location, jobTitle: $jobTitle, timezone: $timezone) {
-                responseResult {
-                  succeeded
-                  errorCode
-                  slug
-                  message
-                }
-              }
-            }
-          }
-        `,
-        variables: {
-          id: this.user.id,
+      try {
+        await updateAdminUser(window.fetch.bind(window), this.user.id, {
           email: this.user.email,
           name: this.user.name,
           newPassword: this.newPassword,
@@ -895,20 +880,19 @@ export default {
           location: this.user.location,
           jobTitle: this.user.jobTitle,
           timezone: this.user.timezone
-        }
-      })
-      this.newPassword = ''
-      if (_.get(resp, 'data.users.update.responseResult.succeeded', false)) {
+        })
+        this.newPassword = ''
         this.$store.commit('showNotification', {
           style: 'success',
           message: this.$t('admin:users.userUpdateSuccess'),
           icon: 'check'
         })
         this.$router.push('/users')
-      } else {
+      } catch (err) {
+        this.newPassword = ''
         this.$store.commit('showNotification', {
           style: 'red',
-          message: _.get(resp, 'data.users.update.responseResult.message', 'An unexpected error occurred.'),
+          message: err.message,
           icon: 'warning'
         })
       }

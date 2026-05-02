@@ -221,6 +221,40 @@ router.get('/whoami', async (req, res) => {
   })
 })
 
+router.put('/:id', async (req, res, next) => {
+  if (!requireUserDetailAccess(req, res)) {
+    return
+  }
+
+  const id = normalizeUserIdParam(req.params.id, res)
+  if (id === null) {
+    return
+  }
+
+  const payload = _.pick(req.body, ['email', 'name', 'newPassword', 'groups', 'location', 'jobTitle', 'timezone', 'dateFormat', 'appearance'])
+  if (!_.isNil(payload.groups) && !Array.isArray(payload.groups)) {
+    return res.status(400).json({ error: 'groups must be an array' })
+  }
+
+  try {
+    if (!(await WIKI.auth.checkAssignUserToGroupAccess(req.user, payload.groups))) {
+      return res.status(403).json({ error: 'You are not authorized to assign a user to a group with elevated permissions.' })
+    }
+
+    await WIKI.models.users.updateUser({
+      id,
+      ...payload
+    })
+
+    return res.json({
+      succeeded: true,
+      message: 'User created successfully'
+    })
+  } catch (err) {
+    return res.status(400).json({ error: err.message || 'User could not be updated.' })
+  }
+})
+
 router.patch('/:id/status', async (req, res, next) => {
   if (!requireUserDetailAccess(req, res)) {
     return

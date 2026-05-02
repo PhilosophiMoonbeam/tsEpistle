@@ -255,6 +255,21 @@ async function createAdminUser (fetchImpl, payload, fallbackMessage = 'User crea
   return normalizeSuccessResult(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
 }
 
+async function updateAdminUser (fetchImpl, id, payload, fallbackMessage = 'User update response is invalid') {
+  const normalizedId = normalizePositiveIntegerId(id, fallbackMessage)
+  const response = await fetchImpl(`/_api/users/${normalizedId}`, {
+    method: 'PUT',
+    credentials: 'same-origin',
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(payload)
+  })
+
+  return normalizeSuccessResult(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
+}
+
 async function patchAdminUserAction (fetchImpl, id, path, payload, fallbackMessage) {
   const normalizedId = normalizePositiveIntegerId(id, fallbackMessage)
   const response = await fetchImpl(`/_api/users/${normalizedId}/${path}`, {
@@ -299,6 +314,7 @@ module.exports = {
   fetchLastLogins,
   fetchAdminUsersList,
   createAdminUser,
+  updateAdminUser,
   setAdminUserActive,
   verifyAdminUser,
   setAdminUserTfa,

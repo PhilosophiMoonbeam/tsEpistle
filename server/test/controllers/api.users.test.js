@@ -2,6 +2,7 @@ jest.mock('express', () => {
   const router = {
     get: jest.fn(),
     post: jest.fn(),
+    put: jest.fn(),
     patch: jest.fn(),
     use: jest.fn()
   }
@@ -18,6 +19,7 @@ describe('controllers/api users endpoints', () => {
     const express = require('express')
     express.__router.get.mockClear()
     express.__router.post.mockClear()
+    express.__router.put.mockClear()
     express.__router.patch.mockClear()
 
     global.WIKI = {
@@ -45,6 +47,7 @@ describe('controllers/api users endpoints', () => {
       models: {
         users: {
           createNewUser: jest.fn().mockResolvedValue(undefined),
+          updateUser: jest.fn().mockResolvedValue(undefined),
           query: jest.fn().mockImplementation(() => ({
             where: jest.fn().mockReturnValue({
               orWhere: jest.fn().mockReturnValue({
@@ -127,6 +130,7 @@ describe('controllers/api users endpoints', () => {
       search: express.__router.get.mock.calls.find(([path]) => path === '/search')[1],
       lastLogins: express.__router.get.mock.calls.find(([path]) => path === '/last-logins')[1],
       whoami: express.__router.get.mock.calls.find(([path]) => path === '/whoami')[1],
+      update: express.__router.put.mock.calls.find(([path]) => path === '/:id')[1],
       status: express.__router.patch.mock.calls.find(([path]) => path === '/:id/status')[1],
       verification: express.__router.patch.mock.calls.find(([path]) => path === '/:id/verification')[1],
       tfa: express.__router.patch.mock.calls.find(([path]) => path === '/:id/tfa')[1],
@@ -142,6 +146,7 @@ describe('controllers/api users endpoints', () => {
     expect(typeof handlers.search).toBe('function')
     expect(typeof handlers.lastLogins).toBe('function')
     expect(typeof handlers.whoami).toBe('function')
+    expect(typeof handlers.update).toBe('function')
     expect(typeof handlers.status).toBe('function')
     expect(typeof handlers.verification).toBe('function')
     expect(typeof handlers.tfa).toBe('function')
@@ -232,6 +237,100 @@ describe('controllers/api users endpoints', () => {
 
     expect(res.status).toHaveBeenCalledWith(400)
     expect(res.json).toHaveBeenCalledWith({ error: 'An account already exists using this email address.' })
+  })
+
+  it('updates admin users for authorized requests', async () => {
+    const { update } = loadHandler()
+    const req = {
+      user: { permissions: ['manage:users'] },
+      params: { id: '42' },
+      body: {
+        email: 'alice@example.com',
+        name: 'Alice',
+        newPassword: 'new-secret',
+        groups: [3, 4],
+        location: 'Tallinn',
+        jobTitle: 'Architect',
+        timezone: 'Europe/Tallinn',
+        dateFormat: 'YYYY-MM-DD',
+        appearance: 'dark',
+        ignored: 'not forwarded'
+      }
+    }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await update(req, res, jest.fn())
+
+    expect(global.WIKI.auth.checkAccess).toHaveBeenCalledWith({ permissions: ['manage:users'] }, ['manage:users', 'manage:system'])
+    expect(global.WIKI.auth.checkAssignUserToGroupAccess).toHaveBeenCalledWith({ permissions: ['manage:users'] }, [3, 4])
+    expect(global.WIKI.models.users.updateUser).toHaveBeenCalledWith({
+      id: 42,
+      email: 'alice@example.com',
+      name: 'Alice',
+      newPassword: 'new-secret',
+      groups: [3, 4],
+      location: 'Tallinn',
+      jobTitle: 'Architect',
+      timezone: 'Europe/Tallinn',
+      dateFormat: 'YYYY-MM-DD',
+      appearance: 'dark'
+    })
+    expect(res.json).toHaveBeenCalledWith({
+      succeeded: true,
+      message: 'User created successfully'
+    })
+  })
+
+  it('returns 400 for malformed admin user update ids and groups', async () => {
+    const { update } = loadHandler()
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await update({ user: { permissions: ['manage:users'] }, params: { id: '42abc' }, body: { groups: [] } }, res, jest.fn())
+    await update({ user: { permissions: ['manage:users'] }, params: { id: '42' }, body: { groups: '3' } }, res, jest.fn())
+
+    expect(res.status).toHaveBeenNthCalledWith(1, 400)
+    expect(res.json).toHaveBeenNthCalledWith(1, { error: 'user id must be a positive integer' })
+    expect(res.status).toHaveBeenNthCalledWith(2, 400)
+    expect(res.json).toHaveBeenNthCalledWith(2, { error: 'groups must be an array' })
+    expect(global.WIKI.models.users.updateUser).not.toHaveBeenCalled()
+  })
+
+  it('returns 403 for unauthorized admin user update requests', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValueOnce(false)
+    const { update } = loadHandler()
+    const req = { user: { permissions: ['manage:api'] }, params: { id: '42' }, body: { groups: [] } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await update(req, res, jest.fn())
+
+    expect(res.status).toHaveBeenCalledWith(403)
+    expect(res.json).toHaveBeenCalledWith({ error: 'manage:users or manage:system is required' })
+    expect(global.WIKI.models.users.updateUser).not.toHaveBeenCalled()
+  })
+
+  it('returns 403 when admin user update assigns disallowed elevated groups', async () => {
+    global.WIKI.auth.checkAssignUserToGroupAccess.mockResolvedValueOnce(false)
+    const { update } = loadHandler()
+    const req = { user: { permissions: ['manage:users'] }, params: { id: '42' }, body: { groups: [1] } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await update(req, res, jest.fn())
+
+    expect(res.status).toHaveBeenCalledWith(403)
+    expect(res.json).toHaveBeenCalledWith({ error: 'You are not authorized to assign a user to a group with elevated permissions.' })
+    expect(global.WIKI.models.users.updateUser).not.toHaveBeenCalled()
+  })
+
+  it('returns model validation errors for admin user update failures', async () => {
+    global.WIKI.models.users.updateUser.mockRejectedValueOnce(new Error('Password must be at least 6 characters!'))
+    const { update } = loadHandler()
+    const req = { user: { permissions: ['manage:system'] }, params: { id: '42' }, body: { groups: [] } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await update(req, res, jest.fn())
+
+    expect(res.status).toHaveBeenCalledWith(400)
+    expect(res.json).toHaveBeenCalledWith({ error: 'Password must be at least 6 characters!' })
   })
 
   it('registers the last-logins route before the detail route', () => {

@@ -1,4 +1,4 @@
-const { searchUsers, fetchLastLogins, fetchAdminUsersList, createAdminUser, setAdminUserActive, verifyAdminUser, setAdminUserTfa, fetchUserDetails } = require('./users-api')
+const { searchUsers, fetchLastLogins, fetchAdminUsersList, createAdminUser, updateAdminUser, setAdminUserActive, verifyAdminUser, setAdminUserTfa, fetchUserDetails } = require('./users-api')
 
 function createJsonResponse (payload, ok = true) {
   return {
@@ -214,6 +214,60 @@ describe('users api helper', () => {
     }, false))
 
     await expect(createAdminUser(fetchImpl, {}, 'Bad user create')).rejects.toThrow('You are not authorized to assign a user to a group with elevated permissions.')
+  })
+
+  test('updates admin users with the expected REST payload', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+      succeeded: true,
+      message: 'User created successfully'
+    }))
+    const payload = {
+      email: 'alice@example.com',
+      name: 'Alice',
+      newPassword: '',
+      groups: [3, 4],
+      location: 'Tallinn',
+      jobTitle: 'Architect',
+      timezone: 'Europe/Tallinn'
+    }
+
+    await expect(updateAdminUser(fetchImpl, '42', payload)).resolves.toEqual({
+      succeeded: true,
+      message: 'User created successfully'
+    })
+
+    expect(fetchImpl).toHaveBeenCalledWith('/_api/users/42', {
+      method: 'PUT',
+      credentials: 'same-origin',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(payload)
+    })
+  })
+
+  test('rejects invalid admin user update ids before fetching', async () => {
+    const fetchImpl = jest.fn()
+
+    await expect(updateAdminUser(fetchImpl, '42abc', {}, 'Bad user update')).rejects.toThrow('Bad user update')
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
+  test('rejects malformed admin user update payloads', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+      succeeded: true
+    }))
+
+    await expect(updateAdminUser(fetchImpl, 42, {}, 'Bad user update')).rejects.toThrow('Bad user update')
+  })
+
+  test('surfaces API error messages for failed admin user updates', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+      error: 'Password must be at least 6 characters!'
+    }, false))
+
+    await expect(updateAdminUser(fetchImpl, 42, {}, 'Bad user update')).rejects.toThrow('Password must be at least 6 characters!')
   })
 
   test('patches admin user active state with the expected REST payload', async () => {
