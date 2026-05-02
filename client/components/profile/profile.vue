@@ -694,9 +694,9 @@ export default {
     },
     'user.dateFormat': function (newValue, oldValue) {
       if (newValue === '') {
-        WIKI.$moment.updateLocale(WIKI.$moment.locale(), null)
+        this.$moment.updateLocale(this.$moment.locale(), null)
       } else {
-        WIKI.$moment.updateLocale(WIKI.$moment.locale(), {
+        this.$moment.updateLocale(this.$moment.locale(), {
           longDateFormat: {
             'L': newValue
           }
@@ -705,9 +705,9 @@ export default {
     },
     'user.timezone': function (newValue, oldValue) {
       if (newValue === '') {
-        WIKI.$moment.tz.setDefault()
+        this.$moment.tz.setDefault()
       } else {
-        WIKI.$moment.tz.setDefault(newValue)
+        this.$moment.tz.setDefault(newValue)
       }
     }
   },

@@ -289,7 +289,7 @@ export default {
       if (resp.succeeded) {
         // Change UI language
         WIKI.$i18n.i18next.changeLanguage(this.selectedLocale)
-        WIKI.$moment.locale(this.selectedLocale)
+        this.$moment.locale(this.selectedLocale)
 
         // Check for RTL
         const curLocale = _.find(this.locales, ['code', this.selectedLocale])

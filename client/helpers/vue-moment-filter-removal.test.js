@@ -33,7 +33,8 @@ describe('vue-moment filter removal guard', () => {
       /require\(['"]vue-moment['"]\)/,
       /VueMoment/,
       /Vue\.use\(\s*VueMoment/,
-      /Vue\.filter\(\s*['"]moment['"]/
+      /Vue\.filter\(\s*['"]moment['"]/,
+      /WIKI\.\$moment\b/
     ]
 
     for (const scanRoot of scanRoots) {
