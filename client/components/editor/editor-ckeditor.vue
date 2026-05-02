@@ -23,6 +23,7 @@ import EditorConflict from './ckeditor/conflict.vue'
 import { html as beautify } from 'js-beautify/js/lib/beautifier.min.js'
 import { onEditorSaveConflict, onEditorContentOverwrite, offEditorSaveConflict, offEditorContentOverwrite } from '../../helpers/editor-conflict-events'
 import { onEditorInsert, offEditorInsert } from '../../helpers/editor-insert-events'
+import { onEditorLinkToPage, offEditorLinkToPage } from '../../helpers/editor-link-events'
 
 /* global siteLangs */
 
@@ -68,6 +69,9 @@ export default {
     },
     handleEditorContentOverwrite () {
       this.editor.setData(this.$store.get('editor/content'))
+    },
+    handleEditorLinkToPage () {
+      this.insertLink()
     },
     handleEditorInsert (opts) {
       switch (opts.kind) {
@@ -127,10 +131,7 @@ export default {
     }, 300))
 
     onEditorInsert(this.$root, this.handleEditorInsert)
-
-    this.$root.$on('editorLinkToPage', opts => {
-      this.insertLink()
-    })
+    onEditorLinkToPage(this.$root, this.handleEditorLinkToPage)
 
     // Handle save conflict
     onEditorSaveConflict(this.$root, this.handleEditorSaveConflict)
@@ -138,6 +139,7 @@ export default {
   },
   beforeDestroy () {
     offEditorInsert(this.$root, this.handleEditorInsert)
+    offEditorLinkToPage(this.$root, this.handleEditorLinkToPage)
     offEditorSaveConflict(this.$root, this.handleEditorSaveConflict)
     offEditorContentOverwrite(this.$root, this.handleEditorContentOverwrite)
     if (this.editor) {

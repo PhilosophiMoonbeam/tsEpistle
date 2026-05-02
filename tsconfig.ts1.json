@@ -23,6 +23,7 @@
     "client/helpers/page-action-events.js",
     "client/helpers/editor-conflict-events.js",
     "client/helpers/editor-insert-events.js",
+    "client/helpers/editor-link-events.js",
     "client/helpers/compatibility.js",
     "client/helpers/index.js",
     "client/polyfills/array-from.js",
