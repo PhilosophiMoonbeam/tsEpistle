@@ -39,7 +39,10 @@
     "client/index-app.js",
     "client/store/index.js",
     "client/store/admin.js",
-    "client/store/editor.js"
+    "client/store/editor.js",
+    "client/store/page.js",
+    "client/store/site.js",
+    "client/store/user.js"
   ],
   "exclude": [
     "node_modules",
