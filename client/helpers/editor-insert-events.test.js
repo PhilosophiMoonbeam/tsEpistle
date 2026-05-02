@@ -18,7 +18,8 @@ const guardedListenerFiles = [
   'client/components/admin/admin-security.vue',
   'client/components/editor/editor-api.vue',
   'client/components/editor/editor-code.vue',
-  'client/components/editor/editor-ckeditor.vue'
+  'client/components/editor/editor-ckeditor.vue',
+  'client/components/editor/editor-asciidoc.vue'
 ]
 
 function createRoot () {

@@ -129,6 +129,7 @@
 /* global siteLangs, siteConfig */
 import _ from 'lodash'
 import { get, sync } from 'vuex-pathify'
+import { onEditorInsert, offEditorInsert } from '../../helpers/editor-insert-events'
 import { onEditorSaveConflict, onEditorContentOverwrite, offEditorSaveConflict, offEditorContentOverwrite } from '../../helpers/editor-conflict-events'
 import DOMPurify from 'dompurify'
 
@@ -208,6 +209,27 @@ export default {
     },
     handleEditorContentOverwrite() {
       this.cm.setValue(this.$store.get('editor/content'))
+    },
+    handleEditorInsert(opts) {
+      switch (opts.kind) {
+        case 'IMAGE':
+          let img = `image::${opts.path}[${opts.text}]`
+          this.insertAtCursor({
+            content: img
+          })
+          break
+        case 'BINARY':
+          this.insertAtCursor({
+            content: `link:${opts.path}[${opts.text}]`
+          })
+          break
+        case 'DIAGRAM':
+          const selStartLine = this.cm.getCursor('from').line
+          const selEndLine = this.cm.getCursor('to').line + 1
+          this.cm.doc.replaceSelection('```diagram\n' + opts.text + '\n```\n', 'start')
+          this.processMarkers(selStartLine, selEndLine)
+          break
+      }
     },
     closeAllModal() {
       this.activeModal = ''
@@ -459,34 +481,14 @@ export default {
     // Render initial preview
     this.processContent(this.$store.get('editor/content'))
 
-    this.$root.$on('editorInsert', opts => {
-      switch (opts.kind) {
-        case 'IMAGE':
-          let img = `image::${opts.path}[${opts.text}]`
-          this.insertAtCursor({
-            content: img
-          })
-          break
-        case 'BINARY':
-          this.insertAtCursor({
-            content: `link:${opts.path}[${opts.text}]`
-          })
-          break
-        case 'DIAGRAM':
-          const selStartLine = this.cm.getCursor('from').line
-          const selEndLine = this.cm.getCursor('to').line + 1
-          this.cm.doc.replaceSelection('```diagram\n' + opts.text + '\n```\n', 'start')
-          this.processMarkers(selStartLine, selEndLine)
-          break
-      }
-    })
+    onEditorInsert(this.$root, this.handleEditorInsert)
 
     // Handle save conflict
     onEditorSaveConflict(this.$root, this.handleEditorSaveConflict)
     onEditorContentOverwrite(this.$root, this.handleEditorContentOverwrite)
   },
   beforeDestroy() {
-    this.$root.$off('editorInsert')
+    offEditorInsert(this.$root, this.handleEditorInsert)
     offEditorSaveConflict(this.$root, this.handleEditorSaveConflict)
     offEditorContentOverwrite(this.$root, this.handleEditorContentOverwrite)
   }
