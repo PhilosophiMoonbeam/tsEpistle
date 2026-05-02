@@ -60,6 +60,7 @@
 import _ from 'lodash'
 import { get, sync } from 'vuex-pathify'
 import { onEditorSaveConflict, onEditorContentOverwrite, offEditorSaveConflict, offEditorContentOverwrite } from '../../helpers/editor-conflict-events'
+import { onEditorInsert, offEditorInsert } from '../../helpers/editor-insert-events'
 
 // ========================================
 // IMPORTS
@@ -116,6 +117,25 @@ export default {
     },
     handleEditorContentOverwrite() {
       this.cm.setValue(this.$store.get('editor/content'))
+    },
+    handleEditorInsert(opts) {
+      switch (opts.kind) {
+        case 'IMAGE':
+          let img = `<img src="${opts.path}" alt="${opts.text}"`
+          if (opts.align && opts.align !== '') {
+            img += ` class="align-${opts.align}"`
+          }
+          img += ` />`
+          this.insertAtCursor({
+            content: img
+          })
+          break
+        case 'BINARY':
+          this.insertAtCursor({
+            content: `<a href="${opts.path}" title="${opts.text}">${opts.text}</a>`
+          })
+          break
+      }
     },
     closeAllModal() {
       this.activeModal = ''
@@ -233,32 +253,14 @@ export default {
 
     // Render initial preview
 
-    this.$root.$on('editorInsert', opts => {
-      switch (opts.kind) {
-        case 'IMAGE':
-          let img = `<img src="${opts.path}" alt="${opts.text}"`
-          if (opts.align && opts.align !== '') {
-            img += ` class="align-${opts.align}"`
-          }
-          img += ` />`
-          this.insertAtCursor({
-            content: img
-          })
-          break
-        case 'BINARY':
-          this.insertAtCursor({
-            content: `<a href="${opts.path}" title="${opts.text}">${opts.text}</a>`
-          })
-          break
-      }
-    })
+    onEditorInsert(this.$root, this.handleEditorInsert)
 
     // Handle save conflict
     onEditorSaveConflict(this.$root, this.handleEditorSaveConflict)
     onEditorContentOverwrite(this.$root, this.handleEditorContentOverwrite)
   },
   beforeDestroy() {
-    this.$root.$off('editorInsert')
+    offEditorInsert(this.$root, this.handleEditorInsert)
     offEditorSaveConflict(this.$root, this.handleEditorSaveConflict)
     offEditorContentOverwrite(this.$root, this.handleEditorContentOverwrite)
   }

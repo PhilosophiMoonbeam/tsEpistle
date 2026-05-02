@@ -16,7 +16,8 @@ const guardedEmitterFiles = [
 const guardedListenerFiles = [
   'client/components/admin/admin-general.vue',
   'client/components/admin/admin-security.vue',
-  'client/components/editor/editor-api.vue'
+  'client/components/editor/editor-api.vue',
+  'client/components/editor/editor-code.vue'
 ]
 
 function createRoot () {
