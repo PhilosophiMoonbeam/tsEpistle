@@ -8,8 +8,6 @@ import page from './page'
 import site from './site'
 import user from './user'
 
-/* global WIKI */
-
 Vue.use(Vuex)
 
 const state = {
@@ -51,10 +49,15 @@ export default new Vuex.Store({
       st.notification.isActive = newState
     },
     pushGraphError (st, err) {
-      WIKI.$store.commit('showNotification', {
+      st.notification = _.defaults({
         style: 'red',
         message: _.get(err, 'graphQLErrors[0].message', err.message),
         icon: 'alert'
+      }, {
+        message: '',
+        style: 'primary',
+        icon: 'cached',
+        isActive: true
       })
     }
   },
