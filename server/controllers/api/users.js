@@ -52,6 +52,25 @@ const applyUserListFilters = (queryBuilder, options) => {
   return queryBuilder
 }
 
+const normalizeUserIdParam = (value, res) => {
+  if (!/^[1-9]\d*$/.test(value)) {
+    res.status(400).json({ error: 'user id must be a positive integer' })
+    return null
+  }
+
+  return Number.parseInt(value, 10)
+}
+
+const requireBooleanBodyValue = (req, res, field) => {
+  const value = _.get(req, ['body', field])
+  if (typeof value !== 'boolean') {
+    res.status(400).json({ error: `${field} must be a boolean` })
+    return null
+  }
+
+  return value
+}
+
 const requireUserSearchAccess = (req, res) => {
   if (!WIKI.auth.checkAccess(req.user, userActivityAccessPermissions)) {
     res.status(403).json({ error: 'a user search admin permission is required' })
@@ -202,17 +221,114 @@ router.get('/whoami', async (req, res) => {
   })
 })
 
+router.patch('/:id/status', async (req, res, next) => {
+  if (!requireUserDetailAccess(req, res)) {
+    return
+  }
+
+  const id = normalizeUserIdParam(req.params.id, res)
+  if (id === null) {
+    return
+  }
+
+  const isActive = requireBooleanBodyValue(req, res, 'isActive')
+  if (isActive === null) {
+    return
+  }
+
+  if (!isActive && id <= 2) {
+    return res.status(400).json({ error: 'Cannot deactivate system accounts.' })
+  }
+
+  try {
+    await WIKI.models.users.query().patch({ isActive }).findById(id)
+
+    if (!isActive) {
+      WIKI.auth.revokeUserTokens({ id, kind: 'u' })
+      WIKI.events.outbound.emit('addAuthRevoke', { id, kind: 'u' })
+    }
+
+    return res.json({
+      succeeded: true,
+      message: isActive ? 'User activated successfully' : 'User deactivated successfully'
+    })
+  } catch (err) {
+    return next(err)
+  }
+})
+
+router.patch('/:id/verification', async (req, res, next) => {
+  if (!requireUserDetailAccess(req, res)) {
+    return
+  }
+
+  const id = normalizeUserIdParam(req.params.id, res)
+  if (id === null) {
+    return
+  }
+
+  const isVerified = requireBooleanBodyValue(req, res, 'isVerified')
+  if (isVerified === null) {
+    return
+  }
+  if (!isVerified) {
+    return res.status(400).json({ error: 'isVerified must be true' })
+  }
+
+  try {
+    await WIKI.models.users.query().patch({ isVerified: true }).findById(id)
+
+    return res.json({
+      succeeded: true,
+      message: 'User verified successfully'
+    })
+  } catch (err) {
+    return next(err)
+  }
+})
+
+router.patch('/:id/tfa', async (req, res, next) => {
+  if (!requireUserDetailAccess(req, res)) {
+    return
+  }
+
+  const id = normalizeUserIdParam(req.params.id, res)
+  if (id === null) {
+    return
+  }
+
+  const enabled = requireBooleanBodyValue(req, res, 'enabled')
+  if (enabled === null) {
+    return
+  }
+
+  try {
+    await WIKI.models.users.query().patch({
+      tfaIsActive: enabled,
+      tfaSecret: null
+    }).findById(id)
+
+    return res.json({
+      succeeded: true,
+      message: enabled ? 'User 2FA enabled successfully' : 'User 2FA disabled successfully'
+    })
+  } catch (err) {
+    return next(err)
+  }
+})
+
 router.get('/:id', async (req, res, next) => {
   if (!requireUserDetailAccess(req, res)) {
     return
   }
 
-  if (!/^[1-9]\d*$/.test(req.params.id)) {
-    return res.status(400).json({ error: 'user id must be a positive integer' })
+  const id = normalizeUserIdParam(req.params.id, res)
+  if (id === null) {
+    return
   }
 
   try {
-    const user = await WIKI.models.users.query().findById(Number.parseInt(req.params.id, 10))
+    const user = await WIKI.models.users.query().findById(id)
     if (!user) {
       return res.status(404).json({ error: 'user not found' })
     }

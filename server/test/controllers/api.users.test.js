@@ -2,6 +2,7 @@ jest.mock('express', () => {
   const router = {
     get: jest.fn(),
     post: jest.fn(),
+    patch: jest.fn(),
     use: jest.fn()
   }
 
@@ -17,11 +18,13 @@ describe('controllers/api users endpoints', () => {
     const express = require('express')
     express.__router.get.mockClear()
     express.__router.post.mockClear()
+    express.__router.patch.mockClear()
 
     global.WIKI = {
       auth: {
         checkAccess: jest.fn().mockReturnValue(true),
         checkAssignUserToGroupAccess: jest.fn().mockResolvedValue(true),
+        revokeUserTokens: jest.fn(),
         strategies: {
           local: {
             displayName: 'Local',
@@ -33,6 +36,11 @@ describe('controllers/api users endpoints', () => {
         authentication: [
           { key: 'local', useForm: true }
         ]
+      },
+      events: {
+        outbound: {
+          emit: jest.fn()
+        }
       },
       models: {
         users: {
@@ -119,6 +127,9 @@ describe('controllers/api users endpoints', () => {
       search: express.__router.get.mock.calls.find(([path]) => path === '/search')[1],
       lastLogins: express.__router.get.mock.calls.find(([path]) => path === '/last-logins')[1],
       whoami: express.__router.get.mock.calls.find(([path]) => path === '/whoami')[1],
+      status: express.__router.patch.mock.calls.find(([path]) => path === '/:id/status')[1],
+      verification: express.__router.patch.mock.calls.find(([path]) => path === '/:id/verification')[1],
+      tfa: express.__router.patch.mock.calls.find(([path]) => path === '/:id/tfa')[1],
       detail: express.__router.get.mock.calls.find(([path]) => path === '/:id')[1]
     }
   }
@@ -131,6 +142,9 @@ describe('controllers/api users endpoints', () => {
     expect(typeof handlers.search).toBe('function')
     expect(typeof handlers.lastLogins).toBe('function')
     expect(typeof handlers.whoami).toBe('function')
+    expect(typeof handlers.status).toBe('function')
+    expect(typeof handlers.verification).toBe('function')
+    expect(typeof handlers.tfa).toBe('function')
     expect(typeof handlers.detail).toBe('function')
   })
 
@@ -236,6 +250,167 @@ describe('controllers/api users endpoints', () => {
 
     expect(registeredGetPaths.indexOf('/')).toBeGreaterThanOrEqual(0)
     expect(registeredGetPaths.indexOf('/:id')).toBeGreaterThan(registeredGetPaths.indexOf('/'))
+  })
+
+  it('registers admin user action routes before the detail route', () => {
+    loadHandler()
+    const express = require('express')
+    const registeredPatchPaths = express.__router.patch.mock.calls.map(([path]) => path)
+    const registeredGetPaths = express.__router.get.mock.calls.map(([path]) => path)
+
+    expect(registeredPatchPaths).toEqual(['/:id/status', '/:id/verification', '/:id/tfa'])
+    expect(registeredGetPaths.indexOf('/:id')).toBeGreaterThan(registeredGetPaths.indexOf('/whoami'))
+  })
+
+  it('activates admin users through REST status action', async () => {
+    const patchBuilder = {
+      patch: jest.fn().mockReturnThis(),
+      findById: jest.fn().mockResolvedValue(1)
+    }
+    global.WIKI.models.users.query.mockReturnValueOnce(patchBuilder)
+    const { status } = loadHandler()
+    const req = { user: { permissions: ['manage:users'] }, params: { id: '42' }, body: { isActive: true } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await status(req, res, jest.fn())
+
+    expect(global.WIKI.auth.checkAccess).toHaveBeenCalledWith({ permissions: ['manage:users'] }, ['manage:users', 'manage:system'])
+    expect(patchBuilder.patch).toHaveBeenCalledWith({ isActive: true })
+    expect(patchBuilder.findById).toHaveBeenCalledWith(42)
+    expect(global.WIKI.auth.revokeUserTokens).not.toHaveBeenCalled()
+    expect(res.json).toHaveBeenCalledWith({
+      succeeded: true,
+      message: 'User activated successfully'
+    })
+  })
+
+  it('deactivates admin users through REST status action and revokes tokens', async () => {
+    const patchBuilder = {
+      patch: jest.fn().mockReturnThis(),
+      findById: jest.fn().mockResolvedValue(1)
+    }
+    global.WIKI.models.users.query.mockReturnValueOnce(patchBuilder)
+    const { status } = loadHandler()
+    const req = { user: { permissions: ['manage:system'] }, params: { id: '42' }, body: { isActive: false } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await status(req, res, jest.fn())
+
+    expect(patchBuilder.patch).toHaveBeenCalledWith({ isActive: false })
+    expect(patchBuilder.findById).toHaveBeenCalledWith(42)
+    expect(global.WIKI.auth.revokeUserTokens).toHaveBeenCalledWith({ id: 42, kind: 'u' })
+    expect(global.WIKI.events.outbound.emit).toHaveBeenCalledWith('addAuthRevoke', { id: 42, kind: 'u' })
+    expect(res.json).toHaveBeenCalledWith({
+      succeeded: true,
+      message: 'User deactivated successfully'
+    })
+  })
+
+  it('rejects protected account deactivation through REST status action', async () => {
+    const { status } = loadHandler()
+    const req = { user: { permissions: ['manage:users'] }, params: { id: '2' }, body: { isActive: false } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await status(req, res, jest.fn())
+
+    expect(res.status).toHaveBeenCalledWith(400)
+    expect(res.json).toHaveBeenCalledWith({ error: 'Cannot deactivate system accounts.' })
+    expect(global.WIKI.models.users.query).not.toHaveBeenCalled()
+  })
+
+  it('verifies admin users through REST verification action', async () => {
+    const patchBuilder = {
+      patch: jest.fn().mockReturnThis(),
+      findById: jest.fn().mockResolvedValue(1)
+    }
+    global.WIKI.models.users.query.mockReturnValueOnce(patchBuilder)
+    const { verification } = loadHandler()
+    const req = { user: { permissions: ['manage:users'] }, params: { id: '42' }, body: { isVerified: true } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await verification(req, res, jest.fn())
+
+    expect(patchBuilder.patch).toHaveBeenCalledWith({ isVerified: true })
+    expect(patchBuilder.findById).toHaveBeenCalledWith(42)
+    expect(res.json).toHaveBeenCalledWith({
+      succeeded: true,
+      message: 'User verified successfully'
+    })
+  })
+
+  it('toggles admin user 2FA through REST tfa action', async () => {
+    const enableBuilder = {
+      patch: jest.fn().mockReturnThis(),
+      findById: jest.fn().mockResolvedValue(1)
+    }
+    const disableBuilder = {
+      patch: jest.fn().mockReturnThis(),
+      findById: jest.fn().mockResolvedValue(1)
+    }
+    global.WIKI.models.users.query
+      .mockReturnValueOnce(enableBuilder)
+      .mockReturnValueOnce(disableBuilder)
+    const { tfa } = loadHandler()
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await tfa({ user: { permissions: ['manage:users'] }, params: { id: '42' }, body: { enabled: true } }, res, jest.fn())
+    await tfa({ user: { permissions: ['manage:users'] }, params: { id: '42' }, body: { enabled: false } }, res, jest.fn())
+
+    expect(enableBuilder.patch).toHaveBeenCalledWith({ tfaIsActive: true, tfaSecret: null })
+    expect(disableBuilder.patch).toHaveBeenCalledWith({ tfaIsActive: false, tfaSecret: null })
+    expect(res.json).toHaveBeenNthCalledWith(1, {
+      succeeded: true,
+      message: 'User 2FA enabled successfully'
+    })
+    expect(res.json).toHaveBeenNthCalledWith(2, {
+      succeeded: true,
+      message: 'User 2FA disabled successfully'
+    })
+  })
+
+  it('returns 403 for unauthorized admin user action requests', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValueOnce(false)
+    const { status } = loadHandler()
+    const req = { user: { permissions: ['manage:api'] }, params: { id: '42' }, body: { isActive: true } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await status(req, res, jest.fn())
+
+    expect(res.status).toHaveBeenCalledWith(403)
+    expect(res.json).toHaveBeenCalledWith({ error: 'manage:users or manage:system is required' })
+    expect(global.WIKI.models.users.query).not.toHaveBeenCalled()
+  })
+
+  it('returns 400 for malformed admin user action ids and booleans', async () => {
+    const { status, verification } = loadHandler()
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await status({ user: { permissions: ['manage:users'] }, params: { id: '42abc' }, body: { isActive: true } }, res, jest.fn())
+    await verification({ user: { permissions: ['manage:users'] }, params: { id: '42' }, body: { isVerified: false } }, res, jest.fn())
+    await status({ user: { permissions: ['manage:users'] }, params: { id: '42' }, body: { isActive: 'yes' } }, res, jest.fn())
+
+    expect(res.status).toHaveBeenNthCalledWith(1, 400)
+    expect(res.json).toHaveBeenNthCalledWith(1, { error: 'user id must be a positive integer' })
+    expect(res.status).toHaveBeenNthCalledWith(2, 400)
+    expect(res.json).toHaveBeenNthCalledWith(2, { error: 'isVerified must be true' })
+    expect(res.status).toHaveBeenNthCalledWith(3, 400)
+    expect(res.json).toHaveBeenNthCalledWith(3, { error: 'isActive must be a boolean' })
+  })
+
+  it('forwards unexpected admin user action failures to next', async () => {
+    const next = jest.fn()
+    global.WIKI.models.users.query.mockReturnValueOnce({
+      patch: jest.fn().mockReturnThis(),
+      findById: jest.fn().mockRejectedValue(new Error('status db down'))
+    })
+    const { status } = loadHandler()
+    const req = { user: { permissions: ['manage:system'] }, params: { id: '42' }, body: { isActive: true } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await status(req, res, next)
+
+    expect(next).toHaveBeenCalledWith(expect.any(Error))
+    expect(next.mock.calls[0][0].message).toBe('status db down')
   })
 
   it('returns the paginated admin users list for authorized requests', async () => {

@@ -377,7 +377,7 @@ import { StatusIndicator } from 'vue-status-indicator'
 import UserSearch from '../common/user-search.vue'
 
 import { fetchGroupOptions } from '../../helpers/groups-api'
-import { fetchUserDetails } from '../../helpers/users-api'
+import { fetchUserDetails, setAdminUserActive, setAdminUserTfa, verifyAdminUser } from '../../helpers/users-api'
 
 const createEmptyUser = () => ({
   id: 0,
@@ -760,36 +760,18 @@ export default {
      */
     async activateUser () {
       this.$store.commit(`loadingStart`, 'admin-users-activate')
-      const resp = await this.$apollo.mutate({
-        mutation: gql`
-          mutation ($id: Int!) {
-            users {
-              activate(id: $id) {
-                responseResult {
-                  succeeded
-                  errorCode
-                  slug
-                  message
-                }
-              }
-            }
-          }
-        `,
-        variables: {
-          id: this.user.id
-        }
-      })
-      if (_.get(resp, 'data.users.activate.responseResult.succeeded', false)) {
+      try {
+        await setAdminUserActive(window.fetch.bind(window), this.user.id, true)
         this.$store.commit('showNotification', {
           style: 'success',
           message: this.$t('admin:users.userActivateSuccess'),
           icon: 'check'
         })
         this.user.isActive = true
-      } else {
+      } catch (err) {
         this.$store.commit('showNotification', {
           style: 'red',
-          message: _.get(resp, 'data.users.activate.responseResult.message', 'An unexpected error occurred.'),
+          message: err.message,
           icon: 'warning'
         })
       }
@@ -800,36 +782,18 @@ export default {
      */
     async deactivateUser () {
       this.$store.commit(`loadingStart`, 'admin-users-deactivate')
-      const resp = await this.$apollo.mutate({
-        mutation: gql`
-          mutation ($id: Int!) {
-            users {
-              deactivate(id: $id) {
-                responseResult {
-                  succeeded
-                  errorCode
-                  slug
-                  message
-                }
-              }
-            }
-          }
-        `,
-        variables: {
-          id: this.user.id
-        }
-      })
-      if (_.get(resp, 'data.users.deactivate.responseResult.succeeded', false)) {
+      try {
+        await setAdminUserActive(window.fetch.bind(window), this.user.id, false)
         this.$store.commit('showNotification', {
           style: 'success',
           message: this.$t('admin:users.userDeactivateSuccess'),
           icon: 'check'
         })
         this.user.isActive = false
-      } else {
+      } catch (err) {
         this.$store.commit('showNotification', {
           style: 'red',
-          message: _.get(resp, 'data.users.deactivate.responseResult.message', 'An unexpected error occurred.'),
+          message: err.message,
           icon: 'warning'
         })
       }
@@ -986,36 +950,18 @@ export default {
      */
     async verifyUser () {
       this.$store.commit(`loadingStart`, 'admin-users-verify')
-      const resp = await this.$apollo.mutate({
-        mutation: gql`
-          mutation ($id: Int!) {
-            users {
-              verify(id: $id) {
-                responseResult {
-                  succeeded
-                  errorCode
-                  slug
-                  message
-                }
-              }
-            }
-          }
-        `,
-        variables: {
-          id: this.user.id
-        }
-      })
-      if (_.get(resp, 'data.users.verify.responseResult.succeeded', false)) {
+      try {
+        await verifyAdminUser(window.fetch.bind(window), this.user.id)
         this.$store.commit('showNotification', {
           style: 'success',
           message: this.$t('admin:users.userVerifySuccess'),
           icon: 'check'
         })
         this.user.isVerified = true
-      } else {
+      } catch (err) {
         this.$store.commit('showNotification', {
           style: 'red',
-          message: _.get(resp, 'data.users.verify.responseResult.message', 'An unexpected error occurred.'),
+          message: err.message,
           icon: 'warning'
         })
       }
@@ -1026,74 +972,21 @@ export default {
      */
     async toggle2FA () {
       this.$store.commit(`loadingStart`, 'admin-users-toggle2fa')
-      if (this.user.tfaIsActive) {
-        const resp = await this.$apollo.mutate({
-          mutation: gql`
-            mutation ($id: Int!) {
-              users {
-                disableTFA(id: $id) {
-                  responseResult {
-                    succeeded
-                    errorCode
-                    slug
-                    message
-                  }
-                }
-              }
-            }
-          `,
-          variables: {
-            id: this.user.id
-          }
+      const enabled = !this.user.tfaIsActive
+      try {
+        await setAdminUserTfa(window.fetch.bind(window), this.user.id, enabled)
+        this.$store.commit('showNotification', {
+          style: 'success',
+          message: this.$t(enabled ? 'admin:users.userTFAEnableSuccess' : 'admin:users.userTFADisableSuccess'),
+          icon: 'check'
         })
-        if (_.get(resp, 'data.users.disableTFA.responseResult.succeeded', false)) {
-          this.$store.commit('showNotification', {
-            style: 'success',
-            message: this.$t('admin:users.userTFADisableSuccess'),
-            icon: 'check'
-          })
-          this.user.tfaIsActive = false
-        } else {
-          this.$store.commit('showNotification', {
-            style: 'red',
-            message: _.get(resp, 'data.users.disableTFA.responseResult.message', 'An unexpected error occurred.'),
-            icon: 'warning'
-          })
-        }
-      } else {
-        const resp = await this.$apollo.mutate({
-          mutation: gql`
-            mutation ($id: Int!) {
-              users {
-                enableTFA(id: $id) {
-                  responseResult {
-                    succeeded
-                    errorCode
-                    slug
-                    message
-                  }
-                }
-              }
-            }
-          `,
-          variables: {
-            id: this.user.id
-          }
+        this.user.tfaIsActive = enabled
+      } catch (err) {
+        this.$store.commit('showNotification', {
+          style: 'red',
+          message: err.message,
+          icon: 'warning'
         })
-        if (_.get(resp, 'data.users.enableTFA.responseResult.succeeded', false)) {
-          this.$store.commit('showNotification', {
-            style: 'success',
-            message: this.$t('admin:users.userTFAEnableSuccess'),
-            icon: 'check'
-          })
-          this.user.tfaIsActive = true
-        } else {
-          this.$store.commit('showNotification', {
-            style: 'red',
-            message: _.get(resp, 'data.users.enableTFA.responseResult.message', 'An unexpected error occurred.'),
-            icon: 'warning'
-          })
-        }
       }
       this.$store.commit(`loadingStop`, 'admin-users-toggle2fa')
     }

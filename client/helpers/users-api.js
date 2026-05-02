@@ -255,6 +255,33 @@ async function createAdminUser (fetchImpl, payload, fallbackMessage = 'User crea
   return normalizeSuccessResult(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
 }
 
+async function patchAdminUserAction (fetchImpl, id, path, payload, fallbackMessage) {
+  const normalizedId = normalizePositiveIntegerId(id, fallbackMessage)
+  const response = await fetchImpl(`/_api/users/${normalizedId}/${path}`, {
+    method: 'PATCH',
+    credentials: 'same-origin',
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(payload)
+  })
+
+  return normalizeSuccessResult(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
+}
+
+async function setAdminUserActive (fetchImpl, id, isActive, fallbackMessage = 'User status response is invalid') {
+  return patchAdminUserAction(fetchImpl, id, 'status', { isActive }, fallbackMessage)
+}
+
+async function verifyAdminUser (fetchImpl, id, fallbackMessage = 'User verification response is invalid') {
+  return patchAdminUserAction(fetchImpl, id, 'verification', { isVerified: true }, fallbackMessage)
+}
+
+async function setAdminUserTfa (fetchImpl, id, enabled, fallbackMessage = 'User 2FA response is invalid') {
+  return patchAdminUserAction(fetchImpl, id, 'tfa', { enabled }, fallbackMessage)
+}
+
 async function fetchUserDetails (fetchImpl, id, fallbackMessage = 'User detail response is invalid') {
   const normalizedId = normalizePositiveIntegerId(id, fallbackMessage)
   const response = await fetchImpl(`/_api/users/${normalizedId}`, {
@@ -272,5 +299,8 @@ module.exports = {
   fetchLastLogins,
   fetchAdminUsersList,
   createAdminUser,
+  setAdminUserActive,
+  verifyAdminUser,
+  setAdminUserTfa,
   fetchUserDetails
 }

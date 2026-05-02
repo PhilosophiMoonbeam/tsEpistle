@@ -1,4 +1,4 @@
-const { searchUsers, fetchLastLogins, fetchAdminUsersList, createAdminUser, fetchUserDetails } = require('./users-api')
+const { searchUsers, fetchLastLogins, fetchAdminUsersList, createAdminUser, setAdminUserActive, verifyAdminUser, setAdminUserTfa, fetchUserDetails } = require('./users-api')
 
 function createJsonResponse (payload, ok = true) {
   return {
@@ -214,6 +214,96 @@ describe('users api helper', () => {
     }, false))
 
     await expect(createAdminUser(fetchImpl, {}, 'Bad user create')).rejects.toThrow('You are not authorized to assign a user to a group with elevated permissions.')
+  })
+
+  test('patches admin user active state with the expected REST payload', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+      succeeded: true,
+      message: 'User deactivated successfully'
+    }))
+
+    await expect(setAdminUserActive(fetchImpl, '42', false)).resolves.toEqual({
+      succeeded: true,
+      message: 'User deactivated successfully'
+    })
+
+    expect(fetchImpl).toHaveBeenCalledWith('/_api/users/42/status', {
+      method: 'PATCH',
+      credentials: 'same-origin',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ isActive: false })
+    })
+  })
+
+  test('patches admin user verification with the expected REST payload', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+      succeeded: true,
+      message: 'User verified successfully'
+    }))
+
+    await expect(verifyAdminUser(fetchImpl, 42)).resolves.toEqual({
+      succeeded: true,
+      message: 'User verified successfully'
+    })
+
+    expect(fetchImpl).toHaveBeenCalledWith('/_api/users/42/verification', {
+      method: 'PATCH',
+      credentials: 'same-origin',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ isVerified: true })
+    })
+  })
+
+  test('patches admin user 2FA state with the expected REST payload', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+      succeeded: true,
+      message: 'User 2FA enabled successfully'
+    }))
+
+    await expect(setAdminUserTfa(fetchImpl, 42, true)).resolves.toEqual({
+      succeeded: true,
+      message: 'User 2FA enabled successfully'
+    })
+
+    expect(fetchImpl).toHaveBeenCalledWith('/_api/users/42/tfa', {
+      method: 'PATCH',
+      credentials: 'same-origin',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ enabled: true })
+    })
+  })
+
+  test('rejects invalid admin user action ids before fetching', async () => {
+    const fetchImpl = jest.fn()
+
+    await expect(setAdminUserActive(fetchImpl, '42abc', true, 'Bad user status')).rejects.toThrow('Bad user status')
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
+  test('rejects malformed admin user action payloads', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+      succeeded: false,
+      message: 'User activated successfully'
+    }))
+
+    await expect(setAdminUserActive(fetchImpl, 42, true, 'Bad user status')).rejects.toThrow('Bad user status')
+  })
+
+  test('surfaces API error messages for failed admin user actions', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+      error: 'Cannot deactivate system accounts.'
+    }, false))
+
+    await expect(setAdminUserActive(fetchImpl, 1, false, 'Bad user status')).rejects.toThrow('Cannot deactivate system accounts.')
   })
 
   test('fetches and validates user detail payloads', async () => {
