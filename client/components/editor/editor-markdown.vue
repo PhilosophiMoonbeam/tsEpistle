@@ -168,6 +168,7 @@
 <script>
 import _ from 'lodash'
 import { get, sync } from 'vuex-pathify'
+import { onEditorInsert, offEditorInsert } from '../../helpers/editor-insert-events'
 import { onEditorSaveConflict, onEditorContentOverwrite, offEditorSaveConflict, offEditorContentOverwrite } from '../../helpers/editor-conflict-events'
 import markdownHelp from './markdown/help.vue'
 import gql from 'graphql-tag'
@@ -431,6 +432,30 @@ export default {
     },
     handleEditorContentOverwrite() {
       this.cm.setValue(this.$store.get('editor/content'))
+    },
+    handleEditorInsert(opts) {
+      switch (opts.kind) {
+        case 'IMAGE':
+          let img = `![${opts.text}](${opts.path})`
+          if (opts.align && opts.align !== '') {
+            img += `{.align-${opts.align}}`
+          }
+          this.insertAtCursor({
+            content: img
+          })
+          break
+        case 'BINARY':
+          this.insertAtCursor({
+            content: `[${opts.text}](${opts.path})`
+          })
+          break
+        case 'DIAGRAM':
+          const selStartLine = this.cm.getCursor('from').line
+          const selEndLine = this.cm.getCursor('to').line + 1
+          this.cm.doc.replaceSelection('```diagram\n' + opts.text + '\n```\n', 'start')
+          this.processMarkers(selStartLine, selEndLine)
+          break
+      }
     },
     closeAllModal() {
       this.activeModal = ''
@@ -829,37 +854,14 @@ export default {
     this.processContent(this.$store.get('editor/content'))
     this.refresh()
 
-    this.$root.$on('editorInsert', opts => {
-      switch (opts.kind) {
-        case 'IMAGE':
-          let img = `![${opts.text}](${opts.path})`
-          if (opts.align && opts.align !== '') {
-            img += `{.align-${opts.align}}`
-          }
-          this.insertAtCursor({
-            content: img
-          })
-          break
-        case 'BINARY':
-          this.insertAtCursor({
-            content: `[${opts.text}](${opts.path})`
-          })
-          break
-        case 'DIAGRAM':
-          const selStartLine = this.cm.getCursor('from').line
-          const selEndLine = this.cm.getCursor('to').line + 1
-          this.cm.doc.replaceSelection('```diagram\n' + opts.text + '\n```\n', 'start')
-          this.processMarkers(selStartLine, selEndLine)
-          break
-      }
-    })
+    onEditorInsert(this.$root, this.handleEditorInsert)
 
     // Handle save conflict
     onEditorSaveConflict(this.$root, this.handleEditorSaveConflict)
     onEditorContentOverwrite(this.$root, this.handleEditorContentOverwrite)
   },
   beforeDestroy() {
-    this.$root.$off('editorInsert')
+    offEditorInsert(this.$root, this.handleEditorInsert)
     offEditorSaveConflict(this.$root, this.handleEditorSaveConflict)
     offEditorContentOverwrite(this.$root, this.handleEditorContentOverwrite)
   }
