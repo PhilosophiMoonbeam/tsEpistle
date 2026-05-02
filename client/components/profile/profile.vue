@@ -353,7 +353,7 @@ import validate from 'validate.js'
 
 import PasswordStrength from '../common/password-strength.vue'
 
-/* global WIKI, siteConfig */
+/* global siteConfig */
 
 export default {
   i18nOptions: {
@@ -687,9 +687,9 @@ export default {
   watch: {
     'user.appearance': function (newValue, oldValue) {
       if (newValue === '') {
-        WIKI.$vuetify.theme.dark = siteConfig.darkMode
+        this.$vuetify.theme.dark = siteConfig.darkMode
       } else {
-        WIKI.$vuetify.theme.dark = (newValue === 'dark')
+        this.$vuetify.theme.dark = (newValue === 'dark')
       }
     },
     'user.dateFormat': function (newValue, oldValue) {

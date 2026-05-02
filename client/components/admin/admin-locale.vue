@@ -140,8 +140,6 @@
 <script>
 import _ from 'lodash'
 
-/* global WIKI */
-
 import localesDownloadMutation from 'gql/admin/locale/locale-mutation-download.gql'
 import localesSaveMutation from 'gql/admin/locale/locale-mutation-save.gql'
 
@@ -288,7 +286,7 @@ export default {
       const resp = _.get(respRaw, 'data.localization.updateLocale.responseResult', {})
       if (resp.succeeded) {
         // Change UI language
-        WIKI.$i18n.i18next.changeLanguage(this.selectedLocale)
+        this.$i18n.i18next.changeLanguage(this.selectedLocale)
         this.$moment.locale(this.selectedLocale)
 
         // Check for RTL
