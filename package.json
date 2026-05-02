@@ -83,7 +83,7 @@
     "dependency-graph": "1.0.0",
     "diff": "8.0.4",
     "diff2html": "3.4.56",
-    "dompurify": "3.4.1",
+    "dompurify": "3.4.2",
     "dotize": "0.6.0",
     "elasticsearch6": "npm:@elastic/elasticsearch@6",
     "elasticsearch7": "npm:@elastic/elasticsearch@7",
