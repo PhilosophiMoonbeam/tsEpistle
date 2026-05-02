@@ -32,7 +32,8 @@
     "client/components/editor/markdown/plantuml.js",
     "client/index-legacy.js",
     "client/.modernizrrc.js",
-    "client/index-setup.js"
+    "client/index-setup.js",
+    "client/client-setup.js"
   ],
   "exclude": [
     "node_modules",

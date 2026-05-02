@@ -243,6 +243,7 @@
 import _ from 'lodash'
 import { sync } from 'vuex-pathify'
 import gql from 'graphql-tag'
+import { onEditorInsert, offEditorInsert } from '../../helpers/editor-insert-events'
 
 import editorStore from '../../store/editor'
 
@@ -389,15 +390,16 @@ export default {
     browseLoginBg () {
       this.$store.set('editor/editorKey', 'common')
       this.activeModal = 'editorModalMedia'
+    },
+    handleEditorInsert (opts) {
+      this.config.authLoginBgUrl = opts.path
     }
   },
   mounted () {
-    this.$root.$on('editorInsert', opts => {
-      this.config.authLoginBgUrl = opts.path
-    })
+    onEditorInsert(this.$root, this.handleEditorInsert)
   },
   beforeDestroy() {
-    this.$root.$off('editorInsert')
+    offEditorInsert(this.$root, this.handleEditorInsert)
   },
   apollo: {
     config: {

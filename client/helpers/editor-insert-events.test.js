@@ -13,6 +13,10 @@ const guardedEmitterFiles = [
   'client/components/editor/editor-modal-media.vue',
   'client/components/editor/editor-modal-drawio.vue'
 ]
+const guardedListenerFiles = [
+  'client/components/admin/admin-general.vue',
+  'client/components/admin/admin-security.vue'
+]
 
 function createRoot () {
   return {
@@ -28,6 +32,10 @@ function getLineNumber (content, index) {
 
 function directEditorInsertEmitPattern () {
   return /\bthis\s*\.\s*\$root\s*\.\s*\$emit\s*\(\s*(['"`])editorInsert\1/g
+}
+
+function directEditorInsertListenerPattern () {
+  return /\bthis\s*\.\s*\$root\s*\.\s*\$(?:on|off)\s*\(\s*(['"`])editorInsert\1/g
 }
 
 describe('editor insert events', () => {
@@ -84,6 +92,25 @@ describe('editor insert event emitter usage', () => {
 
       while ((match = pattern.exec(content)) !== null) {
         offenders.push(`${relPath}:${getLineNumber(content, match.index)}: direct this.$root.$emit for ${EDITOR_INSERT_EVENT}`)
+      }
+    }
+
+    expect(offenders).toEqual([])
+  })
+})
+
+describe('editor insert event listener usage', () => {
+  test('migrated admin listeners use the helper instead of direct root bus listeners', () => {
+    const offenders = []
+
+    for (const relPath of guardedListenerFiles) {
+      const filePath = path.join(repoRoot, relPath)
+      const content = fs.readFileSync(filePath, 'utf8')
+      const pattern = directEditorInsertListenerPattern()
+      let match
+
+      while ((match = pattern.exec(content)) !== null) {
+        offenders.push(`${relPath}:${getLineNumber(content, match.index)}: direct this.$root listener for ${EDITOR_INSERT_EVENT}`)
       }
     }
 
