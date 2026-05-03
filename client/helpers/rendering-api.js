@@ -103,6 +103,30 @@ async function fetchRenderingRenderers (fetchImpl, fallbackMessage = 'Rendering 
   return normalizeRenderersPayload(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
 }
 
+function normalizeRendererSavePayload (payload, fallbackMessage) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload) || typeof payload.message !== 'string' || payload.message.length === 0) {
+    throw new Error(fallbackMessage)
+  }
+  return {
+    message: payload.message
+  }
+}
+
+async function saveRenderingRenderers (fetchImpl, renderers, fallbackMessage = 'Rendering renderers update failed') {
+  const response = await fetchImpl('/_api/rendering/renderers', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ renderers })
+  })
+
+  return normalizeRendererSavePayload(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
+}
+
 module.exports = {
-  fetchRenderingRenderers
+  fetchRenderingRenderers,
+  saveRenderingRenderers
 }

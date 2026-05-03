@@ -138,8 +138,7 @@ import { DepGraph } from 'dependency-graph'
 
 import { StatusIndicator } from 'vue-status-indicator'
 
-import renderersSaveMutation from 'gql/admin/rendering/rendering-mutation-save-renderers.gql'
-import { fetchRenderingRenderers } from '../../helpers/rendering-api'
+import { fetchRenderingRenderers, saveRenderingRenderers } from '../../helpers/rendering-api'
 import { loadingStart, loadingStop, showNotification } from '../../helpers/root-ui-store'
 
 export default {
@@ -227,19 +226,14 @@ export default {
     async save () {
       loadingStart(this.$store, 'admin-rendering-saverenderers')
       try {
-        await this.$apollo.mutate({
-          mutation: renderersSaveMutation,
-          variables: {
-            renderers: _.reduce(this.renderers, (result, core) => {
-              result = _.concat(result, core.children.map(rd => ({
-                key: rd.key,
-                isEnabled: rd.isEnabled,
-                config: rd.config.map(cfg => ({ key: cfg.key, value: JSON.stringify({ v: cfg.value.value }) }))
-              })))
-              return result
-            }, [])
-          }
-        })
+        await saveRenderingRenderers(window.fetch.bind(window), _.reduce(this.renderers, (result, core) => {
+          result = _.concat(result, core.children.map(rd => ({
+            key: rd.key,
+            isEnabled: rd.isEnabled,
+            config: rd.config.map(cfg => ({ key: cfg.key, value: JSON.stringify({ v: cfg.value.value }) }))
+          })))
+          return result
+        }, []), 'Rendering renderers update failed')
         await this.loadRenderers({ notifyError: false })
         showNotification(this.$store, {
           message: 'Rendering configuration saved successfully.',

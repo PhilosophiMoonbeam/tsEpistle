@@ -62,7 +62,7 @@ describe('admin-rendering root UI facade migration guard', () => {
     expect(save).not.toBeNull()
 
     expect(script).toMatch(/import\s+\{(?=[^}]*\bloadingStart\b)(?=[^}]*\bloadingStop\b)(?=[^}]*\bshowNotification\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/root-ui-store['"]/)
-    expect(script).toMatch(/import\s+\{\s*fetchRenderingRenderers\s*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/rendering-api['"]/)
+    expect(script).toMatch(/import\s+\{(?=[^}]*\bfetchRenderingRenderers\b)(?=[^}]*\bsaveRenderingRenderers\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/rendering-api['"]/)
 
     expect(loadRenderers).toMatch(/async\s+loadRenderers\s*\(\s*\{\s*notifyError\s*=\s*true\s*\}\s*=\s*\{\s*\}\s*\)\s*\{\s*loadingStart\s*\(\s*this\.\$store\s*,\s*['"]admin-rendering-refresh['"]\s*\)[\s\S]*?try\s*\{[\s\S]*?const\s+flatRenderers\s*=\s*await\s+fetchRenderingRenderers\s*\(\s*window\.fetch\.bind\(\s*window\s*\)\s*,\s*['"]Rendering renderers response is invalid['"]\s*\)[\s\S]*?this\.renderers\s*=\s*this\.buildRendererTree\s*\(\s*flatRenderers\s*\)[\s\S]*?\}\s*catch\s*\(\s*err\s*\)\s*\{\s*if\s*\(\s*notifyError\s*\)\s*\{\s*showNotification\s*\(\s*this\.\$store\s*,\s*\{\s*message:\s*err\.message\s*,\s*style:\s*['"]red['"]\s*,\s*icon:\s*['"]alert['"]\s*\}\s*\)\s*\}\s*throw\s+err\s*\}\s*finally\s*\{\s*loadingStop\s*\(\s*this\.\$store\s*,\s*['"]admin-rendering-refresh['"]\s*\)\s*\}/)
 
@@ -86,13 +86,13 @@ describe('admin-rendering root UI facade migration guard', () => {
     expect(showNotificationCalls).toHaveLength(1)
   })
 
-  test('save preserves mutation variables, silent reload, success notification, and cleanup key', () => {
-    expect(save).toMatch(/async\s+save\s*\(\s*\)\s*\{\s*loadingStart\s*\(\s*this\.\$store\s*,\s*['"]admin-rendering-saverenderers['"]\s*\)[\s\S]*?try\s*\{[\s\S]*?await\s+this\.\$apollo\.mutate\s*\([\s\S]*?await\s+this\.loadRenderers\s*\(\s*\{\s*notifyError:\s*false\s*\}\s*\)\s*showNotification\s*\(\s*this\.\$store\s*,\s*\{\s*message:\s*['"]Rendering configuration saved successfully\.['"]\s*,\s*style:\s*['"]success['"]\s*,\s*icon:\s*['"]check['"]\s*\}\s*\)[\s\S]*?\}\s*finally\s*\{\s*loadingStop\s*\(\s*this\.\$store\s*,\s*['"]admin-rendering-saverenderers['"]\s*\)\s*\}/)
-    expect(save).toMatch(/mutation:\s*renderersSaveMutation/)
-    expect(save).toMatch(/variables:\s*\{\s*renderers:\s*_\.reduce\s*\(\s*this\.renderers\s*,\s*\(\s*result\s*,\s*core\s*\)\s*=>\s*\{/)
+  test('save preserves REST save payload, silent reload, success notification, and cleanup key', () => {
+    expect(save).toMatch(/async\s+save\s*\(\s*\)\s*\{\s*loadingStart\s*\(\s*this\.\$store\s*,\s*['"]admin-rendering-saverenderers['"]\s*\)[\s\S]*?try\s*\{[\s\S]*?await\s+saveRenderingRenderers\s*\(\s*window\.fetch\.bind\(\s*window\s*\)\s*,[\s\S]*?await\s+this\.loadRenderers\s*\(\s*\{\s*notifyError:\s*false\s*\}\s*\)\s*showNotification\s*\(\s*this\.\$store\s*,\s*\{\s*message:\s*['"]Rendering configuration saved successfully\.['"]\s*,\s*style:\s*['"]success['"]\s*,\s*icon:\s*['"]check['"]\s*\}\s*\)[\s\S]*?\}\s*finally\s*\{\s*loadingStop\s*\(\s*this\.\$store\s*,\s*['"]admin-rendering-saverenderers['"]\s*\)\s*\}/)
+    expect(save).not.toMatch(/this\.\$apollo\.mutate|renderersSaveMutation|rendering-mutation-save-renderers\.gql/)
+    expect(save).toMatch(/saveRenderingRenderers\s*\(\s*window\.fetch\.bind\(\s*window\s*\)\s*,\s*_\.reduce\s*\(\s*this\.renderers\s*,\s*\(\s*result\s*,\s*core\s*\)\s*=>\s*\{/)
     expect(save).toMatch(/result\s*=\s*_\.concat\s*\(\s*result\s*,\s*core\.children\.map\s*\(\s*rd\s*=>\s*\(\s*\{/)
     expect(save).toMatch(/key:\s*rd\.key\s*,\s*isEnabled:\s*rd\.isEnabled\s*,\s*config:\s*rd\.config\.map\s*\(\s*cfg\s*=>\s*\(\s*\{\s*key:\s*cfg\.key\s*,\s*value:\s*JSON\.stringify\s*\(\s*\{\s*v:\s*cfg\.value\.value\s*\}\s*\)\s*\}\s*\)\s*\)/)
-    expect(save).toMatch(/return\s+result[\s\S]*?\},\s*\[\s*\]\s*\)/)
+    expect(save).toMatch(/return\s+result[\s\S]*?\},\s*\[\s*\]\s*\),\s*['"]Rendering renderers update failed['"]\s*\)/)
 
     expect(save).not.toMatch(/\$store\.commit\(\s*(?:`loading(?:Start|Stop)`|['"]loading(?:Start|Stop)['"]|`showNotification`|['"]showNotification['"])\s*,/)
 
