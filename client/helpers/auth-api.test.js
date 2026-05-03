@@ -1,4 +1,4 @@
-const { fetchAuthStrategies, fetchAdminAuthProviders, fetchAdminApiBootstrap, submitAuthRequest, submitStatusRequest } = require('./auth-api')
+const { fetchAuthStrategies, fetchAdminAuthProviders, fetchAdminApiBootstrap, submitAuthRequest, submitStatusRequest, regenerateAuthCertificates, resetGuestUser } = require('./auth-api')
 
 function createJsonResponse (payload, ok = true, status = ok ? 200 : 400) {
   return {
@@ -297,5 +297,47 @@ describe('auth api helper', () => {
     await expect(submitStatusRequest(fetchImpl, '/_api/auth/forgot-password', {
       email: 'alice@example.com'
     }, 'Generic status error')).rejects.toThrow('Generic status error')
+  })
+
+  test('regenerates auth certificates through REST', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ message: 'Certificates have been regenerated successfully.' }))
+
+    await expect(regenerateAuthCertificates(fetchImpl)).resolves.toEqual({ message: 'Certificates have been regenerated successfully.' })
+    expect(fetchImpl).toHaveBeenCalledWith('/_api/auth/certificates/regenerate', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({})
+    })
+  })
+
+  test('surfaces API errors for auth certificate regeneration', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ error: 'cert regen failed' }, false, 500))
+
+    await expect(regenerateAuthCertificates(fetchImpl)).rejects.toThrow('cert regen failed')
+  })
+
+  test('resets the guest user through REST', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ message: 'Guest user has been reset successfully.' }))
+
+    await expect(resetGuestUser(fetchImpl)).resolves.toEqual({ message: 'Guest user has been reset successfully.' })
+    expect(fetchImpl).toHaveBeenCalledWith('/_api/auth/guest/reset', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({})
+    })
+  })
+
+  test('surfaces API errors for guest user reset', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ error: 'guest reset failed' }, false, 500))
+
+    await expect(resetGuestUser(fetchImpl)).rejects.toThrow('guest reset failed')
   })
 })

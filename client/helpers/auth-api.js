@@ -161,10 +161,20 @@ async function submitStatusRequest (fetchImpl, path, body, fallbackMessage = 'Au
   return payload
 }
 
+async function regenerateAuthCertificates (fetchImpl, fallbackMessage = 'Certificate regeneration failed') {
+  return submitStatusRequest(fetchImpl, '/_api/auth/certificates/regenerate', {}, fallbackMessage)
+}
+
+async function resetGuestUser (fetchImpl, fallbackMessage = 'Guest user reset failed') {
+  return submitStatusRequest(fetchImpl, '/_api/auth/guest/reset', {}, fallbackMessage)
+}
+
 module.exports = {
   fetchAuthStrategies,
   fetchAdminAuthProviders,
   fetchAdminApiBootstrap,
   submitAuthRequest,
-  submitStatusRequest
+  submitStatusRequest,
+  regenerateAuthCertificates,
+  resetGuestUser
 }

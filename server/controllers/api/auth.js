@@ -68,6 +68,15 @@ const requireAdminApiAccess = (req, res) => {
   return false
 }
 
+const requireSystemAccess = (req, res) => {
+  if (WIKI.auth.checkAccess(req.user, ['manage:system'])) {
+    return true
+  }
+
+  res.status(403).json({ error: 'manage:system is required' })
+  return false
+}
+
 const getRedactedApiKeySuffix = (key) => {
   if (!_.isString(key) || key.length <= 20) {
     return '...[redacted]'
@@ -137,6 +146,32 @@ router.get('/api', async (req, res, next) => {
     })
   } catch (err) {
     next(err)
+  }
+})
+
+router.post('/certificates/regenerate', async (req, res) => {
+  if (!requireSystemAccess(req, res)) {
+    return
+  }
+
+  try {
+    await WIKI.auth.regenerateCertificates()
+    res.json({ message: 'Certificates have been regenerated successfully.' })
+  } catch (err) {
+    res.status(500).json({ error: err.message || 'Certificate regeneration failed' })
+  }
+})
+
+router.post('/guest/reset', async (req, res) => {
+  if (!requireSystemAccess(req, res)) {
+    return
+  }
+
+  try {
+    await WIKI.auth.resetGuestUser()
+    res.json({ message: 'Guest user has been reset successfully.' })
+  } catch (err) {
+    res.status(500).json({ error: err.message || 'Guest user reset failed' })
   }
 })
 

@@ -20,8 +20,8 @@
 <script>
 import _ from 'lodash'
 import Cookies from 'js-cookie'
-import utilityAuthRegencertsMutation from 'gql/admin/utilities/utilities-mutation-auth-regencerts.gql'
-import utilityAuthResetguestMutation from 'gql/admin/utilities/utilities-mutation-auth-resetguest.gql'
+import { regenerateAuthCertificates, resetGuestUser } from '../../helpers/auth-api'
+import { loadingStart, loadingStop, showNotification, pushGraphError } from '../../helpers/root-ui-store'
 
 export default {
   data: () => {
@@ -32,56 +32,42 @@ export default {
   methods: {
     async regenCerts() {
       this.loading = true
-      this.$store.commit(`loadingStart`, 'admin-utilities-auth-regencerts')
+      loadingStart(this.$store, 'admin-utilities-auth-regencerts')
 
       try {
-        const respRaw = await this.$apollo.mutate({
-          mutation: utilityAuthRegencertsMutation
+        await regenerateAuthCertificates(window.fetch.bind(window))
+        showNotification(this.$store, {
+          message: 'New Certificates generated successfully.',
+          style: 'success',
+          icon: 'check'
         })
-        const resp = _.get(respRaw, 'data.authentication.regenerateCertificates.responseResult', {})
-        if (resp.succeeded) {
-          this.$store.commit('showNotification', {
-            message: 'New Certificates generated successfully.',
-            style: 'success',
-            icon: 'check'
-          })
-          Cookies.remove('jwt')
-          _.delay(() => {
-            window.location.assign('/login')
-          }, 1000)
-        } else {
-          throw new Error(resp.message)
-        }
+        Cookies.remove('jwt')
+        _.delay(() => {
+          window.location.assign('/login')
+        }, 1000)
       } catch (err) {
-        this.$store.commit('pushGraphError', err)
+        pushGraphError(this.$store, err)
       }
 
-      this.$store.commit(`loadingStop`, 'admin-utilities-auth-regencerts')
+      loadingStop(this.$store, 'admin-utilities-auth-regencerts')
       this.loading = false
     },
     async resetGuest() {
       this.loading = true
-      this.$store.commit(`loadingStart`, 'admin-utilities-auth-resetguest')
+      loadingStart(this.$store, 'admin-utilities-auth-resetguest')
 
       try {
-        const respRaw = await this.$apollo.mutate({
-          mutation: utilityAuthResetguestMutation
+        await resetGuestUser(window.fetch.bind(window))
+        showNotification(this.$store, {
+          message: 'Guest user was reset successfully.',
+          style: 'success',
+          icon: 'check'
         })
-        const resp = _.get(respRaw, 'data.authentication.resetGuestUser.responseResult', {})
-        if (resp.succeeded) {
-          this.$store.commit('showNotification', {
-            message: 'Guest user was reset successfully.',
-            style: 'success',
-            icon: 'check'
-          })
-        } else {
-          throw new Error(resp.message)
-        }
       } catch (err) {
-        this.$store.commit('pushGraphError', err)
+        pushGraphError(this.$store, err)
       }
 
-      this.$store.commit(`loadingStop`, 'admin-utilities-auth-resetguest')
+      loadingStop(this.$store, 'admin-utilities-auth-resetguest')
       this.loading = false
     }
   }

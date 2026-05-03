@@ -56,6 +56,8 @@ describe('controllers/api auth endpoints', () => {
       },
       auth: {
         checkAccess: jest.fn().mockReturnValue(true),
+        regenerateCertificates: jest.fn().mockResolvedValue(true),
+        resetGuestUser: jest.fn().mockResolvedValue(true),
         strategies: {
           local: {
             key: 'local',
@@ -126,6 +128,8 @@ describe('controllers/api auth endpoints', () => {
       strategies: getRouteHandler('/strategies'),
       providers: getRouteHandler('/providers'),
       api: getRouteHandler('/api'),
+      regenerateCertificates: postRouteHandler('/certificates/regenerate'),
+      resetGuestUser: postRouteHandler('/guest/reset'),
       forgotPassword: postRouteHandler('/forgot-password'),
       login: postRouteHandler('/login'),
       loginTFA: postRouteHandler('/login/tfa'),
@@ -139,6 +143,8 @@ describe('controllers/api auth endpoints', () => {
     expect(typeof handlers.strategies).toBe('function')
     expect(typeof handlers.providers).toBe('function')
     expect(typeof handlers.api).toBe('function')
+    expect(typeof handlers.regenerateCertificates).toBe('function')
+    expect(typeof handlers.resetGuestUser).toBe('function')
     expect(typeof handlers.forgotPassword).toBe('function')
     expect(typeof handlers.login).toBe('function')
     expect(typeof handlers.loginTFA).toBe('function')
@@ -354,6 +360,80 @@ describe('controllers/api auth endpoints', () => {
     expect(res.status).not.toHaveBeenCalled()
     expect(next).toHaveBeenCalledWith(expect.any(Error))
     expect(next.mock.calls[0][0].message).toBe('db failed')
+  })
+
+  it('regenerates certificates for manage:system users', async () => {
+    const { regenerateCertificates } = loadHandlers()
+    const req = { user: { permissions: ['manage:system'] } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await regenerateCertificates(req, res)
+
+    expect(global.WIKI.auth.checkAccess).toHaveBeenCalledWith({ permissions: ['manage:system'] }, ['manage:system'])
+    expect(global.WIKI.auth.regenerateCertificates).toHaveBeenCalledTimes(1)
+    expect(res.json).toHaveBeenCalledWith({ message: 'Certificates have been regenerated successfully.' })
+  })
+
+  it('rejects certificate regeneration for manage:api-only users', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValueOnce(false)
+    const { regenerateCertificates } = loadHandlers()
+    const req = { user: { permissions: ['manage:api'] } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await regenerateCertificates(req, res)
+
+    expect(res.status).toHaveBeenCalledWith(403)
+    expect(res.json).toHaveBeenCalledWith({ error: 'manage:system is required' })
+    expect(global.WIKI.auth.regenerateCertificates).not.toHaveBeenCalled()
+  })
+
+  it('returns JSON error messages for certificate regeneration failures', async () => {
+    global.WIKI.auth.regenerateCertificates.mockRejectedValueOnce(new Error('cert regen failed'))
+    const { regenerateCertificates } = loadHandlers()
+    const req = { user: { permissions: ['manage:system'] } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await regenerateCertificates(req, res)
+
+    expect(res.status).toHaveBeenCalledWith(500)
+    expect(res.json).toHaveBeenCalledWith({ error: 'cert regen failed' })
+  })
+
+  it('resets the guest user for manage:system users', async () => {
+    const { resetGuestUser } = loadHandlers()
+    const req = { user: { permissions: ['manage:system'] } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await resetGuestUser(req, res)
+
+    expect(global.WIKI.auth.checkAccess).toHaveBeenCalledWith({ permissions: ['manage:system'] }, ['manage:system'])
+    expect(global.WIKI.auth.resetGuestUser).toHaveBeenCalledTimes(1)
+    expect(res.json).toHaveBeenCalledWith({ message: 'Guest user has been reset successfully.' })
+  })
+
+  it('rejects guest user reset for manage:api-only users', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValueOnce(false)
+    const { resetGuestUser } = loadHandlers()
+    const req = { user: { permissions: ['manage:api'] } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await resetGuestUser(req, res)
+
+    expect(res.status).toHaveBeenCalledWith(403)
+    expect(res.json).toHaveBeenCalledWith({ error: 'manage:system is required' })
+    expect(global.WIKI.auth.resetGuestUser).not.toHaveBeenCalled()
+  })
+
+  it('returns JSON error messages for guest user reset failures', async () => {
+    global.WIKI.auth.resetGuestUser.mockRejectedValueOnce(new Error('guest reset failed'))
+    const { resetGuestUser } = loadHandlers()
+    const req = { user: { permissions: ['manage:system'] } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await resetGuestUser(req, res)
+
+    expect(res.status).toHaveBeenCalledWith(500)
+    expect(res.json).toHaveBeenCalledWith({ error: 'guest reset failed' })
   })
 
   it('does not expose internal configuration or admin-only auth metadata', async () => {
