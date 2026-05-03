@@ -273,8 +273,8 @@ import { SemipolarSpinner } from 'epic-spinners'
 import utilityImportv1UsersMutation from 'gql/admin/utilities/utilities-mutation-importv1-users.gql'
 import storageTargetsQuery from 'gql/admin/storage/storage-query-targets.gql'
 import storageStatusQuery from 'gql/admin/storage/storage-query-status.gql'
-import targetExecuteActionMutation from 'gql/admin/storage/storage-mutation-executeaction.gql'
 import targetsSaveMutation from 'gql/admin/storage/storage-mutation-save-targets.gql'
+import { executeStorageAction } from '../../helpers/storage-api'
 import { pushGraphError } from '../../helpers/root-ui-store'
 
 export default {
@@ -471,18 +471,7 @@ export default {
 
               // -> Perform import all
 
-              const respImport = await this.$apollo.mutate({
-                mutation: targetExecuteActionMutation,
-                variables: {
-                  targetKey: this.contentMode,
-                  handler: 'importAll'
-                }
-              })
-
-              const respImportObj = _.get(respImport, 'data.storage.executeAction', {})
-              if (!_.get(respImportObj, 'responseResult.succeeded', false)) {
-                throw new Error(_.get(respImportObj, 'responseResult.message', 'An unexpected error occurred'))
-              }
+              await executeStorageAction(window.fetch.bind(window), this.contentMode, 'importAll')
 
               this.progress += 15
             } else {

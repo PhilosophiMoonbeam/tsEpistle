@@ -1,0 +1,38 @@
+async function parseJsonResponse (response, fallbackMessage) {
+  const hasHeaderReader = response && response.headers && typeof response.headers.get === 'function'
+  const contentType = hasHeaderReader ? response.headers.get('content-type') || '' : ''
+  let payload = null
+
+  if (contentType.includes('application/json') && typeof response.json === 'function') {
+    payload = await response.json()
+  }
+
+  if (!response || !response.ok) {
+    throw new Error((payload && payload.error) || fallbackMessage)
+  }
+
+  return payload
+}
+
+async function executeStorageAction (fetchImpl, targetKey, handler, fallbackMessage = 'Storage action failed') {
+  const response = await fetchImpl('/_api/storage/actions/execute', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ targetKey, handler })
+  })
+  const payload = await parseJsonResponse(response, fallbackMessage)
+
+  if (!payload || typeof payload.message !== 'string') {
+    throw new Error(fallbackMessage)
+  }
+
+  return payload
+}
+
+module.exports = {
+  executeStorageAction
+}

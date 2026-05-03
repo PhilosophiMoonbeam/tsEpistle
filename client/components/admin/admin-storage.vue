@@ -226,10 +226,10 @@ import momentDurationFormatSetup from 'moment-duration-format'
 import DurationPicker from '../common/duration-picker.vue'
 import { LoopingRhombusesSpinner } from 'epic-spinners'
 import { loadingStart, loadingStop, showNotification, setLoading } from '../../helpers/root-ui-store'
+import { executeStorageAction } from '../../helpers/storage-api'
 
 import statusQuery from 'gql/admin/storage/storage-query-status.gql'
 import targetsQuery from 'gql/admin/storage/storage-query-targets.gql'
-import targetExecuteActionMutation from 'gql/admin/storage/storage-mutation-executeaction.gql'
 import targetsSaveMutation from 'gql/admin/storage/storage-mutation-save-targets.gql'
 
 momentDurationFormatSetup(moment)
@@ -303,13 +303,7 @@ export default {
       this.runningAction = true
       this.runningActionHandler = handler
       try {
-        await this.$apollo.mutate({
-          mutation: targetExecuteActionMutation,
-          variables: {
-            targetKey,
-            handler
-          }
-        })
+        await executeStorageAction(window.fetch.bind(window), targetKey, handler)
         showNotification(this.$store, {
           message: 'Action completed.',
           style: 'success',

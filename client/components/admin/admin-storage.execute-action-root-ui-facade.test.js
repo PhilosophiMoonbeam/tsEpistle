@@ -75,7 +75,7 @@ describe('admin-storage executeAction root UI facade migration guard', () => {
     expect(executeAction).not.toBeNull()
 
     expect(script).toMatch(/import\s+\{(?=[^}]*\bloadingStart\b)(?=[^}]*\bloadingStop\b)(?=[^}]*\bshowNotification\b)(?=[^}]*\bsetLoading\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/root-ui-store['"]/)
-
+    expect(script).toMatch(/import\s+\{\s*executeStorageAction\s*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/storage-api['"]/)
     expect(executeAction).toMatch(/\bloadingStart\s*\(\s*this\.\$store\s*,\s*['"]admin-storage-executeaction['"]\s*\)/)
     expect(executeAction).toMatch(/\bshowNotification\s*\(\s*this\.\$store\s*,\s*\{\s*message:\s*['"]Action completed\.['"]\s*,\s*style:\s*['"]success['"]\s*,\s*icon:\s*['"]check['"]\s*\}\s*\)/)
     expect(executeAction).toMatch(/\bloadingStop\s*\(\s*this\.\$store\s*,\s*['"]admin-storage-executeaction['"]\s*\)/)
@@ -83,6 +83,8 @@ describe('admin-storage executeAction root UI facade migration guard', () => {
     expect(executeAction).not.toMatch(/this\.\$store\.commit\s*\(\s*(?:`loadingStart`|['"]loadingStart['"])\s*,\s*['"]admin-storage-executeaction['"]\s*\)/)
     expect(executeAction).not.toMatch(/this\.\$store\.commit\s*\(\s*(?:`loadingStop`|['"]loadingStop['"])\s*,\s*['"]admin-storage-executeaction['"]\s*\)/)
     expect(executeAction).not.toMatch(/this\.\$store\.commit\s*\(\s*['"]showNotification['"]\s*,/)
+    expect(script).not.toContain('storage-mutation-executeaction.gql')
+    expect(script).not.toContain('targetExecuteActionMutation')
 
     const loadingStartCalls = executeAction.match(/\bloadingStart\s*\(/g) || []
     expect(loadingStartCalls).toHaveLength(1)
@@ -102,9 +104,7 @@ describe('admin-storage executeAction root UI facade migration guard', () => {
       ['mark action as running', /this\.runningAction\s*=\s*true/],
       ['store running action handler', /this\.runningActionHandler\s*=\s*handler/],
       ['enter try block', /try\s*\{/],
-      ['execute Apollo mutation', /await\s+this\.\$apollo\.mutate\s*\(\s*\{/],
-      ['use targetExecuteActionMutation', /mutation:\s*targetExecuteActionMutation/],
-      ['pass targetKey and handler variables', /variables:\s*\{\s*targetKey\s*,\s*handler\s*\}/],
+      ['execute storage REST action', /await\s+executeStorageAction\s*\(\s*window\.fetch\.bind\s*\(\s*window\s*\)\s*,\s*targetKey\s*,\s*handler\s*\)/],
       ['show success notification via facade', /\bshowNotification\s*\(\s*this\.\$store\s*,\s*\{\s*message:\s*['"]Action completed\.['"]\s*,\s*style:\s*['"]success['"]\s*,\s*icon:\s*['"]check['"]\s*\}\s*\)/],
       ['catch mutation errors', /\}\s*catch\s*\(\s*err\s*\)\s*\{/],
       ['warn on caught error', /console\.warn\s*\(\s*err\s*\)/],
