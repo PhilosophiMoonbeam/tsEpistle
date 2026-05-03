@@ -48,6 +48,18 @@ function normalizeThemeConfigPayload (payload, fallbackMessage) {
   }
 }
 
+function normalizeThemeSavePayload (payload, fallbackMessage) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    throw new Error(fallbackMessage)
+  }
+  if (typeof payload.message !== 'string' || payload.message.length === 0) {
+    throw new Error(fallbackMessage)
+  }
+  return {
+    message: payload.message
+  }
+}
+
 async function fetchThemeConfig (fetchImpl, fallbackMessage = 'Theme config response is invalid') {
   const response = await fetchImpl('/_api/theming/config', {
     credentials: 'same-origin',
@@ -59,6 +71,21 @@ async function fetchThemeConfig (fetchImpl, fallbackMessage = 'Theme config resp
   return normalizeThemeConfigPayload(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
 }
 
+async function saveThemeConfig (fetchImpl, payload, fallbackMessage = 'Theme config update failed') {
+  const response = await fetchImpl('/_api/theming/config', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(payload)
+  })
+
+  return normalizeThemeSavePayload(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
+}
+
 module.exports = {
-  fetchThemeConfig
+  fetchThemeConfig,
+  saveThemeConfig
 }

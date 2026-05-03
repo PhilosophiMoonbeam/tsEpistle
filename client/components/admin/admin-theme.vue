@@ -129,11 +129,9 @@
 </template>
 
 <script>
-import _ from 'lodash'
 import { sync } from 'vuex-pathify'
 
-import themeSaveMutation from 'gql/admin/theme/theme-mutation-save.gql'
-import { fetchThemeConfig } from '../../helpers/theming-api'
+import { fetchThemeConfig, saveThemeConfig } from '../../helpers/theming-api'
 import { loadingStart, loadingStop, showNotification, pushGraphError } from '../../helpers/root-ui-store'
 
 export default {
@@ -220,29 +218,21 @@ export default {
       this.loading = true
       loadingStart(this.$store, 'admin-theme-save')
       try {
-        const respRaw = await this.$apollo.mutate({
-          mutation: themeSaveMutation,
-          variables: {
-            theme: this.config.theme,
-            iconset: this.config.iconset,
-            darkMode: this.darkMode,
-            tocPosition: this.config.tocPosition,
-            injectCSS: this.config.injectCSS,
-            injectHead: this.config.injectHead,
-            injectBody: this.config.injectBody
-          }
+        await saveThemeConfig(window.fetch.bind(window), {
+          theme: this.config.theme,
+          iconset: this.config.iconset,
+          darkMode: this.darkMode,
+          tocPosition: this.config.tocPosition,
+          injectCSS: this.config.injectCSS,
+          injectHead: this.config.injectHead,
+          injectBody: this.config.injectBody
+        }, 'Theme config update failed')
+        this.darkModeInitial = this.darkMode
+        showNotification(this.$store, {
+          message: 'Theme settings updated successfully.',
+          style: 'success',
+          icon: 'check'
         })
-        const resp = _.get(respRaw, 'data.theming.setConfig.responseResult', {})
-        if (resp.succeeded) {
-          this.darkModeInitial = this.darkMode
-          showNotification(this.$store, {
-            message: 'Theme settings updated successfully.',
-            style: 'success',
-            icon: 'check'
-          })
-        } else {
-          throw new Error(resp.message)
-        }
       } catch (err) {
         pushGraphError(this.$store, err)
       }

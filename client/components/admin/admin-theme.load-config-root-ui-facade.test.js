@@ -65,9 +65,9 @@ describe('admin-theme root UI facade migration guard', () => {
       /import\s+\{(?=[^}]*\bloadingStart\b)(?=[^}]*\bloadingStop\b)(?=[^}]*\bshowNotification\b)(?=[^}]*\bpushGraphError\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/root-ui-store['"]/
     )
     expect(script).toMatch(
-      /import\s+\{\s*fetchThemeConfig\s*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/theming-api['"]/
+      /import\s+\{(?=[^}]*\bfetchThemeConfig\b)(?=[^}]*\bsaveThemeConfig\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/theming-api['"]/
     )
-    expect(script).toMatch(/import\s+themeSaveMutation\s+from\s+['"]gql\/admin\/theme\/theme-mutation-save\.gql['"]/)
+    expect(script).not.toMatch(/themeSaveMutation|theme-mutation-save\.gql/)
   })
 
   test('loadConfig() uses loading and error facades while preserving REST fetch assignment, rethrow, and cleanup', () => {
@@ -82,22 +82,21 @@ describe('admin-theme root UI facade migration guard', () => {
     expect(loadConfig.match(/\bfetchThemeConfig\s*\(/g) || []).toHaveLength(1)
   })
 
-  test('save() uses root UI facades while preserving mutation payload, response handling, dark mode state, fallback, and trailing cleanup', () => {
+  test('save() uses REST helper and root UI facades while preserving payload, dark mode state, error handling, and cleanup', () => {
     expect(save).not.toBeNull()
 
-    expect(save).toMatch(/async\s+save\s*\(\s*\)\s*\{\s*this\.loading\s*=\s*true\s*loadingStart\s*\(\s*this\.\$store\s*,\s*['"]admin-theme-save['"]\s*\)\s*try\s*\{\s*const\s+respRaw\s*=\s*await\s+this\.\$apollo\.mutate\s*\(\s*\{\s*mutation:\s*themeSaveMutation/)
-    expect(save).toMatch(/variables:\s*\{[\s\S]*theme:\s*this\.config\.theme[\s\S]*iconset:\s*this\.config\.iconset[\s\S]*darkMode:\s*this\.darkMode[\s\S]*tocPosition:\s*this\.config\.tocPosition[\s\S]*injectCSS:\s*this\.config\.injectCSS[\s\S]*injectHead:\s*this\.config\.injectHead[\s\S]*injectBody:\s*this\.config\.injectBody[\s\S]*\}/)
-    expect(save).toMatch(/const\s+resp\s*=\s*_\.get\s*\(\s*respRaw\s*,\s*['"]data\.theming\.setConfig\.responseResult['"]\s*,\s*\{\s*\}\s*\)/)
-    expect(save).toMatch(/if\s*\(\s*resp\.succeeded\s*\)\s*\{\s*this\.darkModeInitial\s*=\s*this\.darkMode\s*showNotification\s*\(\s*this\.\$store\s*,\s*\{\s*message:\s*['"]Theme settings updated successfully\.['"]\s*,\s*style:\s*['"]success['"]\s*,\s*icon:\s*['"]check['"]\s*\}\s*\)/)
-    expect(save).toMatch(/throw\s+new\s+Error\s*\(\s*resp\.message\s*\)/)
+    expect(save).toMatch(/async\s+save\s*\(\s*\)\s*\{\s*this\.loading\s*=\s*true\s*loadingStart\s*\(\s*this\.\$store\s*,\s*['"]admin-theme-save['"]\s*\)\s*try\s*\{\s*await\s+saveThemeConfig\s*\(\s*window\.fetch\.bind\(\s*window\s*\)\s*,\s*\{[\s\S]*?\}\s*,\s*['"]Theme config update failed['"]\s*\)/)
+    expect(save).toMatch(/theme:\s*this\.config\.theme[\s\S]*iconset:\s*this\.config\.iconset[\s\S]*darkMode:\s*this\.darkMode[\s\S]*tocPosition:\s*this\.config\.tocPosition[\s\S]*injectCSS:\s*this\.config\.injectCSS[\s\S]*injectHead:\s*this\.config\.injectHead[\s\S]*injectBody:\s*this\.config\.injectBody/)
+    expect(save).toMatch(/this\.darkModeInitial\s*=\s*this\.darkMode\s*showNotification\s*\(\s*this\.\$store\s*,\s*\{\s*message:\s*['"]Theme settings updated successfully\.['"]\s*,\s*style:\s*['"]success['"]\s*,\s*icon:\s*['"]check['"]\s*\}\s*\)/)
     expect(save).toMatch(/catch\s*\(\s*err\s*\)\s*\{\s*pushGraphError\s*\(\s*this\.\$store\s*,\s*err\s*\)\s*\}\s*loadingStop\s*\(\s*this\.\$store\s*,\s*['"]admin-theme-save['"]\s*\)\s*this\.loading\s*=\s*false\s*\}/)
     expect(save).not.toMatch(directRootUiCommit)
+    expect(save).not.toMatch(/this\.\$apollo\.mutate|themeSaveMutation|_\.get/)
 
     expect(save.match(/\bloadingStart\s*\(/g) || []).toHaveLength(1)
+    expect(save.match(/\bsaveThemeConfig\s*\(/g) || []).toHaveLength(1)
     expect(save.match(/\bshowNotification\s*\(/g) || []).toHaveLength(1)
     expect(save.match(/\bpushGraphError\s*\(/g) || []).toHaveLength(1)
     expect(save.match(/\bloadingStop\s*\(/g) || []).toHaveLength(1)
-    expect(save.match(/\bthis\.\$apollo\.mutate\s*\(/g) || []).toHaveLength(1)
   })
 
   test('dark mode lifecycle/watchers, v-html template, and load button binding remain present', () => {

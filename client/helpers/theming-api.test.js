@@ -1,4 +1,4 @@
-const { fetchThemeConfig } = require('./theming-api')
+const { fetchThemeConfig, saveThemeConfig } = require('./theming-api')
 
 function createJsonResponse (payload, ok = true) {
   return {
@@ -112,5 +112,34 @@ describe('theming api helper', () => {
     })
 
     await expect(fetchThemeConfig(fetchImpl, 'Bad theme content type')).rejects.toThrow('Bad theme content type')
+  })
+
+  test('saves theme config with same-origin JSON POST options', async () => {
+    const payload = validConfig({ darkMode: true })
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ message: 'Theme config updated' }))
+
+    await expect(saveThemeConfig(fetchImpl, payload)).resolves.toEqual({ message: 'Theme config updated' })
+
+    expect(fetchImpl).toHaveBeenCalledWith('/_api/theming/config', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(payload)
+    })
+  })
+
+  test('rejects malformed theme save success responses', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ ok: true }))
+
+    await expect(saveThemeConfig(fetchImpl, validConfig(), 'Bad theme save')).rejects.toThrow('Bad theme save')
+  })
+
+  test('surfaces JSON API error messages on theme save failures', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ error: 'Theme CSS is invalid' }, false))
+
+    await expect(saveThemeConfig(fetchImpl, validConfig(), 'Bad theme save')).rejects.toThrow('Theme CSS is invalid')
   })
 })

@@ -16,6 +16,9 @@ jest.mock('express', () => {
       const router = {
         get: jest.fn(),
         post: jest.fn(),
+        patch: jest.fn(),
+        put: jest.fn(),
+        delete: jest.fn(),
         use: jest.fn()
       }
       routers.push(router)
@@ -49,6 +52,9 @@ describe('controllers/api theming endpoints', () => {
       },
       models: {
         knex: {}
+      },
+      configSvc: {
+        saveToDb: jest.fn()
       }
     }
   })
@@ -60,8 +66,21 @@ describe('controllers/api theming endpoints', () => {
     return router.get.mock.calls.find(([path]) => path === '/config')[1]
   }
 
+  const loadSaveHandler = () => {
+    const express = require('express')
+    require('../../controllers/api/theming')
+    const router = express.__routers[0]
+    return router.post.mock.calls.find(([path]) => path === '/config')[1]
+  }
+
   it('registers config route', () => {
     const handler = loadConfigHandler()
+
+    expect(typeof handler).toBe('function')
+  })
+
+  it('registers config save route', () => {
+    const handler = loadSaveHandler()
 
     expect(typeof handler).toBe('function')
   })
@@ -86,6 +105,20 @@ describe('controllers/api theming endpoints', () => {
     expect(res.json).not.toHaveBeenCalled()
   })
 
+  it('returns 403 for unauthorized config save requests without saving', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValue(false)
+    const handler = loadSaveHandler()
+    const req = { user: { permissions: [] }, body: { theme: 'default' } }
+    const res = { sendStatus: jest.fn(), json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await handler(req, res, jest.fn())
+
+    expect(res.status).toHaveBeenCalledWith(403)
+    expect(res.json).toHaveBeenCalledWith({ error: 'Forbidden' })
+    expect(global.WIKI.configSvc.saveToDb).not.toHaveBeenCalled()
+    expect(res.sendStatus).not.toHaveBeenCalled()
+  })
+
   it('checks manage:theme and manage:system access', () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
     const handler = loadConfigHandler()
@@ -95,6 +128,45 @@ describe('controllers/api theming endpoints', () => {
     handler(req, res, jest.fn())
 
     expect(global.WIKI.auth.checkAccess).toHaveBeenCalledWith(req.user, ['manage:theme', 'manage:system'])
+  })
+
+  it('checks manage:theme and manage:system access for config save', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValue(true)
+    const handler = loadSaveHandler()
+    const req = {
+      user: { permissions: ['manage:theme'] },
+      body: {
+        theme: 'default',
+        iconset: 'mdi',
+        darkMode: false,
+        tocPosition: 'left'
+      }
+    }
+    const res = { sendStatus: jest.fn(), json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await handler(req, res, jest.fn())
+
+    expect(global.WIKI.auth.checkAccess).toHaveBeenCalledWith(req.user, ['manage:theme', 'manage:system'])
+  })
+
+  it('rejects invalid theme config save payloads before persisting', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValue(true)
+    const handler = loadSaveHandler()
+    const req = {
+      user: {},
+      body: {
+        theme: 'default',
+        iconset: 'mdi',
+        darkMode: 'false'
+      }
+    }
+    const res = { sendStatus: jest.fn(), json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await handler(req, res, jest.fn())
+
+    expect(res.status).toHaveBeenCalledWith(400)
+    expect(res.json).toHaveBeenCalledWith({ error: 'Invalid theme config payload' })
+    expect(global.WIKI.configSvc.saveToDb).not.toHaveBeenCalled()
   })
 
   it('returns exactly the expected config fields for authorized requests', () => {
@@ -174,5 +246,84 @@ describe('controllers/api theming endpoints', () => {
 
     expect(res.json.mock.calls[0][0].injectHead).toBe('<!-- head marker -->')
     expect(res.json.mock.calls[0][0].injectBody).toBe('<section data-test="body"></section>')
+  })
+
+  it('saves theme config with GraphQL mutation parity', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValue(true)
+    const handler = loadSaveHandler()
+    const req = {
+      user: { permissions: ['manage:theme'] },
+      body: {
+        theme: 'default',
+        iconset: 'fa',
+        darkMode: true,
+        tocPosition: '',
+        injectCSS: '.contents{color:red}',
+        injectHead: '<meta name="saved" content="head">',
+        injectBody: '<div>saved body</div>'
+      }
+    }
+    const res = { sendStatus: jest.fn(), json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await handler(req, res, jest.fn())
+
+    expect(global.WIKI.config.theming).toMatchObject({
+      theme: 'default',
+      iconset: 'fa',
+      darkMode: true,
+      tocPosition: 'left',
+      injectHead: '<meta name="saved" content="head">',
+      injectBody: '<div>saved body</div>',
+      privateSetting: 'do-not-return'
+    })
+    expect(global.WIKI.config.theming.injectCSS).toBe('.contents{color:red}')
+    expect(global.WIKI.configSvc.saveToDb).toHaveBeenCalledWith(['theming'])
+    expect(res.json).toHaveBeenCalledWith({ message: 'Theme config updated' })
+  })
+
+  it('defaults missing optional injection fields to empty strings on save', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValue(true)
+    const handler = loadSaveHandler()
+    const req = {
+      user: {},
+      body: {
+        theme: 'default',
+        iconset: 'mdi',
+        darkMode: false,
+        tocPosition: 'right'
+      }
+    }
+    const res = { sendStatus: jest.fn(), json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await handler(req, res, jest.fn())
+
+    expect(global.WIKI.config.theming.injectCSS).toBe('')
+    expect(global.WIKI.config.theming.injectHead).toBe('')
+    expect(global.WIKI.config.theming.injectBody).toBe('')
+    expect(res.json).toHaveBeenCalledWith({ message: 'Theme config updated' })
+  })
+
+  it('returns JSON errors when theme config save fails', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValue(true)
+    global.WIKI.configSvc.saveToDb.mockRejectedValue(new Error('database unavailable'))
+    const handler = loadSaveHandler()
+    const req = {
+      user: {},
+      body: {
+        theme: 'default',
+        iconset: 'mdi',
+        darkMode: false,
+        tocPosition: 'left',
+        injectCSS: '',
+        injectHead: '',
+        injectBody: ''
+      }
+    }
+    const res = { sendStatus: jest.fn(), json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await handler(req, res, jest.fn())
+
+    expect(res.status).toHaveBeenCalledWith(500)
+    expect(res.json).toHaveBeenCalledWith({ error: 'database unavailable' })
   })
 })
