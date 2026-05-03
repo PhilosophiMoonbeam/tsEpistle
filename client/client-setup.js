@@ -18,4 +18,4 @@ let bootstrap = () => {
   })
 }
 
-window.boot.onDOMReady(bootstrap)
+boot.onDOMReady(bootstrap)

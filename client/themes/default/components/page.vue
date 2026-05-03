@@ -366,6 +366,7 @@ import { get, sync } from 'vuex-pathify'
 import _ from 'lodash'
 import ClipboardJS from 'clipboard'
 import Vue from 'vue'
+import boot from '../../../modules/boot'
 import {
   emitPageConvert,
   emitPageDelete,
@@ -657,7 +658,7 @@ export default {
         }
       })
 
-      window.boot.notify('page-ready')
+      boot.notify('page-ready')
     })
   },
   methods: {
