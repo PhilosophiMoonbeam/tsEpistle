@@ -366,23 +366,23 @@ export default {
     }
   },
   mounted () {
-    onPageEdit(this.$root, this.pageEdit)
-    onPageHistory(this.$root, this.pageHistory)
-    onPageSource(this.$root, this.pageSource)
-    onPageMove(this.$root, this.pageMove)
-    onPageConvert(this.$root, this.pageConvert)
-    onPageDuplicate(this.$root, this.pageDuplicate)
-    onPageDelete(this.$root, this.pageDelete)
+    onPageEdit(this.pageEdit)
+    onPageHistory(this.pageHistory)
+    onPageSource(this.pageSource)
+    onPageMove(this.pageMove)
+    onPageConvert(this.pageConvert)
+    onPageDuplicate(this.pageDuplicate)
+    onPageDelete(this.pageDelete)
     this.isDevMode = siteConfig.devMode === true
   },
   beforeDestroy () {
-    offPageEdit(this.$root, this.pageEdit)
-    offPageHistory(this.$root, this.pageHistory)
-    offPageSource(this.$root, this.pageSource)
-    offPageMove(this.$root, this.pageMove)
-    offPageConvert(this.$root, this.pageConvert)
-    offPageDuplicate(this.$root, this.pageDuplicate)
-    offPageDelete(this.$root, this.pageDelete)
+    offPageEdit(this.pageEdit)
+    offPageHistory(this.pageHistory)
+    offPageSource(this.pageSource)
+    offPageMove(this.pageMove)
+    offPageConvert(this.pageConvert)
+    offPageDuplicate(this.pageDuplicate)
+    offPageDelete(this.pageDelete)
   },
   methods: {
     searchFocus () {

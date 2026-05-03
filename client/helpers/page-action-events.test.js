@@ -14,6 +14,7 @@ const {
 } = pageActionEvents
 
 const repoRoot = path.resolve(__dirname, '../..')
+const helperPath = path.join(repoRoot, 'client/helpers/page-action-events.js')
 const guardedFiles = [
   'client/themes/default/components/page.vue',
   'client/components/common/nav-header.vue'
@@ -37,14 +38,6 @@ const pageActionCases = [
   ['PageDelete', PAGE_DELETE_EVENT]
 ]
 
-function createRoot () {
-  return {
-    $emit: jest.fn(),
-    $on: jest.fn(),
-    $off: jest.fn()
-  }
-}
-
 function getLineNumber (content, index) {
   return content.slice(0, index).split(/\r?\n/).length
 }
@@ -57,38 +50,35 @@ function directRootEventPattern (eventName) {
 }
 
 describe('page action events', () => {
-  test.each(pageActionCases)('emit%s emits the shared %s event', (suffix, eventName) => {
-    const root = createRoot()
+  test.each(pageActionCases)('emit%s emits the shared %s event', (suffix) => {
+    const handler = jest.fn()
+    pageActionEvents[`on${suffix}`](handler)
 
-    pageActionEvents[`emit${suffix}`](root)
+    pageActionEvents[`emit${suffix}`]()
 
-    expect(root.$emit).toHaveBeenCalledWith(eventName)
+    expect(handler).toHaveBeenCalledTimes(1)
+    pageActionEvents[`off${suffix}`](handler)
   })
 
-  test.each(pageActionCases)('on%s subscribes to the shared %s event', (suffix, eventName) => {
-    const root = createRoot()
+  test.each(pageActionCases)('off%s unsubscribes from the shared %s event with the same handler', (suffix) => {
     const handler = jest.fn()
+    pageActionEvents[`on${suffix}`](handler)
+    pageActionEvents[`off${suffix}`](handler)
 
-    pageActionEvents[`on${suffix}`](root, handler)
+    pageActionEvents[`emit${suffix}`]()
 
-    expect(root.$on).toHaveBeenCalledWith(eventName, handler)
-  })
-
-  test.each(pageActionCases)('off%s unsubscribes from the shared %s event with the same handler', (suffix, eventName) => {
-    const root = createRoot()
-    const handler = jest.fn()
-
-    pageActionEvents[`off${suffix}`](root, handler)
-
-    expect(root.$off).toHaveBeenCalledWith(eventName, handler)
+    expect(handler).not.toHaveBeenCalled()
   })
 
   test.each(pageActionCases)('off%s does not broadly unsubscribe without a handler', (suffix) => {
-    const root = createRoot()
+    const handler = jest.fn()
+    pageActionEvents[`on${suffix}`](handler)
+    pageActionEvents[`off${suffix}`]()
 
-    pageActionEvents[`off${suffix}`](root)
+    pageActionEvents[`emit${suffix}`]()
 
-    expect(root.$off).not.toHaveBeenCalled()
+    expect(handler).toHaveBeenCalledTimes(1)
+    pageActionEvents[`off${suffix}`](handler)
   })
 })
 
@@ -108,8 +98,21 @@ describe('page action event usage', () => {
           offenders.push(`${relPath}:${getLineNumber(content, match.index)}: direct this.$root event for ${eventName}`)
         }
       }
+
+      expect(content).not.toMatch(/emitPage(?:Edit|History|Source|Convert|Duplicate|Move|Delete)\s*\(\s*this\.\$root/)
+      expect(content).not.toMatch(/onPage(?:Edit|History|Source|Convert|Duplicate|Move|Delete)\s*\(\s*this\.\$root/)
+      expect(content).not.toMatch(/offPage(?:Edit|History|Source|Convert|Duplicate|Move|Delete)\s*\(\s*this\.\$root/)
     }
 
     expect(offenders).toEqual([])
+  })
+
+  test('page action helper owns its bus instead of requiring caller root instances', () => {
+    const source = fs.readFileSync(helperPath, 'utf8')
+
+    expect(source).toMatch(/const\s+Vue\s*=\s*require\(\s*['"]vue['"]\s*\)/)
+    expect(source).toMatch(/new\s+Vue\s*\(\s*\)/)
+    expect(source).not.toMatch(/function\s+\w+\s*\(\s*root\b/)
+    expect(source).not.toMatch(/\broot\s*\.\s*\$(?:emit|on|off)\b/)
   })
 })

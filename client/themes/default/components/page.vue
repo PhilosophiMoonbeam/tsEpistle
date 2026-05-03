@@ -686,25 +686,25 @@ export default {
       }
     },
     pageEdit () {
-      emitPageEdit(this.$root)
+      emitPageEdit()
     },
     pageHistory () {
-      emitPageHistory(this.$root)
+      emitPageHistory()
     },
     pageSource () {
-      emitPageSource(this.$root)
+      emitPageSource()
     },
     pageConvert () {
-      emitPageConvert(this.$root)
+      emitPageConvert()
     },
     pageDuplicate () {
-      emitPageDuplicate(this.$root)
+      emitPageDuplicate()
     },
     pageMove () {
-      emitPageMove(this.$root)
+      emitPageMove()
     },
     pageDelete () {
-      emitPageDelete(this.$root)
+      emitPageDelete()
     },
     handleSideNavVisibility () {
       if (window.innerWidth === this.winWidth) { return }

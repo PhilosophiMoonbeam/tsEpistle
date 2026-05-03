@@ -1,3 +1,5 @@
+const Vue = require('vue')
+
 const PAGE_EDIT_EVENT = 'pageEdit'
 const PAGE_HISTORY_EVENT = 'pageHistory'
 const PAGE_SOURCE_EVENT = 'pageSource'
@@ -5,96 +7,97 @@ const PAGE_CONVERT_EVENT = 'pageConvert'
 const PAGE_DUPLICATE_EVENT = 'pageDuplicate'
 const PAGE_MOVE_EVENT = 'pageMove'
 const PAGE_DELETE_EVENT = 'pageDelete'
+const pageActionBus = new Vue()
 
-function emitPageEdit (root) {
-  root.$emit(PAGE_EDIT_EVENT)
+function emitPageEdit () {
+  pageActionBus.$emit(PAGE_EDIT_EVENT)
 }
 
-function emitPageHistory (root) {
-  root.$emit(PAGE_HISTORY_EVENT)
+function emitPageHistory () {
+  pageActionBus.$emit(PAGE_HISTORY_EVENT)
 }
 
-function emitPageSource (root) {
-  root.$emit(PAGE_SOURCE_EVENT)
+function emitPageSource () {
+  pageActionBus.$emit(PAGE_SOURCE_EVENT)
 }
 
-function emitPageConvert (root) {
-  root.$emit(PAGE_CONVERT_EVENT)
+function emitPageConvert () {
+  pageActionBus.$emit(PAGE_CONVERT_EVENT)
 }
 
-function emitPageDuplicate (root) {
-  root.$emit(PAGE_DUPLICATE_EVENT)
+function emitPageDuplicate () {
+  pageActionBus.$emit(PAGE_DUPLICATE_EVENT)
 }
 
-function emitPageMove (root) {
-  root.$emit(PAGE_MOVE_EVENT)
+function emitPageMove () {
+  pageActionBus.$emit(PAGE_MOVE_EVENT)
 }
 
-function emitPageDelete (root) {
-  root.$emit(PAGE_DELETE_EVENT)
+function emitPageDelete () {
+  pageActionBus.$emit(PAGE_DELETE_EVENT)
 }
 
-function onPageEdit (root, handler) {
-  root.$on(PAGE_EDIT_EVENT, handler)
+function onPageEdit (handler) {
+  pageActionBus.$on(PAGE_EDIT_EVENT, handler)
 }
 
-function onPageHistory (root, handler) {
-  root.$on(PAGE_HISTORY_EVENT, handler)
+function onPageHistory (handler) {
+  pageActionBus.$on(PAGE_HISTORY_EVENT, handler)
 }
 
-function onPageSource (root, handler) {
-  root.$on(PAGE_SOURCE_EVENT, handler)
+function onPageSource (handler) {
+  pageActionBus.$on(PAGE_SOURCE_EVENT, handler)
 }
 
-function onPageConvert (root, handler) {
-  root.$on(PAGE_CONVERT_EVENT, handler)
+function onPageConvert (handler) {
+  pageActionBus.$on(PAGE_CONVERT_EVENT, handler)
 }
 
-function onPageDuplicate (root, handler) {
-  root.$on(PAGE_DUPLICATE_EVENT, handler)
+function onPageDuplicate (handler) {
+  pageActionBus.$on(PAGE_DUPLICATE_EVENT, handler)
 }
 
-function onPageMove (root, handler) {
-  root.$on(PAGE_MOVE_EVENT, handler)
+function onPageMove (handler) {
+  pageActionBus.$on(PAGE_MOVE_EVENT, handler)
 }
 
-function onPageDelete (root, handler) {
-  root.$on(PAGE_DELETE_EVENT, handler)
+function onPageDelete (handler) {
+  pageActionBus.$on(PAGE_DELETE_EVENT, handler)
 }
 
-function offPageEdit (root, handler) {
+function offPageEdit (handler) {
   if (!handler) { return }
-  root.$off(PAGE_EDIT_EVENT, handler)
+  pageActionBus.$off(PAGE_EDIT_EVENT, handler)
 }
 
-function offPageHistory (root, handler) {
+function offPageHistory (handler) {
   if (!handler) { return }
-  root.$off(PAGE_HISTORY_EVENT, handler)
+  pageActionBus.$off(PAGE_HISTORY_EVENT, handler)
 }
 
-function offPageSource (root, handler) {
+function offPageSource (handler) {
   if (!handler) { return }
-  root.$off(PAGE_SOURCE_EVENT, handler)
+  pageActionBus.$off(PAGE_SOURCE_EVENT, handler)
 }
 
-function offPageConvert (root, handler) {
+function offPageConvert (handler) {
   if (!handler) { return }
-  root.$off(PAGE_CONVERT_EVENT, handler)
+  pageActionBus.$off(PAGE_CONVERT_EVENT, handler)
 }
 
-function offPageDuplicate (root, handler) {
+function offPageDuplicate (handler) {
   if (!handler) { return }
-  root.$off(PAGE_DUPLICATE_EVENT, handler)
+  pageActionBus.$off(PAGE_DUPLICATE_EVENT, handler)
 }
 
-function offPageMove (root, handler) {
+function offPageMove (handler) {
   if (!handler) { return }
-  root.$off(PAGE_MOVE_EVENT, handler)
+  pageActionBus.$off(PAGE_MOVE_EVENT, handler)
 }
 
-function offPageDelete (root, handler) {
+function offPageDelete (handler) {
   if (!handler) { return }
-  root.$off(PAGE_DELETE_EVENT, handler)
+  pageActionBus.$off(PAGE_DELETE_EVENT, handler)
 }
 
 module.exports = {
