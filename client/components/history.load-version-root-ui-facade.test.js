@@ -18,9 +18,10 @@ const extractMethod = (name) => {
 
 describe('history loadVersion root UI facade migration guard', () => {
   const loadVersion = extractMethod('loadVersion')
+  const restoreConfirm = extractMethod('restoreConfirm')
 
-  test('imports the root UI loading helpers for loadVersion and trail watcher', () => {
-    expect(source).toContain("import { loadingStart, loadingStop, setLoading } from '../helpers/root-ui-store'")
+  test('imports the root UI loading and notification helpers for version and restore flows', () => {
+    expect(source).toContain("import { loadingStart, loadingStop, setLoading, showNotification } from '../helpers/root-ui-store'")
   })
 
   test('loadVersion routes version loading through the facade', () => {
@@ -47,12 +48,30 @@ describe('history loadVersion root UI facade migration guard', () => {
     expect(source).not.toContain('this.$store.commit(`loading' + '$' + "{isLoading ? 'Start' : 'Stop'}`, 'history-trail-refresh')")
   })
 
-  test('keeps restore flow, page state commits, and history template out of this slice', () => {
+  test('restoreConfirm routes restore loading and notifications through facades without changing behavior', () => {
+    expect(restoreConfirm).toContain('this.restoreLoading = true')
+    expect(restoreConfirm).toContain("loadingStart(this.$store, 'history-restore')")
+    expect(restoreConfirm).toContain('const resp = await this.$apollo.mutate({')
+    expect(restoreConfirm).toContain('restore (pageId: $pageId, versionId: $versionId)')
+    expect(restoreConfirm).toContain('versionId: this.restoreTarget.versionId')
+    expect(restoreConfirm).toContain('pageId: this.pageId')
+    expect(restoreConfirm).toContain("_.get(resp, 'data.pages.restore.responseResult.succeeded', false) === true")
+    expect(restoreConfirm).toMatch(/showNotification\(this\.\$store, \{\s*style: 'success',\s*message: this\.\$t\('history:restore\.success'\),\s*icon: 'check'\s*\}\)/)
+    expect(restoreConfirm).toContain('this.isRestoreConfirmDialogShown = false')
+    expect(restoreConfirm).toMatch(/setTimeout\(\(\) => \{\s*window\.location\.assign\(`\/\$\{this\.locale\}\/\$\{this\.path\}`\)\s*\}, 1000\)/)
+    expect(restoreConfirm).toMatch(/showNotification\(this\.\$store, \{\s*style: 'red',\s*message: err\.message,\s*icon: 'alert'\s*\}\)/)
+    expect(restoreConfirm).toContain("loadingStop(this.$store, 'history-restore')")
+    expect(restoreConfirm).toContain('this.restoreLoading = false')
+
+    expect(restoreConfirm).not.toContain("this.$store.commit(`loadingStart`, 'history-restore')")
+    expect(restoreConfirm).not.toContain("this.$store.commit('showNotification'")
+    expect(restoreConfirm).not.toContain("this.$store.commit(`loadingStop`, 'history-restore')")
+    expect(restoreConfirm.match(/\bshowNotification\s*\(/g) || []).toHaveLength(2)
+  })
+
+  test('keeps page state commits and history template out of this slice', () => {
     expect(source).toContain("this.$store.commit('page/SET_ID', this.id)")
     expect(source).toContain("this.$store.commit('page/SET_MODE', 'history')")
-    expect(source).toContain("this.$store.commit(`loadingStart`, 'history-restore')")
-    expect(source).toContain("this.$store.commit('showNotification', {")
-    expect(source).toContain("this.$store.commit(`loadingStop`, 'history-restore')")
     expect(source).toContain("v-btn(color='orange darken-2', dark, @click='restoreConfirm', :loading='restoreLoading')")
   })
 })

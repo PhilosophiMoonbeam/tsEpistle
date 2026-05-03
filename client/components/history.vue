@@ -135,7 +135,7 @@ import { createPatch } from 'diff'
 import _ from 'lodash'
 import gql from 'graphql-tag'
 import { getPageDownloadPath, getPageSourcePath } from '../helpers/page-actions'
-import { loadingStart, loadingStop, setLoading } from '../helpers/root-ui-store'
+import { loadingStart, loadingStop, setLoading, showNotification } from '../helpers/root-ui-store'
 
 export default {
   i18nOptions: { namespaces: 'history' },
@@ -387,7 +387,7 @@ export default {
     },
     async restoreConfirm () {
       this.restoreLoading = true
-      this.$store.commit(`loadingStart`, 'history-restore')
+      loadingStart(this.$store, 'history-restore')
       try {
         const resp = await this.$apollo.mutate({
           mutation: gql`
@@ -410,7 +410,7 @@ export default {
           }
         })
         if (_.get(resp, 'data.pages.restore.responseResult.succeeded', false) === true) {
-          this.$store.commit('showNotification', {
+          showNotification(this.$store, {
             style: 'success',
             message: this.$t('history:restore.success'),
             icon: 'check'
@@ -423,13 +423,13 @@ export default {
           throw new Error(_.get(resp, 'data.pages.restore.responseResult.message', 'An unexpected error occurred'))
         }
       } catch (err) {
-        this.$store.commit('showNotification', {
+        showNotification(this.$store, {
           style: 'red',
           message: err.message,
           icon: 'alert'
         })
       }
-      this.$store.commit(`loadingStop`, 'history-restore')
+      loadingStop(this.$store, 'history-restore')
       this.restoreLoading = false
     },
     branchOff (versionId) {
