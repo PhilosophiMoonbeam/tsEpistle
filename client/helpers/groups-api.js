@@ -190,9 +190,22 @@ async function createGroup (fetchImpl, name, fallbackMessage = 'Group create res
   return normalizeGroupMutationResponse(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
 }
 
+async function unassignGroupUser (fetchImpl, groupId, userId, fallbackMessage = 'Group user unassign response is invalid') {
+  const response = await fetchImpl(`/_api/groups/${groupId}/users/${userId}`, {
+    method: 'DELETE',
+    credentials: 'same-origin',
+    headers: {
+      Accept: 'application/json'
+    }
+  })
+
+  return normalizeGroupMutationResponse(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
+}
+
 module.exports = {
   fetchGroupOptions,
   fetchGroupsList,
   fetchGroupDetails,
-  createGroup
+  createGroup,
+  unassignGroupUser
 }

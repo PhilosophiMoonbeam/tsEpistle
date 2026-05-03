@@ -52,7 +52,9 @@
 import UserSearch from '../common/user-search.vue'
 
 import assignUserMutation from 'gql/admin/groups/groups-mutation-assign.gql'
-import unassignUserMutation from 'gql/admin/groups/groups-mutation-unassign.gql'
+
+import { unassignGroupUser } from '../../helpers/groups-api'
+import { loadingStart, loadingStop, showNotification } from '../../helpers/root-ui-store'
 
 export default {
   props: {
@@ -119,29 +121,23 @@ export default {
       }
     },
     async unassignUser(id) {
+      loadingStart(this.$store, 'admin-groups-unassign')
       try {
-        await this.$apollo.mutate({
-          mutation: unassignUserMutation,
-          variables: {
-            groupId: this.group.id,
-            userId: id
-          },
-          watchLoading (isLoading) {
-            this.$store.commit(`loading${isLoading ? 'Start' : 'Stop'}`, 'admin-groups-unassign')
-          }
-        })
-        this.$store.commit('showNotification', {
+        await unassignGroupUser(window.fetch.bind(window), this.group.id, id)
+        showNotification(this.$store, {
           style: 'success',
           message: `User has been unassigned from ${this.group.name}.`,
           icon: 'assignment_ind'
         })
         this.$emit('refresh')
       } catch (err) {
-        this.$store.commit('showNotification', {
+        showNotification(this.$store, {
           style: 'red',
           message: err.message,
           icon: 'warning'
         })
+      } finally {
+        loadingStop(this.$store, 'admin-groups-unassign')
       }
     }
   }

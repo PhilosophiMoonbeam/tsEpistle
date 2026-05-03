@@ -1,4 +1,4 @@
-const { fetchGroupOptions, fetchGroupsList, fetchGroupDetails, createGroup } = require('./groups-api')
+const { fetchGroupOptions, fetchGroupsList, fetchGroupDetails, createGroup, unassignGroupUser } = require('./groups-api')
 
 function createJsonResponse (payload, ok = true) {
   return {
@@ -217,5 +217,42 @@ describe('groups api helper', () => {
     }, false))
 
     await expect(createGroup(fetchImpl, 'Editors', 'Bad group create')).rejects.toThrow('write:groups, manage:groups, or manage:system is required')
+  })
+
+  test('unassigns group users through the REST endpoint', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+      succeeded: true,
+      message: 'User has been unassigned from group.'
+    }))
+
+    await expect(unassignGroupUser(fetchImpl, 3, 10)).resolves.toEqual({
+      succeeded: true,
+      message: 'User has been unassigned from group.'
+    })
+
+    expect(fetchImpl).toHaveBeenCalledWith('/_api/groups/3/users/10', {
+      method: 'DELETE',
+      credentials: 'same-origin',
+      headers: {
+        Accept: 'application/json'
+      }
+    })
+  })
+
+  test('rejects malformed group user unassign responses', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+      succeeded: false,
+      message: 'Nope'
+    }))
+
+    await expect(unassignGroupUser(fetchImpl, 3, 10, 'Bad unassign payload')).rejects.toThrow('Bad unassign payload')
+  })
+
+  test('surfaces API error messages for failed group user unassigns', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+      error: 'Cannot unassign Guest user'
+    }, false))
+
+    await expect(unassignGroupUser(fetchImpl, 3, 2, 'Bad unassign')).rejects.toThrow('Cannot unassign Guest user')
   })
 })

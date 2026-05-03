@@ -2,6 +2,7 @@ jest.mock('express', () => {
   const router = {
     get: jest.fn(),
     post: jest.fn(),
+    delete: jest.fn(),
     use: jest.fn()
   }
 
@@ -17,11 +18,13 @@ describe('controllers/api groups endpoints', () => {
     const express = require('express')
     express.__router.get.mockClear()
     express.__router.post.mockClear()
+    express.__router.delete.mockClear()
 
     global.WIKI = {
       auth: {
         checkAccess: jest.fn().mockReturnValue(true),
-        reloadGroups: jest.fn().mockResolvedValue(undefined)
+        reloadGroups: jest.fn().mockResolvedValue(undefined),
+        revokeUserTokens: jest.fn()
       },
       events: {
         outbound: {
@@ -79,8 +82,20 @@ describe('controllers/api groups endpoints', () => {
                 select: jest.fn().mockResolvedValue([
                   { id: 10, name: 'Alice', email: 'alice@example.com', providerKey: 'local' },
                   { id: 11, name: 'Bob', email: 'bob@example.com', extra: 'nope' }
-                ])
+                ]),
+                unrelate: jest.fn().mockReturnValue({
+                  where: jest.fn().mockResolvedValue(1)
+                })
               })
+            })
+          })
+        },
+        users: {
+          query: jest.fn().mockReturnValue({
+            findById: jest.fn().mockResolvedValue({
+              id: 10,
+              name: 'Alice',
+              email: 'alice@example.com'
             })
           })
         }
@@ -95,6 +110,7 @@ describe('controllers/api groups endpoints', () => {
       create: express.__router.post.mock.calls.find(([path]) => path === '/')[1],
       picker: express.__router.get.mock.calls.find(([path]) => path === '/')[1],
       list: express.__router.get.mock.calls.find(([path]) => path === '/list')[1],
+      unassignUser: express.__router.delete.mock.calls.find(([path]) => path === '/:groupId/users/:userId')[1],
       detail: express.__router.get.mock.calls.find(([path]) => path === '/:id')[1]
     }
   }
@@ -105,6 +121,7 @@ describe('controllers/api groups endpoints', () => {
     expect(typeof handlers.create).toBe('function')
     expect(typeof handlers.picker).toBe('function')
     expect(typeof handlers.list).toBe('function')
+    expect(typeof handlers.unassignUser).toBe('function')
     expect(typeof handlers.detail).toBe('function')
   })
 
@@ -300,6 +317,101 @@ describe('controllers/api groups endpoints', () => {
 
     expect(res.status).toHaveBeenCalledWith(403)
     expect(res.json).toHaveBeenCalledWith({ error: 'write:groups, manage:groups, or manage:system is required' })
+  })
+
+  it('unassigns group users and revokes their tokens', async () => {
+    const { unassignUser } = loadHandler()
+    const req = { user: { permissions: ['manage:groups'] }, params: { groupId: '3', userId: '10' } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await unassignUser(req, res, jest.fn())
+
+    expect(global.WIKI.auth.checkAccess).toHaveBeenCalledWith({ permissions: ['manage:groups'] }, ['write:groups', 'manage:groups', 'manage:system'])
+    const group = await global.WIKI.models.groups.query.mock.results[0].value.findById.mock.results[0].value
+    expect(global.WIKI.models.groups.query.mock.results[0].value.findById).toHaveBeenCalledWith(3)
+    expect(global.WIKI.models.users.query.mock.results[0].value.findById).toHaveBeenCalledWith(10)
+    expect(group.$relatedQuery).toHaveBeenCalledWith('users')
+    expect(group.$relatedQuery.mock.results[0].value.unrelate).toHaveBeenCalled()
+    expect(group.$relatedQuery.mock.results[0].value.unrelate.mock.results[0].value.where).toHaveBeenCalledWith('userId', 10)
+    expect(global.WIKI.auth.revokeUserTokens).toHaveBeenCalledWith({ id: 10, kind: 'u' })
+    expect(global.WIKI.events.outbound.emit).toHaveBeenCalledWith('addAuthRevoke', { id: 10, kind: 'u' })
+    expect(res.json).toHaveBeenCalledWith({
+      succeeded: true,
+      message: 'User has been unassigned from group.'
+    })
+  })
+
+  it('returns 403 for group user unassign requests without group admin access', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValueOnce(false)
+    const { unassignUser } = loadHandler()
+    const req = { user: { permissions: ['manage:api'] }, params: { groupId: '3', userId: '10' } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await unassignUser(req, res, jest.fn())
+
+    expect(res.status).toHaveBeenCalledWith(403)
+    expect(res.json).toHaveBeenCalledWith({ error: 'write:groups, manage:groups, or manage:system is required' })
+  })
+
+  it('returns 400 for malformed group user unassign ids', async () => {
+    const { unassignUser } = loadHandler()
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await unassignUser({ user: { permissions: ['manage:groups'] }, params: { groupId: 'bad', userId: '10' } }, res, jest.fn())
+    await unassignUser({ user: { permissions: ['manage:groups'] }, params: { groupId: '3', userId: 'bad' } }, res, jest.fn())
+
+    expect(res.status).toHaveBeenNthCalledWith(1, 400)
+    expect(res.json).toHaveBeenNthCalledWith(1, { error: 'group id must be a positive integer' })
+    expect(res.status).toHaveBeenNthCalledWith(2, 400)
+    expect(res.json).toHaveBeenNthCalledWith(2, { error: 'user id must be a positive integer' })
+  })
+
+  it('returns protected account errors for invalid group user unassigns', async () => {
+    const { unassignUser } = loadHandler()
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await unassignUser({ user: { permissions: ['manage:groups'] }, params: { groupId: '3', userId: '2' } }, res, jest.fn())
+    await unassignUser({ user: { permissions: ['manage:groups'] }, params: { groupId: '1', userId: '1' } }, res, jest.fn())
+
+    expect(res.status).toHaveBeenNthCalledWith(1, 400)
+    expect(res.json).toHaveBeenNthCalledWith(1, { error: 'Cannot unassign Guest user' })
+    expect(res.status).toHaveBeenNthCalledWith(2, 400)
+    expect(res.json).toHaveBeenNthCalledWith(2, { error: 'Cannot unassign Administrator user from Administrators group.' })
+  })
+
+  it('returns 404 when unassign group or user targets are missing', async () => {
+    const { unassignUser } = loadHandler()
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    global.WIKI.models.groups.query.mockReturnValueOnce({
+      findById: jest.fn().mockResolvedValue(null)
+    })
+    await unassignUser({ user: { permissions: ['manage:groups'] }, params: { groupId: '999', userId: '10' } }, res, jest.fn())
+
+    global.WIKI.models.users.query.mockReturnValueOnce({
+      findById: jest.fn().mockResolvedValue(null)
+    })
+    await unassignUser({ user: { permissions: ['manage:groups'] }, params: { groupId: '3', userId: '999' } }, res, jest.fn())
+
+    expect(res.status).toHaveBeenNthCalledWith(1, 404)
+    expect(res.json).toHaveBeenNthCalledWith(1, { error: 'Invalid Group ID' })
+    expect(res.status).toHaveBeenNthCalledWith(2, 404)
+    expect(res.json).toHaveBeenNthCalledWith(2, { error: 'Invalid User ID' })
+  })
+
+  it('forwards unexpected group user unassign failures to next', async () => {
+    const next = jest.fn()
+    global.WIKI.models.groups.query.mockReturnValueOnce({
+      findById: jest.fn().mockRejectedValue(new Error('unassign db down'))
+    })
+    const { unassignUser } = loadHandler()
+    const req = { user: { permissions: ['manage:groups'] }, params: { groupId: '3', userId: '10' } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await unassignUser(req, res, next)
+
+    expect(next).toHaveBeenCalledWith(expect.any(Error))
+    expect(next.mock.calls[0][0].message).toBe('unassign db down')
   })
 
   it('returns the admin group detail payload for group admins', async () => {
