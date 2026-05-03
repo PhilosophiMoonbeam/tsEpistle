@@ -19,7 +19,7 @@
     "client/helpers/*-api.js",
     "client/helpers/page-actions.js",
     "client/helpers/root-ui-store.js",
-    "client/helpers/search-navigation-events.js",
+    "client/helpers/search-navigation-events.ts",
     "client/helpers/page-action-events.js",
     "client/helpers/editor-conflict-events.js",
     "client/helpers/editor-insert-events.js",

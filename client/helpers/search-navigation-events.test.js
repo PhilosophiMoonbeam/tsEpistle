@@ -13,7 +13,7 @@ const {
 } = require('./search-navigation-events')
 
 const repoRoot = path.resolve(__dirname, '../..')
-const helperPath = path.join(repoRoot, 'client/helpers/search-navigation-events.js')
+const helperPath = path.join(repoRoot, 'client/helpers/search-navigation-events.ts')
 const guardedFiles = [
   'client/components/common/nav-header.vue',
   'client/components/common/search-results.vue'
@@ -122,7 +122,7 @@ describe('search navigation event usage', () => {
   test('search navigation helper owns its bus instead of requiring caller root instances', () => {
     const source = fs.readFileSync(helperPath, 'utf8')
 
-    expect(source).toContain("require('./simple-event-bus')")
+    expect(source).toContain("import { createEventBus } from './simple-event-bus'")
     expect(source).not.toMatch(/require\(\s*['"]vue['"]\s*\)/)
     expect(source).not.toMatch(/new\s+Vue\s*\(/)
     expect(source).not.toMatch(/\.\$(?:emit|on|off)\s*\(/)
