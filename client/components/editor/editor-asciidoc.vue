@@ -481,14 +481,14 @@ export default {
     // Render initial preview
     this.processContent(this.$store.get('editor/content'))
 
-    onEditorInsert(this.$root, this.handleEditorInsert)
+    onEditorInsert(this.handleEditorInsert)
 
     // Handle save conflict
     onEditorSaveConflict(this.$root, this.handleEditorSaveConflict)
     onEditorContentOverwrite(this.$root, this.handleEditorContentOverwrite)
   },
   beforeDestroy() {
-    offEditorInsert(this.$root, this.handleEditorInsert)
+    offEditorInsert(this.handleEditorInsert)
     offEditorSaveConflict(this.$root, this.handleEditorSaveConflict)
     offEditorContentOverwrite(this.$root, this.handleEditorContentOverwrite)
   }

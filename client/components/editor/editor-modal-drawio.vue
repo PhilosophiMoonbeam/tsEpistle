@@ -78,7 +78,7 @@ export default {
           }
           case 'export': {
             const svgDataStart = msg.data.indexOf('base64,') + 7
-            emitEditorInsert(this.$root, {
+            emitEditorInsert({
               kind: 'DIAGRAM',
               text: msg.data.slice(svgDataStart)
               // text: msg.xml.replace(/ agent="(.*?)"/, '').replace(/ host="(.*?)"/, '').replace(/ etag="(.*?)"/, '')

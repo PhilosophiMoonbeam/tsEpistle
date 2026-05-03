@@ -458,10 +458,10 @@ export default {
     }
   },
   mounted () {
-    onEditorInsert(this.$root, this.handleEditorInsert)
+    onEditorInsert(this.handleEditorInsert)
   },
   beforeDestroy() {
-    offEditorInsert(this.$root, this.handleEditorInsert)
+    offEditorInsert(this.handleEditorInsert)
   },
   apollo: {
     config: {

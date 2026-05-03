@@ -130,7 +130,7 @@ export default {
       this.$store.set('editor/content', beautify(this.editor.getData(), { indent_size: 2, end_with_newline: true }))
     }, 300))
 
-    onEditorInsert(this.$root, this.handleEditorInsert)
+    onEditorInsert(this.handleEditorInsert)
     onEditorLinkToPage(this.handleEditorLinkToPage)
 
     // Handle save conflict
@@ -138,7 +138,7 @@ export default {
     onEditorContentOverwrite(this.$root, this.handleEditorContentOverwrite)
   },
   beforeDestroy () {
-    offEditorInsert(this.$root, this.handleEditorInsert)
+    offEditorInsert(this.handleEditorInsert)
     offEditorLinkToPage(this.handleEditorLinkToPage)
     offEditorSaveConflict(this.$root, this.handleEditorSaveConflict)
     offEditorContentOverwrite(this.$root, this.handleEditorContentOverwrite)

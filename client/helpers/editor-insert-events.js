@@ -1,16 +1,19 @@
+const Vue = require('vue')
+
 const EDITOR_INSERT_EVENT = 'editorInsert'
+const editorInsertBus = new Vue()
 
-function emitEditorInsert (root, opts) {
-  root.$emit(EDITOR_INSERT_EVENT, opts)
+function emitEditorInsert (opts) {
+  editorInsertBus.$emit(EDITOR_INSERT_EVENT, opts)
 }
 
-function onEditorInsert (root, handler) {
-  root.$on(EDITOR_INSERT_EVENT, handler)
+function onEditorInsert (handler) {
+  editorInsertBus.$on(EDITOR_INSERT_EVENT, handler)
 }
 
-function offEditorInsert (root, handler) {
+function offEditorInsert (handler) {
   if (!handler) { return }
-  root.$off(EDITOR_INSERT_EVENT, handler)
+  editorInsertBus.$off(EDITOR_INSERT_EVENT, handler)
 }
 
 module.exports = {

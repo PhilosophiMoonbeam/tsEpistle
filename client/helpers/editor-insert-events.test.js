@@ -23,14 +23,6 @@ const guardedListenerFiles = [
   'client/components/editor/editor-markdown.vue'
 ]
 
-function createRoot () {
-  return {
-    $emit: jest.fn(),
-    $on: jest.fn(),
-    $off: jest.fn()
-  }
-}
-
 function getLineNumber (content, index) {
   return content.slice(0, index).split(/\r?\n/).length
 }
@@ -43,9 +35,13 @@ function directEditorInsertListenerPattern () {
   return /\bthis\s*\.\s*\$root\s*\.\s*\$(?:on|off)\s*\(\s*(['"`])editorInsert\1/g
 }
 
+function helperRootCallPattern () {
+  return /\b(?:emit|on|off)EditorInsert\s*\(\s*this\s*\.\s*\$root/g
+}
+
 describe('editor insert events', () => {
   test('emitEditorInsert emits the shared editor insert event with the original payload', () => {
-    const root = createRoot()
+    const handler = jest.fn()
     const opts = {
       kind: 'IMAGE',
       path: '/asset.png',
@@ -53,50 +49,51 @@ describe('editor insert events', () => {
       align: 'center'
     }
 
-    emitEditorInsert(root, opts)
+    onEditorInsert(handler)
+    emitEditorInsert(opts)
+    offEditorInsert(handler)
 
-    expect(root.$emit).toHaveBeenCalledWith(EDITOR_INSERT_EVENT, opts)
-  })
-
-  test('onEditorInsert subscribes to the shared editor insert event', () => {
-    const root = createRoot()
-    const handler = jest.fn()
-
-    onEditorInsert(root, handler)
-
-    expect(root.$on).toHaveBeenCalledWith(EDITOR_INSERT_EVENT, handler)
+    expect(handler).toHaveBeenCalledWith(opts)
   })
 
   test('offEditorInsert unsubscribes from the shared editor insert event with the same handler', () => {
-    const root = createRoot()
     const handler = jest.fn()
 
-    offEditorInsert(root, handler)
+    onEditorInsert(handler)
+    offEditorInsert(handler)
+    emitEditorInsert({ kind: 'IMAGE', path: '/asset.png' })
 
-    expect(root.$off).toHaveBeenCalledWith(EDITOR_INSERT_EVENT, handler)
+    expect(handler).not.toHaveBeenCalled()
   })
 
   test('offEditorInsert does not broadly unsubscribe without a handler', () => {
-    const root = createRoot()
+    const handler = jest.fn()
 
-    offEditorInsert(root)
+    onEditorInsert(handler)
+    offEditorInsert()
+    emitEditorInsert({ kind: 'IMAGE', path: '/asset.png' })
+    offEditorInsert(handler)
 
-    expect(root.$off).not.toHaveBeenCalled()
+    expect(handler).toHaveBeenCalledTimes(1)
   })
 })
 
 describe('editor insert event emitter usage', () => {
-  test('editor insert emitters use the helper instead of direct root bus emits', () => {
+  test('editor insert emitters avoid direct root bus emits and root-backed helper calls', () => {
     const offenders = []
 
     for (const relPath of guardedEmitterFiles) {
       const filePath = path.join(repoRoot, relPath)
       const content = fs.readFileSync(filePath, 'utf8')
-      const pattern = directEditorInsertEmitPattern()
+      const directPattern = directEditorInsertEmitPattern()
+      const helperPattern = helperRootCallPattern()
       let match
 
-      while ((match = pattern.exec(content)) !== null) {
+      while ((match = directPattern.exec(content)) !== null) {
         offenders.push(`${relPath}:${getLineNumber(content, match.index)}: direct this.$root.$emit for ${EDITOR_INSERT_EVENT}`)
+      }
+      while ((match = helperPattern.exec(content)) !== null) {
+        offenders.push(`${relPath}:${getLineNumber(content, match.index)}: root-backed editor insert helper call`)
       }
     }
 
@@ -105,17 +102,21 @@ describe('editor insert event emitter usage', () => {
 })
 
 describe('editor insert event listener usage', () => {
-  test('migrated and cleaned-up listeners avoid direct root bus listeners', () => {
+  test('migrated and cleaned-up listeners avoid direct root bus listeners and root-backed helper calls', () => {
     const offenders = []
 
     for (const relPath of guardedListenerFiles) {
       const filePath = path.join(repoRoot, relPath)
       const content = fs.readFileSync(filePath, 'utf8')
-      const pattern = directEditorInsertListenerPattern()
+      const directPattern = directEditorInsertListenerPattern()
+      const helperPattern = helperRootCallPattern()
       let match
 
-      while ((match = pattern.exec(content)) !== null) {
+      while ((match = directPattern.exec(content)) !== null) {
         offenders.push(`${relPath}:${getLineNumber(content, match.index)}: direct this.$root listener for ${EDITOR_INSERT_EVENT}`)
+      }
+      while ((match = helperPattern.exec(content)) !== null) {
+        offenders.push(`${relPath}:${getLineNumber(content, match.index)}: root-backed editor insert helper call`)
       }
     }
 
