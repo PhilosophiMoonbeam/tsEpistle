@@ -1,4 +1,4 @@
-const { fetchSystemSummary, fetchSystemInfo, fetchSystemTelemetry, fetchSystemExportStatus, fetchSystemHost, fetchSystemSsl, fetchSystemFlags, fetchSystemExtensions, updateSystemFlags, updateSystemTelemetry, resetSystemTelemetryClientId } = require('./system-api')
+const { fetchSystemSummary, fetchSystemInfo, fetchSystemTelemetry, fetchSystemExportStatus, fetchSystemHost, fetchSystemSsl, fetchSystemFlags, fetchSystemExtensions, updateSystemFlags, updateSystemTelemetry, resetSystemTelemetryClientId, flushSystemCache, flushSystemTemporaryUploads } = require('./system-api')
 
 function createJsonResponse (payload, ok = true) {
   return {
@@ -501,6 +501,56 @@ describe('system api helper', () => {
     })
 
     await expect(fetchSystemExtensions(fetchImpl, 'Bad extension load')).rejects.toThrow('Bad extension load')
+  })
+
+  test('flushes system cache through REST', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ message: 'Cache flushed successfully.' }))
+
+    await expect(flushSystemCache(fetchImpl)).resolves.toEqual({ message: 'Cache flushed successfully.' })
+    expect(fetchImpl).toHaveBeenCalledWith('/_api/system/cache/flush', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: {
+        Accept: 'application/json'
+      }
+    })
+  })
+
+  test('rejects malformed system cache flush responses', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ message: '' }))
+
+    await expect(flushSystemCache(fetchImpl)).rejects.toThrow('Cache flush failed')
+  })
+
+  test('surfaces API error messages for failed system cache flushes', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ error: 'cache denied' }, false))
+
+    await expect(flushSystemCache(fetchImpl)).rejects.toThrow('cache denied')
+  })
+
+  test('flushes temporary uploads through REST', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ message: 'Temporary Uploads flushed successfully.' }))
+
+    await expect(flushSystemTemporaryUploads(fetchImpl)).resolves.toEqual({ message: 'Temporary Uploads flushed successfully.' })
+    expect(fetchImpl).toHaveBeenCalledWith('/_api/system/cache/temp-uploads/flush', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: {
+        Accept: 'application/json'
+      }
+    })
+  })
+
+  test('rejects malformed temporary uploads flush responses', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ message: '' }))
+
+    await expect(flushSystemTemporaryUploads(fetchImpl)).rejects.toThrow('Temporary Uploads flush failed')
+  })
+
+  test('surfaces API error messages for failed temporary uploads flushes', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ error: 'uploads denied' }, false))
+
+    await expect(flushSystemTemporaryUploads(fetchImpl)).rejects.toThrow('uploads denied')
   })
 
   test('submits system flags update as xhr JSON and returns parsed message', async () => {

@@ -27,8 +27,7 @@
 <script>
 import _ from 'lodash'
 import { loadingStart, loadingStop, showNotification, pushGraphError } from '../../helpers/root-ui-store'
-import utilityCacheFlushCacheMutation from 'gql/admin/utilities/utilities-mutation-cache-flushcache.gql'
-import utilityCacheFlushUploadsMutation from 'gql/admin/utilities/utilities-mutation-cache-flushuploads.gql'
+import { flushSystemCache, flushSystemTemporaryUploads } from '../../helpers/system-api'
 
 export default {
   data() {
@@ -42,19 +41,12 @@ export default {
       loadingStart(this.$store, 'admin-utilities-cache-flushCache')
 
       try {
-        const respRaw = await this.$apollo.mutate({
-          mutation: utilityCacheFlushCacheMutation
+        await flushSystemCache(window.fetch.bind(window))
+        showNotification(this.$store, {
+          message: 'Cache flushed successfully.',
+          style: 'success',
+          icon: 'check'
         })
-        const resp = _.get(respRaw, 'data.pages.flushCache.responseResult', {})
-        if (resp.succeeded) {
-          showNotification(this.$store, {
-            message: 'Cache flushed successfully.',
-            style: 'success',
-            icon: 'check'
-          })
-        } else {
-          throw new Error(resp.message)
-        }
       } catch (err) {
         pushGraphError(this.$store, err)
       }
@@ -67,19 +59,12 @@ export default {
       loadingStart(this.$store, 'admin-utilities-cache-flushUploads')
 
       try {
-        const respRaw = await this.$apollo.mutate({
-          mutation: utilityCacheFlushUploadsMutation
+        await flushSystemTemporaryUploads(window.fetch.bind(window))
+        showNotification(this.$store, {
+          message: 'Temporary Uploads flushed successfully.',
+          style: 'success',
+          icon: 'check'
         })
-        const resp = _.get(respRaw, 'data.assets.flushTempUploads.responseResult', {})
-        if (resp.succeeded) {
-          showNotification(this.$store, {
-            message: 'Temporary Uploads flushed successfully.',
-            style: 'success',
-            icon: 'check'
-          })
-        } else {
-          throw new Error(resp.message)
-        }
       } catch (err) {
         pushGraphError(this.$store, err)
       }

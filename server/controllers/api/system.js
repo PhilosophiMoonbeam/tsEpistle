@@ -243,6 +243,33 @@ router.post('/telemetry/reset-client-id', async (req, res, next) => {
   }
 })
 
+router.post('/cache/flush', async (req, res) => {
+  if (!requireSystemAccess(req, res)) {
+    return
+  }
+
+  try {
+    await WIKI.models.pages.flushCache()
+    WIKI.events.outbound.emit('flushCache')
+    res.json({ message: 'Cache flushed successfully.' })
+  } catch (err) {
+    res.status(500).json({ error: err.message || 'Cache flush failed' })
+  }
+})
+
+router.post('/cache/temp-uploads/flush', async (req, res) => {
+  if (!requireSystemAccess(req, res)) {
+    return
+  }
+
+  try {
+    await WIKI.models.assets.flushTempUploads()
+    res.json({ message: 'Temporary Uploads flushed successfully.' })
+  } catch (err) {
+    res.status(500).json({ error: err.message || 'Temporary Uploads flush failed' })
+  }
+})
+
 router.get('/export-status', (req, res) => {
   if (!requireSystemAccess(req, res)) {
     return

@@ -61,7 +61,7 @@ const extractMethod = (script, name) => {
   return extractBlock(script, methodStart, bodyStart)
 }
 
-describe('admin utilities cache root UI facade migration guard', () => {
+describe('admin utilities cache REST facade migration guard', () => {
   const componentPath = path.join(process.cwd(), 'client/components/admin/admin-utilities-cache.vue')
   const source = fs.readFileSync(componentPath, 'utf8')
   const script = extractScript(source)
@@ -70,47 +70,53 @@ describe('admin utilities cache root UI facade migration guard', () => {
   const flushClientLocaleCache = script && extractMethod(script, 'flushClientLocaleCache')
   const directRootUiCommit = /\$store\.commit\(\s*(?:`loading(?:Start|Stop)`|['"]loading(?:Start|Stop)['"]|`showNotification`|['"]showNotification['"]|`pushGraphError`|['"]pushGraphError['"])\s*,/
 
-  test('admin-utilities-cache.vue imports root UI facades without changing gql or lodash dependencies', () => {
+  test('admin-utilities-cache.vue imports REST helpers and removes cache GraphQL mutations', () => {
     expect(script).not.toBeNull()
 
-    expect(script).toMatch(/import\s+_\s+from\s+['"]lodash['"]/)
+    expect(script).toMatch(/import\s+_\s+from\s+['"]lodash['"]/) // still needed for localStorage key matching
     expect(script).toMatch(/import\s+\{(?=[^}]*\bloadingStart\b)(?=[^}]*\bloadingStop\b)(?=[^}]*\bshowNotification\b)(?=[^}]*\bpushGraphError\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/root-ui-store['"]/)
-    expect(script).toMatch(/import\s+utilityCacheFlushCacheMutation\s+from\s+['"]gql\/admin\/utilities\/utilities-mutation-cache-flushcache\.gql['"]/)
-    expect(script).toMatch(/import\s+utilityCacheFlushUploadsMutation\s+from\s+['"]gql\/admin\/utilities\/utilities-mutation-cache-flushuploads\.gql['"]/)
+    expect(script).toMatch(/import\s+\{(?=[^}]*\bflushSystemCache\b)(?=[^}]*\bflushSystemTemporaryUploads\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/system-api['"]/)
+    expect(script).not.toMatch(/utilities-mutation-cache-flush(?:cache|uploads)\.gql/)
+    expect(script).not.toMatch(/utilityCacheFlush(?:Cache|Uploads)Mutation/)
+    expect(script).not.toMatch(/\$apollo\.mutate/)
   })
 
-  test('flushCache uses loading, notification, and GraphQL error facades while preserving mutation flow', () => {
+  test('flushCache uses REST helper while preserving loading, notification, and error facades', () => {
     expect(flushCache).not.toBeNull()
 
-    expect(flushCache).toMatch(/async\s+flushCache\s*\(\s*\)\s*\{\s*this\.loading\s*=\s*true\s*loadingStart\s*\(\s*this\.\$store\s*,\s*['"]admin-utilities-cache-flushCache['"]\s*\)[\s\S]*?try\s*\{[\s\S]*?const\s+respRaw\s*=\s*await\s+this\.\$apollo\.mutate\s*\(\s*\{\s*mutation:\s*utilityCacheFlushCacheMutation\s*\}\s*\)[\s\S]*?const\s+resp\s*=\s*_\.get\s*\(\s*respRaw\s*,\s*['"]data\.pages\.flushCache\.responseResult['"]\s*,\s*\{\s*\}\s*\)[\s\S]*?if\s*\(\s*resp\.succeeded\s*\)\s*\{\s*showNotification\s*\(\s*this\.\$store\s*,\s*\{\s*message:\s*['"]Cache flushed successfully\.['"]\s*,\s*style:\s*['"]success['"]\s*,\s*icon:\s*['"]check['"]\s*\}\s*\)\s*\}\s*else\s*\{\s*throw\s+new\s+Error\s*\(\s*resp\.message\s*\)\s*\}\s*\}\s*catch\s*\(\s*err\s*\)\s*\{\s*pushGraphError\s*\(\s*this\.\$store\s*,\s*err\s*\)\s*\}\s*loadingStop\s*\(\s*this\.\$store\s*,\s*['"]admin-utilities-cache-flushCache['"]\s*\)\s*this\.loading\s*=\s*false\s*\}/)
+    expect(flushCache).toMatch(/this\.loading\s*=\s*true/)
+    expect(flushCache).toMatch(/loadingStart\s*\(\s*this\.\$store\s*,\s*['"]admin-utilities-cache-flushCache['"]\s*\)/)
+    expect(flushCache).toMatch(/await\s+flushSystemCache\s*\(\s*window\.fetch\.bind\s*\(\s*window\s*\)\s*\)/)
+    expect(flushCache).toMatch(/showNotification\s*\(\s*this\.\$store\s*,\s*\{\s*message:\s*['"]Cache flushed successfully\.['"]\s*,\s*style:\s*['"]success['"]\s*,\s*icon:\s*['"]check['"]\s*\}\s*\)/)
+    expect(flushCache).toMatch(/catch\s*\(\s*err\s*\)\s*\{\s*pushGraphError\s*\(\s*this\.\$store\s*,\s*err\s*\)\s*\}/)
+    expect(flushCache).toMatch(/loadingStop\s*\(\s*this\.\$store\s*,\s*['"]admin-utilities-cache-flushCache['"]\s*\)/)
+    expect(flushCache).toMatch(/this\.loading\s*=\s*false/)
+    expect(flushCache).not.toMatch(/this\.\$apollo\.mutate|utilityCacheFlushCacheMutation/)
     expect(flushCache).not.toMatch(directRootUiCommit)
-
-    expect(flushCache.match(/\bloadingStart\s*\(/g) || []).toHaveLength(1)
-    expect(flushCache.match(/\bshowNotification\s*\(/g) || []).toHaveLength(1)
-    expect(flushCache.match(/\bpushGraphError\s*\(/g) || []).toHaveLength(1)
-    expect(flushCache.match(/\bloadingStop\s*\(/g) || []).toHaveLength(1)
   })
 
-  test('flushUploads uses loading, notification, and GraphQL error facades while preserving mutation flow', () => {
+  test('flushUploads uses REST helper while preserving loading, notification, and error facades', () => {
     expect(flushUploads).not.toBeNull()
 
-    expect(flushUploads).toMatch(/async\s+flushUploads\s*\(\s*\)\s*\{\s*this\.loading\s*=\s*true\s*loadingStart\s*\(\s*this\.\$store\s*,\s*['"]admin-utilities-cache-flushUploads['"]\s*\)[\s\S]*?try\s*\{[\s\S]*?const\s+respRaw\s*=\s*await\s+this\.\$apollo\.mutate\s*\(\s*\{\s*mutation:\s*utilityCacheFlushUploadsMutation\s*\}\s*\)[\s\S]*?const\s+resp\s*=\s*_\.get\s*\(\s*respRaw\s*,\s*['"]data\.assets\.flushTempUploads\.responseResult['"]\s*,\s*\{\s*\}\s*\)[\s\S]*?if\s*\(\s*resp\.succeeded\s*\)\s*\{\s*showNotification\s*\(\s*this\.\$store\s*,\s*\{\s*message:\s*['"]Temporary Uploads flushed successfully\.['"]\s*,\s*style:\s*['"]success['"]\s*,\s*icon:\s*['"]check['"]\s*\}\s*\)\s*\}\s*else\s*\{\s*throw\s+new\s+Error\s*\(\s*resp\.message\s*\)\s*\}\s*\}\s*catch\s*\(\s*err\s*\)\s*\{\s*pushGraphError\s*\(\s*this\.\$store\s*,\s*err\s*\)\s*\}\s*loadingStop\s*\(\s*this\.\$store\s*,\s*['"]admin-utilities-cache-flushUploads['"]\s*\)\s*this\.loading\s*=\s*false\s*\}/)
+    expect(flushUploads).toMatch(/this\.loading\s*=\s*true/)
+    expect(flushUploads).toMatch(/loadingStart\s*\(\s*this\.\$store\s*,\s*['"]admin-utilities-cache-flushUploads['"]\s*\)/)
+    expect(flushUploads).toMatch(/await\s+flushSystemTemporaryUploads\s*\(\s*window\.fetch\.bind\s*\(\s*window\s*\)\s*\)/)
+    expect(flushUploads).toMatch(/showNotification\s*\(\s*this\.\$store\s*,\s*\{\s*message:\s*['"]Temporary Uploads flushed successfully\.['"]\s*,\s*style:\s*['"]success['"]\s*,\s*icon:\s*['"]check['"]\s*\}\s*\)/)
+    expect(flushUploads).toMatch(/catch\s*\(\s*err\s*\)\s*\{\s*pushGraphError\s*\(\s*this\.\$store\s*,\s*err\s*\)\s*\}/)
+    expect(flushUploads).toMatch(/loadingStop\s*\(\s*this\.\$store\s*,\s*['"]admin-utilities-cache-flushUploads['"]\s*\)/)
+    expect(flushUploads).toMatch(/this\.loading\s*=\s*false/)
+    expect(flushUploads).not.toMatch(/this\.\$apollo\.mutate|utilityCacheFlushUploadsMutation/)
     expect(flushUploads).not.toMatch(directRootUiCommit)
-
-    expect(flushUploads.match(/\bloadingStart\s*\(/g) || []).toHaveLength(1)
-    expect(flushUploads.match(/\bshowNotification\s*\(/g) || []).toHaveLength(1)
-    expect(flushUploads.match(/\bpushGraphError\s*\(/g) || []).toHaveLength(1)
-    expect(flushUploads.match(/\bloadingStop\s*\(/g) || []).toHaveLength(1)
   })
 
-  test('flushClientLocaleCache preserves the localStorage loop and only migrates the success notification', () => {
+  test('flushClientLocaleCache remains local-only and keeps lodash usage', () => {
     expect(flushClientLocaleCache).not.toBeNull()
 
-    expect(flushClientLocaleCache).toMatch(/async\s+flushClientLocaleCache\s*\(\s*\)\s*\{\s*for\s*\(\s*let\s+i\s*=\s*0\s*;\s*i\s*<\s*window\.localStorage\.length\s*;\s*i\+\+\s*\)\s*\{\s*const\s+lsKey\s*=\s*window\.localStorage\.key\s*\(\s*i\s*\)\s*if\s*\(\s*_\.startsWith\s*\(\s*lsKey\s*,\s*['"]i18next_res['"]\s*\)\s*\)\s*\{\s*window\.localStorage\.removeItem\s*\(\s*lsKey\s*\)\s*\}\s*\}\s*showNotification\s*\(\s*this\.\$store\s*,\s*\{\s*message:\s*['"]Locale Client-Side Cache flushed successfully\.['"]\s*,\s*style:\s*['"]success['"]\s*,\s*icon:\s*['"]check['"]\s*\}\s*\)\s*\}/)
+    expect(flushClientLocaleCache).toMatch(/window\.localStorage\.length/)
+    expect(flushClientLocaleCache).toMatch(/_\.startsWith\s*\(\s*lsKey\s*,\s*['"]i18next_res['"]\s*\)/)
+    expect(flushClientLocaleCache).toMatch(/window\.localStorage\.removeItem\s*\(\s*lsKey\s*\)/)
+    expect(flushClientLocaleCache).toMatch(/message:\s*['"]Locale Client-Side Cache flushed successfully\.['"]/)
+    expect(flushClientLocaleCache).not.toMatch(/\bflushSystem(?:Cache|TemporaryUploads)\s*\(/)
     expect(flushClientLocaleCache).not.toMatch(directRootUiCommit)
-
-    expect(flushClientLocaleCache.match(/\bshowNotification\s*\(/g) || []).toHaveLength(1)
-    expect(flushClientLocaleCache).not.toMatch(/\bloading(?:Start|Stop)\s*\(/)
-    expect(flushClientLocaleCache).not.toMatch(/\bpushGraphError\s*\(/)
   })
 })

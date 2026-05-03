@@ -353,6 +353,40 @@ async function resetSystemTelemetryClientId (fetchImpl, fallbackMessage = 'Telem
   return payload
 }
 
+async function flushSystemCache (fetchImpl, fallbackMessage = 'Cache flush failed') {
+  const response = await fetchImpl('/_api/system/cache/flush', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: {
+      Accept: 'application/json'
+    }
+  })
+
+  const payload = await parseJsonResponse(response, fallbackMessage)
+  if (!payload || typeof payload.message !== 'string' || payload.message.length < 1) {
+    throw new Error(fallbackMessage)
+  }
+
+  return payload
+}
+
+async function flushSystemTemporaryUploads (fetchImpl, fallbackMessage = 'Temporary Uploads flush failed') {
+  const response = await fetchImpl('/_api/system/cache/temp-uploads/flush', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: {
+      Accept: 'application/json'
+    }
+  })
+
+  const payload = await parseJsonResponse(response, fallbackMessage)
+  if (!payload || typeof payload.message !== 'string' || payload.message.length < 1) {
+    throw new Error(fallbackMessage)
+  }
+
+  return payload
+}
+
 module.exports = {
   fetchSystemSummary,
   fetchSystemInfo,
@@ -364,5 +398,7 @@ module.exports = {
   fetchSystemExtensions,
   updateSystemFlags,
   updateSystemTelemetry,
-  resetSystemTelemetryClientId
+  resetSystemTelemetryClientId,
+  flushSystemCache,
+  flushSystemTemporaryUploads
 }

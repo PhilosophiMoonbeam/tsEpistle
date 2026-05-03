@@ -105,7 +105,11 @@ describe('controllers/api system endpoints', () => {
             count: jest.fn(() => ({
               first: jest.fn().mockResolvedValue({ total: '42' })
             }))
-          }))
+          })),
+          flushCache: jest.fn().mockResolvedValue(true)
+        },
+        assets: {
+          flushTempUploads: jest.fn().mockResolvedValue(true)
         },
         users: {
           query: jest.fn(() => ({
@@ -142,6 +146,11 @@ describe('controllers/api system endpoints', () => {
         enabled: true,
         generateClientId: jest.fn()
       },
+      events: {
+        outbound: {
+          emit: jest.fn()
+        }
+      },
       servers: {
         servers: {
           http: {
@@ -167,6 +176,8 @@ describe('controllers/api system endpoints', () => {
       telemetry: express.__router.get.mock.calls.find(([path]) => path === '/telemetry')[1],
       updateTelemetry: express.__router.patch.mock.calls.find(([path]) => path === '/telemetry')[1],
       resetTelemetryClientId: express.__router.post.mock.calls.find(([path]) => path === '/telemetry/reset-client-id')[1],
+      flushSystemCache: express.__router.post.mock.calls.find(([path]) => path === '/cache/flush')[1],
+      flushSystemTemporaryUploads: express.__router.post.mock.calls.find(([path]) => path === '/cache/temp-uploads/flush')[1],
       exportStatus: express.__router.get.mock.calls.find(([path]) => path === '/export-status')[1],
       ssl: express.__router.get.mock.calls.find(([path]) => path === '/ssl')[1],
       saveFlags: express.__router.post.mock.calls.find(([path]) => path === '/flags')[1],
@@ -185,6 +196,8 @@ describe('controllers/api system endpoints', () => {
     expect(typeof handlers.telemetry).toBe('function')
     expect(typeof handlers.updateTelemetry).toBe('function')
     expect(typeof handlers.resetTelemetryClientId).toBe('function')
+    expect(typeof handlers.flushSystemCache).toBe('function')
+    expect(typeof handlers.flushSystemTemporaryUploads).toBe('function')
     expect(typeof handlers.exportStatus).toBe('function')
     expect(typeof handlers.ssl).toBe('function')
     expect(typeof handlers.saveFlags).toBe('function')
@@ -193,7 +206,7 @@ describe('controllers/api system endpoints', () => {
 
   it('returns 403 for unauthorized system requests', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(false)
-    const { info, summary, flags, host, extensions, telemetry, updateTelemetry, resetTelemetryClientId, exportStatus, ssl, saveFlags, checkForUpdate } = loadHandlers()
+    const { info, summary, flags, host, extensions, telemetry, updateTelemetry, resetTelemetryClientId, flushSystemCache, flushSystemTemporaryUploads, exportStatus, ssl, saveFlags, checkForUpdate } = loadHandlers()
     const req = { user: { permissions: [] }, get: jest.fn() }
     const res = { sendStatus: jest.fn(), json: jest.fn() }
 
@@ -205,13 +218,15 @@ describe('controllers/api system endpoints', () => {
     await telemetry(req, res)
     await updateTelemetry(req, res)
     await resetTelemetryClientId(req, res)
+    await flushSystemCache(req, res)
+    await flushSystemTemporaryUploads(req, res)
     await exportStatus(req, res)
     await ssl(req, res)
     await saveFlags(req, res)
     await checkForUpdate(req, res)
 
-    expect(res.sendStatus).toHaveBeenCalledTimes(12)
-    for (let idx = 1; idx <= 12; idx++) {
+    expect(res.sendStatus).toHaveBeenCalledTimes(14)
+    for (let idx = 1; idx <= 14; idx++) {
       expect(res.sendStatus).toHaveBeenNthCalledWith(idx, 403)
     }
     expect(res.json).not.toHaveBeenCalled()
@@ -426,6 +441,58 @@ describe('controllers/api system endpoints', () => {
     expect(global.WIKI.telemetry.generateClientId).toHaveBeenCalled()
     expect(next).toHaveBeenCalledWith(expect.any(Error))
     expect(next.mock.calls[0][0].message).toBe('telemetry reset failed')
+  })
+
+  it('flushes pages cache and emits outbound cache invalidation for authorized requests', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValue(true)
+    const { flushSystemCache } = loadHandlers()
+    const req = { user: { permissions: ['manage:system'] } }
+    const res = { json: jest.fn(), sendStatus: jest.fn() }
+
+    await flushSystemCache(req, res, jest.fn())
+
+    expect(global.WIKI.models.pages.flushCache).toHaveBeenCalledTimes(1)
+    expect(global.WIKI.events.outbound.emit).toHaveBeenCalledWith('flushCache')
+    expect(res.json).toHaveBeenCalledWith({ message: 'Cache flushed successfully.' })
+  })
+
+  it('returns JSON error messages for pages cache flush failures', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValue(true)
+    global.WIKI.models.pages.flushCache.mockRejectedValueOnce(new Error('cache flush failed'))
+    const { flushSystemCache } = loadHandlers()
+    const req = { user: { permissions: ['manage:system'] } }
+    const res = { json: jest.fn(), sendStatus: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await flushSystemCache(req, res)
+
+    expect(global.WIKI.events.outbound.emit).not.toHaveBeenCalled()
+    expect(res.status).toHaveBeenCalledWith(500)
+    expect(res.json).toHaveBeenCalledWith({ error: 'cache flush failed' })
+  })
+
+  it('flushes temporary uploads for authorized requests', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValue(true)
+    const { flushSystemTemporaryUploads } = loadHandlers()
+    const req = { user: { permissions: ['manage:system'] } }
+    const res = { json: jest.fn(), sendStatus: jest.fn() }
+
+    await flushSystemTemporaryUploads(req, res, jest.fn())
+
+    expect(global.WIKI.models.assets.flushTempUploads).toHaveBeenCalledTimes(1)
+    expect(res.json).toHaveBeenCalledWith({ message: 'Temporary Uploads flushed successfully.' })
+  })
+
+  it('returns JSON error messages for temporary uploads flush failures', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValue(true)
+    global.WIKI.models.assets.flushTempUploads.mockRejectedValueOnce(new Error('uploads flush failed'))
+    const { flushSystemTemporaryUploads } = loadHandlers()
+    const req = { user: { permissions: ['manage:system'] } }
+    const res = { json: jest.fn(), sendStatus: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await flushSystemTemporaryUploads(req, res)
+
+    expect(res.status).toHaveBeenCalledWith(500)
+    expect(res.json).toHaveBeenCalledWith({ error: 'uploads flush failed' })
   })
 
   it('returns the safe export status JSON for authorized requests', () => {
