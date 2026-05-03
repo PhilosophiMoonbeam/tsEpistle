@@ -22,8 +22,8 @@ describe('editor conflict showNotification facade migration guard', () => {
     expect(script).toMatch(/this\.latest\s*=\s*resp/)
     expect(script).not.toMatch(/this\.\$store\.commit\s*\(\s*['"]showNotification['"]\s*,/)
 
-    expect(script).toMatch(/useLocal\s*\(\s*\)\s*\{[\s\S]*this\.\$store\.set\s*\(\s*['"]editor\/checkoutDateActive['"]\s*,\s*this\.latest\.updatedAt\s*\)[\s\S]*emitEditorConflictReset\s*\(\s*this\.\$root\s*\)[\s\S]*this\.close\s*\(\s*\)/)
-    expect(script).toMatch(/useRemote\s*\(\s*\)\s*\{[\s\S]*this\.\$store\.set\s*\(\s*['"]editor\/checkoutDateActive['"]\s*,\s*this\.latest\.updatedAt\s*\)[\s\S]*this\.\$store\.set\s*\(\s*['"]editor\/content['"]\s*,\s*this\.latest\.content\s*\)[\s\S]*emitEditorConflictResolved\s*\(\s*this\.\$root\s*\)[\s\S]*this\.close\s*\(\s*\)/)
+    expect(script).toMatch(/useLocal\s*\(\s*\)\s*\{[\s\S]*this\.\$store\.set\s*\(\s*['"]editor\/checkoutDateActive['"]\s*,\s*this\.latest\.updatedAt\s*\)[\s\S]*emitEditorConflictReset\s*\(\s*\)[\s\S]*this\.close\s*\(\s*\)/)
+    expect(script).toMatch(/useRemote\s*\(\s*\)\s*\{[\s\S]*this\.\$store\.set\s*\(\s*['"]editor\/checkoutDateActive['"]\s*,\s*this\.latest\.updatedAt\s*\)[\s\S]*this\.\$store\.set\s*\(\s*['"]editor\/content['"]\s*,\s*this\.latest\.content\s*\)[\s\S]*emitEditorConflictResolved\s*\(\s*\)[\s\S]*this\.close\s*\(\s*\)/)
   })
 
   test('editor modal conflict fetch failure notification uses root-ui-store facade and preserves merge behavior', () => {
@@ -43,7 +43,7 @@ describe('editor conflict showNotification facade migration guard', () => {
 
     expect(script).toMatch(/useLocal\s*\(\s*\)\s*\{[\s\S]*this\.\$store\.set\s*\(\s*['"]editor\/content['"]\s*,\s*this\.cm\.edit\.getValue\s*\(\s*\)\s*\)[\s\S]*this\.overwriteAndClose\s*\(\s*\)/)
     expect(script).toMatch(/useRemote\s*\(\s*\)\s*\{[\s\S]*this\.\$store\.set\s*\(\s*['"]editor\/content['"]\s*,\s*this\.latest\.content\s*\)[\s\S]*this\.overwriteAndClose\s*\(\s*\)/)
-    expect(script).toMatch(/overwriteAndClose\s*\(\s*\)\s*\{[\s\S]*this\.checkoutDateActive\s*=\s*this\.latest\.updatedAt[\s\S]*emitEditorConflictResolved\s*\(\s*this\.\$root\s*\)[\s\S]*this\.close\s*\(\s*\)/)
+    expect(script).toMatch(/overwriteAndClose\s*\(\s*\)\s*\{[\s\S]*this\.checkoutDateActive\s*=\s*this\.latest\.updatedAt[\s\S]*emitEditorConflictResolved\s*\(\s*\)[\s\S]*this\.close\s*\(\s*\)/)
     expect(script).toMatch(/CodeMirror\.MergeView\s*\(\s*this\.\$refs\.cm\s*,\s*\{[\s\S]*value:\s*this\.\$store\.get\s*\(\s*['"]editor\/content['"]\s*\)[\s\S]*orig:\s*resp\.content[\s\S]*mode:\s*textMode[\s\S]*lineNumbers:\s*true[\s\S]*lineWrapping:\s*true[\s\S]*highlightDifferences:\s*true[\s\S]*styleActiveLine:\s*true[\s\S]*collapseIdentical:\s*true[\s\S]*direction:\s*siteConfig\.rtl\s*\?\s*['"]rtl['"]\s*:\s*['"]ltr['"][\s\S]*\}\s*\)/)
     expect(script).toMatch(/this\.cm\.rightOriginal\s*\(\s*\)\.setSize\s*\(/)
     expect(script).toMatch(/this\.cm\.editor\s*\(\s*\)\.setSize\s*\(/)

@@ -131,7 +131,7 @@ export default {
     },
     overwriteAndClose() {
       this.checkoutDateActive = this.latest.updatedAt
-      emitEditorConflictResolved(this.$root)
+      emitEditorConflictResolved()
       this.close()
     },
     useLocal () {

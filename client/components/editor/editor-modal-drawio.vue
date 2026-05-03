@@ -43,7 +43,7 @@ export default {
       this.activeModal = ''
     },
     overwriteAndClose() {
-      emitEditorConflictResolved(this.$root)
+      emitEditorConflictResolved()
       this.close()
     },
     send (msg) {

@@ -31,14 +31,6 @@ const conflictEventCases = [
   ['EditorConflictReset', EDITOR_CONFLICT_RESET_EVENT]
 ]
 
-function createRoot () {
-  return {
-    $emit: jest.fn(),
-    $on: jest.fn(),
-    $off: jest.fn()
-  }
-}
-
 function getLineNumber (content, index) {
   return content.slice(0, index).split(/\r?\n/).length
 }
@@ -50,52 +42,77 @@ function directRootEventPattern (eventName) {
   )
 }
 
+function helperRootArgumentPattern () {
+  return /\b(?:emit|on|off)Editor(?:SaveConflict|ContentOverwrite|ConflictReset|ConflictResolved)\s*\(\s*this\.\$root\b/g
+}
+
 describe('editor conflict events', () => {
-  test.each(conflictEventCases)('emit%s emits the shared %s event', (suffix, eventName) => {
-    const root = createRoot()
+  test.each(conflictEventCases)('emit%s emits the shared %s event on the private bus', (suffix) => {
+    const handler = jest.fn()
 
-    editorConflictEvents[`emit${suffix}`](root)
+    editorConflictEvents[`on${suffix}`](handler)
+    editorConflictEvents[`emit${suffix}`]()
+    editorConflictEvents[`off${suffix}`](handler)
 
-    expect(root.$emit).toHaveBeenCalledWith(eventName)
+    expect(handler).toHaveBeenCalledTimes(1)
   })
 
   test('emitEditorConflictResolved emits overwrite before reset', () => {
-    const root = createRoot()
+    const calls = []
+    const overwriteHandler = jest.fn(() => calls.push(EDITOR_CONTENT_OVERWRITE_EVENT))
+    const resetHandler = jest.fn(() => calls.push(EDITOR_CONFLICT_RESET_EVENT))
 
-    editorConflictEvents.emitEditorConflictResolved(root)
+    editorConflictEvents.onEditorContentOverwrite(overwriteHandler)
+    editorConflictEvents.onEditorConflictReset(resetHandler)
+    editorConflictEvents.emitEditorConflictResolved()
+    editorConflictEvents.offEditorContentOverwrite(overwriteHandler)
+    editorConflictEvents.offEditorConflictReset(resetHandler)
 
-    expect(root.$emit).toHaveBeenNthCalledWith(1, EDITOR_CONTENT_OVERWRITE_EVENT)
-    expect(root.$emit).toHaveBeenNthCalledWith(2, EDITOR_CONFLICT_RESET_EVENT)
+    expect(calls).toEqual([EDITOR_CONTENT_OVERWRITE_EVENT, EDITOR_CONFLICT_RESET_EVENT])
+    expect(overwriteHandler).toHaveBeenCalledTimes(1)
+    expect(resetHandler).toHaveBeenCalledTimes(1)
   })
 
-  test.each(conflictEventCases)('on%s subscribes to the shared %s event', (suffix, eventName) => {
-    const root = createRoot()
+  test.each(conflictEventCases)('off%s unsubscribes from the private %s event with the same handler', (suffix) => {
     const handler = jest.fn()
 
-    editorConflictEvents[`on${suffix}`](root, handler)
+    editorConflictEvents[`on${suffix}`](handler)
+    editorConflictEvents[`off${suffix}`](handler)
+    editorConflictEvents[`emit${suffix}`]()
 
-    expect(root.$on).toHaveBeenCalledWith(eventName, handler)
-  })
-
-  test.each(conflictEventCases)('off%s unsubscribes from the shared %s event with the same handler', (suffix, eventName) => {
-    const root = createRoot()
-    const handler = jest.fn()
-
-    editorConflictEvents[`off${suffix}`](root, handler)
-
-    expect(root.$off).toHaveBeenCalledWith(eventName, handler)
+    expect(handler).not.toHaveBeenCalled()
   })
 
   test.each(conflictEventCases)('off%s does not broadly unsubscribe without a handler', (suffix) => {
-    const root = createRoot()
+    const handler = jest.fn()
 
-    editorConflictEvents[`off${suffix}`](root)
+    editorConflictEvents[`on${suffix}`](handler)
+    editorConflictEvents[`off${suffix}`]()
+    editorConflictEvents[`emit${suffix}`]()
+    editorConflictEvents[`off${suffix}`](handler)
 
-    expect(root.$off).not.toHaveBeenCalled()
+    expect(handler).toHaveBeenCalledTimes(1)
   })
 })
 
 describe('editor conflict event usage', () => {
+  test('markdown and code editors keep save-conflict and content-overwrite subscriptions wired to existing handlers', () => {
+    const markdown = fs.readFileSync(path.join(repoRoot, 'client/components/editor/editor-markdown.vue'), 'utf8')
+    const code = fs.readFileSync(path.join(repoRoot, 'client/components/editor/editor-code.vue'), 'utf8')
+
+    expect(markdown).toContain('onEditorSaveConflict(this.handleEditorSaveConflict)')
+    expect(markdown).toContain('onEditorContentOverwrite(this.handleEditorContentOverwrite)')
+    expect(markdown).toContain('offEditorSaveConflict(this.handleEditorSaveConflict)')
+    expect(markdown).toContain('offEditorContentOverwrite(this.handleEditorContentOverwrite)')
+    expect(markdown).not.toContain('onEditorConflictReset(this.handleEditorConflictReset)')
+
+    expect(code).toContain('onEditorSaveConflict(this.handleEditorSaveConflict)')
+    expect(code).toContain('onEditorContentOverwrite(this.handleEditorContentOverwrite)')
+    expect(code).toContain('offEditorSaveConflict(this.handleEditorSaveConflict)')
+    expect(code).toContain('offEditorContentOverwrite(this.handleEditorContentOverwrite)')
+    expect(code).not.toContain('onEditorConflictReset(this.handleEditorConflictReset)')
+  })
+
   test('editor conflict components use the helper instead of direct root bus conflict events', () => {
     const offenders = []
 
@@ -110,6 +127,12 @@ describe('editor conflict event usage', () => {
         while ((match = pattern.exec(content)) !== null) {
           offenders.push(`${relPath}:${getLineNumber(content, match.index)}: direct this.$root event for ${eventName}`)
         }
+      }
+
+      const helperPattern = helperRootArgumentPattern()
+      let helperMatch
+      while ((helperMatch = helperPattern.exec(content)) !== null) {
+        offenders.push(`${relPath}:${getLineNumber(content, helperMatch.index)}: helper called with this.$root`)
       }
     }
 

@@ -857,13 +857,13 @@ export default {
     onEditorInsert(this.handleEditorInsert)
 
     // Handle save conflict
-    onEditorSaveConflict(this.$root, this.handleEditorSaveConflict)
-    onEditorContentOverwrite(this.$root, this.handleEditorContentOverwrite)
+    onEditorSaveConflict(this.handleEditorSaveConflict)
+    onEditorContentOverwrite(this.handleEditorContentOverwrite)
   },
   beforeDestroy() {
     offEditorInsert(this.handleEditorInsert)
-    offEditorSaveConflict(this.$root, this.handleEditorSaveConflict)
-    offEditorContentOverwrite(this.$root, this.handleEditorContentOverwrite)
+    offEditorSaveConflict(this.handleEditorSaveConflict)
+    offEditorContentOverwrite(this.handleEditorContentOverwrite)
   }
 }
 </script>

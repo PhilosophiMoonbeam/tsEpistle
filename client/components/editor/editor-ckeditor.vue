@@ -134,14 +134,14 @@ export default {
     onEditorLinkToPage(this.handleEditorLinkToPage)
 
     // Handle save conflict
-    onEditorSaveConflict(this.$root, this.handleEditorSaveConflict)
-    onEditorContentOverwrite(this.$root, this.handleEditorContentOverwrite)
+    onEditorSaveConflict(this.handleEditorSaveConflict)
+    onEditorContentOverwrite(this.handleEditorContentOverwrite)
   },
   beforeDestroy () {
     offEditorInsert(this.handleEditorInsert)
     offEditorLinkToPage(this.handleEditorLinkToPage)
-    offEditorSaveConflict(this.$root, this.handleEditorSaveConflict)
-    offEditorContentOverwrite(this.$root, this.handleEditorContentOverwrite)
+    offEditorSaveConflict(this.handleEditorSaveConflict)
+    offEditorContentOverwrite(this.handleEditorContentOverwrite)
     if (this.editor) {
       this.editor.destroy()
       this.editor = null

@@ -256,13 +256,13 @@ export default {
       }
     }
 
-    onEditorConflictReset(this.$root, this.handleEditorConflictReset)
+    onEditorConflictReset(this.handleEditorConflictReset)
 
     // this.$store.set('editor/mode', 'edit')
     // this.currentEditor = `editorApi`
   },
   beforeDestroy() {
-    offEditorConflictReset(this.$root, this.handleEditorConflictReset)
+    offEditorConflictReset(this.handleEditorConflictReset)
   },
   methods: {
     openPropsModal(name) {
@@ -278,7 +278,7 @@ export default {
       this.isConflict = false
     },
     openConflict() {
-      emitEditorSaveConflict(this.$root)
+      emitEditorSaveConflict()
     },
     async save({ rethrow = false, overwrite = false } = {}) {
       this.showProgressDialog('saving')
@@ -393,7 +393,7 @@ export default {
             }
           })
           if (_.get(conflictResp, 'data.pages.checkConflicts', false)) {
-            emitEditorSaveConflict(this.$root)
+            emitEditorSaveConflict()
             throw new Error(this.$t('editor:conflict.warning'))
           }
 

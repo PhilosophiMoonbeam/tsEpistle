@@ -85,13 +85,13 @@ export default {
     },
     useLocal () {
       this.$store.set('editor/checkoutDateActive', this.latest.updatedAt)
-      emitEditorConflictReset(this.$root)
+      emitEditorConflictReset()
       this.close()
     },
     useRemote () {
       this.$store.set('editor/checkoutDateActive', this.latest.updatedAt)
       this.$store.set('editor/content', this.latest.content)
-      emitEditorConflictResolved(this.$root)
+      emitEditorConflictResolved()
       this.close()
     }
   },
