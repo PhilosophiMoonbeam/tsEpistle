@@ -190,7 +190,7 @@ let bootstrap = () => {
   // Bootstrap Vue
   // ====================================
 
-  const i18n = localization.init()
+  const i18n = localization.init(window.graphQL)
 
   let darkModeEnabled = siteConfig.darkMode
   if ((store.get('user/appearance') || '').length > 0) {

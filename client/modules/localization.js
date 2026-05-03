@@ -5,13 +5,13 @@ import i18nextXHR from 'i18next-xhr-backend'
 import VueI18Next from '@panter/vue-i18next'
 import _ from 'lodash'
 
-/* global siteConfig, graphQL */
+/* global siteConfig */
 
 import localeQuery from 'gql/common/common-localization-query-translations.gql'
 
 export default {
   VueI18Next,
-  init() {
+  init(apolloClient) {
     i18next
       .use(Backend)
       .init({
@@ -29,7 +29,7 @@ export default {
               parse: (data) => data,
               ajax: (url, opts, cb, data) => {
                 let langParams = url.split('/')
-                graphQL.query({
+                apolloClient.query({
                   query: localeQuery,
                   variables: {
                     locale: langParams[0],
