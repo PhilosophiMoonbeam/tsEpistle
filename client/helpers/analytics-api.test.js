@@ -1,4 +1,4 @@
-const { fetchAnalyticsProviders } = require('./analytics-api')
+const { fetchAnalyticsProviders, saveAnalyticsProviders } = require('./analytics-api')
 
 function createJsonResponse (payload, ok = true) {
   return {
@@ -178,6 +178,45 @@ describe('analytics api helper', () => {
     })
 
     await expect(fetchAnalyticsProviders(fetchImpl, 'Bad analytics load')).rejects.toThrow('manage:system is required')
+  })
+
+  test('saves analytics providers with same-origin JSON POST options', async () => {
+    const providers = [{ key: 'google', isEnabled: true, config: [] }]
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ message: 'Providers updated successfully' }))
+
+    await expect(saveAnalyticsProviders(fetchImpl, providers)).resolves.toEqual({ message: 'Providers updated successfully' })
+    expect(fetchImpl).toHaveBeenCalledWith('/_api/analytics/providers', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ providers })
+    })
+  })
+
+  test('rejects malformed successful analytics provider save responses', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ ok: true }))
+
+    await expect(saveAnalyticsProviders(fetchImpl, [], 'Bad save payload')).rejects.toThrow('Bad save payload')
+  })
+
+  test('propagates API JSON errors for analytics provider saves', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ error: 'Invalid analytics providers payload' }, false))
+
+    await expect(saveAnalyticsProviders(fetchImpl, [], 'Bad save')).rejects.toThrow('Invalid analytics providers payload')
+  })
+
+  test('rejects non-JSON successful analytics provider save responses', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue({
+      ok: true,
+      headers: {
+        get: () => 'text/plain'
+      }
+    })
+
+    await expect(saveAnalyticsProviders(fetchImpl, [], 'Bad save content type')).rejects.toThrow('Bad save content type')
   })
 
   test('rejects non-JSON successful responses', async () => {

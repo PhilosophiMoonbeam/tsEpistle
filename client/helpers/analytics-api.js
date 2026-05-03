@@ -94,6 +94,31 @@ async function fetchAnalyticsProviders (fetchImpl, fallbackMessage = 'Analytics 
   return normalizeProvidersPayload(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
 }
 
+function normalizeAnalyticsSavePayload (payload, fallbackMessage) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload) || typeof payload.message !== 'string' || payload.message.length < 1) {
+    throw new Error(fallbackMessage)
+  }
+
+  return {
+    message: payload.message
+  }
+}
+
+async function saveAnalyticsProviders (fetchImpl, providers, fallbackMessage = 'Analytics providers save response is invalid') {
+  const response = await fetchImpl('/_api/analytics/providers', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ providers })
+  })
+
+  return normalizeAnalyticsSavePayload(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
+}
+
 module.exports = {
-  fetchAnalyticsProviders
+  fetchAnalyticsProviders,
+  saveAnalyticsProviders
 }

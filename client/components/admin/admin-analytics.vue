@@ -109,9 +109,7 @@
 <script>
 import _ from 'lodash'
 
-import providersSaveMutation from 'gql/admin/analytics/analytics-mutation-save-providers.gql'
-
-import { fetchAnalyticsProviders } from '../../helpers/analytics-api'
+import { fetchAnalyticsProviders, saveAnalyticsProviders } from '../../helpers/analytics-api'
 import { loadingStart, loadingStop, showNotification, pushGraphError } from '../../helpers/root-ui-store'
 
 export default {
@@ -163,16 +161,11 @@ export default {
     async save() {
       loadingStart(this.$store, 'admin-analytics-saveproviders')
       try {
-        await this.$apollo.mutate({
-          mutation: providersSaveMutation,
-          variables: {
-            providers: this.providers.map(str => _.pick(str, [
-              'isEnabled',
-              'key',
-              'config'
-            ])).map(str => ({...str, config: str.config.map(cfg => ({...cfg, value: JSON.stringify({ v: cfg.value.value })}))}))
-          }
-        })
+        await saveAnalyticsProviders(window.fetch.bind(window), this.providers.map(str => _.pick(str, [
+          'isEnabled',
+          'key',
+          'config'
+        ])).map(str => ({...str, config: str.config.map(cfg => ({...cfg, value: JSON.stringify({ v: cfg.value.value })}))})), 'Analytics providers save response is invalid')
         await this.loadProviders({ notifyError: false })
         showNotification(this.$store, {
           message: this.$t('admin:analytics.saveSuccess'),

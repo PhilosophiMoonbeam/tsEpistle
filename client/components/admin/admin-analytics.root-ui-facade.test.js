@@ -73,7 +73,7 @@ describe('admin-analytics root UI facade migration guard', () => {
     expect(watchBlock).not.toBeNull()
 
     expect(script).toMatch(/import\s+\{(?=[^}]*\bloadingStart\b)(?=[^}]*\bloadingStop\b)(?=[^}]*\bshowNotification\b)(?=[^}]*\bpushGraphError\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/root-ui-store['"]/)
-    expect(script).toMatch(/import\s+\{\s*fetchAnalyticsProviders\s*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/analytics-api['"]/)
+    expect(script).toMatch(/import\s+\{(?=[^}]*\bfetchAnalyticsProviders\b)(?=[^}]*\bsaveAnalyticsProviders\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/analytics-api['"]/)
     expect(watchBlock).toMatch(/selectedProvider\s*\(\s*newValue\s*,\s*oldValue\s*\)\s*\{\s*this\.provider\s*=\s*_\.find\s*\(\s*this\.providers\s*,\s*\[\s*['"]key['"]\s*,\s*newValue\s*\]\s*\)\s*\|\|\s*\{\s*\}\s*\}/)
     expect(watchBlock).toMatch(/providers\s*\(\s*newValue\s*,\s*oldValue\s*\)\s*\{\s*this\.selectedProvider\s*=\s*['"]google['"]\s*\}/)
   })
@@ -98,15 +98,17 @@ describe('admin-analytics root UI facade migration guard', () => {
     expect(refresh.match(/\bshowNotification\s*\(/g) || []).toHaveLength(1)
   })
 
-  test('save preserves mutation variables, silent reload, success/error facades, and save loading key', () => {
+  test('save uses REST helper while preserving provider payload, silent reload, success/error facades, and save loading key', () => {
     expect(save).not.toBeNull()
 
-    expect(save).toMatch(/async\s+save\s*\(\s*\)\s*\{\s*loadingStart\s*\(\s*this\.\$store\s*,\s*['"]admin-analytics-saveproviders['"]\s*\)[\s\S]*?try\s*\{[\s\S]*?await\s+this\.\$apollo\.mutate\s*\([\s\S]*?await\s+this\.loadProviders\s*\(\s*\{\s*notifyError:\s*false\s*\}\s*\)\s*showNotification\s*\(\s*this\.\$store\s*,\s*\{\s*message:\s*this\.\$t\s*\(\s*['"]admin:analytics\.saveSuccess['"]\s*\)\s*,\s*style:\s*['"]success['"]\s*,\s*icon:\s*['"]check['"]\s*\}\s*\)[\s\S]*?\}\s*catch\s*\(\s*err\s*\)\s*\{\s*pushGraphError\s*\(\s*this\.\$store\s*,\s*err\s*\)\s*\}[\s\S]*?loadingStop\s*\(\s*this\.\$store\s*,\s*['"]admin-analytics-saveproviders['"]\s*\)\s*\}/)
-    expect(save).toMatch(/mutation:\s*providersSaveMutation/)
-    expect(save).toMatch(/variables:\s*\{\s*providers:\s*this\.providers\.map\s*\(\s*str\s*=>\s*_\.pick\s*\(\s*str\s*,\s*\[\s*['"]isEnabled['"]\s*,\s*['"]key['"]\s*,\s*['"]config['"]\s*\]\s*\)\s*\)\.map\s*\(\s*str\s*=>\s*\(\s*\{\s*\.\.\.str\s*,\s*config:\s*str\.config\.map\s*\(\s*cfg\s*=>\s*\(\s*\{\s*\.\.\.cfg\s*,\s*value:\s*JSON\.stringify\s*\(\s*\{\s*v:\s*cfg\.value\.value\s*\}\s*\)\s*\}\s*\)\s*\)\s*\}\s*\)\s*\)\s*\}/)
+    expect(save).toMatch(/async\s+save\s*\(\s*\)\s*\{\s*loadingStart\s*\(\s*this\.\$store\s*,\s*['"]admin-analytics-saveproviders['"]\s*\)[\s\S]*?try\s*\{[\s\S]*?await\s+saveAnalyticsProviders\s*\(\s*window\.fetch\.bind\(\s*window\s*\)\s*,[\s\S]*?await\s+this\.loadProviders\s*\(\s*\{\s*notifyError:\s*false\s*\}\s*\)\s*showNotification\s*\(\s*this\.\$store\s*,\s*\{\s*message:\s*this\.\$t\s*\(\s*['"]admin:analytics\.saveSuccess['"]\s*\)\s*,\s*style:\s*['"]success['"]\s*,\s*icon:\s*['"]check['"]\s*\}\s*\)[\s\S]*?\}\s*catch\s*\(\s*err\s*\)\s*\{\s*pushGraphError\s*\(\s*this\.\$store\s*,\s*err\s*\)\s*\}[\s\S]*?loadingStop\s*\(\s*this\.\$store\s*,\s*['"]admin-analytics-saveproviders['"]\s*\)\s*\}/)
+    expect(save).toMatch(/this\.providers\.map\s*\(\s*str\s*=>\s*_\.pick\s*\(\s*str\s*,\s*\[\s*['"]isEnabled['"]\s*,\s*['"]key['"]\s*,\s*['"]config['"]\s*\]\s*\)\s*\)\.map\s*\(\s*str\s*=>\s*\(\s*\{\s*\.\.\.str\s*,\s*config:\s*str\.config\.map\s*\(\s*cfg\s*=>\s*\(\s*\{\s*\.\.\.cfg\s*,\s*value:\s*JSON\.stringify\s*\(\s*\{\s*v:\s*cfg\.value\.value\s*\}\s*\)\s*\}\s*\)\s*\)\s*\}\s*\)\s*\)/)
+    expect(save).toMatch(/['"]Analytics providers save response is invalid['"]/)
+    expect(save).not.toMatch(/this\.\$apollo\.mutate|providersSaveMutation|analytics-mutation-save-providers\.gql/)
     expect(save).not.toMatch(directRootUiCommit)
 
     expect(save.match(/\bloadingStart\s*\(/g) || []).toHaveLength(1)
+    expect(save.match(/\bsaveAnalyticsProviders\s*\(/g) || []).toHaveLength(1)
     expect(save.match(/\bshowNotification\s*\(/g) || []).toHaveLength(1)
     expect(save.match(/\bpushGraphError\s*\(/g) || []).toHaveLength(1)
     expect(save.match(/\bloadingStop\s*\(/g) || []).toHaveLength(1)

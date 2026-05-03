@@ -6,6 +6,9 @@ jest.mock('express', () => {
       const router = {
         get: jest.fn(),
         post: jest.fn(),
+        patch: jest.fn(),
+        put: jest.fn(),
+        delete: jest.fn(),
         use: jest.fn()
       }
       routers.push(router)
@@ -57,6 +60,7 @@ describe('controllers/api analytics endpoints', () => {
       },
       models: {
         analytics: {
+          query: jest.fn(),
           getProviders: jest.fn().mockResolvedValue([
             {
               key: 'google',
@@ -75,21 +79,40 @@ describe('controllers/api analytics endpoints', () => {
             }
           ])
         }
+      },
+      cache: {
+        del: jest.fn().mockResolvedValue(true)
       }
     }
+
+    global.WIKI.models.analytics.query.mockImplementation(() => {
+      const query = {
+        patch: jest.fn().mockReturnThis(),
+        where: jest.fn().mockResolvedValue(1)
+      }
+      global.WIKI.models.analytics.__queries = global.WIKI.models.analytics.__queries || []
+      global.WIKI.models.analytics.__queries.push(query)
+      return query
+    })
   })
 
-  const loadProvidersHandler = () => {
+  const loadHandlers = () => {
     const express = require('express')
     require('../../controllers/api/analytics')
     const router = express.__routers[0]
-    return router.get.mock.calls.find(([path]) => path === '/providers')[1]
+    return {
+      providers: router.get.mock.calls.find(([path]) => path === '/providers')[1],
+      saveProviders: router.post.mock.calls.find(([path]) => path === '/providers')[1]
+    }
   }
 
-  it('registers analytics provider route', () => {
-    const handler = loadProvidersHandler()
+  const loadProvidersHandler = () => loadHandlers().providers
 
-    expect(typeof handler).toBe('function')
+  it('registers analytics provider routes', () => {
+    const handlers = loadHandlers()
+
+    expect(typeof handlers.providers).toBe('function')
+    expect(typeof handlers.saveProviders).toBe('function')
   })
 
   it('is mounted by the API index router', () => {
@@ -199,6 +222,131 @@ describe('controllers/api analytics endpoints', () => {
     expect(global.WIKI.models.analytics.getProviders).toHaveBeenNthCalledWith(2, false)
     expect(global.WIKI.models.analytics.getProviders).toHaveBeenNthCalledWith(3, undefined)
     expect(global.WIKI.models.analytics.getProviders).toHaveBeenNthCalledWith(4, undefined)
+  })
+
+  const createSavePayload = () => ({
+    body: {
+      providers: [
+        {
+          key: 'google',
+          isEnabled: true,
+          config: [
+            { key: 'trackingId', value: JSON.stringify({ v: 'UA-123' }) },
+            { key: 'missingValue', value: JSON.stringify({ label: 'No value key' }) }
+          ]
+        },
+        {
+          key: 'matomo',
+          isEnabled: false,
+          config: [
+            { key: 'siteId', value: JSON.stringify({ v: '2' }) }
+          ]
+        }
+      ]
+    },
+    user: { permissions: ['manage:system'] }
+  })
+
+  it('returns JSON 403 for unauthorized provider saves without mutating models', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValue(false)
+    const { saveProviders } = loadHandlers()
+    const req = createSavePayload()
+    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+
+    await saveProviders(req, res)
+
+    expect(global.WIKI.auth.checkAccess).toHaveBeenCalledWith(req.user, ['manage:system'])
+    expect(res.status).toHaveBeenCalledWith(403)
+    expect(res.json).toHaveBeenCalledWith({ error: 'Forbidden' })
+    expect(global.WIKI.models.analytics.query).not.toHaveBeenCalled()
+    expect(global.WIKI.cache.del).not.toHaveBeenCalled()
+  })
+
+  it('saves providers with GraphQL parity and invalidates analytics cache per provider', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValue(true)
+    const { saveProviders } = loadHandlers()
+    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+
+    await saveProviders(createSavePayload(), res)
+
+    const queries = global.WIKI.models.analytics.__queries
+    expect(queries).toHaveLength(2)
+    expect(queries[0].patch).toHaveBeenCalledWith({
+      isEnabled: true,
+      config: {
+        trackingId: 'UA-123',
+        missingValue: null
+      }
+    })
+    expect(queries[0].where).toHaveBeenCalledWith('key', 'google')
+    expect(queries[1].patch).toHaveBeenCalledWith({
+      isEnabled: false,
+      config: {
+        siteId: '2'
+      }
+    })
+    expect(queries[1].where).toHaveBeenCalledWith('key', 'matomo')
+    expect(global.WIKI.cache.del).toHaveBeenCalledTimes(2)
+    expect(global.WIKI.cache.del).toHaveBeenNthCalledWith(1, 'analytics')
+    expect(global.WIKI.cache.del).toHaveBeenNthCalledWith(2, 'analytics')
+    expect(res.status).not.toHaveBeenCalled()
+    expect(res.json).toHaveBeenCalledWith({ message: 'Providers updated successfully' })
+  })
+
+  it('returns JSON 400 for malformed provider save payloads', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValue(true)
+    const { saveProviders } = loadHandlers()
+    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+
+    await saveProviders({ body: { providers: [{ key: 'google', isEnabled: 'yes', config: [] }] }, user: {} }, res)
+
+    expect(res.status).toHaveBeenCalledWith(400)
+    expect(res.json).toHaveBeenCalledWith({ error: 'Invalid analytics providers payload' })
+    expect(global.WIKI.models.analytics.query).not.toHaveBeenCalled()
+    expect(global.WIKI.cache.del).not.toHaveBeenCalled()
+  })
+
+  it('returns JSON 400 for malformed provider save config JSON', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValue(true)
+    const { saveProviders } = loadHandlers()
+    const req = createSavePayload()
+    req.body.providers[0].config[0].value = '{not-json'
+    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+
+    await saveProviders(req, res)
+
+    expect(res.status).toHaveBeenCalledWith(400)
+    expect(res.json).toHaveBeenCalledWith({ error: 'Invalid analytics providers payload' })
+    expect(global.WIKI.cache.del).not.toHaveBeenCalled()
+  })
+
+  it('returns JSON 500 for unexpected provider save failures', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValue(true)
+    const query = {
+      patch: jest.fn().mockReturnThis(),
+      where: jest.fn().mockRejectedValue(new Error('provider save failed'))
+    }
+    global.WIKI.models.analytics.query.mockReturnValue(query)
+    const { saveProviders } = loadHandlers()
+    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+
+    await saveProviders(createSavePayload(), res)
+
+    expect(res.status).toHaveBeenCalledWith(500)
+    expect(res.json).toHaveBeenCalledWith({ error: 'provider save failed' })
+    expect(global.WIKI.cache.del).not.toHaveBeenCalled()
+  })
+
+  it('returns JSON 500 for analytics cache invalidation failures', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValue(true)
+    global.WIKI.cache.del.mockRejectedValueOnce(new Error('cache failed'))
+    const { saveProviders } = loadHandlers()
+    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+
+    await saveProviders(createSavePayload(), res)
+
+    expect(res.status).toHaveBeenCalledWith(500)
+    expect(res.json).toHaveBeenCalledWith({ error: 'cache failed' })
   })
 
   it('forwards unexpected failures to next', async () => {
