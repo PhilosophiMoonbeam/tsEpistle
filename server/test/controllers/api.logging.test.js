@@ -6,6 +6,9 @@ jest.mock('express', () => {
       const router = {
         get: jest.fn(),
         post: jest.fn(),
+        patch: jest.fn(),
+        put: jest.fn(),
+        delete: jest.fn(),
         use: jest.fn()
       }
       routers.push(router)
@@ -64,6 +67,7 @@ describe('controllers/api logging endpoints', () => {
       },
       models: {
         loggers: {
+          query: jest.fn(),
           getLoggers: jest.fn().mockResolvedValue([
             {
               key: 'beta',
@@ -94,11 +98,20 @@ describe('controllers/api logging endpoints', () => {
     }
   })
 
-  const loadLoggersHandler = () => {
+  const loadLoggersRouter = () => {
     const express = require('express')
     require('../../controllers/api/logging')
-    const router = express.__routers[0]
+    return express.__routers[0]
+  }
+
+  const loadLoggersHandler = () => {
+    const router = loadLoggersRouter()
     return router.get.mock.calls.find(([path]) => path === '/loggers')[1]
+  }
+
+  const saveLoggersHandler = () => {
+    const router = loadLoggersRouter()
+    return router.post.mock.calls.find(([path]) => path === '/loggers')[1]
   }
 
   it('registers logging loggers route', () => {
@@ -196,6 +209,114 @@ describe('controllers/api logging endpoints', () => {
         })
       }
     ])
+  })
+
+  it('registers logging save loggers route', () => {
+    const handler = saveLoggersHandler()
+
+    expect(typeof handler).toBe('function')
+  })
+
+  it('returns JSON 403 for unauthorized logger saves without patching loggers', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValue(false)
+    const handler = saveLoggersHandler()
+    const req = { user: { permissions: [] }, body: { loggers: [] } }
+    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+
+    await handler(req, res)
+
+    expect(global.WIKI.auth.checkAccess).toHaveBeenCalledWith(req.user, ['manage:system'])
+    expect(res.status).toHaveBeenCalledWith(403)
+    expect(res.json).toHaveBeenCalledWith({ error: 'Forbidden' })
+    expect(global.WIKI.models.loggers.query).not.toHaveBeenCalled()
+  })
+
+  it('returns JSON 400 for malformed logger save payloads', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValue(true)
+    const handler = saveLoggersHandler()
+    const invalidPayloads = [
+      {},
+      { loggers: 'not-array' },
+      { loggers: [null] },
+      { loggers: [{ key: 'alpha', isEnabled: 'yes', level: 'info', config: [] }] },
+      { loggers: [{ key: 'alpha', isEnabled: true, level: 42, config: [] }] },
+      { loggers: [{ key: 'alpha', isEnabled: true, level: 'info', config: [{ key: 'endpoint', value: 42 }] }] }
+    ]
+
+    for (const body of invalidPayloads) {
+      const res = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+      await handler({ user: {}, body }, res)
+      expect(res.status).toHaveBeenCalledWith(400)
+      expect(res.json).toHaveBeenCalledWith({ error: 'Invalid loggers payload' })
+    }
+    expect(global.WIKI.models.loggers.query).not.toHaveBeenCalled()
+  })
+
+  it('patches logger rows by key preserving GraphQL config string semantics', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValue(true)
+    const patch = jest.fn().mockReturnThis()
+    const where = jest.fn().mockResolvedValue(1)
+    global.WIKI.models.loggers.query.mockReturnValue({ patch, where })
+    const handler = saveLoggersHandler()
+    const loggers = [
+      {
+        key: 'alpha',
+        isEnabled: true,
+        level: 'debug',
+        config: [
+          { key: 'endpoint', value: JSON.stringify({ v: 'https://log.example.test' }) },
+          { key: 'redact', value: JSON.stringify({ v: true }) }
+        ]
+      },
+      {
+        key: 'beta',
+        isEnabled: false,
+        level: 'warn',
+        config: []
+      }
+    ]
+    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+
+    await handler({ user: {}, body: { loggers } }, res)
+
+    expect(global.WIKI.models.loggers.query).toHaveBeenCalledTimes(2)
+    expect(patch).toHaveBeenNthCalledWith(1, {
+      isEnabled: true,
+      level: 'debug',
+      config: {
+        endpoint: JSON.stringify({ v: 'https://log.example.test' }),
+        redact: JSON.stringify({ v: true })
+      }
+    })
+    expect(where).toHaveBeenNthCalledWith(1, 'key', 'alpha')
+    expect(patch).toHaveBeenNthCalledWith(2, {
+      isEnabled: false,
+      level: 'warn',
+      config: {}
+    })
+    expect(where).toHaveBeenNthCalledWith(2, 'key', 'beta')
+    expect(res.status).not.toHaveBeenCalled()
+    expect(res.json).toHaveBeenCalledWith({ message: 'Loggers updated successfully' })
+  })
+
+  it('returns JSON 500 for unexpected logger save failures', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValue(true)
+    global.WIKI.models.loggers.query.mockReturnValue({
+      patch: jest.fn().mockReturnThis(),
+      where: jest.fn().mockRejectedValue(new Error('patch failed'))
+    })
+    const handler = saveLoggersHandler()
+    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+
+    await handler({
+      user: {},
+      body: {
+        loggers: [{ key: 'alpha', isEnabled: true, level: 'info', config: [] }]
+      }
+    }, res)
+
+    expect(res.status).toHaveBeenCalledWith(500)
+    expect(res.json).toHaveBeenCalledWith({ error: 'patch failed' })
   })
 
   it('forwards unexpected failures to next', async () => {

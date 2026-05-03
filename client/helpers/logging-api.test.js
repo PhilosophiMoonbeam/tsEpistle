@@ -1,4 +1,4 @@
-const { fetchLoggingLoggers } = require('./logging-api')
+const { fetchLoggingLoggers, saveLoggingLoggers } = require('./logging-api')
 
 function createJsonResponse (payload, ok = true) {
   return {
@@ -197,5 +197,52 @@ describe('logging api helper', () => {
     })
 
     await expect(fetchLoggingLoggers(fetchImpl, 'Bad logging content type')).rejects.toThrow('Bad logging content type')
+  })
+
+  test('saves logging loggers with same-origin JSON POST options', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ message: 'Loggers updated successfully' }))
+    const loggers = [
+      {
+        key: 'alpha',
+        isEnabled: true,
+        level: 'info',
+        config: [{ key: 'endpoint', value: JSON.stringify({ v: 'https://log.example.test' }) }]
+      }
+    ]
+
+    await expect(saveLoggingLoggers(fetchImpl, loggers)).resolves.toEqual({ message: 'Loggers updated successfully' })
+
+    expect(fetchImpl).toHaveBeenCalledWith('/_api/logging/loggers', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ loggers })
+    })
+  })
+
+  test('rejects malformed logging save success payloads', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ ok: true }))
+
+    await expect(saveLoggingLoggers(fetchImpl, [], 'Bad logging save')).rejects.toThrow('Bad logging save')
+  })
+
+  test('propagates logging save REST JSON errors', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ error: 'Invalid loggers payload' }, false))
+
+    await expect(saveLoggingLoggers(fetchImpl, [], 'Bad logging save')).rejects.toThrow('Invalid loggers payload')
+  })
+
+  test('rejects non-JSON successful logging save responses', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue({
+      ok: true,
+      headers: {
+        get: () => 'text/plain'
+      }
+    })
+
+    await expect(saveLoggingLoggers(fetchImpl, [], 'Bad logging save content type')).rejects.toThrow('Bad logging save content type')
   })
 })

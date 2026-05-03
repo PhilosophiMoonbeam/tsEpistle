@@ -72,8 +72,8 @@ describe('admin-logging root UI facade migration guard', () => {
     expect(script).toMatch(/import\s+\{(?=[^}]*\bloadingStart\b)(?=[^}]*\bloadingStop\b)(?=[^}]*\bshowNotification\b)(?=[^}]*\bpushGraphError\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/root-ui-store['"]/)
     expect(script).toMatch(/import\s+LoggingConsole\s+from\s+['"]\.\/admin-logging-console\.vue['"]/)
     expect(script).toMatch(/components:\s*\{\s*LoggingConsole\s*\}/)
-    expect(script).toMatch(/import\s+\{\s*fetchLoggingLoggers\s*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/logging-api['"]/)
-    expect(script).toMatch(/import\s+loggersSaveMutation\s+from\s+['"]gql\/admin\/logging\/logging-mutation-save-loggers\.gql['"]/)
+    expect(script).toMatch(/import\s+\{(?=[^}]*\bfetchLoggingLoggers\b)(?=[^}]*\bsaveLoggingLoggers\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/logging-api['"]/)
+    expect(script).not.toMatch(/logging-mutation-save-loggers\.gql|loggersSaveMutation/)
     expect(script).toMatch(/activeLoggers\s*\(\s*\)\s*\{\s*return\s+_\.filter\s*\(\s*this\.loggers\s*,\s*['"]isEnabled['"]\s*\)\s*\}/)
     expect(script).toMatch(/created\s*\(\s*\)\s*\{\s*this\.loadLoggers\s*\(\s*\)\.catch\s*\(\s*\(\s*\)\s*=>\s*\{\s*\}\s*\)\s*\}/)
     expect(script).toMatch(/toggleConsole\s*\(\s*\)\s*\{\s*this\.showConsole\s*=\s*!this\.showConsole\s*\}/)
@@ -102,9 +102,10 @@ describe('admin-logging root UI facade migration guard', () => {
   test('save preserves mutation variables, silent reload, success/error facades, and trailing loading stop', () => {
     expect(save).not.toBeNull()
 
-    expect(save).toMatch(/async\s+save\s*\(\s*\)\s*\{\s*loadingStart\s*\(\s*this\.\$store\s*,\s*['"]admin-logging-saveloggers['"]\s*\)[\s\S]*?try\s*\{[\s\S]*?await\s+this\.\$apollo\.mutate\s*\([\s\S]*?await\s+this\.loadLoggers\s*\(\s*\{\s*notifyError:\s*false\s*\}\s*\)\s*showNotification\s*\(\s*this\.\$store\s*,\s*\{\s*message:\s*['"]Logging configuration saved successfully\.['"]\s*,\s*style:\s*['"]success['"]\s*,\s*icon:\s*['"]check['"]\s*\}\s*\)[\s\S]*?\}\s*catch\s*\(\s*err\s*\)\s*\{\s*pushGraphError\s*\(\s*this\.\$store\s*,\s*err\s*\)\s*\}\s*loadingStop\s*\(\s*this\.\$store\s*,\s*['"]admin-logging-saveloggers['"]\s*\)\s*\}/)
-    expect(save).toMatch(/mutation:\s*loggersSaveMutation/)
-    expect(save).toMatch(/variables:\s*\{\s*loggers:\s*this\.loggers\.map\s*\(\s*tgt\s*=>\s*_\.pick\s*\(\s*tgt\s*,\s*\[\s*['"]isEnabled['"]\s*,\s*['"]key['"]\s*,\s*['"]config['"]\s*,\s*['"]level['"]\s*\]\s*\)\s*\)\.map\s*\(\s*str\s*=>\s*\(\s*\{\s*\.\.\.str\s*,\s*config:\s*str\.config\.map\s*\(\s*cfg\s*=>\s*\(\s*\{\s*\.\.\.cfg\s*,\s*value:\s*JSON\.stringify\s*\(\s*\{\s*v:\s*cfg\.value\.value\s*\}\s*\)\s*\}\s*\)\s*\)\s*\}\s*\)\s*\)\s*\}/)
+    expect(save).toMatch(/async\s+save\s*\(\s*\)\s*\{\s*loadingStart\s*\(\s*this\.\$store\s*,\s*['"]admin-logging-saveloggers['"]\s*\)[\s\S]*?try\s*\{[\s\S]*?await\s+saveLoggingLoggers\s*\(\s*window\.fetch\.bind\(\s*window\s*\)\s*,[\s\S]*?await\s+this\.loadLoggers\s*\(\s*\{\s*notifyError:\s*false\s*\}\s*\)\s*showNotification\s*\(\s*this\.\$store\s*,\s*\{\s*message:\s*['"]Logging configuration saved successfully\.['"]\s*,\s*style:\s*['"]success['"]\s*,\s*icon:\s*['"]check['"]\s*\}\s*\)[\s\S]*?\}\s*catch\s*\(\s*err\s*\)\s*\{\s*pushGraphError\s*\(\s*this\.\$store\s*,\s*err\s*\)\s*\}\s*loadingStop\s*\(\s*this\.\$store\s*,\s*['"]admin-logging-saveloggers['"]\s*\)\s*\}/)
+    expect(save).toMatch(/this\.loggers\.map\s*\(\s*tgt\s*=>\s*_\.pick\s*\(\s*tgt\s*,\s*\[\s*['"]isEnabled['"]\s*,\s*['"]key['"]\s*,\s*['"]config['"]\s*,\s*['"]level['"]\s*\]\s*\)\s*\)\.map\s*\(\s*str\s*=>\s*\(\s*\{\s*\.\.\.str\s*,\s*config:\s*str\.config\.map\s*\(\s*cfg\s*=>\s*\(\s*\{\s*\.\.\.cfg\s*,\s*value:\s*JSON\.stringify\s*\(\s*\{\s*v:\s*cfg\.value\.value\s*\}\s*\)\s*\}\s*\)\s*\)\s*\}\s*\)\s*\)/)
+    expect(save).toMatch(/['"]Logging loggers update failed['"]/)
+    expect(save).not.toMatch(/this\.\$apollo\.mutate|loggersSaveMutation|logging-mutation-save-loggers\.gql/)
     expect(save).not.toMatch(directRootUiCommit)
 
     expect(save.match(/\bloadingStart\s*\(/g) || []).toHaveLength(1)

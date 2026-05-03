@@ -110,9 +110,8 @@ import _ from 'lodash'
 
 import LoggingConsole from './admin-logging-console.vue'
 
-import { fetchLoggingLoggers } from '../../helpers/logging-api'
+import { fetchLoggingLoggers, saveLoggingLoggers } from '../../helpers/logging-api'
 import { loadingStart, loadingStop, showNotification, pushGraphError } from '../../helpers/root-ui-store'
-import loggersSaveMutation from 'gql/admin/logging/logging-mutation-save-loggers.gql'
 
 export default {
   components: {
@@ -163,17 +162,12 @@ export default {
     async save() {
       loadingStart(this.$store, 'admin-logging-saveloggers')
       try {
-        await this.$apollo.mutate({
-          mutation: loggersSaveMutation,
-          variables: {
-            loggers: this.loggers.map(tgt => _.pick(tgt, [
-              'isEnabled',
-              'key',
-              'config',
-              'level'
-            ])).map(str => ({...str, config: str.config.map(cfg => ({...cfg, value: JSON.stringify({ v: cfg.value.value })}))}))
-          }
-        })
+        await saveLoggingLoggers(window.fetch.bind(window), this.loggers.map(tgt => _.pick(tgt, [
+          'isEnabled',
+          'key',
+          'config',
+          'level'
+        ])).map(str => ({...str, config: str.config.map(cfg => ({...cfg, value: JSON.stringify({ v: cfg.value.value })}))})), 'Logging loggers update failed')
         await this.loadLoggers({ notifyError: false })
         showNotification(this.$store, {
           message: 'Logging configuration saved successfully.',
