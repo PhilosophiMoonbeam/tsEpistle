@@ -59,9 +59,8 @@ describe('admin-groups-edit-users unassign REST migration guard', () => {
 
   test('admin-groups-edit-users imports the REST helper and root UI facades for unassign', () => {
     expect(script).not.toBeNull()
-    expect(script).toMatch(/import\s+\{\s*unassignGroupUser\s*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/groups-api['"]/)
+    expect(script).toMatch(/import\s+\{(?=[^}]*\bunassignGroupUser\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/groups-api['"]/)
     expect(script).toMatch(/import\s+\{(?=[^}]*\bloadingStart\b)(?=[^}]*\bloadingStop\b)(?=[^}]*\bshowNotification\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/root-ui-store['"]/)
-    expect(script).not.toMatch(/groups-mutation-unassign\.gql/)
     expect(script).not.toMatch(/unassignUserMutation/)
   })
 

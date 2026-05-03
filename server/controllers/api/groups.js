@@ -105,6 +105,85 @@ router.get('/list', async (req, res, next) => {
   }
 })
 
+const groupMutationElevatedResourceTypes = ['users', 'groups', 'navigation', 'theme', 'api', 'system']
+
+const getPermissionResourceType = permission => String(permission).split(':').pop()
+
+const groupHasElevatedPermissions = group => {
+  const permissions = Array.isArray(group.permissions) ? group.permissions : []
+  return permissions.some(permission => groupMutationElevatedResourceTypes.includes(getPermissionResourceType(permission)))
+}
+
+const groupHasSystemPermissions = group => {
+  const permissions = Array.isArray(group.permissions) ? group.permissions : []
+  return permissions.some(permission => getPermissionResourceType(permission) === 'system')
+}
+
+router.post('/:groupId/users/:userId', async (req, res, next) => {
+  if (!requireGroupsListAccess(req, res)) {
+    return
+  }
+
+  const groupId = normalizePositiveIntegerParam(req.params.groupId, 'group id', res)
+  if (groupId === null) {
+    return
+  }
+
+  const userId = normalizePositiveIntegerParam(req.params.userId, 'user id', res)
+  if (userId === null) {
+    return
+  }
+
+  if (userId === 2) {
+    return res.status(400).json({ error: 'Cannot assign the Guest user to a group.' })
+  }
+
+  try {
+    const group = await WIKI.models.groups.query().findById(groupId)
+    if (!group) {
+      return res.status(404).json({ error: 'Invalid Group ID' })
+    }
+
+    if (
+      WIKI.auth.checkExclusiveAccess(req.user, ['write:groups'], ['manage:groups', 'manage:system']) &&
+      groupHasElevatedPermissions(group)
+    ) {
+      return res.status(403).json({ error: 'You are not authorized to assign a user to this elevated group.' })
+    }
+
+    if (
+      WIKI.auth.checkExclusiveAccess(req.user, ['manage:groups'], ['manage:system']) &&
+      groupHasSystemPermissions(group)
+    ) {
+      return res.status(403).json({ error: 'You are not authorized to assign a user to a group with the manage:system permission.' })
+    }
+
+    const user = await WIKI.models.users.query().findById(userId)
+    if (!user) {
+      return res.status(404).json({ error: 'Invalid User ID' })
+    }
+
+    const relation = await WIKI.models.knex('userGroups').where({
+      userId,
+      groupId
+    }).first()
+    if (relation) {
+      return res.status(400).json({ error: 'User is already assigned to group.' })
+    }
+
+    await group.$relatedQuery('users').relate(user.id)
+    WIKI.auth.revokeUserTokens({ id: user.id, kind: 'u' })
+    WIKI.events.outbound.emit('addAuthRevoke', { id: user.id, kind: 'u' })
+
+    res.json({
+      succeeded: true,
+      message: 'User has been assigned to group.'
+    })
+  } catch (err) {
+    next(err)
+  }
+})
+
 router.delete('/:groupId/users/:userId', async (req, res, next) => {
   if (!requireGroupsListAccess(req, res)) {
     return

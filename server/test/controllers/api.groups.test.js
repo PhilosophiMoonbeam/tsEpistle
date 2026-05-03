@@ -23,6 +23,7 @@ describe('controllers/api groups endpoints', () => {
     global.WIKI = {
       auth: {
         checkAccess: jest.fn().mockReturnValue(true),
+        checkExclusiveAccess: jest.fn().mockReturnValue(false),
         reloadGroups: jest.fn().mockResolvedValue(undefined),
         revokeUserTokens: jest.fn()
       },
@@ -83,6 +84,7 @@ describe('controllers/api groups endpoints', () => {
                   { id: 10, name: 'Alice', email: 'alice@example.com', providerKey: 'local' },
                   { id: 11, name: 'Bob', email: 'bob@example.com', extra: 'nope' }
                 ]),
+                relate: jest.fn().mockResolvedValue(1),
                 unrelate: jest.fn().mockReturnValue({
                   where: jest.fn().mockResolvedValue(1)
                 })
@@ -90,6 +92,11 @@ describe('controllers/api groups endpoints', () => {
             })
           })
         },
+        knex: jest.fn().mockReturnValue({
+          where: jest.fn().mockReturnValue({
+            first: jest.fn().mockResolvedValue(null)
+          })
+        }),
         users: {
           query: jest.fn().mockReturnValue({
             findById: jest.fn().mockResolvedValue({
@@ -110,6 +117,7 @@ describe('controllers/api groups endpoints', () => {
       create: express.__router.post.mock.calls.find(([path]) => path === '/')[1],
       picker: express.__router.get.mock.calls.find(([path]) => path === '/')[1],
       list: express.__router.get.mock.calls.find(([path]) => path === '/list')[1],
+      assignUser: express.__router.post.mock.calls.find(([path]) => path === '/:groupId/users/:userId')[1],
       unassignUser: express.__router.delete.mock.calls.find(([path]) => path === '/:groupId/users/:userId')[1],
       detail: express.__router.get.mock.calls.find(([path]) => path === '/:id')[1]
     }
@@ -121,6 +129,7 @@ describe('controllers/api groups endpoints', () => {
     expect(typeof handlers.create).toBe('function')
     expect(typeof handlers.picker).toBe('function')
     expect(typeof handlers.list).toBe('function')
+    expect(typeof handlers.assignUser).toBe('function')
     expect(typeof handlers.unassignUser).toBe('function')
     expect(typeof handlers.detail).toBe('function')
   })
@@ -317,6 +326,150 @@ describe('controllers/api groups endpoints', () => {
 
     expect(res.status).toHaveBeenCalledWith(403)
     expect(res.json).toHaveBeenCalledWith({ error: 'write:groups, manage:groups, or manage:system is required' })
+  })
+
+  it('assigns group users and revokes their tokens', async () => {
+    const { assignUser } = loadHandler()
+    const req = { user: { permissions: ['manage:groups'] }, params: { groupId: '3', userId: '10' } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await assignUser(req, res, jest.fn())
+
+    expect(global.WIKI.auth.checkAccess).toHaveBeenCalledWith({ permissions: ['manage:groups'] }, ['write:groups', 'manage:groups', 'manage:system'])
+    const group = await global.WIKI.models.groups.query.mock.results[0].value.findById.mock.results[0].value
+    expect(global.WIKI.models.groups.query.mock.results[0].value.findById).toHaveBeenCalledWith(3)
+    expect(global.WIKI.models.users.query.mock.results[0].value.findById).toHaveBeenCalledWith(10)
+    expect(global.WIKI.models.knex).toHaveBeenCalledWith('userGroups')
+    expect(global.WIKI.models.knex.mock.results[0].value.where).toHaveBeenCalledWith({ userId: 10, groupId: 3 })
+    expect(group.$relatedQuery).toHaveBeenCalledWith('users')
+    expect(group.$relatedQuery.mock.results[0].value.relate).toHaveBeenCalledWith(10)
+    expect(global.WIKI.auth.revokeUserTokens).toHaveBeenCalledWith({ id: 10, kind: 'u' })
+    expect(global.WIKI.events.outbound.emit).toHaveBeenCalledWith('addAuthRevoke', { id: 10, kind: 'u' })
+    expect(res.json).toHaveBeenCalledWith({
+      succeeded: true,
+      message: 'User has been assigned to group.'
+    })
+  })
+
+  it('returns 403 for group user assign requests without group admin access', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValueOnce(false)
+    const { assignUser } = loadHandler()
+    const req = { user: { permissions: ['manage:api'] }, params: { groupId: '3', userId: '10' } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await assignUser(req, res, jest.fn())
+
+    expect(res.status).toHaveBeenCalledWith(403)
+    expect(res.json).toHaveBeenCalledWith({ error: 'write:groups, manage:groups, or manage:system is required' })
+  })
+
+  it('returns 400 for malformed group user assign ids and guest assignment', async () => {
+    const { assignUser } = loadHandler()
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await assignUser({ user: { permissions: ['manage:groups'] }, params: { groupId: 'bad', userId: '10' } }, res, jest.fn())
+    await assignUser({ user: { permissions: ['manage:groups'] }, params: { groupId: '3', userId: 'bad' } }, res, jest.fn())
+    await assignUser({ user: { permissions: ['manage:groups'] }, params: { groupId: '3', userId: '2' } }, res, jest.fn())
+
+    expect(res.status).toHaveBeenNthCalledWith(1, 400)
+    expect(res.json).toHaveBeenNthCalledWith(1, { error: 'group id must be a positive integer' })
+    expect(res.status).toHaveBeenNthCalledWith(2, 400)
+    expect(res.json).toHaveBeenNthCalledWith(2, { error: 'user id must be a positive integer' })
+    expect(res.status).toHaveBeenNthCalledWith(3, 400)
+    expect(res.json).toHaveBeenNthCalledWith(3, { error: 'Cannot assign the Guest user to a group.' })
+  })
+
+  it('protects elevated group user assignments for lower-tier group admins', async () => {
+    global.WIKI.models.groups.query.mockReturnValueOnce({
+      findById: jest.fn().mockResolvedValue({
+        id: 3,
+        permissions: ['manage:users'],
+        $relatedQuery: jest.fn()
+      })
+    })
+    global.WIKI.auth.checkExclusiveAccess.mockReturnValueOnce(true)
+    const { assignUser } = loadHandler()
+    const req = { user: { permissions: ['write:groups'] }, params: { groupId: '3', userId: '10' } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await assignUser(req, res, jest.fn())
+
+    expect(global.WIKI.auth.checkExclusiveAccess).toHaveBeenCalledWith({ permissions: ['write:groups'] }, ['write:groups'], ['manage:groups', 'manage:system'])
+    expect(res.status).toHaveBeenCalledWith(403)
+    expect(res.json).toHaveBeenCalledWith({ error: 'You are not authorized to assign a user to this elevated group.' })
+  })
+
+  it('protects system group user assignments for non-system group admins', async () => {
+    global.WIKI.models.groups.query.mockReturnValueOnce({
+      findById: jest.fn().mockResolvedValue({
+        id: 1,
+        permissions: ['manage:system'],
+        $relatedQuery: jest.fn()
+      })
+    })
+    global.WIKI.auth.checkExclusiveAccess
+      .mockReturnValueOnce(false)
+      .mockReturnValueOnce(true)
+    const { assignUser } = loadHandler()
+    const req = { user: { permissions: ['manage:groups'] }, params: { groupId: '1', userId: '10' } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await assignUser(req, res, jest.fn())
+
+    expect(global.WIKI.auth.checkExclusiveAccess).toHaveBeenNthCalledWith(2, { permissions: ['manage:groups'] }, ['manage:groups'], ['manage:system'])
+    expect(res.status).toHaveBeenCalledWith(403)
+    expect(res.json).toHaveBeenCalledWith({ error: 'You are not authorized to assign a user to a group with the manage:system permission.' })
+  })
+
+  it('returns 404 when assign group or user targets are missing', async () => {
+    const { assignUser } = loadHandler()
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    global.WIKI.models.groups.query.mockReturnValueOnce({
+      findById: jest.fn().mockResolvedValue(null)
+    })
+    await assignUser({ user: { permissions: ['manage:groups'] }, params: { groupId: '999', userId: '10' } }, res, jest.fn())
+
+    global.WIKI.models.users.query.mockReturnValueOnce({
+      findById: jest.fn().mockResolvedValue(null)
+    })
+    await assignUser({ user: { permissions: ['manage:groups'] }, params: { groupId: '3', userId: '999' } }, res, jest.fn())
+
+    expect(res.status).toHaveBeenNthCalledWith(1, 404)
+    expect(res.json).toHaveBeenNthCalledWith(1, { error: 'Invalid Group ID' })
+    expect(res.status).toHaveBeenNthCalledWith(2, 404)
+    expect(res.json).toHaveBeenNthCalledWith(2, { error: 'Invalid User ID' })
+  })
+
+  it('returns 400 when group user assign relation already exists', async () => {
+    global.WIKI.models.knex.mockReturnValueOnce({
+      where: jest.fn().mockReturnValue({
+        first: jest.fn().mockResolvedValue({ userId: 10, groupId: 3 })
+      })
+    })
+    const { assignUser } = loadHandler()
+    const req = { user: { permissions: ['manage:groups'] }, params: { groupId: '3', userId: '10' } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await assignUser(req, res, jest.fn())
+
+    expect(res.status).toHaveBeenCalledWith(400)
+    expect(res.json).toHaveBeenCalledWith({ error: 'User is already assigned to group.' })
+  })
+
+  it('forwards unexpected group user assign failures to next', async () => {
+    const next = jest.fn()
+    global.WIKI.models.groups.query.mockReturnValueOnce({
+      findById: jest.fn().mockRejectedValue(new Error('assign db down'))
+    })
+    const { assignUser } = loadHandler()
+    const req = { user: { permissions: ['manage:groups'] }, params: { groupId: '3', userId: '10' } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await assignUser(req, res, next)
+
+    expect(next).toHaveBeenCalledWith(expect.any(Error))
+    expect(next.mock.calls[0][0].message).toBe('assign db down')
   })
 
   it('unassigns group users and revokes their tokens', async () => {

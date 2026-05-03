@@ -1,4 +1,4 @@
-const { fetchGroupOptions, fetchGroupsList, fetchGroupDetails, createGroup, unassignGroupUser } = require('./groups-api')
+const { fetchGroupOptions, fetchGroupsList, fetchGroupDetails, createGroup, assignGroupUser, unassignGroupUser } = require('./groups-api')
 
 function createJsonResponse (payload, ok = true) {
   return {
@@ -217,6 +217,43 @@ describe('groups api helper', () => {
     }, false))
 
     await expect(createGroup(fetchImpl, 'Editors', 'Bad group create')).rejects.toThrow('write:groups, manage:groups, or manage:system is required')
+  })
+
+  test('assigns group users through the REST endpoint', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+      succeeded: true,
+      message: 'User has been assigned to group.'
+    }))
+
+    await expect(assignGroupUser(fetchImpl, 3, 10)).resolves.toEqual({
+      succeeded: true,
+      message: 'User has been assigned to group.'
+    })
+
+    expect(fetchImpl).toHaveBeenCalledWith('/_api/groups/3/users/10', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: {
+        Accept: 'application/json'
+      }
+    })
+  })
+
+  test('rejects malformed group user assign responses', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+      succeeded: false,
+      message: 'Nope'
+    }))
+
+    await expect(assignGroupUser(fetchImpl, 3, 10, 'Bad assign payload')).rejects.toThrow('Bad assign payload')
+  })
+
+  test('surfaces API error messages for failed group user assigns', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+      error: 'User is already assigned to group.'
+    }, false))
+
+    await expect(assignGroupUser(fetchImpl, 3, 10, 'Bad assign')).rejects.toThrow('User is already assigned to group.')
   })
 
   test('unassigns group users through the REST endpoint', async () => {

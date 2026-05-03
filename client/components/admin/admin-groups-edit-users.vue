@@ -51,9 +51,7 @@
 <script>
 import UserSearch from '../common/user-search.vue'
 
-import assignUserMutation from 'gql/admin/groups/groups-mutation-assign.gql'
-
-import { unassignGroupUser } from '../../helpers/groups-api'
+import { assignGroupUser, unassignGroupUser } from '../../helpers/groups-api'
 import { loadingStart, loadingStop, showNotification } from '../../helpers/root-ui-store'
 
 export default {
@@ -95,29 +93,23 @@ export default {
   },
   methods: {
     async assignUser({ id, email, name }) {
+      loadingStart(this.$store, 'admin-groups-assign')
       try {
-        await this.$apollo.mutate({
-          mutation: assignUserMutation,
-          variables: {
-            groupId: this.group.id,
-            userId: id
-          },
-          watchLoading (isLoading) {
-            this.$store.commit(`loading${isLoading ? 'Start' : 'Stop'}`, 'admin-groups-assign')
-          }
-        })
-        this.$store.commit('showNotification', {
+        await assignGroupUser(window.fetch.bind(window), this.group.id, id)
+        showNotification(this.$store, {
           style: 'success',
           message: `User has been assigned to ${this.group.name}.`,
           icon: 'assignment_ind'
         })
         this.$emit('refresh')
       } catch (err) {
-        this.$store.commit('showNotification', {
+        showNotification(this.$store, {
           style: 'red',
           message: err.message,
           icon: 'warning'
         })
+      } finally {
+        loadingStop(this.$store, 'admin-groups-assign')
       }
     },
     async unassignUser(id) {
