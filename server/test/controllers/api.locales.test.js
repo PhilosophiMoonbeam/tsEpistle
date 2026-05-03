@@ -57,6 +57,11 @@ describe('controllers/api locales endpoints', () => {
       configSvc: {
         saveToDb: jest.fn().mockResolvedValue()
       },
+      scheduler: {
+        registerJob: jest.fn().mockResolvedValue({
+          finished: Promise.resolve()
+        })
+      },
       lang: {
         setCurrentLocale: jest.fn().mockResolvedValue(),
         refreshNamespaces: jest.fn().mockResolvedValue(),
@@ -74,6 +79,7 @@ describe('controllers/api locales endpoints', () => {
       list: express.__router.get.mock.calls.find(([path]) => path === '/')[1],
       config: express.__router.get.mock.calls.find(([path]) => path === '/config')[1],
       saveConfig: express.__router.post.mock.calls.find(([path]) => path === '/config')[1],
+      download: express.__router.post.mock.calls.find(([path]) => path === '/:code/download')[1],
       strings: express.__router.get.mock.calls.find(([path]) => path === '/:code/strings')[1]
     }
   }
@@ -84,6 +90,7 @@ describe('controllers/api locales endpoints', () => {
     expect(typeof handlers.list).toBe('function')
     expect(typeof handlers.config).toBe('function')
     expect(typeof handlers.saveConfig).toBe('function')
+    expect(typeof handlers.download).toBe('function')
     expect(typeof handlers.strings).toBe('function')
   })
 
@@ -200,6 +207,56 @@ describe('controllers/api locales endpoints', () => {
 
     expect(res.status).toHaveBeenCalledWith(500)
     expect(res.json).toHaveBeenCalledWith({ error: 'save failed' })
+  })
+
+  it('returns JSON 403 for locale downloads without manage system access', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValueOnce(false)
+    const { download } = loadHandlers()
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await download({ user: { permissions: [] }, params: { code: 'fr' } }, res)
+
+    expect(res.status).toHaveBeenCalledWith(403)
+    expect(res.json).toHaveBeenCalledWith({ error: 'manage:system is required' })
+    expect(global.WIKI.scheduler.registerJob).not.toHaveBeenCalled()
+  })
+
+  it('downloads locales through scheduler preserving resolver job semantics', async () => {
+    const finished = Promise.resolve()
+    global.WIKI.scheduler.registerJob.mockResolvedValueOnce({ finished })
+    const { download } = loadHandlers()
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await download({ user: { permissions: ['manage:system'] }, params: { code: 'fr' } }, res)
+
+    expect(global.WIKI.scheduler.registerJob).toHaveBeenCalledWith({
+      name: 'fetch-graph-locale',
+      immediate: true
+    }, 'fr')
+    expect(res.status).not.toHaveBeenCalled()
+    expect(res.json).toHaveBeenCalledWith({ message: 'Locale downloaded successfully' })
+  })
+
+  it('returns JSON 400 when locale download code is missing', async () => {
+    const { download } = loadHandlers()
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await download({ user: {}, params: { code: '' } }, res)
+
+    expect(res.status).toHaveBeenCalledWith(400)
+    expect(res.json).toHaveBeenCalledWith({ error: 'locale code is required' })
+    expect(global.WIKI.scheduler.registerJob).not.toHaveBeenCalled()
+  })
+
+  it('returns JSON 500 for locale download failures', async () => {
+    global.WIKI.scheduler.registerJob.mockRejectedValueOnce(new Error('download failed'))
+    const { download } = loadHandlers()
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await download({ user: {}, params: { code: 'fr' } }, res)
+
+    expect(res.status).toHaveBeenCalledWith(500)
+    expect(res.json).toHaveBeenCalledWith({ error: 'download failed' })
   })
 
   it('returns namespace strings payload when namespace is provided', async () => {

@@ -1,4 +1,4 @@
-const { fetchLocales, fetchLocaleConfig, saveLocaleConfig } = require('./locales-api')
+const { fetchLocales, fetchLocaleConfig, saveLocaleConfig, downloadLocale } = require('./locales-api')
 
 function createJsonResponse (payload, ok = true) {
   return {
@@ -141,5 +141,39 @@ describe('locales api helper', () => {
     })
 
     await expect(saveLocaleConfig(fetchImpl, {}, 'Bad locale save content type')).rejects.toThrow('Bad locale save content type')
+  })
+
+  test('downloads locales with same-origin POST options', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ message: 'Locale downloaded successfully' }))
+
+    await expect(downloadLocale(fetchImpl, 'pt-BR')).resolves.toEqual({ message: 'Locale downloaded successfully' })
+
+    expect(fetchImpl).toHaveBeenCalledWith('/_api/locales/pt-BR/download', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: {
+        Accept: 'application/json'
+      }
+    })
+  })
+
+  test('encodes locale download path parameters', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ message: 'Locale downloaded successfully' }))
+
+    await downloadLocale(fetchImpl, 'zh Hans')
+
+    expect(fetchImpl.mock.calls[0][0]).toBe('/_api/locales/zh%20Hans/download')
+  })
+
+  test('rejects malformed locale download success payloads', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ ok: true }))
+
+    await expect(downloadLocale(fetchImpl, 'fr', 'Bad locale download')).rejects.toThrow('Bad locale download')
+  })
+
+  test('propagates locale download REST JSON errors', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ error: 'download failed' }, false))
+
+    await expect(downloadLocale(fetchImpl, 'fr', 'Bad locale download')).rejects.toThrow('download failed')
   })
 })

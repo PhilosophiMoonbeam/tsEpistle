@@ -110,8 +110,21 @@ async function saveLocaleConfig (fetchImpl, config, fallbackMessage = 'Locale se
   return normalizeLocaleSavePayload(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
 }
 
+async function downloadLocale (fetchImpl, code, fallbackMessage = 'Locale download failed') {
+  const response = await fetchImpl(`/_api/locales/${encodeURIComponent(code)}/download`, {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: {
+      Accept: 'application/json'
+    }
+  })
+
+  return normalizeLocaleSavePayload(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
+}
+
 module.exports = {
   fetchLocales,
   fetchLocaleConfig,
-  saveLocaleConfig
+  saveLocaleConfig,
+  downloadLocale
 }

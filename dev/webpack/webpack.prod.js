@@ -44,7 +44,7 @@ module.exports = {
   module: {
     rules: [
       {
-        test: /\.js$/,
+        test: /\.[jt]s$/,
         exclude: (modulePath) => {
           return modulePath.includes('node_modules') && !modulePath.includes('vuetify')
         },
@@ -272,6 +272,7 @@ module.exports = {
       'modernizr$': path.resolve(process.cwd(), 'client/.modernizrrc.js')
     },
     extensions: [
+      '.ts',
       '.js',
       '.json',
       '.vue'

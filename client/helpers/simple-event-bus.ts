@@ -1,8 +1,18 @@
-function createEventBus () {
-  const handlers = Object.create(null)
+type EventHandler = (...args: unknown[]) => void
+
+type EventHandlers = Record<string, EventHandler[] | undefined>
+
+export interface SimpleEventBus {
+  emit(eventName: string, ...args: unknown[]): void
+  on(eventName: string, handler?: EventHandler): void
+  off(eventName: string, handler?: EventHandler): void
+}
+
+export function createEventBus (): SimpleEventBus {
+  const handlers: EventHandlers = Object.create(null)
 
   return {
-    emit (eventName, ...args) {
+    emit (eventName: string, ...args: unknown[]): void {
       const listeners = handlers[eventName]
       if (!listeners) {
         return
@@ -13,7 +23,7 @@ function createEventBus () {
       })
     },
 
-    on (eventName, handler) {
+    on (eventName: string, handler?: EventHandler): void {
       if (typeof handler !== 'function') {
         return
       }
@@ -25,7 +35,7 @@ function createEventBus () {
       handlers[eventName].push(handler)
     },
 
-    off (eventName, handler) {
+    off (eventName: string, handler?: EventHandler): void {
       if (!handler) {
         return
       }
@@ -47,8 +57,4 @@ function createEventBus () {
       }
     }
   }
-}
-
-module.exports = {
-  createEventBus
 }

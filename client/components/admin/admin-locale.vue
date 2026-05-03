@@ -140,9 +140,7 @@
 <script>
 import _ from 'lodash'
 
-import localesDownloadMutation from 'gql/admin/locale/locale-mutation-download.gql'
-
-import { fetchLocales, fetchLocaleConfig, saveLocaleConfig } from '../../helpers/locales-api'
+import { fetchLocales, fetchLocaleConfig, saveLocaleConfig, downloadLocale } from '../../helpers/locales-api'
 import { loadingStart, loadingStop, showNotification } from '../../helpers/root-ui-store'
 
 export default {
@@ -241,31 +239,24 @@ export default {
     },
     async download(lc) {
       lc.isDownloading = true
-      const respRaw = await this.$apollo.mutate({
-        mutation: localesDownloadMutation,
-        variables: {
-          locale: lc.code
-        }
-      })
-      const resp = _.get(respRaw, 'data.localization.downloadLocale.responseResult', {})
-      if (resp.succeeded) {
-        lc.isDownloading = false
+      try {
+        await downloadLocale(window.fetch.bind(window), lc.code, 'Locale download failed')
         lc.isInstalled = true
         lc.updatedAt = new Date().toISOString()
         lc.installDate = lc.updatedAt
-        this.$store.commit('showNotification', {
+        showNotification(this.$store, {
           message: `Locale ${lc.name} has been installed successfully.`,
           style: 'success',
           icon: 'get_app'
         })
-      } else {
-        this.$store.commit('showNotification', {
-          message: `Error: ${resp.message}`,
+      } catch (err) {
+        showNotification(this.$store, {
+          message: `Error: ${err.message}`,
           style: 'error',
           icon: 'warning'
         })
       }
-      this.isDownloading = false
+      lc.isDownloading = false
     },
     async save() {
       if (!this.configLoaded) {

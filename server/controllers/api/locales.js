@@ -87,6 +87,28 @@ router.post('/config', async (req, res) => {
   }
 })
 
+router.post('/:code/download', async (req, res) => {
+  if (!requireSystemAccess(req, res)) {
+    return
+  }
+
+  if (!req.params || typeof req.params.code !== 'string' || req.params.code.length < 1) {
+    return res.status(400).json({ error: 'locale code is required' })
+  }
+
+  try {
+    const job = await WIKI.scheduler.registerJob({
+      name: 'fetch-graph-locale',
+      immediate: true
+    }, req.params.code)
+    await job.finished
+
+    return res.json({ message: 'Locale downloaded successfully' })
+  } catch (err) {
+    return res.status(500).json({ error: err.message || 'Locale download failed' })
+  }
+})
+
 router.get('/:code/strings', async (req, res) => {
   const namespace = req.query.namespace
   if (!namespace) {

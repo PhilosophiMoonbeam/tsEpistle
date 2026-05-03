@@ -6,10 +6,6 @@ extend type Query {
   localization: LocalizationQuery
 }
 
-extend type Mutation {
-  localization: LocalizationMutation
-}
-
 # -----------------------------------------------
 # QUERIES
 # -----------------------------------------------
@@ -18,23 +14,6 @@ type LocalizationQuery {
   locales: [LocalizationLocale]
   config: LocalizationConfig
   translations(locale: String!, namespace: String!): [Translation]
-}
-
-# -----------------------------------------------
-# MUTATIONS
-# -----------------------------------------------
-
-type LocalizationMutation {
-  downloadLocale(
-    locale: String!
-  ): DefaultResponse @auth(requires: ["manage:system"])
-
-  updateLocale(
-    locale: String!
-    autoUpdate: Boolean!
-    namespacing: Boolean!
-    namespaces: [String]!
-  ): DefaultResponse @auth(requires: ["manage:system"])
 }
 
 # -----------------------------------------------

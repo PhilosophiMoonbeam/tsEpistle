@@ -66,9 +66,9 @@ describe('admin-locale loadBootstrap root UI facade migration guard', () => {
       /import\s+\{(?=[^}]*\bloadingStart\b)(?=[^}]*\bloadingStop\b)(?=[^}]*\bshowNotification\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/root-ui-store['"]/
     )
     expect(script).toMatch(
-      /import\s+\{(?=[^}]*\bfetchLocales\b)(?=[^}]*\bfetchLocaleConfig\b)(?=[^}]*\bsaveLocaleConfig\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/locales-api['"]/
+      /import\s+\{(?=[^}]*\bfetchLocales\b)(?=[^}]*\bfetchLocaleConfig\b)(?=[^}]*\bsaveLocaleConfig\b)(?=[^}]*\bdownloadLocale\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/locales-api['"]/
     )
-    expect(script).not.toMatch(/locale-mutation-save\.gql|localesSaveMutation/)
+    expect(script).not.toMatch(/locale-mutation-save\.gql|localesSaveMutation|locale-mutation-download\.gql|localesDownloadMutation/)
   })
 
   test('loadBootstrap() routes loading and fetch error notifications through the root UI facade', () => {
@@ -99,10 +99,14 @@ describe('admin-locale loadBootstrap root UI facade migration guard', () => {
     expect(save).not.toMatch(/this\.\$apollo\.mutate|localesSaveMutation|locale-mutation-save\.gql/)
   })
 
-  test('download(), created(), and template behavior remain otherwise unchanged', () => {
+  test('download(), created(), and template behavior route through REST and facades', () => {
     expect(download).not.toBeNull()
-    expect(download).toMatch(/this\.\$apollo\.mutate\s*\(\s*\{\s*mutation:\s*localesDownloadMutation/)
-    expect(download).toMatch(/this\.\$store\.commit\s*\(\s*['"]showNotification['"]\s*,/)
+    expect(download).toMatch(/lc\.isDownloading\s*=\s*true[\s\S]*await\s+downloadLocale\s*\(\s*window\.fetch\.bind\(\s*window\s*\)\s*,\s*lc\.code\s*,\s*['"]Locale download failed['"]\s*\)/)
+    expect(download).toMatch(/lc\.isInstalled\s*=\s*true[\s\S]*lc\.updatedAt\s*=\s*new Date\(\)\.toISOString\(\)[\s\S]*lc\.installDate\s*=\s*lc\.updatedAt/)
+    expect(download).toMatch(/showNotification\s*\(\s*this\.\$store\s*,\s*\{\s*message:\s*`Locale\s+\$\{lc\.name\}\s+has been installed successfully\.`\s*,\s*style:\s*['"]success['"]\s*,\s*icon:\s*['"]get_app['"]\s*\}\s*\)/)
+    expect(download).toMatch(/catch\s*\(\s*err\s*\)\s*\{\s*showNotification\s*\(\s*this\.\$store\s*,\s*\{\s*message:\s*`Error:\s*\$\{err\.message\}`\s*,\s*style:\s*['"]error['"]\s*,\s*icon:\s*['"]warning['"]\s*\}\s*\)\s*\}/)
+    expect(download).toContain('lc.isDownloading = false')
+    expect(download).not.toMatch(/this\.\$apollo\.mutate|localesDownloadMutation|locale-mutation-download\.gql|this\.\$store\.commit/)
     expect(script).toMatch(/created\s*\(\s*\)\s*\{\s*this\.loadBootstrap\s*\(\s*\)\s*\}/)
     expect(source).toMatch(/@click='save'/)
     expect(source).toMatch(/@click='download\(item\)'/)
