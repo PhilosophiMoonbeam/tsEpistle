@@ -244,6 +244,7 @@ import _ from 'lodash'
 import { sync } from 'vuex-pathify'
 import gql from 'graphql-tag'
 import { onEditorInsert, offEditorInsert } from '../../helpers/editor-insert-events'
+import { pushGraphError, setLoading, showNotification } from '../../helpers/root-ui-store'
 
 import store from '../../store'
 import editorStore from '../../store/editor'
@@ -374,16 +375,16 @@ export default {
             securityCSPDirectives: _.get(this.config, 'securityCSPDirectives', '')
           },
           watchLoading (isLoading) {
-            this.$store.commit(`loading${isLoading ? 'Start' : 'Stop'}`, 'admin-site-update')
+            setLoading(this.$store, 'admin-site-update', isLoading)
           }
         })
-        this.$store.commit('showNotification', {
+        showNotification(this.$store, {
           style: 'success',
           message: 'Configuration saved successfully.',
           icon: 'check'
         })
       } catch (err) {
-        this.$store.commit('pushGraphError', err)
+        pushGraphError(this.$store, err)
       }
     },
     browseLoginBg () {
@@ -433,7 +434,7 @@ export default {
       fetchPolicy: 'network-only',
       update: (data) => _.cloneDeep(data.site.config),
       watchLoading (isLoading) {
-        this.$store.commit(`loading${isLoading ? 'Start' : 'Stop'}`, 'admin-security-refresh')
+        setLoading(this.$store, 'admin-security-refresh', isLoading)
       }
     }
   }

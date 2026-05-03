@@ -1,4 +1,4 @@
-const { fetchLocales, fetchLocaleConfig } = require('./locales-api')
+const { fetchLocales, fetchLocaleConfig, saveLocaleConfig } = require('./locales-api')
 
 function createJsonResponse (payload, ok = true) {
   return {
@@ -96,5 +96,50 @@ describe('locales api helper', () => {
     })
 
     await expect(fetchLocaleConfig(fetchImpl, 'Bad locale config')).rejects.toThrow('manage:system is required')
+  })
+
+  test('saves locale config with same-origin JSON POST options', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ message: 'Locale config updated' }))
+    const config = {
+      locale: 'fr',
+      autoUpdate: false,
+      namespacing: true,
+      namespaces: ['en', 'fr']
+    }
+
+    await expect(saveLocaleConfig(fetchImpl, config)).resolves.toEqual({ message: 'Locale config updated' })
+
+    expect(fetchImpl).toHaveBeenCalledWith('/_api/locales/config', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(config)
+    })
+  })
+
+  test('rejects malformed locale save success payloads', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ ok: true }))
+
+    await expect(saveLocaleConfig(fetchImpl, {}, 'Bad locale save')).rejects.toThrow('Bad locale save')
+  })
+
+  test('propagates locale save REST JSON errors', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ error: 'Invalid locale config payload' }, false))
+
+    await expect(saveLocaleConfig(fetchImpl, {}, 'Bad locale save')).rejects.toThrow('Invalid locale config payload')
+  })
+
+  test('rejects non-JSON successful locale save responses', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue({
+      ok: true,
+      headers: {
+        get: () => 'text/plain'
+      }
+    })
+
+    await expect(saveLocaleConfig(fetchImpl, {}, 'Bad locale save content type')).rejects.toThrow('Bad locale save content type')
   })
 })

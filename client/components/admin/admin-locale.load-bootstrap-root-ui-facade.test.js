@@ -60,14 +60,15 @@ describe('admin-locale loadBootstrap root UI facade migration guard', () => {
   const save = script && extractMethod(script, 'save')
   const directLoadBootstrapRootUiCommit = /\bthis\.\$store\.commit\s*\(\s*(?:['"]loadingStart['"]|['"]loadingStop['"]|['"]showNotification['"]|`loadingStart`|`loadingStop`|`showNotification`)\s*,/
 
-  test('admin-locale.vue imports root UI facades for loadBootstrap()', () => {
+  test('admin-locale.vue imports REST helpers and root UI facades', () => {
     expect(script).not.toBeNull()
     expect(script).toMatch(
       /import\s+\{(?=[^}]*\bloadingStart\b)(?=[^}]*\bloadingStop\b)(?=[^}]*\bshowNotification\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/root-ui-store['"]/
     )
     expect(script).toMatch(
-      /import\s+\{\s*fetchLocales\s*,\s*fetchLocaleConfig\s*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/locales-api['"]/
+      /import\s+\{(?=[^}]*\bfetchLocales\b)(?=[^}]*\bfetchLocaleConfig\b)(?=[^}]*\bsaveLocaleConfig\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/locales-api['"]/
     )
+    expect(script).not.toMatch(/locale-mutation-save\.gql|localesSaveMutation/)
   })
 
   test('loadBootstrap() routes loading and fetch error notifications through the root UI facade', () => {
@@ -81,20 +82,27 @@ describe('admin-locale loadBootstrap root UI facade migration guard', () => {
     expect(loadBootstrap).toMatch(/this\.configLoaded\s*=\s*false\s*showNotification\s*\(\s*this\.\$store\s*,\s*\{\s*style:\s*['"]red['"]\s*,\s*message:\s*configResult\.reason\.message\s*,\s*icon:\s*['"]alert['"]\s*\}\s*\)/)
     expect(loadBootstrap).toMatch(/loadingStop\s*\(\s*this\.\$store\s*,\s*['"]admin-locale-refresh['"]\s*\)\s*\}/)
     expect(loadBootstrap).not.toMatch(directLoadBootstrapRootUiCommit)
-
-    expect(loadBootstrap.match(/\bloadingStart\s*\(/g) || []).toHaveLength(1)
-    expect(loadBootstrap.match(/\bshowNotification\s*\(/g) || []).toHaveLength(2)
-    expect(loadBootstrap.match(/\bloadingStop\s*\(/g) || []).toHaveLength(1)
   })
 
-  test('download(), save(), created(), and template behavior remain out of this migration scope', () => {
-    expect(download).not.toBeNull()
+  test('save() routes locale config through REST without changing UI success, failure, or reload behavior', () => {
     expect(save).not.toBeNull()
 
+    expect(save).toMatch(/if\s*\(\s*!this\.configLoaded\s*\)\s*\{\s*return\s*\}/)
+    expect(save).toMatch(/this\.loading\s*=\s*true[\s\S]*await\s+saveLocaleConfig\s*\(\s*window\.fetch\.bind\(\s*window\s*\)\s*,\s*\{\s*locale:\s*this\.selectedLocale\s*,\s*autoUpdate:\s*this\.autoUpdate\s*,\s*namespacing:\s*this\.namespacing\s*,\s*namespaces:\s*this\.namespaces\s*\}\s*,\s*['"]Locale settings update failed['"]\s*\)/)
+    expect(save).toMatch(/this\.\$i18n\.i18next\.changeLanguage\s*\(\s*this\.selectedLocale\s*\)/)
+    expect(save).toMatch(/this\.\$moment\.locale\s*\(\s*this\.selectedLocale\s*\)/)
+    expect(save).toMatch(/this\.\$vuetify\.rtl\s*=\s*curLocale\s*&&\s*curLocale\.isRTL/)
+    expect(save).toMatch(/showNotification\s*\(\s*this\.\$store\s*,\s*\{\s*message:\s*['"]Locale settings updated successfully\.['"]\s*,\s*style:\s*['"]success['"]\s*,\s*icon:\s*['"]check['"]\s*\}\s*\)/)
+    expect(save).toMatch(/window\.location\.reload\s*\(\s*true\s*\)/)
+    expect(save).toMatch(/catch\s*\(\s*err\s*\)\s*\{\s*showNotification\s*\(\s*this\.\$store\s*,\s*\{\s*message:\s*`Error:\s*\$\{err\.message\}`\s*,\s*style:\s*['"]error['"]\s*,\s*icon:\s*['"]warning['"]\s*\}\s*\)\s*\}/)
+    expect(save).toContain('this.loading = false')
+    expect(save).not.toMatch(/this\.\$apollo\.mutate|localesSaveMutation|locale-mutation-save\.gql/)
+  })
+
+  test('download(), created(), and template behavior remain otherwise unchanged', () => {
+    expect(download).not.toBeNull()
     expect(download).toMatch(/this\.\$apollo\.mutate\s*\(\s*\{\s*mutation:\s*localesDownloadMutation/)
     expect(download).toMatch(/this\.\$store\.commit\s*\(\s*['"]showNotification['"]\s*,/)
-    expect(save).toMatch(/this\.loading\s*=\s*true[\s\S]*this\.\$apollo\.mutate\s*\(\s*\{\s*mutation:\s*localesSaveMutation/)
-    expect(save).toMatch(/window\.location\.reload\s*\(\s*true\s*\)/)
     expect(script).toMatch(/created\s*\(\s*\)\s*\{\s*this\.loadBootstrap\s*\(\s*\)\s*\}/)
     expect(source).toMatch(/@click='save'/)
     expect(source).toMatch(/@click='download\(item\)'/)

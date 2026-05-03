@@ -86,7 +86,32 @@ async function fetchLocaleConfig (fetchImpl, fallbackMessage = 'Locale config re
   return normalizeLocaleConfig(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
 }
 
+function normalizeLocaleSavePayload (payload, fallbackMessage) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload) || typeof payload.message !== 'string' || payload.message.length < 1) {
+    throw new Error(fallbackMessage)
+  }
+
+  return {
+    message: payload.message
+  }
+}
+
+async function saveLocaleConfig (fetchImpl, config, fallbackMessage = 'Locale settings update failed') {
+  const response = await fetchImpl('/_api/locales/config', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(config)
+  })
+
+  return normalizeLocaleSavePayload(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
+}
+
 module.exports = {
   fetchLocales,
-  fetchLocaleConfig
+  fetchLocaleConfig,
+  saveLocaleConfig
 }

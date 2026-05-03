@@ -166,7 +166,7 @@
     "pem-jwk": "2.0.0",
     "pg": "8.20.0",
     "pg-pubsub": "0.8.1",
-    "pg-query-stream": "4.10.3",
+    "pg-query-stream": "4.14.0",
     "pg-tsquery": "8.4.2",
     "prom-client": "15.1.3",
     "pug": "3.0.4",

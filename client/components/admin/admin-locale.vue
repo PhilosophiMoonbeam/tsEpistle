@@ -141,9 +141,8 @@
 import _ from 'lodash'
 
 import localesDownloadMutation from 'gql/admin/locale/locale-mutation-download.gql'
-import localesSaveMutation from 'gql/admin/locale/locale-mutation-save.gql'
 
-import { fetchLocales, fetchLocaleConfig } from '../../helpers/locales-api'
+import { fetchLocales, fetchLocaleConfig, saveLocaleConfig } from '../../helpers/locales-api'
 import { loadingStart, loadingStop, showNotification } from '../../helpers/root-ui-store'
 
 export default {
@@ -274,17 +273,14 @@ export default {
       }
 
       this.loading = true
-      const respRaw = await this.$apollo.mutate({
-        mutation: localesSaveMutation,
-        variables: {
+      try {
+        await saveLocaleConfig(window.fetch.bind(window), {
           locale: this.selectedLocale,
           autoUpdate: this.autoUpdate,
           namespacing: this.namespacing,
           namespaces: this.namespaces
-        }
-      })
-      const resp = _.get(respRaw, 'data.localization.updateLocale.responseResult', {})
-      if (resp.succeeded) {
+        }, 'Locale settings update failed')
+
         // Change UI language
         this.$i18n.i18next.changeLanguage(this.selectedLocale)
         this.$moment.locale(this.selectedLocale)
@@ -293,7 +289,7 @@ export default {
         const curLocale = _.find(this.locales, ['code', this.selectedLocale])
         this.$vuetify.rtl = curLocale && curLocale.isRTL
 
-        this.$store.commit('showNotification', {
+        showNotification(this.$store, {
           message: 'Locale settings updated successfully.',
           style: 'success',
           icon: 'check'
@@ -302,9 +298,9 @@ export default {
         _.delay(() => {
           window.location.reload(true)
         }, 1000)
-      } else {
-        this.$store.commit('showNotification', {
-          message: `Error: ${resp.message}`,
+      } catch (err) {
+        showNotification(this.$store, {
+          message: `Error: ${err.message}`,
           style: 'error',
           icon: 'warning'
         })
