@@ -122,8 +122,10 @@ describe('search navigation event usage', () => {
   test('search navigation helper owns its bus instead of requiring caller root instances', () => {
     const source = fs.readFileSync(helperPath, 'utf8')
 
-    expect(source).toMatch(/const\s+Vue\s*=\s*require\(\s*['"]vue['"]\s*\)/)
-    expect(source).toMatch(/new\s+Vue\s*\(\s*\)/)
+    expect(source).toContain("require('./simple-event-bus')")
+    expect(source).not.toMatch(/require\(\s*['"]vue['"]\s*\)/)
+    expect(source).not.toMatch(/new\s+Vue\s*\(/)
+    expect(source).not.toMatch(/\.\$(?:emit|on|off)\s*\(/)
     expect(source).not.toMatch(/function\s+\w+\s*\(\s*root\b/)
     expect(source).not.toMatch(/\broot\s*\.\s*\$(?:emit|on|off)\b/)
   })
