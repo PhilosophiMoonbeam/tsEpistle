@@ -75,7 +75,9 @@ describe('admin-storage executeAction root UI facade migration guard', () => {
     expect(executeAction).not.toBeNull()
 
     expect(script).toMatch(/import\s+\{(?=[^}]*\bloadingStart\b)(?=[^}]*\bloadingStop\b)(?=[^}]*\bshowNotification\b)(?=[^}]*\bsetLoading\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/root-ui-store['"]/)
-    expect(script).toMatch(/import\s+\{\s*executeStorageAction\s*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/storage-api['"]/)
+    expect(script).toMatch(/import\s+\{(?=[^}]*\bexecuteStorageAction\b)(?=[^}]*\bfetchStorageStatus\b)(?=[^}]*\bfetchStorageTargets\b)(?=[^}]*\bsaveStorageTargets\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/storage-api['"]/)
+    expect(script).not.toContain('gql/admin/storage/')
+    expect(script).not.toContain('apollo:')
     expect(executeAction).toMatch(/\bloadingStart\s*\(\s*this\.\$store\s*,\s*['"]admin-storage-executeaction['"]\s*\)/)
     expect(executeAction).toMatch(/\bshowNotification\s*\(\s*this\.\$store\s*,\s*\{\s*message:\s*['"]Action completed\.['"]\s*,\s*style:\s*['"]success['"]\s*,\s*icon:\s*['"]check['"]\s*\}\s*\)/)
     expect(executeAction).toMatch(/\bloadingStop\s*\(\s*this\.\$store\s*,\s*['"]admin-storage-executeaction['"]\s*\)/)
@@ -112,5 +114,17 @@ describe('admin-storage executeAction root UI facade migration guard', () => {
       ['clear running action handler', /this\.runningActionHandler\s*=\s*['"]['"]/],
       ['stop loading via facade', /\bloadingStop\s*\(\s*this\.\$store\s*,\s*['"]admin-storage-executeaction['"]\s*\)/]
     ])
+  })
+
+  test('storage targets and status are loaded through REST helpers with preserved config mapping', () => {
+    expect(script).not.toBeNull()
+
+    expect(script).toMatch(/async\s+loadTargets\s*\(\)\s*\{[\s\S]*fetchStorageTargets\s*\(\s*window\.fetch\.bind\s*\(\s*window\s*\)\s*\)[\s\S]*setLoading\s*\(\s*this\.\$store\s*,\s*['"]admin-storage-targets-refresh['"]\s*,\s*false\s*\)/)
+    expect(script).toMatch(/async\s+loadStatus\s*\(\)\s*\{[\s\S]*fetchStorageStatus\s*\(\s*window\.fetch\.bind\s*\(\s*window\s*\)\s*\)[\s\S]*setLoading\s*\(\s*this\.\$store\s*,\s*['"]admin-storage-status-refresh['"]\s*,\s*false\s*\)/)
+    expect(script).toContain('value: JSON.parse(cfg.value)')
+    expect(script).toContain('value: JSON.stringify({ v: cfg.value.value })')
+    expect(script).toMatch(/this\.statusRefreshInterval\s*=\s*setInterval\s*\([\s\S]*this\.loadStatus\s*\(\s*\)[\s\S]*3000\s*\)/)
+    expect(script).toMatch(/clearInterval\s*\(\s*this\.statusRefreshInterval\s*\)/)
+    expect(script).toMatch(/await\s+saveStorageTargets\s*\(\s*window\.fetch\.bind\s*\(\s*window\s*\)\s*,\s*this\.storageTargetsPayload\s*\(\s*\)\s*\)/)
   })
 })

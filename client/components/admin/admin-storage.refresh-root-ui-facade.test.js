@@ -42,16 +42,18 @@ describe('admin-storage refresh root UI facade migration guard', () => {
   const script = extractScript(source)
   const refresh = script && extractMethod(script, 'refresh')
 
-  test('refresh() routes the success notification through root-ui-store after refetching targets', () => {
+  test('refresh() routes the success notification through root-ui-store after reloading targets by REST', () => {
     expect(script).not.toBeNull()
     expect(refresh).not.toBeNull()
 
     expect(script).toMatch(/import\s+\{(?=[^}]*\bloadingStart\b)(?=[^}]*\bloadingStop\b)(?=[^}]*\bshowNotification\b)(?=[^}]*\bsetLoading\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/root-ui-store['"]/)
+    expect(script).toMatch(/import\s+\{(?=[^}]*\bfetchStorageTargets\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/storage-api['"]/)
 
-    expect(refresh).toMatch(/await\s+this\.\$apollo\.queries\.targets\.refetch\s*\(\s*\)/)
+    expect(refresh).toMatch(/await\s+this\.loadTargets\s*\(\s*\)/)
     expect(refresh).toMatch(/showNotification\s*\(\s*this\.\$store\s*,\s*\{\s*message:\s*['"]List of storage targets has been refreshed\.['"]\s*,\s*style:\s*['"]success['"]\s*,\s*icon:\s*['"]cached['"]\s*\}\s*\)/)
+    expect(refresh).not.toMatch(/this\.\$apollo\.queries\.targets\.refetch/)
     expect(refresh).not.toMatch(/this\.\$store\.commit\s*\(\s*['"]showNotification['"]\s*,/)
-    expect(refresh).toMatch(/await\s+this\.\$apollo\.queries\.targets\.refetch\s*\(\s*\)[\s\S]*?showNotification\s*\(\s*this\.\$store\s*,/)
+    expect(refresh).toMatch(/await\s+this\.loadTargets\s*\(\s*\)[\s\S]*?showNotification\s*\(\s*this\.\$store\s*,/)
 
     const showNotificationCalls = refresh.match(/\bshowNotification\s*\(/g) || []
     expect(showNotificationCalls).toHaveLength(1)

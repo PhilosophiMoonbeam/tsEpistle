@@ -226,11 +226,7 @@ import momentDurationFormatSetup from 'moment-duration-format'
 import DurationPicker from '../common/duration-picker.vue'
 import { LoopingRhombusesSpinner } from 'epic-spinners'
 import { loadingStart, loadingStop, showNotification, setLoading } from '../../helpers/root-ui-store'
-import { executeStorageAction } from '../../helpers/storage-api'
-
-import statusQuery from 'gql/admin/storage/storage-query-status.gql'
-import targetsQuery from 'gql/admin/storage/storage-query-targets.gql'
-import targetsSaveMutation from 'gql/admin/storage/storage-mutation-save-targets.gql'
+import { executeStorageAction, fetchStorageStatus, fetchStorageTargets, saveStorageTargets } from '../../helpers/storage-api'
 
 momentDurationFormatSetup(moment)
 
@@ -248,7 +244,8 @@ export default {
         supportedModes: []
       },
       targets: [],
-      status: []
+      status: [],
+      statusRefreshInterval: null
     }
   },
   computed: {
@@ -264,9 +261,56 @@ export default {
       this.selectedTarget = _.get(_.find(this.targets, ['isEnabled', true]), 'key', 'disk')
     }
   },
+  mounted() {
+    this.loadTargets()
+    this.loadStatus()
+    this.statusRefreshInterval = setInterval(() => {
+      this.loadStatus()
+    }, 3000)
+  },
+  beforeDestroy() {
+    if (this.statusRefreshInterval) {
+      clearInterval(this.statusRefreshInterval)
+      this.statusRefreshInterval = null
+    }
+  },
   methods: {
+    normalizeTargets(targets) {
+      return _.cloneDeep(targets).map(str => ({
+        ...str,
+        config: _.sortBy(str.config.map(cfg => ({
+          ...cfg,
+          value: JSON.parse(cfg.value)
+        })), [t => t.value.order])
+      }))
+    },
+    storageTargetsPayload() {
+      return this.targets.map(tgt => _.pick(tgt, [
+        'isEnabled',
+        'key',
+        'config',
+        'mode',
+        'syncInterval'
+      ])).map(str => ({...str, config: str.config.map(cfg => ({...cfg, value: JSON.stringify({ v: cfg.value.value })}))}))
+    },
+    async loadTargets() {
+      setLoading(this.$store, 'admin-storage-targets-refresh', true)
+      try {
+        this.targets = this.normalizeTargets(await fetchStorageTargets(window.fetch.bind(window)))
+      } finally {
+        setLoading(this.$store, 'admin-storage-targets-refresh', false)
+      }
+    },
+    async loadStatus() {
+      setLoading(this.$store, 'admin-storage-status-refresh', true)
+      try {
+        this.status = await fetchStorageStatus(window.fetch.bind(window))
+      } finally {
+        setLoading(this.$store, 'admin-storage-status-refresh', false)
+      }
+    },
     async refresh() {
-      await this.$apollo.queries.targets.refetch()
+      await this.loadTargets()
       showNotification(this.$store, {
         message: 'List of storage targets has been refreshed.',
         style: 'success',
@@ -275,18 +319,7 @@ export default {
     },
     async save() {
       loadingStart(this.$store, 'admin-storage-savetargets')
-      await this.$apollo.mutate({
-        mutation: targetsSaveMutation,
-        variables: {
-          targets: this.targets.map(tgt => _.pick(tgt, [
-            'isEnabled',
-            'key',
-            'config',
-            'mode',
-            'syncInterval'
-          ])).map(str => ({...str, config: str.config.map(cfg => ({...cfg, value: JSON.stringify({ v: cfg.value.value })}))}))
-        }
-      })
+      await saveStorageTargets(window.fetch.bind(window), this.storageTargetsPayload())
       showNotification(this.$store, {
         message: 'Storage configuration saved successfully.',
         style: 'success',
@@ -315,31 +348,6 @@ export default {
       this.runningAction = false
       this.runningActionHandler = ''
       loadingStop(this.$store, 'admin-storage-executeaction')
-    }
-  },
-  apollo: {
-    targets: {
-      query: targetsQuery,
-      fetchPolicy: 'network-only',
-      update: (data) => _.cloneDeep(data.storage.targets).map(str => ({
-        ...str,
-        config: _.sortBy(str.config.map(cfg => ({
-          ...cfg,
-          value: JSON.parse(cfg.value)
-        })), [t => t.value.order])
-      })),
-      watchLoading (isLoading) {
-        setLoading(this.$store, 'admin-storage-targets-refresh', isLoading)
-      }
-    },
-    status: {
-      query: statusQuery,
-      fetchPolicy: 'network-only',
-      update: (data) => data.storage.status,
-      watchLoading (isLoading) {
-        setLoading(this.$store, 'admin-storage-status-refresh', isLoading)
-      },
-      pollInterval: 3000
     }
   }
 }

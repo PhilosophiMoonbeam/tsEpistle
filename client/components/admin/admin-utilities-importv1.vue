@@ -64,7 +64,7 @@
               v-textarea(
                 outlined
                 label='Private Key Contents'
-                placeholder='-----BEGIN RSA PRIVATE KEY-----\n...\n-----END RSA PRIVATE KEY-----'
+                placeholder='[REDACTED PRIVATE KEY]'
                 hide-details
                 v-model='gitPrivKey'
               )
@@ -271,10 +271,7 @@ import _ from 'lodash'
 import { SemipolarSpinner } from 'epic-spinners'
 
 import utilityImportv1UsersMutation from 'gql/admin/utilities/utilities-mutation-importv1-users.gql'
-import storageTargetsQuery from 'gql/admin/storage/storage-query-targets.gql'
-import storageStatusQuery from 'gql/admin/storage/storage-query-status.gql'
-import targetsSaveMutation from 'gql/admin/storage/storage-mutation-save-targets.gql'
-import { executeStorageAction } from '../../helpers/storage-api'
+import { executeStorageAction, fetchStorageStatus, fetchStorageTargets, saveStorageTargets } from '../../helpers/storage-api'
 import { pushGraphError } from '../../helpers/root-ui-store'
 
 export default {
@@ -363,13 +360,10 @@ export default {
 
         if (this.wantContent) {
           try {
-            const resp = await this.$apollo.query({
-              query: storageTargetsQuery,
-              fetchPolicy: 'network-only'
-            })
-            if (_.has(resp, 'data.storage.targets')) {
+            const storageTargets = await fetchStorageTargets(window.fetch.bind(window))
+            if (Array.isArray(storageTargets)) {
               this.progress += 10
-              let targets = resp.data.storage.targets.map(str => {
+              let targets = storageTargets.map(str => {
                 let nStr = {
                   ...str,
                   config: _.sortBy(str.config.map(cfg => ({
@@ -416,22 +410,13 @@ export default {
 
               // -> Save storage modules configuration
 
-              const respSv = await this.$apollo.mutate({
-                mutation: targetsSaveMutation,
-                variables: {
-                  targets: targets.map(tgt => _.pick(tgt, [
-                    'isEnabled',
-                    'key',
-                    'config',
-                    'mode',
-                    'syncInterval'
-                  ])).map(str => ({...str, config: str.config.map(cfg => ({...cfg, value: JSON.stringify({ v: cfg.value.value })}))}))
-                }
-              })
-              const respObj = _.get(respSv, 'data.storage.updateTargets', {})
-              if (!_.get(respObj, 'responseResult.succeeded', false)) {
-                throw new Error(_.get(respObj, 'responseResult.message', 'An unexpected error occurred'))
-              }
+              await saveStorageTargets(window.fetch.bind(window), targets.map(tgt => _.pick(tgt, [
+                'isEnabled',
+                'key',
+                'config',
+                'mode',
+                'syncInterval'
+              ])).map(str => ({...str, config: str.config.map(cfg => ({...cfg, value: JSON.stringify({ v: cfg.value.value })}))})))
 
               this.progress += 10
 
@@ -440,12 +425,9 @@ export default {
               let statusAttempts = 0
               while (statusAttempts < 10) {
                 statusAttempts++
-                const respStatus = await this.$apollo.query({
-                  query: storageStatusQuery,
-                  fetchPolicy: 'network-only'
-                })
-                if (_.has(respStatus, 'data.storage.status[0]')) {
-                  const st = _.find(respStatus.data.storage.status, ['key', this.contentMode])
+                const storageStatus = await fetchStorageStatus(window.fetch.bind(window))
+                if (_.has(storageStatus, '[0]')) {
+                  const st = _.find(storageStatus, ['key', this.contentMode])
                   if (!st) {
                     throw new Error('Storage target could not be configured.')
                   }

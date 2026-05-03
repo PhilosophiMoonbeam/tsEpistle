@@ -1,4 +1,0 @@
-# ===============================================
-# MAIL
-# ===============================================
-# GraphQL mail query/mutation surface has moved to REST endpoints under /_api/mail.

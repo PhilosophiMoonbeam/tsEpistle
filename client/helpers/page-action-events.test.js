@@ -14,7 +14,7 @@ const {
 } = pageActionEvents
 
 const repoRoot = path.resolve(__dirname, '../..')
-const helperPath = path.join(repoRoot, 'client/helpers/page-action-events.js')
+const helperPath = path.join(repoRoot, 'client/helpers/page-action-events.ts')
 const guardedFiles = [
   'client/themes/default/components/page.vue',
   'client/components/common/nav-header.vue'
@@ -110,7 +110,7 @@ describe('page action event usage', () => {
   test('page action helper owns its bus instead of requiring caller root instances', () => {
     const source = fs.readFileSync(helperPath, 'utf8')
 
-    expect(source).toContain("require('./simple-event-bus')")
+    expect(source).toContain("import { createEventBus } from './simple-event-bus'")
     expect(source).not.toMatch(/require\(\s*['"]vue['"]\s*\)/)
     expect(source).not.toMatch(/new\s+Vue\s*\(/)
     expect(source).not.toMatch(/\.\$(?:emit|on|off)\s*\(/)
