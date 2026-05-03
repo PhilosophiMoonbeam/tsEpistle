@@ -21,7 +21,7 @@
     "client/helpers/root-ui-store.js",
     "client/helpers/search-navigation-events.ts",
     "client/helpers/page-action-events.js",
-    "client/helpers/editor-conflict-events.js",
+    "client/helpers/editor-conflict-events.ts",
     "client/helpers/editor-insert-events.ts",
     "client/helpers/editor-link-events.ts",
     "client/helpers/simple-event-bus.ts",
