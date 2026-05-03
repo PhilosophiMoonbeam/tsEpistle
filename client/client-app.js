@@ -12,7 +12,6 @@ import { InMemoryCache } from 'apollo-cache-inmemory'
 import { getMainDefinition } from 'apollo-utilities'
 import VueApollo from 'vue-apollo'
 import Vuetify from 'vuetify/lib'
-import Velocity from 'velocity-animate'
 import Vuescroll from 'vuescroll/dist/vuescroll-native'
 import Hammer from 'hammerjs'
 import moment from 'moment-timezone'
@@ -144,8 +143,6 @@ Vue.use(localization.VueI18Next)
 Vue.use(helpers)
 Vue.use(Vuetify)
 Vue.use(Vuescroll)
-
-Vue.prototype.Velocity = Velocity
 
 // ====================================
 // Register Vue Components
