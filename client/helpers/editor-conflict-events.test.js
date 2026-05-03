@@ -47,6 +47,15 @@ function helperRootArgumentPattern () {
 }
 
 describe('editor conflict events', () => {
+  test('editor conflict helper uses the shared non-Vue event bus', () => {
+    const source = fs.readFileSync(path.join(repoRoot, 'client/helpers/editor-conflict-events.js'), 'utf8')
+
+    expect(source).toContain("require('./simple-event-bus')")
+    expect(source).not.toMatch(/require\(\s*['"]vue['"]\s*\)/)
+    expect(source).not.toMatch(/new\s+Vue\s*\(/)
+    expect(source).not.toMatch(/\.\$(?:emit|on|off)\s*\(/)
+  })
+
   test.each(conflictEventCases)('emit%s emits the shared %s event on the private bus', (suffix) => {
     const handler = jest.fn()
 

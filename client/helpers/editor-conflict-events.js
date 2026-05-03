@@ -1,21 +1,21 @@
-const Vue = require('vue')
+const { createEventBus } = require('./simple-event-bus')
 
 const EDITOR_SAVE_CONFLICT_EVENT = 'saveConflict'
 const EDITOR_CONTENT_OVERWRITE_EVENT = 'overwriteEditorContent'
 const EDITOR_CONFLICT_RESET_EVENT = 'resetEditorConflict'
 
-const editorConflictBus = new Vue()
+const editorConflictBus = createEventBus()
 
 function emitEditorSaveConflict () {
-  editorConflictBus.$emit(EDITOR_SAVE_CONFLICT_EVENT)
+  editorConflictBus.emit(EDITOR_SAVE_CONFLICT_EVENT)
 }
 
 function emitEditorContentOverwrite () {
-  editorConflictBus.$emit(EDITOR_CONTENT_OVERWRITE_EVENT)
+  editorConflictBus.emit(EDITOR_CONTENT_OVERWRITE_EVENT)
 }
 
 function emitEditorConflictReset () {
-  editorConflictBus.$emit(EDITOR_CONFLICT_RESET_EVENT)
+  editorConflictBus.emit(EDITOR_CONFLICT_RESET_EVENT)
 }
 
 function emitEditorConflictResolved () {
@@ -24,30 +24,30 @@ function emitEditorConflictResolved () {
 }
 
 function onEditorSaveConflict (handler) {
-  editorConflictBus.$on(EDITOR_SAVE_CONFLICT_EVENT, handler)
+  editorConflictBus.on(EDITOR_SAVE_CONFLICT_EVENT, handler)
 }
 
 function onEditorContentOverwrite (handler) {
-  editorConflictBus.$on(EDITOR_CONTENT_OVERWRITE_EVENT, handler)
+  editorConflictBus.on(EDITOR_CONTENT_OVERWRITE_EVENT, handler)
 }
 
 function onEditorConflictReset (handler) {
-  editorConflictBus.$on(EDITOR_CONFLICT_RESET_EVENT, handler)
+  editorConflictBus.on(EDITOR_CONFLICT_RESET_EVENT, handler)
 }
 
 function offEditorSaveConflict (handler) {
   if (!handler) { return }
-  editorConflictBus.$off(EDITOR_SAVE_CONFLICT_EVENT, handler)
+  editorConflictBus.off(EDITOR_SAVE_CONFLICT_EVENT, handler)
 }
 
 function offEditorContentOverwrite (handler) {
   if (!handler) { return }
-  editorConflictBus.$off(EDITOR_CONTENT_OVERWRITE_EVENT, handler)
+  editorConflictBus.off(EDITOR_CONTENT_OVERWRITE_EVENT, handler)
 }
 
 function offEditorConflictReset (handler) {
   if (!handler) { return }
-  editorConflictBus.$off(EDITOR_CONFLICT_RESET_EVENT, handler)
+  editorConflictBus.off(EDITOR_CONFLICT_RESET_EVENT, handler)
 }
 
 module.exports = {
