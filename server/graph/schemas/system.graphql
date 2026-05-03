@@ -36,8 +36,6 @@ type SystemMutation {
     enabled: Boolean!
   ): DefaultResponse @auth(requires: ["manage:system"])
 
-  performUpgrade: DefaultResponse @auth(requires: ["manage:system"])
-
   importUsersFromV1(
     mongoDbConnString: String!
     groupMode: SystemImportUsersGroupMode!

@@ -31,6 +31,7 @@ jest.mock('filesize', () => jest.fn(() => '16 GB'))
 jest.mock('fs-extra', () => ({
   pathExists: jest.fn().mockResolvedValue(false)
 }))
+jest.mock('request-promise', () => jest.fn())
 
 describe('controllers/api system endpoints', () => {
   beforeEach(() => {
@@ -39,7 +40,10 @@ describe('controllers/api system endpoints', () => {
     express.__router.get.mockClear()
     express.__router.post.mockClear()
     express.__router.patch.mockClear()
-
+    const request = require('request-promise')
+    request.mockReset()
+    delete process.env.UPGRADE_COMPANION
+    delete process.env.UPGRADE_COMPANION_REF
     global.WIKI = {
       version: '2.0.0',
       auth: {
@@ -178,6 +182,7 @@ describe('controllers/api system endpoints', () => {
       telemetry: express.__router.get.mock.calls.find(([path]) => path === '/telemetry')[1],
       updateTelemetry: express.__router.patch.mock.calls.find(([path]) => path === '/telemetry')[1],
       resetTelemetryClientId: express.__router.post.mock.calls.find(([path]) => path === '/telemetry/reset-client-id')[1],
+      performUpgrade: express.__router.post.mock.calls.find(([path]) => path === '/upgrade')[1],
       flushSystemCache: express.__router.post.mock.calls.find(([path]) => path === '/cache/flush')[1],
       flushSystemTemporaryUploads: express.__router.post.mock.calls.find(([path]) => path === '/cache/temp-uploads/flush')[1],
       rebuildPageTree: express.__router.post.mock.calls.find(([path]) => path === '/content/rebuild-tree')[1],
@@ -200,6 +205,7 @@ describe('controllers/api system endpoints', () => {
     expect(typeof handlers.telemetry).toBe('function')
     expect(typeof handlers.updateTelemetry).toBe('function')
     expect(typeof handlers.resetTelemetryClientId).toBe('function')
+    expect(typeof handlers.performUpgrade).toBe('function')
     expect(typeof handlers.flushSystemCache).toBe('function')
     expect(typeof handlers.flushSystemTemporaryUploads).toBe('function')
     expect(typeof handlers.rebuildPageTree).toBe('function')
@@ -212,7 +218,7 @@ describe('controllers/api system endpoints', () => {
 
   it('returns 403 for unauthorized system requests', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(false)
-    const { info, summary, flags, host, extensions, telemetry, updateTelemetry, resetTelemetryClientId, flushSystemCache, flushSystemTemporaryUploads, rebuildPageTree, migratePagesToLocale, exportStatus, ssl, saveFlags, checkForUpdate } = loadHandlers()
+    const { info, summary, flags, host, extensions, telemetry, updateTelemetry, resetTelemetryClientId, performUpgrade, flushSystemCache, flushSystemTemporaryUploads, rebuildPageTree, migratePagesToLocale, exportStatus, ssl, saveFlags, checkForUpdate } = loadHandlers()
     const req = { user: { permissions: [] }, get: jest.fn() }
     const res = { sendStatus: jest.fn(), json: jest.fn() }
 
@@ -224,6 +230,7 @@ describe('controllers/api system endpoints', () => {
     await telemetry(req, res)
     await updateTelemetry(req, res)
     await resetTelemetryClientId(req, res)
+    await performUpgrade(req, res)
     await flushSystemCache(req, res)
     await flushSystemTemporaryUploads(req, res)
     await rebuildPageTree(req, res)
@@ -233,8 +240,8 @@ describe('controllers/api system endpoints', () => {
     await saveFlags(req, res)
     await checkForUpdate(req, res)
 
-    expect(res.sendStatus).toHaveBeenCalledTimes(16)
-    for (let idx = 1; idx <= 16; idx++) {
+    expect(res.sendStatus).toHaveBeenCalledTimes(17)
+    for (let idx = 1; idx <= 17; idx++) {
       expect(res.sendStatus).toHaveBeenNthCalledWith(idx, 403)
     }
     expect(res.json).not.toHaveBeenCalled()
@@ -449,6 +456,77 @@ describe('controllers/api system endpoints', () => {
     expect(global.WIKI.telemetry.generateClientId).toHaveBeenCalled()
     expect(next).toHaveBeenCalledWith(expect.any(Error))
     expect(next.mock.calls[0][0].message).toBe('telemetry reset failed')
+  })
+
+  it('starts system upgrade through update companion with resolver-compatible request options', async () => {
+    const request = require('request-promise')
+    request.mockResolvedValueOnce({ ok: true })
+    process.env.UPGRADE_COMPANION = '1'
+    global.WIKI.auth.checkAccess.mockReturnValue(true)
+    const { performUpgrade } = loadHandlers()
+    const req = { user: { permissions: ['manage:system'] } }
+    const res = { json: jest.fn(), sendStatus: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await performUpgrade(req, res)
+
+    expect(request).toHaveBeenCalledWith({
+      method: 'POST',
+      uri: 'http://wiki-update-companion/upgrade',
+      qs: {}
+    })
+    expect(res.status).not.toHaveBeenCalled()
+    expect(res.json).toHaveBeenCalledWith({ message: 'Upgrade has started.' })
+  })
+
+  it('passes the upgrade companion container reference when configured', async () => {
+    const request = require('request-promise')
+    request.mockResolvedValueOnce({ ok: true })
+    process.env.UPGRADE_COMPANION = '1'
+    process.env.UPGRADE_COMPANION_REF = 'wiki-app'
+    global.WIKI.auth.checkAccess.mockReturnValue(true)
+    const { performUpgrade } = loadHandlers()
+    const req = { user: { permissions: ['manage:system'] } }
+    const res = { json: jest.fn(), sendStatus: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await performUpgrade(req, res)
+
+    expect(request).toHaveBeenCalledWith({
+      method: 'POST',
+      uri: 'http://wiki-update-companion/upgrade',
+      qs: { container: 'wiki-app' }
+    })
+    expect(res.json).toHaveBeenCalledWith({ message: 'Upgrade has started.' })
+  })
+
+  it('returns JSON 500 when the upgrade companion is not configured', async () => {
+    const request = require('request-promise')
+    global.WIKI.auth.checkAccess.mockReturnValue(true)
+    const { performUpgrade } = loadHandlers()
+    const req = { user: { permissions: ['manage:system'] } }
+    const res = { json: jest.fn(), sendStatus: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await performUpgrade(req, res)
+
+    expect(request).not.toHaveBeenCalled()
+    expect(res.status).toHaveBeenCalledWith(500)
+    expect(res.json).toHaveBeenCalledWith({
+      error: 'You must run the wiki-update-companion container and pass the UPGRADE_COMPANION env var in order to use this feature.'
+    })
+  })
+
+  it('returns JSON 500 when the upgrade companion request fails', async () => {
+    const request = require('request-promise')
+    request.mockRejectedValueOnce(new Error('companion failed'))
+    process.env.UPGRADE_COMPANION = '1'
+    global.WIKI.auth.checkAccess.mockReturnValue(true)
+    const { performUpgrade } = loadHandlers()
+    const req = { user: { permissions: ['manage:system'] } }
+    const res = { json: jest.fn(), sendStatus: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await performUpgrade(req, res)
+
+    expect(res.status).toHaveBeenCalledWith(500)
+    expect(res.json).toHaveBeenCalledWith({ error: 'companion failed' })
   })
 
   it('flushes pages cache and emits outbound cache invalidation for authorized requests', async () => {

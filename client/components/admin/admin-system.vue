@@ -134,9 +134,7 @@ import _ from 'lodash'
 
 import { SelfBuildingSquareSpinner } from 'epic-spinners'
 
-import performUpgradeMutation from 'gql/admin/system/system-mutation-upgrade.gql'
-
-import { fetchSystemInfo } from '../../helpers/system-api'
+import { fetchSystemInfo, performSystemUpgrade } from '../../helpers/system-api'
 import { loadingStart, loadingStop, showNotification, pushGraphError } from '../../helpers/root-ui-store'
 
 export default {
@@ -211,22 +209,15 @@ export default {
       this.upgradeProgress = 0
       loadingStart(this.$store, 'admin-system-upgrade')
       try {
-        const respRaw = await this.$apollo.mutate({
-          mutation: performUpgradeMutation
-        })
-        const resp = _.get(respRaw, 'data.system.performUpgrade.responseResult', {})
-        if (resp.succeeded) {
-          this.isUpgradingStarted = true
-          let progressInterval = setInterval(() => {
-            this.upgradeProgress += 0.83
-          }, 500)
-          _.delay(() => {
-            clearInterval(progressInterval)
-            window.location.reload(true)
-          }, 60000)
-        } else {
-          throw new Error(resp.message)
-        }
+        await performSystemUpgrade(window.fetch.bind(window), 'Upgrade failed')
+        this.isUpgradingStarted = true
+        let progressInterval = setInterval(() => {
+          this.upgradeProgress += 0.83
+        }, 500)
+        _.delay(() => {
+          clearInterval(progressInterval)
+          window.location.reload(true)
+        }, 60000)
       } catch (err) {
         pushGraphError(this.$store, err)
         loadingStop(this.$store, 'admin-system-upgrade')

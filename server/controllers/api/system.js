@@ -5,6 +5,7 @@ const os = require('os')
 const filesize = require('filesize')
 const path = require('path')
 const fs = require('fs-extra')
+const request = require('request-promise')
 
 const getosAsync = require('util').promisify(getos)
 
@@ -240,6 +241,30 @@ router.post('/telemetry/reset-client-id', async (req, res, next) => {
     res.json({ message: 'Telemetry Client ID reset successfully.' })
   } catch (err) {
     next(err)
+  }
+})
+
+router.post('/upgrade', async (req, res) => {
+  if (!requireSystemAccess(req, res)) {
+    return
+  }
+
+  try {
+    if (!process.env.UPGRADE_COMPANION) {
+      throw new Error('You must run the wiki-update-companion container and pass the UPGRADE_COMPANION env var in order to use this feature.')
+    }
+
+    await request({
+      method: 'POST',
+      uri: 'http://wiki-update-companion/upgrade',
+      qs: {
+        ...process.env.UPGRADE_COMPANION_REF && { container: process.env.UPGRADE_COMPANION_REF }
+      }
+    })
+
+    res.json({ message: 'Upgrade has started.' })
+  } catch (err) {
+    res.status(500).json({ error: err.message || 'Upgrade failed' })
   }
 })
 

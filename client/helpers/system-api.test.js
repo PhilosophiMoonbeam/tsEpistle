@@ -1,4 +1,4 @@
-const { fetchSystemSummary, fetchSystemInfo, fetchSystemTelemetry, fetchSystemExportStatus, fetchSystemHost, fetchSystemSsl, fetchSystemFlags, fetchSystemExtensions, updateSystemFlags, updateSystemTelemetry, resetSystemTelemetryClientId, flushSystemCache, flushSystemTemporaryUploads, rebuildPageTree, migratePagesToLocale } = require('./system-api')
+const { fetchSystemSummary, fetchSystemInfo, fetchSystemTelemetry, fetchSystemExportStatus, fetchSystemHost, fetchSystemSsl, fetchSystemFlags, fetchSystemExtensions, updateSystemFlags, updateSystemTelemetry, resetSystemTelemetryClientId, flushSystemCache, flushSystemTemporaryUploads, rebuildPageTree, migratePagesToLocale, performSystemUpgrade } = require('./system-api')
 
 function createJsonResponse (payload, ok = true) {
   return {
@@ -701,5 +701,31 @@ describe('system api helper', () => {
     const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ error: 'reset failed' }, false))
 
     await expect(resetSystemTelemetryClientId(fetchImpl, 'Bad reset')).rejects.toThrow('reset failed')
+  })
+
+  test('performs system upgrade with same-origin POST options', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ message: 'Upgrade has started.' }))
+
+    await expect(performSystemUpgrade(fetchImpl)).resolves.toEqual({ message: 'Upgrade has started.' })
+
+    expect(fetchImpl).toHaveBeenCalledWith('/_api/system/upgrade', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: {
+        Accept: 'application/json'
+      }
+    })
+  })
+
+  test('rejects malformed system upgrade success payloads', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ ok: true }))
+
+    await expect(performSystemUpgrade(fetchImpl, 'Bad upgrade payload')).rejects.toThrow('Bad upgrade payload')
+  })
+
+  test('propagates system upgrade REST JSON errors', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ error: 'companion missing' }, false))
+
+    await expect(performSystemUpgrade(fetchImpl, 'Bad upgrade')).rejects.toThrow('companion missing')
   })
 })

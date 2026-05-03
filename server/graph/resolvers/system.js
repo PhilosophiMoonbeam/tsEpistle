@@ -6,7 +6,6 @@ const path = require('path')
 const fs = require('fs-extra')
 const moment = require('moment')
 const graphHelper = require('../../helpers/graph')
-const request = require('request-promise')
 const crypto = require('crypto')
 const nanoid = require('nanoid/non-secure').customAlphabet('1234567890abcdef', 10)
 
@@ -81,26 +80,6 @@ module.exports = {
         await WIKI.configSvc.saveToDb(['telemetry'])
         return {
           responseResult: graphHelper.generateSuccess('Telemetry Client ID has been reset successfully')
-        }
-      } catch (err) {
-        return graphHelper.generateError(err)
-      }
-    },
-    async performUpgrade (obj, args, context) {
-      try {
-        if (process.env.UPGRADE_COMPANION) {
-          await request({
-            method: 'POST',
-            uri: 'http://wiki-update-companion/upgrade',
-            qs: {
-              ...process.env.UPGRADE_COMPANION_REF && { container: process.env.UPGRADE_COMPANION_REF }
-            }
-          })
-          return {
-            responseResult: graphHelper.generateSuccess('Upgrade has started.')
-          }
-        } else {
-          throw new Error('You must run the wiki-update-companion container and pass the UPGRADE_COMPANION env var in order to use this feature.')
         }
       } catch (err) {
         return graphHelper.generateError(err)

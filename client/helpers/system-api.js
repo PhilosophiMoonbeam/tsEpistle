@@ -429,6 +429,23 @@ async function migratePagesToLocale (fetchImpl, sourceLocale, targetLocale, fall
   }
 }
 
+async function performSystemUpgrade (fetchImpl, fallbackMessage = 'Upgrade failed') {
+  const response = await fetchImpl('/_api/system/upgrade', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: {
+      Accept: 'application/json'
+    }
+  })
+
+  const payload = await parseJsonResponse(response, fallbackMessage)
+  if (!payload || typeof payload.message !== 'string' || payload.message.length < 1) {
+    throw new Error(fallbackMessage)
+  }
+
+  return payload
+}
+
 module.exports = {
   fetchSystemSummary,
   fetchSystemInfo,
@@ -444,5 +461,6 @@ module.exports = {
   flushSystemCache,
   flushSystemTemporaryUploads,
   rebuildPageTree,
-  migratePagesToLocale
+  migratePagesToLocale,
+  performSystemUpgrade
 }
