@@ -169,7 +169,8 @@
 import _ from 'lodash'
 import mailConfigQuery from 'gql/admin/mail/mail-query-config.gql'
 import mailUpdateConfigMutation from 'gql/admin/mail/mail-mutation-save-config.gql'
-import mailTestMutation from 'gql/admin/mail/mail-mutation-sendtest.gql'
+
+import { sendMailTest } from '../../helpers/mail-api'
 
 export default {
   data() {
@@ -228,19 +229,8 @@ export default {
     },
     async sendTest () {
       try {
-        const resp = await this.$apollo.mutate({
-          mutation: mailTestMutation,
-          variables: {
-            recipientEmail: this.testEmail
-          },
-          watchLoading (isLoading) {
-            this.$store.commit(`loading${isLoading ? 'Start' : 'Stop'}`, 'admin-mail-test')
-          }
-        })
-        if (!_.get(resp, 'data.mail.sendTest.responseResult.succeeded', false)) {
-          throw new Error(_.get(resp, 'data.mail.sendTest.responseResult.message', 'An unexpected error occurred.'))
-        }
-
+        this.$store.commit(`loadingStart`, 'admin-mail-test')
+        await sendMailTest(window.fetch.bind(window), this.testEmail, 'An unexpected error occurred.')
         this.testEmail = ''
         this.$store.commit('showNotification', {
           style: 'success',
@@ -249,6 +239,8 @@ export default {
         })
       } catch (err) {
         this.$store.commit('pushGraphError', err)
+      } finally {
+        this.$store.commit(`loadingStop`, 'admin-mail-test')
       }
     }
   },
