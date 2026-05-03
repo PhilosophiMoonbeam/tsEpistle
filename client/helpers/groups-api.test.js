@@ -1,4 +1,4 @@
-const { fetchGroupOptions, fetchGroupsList, fetchGroupDetails, createGroup, assignGroupUser, unassignGroupUser } = require('./groups-api')
+const { fetchGroupOptions, fetchGroupsList, fetchGroupDetails, createGroup, assignGroupUser, unassignGroupUser, deleteGroup } = require('./groups-api')
 
 function createJsonResponse (payload, ok = true) {
   return {
@@ -291,5 +291,42 @@ describe('groups api helper', () => {
     }, false))
 
     await expect(unassignGroupUser(fetchImpl, 3, 2, 'Bad unassign')).rejects.toThrow('Cannot unassign Guest user')
+  })
+
+  test('deletes groups through the REST endpoint', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+      succeeded: true,
+      message: 'Group has been deleted.'
+    }))
+
+    await expect(deleteGroup(fetchImpl, 3)).resolves.toEqual({
+      succeeded: true,
+      message: 'Group has been deleted.'
+    })
+
+    expect(fetchImpl).toHaveBeenCalledWith('/_api/groups/3', {
+      method: 'DELETE',
+      credentials: 'same-origin',
+      headers: {
+        Accept: 'application/json'
+      }
+    })
+  })
+
+  test('rejects malformed group delete responses', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+      succeeded: false,
+      message: 'Nope'
+    }))
+
+    await expect(deleteGroup(fetchImpl, 3, 'Bad delete payload')).rejects.toThrow('Bad delete payload')
+  })
+
+  test('surfaces API error messages for failed group deletes', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+      error: 'Cannot delete this group.'
+    }, false))
+
+    await expect(deleteGroup(fetchImpl, 1, 'Bad delete')).rejects.toThrow('Cannot delete this group.')
   })
 })

@@ -230,6 +230,36 @@ router.delete('/:groupId/users/:userId', async (req, res, next) => {
   }
 })
 
+router.delete('/:id', async (req, res, next) => {
+  if (!requireGroupsListAccess(req, res)) {
+    return
+  }
+
+  const id = normalizePositiveIntegerParam(req.params.id, 'group id', res)
+  if (id === null) {
+    return
+  }
+
+  if (id === 1 || id === 2) {
+    return res.status(400).json({ error: 'Cannot delete this group.' })
+  }
+
+  try {
+    await WIKI.models.groups.query().deleteById(id)
+    WIKI.auth.revokeUserTokens({ id, kind: 'g' })
+    WIKI.events.outbound.emit('addAuthRevoke', { id, kind: 'g' })
+    await WIKI.auth.reloadGroups()
+    WIKI.events.outbound.emit('reloadGroups')
+
+    res.json({
+      succeeded: true,
+      message: 'Group has been deleted.'
+    })
+  } catch (err) {
+    next(err)
+  }
+})
+
 router.get('/:id', async (req, res, next) => {
   if (!requireGroupsListAccess(req, res)) {
     return

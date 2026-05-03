@@ -97,7 +97,8 @@
 import _ from 'lodash'
 import gql from 'graphql-tag'
 
-import { fetchGroupDetails } from '../../helpers/groups-api'
+import { deleteGroup, fetchGroupDetails } from '../../helpers/groups-api'
+import { loadingStart, loadingStop, pushGraphError, showNotification } from '../../helpers/root-ui-store'
 
 import GroupPermissions from './admin-groups-edit-permissions.vue'
 import GroupRules from './admin-groups-edit-rules.vue'
@@ -220,37 +221,19 @@ export default {
     },
     async deleteGroup() {
       this.deleteGroupDialog = false
+      loadingStart(this.$store, 'admin-groups-delete')
       try {
-        await this.$apollo.mutate({
-          mutation: gql`
-            mutation ($id: Int!) {
-              groups {
-                delete(id: $id) {
-                  responseResult {
-                    succeeded
-                    errorCode
-                    slug
-                    message
-                  }
-                }
-              }
-            }
-          `,
-          variables: {
-            id: this.group.id
-          },
-          watchLoading (isLoading) {
-            this.$store.commit(`loading${isLoading ? 'Start' : 'Stop'}`, 'admin-groups-delete')
-          }
-        })
-        this.$store.commit('showNotification', {
+        await deleteGroup(window.fetch.bind(window), this.group.id)
+        showNotification(this.$store, {
           style: 'success',
           message: `Group ${this.group.name} has been deleted.`,
           icon: 'delete'
         })
         this.$router.replace('/groups')
       } catch (err) {
-        this.$store.commit('pushGraphError', err)
+        pushGraphError(this.$store, err)
+      } finally {
+        loadingStop(this.$store, 'admin-groups-delete')
       }
     },
     async refresh() {

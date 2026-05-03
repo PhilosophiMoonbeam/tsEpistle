@@ -89,7 +89,8 @@ describe('controllers/api groups endpoints', () => {
                   where: jest.fn().mockResolvedValue(1)
                 })
               })
-            })
+            }),
+            deleteById: jest.fn().mockResolvedValue(1)
           })
         },
         knex: jest.fn().mockReturnValue({
@@ -119,6 +120,7 @@ describe('controllers/api groups endpoints', () => {
       list: express.__router.get.mock.calls.find(([path]) => path === '/list')[1],
       assignUser: express.__router.post.mock.calls.find(([path]) => path === '/:groupId/users/:userId')[1],
       unassignUser: express.__router.delete.mock.calls.find(([path]) => path === '/:groupId/users/:userId')[1],
+      deleteGroup: express.__router.delete.mock.calls.find(([path]) => path === '/:id')[1],
       detail: express.__router.get.mock.calls.find(([path]) => path === '/:id')[1]
     }
   }
@@ -131,6 +133,7 @@ describe('controllers/api groups endpoints', () => {
     expect(typeof handlers.list).toBe('function')
     expect(typeof handlers.assignUser).toBe('function')
     expect(typeof handlers.unassignUser).toBe('function')
+    expect(typeof handlers.deleteGroup).toBe('function')
     expect(typeof handlers.detail).toBe('function')
   })
 
@@ -565,6 +568,68 @@ describe('controllers/api groups endpoints', () => {
 
     expect(next).toHaveBeenCalledWith(expect.any(Error))
     expect(next.mock.calls[0][0].message).toBe('unassign db down')
+  })
+
+  it('deletes groups and reloads group permissions', async () => {
+    const { deleteGroup } = loadHandler()
+    const req = { user: { permissions: ['manage:groups'] }, params: { id: '3' } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await deleteGroup(req, res, jest.fn())
+
+    expect(global.WIKI.auth.checkAccess).toHaveBeenCalledWith({ permissions: ['manage:groups'] }, ['write:groups', 'manage:groups', 'manage:system'])
+    expect(global.WIKI.models.groups.query.mock.results[0].value.deleteById).toHaveBeenCalledWith(3)
+    expect(global.WIKI.auth.revokeUserTokens).toHaveBeenCalledWith({ id: 3, kind: 'g' })
+    expect(global.WIKI.events.outbound.emit).toHaveBeenCalledWith('addAuthRevoke', { id: 3, kind: 'g' })
+    expect(global.WIKI.auth.reloadGroups).toHaveBeenCalled()
+    expect(global.WIKI.events.outbound.emit).toHaveBeenCalledWith('reloadGroups')
+    expect(res.json).toHaveBeenCalledWith({
+      succeeded: true,
+      message: 'Group has been deleted.'
+    })
+  })
+
+  it('returns 403 for group delete requests without group admin access', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValueOnce(false)
+    const { deleteGroup } = loadHandler()
+    const req = { user: { permissions: ['manage:api'] }, params: { id: '3' } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await deleteGroup(req, res, jest.fn())
+
+    expect(res.status).toHaveBeenCalledWith(403)
+    expect(res.json).toHaveBeenCalledWith({ error: 'write:groups, manage:groups, or manage:system is required' })
+  })
+
+  it('returns 400 for malformed and protected group delete ids', async () => {
+    const { deleteGroup } = loadHandler()
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await deleteGroup({ user: { permissions: ['manage:groups'] }, params: { id: 'bad' } }, res, jest.fn())
+    await deleteGroup({ user: { permissions: ['manage:groups'] }, params: { id: '1' } }, res, jest.fn())
+    await deleteGroup({ user: { permissions: ['manage:groups'] }, params: { id: '2' } }, res, jest.fn())
+
+    expect(res.status).toHaveBeenNthCalledWith(1, 400)
+    expect(res.json).toHaveBeenNthCalledWith(1, { error: 'group id must be a positive integer' })
+    expect(res.status).toHaveBeenNthCalledWith(2, 400)
+    expect(res.json).toHaveBeenNthCalledWith(2, { error: 'Cannot delete this group.' })
+    expect(res.status).toHaveBeenNthCalledWith(3, 400)
+    expect(res.json).toHaveBeenNthCalledWith(3, { error: 'Cannot delete this group.' })
+  })
+
+  it('forwards unexpected group delete failures to next', async () => {
+    const next = jest.fn()
+    global.WIKI.models.groups.query.mockReturnValueOnce({
+      deleteById: jest.fn().mockRejectedValue(new Error('delete db down'))
+    })
+    const { deleteGroup } = loadHandler()
+    const req = { user: { permissions: ['manage:groups'] }, params: { id: '3' } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await deleteGroup(req, res, next)
+
+    expect(next).toHaveBeenCalledWith(expect.any(Error))
+    expect(next.mock.calls[0][0].message).toBe('delete db down')
   })
 
   it('returns the admin group detail payload for group admins', async () => {
