@@ -94,6 +94,19 @@ async function fetchSearchEngines (fetchImpl, fallbackMessage = 'Search engines 
   return normalizeSearchEnginesPayload(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
 }
 
+async function rebuildSearchIndex (fetchImpl, fallbackMessage = 'Search index rebuild failed') {
+  const response = await fetchImpl('/_api/search/rebuild-index', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: {
+      Accept: 'application/json'
+    }
+  })
+
+  return parseJsonResponse(response, fallbackMessage)
+}
+
 module.exports = {
-  fetchSearchEngines
+  fetchSearchEngines,
+  rebuildSearchIndex
 }

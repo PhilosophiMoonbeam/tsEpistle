@@ -58,4 +58,17 @@ router.get('/engines', async (req, res, next) => {
   }
 })
 
+router.post('/rebuild-index', async (req, res) => {
+  if (!requireSystemAccess(req, res)) {
+    return
+  }
+
+  try {
+    await WIKI.data.searchEngine.rebuild()
+    res.json({ message: 'Index rebuilt successfully' })
+  } catch (err) {
+    res.status(500).json({ error: err.message || 'Index rebuild failed' })
+  }
+})
+
 module.exports = router

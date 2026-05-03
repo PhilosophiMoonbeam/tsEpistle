@@ -68,8 +68,8 @@ describe('admin-search load/refresh/save/rebuild root UI facade migration guard'
     )
     expect(script).toMatch(/import\s+_\s+from\s+['"]lodash['"]/)
     expect(script).toMatch(/import\s+enginesSaveMutation\s+from\s+['"]gql\/admin\/search\/search-mutation-save-engines\.gql['"]/)
-    expect(script).toMatch(/import\s+enginesRebuildMutation\s+from\s+['"]gql\/admin\/search\/search-mutation-rebuild-index\.gql['"]/)
-    expect(script).toMatch(/import\s+\{\s*fetchSearchEngines\s*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/search-api['"]/)
+    expect(script).toMatch(/import\s+\{\s*fetchSearchEngines,\s*rebuildSearchIndex\s*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/search-api['"]/)
+    expect(script).not.toMatch(/search-mutation-rebuild-index\.gql|enginesRebuildMutation/)
   })
 
   test('loadEngines() uses loading/notification facades while preserving fetch, notifyError, rethrow, and cleanup', () => {
@@ -111,20 +111,19 @@ describe('admin-search load/refresh/save/rebuild root UI facade migration guard'
     expect(save.match(/\bthis\.loadEngines\s*\(/g) || []).toHaveLength(1)
   })
 
-  test('rebuild() uses root UI facades while preserving mutation, response handling, fallback error, and trailing cleanup', () => {
+  test('rebuild() uses REST helper and root UI facades while preserving fallback error and trailing cleanup', () => {
     expect(rebuild).not.toBeNull()
 
-    expect(rebuild).toMatch(/async\s+rebuild\s*\(\s*\)\s*\{\s*loadingStart\s*\(\s*this\.\$store\s*,\s*['"]admin-search-rebuildindex['"]\s*\)\s*try\s*\{\s*const\s+resp\s*=\s*await\s+this\.\$apollo\.mutate\s*\(\s*\{\s*mutation:\s*enginesRebuildMutation\s*\}\s*\)/)
-    expect(rebuild).toMatch(/if\s*\(\s*_\.get\s*\(\s*resp\s*,\s*['"]data\.search\.rebuildIndex\.responseResult\.succeeded['"]\s*,\s*false\s*\)\s*\)/)
+    expect(rebuild).toMatch(/async\s+rebuild\s*\(\s*\)\s*\{\s*loadingStart\s*\(\s*this\.\$store\s*,\s*['"]admin-search-rebuildindex['"]\s*\)\s*try\s*\{\s*await\s+rebuildSearchIndex\s*\(\s*window\.fetch\.bind\(\s*window\s*\)\s*,\s*this\.\$t\s*\(\s*['"]common:error\.unexpected['"]\s*\)\s*\)/)
     expect(rebuild).toMatch(/showNotification\s*\(\s*this\.\$store\s*,\s*\{\s*message:\s*this\.\$t\s*\(\s*['"]admin:search\.indexRebuildSuccess['"]\s*\)\s*,\s*style:\s*['"]success['"]\s*,\s*icon:\s*['"]check['"]\s*\}\s*\)/)
-    expect(rebuild).toMatch(/throw\s+new\s+Error\s*\(\s*_\.get\s*\(\s*resp\s*,\s*['"]data\.search\.rebuildIndex\.responseResult\.message['"]\s*,\s*this\.\$t\s*\(\s*['"]common:error\.unexpected['"]\s*\)\s*\)\s*\)/)
     expect(rebuild).toMatch(/catch\s*\(\s*err\s*\)\s*\{\s*pushGraphError\s*\(\s*this\.\$store\s*,\s*err\s*\)\s*\}\s*loadingStop\s*\(\s*this\.\$store\s*,\s*['"]admin-search-rebuildindex['"]\s*\)\s*\}/)
     expect(rebuild).not.toMatch(directRootUiCommit)
+    expect(rebuild).not.toMatch(/this\.\$apollo\.mutate|enginesRebuildMutation/)
 
     expect(rebuild.match(/\bloadingStart\s*\(/g) || []).toHaveLength(1)
+    expect(rebuild.match(/\brebuildSearchIndex\s*\(/g) || []).toHaveLength(1)
     expect(rebuild.match(/\bshowNotification\s*\(/g) || []).toHaveLength(1)
     expect(rebuild.match(/\bpushGraphError\s*\(/g) || []).toHaveLength(1)
     expect(rebuild.match(/\bloadingStop\s*\(/g) || []).toHaveLength(1)
-    expect(rebuild.match(/\bthis\.\$apollo\.mutate\s*\(/g) || []).toHaveLength(1)
   })
 })

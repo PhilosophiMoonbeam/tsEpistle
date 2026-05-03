@@ -1,4 +1,4 @@
-const { fetchSearchEngines } = require('./search-api')
+const { fetchSearchEngines, rebuildSearchIndex } = require('./search-api')
 
 function createJsonResponse (payload, ok = true) {
   return {
@@ -213,5 +213,35 @@ describe('search api helper', () => {
     })
 
     await expect(fetchSearchEngines(fetchImpl, 'Bad search content type')).rejects.toThrow('Bad search content type')
+  })
+
+  test('rebuilds search index with same-origin JSON options', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ message: 'Index rebuilt successfully' }))
+
+    await expect(rebuildSearchIndex(fetchImpl)).resolves.toEqual({ message: 'Index rebuilt successfully' })
+    expect(fetchImpl).toHaveBeenCalledWith('/_api/search/rebuild-index', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: {
+        Accept: 'application/json'
+      }
+    })
+  })
+
+  test('propagates API JSON errors for search index rebuilds', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ error: 'Index rebuild failed' }, false))
+
+    await expect(rebuildSearchIndex(fetchImpl, 'Bad rebuild')).rejects.toThrow('Index rebuild failed')
+  })
+
+  test('rejects non-JSON successful search index rebuild responses', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue({
+      ok: true,
+      headers: {
+        get: () => 'text/plain'
+      }
+    })
+
+    await expect(rebuildSearchIndex(fetchImpl, 'Bad rebuild content type')).rejects.toThrow('Bad rebuild content type')
   })
 })

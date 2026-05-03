@@ -103,8 +103,7 @@
 import _ from 'lodash'
 
 import enginesSaveMutation from 'gql/admin/search/search-mutation-save-engines.gql'
-import enginesRebuildMutation from 'gql/admin/search/search-mutation-rebuild-index.gql'
-import { fetchSearchEngines } from '../../helpers/search-api'
+import { fetchSearchEngines, rebuildSearchIndex } from '../../helpers/search-api'
 import { loadingStart, loadingStop, showNotification, pushGraphError } from '../../helpers/root-ui-store'
 
 export default {
@@ -184,18 +183,12 @@ export default {
     async rebuild () {
       loadingStart(this.$store, 'admin-search-rebuildindex')
       try {
-        const resp = await this.$apollo.mutate({
-          mutation: enginesRebuildMutation
+        await rebuildSearchIndex(window.fetch.bind(window), this.$t('common:error.unexpected'))
+        showNotification(this.$store, {
+          message: this.$t('admin:search.indexRebuildSuccess'),
+          style: 'success',
+          icon: 'check'
         })
-        if (_.get(resp, 'data.search.rebuildIndex.responseResult.succeeded', false)) {
-          showNotification(this.$store, {
-            message: this.$t('admin:search.indexRebuildSuccess'),
-            style: 'success',
-            icon: 'check'
-          })
-        } else {
-          throw new Error(_.get(resp, 'data.search.rebuildIndex.responseResult.message', this.$t('common:error.unexpected')))
-        }
       } catch (err) {
         pushGraphError(this.$store, err)
       }

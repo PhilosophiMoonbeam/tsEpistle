@@ -6,6 +6,9 @@ jest.mock('express', () => {
       const router = {
         get: jest.fn(),
         post: jest.fn(),
+        patch: jest.fn(),
+        put: jest.fn(),
+        delete: jest.fn(),
         use: jest.fn()
       }
       routers.push(router)
@@ -26,6 +29,9 @@ describe('controllers/api search endpoints', () => {
         checkAccess: jest.fn()
       },
       data: {
+        searchEngine: {
+          rebuild: jest.fn().mockResolvedValue(true)
+        },
         searchEngines: [
           {
             key: 'beta',
@@ -99,17 +105,23 @@ describe('controllers/api search endpoints', () => {
     }
   })
 
-  const loadEnginesHandler = () => {
+  const loadHandlers = () => {
     const express = require('express')
     require('../../controllers/api/search')
     const router = express.__routers[0]
-    return router.get.mock.calls.find(([path]) => path === '/engines')[1]
+    return {
+      engines: router.get.mock.calls.find(([path]) => path === '/engines')[1],
+      rebuildIndex: router.post.mock.calls.find(([path]) => path === '/rebuild-index')[1]
+    }
   }
 
-  it('registers search engines route', () => {
-    const handler = loadEnginesHandler()
+  const loadEnginesHandler = () => loadHandlers().engines
 
-    expect(typeof handler).toBe('function')
+  it('registers search routes', () => {
+    const handlers = loadHandlers()
+
+    expect(typeof handlers.engines).toBe('function')
+    expect(typeof handlers.rebuildIndex).toBe('function')
   })
 
   it('is mounted by the API index router', () => {
@@ -229,5 +241,43 @@ describe('controllers/api search endpoints', () => {
 
     expect(next).toHaveBeenCalledWith(err)
     expect(res.json).not.toHaveBeenCalled()
+  })
+
+  it('returns 403 for unauthorized rebuild requests without rebuilding', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValue(false)
+    const { rebuildIndex } = loadHandlers()
+    const req = { user: { permissions: [] } }
+    const res = { sendStatus: jest.fn(), json: jest.fn() }
+
+    await rebuildIndex(req, res)
+
+    expect(global.WIKI.auth.checkAccess).toHaveBeenCalledWith(req.user, ['manage:system'])
+    expect(res.sendStatus).toHaveBeenCalledWith(403)
+    expect(res.json).not.toHaveBeenCalled()
+    expect(global.WIKI.data.searchEngine.rebuild).not.toHaveBeenCalled()
+  })
+
+  it('rebuilds the search index for authorized requests', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValue(true)
+    const { rebuildIndex } = loadHandlers()
+    const res = { sendStatus: jest.fn(), json: jest.fn() }
+
+    await rebuildIndex({ user: { permissions: ['manage:system'] } }, res)
+
+    expect(global.WIKI.data.searchEngine.rebuild).toHaveBeenCalledTimes(1)
+    expect(res.sendStatus).not.toHaveBeenCalled()
+    expect(res.json).toHaveBeenCalledWith({ message: 'Index rebuilt successfully' })
+  })
+
+  it('returns JSON error messages for search index rebuild failures', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValue(true)
+    global.WIKI.data.searchEngine.rebuild.mockRejectedValueOnce(new Error('index failed'))
+    const { rebuildIndex } = loadHandlers()
+    const res = { sendStatus: jest.fn(), json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await rebuildIndex({ user: { permissions: ['manage:system'] } }, res)
+
+    expect(res.status).toHaveBeenCalledWith(500)
+    expect(res.json).toHaveBeenCalledWith({ error: 'index failed' })
   })
 })
