@@ -206,13 +206,13 @@
   dependencies:
     yargs "16.2.0"
 
-"@asciidoctor/core@2.2.6":
-  version "2.2.6"
-  resolved "https://registry.yarnpkg.com/@asciidoctor/core/-/core-2.2.6.tgz#a59a9e8ab48ac0a615d5a3200214d3071291c5d5"
-  integrity sha512-TmB2K5UfpDpSbCNBBntXzKHcAk2EA3/P68jmWvmJvglVUdkO9V6kTAuXVe12+h6C4GK0ndwuCrHHtEVcL5t6pQ==
+"@asciidoctor/core@2.2.9":
+  version "2.2.9"
+  resolved "https://registry.yarnpkg.com/@asciidoctor/core/-/core-2.2.9.tgz#a591426f96b5fa059b2eb68a129ac1a203ac48a5"
+  integrity sha512-tIPRHo1T2SFmAm+j77cDsj0RuaszP7xJxsaVTTAF5CwKyTbazw9TnIVlpIWM5yWfIWAWcAZy92RcnPgMJwny1w==
   dependencies:
-    asciidoctor-opal-runtime "0.3.3"
-    unxhr "1.0.1"
+    asciidoctor-opal-runtime "0.3.4"
+    unxhr "~1.2"
 
 "@azure/abort-controller@^2.0.0", "@azure/abort-controller@^2.1.2":
   version "2.1.2"
@@ -3908,21 +3908,21 @@ asap@^2.0.0, asap@~2.0.3:
   resolved "https://registry.yarnpkg.com/asap/-/asap-2.0.6.tgz#e50347611d7e690943208bbdafebcbc2fb866d46"
   integrity sha512-BSHWgDSAiKs50o2Re8ppvp3seVHXSRM44cdSsT9FfNEUUZLOGWVCsiWaRPWM1Znn+mqZ1OfVZ3z3DWEzSp7hRA==
 
-asciidoctor-opal-runtime@0.3.3:
-  version "0.3.3"
-  resolved "https://registry.yarnpkg.com/asciidoctor-opal-runtime/-/asciidoctor-opal-runtime-0.3.3.tgz#2667635f858d3eb3fdfcf6795cf68138e2040174"
-  integrity sha512-/CEVNiOia8E5BMO9FLooo+Kv18K4+4JBFRJp8vUy/N5dMRAg+fRNV4HA+o6aoSC79jVU/aT5XvUpxSxSsTS8FQ==
+asciidoctor-opal-runtime@0.3.4:
+  version "0.3.4"
+  resolved "https://registry.yarnpkg.com/asciidoctor-opal-runtime/-/asciidoctor-opal-runtime-0.3.4.tgz#47817b0e0331563ad2f998f5f081893f0e5c4af4"
+  integrity sha512-zqd6zn1LV+PZ69AP/kEbB00zuPHMIAJY3IX8+aZV+X1qOwatYvKGjsMmdMc5ApfhtkjZ4mYkqiTPJWnEnBiMJg==
   dependencies:
-    glob "7.1.3"
-    unxhr "1.0.1"
+    fast-glob "~3.3"
+    unxhr "~1.2"
 
-asciidoctor@2.2.6:
-  version "2.2.6"
-  resolved "https://registry.yarnpkg.com/asciidoctor/-/asciidoctor-2.2.6.tgz#43b5fec8ab91ed2d8d1815c75067cfa29da2e568"
-  integrity sha512-EXG3+F2pO21B+COfQmV/WgEgGiy7nG/mJiS/o5DXpaT2q82FRZWPVkbMZrpDvpu4pjXe5c754RbZR9Vz0L0Vtw==
+asciidoctor@2.2.9:
+  version "2.2.9"
+  resolved "https://registry.yarnpkg.com/asciidoctor/-/asciidoctor-2.2.9.tgz#67e07913b0317d2c7899a2ce085811f53bf8499d"
+  integrity sha512-lzviGTZ/tnnmDLIE+fY/m8aUc6lGTGRNh5rTC1HPevlc89G0iYez+sQFT60oZ87BPzOYllP+TeK1xh0D1wt/6Q==
   dependencies:
     "@asciidoctor/cli" "3.5.0"
-    "@asciidoctor/core" "2.2.6"
+    "@asciidoctor/core" "2.2.9"
 
 asn1.js@^4.10.1:
   version "4.10.1"
@@ -8018,7 +8018,7 @@ fast-deep-equal@^3.1.1:
   resolved "https://registry.yarnpkg.com/fast-deep-equal/-/fast-deep-equal-3.1.3.tgz#3a7d56b559d6cbc3eb512325244e619a65c6c525"
   integrity sha512-f3qQ9oQy9j2AhBe/H9VC91wLmKBCCU/gDOnKNAYG5hswO7BLKj09Hc5HYNz9cGI++xlpDCIgDaitVs03ATR84Q==
 
-fast-glob@^3.1.1, fast-glob@^3.2.4, fast-glob@^3.2.9:
+fast-glob@^3.1.1, fast-glob@^3.2.4, fast-glob@^3.2.9, fast-glob@~3.3:
   version "3.3.3"
   resolved "https://registry.yarnpkg.com/fast-glob/-/fast-glob-3.3.3.tgz#d06d585ce8dba90a16b0505c543c3ccfb3aeb818"
   integrity sha512-7MptL8U0cqcFdzIzwOTHoilX9x5BrNqye7Z/LuC7kCMRio1EMSyqRK3BEAUD7sXRq4iT4AzTVuZdhgQ2TCvYLg==
@@ -8717,18 +8717,6 @@ glob-parent@^5.0.0, glob-parent@^5.1.1, glob-parent@^5.1.2, glob-parent@~5.1.2:
   integrity sha512-AOIgSQCepiJYwP3ARnGx+5VnTu2HBYdzbGP45eLw1vr3zB3vZLeyed1sC9hnbcOc9/SrMyM5RPQrkGz4aS9Zow==
   dependencies:
     is-glob "^4.0.1"
-
-glob@7.1.3:
-  version "7.1.3"
-  resolved "https://registry.yarnpkg.com/glob/-/glob-7.1.3.tgz#3960832d3f1574108342dafd3a67b332c0969df1"
-  integrity sha512-vcfuiIxogLV4DlGBHIUOwI0IbrJ8HWPc4MU7HzviGeNho/UJDfi6B5p3sHeWIQ0KGIU0Jpxi5ZHxemQfLkkAwQ==
-  dependencies:
-    fs.realpath "^1.0.0"
-    inflight "^1.0.4"
-    inherits "2"
-    minimatch "^3.0.4"
-    once "^1.3.0"
-    path-is-absolute "^1.0.0"
 
 glob@^10.4.2:
   version "10.5.0"
@@ -16788,10 +16776,10 @@ untildify@^4.0.0:
   resolved "https://registry.yarnpkg.com/untildify/-/untildify-4.0.0.tgz#2bc947b953652487e4600949fb091e3ae8cd919b"
   integrity sha512-KK8xQ1mkzZeg9inewmFVDNkg3l5LUhoq9kN6iWYB/CC9YMG8HA+c1Q8HwDe6dEX7kErrEVNVBO3fWsVq5iDgtw==
 
-unxhr@1.0.1:
-  version "1.0.1"
-  resolved "https://registry.yarnpkg.com/unxhr/-/unxhr-1.0.1.tgz#92200322d66c728993de771f9e01eeb21f41bc7b"
-  integrity sha512-MAhukhVHyaLGDjyDYhy8gVjWJyhTECCdNsLwlMoGFoNJ3o79fpQhtQuzmAE4IxCMDwraF4cW8ZjpAV0m9CRQbg==
+unxhr@~1.2:
+  version "1.2.0"
+  resolved "https://registry.yarnpkg.com/unxhr/-/unxhr-1.2.0.tgz#44d391cb882c268a2909cd258a9a4f1941a6cf57"
+  integrity sha512-6cGpm8NFXPD9QbSNx0cD2giy7teZ6xOkCUH3U89WKVkL9N9rBrWjlCwhR94Re18ZlAop4MOc3WU1M3Hv/bgpIw==
 
 upath@^1.1.1:
   version "1.2.0"
