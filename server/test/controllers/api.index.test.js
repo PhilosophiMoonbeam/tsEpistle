@@ -56,6 +56,7 @@ describe('controllers/api route shell', () => {
     expect(apiRouter.use).toHaveBeenCalledWith('/logging', expect.any(Object))
     expect(apiRouter.use).toHaveBeenCalledWith('/mail', expect.any(Object))
     expect(apiRouter.use).toHaveBeenCalledWith('/storage', expect.any(Object))
+    expect(apiRouter.use).toHaveBeenCalledWith('/site', expect.any(Object))
     expect(apiRouter.use).toHaveBeenCalledWith('/rendering', expect.any(Object))
     expect(apiRouter.use).toHaveBeenCalledWith('/comments', expect.any(Object))
     expect(apiRouter.use).toHaveBeenCalledWith('/contribute', expect.any(Object))

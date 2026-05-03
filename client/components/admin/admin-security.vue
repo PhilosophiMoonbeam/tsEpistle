@@ -242,9 +242,9 @@
 <script>
 import _ from 'lodash'
 import { sync } from 'vuex-pathify'
-import gql from 'graphql-tag'
 import { onEditorInsert, offEditorInsert } from '../../helpers/editor-insert-events'
-import { pushGraphError, setLoading, showNotification } from '../../helpers/root-ui-store'
+import { fetchSiteConfig, saveSiteConfig } from '../../helpers/site-api'
+import { loadingStart, loadingStop, pushGraphError, setLoading, showNotification } from '../../helpers/root-ui-store'
 
 import store from '../../store'
 import editorStore from '../../store/editor'
@@ -293,91 +293,44 @@ export default {
     activeModal: sync('editor/activeModal')
   },
   methods: {
-    async save () {
+    siteConfigPayload () {
+      return {
+        authAutoLogin: _.get(this.config, 'authAutoLogin', false),
+        authEnforce2FA: _.get(this.config, 'authEnforce2FA', false),
+        authHideLocal: _.get(this.config, 'authHideLocal', false),
+        authLoginBgUrl: _.get(this.config, 'authLoginBgUrl', ''),
+        authJwtAudience: _.get(this.config, 'authJwtAudience', ''),
+        authJwtExpiration: _.get(this.config, 'authJwtExpiration', ''),
+        authJwtRenewablePeriod: _.get(this.config, 'authJwtRenewablePeriod', ''),
+        uploadMaxFileSize: _.toSafeInteger(_.get(this.config, 'uploadMaxFileSize', 0)),
+        uploadMaxFiles: _.toSafeInteger(_.get(this.config, 'uploadMaxFiles', 0)),
+        uploadScanSVG: _.get(this.config, 'uploadScanSVG', false),
+        uploadForceDownload: _.get(this.config, 'uploadForceDownload', false),
+        securityOpenRedirect: _.get(this.config, 'securityOpenRedirect', false),
+        securityIframe: _.get(this.config, 'securityIframe', false),
+        securityReferrerPolicy: _.get(this.config, 'securityReferrerPolicy', false),
+        securityTrustProxy: _.get(this.config, 'securityTrustProxy', false),
+        securitySRI: _.get(this.config, 'securitySRI', false),
+        securityHSTS: _.get(this.config, 'securityHSTS', false),
+        securityHSTSDuration: _.get(this.config, 'securityHSTSDuration', 0),
+        securityCSP: _.get(this.config, 'securityCSP', false),
+        securityCSPDirectives: _.get(this.config, 'securityCSPDirectives', '')
+      }
+    },
+    async loadConfig () {
+      setLoading(this.$store, 'admin-security-refresh', true)
       try {
-        await this.$apollo.mutate({
-          mutation: gql`
-            mutation (
-              $authAutoLogin: Boolean
-              $authEnforce2FA: Boolean
-              $authHideLocal: Boolean
-              $authLoginBgUrl: String
-              $authJwtAudience: String
-              $authJwtExpiration: String
-              $authJwtRenewablePeriod: String
-              $uploadMaxFileSize: Int
-              $uploadMaxFiles: Int
-              $uploadScanSVG: Boolean
-              $uploadForceDownload: Boolean
-              $securityOpenRedirect: Boolean
-              $securityIframe: Boolean
-              $securityReferrerPolicy: Boolean
-              $securityTrustProxy: Boolean
-              $securitySRI: Boolean
-              $securityHSTS: Boolean
-              $securityHSTSDuration: Int
-              $securityCSP: Boolean
-              $securityCSPDirectives: String
-            ) {
-              site {
-                updateConfig(
-                  authAutoLogin: $authAutoLogin,
-                  authEnforce2FA: $authEnforce2FA,
-                  authHideLocal: $authHideLocal,
-                  authLoginBgUrl: $authLoginBgUrl,
-                  authJwtAudience: $authJwtAudience,
-                  authJwtExpiration: $authJwtExpiration,
-                  authJwtRenewablePeriod: $authJwtRenewablePeriod,
-                  uploadMaxFileSize: $uploadMaxFileSize,
-                  uploadMaxFiles: $uploadMaxFiles,
-                  uploadScanSVG: $uploadScanSVG
-                  uploadForceDownload: $uploadForceDownload,
-                  securityOpenRedirect: $securityOpenRedirect,
-                  securityIframe: $securityIframe,
-                  securityReferrerPolicy: $securityReferrerPolicy,
-                  securityTrustProxy: $securityTrustProxy,
-                  securitySRI: $securitySRI,
-                  securityHSTS: $securityHSTS,
-                  securityHSTSDuration: $securityHSTSDuration,
-                  securityCSP: $securityCSP,
-                  securityCSPDirectives: $securityCSPDirectives
-                ) {
-                  responseResult {
-                    succeeded
-                    errorCode
-                    slug
-                    message
-                  }
-                }
-              }
-            }
-          `,
-          variables: {
-            authAutoLogin: _.get(this.config, 'authAutoLogin', false),
-            authEnforce2FA: _.get(this.config, 'authEnforce2FA', false),
-            authHideLocal: _.get(this.config, 'authHideLocal', false),
-            authLoginBgUrl: _.get(this.config, 'authLoginBgUrl', ''),
-            authJwtAudience: _.get(this.config, 'authJwtAudience', ''),
-            authJwtExpiration: _.get(this.config, 'authJwtExpiration', ''),
-            authJwtRenewablePeriod: _.get(this.config, 'authJwtRenewablePeriod', ''),
-            uploadMaxFileSize: _.toSafeInteger(_.get(this.config, 'uploadMaxFileSize', 0)),
-            uploadMaxFiles: _.toSafeInteger(_.get(this.config, 'uploadMaxFiles', 0)),
-            uploadScanSVG: _.get(this.config, 'uploadScanSVG', false),
-            uploadForceDownload: _.get(this.config, 'uploadForceDownload', false),
-            securityOpenRedirect: _.get(this.config, 'securityOpenRedirect', false),
-            securityIframe: _.get(this.config, 'securityIframe', false),
-            securityReferrerPolicy: _.get(this.config, 'securityReferrerPolicy', false),
-            securityTrustProxy: _.get(this.config, 'securityTrustProxy', false),
-            securitySRI: _.get(this.config, 'securitySRI', false),
-            securityHSTS: _.get(this.config, 'securityHSTS', false),
-            securityHSTSDuration: _.get(this.config, 'securityHSTSDuration', 0),
-            securityCSP: _.get(this.config, 'securityCSP', false),
-            securityCSPDirectives: _.get(this.config, 'securityCSPDirectives', '')
-          },
-          watchLoading (isLoading) {
-            setLoading(this.$store, 'admin-site-update', isLoading)
-          }
-        })
+        this.config = _.cloneDeep(await fetchSiteConfig(window.fetch.bind(window)))
+      } catch (err) {
+        pushGraphError(this.$store, err)
+      } finally {
+        setLoading(this.$store, 'admin-security-refresh', false)
+      }
+    },
+    async save () {
+      loadingStart(this.$store, 'admin-site-update')
+      try {
+        await saveSiteConfig(window.fetch.bind(window), this.siteConfigPayload())
         showNotification(this.$store, {
           style: 'success',
           message: 'Configuration saved successfully.',
@@ -385,6 +338,8 @@ export default {
         })
       } catch (err) {
         pushGraphError(this.$store, err)
+      } finally {
+        loadingStop(this.$store, 'admin-site-update')
       }
     },
     browseLoginBg () {
@@ -396,47 +351,11 @@ export default {
     }
   },
   mounted () {
+    this.loadConfig()
     onEditorInsert(this.handleEditorInsert)
   },
   beforeDestroy() {
     offEditorInsert(this.handleEditorInsert)
-  },
-  apollo: {
-    config: {
-      query: gql`
-        {
-          site {
-            config {
-              authAutoLogin
-              authEnforce2FA
-              authHideLocal
-              authLoginBgUrl
-              authJwtAudience
-              authJwtExpiration
-              authJwtRenewablePeriod
-              uploadMaxFileSize
-              uploadMaxFiles
-              uploadScanSVG
-              uploadForceDownload
-              securityOpenRedirect
-              securityIframe
-              securityReferrerPolicy
-              securityTrustProxy
-              securitySRI
-              securityHSTS
-              securityHSTSDuration
-              securityCSP
-              securityCSPDirectives
-            }
-          }
-        }
-      `,
-      fetchPolicy: 'network-only',
-      update: (data) => _.cloneDeep(data.site.config),
-      watchLoading (isLoading) {
-        setLoading(this.$store, 'admin-security-refresh', isLoading)
-      }
-    }
   }
 }
 </script>
