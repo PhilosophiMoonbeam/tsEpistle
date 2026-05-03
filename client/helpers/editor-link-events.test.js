@@ -13,14 +13,6 @@ const guardedLinkListenerFiles = [
   'client/components/editor/editor-ckeditor.vue'
 ]
 
-function createRoot () {
-  return {
-    $emit: jest.fn(),
-    $on: jest.fn(),
-    $off: jest.fn()
-  }
-}
-
 function getLineNumber (content, index) {
   return content.slice(0, index).split(/\r?\n/).length
 }
@@ -29,58 +21,63 @@ function directEditorLinkToPagePattern () {
   return /\bthis\s*\.\s*\$root\s*\.\s*\$(?:emit|on|off)\s*\(\s*(['"`])editorLinkToPage\1/g
 }
 
+function helperRootCallPattern () {
+  return /\b(?:emit|on|off)EditorLinkToPage\s*\(\s*this\s*\.\s*\$root/g
+}
+
 describe('editor link events', () => {
   test('emitEditorLinkToPage emits the shared editor link event with the original payload', () => {
-    const root = createRoot()
+    const handler = jest.fn()
     const opts = {
       locale: 'en',
       path: 'docs/page'
     }
 
-    emitEditorLinkToPage(root, opts)
+    onEditorLinkToPage(handler)
+    emitEditorLinkToPage(opts)
+    offEditorLinkToPage(handler)
 
-    expect(root.$emit).toHaveBeenCalledWith(EDITOR_LINK_TO_PAGE_EVENT, opts)
-  })
-
-  test('onEditorLinkToPage subscribes to the shared editor link event', () => {
-    const root = createRoot()
-    const handler = jest.fn()
-
-    onEditorLinkToPage(root, handler)
-
-    expect(root.$on).toHaveBeenCalledWith(EDITOR_LINK_TO_PAGE_EVENT, handler)
+    expect(handler).toHaveBeenCalledWith(opts)
   })
 
   test('offEditorLinkToPage unsubscribes from the shared editor link event with the same handler', () => {
-    const root = createRoot()
     const handler = jest.fn()
 
-    offEditorLinkToPage(root, handler)
+    onEditorLinkToPage(handler)
+    offEditorLinkToPage(handler)
+    emitEditorLinkToPage({ locale: 'en', path: 'docs/page' })
 
-    expect(root.$off).toHaveBeenCalledWith(EDITOR_LINK_TO_PAGE_EVENT, handler)
+    expect(handler).not.toHaveBeenCalled()
   })
 
   test('offEditorLinkToPage does not broadly unsubscribe without a handler', () => {
-    const root = createRoot()
+    const handler = jest.fn()
 
-    offEditorLinkToPage(root)
+    onEditorLinkToPage(handler)
+    offEditorLinkToPage()
+    emitEditorLinkToPage({ locale: 'en', path: 'docs/page' })
+    offEditorLinkToPage(handler)
 
-    expect(root.$off).not.toHaveBeenCalled()
+    expect(handler).toHaveBeenCalledTimes(1)
   })
 })
 
 describe('editor link event listener usage', () => {
-  test('migrated link listeners avoid direct root bus listeners', () => {
+  test('migrated link listeners avoid direct root bus listeners and root-backed helper calls', () => {
     const offenders = []
 
     for (const relPath of guardedLinkListenerFiles) {
       const filePath = path.join(repoRoot, relPath)
       const content = fs.readFileSync(filePath, 'utf8')
-      const pattern = directEditorLinkToPagePattern()
+      const directPattern = directEditorLinkToPagePattern()
+      const helperPattern = helperRootCallPattern()
       let match
 
-      while ((match = pattern.exec(content)) !== null) {
+      while ((match = directPattern.exec(content)) !== null) {
         offenders.push(`${relPath}:${getLineNumber(content, match.index)}: direct this.$root listener for ${EDITOR_LINK_TO_PAGE_EVENT}`)
+      }
+      while ((match = helperPattern.exec(content)) !== null) {
+        offenders.push(`${relPath}:${getLineNumber(content, match.index)}: root-backed editor link helper call`)
       }
     }
 

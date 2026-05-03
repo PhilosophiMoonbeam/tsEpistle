@@ -131,7 +131,7 @@ export default {
     }, 300))
 
     onEditorInsert(this.$root, this.handleEditorInsert)
-    onEditorLinkToPage(this.$root, this.handleEditorLinkToPage)
+    onEditorLinkToPage(this.handleEditorLinkToPage)
 
     // Handle save conflict
     onEditorSaveConflict(this.$root, this.handleEditorSaveConflict)
@@ -139,7 +139,7 @@ export default {
   },
   beforeDestroy () {
     offEditorInsert(this.$root, this.handleEditorInsert)
-    offEditorLinkToPage(this.$root, this.handleEditorLinkToPage)
+    offEditorLinkToPage(this.handleEditorLinkToPage)
     offEditorSaveConflict(this.$root, this.handleEditorSaveConflict)
     offEditorContentOverwrite(this.$root, this.handleEditorContentOverwrite)
     if (this.editor) {

@@ -1,19 +1,22 @@
+const Vue = require('vue')
+
 const EDITOR_LINK_TO_PAGE_EVENT = 'editorLinkToPage'
+const editorLinkBus = new Vue()
 
-function emitEditorLinkToPage (root, opts) {
-  root.$emit(EDITOR_LINK_TO_PAGE_EVENT, opts)
+function emitEditorLinkToPage (opts) {
+  editorLinkBus.$emit(EDITOR_LINK_TO_PAGE_EVENT, opts)
 }
 
-function onEditorLinkToPage (root, handler) {
-  root.$on(EDITOR_LINK_TO_PAGE_EVENT, handler)
+function onEditorLinkToPage (handler) {
+  editorLinkBus.$on(EDITOR_LINK_TO_PAGE_EVENT, handler)
 }
 
-function offEditorLinkToPage (root, handler) {
+function offEditorLinkToPage (handler) {
   if (!handler) {
     return
   }
 
-  root.$off(EDITOR_LINK_TO_PAGE_EVENT, handler)
+  editorLinkBus.$off(EDITOR_LINK_TO_PAGE_EVENT, handler)
 }
 
 module.exports = {
