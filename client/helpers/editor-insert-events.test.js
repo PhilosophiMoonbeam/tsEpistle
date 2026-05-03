@@ -40,6 +40,15 @@ function helperRootCallPattern () {
 }
 
 describe('editor insert events', () => {
+  test('editor insert helper uses the shared non-Vue event bus', () => {
+    const source = fs.readFileSync(path.join(repoRoot, 'client/helpers/editor-insert-events.js'), 'utf8')
+
+    expect(source).toContain("require('./simple-event-bus')")
+    expect(source).not.toMatch(/require\(\s*['"]vue['"]\s*\)/)
+    expect(source).not.toMatch(/new\s+Vue\s*\(/)
+    expect(source).not.toMatch(/\.\$(?:emit|on|off)\s*\(/)
+  })
+
   test('emitEditorInsert emits the shared editor insert event with the original payload', () => {
     const handler = jest.fn()
     const opts = {
