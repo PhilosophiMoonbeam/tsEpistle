@@ -1,4 +1,4 @@
-const { fetchGroupOptions, fetchGroupsList, fetchGroupDetails, createGroup, assignGroupUser, unassignGroupUser, deleteGroup } = require('./groups-api')
+const { fetchGroupOptions, fetchGroupsList, fetchGroupDetails, createGroup, assignGroupUser, unassignGroupUser, deleteGroup, updateGroup } = require('./groups-api')
 
 function createJsonResponse (payload, ok = true) {
   return {
@@ -328,5 +328,50 @@ describe('groups api helper', () => {
     }, false))
 
     await expect(deleteGroup(fetchImpl, 1, 'Bad delete')).rejects.toThrow('Cannot delete this group.')
+  })
+
+  test('updates groups through the REST endpoint', async () => {
+    const payload = {
+      name: 'Editors',
+      redirectOnLogin: '/docs',
+      permissions: ['read:pages'],
+      pageRules: [{ id: 'rule-1', path: 'docs', roles: ['read:pages'], match: 'START', deny: false, locales: ['en'] }]
+    }
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+      succeeded: true,
+      message: 'Group has been updated.'
+    }))
+
+    await expect(updateGroup(fetchImpl, 3, payload)).resolves.toEqual({
+      succeeded: true,
+      message: 'Group has been updated.'
+    })
+
+    expect(fetchImpl).toHaveBeenCalledWith('/_api/groups/3', {
+      method: 'PATCH',
+      credentials: 'same-origin',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(payload)
+    })
+  })
+
+  test('rejects malformed group update responses', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+      succeeded: false,
+      message: 'Nope'
+    }))
+
+    await expect(updateGroup(fetchImpl, 3, {}, 'Bad update payload')).rejects.toThrow('Bad update payload')
+  })
+
+  test('surfaces API error messages for failed group updates', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+      error: 'Some Page Rules contains unsafe or exponential time regex.'
+    }, false))
+
+    await expect(updateGroup(fetchImpl, 3, {}, 'Bad update')).rejects.toThrow('Some Page Rules contains unsafe or exponential time regex.')
   })
 })

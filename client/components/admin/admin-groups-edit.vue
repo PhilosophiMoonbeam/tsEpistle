@@ -95,9 +95,7 @@
 
 <script>
 import _ from 'lodash'
-import gql from 'graphql-tag'
-
-import { deleteGroup, fetchGroupDetails } from '../../helpers/groups-api'
+import { deleteGroup, fetchGroupDetails, updateGroup } from '../../helpers/groups-api'
 import { loadingStart, loadingStop, pushGraphError, showNotification } from '../../helpers/root-ui-store'
 
 import GroupPermissions from './admin-groups-edit-permissions.vue'
@@ -171,52 +169,23 @@ export default {
       this.group.redirectOnLogin = `/${locale}/${path}`
     },
     async updateGroup() {
+      loadingStart(this.$store, 'admin-groups-update')
       try {
-        await this.$apollo.mutate({
-          mutation: gql`
-            mutation (
-              $id: Int!
-              $name: String!
-              $redirectOnLogin: String!
-              $permissions: [String]!
-              $pageRules: [PageRuleInput]!
-            ) {
-              groups {
-                update(
-                  id: $id
-                  name: $name
-                  redirectOnLogin: $redirectOnLogin
-                  permissions: $permissions
-                  pageRules: $pageRules
-                ) {
-                  responseResult {
-                    succeeded
-                    errorCode
-                    slug
-                    message
-                  }
-                }
-              }
-            }
-          `,
-          variables: {
-            id: this.group.id,
-            name: this.group.name,
-            redirectOnLogin: this.group.redirectOnLogin,
-            permissions: this.group.permissions,
-            pageRules: this.group.pageRules
-          },
-          watchLoading (isLoading) {
-            this.$store.commit(`loading${isLoading ? 'Start' : 'Stop'}`, 'admin-groups-update')
-          }
+        await updateGroup(window.fetch.bind(window), this.group.id, {
+          name: this.group.name,
+          redirectOnLogin: this.group.redirectOnLogin,
+          permissions: this.group.permissions,
+          pageRules: this.group.pageRules
         })
-        this.$store.commit('showNotification', {
+        showNotification(this.$store, {
           style: 'success',
           message: `Group changes have been saved.`,
           icon: 'check'
         })
       } catch (err) {
-        this.$store.commit('pushGraphError', err)
+        pushGraphError(this.$store, err)
+      } finally {
+        loadingStop(this.$store, 'admin-groups-update')
       }
     },
     async deleteGroup() {

@@ -1,4 +1,5 @@
 const express = require('express')
+const safeRegex = require('safe-regex')
 
 const router = express.Router()
 
@@ -117,6 +118,59 @@ const groupHasElevatedPermissions = group => {
 const groupHasSystemPermissions = group => {
   const permissions = Array.isArray(group.permissions) ? group.permissions : []
   return permissions.some(permission => getPermissionResourceType(permission) === 'system')
+}
+
+const normalizeGroupUpdatePayload = (body, res) => {
+  const payload = body && typeof body === 'object' && !Array.isArray(body) ? body : {}
+  const validPageRuleMatches = ['START', 'EXACT', 'END', 'REGEX', 'TAG']
+
+  if (typeof payload.name !== 'string' || payload.name.length < 1) {
+    res.status(400).json({ error: 'group name is required' })
+    return null
+  }
+
+  if (!Array.isArray(payload.permissions) || payload.permissions.some(permission => typeof permission !== 'string')) {
+    res.status(400).json({ error: 'group permissions must be an array of strings' })
+    return null
+  }
+
+  if (!Array.isArray(payload.pageRules)) {
+    res.status(400).json({ error: 'group page rules must be an array' })
+    return null
+  }
+
+  for (const rule of payload.pageRules) {
+    if (
+      !rule ||
+      typeof rule !== 'object' ||
+      Array.isArray(rule) ||
+      typeof rule.id !== 'string' ||
+      rule.id.length < 1 ||
+      typeof rule.path !== 'string' ||
+      typeof rule.match !== 'string' ||
+      !validPageRuleMatches.includes(rule.match) ||
+      typeof rule.deny !== 'boolean' ||
+      !Array.isArray(rule.roles) ||
+      rule.roles.some(role => typeof role !== 'string') ||
+      !Array.isArray(rule.locales) ||
+      rule.locales.some(locale => typeof locale !== 'string')
+    ) {
+      res.status(400).json({ error: 'group page rules are invalid' })
+      return null
+    }
+  }
+
+  if (payload.pageRules.some(rule => rule.match === 'REGEX' && !safeRegex(rule.path))) {
+    res.status(400).json({ error: 'Some Page Rules contains unsafe or exponential time regex.' })
+    return null
+  }
+
+  return {
+    name: payload.name,
+    redirectOnLogin: typeof payload.redirectOnLogin === 'string' && payload.redirectOnLogin.length > 0 ? payload.redirectOnLogin : '/',
+    permissions: payload.permissions,
+    pageRules: payload.pageRules
+  }
 }
 
 router.post('/:groupId/users/:userId', async (req, res, next) => {
@@ -254,6 +308,57 @@ router.delete('/:id', async (req, res, next) => {
     res.json({
       succeeded: true,
       message: 'Group has been deleted.'
+    })
+  } catch (err) {
+    next(err)
+  }
+})
+
+router.patch('/:id', async (req, res, next) => {
+  if (!requireGroupsListAccess(req, res)) {
+    return
+  }
+
+  const id = normalizePositiveIntegerParam(req.params.id, 'group id', res)
+  if (id === null) {
+    return
+  }
+
+  const payload = normalizeGroupUpdatePayload(req.body, res)
+  if (payload === null) {
+    return
+  }
+
+  if (
+    WIKI.auth.checkExclusiveAccess(req.user, ['write:groups'], ['manage:groups', 'manage:system']) &&
+    groupHasElevatedPermissions(payload)
+  ) {
+    return res.status(403).json({ error: 'You are not authorized to manage this group or assign these permissions.' })
+  }
+
+  if (
+    WIKI.auth.checkExclusiveAccess(req.user, ['manage:groups'], ['manage:system']) &&
+    groupHasSystemPermissions(payload)
+  ) {
+    return res.status(403).json({ error: 'You are not authorized to manage this group or assign the manage:system permissions.' })
+  }
+
+  try {
+    await WIKI.models.groups.query().patch({
+      name: payload.name,
+      redirectOnLogin: payload.redirectOnLogin,
+      permissions: JSON.stringify(payload.permissions),
+      pageRules: JSON.stringify(payload.pageRules)
+    }).where('id', id)
+
+    WIKI.auth.revokeUserTokens({ id, kind: 'g' })
+    WIKI.events.outbound.emit('addAuthRevoke', { id, kind: 'g' })
+    await WIKI.auth.reloadGroups()
+    WIKI.events.outbound.emit('reloadGroups')
+
+    res.json({
+      succeeded: true,
+      message: 'Group has been updated.'
     })
   } catch (err) {
     next(err)

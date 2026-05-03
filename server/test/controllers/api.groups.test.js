@@ -2,6 +2,7 @@ jest.mock('express', () => {
   const router = {
     get: jest.fn(),
     post: jest.fn(),
+    patch: jest.fn(),
     delete: jest.fn(),
     use: jest.fn()
   }
@@ -18,6 +19,7 @@ describe('controllers/api groups endpoints', () => {
     const express = require('express')
     express.__router.get.mockClear()
     express.__router.post.mockClear()
+    express.__router.patch.mockClear()
     express.__router.delete.mockClear()
 
     global.WIKI = {
@@ -90,6 +92,9 @@ describe('controllers/api groups endpoints', () => {
                 })
               })
             }),
+            patch: jest.fn().mockReturnValue({
+              where: jest.fn().mockResolvedValue(1)
+            }),
             deleteById: jest.fn().mockResolvedValue(1)
           })
         },
@@ -121,6 +126,7 @@ describe('controllers/api groups endpoints', () => {
       assignUser: express.__router.post.mock.calls.find(([path]) => path === '/:groupId/users/:userId')[1],
       unassignUser: express.__router.delete.mock.calls.find(([path]) => path === '/:groupId/users/:userId')[1],
       deleteGroup: express.__router.delete.mock.calls.find(([path]) => path === '/:id')[1],
+      updateGroup: express.__router.patch.mock.calls.find(([path]) => path === '/:id')[1],
       detail: express.__router.get.mock.calls.find(([path]) => path === '/:id')[1]
     }
   }
@@ -134,6 +140,7 @@ describe('controllers/api groups endpoints', () => {
     expect(typeof handlers.assignUser).toBe('function')
     expect(typeof handlers.unassignUser).toBe('function')
     expect(typeof handlers.deleteGroup).toBe('function')
+    expect(typeof handlers.updateGroup).toBe('function')
     expect(typeof handlers.detail).toBe('function')
   })
 
@@ -630,6 +637,160 @@ describe('controllers/api groups endpoints', () => {
 
     expect(next).toHaveBeenCalledWith(expect.any(Error))
     expect(next.mock.calls[0][0].message).toBe('delete db down')
+  })
+
+  it('updates groups and reloads group permissions', async () => {
+    const { updateGroup } = loadHandler()
+    const req = {
+      user: { permissions: ['manage:groups'] },
+      params: { id: '3' },
+      body: {
+        name: 'Editors',
+        redirectOnLogin: '/docs',
+        permissions: ['read:pages'],
+        pageRules: [{ id: 'rule-1', path: 'docs', roles: ['read:pages'], match: 'START', deny: false, locales: ['en'] }]
+      }
+    }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await updateGroup(req, res, jest.fn())
+
+    expect(global.WIKI.auth.checkAccess).toHaveBeenCalledWith({ permissions: ['manage:groups'] }, ['write:groups', 'manage:groups', 'manage:system'])
+    const query = global.WIKI.models.groups.query.mock.results[0].value
+    expect(query.patch).toHaveBeenCalledWith({
+      name: 'Editors',
+      redirectOnLogin: '/docs',
+      permissions: JSON.stringify(['read:pages']),
+      pageRules: JSON.stringify([{ id: 'rule-1', path: 'docs', roles: ['read:pages'], match: 'START', deny: false, locales: ['en'] }])
+    })
+    expect(query.patch.mock.results[0].value.where).toHaveBeenCalledWith('id', 3)
+    expect(global.WIKI.auth.revokeUserTokens).toHaveBeenCalledWith({ id: 3, kind: 'g' })
+    expect(global.WIKI.events.outbound.emit).toHaveBeenCalledWith('addAuthRevoke', { id: 3, kind: 'g' })
+    expect(global.WIKI.auth.reloadGroups).toHaveBeenCalled()
+    expect(global.WIKI.events.outbound.emit).toHaveBeenCalledWith('reloadGroups')
+    expect(res.json).toHaveBeenCalledWith({
+      succeeded: true,
+      message: 'Group has been updated.'
+    })
+  })
+
+  it('returns 403 for group update requests without group admin access', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValueOnce(false)
+    const { updateGroup } = loadHandler()
+    const req = { user: { permissions: ['manage:api'] }, params: { id: '3' }, body: { name: 'Editors', permissions: [], pageRules: [] } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await updateGroup(req, res, jest.fn())
+
+    expect(res.status).toHaveBeenCalledWith(403)
+    expect(res.json).toHaveBeenCalledWith({ error: 'write:groups, manage:groups, or manage:system is required' })
+  })
+
+  it('returns 400 for malformed group update ids and payloads', async () => {
+    const { updateGroup } = loadHandler()
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const user = { permissions: ['manage:groups'] }
+
+    await updateGroup({ user, params: { id: 'bad' }, body: { name: 'Editors', permissions: [], pageRules: [] } }, res, jest.fn())
+    await updateGroup({ user, params: { id: '3' }, body: { name: '', permissions: [], pageRules: [] } }, res, jest.fn())
+    await updateGroup({ user, params: { id: '3' }, body: { name: 'Editors', permissions: 'bad', pageRules: [] } }, res, jest.fn())
+    await updateGroup({ user, params: { id: '3' }, body: { name: 'Editors', permissions: [], pageRules: 'bad' } }, res, jest.fn())
+    await updateGroup({ user, params: { id: '3' }, body: { name: 'Editors', permissions: [], pageRules: [{ path: 7, match: 'START' }] } }, res, jest.fn())
+    await updateGroup({ user, params: { id: '3' }, body: { name: 'Editors', permissions: [], pageRules: [{ id: 'rule-1', path: 'docs', roles: ['read:pages'], match: 'BAD', deny: false, locales: ['en'] }] } }, res, jest.fn())
+    await updateGroup({ user, params: { id: '3' }, body: { name: 'Editors', permissions: [], pageRules: [{ id: 'rule-1', path: 'docs', roles: 'read:pages', match: 'START', deny: false, locales: ['en'] }] } }, res, jest.fn())
+
+    expect(res.status).toHaveBeenNthCalledWith(1, 400)
+    expect(res.json).toHaveBeenNthCalledWith(1, { error: 'group id must be a positive integer' })
+    expect(res.status).toHaveBeenNthCalledWith(2, 400)
+    expect(res.json).toHaveBeenNthCalledWith(2, { error: 'group name is required' })
+    expect(res.status).toHaveBeenNthCalledWith(3, 400)
+    expect(res.json).toHaveBeenNthCalledWith(3, { error: 'group permissions must be an array of strings' })
+    expect(res.status).toHaveBeenNthCalledWith(4, 400)
+    expect(res.json).toHaveBeenNthCalledWith(4, { error: 'group page rules must be an array' })
+    expect(res.status).toHaveBeenNthCalledWith(5, 400)
+    expect(res.json).toHaveBeenNthCalledWith(5, { error: 'group page rules are invalid' })
+    expect(res.status).toHaveBeenNthCalledWith(6, 400)
+    expect(res.json).toHaveBeenNthCalledWith(6, { error: 'group page rules are invalid' })
+    expect(res.status).toHaveBeenNthCalledWith(7, 400)
+    expect(res.json).toHaveBeenNthCalledWith(7, { error: 'group page rules are invalid' })
+  })
+
+  it('rejects unsafe regex group update page rules', async () => {
+    const { updateGroup } = loadHandler()
+    const req = {
+      user: { permissions: ['manage:groups'] },
+      params: { id: '3' },
+      body: {
+        name: 'Editors',
+        permissions: [],
+        pageRules: [{ id: 'rule-1', path: '(x+x+)+y', roles: ['read:pages'], match: 'REGEX', deny: false, locales: ['en'] }]
+      }
+    }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await updateGroup(req, res, jest.fn())
+
+    expect(res.status).toHaveBeenCalledWith(400)
+    expect(res.json).toHaveBeenCalledWith({ error: 'Some Page Rules contains unsafe or exponential time regex.' })
+  })
+
+  it('defaults blank group update redirectOnLogin to slash', async () => {
+    const { updateGroup } = loadHandler()
+    const req = {
+      user: { permissions: ['manage:groups'] },
+      params: { id: '3' },
+      body: { name: 'Editors', redirectOnLogin: '', permissions: [], pageRules: [] }
+    }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await updateGroup(req, res, jest.fn())
+
+    expect(global.WIKI.models.groups.query.mock.results[0].value.patch).toHaveBeenCalledWith(expect.objectContaining({
+      redirectOnLogin: '/'
+    }))
+  })
+
+  it('protects elevated and system group update permissions', async () => {
+    const { updateGroup } = loadHandler()
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    global.WIKI.auth.checkExclusiveAccess.mockReturnValueOnce(true)
+    await updateGroup({
+      user: { permissions: ['write:groups'] },
+      params: { id: '3' },
+      body: { name: 'Editors', permissions: ['manage:users'], pageRules: [] }
+    }, res, jest.fn())
+
+    global.WIKI.auth.checkExclusiveAccess
+      .mockReturnValueOnce(false)
+      .mockReturnValueOnce(true)
+    await updateGroup({
+      user: { permissions: ['manage:groups'] },
+      params: { id: '3' },
+      body: { name: 'Editors', permissions: ['manage:system'], pageRules: [] }
+    }, res, jest.fn())
+
+    expect(res.status).toHaveBeenNthCalledWith(1, 403)
+    expect(res.json).toHaveBeenNthCalledWith(1, { error: 'You are not authorized to manage this group or assign these permissions.' })
+    expect(res.status).toHaveBeenNthCalledWith(2, 403)
+    expect(res.json).toHaveBeenNthCalledWith(2, { error: 'You are not authorized to manage this group or assign the manage:system permissions.' })
+  })
+
+  it('forwards unexpected group update failures to next', async () => {
+    const next = jest.fn()
+    global.WIKI.models.groups.query.mockReturnValueOnce({
+      patch: jest.fn().mockReturnValue({
+        where: jest.fn().mockRejectedValue(new Error('update db down'))
+      })
+    })
+    const { updateGroup } = loadHandler()
+    const req = { user: { permissions: ['manage:groups'] }, params: { id: '3' }, body: { name: 'Editors', permissions: [], pageRules: [] } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await updateGroup(req, res, next)
+
+    expect(next).toHaveBeenCalledWith(expect.any(Error))
+    expect(next.mock.calls[0][0].message).toBe('update db down')
   })
 
   it('returns the admin group detail payload for group admins', async () => {

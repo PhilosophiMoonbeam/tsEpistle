@@ -226,6 +226,25 @@ async function deleteGroup (fetchImpl, id, fallbackMessage = 'Group delete respo
   return normalizeGroupMutationResponse(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
 }
 
+async function updateGroup (fetchImpl, id, payload, fallbackMessage = 'Group update response is invalid') {
+  const response = await fetchImpl(`/_api/groups/${id}`, {
+    method: 'PATCH',
+    credentials: 'same-origin',
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      name: payload.name,
+      redirectOnLogin: payload.redirectOnLogin,
+      permissions: payload.permissions,
+      pageRules: payload.pageRules
+    })
+  })
+
+  return normalizeGroupMutationResponse(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
+}
+
 module.exports = {
   fetchGroupOptions,
   fetchGroupsList,
@@ -233,5 +252,6 @@ module.exports = {
   createGroup,
   assignGroupUser,
   unassignGroupUser,
-  deleteGroup
+  deleteGroup,
+  updateGroup
 }
