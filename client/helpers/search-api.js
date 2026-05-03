@@ -94,6 +94,30 @@ async function fetchSearchEngines (fetchImpl, fallbackMessage = 'Search engines 
   return normalizeSearchEnginesPayload(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
 }
 
+function normalizeSearchSavePayload (payload, fallbackMessage) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload) || typeof payload.message !== 'string' || payload.message.length < 1) {
+    throw new Error(fallbackMessage)
+  }
+
+  return {
+    message: payload.message
+  }
+}
+
+async function saveSearchEngines (fetchImpl, engines, fallbackMessage = 'Search engines save response is invalid') {
+  const response = await fetchImpl('/_api/search/engines', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ engines })
+  })
+
+  return normalizeSearchSavePayload(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
+}
+
 async function rebuildSearchIndex (fetchImpl, fallbackMessage = 'Search index rebuild failed') {
   const response = await fetchImpl('/_api/search/rebuild-index', {
     method: 'POST',
@@ -108,5 +132,6 @@ async function rebuildSearchIndex (fetchImpl, fallbackMessage = 'Search index re
 
 module.exports = {
   fetchSearchEngines,
-  rebuildSearchIndex
+  rebuildSearchIndex,
+  saveSearchEngines
 }

@@ -30,7 +30,9 @@ describe('controllers/api search endpoints', () => {
       },
       data: {
         searchEngine: {
-          rebuild: jest.fn().mockResolvedValue(true)
+          key: 'beta',
+          rebuild: jest.fn().mockResolvedValue(true),
+          deactivate: jest.fn().mockResolvedValue(true)
         },
         searchEngines: [
           {
@@ -74,6 +76,8 @@ describe('controllers/api search endpoints', () => {
       },
       models: {
         searchEngines: {
+          query: jest.fn(),
+          initEngine: jest.fn().mockResolvedValue(true),
           getSearchEngines: jest.fn().mockResolvedValue([
             {
               key: 'beta',
@@ -101,8 +105,22 @@ describe('controllers/api search endpoints', () => {
             }
           ])
         }
+      },
+      logger: {
+        warn: jest.fn()
       }
     }
+
+    global.WIKI.models.searchEngines.query.mockImplementation(() => {
+      const query = {
+        patch: jest.fn().mockReturnThis(),
+        where: jest.fn().mockResolvedValue(1)
+      }
+      global.WIKI.models.searchEngines.__lastQuery = query
+      global.WIKI.models.searchEngines.__queries = global.WIKI.models.searchEngines.__queries || []
+      global.WIKI.models.searchEngines.__queries.push(query)
+      return query
+    })
   })
 
   const loadHandlers = () => {
@@ -111,6 +129,7 @@ describe('controllers/api search endpoints', () => {
     const router = express.__routers[0]
     return {
       engines: router.get.mock.calls.find(([path]) => path === '/engines')[1],
+      saveEngines: router.post.mock.calls.find(([path]) => path === '/engines')[1],
       rebuildIndex: router.post.mock.calls.find(([path]) => path === '/rebuild-index')[1]
     }
   }
@@ -121,6 +140,7 @@ describe('controllers/api search endpoints', () => {
     const handlers = loadHandlers()
 
     expect(typeof handlers.engines).toBe('function')
+    expect(typeof handlers.saveEngines).toBe('function')
     expect(typeof handlers.rebuildIndex).toBe('function')
   })
 
@@ -241,6 +261,147 @@ describe('controllers/api search endpoints', () => {
 
     expect(next).toHaveBeenCalledWith(err)
     expect(res.json).not.toHaveBeenCalled()
+  })
+
+  const createSavePayload = () => ({
+    body: {
+      engines: [
+        {
+          key: 'alpha',
+          isEnabled: true,
+          config: [
+            { key: 'endpoint', value: JSON.stringify({ v: 'https://example.test/alpha' }) },
+            { key: 'missingValue', value: JSON.stringify({ label: 'No value key' }) }
+          ]
+        },
+        {
+          key: 'beta',
+          isEnabled: false,
+          config: [
+            { key: 'enabledFlag', value: JSON.stringify({ v: false }) }
+          ]
+        }
+      ]
+    },
+    user: { permissions: ['manage:system'] }
+  })
+
+  it('returns JSON 403 for unauthorized engine saves without mutating models', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValue(false)
+    const { saveEngines } = loadHandlers()
+    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+
+    await saveEngines(createSavePayload(), res)
+
+    expect(global.WIKI.auth.checkAccess).toHaveBeenCalledWith({ permissions: ['manage:system'] }, ['manage:system'])
+    expect(res.status).toHaveBeenCalledWith(403)
+    expect(res.json).toHaveBeenCalledWith({ error: 'Forbidden' })
+    expect(global.WIKI.models.searchEngines.query).not.toHaveBeenCalled()
+    expect(global.WIKI.data.searchEngine.deactivate).not.toHaveBeenCalled()
+    expect(global.WIKI.models.searchEngines.initEngine).not.toHaveBeenCalled()
+  })
+
+  it('saves search engines with GraphQL parity and activates the selected engine', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValue(true)
+    const { saveEngines } = loadHandlers()
+    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+
+    await saveEngines(createSavePayload(), res)
+
+    const queries = global.WIKI.models.searchEngines.__queries
+    expect(queries).toHaveLength(2)
+    expect(queries[0].patch).toHaveBeenCalledWith({
+      isEnabled: true,
+      config: {
+        endpoint: 'https://example.test/alpha',
+        missingValue: null
+      }
+    })
+    expect(queries[0].where).toHaveBeenCalledWith('key', 'alpha')
+    expect(queries[1].patch).toHaveBeenCalledWith({
+      isEnabled: false,
+      config: {
+        enabledFlag: false
+      }
+    })
+    expect(queries[1].where).toHaveBeenCalledWith('key', 'beta')
+    expect(global.WIKI.data.searchEngine.deactivate).toHaveBeenCalledTimes(1)
+    expect(global.WIKI.models.searchEngines.initEngine).toHaveBeenCalledWith({ activate: true })
+    expect(res.status).not.toHaveBeenCalled()
+    expect(res.json).toHaveBeenCalledWith({ message: 'Search Engines updated successfully' })
+  })
+
+  it('does not deactivate the current search engine when the selected engine is unchanged', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValue(true)
+    const { saveEngines } = loadHandlers()
+    const req = createSavePayload()
+    req.body.engines[0].isEnabled = false
+    req.body.engines[1].isEnabled = true
+    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+
+    await saveEngines(req, res)
+
+    expect(global.WIKI.data.searchEngine.deactivate).not.toHaveBeenCalled()
+    expect(global.WIKI.models.searchEngines.initEngine).toHaveBeenCalledWith({ activate: true })
+    expect(res.json).toHaveBeenCalledWith({ message: 'Search Engines updated successfully' })
+  })
+
+  it('logs and continues when previous search engine deactivation fails', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValue(true)
+    const deactivateError = new Error('deactivate failed')
+    global.WIKI.data.searchEngine.deactivate.mockRejectedValueOnce(deactivateError)
+    const { saveEngines } = loadHandlers()
+    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+
+    await saveEngines(createSavePayload(), res)
+
+    expect(global.WIKI.logger.warn).toHaveBeenCalledWith('Failed to deactivate previous search engine:', deactivateError)
+    expect(global.WIKI.models.searchEngines.initEngine).toHaveBeenCalledWith({ activate: true })
+    expect(res.json).toHaveBeenCalledWith({ message: 'Search Engines updated successfully' })
+  })
+
+  it('returns JSON 400 for malformed engine save payloads', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValue(true)
+    const { saveEngines } = loadHandlers()
+    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+
+    await saveEngines({ body: { engines: [{ key: 'alpha', isEnabled: 'yes', config: [] }] }, user: {} }, res)
+
+    expect(res.status).toHaveBeenCalledWith(400)
+    expect(res.json).toHaveBeenCalledWith({ error: 'Invalid search engines payload' })
+    expect(global.WIKI.models.searchEngines.query).not.toHaveBeenCalled()
+    expect(global.WIKI.models.searchEngines.initEngine).not.toHaveBeenCalled()
+  })
+
+  it('returns JSON 400 for malformed engine save config JSON', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValue(true)
+    const { saveEngines } = loadHandlers()
+    const req = createSavePayload()
+    req.body.engines[0].config[0].value = '{not-json'
+    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+
+    await saveEngines(req, res)
+
+    expect(res.status).toHaveBeenCalledWith(400)
+    expect(res.json).toHaveBeenCalledWith({ error: 'Invalid search engines payload' })
+    expect(global.WIKI.models.searchEngines.initEngine).not.toHaveBeenCalled()
+  })
+
+  it('returns JSON 500 for unexpected engine save failures', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValue(true)
+    const query = {
+      patch: jest.fn().mockReturnThis(),
+      where: jest.fn().mockRejectedValue(new Error('save failed'))
+    }
+    global.WIKI.models.searchEngines.query.mockReturnValue(query)
+    const { saveEngines } = loadHandlers()
+    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+
+    await saveEngines(createSavePayload(), res)
+
+    expect(res.status).toHaveBeenCalledWith(500)
+    expect(res.json).toHaveBeenCalledWith({ error: 'save failed' })
+    expect(global.WIKI.models.searchEngines.initEngine).not.toHaveBeenCalled()
   })
 
   it('returns 403 for unauthorized rebuild requests without rebuilding', async () => {

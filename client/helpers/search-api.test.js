@@ -1,4 +1,4 @@
-const { fetchSearchEngines, rebuildSearchIndex } = require('./search-api')
+const { fetchSearchEngines, rebuildSearchIndex, saveSearchEngines } = require('./search-api')
 
 function createJsonResponse (payload, ok = true) {
   return {
@@ -213,6 +213,45 @@ describe('search api helper', () => {
     })
 
     await expect(fetchSearchEngines(fetchImpl, 'Bad search content type')).rejects.toThrow('Bad search content type')
+  })
+
+  test('saves search engines with same-origin JSON POST options', async () => {
+    const engines = [{ key: 'db', isEnabled: true, config: [] }]
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ message: 'Search Engines updated successfully' }))
+
+    await expect(saveSearchEngines(fetchImpl, engines)).resolves.toEqual({ message: 'Search Engines updated successfully' })
+    expect(fetchImpl).toHaveBeenCalledWith('/_api/search/engines', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ engines })
+    })
+  })
+
+  test('rejects malformed successful search engine save responses', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ ok: true }))
+
+    await expect(saveSearchEngines(fetchImpl, [], 'Bad save payload')).rejects.toThrow('Bad save payload')
+  })
+
+  test('propagates API JSON errors for search engine saves', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ error: 'Invalid search engines payload' }, false))
+
+    await expect(saveSearchEngines(fetchImpl, [], 'Bad save')).rejects.toThrow('Invalid search engines payload')
+  })
+
+  test('rejects non-JSON successful search engine save responses', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue({
+      ok: true,
+      headers: {
+        get: () => 'text/plain'
+      }
+    })
+
+    await expect(saveSearchEngines(fetchImpl, [], 'Bad save content type')).rejects.toThrow('Bad save content type')
   })
 
   test('rebuilds search index with same-origin JSON options', async () => {

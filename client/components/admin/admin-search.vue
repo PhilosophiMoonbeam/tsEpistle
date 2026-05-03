@@ -102,8 +102,7 @@
 <script>
 import _ from 'lodash'
 
-import enginesSaveMutation from 'gql/admin/search/search-mutation-save-engines.gql'
-import { fetchSearchEngines, rebuildSearchIndex } from '../../helpers/search-api'
+import { fetchSearchEngines, rebuildSearchIndex, saveSearchEngines } from '../../helpers/search-api'
 import { loadingStart, loadingStop, showNotification, pushGraphError } from '../../helpers/root-ui-store'
 
 export default {
@@ -155,26 +154,17 @@ export default {
     async save() {
       loadingStart(this.$store, 'admin-search-saveengines')
       try {
-        const resp = await this.$apollo.mutate({
-          mutation: enginesSaveMutation,
-          variables: {
-            engines: this.engines.map(tgt => ({
-              isEnabled: tgt.key === this.selectedEngine,
-              key: tgt.key,
-              config: tgt.config.map(cfg => ({...cfg, value: JSON.stringify({ v: cfg.value.value })}))
-            }))
-          }
+        await saveSearchEngines(window.fetch.bind(window), this.engines.map(tgt => ({
+          isEnabled: tgt.key === this.selectedEngine,
+          key: tgt.key,
+          config: tgt.config.map(cfg => ({...cfg, value: JSON.stringify({ v: cfg.value.value })}))
+        })), this.$t('common:error.unexpected'))
+        await this.loadEngines({ notifyError: false })
+        showNotification(this.$store, {
+          message: this.$t('admin:search.configSaveSuccess'),
+          style: 'success',
+          icon: 'check'
         })
-        if (_.get(resp, 'data.search.updateSearchEngines.responseResult.succeeded', false)) {
-          await this.loadEngines({ notifyError: false })
-          showNotification(this.$store, {
-            message: this.$t('admin:search.configSaveSuccess'),
-            style: 'success',
-            icon: 'check'
-          })
-        } else {
-          throw new Error(_.get(resp, 'data.search.updateSearchEngines.responseResult.message', this.$t('common:error.unexpected')))
-        }
       } catch (err) {
         pushGraphError(this.$store, err)
       }
