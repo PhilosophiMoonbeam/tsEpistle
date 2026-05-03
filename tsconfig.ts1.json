@@ -37,6 +37,8 @@
     "client/client-setup.js",
     "client/client-app.js",
     "client/index-app.js",
+    "client/modules/boot.js",
+    "client/modules/localization.js",
     "client/store/index.js",
     "client/store/admin.js",
     "client/store/editor.js",
@@ -54,7 +56,6 @@
     "client/**/*.vue",
     "client/graph/**/*",
     "client/libs/**/*",
-    "client/modules/**/*",
     "client/themes/**/*",
     "client/scss/**/*"
   ]
