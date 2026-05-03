@@ -6,6 +6,9 @@ jest.mock('express', () => {
       const router = {
         get: jest.fn(),
         post: jest.fn(),
+        patch: jest.fn(),
+        put: jest.fn(),
+        delete: jest.fn(),
         use: jest.fn()
       }
       routers.push(router)
@@ -62,6 +65,8 @@ describe('controllers/api comments endpoints', () => {
       },
       models: {
         commentProviders: {
+          query: jest.fn(),
+          initProvider: jest.fn().mockResolvedValue(true),
           getProviders: jest.fn().mockResolvedValue([
             {
               key: 'default',
@@ -86,19 +91,35 @@ describe('controllers/api comments endpoints', () => {
         }
       }
     }
+
+    global.WIKI.models.commentProviders.query.mockImplementation(() => {
+      const query = {
+        patch: jest.fn().mockReturnThis(),
+        where: jest.fn().mockResolvedValue(1)
+      }
+      global.WIKI.models.commentProviders.__queries = global.WIKI.models.commentProviders.__queries || []
+      global.WIKI.models.commentProviders.__queries.push(query)
+      return query
+    })
   })
 
-  const loadProvidersHandler = () => {
+  const loadHandlers = () => {
     const express = require('express')
     require('../../controllers/api/comments')
     const router = express.__routers[0]
-    return router.get.mock.calls.find(([path]) => path === '/providers')[1]
+    return {
+      providers: router.get.mock.calls.find(([path]) => path === '/providers')[1],
+      saveProviders: router.post.mock.calls.find(([path]) => path === '/providers')[1]
+    }
   }
 
-  it('registers comments providers route', () => {
-    const handler = loadProvidersHandler()
+  const loadProvidersHandler = () => loadHandlers().providers
 
-    expect(typeof handler).toBe('function')
+  it('registers comments providers routes', () => {
+    const handlers = loadHandlers()
+
+    expect(typeof handlers.providers).toBe('function')
+    expect(typeof handlers.saveProviders).toBe('function')
   })
 
   it('is mounted by the API index router', () => {
@@ -190,6 +211,129 @@ describe('controllers/api comments endpoints', () => {
         })
       }
     ])
+  })
+
+  const createSavePayload = () => ({
+    body: {
+      providers: [
+        {
+          key: 'default',
+          isEnabled: true,
+          config: [
+            { key: 'displayMode', value: JSON.stringify({ v: 'expanded' }) },
+            { key: 'missingValue', value: JSON.stringify({ label: 'No value key' }) }
+          ]
+        },
+        {
+          key: 'external',
+          isEnabled: false,
+          config: [
+            { key: 'endpoint', value: JSON.stringify({ v: 'https://example.invalid/comments' }) }
+          ]
+        }
+      ]
+    },
+    user: { permissions: ['manage:system'] }
+  })
+
+  it('returns JSON 403 for unauthorized provider saves without mutating models', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValue(false)
+    const { saveProviders } = loadHandlers()
+    const req = createSavePayload()
+    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+
+    await saveProviders(req, res)
+
+    expect(global.WIKI.auth.checkAccess).toHaveBeenCalledWith(req.user, ['manage:system'])
+    expect(res.status).toHaveBeenCalledWith(403)
+    expect(res.json).toHaveBeenCalledWith({ error: 'Forbidden' })
+    expect(global.WIKI.models.commentProviders.query).not.toHaveBeenCalled()
+    expect(global.WIKI.models.commentProviders.initProvider).not.toHaveBeenCalled()
+  })
+
+  it('saves providers with GraphQL parity and initializes the active comment provider', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValue(true)
+    const { saveProviders } = loadHandlers()
+    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+
+    await saveProviders(createSavePayload(), res)
+
+    const queries = global.WIKI.models.commentProviders.__queries
+    expect(queries).toHaveLength(2)
+    expect(queries[0].patch).toHaveBeenCalledWith({
+      isEnabled: true,
+      config: {
+        displayMode: 'expanded',
+        missingValue: null
+      }
+    })
+    expect(queries[0].where).toHaveBeenCalledWith('key', 'default')
+    expect(queries[1].patch).toHaveBeenCalledWith({
+      isEnabled: false,
+      config: {
+        endpoint: 'https://example.invalid/comments'
+      }
+    })
+    expect(queries[1].where).toHaveBeenCalledWith('key', 'external')
+    expect(global.WIKI.models.commentProviders.initProvider).toHaveBeenCalledTimes(1)
+    expect(res.status).not.toHaveBeenCalled()
+    expect(res.json).toHaveBeenCalledWith({ message: 'Comment Providers updated successfully' })
+  })
+
+  it('returns JSON 400 for malformed provider save payloads', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValue(true)
+    const { saveProviders } = loadHandlers()
+    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+
+    await saveProviders({ body: { providers: [{ key: 'default', isEnabled: 'yes', config: [] }] }, user: {} }, res)
+
+    expect(res.status).toHaveBeenCalledWith(400)
+    expect(res.json).toHaveBeenCalledWith({ error: 'Invalid comment providers payload' })
+    expect(global.WIKI.models.commentProviders.query).not.toHaveBeenCalled()
+    expect(global.WIKI.models.commentProviders.initProvider).not.toHaveBeenCalled()
+  })
+
+  it('returns JSON 400 for malformed provider save config JSON', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValue(true)
+    const { saveProviders } = loadHandlers()
+    const req = createSavePayload()
+    req.body.providers[0].config[0].value = '{not-json'
+    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+
+    await saveProviders(req, res)
+
+    expect(res.status).toHaveBeenCalledWith(400)
+    expect(res.json).toHaveBeenCalledWith({ error: 'Invalid comment providers payload' })
+    expect(global.WIKI.models.commentProviders.initProvider).not.toHaveBeenCalled()
+  })
+
+  it('returns JSON 500 for unexpected provider save failures', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValue(true)
+    const query = {
+      patch: jest.fn().mockReturnThis(),
+      where: jest.fn().mockRejectedValue(new Error('comment save failed'))
+    }
+    global.WIKI.models.commentProviders.query.mockReturnValue(query)
+    const { saveProviders } = loadHandlers()
+    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+
+    await saveProviders(createSavePayload(), res)
+
+    expect(res.status).toHaveBeenCalledWith(500)
+    expect(res.json).toHaveBeenCalledWith({ error: 'comment save failed' })
+    expect(global.WIKI.models.commentProviders.initProvider).not.toHaveBeenCalled()
+  })
+
+  it('returns JSON 500 for comment provider initialization failures', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValue(true)
+    global.WIKI.models.commentProviders.initProvider.mockRejectedValueOnce(new Error('init failed'))
+    const { saveProviders } = loadHandlers()
+    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+
+    await saveProviders(createSavePayload(), res)
+
+    expect(res.status).toHaveBeenCalledWith(500)
+    expect(res.json).toHaveBeenCalledWith({ error: 'init failed' })
   })
 
   it('forwards unexpected failures to next', async () => {

@@ -94,6 +94,31 @@ async function fetchCommentProviders (fetchImpl, fallbackMessage = 'Comment prov
   return normalizeCommentProvidersPayload(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
 }
 
+function normalizeCommentSavePayload (payload, fallbackMessage) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload) || typeof payload.message !== 'string' || payload.message.length < 1) {
+    throw new Error(fallbackMessage)
+  }
+
+  return {
+    message: payload.message
+  }
+}
+
+async function saveCommentProviders (fetchImpl, providers, fallbackMessage = 'Comment providers save response is invalid') {
+  const response = await fetchImpl('/_api/comments/providers', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ providers })
+  })
+
+  return normalizeCommentSavePayload(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
+}
+
 module.exports = {
-  fetchCommentProviders
+  fetchCommentProviders,
+  saveCommentProviders
 }

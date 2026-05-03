@@ -100,8 +100,7 @@
 
 <script>
 import _ from 'lodash'
-import gql from 'graphql-tag'
-import { fetchCommentProviders } from '../../helpers/comments-api'
+import { fetchCommentProviders, saveCommentProviders } from '../../helpers/comments-api'
 import { loadingStart, loadingStop, showNotification, pushGraphError } from '../../helpers/root-ui-store'
 
 export default {
@@ -152,39 +151,17 @@ export default {
     async save() {
       loadingStart(this.$store, 'admin-comments-saveproviders')
       try {
-        const resp = await this.$apollo.mutate({
-          mutation: gql`
-            mutation($providers: [CommentProviderInput]!) {
-              comments {
-                updateProviders(providers: $providers) {
-                  responseResult {
-                    succeeded
-                    errorCode
-                    slug
-                    message
-                  }
-                }
-              }
-            }
-          `,
-          variables: {
-            providers: this.providers.map(tgt => ({
-              isEnabled: tgt.key === this.selectedProvider,
-              key: tgt.key,
-              config: tgt.config.map(cfg => ({...cfg, value: JSON.stringify({ v: cfg.value.value })}))
-            }))
-          }
+        await saveCommentProviders(window.fetch.bind(window), this.providers.map(tgt => ({
+          isEnabled: tgt.key === this.selectedProvider,
+          key: tgt.key,
+          config: tgt.config.map(cfg => ({...cfg, value: JSON.stringify({ v: cfg.value.value })}))
+        })), 'Comment providers save response is invalid')
+        await this.loadProviders({ notifyError: false })
+        showNotification(this.$store, {
+          message: this.$t('admin:comments.configSaveSuccess'),
+          style: 'success',
+          icon: 'check'
         })
-        if (_.get(resp, 'data.comments.updateProviders.responseResult.succeeded', false)) {
-          await this.loadProviders({ notifyError: false })
-          showNotification(this.$store, {
-            message: this.$t('admin:comments.configSaveSuccess'),
-            style: 'success',
-            icon: 'check'
-          })
-        } else {
-          throw new Error(_.get(resp, 'data.comments.updateProviders.responseResult.message', this.$t('common:error.unexpected')))
-        }
       } catch (err) {
         pushGraphError(this.$store, err)
       }

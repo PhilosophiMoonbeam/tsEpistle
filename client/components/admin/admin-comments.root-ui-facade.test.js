@@ -73,7 +73,8 @@ describe('admin-comments root UI facade migration guard', () => {
     expect(watchBlock).not.toBeNull()
 
     expect(script).toMatch(/import\s+\{(?=[^}]*\bloadingStart\b)(?=[^}]*\bloadingStop\b)(?=[^}]*\bshowNotification\b)(?=[^}]*\bpushGraphError\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/root-ui-store['"]/)
-    expect(script).toMatch(/import\s+\{\s*fetchCommentProviders\s*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/comments-api['"]/)
+    expect(script).toMatch(/import\s+\{(?=[^}]*\bfetchCommentProviders\b)(?=[^}]*\bsaveCommentProviders\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/comments-api['"]/)
+    expect(script).not.toMatch(/graphql-tag|\bgql\b/)
     expect(watchBlock).toMatch(/selectedProvider\s*\(\s*newValue\s*,\s*oldValue\s*\)\s*\{\s*this\.provider\s*=\s*_\.find\s*\(\s*this\.providers\s*,\s*\[\s*['"]key['"]\s*,\s*newValue\s*\]\s*\)\s*\|\|\s*\{\s*\}\s*\}/)
     expect(watchBlock).toMatch(/providers\s*\(\s*newValue\s*,\s*oldValue\s*\)\s*\{\s*this\.selectedProvider\s*=\s*_\.get\s*\(\s*_\.find\s*\(\s*this\.providers\s*,\s*['"]isEnabled['"]\s*\)\s*,\s*['"]key['"]\s*,\s*['"]db['"]\s*\)\s*\}/)
   })
@@ -98,15 +99,17 @@ describe('admin-comments root UI facade migration guard', () => {
     expect(refresh.match(/\bshowNotification\s*\(/g) || []).toHaveLength(1)
   })
 
-  test('save preserves mutation variables, silent reload, success/error facades, and trailing loading stop', () => {
+  test('save uses REST helper while preserving payload, silent reload, success/error facades, and trailing loading stop', () => {
     expect(save).not.toBeNull()
 
-    expect(save).toMatch(/async\s+save\s*\(\s*\)\s*\{\s*loadingStart\s*\(\s*this\.\$store\s*,\s*['"]admin-comments-saveproviders['"]\s*\)[\s\S]*?try\s*\{[\s\S]*?const\s+resp\s*=\s*await\s+this\.\$apollo\.mutate\s*\([\s\S]*?if\s*\(\s*_\.get\s*\(\s*resp\s*,\s*['"]data\.comments\.updateProviders\.responseResult\.succeeded['"]\s*,\s*false\s*\)\s*\)\s*\{\s*await\s+this\.loadProviders\s*\(\s*\{\s*notifyError:\s*false\s*\}\s*\)\s*showNotification\s*\(\s*this\.\$store\s*,\s*\{\s*message:\s*this\.\$t\s*\(\s*['"]admin:comments\.configSaveSuccess['"]\s*\)\s*,\s*style:\s*['"]success['"]\s*,\s*icon:\s*['"]check['"]\s*\}\s*\)[\s\S]*?\}\s*else\s*\{\s*throw\s+new\s+Error\s*\(\s*_\.get\s*\(\s*resp\s*,\s*['"]data\.comments\.updateProviders\.responseResult\.message['"]\s*,\s*this\.\$t\s*\(\s*['"]common:error\.unexpected['"]\s*\)\s*\)\s*\)\s*\}\s*\}\s*catch\s*\(\s*err\s*\)\s*\{\s*pushGraphError\s*\(\s*this\.\$store\s*,\s*err\s*\)\s*\}\s*loadingStop\s*\(\s*this\.\$store\s*,\s*['"]admin-comments-saveproviders['"]\s*\)\s*\}/)
-    expect(save).toMatch(/mutation:\s*gql`[\s\S]*mutation\s*\(\s*\$providers:\s*\[\s*CommentProviderInput\s*\]!\s*\)\s*\{[\s\S]*updateProviders\s*\(\s*providers:\s*\$providers\s*\)/)
-    expect(save).toMatch(/variables:\s*\{\s*providers:\s*this\.providers\.map\s*\(\s*tgt\s*=>\s*\(\s*\{\s*isEnabled:\s*tgt\.key\s*===\s*this\.selectedProvider\s*,\s*key:\s*tgt\.key\s*,\s*config:\s*tgt\.config\.map\s*\(\s*cfg\s*=>\s*\(\s*\{\s*\.\.\.cfg\s*,\s*value:\s*JSON\.stringify\s*\(\s*\{\s*v:\s*cfg\.value\.value\s*\}\s*\)\s*\}\s*\)\s*\)\s*\}\s*\)\s*\)\s*\}/)
+    expect(save).toMatch(/async\s+save\s*\(\s*\)\s*\{\s*loadingStart\s*\(\s*this\.\$store\s*,\s*['"]admin-comments-saveproviders['"]\s*\)[\s\S]*?try\s*\{[\s\S]*?await\s+saveCommentProviders\s*\(\s*window\.fetch\.bind\(\s*window\s*\)\s*,[\s\S]*?await\s+this\.loadProviders\s*\(\s*\{\s*notifyError:\s*false\s*\}\s*\)\s*showNotification\s*\(\s*this\.\$store\s*,\s*\{\s*message:\s*this\.\$t\s*\(\s*['"]admin:comments\.configSaveSuccess['"]\s*\)\s*,\s*style:\s*['"]success['"]\s*,\s*icon:\s*['"]check['"]\s*\}\s*\)[\s\S]*?\}\s*catch\s*\(\s*err\s*\)\s*\{\s*pushGraphError\s*\(\s*this\.\$store\s*,\s*err\s*\)\s*\}\s*loadingStop\s*\(\s*this\.\$store\s*,\s*['"]admin-comments-saveproviders['"]\s*\)\s*\}/)
+    expect(save).toMatch(/this\.providers\.map\s*\(\s*tgt\s*=>\s*\(\s*\{\s*isEnabled:\s*tgt\.key\s*===\s*this\.selectedProvider\s*,\s*key:\s*tgt\.key\s*,\s*config:\s*tgt\.config\.map\s*\(\s*cfg\s*=>\s*\(\s*\{\s*\.\.\.cfg\s*,\s*value:\s*JSON\.stringify\s*\(\s*\{\s*v:\s*cfg\.value\.value\s*\}\s*\)\s*\}\s*\)\s*\)\s*\}\s*\)\s*\)/)
+    expect(save).toMatch(/['"]Comment providers save response is invalid['"]/)
+    expect(save).not.toMatch(/this\.\$apollo\.mutate|updateProviders\.responseResult|graphql-tag|\bgql\b/)
     expect(save).not.toMatch(directRootUiCommit)
 
     expect(save.match(/\bloadingStart\s*\(/g) || []).toHaveLength(1)
+    expect(save.match(/\bsaveCommentProviders\s*\(/g) || []).toHaveLength(1)
     expect(save.match(/\bshowNotification\s*\(/g) || []).toHaveLength(1)
     expect(save.match(/\bpushGraphError\s*\(/g) || []).toHaveLength(1)
     expect(save.match(/\bloadingStop\s*\(/g) || []).toHaveLength(1)

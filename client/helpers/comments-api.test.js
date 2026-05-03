@@ -1,4 +1,4 @@
-const { fetchCommentProviders } = require('./comments-api')
+const { fetchCommentProviders, saveCommentProviders } = require('./comments-api')
 
 function createJsonResponse (payload, ok = true) {
   return {
@@ -187,6 +187,45 @@ describe('comments api helper', () => {
     })
 
     await expect(fetchCommentProviders(fetchImpl, 'Bad comments load')).rejects.toThrow('manage:system is required')
+  })
+
+  test('saves comment providers with same-origin JSON POST options', async () => {
+    const providers = [{ key: 'default', isEnabled: true, config: [] }]
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ message: 'Comment Providers updated successfully' }))
+
+    await expect(saveCommentProviders(fetchImpl, providers)).resolves.toEqual({ message: 'Comment Providers updated successfully' })
+    expect(fetchImpl).toHaveBeenCalledWith('/_api/comments/providers', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ providers })
+    })
+  })
+
+  test('rejects malformed successful comment provider save responses', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ ok: true }))
+
+    await expect(saveCommentProviders(fetchImpl, [], 'Bad save payload')).rejects.toThrow('Bad save payload')
+  })
+
+  test('propagates API JSON errors for comment provider saves', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ error: 'Invalid comment providers payload' }, false))
+
+    await expect(saveCommentProviders(fetchImpl, [], 'Bad save')).rejects.toThrow('Invalid comment providers payload')
+  })
+
+  test('rejects non-JSON successful comment provider save responses', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue({
+      ok: true,
+      headers: {
+        get: () => 'text/plain'
+      }
+    })
+
+    await expect(saveCommentProviders(fetchImpl, [], 'Bad save content type')).rejects.toThrow('Bad save content type')
   })
 
   test('rejects non-JSON successful responses', async () => {
