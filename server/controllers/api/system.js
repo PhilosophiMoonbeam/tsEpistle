@@ -209,6 +209,40 @@ router.get('/telemetry', (req, res) => {
   res.json(buildSystemTelemetry())
 })
 
+router.patch('/telemetry', async (req, res, next) => {
+  if (!requireSystemAccess(req, res)) {
+    return
+  }
+
+  const enabled = _.get(req, 'body.enabled')
+  if (!_.isBoolean(enabled)) {
+    return res.status(400).json({ error: 'enabled must be a boolean' })
+  }
+
+  try {
+    _.set(WIKI.config, 'telemetry.isEnabled', enabled)
+    WIKI.telemetry.enabled = enabled
+    await WIKI.configSvc.saveToDb(['telemetry'])
+    res.json({ message: 'Telemetry updated successfully.' })
+  } catch (err) {
+    next(err)
+  }
+})
+
+router.post('/telemetry/reset-client-id', async (req, res, next) => {
+  if (!requireSystemAccess(req, res)) {
+    return
+  }
+
+  try {
+    WIKI.telemetry.generateClientId()
+    await WIKI.configSvc.saveToDb(['telemetry'])
+    res.json({ message: 'Telemetry Client ID reset successfully.' })
+  } catch (err) {
+    next(err)
+  }
+})
+
 router.get('/export-status', (req, res) => {
   if (!requireSystemAccess(req, res)) {
     return

@@ -2,6 +2,7 @@ jest.mock('express', () => {
   const router = {
     get: jest.fn(),
     post: jest.fn(),
+    patch: jest.fn(),
     use: jest.fn()
   }
 
@@ -37,6 +38,7 @@ describe('controllers/api system endpoints', () => {
     const express = require('express')
     express.__router.get.mockClear()
     express.__router.post.mockClear()
+    express.__router.patch.mockClear()
 
     global.WIKI = {
       version: '2.0.0',
@@ -137,7 +139,8 @@ describe('controllers/api system endpoints', () => {
         }
       },
       telemetry: {
-        enabled: true
+        enabled: true,
+        generateClientId: jest.fn()
       },
       servers: {
         servers: {
@@ -162,6 +165,8 @@ describe('controllers/api system endpoints', () => {
       host: express.__router.get.mock.calls.find(([path]) => path === '/host')[1],
       extensions: express.__router.get.mock.calls.find(([path]) => path === '/extensions')[1],
       telemetry: express.__router.get.mock.calls.find(([path]) => path === '/telemetry')[1],
+      updateTelemetry: express.__router.patch.mock.calls.find(([path]) => path === '/telemetry')[1],
+      resetTelemetryClientId: express.__router.post.mock.calls.find(([path]) => path === '/telemetry/reset-client-id')[1],
       exportStatus: express.__router.get.mock.calls.find(([path]) => path === '/export-status')[1],
       ssl: express.__router.get.mock.calls.find(([path]) => path === '/ssl')[1],
       saveFlags: express.__router.post.mock.calls.find(([path]) => path === '/flags')[1],
@@ -178,6 +183,8 @@ describe('controllers/api system endpoints', () => {
     expect(typeof handlers.host).toBe('function')
     expect(typeof handlers.extensions).toBe('function')
     expect(typeof handlers.telemetry).toBe('function')
+    expect(typeof handlers.updateTelemetry).toBe('function')
+    expect(typeof handlers.resetTelemetryClientId).toBe('function')
     expect(typeof handlers.exportStatus).toBe('function')
     expect(typeof handlers.ssl).toBe('function')
     expect(typeof handlers.saveFlags).toBe('function')
@@ -186,7 +193,7 @@ describe('controllers/api system endpoints', () => {
 
   it('returns 403 for unauthorized system requests', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(false)
-    const { info, summary, flags, host, extensions, telemetry, exportStatus, ssl, saveFlags, checkForUpdate } = loadHandlers()
+    const { info, summary, flags, host, extensions, telemetry, updateTelemetry, resetTelemetryClientId, exportStatus, ssl, saveFlags, checkForUpdate } = loadHandlers()
     const req = { user: { permissions: [] }, get: jest.fn() }
     const res = { sendStatus: jest.fn(), json: jest.fn() }
 
@@ -196,22 +203,17 @@ describe('controllers/api system endpoints', () => {
     await host(req, res)
     await extensions(req, res)
     await telemetry(req, res)
+    await updateTelemetry(req, res)
+    await resetTelemetryClientId(req, res)
     await exportStatus(req, res)
     await ssl(req, res)
     await saveFlags(req, res)
     await checkForUpdate(req, res)
 
-    expect(res.sendStatus).toHaveBeenCalledTimes(10)
-    expect(res.sendStatus).toHaveBeenNthCalledWith(1, 403)
-    expect(res.sendStatus).toHaveBeenNthCalledWith(2, 403)
-    expect(res.sendStatus).toHaveBeenNthCalledWith(3, 403)
-    expect(res.sendStatus).toHaveBeenNthCalledWith(4, 403)
-    expect(res.sendStatus).toHaveBeenNthCalledWith(5, 403)
-    expect(res.sendStatus).toHaveBeenNthCalledWith(6, 403)
-    expect(res.sendStatus).toHaveBeenNthCalledWith(7, 403)
-    expect(res.sendStatus).toHaveBeenNthCalledWith(8, 403)
-    expect(res.sendStatus).toHaveBeenNthCalledWith(9, 403)
-    expect(res.sendStatus).toHaveBeenNthCalledWith(10, 403)
+    expect(res.sendStatus).toHaveBeenCalledTimes(12)
+    for (let idx = 1; idx <= 12; idx++) {
+      expect(res.sendStatus).toHaveBeenNthCalledWith(idx, 403)
+    }
     expect(res.json).not.toHaveBeenCalled()
   })
 
@@ -355,6 +357,75 @@ describe('controllers/api system endpoints', () => {
       telemetry: true,
       telemetryClientId: null
     })
+  })
+
+  it('updates telemetry state and persists it for authorized requests', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValue(true)
+    const { updateTelemetry } = loadHandlers()
+    const req = { user: { permissions: ['manage:system'] }, body: { enabled: false } }
+    const res = { json: jest.fn(), sendStatus: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await updateTelemetry(req, res, jest.fn())
+
+    expect(global.WIKI.config.telemetry.isEnabled).toBe(false)
+    expect(global.WIKI.telemetry.enabled).toBe(false)
+    expect(global.WIKI.configSvc.saveToDb).toHaveBeenCalledWith(['telemetry'])
+    expect(res.json).toHaveBeenCalledWith({ message: 'Telemetry updated successfully.' })
+  })
+
+  it('returns 400 for malformed telemetry state updates', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValue(true)
+    const { updateTelemetry } = loadHandlers()
+    const req = { user: { permissions: ['manage:system'] }, body: { enabled: 'false' } }
+    const res = { json: jest.fn(), sendStatus: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await updateTelemetry(req, res, jest.fn())
+
+    expect(global.WIKI.configSvc.saveToDb).not.toHaveBeenCalled()
+    expect(res.status).toHaveBeenCalledWith(400)
+    expect(res.json).toHaveBeenCalledWith({ error: 'enabled must be a boolean' })
+  })
+
+  it('forwards telemetry state persistence failures to next', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValue(true)
+    global.WIKI.configSvc.saveToDb.mockRejectedValueOnce(new Error('telemetry save failed'))
+    const { updateTelemetry } = loadHandlers()
+    const req = { user: { permissions: ['manage:system'] }, body: { enabled: true } }
+    const res = { json: jest.fn(), sendStatus: jest.fn(), status: jest.fn().mockReturnThis() }
+    const next = jest.fn()
+
+    await updateTelemetry(req, res, next)
+
+    expect(next).toHaveBeenCalledWith(expect.any(Error))
+    expect(next.mock.calls[0][0].message).toBe('telemetry save failed')
+  })
+
+  it('resets telemetry client ID and persists telemetry config for authorized requests', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValue(true)
+    const { resetTelemetryClientId } = loadHandlers()
+    const req = { user: { permissions: ['manage:system'] } }
+    const res = { json: jest.fn(), sendStatus: jest.fn() }
+
+    await resetTelemetryClientId(req, res, jest.fn())
+
+    expect(global.WIKI.telemetry.generateClientId).toHaveBeenCalled()
+    expect(global.WIKI.configSvc.saveToDb).toHaveBeenCalledWith(['telemetry'])
+    expect(res.json).toHaveBeenCalledWith({ message: 'Telemetry Client ID reset successfully.' })
+  })
+
+  it('forwards telemetry client ID reset persistence failures to next', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValue(true)
+    global.WIKI.configSvc.saveToDb.mockRejectedValueOnce(new Error('telemetry reset failed'))
+    const { resetTelemetryClientId } = loadHandlers()
+    const req = { user: { permissions: ['manage:system'] } }
+    const res = { json: jest.fn(), sendStatus: jest.fn() }
+    const next = jest.fn()
+
+    await resetTelemetryClientId(req, res, next)
+
+    expect(global.WIKI.telemetry.generateClientId).toHaveBeenCalled()
+    expect(next).toHaveBeenCalledWith(expect.any(Error))
+    expect(next.mock.calls[0][0].message).toBe('telemetry reset failed')
   })
 
   it('returns the safe export status JSON for authorized requests', () => {

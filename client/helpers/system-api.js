@@ -317,6 +317,42 @@ async function updateSystemFlags (fetchImpl, flags, fallbackMessage = 'System fl
   return payload
 }
 
+async function updateSystemTelemetry (fetchImpl, enabled, fallbackMessage = 'Telemetry update failed') {
+  const response = await fetchImpl('/_api/system/telemetry', {
+    method: 'PATCH',
+    credentials: 'same-origin',
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ enabled })
+  })
+
+  const payload = await parseJsonResponse(response, fallbackMessage)
+  if (!payload || typeof payload.message !== 'string' || payload.message.length < 1) {
+    throw new Error(fallbackMessage)
+  }
+
+  return payload
+}
+
+async function resetSystemTelemetryClientId (fetchImpl, fallbackMessage = 'Telemetry Client ID reset failed') {
+  const response = await fetchImpl('/_api/system/telemetry/reset-client-id', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: {
+      Accept: 'application/json'
+    }
+  })
+
+  const payload = await parseJsonResponse(response, fallbackMessage)
+  if (!payload || typeof payload.message !== 'string' || payload.message.length < 1) {
+    throw new Error(fallbackMessage)
+  }
+
+  return payload
+}
+
 module.exports = {
   fetchSystemSummary,
   fetchSystemInfo,
@@ -326,5 +362,7 @@ module.exports = {
   fetchSystemSsl,
   fetchSystemFlags,
   fetchSystemExtensions,
-  updateSystemFlags
+  updateSystemFlags,
+  updateSystemTelemetry,
+  resetSystemTelemetryClientId
 }

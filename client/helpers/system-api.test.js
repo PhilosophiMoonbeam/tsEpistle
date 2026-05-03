@@ -1,4 +1,4 @@
-const { fetchSystemSummary, fetchSystemInfo, fetchSystemTelemetry, fetchSystemExportStatus, fetchSystemHost, fetchSystemSsl, fetchSystemFlags, fetchSystemExtensions, updateSystemFlags } = require('./system-api')
+const { fetchSystemSummary, fetchSystemInfo, fetchSystemTelemetry, fetchSystemExportStatus, fetchSystemHost, fetchSystemSsl, fetchSystemFlags, fetchSystemExtensions, updateSystemFlags, updateSystemTelemetry, resetSystemTelemetryClientId } = require('./system-api')
 
 function createJsonResponse (payload, ok = true) {
   return {
@@ -537,5 +537,53 @@ describe('system api helper', () => {
     })
 
     await expect(updateSystemFlags(fetchImpl, { ldapdebug: true }, 'Bad update')).rejects.toThrow('manage:system is required')
+  })
+
+  test('submits telemetry updates as REST JSON and returns parsed message', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ message: 'Telemetry updated successfully.' }))
+
+    await expect(updateSystemTelemetry(fetchImpl, true)).resolves.toEqual({ message: 'Telemetry updated successfully.' })
+
+    expect(fetchImpl).toHaveBeenCalledWith('/_api/system/telemetry', {
+      method: 'PATCH',
+      credentials: 'same-origin',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ enabled: true })
+    })
+  })
+
+  test('rejects malformed telemetry update success payloads', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ ok: true }))
+
+    await expect(updateSystemTelemetry(fetchImpl, false, 'Bad telemetry update')).rejects.toThrow('Bad telemetry update')
+  })
+
+  test('surfaces API error messages for failed telemetry updates', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ error: 'enabled must be a boolean' }, false))
+
+    await expect(updateSystemTelemetry(fetchImpl, 'yes', 'Bad telemetry update')).rejects.toThrow('enabled must be a boolean')
+  })
+
+  test('resets telemetry client IDs through the REST endpoint', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ message: 'Telemetry Client ID reset successfully.' }))
+
+    await expect(resetSystemTelemetryClientId(fetchImpl)).resolves.toEqual({ message: 'Telemetry Client ID reset successfully.' })
+
+    expect(fetchImpl).toHaveBeenCalledWith('/_api/system/telemetry/reset-client-id', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: {
+        Accept: 'application/json'
+      }
+    })
+  })
+
+  test('surfaces API error messages for failed telemetry client ID resets', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ error: 'reset failed' }, false))
+
+    await expect(resetSystemTelemetryClientId(fetchImpl, 'Bad reset')).rejects.toThrow('reset failed')
   })
 })
