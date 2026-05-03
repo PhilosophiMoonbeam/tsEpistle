@@ -27,9 +27,9 @@ function helperRootCallPattern () {
 
 describe('editor link events', () => {
   test('editor link helper uses the shared non-Vue event bus', () => {
-    const source = fs.readFileSync(path.join(repoRoot, 'client/helpers/editor-link-events.js'), 'utf8')
+    const source = fs.readFileSync(path.join(repoRoot, 'client/helpers/editor-link-events.ts'), 'utf8')
 
-    expect(source).toContain("require('./simple-event-bus')")
+    expect(source).toContain("import { createEventBus } from './simple-event-bus'")
     expect(source).not.toMatch(/require\(\s*['"]vue['"]\s*\)/)
     expect(source).not.toMatch(/new\s+Vue\s*\(/)
     expect(source).not.toMatch(/\.\$(?:emit|on|off)\s*\(/)
