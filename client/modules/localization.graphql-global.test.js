@@ -14,7 +14,12 @@ describe('localization GraphQL client dependency', () => {
     expect(localizationSource).not.toMatch(/[^.]\bgraphQL\.query\s*\(/)
   })
 
-  test('client-app passes the existing window GraphQL client to localization init', () => {
-    expect(clientAppSource).toContain('const i18n = localization.init(window.graphQL)')
+  test('client-app passes local Apollo client references instead of reading the global', () => {
+    expect(clientAppSource).toContain('const graphQLClient = new ApolloClient({')
+    expect(clientAppSource).toContain('window.graphQL = graphQLClient')
+    expect(clientAppSource).toContain('defaultClient: graphQLClient')
+    expect(clientAppSource).toContain('const i18n = localization.init(graphQLClient)')
+    expect(clientAppSource).not.toContain('defaultClient: window.graphQL')
+    expect(clientAppSource).not.toContain('localization.init(window.graphQL)')
   })
 })

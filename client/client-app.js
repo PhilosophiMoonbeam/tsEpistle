@@ -121,7 +121,7 @@ const graphQLWSLink = new WebSocketLink({
   }
 })
 
-window.graphQL = new ApolloClient({
+const graphQLClient = new ApolloClient({
   link: split(({ query }) => {
     const { kind, operation } = getMainDefinition(query)
     return kind === 'OperationDefinition' && operation === 'subscription'
@@ -129,6 +129,8 @@ window.graphQL = new ApolloClient({
   cache: new InMemoryCache(),
   connectToDevTools: (process.env.node_env === 'development')
 })
+
+window.graphQL = graphQLClient
 
 // ====================================
 // Initialize Vue Modules
@@ -183,14 +185,14 @@ let bootstrap = () => {
   })
 
   const apolloProvider = new VueApollo({
-    defaultClient: window.graphQL
+    defaultClient: graphQLClient
   })
 
   // ====================================
   // Bootstrap Vue
   // ====================================
 
-  const i18n = localization.init(window.graphQL)
+  const i18n = localization.init(graphQLClient)
 
   let darkModeEnabled = siteConfig.darkMode
   if ((store.get('user/appearance') || '').length > 0) {
