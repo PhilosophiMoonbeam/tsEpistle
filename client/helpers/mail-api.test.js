@@ -1,4 +1,4 @@
-const { sendMailTest } = require('./mail-api')
+const { fetchMailConfig, saveMailConfig, sendMailTest } = require('./mail-api')
 
 function createJsonResponse (payload, ok = true) {
   return {
@@ -11,6 +11,64 @@ function createJsonResponse (payload, ok = true) {
 }
 
 describe('mail api helper', () => {
+  const mailConfig = {
+    senderName: 'Wiki Admin',
+    senderEmail: 'admin@example.test',
+    host: 'smtp.example.test',
+    port: 587,
+    name: 'Example SMTP',
+    secure: false,
+    verifySSL: true,
+    user: 'smtp-user',
+    pass: '********',
+    useDKIM: true,
+    dkimDomainName: 'example.test',
+    dkimKeySelector: 'mail',
+    dkimPrivateKey: 'private-key'
+  }
+
+  test('fetches mail config with same-origin JSON options and sanitizes fields', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+      ...mailConfig,
+      privateField: 'do-not-return'
+    }))
+
+    await expect(fetchMailConfig(fetchImpl)).resolves.toEqual(mailConfig)
+    expect(fetchImpl).toHaveBeenCalledWith('/_api/mail/config', {
+      credentials: 'same-origin',
+      headers: {
+        Accept: 'application/json'
+      }
+    })
+  })
+
+  test('rejects invalid mail config responses', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ ...mailConfig, port: '587' }))
+
+    await expect(fetchMailConfig(fetchImpl, 'Bad config')).rejects.toThrow('Bad config')
+  })
+
+  test('saves mail config with same-origin JSON POST options', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ message: 'Mail configuration updated successfully.' }))
+
+    await expect(saveMailConfig(fetchImpl, mailConfig)).resolves.toEqual({ message: 'Mail configuration updated successfully.' })
+    expect(fetchImpl).toHaveBeenCalledWith('/_api/mail/config', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(mailConfig)
+    })
+  })
+
+  test('surfaces JSON mail config REST error responses', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ error: 'Invalid mail config payload' }, false))
+
+    await expect(saveMailConfig(fetchImpl, mailConfig, 'Mail save failed')).rejects.toThrow('Invalid mail config payload')
+  })
+
   test('sends mail test with same-origin JSON POST options', async () => {
     const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ message: 'Test email sent successfully.' }))
 

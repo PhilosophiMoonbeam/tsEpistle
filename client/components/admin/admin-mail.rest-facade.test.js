@@ -24,12 +24,40 @@ function methodBlock (script, methodName) {
 }
 
 describe('admin mail REST facade', () => {
-  test('uses mail REST helper for test emails and no mail send GraphQL document', () => {
+  test('uses mail REST helpers and no mail GraphQL documents', () => {
     const script = scriptBlock()
 
-    expect(script).toMatch(/import\s+\{\s*sendMailTest\s*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/mail-api['"]/)
+    expect(script).toMatch(/import\s+\{(?=[^}]*\bfetchMailConfig\b)(?=[^}]*\bsaveMailConfig\b)(?=[^}]*\bsendMailTest\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/mail-api['"]/)
+    expect(script).not.toContain('mail-query-config.gql')
+    expect(script).not.toContain('mail-mutation-save-config.gql')
     expect(script).not.toContain('mail-mutation-sendtest.gql')
+    expect(script).not.toContain('mailConfigQuery')
+    expect(script).not.toContain('mailUpdateConfigMutation')
     expect(script).not.toContain('mailTestMutation')
+    expect(script).not.toContain('apollo:')
+    expect(script).not.toContain('this.$apollo')
+  })
+
+  test('loadConfig uses REST helper and preserves loading/error behavior', () => {
+    const loadConfig = methodBlock(scriptBlock(), 'loadConfig')
+
+    expect(loadConfig).toContain("this.$store.commit(`loadingStart`, 'admin-mail-refresh')")
+    expect(loadConfig).toContain('this.config = _.cloneDeep(await fetchMailConfig(window.fetch.bind(window)))')
+    expect(loadConfig).toContain("this.$store.commit('pushGraphError', err)")
+    expect(loadConfig).toContain("this.$store.commit(`loadingStop`, 'admin-mail-refresh')")
+  })
+
+  test('save uses REST helper and preserves payload, loading, notification, and error behavior', () => {
+    const save = methodBlock(scriptBlock(), 'save')
+
+    expect(save).toContain("this.$store.commit(`loadingStart`, 'admin-mail-update')")
+    expect(save).toContain('await saveMailConfig(window.fetch.bind(window), {')
+    expect(save).toContain('port: _.toSafeInteger(this.config.port) || 0')
+    expect(save).toContain('verifySSL: this.config.verifySSL || false')
+    expect(save).toContain("message: this.$t('admin:mail.saveSuccess')")
+    expect(save).toContain("this.$store.commit('pushGraphError', err)")
+    expect(save).toContain("this.$store.commit(`loadingStop`, 'admin-mail-update')")
+    expect(save).not.toContain('this.$apollo.mutate')
   })
 
   test('sendTest preserves loading, payload, success, cleanup, and error handling behavior', () => {

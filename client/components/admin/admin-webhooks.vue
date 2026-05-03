@@ -8,7 +8,7 @@
             .headline.primary--text.animated.fadeInLeft {{ $t('admin:webhooks.title') }}
             .subtitle-1.grey--text.animated.fadeInLeft.wait-p4s {{ $t('admin:webhooks.subtitle') }}
           v-spacer
-          v-btn.animated.fadeInDown(color='success', depressed, @click='save', large, disabled)
+          v-btn.animated.fadeInDown(color='success', depressed, large, disabled)
             v-icon(left) check
             span {{$t('common:actions.apply')}}
 
@@ -51,9 +51,6 @@
 <script>
 import _ from 'lodash'
 // import { get } from 'vuex-pathify'
-import mailConfigQuery from 'gql/admin/mail/mail-query-config.gql'
-import mailUpdateConfigMutation from 'gql/admin/mail/mail-mutation-save-config.gql'
-import { setLoading, showNotification, pushGraphError } from '../../helpers/root-ui-store'
 
 export default {
   data() {
@@ -65,48 +62,6 @@ export default {
   computed: {
     hook() {
       return _.find(this.hooks, ['id', this.selectedHook]) || {}
-    }
-  },
-  methods: {
-    async save () {
-      try {
-        await this.$apollo.mutate({
-          mutation: mailUpdateConfigMutation,
-          variables: {
-            senderName: this.config.senderName || '',
-            senderEmail: this.config.senderEmail || '',
-            host: this.config.host || '',
-            port: _.toSafeInteger(this.config.port) || 0,
-            secure: this.config.secure || false,
-            user: this.config.user || '',
-            pass: this.config.pass || '',
-            useDKIM: this.config.useDKIM || false,
-            dkimDomainName: this.config.dkimDomainName || '',
-            dkimKeySelector: this.config.dkimKeySelector || '',
-            dkimPrivateKey: this.config.dkimPrivateKey || ''
-          },
-          watchLoading (isLoading) {
-            setLoading(this.$store, 'admin-mail-update', isLoading)
-          }
-        })
-        showNotification(this.$store, {
-          style: 'success',
-          message: 'Configuration saved successfully.',
-          icon: 'check'
-        })
-      } catch (err) {
-        pushGraphError(this.$store, err)
-      }
-    }
-  },
-  apollo: {
-    hooks: {
-      query: mailConfigQuery,
-      fetchPolicy: 'network-only',
-      update: (data) => _.cloneDeep(data.mail.config),
-      watchLoading (isLoading) {
-        setLoading(this.$store, 'admin-mail-refresh', isLoading)
-      }
     }
   }
 }

@@ -167,10 +167,8 @@
 
 <script>
 import _ from 'lodash'
-import mailConfigQuery from 'gql/admin/mail/mail-query-config.gql'
-import mailUpdateConfigMutation from 'gql/admin/mail/mail-mutation-save-config.gql'
 
-import { sendMailTest } from '../../helpers/mail-api'
+import { fetchMailConfig, saveMailConfig, sendMailTest } from '../../helpers/mail-api'
 
 export default {
   data() {
@@ -197,27 +195,22 @@ export default {
   methods: {
     async save () {
       try {
-        await this.$apollo.mutate({
-          mutation: mailUpdateConfigMutation,
-          variables: {
-            senderName: this.config.senderName || '',
-            senderEmail: this.config.senderEmail || '',
-            host: this.config.host || '',
-            port: _.toSafeInteger(this.config.port) || 0,
-            name: this.config.name || '',
-            secure: this.config.secure || false,
-            verifySSL: this.config.verifySSL || false,
-            user: this.config.user || '',
-            pass: this.config.pass || '',
-            useDKIM: this.config.useDKIM || false,
-            dkimDomainName: this.config.dkimDomainName || '',
-            dkimKeySelector: this.config.dkimKeySelector || '',
-            dkimPrivateKey: this.config.dkimPrivateKey || ''
-          },
-          watchLoading (isLoading) {
-            this.$store.commit(`loading${isLoading ? 'Start' : 'Stop'}`, 'admin-mail-update')
-          }
-        })
+        this.$store.commit(`loadingStart`, 'admin-mail-update')
+        await saveMailConfig(window.fetch.bind(window), {
+          senderName: this.config.senderName || '',
+          senderEmail: this.config.senderEmail || '',
+          host: this.config.host || '',
+          port: _.toSafeInteger(this.config.port) || 0,
+          name: this.config.name || '',
+          secure: this.config.secure || false,
+          verifySSL: this.config.verifySSL || false,
+          user: this.config.user || '',
+          pass: this.config.pass || '',
+          useDKIM: this.config.useDKIM || false,
+          dkimDomainName: this.config.dkimDomainName || '',
+          dkimKeySelector: this.config.dkimKeySelector || '',
+          dkimPrivateKey: this.config.dkimPrivateKey || ''
+        }, 'Mail configuration update failed')
         this.$store.commit('showNotification', {
           style: 'success',
           message: this.$t('admin:mail.saveSuccess'),
@@ -225,6 +218,18 @@ export default {
         })
       } catch (err) {
         this.$store.commit('pushGraphError', err)
+      } finally {
+        this.$store.commit(`loadingStop`, 'admin-mail-update')
+      }
+    },
+    async loadConfig () {
+      try {
+        this.$store.commit(`loadingStart`, 'admin-mail-refresh')
+        this.config = _.cloneDeep(await fetchMailConfig(window.fetch.bind(window)))
+      } catch (err) {
+        this.$store.commit('pushGraphError', err)
+      } finally {
+        this.$store.commit(`loadingStop`, 'admin-mail-refresh')
       }
     },
     async sendTest () {
@@ -244,15 +249,8 @@ export default {
       }
     }
   },
-  apollo: {
-    config: {
-      query: mailConfigQuery,
-      fetchPolicy: 'network-only',
-      update: (data) => _.cloneDeep(data.mail.config),
-      watchLoading (isLoading) {
-        this.$store.commit(`loading${isLoading ? 'Start' : 'Stop'}`, 'admin-mail-refresh')
-      }
-    }
+  created () {
+    this.loadConfig()
   }
 }
 </script>
