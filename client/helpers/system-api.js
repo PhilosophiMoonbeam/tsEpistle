@@ -387,6 +387,48 @@ async function flushSystemTemporaryUploads (fetchImpl, fallbackMessage = 'Tempor
   return payload
 }
 
+async function rebuildPageTree (fetchImpl, fallbackMessage = 'Page tree rebuild failed') {
+  const response = await fetchImpl('/_api/system/content/rebuild-tree', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: {
+      Accept: 'application/json'
+    }
+  })
+
+  const payload = await parseJsonResponse(response, fallbackMessage)
+  if (!payload || typeof payload.message !== 'string' || payload.message.length < 1) {
+    throw new Error(fallbackMessage)
+  }
+
+  return payload
+}
+
+async function migratePagesToLocale (fetchImpl, sourceLocale, targetLocale, fallbackMessage = 'Locale migration failed') {
+  const response = await fetchImpl('/_api/system/content/migrate-locale', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      sourceLocale,
+      targetLocale
+    })
+  })
+
+  const payload = await parseJsonResponse(response, fallbackMessage)
+  if (!payload || typeof payload.message !== 'string' || payload.message.length < 1 || !Number.isFinite(payload.count)) {
+    throw new Error(fallbackMessage)
+  }
+
+  return {
+    message: payload.message,
+    count: payload.count
+  }
+}
+
 module.exports = {
   fetchSystemSummary,
   fetchSystemInfo,
@@ -400,5 +442,7 @@ module.exports = {
   updateSystemTelemetry,
   resetSystemTelemetryClientId,
   flushSystemCache,
-  flushSystemTemporaryUploads
+  flushSystemTemporaryUploads,
+  rebuildPageTree,
+  migratePagesToLocale
 }

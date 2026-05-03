@@ -270,6 +270,45 @@ router.post('/cache/temp-uploads/flush', async (req, res) => {
   }
 })
 
+router.post('/content/rebuild-tree', async (req, res) => {
+  if (!requireSystemAccess(req, res)) {
+    return
+  }
+
+  try {
+    await WIKI.models.pages.rebuildTree()
+    res.json({ message: 'Page tree rebuilt successfully.' })
+  } catch (err) {
+    res.status(500).json({ error: err.message || 'Page tree rebuild failed' })
+  }
+})
+
+router.post('/content/migrate-locale', async (req, res) => {
+  if (!requireSystemAccess(req, res)) {
+    return
+  }
+
+  const sourceLocale = _.get(req, 'body.sourceLocale')
+  const targetLocale = _.get(req, 'body.targetLocale')
+
+  if (!_.isString(sourceLocale) || sourceLocale.length < 1) {
+    return res.status(400).json({ error: 'sourceLocale must be a non-empty string' })
+  }
+  if (!_.isString(targetLocale) || targetLocale.length < 1) {
+    return res.status(400).json({ error: 'targetLocale must be a non-empty string' })
+  }
+
+  try {
+    const count = await WIKI.models.pages.migrateToLocale({ sourceLocale, targetLocale })
+    res.json({
+      message: 'Migrated content to target locale successfully.',
+      count
+    })
+  } catch (err) {
+    res.status(500).json({ error: err.message || 'Locale migration failed' })
+  }
+})
+
 router.get('/export-status', (req, res) => {
   if (!requireSystemAccess(req, res)) {
     return

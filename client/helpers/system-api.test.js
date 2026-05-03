@@ -1,4 +1,4 @@
-const { fetchSystemSummary, fetchSystemInfo, fetchSystemTelemetry, fetchSystemExportStatus, fetchSystemHost, fetchSystemSsl, fetchSystemFlags, fetchSystemExtensions, updateSystemFlags, updateSystemTelemetry, resetSystemTelemetryClientId, flushSystemCache, flushSystemTemporaryUploads } = require('./system-api')
+const { fetchSystemSummary, fetchSystemInfo, fetchSystemTelemetry, fetchSystemExportStatus, fetchSystemHost, fetchSystemSsl, fetchSystemFlags, fetchSystemExtensions, updateSystemFlags, updateSystemTelemetry, resetSystemTelemetryClientId, flushSystemCache, flushSystemTemporaryUploads, rebuildPageTree, migratePagesToLocale } = require('./system-api')
 
 function createJsonResponse (payload, ok = true) {
   return {
@@ -551,6 +551,72 @@ describe('system api helper', () => {
     const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ error: 'uploads denied' }, false))
 
     await expect(flushSystemTemporaryUploads(fetchImpl)).rejects.toThrow('uploads denied')
+  })
+
+  test('rebuilds the page tree through REST', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ message: 'Page tree rebuilt successfully.' }))
+
+    await expect(rebuildPageTree(fetchImpl)).resolves.toEqual({ message: 'Page tree rebuilt successfully.' })
+    expect(fetchImpl).toHaveBeenCalledWith('/_api/system/content/rebuild-tree', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: {
+        Accept: 'application/json'
+      }
+    })
+  })
+
+  test('rejects malformed page tree rebuild responses', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ message: '' }))
+
+    await expect(rebuildPageTree(fetchImpl, 'Bad tree rebuild')).rejects.toThrow('Bad tree rebuild')
+  })
+
+  test('surfaces API error messages for page tree rebuild failures', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ error: 'tree backend failed' }, false))
+
+    await expect(rebuildPageTree(fetchImpl, 'Bad tree rebuild')).rejects.toThrow('tree backend failed')
+  })
+
+  test('migrates pages to a locale through REST', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+      message: 'Migrated content to target locale successfully.',
+      count: 3
+    }))
+
+    await expect(migratePagesToLocale(fetchImpl, 'en', 'fr')).resolves.toEqual({
+      message: 'Migrated content to target locale successfully.',
+      count: 3
+    })
+    expect(fetchImpl).toHaveBeenCalledWith('/_api/system/content/migrate-locale', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        sourceLocale: 'en',
+        targetLocale: 'fr'
+      })
+    })
+  })
+
+  test.each([
+    ['missing count', { message: 'Migrated content to target locale successfully.' }],
+    ['string count', { message: 'Migrated content to target locale successfully.', count: '3' }],
+    ['infinite count', { message: 'Migrated content to target locale successfully.', count: Infinity }],
+    ['empty message', { message: '', count: 3 }]
+  ])('rejects malformed locale migration response: %s', async (label, payload) => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse(payload))
+
+    await expect(migratePagesToLocale(fetchImpl, 'en', 'fr', 'Bad locale migration')).rejects.toThrow('Bad locale migration')
+  })
+
+  test('surfaces API error messages for locale migration failures', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ error: 'migration backend failed' }, false))
+
+    await expect(migratePagesToLocale(fetchImpl, 'en', 'fr', 'Bad locale migration')).rejects.toThrow('migration backend failed')
   })
 
   test('submits system flags update as xhr JSON and returns parsed message', async () => {

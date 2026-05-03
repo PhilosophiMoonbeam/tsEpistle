@@ -93,8 +93,8 @@
 <script>
 import _ from 'lodash'
 import gql from 'graphql-tag'
-import utilityContentMigrateLocaleMutation from 'gql/admin/utilities/utilities-mutation-content-migratelocale.gql'
-import utilityContentRebuildTreeMutation from 'gql/admin/utilities/utilities-mutation-content-rebuildtree.gql'
+import { loadingStart, loadingStop, showNotification, pushGraphError } from '../../helpers/root-ui-store'
+import { migratePagesToLocale, rebuildPageTree } from '../../helpers/system-api'
 
 import { SemipolarSpinner } from 'epic-spinners'
 
@@ -138,27 +138,20 @@ export default {
   methods: {
     async rebuildTree () {
       this.loading = true
-      this.$store.commit(`loadingStart`, 'admin-utilities-content-rebuildtree')
+      loadingStart(this.$store, 'admin-utilities-content-rebuildtree')
 
       try {
-        const respRaw = await this.$apollo.mutate({
-          mutation: utilityContentRebuildTreeMutation
+        await rebuildPageTree(window.fetch.bind(window))
+        showNotification(this.$store, {
+          message: 'Page Tree rebuilt successfully.',
+          style: 'success',
+          icon: 'check'
         })
-        const resp = _.get(respRaw, 'data.pages.rebuildTree.responseResult', {})
-        if (resp.succeeded) {
-          this.$store.commit('showNotification', {
-            message: 'Page Tree rebuilt successfully.',
-            style: 'success',
-            icon: 'check'
-          })
-        } else {
-          throw new Error(resp.message)
-        }
       } catch (err) {
-        this.$store.commit('pushGraphError', err)
+        pushGraphError(this.$store, err)
       }
 
-      this.$store.commit(`loadingStop`, 'admin-utilities-content-rebuildtree')
+      loadingStop(this.$store, 'admin-utilities-content-rebuildtree')
       this.loading = false
     },
     async rerenderPages () {
@@ -239,31 +232,20 @@ export default {
     },
     async migrateToLocale () {
       this.loading = true
-      this.$store.commit(`loadingStart`, 'admin-utilities-content-migratelocale')
+      loadingStart(this.$store, 'admin-utilities-content-migratelocale')
 
       try {
-        const respRaw = await this.$apollo.mutate({
-          mutation: utilityContentMigrateLocaleMutation,
-          variables: {
-            sourceLocale: this.sourceLocale,
-            targetLocale: this.targetLocale
-          }
+        const resp = await migratePagesToLocale(window.fetch.bind(window), this.sourceLocale, this.targetLocale)
+        showNotification(this.$store, {
+          message: `Migrated ${resp.count} page(s) to target locale successfully.`,
+          style: 'success',
+          icon: 'check'
         })
-        const resp = _.get(respRaw, 'data.pages.migrateToLocale.responseResult', {})
-        if (resp.succeeded) {
-          this.$store.commit('showNotification', {
-            message: `Migrated ${_.get(respRaw, 'data.pages.migrateToLocale.count', 0)} page(s) to target locale successfully.`,
-            style: 'success',
-            icon: 'check'
-          })
-        } else {
-          throw new Error(resp.message)
-        }
       } catch (err) {
-        this.$store.commit('pushGraphError', err)
+        pushGraphError(this.$store, err)
       }
 
-      this.$store.commit(`loadingStop`, 'admin-utilities-content-migratelocale')
+      loadingStop(this.$store, 'admin-utilities-content-migratelocale')
       this.loading = false
     },
     async purgeHistory () {

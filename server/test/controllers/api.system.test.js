@@ -106,7 +106,9 @@ describe('controllers/api system endpoints', () => {
               first: jest.fn().mockResolvedValue({ total: '42' })
             }))
           })),
-          flushCache: jest.fn().mockResolvedValue(true)
+          flushCache: jest.fn().mockResolvedValue(true),
+          rebuildTree: jest.fn().mockResolvedValue(true),
+          migrateToLocale: jest.fn().mockResolvedValue(2)
         },
         assets: {
           flushTempUploads: jest.fn().mockResolvedValue(true)
@@ -178,6 +180,8 @@ describe('controllers/api system endpoints', () => {
       resetTelemetryClientId: express.__router.post.mock.calls.find(([path]) => path === '/telemetry/reset-client-id')[1],
       flushSystemCache: express.__router.post.mock.calls.find(([path]) => path === '/cache/flush')[1],
       flushSystemTemporaryUploads: express.__router.post.mock.calls.find(([path]) => path === '/cache/temp-uploads/flush')[1],
+      rebuildPageTree: express.__router.post.mock.calls.find(([path]) => path === '/content/rebuild-tree')[1],
+      migratePagesToLocale: express.__router.post.mock.calls.find(([path]) => path === '/content/migrate-locale')[1],
       exportStatus: express.__router.get.mock.calls.find(([path]) => path === '/export-status')[1],
       ssl: express.__router.get.mock.calls.find(([path]) => path === '/ssl')[1],
       saveFlags: express.__router.post.mock.calls.find(([path]) => path === '/flags')[1],
@@ -198,6 +202,8 @@ describe('controllers/api system endpoints', () => {
     expect(typeof handlers.resetTelemetryClientId).toBe('function')
     expect(typeof handlers.flushSystemCache).toBe('function')
     expect(typeof handlers.flushSystemTemporaryUploads).toBe('function')
+    expect(typeof handlers.rebuildPageTree).toBe('function')
+    expect(typeof handlers.migratePagesToLocale).toBe('function')
     expect(typeof handlers.exportStatus).toBe('function')
     expect(typeof handlers.ssl).toBe('function')
     expect(typeof handlers.saveFlags).toBe('function')
@@ -206,7 +212,7 @@ describe('controllers/api system endpoints', () => {
 
   it('returns 403 for unauthorized system requests', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(false)
-    const { info, summary, flags, host, extensions, telemetry, updateTelemetry, resetTelemetryClientId, flushSystemCache, flushSystemTemporaryUploads, exportStatus, ssl, saveFlags, checkForUpdate } = loadHandlers()
+    const { info, summary, flags, host, extensions, telemetry, updateTelemetry, resetTelemetryClientId, flushSystemCache, flushSystemTemporaryUploads, rebuildPageTree, migratePagesToLocale, exportStatus, ssl, saveFlags, checkForUpdate } = loadHandlers()
     const req = { user: { permissions: [] }, get: jest.fn() }
     const res = { sendStatus: jest.fn(), json: jest.fn() }
 
@@ -220,13 +226,15 @@ describe('controllers/api system endpoints', () => {
     await resetTelemetryClientId(req, res)
     await flushSystemCache(req, res)
     await flushSystemTemporaryUploads(req, res)
+    await rebuildPageTree(req, res)
+    await migratePagesToLocale(req, res)
     await exportStatus(req, res)
     await ssl(req, res)
     await saveFlags(req, res)
     await checkForUpdate(req, res)
 
-    expect(res.sendStatus).toHaveBeenCalledTimes(14)
-    for (let idx = 1; idx <= 14; idx++) {
+    expect(res.sendStatus).toHaveBeenCalledTimes(16)
+    for (let idx = 1; idx <= 16; idx++) {
       expect(res.sendStatus).toHaveBeenNthCalledWith(idx, 403)
     }
     expect(res.json).not.toHaveBeenCalled()
@@ -493,6 +501,77 @@ describe('controllers/api system endpoints', () => {
 
     expect(res.status).toHaveBeenCalledWith(500)
     expect(res.json).toHaveBeenCalledWith({ error: 'uploads flush failed' })
+  })
+
+  it('rebuilds the page tree for authorized requests', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValue(true)
+    const { rebuildPageTree } = loadHandlers()
+    const req = { user: { permissions: ['manage:system'] } }
+    const res = { json: jest.fn(), sendStatus: jest.fn() }
+
+    await rebuildPageTree(req, res)
+
+    expect(global.WIKI.models.pages.rebuildTree).toHaveBeenCalledTimes(1)
+    expect(res.json).toHaveBeenCalledWith({ message: 'Page tree rebuilt successfully.' })
+  })
+
+  it('returns JSON error messages for page tree rebuild failures', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValue(true)
+    global.WIKI.models.pages.rebuildTree.mockRejectedValueOnce(new Error('tree failed'))
+    const { rebuildPageTree } = loadHandlers()
+    const req = { user: { permissions: ['manage:system'] } }
+    const res = { json: jest.fn(), sendStatus: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await rebuildPageTree(req, res)
+
+    expect(res.status).toHaveBeenCalledWith(500)
+    expect(res.json).toHaveBeenCalledWith({ error: 'tree failed' })
+  })
+
+  it('migrates pages to a locale for authorized requests', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValue(true)
+    const { migratePagesToLocale } = loadHandlers()
+    const req = { user: { permissions: ['manage:system'] }, body: { sourceLocale: 'en', targetLocale: 'fr' } }
+    const res = { json: jest.fn(), sendStatus: jest.fn() }
+
+    await migratePagesToLocale(req, res)
+
+    expect(global.WIKI.models.pages.migrateToLocale).toHaveBeenCalledWith({ sourceLocale: 'en', targetLocale: 'fr' })
+    expect(res.json).toHaveBeenCalledWith({
+      message: 'Migrated content to target locale successfully.',
+      count: 2
+    })
+  })
+
+  it.each([
+    ['missing source locale', {}, 'sourceLocale must be a non-empty string'],
+    ['empty source locale', { sourceLocale: '', targetLocale: 'fr' }, 'sourceLocale must be a non-empty string'],
+    ['missing target locale', { sourceLocale: 'en' }, 'targetLocale must be a non-empty string'],
+    ['empty target locale', { sourceLocale: 'en', targetLocale: '' }, 'targetLocale must be a non-empty string']
+  ])('rejects malformed locale migration payloads: %s', async (label, body, error) => {
+    global.WIKI.auth.checkAccess.mockReturnValue(true)
+    const { migratePagesToLocale } = loadHandlers()
+    const req = { user: { permissions: ['manage:system'] }, body }
+    const res = { json: jest.fn(), sendStatus: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await migratePagesToLocale(req, res)
+
+    expect(global.WIKI.models.pages.migrateToLocale).not.toHaveBeenCalled()
+    expect(res.status).toHaveBeenCalledWith(400)
+    expect(res.json).toHaveBeenCalledWith({ error })
+  })
+
+  it('returns JSON error messages for locale migration failures', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValue(true)
+    global.WIKI.models.pages.migrateToLocale.mockRejectedValueOnce(new Error('migration failed'))
+    const { migratePagesToLocale } = loadHandlers()
+    const req = { user: { permissions: ['manage:system'] }, body: { sourceLocale: 'en', targetLocale: 'fr' } }
+    const res = { json: jest.fn(), sendStatus: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await migratePagesToLocale(req, res)
+
+    expect(res.status).toHaveBeenCalledWith(500)
+    expect(res.json).toHaveBeenCalledWith({ error: 'migration failed' })
   })
 
   it('returns the safe export status JSON for authorized requests', () => {
