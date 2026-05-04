@@ -219,38 +219,6 @@ module.exports = {
       } catch (err) {
         return graphHelper.generateError(err)
       }
-    },
-    /**
-     * Export Wiki to Disk
-     */
-    async export (obj, args, context) {
-      try {
-        const desiredPath = path.resolve(WIKI.ROOTPATH, args.path)
-        // -> Check if export process is already running
-        if (WIKI.system.exportStatus.status === 'running') {
-          throw new Error('Another export is already running.')
-        }
-        // -> Validate entities
-        if (args.entities.length < 1) {
-          throw new Error('Must specify at least 1 entity to export.')
-        }
-        // -> Check target path
-        await fs.ensureDir(desiredPath)
-        const existingFiles = await fs.readdir(desiredPath)
-        if (existingFiles.length) {
-          throw new Error('Target directory must be empty!')
-        }
-        // -> Start export
-        WIKI.system.export({
-          entities: args.entities,
-          path: desiredPath
-        })
-        return {
-          responseResult: graphHelper.generateSuccess('Export started successfully.')
-        }
-      } catch (err) {
-        return graphHelper.generateError(err)
-      }
     }
   },
   SystemInfo: {

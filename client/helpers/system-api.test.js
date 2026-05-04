@@ -1,4 +1,4 @@
-const { fetchSystemSummary, fetchSystemInfo, fetchSystemTelemetry, fetchSystemExportStatus, fetchSystemHost, fetchSystemSsl, updateSystemSslRedirection, renewSystemSslCertificate, fetchSystemFlags, fetchSystemExtensions, updateSystemFlags, updateSystemTelemetry, resetSystemTelemetryClientId, flushSystemCache, flushSystemTemporaryUploads, rebuildPageTree, migratePagesToLocale, renderPage, purgePageHistory, performSystemUpgrade } = require('./system-api')
+const { fetchSystemSummary, fetchSystemInfo, fetchSystemTelemetry, fetchSystemExportStatus, fetchSystemHost, fetchSystemSsl, updateSystemSslRedirection, renewSystemSslCertificate, fetchSystemFlags, fetchSystemExtensions, updateSystemFlags, updateSystemTelemetry, resetSystemTelemetryClientId, flushSystemCache, flushSystemTemporaryUploads, rebuildPageTree, migratePagesToLocale, renderPage, purgePageHistory, performSystemUpgrade, startSystemExport } = require('./system-api')
 
 function createJsonResponse (payload, ok = true) {
   return {
@@ -833,5 +833,33 @@ describe('system api helper', () => {
     const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ error: 'SSL is disabled' }, false))
 
     await expect(renewSystemSslCertificate(fetchImpl, 'Bad SSL renew')).rejects.toThrow('SSL is disabled')
+  })
+
+  test('starts system export with same-origin JSON POST options', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ message: 'Export started successfully.' }))
+    const entities = ['pages', 'assets']
+
+    await expect(startSystemExport(fetchImpl, entities, './data/export')).resolves.toEqual({ message: 'Export started successfully.' })
+    expect(fetchImpl).toHaveBeenCalledWith('/_api/system/export', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ entities, path: './data/export' })
+    })
+  })
+
+  test('rejects malformed system export success payloads', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ ok: true }))
+
+    await expect(startSystemExport(fetchImpl, ['pages'], './data/export', 'Bad export start')).rejects.toThrow('Bad export start')
+  })
+
+  test('propagates system export REST JSON errors', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ error: 'Target directory must be empty!' }, false))
+
+    await expect(startSystemExport(fetchImpl, ['pages'], './data/export', 'Bad export start')).rejects.toThrow('Target directory must be empty!')
   })
 })

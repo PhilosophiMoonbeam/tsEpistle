@@ -252,6 +252,25 @@ async function fetchSystemExportStatus (fetchImpl, fallbackMessage = 'Export sta
   return normalizeSystemExportStatusPayload(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
 }
 
+async function startSystemExport (fetchImpl, entities, path, fallbackMessage = 'Export failed') {
+  const response = await fetchImpl('/_api/system/export', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ entities, path })
+  })
+
+  const payload = await parseJsonResponse(response, fallbackMessage)
+  if (!payload || typeof payload.message !== 'string' || payload.message.length < 1) {
+    throw new Error(fallbackMessage)
+  }
+
+  return payload
+}
+
 async function fetchSystemHost (fetchImpl, fallbackMessage = 'Site host response is invalid') {
   const response = await fetchImpl('/_api/system/host', {
     credentials: 'same-origin',
@@ -525,6 +544,7 @@ module.exports = {
   fetchSystemInfo,
   fetchSystemTelemetry,
   fetchSystemExportStatus,
+  startSystemExport,
   fetchSystemHost,
   fetchSystemSsl,
   updateSystemSslRedirection,

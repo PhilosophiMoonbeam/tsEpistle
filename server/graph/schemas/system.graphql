@@ -41,11 +41,6 @@ type SystemMutation {
     groupMode: SystemImportUsersGroupMode!
   ): SystemImportUsersResponse @auth(requires:  ["manage:system"])
 
-
-  export(
-    entities: [String]!
-    path: String!
-  ): DefaultResponse @auth(requires: ["manage:system"])
 }
 
 # -----------------------------------------------

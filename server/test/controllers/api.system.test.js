@@ -29,7 +29,9 @@ jest.mock('os', () => ({
 }))
 jest.mock('filesize', () => jest.fn(() => '16 GB'))
 jest.mock('fs-extra', () => ({
-  pathExists: jest.fn().mockResolvedValue(false)
+  pathExists: jest.fn().mockResolvedValue(false),
+  ensureDir: jest.fn().mockResolvedValue(true),
+  readdir: jest.fn().mockResolvedValue([])
 }))
 jest.mock('request-promise', () => jest.fn())
 
@@ -45,6 +47,7 @@ describe('controllers/api system endpoints', () => {
     delete process.env.UPGRADE_COMPANION
     delete process.env.UPGRADE_COMPANION_REF
     global.WIKI = {
+      ROOTPATH: '/srv/wiki',
       version: '2.0.0',
       auth: {
         checkAccess: jest.fn()
@@ -168,7 +171,8 @@ describe('controllers/api system endpoints', () => {
           progress: 0,
           message: null,
           startedAt: null
-        }
+        },
+        export: jest.fn()
       },
       telemetry: {
         enabled: true,
@@ -206,6 +210,7 @@ describe('controllers/api system endpoints', () => {
       updateTelemetry: express.__router.patch.mock.calls.find(([path]) => path === '/telemetry')[1],
       resetTelemetryClientId: express.__router.post.mock.calls.find(([path]) => path === '/telemetry/reset-client-id')[1],
       performUpgrade: express.__router.post.mock.calls.find(([path]) => path === '/upgrade')[1],
+      startExport: express.__router.post.mock.calls.find(([path]) => path === '/export')[1],
       flushSystemCache: express.__router.post.mock.calls.find(([path]) => path === '/cache/flush')[1],
       flushSystemTemporaryUploads: express.__router.post.mock.calls.find(([path]) => path === '/cache/temp-uploads/flush')[1],
       rebuildPageTree: express.__router.post.mock.calls.find(([path]) => path === '/content/rebuild-tree')[1],
@@ -233,6 +238,7 @@ describe('controllers/api system endpoints', () => {
     expect(typeof handlers.updateTelemetry).toBe('function')
     expect(typeof handlers.resetTelemetryClientId).toBe('function')
     expect(typeof handlers.performUpgrade).toBe('function')
+    expect(typeof handlers.startExport).toBe('function')
     expect(typeof handlers.flushSystemCache).toBe('function')
     expect(typeof handlers.flushSystemTemporaryUploads).toBe('function')
     expect(typeof handlers.rebuildPageTree).toBe('function')
@@ -249,7 +255,7 @@ describe('controllers/api system endpoints', () => {
 
   it('returns 403 for unauthorized system requests', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(false)
-    const { info, summary, flags, host, extensions, telemetry, updateTelemetry, resetTelemetryClientId, performUpgrade, flushSystemCache, flushSystemTemporaryUploads, rebuildPageTree, renderPage, migratePagesToLocale, purgePageHistory, exportStatus, ssl, updateSslRedirection, renewSslCertificate, saveFlags, checkForUpdate } = loadHandlers()
+    const { info, summary, flags, host, extensions, telemetry, updateTelemetry, resetTelemetryClientId, performUpgrade, startExport, flushSystemCache, flushSystemTemporaryUploads, rebuildPageTree, renderPage, migratePagesToLocale, purgePageHistory, exportStatus, ssl, updateSslRedirection, renewSslCertificate, saveFlags, checkForUpdate } = loadHandlers()
     const req = { user: { permissions: [] }, get: jest.fn() }
     const res = { sendStatus: jest.fn(), json: jest.fn() }
 
@@ -262,6 +268,7 @@ describe('controllers/api system endpoints', () => {
     await updateTelemetry(req, res)
     await resetTelemetryClientId(req, res)
     await performUpgrade(req, res)
+    await startExport(req, res)
     await flushSystemCache(req, res)
     await flushSystemTemporaryUploads(req, res)
     await rebuildPageTree(req, res)
@@ -275,8 +282,8 @@ describe('controllers/api system endpoints', () => {
     await saveFlags(req, res)
     await checkForUpdate(req, res)
 
-    expect(res.sendStatus).toHaveBeenCalledTimes(21)
-    for (let idx = 1; idx <= 21; idx++) {
+    expect(res.sendStatus).toHaveBeenCalledTimes(22)
+    for (let idx = 1; idx <= 22; idx++) {
       expect(res.sendStatus).toHaveBeenNthCalledWith(idx, 403)
     }
     expect(res.json).not.toHaveBeenCalled()
@@ -1171,5 +1178,104 @@ describe('controllers/api system endpoints', () => {
       latestVersion: '2.1.0',
       latestVersionReleaseDate: '2026-01-01T00:00:00.000Z'
     })
+  })
+
+  it('starts system exports through REST with resolved target path', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValue(true)
+    const fs = require('fs-extra')
+    const { startExport } = loadHandlers()
+    const req = { user: { permissions: ['manage:system'] }, body: { entities: ['pages', 'assets'], path: './data/export' } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis(), sendStatus: jest.fn() }
+
+    await startExport(req, res)
+
+    expect(fs.ensureDir).toHaveBeenCalledWith(expect.stringMatching(/data[/\\]export$/))
+    expect(fs.readdir).toHaveBeenCalledWith(expect.stringMatching(/data[/\\]export$/))
+    expect(global.WIKI.system.export).toHaveBeenCalledWith({
+      entities: ['pages', 'assets'],
+      path: expect.stringMatching(/data[/\\]export$/)
+    })
+    expect(res.json).toHaveBeenCalledWith({ message: 'Export started successfully.' })
+  })
+
+  it.each([
+    ['missing entities', { path: './data/export' }],
+    ['empty entities', { entities: [], path: './data/export' }],
+    ['non-array entities', { entities: 'pages', path: './data/export' }],
+    ['empty entity', { entities: ['pages', ''], path: './data/export' }],
+    ['non-string entity', { entities: ['pages', 7], path: './data/export' }]
+  ])('rejects malformed export entities: %s', async (label, body) => {
+    global.WIKI.auth.checkAccess.mockReturnValue(true)
+    const fs = require('fs-extra')
+    const { startExport } = loadHandlers()
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis(), sendStatus: jest.fn() }
+
+    await startExport({ user: { permissions: ['manage:system'] }, body }, res)
+
+    expect(res.status).toHaveBeenCalledWith(400)
+    expect(res.json).toHaveBeenCalledWith({ error: 'entities must be a non-empty string array' })
+    expect(fs.ensureDir).not.toHaveBeenCalled()
+    expect(global.WIKI.system.export).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['missing path', { entities: ['pages'] }],
+    ['empty path', { entities: ['pages'], path: '' }],
+    ['non-string path', { entities: ['pages'], path: 7 }]
+  ])('rejects malformed export paths: %s', async (label, body) => {
+    global.WIKI.auth.checkAccess.mockReturnValue(true)
+    const fs = require('fs-extra')
+    const { startExport } = loadHandlers()
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis(), sendStatus: jest.fn() }
+
+    await startExport({ user: { permissions: ['manage:system'] }, body }, res)
+
+    expect(res.status).toHaveBeenCalledWith(400)
+    expect(res.json).toHaveBeenCalledWith({ error: 'path must be a non-empty string' })
+    expect(fs.ensureDir).not.toHaveBeenCalled()
+    expect(global.WIKI.system.export).not.toHaveBeenCalled()
+  })
+
+  it('returns JSON error when an export is already running', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValue(true)
+    global.WIKI.system.exportStatus.status = 'running'
+    const fs = require('fs-extra')
+    const { startExport } = loadHandlers()
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis(), sendStatus: jest.fn() }
+
+    await startExport({ user: { permissions: ['manage:system'] }, body: { entities: ['pages'], path: './data/export' } }, res)
+
+    expect(res.status).toHaveBeenCalledWith(500)
+    expect(res.json).toHaveBeenCalledWith({ error: 'Another export is already running.' })
+    expect(fs.ensureDir).not.toHaveBeenCalled()
+    expect(global.WIKI.system.export).not.toHaveBeenCalled()
+  })
+
+  it('returns JSON error when export target directory is not empty', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValue(true)
+    const fs = require('fs-extra')
+    fs.readdir.mockResolvedValueOnce(['existing.json'])
+    const { startExport } = loadHandlers()
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis(), sendStatus: jest.fn() }
+
+    await startExport({ user: { permissions: ['manage:system'] }, body: { entities: ['pages'], path: './data/export' } }, res)
+
+    expect(res.status).toHaveBeenCalledWith(500)
+    expect(res.json).toHaveBeenCalledWith({ error: 'Target directory must be empty!' })
+    expect(global.WIKI.system.export).not.toHaveBeenCalled()
+  })
+
+  it('returns JSON errors for export filesystem failures', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValue(true)
+    const fs = require('fs-extra')
+    fs.ensureDir.mockRejectedValueOnce(new Error('ensure failed'))
+    const { startExport } = loadHandlers()
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis(), sendStatus: jest.fn() }
+
+    await startExport({ user: { permissions: ['manage:system'] }, body: { entities: ['pages'], path: './data/export' } }, res)
+
+    expect(res.status).toHaveBeenCalledWith(500)
+    expect(res.json).toHaveBeenCalledWith({ error: 'ensure failed' })
+    expect(global.WIKI.system.export).not.toHaveBeenCalled()
   })
 })

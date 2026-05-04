@@ -375,6 +375,43 @@ router.post('/content/purge-history', async (req, res) => {
   }
 })
 
+router.post('/export', async (req, res) => {
+  if (!requireSystemAccess(req, res)) {
+    return
+  }
+
+  const entities = _.get(req, 'body.entities')
+  const exportPath = _.get(req, 'body.path')
+
+  if (!Array.isArray(entities) || entities.length < 1 || entities.some(entity => !_.isString(entity) || entity.length < 1)) {
+    return res.status(400).json({ error: 'entities must be a non-empty string array' })
+  }
+  if (!_.isString(exportPath) || exportPath.length < 1) {
+    return res.status(400).json({ error: 'path must be a non-empty string' })
+  }
+
+  try {
+    const desiredPath = path.resolve(WIKI.ROOTPATH, exportPath)
+    if (WIKI.system.exportStatus.status === 'running') {
+      throw new Error('Another export is already running.')
+    }
+
+    await fs.ensureDir(desiredPath)
+    const existingFiles = await fs.readdir(desiredPath)
+    if (existingFiles.length) {
+      throw new Error('Target directory must be empty!')
+    }
+
+    WIKI.system.export({
+      entities,
+      path: desiredPath
+    })
+    res.json({ message: 'Export started successfully.' })
+  } catch (err) {
+    res.status(500).json({ error: err.message || 'Export failed' })
+  }
+})
+
 router.get('/export-status', (req, res) => {
   if (!requireSystemAccess(req, res)) {
     return

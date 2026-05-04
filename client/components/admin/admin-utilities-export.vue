@@ -98,10 +98,7 @@
 <script>
 import { SelfBuildingSquareSpinner } from 'epic-spinners'
 
-import gql from 'graphql-tag'
-import _get from 'lodash/get'
-
-import { fetchSystemExportStatus } from '../../helpers/system-api'
+import { fetchSystemExportStatus, startSystemExport } from '../../helpers/system-api'
 import { pushGraphError } from '../../helpers/root-ui-store'
 
 export default {
@@ -206,42 +203,13 @@ export default {
       setTimeout(async () => {
         try {
           // -> Initiate export
-          const respExport = await this.$apollo.mutate({
-            mutation: gql`
-              mutation (
-                $entities: [String]!
-                $path: String!
-              ) {
-                system {
-                  export (
-                    entities: $entities
-                    path: $path
-                  ) {
-                    responseResult {
-                      succeeded
-                      message
-                    }
-                  }
-                }
-              }
-            `,
-            variables: {
-              entities: this.entities,
-              path: this.filePath
-            }
-          })
-
-          const respExportObj = _get(respExport, 'data.system.export', {})
-          if (!_get(respExportObj, 'responseResult.succeeded', false)) {
-            this.errorMessage = _get(respExportObj, 'responseResult.message', 'An unexpected error occurred')
-            this.isLoading = false
-            this.isFailed = true
-            return
-          }
+          await startSystemExport(window.fetch.bind(window), this.entities, this.filePath, 'Export failed')
 
           // -> Check for progress
           this.checkProgress()
         } catch (err) {
+          this.errorMessage = err.message
+          this.isFailed = true
           pushGraphError(this.$store, err)
           this.isLoading = false
         }
