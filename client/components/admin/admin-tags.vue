@@ -100,6 +100,7 @@
 <script>
 import _ from 'lodash'
 import gql from 'graphql-tag'
+import { updatePageTag } from '../../helpers/pages-api'
 
 export default {
   data() {
@@ -164,37 +165,18 @@ export default {
     async saveTag(tag) {
       this.$store.commit(`loadingStart`, 'admin-tags-save')
       try {
-        const resp = await this.$apollo.mutate({
-          mutation: gql`
-            mutation ($id: Int!, $tag: String!, $title: String!) {
-              pages {
-                updateTag (id: $id, tag: $tag, title: $title) {
-                  responseResult {
-                    succeeded
-                    errorCode
-                    slug
-                    message
-                  }
-                }
-              }
-            }
-          `,
-          variables: {
-            id: tag.id,
-            tag: tag.tag,
-            title: tag.title
-          }
+        await updatePageTag(
+          window.fetch.bind(window),
+          tag.id,
+          tag.tag,
+          tag.title
+        )
+        this.$store.commit('showNotification', {
+          message: this.$t('tags.saveSuccess'),
+          style: 'success',
+          icon: 'check'
         })
-        if (_.get(resp, 'data.pages.updateTag.responseResult.succeeded', false)) {
-          this.$store.commit('showNotification', {
-            message: this.$t('tags.saveSuccess'),
-            style: 'success',
-            icon: 'check'
-          })
-          this.current.updatedAt = new Date()
-        } else {
-          throw new Error(_.get(resp, 'data.pages.updateTag.responseResult.message', 'An unexpected error occurred.'))
-        }
+        this.current.updatedAt = new Date()
       } catch (err) {
         this.$store.commit('pushGraphError', err)
       }

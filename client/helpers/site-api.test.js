@@ -38,7 +38,7 @@ describe('site api helper', () => {
   })
 
   it('saves site config with same-origin JSON PUT', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ message: 'Site configuration updated successfully' }))
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ message: 'Site configuration updated successfully', saved: true }))
     const config = { title: 'Next Wiki' }
 
     const result = await saveSiteConfig(fetchImpl, config)
@@ -52,7 +52,7 @@ describe('site api helper', () => {
       },
       body: JSON.stringify(config)
     })
-    expect(result).toEqual({ message: 'Site configuration updated successfully' })
+    expect(result).toEqual({ message: 'Site configuration updated successfully', saved: true })
   })
 
   it('rejects malformed successful site config save responses', async () => {

@@ -492,27 +492,6 @@ module.exports = {
       }
     },
     /**
-     * UPDATE TAG
-     */
-    async updateTag (obj, args, context) {
-      try {
-        const affectedRows = await WIKI.models.tags.query()
-          .findById(args.id)
-          .patch({
-            tag: _.trim(args.tag).toLowerCase(),
-            title: _.trim(args.title)
-          })
-        if (affectedRows < 1) {
-          throw new Error('This tag does not exist.')
-        }
-        return {
-          responseResult: graphHelper.generateSuccess('Tag has been updated successfully.')
-        }
-      } catch (err) {
-        return graphHelper.generateError(err)
-      }
-    },
-    /**
      * FLUSH PAGE CACHE
      */
     async flushCache(obj, args, context) {

@@ -1,6 +1,7 @@
 jest.mock('express', () => {
   const router = {
     get: jest.fn(),
+    patch: jest.fn(),
     post: jest.fn(),
     use: jest.fn()
   }
@@ -16,12 +17,20 @@ describe('controllers/api pages endpoints', () => {
     jest.resetModules()
     const express = require('express')
     express.__router.get.mockClear()
+    express.__router.patch.mockClear()
 
     global.WIKI = {
       auth: {
         checkAccess: jest.fn().mockReturnValue(true)
       },
       models: {
+        tags: {
+          query: jest.fn().mockReturnValue({
+            findById: jest.fn().mockReturnValue({
+              patch: jest.fn().mockResolvedValue(1)
+            })
+          })
+        },
         pages: {
           query: jest.fn().mockReturnValue({
             column: jest.fn().mockReturnValue({
@@ -66,7 +75,8 @@ describe('controllers/api pages endpoints', () => {
     const express = require('express')
     require('../../controllers/api/pages')
     return {
-      recent: express.__router.get.mock.calls.find(([path]) => path === '/recent')[1]
+      recent: express.__router.get.mock.calls.find(([path]) => path === '/recent')[1],
+      updateTag: express.__router.patch.mock.calls.find(([path]) => path === '/tags/:id')[1]
     }
   }
 
@@ -156,5 +166,115 @@ describe('controllers/api pages endpoints', () => {
 
     expect(next).toHaveBeenCalledWith(expect.any(Error))
     expect(next.mock.calls[0][0].message).toBe('pages db down')
+  })
+
+  it('registers the tag update route', () => {
+    const { updateTag } = loadHandler()
+
+    expect(typeof updateTag).toBe('function')
+  })
+
+  it('requires manage:system for tag updates', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValueOnce(false)
+    const { updateTag } = loadHandler()
+    const req = { user: { permissions: ['read:pages'] }, params: { id: '7' }, body: { tag: 'News', title: 'News' } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await updateTag(req, res)
+
+    expect(global.WIKI.auth.checkAccess).toHaveBeenCalledWith({ permissions: ['read:pages'] }, ['manage:system'])
+    expect(res.status).toHaveBeenCalledWith(403)
+    expect(res.json).toHaveBeenCalledWith({ error: 'manage:system is required' })
+    expect(global.WIKI.models.tags.query).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['0'],
+    ['1.9'],
+    ['Infinity'],
+    ['9007199254740992']
+  ])('rejects invalid tag update ids: %s', async (id) => {
+    const { updateTag } = loadHandler()
+    const req = { user: { permissions: ['manage:system'] }, params: { id }, body: { tag: 'News', title: 'News' } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await updateTag(req, res)
+
+    expect(res.status).toHaveBeenCalledWith(400)
+    expect(res.json).toHaveBeenCalledWith({ error: 'id must be a positive integer' })
+    expect(global.WIKI.models.tags.query).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    [{ tag: 12, title: 'News' }, 'tag must be a string'],
+    [{ tag: 'News', title: null }, 'title must be a string']
+  ])('rejects malformed tag update payloads', async (body, error) => {
+    const { updateTag } = loadHandler()
+    const req = { user: { permissions: ['manage:system'] }, params: { id: '7' }, body }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await updateTag(req, res)
+
+    expect(res.status).toHaveBeenCalledWith(400)
+    expect(res.json).toHaveBeenCalledWith({ error })
+    expect(global.WIKI.models.tags.query).not.toHaveBeenCalled()
+  })
+
+  it('updates tags with GraphQL-compatible trim and lowercase semantics', async () => {
+    const { updateTag } = loadHandler()
+    const req = { user: { permissions: ['manage:system'] }, params: { id: '7' }, body: { tag: '  News  ', title: '  Current News  ' } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await updateTag(req, res)
+
+    const tagsQuery = global.WIKI.models.tags.query.mock.results[0].value
+    expect(tagsQuery.findById).toHaveBeenCalledWith(7)
+    const tagPatch = tagsQuery.findById.mock.results[0].value
+    expect(tagPatch.patch).toHaveBeenCalledWith({ tag: 'news', title: 'Current News' })
+    expect(res.json).toHaveBeenCalledWith({ message: 'Tag has been updated successfully.' })
+  })
+
+  it('allows empty strings to preserve existing updateTag GraphQL write semantics', async () => {
+    const { updateTag } = loadHandler()
+    const req = { user: { permissions: ['manage:system'] }, params: { id: '7' }, body: { tag: '', title: '' } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await updateTag(req, res)
+
+    const tagsQuery = global.WIKI.models.tags.query.mock.results[0].value
+    expect(tagsQuery.findById.mock.results[0].value.patch).toHaveBeenCalledWith({ tag: '', title: '' })
+    expect(res.json).toHaveBeenCalledWith({ message: 'Tag has been updated successfully.' })
+  })
+
+  it('returns a JSON 404 when a tag update affects no rows', async () => {
+    global.WIKI.models.tags.query.mockReturnValueOnce({
+      findById: jest.fn().mockReturnValue({
+        patch: jest.fn().mockResolvedValue(0)
+      })
+    })
+    const { updateTag } = loadHandler()
+    const req = { user: { permissions: ['manage:system'] }, params: { id: '7' }, body: { tag: 'News', title: 'News' } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await updateTag(req, res)
+
+    expect(res.status).toHaveBeenCalledWith(404)
+    expect(res.json).toHaveBeenCalledWith({ error: 'This tag does not exist.' })
+  })
+
+  it('returns JSON errors for unexpected tag update failures', async () => {
+    global.WIKI.models.tags.query.mockReturnValueOnce({
+      findById: jest.fn().mockReturnValue({
+        patch: jest.fn().mockRejectedValue(new Error('tag db down'))
+      })
+    })
+    const { updateTag } = loadHandler()
+    const req = { user: { permissions: ['manage:system'] }, params: { id: '7' }, body: { tag: 'News', title: 'News' } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await updateTag(req, res)
+
+    expect(res.status).toHaveBeenCalledWith(500)
+    expect(res.json).toHaveBeenCalledWith({ error: 'tag db down' })
   })
 })

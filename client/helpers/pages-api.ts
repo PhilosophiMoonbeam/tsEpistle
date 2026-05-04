@@ -9,11 +9,18 @@ type JsonResponse = {
 }
 
 type FetchImpl = (url: string, init: {
+  method?: string
   credentials: 'same-origin'
   headers: {
     Accept: 'application/json'
+    'Content-Type'?: 'application/json'
   }
+  body?: string
 }) => Promise<JsonResponse>
+
+type MessageResponse = {
+  message: string
+}
 
 type RecentPageRow = {
   id: number
@@ -82,4 +89,26 @@ export async function fetchRecentPages (fetchImpl: FetchImpl, fallbackMessage = 
   }
 
   return payload.map(row => normalizeRecentPageRow(row, fallbackMessage))
+}
+
+
+export async function updatePageTag (fetchImpl: FetchImpl, id: number, tag: string, title: string, fallbackMessage = 'Tag update failed'): Promise<MessageResponse> {
+  const response = await fetchImpl(`/_api/pages/tags/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    credentials: 'same-origin',
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ tag, title })
+  })
+
+  const payload = await parseJsonResponse(response, fallbackMessage)
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload) || typeof (payload as { message?: unknown }).message !== 'string' || (payload as { message: string }).message.length < 1) {
+    throw new Error(fallbackMessage)
+  }
+
+  return {
+    message: (payload as { message: string }).message
+  }
 }

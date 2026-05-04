@@ -1,4 +1,4 @@
-const { fetchRecentPages } = require('./pages-api')
+const { fetchRecentPages, updatePageTag } = require('./pages-api')
 
 function createJsonResponse (payload, ok = true) {
   return {
@@ -83,5 +83,33 @@ describe('pages api helper', () => {
     })
 
     await expect(fetchRecentPages(fetchImpl, 'Bad recent pages payload')).rejects.toThrow('manage:system or read:pages is required')
+  })
+
+  test('updates page tags with same-origin JSON PATCH', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ message: 'Tag has been updated successfully.' }))
+
+    await expect(updatePageTag(fetchImpl, 7, '  News  ', '  Current News  ')).resolves.toEqual({ message: 'Tag has been updated successfully.' })
+
+    expect(fetchImpl).toHaveBeenCalledWith('/_api/pages/tags/7', {
+      method: 'PATCH',
+      credentials: 'same-origin',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ tag: '  News  ', title: '  Current News  ' })
+    })
+  })
+
+  test('surfaces API error messages for failed tag update requests', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ error: 'This tag does not exist.' }, false))
+
+    await expect(updatePageTag(fetchImpl, 7, 'News', 'News')).rejects.toThrow('This tag does not exist.')
+  })
+
+  test('rejects malformed successful tag update responses', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({}))
+
+    await expect(updatePageTag(fetchImpl, 7, 'News', 'News', 'Bad tag update response')).rejects.toThrow('Bad tag update response')
   })
 })
