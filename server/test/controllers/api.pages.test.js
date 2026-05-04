@@ -84,10 +84,98 @@ describe('controllers/api pages endpoints', () => {
     return {
       deletePage: express.__router.delete.mock.calls.find(([path]) => path === '/:id')[1],
       deleteTag: express.__router.delete.mock.calls.find(([path]) => path === '/tags/:id')[1],
+      listTags: express.__router.get.mock.calls.find(([path]) => path === '/tags')[1],
       recent: express.__router.get.mock.calls.find(([path]) => path === '/recent')[1],
       updateTag: express.__router.patch.mock.calls.find(([path]) => path === '/tags/:id')[1]
     }
   }
+
+  it('registers the page tags route', () => {
+    const { listTags } = loadHandler()
+
+    expect(typeof listTags).toBe('function')
+  })
+
+  it('lists unique page tags with GraphQL-compatible access filtering and tag ordering', async () => {
+    const withGraphJoined = jest.fn().mockResolvedValue([
+      {
+        locale: 'en',
+        path: 'docs/public',
+        tags: [
+          { id: 2, tag: 'zeta', title: 'Zeta', createdAt: '2026-01-02T00:00:00.000Z', updatedAt: '2026-01-03T00:00:00.000Z' },
+          { id: 1, tag: 'alpha', title: 'Alpha', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-04T00:00:00.000Z' }
+        ]
+      },
+      {
+        locale: 'fr',
+        path: 'docs/private',
+        tags: [
+          { id: 3, tag: 'hidden', title: 'Hidden', createdAt: '2026-01-05T00:00:00.000Z', updatedAt: '2026-01-06T00:00:00.000Z' }
+        ]
+      },
+      {
+        locale: 'en',
+        path: 'docs/duplicate',
+        tags: [
+          { id: 2, tag: 'zeta', title: 'Zeta Duplicate', createdAt: '2026-01-07T00:00:00.000Z', updatedAt: '2026-01-08T00:00:00.000Z' }
+        ]
+      }
+    ])
+    const column = jest.fn().mockReturnValue({ withGraphJoined })
+    global.WIKI.models.pages.query.mockReturnValueOnce({ column })
+    global.WIKI.auth.checkAccess
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(false)
+      .mockReturnValueOnce(true)
+    const { listTags } = loadHandler()
+    const req = { user: { permissions: ['read:pages'] } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await listTags(req, res, jest.fn())
+
+    expect(global.WIKI.auth.checkAccess).toHaveBeenNthCalledWith(1, { permissions: ['read:pages'] }, ['manage:system', 'read:pages'])
+    expect(column).toHaveBeenCalledWith([
+      'path',
+      { locale: 'localeCode' }
+    ])
+    expect(withGraphJoined).toHaveBeenCalledWith('tags')
+    expect(global.WIKI.auth.checkAccess).toHaveBeenNthCalledWith(2, { permissions: ['read:pages'] }, ['read:pages'], { path: 'docs/public', locale: 'en' })
+    expect(global.WIKI.auth.checkAccess).toHaveBeenNthCalledWith(3, { permissions: ['read:pages'] }, ['read:pages'], { path: 'docs/private', locale: 'fr' })
+    expect(global.WIKI.auth.checkAccess).toHaveBeenNthCalledWith(4, { permissions: ['read:pages'] }, ['read:pages'], { path: 'docs/duplicate', locale: 'en' })
+    expect(res.json).toHaveBeenCalledWith([
+      { id: 1, tag: 'alpha', title: 'Alpha', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-04T00:00:00.000Z' },
+      { id: 2, tag: 'zeta', title: 'Zeta', createdAt: '2026-01-02T00:00:00.000Z', updatedAt: '2026-01-03T00:00:00.000Z' }
+    ])
+  })
+
+  it('returns 403 for unauthorized page tag list requests', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValueOnce(false)
+    const { listTags } = loadHandler()
+    const req = { user: { permissions: ['manage:api'] } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await listTags(req, res, jest.fn())
+
+    expect(res.status).toHaveBeenCalledWith(403)
+    expect(res.json).toHaveBeenCalledWith({ error: 'manage:system or read:pages is required' })
+    expect(global.WIKI.models.pages.query).not.toHaveBeenCalled()
+  })
+
+  it('forwards unexpected page tag list failures to next', async () => {
+    const next = jest.fn()
+    const withGraphJoined = jest.fn().mockRejectedValue(new Error('tags db down'))
+    const column = jest.fn().mockReturnValue({ withGraphJoined })
+    global.WIKI.models.pages.query.mockReturnValueOnce({ column })
+    const { listTags } = loadHandler()
+    const req = { user: { permissions: ['manage:system'] } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await listTags(req, res, next)
+
+    expect(next).toHaveBeenCalledWith(expect.any(Error))
+    expect(next.mock.calls[0][0].message).toBe('tags db down')
+  })
 
   it('registers the recent pages route', () => {
     const { recent } = loadHandler()

@@ -1,4 +1,4 @@
-const { deletePage, deletePageTag, fetchRecentPages, updatePageTag } = require('./pages-api')
+const { deletePage, deletePageTag, fetchPageTags, fetchRecentPages, updatePageTag } = require('./pages-api')
 
 function createJsonResponse (payload, ok = true) {
   return {
@@ -11,6 +11,68 @@ function createJsonResponse (payload, ok = true) {
 }
 
 describe('pages api helper', () => {
+  test('fetches and validates admin page tags payloads', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse([
+      {
+        id: 1,
+        tag: 'alpha',
+        title: 'Alpha',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-02T00:00:00.000Z',
+        extra: 'ignored'
+      },
+      {
+        id: 2,
+        tag: 'zeta',
+        title: null,
+        createdAt: '2026-01-03T00:00:00.000Z',
+        updatedAt: '2026-01-04T00:00:00.000Z'
+      }
+    ]))
+
+    await expect(fetchPageTags(fetchImpl)).resolves.toEqual([
+      { id: 1, tag: 'alpha', title: 'Alpha', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-02T00:00:00.000Z' },
+      { id: 2, tag: 'zeta', title: null, createdAt: '2026-01-03T00:00:00.000Z', updatedAt: '2026-01-04T00:00:00.000Z' }
+    ])
+
+    expect(fetchImpl).toHaveBeenCalledWith('/_api/pages/tags', {
+      credentials: 'same-origin',
+      headers: {
+        Accept: 'application/json'
+      }
+    })
+  })
+
+  test('accepts empty string tag values allowed by the tag update contract', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse([
+      { id: 1, tag: '', title: 'Alpha', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-02T00:00:00.000Z' }
+    ]))
+
+    await expect(fetchPageTags(fetchImpl)).resolves.toEqual([
+      { id: 1, tag: '', title: 'Alpha', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-02T00:00:00.000Z' }
+    ])
+  })
+
+  test('rejects malformed admin page tags rows', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse([
+      { id: 1, tag: 12, title: 'Alpha', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-02T00:00:00.000Z' }
+    ]))
+
+    await expect(fetchPageTags(fetchImpl, 'Bad page tags payload')).rejects.toThrow('Bad page tags payload')
+  })
+
+  test('rejects non-array admin page tags payloads', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ tags: [] }))
+
+    await expect(fetchPageTags(fetchImpl, 'Bad page tags payload')).rejects.toThrow('Bad page tags payload')
+  })
+
+  test('surfaces API error messages for failed page tags requests', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ error: 'manage:system or read:pages is required' }, false))
+
+    await expect(fetchPageTags(fetchImpl, 'Bad page tags payload')).rejects.toThrow('manage:system or read:pages is required')
+  })
+
   test('fetches and validates dashboard recent-pages payloads', async () => {
     const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse([
       {

@@ -32,6 +32,45 @@ const requireRecentPagesAccess = (req, res) => {
   return true
 }
 
+const requireTagsAccess = (req, res) => {
+  if (!WIKI.auth.checkAccess(req.user, ['manage:system', 'read:pages'])) {
+    res.status(403).json({ error: 'manage:system or read:pages is required' })
+    return false
+  }
+
+  return true
+}
+
+router.get('/tags', async (req, res, next) => {
+  if (!requireTagsAccess(req, res)) {
+    return
+  }
+
+  try {
+    const pages = await WIKI.models.pages.query()
+      .column([
+        'path',
+        { locale: 'localeCode' }
+      ])
+      .withGraphJoined('tags')
+
+    const tags = _.orderBy(_.uniqBy(pages.filter(page => WIKI.auth.checkAccess(req.user, ['read:pages'], {
+      path: page.path,
+      locale: page.locale
+    })).flatMap(page => page.tags), 'id'), ['tag'], ['asc'])
+
+    return res.json(tags.map(tag => ({
+      id: tag.id,
+      tag: tag.tag,
+      title: tag.title,
+      createdAt: tag.createdAt,
+      updatedAt: tag.updatedAt
+    })))
+  } catch (err) {
+    return next(err)
+  }
+})
+
 router.get('/recent', async (req, res, next) => {
   if (!requireRecentPagesAccess(req, res)) {
     return

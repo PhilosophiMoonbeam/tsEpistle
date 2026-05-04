@@ -64,7 +64,7 @@ describe('storage api helper', () => {
   })
 
   it('saves storage targets with same-origin JSON PUT', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ message: 'Storage targets updated successfully' }))
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ message: 'Storage targets updated successfully', reload: true }))
     const targets = [{ key: 'git' }]
 
     const result = await saveStorageTargets(fetchImpl, targets)
@@ -78,7 +78,7 @@ describe('storage api helper', () => {
       },
       body: JSON.stringify({ targets })
     })
-    expect(result).toEqual({ message: 'Storage targets updated successfully' })
+    expect(result).toEqual({ message: 'Storage targets updated successfully', reload: true })
   })
 
   it('rejects malformed successful target save responses', async () => {
@@ -93,8 +93,14 @@ describe('storage api helper', () => {
     await expect(saveStorageTargets(fetchImpl, [])).rejects.toThrow('save failed')
   })
 
+  it('uses truthy non-string JSON error values to preserve legacy error precedence', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ error: 403 }, false))
+
+    await expect(saveStorageTargets(fetchImpl, [])).rejects.toThrow('403')
+  })
+
   it('executes a storage action with same-origin JSON POST', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ message: 'Action completed.' }))
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ message: 'Action completed.', job: 'sync' }))
 
     const result = await executeStorageAction(fetchImpl, 'git', 'sync')
 
@@ -107,7 +113,13 @@ describe('storage api helper', () => {
       },
       body: JSON.stringify({ targetKey: 'git', handler: 'sync' })
     })
-    expect(result).toEqual({ message: 'Action completed.' })
+    expect(result).toEqual({ message: 'Action completed.', job: 'sync' })
+  })
+
+  it('accepts empty string action messages to preserve legacy message validation', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ message: '' }))
+
+    await expect(executeStorageAction(fetchImpl, 'git', 'sync')).resolves.toEqual({ message: '' })
   })
 
   it('rejects malformed successful action responses', async () => {

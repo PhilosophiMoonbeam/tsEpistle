@@ -4,6 +4,12 @@ const path = require('path')
 const componentPath = path.join(__dirname, 'admin-tags.vue')
 const source = fs.readFileSync(componentPath, 'utf8')
 const script = source.match(/<script>([\s\S]*?)<\/script>/)[1]
+const mountedStart = script.indexOf('mounted () {')
+const mountedEnd = script.indexOf('  }', mountedStart)
+const mountedBody = script.slice(mountedStart, mountedEnd)
+const refreshStart = script.indexOf('async refresh(notify = true) {')
+const refreshEnd = script.indexOf('  },', refreshStart)
+const refreshBody = script.slice(refreshStart, refreshEnd)
 const deleteTagStart = script.indexOf('async deleteTag(tag) {')
 const deleteTagEnd = script.indexOf('    async saveTag', deleteTagStart)
 const deleteTagBody = script.slice(deleteTagStart, deleteTagEnd)
@@ -13,7 +19,7 @@ const saveTagBody = script.slice(saveTagStart, saveTagEnd)
 
 describe('admin tags REST update facade', () => {
   it('routes tag updates through the pages REST helper instead of the updateTag GraphQL mutation', () => {
-    expect(script).toContain("import { deletePageTag, updatePageTag } from '../../helpers/pages-api'")
+    expect(script).toContain("import { deletePageTag, fetchPageTags, updatePageTag } from '../../helpers/pages-api'")
     expect(saveTagBody).toContain('await updatePageTag(')
     expect(saveTagBody).toContain('window.fetch.bind(window)')
     expect(saveTagBody).toContain('tag.id')
@@ -37,7 +43,7 @@ describe('admin tags REST update facade', () => {
 
 describe('admin tags REST delete facade', () => {
   it('routes tag deletes through the pages REST helper instead of the deleteTag GraphQL mutation', () => {
-    expect(script).toContain("import { deletePageTag, updatePageTag } from '../../helpers/pages-api'")
+    expect(script).toContain("import { deletePageTag, fetchPageTags, updatePageTag } from '../../helpers/pages-api'")
     expect(deleteTagBody).toContain('await deletePageTag(')
     expect(deleteTagBody).toContain('window.fetch.bind(window)')
     expect(deleteTagBody).toContain('tag.id')
@@ -55,5 +61,28 @@ describe('admin tags REST delete facade', () => {
     expect(deleteTagBody).toContain('this.refresh()')
     expect(deleteTagBody).toContain('this.deleteTagDialog = false')
     expect(deleteTagBody).toContain("this.$store.commit('pushGraphError', err)")
+  })
+})
+
+describe('admin tags REST query facade', () => {
+  it('loads tags through the pages REST helper instead of Apollo', () => {
+    expect(script).toContain("import { deletePageTag, fetchPageTags, updatePageTag } from '../../helpers/pages-api'")
+    expect(script).not.toContain("import gql from 'graphql-tag'")
+    expect(script).not.toContain('apollo:')
+    expect(script).not.toContain('this.$apollo.queries.tags.refetch')
+    expect(refreshBody).toContain('await fetchPageTags(window.fetch.bind(window))')
+    expect(refreshBody).toContain('this.tags = _.cloneDeep(')
+    expect(mountedBody).toContain('this.refresh(false)')
+  })
+
+  it('preserves tag refresh loading, notification, selection reset, and graph error behavior', () => {
+    expect(refreshBody).toContain("this.$store.commit(`loadingStart`, 'admin-tags-refresh')")
+    expect(refreshBody).toContain("this.$store.commit(`loadingStop`, 'admin-tags-refresh')")
+    expect(refreshBody).toContain('this.current = {}')
+    expect(refreshBody).toContain('if (notify)')
+    expect(refreshBody).toContain("message: this.$t('tags.refreshSuccess')")
+    expect(refreshBody).toContain("style: 'success'")
+    expect(refreshBody).toContain("icon: 'cached'")
+    expect(refreshBody).toContain("this.$store.commit('pushGraphError', err)")
   })
 })

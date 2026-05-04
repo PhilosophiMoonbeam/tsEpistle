@@ -99,8 +99,7 @@
 
 <script>
 import _ from 'lodash'
-import gql from 'graphql-tag'
-import { deletePageTag, updatePageTag } from '../../helpers/pages-api'
+import { deletePageTag, fetchPageTags, updatePageTag } from '../../helpers/pages-api'
 
 export default {
   data() {
@@ -163,37 +162,26 @@ export default {
       }
       this.$store.commit(`loadingStop`, 'admin-tags-save')
     },
-    async refresh() {
-      await this.$apollo.queries.tags.refetch()
-      this.current = {}
-      this.$store.commit('showNotification', {
-        message: this.$t('tags.refreshSuccess'),
-        style: 'success',
-        icon: 'cached'
-      })
+    async refresh(notify = true) {
+      this.$store.commit(`loadingStart`, 'admin-tags-refresh')
+      try {
+        this.tags = _.cloneDeep(await fetchPageTags(window.fetch.bind(window)))
+        this.current = {}
+        if (notify) {
+          this.$store.commit('showNotification', {
+            message: this.$t('tags.refreshSuccess'),
+            style: 'success',
+            icon: 'cached'
+          })
+        }
+      } catch (err) {
+        this.$store.commit('pushGraphError', err)
+      }
+      this.$store.commit(`loadingStop`, 'admin-tags-refresh')
     }
   },
-  apollo: {
-    tags: {
-      query: gql`
-        {
-          pages {
-            tags {
-              id
-              tag
-              title
-              createdAt
-              updatedAt
-            }
-          }
-        }
-      `,
-      fetchPolicy: 'network-only',
-      update: (data) => _.cloneDeep(data.pages.tags),
-      watchLoading (isLoading) {
-        this.$store.commit(`loading${isLoading ? 'Start' : 'Stop'}`, 'admin-tags-refresh')
-      }
-    }
+  mounted () {
+    this.refresh(false)
   }
 }
 </script>

@@ -30,6 +30,14 @@ type RecentPageRow = {
   updatedAt: string
 }
 
+type PageTagRow = {
+  id: number
+  tag: string
+  title: string | null
+  createdAt: string
+  updatedAt: string
+}
+
 async function parseJsonResponse (response: JsonResponse, fallbackMessage: string): Promise<unknown> {
   const hasHeaderReader = response && response.headers && typeof response.headers.get === 'function'
   const contentType = hasHeaderReader ? response.headers!.get('content-type') || '' : ''
@@ -56,6 +64,25 @@ async function parseJsonResponse (response: JsonResponse, fallbackMessage: strin
   return payload
 }
 
+function normalizePageTagRow (row: unknown, fallbackMessage: string): PageTagRow {
+  if (!row || typeof row !== 'object' || Array.isArray(row)) {
+    throw new Error(fallbackMessage)
+  }
+
+  const tagRow = row as Partial<PageTagRow>
+  if (!Number.isInteger(tagRow.id) || typeof tagRow.tag !== 'string' || (tagRow.title !== null && typeof tagRow.title !== 'string') || typeof tagRow.createdAt !== 'string' || tagRow.createdAt.length < 1 || typeof tagRow.updatedAt !== 'string' || tagRow.updatedAt.length < 1) {
+    throw new Error(fallbackMessage)
+  }
+
+  return {
+    id: tagRow.id,
+    tag: tagRow.tag,
+    title: tagRow.title,
+    createdAt: tagRow.createdAt,
+    updatedAt: tagRow.updatedAt
+  }
+}
+
 function normalizeRecentPageRow (row: unknown, fallbackMessage: string): RecentPageRow {
   if (!row || typeof row !== 'object' || Array.isArray(row)) {
     throw new Error(fallbackMessage)
@@ -73,6 +100,22 @@ function normalizeRecentPageRow (row: unknown, fallbackMessage: string): RecentP
     title: pageRow.title,
     updatedAt: pageRow.updatedAt
   }
+}
+
+export async function fetchPageTags (fetchImpl: FetchImpl, fallbackMessage = 'Page tags response is invalid'): Promise<PageTagRow[]> {
+  const response = await fetchImpl('/_api/pages/tags', {
+    credentials: 'same-origin',
+    headers: {
+      Accept: 'application/json'
+    }
+  })
+
+  const payload = await parseJsonResponse(response, fallbackMessage)
+  if (!Array.isArray(payload)) {
+    throw new Error(fallbackMessage)
+  }
+
+  return payload.map(row => normalizePageTagRow(row, fallbackMessage))
 }
 
 export async function fetchRecentPages (fetchImpl: FetchImpl, fallbackMessage = 'Recent pages response is invalid'): Promise<RecentPageRow[]> {
