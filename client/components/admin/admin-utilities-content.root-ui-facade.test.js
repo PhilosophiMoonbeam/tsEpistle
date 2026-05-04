@@ -28,7 +28,7 @@ describe('admin utilities content REST facades', () => {
 
   test('imports REST content helpers and no obsolete content mutation documents', () => {
     expect(script).toMatch(/import\s+\{\s*loadingStart,\s*loadingStop,\s*showNotification,\s*pushGraphError\s*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/root-ui-store['"]/)
-    expect(script).toMatch(/import\s+\{\s*migratePagesToLocale,\s*rebuildPageTree\s*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/system-api['"]/)
+    expect(script).toMatch(/import\s+\{\s*migratePagesToLocale,\s*purgePageHistory,\s*rebuildPageTree\s*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/system-api['"]/)
     expect(script).not.toMatch(/utilities-mutation-content-(?:rebuildtree|migratelocale)\.gql/)
     expect(script).not.toMatch(/utilityContent(?:RebuildTree|MigrateLocale)Mutation/)
   })
@@ -44,6 +44,20 @@ describe('admin utilities content REST facades', () => {
     expect(rebuildTree).toMatch(/loadingStop\s*\(\s*this\.\$store\s*,\s*['"]admin-utilities-content-rebuildtree['"]\s*\)/)
     expect(rebuildTree).toMatch(/this\.loading\s*=\s*false/)
     expect(rebuildTree).not.toMatch(/this\.\$apollo\.mutate|utilityContentRebuildTreeMutation|\$store\.commit/)
+  })
+
+  test('purgeHistory uses REST helper while preserving loading, notification, and error facades', () => {
+    const purgeHistory = extractMethod(script, 'purgeHistory')
+
+    expect(purgeHistory).toMatch(/this\.loading\s*=\s*true/)
+    expect(purgeHistory).toMatch(/loadingStart\s*\(\s*this\.\$store\s*,\s*['"]admin-utilities-content-purgehistory['"]\s*\)/)
+    expect(purgeHistory).toMatch(/await\s+purgePageHistory\s*\(\s*window\.fetch\.bind\(window\)\s*,\s*this\.purgeHistorySelection\s*\)/)
+    expect(purgeHistory).toMatch(/showNotification\s*\(\s*this\.\$store\s*,/)
+    expect(purgeHistory).toMatch(/message:\s*`Purged history successfully\.`/)
+    expect(purgeHistory).toMatch(/catch\s*\(\s*err\s*\)\s*\{\s*pushGraphError\s*\(\s*this\.\$store\s*,\s*err\s*\)/)
+    expect(purgeHistory).toMatch(/loadingStop\s*\(\s*this\.\$store\s*,\s*['"]admin-utilities-content-purgehistory['"]\s*\)/)
+    expect(purgeHistory).toMatch(/this\.loading\s*=\s*false/)
+    expect(purgeHistory).not.toMatch(/this\.\$apollo\.mutate|pages\.purgeHistory|\$store\.commit/)
   })
 
   test('migrateToLocale uses REST helper while preserving loading, notification, and error facades', () => {

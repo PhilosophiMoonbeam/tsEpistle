@@ -465,6 +465,25 @@ async function migratePagesToLocale (fetchImpl, sourceLocale, targetLocale, fall
   }
 }
 
+async function purgePageHistory (fetchImpl, olderThan, fallbackMessage = 'Page history purge failed') {
+  const response = await fetchImpl('/_api/system/content/purge-history', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ olderThan })
+  })
+
+  const payload = await parseJsonResponse(response, fallbackMessage)
+  if (!payload || typeof payload.message !== 'string' || payload.message.length < 1) {
+    throw new Error(fallbackMessage)
+  }
+
+  return payload
+}
+
 async function performSystemUpgrade (fetchImpl, fallbackMessage = 'Upgrade failed') {
   const response = await fetchImpl('/_api/system/upgrade', {
     method: 'POST',
@@ -500,5 +519,6 @@ module.exports = {
   flushSystemTemporaryUploads,
   rebuildPageTree,
   migratePagesToLocale,
+  purgePageHistory,
   performSystemUpgrade
 }

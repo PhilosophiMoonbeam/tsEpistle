@@ -100,7 +100,7 @@
     "getos": "3.2.1",
     "graphql": "15.3.0",
     "graphql-rate-limit-directive": "1.2.1",
-    "graphql-subscriptions": "1.1.0",
+    "graphql-subscriptions": "1.2.1",
     "graphql-tools": "7.0.5",
     "he": "1.2.0",
     "highlight.js": "11.11.1",

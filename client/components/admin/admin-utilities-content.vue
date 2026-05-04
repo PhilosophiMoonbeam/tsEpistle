@@ -94,7 +94,7 @@
 import _ from 'lodash'
 import gql from 'graphql-tag'
 import { loadingStart, loadingStop, showNotification, pushGraphError } from '../../helpers/root-ui-store'
-import { migratePagesToLocale, rebuildPageTree } from '../../helpers/system-api'
+import { migratePagesToLocale, purgePageHistory, rebuildPageTree } from '../../helpers/system-api'
 
 import { SemipolarSpinner } from 'epic-spinners'
 
@@ -250,45 +250,20 @@ export default {
     },
     async purgeHistory () {
       this.loading = true
-      this.$store.commit(`loadingStart`, 'admin-utilities-content-purgehistory')
+      loadingStart(this.$store, 'admin-utilities-content-purgehistory')
 
       try {
-        const respRaw = await this.$apollo.mutate({
-          mutation: gql`
-            mutation ($olderThan: String!) {
-              pages {
-                purgeHistory (
-                  olderThan: $olderThan
-                ) {
-                  responseResult {
-                    errorCode
-                    message
-                    slug
-                    succeeded
-                  }
-                }
-              }
-            }
-          `,
-          variables: {
-            olderThan: this.purgeHistorySelection
-          }
+        await purgePageHistory(window.fetch.bind(window), this.purgeHistorySelection)
+        showNotification(this.$store, {
+          message: `Purged history successfully.`,
+          style: 'success',
+          icon: 'check'
         })
-        const resp = _.get(respRaw, 'data.pages.purgeHistory.responseResult', {})
-        if (resp.succeeded) {
-          this.$store.commit('showNotification', {
-            message: `Purged history successfully.`,
-            style: 'success',
-            icon: 'check'
-          })
-        } else {
-          throw new Error(resp.message)
-        }
       } catch (err) {
-        this.$store.commit('pushGraphError', err)
+        pushGraphError(this.$store, err)
       }
 
-      this.$store.commit(`loadingStop`, 'admin-utilities-content-purgehistory')
+      loadingStop(this.$store, 'admin-utilities-content-purgehistory')
       this.loading = false
     }
   }

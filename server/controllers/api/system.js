@@ -334,6 +334,24 @@ router.post('/content/migrate-locale', async (req, res) => {
   }
 })
 
+router.post('/content/purge-history', async (req, res) => {
+  if (!requireSystemAccess(req, res)) {
+    return
+  }
+
+  const olderThan = _.get(req, 'body.olderThan')
+  if (!_.isString(olderThan) || olderThan.length < 1) {
+    return res.status(400).json({ error: 'olderThan must be a non-empty string' })
+  }
+
+  try {
+    await WIKI.models.pageHistory.purge(olderThan)
+    res.json({ message: 'Page history purged successfully.' })
+  } catch (err) {
+    res.status(500).json({ error: err.message || 'Page history purge failed' })
+  }
+})
+
 router.get('/export-status', (req, res) => {
   if (!requireSystemAccess(req, res)) {
     return

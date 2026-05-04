@@ -1,4 +1,4 @@
-const { fetchSystemSummary, fetchSystemInfo, fetchSystemTelemetry, fetchSystemExportStatus, fetchSystemHost, fetchSystemSsl, updateSystemSslRedirection, renewSystemSslCertificate, fetchSystemFlags, fetchSystemExtensions, updateSystemFlags, updateSystemTelemetry, resetSystemTelemetryClientId, flushSystemCache, flushSystemTemporaryUploads, rebuildPageTree, migratePagesToLocale, performSystemUpgrade } = require('./system-api')
+const { fetchSystemSummary, fetchSystemInfo, fetchSystemTelemetry, fetchSystemExportStatus, fetchSystemHost, fetchSystemSsl, updateSystemSslRedirection, renewSystemSslCertificate, fetchSystemFlags, fetchSystemExtensions, updateSystemFlags, updateSystemTelemetry, resetSystemTelemetryClientId, flushSystemCache, flushSystemTemporaryUploads, rebuildPageTree, migratePagesToLocale, purgePageHistory, performSystemUpgrade } = require('./system-api')
 
 function createJsonResponse (payload, ok = true) {
   return {
@@ -617,6 +617,33 @@ describe('system api helper', () => {
     const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ error: 'migration backend failed' }, false))
 
     await expect(migratePagesToLocale(fetchImpl, 'en', 'fr', 'Bad locale migration')).rejects.toThrow('migration backend failed')
+  })
+
+  test('purges page history through REST', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ message: 'Page history purged successfully.' }))
+
+    await expect(purgePageHistory(fetchImpl, 'P1Y')).resolves.toEqual({ message: 'Page history purged successfully.' })
+    expect(fetchImpl).toHaveBeenCalledWith('/_api/system/content/purge-history', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ olderThan: 'P1Y' })
+    })
+  })
+
+  test('rejects malformed page history purge success payloads', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ message: '' }))
+
+    await expect(purgePageHistory(fetchImpl, 'P1Y', 'Bad page history purge')).rejects.toThrow('Bad page history purge')
+  })
+
+  test('surfaces API error messages for page history purge failures', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ error: 'purge denied' }, false))
+
+    await expect(purgePageHistory(fetchImpl, 'P1Y', 'Bad page history purge')).rejects.toThrow('purge denied')
   })
 
   test('submits system flags update as xhr JSON and returns parsed message', async () => {
