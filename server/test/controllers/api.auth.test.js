@@ -58,6 +58,7 @@ describe('controllers/api auth endpoints', () => {
         checkAccess: jest.fn().mockReturnValue(true),
         regenerateCertificates: jest.fn().mockResolvedValue(true),
         resetGuestUser: jest.fn().mockResolvedValue(true),
+        reloadApiKeys: jest.fn().mockResolvedValue(true),
         strategies: {
           local: {
             key: 'local',
@@ -74,6 +75,14 @@ describe('controllers/api auth endpoints', () => {
             isEnabled: false,
             strategyKey: 'local'
           }
+        }
+      },
+      configSvc: {
+        saveToDb: jest.fn().mockResolvedValue(true)
+      },
+      events: {
+        outbound: {
+          emit: jest.fn()
         }
       },
       models: {
@@ -102,8 +111,12 @@ describe('controllers/api auth endpoints', () => {
           ])
         },
         apiKeys: {
+          createNewKey: jest.fn().mockResolvedValue('generated-api-key'),
           query: jest.fn(() => ({
-            orderBy: jest.fn().mockResolvedValue([])
+            orderBy: jest.fn().mockResolvedValue([]),
+            findById: jest.fn(() => ({
+              patch: jest.fn().mockResolvedValue(1)
+            }))
           }))
         },
         users: {
@@ -128,6 +141,9 @@ describe('controllers/api auth endpoints', () => {
       strategies: getRouteHandler('/strategies'),
       providers: getRouteHandler('/providers'),
       api: getRouteHandler('/api'),
+      setApiState: postRouteHandler('/api/state'),
+      createApiKey: postRouteHandler('/api/keys'),
+      revokeApiKey: postRouteHandler('/api/keys/:id/revoke'),
       regenerateCertificates: postRouteHandler('/certificates/regenerate'),
       resetGuestUser: postRouteHandler('/guest/reset'),
       forgotPassword: postRouteHandler('/forgot-password'),
@@ -143,6 +159,9 @@ describe('controllers/api auth endpoints', () => {
     expect(typeof handlers.strategies).toBe('function')
     expect(typeof handlers.providers).toBe('function')
     expect(typeof handlers.api).toBe('function')
+    expect(typeof handlers.setApiState).toBe('function')
+    expect(typeof handlers.createApiKey).toBe('function')
+    expect(typeof handlers.revokeApiKey).toBe('function')
     expect(typeof handlers.regenerateCertificates).toBe('function')
     expect(typeof handlers.resetGuestUser).toBe('function')
     expect(typeof handlers.forgotPassword).toBe('function')
@@ -360,6 +379,171 @@ describe('controllers/api auth endpoints', () => {
     expect(res.status).not.toHaveBeenCalled()
     expect(next).toHaveBeenCalledWith(expect.any(Error))
     expect(next.mock.calls[0][0].message).toBe('db failed')
+  })
+
+  it('updates admin API state through REST when authorized', async () => {
+    const { setApiState } = loadHandlers()
+    const req = { user: { permissions: ['manage:api'] }, body: { enabled: false } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await setApiState(req, res)
+
+    expect(global.WIKI.auth.checkAccess).toHaveBeenCalledWith({ permissions: ['manage:api'] }, ['manage:system', 'manage:api'])
+    expect(global.WIKI.config.api.isEnabled).toBe(false)
+    expect(global.WIKI.configSvc.saveToDb).toHaveBeenCalledWith(['api'])
+    expect(res.json).toHaveBeenCalledWith({ message: 'API State changed successfully' })
+  })
+
+  it('rejects malformed admin API state payloads', async () => {
+    const { setApiState } = loadHandlers()
+    const req = { user: { permissions: ['manage:api'] }, body: { enabled: 'yes' } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await setApiState(req, res)
+
+    expect(global.WIKI.configSvc.saveToDb).not.toHaveBeenCalled()
+    expect(res.status).toHaveBeenCalledWith(400)
+    expect(res.json).toHaveBeenCalledWith({ error: 'enabled must be a boolean' })
+  })
+
+  it('returns JSON errors when admin API state persistence fails', async () => {
+    global.WIKI.configSvc.saveToDb.mockRejectedValueOnce(new Error('api save failed'))
+    const { setApiState } = loadHandlers()
+    const req = { user: { permissions: ['manage:api'] }, body: { enabled: false } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await setApiState(req, res)
+
+    expect(res.status).toHaveBeenCalledWith(500)
+    expect(res.json).toHaveBeenCalledWith({ error: 'api save failed' })
+  })
+
+  it('creates admin API keys through REST and reloads runtime keys', async () => {
+    const { createApiKey } = loadHandlers()
+    const req = {
+      user: { permissions: ['manage:api'] },
+      body: {
+        name: 'Deploy',
+        expiration: '1y',
+        fullAccess: false,
+        group: 7
+      }
+    }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await createApiKey(req, res)
+
+    expect(global.WIKI.models.apiKeys.createNewKey).toHaveBeenCalledWith({
+      name: 'Deploy',
+      expiration: '1y',
+      fullAccess: false,
+      group: 7
+    })
+    expect(global.WIKI.auth.reloadApiKeys).toHaveBeenCalled()
+    expect(global.WIKI.events.outbound.emit).toHaveBeenCalledWith('reloadApiKeys')
+    expect(res.json).toHaveBeenCalledWith({
+      key: 'generated-api-key',
+      message: 'API Key created successfully'
+    })
+  })
+
+  it('rejects malformed admin API key creation payloads', async () => {
+    const { createApiKey } = loadHandlers()
+    const req = {
+      user: { permissions: ['manage:api'] },
+      body: {
+        name: 'Deploy',
+        expiration: '1y',
+        fullAccess: 'yes',
+        group: 7
+      }
+    }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await createApiKey(req, res)
+
+    expect(global.WIKI.models.apiKeys.createNewKey).not.toHaveBeenCalled()
+    expect(res.status).toHaveBeenCalledWith(400)
+    expect(res.json).toHaveBeenCalledWith({ error: 'fullAccess must be a boolean' })
+  })
+
+  it('returns JSON errors when admin API key creation fails', async () => {
+    global.WIKI.models.apiKeys.createNewKey.mockRejectedValueOnce(new Error('key backend failed'))
+    const { createApiKey } = loadHandlers()
+    const req = {
+      user: { permissions: ['manage:api'] },
+      body: {
+        name: 'Deploy',
+        expiration: '1y',
+        fullAccess: true,
+        group: null
+      }
+    }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await createApiKey(req, res)
+
+    expect(res.status).toHaveBeenCalledWith(500)
+    expect(res.json).toHaveBeenCalledWith({ error: 'key backend failed' })
+  })
+
+  it('revokes admin API keys through REST and reloads runtime keys', async () => {
+    const patch = jest.fn().mockResolvedValue(1)
+    const findById = jest.fn(() => ({ patch }))
+    global.WIKI.models.apiKeys.query.mockReturnValueOnce({ findById })
+    const { revokeApiKey } = loadHandlers()
+    const req = { user: { permissions: ['manage:api'] }, params: { id: '42' } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await revokeApiKey(req, res)
+
+    expect(findById).toHaveBeenCalledWith(42)
+    expect(patch).toHaveBeenCalledWith({ isRevoked: true })
+    expect(global.WIKI.auth.reloadApiKeys).toHaveBeenCalled()
+    expect(global.WIKI.events.outbound.emit).toHaveBeenCalledWith('reloadApiKeys')
+    expect(res.json).toHaveBeenCalledWith({ message: 'API Key revoked successfully' })
+  })
+
+  it.each(['0', '1.9', 'Infinity', '9007199254740992'])('rejects malformed admin API key revoke IDs: %s', async (id) => {
+    const { revokeApiKey } = loadHandlers()
+    const req = { user: { permissions: ['manage:api'] }, params: { id } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await revokeApiKey(req, res)
+
+    expect(global.WIKI.models.apiKeys.query).not.toHaveBeenCalled()
+    expect(res.status).toHaveBeenCalledWith(400)
+    expect(res.json).toHaveBeenCalledWith({ error: 'id must be a positive integer' })
+  })
+
+  it('returns JSON errors when admin API key revoke fails', async () => {
+    const patch = jest.fn().mockRejectedValue(new Error('revoke backend failed'))
+    const findById = jest.fn(() => ({ patch }))
+    global.WIKI.models.apiKeys.query.mockReturnValueOnce({ findById })
+    const { revokeApiKey } = loadHandlers()
+    const req = { user: { permissions: ['manage:api'] }, params: { id: '42' } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await revokeApiKey(req, res)
+
+    expect(res.status).toHaveBeenCalledWith(500)
+    expect(res.json).toHaveBeenCalledWith({ error: 'revoke backend failed' })
+  })
+
+  it('returns 403 for unauthorized admin API mutation requests', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValue(false)
+    const { setApiState, createApiKey, revokeApiKey } = loadHandlers()
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await setApiState({ user: { permissions: [] }, body: { enabled: true } }, res)
+    await createApiKey({ user: { permissions: [] }, body: { name: 'Deploy', expiration: '1y', fullAccess: true, group: null } }, res)
+    await revokeApiKey({ user: { permissions: [] }, params: { id: '42' } }, res)
+
+    expect(res.status).toHaveBeenCalledTimes(3)
+    expect(res.status).toHaveBeenNthCalledWith(1, 403)
+    expect(res.status).toHaveBeenNthCalledWith(2, 403)
+    expect(res.status).toHaveBeenNthCalledWith(3, 403)
+    expect(res.json).toHaveBeenCalledWith({ error: 'manage:system or manage:api is required' })
   })
 
   it('regenerates certificates for manage:system users', async () => {

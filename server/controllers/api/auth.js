@@ -149,6 +149,88 @@ router.get('/api', async (req, res, next) => {
   }
 })
 
+router.post('/api/state', async (req, res) => {
+  if (!requireAdminApiAccess(req, res)) {
+    return
+  }
+
+  const enabled = _.get(req, 'body.enabled')
+  if (!_.isBoolean(enabled)) {
+    return res.status(400).json({ error: 'enabled must be a boolean' })
+  }
+
+  try {
+    WIKI.config.api.isEnabled = enabled
+    await WIKI.configSvc.saveToDb(['api'])
+    res.json({ message: 'API State changed successfully' })
+  } catch (err) {
+    res.status(500).json({ error: err.message || 'API state update failed' })
+  }
+})
+
+router.post('/api/keys', async (req, res) => {
+  if (!requireAdminApiAccess(req, res)) {
+    return
+  }
+
+  const name = _.get(req, 'body.name')
+  const expiration = _.get(req, 'body.expiration')
+  const fullAccess = _.get(req, 'body.fullAccess')
+  const group = _.get(req, 'body.group', null)
+
+  if (!_.isString(name) || name.length < 1) {
+    return res.status(400).json({ error: 'name must be a non-empty string' })
+  }
+  if (!_.isString(expiration) || expiration.length < 1) {
+    return res.status(400).json({ error: 'expiration must be a non-empty string' })
+  }
+  if (!_.isBoolean(fullAccess)) {
+    return res.status(400).json({ error: 'fullAccess must be a boolean' })
+  }
+  if (!_.isNil(group) && !Number.isInteger(group)) {
+    return res.status(400).json({ error: 'group must be an integer or null' })
+  }
+
+  try {
+    const key = await WIKI.models.apiKeys.createNewKey({ name, expiration, fullAccess, group })
+    await WIKI.auth.reloadApiKeys()
+    WIKI.events.outbound.emit('reloadApiKeys')
+    res.json({
+      key,
+      message: 'API Key created successfully'
+    })
+  } catch (err) {
+    res.status(500).json({ error: err.message || 'API key creation failed' })
+  }
+})
+
+router.post('/api/keys/:id/revoke', async (req, res) => {
+  if (!requireAdminApiAccess(req, res)) {
+    return
+  }
+
+  const rawId = _.get(req, 'params.id')
+  if (!_.isString(rawId) || !/^[1-9]\d*$/.test(rawId)) {
+    return res.status(400).json({ error: 'id must be a positive integer' })
+  }
+
+  const id = Number(rawId)
+  if (!Number.isSafeInteger(id)) {
+    return res.status(400).json({ error: 'id must be a positive integer' })
+  }
+
+  try {
+    await WIKI.models.apiKeys.query().findById(id).patch({
+      isRevoked: true
+    })
+    await WIKI.auth.reloadApiKeys()
+    WIKI.events.outbound.emit('reloadApiKeys')
+    res.json({ message: 'API Key revoked successfully' })
+  } catch (err) {
+    res.status(500).json({ error: err.message || 'API key revoke failed' })
+  }
+})
+
 router.post('/certificates/regenerate', async (req, res) => {
   if (!requireSystemAccess(req, res)) {
     return

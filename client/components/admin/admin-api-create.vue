@@ -94,8 +94,8 @@
 
 <script>
 import _ from 'lodash'
-import gql from 'graphql-tag'
 
+import { createAdminApiKey } from '../../helpers/auth-api'
 import { fetchGroupOptions } from '../../helpers/groups-api'
 
 export default {
@@ -177,70 +177,43 @@ export default {
       }
 
       this.loading = true
+      this.$store.commit('loadingStart', 'admin-api-create')
 
       try {
-        const resp = await this.$apollo.mutate({
-          mutation: gql`
-            mutation ($name: String!, $expiration: String!, $fullAccess: Boolean!, $group: Int) {
-              authentication {
-                createApiKey (name: $name, expiration: $expiration, fullAccess: $fullAccess, group: $group) {
-                  key
-                  responseResult {
-                    succeeded
-                    errorCode
-                    slug
-                    message
-                  }
-                }
-              }
-            }
-          `,
-          variables: {
-            name: this.name,
-            expiration: this.expiration,
-            fullAccess: (this.fullAccess === true),
-            group: this.group
-          },
-          watchLoading (isLoading) {
-            this.$store.commit(`loading${isLoading ? 'Start' : 'Stop'}`, 'admin-api-create')
-          }
+        const resp = await createAdminApiKey(window.fetch.bind(window), {
+          name: this.name,
+          expiration: this.expiration,
+          fullAccess: (this.fullAccess === true),
+          group: this.group
         })
-        if (_.get(resp, 'data.authentication.createApiKey.responseResult.succeeded', false)) {
-          const createdKey = _.get(resp, 'data.authentication.createApiKey.key', '???')
-          const refreshed = this.refreshApiKeys ? await this.refreshApiKeys(false) : true
+        const refreshed = this.refreshApiKeys ? await this.refreshApiKeys(false) : true
 
-          this.name = ''
-          this.expiration = '1y'
-          this.fullAccess = true
-          this.group = null
-          this.isShown = false
+        this.name = ''
+        this.expiration = '1y'
+        this.fullAccess = true
+        this.group = null
+        this.isShown = false
 
-          this.key = createdKey
-          this.isCopyKeyDialogShown = true
+        this.key = resp.key
+        this.isCopyKeyDialogShown = true
 
-          if (refreshed) {
-            this.$store.commit('showNotification', {
-              style: 'success',
-              message: this.$t('admin:api.newKeySuccess'),
-              icon: 'check'
-            })
-          }
-
-          setTimeout(() => {
-            this.$refs.keyContentsIpt.$refs.input.select()
-          }, 400)
-        } else {
+        if (refreshed) {
           this.$store.commit('showNotification', {
-            style: 'red',
-            message: _.get(resp, 'data.authentication.createApiKey.responseResult.message', 'An unexpected error occurred.'),
-            icon: 'alert'
+            style: 'success',
+            message: this.$t('admin:api.newKeySuccess'),
+            icon: 'check'
           })
         }
+
+        setTimeout(() => {
+          this.$refs.keyContentsIpt.$refs.input.select()
+        }, 400)
       } catch (err) {
         this.$store.commit('pushGraphError', err)
+      } finally {
+        this.$store.commit('loadingStop', 'admin-api-create')
+        this.loading = false
       }
-
-      this.loading = false
     }
   },
   created() {

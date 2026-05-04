@@ -1,4 +1,4 @@
-const { fetchAuthStrategies, fetchAdminAuthProviders, fetchAdminApiBootstrap, submitAuthRequest, submitStatusRequest, regenerateAuthCertificates, resetGuestUser } = require('./auth-api')
+const { fetchAuthStrategies, fetchAdminAuthProviders, fetchAdminApiBootstrap, setAdminApiState, revokeAdminApiKey, createAdminApiKey, submitAuthRequest, submitStatusRequest, regenerateAuthCertificates, resetGuestUser } = require('./auth-api')
 
 function createJsonResponse (payload, ok = true, status = ok ? 200 : 400) {
   return {
@@ -194,6 +194,101 @@ describe('auth api helper', () => {
     })
 
     await expect(fetchAdminApiBootstrap(fetchImpl, 'Generic API bootstrap error')).rejects.toThrow('Generic API bootstrap error')
+  })
+
+  test('updates admin API state through REST', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ message: 'API State changed successfully' }))
+
+    await expect(setAdminApiState(fetchImpl, true)).resolves.toEqual({ message: 'API State changed successfully' })
+    expect(fetchImpl).toHaveBeenCalledWith('/_api/auth/api/state', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ enabled: true })
+    })
+  })
+
+  test('surfaces API state REST JSON errors', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ error: 'enabled must be a boolean' }, false))
+
+    await expect(setAdminApiState(fetchImpl, 'yes', 'Bad API state')).rejects.toThrow('enabled must be a boolean')
+  })
+
+  test('revokes admin API keys through REST', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ message: 'API Key revoked successfully' }))
+
+    await expect(revokeAdminApiKey(fetchImpl, 7)).resolves.toEqual({ message: 'API Key revoked successfully' })
+    expect(fetchImpl).toHaveBeenCalledWith('/_api/auth/api/keys/7/revoke', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({})
+    })
+  })
+
+  test('surfaces API key revoke REST JSON errors', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ error: 'missing key' }, false))
+
+    await expect(revokeAdminApiKey(fetchImpl, 7, 'Bad revoke')).rejects.toThrow('missing key')
+  })
+
+  test('creates admin API keys through REST and returns the generated key', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+      key: 'generated-api-key',
+      message: 'API Key created successfully'
+    }))
+
+    await expect(createAdminApiKey(fetchImpl, {
+      name: 'Deploy',
+      expiration: '1y',
+      fullAccess: false,
+      group: 7
+    })).resolves.toEqual({
+      key: 'generated-api-key',
+      message: 'API Key created successfully'
+    })
+    expect(fetchImpl).toHaveBeenCalledWith('/_api/auth/api/keys', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        name: 'Deploy',
+        expiration: '1y',
+        fullAccess: false,
+        group: 7
+      })
+    })
+  })
+
+  test('rejects malformed admin API key creation success payloads', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ message: 'API Key created successfully' }))
+
+    await expect(createAdminApiKey(fetchImpl, {
+      name: 'Deploy',
+      expiration: '1y',
+      fullAccess: true,
+      group: null
+    }, 'Bad key creation')).rejects.toThrow('Bad key creation')
+  })
+
+  test('surfaces admin API key creation REST JSON errors', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ error: 'name must be a non-empty string' }, false))
+
+    await expect(createAdminApiKey(fetchImpl, {
+      name: '',
+      expiration: '1y',
+      fullAccess: true,
+      group: null
+    }, 'Bad key creation')).rejects.toThrow('name must be a non-empty string')
   })
 
   test('submits auth request as JSON and returns parsed body', async () => {

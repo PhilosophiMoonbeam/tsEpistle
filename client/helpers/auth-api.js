@@ -161,6 +161,32 @@ async function submitStatusRequest (fetchImpl, path, body, fallbackMessage = 'Au
   return payload
 }
 
+async function setAdminApiState (fetchImpl, enabled, fallbackMessage = 'API state update failed') {
+  return submitStatusRequest(fetchImpl, '/_api/auth/api/state', { enabled }, fallbackMessage)
+}
+
+async function revokeAdminApiKey (fetchImpl, id, fallbackMessage = 'API key revoke failed') {
+  return submitStatusRequest(fetchImpl, `/_api/auth/api/keys/${encodeURIComponent(id)}/revoke`, {}, fallbackMessage)
+}
+
+async function createAdminApiKey (fetchImpl, payload, fallbackMessage = 'API key creation failed') {
+  const responsePayload = await submitStatusRequest(fetchImpl, '/_api/auth/api/keys', {
+    name: payload.name,
+    expiration: payload.expiration,
+    fullAccess: payload.fullAccess,
+    group: payload.group
+  }, fallbackMessage)
+
+  if (typeof responsePayload.key !== 'string' || responsePayload.key.length < 1) {
+    throw new Error(fallbackMessage)
+  }
+
+  return {
+    key: responsePayload.key,
+    message: responsePayload.message
+  }
+}
+
 async function regenerateAuthCertificates (fetchImpl, fallbackMessage = 'Certificate regeneration failed') {
   return submitStatusRequest(fetchImpl, '/_api/auth/certificates/regenerate', {}, fallbackMessage)
 }
@@ -173,6 +199,9 @@ module.exports = {
   fetchAuthStrategies,
   fetchAdminAuthProviders,
   fetchAdminApiBootstrap,
+  setAdminApiState,
+  revokeAdminApiKey,
+  createAdminApiKey,
   submitAuthRequest,
   submitStatusRequest,
   regenerateAuthCertificates,

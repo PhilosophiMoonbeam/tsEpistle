@@ -13,27 +13,6 @@ module.exports = {
     async authentication () { return {} }
   },
   AuthenticationQuery: {
-    /**
-     * List of API Keys
-     */
-    async apiKeys (obj, args, context) {
-      const keys = await WIKI.models.apiKeys.query().orderBy(['isRevoked', 'name'])
-      return keys.map(k => ({
-        id: k.id,
-        name: k.name,
-        keyShort: '...' + k.key.substring(k.key.length - 20),
-        isRevoked: k.isRevoked,
-        expiration: k.expiration,
-        createdAt: k.createdAt,
-        updatedAt: k.updatedAt
-      }))
-    },
-    /**
-     * Current API State
-     */
-    apiState () {
-      return WIKI.config.api.isEnabled
-    },
     metricsState () {
       return WIKI.config.metrics.isEnabled
     },
@@ -77,22 +56,6 @@ module.exports = {
     }
   },
   AuthenticationMutation: {
-    /**
-     * Create New API Key
-     */
-    async createApiKey (obj, args, context) {
-      try {
-        const key = await WIKI.models.apiKeys.createNewKey(args)
-        await WIKI.auth.reloadApiKeys()
-        WIKI.events.outbound.emit('reloadApiKeys')
-        return {
-          key,
-          responseResult: graphHelper.generateSuccess('API Key created successfully')
-        }
-      } catch (err) {
-        return graphHelper.generateError(err)
-      }
-    },
     /**
      * Perform Login
      */
@@ -167,20 +130,6 @@ module.exports = {
       }
     },
     /**
-     * Set API state
-     */
-    async setApiState (obj, args, context) {
-      try {
-        WIKI.config.api.isEnabled = args.enabled
-        await WIKI.configSvc.saveToDb(['api'])
-        return {
-          responseResult: graphHelper.generateSuccess('API State changed successfully')
-        }
-      } catch (err) {
-        return graphHelper.generateError(err)
-      }
-    },
-    /**
      * Set Metrics state
      */
     async setMetricsState (obj, args, context) {
@@ -207,23 +156,6 @@ module.exports = {
           return graphHelper.generateError(new Error(`Failed to rollback metrics runtime state: ${rollbackErr.message}`))
         }
 
-        return graphHelper.generateError(err)
-      }
-    },
-    /**
-     * Revoke an API key
-     */
-    async revokeApiKey (obj, args, context) {
-      try {
-        await WIKI.models.apiKeys.query().findById(args.id).patch({
-          isRevoked: true
-        })
-        await WIKI.auth.reloadApiKeys()
-        WIKI.events.outbound.emit('reloadApiKeys')
-        return {
-          responseResult: graphHelper.generateSuccess('API Key revoked successfully')
-        }
-      } catch (err) {
         return graphHelper.generateError(err)
       }
     },

@@ -63,12 +63,10 @@
 </template>
 
 <script>
-import _ from 'lodash'
-import gql from 'graphql-tag'
 import { StatusIndicator } from 'vue-status-indicator'
 
 import CreateApiKey from './admin-api-create.vue'
-import { fetchAdminApiBootstrap } from '../../helpers/auth-api'
+import { fetchAdminApiBootstrap, revokeAdminApiKey, setAdminApiState } from '../../helpers/auth-api'
 
 export default {
   components: {
@@ -123,49 +121,23 @@ export default {
     async globalSwitch () {
       const wasEnabled = this.enabled
       this.isToggleLoading = true
+      this.$store.commit('loadingStart', 'admin-api-toggle')
       try {
-        const resp = await this.$apollo.mutate({
-          mutation: gql`
-            mutation ($enabled: Boolean!) {
-              authentication {
-                setApiState (enabled: $enabled) {
-                  responseResult {
-                    succeeded
-                    errorCode
-                    slug
-                    message
-                  }
-                }
-              }
-            }
-          `,
-          variables: {
-            enabled: !this.enabled
-          },
-          watchLoading (isLoading) {
-            this.$store.commit(`loading${isLoading ? 'Start' : 'Stop'}`, 'admin-api-toggle')
-          }
-        })
-        if (_.get(resp, 'data.authentication.setApiState.responseResult.succeeded', false)) {
-          const loaded = await this.refresh(false)
-          if (loaded) {
-            this.$store.commit('showNotification', {
-              style: 'success',
-              message: wasEnabled ? this.$t('admin:api.toggleStateDisabledSuccess') : this.$t('admin:api.toggleStateEnabledSuccess'),
-              icon: 'check'
-            })
-          }
-        } else {
+        await setAdminApiState(window.fetch.bind(window), !this.enabled)
+        const loaded = await this.refresh(false)
+        if (loaded) {
           this.$store.commit('showNotification', {
-            style: 'red',
-            message: _.get(resp, 'data.authentication.setApiState.responseResult.message', 'An unexpected error occurred.'),
-            icon: 'alert'
+            style: 'success',
+            message: wasEnabled ? this.$t('admin:api.toggleStateDisabledSuccess') : this.$t('admin:api.toggleStateEnabledSuccess'),
+            icon: 'check'
           })
         }
       } catch (err) {
         this.$store.commit('pushGraphError', err)
+      } finally {
+        this.$store.commit('loadingStop', 'admin-api-toggle')
+        this.isToggleLoading = false
       }
-      this.isToggleLoading = false
     },
     async newKey () {
       this.isCreateDialogShown = true
@@ -176,50 +148,24 @@ export default {
     },
     async revokeConfirm () {
       this.revokeLoading = true
+      this.$store.commit('loadingStart', 'admin-api-revoke')
       try {
-        const resp = await this.$apollo.mutate({
-          mutation: gql`
-            mutation ($id: Int!) {
-              authentication {
-                revokeApiKey (id: $id) {
-                  responseResult {
-                    succeeded
-                    errorCode
-                    slug
-                    message
-                  }
-                }
-              }
-            }
-          `,
-          variables: {
-            id: this.current.id
-          },
-          watchLoading (isLoading) {
-            this.$store.commit(`loading${isLoading ? 'Start' : 'Stop'}`, 'admin-api-revoke')
-          }
-        })
-        if (_.get(resp, 'data.authentication.revokeApiKey.responseResult.succeeded', false)) {
-          const loaded = await this.refresh(false)
-          if (loaded) {
-            this.$store.commit('showNotification', {
-              style: 'success',
-              message: this.$t('admin:api.revokeSuccess'),
-              icon: 'check'
-            })
-          }
-        } else {
+        await revokeAdminApiKey(window.fetch.bind(window), this.current.id)
+        const loaded = await this.refresh(false)
+        if (loaded) {
           this.$store.commit('showNotification', {
-            style: 'red',
-            message: _.get(resp, 'data.authentication.revokeApiKey.responseResult.message', 'An unexpected error occurred.'),
-            icon: 'alert'
+            style: 'success',
+            message: this.$t('admin:api.revokeSuccess'),
+            icon: 'check'
           })
         }
       } catch (err) {
         this.$store.commit('pushGraphError', err)
+      } finally {
+        this.$store.commit('loadingStop', 'admin-api-revoke')
+        this.isRevokeConfirmDialogShown = false
+        this.revokeLoading = false
       }
-      this.isRevokeConfirmDialogShown = false
-      this.revokeLoading = false
     }
   },
   created () {
