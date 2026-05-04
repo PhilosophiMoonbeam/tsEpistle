@@ -59,6 +59,7 @@ describe('controllers/api auth endpoints', () => {
         regenerateCertificates: jest.fn().mockResolvedValue(true),
         resetGuestUser: jest.fn().mockResolvedValue(true),
         reloadApiKeys: jest.fn().mockResolvedValue(true),
+        activateStrategies: jest.fn().mockResolvedValue(true),
         strategies: {
           local: {
             key: 'local',
@@ -87,6 +88,11 @@ describe('controllers/api auth endpoints', () => {
       },
       models: {
         authentication: {
+          query: jest.fn(() => ({
+            patch: jest.fn(() => ({ where: jest.fn().mockResolvedValue(1) })),
+            insert: jest.fn().mockResolvedValue({}),
+            delete: jest.fn(() => ({ where: jest.fn().mockResolvedValue(1) }))
+          })),
           getStrategies: jest.fn().mockResolvedValue([
             {
               key: 'local',
@@ -120,6 +126,13 @@ describe('controllers/api auth endpoints', () => {
           }))
         },
         users: {
+          query: jest.fn(() => ({
+            count: jest.fn(() => ({
+              where: jest.fn(() => ({
+                first: jest.fn().mockResolvedValue({ total: '0' })
+              }))
+            }))
+          })),
           login: jest.fn(),
           loginTFA: jest.fn(),
           loginChangePassword: jest.fn(),
@@ -140,6 +153,7 @@ describe('controllers/api auth endpoints', () => {
     return {
       strategies: getRouteHandler('/strategies'),
       providers: getRouteHandler('/providers'),
+      updateStrategies: postRouteHandler('/strategies'),
       api: getRouteHandler('/api'),
       setApiState: postRouteHandler('/api/state'),
       createApiKey: postRouteHandler('/api/keys'),
@@ -158,6 +172,7 @@ describe('controllers/api auth endpoints', () => {
 
     expect(typeof handlers.strategies).toBe('function')
     expect(typeof handlers.providers).toBe('function')
+    expect(typeof handlers.updateStrategies).toBe('function')
     expect(typeof handlers.api).toBe('function')
     expect(typeof handlers.setApiState).toBe('function')
     expect(typeof handlers.createApiKey).toBe('function')
@@ -230,6 +245,140 @@ describe('controllers/api auth endpoints', () => {
 
     expect(res.status).toHaveBeenCalledWith(403)
     expect(res.json).toHaveBeenCalledWith({ error: 'manage:system, write:users, or manage:users is required' })
+  })
+
+  it('updates authentication strategies through REST with normalized config and side effects', async () => {
+    const { updateStrategies } = loadHandlers()
+    const req = {
+      user: { permissions: ['manage:system'] },
+      body: {
+        strategies: [
+          {
+            key: 'local',
+            strategyKey: 'local',
+            displayName: 'Local Login',
+            order: 0,
+            isEnabled: true,
+            config: [{ key: 'usernameFormat', value: JSON.stringify({ v: 'email' }) }],
+            selfRegistration: false,
+            domainWhitelist: ['example.test'],
+            autoEnrollGroups: [1, 2]
+          },
+          {
+            key: 'oidc',
+            strategyKey: 'oauth2',
+            displayName: 'OIDC',
+            order: 1,
+            isEnabled: true,
+            config: [{ key: 'clientId', value: JSON.stringify({ v: 'abc' }) }],
+            selfRegistration: true,
+            domainWhitelist: [],
+            autoEnrollGroups: []
+          }
+        ]
+      }
+    }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await updateStrategies(req, res)
+
+    expect(global.WIKI.auth.checkAccess).toHaveBeenCalledWith({ permissions: ['manage:system'] }, ['manage:system'])
+    const queries = global.WIKI.models.authentication.query.mock.results.map(result => result.value)
+    expect(queries[0].patch).toHaveBeenCalledWith({
+      key: 'local',
+      strategyKey: 'local',
+      displayName: 'Local Login',
+      order: 0,
+      isEnabled: true,
+      config: { usernameFormat: 'email' },
+      selfRegistration: false,
+      domainWhitelist: { v: ['example.test'] },
+      autoEnrollGroups: { v: [1, 2] }
+    })
+    expect(queries[0].patch.mock.results[0].value.where).toHaveBeenCalledWith('key', 'local')
+    expect(queries[1].insert).toHaveBeenCalledWith({
+      key: 'oidc',
+      strategyKey: 'oauth2',
+      displayName: 'OIDC',
+      order: 1,
+      isEnabled: true,
+      config: { clientId: 'abc' },
+      selfRegistration: true,
+      domainWhitelist: { v: [] },
+      autoEnrollGroups: { v: [] }
+    })
+    expect(queries[2].delete).toHaveBeenCalled()
+    expect(queries[2].delete.mock.results[0].value.where).toHaveBeenCalledWith('key', 'github')
+    expect(global.WIKI.auth.activateStrategies).toHaveBeenCalledTimes(1)
+    expect(global.WIKI.events.outbound.emit).toHaveBeenCalledWith('reloadAuthStrategies')
+    expect(res.json).toHaveBeenCalledWith({ message: 'Strategies updated successfully' })
+  })
+
+  it('returns 403 for unauthorized authentication strategy updates', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValueOnce(false)
+    const { updateStrategies } = loadHandlers()
+    const req = { user: { permissions: [] }, body: { strategies: [] } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await updateStrategies(req, res)
+
+    expect(res.status).toHaveBeenCalledWith(403)
+    expect(res.json).toHaveBeenCalledWith({ error: 'manage:system is required' })
+    expect(global.WIKI.models.authentication.getStrategies).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['missing strategies', {}],
+    ['non-array strategies', { strategies: {} }],
+    ['malformed strategy', { strategies: [{ key: 'local' }] }],
+    ['malformed config JSON', { strategies: [{ key: 'local', strategyKey: 'local', displayName: 'Local', order: 0, isEnabled: true, config: [{ key: 'usernameFormat', value: '{bad' }], selfRegistration: false, domainWhitelist: [], autoEnrollGroups: [] }] }],
+    ['non-string domain', { strategies: [{ key: 'local', strategyKey: 'local', displayName: 'Local', order: 0, isEnabled: true, config: [], selfRegistration: false, domainWhitelist: [7], autoEnrollGroups: [] }] }],
+    ['non-integer group', { strategies: [{ key: 'local', strategyKey: 'local', displayName: 'Local', order: 0, isEnabled: true, config: [], selfRegistration: false, domainWhitelist: [], autoEnrollGroups: ['1'] }] }]
+  ])('returns 400 for invalid authentication strategy payloads: %s', async (label, body) => {
+    const { updateStrategies } = loadHandlers()
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await updateStrategies({ user: { permissions: ['manage:system'] }, body }, res)
+
+    expect(res.status).toHaveBeenCalledWith(400)
+    expect(res.json).toHaveBeenCalledWith({ error: 'strategies must be an array of valid authentication strategies' })
+    expect(global.WIKI.models.authentication.getStrategies).not.toHaveBeenCalled()
+  })
+
+  it('returns JSON errors when a removed authentication strategy still has users', async () => {
+    global.WIKI.models.users.query.mockImplementationOnce(() => ({
+      count: jest.fn(() => ({
+        where: jest.fn(() => ({
+          first: jest.fn().mockResolvedValue({ total: '1' })
+        }))
+      }))
+    }))
+    const { updateStrategies } = loadHandlers()
+    const req = {
+      user: { permissions: ['manage:system'] },
+      body: {
+        strategies: [
+          {
+            key: 'local',
+            strategyKey: 'local',
+            displayName: 'Local Login',
+            order: 0,
+            isEnabled: true,
+            config: [],
+            selfRegistration: false,
+            domainWhitelist: [],
+            autoEnrollGroups: []
+          }
+        ]
+      }
+    }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await updateStrategies(req, res)
+
+    expect(res.status).toHaveBeenCalledWith(500)
+    expect(res.json).toHaveBeenCalledWith({ error: 'Cannot delete GitHub Login as 1 or more users are still using it.' })
+    expect(global.WIKI.auth.activateStrategies).not.toHaveBeenCalled()
   })
 
   it('returns admin api bootstrap payload when authorized', async () => {

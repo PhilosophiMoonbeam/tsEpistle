@@ -221,6 +221,7 @@
 <script>
 import _ from 'lodash'
 import gql from 'graphql-tag'
+import { updateAdminAuthStrategies } from '../../helpers/auth-api'
 import { v4 as uuid } from 'uuid'
 
 import { fetchGroupOptions } from '../../helpers/groups-api'
@@ -325,44 +326,22 @@ export default {
     async save() {
       this.$store.commit(`loadingStart`, 'admin-auth-savestrategies')
       try {
-        const resp = await this.$apollo.mutate({
-          mutation: gql`
-            mutation($strategies: [AuthenticationStrategyInput]!) {
-              authentication {
-                updateStrategies(strategies: $strategies) {
-                  responseResult {
-                    succeeded
-                    errorCode
-                    slug
-                    message
-                  }
-                }
-              }
-            }
-          `,
-          variables: {
-            strategies: this.activeStrategies.map((str, idx) => ({
-              key: str.key,
-              strategyKey: str.strategy.key,
-              displayName: str.displayName,
-              order: idx,
-              isEnabled: str.isEnabled,
-              config: str.config.map(cfg => ({...cfg, value: JSON.stringify({ v: cfg.value.value })})),
-              selfRegistration: str.selfRegistration,
-              domainWhitelist: str.domainWhitelist,
-              autoEnrollGroups: str.autoEnrollGroups
-            }))
-          }
+        await updateAdminAuthStrategies(window.fetch.bind(window), this.activeStrategies.map((str, idx) => ({
+          key: str.key,
+          strategyKey: str.strategy.key,
+          displayName: str.displayName,
+          order: idx,
+          isEnabled: str.isEnabled,
+          config: str.config.map(cfg => ({ ...cfg, value: JSON.stringify({ v: cfg.value.value }) })),
+          selfRegistration: str.selfRegistration,
+          domainWhitelist: str.domainWhitelist,
+          autoEnrollGroups: str.autoEnrollGroups
+        })))
+        this.$store.commit('showNotification', {
+          message: this.$t('admin:auth.saveSuccess'),
+          style: 'success',
+          icon: 'check'
         })
-        if (_.get(resp, 'data.authentication.updateStrategies.responseResult.succeeded', false)) {
-          this.$store.commit('showNotification', {
-            message: this.$t('admin:auth.saveSuccess'),
-            style: 'success',
-            icon: 'check'
-          })
-        } else {
-          throw new Error(_.get(resp, 'data.authentication.updateStrategies.responseResult.message', this.$t('common:error.unexpected')))
-        }
       } catch (err) {
         this.$store.commit('pushGraphError', err)
       }

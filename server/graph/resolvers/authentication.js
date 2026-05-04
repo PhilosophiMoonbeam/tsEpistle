@@ -160,59 +160,6 @@ module.exports = {
       }
     },
     /**
-     * Update Authentication Strategies
-     */
-    async updateStrategies (obj, args, context) {
-      try {
-        const previousStrategies = await WIKI.models.authentication.getStrategies()
-        for (const str of args.strategies) {
-          const newStr = {
-            displayName: str.displayName,
-            order: str.order,
-            isEnabled: str.isEnabled,
-            config: _.reduce(str.config, (result, value, key) => {
-              _.set(result, `${value.key}`, _.get(JSON.parse(value.value), 'v', null))
-              return result
-            }, {}),
-            selfRegistration: str.selfRegistration,
-            domainWhitelist: { v: str.domainWhitelist },
-            autoEnrollGroups: { v: str.autoEnrollGroups }
-          }
-
-          if (_.some(previousStrategies, ['key', str.key])) {
-            await WIKI.models.authentication.query().patch({
-              key: str.key,
-              strategyKey: str.strategyKey,
-              ...newStr
-            }).where('key', str.key)
-          } else {
-            await WIKI.models.authentication.query().insert({
-              key: str.key,
-              strategyKey: str.strategyKey,
-              ...newStr
-            })
-          }
-        }
-
-        for (const str of _.differenceBy(previousStrategies, args.strategies, 'key')) {
-          const hasUsers = await WIKI.models.users.query().count('* as total').where({ providerKey: str.key }).first()
-          if (_.toSafeInteger(hasUsers.total) > 0) {
-            throw new Error(`Cannot delete ${str.displayName} as 1 or more users are still using it.`)
-          } else {
-            await WIKI.models.authentication.query().delete().where('key', str.key)
-          }
-        }
-
-        await WIKI.auth.activateStrategies()
-        WIKI.events.outbound.emit('reloadAuthStrategies')
-        return {
-          responseResult: graphHelper.generateSuccess('Strategies updated successfully')
-        }
-      } catch (err) {
-        return graphHelper.generateError(err)
-      }
-    },
-    /**
      * Generate New Authentication Public / Private Key Certificates
      */
     async regenerateCertificates (obj, args, context) {

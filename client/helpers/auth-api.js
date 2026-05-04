@@ -161,6 +161,10 @@ async function submitStatusRequest (fetchImpl, path, body, fallbackMessage = 'Au
   return payload
 }
 
+async function updateAdminAuthStrategies (fetchImpl, strategies, fallbackMessage = 'Authentication strategies update failed') {
+  return submitStatusRequest(fetchImpl, '/_api/auth/strategies', { strategies }, fallbackMessage)
+}
+
 async function setAdminApiState (fetchImpl, enabled, fallbackMessage = 'API state update failed') {
   return submitStatusRequest(fetchImpl, '/_api/auth/api/state', { enabled }, fallbackMessage)
 }
@@ -199,6 +203,7 @@ module.exports = {
   fetchAuthStrategies,
   fetchAdminAuthProviders,
   fetchAdminApiBootstrap,
+  updateAdminAuthStrategies,
   setAdminApiState,
   revokeAdminApiKey,
   createAdminApiKey,

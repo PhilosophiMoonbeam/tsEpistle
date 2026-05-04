@@ -95,6 +95,89 @@ const toApiKeyResponse = (apiKey) => ({
   updatedAt: apiKey.updatedAt
 })
 
+const validateAuthStrategyConfig = (config) => {
+  if (!Array.isArray(config)) {
+    return false
+  }
+
+  return config.every(cfg => {
+    if (!cfg || !_.isPlainObject(cfg) || !_.isString(cfg.key) || !_.isString(cfg.value)) {
+      return false
+    }
+    try {
+      JSON.parse(cfg.value)
+      return true
+    } catch (err) {
+      return false
+    }
+  })
+}
+
+const validateAuthStrategyPayload = (strategy) => {
+  if (!strategy || !_.isPlainObject(strategy)) {
+    return false
+  }
+
+  if (!_.isString(strategy.key) || strategy.key.length < 1 || !_.isString(strategy.strategyKey) || strategy.strategyKey.length < 1 || !_.isString(strategy.displayName) || strategy.displayName.length < 1 || !Number.isInteger(strategy.order) || !_.isBoolean(strategy.isEnabled) || !_.isBoolean(strategy.selfRegistration)) {
+    return false
+  }
+
+  if (!Array.isArray(strategy.domainWhitelist) || strategy.domainWhitelist.some(domain => !_.isString(domain))) {
+    return false
+  }
+
+  if (!Array.isArray(strategy.autoEnrollGroups) || strategy.autoEnrollGroups.some(groupId => !Number.isInteger(groupId))) {
+    return false
+  }
+
+  return validateAuthStrategyConfig(strategy.config || [])
+}
+
+const buildAuthStrategyPatch = (strategy) => ({
+  displayName: strategy.displayName,
+  order: strategy.order,
+  isEnabled: strategy.isEnabled,
+  config: _.reduce(strategy.config || [], (result, value) => {
+    _.set(result, `${value.key}`, _.get(JSON.parse(value.value), 'v', null))
+    return result
+  }, {}),
+  selfRegistration: strategy.selfRegistration,
+  domainWhitelist: { v: strategy.domainWhitelist },
+  autoEnrollGroups: { v: strategy.autoEnrollGroups }
+})
+
+const updateAuthenticationStrategies = async (strategies) => {
+  const previousStrategies = await WIKI.models.authentication.getStrategies()
+  for (const strategy of strategies) {
+    const newStrategy = buildAuthStrategyPatch(strategy)
+
+    if (_.some(previousStrategies, ['key', strategy.key])) {
+      await WIKI.models.authentication.query().patch({
+        key: strategy.key,
+        strategyKey: strategy.strategyKey,
+        ...newStrategy
+      }).where('key', strategy.key)
+    } else {
+      await WIKI.models.authentication.query().insert({
+        key: strategy.key,
+        strategyKey: strategy.strategyKey,
+        ...newStrategy
+      })
+    }
+  }
+
+  for (const strategy of _.differenceBy(previousStrategies, strategies, 'key')) {
+    const hasUsers = await WIKI.models.users.query().count('* as total').where({ providerKey: strategy.key }).first()
+    if (_.toSafeInteger(hasUsers.total) > 0) {
+      throw new Error(`Cannot delete ${strategy.displayName} as 1 or more users are still using it.`)
+    }
+    await WIKI.models.authentication.query().delete().where('key', strategy.key)
+  }
+
+  await WIKI.auth.activateStrategies()
+  WIKI.events.outbound.emit('reloadAuthStrategies')
+}
+
 router.get('/strategies', async (req, res, next) => {
   try {
     const strategies = await WIKI.models.authentication.getStrategies()
@@ -112,6 +195,24 @@ router.get('/strategies', async (req, res, next) => {
     }))
   } catch (err) {
     next(err)
+  }
+})
+
+router.post('/strategies', async (req, res) => {
+  if (!requireSystemAccess(req, res)) {
+    return
+  }
+
+  const strategies = _.get(req, 'body.strategies')
+  if (!Array.isArray(strategies) || strategies.some(strategy => !validateAuthStrategyPayload(strategy))) {
+    return res.status(400).json({ error: 'strategies must be an array of valid authentication strategies' })
+  }
+
+  try {
+    await updateAuthenticationStrategies(strategies)
+    res.json({ message: 'Strategies updated successfully' })
+  } catch (err) {
+    res.status(500).json({ error: err.message || 'Authentication strategies update failed' })
   }
 })
 

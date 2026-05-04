@@ -1,4 +1,4 @@
-const { fetchAuthStrategies, fetchAdminAuthProviders, fetchAdminApiBootstrap, setAdminApiState, revokeAdminApiKey, createAdminApiKey, submitAuthRequest, submitStatusRequest, regenerateAuthCertificates, resetGuestUser } = require('./auth-api')
+const { fetchAuthStrategies, fetchAdminAuthProviders, fetchAdminApiBootstrap, updateAdminAuthStrategies, setAdminApiState, revokeAdminApiKey, createAdminApiKey, submitAuthRequest, submitStatusRequest, regenerateAuthCertificates, resetGuestUser } = require('./auth-api')
 
 function createJsonResponse (payload, ok = true, status = ok ? 200 : 400) {
   return {
@@ -434,5 +434,33 @@ describe('auth api helper', () => {
     const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ error: 'guest reset failed' }, false, 500))
 
     await expect(resetGuestUser(fetchImpl)).rejects.toThrow('guest reset failed')
+  })
+
+  test('updates admin authentication strategies with same-origin JSON POST options', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ message: 'Strategies updated successfully' }))
+    const strategies = [{ key: 'local', strategyKey: 'local', config: [], displayName: 'Local', order: 0, isEnabled: true, selfRegistration: false, domainWhitelist: [], autoEnrollGroups: [] }]
+
+    await expect(updateAdminAuthStrategies(fetchImpl, strategies)).resolves.toEqual({ message: 'Strategies updated successfully' })
+    expect(fetchImpl).toHaveBeenCalledWith('/_api/auth/strategies', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ strategies })
+    })
+  })
+
+  test('rejects malformed admin authentication strategy update payloads', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ ok: true }))
+
+    await expect(updateAdminAuthStrategies(fetchImpl, [], 'Bad strategy update')).rejects.toThrow('Bad strategy update')
+  })
+
+  test('propagates admin authentication strategy REST JSON errors', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ error: 'Cannot delete Local as 1 or more users are still using it.' }, false))
+
+    await expect(updateAdminAuthStrategies(fetchImpl, [], 'Bad strategy update')).rejects.toThrow('Cannot delete Local as 1 or more users are still using it.')
   })
 })

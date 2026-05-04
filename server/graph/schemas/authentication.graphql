@@ -60,9 +60,6 @@ type AuthenticationMutation {
     enabled: Boolean!
   ): DefaultResponse @auth(requires: ["manage:system"])
 
-  updateStrategies(
-    strategies: [AuthenticationStrategyInput]!
-  ): DefaultResponse @auth(requires: ["manage:system"])
 
   regenerateCertificates: DefaultResponse @auth(requires: ["manage:system"])
 
@@ -113,16 +110,4 @@ type AuthenticationLoginResponse {
 type AuthenticationRegisterResponse {
   responseResult: ResponseStatus
   jwt: String
-}
-
-input AuthenticationStrategyInput {
-  key: String!
-  strategyKey: String!
-  config: [KeyValuePairInput]
-  displayName: String!
-  order: Int!
-  isEnabled: Boolean!
-  selfRegistration: Boolean!
-  domainWhitelist: [String]!
-  autoEnrollGroups: [Int]!
 }
