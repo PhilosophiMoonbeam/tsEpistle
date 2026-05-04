@@ -41,11 +41,6 @@ type SystemMutation {
     groupMode: SystemImportUsersGroupMode!
   ): SystemImportUsersResponse @auth(requires:  ["manage:system"])
 
-  setHTTPSRedirection(
-    enabled: Boolean!
-  ): DefaultResponse @auth(requires: ["manage:system"])
-
-  renewHTTPSCertificate: DefaultResponse @auth(requires: ["manage:system"])
 
   export(
     entities: [String]!

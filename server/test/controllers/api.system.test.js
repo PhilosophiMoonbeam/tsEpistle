@@ -49,6 +49,23 @@ describe('controllers/api system endpoints', () => {
       auth: {
         checkAccess: jest.fn()
       },
+      Error: {
+        SystemSSLDisabled: class SystemSSLDisabled extends Error {
+          constructor () {
+            super('SSL is disabled')
+          }
+        },
+        SystemSSLRenewInvalidProvider: class SystemSSLRenewInvalidProvider extends Error {
+          constructor () {
+            super('SSL certificate renewal requires the letsencrypt provider')
+          }
+        },
+        SystemSSLLEUnavailable: class SystemSSLLEUnavailable extends Error {
+          constructor () {
+            super("Let's Encrypt server is unavailable")
+          }
+        }
+      },
       config: {
         host: 'https://wiki.example.test',
         server: {
@@ -158,6 +175,7 @@ describe('controllers/api system endpoints', () => {
         }
       },
       servers: {
+        restartServer: jest.fn().mockResolvedValue(true),
         servers: {
           http: {
             address: () => ({ port: 3000 })
@@ -189,6 +207,8 @@ describe('controllers/api system endpoints', () => {
       migratePagesToLocale: express.__router.post.mock.calls.find(([path]) => path === '/content/migrate-locale')[1],
       exportStatus: express.__router.get.mock.calls.find(([path]) => path === '/export-status')[1],
       ssl: express.__router.get.mock.calls.find(([path]) => path === '/ssl')[1],
+      updateSslRedirection: express.__router.patch.mock.calls.find(([path]) => path === '/ssl/redirection')[1],
+      renewSslCertificate: express.__router.post.mock.calls.find(([path]) => path === '/ssl/renew')[1],
       saveFlags: express.__router.post.mock.calls.find(([path]) => path === '/flags')[1],
       checkForUpdate: express.__router.post.mock.calls.find(([path]) => path === '/check-for-update')[1]
     }
@@ -212,13 +232,15 @@ describe('controllers/api system endpoints', () => {
     expect(typeof handlers.migratePagesToLocale).toBe('function')
     expect(typeof handlers.exportStatus).toBe('function')
     expect(typeof handlers.ssl).toBe('function')
+    expect(typeof handlers.updateSslRedirection).toBe('function')
+    expect(typeof handlers.renewSslCertificate).toBe('function')
     expect(typeof handlers.saveFlags).toBe('function')
     expect(typeof handlers.checkForUpdate).toBe('function')
   })
 
   it('returns 403 for unauthorized system requests', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(false)
-    const { info, summary, flags, host, extensions, telemetry, updateTelemetry, resetTelemetryClientId, performUpgrade, flushSystemCache, flushSystemTemporaryUploads, rebuildPageTree, migratePagesToLocale, exportStatus, ssl, saveFlags, checkForUpdate } = loadHandlers()
+    const { info, summary, flags, host, extensions, telemetry, updateTelemetry, resetTelemetryClientId, performUpgrade, flushSystemCache, flushSystemTemporaryUploads, rebuildPageTree, migratePagesToLocale, exportStatus, ssl, updateSslRedirection, renewSslCertificate, saveFlags, checkForUpdate } = loadHandlers()
     const req = { user: { permissions: [] }, get: jest.fn() }
     const res = { sendStatus: jest.fn(), json: jest.fn() }
 
@@ -237,11 +259,13 @@ describe('controllers/api system endpoints', () => {
     await migratePagesToLocale(req, res)
     await exportStatus(req, res)
     await ssl(req, res)
+    await updateSslRedirection(req, res)
+    await renewSslCertificate(req, res)
     await saveFlags(req, res)
     await checkForUpdate(req, res)
 
-    expect(res.sendStatus).toHaveBeenCalledTimes(17)
-    for (let idx = 1; idx <= 17; idx++) {
+    expect(res.sendStatus).toHaveBeenCalledTimes(19)
+    for (let idx = 1; idx <= 19; idx++) {
       expect(res.sendStatus).toHaveBeenNthCalledWith(idx, 403)
     }
     expect(res.json).not.toHaveBeenCalled()
@@ -813,6 +837,107 @@ describe('controllers/api system endpoints', () => {
       sslStatus: 'OK',
       sslSubscriberEmail: null
     })
+  })
+
+  it('updates HTTPS redirection through REST', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValue(true)
+    const { updateSslRedirection } = loadHandlers()
+    const req = { user: { permissions: ['manage:system'] }, body: { enabled: true } }
+    const res = { json: jest.fn(), sendStatus: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await updateSslRedirection(req, res)
+
+    expect(global.WIKI.config.server.sslRedir).toBe(true)
+    expect(global.WIKI.configSvc.saveToDb).toHaveBeenCalledWith(['server'])
+    expect(res.json).toHaveBeenCalledWith({ message: 'HTTP Redirection state set successfully.' })
+  })
+
+  it('rejects malformed HTTPS redirection payloads with 400', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValue(true)
+    const { updateSslRedirection } = loadHandlers()
+    const req = { user: { permissions: ['manage:system'] }, body: { enabled: 'yes' } }
+    const res = { json: jest.fn(), sendStatus: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await updateSslRedirection(req, res)
+
+    expect(global.WIKI.configSvc.saveToDb).not.toHaveBeenCalled()
+    expect(res.status).toHaveBeenCalledWith(400)
+    expect(res.json).toHaveBeenCalledWith({ error: 'enabled must be a boolean' })
+  })
+
+  it('returns JSON errors when HTTPS redirection persistence fails', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValue(true)
+    global.WIKI.configSvc.saveToDb.mockRejectedValueOnce(new Error('server save failed'))
+    const { updateSslRedirection } = loadHandlers()
+    const req = { user: { permissions: ['manage:system'] }, body: { enabled: true } }
+    const res = { json: jest.fn(), sendStatus: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await updateSslRedirection(req, res)
+
+    expect(res.status).toHaveBeenCalledWith(500)
+    expect(res.json).toHaveBeenCalledWith({ error: 'server save failed' })
+  })
+
+  it('renews letsencrypt SSL certificates through REST', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValue(true)
+    global.WIKI.config.ssl = { enabled: true, provider: 'letsencrypt' }
+    global.WIKI.servers.le = { requestCertificate: jest.fn().mockResolvedValue(true) }
+    const { renewSslCertificate } = loadHandlers()
+    const req = { user: { permissions: ['manage:system'] } }
+    const res = { json: jest.fn(), sendStatus: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await renewSslCertificate(req, res)
+
+    expect(global.WIKI.servers.le.requestCertificate).toHaveBeenCalled()
+    expect(global.WIKI.servers.restartServer).toHaveBeenCalledWith('https')
+    expect(res.json).toHaveBeenCalledWith({ message: 'SSL Certificate renewed successfully.' })
+  })
+
+  it('rejects SSL certificate renewal when SSL is disabled', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValue(true)
+    global.WIKI.config.ssl = { enabled: false, provider: 'letsencrypt' }
+    global.WIKI.servers.le = { requestCertificate: jest.fn().mockResolvedValue(true) }
+    const { renewSslCertificate } = loadHandlers()
+    const req = { user: { permissions: ['manage:system'] } }
+    const res = { json: jest.fn(), sendStatus: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await renewSslCertificate(req, res)
+
+    expect(global.WIKI.servers.le.requestCertificate).not.toHaveBeenCalled()
+    expect(global.WIKI.servers.restartServer).not.toHaveBeenCalled()
+    expect(res.status).toHaveBeenCalledWith(500)
+    expect(res.json).toHaveBeenCalledWith({ error: 'SSL is disabled' })
+  })
+
+  it('rejects SSL certificate renewal for non-letsencrypt providers', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValue(true)
+    global.WIKI.config.ssl = { enabled: true, provider: 'custom' }
+    global.WIKI.servers.le = { requestCertificate: jest.fn().mockResolvedValue(true) }
+    const { renewSslCertificate } = loadHandlers()
+    const req = { user: { permissions: ['manage:system'] } }
+    const res = { json: jest.fn(), sendStatus: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await renewSslCertificate(req, res)
+
+    expect(global.WIKI.servers.le.requestCertificate).not.toHaveBeenCalled()
+    expect(global.WIKI.servers.restartServer).not.toHaveBeenCalled()
+    expect(res.status).toHaveBeenCalledWith(500)
+    expect(res.json).toHaveBeenCalledWith({ error: 'SSL certificate renewal requires the letsencrypt provider' })
+  })
+
+  it('rejects SSL certificate renewal when letsencrypt server is unavailable', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValue(true)
+    global.WIKI.config.ssl = { enabled: true, provider: 'letsencrypt' }
+    delete global.WIKI.servers.le
+    const { renewSslCertificate } = loadHandlers()
+    const req = { user: { permissions: ['manage:system'] } }
+    const res = { json: jest.fn(), sendStatus: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await renewSslCertificate(req, res)
+
+    expect(global.WIKI.servers.restartServer).not.toHaveBeenCalled()
+    expect(res.status).toHaveBeenCalledWith(500)
+    expect(res.json).toHaveBeenCalledWith({ error: "Let's Encrypt server is unavailable" })
   })
 
   it('returns 400 when the system flags update receives a non-array payload', async () => {

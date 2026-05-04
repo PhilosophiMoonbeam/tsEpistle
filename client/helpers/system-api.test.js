@@ -1,4 +1,4 @@
-const { fetchSystemSummary, fetchSystemInfo, fetchSystemTelemetry, fetchSystemExportStatus, fetchSystemHost, fetchSystemSsl, fetchSystemFlags, fetchSystemExtensions, updateSystemFlags, updateSystemTelemetry, resetSystemTelemetryClientId, flushSystemCache, flushSystemTemporaryUploads, rebuildPageTree, migratePagesToLocale, performSystemUpgrade } = require('./system-api')
+const { fetchSystemSummary, fetchSystemInfo, fetchSystemTelemetry, fetchSystemExportStatus, fetchSystemHost, fetchSystemSsl, updateSystemSslRedirection, renewSystemSslCertificate, fetchSystemFlags, fetchSystemExtensions, updateSystemFlags, updateSystemTelemetry, resetSystemTelemetryClientId, flushSystemCache, flushSystemTemporaryUploads, rebuildPageTree, migratePagesToLocale, performSystemUpgrade } = require('./system-api')
 
 function createJsonResponse (payload, ok = true) {
   return {
@@ -727,5 +727,57 @@ describe('system api helper', () => {
     const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ error: 'companion missing' }, false))
 
     await expect(performSystemUpgrade(fetchImpl, 'Bad upgrade')).rejects.toThrow('companion missing')
+  })
+
+  test('updates SSL redirection through REST', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ message: 'HTTP Redirection state set successfully.' }))
+
+    await expect(updateSystemSslRedirection(fetchImpl, true)).resolves.toEqual({ message: 'HTTP Redirection state set successfully.' })
+    expect(fetchImpl).toHaveBeenCalledWith('/_api/system/ssl/redirection', {
+      method: 'PATCH',
+      credentials: 'same-origin',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ enabled: true })
+    })
+  })
+
+  test('rejects malformed SSL redirection update responses', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ message: '' }))
+
+    await expect(updateSystemSslRedirection(fetchImpl, false, 'Bad SSL redirection')).rejects.toThrow('Bad SSL redirection')
+  })
+
+  test('surfaces API error messages for failed SSL redirection updates', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ error: 'enabled must be a boolean' }, false))
+
+    await expect(updateSystemSslRedirection(fetchImpl, 'yes', 'Bad SSL redirection')).rejects.toThrow('enabled must be a boolean')
+  })
+
+  test('renews SSL certificates through REST', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ message: 'SSL Certificate renewed successfully.' }))
+
+    await expect(renewSystemSslCertificate(fetchImpl)).resolves.toEqual({ message: 'SSL Certificate renewed successfully.' })
+    expect(fetchImpl).toHaveBeenCalledWith('/_api/system/ssl/renew', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: {
+        Accept: 'application/json'
+      }
+    })
+  })
+
+  test('rejects malformed SSL certificate renewal responses', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ ok: true }))
+
+    await expect(renewSystemSslCertificate(fetchImpl, 'Bad SSL renew')).rejects.toThrow('Bad SSL renew')
+  })
+
+  test('surfaces API error messages for failed SSL certificate renewals', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ error: 'SSL is disabled' }, false))
+
+    await expect(renewSystemSslCertificate(fetchImpl, 'Bad SSL renew')).rejects.toThrow('SSL is disabled')
   })
 })

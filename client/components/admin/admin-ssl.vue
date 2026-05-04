@@ -124,11 +124,9 @@
 
 <script>
 import _ from 'lodash'
-import gql from 'graphql-tag'
-
 import { SemipolarSpinner } from 'epic-spinners'
-import { fetchSystemSsl } from '../../helpers/system-api'
-import { loadingStart, loadingStop, setLoading, showNotification, pushGraphError } from '../../helpers/root-ui-store'
+import { fetchSystemSsl, renewSystemSslCertificate, updateSystemSslRedirection } from '../../helpers/system-api'
+import { loadingStart, loadingStop, showNotification, pushGraphError } from '../../helpers/root-ui-store'
 
 const makeDefaultSslInfo = () => ({
   sslDomain: null,
@@ -184,30 +182,13 @@ export default {
     },
     async toggleRedir () {
       this.loadingRedir = true
+      loadingStart(this.$store, 'admin-ssl-toggleRedirection')
       try {
         this.info.httpRedirection = !this.info.httpRedirection
-        await this.$apollo.mutate({
-          mutation: gql`
-            mutation ($enabled: Boolean!) {
-              system {
-                setHTTPSRedirection(enabled: $enabled) {
-                  responseResult {
-                    succeeded
-                    errorCode
-                    slug
-                    message
-                  }
-                }
-              }
-            }
-          `,
-          variables: {
-            enabled: _.get(this.info, 'httpRedirection', false)
-          },
-          watchLoading (isLoading) {
-            setLoading(this.$store, 'admin-ssl-toggleRedirection', isLoading)
-          }
-        })
+        await updateSystemSslRedirection(
+          window.fetch.bind(window),
+          _.get(this.info, 'httpRedirection', false)
+        )
         showNotification(this.$store, {
           style: 'success',
           message: this.$t('admin:ssl.httpPortRedirectSaveSuccess'),
@@ -216,45 +197,27 @@ export default {
       } catch (err) {
         this.info.httpRedirection = !this.info.httpRedirection
         pushGraphError(this.$store, err)
+      } finally {
+        loadingStop(this.$store, 'admin-ssl-toggleRedirection')
+        this.loadingRedir = false
       }
-      this.loadingRedir = false
     },
     async renewCertificate () {
       this.loadingRenew = true
+      loadingStart(this.$store, 'admin-ssl-renew')
       try {
-        const respRaw = await this.$apollo.mutate({
-          mutation: gql`
-            mutation {
-              system {
-                renewHTTPSCertificate {
-                  responseResult {
-                    succeeded
-                    errorCode
-                    slug
-                    message
-                  }
-                }
-              }
-            }
-          `,
-          watchLoading (isLoading) {
-            setLoading(this.$store, 'admin-ssl-renew', isLoading)
-          }
+        await renewSystemSslCertificate(window.fetch.bind(window))
+        showNotification(this.$store, {
+          style: 'success',
+          message: this.$t('admin:ssl.renewCertificateSuccess'),
+          icon: 'check'
         })
-        const resp = _.get(respRaw, 'data.system.renewHTTPSCertificate.responseResult', {})
-        if (resp.succeeded) {
-          showNotification(this.$store, {
-            style: 'success',
-            message: this.$t('admin:ssl.renewCertificateSuccess'),
-            icon: 'check'
-          })
-        } else {
-          throw new Error(resp.message)
-        }
       } catch (err) {
         pushGraphError(this.$store, err)
+      } finally {
+        loadingStop(this.$store, 'admin-ssl-renew')
+        this.loadingRenew = false
       }
-      this.loadingRenew = false
     }
   }
 }

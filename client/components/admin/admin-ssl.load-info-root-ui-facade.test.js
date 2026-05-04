@@ -78,10 +78,10 @@ describe('admin-ssl loadInfo root UI facade migration guard', () => {
     expect(rootUiImportMatch).not.toBeNull()
 
     expect(script).toMatch(
-      /import\s+\{(?=[^}]*\bloadingStart\b)(?=[^}]*\bloadingStop\b)(?=[^}]*\bsetLoading\b)(?=[^}]*\bshowNotification\b)(?=[^}]*\bpushGraphError\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/root-ui-store['"]/
+      /import\s+\{(?=[^}]*\bloadingStart\b)(?=[^}]*\bloadingStop\b)(?=[^}]*\bshowNotification\b)(?=[^}]*\bpushGraphError\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/root-ui-store['"]/
     )
     expect(script).toMatch(
-      /import\s+\{\s*fetchSystemSsl\s*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/system-api['"]/
+      /import\s+\{(?=[^}]*\bfetchSystemSsl\b)(?=[^}]*\bupdateSystemSslRedirection\b)(?=[^}]*\brenewSystemSslCertificate\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/system-api['"]/
     )
   })
 
@@ -96,21 +96,29 @@ describe('admin-ssl loadInfo root UI facade migration guard', () => {
     expect(loadInfo.match(/\bloadingStop\s*\(/g) || []).toHaveLength(1)
   })
 
-  test('toggleRedir() and renewCertificate() route root UI commits through facades while preserving behavior', () => {
+  test('toggleRedir() and renewCertificate() use REST helpers and root UI facades while preserving behavior', () => {
     expect(toggleRedir).not.toBeNull()
     expect(renewCertificate).not.toBeNull()
 
-    expect(toggleRedir).toMatch(/setLoading\s*\(\s*this\.\$store\s*,\s*['"]admin-ssl-toggleRedirection['"]\s*,\s*isLoading\s*\)/)
+    expect(script).not.toMatch(/graphql-tag/)
+    expect(script).not.toMatch(/this\.\$apollo|gql`|setHTTPSRedirection|renewHTTPSCertificate/)
+
+    expect(toggleRedir).toMatch(/loadingStart\s*\(\s*this\.\$store\s*,\s*['"]admin-ssl-toggleRedirection['"]\s*\)/)
+    expect(toggleRedir).toMatch(/updateSystemSslRedirection\s*\(\s*window\.fetch\.bind\(\s*window\s*\)\s*,\s*_.get\(\s*this\.info\s*,\s*['"]httpRedirection['"]\s*,\s*false\s*\)\s*\)/)
     expect(toggleRedir).toMatch(/showNotification\s*\(\s*this\.\$store\s*,\s*\{[\s\S]*?admin:ssl\.httpPortRedirectSaveSuccess[\s\S]*?\}\s*\)/)
     expect(toggleRedir).toMatch(/pushGraphError\s*\(\s*this\.\$store\s*,\s*err\s*\)/)
     expect(toggleRedir).toMatch(/this\.info\.httpRedirection\s*=\s*!this\.info\.httpRedirection[\s\S]*catch\s*\(\s*err\s*\)\s*\{\s*this\.info\.httpRedirection\s*=\s*!this\.info\.httpRedirection/)
+    expect(toggleRedir).toMatch(/loadingStop\s*\(\s*this\.\$store\s*,\s*['"]admin-ssl-toggleRedirection['"]\s*\)/)
+    expect(toggleRedir).toMatch(/this\.loadingRedir\s*=\s*false/)
     expect(toggleRedir).not.toMatch(directRootUiCommit)
     expect(toggleRedir).not.toMatch(/this\.\$store\.commit\s*\(/)
 
-    expect(renewCertificate).toMatch(/setLoading\s*\(\s*this\.\$store\s*,\s*['"]admin-ssl-renew['"]\s*,\s*isLoading\s*\)/)
+    expect(renewCertificate).toMatch(/loadingStart\s*\(\s*this\.\$store\s*,\s*['"]admin-ssl-renew['"]\s*\)/)
+    expect(renewCertificate).toMatch(/renewSystemSslCertificate\s*\(\s*window\.fetch\.bind\(\s*window\s*\)\s*\)/)
     expect(renewCertificate).toMatch(/showNotification\s*\(\s*this\.\$store\s*,\s*\{[\s\S]*?admin:ssl\.renewCertificateSuccess[\s\S]*?\}\s*\)/)
-    expect(renewCertificate).toMatch(/throw\s+new\s+Error\s*\(\s*resp\.message\s*\)/)
     expect(renewCertificate).toMatch(/pushGraphError\s*\(\s*this\.\$store\s*,\s*err\s*\)/)
+    expect(renewCertificate).toMatch(/loadingStop\s*\(\s*this\.\$store\s*,\s*['"]admin-ssl-renew['"]\s*\)/)
+    expect(renewCertificate).toMatch(/this\.loadingRenew\s*=\s*false/)
     expect(renewCertificate).not.toMatch(directRootUiCommit)
     expect(renewCertificate).not.toMatch(/this\.\$store\.commit\s*\(/)
   })

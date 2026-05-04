@@ -274,6 +274,42 @@ async function fetchSystemSsl (fetchImpl, fallbackMessage = 'SSL status response
   return normalizeSystemSslPayload(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
 }
 
+async function updateSystemSslRedirection (fetchImpl, enabled, fallbackMessage = 'HTTP Redirection update failed') {
+  const response = await fetchImpl('/_api/system/ssl/redirection', {
+    method: 'PATCH',
+    credentials: 'same-origin',
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ enabled })
+  })
+
+  const payload = await parseJsonResponse(response, fallbackMessage)
+  if (!payload || typeof payload.message !== 'string' || payload.message.length < 1) {
+    throw new Error(fallbackMessage)
+  }
+
+  return payload
+}
+
+async function renewSystemSslCertificate (fetchImpl, fallbackMessage = 'SSL Certificate renewal failed') {
+  const response = await fetchImpl('/_api/system/ssl/renew', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: {
+      Accept: 'application/json'
+    }
+  })
+
+  const payload = await parseJsonResponse(response, fallbackMessage)
+  if (!payload || typeof payload.message !== 'string' || payload.message.length < 1) {
+    throw new Error(fallbackMessage)
+  }
+
+  return payload
+}
+
 async function fetchSystemFlags (fetchImpl, fallbackMessage = 'System flags response is invalid') {
   const response = await fetchImpl('/_api/system/flags', {
     credentials: 'same-origin',
@@ -453,6 +489,8 @@ module.exports = {
   fetchSystemExportStatus,
   fetchSystemHost,
   fetchSystemSsl,
+  updateSystemSslRedirection,
+  renewSystemSslCertificate,
   fetchSystemFlags,
   fetchSystemExtensions,
   updateSystemFlags,

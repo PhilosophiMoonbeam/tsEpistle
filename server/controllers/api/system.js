@@ -353,6 +353,47 @@ router.get('/ssl', (req, res) => {
   res.json(buildSystemSslInfo())
 })
 
+router.patch('/ssl/redirection', async (req, res) => {
+  if (!requireSystemAccess(req, res)) {
+    return
+  }
+
+  const enabled = _.get(req, 'body.enabled')
+  if (!_.isBoolean(enabled)) {
+    return res.status(400).json({ error: 'enabled must be a boolean' })
+  }
+
+  try {
+    _.set(WIKI.config, 'server.sslRedir', enabled)
+    await WIKI.configSvc.saveToDb(['server'])
+    res.json({ message: 'HTTP Redirection state set successfully.' })
+  } catch (err) {
+    res.status(500).json({ error: err.message || 'HTTP Redirection update failed' })
+  }
+})
+
+router.post('/ssl/renew', async (req, res) => {
+  if (!requireSystemAccess(req, res)) {
+    return
+  }
+
+  try {
+    if (!WIKI.config.ssl.enabled) {
+      throw new WIKI.Error.SystemSSLDisabled()
+    } else if (WIKI.config.ssl.provider !== 'letsencrypt') {
+      throw new WIKI.Error.SystemSSLRenewInvalidProvider()
+    } else if (!WIKI.servers.le) {
+      throw new WIKI.Error.SystemSSLLEUnavailable()
+    } else {
+      await WIKI.servers.le.requestCertificate()
+      await WIKI.servers.restartServer('https')
+      res.json({ message: 'SSL Certificate renewed successfully.' })
+    }
+  } catch (err) {
+    res.status(500).json({ error: err.message || 'SSL Certificate renewal failed' })
+  }
+})
+
 router.post('/flags', async (req, res, next) => {
   if (!requireSystemAccess(req, res)) {
     return

@@ -18,7 +18,7 @@
   "include": [
     "client/helpers/*-api.js",
     "client/helpers/*-api.ts",
-    "client/helpers/page-actions.js",
+    "client/helpers/page-actions.ts",
     "client/helpers/root-ui-store.js",
     "client/helpers/search-navigation-events.ts",
     "client/helpers/page-action-events.ts",

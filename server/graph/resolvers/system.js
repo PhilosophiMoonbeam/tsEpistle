@@ -221,39 +221,6 @@ module.exports = {
       }
     },
     /**
-     * Set HTTPS Redirection State
-     */
-    async setHTTPSRedirection (obj, args, context) {
-      _.set(WIKI.config, 'server.sslRedir', args.enabled)
-      await WIKI.configSvc.saveToDb(['server'])
-      return {
-        responseResult: graphHelper.generateSuccess('HTTP Redirection state set successfully.')
-      }
-    },
-    /**
-     * Renew SSL Certificate
-     */
-    async renewHTTPSCertificate (obj, args, context) {
-      try {
-        if (!WIKI.config.ssl.enabled) {
-          throw new WIKI.Error.SystemSSLDisabled()
-        } else if (WIKI.config.ssl.provider !== `letsencrypt`) {
-          throw new WIKI.Error.SystemSSLRenewInvalidProvider()
-        } else if (!WIKI.servers.le) {
-          throw new WIKI.Error.SystemSSLLEUnavailable()
-        } else {
-          await WIKI.servers.le.requestCertificate()
-          await WIKI.servers.restartServer('https')
-          return {
-            responseResult: graphHelper.generateSuccess('SSL Certificate renewed successfully.')
-          }
-        }
-      } catch (err) {
-        return graphHelper.generateError(err)
-      }
-    },
-
-    /**
      * Export Wiki to Disk
      */
     async export (obj, args, context) {
