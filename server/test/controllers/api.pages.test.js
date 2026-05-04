@@ -38,6 +38,7 @@ describe('controllers/api pages endpoints', () => {
           })
         },
         pages: {
+          deletePage: jest.fn().mockResolvedValue(undefined),
           query: jest.fn().mockReturnValue({
             column: jest.fn().mockReturnValue({
               withGraphJoined: jest.fn().mockReturnValue({
@@ -81,6 +82,7 @@ describe('controllers/api pages endpoints', () => {
     const express = require('express')
     require('../../controllers/api/pages')
     return {
+      deletePage: express.__router.delete.mock.calls.find(([path]) => path === '/:id')[1],
       deleteTag: express.__router.delete.mock.calls.find(([path]) => path === '/tags/:id')[1],
       recent: express.__router.get.mock.calls.find(([path]) => path === '/recent')[1],
       updateTag: express.__router.patch.mock.calls.find(([path]) => path === '/tags/:id')[1]
@@ -173,6 +175,97 @@ describe('controllers/api pages endpoints', () => {
 
     expect(next).toHaveBeenCalledWith(expect.any(Error))
     expect(next.mock.calls[0][0].message).toBe('pages db down')
+  })
+
+  it('registers the page delete route', () => {
+    const { deletePage } = loadHandler()
+
+    expect(typeof deletePage).toBe('function')
+  })
+
+  it('requires delete:pages or manage:system for page deletes', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValueOnce(false)
+    const { deletePage } = loadHandler()
+    const req = { user: { permissions: ['read:pages'] }, params: { id: '7' } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await deletePage(req, res)
+
+    expect(global.WIKI.auth.checkAccess).toHaveBeenCalledWith({ permissions: ['read:pages'] }, ['delete:pages', 'manage:system'])
+    expect(res.status).toHaveBeenCalledWith(403)
+    expect(res.json).toHaveBeenCalledWith({ error: 'delete:pages or manage:system is required' })
+    expect(global.WIKI.models.pages.deletePage).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['0'],
+    ['1.9'],
+    ['Infinity'],
+    ['9007199254740992']
+  ])('rejects invalid page delete ids: %s', async (id) => {
+    const { deletePage } = loadHandler()
+    const req = { user: { permissions: ['delete:pages'] }, params: { id } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await deletePage(req, res)
+
+    expect(res.status).toHaveBeenCalledWith(400)
+    expect(res.json).toHaveBeenCalledWith({ error: 'id must be a positive integer' })
+    expect(global.WIKI.models.pages.deletePage).not.toHaveBeenCalled()
+  })
+
+  it('deletes pages through the model with GraphQL-compatible user context', async () => {
+    const { deletePage } = loadHandler()
+    const req = { user: { id: 5, permissions: ['delete:pages'] }, params: { id: '7' } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await deletePage(req, res)
+
+    expect(global.WIKI.models.pages.deletePage).toHaveBeenCalledWith({
+      id: 7,
+      user: { id: 5, permissions: ['delete:pages'] }
+    })
+    expect(res.json).toHaveBeenCalledWith({ message: 'Page has been deleted.' })
+  })
+
+  it('maps page delete not-found failures to JSON 404 errors', async () => {
+    const err = new Error('This page does not exist.')
+    err.name = 'PageNotFound'
+    global.WIKI.models.pages.deletePage.mockRejectedValueOnce(err)
+    const { deletePage } = loadHandler()
+    const req = { user: { permissions: ['delete:pages'] }, params: { id: '7' } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await deletePage(req, res)
+
+    expect(res.status).toHaveBeenCalledWith(404)
+    expect(res.json).toHaveBeenCalledWith({ error: 'This page does not exist.' })
+  })
+
+  it('maps page delete model authorization failures to JSON 403 errors', async () => {
+    const err = new Error('You are not authorized to delete this page.')
+    err.name = 'PageDeleteForbidden'
+    global.WIKI.models.pages.deletePage.mockRejectedValueOnce(err)
+    const { deletePage } = loadHandler()
+    const req = { user: { permissions: ['delete:pages'] }, params: { id: '7' } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await deletePage(req, res)
+
+    expect(res.status).toHaveBeenCalledWith(403)
+    expect(res.json).toHaveBeenCalledWith({ error: 'You are not authorized to delete this page.' })
+  })
+
+  it('returns JSON errors for unexpected page delete failures', async () => {
+    global.WIKI.models.pages.deletePage.mockRejectedValueOnce(new Error('page db down'))
+    const { deletePage } = loadHandler()
+    const req = { user: { permissions: ['delete:pages'] }, params: { id: '7' } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await deletePage(req, res)
+
+    expect(res.status).toHaveBeenCalledWith(500)
+    expect(res.json).toHaveBeenCalledWith({ error: 'page db down' })
   })
 
   it('registers the tag update route', () => {

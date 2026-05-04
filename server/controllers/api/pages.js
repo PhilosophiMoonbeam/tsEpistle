@@ -14,6 +14,15 @@ const requireSystemAccess = (req, res) => {
   return true
 }
 
+const requirePageDeleteAccess = (req, res) => {
+  if (!WIKI.auth.checkAccess(req.user, ['delete:pages', 'manage:system'])) {
+    res.status(403).json({ error: 'delete:pages or manage:system is required' })
+    return false
+  }
+
+  return true
+}
+
 const requireRecentPagesAccess = (req, res) => {
   if (!WIKI.auth.checkAccess(req.user, ['manage:system', 'read:pages'])) {
     res.status(403).json({ error: 'manage:system or read:pages is required' })
@@ -51,6 +60,38 @@ router.get('/recent', async (req, res, next) => {
     })))
   } catch (err) {
     return next(err)
+  }
+})
+
+router.delete('/:id', async (req, res) => {
+  if (!requirePageDeleteAccess(req, res)) {
+    return
+  }
+
+  const rawId = _.get(req, 'params.id')
+  if (!_.isString(rawId) || !/^[1-9]\d*$/.test(rawId)) {
+    return res.status(400).json({ error: 'id must be a positive integer' })
+  }
+
+  const id = Number(rawId)
+  if (!Number.isSafeInteger(id)) {
+    return res.status(400).json({ error: 'id must be a positive integer' })
+  }
+
+  try {
+    await WIKI.models.pages.deletePage({
+      id,
+      user: req.user
+    })
+    res.json({ message: 'Page has been deleted.' })
+  } catch (err) {
+    if (err.name === 'PageNotFound') {
+      return res.status(404).json({ error: err.message || 'This page does not exist.' })
+    }
+    if (err.name === 'PageDeleteForbidden') {
+      return res.status(403).json({ error: err.message || 'You are not authorized to delete this page.' })
+    }
+    res.status(500).json({ error: err.message || 'Page delete failed' })
   }
 })
 

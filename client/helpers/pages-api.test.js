@@ -1,4 +1,4 @@
-const { deletePageTag, fetchRecentPages, updatePageTag } = require('./pages-api')
+const { deletePage, deletePageTag, fetchRecentPages, updatePageTag } = require('./pages-api')
 
 function createJsonResponse (payload, ok = true) {
   return {
@@ -83,6 +83,32 @@ describe('pages api helper', () => {
     })
 
     await expect(fetchRecentPages(fetchImpl, 'Bad recent pages payload')).rejects.toThrow('manage:system or read:pages is required')
+  })
+
+  test('deletes pages with same-origin JSON DELETE', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ message: 'Page has been deleted.' }))
+
+    await expect(deletePage(fetchImpl, 7)).resolves.toEqual({ message: 'Page has been deleted.' })
+
+    expect(fetchImpl).toHaveBeenCalledWith('/_api/pages/7', {
+      method: 'DELETE',
+      credentials: 'same-origin',
+      headers: {
+        Accept: 'application/json'
+      }
+    })
+  })
+
+  test('surfaces API error messages for failed page delete requests', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ error: 'This page does not exist.' }, false))
+
+    await expect(deletePage(fetchImpl, 7)).rejects.toThrow('This page does not exist.')
+  })
+
+  test('rejects malformed successful page delete responses', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({}))
+
+    await expect(deletePage(fetchImpl, 7, 'Bad page delete response')).rejects.toThrow('Bad page delete response')
   })
 
   test('updates page tags with same-origin JSON PATCH', async () => {

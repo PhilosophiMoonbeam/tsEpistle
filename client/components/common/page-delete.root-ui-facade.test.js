@@ -59,6 +59,9 @@ describe('page-delete root UI facade migration guard', () => {
 
   test('imports the root UI facade helpers used by deletePage', () => {
     expect(script).toMatch(/import\s+\{\s*loadingStart\s*,\s*loadingStop\s*,\s*pushGraphError\s*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/root-ui-store['"]/)
+    expect(script).toContain("import { deletePage as deletePageById } from '../../helpers/pages-api'")
+    expect(script).not.toContain('common-pages-mutation-delete.gql')
+    expect(script).not.toContain('deletePageMutation')
   })
 
   test('deletePage routes loading and GraphQL errors through the facade', () => {
@@ -69,13 +72,15 @@ describe('page-delete root UI facade migration guard', () => {
     expect(deletePage).not.toMatch(/this\.\$store\.commit\([\s\S]{0,200}(?:['"]page-delete['"]|['"]pushGraphError['"])/)
   })
 
-  test('deletePage preserves mutation, redirect, and local loading behavior', () => {
+  test('deletePage preserves REST delete, redirect, and local loading behavior', () => {
     expect(deletePage).toContain('this.loading = true')
     expect(deletePage).toContain('this.$nextTick(async () => {')
-    expect(deletePage).toContain('const resp = await this.$apollo.mutate({')
-    expect(deletePage).toContain('mutation: deletePageMutation')
-    expect(deletePage).toContain('id: this.pageId')
-    expect(deletePage).toContain("_.get(resp, 'data.pages.delete.responseResult.succeeded', false)")
+    expect(deletePage).toContain('await deletePageById(')
+    expect(deletePage).toContain('window.fetch.bind(window)')
+    expect(deletePage).toContain('this.pageId')
+    expect(deletePage).toContain("this.$t('common:error.unexpected')")
+    expect(deletePage).not.toContain('this.$apollo.mutate')
+    expect(deletePage).not.toContain('data.pages.delete.responseResult')
     expect(deletePage).toContain('this.isShown = false')
     expect(deletePage).toContain("document.body.classList.add('page-deleted')")
     expect(deletePage).toContain("window.location.assign('/')")

@@ -165,7 +165,7 @@ import _ from 'lodash'
 import { StatusIndicator } from 'vue-status-indicator'
 
 import pageQuery from 'gql/admin/pages/pages-query-single.gql'
-import deletePageMutation from 'gql/common/common-pages-mutation-delete.gql'
+import { deletePage as deletePageById } from '../../helpers/pages-api'
 
 export default {
   components: {
@@ -183,22 +183,17 @@ export default {
       this.loading = true
       this.$store.commit(`loadingStart`, 'page-delete')
       try {
-        const resp = await this.$apollo.mutate({
-          mutation: deletePageMutation,
-          variables: {
-            id: this.page.id
-          }
+        await deletePageById(
+          window.fetch.bind(window),
+          this.page.id,
+          this.$t('common:error.unexpected')
+        )
+        this.$store.commit('showNotification', {
+          style: 'green',
+          message: `Page deleted successfully.`,
+          icon: 'check'
         })
-        if (_.get(resp, 'data.pages.delete.responseResult.succeeded', false)) {
-          this.$store.commit('showNotification', {
-            style: 'green',
-            message: `Page deleted successfully.`,
-            icon: 'check'
-          })
-          this.$router.replace('/pages')
-        } else {
-          throw new Error(_.get(resp, 'data.pages.delete.responseResult.message', this.$t('common:error.unexpected')))
-        }
+        this.$router.replace('/pages')
       } catch (err) {
         this.$store.commit('pushGraphError', err)
       }

@@ -29,7 +29,7 @@ import _ from 'lodash'
 import { get } from 'vuex-pathify'
 
 import { loadingStart, loadingStop, pushGraphError } from '../../helpers/root-ui-store'
-import deletePageMutation from 'gql/common/common-pages-mutation-delete.gql'
+import { deletePage as deletePageById } from '../../helpers/pages-api'
 
 export default {
   props: {
@@ -70,23 +70,18 @@ export default {
       loadingStart(this.$store, 'page-delete')
       this.$nextTick(async () => {
         try {
-          const resp = await this.$apollo.mutate({
-            mutation: deletePageMutation,
-            variables: {
-              id: this.pageId
-            }
-          })
-          if (_.get(resp, 'data.pages.delete.responseResult.succeeded', false)) {
-            this.isShown = false
+          await deletePageById(
+            window.fetch.bind(window),
+            this.pageId,
+            this.$t('common:error.unexpected')
+          )
+          this.isShown = false
+          _.delay(() => {
+            document.body.classList.add('page-deleted')
             _.delay(() => {
-              document.body.classList.add('page-deleted')
-              _.delay(() => {
-                window.location.assign('/')
-              }, 1200)
-            }, 400)
-          } else {
-            throw new Error(_.get(resp, 'data.pages.delete.responseResult.message', this.$t('common:error.unexpected')))
-          }
+              window.location.assign('/')
+            }, 1200)
+          }, 400)
         } catch (err) {
           pushGraphError(this.$store, err)
         }
