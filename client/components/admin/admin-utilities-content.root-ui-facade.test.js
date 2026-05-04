@@ -28,6 +28,7 @@ describe('admin utilities content REST facades', () => {
 
   test('imports REST content helpers and no obsolete content mutation documents', () => {
     expect(script).toMatch(/import\s+\{\s*loadingStart,\s*loadingStop,\s*showNotification,\s*pushGraphError\s*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/root-ui-store['"]/)
+    expect(script).toMatch(/import\s+\{\s*fetchPageList\s*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/pages-api['"]/)
     expect(script).toMatch(/import\s+\{\s*migratePagesToLocale,\s*purgePageHistory,\s*rebuildPageTree,\s*renderPage\s*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/system-api['"]/)
     expect(script).not.toMatch(/utilities-mutation-content-(?:rebuildtree|migratelocale)\.gql/)
     expect(script).not.toMatch(/utilityContent(?:RebuildTree|MigrateLocale)Mutation/)
@@ -46,14 +47,13 @@ describe('admin utilities content REST facades', () => {
     expect(rebuildTree).not.toMatch(/this\.\$apollo\.mutate|utilityContentRebuildTreeMutation|\$store\.commit/)
   })
 
-  test('rerenderPages keeps the page list query but renders each page through REST helper and facades', () => {
+  test('rerenderPages fetches the page list through REST and renders each page through REST helper and facades', () => {
     const rerenderPages = extractMethod(script, 'rerenderPages')
 
     expect(rerenderPages).toMatch(/this\.loading\s*=\s*true/)
     expect(rerenderPages).toMatch(/this\.isRerendering\s*=\s*true/)
     expect(rerenderPages).toMatch(/loadingStart\s*\(\s*this\.\$store\s*,\s*['"]admin-utilities-content-rerender['"]\s*\)/)
-    expect(rerenderPages).toMatch(/this\.\$apollo\.query\s*\(/)
-    expect(rerenderPages).toMatch(/pages\s*\{\s*list\s*\{/)
+    expect(rerenderPages).toMatch(/await\s+fetchPageList\s*\(\s*window\.fetch\.bind\(window\)\s*\)/)
     expect(rerenderPages).toMatch(/await\s+renderPage\s*\(\s*window\.fetch\.bind\(window\)\s*,\s*page\.id\s*\)/)
     expect(rerenderPages).toMatch(/catch\s*\(\s*err\s*\)\s*\{\s*failed\+\+/)
     expect(rerenderPages).toMatch(/showNotification\s*\(\s*this\.\$store\s*,/)
@@ -61,7 +61,7 @@ describe('admin utilities content REST facades', () => {
     expect(rerenderPages).toMatch(/loadingStop\s*\(\s*this\.\$store\s*,\s*['"]admin-utilities-content-rerender['"]\s*\)/)
     expect(rerenderPages).toMatch(/this\.isRerendering\s*=\s*false/)
     expect(rerenderPages).toMatch(/this\.loading\s*=\s*false/)
-    expect(rerenderPages).not.toMatch(/this\.\$apollo\.mutate|pages\s*\{\s*render|\$store\.commit/)
+    expect(rerenderPages).not.toMatch(/this\.\$apollo|graphql-tag|gql`|pages\s*\{\s*list|pages\s*\{\s*render|\$store\.commit/)
   })
 
   test('purgeHistory uses REST helper while preserving loading, notification, and error facades', () => {

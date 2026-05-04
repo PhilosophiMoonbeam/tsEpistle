@@ -1,4 +1,4 @@
-const { deletePage, deletePageTag, fetchPageTags, fetchRecentPages, updatePageTag } = require('./pages-api')
+const { deletePage, deletePageTag, fetchPageList, fetchPageTags, fetchRecentPages, updatePageTag } = require('./pages-api')
 
 function createJsonResponse (payload, ok = true) {
   return {
@@ -11,6 +11,70 @@ function createJsonResponse (payload, ok = true) {
 }
 
 describe('pages api helper', () => {
+  test('fetches and validates page list payloads', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse([
+      {
+        id: 10,
+        locale: 'en',
+        path: 'docs/alpha',
+        title: null,
+        description: null,
+        isPublished: true,
+        isPrivate: false,
+        privateNS: null,
+        contentType: 'markdown',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-03T00:00:00.000Z',
+        tags: ['alpha', 'docs'],
+        extra: 'ignored'
+      }
+    ]))
+
+    await expect(fetchPageList(fetchImpl)).resolves.toEqual([
+      {
+        id: 10,
+        locale: 'en',
+        path: 'docs/alpha',
+        title: null,
+        description: null,
+        isPublished: true,
+        isPrivate: false,
+        privateNS: null,
+        contentType: 'markdown',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-03T00:00:00.000Z',
+        tags: ['alpha', 'docs']
+      }
+    ])
+
+    expect(fetchImpl).toHaveBeenCalledWith('/_api/pages', {
+      credentials: 'same-origin',
+      headers: {
+        Accept: 'application/json'
+      }
+    })
+  })
+
+  test('rejects malformed page list rows', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse([
+      { id: 10, locale: 'en', path: 'docs/alpha', title: 'Alpha', tags: ['alpha'] }
+    ]))
+
+    await expect(fetchPageList(fetchImpl, 'Bad page list payload')).rejects.toThrow('Bad page list payload')
+  })
+
+  test('rejects non-array page list payloads', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ pages: [] }))
+
+    await expect(fetchPageList(fetchImpl, 'Bad page list payload')).rejects.toThrow('Bad page list payload')
+  })
+
+  test('surfaces API error messages for failed page list requests', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ error: 'manage:system or read:pages is required' }, false))
+
+    await expect(fetchPageList(fetchImpl, 'Bad page list payload')).rejects.toThrow('manage:system or read:pages is required')
+  })
+
   test('fetches and validates admin page tags payloads', async () => {
     const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse([
       {

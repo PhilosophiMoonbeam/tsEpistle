@@ -41,6 +41,138 @@ const requireTagsAccess = (req, res) => {
   return true
 }
 
+const requirePageListAccess = (req, res) => {
+  if (!WIKI.auth.checkAccess(req.user, ['manage:system', 'read:pages'])) {
+    res.status(403).json({ error: 'manage:system or read:pages is required' })
+    return false
+  }
+
+  return true
+}
+
+const parsePositiveIntegerQuery = value => {
+  if (_.isArray(value)) {
+    value = value[0]
+  }
+  if (_.isString(value) && /^[1-9]\d*$/.test(value)) {
+    const parsed = Number(value)
+    return Number.isSafeInteger(parsed) ? parsed : null
+  }
+  return null
+}
+
+const parseTagsQuery = value => {
+  if (_.isArray(value)) {
+    return value.flatMap(tag => parseTagsQuery(tag))
+  }
+  if (_.isString(value)) {
+    return value.split(',').map(tag => _.trim(tag).toLowerCase()).filter(tag => tag.length > 0)
+  }
+  return []
+}
+
+router.get('/', async (req, res, next) => {
+  if (!requirePageListAccess(req, res)) {
+    return
+  }
+
+  const limit = parsePositiveIntegerQuery(_.get(req, 'query.limit'))
+  const creatorId = parsePositiveIntegerQuery(_.get(req, 'query.creatorId'))
+  const authorId = parsePositiveIntegerQuery(_.get(req, 'query.authorId'))
+  const locale = _.get(req, 'query.locale')
+  const tags = parseTagsQuery(_.get(req, 'query.tags'))
+  const orderBy = _.get(req, 'query.orderBy')
+  const orderByDirection = _.get(req, 'query.orderByDirection')
+
+  try {
+    let pages = await WIKI.models.pages.query()
+      .column([
+        'pages.id',
+        'path',
+        { locale: 'localeCode' },
+        'title',
+        'description',
+        'isPublished',
+        'isPrivate',
+        'privateNS',
+        'contentType',
+        'createdAt',
+        'updatedAt'
+      ])
+      .withGraphJoined('tags')
+      .modifyGraph('tags', builder => {
+        builder.select('tag')
+      })
+      .modify(queryBuilder => {
+        if (limit) {
+          queryBuilder.limit(limit)
+        }
+        if (_.isString(locale) && locale.length > 0) {
+          queryBuilder.where('localeCode', locale)
+        }
+        if (creatorId && authorId) {
+          queryBuilder.where(function () {
+            this.where('creatorId', creatorId).orWhere('authorId', authorId)
+          })
+        } else {
+          if (creatorId) {
+            queryBuilder.where('creatorId', creatorId)
+          }
+          if (authorId) {
+            queryBuilder.where('authorId', authorId)
+          }
+        }
+        if (tags.length > 0) {
+          queryBuilder.whereIn('tags.tag', tags)
+        }
+        const orderDir = orderByDirection === 'DESC' ? 'desc' : 'asc'
+        switch (orderBy) {
+          case 'CREATED':
+            queryBuilder.orderBy('createdAt', orderDir)
+            break
+          case 'PATH':
+            queryBuilder.orderBy('path', orderDir)
+            break
+          case 'TITLE':
+            queryBuilder.orderBy('title', orderDir)
+            break
+          case 'UPDATED':
+            queryBuilder.orderBy('updatedAt', orderDir)
+            break
+          default:
+            queryBuilder.orderBy('pages.id', orderDir)
+            break
+        }
+      })
+
+    pages = pages.filter(page => WIKI.auth.checkAccess(req.user, ['read:pages'], {
+      path: page.path,
+      locale: page.locale
+    })).map(page => ({
+      id: page.id,
+      path: page.path,
+      locale: page.locale,
+      title: page.title === undefined ? null : page.title,
+      description: page.description === undefined ? null : page.description,
+      isPublished: page.isPublished,
+      isPrivate: page.isPrivate,
+      privateNS: page.privateNS === undefined ? null : page.privateNS,
+      contentType: page.contentType,
+      createdAt: page.createdAt,
+      updatedAt: page.updatedAt,
+      tags: _.map(page.tags, 'tag')
+    }))
+
+    if (tags.length > 0) {
+      pages = pages.filter(page => _.every(tags, tag => _.includes(page.tags, tag)))
+    }
+
+    return res.json(pages)
+  } catch (err) {
+    return next(err)
+  }
+})
+
 router.get('/tags', async (req, res, next) => {
   if (!requireTagsAccess(req, res)) {
     return

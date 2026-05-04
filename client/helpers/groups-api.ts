@@ -1,4 +1,7 @@
-async function parseJsonResponse (response, fallbackMessage) {
+type JsonResponse = { ok: boolean, headers?: { get: (name: string) => string | null }, json: () => Promise<any> }
+type FetchImpl = (url: string, init: any) => Promise<JsonResponse>
+
+async function parseJsonResponse (response: JsonResponse, fallbackMessage: string): Promise<any> {
   const hasHeaderReader = response && response.headers && typeof response.headers.get === 'function'
   const contentType = hasHeaderReader ? response.headers.get('content-type') || '' : ''
 
@@ -24,7 +27,7 @@ async function parseJsonResponse (response, fallbackMessage) {
   return payload
 }
 
-function normalizeGroupOption (row, fallbackMessage) {
+function normalizeGroupOption (row: any, fallbackMessage: string): any {
   if (!row || typeof row !== 'object' || Array.isArray(row)) {
     throw new Error(fallbackMessage)
   }
@@ -36,7 +39,7 @@ function normalizeGroupOption (row, fallbackMessage) {
   return row
 }
 
-function normalizeGroupListRow (row, fallbackMessage) {
+function normalizeGroupListRow (row: any, fallbackMessage: string): any {
   if (!row || typeof row !== 'object' || Array.isArray(row)) {
     throw new Error(fallbackMessage)
   }
@@ -52,7 +55,7 @@ function normalizeGroupListRow (row, fallbackMessage) {
   return row
 }
 
-function normalizeGroupDetailPageRule (row, fallbackMessage) {
+function normalizeGroupDetailPageRule (row: any, fallbackMessage: string): any {
   if (!row || typeof row !== 'object' || Array.isArray(row)) {
     throw new Error(fallbackMessage)
   }
@@ -80,7 +83,7 @@ function normalizeGroupDetailPageRule (row, fallbackMessage) {
   }
 }
 
-function normalizeGroupDetailUser (row, fallbackMessage) {
+function normalizeGroupDetailUser (row: any, fallbackMessage: string): any {
   if (!row || typeof row !== 'object' || Array.isArray(row)) {
     throw new Error(fallbackMessage)
   }
@@ -96,7 +99,7 @@ function normalizeGroupDetailUser (row, fallbackMessage) {
   }
 }
 
-function normalizeGroupDetail (payload, fallbackMessage) {
+function normalizeGroupDetail (payload: any, fallbackMessage: string): any {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
     throw new Error(fallbackMessage)
   }
@@ -121,7 +124,7 @@ function normalizeGroupDetail (payload, fallbackMessage) {
   }
 }
 
-async function fetchGroupOptions (fetchImpl, fallbackMessage = 'Groups response is invalid') {
+export async function fetchGroupOptions (fetchImpl: FetchImpl, fallbackMessage = 'Groups response is invalid'): Promise<any[]> {
   const response = await fetchImpl('/_api/groups', {
     credentials: 'same-origin',
     headers: {
@@ -137,7 +140,7 @@ async function fetchGroupOptions (fetchImpl, fallbackMessage = 'Groups response 
   return payload.map(row => normalizeGroupOption(row, fallbackMessage))
 }
 
-async function fetchGroupsList (fetchImpl, fallbackMessage = 'Groups list response is invalid') {
+export async function fetchGroupsList (fetchImpl: FetchImpl, fallbackMessage = 'Groups list response is invalid'): Promise<any[]> {
   const response = await fetchImpl('/_api/groups/list', {
     credentials: 'same-origin',
     headers: {
@@ -153,7 +156,7 @@ async function fetchGroupsList (fetchImpl, fallbackMessage = 'Groups list respon
   return payload.map(row => normalizeGroupListRow(row, fallbackMessage))
 }
 
-async function fetchGroupDetails (fetchImpl, id, fallbackMessage = 'Group detail response is invalid') {
+export async function fetchGroupDetails (fetchImpl: FetchImpl, id: number | string, fallbackMessage = 'Group detail response is invalid'): Promise<any> {
   const response = await fetchImpl(`/_api/groups/${id}`, {
     credentials: 'same-origin',
     headers: {
@@ -164,7 +167,7 @@ async function fetchGroupDetails (fetchImpl, id, fallbackMessage = 'Group detail
   return normalizeGroupDetail(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
 }
 
-function normalizeGroupMutationResponse (payload, fallbackMessage) {
+function normalizeGroupMutationResponse (payload: any, fallbackMessage: string): any {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
     throw new Error(fallbackMessage)
   }
@@ -176,7 +179,7 @@ function normalizeGroupMutationResponse (payload, fallbackMessage) {
   return payload
 }
 
-async function createGroup (fetchImpl, name, fallbackMessage = 'Group create response is invalid') {
+export async function createGroup (fetchImpl: FetchImpl, name: string, fallbackMessage = 'Group create response is invalid'): Promise<any> {
   const response = await fetchImpl('/_api/groups', {
     method: 'POST',
     credentials: 'same-origin',
@@ -190,7 +193,7 @@ async function createGroup (fetchImpl, name, fallbackMessage = 'Group create res
   return normalizeGroupMutationResponse(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
 }
 
-async function assignGroupUser (fetchImpl, groupId, userId, fallbackMessage = 'Group user assign response is invalid') {
+export async function assignGroupUser (fetchImpl: FetchImpl, groupId: number | string, userId: number | string, fallbackMessage = 'Group user assign response is invalid'): Promise<any> {
   const response = await fetchImpl(`/_api/groups/${groupId}/users/${userId}`, {
     method: 'POST',
     credentials: 'same-origin',
@@ -202,7 +205,7 @@ async function assignGroupUser (fetchImpl, groupId, userId, fallbackMessage = 'G
   return normalizeGroupMutationResponse(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
 }
 
-async function unassignGroupUser (fetchImpl, groupId, userId, fallbackMessage = 'Group user unassign response is invalid') {
+export async function unassignGroupUser (fetchImpl: FetchImpl, groupId: number | string, userId: number | string, fallbackMessage = 'Group user unassign response is invalid'): Promise<any> {
   const response = await fetchImpl(`/_api/groups/${groupId}/users/${userId}`, {
     method: 'DELETE',
     credentials: 'same-origin',
@@ -214,7 +217,7 @@ async function unassignGroupUser (fetchImpl, groupId, userId, fallbackMessage = 
   return normalizeGroupMutationResponse(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
 }
 
-async function deleteGroup (fetchImpl, id, fallbackMessage = 'Group delete response is invalid') {
+export async function deleteGroup (fetchImpl: FetchImpl, id: number | string, fallbackMessage = 'Group delete response is invalid'): Promise<any> {
   const response = await fetchImpl(`/_api/groups/${id}`, {
     method: 'DELETE',
     credentials: 'same-origin',
@@ -226,7 +229,7 @@ async function deleteGroup (fetchImpl, id, fallbackMessage = 'Group delete respo
   return normalizeGroupMutationResponse(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
 }
 
-async function updateGroup (fetchImpl, id, payload, fallbackMessage = 'Group update response is invalid') {
+export async function updateGroup (fetchImpl: FetchImpl, id: number | string, payload: any, fallbackMessage = 'Group update response is invalid'): Promise<any> {
   const response = await fetchImpl(`/_api/groups/${id}`, {
     method: 'PATCH',
     credentials: 'same-origin',
@@ -243,15 +246,4 @@ async function updateGroup (fetchImpl, id, payload, fallbackMessage = 'Group upd
   })
 
   return normalizeGroupMutationResponse(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
-}
-
-module.exports = {
-  fetchGroupOptions,
-  fetchGroupsList,
-  fetchGroupDetails,
-  createGroup,
-  assignGroupUser,
-  unassignGroupUser,
-  deleteGroup,
-  updateGroup
 }

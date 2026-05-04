@@ -22,6 +22,21 @@ type MessageResponse = {
   message: string
 }
 
+type PageListRow = {
+  id: number
+  locale: string
+  path: string
+  title: string | null
+  description: string | null
+  isPublished: boolean
+  isPrivate: boolean
+  privateNS: string | null
+  contentType: string
+  createdAt: string
+  updatedAt: string
+  tags: string[]
+}
+
 type RecentPageRow = {
   id: number
   locale: string
@@ -83,6 +98,32 @@ function normalizePageTagRow (row: unknown, fallbackMessage: string): PageTagRow
   }
 }
 
+function normalizePageListRow (row: unknown, fallbackMessage: string): PageListRow {
+  if (!row || typeof row !== 'object' || Array.isArray(row)) {
+    throw new Error(fallbackMessage)
+  }
+
+  const pageRow = row as Partial<PageListRow>
+  if (!Number.isInteger(pageRow.id) || typeof pageRow.locale !== 'string' || pageRow.locale.length < 1 || typeof pageRow.path !== 'string' || (pageRow.title !== null && typeof pageRow.title !== 'string') || (pageRow.description !== null && typeof pageRow.description !== 'string') || typeof pageRow.isPublished !== 'boolean' || typeof pageRow.isPrivate !== 'boolean' || (pageRow.privateNS !== null && typeof pageRow.privateNS !== 'string') || typeof pageRow.contentType !== 'string' || typeof pageRow.createdAt !== 'string' || pageRow.createdAt.length < 1 || typeof pageRow.updatedAt !== 'string' || pageRow.updatedAt.length < 1 || !Array.isArray(pageRow.tags) || pageRow.tags.some(tag => typeof tag !== 'string')) {
+    throw new Error(fallbackMessage)
+  }
+
+  return {
+    id: pageRow.id,
+    locale: pageRow.locale,
+    path: pageRow.path,
+    title: pageRow.title,
+    description: pageRow.description,
+    isPublished: pageRow.isPublished,
+    isPrivate: pageRow.isPrivate,
+    privateNS: pageRow.privateNS,
+    contentType: pageRow.contentType,
+    createdAt: pageRow.createdAt,
+    updatedAt: pageRow.updatedAt,
+    tags: pageRow.tags
+  }
+}
+
 function normalizeRecentPageRow (row: unknown, fallbackMessage: string): RecentPageRow {
   if (!row || typeof row !== 'object' || Array.isArray(row)) {
     throw new Error(fallbackMessage)
@@ -100,6 +141,22 @@ function normalizeRecentPageRow (row: unknown, fallbackMessage: string): RecentP
     title: pageRow.title,
     updatedAt: pageRow.updatedAt
   }
+}
+
+export async function fetchPageList (fetchImpl: FetchImpl, fallbackMessage = 'Page list response is invalid'): Promise<PageListRow[]> {
+  const response = await fetchImpl('/_api/pages', {
+    credentials: 'same-origin',
+    headers: {
+      Accept: 'application/json'
+    }
+  })
+
+  const payload = await parseJsonResponse(response, fallbackMessage)
+  if (!Array.isArray(payload)) {
+    throw new Error(fallbackMessage)
+  }
+
+  return payload.map(row => normalizePageListRow(row, fallbackMessage))
 }
 
 export async function fetchPageTags (fetchImpl: FetchImpl, fallbackMessage = 'Page tags response is invalid'): Promise<PageTagRow[]> {

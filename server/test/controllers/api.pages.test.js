@@ -84,11 +84,155 @@ describe('controllers/api pages endpoints', () => {
     return {
       deletePage: express.__router.delete.mock.calls.find(([path]) => path === '/:id')[1],
       deleteTag: express.__router.delete.mock.calls.find(([path]) => path === '/tags/:id')[1],
+      listPages: express.__router.get.mock.calls.find(([path]) => path === '/')[1],
       listTags: express.__router.get.mock.calls.find(([path]) => path === '/tags')[1],
       recent: express.__router.get.mock.calls.find(([path]) => path === '/recent')[1],
       updateTag: express.__router.patch.mock.calls.find(([path]) => path === '/tags/:id')[1]
     }
   }
+
+  it('registers the page list route', () => {
+    const { listPages } = loadHandler()
+
+    expect(typeof listPages).toBe('function')
+  })
+
+  it('lists pages with GraphQL-compatible query semantics and access filtering', async () => {
+    const rows = [
+      {
+        id: 10,
+        locale: 'en',
+        path: 'docs/alpha',
+        title: 'Alpha',
+        description: 'Alpha description',
+        isPublished: true,
+        isPrivate: false,
+        privateNS: '',
+        contentType: 'markdown',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-03T00:00:00.000Z',
+        tags: [{ tag: 'alpha' }, { tag: 'docs' }]
+      },
+      {
+        id: 11,
+        locale: 'fr',
+        path: 'docs/beta',
+        title: 'Beta',
+        description: 'Beta description',
+        isPublished: false,
+        isPrivate: true,
+        privateNS: 'team',
+        contentType: 'markdown',
+        createdAt: '2026-01-02T00:00:00.000Z',
+        updatedAt: '2026-01-04T00:00:00.000Z',
+        tags: [{ tag: 'beta' }]
+      }
+    ]
+    const queryBuilder = {
+      limit: jest.fn(),
+      where: jest.fn(),
+      whereIn: jest.fn(),
+      orderBy: jest.fn()
+    }
+    const modify = jest.fn((applyQueryModifier) => {
+      applyQueryModifier(queryBuilder)
+      return Promise.resolve(rows)
+    })
+    const tagBuilder = { select: jest.fn() }
+    const modifyGraph = jest.fn((relation, applyGraphModifier) => {
+      applyGraphModifier(tagBuilder)
+      return { modify }
+    })
+    const withGraphJoined = jest.fn().mockReturnValue({ modifyGraph })
+    const column = jest.fn().mockReturnValue({ withGraphJoined })
+    global.WIKI.models.pages.query.mockReturnValueOnce({ column })
+    global.WIKI.auth.checkAccess
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(false)
+    const { listPages } = loadHandler()
+    const req = { user: { permissions: ['read:pages'] }, query: { locale: 'en', limit: '50', orderBy: 'UPDATED', orderByDirection: 'DESC', tags: 'alpha, docs' } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await listPages(req, res, jest.fn())
+
+    expect(global.WIKI.auth.checkAccess).toHaveBeenNthCalledWith(1, { permissions: ['read:pages'] }, ['manage:system', 'read:pages'])
+    expect(column).toHaveBeenCalledWith([
+      'pages.id',
+      'path',
+      { locale: 'localeCode' },
+      'title',
+      'description',
+      'isPublished',
+      'isPrivate',
+      'privateNS',
+      'contentType',
+      'createdAt',
+      'updatedAt'
+    ])
+    expect(withGraphJoined).toHaveBeenCalledWith('tags')
+    expect(modifyGraph).toHaveBeenCalledWith('tags', expect.any(Function))
+    expect(tagBuilder.select).toHaveBeenCalledWith('tag')
+    expect(queryBuilder.limit).toHaveBeenCalledWith(50)
+    expect(queryBuilder.where).toHaveBeenCalledWith('localeCode', 'en')
+    expect(queryBuilder.whereIn).toHaveBeenCalledWith('tags.tag', ['alpha', 'docs'])
+    expect(queryBuilder.orderBy).toHaveBeenCalledWith('updatedAt', 'desc')
+    expect(global.WIKI.auth.checkAccess).toHaveBeenNthCalledWith(2, { permissions: ['read:pages'] }, ['read:pages'], { path: 'docs/alpha', locale: 'en' })
+    expect(global.WIKI.auth.checkAccess).toHaveBeenNthCalledWith(3, { permissions: ['read:pages'] }, ['read:pages'], { path: 'docs/beta', locale: 'fr' })
+    expect(res.json).toHaveBeenCalledWith([
+      {
+        id: 10,
+        locale: 'en',
+        path: 'docs/alpha',
+        title: 'Alpha',
+        description: 'Alpha description',
+        isPublished: true,
+        isPrivate: false,
+        privateNS: '',
+        contentType: 'markdown',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-03T00:00:00.000Z',
+        tags: ['alpha', 'docs']
+      }
+    ])
+  })
+
+  it('returns 403 for unauthorized page list requests', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValueOnce(false)
+    const { listPages } = loadHandler()
+    const req = { user: { permissions: ['manage:api'] }, query: {} }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await listPages(req, res, jest.fn())
+
+    expect(res.status).toHaveBeenCalledWith(403)
+    expect(res.json).toHaveBeenCalledWith({ error: 'manage:system or read:pages is required' })
+    expect(global.WIKI.models.pages.query).not.toHaveBeenCalled()
+  })
+
+  it('forwards unexpected page list failures to next', async () => {
+    const next = jest.fn()
+    global.WIKI.models.pages.query.mockReturnValueOnce({
+      column: jest.fn().mockReturnValue({
+        withGraphJoined: jest.fn().mockReturnValue({
+          modifyGraph: jest.fn((relation, applyGraphModifier) => {
+            applyGraphModifier({ select: jest.fn() })
+            return {
+              modify: jest.fn().mockRejectedValue(new Error('page list db down'))
+            }
+          })
+        })
+      })
+    })
+    const { listPages } = loadHandler()
+    const req = { user: { permissions: ['manage:system'] }, query: {} }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await listPages(req, res, next)
+
+    expect(next).toHaveBeenCalledWith(expect.any(Error))
+    expect(next.mock.calls[0][0].message).toBe('page list db down')
+  })
 
   it('registers the page tags route', () => {
     const { listTags } = loadHandler()

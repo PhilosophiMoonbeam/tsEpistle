@@ -91,8 +91,7 @@
 </template>
 
 <script>
-import _ from 'lodash'
-import gql from 'graphql-tag'
+import { fetchPageList } from '../../helpers/pages-api'
 import { loadingStart, loadingStop, showNotification, pushGraphError } from '../../helpers/root-ui-store'
 import { migratePagesToLocale, purgePageHistory, rebuildPageTree, renderPage } from '../../helpers/system-api'
 
@@ -160,28 +159,15 @@ export default {
       loadingStart(this.$store, 'admin-utilities-content-rerender')
 
       try {
-        const pagesRaw = await this.$apollo.query({
-          query: gql`
-            {
-              pages {
-                list {
-                  id
-                  path
-                  locale
-                }
-              }
-            }
-          `,
-          fetchPolicy: 'network-only'
-        })
-        if (_.get(pagesRaw, 'data.pages.list', []).length < 1) {
+        const pages = await fetchPageList(window.fetch.bind(window))
+        if (pages.length < 1) {
           throw new Error('Could not find any page to render!')
         }
 
         this.renderIndex = 0
-        this.renderTotal = pagesRaw.data.pages.list.length
+        this.renderTotal = pages.length
         let failed = 0
-        for (const page of pagesRaw.data.pages.list) {
+        for (const page of pages) {
           this.renderCurrentPath = `${page.locale}/${page.path}`
           this.renderIndex++
           this.renderProgress = Math.round(this.renderIndex / this.renderTotal * 100)
