@@ -30,6 +30,9 @@ describe('controllers/api navigation endpoints', () => {
       },
       models: {
         navigation: {
+          getTree: jest.fn().mockResolvedValue([
+            { locale: 'en', ignored: true, items: [{ id: 'home', kind: 'link', label: 'Home', ignored: true }] }
+          ]),
           query: jest.fn(() => ({
             patch: jest.fn(() => ({
               where: jest.fn().mockResolvedValue(1)
@@ -42,7 +45,8 @@ describe('controllers/api navigation endpoints', () => {
       },
       config: {
         nav: {
-          mode: 'TREE'
+          mode: 'TREE',
+          ignored: true
         }
       },
       configSvc: {
@@ -57,6 +61,7 @@ describe('controllers/api navigation endpoints', () => {
     return express.__routers[0]
   }
 
+  const loadHandler = () => loadRouter().get.mock.calls.find(([path]) => path === '/')[1]
   const saveHandler = () => loadRouter().put.mock.calls.find(([path]) => path === '/')[1]
 
   const validBody = () => ({
@@ -73,6 +78,64 @@ describe('controllers/api navigation endpoints', () => {
       }
     ],
     mode: 'MIXED'
+  })
+
+  it('registers the navigation load route', () => {
+    expect(typeof loadHandler()).toBe('function')
+  })
+
+  it('returns 403 for unauthorized navigation loads', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValue(false)
+    const handler = loadHandler()
+    const req = { user: { permissions: [] } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await handler(req, res, jest.fn())
+
+    expect(res.status).toHaveBeenCalledWith(403)
+    expect(res.json).toHaveBeenCalledWith({ error: 'manage:navigation or manage:system is required' })
+    expect(global.WIKI.models.navigation.getTree).not.toHaveBeenCalled()
+  })
+
+  it('loads navigation config and tree with GraphQL-compatible bypass-auth semantics', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValue(true)
+    const handler = loadHandler()
+    const req = { user: { permissions: ['manage:navigation'] } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await handler(req, res, jest.fn())
+
+    expect(global.WIKI.models.navigation.getTree).toHaveBeenCalledWith({ cache: false, locale: 'all', bypassAuth: true })
+    expect(res.json).toHaveBeenCalledWith({
+      config: { mode: 'TREE' },
+      tree: [{
+        locale: 'en',
+        items: [{
+          id: 'home',
+          kind: 'link',
+          label: 'Home',
+          icon: undefined,
+          targetType: undefined,
+          target: undefined,
+          visibilityMode: undefined,
+          visibilityGroups: undefined
+        }]
+      }]
+    })
+  })
+
+  it('forwards navigation load failures to next', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValue(true)
+    global.WIKI.models.navigation.getTree.mockRejectedValueOnce(new Error('navigation tree failed'))
+    const next = jest.fn()
+    const handler = loadHandler()
+    const req = { user: { permissions: ['manage:system'] } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await handler(req, res, next)
+
+    expect(next).toHaveBeenCalledWith(expect.any(Error))
+    expect(next.mock.calls[0][0].message).toBe('navigation tree failed')
   })
 
   it('registers the navigation save route', () => {

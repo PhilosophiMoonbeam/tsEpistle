@@ -274,12 +274,11 @@
 
 <script>
 import _ from 'lodash'
-import gql from 'graphql-tag'
 import { v4 as uuid } from 'uuid'
 
 import { fetchGroupOptions } from '../../helpers/groups-api'
 import { fetchLocales } from '../../helpers/locales-api'
-import { saveNavigation } from '../../helpers/navigation-api'
+import { fetchNavigation, saveNavigation } from '../../helpers/navigation-api'
 import { loadingStart, loadingStop, showNotification, pushGraphError } from '../../helpers/root-ui-store'
 
 import draggable from 'vuedraggable'
@@ -428,63 +427,33 @@ export default {
       }
       loadingStop(this.$store, 'admin-navigation-save')
     },
+    async loadNavigation(notify = false) {
+      loadingStart(this.$store, 'admin-navigation-refresh')
+      try {
+        const navigation = await fetchNavigation(window.fetch.bind(window), 'Navigation response is invalid')
+        this.config = _.cloneDeep(navigation.config)
+        this.trees = _.cloneDeep(navigation.tree)
+        this.current = {}
+        if (notify) {
+          showNotification(this.$store, {
+            message: 'Navigation has been refreshed.',
+            style: 'success',
+            icon: 'cached'
+          })
+        }
+      } catch (err) {
+        pushGraphError(this.$store, err)
+      }
+      loadingStop(this.$store, 'admin-navigation-refresh')
+    },
     async refresh() {
-      await this.$apollo.queries.trees.refetch()
-      this.current = {}
-      showNotification(this.$store, {
-        message: 'Navigation has been refreshed.',
-        style: 'success',
-        icon: 'cached'
-      })
+      await this.loadNavigation(true)
     }
   },
   created() {
     this.loadAllLocales()
     this.loadGroups()
-  },
-  apollo: {
-    config: {
-      query: gql`
-        {
-          navigation {
-            config {
-              mode
-            }
-          }
-        }
-      `,
-      fetchPolicy: 'network-only',
-      update: (data) => _.cloneDeep(data.navigation.config),
-      watchLoading (isLoading) {
-        this.$store.commit(`loading${isLoading ? 'Start' : 'Stop'}`, 'admin-navigation-config')
-      }
-    },
-    trees: {
-      query: gql`
-        {
-          navigation {
-            tree {
-              locale
-              items {
-                id
-                kind
-                label
-                icon
-                targetType
-                target
-                visibilityMode
-                visibilityGroups
-              }
-            }
-          }
-        }
-      `,
-      fetchPolicy: 'network-only',
-      update: (data) => _.cloneDeep(data.navigation.tree),
-      watchLoading (isLoading) {
-        this.$store.commit(`loading${isLoading ? 'Start' : 'Stop'}`, 'admin-navigation-tree')
-      }
-    }
+    this.loadNavigation()
   }
 }
 </script>

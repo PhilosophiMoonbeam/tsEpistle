@@ -1,4 +1,4 @@
-const { saveNavigation } = require('./navigation-api')
+const { fetchNavigation, saveNavigation } = require('./navigation-api')
 
 function createJsonResponse (payload, ok = true) {
   return {
@@ -11,6 +11,61 @@ function createJsonResponse (payload, ok = true) {
 }
 
 describe('navigation api helper', () => {
+  test('fetches and validates navigation config and tree', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+      config: { mode: 'MIXED', extra: 'ignored' },
+      tree: [
+        {
+          locale: 'en',
+          items: [
+            { id: 'home', kind: 'link', label: 'Home', icon: 'mdi-home', targetType: 'home', target: '/', visibilityMode: 'all', visibilityGroups: [1], ignored: true }
+          ]
+        }
+      ]
+    }))
+
+    await expect(fetchNavigation(fetchImpl)).resolves.toEqual({
+      config: { mode: 'MIXED' },
+      tree: [
+        {
+          locale: 'en',
+          items: [
+            { id: 'home', kind: 'link', label: 'Home', icon: 'mdi-home', targetType: 'home', target: '/', visibilityMode: 'all', visibilityGroups: [1] }
+          ]
+        }
+      ]
+    })
+    expect(fetchImpl).toHaveBeenCalledWith('/_api/navigation', {
+      credentials: 'same-origin',
+      headers: {
+        Accept: 'application/json'
+      }
+    })
+  })
+
+  test('rejects malformed navigation fetch payloads', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ config: { mode: 'invalid' }, tree: [] }))
+
+    await expect(fetchNavigation(fetchImpl, 'Bad navigation payload')).rejects.toThrow('Bad navigation payload')
+  })
+
+  test('surfaces REST JSON error fields for failed navigation fetches', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ error: 'navigation denied' }, false))
+
+    await expect(fetchNavigation(fetchImpl, 'Bad navigation fetch')).rejects.toThrow('navigation denied')
+  })
+
+  test('rejects non-JSON successful navigation fetch responses', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue({
+      ok: true,
+      headers: {
+        get: () => 'text/plain'
+      }
+    })
+
+    await expect(fetchNavigation(fetchImpl, 'Bad navigation content type')).rejects.toThrow('Bad navigation content type')
+  })
+
   test('saves navigation with same-origin JSON PUT options', async () => {
     const tree = [{ locale: 'en', items: [{ id: 'home', kind: 'link' }] }]
     const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ message: 'Navigation saved successfully.' }))

@@ -24,13 +24,15 @@ const extractMethod = (name) => {
 describe('admin-navigation save REST facade', () => {
   const save = extractMethod('save')
 
-  test('imports navigation save and root UI facades while keeping query Apollo surface', () => {
-    expect(source).toContain("import { saveNavigation } from '../../helpers/navigation-api'")
+  test('imports navigation REST helpers and root UI facades without Apollo query surface', () => {
+    expect(source).toContain("import { fetchNavigation, saveNavigation } from '../../helpers/navigation-api'")
     expect(source).toContain("import { loadingStart, loadingStop, showNotification, pushGraphError } from '../../helpers/root-ui-store'")
-    expect(source).toContain('apollo: {')
-    expect(source).toContain('navigation {')
-    expect(source).toContain('config {')
-    expect(source).toContain('tree {')
+    expect(source).not.toContain("import gql from 'graphql-tag'")
+    expect(source).not.toContain('apollo: {')
+    expect(source).not.toContain('this.$apollo')
+    expect(source).not.toContain('navigation {')
+    expect(source).not.toContain('config {')
+    expect(source).not.toContain('tree {')
   })
 
   test('save uses REST helper while preserving loading, success notification, and error facade', () => {

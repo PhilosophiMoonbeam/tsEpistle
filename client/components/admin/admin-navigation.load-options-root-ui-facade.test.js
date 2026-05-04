@@ -5,9 +5,10 @@ const sourcePath = path.join(__dirname, 'admin-navigation.vue')
 const source = fs.readFileSync(sourcePath, 'utf8')
 
 const extractMethod = (name) => {
-  const marker = `    async ${name}()`
-  const start = source.indexOf(marker)
-  expect(start).toBeGreaterThan(-1)
+  const marker = new RegExp(`    async ${name}\\s*\\([^)]*\\)`)
+  const found = source.match(marker)
+  expect(found).not.toBeNull()
+  const start = found.index
 
   const rest = source.slice(start)
   const match = rest.match(/\n {4}(?:async )?[a-zA-Z0-9_]+\s*\(/)
@@ -24,6 +25,7 @@ const extractMethod = (name) => {
 describe('admin-navigation root UI facade for read-only option loaders and refresh notification', () => {
   const loadAllLocales = extractMethod('loadAllLocales')
   const loadGroups = extractMethod('loadGroups')
+  const loadNavigation = extractMethod('loadNavigation')
   const refresh = extractMethod('refresh')
 
   test('imports only the root UI helpers needed by the option loaders and refresh notification', () => {
@@ -63,23 +65,31 @@ describe('admin-navigation root UI facade for read-only option loaders and refre
     }
   })
 
-  test('refresh routes only its success notification through the facade', () => {
-    expect(refresh).toContain('await this.$apollo.queries.trees.refetch()')
-    expect(refresh).toContain('this.current = {}')
-    expect(refresh).toContain('showNotification(this.$store, {')
-    expect(refresh).toContain("message: 'Navigation has been refreshed.'")
-    expect(refresh).toContain("style: 'success'")
-    expect(refresh).toContain("icon: 'cached'")
-
-    expect(refresh).not.toContain("this.$store.commit('showNotification'")
+  test('loadNavigation routes REST loading, state update, notification, and graph errors through facades', () => {
+    expect(loadNavigation).toContain("loadingStart(this.$store, 'admin-navigation-refresh')")
+    expect(loadNavigation).toContain("const navigation = await fetchNavigation(window.fetch.bind(window), 'Navigation response is invalid')")
+    expect(loadNavigation).toContain('this.config = _.cloneDeep(navigation.config)')
+    expect(loadNavigation).toContain('this.trees = _.cloneDeep(navigation.tree)')
+    expect(loadNavigation).toContain('this.current = {}')
+    expect(loadNavigation).toContain('if (notify)')
+    expect(loadNavigation).toContain('showNotification(this.$store, {')
+    expect(loadNavigation).toContain("message: 'Navigation has been refreshed.'")
+    expect(loadNavigation).toContain("style: 'success'")
+    expect(loadNavigation).toContain("icon: 'cached'")
+    expect(loadNavigation).toContain('pushGraphError(this.$store, err)')
+    expect(loadNavigation).toContain("loadingStop(this.$store, 'admin-navigation-refresh')")
+    expect(loadNavigation).not.toContain('$store.commit')
   })
 
-  test('keeps broader navigation save, Apollo watchers, and template out of this slice', () => {
+  test('refresh delegates to REST load with notification', () => {
+    expect(refresh).toContain('await this.loadNavigation(true)')
+    expect(refresh).not.toContain('this.$apollo.queries.trees.refetch')
+  })
+
+  test('keeps broader navigation save and template out of this slice', () => {
     expect(source).toContain("loadingStart(this.$store, 'admin-navigation-save')")
     expect(source).toContain('pushGraphError(this.$store, err)')
     expect(source).toContain("loadingStop(this.$store, 'admin-navigation-save')")
-    expect(source).toContain('this.$store.commit(`loading' + '$' + "{isLoading ? 'Start' : 'Stop'}`, 'admin-navigation-config')")
-    expect(source).toContain('this.$store.commit(`loading' + '$' + "{isLoading ? 'Start' : 'Stop'}`, 'admin-navigation-tree')")
     expect(source).toContain("v-btn.animated.fadeInDown(color='success', depressed, @click='save', large)")
   })
 })

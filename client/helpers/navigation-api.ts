@@ -14,6 +14,33 @@ type NavigationSaveResponse = {
   message: string
 }
 
+type NavigationConfig = {
+  mode: string
+}
+
+type NavigationItem = {
+  id: string
+  kind: string
+  label?: string | null
+  icon?: string | null
+  targetType?: string | null
+  target?: string | null
+  visibilityMode?: string | null
+  visibilityGroups?: number[] | null
+}
+
+type NavigationTreeRow = {
+  locale: string
+  items: NavigationItem[]
+}
+
+type NavigationPayload = {
+  config: NavigationConfig
+  tree: NavigationTreeRow[]
+}
+
+const VALID_NAVIGATION_MODES = ['NONE', 'TREE', 'MIXED', 'STATIC']
+
 async function parseJsonResponse (response: JsonResponse, fallbackMessage: string): Promise<unknown> {
   const hasHeaderReader = response && response.headers && typeof response.headers.get === 'function'
   const contentType = hasHeaderReader ? response.headers!.get('content-type') || '' : ''
@@ -40,6 +67,71 @@ async function parseJsonResponse (response: JsonResponse, fallbackMessage: strin
   return payload
 }
 
+function normalizeNavigationItem (item: unknown, fallbackMessage: string): NavigationItem {
+  if (!item || typeof item !== 'object' || Array.isArray(item)) {
+    throw new Error(fallbackMessage)
+  }
+
+  const navItem = item as Partial<NavigationItem>
+  if (typeof navItem.id !== 'string' || navItem.id.length < 1 || typeof navItem.kind !== 'string' || navItem.kind.length < 1) {
+    throw new Error(fallbackMessage)
+  }
+
+  for (const field of ['label', 'icon', 'targetType', 'target', 'visibilityMode'] as const) {
+    if (navItem[field] !== null && navItem[field] !== undefined && typeof navItem[field] !== 'string') {
+      throw new Error(fallbackMessage)
+    }
+  }
+
+  if (navItem.visibilityGroups !== null && navItem.visibilityGroups !== undefined && (!Array.isArray(navItem.visibilityGroups) || navItem.visibilityGroups.some(groupId => !Number.isInteger(groupId)))) {
+    throw new Error(fallbackMessage)
+  }
+
+  return {
+    id: navItem.id,
+    kind: navItem.kind,
+    label: navItem.label,
+    icon: navItem.icon,
+    targetType: navItem.targetType,
+    target: navItem.target,
+    visibilityMode: navItem.visibilityMode,
+    visibilityGroups: navItem.visibilityGroups
+  }
+}
+
+function normalizeNavigationPayload (payload: unknown, fallbackMessage: string): NavigationPayload {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    throw new Error(fallbackMessage)
+  }
+
+  const navPayload = payload as Partial<NavigationPayload>
+  if (!navPayload.config || typeof navPayload.config !== 'object' || Array.isArray(navPayload.config) || !VALID_NAVIGATION_MODES.includes((navPayload.config as NavigationConfig).mode)) {
+    throw new Error(fallbackMessage)
+  }
+  if (!Array.isArray(navPayload.tree)) {
+    throw new Error(fallbackMessage)
+  }
+
+  return {
+    config: {
+      mode: (navPayload.config as NavigationConfig).mode
+    },
+    tree: navPayload.tree.map(row => {
+      if (!row || typeof row !== 'object' || Array.isArray(row)) {
+        throw new Error(fallbackMessage)
+      }
+      const treeRow = row as Partial<NavigationTreeRow>
+      if (typeof treeRow.locale !== 'string' || treeRow.locale.length < 1 || !Array.isArray(treeRow.items)) {
+        throw new Error(fallbackMessage)
+      }
+      return {
+        locale: treeRow.locale,
+        items: treeRow.items.map(item => normalizeNavigationItem(item, fallbackMessage))
+      }
+    })
+  }
+}
+
 function normalizeNavigationSavePayload (payload: unknown, fallbackMessage: string): NavigationSaveResponse {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload) || typeof (payload as { message?: unknown }).message !== 'string' || (payload as { message: string }).message.length < 1) {
     throw new Error(fallbackMessage)
@@ -48,6 +140,17 @@ function normalizeNavigationSavePayload (payload: unknown, fallbackMessage: stri
   return {
     message: (payload as { message: string }).message
   }
+}
+
+export async function fetchNavigation (fetchImpl: FetchImpl, fallbackMessage = 'Navigation response is invalid'): Promise<NavigationPayload> {
+  const response = await fetchImpl('/_api/navigation', {
+    credentials: 'same-origin',
+    headers: {
+      Accept: 'application/json'
+    }
+  })
+
+  return normalizeNavigationPayload(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
 }
 
 export async function saveNavigation (fetchImpl: FetchImpl, tree: unknown[], mode: string, fallbackMessage = 'Navigation save failed'): Promise<NavigationSaveResponse> {

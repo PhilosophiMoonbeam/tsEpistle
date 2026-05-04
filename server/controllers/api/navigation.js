@@ -34,6 +34,40 @@ const validateNavigationTree = (tree) => {
   return Array.isArray(tree) && tree.every(row => row && _.isPlainObject(row) && _.isString(row.locale) && row.locale.length > 0 && Array.isArray(row.items) && row.items.every(validateNavigationItem))
 }
 
+const navigationItemResponse = (item) => ({
+  id: item.id,
+  kind: item.kind,
+  label: item.label,
+  icon: item.icon,
+  targetType: item.targetType,
+  target: item.target,
+  visibilityMode: item.visibilityMode,
+  visibilityGroups: item.visibilityGroups
+})
+
+const navigationTreeResponse = (tree) => tree.map(row => ({
+  locale: row.locale,
+  items: row.items.map(navigationItemResponse)
+}))
+
+router.get('/', async (req, res, next) => {
+  if (!requireNavigationAccess(req, res)) {
+    return
+  }
+
+  try {
+    const tree = await WIKI.models.navigation.getTree({ cache: false, locale: 'all', bypassAuth: true })
+    res.json({
+      config: {
+        mode: WIKI.config.nav.mode
+      },
+      tree: navigationTreeResponse(tree)
+    })
+  } catch (err) {
+    return next(err)
+  }
+})
+
 router.put('/', async (req, res) => {
   if (!requireNavigationAccess(req, res)) {
     return
