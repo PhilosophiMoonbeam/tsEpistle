@@ -100,7 +100,7 @@
 <script>
 import _ from 'lodash'
 import gql from 'graphql-tag'
-import { updatePageTag } from '../../helpers/pages-api'
+import { deletePageTag, updatePageTag } from '../../helpers/pages-api'
 
 export default {
   data() {
@@ -127,35 +127,16 @@ export default {
     async deleteTag(tag) {
       this.$store.commit(`loadingStart`, 'admin-tags-delete')
       try {
-        const resp = await this.$apollo.mutate({
-          mutation: gql`
-            mutation ($id: Int!) {
-              pages {
-                deleteTag (id: $id) {
-                  responseResult {
-                    succeeded
-                    errorCode
-                    slug
-                    message
-                  }
-                }
-              }
-            }
-          `,
-          variables: {
-            id: tag.id
-          }
+        await deletePageTag(
+          window.fetch.bind(window),
+          tag.id
+        )
+        this.$store.commit('showNotification', {
+          message: this.$t('tags.deleteSuccess'),
+          style: 'success',
+          icon: 'check'
         })
-        if (_.get(resp, 'data.pages.deleteTag.responseResult.succeeded', false)) {
-          this.$store.commit('showNotification', {
-            message: this.$t('tags.deleteSuccess'),
-            style: 'success',
-            icon: 'check'
-          })
-          this.refresh()
-        } else {
-          throw new Error(_.get(resp, 'data.pages.deleteTag.responseResult.message', 'An unexpected error occurred.'))
-        }
+        this.refresh()
       } catch (err) {
         this.$store.commit('pushGraphError', err)
       }

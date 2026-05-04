@@ -1,4 +1,4 @@
-const { fetchRecentPages, updatePageTag } = require('./pages-api')
+const { deletePageTag, fetchRecentPages, updatePageTag } = require('./pages-api')
 
 function createJsonResponse (payload, ok = true) {
   return {
@@ -111,5 +111,31 @@ describe('pages api helper', () => {
     const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({}))
 
     await expect(updatePageTag(fetchImpl, 7, 'News', 'News', 'Bad tag update response')).rejects.toThrow('Bad tag update response')
+  })
+
+  test('deletes page tags with same-origin JSON DELETE', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ message: 'Tag has been deleted.' }))
+
+    await expect(deletePageTag(fetchImpl, 7)).resolves.toEqual({ message: 'Tag has been deleted.' })
+
+    expect(fetchImpl).toHaveBeenCalledWith('/_api/pages/tags/7', {
+      method: 'DELETE',
+      credentials: 'same-origin',
+      headers: {
+        Accept: 'application/json'
+      }
+    })
+  })
+
+  test('surfaces API error messages for failed tag delete requests', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ error: 'This tag does not exist.' }, false))
+
+    await expect(deletePageTag(fetchImpl, 7)).rejects.toThrow('This tag does not exist.')
+  })
+
+  test('rejects malformed successful tag delete responses', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({}))
+
+    await expect(deletePageTag(fetchImpl, 7, 'Bad tag delete response')).rejects.toThrow('Bad tag delete response')
   })
 })

@@ -112,3 +112,23 @@ export async function updatePageTag (fetchImpl: FetchImpl, id: number, tag: stri
     message: (payload as { message: string }).message
   }
 }
+
+
+export async function deletePageTag (fetchImpl: FetchImpl, id: number, fallbackMessage = 'Tag delete failed'): Promise<MessageResponse> {
+  const response = await fetchImpl(`/_api/pages/tags/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+    credentials: 'same-origin',
+    headers: {
+      Accept: 'application/json'
+    }
+  })
+
+  const payload = await parseJsonResponse(response, fallbackMessage)
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload) || typeof (payload as { message?: unknown }).message !== 'string' || (payload as { message: string }).message.length < 1) {
+    throw new Error(fallbackMessage)
+  }
+
+  return {
+    message: (payload as { message: string }).message
+  }
+}

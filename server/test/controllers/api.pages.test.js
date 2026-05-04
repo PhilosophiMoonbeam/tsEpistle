@@ -1,5 +1,6 @@
 jest.mock('express', () => {
   const router = {
+    delete: jest.fn(),
     get: jest.fn(),
     patch: jest.fn(),
     post: jest.fn(),
@@ -16,6 +17,7 @@ describe('controllers/api pages endpoints', () => {
   beforeEach(() => {
     jest.resetModules()
     const express = require('express')
+    express.__router.delete.mockClear()
     express.__router.get.mockClear()
     express.__router.patch.mockClear()
 
@@ -26,7 +28,11 @@ describe('controllers/api pages endpoints', () => {
       models: {
         tags: {
           query: jest.fn().mockReturnValue({
+            deleteById: jest.fn().mockResolvedValue(1),
             findById: jest.fn().mockReturnValue({
+              $relatedQuery: jest.fn().mockReturnValue({
+                unrelate: jest.fn().mockResolvedValue(1)
+              }),
               patch: jest.fn().mockResolvedValue(1)
             })
           })
@@ -75,6 +81,7 @@ describe('controllers/api pages endpoints', () => {
     const express = require('express')
     require('../../controllers/api/pages')
     return {
+      deleteTag: express.__router.delete.mock.calls.find(([path]) => path === '/tags/:id')[1],
       recent: express.__router.get.mock.calls.find(([path]) => path === '/recent')[1],
       updateTag: express.__router.patch.mock.calls.find(([path]) => path === '/tags/:id')[1]
     }
@@ -276,5 +283,91 @@ describe('controllers/api pages endpoints', () => {
 
     expect(res.status).toHaveBeenCalledWith(500)
     expect(res.json).toHaveBeenCalledWith({ error: 'tag db down' })
+  })
+
+  it('registers the tag delete route', () => {
+    const { deleteTag } = loadHandler()
+
+    expect(typeof deleteTag).toBe('function')
+  })
+
+  it('requires manage:system for tag deletes', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValueOnce(false)
+    const { deleteTag } = loadHandler()
+    const req = { user: { permissions: ['read:pages'] }, params: { id: '7' } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await deleteTag(req, res)
+
+    expect(global.WIKI.auth.checkAccess).toHaveBeenCalledWith({ permissions: ['read:pages'] }, ['manage:system'])
+    expect(res.status).toHaveBeenCalledWith(403)
+    expect(res.json).toHaveBeenCalledWith({ error: 'manage:system is required' })
+    expect(global.WIKI.models.tags.query).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['0'],
+    ['1.9'],
+    ['Infinity'],
+    ['9007199254740992']
+  ])('rejects invalid tag delete ids: %s', async (id) => {
+    const { deleteTag } = loadHandler()
+    const req = { user: { permissions: ['manage:system'] }, params: { id } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await deleteTag(req, res)
+
+    expect(res.status).toHaveBeenCalledWith(400)
+    expect(res.json).toHaveBeenCalledWith({ error: 'id must be a positive integer' })
+    expect(global.WIKI.models.tags.query).not.toHaveBeenCalled()
+  })
+
+  it('deletes tags with GraphQL-compatible unrelate-then-delete semantics', async () => {
+    const { deleteTag } = loadHandler()
+    const req = { user: { permissions: ['manage:system'] }, params: { id: '7' } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await deleteTag(req, res)
+
+    const findQuery = global.WIKI.models.tags.query.mock.results[0].value
+    expect(findQuery.findById).toHaveBeenCalledWith(7)
+    const tagToDel = findQuery.findById.mock.results[0].value
+    expect(tagToDel.$relatedQuery).toHaveBeenCalledWith('pages')
+    expect(tagToDel.$relatedQuery.mock.results[0].value.unrelate).toHaveBeenCalled()
+    const deleteQuery = global.WIKI.models.tags.query.mock.results[1].value
+    expect(deleteQuery.deleteById).toHaveBeenCalledWith(7)
+    expect(res.json).toHaveBeenCalledWith({ message: 'Tag has been deleted.' })
+  })
+
+  it('returns a JSON 404 when deleting a missing tag', async () => {
+    global.WIKI.models.tags.query.mockReturnValueOnce({
+      findById: jest.fn().mockResolvedValue(null)
+    })
+    const { deleteTag } = loadHandler()
+    const req = { user: { permissions: ['manage:system'] }, params: { id: '7' } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await deleteTag(req, res)
+
+    expect(res.status).toHaveBeenCalledWith(404)
+    expect(res.json).toHaveBeenCalledWith({ error: 'This tag does not exist.' })
+  })
+
+  it('returns JSON errors for unexpected tag delete failures', async () => {
+    global.WIKI.models.tags.query.mockReturnValueOnce({
+      findById: jest.fn().mockReturnValue({
+        $relatedQuery: jest.fn().mockReturnValue({
+          unrelate: jest.fn().mockRejectedValue(new Error('unrelate failed'))
+        })
+      })
+    })
+    const { deleteTag } = loadHandler()
+    const req = { user: { permissions: ['manage:system'] }, params: { id: '7' } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await deleteTag(req, res)
+
+    expect(res.status).toHaveBeenCalledWith(500)
+    expect(res.json).toHaveBeenCalledWith({ error: 'unrelate failed' })
   })
 })

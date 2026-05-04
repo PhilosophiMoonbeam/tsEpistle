@@ -94,4 +94,33 @@ router.patch('/tags/:id', async (req, res) => {
   }
 })
 
+router.delete('/tags/:id', async (req, res) => {
+  if (!requireSystemAccess(req, res)) {
+    return
+  }
+
+  const rawId = _.get(req, 'params.id')
+  if (!_.isString(rawId) || !/^[1-9]\d*$/.test(rawId)) {
+    return res.status(400).json({ error: 'id must be a positive integer' })
+  }
+
+  const id = Number(rawId)
+  if (!Number.isSafeInteger(id)) {
+    return res.status(400).json({ error: 'id must be a positive integer' })
+  }
+
+  try {
+    const tagToDel = await WIKI.models.tags.query().findById(id)
+    if (!tagToDel) {
+      return res.status(404).json({ error: 'This tag does not exist.' })
+    }
+
+    await tagToDel.$relatedQuery('pages').unrelate()
+    await WIKI.models.tags.query().deleteById(id)
+    res.json({ message: 'Tag has been deleted.' })
+  } catch (err) {
+    res.status(500).json({ error: err.message || 'Tag delete failed' })
+  }
+})
+
 module.exports = router
