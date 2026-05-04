@@ -125,11 +125,13 @@ describe('controllers/api system endpoints', () => {
           query: jest.fn(() => ({
             count: jest.fn(() => ({
               first: jest.fn().mockResolvedValue({ total: '42' })
-            }))
+            })),
+            findById: jest.fn().mockResolvedValue({ id: 12, path: 'docs', localeCode: 'en' })
           })),
           flushCache: jest.fn().mockResolvedValue(true),
           rebuildTree: jest.fn().mockResolvedValue(true),
-          migrateToLocale: jest.fn().mockResolvedValue(2)
+          migrateToLocale: jest.fn().mockResolvedValue(2),
+          renderPage: jest.fn().mockResolvedValue(true)
         },
         pageHistory: {
           purge: jest.fn().mockResolvedValue(true)
@@ -207,6 +209,7 @@ describe('controllers/api system endpoints', () => {
       flushSystemCache: express.__router.post.mock.calls.find(([path]) => path === '/cache/flush')[1],
       flushSystemTemporaryUploads: express.__router.post.mock.calls.find(([path]) => path === '/cache/temp-uploads/flush')[1],
       rebuildPageTree: express.__router.post.mock.calls.find(([path]) => path === '/content/rebuild-tree')[1],
+      renderPage: express.__router.post.mock.calls.find(([path]) => path === '/content/render-page')[1],
       migratePagesToLocale: express.__router.post.mock.calls.find(([path]) => path === '/content/migrate-locale')[1],
       purgePageHistory: express.__router.post.mock.calls.find(([path]) => path === '/content/purge-history')[1],
       exportStatus: express.__router.get.mock.calls.find(([path]) => path === '/export-status')[1],
@@ -233,6 +236,7 @@ describe('controllers/api system endpoints', () => {
     expect(typeof handlers.flushSystemCache).toBe('function')
     expect(typeof handlers.flushSystemTemporaryUploads).toBe('function')
     expect(typeof handlers.rebuildPageTree).toBe('function')
+    expect(typeof handlers.renderPage).toBe('function')
     expect(typeof handlers.migratePagesToLocale).toBe('function')
     expect(typeof handlers.purgePageHistory).toBe('function')
     expect(typeof handlers.exportStatus).toBe('function')
@@ -245,7 +249,7 @@ describe('controllers/api system endpoints', () => {
 
   it('returns 403 for unauthorized system requests', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(false)
-    const { info, summary, flags, host, extensions, telemetry, updateTelemetry, resetTelemetryClientId, performUpgrade, flushSystemCache, flushSystemTemporaryUploads, rebuildPageTree, migratePagesToLocale, purgePageHistory, exportStatus, ssl, updateSslRedirection, renewSslCertificate, saveFlags, checkForUpdate } = loadHandlers()
+    const { info, summary, flags, host, extensions, telemetry, updateTelemetry, resetTelemetryClientId, performUpgrade, flushSystemCache, flushSystemTemporaryUploads, rebuildPageTree, renderPage, migratePagesToLocale, purgePageHistory, exportStatus, ssl, updateSslRedirection, renewSslCertificate, saveFlags, checkForUpdate } = loadHandlers()
     const req = { user: { permissions: [] }, get: jest.fn() }
     const res = { sendStatus: jest.fn(), json: jest.fn() }
 
@@ -261,6 +265,7 @@ describe('controllers/api system endpoints', () => {
     await flushSystemCache(req, res)
     await flushSystemTemporaryUploads(req, res)
     await rebuildPageTree(req, res)
+    await renderPage(req, res)
     await migratePagesToLocale(req, res)
     await purgePageHistory(req, res)
     await exportStatus(req, res)
@@ -270,8 +275,8 @@ describe('controllers/api system endpoints', () => {
     await saveFlags(req, res)
     await checkForUpdate(req, res)
 
-    expect(res.sendStatus).toHaveBeenCalledTimes(20)
-    for (let idx = 1; idx <= 20; idx++) {
+    expect(res.sendStatus).toHaveBeenCalledTimes(21)
+    for (let idx = 1; idx <= 21; idx++) {
       expect(res.sendStatus).toHaveBeenNthCalledWith(idx, 403)
     }
     expect(res.json).not.toHaveBeenCalled()

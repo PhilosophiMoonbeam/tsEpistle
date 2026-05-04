@@ -94,7 +94,7 @@
 import _ from 'lodash'
 import gql from 'graphql-tag'
 import { loadingStart, loadingStop, showNotification, pushGraphError } from '../../helpers/root-ui-store'
-import { migratePagesToLocale, purgePageHistory, rebuildPageTree } from '../../helpers/system-api'
+import { migratePagesToLocale, purgePageHistory, rebuildPageTree, renderPage } from '../../helpers/system-api'
 
 import { SemipolarSpinner } from 'epic-spinners'
 
@@ -157,7 +157,7 @@ export default {
     async rerenderPages () {
       this.loading = true
       this.isRerendering = true
-      this.$store.commit(`loadingStart`, 'admin-utilities-content-rerender')
+      loadingStart(this.$store, 'admin-utilities-content-rerender')
 
       try {
         const pagesRaw = await this.$apollo.query({
@@ -185,48 +185,30 @@ export default {
           this.renderCurrentPath = `${page.locale}/${page.path}`
           this.renderIndex++
           this.renderProgress = Math.round(this.renderIndex / this.renderTotal * 100)
-          const respRaw = await this.$apollo.mutate({
-            mutation: gql`
-              mutation($id: Int!) {
-                pages {
-                  render(id: $id) {
-                    responseResult {
-                      succeeded
-                      errorCode
-                      slug
-                      message
-                    }
-                  }
-                }
-              }
-            `,
-            variables: {
-              id: page.id
-            }
-          })
-          const resp = _.get(respRaw, 'data.pages.render.responseResult', {})
-          if (!resp.succeeded) {
+          try {
+            await renderPage(window.fetch.bind(window), page.id)
+          } catch (err) {
             failed++
           }
         }
         if (failed > 0) {
-          this.$store.commit('showNotification', {
+          showNotification(this.$store, {
             message: `Completed with ${failed} pages that failed to render. Check server logs for details.`,
             style: 'error',
             icon: 'alert'
           })
         } else {
-          this.$store.commit('showNotification', {
+          showNotification(this.$store, {
             message: 'All pages have been rendered successfully.',
             style: 'success',
             icon: 'check'
           })
         }
       } catch (err) {
-        this.$store.commit('pushGraphError', err)
+        pushGraphError(this.$store, err)
       }
 
-      this.$store.commit(`loadingStop`, 'admin-utilities-content-rerender')
+      loadingStop(this.$store, 'admin-utilities-content-rerender')
       this.isRerendering = false
       this.loading = false
     },

@@ -143,10 +143,6 @@ type PageMutation {
 
   rebuildTree: DefaultResponse @auth(requires: ["manage:system"])
 
-  render(
-    id: Int!
-  ): DefaultResponse @auth(requires: ["manage:system"])
-
   restore(
     pageId: Int!
     versionId: Int!

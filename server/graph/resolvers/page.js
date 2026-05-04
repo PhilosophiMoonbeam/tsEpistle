@@ -514,23 +514,6 @@ module.exports = {
       }
     },
     /**
-     * RENDER PAGE
-     */
-    async render (obj, args, context) {
-      try {
-        const page = await WIKI.models.pages.query().findById(args.id)
-        if (!page) {
-          throw new WIKI.Error.PageNotFound()
-        }
-        await WIKI.models.pages.renderPage(page)
-        return {
-          responseResult: graphHelper.generateSuccess('Page rendered successfully.')
-        }
-      } catch (err) {
-        return graphHelper.generateError(err)
-      }
-    },
-    /**
      * RESTORE PAGE VERSION
      */
     async restore (obj, args, context) {

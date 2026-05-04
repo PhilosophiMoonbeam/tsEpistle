@@ -1,4 +1,4 @@
-const { fetchSystemSummary, fetchSystemInfo, fetchSystemTelemetry, fetchSystemExportStatus, fetchSystemHost, fetchSystemSsl, updateSystemSslRedirection, renewSystemSslCertificate, fetchSystemFlags, fetchSystemExtensions, updateSystemFlags, updateSystemTelemetry, resetSystemTelemetryClientId, flushSystemCache, flushSystemTemporaryUploads, rebuildPageTree, migratePagesToLocale, purgePageHistory, performSystemUpgrade } = require('./system-api')
+const { fetchSystemSummary, fetchSystemInfo, fetchSystemTelemetry, fetchSystemExportStatus, fetchSystemHost, fetchSystemSsl, updateSystemSslRedirection, renewSystemSslCertificate, fetchSystemFlags, fetchSystemExtensions, updateSystemFlags, updateSystemTelemetry, resetSystemTelemetryClientId, flushSystemCache, flushSystemTemporaryUploads, rebuildPageTree, migratePagesToLocale, renderPage, purgePageHistory, performSystemUpgrade } = require('./system-api')
 
 function createJsonResponse (payload, ok = true) {
   return {
@@ -617,6 +617,33 @@ describe('system api helper', () => {
     const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ error: 'migration backend failed' }, false))
 
     await expect(migratePagesToLocale(fetchImpl, 'en', 'fr', 'Bad locale migration')).rejects.toThrow('migration backend failed')
+  })
+
+  test('renders pages through REST', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ message: 'Page rendered successfully.' }))
+
+    await expect(renderPage(fetchImpl, 12)).resolves.toEqual({ message: 'Page rendered successfully.' })
+    expect(fetchImpl).toHaveBeenCalledWith('/_api/system/content/render-page', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ id: 12 })
+    })
+  })
+
+  test('rejects malformed page render success payloads', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ message: '' }))
+
+    await expect(renderPage(fetchImpl, 12, 'Bad page render')).rejects.toThrow('Bad page render')
+  })
+
+  test('surfaces API error messages for page render failures', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ error: 'render denied' }, false))
+
+    await expect(renderPage(fetchImpl, 12, 'Bad page render')).rejects.toThrow('render denied')
   })
 
   test('purges page history through REST', async () => {

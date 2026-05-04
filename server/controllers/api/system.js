@@ -334,6 +334,29 @@ router.post('/content/migrate-locale', async (req, res) => {
   }
 })
 
+router.post('/content/render-page', async (req, res) => {
+  if (!requireSystemAccess(req, res)) {
+    return
+  }
+
+  const id = _.get(req, 'body.id')
+  if (!Number.isSafeInteger(id) || id < 1) {
+    return res.status(400).json({ error: 'id must be a positive integer' })
+  }
+
+  try {
+    const page = await WIKI.models.pages.query().findById(id)
+    if (!page) {
+      return res.status(404).json({ error: 'This page does not exist.' })
+    }
+
+    await WIKI.models.pages.renderPage(page)
+    res.json({ message: 'Page rendered successfully.' })
+  } catch (err) {
+    res.status(500).json({ error: err.message || 'Page render failed' })
+  }
+})
+
 router.post('/content/purge-history', async (req, res) => {
   if (!requireSystemAccess(req, res)) {
     return
