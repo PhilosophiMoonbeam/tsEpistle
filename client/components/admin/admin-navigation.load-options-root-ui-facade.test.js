@@ -27,7 +27,7 @@ describe('admin-navigation root UI facade for read-only option loaders and refre
   const refresh = extractMethod('refresh')
 
   test('imports only the root UI helpers needed by the option loaders and refresh notification', () => {
-    expect(source).toContain("import { loadingStart, loadingStop, showNotification } from '../../helpers/root-ui-store'")
+    expect(source).toContain("import { loadingStart, loadingStop, showNotification, pushGraphError } from '../../helpers/root-ui-store'")
   })
 
   test('loadAllLocales routes loading and error notification through the facade', () => {
@@ -75,9 +75,9 @@ describe('admin-navigation root UI facade for read-only option loaders and refre
   })
 
   test('keeps broader navigation save, Apollo watchers, and template out of this slice', () => {
-    expect(source).toContain("this.$store.commit(`loadingStart`, 'admin-navigation-save')")
-    expect(source).toContain("this.$store.commit('pushGraphError', err)")
-    expect(source).toContain("this.$store.commit(`loadingStop`, 'admin-navigation-save')")
+    expect(source).toContain("loadingStart(this.$store, 'admin-navigation-save')")
+    expect(source).toContain('pushGraphError(this.$store, err)')
+    expect(source).toContain("loadingStop(this.$store, 'admin-navigation-save')")
     expect(source).toContain('this.$store.commit(`loading' + '$' + "{isLoading ? 'Start' : 'Stop'}`, 'admin-navigation-config')")
     expect(source).toContain('this.$store.commit(`loading' + '$' + "{isLoading ? 'Start' : 'Stop'}`, 'admin-navigation-tree')")
     expect(source).toContain("v-btn.animated.fadeInDown(color='success', depressed, @click='save', large)")

@@ -207,7 +207,7 @@
     "@babel/plugin-syntax-import-meta": "^7.10.4",
     "@babel/preset-env": "7.29.3",
     "@babel/preset-typescript": "7.28.5",
-    "@mdi/font": "5.8.55",
+    "@mdi/font": "5.9.55",
     "@panter/vue-i18next": "0.15.2",
     "@requarks/ckeditor5": "19.0.1-wiki.2",
     "animate-sass": "0.8.2",

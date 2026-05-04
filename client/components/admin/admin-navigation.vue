@@ -279,7 +279,8 @@ import { v4 as uuid } from 'uuid'
 
 import { fetchGroupOptions } from '../../helpers/groups-api'
 import { fetchLocales } from '../../helpers/locales-api'
-import { loadingStart, loadingStop, showNotification } from '../../helpers/root-ui-store'
+import { saveNavigation } from '../../helpers/navigation-api'
+import { loadingStart, loadingStop, showNotification, pushGraphError } from '../../helpers/root-ui-store'
 
 import draggable from 'vuedraggable'
 
@@ -414,49 +415,18 @@ export default {
       this.currentTree = [...this.currentTree, ..._.get(_.find(this.trees, ['locale', this.copyFromLocaleCode]), 'items', null) || []]
     },
     async save() {
-      this.$store.commit(`loadingStart`, 'admin-navigation-save')
+      loadingStart(this.$store, 'admin-navigation-save')
       try {
-        const resp = await this.$apollo.mutate({
-          mutation: gql`
-            mutation ($tree: [NavigationTreeInput]!, $mode: NavigationMode!) {
-              navigation{
-                updateTree(tree: $tree) {
-                  responseResult {
-                    succeeded
-                    errorCode
-                    slug
-                    message
-                  }
-                },
-                updateConfig(mode: $mode) {
-                  responseResult {
-                    succeeded
-                    errorCode
-                    slug
-                    message
-                  }
-                }
-              }
-            }
-          `,
-          variables: {
-            tree: this.trees,
-            mode: this.config.mode
-          }
+        await saveNavigation(window.fetch.bind(window), this.trees, this.config.mode)
+        showNotification(this.$store, {
+          message: this.$t('navigation.saveSuccess'),
+          style: 'success',
+          icon: 'check'
         })
-        if (_.get(resp, 'data.navigation.updateTree.responseResult.succeeded', false) && _.get(resp, 'data.navigation.updateConfig.responseResult.succeeded', false)) {
-          this.$store.commit('showNotification', {
-            message: this.$t('navigation.saveSuccess'),
-            style: 'success',
-            icon: 'check'
-          })
-        } else {
-          throw new Error(_.get(resp, 'data.navigation.updateTree.responseResult.message', 'An unexpected error occurred.'))
-        }
       } catch (err) {
-        this.$store.commit('pushGraphError', err)
+        pushGraphError(this.$store, err)
       }
-      this.$store.commit(`loadingStop`, 'admin-navigation-save')
+      loadingStop(this.$store, 'admin-navigation-save')
     },
     async refresh() {
       await this.$apollo.queries.trees.refetch()
