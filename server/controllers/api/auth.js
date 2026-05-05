@@ -146,6 +146,37 @@ const buildAuthStrategyPatch = (strategy) => ({
   autoEnrollGroups: { v: strategy.autoEnrollGroups }
 })
 
+const toAdminStrategyResponse = (strategy) => ({
+  ...strategy,
+  isAvailable: strategy.isAvailable === true,
+  props: _.sortBy(_.transform(strategy.props, (result, value, key) => {
+    result.push({
+      key,
+      value: JSON.stringify(value)
+    })
+  }, []), 'key')
+})
+
+const toAdminActiveStrategyResponse = (strategy) => {
+  const strategyInfo = _.find(WIKI.data.authentication, ['key', strategy.strategyKey]) || {}
+  return {
+    ...strategy,
+    strategy: strategyInfo,
+    config: _.sortBy(_.transform(strategy.config, (result, value, key) => {
+      const configData = _.get(strategyInfo.props, key, false)
+      if (configData) {
+        result.push({
+          key,
+          value: JSON.stringify({
+            ...configData,
+            value
+          })
+        })
+      }
+    }, []), 'key')
+  }
+}
+
 const updateAuthenticationStrategies = async (strategies) => {
   const previousStrategies = await WIKI.models.authentication.getStrategies()
   for (const strategy of strategies) {
@@ -177,6 +208,34 @@ const updateAuthenticationStrategies = async (strategies) => {
   await WIKI.auth.activateStrategies()
   WIKI.events.outbound.emit('reloadAuthStrategies')
 }
+
+router.get('/admin/strategies', async (req, res, next) => {
+  if (!requireSystemAccess(req, res)) {
+    return
+  }
+
+  try {
+    res.json(WIKI.data.authentication.map(toAdminStrategyResponse))
+  } catch (err) {
+    next(err)
+  }
+})
+
+router.get('/admin/active-strategies', async (req, res, next) => {
+  if (!requireSystemAccess(req, res)) {
+    return
+  }
+
+  try {
+    let strategies = (await WIKI.models.authentication.getStrategies()).map(toAdminActiveStrategyResponse)
+    if (_.get(req, 'query.enabledOnly') === 'true') {
+      strategies = _.filter(strategies, 'isEnabled')
+    }
+    res.json(strategies)
+  } catch (err) {
+    next(err)
+  }
+})
 
 router.get('/strategies', async (req, res, next) => {
   try {

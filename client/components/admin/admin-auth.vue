@@ -220,8 +220,7 @@
 
 <script>
 import _ from 'lodash'
-import gql from 'graphql-tag'
-import { updateAdminAuthStrategies } from '../../helpers/auth-api'
+import { fetchAdminAuthActiveStrategies, fetchAdminAuthStrategies, updateAdminAuthStrategies } from '../../helpers/auth-api'
 import { v4 as uuid } from 'uuid'
 
 import { fetchGroupOptions } from '../../helpers/groups-api'
@@ -287,9 +286,39 @@ export default {
         this.$store.commit('loadingStop', 'admin-auth-host-refresh')
       }
     },
+    async loadStrategies() {
+      this.$store.commit('loadingStart', 'admin-auth-strategies-refresh')
+      try {
+        this.strategies = await fetchAdminAuthStrategies(window.fetch.bind(window), 'Authentication strategies response is invalid')
+      } catch (err) {
+        this.$store.commit('showNotification', {
+          style: 'red',
+          message: err.message,
+          icon: 'alert'
+        })
+        throw err
+      } finally {
+        this.$store.commit('loadingStop', 'admin-auth-strategies-refresh')
+      }
+    },
+    async loadActiveStrategies() {
+      this.$store.commit('loadingStart', 'admin-auth-activestrategies-refresh')
+      try {
+        this.activeStrategies = await fetchAdminAuthActiveStrategies(window.fetch.bind(window), 'Active authentication strategies response is invalid')
+      } catch (err) {
+        this.$store.commit('showNotification', {
+          style: 'red',
+          message: err.message,
+          icon: 'alert'
+        })
+        throw err
+      } finally {
+        this.$store.commit('loadingStop', 'admin-auth-activestrategies-refresh')
+      }
+    },
     async refresh() {
-      await this.$apollo.queries.strategies.refetch()
-      await this.$apollo.queries.activeStrategies.refetch()
+      await this.loadStrategies()
+      await this.loadActiveStrategies()
       await this.loadHost()
       this.$store.commit('showNotification', {
         message: this.$t('admin:auth.refreshSuccess'),
@@ -351,81 +380,9 @@ export default {
   created() {
     this.loadGroups()
     this.loadHost().catch(() => {})
-  },
-  apollo: {
-    strategies: {
-      query: gql`
-        query {
-          authentication {
-            strategies {
-              key
-              title
-              description
-              isAvailable
-              useForm
-              logo
-              website
-              props {
-                key
-                value
-              }
-            }
-          }
-        }
-      `,
-      fetchPolicy: 'network-only',
-      update: (data) => _.get(data, 'authentication.strategies', []).map(str => ({
-        ...str,
-        isDisabled: !str.isAvailable || str.key === `local`,
-        props: _.sortBy(str.props.map(cfg => ({
-          key: cfg.key,
-          ...JSON.parse(cfg.value)
-        })), [t => t.order])
-      })),
-      watchLoading (isLoading) {
-        this.$store.commit(`loading${isLoading ? 'Start' : 'Stop'}`, 'admin-auth-strategies-refresh')
-      }
-    },
-    activeStrategies: {
-      query: gql`
-        query {
-          authentication {
-            activeStrategies {
-              key
-              strategy {
-                key
-                title
-                description
-                useForm
-                logo
-                website
-              }
-              config {
-                key
-                value
-              }
-              order
-              isEnabled
-              displayName
-              selfRegistration
-              domainWhitelist
-              autoEnrollGroups
-            }
-          }
-        }
-      `,
-      fetchPolicy: 'network-only',
-      update: (data) => _.sortBy(_.get(data, 'authentication.activeStrategies', []).map(str => ({
-        ...str,
-        config: _.sortBy(str.config.map(cfg => ({
-          ...cfg,
-          value: JSON.parse(cfg.value)
-        })), [t => t.value.order])
-      })), ['order']),
-      watchLoading (isLoading) {
-        this.$store.commit(`loading${isLoading ? 'Start' : 'Stop'}`, 'admin-auth-activestrategies-refresh')
-      }
-    }
+    this.loadStrategies().catch(() => {})
+    this.loadActiveStrategies().catch(() => {})
   }
+
 }
 </script>

@@ -41,7 +41,7 @@ describe('controllers/api auth endpoints', () => {
             title: 'Local',
             useForm: true,
             props: {
-              usernameFormat: { type: 'string', default: 'email' }
+              usernameFormat: { type: 'string', default: 'email', order: 2 }, displayName: { type: 'string', default: '', order: 1 }
             }
           },
           {
@@ -49,7 +49,7 @@ describe('controllers/api auth endpoints', () => {
             title: 'GitHub',
             useForm: false,
             props: {
-              clientId: { type: 'string', default: '' }
+              clientId: { type: 'string', default: '', order: 2 }, clientSharedKey: { type: 'string', default: '', order: 1 }
             }
           }
         ]
@@ -101,8 +101,12 @@ describe('controllers/api auth endpoints', () => {
               order: 1,
               isEnabled: true,
               config: {
-                usernameFormat: 'email'
-              }
+                usernameFormat: 'email',
+                ignoredConfig: 'ignored'
+              },
+              selfRegistration: false,
+              domainWhitelist: ['example.com'],
+              autoEnrollGroups: [1]
             },
             {
               key: 'github',
@@ -111,8 +115,12 @@ describe('controllers/api auth endpoints', () => {
               order: 2,
               isEnabled: false,
               config: {
-                clientId: 'abc123'
-              }
+                clientId: 'abc123',
+                clientSharedKey: 'shh'
+              },
+              selfRegistration: true,
+              domainWhitelist: [],
+              autoEnrollGroups: []
             }
           ])
         },
@@ -151,6 +159,8 @@ describe('controllers/api auth endpoints', () => {
       return call[call.length - 1]
     }
     return {
+      adminStrategies: getRouteHandler('/admin/strategies'),
+      adminActiveStrategies: getRouteHandler('/admin/active-strategies'),
       strategies: getRouteHandler('/strategies'),
       providers: getRouteHandler('/providers'),
       updateStrategies: postRouteHandler('/strategies'),
@@ -170,6 +180,8 @@ describe('controllers/api auth endpoints', () => {
   it('registers the auth routes', () => {
     const handlers = loadHandlers()
 
+    expect(typeof handlers.adminStrategies).toBe('function')
+    expect(typeof handlers.adminActiveStrategies).toBe('function')
     expect(typeof handlers.strategies).toBe('function')
     expect(typeof handlers.providers).toBe('function')
     expect(typeof handlers.updateStrategies).toBe('function')
@@ -185,6 +197,112 @@ describe('controllers/api auth endpoints', () => {
     expect(typeof handlers.loginChangePassword).toBe('function')
   })
 
+  it('returns admin authentication strategy definitions with GraphQL-compatible props', async () => {
+    const { adminStrategies } = loadHandlers()
+    const req = { user: { permissions: ['manage:system'] } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await adminStrategies(req, res, jest.fn())
+
+    expect(global.WIKI.auth.checkAccess).toHaveBeenCalledWith({ permissions: ['manage:system'] }, ['manage:system'])
+    expect(res.json).toHaveBeenCalledWith([
+      expect.objectContaining({
+        key: 'local',
+        title: 'Local',
+        isAvailable: false,
+        props: [
+          { key: 'displayName', value: JSON.stringify({ type: 'string', default: '', order: 1 }) },
+          { key: 'usernameFormat', value: JSON.stringify({ type: 'string', default: 'email', order: 2 }) }
+        ]
+      }),
+      expect.objectContaining({
+        key: 'github',
+        title: 'GitHub',
+        isAvailable: false,
+        props: [
+          { key: 'clientId', value: JSON.stringify({ type: 'string', default: '', order: 2 }) },
+          { key: 'clientSharedKey', value: JSON.stringify({ type: 'string', default: '', order: 1 }) }
+        ]
+      })
+    ])
+  })
+
+  it('returns 403 for unauthorized admin authentication strategy definitions requests', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValueOnce(false)
+    const { adminStrategies } = loadHandlers()
+    const req = { user: { permissions: ['read:pages'] } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await adminStrategies(req, res, jest.fn())
+
+    expect(res.status).toHaveBeenCalledWith(403)
+    expect(res.json).toHaveBeenCalledWith({ error: 'manage:system is required' })
+  })
+
+  it('returns admin active authentication strategies with GraphQL-compatible config', async () => {
+    const { adminActiveStrategies } = loadHandlers()
+    const req = { user: { permissions: ['manage:system'] }, query: {} }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await adminActiveStrategies(req, res, jest.fn())
+
+    expect(global.WIKI.auth.checkAccess).toHaveBeenCalledWith({ permissions: ['manage:system'] }, ['manage:system'])
+    expect(global.WIKI.models.authentication.getStrategies).toHaveBeenCalledTimes(1)
+    expect(res.json).toHaveBeenCalledWith([
+      expect.objectContaining({
+        key: 'local',
+        strategy: expect.objectContaining({ key: 'local', title: 'Local' }),
+        config: [
+          { key: 'usernameFormat', value: JSON.stringify({ type: 'string', default: 'email', order: 2, value: 'email' }) }
+        ],
+        order: 1,
+        isEnabled: true,
+        displayName: 'Local Login',
+        selfRegistration: false,
+        domainWhitelist: ['example.com'],
+        autoEnrollGroups: [1]
+      }),
+      expect.objectContaining({
+        key: 'github',
+        strategy: expect.objectContaining({ key: 'github', title: 'GitHub' }),
+        config: [
+          { key: 'clientId', value: JSON.stringify({ type: 'string', default: '', order: 2, value: 'abc123' }) },
+          { key: 'clientSharedKey', value: JSON.stringify({ type: 'string', default: '', order: 1, value: 'shh' }) }
+        ],
+        order: 2,
+        isEnabled: false,
+        displayName: 'GitHub Login',
+        selfRegistration: true,
+        domainWhitelist: [],
+        autoEnrollGroups: []
+      })
+    ])
+  })
+
+  it('filters admin active authentication strategies when enabledOnly is true', async () => {
+    const { adminActiveStrategies } = loadHandlers()
+    const req = { user: { permissions: ['manage:system'] }, query: { enabledOnly: 'true' } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await adminActiveStrategies(req, res, jest.fn())
+
+    expect(res.json.mock.calls[0][0]).toHaveLength(1)
+    expect(res.json.mock.calls[0][0][0].key).toBe('local')
+  })
+
+  it('forwards admin active authentication strategy failures to next', async () => {
+    const next = jest.fn()
+    global.WIKI.models.authentication.getStrategies.mockRejectedValueOnce(new Error('auth db down'))
+    const { adminActiveStrategies } = loadHandlers()
+    const req = { user: { permissions: ['manage:system'] }, query: {} }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await adminActiveStrategies(req, res, next)
+
+    expect(next).toHaveBeenCalledWith(expect.any(Error))
+    expect(next.mock.calls[0][0].message).toBe('auth db down')
+  })
+
   it('returns only enabled authentication strategies with the public login-safe payload', async () => {
     const { strategies } = loadHandlers()
     const res = { json: jest.fn() }
@@ -197,15 +315,11 @@ describe('controllers/api auth endpoints', () => {
         key: 'local',
         displayName: 'Local Login',
         order: 1,
-        selfRegistration: undefined,
+        selfRegistration: false,
         strategy: {
           key: 'local',
           title: 'Local',
-          logo: undefined,
-          color: undefined,
-          icon: undefined,
-          useForm: true,
-          usernameType: undefined
+          useForm: true
         }
       }
     ])

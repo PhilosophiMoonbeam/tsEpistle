@@ -1,4 +1,4 @@
-const { fetchAuthStrategies, fetchAdminAuthProviders, fetchAdminApiBootstrap, updateAdminAuthStrategies, setAdminApiState, revokeAdminApiKey, createAdminApiKey, submitAuthRequest, submitStatusRequest, regenerateAuthCertificates, resetGuestUser } = require('./auth-api')
+const { fetchAuthStrategies, fetchAdminAuthActiveStrategies, fetchAdminAuthProviders, fetchAdminAuthStrategies, fetchAdminApiBootstrap, updateAdminAuthStrategies, setAdminApiState, revokeAdminApiKey, createAdminApiKey, submitAuthRequest, submitStatusRequest, regenerateAuthCertificates, resetGuestUser } = require('./auth-api')
 
 function createJsonResponse (payload, ok = true, status = ok ? 200 : 400) {
   return {
@@ -31,6 +31,131 @@ describe('auth api helper', () => {
         Accept: 'application/json'
       }
     })
+  })
+
+  test('fetches and normalizes admin authentication strategies', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse([
+      {
+        key: 'github',
+        title: 'GitHub',
+        isAvailable: true,
+        props: [
+          { key: 'clientId', value: JSON.stringify({ type: 'string', order: 2, default: '' }) },
+          { key: 'clientSharedKey', value: JSON.stringify({ type: 'string', order: 1, default: '' }) }
+        ],
+        extra: 'ignored'
+      },
+      {
+        key: 'local',
+        title: 'Local',
+        isAvailable: true,
+        props: []
+      }
+    ]))
+
+    await expect(fetchAdminAuthStrategies(fetchImpl)).resolves.toEqual([
+      expect.objectContaining({
+        key: 'github',
+        title: 'GitHub',
+        isAvailable: true,
+        isDisabled: false,
+        props: [
+          { key: 'clientSharedKey', type: 'string', order: 1, default: '' },
+          { key: 'clientId', type: 'string', order: 2, default: '' }
+        ],
+        extra: 'ignored'
+      }),
+      expect.objectContaining({
+        key: 'local',
+        isAvailable: true,
+        isDisabled: true,
+        props: []
+      })
+    ])
+
+    expect(fetchImpl).toHaveBeenCalledWith('/_api/auth/admin/strategies', {
+      credentials: 'same-origin',
+      headers: {
+        Accept: 'application/json'
+      }
+    })
+  })
+
+  test('rejects malformed admin authentication strategy payloads', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse([{ key: 'github', isAvailable: true, props: [{ key: 'clientId', value: '{' }] }]))
+
+    await expect(fetchAdminAuthStrategies(fetchImpl, 'Bad strategies payload')).rejects.toThrow('Bad strategies payload')
+  })
+
+  test('surfaces REST errors for admin authentication strategy definitions', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ error: 'manage:system is required' }, false))
+
+    await expect(fetchAdminAuthStrategies(fetchImpl, 'Bad strategies payload')).rejects.toThrow('manage:system is required')
+  })
+
+  test('fetches and normalizes admin active authentication strategies', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse([
+      {
+        key: 'github',
+        strategy: { key: 'github', title: 'GitHub' },
+        config: [
+          { key: 'clientId', value: JSON.stringify({ type: 'string', order: 2, value: 'abc' }) },
+          { key: 'clientSharedKey', value: JSON.stringify({ type: 'string', order: 1, value: 'def' }) }
+        ],
+        order: 2,
+        isEnabled: true,
+        displayName: 'GitHub Login',
+        selfRegistration: false,
+        domainWhitelist: [],
+        autoEnrollGroups: []
+      },
+      {
+        key: 'local',
+        strategy: { key: 'local', title: 'Local' },
+        config: [],
+        order: 1,
+        isEnabled: true,
+        displayName: 'Local Login',
+        selfRegistration: false,
+        domainWhitelist: [],
+        autoEnrollGroups: []
+      }
+    ]))
+
+    await expect(fetchAdminAuthActiveStrategies(fetchImpl)).resolves.toEqual([
+      expect.objectContaining({
+        key: 'local',
+        order: 1,
+        config: []
+      }),
+      expect.objectContaining({
+        key: 'github',
+        order: 2,
+        config: [
+          { key: 'clientSharedKey', value: { type: 'string', order: 1, value: 'def' } },
+          { key: 'clientId', value: { type: 'string', order: 2, value: 'abc' } }
+        ]
+      })
+    ])
+
+    expect(fetchImpl).toHaveBeenCalledWith('/_api/auth/admin/active-strategies', {
+      credentials: 'same-origin',
+      headers: {
+        Accept: 'application/json'
+      }
+    })
+  })
+
+  test('rejects malformed admin active authentication strategy payloads', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse([{ key: 'github', strategy: { key: 'github' }, config: [{ key: 'clientId', value: '{' }], order: 1, isEnabled: true, displayName: 'GitHub', selfRegistration: false, domainWhitelist: [], autoEnrollGroups: [] }]))
+
+    await expect(fetchAdminAuthActiveStrategies(fetchImpl, 'Bad active payload')).rejects.toThrow('Bad active payload')
+  })
+
+  test('surfaces REST errors for admin active authentication strategies', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ error: 'manage:system is required' }, false))
+
+    await expect(fetchAdminAuthActiveStrategies(fetchImpl, 'Bad active payload')).rejects.toThrow('manage:system is required')
   })
 
   test('fetches and sorts admin auth providers by order', async () => {

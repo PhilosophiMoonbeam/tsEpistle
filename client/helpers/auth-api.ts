@@ -47,6 +47,97 @@ async function parseJsonResponse (response: JsonResponse, fallbackMessage: strin
   return payload
 }
 
+function parseConfigJson (value: string, fallbackMessage: string): any {
+  try {
+    return JSON.parse(value)
+  } catch (err) {
+    throw new Error(fallbackMessage)
+  }
+}
+
+function normalizeAdminAuthStrategy (strategy: any, fallbackMessage: string): any {
+  if (!strategy || typeof strategy !== 'object' || Array.isArray(strategy) || typeof strategy.key !== 'string' || strategy.key.length < 1 || typeof strategy.isAvailable !== 'boolean' || !Array.isArray(strategy.props)) {
+    throw new Error(fallbackMessage)
+  }
+
+  return {
+    ...strategy,
+    isDisabled: !strategy.isAvailable || strategy.key === 'local',
+    props: strategy.props.map((cfg: any) => {
+      if (!cfg || typeof cfg !== 'object' || Array.isArray(cfg) || typeof cfg.key !== 'string' || cfg.key.length < 1 || typeof cfg.value !== 'string') {
+        throw new Error(fallbackMessage)
+      }
+      return {
+        key: cfg.key,
+        ...parseConfigJson(cfg.value, fallbackMessage)
+      }
+    }).sort((left: any, right: any) => {
+      const leftOrder = Number.isFinite(left.order) ? left.order : 0
+      const rightOrder = Number.isFinite(right.order) ? right.order : 0
+      return leftOrder - rightOrder
+    })
+  }
+}
+
+function normalizeAdminActiveAuthStrategy (strategy: any, fallbackMessage: string): any {
+  if (!strategy || typeof strategy !== 'object' || Array.isArray(strategy) || typeof strategy.key !== 'string' || strategy.key.length < 1 || !strategy.strategy || typeof strategy.strategy !== 'object' || Array.isArray(strategy.strategy) || typeof strategy.strategy.key !== 'string' || !Array.isArray(strategy.config) || !Number.isFinite(strategy.order) || typeof strategy.isEnabled !== 'boolean' || typeof strategy.displayName !== 'string' || typeof strategy.selfRegistration !== 'boolean' || !Array.isArray(strategy.domainWhitelist) || !Array.isArray(strategy.autoEnrollGroups)) {
+    throw new Error(fallbackMessage)
+  }
+
+  return {
+    ...strategy,
+    config: strategy.config.map((cfg: any) => {
+      if (!cfg || typeof cfg !== 'object' || Array.isArray(cfg) || typeof cfg.key !== 'string' || cfg.key.length < 1 || typeof cfg.value !== 'string') {
+        throw new Error(fallbackMessage)
+      }
+      return {
+        ...cfg,
+        value: parseConfigJson(cfg.value, fallbackMessage)
+      }
+    }).sort((left: any, right: any) => {
+      const leftOrder = Number.isFinite(left.value && left.value.order) ? left.value.order : 0
+      const rightOrder = Number.isFinite(right.value && right.value.order) ? right.value.order : 0
+      return leftOrder - rightOrder
+    })
+  }
+}
+
+export async function fetchAdminAuthStrategies (fetchImpl: FetchImpl, fallbackMessage = 'Authentication strategies response is invalid'): Promise<any[]> {
+  const response = await fetchImpl('/_api/auth/admin/strategies', {
+    credentials: 'same-origin',
+    headers: {
+      Accept: 'application/json'
+    }
+  })
+
+  const payload = await parseJsonResponse(response, fallbackMessage)
+  if (!Array.isArray(payload)) {
+    throw new Error(fallbackMessage)
+  }
+
+  return payload.map(strategy => normalizeAdminAuthStrategy(strategy, fallbackMessage))
+}
+
+export async function fetchAdminAuthActiveStrategies (fetchImpl: FetchImpl, fallbackMessage = 'Active authentication strategies response is invalid'): Promise<any[]> {
+  const response = await fetchImpl('/_api/auth/admin/active-strategies', {
+    credentials: 'same-origin',
+    headers: {
+      Accept: 'application/json'
+    }
+  })
+
+  const payload = await parseJsonResponse(response, fallbackMessage)
+  if (!Array.isArray(payload)) {
+    throw new Error(fallbackMessage)
+  }
+
+  return payload.map(strategy => normalizeAdminActiveAuthStrategy(strategy, fallbackMessage)).sort((left, right) => {
+    const leftOrder = Number.isFinite(left.order) ? left.order : 0
+    const rightOrder = Number.isFinite(right.order) ? right.order : 0
+    return leftOrder - rightOrder
+  })
+}
+
 export async function fetchAuthStrategies (fetchImpl: FetchImpl, fallbackMessage = 'Authentication strategies response is invalid'): Promise<any[]> {
   const response = await fetchImpl('/_api/auth/strategies', {
     credentials: 'same-origin',
