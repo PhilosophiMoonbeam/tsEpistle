@@ -36,8 +36,8 @@
 <script>
 import _ from 'lodash'
 import * as d3 from 'd3'
-import gql from 'graphql-tag'
-import { setLoading } from '../../helpers/root-ui-store'
+import { fetchPageLinks } from '../../helpers/pages-api'
+import { pushGraphError, setLoading } from '../../helpers/root-ui-store'
 
 /* global siteConfig, siteLangs */
 
@@ -58,9 +58,25 @@ export default {
     },
     graphMode () {
       this.redraw()
+    },
+    currentLocale () {
+      this.loadPages()
     }
   },
   methods: {
+    async loadPages () {
+      setLoading(this.$store, 'admin-pages-refresh', true)
+      try {
+        this.pages = await fetchPageLinks(
+          window.fetch.bind(window),
+          this.currentLocale,
+          'Page links response is invalid'
+        )
+      } catch (err) {
+        pushGraphError(this.$store, err)
+      }
+      setLoading(this.$store, 'admin-pages-refresh', false)
+    },
     goToPage (d) {
       const id = d.data.id
       if (id) {
@@ -363,31 +379,8 @@ export default {
       }
     }
   },
-  apollo: {
-    pages: {
-      query: gql`
-        query ($locale: String!) {
-          pages {
-            links(locale: $locale) {
-              id
-              path
-              title
-              links
-            }
-          }
-        }
-      `,
-      variables () {
-        return {
-          locale: this.currentLocale
-        }
-      },
-      fetchPolicy: 'network-only',
-      update: (data) => data.pages.links,
-      watchLoading (isLoading) {
-        setLoading(this.$store, 'admin-pages-refresh', isLoading)
-      }
-    }
+  mounted () {
+    this.loadPages()
   }
 }
 </script>

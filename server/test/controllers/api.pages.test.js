@@ -25,7 +25,13 @@ describe('controllers/api pages endpoints', () => {
       auth: {
         checkAccess: jest.fn().mockReturnValue(true)
       },
+      config: {
+        db: {
+          type: 'postgres'
+        }
+      },
       models: {
+        knex: jest.fn(),
         tags: {
           query: jest.fn().mockReturnValue({
             deleteById: jest.fn().mockResolvedValue(1),
@@ -109,6 +115,7 @@ describe('controllers/api pages endpoints', () => {
       deletePage: express.__router.delete.mock.calls.find(([path]) => path === '/:id')[1],
       deleteTag: express.__router.delete.mock.calls.find(([path]) => path === '/tags/:id')[1],
       getPage: express.__router.get.mock.calls.find(([path]) => path === '/:id')[1],
+      links: express.__router.get.mock.calls.find(([path]) => path === '/links')[1],
       listPages: express.__router.get.mock.calls.find(([path]) => path === '/')[1],
       listTags: express.__router.get.mock.calls.find(([path]) => path === '/tags')[1],
       recent: express.__router.get.mock.calls.find(([path]) => path === '/recent')[1],
@@ -433,6 +440,156 @@ describe('controllers/api pages endpoints', () => {
 
     expect(next).toHaveBeenCalledWith(expect.any(Error))
     expect(next.mock.calls[0][0].message).toBe('pages db down')
+  })
+
+  it('registers the page links route before the page detail route', () => {
+    const express = require('express')
+    const { links } = loadHandler()
+    const routes = express.__router.get.mock.calls.map(([path]) => path)
+
+    expect(typeof links).toBe('function')
+    expect(routes.indexOf('/links')).toBeGreaterThan(-1)
+    expect(routes.indexOf('/links')).toBeLessThan(routes.indexOf('/:id'))
+  })
+
+  it('returns GraphQL-compatible page links with default database join semantics', async () => {
+    const rows = [
+      { id: 1, path: 'docs/home', title: 'Home', link: 'docs/target', locale: 'en' },
+      { id: 1, path: 'docs/home', title: 'Home', link: 'docs/other', locale: 'fr' },
+      { id: 2, path: 'docs/target', title: 'Target', link: null, locale: null }
+    ]
+    const chain = {
+      column: jest.fn().mockReturnThis(),
+      fullOuterJoin: jest.fn().mockReturnThis(),
+      where: jest.fn().mockResolvedValue(rows)
+    }
+    global.WIKI.models.knex.mockReturnValueOnce(chain)
+    const { links } = loadHandler()
+    const req = { user: { permissions: ['read:pages'] }, query: { locale: 'en' } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await links(req, res, jest.fn())
+
+    expect(global.WIKI.auth.checkAccess).toHaveBeenNthCalledWith(1, { permissions: ['read:pages'] }, ['manage:system', 'read:pages'])
+    expect(global.WIKI.models.knex).toHaveBeenCalledWith('pages')
+    expect(chain.column).toHaveBeenCalledWith({ id: 'pages.id' }, { path: 'pages.path' }, 'title', { link: 'pageLinks.path' }, { locale: 'pageLinks.localeCode' })
+    expect(chain.fullOuterJoin).toHaveBeenCalledWith('pageLinks', 'pages.id', 'pageLinks.pageId')
+    expect(chain.where).toHaveBeenCalledWith({ 'pages.localeCode': 'en' })
+    expect(global.WIKI.auth.checkAccess).toHaveBeenNthCalledWith(2, { permissions: ['read:pages'] }, ['read:pages'], { path: 'docs/home', locale: 'en' })
+    expect(global.WIKI.auth.checkAccess).toHaveBeenNthCalledWith(3, { permissions: ['read:pages'] }, ['read:pages'], { path: 'docs/target', locale: 'en' })
+    expect(global.WIKI.auth.checkAccess).toHaveBeenNthCalledWith(7, { permissions: ['read:pages'] }, ['read:pages'], { path: null, locale: null })
+    expect(res.json).toHaveBeenCalledWith([
+      { id: 1, title: 'Home', path: 'en/docs/home', links: ['en/docs/target', 'fr/docs/other'] },
+      { id: 2, title: 'Target', path: 'en/docs/target', links: [] }
+    ])
+  })
+
+  it('returns GraphQL-compatible page links with mysql-style union semantics', async () => {
+    global.WIKI.config.db.type = 'mysql'
+    const rows = [
+      { id: 1, path: 'docs/home', title: 'Home', link: 'docs/target', locale: 'en' }
+    ]
+    const primary = {
+      column: jest.fn().mockReturnThis(),
+      leftJoin: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      unionAll: jest.fn().mockResolvedValue(rows)
+    }
+    const secondary = {
+      column: jest.fn().mockReturnThis(),
+      leftJoin: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis()
+    }
+    global.WIKI.models.knex
+      .mockReturnValueOnce(primary)
+      .mockReturnValueOnce(secondary)
+    const { links } = loadHandler()
+    const req = { user: { permissions: ['read:pages'] }, query: { locale: 'en' } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await links(req, res, jest.fn())
+
+    expect(global.WIKI.models.knex).toHaveBeenNthCalledWith(1, 'pages')
+    expect(global.WIKI.models.knex).toHaveBeenNthCalledWith(2, 'pageLinks')
+    expect(primary.leftJoin).toHaveBeenCalledWith('pageLinks', 'pages.id', 'pageLinks.pageId')
+    expect(secondary.leftJoin).toHaveBeenCalledWith('pages', 'pageLinks.pageId', 'pages.id')
+    expect(primary.unionAll).toHaveBeenCalledWith(secondary)
+    expect(res.json).toHaveBeenCalledWith([
+      { id: 1, title: 'Home', path: 'en/docs/home', links: ['en/docs/target'] }
+    ])
+  })
+
+  it('filters page links when source or target page access is denied', async () => {
+    const rows = [
+      { id: 1, path: 'docs/home', title: 'Home', link: 'docs/target', locale: 'en' },
+      { id: 2, path: 'docs/hidden-source', title: 'Hidden Source', link: 'docs/target', locale: 'en' },
+      { id: 3, path: 'docs/hidden-target', title: 'Hidden Target', link: 'docs/secret', locale: 'en' }
+    ]
+    const chain = {
+      column: jest.fn().mockReturnThis(),
+      fullOuterJoin: jest.fn().mockReturnThis(),
+      where: jest.fn().mockResolvedValue(rows)
+    }
+    global.WIKI.models.knex.mockReturnValueOnce(chain)
+    global.WIKI.auth.checkAccess
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(false)
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(false)
+    const { links } = loadHandler()
+    const req = { user: { permissions: ['read:pages'] }, query: { locale: 'en' } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await links(req, res, jest.fn())
+
+    expect(res.json).toHaveBeenCalledWith([
+      { id: 1, title: 'Home', path: 'en/docs/home', links: ['en/docs/target'] }
+    ])
+  })
+
+  it('returns 400 for invalid page links locale requests', async () => {
+    const { links } = loadHandler()
+    const req = { user: { permissions: ['read:pages'] }, query: { locale: '' } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await links(req, res, jest.fn())
+
+    expect(res.status).toHaveBeenCalledWith(400)
+    expect(res.json).toHaveBeenCalledWith({ error: 'locale must be a non-empty string' })
+    expect(global.WIKI.models.knex).not.toHaveBeenCalled()
+  })
+
+  it('returns 403 for unauthorized page links requests', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValueOnce(false)
+    const { links } = loadHandler()
+    const req = { user: { permissions: ['manage:api'] }, query: { locale: 'en' } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await links(req, res, jest.fn())
+
+    expect(res.status).toHaveBeenCalledWith(403)
+    expect(res.json).toHaveBeenCalledWith({ error: 'manage:system or read:pages is required' })
+    expect(global.WIKI.models.knex).not.toHaveBeenCalled()
+  })
+
+  it('forwards unexpected page links failures to next', async () => {
+    const next = jest.fn()
+    const chain = {
+      column: jest.fn().mockReturnThis(),
+      fullOuterJoin: jest.fn().mockReturnThis(),
+      where: jest.fn().mockRejectedValue(new Error('links db down'))
+    }
+    global.WIKI.models.knex.mockReturnValueOnce(chain)
+    const { links } = loadHandler()
+    const req = { user: { permissions: ['read:pages'] }, query: { locale: 'en' } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await links(req, res, next)
+
+    expect(next).toHaveBeenCalledWith(expect.any(Error))
+    expect(next.mock.calls[0][0].message).toBe('links db down')
   })
 
   it('registers the page detail route', () => {

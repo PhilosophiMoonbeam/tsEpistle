@@ -41,6 +41,15 @@ const requireTagsAccess = (req, res) => {
   return true
 }
 
+const requirePageLinksAccess = (req, res) => {
+  if (!WIKI.auth.checkAccess(req.user, ['manage:system', 'read:pages'])) {
+    res.status(403).json({ error: 'manage:system or read:pages is required' })
+    return false
+  }
+
+  return true
+}
+
 const requirePageListAccess = (req, res) => {
   if (!WIKI.auth.checkAccess(req.user, ['manage:system', 'read:pages'])) {
     res.status(403).json({ error: 'manage:system or read:pages is required' })
@@ -229,6 +238,70 @@ router.get('/recent', async (req, res, next) => {
       title: page.title,
       updatedAt: page.updatedAt
     })))
+  } catch (err) {
+    return next(err)
+  }
+})
+
+router.get('/links', async (req, res, next) => {
+  if (!requirePageLinksAccess(req, res)) {
+    return
+  }
+
+  const locale = _.get(req, 'query.locale')
+  if (!_.isString(locale) || locale.length < 1) {
+    return res.status(400).json({ error: 'locale must be a non-empty string' })
+  }
+
+  try {
+    let results
+    if (WIKI.config.db.type === 'mysql' || WIKI.config.db.type === 'mariadb' || WIKI.config.db.type === 'sqlite') {
+      results = await WIKI.models.knex('pages')
+        .column({ id: 'pages.id' }, { path: 'pages.path' }, 'title', { link: 'pageLinks.path' }, { locale: 'pageLinks.localeCode' })
+        .leftJoin('pageLinks', 'pages.id', 'pageLinks.pageId')
+        .where({
+          'pages.localeCode': locale
+        })
+        .unionAll(
+          WIKI.models.knex('pageLinks')
+            .column({ id: 'pages.id' }, { path: 'pages.path' }, 'title', { link: 'pageLinks.path' }, { locale: 'pageLinks.localeCode' })
+            .leftJoin('pages', 'pageLinks.pageId', 'pages.id')
+            .where({
+              'pages.localeCode': locale
+            })
+        )
+    } else {
+      results = await WIKI.models.knex('pages')
+        .column({ id: 'pages.id' }, { path: 'pages.path' }, 'title', { link: 'pageLinks.path' }, { locale: 'pageLinks.localeCode' })
+        .fullOuterJoin('pageLinks', 'pages.id', 'pageLinks.pageId')
+        .where({
+          'pages.localeCode': locale
+        })
+    }
+
+    return res.json(_.reduce(results, (result, val) => {
+      if (
+        !WIKI.auth.checkAccess(req.user, ['read:pages'], { path: val.path, locale }) ||
+        !WIKI.auth.checkAccess(req.user, ['read:pages'], { path: val.link, locale: val.locale })
+      ) {
+        return result
+      }
+
+      const existingEntry = _.findIndex(result, ['id', val.id])
+      if (existingEntry >= 0) {
+        if (val.link) {
+          result[existingEntry].links.push(`${val.locale}/${val.link}`)
+        }
+      } else {
+        result.push({
+          id: val.id,
+          title: val.title,
+          path: `${locale}/${val.path}`,
+          links: val.link ? [`${val.locale}/${val.link}`] : []
+        })
+      }
+      return result
+    }, []))
   } catch (err) {
     return next(err)
   }

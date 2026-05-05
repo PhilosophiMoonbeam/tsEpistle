@@ -1,4 +1,4 @@
-const { deletePage, deletePageTag, fetchPage, fetchPageList, fetchPageTags, fetchRecentPages, updatePageTag } = require('./pages-api')
+const { deletePage, deletePageTag, fetchPage, fetchPageLinks, fetchPageList, fetchPageTags, fetchRecentPages, updatePageTag } = require('./pages-api')
 
 function createJsonResponse (payload, ok = true) {
   return {
@@ -11,6 +11,49 @@ function createJsonResponse (payload, ok = true) {
 }
 
 describe('pages api helper', () => {
+  test('fetches and validates page links payloads', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse([
+      {
+        id: 1,
+        path: 'en/docs/home',
+        title: 'Home',
+        links: ['en/docs/target'],
+        extra: 'ignored'
+      }
+    ]))
+
+    await expect(fetchPageLinks(fetchImpl, 'en')).resolves.toEqual([
+      { id: 1, path: 'en/docs/home', title: 'Home', links: ['en/docs/target'] }
+    ])
+
+    expect(fetchImpl).toHaveBeenCalledWith('/_api/pages/links?locale=en', {
+      credentials: 'same-origin',
+      headers: {
+        Accept: 'application/json'
+      }
+    })
+  })
+
+  test('URL-encodes page links locale requests', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse([]))
+
+    await expect(fetchPageLinks(fetchImpl, 'pt BR')).resolves.toEqual([])
+
+    expect(fetchImpl.mock.calls[0][0]).toBe('/_api/pages/links?locale=pt%20BR')
+  })
+
+  test('rejects malformed page links payloads', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse([{ id: 1, path: 'en/docs/home', title: 'Home', links: [7] }]))
+
+    await expect(fetchPageLinks(fetchImpl, 'en', 'Bad links payload')).rejects.toThrow('Bad links payload')
+  })
+
+  test('surfaces API error messages for failed page links requests', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ error: 'manage:system or read:pages is required' }, false))
+
+    await expect(fetchPageLinks(fetchImpl, 'en', 'Bad links payload')).rejects.toThrow('manage:system or read:pages is required')
+  })
+
   test('fetches and validates page detail payloads', async () => {
     const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
       id: 7,

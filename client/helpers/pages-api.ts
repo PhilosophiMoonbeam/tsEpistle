@@ -46,6 +46,13 @@ type PageDetails = {
   creatorEmail: string
 }
 
+type PageLinkRow = {
+  id: number
+  path: string
+  title: string
+  links: string[]
+}
+
 type PageListRow = {
   id: number
   locale: string
@@ -157,6 +164,24 @@ function normalizePageDetails (row: unknown, fallbackMessage: string): PageDetai
   }
 }
 
+function normalizePageLinkRow (row: unknown, fallbackMessage: string): PageLinkRow {
+  if (!row || typeof row !== 'object' || Array.isArray(row)) {
+    throw new Error(fallbackMessage)
+  }
+
+  const pageRow = row as Partial<PageLinkRow>
+  if (!Number.isInteger(pageRow.id) || typeof pageRow.path !== 'string' || pageRow.path.length < 1 || typeof pageRow.title !== 'string' || !Array.isArray(pageRow.links) || pageRow.links.some(link => typeof link !== 'string')) {
+    throw new Error(fallbackMessage)
+  }
+
+  return {
+    id: pageRow.id,
+    path: pageRow.path,
+    title: pageRow.title,
+    links: pageRow.links
+  }
+}
+
 function normalizePageListRow (row: unknown, fallbackMessage: string): PageListRow {
   if (!row || typeof row !== 'object' || Array.isArray(row)) {
     throw new Error(fallbackMessage)
@@ -200,6 +225,22 @@ function normalizeRecentPageRow (row: unknown, fallbackMessage: string): RecentP
     title: pageRow.title,
     updatedAt: pageRow.updatedAt
   }
+}
+
+export async function fetchPageLinks (fetchImpl: FetchImpl, locale: string, fallbackMessage = 'Page links response is invalid'): Promise<PageLinkRow[]> {
+  const response = await fetchImpl(`/_api/pages/links?locale=${encodeURIComponent(locale)}`, {
+    credentials: 'same-origin',
+    headers: {
+      Accept: 'application/json'
+    }
+  })
+
+  const payload = await parseJsonResponse(response, fallbackMessage)
+  if (!Array.isArray(payload)) {
+    throw new Error(fallbackMessage)
+  }
+
+  return payload.map(row => normalizePageLinkRow(row, fallbackMessage))
 }
 
 export async function fetchPage (fetchImpl: FetchImpl, id: number, fallbackMessage = 'Page response is invalid'): Promise<PageDetails> {
