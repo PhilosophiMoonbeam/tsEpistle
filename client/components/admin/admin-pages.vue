@@ -82,9 +82,8 @@
 
 <script>
 import _ from 'lodash'
-import pagesQuery from 'gql/admin/pages/pages-query-list.gql'
-
-import { showNotification, setLoading } from '../../helpers/root-ui-store'
+import { fetchPageList } from '../../helpers/pages-api'
+import { showNotification, setLoading, pushGraphError } from '../../helpers/root-ui-store'
 
 export default {
   data() {
@@ -134,29 +133,37 @@ export default {
     }
   },
   methods: {
+    async loadPages () {
+      this.loading = true
+      setLoading(this.$store, 'admin-pages-refresh', true)
+      try {
+        this.pages = await fetchPageList(window.fetch.bind(window))
+        return true
+      } catch (err) {
+        pushGraphError(this.$store, err)
+        return false
+      } finally {
+        this.loading = false
+        setLoading(this.$store, 'admin-pages-refresh', false)
+      }
+    },
     async refresh() {
-      await this.$apollo.queries.pages.refetch()
-      showNotification(this.$store, {
-        message: 'Page list has been refreshed.',
-        style: 'success',
-        icon: 'cached'
-      })
+      const isLoaded = await this.loadPages()
+      if (isLoaded) {
+        showNotification(this.$store, {
+          message: 'Page list has been refreshed.',
+          style: 'success',
+          icon: 'cached'
+        })
+      }
     },
     newpage() {
       this.pageSelectorShown = true
     },
     recyclebin () { }
   },
-  apollo: {
-    pages: {
-      query: pagesQuery,
-      fetchPolicy: 'network-only',
-      update: (data) => data.pages.list,
-      watchLoading (isLoading) {
-        this.loading = isLoading
-        setLoading(this.$store, 'admin-pages-refresh', isLoading)
-      }
-    }
+  mounted () {
+    this.loadPages()
   }
 }
 </script>

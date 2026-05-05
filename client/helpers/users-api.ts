@@ -1,4 +1,7 @@
-async function parseJsonResponse (response, fallbackMessage) {
+type JsonResponse = { ok: boolean, headers?: { get: (name: string) => string | null }, json: () => Promise<any> }
+type FetchImpl = (url: string, init: any) => Promise<JsonResponse>
+
+async function parseJsonResponse (response: JsonResponse, fallbackMessage: string): Promise<any> {
   const hasHeaderReader = response && response.headers && typeof response.headers.get === 'function'
   const contentType = hasHeaderReader ? response.headers.get('content-type') || '' : ''
 
@@ -24,7 +27,7 @@ async function parseJsonResponse (response, fallbackMessage) {
   return payload
 }
 
-function normalizeUserSearchRow (row, fallbackMessage) {
+function normalizeUserSearchRow (row: any, fallbackMessage: string): any {
   if (!row || typeof row !== 'object' || Array.isArray(row)) {
     throw new Error(fallbackMessage)
   }
@@ -41,7 +44,7 @@ function normalizeUserSearchRow (row, fallbackMessage) {
   }
 }
 
-function normalizeLastLoginRow (row, fallbackMessage) {
+function normalizeLastLoginRow (row: any, fallbackMessage: string): any {
   if (!row || typeof row !== 'object' || Array.isArray(row)) {
     throw new Error(fallbackMessage)
   }
@@ -57,7 +60,7 @@ function normalizeLastLoginRow (row, fallbackMessage) {
   }
 }
 
-function normalizeUserGroupRow (row, fallbackMessage) {
+function normalizeUserGroupRow (row: any, fallbackMessage: string): any {
   if (!row || typeof row !== 'object' || Array.isArray(row)) {
     throw new Error(fallbackMessage)
   }
@@ -72,7 +75,7 @@ function normalizeUserGroupRow (row, fallbackMessage) {
   }
 }
 
-function normalizeAdminUserListRow (row, fallbackMessage) {
+function normalizeAdminUserListRow (row: any, fallbackMessage: string): any {
   if (!row || typeof row !== 'object' || Array.isArray(row)) {
     throw new Error(fallbackMessage)
   }
@@ -99,7 +102,7 @@ function normalizeAdminUserListRow (row, fallbackMessage) {
   }
 }
 
-function normalizeUserDetail (payload, fallbackMessage) {
+function normalizeUserDetail (payload: any, fallbackMessage: string): any {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
     throw new Error(fallbackMessage)
   }
@@ -154,7 +157,7 @@ function normalizeUserDetail (payload, fallbackMessage) {
   }
 }
 
-function normalizePositiveIntegerId (id, fallbackMessage) {
+function normalizePositiveIntegerId (id: any, fallbackMessage: string): number {
   if (Number.isInteger(id) && id > 0) {
     return id
   }
@@ -166,7 +169,7 @@ function normalizePositiveIntegerId (id, fallbackMessage) {
   throw new Error(fallbackMessage)
 }
 
-function normalizeSuccessResult (payload, fallbackMessage) {
+function normalizeSuccessResult (payload: any, fallbackMessage: string): any {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload) || payload.succeeded !== true || typeof payload.message !== 'string') {
     throw new Error(fallbackMessage)
   }
@@ -177,7 +180,7 @@ function normalizeSuccessResult (payload, fallbackMessage) {
   }
 }
 
-async function searchUsers (fetchImpl, query, fallbackMessage = 'User search response is invalid') {
+export async function searchUsers (fetchImpl: FetchImpl, query: any, fallbackMessage = 'User search response is invalid'): Promise<any[]> {
   const normalizedQuery = typeof query === 'string' ? query.trim() : ''
   if (normalizedQuery.length < 2) {
     return []
@@ -198,7 +201,7 @@ async function searchUsers (fetchImpl, query, fallbackMessage = 'User search res
   return payload.map(row => normalizeUserSearchRow(row, fallbackMessage))
 }
 
-async function fetchLastLogins (fetchImpl, fallbackMessage = 'Last logins response is invalid') {
+export async function fetchLastLogins (fetchImpl: FetchImpl, fallbackMessage = 'Last logins response is invalid'): Promise<any[]> {
   const response = await fetchImpl('/_api/users/last-logins', {
     credentials: 'same-origin',
     headers: {
@@ -214,7 +217,7 @@ async function fetchLastLogins (fetchImpl, fallbackMessage = 'Last logins respon
   return payload.map(row => normalizeLastLoginRow(row, fallbackMessage))
 }
 
-async function fetchAdminUsersList (fetchImpl, options = {}, fallbackMessage = 'Users list response is invalid') {
+export async function fetchAdminUsersList (fetchImpl: FetchImpl, options: any = {}, fallbackMessage = 'Users list response is invalid'): Promise<any> {
   const params = new URLSearchParams()
   params.set('page', String(options.page || 1))
   params.set('pageSize', String(options.pageSize || 15))
@@ -241,7 +244,7 @@ async function fetchAdminUsersList (fetchImpl, options = {}, fallbackMessage = '
   }
 }
 
-async function createAdminUser (fetchImpl, payload, fallbackMessage = 'User create response is invalid') {
+export async function createAdminUser (fetchImpl: FetchImpl, payload: any, fallbackMessage = 'User create response is invalid'): Promise<any> {
   const response = await fetchImpl('/_api/users', {
     method: 'POST',
     credentials: 'same-origin',
@@ -255,7 +258,7 @@ async function createAdminUser (fetchImpl, payload, fallbackMessage = 'User crea
   return normalizeSuccessResult(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
 }
 
-async function updateAdminUser (fetchImpl, id, payload, fallbackMessage = 'User update response is invalid') {
+export async function updateAdminUser (fetchImpl: FetchImpl, id: any, payload: any, fallbackMessage = 'User update response is invalid'): Promise<any> {
   const normalizedId = normalizePositiveIntegerId(id, fallbackMessage)
   const response = await fetchImpl(`/_api/users/${normalizedId}`, {
     method: 'PUT',
@@ -270,7 +273,7 @@ async function updateAdminUser (fetchImpl, id, payload, fallbackMessage = 'User 
   return normalizeSuccessResult(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
 }
 
-async function deleteAdminUser (fetchImpl, id, replaceId, fallbackMessage = 'User delete response is invalid') {
+export async function deleteAdminUser (fetchImpl: FetchImpl, id: any, replaceId: any, fallbackMessage = 'User delete response is invalid'): Promise<any> {
   const normalizedId = normalizePositiveIntegerId(id, fallbackMessage)
   const normalizedReplaceId = normalizePositiveIntegerId(replaceId, fallbackMessage)
   const response = await fetchImpl(`/_api/users/${normalizedId}`, {
@@ -286,7 +289,7 @@ async function deleteAdminUser (fetchImpl, id, replaceId, fallbackMessage = 'Use
   return normalizeSuccessResult(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
 }
 
-async function patchAdminUserAction (fetchImpl, id, path, payload, fallbackMessage) {
+async function patchAdminUserAction (fetchImpl: FetchImpl, id: any, path: string, payload: any, fallbackMessage: string): Promise<any> {
   const normalizedId = normalizePositiveIntegerId(id, fallbackMessage)
   const response = await fetchImpl(`/_api/users/${normalizedId}/${path}`, {
     method: 'PATCH',
@@ -301,19 +304,19 @@ async function patchAdminUserAction (fetchImpl, id, path, payload, fallbackMessa
   return normalizeSuccessResult(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
 }
 
-async function setAdminUserActive (fetchImpl, id, isActive, fallbackMessage = 'User status response is invalid') {
+export async function setAdminUserActive (fetchImpl: FetchImpl, id: any, isActive: boolean, fallbackMessage = 'User status response is invalid'): Promise<any> {
   return patchAdminUserAction(fetchImpl, id, 'status', { isActive }, fallbackMessage)
 }
 
-async function verifyAdminUser (fetchImpl, id, fallbackMessage = 'User verification response is invalid') {
+export async function verifyAdminUser (fetchImpl: FetchImpl, id: any, fallbackMessage = 'User verification response is invalid'): Promise<any> {
   return patchAdminUserAction(fetchImpl, id, 'verification', { isVerified: true }, fallbackMessage)
 }
 
-async function setAdminUserTfa (fetchImpl, id, enabled, fallbackMessage = 'User 2FA response is invalid') {
+export async function setAdminUserTfa (fetchImpl: FetchImpl, id: any, enabled: boolean, fallbackMessage = 'User 2FA response is invalid'): Promise<any> {
   return patchAdminUserAction(fetchImpl, id, 'tfa', { enabled }, fallbackMessage)
 }
 
-async function fetchUserDetails (fetchImpl, id, fallbackMessage = 'User detail response is invalid') {
+export async function fetchUserDetails (fetchImpl: FetchImpl, id: any, fallbackMessage = 'User detail response is invalid'): Promise<any> {
   const normalizedId = normalizePositiveIntegerId(id, fallbackMessage)
   const response = await fetchImpl(`/_api/users/${normalizedId}`, {
     credentials: 'same-origin',
@@ -323,17 +326,4 @@ async function fetchUserDetails (fetchImpl, id, fallbackMessage = 'User detail r
   })
 
   return normalizeUserDetail(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
-}
-
-module.exports = {
-  searchUsers,
-  fetchLastLogins,
-  fetchAdminUsersList,
-  createAdminUser,
-  updateAdminUser,
-  deleteAdminUser,
-  setAdminUserActive,
-  verifyAdminUser,
-  setAdminUserTfa,
-  fetchUserDetails
 }
