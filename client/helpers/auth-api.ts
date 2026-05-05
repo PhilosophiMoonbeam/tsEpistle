@@ -1,4 +1,7 @@
-function getErrorMessage (payload, fallbackMessage) {
+type JsonResponse = { ok: boolean, headers?: { get: (name: string) => string | null }, json: () => Promise<any> }
+type FetchImpl = (url: string, init: any) => Promise<JsonResponse>
+
+function getErrorMessage (payload: any, fallbackMessage: string): string {
   if (payload && typeof payload.error === 'string' && payload.error.length > 0) {
     return payload.error
   }
@@ -8,7 +11,7 @@ function getErrorMessage (payload, fallbackMessage) {
   return fallbackMessage
 }
 
-function isValidAuthResponse (payload) {
+function isValidAuthResponse (payload: any): boolean {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
     return false
   }
@@ -24,7 +27,7 @@ function isValidAuthResponse (payload) {
   return typeof payload.jwt === 'string' && payload.jwt.length > 0
 }
 
-async function parseJsonResponse (response, fallbackMessage) {
+async function parseJsonResponse (response: JsonResponse, fallbackMessage: string): Promise<any> {
   const hasHeaderReader = response && response.headers && typeof response.headers.get === 'function'
   const contentType = hasHeaderReader ? response.headers.get('content-type') || '' : ''
 
@@ -44,7 +47,7 @@ async function parseJsonResponse (response, fallbackMessage) {
   return payload
 }
 
-async function fetchAuthStrategies (fetchImpl, fallbackMessage = 'Authentication strategies response is invalid') {
+export async function fetchAuthStrategies (fetchImpl: FetchImpl, fallbackMessage = 'Authentication strategies response is invalid'): Promise<any[]> {
   const response = await fetchImpl('/_api/auth/strategies', {
     credentials: 'same-origin',
     headers: {
@@ -64,7 +67,7 @@ async function fetchAuthStrategies (fetchImpl, fallbackMessage = 'Authentication
   })
 }
 
-async function fetchAdminAuthProviders (fetchImpl, fallbackMessage = 'Admin authentication providers response is invalid') {
+export async function fetchAdminAuthProviders (fetchImpl: FetchImpl, fallbackMessage = 'Admin authentication providers response is invalid'): Promise<any[]> {
   const response = await fetchImpl('/_api/auth/providers', {
     credentials: 'same-origin',
     headers: {
@@ -90,11 +93,11 @@ async function fetchAdminAuthProviders (fetchImpl, fallbackMessage = 'Admin auth
   })
 }
 
-function isValidAdminApiKeyShort (keyShort) {
+function isValidAdminApiKeyShort (keyShort: string): boolean {
   return /^\.\.\..{20}$/.test(keyShort) || keyShort === '...[redacted]'
 }
 
-function normalizeAdminApiKey (key, fallbackMessage) {
+function normalizeAdminApiKey (key: any, fallbackMessage: string): any {
   if (!key || typeof key !== 'object' || Array.isArray(key) || !Number.isFinite(key.id) || typeof key.name !== 'string' || key.name.length < 1 || typeof key.keyShort !== 'string' || !isValidAdminApiKeyShort(key.keyShort) || typeof key.isRevoked !== 'boolean' || typeof key.expiration !== 'string' || key.expiration.length < 1 || typeof key.createdAt !== 'string' || key.createdAt.length < 1 || typeof key.updatedAt !== 'string' || key.updatedAt.length < 1) {
     throw new Error(fallbackMessage)
   }
@@ -110,7 +113,7 @@ function normalizeAdminApiKey (key, fallbackMessage) {
   }
 }
 
-async function fetchAdminApiBootstrap (fetchImpl, fallbackMessage = 'Admin API bootstrap response is invalid') {
+export async function fetchAdminApiBootstrap (fetchImpl: FetchImpl, fallbackMessage = 'Admin API bootstrap response is invalid'): Promise<any> {
   const response = await fetchImpl('/_api/auth/api', {
     credentials: 'same-origin',
     headers: {
@@ -129,7 +132,7 @@ async function fetchAdminApiBootstrap (fetchImpl, fallbackMessage = 'Admin API b
   }
 }
 
-async function postJson (fetchImpl, path, body, fallbackMessage) {
+async function postJson (fetchImpl: FetchImpl, path: string, body: any, fallbackMessage: string): Promise<any> {
   const response = await fetchImpl(path, {
     method: 'POST',
     credentials: 'same-origin',
@@ -143,7 +146,7 @@ async function postJson (fetchImpl, path, body, fallbackMessage) {
   return parseJsonResponse(response, fallbackMessage)
 }
 
-async function submitAuthRequest (fetchImpl, path, body, fallbackMessage = 'Authentication request failed') {
+export async function submitAuthRequest (fetchImpl: FetchImpl, path: string, body: any, fallbackMessage = 'Authentication request failed'): Promise<any> {
   const payload = await postJson(fetchImpl, path, body, fallbackMessage)
   if (!isValidAuthResponse(payload)) {
     throw new Error(fallbackMessage)
@@ -152,7 +155,7 @@ async function submitAuthRequest (fetchImpl, path, body, fallbackMessage = 'Auth
   return payload
 }
 
-async function submitStatusRequest (fetchImpl, path, body, fallbackMessage = 'Authentication request failed') {
+export async function submitStatusRequest (fetchImpl: FetchImpl, path: string, body: any, fallbackMessage = 'Authentication request failed'): Promise<any> {
   const payload = await postJson(fetchImpl, path, body, fallbackMessage)
   if (!payload || typeof payload !== 'object' || Array.isArray(payload) || typeof payload.message !== 'string' || payload.message.length < 1) {
     throw new Error(fallbackMessage)
@@ -161,19 +164,19 @@ async function submitStatusRequest (fetchImpl, path, body, fallbackMessage = 'Au
   return payload
 }
 
-async function updateAdminAuthStrategies (fetchImpl, strategies, fallbackMessage = 'Authentication strategies update failed') {
+export async function updateAdminAuthStrategies (fetchImpl: FetchImpl, strategies: any, fallbackMessage = 'Authentication strategies update failed'): Promise<any> {
   return submitStatusRequest(fetchImpl, '/_api/auth/strategies', { strategies }, fallbackMessage)
 }
 
-async function setAdminApiState (fetchImpl, enabled, fallbackMessage = 'API state update failed') {
+export async function setAdminApiState (fetchImpl: FetchImpl, enabled: boolean, fallbackMessage = 'API state update failed'): Promise<any> {
   return submitStatusRequest(fetchImpl, '/_api/auth/api/state', { enabled }, fallbackMessage)
 }
 
-async function revokeAdminApiKey (fetchImpl, id, fallbackMessage = 'API key revoke failed') {
+export async function revokeAdminApiKey (fetchImpl: FetchImpl, id: number | string, fallbackMessage = 'API key revoke failed'): Promise<any> {
   return submitStatusRequest(fetchImpl, `/_api/auth/api/keys/${encodeURIComponent(id)}/revoke`, {}, fallbackMessage)
 }
 
-async function createAdminApiKey (fetchImpl, payload, fallbackMessage = 'API key creation failed') {
+export async function createAdminApiKey (fetchImpl: FetchImpl, payload: any, fallbackMessage = 'API key creation failed'): Promise<any> {
   const responsePayload = await submitStatusRequest(fetchImpl, '/_api/auth/api/keys', {
     name: payload.name,
     expiration: payload.expiration,
@@ -191,24 +194,10 @@ async function createAdminApiKey (fetchImpl, payload, fallbackMessage = 'API key
   }
 }
 
-async function regenerateAuthCertificates (fetchImpl, fallbackMessage = 'Certificate regeneration failed') {
+export async function regenerateAuthCertificates (fetchImpl: FetchImpl, fallbackMessage = 'Certificate regeneration failed'): Promise<any> {
   return submitStatusRequest(fetchImpl, '/_api/auth/certificates/regenerate', {}, fallbackMessage)
 }
 
-async function resetGuestUser (fetchImpl, fallbackMessage = 'Guest user reset failed') {
+export async function resetGuestUser (fetchImpl: FetchImpl, fallbackMessage = 'Guest user reset failed'): Promise<any> {
   return submitStatusRequest(fetchImpl, '/_api/auth/guest/reset', {}, fallbackMessage)
-}
-
-module.exports = {
-  fetchAuthStrategies,
-  fetchAdminAuthProviders,
-  fetchAdminApiBootstrap,
-  updateAdminAuthStrategies,
-  setAdminApiState,
-  revokeAdminApiKey,
-  createAdminApiKey,
-  submitAuthRequest,
-  submitStatusRequest,
-  regenerateAuthCertificates,
-  resetGuestUser
 }

@@ -234,6 +234,64 @@ router.get('/recent', async (req, res, next) => {
   }
 })
 
+router.get('/:id', async (req, res, next) => {
+  const rawId = _.get(req, 'params.id')
+  if (!_.isString(rawId) || !/^[1-9]\d*$/.test(rawId)) {
+    return res.status(400).json({ error: 'id must be a positive integer' })
+  }
+
+  const id = Number(rawId)
+  if (!Number.isSafeInteger(id)) {
+    return res.status(400).json({ error: 'id must be a positive integer' })
+  }
+
+  if (!WIKI.auth.checkAccess(req.user, ['read:pages', 'manage:system'])) {
+    return res.status(403).json({ error: 'read:pages or manage:system is required' })
+  }
+
+  try {
+    const page = await WIKI.models.pages.getPageFromDb(id)
+    if (!page) {
+      return res.status(404).json({ error: 'This page does not exist.' })
+    }
+    if (!WIKI.auth.checkAccess(req.user, ['manage:pages', 'delete:pages'], {
+      path: page.path,
+      locale: page.localeCode
+    })) {
+      return res.status(403).json({ error: 'You are not authorized to view this page.' })
+    }
+    if (!WIKI.auth.checkAccess(req.user, ['write:pages', 'manage:system'])) {
+      return res.status(403).json({ error: 'write:pages or manage:system is required' })
+    }
+
+    return res.json({
+      id: page.id,
+      path: page.path,
+      hash: page.hash,
+      title: page.title,
+      description: page.description,
+      isPrivate: page.isPrivate,
+      isPublished: page.isPublished,
+      privateNS: page.privateNS,
+      publishStartDate: page.publishStartDate,
+      publishEndDate: page.publishEndDate,
+      contentType: page.contentType,
+      createdAt: page.createdAt,
+      updatedAt: page.updatedAt,
+      editor: page.editorKey,
+      locale: page.localeCode,
+      authorId: page.authorId,
+      authorName: page.authorName,
+      authorEmail: page.authorEmail,
+      creatorId: page.creatorId,
+      creatorName: page.creatorName,
+      creatorEmail: page.creatorEmail
+    })
+  } catch (err) {
+    return next(err)
+  }
+})
+
 router.delete('/:id', async (req, res) => {
   if (!requirePageDeleteAccess(req, res)) {
     return

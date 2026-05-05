@@ -10,7 +10,7 @@ const deletePageBody = script.slice(deletePageStart, deletePageEnd)
 
 describe('admin pages edit REST delete facade', () => {
   it('routes page deletes through the pages REST helper instead of the common GraphQL mutation', () => {
-    expect(script).toContain("import { deletePage as deletePageById } from '../../helpers/pages-api'")
+    expect(script).toContain("import { deletePage as deletePageById, fetchPage } from '../../helpers/pages-api'")
     expect(script).not.toContain('common-pages-mutation-delete.gql')
     expect(script).not.toContain('deletePageMutation')
     expect(deletePageBody).toContain('await deletePageById(')

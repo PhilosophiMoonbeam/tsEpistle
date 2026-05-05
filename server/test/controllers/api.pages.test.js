@@ -39,6 +39,30 @@ describe('controllers/api pages endpoints', () => {
         },
         pages: {
           deletePage: jest.fn().mockResolvedValue(undefined),
+          getPageFromDb: jest.fn().mockResolvedValue({
+            id: 7,
+            path: 'docs/alpha',
+            hash: 'abc123',
+            title: 'Alpha',
+            description: 'Alpha description',
+            isPrivate: false,
+            isPublished: true,
+            privateNS: null,
+            publishStartDate: null,
+            publishEndDate: null,
+            contentType: 'markdown',
+            createdAt: '2026-01-01T00:00:00.000Z',
+            updatedAt: '2026-01-02T00:00:00.000Z',
+            editorKey: 'markdown',
+            localeCode: 'en',
+            authorId: 2,
+            authorName: 'Author',
+            authorEmail: 'author@example.com',
+            creatorId: 1,
+            creatorName: 'Creator',
+            creatorEmail: 'creator@example.com',
+            extra: { js: 'console.log(1)', css: '.x{}' }
+          }),
           query: jest.fn().mockReturnValue({
             column: jest.fn().mockReturnValue({
               withGraphJoined: jest.fn().mockReturnValue({
@@ -84,6 +108,7 @@ describe('controllers/api pages endpoints', () => {
     return {
       deletePage: express.__router.delete.mock.calls.find(([path]) => path === '/:id')[1],
       deleteTag: express.__router.delete.mock.calls.find(([path]) => path === '/tags/:id')[1],
+      getPage: express.__router.get.mock.calls.find(([path]) => path === '/:id')[1],
       listPages: express.__router.get.mock.calls.find(([path]) => path === '/')[1],
       listTags: express.__router.get.mock.calls.find(([path]) => path === '/tags')[1],
       recent: express.__router.get.mock.calls.find(([path]) => path === '/recent')[1],
@@ -147,6 +172,7 @@ describe('controllers/api pages endpoints', () => {
     const column = jest.fn().mockReturnValue({ withGraphJoined })
     global.WIKI.models.pages.query.mockReturnValueOnce({ column })
     global.WIKI.auth.checkAccess
+      .mockReturnValueOnce(true)
       .mockReturnValueOnce(true)
       .mockReturnValueOnce(true)
       .mockReturnValueOnce(false)
@@ -407,6 +433,137 @@ describe('controllers/api pages endpoints', () => {
 
     expect(next).toHaveBeenCalledWith(expect.any(Error))
     expect(next.mock.calls[0][0].message).toBe('pages db down')
+  })
+
+  it('registers the page detail route', () => {
+    const { getPage } = loadHandler()
+
+    expect(typeof getPage).toBe('function')
+  })
+
+  it('returns GraphQL-compatible page details for authorized page detail requests', async () => {
+    global.WIKI.auth.checkAccess
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(true)
+    const { getPage } = loadHandler()
+    const req = { user: { permissions: ['manage:pages'] }, params: { id: '7' } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await getPage(req, res)
+
+    expect(global.WIKI.auth.checkAccess).toHaveBeenNthCalledWith(1, { permissions: ['manage:pages'] }, ['read:pages', 'manage:system'])
+    expect(global.WIKI.models.pages.getPageFromDb).toHaveBeenCalledWith(7)
+    expect(global.WIKI.auth.checkAccess).toHaveBeenNthCalledWith(2, { permissions: ['manage:pages'] }, ['manage:pages', 'delete:pages'], { path: 'docs/alpha', locale: 'en' })
+    expect(global.WIKI.auth.checkAccess).toHaveBeenNthCalledWith(3, { permissions: ['manage:pages'] }, ['write:pages', 'manage:system'])
+    expect(res.json).toHaveBeenCalledWith({
+      id: 7,
+      path: 'docs/alpha',
+      hash: 'abc123',
+      title: 'Alpha',
+      description: 'Alpha description',
+      isPrivate: false,
+      isPublished: true,
+      privateNS: null,
+      publishStartDate: null,
+      publishEndDate: null,
+      contentType: 'markdown',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-02T00:00:00.000Z',
+      editor: 'markdown',
+      locale: 'en',
+      authorId: 2,
+      authorName: 'Author',
+      authorEmail: 'author@example.com',
+      creatorId: 1,
+      creatorName: 'Creator',
+      creatorEmail: 'creator@example.com'
+    })
+  })
+
+  it.each([
+    ['0'],
+    ['1.9'],
+    ['Infinity'],
+    ['9007199254740992']
+  ])('rejects invalid page detail ids: %s', async (id) => {
+    const { getPage } = loadHandler()
+    const req = { user: { permissions: ['manage:pages'] }, params: { id } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await getPage(req, res)
+
+    expect(res.status).toHaveBeenCalledWith(400)
+    expect(res.json).toHaveBeenCalledWith({ error: 'id must be a positive integer' })
+    expect(global.WIKI.models.pages.getPageFromDb).not.toHaveBeenCalled()
+  })
+
+  it('returns 404 when page detail is missing', async () => {
+    global.WIKI.models.pages.getPageFromDb.mockResolvedValueOnce(null)
+    const { getPage } = loadHandler()
+    const req = { user: { permissions: ['manage:pages'] }, params: { id: '7' } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await getPage(req, res)
+
+    expect(res.status).toHaveBeenCalledWith(404)
+    expect(res.json).toHaveBeenCalledWith({ error: 'This page does not exist.' })
+  })
+
+  it('returns 403 when page detail route access is denied', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValueOnce(false)
+    const { getPage } = loadHandler()
+    const req = { user: { permissions: ['read:pages'] }, params: { id: '7' } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await getPage(req, res)
+
+    expect(res.status).toHaveBeenCalledWith(403)
+    expect(res.json).toHaveBeenCalledWith({ error: 'read:pages or manage:system is required' })
+    expect(global.WIKI.models.pages.getPageFromDb).not.toHaveBeenCalled()
+  })
+
+  it('returns 403 when scoped page detail access is denied', async () => {
+    global.WIKI.auth.checkAccess
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(false)
+    const { getPage } = loadHandler()
+    const req = { user: { permissions: ['read:pages'] }, params: { id: '7' } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await getPage(req, res)
+
+    expect(res.status).toHaveBeenCalledWith(403)
+    expect(res.json).toHaveBeenCalledWith({ error: 'You are not authorized to view this page.' })
+  })
+
+  it('returns 403 when page detail field access is denied', async () => {
+    global.WIKI.auth.checkAccess
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(false)
+    const { getPage } = loadHandler()
+    const req = { user: { permissions: ['read:pages'] }, params: { id: '7' } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await getPage(req, res)
+
+    expect(res.status).toHaveBeenCalledWith(403)
+    expect(res.json).toHaveBeenCalledWith({ error: 'write:pages or manage:system is required' })
+  })
+
+  it('forwards unexpected page detail failures to next', async () => {
+    const next = jest.fn()
+    global.WIKI.auth.checkAccess.mockReturnValueOnce(true)
+    global.WIKI.models.pages.getPageFromDb.mockRejectedValueOnce(new Error('page db down'))
+    const { getPage } = loadHandler()
+    const req = { user: { permissions: ['manage:system'] }, params: { id: '7' } }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+
+    await getPage(req, res, next)
+
+    expect(next).toHaveBeenCalledWith(expect.any(Error))
+    expect(next.mock.calls[0][0].message).toBe('page db down')
   })
 
   it('registers the page delete route', () => {

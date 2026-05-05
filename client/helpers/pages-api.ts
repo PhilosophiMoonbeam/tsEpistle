@@ -22,6 +22,30 @@ type MessageResponse = {
   message: string
 }
 
+type PageDetails = {
+  id: number
+  locale: string
+  path: string
+  hash: string
+  title: string | null
+  description: string | null
+  isPrivate: boolean
+  isPublished: boolean
+  privateNS: string | null
+  publishStartDate: string | null
+  publishEndDate: string | null
+  contentType: string
+  createdAt: string
+  updatedAt: string
+  editor: string
+  authorId: number
+  authorName: string
+  authorEmail: string
+  creatorId: number
+  creatorName: string
+  creatorEmail: string
+}
+
 type PageListRow = {
   id: number
   locale: string
@@ -98,6 +122,41 @@ function normalizePageTagRow (row: unknown, fallbackMessage: string): PageTagRow
   }
 }
 
+function normalizePageDetails (row: unknown, fallbackMessage: string): PageDetails {
+  if (!row || typeof row !== 'object' || Array.isArray(row)) {
+    throw new Error(fallbackMessage)
+  }
+
+  const page = row as Partial<PageDetails>
+  if (!Number.isInteger(page.id) || typeof page.locale !== 'string' || page.locale.length < 1 || typeof page.path !== 'string' || typeof page.hash !== 'string' || (page.title !== null && typeof page.title !== 'string') || (page.description !== null && typeof page.description !== 'string') || typeof page.isPrivate !== 'boolean' || typeof page.isPublished !== 'boolean' || (page.privateNS !== null && typeof page.privateNS !== 'string') || (page.publishStartDate !== null && typeof page.publishStartDate !== 'string') || (page.publishEndDate !== null && typeof page.publishEndDate !== 'string') || typeof page.contentType !== 'string' || typeof page.createdAt !== 'string' || page.createdAt.length < 1 || typeof page.updatedAt !== 'string' || page.updatedAt.length < 1 || typeof page.editor !== 'string' || !Number.isInteger(page.authorId) || typeof page.authorName !== 'string' || typeof page.authorEmail !== 'string' || !Number.isInteger(page.creatorId) || typeof page.creatorName !== 'string' || typeof page.creatorEmail !== 'string') {
+    throw new Error(fallbackMessage)
+  }
+
+  return {
+    id: page.id,
+    locale: page.locale,
+    path: page.path,
+    hash: page.hash,
+    title: page.title,
+    description: page.description,
+    isPrivate: page.isPrivate,
+    isPublished: page.isPublished,
+    privateNS: page.privateNS,
+    publishStartDate: page.publishStartDate,
+    publishEndDate: page.publishEndDate,
+    contentType: page.contentType,
+    createdAt: page.createdAt,
+    updatedAt: page.updatedAt,
+    editor: page.editor,
+    authorId: page.authorId,
+    authorName: page.authorName,
+    authorEmail: page.authorEmail,
+    creatorId: page.creatorId,
+    creatorName: page.creatorName,
+    creatorEmail: page.creatorEmail
+  }
+}
+
 function normalizePageListRow (row: unknown, fallbackMessage: string): PageListRow {
   if (!row || typeof row !== 'object' || Array.isArray(row)) {
     throw new Error(fallbackMessage)
@@ -141,6 +200,17 @@ function normalizeRecentPageRow (row: unknown, fallbackMessage: string): RecentP
     title: pageRow.title,
     updatedAt: pageRow.updatedAt
   }
+}
+
+export async function fetchPage (fetchImpl: FetchImpl, id: number, fallbackMessage = 'Page response is invalid'): Promise<PageDetails> {
+  const response = await fetchImpl(`/_api/pages/${encodeURIComponent(id)}`, {
+    credentials: 'same-origin',
+    headers: {
+      Accept: 'application/json'
+    }
+  })
+
+  return normalizePageDetails(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
 }
 
 export async function fetchPageList (fetchImpl: FetchImpl, fallbackMessage = 'Page list response is invalid'): Promise<PageListRow[]> {

@@ -1,4 +1,4 @@
-const { deletePage, deletePageTag, fetchPageList, fetchPageTags, fetchRecentPages, updatePageTag } = require('./pages-api')
+const { deletePage, deletePageTag, fetchPage, fetchPageList, fetchPageTags, fetchRecentPages, updatePageTag } = require('./pages-api')
 
 function createJsonResponse (payload, ok = true) {
   return {
@@ -11,6 +11,76 @@ function createJsonResponse (payload, ok = true) {
 }
 
 describe('pages api helper', () => {
+  test('fetches and validates page detail payloads', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+      id: 7,
+      locale: 'en',
+      path: 'docs/alpha',
+      hash: 'abc123',
+      title: 'Alpha',
+      description: null,
+      isPrivate: false,
+      isPublished: true,
+      privateNS: null,
+      publishStartDate: null,
+      publishEndDate: null,
+      contentType: 'markdown',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-02T00:00:00.000Z',
+      editor: 'markdown',
+      authorId: 2,
+      authorName: 'Author',
+      authorEmail: 'author@example.com',
+      creatorId: 1,
+      creatorName: 'Creator',
+      creatorEmail: 'creator@example.com',
+      extra: 'ignored'
+    }))
+
+    await expect(fetchPage(fetchImpl, 7)).resolves.toEqual({
+      id: 7,
+      locale: 'en',
+      path: 'docs/alpha',
+      hash: 'abc123',
+      title: 'Alpha',
+      description: null,
+      isPrivate: false,
+      isPublished: true,
+      privateNS: null,
+      publishStartDate: null,
+      publishEndDate: null,
+      contentType: 'markdown',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-02T00:00:00.000Z',
+      editor: 'markdown',
+      authorId: 2,
+      authorName: 'Author',
+      authorEmail: 'author@example.com',
+      creatorId: 1,
+      creatorName: 'Creator',
+      creatorEmail: 'creator@example.com'
+    })
+
+    expect(fetchImpl).toHaveBeenCalledWith('/_api/pages/7', {
+      credentials: 'same-origin',
+      headers: {
+        Accept: 'application/json'
+      }
+    })
+  })
+
+  test('rejects malformed page detail payloads', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ id: 7, locale: 'en', path: 'docs/alpha' }))
+
+    await expect(fetchPage(fetchImpl, 7, 'Bad page payload')).rejects.toThrow('Bad page payload')
+  })
+
+  test('surfaces API error messages for failed page detail requests', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ error: 'This page does not exist.' }, false))
+
+    await expect(fetchPage(fetchImpl, 7, 'Bad page payload')).rejects.toThrow('This page does not exist.')
+  })
+
   test('fetches and validates page list payloads', async () => {
     const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse([
       {

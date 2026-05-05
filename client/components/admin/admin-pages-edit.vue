@@ -164,8 +164,7 @@
 import _ from 'lodash'
 import { StatusIndicator } from 'vue-status-indicator'
 
-import pageQuery from 'gql/admin/pages/pages-query-single.gql'
-import { deletePage as deletePageById } from '../../helpers/pages-api'
+import { deletePage as deletePageById, fetchPage } from '../../helpers/pages-api'
 
 export default {
   components: {
@@ -179,6 +178,21 @@ export default {
     }
   },
   methods: {
+    async loadPage () {
+      this.loading = true
+      this.$store.commit(`loadingStart`, 'admin-pages-refresh')
+      try {
+        this.page = await fetchPage(
+          window.fetch.bind(window),
+          _.toSafeInteger(this.$route.params.id),
+          this.$t('common:error.unexpected')
+        )
+      } catch (err) {
+        this.$store.commit('pushGraphError', err)
+      }
+      this.$store.commit(`loadingStop`, 'admin-pages-refresh')
+      this.loading = false
+    },
     async deletePage() {
       this.loading = true
       this.$store.commit(`loadingStart`, 'page-delete')
@@ -207,20 +221,8 @@ export default {
       })
     }
   },
-  apollo: {
-    page: {
-      query: pageQuery,
-      variables() {
-        return {
-          id: _.toSafeInteger(this.$route.params.id)
-        }
-      },
-      fetchPolicy: 'network-only',
-      update: (data) => data.pages.single,
-      watchLoading (isLoading) {
-        this.$store.commit(`loading${isLoading ? 'Start' : 'Stop'}`, 'admin-pages-refresh')
-      }
-    }
+  mounted () {
+    this.loadPage()
   }
 }
 </script>
