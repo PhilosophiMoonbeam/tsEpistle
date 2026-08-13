@@ -78,7 +78,7 @@ describe('controllers/api storage endpoints', () => {
           getTargets: vi.fn().mockResolvedValue([
             {
               key: 'git',
-              isEnabled: true,
+              isEnabled: 1,
               mode: 'sync',
               syncInterval: '',
               config: {
@@ -89,7 +89,7 @@ describe('controllers/api storage endpoints', () => {
             },
             {
               key: 'disk',
-              isEnabled: false,
+              isEnabled: 0,
               mode: 'push',
               syncInterval: '',
               config: {

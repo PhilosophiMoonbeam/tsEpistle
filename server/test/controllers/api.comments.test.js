@@ -113,7 +113,7 @@ describe('controllers/api comments endpoints', () => {
           getProviders: vi.fn().mockResolvedValue([
             {
               key: 'default',
-              isEnabled: true,
+              isEnabled: 1,
               config: {
                 displayMode: 'compact',
                 requireApproval: true,
@@ -126,7 +126,7 @@ describe('controllers/api comments endpoints', () => {
             },
             {
               key: 'external',
-              isEnabled: false,
+              isEnabled: 0,
               config: {},
               privateField: 'do-not-return'
             }

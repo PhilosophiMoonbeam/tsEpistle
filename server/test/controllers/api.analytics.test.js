@@ -107,7 +107,7 @@ describe('controllers/api analytics endpoints', () => {
           getProviders: vi.fn().mockResolvedValue([
             {
               key: 'google',
-              isEnabled: true,
+              isEnabled: 1,
               config: {
                 trackingId: 'example-tracking-id',
                 anonymizeIp: false

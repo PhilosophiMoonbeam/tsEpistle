@@ -53,6 +53,7 @@ const listEngines = async (orderBy?: string): Promise<Array<Record<string, unkno
     return {
       ...definition,
       ...engine,
+      isEnabled: Boolean(engine.isEnabled),
       config: serializeConfig({ config: engine.config as Record<string, unknown>, definition, knownOnly: true })
     }
   })

@@ -49,7 +49,12 @@ const listProviders = async () => {
   const providers = await models.commentProviders.getProviders()
   return providers.map(provider => {
     const definition = _.find(definitions.commentProviders, ['key', provider.key]) ?? {}
-    return { ...definition, ...provider, config: serializeConfig({ config: provider.config as Record<string, unknown>, definition, knownOnly: true }) }
+    return {
+      ...definition,
+      ...provider,
+      isEnabled: Boolean(provider.isEnabled),
+      config: serializeConfig({ config: provider.config as Record<string, unknown>, definition, knownOnly: true })
+    }
   })
 }
 

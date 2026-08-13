@@ -79,6 +79,7 @@ const listTargets = async () => {
     return {
       ...definition,
       ...target,
+      isEnabled: Boolean(target.isEnabled),
       hasSchedule: definition.schedule !== false,
       syncInterval: target.syncInterval || definition.schedule || 'P0D',
       syncIntervalDefault: definition.schedule,

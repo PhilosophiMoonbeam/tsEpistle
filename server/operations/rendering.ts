@@ -44,6 +44,7 @@ const listRenderers = async (orderBy?: string): Promise<Array<Record<string, unk
     return {
       ...definition,
       ...renderer,
+      isEnabled: Boolean(renderer.isEnabled),
       config: serializeConfig({ config: renderer.config as Record<string, unknown>, definition, knownOnly: true })
     }
   })

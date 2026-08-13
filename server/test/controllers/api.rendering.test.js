@@ -71,7 +71,7 @@ describe('controllers/api rendering endpoints', () => {
           getRenderers: vi.fn().mockResolvedValue([
             {
               key: 'markdownCore',
-              isEnabled: true,
+              isEnabled: 1,
               config: {
                 flavor: 'commonmark',
                 safeMode: true,
@@ -84,7 +84,7 @@ describe('controllers/api rendering endpoints', () => {
             },
             {
               key: 'emojiRenderer',
-              isEnabled: false,
+              isEnabled: 0,
               config: {},
               privateField: 'do-not-return'
             }

@@ -84,7 +84,7 @@ describe('controllers/api search endpoints', () => {
           getSearchEngines: vi.fn().mockResolvedValue([
             {
               key: 'beta',
-              isEnabled: true,
+              isEnabled: 1,
               config: {
                 zUndeclared: 'must-not-return',
                 endpoint: 'https://example.test/search',
@@ -100,7 +100,7 @@ describe('controllers/api search endpoints', () => {
             },
             {
               key: 'alpha',
-              isEnabled: false,
+              isEnabled: 0,
               config: {
                 indexName: 'docs-index'
               },

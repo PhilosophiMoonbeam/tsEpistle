@@ -45,6 +45,7 @@ const listProviders = async (isEnabled?: boolean): Promise<Array<Record<string, 
     return {
       ...definition,
       ...provider,
+      isEnabled: Boolean(provider.isEnabled),
       config: serializeConfig({ config: provider.config as Record<string, unknown>, definition })
     }
   })

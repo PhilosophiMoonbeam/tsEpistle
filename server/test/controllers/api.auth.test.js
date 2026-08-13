@@ -106,12 +106,12 @@ describe('controllers/api auth endpoints', () => {
               strategyKey: 'local',
               displayName: 'Local Login',
               order: 1,
-              isEnabled: true,
+              isEnabled: 1,
               config: {
                 usernameFormat: 'email',
                 ignoredConfig: 'ignored'
               },
-              selfRegistration: false,
+              selfRegistration: 0,
               domainWhitelist: ['example.com'],
               autoEnrollGroups: [1]
             },
@@ -120,12 +120,12 @@ describe('controllers/api auth endpoints', () => {
               strategyKey: 'github',
               displayName: 'GitHub Login',
               order: 2,
-              isEnabled: false,
+              isEnabled: 0,
               config: {
                 clientId: 'abc123',
                 clientSharedKey: 'shh'
               },
-              selfRegistration: true,
+              selfRegistration: 1,
               domainWhitelist: [],
               autoEnrollGroups: []
             }

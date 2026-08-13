@@ -88,7 +88,13 @@ const listActive = async (enabledOnly?: boolean) => {
       const property = definition.props?.[key]
       return property ? [{ key, value: JSON.stringify({ ...property, value }) }] : []
     })
-    return { ...strategy, strategy: definition, config: _.sortBy(serializedConfig, 'key') }
+    return {
+      ...strategy,
+      isEnabled: Boolean(strategy.isEnabled),
+      selfRegistration: Boolean(strategy.selfRegistration),
+      strategy: definition,
+      config: _.sortBy(serializedConfig, 'key')
+    }
   })
   return enabledOnly ? _.filter(strategies, 'isEnabled') : strategies
 }
@@ -114,7 +120,7 @@ const listPublic = async () => {
 }
 
 const listProviderOptions = async () => (await getAuthenticationModel().getStrategies()).map(strategy => ({
-  key: strategy.key, displayName: strategy.displayName, order: strategy.order, isEnabled: strategy.isEnabled === true
+  key: strategy.key, displayName: strategy.displayName, order: strategy.order, isEnabled: Boolean(strategy.isEnabled)
 }))
 
 const updateStrategies = async (strategies: unknown): Promise<void> => {
