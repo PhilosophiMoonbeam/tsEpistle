@@ -17,12 +17,17 @@ npm-debug.log*
 
 # Generated assets
 /assets
+/server/.build-metadata.json
 
 # Webpack
 .webpack-cache
 .fusebox
 
 # Config Files
+# Local environment and browser automation state
+/.env
+/.playwright-cli/
+
 /config.yml
 
 # Data directories

@@ -21,6 +21,7 @@ import uploadController from './controllers/upload.ts'
 import commonController from './controllers/common.ts'
 import sslController from './controllers/ssl.ts'
 import apiController from './controllers/api/index.ts'
+import type { ProductMetadata } from '../shared/product.ts'
 
 const { collectEntry } = viteAssets
 
@@ -63,6 +64,7 @@ interface MasterWiki extends Record<string, unknown> {
     knex: Knex
     locales: { getNavLocales(options: { cache: boolean }): Promise<unknown> }
   }
+  product: ProductMetadata
   servers: { startGraphQL(): Promise<void>; startHTTP(): Promise<void>; startHTTPS(): Promise<void> }
   system: unknown
 }
@@ -156,7 +158,8 @@ export default async function startMaster(): Promise<true> {
       company: wiki.config.company,
       contentLicense: wiki.config.contentLicense,
       footerOverride: wiki.config.footerOverride,
-      logoUrl: wiki.config.logoUrl
+      logoUrl: wiki.config.logoUrl,
+      product: wiki.product
     }
     res.locals.langs = await wiki.models.locales.getNavLocales({ cache: true })
     res.locals.analyticsCode = await wiki.models.analytics.getCode({ cache: true })

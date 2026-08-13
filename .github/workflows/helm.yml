@@ -1,7 +1,7 @@
 name: Helm Chart CI
 
 on:
-  # Triggers the workflow on push or pull request events but only for the dev branch
+  # Validate and package the fork-owned chart on main.
   push:
     branches: [ main ]
     paths: [ dev/helm/** ]
@@ -11,19 +11,20 @@ on:
 
 jobs:
   build:
-    name: Update Chart
+    name: Validate Chart
     runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
-      - name: Package and Push Chart
-        env:
-          HELM_REPO_PASSWORD: ${{ secrets.HELM_REPO_PASSWORD }}
-          HELM_REPO_USERNAME: ${{ secrets.HELM_REPO_USERNAME }}
+      - name: Lint and Package Chart
         run: |
-          export CHARTVER=$(yq '.version' dev/helm/Chart.yaml)
-          helm plugin install https://github.com/chartmuseum/helm-push.git --version v0.11.1
-          helm repo add chartmuseum https://charts.js.wiki
-          helm cm-push --version="$CHARTVER" --username="$HELM_REPO_USERNAME" --password="$HELM_REPO_PASSWORD" dev/helm/ chartmuseum
-          helm repo remove chartmuseum
+          helm lint dev/helm
+          helm package --destination dist dev/helm
+
+      - name: Upload Chart Artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: wiki-ts-preview-helm
+          path: dist/*.tgz
+          if-no-files-found: error

@@ -1,4 +1,6 @@
 import { fetchSystemSummary, fetchSystemInfo, fetchSystemTelemetry, fetchSystemExportStatus, fetchSystemHost, fetchSystemSsl, updateSystemSslRedirection, renewSystemSslCertificate, fetchSystemFlags, fetchSystemExtensions, updateSystemFlags, updateSystemTelemetry, resetSystemTelemetryClientId, flushSystemCache, flushSystemTemporaryUploads, rebuildPageTree, migratePagesToLocale, renderPage, purgePageHistory, performSystemUpgrade, startSystemExport } from './system-api.ts'
+import { createProductMetadata } from '../../shared/product.ts'
+
 
 function createJsonResponse (payload, ok = true) {
   return {
@@ -9,27 +11,43 @@ function createJsonResponse (payload, ok = true) {
     json: async () => payload
   }
 }
+const product = createProductMetadata({
+  revision: '0123456789abcdef0123456789abcdef01234567',
+  date: '2026-08-13T00:00:00.000Z'
+})
+const summaryPayload = {
+  product,
+  currentVersion: product.version,
+  latestVersion: null,
+  latestVersionReleaseDate: null,
+  updateStatus: 'unavailable',
+  groupsTotal: 3,
+  pagesTotal: 42,
+  usersTotal: 11,
+  tagsTotal: 7
+}
+const infoPayload = {
+  ...summaryPayload,
+  configFile: '/wiki/config.yml',
+  cpuCores: 8,
+  dbHost: 'postgres.example.com',
+  dbType: 'PostgreSQL',
+  dbVersion: '15.4',
+  hostname: 'wiki-host',
+  nodeVersion: '24.9.0',
+  operatingSystem: 'Ubuntu 24.04 LTS',
+  platform: 'linux',
+  ramTotal: '16 GB',
+  upgradeCapable: false,
+  workingDirectory: '/srv/wiki'
+}
+
 
 describe('system api helper', () => {
-  test('fetches and validates system summary', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({
-      currentVersion: '2.0.0',
-      latestVersion: '2.1.0',
-      latestVersionReleaseDate: '2026-01-01T00:00:00.000Z',
-      groupsTotal: 3,
-      pagesTotal: 42,
-      usersTotal: 11,
-      tagsTotal: 7
-    }))
+  test('fetches and validates system summary metadata', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse(summaryPayload))
 
-    await expect(fetchSystemSummary(fetchImpl)).resolves.toEqual({
-      currentVersion: '2.0.0',
-      latestVersion: '2.1.0',
-      groupsTotal: 3,
-      pagesTotal: 42,
-      usersTotal: 11,
-      tagsTotal: 7
-    })
+    await expect(fetchSystemSummary(fetchImpl)).resolves.toEqual(summaryPayload)
 
     expect(fetchImpl).toHaveBeenCalledWith('/_api/system/summary', {
       credentials: 'same-origin',
@@ -40,41 +58,9 @@ describe('system api helper', () => {
   })
 
   test('fetches and validates rich system info payloads', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({
-      configFile: '/wiki/config.yml',
-      cpuCores: 8,
-      currentVersion: '2.0.0',
-      dbHost: 'postgres.example.com',
-      dbType: 'PostgreSQL',
-      dbVersion: '15.4',
-      hostname: 'wiki-host',
-      latestVersion: '2.1.0',
-      latestVersionReleaseDate: '2026-01-01T00:00:00.000Z',
-      nodeVersion: '18.19.0',
-      operatingSystem: 'Ubuntu 24.04 LTS',
-      platform: 'linux',
-      ramTotal: '16 GB',
-      upgradeCapable: true,
-      workingDirectory: '/srv/wiki'
-    }))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse(infoPayload))
 
-    await expect(fetchSystemInfo(fetchImpl)).resolves.toEqual({
-      configFile: '/wiki/config.yml',
-      cpuCores: 8,
-      currentVersion: '2.0.0',
-      dbHost: 'postgres.example.com',
-      dbType: 'PostgreSQL',
-      dbVersion: '15.4',
-      hostname: 'wiki-host',
-      latestVersion: '2.1.0',
-      latestVersionReleaseDate: '2026-01-01T00:00:00.000Z',
-      nodeVersion: '18.19.0',
-      operatingSystem: 'Ubuntu 24.04 LTS',
-      platform: 'linux',
-      ramTotal: '16 GB',
-      upgradeCapable: true,
-      workingDirectory: '/srv/wiki'
-    })
+    await expect(fetchSystemInfo(fetchImpl)).resolves.toEqual(infoPayload)
 
     expect(fetchImpl).toHaveBeenCalledWith('/_api/system/info', {
       credentials: 'same-origin',
@@ -86,24 +72,23 @@ describe('system api helper', () => {
 
   test('rejects malformed system info payloads', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({
-      configFile: '/wiki/config.yml',
-      cpuCores: '8',
-      currentVersion: '2.0.0',
-      dbHost: 'postgres.example.com',
-      dbType: 'PostgreSQL',
-      dbVersion: '15.4',
-      hostname: 'wiki-host',
-      latestVersion: '2.1.0',
-      latestVersionReleaseDate: '2026-01-01T00:00:00.000Z',
-      nodeVersion: '18.19.0',
-      operatingSystem: 'Ubuntu 24.04 LTS',
-      platform: 'linux',
-      ramTotal: '16 GB',
-      upgradeCapable: true,
-      workingDirectory: '/srv/wiki'
+      ...infoPayload,
+      cpuCores: '8'
     }))
 
     await expect(fetchSystemInfo(fetchImpl, 'Bad system info')).rejects.toThrow('Bad system info')
+  })
+
+  test('rejects a source URL that does not identify the reported revision', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({
+      ...summaryPayload,
+      product: {
+        ...product,
+        sourceUrl: product.sourceRepository
+      }
+    }))
+
+    await expect(fetchSystemSummary(fetchImpl, 'Bad product metadata')).rejects.toThrow('Bad product metadata')
   })
 
   test('fetches and validates system telemetry', async () => {

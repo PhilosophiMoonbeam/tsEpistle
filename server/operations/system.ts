@@ -8,6 +8,7 @@ import fs from 'fs-extra'
 import getos from 'getos'
 
 import errors from './errors.ts'
+import type { ProductMetadata } from '../../shared/product.ts'
 
 const { ApplicationError } = errors
 
@@ -92,6 +93,7 @@ interface WikiServices extends Record<string, unknown> {
   version: string
   models: WikiModels
   system: WikiSystemState
+  product: ProductMetadata
   config: WikiConfig
   configSvc: {
     applyFlags(): Promise<unknown>
@@ -136,9 +138,11 @@ const getSummary = async () => {
     wiki.models.tags.query().count('* as total').first()
   ])
   return {
-    currentVersion: wiki.version,
-    latestVersion: _.get(wiki.system, 'updates.version', wiki.version),
-    latestVersionReleaseDate: _.get(wiki.system, 'updates.releaseDate', null),
+    product: wiki.product,
+    currentVersion: wiki.product.version,
+    latestVersion: null,
+    latestVersionReleaseDate: null,
+    updateStatus: 'unavailable',
     groupsTotal: _.toSafeInteger(groups.total),
     pagesTotal: _.toSafeInteger(pages.total),
     usersTotal: _.toSafeInteger(users.total),
@@ -190,7 +194,7 @@ const getInfo = async () => ({
   telemetryClientId: _.get(wiki.config, 'telemetry.clientId', null),
   httpPort: wiki.servers.servers.http ? _.get(wiki.servers.servers.http.address(), 'port', 0) : 0,
   httpsPort: wiki.servers.servers.https ? _.get(wiki.servers.servers.https.address(), 'port', 0) : 0,
-  upgradeCapable: !_.isNil(process.env.UPGRADE_COMPANION),
+  upgradeCapable: false,
   workingDirectory: process.cwd()
 })
 
@@ -269,15 +273,10 @@ const resetTelemetryClientId = async () => {
 }
 
 const performUpgrade = async (): Promise<void> => {
-  if (!process.env.UPGRADE_COMPANION) throw new Error('You must run the wiki-update-companion container and pass the UPGRADE_COMPANION env var in order to use this feature.')
-  const url = new URL('http://wiki-update-companion/upgrade')
-  if (process.env.UPGRADE_COMPANION_REF) {
-    url.searchParams.set('container', process.env.UPGRADE_COMPANION_REF)
-  }
-  const response = await fetch(url, { method: 'POST' })
-  if (!response.ok) {
-    throw new Error(`Upgrade companion returned ${response.status} ${response.statusText}`)
-  }
+  throw new ApplicationError('Preview updates are unavailable because no fork-owned update provider is configured.', {
+    code: 'UPDATE_PROVIDER_UNAVAILABLE',
+    status: 409
+  })
 }
 
 const flushPageCache = async () => {
@@ -362,14 +361,13 @@ const renewSslCertificate = async () => {
   await wiki.servers.restartServer('https')
 }
 
-const checkForUpdate = async () => {
-  await (await import('../jobs/sync-graph-updates.ts')).default()
-  return {
-    currentVersion: wiki.version,
-    latestVersion: _.get(wiki.system, 'updates.version', wiki.version),
-    latestVersionReleaseDate: _.get(wiki.system, 'updates.releaseDate', null)
-  }
-}
+const checkForUpdate = async () => ({
+  product: wiki.product,
+  currentVersion: wiki.product.version,
+  latestVersion: null,
+  latestVersionReleaseDate: null,
+  updateStatus: 'unavailable'
+})
 
 export default {
   checkForUpdate,

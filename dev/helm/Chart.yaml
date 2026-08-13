@@ -1,8 +1,8 @@
 apiVersion: v2
-name: wiki
-version: '3.0.0'
-appVersion: '2'
-description: The most powerful and extensible open source Wiki software.
+name: wiki-ts-preview
+version: '0.1.0-alpha.1'
+appVersion: '0.1.0-alpha.1'
+description: Wiki.ts Preview, an independent community fork of Wiki.js.
 keywords:
   - wiki
   - documentation
@@ -11,7 +11,7 @@ keywords:
   - reference
   - editor
 type: application
-home: https://js.wiki
+home: https://github.com/PhilosophiMoonbeam/wiki
 icon: https://cdn.js.wiki/images/wikijs-butterfly.svg
 sources:
-  - https://github.com/requarks/wiki
+  - https://github.com/PhilosophiMoonbeam/wiki

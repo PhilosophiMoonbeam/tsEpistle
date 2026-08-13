@@ -1,7 +1,19 @@
 # syntax=docker/dockerfile:1@sha256:ecfaec9ed6d810b56388c508f4121597bfbba70d41a6dfeee4d8cad5f295fc32
 
+ARG WIKI_BUILD_DATE
+ARG WIKI_BUILD_REVISION
+ARG WIKI_PRODUCT_DESCRIPTION
+ARG WIKI_PRODUCT_NAME
+ARG WIKI_PRODUCT_VERSION
+ARG WIKI_SOURCE_REPOSITORY
+ARG WIKI_UPSTREAM_BASE
+
 FROM node:24-alpine@sha256:d32cdf619f63fe0471182d08996dd516c6275bb5fd31ae06e55a570bd9e1ad43 AS build
-ENV CI=true
+ARG WIKI_BUILD_DATE
+ARG WIKI_BUILD_REVISION
+ENV CI=true \
+    WIKI_BUILD_DATE=$WIKI_BUILD_DATE \
+    WIKI_BUILD_REVISION=$WIKI_BUILD_REVISION
 
 RUN apk add --no-cache g++ make cmake python3
 
@@ -18,13 +30,28 @@ RUN --mount=type=cache,id=wiki-pnpm,target=/pnpm/store \
 
 COPY client ./client
 COPY shared ./shared
+COPY server ./server
 COPY vite.config.mts ./
 
 RUN pnpm build && pnpm prune --prod
 
 FROM node:24-alpine@sha256:d32cdf619f63fe0471182d08996dd516c6275bb5fd31ae06e55a570bd9e1ad43 AS runtime
 
-LABEL maintainer="requarks.io"
+ARG WIKI_BUILD_DATE
+ARG WIKI_BUILD_REVISION
+ARG WIKI_PRODUCT_DESCRIPTION
+ARG WIKI_PRODUCT_NAME
+ARG WIKI_PRODUCT_VERSION
+ARG WIKI_SOURCE_REPOSITORY
+ARG WIKI_UPSTREAM_BASE
+LABEL org.opencontainers.image.created="${WIKI_BUILD_DATE}" \
+      org.opencontainers.image.description="${WIKI_PRODUCT_DESCRIPTION}" \
+      org.opencontainers.image.licenses="AGPL-3.0-only" \
+      org.opencontainers.image.revision="${WIKI_BUILD_REVISION}" \
+      org.opencontainers.image.source="${WIKI_SOURCE_REPOSITORY}" \
+      org.opencontainers.image.title="${WIKI_PRODUCT_NAME}" \
+      org.opencontainers.image.version="${WIKI_PRODUCT_VERSION}" \
+      io.wikits.upstream-base="${WIKI_UPSTREAM_BASE}"
 ENV NODE_ENV=production
 
 RUN apk add --no-cache bash curl git openssh gnupg sqlite && \
@@ -36,10 +63,11 @@ WORKDIR /wiki
 COPY --chown=node:node --from=build /wiki/assets ./assets
 COPY --chown=node:node --from=build /wiki/node_modules ./node_modules
 COPY --chown=node:node shared ./shared
-COPY --chown=node:node server ./server
+COPY --chown=node:node --from=build /wiki/server ./server
 COPY --chown=node:node dev/build/config.yml ./config.yml
 COPY --chown=node:node package.json ./
 COPY --chown=node:node LICENSE ./
+COPY --chown=node:node NOTICE ./
 
 USER node
 

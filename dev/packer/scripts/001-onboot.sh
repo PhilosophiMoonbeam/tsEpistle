@@ -8,7 +8,6 @@ if [[ -z $DATABASE_URL ]]; then
   docker start db
 fi
 docker start wiki
-docker start wiki-update-companion
 
 # Remove the ssh force logout command
 sed -e '/Match User root/d' \

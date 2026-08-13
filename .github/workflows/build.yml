@@ -12,7 +12,6 @@ permissions:
   contents: read
 
 env:
-  BASE_DEV_VERSION: 2.5.0
   PNPM_VERSION: 11.12.0
 
 jobs:
@@ -62,25 +61,9 @@ jobs:
     steps:
     - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
-    - name: Set Build Variables
+    - name: Set Build Metadata
       shell: bash
-      run: |
-        if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-          echo "Using TAG mode: $GITHUB_REF_NAME"
-          echo "REL_VERSION=$GITHUB_REF_NAME" >> "$GITHUB_ENV"
-          echo "REL_VERSION_STRICT=${GITHUB_REF_NAME#?}" >> "$GITHUB_ENV"
-        else
-          echo "Using BRANCH mode: v$BASE_DEV_VERSION-dev.$GITHUB_RUN_NUMBER"
-          echo "REL_VERSION=v$BASE_DEV_VERSION-dev.$GITHUB_RUN_NUMBER" >> "$GITHUB_ENV"
-          echo "REL_VERSION_STRICT=$BASE_DEV_VERSION-dev.$GITHUB_RUN_NUMBER" >> "$GITHUB_ENV"
-        fi
-        epoch="${SOURCE_DATE_EPOCH:-$(git show -s --format=%ct "$GITHUB_SHA")}"
-        echo "SOURCE_DATE_EPOCH=$epoch" >> "$GITHUB_ENV"
-
-    - name: Disable DEV Flag and Set Version
-      run: |
-        jq --arg version "$REL_VERSION_STRICT" '. + {dev:false, version:$version}' package.json > package.json.tmp
-        mv package.json.tmp package.json
+      run: node server/scripts/export-build-environment.ts >> "$GITHUB_ENV"
 
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
@@ -92,19 +75,27 @@ jobs:
       with:
         context: .
         file: dev/build/Dockerfile
+        build-args: |
+          WIKI_BUILD_DATE=${{ env.WIKI_BUILD_DATE }}
+          WIKI_BUILD_REVISION=${{ env.WIKI_BUILD_REVISION }}
+          WIKI_PRODUCT_DESCRIPTION=${{ env.WIKI_PRODUCT_DESCRIPTION }}
+          WIKI_PRODUCT_NAME=${{ env.WIKI_PRODUCT_NAME }}
+          WIKI_PRODUCT_VERSION=${{ env.WIKI_PRODUCT_VERSION }}
+          WIKI_SOURCE_REPOSITORY=${{ env.WIKI_SOURCE_REPOSITORY }}
+          WIKI_UPSTREAM_BASE=${{ env.WIKI_UPSTREAM_BASE }}
         load: true
         provenance: false
         sbom: false
-        tags: requarks/wiki:canary-${{ env.REL_VERSION_STRICT }}
+        tags: wiki-ts-preview:test-${{ env.WIKI_BUILD_REVISION }}
 
     - name: Export Test Image
-      run: docker save "requarks/wiki:canary-$REL_VERSION_STRICT" | gzip -n > wiki-test-image.tar.gz
+      run: docker save "wiki-ts-preview:test-$WIKI_BUILD_REVISION" | gzip -n > wiki-ts-preview-test-image.tar.gz
 
     - name: Create Reproducible Linux Bundle
       shell: bash
       run: |
         mkdir -p _dist
-        container_id="$(docker create "requarks/wiki:canary-$REL_VERSION_STRICT")"
+        container_id="$(docker create "wiki-ts-preview:test-$WIKI_BUILD_REVISION")"
         docker cp "$container_id:/wiki" _dist
         docker rm "$container_id"
         rm -f _dist/wiki/config.yml
@@ -116,21 +107,21 @@ jobs:
           --group=0 \
           --numeric-owner \
           --mtime="@$SOURCE_DATE_EPOCH" \
-          -czf wiki-js.tar.gz \
+          -czf wiki-ts-preview-linux.tar.gz \
           -C _dist/wiki .
 
     - name: Upload Linux Build
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
       with:
         name: drop
-        path: wiki-js.tar.gz
+        path: wiki-ts-preview-linux.tar.gz
         if-no-files-found: error
 
     - name: Upload Test Image
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
       with:
         name: test-image
-        path: wiki-test-image.tar.gz
+        path: wiki-ts-preview-test-image.tar.gz
         if-no-files-found: error
         retention-days: 1
 
@@ -170,22 +161,16 @@ jobs:
         path: test-image
 
     - name: Load Test Image
-      run: gzip -dc test-image/wiki-test-image.tar.gz | docker load
+      run: gzip -dc test-image/wiki-ts-preview-test-image.tar.gz | docker load
 
-    - name: Set Test Variables
+    - name: Set Test Metadata
       shell: bash
-      run: |
-        if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-          echo "Using TAG mode: $GITHUB_REF_NAME"
-          echo "REL_VERSION_STRICT=${GITHUB_REF_NAME#?}" >> "$GITHUB_ENV"
-        else
-          echo "Using BRANCH mode: v$BASE_DEV_VERSION-dev.$GITHUB_RUN_NUMBER"
-          echo "REL_VERSION_STRICT=$BASE_DEV_VERSION-dev.$GITHUB_RUN_NUMBER" >> "$GITHUB_ENV"
-        fi
+      run: node server/scripts/export-build-environment.ts >> "$GITHUB_ENV"
 
     - name: Run Playwright Tests
       env:
         MATRIXENV: ${{ matrix.dbtype }}
+        WIKI_TEST_IMAGE: wiki-ts-preview:test-${{ env.WIKI_BUILD_REVISION }}
         PLAYWRIGHT_BASE_URL: http://127.0.0.1:3000
       run: |
         chmod u+x dev/e2e/ci-setup.sh
@@ -204,30 +189,21 @@ jobs:
     steps:
     - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
-    - name: Set Build Variables
+    - name: Set Build Metadata
       shell: bash
-      run: |
-        if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-          echo "Using TAG mode: $GITHUB_REF_NAME"
-          echo "REL_VERSION_STRICT=${GITHUB_REF_NAME#?}" >> "$GITHUB_ENV"
-        else
-          echo "Using BRANCH mode: v$BASE_DEV_VERSION-dev.$GITHUB_RUN_NUMBER"
-          echo "REL_VERSION_STRICT=$BASE_DEV_VERSION-dev.$GITHUB_RUN_NUMBER" >> "$GITHUB_ENV"
-        fi
+      run: node server/scripts/export-build-environment.ts >> "$GITHUB_ENV"
 
-    - name: Disable DEV Flag and Set Version
-      run: |
-        jq --arg version "$REL_VERSION_STRICT" '. + {dev:false, version:$version}' package.json > package.json.tmp
-        mv package.json.tmp package.json
+    - name: Validate Release Tag
+      if: startsWith(github.ref, 'refs/tags/v')
+      run: test "$GITHUB_REF_NAME" = "v$WIKI_PRODUCT_VERSION"
+
+    - name: Verify Published Source Revision
+      run: curl --fail --silent --show-error --location --output /dev/null "$WIKI_SOURCE_REPOSITORY/tree/$WIKI_BUILD_REVISION"
+
 
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
 
-    - name: Login to DockerHub
-      uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
-      with:
-        username: ${{ secrets.DOCKERHUB_USERNAME }}
-        password: ${{ secrets.DOCKERHUB_TOKEN }}
 
     - name: Login to GitHub Container Registry
       uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
@@ -243,15 +219,21 @@ jobs:
       with:
         context: .
         file: dev/build/Dockerfile
+        build-args: |
+          WIKI_BUILD_DATE=${{ env.WIKI_BUILD_DATE }}
+          WIKI_BUILD_REVISION=${{ env.WIKI_BUILD_REVISION }}
+          WIKI_PRODUCT_DESCRIPTION=${{ env.WIKI_PRODUCT_DESCRIPTION }}
+          WIKI_PRODUCT_NAME=${{ env.WIKI_PRODUCT_NAME }}
+          WIKI_PRODUCT_VERSION=${{ env.WIKI_PRODUCT_VERSION }}
+          WIKI_SOURCE_REPOSITORY=${{ env.WIKI_SOURCE_REPOSITORY }}
+          WIKI_UPSTREAM_BASE=${{ env.WIKI_UPSTREAM_BASE }}
         platforms: linux/amd64
         provenance: mode=max
         sbom: true
         push: true
         tags: |
-          requarks/wiki:canary
-          requarks/wiki:canary-${{ env.REL_VERSION_STRICT }}
-          ghcr.io/requarks/wiki:canary
-          ghcr.io/requarks/wiki:canary-${{ env.REL_VERSION_STRICT }}
+          ${{ env.IMAGE_REPOSITORY }}:canary
+          ${{ env.IMAGE_REPOSITORY }}:canary-${{ env.REL_VERSION_STRICT }}
 
   arm:
     name: ARM Build
@@ -265,16 +247,13 @@ jobs:
     steps:
     - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
-    - name: Set Version Variables
+    - name: Set Build Metadata
       shell: bash
-      run: |
-        if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-          echo "Using TAG mode: $GITHUB_REF_NAME"
-          echo "REL_VERSION_STRICT=${GITHUB_REF_NAME#?}" >> "$GITHUB_ENV"
-        else
-          echo "Using BRANCH mode: v$BASE_DEV_VERSION-dev.$GITHUB_RUN_NUMBER"
-          echo "REL_VERSION_STRICT=$BASE_DEV_VERSION-dev.$GITHUB_RUN_NUMBER" >> "$GITHUB_ENV"
-        fi
+      run: node server/scripts/export-build-environment.ts >> "$GITHUB_ENV"
+
+    - name: Validate Release Tag
+      if: startsWith(github.ref, 'refs/tags/v')
+      run: test "$GITHUB_REF_NAME" = "v$WIKI_PRODUCT_VERSION"
 
     - name: Set up QEMU
       uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4
@@ -282,11 +261,6 @@ jobs:
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
 
-    - name: Login to DockerHub
-      uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
-      with:
-        username: ${{ secrets.DOCKERHUB_USERNAME }}
-        password: ${{ secrets.DOCKERHUB_TOKEN }}
 
     - name: Login to GitHub Container Registry
       uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
@@ -304,7 +278,7 @@ jobs:
     - name: Extract Build
       run: |
         mkdir -p build
-        tar -xzf "$GITHUB_WORKSPACE/drop/wiki-js.tar.gz" -C "$GITHUB_WORKSPACE/build" --exclude=node_modules
+        tar -xzf "$GITHUB_WORKSPACE/drop/wiki-ts-preview-linux.tar.gz" -C "$GITHUB_WORKSPACE/build" --exclude=node_modules
 
     - name: Build and Push ARM64 Images
       uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
@@ -313,13 +287,20 @@ jobs:
       with:
         context: .
         file: dev/build-arm/Dockerfile
+        build-args: |
+          WIKI_BUILD_DATE=${{ env.WIKI_BUILD_DATE }}
+          WIKI_BUILD_REVISION=${{ env.WIKI_BUILD_REVISION }}
+          WIKI_PRODUCT_DESCRIPTION=${{ env.WIKI_PRODUCT_DESCRIPTION }}
+          WIKI_PRODUCT_NAME=${{ env.WIKI_PRODUCT_NAME }}
+          WIKI_PRODUCT_VERSION=${{ env.WIKI_PRODUCT_VERSION }}
+          WIKI_SOURCE_REPOSITORY=${{ env.WIKI_SOURCE_REPOSITORY }}
+          WIKI_UPSTREAM_BASE=${{ env.WIKI_UPSTREAM_BASE }}
         platforms: linux/arm64
         provenance: mode=max
         sbom: true
         push: true
         tags: |
-          requarks/wiki:canary-arm64-${{ env.REL_VERSION_STRICT }}
-          ghcr.io/requarks/wiki:canary-arm64-${{ env.REL_VERSION_STRICT }}
+          ${{ env.IMAGE_REPOSITORY }}:canary-arm64-${{ env.REL_VERSION_STRICT }}
 
   windows:
     name: Windows Build
@@ -347,7 +328,7 @@ jobs:
       shell: pwsh
       run: |
         New-Item -ItemType Directory -Path win -Force
-        tar -xzf "$env:GITHUB_WORKSPACE\drop\wiki-js.tar.gz" -C "$env:GITHUB_WORKSPACE\win"
+        tar -xzf "$env:GITHUB_WORKSPACE\drop\wiki-ts-preview-linux.tar.gz" -C "$env:GITHUB_WORKSPACE\win"
         Remove-Item -Path win\node_modules -Force -Recurse
         Copy-Item pnpm-lock.yaml, pnpm-workspace.yaml, .npmrc -Destination win -Force
         Copy-Item patches -Destination win\patches -Recurse -Force
@@ -368,17 +349,17 @@ jobs:
 
     - name: Create Bundle
       shell: pwsh
-      run: tar -czf "$env:GITHUB_WORKSPACE\wiki-js-windows.tar.gz" -C "$env:GITHUB_WORKSPACE\win" .
+      run: tar -czf "$env:GITHUB_WORKSPACE\wiki-ts-preview-windows.tar.gz" -C "$env:GITHUB_WORKSPACE\win" .
 
     - name: Upload Windows Build
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
       with:
         name: drop-win
-        path: wiki-js-windows.tar.gz
+        path: wiki-ts-preview-windows.tar.gz
         if-no-files-found: error
 
   beta:
-    name: Publish Beta Images
+    name: Publish Preview Images
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [publish-amd64, arm, windows]
@@ -386,17 +367,14 @@ jobs:
       packages: write
 
     steps:
-    - name: Set Version Variables
-      run: echo "REL_VERSION_STRICT=${GITHUB_REF_NAME#?}" >> "$GITHUB_ENV"
+    - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+    - name: Set Build Metadata
+      run: node server/scripts/export-build-environment.ts >> "$GITHUB_ENV"
 
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
 
-    - name: Login to DockerHub
-      uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
-      with:
-        username: ${{ secrets.DOCKERHUB_USERNAME }}
-        password: ${{ secrets.DOCKERHUB_TOKEN }}
 
     - name: Login to GitHub Container Registry
       uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
@@ -405,17 +383,13 @@ jobs:
         username: ${{ github.repository_owner }}
         password: ${{ secrets.GITHUB_TOKEN }}
 
-    - name: Create and Push Beta Manifests
+    - name: Create and Push Preview Manifest
       shell: bash
       run: |
         docker buildx imagetools create \
-          --tag "requarks/wiki:beta-$REL_VERSION_STRICT" \
-          "requarks/wiki:canary-$REL_VERSION_STRICT" \
-          "requarks/wiki:canary-arm64-$REL_VERSION_STRICT"
-        docker buildx imagetools create \
-          --tag "ghcr.io/requarks/wiki:beta-$REL_VERSION_STRICT" \
-          "ghcr.io/requarks/wiki:canary-$REL_VERSION_STRICT" \
-          "ghcr.io/requarks/wiki:canary-arm64-$REL_VERSION_STRICT"
+          --tag "$IMAGE_REPOSITORY:preview-$REL_VERSION_STRICT" \
+          "$IMAGE_REPOSITORY:canary-$REL_VERSION_STRICT" \
+          "$IMAGE_REPOSITORY:canary-arm64-$REL_VERSION_STRICT"
 
   release:
     name: Publish Release Images
@@ -428,28 +402,18 @@ jobs:
       packages: write
 
     steps:
-    - name: Set Version Variables
+    - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+    - name: Set Build Metadata
       shell: bash
-      run: |
-        REL_VERSION_STRICT="${GITHUB_REF_NAME#?}"
-        if [[ ! "$REL_VERSION_STRICT" =~ ^([0-9]+)\.([0-9]+)\.[0-9]+ ]]; then
-          echo "Release tag must use vMAJOR.MINOR.PATCH format" >&2
-          exit 1
-        fi
-        {
-          echo "REL_VERSION_STRICT=$REL_VERSION_STRICT"
-          echo "MAJOR=${BASH_REMATCH[1]}"
-          echo "MAJORMINOR=${BASH_REMATCH[1]}.${BASH_REMATCH[2]}"
-        } >> "$GITHUB_ENV"
+      run: node server/scripts/export-build-environment.ts >> "$GITHUB_ENV"
+
+    - name: Validate Release Tag
+      run: test "$GITHUB_REF_NAME" = "v$WIKI_PRODUCT_VERSION"
 
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
 
-    - name: Login to DockerHub
-      uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
-      with:
-        username: ${{ secrets.DOCKERHUB_USERNAME }}
-        password: ${{ secrets.DOCKERHUB_TOKEN }}
 
     - name: Login to GitHub Container Registry
       uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
@@ -458,23 +422,14 @@ jobs:
         username: ${{ github.repository_owner }}
         password: ${{ secrets.GITHUB_TOKEN }}
 
-    - name: Create and Push Release Manifests
+    - name: Create and Push Release Manifest
       shell: bash
       run: |
         docker buildx imagetools create \
-          --tag "requarks/wiki:$REL_VERSION_STRICT" \
-          --tag "requarks/wiki:$MAJOR" \
-          --tag "requarks/wiki:$MAJORMINOR" \
-          --tag requarks/wiki:latest \
-          "requarks/wiki:canary-$REL_VERSION_STRICT" \
-          "requarks/wiki:canary-arm64-$REL_VERSION_STRICT"
-        docker buildx imagetools create \
-          --tag "ghcr.io/requarks/wiki:$REL_VERSION_STRICT" \
-          --tag "ghcr.io/requarks/wiki:$MAJOR" \
-          --tag "ghcr.io/requarks/wiki:$MAJORMINOR" \
-          --tag ghcr.io/requarks/wiki:latest \
-          "ghcr.io/requarks/wiki:canary-$REL_VERSION_STRICT" \
-          "ghcr.io/requarks/wiki:canary-arm64-$REL_VERSION_STRICT"
+          --tag "$IMAGE_REPOSITORY:$REL_VERSION_STRICT" \
+          --tag "$IMAGE_REPOSITORY:preview" \
+          "$IMAGE_REPOSITORY:canary-$REL_VERSION_STRICT" \
+          "$IMAGE_REPOSITORY:canary-arm64-$REL_VERSION_STRICT"
 
     - name: Download Linux Build
       uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
@@ -488,14 +443,19 @@ jobs:
         name: drop-win
         path: drop-win
 
+    - name: Create Corresponding Source Archive
+      run: git archive --format=tar.gz --prefix="wiki-ts-preview-$REL_VERSION_STRICT/" --output=wiki-ts-preview-source.tar.gz "$WIKI_BUILD_REVISION"
+
     - name: Generate Release Checksums
       shell: bash
       run: |
-        linux_sha="$(sha256sum drop/wiki-js.tar.gz | cut -d ' ' -f 1)"
-        windows_sha="$(sha256sum drop-win/wiki-js-windows.tar.gz | cut -d ' ' -f 1)"
-        printf '%s  %s\n%s  %s\n' \
-          "$linux_sha" "wiki-js.tar.gz" \
-          "$windows_sha" "wiki-js-windows.tar.gz" \
+        linux_sha="$(sha256sum drop/wiki-ts-preview-linux.tar.gz | cut -d ' ' -f 1)"
+        windows_sha="$(sha256sum drop-win/wiki-ts-preview-windows.tar.gz | cut -d ' ' -f 1)"
+        source_sha="$(sha256sum wiki-ts-preview-source.tar.gz | cut -d ' ' -f 1)"
+        printf '%s  %s\n%s  %s\n%s  %s\n' \
+          "$linux_sha" "wiki-ts-preview-linux.tar.gz" \
+          "$windows_sha" "wiki-ts-preview-windows.tar.gz" \
+          "$source_sha" "wiki-ts-preview-source.tar.gz" \
           > SHA256SUMS
 
     - name: Generate Changelog
@@ -515,7 +475,7 @@ jobs:
         name: ${{ github.ref_name }}
         body: ${{ steps.changelog.outputs.changes }}
         token: ${{ github.token }}
-        artifacts: 'drop/wiki-js.tar.gz,drop-win/wiki-js-windows.tar.gz,SHA256SUMS'
+        artifacts: 'drop/wiki-ts-preview-linux.tar.gz,drop-win/wiki-ts-preview-windows.tar.gz,wiki-ts-preview-source.tar.gz,SHA256SUMS'
 
     - name: Notify Telegram Channel
       uses: appleboy/telegram-action@221e6b684967abe813051ee4a37dd61770a83ad3 # v1.0.1
@@ -525,11 +485,11 @@ jobs:
         format: markdown
         disable_web_page_preview: true
         message: |
-          Wiki.js *${{ github.ref_name }}* has been released!
-          See [release notes](https://github.com/requarks/wiki/releases) for details.
+          Wiki.ts Preview *${{ github.ref_name }}* has been released!
+          See [release notes](https://github.com/PhilosophiMoonbeam/wiki/releases) for details.
 
     - name: Notify Discord Channel
       uses: sebastianpopp/discord-action@4f2d5417bc61a79593304a62e71cd32427c17790 # v2.0
       with:
         webhook: ${{ secrets.DISCORD_WEBHOOK }}
-        message: Wiki.js ${{ github.ref_name }} has been released! See https://github.com/requarks/wiki/releases for details.
+        message: Wiki.ts Preview ${{ github.ref_name }} has been released! See https://github.com/PhilosophiMoonbeam/wiki/releases for details.

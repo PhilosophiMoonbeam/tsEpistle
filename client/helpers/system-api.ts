@@ -1,24 +1,28 @@
+import { createProductMetadata, type ProductMetadata } from '../../shared/product.ts'
+
 type FetchImpl = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>
 
 
+export type UpdateStatus = 'unavailable' | 'current' | 'available'
+
 export type SystemSummary = {
+  product: ProductMetadata
   currentVersion: string
-  latestVersion: string
+  latestVersion: string | null
+  latestVersionReleaseDate: string | null
+  updateStatus: UpdateStatus
   groupsTotal: number
   pagesTotal: number
   usersTotal: number
   tagsTotal: number
 }
-export type SystemInfo = {
+export type SystemInfo = SystemSummary & {
   configFile: string
   cpuCores: number
-  currentVersion: string
   dbHost: string
   dbType: string
   dbVersion: string
   hostname: string
-  latestVersion: string
-  latestVersionReleaseDate: string | null
   nodeVersion: string
   operatingSystem: string
   platform: string
@@ -92,9 +96,30 @@ function normalizeFlagsPayload (payload: unknown, fallbackMessage: string): Syst
   }, {})
 }
 
+function normalizeProductMetadata (payload: Record<string, unknown>, fallbackMessage: string): ProductMetadata {
+  const value = payload.product
+  if (!isRecord(value) || typeof value.revision !== 'string' || typeof value.date !== 'string') {
+    throw new Error(fallbackMessage)
+  }
+  let expected: ProductMetadata
+  try {
+    expected = createProductMetadata({ revision: value.revision, date: value.date })
+  } catch {
+    throw new Error(fallbackMessage)
+  }
+  if (Object.entries(expected).some(([key, expectedValue]) => value[key] !== expectedValue)) {
+    throw new Error(fallbackMessage)
+  }
+  return expected
+}
+
 function normalizeSystemSummaryPayload (payload: unknown, fallbackMessage: string): SystemSummary {
   if (!isRecord(payload)) throw new Error(fallbackMessage)
-  if (typeof payload.currentVersion !== 'string' || typeof payload.latestVersion !== 'string') throw new Error(fallbackMessage)
+  const product = normalizeProductMetadata(payload, fallbackMessage)
+  if (payload.currentVersion !== product.version) throw new Error(fallbackMessage)
+  if (typeof payload.latestVersion !== 'string' && payload.latestVersion !== null) throw new Error(fallbackMessage)
+  if (typeof payload.latestVersionReleaseDate !== 'string' && payload.latestVersionReleaseDate !== null) throw new Error(fallbackMessage)
+  if (payload.updateStatus !== 'unavailable' && payload.updateStatus !== 'current' && payload.updateStatus !== 'available') throw new Error(fallbackMessage)
   if (
     typeof payload.groupsTotal !== 'number' ||
     typeof payload.pagesTotal !== 'number' ||
@@ -106,8 +131,11 @@ function normalizeSystemSummaryPayload (payload: unknown, fallbackMessage: strin
     !Number.isFinite(payload.tagsTotal)
   ) throw new Error(fallbackMessage)
   return {
-    currentVersion: payload.currentVersion,
+    product,
+    currentVersion: product.version,
     latestVersion: payload.latestVersion,
+    latestVersionReleaseDate: payload.latestVersionReleaseDate,
+    updateStatus: payload.updateStatus,
     groupsTotal: payload.groupsTotal,
     pagesTotal: payload.pagesTotal,
     usersTotal: payload.usersTotal,
@@ -127,7 +155,6 @@ function normalizeSystemInfoPayload (payload: unknown, fallbackMessage: string):
     'dbType',
     'dbVersion',
     'hostname',
-    'latestVersion',
     'nodeVersion',
     'operatingSystem',
     'platform',
@@ -148,6 +175,7 @@ function normalizeSystemInfoPayload (payload: unknown, fallbackMessage: string):
   if (typeof payload.latestVersionReleaseDate !== 'string' && payload.latestVersionReleaseDate !== null) {
     throw new Error(fallbackMessage)
   }
+  normalizeSystemSummaryPayload(payload, fallbackMessage)
 
   return payload as SystemInfo
 }

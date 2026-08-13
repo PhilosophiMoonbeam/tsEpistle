@@ -11,32 +11,40 @@
           v-col(lg='6' cols='12')
             v-card.animated.fadeInUp
               v-btn.animated.fadeInLeft.wait-p2s.btn-animate-rotate(fab, absolute, :right='!$vuetify.locale.isRtl', :left='$vuetify.locale.isRtl', top, small, light, @click='refresh'): v-icon(color='grey') mdi-refresh
-              v-list-subheader Wiki.js
+              v-list-subheader {{ info.product.name }}
               v-list(two-line, dense)
                 v-list-item
                   v-avatar
-                    v-icon.blue.white--text mdi-application-export
+                    v-icon.indigo.white--text mdi-source-fork
                   div.v-list-item-content
-                    v-list-item-title {{ $t('admin:system.currentVersion') }}
-                    v-list-item-subtitle {{ info.currentVersion }}
+                    v-list-item-title Product Version
+                    v-list-item-subtitle {{ info.product.version }}
                 v-list-item
                   v-avatar
-                    v-icon.blue.white--text mdi-inbox-arrow-up
+                    v-icon.blue-grey.white--text mdi-source-branch
                   div.v-list-item-content
-                    v-list-item-title {{ $t('admin:system.latestVersion') }}
-                    v-list-item-subtitle {{ info.latestVersion }}
-                  div.v-list-item-action
-                    span.v-list-item-action-text {{ $t('admin:system.published') }} {{ $helpers.formatMoment(info.latestVersionReleaseDate, 'from') }}
-              v-card-actions(v-if='info.upgradeCapable && !isLatestVersion && info.platform === `docker`', :class='$vuetify.theme.current.dark ? `grey darken-3-d5` : `indigo lighten-5`')
-                .caption.indigo--text.pl-3(:class='$vuetify.theme.current.dark ? `text--lighten-4` : ``') Wiki.js can perform the upgrade to the latest version for you.
-                v-spacer
-                v-btn.px-3(
-                  color='indigo'
-                  dark
-                  @click='performUpgrade'
-                  )
-                  v-icon(left) mdi-upload
-                  span Perform Upgrade
+                    v-list-item-title Build Revision
+                    v-list-item-subtitle
+                      a(:href='info.product.sourceUrl', target='_blank', rel='noopener noreferrer') {{ info.product.revision }}
+                v-list-item
+                  v-avatar
+                    v-icon.blue-grey.white--text mdi-call-merge
+                  div.v-list-item-content
+                    v-list-item-title Upstream Base
+                    v-list-item-subtitle {{ info.product.upstreamBase }}
+                v-list-item
+                  v-avatar
+                    v-icon.blue-grey.white--text mdi-update
+                  div.v-list-item-content
+                    v-list-item-title Preview Update Checks
+                    v-list-item-subtitle Unavailable — no fork-owned update provider is configured
+                v-list-item
+                  v-avatar
+                    v-icon.blue-grey.white--text mdi-code-tags
+                  div.v-list-item-content
+                    v-list-item-title Source Code
+                    v-list-item-subtitle
+                      a(:href='info.product.sourceUrl', target='_blank', rel='noopener noreferrer') Exact deployed revision
 
             v-card.mt-4.animated.fadeInUp.wait-p2s
               v-list-subheader {{ $t('admin:system.hostInfo') }}
@@ -103,52 +111,33 @@
 
                 v-alert.mt-3.mx-4(:value='isDbLimited', color='deep-orange darken-2', icon='mdi-alert', dark) {{ $t('admin:system.dbPartialSupport') }}
 
-    v-dialog(
-      v-model='isUpgrading'
-      persistent
-      width='450'
-      )
-      v-card.blue.darken-5(dark)
-        v-card-text.text-center.pa-10
-          self-building-square-spinner(
-            :animation-duration='4000'
-            :size='40'
-            color='#FFF'
-            style='margin: 0 auto;'
-            )
-          .body-2.mt-5.blue--text.text--lighten-4 Your Wiki.js container is being upgraded...
-          .caption.blue--text.text--lighten-2 Please wait
-          v-progress-linear.mt-5(
-            color='blue lighten-2'
-            :value='upgradeProgress'
-            :buffer-value='upgradeProgress'
-            rounded
-            :stream='isUpgradingStarted'
-            query
-            :indeterminate='!isUpgradingStarted'
-          )
 </template>
 
 <script lang='ts'>
 import _ from 'lodash'
 
-import { SelfBuildingSquareSpinner } from 'epic-spinners'
 import { wikiStore } from '@/store/index.ts'
 
-import { fetchSystemInfo, performSystemUpgrade } from '../../helpers/system-api'
+import { fetchSystemInfo } from '../../helpers/system-api'
 import type { SystemInfo } from '../../helpers/system-api'
 import { loadingStart, loadingStop, showNotification, pushGraphError } from '../../helpers/root-ui-store'
 
 const makeDefaultSystemInfo = (): SystemInfo => ({
+  product: siteConfig.product,
+  currentVersion: siteConfig.product.version,
+  latestVersion: null,
+  latestVersionReleaseDate: null,
+  updateStatus: 'unavailable',
+  groupsTotal: 0,
+  pagesTotal: 0,
+  usersTotal: 0,
+  tagsTotal: 0,
   configFile: '',
   cpuCores: 0,
-  currentVersion: '',
   dbHost: '',
   dbType: '',
   dbVersion: '',
   hostname: '',
-  latestVersion: '',
-  latestVersionReleaseDate: null,
   nodeVersion: '',
   operatingSystem: '',
   platform: '',
@@ -158,14 +147,8 @@ const makeDefaultSystemInfo = (): SystemInfo => ({
 })
 
 export default {
-  components: {
-    SelfBuildingSquareSpinner
-  },
   data () {
     return {
-      isUpgrading: false,
-      isUpgradingStarted: false,
-      upgradeProgress: 0,
       info: makeDefaultSystemInfo()
     }
   },
@@ -193,9 +176,6 @@ export default {
     },
     isDbLimited () {
       return this.info.dbType === 'MySQL' && this.dbVersion.indexOf('5.') === 0
-    },
-    isLatestVersion () {
-      return this.info.currentVersion === this.info.latestVersion
     }
   },
   methods: {
@@ -222,27 +202,6 @@ export default {
         icon: 'cached'
       })
       return true
-    },
-    async performUpgrade () {
-      this.isUpgrading = true
-      this.isUpgradingStarted = false
-      this.upgradeProgress = 0
-      loadingStart(wikiStore, 'admin-system-upgrade')
-      try {
-        await performSystemUpgrade(window.fetch.bind(window), 'Upgrade failed')
-        this.isUpgradingStarted = true
-        const progressInterval: ReturnType<typeof setInterval> = setInterval(() => {
-          this.upgradeProgress += 0.83
-        }, 500)
-        _.delay(() => {
-          clearInterval(progressInterval)
-          window.location.reload()
-        }, 60000)
-      } catch (err) {
-        pushGraphError(wikiStore, err)
-        loadingStop(wikiStore, 'admin-system-upgrade')
-        this.isUpgrading = false
-      }
     }
   },
   created () {

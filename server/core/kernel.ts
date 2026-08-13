@@ -9,6 +9,7 @@ import metrics from './metrics.ts'
 import scheduler from './scheduler.ts'
 import sideloader from './sideloader.ts'
 import telemetry from './telemetry.ts'
+import type { ProductMetadata } from '../../shared/product.ts'
 const EventEmitter2 = EventEmitter2Module.EventEmitter2
 
 interface Logger { error(message: unknown): void; info(message: string): void; warn(message: unknown): void }
@@ -39,6 +40,7 @@ interface WikiContext {
   servers?: { stopServers(): Promise<void> }
   sideloader?: unknown
   telemetry: typeof telemetry
+  product: ProductMetadata
   version: string
 }
 interface KernelService { init(): Promise<void>; preBootMaster(): Promise<void>; bootMaster(): Promise<void>; postBootMaster(): Promise<void>; initTelemetry(): Promise<void>; shutdown(devMode?: boolean): Promise<void> }
@@ -66,7 +68,10 @@ const wiki = WIKI as unknown as WikiContext
 const kernel: KernelService = {
   async init() {
     wiki.logger.info('=======================================')
-    wiki.logger.info(`= Wiki.js ${_.padEnd(wiki.version + ' ', 29, '=')}`)
+    wiki.logger.info(`= ${_.padEnd(`${wiki.product.name} ${wiki.product.version} `, 35, '=')}`)
+    wiki.logger.info(`= Upstream: ${wiki.product.upstreamBase}`)
+    wiki.logger.info(`= Revision: ${wiki.product.revision}`)
+    wiki.logger.info(`= Source: ${wiki.product.sourceUrl}`)
     wiki.logger.info('=======================================')
     wiki.logger.info('Initializing...')
     const initializedModels = await database.init()

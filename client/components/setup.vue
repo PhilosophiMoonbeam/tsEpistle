@@ -5,16 +5,16 @@
         v-row
           v-col(cols='12', lg='6', offset-lg='3')
             v-card.elevation-20.radius-7.animated.fadeInUp
-              v-alert(v-if='isDevMode', tile, dark, color='red darken-3', icon='mdi-alert', prominent)
-                .body-2 You are running an unstable, unreleased development version. This code base is #[strong NOT] for production use!
-                .body-2.mt-3 Cloning the dev branch directly from GitHub is #[strong NOT] the proper way to install Wiki.js!
-                .body-2 Read the #[a(href='https://docs.requarks.io/install', style='color: #FFF;') documentation] on correctly installing the latest stable version.
-              .text-center
-                img.setup-logo.animated.fadeInUp.wait-p2s(src='/_assets/svg/logo-wikijs-full.svg', alt='Wiki.js Logo')
+              .text-center.pa-6
+                v-icon.animated.fadeInUp.wait-p2s(color='primary', size='72') mdi-source-fork
+                .text-h4.primary--text.mt-3 {{ product.name }}
+                .body-2.grey--text Independent community fork derived from {{ product.upstreamBase }}
               v-alert(v-model='error', type='error', icon='mdi-alert', tile, dismissible) {{ errorMessage }}
               v-alert(v-if='!error', tile, color='blue lighten-5', :value='true')
                 v-icon.mr-3(color='blue') mdi-package-variant
-                span.blue--text You are about to install Wiki.js #[strong {{wikiVersion}}].
+                span.blue--text You are about to install #[strong {{ product.name }} {{ product.version }}].
+                .caption.mt-2
+                  a(:href='product.sourceUrl', target='_blank', rel='noopener noreferrer') Source Code for {{ product.revision.slice(0, 12) }}
               form#setup-form.v-card-text(@submit.prevent='install')
                 .overline.pl-3 Administrator Account
                 v-container.pa-3.mt-3(grid-list-xl)
@@ -106,6 +106,7 @@ import { BreedingRhombusSpinner } from 'epic-spinners'
 import confetti from 'canvas-confetti'
 import { getErrorMessage } from '../helpers/root-ui-store'
 import { isRecord } from '../helpers/type-guards'
+import type { ProductMetadata } from '../../shared/product.ts'
 /* global siteConfig */
 
 
@@ -141,18 +142,14 @@ export default {
   components: {
     BreedingRhombusSpinner
   },
-  props: {
-    wikiVersion: {
-      type: String,
-      required: true
-    }
-  },
+
   data() {
     return {
       loading: false,
       success: false,
       error: false,
       errorMessage: '',
+      product: siteConfig.product as ProductMetadata,
       conf: {
         adminEmail: '',
         adminPassword: '',
@@ -161,15 +158,13 @@ export default {
         telemetry: true
       } as SetupConfig,
       pwdMode: true,
-      pwdConfirmMode: true,
-      isDevMode: false
+      pwdConfirmMode: true
     }
   },
   mounted() {
     _.delay(() => {
       focusComponent(this.$refs.adminEmailInput)
     }, 500)
-    this.isDevMode = siteConfig.devMode === true
   },
   methods: {
     async install () {

@@ -41,17 +41,14 @@
               easing='easeOutQuint'
               )
       v-col(cols='12' md='6' lg='12' xl='3' class='d-flex')
-        v-card.dashboard-card.animated.fadeInUp.wait-p6s(
-          :class='isLatestVersion ? "green" : "red lighten-2"'
-          dark
-          )
-          v-btn.btn-animate-wrench(fab, absolute, :right='!$vuetify.locale.isRtl', :left='$vuetify.locale.isRtl', top, small, light, to='system', v-if='hasPermission(`manage:system`)')
-            v-icon(:color='isLatestVersion ? `green` : `red darken-4`', small) mdi-wrench
+        v-card.dashboard-card.animated.fadeInUp.wait-p6s.indigo(dark)
+          v-btn(fab, absolute, :right='!$vuetify.locale.isRtl', :left='$vuetify.locale.isRtl', top, small, light, to='system', v-if='hasPermission(`manage:system`)')
+            v-icon(color='indigo', small) mdi-information-outline
           v-card-text
-            v-icon.dashboard-icon mdi-blur
-            .subtitle-1 Wiki.js {{info.currentVersion}}
-            .body-2(v-if='isLatestVersion') {{$t('admin:dashboard.versionLatest')}}
-            .body-2(v-else) {{$t('admin:dashboard.versionNew', { version: info.latestVersion })}}
+            v-icon.dashboard-icon mdi-source-fork
+            .subtitle-1 {{ info.product.name }} {{ info.product.version }}
+            .body-2 Preview update checks are unavailable
+            .caption {{ info.product.upstreamBase }}
       v-col(cols='12', xl='6')
         v-card.radius-7.animated.fadeInUp.wait-p2s
           v-toolbar(:color='$vuetify.theme.current.dark ? `grey darken-2` : `grey lighten-5`', dense, flat)
@@ -109,7 +106,6 @@
 import _ from 'lodash'
 import AnimatedNumber from '@/components/common/animated-number.vue'
 import { wikiStore } from '@/store/index.ts'
-import { lte as semverLte } from 'semver'
 import { fetchRecentPages, type RecentPageRow } from '../../helpers/pages-api'
 import { fetchLastLogins, type LastLoginRow } from '../../helpers/users-api'
 import { getErrorMessage, loadingStart, loadingStop, showNotification } from '../../helpers/root-ui-store'
@@ -136,13 +132,6 @@ export default {
     }
   },
   computed: {
-    isLatestVersion() {
-      if (this.info.latestVersion === 'n/a' || this.info.currentVersion === 'n/a') {
-        return true
-      } else {
-        return semverLte(this.info.latestVersion, this.info.currentVersion)
-      }
-    },
     canViewRecentPages() {
       return this.hasPermission(['manage:system', 'read:pages'])
     },

@@ -5,7 +5,8 @@ import fs from 'node:fs'
 import path from 'node:path'
 import * as yaml from 'js-yaml'
 import regex from '../app/regex.ts'
-import packageJson from '../../package.json' with { type: 'json' }
+import { loadProductMetadata } from './product.ts'
+import type { ProductMetadata } from '../../shared/product.ts'
 
 interface AppConfig {
   [key: string]: unknown
@@ -46,6 +47,7 @@ interface WikiContext {
       query(): SettingsQuery
     }
   }
+  product: ProductMetadata
   releaseDate: string
   version: string
 }
@@ -59,7 +61,6 @@ interface ConfigService {
 }
 
 const getWiki = (): WikiContext => WIKI as unknown as WikiContext
-const packageInfo = packageJson as { dev?: boolean; releaseDate: string; version: string }
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
@@ -138,9 +139,10 @@ const configService: ConfigService = {
 
     wiki.config = appconfig
     wiki.data = appdata
-    wiki.version = packageInfo.version
-    wiki.releaseDate = packageInfo.releaseDate
-    wiki.devMode = packageInfo.dev === true
+    wiki.product = loadProductMetadata(wiki.ROOTPATH)
+    wiki.version = wiki.product.version
+    wiki.releaseDate = wiki.product.date
+    wiki.devMode = false
   },
 
   async loadFromDb() {

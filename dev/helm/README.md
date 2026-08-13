@@ -1,27 +1,12 @@
-<div align="center">
+# Wiki.ts Preview Helm chart
 
-<img src="https://static.requarks.io/logo/wikijs-full.svg" alt="Wiki.js" width="600" />
+This chart deploys **Wiki.ts Preview 0.1.0-alpha.1**, an independent community fork derived from Wiki.js 2.5.314. It is not an official Wiki.js release.
 
-[![Release](https://img.shields.io/github/release/Requarks/wiki.svg?style=flat&maxAge=3600)](https://github.com/Requarks/wiki/releases)
-[![License](https://img.shields.io/badge/license-AGPLv3-blue.svg?style=flat)](https://github.com/requarks/wiki/blob/master/LICENSE)
-[![Standard - JavaScript Style Guide](https://img.shields.io/badge/code%20style-standard-green.svg?style=flat&logo=javascript&logoColor=white)](http://standardjs.com/)
-[![Downloads](https://img.shields.io/github/downloads/Requarks/wiki/total.svg?style=flat&logo=github)](https://github.com/Requarks/wiki/releases)
-[![Docker Pulls](https://img.shields.io/docker/pulls/requarks/wiki.svg?logo=docker&logoColor=white)](https://hub.docker.com/r/requarks/wiki/)  
-[![Build + Publish](https://github.com/Requarks/wiki/actions/workflows/build.yml/badge.svg)](https://github.com/Requarks/wiki/actions/workflows/build.yml)
-[![Huntr](https://img.shields.io/badge/security%20bounty-disclose-brightgreen.svg?style=flat&logo=cachet&logoColor=white)](https://huntr.dev/bounties/disclose)
-[![GitHub Sponsors](https://img.shields.io/github/sponsors/ngpixel?logo=github&color=ea4aaa)](https://github.com/users/NGPixel/sponsorship)
-[![Open Collective backers and sponsors](https://img.shields.io/opencollective/all/wikijs?label=backers&color=218bff&logo=opencollective&logoColor=white)](https://opencollective.com/wikijs)  
-[![Chat on Slack](https://img.shields.io/badge/slack-requarks-CC2B5E.svg?style=flat&logo=slack)](https://wiki.requarks.io/slack)
-[![Twitter Follow](https://img.shields.io/badge/follow-%40requarks-blue.svg?style=flat&logo=twitter)](https://twitter.com/requarks)
-[![Reddit](https://img.shields.io/badge/reddit-%2Fr%2Fwikijs-orange?logo=reddit&logoColor=white)](https://www.reddit.com/r/wikijs/)
-[![Subscribe to Newsletter](https://img.shields.io/badge/newsletter-subscribe-yellow.svg?style=flat&logo=mailchimp)](https://blog.js.wiki/subscribe)
+- [Fork source](https://github.com/PhilosophiMoonbeam/wiki)
+- [AGPLv3 license](../../LICENSE)
+- Container: `ghcr.io/philosophimoonbeam/wiki:0.1.0-alpha.1`
 
-##### A modern, lightweight and powerful wiki app built on NodeJS
-
-</div>
-
-- **[Official Website](https://wiki.js.org/)**
-- **[Documentation](https://docs.requarks.io/)**
+The chart was modified for this fork on 2026-08-13. Wiki.js was created by Nicolas Giard and developed by Requarks and its contributors; the historical credits below are retained as upstream attribution.
 
 <h2 align="center">Donate</h2>
 
@@ -41,7 +26,7 @@ Wiki.js is an open source project that has been made possible due to the generou
 
 ## Introduction
 
-This chart bootstraps a Wiki.js deployment on a [Kubernetes](http://kubernetes.io) cluster using the [Helm](https://helm.sh) package manager.
+This chart bootstraps a Wiki.ts Preview deployment on a [Kubernetes](http://kubernetes.io) cluster using the [Helm](https://helm.sh) package manager.
 
 It also optionally deploys PostgreSQL as the database using the official PostgreSQL image from Docker Hub, but you are free to bring your own database.
 
@@ -49,26 +34,16 @@ It also optionally deploys PostgreSQL as the database using the official Postgre
 
 - PV provisioner support in the underlying infrastructure (with persistence storage enabled) if you want data persistance
 
-## Adding the Wiki.js Helm Repository
+## Packaging and installing the chart
+
+The repository workflow validates the chart and publishes it as a build artifact; it does not publish to the upstream Wiki.js chart repository.
 
 ```console
-$ helm repo add requarks https://charts.js.wiki
+$ helm package dev/helm
+$ helm install my-release ./wiki-ts-preview-0.1.0-alpha.1.tgz
 ```
 
-## Installing the Chart
-
-To install the chart with the release name `my-release` run the following:
-
-### Using Helm 3/4:
-```console
-$ helm install my-release requarks/wiki
-```
-### Using Helm 2:
-```console
-$ helm install --name my-release requarks/wiki
-```
-
-The command deploys Wiki.js on the Kubernetes cluster in the default configuration. The [configuration](#configuration) section lists the parameters that can be configured during installation.
+The command deploys Wiki.ts Preview on the Kubernetes cluster in the default configuration. The [configuration](#configuration) section lists the parameters that can be configured during installation.
 
 > **Tip**: List all releases using `helm list`
 
@@ -90,14 +65,14 @@ $ kubectl delete pvc/data-wiki-postgresql-0
 
 ## Configuration
 
-The following table lists the configurable parameters of the Wiki.js chart and their default values.
+The following table lists the configurable parameters of the Wiki.ts Preview chart and their default values.
 
 | Parameter                            | Description                                 | Default                                                    |
 | -------------------------------      | -------------------------------             | ---------------------------------------------------------- |
-| `image.repository`                   | Wiki.js image                                | `requarks/wiki`                                           |
-| `image.tag`                          | Wiki.js image tag                            | `2`                                                      |
+| `image.repository`                   | Wiki.ts Preview image                       | `ghcr.io/philosophimoonbeam/wiki`                           |
+| `image.tag`                          | Wiki.ts Preview image tag                   | `0.1.0-alpha.1`                                             |
 | `imagePullPolicy`                    | Image pull policy                           | `IfNotPresent`                                             |
-| `replicacount`                       | Number of Wiki.js pods to run                   | `1`                                                        |
+| `replicacount`                       | Number of Wiki.ts Preview pods to run        | `1`                                                        |
 | `revisionHistoryLimit`               | Total number of revision history points                   | `10`                                        |
 | `resources.limits`               | Wiki.js service resource limits                         | `nil`                               |
 | `resources.requests`             | Wiki.js service resource requests                       | `nil`                               |
@@ -150,15 +125,14 @@ The following table lists the configurable parameters of the Wiki.js chart and t
 Specify each parameter using the `--set key=value[,key=value]` argument to `helm install`. For example,
 
 ```console
-$ helm install --name my-release \
-  --set postgresql.persistence.enabled=false \
-   requarks/wiki
+$ helm install my-release ./wiki-ts-preview-0.1.0-alpha.1.tgz \
+  --set postgresql.persistence.enabled=false
 ```
 
 Alternatively, a YAML file that specifies the values for the above parameters can be provided while installing the chart. For example,
 
 ```console
-$ helm install --name my-release -f values.yaml requarks/wiki
+$ helm install my-release ./wiki-ts-preview-0.1.0-alpha.1.tgz -f values.yaml
 ```
 
 > **Tip**: You can use the default [values.yaml](values.yaml)
@@ -198,7 +172,7 @@ kubectl create secret generic my-postgres-secret \
   --from-literal=postgresql-password=yourpassword
 
 # Deploy with existing secret
-helm install my-release requarks/wiki \
+helm install my-release ./wiki-ts-preview-0.1.0-alpha.1.tgz \
   --set postgresql.enabled=true \
   --set postgresql.existingSecret=my-postgres-secret
 ```

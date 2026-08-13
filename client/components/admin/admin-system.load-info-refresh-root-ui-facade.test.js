@@ -57,7 +57,6 @@ describe('admin-system loadInfo/refresh root UI facade migration guard', () => {
   const script = extractScript(source)
   const loadInfo = script && extractMethod(script, 'loadInfo')
   const refresh = script && extractMethod(script, 'refresh')
-  const performUpgrade = script && extractMethod(script, 'performUpgrade')
   const directRootUiCommit = /\bthis\.\$store\.commit\s*\(\s*(?:`loading(?:Start|Stop)`|['"]loading(?:Start|Stop)['"]|`showNotification`|['"]showNotification['"]|`pushGraphError`|['"]pushGraphError['"])\s*,/
 
   test('admin-system.vue imports typed wiki store and the facades required by loadInfo() and refresh()', () => {
@@ -65,9 +64,8 @@ describe('admin-system loadInfo/refresh root UI facade migration guard', () => {
     expect(script).toMatch(
       /import\s+\{(?=[^}]*\bloadingStart\b)(?=[^}]*\bloadingStop\b)(?=[^}]*\bshowNotification\b)(?=[^}]*\bpushGraphError\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/root-ui-store['"]/
     )
-    expect(script).toMatch(
-      /import\s+\{(?=[^}]*\bfetchSystemInfo\b)(?=[^}]*\bperformSystemUpgrade\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/system-api['"]/
-    )
+    expect(script).toMatch(/import\s+\{\s*fetchSystemInfo\s*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/system-api['"]/)
+    expect(script).not.toMatch(/performSystemUpgrade/)
     expect(script).toContain("import { wikiStore } from '@/store/index.ts'")
   })
 
@@ -91,18 +89,12 @@ describe('admin-system loadInfo/refresh root UI facade migration guard', () => {
     expect(refresh.match(/\bshowNotification\s*\(/g) || []).toHaveLength(1)
   })
 
-  test('performUpgrade() uses loading and error facades while preserving upgrade flow behavior', () => {
-    expect(performUpgrade).not.toBeNull()
-
-    const directUpgradeRootUiCommit = /\bthis\.\$store\.commit\s*\(\s*(?:`loading(?:Start|Stop)`|['"]loading(?:Start|Stop)['"]|`pushGraphError`|['"]pushGraphError['"])\s*,/
-
-    expect(performUpgrade).toMatch(/async\s+performUpgrade\s*\(\s*\)\s*\{\s*this\.isUpgrading\s*=\s*true\s*this\.isUpgradingStarted\s*=\s*false\s*this\.upgradeProgress\s*=\s*0\s*loadingStart\s*\(\s*wikiStore\s*,\s*['"]admin-system-upgrade['"]\s*\)\s*try\s*\{\s*await\s+performSystemUpgrade\s*\(\s*window\.fetch\.bind\(\s*window\s*\)\s*,\s*['"]Upgrade failed['"]\s*\)\s*this\.isUpgradingStarted\s*=\s*true\s*const\s+progressInterval\s*:\s*ReturnType\s*<\s*typeof\s+setInterval\s*>\s*=\s*setInterval\s*\(\s*\(\s*\)\s*=>\s*\{\s*this\.upgradeProgress\s*\+=\s*0\.83\s*\}\s*,\s*500\s*\)\s*_\.delay\s*\(\s*\(\s*\)\s*=>\s*\{\s*clearInterval\s*\(\s*progressInterval\s*\)\s*window\.location\.reload\s*\(\s*\)\s*\}\s*,\s*60000\s*\)\s*\}\s*catch\s*\(\s*err\s*\)\s*\{\s*pushGraphError\s*\(\s*wikiStore\s*,\s*err\s*\)\s*loadingStop\s*\(\s*wikiStore\s*,\s*['"]admin-system-upgrade['"]\s*\)\s*this\.isUpgrading\s*=\s*false\s*\}\s*\}/)
-    expect(performUpgrade).not.toMatch(/this\.\$apollo\.mutate|performUpgradeMutation|system-mutation-upgrade\.gql/)
-    expect(performUpgrade).not.toMatch(directUpgradeRootUiCommit)
-    expect(performUpgrade).not.toMatch(/\bfinally\s*\{/)
-
-    expect(performUpgrade.match(/\bloadingStart\s*\(/g) || []).toHaveLength(1)
-    expect(performUpgrade.match(/\bpushGraphError\s*\(/g) || []).toHaveLength(1)
-    expect(performUpgrade.match(/\bloadingStop\s*\(/g) || []).toHaveLength(1)
+  test('renders exact build identity and an honest unavailable update state', () => {
+    expect(source).toContain('{{ info.product.name }}')
+    expect(source).toContain('{{ info.product.version }}')
+    expect(source).toContain('{{ info.product.upstreamBase }}')
+    expect(source).toContain("a(:href='info.product.sourceUrl'")
+    expect(source).toContain('Unavailable — no fork-owned update provider is configured')
+    expect(source).not.toMatch(/Perform Upgrade|container is being upgraded/)
   })
 })

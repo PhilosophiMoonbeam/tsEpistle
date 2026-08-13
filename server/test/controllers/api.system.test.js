@@ -15,14 +15,13 @@ vi.mock('express', () => {
 })
 
 import * as express from 'express'
-import syncGraphUpdates from '../../jobs/sync-graph-updates.ts'
 import importV1Operations from '../../operations/import-v1.ts'
 import fs from 'fs-extra'
 import getos from 'getos'
 import * as os from 'node:os'
 import { filesize } from 'filesize'
+import { createProductMetadata } from '../../../shared/product.ts'
 
-vi.mock('../../jobs/sync-graph-updates.ts', () => ({ default: vi.fn().mockResolvedValue(true) }))
 vi.mock('../../operations/import-v1.ts', () => ({
   default: {
   importUsers: vi.fn().mockResolvedValue({
@@ -58,17 +57,16 @@ vi.mock('fs-extra', () => {
   }
   return { default: fsMock, ...fsMock }
 })
+const product = createProductMetadata({
+  revision: '0123456789abcdef0123456789abcdef01234567',
+  date: '2026-08-13T00:00:00.000Z'
+})
+
 const originalFetch = global.fetch
-const successfulFetchResponse = {
-  ok: true,
-  status: 200,
-  statusText: 'OK'
-}
 
 describe('controllers/api system endpoints', () => {
   beforeEach(() => {
     vi.resetModules()
-    syncGraphUpdates.mockResolvedValue(true)
     importV1Operations.importUsers.mockResolvedValue({
       usersCount: 4,
       groupsCount: 2,
@@ -98,7 +96,8 @@ describe('controllers/api system endpoints', () => {
     delete process.env.UPGRADE_COMPANION_REF
     global.WIKI = {
       ROOTPATH: '/srv/wiki',
-      version: '2.0.0',
+      version: product.version,
+      product,
       auth: {
         checkAccess: vi.fn()
       },
@@ -213,8 +212,9 @@ describe('controllers/api system endpoints', () => {
       },
       system: {
         updates: {
-          version: '2.1.0',
-          releaseDate: '2026-01-01T00:00:00.000Z'
+          status: 'unavailable',
+          version: null,
+          releaseDate: null
         },
         exportStatus: {
           status: 'idle',
@@ -354,9 +354,11 @@ describe('controllers/api system endpoints', () => {
     await summary(req, res)
 
     expect(res.json).toHaveBeenCalledWith({
-      currentVersion: '2.0.0',
-      latestVersion: '2.1.0',
-      latestVersionReleaseDate: '2026-01-01T00:00:00.000Z',
+      product,
+      currentVersion: product.version,
+      latestVersion: null,
+      latestVersionReleaseDate: null,
+      updateStatus: 'unavailable',
       groupsTotal: 3,
       pagesTotal: 42,
       usersTotal: 11,
@@ -374,9 +376,11 @@ describe('controllers/api system endpoints', () => {
 
     expect(res.sendStatus).not.toHaveBeenCalled()
     expect(res.json).toHaveBeenCalledWith({
-      currentVersion: '2.0.0',
-      latestVersion: '2.1.0',
-      latestVersionReleaseDate: '2026-01-01T00:00:00.000Z',
+      product,
+      currentVersion: product.version,
+      latestVersion: null,
+      latestVersionReleaseDate: null,
+      updateStatus: 'unavailable',
       groupsTotal: 3,
       pagesTotal: 42,
       usersTotal: 11,
@@ -556,47 +560,8 @@ describe('controllers/api system endpoints', () => {
     expect(next.mock.calls[0][0].message).toBe('telemetry reset failed')
   })
 
-  it('starts system upgrade through update companion with native fetch options', async () => {
-    global.fetch.mockResolvedValueOnce(successfulFetchResponse)
+  it('rejects the retained upgrade route while no fork-owned update provider exists', async () => {
     process.env.UPGRADE_COMPANION = '1'
-    global.WIKI.auth.checkAccess.mockReturnValue(true)
-    const { performUpgrade } = await loadHandlers()
-    const req = { user: { permissions: ['manage:system'] } }
-    const res = { json: vi.fn(), sendStatus: vi.fn(), status: vi.fn().mockReturnThis() }
-
-    await performUpgrade(req, res)
-
-    expect(global.fetch).toHaveBeenCalledTimes(1)
-    const [url, options] = global.fetch.mock.calls[0]
-    expect(url).toBeInstanceOf(URL)
-    expect(url.toString()).toBe('http://wiki-update-companion/upgrade')
-    expect(options).toEqual({ method: 'POST' })
-    expect(res.status).not.toHaveBeenCalled()
-    expect(res.json).toHaveBeenCalledWith({ message: 'Upgrade has started.' })
-  })
-
-  it('passes the upgrade companion container reference when configured', async () => {
-    global.fetch.mockResolvedValueOnce(successfulFetchResponse)
-    process.env.UPGRADE_COMPANION = '1'
-    process.env.UPGRADE_COMPANION_REF = 'wiki-app'
-    global.WIKI.auth.checkAccess.mockReturnValue(true)
-    const { performUpgrade } = await loadHandlers()
-    const req = { user: { permissions: ['manage:system'] } }
-    const res = { json: vi.fn(), sendStatus: vi.fn(), status: vi.fn().mockReturnThis() }
-
-    await performUpgrade(req, res)
-
-    expect(global.fetch).toHaveBeenCalledTimes(1)
-    const [url, options] = global.fetch.mock.calls[0]
-    expect(url).toBeInstanceOf(URL)
-    expect(url.toString()).toBe('http://wiki-update-companion/upgrade?container=wiki-app')
-    expect(url.searchParams.get('container')).toBe('wiki-app')
-    expect(options).toEqual({ method: 'POST' })
-    expect(res.json).toHaveBeenCalledWith({ message: 'Upgrade has started.' })
-  })
-
-  it('returns JSON 500 when the upgrade companion is not configured', async () => {
-
     global.WIKI.auth.checkAccess.mockReturnValue(true)
     const { performUpgrade } = await loadHandlers()
     const req = { user: { permissions: ['manage:system'] } }
@@ -605,44 +570,10 @@ describe('controllers/api system endpoints', () => {
     await performUpgrade(req, res)
 
     expect(global.fetch).not.toHaveBeenCalled()
-    expect(res.status).toHaveBeenCalledWith(500)
+    expect(res.status).toHaveBeenCalledWith(409)
     expect(res.json).toHaveBeenCalledWith({
-      error: 'You must run the wiki-update-companion container and pass the UPGRADE_COMPANION env var in order to use this feature.'
+      error: 'Preview updates are unavailable because no fork-owned update provider is configured.'
     })
-  })
-
-  it('returns JSON 500 when the upgrade companion request fails', async () => {
-    const err = new Error('companion failed')
-    global.fetch.mockRejectedValueOnce(err)
-    process.env.UPGRADE_COMPANION = '1'
-    global.WIKI.auth.checkAccess.mockReturnValue(true)
-    const { performUpgrade } = await loadHandlers()
-    const req = { user: { permissions: ['manage:system'] } }
-    const res = { json: vi.fn(), sendStatus: vi.fn(), status: vi.fn().mockReturnThis() }
-
-    await performUpgrade(req, res)
-
-    expect(res.status).toHaveBeenCalledWith(500)
-    expect(res.json).toHaveBeenCalledWith({ error: 'companion failed' })
-  })
-
-  it('returns JSON 500 when the upgrade companion returns an HTTP error', async () => {
-    global.fetch.mockResolvedValueOnce({
-      ok: false,
-      status: 502,
-      statusText: 'Bad Gateway'
-    })
-    process.env.UPGRADE_COMPANION = '1'
-    global.WIKI.auth.checkAccess.mockReturnValue(true)
-    const { performUpgrade } = await loadHandlers()
-    const req = { user: { permissions: ['manage:system'] } }
-    const res = { json: vi.fn(), sendStatus: vi.fn(), status: vi.fn().mockReturnThis() }
-
-    await performUpgrade(req, res)
-
-    expect(global.fetch).toHaveBeenCalledWith(expect.any(URL), { method: 'POST' })
-    expect(res.status).toHaveBeenCalledWith(500)
-    expect(res.json).toHaveBeenCalledWith({ error: 'Upgrade companion returned 502 Bad Gateway' })
   })
 
   it('flushes pages cache and emits outbound cache invalidation for authorized requests', async () => {
@@ -1193,15 +1124,17 @@ describe('controllers/api system endpoints', () => {
     expect(next).not.toHaveBeenCalled()
 
     expect(res.json).toHaveBeenCalledWith({
+      product,
       configFile: `${process.cwd()}/config.yml`,
       cpuCores: 8,
-      currentVersion: '2.0.0',
+      currentVersion: product.version,
       dbHost: 'postgres.example.com',
       dbType: 'PostgreSQL',
       dbVersion: '15.4',
       hostname: 'wiki-host',
-      latestVersion: '2.1.0',
-      latestVersionReleaseDate: '2026-01-01T00:00:00.000Z',
+      latestVersion: null,
+      latestVersionReleaseDate: null,
+      updateStatus: 'unavailable',
       nodeVersion: process.version.substr(1),
       operatingSystem: 'Linux - Ubuntu (noble) 24.04.1 x64',
       platform: 'linux',
@@ -1252,12 +1185,11 @@ describe('controllers/api system endpoints', () => {
 
     await checkForUpdate(req, res)
 
-    expect(syncGraphUpdates).not.toHaveBeenCalled()
     expect(res.status).toHaveBeenCalledWith(400)
     expect(res.json).toHaveBeenCalledWith({ error: 'X-Requested-With header is required' })
   })
 
-  it('runs the update sync job and returns the latest update state', async () => {
+  it('reports preview updates as unavailable without contacting an upstream release provider', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
     const { checkForUpdate } = await loadHandlers()
     const req = {
@@ -1268,11 +1200,13 @@ describe('controllers/api system endpoints', () => {
 
     await checkForUpdate(req, res)
 
-    expect(syncGraphUpdates).toHaveBeenCalledTimes(1)
+    expect(global.fetch).not.toHaveBeenCalled()
     expect(res.json).toHaveBeenCalledWith({
-      currentVersion: '2.0.0',
-      latestVersion: '2.1.0',
-      latestVersionReleaseDate: '2026-01-01T00:00:00.000Z'
+      product,
+      currentVersion: product.version,
+      latestVersion: null,
+      latestVersionReleaseDate: null,
+      updateStatus: 'unavailable'
     })
   })
 

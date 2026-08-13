@@ -1,28 +1,29 @@
 {
-  "name": "wiki",
-  "version": "2.0.0",
-  "releaseDate": "2026-01-01T01:01:01.000Z",
-  "description": "A modern, lightweight and powerful wiki app built on NodeJS, Git and Markdown",
+  "name": "wiki-ts-preview",
+  "version": "0.1.0-alpha.1",
+  "releaseDate": "2026-08-13T00:00:00.000Z",
+  "description": "Wiki.ts Preview, an independent community fork of Wiki.js",
   "main": "server/index.ts",
   "type": "module",
   "packageManager": "pnpm@11.12.0",
-  "dev": true,
+  "dev": false,
   "scripts": {
     "start": "node server/index.ts",
     "dev": "pnpm run --parallel '/^dev:(client|server)$/'",
     "dev:server": "cross-env NODE_ENV=development node --watch server/index.ts",
     "dev:client": "vite --host 127.0.0.1",
-    "build": "vite build",
+    "build": "node server/scripts/generate-build-metadata.ts && vite build",
     "watch": "pnpm run dev",
     "lint": "eslint .",
     "test": "vitest run",
     "typecheck:client": "vue-tsc -p tsconfig.client.json --noEmit --pretty false",
     "typecheck:server": "tsc -p tsconfig.server.json --noEmit --pretty false",
-    "e2e": "playwright test"
+    "e2e": "playwright test",
+    "docker:build": "node server/scripts/build-docker.ts"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Requarks/wiki.git"
+    "url": "git+https://github.com/PhilosophiMoonbeam/wiki.git"
   },
   "keywords": [
     "wiki",
@@ -36,9 +37,19 @@
   "author": "Nicolas Giard",
   "license": "AGPL-3.0",
   "bugs": {
-    "url": "https://github.com/Requarks/wiki/issues"
+    "url": "https://github.com/PhilosophiMoonbeam/wiki/issues"
   },
-  "homepage": "https://github.com/Requarks/wiki#readme",
+  "homepage": "https://github.com/PhilosophiMoonbeam/wiki#readme",
+  "product": {
+    "name": "Wiki.ts Preview",
+    "version": "0.1.0-alpha.1",
+    "sourceRepository": "https://github.com/PhilosophiMoonbeam/wiki",
+    "containerRepository": "ghcr.io/philosophimoonbeam/wiki",
+    "upstreamName": "Wiki.js",
+    "upstreamVersion": "2.5.314",
+    "independentFork": true,
+    "modifiedAt": "2026-08-13"
+  },
   "engines": {
     "node": ">=24 <25"
   },

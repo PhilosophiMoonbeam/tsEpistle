@@ -75,6 +75,7 @@ type SystemInfo {
   operatingSystem: String @auth(requires: ["manage:system"])
   pagesTotal: Int @auth(requires: ["manage:system", "manage:navigation", "manage:pages", "delete:pages"])
   platform: String @auth(requires: ["manage:system"])
+  product: ProductMetadata @auth(requires: ["manage:system"])
   ramTotal: String @auth(requires: ["manage:system"])
   sslDomain: String @auth(requires: ["manage:system"])
   sslExpirationDate: Date @auth(requires: ["manage:system"])
@@ -84,9 +85,26 @@ type SystemInfo {
   tagsTotal: Int @auth(requires: ["manage:system", "manage:navigation", "manage:pages", "delete:pages"])
   telemetry: Boolean @auth(requires: ["manage:system"])
   telemetryClientId: String @auth(requires: ["manage:system"])
+  updateStatus: String @auth(requires: ["manage:system"])
   upgradeCapable: Boolean @auth(requires: ["manage:system"])
   usersTotal: Int @auth(requires: ["manage:system", "manage:navigation", "manage:groups", "write:groups", "manage:users", "write:users"])
   workingDirectory: String @auth(requires: ["manage:system"])
+}
+
+type ProductMetadata {
+  name: String!
+  version: String!
+  containerRepository: String!
+  description: String!
+  sourceRepository: String!
+  sourceUrl: String!
+  upstreamName: String!
+  upstreamVersion: String!
+  upstreamBase: String!
+  independentFork: Boolean!
+  modifiedAt: String!
+  revision: String!
+  date: Date!
 }
 
 enum SystemImportUsersGroupMode {

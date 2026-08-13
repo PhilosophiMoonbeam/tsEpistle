@@ -1,40 +1,35 @@
 <div align="center">
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://static.requarks.io/logo/wikijs-full-darktheme.svg">
-  <img alt="Wiki.js" src="https://static.requarks.io/logo/wikijs-full.svg" width="600">
-</picture>
+# Wiki.ts Preview
 
-[![Release](https://img.shields.io/github/release/Requarks/wiki.svg?style=flat&maxAge=3600)](https://github.com/Requarks/wiki/releases)
-[![License](https://img.shields.io/badge/license-AGPLv3-blue.svg?style=flat)](https://github.com/requarks/wiki/blob/master/LICENSE)
-[![Standard - JavaScript Style Guide](https://img.shields.io/badge/code%20style-standard-green.svg?style=flat&logo=javascript&logoColor=white)](http://standardjs.com/)
-[![Build + Publish](https://github.com/Requarks/wiki/actions/workflows/build.yml/badge.svg)](https://github.com/Requarks/wiki/actions/workflows/build.yml)  
-[![GitHub Sponsors](https://img.shields.io/github/sponsors/ngpixel?logo=github&color=ea4aaa)](https://github.com/users/NGPixel/sponsorship)
-[![Open Collective backers and sponsors](https://img.shields.io/opencollective/all/wikijs?label=backers&color=218bff&logo=opencollective&logoColor=white)](https://opencollective.com/wikijs)
-[![Downloads](https://img.shields.io/github/downloads/Requarks/wiki/total.svg?style=flat&logo=github)](https://github.com/Requarks/wiki/releases)
-[![Docker Pulls](https://img.shields.io/docker/pulls/requarks/wiki.svg?logo=docker&logoColor=white)](https://hub.docker.com/r/requarks/wiki/)  
-[![Chat on Discord](https://img.shields.io/badge/discord-join-8D96F6.svg?style=flat&logo=discord&logoColor=white)](https://discord.gg/rcxt9QS2jd)
-[![Follow on Bluesky](https://img.shields.io/badge/bluesky-%40js.wiki-blue.svg?style=flat&logo=bluesky&logoColor=white)](https://bsky.app/profile/js.wiki)
-[![Follow on Telegram](https://img.shields.io/badge/telegram-%40wiki__js-blue.svg?style=flat&logo=telegram)](https://t.me/wiki_js)
-[![Reddit](https://img.shields.io/badge/reddit-%2Fr%2Fwikijs-orange?logo=reddit&logoColor=white)](https://www.reddit.com/r/wikijs/)
+[![Release](https://img.shields.io/github/v/release/PhilosophiMoonbeam/wiki?include_prereleases&label=preview)](https://github.com/PhilosophiMoonbeam/wiki/releases)
+[![License](https://img.shields.io/badge/license-AGPLv3-blue.svg)](LICENSE)
+[![Build + Publish](https://github.com/PhilosophiMoonbeam/wiki/actions/workflows/build.yml/badge.svg)](https://github.com/PhilosophiMoonbeam/wiki/actions/workflows/build.yml)
 
-##### A modern, lightweight and powerful wiki app built on NodeJS
+**An independent community fork derived from Wiki.js.**
 
 </div>
 
-- **[Official Website](https://js.wiki/)**
-- **[Documentation](https://docs.requarks.io/)**
-- [Requirements](https://docs.requarks.io/install/requirements)
-- [Installation](https://docs.requarks.io/install)
-- [Demo](https://docs.requarks.io/demo)
-- [Changelog](https://github.com/requarks/wiki/releases)
-- [Feature Requests](https://feedback.js.wiki/wiki)
-- Chat with us on [Discord](https://discord.gg/rcxt9QS2jd)
-- [Translations](https://docs.requarks.io/dev/translations) *(We need your help!)*
-- [Special Thanks](#special-thanks)
-- [Contribute](#contributors)
+Wiki.ts Preview is an experimental, long-lived community fork of [Wiki.js](https://github.com/Requarks/wiki). It is not an official Wiki.js release and is not produced or endorsed by Nicolas Giard or Requarks.
 
-[Follow our Twitter feed](https://twitter.com/requarks) to learn about upcoming updates and new releases!
+- **Preview version:** `0.1.0-alpha.1`
+- **Upstream base:** Wiki.js `2.5.314`
+- **Source repository:** [PhilosophiMoonbeam/wiki](https://github.com/PhilosophiMoonbeam/wiki)
+- **Container images:** `ghcr.io/philosophimoonbeam/wiki`
+
+The running application exposes its exact Git revision and a **Source Code** link in Setup, Administration → System, and the site footer. That link identifies the source corresponding to the deployed artifact.
+
+## Fork attribution and license
+
+This fork was materially modified on 2026-08-13. The modification notice does not claim ownership of upstream work.
+
+Wiki.js was created by Nicolas Giard and developed by Requarks and its contributors. Their copyright, contributor credits, trademarks, and historical notices are preserved. See the [upstream project](https://github.com/Requarks/wiki) for official Wiki.js releases and documentation.
+
+Wiki.ts Preview remains licensed under the [GNU Affero General Public License version 3](LICENSE). Anyone interacting with a deployed modified version over a network must be offered the complete Corresponding Source for that exact version. Release source archives and the revision-specific source link include the build scripts, patches, lockfile, Dockerfiles, and other tracked build inputs.
+
+## Upstream project credits and funding
+
+The historical sponsorship, contributor, and service-provider acknowledgements below belong to the upstream Wiki.js project and are retained for attribution.
 
 <h2 align="center">Donate</h2>
 

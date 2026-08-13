@@ -1,5 +1,6 @@
 import { createPinia, defineStore } from 'pinia'
 import Cookies from 'js-cookie'
+import type { SystemSummary } from '../helpers/system-api.ts'
 
 export type Notification = {
   message: string
@@ -41,13 +42,16 @@ export const useWikiStore = defineStore('wiki', {
     } as Notification,
     admin: {
       info: {
-        currentVersion: 'n/a',
-        latestVersion: 'n/a',
+        product: window.siteConfig.product,
+        currentVersion: window.siteConfig.product.version,
+        latestVersion: null,
+        latestVersionReleaseDate: null,
+        updateStatus: 'unavailable',
         groupsTotal: 0,
         pagesTotal: 0,
         usersTotal: 0,
         tagsTotal: 0
-      }
+      } as SystemSummary
     },
     editor: {
       id: 0,
@@ -103,6 +107,7 @@ export const useWikiStore = defineStore('wiki', {
       mascot: true,
       title: window.siteConfig.title,
       logoUrl: window.siteConfig.logoUrl,
+      product: window.siteConfig.product,
       search: '',
       searchIsFocused: false,
       searchIsLoading: false,

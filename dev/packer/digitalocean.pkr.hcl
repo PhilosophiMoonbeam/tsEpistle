@@ -17,8 +17,8 @@ variable "application_version" {
 }
 
 locals {
-  application_name = "Wiki.js"
-  image_name       = "wikijs-snapshot-${formatdate("YYYYMMDDhhmmss", timestamp())}"
+  application_name = "Wiki.ts Preview"
+  image_name       = "wiki-ts-preview-${formatdate("YYYYMMDDhhmmss", timestamp())}"
 }
 
 source "digitalocean" "wiki" {

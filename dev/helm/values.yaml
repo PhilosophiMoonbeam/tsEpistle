@@ -1,4 +1,4 @@
-# Default values for wiki.
+# Default values for Wiki.ts Preview.
 # This is a YAML-formatted file.
 # Declare variables to be passed into your templates.
 
@@ -6,7 +6,7 @@ replicaCount: 1
 revisionHistoryLimit: 2
 
 image:
-  repository: requarks/wiki
+  repository: ghcr.io/philosophimoonbeam/wiki
   imagePullPolicy: IfNotPresent
 
 imagePullSecrets: []

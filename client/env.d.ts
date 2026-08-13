@@ -4,6 +4,7 @@ import type { i18n as I18next } from 'i18next'
 import type moment from 'moment-timezone'
 import type { helpers } from './helpers/index.ts'
 import type { Router } from 'vue-router'
+import type { ProductMetadata } from '../shared/product.ts'
 
 export type SiteConfig = {
   title: string
@@ -16,6 +17,7 @@ export type SiteConfig = {
   contentLicense: string
   footerOverride: string
   logoUrl: string
+  product: ProductMetadata
   path?: string
   devMode?: boolean
 }

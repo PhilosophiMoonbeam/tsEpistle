@@ -14,6 +14,7 @@ import semver from 'semver'
 import viteAssets from './helpers/vite-assets.ts'
 import system from './core/system.ts'
 
+import type { ProductMetadata } from '../shared/product.ts'
 const { collectEntry } = viteAssets
 const randomBytesAsync = promisify(randomBytes)
 const { pem2jwk } = pemJwk
@@ -86,6 +87,7 @@ interface SetupWiki extends Record<string, unknown> {
   data: unknown
   kernel: { bootMaster(): void; initTelemetry(): void }
   logger: { error(value: unknown): void; info(message: string): void }
+  product: ProductMetadata
   models: SetupModels
   server: DestroyableServer
   system: unknown
@@ -115,7 +117,7 @@ function requiredString(body: Record<string, unknown>, key: string): string {
 export default function startSetup(): void {
   wiki.config.site = {
     path: '',
-    title: 'Wiki.js'
+    title: wiki.product.name
   }
   wiki.system = system
 
@@ -132,15 +134,15 @@ export default function startSetup(): void {
   app.locals.config = wiki.config
   app.locals.data = wiki.data
   app.locals._ = _
+  app.locals.product = wiki.product
   const viteOrigin = process.env.WIKI_VITE_ORIGIN
   app.locals.vite = collectEntry('client/index-setup.ts', {
     dev: wiki.IS_DEBUG,
     ...(viteOrigin === undefined ? {} : { origin: viteOrigin })
   })
 
-  app.get('/{*setupPath}', async (_req, res) => {
-    const packageObject: unknown = await fs.readJson(path.join(wiki.ROOTPATH, 'package.json'))
-    res.render('setup', { packageObj: packageObject })
+  app.get('/{*setupPath}', (_req, res) => {
+    res.render('setup')
   })
 
   app.post('/finalize', async (req, res) => {
@@ -175,7 +177,7 @@ export default function startSetup(): void {
       _.set(wiki.config, 'theming', {
         theme: 'default', darkMode: false, iconset: 'mdi', injectCSS: '', injectHead: '', injectBody: ''
       })
-      _.set(wiki.config, 'title', 'Wiki.js')
+      _.set(wiki.config, 'title', wiki.product.name)
 
       wiki.kernel.initTelemetry()
       if (!semver.satisfies(process.version, '>=10.12')) {

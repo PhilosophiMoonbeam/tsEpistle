@@ -6,7 +6,7 @@ postgres)
     echo "Waiting for database connection..."
     sleep 2
   done
-  docker run -d -p 3000:3000 --name wiki --network="host" -e "DB_TYPE=postgres" -e "DB_HOST=localhost" -e "DB_PORT=5432" -e "DB_NAME=wiki" -e "DB_USER=wiki" -e "DB_PASS=Password123!" requarks/wiki:canary-$REL_VERSION_STRICT
+  docker run -d -p 3000:3000 --name wiki --network="host" -e "DB_TYPE=postgres" -e "DB_HOST=localhost" -e "DB_PORT=5432" -e "DB_NAME=wiki" -e "DB_USER=wiki" -e "DB_PASS=Password123!" "$WIKI_TEST_IMAGE"
   ;;
 mysql)
   echo "Using MySQL..."
@@ -15,7 +15,7 @@ mysql)
     echo "Waiting for database connection..."
     sleep 2
   done
-  docker run -d -p 3000:3000 --name wiki --network="host" -e "DB_TYPE=mysql" -e "DB_HOST=localhost" -e "DB_PORT=3306" -e "DB_NAME=wiki" -e "DB_USER=wiki" -e "DB_PASS=Password123!" requarks/wiki:canary-$REL_VERSION_STRICT
+  docker run -d -p 3000:3000 --name wiki --network="host" -e "DB_TYPE=mysql" -e "DB_HOST=localhost" -e "DB_PORT=3306" -e "DB_NAME=wiki" -e "DB_USER=wiki" -e "DB_PASS=Password123!" "$WIKI_TEST_IMAGE"
   ;;
 mariadb)
   echo "Using MariaDB..."
@@ -24,7 +24,7 @@ mariadb)
     echo "Waiting for database connection..."
     sleep 2
   done
-  docker run -d -p 3000:3000 --name wiki --network="host" -e "DB_TYPE=mariadb" -e "DB_HOST=localhost" -e "DB_PORT=3306" -e "DB_NAME=wiki" -e "DB_USER=wiki" -e "DB_PASS=Password123!" requarks/wiki:canary-$REL_VERSION_STRICT
+  docker run -d -p 3000:3000 --name wiki --network="host" -e "DB_TYPE=mariadb" -e "DB_HOST=localhost" -e "DB_PORT=3306" -e "DB_NAME=wiki" -e "DB_USER=wiki" -e "DB_PASS=Password123!" "$WIKI_TEST_IMAGE"
   ;;
 mssql)
   echo "Using MS SQL Server..."
@@ -34,11 +34,11 @@ mssql)
     sleep 2
   done
   docker exec db /opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P "Password123!" -Q 'CREATE DATABASE wiki'
-  docker run -d -p 3000:3000 --name wiki --network="host" -e "DB_TYPE=mssql" -e "DB_HOST=localhost" -e "DB_PORT=1433" -e "DB_NAME=wiki" -e "DB_USER=sa" -e "DB_PASS=Password123!" requarks/wiki:canary-$REL_VERSION_STRICT
+  docker run -d -p 3000:3000 --name wiki --network="host" -e "DB_TYPE=mssql" -e "DB_HOST=localhost" -e "DB_PORT=1433" -e "DB_NAME=wiki" -e "DB_USER=sa" -e "DB_PASS=Password123!" "$WIKI_TEST_IMAGE"
   ;;
 sqlite)
   echo "Using SQLite..."
-  docker run -d -p 3000:3000 --name wiki --network="host" -e "DB_TYPE=sqlite" -e "DB_FILEPATH=db.sqlite" requarks/wiki:canary-$REL_VERSION_STRICT
+  docker run -d -p 3000:3000 --name wiki --network="host" -e "DB_TYPE=sqlite" -e "DB_FILEPATH=db.sqlite" "$WIKI_TEST_IMAGE"
   ;;
 *)
   echo "Invalid DB Type!"

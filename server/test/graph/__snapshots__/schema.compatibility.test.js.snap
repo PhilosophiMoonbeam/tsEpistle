@@ -585,6 +585,22 @@ type PageVersion {
   versionId: Int!
 }
 
+type ProductMetadata {
+  containerRepository: String!
+  date: Date!
+  description: String!
+  independentFork: Boolean!
+  modifiedAt: String!
+  name: String!
+  revision: String!
+  sourceRepository: String!
+  sourceUrl: String!
+  upstreamBase: String!
+  upstreamName: String!
+  upstreamVersion: String!
+  version: String!
+}
+
 type Query {
   analytics: AnalyticsQuery
   assets: AssetQuery
@@ -776,6 +792,7 @@ type SystemInfo {
   operatingSystem: String
   pagesTotal: Int
   platform: String
+  product: ProductMetadata
   ramTotal: String
   sslDomain: String
   sslExpirationDate: Date
@@ -785,6 +802,7 @@ type SystemInfo {
   tagsTotal: Int
   telemetry: Boolean
   telemetryClientId: String
+  updateStatus: String
   upgradeCapable: Boolean
   usersTotal: Int
   workingDirectory: String

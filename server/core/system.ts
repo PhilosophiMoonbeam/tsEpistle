@@ -123,11 +123,9 @@ async function collectCursor<TDocument extends object>(cursor: MongoCursor<TDocu
 
 const system = {
   updates: {
-    channel: 'BETA',
-    version: wiki.version,
-    releaseDate: wiki.releaseDate,
-    minimumVersionRequired: '2.0.0-beta.0',
-    minimumNodeRequired: '10.12.0'
+    status: 'unavailable',
+    version: null,
+    releaseDate: null
   },
   exportStatus,
   init() {
