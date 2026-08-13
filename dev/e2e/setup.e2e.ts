@@ -5,7 +5,7 @@ const adminPassword = '12345678'
 
 async function expectWelcomePage(page: Page) {
   await expect(page).toHaveURL('/')
-  await expect(page).toHaveTitle('Welcome | Wiki.js')
+  await expect(page).toHaveTitle('Welcome | Wiki.ts Preview')
   await expect(page.getByRole('img', { name: 'Wiki.js' })).toBeVisible()
   await expect(page.getByText('Welcome to your wiki!', { exact: true })).toBeVisible()
   await expect(page.getByText("Let's get started and create the home page.", { exact: true })).toBeVisible()
@@ -31,11 +31,11 @@ async function loginAsAdmin(page: Page) {
 test.describe('critical post-install workflows', () => {
   test.describe.configure({ mode: 'serial', retries: 0 })
 
-  test('installs Wiki.js with telemetry disabled and opens the login screen', async ({ page }) => {
+  test('installs Wiki.ts Preview with telemetry disabled and opens the login screen', async ({ page }) => {
     test.setTimeout(45_000)
 
     await page.goto('/')
-    await expect(page.getByText('You are about to install Wiki.js')).toBeVisible()
+    await expect(page.getByText('You are about to install Wiki.ts Preview')).toBeVisible()
 
     const siteUrl = new URL(page.url()).origin
     await page.getByLabel('Administrator Email').fill(adminEmail)
@@ -163,7 +163,7 @@ test.describe('critical post-install workflows', () => {
     await page.getByPlaceholder('Password').fill(adminPassword)
     await page.getByRole('button', { name: 'Log In' }).click()
     await expect(page).toHaveURL('/')
-    await expect(page).toHaveTitle('Home | Wiki.js')
+    await expect(page).toHaveTitle('Home | Wiki.ts Preview')
     await expect(page.getByRole('heading', { name: 'Browser Workflow Updated' })).toBeVisible()
     await expect.poll(async () => page.evaluate(async () => {
       const response = await fetch('/_api/users/whoami', { credentials: 'same-origin' })
