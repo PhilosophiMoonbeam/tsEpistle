@@ -1,3 +1,5 @@
+import { isRecord } from './type-guards'
+
 type JsonHeaders = {
   get: (name: string) => string | null
 }
@@ -32,6 +34,65 @@ type CommentProvider = {
 
 type CommentSaveResponse = {
   message: string
+}
+
+type CommentRow = {
+  id: number
+  render: string
+  authorName: string
+  createdAt: string
+  updatedAt: string
+}
+
+type CommentDetails = {
+  id: number
+  content: string
+}
+
+type CommentCreateInput = {
+  pageId: number
+  replyTo: number
+  content: string
+  guestName: string
+  guestEmail: string
+}
+
+
+function normalizePositiveInteger (value: unknown, fallbackMessage: string): number {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 1) throw new Error(fallbackMessage)
+  return value
+}
+
+function normalizeCommentRow (payload: unknown, fallbackMessage: string): CommentRow {
+  if (!isRecord(payload)) throw new Error(fallbackMessage)
+  if (typeof payload.render !== 'string' || typeof payload.authorName !== 'string' || typeof payload.createdAt !== 'string' || typeof payload.updatedAt !== 'string') {
+    throw new Error(fallbackMessage)
+  }
+  return {
+    id: normalizePositiveInteger(payload.id, fallbackMessage),
+    render: payload.render,
+    authorName: payload.authorName,
+    createdAt: payload.createdAt,
+    updatedAt: payload.updatedAt
+  }
+}
+
+function normalizeMessage (payload: unknown, fallbackMessage: string): CommentSaveResponse {
+  if (!isRecord(payload) || typeof payload.message !== 'string') throw new Error(fallbackMessage)
+  return { message: payload.message }
+}
+
+async function sendJson (fetchImpl: FetchImpl, path: string, method: string, body: unknown, fallbackMessage: string): Promise<unknown> {
+  const response = await fetchImpl(path, {
+    method,
+    credentials: 'same-origin',
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(body)
+  })
+  return parseJsonResponse(response, fallbackMessage)
 }
 
 async function parseJsonResponse (response: JsonResponse, fallbackMessage: string): Promise<unknown> {
@@ -153,4 +214,45 @@ export async function saveCommentProviders (fetchImpl: FetchImpl, providers: unk
   })
 
   return normalizeCommentSavePayload(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
+}
+
+export async function fetchComments (fetchImpl: FetchImpl, locale: string, path: string, fallbackMessage = 'Comments response is invalid'): Promise<CommentRow[]> {
+  const response = await fetchImpl(`/_api/comments?locale=${encodeURIComponent(locale)}&path=${encodeURIComponent(path)}`, {
+    credentials: 'same-origin',
+    headers: { Accept: 'application/json' }
+  })
+  const payload = await parseJsonResponse(response, fallbackMessage)
+  if (!Array.isArray(payload)) throw new Error(fallbackMessage)
+  return payload.map(row => normalizeCommentRow(row, fallbackMessage))
+}
+
+export async function createComment (fetchImpl: FetchImpl, input: CommentCreateInput, fallbackMessage = 'Comment creation failed'): Promise<{ id: number }> {
+  const payload = await sendJson(fetchImpl, '/_api/comments', 'POST', input, fallbackMessage)
+  if (!isRecord(payload)) throw new Error(fallbackMessage)
+  return { id: normalizePositiveInteger(payload.id, fallbackMessage) }
+}
+
+export async function fetchComment (fetchImpl: FetchImpl, id: number, fallbackMessage = 'Comment response is invalid'): Promise<CommentDetails> {
+  const response = await fetchImpl(`/_api/comments/${encodeURIComponent(id)}`, {
+    credentials: 'same-origin',
+    headers: { Accept: 'application/json' }
+  })
+  const payload = await parseJsonResponse(response, fallbackMessage)
+  if (!isRecord(payload) || typeof payload.content !== 'string') throw new Error(fallbackMessage)
+  return { id: normalizePositiveInteger(payload.id, fallbackMessage), content: payload.content }
+}
+
+export async function updateComment (fetchImpl: FetchImpl, id: number, content: string, fallbackMessage = 'Comment update failed'): Promise<{ render: string }> {
+  const payload = await sendJson(fetchImpl, `/_api/comments/${encodeURIComponent(id)}`, 'PATCH', { content }, fallbackMessage)
+  if (!isRecord(payload) || typeof payload.render !== 'string') throw new Error(fallbackMessage)
+  return { render: payload.render }
+}
+
+export async function deleteComment (fetchImpl: FetchImpl, id: number, fallbackMessage = 'Comment deletion failed'): Promise<CommentSaveResponse> {
+  const response = await fetchImpl(`/_api/comments/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+    credentials: 'same-origin',
+    headers: { Accept: 'application/json' }
+  })
+  return normalizeMessage(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
 }

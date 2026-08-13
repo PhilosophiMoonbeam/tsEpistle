@@ -134,7 +134,7 @@
 </template>
 
 <script>
-import gql from 'graphql-tag'
+import { createComment, deleteComment, fetchComment, fetchComments, updateComment } from '../helpers/comments-api'
 import { get } from 'vuex-pathify'
 import validate from 'validate.js'
 import _ from 'lodash'
@@ -176,27 +176,12 @@ export default {
     async fetch (silent = false) {
       this.isLoading = true
       try {
-        const results = await this.$apollo.query({
-          query: gql`
-            query ($locale: String!, $path: String!) {
-              comments {
-                list(locale: $locale, path: $path) {
-                  id
-                  render
-                  authorName
-                  createdAt
-                  updatedAt
-                }
-              }
-            }
-          `,
-          variables: {
-            locale: this.$store.get('page/locale'),
-            path: this.$store.get('page/path')
-          },
-          fetchPolicy: 'network-only'
-        })
-        this.comments = _.get(results, 'data.comments.list', []).map(c => {
+        const comments = await fetchComments(
+          window.fetch.bind(window),
+          this.$store.get('page/locale'),
+          this.$store.get('page/path')
+        )
+        this.comments = comments.map(c => {
           const nameParts = c.authorName.toUpperCase().split(' ')
           let initials = _.head(nameParts).charAt(0)
           if (nameParts.length > 1) {
@@ -265,58 +250,23 @@ export default {
       }
 
       try {
-        const resp = await this.$apollo.mutate({
-          mutation: gql`
-            mutation (
-              $pageId: Int!
-              $replyTo: Int
-              $content: String!
-              $guestName: String
-              $guestEmail: String
-            ) {
-              comments {
-                create (
-                  pageId: $pageId
-                  replyTo: $replyTo
-                  content: $content
-                  guestName: $guestName
-                  guestEmail: $guestEmail
-                ) {
-                  responseResult {
-                    succeeded
-                    errorCode
-                    slug
-                    message
-                  }
-                  id
-                }
-              }
-            }
-          `,
-          variables: {
-            pageId: this.pageId,
-            replyTo: 0,
-            content: this.newcomment,
-            guestName: this.guestName,
-            guestEmail: this.guestEmail
-          }
+        const response = await createComment(window.fetch.bind(window), {
+          pageId: this.pageId,
+          replyTo: 0,
+          content: this.newcomment,
+          guestName: this.guestName,
+          guestEmail: this.guestEmail
         })
-
-        if (_.get(resp, 'data.comments.create.responseResult.succeeded', false)) {
-          this.$store.commit('showNotification', {
-            style: 'success',
-            message: this.$t('common:comments.postSuccess'),
-            icon: 'check'
-          })
-
-          this.newcomment = ''
-          await this.fetch()
-          this.$nextTick(() => {
-            this.$vuetify.goTo(`#comment-post-id-${_.get(resp, 'data.comments.create.id', 0)}`, this.scrollOpts)
-          })
-        } else {
-          throw new Error(_.get(resp, 'data.comments.create.responseResult.message', 'An unexpected error occurred.'))
-        }
+        this.$store.commit('showNotification', {
+          style: 'success',
+          message: this.$t('common:comments.postSuccess'),
+          icon: 'check'
+        })
+        this.newcomment = ''
+        await this.fetch()
+        this.$nextTick(() => {
+          this.$vuetify.goTo(`#comment-post-id-${response.id}`, this.scrollOpts)
+        })
       } catch (err) {
         this.$store.commit('showNotification', {
           style: 'red',
@@ -332,25 +282,8 @@ export default {
       this.$store.commit(`loadingStart`, 'comments-edit')
       this.isBusy = true
       try {
-        const results = await this.$apollo.query({
-          query: gql`
-            query ($id: Int!) {
-              comments {
-                single(id: $id) {
-                  content
-                }
-              }
-            }
-          `,
-          variables: {
-            id: cm.id
-          },
-          fetchPolicy: 'network-only'
-        })
-        this.commentEditContent = _.get(results, 'data.comments.single.content', null)
-        if (this.commentEditContent === null) {
-          throw new Error('Failed to load comment content.')
-        }
+        const comment = await fetchComment(window.fetch.bind(window), cm.id)
+        this.commentEditContent = comment.content
       } catch (err) {
         console.warn(err)
         this.$store.commit('showNotification', {
@@ -380,49 +313,21 @@ export default {
         if (this.commentEditContent.length < 2) {
           throw new Error(this.$t('common:comments.contentMissingError'))
         }
-        const resp = await this.$apollo.mutate({
-          mutation: gql`
-            mutation (
-              $id: Int!
-              $content: String!
-            ) {
-              comments {
-                update (
-                  id: $id,
-                  content: $content
-                ) {
-                  responseResult {
-                    succeeded
-                    errorCode
-                    slug
-                    message
-                  }
-                  render
-                }
-              }
-            }
-          `,
-          variables: {
-            id: this.commentEditId,
-            content: this.commentEditContent
-          }
+        const response = await updateComment(
+          window.fetch.bind(window),
+          this.commentEditId,
+          this.commentEditContent
+        )
+        this.$store.commit('showNotification', {
+          style: 'success',
+          message: this.$t('common:comments.updateSuccess'),
+          icon: 'check'
         })
 
-        if (_.get(resp, 'data.comments.update.responseResult.succeeded', false)) {
-          this.$store.commit('showNotification', {
-            style: 'success',
-            message: this.$t('common:comments.updateSuccess'),
-            icon: 'check'
-          })
-
-          const cm = _.find(this.comments, ['id', this.commentEditId])
-          cm.render = _.get(resp, 'data.comments.update.render', '-- Failed to load updated comment --')
-          cm.updatedAt = (new Date()).toISOString()
-
-          this.editCommentCancel()
-        } else {
-          throw new Error(_.get(resp, 'data.comments.delete.responseResult.message', 'An unexpected error occurred.'))
-        }
+        const cm = _.find(this.comments, ['id', this.commentEditId])
+        cm.render = response.render
+        cm.updatedAt = (new Date()).toISOString()
+        this.editCommentCancel()
       } catch (err) {
         console.warn(err)
         this.$store.commit('showNotification', {
@@ -450,41 +355,13 @@ export default {
       this.deleteCommentDialogShown = false
 
       try {
-        const resp = await this.$apollo.mutate({
-          mutation: gql`
-            mutation (
-              $id: Int!
-            ) {
-              comments {
-                delete (
-                  id: $id
-                ) {
-                  responseResult {
-                    succeeded
-                    errorCode
-                    slug
-                    message
-                  }
-                }
-              }
-            }
-          `,
-          variables: {
-            id: this.commentToDelete.id
-          }
+        await deleteComment(window.fetch.bind(window), this.commentToDelete.id)
+        this.$store.commit('showNotification', {
+          style: 'success',
+          message: this.$t('common:comments.deleteSuccess'),
+          icon: 'check'
         })
-
-        if (_.get(resp, 'data.comments.delete.responseResult.succeeded', false)) {
-          this.$store.commit('showNotification', {
-            style: 'success',
-            message: this.$t('common:comments.deleteSuccess'),
-            icon: 'check'
-          })
-
-          this.comments = _.reject(this.comments, ['id', this.commentToDelete.id])
-        } else {
-          throw new Error(_.get(resp, 'data.comments.delete.responseResult.message', 'An unexpected error occurred.'))
-        }
+        this.comments = _.reject(this.comments, ['id', this.commentToDelete.id])
       } catch (err) {
         this.$store.commit('showNotification', {
           style: 'red',

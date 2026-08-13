@@ -88,6 +88,11 @@ describe('controllers/api comments endpoints', () => {
               privateField: 'do-not-return'
             }
           ])
+        },
+        comments: {
+          postNewComment: jest.fn().mockResolvedValue(73),
+          updateComment: jest.fn().mockResolvedValue('<p>Updated</p>'),
+          deleteComment: jest.fn().mockResolvedValue(true)
         }
       }
     }
@@ -108,6 +113,11 @@ describe('controllers/api comments endpoints', () => {
     require('../../controllers/api/comments')
     const router = express.__routers[0]
     return {
+      list: router.get.mock.calls.find(([path]) => path === '/')[1],
+      create: router.post.mock.calls.find(([path]) => path === '/')[1],
+      get: router.get.mock.calls.find(([path]) => path === '/:id')[1],
+      update: router.patch.mock.calls.find(([path]) => path === '/:id')[1],
+      remove: router.delete.mock.calls.find(([path]) => path === '/:id')[1],
       providers: router.get.mock.calls.find(([path]) => path === '/providers')[1],
       saveProviders: router.post.mock.calls.find(([path]) => path === '/providers')[1]
     }
@@ -115,9 +125,14 @@ describe('controllers/api comments endpoints', () => {
 
   const loadProvidersHandler = () => loadHandlers().providers
 
-  it('registers comments providers routes', () => {
+  it('registers comment CRUD and provider routes', () => {
     const handlers = loadHandlers()
 
+    expect(typeof handlers.list).toBe('function')
+    expect(typeof handlers.create).toBe('function')
+    expect(typeof handlers.get).toBe('function')
+    expect(typeof handlers.update).toBe('function')
+    expect(typeof handlers.remove).toBe('function')
     expect(typeof handlers.providers).toBe('function')
     expect(typeof handlers.saveProviders).toBe('function')
   })
@@ -348,5 +363,60 @@ describe('controllers/api comments endpoints', () => {
 
     expect(next).toHaveBeenCalledWith(err)
     expect(res.json).not.toHaveBeenCalled()
+  })
+
+  it('creates, updates, and deletes comments through shared operations', async () => {
+    const handlers = loadHandlers()
+    const user = { id: 12 }
+    const createReq = {
+      user,
+      ip: '127.0.0.1',
+      body: {
+        pageId: 9,
+        replyTo: 0,
+        content: 'New comment',
+        guestName: '',
+        guestEmail: ''
+      }
+    }
+    const createRes = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+
+    await handlers.create(createReq, createRes)
+
+    expect(global.WIKI.models.comments.postNewComment).toHaveBeenCalledWith({
+      ...createReq.body,
+      user,
+      ip: createReq.ip
+    })
+    expect(createRes.status).toHaveBeenCalledWith(201)
+    expect(createRes.json).toHaveBeenCalledWith({ id: 73 })
+
+    const updateReq = { user, ip: '127.0.0.2', params: { id: '73' }, body: { content: 'Updated' } }
+    const updateRes = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+    await handlers.update(updateReq, updateRes)
+    expect(global.WIKI.models.comments.updateComment).toHaveBeenCalledWith({
+      id: 73,
+      content: 'Updated',
+      user,
+      ip: updateReq.ip
+    })
+    expect(updateRes.json).toHaveBeenCalledWith({ render: '<p>Updated</p>' })
+
+    const deleteReq = { user, ip: '127.0.0.3', params: { id: '73' } }
+    const deleteRes = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+    await handlers.remove(deleteReq, deleteRes)
+    expect(global.WIKI.models.comments.deleteComment).toHaveBeenCalledWith({ id: 73, user, ip: deleteReq.ip })
+    expect(deleteRes.json).toHaveBeenCalledWith({ message: 'Comment deleted successfully' })
+  })
+
+  it('rejects malformed comment ids before calling shared operations', async () => {
+    const handlers = loadHandlers()
+    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+
+    await handlers.update({ params: { id: '0' }, body: { content: 'Updated' } }, res)
+
+    expect(res.status).toHaveBeenCalledWith(400)
+    expect(res.json).toHaveBeenCalledWith({ error: 'comment id must be a positive integer' })
+    expect(global.WIKI.models.comments.updateComment).not.toHaveBeenCalled()
   })
 })
