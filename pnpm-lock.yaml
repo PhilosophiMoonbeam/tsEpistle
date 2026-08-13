@@ -527,6 +527,9 @@ importers:
       '@types/multer':
         specifier: 2.2.0
         version: 2.2.0
+      '@types/node':
+        specifier: 26.2.0
+        version: 26.2.0
       '@types/passport':
         specifier: 1.0.17
         version: 1.0.17
