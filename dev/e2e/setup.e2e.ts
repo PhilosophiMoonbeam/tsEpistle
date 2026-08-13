@@ -35,7 +35,7 @@ test.describe('critical post-install workflows', () => {
     test.setTimeout(45_000)
 
     await page.goto('/')
-    await expect(page.getByText('You are about to install Wiki.js')).toBeVisible()
+    await expect(page.getByText('You are about to install Wiki.ts Preview')).toBeVisible()
 
     const siteUrl = new URL(page.url()).origin
     await page.getByLabel('Administrator Email').fill(adminEmail)
