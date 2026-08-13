@@ -8,7 +8,7 @@ interface ApiKey {
   id: number
   name: string
   key: string
-  isRevoked: boolean
+  isRevoked: boolean | number
   expiration: string
   createdAt: unknown
   updatedAt: unknown
@@ -37,7 +37,7 @@ const serializeKey = (key: ApiKey) => ({
   id: key.id,
   name: key.name,
   keyShort: redactedSuffix(key.key),
-  isRevoked: key.isRevoked,
+  isRevoked: key.isRevoked === true || key.isRevoked === 1,
   expiration: key.expiration,
   createdAt: key.createdAt,
   updatedAt: key.updatedAt

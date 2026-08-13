@@ -522,7 +522,7 @@ describe('controllers/api auth endpoints', () => {
         id: 7,
         name: 'Deploy',
         key: fullKey,
-        isRevoked: false,
+        isRevoked: 0,
         expiration: '2026-01-01T00:00:00.000Z',
         createdAt: '2025-01-01T00:00:00.000Z',
         updatedAt: '2025-02-01T00:00:00.000Z',
