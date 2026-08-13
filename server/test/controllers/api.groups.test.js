@@ -340,12 +340,12 @@ describe('controllers/api groups endpoints', () => {
 
   it('assigns group users and revokes their tokens', async () => {
     const { assignUser } = loadHandler()
-    const req = { user: { permissions: ['manage:groups'] }, params: { groupId: '3', userId: '10' } }
+    const req = { user: { permissions: ['manage:users'] }, params: { groupId: '3', userId: '10' } }
     const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
 
     await assignUser(req, res, jest.fn())
 
-    expect(global.WIKI.auth.checkAccess).toHaveBeenCalledWith({ permissions: ['manage:groups'] }, ['write:groups', 'manage:groups', 'manage:system'])
+    expect(global.WIKI.auth.checkAccess).toHaveBeenCalledWith({ permissions: ['manage:users'] }, ['manage:users', 'write:groups', 'manage:groups', 'manage:system'])
     const group = await global.WIKI.models.groups.query.mock.results[0].value.findById.mock.results[0].value
     expect(global.WIKI.models.groups.query.mock.results[0].value.findById).toHaveBeenCalledWith(3)
     expect(global.WIKI.models.users.query.mock.results[0].value.findById).toHaveBeenCalledWith(10)
@@ -361,7 +361,7 @@ describe('controllers/api groups endpoints', () => {
     })
   })
 
-  it('returns 403 for group user assign requests without group admin access', async () => {
+  it('returns 403 for group user assign requests without assignment access', async () => {
     global.WIKI.auth.checkAccess.mockReturnValueOnce(false)
     const { assignUser } = loadHandler()
     const req = { user: { permissions: ['manage:api'] }, params: { groupId: '3', userId: '10' } }
@@ -370,7 +370,7 @@ describe('controllers/api groups endpoints', () => {
     await assignUser(req, res, jest.fn())
 
     expect(res.status).toHaveBeenCalledWith(403)
-    expect(res.json).toHaveBeenCalledWith({ error: 'write:groups, manage:groups, or manage:system is required' })
+    expect(res.json).toHaveBeenCalledWith({ error: 'manage:users, write:groups, manage:groups, or manage:system is required' })
   })
 
   it('returns 400 for malformed group user assign ids and guest assignment', async () => {
@@ -399,14 +399,14 @@ describe('controllers/api groups endpoints', () => {
     })
     global.WIKI.auth.checkExclusiveAccess.mockReturnValueOnce(true)
     const { assignUser } = loadHandler()
-    const req = { user: { permissions: ['write:groups'] }, params: { groupId: '3', userId: '10' } }
+    const req = { user: { permissions: ['manage:users'] }, params: { groupId: '3', userId: '10' } }
     const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
 
     await assignUser(req, res, jest.fn())
 
-    expect(global.WIKI.auth.checkExclusiveAccess).toHaveBeenCalledWith({ permissions: ['write:groups'] }, ['write:groups'], ['manage:groups', 'manage:system'])
+    expect(global.WIKI.auth.checkExclusiveAccess).toHaveBeenCalledWith({ permissions: ['manage:users'] }, ['manage:users', 'write:groups'], ['manage:groups', 'manage:system'])
     expect(res.status).toHaveBeenCalledWith(403)
-    expect(res.json).toHaveBeenCalledWith({ error: 'You are not authorized to assign a user to this elevated group.' })
+    expect(res.json).toHaveBeenCalledWith({ error: 'You are not authorized to assign a user to this administrative group.' })
   })
 
   it('protects system group user assignments for non-system group admins', async () => {
@@ -484,12 +484,12 @@ describe('controllers/api groups endpoints', () => {
 
   it('unassigns group users and revokes their tokens', async () => {
     const { unassignUser } = loadHandler()
-    const req = { user: { permissions: ['manage:groups'] }, params: { groupId: '3', userId: '10' } }
+    const req = { user: { permissions: ['manage:users'] }, params: { groupId: '3', userId: '10' } }
     const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
 
     await unassignUser(req, res, jest.fn())
 
-    expect(global.WIKI.auth.checkAccess).toHaveBeenCalledWith({ permissions: ['manage:groups'] }, ['write:groups', 'manage:groups', 'manage:system'])
+    expect(global.WIKI.auth.checkAccess).toHaveBeenCalledWith({ permissions: ['manage:users'] }, ['manage:users', 'write:groups', 'manage:groups', 'manage:system'])
     const group = await global.WIKI.models.groups.query.mock.results[0].value.findById.mock.results[0].value
     expect(global.WIKI.models.groups.query.mock.results[0].value.findById).toHaveBeenCalledWith(3)
     expect(global.WIKI.models.users.query.mock.results[0].value.findById).toHaveBeenCalledWith(10)
@@ -504,7 +504,7 @@ describe('controllers/api groups endpoints', () => {
     })
   })
 
-  it('returns 403 for group user unassign requests without group admin access', async () => {
+  it('returns 403 for group user unassign requests without assignment access', async () => {
     global.WIKI.auth.checkAccess.mockReturnValueOnce(false)
     const { unassignUser } = loadHandler()
     const req = { user: { permissions: ['manage:api'] }, params: { groupId: '3', userId: '10' } }
@@ -513,7 +513,7 @@ describe('controllers/api groups endpoints', () => {
     await unassignUser(req, res, jest.fn())
 
     expect(res.status).toHaveBeenCalledWith(403)
-    expect(res.json).toHaveBeenCalledWith({ error: 'write:groups, manage:groups, or manage:system is required' })
+    expect(res.json).toHaveBeenCalledWith({ error: 'manage:users, write:groups, manage:groups, or manage:system is required' })
   })
 
   it('returns 400 for malformed group user unassign ids', async () => {
@@ -771,7 +771,7 @@ describe('controllers/api groups endpoints', () => {
     }, res, jest.fn())
 
     expect(res.status).toHaveBeenNthCalledWith(1, 403)
-    expect(res.json).toHaveBeenNthCalledWith(1, { error: 'You are not authorized to manage this group or assign these permissions.' })
+    expect(res.json).toHaveBeenNthCalledWith(1, { error: 'You are not authorized to manage this group or assign these administrative permissions.' })
     expect(res.status).toHaveBeenNthCalledWith(2, 403)
     expect(res.json).toHaveBeenNthCalledWith(2, { error: 'You are not authorized to manage this group or assign the manage:system permissions.' })
   })

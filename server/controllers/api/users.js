@@ -119,7 +119,7 @@ router.post('/', async (req, res, next) => {
 
   try {
     if (!(await WIKI.auth.checkAssignUserToGroupAccess(req.user, payload.groups))) {
-      return res.status(403).json({ error: 'You are not authorized to assign a user to a group with elevated permissions.' })
+      return res.status(403).json({ error: 'You are not authorized to create a user with an assignment to an administrative group.' })
     }
 
     await WIKI.models.users.createNewUser(payload)
@@ -238,7 +238,7 @@ router.put('/:id', async (req, res, next) => {
 
   try {
     if (!(await WIKI.auth.checkAssignUserToGroupAccess(req.user, payload.groups))) {
-      return res.status(403).json({ error: 'You are not authorized to assign a user to a group with elevated permissions.' })
+      return res.status(403).json({ error: 'You are not authorized to modify / assign a user from / to an administrative group.' })
     }
 
     await WIKI.models.users.updateUser({
@@ -248,7 +248,7 @@ router.put('/:id', async (req, res, next) => {
 
     return res.json({
       succeeded: true,
-      message: 'User created successfully'
+      message: 'User updated successfully'
     })
   } catch (err) {
     return res.status(400).json({ error: err.message || 'User could not be updated.' })

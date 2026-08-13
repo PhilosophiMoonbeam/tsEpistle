@@ -228,7 +228,7 @@ describe('controllers/api users endpoints', () => {
     await create(req, res, jest.fn())
 
     expect(res.status).toHaveBeenCalledWith(403)
-    expect(res.json).toHaveBeenCalledWith({ error: 'You are not authorized to assign a user to a group with elevated permissions.' })
+    expect(res.json).toHaveBeenCalledWith({ error: 'You are not authorized to create a user with an assignment to an administrative group.' })
     expect(global.WIKI.models.users.createNewUser).not.toHaveBeenCalled()
   })
 
@@ -282,7 +282,7 @@ describe('controllers/api users endpoints', () => {
     })
     expect(res.json).toHaveBeenCalledWith({
       succeeded: true,
-      message: 'User created successfully'
+      message: 'User updated successfully'
     })
   })
 
@@ -322,7 +322,7 @@ describe('controllers/api users endpoints', () => {
     await update(req, res, jest.fn())
 
     expect(res.status).toHaveBeenCalledWith(403)
-    expect(res.json).toHaveBeenCalledWith({ error: 'You are not authorized to assign a user to a group with elevated permissions.' })
+    expect(res.json).toHaveBeenCalledWith({ error: 'You are not authorized to modify / assign a user from / to an administrative group.' })
     expect(global.WIKI.models.users.updateUser).not.toHaveBeenCalled()
   })
 

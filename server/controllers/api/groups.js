@@ -23,6 +23,15 @@ const requireGroupsListAccess = (req, res) => {
   return true
 }
 
+const requireGroupUserAssignmentAccess = (req, res) => {
+  if (!WIKI.auth.checkAccess(req.user, ['manage:users', 'write:groups', 'manage:groups', 'manage:system'])) {
+    res.status(403).json({ error: 'manage:users, write:groups, manage:groups, or manage:system is required' })
+    return false
+  }
+
+  return true
+}
+
 const normalizePositiveIntegerParam = (value, label, res) => {
   if (!/^[1-9]\d*$/.test(value)) {
     res.status(400).json({ error: `${label} must be a positive integer` })
@@ -174,7 +183,7 @@ const normalizeGroupUpdatePayload = (body, res) => {
 }
 
 router.post('/:groupId/users/:userId', async (req, res, next) => {
-  if (!requireGroupsListAccess(req, res)) {
+  if (!requireGroupUserAssignmentAccess(req, res)) {
     return
   }
 
@@ -199,10 +208,10 @@ router.post('/:groupId/users/:userId', async (req, res, next) => {
     }
 
     if (
-      WIKI.auth.checkExclusiveAccess(req.user, ['write:groups'], ['manage:groups', 'manage:system']) &&
+      WIKI.auth.checkExclusiveAccess(req.user, ['manage:users', 'write:groups'], ['manage:groups', 'manage:system']) &&
       groupHasElevatedPermissions(group)
     ) {
-      return res.status(403).json({ error: 'You are not authorized to assign a user to this elevated group.' })
+      return res.status(403).json({ error: 'You are not authorized to assign a user to this administrative group.' })
     }
 
     if (
@@ -239,7 +248,7 @@ router.post('/:groupId/users/:userId', async (req, res, next) => {
 })
 
 router.delete('/:groupId/users/:userId', async (req, res, next) => {
-  if (!requireGroupsListAccess(req, res)) {
+  if (!requireGroupUserAssignmentAccess(req, res)) {
     return
   }
 
@@ -333,7 +342,7 @@ router.patch('/:id', async (req, res, next) => {
     WIKI.auth.checkExclusiveAccess(req.user, ['write:groups'], ['manage:groups', 'manage:system']) &&
     groupHasElevatedPermissions(payload)
   ) {
-    return res.status(403).json({ error: 'You are not authorized to manage this group or assign these permissions.' })
+    return res.status(403).json({ error: 'You are not authorized to manage this group or assign these administrative permissions.' })
   }
 
   if (
