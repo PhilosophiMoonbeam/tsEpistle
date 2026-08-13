@@ -101,7 +101,7 @@
 
 <script>
 import _ from 'lodash'
-import gql from 'graphql-tag'
+import { fetchPageTree } from '../../helpers/pages-api'
 
 const localeSegmentRegex = /^[A-Z]{2}(-[A-Z]{2})?$/i
 
@@ -276,29 +276,11 @@ export default {
     },
     async fetchFolders (item) {
       this.searchLoading = true
-      const resp = await this.$apollo.query({
-        query: gql`
-          query ($parent: Int!, $mode: PageTreeMode!, $locale: String!) {
-            pages {
-              tree(parent: $parent, mode: $mode, locale: $locale) {
-                id
-                path
-                title
-                isFolder
-                pageId
-                parent
-              }
-            }
-          }
-        `,
-        fetchPolicy: 'network-only',
-        variables: {
-          parent: item.id,
-          mode: 'ALL',
-          locale: this.currentLocale
-        }
+      const items = await fetchPageTree(window.fetch.bind(window), {
+        parent: item.id,
+        mode: 'ALL',
+        locale: this.currentLocale
       })
-      const items = _.get(resp, 'data.pages.tree', [])
       const itemFolders = _.filter(items, ['isFolder', true]).map(f => ({...f, children: []}))
       const itemPages = _.filter(items, i => i.pageId > 0)
       if (itemFolders.length > 0) {
@@ -308,7 +290,6 @@ export default {
       }
       this.pages = _.unionBy(this.pages, itemPages, 'id')
       this.all = _.unionBy(this.all, items, 'id')
-
       this.searchLoading = false
     }
   }

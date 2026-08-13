@@ -128,13 +128,14 @@
 </template>
 
 <script>
-import gql from 'graphql-tag'
 import { get, sync } from 'vuex-pathify'
+import { fetchGroupOptions } from '../../helpers/groups-api'
 import { setLoading } from '../../helpers/root-ui-store'
 
 export default {
   data() {
     return {
+      groups: [],
       fallbackMode: 'page',
       fallbackUrl: 'https://'
     }
@@ -150,32 +151,20 @@ export default {
   },
   methods: {
   },
-  mounted() {
+  async mounted() {
     this.$store.set('editor/editorKey', 'redirect')
 
     if (this.mode === 'create') {
       this.$store.set('editor/content', '<h1>Title</h1>\n\n<p>Some text here</p>')
     }
-  },
-  apollo: {
-    groups: {
-      query: gql`
-        {
-          groups {
-            list {
-              id
-              name
-            }
-          }
-        }
-      `,
-      fetchPolicy: 'network-only',
-      update: (data) => data.groups.list,
-      watchLoading (isLoading) {
-        setLoading(this.$store, 'editor-redirect-groups', isLoading)
-      }
+    setLoading(this.$store, 'editor-redirect-groups', true)
+    try {
+      this.groups = await fetchGroupOptions(window.fetch.bind(window))
+    } finally {
+      setLoading(this.$store, 'editor-redirect-groups', false)
     }
   }
+
 }
 </script>
 

@@ -233,13 +233,8 @@ import { get, sync } from 'vuex-pathify'
 import Cookies from 'js-cookie'
 import vueFilePond from 'vue-filepond'
 import 'filepond/dist/filepond.min.css'
+import { createAssetFolder, deleteAsset as deleteAssetRequest, fetchAssetFolders, fetchAssets, renameAsset as renameAssetRequest } from '../../helpers/assets-api'
 import { emitEditorInsert } from '../../helpers/editor-insert-events'
-
-import listAssetQuery from 'gql/editor/editor-media-query-list.gql'
-import listFolderAssetQuery from 'gql/editor/editor-media-query-folder-list.gql'
-import createAssetFolderMutation from 'gql/editor/editor-media-mutation-folder-create.gql'
-import renameAssetMutation from 'gql/editor/editor-media-mutation-asset-rename.gql'
-import deleteAssetMutation from 'gql/editor/editor-media-mutation-asset-delete.gql'
 
 const FilePond = vueFilePond()
 const localeSegmentRegex = /^[A-Z]{2}(-[A-Z]{2})?$/i
@@ -334,7 +329,13 @@ export default {
           this.$refs.folderNameIpt.focus()
         })
       }
+    },
+    currentFolderId () {
+      this.loadMedia()
     }
+  },
+  mounted() {
+    this.loadMedia()
   },
   methods: {
     prettyBytes(num) {
@@ -360,7 +361,7 @@ export default {
       return (neg ? '-' : '') + num + ' ' + unit
     },
     async refresh() {
-      await this.$apollo.queries.assets.refetch()
+      await this.loadMedia()
       this.$store.commit('showNotification', {
         message: this.$t('editor:assets.refreshSuccess'),
         style: 'success',
@@ -409,7 +410,7 @@ export default {
         this.$refs.pond.removeFile(file.id)
       }, 5000)
 
-      await this.$apollo.queries.assets.refetch()
+      await this.loadMedia()
     },
     downFolder(folder) {
       this.$store.commit('editor/pushMediaFolderTree', folder)
@@ -426,25 +427,15 @@ export default {
       this.$store.commit(`loadingStart`, 'editor-media-createfolder')
       this.newFolderLoading = true
       try {
-        const resp = await this.$apollo.mutate({
-          mutation: createAssetFolderMutation,
-          variables: {
-            parentFolderId: this.currentFolderId,
-            slug: this.newFolderName
-          }
+        await createAssetFolder(window.fetch.bind(window), this.currentFolderId, this.newFolderName)
+        await this.loadMedia()
+        this.$store.commit('showNotification', {
+          message: this.$t('editor:assets.folderCreateSuccess'),
+          style: 'success',
+          icon: 'check'
         })
-        if (_.get(resp, 'data.assets.createFolder.responseResult.succeeded', false)) {
-          await this.$apollo.queries.folders.refetch()
-          this.$store.commit('showNotification', {
-            message: this.$t('editor:assets.folderCreateSuccess'),
-            style: 'success',
-            icon: 'check'
-          })
-          this.newFolderDialog = false
-          this.newFolderName = ''
-        } else {
-          this.$store.commit('pushGraphError', new Error(_.get(resp, 'data.assets.createFolder.responseResult.message')))
-        }
+        this.newFolderDialog = false
+        this.newFolderName = ''
       } catch (err) {
         this.$store.commit('pushGraphError', err)
       }
@@ -459,25 +450,15 @@ export default {
       this.$store.commit(`loadingStart`, 'editor-media-renameasset')
       this.renameAssetLoading = true
       try {
-        const resp = await this.$apollo.mutate({
-          mutation: renameAssetMutation,
-          variables: {
-            id: this.currentFileId,
-            filename: this.renameAssetName
-          }
+        await renameAssetRequest(window.fetch.bind(window), this.currentFileId, this.renameAssetName)
+        await this.loadMedia()
+        this.$store.commit('showNotification', {
+          message: this.$t('editor:assets.renameSuccess'),
+          style: 'success',
+          icon: 'check'
         })
-        if (_.get(resp, 'data.assets.renameAsset.responseResult.succeeded', false)) {
-          await this.$apollo.queries.assets.refetch()
-          this.$store.commit('showNotification', {
-            message: this.$t('editor:assets.renameSuccess'),
-            style: 'success',
-            icon: 'check'
-          })
-          this.renameDialog = false
-          this.renameAssetName = ''
-        } else {
-          this.$store.commit('pushGraphError', new Error(_.get(resp, 'data.assets.renameAsset.responseResult.message')))
-        }
+        this.renameDialog = false
+        this.renameAssetName = ''
       } catch (err) {
         this.$store.commit('pushGraphError', err)
       }
@@ -488,65 +469,43 @@ export default {
       this.$store.commit(`loadingStart`, 'editor-media-deleteasset')
       this.deleteAssetLoading = true
       try {
-        const resp = await this.$apollo.mutate({
-          mutation: deleteAssetMutation,
-          variables: {
-            id: this.currentFileId
-          }
+        await deleteAssetRequest(window.fetch.bind(window), this.currentFileId)
+        this.currentFileId = null
+        await this.loadMedia()
+        this.$store.commit('showNotification', {
+          message: this.$t('editor:assets.deleteSuccess'),
+          style: 'success',
+          icon: 'check'
         })
-        if (_.get(resp, 'data.assets.deleteAsset.responseResult.succeeded', false)) {
-          this.currentFileId = null
-          await this.$apollo.queries.assets.refetch()
-          this.$store.commit('showNotification', {
-            message: this.$t('editor:assets.deleteSuccess'),
-            style: 'success',
-            icon: 'check'
-          })
-          this.deleteDialog = false
-        } else {
-          this.$store.commit('pushGraphError', new Error(_.get(resp, 'data.assets.deleteAsset.responseResult.message')))
-        }
+        this.deleteDialog = false
       } catch (err) {
         this.$store.commit('pushGraphError', err)
       }
       this.deleteAssetLoading = false
       this.$store.commit(`loadingStop`, 'editor-media-deleteasset')
     },
+    async loadMedia () {
+      this.loading = true
+      this.$store.commit('loadingStart', 'editor-media-list-refresh')
+      this.$store.commit('loadingStart', 'editor-media-folders-list-refresh')
+      try {
+        const [folders, assets] = await Promise.all([
+          fetchAssetFolders(window.fetch.bind(window), this.currentFolderId),
+          fetchAssets(window.fetch.bind(window), this.currentFolderId)
+        ])
+        this.folders = folders
+        this.assets = assets
+      } finally {
+        this.loading = false
+        this.$store.commit('loadingStop', 'editor-media-list-refresh')
+        this.$store.commit('loadingStop', 'editor-media-folders-list-refresh')
+      }
+    },
     cancel () {
       this.activeModal = ''
     }
-  },
-  apollo: {
-    folders: {
-      query: listFolderAssetQuery,
-      variables() {
-        return {
-          parentFolderId: this.currentFolderId
-        }
-      },
-      fetchPolicy: 'network-only',
-      update: (data) => data.assets.folders,
-      watchLoading (isLoading) {
-        this.$store.commit(`loading${isLoading ? 'Start' : 'Stop'}`, 'editor-media-folders-list-refresh')
-      }
-    },
-    assets: {
-      query: listAssetQuery,
-      variables() {
-        return {
-          folderId: this.currentFolderId,
-          kind: 'ALL'
-        }
-      },
-      throttle: 1000,
-      fetchPolicy: 'network-only',
-      update: (data) => data.assets.list,
-      watchLoading (isLoading) {
-        this.loading = isLoading
-        this.$store.commit(`loading${isLoading ? 'Start' : 'Stop'}`, 'editor-media-list-refresh')
-      }
-    }
   }
+
 }
 </script>
 

@@ -1,3 +1,5 @@
+import { isRecord } from './type-guards'
+
 type JsonHeaders = {
   get: (name: string) => string | null
 }
@@ -362,4 +364,195 @@ export async function deletePage (fetchImpl: FetchImpl, id: number, fallbackMess
   return {
     message: (payload as { message: string }).message
   }
+}
+
+type PageWriteInput = {
+  content: string
+  description: string
+  editor: string
+  isPrivate: boolean
+  isPublished: boolean
+  locale: string
+  path: string
+  publishEndDate: string
+  publishStartDate: string
+  scriptCss: string
+  scriptJs: string
+  tags: string[]
+  title: string
+}
+
+type PageTreeRow = {
+  id: number
+  path: string
+  title: string
+  isFolder: boolean
+  pageId: number | null
+  parent: number
+  locale: string
+}
+
+type PageSearchResult = {
+  results: Array<{ title: string, path: string, locale: string }>
+  suggestions: string[]
+  totalHits: number
+}
+
+async function sendJson (fetchImpl: FetchImpl, url: string, method: string, body: unknown, fallbackMessage: string): Promise<unknown> {
+  const response = await fetchImpl(url, {
+    method,
+    credentials: 'same-origin',
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(body)
+  })
+  return parseJsonResponse(response, fallbackMessage)
+}
+
+function normalizeWrittenPage (payload: unknown, fallbackMessage: string, requireId: boolean): { id?: number, updatedAt: string } {
+  if (!isRecord(payload) || !isRecord(payload.page) || typeof payload.page.updatedAt !== 'string') throw new Error(fallbackMessage)
+  if (requireId && (typeof payload.page.id !== 'number' || !Number.isSafeInteger(payload.page.id) || payload.page.id < 1)) {
+    throw new Error(fallbackMessage)
+  }
+
+  return {
+    ...(typeof payload.page.id === 'number' ? { id: payload.page.id } : {}),
+    updatedAt: payload.page.updatedAt
+  }
+}
+function isNullableNumber (value: unknown): value is number | null {
+  return value === null || typeof value === 'number'
+}
+
+export async function createPage (fetchImpl: FetchImpl, input: PageWriteInput, fallbackMessage = 'Page creation failed'): Promise<{ id?: number, updatedAt: string }> {
+  return normalizeWrittenPage(await sendJson(fetchImpl, '/_api/pages', 'POST', input, fallbackMessage), fallbackMessage, true)
+}
+
+export async function updatePage (fetchImpl: FetchImpl, id: number, input: PageWriteInput, fallbackMessage = 'Page update failed'): Promise<{ id?: number, updatedAt: string }> {
+  return normalizeWrittenPage(await sendJson(fetchImpl, `/_api/pages/${encodeURIComponent(id)}`, 'PUT', input, fallbackMessage), fallbackMessage, false)
+}
+
+export async function convertPage (fetchImpl: FetchImpl, id: number, editor: string, fallbackMessage = 'Page conversion failed'): Promise<void> {
+  await sendJson(fetchImpl, `/_api/pages/${encodeURIComponent(id)}/convert`, 'POST', { editor }, fallbackMessage)
+}
+
+export async function movePage (fetchImpl: FetchImpl, id: number, destinationLocale: string, destinationPath: string, fallbackMessage = 'Page move failed'): Promise<void> {
+  await sendJson(fetchImpl, `/_api/pages/${encodeURIComponent(id)}/move`, 'POST', { destinationLocale, destinationPath }, fallbackMessage)
+}
+
+export async function checkPageConflict (fetchImpl: FetchImpl, id: number, checkoutDate: string, fallbackMessage = 'Page conflict check failed'): Promise<boolean> {
+  const payload = await sendJson(fetchImpl, `/_api/pages/${encodeURIComponent(id)}/conflicts/check`, 'POST', { checkoutDate }, fallbackMessage)
+  if (!isRecord(payload) || typeof payload.conflict !== 'boolean') throw new Error(fallbackMessage)
+  return payload.conflict
+}
+
+export async function fetchPageConflictLatest (fetchImpl: FetchImpl, id: number, fallbackMessage = 'Latest page version fetch failed'): Promise<Record<string, unknown>> {
+  const response = await fetchImpl(`/_api/pages/${encodeURIComponent(id)}/conflict-latest`, {
+    credentials: 'same-origin',
+    headers: { Accept: 'application/json' }
+  })
+  const payload = await parseJsonResponse(response, fallbackMessage)
+  if (!isRecord(payload)) throw new Error(fallbackMessage)
+  return payload
+}
+
+export async function fetchPageTree (fetchImpl: FetchImpl, options: { locale: string, parent?: number, path?: string, mode?: 'ALL' | 'FOLDERS' | 'PAGES', includeAncestors?: boolean }, fallbackMessage = 'Page tree response is invalid'): Promise<PageTreeRow[]> {
+  const params = new URLSearchParams({ locale: options.locale, mode: options.mode || 'ALL' })
+  if (options.parent !== undefined) params.set('parent', String(options.parent))
+  if (options.path) params.set('path', options.path)
+  if (options.includeAncestors) params.set('includeAncestors', 'true')
+  const response = await fetchImpl(`/_api/pages/tree?${params.toString()}`, {
+    credentials: 'same-origin',
+    headers: { Accept: 'application/json' }
+  })
+  const payload = await parseJsonResponse(response, fallbackMessage)
+  if (!Array.isArray(payload)) throw new Error(fallbackMessage)
+  return payload.map(row => {
+    if (!isRecord(row)) throw new Error(fallbackMessage)
+    const pageId = row.pageId
+    if (!isNullableNumber(pageId)) throw new Error(fallbackMessage)
+    if (typeof row.id !== 'number' || typeof row.path !== 'string' || typeof row.title !== 'string' || typeof row.isFolder !== 'boolean' || typeof row.parent !== 'number' || typeof row.locale !== 'string') {
+      throw new Error(fallbackMessage)
+    }
+    return {
+      id: row.id,
+      path: row.path,
+      title: row.title,
+      isFolder: row.isFolder,
+      pageId,
+      parent: row.parent,
+      locale: row.locale
+    }
+  })
+}
+
+export async function searchPages (fetchImpl: FetchImpl, query: string, options: { locale?: string, path?: string } = {}, fallbackMessage = 'Page search response is invalid'): Promise<PageSearchResult> {
+  const params = new URLSearchParams({ query })
+  if (options.locale) params.set('locale', options.locale)
+  if (options.path) params.set('path', options.path)
+  const response = await fetchImpl(`/_api/pages/search?${params.toString()}`, {
+    credentials: 'same-origin',
+    headers: { Accept: 'application/json' }
+  })
+  const payload = await parseJsonResponse(response, fallbackMessage)
+  if (!isRecord(payload) || !Array.isArray(payload.results) || !Array.isArray(payload.suggestions) || typeof payload.totalHits !== 'number') throw new Error(fallbackMessage)
+  const results = payload.results.map(row => {
+    if (!isRecord(row) || typeof row.title !== 'string' || typeof row.path !== 'string' || typeof row.locale !== 'string') throw new Error(fallbackMessage)
+    return { title: row.title, path: row.path, locale: row.locale }
+  })
+  if (payload.suggestions.some(suggestion => typeof suggestion !== 'string')) throw new Error(fallbackMessage)
+  return { results, suggestions: payload.suggestions, totalHits: payload.totalHits }
+}
+
+export async function searchPageTags (fetchImpl: FetchImpl, query: string, fallbackMessage = 'Tag search response is invalid'): Promise<string[]> {
+  const response = await fetchImpl(`/_api/pages/tags/search?query=${encodeURIComponent(query)}`, {
+    credentials: 'same-origin',
+    headers: { Accept: 'application/json' }
+  })
+  const payload = await parseJsonResponse(response, fallbackMessage)
+  if (!Array.isArray(payload) || payload.some(tag => typeof tag !== 'string')) throw new Error(fallbackMessage)
+  return payload
+}
+
+
+export async function fetchPages (fetchImpl: FetchImpl, options: { creatorId?: number, authorId?: number, locale?: string, tags?: string[] } = {}, fallbackMessage = 'Page list response is invalid'): Promise<PageListRow[]> {
+  const params = new URLSearchParams()
+  if (options.creatorId) params.set('creatorId', String(options.creatorId))
+  if (options.authorId) params.set('authorId', String(options.authorId))
+  if (options.locale) params.set('locale', options.locale)
+  if (options.tags && options.tags.length > 0) params.set('tags', options.tags.join(','))
+  const suffix = params.toString()
+  const response = await fetchImpl(`/_api/pages${suffix ? `?${suffix}` : ''}`, {
+    credentials: 'same-origin',
+    headers: { Accept: 'application/json' }
+  })
+  const payload = await parseJsonResponse(response, fallbackMessage)
+  if (!Array.isArray(payload)) throw new Error(fallbackMessage)
+  return payload.map(row => normalizePageListRow(row, fallbackMessage))
+}
+
+export async function fetchPageHistory (fetchImpl: FetchImpl, id: number, offsetPage: number, offsetSize: number, fallbackMessage = 'Page history fetch failed'): Promise<{ trail: unknown[], total: number }> {
+  const response = await fetchImpl(`/_api/pages/${encodeURIComponent(id)}/history?offsetPage=${encodeURIComponent(offsetPage)}&offsetSize=${encodeURIComponent(offsetSize)}`, {
+    credentials: 'same-origin',
+    headers: { Accept: 'application/json' }
+  })
+  const payload = await parseJsonResponse(response, fallbackMessage)
+  if (!isRecord(payload) || !Array.isArray(payload.trail) || typeof payload.total !== 'number') throw new Error(fallbackMessage)
+  return { trail: payload.trail, total: payload.total }
+}
+
+export async function fetchPageVersion (fetchImpl: FetchImpl, pageId: number, versionId: number, fallbackMessage = 'Page version fetch failed'): Promise<Record<string, unknown>> {
+  const response = await fetchImpl(`/_api/pages/${encodeURIComponent(pageId)}/history/${encodeURIComponent(versionId)}`, {
+    credentials: 'same-origin',
+    headers: { Accept: 'application/json' }
+  })
+  const payload = await parseJsonResponse(response, fallbackMessage)
+  if (!isRecord(payload) || typeof payload.content !== 'string') throw new Error(fallbackMessage)
+  return payload
+}
+
+export async function restorePageVersion (fetchImpl: FetchImpl, pageId: number, versionId: number, fallbackMessage = 'Page restore failed'): Promise<void> {
+  await sendJson(fetchImpl, `/_api/pages/${encodeURIComponent(pageId)}/history/${encodeURIComponent(versionId)}/restore`, 'POST', {}, fallbackMessage)
 }

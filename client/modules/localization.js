@@ -7,11 +7,9 @@ import _ from 'lodash'
 
 /* global siteConfig */
 
-import localeQuery from 'gql/common/common-localization-query-translations.gql'
-
 export default {
   VueI18Next,
-  init(apolloClient) {
+  init() {
     i18next
       .use(Backend)
       .init({
@@ -28,17 +26,16 @@ export default {
               loadPath: '{{lng}}/{{ns}}',
               parse: (data) => data,
               ajax: (url, opts, cb, data) => {
-                let langParams = url.split('/')
-                apolloClient.query({
-                  query: localeQuery,
-                  variables: {
-                    locale: langParams[0],
-                    namespace: langParams[1]
-                  }
-                }).then(resp => {
-                  let ns = {}
-                  if (_.get(resp, 'data.localization.translations', []).length > 0) {
-                    resp.data.localization.translations.forEach(entry => {
+                const langParams = url.split('/')
+                window.fetch(`/_api/locales/${encodeURIComponent(langParams[0])}/strings?namespace=${encodeURIComponent(langParams[1])}`, {
+                  credentials: 'same-origin',
+                  headers: { Accept: 'application/json' }
+                }).then(async response => {
+                  if (!response.ok) throw new Error('Translations request failed')
+                  const entries = await response.json()
+                  const ns = {}
+                  if (Array.isArray(entries)) {
+                    entries.forEach(entry => {
                       _.set(ns, entry.key, entry.value)
                     })
                   }

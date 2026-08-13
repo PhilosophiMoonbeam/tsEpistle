@@ -1,21 +1,21 @@
 const fs = require('fs')
 const path = require('path')
 
-describe('tags Apollo loading facade migration guard', () => {
-  const tagsPath = path.join(process.cwd(), 'client/components/tags.vue')
-  const source = fs.readFileSync(tagsPath, 'utf8')
+describe('tags REST migration guard', () => {
+  const source = fs.readFileSync(path.join(process.cwd(), 'client/components/tags.vue'), 'utf8')
 
-  test('tags.vue imports and uses root-ui-store setLoading instead of dynamic loading commits', () => {
-    expect(source).toMatch(/import\s+\{[^}]*\bsetLoading\b[^}]*\}\s+from\s+['"]\.\.\/helpers\/root-ui-store['"]/)
+  test('loads tags and filtered pages through REST helpers', () => {
+    expect(source).toContain("import { fetchPages, fetchPageTags } from '../helpers/pages-api'")
+    expect(source).toContain('this.tags = await fetchPageTags(window.fetch.bind(window))')
+    expect(source).toMatch(/fetchPages\(window\.fetch\.bind\(window\),\s*\{[\s\S]*locale: this\.locale === 'any' \? undefined : this\.locale,[\s\S]*tags: this\.selection/)
+    expect(source).not.toMatch(/graphql-tag|\$apollo/)
+  })
 
-    expect(source).toMatch(/\bsetLoading\s*\(\s*this\.\$store\s*,\s*['"]tags-refresh['"]\s*,\s*isLoading\s*\)/)
-    expect(source).toMatch(/\bsetLoading\s*\(\s*this\.\$store\s*,\s*['"]pages-refresh['"]\s*,\s*isLoading\s*\)/)
-
-    expect(source).toMatch(/watchLoading\s*\(\s*isLoading\s*\)\s*\{[\s\S]*?this\.isLoading\s*=\s*isLoading[\s\S]*?setLoading\s*\(\s*this\.\$store\s*,\s*['"]pages-refresh['"]\s*,\s*isLoading\s*\)/)
-
-    expect(source).not.toMatch(/this\.\$store\.commit\(\s*(?:`loading|['"]loading(?:Start|Stop)['"])/)
-
-    const setLoadingCalls = source.match(/\bsetLoading\s*\(/g) || []
-    expect(setLoadingCalls).toHaveLength(2)
+  test('preserves independent tag and page loading state', () => {
+    expect(source).toContain("setLoading(this.$store, 'tags-refresh', true)")
+    expect(source).toContain("setLoading(this.$store, 'tags-refresh', false)")
+    expect(source).toContain("setLoading(this.$store, 'pages-refresh', true)")
+    expect(source).toContain("setLoading(this.$store, 'pages-refresh', false)")
+    expect(source).toContain('this.isLoading = false')
   })
 })

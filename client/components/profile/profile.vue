@@ -346,7 +346,7 @@
 
 <script>
 import { get } from 'vuex-pathify'
-import gql from 'graphql-tag'
+import { changeProfilePassword, fetchProfile, updateProfile } from '../../helpers/users-api'
 import _ from 'lodash'
 import Cookies from 'js-cookie'
 import validate from 'validate.js'
@@ -711,7 +711,20 @@ export default {
       }
     }
   },
+  mounted() {
+    this.loadProfile()
+  },
   methods: {
+    async loadProfile () {
+      this.$store.commit('loadingStart', 'profile-refresh')
+      try {
+        this.user = await fetchProfile(window.fetch.bind(window))
+      } catch (err) {
+        this.$store.commit('pushGraphError', err)
+      } finally {
+        this.$store.commit('loadingStop', 'profile-refresh')
+      }
+    },
     /**
      * Focus an input after delay
      */
@@ -730,43 +743,21 @@ export default {
       this.$store.commit(`loadingStart`, 'profile-save')
 
       try {
-        const respRaw = await this.$apollo.mutate({
-          mutation: gql`
-            mutation ($name: String!, $location: String!, $jobTitle: String!, $timezone: String!, $dateFormat: String!, $appearance: String!) {
-              users {
-                updateProfile(name: $name, location: $location, jobTitle: $jobTitle, timezone: $timezone, dateFormat: $dateFormat, appearance: $appearance) {
-                  responseResult {
-                    succeeded
-                    errorCode
-                    slug
-                    message
-                  }
-                  jwt
-                }
-              }
-            }
-          `,
-          variables: {
-            name: this.user.name,
-            location: this.user.location,
-            jobTitle: this.user.jobTitle,
-            timezone: this.user.timezone,
-            dateFormat: this.user.dateFormat,
-            appearance: this.user.appearance
-          }
+        const token = await updateProfile(window.fetch.bind(window), {
+          name: this.user.name,
+          location: this.user.location,
+          jobTitle: this.user.jobTitle,
+          timezone: this.user.timezone,
+          dateFormat: this.user.dateFormat,
+          appearance: this.user.appearance
         })
-        const resp = _.get(respRaw, 'data.users.updateProfile.responseResult', {})
-        if (resp.succeeded) {
-          Cookies.set('jwt', _.get(respRaw, 'data.users.updateProfile.jwt', ''), { expires: 365, secure: window.location.protocol === 'https:' })
-          this.$store.set('user/name', this.user.name)
-          this.$store.commit('showNotification', {
-            message: this.$t('profile:save.success'),
-            style: 'success',
-            icon: 'check'
-          })
-        } else {
-          throw new Error(resp.message)
-        }
+        Cookies.set('jwt', token, { expires: 365, secure: window.location.protocol === 'https:' })
+        this.$store.set('user/name', this.user.name)
+        this.$store.commit('showNotification', {
+          message: this.$t('profile:save.success'),
+          style: 'success',
+          icon: 'check'
+        })
       } catch (err) {
         this.$store.commit('pushGraphError', err)
       }
@@ -839,81 +830,26 @@ export default {
         this.$store.commit(`loadingStart`, 'profile-changepassword')
 
         try {
-          const respRaw = await this.$apollo.mutate({
-            mutation: gql`
-              mutation ($current: String!, $new: String!) {
-                users {
-                  changePassword(current: $current, new: $new) {
-                    responseResult {
-                      succeeded
-                      errorCode
-                      slug
-                      message
-                    }
-                    jwt
-                  }
-                }
-              }
-            `,
-            variables: {
-              current: this.currentPass,
-              new: this.newPass
-            }
+          const token = await changeProfilePassword(
+            window.fetch.bind(window),
+            this.currentPass,
+            this.newPass
+          )
+          this.currentPass = ''
+          this.newPass = ''
+          this.verifyPass = ''
+          Cookies.set('jwt', token, { expires: 365, secure: window.location.protocol === 'https:' })
+          this.$store.commit('showNotification', {
+            message: this.$t('profile:auth.changePassSuccess'),
+            style: 'success',
+            icon: 'check'
           })
-          const resp = _.get(respRaw, 'data.users.changePassword.responseResult', {})
-          if (resp.succeeded) {
-            this.currentPass = ''
-            this.newPass = ''
-            this.verifyPass = ''
-            Cookies.set('jwt', _.get(respRaw, 'data.users.changePassword.jwt', ''), { expires: 365, secure: window.location.protocol === 'https:' })
-            this.$store.commit('showNotification', {
-              message: this.$t('profile:auth.changePassSuccess'),
-              style: 'success',
-              icon: 'check'
-            })
-          } else {
-            throw new Error(resp.message)
-          }
         } catch (err) {
           this.$store.commit('pushGraphError', err)
         }
 
         this.$store.commit(`loadingStop`, 'profile-changepassword')
         this.changePassLoading = false
-      }
-    }
-  },
-  apollo: {
-    user: {
-      query: gql`
-        {
-          users {
-            profile {
-              id
-              name
-              email
-              providerKey
-              providerName
-              isSystem
-              isVerified
-              location
-              jobTitle
-              timezone
-              dateFormat
-              appearance
-              createdAt
-              updatedAt
-              lastLoginAt
-              groups
-              pagesTotal
-            }
-          }
-        }
-      `,
-      fetchPolicy: 'network-only',
-      update: (data) => _.cloneDeep(data.users.profile),
-      watchLoading (isLoading) {
-        this.$store.commit(`loading${isLoading ? 'Start' : 'Stop'}`, 'profile-refresh')
       }
     }
   }

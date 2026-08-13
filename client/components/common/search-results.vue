@@ -60,7 +60,7 @@ import { sync } from 'vuex-pathify'
 import { OrbitSpinner } from 'epic-spinners'
 
 import { onSearchEnter, onSearchMove, offSearchEnter, offSearchMove } from '../../helpers/search-navigation-events'
-import searchPagesQuery from 'gql/common/common-pages-query-search.gql'
+import { searchPages } from '../../helpers/pages-api'
 
 export default {
   components: {
@@ -71,6 +71,7 @@ export default {
       cursor: 0,
       pagination: 1,
       perPage: 10,
+      searchTimer: null,
       response: {
         results: [],
         suggestions: [],
@@ -101,11 +102,14 @@ export default {
   watch: {
     search(newValue, oldValue) {
       this.cursor = 0
-      if (!newValue || (newValue && newValue.length < 2)) {
+      clearTimeout(this.searchTimer)
+      if (!newValue || newValue.length < 2) {
         this.searchIsLoading = false
-      } else {
-        this.searchIsLoading = true
+        this.response = { results: [], suggestions: [], totalHits: 0 }
+        return
       }
+      this.searchIsLoading = true
+      this.searchTimer = setTimeout(() => this.runSearch(newValue), 300)
     },
     results() {
       this.cursor = 0
@@ -116,6 +120,7 @@ export default {
     onSearchEnter(this.handleSearchEnter)
   },
   beforeDestroy() {
+    clearTimeout(this.searchTimer)
     offSearchMove(this.handleSearchMove)
     offSearchEnter(this.handleSearchEnter)
   },
@@ -147,28 +152,21 @@ export default {
     },
     goToPageInNewTab(item) {
       window.open(`/${item.locale}/${item.path}`, '_blank')
-    }
-  },
-  apollo: {
-    response: {
-      query: searchPagesQuery,
-      variables() {
-        return {
-          query: this.search
-        }
-      },
-      fetchPolicy: 'network-only',
-      debounce: 300,
-      throttle: 1000,
-      skip() {
-        return !this.search || this.search.length < 2
-      },
-      result() {
+    },
+    async runSearch(query) {
+      try {
+        this.response = await searchPages(window.fetch.bind(window), query, {
+          locale: this.searchRestrictLocale || undefined,
+          path: this.searchRestrictPath || undefined
+        })
         this.pagination = 1
-      },
-      update: (data) => _.get(data, 'pages.search', {}),
-      watchLoading (isLoading) {
-        this.searchIsLoading = isLoading
+      } catch (err) {
+        console.warn(err)
+        this.response = { results: [], suggestions: [], totalHits: 0 }
+      } finally {
+        if (query === this.search) {
+          this.searchIsLoading = false
+        }
       }
     }
   }

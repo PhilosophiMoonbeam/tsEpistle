@@ -85,7 +85,7 @@
               v-model='newTag'
               :hint='$t(`editor:props.tagsHint`)'
               :items='newTagSuggestions'
-              :loading='$apollo.queries.newTagSuggestions.loading'
+              :loading='tagSearchLoading'
               persistent-hint
               hide-no-data
               :search-input.sync='newTagSearch'
@@ -247,7 +247,7 @@
 <script>
 import _ from 'lodash'
 import { sync, get } from 'vuex-pathify'
-import gql from 'graphql-tag'
+import { searchPageTags } from '../../helpers/pages-api'
 
 import CodeMirror from 'codemirror'
 import 'codemirror/lib/codemirror.css'
@@ -274,6 +274,8 @@ export default {
       newTag: '',
       newTagSuggestions: [],
       newTagSearch: '',
+      tagSearchTimer: null,
+      tagSearchLoading: false,
       currentTab: 0,
       cm: null,
       rules: {
@@ -314,6 +316,14 @@ export default {
         }, 500)
       }
     },
+    newTagSearch (newValue) {
+      clearTimeout(this.tagSearchTimer)
+      if (!this.value || _.isEmpty(newValue)) {
+        this.newTagSuggestions = []
+        return
+      }
+      this.tagSearchTimer = setTimeout(() => this.loadTagSuggestions(newValue), 500)
+    },
     newTag (newValue, oldValue) {
       const tagClean = _.trim(newValue || '').toLowerCase()
       if (tagClean && tagClean.length > 0) {
@@ -344,6 +354,9 @@ export default {
       }
     }
   },
+  beforeDestroy() {
+    clearTimeout(this.tagSearchTimer)
+  },
   methods: {
     removeTag (tag) {
       this.tags = _.without(this.tags, tag)
@@ -357,6 +370,17 @@ export default {
     setPath({ path, locale }) {
       this.locale = locale
       this.path = path
+    },
+    async loadTagSuggestions(query) {
+      this.tagSearchLoading = true
+      try {
+        this.newTagSuggestions = await searchPageTags(window.fetch.bind(window), query)
+      } catch (err) {
+        console.warn(err)
+        this.newTagSuggestions = []
+      } finally {
+        this.tagSearchLoading = false
+      }
     },
     loadEditor(ref, mode) {
       this.cm = CodeMirror.fromTextArea(ref, {
@@ -394,29 +418,8 @@ export default {
         this.cm.focus()
       })
     }
-  },
-  apollo: {
-    newTagSuggestions: {
-      query: gql`
-        query ($query: String!) {
-          pages {
-            searchTags (query: $query)
-          }
-        }
-      `,
-      variables () {
-        return {
-          query: this.newTagSearch
-        }
-      },
-      fetchPolicy: 'cache-first',
-      update: (data) => _.get(data, 'pages.searchTags', []),
-      skip () {
-        return !this.value || _.isEmpty(this.newTagSearch)
-      },
-      throttle: 500
-    }
   }
+
 }
 </script>
 

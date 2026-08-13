@@ -81,6 +81,18 @@ const parseTagsQuery = value => {
   return []
 }
 
+const parsePositiveIntegerParam = (req, res, name = 'id') => {
+  const id = parsePositiveIntegerQuery(_.get(req, `params.${name}`))
+  if (id === null) {
+    res.status(400).json({ error: `${name} must be a positive integer` })
+  }
+  return id
+}
+
+const sendOperationError = (res, err, fallback) => {
+  res.status(err.status || 500).json({ error: err.message || fallback })
+}
+
 router.get('/', async (req, res, next) => {
   if (!requirePageListAccess(req, res)) {
     return
@@ -171,6 +183,166 @@ router.get('/links', async (req, res, next) => {
     return res.json(await pageOperations.listLinks({ requester: req.user, locale }))
   } catch (err) {
     return next(err)
+  }
+})
+
+router.get('/tags/search', async (req, res, next) => {
+  const query = _.get(req, 'query.query')
+  if (!_.isString(query) || query.length < 1) return res.status(400).json({ error: 'query must be a non-empty string' })
+  try {
+    res.json(await pageOperations.searchTags({ requester: req.user, query }))
+  } catch (err) {
+    next(err)
+  }
+})
+
+router.get('/search', async (req, res, next) => {
+  const query = _.get(req, 'query.query')
+  if (!_.isString(query) || query.length < 1) {
+    return res.status(400).json({ error: 'query must be a non-empty string' })
+  }
+  try {
+    res.json(await pageOperations.search({
+      requester: req.user,
+      query,
+      locale: _.isString(_.get(req, 'query.locale')) ? _.get(req, 'query.locale') : undefined,
+      path: _.isString(_.get(req, 'query.path')) ? _.get(req, 'query.path') : undefined
+    }))
+  } catch (err) {
+    next(err)
+  }
+})
+
+router.get('/tree', async (req, res, next) => {
+  const locale = _.get(req, 'query.locale')
+  const mode = _.get(req, 'query.mode', 'ALL')
+  const parentValue = _.get(req, 'query.parent')
+  const parent = parentValue === undefined || parentValue === '' ? undefined : Number(parentValue)
+  if (!_.isString(locale) || locale.length < 1) return res.status(400).json({ error: 'locale must be a non-empty string' })
+  if (!['ALL', 'FOLDERS', 'PAGES'].includes(mode)) return res.status(400).json({ error: 'mode must be ALL, FOLDERS, or PAGES' })
+  if (parent !== undefined && (!Number.isSafeInteger(parent) || parent < 0)) return res.status(400).json({ error: 'parent must be a non-negative integer' })
+  try {
+    res.json(await pageOperations.getTree({
+      requester: req.user,
+      locale,
+      path: _.isString(_.get(req, 'query.path')) ? _.get(req, 'query.path') : undefined,
+      parent,
+      mode,
+      includeAncestors: _.get(req, 'query.includeAncestors') === 'true'
+    }))
+  } catch (err) {
+    next(err)
+  }
+})
+
+router.post('/', async (req, res) => {
+  try {
+    const page = await pageOperations.create({ requester: req.user, input: req.body || {} })
+    res.status(201).json({ page })
+  } catch (err) {
+    sendOperationError(res, err, 'Page creation failed')
+  }
+})
+
+router.put('/:id', async (req, res) => {
+  const id = parsePositiveIntegerParam(req, res)
+  if (id === null) return
+  try {
+    const page = await pageOperations.update({ requester: req.user, input: { ...(req.body || {}), id } })
+    res.json({ page })
+  } catch (err) {
+    sendOperationError(res, err, 'Page update failed')
+  }
+})
+
+router.post('/:id/convert', async (req, res) => {
+  const id = parsePositiveIntegerParam(req, res)
+  if (id === null) return
+  try {
+    await pageOperations.convert({ requester: req.user, input: { id, editor: _.get(req, 'body.editor') } })
+    res.json({ message: 'Page has been converted.' })
+  } catch (err) {
+    sendOperationError(res, err, 'Page conversion failed')
+  }
+})
+
+router.post('/:id/move', async (req, res) => {
+  const id = parsePositiveIntegerParam(req, res)
+  if (id === null) return
+  try {
+    await pageOperations.move({
+      requester: req.user,
+      input: {
+        id,
+        destinationLocale: _.get(req, 'body.destinationLocale'),
+        destinationPath: _.get(req, 'body.destinationPath')
+      }
+    })
+    res.json({ message: 'Page has been moved.' })
+  } catch (err) {
+    sendOperationError(res, err, 'Page move failed')
+  }
+})
+
+router.post('/:id/conflicts/check', async (req, res) => {
+  const id = parsePositiveIntegerParam(req, res)
+  if (id === null) return
+  const checkoutDate = new Date(_.get(req, 'body.checkoutDate'))
+  if (Number.isNaN(checkoutDate.valueOf())) return res.status(400).json({ error: 'checkoutDate must be a valid date' })
+  try {
+    res.json({ conflict: await pageOperations.checkConflict({ requester: req.user, id, checkoutDate }) })
+  } catch (err) {
+    sendOperationError(res, err, 'Page conflict check failed')
+  }
+})
+
+router.get('/:id/conflict-latest', async (req, res) => {
+  const id = parsePositiveIntegerParam(req, res)
+  if (id === null) return
+  try {
+    res.json(await pageOperations.getConflictLatest({ requester: req.user, id }))
+  } catch (err) {
+    sendOperationError(res, err, 'Latest page version fetch failed')
+  }
+})
+
+router.get('/:id/history', async (req, res) => {
+  const id = parsePositiveIntegerParam(req, res)
+  if (id === null) return
+  const offsetPage = Number(_.get(req, 'query.offsetPage', 0))
+  const offsetSize = Number(_.get(req, 'query.offsetSize', 100))
+  if (!Number.isSafeInteger(offsetPage) || offsetPage < 0 || !Number.isSafeInteger(offsetSize) || offsetSize < 1) {
+    return res.status(400).json({ error: 'history offsets are invalid' })
+  }
+  try {
+    res.json(await pageOperations.getHistory({ requester: req.user, id, offsetPage, offsetSize }))
+  } catch (err) {
+    sendOperationError(res, err, 'Page history fetch failed')
+  }
+})
+
+router.get('/:id/history/:versionId', async (req, res) => {
+  const pageId = parsePositiveIntegerParam(req, res)
+  if (pageId === null) return
+  const versionId = parsePositiveIntegerParam(req, res, 'versionId')
+  if (versionId === null) return
+  try {
+    res.json(await pageOperations.getVersion({ requester: req.user, pageId, versionId }))
+  } catch (err) {
+    sendOperationError(res, err, 'Page version fetch failed')
+  }
+})
+
+router.post('/:id/history/:versionId/restore', async (req, res) => {
+  const pageId = parsePositiveIntegerParam(req, res)
+  if (pageId === null) return
+  const versionId = parsePositiveIntegerParam(req, res, 'versionId')
+  if (versionId === null) return
+  try {
+    await pageOperations.restore({ requester: req.user, pageId, versionId })
+    res.json({ message: 'Page version restored successfully.' })
+  } catch (err) {
+    sendOperationError(res, err, 'Page restore failed')
   }
 })
 

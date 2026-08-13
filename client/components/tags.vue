@@ -155,8 +155,7 @@
 import VueRouter from 'vue-router'
 import _ from 'lodash'
 
-import tagsQuery from 'gql/common/common-pages-query-tags.gql'
-import pagesQuery from 'gql/common/common-pages-query-list.gql'
+import { fetchPages, fetchPageTags } from '../helpers/pages-api'
 import { setLoading } from '../helpers/root-ui-store'
 
 /* global siteLangs */
@@ -238,6 +237,10 @@ export default {
     orderByDirection (newValue, oldValue) {
       this.rebuildURL()
       this.pagination.sortDesc = [newValue === 1]
+    },
+    $route () {
+      this.selection = _.compact(decodeURI(this.$route.path).split('/'))
+      this.loadPages()
     }
   },
   router,
@@ -266,6 +269,8 @@ export default {
       this.orderByDirection = this.$route.query.dir === 'asc' ? 0 : 1
       this.pagination.sortDesc = [this.orderByDirection === 1]
     }
+    this.loadTags()
+    this.loadPages()
   },
   methods: {
     toggleTag (tag) {
@@ -296,36 +301,35 @@ export default {
     },
     goTo (page) {
       window.location.assign(`/${page.locale}/${page.path}`)
-    }
-  },
-  apollo: {
-    tags: {
-      query: tagsQuery,
-      fetchPolicy: 'cache-and-network',
-      update: (data) => _.cloneDeep(data.pages.tags),
-      watchLoading (isLoading) {
-        setLoading(this.$store, 'tags-refresh', isLoading)
+    },
+    async loadTags () {
+      setLoading(this.$store, 'tags-refresh', true)
+      try {
+        this.tags = await fetchPageTags(window.fetch.bind(window))
+      } finally {
+        setLoading(this.$store, 'tags-refresh', false)
       }
     },
-    pages: {
-      query: pagesQuery,
-      fetchPolicy: 'cache-and-network',
-      update: (data) => _.cloneDeep(data.pages.list),
-      watchLoading (isLoading) {
-        this.isLoading = isLoading
-        setLoading(this.$store, 'pages-refresh', isLoading)
-      },
-      variables () {
-        return {
-          locale: this.locale === 'any' ? null : this.locale,
+    async loadPages () {
+      if (this.selection.length < 1) {
+        this.pages = []
+        this.isLoading = false
+        return
+      }
+      this.isLoading = true
+      setLoading(this.$store, 'pages-refresh', true)
+      try {
+        this.pages = await fetchPages(window.fetch.bind(window), {
+          locale: this.locale === 'any' ? undefined : this.locale,
           tags: this.selection
-        }
-      },
-      skip () {
-        return this.selection.length < 1
+        })
+      } finally {
+        this.isLoading = false
+        setLoading(this.$store, 'pages-refresh', false)
       }
     }
   }
+
 }
 </script>
 

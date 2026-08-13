@@ -32,9 +32,8 @@
 </template>
 
 <script>
-import _ from 'lodash'
 import { get } from 'vuex-pathify'
-import gql from 'graphql-tag'
+import { convertPage } from '../../helpers/pages-api'
 import { loadingStart, loadingStop, pushGraphError } from '../../helpers/root-ui-store'
 
 export default {
@@ -73,38 +72,9 @@ export default {
       loadingStart(this.$store, 'page-convert')
       this.$nextTick(async () => {
         try {
-          const resp = await this.$apollo.mutate({
-            mutation: gql`
-              mutation (
-                $id: Int!
-                $editor: String!
-                ) {
-                  pages {
-                    convert(
-                      id: $id
-                      editor: $editor
-                    ) {
-                      responseResult {
-                        succeeded
-                        errorCode
-                        slug
-                        message
-                      }
-                    }
-                  }
-              }
-            `,
-            variables: {
-              id: this.pageId,
-              editor: this.newEditor
-            }
-          })
-          if (_.get(resp, 'data.pages.convert.responseResult.succeeded', false)) {
-            this.isShown = false
-            window.location.assign(`/e/${this.pageLocale}/${this.pagePath}`)
-          } else {
-            throw new Error(_.get(resp, 'data.pages.convert.responseResult.message', this.$t('common:error.unexpected')))
-          }
+          await convertPage(window.fetch.bind(window), this.pageId, this.newEditor)
+          this.isShown = false
+          window.location.assign(`/e/${this.pageLocale}/${this.pagePath}`)
         } catch (err) {
           pushGraphError(this.$store, err)
         }

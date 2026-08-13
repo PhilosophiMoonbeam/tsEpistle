@@ -75,10 +75,9 @@
 </template>
 
 <script>
-import _ from 'lodash'
-import gql from 'graphql-tag'
 import { sync, get } from 'vuex-pathify'
 import { emitEditorConflictResolved } from '../../helpers/editor-conflict-events'
+import { fetchPageConflictLatest } from '../../helpers/pages-api'
 import { showNotification } from '../../helpers/root-ui-store'
 
 /* global siteConfig */
@@ -152,33 +151,12 @@ export default {
         break
     }
 
-    let resp = await this.$apollo.query({
-      query: gql`
-        query ($id: Int!) {
-          pages {
-            conflictLatest(id: $id) {
-              id
-              authorId
-              authorName
-              content
-              createdAt
-              description
-              isPublished
-              locale
-              path
-              tags
-              title
-              updatedAt
-            }
-          }
-        }
-      `,
-      fetchPolicy: 'network-only',
-      variables: {
-        id: this.$store.get('page/id')
-      }
-    })
-    resp = _.get(resp, 'data.pages.conflictLatest', false)
+    let resp
+    try {
+      resp = await fetchPageConflictLatest(window.fetch.bind(window), this.$store.get('page/id'))
+    } catch (err) {
+      resp = null
+    }
 
     if (!resp) {
       return showNotification(this.$store, {

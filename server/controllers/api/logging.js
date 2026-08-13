@@ -44,4 +44,31 @@ router.post('/loggers', async (req, res) => {
   }
 })
 
+router.get('/live', async (req, res, next) => {
+  if (!requireSystemAccess(req, res, true)) return
+  res.status(200)
+  res.set({
+    'Cache-Control': 'no-cache, no-transform',
+    'Content-Type': 'text/event-stream',
+    Connection: 'keep-alive'
+  })
+  res.flushHeaders()
+
+  const iterator = WIKI.GQLEmitter.asyncIterator('livetrail')
+  let closed = false
+  req.on('close', async () => {
+    closed = true
+    if (typeof iterator.return === 'function') await iterator.return()
+  })
+
+  try {
+    for await (const item of iterator) {
+      if (closed) break
+      res.write(`data: ${JSON.stringify(item)}\n\n`)
+    }
+  } catch (err) {
+    if (!closed) next(err)
+  }
+})
+
 module.exports = router

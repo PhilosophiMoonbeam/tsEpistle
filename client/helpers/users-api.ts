@@ -1,3 +1,5 @@
+import { isRecord } from './type-guards'
+
 type JsonResponse = { ok: boolean, headers?: { get: (name: string) => string | null }, json: () => Promise<any> }
 type FetchImpl = (url: string, init: any) => Promise<JsonResponse>
 
@@ -326,4 +328,50 @@ export async function fetchUserDetails (fetchImpl: FetchImpl, id: any, fallbackM
   })
 
   return normalizeUserDetail(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
+}
+
+type ProfileUpdateInput = {
+  name: string
+  location: string
+  jobTitle: string
+  timezone: string
+  dateFormat: string
+  appearance: string
+}
+
+export async function fetchProfile (fetchImpl: FetchImpl, fallbackMessage = 'Profile response is invalid'): Promise<Record<string, unknown>> {
+  const response = await fetchImpl('/_api/users/profile', {
+    credentials: 'same-origin',
+    headers: { Accept: 'application/json' }
+  })
+  const payload = await parseJsonResponse(response, fallbackMessage)
+  if (!isRecord(payload) || typeof payload.id !== 'number' || typeof payload.name !== 'string' || typeof payload.email !== 'string' || !Array.isArray(payload.groups) || typeof payload.pagesTotal !== 'number') {
+    throw new Error(fallbackMessage)
+  }
+  return payload
+}
+
+async function sendProfileRequest (fetchImpl: FetchImpl, path: string, method: string, body: unknown, fallbackMessage: string): Promise<string> {
+  const response = await fetchImpl(`/_api/users/profile${path}`, {
+    method,
+    credentials: 'same-origin',
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(body)
+  })
+  const payload = await parseJsonResponse(response, fallbackMessage)
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload) || typeof payload.token !== 'string' || payload.token.length < 1) {
+    throw new Error(fallbackMessage)
+  }
+  return payload.token
+}
+
+export function updateProfile (fetchImpl: FetchImpl, input: ProfileUpdateInput, fallbackMessage = 'Profile update failed'): Promise<string> {
+  return sendProfileRequest(fetchImpl, '', 'PATCH', input, fallbackMessage)
+}
+
+export function changeProfilePassword (fetchImpl: FetchImpl, current: string, newPassword: string, fallbackMessage = 'Password change failed'): Promise<string> {
+  return sendProfileRequest(fetchImpl, '/password', 'POST', { current, newPassword }, fallbackMessage)
 }

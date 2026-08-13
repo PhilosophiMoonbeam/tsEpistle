@@ -7,15 +7,11 @@ describe('admin logging console showNotification facade migration guard', () => 
   const scriptMatch = source.match(/<script>\s*([\s\S]*?)\s*<\/script>/)
   const script = scriptMatch && scriptMatch[1]
 
-  test('admin-logging-console.vue uses root-ui-store showNotification for subscription errors', () => {
+  test('admin-logging-console.vue reports SSE failures through the root UI facade', () => {
     expect(script).not.toBeNull()
     expect(script).toMatch(/import\s+\{[^}]*\bshowNotification\b[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/root-ui-store['"]/)
-
-    expect(script).toMatch(/\bshowNotification\s*\(\s*self\.\$store\s*,\s*\{\s*style:\s*['"]red['"]\s*,\s*message:\s*error\.message\s*,\s*icon:\s*['"]warning['"]\s*\}\s*\)/)
-    expect(script).not.toMatch(/\bself\.\$store\.commit\(\s*['"]showNotification['"]\s*,/)
-    expect(script).not.toMatch(/\$store\.commit\(\s*['"]showNotification['"]\s*,/)
-
-    const showNotificationCalls = script.match(/\bshowNotification\s*\(/g) || []
-    expect(showNotificationCalls).toHaveLength(1)
+    expect(script).toContain("this.liveSource = new EventSource('/_api/logging/live')")
+    expect(script).toMatch(/this\.liveSource\.onerror\s*=\s*\(\)\s*=>\s*\{[\s\S]*showNotification\s*\(\s*this\.\$store\s*,\s*\{[\s\S]*message:\s*['"]Live console connection failed\.['"]/)
+    expect(script).not.toMatch(/\$apollo|graphql-tag|self\.\$store/)
   })
 })

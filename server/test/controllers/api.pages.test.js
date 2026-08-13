@@ -4,6 +4,7 @@ jest.mock('express', () => {
     get: jest.fn(),
     patch: jest.fn(),
     post: jest.fn(),
+    put: jest.fn(),
     use: jest.fn()
   }
 
@@ -20,6 +21,8 @@ describe('controllers/api pages endpoints', () => {
     express.__router.delete.mockClear()
     express.__router.get.mockClear()
     express.__router.patch.mockClear()
+    express.__router.post.mockClear()
+    express.__router.put.mockClear()
 
     global.WIKI = {
       auth: {

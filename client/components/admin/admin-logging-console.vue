@@ -26,13 +26,13 @@ import _ from 'lodash'
 // import { Terminal } from 'xterm'
 // import * as fit from 'xterm/lib/addons/fit/fit'
 
-import livetrailSubscription from 'gql/admin/logging/logging-subscription-livetrail.gql'
 import { showNotification } from '../../helpers/root-ui-store'
 
 // Terminal.applyAddon(fit)
 
 export default {
   term: null,
+  liveSource: null,
   props: {
     value: {
       type: Boolean,
@@ -56,6 +56,8 @@ export default {
           this.attach()
         }, 100)
       } else {
+        if (this.liveSource) this.liveSource.close()
+        this.liveSource = null
         this.term.dispose()
         this.term = null
       }
@@ -72,24 +74,18 @@ export default {
       this.isShown = false
     },
     attach() {
-      const self = this
-      const observer = this.$apollo.subscribe({
-        query: livetrailSubscription
-      })
-      observer.subscribe({
-        next(data) {
-          const item = _.get(data, `data.loggingLiveTrail`, {})
-          console.info(item)
-          self.term.writeln(`${item.level}: ${item.output}`)
-        },
-        error(error) {
-          showNotification(self.$store, {
-            style: 'red',
-            message: error.message,
-            icon: 'warning'
-          })
-        }
-      })
+      this.liveSource = new EventSource('/_api/logging/live')
+      this.liveSource.onmessage = event => {
+        const item = JSON.parse(event.data)
+        this.term.writeln(`${item.level}: ${item.output}`)
+      }
+      this.liveSource.onerror = () => {
+        showNotification(this.$store, {
+          style: 'red',
+          message: 'Live console connection failed.',
+          icon: 'warning'
+        })
+      }
     }
   }
 }

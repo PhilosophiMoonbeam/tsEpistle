@@ -171,7 +171,7 @@ import { get, sync } from 'vuex-pathify'
 import { onEditorInsert, offEditorInsert } from '../../helpers/editor-insert-events'
 import { onEditorSaveConflict, onEditorContentOverwrite, offEditorSaveConflict, offEditorContentOverwrite } from '../../helpers/editor-conflict-events'
 import markdownHelp from './markdown/help.vue'
-import gql from 'graphql-tag'
+import { searchPages } from '../../helpers/pages-api'
 import DOMPurify from 'dompurify'
 import Velocity from 'velocity-animate'
 
@@ -643,28 +643,9 @@ export default {
               const queryString = curLine.substring(curLine.lastIndexOf('[') + 1, curLine.length - 2)
               const token = cm.getTokenAt(cur)
               try {
-                const respRaw = await this.$apollo.query({
-                  query: gql`
-                    query ($query: String!, $locale: String) {
-                      pages {
-                        search(query:$query, locale:$locale) {
-                          results {
-                            title
-                            path
-                            locale
-                          }
-                          totalHits
-                        }
-                      }
-                    }
-                  `,
-                  variables: {
-                    query: queryString,
-                    locale: this.locale
-                  },
-                  fetchPolicy: 'cache-first'
+                const resp = await searchPages(window.fetch.bind(window), queryString, {
+                  locale: this.locale
                 })
-                const resp = _.get(respRaw, 'data.pages.search', {})
                 if (resp && resp.totalHits > 0) {
                   return {
                     list: resp.results.map(r => ({

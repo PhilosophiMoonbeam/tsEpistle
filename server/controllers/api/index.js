@@ -2,6 +2,7 @@ const express = require('express')
 
 const router = express.Router()
 
+router.use('/assets', require('./assets'))
 router.use('/system', require('./system'))
 router.use('/analytics', require('./analytics'))
 router.use('/search', require('./search'))

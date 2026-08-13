@@ -442,8 +442,8 @@ describe('controllers/api users endpoints', () => {
     const registeredPatchPaths = express.__router.patch.mock.calls.map(([path]) => path)
     const registeredGetPaths = express.__router.get.mock.calls.map(([path]) => path)
 
-    expect(registeredPatchPaths).toEqual(['/:id/status', '/:id/verification', '/:id/tfa'])
-    expect(registeredGetPaths.indexOf('/:id')).toBeGreaterThan(registeredGetPaths.indexOf('/whoami'))
+    expect(registeredPatchPaths).toEqual(['/profile', '/:id/status', '/:id/verification', '/:id/tfa'])
+    expect(registeredGetPaths.indexOf('/:id')).toBeGreaterThan(registeredGetPaths.indexOf('/profile'))
   })
 
   it('activates admin users through REST status action', async () => {

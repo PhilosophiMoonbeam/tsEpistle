@@ -133,7 +133,7 @@
 import * as Diff2Html from 'diff2html'
 import { createPatch } from 'diff'
 import _ from 'lodash'
-import gql from 'graphql-tag'
+import { fetchPageHistory, fetchPageVersion, restorePageVersion } from '../helpers/pages-api'
 import { getPageDownloadPath, getPageSourcePath } from '../helpers/page-actions'
 import { loadingStart, loadingStop, setLoading, showNotification } from '../helpers/root-ui-store'
 
@@ -327,49 +327,21 @@ export default {
       this.$store.set('page/effectivePermissions', JSON.parse(Buffer.from(this.effectivePermissions, 'base64').toString()))
     }
   },
+  mounted() {
+    this.loadHistory()
+  },
   methods: {
     async loadVersion (versionId) {
       loadingStart(this.$store, 'history-version-' + versionId)
-      const resp = await this.$apollo.query({
-        query: gql`
-          query ($pageId: Int!, $versionId: Int!) {
-            pages {
-              version (pageId: $pageId, versionId: $versionId) {
-                action
-                authorId
-                authorName
-                content
-                contentType
-                createdAt
-                versionDate
-                description
-                editor
-                isPrivate
-                isPublished
-                locale
-                pageId
-                path
-                publishEndDate
-                publishStartDate
-                tags
-                title
-                versionId
-              }
-            }
-          }
-        `,
-        variables: {
-          versionId,
-          pageId: this.pageId
-        }
-      })
-      loadingStop(this.$store, 'history-version-' + versionId)
-      const page = _.get(resp, 'data.pages.version', null)
-      if (page) {
+      try {
+        const page = await fetchPageVersion(window.fetch.bind(window), this.pageId, versionId)
         this.cache.push(page)
         return page
-      } else {
+      } catch (err) {
+        console.warn(err)
         return { content: '' }
+      } finally {
+        loadingStop(this.$store, 'history-version-' + versionId)
       }
     },
     viewSource (versionId) {
@@ -389,39 +361,16 @@ export default {
       this.restoreLoading = true
       loadingStart(this.$store, 'history-restore')
       try {
-        const resp = await this.$apollo.mutate({
-          mutation: gql`
-            mutation ($pageId: Int!, $versionId: Int!) {
-              pages {
-                restore (pageId: $pageId, versionId: $versionId) {
-                  responseResult {
-                    succeeded
-                    errorCode
-                    slug
-                    message
-                  }
-                }
-              }
-            }
-          `,
-          variables: {
-            versionId: this.restoreTarget.versionId,
-            pageId: this.pageId
-          }
+        await restorePageVersion(window.fetch.bind(window), this.pageId, this.restoreTarget.versionId)
+        showNotification(this.$store, {
+          style: 'success',
+          message: this.$t('history:restore.success'),
+          icon: 'check'
         })
-        if (_.get(resp, 'data.pages.restore.responseResult.succeeded', false) === true) {
-          showNotification(this.$store, {
-            style: 'success',
-            message: this.$t('history:restore.success'),
-            icon: 'check'
-          })
-          this.isRestoreConfirmDialogShown = false
-          setTimeout(() => {
-            window.location.assign(`/${this.locale}/${this.path}`)
-          }, 1000)
-        } else {
-          throw new Error(_.get(resp, 'data.pages.restore.responseResult.message', 'An unexpected error occurred'))
-        }
+        this.isRestoreConfirmDialogShown = false
+        setTimeout(() => {
+          window.location.assign(`/${this.locale}/${this.path}`)
+        }, 1000)
       } catch (err) {
         showNotification(this.$store, {
           style: 'red',
@@ -456,27 +405,28 @@ export default {
     setDiffTarget (versionId) {
       this.diffTarget = versionId
     },
-    loadMore () {
+    async loadMore () {
       this.offsetPage++
-      this.$apollo.queries.trail.fetchMore({
-        variables: {
-          id: this.pageId,
-          offsetPage: this.offsetPage,
-          offsetSize: this.$vuetify.breakpoint.mdAndUp ? 25 : 5
-        },
-        updateQuery: (previousResult, { fetchMoreResult }) => {
-          return {
-            pages: {
-              history: {
-                total: previousResult.pages.history.total,
-                trail: [...previousResult.pages.history.trail, ...fetchMoreResult.pages.history.trail],
-                __typename: previousResult.pages.history.__typename
-              },
-              __typename: previousResult.pages.__typename
-            }
-          }
-        }
-      })
+      const result = await this.fetchHistoryPage(this.offsetPage)
+      this.trail = [...this.trail, ...result.trail]
+    },
+    async loadHistory () {
+      const result = await this.fetchHistoryPage(0)
+      this.total = result.total
+      this.trail = result.trail
+    },
+    async fetchHistoryPage (offsetPage) {
+      setLoading(this.$store, 'history-trail-refresh', true)
+      try {
+        return await fetchPageHistory(
+          window.fetch.bind(window),
+          this.pageId,
+          offsetPage,
+          this.$vuetify.breakpoint.mdAndUp ? 25 : 5
+        )
+      } finally {
+        setLoading(this.$store, 'history-trail-refresh', false)
+      }
     },
     trailColor (actionType) {
       switch (actionType) {
@@ -518,44 +468,8 @@ export default {
           return this.$vuetify.theme.dark ? 'grey darken-3' : 'grey lighten-4'
       }
     }
-  },
-  apollo: {
-    trail: {
-      query: gql`
-        query($id: Int!, $offsetPage: Int, $offsetSize: Int) {
-          pages {
-            history(id:$id, offsetPage:$offsetPage, offsetSize:$offsetSize) {
-              trail {
-                versionId
-                authorId
-                authorName
-                actionType
-                valueBefore
-                valueAfter
-                versionDate
-              }
-              total
-            }
-          }
-        }
-      `,
-      variables () {
-        return {
-          id: this.pageId,
-          offsetPage: 0,
-          offsetSize: this.$vuetify.breakpoint.mdAndUp ? 25 : 5
-        }
-      },
-      manual: true,
-      result ({ data, loading, networkStatus }) {
-        this.total = data.pages.history.total
-        this.trail = data.pages.history.trail
-      },
-      watchLoading (isLoading) {
-        setLoading(this.$store, 'history-trail-refresh', isLoading)
-      }
-    }
   }
+
 }
 </script>
 

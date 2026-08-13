@@ -41,7 +41,7 @@
 </template>
 
 <script>
-import gql from 'graphql-tag'
+import { fetchPages } from '../../helpers/pages-api'
 import { showNotification, setLoading } from '../../helpers/root-ui-store'
 
 export default {
@@ -66,9 +66,12 @@ export default {
       return Math.ceil(this.pages.length / 15)
     }
   },
+  mounted() {
+    this.loadPages()
+  },
   methods: {
     async refresh() {
-      await this.$apollo.queries.pages.refetch()
+      await this.loadPages()
       showNotification(this.$store, {
         message: this.$t('profile:pages.refreshSuccess'),
         style: 'success',
@@ -77,43 +80,23 @@ export default {
     },
     goToPage(id) {
       window.location.assign(`/i/` + id)
-    }
-  },
-  apollo: {
-    pages: {
-      query: gql`
-        query($creatorId: Int, $authorId: Int) {
-          pages {
-            list(creatorId: $creatorId, authorId: $authorId) {
-              id
-              locale
-              path
-              title
-              description
-              contentType
-              isPublished
-              isPrivate
-              privateNS
-              createdAt
-              updatedAt
-            }
-          }
-        }
-      `,
-      variables () {
-        return {
-          creatorId: this.$store.get('user/id'),
-          authorId: this.$store.get('user/id')
-        }
-      },
-      fetchPolicy: 'network-only',
-      update: (data) => data.pages.list,
-      watchLoading (isLoading) {
-        this.loading = isLoading
-        setLoading(this.$store, 'profile-pages-refresh', isLoading)
+    },
+    async loadPages() {
+      this.loading = true
+      setLoading(this.$store, 'profile-pages-refresh', true)
+      try {
+        const userId = this.$store.get('user/id')
+        this.pages = await fetchPages(window.fetch.bind(window), {
+          creatorId: userId,
+          authorId: userId
+        })
+      } finally {
+        this.loading = false
+        setLoading(this.$store, 'profile-pages-refresh', false)
       }
     }
   }
+
 }
 </script>
 

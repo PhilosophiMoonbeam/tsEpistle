@@ -2,7 +2,6 @@
   "comments": true,
   "plugins": [
     "lodash",
-    "graphql-tag",
     "@babel/plugin-syntax-dynamic-import",
     "@babel/plugin-syntax-import-meta",
     "@babel/plugin-proposal-class-properties",

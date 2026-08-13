@@ -69,7 +69,7 @@
 
 <script>
 import _ from 'lodash'
-import gql from 'graphql-tag'
+import { fetchPageTree } from '../../../helpers/pages-api'
 import { get } from 'vuex-pathify'
 import { loadingStart, loadingStop } from '../../../helpers/root-ui-store'
 
@@ -143,60 +143,26 @@ export default {
 
       this.currentParent = item
 
-      const resp = await this.$apollo.query({
-        query: gql`
-          query ($parent: Int, $locale: String!) {
-            pages {
-              tree(parent: $parent, mode: ALL, locale: $locale) {
-                id
-                path
-                title
-                isFolder
-                pageId
-                parent
-                locale
-              }
-            }
-          }
-        `,
-        fetchPolicy: 'cache-first',
-        variables: {
-          parent: item.id,
-          locale: this.locale
-        }
+      this.currentItems = await fetchPageTree(window.fetch.bind(window), {
+        parent: item.id,
+        locale: this.locale,
+        mode: 'ALL'
       })
       this.loadedCache = _.union(this.loadedCache, [item.id])
-      this.currentItems = _.get(resp, 'data.pages.tree', [])
       loadingStop(this.$store, 'browse-load')
     },
     async loadFromCurrentPath() {
       loadingStart(this.$store, 'browse-load')
-      const resp = await this.$apollo.query({
-        query: gql`
-          query ($path: String, $locale: String!) {
-            pages {
-              tree(path: $path, mode: ALL, locale: $locale, includeAncestors: true) {
-                id
-                path
-                title
-                isFolder
-                pageId
-                parent
-                locale
-              }
-            }
-          }
-        `,
-        fetchPolicy: 'cache-first',
-        variables: {
-          path: this.path,
-          locale: this.locale
-        }
+      const items = await fetchPageTree(window.fetch.bind(window), {
+        path: this.path,
+        locale: this.locale,
+        mode: 'ALL',
+        includeAncestors: true
       })
-      const items = _.get(resp, 'data.pages.tree', [])
       const curPage = _.find(items, ['pageId', this.$store.get('page/id')])
       if (!curPage) {
         console.warn('Could not find current page in page tree listing!')
+        loadingStop(this.$store, 'browse-load')
         return
       }
 
@@ -213,7 +179,6 @@ export default {
 
       this.parents = [this.currentParent, ...invertedAncestors.reverse()]
       this.currentParent = _.last(this.parents)
-
       this.loadedCache = [curPage.parent]
       this.currentItems = _.filter(items, ['parent', curPage.parent])
       loadingStop(this.$store, 'browse-load')

@@ -163,6 +163,50 @@ router.get('/whoami', async (req, res) => {
   })
 })
 
+router.get('/profile', async (req, res, next) => {
+  try {
+    const user = await userOperations.getProfile(req.user)
+    const [groups, pagesTotal] = await Promise.all([
+      userOperations.listProfileGroups(user),
+      userOperations.countPages(user)
+    ])
+    res.json({
+      ..._.pick(user, ['id', 'name', 'email', 'providerKey', 'providerName', 'isSystem', 'isVerified', 'location', 'jobTitle', 'timezone', 'dateFormat', 'appearance', 'createdAt', 'updatedAt', 'lastLoginAt']),
+      groups,
+      pagesTotal
+    })
+  } catch (err) {
+    next(err)
+  }
+})
+
+router.patch('/profile', async (req, res, next) => {
+  const input = _.pick(req.body, ['name', 'location', 'jobTitle', 'timezone', 'dateFormat', 'appearance'])
+  if (['name', 'location', 'jobTitle', 'timezone', 'dateFormat', 'appearance'].some(field => typeof input[field] !== 'string')) {
+    return res.status(400).json({ error: 'Profile fields must be strings' })
+  }
+  try {
+    const token = await userOperations.updateProfile({ requester: req.user, input })
+    res.json({ token })
+  } catch (err) {
+    next(err)
+  }
+})
+
+router.post('/profile/password', async (req, res, next) => {
+  const current = _.get(req, 'body.current')
+  const newPassword = _.get(req, 'body.newPassword')
+  if (typeof current !== 'string' || typeof newPassword !== 'string') {
+    return res.status(400).json({ error: 'current and newPassword must be strings' })
+  }
+  try {
+    const token = await userOperations.changePassword({ requester: req.user, current, newPassword })
+    res.json({ token })
+  } catch (err) {
+    next(err)
+  }
+})
+
 router.put('/:id', async (req, res, next) => {
   if (!requireUserDetailAccess(req, res)) {
     return

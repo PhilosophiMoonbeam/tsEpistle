@@ -271,7 +271,7 @@ import {
 } from '../../helpers/page-action-events'
 import { loadingStart, loadingStop, pushGraphError } from '../../helpers/root-ui-store'
 import { emitSearchEnter, emitSearchMove } from '../../helpers/search-navigation-events'
-import movePageMutation from 'gql/common/common-pages-mutation-move.gql'
+import { movePage } from '../../helpers/pages-api'
 
 /* global siteConfig, siteLangs */
 
@@ -447,19 +447,13 @@ export default {
     async pageMoveRename ({ path, locale }) {
       loadingStart(this.$store, 'page-move')
       try {
-        const resp = await this.$apollo.mutate({
-          mutation: movePageMutation,
-          variables: {
-            id: this.$store.get('page/id'),
-            destinationLocale: locale,
-            destinationPath: path
-          }
-        })
-        if (_.get(resp, 'data.pages.move.responseResult.succeeded', false)) {
-          window.location.replace(`/${locale}/${path}`)
-        } else {
-          throw new Error(_.get(resp, 'data.pages.move.responseResult.message', this.$t('common:error.unexpected')))
-        }
+        await movePage(
+          window.fetch.bind(window),
+          this.$store.get('page/id'),
+          locale,
+          path
+        )
+        window.location.replace(`/${locale}/${path}`)
       } catch (err) {
         pushGraphError(this.$store, err)
         loadingStop(this.$store, 'page-move')

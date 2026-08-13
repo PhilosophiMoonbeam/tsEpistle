@@ -57,7 +57,7 @@
 
 <script>
 import _ from 'lodash'
-import gql from 'graphql-tag'
+import { checkPageConflict, createPage, updatePage } from '../helpers/pages-api'
 import { get, sync } from 'vuex-pathify'
 import { AtomSpinner } from 'epic-spinners'
 import { Base64 } from 'js-base64'
@@ -158,6 +158,7 @@ export default {
     return {
       isSaving: false,
       isConflict: false,
+      conflictTimer: null,
       dialogProps: false,
       dialogProgress: false,
       dialogEditorSelector: false,
@@ -257,12 +258,14 @@ export default {
     }
 
     onEditorConflictReset(this.handleEditorConflictReset)
+    this.conflictTimer = setInterval(this.refreshConflict, 5000)
 
     // this.$store.set('editor/mode', 'edit')
     // this.currentEditor = `editorApi`
   },
   beforeDestroy() {
     offEditorConflictReset(this.handleEditorConflictReset)
+    clearInterval(this.conflictTimer)
   },
   methods: {
     openPropsModal(name) {
@@ -276,6 +279,14 @@ export default {
     },
     handleEditorConflictReset() {
       this.isConflict = false
+    },
+    async refreshConflict() {
+      if (this.mode === 'create' || this.isSaving || !this.isDirty) return
+      try {
+        this.isConflict = await checkPageConflict(window.fetch.bind(window), this.pageId, this.checkoutDateActive)
+      } catch (err) {
+        console.warn(err)
+      }
     },
     openConflict() {
       emitEditorSaveConflict()
@@ -294,190 +305,44 @@ export default {
           // -> CREATE PAGE
           // --------------------------------------------
 
-          let resp = await this.$apollo.mutate({
-            mutation: gql`
-              mutation (
-                $content: String!
-                $description: String!
-                $editor: String!
-                $isPrivate: Boolean!
-                $isPublished: Boolean!
-                $locale: String!
-                $path: String!
-                $publishEndDate: Date
-                $publishStartDate: Date
-                $scriptCss: String
-                $scriptJs: String
-                $tags: [String]!
-                $title: String!
-              ) {
-                pages {
-                  create(
-                    content: $content
-                    description: $description
-                    editor: $editor
-                    isPrivate: $isPrivate
-                    isPublished: $isPublished
-                    locale: $locale
-                    path: $path
-                    publishEndDate: $publishEndDate
-                    publishStartDate: $publishStartDate
-                    scriptCss: $scriptCss
-                    scriptJs: $scriptJs
-                    tags: $tags
-                    title: $title
-                  ) {
-                    responseResult {
-                      succeeded
-                      errorCode
-                      slug
-                      message
-                    }
-                    page {
-                      id
-                      updatedAt
-                    }
-                  }
-                }
-              }
-            `,
-            variables: {
-              content: this.$store.get('editor/content'),
-              description: this.$store.get('page/description'),
-              editor: this.$store.get('editor/editorKey'),
-              locale: this.$store.get('page/locale'),
-              isPrivate: false,
-              isPublished: this.$store.get('page/isPublished'),
-              path: this.$store.get('page/path'),
-              publishEndDate: this.$store.get('page/publishEndDate') || '',
-              publishStartDate: this.$store.get('page/publishStartDate') || '',
-              scriptCss: this.$store.get('page/scriptCss'),
-              scriptJs: this.$store.get('page/scriptJs'),
-              tags: this.$store.get('page/tags'),
-              title: this.$store.get('page/title')
-            }
+          const page = await createPage(window.fetch.bind(window), this.getPageInput())
+          this.checkoutDateActive = page.updatedAt || this.checkoutDateActive
+          this.isConflict = false
+          this.$store.commit('showNotification', {
+            message: this.$t('editor:save.createSuccess'),
+            style: 'success',
+            icon: 'check'
           })
-          resp = _.get(resp, 'data.pages.create', {})
-          if (_.get(resp, 'responseResult.succeeded')) {
-            this.checkoutDateActive = _.get(resp, 'page.updatedAt', this.checkoutDateActive)
-            this.isConflict = false
-            this.$store.commit('showNotification', {
-              message: this.$t('editor:save.createSuccess'),
-              style: 'success',
-              icon: 'check'
-            })
-            this.$store.set('editor/id', _.get(resp, 'page.id'))
-            this.$store.set('editor/mode', 'update')
-            this.exitConfirmed = true
-            window.location.assign(`/${this.$store.get('page/locale')}/${this.$store.get('page/path')}`)
-          } else {
-            throw new Error(_.get(resp, 'responseResult.message'))
-          }
+          this.$store.set('editor/id', page.id)
+          this.$store.set('editor/mode', 'update')
+          this.exitConfirmed = true
+          window.location.assign(`/${this.$store.get('page/locale')}/${this.$store.get('page/path')}`)
         } else {
           // --------------------------------------------
           // -> UPDATE EXISTING PAGE
           // --------------------------------------------
 
-          const conflictResp = await this.$apollo.query({
-            query: gql`
-              query ($id: Int!, $checkoutDate: Date!) {
-                pages {
-                  checkConflicts(id: $id, checkoutDate: $checkoutDate)
-                }
-              }
-            `,
-            fetchPolicy: 'network-only',
-            variables: {
-              id: this.pageId,
-              checkoutDate: this.checkoutDateActive
-            }
-          })
-          if (_.get(conflictResp, 'data.pages.checkConflicts', false)) {
+          if (await checkPageConflict(window.fetch.bind(window), this.pageId, this.checkoutDateActive)) {
             emitEditorSaveConflict()
             throw new Error(this.$t('editor:conflict.warning'))
           }
 
-          let resp = await this.$apollo.mutate({
-            mutation: gql`
-              mutation (
-                $id: Int!
-                $content: String
-                $description: String
-                $editor: String
-                $isPrivate: Boolean
-                $isPublished: Boolean
-                $locale: String
-                $path: String
-                $publishEndDate: Date
-                $publishStartDate: Date
-                $scriptCss: String
-                $scriptJs: String
-                $tags: [String]
-                $title: String
-              ) {
-                pages {
-                  update(
-                    id: $id
-                    content: $content
-                    description: $description
-                    editor: $editor
-                    isPrivate: $isPrivate
-                    isPublished: $isPublished
-                    locale: $locale
-                    path: $path
-                    publishEndDate: $publishEndDate
-                    publishStartDate: $publishStartDate
-                    scriptCss: $scriptCss
-                    scriptJs: $scriptJs
-                    tags: $tags
-                    title: $title
-                  ) {
-                    responseResult {
-                      succeeded
-                      errorCode
-                      slug
-                      message
-                    }
-                    page {
-                      updatedAt
-                    }
-                  }
-                }
-              }
-            `,
-            variables: {
-              id: this.$store.get('page/id'),
-              content: this.$store.get('editor/content'),
-              description: this.$store.get('page/description'),
-              editor: this.$store.get('editor/editorKey'),
-              locale: this.$store.get('page/locale'),
-              isPrivate: false,
-              isPublished: this.$store.get('page/isPublished'),
-              path: this.$store.get('page/path'),
-              publishEndDate: this.$store.get('page/publishEndDate') || '',
-              publishStartDate: this.$store.get('page/publishStartDate') || '',
-              scriptCss: this.$store.get('page/scriptCss'),
-              scriptJs: this.$store.get('page/scriptJs'),
-              tags: this.$store.get('page/tags'),
-              title: this.$store.get('page/title')
-            }
+          const page = await updatePage(
+            window.fetch.bind(window),
+            this.$store.get('page/id'),
+            this.getPageInput()
+          )
+          this.checkoutDateActive = page.updatedAt || this.checkoutDateActive
+          this.isConflict = false
+          this.$store.commit('showNotification', {
+            message: this.$t('editor:save.updateSuccess'),
+            style: 'success',
+            icon: 'check'
           })
-          resp = _.get(resp, 'data.pages.update', {})
-          if (_.get(resp, 'responseResult.succeeded')) {
-            this.checkoutDateActive = _.get(resp, 'page.updatedAt', this.checkoutDateActive)
-            this.isConflict = false
-            this.$store.commit('showNotification', {
-              message: this.$t('editor:save.updateSuccess'),
-              style: 'success',
-              icon: 'check'
-            })
-            if (this.locale !== this.$store.get('page/locale') || this.path !== this.$store.get('page/path')) {
-              _.delay(() => {
-                window.location.replace(`/e/${this.$store.get('page/locale')}/${this.$store.get('page/path')}`)
-              }, 1000)
-            }
-          } else {
-            throw new Error(_.get(resp, 'responseResult.message'))
+          if (this.locale !== this.$store.get('page/locale') || this.path !== this.$store.get('page/path')) {
+            _.delay(() => {
+              window.location.replace(`/e/${this.$store.get('page/locale')}/${this.$store.get('page/path')}`)
+            }, 1000)
           }
         }
 
@@ -531,6 +396,23 @@ export default {
         }
       }, 500)
     },
+    getPageInput () {
+      return {
+        content: this.$store.get('editor/content'),
+        description: this.$store.get('page/description'),
+        editor: this.$store.get('editor/editorKey'),
+        locale: this.$store.get('page/locale'),
+        isPrivate: false,
+        isPublished: this.$store.get('page/isPublished'),
+        path: this.$store.get('page/path'),
+        publishEndDate: this.$store.get('page/publishEndDate') || '',
+        publishStartDate: this.$store.get('page/publishStartDate') || '',
+        scriptCss: this.$store.get('page/scriptCss'),
+        scriptJs: this.$store.get('page/scriptJs'),
+        tags: this.$store.get('page/tags'),
+        title: this.$store.get('page/title')
+      }
+    },
     setCurrentSavedState () {
       this.savedState = {
         description: this.$store.get('page/description'),
@@ -556,29 +438,6 @@ export default {
         styl.appendChild(document.createTextNode(css))
       }
     }, 1000)
-  },
-  apollo: {
-    isConflict: {
-      query: gql`
-        query ($id: Int!, $checkoutDate: Date!) {
-          pages {
-            checkConflicts(id: $id, checkoutDate: $checkoutDate)
-          }
-        }
-      `,
-      fetchPolicy: 'network-only',
-      pollInterval: 5000,
-      variables () {
-        return {
-          id: this.pageId,
-          checkoutDate: this.checkoutDateActive
-        }
-      },
-      update: (data) => _.cloneDeep(data.pages.checkConflicts),
-      skip () {
-        return this.mode === 'create' || this.isSaving || !this.isDirty
-      }
-    }
   }
 }
 </script>
