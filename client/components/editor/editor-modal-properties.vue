@@ -18,12 +18,13 @@
         span {{ $t('common:actions.ok') }}
     v-card(tile)
       v-tabs(color='white', background-color='blue darken-1', dark, centered, v-model='currentTab')
-        v-tab {{$t('editor:props.info')}}
-        v-tab {{$t('editor:props.scheduling')}}
-        v-tab(:disabled='!hasScriptPermission') {{$t('editor:props.scripts')}}
-        //- v-tab(disabled) {{$t('editor:props.social')}}
-        v-tab(:disabled='!hasStylePermission') {{$t('editor:props.styles')}}
-        v-tab-item(transition='fade-transition', reverse-transition='fade-transition')
+        v-tab(:value='0') {{$t('editor:props.info')}}
+        v-tab(:value='1') {{$t('editor:props.scheduling')}}
+        v-tab(:value='2', :disabled='!hasScriptPermission') {{$t('editor:props.scripts')}}
+        //- v-tab(:value='3', disabled) {{$t('editor:props.social')}}
+        v-tab(:value='3', :disabled='!hasStylePermission') {{$t('editor:props.styles')}}
+      v-tabs-window(v-model='currentTab')
+        v-tabs-window-item(:value='0', transition='fade-transition', reverse-transition='fade-transition')
           v-card-text.pt-5
             .overline.pb-5 {{$t('editor:props.pageInfo')}}
             v-text-field(
@@ -90,7 +91,7 @@
               hide-no-data
               v-model:search-input='newTagSearch'
               )
-        v-tab-item(transition='fade-transition', reverse-transition='fade-transition')
+        v-tabs-window-item(:value='1', transition='fade-transition', reverse-transition='fade-transition')
           v-card-text
             .overline {{$t('editor:props.publishState')}}
             v-switch(
@@ -188,7 +189,7 @@
                         @click='$refs.menuPublishEnd.save(publishEndDate)'
                         ) {{$t('common:actions.ok')}}
 
-        v-tab-item(:transition='false', :reverse-transition='false')
+        v-tabs-window-item(:value='2', :transition='false', :reverse-transition='false')
           .editor-props-codeeditor-title
             .overline {{$t('editor:props.html')}}
           .editor-props-codeeditor
@@ -196,7 +197,7 @@
           .editor-props-codeeditor-hint
             .caption {{$t('editor:props.htmlHint')}}
 
-        //- v-tab-item(transition='fade-transition', reverse-transition='fade-transition')
+        //- v-tabs-window-item(:value='3', transition='fade-transition', reverse-transition='fade-transition')
         //-   v-card-text
         //-     .overline {{$t('editor:props.socialFeatures')}}
         //-     v-switch(
@@ -233,7 +234,7 @@
         //-       inset
         //-       )
 
-        v-tab-item(:transition='false', :reverse-transition='false')
+        v-tabs-window-item(:value='3', :transition='false', :reverse-transition='false')
           .editor-props-codeeditor-title
             .overline {{$t('editor:props.css')}}
           .editor-props-codeeditor

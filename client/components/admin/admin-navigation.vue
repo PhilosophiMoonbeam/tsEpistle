@@ -22,8 +22,8 @@
                 v-toolbar(color='teal', dark, dense, flat, height='56')
                   v-toolbar-title.subtitle-1 {{$t('admin:navigation.mode')}}
                 v-list(nav, two-line)
-                  v-list-item-group(v-model='config.mode', mandatory, :color='$vuetify.theme.current.dark ? `teal lighten-3` : `teal`')
-                    v-list-item(value='TREE')
+                  template
+                    v-list-item(value='TREE', :active='config.mode === `TREE`', @click='config.mode = `TREE`')
                       v-avatar
                         img(src='/_assets/svg/icon-tree-structure-dotted.svg', alt='Site Tree')
                       div.v-list-item-content
@@ -32,7 +32,7 @@
                       v-avatar
                         v-icon(v-if='$vuetify.theme.current.dark', :color='config.mode === `TREE` ? `teal lighten-3` : `grey darken-2`') mdi-check-circle
                         v-icon(v-else, :color='config.mode === `TREE` ? `teal` : `grey lighten-3`') mdi-check-circle
-                    v-list-item(value='STATIC')
+                    v-list-item(value='STATIC', :active='config.mode === `STATIC`', @click='config.mode = `STATIC`')
                       v-avatar
                         img(src='/_assets/svg/icon-features-list.svg', alt='Static Navigation')
                       div.v-list-item-content
@@ -41,7 +41,7 @@
                       v-avatar
                         v-icon(v-if='$vuetify.theme.current.dark', :color='config.mode === `STATIC` ? `teal lighten-3` : `grey darken-2`') mdi-check-circle
                         v-icon(v-else, :color='config.mode === `STATIC` ? `teal` : `grey lighten-3`') mdi-check-circle
-                    v-list-item(value='MIXED')
+                    v-list-item(value='MIXED', :active='config.mode === `MIXED`', @click='config.mode = `MIXED`')
                       v-avatar
                         img(src='/_assets/svg/icon-user-menu-male-dotted.svg', alt='Custom Navigation')
                       div.v-list-item-content
@@ -50,15 +50,15 @@
                       v-avatar
                         v-icon(v-if='$vuetify.theme.current.dark', :color='config.mode === `MIXED` ? `teal lighten-3` : `grey darken-2`') mdi-check-circle
                         v-icon(v-else, :color='config.mode === `MIXED` ? `teal` : `grey lighten-3`') mdi-check-circle
-                    v-list-item(value='NONE')
+                    v-list-item(value='NONE', :active='config.mode === `NONE`', @click='config.mode = `NONE`')
                       v-avatar
                         img(src='/_assets/svg/icon-cancel-dotted.svg', alt='None')
                       div.v-list-item-content
                         v-list-item-title {{$t('admin:navigation.modeNone.title')}}
                         v-list-item-subtitle {{$t('admin:navigation.modeNone.description')}}
                       v-avatar
-                        v-icon(v-if='$vuetify.theme.current.dark', :color='config.mode === `none` ? `teal lighten-3` : `grey darken-2`') mdi-check-circle
-                        v-icon(v-else, :color='config.mode === `none` ? `teal` : `grey lighten-3`') mdi-check-circle
+                        v-icon(v-if='$vuetify.theme.current.dark', :color='config.mode === `NONE` ? `teal lighten-3` : `grey darken-2`') mdi-check-circle
+                        v-icon(v-else, :color='config.mode === `NONE` ? `teal` : `grey lighten-3`') mdi-check-circle
             v-col(cols='9', v-if='config.mode === `MIXED` || config.mode === `STATIC`')
               v-card.animated.fadeInUp.wait-p2s
                 v-row(no-gutters, align='stretch')

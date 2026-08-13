@@ -17,6 +17,7 @@
             v-divider.mt-3
             v-list-subheader.subtitle-2 {{ $t('admin:contribute.fundOurWork') }}
             v-tabs.mx-3.radius-7.admin-contribute-tabs(
+              v-model='contributeTab'
               centered
               fixed-tabs
               background-color='primary'
@@ -25,37 +26,38 @@
               slider-color='#FFF'
               icons-and-text
               )
-              v-tab
+              v-tab(value='github')
                 span GitHub
                 v-icon.my-1(size='24') mdi-github
-              v-tab
+              v-tab(value='patreon')
                 span Patreon
                 img.my-1(src='/_assets/svg/icon-patreon.svg', style='height: 24px;')
-              v-tab
+              v-tab(value='open-collective')
                 span OpenCollective
                 img.my-1(src='/_assets/svg/icon-opencollective.svg', style='height: 24px;')
-              v-tab
+              v-tab(value='paypal')
                 span PayPal
                 img.my-1(src='/_assets/svg/icon-paypal.svg', style='height: 24px;')
-              v-tab
+              v-tab(value='ethereum')
                 span Ethereum
                 img.my-1(src='/_assets/svg/icon-ethereum.svg', style='height: 24px;')
-              v-tab
+              v-tab(value='tshirts')
                 span T-Shirts
                 img.my-1(src='/_assets/svg/icon-t-shirt.svg', style='height: 24px;')
-              v-tab-item(:transition='false', :reverse-transition='false')
+            v-tabs-window(v-model='contributeTab')
+              v-tabs-window-item(value='github', :transition='false', :reverse-transition='false')
                 .body-2.pa-3 {{ $t('admin:contribute.github') }}
                 a.ml-3(href='https://github.com/users/NGPixel/sponsorship', :title='$t(`admin:contribute.becomeASponsor`)')
                   img(src='/_assets/img/donate_github.svg', :alt='$t(`admin:contribute.becomeASponsor`)' style='width:200px;')
-              v-tab-item(:transition='false', :reverse-transition='false')
+              v-tabs-window-item(value='patreon', :transition='false', :reverse-transition='false')
                 .body-2.pa-3 {{ $t('admin:contribute.patreon') }}
                 a.ml-3(href='https://www.patreon.com/bePatron?u=16744039', :title='$t(`admin:contribute.becomeAPatron`)')
                   img(src='/_assets/img/donate_patreon.png', :alt='$t(`admin:contribute.becomeAPatron`)' style='width:200px;')
-              v-tab-item(:transition='false', :reverse-transition='false')
+              v-tabs-window-item(value='open-collective', :transition='false', :reverse-transition='false')
                 .body-2.pa-3 {{ $t('admin:contribute.openCollective') }}
                 a.ml-3(href='https://opencollective.com/wikijs/donate', :title='$t(`admin:contribute.makeADonation`)')
                   img(src='/_assets/img/donate_opencollective.png', :alt='$t(`admin:contribute.makeADonation`)' style='width:300px;')
-              v-tab-item(:transition='false', :reverse-transition='false')
+              v-tabs-window-item(value='paypal', :transition='false', :reverse-transition='false')
                 .body-2.pa-3 {{ $t('admin:contribute.paypal') }}
                 .ml-3
                   form(action='https://www.paypal.com/cgi-bin/webscr', method='post', target='_top')
@@ -63,14 +65,14 @@
                     input(type='hidden', name='hosted_button_id', value='FLV5X255Z9CJU')
                     input(type='image', src='/_assets/img/donate_paypal.png', border='0', name='submit', title='PayPal - The safer, easier way to pay online!', alt='Donate with PayPal button')
                     img(alt='', border='0', src='https://www.paypal.com/en_CA/i/scr/pixel.gif', width='1', height='1')
-              v-tab-item(:transition='false', :reverse-transition='false')
+              v-tabs-window-item(value='ethereum', :transition='false', :reverse-transition='false')
                 .body-2.pa-3 {{ $t('admin:contribute.ethereum') }}
                 .ml-3
                   .admin-contribute-ethaddress
                     strong Ethereum Address
                     span 0xE1d55C19aE86f6Bcbfb17e7f06aCe96BdBb22Cb5
                   div: img(src='/_assets/img/donate_eth_qr.png')
-              v-tab-item(:transition='false', :reverse-transition='false')
+              v-tabs-window-item(value='tshirts', :transition='false', :reverse-transition='false')
                 .body-2.pa-3 {{ $t('admin:contribute.tshirts') }}
                 v-card-actions.ml-2
                   v-btn(outlined, :color='$vuetify.theme.current.dark ? `blue lighten-1` : `primary`', href='https://wikijs.threadless.com', large)
@@ -197,6 +199,7 @@ import { getErrorMessage, loadingStart, loadingStop, showNotification } from '..
 export default {
   data() {
     return {
+      contributeTab: 'github',
       backers: [] as ContributorRow[]
     }
   },

@@ -15,11 +15,12 @@
             span {{$t('common:actions.apply')}}
 
         v-card.mt-3
-          v-tabs(color='grey darken-2', fixed-tabs, slider-color='white', show-arrows, dark)
-            v-tab(key='settings'): v-icon settings
-            v-tab(key='code') Markdown
+          v-tabs(v-model='tab', color='grey darken-2', fixed-tabs, slider-color='white', show-arrows, dark)
+            v-tab(value='settings'): v-icon settings
+            v-tab(value='code') Markdown
 
-            v-tab-item(key='settings', :transition='false', :reverse-transition='false')
+          v-tabs-window(v-model='tab')
+            v-tabs-window-item(value='settings', :transition='false', :reverse-transition='false')
               v-card.pa-3(flat, tile)
                 .body-2.grey--text.text--darken-1 Select which editors to enable:
                 .caption.grey--text.pb-2 Some editors require additional configuration in their dedicated tab (when selected).
@@ -33,7 +34,7 @@
                     disabled
                     hide-details
                   )
-            v-tab-item(key='code', :transition='false', :reverse-transition='false')
+            v-tabs-window-item(value='code', :transition='false', :reverse-transition='false')
               v-card.wiki-form.pa-3(flat, tile)
                 v-form
                   v-list-subheader Editor Configuration
@@ -44,6 +45,7 @@
 export default {
   data() {
     return {
+      tab: 'settings',
       editors: [
         { title: 'API Docs', key: 'api', isEnabled: false },
         { title: 'Code', key: 'code', isEnabled: true },

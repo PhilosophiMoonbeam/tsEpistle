@@ -28,21 +28,12 @@
           v-divider.mt-4
           v-list-subheader.pl-2: strong.indigo--text {{$t('admin:api.newKeyPermissionScopes')}}
           v-list.pl-8(nav)
-            v-list-item-group(v-model='fullAccess')
-              v-list-item(
-                :value='true'
-                active-class='indigo--text'
-                )
-                template(v-slot:default='{ active, toggle }')
-                  div.v-list-item-action
-                    v-checkbox(
-                      :input-value='active'
-                      :true-value='true'
-                      color='indigo'
-                      @click='toggle'
-                    )
-                  div.v-list-item-content
-                    v-list-item-title {{$t('admin:api.newKeyFullAccess')}}
+            v-checkbox(
+              v-model='fullAccess'
+              color='indigo'
+              hide-details
+              :label='$t(`admin:api.newKeyFullAccess`)'
+            )
             v-divider.mt-3
             v-list-subheader.caption.indigo--text {{$t('admin:api.newKeyGroupPermissions')}}
             v-list-item

@@ -26,20 +26,21 @@
             span Update Group
         v-card.mt-3
           v-tabs.grad-tabs(v-model='tab', :color='$vuetify.theme.current.dark ? `blue` : `primary`', fixed-tabs, show-arrows, icons-and-text)
-            v-tab(key='settings')
+            v-tab(value='settings')
               span Settings
               v-icon mdi-cog-box
-            v-tab(key='permissions')
+            v-tab(value='permissions')
               span Permissions
               v-icon mdi-lock-pattern
-            v-tab(key='rules')
+            v-tab(value='rules')
               span Page Rules
               v-icon mdi-file-lock
-            v-tab(key='users')
+            v-tab(value='users')
               span Users
               v-icon mdi-account-group
 
-            v-tab-item(key='settings', :transition='false', :reverse-transition='false')
+          v-tabs-window(v-model='tab')
+            v-tabs-window-item(value='settings', :transition='false', :reverse-transition='false')
               v-card(flat)
                 template(v-if='group.id <= 2')
                   v-card-text
@@ -77,13 +78,13 @@
                       :counter='255'
                     )
 
-            v-tab-item(key='permissions', :transition='false', :reverse-transition='false')
+            v-tabs-window-item(value='permissions', :transition='false', :reverse-transition='false')
               group-permissions(v-model='group', @refresh='refresh')
 
-            v-tab-item(key='rules', :transition='false', :reverse-transition='false')
+            v-tabs-window-item(value='rules', :transition='false', :reverse-transition='false')
               group-rules(v-model='group', @refresh='refresh')
 
-            v-tab-item(key='users', :transition='false', :reverse-transition='false')
+            v-tabs-window-item(value='users', :transition='false', :reverse-transition='false')
               group-users(v-model='group', @refresh='refresh')
 
           div.v-card-chin
@@ -120,7 +121,7 @@ export default {
       group: createEmptyGroupEditorState(),
       groupLoadRequestId: 0,
       deleteGroupDialog: false,
-      tab: null,
+      tab: 'settings',
       selectPageModal: false,
       currentLang: siteConfig.lang
     }

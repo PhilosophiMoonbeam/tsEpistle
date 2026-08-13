@@ -124,9 +124,56 @@ describe('controllers/api pages endpoints', () => {
       listPages: express.__router.get.mock.calls.find(([path]) => path === '/')[1],
       listTags: express.__router.get.mock.calls.find(([path]) => path === '/tags')[1],
       recent: express.__router.get.mock.calls.find(([path]) => path === '/recent')[1],
-      updateTag: express.__router.patch.mock.calls.find(([path]) => path === '/tags/:id')[1]
+      updateTag: express.__router.patch.mock.calls.find(([path]) => path === '/tags/:id')[1],
+      tree: express.__router.get.mock.calls.find(([path]) => path === '/tree')[1]
     }
   }
+
+  it('lists root page tree entries when parent is zero', async () => {
+    const rows = [{
+      id: 1,
+      path: 'home',
+      title: 'Home',
+      isFolder: 0,
+      isPrivate: 0,
+      pageId: 1,
+      parent: null,
+      localeCode: 'en'
+    }]
+    const orderBy = vi.fn().mockResolvedValue(rows)
+    const queryBuilder = {
+      where: vi.fn((applyWhere) => {
+        const whereBuilder = {
+          andWhere: vi.fn(),
+          andWhereNotNull: vi.fn(),
+          orWhereIn: vi.fn(),
+          where: vi.fn(),
+          whereNull: vi.fn()
+        }
+        applyWhere(whereBuilder)
+        return { orderBy }
+      })
+    }
+    global.WIKI.models.knex.mockReturnValue(queryBuilder)
+    const { tree } = await loadHandler()
+    const req = { query: { locale: 'en', mode: 'ALL', parent: '0' }, user: { id: 1 } }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
+    const next = vi.fn()
+
+    await tree(req, res, next)
+
+    expect(next).not.toHaveBeenCalled()
+    expect(res.status).not.toHaveBeenCalled()
+    expect(res.json).toHaveBeenCalledWith([{
+      ...rows[0],
+      isFolder: false,
+      isPrivate: false,
+      parent: 0,
+      locale: 'en'
+    }])
+    expect(queryBuilder.where).toHaveBeenCalledOnce()
+    expect(orderBy).toHaveBeenCalledOnce()
+  })
 
   it('registers the page list route', async () => {
     const { listPages } = await loadHandler()

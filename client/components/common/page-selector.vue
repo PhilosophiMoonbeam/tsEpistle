@@ -52,15 +52,16 @@
           div(v-if='currentPages.length > 0', style='height:400px;')
             vue-scroll(:ops='scrollStyle')
               v-list.py-0(dense)
-                v-list-item-group(
-                  v-model='currentPage'
-                  color='primary'
-                  )
+                template
                   template(v-for='(page, idx) of currentPages', :key='`page-` + page.id')
-                    v-list-item(:value='page')
+                    v-list-item(
+                      :value='page'
+                      :active='currentPage?.id === page.id'
+                      @click='currentPage = page'
+                    )
                       div.v-list-item-icon: v-icon mdi-text-box
                       v-list-item-title {{page.title}}
-                    v-divider(v-if='idx < pages.length - 1')
+                    v-divider(v-if='idx < currentPages.length - 1')
           v-alert.animated.fadeIn(
             v-else
             text
@@ -231,7 +232,11 @@ export default defineComponent({
     isShown (newValue: boolean, oldValue: boolean) {
       if (newValue && !oldValue) {
         this.currentPath = this.path
+        const localeChanged = this.currentLocale !== this.locale
         this.currentLocale = this.locale
+        if (!localeChanged) {
+          this.reloadTree(this.locale).catch(err => console.warn(err))
+        }
         _.delay(() => {
           ;(this.$refs.pathIpt as { focus: () => void }).focus()
         }, 0)
@@ -267,14 +272,7 @@ export default defineComponent({
       }
     },
     currentLocale (newValue: string) {
-      this.$nextTick(() => {
-        this.tree = [createRootNode(newValue)]
-        this.currentNode = [0]
-        this.openNodes = [0]
-        this.pages = []
-        this.all = []
-        this.treeViewCacheId += 1
-      })
+      this.reloadTree(newValue).catch(err => console.warn(err))
     }
   },
   methods: {
@@ -292,26 +290,37 @@ export default defineComponent({
         this.close()
       }
     },
+    async reloadTree (locale: string): Promise<void> {
+      const root = createRootNode(locale)
+      this.tree = [root]
+      this.currentNode = [0]
+      this.openNodes = [0]
+      this.currentPage = null
+      this.pages = []
+      this.all = []
+      this.treeViewCacheId += 1
+      await this.fetchFolders(root)
+    },
     async fetchFolders (item: unknown): Promise<void> {
       if (!isPageTreeItem(item)) {
         throw new TypeError('Invalid page tree item')
       }
       this.searchLoading = true
-      const items = await fetchPageTree(window.fetch.bind(window), {
-        parent: item.id,
-        mode: 'ALL',
-        locale: this.currentLocale
-      })
-      const itemFolders: PageTreeItem[] = items.filter(item => item.isFolder).map(folder => ({...folder, children: []}))
-      const itemPages = items.filter(isPageEntry)
-      if (itemFolders.length > 0) {
-        item.children = itemFolders
-      } else {
-        item.children = undefined
+      try {
+        const items = await fetchPageTree(window.fetch.bind(window), {
+          parent: item.id,
+          mode: 'ALL',
+          locale: this.currentLocale
+        })
+        if (item.locale !== this.currentLocale) return
+        const itemFolders: PageTreeItem[] = items.filter(item => item.isFolder).map(folder => ({ ...folder, children: [] }))
+        const itemPages = items.filter(isPageEntry)
+        item.children = itemFolders.length > 0 ? itemFolders : undefined
+        this.pages = _.unionBy(this.pages, itemPages, 'id')
+        this.all = _.unionBy(this.all, items, 'id')
+      } finally {
+        this.searchLoading = false
       }
-      this.pages = _.unionBy(this.pages, itemPages, 'id')
-      this.all = _.unionBy(this.all, items, 'id')
-      this.searchLoading = false
     }
   }
 })

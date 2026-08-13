@@ -18,11 +18,12 @@
             span {{$t('common:actions.apply')}}
 
         v-card.mt-3
-          v-tabs(color='grey darken-2', fixed-tabs, slider-color='white', show-arrows, dark)
-            v-tab(key='settings'): v-icon settings
-            v-tab(v-for='logger in activeLoggers', :key='logger.key') {{ logger.title }}
+          v-tabs(v-model='tab', color='grey darken-2', fixed-tabs, slider-color='white', show-arrows, dark)
+            v-tab(value='settings'): v-icon settings
+            v-tab(v-for='logger in activeLoggers', :key='logger.key', :value='logger.key') {{ logger.title }}
 
-            v-tab-item(key='settings', :transition='false', :reverse-transition='false')
+          v-tabs-window(v-model='tab')
+            v-tabs-window-item(value='settings', :transition='false', :reverse-transition='false')
               v-card.pa-3(flat, tile)
                 .body-2.grey--text.text--darken-1 Select which logging service to enable:
                 .caption.grey--text.pb-2 Some loggers require additional configuration in their dedicated tab (when selected).
@@ -37,7 +38,7 @@
                     disabled
                   )
 
-            v-tab-item(v-for='(logger, n) in activeLoggers', :key='logger.key', :transition='false', :reverse-transition='false')
+            v-tabs-window-item(v-for='logger in activeLoggers', :key='logger.key', :value='logger.key', :transition='false', :reverse-transition='false')
               v-card.wiki-form.pa-3(flat, tile)
                 v-form
                   .loggerlogo
@@ -120,6 +121,7 @@ export default {
   },
   data() {
     return {
+      tab: 'settings',
       showConsole: false,
       loggers: [] as Logger[],
       levels: ['error', 'warn', 'info', 'debug', 'verbose']

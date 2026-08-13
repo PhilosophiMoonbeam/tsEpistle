@@ -110,6 +110,10 @@ const positiveInteger = (value: unknown, label: string): number => {
   if (!Number.isSafeInteger(value) || (value as number) < 1) throw new ApplicationError(`${label} must be a positive integer`, { code: 'INVALID_INPUT' })
   return value as number
 }
+const nonNegativeInteger = (value: unknown, label: string): number => {
+  if (!Number.isSafeInteger(value) || (value as number) < 0) throw new ApplicationError(`${label} must be a non-negative integer`, { code: 'INVALID_INPUT' })
+  return value as number
+}
 const stringValue = (value: unknown, label: string): string => {
   if (typeof value !== 'string') throw new ApplicationError(`${label} must be a string`, { code: 'INVALID_INPUT' })
   return value
@@ -358,7 +362,7 @@ const getTree = async (input: OperationInput) => {
   const requester = input.requester
   const locale = input.locale === undefined ? wiki.config.lang.code : stringValue(input.locale, 'locale')
   const path = input.path === undefined ? undefined : stringValue(input.path, 'path')
-  let parentId = input.parent === undefined ? undefined : positiveInteger(input.parent, 'parent')
+  let parentId = input.parent === undefined ? undefined : nonNegativeInteger(input.parent, 'parent')
   const mode = typeof input.mode === 'string' ? input.mode : ''
   const includeAncestors = input.includeAncestors === true
   let currentPage: PageTreeRecord | undefined
@@ -380,7 +384,13 @@ const getTree = async (input: OperationInput) => {
     }
   }).orderBy([{ column: 'isFolder', order: 'desc' }, 'title'])
   return results.filter(result => wiki.auth.checkAccess(requester, ['read:pages'], { path: result.path, locale: result.localeCode }))
-    .map(result => ({ ...result, parent: result.parent || 0, locale: result.localeCode }))
+    .map(result => ({
+      ...result,
+      isFolder: Boolean(result.isFolder),
+      isPrivate: Boolean(result.isPrivate),
+      parent: result.parent || 0,
+      locale: result.localeCode
+    }))
 }
 
 const checkConflict = async (input: OperationInput) => {

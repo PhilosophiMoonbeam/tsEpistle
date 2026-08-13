@@ -2,20 +2,20 @@
   .editor-api
     .editor-api-main
       v-list.editor-api-sidebar.radius-0(nav, :class='$vuetify.theme.current.dark ? `grey darken-4` : `primary`', dark)
-        v-list-item-group(v-model='tab')
-          v-list-item.animated.fadeInLeft(value='info')
+        template
+          v-list-item.animated.fadeInLeft(value='info', :active='tab === `info`', @click='tab = `info`')
             div.v-list-item-icon: v-icon mdi-book-information-variant
             v-list-item-title Info
-          v-list-item.mt-3.animated.fadeInLeft.wait-p2s(value='servers')
+          v-list-item.mt-3.animated.fadeInLeft.wait-p2s(value='servers', :active='tab === `servers`', @click='tab = `servers`')
             div.v-list-item-icon: v-icon mdi-server
             v-list-item-title Servers
-          v-list-item.mt-3.animated.fadeInLeft.wait-p3s(value='endpoints')
+          v-list-item.mt-3.animated.fadeInLeft.wait-p3s(value='endpoints', :active='tab === `endpoints`', @click='tab = `endpoints`')
             div.v-list-item-icon: v-icon mdi-code-braces
             v-list-item-title Endpoints
-          v-list-item.mt-3.animated.fadeInLeft.wait-p4s(value='models')
+          v-list-item.mt-3.animated.fadeInLeft.wait-p4s(value='models', :active='tab === `models`', @click='tab = `models`')
             div.v-list-item-icon: v-icon mdi-buffer
             v-list-item-title Models
-          v-list-item.mt-3.animated.fadeInLeft.wait-p5s(value='auth')
+          v-list-item.mt-3.animated.fadeInLeft.wait-p5s(value='auth', :active='tab === `auth`', @click='tab = `auth`')
             div.v-list-item-icon: v-icon mdi-lock
             v-list-item-title Authentication
       .editor-api-editor
@@ -56,8 +56,8 @@
                 v-card.pt-2
                   v-card-text
                     v-list(nav, two-line)
-                      v-list-item-group(v-model='kind', mandatory, color='primary')
-                        v-list-item(value='rest')
+                      template
+                        v-list-item(value='rest', :active='kind === `rest`', @click='kind = `rest`')
                           v-avatar
                             img(src='/_assets/svg/icon-transaction-list.svg', alt='REST')
                           div.v-list-item-content
@@ -96,10 +96,16 @@
                             v-btn(text, x-large, style='min-width: 0;', v-bind='props')
                               v-icon(large, :color='iconColor(srv.icon)') {{iconKey(srv.icon)}}
                           v-list(nav, dense)
-                            v-list-item-group(v-model='srv.icon', mandatory)
-                              v-list-item(:value='srvKey', v-for='(srv, srvKey) in serverTypes', :key='srvKey')
-                                div.v-list-item-icon: v-icon(large, :color='srv.color', v-text='srv.icon')
-                                div.v-list-item-content: v-list-item-title(v-text='srv.title')
+                            template
+                              v-list-item(
+                                v-for='(srvType, srvKey) in serverTypes'
+                                :key='srvKey'
+                                :value='srvKey'
+                                :active='srv.icon === srvKey'
+                                @click='srv.icon = srvKey'
+                              )
+                                div.v-list-item-icon: v-icon(large, :color='srvType.color', v-text='srvType.icon')
+                                div.v-list-item-content: v-list-item-title(v-text='srvType.title')
                         v-btn.mb-2(depressed, small, @click='removeServer(srv.id)')
                           v-icon(left) mdi-close
                           span Delete
@@ -174,8 +180,8 @@
                                       v-btn.subtitle-1(depressed, large, dark, style='min-width: 140px;', height='48', v-bind='props', :color='methodColor(ept.method)')
                                         strong {{ept.method}}
                                     v-list(nav, dense)
-                                      v-list-item-group(v-model='ept.method', mandatory)
-                                        v-list-item(:value='mtd.key', v-for='mtd of endpointMethods', :key='mtd.key')
+                                      template
+                                        v-list-item(:value='mtd.key', :active='ept.method === mtd.key', @click='ept.method = mtd.key', v-for='mtd of endpointMethods', :key='mtd.key')
                                           div.v-list-item-content
                                             v-chip.text-center(label, :color='mtd.color', dark) {{mtd.key}}
                                   v-btn.mt-2(v-if='!ept.expanded', small, @click='ept.expanded = true', color='pink', outlined)
