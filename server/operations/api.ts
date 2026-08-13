@@ -27,7 +27,8 @@ interface ApiKeyModel {
 const apiConfig = (WIKI.config as { api: { isEnabled: boolean } }).api
 const apiKeyModel = (WIKI.models as { apiKeys: ApiKeyModel }).apiKeys
 const configService = WIKI.configSvc as { saveToDb(keys: string[]): Promise<unknown> }
-const auth = WIKI.auth as { reloadApiKeys(): Promise<unknown> }
+const getAuth = (): { reloadApiKeys(): Promise<unknown> } =>
+  WIKI.auth as { reloadApiKeys(): Promise<unknown> }
 const outboundEvents = (WIKI.events as { outbound: { emit(event: string): void } }).outbound
 
 const redactedSuffix = (key: unknown): string => _.isString(key) && key.length > 20 ? `...${key.substring(key.length - 20)}` : '...[redacted]'
@@ -60,7 +61,7 @@ const createKey = async (input: { name: unknown, expiration: unknown, fullAccess
   if (!_.isBoolean(fullAccess)) throw new ApplicationError('fullAccess must be a boolean', { code: 'INVALID_API_KEY_ACCESS' })
   if (!_.isNil(group) && !Number.isInteger(group)) throw new ApplicationError('group must be an integer or null', { code: 'INVALID_API_KEY_GROUP' })
   const key = await apiKeyModel.createNewKey({ name, expiration, fullAccess, group: group as number | null | undefined })
-  await auth.reloadApiKeys()
+  await getAuth().reloadApiKeys()
   outboundEvents.emit('reloadApiKeys')
   return key
 }
@@ -68,7 +69,7 @@ const createKey = async (input: { name: unknown, expiration: unknown, fullAccess
 const revokeKey = async (id: unknown): Promise<void> => {
   if (!Number.isSafeInteger(id) || typeof id !== 'number' || id < 1) throw new ApplicationError('id must be a positive integer', { code: 'INVALID_API_KEY_ID' })
   await apiKeyModel.query().findById(id).patch({ isRevoked: true })
-  await auth.reloadApiKeys()
+  await getAuth().reloadApiKeys()
   outboundEvents.emit('reloadApiKeys')
 }
 

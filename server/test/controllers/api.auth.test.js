@@ -701,8 +701,11 @@ describe('controllers/api auth endpoints', () => {
     expect(res.json).toHaveBeenCalledWith({ error: 'api save failed' })
   })
 
-  it('creates admin API keys through REST and reloads runtime keys', async () => {
+  it('creates admin API keys after runtime auth initializes and reloads the active-key cache', async () => {
+    const runtimeAuth = global.WIKI.auth
+    delete global.WIKI.auth
     const { createApiKey } = await loadHandlers()
+    global.WIKI.auth = runtimeAuth
     const req = {
       user: { permissions: ['manage:api'] },
       body: {
