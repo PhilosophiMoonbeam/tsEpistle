@@ -44,7 +44,7 @@ describe('admin-navigation save REST facade', () => {
     expect(save).toContain("wikiStore.startLoading('admin-navigation-save')")
     expect(save).toContain('await saveNavigation(window.fetch.bind(window), this.trees, this.config.mode)')
     expect(save).toContain('wikiStore.showNotification({')
-    expect(save).toContain("message: this.$t('navigation.saveSuccess')")
+    expect(save).toContain("message: this.$t('admin:navigation.saveSuccess')")
     expect(save).toContain("style: 'success'")
     expect(save).toContain("icon: 'check'")
     expect(save).toContain('wikiStore.showError(err)')

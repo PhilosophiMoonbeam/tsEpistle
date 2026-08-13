@@ -217,6 +217,39 @@ describe('controllers/api logging endpoints', () => {
     expect(row).not.toHaveProperty('unrelatedMetadata')
   })
 
+  it('uses current logger metadata and normalizes SQLite booleans', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValue(true)
+    const handler = await loadLoggersHandler()
+    global.WIKI.data.loggers = [{
+      key: 'late',
+      title: 'Late Logger',
+      description: 'Loaded after route initialization.',
+      logo: '/late.svg',
+      website: 'https://example.test/late-logger',
+      props: {}
+    }]
+    global.WIKI.models.loggers.getLoggers.mockResolvedValue([{
+      key: 'late',
+      isEnabled: 1,
+      level: 'info',
+      config: {}
+    }])
+    const res = { sendStatus: vi.fn(), json: vi.fn() }
+
+    await handler({ user: {} }, res, vi.fn())
+
+    expect(res.json).toHaveBeenCalledWith([{
+      isEnabled: true,
+      key: 'late',
+      title: 'Late Logger',
+      description: 'Loaded after route initialization.',
+      logo: '/late.svg',
+      website: 'https://example.test/late-logger',
+      level: 'info',
+      config: []
+    }])
+  })
+
   it('merges config with logger metadata as JSON strings sorted by config key', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
     const handler = await loadLoggersHandler()

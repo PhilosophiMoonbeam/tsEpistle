@@ -27,7 +27,6 @@ interface LoggerModel {
 }
 
 const loggerModel = (WIKI.models as { loggers: LoggerModel }).loggers
-const loggerDefinitions = (WIKI.data as { loggers: Array<Record<string, unknown> & { key: string }> }).loggers
 
 const validLogger = (logger: unknown): logger is LoggerRow => Boolean(
   logger &&
@@ -40,12 +39,14 @@ const validLogger = (logger: unknown): logger is LoggerRow => Boolean(
 )
 
 const listLoggers = async (orderBy?: string): Promise<Array<Record<string, unknown>>> => {
+  const loggerDefinitions = (WIKI.data as { loggers: Array<Record<string, unknown> & { key: string }> }).loggers
   const loggers = await loggerModel.getLoggers()
   const result = loggers.map(logger => {
     const definition = _.find(loggerDefinitions, ['key', logger.key]) ?? {}
     return {
       ...definition,
       ...logger,
+      isEnabled: Boolean(logger.isEnabled),
       config: serializeConfig({ config: logger.config as Record<string, unknown>, definition })
     }
   })

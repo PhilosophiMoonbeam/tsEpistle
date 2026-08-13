@@ -804,7 +804,7 @@ describe('controllers/api groups endpoints', () => {
     expect(global.WIKI.models.groups.query.mock.results[0].value.findById).toHaveBeenCalledWith(3)
     const group = await global.WIKI.models.groups.query.mock.results[0].value.findById.mock.results[0].value
     expect(group.$relatedQuery).toHaveBeenCalledWith('users')
-    expect(group.$relatedQuery.mock.results[0].value.select).toHaveBeenCalledWith('id', 'name', 'email')
+    expect(group.$relatedQuery.mock.results[0].value.select).toHaveBeenCalledWith('users.id', 'users.name', 'users.email')
     const payload = res.json.mock.calls[0][0]
     expect(payload).toEqual({
       id: 3,

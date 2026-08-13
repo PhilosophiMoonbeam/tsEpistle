@@ -52,16 +52,15 @@
           div(v-if='currentPages.length > 0', style='height:400px;')
             vue-scroll(:ops='scrollStyle')
               v-list.py-0(dense)
-                template
-                  template(v-for='(page, idx) of currentPages', :key='`page-` + page.id')
-                    v-list-item(
-                      :value='page'
-                      :active='currentPage?.id === page.id'
-                      @click='currentPage = page'
-                    )
-                      div.v-list-item-icon: v-icon mdi-text-box
-                      v-list-item-title {{page.title}}
-                    v-divider(v-if='idx < currentPages.length - 1')
+                template(v-for='(page, idx) of currentPages', :key='`page-` + page.id')
+                  v-list-item(
+                    :value='page'
+                    :active='currentPage?.id === page.id'
+                    @click='currentPage = page'
+                  )
+                    div.v-list-item-icon: v-icon mdi-text-box
+                    v-list-item-title {{page.title}}
+                  v-divider(v-if='idx < currentPages.length - 1')
           v-alert.animated.fadeIn(
             v-else
             text

@@ -5,8 +5,8 @@
         .admin-header
           img.animated.fadeInUp(src='/_assets/svg/icon-triangle-arrow.svg', alt='Navigation', style='width: 80px;')
           .admin-header-title
-            .headline.primary--text.animated.fadeInLeft {{$t('navigation.title')}}
-            .subtitle-1.grey--text.animated.fadeInLeft.wait-p4s {{$t('navigation.subtitle')}}
+            .headline.primary--text.animated.fadeInLeft {{$t('admin:navigation.title')}}
+            .subtitle-1.grey--text.animated.fadeInLeft.wait-p4s {{$t('admin:navigation.subtitle')}}
           v-spacer
           v-btn.animated.fadeInDown.wait-p3s(icon, outlined, color='grey', href='https://docs.requarks.io/navigation', target='_blank')
             v-icon mdi-help-circle
@@ -22,43 +22,42 @@
                 v-toolbar(color='teal', dark, dense, flat, height='56')
                   v-toolbar-title.subtitle-1 {{$t('admin:navigation.mode')}}
                 v-list(nav, two-line)
-                  template
-                    v-list-item(value='TREE', :active='config.mode === `TREE`', @click='config.mode = `TREE`')
-                      v-avatar
-                        img(src='/_assets/svg/icon-tree-structure-dotted.svg', alt='Site Tree')
-                      div.v-list-item-content
-                        v-list-item-title {{$t('admin:navigation.modeSiteTree.title')}}
-                        v-list-item-subtitle {{$t('admin:navigation.modeSiteTree.description')}}
-                      v-avatar
-                        v-icon(v-if='$vuetify.theme.current.dark', :color='config.mode === `TREE` ? `teal lighten-3` : `grey darken-2`') mdi-check-circle
-                        v-icon(v-else, :color='config.mode === `TREE` ? `teal` : `grey lighten-3`') mdi-check-circle
-                    v-list-item(value='STATIC', :active='config.mode === `STATIC`', @click='config.mode = `STATIC`')
-                      v-avatar
-                        img(src='/_assets/svg/icon-features-list.svg', alt='Static Navigation')
-                      div.v-list-item-content
-                        v-list-item-title {{$t('admin:navigation.modeStatic.title')}}
-                        v-list-item-subtitle {{$t('admin:navigation.modeStatic.description')}}
-                      v-avatar
-                        v-icon(v-if='$vuetify.theme.current.dark', :color='config.mode === `STATIC` ? `teal lighten-3` : `grey darken-2`') mdi-check-circle
-                        v-icon(v-else, :color='config.mode === `STATIC` ? `teal` : `grey lighten-3`') mdi-check-circle
-                    v-list-item(value='MIXED', :active='config.mode === `MIXED`', @click='config.mode = `MIXED`')
-                      v-avatar
-                        img(src='/_assets/svg/icon-user-menu-male-dotted.svg', alt='Custom Navigation')
-                      div.v-list-item-content
-                        v-list-item-title {{$t('admin:navigation.modeCustom.title')}}
-                        v-list-item-subtitle {{$t('admin:navigation.modeCustom.description')}}
-                      v-avatar
-                        v-icon(v-if='$vuetify.theme.current.dark', :color='config.mode === `MIXED` ? `teal lighten-3` : `grey darken-2`') mdi-check-circle
-                        v-icon(v-else, :color='config.mode === `MIXED` ? `teal` : `grey lighten-3`') mdi-check-circle
-                    v-list-item(value='NONE', :active='config.mode === `NONE`', @click='config.mode = `NONE`')
-                      v-avatar
-                        img(src='/_assets/svg/icon-cancel-dotted.svg', alt='None')
-                      div.v-list-item-content
-                        v-list-item-title {{$t('admin:navigation.modeNone.title')}}
-                        v-list-item-subtitle {{$t('admin:navigation.modeNone.description')}}
-                      v-avatar
-                        v-icon(v-if='$vuetify.theme.current.dark', :color='config.mode === `NONE` ? `teal lighten-3` : `grey darken-2`') mdi-check-circle
-                        v-icon(v-else, :color='config.mode === `NONE` ? `teal` : `grey lighten-3`') mdi-check-circle
+                  v-list-item(value='TREE', :active='config.mode === `TREE`', @click='config.mode = `TREE`')
+                    v-avatar
+                      img(src='/_assets/svg/icon-tree-structure-dotted.svg', alt='Site Tree')
+                    div.v-list-item-content
+                      v-list-item-title {{$t('admin:navigation.modeSiteTree.title')}}
+                      v-list-item-subtitle {{$t('admin:navigation.modeSiteTree.description')}}
+                    v-avatar
+                      v-icon(v-if='$vuetify.theme.current.dark', :color='config.mode === `TREE` ? `teal lighten-3` : `grey darken-2`') mdi-check-circle
+                      v-icon(v-else, :color='config.mode === `TREE` ? `teal` : `grey lighten-3`') mdi-check-circle
+                  v-list-item(value='STATIC', :active='config.mode === `STATIC`', @click='config.mode = `STATIC`')
+                    v-avatar
+                      img(src='/_assets/svg/icon-features-list.svg', alt='Static Navigation')
+                    div.v-list-item-content
+                      v-list-item-title {{$t('admin:navigation.modeStatic.title')}}
+                      v-list-item-subtitle {{$t('admin:navigation.modeStatic.description')}}
+                    v-avatar
+                      v-icon(v-if='$vuetify.theme.current.dark', :color='config.mode === `STATIC` ? `teal lighten-3` : `grey darken-2`') mdi-check-circle
+                      v-icon(v-else, :color='config.mode === `STATIC` ? `teal` : `grey lighten-3`') mdi-check-circle
+                  v-list-item(value='MIXED', :active='config.mode === `MIXED`', @click='config.mode = `MIXED`')
+                    v-avatar
+                      img(src='/_assets/svg/icon-user-menu-male-dotted.svg', alt='Custom Navigation')
+                    div.v-list-item-content
+                      v-list-item-title {{$t('admin:navigation.modeCustom.title')}}
+                      v-list-item-subtitle {{$t('admin:navigation.modeCustom.description')}}
+                    v-avatar
+                      v-icon(v-if='$vuetify.theme.current.dark', :color='config.mode === `MIXED` ? `teal lighten-3` : `grey darken-2`') mdi-check-circle
+                      v-icon(v-else, :color='config.mode === `MIXED` ? `teal` : `grey lighten-3`') mdi-check-circle
+                  v-list-item(value='NONE', :active='config.mode === `NONE`', @click='config.mode = `NONE`')
+                    v-avatar
+                      img(src='/_assets/svg/icon-cancel-dotted.svg', alt='None')
+                    div.v-list-item-content
+                      v-list-item-title {{$t('admin:navigation.modeNone.title')}}
+                      v-list-item-subtitle {{$t('admin:navigation.modeNone.description')}}
+                    v-avatar
+                      v-icon(v-if='$vuetify.theme.current.dark', :color='config.mode === `NONE` ? `teal lighten-3` : `grey darken-2`') mdi-check-circle
+                      v-icon(v-else, :color='config.mode === `NONE` ? `teal` : `grey lighten-3`') mdi-check-circle
             v-col(cols='9', v-if='config.mode === `MIXED` || config.mode === `STATIC`')
               v-card.animated.fadeInUp.wait-p2s
                 v-row(no-gutters, align='stretch')
@@ -88,7 +87,7 @@
                         v-list-item(v-if='currentTree.length < 1')
                           v-avatar(size='24'): v-icon(color='blue lighten-3') mdi-alert
                           div.v-list-item-content
-                            em.caption.blue--text.text--lighten-4 {{$t('navigation.emptyList')}}
+                            em.caption.blue--text.text--lighten-4 {{$t('admin:navigation.emptyList')}}
                         draggable(v-model='currentTree')
                           template(v-for='navItem in currentTree')
                             v-list-item(
@@ -123,33 +122,33 @@
                           v-list
                             v-list-item(@click='addItem("link")')
                               v-avatar(size='24'): v-icon mdi-link
-                              v-list-item-title {{$t('navigation.link')}}
+                              v-list-item-title {{$t('admin:navigation.link')}}
                             v-list-item(@click='addItem("header")')
                               v-avatar(size='24'): v-icon mdi-format-title
-                              v-list-item-title {{$t('navigation.header')}}
+                              v-list-item-title {{$t('admin:navigation.header')}}
                             v-list-item(@click='addItem("divider")')
                               v-avatar(size='24'): v-icon mdi-minus
-                              v-list-item-title {{$t('navigation.divider')}}
+                              v-list-item-title {{$t('admin:navigation.divider')}}
                   v-col
                     v-card(flat, style='border-radius: 0 4px 4px 0;')
                       template(v-if='current.kind === "link"')
                         v-toolbar(height='56', color='teal lighten-1', flat, dark)
-                          .subtitle-1 {{$t('navigation.edit', { kind: $t('navigation.link') })}}
+                          .subtitle-1 {{$t('admin:navigation.edit', { kind: $t('admin:navigation.link') })}}
                           v-spacer
                           v-btn.px-5(color='white', outlined, @click='deleteItem(current)')
                             v-icon(left) mdi-delete
-                            span {{$t('navigation.delete', { kind: $t('navigation.link') })}}
+                            span {{$t('admin:navigation.delete', { kind: $t('admin:navigation.link') })}}
                         v-card-text
                           v-text-field(
                             outlined
-                            :label='$t("navigation.label")'
+                            :label='$t("admin:navigation.label")'
                             prepend-icon='mdi-format-title'
                             v-model='current.label'
                             counter='255'
                           )
                           v-text-field(
                             outlined
-                            :label='$t("navigation.icon")'
+                            :label='$t("admin:navigation.icon")'
                             prepend-icon='mdi-dice-5'
                             v-model='current.icon'
                             hide-details
@@ -165,7 +164,7 @@
                         v-card-text
                           v-select(
                             outlined
-                            :label='$t("navigation.targetType")'
+                            :label='$t("admin:navigation.targetType")'
                             prepend-icon='mdi-near-me'
                             :items='navTypes'
                             v-model='current.targetType'
@@ -174,7 +173,7 @@
                           v-text-field.mt-4(
                             v-if='current.targetType === `external` || current.targetType === `externalblank`'
                             outlined
-                            :label='$t("navigation.target")'
+                            :label='$t("admin:navigation.target")'
                             prepend-icon='mdi-near-me'
                             v-model='current.target'
                             hide-details
@@ -191,7 +190,7 @@
                           v-text-field(
                             v-else-if='current.targetType === `search`'
                             outlined
-                            :label='$t("navigation.navType.searchQuery")'
+                            :label='$t("admin:navigation.navType.searchQuery")'
                             prepend-icon='search'
                             v-model='current.target'
                           )
@@ -199,15 +198,15 @@
 
                       template(v-else-if='current.kind === "header"')
                         v-toolbar(height='56', color='teal lighten-1', flat, dark)
-                          .subtitle-1 {{$t('navigation.edit', { kind: $t('navigation.header') })}}
+                          .subtitle-1 {{$t('admin:navigation.edit', { kind: $t('admin:navigation.header') })}}
                           v-spacer
                           v-btn.px-5(color='white', outlined, @click='deleteItem(current)')
                             v-icon(left) mdi-delete
-                            span {{$t('navigation.delete', { kind: $t('navigation.header') })}}
+                            span {{$t('admin:navigation.delete', { kind: $t('admin:navigation.header') })}}
                         v-card-text
                           v-text-field(
                             outlined
-                            :label='$t("navigation.label")'
+                            :label='$t("admin:navigation.label")'
                             prepend-icon='mdi-format-title'
                             v-model='current.label'
                           )
@@ -215,11 +214,11 @@
 
                       div(v-else-if='current.kind === "divider"')
                         v-toolbar(height='56', color='teal lighten-1', flat, dark)
-                          .subtitle-1 {{$t('navigation.edit', { kind: $t('navigation.divider') })}}
+                          .subtitle-1 {{$t('admin:navigation.edit', { kind: $t('admin:navigation.divider') })}}
                           v-spacer
                           v-btn.px-5(color='white', outlined, @click='deleteItem(current)')
                             v-icon(left) mdi-delete
-                            span {{$t('navigation.delete', { kind: $t('navigation.divider') })}}
+                            span {{$t('admin:navigation.delete', { kind: $t('admin:navigation.divider') })}}
 
                       v-card-text(v-if='current.kind')
                         v-radio-group.pl-8(v-model='current.visibilityMode', mandatory, hide-details)
@@ -241,8 +240,8 @@
                           )
                       template(v-else)
                         v-toolbar(height='56', color='teal lighten-1', flat, dark)
-                        v-card-text.grey--text(v-if='currentTree.length > 0') {{$t('navigation.noSelectionText')}}
-                        v-card-text.grey--text(v-else) {{$t('navigation.noItemsText')}}
+                        v-card-text.grey--text(v-if='currentTree.length > 0') {{$t('admin:navigation.noSelectionText')}}
+                        v-card-text.grey--text(v-else) {{$t('admin:navigation.noItemsText')}}
 
     v-dialog(v-model='copyFromLocaleDialogIsShown', max-width='650', persistent)
       v-card
@@ -313,11 +312,11 @@ export default {
   computed: {
     navTypes () {
       return [
-        { text: this.$t('navigation.navType.external'), value: 'external' },
-        { text: this.$t('navigation.navType.externalblank'), value: 'externalblank' },
-        { text: this.$t('navigation.navType.home'), value: 'home' },
-        { text: this.$t('navigation.navType.page'), value: 'page' }
-        // { text: this.$t('navigation.navType.searchQuery'), value: 'search' }
+        { text: this.$t('admin:navigation.navType.external'), value: 'external' },
+        { text: this.$t('admin:navigation.navType.externalblank'), value: 'externalblank' },
+        { text: this.$t('admin:navigation.navType.home'), value: 'home' },
+        { text: this.$t('admin:navigation.navType.page'), value: 'page' }
+        // { text: this.$t('admin:navigation.navType.searchQuery'), value: 'search' }
       ]
     },
     locales () {
@@ -390,14 +389,14 @@ export default {
         case 'link':
           newItem = {
             ...newItem,
-            label: this.$t('navigation.untitled', { kind: this.$t(`navigation.link`) }),
+            label: this.$t('admin:navigation.untitled', { kind: this.$t('admin:navigation.link') }),
             icon: 'mdi-chevron-right',
             targetType: 'home',
             target: ''
           }
           break
         case 'header':
-          newItem.label = this.$t('navigation.untitled', { kind: this.$t(`navigation.header`) })
+          newItem.label = this.$t('admin:navigation.untitled', { kind: this.$t('admin:navigation.header') })
           break
       }
       this.currentTree = [...this.currentTree, newItem]
@@ -425,7 +424,7 @@ export default {
       try {
         await saveNavigation(window.fetch.bind(window), this.trees, this.config.mode)
         wikiStore.showNotification({
-          message: this.$t('navigation.saveSuccess'),
+          message: this.$t('admin:navigation.saveSuccess'),
           style: 'success',
           icon: 'check'
         })

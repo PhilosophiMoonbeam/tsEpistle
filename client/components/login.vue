@@ -26,17 +26,16 @@
             .text-subtitle-1 {{$t('auth:selectAuthProvider')}}
           .login-list
             v-list.elevation-1.radius-7(nav, light)
-              template
-                v-list-item(
-                  v-for='(stg, idx) of filteredStrategies'
-                  :key='stg.key'
-                  :value='stg.key'
-                  :color='stg.strategy.color'
-                  :active='selectedStrategyKey === stg.key'
-                  @click='selectedStrategyKey = stg.key'
-                  )
-                  v-avatar.mr-3(tile, size='24', v-html='stg.strategy.icon')
-                  span.text-none {{stg.displayName}}
+              v-list-item(
+                v-for='(stg, idx) of filteredStrategies'
+                :key='stg.key'
+                :value='stg.key'
+                :color='stg.strategy.color'
+                :active='selectedStrategyKey === stg.key'
+                @click='selectedStrategyKey = stg.key'
+                )
+                v-avatar.mr-3(tile, size='24', v-html='stg.strategy.icon')
+                span.text-none {{stg.displayName}}
         //-------------------------------------------------
         //- LOGIN FORM
         //-------------------------------------------------

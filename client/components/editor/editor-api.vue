@@ -2,22 +2,21 @@
   .editor-api
     .editor-api-main
       v-list.editor-api-sidebar.radius-0(nav, :class='$vuetify.theme.current.dark ? `grey darken-4` : `primary`', dark)
-        template
-          v-list-item.animated.fadeInLeft(value='info', :active='tab === `info`', @click='tab = `info`')
-            div.v-list-item-icon: v-icon mdi-book-information-variant
-            v-list-item-title Info
-          v-list-item.mt-3.animated.fadeInLeft.wait-p2s(value='servers', :active='tab === `servers`', @click='tab = `servers`')
-            div.v-list-item-icon: v-icon mdi-server
-            v-list-item-title Servers
-          v-list-item.mt-3.animated.fadeInLeft.wait-p3s(value='endpoints', :active='tab === `endpoints`', @click='tab = `endpoints`')
-            div.v-list-item-icon: v-icon mdi-code-braces
-            v-list-item-title Endpoints
-          v-list-item.mt-3.animated.fadeInLeft.wait-p4s(value='models', :active='tab === `models`', @click='tab = `models`')
-            div.v-list-item-icon: v-icon mdi-buffer
-            v-list-item-title Models
-          v-list-item.mt-3.animated.fadeInLeft.wait-p5s(value='auth', :active='tab === `auth`', @click='tab = `auth`')
-            div.v-list-item-icon: v-icon mdi-lock
-            v-list-item-title Authentication
+        v-list-item.animated.fadeInLeft(value='info', :active='tab === `info`', @click='tab = `info`')
+          div.v-list-item-icon: v-icon mdi-book-information-variant
+          v-list-item-title Info
+        v-list-item.mt-3.animated.fadeInLeft.wait-p2s(value='servers', :active='tab === `servers`', @click='tab = `servers`')
+          div.v-list-item-icon: v-icon mdi-server
+          v-list-item-title Servers
+        v-list-item.mt-3.animated.fadeInLeft.wait-p3s(value='endpoints', :active='tab === `endpoints`', @click='tab = `endpoints`')
+          div.v-list-item-icon: v-icon mdi-code-braces
+          v-list-item-title Endpoints
+        v-list-item.mt-3.animated.fadeInLeft.wait-p4s(value='models', :active='tab === `models`', @click='tab = `models`')
+          div.v-list-item-icon: v-icon mdi-buffer
+          v-list-item-title Models
+        v-list-item.mt-3.animated.fadeInLeft.wait-p5s(value='auth', :active='tab === `auth`', @click='tab = `auth`')
+          div.v-list-item-icon: v-icon mdi-lock
+          v-list-item-title Authentication
       .editor-api-editor
         template(v-if='tab === `info`')
           v-container.px-2.pt-1(fluid)
@@ -56,24 +55,23 @@
                 v-card.pt-2
                   v-card-text
                     v-list(nav, two-line)
-                      template
-                        v-list-item(value='rest', :active='kind === `rest`', @click='kind = `rest`')
-                          v-avatar
-                            img(src='/_assets/svg/icon-transaction-list.svg', alt='REST')
-                          div.v-list-item-content
-                            v-list-item-title REST API
-                            v-list-item-subtitle Classic REST Endpoints
-                          v-avatar
-                            v-icon(:color='kind === `rest` ? `primary` : `grey lighten-3`') mdi-check-circle
-                        v-list-item(value='graphql', disabled)
-                          v-avatar
-                            img(src='/_assets/svg/icon-graphql.svg', alt='GraphQL')
-                          div.v-list-item-content
-                            v-list-item-title GraphQL
-                            v-list-item-subtitle.grey--text.text--lighten-1 Schema-based API
-                          div.v-list-item-action
-                            //- v-icon(:color='kind === `graphql` ? `primary` : `grey lighten-3`') mdi-check-circle
-                            v-chip(label, small) Coming soon
+                      v-list-item(value='rest', :active='kind === `rest`', @click='kind = `rest`')
+                        v-avatar
+                          img(src='/_assets/svg/icon-transaction-list.svg', alt='REST')
+                        div.v-list-item-content
+                          v-list-item-title REST API
+                          v-list-item-subtitle Classic REST Endpoints
+                        v-avatar
+                          v-icon(:color='kind === `rest` ? `primary` : `grey lighten-3`') mdi-check-circle
+                      v-list-item(value='graphql', disabled)
+                        v-avatar
+                          img(src='/_assets/svg/icon-graphql.svg', alt='GraphQL')
+                        div.v-list-item-content
+                          v-list-item-title GraphQL
+                          v-list-item-subtitle.grey--text.text--lighten-1 Schema-based API
+                        div.v-list-item-action
+                          //- v-icon(:color='kind === `graphql` ? `primary` : `grey lighten-3`') mdi-check-circle
+                          v-chip(label, small) Coming soon
         template(v-else-if='tab === `servers`')
           v-container.px-2.pt-1(fluid)
             v-row(dense)
@@ -96,16 +94,15 @@
                             v-btn(text, x-large, style='min-width: 0;', v-bind='props')
                               v-icon(large, :color='iconColor(srv.icon)') {{iconKey(srv.icon)}}
                           v-list(nav, dense)
-                            template
-                              v-list-item(
-                                v-for='(srvType, srvKey) in serverTypes'
-                                :key='srvKey'
-                                :value='srvKey'
-                                :active='srv.icon === srvKey'
-                                @click='srv.icon = srvKey'
-                              )
-                                div.v-list-item-icon: v-icon(large, :color='srvType.color', v-text='srvType.icon')
-                                div.v-list-item-content: v-list-item-title(v-text='srvType.title')
+                            v-list-item(
+                              v-for='(srvType, srvKey) in serverTypes'
+                              :key='srvKey'
+                              :value='srvKey'
+                              :active='srv.icon === srvKey'
+                              @click='srv.icon = srvKey'
+                            )
+                              div.v-list-item-icon: v-icon(large, :color='srvType.color', v-text='srvType.icon')
+                              div.v-list-item-content: v-list-item-title(v-text='srvType.title')
                         v-btn.mb-2(depressed, small, @click='removeServer(srv.id)')
                           v-icon(left) mdi-close
                           span Delete
@@ -180,10 +177,9 @@
                                       v-btn.subtitle-1(depressed, large, dark, style='min-width: 140px;', height='48', v-bind='props', :color='methodColor(ept.method)')
                                         strong {{ept.method}}
                                     v-list(nav, dense)
-                                      template
-                                        v-list-item(:value='mtd.key', :active='ept.method === mtd.key', @click='ept.method = mtd.key', v-for='mtd of endpointMethods', :key='mtd.key')
-                                          div.v-list-item-content
-                                            v-chip.text-center(label, :color='mtd.color', dark) {{mtd.key}}
+                                      v-list-item(:value='mtd.key', :active='ept.method === mtd.key', @click='ept.method = mtd.key', v-for='mtd of endpointMethods', :key='mtd.key')
+                                        div.v-list-item-content
+                                          v-chip.text-center(label, :color='mtd.color', dark) {{mtd.key}}
                                   v-btn.mt-2(v-if='!ept.expanded', small, @click='ept.expanded = true', color='pink', outlined)
                                     v-icon(left) mdi-arrow-down-box
                                     span Expand

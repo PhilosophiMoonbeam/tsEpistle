@@ -166,7 +166,7 @@ const listPickerOptions = (): GroupQuery => wiki.models.groups.query().select('i
 
 const get = (value: unknown): Promise<GroupRecord | undefined> => wiki.models.groups.query().findById(requirePositiveInteger(value, 'id'))
 
-const listUsers = (group: GroupRecord): UserRelationQuery => group.$relatedQuery('users').select('id', 'name', 'email')
+const listUsers = (group: GroupRecord): UserRelationQuery => group.$relatedQuery('users').select('users.id', 'users.name', 'users.email')
 
 const create = async (value: unknown): Promise<GroupRecord> => {
   const name = requireNonEmptyString(value, 'name')
