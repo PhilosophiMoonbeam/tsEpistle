@@ -1,5 +1,5 @@
 import express from 'express'
-import { type Request, type Response, wikiAuth } from '../_types.ts'
+import { type Request, type Response, getWikiAuth } from '../_types.ts'
 import _ from 'lodash'
 import userOperations, { type ListUser } from '../../operations/users.ts'
 
@@ -81,7 +81,7 @@ const requireBooleanBodyValue = (req: Request, res: Response, field: string): bo
 }
 
 const requireUserSearchAccess = (req: Request, res: Response): boolean => {
-  if (!wikiAuth.checkAccess(req.user, userActivityAccessPermissions)) {
+  if (!getWikiAuth().checkAccess(req.user, userActivityAccessPermissions)) {
     res.status(403).json({ error: 'a user search admin permission is required' })
     return false
   }
@@ -90,7 +90,7 @@ const requireUserSearchAccess = (req: Request, res: Response): boolean => {
 }
 
 const requireUserLastLoginsAccess = (req: Request, res: Response): boolean => {
-  if (!wikiAuth.checkAccess(req.user, userActivityAccessPermissions)) {
+  if (!getWikiAuth().checkAccess(req.user, userActivityAccessPermissions)) {
     res.status(403).json({ error: 'a dashboard user activity permission is required' })
     return false
   }
@@ -99,7 +99,7 @@ const requireUserLastLoginsAccess = (req: Request, res: Response): boolean => {
 }
 
 const requireUserDetailAccess = (req: Request, res: Response): boolean => {
-  if (!wikiAuth.checkAccess(req.user, ['manage:users', 'manage:system'])) {
+  if (!getWikiAuth().checkAccess(req.user, ['manage:users', 'manage:system'])) {
     res.status(403).json({ error: 'manage:users or manage:system is required' })
     return false
   }
@@ -108,7 +108,7 @@ const requireUserDetailAccess = (req: Request, res: Response): boolean => {
 }
 
 const requireUserMutationAccess = (req: Request, res: Response): boolean => {
-  if (!wikiAuth.checkAccess(req.user, userMutationAccessPermissions)) {
+  if (!getWikiAuth().checkAccess(req.user, userMutationAccessPermissions)) {
     res.status(403).json({ error: 'write:users, manage:users or manage:system is required' })
     return false
   }
@@ -216,7 +216,9 @@ router.get('/profile', async (req, res, next) => {
       userOperations.countPages(user)
     ])
     res.json({
-      ..._.pick(user, ['id', 'name', 'email', 'providerKey', 'providerName', 'isSystem', 'isVerified', 'location', 'jobTitle', 'timezone', 'dateFormat', 'appearance', 'createdAt', 'updatedAt', 'lastLoginAt']),
+      ..._.pick(user, ['id', 'name', 'email', 'providerKey', 'providerName', 'location', 'jobTitle', 'timezone', 'dateFormat', 'appearance', 'createdAt', 'updatedAt', 'lastLoginAt']),
+      isSystem: user.isSystem === true || user.isSystem === 1,
+      isVerified: user.isVerified === true || user.isVerified === 1,
       groups,
       pagesTotal
     })

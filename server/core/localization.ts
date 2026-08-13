@@ -4,7 +4,7 @@ import * as i18nMiddleware from 'i18next-http-middleware'
 import i18next from 'i18next'
 import fs from 'fs-extra'
 import path from 'node:path'
-import yaml from 'js-yaml'
+import * as yaml from 'js-yaml'
 import type { Express } from 'express'
 
 interface LocaleRow { strings?: unknown }

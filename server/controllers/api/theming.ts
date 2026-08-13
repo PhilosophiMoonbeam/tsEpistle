@@ -1,12 +1,12 @@
 import express from 'express'
-import { type Request, wikiAuth } from '../_types.ts'
+import { type Request, getWikiAuth } from '../_types.ts'
 
 import themingOperations from '../../operations/theming.ts'
 
 const router = express.Router()
 
 
-const canManageTheme = (req: Request): boolean => wikiAuth.checkAccess(req.user, ['manage:theme', 'manage:system'])
+const canManageTheme = (req: Request): boolean => getWikiAuth().checkAccess(req.user, ['manage:theme', 'manage:system'])
 
 router.get('/config', (req, res) => {
   if (!canManageTheme(req)) return res.sendStatus(403)

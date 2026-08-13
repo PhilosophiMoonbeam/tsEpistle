@@ -20,7 +20,7 @@ import importV1Operations from '../../operations/import-v1.ts'
 import fs from 'fs-extra'
 import getos from 'getos'
 import * as os from 'node:os'
-import filesize from 'filesize'
+import { filesize } from 'filesize'
 
 vi.mock('../../jobs/sync-graph-updates.ts', () => ({ default: vi.fn().mockResolvedValue(true) }))
 vi.mock('../../operations/import-v1.ts', () => ({
@@ -49,7 +49,7 @@ vi.mock('node:os', () => {
   }
   return { default: osMock, ...osMock }
 })
-vi.mock('filesize', () => ({ default: vi.fn(() => '16 GB') }))
+vi.mock('filesize', () => ({ filesize: vi.fn(() => '16 GB') }))
 vi.mock('fs-extra', () => {
   const fsMock = {
     pathExists: vi.fn().mockResolvedValue(false),

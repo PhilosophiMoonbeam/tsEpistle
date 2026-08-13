@@ -18,7 +18,14 @@ async function loginAsAdmin(page: Page) {
   await page.getByPlaceholder('Email Address').fill(adminEmail)
   await page.getByPlaceholder('Password').fill(adminPassword)
   await page.getByRole('button', { name: 'Log In' }).click()
-  await expectWelcomePage(page)
+  await expect(page).toHaveURL('/')
+  await expect.poll(async () => page.evaluate(async () => {
+    const response = await fetch('/_api/users/whoami', { credentials: 'same-origin' })
+    return response.json()
+  })).toMatchObject({
+    authenticated: true,
+    user: { email: adminEmail }
+  })
 }
 
 test.describe('critical post-install workflows', () => {
@@ -62,5 +69,71 @@ test.describe('critical post-install workflows', () => {
     await expect(page.getByRole('img', { name: 'Dashboard' })).toBeVisible()
     await expect(page.getByText('Recent Pages', { exact: true })).toBeVisible()
     await expect(page.getByText('Last Logins', { exact: true })).toBeVisible()
+  })
+
+  test('creates and publishes the home page with the Markdown editor', async ({ page }) => {
+    test.setTimeout(60_000)
+    await loginAsAdmin(page)
+
+    await page.getByRole('link', { name: 'Create Home Page' }).click()
+    await expect(page).toHaveURL('/e/en/home')
+    await page.getByText('Markdown', { exact: true }).click()
+    await page.getByRole('textbox', { name: 'Title' }).fill('Home')
+    await page.getByRole('textbox', { name: 'Short Description' }).fill('Welcome home')
+    await page.getByRole('button', { name: 'OK' }).click()
+
+    const editor = page.locator('.cm-content')
+    await expect(editor).toBeVisible()
+    await editor.fill('# Browser Workflow\n\nPublished through the modern editor.')
+    await page.getByRole('button', { name: 'Create' }).click()
+
+    await expect(page).toHaveURL('/en/home', { timeout: 30_000 })
+    await expect(page.getByRole('heading', { name: 'Browser Workflow' })).toBeVisible()
+    await expect(page.getByText('Published through the modern editor.')).toBeVisible()
+
+    await page.reload()
+    await expect(page.getByRole('heading', { name: 'Browser Workflow' })).toBeVisible()
+  })
+
+  test('edits and renders the published home page', async ({ page }) => {
+    test.setTimeout(60_000)
+    await loginAsAdmin(page)
+    await page.goto('/en/home')
+
+    await page.getByRole('button', { name: 'Edit Page' }).click()
+    await expect(page).toHaveURL('/e/en/home')
+    const editor = page.locator('.cm-content')
+    await editor.fill('# Browser Workflow Updated\n\nEdited and rendered through the modern editor.')
+    await page.getByRole('button', { name: 'Save' }).click()
+    await expect(page.getByRole('button', { name: 'Saved' })).toBeVisible({ timeout: 30_000 })
+    await page.getByRole('button', { name: 'Close' }).click()
+
+    await expect(page).toHaveURL('/en/home')
+    await expect(page.getByRole('heading', { name: 'Browser Workflow Updated' })).toBeVisible()
+    await expect(page.getByText('Edited and rendered through the modern editor.')).toBeVisible()
+  })
+
+  test('searches for and opens the published home page', async ({ page }) => {
+    await loginAsAdmin(page)
+    await page.goto('/en/home')
+
+    await page.getByRole('textbox', { name: 'Search...' }).fill('Home')
+    const result = page.locator('.search-results-items').getByText('Home', { exact: true })
+    await expect(result).toBeVisible()
+    await result.click()
+
+    await expect(page).toHaveURL('/en/home')
+    await expect(page.getByRole('heading', { name: 'Browser Workflow Updated' })).toBeVisible()
+  })
+
+  test('opens the authenticated administrator profile', async ({ page }) => {
+    await loginAsAdmin(page)
+    await page.getByRole('button', { name: 'Account' }).click()
+    await page.getByText('Profile', { exact: true }).click()
+
+    await expect(page).toHaveURL('/p/profile')
+    await expect(page.getByText('My personal info', { exact: true })).toBeVisible()
+    await expect(page.getByText('Administrator', { exact: true })).toBeVisible()
+    await expect(page.getByText('Local', { exact: true })).toBeVisible()
   })
 })

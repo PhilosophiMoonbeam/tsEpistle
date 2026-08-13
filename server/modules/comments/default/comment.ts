@@ -4,13 +4,9 @@ import { full as mdEmoji } from 'markdown-it-emoji'
 import jsdomModule from 'jsdom'
 import createDOMPurify from 'dompurify'
 import _ from 'lodash'
-import akismetApiModule, { type AkismetClient as AkismetClientInstance } from 'akismet-api'
 import moment from 'moment'
 
 const { JSDOM } = jsdomModule
-const { AkismetClient } = akismetApiModule
-
-
 const window = new JSDOM('').window
 const DOMPurify = createDOMPurify(window)
 
@@ -109,7 +105,85 @@ interface CommentModel {
   query (): CommentQuery<CommentRow>
 }
 
-type AkismetComment = Parameters<AkismetClientInstance['checkSpam']>[0]
+interface AkismetComment {
+  ip: string
+  useragent?: string
+  content: string
+  name: string
+  email: string
+  permalink: string
+  permalinkDate: string
+  type: 'reply' | 'comment'
+  role: string
+}
+
+interface AkismetOptions {
+  key: string
+  blog: string
+  lang: string
+  charset: string
+}
+
+class AkismetClient {
+  readonly key: string
+  readonly blog: string
+  readonly lang: string
+  readonly charset: string
+
+  constructor(options: AkismetOptions) {
+    this.key = options.key
+    this.blog = options.blog
+    this.lang = options.lang
+    this.charset = options.charset
+  }
+
+  async verifyKey(): Promise<boolean> {
+    const result = await this.post('https://rest.akismet.com/1.1/verify-key', {
+      key: this.key,
+      blog: this.blog
+    })
+    if (result === 'valid') return true
+    if (result === 'invalid') return false
+    throw new Error(result)
+  }
+
+  async checkSpam(comment: AkismetComment): Promise<boolean> {
+    const result = await this.post(`https://${this.key}.rest.akismet.com/1.1/comment-check`, {
+      blog: this.blog,
+      blog_lang: this.lang,
+      blog_charset: this.charset,
+      user_ip: comment.ip,
+      ...(comment.useragent === undefined ? {} : { user_agent: comment.useragent }),
+      comment_content: comment.content,
+      comment_author: comment.name,
+      comment_author_email: comment.email,
+      permalink: comment.permalink,
+      comment_post_modified_gmt: comment.permalinkDate,
+      comment_type: comment.type,
+      user_role: comment.role
+    })
+    if (result === 'true') return true
+    if (result === 'false') return false
+    if (result === 'invalid') throw new Error('Invalid API key')
+    throw new Error(result)
+  }
+
+  async post(endpoint: string, fields: Record<string, string>): Promise<string> {
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'User-Agent': 'Wiki.js'
+      },
+      body: new URLSearchParams(fields)
+    })
+    const result = await response.text()
+    if (!response.ok) {
+      throw new Error(response.headers.get('x-akismet-debug-help') ?? (result || `Akismet returned HTTP ${response.status}`))
+    }
+    return result
+  }
+}
 
 const isCommentModel = (value: unknown): value is CommentModel => (
   (typeof value === 'object' || typeof value === 'function') &&
@@ -123,7 +197,7 @@ if (!isCommentModel(commentModelCandidate)) {
 }
 const comments = commentModelCandidate
 
-let akismetClient: AkismetClientInstance | null = null
+let akismetClient: AkismetClient | null = null
 
 const mkdown = md({
   html: false,

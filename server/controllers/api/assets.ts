@@ -1,5 +1,5 @@
 import express from 'express'
-import { objectValue, type Request, type Response, wikiAuth } from '../_types.ts'
+import { objectValue, type Request, type Response, getWikiAuth } from '../_types.ts'
 import assetOperations from '../../operations/assets.ts'
 
 const router = express.Router()
@@ -23,7 +23,7 @@ const requireAccess = (
   res: Response,
   permissions: readonly string[]
 ): req is Request & { user: Express.User & AssetRequester } => {
-  if (!wikiAuth.checkAccess(req.user, permissions) || !isAssetRequester(req.user)) {
+  if (!getWikiAuth().checkAccess(req.user, permissions) || !isAssetRequester(req.user)) {
     res.status(403).json({ error: 'Forbidden' })
     return false
   }

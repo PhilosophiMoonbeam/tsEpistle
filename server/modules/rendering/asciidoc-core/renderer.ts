@@ -1,5 +1,4 @@
-import asciidoctorModule from 'asciidoctor'
-import type { Asciidoctor } from 'asciidoctor'
+import { convert } from '@asciidoctor/core'
 import * as cheerio from 'cheerio'
 
 interface AsciidocConfig {
@@ -10,21 +9,10 @@ interface AsciidocRendererContext {
   config: AsciidocConfig
   input: string
 }
-type AsciidoctorFactory = () => Asciidoctor
-
-const isAsciidoctorFactory = (value: unknown): value is AsciidoctorFactory => typeof value === 'function'
-const factory: unknown = asciidoctorModule
-
-if (!isAsciidoctorFactory(factory)) {
-  throw new TypeError('asciidoctor does not export a factory function')
-}
-
-
-const asciidoctor = factory()
 
 const plugin = {
   async render(this: AsciidocRendererContext): Promise<string> {
-    const converted = asciidoctor.convert(this.input, {
+    const converted = await convert(this.input, {
       standalone: false,
       safe: this.config.safeMode,
       attributes: {

@@ -105,7 +105,7 @@
                 v-icon mdi-arrow-expand-all
             span {{$t('editor:markup.distractionFreeMode')}}
       .editor-asciidoc-editor
-        textarea(ref='cm')
+        div(ref='cm')
       transition(name='editor-asciidoc-preview')
         .editor-asciidoc-preview(v-if='previewShown')
           .editor-asciidoc-preview-content.contents(ref='editorPreviewContainer')
@@ -135,60 +135,29 @@ import { onEditorSaveConflict, onEditorContentOverwrite, offEditorSaveConflict, 
 import type { Element } from 'domhandler'
 import type { ContentInsertOptions, LineInsertOptions, MarkupOptions, MultiLineInsertOptions, PageLinkTarget } from './common/editor-types'
 import DOMPurify from 'dompurify'
+import { decodeBase64Text } from '../../helpers/base64'
+import { convert } from '@asciidoctor/core'
 
 // ========================================
 // IMPORTS
 // ========================================
 
-// Code Mirror
-import CodeMirror from 'codemirror'
-import 'codemirror/lib/codemirror.css'
-
-// Language
-import 'codemirror-asciidoc'
-
-// Addons
-import 'codemirror/addon/selection/active-line.js'
-import 'codemirror/addon/display/fullscreen.js'
-import 'codemirror/addon/display/fullscreen.css'
-import 'codemirror/addon/selection/mark-selection.js'
-import 'codemirror/addon/search/searchcursor.js'
-import 'codemirror/addon/hint/show-hint.js'
-import 'codemirror/addon/fold/foldcode.js'
-import 'codemirror/addon/fold/foldgutter.js'
-import 'codemirror/addon/fold/foldgutter.css'
-import cmFold from './common/cmFold'
+import { keymap } from '@codemirror/view'
+import { TextEditor, type TextEditorHandle, type TextPosition } from './common/text-editor'
 
 // ========================================
 // INIT
 // ========================================
-const asciidoctor = require('asciidoctor')()
 const cheerio = require('cheerio')
 
-// Platform detection
-const CtrlKey = /Mac/.test(navigator.platform) ? 'Cmd' : 'Ctrl'
 
-// ========================================
-// HELPER FUNCTIONS
-// ========================================
-
-cmFold.register('asciidoc')
-
-type DiagramLineHandle = CodeMirror.LineHandle & {
-  height: number
-  lineNo(): number
-}
-
-type DiagramMarker = CodeMirror.TextMarker & {
-  __kind?: 'diagram'
-}
 
 interface MarkerOptions {
   kind: 'diagram'
-  from: CodeMirror.Position
-  to: CodeMirror.Position
+  from: TextPosition
+  to: TextPosition
   text: string
-  action: (event: MouseEvent) => void
+  action: EventListener
 }
 
 // ========================================
@@ -198,8 +167,8 @@ interface MarkerOptions {
 export default defineComponent({
   data() {
     return {
-      cm: null as CodeMirror.EditorFromTextArea | null,
-      cursorPos: { ch: 0, line: 1 } as CodeMirror.Position,
+      cm: null as TextEditorHandle | null,
+      cursorPos: { ch: 0, line: 1 } as TextPosition,
       previewShown: true,
       insertLinkDialog: false,
       helpShown: false,
@@ -252,10 +221,9 @@ export default defineComponent({
           break
         case 'DIAGRAM': {
           const cm = this.editor()
-          const doc = cm.getDoc()
-          const selectionStart = doc.getCursor('from').line
-          const selectionEnd = doc.getCursor('to').line + 1
-          doc.replaceSelection('```diagram\n' + opts.text + '\n```\n', 'start')
+          const selectionStart = cm.cursor('from').line
+          const selectionEnd = cm.cursor('to').line + 1
+          cm.replaceSelection('```diagram\n' + opts.text + '\n```\n')
           this.processMarkers(selectionStart, selectionEnd)
           break
         }
@@ -265,24 +233,24 @@ export default defineComponent({
       this.activeModal = ''
       this.helpShown = false
     },
-    editor(): CodeMirror.EditorFromTextArea {
+    editor(): TextEditorHandle {
       if (!this.cm) throw new Error('CodeMirror editor is not initialized')
       return this.cm
     },
-    onCmInput: _.debounce(function (this: { processContent: (content: string) => void }, newContent: string) {
-      this.processContent(newContent)
+    onCmInput: _.debounce(function (this: { processContent: (content: string) => Promise<void> }, newContent: string) {
+      void this.processContent(newContent)
     }, 600),
-    processContent(newContent: string) {
+    async processContent(newContent: string) {
       const cm = this.editor()
-      this.processMarkers(cm.firstLine(), cm.lastLine())
-      const html = asciidoctor.convert(newContent, {
+      this.processMarkers(0, cm.lineCount)
+      const html = await convert(newContent, {
         standalone: false,
         safe: 'safe',
         attributes: { showtitle: true, icons: 'font' }
       })
       const $ = cheerio.load(html, { decodeEntities: true })
       $('pre.highlight > code.language-diagram').each((_index: number, element: Element) => {
-        const diagramContent = Buffer.from($(element).html(), 'base64').toString()
+        const diagramContent = decodeBase64Text($(element).html() ?? '')
         $(element).parent().replaceWith(`<pre class="diagram">${diagramContent}</div>`)
       })
       this.previewHTML = DOMPurify.sanitize($.html(), {
@@ -291,65 +259,57 @@ export default defineComponent({
       })
     },
     insertAtCursor({ content }: ContentInsertOptions) {
-      const doc = this.editor().getDoc()
-      doc.replaceRange(content, doc.getCursor('head'))
+      const editor = this.editor()
+      editor.replaceRange(content, editor.cursor())
     },
     insertAfter({ content, newLine }: LineInsertOptions) {
-      const doc = this.editor().getDoc()
-      const line = doc.getCursor('to').line
-      doc.replaceRange(newLine ? `\n${content}\n` : content, { line, ch: doc.getLine(line).length + 1 })
+      const editor = this.editor()
+      const line = editor.cursor('to').line
+      editor.replaceRange(newLine ? `\n${content}\n` : content, { line, ch: editor.getLine(line).length })
     },
     insertBeforeEachLine({ content, after }: MultiLineInsertOptions) {
-      const doc = this.editor().getDoc()
-      let lines: number[] = []
-      if (!doc.somethingSelected()) {
-        lines.push(doc.getCursor('head').line)
-      } else {
-        lines = _.flatten(doc.listSelections().map((selection: CodeMirror.Range) => {
-          const range = Math.abs(selection.anchor.line - selection.head.line) + 1
-          const lowestLine = selection.anchor.line > selection.head.line ? selection.head.line : selection.anchor.line
-          return _.times(range, offset => offset + lowestLine)
-        }))
+      const editor = this.editor()
+      const lines = editor.selectedLines()
+      for (const line of [...lines].reverse()) {
+        const lineContent = editor.getLine(line)
+        const replacement = _.startsWith(lineContent, content) ? lineContent.substring(content.length) : content + lineContent
+        editor.replaceRange(replacement, { line, ch: 0 }, { line, ch: lineContent.length })
       }
-      lines.forEach(line => {
-        let lineContent = doc.getLine(line)
-        const lineLength = lineContent.length
-        if (_.startsWith(lineContent, content)) lineContent = lineContent.substring(content.length)
-        doc.replaceRange(content + lineContent, { line, ch: 0 }, { line, ch: lineLength })
-      })
       if (after) {
         const line = lines[lines.length - 1]
-        doc.replaceRange(`\n${after}\n`, { line, ch: doc.getLine(line).length + 1 })
+        editor.replaceRange(`\n${after}\n`, { line, ch: editor.getLine(line).length })
       }
     },
-    positionSync(cm: CodeMirror.Editor) {
-      this.cursorPos = cm.getCursor('head')
+    positionSync(position: TextPosition) {
+      this.cursorPos = position
     },
     toggleMarkup({ start, end = start }: MarkupOptions) {
-      const doc = this.editor().getDoc()
-      if (!doc.somethingSelected()) {
+      const editor = this.editor()
+      if (!editor.hasSelection()) {
         return wikiStore.showNotification({
           message: this.$t('editor:markup.noSelectionError'),
           style: 'warning',
           icon: 'warning'
         })
       }
-      doc.replaceSelections(doc.getSelections().map((selection: string) => start + selection + end))
+      for (const selection of editor.selectedOffsets().reverse()) {
+        editor.replaceOffsets(start + editor.slice(selection.from, selection.to) + end, selection.from, selection.to)
+      }
     },
     setHeaderLine(level: number) {
-      const doc = this.editor().getDoc()
-      const line = doc.getCursor('head').line
-      let content = doc.getLine(line)
+      const editor = this.editor()
+      const line = editor.cursor().line
+      let content = editor.getLine(line)
       const length = content.length
       if (_.startsWith(content, '=')) content = content.replace(/^(=+ )/, '')
       content = _.times(level, () => '=').join('') + ` ` + content
-      doc.replaceRange(content, { line, ch: 0 }, { line, ch: length })
+      editor.replaceRange(content, { line, ch: 0 }, { line, ch: length })
     },
     toggleFullscreen() {
-      this.editor().setOption('fullScreen', true)
+      this.$el.requestFullscreen?.()
     },
     refresh() {
-      this.$nextTick(() => this.editor().refresh())
+      this.$nextTick(() => this.editor().requestMeasure())
     },
     insertLink() {
       this.insertLinkDialog = true
@@ -360,54 +320,42 @@ export default defineComponent({
         content: siteLangs.length > 0 ? `link:/${locale}/${path}[${lastPart}]` : `link:/${path}[${lastPart}]`
       })
     },
-    processMarkers(from: number, to: number) {
-      const cm = this.editor()
-      const doc = cm.getDoc()
-      let found: 'diagram' | null = null
-      let foundStart = 0
-      ;(doc.getAllMarks() as DiagramMarker[]).forEach(marker => {
-        if (marker.__kind) marker.clear()
-      })
-      cm.eachLine(from, to, (handle: CodeMirror.LineHandle) => {
-        const line = handle as DiagramLineHandle
-        const lineNumber = line.lineNo()
-        if (line.text.startsWith('```diagram')) {
-          found = 'diagram'
-          foundStart = lineNumber
-        } else if (line.text === '```' && found === 'diagram') {
-          if (lineNumber - foundStart !== 2) return
-          this.addMarker({
-            kind: 'diagram',
-            from: { line: foundStart, ch: 3 },
-            to: { line: foundStart, ch: 10 },
-            text: 'Edit Diagram',
-            action: ((start: number, end: number) => (_event: MouseEvent) => {
-              doc.setSelection({ line: start, ch: 0 }, { line: end, ch: 3 })
-              try {
-                const raw = doc.getLine(end - 1)
-                wikiStore.editor.activeModalData = Buffer.from(raw, 'base64').toString()
-                this.toggleModal('editorModalDrawio')
-              } catch (err) {
-                return wikiStore.showNotification({
-                  message: 'Failed to process diagram data.',
-                  style: 'warning',
-                  icon: 'warning'
-                })
+    processMarkers(_from: number, _to: number) {
+      const editor = this.editor()
+      const markers: MarkerOptions[] = []
+      let foundStart: number | null = null
+      for (let line = 0; line < editor.lineCount; line++) {
+        const text = editor.getLine(line)
+        if (text.startsWith('```diagram')) {
+          foundStart = line
+        } else if (text === '```' && foundStart !== null) {
+          const start = foundStart
+          if (line - start === 2) {
+            markers.push({
+              kind: 'diagram',
+              from: { line: start, ch: 3 },
+              to: { line: start, ch: 10 },
+              text: 'Edit Diagram',
+              action: () => {
+                editor.setSelection({ line: start, ch: 0 }, { line, ch: 3 })
+                try {
+                  wikiStore.editor.activeModalData = decodeBase64Text(editor.getLine(line - 1))
+                  this.toggleModal('editorModalDrawio')
+                } catch {
+                  wikiStore.showNotification({
+                    message: 'Failed to process diagram data.',
+                    style: 'warning',
+                    icon: 'warning'
+                  })
+                }
               }
-            })(foundStart, lineNumber)
-          })
-          if (line.height > 0) cm.foldCode(foundStart)
-          found = null
+            })
+            editor.foldRange({ line: start, ch: editor.getLine(start).length }, { line, ch: 0 })
+          }
+          foundStart = null
         }
-      })
-    },
-    addMarker({ kind, from, to, text, action }: MarkerOptions) {
-      const marker = document.createElement('span')
-      marker.appendChild(document.createTextNode(text))
-      marker.className = 'CodeMirror-buttonmarker'
-      marker.addEventListener('click', action)
-      const options = { replacedWith: marker, __kind: kind } as CodeMirror.TextMarkerOptions & { __kind: 'diagram' }
-      this.editor().markText(from, to, options)
+      }
+      editor.setMarkers(markers)
     }
   },
   mounted() {
@@ -417,62 +365,28 @@ export default defineComponent({
       wikiStore.editor.content = '== header\n\ncontent'
     }
 
-    // Initialize CodeMirror
-
-    const cm = CodeMirror.fromTextArea(this.$refs.cm as HTMLTextAreaElement, {
-      tabSize: 2,
-      mode: 'asciidoc',
-      theme: 'wikijs-dark',
-      lineNumbers: true,
-      lineWrapping: true,
-      line: true,
-      styleActiveLine: true,
-      highlightSelectionMatches: {
-        annotateScrollbar: true
-      },
-      viewportMargin: 50,
-      inputStyle: 'contenteditable',
-      allowDropFileTypes: ['image/jpg', 'image/png', 'image/svg', 'image/jpeg', 'image/gif'],
+    const container = this.$refs.cm as HTMLElement
+    container.style.height = this.$vuetify.display.mdAndUp
+      ? 'calc(100vh - 137px)'
+      : 'calc(100vh - 112px - 16px)'
+    const cm = new TextEditor({
+      parent: container,
+      value: wikiStore.editor.content,
       direction: siteConfig.rtl ? 'rtl' : 'ltr',
-      foldGutter: true,
-      gutters: ['CodeMirror-linenumbers', 'CodeMirror-foldgutter']
-    } as CodeMirror.EditorConfiguration)
-    this.cm = cm
-    cm.setValue(wikiStore.editor.content)
-    cm.on('change', (changedEditor: CodeMirror.Editor) => {
-      wikiStore.editor.content = changedEditor.getValue()
-      this.onCmInput(wikiStore.editor.content)
-    })
-    if (this.$vuetify.display.mdAndUp) {
-      cm.setSize(null, 'calc(100vh - 137px)')
-    } else {
-      cm.setSize(null, 'calc(100vh - 112px - 16px)')
-    }
-
-    // Set Keybindings
-
-    const keyBindings: CodeMirror.KeyMap = {
-      F11(editor: CodeMirror.Editor) {
-        editor.setOption('fullScreen', !editor.getOption('fullScreen'))
+      extensions: [
+        keymap.of([
+          { key: 'F11', run: () => { this.toggleFullscreen(); return true } },
+          { key: 'Mod-b', run: () => { this.toggleMarkup({ start: '**' }); return true } },
+          { key: 'Mod-i', run: () => { this.toggleMarkup({ start: '__' }); return true } }
+        ])
+      ],
+      onChange: value => {
+        wikiStore.editor.content = value
+        this.onCmInput(value)
       },
-      Esc(editor: CodeMirror.Editor) {
-        if (editor.getOption('fullScreen')) editor.setOption('fullScreen', false)
-      }
-    }
-    keyBindings[`${CtrlKey}-B`] = () => {
-      this.toggleMarkup({ start: '**' })
-    }
-    keyBindings[`${CtrlKey}-I`] = () => {
-      this.toggleMarkup({ start: '__' })
-    }
-
-    cm.setOption('extraKeys', keyBindings)
-
-    // Handle cursor movement
-
-    cm.on('cursorActivity', (activeEditor: CodeMirror.Editor) => {
-      this.positionSync(activeEditor)
+      onCursor: position => this.positionSync(position)
     })
+    this.cm = cm
 
     // Render initial preview
     this.processContent(wikiStore.editor.content)
@@ -488,7 +402,7 @@ export default defineComponent({
     offEditorSaveConflict(this.handleEditorSaveConflict)
     offEditorContentOverwrite(this.handleEditorContentOverwrite)
     this.onCmInput.cancel()
-    this.cm?.toTextArea()
+    this.cm?.destroy()
     this.cm = null
   }
 })
@@ -667,49 +581,5 @@ $editor-ascii-height-mobile: calc(100vh - 112px - 16px);
     z-index: 8;
   }
 
-  // ==========================================
-  // CODE MIRROR
-  // ==========================================
-
-  .CodeMirror {
-    height: auto;
-    font-family: 'Roboto Mono', monospace;
-    font-size: .9rem;
-
-    .cm-header-1 {
-      font-size: 1.5rem;
-    }
-    .cm-header-2 {
-      font-size: 1.25rem;
-    }
-    .cm-header-3 {
-      font-size: 1.15rem;
-    }
-    .cm-header-4 {
-      font-size: 1.1rem;
-    }
-    .cm-header-5 {
-      font-size: 1.05rem;
-    }
-    .cm-header-6 {
-      font-size: 1.025rem;
-    }
-  }
-
-  .CodeMirror-wrap pre.CodeMirror-line, .CodeMirror-wrap pre.CodeMirror-line-like {
-    word-break: break-word;
-  }
-
-  .CodeMirror-focused .cm-matchhighlight {
-    background-image: url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAFklEQVQI12NgYGBgkKzc8x9CMDAwAAAmhwSbidEoSQAAAABJRU5ErkJggg==);
-    background-position: bottom;
-    background-repeat: repeat-x;
-  }
-  .cm-matchhighlight {
-    background-color: mc('grey', '800');
-  }
-  .CodeMirror-selection-highlight-scrollbar {
-    background-color: mc('green', '600');
-  }
 }
 </style>

@@ -1,5 +1,5 @@
 import express from 'express'
-import { type NextFunction, type Request, type Response, wikiAuth } from '../_types.ts'
+import { type NextFunction, type Request, type Response, getWikiAuth } from '../_types.ts'
 
 import systemOperations from '../../operations/system.ts'
 import importV1Operations from '../../operations/import-v1.ts'
@@ -8,7 +8,7 @@ const router = express.Router()
 
 
 const requireSystemAccess = (req: Request, res: Response): boolean => {
-  if (!wikiAuth.checkAccess(req.user, ['manage:system'])) {
+  if (!getWikiAuth().checkAccess(req.user, ['manage:system'])) {
     res.sendStatus(403)
     return false
   }
@@ -16,7 +16,7 @@ const requireSystemAccess = (req: Request, res: Response): boolean => {
 }
 
 const requireSystemSummaryAccess = (req: Request, res: Response): boolean => {
-  if (!wikiAuth.checkAccess(req.user, ['manage:system', 'manage:navigation', 'manage:groups', 'write:groups', 'manage:users', 'write:users', 'manage:theme', 'manage:api'])) {
+  if (!getWikiAuth().checkAccess(req.user, ['manage:system', 'manage:navigation', 'manage:groups', 'write:groups', 'manage:users', 'write:users', 'manage:theme', 'manage:api'])) {
     res.sendStatus(403)
     return false
   }

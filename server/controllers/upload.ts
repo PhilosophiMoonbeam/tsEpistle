@@ -1,5 +1,5 @@
 import express from 'express'
-import { wikiAuth } from './_types.ts'
+import { getWikiAuth } from './_types.ts'
 import _ from 'lodash'
 import multer from 'multer'
 import path from 'node:path'
@@ -106,7 +106,7 @@ router.post('/u', (req, res, next) => {
 
   // Check if user can upload at path
   const assetPath = (folderId) ? hierarchy.map(h => h.slug).join('/') + `/${fileMeta.originalname}` : fileMeta.originalname
-  if (!wikiAuth.checkAccess(req.user, ['write:assets'], { path: assetPath })) {
+  if (!getWikiAuth().checkAccess(req.user, ['write:assets'], { path: assetPath })) {
     return res.status(403).json({
       succeeded: false,
       message: 'You are not authorized to upload files to this folder.'

@@ -362,7 +362,8 @@ import { useGoTo } from 'vuetify'
 import StatusIndicator from '@/components/common/status-indicator.vue'
 import Tabset from './tabset.vue'
 import NavSidebar, { type SidebarItem } from './nav-sidebar.vue'
-import Prism, { type Environment as PrismEnvironment } from 'prismjs'
+import type { Environment as PrismEnvironment } from 'prismjs'
+import Prism from '../../../libs/prism/setup'
 import mermaid from 'mermaid'
 import { wikiStore } from '@/store/index.ts'
 import _ from 'lodash'
@@ -377,6 +378,7 @@ import {
   emitPageMove,
   emitPageSource
 } from '../../../helpers/page-action-events'
+import { decodeBase64Json } from '../../../helpers/base64'
 
 /* global siteLangs */
 
@@ -391,15 +393,6 @@ type TableOfContentsItem = {
   children: TableOfContentsItem[]
 }
 
-Prism.plugins.autoloader.languages_path = '/_assets/js/prism/'
-Prism.plugins.NormalizeWhitespace.setDefaults({
-  'remove-trailing': true,
-  'remove-indent': true,
-  'left-trim': true,
-  'right-trim': true,
-  'remove-initial-line-feed': true,
-  'tabs-to-spaces': 2
-})
 Prism.plugins.toolbar.registerButton('copy-to-clipboard', (env: PrismEnvironment) => {
   let linkCopy = document.createElement('button')
   linkCopy.textContent = 'Copy'
@@ -592,10 +585,10 @@ export default defineComponent({
       }
     },
     sidebarDecoded (): SidebarItem[] {
-      return JSON.parse(Buffer.from(this.sidebar, 'base64').toString()) as SidebarItem[]
+      return decodeBase64Json<SidebarItem[]>(this.sidebar)
     },
     tocDecoded (): TableOfContentsItem[] {
-      return JSON.parse(Buffer.from(this.toc, 'base64').toString()) as TableOfContentsItem[]
+      return decodeBase64Json<TableOfContentsItem[]>(this.toc)
     },
     tocPosition () {
       return wikiStore.site.tocPosition
@@ -652,14 +645,10 @@ export default defineComponent({
     wikiStore.page.editor = this.editor
     wikiStore.page.updatedAt = this.updatedAt
     if (this.effectivePermissions) {
-      wikiStore.page.effectivePermissions = JSON.parse(
-        Buffer.from(this.effectivePermissions, 'base64').toString()
-      ) as typeof wikiStore.page.effectivePermissions
+      wikiStore.page.effectivePermissions = decodeBase64Json(this.effectivePermissions)
     }
     if (this.editShortcuts) {
-      wikiStore.page.editShortcuts = JSON.parse(
-        Buffer.from(this.editShortcuts, 'base64').toString()
-      ) as typeof wikiStore.page.editShortcuts
+      wikiStore.page.editShortcuts = decodeBase64Json(this.editShortcuts)
     }
 
     wikiStore.page.mode = 'view'
@@ -680,8 +669,13 @@ export default defineComponent({
 
     // -> Render Mermaid diagrams
     mermaid.initialize({
-      startOnLoad: true,
+      startOnLoad: false,
+      securityLevel: 'strict',
       theme: this.$vuetify.theme.current.dark ? `dark` : `default`
+    })
+    this.$nextTick(() => {
+      const diagrams = (this.$refs.container as HTMLElement).querySelectorAll<HTMLElement>('.mermaid')
+      void mermaid.run({ nodes: diagrams, suppressErrors: true })
     })
 
     // -> Handle anchor scrolling

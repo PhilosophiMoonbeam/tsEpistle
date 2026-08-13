@@ -16,9 +16,9 @@ interface UserRecord extends Record<string, unknown> {
   location?: string
   jobTitle?: string
   timezone?: string
-  isSystem?: boolean
-  isActive: boolean
-  isVerified: boolean
+  isSystem?: boolean | number
+  isActive: boolean | number
+  isVerified: boolean | number
   createdAt: unknown
   updatedAt: unknown
   lastLoginAt: unknown
@@ -170,7 +170,14 @@ const list = async (args: unknown): Promise<{ users: ListUser[], total: number }
   const users = await applyListFilters(wiki.models.users.query(), options)
     .select('id', 'email', 'name', 'providerKey', 'isSystem', 'isActive', 'createdAt', 'lastLoginAt')
     .orderBy(options.orderBy, options.orderByDirection).offset(options.offset).limit(options.pageSize)
-  return { users, total: _.toSafeInteger(totalResult.total) }
+  return {
+    users: users.map(user => ({
+      ...user,
+      isSystem: user.isSystem === true || user.isSystem === 1,
+      isActive: user.isActive === true || user.isActive === 1
+    })),
+    total: _.toSafeInteger(totalResult.total)
+  }
 }
 const search = (value: unknown): UserQuery => {
   const query = stringValue(value, 'query')

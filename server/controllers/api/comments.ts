@@ -1,12 +1,12 @@
 import express from 'express'
-import { errorStatus, objectValue, type Request, type Response, wikiAuth } from '../_types.ts'
+import { errorStatus, objectValue, type Request, type Response, getWikiAuth } from '../_types.ts'
 
 import commentOperations from '../../operations/comments.ts'
 
 const router = express.Router()
 
 
-const requireSystemAccess = (req: Request, res: Response, json = false): boolean => { if (!wikiAuth.checkAccess(req.user, ['manage:system'])) {
+const requireSystemAccess = (req: Request, res: Response, json = false): boolean => { if (!getWikiAuth().checkAccess(req.user, ['manage:system'])) {
   if (json) res.status(403).json({ error: 'Forbidden' })
   else res.sendStatus(403)
   return false

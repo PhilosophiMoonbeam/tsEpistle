@@ -10,27 +10,7 @@ declare module 'epic-spinners' {
   export const SemipolarSpinner: SpinnerComponent
 }
 
-declare module '@requarks/ckeditor5' {
-  const editor: unknown
-  export default editor
-}
 
-declare module 'mermaid' {
-  type MermaidConfig = {
-    startOnLoad?: boolean
-    theme?: string
-  }
-
-  const mermaid: {
-    initialize: (config: MermaidConfig) => void
-    mermaidAPI: {
-      initialize: (config: MermaidConfig) => void
-    }
-    render: (id: string, definition: string) => string
-  }
-
-  export default mermaid
-}
 
 declare module 'velocity-animate' {
   type VelocityTarget = Element | Element[] | NodeListOf<Element> | null | undefined

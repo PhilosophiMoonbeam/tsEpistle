@@ -32,9 +32,9 @@ block body
       edit-shortcuts=Buffer.from(JSON.stringify(config.editShortcuts)).toString('base64')
       filename=pageFilename
       )
-      template(slot='contents')
+      template(v-slot:contents)
         div!= page.render
-      template(slot='comments')
+      template(v-slot:comments)
         div!= comments.main
   if injectCode.body
     != injectCode.body

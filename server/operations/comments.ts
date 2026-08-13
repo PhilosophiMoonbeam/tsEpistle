@@ -30,11 +30,13 @@ interface CommentErrors {
   CommentGenericError: ErrorConstructor
 }
 
-const models = WIKI.models as unknown as CommentModels
-const definitions = (WIKI.data as { commentProviders: Array<Record<string, unknown> & { key: string }>, commentProvider: { getCommentById(id: number): Promise<Comment | undefined> } })
-const auth = WIKI.auth as { checkAccess(requester: Requester, permissions: string[], context: Record<string, unknown>): boolean }
-const errors = WIKI.Error as unknown as CommentErrors
-const logger = WIKI.logger as { warn(message: string): void }
+const getWiki = () => WIKI as unknown as {
+  models: CommentModels
+  data: { commentProviders: Array<Record<string, unknown> & { key: string }>, commentProvider: { getCommentById(id: number): Promise<Comment | undefined> } }
+  auth: { checkAccess(requester: Requester, permissions: string[], context: Record<string, unknown>): boolean }
+  Error: CommentErrors
+  logger: { warn(message: string): void }
+}
 
 const validProvider = (provider: unknown): provider is Provider => Boolean(
   provider && typeof provider === 'object' && !Array.isArray(provider) &&
@@ -43,6 +45,7 @@ const validProvider = (provider: unknown): provider is Provider => Boolean(
 )
 
 const listProviders = async () => {
+  const { models, data: definitions } = getWiki()
   const providers = await models.commentProviders.getProviders()
   return providers.map(provider => {
     const definition = _.find(definitions.commentProviders, ['key', provider.key]) ?? {}
@@ -51,6 +54,7 @@ const listProviders = async () => {
 }
 
 const updateProviders = async (providers: unknown): Promise<void> => {
+  const { models } = getWiki()
   validateRows(providers, validProvider, 'Invalid comment providers payload')
   for (const provider of providers.map(provider => ({
     key: provider.key,
@@ -63,6 +67,7 @@ const updateProviders = async (providers: unknown): Promise<void> => {
 }
 
 const list = async ({ requester, locale, path }: { requester: Requester, locale: string, path: string }) => {
+  const { models, auth, Error: errors } = getWiki()
   const page = await models.pages.query().select('pages.id').findOne({ localeCode: locale, path })
     .withGraphJoined('tags').modifyGraph('tags', builder => builder.select('tag'))
   if (!page) return []
@@ -75,6 +80,7 @@ const list = async ({ requester, locale, path }: { requester: Requester, locale:
 }
 
 const get = async ({ requester, id }: { requester: Requester, id: number }) => {
+  const { models, data: definitions, auth, Error: errors, logger } = getWiki()
   const comment = await definitions.commentProvider.getCommentById(id)
   if (!comment || !comment.pageId) throw new errors.CommentNotFound()
   const page = await models.pages.query().select('localeCode', 'path').findById(comment.pageId)
@@ -90,10 +96,10 @@ const get = async ({ requester, id }: { requester: Requester, id: number }) => {
 }
 
 const create = ({ requester, ip, input }: { requester: Requester, ip: string, input: Record<string, unknown> }): unknown =>
-  models.comments.postNewComment({ ...input, user: requester, ip })
+  getWiki().models.comments.postNewComment({ ...input, user: requester, ip })
 const update = ({ requester, ip, input }: { requester: Requester, ip: string, input: Record<string, unknown> }): unknown =>
-  models.comments.updateComment({ ...input, user: requester, ip })
+  getWiki().models.comments.updateComment({ ...input, user: requester, ip })
 const remove = ({ requester, ip, id }: { requester: Requester, ip: string, id: number }): unknown =>
-  models.comments.deleteComment({ id, user: requester, ip })
+  getWiki().models.comments.deleteComment({ id, user: requester, ip })
 
 export default { create, get, list, listProviders, remove, update, updateProviders }

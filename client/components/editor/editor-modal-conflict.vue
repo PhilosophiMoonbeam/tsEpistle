@@ -79,43 +79,20 @@ import { wikiStore } from '@/store/index.ts'
 import { emitEditorConflictResolved } from '../../helpers/editor-conflict-events'
 import { fetchPageConflictLatest, type PageConflictLatest } from '../../helpers/pages-api'
 import { showNotification } from '../../helpers/root-ui-store'
+import { html } from '@codemirror/lang-html'
+import { markdown } from '@codemirror/lang-markdown'
+import { unifiedMergeView } from '@codemirror/merge'
+import type { Extension } from '@codemirror/state'
+import { TextEditor, type TextEditorHandle } from './common/text-editor'
 
 /* global siteConfig */
 
-// ========================================
-// IMPORTS
-// ========================================
-
-import '../../libs/codemirror-merge/diff-match-patch.js'
-
-// Code Mirror
-import CodeMirror from 'codemirror'
-import 'codemirror/lib/codemirror.css'
-
-// Language
-import 'codemirror/mode/markdown/markdown.js'
-import 'codemirror/mode/htmlmixed/htmlmixed.js'
-
-// Addons
-import 'codemirror/addon/selection/active-line.js'
-import 'codemirror/addon/merge/merge.js'
-import 'codemirror/addon/merge/merge.css'
-import type { MergeView, MergeViewConfiguration } from 'codemirror/addon/merge/merge'
 
 type ConflictLatest = Pick<PageConflictLatest, 'title' | 'description' | 'updatedAt' | 'authorName' | 'content'>
-type EditorMergeView = MergeView & {
-  wrap: HTMLElement
-}
-type EditorMergeViewConfiguration = Omit<MergeViewConfiguration, 'connect'> & {
-  connect: null
-  highlightDifferences: boolean
-}
-type EditorMergeViewConstructor = (element: HTMLElement, options: EditorMergeViewConfiguration) => EditorMergeView
-
 export default {
   data() {
     return {
-      cm: null as EditorMergeView | null,
+      cm: null as TextEditorHandle | null,
       latest: {
         title: '',
         description: '',
@@ -170,7 +147,7 @@ export default {
       this.close()
     },
     useLocal () {
-      wikiStore.editor.content = this.cm!.editor().getValue()
+      wikiStore.editor.content = this.cm!.getValue()
       this.overwriteAndClose()
     },
     useRemote () {
@@ -179,12 +156,9 @@ export default {
     }
   },
   async mounted () {
-    let textMode = 'text/html'
-
-    switch (this.editorKey) {
-      case 'markdown':
-        textMode = 'text/markdown'
-        break
+    let language: Extension = html()
+    if (this.editorKey === 'markdown') {
+      language = markdown()
     }
 
     let resp
@@ -203,24 +177,28 @@ export default {
     }
     this.latest = resp
 
-    const createMergeView = CodeMirror.MergeView as unknown as EditorMergeViewConstructor
-    const mergeView = createMergeView(this.$refs.cm as HTMLElement, {
+    const container = this.$refs.cm as HTMLElement
+    container.style.height = 'calc(100vh - 265px)'
+    this.cm = new TextEditor({
+      parent: container,
       value: wikiStore.editor.content,
-      orig: resp.content,
-      tabSize: 2,
-      mode: textMode,
-      lineNumbers: true,
-      lineWrapping: true,
-      connect: null,
-      highlightDifferences: true,
-      styleActiveLine: true,
-      collapseIdentical: true,
-      direction: siteConfig.rtl ? 'rtl' : 'ltr'
+      language,
+      direction: siteConfig.rtl ? 'rtl' : 'ltr',
+      extensions: [
+        unifiedMergeView({
+          original: resp.content,
+          mergeControls: false,
+          collapseUnchanged: {
+            margin: 3,
+            minSize: 4
+          }
+        })
+      ]
     })
-    this.cm = mergeView
-    mergeView.rightOriginal()!.setSize(null, 'calc(100vh - 265px)')
-    mergeView.editor().setSize(null, 'calc(100vh - 265px)')
-    mergeView.wrap.style.height = 'calc(100vh - 265px)'
+  },
+  beforeUnmount () {
+    this.cm?.destroy()
+    this.cm = null
   }
 }
 </script>

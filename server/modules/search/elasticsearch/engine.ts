@@ -9,13 +9,10 @@ import {
 import fs from 'node:fs'
 import { pipeline } from 'node:stream/promises'
 import { Transform, type TransformCallback } from 'node:stream'
-import elasticsearch6Module, { type Client as ElasticsearchClient6 } from 'elasticsearch6'
-import elasticsearch7Module, { type Client as ElasticsearchClient7 } from 'elasticsearch7'
-import elasticsearch8Module, { type Client as ElasticsearchClient8 } from 'elasticsearch8'
+import { Client as ElasticsearchClient } from '@elastic/elasticsearch'
 
 interface ElasticsearchConfig extends SearchConfig {
   analyzer: string
-  apiVersion: string
   hosts: string
   indexName: string
   sniffInterval: number
@@ -24,9 +21,9 @@ interface ElasticsearchConfig extends SearchConfig {
   verifyTLSCertificate: boolean
 }
 
-type ElasticsearchClient = ElasticsearchClient6 | ElasticsearchClient7 | ElasticsearchClient8
+type ElasticsearchClientInstance = ElasticsearchClient
 
-interface ElasticsearchSearchContext extends SearchContext<ElasticsearchConfig, ElasticsearchClient> {
+interface ElasticsearchSearchContext extends SearchContext<ElasticsearchConfig, ElasticsearchClientInstance> {
   buildSuggest(page: ElasticsearchSuggestPage): ElasticsearchSuggestion[]
   buildTags(id: number): Promise<string[]>
   createIndex(): Promise<void>
@@ -76,7 +73,6 @@ interface ElasticsearchBulkAction {
   index: {
     _id: string
     _index: string
-    _type?: string
   }
 }
 
@@ -155,75 +151,22 @@ const getSuggestionText = (value: unknown): string | false => {
   return typeof text === 'string' ? text : false
 }
 
-const getTotalHits = (value: unknown, apiVersion: string): number => {
-  const total = getNestedValue(value, apiVersion === '8.x' ? ['hits', 'total', 'value'] : ['body', 'hits', 'total', 'value'])
-  if (typeof total === 'number') {
-    return total
-  }
-  const fallback = getNestedValue(value, apiVersion === '8.x' ? ['hits', 'total'] : ['body', 'hits', 'total'])
+const getTotalHits = (value: unknown): number => {
+  const total = getNestedValue(value, ['hits', 'total', 'value'])
+  if (typeof total === 'number') return total
+  const fallback = getNestedValue(value, ['hits', 'total'])
   return typeof fallback === 'number' ? fallback : 0
 }
 
-const { Client: Client6 } = elasticsearch6Module
-const { Client: Client7 } = elasticsearch7Module
-const { Client: Client8 } = elasticsearch8Module
-
-const elasticsearchIndexExists = async (client: ElasticsearchClient, index: string): Promise<unknown> => {
-  if (client instanceof Client8) {
-    return client.indices.exists({ index })
-  }
-  if (client instanceof Client7) {
-    return client.indices.exists({ index })
-  }
+const elasticsearchIndexExists = async (client: ElasticsearchClientInstance, index: string): Promise<boolean> => {
   return client.indices.exists({ index })
 }
 
-const createLegacyElasticsearchIndex = async (
-  client: ElasticsearchClient,
-  index: string,
-  analyzer: string,
-  apiVersion: string
-): Promise<void> => {
-  const mappings = {
-    properties: {
-      suggest: { type: 'completion' },
-      title: { type: 'text', boost: 10.0 },
-      description: { type: 'text', boost: 3.0 },
-      content: { type: 'text', boost: 1.0 },
-      locale: { type: 'keyword' },
-      path: { type: 'text' },
-      tags: { type: 'text', boost: 8.0 }
-    }
-  }
-  const body = {
-    mappings: apiVersion === '6.x' ? { _doc: mappings } : mappings,
-    settings: {
-      analysis: {
-        analyzer: {
-          default: { type: analyzer }
-        }
-      }
-    }
-  }
-  if (client instanceof Client6) {
-    await client.indices.create({ index, body })
-    return
-  }
-  if (client instanceof Client7) {
-    await client.indices.create({ index, body })
-    return
-  }
-  throw new Error('Elasticsearch client does not match the configured legacy API version')
-}
-
-const createCurrentElasticsearchIndex = async (
-  client: ElasticsearchClient,
+const createElasticsearchIndex = async (
+  client: ElasticsearchClientInstance,
   index: string,
   analyzer: string
 ): Promise<void> => {
-  if (!(client instanceof Client8)) {
-    throw new Error('Elasticsearch client does not match the configured 8.x API version')
-  }
   await client.indices.create({
     index,
     mappings: {
@@ -244,12 +187,11 @@ const createCurrentElasticsearchIndex = async (
 }
 
 const searchElasticsearch = async (
-  client: ElasticsearchClient,
+  client: ElasticsearchClientInstance,
   index: string,
   query: string
 ): Promise<unknown> => {
-  if (client instanceof Client8) {
-    return client.search<ElasticsearchHit['_source']>({
+  return client.search<ElasticsearchHit['_source']>({
       index,
       query: {
         simple_query_string: {
@@ -274,96 +216,35 @@ const searchElasticsearch = async (
         }
       }
     })
-  }
-  const body = {
-    query: {
-      simple_query_string: {
-        query: `*${query}*`,
-        fields: ['title^20', 'description^3', 'tags^8', 'content^1'],
-        default_operator: 'and',
-        analyze_wildcard: true
-      }
-    },
-    from: 0,
-    size: 50,
-    _source: ['title', 'description', 'path', 'locale'],
-    suggest: {
-      suggestions: {
-        text: query,
-        completion: {
-          field: 'suggest',
-          size: 5,
-          skip_duplicates: true,
-          fuzzy: true
-        }
-      }
-    }
-  }
-  if (client instanceof Client7) {
-    return client.search({ index, body })
-  }
-  return client.search({ index, body })
 }
 
 const indexElasticsearchDocument = async (
-  client: ElasticsearchClient,
+  client: ElasticsearchClientInstance,
   index: string,
   id: string,
   document: ElasticsearchBulkDocument
 ): Promise<void> => {
-  if (client instanceof Client8) {
-    await client.index({ index, id, document, refresh: true })
-    return
-  }
-  if (client instanceof Client7) {
-    await client.index({ index, type: '_doc', id, body: document, refresh: true })
-    return
-  }
-  await client.index({ index, type: '_doc', id, body: document, refresh: 'true' })
+  await client.index({ index, id, document, refresh: true })
 }
 
 const deleteElasticsearchDocument = async (
-  client: ElasticsearchClient,
+  client: ElasticsearchClientInstance,
   index: string,
   id: string
 ): Promise<void> => {
-  if (client instanceof Client8) {
-    await client.delete({ index, id, refresh: true })
-    return
-  }
-  if (client instanceof Client7) {
-    await client.delete({ index, type: '_doc', id, refresh: true })
-    return
-  }
-  await client.delete({ index, type: '_doc', id, refresh: 'true' })
+  await client.delete({ index, id, refresh: true })
 }
 
-const deleteElasticsearchIndex = async (client: ElasticsearchClient, index: string): Promise<void> => {
-  if (client instanceof Client8) {
-    await client.indices.delete({ index })
-    return
-  }
-  if (client instanceof Client7) {
-    await client.indices.delete({ index })
-    return
-  }
+const deleteElasticsearchIndex = async (client: ElasticsearchClientInstance, index: string): Promise<void> => {
   await client.indices.delete({ index })
 }
 
 const bulkIndexElasticsearchDocuments = async (
-  client: ElasticsearchClient,
+  client: ElasticsearchClientInstance,
   index: string,
   body: ElasticsearchBulkItem[]
 ): Promise<void> => {
-  if (client instanceof Client8) {
-    await client.bulk({ index, operations: body, refresh: true })
-    return
-  }
-  if (client instanceof Client7) {
-    await client.bulk({ index, body, refresh: true })
-    return
-  }
-  await client.bulk({ index, body, refresh: 'true' })
+  await client.bulk({ index, operations: body, refresh: true })
 }
 
 
@@ -379,37 +260,13 @@ const plugin: ElasticsearchPlugin = {
    */
   async init() {
     wiki.logger.info(`(SEARCH/ELASTICSEARCH) Initializing...`)
-    switch (this.config.apiVersion) {
-      case '8.x':
-        this.client = new Client8({
-          nodes: this.config.hosts.split(',').map(host => host.trim()),
-          sniffOnStart: this.config.sniffOnStart,
-          sniffInterval: (this.config.sniffInterval > 0) ? this.config.sniffInterval : false,
-          tls: getTlsOptions(this.config),
-          name: 'wiki-js'
-        })
-        break
-      case '7.x':
-        this.client = new Client7({
-          nodes: this.config.hosts.split(',').map(host => host.trim()),
-          sniffOnStart: this.config.sniffOnStart,
-          sniffInterval: (this.config.sniffInterval > 0) ? this.config.sniffInterval : false,
-          ssl: getTlsOptions(this.config),
-          name: 'wiki-js'
-        })
-        break
-      case '6.x':
-        this.client = new Client6({
-          nodes: this.config.hosts.split(',').map(host => host.trim()),
-          sniffOnStart: this.config.sniffOnStart,
-          sniffInterval: (this.config.sniffInterval > 0) ? this.config.sniffInterval : false,
-          ssl: getTlsOptions(this.config),
-          name: 'wiki-js'
-        })
-        break
-      default:
-        throw new Error('Unsupported version of elasticsearch! Update your settings in the Administration Area.')
-    }
+    this.client = new ElasticsearchClient({
+      nodes: this.config.hosts.split(',').map(host => host.trim()),
+      sniffOnStart: this.config.sniffOnStart,
+      sniffInterval: (this.config.sniffInterval > 0) ? this.config.sniffInterval : false,
+      tls: getTlsOptions(this.config),
+      name: 'wiki-js'
+    })
 
     // -> Create Search Index
     await this.createIndex()
@@ -422,25 +279,10 @@ const plugin: ElasticsearchPlugin = {
   async createIndex() {
     try {
       const indexExists = await elasticsearchIndexExists(this.client, this.config.indexName)
-      // Elasticsearch 6.x / 7.x
-      if (this.config.apiVersion !== '8.x' && !getNestedValue(indexExists, ['body'])) {
+      if (!indexExists) {
         wiki.logger.info(`(SEARCH/ELASTICSEARCH) Creating index...`)
         try {
-          await createLegacyElasticsearchIndex(
-            this.client,
-            this.config.indexName,
-            this.config.analyzer,
-            this.config.apiVersion
-          )
-        } catch (err: unknown) {
-          wiki.logger.error(`(SEARCH/ELASTICSEARCH) Create Index Error: `, getNestedValue(err, ['meta', 'body', 'error']) ?? err)
-        }
-      // Elasticsearch 8.x
-      } else if (this.config.apiVersion === '8.x' && !indexExists) {
-        wiki.logger.info(`(SEARCH/ELASTICSEARCH) Creating index...`)
-        try {
-          // 8.x Doesn't support boost in mappings, so we will need to boost at query time.
-          await createCurrentElasticsearchIndex(this.client, this.config.indexName, this.config.analyzer)
+          await createElasticsearchIndex(this.client, this.config.indexName, this.config.analyzer)
         } catch (err: unknown) {
           wiki.logger.error(`(SEARCH/ELASTICSEARCH) Create Index Error: `, getNestedValue(err, ['meta', 'body', 'error']) ?? err)
         }
@@ -459,7 +301,7 @@ const plugin: ElasticsearchPlugin = {
     void _opts
     try {
       const response = await searchElasticsearch(this.client, this.config.indexName, q)
-      const hitsValue = getNestedValue(response, this.config.apiVersion === '8.x' ? ['hits', 'hits'] : ['body', 'hits', 'hits'])
+      const hitsValue = getNestedValue(response, ['hits', 'hits'])
       if (!Array.isArray(hitsValue) || !hitsValue.every(isElasticsearchHit)) {
         throw new Error('Elasticsearch returned invalid search hits')
       }
@@ -474,7 +316,7 @@ const plugin: ElasticsearchPlugin = {
           description: hit._source.description
         })),
         suggestions: suggestionItems.map(getSuggestionText).filter((suggestion): suggestion is string => Boolean(suggestion)),
-        totalHits: getTotalHits(response, this.config.apiVersion)
+        totalHits: getTotalHits(response)
       }
     } catch (err: unknown) {
       wiki.logger.warn('Search Engine Error: ', getNestedValue(err, ['meta', 'body', 'error']) ?? err)
@@ -632,8 +474,7 @@ const plugin: ElasticsearchPlugin = {
           result.push({
             index: {
               _index: this.config.indexName,
-              _id: document.id,
-              ...(this.config.apiVersion !== '8.x' && { _type: '_doc' })
+              _id: document.id
             }
           })
           const safeContent = wiki.models.pages.cleanHTML(document.render)

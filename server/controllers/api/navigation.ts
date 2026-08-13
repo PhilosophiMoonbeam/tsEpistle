@@ -1,12 +1,12 @@
 import express from 'express'
-import { errorStatus, type Request, type Response, wikiAuth } from '../_types.ts'
+import { errorStatus, type Request, type Response, getWikiAuth } from '../_types.ts'
 
 import navigationOperations from '../../operations/navigation.ts'
 
 const router = express.Router()
 
 
-const requireNavigationAccess = (req: Request, res: Response): boolean => { if (!wikiAuth.checkAccess(req.user, ['manage:navigation', 'manage:system'])) {
+const requireNavigationAccess = (req: Request, res: Response): boolean => { if (!getWikiAuth().checkAccess(req.user, ['manage:navigation', 'manage:system'])) {
   res.status(403).json({ error: 'manage:navigation or manage:system is required' })
   return false
 }

@@ -137,6 +137,7 @@ import { fetchPageHistory, fetchPageVersion, restorePageVersion, type PageHistor
 import { getPageDownloadPath, getPageSourcePath } from '../helpers/page-actions'
 import { getErrorMessage, loadingStart, loadingStop, setLoading, showNotification } from '../helpers/root-ui-store'
 import { wikiStore } from '@/store/index.ts'
+import { decodeBase64Json } from '../helpers/base64'
 
 export default {
   i18nOptions: { namespaces: 'history' },
@@ -324,7 +325,7 @@ export default {
     this.target = this.cache[0]!
 
     if (this.effectivePermissions) {
-      wikiStore.page.effectivePermissions = JSON.parse(Buffer.from(this.effectivePermissions, 'base64').toString())
+      wikiStore.page.effectivePermissions = decodeBase64Json(this.effectivePermissions)
     }
   },
   mounted() {

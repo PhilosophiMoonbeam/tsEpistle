@@ -1,5 +1,5 @@
 import type { App, Plugin } from 'vue'
-import filesize from 'filesize.js'
+import { filesize } from 'filesize'
 import _ from 'lodash'
 import moment, { type MomentInput } from 'moment-timezone'
 

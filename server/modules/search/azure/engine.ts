@@ -1,23 +1,26 @@
 import {
+  AzureKeyCredential,
+  SearchClient,
+  SearchIndexClient,
+  type SearchIndex
+} from '@azure/search-documents'
+import {
   wiki,
   type SearchConfig,
   type SearchContext,
   type SearchPlugin,
   type UnknownRecord
 } from '../../types.ts'
-import _ from 'lodash'
-import { SearchService } from 'azure-search-client'
-import { FieldType, IndexAction, QueryType, SuggestSearchMode } from 'azure-search-types'
-import { pipeline } from 'node:stream/promises'
-import { Transform, type TransformCallback } from 'node:stream'
 
-interface AzureSuggestion {
-  queryPlusText: string
+interface AzureDocument {
+  content: string
+  description: string
+  id: string
+  locale: string
+  path: string
+  title: string
 }
 
-interface AzureSuggestResponse {
-  value: AzureSuggestion[]
-}
 interface AzureIndexRow extends UnknownRecord {
   description: string
   id: string
@@ -27,7 +30,9 @@ interface AzureIndexRow extends UnknownRecord {
   title: string
 }
 
-type AzureSearchContext = SearchContext<SearchConfig, SearchService>
+interface AzureSearchContext extends SearchContext<SearchConfig, SearchClient<AzureDocument>> {
+  indexClient: SearchIndexClient
+}
 
 const isAzureIndexRow = (value: unknown): value is AzureIndexRow => (
   typeof value === 'object' &&
@@ -46,253 +51,157 @@ const isAzureIndexRow = (value: unknown): value is AzureIndexRow => (
   typeof value.title === 'string'
 )
 
+const toSearchDocument = (page: {
+  hash: string
+  localeCode: string
+  path: string
+  title: string
+  description: string
+  safeContent: string
+}): AzureDocument => ({
+  id: page.hash,
+  locale: page.localeCode,
+  path: page.path,
+  title: page.title,
+  description: page.description,
+  content: page.safeContent
+})
 
-const isSuggestResponse = (value: unknown): value is AzureSuggestResponse => {
-  if (typeof value !== 'object' || value === null || !('value' in value) || !Array.isArray(value.value)) {
-    return false
-  }
-  return value.value.every(suggestion => (
-    typeof suggestion === 'object' &&
-    suggestion !== null &&
-    'queryPlusText' in suggestion &&
-    typeof suggestion.queryPlusText === 'string'
-  ))
-}
-
+const indexDefinition = (name: string): SearchIndex => ({
+  name,
+  fields: [
+    { name: 'id', type: 'Edm.String', key: true, searchable: false },
+    { name: 'locale', type: 'Edm.String', searchable: false },
+    { name: 'path', type: 'Edm.String', searchable: false },
+    { name: 'title', type: 'Edm.String', searchable: true },
+    { name: 'description', type: 'Edm.String', searchable: true },
+    { name: 'content', type: 'Edm.String', searchable: true }
+  ],
+  scoringProfiles: [{
+    name: 'fieldWeights',
+    textWeights: {
+      weights: {
+        title: 4,
+        description: 3,
+        content: 1
+      }
+    }
+  }],
+  suggesters: [{
+    name: 'suggestions',
+    searchMode: 'analyzingInfixMatching',
+    sourceFields: ['title', 'description', 'content']
+  }]
+})
 
 const plugin: SearchPlugin<SearchConfig, AzureSearchContext> = {
-  async activate() {
-    // not used
-  },
-  async deactivate() {
-    // not used
-  },
-  /**
-   * INIT
-   */
-  async init() {
-    wiki.logger.info(`(SEARCH/AZURE) Initializing...`)
-    this.client = new SearchService(this.config.serviceName, this.config.adminKey)
+  async activate() {},
+  async deactivate() {},
 
-    // -> Create Search Index
-    const indexes = await this.client.indexes.list()
-    if (!_.find(_.get(indexes, 'result.value', []), ['name', this.config.indexName])) {
-      wiki.logger.info(`(SEARCH/AZURE) Creating index...`)
-      await this.client.indexes.create({
-        name: this.config.indexName,
-        fields: [
-          {
-            name: 'id',
-            type: FieldType.string,
-            key: true,
-            searchable: false
-          },
-          {
-            name: 'locale',
-            type: FieldType.string,
-            searchable: false
-          },
-          {
-            name: 'path',
-            type: FieldType.string,
-            searchable: false
-          },
-          {
-            name: 'title',
-            type: FieldType.string,
-            searchable: true
-          },
-          {
-            name: 'description',
-            type: FieldType.string,
-            searchable: true
-          },
-          {
-            name: 'content',
-            type: FieldType.string,
-            searchable: true
-          }
-        ],
-        scoringProfiles: [
-          {
-            name: 'fieldWeights',
-            text: {
-              weights: {
-                title: 4,
-                description: 3,
-                content: 1
-              }
-            }
-          }
-        ],
-        suggesters: [
-          {
-            name: 'suggestions',
-            searchMode: SuggestSearchMode.analyzingInfixMatching,
-            sourceFields: ['title', 'description', 'content']
-          }
-        ]
-      })
+  async init() {
+    wiki.logger.info('(SEARCH/AZURE) Initializing...')
+    const endpoint = `https://${this.config.serviceName}.search.windows.net`
+    const credential = new AzureKeyCredential(this.config.adminKey)
+    this.indexClient = new SearchIndexClient(endpoint, credential)
+    this.client = new SearchClient<AzureDocument>(endpoint, this.config.indexName, credential)
+
+    let indexExists = false
+    for await (const index of this.indexClient.listIndexes()) {
+      if (index.name === this.config.indexName) {
+        indexExists = true
+        break
+      }
     }
-    wiki.logger.info(`(SEARCH/AZURE) Initialization completed.`)
+    if (!indexExists) {
+      wiki.logger.info('(SEARCH/AZURE) Creating index...')
+      await this.indexClient.createIndex(indexDefinition(this.config.indexName))
+    }
+    wiki.logger.info('(SEARCH/AZURE) Initialization completed.')
   },
-  /**
-   * QUERY
-   *
-   * @param {String} q Query
-   * @param {Object} opts Additional options
-   */
-  async query(q, _opts) {
-    void _opts
+
+  async query(q) {
     try {
-      let suggestions: string[] = []
-      const results = await this.client.indexes.use(this.config.indexName).search({
-        count: true,
+      const response = await this.client.search(q, {
+        includeTotalCount: true,
         scoringProfile: 'fieldWeights',
-        search: q,
-        select: 'id, locale, path, title, description',
-        queryType: QueryType.simple,
+        select: ['id', 'locale', 'path', 'title', 'description'],
+        queryType: 'simple',
         top: 50
       })
-      if (results.result.value.length < 5) {
-        // Using plain request, not yet available in library...
+      const results = []
+      for await (const result of response.results) results.push(result.document)
+
+      let suggestions: string[] = []
+      if (results.length < 5) {
         try {
-          const endpoint = new URL(`https://${this.config.serviceName}.search.windows.net/indexes/${this.config.indexName}/docs/autocomplete`)
-          endpoint.searchParams.set('api-version', '2017-11-11-Preview')
-          const response = await fetch(endpoint, {
-            method: 'POST',
-            headers: {
-              'api-key': this.config.adminKey,
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-              autocompleteMode: 'oneTermWithContext',
-              search: q,
-              suggesterName: 'suggestions'
-            })
+          const autocomplete = await this.client.autocomplete(q, 'suggestions', {
+            autocompleteMode: 'oneTermWithContext'
           })
-          if (!response.ok) {
-            throw new Error(`Azure Search autocomplete failed with HTTP ${response.status}`)
-          }
-          const suggestResults: unknown = await response.json()
-          if (!isSuggestResponse(suggestResults)) {
-            throw new Error('Azure Search autocomplete returned an invalid response')
-          }
-          suggestions = suggestResults.value.map(suggestion => suggestion.queryPlusText)
+          suggestions = autocomplete.results.map(result => result.text)
         } catch (err: unknown) {
           wiki.logger.warn('Search Engine suggestion failure: ', err instanceof Error ? err.message : String(err))
         }
       }
       return {
-        results: results.result.value,
+        results,
         suggestions,
-        totalHits: results.result['@odata.count'] ?? 0
+        totalHits: response.count ?? 0
       }
     } catch (err: unknown) {
       wiki.logger.warn('Search Engine Error:')
       wiki.logger.warn(err instanceof Error ? err.message : String(err))
     }
   },
-  /**
-   * CREATE
-   *
-   * @param {Object} page Page to create
-   */
+
   async created(page) {
-    await this.client.indexes.use(this.config.indexName).index([
-      {
-        id: page.hash,
-        locale: page.localeCode,
-        path: page.path,
-        title: page.title,
-        description: page.description,
-        content: page.safeContent
-      }
-    ])
+    await this.client.uploadDocuments([toSearchDocument(page)])
   },
-  /**
-   * UPDATE
-   *
-   * @param {Object} page Page to update
-   */
+
   async updated(page) {
-    await this.client.indexes.use(this.config.indexName).index([
-      {
-        id: page.hash,
-        locale: page.localeCode,
-        path: page.path,
-        title: page.title,
-        description: page.description,
-        content: page.safeContent
-      }
-    ])
+    await this.client.uploadDocuments([toSearchDocument(page)])
   },
-  /**
-   * DELETE
-   *
-   * @param {Object} page Page to delete
-   */
+
   async deleted(page) {
-    await this.client.indexes.use(this.config.indexName).index([
-      {
-        '@search.action': IndexAction.delete,
-        id: page.hash
-      }
-    ])
+    await this.client.deleteDocuments('id', [page.hash])
   },
-  /**
-   * RENAME
-   *
-   * @param {Object} page Page to rename
-   */
+
   async renamed(page) {
-    await this.client.indexes.use(this.config.indexName).index([
-      {
-        '@search.action': IndexAction.delete,
-        id: page.hash
-      }
-    ])
-    await this.client.indexes.use(this.config.indexName).index([
-      {
-        id: page.destinationHash,
-        locale: page.destinationLocaleCode,
-        path: page.destinationPath,
-        title: page.title,
-        description: page.description,
-        content: page.safeContent
-      }
-    ])
+    await this.client.deleteDocuments('id', [page.hash])
+    await this.client.uploadDocuments([{
+      id: page.destinationHash,
+      locale: page.destinationLocaleCode,
+      path: page.destinationPath,
+      title: page.title,
+      description: page.description,
+      content: page.safeContent
+    }])
   },
-  /**
-   * REBUILD INDEX
-   */
+
   async rebuild() {
-    wiki.logger.info(`(SEARCH/AZURE) Rebuilding Index...`)
-    await pipeline(
-      wiki.models.knex.column({ id: 'hash' }, 'path', { locale: 'localeCode' }, 'title', 'description', 'render').select().from('pages').where({
-        isPublished: true,
-        isPrivate: false
-      }).stream(),
-      new Transform({
-        objectMode: true,
-        transform: (chunk: unknown, _encoding: BufferEncoding, callback: TransformCallback) => {
-          if (!isAzureIndexRow(chunk)) {
-            callback(new Error('Azure Search index row is invalid'))
-            return
-          }
-          callback(null, {
-            id: chunk.id,
-            path: chunk.path,
-            locale: chunk.locale,
-            title: chunk.title,
-            description: chunk.description,
-            content: wiki.models.pages.cleanHTML(chunk.render)
-          })
-        }
-      }),
-      this.client.indexes.use(this.config.indexName).createIndexingStream()
-    )
-    wiki.logger.info(`(SEARCH/AZURE) Index rebuilt successfully.`)
+    wiki.logger.info('(SEARCH/AZURE) Rebuilding Index...')
+    const documents: AzureDocument[] = []
+    const rows = wiki.models.knex.column({ id: 'hash' }, 'path', { locale: 'localeCode' }, 'title', 'description', 'render').select().from('pages').where({
+      isPublished: true,
+      isPrivate: false
+    }).stream()
+
+    for await (const row of rows) {
+      if (!isAzureIndexRow(row)) throw new Error('Azure Search index row is invalid')
+      documents.push({
+        id: row.id,
+        path: row.path,
+        locale: row.locale,
+        title: row.title,
+        description: row.description,
+        content: wiki.models.pages.cleanHTML(row.render)
+      })
+      if (documents.length === 1000) {
+        await this.client.uploadDocuments(documents)
+        documents.length = 0
+      }
+    }
+    if (documents.length > 0) await this.client.uploadDocuments(documents)
+    wiki.logger.info('(SEARCH/AZURE) Index rebuilt successfully.')
   }
 }
 

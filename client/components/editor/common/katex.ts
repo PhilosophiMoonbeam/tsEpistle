@@ -1,14 +1,12 @@
+import type { StateBlock, StateInline } from 'markdown-it'
+
 // Test if potential opening or closing delimieter
 // Assumes that there is a "$" at state.src[pos]
-function isValidDelim (state, pos) {
-  let prevChar
-  let nextChar
-  let max = state.posMax
+function isValidDelim (state: StateInline, pos: number): { canOpen: boolean, canClose: boolean } {
+  const prevChar = pos > 0 ? state.src.charCodeAt(pos - 1) : -1
+  const nextChar = pos + 1 <= state.posMax ? state.src.charCodeAt(pos + 1) : -1
   let canOpen = true
   let canClose = true
-
-  prevChar = pos > 0 ? state.src.charCodeAt(pos - 1) : -1
-  nextChar = pos + 1 <= max ? state.src.charCodeAt(pos + 1) : -1
 
   // Check non-whitespace conditions for opening and closing, and
   // check that closing delimeter isn't followed by a number
@@ -27,8 +25,8 @@ function isValidDelim (state, pos) {
 }
 
 export default {
-  katexInline (state, silent) {
-    let start, match, token, res, pos
+  katexInline (state: StateInline, silent: boolean): boolean {
+    let match, token, res, pos
 
     if (state.src[state.pos] !== '$') { return false }
 
@@ -43,7 +41,7 @@ export default {
     // This loop will assume that the first leading backtick can not
     // be the first character in state.src, which is known since
     // we have found an opening delimieter already.
-    start = state.pos + 1
+    const start = state.pos + 1
     match = start
     while ((match = state.src.indexOf('$', match)) !== -1) {
       // Found potential $, look for escapes, pos will point to
@@ -95,8 +93,8 @@ export default {
     return true
   },
 
-  katexBlock (state, start, end, silent) {
-    let firstLine; let lastLine; let next; let lastPos; let found = false; let token
+  katexBlock (state: StateBlock, start: number, end: number, silent: boolean): boolean {
+    let firstLine: string; let lastLine = ''; let next: number; let found = false
     let pos = state.bMarks[start] + state.tShift[start]
     let max = state.eMarks[start]
 
@@ -127,7 +125,7 @@ export default {
       }
 
       if (state.src.slice(pos, max).trim().slice(-2) === '$$') {
-        lastPos = state.src.slice(0, max).lastIndexOf('$$')
+        const lastPos = state.src.slice(0, max).lastIndexOf('$$')
         lastLine = state.src.slice(pos, lastPos)
         found = true
       }
@@ -135,7 +133,7 @@ export default {
 
     state.line = next + 1
 
-    token = state.push('katex_block', 'math', 0)
+    const token = state.push('katex_block', 'math', 0)
     token.block = true
     token.content = (firstLine && firstLine.trim() ? firstLine + '\n' : '') +
     state.getLines(start + 1, next, state.tShift[start], true) +

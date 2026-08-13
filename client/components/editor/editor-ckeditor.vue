@@ -18,7 +18,35 @@
 import _ from 'lodash'
 import { defineComponent, type PropType } from 'vue'
 import { wikiStore } from '@/store/index.ts'
-import DecoupledEditor from '@requarks/ckeditor5'
+import {
+  Autoformat,
+  BlockQuote,
+  Bold,
+  CodeBlock,
+  DecoupledEditor,
+  Essentials,
+  Heading,
+  Image,
+  ImageCaption,
+  ImageInsert,
+  ImageResize,
+  ImageStyle,
+  ImageToolbar,
+  Indent,
+  IndentBlock,
+  Italic,
+  Link,
+  List,
+  ListProperties,
+  Paragraph,
+  PasteFromOffice,
+  Strikethrough,
+  Table,
+  TableToolbar,
+  Underline,
+  WordCount
+} from 'ckeditor5'
+import 'ckeditor5/ckeditor5.css'
 import { html as beautify } from 'js-beautify'
 import EditorConflict from './ckeditor/conflict.vue'
 import { onEditorSaveConflict, onEditorContentOverwrite, offEditorSaveConflict, offEditorContentOverwrite } from '../../helpers/editor-conflict-events'
@@ -55,40 +83,6 @@ type ImageInsertOptions = {
   source: string
 }
 
-interface CKEditorInstance {
-  destroy: () => Promise<unknown>
-  execute: {
-    (command: 'imageInsert', options: ImageInsertOptions): void
-    (command: 'link', href: string, attributes?: LinkAttributes): void
-  }
-  getData: () => string
-  model: {
-    document: {
-      on: (event: 'change:data', callback: () => void) => void
-    }
-  }
-  setData: (data: string) => void
-  ui: {
-    view: {
-      toolbar: {
-        element: HTMLElement
-      }
-    }
-  }
-}
-
-type CKEditorConfig = {
-  language: string
-  placeholder: string
-  disableNativeSpellChecker: boolean
-  wordCount: {
-    onUpdate: (stats: EditorStats) => void
-  }
-}
-
-interface CKEditorConstructor {
-  create: (sourceElement: HTMLElement, config: CKEditorConfig) => Promise<CKEditorInstance>
-}
 
 export default defineComponent({
   components: {
@@ -102,7 +96,7 @@ export default defineComponent({
   },
   data() {
     return {
-      editor: null as CKEditorInstance | null,
+      editor: null as DecoupledEditor | null,
       stats: {
         characters: 0,
         words: 0
@@ -175,10 +169,78 @@ export default defineComponent({
 
     const editorElement = this.$refs.editor as HTMLElement
     const toolbarContainer = this.$refs.toolbarContainer as HTMLElement
-    const editor = await (DecoupledEditor as unknown as CKEditorConstructor).create(editorElement, {
+    const editor = await DecoupledEditor.create(editorElement, {
+      licenseKey: 'GPL',
+      plugins: [
+        Essentials,
+        Paragraph,
+        Heading,
+        Bold,
+        Italic,
+        Underline,
+        Strikethrough,
+        Link,
+        List,
+        ListProperties,
+        BlockQuote,
+        CodeBlock,
+        Image,
+        ImageInsert,
+        ImageCaption,
+        ImageResize,
+        ImageStyle,
+        ImageToolbar,
+        Table,
+        TableToolbar,
+        WordCount,
+        Autoformat,
+        Indent,
+        IndentBlock,
+        PasteFromOffice
+      ],
+      toolbar: {
+        items: [
+          'undo',
+          'redo',
+          '|',
+          'heading',
+          '|',
+          'bold',
+          'italic',
+          'underline',
+          'strikethrough',
+          'link',
+          '|',
+          'bulletedList',
+          'numberedList',
+          'outdent',
+          'indent',
+          '|',
+          'blockQuote',
+          'codeBlock',
+          'insertTable'
+        ]
+      },
+      image: {
+        toolbar: ['imageTextAlternative', 'toggleImageCaption', 'imageStyle:inline', 'imageStyle:block', 'imageStyle:side']
+      },
+      table: {
+        contentToolbar: ['tableColumn', 'tableRow', 'mergeTableCells']
+      },
+      link: {
+        addTargetToExternalLinks: true,
+        decorators: {
+          isDownloadable: {
+            mode: 'manual',
+            label: 'Downloadable',
+            attributes: {
+              download: 'download'
+            }
+          }
+        }
+      },
       language: this.locale,
       placeholder: 'Type the page content here',
-      disableNativeSpellChecker: false,
       wordCount: {
         onUpdate: stats => {
           this.stats = stats
@@ -186,7 +248,10 @@ export default defineComponent({
       }
     })
     this.editor = editor
-    toolbarContainer.appendChild(editor.ui.view.toolbar.element)
+    const toolbarElement = editor.ui.view.toolbar.element
+    if (toolbarElement) {
+      toolbarContainer.appendChild(toolbarElement)
+    }
 
     if (this.mode !== 'create') {
       editor.setData(wikiStore.editor.content)

@@ -45,7 +45,7 @@
                 v-icon mdi-arrow-expand-all
             span {{$t('editor:markup.distractionFreeMode')}}
       .editor-code-editor
-        textarea(ref='cm')
+        div(ref='cm')
     v-system-bar.editor-code-sysbar(dark, status, color='grey darken-3')
       .caption.editor-code-sysbar-locale {{locale.toUpperCase()}}
       .caption.px-3 /{{path}}
@@ -63,31 +63,9 @@ import { wikiStore } from '@/store/index.ts'
 import { onEditorSaveConflict, onEditorContentOverwrite, offEditorSaveConflict, offEditorContentOverwrite } from '../../helpers/editor-conflict-events'
 import { onEditorInsert, offEditorInsert, type EditorInsertPayload } from '../../helpers/editor-insert-events'
 import type { ContentInsertOptions, LineInsertOptions, MultiLineInsertOptions } from './common/editor-types'
+import { TextEditor, type TextEditorHandle, type TextPosition } from './common/text-editor'
+import { html } from '@codemirror/lang-html'
 
-// ========================================
-// IMPORTS
-// ========================================
-
-// Code Mirror
-import CodeMirror from 'codemirror'
-import 'codemirror/lib/codemirror.css'
-
-// Language
-import 'codemirror/mode/htmlmixed/htmlmixed.js'
-
-// Addons
-import 'codemirror/addon/selection/active-line.js'
-import 'codemirror/addon/display/fullscreen.js'
-import 'codemirror/addon/display/fullscreen.css'
-import 'codemirror/addon/selection/mark-selection.js'
-import 'codemirror/addon/search/searchcursor.js'
-
-// ========================================
-// INIT
-// ========================================
-
-// Platform detection
-// const CtrlKey = /Mac/.test(navigator.platform) ? 'Cmd' : 'Ctrl'
 
 // ========================================
 // Vue Component
@@ -96,8 +74,8 @@ import 'codemirror/addon/search/searchcursor.js'
 export default defineComponent({
   data() {
     return {
-      cm: null as CodeMirror.EditorFromTextArea | null,
-      cursorPos: { ch: 0, line: 1 } as CodeMirror.Position,
+      cm: null as TextEditorHandle | null,
+      cursorPos: { ch: 0, line: 1 } as TextPosition,
       helpShown: false
     }
   },
@@ -158,68 +136,52 @@ export default defineComponent({
       this.activeModal = ''
       this.helpShown = false
     },
-    editor(): CodeMirror.EditorFromTextArea {
-      if (!this.cm) {
-        throw new Error('CodeMirror editor is not initialized')
-      }
+    editor(): TextEditorHandle {
+      if (!this.cm) throw new Error('CodeMirror editor is not initialized')
       return this.cm
     },
     /**
      * Insert content at cursor
      */
     insertAtCursor({ content }: ContentInsertOptions) {
-      const doc = this.editor().getDoc()
-      doc.replaceRange(content, doc.getCursor('head'))
+      const editor = this.editor()
+      editor.replaceRange(content, editor.cursor())
     },
     /**
      * Insert content after current line
      */
     insertAfter({ content, newLine }: LineInsertOptions) {
-      const doc = this.editor().getDoc()
-      const line = doc.getCursor('to').line
-      doc.replaceRange(newLine ? `\n${content}\n` : content, { line, ch: doc.getLine(line).length + 1 })
+      const editor = this.editor()
+      const line = editor.cursor('to').line
+      editor.replaceRange(newLine ? `\n${content}\n` : content, { line, ch: editor.getLine(line).length })
     },
     /**
      * Insert content before current line
      */
     insertBeforeEachLine({ content, after }: MultiLineInsertOptions) {
-      const doc = this.editor().getDoc()
-      let lines: number[] = []
-      if (!doc.somethingSelected()) {
-        lines.push(doc.getCursor('head').line)
-      } else {
-        lines = _.flatten(doc.listSelections().map((selection: CodeMirror.Range) => {
-          const range = Math.abs(selection.anchor.line - selection.head.line) + 1
-          const lowestLine = selection.anchor.line > selection.head.line ? selection.head.line : selection.anchor.line
-          return _.times(range, offset => offset + lowestLine)
-        }))
+      const editor = this.editor()
+      const lines = editor.selectedLines()
+      for (const line of [...lines].reverse()) {
+        const lineContent = editor.getLine(line)
+        const replacement = _.startsWith(lineContent, content) ? lineContent.substring(content.length) : content + lineContent
+        editor.replaceRange(replacement, { line, ch: 0 }, { line, ch: lineContent.length })
       }
-      lines.forEach(line => {
-        let lineContent = doc.getLine(line)
-        const lineLength = lineContent.length
-        if (_.startsWith(lineContent, content)) {
-          lineContent = lineContent.substring(content.length)
-        }
-        doc.replaceRange(content + lineContent, { line, ch: 0 }, { line, ch: lineLength })
-      })
       if (after) {
         const line = lines[lines.length - 1]
-        doc.replaceRange(`\n${after}\n`, { line, ch: doc.getLine(line).length + 1 })
+        editor.replaceRange(`\n${after}\n`, { line, ch: editor.getLine(line).length })
       }
     },
     /**
      * Update cursor state
      */
-    positionSync(cm: CodeMirror.Editor) {
-      this.cursorPos = cm.getCursor('head')
+    positionSync(position: TextPosition) {
+      this.cursorPos = position
     },
     toggleFullscreen () {
-      this.editor().setOption('fullScreen', true)
+      this.$el.requestFullscreen?.()
     },
     refresh() {
-      this.$nextTick(() => {
-        this.editor().refresh()
-      })
+      this.$nextTick(() => this.editor().requestMeasure())
     }
   },
   mounted() {
@@ -229,51 +191,16 @@ export default defineComponent({
       wikiStore.editor.content = '<h1>Title</h1>\n\n<p>Some text here</p>'
     }
 
-    // Initialize CodeMirror
-
-    const cm = CodeMirror.fromTextArea(this.$refs.cm as HTMLTextAreaElement, {
-      tabSize: 2,
-      mode: 'text/html',
-      theme: 'wikijs-dark',
-      lineNumbers: true,
-      lineWrapping: true,
-      line: true,
-      styleActiveLine: true,
-      highlightSelectionMatches: {
-        annotateScrollbar: true
+    const cm = new TextEditor({
+      parent: this.$refs.cm as HTMLElement,
+      value: wikiStore.editor.content,
+      language: html(),
+      onChange: value => {
+        wikiStore.editor.content = value
       },
-      viewportMargin: 50,
-      inputStyle: 'contenteditable',
-      allowDropFileTypes: ['image/jpg', 'image/png', 'image/svg', 'image/jpeg', 'image/gif']
-    } as CodeMirror.EditorConfiguration)
+      onCursor: position => this.positionSync(position)
+    })
     this.cm = cm
-    cm.setValue(wikiStore.editor.content)
-    cm.on('change', (changedEditor: CodeMirror.Editor) => {
-      wikiStore.editor.content = changedEditor.getValue()
-    })
-    if (this.$vuetify.display.mdAndUp) {
-      cm.setSize(null, 'calc(100vh - 64px - 24px)')
-    } else {
-      cm.setSize(null, 'calc(100vh - 56px - 16px)')
-    }
-
-    // Set Keybindings
-
-    const keyBindings: CodeMirror.KeyMap = {
-      F11(editor: CodeMirror.Editor) {
-        editor.setOption('fullScreen', !editor.getOption('fullScreen'))
-      },
-      Esc(editor: CodeMirror.Editor) {
-        if (editor.getOption('fullScreen')) editor.setOption('fullScreen', false)
-      }
-    }
-    cm.setOption('extraKeys', keyBindings)
-
-    // Handle cursor movement
-
-    cm.on('cursorActivity', (activeEditor: CodeMirror.Editor) => {
-      this.positionSync(activeEditor)
-    })
 
     // Render initial preview
 
@@ -287,7 +214,7 @@ export default defineComponent({
     offEditorInsert(this.handleEditorInsert)
     offEditorSaveConflict(this.handleEditorSaveConflict)
     offEditorContentOverwrite(this.handleEditorContentOverwrite)
-    this.cm?.toTextArea()
+    this.cm?.destroy()
     this.cm = null
   }
 })
@@ -362,124 +289,6 @@ $editor-height-mobile: calc(100vh - 56px - 16px);
     }
   }
 
-  // ==========================================
-  // CODE MIRROR
-  // ==========================================
-
-  .CodeMirror {
-    height: auto;
-
-    .cm-header-1 {
-      font-size: 1.5rem;
-    }
-    .cm-header-2 {
-      font-size: 1.25rem;
-    }
-    .cm-header-3 {
-      font-size: 1.15rem;
-    }
-    .cm-header-4 {
-      font-size: 1.1rem;
-    }
-    .cm-header-5 {
-      font-size: 1.05rem;
-    }
-    .cm-header-6 {
-      font-size: 1.025rem;
-    }
-  }
-
-  .CodeMirror-focused .cm-matchhighlight {
-    background-image: url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAFklEQVQI12NgYGBgkKzc8x9CMDAwAAAmhwSbidEoSQAAAABJRU5ErkJggg==);
-    background-position: bottom;
-    background-repeat: repeat-x;
-  }
-  .cm-matchhighlight {
-    background-color: mc('grey', '800');
-  }
-  .CodeMirror-selection-highlight-scrollbar {
-    background-color: mc('green', '600');
-  }
-
-  .cm-s-wikijs-dark.CodeMirror {
-    background: darken(mc('grey','900'), 3%);
-    color: #e0e0e0;
-  }
-  .cm-s-wikijs-dark div.CodeMirror-selected {
-    background: mc('blue','800');
-  }
-  .cm-s-wikijs-dark .cm-matchhighlight {
-    background: mc('blue','800');
-  }
-  .cm-s-wikijs-dark .CodeMirror-line::selection, .cm-s-wikijs-dark .CodeMirror-line > span::selection, .cm-s-wikijs-dark .CodeMirror-line > span > span::selection {
-    background: mc('amber', '500');
-  }
-  .cm-s-wikijs-dark .CodeMirror-line::-moz-selection, .cm-s-wikijs-dark .CodeMirror-line > span::-moz-selection, .cm-s-wikijs-dark .CodeMirror-line > span > span::-moz-selection {
-    background: mc('amber', '500');
-  }
-  .cm-s-wikijs-dark .CodeMirror-gutters {
-    background: darken(mc('grey','900'), 6%);
-    border-right: 1px solid mc('grey','900');
-  }
-  .cm-s-wikijs-dark .CodeMirror-guttermarker {
-    color: #ac4142;
-  }
-  .cm-s-wikijs-dark .CodeMirror-guttermarker-subtle {
-    color: #505050;
-  }
-  .cm-s-wikijs-dark .CodeMirror-linenumber {
-    color: mc('grey','800');
-  }
-  .cm-s-wikijs-dark .CodeMirror-cursor {
-    border-left: 1px solid #b0b0b0;
-  }
-  .cm-s-wikijs-dark span.cm-comment {
-    color: mc('orange','800');
-  }
-  .cm-s-wikijs-dark span.cm-atom {
-    color: #aa759f;
-  }
-  .cm-s-wikijs-dark span.cm-number {
-    color: #aa759f;
-  }
-  .cm-s-wikijs-dark span.cm-property, .cm-s-wikijs-dark span.cm-attribute {
-    color: #90a959;
-  }
-  .cm-s-wikijs-dark span.cm-keyword {
-    color: #ac4142;
-  }
-  .cm-s-wikijs-dark span.cm-string {
-    color: #f4bf75;
-  }
-  .cm-s-wikijs-dark span.cm-variable {
-    color: #90a959;
-  }
-  .cm-s-wikijs-dark span.cm-variable-2 {
-    color: #6a9fb5;
-  }
-  .cm-s-wikijs-dark span.cm-def {
-    color: #d28445;
-  }
-  .cm-s-wikijs-dark span.cm-bracket {
-    color: #e0e0e0;
-  }
-  .cm-s-wikijs-dark span.cm-tag {
-    color: #ac4142;
-  }
-  .cm-s-wikijs-dark span.cm-link {
-    color: #aa759f;
-  }
-  .cm-s-wikijs-dark span.cm-error {
-    background: #ac4142;
-    color: #b0b0b0;
-  }
-  .cm-s-wikijs-dark .CodeMirror-activeline-background {
-    background: mc('grey','900');
-  }
-  .cm-s-wikijs-dark .CodeMirror-matchingbracket {
-    text-decoration: underline;
-    color: white !important;
-  }
 
 }
 </style>

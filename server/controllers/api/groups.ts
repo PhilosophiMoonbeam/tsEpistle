@@ -1,5 +1,5 @@
 import express from 'express'
-import { errorStatus, objectValue, type NextFunction, type Request, type Response, wikiAuth } from '../_types.ts'
+import { errorStatus, objectValue, type NextFunction, type Request, type Response, getWikiAuth } from '../_types.ts'
 
 import groupOperations from '../../operations/groups.ts'
 
@@ -7,7 +7,7 @@ const router = express.Router()
 
 
 const requireAccess = (req: Request, res: Response, permissions: readonly string[], message: string): boolean => {
-  if (!wikiAuth.checkAccess(req.user, permissions)) {
+  if (!getWikiAuth().checkAccess(req.user, permissions)) {
     res.status(403).json({ error: message })
     return false
   }

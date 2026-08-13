@@ -28,12 +28,13 @@ mariadb)
   ;;
 mssql)
   echo "Using MS SQL Server..."
-  docker run -d -p 1433:1433 --name db --network="host" -e "SA_PASSWORD=Password123!" -e "ACCEPT_EULA=Y" mcr.microsoft.com/mssql/server:2019-latest
-  while ! docker exec db /opt/mssql-tools/bin/sqlcmd -S localhost -U SA -P "Password123!" -Q 'CREATE DATABASE wiki' &> /dev/null ; do
+  docker run -d -p 1433:1433 --name db --network="host" -e "MSSQL_SA_PASSWORD=Password123!" -e "ACCEPT_EULA=Y" mcr.microsoft.com/mssql/server:2022-latest
+  while ! docker exec db /opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P "Password123!" -Q 'SELECT 1' &> /dev/null ; do
     echo "Waiting for database connection..."
     sleep 2
   done
-  docker run -d -p 3000:3000 --name wiki --network="host" -e "DB_TYPE=mssql" -e "DB_HOST=localhost" -e "DB_PORT=1433" -e "DB_NAME=wiki" -e "DB_USER=SA" -e "DB_PASS=Password123!" requarks/wiki:canary-$REL_VERSION_STRICT
+  docker exec db /opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P "Password123!" -Q 'CREATE DATABASE wiki'
+  docker run -d -p 3000:3000 --name wiki --network="host" -e "DB_TYPE=mssql" -e "DB_HOST=localhost" -e "DB_PORT=1433" -e "DB_NAME=wiki" -e "DB_USER=sa" -e "DB_PASS=Password123!" requarks/wiki:canary-$REL_VERSION_STRICT
   ;;
 sqlite)
   echo "Using SQLite..."

@@ -3,7 +3,7 @@ import path from 'node:path'
 import { promisify } from 'node:util'
 
 import _ from 'lodash'
-import filesize from 'filesize'
+import { filesize } from 'filesize'
 import fs from 'fs-extra'
 import getos from 'getos'
 

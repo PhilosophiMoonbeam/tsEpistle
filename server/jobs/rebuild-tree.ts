@@ -39,7 +39,7 @@ export default async function rebuildTree (_pageId?: number): Promise<void> {
   void _pageId
   wiki.logger.info('Rebuilding page tree...')
   try {
-    wiki.models = database.init() as unknown as Models
+    wiki.models = await database.init() as unknown as Models
     await wiki.configSvc.loadFromDb()
     await wiki.configSvc.applyFlags()
     const pages = await wiki.models.pages.query().select('id', 'path', 'localeCode', 'title', 'isPrivate', 'privateNS').orderBy(['localeCode', 'path'])
@@ -90,7 +90,7 @@ export default async function rebuildTree (_pageId?: number): Promise<void> {
     wiki.logger.info('Rebuilding page tree: [ COMPLETED ]')
   } catch (error) {
     wiki.logger.error('Rebuilding page tree: [ FAILED ]')
-    wiki.logger.error(error instanceof Error ? error.message : String(error))
+    wiki.logger.error(error instanceof Error ? error.stack ?? error.message : String(error))
     throw error
   }
 }

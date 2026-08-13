@@ -1,5 +1,5 @@
 import express from 'express'
-import { errorStatus, objectValue, type Request, type Response, wikiAuth } from '../_types.ts'
+import { errorStatus, objectValue, type Request, type Response, getWikiAuth } from '../_types.ts'
 import { createAuthRateLimiter } from '../../helpers/auth-rate-limiter.ts'
 import _ from 'lodash'
 
@@ -57,13 +57,13 @@ const handleExpectedAuthError = (err: unknown, res: Response): boolean => {
 }
 
 const requireAdminApiAccess = (req: Request, res: Response): boolean => {
-  if (wikiAuth.checkAccess(req.user, ['manage:system', 'manage:api'])) return true
+  if (getWikiAuth().checkAccess(req.user, ['manage:system', 'manage:api'])) return true
   res.status(403).json({ error: 'manage:system or manage:api is required' })
   return false
 }
 
 const requireSystemAccess = (req: Request, res: Response): boolean => {
-  if (wikiAuth.checkAccess(req.user, ['manage:system'])) return true
+  if (getWikiAuth().checkAccess(req.user, ['manage:system'])) return true
   res.status(403).json({ error: 'manage:system is required' })
   return false
 }
@@ -106,7 +106,7 @@ router.post('/strategies', async (req, res) => {
 })
 
 router.get('/providers', async (req, res, next) => {
-  if (!wikiAuth.checkAccess(req.user, ['manage:system', 'write:users', 'manage:users'])) {
+  if (!getWikiAuth().checkAccess(req.user, ['manage:system', 'write:users', 'manage:users'])) {
     return res.status(403).json({ error: 'manage:system, write:users, or manage:users is required' })
   }
   try {

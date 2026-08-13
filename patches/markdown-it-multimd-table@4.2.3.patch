@@ -1,0 +1,13 @@
+diff --git a/index.js b/index.js
+index 94f48a8b68420b53d116635495ac63065eb23649..56dc9185f8dfdda9d0b467de5f8ad16ace83e433 100644
+--- a/index.js
++++ b/index.js
+@@ -9,7 +9,7 @@ module.exports = function multimd_table_plugin(md, options) {
+     multibody:  true,
+     autolabel:  true
+   };
+-  options = md.utils.assign({}, defaults, options || {});
++  options = Object.assign({}, defaults, options || {});
+ 
+   function scan_bound_indices(state, line) {
+     /**

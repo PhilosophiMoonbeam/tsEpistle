@@ -4,7 +4,7 @@ import _ from 'lodash'
 import moment from 'moment'
 import CSR from '@root/csr'
 import PEM from '@root/pem'
-import punycode from 'node:punycode'
+import { domainToASCII } from 'node:url'
 import type { AcmeAccount, AcmeCertificate, AcmeChallenge, AcmeClient } from 'acme'
 import type { RootKeypair } from '@root/keypairs'
 
@@ -113,7 +113,9 @@ const letsencrypt: LetsEncryptService = {
       // -> Create CSR
 
       wiki.logger.info(`(LETSENCRYPT) Generating certificate signing request (CSR)...`)
-      const domains = [ punycode.toASCII(wiki.config.ssl.domain) ]
+      const asciiDomain = domainToASCII(wiki.config.ssl.domain)
+      if (!asciiDomain) throw new Error('SSL domain is invalid')
+      const domains = [asciiDomain]
       const serverKey = await Keypairs.import({ pem: serverKeyPem })
       const csrDer = await CSR.csr({ jwk: serverKey, domains, encoding: 'der' })
       const csr = PEM.packBlock({ type: 'CERTIFICATE REQUEST', bytes: csrDer })

@@ -33,6 +33,7 @@
 <script lang='ts'>
 import { getPageDownloadPath } from '../helpers/page-actions'
 import { wikiStore } from '@/store/index.ts'
+import { decodeBase64Json } from '../helpers/base64'
 
 export default {
   props: {
@@ -72,7 +73,7 @@ export default {
     wikiStore.page.mode = 'source'
 
     if (this.effectivePermissions) {
-      wikiStore.page.effectivePermissions = JSON.parse(Buffer.from(this.effectivePermissions, 'base64').toString())
+      wikiStore.page.effectivePermissions = decodeBase64Json(this.effectivePermissions)
     }
   },
   methods: {

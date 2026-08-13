@@ -1,5 +1,5 @@
 import express from 'express'
-import { type Request, type Response, wikiAuth } from '../_types.ts'
+import { type Request, type Response, getWikiAuth } from '../_types.ts'
 import _ from 'lodash'
 import pageOperations from '../../operations/pages.ts'
 
@@ -81,7 +81,7 @@ const requesterInput = (req: Request): { requester?: Express.User } =>
 
 
 const requireSystemAccess = (req: Request, res: Response): boolean => {
-  if (!wikiAuth.checkAccess(req.user, ['manage:system'])) {
+  if (!getWikiAuth().checkAccess(req.user, ['manage:system'])) {
     res.status(403).json({ error: 'manage:system is required' })
     return false
   }
@@ -89,7 +89,7 @@ const requireSystemAccess = (req: Request, res: Response): boolean => {
 }
 
 const requirePageDeleteAccess = (req: Request, res: Response): boolean => {
-  if (!wikiAuth.checkAccess(req.user, ['delete:pages', 'manage:system'])) {
+  if (!getWikiAuth().checkAccess(req.user, ['delete:pages', 'manage:system'])) {
     res.status(403).json({ error: 'delete:pages or manage:system is required' })
     return false
   }
@@ -98,7 +98,7 @@ const requirePageDeleteAccess = (req: Request, res: Response): boolean => {
 }
 
 const requireRecentPagesAccess = (req: Request, res: Response): boolean => {
-  if (!wikiAuth.checkAccess(req.user, ['manage:system', 'read:pages'])) {
+  if (!getWikiAuth().checkAccess(req.user, ['manage:system', 'read:pages'])) {
     res.status(403).json({ error: 'manage:system or read:pages is required' })
     return false
   }
@@ -107,7 +107,7 @@ const requireRecentPagesAccess = (req: Request, res: Response): boolean => {
 }
 
 const requireTagsAccess = (req: Request, res: Response): boolean => {
-  if (!wikiAuth.checkAccess(req.user, ['manage:system', 'read:pages'])) {
+  if (!getWikiAuth().checkAccess(req.user, ['manage:system', 'read:pages'])) {
     res.status(403).json({ error: 'manage:system or read:pages is required' })
     return false
   }
@@ -116,7 +116,7 @@ const requireTagsAccess = (req: Request, res: Response): boolean => {
 }
 
 const requirePageLinksAccess = (req: Request, res: Response): boolean => {
-  if (!wikiAuth.checkAccess(req.user, ['manage:system', 'read:pages'])) {
+  if (!getWikiAuth().checkAccess(req.user, ['manage:system', 'read:pages'])) {
     res.status(403).json({ error: 'manage:system or read:pages is required' })
     return false
   }
@@ -125,7 +125,7 @@ const requirePageLinksAccess = (req: Request, res: Response): boolean => {
 }
 
 const requirePageListAccess = (req: Request, res: Response): boolean => {
-  if (!wikiAuth.checkAccess(req.user, ['manage:system', 'read:pages'])) {
+  if (!getWikiAuth().checkAccess(req.user, ['manage:system', 'read:pages'])) {
     res.status(403).json({ error: 'manage:system or read:pages is required' })
     return false
   }
@@ -448,14 +448,14 @@ router.get('/:id', async (req, res, next) => {
     return res.status(400).json({ error: 'id must be a positive integer' })
   }
 
-  if (!wikiAuth.checkAccess(req.user, ['read:pages', 'manage:system'])) {
+  if (!getWikiAuth().checkAccess(req.user, ['read:pages', 'manage:system'])) {
     return res.status(403).json({ error: 'read:pages or manage:system is required' })
   }
 
   try {
     const page = await pageOperations.get({ ...requesterInput(req), id })
     const pageResult: Record<string, unknown> = page
-    if (!wikiAuth.checkAccess(req.user, ['write:pages', 'manage:system'])) {
+    if (!getWikiAuth().checkAccess(req.user, ['write:pages', 'manage:system'])) {
       return res.status(403).json({ error: 'write:pages or manage:system is required' })
     }
     return res.json({

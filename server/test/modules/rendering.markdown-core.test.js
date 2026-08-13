@@ -59,7 +59,7 @@ describe('markdown core renderer plugin behavior', () => {
       '<p><code id="c" class="kbd" target="_blank">code</code></p>\n' +
       '<p>bad {.}</p>\n' +
       '<p>bad</p>\n' +
-      '<p class="a b" id="one" id="two" target="_blank">x</p>\n'
+      '<p class="a b" id="two" target="_blank">x</p>\n'
     )
   })
 

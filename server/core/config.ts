@@ -3,7 +3,7 @@ import chalk from 'chalk'
 import cfgHelper from '../helpers/config.ts'
 import fs from 'node:fs'
 import path from 'node:path'
-import yaml from 'js-yaml'
+import * as yaml from 'js-yaml'
 import regex from '../app/regex.ts'
 import packageJson from '../../package.json' with { type: 'json' }
 

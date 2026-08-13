@@ -2,7 +2,7 @@ import { Model } from 'objection'
 import fs from 'fs-extra'
 import path from 'node:path'
 import _ from 'lodash'
-import yaml from 'js-yaml'
+import * as yaml from 'js-yaml'
 import commonHelper from '../helpers/common.ts'
 import {
   isNodeError,

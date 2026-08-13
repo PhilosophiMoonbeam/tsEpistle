@@ -1,12 +1,12 @@
 import express from 'express'
-import { type Request, type Response, wikiAuth } from '../_types.ts'
+import { type Request, type Response, getWikiAuth } from '../_types.ts'
 
 import renderingOperations from '../../operations/rendering.ts'
 
 const router = express.Router()
 
 
-const requireSystemAccess = (req: Request, res: Response, json = false): boolean => { if (!wikiAuth.checkAccess(req.user, ['manage:system'])) {
+const requireSystemAccess = (req: Request, res: Response, json = false): boolean => { if (!getWikiAuth().checkAccess(req.user, ['manage:system'])) {
   if (json) res.status(403).json({ error: 'Forbidden' })
   else res.sendStatus(403)
   return false

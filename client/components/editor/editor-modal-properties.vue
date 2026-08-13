@@ -192,7 +192,7 @@
           .editor-props-codeeditor-title
             .overline {{$t('editor:props.html')}}
           .editor-props-codeeditor
-            textarea(ref='codejs')
+            div(ref='codejs')
           .editor-props-codeeditor-hint
             .caption {{$t('editor:props.htmlHint')}}
 
@@ -237,7 +237,7 @@
           .editor-props-codeeditor-title
             .overline {{$t('editor:props.css')}}
           .editor-props-codeeditor
-            textarea(ref='codecss')
+            div(ref='codecss')
           .editor-props-codeeditor-hint
             .caption {{$t('editor:props.cssHint')}}
 
@@ -250,10 +250,9 @@ import _ from 'lodash'
 import { wikiStore } from '@/store/index.ts'
 import { searchPageTags } from '../../helpers/pages-api'
 
-import CodeMirror from 'codemirror'
-import 'codemirror/lib/codemirror.css'
-import 'codemirror/mode/htmlmixed/htmlmixed.js'
-import 'codemirror/mode/css/css.js'
+import { css } from '@codemirror/lang-css'
+import { javascript } from '@codemirror/lang-javascript'
+import { TextEditor, type TextEditorHandle } from './common/text-editor'
 
 /* global siteLangs, siteConfig */
 
@@ -279,7 +278,7 @@ export default defineComponent({
       tagSearchTimer: null as number | null,
       tagSearchLoading: false,
       currentTab: 0,
-      cm: null as CodeMirror.EditorFromTextArea | null,
+      cm: null as TextEditorHandle | null,
       rules: {
         required: (value: string) => !!value || 'This field is required.',
         path: (value: string) => {
@@ -415,18 +414,18 @@ export default defineComponent({
     },
     currentTab (newValue: number) {
       if (this.cm) {
-        this.cm.toTextArea()
+        this.cm.destroy()
       }
       if (newValue === 2) {
         this.$nextTick(() => {
           setTimeout(() => {
-            this.loadEditor(this.$refs.codejs as HTMLTextAreaElement, 'html')
+            this.loadEditor(this.$refs.codejs as HTMLElement, 'js')
           }, 100)
         })
       } else if (newValue === 3) {
         this.$nextTick(() => {
           setTimeout(() => {
-            this.loadEditor(this.$refs.codecss as HTMLTextAreaElement, 'css')
+            this.loadEditor(this.$refs.codecss as HTMLElement, 'css')
           }, 100)
         })
       }
@@ -434,6 +433,7 @@ export default defineComponent({
   },
   beforeUnmount() {
     if (this.tagSearchTimer !== null) window.clearTimeout(this.tagSearchTimer)
+    this.cm?.destroy()
   },
   methods: {
     removeTag (tag: string) {
@@ -460,39 +460,23 @@ export default defineComponent({
         this.tagSearchLoading = false
       }
     },
-    loadEditor(ref: HTMLTextAreaElement, mode: 'html' | 'css') {
-      const cm = CodeMirror.fromTextArea(ref, {
-        tabSize: 2,
-        mode: `text/${mode}`,
-        theme: 'wikijs-dark',
-        lineNumbers: true,
-        lineWrapping: true,
-        styleActiveLine: true,
-        viewportMargin: 50,
-        inputStyle: 'contenteditable',
-        direction: 'ltr'
+    loadEditor(ref: HTMLElement, mode: 'js' | 'css') {
+      const cm = new TextEditor({
+        parent: ref,
+        value: mode === 'js' ? this.scriptJs : this.scriptCss,
+        language: mode === 'js' ? javascript() : css(),
+        onChange: value => {
+          if (mode === 'js') {
+            this.scriptJs = value
+          } else {
+            this.scriptCss = value
+          }
+        }
       })
       this.cm = cm
-      switch (mode) {
-        case 'html':
-          cm.setValue(this.scriptJs)
-          cm.on('change', (c: CodeMirror.Editor) => {
-            this.scriptJs = c.getValue()
-          })
-          break
-        case 'css':
-          cm.setValue(this.scriptCss)
-          cm.on('change', (c: CodeMirror.Editor) => {
-            this.scriptCss = c.getValue()
-          })
-          break
-        default:
-          console.warn('Invalid Editor Mode')
-          break
-      }
-      cm.setSize(null, '500px')
+      ref.style.height = '500px'
       this.$nextTick(() => {
-        cm.refresh()
+        cm.requestMeasure()
         cm.focus()
       })
     }

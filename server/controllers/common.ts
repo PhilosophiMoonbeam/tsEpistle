@@ -295,9 +295,8 @@ router.get(['/e', '/e/*editorPath'], async (req, res, next) => {
     userId: requesterId(req),
     isPrivate: false
   })
-  let page: EditorPage | null = storedPage === null
-    ? null
-    : { ...storedPage, extra: storedPage.extra ?? { css: '', js: '' } }
+  let page: EditorPage | null = storedPage == null ? null : storedPage as EditorPage
+  if (page) page.extra ??= { css: '', js: '' }
 
   pageArgs.tags = _.get(page, 'tags', [])
 

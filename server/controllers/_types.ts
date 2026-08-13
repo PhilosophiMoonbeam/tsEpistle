@@ -29,4 +29,4 @@ export const operationError = (value: unknown): OperationError => {
   return error
 }
 
-export const wikiAuth = WIKI.auth as WikiAuth
+export const getWikiAuth = (): WikiAuth => WIKI.auth as WikiAuth

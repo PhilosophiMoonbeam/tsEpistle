@@ -65,6 +65,7 @@ import { Base64 } from 'js-base64'
 import StatusIndicator from '@/components/common/status-indicator.vue'
 import { emitEditorSaveConflict, onEditorConflictReset, offEditorConflictReset } from '../helpers/editor-conflict-events'
 import { getErrorMessage } from '../helpers/root-ui-store'
+import { decodeBase64Json } from '../helpers/base64'
 
 
 export default defineComponent({
@@ -243,7 +244,7 @@ export default defineComponent({
     this.checkoutDateActive = this.checkoutDate
 
     if (this.effectivePermissions) {
-      wikiStore.page.effectivePermissions = JSON.parse(Buffer.from(this.effectivePermissions, 'base64').toString())
+      wikiStore.page.effectivePermissions = decodeBase64Json(this.effectivePermissions)
     }
   },
   mounted() {

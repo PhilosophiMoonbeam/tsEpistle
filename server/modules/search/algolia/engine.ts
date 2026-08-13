@@ -9,13 +9,11 @@ import {
   type WikiPage
 } from '../../types.ts'
 import _ from 'lodash'
-import algoliasearchModule, { type SearchClient, type SearchIndex } from 'algoliasearch'
+import { algoliasearch, type SearchClient } from 'algoliasearch'
 import { pipeline } from 'node:stream/promises'
 import { Transform, type TransformCallback } from 'node:stream'
 
-interface AlgoliaSearchContext extends SearchContext<SearchConfig, SearchClient> {
-  index: SearchIndex
-}
+type AlgoliaSearchContext = SearchContext<SearchConfig, SearchClient>
 
 interface AlgoliaHit {
   description: string
@@ -64,24 +62,26 @@ const plugin: SearchPlugin<SearchConfig, AlgoliaSearchContext> = {
    */
   async init() {
     wiki.logger.info(`(SEARCH/ALGOLIA) Initializing...`)
-    this.client = algoliasearchModule.default(this.config.appId, this.config.apiKey)
-    this.index = this.client.initIndex(this.config.indexName)
+    this.client = algoliasearch(this.config.appId, this.config.apiKey)
 
     // -> Create Search Index
     wiki.logger.info(`(SEARCH/ALGOLIA) Setting index configuration...`)
-    await this.index.setSettings({
-      searchableAttributes: [
-        'title',
-        'description',
-        'content'
-      ],
-      attributesToRetrieve: [
-        'locale',
-        'path',
-        'title',
-        'description'
-      ],
-      advancedSyntax: true
+    await this.client.setSettings({
+      indexName: this.config.indexName,
+      indexSettings: {
+        searchableAttributes: [
+          'title',
+          'description',
+          'content'
+        ],
+        attributesToRetrieve: [
+          'locale',
+          'path',
+          'title',
+          'description'
+        ],
+        advancedSyntax: true
+      }
     })
     wiki.logger.info(`(SEARCH/ALGOLIA) Initialization completed.`)
   },
@@ -94,8 +94,12 @@ const plugin: SearchPlugin<SearchConfig, AlgoliaSearchContext> = {
   async query(q: string, _opts: SearchOptions): Promise<SearchResult | void> {
     void _opts
     try {
-      const results = await this.index.search<AlgoliaHit>(q, {
-        hitsPerPage: 50
+      const results = await this.client.searchSingleIndex<AlgoliaHit>({
+        indexName: this.config.indexName,
+        searchParams: {
+          query: q,
+          hitsPerPage: 50
+        }
       })
       return {
         results: _.map(results.hits, r => ({
@@ -106,7 +110,7 @@ const plugin: SearchPlugin<SearchConfig, AlgoliaSearchContext> = {
           description: r.description
         })),
         suggestions: [],
-        totalHits: results.nbHits
+        totalHits: results.nbHits ?? 0
       }
     } catch (err: unknown) {
       wiki.logger.warn('Search Engine Error:')
@@ -119,13 +123,16 @@ const plugin: SearchPlugin<SearchConfig, AlgoliaSearchContext> = {
    * @param {Object} page Page to create
    */
   async created(page: WikiPage): Promise<void> {
-    await this.index.saveObject({
-      objectID: page.hash,
-      locale: page.localeCode,
-      path: page.path,
-      title: page.title,
-      description: page.description,
-      content: page.safeContent
+    await this.client.saveObject({
+      indexName: this.config.indexName,
+      body: {
+        objectID: page.hash,
+        locale: page.localeCode,
+        path: page.path,
+        title: page.title,
+        description: page.description,
+        content: page.safeContent
+      }
     })
   },
   /**
@@ -134,11 +141,15 @@ const plugin: SearchPlugin<SearchConfig, AlgoliaSearchContext> = {
    * @param {Object} page Page to update
    */
   async updated(page: WikiPage): Promise<void> {
-    await this.index.partialUpdateObject({
+    await this.client.partialUpdateObject({
+      indexName: this.config.indexName,
       objectID: page.hash,
-      title: page.title,
-      description: page.description,
-      content: page.safeContent
+      attributesToUpdate: {
+        title: page.title,
+        description: page.description,
+        content: page.safeContent
+      },
+      createIfNotExists: false
     })
   },
   /**
@@ -147,7 +158,7 @@ const plugin: SearchPlugin<SearchConfig, AlgoliaSearchContext> = {
    * @param {Object} page Page to delete
    */
   async deleted(page: WikiPage): Promise<void> {
-    await this.index.deleteObject(page.hash)
+    await this.client.deleteObject({ indexName: this.config.indexName, objectID: page.hash })
   },
   /**
    * RENAME
@@ -155,14 +166,17 @@ const plugin: SearchPlugin<SearchConfig, AlgoliaSearchContext> = {
    * @param {Object} page Page to rename
    */
   async renamed(page: WikiPage): Promise<void> {
-    await this.index.deleteObject(page.hash)
-    await this.index.saveObject({
-      objectID: page.destinationHash,
-      locale: page.destinationLocaleCode,
-      path: page.destinationPath,
-      title: page.title,
-      description: page.description,
-      content: page.safeContent
+    await this.client.deleteObject({ indexName: this.config.indexName, objectID: page.hash })
+    await this.client.saveObject({
+      indexName: this.config.indexName,
+      body: {
+        objectID: page.destinationHash,
+        locale: page.destinationLocaleCode,
+        path: page.destinationPath,
+        title: page.title,
+        description: page.description,
+        content: page.safeContent
+      }
     })
   },
   /**
@@ -170,7 +184,7 @@ const plugin: SearchPlugin<SearchConfig, AlgoliaSearchContext> = {
    */
   async rebuild() {
     wiki.logger.info(`(SEARCH/ALGOLIA) Rebuilding Index...`)
-    await this.index.clearObjects()
+    await this.client.clearObjects({ indexName: this.config.indexName })
 
     const MAX_DOCUMENT_BYTES = 10 * Math.pow(2, 10) // 10 KB
     const MAX_INDEXING_BYTES = 10 * Math.pow(2, 20) - Buffer.from('[').byteLength - Buffer.from(']').byteLength // 10 MB
@@ -220,8 +234,9 @@ const plugin: SearchPlugin<SearchConfig, AlgoliaSearchContext> = {
     const flushBuffer = async (): Promise<void> => {
       wiki.logger.info(`(SEARCH/ALGOLIA) Sending batch of ${chunks.length}...`)
       try {
-        await this.index.saveObjects(
-          _.map(chunks, doc => ({
+        await this.client.saveObjects({
+          indexName: this.config.indexName,
+          objects: _.map(chunks, doc => ({
             objectID: doc.id,
             locale: doc.locale,
             path: doc.path,
@@ -229,7 +244,7 @@ const plugin: SearchPlugin<SearchConfig, AlgoliaSearchContext> = {
             description: doc.description,
             content: wiki.models.pages.cleanHTML(doc.render)
           }))
-        )
+        })
       } catch (err: unknown) {
         wiki.logger.warn('(SEARCH/ALGOLIA) Failed to send batch to Algolia: ', err)
       }

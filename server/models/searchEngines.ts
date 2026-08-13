@@ -3,7 +3,7 @@ import type { Knex } from 'knex'
 import path from 'node:path'
 import fs from 'fs-extra'
 import _ from 'lodash'
-import yaml from 'js-yaml'
+import * as yaml from 'js-yaml'
 import commonHelper from '../helpers/common.ts'
 import { hasMethod, isRecord, readModuleDefinition, readModuleDirectories } from './moduleTypes.ts'
 import type {

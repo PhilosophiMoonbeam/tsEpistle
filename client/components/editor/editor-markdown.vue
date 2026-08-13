@@ -140,7 +140,7 @@
                 v-icon(:color='helpShown ? `teal` : ``') mdi-help-circle
             span {{$t('editor:markup.markdownFormattingHelp')}}
       .editor-markdown-editor
-        textarea(ref='cm')
+        div(ref='cm')
       transition(name='editor-markdown-preview')
         .editor-markdown-preview(v-if='previewShown')
           .editor-markdown-preview-content.contents(ref='editorPreviewContainer')
@@ -175,30 +175,14 @@ import markdownHelp from './markdown/help.vue'
 import { searchPages } from '../../helpers/pages-api'
 import DOMPurify from 'dompurify'
 import Velocity from 'velocity-animate'
+import { decodeBase64Text } from '../../helpers/base64'
 
 /* global siteConfig, siteLangs */
 
-// ========================================
-// IMPORTS
-// ========================================
-
-// Code Mirror
-import CodeMirror from 'codemirror'
-import 'codemirror/lib/codemirror.css'
-
-// Language
-import 'codemirror/mode/markdown/markdown.js'
-
-// Addons
-import 'codemirror/addon/selection/active-line.js'
-import 'codemirror/addon/display/fullscreen.js'
-import 'codemirror/addon/display/fullscreen.css'
-import 'codemirror/addon/selection/mark-selection.js'
-import 'codemirror/addon/search/searchcursor.js'
-import 'codemirror/addon/hint/show-hint.js'
-import 'codemirror/addon/fold/foldcode.js'
-import 'codemirror/addon/fold/foldgutter.js'
-import 'codemirror/addon/fold/foldgutter.css'
+import { autocompletion, type CompletionContext } from '@codemirror/autocomplete'
+import { markdown } from '@codemirror/lang-markdown'
+import { keymap } from '@codemirror/view'
+import { TextEditor, type TextEditorHandle, type TextPosition } from './common/text-editor'
 
 // Markdown-it
 import MarkdownIt from 'markdown-it'
@@ -213,15 +197,15 @@ import mdSub from 'markdown-it-sub'
 import mdMark from 'markdown-it-mark'
 import mdMultiTable from 'markdown-it-multimd-table'
 import mdFootnote from 'markdown-it-footnote'
-import mdImsize from 'markdown-it-imsize'
+import mdImsize from '../../libs/markdown-it-image-size'
 import katex from 'katex'
 import underline from '../../libs/markdown-it-underline'
-import 'katex/dist/contrib/mhchem'
+import 'katex/dist/contrib/mhchem.mjs'
 import twemoji from 'twemoji'
 import plantuml from './markdown/plantuml'
 
 // Prism (Syntax Highlighting)
-import Prism from 'prismjs'
+import Prism from '../../libs/prism/setup'
 
 // Mermaid
 import mermaid from 'mermaid'
@@ -229,7 +213,6 @@ import mermaid from 'mermaid'
 // Helpers
 import katexHelper from './common/katex'
 import tabsetHelper from './markdown/tabset'
-import cmFold from './common/cmFold'
 
 type MarkdownMarkerKind = 'diagram'
 
@@ -256,26 +239,16 @@ type LinkSelection = {
 }
 
 type AddMarkerOptions = {
-  from: CodeMirror.Position
-  to: CodeMirror.Position
+  from: TextPosition
+  to: TextPosition
   text: string
   action: EventListener
 }
 
-
-type MarkdownEditorConfiguration = CodeMirror.EditorConfiguration & {
-  line: boolean
-  highlightSelectionMatches: {
-    annotateScrollbar: boolean
-  }
-}
-
 type MarkdownItRenderRule = NonNullable<InstanceType<typeof MarkdownIt>['renderer']['rules'][string]>
 
-function requireEditor (editor: CodeMirror.EditorFromTextArea | null): CodeMirror.EditorFromTextArea {
-  if (!editor) {
-    throw new Error('Markdown editor has not been initialized.')
-  }
+function requireEditor (editor: TextEditorHandle | null): TextEditorHandle {
+  if (!editor) throw new Error('Markdown editor has not been initialized.')
   return editor
 }
 
@@ -286,16 +259,6 @@ function requireEditor (editor: CodeMirror.EditorFromTextArea | null): CodeMirro
 // Platform detection
 const CtrlKey = /Mac/.test(navigator.platform) ? 'Cmd' : 'Ctrl'
 
-// Prism Config
-Prism.plugins.autoloader.languages_path = '/_assets/js/prism/'
-Prism.plugins.NormalizeWhitespace.setDefaults({
-  'remove-trailing': true,
-  'remove-indent': true,
-  'left-trim': true,
-  'right-trim': true,
-  'remove-initial-line-feed': true,
-  'tabs-to-spaces': 2
-})
 
 // Markdown Instance
 const md = new MarkdownIt({
@@ -305,7 +268,7 @@ const md = new MarkdownIt({
   typographer: true,
   highlight(str, lang) {
     if (lang === 'diagram') {
-      return `<pre class="diagram">` + Buffer.from(str, 'base64').toString() + `</pre>`
+      return `<pre class="diagram">` + decodeBase64Text(str) + `</pre>`
     } else if (['mermaid', 'plantuml'].includes(lang)) {
       return `<pre class="codeblock-${lang}"><code>${_.escape(str)}</code></pre>`
     } else {
@@ -361,12 +324,11 @@ md.renderer.rules.paragraph_open = injectLineNumbers
 md.renderer.rules.heading_open = injectLineNumbers
 md.renderer.rules.blockquote_open = injectLineNumbers
 
-cmFold.register('markdown')
 // ========================================
 // PLANTUML
 // ========================================
 
-// TODO: Use same options as defined in backend
+// Plugin defaults mirror the server renderer defaults.
 plantuml.init(md, {})
 
 // ========================================
@@ -430,16 +392,16 @@ export default defineComponent({
   data() {
     return {
       fabInsertMenu: false,
-      cm: null as CodeMirror.EditorFromTextArea | null,
-      cursorPos: { ch: 0, line: 1 } as CodeMirror.Position,
+      cm: null as TextEditorHandle | null,
+      cursorPos: { ch: 0, line: 1 } as TextPosition,
       previewShown: true,
       previewHTML: '',
       helpShown: false,
       spellModeActive: false,
       insertLinkDialog: false,
-      markers: new Set<CodeMirror.TextMarker>(),
+      markers: [] as AddMarkerOptions[],
       debouncedProcessContent: null as _.DebouncedFunc<(newContent: string) => void> | null,
-      debouncedScrollSync: null as _.DebouncedFunc<(cm: CodeMirror.Editor) => void> | null
+      debouncedScrollSync: null as _.DebouncedFunc<(cm: TextEditorHandle) => void> | null
     }
   },
   computed: {
@@ -472,7 +434,7 @@ export default defineComponent({
       if (newValue && !oldValue) {
         this.$nextTick(() => {
           const preview = this.$refs.editorPreview as HTMLElement
-          this.renderMermaidDiagrams()
+          void this.renderMermaidDiagrams()
           Prism.highlightAllUnder(preview)
           preview.querySelectorAll('pre.line-numbers').forEach(pre => pre.classList.add('prismjs'))
         })
@@ -516,9 +478,9 @@ export default defineComponent({
           })
           break
         case 'DIAGRAM': {
-          const selStartLine = cm.getCursor('from').line
-          const selEndLine = cm.getCursor('to').line + 1
-          cm.getDoc().replaceSelection('```diagram\n' + opts.text + '\n```\n', 'start')
+          const selStartLine = cm.cursor('from').line
+          const selEndLine = cm.cursor('to').line + 1
+          cm.replaceSelection('```diagram\n' + opts.text + '\n```\n')
           this.processMarkers(selStartLine, selEndLine)
           break
         }
@@ -531,28 +493,14 @@ export default defineComponent({
     onCmInput (newContent: string) {
       this.debouncedProcessContent?.(newContent)
     },
-    onCmPaste (_cm: CodeMirror.Editor, _ev: ClipboardEvent) {
-      // const clipItems = (ev.clipboardData || ev.originalEvent.clipboardData).items
-      // for (let clipItem of clipItems) {
-      //   if (_.startsWith(clipItem.type, 'image/')) {
-      //     const file = clipItem.getAsFile()
-      //     const reader = new FileReader()
-      //     reader.onload = evt => {
-      //       wikiStore.startLoading('editor-paste-image')
-      //       this.insertAfter({
-      //         content: `![${file.name}](${evt.target.result})`,
-      //         newLine: true
-      //       })
-      //     }
-      //     reader.readAsDataURL(file)
-      //   }
-      // }
+    onCmPaste (_ev: ClipboardEvent) {
+      // Image paste uploads remain handled by the asset workflow.
     },
     processContent (newContent: string) {
       const cm = requireEditor(this.cm)
       linesMap = []
       // wikiStore.editor.content = newContent
-      this.processMarkers(cm.firstLine(), cm.lastLine())
+      this.processMarkers(0, cm.lineCount)
       this.previewHTML = DOMPurify.sanitize(md.render(newContent), {
         ADD_TAGS: ['foreignObject'],
         HTML_INTEGRATION_POINTS: { foreignobject: true }
@@ -560,7 +508,7 @@ export default defineComponent({
       this.$nextTick(() => {
         const preview = this.$refs.editorPreview as HTMLElement
         tabsetHelper.format()
-        this.renderMermaidDiagrams()
+        void this.renderMermaidDiagrams()
         Prism.highlightAllUnder(preview)
         preview.querySelectorAll('pre.line-numbers').forEach(pre => pre.classList.add('prismjs'))
         this.scrollSync(cm)
@@ -569,8 +517,8 @@ export default defineComponent({
     /**
      * Update cursor state
      */
-    positionSync(cm: CodeMirror.Editor) {
-      this.cursorPos = cm.getCursor('head')
+    positionSync(position: TextPosition) {
+      this.cursorPos = position
     },
     /**
      * Wrap selection with start / end tags
@@ -578,35 +526,35 @@ export default defineComponent({
     toggleMarkup({ start, end }: ToggleMarkupOptions) {
       const cm = requireEditor(this.cm)
       if (!end) { end = start }
-      if (!cm.getDoc().somethingSelected()) {
+      if (!cm.hasSelection()) {
         return wikiStore.showNotification({
           message: this.$t('editor:markup.noSelectionError'),
           style: 'warning',
           icon: 'warning'
         })
       }
-      cm.getDoc().replaceSelections(cm.getDoc().getSelections().map((selection: string) => start + selection + end))
+      const selections = cm.selectedOffsets().reverse()
+      for (const selection of selections) {
+        cm.replaceOffsets(start + cm.slice(selection.from, selection.to) + end, selection.from, selection.to)
+      }
     },
     /**
      * Set current line as header
      */
     setHeaderLine(lvl: number) {
       const cm = requireEditor(this.cm)
-      const curLine = cm.getDoc().getCursor('head').line
-      let lineContent = cm.getDoc().getLine(curLine)
+      const curLine = cm.cursor().line
+      let lineContent = cm.getLine(curLine)
       const lineLength = lineContent.length
-      if (_.startsWith(lineContent, '#')) {
-        lineContent = lineContent.replace(/^(#+ )/, '')
-      }
+      if (_.startsWith(lineContent, '#')) lineContent = lineContent.replace(/^(#+ )/, '')
       lineContent = _.times(lvl, () => '#').join('') + ` ` + lineContent
-      cm.getDoc().replaceRange(lineContent, { line: curLine, ch: 0 }, { line: curLine, ch: lineLength })
+      cm.replaceRange(lineContent, { line: curLine, ch: 0 }, { line: curLine, ch: lineLength })
     },
     /**
      * Get the header lever of the current line
      */
-    getHeaderLevel(cm: CodeMirror.Editor) {
-      const curLine = cm.getDoc().getCursor('head').line
-      const lineContent = cm.getDoc().getLine(curLine)
+    getHeaderLevel(cm: TextEditorHandle) {
+      const lineContent = cm.getLine(cm.cursor().line)
       const result = lineContent.match(/^(#+) /)
       return result?.[1]?.length ?? 0
     },
@@ -614,57 +562,42 @@ export default defineComponent({
      * Insert content at cursor
      */
     insertAtCursor({ content }: InsertContentOptions) {
-      const doc = requireEditor(this.cm).getDoc()
-      const cursor = doc.getCursor('head')
-      doc.replaceRange(content, cursor)
+      const editor = requireEditor(this.cm)
+      editor.replaceRange(content, editor.cursor())
     },
     /**
      * Insert content after current line
      */
     insertAfter({ content, newLine }: InsertAfterOptions) {
-      const doc = requireEditor(this.cm).getDoc()
-      const curLine = doc.getCursor('to').line
-      const lineLength = doc.getLine(curLine).length
-      doc.replaceRange(newLine ? `\n${content}\n` : content, { line: curLine, ch: lineLength + 1 })
+      const editor = requireEditor(this.cm)
+      const curLine = editor.cursor('to').line
+      editor.replaceRange(newLine ? `\n${content}\n` : content, { line: curLine, ch: editor.getLine(curLine).length })
     },
     /**
      * Insert content before current line
      */
     insertBeforeEachLine({ content, after }: InsertBeforeEachLineOptions) {
-      const doc = requireEditor(this.cm).getDoc()
-      let lines: number[] = []
-      if (!doc.somethingSelected()) {
-        lines.push(doc.getCursor('head').line)
-      } else {
-        lines = _.flatten(doc.listSelections().map((selection: CodeMirror.Range) => {
-          const range = Math.abs(selection.anchor.line - selection.head.line) + 1
-          const lowestLine = (selection.anchor.line > selection.head.line) ? selection.head.line : selection.anchor.line
-          return _.times(range, lineOffset => lineOffset + lowestLine)
-        }))
+      const editor = requireEditor(this.cm)
+      const lines = editor.selectedLines()
+      for (const line of [...lines].reverse()) {
+        const lineContent = editor.getLine(line)
+        const replacement = _.startsWith(lineContent, content) ? lineContent.substring(content.length) : content + lineContent
+        editor.replaceRange(replacement, { line, ch: 0 }, { line, ch: lineContent.length })
       }
-      lines.forEach(line => {
-        let lineContent = doc.getLine(line)
-        const lineLength = lineContent.length
-        if (_.startsWith(lineContent, content)) {
-          lineContent = lineContent.substring(content.length)
-        }
-
-        doc.replaceRange(content + lineContent, { line, ch: 0 }, { line, ch: lineLength })
-      })
       const lastLine = _.last(lines)
       if (after && lastLine !== undefined) {
-        doc.replaceRange(`\n${after}\n`, { line: lastLine, ch: doc.getLine(lastLine).length + 1 })
+        editor.replaceRange(`\n${after}\n`, { line: lastLine, ch: editor.getLine(lastLine).length })
       }
     },
     /**
      * Update scroll sync
      */
-    scrollSync (cm: CodeMirror.Editor) {
+    scrollSync (cm: TextEditorHandle) {
       this.debouncedScrollSync?.(cm)
     },
-    performScrollSync (cm: CodeMirror.Editor) {
-      if (!this.previewShown || cm.somethingSelected()) { return }
-      const currentLine = cm.getCursor().line
+    performScrollSync (cm: TextEditorHandle) {
+      if (!this.previewShown || cm.hasSelection()) return
+      const currentLine = cm.cursor().line
       const preview = this.$refs.editorPreview as HTMLElement
       const previewContainer = this.$refs.editorPreviewContainer as HTMLElement
       if (currentLine < 3) {
@@ -686,59 +619,25 @@ export default defineComponent({
       this.activeModal = ''
     },
     toggleFullscreen () {
-      requireEditor(this.cm).setOption('fullScreen', true)
+      this.$el.requestFullscreen?.()
     },
     refresh() {
-      this.$nextTick(() => {
-        requireEditor(this.cm).refresh()
-      })
+      this.$nextTick(() => requireEditor(this.cm).requestMeasure())
     },
-    renderMermaidDiagrams () {
-      document.querySelectorAll<HTMLElement>('.editor-markdown-preview pre.codeblock-mermaid > code').forEach(element => {
-        mermaidId++
-        const mermaidDef = element.innerText
-        const mermaidElement = document.createElement('div')
-        mermaidElement.innerHTML = `<div id="mermaid-id-${mermaidId}">${mermaid.render(`mermaid-id-${mermaidId}`, mermaidDef)}</div>`
-        element.parentElement?.replaceWith(mermaidElement)
-      })
-    },
-    autocomplete (cm: CodeMirror.Editor, change: CodeMirror.EditorChange) {
-      if (cm.getModeAt(cm.getCursor()).name !== 'markdown') {
-        return
-      }
-
-      // Links
-      if (change.text[0] === '(') {
-        const curLine = cm.getLine(change.from.line).substring(0, change.from.ch)
-        if (curLine[curLine.length - 1] === ']') {
-          cm.showHint({
-            hint: async (hintEditor: CodeMirror.Editor) => {
-              const cur = hintEditor.getCursor()
-              const curLine = hintEditor.getLine(cur.line).substring(0, cur.ch)
-              const queryString = curLine.substring(curLine.lastIndexOf('[') + 1, curLine.length - 2)
-              const token = hintEditor.getTokenAt(cur)
-              try {
-                const resp = await searchPages(window.fetch.bind(window), queryString, {
-                  locale: this.locale
-                })
-                if (resp && resp.totalHits > 0) {
-                  return {
-                    list: resp.results.map(r => ({
-                      text: '(' + (siteLangs.length > 0 ? `/${r.locale}/${r.path}` : `/${r.path}`) + ')',
-                      displayText: siteLangs.length > 0 ? `/${r.locale}/${r.path} - ${r.title}` : `/${r.path} - ${r.title}`
-                    })),
-                    from: CodeMirror.Pos(cur.line, token.start),
-                    to: CodeMirror.Pos(cur.line, token.end)
-                  }
-                }
-              } catch (err) {}
-              return {
-                list: [],
-                from: CodeMirror.Pos(cur.line, token.start),
-                to: CodeMirror.Pos(cur.line, token.end)
-              }
-            }
-          })
+    async renderMermaidDiagrams (): Promise<void> {
+      const elements = document.querySelectorAll<HTMLElement>('.editor-markdown-preview pre.codeblock-mermaid > code')
+      for (const element of elements) {
+        const codeBlock = element.parentElement
+        if (!codeBlock) continue
+        const id = `mermaid-id-${++mermaidId}`
+        try {
+          const { svg, bindFunctions } = await mermaid.render(id, element.innerText)
+          const mermaidElement = document.createElement('div')
+          mermaidElement.innerHTML = svg
+          codeBlock.replaceWith(mermaidElement)
+          bindFunctions?.(mermaidElement)
+        } catch {
+          // Keep the source block visible when the diagram is invalid.
         }
       }
     },
@@ -751,64 +650,49 @@ export default defineComponent({
         content: siteLangs.length > 0 ? `[${lastPart}](/${locale}/${path})` : `[${lastPart}](/${path})`
       })
     },
-    processMarkers (from: number, to: number) {
+    processMarkers (_from: number, _to: number) {
       const cm = requireEditor(this.cm)
       let found: MarkdownMarkerKind | null = null
       let foundStart = 0
-      let currentLine = from
-      this.markers.forEach(marker => marker.clear())
-      this.markers.clear()
-      cm.eachLine(from, to, lineHandle => {
-        const line = currentLine++
-        if (lineHandle.text.startsWith('```diagram')) {
+      this.markers = []
+      for (let line = 0; line < cm.lineCount; line++) {
+        const text = cm.getLine(line)
+        if (text.startsWith('```diagram')) {
           found = 'diagram'
           foundStart = line
-        } else if (lineHandle.text === '```' && found) {
-          switch (found) {
-            case 'diagram': {
-              if (line - foundStart !== 2) {
-                return
+        } else if (text === '```' && found === 'diagram') {
+          if (line - foundStart === 2) {
+            this.addMarker({
+              from: { line: foundStart, ch: 3 },
+              to: { line: foundStart, ch: 10 },
+              text: 'Edit Diagram',
+              action: () => {
+                const editor = requireEditor(this.cm)
+                editor.setSelection({ line: foundStart, ch: 0 }, { line, ch: 3 })
+                try {
+                  wikiStore.editor.activeModalData = decodeBase64Text(editor.getLine(line - 1))
+                  this.toggleModal(`editorModalDrawio`)
+                } catch {
+                  wikiStore.showNotification({
+                    message: 'Failed to process diagram data.',
+                    style: 'warning',
+                    icon: 'warning'
+                  })
+                }
               }
-              this.addMarker({
-                from: { line: foundStart, ch: 3 },
-                to: { line: foundStart, ch: 10 },
-                text: 'Edit Diagram',
-                action: ((start: number, end: number): EventListener => {
-                  return () => {
-                    const doc = requireEditor(this.cm).getDoc()
-                    doc.setSelection({ line: start, ch: 0 }, { line: end, ch: 3 })
-                    try {
-                      const raw = doc.getLine(end - 1)
-                      wikiStore.editor.activeModalData = Buffer.from(raw, 'base64').toString()
-                      this.toggleModal(`editorModalDrawio`)
-                    } catch (err) {
-                      return wikiStore.showNotification({
-                        message: 'Failed to process diagram data.',
-                        style: 'warning',
-                        icon: 'warning'
-                      })
-                    }
-                  }
-                })(foundStart, line)
-              })
-              const foldPosition = { line: foundStart, ch: cm.getLine(foundStart).length }
-              if (!cm.isFolded(foldPosition)) {
-                cm.foldCode(foundStart)
-              }
-              break
-            }
+            })
+            cm.foldRange(
+              { line: foundStart, ch: cm.getLine(foundStart).length },
+              { line, ch: 0 }
+            )
           }
           found = null
         }
-      })
+      }
+      cm.setMarkers(this.markers)
     },
-    addMarker ({ from, to, text, action }: AddMarkerOptions) {
-      const markerElement = document.createElement('span')
-      markerElement.appendChild(document.createTextNode(text))
-      markerElement.className = 'CodeMirror-buttonmarker'
-      markerElement.addEventListener('click', action)
-      const marker = requireEditor(this.cm).markText(from, to, { replacedWith: markerElement })
-      this.markers.add(marker)
+    addMarker (marker: AddMarkerOptions) {
+      this.markers.push(marker)
     }
   },
   mounted() {
@@ -821,89 +705,75 @@ export default defineComponent({
     // Initialize Mermaid API
     mermaid.initialize({
       startOnLoad: false,
+      securityLevel: 'strict',
       theme: this.$vuetify.theme.current.dark ? `dark` : `default`
     })
 
-    // Initialize CodeMirror
-
-    this.cm = CodeMirror.fromTextArea(this.$refs.cm as HTMLTextAreaElement, {
-      tabSize: 2,
-      mode: 'text/markdown',
-      theme: 'wikijs-dark',
-      lineNumbers: true,
-      lineWrapping: true,
-      styleActiveLine: true,
-      highlightSelectionMatches: {
-        annotateScrollbar: true
-      },
-      viewportMargin: 50,
-      inputStyle: 'contenteditable',
-      allowDropFileTypes: ['image/jpg', 'image/png', 'image/svg', 'image/jpeg', 'image/gif'],
-      direction: siteConfig.rtl ? 'rtl' : 'ltr',
-      foldGutter: true,
-      gutters: ['CodeMirror-linenumbers', 'CodeMirror-foldgutter']
-    })
     this.debouncedProcessContent = _.debounce((newContent: string) => this.processContent(newContent), 600)
-    this.debouncedScrollSync = _.debounce((editor: CodeMirror.Editor) => this.performScrollSync(editor), 500)
-    this.cm.setValue(wikiStore.editor.content)
-    this.cm.on('change', c => {
-      wikiStore.editor.content = c.getValue()
-      this.onCmInput(wikiStore.editor.content)
-    })
-    if (this.$vuetify.display.mdAndUp) {
-      this.cm.setSize(null, 'calc(100vh - 112px - 24px)')
-    } else {
-      this.cm.setSize(null, 'calc(100vh - 112px - 16px)')
-    }
-
-    // Set Keybindings
-
-    const keyBindings = {
-      'F11' (c: CodeMirror.Editor) {
-        c.setOption('fullScreen', !c.getOption('fullScreen'))
-      },
-      'Esc' (c: CodeMirror.Editor) {
-        if (c.getOption('fullScreen')) c.setOption('fullScreen', false)
+    this.debouncedScrollSync = _.debounce((editor: TextEditorHandle) => this.performScrollSync(editor), 500)
+    const completePageLink = async (context: CompletionContext) => {
+      const prefix = context.matchBefore(/\[[^\]]+\]\($/)
+      if (!prefix) return null
+      const title = prefix.text.slice(1, -2)
+      try {
+        const response = await searchPages(window.fetch.bind(window), title, { locale: this.locale })
+        return {
+          from: context.pos,
+          options: response.results.map(result => ({
+            label: siteLangs.length > 0 ? `/${result.locale}/${result.path} - ${result.title}` : `/${result.path} - ${result.title}`,
+            apply: (siteLangs.length > 0 ? `/${result.locale}/${result.path}` : `/${result.path}`) + ')'
+          }))
+        }
+      } catch {
+        return null
       }
     }
-    _.set(keyBindings, `${CtrlKey}-S`, (_c: CodeMirror.Editor) => {
-      this.save()
-      return false
-    })
-    _.set(keyBindings, `${CtrlKey}-B`, (_c: CodeMirror.Editor) => {
-      this.toggleMarkup({ start: `**` })
-      return false
-    })
-    _.set(keyBindings, `${CtrlKey}-I`, (_c: CodeMirror.Editor) => {
-      this.toggleMarkup({ start: `*` })
-      return false
-    })
-    _.set(keyBindings, `${CtrlKey}-Alt-Right`, (c: CodeMirror.Editor) => {
-      let lvl = this.getHeaderLevel(c)
-      if (lvl >= 6) { lvl = 5 }
-      this.setHeaderLine(lvl + 1)
-      return false
-    })
-    _.set(keyBindings, `${CtrlKey}-Alt-Left`, (c: CodeMirror.Editor) => {
-      let lvl = this.getHeaderLevel(c)
-      if (lvl <= 1) { lvl = 2 }
-      this.setHeaderLine(lvl - 1)
-      return false
-    })
-    this.cm.setOption('extraKeys', keyBindings)
 
-    this.cm.on('inputRead', this.autocomplete)
-
-    // Handle cursor movement
-
-    this.cm.on('cursorActivity', c => {
-      this.positionSync(c)
-      this.scrollSync(c)
+    const cm = new TextEditor({
+      parent: this.$refs.cm as HTMLElement,
+      value: wikiStore.editor.content,
+      language: markdown(),
+      direction: siteConfig.rtl ? 'rtl' : 'ltr',
+      extensions: [
+        autocompletion({ override: [completePageLink] }),
+        keymap.of([
+          { key: 'F11', run: () => { this.toggleFullscreen(); return true } },
+          { key: 'Mod-s', run: () => { this.save(); return true } },
+          { key: 'Mod-b', run: () => { this.toggleMarkup({ start: '**' }); return true } },
+          { key: 'Mod-i', run: () => { this.toggleMarkup({ start: '*' }); return true } },
+          {
+            key: 'Mod-Alt-ArrowRight',
+            run: () => {
+              let level = this.getHeaderLevel(cm)
+              if (level >= 6) level = 5
+              this.setHeaderLine(level + 1)
+              return true
+            }
+          },
+          {
+            key: 'Mod-Alt-ArrowLeft',
+            run: () => {
+              let level = this.getHeaderLevel(cm)
+              if (level <= 1) level = 2
+              this.setHeaderLine(level - 1)
+              return true
+            }
+          }
+        ])
+      ],
+      onChange: value => {
+        wikiStore.editor.content = value
+        this.onCmInput(value)
+      },
+      onCursor: position => {
+        this.positionSync(position)
+        this.scrollSync(cm)
+      }
     })
-
-    // Handle special paste
-
-    this.cm.on('paste', this.onCmPaste)
+    this.cm = cm
+    ;(this.$refs.cm as HTMLElement).style.height = this.$vuetify.display.mdAndUp
+      ? 'calc(100vh - 112px - 24px)'
+      : 'calc(100vh - 112px - 16px)'
 
     // Render initial preview
 
@@ -922,6 +792,8 @@ export default defineComponent({
     offEditorInsert(this.handleEditorInsert)
     offEditorSaveConflict(this.handleEditorSaveConflict)
     offEditorContentOverwrite(this.handleEditorContentOverwrite)
+    this.cm?.destroy()
+    this.cm = null
   }
 })
 </script>
@@ -1100,87 +972,6 @@ $editor-height-mobile: calc(100vh - 112px - 16px);
     z-index: 8;
   }
 
-  // ==========================================
-  // CODE MIRROR
-  // ==========================================
-
-  .CodeMirror {
-    height: auto;
-    font-family: 'Roboto Mono', monospace;
-    font-size: .9rem;
-
-    .cm-header-1 {
-      font-size: 1.5rem;
-    }
-    .cm-header-2 {
-      font-size: 1.25rem;
-    }
-    .cm-header-3 {
-      font-size: 1.15rem;
-    }
-    .cm-header-4 {
-      font-size: 1.1rem;
-    }
-    .cm-header-5 {
-      font-size: 1.05rem;
-    }
-    .cm-header-6 {
-      font-size: 1.025rem;
-    }
-  }
-
-  .CodeMirror-wrap pre.CodeMirror-line, .CodeMirror-wrap pre.CodeMirror-line-like {
-    word-break: break-word;
-  }
-
-  .CodeMirror-focused .cm-matchhighlight {
-    background-image: url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAFklEQVQI12NgYGBgkKzc8x9CMDAwAAAmhwSbidEoSQAAAABJRU5ErkJggg==);
-    background-position: bottom;
-    background-repeat: repeat-x;
-  }
-  .cm-matchhighlight {
-    background-color: mc('grey', '800');
-  }
-  .CodeMirror-selection-highlight-scrollbar {
-    background-color: mc('green', '600');
-  }
 }
 
-// HINT DROPDOWN
-
-.CodeMirror-hints {
-  position: absolute;
-  z-index: 10;
-  overflow: hidden;
-  list-style: none;
-
-  margin: 0;
-  padding: 1px;
-
-  box-shadow: 2px 3px 5px rgba(0,0,0,.2);
-  border: 1px solid mc('grey', '700');
-
-  background: mc('grey', '900');
-  font-family: 'Roboto Mono', monospace;
-  font-size: .9rem;
-
-  max-height: 150px;
-  overflow-y: auto;
-
-  min-width: 250px;
-  max-width: 80vw;
-}
-
-.CodeMirror-hint {
-  margin: 0;
-  padding: 0 4px;
-  white-space: pre;
-  color: #FFF;
-  cursor: pointer;
-}
-
-li.CodeMirror-hint-active {
-  background: mc('blue', '500');
-  color: #FFF;
-}
 </style>

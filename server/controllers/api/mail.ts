@@ -1,5 +1,5 @@
 import express from 'express'
-import { type Request, type Response, wikiAuth } from '../_types.ts'
+import { type Request, type Response, getWikiAuth } from '../_types.ts'
 
 import mailOperations from '../../operations/mail.ts'
 
@@ -7,7 +7,7 @@ const router = express.Router()
 
 
 const requireSystemAccess = (req: Request, res: Response): boolean => {
-  if (!wikiAuth.checkAccess(req.user, ['manage:system'])) {
+  if (!getWikiAuth().checkAccess(req.user, ['manage:system'])) {
     res.status(403).json({ error: 'Forbidden' })
     return false
   }
