@@ -17,6 +17,10 @@ describe('markdown image dimensions', () => {
     )
   })
 
+  it('rejects malformed percentage dimensions', () => {
+    expect(render('![wide](/assets/wide.png =100%%x20)')).not.toContain('width=')
+  })
+
   it('preserves ordinary Markdown image behavior', () => {
     expect(render('![logo](/logo.svg "Wiki")')).toBe(
       '<img src="/logo.svg" alt="logo" title="Wiki">'

@@ -1,23 +1,24 @@
-@import "global";
+@use "sass:meta";
+@use "global";
 
-@import "base/base";
-@import "base/icons";
-@import "base/animation";
+@use "base/base";
+@use "base/icons";
+@use "base/animation";
 
 @import 'katex/dist/katex.min.css';
 @import 'diff2html/bundles/css/diff2html.min.css';
 
-@import 'components/katex';
-@import 'components/v-btn';
-@import 'components/v-data-table';
-@import 'components/v-dialog';
-@import 'components/v-form';
-@import 'components/v-tabs';
+@include meta.load-css('components/katex');
+@include meta.load-css('components/v-btn');
+@include meta.load-css('components/v-data-table');
+@include meta.load-css('components/v-dialog');
+@include meta.load-css('components/v-form');
+@include meta.load-css('components/v-tabs');
 
-@import 'pages/new';
-@import 'pages/notfound';
-@import 'pages/unauthorized';
-@import 'pages/welcome';
-@import 'pages/error';
+@include meta.load-css('pages/new');
+@include meta.load-css('pages/notfound');
+@include meta.load-css('pages/unauthorized');
+@include meta.load-css('pages/welcome');
+@include meta.load-css('pages/error');
 
-@import 'layout/_rtl';
+@include meta.load-css('layout/_rtl');

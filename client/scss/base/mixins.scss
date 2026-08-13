@@ -1,3 +1,5 @@
+@use "../variables";
+
 /**
 * Placeholder attribute for inputs
 *
@@ -87,43 +89,43 @@
 }
 
 @mixin mobile {
-  @media screen and (max-width: $tablet - 1px) {
+  @media screen and (max-width: variables.$tablet - 1px) {
     @content;
   }
 }
 
 @mixin tablet {
-  @media screen and (min-width: $tablet) {
+  @media screen and (min-width: variables.$tablet) {
     @content;
   }
 }
 
 @mixin tablet-only {
-  @media screen and (min-width: $tablet) and (max-width: $desktop - 1px) {
+  @media screen and (min-width: variables.$tablet) and (max-width: variables.$desktop - 1px) {
     @content;
   }
 }
 
 @mixin touch {
-  @media screen and (max-width: $desktop - 1px) {
+  @media screen and (max-width: variables.$desktop - 1px) {
     @content;
   }
 }
 
 @mixin desktop {
-  @media screen and (min-width: $desktop) {
+  @media screen and (min-width: variables.$desktop) {
     @content;
   }
 }
 
 @mixin desktop-only {
-  @media screen and (min-width: $desktop) and (max-width: $widescreen - 1px) {
+  @media screen and (min-width: variables.$desktop) and (max-width: variables.$widescreen - 1px) {
     @content;
   }
 }
 
 @mixin widescreen {
-  @media screen and (min-width: $widescreen) {
+  @media screen and (min-width: variables.$widescreen) {
     @content;
   }
 }

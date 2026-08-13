@@ -2,22 +2,26 @@ allowBuilds:
   '@apollo/protobufjs': true
   '@parcel/watcher': true
   '@root/acme': true
+  better-sqlite3: false
   core-js: true
   core-js-pure: true
   cpu-features: true
   dtrace-provider: true
   esbuild: true
-  sqlite3: true
   ssh2: true
 overrides:
   ip-address: 10.3.1
   node-uuid: 1.4.8
   underscore: 1.13.8
+  '@xmldom/xmldom': 0.9.11
+  encoding-sniffer: 1.0.2
 minimumReleaseAgeExclude:
   - pinia@4.0.3
   - vuetify@4.1.9
   - '@graphql-tools/merge@9.2.3'
   - '@graphql-tools/schema@10.1.0'
   - '@graphql-tools/utils@12.0.0'
+  - '@xmldom/xmldom@0.9.11'
 patchedDependencies:
+  '@asciidoctor/core@4.0.8': patches/@asciidoctor__core@4.0.8.patch
   markdown-it-multimd-table@4.2.3: patches/markdown-it-multimd-table@4.2.3.patch

@@ -1,0 +1,129 @@
+diff --git a/build/browser/index.js b/build/browser/index.js
+index 2fb18babed8fb4b96f0ed3030855fe88e27767b6..90cb4d89c2ac1d1dbf3c5ef8c88ba0f4a6e67c94 100644
+--- a/build/browser/index.js
++++ b/build/browser/index.js
+@@ -964,7 +964,7 @@ let USER_HOME = '';
+ try {
+   LIB_DIR = new URL('.', import.meta.url).pathname.replace(/\/$/, '');
+   ROOT_DIR = new URL('../../', import.meta.url).pathname.replace(/\/$/, '');
+-  DATA_DIR = new URL('../../data', import.meta.url).pathname;
++  DATA_DIR = new URL(/* @vite-ignore */ '../../data', import.meta.url).pathname;
+   // Prefer $HOME; fall back to $USERPROFILE (Windows) then process.cwd()
+   if (typeof process !== 'undefined') {
+     USER_HOME =
+@@ -1524,7 +1524,7 @@ let _loggerStorePromise = null;
+  */
+ async function _ensureLoggerStore() {
+   if (_loggerStorePromise === null) {
+-    _loggerStorePromise = import('node:async_hooks')
++    _loggerStorePromise = import(/* @vite-ignore */ 'node:async_hooks')
+       .then(({ AsyncLocalStorage }) => {
+         const store = new AsyncLocalStorage();
+         _loggerStore = store;
+@@ -2413,7 +2413,7 @@ async function asyncReplace(str, regex, replacer) {
+  * @returns {Promise<void>} Throws if the path cannot be created
+  */
+ async function mkdirP(dir) {
+-  const { mkdir } = await import('node:fs/promises');
++  const { mkdir } = await import(/* @vite-ignore */ 'node:fs/promises');
+   await mkdir(dir, { recursive: true });
+ }
+ 
+@@ -2714,8 +2714,8 @@ let _fsConstants$1; // node:fs constants (R_OK etc.) — not on node:fs/promises
+ async function _requireFsp$1() {
+   if (_fsp$1 !== undefined) return
+   try {
+-    _fsp$1 = await import('node:fs/promises');
+-    _fsConstants$1 = (await import('node:fs')).constants;
++    _fsp$1 = await import(/* @vite-ignore */ 'node:fs/promises');
++    _fsConstants$1 = (await import(/* @vite-ignore */ 'node:fs')).constants;
+   } catch {
+     _fsp$1 = null;
+   }
+@@ -6601,8 +6601,8 @@ let _fsConstants; // node:fs constants (F_OK etc.) — not on node:fs/promises
+ async function _requireFsp() {
+   if (_fsp !== undefined) return
+   try {
+-    _fsp = await import('node:fs/promises');
+-    _fsConstants = (await import('node:fs')).constants;
++    _fsp = await import(/* @vite-ignore */ 'node:fs/promises');
++    _fsConstants = (await import(/* @vite-ignore */ 'node:fs')).constants;
+   } catch {
+     _fsp = null;
+   }
+@@ -17449,7 +17449,7 @@ class Document extends AbstractBlock {
+         }
+       } else {
+         try {
+-          const { writeFile } = await import('node:fs/promises');
++          const { writeFile } = await import(/* @vite-ignore */ 'node:fs/promises');
+           await writeFile(target, output ?? '', 'utf8');
+         } catch {}
+       }
+@@ -21086,7 +21086,7 @@ async function _readStream(readable) {
+  * @internal
+  */
+ async function _requirePath$1() {
+-  return import('node:path')
++  return import(/* @vite-ignore */ 'node:path')
+ }
+ 
+ // Auto-generated from data/asciidoctor-default.css — run 'npm run build:data' to update
+@@ -21119,8 +21119,8 @@ class StylesheetsClass {
+ 
+   async writePrimaryStylesheet(stylesoutdir) {
+     try {
+-      const { writeFile } = await import('node:fs/promises');
+-      const { join } = await import('node:path');
++      const { writeFile } = await import(/* @vite-ignore */ 'node:fs/promises');
++      const { join } = await import(/* @vite-ignore */ 'node:path');
+       await writeFile(
+         join(stylesoutdir, StylesheetsClass.DEFAULT_STYLESHEET_NAME),
+         defaultStylesheetData,
+@@ -21410,7 +21410,7 @@ async function convert(input, options = {}) {
+               label: 'stylesheet',
+             });
+             if (stylesheetData) {
+-              const { writeFile } = await import('node:fs/promises');
++              const { writeFile } = await import(/* @vite-ignore */ 'node:fs/promises');
+               const nodePath = await _requirePath();
+               const stylesheetOutdir = nodePath.dirname(stylesheetDest);
+               if (
+@@ -21446,7 +21446,7 @@ async function convert(input, options = {}) {
+  * Lazily import node:path to avoid issues in browser / Opal environments.
+  */
+ async function _requirePath() {
+-  return import('node:path')
++  return import(/* @vite-ignore */ 'node:path')
+ }
+ 
+ /**
+@@ -21456,7 +21456,7 @@ async function _requirePath() {
+  */
+ async function _isDirectory(dir) {
+   try {
+-    const { stat } = await import('node:fs/promises');
++    const { stat } = await import(/* @vite-ignore */ 'node:fs/promises');
+     return (await stat(dir)).isDirectory()
+   } catch {
+     return false
+@@ -21470,7 +21470,7 @@ async function _isDirectory(dir) {
+  */
+ async function _isFile(path) {
+   try {
+-    const { stat } = await import('node:fs/promises');
++    const { stat } = await import(/* @vite-ignore */ 'node:fs/promises');
+     return (await stat(path)).isFile()
+   } catch {
+     return false
+@@ -25421,8 +25421,8 @@ ${this.manify(await node.content(), { whitespace: 'preserve' })}
+     if (!mannames || mannames.length <= 1) return
+     mannames = mannames.slice(1);
+     const manvolext = `.${manvolnum}`;
+-    const { dirname, basename, join } = await import('node:path');
+-    const { writeFile } = await import('node:fs/promises');
++    const { dirname, basename, join } = await import(/* @vite-ignore */ 'node:path');
++    const { writeFile } = await import(/* @vite-ignore */ 'node:fs/promises');
+     const dir = dirname(target);
+     const base = basename(target);
+     for (const manname of mannames) {

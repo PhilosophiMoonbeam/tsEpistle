@@ -41,7 +41,7 @@
         template(v-if='screen === `login` && selectedStrategy.strategy.useForm')
           .login-subtitle
             .text-subtitle-1 {{$t('auth:enterCredentials')}}
-          .login-form
+          form.login-form(@submit.prevent='login')
             v-text-field(
               solo
               flat
@@ -70,7 +70,6 @@
               :type='hidePassword ? "password" : "text"'
               :placeholder='$t("auth:fields.password")'
               autocomplete='current-password'
-              @keyup.enter='login'
               light
             )
             v-btn.mt-2.text-none(
@@ -78,7 +77,7 @@
               large
               color='blue darken-2'
               dark
-              @click='login'
+              type='submit'
               :loading='isLoading'
               ) {{ $t('auth:actions.login') }}
             .text-center.mt-5
@@ -103,7 +102,7 @@
           .login-subtitle
             .text-subtitle-1 {{$t('auth:forgotPasswordTitle')}}
           .login-info {{ $t('auth:forgotPasswordSubtitle') }}
-          .login-form
+          form.login-form(@submit.prevent='forgotPasswordSubmit')
             v-text-field(
               solo
               flat
@@ -123,7 +122,7 @@
               large
               color='blue darken-2'
               dark
-              @click='forgotPasswordSubmit'
+              type='submit'
               :loading='isLoading'
               ) {{ $t('auth:sendResetPassword') }}
             .text-center.mt-5
@@ -140,7 +139,7 @@
         template(v-if='screen === `changePwd`')
           .login-subtitle
             .text-subtitle-1 {{ $t('auth:changePwd.subtitle') }}
-          .login-form
+          form.login-form(@submit.prevent='changePassword')
             v-text-field.mt-2(
               type='password'
               solo
@@ -168,7 +167,6 @@
               v-model='newPasswordVerify'
               :placeholder='$t(`auth:changePwd.newPasswordVerifyPlaceholder`)'
               autocomplete='new-password'
-              @keyup.enter='changePassword'
               light
             )
             v-btn.mt-2.text-none(
@@ -176,7 +174,7 @@
               large
               color='blue darken-2'
               dark
-              @click='changePassword'
+              type='submit'
               :loading='isLoading'
               ) {{ $t('auth:changePwd.proceed') }}
 

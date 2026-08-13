@@ -9,9 +9,3 @@ declare module 'markdown-it-attrs' {
 
   export default function attributes (markdown: MarkdownIt, options?: AttributesOptions): void
 }
-
-declare module 'markdown-it-decorate' {
-  import type { MarkdownIt } from 'markdown-it'
-
-  export default function decorate (markdown: MarkdownIt): void
-}

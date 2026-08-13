@@ -35,9 +35,11 @@ export default defineConfig(({ command }) => ({
   css: {
     preprocessorOptions: {
       scss: {
-        additionalData: (source: string, filename: string) => filename.endsWith('/client/scss/global.scss')
+        additionalData: (source: string, filename: string) => (
+          filename.endsWith('/client/scss/global.scss') || filename.endsWith('/client/scss/app.scss')
+        )
           ? source
-          : `@import "@/scss/global.scss";\n${source}`
+          : `@use "@/scss/global.scss" as *;\n${source}`
       }
     }
   },
@@ -54,6 +56,7 @@ export default defineConfig(({ command }) => ({
     manifest: true,
     sourcemap: true,
     target: 'es2022',
+    chunkSizeWarningLimit: 1200,
     rolldownOptions: {
       input: {
         app: resolve(root, 'client/index-app.ts'),

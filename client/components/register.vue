@@ -100,7 +100,7 @@
 <script lang='ts'>
 /* global siteConfig */
 
-import validate from 'validate.js'
+import validateValues from '../../shared/validation'
 import PasswordStrength from './common/password-strength.vue'
 import { registerAccount } from '../helpers/auth-api'
 import { getErrorMessage } from '../helpers/root-ui-store'
@@ -149,7 +149,7 @@ export default {
      * REGISTER
      */
     async register () {
-      const validation = validate({
+      const validation = validateValues({
         email: this.email,
         password: this.password,
         verifyPassword: this.verifyPassword,

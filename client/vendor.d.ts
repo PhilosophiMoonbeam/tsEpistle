@@ -34,10 +34,6 @@ declare module 'markdown-it-attrs' {
   export default plugin
 }
 
-declare module 'markdown-it-decorate' {
-  const plugin: MarkdownItPlugin
-  export default plugin
-}
 
 declare module 'markdown-it-emoji' {
   export const full: MarkdownItPlugin

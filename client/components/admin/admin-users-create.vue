@@ -90,7 +90,7 @@
 
 <script lang='ts'>
 import _ from 'lodash'
-import validate from 'validate.js'
+import validateValues from '../../../shared/validation'
 
 import { fetchAdminAuthProviders, type AdminAuthProviderSummary } from '../../helpers/auth-api'
 import { fetchGroupOptions, type GroupOption } from '../../helpers/groups-api'
@@ -239,7 +239,7 @@ export default {
           }
         }
       }
-      const validationResults = validate({
+      const validationResults = validateValues({
         email: this.email,
         password: this.password,
         name: this.name

@@ -245,7 +245,7 @@ const database: DatabaseService = {
         }
         break
       case 'sqlite':
-        dbClient = 'sqlite3'
+        dbClient = 'better-sqlite3'
         dbConfig = { filename: wiki.config.db.storage }
         break
       default:
@@ -261,21 +261,26 @@ const database: DatabaseService = {
       connection: dbConfig,
       pool: {
         ...wiki.config.pool,
-        async afterCreate(conn: PoolConnection, done: (error?: Error) => void) {
+        afterCreate(conn: PoolConnection, done: (error?: Error) => void) {
+          let query: Promise<unknown> | undefined
           switch (wiki.config.db.type) {
             case 'postgres':
-              await conn.query(`set application_name = 'Wiki.js'`)
-              if (wiki.config.db.schema && wiki.config.db.schema !== 'public') await conn.query(`set search_path TO ${wiki.config.db.schema}, public;`)
-              done()
+              query = conn.query(`set application_name = 'Wiki.js'`)
+              if (wiki.config.db.schema && wiki.config.db.schema !== 'public') {
+                query = query.then(() => conn.query(`set search_path TO ${wiki.config.db.schema}, public;`))
+              }
               break
             case 'mysql':
-              await conn.promise().query(`set autocommit = 1`)
-              done()
+              query = conn.promise().query(`set autocommit = 1`)
               break
             default:
               done()
-              break
+              return
           }
+          void query.then(
+            () => done(),
+            error => done(error instanceof Error ? error : new Error(String(error)))
+          )
         }
       },
       debug: wiki.IS_DEBUG

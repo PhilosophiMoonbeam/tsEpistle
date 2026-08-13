@@ -5,13 +5,12 @@ import _ from 'lodash'
 // CAS Account
 // ------------------------------------
 
-import passportCasModule from 'passport-cas'
-const CASStrategy = passportCasModule.Strategy
+import { CasStrategy } from './cas-strategy.ts'
 
 const plugin: AuthenticationPlugin = {
   init (passport, conf) {
     passport.use(conf.key,
-      new CASStrategy({
+      new CasStrategy({
         version: conf.casVersion,
         ssoBaseURL: conf.casUrl,
         serverBaseURL: conf.baseUrl,

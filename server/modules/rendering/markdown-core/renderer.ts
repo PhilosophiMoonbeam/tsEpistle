@@ -2,7 +2,6 @@ import type { MarkdownIt, MarkdownItOptions } from 'markdown-it'
 import type { RendererContext, UnknownRecord } from '../../types.ts'
 import * as markdownItModule from 'markdown-it'
 import * as mdAttrsModule from 'markdown-it-attrs'
-import * as mdDecorateModule from 'markdown-it-decorate'
 import _ from 'lodash'
 import underline from './underline.ts'
 
@@ -36,11 +35,9 @@ type AttributesPlugin = (
     allowedAttributes?: Array<string | RegExp>
   }
 ) => void
-type DecoratePlugin = (markdown: MarkdownIt) => void
 
 const isMarkdownItFactory = (value: unknown): value is MarkdownItFactory => typeof value === 'function'
 const isAttributesPlugin = (value: unknown): value is AttributesPlugin => typeof value === 'function'
-const isDecoratePlugin = (value: unknown): value is DecoratePlugin => typeof value === 'function'
 
 function resolveCallable<T> (
   moduleValue: unknown,
@@ -74,7 +71,6 @@ function isChildRendererModule (value: unknown): value is ChildRendererModule {
 
 const createMarkdownIt = resolveCallable(markdownItModule, isMarkdownItFactory, 'markdown-it')
 const mdAttrs = resolveCallable(mdAttrsModule, isAttributesPlugin, 'markdown-it-attrs')
-const mdDecorate = resolveCallable(mdDecorateModule, isDecoratePlugin, 'markdown-it-decorate')
 
 const quoteStyles = {
   Chinese: '””‘’',
@@ -116,7 +112,6 @@ const plugin = {
     mkdown.use(mdAttrs, {
       allowedAttributes: ['id', 'class', 'target']
     })
-    mkdown.use(mdDecorate)
 
     for (const child of this.children) {
       // Child renderers are selected from the configured rendering pipeline at runtime.

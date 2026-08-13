@@ -139,7 +139,7 @@ import { useGoTo } from 'vuetify'
 import { createComment, deleteComment, fetchComment, fetchComments, updateComment } from '../helpers/comments-api'
 import type { CommentRow } from '../helpers/comments-api'
 import { wikiStore } from '@/store/index.ts'
-import validate from 'validate.js'
+import validateValues from '../../shared/validation'
 import { getErrorMessage, showNotification } from '../helpers/root-ui-store'
 
 type CommentWithInitials = CommentRow & {
@@ -273,7 +273,7 @@ export default defineComponent({
           email: true
         }
       }
-      const validationResults = validate({
+      const validationResults = validateValues({
         comment: this.newcomment,
         name: this.guestName,
         email: this.guestEmail

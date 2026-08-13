@@ -14,7 +14,7 @@ async function expectWelcomePage(page: Page) {
 }
 
 async function loginAsAdmin(page: Page) {
-  await page.goto('/login')
+  await page.goto('/login', { waitUntil: 'domcontentloaded' })
   await page.getByPlaceholder('Email Address').fill(adminEmail)
   await page.getByPlaceholder('Password').fill(adminPassword)
   await page.getByRole('button', { name: 'Log In' }).click()
@@ -135,5 +135,44 @@ test.describe('critical post-install workflows', () => {
     await expect(page.getByText('My personal info', { exact: true })).toBeVisible()
     await expect(page.getByText('Administrator', { exact: true })).toBeVisible()
     await expect(page.getByText('Local', { exact: true })).toBeVisible()
+  })
+
+  test('logs out and authenticates again without browser runtime failures', async ({ page }) => {
+    const consoleErrors: string[] = []
+    const failedRequests: string[] = []
+    page.on('console', message => {
+      if (message.type() === 'error') {
+        consoleErrors.push(message.text())
+      }
+    })
+    page.on('requestfailed', request => {
+      failedRequests.push(`${request.method()} ${request.url()}: ${request.failure()?.errorText || 'unknown failure'}`)
+    })
+
+    await loginAsAdmin(page)
+    await page.getByRole('button', { name: 'Account' }).click()
+    await page.getByText('Logout', { exact: true }).click()
+    await expect(page).toHaveURL('/')
+    await expect.poll(async () => page.evaluate(async () => {
+      const response = await fetch('/_api/users/whoami', { credentials: 'same-origin' })
+      return response.json()
+    })).toMatchObject({ authenticated: false })
+    await page.goto('/login')
+
+    await page.getByPlaceholder('Email Address').fill(adminEmail)
+    await page.getByPlaceholder('Password').fill(adminPassword)
+    await page.getByRole('button', { name: 'Log In' }).click()
+    await expect(page).toHaveURL('/')
+    await expect(page).toHaveTitle('Home | Wiki.js')
+    await expect(page.getByRole('heading', { name: 'Browser Workflow Updated' })).toBeVisible()
+    await expect.poll(async () => page.evaluate(async () => {
+      const response = await fetch('/_api/users/whoami', { credentials: 'same-origin' })
+      return response.json()
+    })).toMatchObject({
+      authenticated: true,
+      user: { email: adminEmail }
+    })
+    expect(consoleErrors).toEqual([])
+    expect(failedRequests).toEqual([])
   })
 })

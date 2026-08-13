@@ -488,6 +488,16 @@ jobs:
         name: drop-win
         path: drop-win
 
+    - name: Generate Release Checksums
+      shell: bash
+      run: |
+        linux_sha="$(sha256sum drop/wiki-js.tar.gz | cut -d ' ' -f 1)"
+        windows_sha="$(sha256sum drop-win/wiki-js-windows.tar.gz | cut -d ' ' -f 1)"
+        printf '%s  %s\n%s  %s\n' \
+          "$linux_sha" "wiki-js.tar.gz" \
+          "$windows_sha" "wiki-js-windows.tar.gz" \
+          > SHA256SUMS
+
     - name: Generate Changelog
       id: changelog
       uses: Requarks/changelog-action@b78a3354a01f4a1affb484b9264b506a815c46b1 # v1
@@ -505,7 +515,7 @@ jobs:
         name: ${{ github.ref_name }}
         body: ${{ steps.changelog.outputs.changes }}
         token: ${{ github.token }}
-        artifacts: 'drop/wiki-js.tar.gz,drop-win/wiki-js-windows.tar.gz'
+        artifacts: 'drop/wiki-js.tar.gz,drop-win/wiki-js-windows.tar.gz,SHA256SUMS'
 
     - name: Notify Telegram Channel
       uses: appleboy/telegram-action@221e6b684967abe813051ee4a37dd61770a83ad3 # v1.0.1

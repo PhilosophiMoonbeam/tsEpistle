@@ -16,9 +16,10 @@ const parseDimension = (source: string, start: number, end: number): { position:
   let position = start
   while (position < end) {
     const code = source.charCodeAt(position)
-    if ((code < 0x30 || code > 0x39) && code !== 0x25) break
+    if (code < 0x30 || code > 0x39) break
     position += 1
   }
+  if (position > start && source.charCodeAt(position) === 0x25) position += 1
   return { position, value: source.slice(start, position) }
 }
 

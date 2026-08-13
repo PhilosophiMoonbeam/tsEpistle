@@ -1,5 +1,5 @@
 import type { MarkdownIt } from 'markdown-it'
-import pivotTable from 'markdown-it-pivot-table'
+import pivotTable from './pivot-table.ts'
 
 const plugin = {
   init (md: MarkdownIt): void {

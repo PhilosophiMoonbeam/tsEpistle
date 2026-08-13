@@ -1,11 +1,15 @@
+@use "../base/material";
+@use "../base/mixins";
+@use "../global";
+
 .onboarding {
-  background: linear-gradient(to bottom, mc('grey', '900') 0%, mc('grey', '700') 100%);
+  background: linear-gradient(to bottom, material.mc('grey', '900') 0%, material.mc('grey', '700') 100%);
   height: 100%;
   display: flex;
   flex-direction: column;
   justify-content: center;
   align-items: center;
-  color: mc('grey', '50');
+  color: material.mc('grey', '50');
 
   &::before {
     content: '';
@@ -23,7 +27,7 @@
     opacity: .75;
     animation: onboardingBgReveal 50s linear infinite;
 
-    @include keyframes(onboardingBgReveal) {
+    @include mixins.keyframes(onboardingBgReveal) {
       0% {
         background-position-y: 0;
       }
@@ -48,7 +52,7 @@
     z-index: 2;
     animation-duration: 3s;
 
-    @include until($tablet) {
+    @include mixins.until(global.$tablet) {
       width: 300px;
     }
   }

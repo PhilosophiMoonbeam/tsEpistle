@@ -1,32 +1,20 @@
 @charset "utf-8";
 
-@import "base/material";
-@import "base/mixins";
+@use "sass:color";
+@use "sass:map";
 
-$tablet: 769px !default;
-$desktop: 980px !default;
-$widescreen: 1180px !default;
+@forward "variables";
+@forward "base/material";
+@forward "base/mixins";
 
-$grid-breakpoints: (
-  'xs': 0,
-  'sm': 600px,
-  'md': 960px,
-  'lg': 1280px - 16px,
-  'xl': 1920px - 16px
-) !default;
+@function darken($value, $amount) {
+  @return color.adjust($value, $lightness: -$amount);
+}
 
-$display-breakpoints: (
-  'print-only': 'only print',
-  'screen-only': 'only screen',
-  'xs-only': 'only screen and (max-width: #{map-get($grid-breakpoints, 'sm') - 1})',
-  'sm-only': 'only screen and (min-width: #{map-get($grid-breakpoints, 'sm')}) and (max-width: #{map-get($grid-breakpoints, 'md') - 1})',
-  'sm-and-down': 'only screen and (max-width: #{map-get($grid-breakpoints, 'md') - 1})',
-  'sm-and-up': 'only screen and (min-width: #{map-get($grid-breakpoints, 'sm')})',
-  'md-only': 'only screen and (min-width: #{map-get($grid-breakpoints, 'md')}) and (max-width: #{map-get($grid-breakpoints, 'lg') - 1})',
-  'md-and-down': 'only screen and (max-width: #{map-get($grid-breakpoints, 'lg') - 1})',
-  'md-and-up': 'only screen and (min-width: #{map-get($grid-breakpoints, 'md')})',
-  'lg-only': 'only screen and (min-width: #{map-get($grid-breakpoints, 'lg')}) and (max-width: #{map-get($grid-breakpoints, 'xl') - 1})',
-  'lg-and-down': 'only screen and (max-width: #{map-get($grid-breakpoints, 'xl') - 1})',
-  'lg-and-up': 'only screen and (min-width: #{map-get($grid-breakpoints, 'lg')})',
-  'xl-only': 'only screen and (min-width: #{map-get($grid-breakpoints, 'xl')})'
-) !default;
+@function lighten($value, $amount) {
+  @return color.adjust($value, $lightness: $amount);
+}
+
+@function map-get($value, $key) {
+  @return map.get($value, $key);
+}

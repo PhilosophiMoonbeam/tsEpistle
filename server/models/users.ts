@@ -6,7 +6,7 @@ import tfa from 'node-2fa'
 import jwt, { type SignOptions } from 'jsonwebtoken'
 import { Model, type ModelOptions, type QueryContext } from 'objection'
 import type { Knex } from 'knex'
-import validate from 'validate.js'
+import validateValues from '../../shared/validation.ts'
 import qr from 'qr-image'
 import Group from './groups.ts'
 import Authentication from './authentication.ts'
@@ -827,7 +827,7 @@ static async createNewUser ({ providerKey, email, passwordRaw, name, groups, mus
   // Input validation
   let validation: unknown
   if (providerKey === 'local') {
-    validation = validate({
+    validation = validateValues({
       email,
       passwordRaw,
       name
@@ -857,7 +857,7 @@ static async createNewUser ({ providerKey, email, passwordRaw, name, groups, mus
       }
     }, { format: 'flat' })
   } else {
-    validation = validate({
+    validation = validateValues({
       email,
       name
     }, {
@@ -1034,7 +1034,7 @@ static async register ({ email, password, name, verify = false, bypassChecks = f
     email = _.toLower(email)
 
     // Input validation
-    const validation: unknown = validate({
+    const validation: unknown = validateValues({
       email,
       password,
       name

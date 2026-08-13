@@ -1,17 +1,3 @@
-declare module 'passport-cas' {
-  namespace CasStrategy {
-    interface Request { params: { strategy: string } }
-    interface ProfileDetails extends Record<string, unknown> { user: string; attributes: Record<string, unknown> }
-    type Profile = string | ProfileDetails
-    interface Options { version: string; ssoBaseURL: string; serverBaseURL: string; serviceURL: string; passReqToCallback: true }
-    type Done = (error: Error | null, user?: Record<string, unknown> | false) => void
-    type Verify = (request: Request, profile: Profile, done: Done) => void
-  }
-  const passportCas: {
-    Strategy: new (options: CasStrategy.Options, verify: CasStrategy.Verify) => object
-  }
-  export = passportCas
-}
 
 declare module '@exlinc/keycloak-passport' {
   class KeycloakStrategy {

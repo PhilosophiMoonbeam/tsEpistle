@@ -350,7 +350,7 @@ import { wikiStore } from '@/store/index.ts'
 import { changeProfilePassword, fetchProfile, updateProfile, type Profile } from '../../helpers/users-api'
 import _ from 'lodash'
 import Cookies from 'js-cookie'
-import validate from 'validate.js'
+import validateValues from '../../../shared/validation'
 import type moment from 'moment'
 import PasswordStrength from '../common/password-strength.vue'
 
@@ -793,7 +793,7 @@ export default {
      * Change Password
      */
     async changePassword () {
-      const validation = validate({
+      const validation = validateValues({
         current: this.currentPass,
         password: this.newPass,
         verifyPassword: this.verifyPass

@@ -4,7 +4,7 @@ import { asError, wiki, type AuthenticationConfig, type AuthenticationPlugin, ty
 // LDAP Account
 // ------------------------------------
 
-import LdapStrategy from 'passport-ldapauth'
+import { LdapStrategy } from './ldap-strategy.ts'
 import { readFileSync } from 'node:fs'
 import type { IncomingMessage } from 'node:http'
 import type { ConnectionOptions } from 'node:tls'
@@ -76,7 +76,7 @@ const plugin: AuthenticationPlugin = {
         groupDnProperty: conf.groupDnProperty,
         groupSearchAttributes: [conf.groupNameField]
       },
-      includeRaw: true
+      binaryAttributes: [conf.mappingPicture]
     }
     passport.use(conf.key,
       new LdapStrategy({

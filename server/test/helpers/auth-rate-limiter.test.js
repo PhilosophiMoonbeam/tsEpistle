@@ -19,7 +19,7 @@ describe('auth rate limiter', () => {
     now = Date.UTC(2026, 0, 1)
     vi.spyOn(Date, 'now').mockImplementation(() => now)
     knex = createKnex({
-      client: 'sqlite3',
+      client: 'better-sqlite3',
       connection: { filename: ':memory:' },
       useNullAsDefault: true,
       pool: { min: 1, max: 1 }

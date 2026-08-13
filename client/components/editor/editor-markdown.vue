@@ -187,7 +187,6 @@ import { TextEditor, type TextEditorHandle, type TextPosition } from './common/t
 // Markdown-it
 import MarkdownIt from 'markdown-it'
 import mdAttrs from 'markdown-it-attrs'
-import mdDecorate from 'markdown-it-decorate'
 import { full as mdEmoji } from 'markdown-it-emoji'
 import mdTaskLists from 'markdown-it-task-lists'
 import mdExpandTabs from 'markdown-it-expand-tabs'
@@ -197,7 +196,7 @@ import mdSub from 'markdown-it-sub'
 import mdMark from 'markdown-it-mark'
 import mdMultiTable from 'markdown-it-multimd-table'
 import mdFootnote from 'markdown-it-footnote'
-import mdImsize from '../../libs/markdown-it-image-size'
+import mdImsize from '../../../shared/markdown-it-image-size'
 import katex from 'katex'
 import underline from '../../libs/markdown-it-underline'
 import 'katex/dist/contrib/mhchem.mjs'
@@ -279,7 +278,6 @@ const md = new MarkdownIt({
   .use(mdAttrs, {
     allowedAttributes: ['id', 'class', 'target']
   })
-  .use(mdDecorate)
   .use(underline)
   .use(mdEmoji)
   .use(mdTaskLists, { label: false, labelAfter: false })

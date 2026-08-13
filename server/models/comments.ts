@@ -1,5 +1,5 @@
 import { Model } from 'objection'
-import validate from 'validate.js'
+import validateValues from '../../shared/validation.ts'
 import _ from 'lodash'
 import User from './users.ts'
 import Page from './pages.ts'
@@ -82,11 +82,11 @@ export default class Comment extends Model {
 
   static async postNewComment ({ pageId, replyTo, content, guestName, guestEmail, user, ip }: PostCommentOptions): Promise<unknown> {
     if (user.id === 2) {
-      const validation = validate({ email: _.toLower(guestEmail), name: guestName }, {
+      const validation = validateValues({ email: _.toLower(guestEmail), name: guestName }, {
         email: { email: true, length: { maximum: 255 } },
         name: { presence: { allowEmpty: false }, length: { minimum: 2, maximum: 255 } }
       }, { format: 'flat' })
-      if (validation && validation.length > 0) throw new wiki.Error.InputInvalid(validation[0])
+      if (validation?.[0]) throw new wiki.Error.InputInvalid(validation[0])
     }
     content = _.trim(content)
     if (content.length < 2) throw new wiki.Error.CommentContentMissing()

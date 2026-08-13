@@ -17,6 +17,7 @@ RUN --mount=type=cache,id=wiki-pnpm,target=/pnpm/store \
     pnpm install --frozen-lockfile
 
 COPY client ./client
+COPY shared ./shared
 COPY vite.config.mts ./
 
 RUN pnpm build && pnpm prune --prod
@@ -34,6 +35,7 @@ WORKDIR /wiki
 
 COPY --chown=node:node --from=build /wiki/assets ./assets
 COPY --chown=node:node --from=build /wiki/node_modules ./node_modules
+COPY --chown=node:node shared ./shared
 COPY --chown=node:node server ./server
 COPY --chown=node:node dev/build/config.yml ./config.yml
 COPY --chown=node:node package.json ./

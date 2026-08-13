@@ -15,13 +15,15 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
-      - uses: actions/checkout@v6
-      
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
       - name: Package and Push Chart
+        env:
+          HELM_REPO_PASSWORD: ${{ secrets.HELM_REPO_PASSWORD }}
+          HELM_REPO_USERNAME: ${{ secrets.HELM_REPO_USERNAME }}
         run: |
           export CHARTVER=$(yq '.version' dev/helm/Chart.yaml)
-          helm plugin install https://github.com/chartmuseum/helm-push.git
+          helm plugin install https://github.com/chartmuseum/helm-push.git --version v0.11.1
           helm repo add chartmuseum https://charts.js.wiki
-          helm cm-push --version="$CHARTVER" --username="${{secrets.HELM_REPO_USERNAME}}" --password="${{secrets.HELM_REPO_PASSWORD}}" dev/helm/ chartmuseum
+          helm cm-push --version="$CHARTVER" --username="$HELM_REPO_USERNAME" --password="$HELM_REPO_PASSWORD" dev/helm/ chartmuseum
           helm repo remove chartmuseum

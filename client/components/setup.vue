@@ -15,7 +15,7 @@
               v-alert(v-if='!error', tile, color='blue lighten-5', :value='true')
                 v-icon.mr-3(color='blue') mdi-package-variant
                 span.blue--text You are about to install Wiki.js #[strong {{wikiVersion}}].
-              v-card-text
+              form#setup-form.v-card-text(@submit.prevent='install')
                 .overline.pl-3 Administrator Account
                 v-container.pa-3.mt-3(grid-list-xl)
                   v-row()
@@ -64,7 +64,6 @@
                   label='Site URL',
                   hint='Full URL to your wiki, without the trailing slash (e.g. https://wiki.example.com). This should be the public facing URL, not the internal one if using a reverse-proxy.',
                   persistent-hint
-                  @keyup.enter='install'
                 )
                 v-divider.mb-4
                 .overline.pl-3.mb-3 Telemetry
@@ -79,7 +78,7 @@
                 a.pl-3(style='font-size: 12px; letter-spacing: initial;', href='https://docs.requarks.io/telemetry', target='_blank') Learn more
               v-divider.mt-2
               v-card-actions
-                v-btn(color='primary', @click='install', :disabled='loading', x-large, depressed, block)
+                v-btn(color='primary', type='submit', form='setup-form', :disabled='loading', x-large, depressed, block)
                   v-icon(left) mdi-check
                   span Install
 
@@ -102,7 +101,7 @@
 
 <script lang='ts'>
 import _ from 'lodash'
-import validate from 'validate.js'
+import validateValues from '../../shared/validation'
 import { BreedingRhombusSpinner } from 'epic-spinners'
 import confetti from 'canvas-confetti'
 import { getErrorMessage } from '../helpers/root-ui-store'
@@ -176,7 +175,7 @@ export default {
     async install () {
       this.error = false
 
-      const validationResults = validate(this.conf, {
+      const validationResults = validateValues(this.conf, {
         adminEmail: {
           presence: {
             allowEmpty: false
