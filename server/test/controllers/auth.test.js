@@ -62,14 +62,12 @@ describe('HTML auth controller rate limiting', () => {
     }
   })
 
-  const loadLegacyLogin = async () => {
+  const loadController = async () => {
     await import('../../controllers/auth.ts')
-    const route = express.__router.post.mock.calls.find(([path]) => path === '/login')
-    return route[route.length - 1]
   }
 
   it('configures the HTML limiter with the preserved 401 text response', async () => {
-    await loadLegacyLogin()
+    await loadController()
     const res = { send: vi.fn(), status: vi.fn().mockReturnThis() }
 
     limiter.options[0].onLimit({}, res, 5 * 60 * 1000)
@@ -78,15 +76,15 @@ describe('HTML auth controller rate limiting', () => {
     expect(res.send).toHaveBeenCalledWith('Too many failed attempts. Try again later.')
   })
 
-  it('deletes limiter state after a successful legacy login', async () => {
-    const login = await loadLegacyLogin()
+  it('uses the modern login shell for legacy query strings and user agents', async () => {
+    await loadController()
+    const route = express.__router.get.mock.calls.find(([path]) => path === '/login')
+    const login = route[route.length - 1]
     const req = {
-      body: { strategy: 'local', user: 'alice@example.com', pass: 'secret' },
-      get: vi.fn(),
+      get: vi.fn().mockReturnValue('Trident'),
       query: { legacy: '1' }
     }
     const res = {
-      cookie: vi.fn(),
       locals: {},
       redirect: vi.fn(),
       render: vi.fn()
@@ -94,13 +92,10 @@ describe('HTML auth controller rate limiting', () => {
 
     await login(req, res)
 
-    expect(global.WIKI.models.users.login).toHaveBeenCalledWith({
-      strategy: 'local',
-      username: 'alice@example.com',
-      password: 'secret'
-    }, { req, res })
-    expect(limiter.reset).toHaveBeenCalledWith(req)
-    expect(res.cookie).toHaveBeenCalledWith('jwt', 'login-jwt', { httpOnly: true })
-    expect(res.redirect).toHaveBeenCalledWith('/')
+    expect(res.render).toHaveBeenCalledWith('login', {
+      bgUrl: '/_assets/img/splash/1.jpg',
+      hideLocal: false
+    })
+    expect(res.render).not.toHaveBeenCalledWith('legacy/login', expect.anything())
   })
 })

@@ -20,7 +20,6 @@ interface AuthWiki {
   models: {
     knex: Knex
     authentication: {
-      getStrategiesForLegacyClient(): Promise<{ formStrategies: unknown; socialStrategies: unknown }>
       getStrategy(key: string): Promise<{ selfRegistration: boolean }>
       query(): { orderBy(column: string): { first(): Promise<AuthenticationStrategy> } }
     }
@@ -52,10 +51,6 @@ interface AuthWiki {
 }
 
 const wiki = WIKI as unknown as AuthWiki
-const requestBody = (req: Request): Record<string, unknown> => {
-  const body: unknown = req.body
-  return typeof body === 'object' && body !== null && !Array.isArray(body) ? body as Record<string, unknown> : {}
-}
 
 const routeParam = (req: Request, name: string): string => {
   const value = req.params[name]
@@ -83,27 +78,18 @@ const bruteforce = createAuthRateLimiter({
 router.get('/login', async (req, res) => {
   _.set(res.locals, 'pageMeta.title', 'Login')
 
-  const userAgent = req.get('user-agent')
-  if (req.query.legacy || userAgent?.includes('Trident')) {
-    const { formStrategies, socialStrategies } = await wiki.models.authentication.getStrategiesForLegacyClient()
-    res.render('legacy/login', {
-      err: false,
-      formStrategies,
-      socialStrategies
-    })
-  } else {
-    // -> Bypass Login
-    if (wiki.config.auth.autoLogin && !req.query.all) {
-      const stg = await wiki.models.authentication.query().orderBy('order').first()
-      const stgInfo = _.find(wiki.data.authentication, ['key', stg.strategyKey])
-      if (stgInfo && !stgInfo.useForm) {
-        return res.redirect(`/login/${stg.key}`)
-      }
+  // -> Bypass Login
+  if (wiki.config.auth.autoLogin && !req.query.all) {
+    const stg = await wiki.models.authentication.query().orderBy('order').first()
+    const stgInfo = _.find(wiki.data.authentication, ['key', stg.strategyKey])
+    if (stgInfo && !stgInfo.useForm) {
+      return res.redirect(`/login/${stg.key}`)
     }
-    // -> Show Login
-    const bgUrl = !_.isEmpty(wiki.config.auth.loginBgUrl) ? wiki.config.auth.loginBgUrl : '/_assets/img/splash/1.jpg'
-    res.render('login', { bgUrl, hideLocal: wiki.config.auth.hideLocal })
   }
+
+  // -> Show Login
+  const bgUrl = !_.isEmpty(wiki.config.auth.loginBgUrl) ? wiki.config.auth.loginBgUrl : '/_assets/img/splash/1.jpg'
+  res.render('login', { bgUrl, hideLocal: wiki.config.auth.hideLocal })
 })
 
 /**
@@ -155,38 +141,6 @@ router.all('/login/:strategy/callback', async (req, res, next) => {
   }
 })
 
-/**
- * LEGACY - Login form handling
- */
-router.post('/login', bruteforce.middleware, async (req, res) => {
-  _.set(res.locals, 'pageMeta.title', 'Login')
-  const userAgent = req.get('user-agent')
-  if (req.query.legacy || userAgent?.includes('Trident')) {
-    try {
-      const body = requestBody(req)
-      if (typeof body.strategy !== 'string' || typeof body.user !== 'string' || typeof body.pass !== 'string') {
-        throw new Error('Invalid login payload')
-      }
-      const authResult = await wiki.models.users.login({
-        strategy: body.strategy,
-        username: body.user,
-        password: body.pass
-      }, { req, res })
-      await bruteforce.reset(req)
-      res.cookie('jwt', authResult.jwt, commonHelper.getCookieOpts())
-      res.redirect('/')
-    } catch (err) {
-      const { formStrategies, socialStrategies } = await wiki.models.authentication.getStrategiesForLegacyClient()
-      res.render('legacy/login', {
-        err,
-        formStrategies,
-        socialStrategies
-      })
-    }
-  } else {
-    res.redirect('/login')
-  }
-})
 
 /**
  * Logout

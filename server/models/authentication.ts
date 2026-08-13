@@ -5,7 +5,6 @@ import _ from 'lodash'
 import * as yaml from 'js-yaml'
 import commonHelper from '../helpers/common.ts'
 import {
-  isNodeError,
   readModuleDirectories,
   readModuleDefinition,
   type LoadedModuleDefinition,
@@ -17,12 +16,6 @@ interface AuthenticationDefinition extends LoadedModuleDefinition {
   useForm?: boolean
 }
 
-interface LegacyStrategy extends Record<string, unknown> {
-  key: string
-  title?: string
-  icon?: string | null
-  selfRegistration?: boolean
-}
 interface NormalizedAuthentication extends Record<string, unknown> {
   key: string
   domainWhitelist: string[]
@@ -67,24 +60,6 @@ export default class Authentication extends Model {
     }))
   }
 
-  static async getStrategiesForLegacyClient (): Promise<{ formStrategies: LegacyStrategy[], socialStrategies: LegacyStrategy[] }> {
-    const strategies = await wiki.models.authentication.query().select('key', 'selfRegistration')
-    const formStrategies: LegacyStrategy[] = []
-    const socialStrategies: LegacyStrategy[] = []
-    for (const strategy of strategies) {
-      const strategyInfo = _.find(wiki.data.authentication, ['key', strategy.key])
-      if (strategyInfo?.useForm) {
-        formStrategies.push({ key: strategy.key, ...(strategyInfo.title === undefined ? {} : { title: strategyInfo.title }) })
-      } else {
-        const icon = await fs.readFile(path.join(wiki.ROOTPATH, `assets/svg/auth-icon-${strategy.key}.svg`), 'utf8').catch((err: unknown) => {
-          if (isNodeError(err) && err.code === 'ENOENT') return null
-          throw err
-        })
-        socialStrategies.push({ ...(strategyInfo ?? {}), ...strategy, icon })
-      }
-    }
-    return { formStrategies, socialStrategies }
-  }
 
   static async refreshStrategiesFromDisk (): Promise<void> {
     try {
