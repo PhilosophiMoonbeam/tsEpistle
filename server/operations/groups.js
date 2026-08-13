@@ -39,6 +39,8 @@ const listPickerOptions = () => WIKI.models.groups.query().select('id', 'name', 
 
 const get = id => WIKI.models.groups.query().findById(id)
 
+const listUsers = group => group.$relatedQuery('users').select('id', 'name', 'email')
+
 const create = async name => {
   const group = await WIKI.models.groups.query().insertAndFetch({
     name,
@@ -155,6 +157,7 @@ module.exports = {
   hasSystemPermissions,
   listPickerOptions,
   list,
+  listUsers,
   remove,
   unassignUser,
   update

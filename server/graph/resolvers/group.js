@@ -58,8 +58,6 @@ module.exports = {
     }
   },
   Group: {
-    users (group) {
-      return group.$relatedQuery('users')
-    }
+    users: groupOperations.listUsers
   }
 }

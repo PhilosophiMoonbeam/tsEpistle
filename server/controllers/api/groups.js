@@ -200,7 +200,7 @@ router.get('/:id', async (req, res, next) => {
   try {
     const group = await groupOperations.get(groupId)
     if (!group) return res.status(404).json({ error: 'group not found' })
-    const users = await group.$relatedQuery('users').select('id', 'name', 'email')
+    const users = await groupOperations.listUsers(group)
     res.json({
       id: group.id,
       name: group.name,
