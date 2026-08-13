@@ -123,15 +123,15 @@ export default {
       recentPages: [] as RecentPageRow[],
       recentPagesLoading: false,
       recentPagesHeaders: [
-        { text: 'Title', value: 'title' },
-        { text: 'Path', value: 'path' },
-        { text: 'Last Updated', value: 'updatedAt', width: 250 }
+        { title: 'Title', value: 'title' },
+        { title: 'Path', value: 'path' },
+        { title: 'Last Updated', value: 'updatedAt', width: 250 }
       ],
       lastLogins: [] as LastLoginRow[],
       lastLoginsLoading: false,
       lastLoginsHeaders: [
-        { text: 'User', value: 'displayName' },
-        { text: 'Last Login', value: 'lastLoginAt', width: 250 }
+        { title: 'User', value: 'displayName' },
+        { title: 'Last Login', value: 'lastLoginAt', width: 250 }
       ]
     }
   },

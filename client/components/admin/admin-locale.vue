@@ -167,37 +167,37 @@ export default {
     headers() {
       return [
         {
-          text: this.$t('admin:locale.code'),
+          title: this.$t('admin:locale.code'),
           align: 'left',
           value: 'code',
           width: 90
         },
         {
-          text: this.$t('admin:locale.name'),
+          title: this.$t('admin:locale.name'),
           align: 'left',
           value: 'name'
         },
         {
-          text: this.$t('admin:locale.nativeName'),
+          title: this.$t('admin:locale.nativeName'),
           align: 'left',
           value: 'nativeName'
         },
         {
-          text: this.$t('admin:locale.rtl'),
+          title: this.$t('admin:locale.rtl'),
           align: 'center',
           value: 'isRTL',
           sortable: false,
           width: 10
         },
         {
-          text: this.$t('admin:locale.availability'),
+          title: this.$t('admin:locale.availability'),
           align: 'center',
           value: 'availability',
           sortable: false,
           width: 120
         },
         {
-          text: this.$t('admin:locale.download'),
+          title: this.$t('admin:locale.download'),
           align: 'center',
           value: 'isInstalled',
           sortable: false,

@@ -173,17 +173,17 @@ export default {
     headers() {
       return [
         {
-          text: this.$t('admin:theme.downloadName'),
+          title: this.$t('admin:theme.downloadName'),
           align: 'left',
           value: 'text'
         },
         {
-          text: this.$t('admin:theme.downloadAuthor'),
+          title: this.$t('admin:theme.downloadAuthor'),
           align: 'left',
           value: 'author'
         },
         {
-          text: this.$t('admin:theme.downloadDownload'),
+          title: this.$t('admin:theme.downloadDownload'),
           align: 'center',
           value: 'value',
           sortable: false,

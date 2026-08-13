@@ -19,8 +19,7 @@
             :items-per-page='15'
             :loading='loading'
             must-sort,
-            sort-by='updatedAt',
-            sort-desc,
+            :sort-by="[{ key: 'updatedAt', order: 'desc' }]"
             hide-default-footer
           )
             template(v-slot:item='props')
@@ -57,10 +56,10 @@ export default {
   computed: {
     headers () {
       return [
-        { text: this.$t('profile:pages.headerTitle'), value: 'title' },
-        { text: this.$t('profile:pages.headerPath'), value: 'path' },
-        { text: this.$t('profile:pages.headerCreatedAt'), value: 'createdAt', width: 250 },
-        { text: this.$t('profile:pages.headerUpdatedAt'), value: 'updatedAt', width: 250 }
+        { title: this.$t('profile:pages.headerTitle'), value: 'title' },
+        { title: this.$t('profile:pages.headerPath'), value: 'path' },
+        { title: this.$t('profile:pages.headerCreatedAt'), value: 'createdAt', width: 250 },
+        { title: this.$t('profile:pages.headerUpdatedAt'), value: 'updatedAt', width: 250 }
       ]
     },
     pageTotal () {

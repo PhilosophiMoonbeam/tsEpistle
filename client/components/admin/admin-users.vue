@@ -45,7 +45,6 @@
             :headers='headers'
             v-model:page='pagination'
             v-model:sort-by='sortBy'
-            v-model:sort-desc='sortDesc'
             :items-per-page='15'
             :loading='loading'
             hide-default-footer
@@ -93,10 +92,15 @@ type AuthStrategySummary = Pick<AdminAuthProviderSummary, 'key' | 'displayName'>
 }
 
 type UserTableHeader = {
-  text: string
+  title: string
   value: string
   sortable: boolean
   width?: number
+}
+
+type UserTableSort = {
+  key: string
+  order: 'asc' | 'desc'
 }
 
 export default {
@@ -109,17 +113,16 @@ export default {
       selected: [] as AdminUserListRow[],
       pagination: 1,
       pageCount: 0,
-      sortBy: 'name',
-      sortDesc: false,
+      sortBy: [{ key: 'name', order: 'asc' }] as UserTableSort[],
       users: [] as AdminUserListRow[],
       headers: [
-        { text: 'ID', value: 'id', width: 80, sortable: true },
-        { text: 'Name', value: 'name', sortable: true },
-        { text: 'Email', value: 'email', sortable: true },
-        { text: 'Provider', value: 'providerKey', sortable: true },
-        { text: 'Created', value: 'createdAt', sortable: true },
-        { text: 'Last Login', value: 'lastLoginAt', sortable: true },
-        { text: '', value: 'actions', sortable: false, width: 80 }
+        { title: 'ID', value: 'id', width: 80, sortable: true },
+        { title: 'Name', value: 'name', sortable: true },
+        { title: 'Email', value: 'email', sortable: true },
+        { title: 'Provider', value: 'providerKey', sortable: true },
+        { title: 'Created', value: 'createdAt', sortable: true },
+        { title: 'Last Login', value: 'lastLoginAt', sortable: true },
+        { title: '', value: 'actions', sortable: false, width: 80 }
       ] as UserTableHeader[],
       strategies: [] as AuthStrategySummary[],
       filterStrategy: 'all',
@@ -158,11 +161,11 @@ export default {
         this.loadUsers()
       }
     },
-    sortBy () {
-      this.loadUsers()
-    },
-    sortDesc () {
-      this.loadUsers()
+    sortBy: {
+      handler() {
+        this.loadUsers()
+      },
+      deep: true
     },
     pagination () {
       this.loadUsers()
@@ -213,8 +216,8 @@ export default {
           pageSize: 15,
           filter: this.search,
           providerKey: this.filterStrategy,
-          orderBy: this.sortBy,
-          orderByDirection: this.sortDesc ? 'desc' : 'asc'
+          orderBy: this.sortBy[0]?.key ?? 'name',
+          orderByDirection: this.sortBy[0]?.order ?? 'asc'
         }, 'Users list response is invalid')
 
         if (requestId !== this.loadRequestId) {

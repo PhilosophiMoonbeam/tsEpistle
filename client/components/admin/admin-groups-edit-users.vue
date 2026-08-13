@@ -72,10 +72,10 @@ export default {
   data() {
     return {
       headers: [
-        { text: 'ID', value: 'id', width: 70 },
-        { text: 'Name', value: 'name' },
-        { text: 'Email', value: 'email' },
-        { text: 'Actions', value: 'actions', sortable: false, width: 50 }
+        { title: 'ID', value: 'id', width: 70 },
+        { title: 'Name', value: 'name' },
+        { title: 'Email', value: 'email' },
+        { title: 'Actions', value: 'actions', sortable: false, width: 50 }
       ],
       searchUserDialog: false,
       pagination: 1,

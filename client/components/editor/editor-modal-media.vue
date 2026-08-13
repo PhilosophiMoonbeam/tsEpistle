@@ -57,8 +57,7 @@
                 :items-per-page='15'
                 :loading='loading'
                 must-sort,
-                sort-by='ID',
-                sort-desc,
+                :sort-by="[{ key: 'id', order: 'desc' }]"
                 hide-default-footer,
                 dense
               )
@@ -335,12 +334,12 @@ export default defineComponent({
     },
     headers() {
       return _.compact([
-        this.$vuetify.display.smAndUp && { text: this.$t('editor:assets.headerId'), value: 'id', width: 80 },
-        { text: this.$t('editor:assets.headerFilename'), value: 'filename' },
-        this.$vuetify.display.lgAndUp && { text: this.$t('editor:assets.headerType'), value: 'ext', width: 90 },
-        this.$vuetify.display.mdAndUp && { text: this.$t('editor:assets.headerFileSize'), value: 'fileSize', width: 110 },
-        this.$vuetify.display.mdAndUp && { text: this.$t('editor:assets.headerAdded'), value: 'createdAt', width: 175 },
-        this.$vuetify.display.smAndUp && { text: this.$t('editor:assets.headerActions'), value: '', width: 80, sortable: false, align: 'right' }
+        this.$vuetify.display.smAndUp && { title: this.$t('editor:assets.headerId'), value: 'id', width: 80 },
+        { title: this.$t('editor:assets.headerFilename'), value: 'filename' },
+        this.$vuetify.display.lgAndUp && { title: this.$t('editor:assets.headerType'), value: 'ext', width: 90 },
+        this.$vuetify.display.mdAndUp && { title: this.$t('editor:assets.headerFileSize'), value: 'fileSize', width: 110 },
+        this.$vuetify.display.mdAndUp && { title: this.$t('editor:assets.headerAdded'), value: 'createdAt', width: 175 },
+        this.$vuetify.display.smAndUp && { title: this.$t('editor:assets.headerActions'), value: '', width: 80, sortable: false, align: 'right' }
       ])
     },
     isFolderNameValid() {

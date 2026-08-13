@@ -80,12 +80,12 @@ export default {
       pageCount: 0,
       groups: [] as GroupListRow[],
       headers: [
-        { text: 'ID', value: 'id', width: 80, sortable: true },
-        { text: 'Name', value: 'name' },
-        { text: 'Users', value: 'userCount', width: 200 },
-        { text: 'Created', value: 'createdAt', width: 250 },
-        { text: 'Last Updated', value: 'updatedAt', width: 250 },
-        { text: '', value: 'isSystem', width: 20, sortable: false }
+        { title: 'ID', value: 'id', width: 80, sortable: true },
+        { title: 'Name', value: 'name' },
+        { title: 'Users', value: 'userCount', width: 200 },
+        { title: 'Created', value: 'createdAt', width: 250 },
+        { title: 'Last Updated', value: 'updatedAt', width: 250 },
+        { title: '', value: 'isSystem', width: 20, sortable: false }
       ],
       search: '',
       loading: false

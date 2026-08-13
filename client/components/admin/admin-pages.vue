@@ -98,11 +98,11 @@ export default {
       pages: [] as PageListRow[],
       pageTotal: 0,
       headers: [
-        { text: 'ID', value: 'id', width: 80, sortable: true },
-        { text: 'Title', value: 'title' },
-        { text: 'Path', value: 'path' },
-        { text: 'Created', value: 'createdAt', width: 250 },
-        { text: 'Last Updated', value: 'updatedAt', width: 250 }
+        { title: 'ID', value: 'id', width: 80, sortable: true },
+        { title: 'Title', value: 'title' },
+        { title: 'Path', value: 'path' },
+        { title: 'Created', value: 'createdAt', width: 250 },
+        { title: 'Last Updated', value: 'updatedAt', width: 250 }
       ],
       search: '',
       selectedLang: null as string | null,
