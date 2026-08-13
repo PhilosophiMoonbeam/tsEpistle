@@ -19,6 +19,13 @@ Wiki.ts Preview is an experimental, long-lived community fork of [Wiki.js](https
 
 The running application exposes its exact Git revision and a **Source Code** link in Setup, Administration → System, and the site footer. That link identifies the source corresponding to the deployed artifact.
 
+## Branch model
+
+- [`main`](https://github.com/PhilosophiMoonbeam/wiki/tree/main) is the authoritative Wiki.ts Preview product branch. Releases and deployments originate from it.
+- [`upstream-main`](https://github.com/PhilosophiMoonbeam/wiki/tree/upstream-main) is a read-only mirror of `requarks/wiki:main`; fork-specific commits do not land there.
+- Upstream updates are merged into a short-lived integration branch, adapted and verified there, then submitted to `main`. Product history is not rebased onto upstream.
+
+
 ## Fork attribution and license
 
 This fork was materially modified on 2026-08-13. The modification notice does not claim ownership of upstream work.
