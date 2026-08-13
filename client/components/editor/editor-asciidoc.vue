@@ -168,6 +168,7 @@ export default defineComponent({
   data() {
     return {
       cm: null as TextEditorHandle | null,
+      debouncedProcessContent: null as ReturnType<typeof _.debounce> | null,
       cursorPos: { ch: 0, line: 1 } as TextPosition,
       previewShown: true,
       insertLinkDialog: false,
@@ -237,9 +238,6 @@ export default defineComponent({
       if (!this.cm) throw new Error('CodeMirror editor is not initialized')
       return this.cm
     },
-    onCmInput: _.debounce(function (this: { processContent: (content: string) => Promise<void> }, newContent: string) {
-      void this.processContent(newContent)
-    }, 600),
     async processContent(newContent: string) {
       const cm = this.editor()
       this.processMarkers(0, cm.lineCount)
@@ -369,6 +367,9 @@ export default defineComponent({
     container.style.height = this.$vuetify.display.mdAndUp
       ? 'calc(100vh - 137px)'
       : 'calc(100vh - 112px - 16px)'
+    this.debouncedProcessContent = _.debounce((newContent: string) => {
+      void this.processContent(newContent)
+    }, 600)
     const cm = new TextEditor({
       parent: container,
       value: wikiStore.editor.content,
@@ -382,7 +383,7 @@ export default defineComponent({
       ],
       onChange: value => {
         wikiStore.editor.content = value
-        this.onCmInput(value)
+        this.debouncedProcessContent?.(value)
       },
       onCursor: position => this.positionSync(position)
     })
@@ -401,7 +402,7 @@ export default defineComponent({
     offEditorInsert(this.handleEditorInsert)
     offEditorSaveConflict(this.handleEditorSaveConflict)
     offEditorContentOverwrite(this.handleEditorContentOverwrite)
-    this.onCmInput.cancel()
+    this.debouncedProcessContent?.cancel()
     this.cm?.destroy()
     this.cm = null
   }

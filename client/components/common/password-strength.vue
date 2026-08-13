@@ -13,16 +13,9 @@ import { defineComponent } from 'vue'
 import zxcvbn from 'zxcvbn'
 import _ from 'lodash'
 
-type PasswordStrengthContext = {
-  passwordStrength: number
-  passwordStrengthColor: string
-  passwordStrengthText: string
-  $t: (key: string) => string
-}
-
 export default defineComponent({
   props: {
-    value: {
+    modelValue: {
       type: String,
       default: ''
     },
@@ -33,18 +26,25 @@ export default defineComponent({
   },
   data() {
     return {
+      debouncedCheckPasswordStrength: null as ReturnType<typeof _.debounce> | null,
       passwordStrength: 0,
       passwordStrengthColor: 'grey',
       passwordStrengthText: ''
     }
   },
   watch: {
-    value(newValue: string) {
-      this.checkPasswordStrength(newValue)
+    modelValue(newValue: string) {
+      this.debouncedCheckPasswordStrength?.(newValue)
     }
   },
+  created() {
+    this.debouncedCheckPasswordStrength = _.debounce((password: string) => {
+      this.updatePasswordStrength(password)
+    }, 100)
+    this.debouncedCheckPasswordStrength(this.modelValue)
+  },
   methods: {
-    checkPasswordStrength: _.debounce(function (this: PasswordStrengthContext, pwd: string) {
+    updatePasswordStrength(pwd: string) {
       if (!pwd || pwd.length < 1) {
         this.passwordStrength = 0
         this.passwordStrengthColor = 'grey'
@@ -69,10 +69,10 @@ export default defineComponent({
         this.passwordStrengthColor = 'green'
         this.passwordStrengthText = this.$t('common:password.veryStrong')
       }
-    }, 100)
+    }
   },
   beforeUnmount() {
-    this.checkPasswordStrength.cancel()
+    this.debouncedCheckPasswordStrength?.cancel()
   }
 })
 </script>
