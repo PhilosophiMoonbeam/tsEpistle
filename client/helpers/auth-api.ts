@@ -292,3 +292,7 @@ export async function regenerateAuthCertificates (fetchImpl: FetchImpl, fallback
 export async function resetGuestUser (fetchImpl: FetchImpl, fallbackMessage = 'Guest user reset failed'): Promise<any> {
   return submitStatusRequest(fetchImpl, '/_api/auth/guest/reset', {}, fallbackMessage)
 }
+
+export async function registerAccount (fetchImpl: FetchImpl, input: { email: string, password: string, name: string }, fallbackMessage = 'Registration failed'): Promise<any> {
+  return submitStatusRequest(fetchImpl, '/_api/auth/register', input, fallbackMessage)
+}

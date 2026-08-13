@@ -178,6 +178,19 @@ router.post('/guest/reset', async (req, res) => {
   }
 })
 
+router.post('/register', async (req, res, next) => {
+  try {
+    await authenticationOperations.register({
+      email: req.body && req.body.email,
+      password: req.body && req.body.password,
+      name: req.body && req.body.name
+    }, { req, res })
+    res.status(201).json({ message: 'Registration success' })
+  } catch (err) {
+    next(err)
+  }
+})
+
 router.post('/forgot-password', bruteforce.prevent, async (req, res, next) => {
   const email = req.body && req.body.email
   if (!email) return res.status(400).json({ error: 'email is required' })

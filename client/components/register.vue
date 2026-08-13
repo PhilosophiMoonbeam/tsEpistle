@@ -99,11 +99,9 @@
 <script>
 /* global siteConfig */
 
-import _ from 'lodash'
 import validate from 'validate.js'
 import PasswordStrength from './common/password-strength.vue'
-
-import registerMutation from 'gql/register/register-mutation-create.gql'
+import { registerAccount } from '../helpers/auth-api'
 
 export default {
   i18nOptions: { namespaces: 'auth' },
@@ -224,28 +222,16 @@ export default {
         this.loaderMode = 'loading'
         this.isLoading = true
         try {
-          let resp = await this.$apollo.mutate({
-            mutation: registerMutation,
-            variables: {
-              email: this.email,
-              password: this.password,
-              name: this.name
-            }
-          })
-          if (_.has(resp, 'data.authentication.register')) {
-            let respObj = _.get(resp, 'data.authentication.register', {})
-            if (respObj.responseResult.succeeded === true) {
-              this.loaderColor = 'grey darken-4'
-              this.loaderTitle = this.$t('auth:registerSuccess')
-              this.loaderSubtitle = this.$t(`auth:registerCheckEmail`)
-              this.loaderMode = 'icon'
-              this.isShown = false
-            } else {
-              throw new Error(respObj.responseResult.message)
-            }
-          } else {
-            throw new Error(this.$t('auth:genericError'))
-          }
+          await registerAccount(window.fetch.bind(window), {
+            email: this.email,
+            password: this.password,
+            name: this.name
+          }, this.$t('auth:genericError'))
+          this.loaderColor = 'grey darken-4'
+          this.loaderTitle = this.$t('auth:registerSuccess')
+          this.loaderSubtitle = this.$t(`auth:registerCheckEmail`)
+          this.loaderMode = 'icon'
+          this.isShown = false
         } catch (err) {
           console.error(err)
           this.$store.commit('showNotification', {

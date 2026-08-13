@@ -144,7 +144,8 @@ describe('controllers/api auth endpoints', () => {
           login: jest.fn(),
           loginTFA: jest.fn(),
           loginChangePassword: jest.fn(),
-          loginForgotPassword: jest.fn()
+          loginForgotPassword: jest.fn(),
+          register: jest.fn().mockResolvedValue(undefined)
         }
       }
     }
@@ -170,6 +171,7 @@ describe('controllers/api auth endpoints', () => {
       revokeApiKey: postRouteHandler('/api/keys/:id/revoke'),
       regenerateCertificates: postRouteHandler('/certificates/regenerate'),
       resetGuestUser: postRouteHandler('/guest/reset'),
+      register: postRouteHandler('/register'),
       forgotPassword: postRouteHandler('/forgot-password'),
       login: postRouteHandler('/login'),
       loginTFA: postRouteHandler('/login/tfa'),
@@ -191,6 +193,7 @@ describe('controllers/api auth endpoints', () => {
     expect(typeof handlers.revokeApiKey).toBe('function')
     expect(typeof handlers.regenerateCertificates).toBe('function')
     expect(typeof handlers.resetGuestUser).toBe('function')
+    expect(typeof handlers.register).toBe('function')
     expect(typeof handlers.forgotPassword).toBe('function')
     expect(typeof handlers.login).toBe('function')
     expect(typeof handlers.loginTFA).toBe('function')
@@ -909,6 +912,27 @@ describe('controllers/api auth endpoints', () => {
     expect(res.json).not.toHaveBeenCalled()
     expect(next).toHaveBeenCalledWith(expect.any(Error))
     expect(next.mock.calls[0][0].message).toBe('db failed')
+  })
+
+  it('registers a local account through the shared authentication operation', async () => {
+    const { register } = loadHandlers()
+    const req = {
+      body: {
+        email: 'alice@example.com',
+        password: 'correct horse battery staple',
+        name: 'Alice'
+      }
+    }
+    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+
+    await register(req, res, jest.fn())
+
+    expect(global.WIKI.models.users.register).toHaveBeenCalledWith({
+      ...req.body,
+      verify: true
+    }, { req, res })
+    expect(res.status).toHaveBeenCalledWith(201)
+    expect(res.json).toHaveBeenCalledWith({ message: 'Registration success' })
   })
 
   it('returns a generic success payload for forgot-password requests', async () => {
