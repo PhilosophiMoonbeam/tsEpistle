@@ -181,6 +181,19 @@ describe('controllers/api storage endpoints', () => {
     expect(targets[1].config.find(cfg => cfg.key === 'ignored')).toBeUndefined()
   })
 
+  it('reads storage definitions after the operation module is loaded', async () => {
+    const handler = await loadGetHandler('/targets')
+    global.WIKI.data.storage = global.WIKI.data.storage.map(target => ({
+      ...target,
+      title: `Runtime ${target.key}`
+    }))
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
+
+    await handler({ user: {}, body: {} }, res)
+
+    expect(res.json.mock.calls[0][0].map(target => target.title)).toEqual(['Runtime disk', 'Runtime git'])
+  })
+
   it('returns active storage status with GraphQL resolver defaults', async () => {
     const handler = await loadGetHandler('/status')
     const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }

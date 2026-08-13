@@ -33,8 +33,6 @@ interface ActiveSearchEngine {
 }
 
 const searchEngineModel = (WIKI.models as { searchEngines: SearchEngineModel }).searchEngines
-const searchEngineDefinitions = (WIKI.data as { searchEngines: Array<Record<string, unknown> & { key: string }> }).searchEngines
-const activeSearchEngine = (WIKI.data as { searchEngine: ActiveSearchEngine }).searchEngine
 const logger = WIKI.logger as { warn(message: string, error: unknown): void }
 
 const validEngine = (engine: unknown): engine is SearchEngineRow => Boolean(
@@ -47,6 +45,7 @@ const validEngine = (engine: unknown): engine is SearchEngineRow => Boolean(
 )
 
 const listEngines = async (orderBy?: string): Promise<Array<Record<string, unknown>>> => {
+  const searchEngineDefinitions = (WIKI.data as { searchEngines: Array<Record<string, unknown> & { key: string }> }).searchEngines
   const engines = await searchEngineModel.getSearchEngines()
   const result = engines.map(engine => {
     const definition = _.find(searchEngineDefinitions, ['key', engine.key]) ?? {}
@@ -68,6 +67,7 @@ const updateEngines = async (engines: unknown): Promise<void> => {
     config: parseConfig(engine.config, { errorMessage: 'Invalid search engines payload' })
   }))
   let newActiveEngine = ''
+  const activeSearchEngine = (WIKI.data as { searchEngine: ActiveSearchEngine }).searchEngine
   for (const engine of updates) {
     if (engine.isEnabled) newActiveEngine = engine.key
     await searchEngineModel.query().patch({
@@ -85,6 +85,6 @@ const updateEngines = async (engines: unknown): Promise<void> => {
   await searchEngineModel.initEngine({ activate: true })
 }
 
-const rebuildIndex = (): unknown => activeSearchEngine.rebuild()
+const rebuildIndex = (): unknown => (WIKI.data as { searchEngine: ActiveSearchEngine }).searchEngine.rebuild()
 
 export default { listEngines, rebuildIndex, updateEngines }

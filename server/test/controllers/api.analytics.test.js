@@ -214,6 +214,20 @@ describe('controllers/api analytics endpoints', () => {
     expect(row).not.toHaveProperty('unrelatedMetadata')
   })
 
+  it('reads provider definitions after the operation module is loaded', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValue(true)
+    const handler = await loadProvidersHandler()
+    global.WIKI.data.analytics = global.WIKI.data.analytics.map(provider => ({
+      ...provider,
+      title: 'Runtime Analytics'
+    }))
+    const res = { sendStatus: vi.fn(), json: vi.fn() }
+
+    await handler({ user: {}, query: {} }, res, vi.fn())
+
+    expect(res.json.mock.calls[0][0][0].title).toBe('Runtime Analytics')
+  })
+
   it('merges config with provider metadata as JSON strings sorted by config key', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
     const handler = await loadProvidersHandler()

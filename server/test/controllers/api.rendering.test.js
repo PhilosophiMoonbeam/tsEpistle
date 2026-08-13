@@ -215,6 +215,20 @@ describe('controllers/api rendering endpoints', () => {
     expect(row).not.toHaveProperty('internalNote')
   })
 
+  it('reads renderer definitions after the operation module is loaded', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValue(true)
+    const handler = await loadRenderersHandler()
+    global.WIKI.data.renderers = global.WIKI.data.renderers.map(renderer => ({
+      ...renderer,
+      title: `Runtime ${renderer.key}`
+    }))
+    const res = { sendStatus: vi.fn(), json: vi.fn() }
+
+    await handler({ user: {} }, res, vi.fn())
+
+    expect(res.json.mock.calls[0][0][0].title).toBe('Runtime markdownCore')
+  })
+
   it('merges config with renderer metadata as JSON strings sorted by config key and omits unknown config keys', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
     const handler = await loadRenderersHandler()

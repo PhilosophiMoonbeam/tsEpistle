@@ -58,8 +58,7 @@
             :items-per-page='15'
             :loading='loading'
             must-sort,
-            sort-by='updatedAt',
-            sort-desc,
+            :sort-by="[{ key: 'updatedAt', order: 'desc' }]"
             hide-default-footer
             @page-count="pageTotal = $event"
           )

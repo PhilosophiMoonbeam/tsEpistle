@@ -247,6 +247,20 @@ describe('controllers/api search endpoints', () => {
     }
   })
 
+  it('reads search engine definitions after the operation module is loaded', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValue(true)
+    const handler = await loadEnginesHandler()
+    global.WIKI.data.searchEngines = global.WIKI.data.searchEngines.map(engine => ({
+      ...engine,
+      title: `Runtime ${engine.key}`
+    }))
+    const res = { sendStatus: vi.fn(), json: vi.fn() }
+
+    await handler({ user: {} }, res, vi.fn())
+
+    expect(res.json.mock.calls[0][0].map(engine => engine.title)).toEqual(['Runtime alpha', 'Runtime beta'])
+  })
+
   it('serializes only declared config metadata and persisted values as JSON strings sorted by config key', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
     const handler = await loadEnginesHandler()

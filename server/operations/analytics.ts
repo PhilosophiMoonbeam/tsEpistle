@@ -26,7 +26,6 @@ interface AnalyticsModel {
 }
 
 const analyticsModel = (WIKI.models as { analytics: AnalyticsModel }).analytics
-const analyticsDefinitions = (WIKI.data as { analytics: Array<Record<string, unknown> & { key: string }> }).analytics
 const cache = WIKI.cache as { del(key: string): Promise<unknown> }
 
 const validProvider = (provider: unknown): provider is AnalyticsProvider => Boolean(
@@ -39,6 +38,7 @@ const validProvider = (provider: unknown): provider is AnalyticsProvider => Bool
 )
 
 const listProviders = async (isEnabled?: boolean): Promise<Array<Record<string, unknown>>> => {
+  const analyticsDefinitions = (WIKI.data as { analytics: Array<Record<string, unknown> & { key: string }> }).analytics
   const providers = await analyticsModel.getProviders(isEnabled)
   return providers.map(provider => {
     const definition = _.find(analyticsDefinitions, ['key', provider.key]) ?? {}

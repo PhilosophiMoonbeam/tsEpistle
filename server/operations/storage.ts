@@ -41,11 +41,10 @@ interface StorageModel {
   executeAction(targetKey: string, handler: string): Promise<unknown>
 }
 
-// WIKI model and data registries are initialized before operation modules are loaded.
-const wikiModels = WIKI.models as { storage: StorageModel }
-const wikiData = WIKI.data as { storage: StorageDefinition[] }
-const storageModel = wikiModels.storage
-const storageDefinitions = wikiData.storage
+const storageModel = (WIKI.models as { storage: StorageModel }).storage
+
+const getStorageDefinitions = (): StorageDefinition[] =>
+  (WIKI.data as { storage: StorageDefinition[] }).storage
 
 function requireString(value: unknown, label: string): asserts value is string {
   if (!_.isString(value) || _.trim(value).length < 1) {
@@ -74,6 +73,7 @@ function validateTargets(targets: unknown): asserts targets is StorageTargetUpda
 
 const listTargets = async () => {
   const targets = await storageModel.getTargets()
+  const storageDefinitions = getStorageDefinitions()
   return _.sortBy(targets.map(target => {
     const definition: StorageDefinition = storageDefinitions.find(item => item.key === target.key) ?? { key: target.key }
     return {
@@ -90,6 +90,7 @@ const listTargets = async () => {
 
 const listStatus = async () => {
   const activeTargets = await storageModel.query().where('isEnabled', true)
+  const storageDefinitions = getStorageDefinitions()
   return activeTargets.map(target => {
     const definition: StorageDefinition = storageDefinitions.find(item => item.key === target.key) ?? { key: target.key }
     return {

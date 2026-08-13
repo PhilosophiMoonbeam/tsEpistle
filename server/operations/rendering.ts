@@ -26,7 +26,6 @@ interface RendererModel {
 }
 
 const rendererModel = (WIKI.models as { renderers: RendererModel }).renderers
-const rendererDefinitions = (WIKI.data as { renderers: Array<Record<string, unknown> & { key: string }> }).renderers
 
 const validRenderer = (renderer: unknown): renderer is RendererRow => Boolean(
   renderer &&
@@ -38,6 +37,7 @@ const validRenderer = (renderer: unknown): renderer is RendererRow => Boolean(
 )
 
 const listRenderers = async (orderBy?: string): Promise<Array<Record<string, unknown>>> => {
+  const rendererDefinitions = (WIKI.data as { renderers: Array<Record<string, unknown> & { key: string }> }).renderers
   const renderers = await rendererModel.getRenderers()
   const result = renderers.map(renderer => {
     const definition = _.find(rendererDefinitions, ['key', renderer.key]) ?? {}
