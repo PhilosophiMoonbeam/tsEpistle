@@ -870,7 +870,7 @@ describe('controllers/api users endpoints', () => {
     expect(queryBuilder.findById).toHaveBeenCalledWith(42)
     const user = await queryBuilder.findById.mock.results[0].value
     expect(user.$relatedQuery).toHaveBeenCalledWith('groups')
-    expect(user.$relatedQuery.mock.results[0].value.select).toHaveBeenCalledWith('id', 'name')
+    expect(user.$relatedQuery.mock.results[0].value.select).toHaveBeenCalledWith('groups.id', 'groups.name')
     const payload = res.json.mock.calls[0][0]
     expect(payload).toEqual({
       id: 42,

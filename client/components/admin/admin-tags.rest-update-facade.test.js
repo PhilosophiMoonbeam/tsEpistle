@@ -40,7 +40,7 @@ describe('admin tags REST update facade', () => {
   it('preserves tag update loading, notification, timestamp, and graph error behavior', () => {
     expect(saveTagBody).toContain("wikiStore.startLoading('admin-tags-save')")
     expect(saveTagBody).toContain("wikiStore.stopLoading('admin-tags-save')")
-    expect(saveTagBody).toContain("message: this.$t('tags.saveSuccess')")
+    expect(saveTagBody).toContain("message: this.$t('admin:tags.saveSuccess')")
     expect(saveTagBody).toContain("style: 'success'")
     expect(saveTagBody).toContain("icon: 'check'")
     expect(saveTagBody).toContain('this.current.updatedAt = new Date()')
@@ -62,7 +62,7 @@ describe('admin tags REST delete facade', () => {
   it('preserves tag delete loading, notification, refresh, dialog, and graph error behavior', () => {
     expect(deleteTagBody).toContain("wikiStore.startLoading('admin-tags-delete')")
     expect(deleteTagBody).toContain("wikiStore.stopLoading('admin-tags-delete')")
-    expect(deleteTagBody).toContain("message: this.$t('tags.deleteSuccess')")
+    expect(deleteTagBody).toContain("message: this.$t('admin:tags.deleteSuccess')")
     expect(deleteTagBody).toContain("style: 'success'")
     expect(deleteTagBody).toContain("icon: 'check'")
     expect(deleteTagBody).toContain('this.refresh()')
@@ -87,7 +87,7 @@ describe('admin tags REST query facade', () => {
     expect(refreshBody).toContain("wikiStore.stopLoading('admin-tags-refresh')")
     expect(refreshBody).toContain('this.current = makeEmptyTag()')
     expect(refreshBody).toContain('if (notify)')
-    expect(refreshBody).toContain("message: this.$t('tags.refreshSuccess')")
+    expect(refreshBody).toContain("message: this.$t('admin:tags.refreshSuccess')")
     expect(refreshBody).toContain("style: 'success'")
     expect(refreshBody).toContain("icon: 'cached'")
     expect(refreshBody).toContain('wikiStore.showError(err)')

@@ -202,7 +202,7 @@ const getAdminDetail = async (value: unknown) => {
   const user = await get(value)
   const provider = strategyFor(user.providerKey)
   const definition = provider ? definitionFor(provider.strategyKey) : undefined
-  const groups = await user.$relatedQuery('groups').select('id', 'name')
+  const groups = await user.$relatedQuery('groups').select('groups.id', 'groups.name')
   return {
     id: user.id, name: user.name, email: user.email, providerKey: user.providerKey,
     providerName: provider?.displayName ?? 'Unknown', providerId: user.providerId ?? null,

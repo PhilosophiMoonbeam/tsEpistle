@@ -12,11 +12,11 @@ interface PageListItem {
   id: number
   path: string
   locale?: string
-  title?: string
-  description?: string
+  title?: string | null
+  description?: string | null
   isPublished: boolean | number
   isPrivate: boolean | number
-  privateNS?: string
+  privateNS?: string | null
   contentType: string
   createdAt: string | Date
   updatedAt: string | Date
@@ -39,11 +39,11 @@ const isPageListItem = (page: PageOperationListItem): page is PageOperationListI
   typeof page.id === 'number' &&
   typeof page.path === 'string' &&
   (page.locale === undefined || typeof page.locale === 'string') &&
-  (page.title === undefined || typeof page.title === 'string') &&
-  (page.description === undefined || typeof page.description === 'string') &&
+  (page.title === undefined || page.title === null || typeof page.title === 'string') &&
+  (page.description === undefined || page.description === null || typeof page.description === 'string') &&
   (typeof page.isPublished === 'boolean' || typeof page.isPublished === 'number') &&
   (typeof page.isPrivate === 'boolean' || typeof page.isPrivate === 'number') &&
-  (page.privateNS === undefined || typeof page.privateNS === 'string') &&
+  (page.privateNS === undefined || page.privateNS === null || typeof page.privateNS === 'string') &&
   typeof page.contentType === 'string' &&
   isDateValue(page.createdAt) &&
   isDateValue(page.updatedAt) &&
@@ -199,11 +199,11 @@ router.get('/', async (req, res, next) => {
         id: page.id,
         path: page.path,
         locale: page.locale,
-        title: page.title === undefined ? null : page.title,
-        description: page.description === undefined ? null : page.description,
-        isPublished: page.isPublished,
-        isPrivate: page.isPrivate,
-        privateNS: page.privateNS === undefined ? null : page.privateNS,
+        title: page.title ?? null,
+        description: page.description ?? null,
+        isPublished: Boolean(page.isPublished),
+        isPrivate: Boolean(page.isPrivate),
+        privateNS: page.privateNS ?? null,
         contentType: page.contentType,
         createdAt: page.createdAt,
         updatedAt: page.updatedAt,
@@ -464,11 +464,11 @@ router.get('/:id', async (req, res, next) => {
       hash: pageResult.hash,
       title: pageResult.title,
       description: pageResult.description,
-      isPrivate: pageResult.isPrivate,
-      isPublished: pageResult.isPublished,
-      privateNS: pageResult.privateNS,
-      publishStartDate: pageResult.publishStartDate,
-      publishEndDate: pageResult.publishEndDate,
+      isPrivate: Boolean(pageResult.isPrivate),
+      isPublished: Boolean(pageResult.isPublished),
+      privateNS: pageResult.privateNS ?? null,
+      publishStartDate: pageResult.publishStartDate || null,
+      publishEndDate: pageResult.publishEndDate || null,
       contentType: pageResult.contentType,
       createdAt: pageResult.createdAt,
       updatedAt: pageResult.updatedAt,

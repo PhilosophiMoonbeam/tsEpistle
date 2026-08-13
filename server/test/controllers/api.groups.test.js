@@ -48,7 +48,7 @@ describe('controllers/api groups endpoints', () => {
             insertAndFetch: vi.fn().mockResolvedValue({
               id: 3,
               name: 'Editors',
-              isSystem: false,
+              isSystem: 0,
               permissions: ['read:pages'],
               pageRules: []
             }),
@@ -56,19 +56,19 @@ describe('controllers/api groups endpoints', () => {
               {
                 id: 1,
                 name: 'Administrators',
-                isSystem: true
+                isSystem: 1
               },
               {
                 id: 3,
                 name: 'Editors',
-                isSystem: false
+                isSystem: 0
               }
             ]),
             findById: vi.fn().mockResolvedValue({
               id: 3,
               name: 'Editors',
               redirectOnLogin: '/en/home',
-              isSystem: false,
+              isSystem: 0,
               permissions: ['read:pages', 'write:pages'],
               pageRules: [
                 {
@@ -76,7 +76,7 @@ describe('controllers/api groups endpoints', () => {
                   path: 'docs',
                   roles: ['read:pages'],
                   match: 'START',
-                  deny: false,
+                  deny: 0,
                   locales: ['en'],
                   extra: 'nope'
                 }
@@ -165,9 +165,7 @@ describe('controllers/api groups endpoints', () => {
       group: {
         id: 3,
         name: 'Editors',
-        isSystem: false,
-        permissions: ['read:pages'],
-        pageRules: []
+        isSystem: false
       }
     })
   })
@@ -288,7 +286,7 @@ describe('controllers/api groups endpoints', () => {
         {
           id: 1,
           name: 'Administrators',
-          isSystem: true,
+          isSystem: 1,
           userCount: '2',
           createdAt: '2026-01-01T00:00:00.000Z',
           updatedAt: '2026-01-02T00:00:00.000Z',

@@ -137,7 +137,15 @@ router.post('/', async (req, res, next) => {
 
   try {
     const group = await groupOperations.create(name)
-    res.json({ succeeded: true, message: 'Group created successfully.', group })
+    res.json({
+      succeeded: true,
+      message: 'Group created successfully.',
+      group: {
+        id: objectValue(group, 'id'),
+        name: objectValue(group, 'name'),
+        isSystem: Boolean(objectValue(group, 'isSystem'))
+      }
+    })
   } catch (err) {
     handleOperationError(err, res, next)
   }
@@ -151,7 +159,7 @@ router.get('/', async (req, res, next) => {
     res.json(groups.map((group: unknown) => ({
       id: objectValue(group, 'id'),
       name: objectValue(group, 'name'),
-      isSystem: objectValue(group, 'isSystem')
+      isSystem: Boolean(objectValue(group, 'isSystem'))
     })))
   } catch (err) {
     next(err)
@@ -166,7 +174,7 @@ router.get('/list', async (req, res, next) => {
     res.json(groups.map((group: unknown) => ({
       id: objectValue(group, 'id'),
       name: objectValue(group, 'name'),
-      isSystem: objectValue(group, 'isSystem'),
+      isSystem: Boolean(objectValue(group, 'isSystem')),
       userCount: Number.parseInt(String(objectValue(group, 'userCount')), 10) || 0,
       createdAt: objectValue(group, 'createdAt'),
       updatedAt: objectValue(group, 'updatedAt')
@@ -259,7 +267,7 @@ router.get('/:id', async (req, res, next) => {
       id: objectValue(group, 'id'),
       name: objectValue(group, 'name'),
       redirectOnLogin: objectValue(group, 'redirectOnLogin'),
-      isSystem: objectValue(group, 'isSystem'),
+      isSystem: Boolean(objectValue(group, 'isSystem')),
       permissions: Array.isArray(permissionsValue)
         ? permissionsValue.filter((permission: unknown) => typeof permission === 'string')
         : [],
@@ -271,7 +279,7 @@ router.get('/:id', async (req, res, next) => {
           path: objectValue(rule, 'path'),
           roles: Array.isArray(rolesValue) ? rolesValue.filter((role: unknown) => typeof role === 'string') : [],
           match: objectValue(rule, 'match'),
-          deny: objectValue(rule, 'deny'),
+          deny: Boolean(objectValue(rule, 'deny')),
           locales: Array.isArray(localesValue) ? localesValue.filter((locale: unknown) => typeof locale === 'string') : []
         }
       }),

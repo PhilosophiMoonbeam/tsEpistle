@@ -5,8 +5,8 @@
         .admin-header
           img.animated.fadeInUp(src='/_assets/svg/icon-tags.svg', alt='Tags', style='width: 80px;')
           .admin-header-title
-            .headline.primary--text.animated.fadeInLeft {{$t('tags.title')}}
-            .subtitle-1.grey--text.animated.fadeInLeft.wait-p4s {{$t('tags.subtitle')}}
+            .headline.primary--text.animated.fadeInLeft {{$t('admin:tags.title')}}
+            .subtitle-1.grey--text.animated.fadeInLeft.wait-p4s {{$t('admin:tags.subtitle')}}
           v-spacer
           v-btn.animated.fadeInDown(outlined, color='grey', @click='refresh', icon)
             v-icon mdi-refresh
@@ -32,7 +32,7 @@
                   v-list-item(v-if='tags.length < 1')
                     v-avatar(size='24'): v-icon(color='grey') mdi-compass-off
                     div.v-list-item-content
-                      .caption.grey--text {{$t('tags.emptyList')}}
+                      .caption.grey--text {{$t('admin:tags.emptyList')}}
                   v-list-item(
                     v-for='tag of filteredTags'
                     :key='tag.id'
@@ -45,7 +45,7 @@
               template(v-if='current.id')
                 v-card
                   v-toolbar(dense, color='teal', flat, dark)
-                    .subtitle-1 {{$t('tags.edit')}}
+                    .subtitle-1 {{$t('admin:tags.edit')}}
                     v-spacer
                     v-btn.pl-4(
                       color='white'
@@ -59,14 +59,14 @@
                   v-card-text
                     v-text-field(
                       outlined
-                      :label='$t("tags.tag")'
+                      :label='$t("admin:tags.tag")'
                       prepend-icon='mdi-tag'
                       v-model='current.tag'
                       counter='255'
                     )
                     v-text-field(
                       outlined
-                      :label='$t("tags.label")'
+                      :label='$t("admin:tags.label")'
                       prepend-icon='mdi-format-title'
                       v-model='current.title'
                       hide-details
@@ -93,8 +93,8 @@
                       v-icon(left) mdi-content-save
                       span {{$t('common:actions.save')}}
               v-card(v-else)
-                v-card-text.grey--text(v-if='tags.length > 0') {{$t('tags.noSelectionText')}}
-                v-card-text.grey--text(v-else) {{$t('tags.noItemsText')}}
+                v-card-text.grey--text(v-if='tags.length > 0') {{$t('admin:tags.noSelectionText')}}
+                v-card-text.grey--text(v-else) {{$t('admin:tags.noItemsText')}}
 </template>
 
 <script lang='ts'>
@@ -145,7 +145,7 @@ export default {
           tag.id
         )
         wikiStore.showNotification({
-          message: this.$t('tags.deleteSuccess'),
+          message: this.$t('admin:tags.deleteSuccess'),
           style: 'success',
           icon: 'check'
         })
@@ -166,7 +166,7 @@ export default {
           tag.title
         )
         wikiStore.showNotification({
-          message: this.$t('tags.saveSuccess'),
+          message: this.$t('admin:tags.saveSuccess'),
           style: 'success',
           icon: 'check'
         })
@@ -183,7 +183,7 @@ export default {
         this.current = makeEmptyTag()
         if (notify) {
           wikiStore.showNotification({
-            message: this.$t('tags.refreshSuccess'),
+            message: this.$t('admin:tags.refreshSuccess'),
             style: 'success',
             icon: 'cached'
           })
