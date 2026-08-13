@@ -1,7 +1,7 @@
 <template lang='pug'>
   v-container(fluid, grid-list-lg)
-    v-layout(row, wrap)
-      v-flex(xs12)
+    v-row()
+      v-col(cols='12')
         .admin-header
           img.animated.fadeInUp(src='/_assets/svg/icon-customer.svg', alt='Users', style='width: 80px;')
           .admin-header-title
@@ -14,7 +14,7 @@
             v-icon(left) mdi-plus
             span New User
         v-card.mt-3.animated.fadeInUp
-          .pa-2.d-flex.align-center(:class='$vuetify.theme.dark ? `grey darken-3-d5` : `grey lighten-3`')
+          .pa-2.d-flex.align-center(:class='$vuetify.theme.current.dark ? `grey darken-3-d5` : `grey lighten-3`')
             v-text-field(
               solo
               flat
@@ -43,14 +43,14 @@
             v-model='selected'
             :items='users'
             :headers='headers'
-            :page.sync='pagination'
-            :sort-by.sync='sortBy'
-            :sort-desc.sync='sortDesc'
+            v-model:page='pagination'
+            v-model:sort-by='sortBy'
+            v-model:sort-desc='sortDesc'
             :items-per-page='15'
             :loading='loading'
             hide-default-footer
             )
-            template(slot='item', slot-scope='props')
+            template(v-slot:item='props')
               tr.is-clickable(:active='props.selected', @click='$router.push("/users/" + props.item.id)')
                 //- td
                   v-checkbox(hide-details, :input-value='props.selected', color='blue darken-2', @click='props.selected = !props.selected')
@@ -66,11 +66,11 @@
                   v-icon.mr-3(v-if='props.item.isSystem') mdi-lock-outline
                   status-indicator(positive, pulse, v-if='props.item.isActive')
                   status-indicator(negative, pulse, v-else)
-            template(slot='no-data')
+            template(v-slot:no-data)
               .pa-3
                 v-alert.text-left(icon='mdi-alert', outlined, color='grey')
                   em.body-2 No users to display!
-          v-card-chin(v-if='pageCount > 1')
+          div.v-card-chin(v-if='pageCount > 1')
             v-spacer
             v-pagination(v-model='pagination', :length='pageCount')
             v-spacer
@@ -78,14 +78,26 @@
     user-create(v-model='isCreateDialogShown', @refresh='refresh(false)')
 </template>
 
-<script>
-import _ from 'lodash'
+<script lang='ts'>
 
-import { fetchAdminAuthProviders } from '../../helpers/auth-api'
-import { fetchAdminUsersList } from '../../helpers/users-api'
+import { fetchAdminAuthProviders, type AdminAuthProviderSummary } from '../../helpers/auth-api'
+import { getErrorMessage } from '../../helpers/root-ui-store'
+import { fetchAdminUsersList, type AdminUserListRow } from '../../helpers/users-api'
 
-import { StatusIndicator } from 'vue-status-indicator'
+import StatusIndicator from '@/components/common/status-indicator.vue'
 import UserCreate from './admin-users-create.vue'
+import { wikiStore } from '@/store/index.ts'
+
+type AuthStrategySummary = Pick<AdminAuthProviderSummary, 'key' | 'displayName'> & {
+  isEnabled?: boolean
+}
+
+type UserTableHeader = {
+  text: string
+  value: string
+  sortable: boolean
+  width?: number
+}
 
 export default {
   components: {
@@ -94,12 +106,12 @@ export default {
   },
   data() {
     return {
-      selected: [],
+      selected: [] as AdminUserListRow[],
       pagination: 1,
       pageCount: 0,
       sortBy: 'name',
       sortDesc: false,
-      users: [],
+      users: [] as AdminUserListRow[],
       headers: [
         { text: 'ID', value: 'id', width: 80, sortable: true },
         { text: 'Name', value: 'name', sortable: true },
@@ -108,13 +120,13 @@ export default {
         { text: 'Created', value: 'createdAt', sortable: true },
         { text: 'Last Login', value: 'lastLoginAt', sortable: true },
         { text: '', value: 'actions', sortable: false, width: 80 }
-      ],
-      strategies: [],
+      ] as UserTableHeader[],
+      strategies: [] as AuthStrategySummary[],
       filterStrategy: 'all',
       search: '',
       loading: false,
       loadRequestId: 0,
-      searchDebounce: null,
+      searchDebounce: null as ReturnType<typeof setTimeout> | null,
       isCreateDialogShown: false
     }
   },
@@ -128,7 +140,9 @@ export default {
   },
   watch: {
     search () {
-      clearTimeout(this.searchDebounce)
+      if (this.searchDebounce !== null) {
+        clearTimeout(this.searchDebounce)
+      }
       this.searchDebounce = setTimeout(() => {
         if (this.pagination !== 1) {
           this.pagination = 1
@@ -159,38 +173,38 @@ export default {
       this.isCreateDialogShown = true
     },
     async loadStrategies() {
-      this.$store.commit('loadingStart', 'admin-users-strategies-refresh')
+      wikiStore.startLoading('admin-users-strategies-refresh')
       try {
         const providers = await fetchAdminAuthProviders(window.fetch.bind(window), 'Admin authentication providers response is invalid')
-        this.strategies = _.concat({
+        this.strategies = [{
           key: 'all',
           displayName: 'All Providers'
-        }, providers.map(provider => ({
+        }, ...providers.map(provider => ({
           key: provider.key,
           displayName: provider.displayName,
           isEnabled: provider.isEnabled
-        })))
+        }))]
 
         if (!this.strategies.some(strategy => strategy.key === this.filterStrategy)) {
           this.filterStrategy = 'all'
         }
         return true
       } catch (err) {
-        this.$store.commit('showNotification', {
+        wikiStore.showNotification({
           style: 'red',
-          message: err.message,
+          message: getErrorMessage(err),
           icon: 'alert'
         })
         return false
       } finally {
-        this.$store.commit('loadingStop', 'admin-users-strategies-refresh')
+        wikiStore.stopLoading('admin-users-strategies-refresh')
       }
     },
     async loadUsers () {
       const requestId = ++this.loadRequestId
       if (!this.loading) {
         this.loading = true
-        this.$store.commit('loadingStart', 'admin-users-refresh')
+        wikiStore.startLoading('admin-users-refresh')
       }
 
       try {
@@ -213,7 +227,7 @@ export default {
         if (requestId === this.loadRequestId) {
           this.users = []
           this.pageCount = 0
-          this.$store.commit('showNotification', {
+          wikiStore.showNotification({
             message: 'Failed to load users list.',
             style: 'error',
             icon: 'alert'
@@ -222,7 +236,7 @@ export default {
       } finally {
         if (requestId === this.loadRequestId) {
           this.loading = false
-          this.$store.commit('loadingStop', 'admin-users-refresh')
+          wikiStore.stopLoading('admin-users-refresh')
         }
       }
     },
@@ -230,23 +244,25 @@ export default {
       const strategiesLoaded = await this.loadStrategies()
       await this.loadUsers()
       if (notify && strategiesLoaded) {
-        this.$store.commit('showNotification', {
+        wikiStore.showNotification({
           message: 'Users list has been refreshed.',
           style: 'success',
           icon: 'cached'
         })
       }
     },
-    getStrategyName(key) {
-      return (_.find(this.strategies, ['key', key]) || {}).displayName || key
+    getStrategyName(key: string) {
+      return this.strategies.find(strategy => strategy.key === key)?.displayName || key
     }
   },
   mounted () {
     this.loadStrategies()
     this.loadUsers()
   },
-  beforeDestroy () {
-    clearTimeout(this.searchDebounce)
+  beforeUnmount () {
+    if (this.searchDebounce !== null) {
+      clearTimeout(this.searchDebounce)
+    }
   }
 }
 </script>

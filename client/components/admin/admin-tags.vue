@@ -1,7 +1,7 @@
 <template lang='pug'>
   v-container(fluid, grid-list-lg)
-    v-layout(row wrap)
-      v-flex(xs12)
+    v-row
+      v-col(cols='12')
         .admin-header
           img.animated.fadeInUp(src='/_assets/svg/icon-tags.svg', alt='Tags', style='width: 80px;')
           .admin-header-title
@@ -11,10 +11,10 @@
           v-btn.animated.fadeInDown(outlined, color='grey', @click='refresh', icon)
             v-icon mdi-refresh
         v-container.pa-0.mt-3(fluid, grid-list-lg)
-          v-layout(row)
-            v-flex(style='flex: 0 0 350px;')
+          v-row
+            v-col(style='flex: 0 0 350px;')
               v-card.animated.fadeInUp
-                v-toolbar(:color='$vuetify.theme.dark ? `grey darken-3-d5` : `grey lighten-4`', flat)
+                v-toolbar(:color='$vuetify.theme.current.dark ? `grey darken-3-d5` : `grey lighten-4`', flat)
                   v-text-field(
                     v-model='filter'
                     :label='$t(`admin:tags.filter`)'
@@ -24,14 +24,14 @@
                     flat
                     dense
                     color='teal'
-                    :background-color='$vuetify.theme.dark ? `grey darken-4` : `grey lighten-2`'
+                    :background-color='$vuetify.theme.current.dark ? `grey darken-4` : `grey lighten-2`'
                     prepend-inner-icon='mdi-magnify'
                   )
                 v-divider
                 v-list.py-2(dense, nav)
                   v-list-item(v-if='tags.length < 1')
-                    v-list-item-avatar(size='24'): v-icon(color='grey') mdi-compass-off
-                    v-list-item-content
+                    v-avatar(size='24'): v-icon(color='grey') mdi-compass-off
+                    div.v-list-item-content
                       .caption.grey--text {{$t('tags.emptyList')}}
                   v-list-item(
                     v-for='tag of filteredTags'
@@ -39,9 +39,9 @@
                     :class='(tag.id === current.id) ? "teal" : ""'
                     @click='selectTag(tag)'
                     )
-                    v-list-item-avatar(size='24', tile): v-icon(size='18', :color='tag.id === current.id ? `white` : `teal`') mdi-tag
+                    v-avatar(size='24', tile): v-icon(size='18', :color='tag.id === current.id ? `white` : `teal`') mdi-tag
                     v-list-item-title(:class='tag.id === current.id ? `white--text` : ``') {{tag.tag}}
-            v-flex.animated.fadeInUp.wait-p2s
+            v-col.animated.fadeInUp.wait-p2s
               template(v-if='current.id')
                 v-card
                   v-toolbar(dense, color='teal', flat, dark)
@@ -71,14 +71,14 @@
                       v-model='current.title'
                       hide-details
                     )
-                  v-card-chin
+                  div.v-card-chin
                     i18next.caption.pl-3(path='admin:tags.date', tag='div')
                       strong(place='created') {{ $helpers.formatMoment(current.createdAt, 'from') }}
                       strong(place='updated') {{ $helpers.formatMoment(current.updatedAt, 'from') }}
                     v-spacer
                     v-dialog(v-model='deleteTagDialog', max-width='500')
-                      template(v-slot:activator='{ on }')
-                        v-btn(color='red', outlined, v-on='on')
+                      template(v-slot:activator='{ props }')
+                        v-btn(color='red', outlined, v-bind='props')
                           v-icon(color='red') mdi-trash-can-outline
                       v-card
                         .dialog-header.is-red {{$t('admin:tags.deleteConfirm')}}
@@ -97,15 +97,29 @@
                 v-card-text.grey--text(v-else) {{$t('tags.noItemsText')}}
 </template>
 
-<script>
+<script lang='ts'>
 import _ from 'lodash'
+import { wikiStore } from '@/store/index.ts'
 import { deletePageTag, fetchPageTags, updatePageTag } from '../../helpers/pages-api'
+import type { PageTagRow } from '../../helpers/pages-api'
+
+type EditablePageTagRow = Omit<PageTagRow, 'updatedAt'> & {
+  updatedAt: string | Date
+}
+
+const makeEmptyTag = (): EditablePageTagRow => ({
+  id: 0,
+  tag: '',
+  title: null,
+  createdAt: '',
+  updatedAt: ''
+})
 
 export default {
   data() {
     return {
-      tags: [],
-      current: {},
+      tags: [] as EditablePageTagRow[],
+      current: makeEmptyTag(),
       filter: '',
       deleteTagDialog: false
     }
@@ -113,37 +127,37 @@ export default {
   computed: {
     filteredTags () {
       if (this.filter.length > 0) {
-        return _.filter(this.tags, t => t.tag.indexOf(this.filter) >= 0 || t.title.indexOf(this.filter) >= 0)
+        return _.filter(this.tags, t => t.tag.indexOf(this.filter) >= 0 || (t.title?.indexOf(this.filter) ?? -1) >= 0)
       } else {
         return this.tags
       }
     }
   },
   methods: {
-    selectTag(tag) {
+    selectTag(tag: EditablePageTagRow) {
       this.current = tag
     },
-    async deleteTag(tag) {
-      this.$store.commit(`loadingStart`, 'admin-tags-delete')
+    async deleteTag(tag: EditablePageTagRow) {
+      wikiStore.startLoading('admin-tags-delete')
       try {
         await deletePageTag(
           window.fetch.bind(window),
           tag.id
         )
-        this.$store.commit('showNotification', {
+        wikiStore.showNotification({
           message: this.$t('tags.deleteSuccess'),
           style: 'success',
           icon: 'check'
         })
         this.refresh()
       } catch (err) {
-        this.$store.commit('pushGraphError', err)
+        wikiStore.showError(err)
       }
       this.deleteTagDialog = false
-      this.$store.commit(`loadingStop`, 'admin-tags-delete')
+      wikiStore.stopLoading('admin-tags-delete')
     },
-    async saveTag(tag) {
-      this.$store.commit(`loadingStart`, 'admin-tags-save')
+    async saveTag(tag: EditablePageTagRow) {
+      wikiStore.startLoading('admin-tags-save')
       try {
         await updatePageTag(
           window.fetch.bind(window),
@@ -151,33 +165,33 @@ export default {
           tag.tag,
           tag.title
         )
-        this.$store.commit('showNotification', {
+        wikiStore.showNotification({
           message: this.$t('tags.saveSuccess'),
           style: 'success',
           icon: 'check'
         })
         this.current.updatedAt = new Date()
       } catch (err) {
-        this.$store.commit('pushGraphError', err)
+        wikiStore.showError(err)
       }
-      this.$store.commit(`loadingStop`, 'admin-tags-save')
+      wikiStore.stopLoading('admin-tags-save')
     },
     async refresh(notify = true) {
-      this.$store.commit(`loadingStart`, 'admin-tags-refresh')
+      wikiStore.startLoading('admin-tags-refresh')
       try {
         this.tags = _.cloneDeep(await fetchPageTags(window.fetch.bind(window)))
-        this.current = {}
+        this.current = makeEmptyTag()
         if (notify) {
-          this.$store.commit('showNotification', {
+          wikiStore.showNotification({
             message: this.$t('tags.refreshSuccess'),
             style: 'success',
             icon: 'cached'
           })
         }
       } catch (err) {
-        this.$store.commit('pushGraphError', err)
+        wikiStore.showError(err)
       }
-      this.$store.commit(`loadingStop`, 'admin-tags-refresh')
+      wikiStore.stopLoading('admin-tags-refresh')
     }
   },
   mounted () {

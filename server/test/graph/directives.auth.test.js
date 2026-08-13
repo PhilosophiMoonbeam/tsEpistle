@@ -1,5 +1,7 @@
-const { graphql } = require('graphql')
-const { makeExecutableSchema } = require('graphql-tools')
+import { makeExecutableSchema } from '@graphql-tools/schema'
+import { graphql } from 'graphql/index.js'
+
+import { authDirectiveTransformer } from '../../graph/directives/auth.ts'
 
 describe('graph/directives/auth directive contract', () => {
   let schema
@@ -7,13 +9,10 @@ describe('graph/directives/auth directive contract', () => {
   let overrideResolver
 
   beforeEach(() => {
-    jest.resetModules()
+    securedResolver = vi.fn().mockResolvedValue('secured-value')
+    overrideResolver = vi.fn().mockResolvedValue('override-value')
 
-    const AuthDirective = require('../../graph/directives/auth')
-    securedResolver = jest.fn().mockResolvedValue('secured-value')
-    overrideResolver = jest.fn().mockResolvedValue('override-value')
-
-    schema = makeExecutableSchema({
+    const rawSchema = makeExecutableSchema({
       typeDefs: `
         directive @auth(requires: [String]) on OBJECT | FIELD_DEFINITION | ARGUMENT_DEFINITION
 
@@ -34,11 +33,9 @@ describe('graph/directives/auth directive contract', () => {
         ScopedObject: {
           message: overrideResolver
         }
-      },
-      schemaDirectives: {
-        auth: AuthDirective
       }
     })
+    schema = authDirectiveTransformer(rawSchema)
   })
 
   it('throws Unauthorized when no authenticated user is present', async () => {

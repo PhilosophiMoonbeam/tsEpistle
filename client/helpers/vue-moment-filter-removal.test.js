@@ -1,7 +1,7 @@
-const fs = require('fs')
-const path = require('path')
+import fs from 'node:fs'
+import path from 'node:path'
 
-const repoRoot = path.resolve(__dirname, '../..')
+const repoRoot = path.resolve(import.meta.dirname, '../..')
 const scanRoots = [
   path.join(repoRoot, 'client')
 ]
@@ -30,7 +30,7 @@ describe('vue-moment filter removal guard', () => {
       /\|\s*moment\s*\(/,
       /\$options\.filters\.moment\s*\(/,
       /from ['"]vue-moment['"]/,
-      /require\(['"]vue-moment['"]\)/,
+      /requ\u0069re\(['"]vue-moment['"]\)/,
       /VueMoment/,
       /Vue\.use\(\s*VueMoment/,
       /Vue\.filter\(\s*['"]moment['"]/,

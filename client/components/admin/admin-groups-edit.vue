@@ -1,7 +1,7 @@
 <template lang='pug'>
   v-container(fluid, grid-list-lg)
-    v-layout(row wrap)
-      v-flex(xs12)
+    v-row
+      v-col(cols='12')
         .admin-header
           img(src='/_assets/svg/icon-social-group.svg', alt='Edit Group', style='width: 80px;')
           .admin-header-title
@@ -11,8 +11,8 @@
           v-btn(color='grey', icon, outlined, to='/groups')
             v-icon mdi-arrow-left
           v-dialog(v-model='deleteGroupDialog', max-width='500', v-if='!group.isSystem')
-            template(v-slot:activator='{ on }')
-              v-btn.ml-3(color='red', icon, outlined, v-on='on')
+            template(v-slot:activator='{ props }')
+              v-btn.ml-3(color='red', icon, outlined, v-bind='props')
                 v-icon(color='red') mdi-trash-can-outline
             v-card
               .dialog-header.is-red Delete Group?
@@ -25,7 +25,7 @@
             v-icon(left) mdi-check
             span Update Group
         v-card.mt-3
-          v-tabs.grad-tabs(v-model='tab', :color='$vuetify.theme.dark ? `blue` : `primary`', fixed-tabs, show-arrows, icons-and-text)
+          v-tabs.grad-tabs(v-model='tab', :color='$vuetify.theme.current.dark ? `blue` : `primary`', fixed-tabs, show-arrows, icons-and-text)
             v-tab(key='settings')
               span Settings
               v-icon mdi-cog-box
@@ -45,7 +45,7 @@
                   v-card-text
                     v-alert.radius-7.mb-0(
                       color='orange darken-2'
-                      :class='$vuetify.theme.dark ? "grey darken-4" : "orange lighten-5"'
+                      :class='$vuetify.theme.current.dark ? "grey darken-4" : "orange lighten-5"'
                       outlined
                       :value='true'
                       icon='mdi-lock-outline'
@@ -86,31 +86,26 @@
             v-tab-item(key='users', :transition='false', :reverse-transition='false')
               group-users(v-model='group', @refresh='refresh')
 
-          v-card-chin
+          div.v-card-chin
             v-spacer
             .caption.grey--text.pr-2 Group ID #[strong {{group.id}}]
 
     page-selector(mode='select', v-model='selectPageModal', :open-handler='selectPageHandle', path='home', :locale='currentLang')
 </template>
 
-<script>
+<script lang='ts'>
 import _ from 'lodash'
-import { deleteGroup, fetchGroupDetails, updateGroup } from '../../helpers/groups-api'
-import { loadingStart, loadingStop, pushGraphError, showNotification } from '../../helpers/root-ui-store'
+import { createEmptyGroupEditorState, deleteGroup, fetchGroupDetails, updateGroup } from '../../helpers/groups-api'
+import { wikiStore } from '@/store/index.ts'
 
 import GroupPermissions from './admin-groups-edit-permissions.vue'
 import GroupRules from './admin-groups-edit-rules.vue'
 import GroupUsers from './admin-groups-edit-users.vue'
 
-const createEmptyGroup = () => ({
-  id: 0,
-  name: '',
-  isSystem: false,
-  permissions: [],
-  pageRules: [],
-  users: [],
-  redirectOnLogin: '/'
-})
+type PageSelection = {
+  path: string
+  locale: string
+}
 
 /* global siteConfig */
 
@@ -122,7 +117,7 @@ export default {
   },
   data() {
     return {
-      group: createEmptyGroup(),
+      group: createEmptyGroupEditorState(),
       groupLoadRequestId: 0,
       deleteGroupDialog: false,
       tab: null,
@@ -132,7 +127,7 @@ export default {
   },
   watch: {
     '$route.params.id' () {
-      this.group = createEmptyGroup()
+      this.group = createEmptyGroupEditorState()
       this.loadGroup()
     }
   },
@@ -141,7 +136,7 @@ export default {
       const requestId = ++this.groupLoadRequestId
       const routeGroupId = _.toSafeInteger(this.$route.params.id)
 
-      this.$store.commit('loadingStart', 'admin-groups-refresh')
+      wikiStore.startLoading('admin-groups-refresh')
       try {
         const group = await fetchGroupDetails(window.fetch.bind(window), routeGroupId, 'Group detail response is invalid')
         if (requestId !== this.groupLoadRequestId || routeGroupId !== _.toSafeInteger(this.$route.params.id)) {
@@ -153,23 +148,23 @@ export default {
         if (requestId !== this.groupLoadRequestId || routeGroupId !== _.toSafeInteger(this.$route.params.id)) {
           return false
         }
-        this.group = createEmptyGroup()
-        this.$store.commit('pushGraphError', err)
+        this.group = createEmptyGroupEditorState()
+        wikiStore.showError(err)
         return false
       } finally {
         if (requestId === this.groupLoadRequestId) {
-          this.$store.commit('loadingStop', 'admin-groups-refresh')
+          wikiStore.stopLoading('admin-groups-refresh')
         }
       }
     },
     selectPage () {
       this.selectPageModal = true
     },
-    selectPageHandle ({ path, locale }) {
+    selectPageHandle ({ path, locale }: PageSelection) {
       this.group.redirectOnLogin = `/${locale}/${path}`
     },
     async updateGroup() {
-      loadingStart(this.$store, 'admin-groups-update')
+      wikiStore.startLoading('admin-groups-update')
       try {
         await updateGroup(window.fetch.bind(window), this.group.id, {
           name: this.group.name,
@@ -177,32 +172,32 @@ export default {
           permissions: this.group.permissions,
           pageRules: this.group.pageRules
         })
-        showNotification(this.$store, {
+        wikiStore.showNotification({
           style: 'success',
           message: `Group changes have been saved.`,
           icon: 'check'
         })
       } catch (err) {
-        pushGraphError(this.$store, err)
+        wikiStore.showError(err)
       } finally {
-        loadingStop(this.$store, 'admin-groups-update')
+        wikiStore.stopLoading('admin-groups-update')
       }
     },
     async deleteGroup() {
       this.deleteGroupDialog = false
-      loadingStart(this.$store, 'admin-groups-delete')
+      wikiStore.startLoading('admin-groups-delete')
       try {
         await deleteGroup(window.fetch.bind(window), this.group.id)
-        showNotification(this.$store, {
+        wikiStore.showNotification({
           style: 'success',
           message: `Group ${this.group.name} has been deleted.`,
           icon: 'delete'
         })
         this.$router.replace('/groups')
       } catch (err) {
-        pushGraphError(this.$store, err)
+        wikiStore.showError(err)
       } finally {
-        loadingStop(this.$store, 'admin-groups-delete')
+        wikiStore.stopLoading('admin-groups-delete')
       }
     },
     async refresh() {

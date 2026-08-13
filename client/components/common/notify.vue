@@ -11,16 +11,19 @@
       span {{ notification.message }}
 </template>
 
-<script>
-import { get, sync } from 'vuex-pathify'
+<script lang='ts'>
+import { wikiStore, type Notification } from '@/store/index.ts'
 
 export default {
   data() {
     return { }
   },
   computed: {
-    notification: get('notification'),
-    notificationState: sync('notification@isActive')
+    notification(): Notification { return wikiStore.notification },
+    notificationState: {
+      get(): boolean { return wikiStore.notification.isActive },
+      set(value: boolean) { wikiStore.notification.isActive = value }
+    }
   }
 }
 </script>

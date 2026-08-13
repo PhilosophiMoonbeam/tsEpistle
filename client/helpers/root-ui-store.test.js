@@ -1,37 +1,43 @@
-const rootUiStore = require('./root-ui-store')
+import { describe, expect, test, vi } from 'vitest'
+
+import * as rootUiStore from './root-ui-store.ts'
 
 describe('root UI store facade', () => {
   const createStore = (overrides = {}) => ({
-    commit: jest.fn(),
-    getters: {},
-    state: {},
+    startLoading: vi.fn(),
+    stopLoading: vi.fn(),
+    showNotification: vi.fn(),
+    setNotificationActive: vi.fn(),
+    showError: vi.fn(),
+    isLoading: false,
+    notification: null,
     ...overrides
   })
 
-  test('loadingStart commits the existing root mutation', () => {
+  test('loadingStart delegates to the root store action', () => {
     const store = createStore()
 
     rootUiStore.loadingStart(store, 'example')
 
-    expect(store.commit).toHaveBeenCalledWith('loadingStart', 'example')
+    expect(store.startLoading).toHaveBeenCalledWith('example')
   })
 
-  test('loadingStop commits the existing root mutation', () => {
+  test('loadingStop delegates to the root store action', () => {
     const store = createStore()
 
     rootUiStore.loadingStop(store, 'example')
 
-    expect(store.commit).toHaveBeenCalledWith('loadingStop', 'example')
+    expect(store.stopLoading).toHaveBeenCalledWith('example')
   })
 
-  test('setLoading routes true to loadingStart and false to loadingStop', () => {
+  test('setLoading routes true to startLoading and false to stopLoading', () => {
     const store = createStore()
 
     rootUiStore.setLoading(store, 'watcher', true)
     rootUiStore.setLoading(store, 'watcher', false)
 
-    expect(store.commit).toHaveBeenNthCalledWith(1, 'loadingStart', 'watcher')
-    expect(store.commit).toHaveBeenNthCalledWith(2, 'loadingStop', 'watcher')
+    expect(store.startLoading).toHaveBeenCalledWith('watcher')
+    expect(store.stopLoading).toHaveBeenCalledWith('watcher')
   })
 
   test('showNotification passes the payload through unchanged', () => {
@@ -40,38 +46,36 @@ describe('root UI store facade', () => {
 
     rootUiStore.showNotification(store, payload)
 
-    expect(store.commit).toHaveBeenCalledWith('showNotification', payload)
+    expect(store.showNotification).toHaveBeenCalledWith(payload)
   })
 
-  test('updateNotificationState commits active state', () => {
+  test('updateNotificationState delegates active state to the root store', () => {
     const store = createStore()
 
     rootUiStore.updateNotificationState(store, false)
     rootUiStore.updateNotificationState(store, true)
 
-    expect(store.commit).toHaveBeenNthCalledWith(1, 'updateNotificationState', false)
-    expect(store.commit).toHaveBeenNthCalledWith(2, 'updateNotificationState', true)
+    expect(store.setNotificationActive).toHaveBeenNthCalledWith(1, false)
+    expect(store.setNotificationActive).toHaveBeenNthCalledWith(2, true)
   })
 
-  test('pushGraphError delegates existing mutation behavior', () => {
+  test('pushGraphError delegates existing root store behavior', () => {
     const store = createStore()
     const err = new Error('Broken')
 
     rootUiStore.pushGraphError(store, err)
 
-    expect(store.commit).toHaveBeenCalledWith('pushGraphError', err)
+    expect(store.showError).toHaveBeenCalledWith(err)
   })
 
-  test('isLoading reads the root getter safely', () => {
-    expect(rootUiStore.isLoading(createStore({ getters: { isLoading: true } }))).toBe(true)
-    expect(rootUiStore.isLoading(createStore({ getters: { isLoading: false } }))).toBe(false)
-    expect(rootUiStore.isLoading(createStore({ getters: {} }))).toBe(false)
-    expect(rootUiStore.isLoading(createStore({ getters: null }))).toBe(false)
+  test('isLoading reads the root store getter', () => {
+    expect(rootUiStore.isLoading(createStore({ isLoading: true }))).toBe(true)
+    expect(rootUiStore.isLoading(createStore({ isLoading: false }))).toBe(false)
   })
 
   test('getNotification returns current notification state', () => {
     const notification = { message: 'Hi', style: 'primary', icon: 'cached', isActive: true }
-    const store = createStore({ state: { notification } })
+    const store = createStore({ notification })
 
     expect(rootUiStore.getNotification(store)).toBe(notification)
   })

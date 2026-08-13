@@ -1,9 +1,9 @@
 import { createEventBus } from './simple-event-bus'
 
 export const EDITOR_INSERT_EVENT = 'editorInsert'
-const editorInsertBus = createEventBus()
+const editorInsertBus = createEventBus<[EditorInsertPayload]>()
 
-type EditorInsertPayload = {
+export type EditorInsertPayload = {
   kind?: string
   path?: string
   text?: string

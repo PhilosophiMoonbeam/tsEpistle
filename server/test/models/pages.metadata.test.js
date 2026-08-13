@@ -1,14 +1,79 @@
+import { EventEmitter } from 'node:events'
+
+const originalWIKI = global.WIKI
+
 describe('models/pages.parseMetadata', () => {
   let Page
 
-  beforeEach(() => {
-    jest.resetModules()
+  beforeEach(async () => {
+    vi.resetModules()
     global.WIKI = {
+      ROOTPATH: '/test',
+      Error: {
+        PageDeleteForbidden: Error,
+        PageDuplicateCreate: Error,
+        PageEmptyContent: Error,
+        PageIllegalPath: Error,
+        PageMoveForbidden: Error,
+        PageNotFound: Error,
+        PagePathCollision: Error,
+        PageUpdateForbidden: Error
+      },
+      auth: {
+        checkAccess: vi.fn()
+      },
+      config: {
+        dataPath: '/test/data',
+        db: {
+          type: 'sqlite'
+        },
+        lang: {
+          code: 'en'
+        }
+      },
+      data: {
+        editors: [],
+        reservedPaths: [],
+        searchEngine: {
+          created: vi.fn(),
+          updated: vi.fn(),
+          deleted: vi.fn(),
+          renamed: vi.fn()
+        }
+      },
+      events: {
+        inbound: new EventEmitter(),
+        outbound: new EventEmitter()
+      },
       logger: {
-        warn: jest.fn()
+        error: vi.fn(),
+        warn: vi.fn()
+      },
+      models: {
+        comments: {},
+        knex: vi.fn(),
+        pageHistory: {
+          addVersion: vi.fn()
+        },
+        pages: {},
+        storage: {
+          pageEvent: vi.fn()
+        },
+        tags: {}
+      },
+      scheduler: {
+        registerJob: vi.fn()
       }
     }
-    Page = require('../../models/pages')
+    Page = (await import('../../models/pages.ts')).default
+  })
+
+  afterEach(() => {
+    if (originalWIKI === undefined) {
+      delete global.WIKI
+    } else {
+      global.WIKI = originalWIKI
+    }
   })
 
   it('parses markdown frontmatter into metadata and content', () => {

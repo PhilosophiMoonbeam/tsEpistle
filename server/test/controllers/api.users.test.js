@@ -1,23 +1,26 @@
-jest.mock('express', () => {
+vi.mock('express', () => {
   const router = {
-    get: jest.fn(),
-    post: jest.fn(),
-    put: jest.fn(),
-    delete: jest.fn(),
-    patch: jest.fn(),
-    use: jest.fn()
+    get: vi.fn(),
+    post: vi.fn(),
+    put: vi.fn(),
+    delete: vi.fn(),
+    patch: vi.fn(),
+    use: vi.fn()
   }
 
-  return {
+  const expressMock = {
     Router: () => router,
     __router: router
   }
+
+  return { default: expressMock, ...expressMock }
 })
+
+import * as express from 'express'
 
 describe('controllers/api users endpoints', () => {
   beforeEach(() => {
-    jest.resetModules()
-    const express = require('express')
+    vi.resetModules()
     express.__router.get.mockClear()
     express.__router.post.mockClear()
     express.__router.put.mockClear()
@@ -25,10 +28,11 @@ describe('controllers/api users endpoints', () => {
     express.__router.patch.mockClear()
 
     global.WIKI = {
+      Error: {},
       auth: {
-        checkAccess: jest.fn().mockReturnValue(true),
-        checkAssignUserToGroupAccess: jest.fn().mockResolvedValue(true),
-        revokeUserTokens: jest.fn(),
+        checkAccess: vi.fn().mockReturnValue(true),
+        checkAssignUserToGroupAccess: vi.fn().mockResolvedValue(true),
+        revokeUserTokens: vi.fn(),
         strategies: {
           local: {
             displayName: 'Local',
@@ -43,19 +47,19 @@ describe('controllers/api users endpoints', () => {
       },
       events: {
         outbound: {
-          emit: jest.fn()
+          emit: vi.fn()
         }
       },
       models: {
         users: {
-          createNewUser: jest.fn().mockResolvedValue(undefined),
-          updateUser: jest.fn().mockResolvedValue(undefined),
-          deleteUser: jest.fn().mockResolvedValue(undefined),
-          query: jest.fn().mockImplementation(() => ({
-            where: jest.fn().mockReturnValue({
-              orWhere: jest.fn().mockReturnValue({
-                limit: jest.fn().mockReturnValue({
-                  select: jest.fn().mockResolvedValue([
+          createNewUser: vi.fn().mockResolvedValue(undefined),
+          updateUser: vi.fn().mockResolvedValue(undefined),
+          deleteUser: vi.fn().mockResolvedValue(undefined),
+          query: vi.fn().mockImplementation(() => ({
+            where: vi.fn().mockReturnValue({
+              orWhere: vi.fn().mockReturnValue({
+                limit: vi.fn().mockReturnValue({
+                  select: vi.fn().mockResolvedValue([
                     {
                       id: 42,
                       name: 'Alice',
@@ -73,10 +77,10 @@ describe('controllers/api users endpoints', () => {
                 })
               })
             }),
-            select: jest.fn().mockReturnValue({
-              whereNotNull: jest.fn().mockReturnValue({
-                orderBy: jest.fn().mockReturnValue({
-                  limit: jest.fn().mockResolvedValue([
+            select: vi.fn().mockReturnValue({
+              whereNotNull: vi.fn().mockReturnValue({
+                orderBy: vi.fn().mockReturnValue({
+                  limit: vi.fn().mockResolvedValue([
                     {
                       id: 42,
                       name: 'Alice',
@@ -92,7 +96,7 @@ describe('controllers/api users endpoints', () => {
                 })
               })
             }),
-            findById: jest.fn().mockResolvedValue({
+            findById: vi.fn().mockResolvedValue({
               id: 42,
               name: 'Alice',
               email: 'alice@example.com',
@@ -111,22 +115,24 @@ describe('controllers/api users endpoints', () => {
               password: 'secret',
               tfaSecret: 'hidden',
               permissions: ['manage:system'],
-              $relatedQuery: jest.fn().mockReturnValue({
-                select: jest.fn().mockResolvedValue([
+              $relatedQuery: vi.fn().mockReturnValue({
+                select: vi.fn().mockResolvedValue([
                   { id: 1, name: 'Administrators', isSystem: true },
                   { id: 3, name: 'Editors', description: 'hidden' }
                 ])
               })
             })
           }))
+        },
+        pages: {
+          query: vi.fn()
         }
       }
     }
   })
 
-  const loadHandler = () => {
-    const express = require('express')
-    require('../../controllers/api/users')
+  const loadHandler = async () => {
+    await import('../../controllers/api/users.ts')
     return {
       create: express.__router.post.mock.calls.find(([path]) => path === '/')[1],
       list: express.__router.get.mock.calls.find(([path]) => path === '/')[1],
@@ -142,8 +148,8 @@ describe('controllers/api users endpoints', () => {
     }
   }
 
-  it('registers the users routes', () => {
-    const handlers = loadHandler()
+  it('registers the users routes', async () => {
+    const handlers = await loadHandler()
 
     expect(typeof handlers.create).toBe('function')
     expect(typeof handlers.list).toBe('function')
@@ -159,7 +165,7 @@ describe('controllers/api users endpoints', () => {
   })
 
   it('creates admin users for authorized requests', async () => {
-    const { create } = loadHandler()
+    const { create } = await loadHandler()
     const req = {
       user: { permissions: ['write:users'] },
       body: {
@@ -173,9 +179,9 @@ describe('controllers/api users endpoints', () => {
         ignored: 'not forwarded'
       }
     }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await create(req, res, jest.fn())
+    await create(req, res, vi.fn())
 
     expect(global.WIKI.auth.checkAccess).toHaveBeenCalledWith({ permissions: ['write:users'] }, ['write:users', 'manage:users', 'manage:system'])
     expect(global.WIKI.auth.checkAssignUserToGroupAccess).toHaveBeenCalledWith({ permissions: ['write:users'] }, [3, 4])
@@ -195,11 +201,11 @@ describe('controllers/api users endpoints', () => {
   })
 
   it('returns 400 when admin user create groups is not an array', async () => {
-    const { create } = loadHandler()
+    const { create } = await loadHandler()
     const req = { user: { permissions: ['manage:users'] }, body: { groups: '3' } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await create(req, res, jest.fn())
+    await create(req, res, vi.fn())
 
     expect(res.status).toHaveBeenCalledWith(400)
     expect(res.json).toHaveBeenCalledWith({ error: 'groups must be an array' })
@@ -208,11 +214,11 @@ describe('controllers/api users endpoints', () => {
 
   it('returns 403 for unauthorized admin user create requests', async () => {
     global.WIKI.auth.checkAccess.mockReturnValueOnce(false)
-    const { create } = loadHandler()
+    const { create } = await loadHandler()
     const req = { user: { permissions: ['manage:api'] }, body: { groups: [] } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await create(req, res, jest.fn())
+    await create(req, res, vi.fn())
 
     expect(res.status).toHaveBeenCalledWith(403)
     expect(res.json).toHaveBeenCalledWith({ error: 'write:users, manage:users or manage:system is required' })
@@ -221,11 +227,14 @@ describe('controllers/api users endpoints', () => {
 
   it('returns 403 when admin user create assigns disallowed elevated groups', async () => {
     global.WIKI.auth.checkAssignUserToGroupAccess.mockResolvedValueOnce(false)
-    const { create } = loadHandler()
-    const req = { user: { permissions: ['write:users'] }, body: { groups: [1] } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const { create } = await loadHandler()
+    const req = {
+      user: { permissions: ['write:users'] },
+      body: { providerKey: 'local', email: 'alice@example.com', name: 'Alice', groups: [1] }
+    }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await create(req, res, jest.fn())
+    await create(req, res, vi.fn())
 
     expect(res.status).toHaveBeenCalledWith(403)
     expect(res.json).toHaveBeenCalledWith({ error: 'You are not authorized to create a user with an assignment to an administrative group.' })
@@ -234,18 +243,21 @@ describe('controllers/api users endpoints', () => {
 
   it('returns model validation errors for admin user create failures', async () => {
     global.WIKI.models.users.createNewUser.mockRejectedValueOnce(new Error('An account already exists using this email address.'))
-    const { create } = loadHandler()
-    const req = { user: { permissions: ['manage:system'] }, body: { groups: [] } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const { create } = await loadHandler()
+    const req = {
+      user: { permissions: ['manage:system'] },
+      body: { providerKey: 'local', email: 'alice@example.com', name: 'Alice', groups: [] }
+    }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await create(req, res, jest.fn())
+    await create(req, res, vi.fn())
 
     expect(res.status).toHaveBeenCalledWith(400)
     expect(res.json).toHaveBeenCalledWith({ error: 'An account already exists using this email address.' })
   })
 
   it('updates admin users for authorized requests', async () => {
-    const { update } = loadHandler()
+    const { update } = await loadHandler()
     const req = {
       user: { permissions: ['manage:users'] },
       params: { id: '42' },
@@ -262,9 +274,9 @@ describe('controllers/api users endpoints', () => {
         ignored: 'not forwarded'
       }
     }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await update(req, res, jest.fn())
+    await update(req, res, vi.fn())
 
     expect(global.WIKI.auth.checkAccess).toHaveBeenCalledWith({ permissions: ['manage:users'] }, ['manage:users', 'manage:system'])
     expect(global.WIKI.auth.checkAssignUserToGroupAccess).toHaveBeenCalledWith({ permissions: ['manage:users'] }, [3, 4])
@@ -287,11 +299,11 @@ describe('controllers/api users endpoints', () => {
   })
 
   it('returns 400 for malformed admin user update ids and groups', async () => {
-    const { update } = loadHandler()
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const { update } = await loadHandler()
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await update({ user: { permissions: ['manage:users'] }, params: { id: '42abc' }, body: { groups: [] } }, res, jest.fn())
-    await update({ user: { permissions: ['manage:users'] }, params: { id: '42' }, body: { groups: '3' } }, res, jest.fn())
+    await update({ user: { permissions: ['manage:users'] }, params: { id: '42abc' }, body: { groups: [] } }, res, vi.fn())
+    await update({ user: { permissions: ['manage:users'] }, params: { id: '42' }, body: { groups: '3' } }, res, vi.fn())
 
     expect(res.status).toHaveBeenNthCalledWith(1, 400)
     expect(res.json).toHaveBeenNthCalledWith(1, { error: 'user id must be a positive integer' })
@@ -302,11 +314,11 @@ describe('controllers/api users endpoints', () => {
 
   it('returns 403 for unauthorized admin user update requests', async () => {
     global.WIKI.auth.checkAccess.mockReturnValueOnce(false)
-    const { update } = loadHandler()
+    const { update } = await loadHandler()
     const req = { user: { permissions: ['manage:api'] }, params: { id: '42' }, body: { groups: [] } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await update(req, res, jest.fn())
+    await update(req, res, vi.fn())
 
     expect(res.status).toHaveBeenCalledWith(403)
     expect(res.json).toHaveBeenCalledWith({ error: 'manage:users or manage:system is required' })
@@ -315,11 +327,11 @@ describe('controllers/api users endpoints', () => {
 
   it('returns 403 when admin user update assigns disallowed elevated groups', async () => {
     global.WIKI.auth.checkAssignUserToGroupAccess.mockResolvedValueOnce(false)
-    const { update } = loadHandler()
+    const { update } = await loadHandler()
     const req = { user: { permissions: ['manage:users'] }, params: { id: '42' }, body: { groups: [1] } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await update(req, res, jest.fn())
+    await update(req, res, vi.fn())
 
     expect(res.status).toHaveBeenCalledWith(403)
     expect(res.json).toHaveBeenCalledWith({ error: 'You are not authorized to modify / assign a user from / to an administrative group.' })
@@ -328,22 +340,22 @@ describe('controllers/api users endpoints', () => {
 
   it('returns model validation errors for admin user update failures', async () => {
     global.WIKI.models.users.updateUser.mockRejectedValueOnce(new Error('Password must be at least 6 characters!'))
-    const { update } = loadHandler()
+    const { update } = await loadHandler()
     const req = { user: { permissions: ['manage:system'] }, params: { id: '42' }, body: { groups: [] } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await update(req, res, jest.fn())
+    await update(req, res, vi.fn())
 
     expect(res.status).toHaveBeenCalledWith(400)
     expect(res.json).toHaveBeenCalledWith({ error: 'Password must be at least 6 characters!' })
   })
 
   it('deletes admin users for authorized requests and revokes tokens', async () => {
-    const { delete: deleteHandler } = loadHandler()
+    const { delete: deleteHandler } = await loadHandler()
     const req = { user: { permissions: ['manage:users'] }, params: { id: '42' }, body: { replaceId: 7 } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await deleteHandler(req, res, jest.fn())
+    await deleteHandler(req, res, vi.fn())
 
     expect(global.WIKI.auth.checkAccess).toHaveBeenCalledWith({ permissions: ['manage:users'] }, ['manage:users', 'manage:system'])
     expect(global.WIKI.models.users.deleteUser).toHaveBeenCalledWith(42, 7)
@@ -356,11 +368,11 @@ describe('controllers/api users endpoints', () => {
   })
 
   it('returns 400 for malformed admin user delete ids and replacement ids', async () => {
-    const { delete: deleteHandler } = loadHandler()
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const { delete: deleteHandler } = await loadHandler()
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await deleteHandler({ user: { permissions: ['manage:users'] }, params: { id: '42abc' }, body: { replaceId: 7 } }, res, jest.fn())
-    await deleteHandler({ user: { permissions: ['manage:users'] }, params: { id: '42' }, body: { replaceId: '7abc' } }, res, jest.fn())
+    await deleteHandler({ user: { permissions: ['manage:users'] }, params: { id: '42abc' }, body: { replaceId: 7 } }, res, vi.fn())
+    await deleteHandler({ user: { permissions: ['manage:users'] }, params: { id: '42' }, body: { replaceId: '7abc' } }, res, vi.fn())
 
     expect(res.status).toHaveBeenNthCalledWith(1, 400)
     expect(res.json).toHaveBeenNthCalledWith(1, { error: 'user id must be a positive integer' })
@@ -371,11 +383,11 @@ describe('controllers/api users endpoints', () => {
 
   it('returns 403 for unauthorized admin user delete requests', async () => {
     global.WIKI.auth.checkAccess.mockReturnValueOnce(false)
-    const { delete: deleteHandler } = loadHandler()
+    const { delete: deleteHandler } = await loadHandler()
     const req = { user: { permissions: ['manage:api'] }, params: { id: '42' }, body: { replaceId: 7 } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await deleteHandler(req, res, jest.fn())
+    await deleteHandler(req, res, vi.fn())
 
     expect(res.status).toHaveBeenCalledWith(403)
     expect(res.json).toHaveBeenCalledWith({ error: 'manage:users or manage:system is required' })
@@ -383,11 +395,11 @@ describe('controllers/api users endpoints', () => {
   })
 
   it('rejects protected admin user deletes before calling the model', async () => {
-    const { delete: deleteHandler } = loadHandler()
+    const { delete: deleteHandler } = await loadHandler()
     const req = { user: { permissions: ['manage:users'] }, params: { id: '2' }, body: { replaceId: 7 } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await deleteHandler(req, res, jest.fn())
+    await deleteHandler(req, res, vi.fn())
 
     expect(res.status).toHaveBeenCalledWith(400)
     expect(res.json).toHaveBeenCalledWith({ error: 'Cannot delete a protected system account.' })
@@ -396,11 +408,11 @@ describe('controllers/api users endpoints', () => {
 
   it('maps foreign constraint admin user delete failures', async () => {
     global.WIKI.models.users.deleteUser.mockRejectedValueOnce(new Error('SQLITE_CONSTRAINT: foreign key constraint failed'))
-    const { delete: deleteHandler } = loadHandler()
+    const { delete: deleteHandler } = await loadHandler()
     const req = { user: { permissions: ['manage:system'] }, params: { id: '42' }, body: { replaceId: 7 } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await deleteHandler(req, res, jest.fn())
+    await deleteHandler(req, res, vi.fn())
 
     expect(res.status).toHaveBeenCalledWith(400)
     expect(res.json).toHaveBeenCalledWith({ error: 'Cannot delete user because of content relational constraints.' })
@@ -408,37 +420,34 @@ describe('controllers/api users endpoints', () => {
 
   it('returns model errors for admin user delete failures', async () => {
     global.WIKI.models.users.deleteUser.mockRejectedValueOnce(new Error('This user does not exist.'))
-    const { delete: deleteHandler } = loadHandler()
+    const { delete: deleteHandler } = await loadHandler()
     const req = { user: { permissions: ['manage:system'] }, params: { id: '42' }, body: { replaceId: 7 } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await deleteHandler(req, res, jest.fn())
+    await deleteHandler(req, res, vi.fn())
 
     expect(res.status).toHaveBeenCalledWith(400)
     expect(res.json).toHaveBeenCalledWith({ error: 'This user does not exist.' })
   })
 
-  it('registers the last-logins route before the detail route', () => {
-    loadHandler()
-    const express = require('express')
+  it('registers the last-logins route before the detail route', async () => {
+    await loadHandler()
     const registeredGetPaths = express.__router.get.mock.calls.map(([path]) => path)
 
     expect(registeredGetPaths.indexOf('/last-logins')).toBeGreaterThanOrEqual(0)
     expect(registeredGetPaths.indexOf('/:id')).toBeGreaterThan(registeredGetPaths.indexOf('/last-logins'))
   })
 
-  it('registers the list route before the detail route', () => {
-    loadHandler()
-    const express = require('express')
+  it('registers the list route before the detail route', async () => {
+    await loadHandler()
     const registeredGetPaths = express.__router.get.mock.calls.map(([path]) => path)
 
     expect(registeredGetPaths.indexOf('/')).toBeGreaterThanOrEqual(0)
     expect(registeredGetPaths.indexOf('/:id')).toBeGreaterThan(registeredGetPaths.indexOf('/'))
   })
 
-  it('registers admin user action routes before the detail route', () => {
-    loadHandler()
-    const express = require('express')
+  it('registers admin user action routes before the detail route', async () => {
+    await loadHandler()
     const registeredPatchPaths = express.__router.patch.mock.calls.map(([path]) => path)
     const registeredGetPaths = express.__router.get.mock.calls.map(([path]) => path)
 
@@ -448,15 +457,15 @@ describe('controllers/api users endpoints', () => {
 
   it('activates admin users through REST status action', async () => {
     const patchBuilder = {
-      patch: jest.fn().mockReturnThis(),
-      findById: jest.fn().mockResolvedValue(1)
+      patch: vi.fn().mockReturnThis(),
+      findById: vi.fn().mockResolvedValue(1)
     }
     global.WIKI.models.users.query.mockReturnValueOnce(patchBuilder)
-    const { status } = loadHandler()
+    const { status } = await loadHandler()
     const req = { user: { permissions: ['manage:users'] }, params: { id: '42' }, body: { isActive: true } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await status(req, res, jest.fn())
+    await status(req, res, vi.fn())
 
     expect(global.WIKI.auth.checkAccess).toHaveBeenCalledWith({ permissions: ['manage:users'] }, ['manage:users', 'manage:system'])
     expect(patchBuilder.patch).toHaveBeenCalledWith({ isActive: true })
@@ -470,15 +479,15 @@ describe('controllers/api users endpoints', () => {
 
   it('deactivates admin users through REST status action and revokes tokens', async () => {
     const patchBuilder = {
-      patch: jest.fn().mockReturnThis(),
-      findById: jest.fn().mockResolvedValue(1)
+      patch: vi.fn().mockReturnThis(),
+      findById: vi.fn().mockResolvedValue(1)
     }
     global.WIKI.models.users.query.mockReturnValueOnce(patchBuilder)
-    const { status } = loadHandler()
+    const { status } = await loadHandler()
     const req = { user: { permissions: ['manage:system'] }, params: { id: '42' }, body: { isActive: false } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await status(req, res, jest.fn())
+    await status(req, res, vi.fn())
 
     expect(patchBuilder.patch).toHaveBeenCalledWith({ isActive: false })
     expect(patchBuilder.findById).toHaveBeenCalledWith(42)
@@ -491,11 +500,11 @@ describe('controllers/api users endpoints', () => {
   })
 
   it('rejects protected account deactivation through REST status action', async () => {
-    const { status } = loadHandler()
+    const { status } = await loadHandler()
     const req = { user: { permissions: ['manage:users'] }, params: { id: '2' }, body: { isActive: false } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await status(req, res, jest.fn())
+    await status(req, res, vi.fn())
 
     expect(res.status).toHaveBeenCalledWith(400)
     expect(res.json).toHaveBeenCalledWith({ error: 'Cannot deactivate system accounts.' })
@@ -504,15 +513,15 @@ describe('controllers/api users endpoints', () => {
 
   it('verifies admin users through REST verification action', async () => {
     const patchBuilder = {
-      patch: jest.fn().mockReturnThis(),
-      findById: jest.fn().mockResolvedValue(1)
+      patch: vi.fn().mockReturnThis(),
+      findById: vi.fn().mockResolvedValue(1)
     }
     global.WIKI.models.users.query.mockReturnValueOnce(patchBuilder)
-    const { verification } = loadHandler()
+    const { verification } = await loadHandler()
     const req = { user: { permissions: ['manage:users'] }, params: { id: '42' }, body: { isVerified: true } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await verification(req, res, jest.fn())
+    await verification(req, res, vi.fn())
 
     expect(patchBuilder.patch).toHaveBeenCalledWith({ isVerified: true })
     expect(patchBuilder.findById).toHaveBeenCalledWith(42)
@@ -524,21 +533,21 @@ describe('controllers/api users endpoints', () => {
 
   it('toggles admin user 2FA through REST tfa action', async () => {
     const enableBuilder = {
-      patch: jest.fn().mockReturnThis(),
-      findById: jest.fn().mockResolvedValue(1)
+      patch: vi.fn().mockReturnThis(),
+      findById: vi.fn().mockResolvedValue(1)
     }
     const disableBuilder = {
-      patch: jest.fn().mockReturnThis(),
-      findById: jest.fn().mockResolvedValue(1)
+      patch: vi.fn().mockReturnThis(),
+      findById: vi.fn().mockResolvedValue(1)
     }
     global.WIKI.models.users.query
       .mockReturnValueOnce(enableBuilder)
       .mockReturnValueOnce(disableBuilder)
-    const { tfa } = loadHandler()
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const { tfa } = await loadHandler()
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await tfa({ user: { permissions: ['manage:users'] }, params: { id: '42' }, body: { enabled: true } }, res, jest.fn())
-    await tfa({ user: { permissions: ['manage:users'] }, params: { id: '42' }, body: { enabled: false } }, res, jest.fn())
+    await tfa({ user: { permissions: ['manage:users'] }, params: { id: '42' }, body: { enabled: true } }, res, vi.fn())
+    await tfa({ user: { permissions: ['manage:users'] }, params: { id: '42' }, body: { enabled: false } }, res, vi.fn())
 
     expect(enableBuilder.patch).toHaveBeenCalledWith({ tfaIsActive: true, tfaSecret: null })
     expect(disableBuilder.patch).toHaveBeenCalledWith({ tfaIsActive: false, tfaSecret: null })
@@ -554,11 +563,11 @@ describe('controllers/api users endpoints', () => {
 
   it('returns 403 for unauthorized admin user action requests', async () => {
     global.WIKI.auth.checkAccess.mockReturnValueOnce(false)
-    const { status } = loadHandler()
+    const { status } = await loadHandler()
     const req = { user: { permissions: ['manage:api'] }, params: { id: '42' }, body: { isActive: true } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await status(req, res, jest.fn())
+    await status(req, res, vi.fn())
 
     expect(res.status).toHaveBeenCalledWith(403)
     expect(res.json).toHaveBeenCalledWith({ error: 'manage:users or manage:system is required' })
@@ -566,12 +575,12 @@ describe('controllers/api users endpoints', () => {
   })
 
   it('returns 400 for malformed admin user action ids and booleans', async () => {
-    const { status, verification } = loadHandler()
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const { status, verification } = await loadHandler()
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await status({ user: { permissions: ['manage:users'] }, params: { id: '42abc' }, body: { isActive: true } }, res, jest.fn())
-    await verification({ user: { permissions: ['manage:users'] }, params: { id: '42' }, body: { isVerified: false } }, res, jest.fn())
-    await status({ user: { permissions: ['manage:users'] }, params: { id: '42' }, body: { isActive: 'yes' } }, res, jest.fn())
+    await status({ user: { permissions: ['manage:users'] }, params: { id: '42abc' }, body: { isActive: true } }, res, vi.fn())
+    await verification({ user: { permissions: ['manage:users'] }, params: { id: '42' }, body: { isVerified: false } }, res, vi.fn())
+    await status({ user: { permissions: ['manage:users'] }, params: { id: '42' }, body: { isActive: 'yes' } }, res, vi.fn())
 
     expect(res.status).toHaveBeenNthCalledWith(1, 400)
     expect(res.json).toHaveBeenNthCalledWith(1, { error: 'user id must be a positive integer' })
@@ -582,14 +591,14 @@ describe('controllers/api users endpoints', () => {
   })
 
   it('forwards unexpected admin user action failures to next', async () => {
-    const next = jest.fn()
+    const next = vi.fn()
     global.WIKI.models.users.query.mockReturnValueOnce({
-      patch: jest.fn().mockReturnThis(),
-      findById: jest.fn().mockRejectedValue(new Error('status db down'))
+      patch: vi.fn().mockReturnThis(),
+      findById: vi.fn().mockRejectedValue(new Error('status db down'))
     })
-    const { status } = loadHandler()
+    const { status } = await loadHandler()
     const req = { user: { permissions: ['manage:system'] }, params: { id: '42' }, body: { isActive: true } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await status(req, res, next)
 
@@ -599,32 +608,32 @@ describe('controllers/api users endpoints', () => {
 
   it('returns the paginated admin users list for authorized requests', async () => {
     const countFilterBuilder = {
-      where: jest.fn().mockReturnThis(),
-      orWhere: jest.fn().mockReturnThis()
+      where: vi.fn().mockReturnThis(),
+      orWhere: vi.fn().mockReturnThis()
     }
     const listFilterBuilder = {
-      where: jest.fn().mockReturnThis(),
-      orWhere: jest.fn().mockReturnThis()
+      where: vi.fn().mockReturnThis(),
+      orWhere: vi.fn().mockReturnThis()
     }
     const countBuilder = {
-      where: jest.fn(callback => {
+      where: vi.fn(callback => {
         callback(countFilterBuilder)
         return countBuilder
       }),
-      andWhere: jest.fn().mockReturnThis(),
-      count: jest.fn().mockReturnThis(),
-      first: jest.fn().mockResolvedValue({ total: '2' })
+      andWhere: vi.fn().mockReturnThis(),
+      count: vi.fn().mockReturnThis(),
+      first: vi.fn().mockResolvedValue({ total: '2' })
     }
     const listBuilder = {
-      where: jest.fn(callback => {
+      where: vi.fn(callback => {
         callback(listFilterBuilder)
         return listBuilder
       }),
-      andWhere: jest.fn().mockReturnThis(),
-      select: jest.fn().mockReturnThis(),
-      orderBy: jest.fn().mockReturnThis(),
-      offset: jest.fn().mockReturnThis(),
-      limit: jest.fn().mockResolvedValue([
+      andWhere: vi.fn().mockReturnThis(),
+      select: vi.fn().mockReturnThis(),
+      orderBy: vi.fn().mockReturnThis(),
+      offset: vi.fn().mockReturnThis(),
+      limit: vi.fn().mockResolvedValue([
         {
           id: 42,
           email: 'alice@example.com',
@@ -652,7 +661,7 @@ describe('controllers/api users endpoints', () => {
     global.WIKI.models.users.query
       .mockReturnValueOnce(countBuilder)
       .mockReturnValueOnce(listBuilder)
-    const { list } = loadHandler()
+    const { list } = await loadHandler()
     const req = {
       user: { permissions: ['manage:users'] },
       query: {
@@ -664,9 +673,9 @@ describe('controllers/api users endpoints', () => {
         orderByDirection: 'DESC'
       }
     }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await list(req, res, jest.fn())
+    await list(req, res, vi.fn())
 
     expect(global.WIKI.auth.checkAccess).toHaveBeenCalledWith({ permissions: ['manage:users'] }, ['manage:users', 'manage:system'])
     expect(global.WIKI.models.users.query).toHaveBeenCalledTimes(2)
@@ -711,19 +720,19 @@ describe('controllers/api users endpoints', () => {
 
   it('uses safe defaults for invalid admin users list query options', async () => {
     const countBuilder = {
-      count: jest.fn().mockReturnThis(),
-      first: jest.fn().mockResolvedValue({ total: 0 })
+      count: vi.fn().mockReturnThis(),
+      first: vi.fn().mockResolvedValue({ total: 0 })
     }
     const listBuilder = {
-      select: jest.fn().mockReturnThis(),
-      orderBy: jest.fn().mockReturnThis(),
-      offset: jest.fn().mockReturnThis(),
-      limit: jest.fn().mockResolvedValue([])
+      select: vi.fn().mockReturnThis(),
+      orderBy: vi.fn().mockReturnThis(),
+      offset: vi.fn().mockReturnThis(),
+      limit: vi.fn().mockResolvedValue([])
     }
     global.WIKI.models.users.query
       .mockReturnValueOnce(countBuilder)
       .mockReturnValueOnce(listBuilder)
-    const { list } = loadHandler()
+    const { list } = await loadHandler()
     const req = {
       user: { permissions: ['manage:system'] },
       query: {
@@ -734,9 +743,9 @@ describe('controllers/api users endpoints', () => {
         orderByDirection: 'sideways'
       }
     }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await list(req, res, jest.fn())
+    await list(req, res, vi.fn())
 
     expect(countBuilder.where).toBeUndefined()
     expect(countBuilder.andWhere).toBeUndefined()
@@ -748,11 +757,11 @@ describe('controllers/api users endpoints', () => {
 
   it('returns 403 for unauthorized admin users list requests', async () => {
     global.WIKI.auth.checkAccess.mockReturnValueOnce(false)
-    const { list } = loadHandler()
+    const { list } = await loadHandler()
     const req = { user: { permissions: ['manage:api'] }, query: {} }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await list(req, res, jest.fn())
+    await list(req, res, vi.fn())
 
     expect(res.status).toHaveBeenCalledWith(403)
     expect(res.json).toHaveBeenCalledWith({ error: 'manage:users or manage:system is required' })
@@ -760,14 +769,14 @@ describe('controllers/api users endpoints', () => {
   })
 
   it('forwards unexpected admin users list failures to next', async () => {
-    const next = jest.fn()
+    const next = vi.fn()
     global.WIKI.models.users.query.mockReturnValueOnce({
-      count: jest.fn().mockReturnThis(),
-      first: jest.fn().mockRejectedValue(new Error('list db down'))
+      count: vi.fn().mockReturnThis(),
+      first: vi.fn().mockRejectedValue(new Error('list db down'))
     })
-    const { list } = loadHandler()
+    const { list } = await loadHandler()
     const req = { user: { permissions: ['manage:system'] }, query: {} }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await list(req, res, next)
 
@@ -776,11 +785,11 @@ describe('controllers/api users endpoints', () => {
   })
 
   it('returns the minimal admin user search payload for authorized requests', async () => {
-    const { search } = loadHandler()
+    const { search } = await loadHandler()
     const req = { user: { permissions: ['manage:groups'] }, query: { query: 'ali' } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await search(req, res, jest.fn())
+    await search(req, res, vi.fn())
 
     expect(global.WIKI.auth.checkAccess).toHaveBeenCalledWith({ permissions: ['manage:groups'] }, ['write:groups', 'manage:groups', 'write:users', 'manage:users', 'manage:system'])
     expect(global.WIKI.models.users.query).toHaveBeenCalled()
@@ -796,11 +805,11 @@ describe('controllers/api users endpoints', () => {
   })
 
   it('returns the minimal dashboard last-logins payload for authorized requests', async () => {
-    const { lastLogins } = loadHandler()
+    const { lastLogins } = await loadHandler()
     const req = { user: { permissions: ['write:users'] } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await lastLogins(req, res, jest.fn())
+    await lastLogins(req, res, vi.fn())
 
     expect(global.WIKI.auth.checkAccess).toHaveBeenCalledWith({ permissions: ['write:users'] }, ['write:groups', 'manage:groups', 'write:users', 'manage:users', 'manage:system'])
     expect(global.WIKI.models.users.query).toHaveBeenCalled()
@@ -817,30 +826,30 @@ describe('controllers/api users endpoints', () => {
 
   it('returns 403 for unauthorized dashboard last-logins requests', async () => {
     global.WIKI.auth.checkAccess.mockReturnValueOnce(false)
-    const { lastLogins } = loadHandler()
+    const { lastLogins } = await loadHandler()
     const req = { user: { permissions: ['manage:api'] } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await lastLogins(req, res, jest.fn())
+    await lastLogins(req, res, vi.fn())
 
     expect(res.status).toHaveBeenCalledWith(403)
     expect(res.json).toHaveBeenCalledWith({ error: 'a dashboard user activity permission is required' })
   })
 
   it('forwards unexpected dashboard last-logins failures to next', async () => {
-    const next = jest.fn()
+    const next = vi.fn()
     global.WIKI.models.users.query.mockReturnValueOnce({
-      select: jest.fn().mockReturnValue({
-        whereNotNull: jest.fn().mockReturnValue({
-          orderBy: jest.fn().mockReturnValue({
-            limit: jest.fn().mockRejectedValue(new Error('last logins db down'))
+      select: vi.fn().mockReturnValue({
+        whereNotNull: vi.fn().mockReturnValue({
+          orderBy: vi.fn().mockReturnValue({
+            limit: vi.fn().mockRejectedValue(new Error('last logins db down'))
           })
         })
       })
     })
-    const { lastLogins } = loadHandler()
+    const { lastLogins } = await loadHandler()
     const req = { user: { permissions: ['manage:system'] } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await lastLogins(req, res, next)
 
@@ -849,11 +858,11 @@ describe('controllers/api users endpoints', () => {
   })
 
   it('returns the sanitized admin user detail payload for authorized requests', async () => {
-    const { detail } = loadHandler()
+    const { detail } = await loadHandler()
     const req = { user: { permissions: ['manage:users'] }, params: { id: '42' } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await detail(req, res, jest.fn())
+    await detail(req, res, vi.fn())
 
     expect(global.WIKI.auth.checkAccess).toHaveBeenCalledWith({ permissions: ['manage:users'] }, ['manage:users', 'manage:system'])
     expect(global.WIKI.models.users.query).toHaveBeenCalled()
@@ -894,22 +903,22 @@ describe('controllers/api users endpoints', () => {
 
   it('returns unknown provider metadata when the strategy is missing', async () => {
     delete global.WIKI.auth.strategies.local
-    const { detail } = loadHandler()
+    const { detail } = await loadHandler()
     const req = { user: { permissions: ['manage:system'] }, params: { id: '42' } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await detail(req, res, jest.fn())
+    await detail(req, res, vi.fn())
 
     expect(res.json.mock.calls[0][0].providerName).toBe('Unknown')
     expect(res.json.mock.calls[0][0].providerIs2FACapable).toBe(false)
   })
 
   it('returns 400 for malformed user detail ids', async () => {
-    const { detail } = loadHandler()
+    const { detail } = await loadHandler()
     const req = { user: { permissions: ['manage:users'] }, params: { id: '42abc' } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await detail(req, res, jest.fn())
+    await detail(req, res, vi.fn())
 
     expect(res.status).toHaveBeenCalledWith(400)
     expect(res.json).toHaveBeenCalledWith({ error: 'user id must be a positive integer' })
@@ -917,13 +926,13 @@ describe('controllers/api users endpoints', () => {
 
   it('returns 404 when the requested user detail is missing', async () => {
     global.WIKI.models.users.query.mockReturnValueOnce({
-      findById: jest.fn().mockResolvedValue(null)
+      findById: vi.fn().mockResolvedValue(null)
     })
-    const { detail } = loadHandler()
+    const { detail } = await loadHandler()
     const req = { user: { permissions: ['manage:users'] }, params: { id: '999' } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await detail(req, res, jest.fn())
+    await detail(req, res, vi.fn())
 
     expect(res.status).toHaveBeenCalledWith(404)
     expect(res.json).toHaveBeenCalledWith({ error: 'user not found' })
@@ -931,24 +940,24 @@ describe('controllers/api users endpoints', () => {
 
   it('returns 403 for unauthorized user detail requests', async () => {
     global.WIKI.auth.checkAccess.mockReturnValueOnce(false)
-    const { detail } = loadHandler()
+    const { detail } = await loadHandler()
     const req = { user: { permissions: ['manage:api'] }, params: { id: '42' } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await detail(req, res, jest.fn())
+    await detail(req, res, vi.fn())
 
     expect(res.status).toHaveBeenCalledWith(403)
     expect(res.json).toHaveBeenCalledWith({ error: 'manage:users or manage:system is required' })
   })
 
   it('forwards unexpected user detail failures to next', async () => {
-    const next = jest.fn()
+    const next = vi.fn()
     global.WIKI.models.users.query.mockReturnValueOnce({
-      findById: jest.fn().mockRejectedValue(new Error('detail db down'))
+      findById: vi.fn().mockRejectedValue(new Error('detail db down'))
     })
-    const { detail } = loadHandler()
+    const { detail } = await loadHandler()
     const req = { user: { permissions: ['manage:system'] }, params: { id: '42' } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await detail(req, res, next)
 
@@ -957,11 +966,11 @@ describe('controllers/api users endpoints', () => {
   })
 
   it('returns an empty list for short search queries', async () => {
-    const { search } = loadHandler()
+    const { search } = await loadHandler()
     const req = { user: { permissions: ['manage:users'] }, query: { query: ' a ' } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await search(req, res, jest.fn())
+    await search(req, res, vi.fn())
 
     expect(global.WIKI.models.users.query).not.toHaveBeenCalled()
     expect(res.json).toHaveBeenCalledWith([])
@@ -969,30 +978,30 @@ describe('controllers/api users endpoints', () => {
 
   it('returns 403 for unauthorized user search requests', async () => {
     global.WIKI.auth.checkAccess.mockReturnValueOnce(false)
-    const { search } = loadHandler()
+    const { search } = await loadHandler()
     const req = { user: { permissions: ['manage:api'] }, query: { query: 'ali' } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await search(req, res, jest.fn())
+    await search(req, res, vi.fn())
 
     expect(res.status).toHaveBeenCalledWith(403)
     expect(res.json).toHaveBeenCalledWith({ error: 'a user search admin permission is required' })
   })
 
   it('forwards unexpected user search failures to next', async () => {
-    const next = jest.fn()
+    const next = vi.fn()
     global.WIKI.models.users.query.mockReturnValueOnce({
-      where: jest.fn().mockReturnValue({
-        orWhere: jest.fn().mockReturnValue({
-          limit: jest.fn().mockReturnValue({
-            select: jest.fn().mockRejectedValue(new Error('search db down'))
+      where: vi.fn().mockReturnValue({
+        orWhere: vi.fn().mockReturnValue({
+          limit: vi.fn().mockReturnValue({
+            select: vi.fn().mockRejectedValue(new Error('search db down'))
           })
         })
       })
     })
-    const { search } = loadHandler()
+    const { search } = await loadHandler()
     const req = { user: { permissions: ['manage:system'] }, query: { query: 'ali' } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await search(req, res, next)
 
@@ -1001,9 +1010,9 @@ describe('controllers/api users endpoints', () => {
   })
 
   it('returns anonymous state when no authenticated user is present', async () => {
-    const { whoami } = loadHandler()
+    const { whoami } = await loadHandler()
     const req = {}
-    const res = { json: jest.fn() }
+    const res = { json: vi.fn() }
 
     await whoami(req, res)
 
@@ -1011,7 +1020,7 @@ describe('controllers/api users endpoints', () => {
   })
 
   it('returns a safe authenticated user summary', async () => {
-    const { whoami } = loadHandler()
+    const { whoami } = await loadHandler()
     const req = {
       user: {
         id: 42,
@@ -1024,7 +1033,7 @@ describe('controllers/api users endpoints', () => {
         providerId: 'provider-42'
       }
     }
-    const res = { json: jest.fn() }
+    const res = { json: vi.fn() }
 
     await whoami(req, res)
 
@@ -1041,7 +1050,7 @@ describe('controllers/api users endpoints', () => {
   })
 
   it('does not leak sensitive user fields', async () => {
-    const { whoami } = loadHandler()
+    const { whoami } = await loadHandler()
     const req = {
       user: {
         id: 42,
@@ -1055,7 +1064,7 @@ describe('controllers/api users endpoints', () => {
         continuationToken: 'token-123'
       }
     }
-    const res = { json: jest.fn() }
+    const res = { json: vi.fn() }
 
     await whoami(req, res)
 

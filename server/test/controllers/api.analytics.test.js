@@ -1,32 +1,75 @@
-jest.mock('express', () => {
+vi.mock('express', () => {
   const routers = []
-
-  return {
+  const express = {
     Router: () => {
       const router = {
-        get: jest.fn(),
-        post: jest.fn(),
-        patch: jest.fn(),
-        put: jest.fn(),
-        delete: jest.fn(),
-        use: jest.fn()
+        get: vi.fn(),
+        post: vi.fn(),
+        patch: vi.fn(),
+        put: vi.fn(),
+        delete: vi.fn(),
+        use: vi.fn()
       }
       routers.push(router)
       return router
     },
     __routers: routers
   }
+
+  return { default: express, ...express }
 })
+
+import express from 'express'
+
+const API_CONTROLLER_NAMES = [
+  'analytics',
+  'assets',
+  'auth',
+  'comments',
+  'contribute',
+  'groups',
+  'locales',
+  'logging',
+  'mail',
+  'navigation',
+  'pages',
+  'rendering',
+  'search',
+  'site',
+  'storage',
+  'system',
+  'theming',
+  'users'
+]
+
+const loadApiIndexRouter = async () => {
+  const subrouters = Object.fromEntries(API_CONTROLLER_NAMES.map(name => [name, {}]))
+
+  for (const name of API_CONTROLLER_NAMES) {
+    vi.doMock(`../../controllers/api/${name}.ts`, () => ({
+      default: subrouters[name]
+    }))
+  }
+
+  try {
+    await expect(import('../../controllers/api/index.ts')).resolves.toBeDefined()
+  } finally {
+    for (const name of API_CONTROLLER_NAMES) {
+      vi.doUnmock(`../../controllers/api/${name}.ts`)
+    }
+  }
+
+  return { apiRouter: express.__routers.at(-1), subrouters }
+}
 
 describe('controllers/api analytics endpoints', () => {
   beforeEach(() => {
-    jest.resetModules()
-    const express = require('express')
+    vi.resetModules()
     express.__routers.length = 0
 
     global.WIKI = {
       auth: {
-        checkAccess: jest.fn()
+        checkAccess: vi.fn()
       },
       data: {
         analytics: [
@@ -60,8 +103,8 @@ describe('controllers/api analytics endpoints', () => {
       },
       models: {
         analytics: {
-          query: jest.fn(),
-          getProviders: jest.fn().mockResolvedValue([
+          query: vi.fn(),
+          getProviders: vi.fn().mockResolvedValue([
             {
               key: 'google',
               isEnabled: true,
@@ -81,14 +124,14 @@ describe('controllers/api analytics endpoints', () => {
         }
       },
       cache: {
-        del: jest.fn().mockResolvedValue(true)
+        del: vi.fn().mockResolvedValue(true)
       }
     }
 
     global.WIKI.models.analytics.query.mockImplementation(() => {
       const query = {
-        patch: jest.fn().mockReturnThis(),
-        where: jest.fn().mockResolvedValue(1)
+        patch: vi.fn().mockReturnThis(),
+        where: vi.fn().mockResolvedValue(1)
       }
       global.WIKI.models.analytics.__queries = global.WIKI.models.analytics.__queries || []
       global.WIKI.models.analytics.__queries.push(query)
@@ -96,9 +139,8 @@ describe('controllers/api analytics endpoints', () => {
     })
   })
 
-  const loadHandlers = () => {
-    const express = require('express')
-    require('../../controllers/api/analytics')
+  const loadHandlers = async () => {
+    await import('../../controllers/api/analytics.ts')
     const router = express.__routers[0]
     return {
       providers: router.get.mock.calls.find(([path]) => path === '/providers')[1],
@@ -106,30 +148,26 @@ describe('controllers/api analytics endpoints', () => {
     }
   }
 
-  const loadProvidersHandler = () => loadHandlers().providers
+  const loadProvidersHandler = async () => (await loadHandlers()).providers
 
-  it('registers analytics provider routes', () => {
-    const handlers = loadHandlers()
+  it('registers analytics provider routes', async () => { const handlers = await loadHandlers()
 
-    expect(typeof handlers.providers).toBe('function')
-    expect(typeof handlers.saveProviders).toBe('function')
-  })
+  expect(typeof handlers.providers).toBe('function')
+  expect(typeof handlers.saveProviders).toBe('function') })
 
-  it('is mounted by the API index router', () => {
-    const express = require('express')
-    expect(() => require('../../controllers/api')).not.toThrow()
-    const apiRouter = express.__routers[0]
+  it('is mounted by the API index router', async () => {
+    const { apiRouter, subrouters } = await loadApiIndexRouter()
 
-    expect(apiRouter.use).toHaveBeenCalledWith('/analytics', expect.any(Object))
+    expect(apiRouter.use).toHaveBeenCalledWith('/analytics', subrouters.analytics)
   })
 
   it('returns 403 for unauthorized provider requests', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(false)
-    const handler = loadProvidersHandler()
+    const handler = await loadProvidersHandler()
     const req = { user: { permissions: [] }, query: {} }
-    const res = { sendStatus: jest.fn(), json: jest.fn() }
+    const res = { sendStatus: vi.fn(), json: vi.fn() }
 
-    await handler(req, res, jest.fn())
+    await handler(req, res, vi.fn())
 
     expect(global.WIKI.auth.checkAccess).toHaveBeenCalledWith(req.user, ['manage:system'])
     expect(res.sendStatus).toHaveBeenCalledWith(403)
@@ -139,11 +177,11 @@ describe('controllers/api analytics endpoints', () => {
 
   it('loads providers without an isEnabled query filter by default', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
-    const handler = loadProvidersHandler()
+    const handler = await loadProvidersHandler()
     const req = { user: { permissions: ['manage:system'] } }
-    const res = { sendStatus: jest.fn(), json: jest.fn() }
+    const res = { sendStatus: vi.fn(), json: vi.fn() }
 
-    await handler(req, res, jest.fn())
+    await handler(req, res, vi.fn())
 
     expect(global.WIKI.models.analytics.getProviders).toHaveBeenCalledWith(undefined)
     expect(res.sendStatus).not.toHaveBeenCalled()
@@ -152,10 +190,10 @@ describe('controllers/api analytics endpoints', () => {
 
   it('returns allowlisted provider fields without raw props, private fields, or unrelated fields', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
-    const handler = loadProvidersHandler()
-    const res = { sendStatus: jest.fn(), json: jest.fn() }
+    const handler = await loadProvidersHandler()
+    const res = { sendStatus: vi.fn(), json: vi.fn() }
 
-    await handler({ user: {}, query: {} }, res, jest.fn())
+    await handler({ user: {}, query: {} }, res, vi.fn())
 
     expect(res.json).toHaveBeenCalledWith([
       {
@@ -178,10 +216,10 @@ describe('controllers/api analytics endpoints', () => {
 
   it('merges config with provider metadata as JSON strings sorted by config key', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
-    const handler = loadProvidersHandler()
-    const res = { sendStatus: jest.fn(), json: jest.fn() }
+    const handler = await loadProvidersHandler()
+    const res = { sendStatus: vi.fn(), json: vi.fn() }
 
-    await handler({ user: {}, query: {} }, res, jest.fn())
+    await handler({ user: {}, query: {} }, res, vi.fn())
 
     const config = res.json.mock.calls[0][0][0].config
     expect(config.map(row => row.key)).toEqual(['anonymizeIp', 'trackingId'])
@@ -210,13 +248,13 @@ describe('controllers/api analytics endpoints', () => {
 
   it('converts only literal true and false isEnabled query values to booleans', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
-    const handler = loadProvidersHandler()
-    const res = { sendStatus: jest.fn(), json: jest.fn() }
+    const handler = await loadProvidersHandler()
+    const res = { sendStatus: vi.fn(), json: vi.fn() }
 
-    await handler({ user: {}, query: { isEnabled: 'true' } }, res, jest.fn())
-    await handler({ user: {}, query: { isEnabled: 'false' } }, res, jest.fn())
-    await handler({ user: {}, query: { isEnabled: '1' } }, res, jest.fn())
-    await handler({ user: {}, query: { isEnabled: true } }, res, jest.fn())
+    await handler({ user: {}, query: { isEnabled: 'true' } }, res, vi.fn())
+    await handler({ user: {}, query: { isEnabled: 'false' } }, res, vi.fn())
+    await handler({ user: {}, query: { isEnabled: '1' } }, res, vi.fn())
+    await handler({ user: {}, query: { isEnabled: true } }, res, vi.fn())
 
     expect(global.WIKI.models.analytics.getProviders).toHaveBeenNthCalledWith(1, true)
     expect(global.WIKI.models.analytics.getProviders).toHaveBeenNthCalledWith(2, false)
@@ -249,9 +287,9 @@ describe('controllers/api analytics endpoints', () => {
 
   it('returns JSON 403 for unauthorized provider saves without mutating models', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(false)
-    const { saveProviders } = loadHandlers()
+    const { saveProviders } = await loadHandlers()
     const req = createSavePayload()
-    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
 
     await saveProviders(req, res)
 
@@ -264,8 +302,8 @@ describe('controllers/api analytics endpoints', () => {
 
   it('saves providers with GraphQL parity and invalidates analytics cache per provider', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
-    const { saveProviders } = loadHandlers()
-    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+    const { saveProviders } = await loadHandlers()
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
 
     await saveProviders(createSavePayload(), res)
 
@@ -295,8 +333,8 @@ describe('controllers/api analytics endpoints', () => {
 
   it('returns JSON 400 for malformed provider save payloads', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
-    const { saveProviders } = loadHandlers()
-    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+    const { saveProviders } = await loadHandlers()
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
 
     await saveProviders({ body: { providers: [{ key: 'google', isEnabled: 'yes', config: [] }] }, user: {} }, res)
 
@@ -308,10 +346,10 @@ describe('controllers/api analytics endpoints', () => {
 
   it('returns JSON 400 for malformed provider save config JSON', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
-    const { saveProviders } = loadHandlers()
+    const { saveProviders } = await loadHandlers()
     const req = createSavePayload()
     req.body.providers[0].config[0].value = '{not-json'
-    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
 
     await saveProviders(req, res)
 
@@ -323,12 +361,12 @@ describe('controllers/api analytics endpoints', () => {
   it('returns JSON 500 for unexpected provider save failures', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
     const query = {
-      patch: jest.fn().mockReturnThis(),
-      where: jest.fn().mockRejectedValue(new Error('provider save failed'))
+      patch: vi.fn().mockReturnThis(),
+      where: vi.fn().mockRejectedValue(new Error('provider save failed'))
     }
     global.WIKI.models.analytics.query.mockReturnValue(query)
-    const { saveProviders } = loadHandlers()
-    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+    const { saveProviders } = await loadHandlers()
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
 
     await saveProviders(createSavePayload(), res)
 
@@ -340,8 +378,8 @@ describe('controllers/api analytics endpoints', () => {
   it('returns JSON 500 for analytics cache invalidation failures', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
     global.WIKI.cache.del.mockRejectedValueOnce(new Error('cache failed'))
-    const { saveProviders } = loadHandlers()
-    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+    const { saveProviders } = await loadHandlers()
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
 
     await saveProviders(createSavePayload(), res)
 
@@ -353,9 +391,9 @@ describe('controllers/api analytics endpoints', () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
     const err = new Error('analytics failed')
     global.WIKI.models.analytics.getProviders.mockRejectedValue(err)
-    const handler = loadProvidersHandler()
-    const res = { sendStatus: jest.fn(), json: jest.fn() }
-    const next = jest.fn()
+    const handler = await loadProvidersHandler()
+    const res = { sendStatus: vi.fn(), json: vi.fn() }
+    const next = vi.fn()
 
     await handler({ user: {}, query: {} }, res, next)
 

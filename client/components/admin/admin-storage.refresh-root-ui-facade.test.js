@@ -1,8 +1,8 @@
-const fs = require('fs')
-const path = require('path')
+import fs from 'node:fs'
+import path from 'node:path'
 
 const extractScript = (source) => {
-  const match = source.match(/<script>\s*([\s\S]*?)\s*<\/script>/)
+  const match = source.match(/<script(?:\s+lang=["']ts["'])?>\s*([\s\S]*?)\s*<\/script>/)
   return match && match[1]
 }
 
@@ -44,16 +44,18 @@ describe('admin-storage refresh root UI facade migration guard', () => {
 
   test('refresh() routes the success notification through root-ui-store after reloading targets by REST', () => {
     expect(script).not.toBeNull()
+    expect(source).toMatch(/<script\s+lang=["']ts["']>/)
     expect(refresh).not.toBeNull()
 
     expect(script).toMatch(/import\s+\{(?=[^}]*\bloadingStart\b)(?=[^}]*\bloadingStop\b)(?=[^}]*\bshowNotification\b)(?=[^}]*\bsetLoading\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/root-ui-store['"]/)
     expect(script).toMatch(/import\s+\{(?=[^}]*\bfetchStorageTargets\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/storage-api['"]/)
+    expect(script).toContain("import { wikiStore } from '@/store/index.ts'")
 
     expect(refresh).toMatch(/await\s+this\.loadTargets\s*\(\s*\)/)
-    expect(refresh).toMatch(/showNotification\s*\(\s*this\.\$store\s*,\s*\{\s*message:\s*['"]List of storage targets has been refreshed\.['"]\s*,\s*style:\s*['"]success['"]\s*,\s*icon:\s*['"]cached['"]\s*\}\s*\)/)
+    expect(refresh).toMatch(/showNotification\s*\(\s*wikiStore\s*,\s*\{\s*message:\s*['"]List of storage targets has been refreshed\.['"]\s*,\s*style:\s*['"]success['"]\s*,\s*icon:\s*['"]cached['"]\s*\}\s*\)/)
     expect(refresh).not.toMatch(/this\.\$apollo\.queries\.targets\.refetch/)
     expect(refresh).not.toMatch(/this\.\$store\.commit\s*\(\s*['"]showNotification['"]\s*,/)
-    expect(refresh).toMatch(/await\s+this\.loadTargets\s*\(\s*\)[\s\S]*?showNotification\s*\(\s*this\.\$store\s*,/)
+    expect(refresh).toMatch(/await\s+this\.loadTargets\s*\(\s*\)[\s\S]*?showNotification\s*\(\s*wikiStore\s*,/)
 
     const showNotificationCalls = refresh.match(/\bshowNotification\s*\(/g) || []
     expect(showNotificationCalls).toHaveLength(1)

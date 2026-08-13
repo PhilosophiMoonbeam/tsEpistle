@@ -1,21 +1,21 @@
 <template lang='pug'>
-  v-app(:dark='$vuetify.theme.dark').tags
+  v-app(:dark='$vuetify.theme.current.dark').tags
     nav-header
-    v-navigation-drawer.pb-0.elevation-1(app, fixed, clipped, :right='$vuetify.rtl', permanent, width='300')
+    v-navigation-drawer.pb-0.elevation-1(app, fixed, clipped, :right='$vuetify.locale.isRtl', permanent, width='300')
       vue-scroll(:ops='scrollStyle')
         v-list(dense, nav)
           v-list-item(href='/')
-            v-list-item-icon: v-icon mdi-home
+            div.v-list-item-icon: v-icon mdi-home
             v-list-item-title {{$t('common:header.home')}}
-          template(v-for='(tags, groupName) in tagsGrouped')
+          template(v-for='(tags, groupName) in tagsGrouped', :key='`tagGroup-` + groupName')
             v-divider.my-2
-            v-subheader.pl-4(:key='`tagGroup-` + groupName') {{groupName}}
+            v-list-subheader.pl-4 {{groupName}}
             v-list-item(v-for='tag of tags', @click='toggleTag(tag.tag)', :key='`tag-` + tag.tag')
-              v-list-item-icon
+              div.v-list-item-icon
                 v-icon(v-if='isSelected(tag.tag)', color='primary') mdi-checkbox-intermediate
                 v-icon(v-else) mdi-checkbox-blank-outline
               v-list-item-title {{tag.title}}
-    v-content.grey(:class='$vuetify.theme.dark ? `darken-4-d5` : `lighten-3`')
+    v-main.grey(:class='$vuetify.theme.current.dark ? `darken-4-d5` : `lighten-3`')
       v-toolbar(color='primary', dark, flat, height='58')
         template(v-if='selection.length > 0')
           .overline.mr-3.animated.fadeInLeft {{$t('tags:currentSelection')}}
@@ -39,7 +39,7 @@
         template(v-else)
           v-icon.mr-3.animated.fadeInRight mdi-arrow-left
           .overline.animated.fadeInRight {{$t('tags:selectOneMoreTags')}}
-      v-toolbar(:color='$vuetify.theme.dark ? `grey darken-4-l5` : `grey lighten-4`', flat, height='58')
+      v-toolbar(:color='$vuetify.theme.current.dark ? `grey darken-4-l5` : `grey lighten-4`', flat, height='58')
         v-text-field.tags-search(
           v-model='innerSearch'
           :label='$t(`tags:searchWithinResultsPlaceholder`)'
@@ -59,7 +59,7 @@
           v-select.ml-2(
             :items='locales'
             v-model='locale'
-            :background-color='$vuetify.theme.dark ? `grey darken-3` : `white`'
+            :background-color='$vuetify.theme.current.dark ? `grey darken-3` : `white`'
             hide-details
             :label='$t(`tags:locale`)'
             item-text='name'
@@ -75,7 +75,7 @@
         v-select.ml-2(
           :items='orderByItems'
           v-model='orderBy'
-          :background-color='$vuetify.theme.dark ? `grey darken-3` : `white`'
+          :background-color='$vuetify.theme.current.dark ? `grey darken-3` : `white`'
           hide-details
           :label='$t(`tags:orderBy`)'
           rounded
@@ -97,7 +97,7 @@
           :items-per-page='4'
           :search='innerSearch'
           :loading='isLoading'
-          :options.sync='pagination'
+          v-model:options='pagination'
           @page-count='pageTotal = $event'
           hide-default-footer
           ref='dude'
@@ -130,7 +130,7 @@
                 v-card.radius-7(
                   @click='goTo(item)'
                   style='height:100%;'
-                  :class='$vuetify.theme.dark ? `grey darken-4` : ``'
+                  :class='$vuetify.theme.current.dark ? `grey darken-4` : ``'
                   )
                   v-card-text
                     .d-flex.flex-row.align-center
@@ -141,7 +141,7 @@
                     .body-2.grey--text {{item.description || '---'}}
                     v-divider.my-2
                     .d-flex.flex-row.align-center
-                      v-chip(small, label, :color='$vuetify.theme.dark ? `grey darken-3-l5` : `grey lighten-4`').overline {{item.locale}}
+                      v-chip(small, label, :color='$vuetify.theme.current.dark ? `grey darken-3-l5` : `grey lighten-4`').overline {{item.locale}}
                       .caption.ml-1 / {{item.path}}
         .text-center.py-2.animated.fadeInDown(v-if='this.pageTotal > 1')
           v-pagination(v-model='pagination.page', :length='pageTotal')
@@ -151,29 +151,35 @@
     search-results
 </template>
 
-<script>
-import VueRouter from 'vue-router'
+<script lang='ts'>
 import _ from 'lodash'
 
-import { fetchPages, fetchPageTags } from '../helpers/pages-api'
+import { fetchPages, fetchPageTags, type PageListRow, type PageTagRow } from '../helpers/pages-api'
 import { setLoading } from '../helpers/root-ui-store'
+import { wikiStore } from '@/store/index.ts'
 
 /* global siteLangs */
 
-const router = new VueRouter({
-  mode: 'history',
-  base: '/t'
-})
+type TagLocale = {
+  name: string
+  code: string
+}
+
+function normalizeQueryValue (value: unknown): string | undefined {
+  const normalized = Array.isArray(value) ? value[0] : value
+  return typeof normalized === 'string' && normalized.length > 0 ? normalized : undefined
+}
+
 
 export default {
   i18nOptions: { namespaces: 'tags' },
   data() {
     return {
-      tags: [],
-      selection: [],
+      tags: [] as PageTagRow[],
+      selection: [] as string[],
       innerSearch: '',
       locale: 'any',
-      locales: [],
+      locales: [] as TagLocale[],
       orderBy: 'title',
       orderByDirection: 0,
       pagination: {
@@ -183,7 +189,7 @@ export default {
         sortBy: ['title'],
         sortDesc: [false]
       },
-      pages: [],
+      pages: [] as PageListRow[],
       pageTotal: 0,
       isLoading: true,
       scrollStyle: {
@@ -194,7 +200,7 @@ export default {
           scrollingX: false,
           easing: 'easeOutQuad',
           speed: 1000,
-          verticalNativeBarPos: this.$vuetify.rtl ? `left` : `right`
+          verticalNativeBarPos: this.$vuetify.locale.isRtl ? `left` : `right`
         },
         rail: {
           gutterOfEnds: '2px'
@@ -211,10 +217,10 @@ export default {
   },
   computed: {
     tagsGrouped () {
-      return _.groupBy(this.tags, t => t.title.charAt(0).toUpperCase())
+      return _.groupBy(this.tags, (tag: PageTagRow) => (tag.title ?? '').charAt(0).toUpperCase())
     },
     tagsSelected () {
-      return _.filter(this.tags, t => _.includes(this.selection, t.tag))
+      return _.filter(this.tags, (tag: PageTagRow) => _.includes(this.selection, tag.tag))
     },
     orderByItems () {
       return [
@@ -227,14 +233,14 @@ export default {
     }
   },
   watch: {
-    locale (newValue, oldValue) {
+    locale (newValue: string, _oldValue: string) {
       this.rebuildURL()
     },
-    orderBy (newValue, oldValue) {
+    orderBy (newValue: string, _oldValue: string) {
       this.rebuildURL()
       this.pagination.sortBy = [newValue]
     },
-    orderByDirection (newValue, oldValue) {
+    orderByDirection (newValue: number, _oldValue: number) {
       this.rebuildURL()
       this.pagination.sortDesc = [newValue === 1]
     },
@@ -243,9 +249,8 @@ export default {
       this.loadPages()
     }
   },
-  router,
   created () {
-    this.$store.commit('page/SET_MODE', 'tags')
+    wikiStore.page.mode = 'tags'
     this.selection = _.compact(decodeURI(this.$route.path).split('/'))
   },
   mounted () {
@@ -253,11 +258,13 @@ export default {
       [{name: this.$t('tags:localeAny'), code: 'any'}],
       (siteLangs.length > 0 ? siteLangs : [])
     )
-    if (this.$route.query.lang) {
-      this.locale = this.$route.query.lang
+    const lang = normalizeQueryValue(this.$route.query.lang)
+    if (lang) {
+      this.locale = lang
     }
-    if (this.$route.query.sort) {
-      this.orderBy = this.$route.query.sort.toLowerCase()
+    const sort = normalizeQueryValue(this.$route.query.sort)
+    if (sort) {
+      this.orderBy = sort.toLowerCase()
       switch (this.orderBy) {
         case 'updatedat':
           this.orderBy = 'updatedAt'
@@ -265,15 +272,16 @@ export default {
       }
       this.pagination.sortBy = [this.orderBy]
     }
-    if (this.$route.query.dir) {
-      this.orderByDirection = this.$route.query.dir === 'asc' ? 0 : 1
+    const direction = normalizeQueryValue(this.$route.query.dir)
+    if (direction) {
+      this.orderByDirection = direction === 'asc' ? 0 : 1
       this.pagination.sortDesc = [this.orderByDirection === 1]
     }
     this.loadTags()
     this.loadPages()
   },
   methods: {
-    toggleTag (tag) {
+    toggleTag (tag: string) {
       if (_.includes(this.selection, tag)) {
         this.selection = _.without(this.selection, tag)
       } else {
@@ -281,33 +289,34 @@ export default {
       }
       this.rebuildURL()
     },
-    isSelected (tag) {
+    isSelected (tag: string) {
       return _.includes(this.selection, tag)
     },
     rebuildURL () {
-      let urlObj = {
-        path: '/' + this.selection.join('/')
-      }
+      const query: Record<string, string> = {}
       if (this.locale !== `any`) {
-        _.set(urlObj, 'query.lang', this.locale)
+        query.lang = this.locale
       }
       if (this.orderBy !== `TITLE`) {
-        _.set(urlObj, 'query.sort', this.orderBy.toLowerCase())
+        query.sort = this.orderBy.toLowerCase()
       }
       if (this.orderByDirection !== 0) {
-        _.set(urlObj, 'query.dir', this.orderByDirection === 0 ? `asc` : `desc`)
+        query.dir = this.orderByDirection === 0 ? `asc` : `desc`
       }
-      this.$router.push(urlObj)
+      this.$router.push({
+        path: '/' + this.selection.join('/'),
+        query
+      })
     },
-    goTo (page) {
+    goTo (page: PageListRow) {
       window.location.assign(`/${page.locale}/${page.path}`)
     },
     async loadTags () {
-      setLoading(this.$store, 'tags-refresh', true)
+      setLoading(wikiStore, 'tags-refresh', true)
       try {
         this.tags = await fetchPageTags(window.fetch.bind(window))
       } finally {
-        setLoading(this.$store, 'tags-refresh', false)
+        setLoading(wikiStore, 'tags-refresh', false)
       }
     },
     async loadPages () {
@@ -317,7 +326,7 @@ export default {
         return
       }
       this.isLoading = true
-      setLoading(this.$store, 'pages-refresh', true)
+      setLoading(wikiStore, 'pages-refresh', true)
       try {
         this.pages = await fetchPages(window.fetch.bind(window), {
           locale: this.locale === 'any' ? undefined : this.locale,
@@ -325,7 +334,7 @@ export default {
         })
       } finally {
         this.isLoading = false
-        setLoading(this.$store, 'pages-refresh', false)
+        setLoading(wikiStore, 'pages-refresh', false)
       }
     }
   }

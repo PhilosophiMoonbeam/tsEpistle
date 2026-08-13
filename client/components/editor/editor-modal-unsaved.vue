@@ -6,17 +6,18 @@
         span {{$t('editor:unsaved.title')}}
       v-card-text.pt-4
         .body-2 {{$t('editor:unsaved.body')}}
-      v-card-chin
+      div.v-card-chin
         v-spacer
         v-btn(text, @click='isShown = false') {{$t('common:actions.cancel')}}
         v-btn.px-4(color='red', @click='discard', dark) {{$t('common:actions.discardChanges')}}
 </template>
 
-<script>
+<script lang='ts'>
 
 export default {
+  emits: ['discard', 'update:modelValue'],
   props: {
-    value: {
+    modelValue: {
       type: Boolean,
       default: false
     }
@@ -26,8 +27,8 @@ export default {
   },
   computed: {
     isShown: {
-      get() { return this.value },
-      set(val) { this.$emit('input', val) }
+      get() { return this.modelValue },
+      set(val: boolean) { this.$emit('update:modelValue', val) }
     }
   },
   methods: {

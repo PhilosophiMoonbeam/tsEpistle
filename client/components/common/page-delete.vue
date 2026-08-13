@@ -18,22 +18,23 @@
           .caption.red--text.text--darken-2 {{pageLocale.toUpperCase()}}
         v-chip.mt-3.mx-0(label, color='red lighten-5', small)
           span.red--text.text--darken-2 /{{pagePath}}
-      v-card-chin
+      div.v-card-chin
         v-spacer
         v-btn(text, @click='discard', :disabled='loading') {{$t('common:actions.cancel')}}
         v-btn.px-4(color='red darken-2', @click='deletePage', :loading='loading').white--text {{$t('common:actions.delete')}}
 </template>
 
-<script>
+<script lang='ts'>
+import { defineComponent } from 'vue'
 import _ from 'lodash'
-import { get } from 'vuex-pathify'
+import { wikiStore } from '@/store/index.ts'
 
-import { loadingStart, loadingStop, pushGraphError } from '../../helpers/root-ui-store'
 import { deletePage as deletePageById } from '../../helpers/pages-api'
 
-export default {
+export default defineComponent({
+  emits: ['update:modelValue'],
   props: {
-    value: {
+    modelValue: {
       type: Boolean,
       default: false
     }
@@ -45,29 +46,29 @@ export default {
   },
   computed: {
     isShown: {
-      get() { return this.value },
-      set(val) { this.$emit('input', val) }
+      get(): boolean { return this.modelValue },
+      set(val: boolean) { this.$emit('update:modelValue', val) }
     },
-    pageTitle: get('page/title'),
-    pagePath: get('page/path'),
-    pageLocale: get('page/locale'),
-    pageId: get('page/id')
+    pageTitle(): string { return wikiStore.page.title },
+    pagePath(): string { return wikiStore.page.path },
+    pageLocale(): string { return wikiStore.page.locale },
+    pageId(): number { return wikiStore.page.id }
   },
   watch: {
-    isShown(newValue, oldValue) {
+    isShown(newValue: boolean) {
       if (newValue) {
         document.body.classList.add('page-deleted-pending')
       }
     }
   },
   methods: {
-    discard() {
+    discard(): void {
       document.body.classList.remove('page-deleted-pending')
       this.isShown = false
     },
-    async deletePage() {
+    async deletePage(): Promise<void> {
       this.loading = true
-      loadingStart(this.$store, 'page-delete')
+      wikiStore.startLoading('page-delete')
       this.$nextTick(async () => {
         try {
           await deletePageById(
@@ -83,14 +84,14 @@ export default {
             }, 1200)
           }, 400)
         } catch (err) {
-          pushGraphError(this.$store, err)
+          wikiStore.showError(err)
         }
-        loadingStop(this.$store, 'page-delete')
+        wikiStore.stopLoading('page-delete')
         this.loading = false
       })
     }
   }
-}
+})
 </script>
 
 <style lang='scss'>

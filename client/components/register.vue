@@ -2,8 +2,8 @@
   v-app
     .register
       v-container(grid-list-lg)
-        v-layout(row, wrap)
-          v-flex(
+        v-row()
+          v-col(
             xs12
             offset-sm1, sm10
             offset-md2, md8
@@ -23,7 +23,7 @@
                     solo
                     flat
                     prepend-icon='mdi-email'
-                    :background-color='$vuetify.theme.dark ? `grey darken-3` : `grey lighten-4`'
+                    :background-color='$vuetify.theme.current.dark ? `grey darken-3` : `grey lighten-4`'
                     hide-details
                     ref='iptEmail'
                     v-model='email'
@@ -34,7 +34,7 @@
                     solo
                     flat
                     prepend-icon='mdi-form-textbox-password'
-                    :background-color='$vuetify.theme.dark ? `grey darken-3` : `grey lighten-4`'
+                    :background-color='$vuetify.theme.current.dark ? `grey darken-3` : `grey lighten-4`'
                     ref='iptPassword'
                     v-model='password'
                     :append-icon='hidePassword ? "mdi-eye-off" : "mdi-eye"'
@@ -45,12 +45,13 @@
                     loading
                     counter='255'
                     )
-                    password-strength(slot='progress', v-model='password')
+                    template(v-slot:loader)
+                      password-strength(v-model='password')
                   v-text-field.md2.mt-2(
                     solo
                     flat
                     prepend-icon='mdi-form-textbox-password'
-                    :background-color='$vuetify.theme.dark ? `grey darken-3` : `grey lighten-4`'
+                    :background-color='$vuetify.theme.current.dark ? `grey darken-3` : `grey lighten-4`'
                     hide-details
                     ref='iptVerifyPassword'
                     v-model='verifyPassword'
@@ -63,7 +64,7 @@
                     solo
                     flat
                     prepend-icon='mdi-account'
-                    :background-color='$vuetify.theme.dark ? `grey darken-3` : `grey lighten-4`'
+                    :background-color='$vuetify.theme.current.dark ? `grey darken-3` : `grey lighten-4`'
                     ref='iptName'
                     v-model='name'
                     :placeholder='$t("auth:fields.name")'
@@ -85,7 +86,7 @@
                     ) {{ $t('auth:actions.register') }}
                   v-spacer
                 v-divider
-                v-card-actions.py-3.grey(:class='$vuetify.theme.dark ? `darken-4-l1` : `lighten-4`')
+                v-card-actions.py-3.grey(:class='$vuetify.theme.current.dark ? `darken-4-l1` : `lighten-4`')
                   v-spacer
                   i18next.caption(path='auth:switchToLogin.text', tag='div')
                     a.caption(href='/login', place='link') {{ $t('auth:switchToLogin.link') }}
@@ -96,12 +97,20 @@
     notify(style='padding-top: 64px;')
 </template>
 
-<script>
+<script lang='ts'>
 /* global siteConfig */
 
 import validate from 'validate.js'
 import PasswordStrength from './common/password-strength.vue'
 import { registerAccount } from '../helpers/auth-api'
+import { getErrorMessage } from '../helpers/root-ui-store'
+import { wikiStore } from '@/store/index.ts'
+
+function focusComponent (ref: unknown): void {
+  if (!ref || typeof ref !== 'object') return
+  const candidate = ref as { focus?: unknown }
+  if (typeof candidate.focus === 'function') candidate.focus()
+}
 
 export default {
   i18nOptions: { namespaces: 'auth' },
@@ -132,7 +141,7 @@ export default {
   mounted () {
     this.isShown = true
     this.$nextTick(() => {
-      this.$refs.iptEmail.focus()
+      focusComponent(this.$refs.iptEmail)
     })
   },
   methods: {
@@ -187,33 +196,33 @@ export default {
 
       if (validation) {
         if (validation.email) {
-          this.$store.commit('showNotification', {
+          wikiStore.showNotification({
             style: 'red',
             message: validation.email[0],
             icon: 'warning'
           })
-          this.$refs.iptEmail.focus()
+          focusComponent(this.$refs.iptEmail)
         } else if (validation.password) {
-          this.$store.commit('showNotification', {
+          wikiStore.showNotification({
             style: 'red',
             message: validation.password[0],
             icon: 'warning'
           })
-          this.$refs.iptPassword.focus()
+          focusComponent(this.$refs.iptPassword)
         } else if (validation.verifyPassword) {
-          this.$store.commit('showNotification', {
+          wikiStore.showNotification({
             style: 'red',
             message: validation.verifyPassword[0],
             icon: 'warning'
           })
-          this.$refs.iptVerifyPassword.focus()
+          focusComponent(this.$refs.iptVerifyPassword)
         } else {
-          this.$store.commit('showNotification', {
+          wikiStore.showNotification({
             style: 'red',
             message: validation.name[0],
             icon: 'warning'
           })
-          this.$refs.iptName.focus()
+          focusComponent(this.$refs.iptName)
         }
       } else {
         this.loaderColor = 'grey darken-4'
@@ -234,9 +243,9 @@ export default {
           this.isShown = false
         } catch (err) {
           console.error(err)
-          this.$store.commit('showNotification', {
+          wikiStore.showNotification({
             style: 'red',
-            message: err.message,
+            message: getErrorMessage(err),
             icon: 'warning'
           })
           this.isLoading = false

@@ -4,7 +4,7 @@ export const EDITOR_SAVE_CONFLICT_EVENT = 'saveConflict'
 export const EDITOR_CONTENT_OVERWRITE_EVENT = 'overwriteEditorContent'
 export const EDITOR_CONFLICT_RESET_EVENT = 'resetEditorConflict'
 
-const editorConflictBus = createEventBus()
+const editorConflictBus = createEventBus<[]>()
 
 type EditorConflictHandler = () => void
 

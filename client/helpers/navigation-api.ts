@@ -14,11 +14,11 @@ type NavigationSaveResponse = {
   message: string
 }
 
-type NavigationConfig = {
+export type NavigationConfig = {
   mode: string
 }
 
-type NavigationItem = {
+export type NavigationItem = {
   id: string
   kind: string
   label?: string | null
@@ -29,12 +29,12 @@ type NavigationItem = {
   visibilityGroups?: number[] | null
 }
 
-type NavigationTreeRow = {
+export type NavigationTreeRow = {
   locale: string
   items: NavigationItem[]
 }
 
-type NavigationPayload = {
+export type NavigationPayload = {
   config: NavigationConfig
   tree: NavigationTreeRow[]
 }

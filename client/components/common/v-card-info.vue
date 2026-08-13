@@ -5,7 +5,7 @@
       slot
 </template>
 
-<script>
+<script lang='ts'>
 export default {
   props: {
     color: {
@@ -22,17 +22,17 @@ export default {
       switch (this.color) {
         case 'blue':
           return {
-            cls: this.$vuetify.theme.dark ? 'grey darken-4-l5 blue--text text--lighten-4' : 'blue lighten-5 blue--text text--darken-3',
+            cls: this.$vuetify.theme.current.dark ? 'grey darken-4-l5 blue--text text--lighten-4' : 'blue lighten-5 blue--text text--darken-3',
             icon: 'blue lighten-3'
           }
         case 'red':
           return {
-            cls: this.$vuetify.theme.dark ? 'grey darken-4-l5 red--text text--lighten-4' : 'red lighten-5 red--text text--darken-2',
+            cls: this.$vuetify.theme.current.dark ? 'grey darken-4-l5 red--text text--lighten-4' : 'red lighten-5 red--text text--darken-2',
             icon: 'red lighten-3'
           }
         default:
           return {
-            cls: this.$vuetify.theme.dark ? 'grey darken-4-l5' : 'grey lighten-4',
+            cls: this.$vuetify.theme.current.dark ? 'grey darken-4-l5' : 'grey lighten-4',
             icon: 'grey darken-2'
           }
       }

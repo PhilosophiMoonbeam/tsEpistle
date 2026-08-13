@@ -1,0 +1,132 @@
+import {
+  wiki,
+  type QueryBuilder as WikiQueryBuilder,
+  type SearchPlugin,
+  type WikiPage
+} from '../../types.ts'
+
+type WikiPageQuery = WikiQueryBuilder<WikiPage>
+
+interface RelatedQuery {
+  select(...columns: string[]): RelatedQuery
+}
+
+interface PageWhereQuery {
+  andWhere(...args: unknown[]): PageWhereQuery
+  orWhere(...args: unknown[]): PageWhereQuery
+  where(...args: unknown[]): PageWhereQuery
+}
+
+interface ObjectionPageQuery extends WikiPageQuery {
+  modifyGraph(relation: string, modifier: (builder: RelatedQuery) => void): ObjectionPageQuery
+  withGraphJoined(relation: string): ObjectionPageQuery
+}
+
+const isObjectionPageQuery = (query: WikiPageQuery): query is ObjectionPageQuery => (
+  'withGraphJoined' in query &&
+  typeof query.withGraphJoined === 'function' &&
+  'modifyGraph' in query &&
+  typeof query.modifyGraph === 'function'
+)
+
+const plugin: SearchPlugin = {
+  async activate() {
+    // not used
+  },
+  async deactivate() {
+    // not used
+  },
+  /**
+   * INIT
+   */
+  async init() {
+    // not used
+  },
+  /**
+   * QUERY
+   *
+   * @param {String} q Query
+   * @param {Object} opts Additional options
+   */
+  async query(q, opts) {
+    const pageQuery = wiki.models.pages.query()
+    if (!isObjectionPageQuery(pageQuery)) {
+      throw new Error('Database search requires an Objection query builder')
+    }
+    pageQuery.column('pages.id', 'title', 'description', 'path', 'localeCode as locale')
+    pageQuery.withGraphJoined('tags') // Adding page tags since they can be used to check resource access permissions
+    pageQuery.modifyGraph('tags', (builder: RelatedQuery) => {
+      builder.select('tag')
+    })
+    pageQuery.where((builder: PageWhereQuery) => {
+      builder.where('isPublished', true)
+      if (opts.locale) {
+        builder.andWhere('localeCode', opts.locale)
+      }
+      if (opts.path) {
+        builder.andWhere('path', 'like', `${opts.path}%`)
+      }
+      builder.andWhere((builderSub: PageWhereQuery) => {
+        if (wiki.config.db.type === 'postgres') {
+          builderSub.where('title', 'ILIKE', `%${q}%`)
+          builderSub.orWhere('description', 'ILIKE', `%${q}%`)
+          builderSub.orWhere('path', 'ILIKE', `%${q.toLowerCase()}%`)
+        } else {
+          builderSub.where('title', 'LIKE', `%${q}%`)
+          builderSub.orWhere('description', 'LIKE', `%${q}%`)
+          builderSub.orWhere('path', 'LIKE', `%${q.toLowerCase()}%`)
+        }
+      })
+    })
+    const results = await pageQuery.limit(wiki.config.search.maxHits)
+    return {
+      results,
+      suggestions: [],
+      totalHits: results.length
+    }
+  },
+  /**
+   * CREATE
+   *
+   * @param {Object} page Page to create
+   */
+  async created(_page) {
+    void _page
+    // not used
+  },
+  /**
+   * UPDATE
+   *
+   * @param {Object} page Page to update
+   */
+  async updated(_page) {
+    void _page
+    // not used
+  },
+  /**
+   * DELETE
+   *
+   * @param {Object} page Page to delete
+   */
+  async deleted(_page) {
+    void _page
+    // not used
+  },
+  /**
+   * RENAME
+   *
+   * @param {Object} page Page to rename
+   */
+  async renamed(_page) {
+    void _page
+    // not used
+  },
+  /**
+   * REBUILD INDEX
+   */
+  async rebuild() {
+    // not used
+  }
+}
+
+export default plugin

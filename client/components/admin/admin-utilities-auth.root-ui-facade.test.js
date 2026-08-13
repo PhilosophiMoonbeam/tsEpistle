@@ -1,8 +1,8 @@
-const fs = require('fs')
-const path = require('path')
+import fs from 'node:fs'
+import path from 'node:path'
 
 const extractScript = (source) => {
-  const match = source.match(/<script>\s*([\s\S]*?)\s*<\/script>/)
+  const match = source.match(/<script(?:\s+lang=["']ts["'])?>\s*([\s\S]*?)\s*<\/script>/)
   return match && match[1]
 }
 
@@ -71,11 +71,12 @@ describe('admin utilities auth REST facade migration guard', () => {
 
   test('admin-utilities-auth.vue imports REST helpers and removes auth GraphQL mutations', () => {
     expect(script).not.toBeNull()
+    expect(source).toMatch(/<script\s+lang=["']ts["']>/)
 
     expect(script).toMatch(/import\s+_\s+from\s+['"]lodash['"]/) // still used for delayed redirect
     expect(script).toMatch(/import\s+Cookies\s+from\s+['"]js-cookie['"]/)
     expect(script).toMatch(/import\s+\{(?=[^}]*\bregenerateAuthCertificates\b)(?=[^}]*\bresetGuestUser\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/auth-api['"]/)
-    expect(script).toMatch(/import\s+\{(?=[^}]*\bloadingStart\b)(?=[^}]*\bloadingStop\b)(?=[^}]*\bshowNotification\b)(?=[^}]*\bpushGraphError\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/root-ui-store['"]/)
+    expect(script).toContain("import { wikiStore } from '@/store/index.ts'")
     expect(script).not.toMatch(/utilities-mutation-auth-(?:regencerts|resetguest)\.gql/)
     expect(script).not.toMatch(/utilityAuth(?:Regencerts|Resetguest)Mutation/)
     expect(script).not.toMatch(/\$apollo\.mutate/)
@@ -85,13 +86,13 @@ describe('admin utilities auth REST facade migration guard', () => {
     expect(regenCerts).not.toBeNull()
 
     expect(regenCerts).toMatch(/this\.loading\s*=\s*true/)
-    expect(regenCerts).toMatch(/loadingStart\s*\(\s*this\.\$store\s*,\s*['"]admin-utilities-auth-regencerts['"]\s*\)/)
+    expect(regenCerts).toMatch(/wikiStore\.startLoading\s*\(\s*['"]admin-utilities-auth-regencerts['"]\s*\)/)
     expect(regenCerts).toMatch(/await\s+regenerateAuthCertificates\s*\(\s*window\.fetch\.bind\s*\(\s*window\s*\)\s*\)/)
-    expect(regenCerts).toMatch(/showNotification\s*\(\s*this\.\$store\s*,\s*\{\s*message:\s*['"]New Certificates generated successfully\.['"]\s*,\s*style:\s*['"]success['"]\s*,\s*icon:\s*['"]check['"]\s*\}\s*\)/)
+    expect(regenCerts).toMatch(/wikiStore\.showNotification\s*\(\s*\{\s*message:\s*['"]New Certificates generated successfully\.['"]\s*,\s*style:\s*['"]success['"]\s*,\s*icon:\s*['"]check['"]\s*\}\s*\)/)
     expect(regenCerts).toMatch(/Cookies\.remove\s*\(\s*['"]jwt['"]\s*\)/)
     expect(regenCerts).toMatch(/_\.delay\s*\([\s\S]*window\.location\.assign\s*\(\s*['"]\/login['"]\s*\)[\s\S]*,\s*1000\s*\)/)
-    expect(regenCerts).toMatch(/catch\s*\(\s*err\s*\)\s*\{\s*pushGraphError\s*\(\s*this\.\$store\s*,\s*err\s*\)\s*\}/)
-    expect(regenCerts).toMatch(/loadingStop\s*\(\s*this\.\$store\s*,\s*['"]admin-utilities-auth-regencerts['"]\s*\)/)
+    expect(regenCerts).toMatch(/catch\s*\(\s*err\s*\)\s*\{\s*wikiStore\.showError\s*\(\s*err\s*\)\s*\}/)
+    expect(regenCerts).toMatch(/wikiStore\.stopLoading\s*\(\s*['"]admin-utilities-auth-regencerts['"]\s*\)/)
     expect(regenCerts).toMatch(/this\.loading\s*=\s*false/)
     expect(regenCerts).not.toMatch(/this\.\$apollo\.mutate|utilityAuthRegencertsMutation/)
     expect(regenCerts).not.toMatch(directRootUiCommit)
@@ -101,11 +102,11 @@ describe('admin utilities auth REST facade migration guard', () => {
     expect(resetGuest).not.toBeNull()
 
     expect(resetGuest).toMatch(/this\.loading\s*=\s*true/)
-    expect(resetGuest).toMatch(/loadingStart\s*\(\s*this\.\$store\s*,\s*['"]admin-utilities-auth-resetguest['"]\s*\)/)
+    expect(resetGuest).toMatch(/wikiStore\.startLoading\s*\(\s*['"]admin-utilities-auth-resetguest['"]\s*\)/)
     expect(resetGuest).toMatch(/await\s+resetGuestUser\s*\(\s*window\.fetch\.bind\s*\(\s*window\s*\)\s*\)/)
-    expect(resetGuest).toMatch(/showNotification\s*\(\s*this\.\$store\s*,\s*\{\s*message:\s*['"]Guest user was reset successfully\.['"]\s*,\s*style:\s*['"]success['"]\s*,\s*icon:\s*['"]check['"]\s*\}\s*\)/)
-    expect(resetGuest).toMatch(/catch\s*\(\s*err\s*\)\s*\{\s*pushGraphError\s*\(\s*this\.\$store\s*,\s*err\s*\)\s*\}/)
-    expect(resetGuest).toMatch(/loadingStop\s*\(\s*this\.\$store\s*,\s*['"]admin-utilities-auth-resetguest['"]\s*\)/)
+    expect(resetGuest).toMatch(/wikiStore\.showNotification\s*\(\s*\{\s*message:\s*['"]Guest user was reset successfully\.['"]\s*,\s*style:\s*['"]success['"]\s*,\s*icon:\s*['"]check['"]\s*\}\s*\)/)
+    expect(resetGuest).toMatch(/catch\s*\(\s*err\s*\)\s*\{\s*wikiStore\.showError\s*\(\s*err\s*\)\s*\}/)
+    expect(resetGuest).toMatch(/wikiStore\.stopLoading\s*\(\s*['"]admin-utilities-auth-resetguest['"]\s*\)/)
     expect(resetGuest).toMatch(/this\.loading\s*=\s*false/)
     expect(resetGuest).not.toMatch(/this\.\$apollo\.mutate|utilityAuthResetguestMutation/)
     expect(resetGuest).not.toMatch(directRootUiCommit)

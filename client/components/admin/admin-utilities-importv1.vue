@@ -180,7 +180,7 @@
           .body-2 Note that any user that already exists in this installation will not be imported. A list of skipped users will be displayed upon completion.
           .caption.grey--text You must first delete from this installation any user you want to migrate over from the old installation.
 
-    v-card-chin
+    div.v-card-chin
       v-btn.px-3(depressed, color='deep-orange darken-2', :disabled='!wantUsers && !wantContent', @click='startImport').ml-0
         v-icon(left, color='white') mdi-database-import
         span.white--text Start Import
@@ -251,7 +251,7 @@
             text
             @click='showFailedUsers = false'
             ) Close
-        v-simple-table(dense, fixed-header, height='300px')
+        v-table(dense, fixed-header, height='300px')
           template(v-slot:default)
             thead
               tr
@@ -265,29 +265,129 @@
                 td {{fusr.error}}
 </template>
 
-<script>
+<script lang='ts'>
+import { defineComponent } from 'vue'
 import _ from 'lodash'
 
 import { SemipolarSpinner } from 'epic-spinners'
 
 import { executeStorageAction, fetchStorageStatus, fetchStorageTargets, saveStorageTargets } from '../../helpers/storage-api'
 import { importV1Users } from '../../helpers/system-api'
-import { pushGraphError } from '../../helpers/root-ui-store'
+import { wikiStore } from '@/store/index.ts'
 
-export default {
+type ImportFilter = 'content' | 'users'
+type ContentMode = 'git' | 'disk'
+type GitAuthMode = 'ssh' | 'basic'
+type GroupMode = 'MULTI' | 'SINGLE' | 'NONE'
+
+type FailedUser = {
+  provider: string
+  email: string
+  error: string
+}
+
+type StorageConfigValue = {
+  value: unknown
+  order?: number
+  [key: string]: unknown
+}
+
+type StorageConfig = {
+  key: string
+  value: StorageConfigValue
+  [key: string]: unknown
+}
+
+type StorageTarget = {
+  key: string
+  isEnabled: boolean
+  mode: string
+  syncInterval: string
+  config: StorageConfig[]
+  [key: string]: unknown
+}
+
+type StorageStatus = {
+  key: string
+  status: string
+  message: string
+}
+
+function isRecord (value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+function normalizeFailedUsers (users: unknown[]): FailedUser[] {
+  return users.map(user => {
+    if (!isRecord(user) || typeof user.provider !== 'string' || typeof user.email !== 'string' || typeof user.error !== 'string') {
+      throw new Error('Wiki.js 1.x user import response is invalid.')
+    }
+    return {
+      provider: user.provider,
+      email: user.email,
+      error: user.error
+    }
+  })
+}
+
+function normalizeStorageTarget (target: unknown): StorageTarget {
+  if (!isRecord(target) || typeof target.key !== 'string' || typeof target.isEnabled !== 'boolean' || typeof target.mode !== 'string' || typeof target.syncInterval !== 'string' || !Array.isArray(target.config)) {
+    throw new Error('Storage target response is invalid.')
+  }
+
+  const config: StorageConfig[] = target.config.map(entry => {
+    if (!isRecord(entry) || typeof entry.key !== 'string' || typeof entry.value !== 'string') {
+      throw new Error('Storage target configuration is invalid.')
+    }
+    const value: unknown = JSON.parse(entry.value)
+    if (!isRecord(value) || !('value' in value)) {
+      throw new Error('Storage target configuration is invalid.')
+    }
+    return {
+      ...entry,
+      key: entry.key,
+      value: {
+        ...value,
+        value: value.value
+      }
+    }
+  })
+
+  return {
+    ...target,
+    key: target.key,
+    isEnabled: target.isEnabled,
+    mode: target.mode,
+    syncInterval: target.syncInterval,
+    config: _.sortBy(config, entry => entry.value.order)
+  }
+}
+
+function normalizeStorageStatus (status: unknown): StorageStatus {
+  if (!isRecord(status) || typeof status.key !== 'string' || typeof status.status !== 'string' || typeof status.message !== 'string') {
+    throw new Error('Storage status response is invalid.')
+  }
+  return {
+    key: status.key,
+    status: status.status,
+    message: status.message
+  }
+}
+
+export default defineComponent({
   components: {
     SemipolarSpinner
   },
   data() {
     return {
-      importFilters: ['content', 'users'],
-      groupMode: 'MULTI',
-      contentMode: 'git',
+      importFilters: ['content', 'users'] as ImportFilter[],
+      groupMode: 'MULTI' as GroupMode,
+      contentMode: 'git' as ContentMode,
       dbConnStr: 'mongodb://',
       contentPath: '/wiki-v1/repo',
       isLoading: false,
       isSuccess: false,
-      gitAuthMode: 'ssh',
+      gitAuthMode: 'ssh' as GitAuthMode,
       gitAuthModes: [
         { text: 'SSH', value: 'ssh' },
         { text: 'Basic', value: 'basic' }
@@ -306,7 +406,7 @@ export default {
       successUsers: 0,
       successPages: 0,
       showFailedUsers: false,
-      failedUsers: []
+      failedUsers: [] as FailedUser[]
     }
   },
   computed: {
@@ -341,10 +441,10 @@ export default {
             )
             this.successUsers = result.usersCount
             this.successGroups = result.groupsCount
-            this.failedUsers = result.failed
+            this.failedUsers = normalizeFailedUsers(result.failed)
             this.progress += 50
           } catch (err) {
-            pushGraphError(this.$store, err)
+            wikiStore.showError(err)
             this.isLoading = false
             return
           }
@@ -354,16 +454,16 @@ export default {
 
         if (this.wantContent) {
           try {
-            const storageTargets = await fetchStorageTargets(window.fetch.bind(window))
-            if (Array.isArray(storageTargets)) {
+            const storageTargets = (await fetchStorageTargets(window.fetch.bind(window))).map(normalizeStorageTarget)
+            if (storageTargets.length > 0) {
               this.progress += 10
-              let targets = storageTargets.map(str => {
-                let nStr = {
+              const targets = storageTargets.map(str => {
+                const nStr: StorageTarget = {
                   ...str,
-                  config: _.sortBy(str.config.map(cfg => ({
+                  config: str.config.map(cfg => ({
                     ...cfg,
-                    value: JSON.parse(cfg.value)
-                  })), [t => t.value.order])
+                    value: { ...cfg.value }
+                  }))
                 }
 
                 // -> Setup Git Module
@@ -404,13 +504,16 @@ export default {
 
               // -> Save storage modules configuration
 
-              await saveStorageTargets(window.fetch.bind(window), targets.map(tgt => _.pick(tgt, [
-                'isEnabled',
-                'key',
-                'config',
-                'mode',
-                'syncInterval'
-              ])).map(str => ({...str, config: str.config.map(cfg => ({...cfg, value: JSON.stringify({ v: cfg.value.value })}))})))
+              await saveStorageTargets(window.fetch.bind(window), targets.map(target => ({
+                isEnabled: target.isEnabled,
+                key: target.key,
+                config: target.config.map(config => ({
+                  ...config,
+                  value: JSON.stringify({ v: config.value.value })
+                })),
+                mode: target.mode,
+                syncInterval: target.syncInterval
+              })))
 
               this.progress += 10
 
@@ -419,9 +522,9 @@ export default {
               let statusAttempts = 0
               while (statusAttempts < 10) {
                 statusAttempts++
-                const storageStatus = await fetchStorageStatus(window.fetch.bind(window))
-                if (_.has(storageStatus, '[0]')) {
-                  const st = _.find(storageStatus, ['key', this.contentMode])
+                const storageStatus = (await fetchStorageStatus(window.fetch.bind(window))).map(normalizeStorageStatus)
+                if (storageStatus.length > 0) {
+                  const st = storageStatus.find(status => status.key === this.contentMode)
                   if (!st) {
                     throw new Error('Storage target could not be configured.')
                   }
@@ -454,7 +557,7 @@ export default {
               throw new Error('Failed to fetch storage targets.')
             }
           } catch (err) {
-            pushGraphError(this.$store, err)
+            wikiStore.showError(err)
             this.isLoading = false
             return
           }
@@ -465,7 +568,7 @@ export default {
       }, 1500)
     }
   }
-}
+})
 </script>
 
 <style lang='scss'>

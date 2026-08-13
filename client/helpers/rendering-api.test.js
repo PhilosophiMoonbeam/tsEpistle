@@ -1,4 +1,4 @@
-const { fetchRenderingRenderers, saveRenderingRenderers } = require('./rendering-api')
+import { fetchRenderingRenderers, saveRenderingRenderers } from './rendering-api.ts'
 
 function createJsonResponse (payload, ok = true) {
   return {
@@ -12,7 +12,7 @@ function createJsonResponse (payload, ok = true) {
 
 describe('rendering api helper', () => {
   test('requests rendering renderers with same-origin JSON options', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse([]))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([]))
 
     await expect(fetchRenderingRenderers(fetchImpl)).resolves.toEqual([])
 
@@ -25,7 +25,7 @@ describe('rendering api helper', () => {
   })
 
   test('validates, sanitizes, parses config JSON, sorts by parsed value order, and accepts dependsOn values', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse([
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([
       {
         isEnabled: true,
         key: 'markdownCore',
@@ -104,7 +104,7 @@ describe('rendering api helper', () => {
   })
 
   test('strips extra renderer and config fields', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse([
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([
       {
         isEnabled: false,
         key: 'emojiRenderer',
@@ -147,13 +147,13 @@ describe('rendering api helper', () => {
   })
 
   test('rejects malformed root payloads', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ renderers: [] }))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ renderers: [] }))
 
     await expect(fetchRenderingRenderers(fetchImpl, 'Bad rendering payload')).rejects.toThrow('Bad rendering payload')
   })
 
   test('rejects malformed renderer rows', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse([
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([
       {
         isEnabled: 'yes',
         key: 'markdownCore',
@@ -171,7 +171,7 @@ describe('rendering api helper', () => {
   })
 
   test('rejects malformed dependsOn values', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse([
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([
       {
         isEnabled: true,
         key: 'markdownCore',
@@ -189,7 +189,7 @@ describe('rendering api helper', () => {
   })
 
   test('rejects malformed config rows', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse([
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([
       {
         isEnabled: true,
         key: 'markdownCore',
@@ -207,7 +207,7 @@ describe('rendering api helper', () => {
   })
 
   test('rejects malformed config JSON', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse([
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([
       {
         isEnabled: true,
         key: 'markdownCore',
@@ -225,7 +225,7 @@ describe('rendering api helper', () => {
   })
 
   test('propagates API JSON errors', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue({
+    const fetchImpl = vi.fn().mockResolvedValue({
       ok: false,
       headers: {
         get: () => 'application/json; charset=utf-8'
@@ -237,7 +237,7 @@ describe('rendering api helper', () => {
   })
 
   test('rejects non-JSON successful responses', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue({
+    const fetchImpl = vi.fn().mockResolvedValue({
       ok: true,
       headers: {
         get: () => 'text/plain'
@@ -249,7 +249,7 @@ describe('rendering api helper', () => {
 
   test('saves rendering renderers with same-origin JSON POST options', async () => {
     const renderers = [{ key: 'markdownCore', isEnabled: true, config: [{ key: 'safeMode', value: JSON.stringify({ v: true }) }] }]
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ message: 'Renderers updated successfully' }))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ message: 'Renderers updated successfully' }))
 
     await expect(saveRenderingRenderers(fetchImpl, renderers)).resolves.toEqual({ message: 'Renderers updated successfully' })
 
@@ -265,13 +265,13 @@ describe('rendering api helper', () => {
   })
 
   test('rejects malformed rendering save success responses', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ ok: true }))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ ok: true }))
 
     await expect(saveRenderingRenderers(fetchImpl, [], 'Bad rendering save')).rejects.toThrow('Bad rendering save')
   })
 
   test('surfaces JSON API error messages on rendering save failures', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ error: 'Invalid renderers payload' }, false))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ error: 'Invalid renderers payload' }, false))
 
     await expect(saveRenderingRenderers(fetchImpl, [], 'Bad rendering save')).rejects.toThrow('Invalid renderers payload')
   })

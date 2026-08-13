@@ -9,7 +9,7 @@ export const PAGE_CONVERT_EVENT = 'pageConvert'
 export const PAGE_DUPLICATE_EVENT = 'pageDuplicate'
 export const PAGE_MOVE_EVENT = 'pageMove'
 export const PAGE_DELETE_EVENT = 'pageDelete'
-const pageActionBus = createEventBus()
+const pageActionBus = createEventBus<[]>()
 
 export function emitPageEdit (): void {
   pageActionBus.emit(PAGE_EDIT_EVENT)

@@ -1,4 +1,4 @@
-const { fetchMailConfig, saveMailConfig, sendMailTest } = require('./mail-api')
+import { fetchMailConfig, saveMailConfig, sendMailTest } from './mail-api.ts'
 
 function createJsonResponse (payload, ok = true) {
   return {
@@ -28,7 +28,7 @@ describe('mail api helper', () => {
   }
 
   test('fetches mail config with same-origin JSON options and sanitizes fields', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({
       ...mailConfig,
       privateField: 'do-not-return'
     }))
@@ -43,13 +43,13 @@ describe('mail api helper', () => {
   })
 
   test('rejects invalid mail config responses', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ ...mailConfig, port: '587' }))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ ...mailConfig, port: '587' }))
 
     await expect(fetchMailConfig(fetchImpl, 'Bad config')).rejects.toThrow('Bad config')
   })
 
   test('saves mail config with same-origin JSON POST options', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ message: 'Mail configuration updated successfully.' }))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ message: 'Mail configuration updated successfully.' }))
 
     await expect(saveMailConfig(fetchImpl, mailConfig)).resolves.toEqual({ message: 'Mail configuration updated successfully.' })
     expect(fetchImpl).toHaveBeenCalledWith('/_api/mail/config', {
@@ -64,13 +64,13 @@ describe('mail api helper', () => {
   })
 
   test('surfaces JSON mail config REST error responses', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ error: 'Invalid mail config payload' }, false))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ error: 'Invalid mail config payload' }, false))
 
     await expect(saveMailConfig(fetchImpl, mailConfig, 'Mail save failed')).rejects.toThrow('Invalid mail config payload')
   })
 
   test('sends mail test with same-origin JSON POST options', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ message: 'Test email sent successfully.' }))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ message: 'Test email sent successfully.' }))
 
     await expect(sendMailTest(fetchImpl, 'admin@example.test')).resolves.toEqual({ message: 'Test email sent successfully.' })
 
@@ -86,19 +86,19 @@ describe('mail api helper', () => {
   })
 
   test('rejects invalid success responses', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ ok: true }))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ ok: true }))
 
     await expect(sendMailTest(fetchImpl, 'admin@example.test', 'Bad mail response')).rejects.toThrow('Bad mail response')
   })
 
   test('surfaces JSON REST error responses', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ error: 'smtp unavailable' }, false))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ error: 'smtp unavailable' }, false))
 
     await expect(sendMailTest(fetchImpl, 'admin@example.test', 'Mail test failed')).rejects.toThrow('smtp unavailable')
   })
 
   test('uses fallback message for non-JSON failures', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue({
+    const fetchImpl = vi.fn().mockResolvedValue({
       ok: false,
       headers: {
         get: () => 'text/plain'

@@ -1,4 +1,4 @@
-const { getPageDownloadPath, getPageSourcePath } = require('./page-actions')
+import { getPageDownloadPath, getPageSourcePath } from './page-actions.ts'
 
 describe('page actions helper', () => {
   test('returns live page download path without version query', () => {

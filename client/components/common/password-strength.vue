@@ -8,11 +8,19 @@
     .caption(v-if='!hideText', :class='passwordStrengthColor + "--text"') {{passwordStrengthText}}
 </template>
 
-<script>
+<script lang='ts'>
+import { defineComponent } from 'vue'
 import zxcvbn from 'zxcvbn'
 import _ from 'lodash'
 
-export default {
+type PasswordStrengthContext = {
+  passwordStrength: number
+  passwordStrengthColor: string
+  passwordStrengthText: string
+  $t: (key: string) => string
+}
+
+export default defineComponent({
   props: {
     value: {
       type: String,
@@ -31,12 +39,12 @@ export default {
     }
   },
   watch: {
-    value(newValue) {
+    value(newValue: string) {
       this.checkPasswordStrength(newValue)
     }
   },
   methods: {
-    checkPasswordStrength: _.debounce(function (pwd) {
+    checkPasswordStrength: _.debounce(function (this: PasswordStrengthContext, pwd: string) {
       if (!pwd || pwd.length < 1) {
         this.passwordStrength = 0
         this.passwordStrengthColor = 'grey'
@@ -62,8 +70,11 @@ export default {
         this.passwordStrengthText = this.$t('common:password.veryStrong')
       }
     }, 100)
+  },
+  beforeUnmount() {
+    this.checkPasswordStrength.cancel()
   }
-}
+})
 </script>
 
 <style lang="scss">

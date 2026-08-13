@@ -1,4 +1,4 @@
-const { fetchContributors } = require('./contribute-api')
+import { fetchContributors } from './contribute-api.ts'
 
 function createJsonResponse (payload, ok = true) {
   return {
@@ -12,7 +12,7 @@ function createJsonResponse (payload, ok = true) {
 
 describe('contribute api helper', () => {
   test('requests contributors with same-origin JSON options', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse([]))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([]))
 
     await expect(fetchContributors(fetchImpl)).resolves.toEqual([])
 
@@ -25,7 +25,7 @@ describe('contribute api helper', () => {
   })
 
   test('validates and sanitizes contributor rows', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse([
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([
       {
         id: 'one',
         source: 'github',
@@ -52,7 +52,7 @@ describe('contribute api helper', () => {
   })
 
   test('allows null optional website, twitter, and avatar fields', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse([
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([
       {
         id: 'two',
         source: 'patreon',
@@ -78,13 +78,13 @@ describe('contribute api helper', () => {
   })
 
   test('rejects malformed root payloads', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ contributors: [] }))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ contributors: [] }))
 
     await expect(fetchContributors(fetchImpl, 'Bad contributors payload')).rejects.toThrow('Bad contributors payload')
   })
 
   test('rejects malformed contributor rows with invalid required fields', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse([
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([
       {
         id: 123,
         source: 'github',
@@ -100,7 +100,7 @@ describe('contribute api helper', () => {
   })
 
   test('rejects malformed contributor rows with invalid optional fields', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse([
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([
       {
         id: 'one',
         source: 'github',
@@ -116,7 +116,7 @@ describe('contribute api helper', () => {
   })
 
   test('propagates API JSON errors', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue({
+    const fetchImpl = vi.fn().mockResolvedValue({
       ok: false,
       headers: {
         get: () => 'application/json; charset=utf-8'
@@ -128,7 +128,7 @@ describe('contribute api helper', () => {
   })
 
   test('rejects non-JSON successful responses', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue({
+    const fetchImpl = vi.fn().mockResolvedValue({
       ok: true,
       headers: {
         get: () => 'text/plain'

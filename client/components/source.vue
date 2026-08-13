@@ -1,14 +1,14 @@
 <template lang='pug'>
-  v-app(:dark='$vuetify.theme.dark').source
+  v-app(:dark='$vuetify.theme.current.dark').source
     nav-header
-    v-content
+    v-main
       v-toolbar(color='primary', dark)
         i18next.subheading(v-if='versionId > 0', path='common:page.viewingSourceVersion', tag='div')
           strong(place='date', :title='$helpers.formatMoment(versionDate, `LLL`)') {{ $helpers.formatMoment(versionDate, 'lll') }}
           strong(place='path') /{{path}}
         i18next.subheading(v-else, path='common:page.viewingSource', tag='div')
           strong(place='path') /{{path}}
-        template(v-if='$vuetify.breakpoint.mdAndUp')
+        template(v-if='$vuetify.display.mdAndUp')
           v-spacer
           .caption.blue--text.text--lighten-3 {{$t('common:page.id', { id: pageId })}}
           .caption.blue--text.text--lighten-3.ml-4(v-if='versionId > 0') {{$t('common:page.versionId', { id: versionId })}}
@@ -20,7 +20,7 @@
           v-btn.ml-4(depressed, color='blue darken-1', @click='goLive') {{$t('common:page.returnNormalView')}}
       v-card(tile)
         v-card-text
-          v-card.grey.radius-7(flat, :class='$vuetify.theme.dark ? `darken-4` : `lighten-4`')
+          v-card.grey.radius-7(flat, :class='$vuetify.theme.current.dark ? `darken-4` : `lighten-4`')
             v-card-text
               pre
                 slot
@@ -30,8 +30,9 @@
     search-results
 </template>
 
-<script>
+<script lang='ts'>
 import { getPageDownloadPath } from '../helpers/page-actions'
+import { wikiStore } from '@/store/index.ts'
 
 export default {
   props: {
@@ -64,14 +65,14 @@ export default {
     return {}
   },
   created () {
-    this.$store.commit('page/SET_ID', this.id)
-    this.$store.commit('page/SET_LOCALE', this.locale)
-    this.$store.commit('page/SET_PATH', this.path)
+    wikiStore.page.id = this.pageId
+    wikiStore.page.locale = this.locale
+    wikiStore.page.path = this.path
 
-    this.$store.commit('page/SET_MODE', 'source')
+    wikiStore.page.mode = 'source'
 
     if (this.effectivePermissions) {
-      this.$store.set('page/effectivePermissions', JSON.parse(Buffer.from(this.effectivePermissions, 'base64').toString()))
+      wikiStore.page.effectivePermissions = JSON.parse(Buffer.from(this.effectivePermissions, 'base64').toString())
     }
   },
   methods: {

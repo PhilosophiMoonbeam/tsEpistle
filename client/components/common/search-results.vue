@@ -15,17 +15,17 @@
         img(src='/_assets/svg/icon-no-results.svg', alt='No Results')
         .subheading {{$t('common:header.searchNoResult')}}
       template(v-if='search && search.length >= 2 && results && results.length > 0')
-        v-subheader.white--text {{$t('common:header.searchResultsCount', { total: response.totalHits })}}
+        v-list-subheader.white--text {{$t('common:header.searchResultsCount', { total: response.totalHits })}}
         v-list.search-results-items.radius-7.py-0(two-line, dense)
-          template(v-for='(item, idx) of results')
-            v-list-item(@click='goToPage(item)', @click.middle="goToPageInNewTab(item)", :key='item.id', :class='idx === cursor ? `highlighted` : ``')
-              v-list-item-avatar(tile)
+          template(v-for='(item, idx) of results', :key='item.id')
+            v-list-item(@click='goToPage(item)', @click.middle="goToPageInNewTab(item)", :class='idx === cursor ? `highlighted` : ``')
+              v-avatar(tile)
                 img(src='/_assets/svg/icon-selective-highlighting.svg')
-              v-list-item-content
+              div.v-list-item-content
                 v-list-item-title(v-text='item.title')
                 v-list-item-subtitle.caption(v-text='item.description')
                 .caption.grey--text(v-text='item.path')
-              v-list-item-action
+              div.v-list-item-action
                 v-chip(label, outlined) {{item.locale.toUpperCase()}}
             v-divider(v-if='idx < results.length - 1')
         v-pagination.mt-3(
@@ -36,13 +36,13 @@
           circle
         )
       template(v-if='suggestions && suggestions.length > 0')
-        v-subheader.white--text.mt-3 {{$t('common:header.searchDidYouMean')}}
+        v-list-subheader.white--text.mt-3 {{$t('common:header.searchDidYouMean')}}
         v-list.search-results-suggestions.radius-7(dense, dark)
-          template(v-for='(term, idx) of suggestions')
-            v-list-item(:key='term', @click='setSearchTerm(term)', :class='idx + results.length === cursor ? `highlighted` : ``')
-              v-list-item-avatar
+          template(v-for='(term, idx) of suggestions', :key='term')
+            v-list-item(@click='setSearchTerm(term)', :class='idx + results.length === cursor ? `highlighted` : ``')
+              v-avatar
                 v-icon mdi-magnify
-              v-list-item-content
+              div.v-list-item-content
                 v-list-item-title(v-text='term')
             v-divider(v-if='idx < suggestions.length - 1')
       .text-xs-center.pt-5(v-if='search && search.length > 1')
@@ -54,15 +54,22 @@
           span {{$t('common:header.searchClose')}}
 </template>
 
-<script>
+<script lang='ts'>
+import { defineComponent } from 'vue'
 import _ from 'lodash'
-import { sync } from 'vuex-pathify'
+import { wikiStore } from '@/store/index.ts'
 import { OrbitSpinner } from 'epic-spinners'
 
 import { onSearchEnter, onSearchMove, offSearchEnter, offSearchMove } from '../../helpers/search-navigation-events'
-import { searchPages } from '../../helpers/pages-api'
+import { searchPages, type PageSearchResult, type PageSearchRow } from '../../helpers/pages-api'
 
-export default {
+const emptySearchResponse = (): PageSearchResult => ({
+  results: [],
+  suggestions: [],
+  totalHits: 0
+})
+
+export default defineComponent({
   components: {
     OrbitSpinner
   },
@@ -71,28 +78,39 @@ export default {
       cursor: 0,
       pagination: 1,
       perPage: 10,
-      searchTimer: null,
-      response: {
-        results: [],
-        suggestions: [],
-        totalHits: 0
-      }
+      searchTimer: null as number | null,
+      response: emptySearchResponse()
     }
   },
   computed: {
-    search: sync('site/search'),
-    searchIsFocused: sync('site/searchIsFocused'),
-    searchIsLoading: sync('site/searchIsLoading'),
-    searchRestrictLocale: sync('site/searchRestrictLocale'),
-    searchRestrictPath: sync('site/searchRestrictPath'),
-    results() {
+    search: {
+      get(): string { return wikiStore.site.search },
+      set(value: string) { wikiStore.site.search = value }
+    },
+    searchIsFocused: {
+      get(): boolean { return wikiStore.site.searchIsFocused },
+      set(value: boolean) { wikiStore.site.searchIsFocused = value }
+    },
+    searchIsLoading: {
+      get(): boolean { return wikiStore.site.searchIsLoading },
+      set(value: boolean) { wikiStore.site.searchIsLoading = value }
+    },
+    searchRestrictLocale: {
+      get(): boolean { return wikiStore.site.searchRestrictLocale },
+      set(value: boolean) { wikiStore.site.searchRestrictLocale = value }
+    },
+    searchRestrictPath: {
+      get(): boolean { return wikiStore.site.searchRestrictPath },
+      set(value: boolean) { wikiStore.site.searchRestrictPath = value }
+    },
+    results(): PageSearchRow[] {
       const currentIndex = (this.pagination - 1) * this.perPage
       return this.response.results ? _.slice(this.response.results, currentIndex, currentIndex + this.perPage) : []
     },
     hits() {
       return this.response.totalHits ? this.response.totalHits : 0
     },
-    suggestions() {
+    suggestions(): string[] {
       return this.response.suggestions ? this.response.suggestions : []
     },
     paginationLength() {
@@ -100,16 +118,16 @@ export default {
     }
   },
   watch: {
-    search(newValue, oldValue) {
+    search(newValue: string | null) {
       this.cursor = 0
-      clearTimeout(this.searchTimer)
+      if (this.searchTimer !== null) window.clearTimeout(this.searchTimer)
       if (!newValue || newValue.length < 2) {
         this.searchIsLoading = false
-        this.response = { results: [], suggestions: [], totalHits: 0 }
+        this.response = emptySearchResponse()
         return
       }
       this.searchIsLoading = true
-      this.searchTimer = setTimeout(() => this.runSearch(newValue), 300)
+      this.searchTimer = window.setTimeout(() => this.runSearch(newValue), 300)
     },
     results() {
       this.cursor = 0
@@ -119,13 +137,13 @@ export default {
     onSearchMove(this.handleSearchMove)
     onSearchEnter(this.handleSearchEnter)
   },
-  beforeDestroy() {
-    clearTimeout(this.searchTimer)
+  beforeUnmount() {
+    if (this.searchTimer !== null) window.clearTimeout(this.searchTimer)
     offSearchMove(this.handleSearchMove)
     offSearchEnter(this.handleSearchEnter)
   },
   methods: {
-    handleSearchMove(dir) {
+    handleSearchMove(dir: string): void {
       this.cursor += ((dir === 'up') ? -1 : 1)
       if (this.cursor < -1) {
         this.cursor = -1
@@ -139,30 +157,31 @@ export default {
       }
 
       if (this.cursor >= 0 && this.cursor < this.results.length) {
-        this.goToPage(_.nth(this.results, this.cursor))
+        const result = _.nth(this.results, this.cursor)
+        if (result) this.goToPage(result)
       } else if (this.cursor >= 0) {
         this.setSearchTerm(_.nth(this.suggestions, this.cursor - this.results.length))
       }
     },
-    setSearchTerm(term) {
-      this.search = term
+    setSearchTerm(term: string | undefined): void {
+      if (term !== undefined) this.search = term
     },
-    goToPage(item) {
+    goToPage(item: PageSearchRow): void {
       window.location.assign(`/${item.locale}/${item.path}`)
     },
-    goToPageInNewTab(item) {
+    goToPageInNewTab(item: PageSearchRow): void {
       window.open(`/${item.locale}/${item.path}`, '_blank')
     },
-    async runSearch(query) {
+    async runSearch(query: string): Promise<void> {
       try {
         this.response = await searchPages(window.fetch.bind(window), query, {
-          locale: this.searchRestrictLocale || undefined,
-          path: this.searchRestrictPath || undefined
+          locale: this.searchRestrictLocale ? wikiStore.page.locale : undefined,
+          path: this.searchRestrictPath ? wikiStore.page.path : undefined
         })
         this.pagination = 1
       } catch (err) {
         console.warn(err)
-        this.response = { results: [], suggestions: [], totalHits: 0 }
+        this.response = emptySearchResponse()
       } finally {
         if (query === this.search) {
           this.searchIsLoading = false
@@ -170,7 +189,7 @@ export default {
       }
     }
   }
-}
+})
 </script>
 
 <style lang="scss">

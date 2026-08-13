@@ -1,20 +1,47 @@
-type JsonResponse = { ok: boolean, headers?: { get: (name: string) => string | null }, json: () => Promise<any> }
-type FetchImpl = (url: string, init: any) => Promise<JsonResponse>
+import { isRecord } from './type-guards'
 
-async function parseJsonResponse (response: JsonResponse, fallbackMessage: string): Promise<any> {
-  const hasHeaderReader = response && response.headers && typeof response.headers.get === 'function'
-  const contentType = hasHeaderReader ? response.headers.get('content-type') || '' : ''
+type JsonResponse = {
+  ok: boolean
+  headers?: { get: (name: string) => string | null }
+  json: () => Promise<unknown>
+}
+type FetchImpl = (url: string, init: RequestInit) => Promise<JsonResponse>
 
-  let payload = null
+export type GroupPageRuleMatch = 'START' | 'EXACT' | 'END' | 'REGEX' | 'TAG'
+
+const GROUP_PAGE_RULE_MATCHES: Record<GroupPageRuleMatch, true> = {
+  START: true,
+  EXACT: true,
+  END: true,
+  REGEX: true,
+  TAG: true
+}
+
+function isInteger (value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value)
+}
+
+function isStringArray (value: unknown): value is string[] {
+  return Array.isArray(value) && value.every(item => typeof item === 'string')
+}
+
+function isGroupPageRuleMatch (value: unknown): value is GroupPageRuleMatch {
+  return typeof value === 'string' && Object.prototype.hasOwnProperty.call(GROUP_PAGE_RULE_MATCHES, value)
+}
+
+async function parseJsonResponse (response: JsonResponse, fallbackMessage: string): Promise<unknown> {
+  const contentType = response.headers?.get('content-type') || ''
+  let payload: unknown = null
+
   if (contentType.includes('application/json')) {
     payload = await response.json()
   }
 
   if (!response.ok) {
-    if (payload && typeof payload.error === 'string' && payload.error.length > 0) {
+    if (isRecord(payload) && typeof payload.error === 'string' && payload.error.length > 0) {
       throw new Error(payload.error)
     }
-    if (payload && typeof payload.message === 'string' && payload.message.length > 0) {
+    if (isRecord(payload) && typeof payload.message === 'string' && payload.message.length > 0) {
       throw new Error(payload.message)
     }
     throw new Error(fallbackMessage)
@@ -27,49 +54,105 @@ async function parseJsonResponse (response: JsonResponse, fallbackMessage: strin
   return payload
 }
 
-function normalizeGroupOption (row: any, fallbackMessage: string): any {
-  if (!row || typeof row !== 'object' || Array.isArray(row)) {
-    throw new Error(fallbackMessage)
-  }
-
-  if (!Number.isInteger(row.id) || typeof row.name !== 'string' || row.name.length < 1 || typeof row.isSystem !== 'boolean') {
-    throw new Error(fallbackMessage)
-  }
-
-  return row
+export type GroupOption = {
+  id: number
+  name: string
+  isSystem: boolean
 }
 
-function normalizeGroupListRow (row: any, fallbackMessage: string): any {
-  if (!row || typeof row !== 'object' || Array.isArray(row)) {
-    throw new Error(fallbackMessage)
-  }
-
-  if (!Number.isInteger(row.id) || typeof row.name !== 'string' || row.name.length < 1 || typeof row.isSystem !== 'boolean' || !Number.isInteger(row.userCount)) {
-    throw new Error(fallbackMessage)
-  }
-
-  if (typeof row.createdAt !== 'string' || row.createdAt.length < 1 || typeof row.updatedAt !== 'string' || row.updatedAt.length < 1) {
-    throw new Error(fallbackMessage)
-  }
-
-  return row
+export type GroupListRow = GroupOption & {
+  userCount: number
+  createdAt: string
+  updatedAt: string
 }
 
-function normalizeGroupDetailPageRule (row: any, fallbackMessage: string): any {
-  if (!row || typeof row !== 'object' || Array.isArray(row)) {
+
+export type GroupPageRule = {
+  id: string
+  path: string
+  roles: string[]
+  match: GroupPageRuleMatch
+  deny: boolean
+  locales: string[]
+}
+
+export type GroupUserRow = {
+  id: number
+  name: string
+  email: string
+}
+
+export type GroupDetails = GroupOption & {
+  redirectOnLogin: string
+  permissions: string[]
+  pageRules: GroupPageRule[]
+  users: GroupUserRow[]
+  createdAt: string
+  updatedAt: string
+}
+
+export type GroupEditorState = Omit<GroupDetails, 'createdAt' | 'updatedAt'>
+
+export type GroupUpdateInput = Pick<GroupEditorState, 'name' | 'redirectOnLogin' | 'permissions' | 'pageRules'>
+
+export type GroupMutationResponse = {
+  succeeded: true
+  message: string
+}
+
+export type GroupCreateResponse = GroupMutationResponse & {
+  group: GroupOption
+}
+
+export function createEmptyGroupEditorState (): GroupEditorState {
+  return {
+    id: 0,
+    name: '',
+    isSystem: false,
+    permissions: [],
+    pageRules: [],
+    users: [],
+    redirectOnLogin: '/'
+  }
+}
+
+function normalizeGroupOption (row: unknown, fallbackMessage: string): GroupOption {
+  if (!isRecord(row) || !isInteger(row.id) || typeof row.name !== 'string' || row.name.length < 1 || typeof row.isSystem !== 'boolean') {
     throw new Error(fallbackMessage)
   }
 
-  if (typeof row.id !== 'string' || row.id.length < 1 || typeof row.path !== 'string' || typeof row.match !== 'string' || typeof row.deny !== 'boolean') {
+  return {
+    id: row.id,
+    name: row.name,
+    isSystem: row.isSystem
+  }
+}
+
+function normalizeGroupListRow (row: unknown, fallbackMessage: string): GroupListRow {
+  const group = normalizeGroupOption(row, fallbackMessage)
+  if (!isRecord(row) || !isInteger(row.userCount) || typeof row.createdAt !== 'string' || row.createdAt.length < 1 || typeof row.updatedAt !== 'string' || row.updatedAt.length < 1) {
     throw new Error(fallbackMessage)
   }
-  if (!['START', 'EXACT', 'END', 'REGEX', 'TAG'].includes(row.match)) {
-    throw new Error(fallbackMessage)
+
+  return {
+    ...group,
+    userCount: row.userCount,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt
   }
-  if (!Array.isArray(row.roles) || row.roles.some(role => typeof role !== 'string')) {
-    throw new Error(fallbackMessage)
-  }
-  if (!Array.isArray(row.locales) || row.locales.some(locale => typeof locale !== 'string')) {
+}
+
+function normalizeGroupDetailPageRule (row: unknown, fallbackMessage: string): GroupPageRule {
+  if (
+    !isRecord(row) ||
+    typeof row.id !== 'string' ||
+    row.id.length < 1 ||
+    typeof row.path !== 'string' ||
+    !isGroupPageRuleMatch(row.match) ||
+    typeof row.deny !== 'boolean' ||
+    !isStringArray(row.roles) ||
+    !isStringArray(row.locales)
+  ) {
     throw new Error(fallbackMessage)
   }
 
@@ -83,12 +166,8 @@ function normalizeGroupDetailPageRule (row: any, fallbackMessage: string): any {
   }
 }
 
-function normalizeGroupDetailUser (row: any, fallbackMessage: string): any {
-  if (!row || typeof row !== 'object' || Array.isArray(row)) {
-    throw new Error(fallbackMessage)
-  }
-
-  if (!Number.isInteger(row.id) || typeof row.name !== 'string' || row.name.length < 1 || typeof row.email !== 'string' || row.email.length < 1) {
+function normalizeGroupDetailUser (row: unknown, fallbackMessage: string): GroupUserRow {
+  if (!isRecord(row) || !isInteger(row.id) || typeof row.name !== 'string' || row.name.length < 1 || typeof row.email !== 'string' || row.email.length < 1) {
     throw new Error(fallbackMessage)
   }
 
@@ -99,32 +178,39 @@ function normalizeGroupDetailUser (row: any, fallbackMessage: string): any {
   }
 }
 
-function normalizeGroupDetail (payload: any, fallbackMessage: string): any {
-  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
-    throw new Error(fallbackMessage)
-  }
-
-  if (!Number.isInteger(payload.id) || typeof payload.name !== 'string' || payload.name.length < 1 || typeof payload.redirectOnLogin !== 'string' || typeof payload.isSystem !== 'boolean') {
-    throw new Error(fallbackMessage)
-  }
-  if (!Array.isArray(payload.permissions) || payload.permissions.some(permission => typeof permission !== 'string')) {
-    throw new Error(fallbackMessage)
-  }
-  if (!Array.isArray(payload.pageRules) || !Array.isArray(payload.users)) {
-    throw new Error(fallbackMessage)
-  }
-  if (typeof payload.createdAt !== 'string' || payload.createdAt.length < 1 || typeof payload.updatedAt !== 'string' || payload.updatedAt.length < 1) {
+function normalizeGroupDetail (payload: unknown, fallbackMessage: string): GroupDetails {
+  if (
+    !isRecord(payload) ||
+    !isInteger(payload.id) ||
+    typeof payload.name !== 'string' ||
+    payload.name.length < 1 ||
+    typeof payload.redirectOnLogin !== 'string' ||
+    typeof payload.isSystem !== 'boolean' ||
+    !isStringArray(payload.permissions) ||
+    !Array.isArray(payload.pageRules) ||
+    !Array.isArray(payload.users) ||
+    typeof payload.createdAt !== 'string' ||
+    payload.createdAt.length < 1 ||
+    typeof payload.updatedAt !== 'string' ||
+    payload.updatedAt.length < 1
+  ) {
     throw new Error(fallbackMessage)
   }
 
   return {
-    ...payload,
+    id: payload.id,
+    name: payload.name,
+    redirectOnLogin: payload.redirectOnLogin,
+    isSystem: payload.isSystem,
+    permissions: payload.permissions,
     pageRules: payload.pageRules.map(row => normalizeGroupDetailPageRule(row, fallbackMessage)),
-    users: payload.users.map(row => normalizeGroupDetailUser(row, fallbackMessage))
+    users: payload.users.map(row => normalizeGroupDetailUser(row, fallbackMessage)),
+    createdAt: payload.createdAt,
+    updatedAt: payload.updatedAt
   }
 }
 
-export async function fetchGroupOptions (fetchImpl: FetchImpl, fallbackMessage = 'Groups response is invalid'): Promise<any[]> {
+export async function fetchGroupOptions (fetchImpl: FetchImpl, fallbackMessage = 'Groups response is invalid'): Promise<GroupOption[]> {
   const response = await fetchImpl('/_api/groups', {
     credentials: 'same-origin',
     headers: {
@@ -140,7 +226,7 @@ export async function fetchGroupOptions (fetchImpl: FetchImpl, fallbackMessage =
   return payload.map(row => normalizeGroupOption(row, fallbackMessage))
 }
 
-export async function fetchGroupsList (fetchImpl: FetchImpl, fallbackMessage = 'Groups list response is invalid'): Promise<any[]> {
+export async function fetchGroupsList (fetchImpl: FetchImpl, fallbackMessage = 'Groups list response is invalid'): Promise<GroupListRow[]> {
   const response = await fetchImpl('/_api/groups/list', {
     credentials: 'same-origin',
     headers: {
@@ -156,7 +242,7 @@ export async function fetchGroupsList (fetchImpl: FetchImpl, fallbackMessage = '
   return payload.map(row => normalizeGroupListRow(row, fallbackMessage))
 }
 
-export async function fetchGroupDetails (fetchImpl: FetchImpl, id: number | string, fallbackMessage = 'Group detail response is invalid'): Promise<any> {
+export async function fetchGroupDetails (fetchImpl: FetchImpl, id: number | string, fallbackMessage = 'Group detail response is invalid'): Promise<GroupDetails> {
   const response = await fetchImpl(`/_api/groups/${id}`, {
     credentials: 'same-origin',
     headers: {
@@ -167,19 +253,18 @@ export async function fetchGroupDetails (fetchImpl: FetchImpl, id: number | stri
   return normalizeGroupDetail(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
 }
 
-function normalizeGroupMutationResponse (payload: any, fallbackMessage: string): any {
-  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+function normalizeGroupMutationResponse (payload: unknown, fallbackMessage: string): GroupMutationResponse {
+  if (!isRecord(payload) || payload.succeeded !== true || typeof payload.message !== 'string' || payload.message.length < 1) {
     throw new Error(fallbackMessage)
   }
 
-  if (payload.succeeded !== true || typeof payload.message !== 'string' || payload.message.length < 1) {
-    throw new Error(fallbackMessage)
+  return {
+    succeeded: true,
+    message: payload.message
   }
-
-  return payload
 }
 
-export async function createGroup (fetchImpl: FetchImpl, name: string, fallbackMessage = 'Group create response is invalid'): Promise<any> {
+export async function createGroup (fetchImpl: FetchImpl, name: string, fallbackMessage = 'Group create response is invalid'): Promise<GroupCreateResponse> {
   const response = await fetchImpl('/_api/groups', {
     method: 'POST',
     credentials: 'same-origin',
@@ -190,10 +275,18 @@ export async function createGroup (fetchImpl: FetchImpl, name: string, fallbackM
     body: JSON.stringify({ name })
   })
 
-  return normalizeGroupMutationResponse(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
+  const payload = await parseJsonResponse(response, fallbackMessage)
+  const result = normalizeGroupMutationResponse(payload, fallbackMessage)
+  if (!isRecord(payload)) {
+    throw new Error(fallbackMessage)
+  }
+  return {
+    ...result,
+    group: normalizeGroupOption(payload.group, fallbackMessage)
+  }
 }
 
-export async function assignGroupUser (fetchImpl: FetchImpl, groupId: number | string, userId: number | string, fallbackMessage = 'Group user assign response is invalid'): Promise<any> {
+export async function assignGroupUser (fetchImpl: FetchImpl, groupId: number | string, userId: number | string, fallbackMessage = 'Group user assign response is invalid'): Promise<GroupMutationResponse> {
   const response = await fetchImpl(`/_api/groups/${groupId}/users/${userId}`, {
     method: 'POST',
     credentials: 'same-origin',
@@ -205,7 +298,7 @@ export async function assignGroupUser (fetchImpl: FetchImpl, groupId: number | s
   return normalizeGroupMutationResponse(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
 }
 
-export async function unassignGroupUser (fetchImpl: FetchImpl, groupId: number | string, userId: number | string, fallbackMessage = 'Group user unassign response is invalid'): Promise<any> {
+export async function unassignGroupUser (fetchImpl: FetchImpl, groupId: number | string, userId: number | string, fallbackMessage = 'Group user unassign response is invalid'): Promise<GroupMutationResponse> {
   const response = await fetchImpl(`/_api/groups/${groupId}/users/${userId}`, {
     method: 'DELETE',
     credentials: 'same-origin',
@@ -217,7 +310,7 @@ export async function unassignGroupUser (fetchImpl: FetchImpl, groupId: number |
   return normalizeGroupMutationResponse(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
 }
 
-export async function deleteGroup (fetchImpl: FetchImpl, id: number | string, fallbackMessage = 'Group delete response is invalid'): Promise<any> {
+export async function deleteGroup (fetchImpl: FetchImpl, id: number | string, fallbackMessage = 'Group delete response is invalid'): Promise<GroupMutationResponse> {
   const response = await fetchImpl(`/_api/groups/${id}`, {
     method: 'DELETE',
     credentials: 'same-origin',
@@ -229,7 +322,7 @@ export async function deleteGroup (fetchImpl: FetchImpl, id: number | string, fa
   return normalizeGroupMutationResponse(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
 }
 
-export async function updateGroup (fetchImpl: FetchImpl, id: number | string, payload: any, fallbackMessage = 'Group update response is invalid'): Promise<any> {
+export async function updateGroup (fetchImpl: FetchImpl, id: number | string, payload: GroupUpdateInput, fallbackMessage = 'Group update response is invalid'): Promise<GroupMutationResponse> {
   const response = await fetchImpl(`/_api/groups/${id}`, {
     method: 'PATCH',
     credentials: 'same-origin',

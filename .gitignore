@@ -10,11 +10,10 @@ dist
 node_modules
 npm/node_modules
 
-# NPM / Yarn
+# Package managers
 .npm
 .node_repl_history
 npm-debug.log*
-.yarn
 
 # Generated assets
 /assets

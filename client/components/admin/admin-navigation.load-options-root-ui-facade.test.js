@@ -1,5 +1,8 @@
-const fs = require('fs')
-const path = require('path')
+import fs from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 const sourcePath = path.join(__dirname, 'admin-navigation.vue')
 const source = fs.readFileSync(sourcePath, 'utf8')
@@ -28,26 +31,28 @@ describe('admin-navigation root UI facade for read-only option loaders and refre
   const loadNavigation = extractMethod('loadNavigation')
   const refresh = extractMethod('refresh')
 
-  test('imports only the root UI helpers needed by the option loaders and refresh notification', () => {
-    expect(source).toContain("import { loadingStart, loadingStop, showNotification, pushGraphError } from '../../helpers/root-ui-store'")
+  test('imports the typed wiki store and error helper used by loaders and refresh', () => {
+    expect(source).toMatch(/<script\s+lang=['"]ts['"]>/)
+    expect(source).toContain("import { getErrorMessage } from '../../helpers/root-ui-store'")
+    expect(source).toContain("import { wikiStore } from '@/store/index.ts'")
   })
 
-  test('loadAllLocales routes loading and error notification through the facade', () => {
-    expect(loadAllLocales).toContain("loadingStart(this.$store, 'admin-navigation-locales')")
-    expect(loadAllLocales).toContain('showNotification(this.$store, {')
-    expect(loadAllLocales).toContain('message: err.message')
-    expect(loadAllLocales).toContain("loadingStop(this.$store, 'admin-navigation-locales')")
+  test('loadAllLocales routes loading and error notification through the wiki store', () => {
+    expect(loadAllLocales).toContain("wikiStore.startLoading('admin-navigation-locales')")
+    expect(loadAllLocales).toContain('wikiStore.showNotification({')
+    expect(loadAllLocales).toContain('message: getErrorMessage(err)')
+    expect(loadAllLocales).toContain("wikiStore.stopLoading('admin-navigation-locales')")
 
     expect(loadAllLocales).not.toContain("this.$store.commit('loadingStart', 'admin-navigation-locales')")
     expect(loadAllLocales).not.toContain("this.$store.commit('showNotification'")
     expect(loadAllLocales).not.toContain("this.$store.commit('loadingStop', 'admin-navigation-locales')")
   })
 
-  test('loadGroups routes loading and error notification through the facade', () => {
-    expect(loadGroups).toContain("loadingStart(this.$store, 'admin-navigation-groups')")
-    expect(loadGroups).toContain('showNotification(this.$store, {')
-    expect(loadGroups).toContain('message: err.message')
-    expect(loadGroups).toContain("loadingStop(this.$store, 'admin-navigation-groups')")
+  test('loadGroups routes loading and error notification through the wiki store', () => {
+    expect(loadGroups).toContain("wikiStore.startLoading('admin-navigation-groups')")
+    expect(loadGroups).toContain('wikiStore.showNotification({')
+    expect(loadGroups).toContain('message: getErrorMessage(err)')
+    expect(loadGroups).toContain("wikiStore.stopLoading('admin-navigation-groups')")
 
     expect(loadGroups).not.toContain("this.$store.commit('loadingStart', 'admin-navigation-groups')")
     expect(loadGroups).not.toContain("this.$store.commit('showNotification'")
@@ -60,24 +65,24 @@ describe('admin-navigation root UI facade for read-only option loaders and refre
 
     for (const method of [loadAllLocales, loadGroups]) {
       expect(method).toContain("style: 'red'")
-      expect(method).toContain('message: err.message')
+      expect(method).toContain('message: getErrorMessage(err)')
       expect(method).toContain("icon: 'alert'")
     }
   })
 
-  test('loadNavigation routes REST loading, state update, notification, and graph errors through facades', () => {
-    expect(loadNavigation).toContain("loadingStart(this.$store, 'admin-navigation-refresh')")
+  test('loadNavigation routes REST loading, state update, notification, and errors through the wiki store', () => {
+    expect(loadNavigation).toContain("wikiStore.startLoading('admin-navigation-refresh')")
     expect(loadNavigation).toContain("const navigation = await fetchNavigation(window.fetch.bind(window), 'Navigation response is invalid')")
     expect(loadNavigation).toContain('this.config = _.cloneDeep(navigation.config)')
     expect(loadNavigation).toContain('this.trees = _.cloneDeep(navigation.tree)')
-    expect(loadNavigation).toContain('this.current = {}')
+    expect(loadNavigation).toContain('this.current = createEmptyNavigationItem()')
     expect(loadNavigation).toContain('if (notify)')
-    expect(loadNavigation).toContain('showNotification(this.$store, {')
+    expect(loadNavigation).toContain('wikiStore.showNotification({')
     expect(loadNavigation).toContain("message: 'Navigation has been refreshed.'")
     expect(loadNavigation).toContain("style: 'success'")
     expect(loadNavigation).toContain("icon: 'cached'")
-    expect(loadNavigation).toContain('pushGraphError(this.$store, err)')
-    expect(loadNavigation).toContain("loadingStop(this.$store, 'admin-navigation-refresh')")
+    expect(loadNavigation).toContain('wikiStore.showError(err)')
+    expect(loadNavigation).toContain("wikiStore.stopLoading('admin-navigation-refresh')")
     expect(loadNavigation).not.toContain('$store.commit')
   })
 
@@ -87,9 +92,9 @@ describe('admin-navigation root UI facade for read-only option loaders and refre
   })
 
   test('keeps broader navigation save and template out of this slice', () => {
-    expect(source).toContain("loadingStart(this.$store, 'admin-navigation-save')")
-    expect(source).toContain('pushGraphError(this.$store, err)')
-    expect(source).toContain("loadingStop(this.$store, 'admin-navigation-save')")
+    expect(source).toContain("wikiStore.startLoading('admin-navigation-save')")
+    expect(source).toContain('wikiStore.showError(err)')
+    expect(source).toContain("wikiStore.stopLoading('admin-navigation-save')")
     expect(source).toContain("v-btn.animated.fadeInDown(color='success', depressed, @click='save', large)")
   })
 })

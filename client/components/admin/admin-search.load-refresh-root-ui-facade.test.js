@@ -1,8 +1,8 @@
-const fs = require('fs')
-const path = require('path')
+import fs from 'node:fs'
+import path from 'node:path'
 
 const extractScript = (source) => {
-  const match = source.match(/<script>\s*([\s\S]*?)\s*<\/script>/)
+  const match = source.match(/<script(?:\s+lang=["']ts["'])?>\s*([\s\S]*?)\s*<\/script>/)
   return match && match[1]
 }
 
@@ -63,6 +63,8 @@ describe('admin-search load/refresh/save/rebuild root UI facade migration guard'
 
   test('admin-search.vue imports REST and root UI facades needed by loadEngines(), refresh(), save(), and rebuild()', () => {
     expect(script).not.toBeNull()
+    expect(source).toContain("<script lang='ts'>")
+    expect(script).toContain("import { wikiStore } from '@/store/index.ts'")
     expect(script).toMatch(
       /import\s+\{(?=[^}]*\bloadingStart\b)(?=[^}]*\bloadingStop\b)(?=[^}]*\bshowNotification\b)(?=[^}]*\bpushGraphError\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/root-ui-store['"]/
     )
@@ -75,12 +77,12 @@ describe('admin-search load/refresh/save/rebuild root UI facade migration guard'
   test('loadEngines() uses loading/notification facades while preserving fetch, notifyError, rethrow, and cleanup', () => {
     expect(loadEngines).not.toBeNull()
 
-    expect(loadEngines).toMatch(/loadingStart\s*\(\s*this\.\$store\s*,\s*['"]admin-search-refresh['"]\s*\)/)
+    expect(loadEngines).toMatch(/loadingStart\s*\(\s*wikiStore\s*,\s*['"]admin-search-refresh['"]\s*\)/)
     expect(loadEngines).toMatch(/this\.engines\s*=\s*await\s+fetchSearchEngines\s*\(\s*window\.fetch\.bind\(\s*window\s*\)\s*,\s*['"]Search engines response is invalid['"]\s*\)/)
     expect(loadEngines).toMatch(/if\s*\(\s*notifyError\s*\)/)
-    expect(loadEngines).toMatch(/showNotification\s*\(\s*this\.\$store\s*,\s*\{[\s\S]*message:\s*err\.message[\s\S]*style:\s*['"]error['"][\s\S]*icon:\s*['"]alert['"][\s\S]*\}\s*\)/)
+    expect(loadEngines).toMatch(/showNotification\s*\(\s*wikiStore\s*,\s*\{[\s\S]*message:\s*getErrorMessage\s*\(\s*err\s*\)[\s\S]*style:\s*['"]error['"][\s\S]*icon:\s*['"]alert['"][\s\S]*\}\s*\)/)
     expect(loadEngines).toMatch(/throw\s+err/)
-    expect(loadEngines).toMatch(/loadingStop\s*\(\s*this\.\$store\s*,\s*['"]admin-search-refresh['"]\s*\)/)
+    expect(loadEngines).toMatch(/loadingStop\s*\(\s*wikiStore\s*,\s*['"]admin-search-refresh['"]\s*\)/)
     expect(loadEngines).not.toMatch(directRootUiCommit)
 
     expect(loadEngines.match(/\bloadingStart\s*\(/g) || []).toHaveLength(1)
@@ -93,7 +95,7 @@ describe('admin-search load/refresh/save/rebuild root UI facade migration guard'
     expect(refresh).not.toBeNull()
 
     expect(refresh).toMatch(/await\s+this\.loadEngines\s*\(\s*\)/)
-    expect(refresh).toMatch(/showNotification\s*\(\s*this\.\$store\s*,\s*\{[\s\S]*message:\s*this\.\$t\s*\(\s*['"]admin:search\.listRefreshSuccess['"]\s*\)[\s\S]*style:\s*['"]success['"][\s\S]*icon:\s*['"]cached['"][\s\S]*\}\s*\)/)
+    expect(refresh).toMatch(/showNotification\s*\(\s*wikiStore\s*,\s*\{[\s\S]*message:\s*this\.\$t\s*\(\s*['"]admin:search\.listRefreshSuccess['"]\s*\)[\s\S]*style:\s*['"]success['"][\s\S]*icon:\s*['"]cached['"][\s\S]*\}\s*\)/)
     expect(refresh).not.toMatch(directRootUiCommit)
     expect(refresh.match(/\bshowNotification\s*\(/g) || []).toHaveLength(1)
   })
@@ -104,9 +106,9 @@ describe('admin-search load/refresh/save/rebuild root UI facade migration guard'
     expect(save).toMatch(/await\s+saveSearchEngines\s*\(\s*window\.fetch\.bind\(\s*window\s*\)\s*,\s*this\.engines\.map\s*\(\s*tgt\s*=>\s*\(\{[\s\S]*isEnabled:\s*tgt\.key\s*===\s*this\.selectedEngine[\s\S]*key:\s*tgt\.key[\s\S]*config:\s*tgt\.config\.map\s*\(\s*cfg\s*=>\s*\(\{\.\.\.cfg,\s*value:\s*JSON\.stringify\s*\(\s*\{\s*v:\s*cfg\.value\.value\s*\}\s*\)\s*\}\)\)/)
     expect(save).toMatch(/this\.\$t\s*\(\s*['"]common:error\.unexpected['"]\s*\)/)
     expect(save).toMatch(/await\s+this\.loadEngines\s*\(\s*\{\s*notifyError:\s*false\s*\}\s*\)/)
-    expect(save).toMatch(/showNotification\s*\(\s*this\.\$store\s*,\s*\{[\s\S]*message:\s*this\.\$t\s*\(\s*['"]admin:search\.configSaveSuccess['"]\s*\)[\s\S]*style:\s*['"]success['"][\s\S]*icon:\s*['"]check['"][\s\S]*\}\s*\)/)
-    expect(save).toMatch(/catch\s*\(\s*err\s*\)\s*\{\s*pushGraphError\s*\(\s*this\.\$store\s*,\s*err\s*\)\s*\}/)
-    expect(save).toMatch(/loadingStop\s*\(\s*this\.\$store\s*,\s*['"]admin-search-saveengines['"]\s*\)/)
+    expect(save).toMatch(/showNotification\s*\(\s*wikiStore\s*,\s*\{[\s\S]*message:\s*this\.\$t\s*\(\s*['"]admin:search\.configSaveSuccess['"]\s*\)[\s\S]*style:\s*['"]success['"][\s\S]*icon:\s*['"]check['"][\s\S]*\}\s*\)/)
+    expect(save).toMatch(/catch\s*\(\s*err\s*\)\s*\{\s*pushGraphError\s*\(\s*wikiStore\s*,\s*err\s*\)\s*\}/)
+    expect(save).toMatch(/loadingStop\s*\(\s*wikiStore\s*,\s*['"]admin-search-saveengines['"]\s*\)/)
     expect(save).not.toMatch(/this\.\$apollo\.mutate|enginesSaveMutation|updateSearchEngines\.responseResult/)
     expect(save).not.toMatch(directRootUiCommit)
 
@@ -121,9 +123,9 @@ describe('admin-search load/refresh/save/rebuild root UI facade migration guard'
   test('rebuild() uses REST helper and root UI facades while preserving fallback error and trailing cleanup', () => {
     expect(rebuild).not.toBeNull()
 
-    expect(rebuild).toMatch(/async\s+rebuild\s*\(\s*\)\s*\{\s*loadingStart\s*\(\s*this\.\$store\s*,\s*['"]admin-search-rebuildindex['"]\s*\)\s*try\s*\{\s*await\s+rebuildSearchIndex\s*\(\s*window\.fetch\.bind\(\s*window\s*\)\s*,\s*this\.\$t\s*\(\s*['"]common:error\.unexpected['"]\s*\)\s*\)/)
-    expect(rebuild).toMatch(/showNotification\s*\(\s*this\.\$store\s*,\s*\{\s*message:\s*this\.\$t\s*\(\s*['"]admin:search\.indexRebuildSuccess['"]\s*\)\s*,\s*style:\s*['"]success['"]\s*,\s*icon:\s*['"]check['"]\s*\}\s*\)/)
-    expect(rebuild).toMatch(/catch\s*\(\s*err\s*\)\s*\{\s*pushGraphError\s*\(\s*this\.\$store\s*,\s*err\s*\)\s*\}\s*loadingStop\s*\(\s*this\.\$store\s*,\s*['"]admin-search-rebuildindex['"]\s*\)\s*\}/)
+    expect(rebuild).toMatch(/async\s+rebuild\s*\(\s*\)\s*\{\s*loadingStart\s*\(\s*wikiStore\s*,\s*['"]admin-search-rebuildindex['"]\s*\)\s*try\s*\{\s*await\s+rebuildSearchIndex\s*\(\s*window\.fetch\.bind\(\s*window\s*\)\s*,\s*this\.\$t\s*\(\s*['"]common:error\.unexpected['"]\s*\)\s*\)/)
+    expect(rebuild).toMatch(/showNotification\s*\(\s*wikiStore\s*,\s*\{\s*message:\s*this\.\$t\s*\(\s*['"]admin:search\.indexRebuildSuccess['"]\s*\)\s*,\s*style:\s*['"]success['"]\s*,\s*icon:\s*['"]check['"]\s*\}\s*\)/)
+    expect(rebuild).toMatch(/catch\s*\(\s*err\s*\)\s*\{\s*pushGraphError\s*\(\s*wikiStore\s*,\s*err\s*\)\s*\}\s*loadingStop\s*\(\s*wikiStore\s*,\s*['"]admin-search-rebuildindex['"]\s*\)\s*\}/)
     expect(rebuild).not.toMatch(directRootUiCommit)
     expect(rebuild).not.toMatch(/this\.\$apollo\.mutate|enginesRebuildMutation/)
 

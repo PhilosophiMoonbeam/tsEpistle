@@ -1,7 +1,7 @@
 <template lang='pug'>
   v-container(fluid, grid-list-lg)
-    v-layout(row, wrap)
-      v-flex(xs12)
+    v-row()
+      v-col(cols='12')
         .admin-header
           img.animated.fadeInUp(src='/_assets/svg/icon-chat-bubble.svg', alt='Comments', style='width: 80px;')
           .admin-header-title
@@ -16,29 +16,29 @@
             v-icon(left) mdi-check
             span {{$t('common:actions.apply')}}
 
-      v-flex(lg3, xs12)
+      v-col(lg='3', cols='12')
         v-card.animated.fadeInUp
           v-toolbar(flat, color='primary', dark, dense)
             .subtitle-1 {{$t('admin:comments.provider')}}
           v-list.py-0(two-line, dense)
-            template(v-for='(provider, idx) in providers')
-              v-list-item(:key='provider.key', @click='selectedProvider = provider.key', :disabled='!provider.isAvailable')
-                v-list-item-avatar(size='24')
+            template(v-for='(provider, idx) in providers', :key='provider.key')
+              v-list-item(@click='selectedProvider = provider.key', :disabled='!provider.isAvailable')
+                v-avatar(size='24')
                   v-icon(color='grey', v-if='!provider.isAvailable') mdi-minus-box-outline
                   v-icon(color='primary', v-else-if='provider.key === selectedProvider') mdi-checkbox-marked-circle-outline
                   v-icon(color='grey', v-else) mdi-checkbox-blank-circle-outline
-                v-list-item-content
+                div.v-list-item-content
                   v-list-item-title.body-2(:class='!provider.isAvailable ? `grey--text` : (selectedProvider === provider.key ? `primary--text` : ``)') {{ provider.title }}
                   v-list-item-subtitle: .caption(:class='!provider.isAvailable ? `grey--text text--lighten-1` : (selectedProvider === provider.key ? `blue--text ` : ``)') {{ provider.description }}
-                v-list-item-avatar(v-if='selectedProvider === provider.key', size='24')
+                v-avatar(v-if='selectedProvider === provider.key', size='24')
                   v-icon.animated.fadeInLeft(color='primary', large) mdi-chevron-right
               v-divider(v-if='idx < providers.length - 1')
 
-      v-flex(lg9, xs12)
+      v-col(lg='9', cols='12')
         v-card.animated.fadeInUp.wait-p2s
           v-toolbar(color='primary', dense, flat, dark)
             .subtitle-1 {{provider.title}}
-          v-card-info(color='blue')
+          div.v-card-info(color='blue')
             div
               div {{provider.description}}
               span.caption: a(:href='provider.website') {{provider.website}}
@@ -48,23 +48,21 @@
           v-card-text
             .overline.my-5 {{$t('admin:comments.providerConfig')}}
             .body-2.ml-3(v-if='!provider.config || provider.config.length < 1'): em {{$t('admin:comments.providerNoConfig')}}
-            template(v-else, v-for='cfg in provider.config')
+            template(v-else, v-for='cfg in provider.config', :key='cfg.key')
               v-select.mb-3(
                 v-if='cfg.value.type === "string" && cfg.value.enum'
                 outlined
                 :items='cfg.value.enum'
-                :key='cfg.key'
                 :label='cfg.value.title'
                 v-model='cfg.value.value'
                 prepend-icon='mdi-cog-box'
                 :hint='cfg.value.hint ? cfg.value.hint : ""'
                 persistent-hint
                 :class='cfg.value.hint ? "mb-2" : ""'
-                :style='cfg.value.maxWidth > 0 ? `max-width:` + cfg.value.maxWidth + `px;` : ``'
+                :style='(cfg.value.maxWidth || 0) > 0 ? `max-width:` + cfg.value.maxWidth + `px;` : ``'
               )
               v-switch.mb-6(
                 v-else-if='cfg.value.type === "boolean"'
-                :key='cfg.key'
                 :label='cfg.value.title'
                 v-model='cfg.value.value'
                 color='primary'
@@ -76,7 +74,6 @@
               v-textarea.mb-3(
                 v-else-if='cfg.value.type === "string" && cfg.value.multiline'
                 outlined
-                :key='cfg.key'
                 :label='cfg.value.title'
                 v-model='cfg.value.value'
                 prepend-icon='mdi-cog-box'
@@ -87,35 +84,35 @@
               v-text-field.mb-3(
                 v-else
                 outlined
-                :key='cfg.key'
                 :label='cfg.value.title'
                 v-model='cfg.value.value'
                 prepend-icon='mdi-cog-box'
                 :hint='cfg.value.hint ? cfg.value.hint : ""'
                 persistent-hint
                 :class='cfg.value.hint ? "mb-2" : ""'
-                :style='cfg.value.maxWidth > 0 ? `max-width:` + cfg.value.maxWidth + `px;` : ``'
+                :style='(cfg.value.maxWidth || 0) > 0 ? `max-width:` + cfg.value.maxWidth + `px;` : ``'
                 )
 </template>
 
-<script>
+<script lang='ts'>
 import _ from 'lodash'
-import { fetchCommentProviders, saveCommentProviders } from '../../helpers/comments-api'
-import { loadingStart, loadingStop, showNotification, pushGraphError } from '../../helpers/root-ui-store'
+import { wikiStore } from '@/store/index.ts'
+import { fetchCommentProviders, saveCommentProviders, type CommentProvider } from '../../helpers/comments-api'
+import { getErrorMessage, loadingStart, loadingStop, showNotification, pushGraphError } from '../../helpers/root-ui-store'
 
 export default {
   data() {
     return {
-      providers: [],
+      providers: [] as CommentProvider[],
       selectedProvider: '',
-      provider: {}
+      provider: {} as Partial<CommentProvider>
     }
   },
   watch: {
-    selectedProvider(newValue, oldValue) {
+    selectedProvider(newValue: string) {
       this.provider = _.find(this.providers, ['key', newValue]) || {}
     },
-    providers(newValue, oldValue) {
+    providers() {
       this.selectedProvider = _.get(_.find(this.providers, 'isEnabled'), 'key', 'db')
     }
   },
@@ -123,33 +120,33 @@ export default {
     this.loadProviders().catch(() => {})
   },
   methods: {
-    async loadProviders({ notifyError = true } = {}) {
-      loadingStart(this.$store, 'admin-comments-refresh')
+    async loadProviders({ notifyError = true }: { notifyError?: boolean } = {}) {
+      loadingStart(wikiStore, 'admin-comments-refresh')
       try {
         this.providers = await fetchCommentProviders(window.fetch.bind(window), 'Comment providers response is invalid')
       } catch (err) {
         if (notifyError) {
-          showNotification(this.$store, {
-            message: err.message || this.$t('common:error.unexpected'),
+          showNotification(wikiStore, {
+            message: getErrorMessage(err) || this.$t('common:error.unexpected'),
             style: 'red',
             icon: 'alert'
           })
         }
         throw err
       } finally {
-        loadingStop(this.$store, 'admin-comments-refresh')
+        loadingStop(wikiStore, 'admin-comments-refresh')
       }
     },
     async refresh() {
       await this.loadProviders()
-      showNotification(this.$store, {
+      showNotification(wikiStore, {
         message: this.$t('admin:comments.listRefreshSuccess'),
         style: 'success',
         icon: 'cached'
       })
     },
     async save() {
-      loadingStart(this.$store, 'admin-comments-saveproviders')
+      loadingStart(wikiStore, 'admin-comments-saveproviders')
       try {
         await saveCommentProviders(window.fetch.bind(window), this.providers.map(tgt => ({
           isEnabled: tgt.key === this.selectedProvider,
@@ -157,15 +154,15 @@ export default {
           config: tgt.config.map(cfg => ({...cfg, value: JSON.stringify({ v: cfg.value.value })}))
         })), 'Comment providers save response is invalid')
         await this.loadProviders({ notifyError: false })
-        showNotification(this.$store, {
+        showNotification(wikiStore, {
           message: this.$t('admin:comments.configSaveSuccess'),
           style: 'success',
           icon: 'check'
         })
       } catch (err) {
-        pushGraphError(this.$store, err)
+        pushGraphError(wikiStore, err)
       }
-      loadingStop(this.$store, 'admin-comments-saveproviders')
+      loadingStop(wikiStore, 'admin-comments-saveproviders')
     }
   }
 }

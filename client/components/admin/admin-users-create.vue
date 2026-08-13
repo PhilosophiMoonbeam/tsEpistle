@@ -77,7 +77,7 @@
         //-   v-model='sendWelcomeEmail'
         //-   disabled
         //- )
-      v-card-chin
+      div.v-card-chin
         v-spacer
         v-btn(text, @click='isShown = false') Cancel
         v-btn.px-3(depressed, color='primary', @click='newUser(false)', :disabled='!providersLoaded || availableProviders.length < 1')
@@ -88,30 +88,56 @@
           span Create and Close
 </template>
 
-<script>
+<script lang='ts'>
 import _ from 'lodash'
 import validate from 'validate.js'
 
-import { fetchAdminAuthProviders } from '../../helpers/auth-api'
-import { fetchGroupOptions } from '../../helpers/groups-api'
+import { fetchAdminAuthProviders, type AdminAuthProviderSummary } from '../../helpers/auth-api'
+import { fetchGroupOptions, type GroupOption } from '../../helpers/groups-api'
+import { getErrorMessage } from '../../helpers/root-ui-store'
 import { createAdminUser } from '../../helpers/users-api'
+import { wikiStore } from '@/store/index.ts'
+
+type AuthProviderSummary = Pick<AdminAuthProviderSummary, 'key' | 'displayName' | 'isEnabled'>
+
+type FocusableRef = {
+  focus: () => void
+}
+
+type UserFieldConstraint = {
+  presence: {
+    allowEmpty: boolean
+  }
+  email?: boolean
+  length?: {
+    minimum: number
+    maximum: number
+  }
+}
+
+type UserValidationSchema = {
+  email: UserFieldConstraint
+  name: UserFieldConstraint
+  password?: UserFieldConstraint
+}
 
 export default {
+  emits: ['refresh', 'update:modelValue'],
   props: {
-    value: {
+    modelValue: {
       type: Boolean,
       default: false
     }
   },
   data() {
     return {
-      providers: [],
+      providers: [] as AuthProviderSummary[],
       provider: 'local',
       email: '',
       password: '',
       name: '',
-      groups: [],
-      group: [],
+      groups: [] as GroupOption[],
+      group: [] as number[],
       mustChangePwd: false,
       sendWelcomeEmail: false,
       providersLoaded: false
@@ -122,25 +148,25 @@ export default {
       return this.providers.filter(provider => provider.isEnabled === true)
     },
     isShown: {
-      get() { return this.value },
-      set(val) { this.$emit('input', val) }
+      get() { return this.modelValue },
+      set(val: boolean) { this.$emit('update:modelValue', val) }
     }
   },
   watch: {
-    value(newValue, oldValue) {
+    modelValue(newValue: boolean) {
       if (newValue) {
         if (!this.providersLoaded) {
           this.loadProviders()
         }
         this.$nextTick(() => {
-          this.$refs.emailInput.focus()
+          ;(this.$refs.emailInput as FocusableRef).focus()
         })
       }
     }
   },
   methods: {
     async loadProviders() {
-      this.$store.commit('loadingStart', 'admin-users-strategies-refresh')
+      wikiStore.startLoading('admin-users-strategies-refresh')
       try {
         this.providers = (await fetchAdminAuthProviders(window.fetch.bind(window), 'Admin authentication providers response is invalid')).map(strategy => ({
           key: strategy.key,
@@ -154,30 +180,30 @@ export default {
         this.providersLoaded = true
       } catch (err) {
         this.providersLoaded = false
-        this.$store.commit('showNotification', {
+        wikiStore.showNotification({
           style: 'red',
-          message: err.message,
+          message: getErrorMessage(err),
           icon: 'alert'
         })
       }
-      this.$store.commit('loadingStop', 'admin-users-strategies-refresh')
+      wikiStore.stopLoading('admin-users-strategies-refresh')
     },
     async loadGroups() {
-      this.$store.commit('loadingStart', 'admin-auth-groups-refresh')
+      wikiStore.startLoading('admin-auth-groups-refresh')
       try {
         this.groups = await fetchGroupOptions(window.fetch.bind(window), 'Groups response is invalid')
       } catch (err) {
-        this.$store.commit('showNotification', {
+        wikiStore.showNotification({
           style: 'red',
-          message: err.message,
+          message: getErrorMessage(err),
           icon: 'alert'
         })
       }
-      this.$store.commit('loadingStop', 'admin-auth-groups-refresh')
+      wikiStore.stopLoading('admin-auth-groups-refresh')
     },
     async newUser(close = false) {
       if (!this.providersLoaded || this.availableProviders.length < 1) {
-        this.$store.commit('showNotification', {
+        wikiStore.showNotification({
           style: 'red',
           message: 'Authentication providers are not available.',
           icon: 'alert'
@@ -185,7 +211,7 @@ export default {
         return
       }
 
-      let rules = {
+      const rules: UserValidationSchema = {
         email: {
           presence: {
             allowEmpty: false
@@ -217,10 +243,10 @@ export default {
         email: this.email,
         password: this.password,
         name: this.name
-      }, rules, { format: 'flat' })
+      }, rules, { format: 'flat' }) as string[] | undefined
 
       if (validationResults) {
-        this.$store.commit('showNotification', {
+        wikiStore.showNotification({
           style: 'red',
           message: validationResults[0],
           icon: 'alert'
@@ -229,7 +255,7 @@ export default {
       }
 
       try {
-        this.$store.commit('loadingStart', 'admin-users-create')
+        wikiStore.startLoading('admin-users-create')
         const resp = await createAdminUser(window.fetch.bind(window), {
           providerKey: this.provider,
           email: this.email,
@@ -241,7 +267,7 @@ export default {
         }, 'User create response is invalid')
 
         if (resp.succeeded) {
-          this.$store.commit('showNotification', {
+          wikiStore.showNotification({
             style: 'success',
             message: 'New user created successfully.',
             icon: 'check'
@@ -255,23 +281,23 @@ export default {
             this.isShown = false
             this.$emit('refresh')
           } else {
-            this.$refs.emailInput.focus()
+            ;(this.$refs.emailInput as FocusableRef).focus()
           }
         } else {
-          this.$store.commit('showNotification', {
+          wikiStore.showNotification({
             style: 'red',
             message: resp.message || 'An unexpected error occurred.',
             icon: 'alert'
           })
         }
       } catch (err) {
-        this.$store.commit('showNotification', {
+        wikiStore.showNotification({
           style: 'red',
-          message: err.message,
+          message: getErrorMessage(err),
           icon: 'alert'
         })
       } finally {
-        this.$store.commit('loadingStop', 'admin-users-create')
+        wikiStore.stopLoading('admin-users-create')
       }
     },
     generatePwd() {

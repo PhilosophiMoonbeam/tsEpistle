@@ -1,7 +1,7 @@
 <template lang='pug'>
   v-container(fluid, fill-height)
-    v-layout(row wrap)
-      v-flex(xs12)
+    v-row
+      v-col(cols='12')
         .admin-header-icon: v-icon(size='80', color='grey lighten-2') show_chart
         .headline.primary--text Statistics
         .subtitle-1.grey--text Useful information about your wiki
@@ -14,7 +14,7 @@
           .caption.pink--text.mt-3 Compiling latest data...
 </template>
 
-<script>
+<script lang='ts'>
 import { FingerprintSpinner } from 'epic-spinners'
 
 export default {

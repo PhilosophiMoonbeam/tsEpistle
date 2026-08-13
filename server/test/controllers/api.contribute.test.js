@@ -1,93 +1,128 @@
-jest.mock('express', () => {
+vi.mock('express', () => {
   const routers = []
-
-  return {
+  const express = {
     Router: () => {
       const router = {
-        delete: jest.fn(),
-        get: jest.fn(),
-        patch: jest.fn(),
-        post: jest.fn(),
-        put: jest.fn(),
-        use: jest.fn()
+        delete: vi.fn(),
+        get: vi.fn(),
+        patch: vi.fn(),
+        post: vi.fn(),
+        put: vi.fn(),
+        use: vi.fn()
       }
       routers.push(router)
       return router
     },
     __routers: routers
   }
+
+  return { default: express, ...express }
 })
 
-jest.mock('express-brute', () => {
-  return jest.fn().mockImplementation(() => ({
-    prevent: jest.fn((req, res, next) => next())
-  }))
+import express from 'express'
+
+const API_CONTROLLER_NAMES = [
+  'analytics',
+  'assets',
+  'auth',
+  'comments',
+  'contribute',
+  'groups',
+  'locales',
+  'logging',
+  'mail',
+  'navigation',
+  'pages',
+  'rendering',
+  'search',
+  'site',
+  'storage',
+  'system',
+  'theming',
+  'users'
+]
+
+const loadApiIndexRouter = async () => {
+  const subrouters = Object.fromEntries(API_CONTROLLER_NAMES.map(name => [name, {}]))
+
+  for (const name of API_CONTROLLER_NAMES) {
+    vi.doMock(`../../controllers/api/${name}.ts`, () => ({
+      default: subrouters[name]
+    }))
+  }
+
+  try {
+    await expect(import('../../controllers/api/index.ts')).resolves.toBeDefined()
+  } finally {
+    for (const name of API_CONTROLLER_NAMES) {
+      vi.doUnmock(`../../controllers/api/${name}.ts`)
+    }
+  }
+
+  return { apiRouter: express.__routers.at(-1), subrouters }
+}
+
+
+const originalFetch = global.fetch
+const successfulResponse = body => ({
+  ok: true,
+  status: 200,
+  statusText: 'OK',
+  json: vi.fn().mockResolvedValue(body)
 })
-
-jest.mock('../../helpers/brute-knex', () => {
-  return jest.fn().mockImplementation(() => ({}))
-})
-
-jest.mock('request-promise', () => jest.fn())
-
-let request
 
 describe('controllers/api contribute endpoints', () => {
   beforeEach(() => {
-    jest.resetModules()
-    const express = require('express')
+    vi.resetModules()
     express.__routers.length = 0
-    request = require('request-promise')
-    request.mockReset()
+    global.fetch = vi.fn()
 
     global.WIKI = {
       models: {
         knex: {}
       },
       logger: {
-        warn: jest.fn()
+        warn: vi.fn()
       }
     }
   })
 
-  const loadContributorsHandler = () => {
-    const express = require('express')
-    require('../../controllers/api/contribute')
+  afterEach(() => {
+    global.fetch = originalFetch
+  })
+
+  const loadContributorsHandler = async () => {
+    await import('../../controllers/api/contribute.ts')
     const router = express.__routers[0]
     return router.get.mock.calls.find(([path]) => path === '/contributors')[1]
   }
 
-  it('registers contributors route', () => {
-    const handler = loadContributorsHandler()
+  it('registers contributors route', async () => { const handler = await loadContributorsHandler()
 
-    expect(typeof handler).toBe('function')
-  })
+  expect(typeof handler).toBe('function') })
 
-  it('is mounted by the API index router', () => {
-    const express = require('express')
-    expect(() => require('../../controllers/api')).not.toThrow()
-    const apiRouter = express.__routers[0]
+  it('is mounted by the API index router', async () => {
+    const { apiRouter, subrouters } = await loadApiIndexRouter()
 
-    expect(apiRouter.use).toHaveBeenCalledWith('/contribute', expect.any(Object))
+    expect(apiRouter.use).toHaveBeenCalledWith('/contribute', subrouters.contribute)
   })
 
   it('requests upstream sponsors backers using the expected GraphQL request shape', async () => {
-    request.mockResolvedValue({ data: { sponsors: { list: [] } } })
-    const handler = loadContributorsHandler()
-    const res = { json: jest.fn() }
+    global.fetch.mockResolvedValue(successfulResponse({ data: { sponsors: { list: [] } } }))
+    const handler = await loadContributorsHandler()
+    const res = { json: vi.fn() }
 
     await handler({}, res)
 
-    expect(request).toHaveBeenCalledWith({
+    expect(global.fetch).toHaveBeenCalledWith('https://graph.requarks.io', {
       method: 'POST',
-      uri: 'https://graph.requarks.io',
-      json: true,
-      body: {
-        query: expect.stringContaining('list(kind: BACKER)'),
-        variables: {}
-      }
+      headers: { 'content-type': 'application/json' },
+      body: expect.any(String)
     })
-    const query = request.mock.calls[0][0].body.query
+    const body = JSON.parse(global.fetch.mock.calls[0][1].body)
+    expect(body.variables).toEqual({})
+    expect(body.query).toContain('list(kind: BACKER)')
+    const query = body.query
     expect(query).toContain('id')
     expect(query).toContain('source')
     expect(query).toContain('name')
@@ -98,7 +133,7 @@ describe('controllers/api contribute endpoints', () => {
   })
 
   it('returns strict allowlisted contributor fields without upstream extras', async () => {
-    request.mockResolvedValue({
+    global.fetch.mockResolvedValue(successfulResponse({
       data: {
         sponsors: {
           list: [
@@ -115,9 +150,9 @@ describe('controllers/api contribute endpoints', () => {
           ]
         }
       }
-    })
-    const handler = loadContributorsHandler()
-    const res = { json: jest.fn() }
+    }))
+    const handler = await loadContributorsHandler()
+    const res = { json: vi.fn() }
 
     await handler({}, res)
 
@@ -136,7 +171,7 @@ describe('controllers/api contribute endpoints', () => {
   })
 
   it('normalizes missing optional contributor fields to null without rewriting empty strings', async () => {
-    request.mockResolvedValue({
+    global.fetch.mockResolvedValue(successfulResponse({
       data: {
         sponsors: {
           list: [
@@ -151,9 +186,9 @@ describe('controllers/api contribute endpoints', () => {
           ]
         }
       }
-    })
-    const handler = loadContributorsHandler()
-    const res = { json: jest.fn() }
+    }))
+    const handler = await loadContributorsHandler()
+    const res = { json: vi.fn() }
 
     await handler({}, res)
 
@@ -171,9 +206,9 @@ describe('controllers/api contribute endpoints', () => {
   })
 
   it('returns an empty array when upstream list data is missing', async () => {
-    request.mockResolvedValue({ data: { sponsors: {} } })
-    const handler = loadContributorsHandler()
-    const res = { json: jest.fn() }
+    global.fetch.mockResolvedValue(successfulResponse({ data: { sponsors: {} } }))
+    const handler = await loadContributorsHandler()
+    const res = { json: vi.fn() }
 
     await handler({}, res)
 
@@ -181,14 +216,20 @@ describe('controllers/api contribute endpoints', () => {
   })
 
   it('logs upstream failures and returns an empty array', async () => {
-    const err = new Error('upstream failed')
-    request.mockRejectedValue(err)
-    const handler = loadContributorsHandler()
-    const res = { json: jest.fn() }
+    global.fetch.mockResolvedValue({
+      ok: false,
+      status: 503,
+      statusText: 'Service Unavailable',
+      json: vi.fn()
+    })
+    const handler = await loadContributorsHandler()
+    const res = { json: vi.fn() }
 
     await handler({}, res)
 
-    expect(global.WIKI.logger.warn).toHaveBeenCalledWith(err)
+    expect(global.WIKI.logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'Contributor service returned 503 Service Unavailable' })
+    )
     expect(res.json).toHaveBeenCalledWith([])
   })
 })

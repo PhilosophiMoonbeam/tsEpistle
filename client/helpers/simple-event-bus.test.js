@@ -1,4 +1,4 @@
-const { createEventBus } = require('./simple-event-bus')
+import { createEventBus } from './simple-event-bus.ts'
 
 describe('simple event bus', () => {
   test('emits synchronously and forwards all payload arguments', () => {
@@ -15,8 +15,8 @@ describe('simple event bus', () => {
 
   test('unsubscribes only the matching handler and ignores missing handlers', () => {
     const bus = createEventBus()
-    const first = jest.fn()
-    const second = jest.fn()
+    const first = vi.fn()
+    const second = vi.fn()
 
     bus.on('event', first)
     bus.on('event', second)
@@ -30,8 +30,8 @@ describe('simple event bus', () => {
 
   test('uses an emit snapshot when listeners mutate subscriptions', () => {
     const bus = createEventBus()
-    const first = jest.fn(() => bus.off('event', second))
-    const second = jest.fn()
+    const first = vi.fn(() => bus.off('event', second))
+    const second = vi.fn()
 
     bus.on('event', first)
     bus.on('event', second)

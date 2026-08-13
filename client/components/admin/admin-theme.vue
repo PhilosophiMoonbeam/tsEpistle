@@ -1,7 +1,7 @@
 <template lang='pug'>
   v-container(fluid, grid-list-lg)
-    v-layout(row wrap)
-      v-flex(xs12)
+    v-row
+      v-col(cols='12')
         .admin-header
           img.animated.fadeInUp(src='/_assets/svg/icon-paint-palette.svg', alt='Theme', style='width: 80px;')
           .admin-header-title
@@ -12,8 +12,8 @@
             v-icon(left) mdi-check
             span {{$t('common:actions.apply')}}
         v-form.pt-3
-          v-layout(row wrap)
-            v-flex(lg6 xs12)
+          v-row
+            v-col(lg='6' cols='12')
               v-card.animated.fadeInUp
                 v-toolbar(color='primary', dark, dense, flat)
                   v-toolbar-title.subtitle-1 {{$t('admin:theme.title')}}
@@ -27,12 +27,12 @@
                     persistent-hint
                     :hint='$t(`admin:theme.siteThemeHint`)'
                     )
-                    template(slot='item', slot-scope='data')
-                      v-list-item-avatar
+                    template(v-slot:item='data')
+                      v-avatar
                         v-icon.blue--text(dark) mdi-image-filter-frames
-                      v-list-item-content
+                      div.v-list-item-content
                         v-list-item-title(v-html='data.item.text')
-                        v-list-item-sub-title(v-html='data.item.author')
+                        v-list-item-subtitle(v-html='data.item.author')
                   v-select.mt-3(
                     :items='iconsets'
                     outlined
@@ -65,7 +65,7 @@
                     persistent-hint
                     hint='Select whether the table of contents is shown on the left, right or not at all.'
                     )
-            v-flex(lg6 xs12)
+            v-col(lg='6' cols='12')
               //- v-card.animated.fadeInUp.wait-p2s
               //-   v-toolbar(color='teal', dark, dense, flat)
               //-     v-toolbar-title.subtitle-1 {{$t('admin:theme.downloadThemes')}}
@@ -128,8 +128,8 @@
                     )
 </template>
 
-<script>
-import { sync } from 'vuex-pathify'
+<script lang='ts'>
+import { wikiStore } from '@/store/index.ts'
 
 import { fetchThemeConfig, saveThemeConfig } from '../../helpers/theming-api'
 import { loadingStart, loadingStop, showNotification, pushGraphError } from '../../helpers/root-ui-store'
@@ -159,7 +159,14 @@ export default {
     }
   },
   computed: {
-    darkMode: sync('site/dark'),
+    darkMode: {
+      get (): boolean {
+        return wikiStore.site.dark
+      },
+      set (value: boolean) {
+        wikiStore.site.dark = value
+      }
+    },
     headers() {
       return [
         {
@@ -191,32 +198,32 @@ export default {
   },
   watch: {
     'darkMode' (newValue, oldValue) {
-      this.$vuetify.theme.dark = newValue
+      void this.$vuetify.theme.change(newValue ? 'dark' : 'light', false)
     }
   },
   mounted() {
     this.darkModeInitial = this.darkMode
     this.loadConfig().catch(() => {})
   },
-  beforeDestroy() {
+  beforeUnmount() {
     this.darkMode = this.darkModeInitial
-    this.$vuetify.theme.dark = this.darkModeInitial
+    void this.$vuetify.theme.change(this.darkModeInitial ? 'dark' : 'light', false)
   },
   methods: {
     async loadConfig () {
-      loadingStart(this.$store, 'admin-theme-refresh')
+      loadingStart(wikiStore, 'admin-theme-refresh')
       try {
         this.config = await fetchThemeConfig(window.fetch.bind(window), 'Theme config response is invalid')
       } catch (err) {
-        pushGraphError(this.$store, err)
+        pushGraphError(wikiStore, err)
         throw err
       } finally {
-        loadingStop(this.$store, 'admin-theme-refresh')
+        loadingStop(wikiStore, 'admin-theme-refresh')
       }
     },
     async save () {
       this.loading = true
-      loadingStart(this.$store, 'admin-theme-save')
+      loadingStart(wikiStore, 'admin-theme-save')
       try {
         await saveThemeConfig(window.fetch.bind(window), {
           theme: this.config.theme,
@@ -228,15 +235,15 @@ export default {
           injectBody: this.config.injectBody
         }, 'Theme config update failed')
         this.darkModeInitial = this.darkMode
-        showNotification(this.$store, {
+        showNotification(wikiStore, {
           message: 'Theme settings updated successfully.',
           style: 'success',
           icon: 'check'
         })
       } catch (err) {
-        pushGraphError(this.$store, err)
+        pushGraphError(wikiStore, err)
       }
-      loadingStop(this.$store, 'admin-theme-save')
+      loadingStop(wikiStore, 'admin-theme-save')
       this.loading = false
     }
   }

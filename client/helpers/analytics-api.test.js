@@ -1,4 +1,4 @@
-const { fetchAnalyticsProviders, saveAnalyticsProviders } = require('./analytics-api')
+import { fetchAnalyticsProviders, saveAnalyticsProviders } from './analytics-api.ts'
 
 function createJsonResponse (payload, ok = true) {
   return {
@@ -12,7 +12,7 @@ function createJsonResponse (payload, ok = true) {
 
 describe('analytics api helper', () => {
   test('requests analytics providers with same-origin JSON options', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse([]))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([]))
 
     await expect(fetchAnalyticsProviders(fetchImpl)).resolves.toEqual([])
 
@@ -25,7 +25,7 @@ describe('analytics api helper', () => {
   })
 
   test('validates, sanitizes, and sorts provider config by parsed value order', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse([
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([
       {
         isEnabled: true,
         key: 'google',
@@ -71,7 +71,7 @@ describe('analytics api helper', () => {
   })
 
   test('strips extra provider and config fields', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse([
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([
       {
         isEnabled: false,
         key: 'matomo',
@@ -112,13 +112,13 @@ describe('analytics api helper', () => {
   })
 
   test('rejects malformed root payloads', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ providers: [] }))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ providers: [] }))
 
     await expect(fetchAnalyticsProviders(fetchImpl, 'Bad analytics payload')).rejects.toThrow('Bad analytics payload')
   })
 
   test('rejects malformed provider rows', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse([
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([
       {
         isEnabled: 'yes',
         key: 'google',
@@ -135,7 +135,7 @@ describe('analytics api helper', () => {
   })
 
   test('rejects malformed config rows', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse([
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([
       {
         isEnabled: true,
         key: 'google',
@@ -152,7 +152,7 @@ describe('analytics api helper', () => {
   })
 
   test('rejects malformed config JSON', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse([
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([
       {
         isEnabled: true,
         key: 'google',
@@ -169,7 +169,7 @@ describe('analytics api helper', () => {
   })
 
   test('propagates API JSON errors', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue({
+    const fetchImpl = vi.fn().mockResolvedValue({
       ok: false,
       headers: {
         get: () => 'application/json; charset=utf-8'
@@ -182,7 +182,7 @@ describe('analytics api helper', () => {
 
   test('saves analytics providers with same-origin JSON POST options', async () => {
     const providers = [{ key: 'google', isEnabled: true, config: [] }]
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ message: 'Providers updated successfully' }))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ message: 'Providers updated successfully' }))
 
     await expect(saveAnalyticsProviders(fetchImpl, providers)).resolves.toEqual({ message: 'Providers updated successfully' })
     expect(fetchImpl).toHaveBeenCalledWith('/_api/analytics/providers', {
@@ -197,19 +197,19 @@ describe('analytics api helper', () => {
   })
 
   test('rejects malformed successful analytics provider save responses', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ ok: true }))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ ok: true }))
 
     await expect(saveAnalyticsProviders(fetchImpl, [], 'Bad save payload')).rejects.toThrow('Bad save payload')
   })
 
   test('propagates API JSON errors for analytics provider saves', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ error: 'Invalid analytics providers payload' }, false))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ error: 'Invalid analytics providers payload' }, false))
 
     await expect(saveAnalyticsProviders(fetchImpl, [], 'Bad save')).rejects.toThrow('Invalid analytics providers payload')
   })
 
   test('rejects non-JSON successful analytics provider save responses', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue({
+    const fetchImpl = vi.fn().mockResolvedValue({
       ok: true,
       headers: {
         get: () => 'text/plain'
@@ -220,7 +220,7 @@ describe('analytics api helper', () => {
   })
 
   test('rejects non-JSON successful responses', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue({
+    const fetchImpl = vi.fn().mockResolvedValue({
       ok: true,
       headers: {
         get: () => 'text/plain'

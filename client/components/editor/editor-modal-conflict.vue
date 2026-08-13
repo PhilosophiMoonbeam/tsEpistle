@@ -12,8 +12,8 @@
           v-model='isRemoteConfirmDiagShown'
           width='500'
           )
-          template(v-slot:activator='{ on }')
-            v-btn.ml-3(outlined, color='white', v-on='on', :title='$t(`editor:conflict.useRemoteHint`)')
+          template(v-slot:activator='{ props }')
+            v-btn.ml-3(outlined, color='white', v-bind='props', :title='$t(`editor:conflict.useRemoteHint`)')
               v-icon(left) mdi-alpha-r-box
               span {{$t('editor:conflict.useRemote')}}
           v-card
@@ -23,7 +23,7 @@
             v-card-text.pa-4
               i18next.body-2(tag='div', path='editor:conflict.overwrite.description')
                 strong(place='refEditsLost') {{$t('editor:conflict.overwrite.editsLost')}}
-            v-card-chin
+            div.v-card-chin
               v-spacer
               v-btn(outlined, color='indigo', @click='isRemoteConfirmDiagShown = false')
                 v-icon(left) mdi-close
@@ -70,14 +70,14 @@
           .caption
             strong.indigo--text {{$t('editor:conflict.pageDescription')}}
             span.pl-2 {{latest.description}}
-      v-card.radius-7(:light='!$vuetify.theme.dark', :dark='$vuetify.theme.dark')
+      v-card.radius-7(:light='!$vuetify.theme.current.dark', :dark='$vuetify.theme.current.dark')
         div(ref='cm')
 </template>
 
-<script>
-import { sync, get } from 'vuex-pathify'
+<script lang='ts'>
+import { wikiStore } from '@/store/index.ts'
 import { emitEditorConflictResolved } from '../../helpers/editor-conflict-events'
-import { fetchPageConflictLatest } from '../../helpers/pages-api'
+import { fetchPageConflictLatest, type PageConflictLatest } from '../../helpers/pages-api'
 import { showNotification } from '../../helpers/root-ui-store'
 
 /* global siteConfig */
@@ -100,28 +100,64 @@ import 'codemirror/mode/htmlmixed/htmlmixed.js'
 import 'codemirror/addon/selection/active-line.js'
 import 'codemirror/addon/merge/merge.js'
 import 'codemirror/addon/merge/merge.css'
+import type { MergeView, MergeViewConfiguration } from 'codemirror/addon/merge/merge'
+
+type ConflictLatest = Pick<PageConflictLatest, 'title' | 'description' | 'updatedAt' | 'authorName' | 'content'>
+type EditorMergeView = MergeView & {
+  wrap: HTMLElement
+}
+type EditorMergeViewConfiguration = Omit<MergeViewConfiguration, 'connect'> & {
+  connect: null
+  highlightDifferences: boolean
+}
+type EditorMergeViewConstructor = (element: HTMLElement, options: EditorMergeViewConfiguration) => EditorMergeView
 
 export default {
   data() {
     return {
-      cm: null,
+      cm: null as EditorMergeView | null,
       latest: {
         title: '',
         description: '',
         updatedAt: '',
-        authorName: ''
-      },
+        authorName: '',
+        content: ''
+      } as ConflictLatest,
       isRemoteConfirmDiagShown: false
     }
   },
   computed: {
-    editorKey: get('editor/editorKey'),
-    activeModal: sync('editor/activeModal'),
-    pageId: get('page/id'),
-    title: get('page/title'),
-    description: get('page/description'),
-    updatedAt: get('page/updatedAt'),
-    checkoutDateActive: sync('editor/checkoutDateActive')
+    editorKey() {
+      return wikiStore.editor.editorKey
+    },
+    activeModal: {
+      get() {
+        return wikiStore.editor.activeModal
+      },
+      set(value: string) {
+        wikiStore.editor.activeModal = value
+      }
+    },
+    pageId() {
+      return wikiStore.page.id
+    },
+    title() {
+      return wikiStore.page.title
+    },
+    description() {
+      return wikiStore.page.description
+    },
+    updatedAt() {
+      return wikiStore.page.updatedAt
+    },
+    checkoutDateActive: {
+      get() {
+        return wikiStore.editor.checkoutDateActive
+      },
+      set(value: string) {
+        wikiStore.editor.checkoutDateActive = value
+      }
+    }
   },
   methods: {
     close () {
@@ -134,11 +170,11 @@ export default {
       this.close()
     },
     useLocal () {
-      this.$store.set('editor/content', this.cm.edit.getValue())
+      wikiStore.editor.content = this.cm!.editor().getValue()
       this.overwriteAndClose()
     },
     useRemote () {
-      this.$store.set('editor/content', this.latest.content)
+      wikiStore.editor.content = this.latest.content
       this.overwriteAndClose()
     }
   },
@@ -153,13 +189,13 @@ export default {
 
     let resp
     try {
-      resp = await fetchPageConflictLatest(window.fetch.bind(window), this.$store.get('page/id'))
+      resp = await fetchPageConflictLatest(window.fetch.bind(window), wikiStore.page.id)
     } catch (err) {
       resp = null
     }
 
     if (!resp) {
-      return showNotification(this.$store, {
+      return showNotification(wikiStore, {
         message: 'Failed to fetch latest version.',
         style: 'warning',
         icon: 'warning'
@@ -167,8 +203,9 @@ export default {
     }
     this.latest = resp
 
-    this.cm = CodeMirror.MergeView(this.$refs.cm, {
-      value: this.$store.get('editor/content'),
+    const createMergeView = CodeMirror.MergeView as unknown as EditorMergeViewConstructor
+    const mergeView = createMergeView(this.$refs.cm as HTMLElement, {
+      value: wikiStore.editor.content,
       orig: resp.content,
       tabSize: 2,
       mode: textMode,
@@ -180,9 +217,10 @@ export default {
       collapseIdentical: true,
       direction: siteConfig.rtl ? 'rtl' : 'ltr'
     })
-    this.cm.rightOriginal().setSize(null, 'calc(100vh - 265px)')
-    this.cm.editor().setSize(null, 'calc(100vh - 265px)')
-    this.cm.wrap.style.height = 'calc(100vh - 265px)'
+    this.cm = mergeView
+    mergeView.rightOriginal()!.setSize(null, 'calc(100vh - 265px)')
+    mergeView.editor().setSize(null, 'calc(100vh - 265px)')
+    mergeView.wrap.style.height = 'calc(100vh - 265px)'
   }
 }
 </script>

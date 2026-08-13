@@ -1,22 +1,24 @@
-jest.mock('express', () => {
+vi.mock('express', () => {
   const router = {
-    get: jest.fn(),
-    post: jest.fn(),
-    patch: jest.fn(),
-    delete: jest.fn(),
-    use: jest.fn()
+    get: vi.fn(),
+    post: vi.fn(),
+    patch: vi.fn(),
+    delete: vi.fn(),
+    use: vi.fn()
   }
-
-  return {
+  const express = {
     Router: () => router,
     __router: router
   }
+
+  return { default: express, ...express }
 })
+
+import express from 'express'
 
 describe('controllers/api groups endpoints', () => {
   beforeEach(() => {
-    jest.resetModules()
-    const express = require('express')
+    vi.resetModules()
     express.__router.get.mockClear()
     express.__router.post.mockClear()
     express.__router.patch.mockClear()
@@ -24,14 +26,14 @@ describe('controllers/api groups endpoints', () => {
 
     global.WIKI = {
       auth: {
-        checkAccess: jest.fn().mockReturnValue(true),
-        checkExclusiveAccess: jest.fn().mockReturnValue(false),
-        reloadGroups: jest.fn().mockResolvedValue(undefined),
-        revokeUserTokens: jest.fn()
+        checkAccess: vi.fn().mockReturnValue(true),
+        checkExclusiveAccess: vi.fn().mockReturnValue(false),
+        reloadGroups: vi.fn().mockResolvedValue(undefined),
+        revokeUserTokens: vi.fn()
       },
       events: {
         outbound: {
-          emit: jest.fn()
+          emit: vi.fn()
         }
       },
       data: {
@@ -42,15 +44,15 @@ describe('controllers/api groups endpoints', () => {
       },
       models: {
         groups: {
-          query: jest.fn().mockReturnValue({
-            insertAndFetch: jest.fn().mockResolvedValue({
+          query: vi.fn().mockReturnValue({
+            insertAndFetch: vi.fn().mockResolvedValue({
               id: 3,
               name: 'Editors',
               isSystem: false,
               permissions: ['read:pages'],
               pageRules: []
             }),
-            select: jest.fn().mockResolvedValue([
+            select: vi.fn().mockResolvedValue([
               {
                 id: 1,
                 name: 'Administrators',
@@ -62,7 +64,7 @@ describe('controllers/api groups endpoints', () => {
                 isSystem: false
               }
             ]),
-            findById: jest.fn().mockResolvedValue({
+            findById: vi.fn().mockResolvedValue({
               id: 3,
               name: 'Editors',
               redirectOnLogin: '/en/home',
@@ -81,31 +83,31 @@ describe('controllers/api groups endpoints', () => {
               ],
               createdAt: '2026-01-01T00:00:00.000Z',
               updatedAt: '2026-01-02T00:00:00.000Z',
-              $relatedQuery: jest.fn().mockReturnValue({
-                select: jest.fn().mockResolvedValue([
+              $relatedQuery: vi.fn().mockReturnValue({
+                select: vi.fn().mockResolvedValue([
                   { id: 10, name: 'Alice', email: 'alice@example.com', providerKey: 'local' },
                   { id: 11, name: 'Bob', email: 'bob@example.com', extra: 'nope' }
                 ]),
-                relate: jest.fn().mockResolvedValue(1),
-                unrelate: jest.fn().mockReturnValue({
-                  where: jest.fn().mockResolvedValue(1)
+                relate: vi.fn().mockResolvedValue(1),
+                unrelate: vi.fn().mockReturnValue({
+                  where: vi.fn().mockResolvedValue(1)
                 })
               })
             }),
-            patch: jest.fn().mockReturnValue({
-              where: jest.fn().mockResolvedValue(1)
+            patch: vi.fn().mockReturnValue({
+              where: vi.fn().mockResolvedValue(1)
             }),
-            deleteById: jest.fn().mockResolvedValue(1)
+            deleteById: vi.fn().mockResolvedValue(1)
           })
         },
-        knex: jest.fn().mockReturnValue({
-          where: jest.fn().mockReturnValue({
-            first: jest.fn().mockResolvedValue(null)
+        knex: vi.fn().mockReturnValue({
+          where: vi.fn().mockReturnValue({
+            first: vi.fn().mockResolvedValue(null)
           })
         }),
         users: {
-          query: jest.fn().mockReturnValue({
-            findById: jest.fn().mockResolvedValue({
+          query: vi.fn().mockReturnValue({
+            findById: vi.fn().mockResolvedValue({
               id: 10,
               name: 'Alice',
               email: 'alice@example.com'
@@ -116,9 +118,8 @@ describe('controllers/api groups endpoints', () => {
     }
   })
 
-  const loadHandler = () => {
-    const express = require('express')
-    require('../../controllers/api/groups')
+  const loadHandler = async () => {
+    await import('../../controllers/api/groups.ts')
     return {
       create: express.__router.post.mock.calls.find(([path]) => path === '/')[1],
       picker: express.__router.get.mock.calls.find(([path]) => path === '/')[1],
@@ -131,31 +132,29 @@ describe('controllers/api groups endpoints', () => {
     }
   }
 
-  it('registers the groups routes', () => {
-    const handlers = loadHandler()
+  it('registers the groups routes', async () => { const handlers = await loadHandler()
 
-    expect(typeof handlers.create).toBe('function')
-    expect(typeof handlers.picker).toBe('function')
-    expect(typeof handlers.list).toBe('function')
-    expect(typeof handlers.assignUser).toBe('function')
-    expect(typeof handlers.unassignUser).toBe('function')
-    expect(typeof handlers.deleteGroup).toBe('function')
-    expect(typeof handlers.updateGroup).toBe('function')
-    expect(typeof handlers.detail).toBe('function')
-  })
+  expect(typeof handlers.create).toBe('function')
+  expect(typeof handlers.picker).toBe('function')
+  expect(typeof handlers.list).toBe('function')
+  expect(typeof handlers.assignUser).toBe('function')
+  expect(typeof handlers.unassignUser).toBe('function')
+  expect(typeof handlers.deleteGroup).toBe('function')
+  expect(typeof handlers.updateGroup).toBe('function')
+  expect(typeof handlers.detail).toBe('function') })
 
   it('creates groups with default permissions for group admins', async () => {
-    const { create } = loadHandler()
+    const { create } = await loadHandler()
     const req = { user: { permissions: ['write:groups'] }, body: { name: ' Editors ' } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await create(req, res, jest.fn())
+    await create(req, res, vi.fn())
 
     expect(global.WIKI.auth.checkAccess).toHaveBeenCalledWith({ permissions: ['write:groups'] }, ['write:groups', 'manage:groups', 'manage:system'])
     expect(global.WIKI.models.groups.query.mock.results[0].value.insertAndFetch).toHaveBeenCalledWith({
       name: 'Editors',
-      permissions: JSON.stringify(global.WIKI.data.groups.defaultPermissions),
-      pageRules: JSON.stringify(global.WIKI.data.groups.defaultPageRules),
+      permissions: global.WIKI.data.groups.defaultPermissions,
+      pageRules: global.WIKI.data.groups.defaultPageRules,
       isSystem: false
     })
     expect(global.WIKI.auth.reloadGroups).toHaveBeenCalled()
@@ -175,35 +174,35 @@ describe('controllers/api groups endpoints', () => {
 
   it('returns 403 for group create requests without group admin access', async () => {
     global.WIKI.auth.checkAccess.mockReturnValueOnce(false)
-    const { create } = loadHandler()
+    const { create } = await loadHandler()
     const req = { user: { permissions: ['manage:api'] }, body: { name: 'Editors' } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await create(req, res, jest.fn())
+    await create(req, res, vi.fn())
 
     expect(res.status).toHaveBeenCalledWith(403)
     expect(res.json).toHaveBeenCalledWith({ error: 'write:groups, manage:groups, or manage:system is required' })
   })
 
   it('returns 400 for blank group names', async () => {
-    const { create } = loadHandler()
+    const { create } = await loadHandler()
     const req = { user: { permissions: ['manage:groups'] }, body: { name: '   ' } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await create(req, res, jest.fn())
+    await create(req, res, vi.fn())
 
     expect(res.status).toHaveBeenCalledWith(400)
     expect(res.json).toHaveBeenCalledWith({ error: 'group name is required' })
   })
 
   it('forwards unexpected group create failures to next', async () => {
-    const next = jest.fn()
+    const next = vi.fn()
     global.WIKI.models.groups.query.mockReturnValueOnce({
-      insertAndFetch: jest.fn().mockRejectedValue(new Error('create db down'))
+      insertAndFetch: vi.fn().mockRejectedValue(new Error('create db down'))
     })
-    const { create } = loadHandler()
+    const { create } = await loadHandler()
     const req = { user: { permissions: ['manage:groups'] }, body: { name: 'Editors' } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await create(req, res, next)
 
@@ -212,11 +211,11 @@ describe('controllers/api groups endpoints', () => {
   })
 
   it('returns the minimal groups picker payload for authorized users', async () => {
-    const { picker } = loadHandler()
+    const { picker } = await loadHandler()
     const req = { user: { permissions: ['manage:groups'] } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await picker(req, res, jest.fn())
+    await picker(req, res, vi.fn())
 
     expect(global.WIKI.auth.checkAccess).toHaveBeenCalledWith({ permissions: ['manage:groups'] }, ['write:groups', 'manage:groups', 'manage:system', 'write:users', 'manage:users', 'manage:navigation', 'manage:api'])
     expect(global.WIKI.models.groups.query).toHaveBeenCalled()
@@ -229,7 +228,7 @@ describe('controllers/api groups endpoints', () => {
 
   it('does not leak extra group fields', async () => {
     global.WIKI.models.groups.query.mockReturnValueOnce({
-      select: jest.fn().mockResolvedValue([
+      select: vi.fn().mockResolvedValue([
         {
           id: 3,
           name: 'Editors',
@@ -239,11 +238,11 @@ describe('controllers/api groups endpoints', () => {
         }
       ])
     })
-    const { picker } = loadHandler()
+    const { picker } = await loadHandler()
     const req = { user: { permissions: ['manage:system'] } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await picker(req, res, jest.fn())
+    await picker(req, res, vi.fn())
 
     const payload = res.json.mock.calls[0][0]
     expect(payload[0].permissions).toBeUndefined()
@@ -256,36 +255,36 @@ describe('controllers/api groups endpoints', () => {
   })
 
   it('returns the minimal groups picker payload for users, navigation, and api admins too', async () => {
-    const { picker } = loadHandler()
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const { picker } = await loadHandler()
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await picker({ user: { permissions: ['write:users'] } }, res, jest.fn())
-    await picker({ user: { permissions: ['manage:navigation'] } }, res, jest.fn())
-    await picker({ user: { permissions: ['manage:api'] } }, res, jest.fn())
+    await picker({ user: { permissions: ['write:users'] } }, res, vi.fn())
+    await picker({ user: { permissions: ['manage:navigation'] } }, res, vi.fn())
+    await picker({ user: { permissions: ['manage:api'] } }, res, vi.fn())
 
     expect(res.json).toHaveBeenCalledTimes(3)
   })
 
   it('returns 403 for unauthorized users', async () => {
     global.WIKI.auth.checkAccess.mockReturnValueOnce(false)
-    const { picker } = loadHandler()
+    const { picker } = await loadHandler()
     const req = { user: { permissions: ['manage:theme'] } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await picker(req, res, jest.fn())
+    await picker(req, res, vi.fn())
 
     expect(res.status).toHaveBeenCalledWith(403)
     expect(res.json).toHaveBeenCalledWith({ error: 'an admin groups picker permission is required' })
   })
 
   it('returns the admin groups table payload for group admins', async () => {
-    global.WIKI.models.groups.relatedQuery = jest.fn().mockReturnValue({
-      count: jest.fn().mockReturnValue({
-        as: jest.fn().mockReturnValue('userCountExpr')
+    global.WIKI.models.groups.relatedQuery = vi.fn().mockReturnValue({
+      count: vi.fn().mockReturnValue({
+        as: vi.fn().mockReturnValue('userCountExpr')
       })
     })
     global.WIKI.models.groups.query.mockReturnValueOnce({
-      select: jest.fn().mockResolvedValue([
+      select: vi.fn().mockResolvedValue([
         {
           id: 1,
           name: 'Administrators',
@@ -297,11 +296,11 @@ describe('controllers/api groups endpoints', () => {
         }
       ])
     })
-    const { list } = loadHandler()
+    const { list } = await loadHandler()
     const req = { user: { permissions: ['manage:groups'] } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await list(req, res, jest.fn())
+    await list(req, res, vi.fn())
 
     expect(global.WIKI.auth.checkAccess).toHaveBeenCalledWith({ permissions: ['manage:groups'] }, ['write:groups', 'manage:groups', 'manage:system'])
     expect(res.json).toHaveBeenCalledWith([
@@ -328,22 +327,22 @@ describe('controllers/api groups endpoints', () => {
 
   it('returns 403 for table-list requests without group admin access', async () => {
     global.WIKI.auth.checkAccess.mockReturnValueOnce(false)
-    const { list } = loadHandler()
+    const { list } = await loadHandler()
     const req = { user: { permissions: ['manage:api'] } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await list(req, res, jest.fn())
+    await list(req, res, vi.fn())
 
     expect(res.status).toHaveBeenCalledWith(403)
     expect(res.json).toHaveBeenCalledWith({ error: 'write:groups, manage:groups, or manage:system is required' })
   })
 
   it('assigns group users and revokes their tokens', async () => {
-    const { assignUser } = loadHandler()
+    const { assignUser } = await loadHandler()
     const req = { user: { permissions: ['manage:users'] }, params: { groupId: '3', userId: '10' } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await assignUser(req, res, jest.fn())
+    await assignUser(req, res, vi.fn())
 
     expect(global.WIKI.auth.checkAccess).toHaveBeenCalledWith({ permissions: ['manage:users'] }, ['manage:users', 'write:groups', 'manage:groups', 'manage:system'])
     const group = await global.WIKI.models.groups.query.mock.results[0].value.findById.mock.results[0].value
@@ -363,23 +362,23 @@ describe('controllers/api groups endpoints', () => {
 
   it('returns 403 for group user assign requests without assignment access', async () => {
     global.WIKI.auth.checkAccess.mockReturnValueOnce(false)
-    const { assignUser } = loadHandler()
+    const { assignUser } = await loadHandler()
     const req = { user: { permissions: ['manage:api'] }, params: { groupId: '3', userId: '10' } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await assignUser(req, res, jest.fn())
+    await assignUser(req, res, vi.fn())
 
     expect(res.status).toHaveBeenCalledWith(403)
     expect(res.json).toHaveBeenCalledWith({ error: 'manage:users, write:groups, manage:groups, or manage:system is required' })
   })
 
   it('returns 400 for malformed group user assign ids and guest assignment', async () => {
-    const { assignUser } = loadHandler()
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const { assignUser } = await loadHandler()
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await assignUser({ user: { permissions: ['manage:groups'] }, params: { groupId: 'bad', userId: '10' } }, res, jest.fn())
-    await assignUser({ user: { permissions: ['manage:groups'] }, params: { groupId: '3', userId: 'bad' } }, res, jest.fn())
-    await assignUser({ user: { permissions: ['manage:groups'] }, params: { groupId: '3', userId: '2' } }, res, jest.fn())
+    await assignUser({ user: { permissions: ['manage:groups'] }, params: { groupId: 'bad', userId: '10' } }, res, vi.fn())
+    await assignUser({ user: { permissions: ['manage:groups'] }, params: { groupId: '3', userId: 'bad' } }, res, vi.fn())
+    await assignUser({ user: { permissions: ['manage:groups'] }, params: { groupId: '3', userId: '2' } }, res, vi.fn())
 
     expect(res.status).toHaveBeenNthCalledWith(1, 400)
     expect(res.json).toHaveBeenNthCalledWith(1, { error: 'group id must be a positive integer' })
@@ -391,18 +390,18 @@ describe('controllers/api groups endpoints', () => {
 
   it('protects elevated group user assignments for lower-tier group admins', async () => {
     global.WIKI.models.groups.query.mockReturnValueOnce({
-      findById: jest.fn().mockResolvedValue({
+      findById: vi.fn().mockResolvedValue({
         id: 3,
         permissions: ['manage:users'],
-        $relatedQuery: jest.fn()
+        $relatedQuery: vi.fn()
       })
     })
     global.WIKI.auth.checkExclusiveAccess.mockReturnValueOnce(true)
-    const { assignUser } = loadHandler()
+    const { assignUser } = await loadHandler()
     const req = { user: { permissions: ['manage:users'] }, params: { groupId: '3', userId: '10' } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await assignUser(req, res, jest.fn())
+    await assignUser(req, res, vi.fn())
 
     expect(global.WIKI.auth.checkExclusiveAccess).toHaveBeenCalledWith({ permissions: ['manage:users'] }, ['manage:users', 'write:groups'], ['manage:groups', 'manage:system'])
     expect(res.status).toHaveBeenCalledWith(403)
@@ -411,20 +410,20 @@ describe('controllers/api groups endpoints', () => {
 
   it('protects system group user assignments for non-system group admins', async () => {
     global.WIKI.models.groups.query.mockReturnValueOnce({
-      findById: jest.fn().mockResolvedValue({
+      findById: vi.fn().mockResolvedValue({
         id: 1,
         permissions: ['manage:system'],
-        $relatedQuery: jest.fn()
+        $relatedQuery: vi.fn()
       })
     })
     global.WIKI.auth.checkExclusiveAccess
       .mockReturnValueOnce(false)
       .mockReturnValueOnce(true)
-    const { assignUser } = loadHandler()
+    const { assignUser } = await loadHandler()
     const req = { user: { permissions: ['manage:groups'] }, params: { groupId: '1', userId: '10' } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await assignUser(req, res, jest.fn())
+    await assignUser(req, res, vi.fn())
 
     expect(global.WIKI.auth.checkExclusiveAccess).toHaveBeenNthCalledWith(2, { permissions: ['manage:groups'] }, ['manage:groups'], ['manage:system'])
     expect(res.status).toHaveBeenCalledWith(403)
@@ -432,18 +431,18 @@ describe('controllers/api groups endpoints', () => {
   })
 
   it('returns 404 when assign group or user targets are missing', async () => {
-    const { assignUser } = loadHandler()
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const { assignUser } = await loadHandler()
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     global.WIKI.models.groups.query.mockReturnValueOnce({
-      findById: jest.fn().mockResolvedValue(null)
+      findById: vi.fn().mockResolvedValue(null)
     })
-    await assignUser({ user: { permissions: ['manage:groups'] }, params: { groupId: '999', userId: '10' } }, res, jest.fn())
+    await assignUser({ user: { permissions: ['manage:groups'] }, params: { groupId: '999', userId: '10' } }, res, vi.fn())
 
     global.WIKI.models.users.query.mockReturnValueOnce({
-      findById: jest.fn().mockResolvedValue(null)
+      findById: vi.fn().mockResolvedValue(null)
     })
-    await assignUser({ user: { permissions: ['manage:groups'] }, params: { groupId: '3', userId: '999' } }, res, jest.fn())
+    await assignUser({ user: { permissions: ['manage:groups'] }, params: { groupId: '3', userId: '999' } }, res, vi.fn())
 
     expect(res.status).toHaveBeenNthCalledWith(1, 404)
     expect(res.json).toHaveBeenNthCalledWith(1, { error: 'Invalid Group ID' })
@@ -453,28 +452,28 @@ describe('controllers/api groups endpoints', () => {
 
   it('returns 400 when group user assign relation already exists', async () => {
     global.WIKI.models.knex.mockReturnValueOnce({
-      where: jest.fn().mockReturnValue({
-        first: jest.fn().mockResolvedValue({ userId: 10, groupId: 3 })
+      where: vi.fn().mockReturnValue({
+        first: vi.fn().mockResolvedValue({ userId: 10, groupId: 3 })
       })
     })
-    const { assignUser } = loadHandler()
+    const { assignUser } = await loadHandler()
     const req = { user: { permissions: ['manage:groups'] }, params: { groupId: '3', userId: '10' } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await assignUser(req, res, jest.fn())
+    await assignUser(req, res, vi.fn())
 
     expect(res.status).toHaveBeenCalledWith(400)
     expect(res.json).toHaveBeenCalledWith({ error: 'User is already assigned to group.' })
   })
 
   it('forwards unexpected group user assign failures to next', async () => {
-    const next = jest.fn()
+    const next = vi.fn()
     global.WIKI.models.groups.query.mockReturnValueOnce({
-      findById: jest.fn().mockRejectedValue(new Error('assign db down'))
+      findById: vi.fn().mockRejectedValue(new Error('assign db down'))
     })
-    const { assignUser } = loadHandler()
+    const { assignUser } = await loadHandler()
     const req = { user: { permissions: ['manage:groups'] }, params: { groupId: '3', userId: '10' } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await assignUser(req, res, next)
 
@@ -483,11 +482,11 @@ describe('controllers/api groups endpoints', () => {
   })
 
   it('unassigns group users and revokes their tokens', async () => {
-    const { unassignUser } = loadHandler()
+    const { unassignUser } = await loadHandler()
     const req = { user: { permissions: ['manage:users'] }, params: { groupId: '3', userId: '10' } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await unassignUser(req, res, jest.fn())
+    await unassignUser(req, res, vi.fn())
 
     expect(global.WIKI.auth.checkAccess).toHaveBeenCalledWith({ permissions: ['manage:users'] }, ['manage:users', 'write:groups', 'manage:groups', 'manage:system'])
     const group = await global.WIKI.models.groups.query.mock.results[0].value.findById.mock.results[0].value
@@ -506,22 +505,22 @@ describe('controllers/api groups endpoints', () => {
 
   it('returns 403 for group user unassign requests without assignment access', async () => {
     global.WIKI.auth.checkAccess.mockReturnValueOnce(false)
-    const { unassignUser } = loadHandler()
+    const { unassignUser } = await loadHandler()
     const req = { user: { permissions: ['manage:api'] }, params: { groupId: '3', userId: '10' } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await unassignUser(req, res, jest.fn())
+    await unassignUser(req, res, vi.fn())
 
     expect(res.status).toHaveBeenCalledWith(403)
     expect(res.json).toHaveBeenCalledWith({ error: 'manage:users, write:groups, manage:groups, or manage:system is required' })
   })
 
   it('returns 400 for malformed group user unassign ids', async () => {
-    const { unassignUser } = loadHandler()
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const { unassignUser } = await loadHandler()
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await unassignUser({ user: { permissions: ['manage:groups'] }, params: { groupId: 'bad', userId: '10' } }, res, jest.fn())
-    await unassignUser({ user: { permissions: ['manage:groups'] }, params: { groupId: '3', userId: 'bad' } }, res, jest.fn())
+    await unassignUser({ user: { permissions: ['manage:groups'] }, params: { groupId: 'bad', userId: '10' } }, res, vi.fn())
+    await unassignUser({ user: { permissions: ['manage:groups'] }, params: { groupId: '3', userId: 'bad' } }, res, vi.fn())
 
     expect(res.status).toHaveBeenNthCalledWith(1, 400)
     expect(res.json).toHaveBeenNthCalledWith(1, { error: 'group id must be a positive integer' })
@@ -530,11 +529,11 @@ describe('controllers/api groups endpoints', () => {
   })
 
   it('returns protected account errors for invalid group user unassigns', async () => {
-    const { unassignUser } = loadHandler()
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const { unassignUser } = await loadHandler()
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await unassignUser({ user: { permissions: ['manage:groups'] }, params: { groupId: '3', userId: '2' } }, res, jest.fn())
-    await unassignUser({ user: { permissions: ['manage:groups'] }, params: { groupId: '1', userId: '1' } }, res, jest.fn())
+    await unassignUser({ user: { permissions: ['manage:groups'] }, params: { groupId: '3', userId: '2' } }, res, vi.fn())
+    await unassignUser({ user: { permissions: ['manage:groups'] }, params: { groupId: '1', userId: '1' } }, res, vi.fn())
 
     expect(res.status).toHaveBeenNthCalledWith(1, 400)
     expect(res.json).toHaveBeenNthCalledWith(1, { error: 'Cannot unassign Guest user' })
@@ -543,18 +542,18 @@ describe('controllers/api groups endpoints', () => {
   })
 
   it('returns 404 when unassign group or user targets are missing', async () => {
-    const { unassignUser } = loadHandler()
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const { unassignUser } = await loadHandler()
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     global.WIKI.models.groups.query.mockReturnValueOnce({
-      findById: jest.fn().mockResolvedValue(null)
+      findById: vi.fn().mockResolvedValue(null)
     })
-    await unassignUser({ user: { permissions: ['manage:groups'] }, params: { groupId: '999', userId: '10' } }, res, jest.fn())
+    await unassignUser({ user: { permissions: ['manage:groups'] }, params: { groupId: '999', userId: '10' } }, res, vi.fn())
 
     global.WIKI.models.users.query.mockReturnValueOnce({
-      findById: jest.fn().mockResolvedValue(null)
+      findById: vi.fn().mockResolvedValue(null)
     })
-    await unassignUser({ user: { permissions: ['manage:groups'] }, params: { groupId: '3', userId: '999' } }, res, jest.fn())
+    await unassignUser({ user: { permissions: ['manage:groups'] }, params: { groupId: '3', userId: '999' } }, res, vi.fn())
 
     expect(res.status).toHaveBeenNthCalledWith(1, 404)
     expect(res.json).toHaveBeenNthCalledWith(1, { error: 'Invalid Group ID' })
@@ -563,13 +562,13 @@ describe('controllers/api groups endpoints', () => {
   })
 
   it('forwards unexpected group user unassign failures to next', async () => {
-    const next = jest.fn()
+    const next = vi.fn()
     global.WIKI.models.groups.query.mockReturnValueOnce({
-      findById: jest.fn().mockRejectedValue(new Error('unassign db down'))
+      findById: vi.fn().mockRejectedValue(new Error('unassign db down'))
     })
-    const { unassignUser } = loadHandler()
+    const { unassignUser } = await loadHandler()
     const req = { user: { permissions: ['manage:groups'] }, params: { groupId: '3', userId: '10' } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await unassignUser(req, res, next)
 
@@ -578,11 +577,11 @@ describe('controllers/api groups endpoints', () => {
   })
 
   it('deletes groups and reloads group permissions', async () => {
-    const { deleteGroup } = loadHandler()
+    const { deleteGroup } = await loadHandler()
     const req = { user: { permissions: ['manage:groups'] }, params: { id: '3' } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await deleteGroup(req, res, jest.fn())
+    await deleteGroup(req, res, vi.fn())
 
     expect(global.WIKI.auth.checkAccess).toHaveBeenCalledWith({ permissions: ['manage:groups'] }, ['write:groups', 'manage:groups', 'manage:system'])
     expect(global.WIKI.models.groups.query.mock.results[0].value.deleteById).toHaveBeenCalledWith(3)
@@ -598,23 +597,23 @@ describe('controllers/api groups endpoints', () => {
 
   it('returns 403 for group delete requests without group admin access', async () => {
     global.WIKI.auth.checkAccess.mockReturnValueOnce(false)
-    const { deleteGroup } = loadHandler()
+    const { deleteGroup } = await loadHandler()
     const req = { user: { permissions: ['manage:api'] }, params: { id: '3' } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await deleteGroup(req, res, jest.fn())
+    await deleteGroup(req, res, vi.fn())
 
     expect(res.status).toHaveBeenCalledWith(403)
     expect(res.json).toHaveBeenCalledWith({ error: 'write:groups, manage:groups, or manage:system is required' })
   })
 
   it('returns 400 for malformed and protected group delete ids', async () => {
-    const { deleteGroup } = loadHandler()
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const { deleteGroup } = await loadHandler()
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await deleteGroup({ user: { permissions: ['manage:groups'] }, params: { id: 'bad' } }, res, jest.fn())
-    await deleteGroup({ user: { permissions: ['manage:groups'] }, params: { id: '1' } }, res, jest.fn())
-    await deleteGroup({ user: { permissions: ['manage:groups'] }, params: { id: '2' } }, res, jest.fn())
+    await deleteGroup({ user: { permissions: ['manage:groups'] }, params: { id: 'bad' } }, res, vi.fn())
+    await deleteGroup({ user: { permissions: ['manage:groups'] }, params: { id: '1' } }, res, vi.fn())
+    await deleteGroup({ user: { permissions: ['manage:groups'] }, params: { id: '2' } }, res, vi.fn())
 
     expect(res.status).toHaveBeenNthCalledWith(1, 400)
     expect(res.json).toHaveBeenNthCalledWith(1, { error: 'group id must be a positive integer' })
@@ -625,13 +624,13 @@ describe('controllers/api groups endpoints', () => {
   })
 
   it('forwards unexpected group delete failures to next', async () => {
-    const next = jest.fn()
+    const next = vi.fn()
     global.WIKI.models.groups.query.mockReturnValueOnce({
-      deleteById: jest.fn().mockRejectedValue(new Error('delete db down'))
+      deleteById: vi.fn().mockRejectedValue(new Error('delete db down'))
     })
-    const { deleteGroup } = loadHandler()
+    const { deleteGroup } = await loadHandler()
     const req = { user: { permissions: ['manage:groups'] }, params: { id: '3' } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await deleteGroup(req, res, next)
 
@@ -640,7 +639,7 @@ describe('controllers/api groups endpoints', () => {
   })
 
   it('updates groups and reloads group permissions', async () => {
-    const { updateGroup } = loadHandler()
+    const { updateGroup } = await loadHandler()
     const req = {
       user: { permissions: ['manage:groups'] },
       params: { id: '3' },
@@ -651,17 +650,17 @@ describe('controllers/api groups endpoints', () => {
         pageRules: [{ id: 'rule-1', path: 'docs', roles: ['read:pages'], match: 'START', deny: false, locales: ['en'] }]
       }
     }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await updateGroup(req, res, jest.fn())
+    await updateGroup(req, res, vi.fn())
 
     expect(global.WIKI.auth.checkAccess).toHaveBeenCalledWith({ permissions: ['manage:groups'] }, ['write:groups', 'manage:groups', 'manage:system'])
     const query = global.WIKI.models.groups.query.mock.results[0].value
     expect(query.patch).toHaveBeenCalledWith({
       name: 'Editors',
       redirectOnLogin: '/docs',
-      permissions: JSON.stringify(['read:pages']),
-      pageRules: JSON.stringify([{ id: 'rule-1', path: 'docs', roles: ['read:pages'], match: 'START', deny: false, locales: ['en'] }])
+      permissions: ['read:pages'],
+      pageRules: [{ id: 'rule-1', path: 'docs', match: 'START', deny: false, roles: ['read:pages'], locales: ['en'] }]
     })
     expect(query.patch.mock.results[0].value.where).toHaveBeenCalledWith('id', 3)
     expect(global.WIKI.auth.revokeUserTokens).toHaveBeenCalledWith({ id: 3, kind: 'g' })
@@ -676,28 +675,28 @@ describe('controllers/api groups endpoints', () => {
 
   it('returns 403 for group update requests without group admin access', async () => {
     global.WIKI.auth.checkAccess.mockReturnValueOnce(false)
-    const { updateGroup } = loadHandler()
+    const { updateGroup } = await loadHandler()
     const req = { user: { permissions: ['manage:api'] }, params: { id: '3' }, body: { name: 'Editors', permissions: [], pageRules: [] } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await updateGroup(req, res, jest.fn())
+    await updateGroup(req, res, vi.fn())
 
     expect(res.status).toHaveBeenCalledWith(403)
     expect(res.json).toHaveBeenCalledWith({ error: 'write:groups, manage:groups, or manage:system is required' })
   })
 
   it('returns 400 for malformed group update ids and payloads', async () => {
-    const { updateGroup } = loadHandler()
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const { updateGroup } = await loadHandler()
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
     const user = { permissions: ['manage:groups'] }
 
-    await updateGroup({ user, params: { id: 'bad' }, body: { name: 'Editors', permissions: [], pageRules: [] } }, res, jest.fn())
-    await updateGroup({ user, params: { id: '3' }, body: { name: '', permissions: [], pageRules: [] } }, res, jest.fn())
-    await updateGroup({ user, params: { id: '3' }, body: { name: 'Editors', permissions: 'bad', pageRules: [] } }, res, jest.fn())
-    await updateGroup({ user, params: { id: '3' }, body: { name: 'Editors', permissions: [], pageRules: 'bad' } }, res, jest.fn())
-    await updateGroup({ user, params: { id: '3' }, body: { name: 'Editors', permissions: [], pageRules: [{ path: 7, match: 'START' }] } }, res, jest.fn())
-    await updateGroup({ user, params: { id: '3' }, body: { name: 'Editors', permissions: [], pageRules: [{ id: 'rule-1', path: 'docs', roles: ['read:pages'], match: 'BAD', deny: false, locales: ['en'] }] } }, res, jest.fn())
-    await updateGroup({ user, params: { id: '3' }, body: { name: 'Editors', permissions: [], pageRules: [{ id: 'rule-1', path: 'docs', roles: 'read:pages', match: 'START', deny: false, locales: ['en'] }] } }, res, jest.fn())
+    await updateGroup({ user, params: { id: 'bad' }, body: { name: 'Editors', permissions: [], pageRules: [] } }, res, vi.fn())
+    await updateGroup({ user, params: { id: '3' }, body: { name: '', permissions: [], pageRules: [] } }, res, vi.fn())
+    await updateGroup({ user, params: { id: '3' }, body: { name: 'Editors', permissions: 'bad', pageRules: [] } }, res, vi.fn())
+    await updateGroup({ user, params: { id: '3' }, body: { name: 'Editors', permissions: [], pageRules: 'bad' } }, res, vi.fn())
+    await updateGroup({ user, params: { id: '3' }, body: { name: 'Editors', permissions: [], pageRules: [{ path: 7, match: 'START' }] } }, res, vi.fn())
+    await updateGroup({ user, params: { id: '3' }, body: { name: 'Editors', permissions: [], pageRules: [{ id: 'rule-1', path: 'docs', roles: ['read:pages'], match: 'BAD', deny: false, locales: ['en'] }] } }, res, vi.fn())
+    await updateGroup({ user, params: { id: '3' }, body: { name: 'Editors', permissions: [], pageRules: [{ id: 'rule-1', path: 'docs', roles: 'read:pages', match: 'START', deny: false, locales: ['en'] }] } }, res, vi.fn())
 
     expect(res.status).toHaveBeenNthCalledWith(1, 400)
     expect(res.json).toHaveBeenNthCalledWith(1, { error: 'group id must be a positive integer' })
@@ -716,7 +715,7 @@ describe('controllers/api groups endpoints', () => {
   })
 
   it('rejects unsafe regex group update page rules', async () => {
-    const { updateGroup } = loadHandler()
+    const { updateGroup } = await loadHandler()
     const req = {
       user: { permissions: ['manage:groups'] },
       params: { id: '3' },
@@ -726,24 +725,24 @@ describe('controllers/api groups endpoints', () => {
         pageRules: [{ id: 'rule-1', path: '(x+x+)+y', roles: ['read:pages'], match: 'REGEX', deny: false, locales: ['en'] }]
       }
     }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await updateGroup(req, res, jest.fn())
+    await updateGroup(req, res, vi.fn())
 
     expect(res.status).toHaveBeenCalledWith(400)
     expect(res.json).toHaveBeenCalledWith({ error: 'Some Page Rules contains unsafe or exponential time regex.' })
   })
 
   it('defaults blank group update redirectOnLogin to slash', async () => {
-    const { updateGroup } = loadHandler()
+    const { updateGroup } = await loadHandler()
     const req = {
       user: { permissions: ['manage:groups'] },
       params: { id: '3' },
       body: { name: 'Editors', redirectOnLogin: '', permissions: [], pageRules: [] }
     }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await updateGroup(req, res, jest.fn())
+    await updateGroup(req, res, vi.fn())
 
     expect(global.WIKI.models.groups.query.mock.results[0].value.patch).toHaveBeenCalledWith(expect.objectContaining({
       redirectOnLogin: '/'
@@ -751,15 +750,15 @@ describe('controllers/api groups endpoints', () => {
   })
 
   it('protects elevated and system group update permissions', async () => {
-    const { updateGroup } = loadHandler()
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const { updateGroup } = await loadHandler()
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     global.WIKI.auth.checkExclusiveAccess.mockReturnValueOnce(true)
     await updateGroup({
       user: { permissions: ['write:groups'] },
       params: { id: '3' },
       body: { name: 'Editors', permissions: ['manage:users'], pageRules: [] }
-    }, res, jest.fn())
+    }, res, vi.fn())
 
     global.WIKI.auth.checkExclusiveAccess
       .mockReturnValueOnce(false)
@@ -768,7 +767,7 @@ describe('controllers/api groups endpoints', () => {
       user: { permissions: ['manage:groups'] },
       params: { id: '3' },
       body: { name: 'Editors', permissions: ['manage:system'], pageRules: [] }
-    }, res, jest.fn())
+    }, res, vi.fn())
 
     expect(res.status).toHaveBeenNthCalledWith(1, 403)
     expect(res.json).toHaveBeenNthCalledWith(1, { error: 'You are not authorized to manage this group or assign these administrative permissions.' })
@@ -777,15 +776,15 @@ describe('controllers/api groups endpoints', () => {
   })
 
   it('forwards unexpected group update failures to next', async () => {
-    const next = jest.fn()
+    const next = vi.fn()
     global.WIKI.models.groups.query.mockReturnValueOnce({
-      patch: jest.fn().mockReturnValue({
-        where: jest.fn().mockRejectedValue(new Error('update db down'))
+      patch: vi.fn().mockReturnValue({
+        where: vi.fn().mockRejectedValue(new Error('update db down'))
       })
     })
-    const { updateGroup } = loadHandler()
+    const { updateGroup } = await loadHandler()
     const req = { user: { permissions: ['manage:groups'] }, params: { id: '3' }, body: { name: 'Editors', permissions: [], pageRules: [] } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await updateGroup(req, res, next)
 
@@ -794,11 +793,11 @@ describe('controllers/api groups endpoints', () => {
   })
 
   it('returns the admin group detail payload for group admins', async () => {
-    const { detail } = loadHandler()
+    const { detail } = await loadHandler()
     const req = { user: { permissions: ['manage:groups'] }, params: { id: '3' } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await detail(req, res, jest.fn())
+    await detail(req, res, vi.fn())
 
     expect(global.WIKI.auth.checkAccess).toHaveBeenCalledWith({ permissions: ['manage:groups'] }, ['write:groups', 'manage:groups', 'manage:system'])
     expect(global.WIKI.models.groups.query).toHaveBeenCalled()
@@ -836,11 +835,11 @@ describe('controllers/api groups endpoints', () => {
   })
 
   it('returns 400 for malformed group detail ids', async () => {
-    const { detail } = loadHandler()
+    const { detail } = await loadHandler()
     const req = { user: { permissions: ['manage:groups'] }, params: { id: '3abc' } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await detail(req, res, jest.fn())
+    await detail(req, res, vi.fn())
 
     expect(res.status).toHaveBeenCalledWith(400)
     expect(res.json).toHaveBeenCalledWith({ error: 'group id must be a positive integer' })
@@ -848,13 +847,13 @@ describe('controllers/api groups endpoints', () => {
 
   it('returns 404 when the requested group detail is missing', async () => {
     global.WIKI.models.groups.query.mockReturnValueOnce({
-      findById: jest.fn().mockResolvedValue(null)
+      findById: vi.fn().mockResolvedValue(null)
     })
-    const { detail } = loadHandler()
+    const { detail } = await loadHandler()
     const req = { user: { permissions: ['manage:groups'] }, params: { id: '999' } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await detail(req, res, jest.fn())
+    await detail(req, res, vi.fn())
 
     expect(res.status).toHaveBeenCalledWith(404)
     expect(res.json).toHaveBeenCalledWith({ error: 'group not found' })
@@ -862,24 +861,24 @@ describe('controllers/api groups endpoints', () => {
 
   it('returns 403 for detail requests without group admin access', async () => {
     global.WIKI.auth.checkAccess.mockReturnValueOnce(false)
-    const { detail } = loadHandler()
+    const { detail } = await loadHandler()
     const req = { user: { permissions: ['manage:api'] }, params: { id: '3' } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await detail(req, res, jest.fn())
+    await detail(req, res, vi.fn())
 
     expect(res.status).toHaveBeenCalledWith(403)
     expect(res.json).toHaveBeenCalledWith({ error: 'write:groups, manage:groups, or manage:system is required' })
   })
 
   it('forwards unexpected detail query failures to next', async () => {
-    const next = jest.fn()
+    const next = vi.fn()
     global.WIKI.models.groups.query.mockReturnValueOnce({
-      findById: jest.fn().mockRejectedValue(new Error('detail db down'))
+      findById: vi.fn().mockRejectedValue(new Error('detail db down'))
     })
-    const { detail } = loadHandler()
+    const { detail } = await loadHandler()
     const req = { user: { permissions: ['manage:groups'] }, params: { id: '3' } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await detail(req, res, next)
 
@@ -888,13 +887,13 @@ describe('controllers/api groups endpoints', () => {
   })
 
   it('forwards unexpected query failures to next', async () => {
-    const next = jest.fn()
+    const next = vi.fn()
     global.WIKI.models.groups.query.mockReturnValueOnce({
-      select: jest.fn().mockRejectedValue(new Error('db down'))
+      select: vi.fn().mockRejectedValue(new Error('db down'))
     })
-    const { picker } = loadHandler()
+    const { picker } = await loadHandler()
     const req = { user: { permissions: ['manage:system'] } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await picker(req, res, next)
 

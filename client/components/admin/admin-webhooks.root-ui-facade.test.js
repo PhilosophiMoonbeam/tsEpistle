@@ -1,10 +1,10 @@
-const fs = require('fs')
-const path = require('path')
+import fs from 'node:fs'
+import path from 'node:path'
 
 describe('admin-webhooks stale mail GraphQL cleanup guard', () => {
   const componentPath = path.join(process.cwd(), 'client/components/admin/admin-webhooks.vue')
   const source = fs.readFileSync(componentPath, 'utf8')
-  const scriptMatch = source.match(/<script>\s*([\s\S]*?)\s*<\/script>/)
+  const scriptMatch = source.match(/<script(?:\s+lang=["']ts["'])?>\s*([\s\S]*?)\s*<\/script>/)
   const script = scriptMatch && scriptMatch[1]
 
   test('admin-webhooks no longer carries broken mail config GraphQL scaffolding', () => {

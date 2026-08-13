@@ -18,6 +18,52 @@ type FetchImpl = (url: string, init: {
   body?: string
 }) => Promise<JsonResponse>
 
+export type SiteConfig = Record<string, unknown> & {
+  host?: string
+  title?: string
+  description?: string
+  robots?: string[]
+  analyticsService?: string
+  analyticsId?: string
+  company?: string
+  contentLicense?: string
+  footerOverride?: string
+  logoUrl?: string
+  featureAnalytics?: boolean
+  featurePageRatings?: boolean
+  featurePageComments?: boolean
+  featurePersonalWikis?: boolean
+  featureTinyPNG?: boolean
+  pageExtensions?: string
+  editFab?: boolean
+  editMenuBar?: boolean
+  editMenuBtn?: boolean
+  editMenuExternalBtn?: boolean
+  editMenuExternalName?: string
+  editMenuExternalIcon?: string
+  editMenuExternalUrl?: string
+  uploadMaxFileSize?: number
+  uploadMaxFiles?: number
+  uploadScanSVG?: boolean
+  uploadForceDownload?: boolean
+  securityOpenRedirect?: boolean
+  securityIframe?: boolean
+  securityReferrerPolicy?: boolean
+  securityTrustProxy?: boolean
+  securitySRI?: boolean
+  securityHSTS?: boolean
+  securityHSTSDuration?: number
+  securityCSP?: boolean
+  securityCSPDirectives?: string
+  authAutoLogin?: boolean
+  authEnforce2FA?: boolean
+  authHideLocal?: boolean
+  authLoginBgUrl?: string
+  authJwtAudience?: string
+  authJwtExpiration?: string
+  authJwtRenewablePeriod?: string
+}
+
 type MessageResponse = {
   message: string
 }
@@ -47,7 +93,65 @@ function assertPlainObject (payload: unknown, fallbackMessage: string): asserts 
   }
 }
 
-export async function fetchSiteConfig (fetchImpl: FetchImpl, fallbackMessage = 'Site configuration fetch failed'): Promise<Record<string, unknown>> {
+function assertSiteConfig (payload: Record<string, unknown>, fallbackMessage: string): asserts payload is SiteConfig {
+  const stringFields = [
+    'host',
+    'title',
+    'description',
+    'analyticsService',
+    'analyticsId',
+    'company',
+    'contentLicense',
+    'footerOverride',
+    'logoUrl',
+    'pageExtensions',
+    'editMenuExternalName',
+    'editMenuExternalIcon',
+    'editMenuExternalUrl',
+    'securityCSPDirectives',
+    'authLoginBgUrl',
+    'authJwtAudience',
+    'authJwtExpiration',
+    'authJwtRenewablePeriod'
+  ]
+  const booleanFields = [
+    'featureAnalytics',
+    'featurePageRatings',
+    'featurePageComments',
+    'featurePersonalWikis',
+    'featureTinyPNG',
+    'editFab',
+    'editMenuBar',
+    'editMenuBtn',
+    'editMenuExternalBtn',
+    'uploadScanSVG',
+    'uploadForceDownload',
+    'securityOpenRedirect',
+    'securityIframe',
+    'securityReferrerPolicy',
+    'securityTrustProxy',
+    'securitySRI',
+    'securityHSTS',
+    'securityCSP',
+    'authAutoLogin',
+    'authEnforce2FA',
+    'authHideLocal'
+  ]
+  const numberFields = [
+    'uploadMaxFileSize',
+    'uploadMaxFiles',
+    'securityHSTSDuration'
+  ]
+
+  if (stringFields.some(field => field in payload && typeof payload[field] !== 'string') ||
+    booleanFields.some(field => field in payload && typeof payload[field] !== 'boolean') ||
+    numberFields.some(field => field in payload && typeof payload[field] !== 'number') ||
+    ('robots' in payload && (!Array.isArray(payload.robots) || payload.robots.some(robot => typeof robot !== 'string')))) {
+    throw new Error(fallbackMessage)
+  }
+}
+
+export async function fetchSiteConfig (fetchImpl: FetchImpl, fallbackMessage = 'Site configuration fetch failed'): Promise<SiteConfig> {
   const response = await fetchImpl('/_api/site/config', {
     credentials: 'same-origin',
     headers: {
@@ -56,6 +160,7 @@ export async function fetchSiteConfig (fetchImpl: FetchImpl, fallbackMessage = '
   })
   const payload = await parseJsonResponse(response, fallbackMessage)
   assertPlainObject(payload, fallbackMessage)
+  assertSiteConfig(payload, fallbackMessage)
   return payload
 }
 

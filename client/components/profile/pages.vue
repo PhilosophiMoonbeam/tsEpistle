@@ -1,7 +1,7 @@
 <template lang='pug'>
   v-container(fluid, grid-list-lg)
-    v-layout(row wrap)
-      v-flex(xs12)
+    v-row
+      v-col(cols='12')
         .profile-header
           img.animated.fadeInUp(src='/_assets/svg/icon-file.svg', alt='Users', style='width: 80px;')
           .profile-header-title
@@ -10,12 +10,12 @@
           v-spacer
           v-btn.animated.fadeInDown.wait-p1s(color='grey', outlined, @click='refresh', large)
             v-icon.grey--text mdi-refresh
-      v-flex(xs12)
+      v-col(cols='12')
         v-card.animated.fadeInUp
           v-data-table(
             :items='pages'
             :headers='headers'
-            :page.sync='pagination'
+            v-model:page='pagination'
             :items-per-page='15'
             :loading='loading'
             must-sort,
@@ -23,33 +23,34 @@
             sort-desc,
             hide-default-footer
           )
-            template(slot='item', slot-scope='props')
+            template(v-slot:item='props')
               tr.is-clickable(:active='props.selected', @click='goToPage(props.item.id)')
                 td
                   .body-2: strong {{ props.item.title }}
                   .caption {{ props.item.description }}
                 td.admin-pages-path
-                  v-chip(label, small, :color='$vuetify.theme.dark ? `grey darken-4` : `grey lighten-4`') {{ props.item.locale }}
-                  span.ml-2.grey--text(:class='$vuetify.theme.dark ? `text--lighten-1` : `text--darken-2`') / {{ props.item.path }}
+                  v-chip(label, small, :color='$vuetify.theme.current.dark ? `grey darken-4` : `grey lighten-4`') {{ props.item.locale }}
+                  span.ml-2.grey--text(:class='$vuetify.theme.current.dark ? `text--lighten-1` : `text--darken-2`') / {{ props.item.path }}
                 td {{ $helpers.formatMoment(props.item.createdAt, 'calendar') }}
                 td {{ $helpers.formatMoment(props.item.updatedAt, 'calendar') }}
-            template(slot='no-data')
+            template(v-slot:no-data)
               v-alert.ma-3(icon='mdi-alert', :value='true', outlined, color='grey')
                 em.caption {{$t('profile:pages.emptyList')}}
           .text-center.py-2.animated.fadeInDown(v-if='this.pageTotal > 1')
             v-pagination(v-model='pagination', :length='pageTotal')
 </template>
 
-<script>
-import { fetchPages } from '../../helpers/pages-api'
+<script lang='ts'>
+import { fetchPages, type PageListRow } from '../../helpers/pages-api'
 import { showNotification, setLoading } from '../../helpers/root-ui-store'
+import { wikiStore } from '@/store/index.ts'
 
 export default {
   data() {
     return {
-      selectedPage: {},
+      selectedPage: null as PageListRow | null,
       pagination: 1,
-      pages: [],
+      pages: [] as PageListRow[],
       loading: false
     }
   },
@@ -72,27 +73,27 @@ export default {
   methods: {
     async refresh() {
       await this.loadPages()
-      showNotification(this.$store, {
+      showNotification(wikiStore, {
         message: this.$t('profile:pages.refreshSuccess'),
         style: 'success',
         icon: 'cached'
       })
     },
-    goToPage(id) {
+    goToPage(id: number) {
       window.location.assign(`/i/` + id)
     },
     async loadPages() {
       this.loading = true
-      setLoading(this.$store, 'profile-pages-refresh', true)
+      setLoading(wikiStore, 'profile-pages-refresh', true)
       try {
-        const userId = this.$store.get('user/id')
+        const userId = wikiStore.user.id
         this.pages = await fetchPages(window.fetch.bind(window), {
           creatorId: userId,
           authorId: userId
         })
       } finally {
         this.loading = false
-        setLoading(this.$store, 'profile-pages-refresh', false)
+        setLoading(wikiStore, 'profile-pages-refresh', false)
       }
     }
   }

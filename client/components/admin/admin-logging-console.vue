@@ -10,7 +10,7 @@
         :size='20'
         :width='2'
         )
-    .consoleTerm(ref='consoleContainer')
+    pre.consoleTerm(ref='consoleContainer') {{output}}
     v-toolbar(flat, color='grey darken-3', dark)
       v-spacer
       v-btn(outline, @click='clear')
@@ -21,66 +21,70 @@
         span Close
 </template>
 
-<script>
-import _ from 'lodash'
-// import { Terminal } from 'xterm'
-// import * as fit from 'xterm/lib/addons/fit/fit'
-
-import { showNotification } from '../../helpers/root-ui-store'
-
-// Terminal.applyAddon(fit)
-
+<script lang='ts'>
+import { wikiStore } from '@/store/index.ts'
 export default {
-  term: null,
-  liveSource: null,
+  emits: ['update:modelValue'],
+  data() {
+    return {
+      liveSource: null as EventSource | null,
+      output: ''
+    }
+  },
   props: {
-    value: {
+    modelValue: {
       type: Boolean,
       default: false
     }
   },
   computed: {
     isShown: {
-      get() { return this.value },
-      set(val) { this.$emit('input', val) }
+      get() { return this.modelValue },
+      set(val: boolean) { this.$emit('update:modelValue', val) }
     }
   },
   watch: {
-    value(newValue, oldValue) {
+    modelValue(newValue: boolean) {
       if (newValue) {
-        _.delay(() => {
-          // this.term = new Terminal()
-          this.term.open(this.$refs.consoleContainer)
-          this.term.writeln('Connecting to \x1B[1;3;31mconsole output\x1B[0m...')
-
+        setTimeout(() => {
+          this.output = 'Connecting to console output...'
           this.attach()
         }, 100)
       } else {
-        if (this.liveSource) this.liveSource.close()
+        this.liveSource?.close()
         this.liveSource = null
-        this.term.dispose()
-        this.term = null
       }
     }
   },
-  mounted() {
-
+  beforeUnmount() {
+    this.liveSource?.close()
   },
   methods: {
     clear() {
-      this.term.clear()
+      this.output = ''
     },
     close() {
       this.isShown = false
     },
     attach() {
+      this.liveSource?.close()
       this.liveSource = new EventSource('/_api/logging/live')
-      this.liveSource.onmessage = event => {
-        const item = JSON.parse(event.data)
-        this.term.writeln(`${item.level}: ${item.output}`)
+      this.liveSource.onmessage = (event: MessageEvent<string>) => {
+        try {
+          const item = JSON.parse(event.data) as { level?: unknown, output?: unknown }
+          const level = typeof item.level === 'string' ? item.level : 'log'
+          const message = typeof item.output === 'string' ? item.output : event.data
+          this.output += `${this.output ? '\n' : ''}${level}: ${message}`
+          this.$nextTick(() => {
+            const container = this.$refs.consoleContainer as HTMLElement
+            container.scrollTop = container.scrollHeight
+          })
+        } catch {
+          this.output += `${this.output ? '\n' : ''}${event.data}`
+        }
       }
       this.liveSource.onerror = () => {
-        showNotification(this.$store, {
+        wikiStore.showNotification({
           style: 'red',
           message: 'Live console connection failed.',
           icon: 'warning'
@@ -98,6 +102,10 @@ export default {
   padding: 16px;
   width: 100%;
   height: 415px;
+  margin: 0;
+  overflow: auto;
+  color: #fff;
+  white-space: pre-wrap;
 }
 
 </style>

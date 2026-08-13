@@ -1,22 +1,22 @@
 <template lang='pug'>
-  v-app(:dark='$vuetify.theme.dark').history
+  v-app(:dark='$vuetify.theme.current.dark').history
     nav-header
-    v-content
+    v-main
       v-toolbar(color='primary', dark)
         .subheading Viewing history of #[strong /{{path}}]
-        template(v-if='$vuetify.breakpoint.mdAndUp')
+        template(v-if='$vuetify.display.mdAndUp')
           v-spacer
           .caption.blue--text.text--lighten-3.mr-4 Trail Length: {{total}}
           .caption.blue--text.text--lighten-3 ID: {{pageId}}
           v-btn.ml-4(depressed, color='blue darken-1', @click='goLive') Return to Live Version
       v-container(fluid, grid-list-xl)
-        v-layout(row, wrap)
-          v-flex(xs12, md4)
+        v-row()
+          v-col(cols='12', md='4')
             v-chip.my-0.ml-6(
               label
               small
-              :color='$vuetify.theme.dark ? `grey darken-2` : `grey lighten-2`'
-              :class='$vuetify.theme.dark ? `grey--text text--lighten-2` : `grey--text text--darken-2`'
+              :color='$vuetify.theme.current.dark ? `grey darken-2` : `grey lighten-2`'
+              :class='$vuetify.theme.current.dark ? `grey--text text--lighten-2` : `grey--text text--darken-2`'
               )
               span Live
             v-timeline(
@@ -40,26 +40,26 @@
                     .caption(v-else) Unknown Action by #[strong {{ ph.authorName }}]
                     v-spacer
                     v-menu(offset-x, left)
-                      template(v-slot:activator='{ on }')
-                        v-btn.mr-2.radius-4(icon, v-on='on', small, tile): v-icon mdi-dots-horizontal
+                      template(v-slot:activator='{ props }')
+                        v-btn.mr-2.radius-4(icon, v-bind='props', small, tile): v-icon mdi-dots-horizontal
                       v-list(dense, nav).history-promptmenu
                         v-list-item(@click='setDiffSource(ph.versionId)', :disabled='(ph.versionId >= diffTarget && diffTarget !== 0) || ph.versionId === 0')
-                          v-list-item-avatar(size='24'): v-avatar A
+                          v-avatar(size='24'): v-avatar A
                           v-list-item-title Set as Differencing Source
                         v-list-item(@click='setDiffTarget(ph.versionId)', :disabled='ph.versionId <= diffSource && ph.versionId !== 0')
-                          v-list-item-avatar(size='24'): v-avatar B
+                          v-avatar(size='24'): v-avatar B
                           v-list-item-title Set as Differencing Target
                         v-list-item(@click='viewSource(ph.versionId)')
-                          v-list-item-avatar(size='24'): v-icon mdi-code-tags
+                          v-avatar(size='24'): v-icon mdi-code-tags
                           v-list-item-title View Source
                         v-list-item(@click='download(ph.versionId)')
-                          v-list-item-avatar(size='24'): v-icon mdi-cloud-download-outline
+                          v-avatar(size='24'): v-icon mdi-cloud-download-outline
                           v-list-item-title Download Version
                         v-list-item(@click='restore(ph.versionId, ph.versionDate)', :disabled='ph.versionId === 0')
-                          v-list-item-avatar(size='24'): v-icon(:disabled='ph.versionId === 0') mdi-history
+                          v-avatar(size='24'): v-icon(:disabled='ph.versionId === 0') mdi-history
                           v-list-item-title Restore
                         v-list-item(@click='branchOff(ph.versionId)')
-                          v-list-item-avatar(size='24'): v-icon mdi-source-branch
+                          v-avatar(size='24'): v-icon mdi-source-branch
                           v-list-item-title Branch off from here
                     v-btn.mr-2.radius-4(
                       @click='setDiffSource(ph.versionId)'
@@ -67,7 +67,7 @@
                       small
                       depressed
                       tile
-                      :class='diffSource === ph.versionId ? `pink white--text` : ($vuetify.theme.dark ? `grey darken-2` : `grey lighten-2`)'
+                      :class='diffSource === ph.versionId ? `pink white--text` : ($vuetify.theme.current.dark ? `grey darken-2` : `grey lighten-2`)'
                       :disabled='(ph.versionId >= diffTarget && diffTarget !== 0) || ph.versionId === 0'
                       ): strong A
                     v-btn.mr-0.radius-4(
@@ -76,7 +76,7 @@
                       small
                       depressed
                       tile
-                      :class='diffTarget === ph.versionId ? `pink white--text` : ($vuetify.theme.dark ? `grey darken-2` : `grey lighten-2`)'
+                      :class='diffTarget === ph.versionId ? `pink white--text` : ($vuetify.theme.current.dark ? `grey darken-2` : `grey lighten-2`)'
                       :disabled='ph.versionId <= diffSource && ph.versionId !== 0'
                       ): strong B
 
@@ -92,21 +92,21 @@
               v-else
               label
               small
-              :color='$vuetify.theme.dark ? `grey darken-2` : `grey lighten-2`'
-              :class='$vuetify.theme.dark ? `grey--text text--lighten-2` : `grey--text text--darken-2`'
+              :color='$vuetify.theme.current.dark ? `grey darken-2` : `grey lighten-2`'
+              :class='$vuetify.theme.current.dark ? `grey--text text--lighten-2` : `grey--text text--darken-2`'
               ) End of history trail
 
-          v-flex(xs12, md8)
-            v-card.radius-7(:class='$vuetify.breakpoint.mdAndUp ? `mt-8` : ``')
+          v-col(cols='12', md='8')
+            v-card.radius-7(:class='$vuetify.display.mdAndUp ? `mt-8` : ``')
               v-card-text
-                v-card.grey.radius-7(flat, :class='$vuetify.theme.dark ? `darken-2` : `lighten-4`')
+                v-card.grey.radius-7(flat, :class='$vuetify.theme.current.dark ? `darken-2` : `lighten-4`')
                   v-row(no-gutters, align='center')
                     v-col
                       v-card-text
                         .subheading {{target.title}}
                         .caption {{target.description}}
-                    v-col.text-right.py-3(cols='2', v-if='$vuetify.breakpoint.mdAndUp')
-                      v-btn.mr-3(:color='$vuetify.theme.dark ? `white` : `grey darken-3`', small, dark, outlined, @click='toggleViewMode')
+                    v-col.text-right.py-3(cols='2', v-if='$vuetify.display.mdAndUp')
+                      v-btn.mr-3(:color='$vuetify.theme.current.dark ? `white` : `grey darken-3`', small, dark, outlined, @click='toggleViewMode')
                         v-icon(left) mdi-eye
                         .overline View Mode
                 v-card.mt-3(light, v-html='diffHTML', flat)
@@ -129,13 +129,14 @@
     search-results
 </template>
 
-<script>
+<script lang='ts'>
 import * as Diff2Html from 'diff2html'
 import { createPatch } from 'diff'
 import _ from 'lodash'
-import { fetchPageHistory, fetchPageVersion, restorePageVersion } from '../helpers/pages-api'
+import { fetchPageHistory, fetchPageVersion, restorePageVersion, type PageHistoryTrailItem, type PageVersion } from '../helpers/pages-api'
 import { getPageDownloadPath, getPageSourcePath } from '../helpers/page-actions'
-import { loadingStart, loadingStop, setLoading, showNotification } from '../helpers/root-ui-store'
+import { getErrorMessage, loadingStart, loadingStop, setLoading, showNotification } from '../helpers/root-ui-store'
+import { wikiStore } from '@/store/index.ts'
 
 export default {
   i18nOptions: { namespaces: 'history' },
@@ -207,13 +208,13 @@ export default {
         title: '',
         description: ''
       },
-      trail: [],
+      trail: [] as PageHistoryTrailItem[],
       diffSource: 0,
       diffTarget: 0,
       offsetPage: 0,
       total: 0,
-      viewMode: 'line-by-line',
-      cache: [],
+      viewMode: 'line-by-line' as 'line-by-line' | 'side-by-side',
+      cache: [] as PageVersion[],
       restoreTarget: {
         versionId: 0,
         versionDate: ''
@@ -230,7 +231,7 @@ export default {
   },
   computed: {
     fullTrail () {
-      const liveTrailItem = {
+      const liveTrailItem: PageHistoryTrailItem = {
         versionId: 0,
         authorId: this.authorId,
         authorName: this.authorName,
@@ -257,7 +258,6 @@ export default {
     },
     diffHTML () {
       return Diff2Html.html(this.diffs, {
-        inputFormat: 'diff',
         drawFileList: false,
         matching: 'lines',
         outputFormat: this.viewMode
@@ -293,11 +293,11 @@ export default {
     }
   },
   created () {
-    this.$store.commit('page/SET_ID', this.id)
-    this.$store.commit('page/SET_LOCALE', this.locale)
-    this.$store.commit('page/SET_PATH', this.path)
+    wikiStore.page.id = this.pageId
+    wikiStore.page.locale = this.locale
+    wikiStore.page.path = this.path
 
-    this.$store.commit('page/SET_MODE', 'history')
+    wikiStore.page.mode = 'history'
 
     this.cache.push({
       action: 'live',
@@ -321,36 +321,36 @@ export default {
       versionDate: this.updatedAt
     })
 
-    this.target = this.cache[0]
+    this.target = this.cache[0]!
 
     if (this.effectivePermissions) {
-      this.$store.set('page/effectivePermissions', JSON.parse(Buffer.from(this.effectivePermissions, 'base64').toString()))
+      wikiStore.page.effectivePermissions = JSON.parse(Buffer.from(this.effectivePermissions, 'base64').toString())
     }
   },
   mounted() {
     this.loadHistory()
   },
   methods: {
-    async loadVersion (versionId) {
-      loadingStart(this.$store, 'history-version-' + versionId)
+    async loadVersion (versionId: number): Promise<PageVersion> {
+      loadingStart(wikiStore, 'history-version-' + versionId)
       try {
         const page = await fetchPageVersion(window.fetch.bind(window), this.pageId, versionId)
         this.cache.push(page)
         return page
       } catch (err) {
         console.warn(err)
-        return { content: '' }
+        return { versionId, content: '', title: '', description: '', path: this.path }
       } finally {
-        loadingStop(this.$store, 'history-version-' + versionId)
+        loadingStop(wikiStore, 'history-version-' + versionId)
       }
     },
-    viewSource (versionId) {
+    viewSource (versionId: number) {
       window.location.assign(getPageSourcePath(this.locale, this.path, versionId))
     },
-    download (versionId) {
+    download (versionId: number) {
       window.location.assign(getPageDownloadPath(this.locale, this.path, versionId))
     },
-    restore (versionId, versionDate) {
+    restore (versionId: number, versionDate: string) {
       this.restoreTarget = {
         versionId,
         versionDate
@@ -359,10 +359,10 @@ export default {
     },
     async restoreConfirm () {
       this.restoreLoading = true
-      loadingStart(this.$store, 'history-restore')
+      loadingStart(wikiStore, 'history-restore')
       try {
         await restorePageVersion(window.fetch.bind(window), this.pageId, this.restoreTarget.versionId)
-        showNotification(this.$store, {
+        showNotification(wikiStore, {
           style: 'success',
           message: this.$t('history:restore.success'),
           icon: 'check'
@@ -372,16 +372,16 @@ export default {
           window.location.assign(`/${this.locale}/${this.path}`)
         }, 1000)
       } catch (err) {
-        showNotification(this.$store, {
+        showNotification(wikiStore, {
           style: 'red',
-          message: err.message,
+          message: getErrorMessage(err),
           icon: 'alert'
         })
       }
-      loadingStop(this.$store, 'history-restore')
+      loadingStop(wikiStore, 'history-restore')
       this.restoreLoading = false
     },
-    branchOff (versionId) {
+    branchOff (versionId: number) {
       const pathParts = this.path.split('/')
       this.branchOffOpts = {
         versionId: versionId,
@@ -390,7 +390,7 @@ export default {
         modal: true
       }
     },
-    branchOffHandle ({ locale, path }) {
+    branchOffHandle ({ locale, path }: { locale: string, path: string }) {
       window.location.assign(`/e/${locale}/${path}?from=${this.pageId},${this.branchOffOpts.versionId}`)
     },
     toggleViewMode () {
@@ -399,10 +399,10 @@ export default {
     goLive () {
       window.location.assign(`/${this.path}`)
     },
-    setDiffSource (versionId) {
+    setDiffSource (versionId: number) {
       this.diffSource = versionId
     },
-    setDiffTarget (versionId) {
+    setDiffTarget (versionId: number) {
       this.diffTarget = versionId
     },
     async loadMore () {
@@ -415,20 +415,20 @@ export default {
       this.total = result.total
       this.trail = result.trail
     },
-    async fetchHistoryPage (offsetPage) {
-      setLoading(this.$store, 'history-trail-refresh', true)
+    async fetchHistoryPage (offsetPage: number) {
+      setLoading(wikiStore, 'history-trail-refresh', true)
       try {
         return await fetchPageHistory(
           window.fetch.bind(window),
           this.pageId,
           offsetPage,
-          this.$vuetify.breakpoint.mdAndUp ? 25 : 5
+          this.$vuetify.display.mdAndUp ? 25 : 5
         )
       } finally {
-        setLoading(this.$store, 'history-trail-refresh', false)
+        setLoading(wikiStore, 'history-trail-refresh', false)
       }
     },
-    trailColor (actionType) {
+    trailColor (actionType: string) {
       switch (actionType) {
         case 'edit':
           return 'primary'
@@ -442,7 +442,7 @@ export default {
           return 'grey'
       }
     },
-    trailIcon (actionType) {
+    trailIcon (actionType: string) {
       switch (actionType) {
         case 'edit':
           return '' // 'mdi-pencil'
@@ -456,16 +456,16 @@ export default {
           return 'mdi-alert'
       }
     },
-    trailBgColor (actionType) {
+    trailBgColor (actionType: string) {
       switch (actionType) {
         case 'move':
-          return this.$vuetify.theme.dark ? 'purple' : 'purple lighten-5'
+          return this.$vuetify.theme.current.dark ? 'purple' : 'purple lighten-5'
         case 'initial':
-          return this.$vuetify.theme.dark ? 'teal darken-3' : 'teal lighten-5'
+          return this.$vuetify.theme.current.dark ? 'teal darken-3' : 'teal lighten-5'
         case 'live':
-          return this.$vuetify.theme.dark ? 'orange darken-3' : 'orange lighten-5'
+          return this.$vuetify.theme.current.dark ? 'orange darken-3' : 'orange lighten-5'
         default:
-          return this.$vuetify.theme.dark ? 'grey darken-3' : 'grey lighten-4'
+          return this.$vuetify.theme.current.dark ? 'grey darken-3' : 'grey lighten-4'
       }
     }
   }

@@ -1,13 +1,13 @@
 <template lang='pug'>
   v-container(fluid, grid-list-lg)
-    v-layout(row, wrap)
-      v-flex(xs12)
+    v-row()
+      v-col(cols='12')
         .admin-header
           img.animated.fadeInUp(src='/_assets/svg/icon-browse-page.svg', alt='Dashboard', style='width: 80px;')
           .admin-header-title
             .headline.primary--text.animated.fadeInLeft {{ $t('admin:dashboard.title') }}
             .subtitle-1.grey--text.animated.fadeInLeft.wait-p2s {{ $t('admin:dashboard.subtitle') }}
-      v-flex(xs12 md6 lg4 xl3 d-flex)
+      v-col(cols='12' md='6' lg='4' xl='3' class='d-flex')
         v-card.primary.dashboard-card.animated.fadeInUp(dark)
           v-card-text
             v-icon.dashboard-icon mdi-file-document-outline
@@ -18,7 +18,7 @@
               :formatValue='round'
               easing='easeOutQuint'
               )
-      v-flex(xs12 md6 lg4 xl3 d-flex)
+      v-col(cols='12' md='6' lg='4' xl='3' class='d-flex')
         v-card.blue.darken-3.dashboard-card.animated.fadeInUp.wait-p2s(dark)
           v-card-text
             v-icon.dashboard-icon mdi-account
@@ -29,7 +29,7 @@
               :formatValue='round'
               easing='easeOutQuint'
               )
-      v-flex(xs12 md6 lg4 xl3 d-flex)
+      v-col(cols='12' md='6' lg='4' xl='3' class='d-flex')
         v-card.blue.darken-4.dashboard-card.animated.fadeInUp.wait-p4s(dark)
           v-card-text
             v-icon.dashboard-icon mdi-account-group
@@ -40,21 +40,21 @@
               :formatValue='round'
               easing='easeOutQuint'
               )
-      v-flex(xs12 md6 lg12 xl3 d-flex)
+      v-col(cols='12' md='6' lg='12' xl='3' class='d-flex')
         v-card.dashboard-card.animated.fadeInUp.wait-p6s(
           :class='isLatestVersion ? "green" : "red lighten-2"'
           dark
           )
-          v-btn.btn-animate-wrench(fab, absolute, :right='!$vuetify.rtl', :left='$vuetify.rtl', top, small, light, to='system', v-if='hasPermission(`manage:system`)')
+          v-btn.btn-animate-wrench(fab, absolute, :right='!$vuetify.locale.isRtl', :left='$vuetify.locale.isRtl', top, small, light, to='system', v-if='hasPermission(`manage:system`)')
             v-icon(:color='isLatestVersion ? `green` : `red darken-4`', small) mdi-wrench
           v-card-text
             v-icon.dashboard-icon mdi-blur
             .subtitle-1 Wiki.js {{info.currentVersion}}
             .body-2(v-if='isLatestVersion') {{$t('admin:dashboard.versionLatest')}}
             .body-2(v-else) {{$t('admin:dashboard.versionNew', { version: info.latestVersion })}}
-      v-flex(xs12, xl6)
+      v-col(cols='12', xl='6')
         v-card.radius-7.animated.fadeInUp.wait-p2s
-          v-toolbar(:color='$vuetify.theme.dark ? `grey darken-2` : `grey lighten-5`', dense, flat)
+          v-toolbar(:color='$vuetify.theme.current.dark ? `grey darken-2` : `grey lighten-5`', dense, flat)
             v-spacer
             .overline {{$t('admin:dashboard.recentPages')}}
             v-spacer
@@ -65,17 +65,17 @@
             hide-default-footer
             hide-default-header
             )
-            template(slot='item', slot-scope='props')
+            template(v-slot:item='props')
               tr.is-clickable(:active='props.selected', @click='$router.push(`/pages/` + props.item.id)')
                 td
                   .body-2: strong {{ props.item.title }}
                 td.admin-pages-path
-                  v-chip(label, small, :color='$vuetify.theme.dark ? `grey darken-4` : `grey lighten-4`') {{ props.item.locale }}
-                  span.ml-2.grey--text(:class='$vuetify.theme.dark ? `text--lighten-1` : `text--darken-2`') / {{ props.item.path }}
+                  v-chip(label, small, :color='$vuetify.theme.current.dark ? `grey darken-4` : `grey lighten-4`') {{ props.item.locale }}
+                  span.ml-2.grey--text(:class='$vuetify.theme.current.dark ? `text--lighten-1` : `text--darken-2`') / {{ props.item.path }}
                 td.text-right.caption(width='250') {{ $helpers.formatMoment(props.item.updatedAt, 'calendar') }}
-      v-flex(xs12, xl6)
+      v-col(cols='12', xl='6')
         v-card.radius-7.animated.fadeInUp.wait-p4s
-          v-toolbar(:color='$vuetify.theme.dark ? `grey darken-2` : `grey lighten-5`', dense, flat)
+          v-toolbar(:color='$vuetify.theme.current.dark ? `grey darken-2` : `grey lighten-5`', dense, flat)
             v-spacer
             .overline {{$t('admin:dashboard.lastLogins')}}
             v-spacer
@@ -86,13 +86,13 @@
             hide-default-footer
             hide-default-header
             )
-            template(slot='item', slot-scope='props')
+            template(v-slot:item='props')
               tr.is-clickable(:active='props.selected', @click='$router.push(`/users/` + props.item.id)')
                 td
                   .body-2: strong {{ props.item.name }}
                 td.text-right.caption(width='250') {{ $helpers.formatMoment(props.item.lastLoginAt, 'calendar') }}
 
-      v-flex(xs12)
+      v-col(cols='12')
         v-card.dashboard-contribute.animated.fadeInUp.wait-p4s
           v-card-text
             img(src='/_assets/svg/icon-heart-health.svg', alt='Contribute', style='height: 80px;')
@@ -100,19 +100,19 @@
               .subtitle-1 {{$t('admin:contribute.title')}}
               .body-2.mt-3: strong {{$t('admin:dashboard.contributeSubtitle')}}
               .body-2 {{$t('admin:dashboard.contributeHelp')}}
-              v-btn.mx-0.mt-4(:color='$vuetify.theme.dark ? `indigo lighten-3` : `indigo`', outlined, small, to='/contribute')
+              v-btn.mx-0.mt-4(:color='$vuetify.theme.current.dark ? `indigo lighten-3` : `indigo`', outlined, small, to='/contribute')
                 .caption: strong {{$t('admin:dashboard.contributeLearnMore')}}
 
 </template>
 
-<script>
+<script lang='ts'>
 import _ from 'lodash'
-import AnimatedNumber from 'animated-number-vue'
-import { get } from 'vuex-pathify'
-import semverLte from 'semver/functions/lte'
-import { fetchRecentPages } from '../../helpers/pages-api'
-import { fetchLastLogins } from '../../helpers/users-api'
-import { loadingStart, loadingStop, showNotification } from '../../helpers/root-ui-store'
+import AnimatedNumber from '@/components/common/animated-number.vue'
+import { wikiStore } from '@/store/index.ts'
+import { lte as semverLte } from 'semver'
+import { fetchRecentPages, type RecentPageRow } from '../../helpers/pages-api'
+import { fetchLastLogins, type LastLoginRow } from '../../helpers/users-api'
+import { getErrorMessage, loadingStart, loadingStop, showNotification } from '../../helpers/root-ui-store'
 
 export default {
   components: {
@@ -120,14 +120,14 @@ export default {
   },
   data() {
     return {
-      recentPages: [],
+      recentPages: [] as RecentPageRow[],
       recentPagesLoading: false,
       recentPagesHeaders: [
         { text: 'Title', value: 'title' },
         { text: 'Path', value: 'path' },
         { text: 'Last Updated', value: 'updatedAt', width: 250 }
       ],
-      lastLogins: [],
+      lastLogins: [] as LastLoginRow[],
       lastLoginsLoading: false,
       lastLoginsHeaders: [
         { text: 'User', value: 'displayName' },
@@ -149,18 +149,22 @@ export default {
     canViewLastLogins() {
       return this.hasPermission(['manage:system', 'manage:groups', 'write:groups', 'manage:users', 'write:users'])
     },
-    info: get('admin/info'),
-    permissions: get('user/permissions')
+    info() {
+      return wikiStore.admin.info
+    },
+    permissions() {
+      return wikiStore.user.permissions
+    }
   },
   watch: {
-    canViewRecentPages(newValue, oldValue) {
+    canViewRecentPages(newValue: boolean, oldValue: boolean) {
       if (newValue && !oldValue) {
         this.loadRecentPages()
       } else if (!newValue) {
         this.recentPages = []
       }
     },
-    canViewLastLogins(newValue, oldValue) {
+    canViewLastLogins(newValue: boolean, oldValue: boolean) {
       if (newValue && !oldValue) {
         this.loadLastLogins()
       } else if (!newValue) {
@@ -177,8 +181,8 @@ export default {
     }
   },
   methods: {
-    round(val) { return Math.round(val) },
-    hasPermission(prm) {
+    round(val: number) { return Math.round(val) },
+    hasPermission(prm: string | string[]) {
       if (_.isArray(prm)) {
         return _.some(prm, p => {
           return _.includes(this.permissions, p)
@@ -189,42 +193,42 @@ export default {
     },
     async loadRecentPages() {
       this.recentPagesLoading = true
-      loadingStart(this.$store, 'admin-dashboard-recentpages')
+      loadingStart(wikiStore, 'admin-dashboard-recentpages')
 
       try {
         this.recentPages = await fetchRecentPages(window.fetch.bind(window), 'Recent pages response is invalid')
         return true
       } catch (err) {
         this.recentPages = []
-        showNotification(this.$store, {
-          message: err.message,
+        showNotification(wikiStore, {
+          message: getErrorMessage(err),
           style: 'error',
           icon: 'alert'
         })
         return false
       } finally {
         this.recentPagesLoading = false
-        loadingStop(this.$store, 'admin-dashboard-recentpages')
+        loadingStop(wikiStore, 'admin-dashboard-recentpages')
       }
     },
     async loadLastLogins() {
       this.lastLoginsLoading = true
-      loadingStart(this.$store, 'admin-dashboard-lastlogins')
+      loadingStart(wikiStore, 'admin-dashboard-lastlogins')
 
       try {
         this.lastLogins = await fetchLastLogins(window.fetch.bind(window), 'Last logins response is invalid')
         return true
       } catch (err) {
         this.lastLogins = []
-        showNotification(this.$store, {
-          message: err.message,
+        showNotification(wikiStore, {
+          message: getErrorMessage(err),
           style: 'error',
           icon: 'alert'
         })
         return false
       } finally {
         this.lastLoginsLoading = false
-        loadingStop(this.$store, 'admin-dashboard-lastlogins')
+        loadingStop(wikiStore, 'admin-dashboard-lastlogins')
       }
     }
   }

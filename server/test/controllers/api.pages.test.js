@@ -1,23 +1,26 @@
-jest.mock('express', () => {
+vi.mock('express', () => {
   const router = {
-    delete: jest.fn(),
-    get: jest.fn(),
-    patch: jest.fn(),
-    post: jest.fn(),
-    put: jest.fn(),
-    use: jest.fn()
+    delete: vi.fn(),
+    get: vi.fn(),
+    patch: vi.fn(),
+    post: vi.fn(),
+    put: vi.fn(),
+    use: vi.fn()
   }
 
-  return {
+  const expressMock = {
     Router: () => router,
     __router: router
   }
+
+  return { default: expressMock, ...expressMock }
 })
+
+import * as express from 'express'
 
 describe('controllers/api pages endpoints', () => {
   beforeEach(() => {
-    jest.resetModules()
-    const express = require('express')
+    vi.resetModules()
     express.__router.delete.mockClear()
     express.__router.get.mockClear()
     express.__router.patch.mockClear()
@@ -26,7 +29,7 @@ describe('controllers/api pages endpoints', () => {
 
     global.WIKI = {
       auth: {
-        checkAccess: jest.fn().mockReturnValue(true)
+        checkAccess: vi.fn().mockReturnValue(true)
       },
       config: {
         db: {
@@ -34,21 +37,21 @@ describe('controllers/api pages endpoints', () => {
         }
       },
       models: {
-        knex: jest.fn(),
+        knex: vi.fn(),
         tags: {
-          query: jest.fn().mockReturnValue({
-            deleteById: jest.fn().mockResolvedValue(1),
-            findById: jest.fn().mockReturnValue({
-              $relatedQuery: jest.fn().mockReturnValue({
-                unrelate: jest.fn().mockResolvedValue(1)
+          query: vi.fn().mockReturnValue({
+            deleteById: vi.fn().mockResolvedValue(1),
+            findById: vi.fn().mockReturnValue({
+              $relatedQuery: vi.fn().mockReturnValue({
+                unrelate: vi.fn().mockResolvedValue(1)
               }),
-              patch: jest.fn().mockResolvedValue(1)
+              patch: vi.fn().mockResolvedValue(1)
             })
           })
         },
         pages: {
-          deletePage: jest.fn().mockResolvedValue(undefined),
-          getPageFromDb: jest.fn().mockResolvedValue({
+          deletePage: vi.fn().mockResolvedValue(undefined),
+          getPageFromDb: vi.fn().mockResolvedValue({
             id: 7,
             path: 'docs/alpha',
             hash: 'abc123',
@@ -72,15 +75,15 @@ describe('controllers/api pages endpoints', () => {
             creatorEmail: 'creator@example.com',
             extra: { js: 'console.log(1)', css: '.x{}' }
           }),
-          query: jest.fn().mockReturnValue({
-            column: jest.fn().mockReturnValue({
-              withGraphJoined: jest.fn().mockReturnValue({
-                modifyGraph: jest.fn((relation, applyGraphModifier) => {
-                  const builder = { select: jest.fn() }
+          query: vi.fn().mockReturnValue({
+            column: vi.fn().mockReturnValue({
+              withGraphJoined: vi.fn().mockReturnValue({
+                modifyGraph: vi.fn((relation, applyGraphModifier) => {
+                  const builder = { select: vi.fn() }
                   applyGraphModifier(builder)
                   return {
-                    orderBy: jest.fn().mockReturnValue({
-                      limit: jest.fn().mockResolvedValue([
+                    orderBy: vi.fn().mockReturnValue({
+                      limit: vi.fn().mockResolvedValue([
                         {
                           id: 10,
                           locale: 'en',
@@ -111,9 +114,8 @@ describe('controllers/api pages endpoints', () => {
     }
   })
 
-  const loadHandler = () => {
-    const express = require('express')
-    require('../../controllers/api/pages')
+  const loadHandler = async () => {
+    await import('../../controllers/api/pages.ts')
     return {
       deletePage: express.__router.delete.mock.calls.find(([path]) => path === '/:id')[1],
       deleteTag: express.__router.delete.mock.calls.find(([path]) => path === '/tags/:id')[1],
@@ -126,8 +128,8 @@ describe('controllers/api pages endpoints', () => {
     }
   }
 
-  it('registers the page list route', () => {
-    const { listPages } = loadHandler()
+  it('registers the page list route', async () => {
+    const { listPages } = await loadHandler()
 
     expect(typeof listPages).toBe('function')
   })
@@ -164,33 +166,33 @@ describe('controllers/api pages endpoints', () => {
       }
     ]
     const queryBuilder = {
-      limit: jest.fn(),
-      where: jest.fn(),
-      whereIn: jest.fn(),
-      orderBy: jest.fn()
+      limit: vi.fn(),
+      where: vi.fn(),
+      whereIn: vi.fn(),
+      orderBy: vi.fn()
     }
-    const modify = jest.fn((applyQueryModifier) => {
+    const modify = vi.fn((applyQueryModifier) => {
       applyQueryModifier(queryBuilder)
       return Promise.resolve(rows)
     })
-    const tagBuilder = { select: jest.fn() }
-    const modifyGraph = jest.fn((relation, applyGraphModifier) => {
+    const tagBuilder = { select: vi.fn() }
+    const modifyGraph = vi.fn((relation, applyGraphModifier) => {
       applyGraphModifier(tagBuilder)
       return { modify }
     })
-    const withGraphJoined = jest.fn().mockReturnValue({ modifyGraph })
-    const column = jest.fn().mockReturnValue({ withGraphJoined })
+    const withGraphJoined = vi.fn().mockReturnValue({ modifyGraph })
+    const column = vi.fn().mockReturnValue({ withGraphJoined })
     global.WIKI.models.pages.query.mockReturnValueOnce({ column })
     global.WIKI.auth.checkAccess
       .mockReturnValueOnce(true)
       .mockReturnValueOnce(true)
       .mockReturnValueOnce(true)
       .mockReturnValueOnce(false)
-    const { listPages } = loadHandler()
+    const { listPages } = await loadHandler()
     const req = { user: { permissions: ['read:pages'] }, query: { locale: 'en', limit: '50', orderBy: 'UPDATED', orderByDirection: 'DESC', tags: 'alpha, docs' } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await listPages(req, res, jest.fn())
+    await listPages(req, res, vi.fn())
 
     expect(global.WIKI.auth.checkAccess).toHaveBeenNthCalledWith(1, { permissions: ['read:pages'] }, ['manage:system', 'read:pages'])
     expect(column).toHaveBeenCalledWith([
@@ -235,11 +237,11 @@ describe('controllers/api pages endpoints', () => {
 
   it('returns 403 for unauthorized page list requests', async () => {
     global.WIKI.auth.checkAccess.mockReturnValueOnce(false)
-    const { listPages } = loadHandler()
+    const { listPages } = await loadHandler()
     const req = { user: { permissions: ['manage:api'] }, query: {} }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await listPages(req, res, jest.fn())
+    await listPages(req, res, vi.fn())
 
     expect(res.status).toHaveBeenCalledWith(403)
     expect(res.json).toHaveBeenCalledWith({ error: 'manage:system or read:pages is required' })
@@ -247,22 +249,22 @@ describe('controllers/api pages endpoints', () => {
   })
 
   it('forwards unexpected page list failures to next', async () => {
-    const next = jest.fn()
+    const next = vi.fn()
     global.WIKI.models.pages.query.mockReturnValueOnce({
-      column: jest.fn().mockReturnValue({
-        withGraphJoined: jest.fn().mockReturnValue({
-          modifyGraph: jest.fn((relation, applyGraphModifier) => {
-            applyGraphModifier({ select: jest.fn() })
+      column: vi.fn().mockReturnValue({
+        withGraphJoined: vi.fn().mockReturnValue({
+          modifyGraph: vi.fn((relation, applyGraphModifier) => {
+            applyGraphModifier({ select: vi.fn() })
             return {
-              modify: jest.fn().mockRejectedValue(new Error('page list db down'))
+              modify: vi.fn().mockRejectedValue(new Error('page list db down'))
             }
           })
         })
       })
     })
-    const { listPages } = loadHandler()
+    const { listPages } = await loadHandler()
     const req = { user: { permissions: ['manage:system'] }, query: {} }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await listPages(req, res, next)
 
@@ -270,14 +272,14 @@ describe('controllers/api pages endpoints', () => {
     expect(next.mock.calls[0][0].message).toBe('page list db down')
   })
 
-  it('registers the page tags route', () => {
-    const { listTags } = loadHandler()
+  it('registers the page tags route', async () => {
+    const { listTags } = await loadHandler()
 
     expect(typeof listTags).toBe('function')
   })
 
   it('lists unique page tags with GraphQL-compatible access filtering and tag ordering', async () => {
-    const withGraphJoined = jest.fn().mockResolvedValue([
+    const withGraphJoined = vi.fn().mockResolvedValue([
       {
         locale: 'en',
         path: 'docs/public',
@@ -301,18 +303,18 @@ describe('controllers/api pages endpoints', () => {
         ]
       }
     ])
-    const column = jest.fn().mockReturnValue({ withGraphJoined })
+    const column = vi.fn().mockReturnValue({ withGraphJoined })
     global.WIKI.models.pages.query.mockReturnValueOnce({ column })
     global.WIKI.auth.checkAccess
       .mockReturnValueOnce(true)
       .mockReturnValueOnce(true)
       .mockReturnValueOnce(false)
       .mockReturnValueOnce(true)
-    const { listTags } = loadHandler()
+    const { listTags } = await loadHandler()
     const req = { user: { permissions: ['read:pages'] } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await listTags(req, res, jest.fn())
+    await listTags(req, res, vi.fn())
 
     expect(global.WIKI.auth.checkAccess).toHaveBeenNthCalledWith(1, { permissions: ['read:pages'] }, ['manage:system', 'read:pages'])
     expect(column).toHaveBeenCalledWith([
@@ -331,11 +333,11 @@ describe('controllers/api pages endpoints', () => {
 
   it('returns 403 for unauthorized page tag list requests', async () => {
     global.WIKI.auth.checkAccess.mockReturnValueOnce(false)
-    const { listTags } = loadHandler()
+    const { listTags } = await loadHandler()
     const req = { user: { permissions: ['manage:api'] } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await listTags(req, res, jest.fn())
+    await listTags(req, res, vi.fn())
 
     expect(res.status).toHaveBeenCalledWith(403)
     expect(res.json).toHaveBeenCalledWith({ error: 'manage:system or read:pages is required' })
@@ -343,13 +345,13 @@ describe('controllers/api pages endpoints', () => {
   })
 
   it('forwards unexpected page tag list failures to next', async () => {
-    const next = jest.fn()
-    const withGraphJoined = jest.fn().mockRejectedValue(new Error('tags db down'))
-    const column = jest.fn().mockReturnValue({ withGraphJoined })
+    const next = vi.fn()
+    const withGraphJoined = vi.fn().mockRejectedValue(new Error('tags db down'))
+    const column = vi.fn().mockReturnValue({ withGraphJoined })
     global.WIKI.models.pages.query.mockReturnValueOnce({ column })
-    const { listTags } = loadHandler()
+    const { listTags } = await loadHandler()
     const req = { user: { permissions: ['manage:system'] } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await listTags(req, res, next)
 
@@ -357,18 +359,18 @@ describe('controllers/api pages endpoints', () => {
     expect(next.mock.calls[0][0].message).toBe('tags db down')
   })
 
-  it('registers the recent pages route', () => {
-    const { recent } = loadHandler()
+  it('registers the recent pages route', async () => {
+    const { recent } = await loadHandler()
 
     expect(typeof recent).toBe('function')
   })
 
   it('returns the minimal dashboard recent-pages payload for authorized requests', async () => {
-    const { recent } = loadHandler()
+    const { recent } = await loadHandler()
     const req = { user: { permissions: ['read:pages'] } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await recent(req, res, jest.fn())
+    await recent(req, res, vi.fn())
 
     expect(global.WIKI.auth.checkAccess).toHaveBeenNthCalledWith(1, { permissions: ['read:pages'] }, ['manage:system', 'read:pages'])
     expect(global.WIKI.models.pages.query).toHaveBeenCalled()
@@ -395,11 +397,11 @@ describe('controllers/api pages endpoints', () => {
       .mockReturnValueOnce(true)
       .mockReturnValueOnce(true)
       .mockReturnValueOnce(false)
-    const { recent } = loadHandler()
+    const { recent } = await loadHandler()
     const req = { user: { permissions: ['read:pages'] } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await recent(req, res, jest.fn())
+    await recent(req, res, vi.fn())
 
     expect(res.json).toHaveBeenCalledWith([
       { id: 10, locale: 'en', path: 'docs/alpha', title: 'Alpha', updatedAt: '2026-01-03T00:00:00.000Z' }
@@ -408,11 +410,11 @@ describe('controllers/api pages endpoints', () => {
 
   it('returns 403 for unauthorized recent-pages requests', async () => {
     global.WIKI.auth.checkAccess.mockReturnValueOnce(false)
-    const { recent } = loadHandler()
+    const { recent } = await loadHandler()
     const req = { user: { permissions: ['manage:api'] } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await recent(req, res, jest.fn())
+    await recent(req, res, vi.fn())
 
     expect(res.status).toHaveBeenCalledWith(403)
     expect(res.json).toHaveBeenCalledWith({ error: 'manage:system or read:pages is required' })
@@ -420,24 +422,24 @@ describe('controllers/api pages endpoints', () => {
   })
 
   it('forwards unexpected recent-pages failures to next', async () => {
-    const next = jest.fn()
+    const next = vi.fn()
     global.WIKI.models.pages.query.mockReturnValueOnce({
-      column: jest.fn().mockReturnValue({
-        withGraphJoined: jest.fn().mockReturnValue({
-          modifyGraph: jest.fn((relation, applyGraphModifier) => {
-            applyGraphModifier({ select: jest.fn() })
+      column: vi.fn().mockReturnValue({
+        withGraphJoined: vi.fn().mockReturnValue({
+          modifyGraph: vi.fn((relation, applyGraphModifier) => {
+            applyGraphModifier({ select: vi.fn() })
             return {
-              orderBy: jest.fn().mockReturnValue({
-                limit: jest.fn().mockRejectedValue(new Error('pages db down'))
+              orderBy: vi.fn().mockReturnValue({
+                limit: vi.fn().mockRejectedValue(new Error('pages db down'))
               })
             }
           })
         })
       })
     })
-    const { recent } = loadHandler()
+    const { recent } = await loadHandler()
     const req = { user: { permissions: ['manage:system'] } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await recent(req, res, next)
 
@@ -445,9 +447,8 @@ describe('controllers/api pages endpoints', () => {
     expect(next.mock.calls[0][0].message).toBe('pages db down')
   })
 
-  it('registers the page links route before the page detail route', () => {
-    const express = require('express')
-    const { links } = loadHandler()
+  it('registers the page links route before the page detail route', async () => {
+    const { links } = await loadHandler()
     const routes = express.__router.get.mock.calls.map(([path]) => path)
 
     expect(typeof links).toBe('function')
@@ -462,16 +463,16 @@ describe('controllers/api pages endpoints', () => {
       { id: 2, path: 'docs/target', title: 'Target', link: null, locale: null }
     ]
     const chain = {
-      column: jest.fn().mockReturnThis(),
-      fullOuterJoin: jest.fn().mockReturnThis(),
-      where: jest.fn().mockResolvedValue(rows)
+      column: vi.fn().mockReturnThis(),
+      fullOuterJoin: vi.fn().mockReturnThis(),
+      where: vi.fn().mockResolvedValue(rows)
     }
     global.WIKI.models.knex.mockReturnValueOnce(chain)
-    const { links } = loadHandler()
+    const { links } = await loadHandler()
     const req = { user: { permissions: ['read:pages'] }, query: { locale: 'en' } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await links(req, res, jest.fn())
+    await links(req, res, vi.fn())
 
     expect(global.WIKI.auth.checkAccess).toHaveBeenNthCalledWith(1, { permissions: ['read:pages'] }, ['manage:system', 'read:pages'])
     expect(global.WIKI.models.knex).toHaveBeenCalledWith('pages')
@@ -493,24 +494,24 @@ describe('controllers/api pages endpoints', () => {
       { id: 1, path: 'docs/home', title: 'Home', link: 'docs/target', locale: 'en' }
     ]
     const primary = {
-      column: jest.fn().mockReturnThis(),
-      leftJoin: jest.fn().mockReturnThis(),
-      where: jest.fn().mockReturnThis(),
-      unionAll: jest.fn().mockResolvedValue(rows)
+      column: vi.fn().mockReturnThis(),
+      leftJoin: vi.fn().mockReturnThis(),
+      where: vi.fn().mockReturnThis(),
+      unionAll: vi.fn().mockResolvedValue(rows)
     }
     const secondary = {
-      column: jest.fn().mockReturnThis(),
-      leftJoin: jest.fn().mockReturnThis(),
-      where: jest.fn().mockReturnThis()
+      column: vi.fn().mockReturnThis(),
+      leftJoin: vi.fn().mockReturnThis(),
+      where: vi.fn().mockReturnThis()
     }
     global.WIKI.models.knex
       .mockReturnValueOnce(primary)
       .mockReturnValueOnce(secondary)
-    const { links } = loadHandler()
+    const { links } = await loadHandler()
     const req = { user: { permissions: ['read:pages'] }, query: { locale: 'en' } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await links(req, res, jest.fn())
+    await links(req, res, vi.fn())
 
     expect(global.WIKI.models.knex).toHaveBeenNthCalledWith(1, 'pages')
     expect(global.WIKI.models.knex).toHaveBeenNthCalledWith(2, 'pageLinks')
@@ -529,9 +530,9 @@ describe('controllers/api pages endpoints', () => {
       { id: 3, path: 'docs/hidden-target', title: 'Hidden Target', link: 'docs/secret', locale: 'en' }
     ]
     const chain = {
-      column: jest.fn().mockReturnThis(),
-      fullOuterJoin: jest.fn().mockReturnThis(),
-      where: jest.fn().mockResolvedValue(rows)
+      column: vi.fn().mockReturnThis(),
+      fullOuterJoin: vi.fn().mockReturnThis(),
+      where: vi.fn().mockResolvedValue(rows)
     }
     global.WIKI.models.knex.mockReturnValueOnce(chain)
     global.WIKI.auth.checkAccess
@@ -541,11 +542,11 @@ describe('controllers/api pages endpoints', () => {
       .mockReturnValueOnce(false)
       .mockReturnValueOnce(true)
       .mockReturnValueOnce(false)
-    const { links } = loadHandler()
+    const { links } = await loadHandler()
     const req = { user: { permissions: ['read:pages'] }, query: { locale: 'en' } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await links(req, res, jest.fn())
+    await links(req, res, vi.fn())
 
     expect(res.json).toHaveBeenCalledWith([
       { id: 1, title: 'Home', path: 'en/docs/home', links: ['en/docs/target'] }
@@ -553,11 +554,11 @@ describe('controllers/api pages endpoints', () => {
   })
 
   it('returns 400 for invalid page links locale requests', async () => {
-    const { links } = loadHandler()
+    const { links } = await loadHandler()
     const req = { user: { permissions: ['read:pages'] }, query: { locale: '' } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await links(req, res, jest.fn())
+    await links(req, res, vi.fn())
 
     expect(res.status).toHaveBeenCalledWith(400)
     expect(res.json).toHaveBeenCalledWith({ error: 'locale must be a non-empty string' })
@@ -566,11 +567,11 @@ describe('controllers/api pages endpoints', () => {
 
   it('returns 403 for unauthorized page links requests', async () => {
     global.WIKI.auth.checkAccess.mockReturnValueOnce(false)
-    const { links } = loadHandler()
+    const { links } = await loadHandler()
     const req = { user: { permissions: ['manage:api'] }, query: { locale: 'en' } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await links(req, res, jest.fn())
+    await links(req, res, vi.fn())
 
     expect(res.status).toHaveBeenCalledWith(403)
     expect(res.json).toHaveBeenCalledWith({ error: 'manage:system or read:pages is required' })
@@ -578,16 +579,16 @@ describe('controllers/api pages endpoints', () => {
   })
 
   it('forwards unexpected page links failures to next', async () => {
-    const next = jest.fn()
+    const next = vi.fn()
     const chain = {
-      column: jest.fn().mockReturnThis(),
-      fullOuterJoin: jest.fn().mockReturnThis(),
-      where: jest.fn().mockRejectedValue(new Error('links db down'))
+      column: vi.fn().mockReturnThis(),
+      fullOuterJoin: vi.fn().mockReturnThis(),
+      where: vi.fn().mockRejectedValue(new Error('links db down'))
     }
     global.WIKI.models.knex.mockReturnValueOnce(chain)
-    const { links } = loadHandler()
+    const { links } = await loadHandler()
     const req = { user: { permissions: ['read:pages'] }, query: { locale: 'en' } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await links(req, res, next)
 
@@ -595,8 +596,8 @@ describe('controllers/api pages endpoints', () => {
     expect(next.mock.calls[0][0].message).toBe('links db down')
   })
 
-  it('registers the page detail route', () => {
-    const { getPage } = loadHandler()
+  it('registers the page detail route', async () => {
+    const { getPage } = await loadHandler()
 
     expect(typeof getPage).toBe('function')
   })
@@ -606,9 +607,9 @@ describe('controllers/api pages endpoints', () => {
       .mockReturnValueOnce(true)
       .mockReturnValueOnce(true)
       .mockReturnValueOnce(true)
-    const { getPage } = loadHandler()
+    const { getPage } = await loadHandler()
     const req = { user: { permissions: ['manage:pages'] }, params: { id: '7' } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await getPage(req, res)
 
@@ -647,9 +648,9 @@ describe('controllers/api pages endpoints', () => {
     ['Infinity'],
     ['9007199254740992']
   ])('rejects invalid page detail ids: %s', async (id) => {
-    const { getPage } = loadHandler()
+    const { getPage } = await loadHandler()
     const req = { user: { permissions: ['manage:pages'] }, params: { id } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await getPage(req, res)
 
@@ -660,9 +661,9 @@ describe('controllers/api pages endpoints', () => {
 
   it('returns 404 when page detail is missing', async () => {
     global.WIKI.models.pages.getPageFromDb.mockResolvedValueOnce(null)
-    const { getPage } = loadHandler()
+    const { getPage } = await loadHandler()
     const req = { user: { permissions: ['manage:pages'] }, params: { id: '7' } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await getPage(req, res)
 
@@ -672,9 +673,9 @@ describe('controllers/api pages endpoints', () => {
 
   it('returns 403 when page detail route access is denied', async () => {
     global.WIKI.auth.checkAccess.mockReturnValueOnce(false)
-    const { getPage } = loadHandler()
+    const { getPage } = await loadHandler()
     const req = { user: { permissions: ['read:pages'] }, params: { id: '7' } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await getPage(req, res)
 
@@ -687,9 +688,9 @@ describe('controllers/api pages endpoints', () => {
     global.WIKI.auth.checkAccess
       .mockReturnValueOnce(true)
       .mockReturnValueOnce(false)
-    const { getPage } = loadHandler()
+    const { getPage } = await loadHandler()
     const req = { user: { permissions: ['read:pages'] }, params: { id: '7' } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await getPage(req, res)
 
@@ -702,9 +703,9 @@ describe('controllers/api pages endpoints', () => {
       .mockReturnValueOnce(true)
       .mockReturnValueOnce(true)
       .mockReturnValueOnce(false)
-    const { getPage } = loadHandler()
+    const { getPage } = await loadHandler()
     const req = { user: { permissions: ['read:pages'] }, params: { id: '7' } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await getPage(req, res)
 
@@ -713,12 +714,12 @@ describe('controllers/api pages endpoints', () => {
   })
 
   it('forwards unexpected page detail failures to next', async () => {
-    const next = jest.fn()
+    const next = vi.fn()
     global.WIKI.auth.checkAccess.mockReturnValueOnce(true)
     global.WIKI.models.pages.getPageFromDb.mockRejectedValueOnce(new Error('page db down'))
-    const { getPage } = loadHandler()
+    const { getPage } = await loadHandler()
     const req = { user: { permissions: ['manage:system'] }, params: { id: '7' } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await getPage(req, res, next)
 
@@ -726,17 +727,17 @@ describe('controllers/api pages endpoints', () => {
     expect(next.mock.calls[0][0].message).toBe('page db down')
   })
 
-  it('registers the page delete route', () => {
-    const { deletePage } = loadHandler()
+  it('registers the page delete route', async () => {
+    const { deletePage } = await loadHandler()
 
     expect(typeof deletePage).toBe('function')
   })
 
   it('requires delete:pages or manage:system for page deletes', async () => {
     global.WIKI.auth.checkAccess.mockReturnValueOnce(false)
-    const { deletePage } = loadHandler()
+    const { deletePage } = await loadHandler()
     const req = { user: { permissions: ['read:pages'] }, params: { id: '7' } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await deletePage(req, res)
 
@@ -752,9 +753,9 @@ describe('controllers/api pages endpoints', () => {
     ['Infinity'],
     ['9007199254740992']
   ])('rejects invalid page delete ids: %s', async (id) => {
-    const { deletePage } = loadHandler()
+    const { deletePage } = await loadHandler()
     const req = { user: { permissions: ['delete:pages'] }, params: { id } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await deletePage(req, res)
 
@@ -764,9 +765,9 @@ describe('controllers/api pages endpoints', () => {
   })
 
   it('deletes pages through the model with GraphQL-compatible user context', async () => {
-    const { deletePage } = loadHandler()
+    const { deletePage } = await loadHandler()
     const req = { user: { id: 5, permissions: ['delete:pages'] }, params: { id: '7' } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await deletePage(req, res)
 
@@ -781,9 +782,9 @@ describe('controllers/api pages endpoints', () => {
     const err = new Error('This page does not exist.')
     err.name = 'PageNotFound'
     global.WIKI.models.pages.deletePage.mockRejectedValueOnce(err)
-    const { deletePage } = loadHandler()
+    const { deletePage } = await loadHandler()
     const req = { user: { permissions: ['delete:pages'] }, params: { id: '7' } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await deletePage(req, res)
 
@@ -795,9 +796,9 @@ describe('controllers/api pages endpoints', () => {
     const err = new Error('You are not authorized to delete this page.')
     err.name = 'PageDeleteForbidden'
     global.WIKI.models.pages.deletePage.mockRejectedValueOnce(err)
-    const { deletePage } = loadHandler()
+    const { deletePage } = await loadHandler()
     const req = { user: { permissions: ['delete:pages'] }, params: { id: '7' } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await deletePage(req, res)
 
@@ -807,9 +808,9 @@ describe('controllers/api pages endpoints', () => {
 
   it('returns JSON errors for unexpected page delete failures', async () => {
     global.WIKI.models.pages.deletePage.mockRejectedValueOnce(new Error('page db down'))
-    const { deletePage } = loadHandler()
+    const { deletePage } = await loadHandler()
     const req = { user: { permissions: ['delete:pages'] }, params: { id: '7' } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await deletePage(req, res)
 
@@ -817,17 +818,17 @@ describe('controllers/api pages endpoints', () => {
     expect(res.json).toHaveBeenCalledWith({ error: 'page db down' })
   })
 
-  it('registers the tag update route', () => {
-    const { updateTag } = loadHandler()
+  it('registers the tag update route', async () => {
+    const { updateTag } = await loadHandler()
 
     expect(typeof updateTag).toBe('function')
   })
 
   it('requires manage:system for tag updates', async () => {
     global.WIKI.auth.checkAccess.mockReturnValueOnce(false)
-    const { updateTag } = loadHandler()
+    const { updateTag } = await loadHandler()
     const req = { user: { permissions: ['read:pages'] }, params: { id: '7' }, body: { tag: 'News', title: 'News' } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await updateTag(req, res)
 
@@ -843,9 +844,9 @@ describe('controllers/api pages endpoints', () => {
     ['Infinity'],
     ['9007199254740992']
   ])('rejects invalid tag update ids: %s', async (id) => {
-    const { updateTag } = loadHandler()
+    const { updateTag } = await loadHandler()
     const req = { user: { permissions: ['manage:system'] }, params: { id }, body: { tag: 'News', title: 'News' } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await updateTag(req, res)
 
@@ -858,9 +859,9 @@ describe('controllers/api pages endpoints', () => {
     [{ tag: 12, title: 'News' }, 'tag must be a string'],
     [{ tag: 'News', title: null }, 'title must be a string']
   ])('rejects malformed tag update payloads', async (body, error) => {
-    const { updateTag } = loadHandler()
+    const { updateTag } = await loadHandler()
     const req = { user: { permissions: ['manage:system'] }, params: { id: '7' }, body }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await updateTag(req, res)
 
@@ -870,9 +871,9 @@ describe('controllers/api pages endpoints', () => {
   })
 
   it('updates tags with GraphQL-compatible trim and lowercase semantics', async () => {
-    const { updateTag } = loadHandler()
+    const { updateTag } = await loadHandler()
     const req = { user: { permissions: ['manage:system'] }, params: { id: '7' }, body: { tag: '  News  ', title: '  Current News  ' } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await updateTag(req, res)
 
@@ -884,9 +885,9 @@ describe('controllers/api pages endpoints', () => {
   })
 
   it('allows empty strings to preserve existing updateTag GraphQL write semantics', async () => {
-    const { updateTag } = loadHandler()
+    const { updateTag } = await loadHandler()
     const req = { user: { permissions: ['manage:system'] }, params: { id: '7' }, body: { tag: '', title: '' } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await updateTag(req, res)
 
@@ -897,13 +898,13 @@ describe('controllers/api pages endpoints', () => {
 
   it('returns a JSON 404 when a tag update affects no rows', async () => {
     global.WIKI.models.tags.query.mockReturnValueOnce({
-      findById: jest.fn().mockReturnValue({
-        patch: jest.fn().mockResolvedValue(0)
+      findById: vi.fn().mockReturnValue({
+        patch: vi.fn().mockResolvedValue(0)
       })
     })
-    const { updateTag } = loadHandler()
+    const { updateTag } = await loadHandler()
     const req = { user: { permissions: ['manage:system'] }, params: { id: '7' }, body: { tag: 'News', title: 'News' } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await updateTag(req, res)
 
@@ -913,13 +914,13 @@ describe('controllers/api pages endpoints', () => {
 
   it('returns JSON errors for unexpected tag update failures', async () => {
     global.WIKI.models.tags.query.mockReturnValueOnce({
-      findById: jest.fn().mockReturnValue({
-        patch: jest.fn().mockRejectedValue(new Error('tag db down'))
+      findById: vi.fn().mockReturnValue({
+        patch: vi.fn().mockRejectedValue(new Error('tag db down'))
       })
     })
-    const { updateTag } = loadHandler()
+    const { updateTag } = await loadHandler()
     const req = { user: { permissions: ['manage:system'] }, params: { id: '7' }, body: { tag: 'News', title: 'News' } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await updateTag(req, res)
 
@@ -927,17 +928,17 @@ describe('controllers/api pages endpoints', () => {
     expect(res.json).toHaveBeenCalledWith({ error: 'tag db down' })
   })
 
-  it('registers the tag delete route', () => {
-    const { deleteTag } = loadHandler()
+  it('registers the tag delete route', async () => {
+    const { deleteTag } = await loadHandler()
 
     expect(typeof deleteTag).toBe('function')
   })
 
   it('requires manage:system for tag deletes', async () => {
     global.WIKI.auth.checkAccess.mockReturnValueOnce(false)
-    const { deleteTag } = loadHandler()
+    const { deleteTag } = await loadHandler()
     const req = { user: { permissions: ['read:pages'] }, params: { id: '7' } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await deleteTag(req, res)
 
@@ -953,9 +954,9 @@ describe('controllers/api pages endpoints', () => {
     ['Infinity'],
     ['9007199254740992']
   ])('rejects invalid tag delete ids: %s', async (id) => {
-    const { deleteTag } = loadHandler()
+    const { deleteTag } = await loadHandler()
     const req = { user: { permissions: ['manage:system'] }, params: { id } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await deleteTag(req, res)
 
@@ -965,9 +966,9 @@ describe('controllers/api pages endpoints', () => {
   })
 
   it('deletes tags with GraphQL-compatible unrelate-then-delete semantics', async () => {
-    const { deleteTag } = loadHandler()
+    const { deleteTag } = await loadHandler()
     const req = { user: { permissions: ['manage:system'] }, params: { id: '7' } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await deleteTag(req, res)
 
@@ -983,11 +984,11 @@ describe('controllers/api pages endpoints', () => {
 
   it('returns a JSON 404 when deleting a missing tag', async () => {
     global.WIKI.models.tags.query.mockReturnValueOnce({
-      findById: jest.fn().mockResolvedValue(null)
+      findById: vi.fn().mockResolvedValue(null)
     })
-    const { deleteTag } = loadHandler()
+    const { deleteTag } = await loadHandler()
     const req = { user: { permissions: ['manage:system'] }, params: { id: '7' } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await deleteTag(req, res)
 
@@ -997,15 +998,15 @@ describe('controllers/api pages endpoints', () => {
 
   it('returns JSON errors for unexpected tag delete failures', async () => {
     global.WIKI.models.tags.query.mockReturnValueOnce({
-      findById: jest.fn().mockReturnValue({
-        $relatedQuery: jest.fn().mockReturnValue({
-          unrelate: jest.fn().mockRejectedValue(new Error('unrelate failed'))
+      findById: vi.fn().mockReturnValue({
+        $relatedQuery: vi.fn().mockReturnValue({
+          unrelate: vi.fn().mockRejectedValue(new Error('unrelate failed'))
         })
       })
     })
-    const { deleteTag } = loadHandler()
+    const { deleteTag } = await loadHandler()
     const req = { user: { permissions: ['manage:system'] }, params: { id: '7' } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await deleteTag(req, res)
 

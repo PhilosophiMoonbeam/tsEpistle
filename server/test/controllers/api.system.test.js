@@ -1,63 +1,106 @@
-jest.mock('express', () => {
+vi.mock('express', () => {
   const router = {
-    get: jest.fn(),
-    post: jest.fn(),
-    patch: jest.fn(),
-    use: jest.fn()
+    get: vi.fn(),
+    post: vi.fn(),
+    patch: vi.fn(),
+    use: vi.fn()
   }
 
-  return {
+  const expressMock = {
     Router: () => router,
     __router: router
   }
+
+  return { default: expressMock, ...expressMock }
 })
 
-jest.mock('../../jobs/sync-graph-updates', () => jest.fn().mockResolvedValue(true))
-jest.mock('../../operations/import-v1', () => ({
-  importUsers: jest.fn().mockResolvedValue({
+import * as express from 'express'
+import syncGraphUpdates from '../../jobs/sync-graph-updates.ts'
+import importV1Operations from '../../operations/import-v1.ts'
+import fs from 'fs-extra'
+import getos from 'getos'
+import * as os from 'node:os'
+import filesize from 'filesize'
+
+vi.mock('../../jobs/sync-graph-updates.ts', () => ({ default: vi.fn().mockResolvedValue(true) }))
+vi.mock('../../operations/import-v1.ts', () => ({
+  default: {
+  importUsers: vi.fn().mockResolvedValue({
     usersCount: 4,
     groupsCount: 2,
     failed: [{ provider: 'local', email: 'failed@example.com', error: 'duplicate' }]
   })
+  }
 }))
-jest.mock('getos', () => jest.fn((cb) => cb(null, {
+vi.mock('getos', () => ({ default: vi.fn((cb) => cb(null, {
   dist: 'Ubuntu',
   codename: 'noble',
   release: '24.04.1'
-})))
-jest.mock('os', () => ({
-  cpus: jest.fn(() => Array.from({ length: 8 }, () => ({ model: 'Mock CPU' }))),
-  hostname: jest.fn(() => 'wiki-host'),
-  type: jest.fn(() => 'Linux'),
-  platform: jest.fn(() => 'linux'),
-  release: jest.fn(() => '6.8.0'),
-  arch: jest.fn(() => 'x64'),
-  totalmem: jest.fn(() => 16 * 1024 * 1024 * 1024)
-}))
-jest.mock('filesize', () => jest.fn(() => '16 GB'))
-jest.mock('fs-extra', () => ({
-  pathExists: jest.fn().mockResolvedValue(false),
-  ensureDir: jest.fn().mockResolvedValue(true),
-  readdir: jest.fn().mockResolvedValue([])
-}))
-jest.mock('request-promise', () => jest.fn())
+})) }))
+vi.mock('node:os', () => {
+  const osMock = {
+    cpus: vi.fn(() => Array.from({ length: 8 }, () => ({ model: 'Mock CPU' }))),
+    hostname: vi.fn(() => 'wiki-host'),
+    type: vi.fn(() => 'Linux'),
+    platform: vi.fn(() => 'linux'),
+    release: vi.fn(() => '6.8.0'),
+    arch: vi.fn(() => 'x64'),
+    totalmem: vi.fn(() => 16 * 1024 * 1024 * 1024)
+  }
+  return { default: osMock, ...osMock }
+})
+vi.mock('filesize', () => ({ default: vi.fn(() => '16 GB') }))
+vi.mock('fs-extra', () => {
+  const fsMock = {
+    pathExists: vi.fn().mockResolvedValue(false),
+    ensureDir: vi.fn().mockResolvedValue(true),
+    readdir: vi.fn().mockResolvedValue([])
+  }
+  return { default: fsMock, ...fsMock }
+})
+const originalFetch = global.fetch
+const successfulFetchResponse = {
+  ok: true,
+  status: 200,
+  statusText: 'OK'
+}
 
 describe('controllers/api system endpoints', () => {
   beforeEach(() => {
-    jest.resetModules()
-    const express = require('express')
+    vi.resetModules()
+    syncGraphUpdates.mockResolvedValue(true)
+    importV1Operations.importUsers.mockResolvedValue({
+      usersCount: 4,
+      groupsCount: 2,
+      failed: [{ provider: 'local', email: 'failed@example.com', error: 'duplicate' }]
+    })
+    getos.mockImplementation(cb => cb(null, {
+      dist: 'Ubuntu',
+      codename: 'noble',
+      release: '24.04.1'
+    }))
+    os.cpus.mockReturnValue(Array.from({ length: 8 }, () => ({ model: 'Mock CPU' })))
+    os.hostname.mockReturnValue('wiki-host')
+    os.type.mockReturnValue('Linux')
+    os.platform.mockReturnValue('linux')
+    os.release.mockReturnValue('6.8.0')
+    os.arch.mockReturnValue('x64')
+    os.totalmem.mockReturnValue(16 * 1024 * 1024 * 1024)
+    filesize.mockReturnValue('16 GB')
+    fs.pathExists.mockResolvedValue(false)
+    fs.ensureDir.mockResolvedValue(true)
+    fs.readdir.mockResolvedValue([])
     express.__router.get.mockClear()
     express.__router.post.mockClear()
     express.__router.patch.mockClear()
-    const request = require('request-promise')
-    request.mockReset()
+    global.fetch = vi.fn()
     delete process.env.UPGRADE_COMPANION
     delete process.env.UPGRADE_COMPANION_REF
     global.WIKI = {
       ROOTPATH: '/srv/wiki',
       version: '2.0.0',
       auth: {
-        checkAccess: jest.fn()
+        checkAccess: vi.fn()
       },
       Error: {
         SystemSSLDisabled: class SystemSSLDisabled extends Error {
@@ -106,14 +149,14 @@ describe('controllers/api system endpoints', () => {
             description: 'First extension',
             isInstalled: true,
             internalField: 'not-public',
-            isCompatible: jest.fn().mockResolvedValue(true)
+            isCompatible: vi.fn().mockResolvedValue(true)
           },
           beta: {
             key: 'beta',
             title: 'Beta Extension',
             description: 'Second extension',
             isInstalled: false,
-            isCompatible: jest.fn().mockResolvedValue(false)
+            isCompatible: vi.fn().mockResolvedValue(false)
           }
         }
       },
@@ -122,51 +165,51 @@ describe('controllers/api system endpoints', () => {
           client: {
             version: '15.4'
           },
-          raw: jest.fn()
+          raw: vi.fn()
         },
         groups: {
-          query: jest.fn(() => ({
-            count: jest.fn(() => ({
-              first: jest.fn().mockResolvedValue({ total: '3' })
+          query: vi.fn(() => ({
+            count: vi.fn(() => ({
+              first: vi.fn().mockResolvedValue({ total: '3' })
             }))
           }))
         },
         pages: {
-          query: jest.fn(() => ({
-            count: jest.fn(() => ({
-              first: jest.fn().mockResolvedValue({ total: '42' })
+          query: vi.fn(() => ({
+            count: vi.fn(() => ({
+              first: vi.fn().mockResolvedValue({ total: '42' })
             })),
-            findById: jest.fn().mockResolvedValue({ id: 12, path: 'docs', localeCode: 'en' })
+            findById: vi.fn().mockResolvedValue({ id: 12, path: 'docs', localeCode: 'en' })
           })),
-          flushCache: jest.fn().mockResolvedValue(true),
-          rebuildTree: jest.fn().mockResolvedValue(true),
-          migrateToLocale: jest.fn().mockResolvedValue(2),
-          renderPage: jest.fn().mockResolvedValue(true)
+          flushCache: vi.fn().mockResolvedValue(true),
+          rebuildTree: vi.fn().mockResolvedValue(true),
+          migrateToLocale: vi.fn().mockResolvedValue(2),
+          renderPage: vi.fn().mockResolvedValue(true)
         },
         pageHistory: {
-          purge: jest.fn().mockResolvedValue(true)
+          purge: vi.fn().mockResolvedValue(true)
         },
         assets: {
-          flushTempUploads: jest.fn().mockResolvedValue(true)
+          flushTempUploads: vi.fn().mockResolvedValue(true)
         },
         users: {
-          query: jest.fn(() => ({
-            count: jest.fn(() => ({
-              first: jest.fn().mockResolvedValue({ total: '11' })
+          query: vi.fn(() => ({
+            count: vi.fn(() => ({
+              first: vi.fn().mockResolvedValue({ total: '11' })
             }))
           }))
         },
         tags: {
-          query: jest.fn(() => ({
-            count: jest.fn(() => ({
-              first: jest.fn().mockResolvedValue({ total: '7' })
+          query: vi.fn(() => ({
+            count: vi.fn(() => ({
+              first: vi.fn().mockResolvedValue({ total: '7' })
             }))
           }))
         }
       },
       configSvc: {
-        applyFlags: jest.fn().mockResolvedValue(true),
-        saveToDb: jest.fn().mockResolvedValue(true)
+        applyFlags: vi.fn().mockResolvedValue(true),
+        saveToDb: vi.fn().mockResolvedValue(true)
       },
       system: {
         updates: {
@@ -179,19 +222,19 @@ describe('controllers/api system endpoints', () => {
           message: null,
           startedAt: null
         },
-        export: jest.fn()
+        export: vi.fn()
       },
       telemetry: {
         enabled: true,
-        generateClientId: jest.fn()
+        generateClientId: vi.fn()
       },
       events: {
         outbound: {
-          emit: jest.fn()
+          emit: vi.fn()
         }
       },
       servers: {
-        restartServer: jest.fn().mockResolvedValue(true),
+        restartServer: vi.fn().mockResolvedValue(true),
         servers: {
           http: {
             address: () => ({ port: 3000 })
@@ -204,9 +247,12 @@ describe('controllers/api system endpoints', () => {
     }
   })
 
-  const loadHandlers = () => {
-    const express = require('express')
-    require('../../controllers/api/system')
+  afterEach(() => {
+    global.fetch = originalFetch
+  })
+
+  const loadHandlers = async () => {
+    await import('../../controllers/api/system.ts')
     return {
       info: express.__router.get.mock.calls.find(([path]) => path === '/info')[1],
       summary: express.__router.get.mock.calls.find(([path]) => path === '/summary')[1],
@@ -234,8 +280,8 @@ describe('controllers/api system endpoints', () => {
     }
   }
 
-  it('registers system routes', () => {
-    const handlers = loadHandlers()
+  it('registers system routes', async () => {
+    const handlers = await loadHandlers()
 
     expect(typeof handlers.info).toBe('function')
     expect(typeof handlers.summary).toBe('function')
@@ -264,9 +310,9 @@ describe('controllers/api system endpoints', () => {
 
   it('returns 403 for unauthorized system requests', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(false)
-    const { info, summary, flags, host, extensions, telemetry, updateTelemetry, resetTelemetryClientId, performUpgrade, startExport, flushSystemCache, flushSystemTemporaryUploads, rebuildPageTree, renderPage, migratePagesToLocale, purgePageHistory, exportStatus, ssl, updateSslRedirection, renewSslCertificate, saveFlags, importV1Users, checkForUpdate } = loadHandlers()
-    const req = { user: { permissions: [] }, get: jest.fn() }
-    const res = { sendStatus: jest.fn(), json: jest.fn() }
+    const { info, summary, flags, host, extensions, telemetry, updateTelemetry, resetTelemetryClientId, performUpgrade, startExport, flushSystemCache, flushSystemTemporaryUploads, rebuildPageTree, renderPage, migratePagesToLocale, purgePageHistory, exportStatus, ssl, updateSslRedirection, renewSslCertificate, saveFlags, importV1Users, checkForUpdate } = await loadHandlers()
+    const req = { user: { permissions: [] }, get: vi.fn() }
+    const res = { sendStatus: vi.fn(), json: vi.fn() }
 
     await info(req, res)
     await summary(req, res)
@@ -301,9 +347,9 @@ describe('controllers/api system endpoints', () => {
 
   it('returns system summary JSON for authorized dashboard-style requests', async () => {
     global.WIKI.auth.checkAccess.mockImplementation((user, permissions) => permissions.includes('manage:navigation'))
-    const { summary } = loadHandlers()
+    const { summary } = await loadHandlers()
     const req = { user: { permissions: ['manage:navigation'] } }
-    const res = { json: jest.fn(), sendStatus: jest.fn() }
+    const res = { json: vi.fn(), sendStatus: vi.fn() }
 
     await summary(req, res)
 
@@ -320,9 +366,9 @@ describe('controllers/api system endpoints', () => {
 
   it('returns system summary JSON for theme/api admins allowed into the admin shell', async () => {
     global.WIKI.auth.checkAccess.mockImplementation((user, permissions) => permissions.includes('manage:theme') || permissions.includes('manage:api'))
-    const { summary } = loadHandlers()
+    const { summary } = await loadHandlers()
     const req = { user: { permissions: ['manage:theme'] } }
-    const res = { json: jest.fn(), sendStatus: jest.fn() }
+    const res = { json: vi.fn(), sendStatus: vi.fn() }
 
     await summary(req, res)
 
@@ -340,9 +386,9 @@ describe('controllers/api system endpoints', () => {
 
   it('returns flag list JSON for authorized requests', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
-    const { flags } = loadHandlers()
+    const { flags } = await loadHandlers()
     const req = { user: { permissions: ['manage:system'] } }
-    const res = { json: jest.fn(), sendStatus: jest.fn() }
+    const res = { json: vi.fn(), sendStatus: vi.fn() }
 
     await flags(req, res)
 
@@ -352,12 +398,12 @@ describe('controllers/api system endpoints', () => {
     ])
   })
 
-  it('returns only system host JSON for authorized requests', () => {
+  it('returns only system host JSON for authorized requests', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
     global.WIKI.config.host = 'https://docs.example.test'
-    const { host } = loadHandlers()
+    const { host } = await loadHandlers()
     const req = { user: { permissions: ['manage:system'] } }
-    const res = { json: jest.fn(), sendStatus: jest.fn() }
+    const res = { json: vi.fn(), sendStatus: vi.fn() }
 
     host(req, res)
 
@@ -370,11 +416,11 @@ describe('controllers/api system endpoints', () => {
 
   it('returns system extensions JSON for authorized requests', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
-    const { extensions } = loadHandlers()
+    const { extensions } = await loadHandlers()
     const req = { user: { permissions: ['manage:system'] } }
-    const res = { json: jest.fn(), sendStatus: jest.fn() }
+    const res = { json: vi.fn(), sendStatus: vi.fn() }
 
-    await extensions(req, res, jest.fn())
+    await extensions(req, res, vi.fn())
 
     expect(global.WIKI.extensions.ext.alpha.isCompatible).toHaveBeenCalledTimes(1)
     expect(global.WIKI.extensions.ext.beta.isCompatible).toHaveBeenCalledTimes(1)
@@ -399,10 +445,10 @@ describe('controllers/api system endpoints', () => {
   it('forwards system extension compatibility errors to next', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
     global.WIKI.extensions.ext.beta.isCompatible.mockRejectedValueOnce(new Error('compatibility failed'))
-    const { extensions } = loadHandlers()
+    const { extensions } = await loadHandlers()
     const req = { user: { permissions: ['manage:system'] } }
-    const res = { json: jest.fn(), sendStatus: jest.fn() }
-    const next = jest.fn()
+    const res = { json: vi.fn(), sendStatus: vi.fn() }
+    const next = vi.fn()
 
     await extensions(req, res, next)
 
@@ -411,11 +457,11 @@ describe('controllers/api system endpoints', () => {
     expect(next.mock.calls[0][0].message).toBe('compatibility failed')
   })
 
-  it('returns system telemetry JSON for authorized requests', () => {
+  it('returns system telemetry JSON for authorized requests', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
-    const { telemetry } = loadHandlers()
+    const { telemetry } = await loadHandlers()
     const req = { user: { permissions: ['manage:system'] } }
-    const res = { json: jest.fn(), sendStatus: jest.fn() }
+    const res = { json: vi.fn(), sendStatus: vi.fn() }
 
     telemetry(req, res)
 
@@ -426,12 +472,12 @@ describe('controllers/api system endpoints', () => {
     })
   })
 
-  it('returns a null telemetry client ID when none is configured', () => {
+  it('returns a null telemetry client ID when none is configured', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
     global.WIKI.config.telemetry.clientId = null
-    const { telemetry } = loadHandlers()
+    const { telemetry } = await loadHandlers()
     const req = { user: { permissions: ['manage:system'] } }
-    const res = { json: jest.fn(), sendStatus: jest.fn() }
+    const res = { json: vi.fn(), sendStatus: vi.fn() }
 
     telemetry(req, res)
 
@@ -443,11 +489,11 @@ describe('controllers/api system endpoints', () => {
 
   it('updates telemetry state and persists it for authorized requests', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
-    const { updateTelemetry } = loadHandlers()
+    const { updateTelemetry } = await loadHandlers()
     const req = { user: { permissions: ['manage:system'] }, body: { enabled: false } }
-    const res = { json: jest.fn(), sendStatus: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), sendStatus: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await updateTelemetry(req, res, jest.fn())
+    await updateTelemetry(req, res, vi.fn())
 
     expect(global.WIKI.config.telemetry.isEnabled).toBe(false)
     expect(global.WIKI.telemetry.enabled).toBe(false)
@@ -457,11 +503,11 @@ describe('controllers/api system endpoints', () => {
 
   it('returns 400 for malformed telemetry state updates', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
-    const { updateTelemetry } = loadHandlers()
+    const { updateTelemetry } = await loadHandlers()
     const req = { user: { permissions: ['manage:system'] }, body: { enabled: 'false' } }
-    const res = { json: jest.fn(), sendStatus: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), sendStatus: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await updateTelemetry(req, res, jest.fn())
+    await updateTelemetry(req, res, vi.fn())
 
     expect(global.WIKI.configSvc.saveToDb).not.toHaveBeenCalled()
     expect(res.status).toHaveBeenCalledWith(400)
@@ -471,10 +517,10 @@ describe('controllers/api system endpoints', () => {
   it('forwards telemetry state persistence failures to next', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
     global.WIKI.configSvc.saveToDb.mockRejectedValueOnce(new Error('telemetry save failed'))
-    const { updateTelemetry } = loadHandlers()
+    const { updateTelemetry } = await loadHandlers()
     const req = { user: { permissions: ['manage:system'] }, body: { enabled: true } }
-    const res = { json: jest.fn(), sendStatus: jest.fn(), status: jest.fn().mockReturnThis() }
-    const next = jest.fn()
+    const res = { json: vi.fn(), sendStatus: vi.fn(), status: vi.fn().mockReturnThis() }
+    const next = vi.fn()
 
     await updateTelemetry(req, res, next)
 
@@ -484,11 +530,11 @@ describe('controllers/api system endpoints', () => {
 
   it('resets telemetry client ID and persists telemetry config for authorized requests', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
-    const { resetTelemetryClientId } = loadHandlers()
+    const { resetTelemetryClientId } = await loadHandlers()
     const req = { user: { permissions: ['manage:system'] } }
-    const res = { json: jest.fn(), sendStatus: jest.fn() }
+    const res = { json: vi.fn(), sendStatus: vi.fn() }
 
-    await resetTelemetryClientId(req, res, jest.fn())
+    await resetTelemetryClientId(req, res, vi.fn())
 
     expect(global.WIKI.telemetry.generateClientId).toHaveBeenCalled()
     expect(global.WIKI.configSvc.saveToDb).toHaveBeenCalledWith(['telemetry'])
@@ -498,10 +544,10 @@ describe('controllers/api system endpoints', () => {
   it('forwards telemetry client ID reset persistence failures to next', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
     global.WIKI.configSvc.saveToDb.mockRejectedValueOnce(new Error('telemetry reset failed'))
-    const { resetTelemetryClientId } = loadHandlers()
+    const { resetTelemetryClientId } = await loadHandlers()
     const req = { user: { permissions: ['manage:system'] } }
-    const res = { json: jest.fn(), sendStatus: jest.fn() }
-    const next = jest.fn()
+    const res = { json: vi.fn(), sendStatus: vi.fn() }
+    const next = vi.fn()
 
     await resetTelemetryClientId(req, res, next)
 
@@ -510,56 +556,55 @@ describe('controllers/api system endpoints', () => {
     expect(next.mock.calls[0][0].message).toBe('telemetry reset failed')
   })
 
-  it('starts system upgrade through update companion with resolver-compatible request options', async () => {
-    const request = require('request-promise')
-    request.mockResolvedValueOnce({ ok: true })
+  it('starts system upgrade through update companion with native fetch options', async () => {
+    global.fetch.mockResolvedValueOnce(successfulFetchResponse)
     process.env.UPGRADE_COMPANION = '1'
     global.WIKI.auth.checkAccess.mockReturnValue(true)
-    const { performUpgrade } = loadHandlers()
+    const { performUpgrade } = await loadHandlers()
     const req = { user: { permissions: ['manage:system'] } }
-    const res = { json: jest.fn(), sendStatus: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), sendStatus: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await performUpgrade(req, res)
 
-    expect(request).toHaveBeenCalledWith({
-      method: 'POST',
-      uri: 'http://wiki-update-companion/upgrade',
-      qs: {}
-    })
+    expect(global.fetch).toHaveBeenCalledTimes(1)
+    const [url, options] = global.fetch.mock.calls[0]
+    expect(url).toBeInstanceOf(URL)
+    expect(url.toString()).toBe('http://wiki-update-companion/upgrade')
+    expect(options).toEqual({ method: 'POST' })
     expect(res.status).not.toHaveBeenCalled()
     expect(res.json).toHaveBeenCalledWith({ message: 'Upgrade has started.' })
   })
 
   it('passes the upgrade companion container reference when configured', async () => {
-    const request = require('request-promise')
-    request.mockResolvedValueOnce({ ok: true })
+    global.fetch.mockResolvedValueOnce(successfulFetchResponse)
     process.env.UPGRADE_COMPANION = '1'
     process.env.UPGRADE_COMPANION_REF = 'wiki-app'
     global.WIKI.auth.checkAccess.mockReturnValue(true)
-    const { performUpgrade } = loadHandlers()
+    const { performUpgrade } = await loadHandlers()
     const req = { user: { permissions: ['manage:system'] } }
-    const res = { json: jest.fn(), sendStatus: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), sendStatus: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await performUpgrade(req, res)
 
-    expect(request).toHaveBeenCalledWith({
-      method: 'POST',
-      uri: 'http://wiki-update-companion/upgrade',
-      qs: { container: 'wiki-app' }
-    })
+    expect(global.fetch).toHaveBeenCalledTimes(1)
+    const [url, options] = global.fetch.mock.calls[0]
+    expect(url).toBeInstanceOf(URL)
+    expect(url.toString()).toBe('http://wiki-update-companion/upgrade?container=wiki-app')
+    expect(url.searchParams.get('container')).toBe('wiki-app')
+    expect(options).toEqual({ method: 'POST' })
     expect(res.json).toHaveBeenCalledWith({ message: 'Upgrade has started.' })
   })
 
   it('returns JSON 500 when the upgrade companion is not configured', async () => {
-    const request = require('request-promise')
+
     global.WIKI.auth.checkAccess.mockReturnValue(true)
-    const { performUpgrade } = loadHandlers()
+    const { performUpgrade } = await loadHandlers()
     const req = { user: { permissions: ['manage:system'] } }
-    const res = { json: jest.fn(), sendStatus: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), sendStatus: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await performUpgrade(req, res)
 
-    expect(request).not.toHaveBeenCalled()
+    expect(global.fetch).not.toHaveBeenCalled()
     expect(res.status).toHaveBeenCalledWith(500)
     expect(res.json).toHaveBeenCalledWith({
       error: 'You must run the wiki-update-companion container and pass the UPGRADE_COMPANION env var in order to use this feature.'
@@ -567,13 +612,13 @@ describe('controllers/api system endpoints', () => {
   })
 
   it('returns JSON 500 when the upgrade companion request fails', async () => {
-    const request = require('request-promise')
-    request.mockRejectedValueOnce(new Error('companion failed'))
+    const err = new Error('companion failed')
+    global.fetch.mockRejectedValueOnce(err)
     process.env.UPGRADE_COMPANION = '1'
     global.WIKI.auth.checkAccess.mockReturnValue(true)
-    const { performUpgrade } = loadHandlers()
+    const { performUpgrade } = await loadHandlers()
     const req = { user: { permissions: ['manage:system'] } }
-    const res = { json: jest.fn(), sendStatus: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), sendStatus: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await performUpgrade(req, res)
 
@@ -581,13 +626,32 @@ describe('controllers/api system endpoints', () => {
     expect(res.json).toHaveBeenCalledWith({ error: 'companion failed' })
   })
 
+  it('returns JSON 500 when the upgrade companion returns an HTTP error', async () => {
+    global.fetch.mockResolvedValueOnce({
+      ok: false,
+      status: 502,
+      statusText: 'Bad Gateway'
+    })
+    process.env.UPGRADE_COMPANION = '1'
+    global.WIKI.auth.checkAccess.mockReturnValue(true)
+    const { performUpgrade } = await loadHandlers()
+    const req = { user: { permissions: ['manage:system'] } }
+    const res = { json: vi.fn(), sendStatus: vi.fn(), status: vi.fn().mockReturnThis() }
+
+    await performUpgrade(req, res)
+
+    expect(global.fetch).toHaveBeenCalledWith(expect.any(URL), { method: 'POST' })
+    expect(res.status).toHaveBeenCalledWith(500)
+    expect(res.json).toHaveBeenCalledWith({ error: 'Upgrade companion returned 502 Bad Gateway' })
+  })
+
   it('flushes pages cache and emits outbound cache invalidation for authorized requests', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
-    const { flushSystemCache } = loadHandlers()
+    const { flushSystemCache } = await loadHandlers()
     const req = { user: { permissions: ['manage:system'] } }
-    const res = { json: jest.fn(), sendStatus: jest.fn() }
+    const res = { json: vi.fn(), sendStatus: vi.fn() }
 
-    await flushSystemCache(req, res, jest.fn())
+    await flushSystemCache(req, res, vi.fn())
 
     expect(global.WIKI.models.pages.flushCache).toHaveBeenCalledTimes(1)
     expect(global.WIKI.events.outbound.emit).toHaveBeenCalledWith('flushCache')
@@ -597,9 +661,9 @@ describe('controllers/api system endpoints', () => {
   it('returns JSON error messages for pages cache flush failures', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
     global.WIKI.models.pages.flushCache.mockRejectedValueOnce(new Error('cache flush failed'))
-    const { flushSystemCache } = loadHandlers()
+    const { flushSystemCache } = await loadHandlers()
     const req = { user: { permissions: ['manage:system'] } }
-    const res = { json: jest.fn(), sendStatus: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), sendStatus: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await flushSystemCache(req, res)
 
@@ -610,11 +674,11 @@ describe('controllers/api system endpoints', () => {
 
   it('flushes temporary uploads for authorized requests', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
-    const { flushSystemTemporaryUploads } = loadHandlers()
+    const { flushSystemTemporaryUploads } = await loadHandlers()
     const req = { user: { permissions: ['manage:system'] } }
-    const res = { json: jest.fn(), sendStatus: jest.fn() }
+    const res = { json: vi.fn(), sendStatus: vi.fn() }
 
-    await flushSystemTemporaryUploads(req, res, jest.fn())
+    await flushSystemTemporaryUploads(req, res, vi.fn())
 
     expect(global.WIKI.models.assets.flushTempUploads).toHaveBeenCalledTimes(1)
     expect(res.json).toHaveBeenCalledWith({ message: 'Temporary Uploads flushed successfully.' })
@@ -623,9 +687,9 @@ describe('controllers/api system endpoints', () => {
   it('returns JSON error messages for temporary uploads flush failures', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
     global.WIKI.models.assets.flushTempUploads.mockRejectedValueOnce(new Error('uploads flush failed'))
-    const { flushSystemTemporaryUploads } = loadHandlers()
+    const { flushSystemTemporaryUploads } = await loadHandlers()
     const req = { user: { permissions: ['manage:system'] } }
-    const res = { json: jest.fn(), sendStatus: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), sendStatus: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await flushSystemTemporaryUploads(req, res)
 
@@ -635,9 +699,9 @@ describe('controllers/api system endpoints', () => {
 
   it('rebuilds the page tree for authorized requests', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
-    const { rebuildPageTree } = loadHandlers()
+    const { rebuildPageTree } = await loadHandlers()
     const req = { user: { permissions: ['manage:system'] } }
-    const res = { json: jest.fn(), sendStatus: jest.fn() }
+    const res = { json: vi.fn(), sendStatus: vi.fn() }
 
     await rebuildPageTree(req, res)
 
@@ -648,9 +712,9 @@ describe('controllers/api system endpoints', () => {
   it('returns JSON error messages for page tree rebuild failures', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
     global.WIKI.models.pages.rebuildTree.mockRejectedValueOnce(new Error('tree failed'))
-    const { rebuildPageTree } = loadHandlers()
+    const { rebuildPageTree } = await loadHandlers()
     const req = { user: { permissions: ['manage:system'] } }
-    const res = { json: jest.fn(), sendStatus: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), sendStatus: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await rebuildPageTree(req, res)
 
@@ -660,9 +724,9 @@ describe('controllers/api system endpoints', () => {
 
   it('migrates pages to a locale for authorized requests', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
-    const { migratePagesToLocale } = loadHandlers()
+    const { migratePagesToLocale } = await loadHandlers()
     const req = { user: { permissions: ['manage:system'] }, body: { sourceLocale: 'en', targetLocale: 'fr' } }
-    const res = { json: jest.fn(), sendStatus: jest.fn() }
+    const res = { json: vi.fn(), sendStatus: vi.fn() }
 
     await migratePagesToLocale(req, res)
 
@@ -680,9 +744,9 @@ describe('controllers/api system endpoints', () => {
     ['empty target locale', { sourceLocale: 'en', targetLocale: '' }, 'targetLocale must be a non-empty string']
   ])('rejects malformed locale migration payloads: %s', async (label, body, error) => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
-    const { migratePagesToLocale } = loadHandlers()
+    const { migratePagesToLocale } = await loadHandlers()
     const req = { user: { permissions: ['manage:system'] }, body }
-    const res = { json: jest.fn(), sendStatus: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), sendStatus: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await migratePagesToLocale(req, res)
 
@@ -694,9 +758,9 @@ describe('controllers/api system endpoints', () => {
   it('returns JSON error messages for locale migration failures', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
     global.WIKI.models.pages.migrateToLocale.mockRejectedValueOnce(new Error('migration failed'))
-    const { migratePagesToLocale } = loadHandlers()
+    const { migratePagesToLocale } = await loadHandlers()
     const req = { user: { permissions: ['manage:system'] }, body: { sourceLocale: 'en', targetLocale: 'fr' } }
-    const res = { json: jest.fn(), sendStatus: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), sendStatus: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await migratePagesToLocale(req, res)
 
@@ -704,7 +768,7 @@ describe('controllers/api system endpoints', () => {
     expect(res.json).toHaveBeenCalledWith({ error: 'migration failed' })
   })
 
-  it('returns the safe export status JSON for authorized requests', () => {
+  it('returns the safe export status JSON for authorized requests', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
     global.WIKI.system.exportStatus = {
       status: 'running',
@@ -715,9 +779,9 @@ describe('controllers/api system endpoints', () => {
       entities: ['pages'],
       internalField: 'must-not-return'
     }
-    const { exportStatus } = loadHandlers()
+    const { exportStatus } = await loadHandlers()
     const req = { user: { permissions: ['manage:system'] } }
-    const res = { json: jest.fn(), sendStatus: jest.fn(), set: jest.fn() }
+    const res = { json: vi.fn(), sendStatus: vi.fn(), set: vi.fn() }
 
     exportStatus(req, res)
 
@@ -737,7 +801,7 @@ describe('controllers/api system endpoints', () => {
     ].sort())
   })
 
-  it('returns the default not-running export status when optional fields are absent', () => {
+  it('returns the default not-running export status when optional fields are absent', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
     global.WIKI.system.exportStatus = {
       status: 'notrunning',
@@ -745,9 +809,9 @@ describe('controllers/api system endpoints', () => {
       message: '',
       updatedAt: null
     }
-    const { exportStatus } = loadHandlers()
+    const { exportStatus } = await loadHandlers()
     const req = { user: { permissions: ['manage:system'] } }
-    const res = { json: jest.fn(), sendStatus: jest.fn(), set: jest.fn() }
+    const res = { json: vi.fn(), sendStatus: vi.fn(), set: vi.fn() }
 
     exportStatus(req, res)
 
@@ -759,7 +823,7 @@ describe('controllers/api system endpoints', () => {
     })
   })
 
-  it('returns SSL status JSON for authorized letsencrypt requests', () => {
+  it('returns SSL status JSON for authorized letsencrypt requests', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
     global.WIKI.config.server.sslRedir = true
     global.WIKI.config.ssl = {
@@ -775,9 +839,9 @@ describe('controllers/api system endpoints', () => {
         internalField: 'must-not-return'
       }
     }
-    const { ssl } = loadHandlers()
+    const { ssl } = await loadHandlers()
     const req = { user: { permissions: ['manage:system'] } }
-    const res = { json: jest.fn(), sendStatus: jest.fn() }
+    const res = { json: vi.fn(), sendStatus: vi.fn() }
 
     ssl(req, res)
 
@@ -804,7 +868,7 @@ describe('controllers/api system endpoints', () => {
     ].sort())
   })
 
-  it('returns null SSL fields and zero ports when SSL and servers are disabled', () => {
+  it('returns null SSL fields and zero ports when SSL and servers are disabled', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
     global.WIKI.config.ssl = {
       enabled: false,
@@ -818,9 +882,9 @@ describe('controllers/api system endpoints', () => {
       }
     }
     global.WIKI.servers.servers = {}
-    const { ssl } = loadHandlers()
+    const { ssl } = await loadHandlers()
     const req = { user: { permissions: ['manage:system'] } }
-    const res = { json: jest.fn(), sendStatus: jest.fn() }
+    const res = { json: vi.fn(), sendStatus: vi.fn() }
 
     ssl(req, res)
 
@@ -836,7 +900,7 @@ describe('controllers/api system endpoints', () => {
     })
   })
 
-  it('returns custom SSL provider without letsencrypt-only fields', () => {
+  it('returns custom SSL provider without letsencrypt-only fields', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
     global.WIKI.config.ssl = {
       enabled: true,
@@ -849,9 +913,9 @@ describe('controllers/api system endpoints', () => {
         expires: '2026-06-01T00:00:00.000Z'
       }
     }
-    const { ssl } = loadHandlers()
+    const { ssl } = await loadHandlers()
     const req = { user: { permissions: ['manage:system'] } }
-    const res = { json: jest.fn(), sendStatus: jest.fn() }
+    const res = { json: vi.fn(), sendStatus: vi.fn() }
 
     ssl(req, res)
 
@@ -869,9 +933,9 @@ describe('controllers/api system endpoints', () => {
 
   it('updates HTTPS redirection through REST', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
-    const { updateSslRedirection } = loadHandlers()
+    const { updateSslRedirection } = await loadHandlers()
     const req = { user: { permissions: ['manage:system'] }, body: { enabled: true } }
-    const res = { json: jest.fn(), sendStatus: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), sendStatus: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await updateSslRedirection(req, res)
 
@@ -882,9 +946,9 @@ describe('controllers/api system endpoints', () => {
 
   it('rejects malformed HTTPS redirection payloads with 400', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
-    const { updateSslRedirection } = loadHandlers()
+    const { updateSslRedirection } = await loadHandlers()
     const req = { user: { permissions: ['manage:system'] }, body: { enabled: 'yes' } }
-    const res = { json: jest.fn(), sendStatus: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), sendStatus: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await updateSslRedirection(req, res)
 
@@ -896,9 +960,9 @@ describe('controllers/api system endpoints', () => {
   it('returns JSON errors when HTTPS redirection persistence fails', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
     global.WIKI.configSvc.saveToDb.mockRejectedValueOnce(new Error('server save failed'))
-    const { updateSslRedirection } = loadHandlers()
+    const { updateSslRedirection } = await loadHandlers()
     const req = { user: { permissions: ['manage:system'] }, body: { enabled: true } }
-    const res = { json: jest.fn(), sendStatus: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), sendStatus: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await updateSslRedirection(req, res)
 
@@ -909,10 +973,10 @@ describe('controllers/api system endpoints', () => {
   it('renews letsencrypt SSL certificates through REST', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
     global.WIKI.config.ssl = { enabled: true, provider: 'letsencrypt' }
-    global.WIKI.servers.le = { requestCertificate: jest.fn().mockResolvedValue(true) }
-    const { renewSslCertificate } = loadHandlers()
+    global.WIKI.servers.le = { requestCertificate: vi.fn().mockResolvedValue(true) }
+    const { renewSslCertificate } = await loadHandlers()
     const req = { user: { permissions: ['manage:system'] } }
-    const res = { json: jest.fn(), sendStatus: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), sendStatus: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await renewSslCertificate(req, res)
 
@@ -924,10 +988,10 @@ describe('controllers/api system endpoints', () => {
   it('rejects SSL certificate renewal when SSL is disabled', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
     global.WIKI.config.ssl = { enabled: false, provider: 'letsencrypt' }
-    global.WIKI.servers.le = { requestCertificate: jest.fn().mockResolvedValue(true) }
-    const { renewSslCertificate } = loadHandlers()
+    global.WIKI.servers.le = { requestCertificate: vi.fn().mockResolvedValue(true) }
+    const { renewSslCertificate } = await loadHandlers()
     const req = { user: { permissions: ['manage:system'] } }
-    const res = { json: jest.fn(), sendStatus: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), sendStatus: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await renewSslCertificate(req, res)
 
@@ -940,10 +1004,10 @@ describe('controllers/api system endpoints', () => {
   it('rejects SSL certificate renewal for non-letsencrypt providers', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
     global.WIKI.config.ssl = { enabled: true, provider: 'custom' }
-    global.WIKI.servers.le = { requestCertificate: jest.fn().mockResolvedValue(true) }
-    const { renewSslCertificate } = loadHandlers()
+    global.WIKI.servers.le = { requestCertificate: vi.fn().mockResolvedValue(true) }
+    const { renewSslCertificate } = await loadHandlers()
     const req = { user: { permissions: ['manage:system'] } }
-    const res = { json: jest.fn(), sendStatus: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), sendStatus: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await renewSslCertificate(req, res)
 
@@ -957,9 +1021,9 @@ describe('controllers/api system endpoints', () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
     global.WIKI.config.ssl = { enabled: true, provider: 'letsencrypt' }
     delete global.WIKI.servers.le
-    const { renewSslCertificate } = loadHandlers()
+    const { renewSslCertificate } = await loadHandlers()
     const req = { user: { permissions: ['manage:system'] } }
-    const res = { json: jest.fn(), sendStatus: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), sendStatus: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await renewSslCertificate(req, res)
 
@@ -970,15 +1034,15 @@ describe('controllers/api system endpoints', () => {
 
   it('returns 400 when the system flags update receives a non-array payload', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
-    const { saveFlags } = loadHandlers()
+    const { saveFlags } = await loadHandlers()
     const req = {
       user: { permissions: ['manage:system'] },
       body: { flags: 'bad-payload' },
-      get: jest.fn().mockReturnValue(undefined)
+      get: vi.fn().mockReturnValue(undefined)
     }
-    const res = { json: jest.fn(), sendStatus: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), sendStatus: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await saveFlags(req, res, jest.fn())
+    await saveFlags(req, res, vi.fn())
 
     expect(global.WIKI.configSvc.applyFlags).not.toHaveBeenCalled()
     expect(global.WIKI.configSvc.saveToDb).not.toHaveBeenCalled()
@@ -988,15 +1052,15 @@ describe('controllers/api system endpoints', () => {
 
   it('rejects malformed flags payloads with 400', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
-    const { saveFlags } = loadHandlers()
+    const { saveFlags } = await loadHandlers()
     const req = {
       user: { permissions: ['manage:system'] },
       body: { flags: [{ key: 'alpha', value: 'yes' }] },
-      get: jest.fn().mockImplementation((header) => header === 'X-Requested-With' ? 'XMLHttpRequest' : undefined)
+      get: vi.fn().mockImplementation((header) => header === 'X-Requested-With' ? 'XMLHttpRequest' : undefined)
     }
-    const res = { json: jest.fn(), sendStatus: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), sendStatus: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await saveFlags(req, res, jest.fn())
+    await saveFlags(req, res, vi.fn())
 
     expect(global.WIKI.configSvc.applyFlags).not.toHaveBeenCalled()
     expect(global.WIKI.configSvc.saveToDb).not.toHaveBeenCalled()
@@ -1006,15 +1070,15 @@ describe('controllers/api system endpoints', () => {
 
   it('rejects unknown or path-like flag keys with 400', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
-    const { saveFlags } = loadHandlers()
+    const { saveFlags } = await loadHandlers()
     const req = {
       user: { permissions: ['manage:system'] },
       body: { flags: [{ key: 'alpha.nested', value: true }] },
-      get: jest.fn()
+      get: vi.fn()
     }
-    const res = { json: jest.fn(), sendStatus: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), sendStatus: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await saveFlags(req, res, jest.fn())
+    await saveFlags(req, res, vi.fn())
 
     expect(global.WIKI.configSvc.applyFlags).not.toHaveBeenCalled()
     expect(global.WIKI.configSvc.saveToDb).not.toHaveBeenCalled()
@@ -1024,15 +1088,15 @@ describe('controllers/api system endpoints', () => {
 
   it('rejects duplicate flag keys with 400', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
-    const { saveFlags } = loadHandlers()
+    const { saveFlags } = await loadHandlers()
     const req = {
       user: { permissions: ['manage:system'] },
       body: { flags: [{ key: 'alpha', value: true }, { key: 'alpha', value: false }] },
-      get: jest.fn()
+      get: vi.fn()
     }
-    const res = { json: jest.fn(), sendStatus: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), sendStatus: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await saveFlags(req, res, jest.fn())
+    await saveFlags(req, res, vi.fn())
 
     expect(global.WIKI.configSvc.applyFlags).not.toHaveBeenCalled()
     expect(global.WIKI.configSvc.saveToDb).not.toHaveBeenCalled()
@@ -1042,15 +1106,15 @@ describe('controllers/api system endpoints', () => {
 
   it('rejects partial flag payloads with 400', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
-    const { saveFlags } = loadHandlers()
+    const { saveFlags } = await loadHandlers()
     const req = {
       user: { permissions: ['manage:system'] },
       body: { flags: [{ key: 'alpha', value: true }] },
-      get: jest.fn()
+      get: vi.fn()
     }
-    const res = { json: jest.fn(), sendStatus: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), sendStatus: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await saveFlags(req, res, jest.fn())
+    await saveFlags(req, res, vi.fn())
 
     expect(global.WIKI.configSvc.applyFlags).not.toHaveBeenCalled()
     expect(global.WIKI.configSvc.saveToDb).not.toHaveBeenCalled()
@@ -1060,15 +1124,15 @@ describe('controllers/api system endpoints', () => {
 
   it('applies and persists system flags for authorized requests', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
-    const { saveFlags } = loadHandlers()
+    const { saveFlags } = await loadHandlers()
     const req = {
       user: { permissions: ['manage:system'] },
       body: { flags: [{ key: 'alpha', value: false }, { key: 'beta', value: true }] },
-      get: jest.fn().mockImplementation((header) => header === 'X-Requested-With' ? 'XMLHttpRequest' : undefined)
+      get: vi.fn().mockImplementation((header) => header === 'X-Requested-With' ? 'XMLHttpRequest' : undefined)
     }
-    const res = { json: jest.fn(), sendStatus: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), sendStatus: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await saveFlags(req, res, jest.fn())
+    await saveFlags(req, res, vi.fn())
 
     expect(global.WIKI.config.flags).toEqual({ alpha: false, beta: true })
     expect(global.WIKI.configSvc.applyFlags).toHaveBeenCalledTimes(1)
@@ -1079,14 +1143,14 @@ describe('controllers/api system endpoints', () => {
   it('forwards unexpected system flag persistence failures to next', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
     global.WIKI.configSvc.applyFlags.mockRejectedValueOnce(new Error('flags save failed'))
-    const { saveFlags } = loadHandlers()
+    const { saveFlags } = await loadHandlers()
     const req = {
       user: { permissions: ['manage:system'] },
       body: { flags: [{ key: 'alpha', value: false }, { key: 'beta', value: true }] },
-      get: jest.fn().mockImplementation((header) => header === 'X-Requested-With' ? 'XMLHttpRequest' : undefined)
+      get: vi.fn().mockImplementation((header) => header === 'X-Requested-With' ? 'XMLHttpRequest' : undefined)
     }
-    const res = { json: jest.fn(), sendStatus: jest.fn(), status: jest.fn().mockReturnThis() }
-    const next = jest.fn()
+    const res = { json: vi.fn(), sendStatus: vi.fn(), status: vi.fn().mockReturnThis() }
+    const next = vi.fn()
 
     await saveFlags(req, res, next)
 
@@ -1100,14 +1164,14 @@ describe('controllers/api system endpoints', () => {
   it('forwards a persistence error when saveToDb returns false', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
     global.WIKI.configSvc.saveToDb.mockResolvedValueOnce(false)
-    const { saveFlags } = loadHandlers()
+    const { saveFlags } = await loadHandlers()
     const req = {
       user: { permissions: ['manage:system'] },
       body: { flags: [{ key: 'alpha', value: false }, { key: 'beta', value: true }] },
-      get: jest.fn()
+      get: vi.fn()
     }
-    const res = { json: jest.fn(), sendStatus: jest.fn(), status: jest.fn().mockReturnThis() }
-    const next = jest.fn()
+    const res = { json: vi.fn(), sendStatus: vi.fn(), status: vi.fn().mockReturnThis() }
+    const next = vi.fn()
 
     await saveFlags(req, res, next)
 
@@ -1120,11 +1184,13 @@ describe('controllers/api system endpoints', () => {
 
   it('returns a safe system info payload for authorized requests', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
-    const { info } = loadHandlers()
+    const { info } = await loadHandlers()
     const req = { user: { permissions: ['manage:system'] } }
-    const res = { json: jest.fn(), sendStatus: jest.fn() }
+    const res = { json: vi.fn(), sendStatus: vi.fn() }
+    const next = vi.fn()
 
-    await info(req, res)
+    await info(req, res, next)
+    expect(next).not.toHaveBeenCalled()
 
     expect(res.json).toHaveBeenCalledWith({
       configFile: `${process.cwd()}/config.yml`,
@@ -1155,8 +1221,7 @@ describe('controllers/api system endpoints', () => {
 
   it('imports Wiki.js 1.x users through the shared import operation', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
-    const importV1Operations = require('../../operations/import-v1')
-    const { importV1Users } = loadHandlers()
+    const { importV1Users } = await loadHandlers()
     const req = {
       user: { permissions: ['manage:system'] },
       body: {
@@ -1164,7 +1229,7 @@ describe('controllers/api system endpoints', () => {
         groupMode: 'MULTI'
       }
     }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis(), sendStatus: jest.fn() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis(), sendStatus: vi.fn() }
 
     await importV1Users(req, res)
 
@@ -1178,13 +1243,12 @@ describe('controllers/api system endpoints', () => {
 
   it('returns 400 when the update sync request omits the required API header', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
-    const syncGraphUpdates = require('../../jobs/sync-graph-updates')
-    const { checkForUpdate } = loadHandlers()
+    const { checkForUpdate } = await loadHandlers()
     const req = {
       user: { permissions: ['manage:system'] },
-      get: jest.fn().mockReturnValue(undefined)
+      get: vi.fn().mockReturnValue(undefined)
     }
-    const res = { json: jest.fn(), sendStatus: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), sendStatus: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await checkForUpdate(req, res)
 
@@ -1195,13 +1259,12 @@ describe('controllers/api system endpoints', () => {
 
   it('runs the update sync job and returns the latest update state', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
-    const syncGraphUpdates = require('../../jobs/sync-graph-updates')
-    const { checkForUpdate } = loadHandlers()
+    const { checkForUpdate } = await loadHandlers()
     const req = {
       user: { permissions: ['manage:system'] },
-      get: jest.fn().mockImplementation((header) => header === 'X-Requested-With' ? 'XMLHttpRequest' : undefined)
+      get: vi.fn().mockImplementation((header) => header === 'X-Requested-With' ? 'XMLHttpRequest' : undefined)
     }
-    const res = { json: jest.fn(), sendStatus: jest.fn() }
+    const res = { json: vi.fn(), sendStatus: vi.fn() }
 
     await checkForUpdate(req, res)
 
@@ -1215,10 +1278,9 @@ describe('controllers/api system endpoints', () => {
 
   it('starts system exports through REST with resolved target path', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
-    const fs = require('fs-extra')
-    const { startExport } = loadHandlers()
+    const { startExport } = await loadHandlers()
     const req = { user: { permissions: ['manage:system'] }, body: { entities: ['pages', 'assets'], path: './data/export' } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis(), sendStatus: jest.fn() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis(), sendStatus: vi.fn() }
 
     await startExport(req, res)
 
@@ -1239,9 +1301,8 @@ describe('controllers/api system endpoints', () => {
     ['non-string entity', { entities: ['pages', 7], path: './data/export' }]
   ])('rejects malformed export entities: %s', async (label, body) => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
-    const fs = require('fs-extra')
-    const { startExport } = loadHandlers()
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis(), sendStatus: jest.fn() }
+    const { startExport } = await loadHandlers()
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis(), sendStatus: vi.fn() }
 
     await startExport({ user: { permissions: ['manage:system'] }, body }, res)
 
@@ -1257,9 +1318,8 @@ describe('controllers/api system endpoints', () => {
     ['non-string path', { entities: ['pages'], path: 7 }]
   ])('rejects malformed export paths: %s', async (label, body) => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
-    const fs = require('fs-extra')
-    const { startExport } = loadHandlers()
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis(), sendStatus: jest.fn() }
+    const { startExport } = await loadHandlers()
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis(), sendStatus: vi.fn() }
 
     await startExport({ user: { permissions: ['manage:system'] }, body }, res)
 
@@ -1272,9 +1332,8 @@ describe('controllers/api system endpoints', () => {
   it('returns JSON error when an export is already running', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
     global.WIKI.system.exportStatus.status = 'running'
-    const fs = require('fs-extra')
-    const { startExport } = loadHandlers()
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis(), sendStatus: jest.fn() }
+    const { startExport } = await loadHandlers()
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis(), sendStatus: vi.fn() }
 
     await startExport({ user: { permissions: ['manage:system'] }, body: { entities: ['pages'], path: './data/export' } }, res)
 
@@ -1286,10 +1345,9 @@ describe('controllers/api system endpoints', () => {
 
   it('returns JSON error when export target directory is not empty', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
-    const fs = require('fs-extra')
     fs.readdir.mockResolvedValueOnce(['existing.json'])
-    const { startExport } = loadHandlers()
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis(), sendStatus: jest.fn() }
+    const { startExport } = await loadHandlers()
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis(), sendStatus: vi.fn() }
 
     await startExport({ user: { permissions: ['manage:system'] }, body: { entities: ['pages'], path: './data/export' } }, res)
 
@@ -1300,10 +1358,9 @@ describe('controllers/api system endpoints', () => {
 
   it('returns JSON errors for export filesystem failures', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
-    const fs = require('fs-extra')
     fs.ensureDir.mockRejectedValueOnce(new Error('ensure failed'))
-    const { startExport } = loadHandlers()
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis(), sendStatus: jest.fn() }
+    const { startExport } = await loadHandlers()
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis(), sendStatus: vi.fn() }
 
     await startExport({ user: { permissions: ['manage:system'] }, body: { entities: ['pages'], path: './data/export' } }, res)
 

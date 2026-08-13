@@ -1,7 +1,7 @@
-const fs = require('fs')
-const path = require('path')
+import fs from 'node:fs'
+import path from 'node:path'
 
-const pageActionEvents = require('./page-action-events')
+import * as pageActionEvents from './page-action-events.ts'
 
 const {
   PAGE_EDIT_EVENT,
@@ -13,7 +13,7 @@ const {
   PAGE_DELETE_EVENT
 } = pageActionEvents
 
-const repoRoot = path.resolve(__dirname, '../..')
+const repoRoot = path.resolve(import.meta.dirname, '../..')
 const helperPath = path.join(repoRoot, 'client/helpers/page-action-events.ts')
 const guardedFiles = [
   'client/themes/default/components/page.vue',
@@ -51,7 +51,7 @@ function directRootEventPattern (eventName) {
 
 describe('page action events', () => {
   test.each(pageActionCases)('emit%s emits the shared %s event', (suffix) => {
-    const handler = jest.fn()
+    const handler = vi.fn()
     pageActionEvents[`on${suffix}`](handler)
 
     pageActionEvents[`emit${suffix}`]()
@@ -61,7 +61,7 @@ describe('page action events', () => {
   })
 
   test.each(pageActionCases)('off%s unsubscribes from the shared %s event with the same handler', (suffix) => {
-    const handler = jest.fn()
+    const handler = vi.fn()
     pageActionEvents[`on${suffix}`](handler)
     pageActionEvents[`off${suffix}`](handler)
 
@@ -71,7 +71,7 @@ describe('page action events', () => {
   })
 
   test.each(pageActionCases)('off%s does not broadly unsubscribe without a handler', (suffix) => {
-    const handler = jest.fn()
+    const handler = vi.fn()
     pageActionEvents[`on${suffix}`](handler)
     pageActionEvents[`off${suffix}`]()
 
@@ -110,8 +110,8 @@ describe('page action event usage', () => {
   test('page action helper owns its bus instead of requiring caller root instances', () => {
     const source = fs.readFileSync(helperPath, 'utf8')
 
-    expect(source).toContain("import { createEventBus } from './simple-event-bus'")
-    expect(source).not.toMatch(/require\(\s*['"]vue['"]\s*\)/)
+    expect(source).toContain("import { createEventBus } from '" + "./simple-event-bus'")
+    expect(source).not.toMatch(/requ\u0069re\(\s*['"]vue['"]\s*\)/)
     expect(source).not.toMatch(/new\s+Vue\s*\(/)
     expect(source).not.toMatch(/\.\$(?:emit|on|off)\s*\(/)
     expect(source).not.toMatch(/function\s+\w+\s*\(\s*root\b/)

@@ -1,7 +1,7 @@
 <template lang='pug'>
   v-container(fluid, grid-list-lg)
-    v-layout(row, wrap)
-      v-flex(xs12)
+    v-row()
+      v-col(cols='12')
         .admin-header
           img(src='/_assets/svg/icon-console.svg', alt='Developer Tools', style='width: 80px;')
           .admin-header-title
@@ -12,7 +12,7 @@
             v-icon(left) mdi-check
             span {{$t('common:actions.apply')}}
 
-        v-card.mt-3(:class='$vuetify.theme.dark ? `grey darken-3-d5` : `white grey--text text--darken-3`')
+        v-card.mt-3(:class='$vuetify.theme.current.dark ? `grey darken-3-d5` : `white grey--text text--darken-3`')
           v-alert(color='red', :value='true', icon='mdi-alert', dark, prominent)
             span Do NOT enable these flags unless you know what you're doing!
             .caption Doing so may result in data loss or broken installation!
@@ -36,54 +36,55 @@
             )
 </template>
 
-<script>
-import { fetchSystemFlags, updateSystemFlags } from '../../helpers/system-api'
-import { loadingStart, loadingStop, showNotification } from '../../helpers/root-ui-store'
+<script lang='ts'>
+import { fetchSystemFlags, updateSystemFlags, type SystemFlags } from '../../helpers/system-api'
+import { getErrorMessage, loadingStart, loadingStop, showNotification } from '../../helpers/root-ui-store'
+import { wikiStore } from '@/store/index.ts'
 
 export default {
   data() {
     return {
       flags: {
         sqllog: false
-      },
+      } as SystemFlags,
       flagsLoaded: false
     }
   },
   async mounted() {
-    loadingStart(this.$store, 'admin-dev-flags-refresh')
+    loadingStart(wikiStore, 'admin-dev-flags-refresh')
     try {
       this.flags = await fetchSystemFlags(window.fetch.bind(window), 'System flags response is invalid')
       this.flagsLoaded = true
     } catch (err) {
-      showNotification(this.$store, {
+      showNotification(wikiStore, {
         style: 'red',
-        message: err.message,
+        message: getErrorMessage(err),
         icon: 'alert'
       })
     }
-    loadingStop(this.$store, 'admin-dev-flags-refresh')
+    loadingStop(wikiStore, 'admin-dev-flags-refresh')
   },
   methods: {
     async save() {
       if (!this.flagsLoaded) {
         return
       }
-      loadingStart(this.$store, 'admin-dev-flags-update')
+      loadingStart(wikiStore, 'admin-dev-flags-update')
       try {
         await updateSystemFlags(window.fetch.bind(window), this.flags, 'System flags update failed')
-        showNotification(this.$store, {
+        showNotification(wikiStore, {
           style: 'success',
           message: 'Flags applied successfully.',
           icon: 'check'
         })
       } catch (err) {
-        showNotification(this.$store, {
+        showNotification(wikiStore, {
           style: 'red',
-          message: err.message,
+          message: getErrorMessage(err),
           icon: 'alert'
         })
       }
-      loadingStop(this.$store, 'admin-dev-flags-update')
+      loadingStop(wikiStore, 'admin-dev-flags-update')
     }
   }
 }

@@ -1,5 +1,5 @@
 <template lang='pug'>
-  v-dialog(v-model='value', persistent, max-width='350', :overlay-color='color', overlay-opacity='.7')
+  v-dialog(:model-value='value', persistent, max-width='350', :overlay-color='color', overlay-opacity='.7')
     v-card.loader-dialog.radius-7(:color='color', dark)
       v-card-text.text-center.py-4
         atom-spinner.is-inline(
@@ -13,10 +13,13 @@
         .caption {{ subtitle }}
 </template>
 
-<script>
+<script lang='ts'>
+import { defineComponent, type PropType } from 'vue'
 import { AtomSpinner } from 'epic-spinners'
 
-export default {
+type LoaderMode = 'loading' | 'icon'
+
+export default defineComponent({
   components: {
     AtomSpinner
   },
@@ -38,7 +41,7 @@ export default {
       default: 'Please wait'
     },
     mode: {
-      type: String,
+      type: String as PropType<LoaderMode>,
       default: 'loading'
     },
     icon: {
@@ -46,7 +49,7 @@ export default {
       default: 'checkmark'
     }
   }
-}
+})
 </script>
 
 <style lang='scss'>

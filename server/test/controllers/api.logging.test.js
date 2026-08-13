@@ -1,32 +1,75 @@
-jest.mock('express', () => {
+vi.mock('express', () => {
   const routers = []
-
-  return {
+  const express = {
     Router: () => {
       const router = {
-        get: jest.fn(),
-        post: jest.fn(),
-        patch: jest.fn(),
-        put: jest.fn(),
-        delete: jest.fn(),
-        use: jest.fn()
+        get: vi.fn(),
+        post: vi.fn(),
+        patch: vi.fn(),
+        put: vi.fn(),
+        delete: vi.fn(),
+        use: vi.fn()
       }
       routers.push(router)
       return router
     },
     __routers: routers
   }
+
+  return { default: express, ...express }
 })
+
+import express from 'express'
+
+const API_CONTROLLER_NAMES = [
+  'analytics',
+  'assets',
+  'auth',
+  'comments',
+  'contribute',
+  'groups',
+  'locales',
+  'logging',
+  'mail',
+  'navigation',
+  'pages',
+  'rendering',
+  'search',
+  'site',
+  'storage',
+  'system',
+  'theming',
+  'users'
+]
+
+const loadApiIndexRouter = async () => {
+  const subrouters = Object.fromEntries(API_CONTROLLER_NAMES.map(name => [name, {}]))
+
+  for (const name of API_CONTROLLER_NAMES) {
+    vi.doMock(`../../controllers/api/${name}.ts`, () => ({
+      default: subrouters[name]
+    }))
+  }
+
+  try {
+    await expect(import('../../controllers/api/index.ts')).resolves.toBeDefined()
+  } finally {
+    for (const name of API_CONTROLLER_NAMES) {
+      vi.doUnmock(`../../controllers/api/${name}.ts`)
+    }
+  }
+
+  return { apiRouter: express.__routers.at(-1), subrouters }
+}
 
 describe('controllers/api logging endpoints', () => {
   beforeEach(() => {
-    jest.resetModules()
-    const express = require('express')
+    vi.resetModules()
     express.__routers.length = 0
 
     global.WIKI = {
       auth: {
-        checkAccess: jest.fn()
+        checkAccess: vi.fn()
       },
       data: {
         loggers: [
@@ -67,8 +110,8 @@ describe('controllers/api logging endpoints', () => {
       },
       models: {
         loggers: {
-          query: jest.fn(),
-          getLoggers: jest.fn().mockResolvedValue([
+          query: vi.fn(),
+          getLoggers: vi.fn().mockResolvedValue([
             {
               key: 'beta',
               isEnabled: false,
@@ -98,43 +141,38 @@ describe('controllers/api logging endpoints', () => {
     }
   })
 
-  const loadLoggersRouter = () => {
-    const express = require('express')
-    require('../../controllers/api/logging')
+  const loadLoggersRouter = async () => {
+    await import('../../controllers/api/logging.ts')
     return express.__routers[0]
   }
 
-  const loadLoggersHandler = () => {
-    const router = loadLoggersRouter()
+  const loadLoggersHandler = async () => {
+    const router = await loadLoggersRouter()
     return router.get.mock.calls.find(([path]) => path === '/loggers')[1]
   }
 
-  const saveLoggersHandler = () => {
-    const router = loadLoggersRouter()
+  const saveLoggersHandler = async () => {
+    const router = await loadLoggersRouter()
     return router.post.mock.calls.find(([path]) => path === '/loggers')[1]
   }
 
-  it('registers logging loggers route', () => {
-    const handler = loadLoggersHandler()
+  it('registers logging loggers route', async () => { const handler = await loadLoggersHandler()
 
-    expect(typeof handler).toBe('function')
-  })
+  expect(typeof handler).toBe('function') })
 
-  it('is mounted by the API index router', () => {
-    const express = require('express')
-    expect(() => require('../../controllers/api')).not.toThrow()
-    const apiRouter = express.__routers[0]
+  it('is mounted by the API index router', async () => {
+    const { apiRouter, subrouters } = await loadApiIndexRouter()
 
-    expect(apiRouter.use).toHaveBeenCalledWith('/logging', expect.any(Object))
+    expect(apiRouter.use).toHaveBeenCalledWith('/logging', subrouters.logging)
   })
 
   it('returns 403 for unauthorized logger requests without querying loggers', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(false)
-    const handler = loadLoggersHandler()
+    const handler = await loadLoggersHandler()
     const req = { user: { permissions: [] } }
-    const res = { sendStatus: jest.fn(), json: jest.fn() }
+    const res = { sendStatus: vi.fn(), json: vi.fn() }
 
-    await handler(req, res, jest.fn())
+    await handler(req, res, vi.fn())
 
     expect(global.WIKI.auth.checkAccess).toHaveBeenCalledWith(req.user, ['manage:system'])
     expect(res.sendStatus).toHaveBeenCalledWith(403)
@@ -144,10 +182,10 @@ describe('controllers/api logging endpoints', () => {
 
   it('returns allowlisted logger fields sorted by title without raw props or internal fields', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
-    const handler = loadLoggersHandler()
-    const res = { sendStatus: jest.fn(), json: jest.fn() }
+    const handler = await loadLoggersHandler()
+    const res = { sendStatus: vi.fn(), json: vi.fn() }
 
-    await handler({ user: {} }, res, jest.fn())
+    await handler({ user: {} }, res, vi.fn())
 
     expect(global.WIKI.models.loggers.getLoggers).toHaveBeenCalledWith()
     expect(res.json).toHaveBeenCalledWith([
@@ -181,10 +219,10 @@ describe('controllers/api logging endpoints', () => {
 
   it('merges config with logger metadata as JSON strings sorted by config key', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
-    const handler = loadLoggersHandler()
-    const res = { sendStatus: jest.fn(), json: jest.fn() }
+    const handler = await loadLoggersHandler()
+    const res = { sendStatus: vi.fn(), json: vi.fn() }
 
-    await handler({ user: {} }, res, jest.fn())
+    await handler({ user: {} }, res, vi.fn())
 
     const config = res.json.mock.calls[0][0][0].config
     expect(config.map(row => row.key)).toEqual(['endpoint', 'redact'])
@@ -211,17 +249,15 @@ describe('controllers/api logging endpoints', () => {
     ])
   })
 
-  it('registers logging save loggers route', () => {
-    const handler = saveLoggersHandler()
+  it('registers logging save loggers route', async () => { const handler = await saveLoggersHandler()
 
-    expect(typeof handler).toBe('function')
-  })
+  expect(typeof handler).toBe('function') })
 
   it('returns JSON 403 for unauthorized logger saves without patching loggers', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(false)
-    const handler = saveLoggersHandler()
+    const handler = await saveLoggersHandler()
     const req = { user: { permissions: [] }, body: { loggers: [] } }
-    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
 
     await handler(req, res)
 
@@ -233,7 +269,7 @@ describe('controllers/api logging endpoints', () => {
 
   it('returns JSON 400 for malformed logger save payloads', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
-    const handler = saveLoggersHandler()
+    const handler = await saveLoggersHandler()
     const invalidPayloads = [
       {},
       { loggers: 'not-array' },
@@ -244,7 +280,7 @@ describe('controllers/api logging endpoints', () => {
     ]
 
     for (const body of invalidPayloads) {
-      const res = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+      const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
       await handler({ user: {}, body }, res)
       expect(res.status).toHaveBeenCalledWith(400)
       expect(res.json).toHaveBeenCalledWith({ error: 'Invalid loggers payload' })
@@ -254,10 +290,10 @@ describe('controllers/api logging endpoints', () => {
 
   it('patches logger rows by key preserving GraphQL config string semantics', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
-    const patch = jest.fn().mockReturnThis()
-    const where = jest.fn().mockResolvedValue(1)
+    const patch = vi.fn().mockReturnThis()
+    const where = vi.fn().mockResolvedValue(1)
     global.WIKI.models.loggers.query.mockReturnValue({ patch, where })
-    const handler = saveLoggersHandler()
+    const handler = await saveLoggersHandler()
     const loggers = [
       {
         key: 'alpha',
@@ -275,7 +311,7 @@ describe('controllers/api logging endpoints', () => {
         config: []
       }
     ]
-    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
 
     await handler({ user: {}, body: { loggers } }, res)
 
@@ -302,11 +338,11 @@ describe('controllers/api logging endpoints', () => {
   it('returns JSON 500 for unexpected logger save failures', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
     global.WIKI.models.loggers.query.mockReturnValue({
-      patch: jest.fn().mockReturnThis(),
-      where: jest.fn().mockRejectedValue(new Error('patch failed'))
+      patch: vi.fn().mockReturnThis(),
+      where: vi.fn().mockRejectedValue(new Error('patch failed'))
     })
-    const handler = saveLoggersHandler()
-    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+    const handler = await saveLoggersHandler()
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
 
     await handler({
       user: {},
@@ -323,9 +359,9 @@ describe('controllers/api logging endpoints', () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
     const err = new Error('logging failed')
     global.WIKI.models.loggers.getLoggers.mockRejectedValue(err)
-    const handler = loadLoggersHandler()
-    const res = { sendStatus: jest.fn(), json: jest.fn() }
-    const next = jest.fn()
+    const handler = await loadLoggersHandler()
+    const res = { sendStatus: vi.fn(), json: vi.fn() }
+    const next = vi.fn()
 
     await handler({ user: {} }, res, next)
 

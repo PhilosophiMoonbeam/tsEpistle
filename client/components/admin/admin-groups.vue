@@ -1,7 +1,7 @@
 <template lang='pug'>
   v-container(fluid, grid-list-lg)
-    v-layout(row wrap)
-      v-flex(xs12)
+    v-row
+      v-col(cols='12')
         .admin-header
           img.animated.fadeInUp(src='/_assets/svg/icon-people.svg', alt='Groups', style='width: 80px;')
           .admin-header-title
@@ -13,8 +13,8 @@
           v-btn.animated.fadeInDown.wait-p2s.mx-3(color='grey', outlined, @click='refresh', icon)
             v-icon mdi-refresh
           v-dialog(v-model='newGroupDialog', max-width='500')
-            template(v-slot:activator='{ on }')
-              v-btn.animated.fadeInDown(color='primary', depressed, v-on='on', large)
+            template(v-slot:activator='{ props }')
+              v-btn.animated.fadeInDown(color='primary', depressed, v-bind='props', large)
                 v-icon(left) mdi-plus
                 span New Group
             v-card
@@ -30,7 +30,7 @@
                   @keyup.esc='newGroupDialog = false'
                   ref='groupNameIpt'
                   )
-              v-card-chin
+              div.v-card-chin
                 v-spacer
                 v-btn(text, @click='newGroupDialog = false') Cancel
                 v-btn(color='primary', @click='createGroup') Create
@@ -39,14 +39,14 @@
             :items='groups'
             :headers='headers'
             :search='search'
-            :page.sync='pagination'
+            v-model:page='pagination'
             :items-per-page='15'
             :loading='loading'
             @page-count='pageCount = $event'
             must-sort,
             hide-default-footer
           )
-            template(slot='item', slot-scope='props')
+            template(v-slot:item='props')
               tr.is-clickable(:active='props.selected', @click='$router.push("/groups/" + props.item.id)')
                 td {{ props.item.id }}
                 td: strong {{ props.item.name }}
@@ -55,30 +55,30 @@
                 td {{ $helpers.formatMoment(props.item.updatedAt, 'calendar') }}
                 td
                   v-tooltip(left, v-if='props.item.isSystem')
-                    template(v-slot:activator='{ on }')
-                      v-icon(v-on='on') mdi-lock-outline
+                    template(v-slot:activator='{ props }')
+                      v-icon(v-bind='props') mdi-lock-outline
                     span System Group
-            template(slot='no-data')
+            template(v-slot:no-data)
               v-alert.ma-3(icon='mdi-alert', :value='true', outline) No groups to display.
           .text-xs-center.py-2(v-if='pageCount > 1')
             v-pagination(v-model='pagination', :length='pageCount')
 </template>
 
-<script>
+<script lang='ts'>
 import _ from 'lodash'
 
-import { createGroup, fetchGroupsList } from '../../helpers/groups-api'
-import { loadingStart, loadingStop, showNotification, pushGraphError } from '../../helpers/root-ui-store'
+import { createGroup, fetchGroupsList, type GroupListRow } from '../../helpers/groups-api'
+import { getErrorMessage } from '../../helpers/root-ui-store'
+import { wikiStore } from '@/store/index.ts'
 
 export default {
   data() {
     return {
       newGroupDialog: false,
       newGroupName: '',
-      selectedGroup: {},
       pagination: 1,
       pageCount: 0,
-      groups: [],
+      groups: [] as GroupListRow[],
       headers: [
         { text: 'ID', value: 'id', width: 80, sortable: true },
         { text: 'Name', value: 'name' },
@@ -92,10 +92,10 @@ export default {
     }
   },
   watch: {
-    newGroupDialog(newValue, oldValue) {
+    newGroupDialog(newValue: boolean) {
       if (newValue) {
         this.$nextTick(() => {
-          this.$refs.groupNameIpt.focus()
+          ;(this.$refs.groupNameIpt as { focus: () => void }).focus()
         })
       }
     }
@@ -103,25 +103,25 @@ export default {
   methods: {
     async loadGroups() {
       this.loading = true
-      loadingStart(this.$store, 'admin-groups-refresh')
+      wikiStore.startLoading('admin-groups-refresh')
       try {
         this.groups = await fetchGroupsList(window.fetch.bind(window), 'Groups list response is invalid')
         return true
       } catch (err) {
-        showNotification(this.$store, {
+        wikiStore.showNotification({
           style: 'red',
-          message: err.message,
+          message: getErrorMessage(err),
           icon: 'alert'
         })
         return false
       } finally {
         this.loading = false
-        loadingStop(this.$store, 'admin-groups-refresh')
+        wikiStore.stopLoading('admin-groups-refresh')
       }
     },
     async refresh() {
       if (await this.loadGroups()) {
-        showNotification(this.$store, {
+        wikiStore.showNotification({
           message: 'Groups have been refreshed.',
           style: 'success',
           icon: 'cached'
@@ -130,7 +130,7 @@ export default {
     },
     async createGroup() {
       if (_.trim(this.newGroupName).length < 1) {
-        showNotification(this.$store, {
+        wikiStore.showNotification({
           style: 'red',
           message: 'Enter a group name.',
           icon: 'warning'
@@ -138,13 +138,13 @@ export default {
         return
       }
       this.newGroupDialog = false
-      loadingStart(this.$store, 'admin-groups-create')
+      wikiStore.startLoading('admin-groups-create')
       try {
         const data = await createGroup(window.fetch.bind(window), this.newGroupName)
         if (data.succeeded === true) {
           this.newGroupName = ''
           if (await this.loadGroups()) {
-            showNotification(this.$store, {
+            wikiStore.showNotification({
               style: 'success',
               message: 'Group has been created successfully.',
               icon: 'check'
@@ -154,9 +154,9 @@ export default {
           throw new Error(data.message || 'An unexpected error occurred.')
         }
       } catch (err) {
-        pushGraphError(this.$store, err)
+        wikiStore.showError(err)
       } finally {
-        loadingStop(this.$store, 'admin-groups-create')
+        wikiStore.stopLoading('admin-groups-create')
       }
     }
   },

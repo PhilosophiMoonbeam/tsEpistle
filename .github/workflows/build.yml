@@ -6,61 +6,246 @@ on:
       - main
     tags:
       - 'v*'
+  pull_request:
+
+permissions:
+  contents: read
 
 env:
   BASE_DEV_VERSION: 2.5.0
+  PNPM_VERSION: 11.12.0
 
 jobs:
-
-  build:
-    name: Build
+  quality:
+    name: Quality
     runs-on: ubuntu-latest
     permissions:
-      packages: write
+      contents: read
 
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+    - uses: pnpm/action-setup@a8198c4bff370c8506180b035930dea56dbd5288 # v5
+      with:
+        version: ${{ env.PNPM_VERSION }}
+
+    - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+      with:
+        node-version-file: .nvmrc
+        cache: pnpm
+
+    - name: Install Dependencies
+      run: pnpm install --frozen-lockfile
+
+    - name: Lint
+      run: pnpm run lint
+
+    - name: Typecheck Client
+      run: pnpm run typecheck:client
+
+    - name: Typecheck Server
+      run: pnpm run typecheck:server
+
+    - name: Run Vitest
+      run: pnpm run test
+
+    - name: Build Vite Assets
+      run: pnpm run build
+
+  build:
+    name: Build Test Image and Linux Bundle
+    runs-on: ubuntu-latest
+    needs: [quality]
+    permissions:
+      contents: read
+
+    steps:
+    - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
     - name: Set Build Variables
+      shell: bash
       run: |
-        if [[ "$GITHUB_REF" =~ ^refs/tags/v* ]]; then
+        if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
           echo "Using TAG mode: $GITHUB_REF_NAME"
-          echo "REL_VERSION=$GITHUB_REF_NAME" >> $GITHUB_ENV
-          echo "REL_VERSION_STRICT=${GITHUB_REF_NAME#?}" >> $GITHUB_ENV
+          echo "REL_VERSION=$GITHUB_REF_NAME" >> "$GITHUB_ENV"
+          echo "REL_VERSION_STRICT=${GITHUB_REF_NAME#?}" >> "$GITHUB_ENV"
         else
           echo "Using BRANCH mode: v$BASE_DEV_VERSION-dev.$GITHUB_RUN_NUMBER"
-          echo "REL_VERSION=v$BASE_DEV_VERSION-dev.$GITHUB_RUN_NUMBER" >> $GITHUB_ENV
-          echo "REL_VERSION_STRICT=$BASE_DEV_VERSION-dev.$GITHUB_RUN_NUMBER" >> $GITHUB_ENV
+          echo "REL_VERSION=v$BASE_DEV_VERSION-dev.$GITHUB_RUN_NUMBER" >> "$GITHUB_ENV"
+          echo "REL_VERSION_STRICT=$BASE_DEV_VERSION-dev.$GITHUB_RUN_NUMBER" >> "$GITHUB_ENV"
         fi
+        epoch="${SOURCE_DATE_EPOCH:-$(git show -s --format=%ct "$GITHUB_SHA")}"
+        echo "SOURCE_DATE_EPOCH=$epoch" >> "$GITHUB_ENV"
 
-    - name: Disable DEV Flag + Set Version
+    - name: Disable DEV Flag and Set Version
       run: |
-        sudo apt-get install jq -y
-        mv package.json pkg-temp.json
-        jq --arg vs "$REL_VERSION_STRICT" -r '. + {dev:false, version:$vs}' pkg-temp.json > package.json
-        rm pkg-temp.json
-        cat package.json
+        jq --arg version "$REL_VERSION_STRICT" '. + {dev:false, version:$version}' package.json > package.json.tmp
+        mv package.json.tmp package.json
 
-    - name: Login to DockerHub
-      uses: docker/login-action@v4
-      with:
-        username: ${{ secrets.DOCKERHUB_USERNAME }}
-        password: ${{ secrets.DOCKERHUB_TOKEN }}
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
 
-    - name: Login to GitHub Container Registry
-      uses: docker/login-action@v4
-      with:
-        registry: ghcr.io
-        username: ${{ github.repository_owner }}
-        password: ${{ secrets.GITHUB_TOKEN }}
-
-    - name: Build and push Docker images
-      uses: docker/build-push-action@v7
+    - name: Build Test Image
+      uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
       env:
         DOCKER_BUILD_SUMMARY: false
       with:
         context: .
         file: dev/build/Dockerfile
+        load: true
+        provenance: false
+        sbom: false
+        tags: requarks/wiki:canary-${{ env.REL_VERSION_STRICT }}
+
+    - name: Export Test Image
+      run: docker save "requarks/wiki:canary-$REL_VERSION_STRICT" | gzip -n > wiki-test-image.tar.gz
+
+    - name: Create Reproducible Linux Bundle
+      shell: bash
+      run: |
+        mkdir -p _dist
+        container_id="$(docker create "requarks/wiki:canary-$REL_VERSION_STRICT")"
+        docker cp "$container_id:/wiki" _dist
+        docker rm "$container_id"
+        rm -f _dist/wiki/config.yml
+        cp config.sample.yml _dist/wiki/config.sample.yml
+        tar \
+          --sort=name \
+          --format=gnu \
+          --owner=0 \
+          --group=0 \
+          --numeric-owner \
+          --mtime="@$SOURCE_DATE_EPOCH" \
+          -czf wiki-js.tar.gz \
+          -C _dist/wiki .
+
+    - name: Upload Linux Build
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      with:
+        name: drop
+        path: wiki-js.tar.gz
+        if-no-files-found: error
+
+    - name: Upload Test Image
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      with:
+        name: test-image
+        path: wiki-test-image.tar.gz
+        if-no-files-found: error
+        retention-days: 1
+
+  e2e:
+    name: Playwright (${{ matrix.dbtype }})
+    runs-on: ubuntu-latest
+    needs: [build]
+    permissions:
+      contents: read
+
+    strategy:
+      fail-fast: false
+      matrix:
+        dbtype: [postgres, mysql, mariadb, sqlite]
+
+    steps:
+    - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+    - uses: pnpm/action-setup@a8198c4bff370c8506180b035930dea56dbd5288 # v5
+      with:
+        version: ${{ env.PNPM_VERSION }}
+
+    - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+      with:
+        node-version-file: .nvmrc
+        cache: pnpm
+
+    - name: Install Test Dependencies
+      run: |
+        pnpm install --frozen-lockfile
+        pnpm exec playwright install --with-deps chromium
+
+    - name: Download Test Image
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+      with:
+        name: test-image
+        path: test-image
+
+    - name: Load Test Image
+      run: gzip -dc test-image/wiki-test-image.tar.gz | docker load
+
+    - name: Set Test Variables
+      shell: bash
+      run: |
+        if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+          echo "Using TAG mode: $GITHUB_REF_NAME"
+          echo "REL_VERSION_STRICT=${GITHUB_REF_NAME#?}" >> "$GITHUB_ENV"
+        else
+          echo "Using BRANCH mode: v$BASE_DEV_VERSION-dev.$GITHUB_RUN_NUMBER"
+          echo "REL_VERSION_STRICT=$BASE_DEV_VERSION-dev.$GITHUB_RUN_NUMBER" >> "$GITHUB_ENV"
+        fi
+
+    - name: Run Playwright Tests
+      env:
+        MATRIXENV: ${{ matrix.dbtype }}
+        PLAYWRIGHT_BASE_URL: http://127.0.0.1:3000
+      run: |
+        chmod u+x dev/e2e/ci-setup.sh
+        dev/e2e/ci-setup.sh
+        pnpm exec playwright test
+
+  publish-amd64:
+    name: Publish AMD64 Images
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+    needs: [e2e]
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+    - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+    - name: Set Build Variables
+      shell: bash
+      run: |
+        if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+          echo "Using TAG mode: $GITHUB_REF_NAME"
+          echo "REL_VERSION_STRICT=${GITHUB_REF_NAME#?}" >> "$GITHUB_ENV"
+        else
+          echo "Using BRANCH mode: v$BASE_DEV_VERSION-dev.$GITHUB_RUN_NUMBER"
+          echo "REL_VERSION_STRICT=$BASE_DEV_VERSION-dev.$GITHUB_RUN_NUMBER" >> "$GITHUB_ENV"
+        fi
+
+    - name: Disable DEV Flag and Set Version
+      run: |
+        jq --arg version "$REL_VERSION_STRICT" '. + {dev:false, version:$version}' package.json > package.json.tmp
+        mv package.json.tmp package.json
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
+
+    - name: Login to DockerHub
+      uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+      with:
+        username: ${{ secrets.DOCKERHUB_USERNAME }}
+        password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+    - name: Login to GitHub Container Registry
+      uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+      with:
+        registry: ghcr.io
+        username: ${{ github.repository_owner }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Build and Push AMD64 Images
+      uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
+      env:
+        DOCKER_BUILD_SUMMARY: false
+      with:
+        context: .
+        file: dev/build/Dockerfile
+        platforms: linux/amd64
+        provenance: mode=max
+        sbom: true
         push: true
         tags: |
           requarks/wiki:canary
@@ -68,94 +253,50 @@ jobs:
           ghcr.io/requarks/wiki:canary
           ghcr.io/requarks/wiki:canary-${{ env.REL_VERSION_STRICT }}
 
-    - name: Extract compiled files
-      run: |
-        mkdir -p _dist
-        docker create --name wiki ghcr.io/requarks/wiki:canary-$REL_VERSION_STRICT
-        docker cp wiki:/wiki _dist
-        docker rm wiki
-        rm _dist/wiki/config.yml
-        cp ./config.sample.yml _dist/wiki/config.sample.yml
-        find _dist/wiki/ -printf "%P\n" | tar -czf wiki-js.tar.gz --no-recursion -C _dist/wiki/ -T -
-
-    - name: Upload a Build Artifact
-      uses: actions/upload-artifact@v7
-      with:
-        name: drop
-        path: wiki-js.tar.gz
-
-  cypress:
-    name: Run Cypress Tests
-    runs-on: ubuntu-latest
-    needs: [build]
-
-    strategy:
-      matrix:
-        dbtype: [postgres, mysql, mariadb, sqlite]
-
-    steps:
-    - uses: actions/checkout@v6
-
-    - name: Set Test Variables
-      run: |
-        if [[ "$GITHUB_REF" =~ ^refs/tags/v* ]]; then
-          echo "Using TAG mode: $GITHUB_REF_NAME"
-          echo "REL_VERSION_STRICT=${GITHUB_REF_NAME#?}" >> $GITHUB_ENV
-        else
-          echo "Using BRANCH mode: v$BASE_DEV_VERSION-dev.$GITHUB_RUN_NUMBER"
-          echo "REL_VERSION_STRICT=$BASE_DEV_VERSION-dev.$GITHUB_RUN_NUMBER" >> $GITHUB_ENV
-        fi
-
-    - name: Run Tests
-      env:
-        MATRIXENV: ${{ matrix.dbtype }}
-        CYPRESS_KEY: ${{ secrets.CYPRESS_KEY }}
-      run: |
-        chmod u+x dev/cypress/ci-setup.sh
-        dev/cypress/ci-setup.sh
-        docker run --name cypress --ipc=host --shm-size 1G -v $GITHUB_WORKSPACE:/e2e -w /e2e cypress/included:4.9.0 --record --key "$CYPRESS_KEY" --headless --group "$MATRIXENV" --ci-build-id "$REL_VERSION_STRICT-run$GITHUB_RUN_NUMBER.$GITHUB_RUN_ATTEMPT" --tag "$REL_VERSION_STRICT" --config baseUrl=http://172.17.0.1:3000
-
   arm:
     name: ARM Build
     runs-on: ubuntu-24.04-arm
-    needs: [cypress]
+    if: github.event_name == 'push'
+    needs: [e2e]
     permissions:
+      contents: read
       packages: write
 
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
     - name: Set Version Variables
+      shell: bash
       run: |
-        if [[ "$GITHUB_REF" =~ ^refs/tags/v* ]]; then
+        if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
           echo "Using TAG mode: $GITHUB_REF_NAME"
-          echo "REL_VERSION_STRICT=${GITHUB_REF_NAME#?}" >> $GITHUB_ENV
+          echo "REL_VERSION_STRICT=${GITHUB_REF_NAME#?}" >> "$GITHUB_ENV"
         else
           echo "Using BRANCH mode: v$BASE_DEV_VERSION-dev.$GITHUB_RUN_NUMBER"
-          echo "REL_VERSION_STRICT=$BASE_DEV_VERSION-dev.$GITHUB_RUN_NUMBER" >> $GITHUB_ENV
+          echo "REL_VERSION_STRICT=$BASE_DEV_VERSION-dev.$GITHUB_RUN_NUMBER" >> "$GITHUB_ENV"
         fi
 
     - name: Set up QEMU
-      uses: docker/setup-qemu-action@v4
+      uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4
 
     - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v4
+      uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
 
     - name: Login to DockerHub
-      uses: docker/login-action@v4
+      uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
       with:
         username: ${{ secrets.DOCKERHUB_USERNAME }}
         password: ${{ secrets.DOCKERHUB_TOKEN }}
 
     - name: Login to GitHub Container Registry
-      uses: docker/login-action@v4
+      uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
       with:
         registry: ghcr.io
         username: ${{ github.repository_owner }}
         password: ${{ secrets.GITHUB_TOKEN }}
 
-    - name: Download a Build Artifact
-      uses: actions/download-artifact@v8
+    - name: Download Linux Build
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
       with:
         name: drop
         path: drop
@@ -163,17 +304,18 @@ jobs:
     - name: Extract Build
       run: |
         mkdir -p build
-        tar -xzf $GITHUB_WORKSPACE/drop/wiki-js.tar.gz -C $GITHUB_WORKSPACE/build --exclude=node_modules
+        tar -xzf "$GITHUB_WORKSPACE/drop/wiki-js.tar.gz" -C "$GITHUB_WORKSPACE/build" --exclude=node_modules
 
-    - name: Build and push Docker images
-      uses: docker/build-push-action@v7
+    - name: Build and Push ARM64 Images
+      uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
       env:
         DOCKER_BUILD_SUMMARY: false
       with:
         context: .
         file: dev/build-arm/Dockerfile
         platforms: linux/arm64
-        provenance: false
+        provenance: mode=max
+        sbom: true
         push: true
         tags: |
           requarks/wiki:canary-arm64-${{ env.REL_VERSION_STRICT }}
@@ -182,86 +324,94 @@ jobs:
   windows:
     name: Windows Build
     runs-on: windows-latest
-    needs: [cypress]
+    if: github.event_name == 'push'
+    needs: [e2e]
+    permissions:
+      contents: read
 
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
-    - name: Setup Node.js environment
-      uses: actions/setup-node@v6
+    - name: Setup Node.js Environment
+      uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
       with:
         node-version-file: .nvmrc
 
-    - name: Download a Build Artifact
-      uses: actions/download-artifact@v8
+    - name: Download Linux Build
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
       with:
         name: drop
         path: drop
 
     - name: Extract Build
+      shell: pwsh
       run: |
-        mkdir -p win
-        tar -xzf $env:GITHUB_WORKSPACE\drop\wiki-js.tar.gz -C $env:GITHUB_WORKSPACE\win
+        New-Item -ItemType Directory -Path win -Force
+        tar -xzf "$env:GITHUB_WORKSPACE\drop\wiki-js.tar.gz" -C "$env:GITHUB_WORKSPACE\win"
         Copy-Item win\node_modules\extract-files\package.json patch-extractfile.json -Force
         Remove-Item -Path win\node_modules -Force -Recurse
 
-    - name: Install Dependencies
-      run: |
-        yarn --production --frozen-lockfile --non-interactive
-        yarn patch-package
+    - name: Install Production Dependencies
+      shell: pwsh
       working-directory: win
-
-    - name: Fix patched packages
       run: |
-        Copy-Item patch-extractfile.json win\node_modules\extract-files\package.json -Force
+        corepack enable
+        pnpm install --prod --frozen-lockfile
+
+    - name: Fix Patched Packages
+      shell: pwsh
+      run: Copy-Item patch-extractfile.json win\node_modules\extract-files\package.json -Force
 
     - name: Create Bundle
-      run: tar -czf $env:GITHUB_WORKSPACE\wiki-js-windows.tar.gz -C $env:GITHUB_WORKSPACE\win .
+      shell: pwsh
+      run: tar -czf "$env:GITHUB_WORKSPACE\wiki-js-windows.tar.gz" -C "$env:GITHUB_WORKSPACE\win" .
 
-    - name: Upload a Build Artifact
-      uses: actions/upload-artifact@v7
+    - name: Upload Windows Build
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
       with:
         name: drop-win
         path: wiki-js-windows.tar.gz
+        if-no-files-found: error
 
   beta:
     name: Publish Beta Images
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [build, arm, windows]
+    needs: [publish-amd64, arm, windows]
     permissions:
       packages: write
 
     steps:
     - name: Set Version Variables
-      run: |
-        echo "Using TAG mode: $GITHUB_REF_NAME"
-        echo "REL_VERSION_STRICT=${GITHUB_REF_NAME#?}" >> $GITHUB_ENV
+      run: echo "REL_VERSION_STRICT=${GITHUB_REF_NAME#?}" >> "$GITHUB_ENV"
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
 
     - name: Login to DockerHub
-      uses: docker/login-action@v4
+      uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
       with:
         username: ${{ secrets.DOCKERHUB_USERNAME }}
         password: ${{ secrets.DOCKERHUB_TOKEN }}
 
     - name: Login to GitHub Container Registry
-      uses: docker/login-action@v4
+      uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
       with:
         registry: ghcr.io
         username: ${{ github.repository_owner }}
         password: ${{ secrets.GITHUB_TOKEN }}
 
-    - name: Create and Push Manifests
+    - name: Create and Push Beta Manifests
+      shell: bash
       run: |
-        echo "Creating the manifests..."
-
-        docker manifest create requarks/wiki:beta-$REL_VERSION_STRICT requarks/wiki:canary-$REL_VERSION_STRICT requarks/wiki:canary-arm64-$REL_VERSION_STRICT
-        docker manifest create ghcr.io/requarks/wiki:beta-$REL_VERSION_STRICT ghcr.io/requarks/wiki:canary-$REL_VERSION_STRICT ghcr.io/requarks/wiki:canary-arm64-$REL_VERSION_STRICT
-
-        echo "Pushing the manifests..."
-
-        docker manifest push -p requarks/wiki:beta-$REL_VERSION_STRICT
-        docker manifest push -p ghcr.io/requarks/wiki:beta-$REL_VERSION_STRICT
+        docker buildx imagetools create \
+          --tag "requarks/wiki:beta-$REL_VERSION_STRICT" \
+          "requarks/wiki:canary-$REL_VERSION_STRICT" \
+          "requarks/wiki:canary-arm64-$REL_VERSION_STRICT"
+        docker buildx imagetools create \
+          --tag "ghcr.io/requarks/wiki:beta-$REL_VERSION_STRICT" \
+          "ghcr.io/requarks/wiki:canary-$REL_VERSION_STRICT" \
+          "ghcr.io/requarks/wiki:canary-arm64-$REL_VERSION_STRICT"
 
   release:
     name: Publish Release Images
@@ -270,83 +420,80 @@ jobs:
     environment: prod
     needs: [beta]
     permissions:
-      packages: write
       contents: write
+      packages: write
 
     steps:
     - name: Set Version Variables
+      shell: bash
       run: |
-        echo "Using TAG mode: $GITHUB_REF_NAME"
-        echo "REL_VERSION_STRICT=${GITHUB_REF_NAME#?}" >> $GITHUB_ENV
+        REL_VERSION_STRICT="${GITHUB_REF_NAME#?}"
+        if [[ ! "$REL_VERSION_STRICT" =~ ^([0-9]+)\.([0-9]+)\.[0-9]+ ]]; then
+          echo "Release tag must use vMAJOR.MINOR.PATCH format" >&2
+          exit 1
+        fi
+        {
+          echo "REL_VERSION_STRICT=$REL_VERSION_STRICT"
+          echo "MAJOR=${BASH_REMATCH[1]}"
+          echo "MAJORMINOR=${BASH_REMATCH[1]}.${BASH_REMATCH[2]}"
+        } >> "$GITHUB_ENV"
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
 
     - name: Login to DockerHub
-      uses: docker/login-action@v4
+      uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
       with:
         username: ${{ secrets.DOCKERHUB_USERNAME }}
         password: ${{ secrets.DOCKERHUB_TOKEN }}
 
     - name: Login to GitHub Container Registry
-      uses: docker/login-action@v4
+      uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
       with:
         registry: ghcr.io
         username: ${{ github.repository_owner }}
         password: ${{ secrets.GITHUB_TOKEN }}
 
-    - name: Create and Push Manifests
+    - name: Create and Push Release Manifests
+      shell: bash
       run: |
-        echo "Fetching semver tool..."
-        curl -LJO https://static.requarks.io/semver
-        chmod +x semver
-
-        MAJOR=`./semver get major $REL_VERSION_STRICT`
-        MINOR=`./semver get minor $REL_VERSION_STRICT`
-        MAJORMINOR="$MAJOR.$MINOR"
-
-        echo "Using major $MAJOR and minor $MINOR..."
-        echo "Creating the manifests..."
-
-        docker manifest create requarks/wiki:$REL_VERSION_STRICT requarks/wiki:canary-$REL_VERSION_STRICT requarks/wiki:canary-arm64-$REL_VERSION_STRICT
-        docker manifest create requarks/wiki:$MAJOR requarks/wiki:canary-$REL_VERSION_STRICT requarks/wiki:canary-arm64-$REL_VERSION_STRICT
-        docker manifest create requarks/wiki:$MAJORMINOR requarks/wiki:canary-$REL_VERSION_STRICT requarks/wiki:canary-arm64-$REL_VERSION_STRICT
-        docker manifest create requarks/wiki:latest requarks/wiki:canary-$REL_VERSION_STRICT requarks/wiki:canary-arm64-$REL_VERSION_STRICT
-        docker manifest create ghcr.io/requarks/wiki:$REL_VERSION_STRICT ghcr.io/requarks/wiki:canary-$REL_VERSION_STRICT ghcr.io/requarks/wiki:canary-arm64-$REL_VERSION_STRICT
-        docker manifest create ghcr.io/requarks/wiki:$MAJOR ghcr.io/requarks/wiki:canary-$REL_VERSION_STRICT ghcr.io/requarks/wiki:canary-arm64-$REL_VERSION_STRICT
-        docker manifest create ghcr.io/requarks/wiki:$MAJORMINOR ghcr.io/requarks/wiki:canary-$REL_VERSION_STRICT ghcr.io/requarks/wiki:canary-arm64-$REL_VERSION_STRICT
-        docker manifest create ghcr.io/requarks/wiki:latest ghcr.io/requarks/wiki:canary-$REL_VERSION_STRICT ghcr.io/requarks/wiki:canary-arm64-$REL_VERSION_STRICT
-
-        echo "Pushing the manifests..."
-
-        docker manifest push -p requarks/wiki:$REL_VERSION_STRICT
-        docker manifest push -p requarks/wiki:$MAJOR
-        docker manifest push -p requarks/wiki:$MAJORMINOR
-        docker manifest push -p requarks/wiki:latest
-        docker manifest push -p ghcr.io/requarks/wiki:$REL_VERSION_STRICT
-        docker manifest push -p ghcr.io/requarks/wiki:$MAJOR
-        docker manifest push -p ghcr.io/requarks/wiki:$MAJORMINOR
-        docker manifest push -p ghcr.io/requarks/wiki:latest
+        docker buildx imagetools create \
+          --tag "requarks/wiki:$REL_VERSION_STRICT" \
+          --tag "requarks/wiki:$MAJOR" \
+          --tag "requarks/wiki:$MAJORMINOR" \
+          --tag requarks/wiki:latest \
+          "requarks/wiki:canary-$REL_VERSION_STRICT" \
+          "requarks/wiki:canary-arm64-$REL_VERSION_STRICT"
+        docker buildx imagetools create \
+          --tag "ghcr.io/requarks/wiki:$REL_VERSION_STRICT" \
+          --tag "ghcr.io/requarks/wiki:$MAJOR" \
+          --tag "ghcr.io/requarks/wiki:$MAJORMINOR" \
+          --tag ghcr.io/requarks/wiki:latest \
+          "ghcr.io/requarks/wiki:canary-$REL_VERSION_STRICT" \
+          "ghcr.io/requarks/wiki:canary-arm64-$REL_VERSION_STRICT"
 
     - name: Download Linux Build
-      uses: actions/download-artifact@v8
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
       with:
         name: drop
         path: drop
 
     - name: Download Windows Build
-      uses: actions/download-artifact@v8
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
       with:
         name: drop-win
         path: drop-win
 
     - name: Generate Changelog
       id: changelog
-      uses: Requarks/changelog-action@v1
+      uses: Requarks/changelog-action@b78a3354a01f4a1affb484b9264b506a815c46b1 # v1
       with:
         token: ${{ github.token }}
         tag: ${{ github.ref_name }}
         writeToFile: false
 
     - name: Update GitHub Release
-      uses: ncipollo/release-action@v1.21.0
+      uses: ncipollo/release-action@339a81892b84b4eeb0f6e744e4574d79d0d9b8dd # v1.21.0
       with:
         allowUpdates: true
         draft: false
@@ -356,19 +503,8 @@ jobs:
         token: ${{ github.token }}
         artifacts: 'drop/wiki-js.tar.gz,drop-win/wiki-js-windows.tar.gz'
 
-    # - name: Notify Slack Releases Channel
-    #   uses: slackapi/slack-github-action@v1.26.0
-    #   with:
-    #     payload: |
-    #       {
-    #         "text": "Wiki.js ${{ github.ref_name }} has been released."
-    #       }
-    #   env:
-    #     SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-    #     SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
-
     - name: Notify Telegram Channel
-      uses: appleboy/telegram-action@v1.0.1
+      uses: appleboy/telegram-action@221e6b684967abe813051ee4a37dd61770a83ad3 # v1.0.1
       with:
         to: ${{ secrets.TELEGRAM_TO }}
         token: ${{ secrets.TELEGRAM_TOKEN }}
@@ -379,34 +515,7 @@ jobs:
           See [release notes](https://github.com/requarks/wiki/releases) for details.
 
     - name: Notify Discord Channel
-      uses: sebastianpopp/discord-action@v2.0
+      uses: sebastianpopp/discord-action@4f2d5417bc61a79593304a62e71cd32427c17790 # v2.0
       with:
         webhook: ${{ secrets.DISCORD_WEBHOOK }}
         message: Wiki.js ${{ github.ref_name }} has been released! See https://github.com/requarks/wiki/releases for details.
-
-  # build-do-image:
-  #   name: Build DigitalOcean Image
-  #   runs-on: ubuntu-latest
-  #   needs: [release]
-
-  #   steps:
-  #   - uses: actions/checkout@v6
-
-  #   - name: Set Version Variables
-  #     run: |
-  #       echo "Using TAG mode: $GITHUB_REF_NAME"
-  #       echo "REL_VERSION_STRICT=${GITHUB_REF_NAME#?}" >> $GITHUB_ENV
-
-  #   - name: Install Packer
-  #     run: |
-  #       curl -fsSL https://apt.releases.hashicorp.com/gpg | sudo apt-key add -
-  #       sudo apt-add-repository "deb [arch=amd64] https://apt.releases.hashicorp.com $(lsb_release -cs) main"
-  #       sudo apt-get update && sudo apt-get install packer
-
-  #   - name: Build Droplet Image
-  #     env:
-  #       DIGITALOCEAN_API_TOKEN: ${{ secrets.DO_TOKEN }}
-  #       WIKI_APP_VERSION: ${{ env.REL_VERSION_STRICT }}
-  #     working-directory: dev/packer
-  #     run: |
-  #       packer build digitalocean.json

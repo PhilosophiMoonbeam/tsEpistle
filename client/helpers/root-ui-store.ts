@@ -1,41 +1,38 @@
-type RootStore = {
-  commit: (type: string, payload?: any) => void
-  getters?: {
-    isLoading?: any
-  }
-  state?: {
-    notification?: any
-  }
+import type { Notification, WikiStore } from '../store/index.ts'
+
+export function loadingStart (store: WikiStore, stackName: string): void {
+  store.startLoading(stackName)
 }
 
-export function loadingStart (store: RootStore, stackName: any): void {
-  store.commit('loadingStart', stackName)
+export function loadingStop (store: WikiStore, stackName: string): void {
+  store.stopLoading(stackName)
 }
 
-export function loadingStop (store: RootStore, stackName: any): void {
-  store.commit('loadingStop', stackName)
+export function setLoading (store: WikiStore, stackName: string, isLoading: boolean): void {
+  if (isLoading) store.startLoading(stackName)
+  else store.stopLoading(stackName)
 }
 
-export function setLoading (store: RootStore, stackName: any, isLoading: any): void {
-  store.commit(isLoading ? 'loadingStart' : 'loadingStop', stackName)
+export function showNotification (store: WikiStore, opts: Partial<Notification>): void {
+  store.showNotification(opts)
 }
 
-export function showNotification (store: RootStore, opts: any): void {
-  store.commit('showNotification', opts)
+export function updateNotificationState (store: WikiStore, isActive: boolean): void {
+  store.setNotificationActive(isActive)
 }
 
-export function updateNotificationState (store: RootStore, isActive: any): void {
-  store.commit('updateNotificationState', isActive)
+export function pushGraphError (store: WikiStore, err: unknown): void {
+  store.showError(err)
 }
 
-export function pushGraphError (store: RootStore, err: any): void {
-  store.commit('pushGraphError', err)
+export function isLoading (store: WikiStore): boolean {
+  return store.isLoading
 }
 
-export function isLoading (store: RootStore): boolean {
-  return Boolean(store.getters && store.getters.isLoading)
+export function getNotification (store: WikiStore): Notification {
+  return store.notification
 }
 
-export function getNotification (store: RootStore): any {
-  return store.state && store.state.notification
+export function getErrorMessage (error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
 }

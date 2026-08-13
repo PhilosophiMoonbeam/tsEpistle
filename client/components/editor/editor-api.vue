@@ -1,22 +1,22 @@
 <template lang='pug'>
   .editor-api
     .editor-api-main
-      v-list.editor-api-sidebar.radius-0(nav, :class='$vuetify.theme.dark ? `grey darken-4` : `primary`', dark)
+      v-list.editor-api-sidebar.radius-0(nav, :class='$vuetify.theme.current.dark ? `grey darken-4` : `primary`', dark)
         v-list-item-group(v-model='tab')
           v-list-item.animated.fadeInLeft(value='info')
-            v-list-item-icon: v-icon mdi-book-information-variant
+            div.v-list-item-icon: v-icon mdi-book-information-variant
             v-list-item-title Info
           v-list-item.mt-3.animated.fadeInLeft.wait-p2s(value='servers')
-            v-list-item-icon: v-icon mdi-server
+            div.v-list-item-icon: v-icon mdi-server
             v-list-item-title Servers
           v-list-item.mt-3.animated.fadeInLeft.wait-p3s(value='endpoints')
-            v-list-item-icon: v-icon mdi-code-braces
+            div.v-list-item-icon: v-icon mdi-code-braces
             v-list-item-title Endpoints
           v-list-item.mt-3.animated.fadeInLeft.wait-p4s(value='models')
-            v-list-item-icon: v-icon mdi-buffer
+            div.v-list-item-icon: v-icon mdi-buffer
             v-list-item-title Models
           v-list-item.mt-3.animated.fadeInLeft.wait-p5s(value='auth')
-            v-list-item-icon: v-icon mdi-lock
+            div.v-list-item-icon: v-icon mdi-lock
             v-list-item-title Authentication
       .editor-api-editor
         template(v-if='tab === `info`')
@@ -58,20 +58,20 @@
                     v-list(nav, two-line)
                       v-list-item-group(v-model='kind', mandatory, color='primary')
                         v-list-item(value='rest')
-                          v-list-item-avatar
+                          v-avatar
                             img(src='/_assets/svg/icon-transaction-list.svg', alt='REST')
-                          v-list-item-content
+                          div.v-list-item-content
                             v-list-item-title REST API
                             v-list-item-subtitle Classic REST Endpoints
-                          v-list-item-avatar
+                          v-avatar
                             v-icon(:color='kind === `rest` ? `primary` : `grey lighten-3`') mdi-check-circle
                         v-list-item(value='graphql', disabled)
-                          v-list-item-avatar
+                          v-avatar
                             img(src='/_assets/svg/icon-graphql.svg', alt='GraphQL')
-                          v-list-item-content
+                          div.v-list-item-content
                             v-list-item-title GraphQL
                             v-list-item-subtitle.grey--text.text--lighten-1 Schema-based API
-                          v-list-item-action
+                          div.v-list-item-action
                             //- v-icon(:color='kind === `graphql` ? `primary` : `grey lighten-3`') mdi-check-circle
                             v-chip(label, small) Coming soon
         template(v-else-if='tab === `servers`')
@@ -92,14 +92,14 @@
                     .d-flex
                       .d-flex.flex-column.justify-space-between
                         v-menu(offset-y, min-width='200')
-                          template(v-slot:activator='{ on }')
-                            v-btn(text, x-large, style='min-width: 0;', v-on='on')
+                          template(v-slot:activator='{ props }')
+                            v-btn(text, x-large, style='min-width: 0;', v-bind='props')
                               v-icon(large, :color='iconColor(srv.icon)') {{iconKey(srv.icon)}}
                           v-list(nav, dense)
                             v-list-item-group(v-model='srv.icon', mandatory)
                               v-list-item(:value='srvKey', v-for='(srv, srvKey) in serverTypes', :key='srvKey')
-                                v-list-item-icon: v-icon(large, :color='srv.color', v-text='srv.icon')
-                                v-list-item-content: v-list-item-title(v-text='srv.title')
+                                div.v-list-item-icon: v-icon(large, :color='srv.color', v-text='srv.icon')
+                                div.v-list-item-content: v-list-item-title(v-text='srv.title')
                         v-btn.mb-2(depressed, small, @click='removeServer(srv.id)')
                           v-icon(left) mdi-close
                           span Delete
@@ -170,13 +170,13 @@
                               .d-flex
                                 .d-flex.flex-column
                                   v-menu(offset-y, min-width='140')
-                                    template(v-slot:activator='{ on }')
-                                      v-btn.subtitle-1(depressed, large, dark, style='min-width: 140px;', height='48', v-on='on', :color='methodColor(ept.method)')
+                                    template(v-slot:activator='{ props }')
+                                      v-btn.subtitle-1(depressed, large, dark, style='min-width: 140px;', height='48', v-bind='props', :color='methodColor(ept.method)')
                                         strong {{ept.method}}
                                     v-list(nav, dense)
                                       v-list-item-group(v-model='ept.method', mandatory)
                                         v-list-item(:value='mtd.key', v-for='mtd of endpointMethods', :key='mtd.key')
-                                          v-list-item-content
+                                          div.v-list-item-content
                                             v-chip.text-center(label, :color='mtd.color', dark) {{mtd.key}}
                                   v-btn.mt-2(v-if='!ept.expanded', small, @click='ept.expanded = true', color='pink', outlined)
                                     v-icon(left) mdi-arrow-down-box
@@ -216,23 +216,57 @@
     v-system-bar.editor-api-sysbar(dark, status, color='grey darken-3')
       .caption.editor-api-sysbar-locale {{locale.toUpperCase()}}
       .caption.px-3 /{{path}}
-      template(v-if='$vuetify.breakpoint.mdAndUp')
+      template(v-if='$vuetify.display.mdAndUp')
         v-spacer
         .caption API Docs
         v-spacer
         .caption OpenAPI 3.0
 </template>
 
-<script>
-import _ from 'lodash'
-import { v4 as uuid } from 'uuid'
-import { get, sync } from 'vuex-pathify'
+<script lang='ts'>
+import { defineComponent } from 'vue'
+import { wikiStore } from '@/store/index.ts'
 
-export default {
+type ApiServer = {
+  id: string
+  name: string
+  url: string
+  icon: string
+}
+
+type ApiServerType = {
+  color: string
+  icon: string
+  title: string
+}
+
+type ApiEndpoint = {
+  id: string
+  method: string
+  path: string
+  summary: string
+  description: string
+  expanded: boolean
+}
+
+type ApiEndpointGroup = {
+  id: string
+  name: string
+  description: string
+  endpoints: ApiEndpoint[]
+}
+
+type ApiEndpointMethod = {
+  key: string
+  color: string
+}
+
+export default defineComponent({
   data() {
     return {
       tab: `endpoints`,
       kind: 'rest',
+      helpShown: false,
       kinds: [
         { text: 'REST', value: 'rest' },
         { text: 'GraphQL', value: 'graphql' }
@@ -244,7 +278,7 @@ export default {
       },
       servers: [
         { name: 'Production', url: 'https://api.example.com/v1', icon: 'server', id: '123456' }
-      ],
+      ] as ApiServer[],
       serverTypes: {
         aws: {
           color: 'orange',
@@ -296,17 +330,24 @@ export default {
           icon: 'mdi-windows',
           title: 'Windows'
         }
-      },
+      } as Record<string, ApiServerType>,
       endpointGroups: [
         {
           id: '345678',
           name: '',
           description: '',
           endpoints: [
-            { method: 'GET', path: '/pet', expanded: false, id: '234567' }
+            {
+              method: 'GET',
+              path: '/pet',
+              summary: '',
+              description: '',
+              expanded: false,
+              id: '234567'
+            }
           ]
         }
-      ],
+      ] as ApiEndpointGroup[],
       endpointMethods: [
         { key: 'GET', color: 'blue' },
         { key: 'POST', color: 'green' },
@@ -315,59 +356,74 @@ export default {
         { key: 'DELETE', color: 'red' },
         { key: 'HEAD', color: 'deep-purple' },
         { key: 'OPTIONS', color: 'blue-grey' }
-      ]
+      ] as ApiEndpointMethod[]
     }
   },
   computed: {
     isMobile() {
-      return this.$vuetify.breakpoint.smAndDown
+      return this.$vuetify.display.smAndDown
     },
-    locale: get('page/locale'),
-    path: get('page/path'),
-    mode: get('editor/mode'),
-    activeModal: sync('editor/activeModal')
+    locale() {
+      return wikiStore.page.locale
+    },
+    path() {
+      return wikiStore.page.path
+    },
+    mode() {
+      return wikiStore.editor.mode
+    },
+    activeModal: {
+      get() {
+        return wikiStore.editor.activeModal
+      },
+      set(value: string) {
+        wikiStore.editor.activeModal = value
+      }
+    }
   },
   methods: {
-    iconColor (val) {
-      return _.get(this.serverTypes, `${val}.color`, 'white')
+    iconColor (val: string) {
+      return this.serverTypes[val]?.color ?? 'white'
     },
-    iconKey (val) {
-      return _.get(this.serverTypes, `${val}.icon`, 'mdi-server')
+    iconKey (val: string) {
+      return this.serverTypes[val]?.icon ?? 'mdi-server'
     },
-    methodColor (val) {
-      return _.get(_.find(this.endpointMethods, ['key', val]), 'color', 'grey')
+    methodColor (val: string) {
+      return this.endpointMethods.find(method => method.key === val)?.color ?? 'grey'
     },
     addServer () {
       this.servers.push({
-        id: uuid(),
+        id: crypto.randomUUID(),
         name: 'Production',
         url: 'https://api.example.com/v1',
         icon: 'server'
       })
     },
-    removeServer (id) {
-      this.servers = _.reject(this.servers, ['id', id])
+    removeServer (id: string) {
+      this.servers = this.servers.filter(server => server.id !== id)
     },
     addGroup () {
       this.endpointGroups.push({
-        id: uuid(),
+        id: crypto.randomUUID(),
         name: '',
         description: '',
         endpoints: []
       })
     },
-    addEndpoint (grp) {
+    addEndpoint (grp: ApiEndpointGroup) {
       grp.endpoints.push({
-        id: uuid(),
+        id: crypto.randomUUID(),
         method: 'GET',
         path: '/pet',
+        summary: '',
+        description: '',
         expanded: false
       })
     },
-    removeEndpoint (grp, eptId) {
-      grp.endpoints = _.reject(grp.endpoints, ['id', eptId])
+    removeEndpoint (grp: ApiEndpointGroup, eptId: string) {
+      grp.endpoints = grp.endpoints.filter(endpoint => endpoint.id !== eptId)
     },
-    toggleModal(key) {
+    toggleModal(key: string) {
       this.activeModal = (this.activeModal === key) ? '' : key
       this.helpShown = false
     },
@@ -377,13 +433,13 @@ export default {
     }
   },
   mounted() {
-    this.$store.set('editor/editorKey', 'api')
+    wikiStore.editor.editorKey = 'api'
 
     if (this.mode === 'create') {
-      this.$store.set('editor/content', '<h1>Title</h1>\n\n<p>Some text here</p>')
+      wikiStore.editor.content = '<h1>Title</h1>\n\n<p>Some text here</p>'
     }
   }
-}
+})
 </script>
 
 <style lang='scss'>

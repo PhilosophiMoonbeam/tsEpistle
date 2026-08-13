@@ -1,4 +1,4 @@
-const renderer = require('../../modules/rendering/markdown-core/renderer')
+import renderer from '../../modules/rendering/markdown-core/renderer.ts'
 
 const baseConfig = {
   allowHTML: false,

@@ -1,4 +1,4 @@
-const { fetchSystemSummary, fetchSystemInfo, fetchSystemTelemetry, fetchSystemExportStatus, fetchSystemHost, fetchSystemSsl, updateSystemSslRedirection, renewSystemSslCertificate, fetchSystemFlags, fetchSystemExtensions, updateSystemFlags, updateSystemTelemetry, resetSystemTelemetryClientId, flushSystemCache, flushSystemTemporaryUploads, rebuildPageTree, migratePagesToLocale, renderPage, purgePageHistory, performSystemUpgrade, startSystemExport } = require('./system-api')
+import { fetchSystemSummary, fetchSystemInfo, fetchSystemTelemetry, fetchSystemExportStatus, fetchSystemHost, fetchSystemSsl, updateSystemSslRedirection, renewSystemSslCertificate, fetchSystemFlags, fetchSystemExtensions, updateSystemFlags, updateSystemTelemetry, resetSystemTelemetryClientId, flushSystemCache, flushSystemTemporaryUploads, rebuildPageTree, migratePagesToLocale, renderPage, purgePageHistory, performSystemUpgrade, startSystemExport } from './system-api.ts'
 
 function createJsonResponse (payload, ok = true) {
   return {
@@ -12,7 +12,7 @@ function createJsonResponse (payload, ok = true) {
 
 describe('system api helper', () => {
   test('fetches and validates system summary', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({
       currentVersion: '2.0.0',
       latestVersion: '2.1.0',
       latestVersionReleaseDate: '2026-01-01T00:00:00.000Z',
@@ -25,7 +25,6 @@ describe('system api helper', () => {
     await expect(fetchSystemSummary(fetchImpl)).resolves.toEqual({
       currentVersion: '2.0.0',
       latestVersion: '2.1.0',
-      latestVersionReleaseDate: '2026-01-01T00:00:00.000Z',
       groupsTotal: 3,
       pagesTotal: 42,
       usersTotal: 11,
@@ -41,7 +40,7 @@ describe('system api helper', () => {
   })
 
   test('fetches and validates rich system info payloads', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({
       configFile: '/wiki/config.yml',
       cpuCores: 8,
       currentVersion: '2.0.0',
@@ -86,7 +85,7 @@ describe('system api helper', () => {
   })
 
   test('rejects malformed system info payloads', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({
       configFile: '/wiki/config.yml',
       cpuCores: '8',
       currentVersion: '2.0.0',
@@ -108,7 +107,7 @@ describe('system api helper', () => {
   })
 
   test('fetches and validates system telemetry', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({
       telemetry: true,
       telemetryClientId: 'client-123',
       privateValue: 'must not be returned by helper'
@@ -127,7 +126,7 @@ describe('system api helper', () => {
   })
 
   test('accepts null system telemetry client IDs', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({
       telemetry: false,
       telemetryClientId: null
     }))
@@ -139,7 +138,7 @@ describe('system api helper', () => {
   })
 
   test('rejects malformed system telemetry payloads', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({
       telemetry: 'yes',
       telemetryClientId: 'client-123'
     }))
@@ -148,7 +147,7 @@ describe('system api helper', () => {
   })
 
   test('surfaces API error messages for failed telemetry loads', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue({
+    const fetchImpl = vi.fn().mockResolvedValue({
       ok: false,
       headers: {
         get: () => 'application/json; charset=utf-8'
@@ -160,7 +159,7 @@ describe('system api helper', () => {
   })
 
   test('fetches and validates export status payloads', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({
       status: 'running',
       progress: 42,
       message: 'Export is running',
@@ -182,7 +181,7 @@ describe('system api helper', () => {
   })
 
   test('strips extra fields from export status payloads', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({
       status: 'success',
       progress: 100,
       message: null,
@@ -204,7 +203,7 @@ describe('system api helper', () => {
     ['missing root', null],
     ['array root', []]
   ])('rejects malformed export status roots: %s', async (label, payload) => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse(payload))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse(payload))
 
     await expect(fetchSystemExportStatus(fetchImpl, 'Bad export status')).rejects.toThrow('Bad export status')
   })
@@ -223,13 +222,13 @@ describe('system api helper', () => {
       startedAt: '2026-04-25T12:00:00.000Z'
     }
     payload[field] = value
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse(payload))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse(payload))
 
     await expect(fetchSystemExportStatus(fetchImpl, 'Bad export status')).rejects.toThrow('Bad export status')
   })
 
   test('surfaces API error messages for failed export status loads', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue({
+    const fetchImpl = vi.fn().mockResolvedValue({
       ok: false,
       headers: {
         get: () => 'application/json; charset=utf-8'
@@ -241,7 +240,7 @@ describe('system api helper', () => {
   })
 
   test('rejects non-JSON successful export status responses', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue({
+    const fetchImpl = vi.fn().mockResolvedValue({
       ok: true,
       headers: {
         get: () => 'text/plain'
@@ -252,7 +251,7 @@ describe('system api helper', () => {
   })
 
   test('fetches and validates system host', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({
       host: 'https://docs.example.test',
       title: 'must not be returned by helper'
     }))
@@ -274,13 +273,13 @@ describe('system api helper', () => {
     ['non-string host', { host: null }],
     ['array root', []]
   ])('rejects malformed system host payloads: %s', async (label, payload) => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse(payload))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse(payload))
 
     await expect(fetchSystemHost(fetchImpl, 'Bad host payload')).rejects.toThrow('Bad host payload')
   })
 
   test('surfaces API error messages for failed system host loads', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue({
+    const fetchImpl = vi.fn().mockResolvedValue({
       ok: false,
       headers: {
         get: () => 'application/json; charset=utf-8'
@@ -292,7 +291,7 @@ describe('system api helper', () => {
   })
 
   test('rejects non-JSON successful system host responses', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue({
+    const fetchImpl = vi.fn().mockResolvedValue({
       ok: true,
       headers: {
         get: () => 'text/plain'
@@ -303,7 +302,7 @@ describe('system api helper', () => {
   })
 
   test('fetches and validates SSL status payloads', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({
       httpPort: 3000,
       httpRedirection: true,
       httpsPort: 3443,
@@ -334,7 +333,7 @@ describe('system api helper', () => {
   })
 
   test('accepts nullable SSL status fields', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({
       httpPort: 0,
       httpRedirection: false,
       httpsPort: 0,
@@ -358,7 +357,7 @@ describe('system api helper', () => {
   })
 
   test('rejects malformed SSL status payload roots', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse([]))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([]))
 
     await expect(fetchSystemSsl(fetchImpl, 'Bad SSL payload')).rejects.toThrow('Bad SSL payload')
   })
@@ -384,13 +383,13 @@ describe('system api helper', () => {
       sslSubscriberEmail: 'ops@example.test'
     }
     payload[field] = value
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse(payload))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse(payload))
 
     await expect(fetchSystemSsl(fetchImpl, 'Bad SSL payload')).rejects.toThrow('Bad SSL payload')
   })
 
   test('surfaces API error messages for failed SSL status loads', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue({
+    const fetchImpl = vi.fn().mockResolvedValue({
       ok: false,
       headers: {
         get: () => 'application/json; charset=utf-8'
@@ -402,7 +401,7 @@ describe('system api helper', () => {
   })
 
   test('rejects non-JSON successful SSL status responses', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue({
+    const fetchImpl = vi.fn().mockResolvedValue({
       ok: true,
       headers: {
         get: () => 'text/plain'
@@ -413,7 +412,7 @@ describe('system api helper', () => {
   })
 
   test('fetches and normalizes system flags', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse([
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([
       { key: 'ldapdebug', value: true },
       { key: 'sqllog', value: false }
     ]))
@@ -432,13 +431,13 @@ describe('system api helper', () => {
   })
 
   test('rejects malformed system flags payloads', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse([{ key: 'ldapdebug', value: 'yes' }]))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([{ key: 'ldapdebug', value: 'yes' }]))
 
     await expect(fetchSystemFlags(fetchImpl, 'Bad flags payload')).rejects.toThrow('Bad flags payload')
   })
 
   test('fetches and validates system extensions', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse([
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([
       {
         key: 'alpha',
         title: 'Alpha Extension',
@@ -467,7 +466,7 @@ describe('system api helper', () => {
   })
 
   test('rejects malformed system extensions payloads', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse([
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([
       {
         key: 'alpha',
         title: 'Alpha Extension',
@@ -481,7 +480,7 @@ describe('system api helper', () => {
   })
 
   test('surfaces API error messages for failed extension loads', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue({
+    const fetchImpl = vi.fn().mockResolvedValue({
       ok: false,
       headers: {
         get: () => 'application/json; charset=utf-8'
@@ -493,7 +492,7 @@ describe('system api helper', () => {
   })
 
   test('rejects non-JSON successful extension responses', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue({
+    const fetchImpl = vi.fn().mockResolvedValue({
       ok: true,
       headers: {
         get: () => 'text/plain'
@@ -504,7 +503,7 @@ describe('system api helper', () => {
   })
 
   test('flushes system cache through REST', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ message: 'Cache flushed successfully.' }))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ message: 'Cache flushed successfully.' }))
 
     await expect(flushSystemCache(fetchImpl)).resolves.toEqual({ message: 'Cache flushed successfully.' })
     expect(fetchImpl).toHaveBeenCalledWith('/_api/system/cache/flush', {
@@ -517,19 +516,19 @@ describe('system api helper', () => {
   })
 
   test('rejects malformed system cache flush responses', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ message: '' }))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ message: '' }))
 
     await expect(flushSystemCache(fetchImpl)).rejects.toThrow('Cache flush failed')
   })
 
   test('surfaces API error messages for failed system cache flushes', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ error: 'cache denied' }, false))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ error: 'cache denied' }, false))
 
     await expect(flushSystemCache(fetchImpl)).rejects.toThrow('cache denied')
   })
 
   test('flushes temporary uploads through REST', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ message: 'Temporary Uploads flushed successfully.' }))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ message: 'Temporary Uploads flushed successfully.' }))
 
     await expect(flushSystemTemporaryUploads(fetchImpl)).resolves.toEqual({ message: 'Temporary Uploads flushed successfully.' })
     expect(fetchImpl).toHaveBeenCalledWith('/_api/system/cache/temp-uploads/flush', {
@@ -542,19 +541,19 @@ describe('system api helper', () => {
   })
 
   test('rejects malformed temporary uploads flush responses', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ message: '' }))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ message: '' }))
 
     await expect(flushSystemTemporaryUploads(fetchImpl)).rejects.toThrow('Temporary Uploads flush failed')
   })
 
   test('surfaces API error messages for failed temporary uploads flushes', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ error: 'uploads denied' }, false))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ error: 'uploads denied' }, false))
 
     await expect(flushSystemTemporaryUploads(fetchImpl)).rejects.toThrow('uploads denied')
   })
 
   test('rebuilds the page tree through REST', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ message: 'Page tree rebuilt successfully.' }))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ message: 'Page tree rebuilt successfully.' }))
 
     await expect(rebuildPageTree(fetchImpl)).resolves.toEqual({ message: 'Page tree rebuilt successfully.' })
     expect(fetchImpl).toHaveBeenCalledWith('/_api/system/content/rebuild-tree', {
@@ -567,19 +566,19 @@ describe('system api helper', () => {
   })
 
   test('rejects malformed page tree rebuild responses', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ message: '' }))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ message: '' }))
 
     await expect(rebuildPageTree(fetchImpl, 'Bad tree rebuild')).rejects.toThrow('Bad tree rebuild')
   })
 
   test('surfaces API error messages for page tree rebuild failures', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ error: 'tree backend failed' }, false))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ error: 'tree backend failed' }, false))
 
     await expect(rebuildPageTree(fetchImpl, 'Bad tree rebuild')).rejects.toThrow('tree backend failed')
   })
 
   test('migrates pages to a locale through REST', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({
       message: 'Migrated content to target locale successfully.',
       count: 3
     }))
@@ -608,19 +607,19 @@ describe('system api helper', () => {
     ['infinite count', { message: 'Migrated content to target locale successfully.', count: Infinity }],
     ['empty message', { message: '', count: 3 }]
   ])('rejects malformed locale migration response: %s', async (label, payload) => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse(payload))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse(payload))
 
     await expect(migratePagesToLocale(fetchImpl, 'en', 'fr', 'Bad locale migration')).rejects.toThrow('Bad locale migration')
   })
 
   test('surfaces API error messages for locale migration failures', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ error: 'migration backend failed' }, false))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ error: 'migration backend failed' }, false))
 
     await expect(migratePagesToLocale(fetchImpl, 'en', 'fr', 'Bad locale migration')).rejects.toThrow('migration backend failed')
   })
 
   test('renders pages through REST', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ message: 'Page rendered successfully.' }))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ message: 'Page rendered successfully.' }))
 
     await expect(renderPage(fetchImpl, 12)).resolves.toEqual({ message: 'Page rendered successfully.' })
     expect(fetchImpl).toHaveBeenCalledWith('/_api/system/content/render-page', {
@@ -635,19 +634,19 @@ describe('system api helper', () => {
   })
 
   test('rejects malformed page render success payloads', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ message: '' }))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ message: '' }))
 
     await expect(renderPage(fetchImpl, 12, 'Bad page render')).rejects.toThrow('Bad page render')
   })
 
   test('surfaces API error messages for page render failures', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ error: 'render denied' }, false))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ error: 'render denied' }, false))
 
     await expect(renderPage(fetchImpl, 12, 'Bad page render')).rejects.toThrow('render denied')
   })
 
   test('purges page history through REST', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ message: 'Page history purged successfully.' }))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ message: 'Page history purged successfully.' }))
 
     await expect(purgePageHistory(fetchImpl, 'P1Y')).resolves.toEqual({ message: 'Page history purged successfully.' })
     expect(fetchImpl).toHaveBeenCalledWith('/_api/system/content/purge-history', {
@@ -662,19 +661,19 @@ describe('system api helper', () => {
   })
 
   test('rejects malformed page history purge success payloads', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ message: '' }))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ message: '' }))
 
     await expect(purgePageHistory(fetchImpl, 'P1Y', 'Bad page history purge')).rejects.toThrow('Bad page history purge')
   })
 
   test('surfaces API error messages for page history purge failures', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ error: 'purge denied' }, false))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ error: 'purge denied' }, false))
 
     await expect(purgePageHistory(fetchImpl, 'P1Y', 'Bad page history purge')).rejects.toThrow('purge denied')
   })
 
   test('submits system flags update as xhr JSON and returns parsed message', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ message: 'System flags applied successfully.' }))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ message: 'System flags applied successfully.' }))
 
     await expect(updateSystemFlags(fetchImpl, {
       ldapdebug: true,
@@ -698,7 +697,7 @@ describe('system api helper', () => {
   })
 
   test('surfaces API error messages for failed flag updates', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue({
+    const fetchImpl = vi.fn().mockResolvedValue({
       ok: false,
       headers: {
         get: () => 'application/json; charset=utf-8'
@@ -710,7 +709,7 @@ describe('system api helper', () => {
   })
 
   test('submits telemetry updates as REST JSON and returns parsed message', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ message: 'Telemetry updated successfully.' }))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ message: 'Telemetry updated successfully.' }))
 
     await expect(updateSystemTelemetry(fetchImpl, true)).resolves.toEqual({ message: 'Telemetry updated successfully.' })
 
@@ -726,19 +725,19 @@ describe('system api helper', () => {
   })
 
   test('rejects malformed telemetry update success payloads', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ ok: true }))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ ok: true }))
 
     await expect(updateSystemTelemetry(fetchImpl, false, 'Bad telemetry update')).rejects.toThrow('Bad telemetry update')
   })
 
   test('surfaces API error messages for failed telemetry updates', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ error: 'enabled must be a boolean' }, false))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ error: 'enabled must be a boolean' }, false))
 
     await expect(updateSystemTelemetry(fetchImpl, 'yes', 'Bad telemetry update')).rejects.toThrow('enabled must be a boolean')
   })
 
   test('resets telemetry client IDs through the REST endpoint', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ message: 'Telemetry Client ID reset successfully.' }))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ message: 'Telemetry Client ID reset successfully.' }))
 
     await expect(resetSystemTelemetryClientId(fetchImpl)).resolves.toEqual({ message: 'Telemetry Client ID reset successfully.' })
 
@@ -752,13 +751,13 @@ describe('system api helper', () => {
   })
 
   test('surfaces API error messages for failed telemetry client ID resets', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ error: 'reset failed' }, false))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ error: 'reset failed' }, false))
 
     await expect(resetSystemTelemetryClientId(fetchImpl, 'Bad reset')).rejects.toThrow('reset failed')
   })
 
   test('performs system upgrade with same-origin POST options', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ message: 'Upgrade has started.' }))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ message: 'Upgrade has started.' }))
 
     await expect(performSystemUpgrade(fetchImpl)).resolves.toEqual({ message: 'Upgrade has started.' })
 
@@ -772,19 +771,19 @@ describe('system api helper', () => {
   })
 
   test('rejects malformed system upgrade success payloads', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ ok: true }))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ ok: true }))
 
     await expect(performSystemUpgrade(fetchImpl, 'Bad upgrade payload')).rejects.toThrow('Bad upgrade payload')
   })
 
   test('propagates system upgrade REST JSON errors', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ error: 'companion missing' }, false))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ error: 'companion missing' }, false))
 
     await expect(performSystemUpgrade(fetchImpl, 'Bad upgrade')).rejects.toThrow('companion missing')
   })
 
   test('updates SSL redirection through REST', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ message: 'HTTP Redirection state set successfully.' }))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ message: 'HTTP Redirection state set successfully.' }))
 
     await expect(updateSystemSslRedirection(fetchImpl, true)).resolves.toEqual({ message: 'HTTP Redirection state set successfully.' })
     expect(fetchImpl).toHaveBeenCalledWith('/_api/system/ssl/redirection', {
@@ -799,19 +798,19 @@ describe('system api helper', () => {
   })
 
   test('rejects malformed SSL redirection update responses', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ message: '' }))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ message: '' }))
 
     await expect(updateSystemSslRedirection(fetchImpl, false, 'Bad SSL redirection')).rejects.toThrow('Bad SSL redirection')
   })
 
   test('surfaces API error messages for failed SSL redirection updates', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ error: 'enabled must be a boolean' }, false))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ error: 'enabled must be a boolean' }, false))
 
     await expect(updateSystemSslRedirection(fetchImpl, 'yes', 'Bad SSL redirection')).rejects.toThrow('enabled must be a boolean')
   })
 
   test('renews SSL certificates through REST', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ message: 'SSL Certificate renewed successfully.' }))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ message: 'SSL Certificate renewed successfully.' }))
 
     await expect(renewSystemSslCertificate(fetchImpl)).resolves.toEqual({ message: 'SSL Certificate renewed successfully.' })
     expect(fetchImpl).toHaveBeenCalledWith('/_api/system/ssl/renew', {
@@ -824,19 +823,19 @@ describe('system api helper', () => {
   })
 
   test('rejects malformed SSL certificate renewal responses', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ ok: true }))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ ok: true }))
 
     await expect(renewSystemSslCertificate(fetchImpl, 'Bad SSL renew')).rejects.toThrow('Bad SSL renew')
   })
 
   test('surfaces API error messages for failed SSL certificate renewals', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ error: 'SSL is disabled' }, false))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ error: 'SSL is disabled' }, false))
 
     await expect(renewSystemSslCertificate(fetchImpl, 'Bad SSL renew')).rejects.toThrow('SSL is disabled')
   })
 
   test('starts system export with same-origin JSON POST options', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ message: 'Export started successfully.' }))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ message: 'Export started successfully.' }))
     const entities = ['pages', 'assets']
 
     await expect(startSystemExport(fetchImpl, entities, './data/export')).resolves.toEqual({ message: 'Export started successfully.' })
@@ -852,13 +851,13 @@ describe('system api helper', () => {
   })
 
   test('rejects malformed system export success payloads', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ ok: true }))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ ok: true }))
 
     await expect(startSystemExport(fetchImpl, ['pages'], './data/export', 'Bad export start')).rejects.toThrow('Bad export start')
   })
 
   test('propagates system export REST JSON errors', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ error: 'Target directory must be empty!' }, false))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ error: 'Target directory must be empty!' }, false))
 
     await expect(startSystemExport(fetchImpl, ['pages'], './data/export', 'Bad export start')).rejects.toThrow('Target directory must be empty!')
   })

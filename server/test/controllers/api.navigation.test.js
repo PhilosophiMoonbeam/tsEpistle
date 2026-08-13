@@ -1,47 +1,90 @@
-jest.mock('express', () => {
+vi.mock('express', () => {
   const routers = []
-
-  return {
+  const express = {
     Router: () => {
       const router = {
-        get: jest.fn(),
-        post: jest.fn(),
-        patch: jest.fn(),
-        put: jest.fn(),
-        delete: jest.fn(),
-        use: jest.fn()
+        get: vi.fn(),
+        post: vi.fn(),
+        patch: vi.fn(),
+        put: vi.fn(),
+        delete: vi.fn(),
+        use: vi.fn()
       }
       routers.push(router)
       return router
     },
     __routers: routers
   }
+
+  return { default: express, ...express }
 })
+
+import express from 'express'
+
+const API_CONTROLLER_NAMES = [
+  'analytics',
+  'assets',
+  'auth',
+  'comments',
+  'contribute',
+  'groups',
+  'locales',
+  'logging',
+  'mail',
+  'navigation',
+  'pages',
+  'rendering',
+  'search',
+  'site',
+  'storage',
+  'system',
+  'theming',
+  'users'
+]
+
+const loadApiIndexRouter = async () => {
+  const subrouters = Object.fromEntries(API_CONTROLLER_NAMES.map(name => [name, {}]))
+
+  for (const name of API_CONTROLLER_NAMES) {
+    vi.doMock(`../../controllers/api/${name}.ts`, () => ({
+      default: subrouters[name]
+    }))
+  }
+
+  try {
+    await expect(import('../../controllers/api/index.ts')).resolves.toBeDefined()
+  } finally {
+    for (const name of API_CONTROLLER_NAMES) {
+      vi.doUnmock(`../../controllers/api/${name}.ts`)
+    }
+  }
+
+  return { apiRouter: express.__routers.at(-1), subrouters }
+}
 
 describe('controllers/api navigation endpoints', () => {
   beforeEach(() => {
-    jest.resetModules()
-    const express = require('express')
+    vi.resetModules()
     express.__routers.length = 0
 
     global.WIKI = {
       auth: {
-        checkAccess: jest.fn()
+        checkAccess: vi.fn()
       },
       models: {
         navigation: {
-          getTree: jest.fn().mockResolvedValue([
+          getTree: vi.fn().mockResolvedValue([
             { locale: 'en', ignored: true, items: [{ id: 'home', kind: 'link', label: 'Home', ignored: true }] }
           ]),
-          query: jest.fn(() => ({
-            patch: jest.fn(() => ({
-              where: jest.fn().mockResolvedValue(1)
+          query: vi.fn(() => ({
+            patch: vi.fn(() => ({
+              where: vi.fn().mockResolvedValue(1)
             }))
           }))
         }
       },
       cache: {
-        set: jest.fn().mockResolvedValue(true)
+        set: vi.fn().mockResolvedValue(true)
       },
       config: {
         nav: {
@@ -50,19 +93,18 @@ describe('controllers/api navigation endpoints', () => {
         }
       },
       configSvc: {
-        saveToDb: jest.fn().mockResolvedValue(true)
+        saveToDb: vi.fn().mockResolvedValue(true)
       }
     }
   })
 
-  const loadRouter = () => {
-    const express = require('express')
-    require('../../controllers/api/navigation')
+  const loadRouter = async () => {
+    await import('../../controllers/api/navigation.ts')
     return express.__routers[0]
   }
 
-  const loadHandler = () => loadRouter().get.mock.calls.find(([path]) => path === '/')[1]
-  const saveHandler = () => loadRouter().put.mock.calls.find(([path]) => path === '/')[1]
+  const loadHandler = async () => (await loadRouter()).get.mock.calls.find(([path]) => path === '/')[1]
+  const saveHandler = async () => (await loadRouter()).put.mock.calls.find(([path]) => path === '/')[1]
 
   const validBody = () => ({
     tree: [
@@ -80,17 +122,15 @@ describe('controllers/api navigation endpoints', () => {
     mode: 'MIXED'
   })
 
-  it('registers the navigation load route', () => {
-    expect(typeof loadHandler()).toBe('function')
-  })
+  it('registers the navigation load route', async () => { expect(typeof await loadHandler()).toBe('function') })
 
   it('returns 403 for unauthorized navigation loads', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(false)
-    const handler = loadHandler()
+    const handler = await loadHandler()
     const req = { user: { permissions: [] } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await handler(req, res, jest.fn())
+    await handler(req, res, vi.fn())
 
     expect(res.status).toHaveBeenCalledWith(403)
     expect(res.json).toHaveBeenCalledWith({ error: 'manage:navigation or manage:system is required' })
@@ -99,11 +139,11 @@ describe('controllers/api navigation endpoints', () => {
 
   it('loads navigation config and tree with GraphQL-compatible bypass-auth semantics', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
-    const handler = loadHandler()
+    const handler = await loadHandler()
     const req = { user: { permissions: ['manage:navigation'] } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await handler(req, res, jest.fn())
+    await handler(req, res, vi.fn())
 
     expect(global.WIKI.models.navigation.getTree).toHaveBeenCalledWith({ cache: false, locale: 'all', bypassAuth: true })
     expect(res.json).toHaveBeenCalledWith({
@@ -127,10 +167,10 @@ describe('controllers/api navigation endpoints', () => {
   it('forwards navigation load failures to next', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
     global.WIKI.models.navigation.getTree.mockRejectedValueOnce(new Error('navigation tree failed'))
-    const next = jest.fn()
-    const handler = loadHandler()
+    const next = vi.fn()
+    const handler = await loadHandler()
     const req = { user: { permissions: ['manage:system'] } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await handler(req, res, next)
 
@@ -138,23 +178,19 @@ describe('controllers/api navigation endpoints', () => {
     expect(next.mock.calls[0][0].message).toBe('navigation tree failed')
   })
 
-  it('registers the navigation save route', () => {
-    expect(typeof saveHandler()).toBe('function')
-  })
+  it('registers the navigation save route', async () => { expect(typeof await saveHandler()).toBe('function') })
 
-  it('is mounted by the API index router', () => {
-    const express = require('express')
-    expect(() => require('../../controllers/api')).not.toThrow()
-    const apiRouter = express.__routers[0]
+  it('is mounted by the API index router', async () => {
+    const { apiRouter, subrouters } = await loadApiIndexRouter()
 
-    expect(apiRouter.use).toHaveBeenCalledWith('/navigation', expect.any(Object))
+    expect(apiRouter.use).toHaveBeenCalledWith('/navigation', subrouters.navigation)
   })
 
   it('returns 403 for unauthorized navigation saves', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(false)
-    const handler = saveHandler()
+    const handler = await saveHandler()
     const req = { user: { permissions: [] }, body: validBody() }
-    const res = { sendStatus: jest.fn(), json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { sendStatus: vi.fn(), json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await handler(req, res)
 
@@ -178,9 +214,9 @@ describe('controllers/api navigation endpoints', () => {
     ['item non-integer visibility group', { tree: [{ locale: 'en', items: [{ id: 'home', kind: 'link', visibilityGroups: [1, '2'] }] }], mode: 'TREE' }]
   ])('returns 400 for malformed navigation tree payloads: %s', async (label, body) => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
-    const handler = saveHandler()
+    const handler = await saveHandler()
     const req = { user: { permissions: ['manage:navigation'] }, body }
-    const res = { sendStatus: jest.fn(), json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { sendStatus: vi.fn(), json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await handler(req, res)
 
@@ -191,9 +227,9 @@ describe('controllers/api navigation endpoints', () => {
 
   it.each(['', 'INVALID', 'tree', null, undefined])('returns 400 for invalid navigation mode %p', async (mode) => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
-    const handler = saveHandler()
+    const handler = await saveHandler()
     const req = { user: { permissions: ['manage:navigation'] }, body: { tree: [], mode } }
-    const res = { sendStatus: jest.fn(), json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { sendStatus: vi.fn(), json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await handler(req, res)
 
@@ -204,10 +240,10 @@ describe('controllers/api navigation endpoints', () => {
 
   it('saves navigation tree, refreshes sidebar cache per locale, persists mode, and returns JSON success', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
-    const handler = saveHandler()
+    const handler = await saveHandler()
     const body = validBody()
     const req = { user: { permissions: ['manage:navigation'] }, body }
-    const res = { sendStatus: jest.fn(), json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { sendStatus: vi.fn(), json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await handler(req, res)
 
@@ -226,13 +262,13 @@ describe('controllers/api navigation endpoints', () => {
   it('returns JSON errors for navigation save failures', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
     global.WIKI.models.navigation.query.mockImplementationOnce(() => ({
-      patch: jest.fn(() => ({
-        where: jest.fn().mockRejectedValue(new Error('navigation patch failed'))
+      patch: vi.fn(() => ({
+        where: vi.fn().mockRejectedValue(new Error('navigation patch failed'))
       }))
     }))
-    const handler = saveHandler()
+    const handler = await saveHandler()
     const req = { user: { permissions: ['manage:navigation'] }, body: validBody() }
-    const res = { sendStatus: jest.fn(), json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { sendStatus: vi.fn(), json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await handler(req, res)
 

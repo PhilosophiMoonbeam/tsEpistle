@@ -1,7 +1,7 @@
 <template lang="pug">
-  v-app.editor(:dark='$vuetify.theme.dark')
+  v-app.editor(:dark='$vuetify.theme.current.dark')
     nav-header(dense)
-      template(slot='mid')
+      template(v-slot:mid)
         v-text-field.editor-title-input(
           dark
           solo
@@ -12,7 +12,7 @@
           dense
           full-width
         )
-      template(slot='actions')
+      template(v-slot:actions)
         v-btn.mr-3.animated.fadeIn(color='amber', outlined, small, v-if='isConflict', @click='openConflict')
           .overline.amber--text.mr-3 Conflict
           status-indicator(intermediary, pulse)
@@ -21,28 +21,28 @@
           color='green'
           @click.exact='save'
           @click.ctrl.exact='saveAndClose'
-          :class='{ "is-icon": $vuetify.breakpoint.mdAndDown }'
+          :class='{ "is-icon": $vuetify.display.mdAndDown }'
           )
-          v-icon(color='green', :left='$vuetify.breakpoint.lgAndUp') mdi-check
-          span.grey--text(v-if='$vuetify.breakpoint.lgAndUp && mode !== `create` && !isDirty') {{ $t('editor:save.saved') }}
-          span.white--text(v-else-if='$vuetify.breakpoint.lgAndUp') {{ mode === 'create' ? $t('common:actions.create') : $t('common:actions.save') }}
+          v-icon(color='green', :left='$vuetify.display.lgAndUp') mdi-check
+          span.grey--text(v-if='$vuetify.display.lgAndUp && mode !== `create` && !isDirty') {{ $t('editor:save.saved') }}
+          span.white--text(v-else-if='$vuetify.display.lgAndUp') {{ mode === 'create' ? $t('common:actions.create') : $t('common:actions.save') }}
         v-btn.animated.fadeInDown.wait-p1s(
           text
           color='blue'
           @click='openPropsModal'
-          :class='{ "is-icon": $vuetify.breakpoint.mdAndDown, "mx-0": !welcomeMode, "ml-0": welcomeMode }'
+          :class='{ "is-icon": $vuetify.display.mdAndDown, "mx-0": !welcomeMode, "ml-0": welcomeMode }'
           )
-          v-icon(color='blue', :left='$vuetify.breakpoint.lgAndUp') mdi-tag-text-outline
-          span.white--text(v-if='$vuetify.breakpoint.lgAndUp') {{ $t('common:actions.page') }}
+          v-icon(color='blue', :left='$vuetify.display.lgAndUp') mdi-tag-text-outline
+          span.white--text(v-if='$vuetify.display.lgAndUp') {{ $t('common:actions.page') }}
         v-btn.animated.fadeInDown.wait-p2s(
           v-if='!welcomeMode'
           text
           color='red'
-          :class='{ "is-icon": $vuetify.breakpoint.mdAndDown }'
+          :class='{ "is-icon": $vuetify.display.mdAndDown }'
           @click='exit'
           )
-          v-icon(color='red', :left='$vuetify.breakpoint.lgAndUp') mdi-close
-          span.white--text(v-if='$vuetify.breakpoint.lgAndUp') {{ $t('common:actions.close') }}
+          v-icon(color='red', :left='$vuetify.display.lgAndUp') mdi-close
+          span.white--text(v-if='$vuetify.display.lgAndUp') {{ $t('common:actions.close') }}
         v-divider.ml-3(vertical)
     v-main
       component(:is='currentEditor', :save='save')
@@ -55,38 +55,36 @@
     notify
 </template>
 
-<script>
+<script lang='ts'>
+import { defineAsyncComponent, defineComponent, type PropType } from 'vue'
 import _ from 'lodash'
 import { checkPageConflict, createPage, updatePage } from '../helpers/pages-api'
-import { get, sync } from 'vuex-pathify'
+import { wikiStore } from '@/store/index.ts'
 import { AtomSpinner } from 'epic-spinners'
 import { Base64 } from 'js-base64'
-import { StatusIndicator } from 'vue-status-indicator'
+import StatusIndicator from '@/components/common/status-indicator.vue'
 import { emitEditorSaveConflict, onEditorConflictReset, offEditorConflictReset } from '../helpers/editor-conflict-events'
+import { getErrorMessage } from '../helpers/root-ui-store'
 
-import store from '../store'
-import editorStore from '../store/editor'
 
-store.registerModule('editor', editorStore)
-
-export default {
+export default defineComponent({
   i18nOptions: { namespaces: 'editor' },
   components: {
     AtomSpinner,
     StatusIndicator,
-    editorApi: () => import(/* webpackChunkName: "editor-api", webpackMode: "lazy" */ './editor/editor-api.vue'),
-    editorCode: () => import(/* webpackChunkName: "editor-code", webpackMode: "lazy" */ './editor/editor-code.vue'),
-    editorCkeditor: () => import(/* webpackChunkName: "editor-ckeditor", webpackMode: "lazy" */ './editor/editor-ckeditor.vue'),
-    editorAsciidoc: () => import(/* webpackChunkName: "editor-asciidoc", webpackMode: "lazy" */ './editor/editor-asciidoc.vue'),
-    editorMarkdown: () => import(/* webpackChunkName: "editor-markdown", webpackMode: "lazy" */ './editor/editor-markdown.vue'),
-    editorRedirect: () => import(/* webpackChunkName: "editor-redirect", webpackMode: "lazy" */ './editor/editor-redirect.vue'),
-    editorModalEditorselect: () => import(/* webpackChunkName: "editor", webpackMode: "eager" */ './editor/editor-modal-editorselect.vue'),
-    editorModalProperties: () => import(/* webpackChunkName: "editor", webpackMode: "eager" */ './editor/editor-modal-properties.vue'),
-    editorModalUnsaved: () => import(/* webpackChunkName: "editor", webpackMode: "eager" */ './editor/editor-modal-unsaved.vue'),
-    editorModalMedia: () => import(/* webpackChunkName: "editor", webpackMode: "eager" */ './editor/editor-modal-media.vue'),
-    editorModalBlocks: () => import(/* webpackChunkName: "editor", webpackMode: "eager" */ './editor/editor-modal-blocks.vue'),
-    editorModalConflict: () => import(/* webpackChunkName: "editor-conflict", webpackMode: "lazy" */ './editor/editor-modal-conflict.vue'),
-    editorModalDrawio: () => import(/* webpackChunkName: "editor", webpackMode: "eager" */ './editor/editor-modal-drawio.vue')
+    editorApi: defineAsyncComponent(() => import('./editor/editor-api.vue')),
+    editorCode: defineAsyncComponent(() => import('./editor/editor-code.vue')),
+    editorCkeditor: defineAsyncComponent(() => import('./editor/editor-ckeditor.vue')),
+    editorAsciidoc: defineAsyncComponent(() => import('./editor/editor-asciidoc.vue')),
+    editorMarkdown: defineAsyncComponent(() => import('./editor/editor-markdown.vue')),
+    editorRedirect: defineAsyncComponent(() => import('./editor/editor-redirect.vue')),
+    editorModalEditorselect: defineAsyncComponent(() => import('./editor/editor-modal-editorselect.vue')),
+    editorModalProperties: defineAsyncComponent(() => import('./editor/editor-modal-properties.vue')),
+    editorModalUnsaved: defineAsyncComponent(() => import('./editor/editor-modal-unsaved.vue')),
+    editorModalMedia: defineAsyncComponent(() => import('./editor/editor-modal-media.vue')),
+    editorModalBlocks: defineAsyncComponent(() => import('./editor/editor-modal-blocks.vue')),
+    editorModalConflict: defineAsyncComponent(() => import('./editor/editor-modal-conflict.vue')),
+    editorModalDrawio: defineAsyncComponent(() => import('./editor/editor-modal-drawio.vue'))
   },
   props: {
     locale: {
@@ -106,7 +104,7 @@ export default {
       default: ''
     },
     tags: {
-      type: Array,
+      type: Array as PropType<string[]>,
       default: () => ([])
     },
     isPublished: {
@@ -158,7 +156,7 @@ export default {
     return {
       isSaving: false,
       isConflict: false,
-      conflictTimer: null,
+      conflictTimer: null as number | null,
       dialogProps: false,
       dialogProgress: false,
       dialogEditorSelector: false,
@@ -170,7 +168,7 @@ export default {
         isPublished: false,
         publishEndDate: '',
         publishStartDate: '',
-        tags: '',
+        tags: [] as string[],
         title: '',
         css: '',
         js: ''
@@ -178,69 +176,81 @@ export default {
     }
   },
   computed: {
-    currentEditor: sync('editor/editor'),
-    activeModal: sync('editor/activeModal'),
-    mode: get('editor/mode'),
+    currentEditor: {
+      get(): string { return wikiStore.editor.editor },
+      set(value: string) { wikiStore.editor.editor = value }
+    },
+    activeModal: {
+      get(): string { return wikiStore.editor.activeModal },
+      set(value: string) { wikiStore.editor.activeModal = value }
+    },
+    mode(): string { return wikiStore.editor.mode },
     welcomeMode() { return this.mode === `create` && this.path === `home` },
-    currentPageTitle: sync('page/title'),
-    checkoutDateActive: sync('editor/checkoutDateActive'),
-    currentStyling: get('page/scriptCss'),
+    currentPageTitle: {
+      get(): string { return wikiStore.page.title },
+      set(value: string) { wikiStore.page.title = value }
+    },
+    checkoutDateActive: {
+      get(): string { return wikiStore.editor.checkoutDateActive },
+      set(value: string) { wikiStore.editor.checkoutDateActive = value }
+    },
+    currentStyling(): string { return wikiStore.page.scriptCss },
     isDirty () {
       return _.some([
-        this.initContentParsed !== this.$store.get('editor/content'),
-        this.locale !== this.$store.get('page/locale'),
-        this.path !== this.$store.get('page/path'),
-        this.savedState.title !== this.$store.get('page/title'),
-        this.savedState.description !== this.$store.get('page/description'),
-        this.savedState.tags !== this.$store.get('page/tags'),
-        this.savedState.isPublished !== this.$store.get('page/isPublished'),
-        this.savedState.publishStartDate !== this.$store.get('page/publishStartDate'),
-        this.savedState.publishEndDate !== this.$store.get('page/publishEndDate'),
-        this.savedState.css !== this.$store.get('page/scriptCss'),
-        this.savedState.js !== this.$store.get('page/scriptJs')
+        this.initContentParsed !== wikiStore.editor.content,
+        this.locale !== wikiStore.page.locale,
+        this.path !== wikiStore.page.path,
+        this.savedState.title !== wikiStore.page.title,
+        this.savedState.description !== wikiStore.page.description,
+        this.savedState.tags !== wikiStore.page.tags,
+        this.savedState.isPublished !== wikiStore.page.isPublished,
+        this.savedState.publishStartDate !== wikiStore.page.publishStartDate,
+        this.savedState.publishEndDate !== wikiStore.page.publishEndDate,
+        this.savedState.css !== wikiStore.page.scriptCss,
+        this.savedState.js !== wikiStore.page.scriptJs
       ], Boolean)
     }
   },
   watch: {
-    currentEditor(newValue, oldValue) {
+    currentEditor(newValue: string) {
       if (newValue !== '' && this.mode === 'create') {
         _.delay(() => {
           this.dialogProps = true
         }, 500)
       }
     },
-    currentStyling(newValue) {
+    currentStyling(newValue: string) {
       this.injectCustomCss(newValue)
     }
   },
   created() {
-    this.$store.set('page/id', this.pageId)
-    this.$store.set('page/description', this.description)
-    this.$store.set('page/isPublished', this.isPublished)
-    this.$store.set('page/publishStartDate', this.publishStartDate)
-    this.$store.set('page/publishEndDate', this.publishEndDate)
-    this.$store.set('page/locale', this.locale)
-    this.$store.set('page/path', this.path)
-    this.$store.set('page/tags', this.tags)
-    this.$store.set('page/title', this.title)
-    this.$store.set('page/scriptCss', this.scriptCss)
-    this.$store.set('page/scriptJs', this.scriptJs)
+    wikiStore.page.id = this.pageId
+    wikiStore.page.description = this.description
+    wikiStore.page.isPublished = this.isPublished
+    wikiStore.page.publishStartDate = this.publishStartDate
+    wikiStore.page.publishEndDate = this.publishEndDate
+    wikiStore.page.locale = this.locale
+    wikiStore.page.path = this.path
+    wikiStore.page.tags = this.tags
+    wikiStore.page.title = this.title
+    wikiStore.page.scriptCss = this.scriptCss
+    wikiStore.page.scriptJs = this.scriptJs
 
-    this.$store.set('page/mode', 'edit')
+    wikiStore.page.mode = 'edit'
 
     this.setCurrentSavedState()
 
     this.checkoutDateActive = this.checkoutDate
 
     if (this.effectivePermissions) {
-      this.$store.set('page/effectivePermissions', JSON.parse(Buffer.from(this.effectivePermissions, 'base64').toString()))
+      wikiStore.page.effectivePermissions = JSON.parse(Buffer.from(this.effectivePermissions, 'base64').toString())
     }
   },
   mounted() {
-    this.$store.set('editor/mode', this.initMode || 'create')
+    wikiStore.editor.mode = this.initMode || 'create'
 
     this.initContentParsed = this.initContent ? Base64.decode(this.initContent) : ''
-    this.$store.set('editor/content', this.initContentParsed)
+    wikiStore.editor.content = this.initContentParsed
     if (this.mode === 'create' && !this.initEditor) {
       _.delay(() => {
         this.dialogEditorSelector = true
@@ -250,7 +260,7 @@ export default {
     }
 
     window.onbeforeunload = () => {
-      if (!this.exitConfirmed && this.initContentParsed !== this.$store.get('editor/content')) {
+      if (!this.exitConfirmed && this.initContentParsed !== wikiStore.editor.content) {
         return this.$t('editor:unsavedWarning')
       } else {
         return undefined
@@ -258,20 +268,18 @@ export default {
     }
 
     onEditorConflictReset(this.handleEditorConflictReset)
-    this.conflictTimer = setInterval(this.refreshConflict, 5000)
+    this.conflictTimer = window.setInterval(this.refreshConflict, 5000)
 
-    // this.$store.set('editor/mode', 'edit')
-    // this.currentEditor = `editorApi`
   },
-  beforeDestroy() {
+  beforeUnmount() {
     offEditorConflictReset(this.handleEditorConflictReset)
-    clearInterval(this.conflictTimer)
+    if (this.conflictTimer !== null) window.clearInterval(this.conflictTimer)
   },
   methods: {
-    openPropsModal(name) {
+    openPropsModal() {
       this.dialogProps = true
     },
-    showProgressDialog(textKey) {
+    showProgressDialog() {
       this.dialogProgress = true
     },
     hideProgressDialog() {
@@ -291,16 +299,16 @@ export default {
     openConflict() {
       emitEditorSaveConflict()
     },
-    async save({ rethrow = false, overwrite = false } = {}) {
-      this.showProgressDialog('saving')
+    async save({ rethrow = false, overwrite = false }: { rethrow?: boolean, overwrite?: boolean } = {}) {
+      this.showProgressDialog()
       this.isSaving = true
 
-      const saveTimeoutHandle = setTimeout(() => {
+      const saveTimeoutHandle = window.setTimeout(() => {
         throw new Error('Save operation timed out.')
       }, 30000)
 
       try {
-        if (this.$store.get('editor/mode') === 'create') {
+        if (wikiStore.editor.mode === 'create') {
           // --------------------------------------------
           // -> CREATE PAGE
           // --------------------------------------------
@@ -308,15 +316,15 @@ export default {
           const page = await createPage(window.fetch.bind(window), this.getPageInput())
           this.checkoutDateActive = page.updatedAt || this.checkoutDateActive
           this.isConflict = false
-          this.$store.commit('showNotification', {
+          wikiStore.showNotification({
             message: this.$t('editor:save.createSuccess'),
             style: 'success',
             icon: 'check'
           })
-          this.$store.set('editor/id', page.id)
-          this.$store.set('editor/mode', 'update')
+          wikiStore.editor.id = page.id
+          wikiStore.editor.mode = 'update'
           this.exitConfirmed = true
-          window.location.assign(`/${this.$store.get('page/locale')}/${this.$store.get('page/path')}`)
+          window.location.assign(`/${wikiStore.page.locale}/${wikiStore.page.path}`)
         } else {
           // --------------------------------------------
           // -> UPDATE EXISTING PAGE
@@ -329,28 +337,28 @@ export default {
 
           const page = await updatePage(
             window.fetch.bind(window),
-            this.$store.get('page/id'),
+            wikiStore.page.id,
             this.getPageInput()
           )
           this.checkoutDateActive = page.updatedAt || this.checkoutDateActive
           this.isConflict = false
-          this.$store.commit('showNotification', {
+          wikiStore.showNotification({
             message: this.$t('editor:save.updateSuccess'),
             style: 'success',
             icon: 'check'
           })
-          if (this.locale !== this.$store.get('page/locale') || this.path !== this.$store.get('page/path')) {
+          if (this.locale !== wikiStore.page.locale || this.path !== wikiStore.page.path) {
             _.delay(() => {
-              window.location.replace(`/e/${this.$store.get('page/locale')}/${this.$store.get('page/path')}`)
+              window.location.replace(`/e/${wikiStore.page.locale}/${wikiStore.page.path}`)
             }, 1000)
           }
         }
 
-        this.initContentParsed = this.$store.get('editor/content')
+        this.initContentParsed = wikiStore.editor.content
         this.setCurrentSavedState()
       } catch (err) {
-        this.$store.commit('showNotification', {
-          message: err.message,
+        wikiStore.showNotification({
+          message: getErrorMessage(err),
           style: 'error',
           icon: 'warning'
         })
@@ -367,7 +375,7 @@ export default {
     },
     async saveAndClose() {
       try {
-        if (this.$store.get('editor/mode') === 'create') {
+        if (wikiStore.editor.mode === 'create') {
           await this.save()
         } else {
           await this.save({ rethrow: true })
@@ -385,47 +393,47 @@ export default {
       }
     },
     exitGo() {
-      this.$store.commit(`loadingStart`, 'editor-close')
+      wikiStore.startLoading('editor-close')
       this.currentEditor = ''
       this.exitConfirmed = true
       _.delay(() => {
-        if (this.$store.get('editor/mode') === 'create') {
+        if (wikiStore.editor.mode === 'create') {
           window.location.assign(`/`)
         } else {
-          window.location.assign(`/${this.$store.get('page/locale')}/${this.$store.get('page/path')}`)
+          window.location.assign(`/${wikiStore.page.locale}/${wikiStore.page.path}`)
         }
       }, 500)
     },
     getPageInput () {
       return {
-        content: this.$store.get('editor/content'),
-        description: this.$store.get('page/description'),
-        editor: this.$store.get('editor/editorKey'),
-        locale: this.$store.get('page/locale'),
+        content: wikiStore.editor.content,
+        description: wikiStore.page.description,
+        editor: wikiStore.editor.editorKey,
+        locale: wikiStore.page.locale,
         isPrivate: false,
-        isPublished: this.$store.get('page/isPublished'),
-        path: this.$store.get('page/path'),
-        publishEndDate: this.$store.get('page/publishEndDate') || '',
-        publishStartDate: this.$store.get('page/publishStartDate') || '',
-        scriptCss: this.$store.get('page/scriptCss'),
-        scriptJs: this.$store.get('page/scriptJs'),
-        tags: this.$store.get('page/tags'),
-        title: this.$store.get('page/title')
+        isPublished: wikiStore.page.isPublished,
+        path: wikiStore.page.path,
+        publishEndDate: wikiStore.page.publishEndDate || '',
+        publishStartDate: wikiStore.page.publishStartDate || '',
+        scriptCss: wikiStore.page.scriptCss,
+        scriptJs: wikiStore.page.scriptJs,
+        tags: wikiStore.page.tags,
+        title: wikiStore.page.title
       }
     },
     setCurrentSavedState () {
       this.savedState = {
-        description: this.$store.get('page/description'),
-        isPublished: this.$store.get('page/isPublished'),
-        publishEndDate: this.$store.get('page/publishEndDate') || '',
-        publishStartDate: this.$store.get('page/publishStartDate') || '',
-        tags: this.$store.get('page/tags'),
-        title: this.$store.get('page/title'),
-        css: this.$store.get('page/scriptCss'),
-        js: this.$store.get('page/scriptJs')
+        description: wikiStore.page.description,
+        isPublished: wikiStore.page.isPublished,
+        publishEndDate: wikiStore.page.publishEndDate || '',
+        publishStartDate: wikiStore.page.publishStartDate || '',
+        tags: wikiStore.page.tags,
+        title: wikiStore.page.title,
+        css: wikiStore.page.scriptCss,
+        js: wikiStore.page.scriptJs
       }
     },
-    injectCustomCss: _.debounce(css => {
+    injectCustomCss: _.debounce((css: string) => {
       const oldStyl = document.querySelector('#editor-script-css')
       if (oldStyl) {
         document.head.removeChild(oldStyl)
@@ -439,7 +447,7 @@ export default {
       }
     }, 1000)
   }
-}
+})
 </script>
 
 <style lang='scss'>

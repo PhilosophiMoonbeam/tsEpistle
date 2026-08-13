@@ -29,5 +29,5 @@
 	"oderwat.indent-rainbow",
 	"christian-kohler.npm-intellisense"
 ],
-  "postCreateCommand": ["yarn", "install"]
+  "postCreateCommand": ["corepack", "pnpm", "install", "--frozen-lockfile"]
 }

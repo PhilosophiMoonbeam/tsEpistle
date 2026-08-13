@@ -1,7 +1,7 @@
 <template lang='pug'>
   v-container(fluid, grid-list-lg)
-    v-layout(row, wrap)
-      v-flex(xs12)
+    v-row()
+      v-col(cols='12')
         .admin-header
           img.animated.fadeInUp(src='/_assets/svg/icon-globe-earth.svg', alt='Locale', style='width: 80px;')
           .admin-header-title
@@ -14,8 +14,8 @@
             v-icon(left) mdi-check
             span {{$t('common:actions.apply')}}
         v-form.pt-3
-          v-layout(row wrap)
-            v-flex(xl6 lg5 xs12)
+          v-row
+            v-col(xl='6' lg='5' cols='12')
               v-card.wiki-form.animated.fadeInUp
                 v-toolbar(color='primary', dark, dense, flat)
                   v-toolbar-title.subtitle-1 {{ $t('admin:locale.settings') }}
@@ -31,13 +31,13 @@
                     persistent-hint
                     :hint='$t("admin:locale.base.hint")'
                   )
-                    template(slot='item', slot-scope='data')
+                    template(v-slot:item='data')
                       template(v-if='typeof data.item !== "object"')
-                        v-list-item-content(v-text='data.item')
+                        div.v-list-item-content(v-text='data.item')
                       template(v-else)
-                        v-list-item-avatar
+                        v-avatar
                           v-avatar.blue.white--text(tile, size='40', v-html='data.item.code.toUpperCase()')
-                        v-list-item-content
+                        div.v-list-item-content
                           v-list-item-title(v-html='data.item.name')
                           v-list-item-subtitle(v-html='data.item.nativeName')
                   v-divider.mt-3
@@ -87,18 +87,18 @@
                     small-chips
                     :hint='$t("admin:locale.activeNamespaces.hint")'
                     )
-                    template(slot='item', slot-scope='data')
+                    template(v-slot:item='data')
                       template(v-if='typeof data.item !== "object"')
-                        v-list-item-content(v-text='data.item')
+                        div.v-list-item-content(v-text='data.item')
                       template(v-else)
-                        v-list-item-avatar
+                        v-avatar
                           v-avatar.blue.white--text(tile, size='40', v-html='data.item.code.toUpperCase()')
-                        v-list-item-content
+                        div.v-list-item-content
                           v-list-item-title(v-html='data.item.name')
                           v-list-item-subtitle(v-html='data.item.nativeName')
-                        v-list-item-action
+                        div.v-list-item-action
                           v-checkbox(:input-value='data.attrs.inputValue', color='primary', value)
-            v-flex(xl6 lg7 xs12)
+            v-col(xl='6' lg='7' cols='12')
               v-card.animated.fadeInUp.wait-p4s
                 v-toolbar(color='teal', dark, dense, flat)
                   v-toolbar-title.subtitle-1 {{ $t('admin:locale.downloadTitle') }}
@@ -137,21 +137,26 @@
                   v-btn.ml-0.mt-3(color='teal', disabled) {{ $t('common:actions.browse') }}
 </template>
 
-<script>
+<script lang='ts'>
 import _ from 'lodash'
 
-import { fetchLocales, fetchLocaleConfig, saveLocaleConfig, downloadLocale } from '../../helpers/locales-api'
-import { loadingStart, loadingStop, showNotification } from '../../helpers/root-ui-store'
+import { fetchLocales, fetchLocaleConfig, saveLocaleConfig, downloadLocale, type LocaleRow } from '../../helpers/locales-api'
+import { getErrorMessage } from '../../helpers/root-ui-store'
+import { wikiStore } from '@/store/index.ts'
+
+type LocaleTableRow = LocaleRow & {
+  isDownloading: boolean
+}
 
 export default {
   data() {
     return {
       loading: false,
-      locales: [],
+      locales: [] as LocaleTableRow[],
       selectedLocale: 'en',
       autoUpdate: false,
       namespacing: false,
-      namespaces: [],
+      namespaces: [] as string[],
       configLoaded: false
     }
   },
@@ -203,7 +208,7 @@ export default {
   },
   methods: {
     async loadBootstrap() {
-      loadingStart(this.$store, 'admin-locale-refresh')
+      wikiStore.startLoading('admin-locale-refresh')
 
       const [localesResult, configResult] = await Promise.allSettled([
         fetchLocales(window.fetch.bind(window), 'Locales response is invalid'),
@@ -213,9 +218,9 @@ export default {
       if (localesResult.status === 'fulfilled') {
         this.locales = localesResult.value.map(lc => ({ ...lc, isDownloading: false }))
       } else {
-        showNotification(this.$store, {
+        wikiStore.showNotification({
           style: 'red',
-          message: localesResult.reason.message,
+          message: getErrorMessage(localesResult.reason),
           icon: 'alert'
         })
       }
@@ -228,30 +233,30 @@ export default {
         this.configLoaded = true
       } else {
         this.configLoaded = false
-        showNotification(this.$store, {
+        wikiStore.showNotification({
           style: 'red',
-          message: configResult.reason.message,
+          message: getErrorMessage(configResult.reason),
           icon: 'alert'
         })
       }
 
-      loadingStop(this.$store, 'admin-locale-refresh')
+      wikiStore.stopLoading('admin-locale-refresh')
     },
-    async download(lc) {
+    async download(lc: LocaleTableRow) {
       lc.isDownloading = true
       try {
         await downloadLocale(window.fetch.bind(window), lc.code, 'Locale download failed')
         lc.isInstalled = true
         lc.updatedAt = new Date().toISOString()
         lc.installDate = lc.updatedAt
-        showNotification(this.$store, {
+        wikiStore.showNotification({
           message: `Locale ${lc.name} has been installed successfully.`,
           style: 'success',
           icon: 'get_app'
         })
       } catch (err) {
-        showNotification(this.$store, {
-          message: `Error: ${err.message}`,
+        wikiStore.showNotification({
+          message: `Error: ${getErrorMessage(err)}`,
           style: 'error',
           icon: 'warning'
         })
@@ -273,25 +278,25 @@ export default {
         }, 'Locale settings update failed')
 
         // Change UI language
-        this.$i18n.i18next.changeLanguage(this.selectedLocale)
+        void this.$i18n.changeLanguage(this.selectedLocale)
         this.$moment.locale(this.selectedLocale)
 
         // Check for RTL
         const curLocale = _.find(this.locales, ['code', this.selectedLocale])
-        this.$vuetify.rtl = curLocale && curLocale.isRTL
+        this.$vuetify.locale.rtl[this.selectedLocale] = Boolean(curLocale && curLocale.isRTL)
 
-        showNotification(this.$store, {
+        wikiStore.showNotification({
           message: 'Locale settings updated successfully.',
           style: 'success',
           icon: 'check'
         })
 
         _.delay(() => {
-          window.location.reload(true)
+          window.location.reload()
         }, 1000)
       } catch (err) {
-        showNotification(this.$store, {
-          message: `Error: ${err.message}`,
+        wikiStore.showNotification({
+          message: `Error: ${getErrorMessage(err)}`,
           style: 'error',
           icon: 'warning'
         })

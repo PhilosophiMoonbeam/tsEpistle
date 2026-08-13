@@ -1,7 +1,7 @@
 <template lang='pug'>
   v-container(fluid, grid-list-lg)
-    v-layout(row, wrap)
-      v-flex(xs12)
+    v-row()
+      v-col(cols='12')
         .admin-header
           img.animated.fadeInUp(src='/_assets/svg/icon-cloud-storage.svg', alt='Storage', style='width: 80px;')
           .admin-header-title
@@ -16,26 +16,26 @@
             v-icon(left) mdi-check
             span {{$t('common:actions.apply')}}
 
-      v-flex(lg3, xs12)
+      v-col(lg='3', cols='12')
         v-card.animated.fadeInUp
           v-toolbar(flat, color='primary', dark, dense)
             .subtitle-1 {{$t('admin:storage.targets')}}
           v-list(two-line, dense).py-0
-            template(v-for='(tgt, idx) in targets')
-              v-list-item(:key='tgt.key', @click='selectedTarget = tgt.key', :disabled='!tgt.isAvailable')
-                v-list-item-avatar(size='24')
+            template(v-for='(tgt, idx) in targets', :key='tgt.key')
+              v-list-item(@click='selectedTarget = tgt.key', :disabled='!tgt.isAvailable')
+                v-avatar(size='24')
                   v-icon(color='grey', v-if='!tgt.isAvailable') mdi-minus-box-outline
                   v-icon(color='primary', v-else-if='tgt.isEnabled', v-ripple, @click='tgt.key !== `local` && (tgt.isEnabled = false)') mdi-checkbox-marked-outline
                   v-icon(color='grey', v-else, v-ripple, @click='tgt.isEnabled = true') mdi-checkbox-blank-outline
-                v-list-item-content
+                div.v-list-item-content
                   v-list-item-title.body-2(:class='!tgt.isAvailable ? `grey--text` : (selectedTarget === tgt.key ? `primary--text` : ``)') {{ tgt.title }}
                   v-list-item-subtitle: .caption(:class='!tgt.isAvailable ? `grey--text text--lighten-1` : (selectedTarget === tgt.key ? `blue--text ` : ``)') {{ tgt.description }}
-                v-list-item-avatar(v-if='selectedTarget === tgt.key', size='24')
+                v-avatar(v-if='selectedTarget === tgt.key', size='24')
                   v-icon.animated.fadeInLeft(color='primary', large) mdi-chevron-right
               v-divider(v-if='idx < targets.length - 1')
 
         v-card.mt-3.animated.fadeInUp.wait-p2s
-          v-toolbar(flat, :color='$vuetify.theme.dark ? `grey darken-3-l5` : `grey darken-3`', dark, dense)
+          v-toolbar(flat, :color='$vuetify.theme.current.dark ? `grey darken-3-l5` : `grey darken-3`', dark, dense)
             .subtitle-1 {{$t('admin:storage.status')}}
             v-spacer
             looping-rhombuses-spinner(
@@ -44,32 +44,32 @@
               color='#FFF'
             )
           v-list.py-0(two-line, dense)
-            template(v-for='(tgt, n) in status')
-              v-list-item(:key='tgt.key')
+            template(v-for='(tgt, n) in status', :key='tgt.key')
+              v-list-item
                 template(v-if='tgt.status === `pending`')
-                  v-list-item-avatar(color='purple')
+                  v-avatar(color='purple')
                     v-icon(color='white') mdi-clock-outline
-                  v-list-item-content
+                  div.v-list-item-content
                     v-list-item-title.body-2 {{tgt.title}}
                     v-list-item-subtitle.purple--text.caption {{tgt.status}}
-                  v-list-item-action
+                  div.v-list-item-action
                     v-progress-circular(indeterminate, :size='20', :width='2', color='purple')
                 template(v-else-if='tgt.status === `operational`')
-                  v-list-item-avatar(color='green')
+                  v-avatar(color='green')
                     v-icon(color='white') mdi-check-circle
-                  v-list-item-content
+                  div.v-list-item-content
                     v-list-item-title.body-2 {{tgt.title}}
                     v-list-item-subtitle.green--text.caption {{$t('admin:storage.lastSync', { time: $helpers.formatMoment(tgt.lastAttempt, 'from') })}}
                 template(v-else)
-                  v-list-item-avatar(color='red')
+                  v-avatar(color='red')
                     v-icon(color='white') mdi-close-circle-outline
-                  v-list-item-content
+                  div.v-list-item-content
                     v-list-item-title.body-2 {{tgt.title}}
                     v-list-item-subtitle.red--text.caption {{$t('admin:storage.lastSyncAttempt', { time: $helpers.formatMoment(tgt.lastAttempt, 'from') })}}
-                  v-list-item-action
+                  div.v-list-item-action
                     v-menu
-                      template(v-slot:activator='{ on }')
-                        v-btn(icon, v-on='on')
+                      template(v-slot:activator='{ props }')
+                        v-btn(icon, v-bind='props')
                           v-icon(color='red') mdi-information
                       v-card(width='450')
                         v-toolbar(flat, color='red', dark, dense) {{$t('admin:storage.errorMsg')}}
@@ -79,7 +79,7 @@
             v-list-item(v-if='status.length < 1')
               em {{$t('admin:storage.noTarget')}}
 
-      v-flex(xs12, lg9)
+      v-col(cols='12', lg='9')
         v-card.wiki-form.animated.fadeInUp.wait-p2s
           v-toolbar(color='primary', dense, flat, dark)
             .subtitle-1 {{target.title}}
@@ -92,7 +92,7 @@
               hide-details
               inset
               )
-          v-card-info(color='blue')
+          div.v-card-info(color='blue')
             div
               div {{target.description}}
               span.caption: a(:href='target.website') {{target.website}}
@@ -108,12 +108,11 @@
               v-divider.mt-3
               .overline.my-5 {{$t('admin:storage.targetConfig')}}
               .body-2.ml-3(v-if='!target.config || target.config.length < 1'): em {{$t('admin:storage.noConfigOption')}}
-              template(v-else, v-for='cfg in target.config')
+              template(v-else, v-for='cfg in target.config', :key='cfg.key')
                 v-select(
                   v-if='cfg.value.type === "string" && cfg.value.enum'
                   outlined
                   :items='cfg.value.enum'
-                  :key='cfg.key'
                   :label='cfg.value.title'
                   v-model='cfg.value.value'
                   prepend-icon='mdi-cog-box'
@@ -123,7 +122,6 @@
                 )
                 v-switch.mb-3(
                   v-else-if='cfg.value.type === "boolean"'
-                  :key='cfg.key'
                   :label='cfg.value.title'
                   v-model='cfg.value.value'
                   color='primary'
@@ -135,7 +133,6 @@
                 v-textarea(
                   v-else-if='cfg.value.type === "string" && cfg.value.multiline'
                   outlined
-                  :key='cfg.key'
                   :label='cfg.value.title'
                   v-model='cfg.value.value'
                   prepend-icon='mdi-cog-box'
@@ -146,7 +143,6 @@
                 v-text-field(
                   v-else
                   outlined
-                  :key='cfg.key'
                   :label='cfg.value.title'
                   v-model='cfg.value.value'
                   prepend-icon='mdi-cog-box'
@@ -202,33 +198,78 @@
                 v-alert(outlined, :value='!target.isEnabled', color='red', icon='mdi-alert')
                   .body-2 {{$t('admin:storage.actionsInactiveWarn')}}
                 v-container.pt-0(grid-list-xl, fluid)
-                  v-layout(row, wrap, fill-height)
-                    v-flex(xs12, lg6, xl4, v-for='act of target.actions', :key='act.handler')
-                      v-card.radius-7.grey(flat, :class='$vuetify.theme.dark ? `darken-3-d5` : `lighten-3`', height='100%')
+                  v-row(, class='fill-height')
+                    v-col(cols='12', lg='6', xl='4', v-for='act of target.actions', :key='act.handler')
+                      v-card.radius-7.grey(flat, :class='$vuetify.theme.current.dark ? `darken-3-d5` : `lighten-3`', height='100%')
                         v-card-text
                           .subtitle-1(v-html='act.label')
                           .body-2.mt-4(v-html='act.hint')
                           v-btn.mx-0.mt-5(
                             @click='executeAction(target.key, act.handler)'
                             outlined
-                            :color='$vuetify.theme.dark ? `blue` : `primary`'
+                            :color='$vuetify.theme.current.dark ? `blue` : `primary`'
                             :disabled='runningAction || !target.isEnabled'
                             :loading='runningActionHandler === act.handler'
                             ) {{$t('admin:storage.actionRun')}}
 
 </template>
 
-<script>
+<script lang='ts'>
 import _ from 'lodash'
 import moment from 'moment'
 import momentDurationFormatSetup from 'moment-duration-format'
 
 import DurationPicker from '../common/duration-picker.vue'
 import { LoopingRhombusesSpinner } from 'epic-spinners'
+import { wikiStore } from '@/store/index.ts'
 import { loadingStart, loadingStop, showNotification, setLoading } from '../../helpers/root-ui-store'
 import { executeStorageAction, fetchStorageStatus, fetchStorageTargets, saveStorageTargets } from '../../helpers/storage-api'
+import type {
+  StorageConfigEntry,
+  StorageInterval,
+  StorageStatus,
+  StorageTarget,
+  StorageTargetUpdate
+} from '../../helpers/storage-api'
 
 momentDurationFormatSetup(moment)
+
+type StorageConfigValue = {
+  enum?: unknown[]
+  hint?: string
+  multiline?: boolean
+  order?: number
+  title?: string
+  type: string
+  value: unknown
+}
+
+type NormalizedStorageConfig = {
+  key: string
+  value: StorageConfigValue
+  [key: string]: unknown
+}
+
+type NormalizedStorageTarget = Omit<StorageTarget, 'config'> & {
+  config: NormalizedStorageConfig[]
+}
+
+const makeDefaultStorageTarget = (): NormalizedStorageTarget => ({
+  actions: [],
+  config: [],
+  description: '',
+  hasSchedule: false,
+  isAvailable: false,
+  isEnabled: false,
+  key: '',
+  logo: '',
+  mode: '',
+  supportedModes: [],
+  syncInterval: '',
+  syncIntervalDefault: null,
+  title: '',
+  website: ''
+})
 
 export default {
   components: {
@@ -240,12 +281,10 @@ export default {
       runningAction: false,
       runningActionHandler: '',
       selectedTarget: '',
-      target: {
-        supportedModes: []
-      },
-      targets: [],
-      status: [],
-      statusRefreshInterval: null
+      target: makeDefaultStorageTarget(),
+      targets: [] as NormalizedStorageTarget[],
+      status: [] as StorageStatus[],
+      statusRefreshInterval: null as ReturnType<typeof setInterval> | null
     }
   },
   computed: {
@@ -254,10 +293,10 @@ export default {
     }
   },
   watch: {
-    selectedTarget(newValue, oldValue) {
-      this.target = _.find(this.targets, ['key', newValue]) || {}
+    selectedTarget(newValue: string) {
+      this.target = _.find(this.targets, ['key', newValue]) || makeDefaultStorageTarget()
     },
-    targets(newValue, oldValue) {
+    targets() {
       this.selectedTarget = _.get(_.find(this.targets, ['isEnabled', true]), 'key', 'disk')
     }
   },
@@ -268,76 +307,79 @@ export default {
       this.loadStatus()
     }, 3000)
   },
-  beforeDestroy() {
+  beforeUnmount() {
     if (this.statusRefreshInterval) {
       clearInterval(this.statusRefreshInterval)
       this.statusRefreshInterval = null
     }
   },
   methods: {
-    normalizeTargets(targets) {
-      return _.cloneDeep(targets).map(str => ({
-        ...str,
-        config: _.sortBy(str.config.map(cfg => ({
-          ...cfg,
-          value: JSON.parse(cfg.value)
-        })), [t => t.value.order])
+    normalizeTargets(targets: StorageTarget[]): NormalizedStorageTarget[] {
+      return _.cloneDeep(targets).map(target => ({
+        ...target,
+        config: _.sortBy(target.config.map(config => ({
+          ...config,
+          value: JSON.parse(config.value) as StorageConfigValue
+        })), [config => config.value.order])
       }))
     },
-    storageTargetsPayload() {
-      return this.targets.map(tgt => _.pick(tgt, [
-        'isEnabled',
-        'key',
-        'config',
-        'mode',
-        'syncInterval'
-      ])).map(str => ({...str, config: str.config.map(cfg => ({...cfg, value: JSON.stringify({ v: cfg.value.value })}))}))
+    storageTargetsPayload(): StorageTargetUpdate[] {
+      return this.targets.map(target => ({
+        isEnabled: target.isEnabled,
+        key: target.key,
+        config: target.config.map((config): StorageConfigEntry => ({
+          ...config,
+          value: JSON.stringify({ v: config.value.value })
+        })),
+        mode: target.mode,
+        syncInterval: target.syncInterval
+      }))
     },
     async loadTargets() {
-      setLoading(this.$store, 'admin-storage-targets-refresh', true)
+      setLoading(wikiStore, 'admin-storage-targets-refresh', true)
       try {
         this.targets = this.normalizeTargets(await fetchStorageTargets(window.fetch.bind(window)))
       } finally {
-        setLoading(this.$store, 'admin-storage-targets-refresh', false)
+        setLoading(wikiStore, 'admin-storage-targets-refresh', false)
       }
     },
     async loadStatus() {
-      setLoading(this.$store, 'admin-storage-status-refresh', true)
+      setLoading(wikiStore, 'admin-storage-status-refresh', true)
       try {
         this.status = await fetchStorageStatus(window.fetch.bind(window))
       } finally {
-        setLoading(this.$store, 'admin-storage-status-refresh', false)
+        setLoading(wikiStore, 'admin-storage-status-refresh', false)
       }
     },
     async refresh() {
       await this.loadTargets()
-      showNotification(this.$store, {
+      showNotification(wikiStore, {
         message: 'List of storage targets has been refreshed.',
         style: 'success',
         icon: 'cached'
       })
     },
     async save() {
-      loadingStart(this.$store, 'admin-storage-savetargets')
+      loadingStart(wikiStore, 'admin-storage-savetargets')
       await saveStorageTargets(window.fetch.bind(window), this.storageTargetsPayload())
-      showNotification(this.$store, {
+      showNotification(wikiStore, {
         message: 'Storage configuration saved successfully.',
         style: 'success',
         icon: 'check'
       })
-      loadingStop(this.$store, 'admin-storage-savetargets')
+      loadingStop(wikiStore, 'admin-storage-savetargets')
     },
-    getDefaultSchedule(val) {
+    getDefaultSchedule(val: StorageInterval | undefined) {
       if (!val) { return 'N/A' }
       return moment.duration(val).format('y [years], M [months], d [days], h [hours], m [minutes]')
     },
-    async executeAction(targetKey, handler) {
-      loadingStart(this.$store, 'admin-storage-executeaction')
+    async executeAction(targetKey: string, handler: string) {
+      loadingStart(wikiStore, 'admin-storage-executeaction')
       this.runningAction = true
       this.runningActionHandler = handler
       try {
         await executeStorageAction(window.fetch.bind(window), targetKey, handler)
-        showNotification(this.$store, {
+        showNotification(wikiStore, {
           message: 'Action completed.',
           style: 'success',
           icon: 'check'
@@ -347,7 +389,7 @@ export default {
       }
       this.runningAction = false
       this.runningActionHandler = ''
-      loadingStop(this.$store, 'admin-storage-executeaction')
+      loadingStop(wikiStore, 'admin-storage-executeaction')
     }
   }
 }

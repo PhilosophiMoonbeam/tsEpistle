@@ -1,4 +1,29 @@
-const { injectPageMetadata } = require('../../helpers/page')
+const originalWIKI = global.WIKI
+
+let injectPageMetadata
+
+beforeEach(async () => {
+  vi.resetModules()
+  global.WIKI = {
+    config: {
+      lang: {
+        code: 'en'
+      }
+    },
+    data: {
+      reservedPaths: []
+    }
+  }
+  ;({ injectPageMetadata } = (await import('../../helpers/page.ts')).default)
+})
+
+afterEach(() => {
+  if (originalWIKI === undefined) {
+    delete global.WIKI
+  } else {
+    global.WIKI = originalWIKI
+  }
+})
 
 describe('helpers/page/injectPageMetadata', () => {
   const page = {

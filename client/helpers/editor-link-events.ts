@@ -1,7 +1,7 @@
 import { createEventBus } from './simple-event-bus'
 
 export const EDITOR_LINK_TO_PAGE_EVENT = 'editorLinkToPage'
-const editorLinkBus = createEventBus()
+const editorLinkBus = createEventBus<[EditorLinkPayload]>()
 
 type EditorLinkPayload = {
   locale?: string

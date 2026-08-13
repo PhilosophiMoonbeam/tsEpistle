@@ -1,8 +1,8 @@
-const fs = require('fs')
-const path = require('path')
+import fs from 'node:fs'
+import path from 'node:path'
 
 const extractScript = (source) => {
-  const match = source.match(/<script>\s*([\s\S]*?)\s*<\/script>/)
+  const match = source.match(/<script(?:\s+lang=["']ts["'])?>\s*([\s\S]*?)\s*<\/script>/)
   return match && match[1]
 }
 
@@ -42,18 +42,20 @@ describe('admin-storage save root UI facade migration guard', () => {
   const source = fs.readFileSync(componentPath, 'utf8')
   const script = extractScript(source)
   const saveMethod = script && extractMethod(script, /async\s+save\s*\(\s*\)\s*\{/)
-  const payloadMethod = script && extractMethod(script, /storageTargetsPayload\s*\(\s*\)\s*\{/)
+  const payloadMethod = script && extractMethod(script, /storageTargetsPayload\s*\(\s*\)\s*:\s*StorageTargetUpdate\[\]\s*\{/)
 
   test('save() uses root-ui-store facades for save-only root UI commits', () => {
     expect(script).not.toBeNull()
+    expect(source).toMatch(/<script\s+lang=["']ts["']>/)
     expect(saveMethod).not.toBeNull()
 
     expect(script).toMatch(/import\s+\{(?=[^}]*\bsetLoading\b)(?=[^}]*\bloadingStart\b)(?=[^}]*\bloadingStop\b)(?=[^}]*\bshowNotification\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/root-ui-store['"]/)
     expect(script).toMatch(/import\s+\{(?=[^}]*\bsaveStorageTargets\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/storage-api['"]/)
+    expect(script).toContain("import { wikiStore } from '@/store/index.ts'")
 
-    expect(saveMethod).toMatch(/\bloadingStart\s*\(\s*this\.\$store\s*,\s*['"]admin-storage-savetargets['"]\s*\)/)
-    expect(saveMethod).toMatch(/\bshowNotification\s*\(\s*this\.\$store\s*,\s*\{\s*message:\s*['"]Storage configuration saved successfully\.['"]\s*,\s*style:\s*['"]success['"]\s*,\s*icon:\s*['"]check['"]\s*\}\s*\)/)
-    expect(saveMethod).toMatch(/\bloadingStop\s*\(\s*this\.\$store\s*,\s*['"]admin-storage-savetargets['"]\s*\)/)
+    expect(saveMethod).toMatch(/\bloadingStart\s*\(\s*wikiStore\s*,\s*['"]admin-storage-savetargets['"]\s*\)/)
+    expect(saveMethod).toMatch(/\bshowNotification\s*\(\s*wikiStore\s*,\s*\{\s*message:\s*['"]Storage configuration saved successfully\.['"]\s*,\s*style:\s*['"]success['"]\s*,\s*icon:\s*['"]check['"]\s*\}\s*\)/)
+    expect(saveMethod).toMatch(/\bloadingStop\s*\(\s*wikiStore\s*,\s*['"]admin-storage-savetargets['"]\s*\)/)
 
     expect(saveMethod).not.toMatch(/this\.\$store\.commit\s*\(\s*`loadingStart`\s*,\s*['"]admin-storage-savetargets['"]\s*\)/)
     expect(saveMethod).not.toMatch(/this\.\$store\.commit\s*\(\s*['"]loadingStart['"]\s*,\s*['"]admin-storage-savetargets['"]\s*\)/)
@@ -67,17 +69,17 @@ describe('admin-storage save root UI facade migration guard', () => {
     expect(payloadMethod).not.toBeNull()
 
     expect(saveMethod).toMatch(/await\s+saveStorageTargets\s*\(\s*window\.fetch\.bind\s*\(\s*window\s*\)\s*,\s*this\.storageTargetsPayload\s*\(\s*\)\s*\)/)
-    expect(payloadMethod).toMatch(/return\s+this\.targets\.map\s*\(\s*tgt\s*=>\s*_\.pick\s*\(\s*tgt\s*,\s*\[\s*['"]isEnabled['"]\s*,\s*['"]key['"]\s*,\s*['"]config['"]\s*,\s*['"]mode['"]\s*,\s*['"]syncInterval['"]\s*\]\s*\)\s*\)\.map\s*\(\s*str\s*=>\s*\(\s*\{\s*\.\.\.str\s*,\s*config:\s*str\.config\.map\s*\(\s*cfg\s*=>\s*\(\s*\{\s*\.\.\.cfg\s*,\s*value:\s*JSON\.stringify\s*\(\s*\{\s*v:\s*cfg\.value\.value\s*\}\s*\)\s*\}\s*\)\s*\)\s*\}\s*\)\s*\)/)
-    expect(payloadMethod).not.toMatch(/JSON\.stringify\s*\(\s*cfg\.value\.value\s*\)/)
-    expect(payloadMethod).not.toMatch(/config:\s*str\.config(?!\.map)/)
+    expect(payloadMethod).toMatch(/return\s+this\.targets\.map\s*\(\s*target\s*=>\s*\(\s*\{\s*isEnabled:\s*target\.isEnabled\s*,\s*key:\s*target\.key\s*,\s*config:\s*target\.config\.map\s*\(\s*\(\s*config\s*\)\s*:\s*StorageConfigEntry\s*=>\s*\(\s*\{\s*\.\.\.config\s*,\s*value:\s*JSON\.stringify\s*\(\s*\{\s*v:\s*config\.value\.value\s*\}\s*\)\s*\}\s*\)\s*\)\s*,\s*mode:\s*target\.mode\s*,\s*syncInterval:\s*target\.syncInterval\s*\}\s*\)\s*\)/)
+    expect(payloadMethod).not.toMatch(/JSON\.stringify\s*\(\s*config\.value\.value\s*\)/)
+    expect(payloadMethod).not.toMatch(/config:\s*target\.config(?!\.map)/)
     expect(saveMethod).not.toMatch(/this\.\$apollo\.mutate/)
   })
 
   test('save() preserves operation ordering around REST save', () => {
     expect(saveMethod).not.toBeNull()
 
-    expect(saveMethod).toMatch(/\bloadingStart\s*\(\s*this\.\$store\s*,\s*['"]admin-storage-savetargets['"]\s*\)[\s\S]*?await\s+saveStorageTargets/)
-    expect(saveMethod).toMatch(/await\s+saveStorageTargets[\s\S]*?\bshowNotification\s*\(\s*this\.\$store\s*,/)
-    expect(saveMethod).toMatch(/\bshowNotification\s*\(\s*this\.\$store\s*,[\s\S]*?\bloadingStop\s*\(\s*this\.\$store\s*,\s*['"]admin-storage-savetargets['"]\s*\)/)
+    expect(saveMethod).toMatch(/\bloadingStart\s*\(\s*wikiStore\s*,\s*['"]admin-storage-savetargets['"]\s*\)[\s\S]*?await\s+saveStorageTargets/)
+    expect(saveMethod).toMatch(/await\s+saveStorageTargets[\s\S]*?\bshowNotification\s*\(\s*wikiStore\s*,/)
+    expect(saveMethod).toMatch(/\bshowNotification\s*\(\s*wikiStore\s*,[\s\S]*?\bloadingStop\s*\(\s*wikiStore\s*,\s*['"]admin-storage-savetargets['"]\s*\)/)
   })
 })

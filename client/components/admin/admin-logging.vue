@@ -1,7 +1,7 @@
 <template lang='pug'>
   v-container(fluid, grid-list-lg)
-    v-layout(row, wrap)
-      v-flex(xs12)
+    v-row()
+      v-col(cols='12')
         .admin-header
           img(src='/_assets/svg/icon-registry-editor.svg', alt='Logging', style='width: 80px;')
           .admin-header-title
@@ -42,11 +42,11 @@
                 v-form
                   .loggerlogo
                     img(:src='logger.logo', :alt='logger.title')
-                  v-subheader.pl-0 {{logger.title}}
+                  v-list-subheader.pl-0 {{logger.title}}
                   .caption {{logger.description}}
                   .caption: a(:href='logger.website') {{logger.website}}
                   v-divider.mt-3
-                  v-subheader.pl-0 Logger Configuration
+                  v-list-subheader.pl-0 Logger Configuration
                   .body-1.ml-3(v-if='!logger.config || logger.config.length < 1') This logger has no configuration options you can modify.
                   template(v-else, v-for='cfg in logger.config')
                     v-select(
@@ -85,10 +85,10 @@
                       :class='cfg.value.hint ? "mb-2" : ""'
                       )
                   v-divider.mt-3
-                  v-subheader.pl-0 Log Level
+                  v-list-subheader.pl-0 Log Level
                   .body-1.ml-3 Select the minimum error level that will be reported to this logger.
-                  v-layout(row)
-                    v-flex(xs12, md6, lg4)
+                  v-row
+                    v-col(cols='12', md='6', lg='4')
                       .pt-3
                         v-select(
                           single-line
@@ -105,13 +105,14 @@
     logging-console(v-model='showConsole')
 </template>
 
-<script>
+<script lang='ts'>
 import _ from 'lodash'
 
 import LoggingConsole from './admin-logging-console.vue'
 
-import { fetchLoggingLoggers, saveLoggingLoggers } from '../../helpers/logging-api'
-import { loadingStart, loadingStop, showNotification, pushGraphError } from '../../helpers/root-ui-store'
+import { fetchLoggingLoggers, saveLoggingLoggers, type Logger } from '../../helpers/logging-api'
+import { getErrorMessage } from '../../helpers/root-ui-store'
+import { wikiStore } from '@/store/index.ts'
 
 export default {
   components: {
@@ -120,7 +121,7 @@ export default {
   data() {
     return {
       showConsole: false,
-      loggers: [],
+      loggers: [] as Logger[],
       levels: ['error', 'warn', 'info', 'debug', 'verbose']
     }
   },
@@ -133,34 +134,34 @@ export default {
     this.loadLoggers().catch(() => {})
   },
   methods: {
-    async loadLoggers({ notifyError = true } = {}) {
-      loadingStart(this.$store, 'admin-logging-refresh')
+    async loadLoggers({ notifyError = true }: { notifyError?: boolean } = {}) {
+      wikiStore.startLoading('admin-logging-refresh')
       try {
         this.loggers = await fetchLoggingLoggers(window.fetch.bind(window), 'Logging loggers response is invalid')
         return true
       } catch (err) {
         if (notifyError) {
-          showNotification(this.$store, {
-            message: err.message,
+          wikiStore.showNotification({
+            message: getErrorMessage(err),
             style: 'red',
             icon: 'warning'
           })
         }
         throw err
       } finally {
-        loadingStop(this.$store, 'admin-logging-refresh')
+        wikiStore.stopLoading('admin-logging-refresh')
       }
     },
     async refresh() {
       await this.loadLoggers()
-      showNotification(this.$store, {
+      wikiStore.showNotification({
         message: 'List of loggers has been refreshed.',
         style: 'success',
         icon: 'cached'
       })
     },
     async save() {
-      loadingStart(this.$store, 'admin-logging-saveloggers')
+      wikiStore.startLoading('admin-logging-saveloggers')
       try {
         await saveLoggingLoggers(window.fetch.bind(window), this.loggers.map(tgt => _.pick(tgt, [
           'isEnabled',
@@ -169,15 +170,15 @@ export default {
           'level'
         ])).map(str => ({...str, config: str.config.map(cfg => ({...cfg, value: JSON.stringify({ v: cfg.value.value })}))})), 'Logging loggers update failed')
         await this.loadLoggers({ notifyError: false })
-        showNotification(this.$store, {
+        wikiStore.showNotification({
           message: 'Logging configuration saved successfully.',
           style: 'success',
           icon: 'check'
         })
       } catch (err) {
-        pushGraphError(this.$store, err)
+        wikiStore.showError(err)
       }
-      loadingStop(this.$store, 'admin-logging-saveloggers')
+      wikiStore.stopLoading('admin-logging-saveloggers')
     },
     toggleConsole() {
       this.showConsole = !this.showConsole

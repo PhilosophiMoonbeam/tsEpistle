@@ -3,7 +3,7 @@
     v-model='isShown'
     persistent
     width='1000'
-    :fullscreen='$vuetify.breakpoint.smAndDown'
+    :fullscreen='$vuetify.display.smAndDown'
     )
     .dialog-header
       v-icon(color='white') mdi-tag-text-outline
@@ -12,7 +12,7 @@
       v-btn.mx-0(
         outlined
         dark
-        @click.native='close'
+        @click='close'
         )
         v-icon(left) mdi-check
         span {{ $t('common:actions.ok') }}
@@ -42,11 +42,11 @@
               :hint='$t(`editor:props.shortDescriptionHint`)'
               )
           v-divider
-          v-card-text.grey.pt-5(:class='$vuetify.theme.dark ? `darken-3-d3` : `lighten-5`')
+          v-card-text.grey.pt-5(:class='$vuetify.theme.current.dark ? `darken-3-d3` : `lighten-5`')
             .overline.pb-5 {{$t('editor:props.path')}}
             v-container.pa-0(fluid, grid-list-lg)
-              v-layout(row, wrap)
-                v-flex(xs12, md2)
+              v-row()
+                v-col(cols='12', md='2')
                   v-select(
                     outlined
                     :label='$t(`editor:props.locale`)'
@@ -55,7 +55,7 @@
                     v-model='locale'
                     hide-details
                   )
-                v-flex(xs12, md10)
+                v-col(cols='12', md='10')
                   v-text-field(
                     outlined
                     :label='$t(`editor:props.path`)'
@@ -67,7 +67,7 @@
                     :rules='[rules.required, rules.path]'
                     )
           v-divider
-          v-card-text.grey.pt-5(:class='$vuetify.theme.dark ? `darken-3-d5` : `lighten-4`')
+          v-card-text.grey.pt-5(:class='$vuetify.theme.current.dark ? `darken-3-d5` : `lighten-4`')
             .overline.pb-5 {{$t('editor:props.categorization')}}
             v-chip-group.radius-5.mb-5(column, v-if='tags && tags.length > 0')
               v-chip(
@@ -88,7 +88,7 @@
               :loading='tagSearchLoading'
               persistent-hint
               hide-no-data
-              :search-input.sync='newTagSearch'
+              v-model:search-input='newTagSearch'
               )
         v-tab-item(transition='fade-transition', reverse-transition='fade-transition')
           v-card-text
@@ -102,7 +102,7 @@
               inset
               )
           v-divider
-          v-card-text.grey.pt-5(:class='$vuetify.theme.dark ? `darken-3-d3` : `lighten-5`')
+          v-card-text.grey.pt-5(:class='$vuetify.theme.current.dark ? `darken-3-d3` : `lighten-5`')
             v-container.pa-0(fluid, grid-list-lg)
               v-row
                 v-col(cols='6')
@@ -110,13 +110,13 @@
                     ref='menuPublishStart'
                     :close-on-content-click='false'
                     v-model='isPublishStartShown'
-                    :return-value.sync='publishStartDate'
+                    v-model:return-value='publishStartDate'
                     width='460px'
                     :disabled='!isPublished'
                     )
-                    template(v-slot:activator='{ on }')
+                    template(v-slot:activator='{ props }')
                       v-text-field(
-                        v-on='on'
+                        v-bind='props'
                         :label='$t(`editor:props.publishStart`)'
                         v-model='publishStartDate'
                         prepend-icon='mdi-calendar-check'
@@ -151,13 +151,13 @@
                     ref='menuPublishEnd'
                     :close-on-content-click='false'
                     v-model='isPublishEndShown'
-                    :return-value.sync='publishEndDate'
+                    v-model:return-value='publishEndDate'
                     width='460px'
                     :disabled='!isPublished'
                     )
-                    template(v-slot:activator='{ on }')
+                    template(v-slot:activator='{ props }')
                       v-text-field(
-                        v-on='on'
+                        v-bind='props'
                         :label='$t(`editor:props.publishEnd`)'
                         v-model='publishEndDate'
                         prepend-icon='mdi-calendar-remove'
@@ -244,9 +244,10 @@
     page-selector(:mode='pageSelectorMode', v-model='pageSelectorShown', :path='path', :locale='locale', :open-handler='setPath')
 </template>
 
-<script>
+<script lang='ts'>
+import { defineComponent } from 'vue'
 import _ from 'lodash'
-import { sync, get } from 'vuex-pathify'
+import { wikiStore } from '@/store/index.ts'
 import { searchPageTags } from '../../helpers/pages-api'
 
 import CodeMirror from 'codemirror'
@@ -255,12 +256,13 @@ import 'codemirror/mode/htmlmixed/htmlmixed.js'
 import 'codemirror/mode/css/css.js'
 
 /* global siteLangs, siteConfig */
-// eslint-disable-next-line no-useless-escape
+
 const filenamePattern = /^(?![\#\/\.\$\^\=\*\;\:\&\?\(\)\[\]\{\}\"\'\>\<\,\@\!\%\`\~\s])(?!.*[\#\/\.\$\^\=\*\;\:\&\?\(\)\[\]\{\}\"\'\>\<\,\@\!\%\`\~\s]$)[^\#\.\$\^\=\*\;\:\&\?\(\)\[\]\{\}\"\'\>\<\,\@\!\%\`\~\s]*$/
 
-export default {
+export default defineComponent({
+  emits: ['update:modelValue'],
   props: {
-    value: {
+    modelValue: {
       type: Boolean,
       default: false
     }
@@ -272,15 +274,15 @@ export default {
       pageSelectorShown: false,
       namespaces: siteLangs.length ? siteLangs.map(ns => ns.code) : [siteConfig.lang],
       newTag: '',
-      newTagSuggestions: [],
+      newTagSuggestions: [] as string[],
       newTagSearch: '',
-      tagSearchTimer: null,
+      tagSearchTimer: null as number | null,
       tagSearchLoading: false,
       currentTab: 0,
-      cm: null,
+      cm: null as CodeMirror.EditorFromTextArea | null,
       rules: {
-        required: value => !!value || 'This field is required.',
-        path: value => {
+        required: (value: string) => !!value || 'This field is required.',
+        path: (value: string) => {
           return filenamePattern.test(value) || 'Invalid path. Please ensure it does not contain special characters, or begin/end in a slash or hashtag string.'
         }
       }
@@ -288,77 +290,153 @@ export default {
   },
   computed: {
     isShown: {
-      get() { return this.value },
-      set(val) { this.$emit('input', val) }
+      get() { return this.modelValue },
+      set(val: boolean) { this.$emit('update:modelValue', val) }
     },
-    mode: get('editor/mode'),
-    title: sync('page/title'),
-    description: sync('page/description'),
-    locale: sync('page/locale'),
-    tags: sync('page/tags'),
-    path: sync('page/path'),
-    isPublished: sync('page/isPublished'),
-    publishStartDate: sync('page/publishStartDate'),
-    publishEndDate: sync('page/publishEndDate'),
-    scriptJs: sync('page/scriptJs'),
-    scriptCss: sync('page/scriptCss'),
-    hasScriptPermission: get('page/effectivePermissions@pages.script'),
-    hasStylePermission: get('page/effectivePermissions@pages.style'),
+    mode() {
+      return wikiStore.editor.mode
+    },
+    title: {
+      get() {
+        return wikiStore.page.title
+      },
+      set(value: string) {
+        wikiStore.page.title = value
+      }
+    },
+    description: {
+      get() {
+        return wikiStore.page.description
+      },
+      set(value: string) {
+        wikiStore.page.description = value
+      }
+    },
+    locale: {
+      get() {
+        return wikiStore.page.locale
+      },
+      set(value: string) {
+        wikiStore.page.locale = value
+      }
+    },
+    tags: {
+      get() {
+        return wikiStore.page.tags
+      },
+      set(value: string[]) {
+        wikiStore.page.tags = value
+      }
+    },
+    path: {
+      get() {
+        return wikiStore.page.path
+      },
+      set(value: string) {
+        wikiStore.page.path = value
+      }
+    },
+    isPublished: {
+      get() {
+        return wikiStore.page.isPublished
+      },
+      set(value: boolean) {
+        wikiStore.page.isPublished = value
+      }
+    },
+    publishStartDate: {
+      get() {
+        return wikiStore.page.publishStartDate
+      },
+      set(value: string) {
+        wikiStore.page.publishStartDate = value
+      }
+    },
+    publishEndDate: {
+      get() {
+        return wikiStore.page.publishEndDate
+      },
+      set(value: string) {
+        wikiStore.page.publishEndDate = value
+      }
+    },
+    scriptJs: {
+      get() {
+        return wikiStore.page.scriptJs
+      },
+      set(value: string) {
+        wikiStore.page.scriptJs = value
+      }
+    },
+    scriptCss: {
+      get() {
+        return wikiStore.page.scriptCss
+      },
+      set(value: string) {
+        wikiStore.page.scriptCss = value
+      }
+    },
+    hasScriptPermission() {
+      return wikiStore.page.effectivePermissions.pages.script
+    },
+    hasStylePermission() {
+      return wikiStore.page.effectivePermissions.pages.style
+    },
     pageSelectorMode () {
       return (this.mode === 'create') ? 'create' : 'move'
     }
   },
   watch: {
-    value (newValue, oldValue) {
+    modelValue (newValue: boolean) {
       if (newValue) {
         _.delay(() => {
-          this.$refs.iptTitle.focus()
+          ;(this.$refs.iptTitle as { focus: () => void }).focus()
         }, 500)
       }
     },
-    newTagSearch (newValue) {
-      clearTimeout(this.tagSearchTimer)
-      if (!this.value || _.isEmpty(newValue)) {
+    newTagSearch (newValue: string) {
+      if (this.tagSearchTimer !== null) window.clearTimeout(this.tagSearchTimer)
+      if (!this.modelValue || _.isEmpty(newValue)) {
         this.newTagSuggestions = []
         return
       }
-      this.tagSearchTimer = setTimeout(() => this.loadTagSuggestions(newValue), 500)
+      this.tagSearchTimer = window.setTimeout(() => this.loadTagSuggestions(newValue), 500)
     },
-    newTag (newValue, oldValue) {
+    newTag (newValue: string) {
       const tagClean = _.trim(newValue || '').toLowerCase()
       if (tagClean && tagClean.length > 0) {
         if (!_.includes(this.tags, tagClean)) {
           this.tags = [...this.tags, tagClean]
         }
         this.$nextTick(() => {
-          this.newTag = null
+          this.newTag = ''
         })
       }
     },
-    currentTab (newValue, oldValue) {
+    currentTab (newValue: number) {
       if (this.cm) {
         this.cm.toTextArea()
       }
       if (newValue === 2) {
         this.$nextTick(() => {
           setTimeout(() => {
-            this.loadEditor(this.$refs.codejs, 'html')
+            this.loadEditor(this.$refs.codejs as HTMLTextAreaElement, 'html')
           }, 100)
         })
       } else if (newValue === 3) {
         this.$nextTick(() => {
           setTimeout(() => {
-            this.loadEditor(this.$refs.codecss, 'css')
+            this.loadEditor(this.$refs.codecss as HTMLTextAreaElement, 'css')
           }, 100)
         })
       }
     }
   },
-  beforeDestroy() {
-    clearTimeout(this.tagSearchTimer)
+  beforeUnmount() {
+    if (this.tagSearchTimer !== null) window.clearTimeout(this.tagSearchTimer)
   },
   methods: {
-    removeTag (tag) {
+    removeTag (tag: string) {
       this.tags = _.without(this.tags, tag)
     },
     close() {
@@ -367,11 +445,11 @@ export default {
     showPathSelector() {
       this.pageSelectorShown = true
     },
-    setPath({ path, locale }) {
+    setPath({ path, locale }: { path: string, locale: string }) {
       this.locale = locale
       this.path = path
     },
-    async loadTagSuggestions(query) {
+    async loadTagSuggestions(query: string) {
       this.tagSearchLoading = true
       try {
         this.newTagSuggestions = await searchPageTags(window.fetch.bind(window), query)
@@ -382,29 +460,29 @@ export default {
         this.tagSearchLoading = false
       }
     },
-    loadEditor(ref, mode) {
-      this.cm = CodeMirror.fromTextArea(ref, {
+    loadEditor(ref: HTMLTextAreaElement, mode: 'html' | 'css') {
+      const cm = CodeMirror.fromTextArea(ref, {
         tabSize: 2,
         mode: `text/${mode}`,
         theme: 'wikijs-dark',
         lineNumbers: true,
         lineWrapping: true,
-        line: true,
         styleActiveLine: true,
         viewportMargin: 50,
         inputStyle: 'contenteditable',
         direction: 'ltr'
       })
+      this.cm = cm
       switch (mode) {
         case 'html':
-          this.cm.setValue(this.scriptJs)
-          this.cm.on('change', c => {
+          cm.setValue(this.scriptJs)
+          cm.on('change', (c: CodeMirror.Editor) => {
             this.scriptJs = c.getValue()
           })
           break
         case 'css':
-          this.cm.setValue(this.scriptCss)
-          this.cm.on('change', c => {
+          cm.setValue(this.scriptCss)
+          cm.on('change', (c: CodeMirror.Editor) => {
             this.scriptCss = c.getValue()
           })
           break
@@ -412,15 +490,15 @@ export default {
           console.warn('Invalid Editor Mode')
           break
       }
-      this.cm.setSize(null, '500px')
+      cm.setSize(null, '500px')
       this.$nextTick(() => {
-        this.cm.refresh()
-        this.cm.focus()
+        cm.refresh()
+        cm.focus()
       })
     }
   }
 
-}
+})
 </script>
 
 <style lang='scss'>

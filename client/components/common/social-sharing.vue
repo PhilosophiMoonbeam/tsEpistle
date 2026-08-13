@@ -32,15 +32,16 @@
       v-list-item-title.px-3 Whatsapp
 </template>
 
-<script>
+<script lang='ts'>
+import { defineComponent, type ComponentPublicInstance } from 'vue'
 import ClipboardJS from 'clipboard'
-import { showNotification } from '../../helpers/root-ui-store'
+import { wikiStore } from '@/store/index.ts'
 
-export default {
+export default defineComponent({
   props: {
     url: {
       type: String,
-      default: window.location.url
+      default: () => window.location.href
     },
     title: {
       type: String,
@@ -56,34 +57,37 @@ export default {
       width: 626,
       height: 436,
       left: 0,
-      top: 0
+      top: 0,
+      clipboard: null as ClipboardJS | null
     }
   },
   methods: {
-    openSocialPop (url) {
+    openSocialPop (url: string): void {
       const popupWindow = window.open(
         url,
         'sharer',
         `status=no,height=${this.height},width=${this.width},resizable=yes,left=${this.left},top=${this.top},screenX=${this.left},screenY=${this.top},toolbar=no,menubar=no,scrollbars=no,location=no,directories=no`
       )
 
-      popupWindow.focus()
+      popupWindow?.focus()
     }
   },
   mounted () {
-    const clip = new ClipboardJS(this.$refs.copyUrlButton.$el, {
-      text: () => { return this.url }
+    const copyUrlButton = this.$refs.copyUrlButton as ComponentPublicInstance
+    const copyUrlElement = copyUrlButton.$el as Element
+    this.clipboard = new ClipboardJS(copyUrlElement, {
+      text: () => this.url
     })
 
-    clip.on('success', () => {
-      showNotification(this.$store, {
+    this.clipboard.on('success', () => {
+      wikiStore.showNotification({
         style: 'success',
         message: `URL copied successfully`,
         icon: 'content-copy'
       })
     })
-    clip.on('error', () => {
-      showNotification(this.$store, {
+    this.clipboard.on('error', () => {
+      wikiStore.showNotification({
         style: 'red',
         message: `Failed to copy to clipboard`,
         icon: 'alert'
@@ -94,14 +98,17 @@ export default {
      * Center the popup on dual screens
      * http://stackoverflow.com/questions/4068373/center-a-popup-window-on-screen/32261263
      */
-    const dualScreenLeft = window.screenLeft !== undefined ? window.screenLeft : screen.left
-    const dualScreenTop = window.screenTop !== undefined ? window.screenTop : screen.top
+    const dualScreenLeft = window.screenX
+    const dualScreenTop = window.screenY
 
     const width = window.innerWidth ? window.innerWidth : (document.documentElement.clientWidth ? document.documentElement.clientWidth : screen.width)
     const height = window.innerHeight ? window.innerHeight : (document.documentElement.clientHeight ? document.documentElement.clientHeight : screen.height)
 
     this.left = ((width / 2) - (this.width / 2)) + dualScreenLeft
     this.top = ((height / 2) - (this.height / 2)) + dualScreenTop
+  },
+  beforeUnmount () {
+    this.clipboard?.destroy()
   }
-}
+})
 </script>

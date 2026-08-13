@@ -1,31 +1,60 @@
-describe('core/servers GraphQL subscription handshake', () => {
-  const apolloServerFactory = () => {
-    const instances = []
-    const ApolloServer = jest.fn().mockImplementation(function ApolloServer(options) {
-      this.options = options
-      this.applyMiddleware = jest.fn()
-      instances.push(this)
+describe('core/servers GraphQL transports', () => {
+  let previousWiki
+
+  beforeEach(() => {
+    previousWiki = global.WIKI
+  })
+
+  afterEach(() => {
+    global.WIKI = previousWiki
+    vi.doUnmock('graphql-yoga')
+    vi.doUnmock('graphql-ws/use/ws')
+    vi.doUnmock('ws')
+    vi.doUnmock('jsonwebtoken')
+    vi.doUnmock('../../graph/index.ts')
+    vi.restoreAllMocks()
+  })
+
+  const setupModule = async () => {
+    vi.resetModules()
+
+    const yoga = Object.assign(vi.fn(), {
+      graphqlEndpoint: '/graphql',
+      getEnveloped: vi.fn()
     })
+    const createYoga = vi.fn().mockReturnValue(yoga)
+    const wsServer = {
+      close: vi.fn(callback => callback())
+    }
+    const cleanup = {
+      dispose: vi.fn(() => new Promise((resolve, reject) => {
+        wsServer.close(error => error ? reject(error) : resolve())
+      }))
+    }
+    const useServer = vi.fn().mockReturnValue(cleanup)
+    const WebSocketServer = vi.fn(function () {
+      return wsServer
+    })
+    const verify = vi.fn()
 
-    return { ApolloServer, instances }
-  }
-
-  const setupModule = () => {
-    jest.resetModules()
-
-    const { ApolloServer, instances } = apolloServerFactory()
-    const verify = jest.fn()
-
-    jest.doMock('apollo-server-express', () => ({ ApolloServer }))
-    jest.doMock('jsonwebtoken', () => ({ verify }))
-    jest.doMock('../../graph', () => ({
-      typeDefs: ['type Query { ok: Boolean }'],
-      resolvers: {},
-      schemaDirectives: {}
+    vi.doMock('graphql-yoga', () => ({ createYoga }))
+    vi.doMock('graphql-ws/use/ws', () => ({ useServer }))
+    vi.doMock('ws', () => ({
+      default: { Server: WebSocketServer },
+      WebSocketServer
+    }))
+    vi.doMock('jsonwebtoken', () => ({
+      default: { verify }
+    }))
+    vi.doMock('../../graph/index.ts', () => ({
+      schema: { kind: 'schema' }
     }))
 
     global.WIKI = {
-      app: {},
+      IS_DEBUG: false,
+      app: {
+        use: vi.fn()
+      },
       config: {
         certs: {
           public: 'PUBLIC-KEY'
@@ -36,30 +65,60 @@ describe('core/servers GraphQL subscription handshake', () => {
       }
     }
 
-    const servers = require('../../core/servers')
-
-    return { servers, verify, ApolloServer, instances }
+    const { default: servers } = await import('../../core/servers.ts')
+    return { servers, createYoga, yoga, useServer, cleanup, WebSocketServer, wsServer, verify }
   }
 
-  it('registers the subscription path and applies GraphQL middleware', async () => {
-    const { servers, ApolloServer, instances } = setupModule()
+  it('mounts Yoga on the existing GraphQL endpoint', async () => {
+    const { servers, createYoga, yoga } = await setupModule()
 
     await servers.startGraphQL()
 
-    expect(ApolloServer).toHaveBeenCalledTimes(1)
-    expect(instances[0].options.subscriptions.path).toBe('/graphql-subscriptions')
-    expect(instances[0].applyMiddleware).toHaveBeenCalledWith({ app: global.WIKI.app, cors: false })
+    expect(createYoga).toHaveBeenCalledWith(expect.objectContaining({
+      schema: { kind: 'schema' },
+      graphqlEndpoint: '/graphql',
+      maskedErrors: false,
+      graphiql: false
+    }))
+    expect(global.WIKI.app.use).toHaveBeenCalledWith('/graphql', expect.any(Function))
+    const request = { kind: 'request' }
+    const response = { kind: 'response' }
+    global.WIKI.app.use.mock.calls[0][1](request, response, vi.fn())
+    expect(yoga).toHaveBeenCalledWith(request, response)
   })
 
-  it('accepts a valid token from connectionParams for manage:system users', async () => {
-    const { servers, verify, instances } = setupModule()
-    verify.mockReturnValue({ id: 7, permissions: ['manage:system'] })
+  it('attaches graphql-ws to the maintained subscription endpoint', async () => {
+    const { servers, useServer, WebSocketServer } = await setupModule()
+    const httpServer = { kind: 'http-server' }
 
     await servers.startGraphQL()
+    servers.installGraphQLSubscriptions(httpServer)
 
-    expect(instances[0].options.subscriptions.onConnect({ token: 'direct-token' }, {})).toEqual({
-      user: { id: 7, permissions: ['manage:system'] }
+    expect(WebSocketServer).toHaveBeenCalledWith({
+      server: httpServer,
+      path: '/graphql-subscriptions'
     })
+    expect(useServer).toHaveBeenCalledWith(expect.objectContaining({
+      onConnect: expect.any(Function),
+      onSubscribe: expect.any(Function)
+    }), expect.any(Object))
+  })
+
+  it('accepts a valid connection token for manage:system users', async () => {
+    const { servers, useServer, verify } = await setupModule()
+    const user = { id: 7, permissions: ['manage:system'] }
+    verify.mockReturnValue(user)
+
+    await servers.startGraphQL()
+    servers.installGraphQLSubscriptions({})
+    const protocol = useServer.mock.calls[0][0]
+    const context = {
+      connectionParams: { token: 'direct-token' },
+      extra: { request: { headers: {} } }
+    }
+    protocol.onConnect(context)
+
+    expect(context.extra.user).toBe(user)
     expect(verify).toHaveBeenCalledWith('direct-token', 'PUBLIC-KEY', {
       audience: 'urn:test-audience',
       issuer: 'urn:wiki.js',
@@ -67,43 +126,40 @@ describe('core/servers GraphQL subscription handshake', () => {
     })
   })
 
-  it('falls back to the jwt cookie when no connection param token is provided', async () => {
-    const { servers, verify, instances } = setupModule()
-    verify.mockReturnValue({ id: 9, permissions: ['manage:system'] })
+  it('falls back to the jwt cookie', async () => {
+    const { servers, verify } = await setupModule()
+    const user = { id: 9, permissions: ['manage:system'] }
+    verify.mockReturnValue(user)
 
-    await servers.startGraphQL()
-
-    expect(instances[0].options.subscriptions.onConnect({}, {
-      upgradeReq: {
-        headers: {
-          cookie: 'foo=bar; jwt=cookie-token'
-        }
-      }
-    })).toEqual({
-      user: { id: 9, permissions: ['manage:system'] }
-    })
+    expect(servers.authenticateGraphQLSubscription({}, {
+      headers: { cookie: 'foo=bar; jwt=cookie-token' }
+    })).toBe(user)
     expect(verify).toHaveBeenCalledWith('cookie-token', 'PUBLIC-KEY', expect.any(Object))
   })
 
-  it('rejects invalid JWT verification as Unauthorized', async () => {
-    const { servers, verify, instances } = setupModule()
-    verify.mockImplementation(() => {
+  it('rejects missing, invalid, and underprivileged credentials', async () => {
+    const { servers, verify } = await setupModule()
+    const request = { headers: {} }
+
+    expect(() => servers.authenticateGraphQLSubscription({}, request)).toThrow('Unauthorized')
+    verify.mockImplementationOnce(() => {
       throw new Error('invalid token')
     })
-
-    await servers.startGraphQL()
-
-    expect(() => instances[0].options.subscriptions.onConnect({ token: 'invalid-token' }, {})).toThrow('Unauthorized')
+    expect(() => servers.authenticateGraphQLSubscription({ token: 'invalid-token' }, request)).toThrow('Unauthorized')
+    verify.mockReturnValueOnce({ id: 8, permissions: ['read:pages'] })
+    expect(() => servers.authenticateGraphQLSubscription({ token: 'underprivileged-token' }, request)).toThrow('Unauthorized')
   })
 
-  it('rejects missing or underprivileged subscription auth as Unauthorized', async () => {
-    const { servers, verify, instances } = setupModule()
+  it('disposes the graphql-ws handler and WebSocket server', async () => {
+    const { servers, cleanup, wsServer } = await setupModule()
+    const httpServer = { kind: 'http-server' }
 
     await servers.startGraphQL()
+    servers.installGraphQLSubscriptions(httpServer)
+    await servers.disposeGraphQLSubscriptions(httpServer)
 
-    expect(() => instances[0].options.subscriptions.onConnect({}, {})).toThrow('Unauthorized')
-
-    verify.mockReturnValueOnce({ id: 8, permissions: ['read:pages'] })
-    expect(() => instances[0].options.subscriptions.onConnect({ token: 'underprivileged-token' }, {})).toThrow('Unauthorized')
+    expect(cleanup.dispose).toHaveBeenCalledTimes(1)
+    expect(wsServer.close).toHaveBeenCalledTimes(1)
+    expect(servers.servers.graph.subscriptions).toEqual([])
   })
 })

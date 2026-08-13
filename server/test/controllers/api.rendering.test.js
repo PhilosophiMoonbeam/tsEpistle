@@ -1,32 +1,35 @@
-jest.mock('express', () => {
+vi.mock('express', () => {
   const routers = []
 
-  return {
+  const expressMock = {
     Router: () => {
       const router = {
-        get: jest.fn(),
-        post: jest.fn(),
-        patch: jest.fn(),
-        put: jest.fn(),
-        delete: jest.fn(),
-        use: jest.fn()
+        get: vi.fn(),
+        post: vi.fn(),
+        patch: vi.fn(),
+        put: vi.fn(),
+        delete: vi.fn(),
+        use: vi.fn()
       }
       routers.push(router)
       return router
     },
     __routers: routers
   }
+
+  return { default: expressMock, ...expressMock }
 })
+
+import * as express from 'express'
 
 describe('controllers/api rendering endpoints', () => {
   beforeEach(() => {
-    jest.resetModules()
-    const express = require('express')
+    vi.resetModules()
     express.__routers.length = 0
 
     global.WIKI = {
       auth: {
-        checkAccess: jest.fn()
+        checkAccess: vi.fn()
       },
       data: {
         renderers: [
@@ -64,8 +67,8 @@ describe('controllers/api rendering endpoints', () => {
       },
       models: {
         renderers: {
-          query: jest.fn(),
-          getRenderers: jest.fn().mockResolvedValue([
+          query: vi.fn(),
+          getRenderers: vi.fn().mockResolvedValue([
             {
               key: 'markdownCore',
               isEnabled: true,
@@ -91,54 +94,81 @@ describe('controllers/api rendering endpoints', () => {
     }
   })
 
-  const loadRenderersHandler = () => {
-    const express = require('express')
-    require('../../controllers/api/rendering')
+  const loadRenderersHandler = async () => {
+    await import('../../controllers/api/rendering.ts')
     const router = express.__routers[0]
     return router.get.mock.calls.find(([path]) => path === '/renderers')[1]
   }
 
-  const loadSaveRenderersHandler = () => {
-    const express = require('express')
-    require('../../controllers/api/rendering')
+  const loadSaveRenderersHandler = async () => {
+    await import('../../controllers/api/rendering.ts')
     const router = express.__routers[0]
     return router.post.mock.calls.find(([path]) => path === '/renderers')[1]
   }
 
   const mockRendererPatch = () => {
-    const where = jest.fn().mockResolvedValue(1)
-    const patch = jest.fn(() => ({ where }))
+    const where = vi.fn().mockResolvedValue(1)
+    const patch = vi.fn(() => ({ where }))
     global.WIKI.models.renderers.query.mockReturnValue({ patch })
     return { patch, where }
   }
 
-  it('registers rendering renderers route', () => {
-    const handler = loadRenderersHandler()
+  it('registers rendering renderers route', async () => {
+    const handler = await loadRenderersHandler()
 
     expect(typeof handler).toBe('function')
   })
 
-  it('registers rendering renderers save route', () => {
-    const handler = loadSaveRenderersHandler()
+  it('registers rendering renderers save route', async () => {
+    const handler = await loadSaveRenderersHandler()
 
     expect(typeof handler).toBe('function')
   })
 
-  it('is mounted by the API index router', () => {
-    const express = require('express')
-    expect(() => require('../../controllers/api')).not.toThrow()
-    const apiRouter = express.__routers[0]
+  it('is mounted by the API index router', async () => {
+    const modulePaths = [
+      '../../controllers/api/analytics.ts',
+      '../../controllers/api/assets.ts',
+      '../../controllers/api/auth.ts',
+      '../../controllers/api/comments.ts',
+      '../../controllers/api/contribute.ts',
+      '../../controllers/api/groups.ts',
+      '../../controllers/api/locales.ts',
+      '../../controllers/api/logging.ts',
+      '../../controllers/api/mail.ts',
+      '../../controllers/api/navigation.ts',
+      '../../controllers/api/pages.ts',
+      '../../controllers/api/rendering.ts',
+      '../../controllers/api/search.ts',
+      '../../controllers/api/site.ts',
+      '../../controllers/api/storage.ts',
+      '../../controllers/api/system.ts',
+      '../../controllers/api/theming.ts',
+      '../../controllers/api/users.ts'
+    ]
+    for (const modulePath of modulePaths) {
+      vi.doMock(modulePath, () => ({ default: {} }))
+    }
 
-    expect(apiRouter.use).toHaveBeenCalledWith('/rendering', expect.any(Object))
+    try {
+      await expect(import('../../controllers/api/index.ts')).resolves.toBeDefined()
+      const apiRouter = express.__routers[0]
+
+      expect(apiRouter.use).toHaveBeenCalledWith('/rendering', expect.any(Object))
+    } finally {
+      for (const modulePath of modulePaths) {
+        vi.doUnmock(modulePath)
+      }
+    }
   })
 
   it('returns 403 for unauthorized renderer requests without querying renderers', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(false)
-    const handler = loadRenderersHandler()
+    const handler = await loadRenderersHandler()
     const req = { user: { permissions: [] } }
-    const res = { sendStatus: jest.fn(), json: jest.fn() }
+    const res = { sendStatus: vi.fn(), json: vi.fn() }
 
-    await handler(req, res, jest.fn())
+    await handler(req, res, vi.fn())
 
     expect(global.WIKI.auth.checkAccess).toHaveBeenCalledWith(req.user, ['manage:system'])
     expect(res.sendStatus).toHaveBeenCalledWith(403)
@@ -148,10 +178,10 @@ describe('controllers/api rendering endpoints', () => {
 
   it('returns allowlisted renderer fields without raw props or internal fields', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
-    const handler = loadRenderersHandler()
-    const res = { sendStatus: jest.fn(), json: jest.fn() }
+    const handler = await loadRenderersHandler()
+    const res = { sendStatus: vi.fn(), json: vi.fn() }
 
-    await handler({ user: {} }, res, jest.fn())
+    await handler({ user: {} }, res, vi.fn())
 
     expect(global.WIKI.models.renderers.getRenderers).toHaveBeenCalledWith()
     expect(res.json).toHaveBeenCalledWith([
@@ -187,10 +217,10 @@ describe('controllers/api rendering endpoints', () => {
 
   it('merges config with renderer metadata as JSON strings sorted by config key and omits unknown config keys', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
-    const handler = loadRenderersHandler()
-    const res = { sendStatus: jest.fn(), json: jest.fn() }
+    const handler = await loadRenderersHandler()
+    const res = { sendStatus: vi.fn(), json: vi.fn() }
 
-    await handler({ user: {} }, res, jest.fn())
+    await handler({ user: {} }, res, vi.fn())
 
     const config = res.json.mock.calls[0][0][0].config
     expect(config.map(row => row.key)).toEqual(['flavor', 'safeMode'])
@@ -219,11 +249,11 @@ describe('controllers/api rendering endpoints', () => {
 
   it('returns JSON 403 for unauthorized renderer save requests without patching renderers', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(false)
-    const handler = loadSaveRenderersHandler()
+    const handler = await loadSaveRenderersHandler()
     const req = { user: { permissions: [] }, body: { renderers: [] } }
-    const res = { status: jest.fn().mockReturnThis(), json: jest.fn(), sendStatus: jest.fn() }
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn(), sendStatus: vi.fn() }
 
-    await handler(req, res, jest.fn())
+    await handler(req, res, vi.fn())
 
     expect(global.WIKI.auth.checkAccess).toHaveBeenCalledWith(req.user, ['manage:system'])
     expect(res.status).toHaveBeenCalledWith(403)
@@ -234,7 +264,7 @@ describe('controllers/api rendering endpoints', () => {
   it('saves renderer configuration with GraphQL mutation parity', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
     const { patch, where } = mockRendererPatch()
-    const handler = loadSaveRenderersHandler()
+    const handler = await loadSaveRenderersHandler()
     const req = {
       user: { permissions: ['manage:system'] },
       body: {
@@ -256,9 +286,9 @@ describe('controllers/api rendering endpoints', () => {
         ]
       }
     }
-    const res = { status: jest.fn().mockReturnThis(), json: jest.fn(), sendStatus: jest.fn() }
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn(), sendStatus: vi.fn() }
 
-    await handler(req, res, jest.fn())
+    await handler(req, res, vi.fn())
 
     expect(patch).toHaveBeenNthCalledWith(1, {
       isEnabled: true,
@@ -279,11 +309,11 @@ describe('controllers/api rendering endpoints', () => {
 
   it('rejects invalid renderer save payloads before patching', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
-    const handler = loadSaveRenderersHandler()
+    const handler = await loadSaveRenderersHandler()
     const req = { user: {}, body: { renderers: [{ key: 'markdownCore', isEnabled: 'yes', config: [] }] } }
-    const res = { status: jest.fn().mockReturnThis(), json: jest.fn(), sendStatus: jest.fn() }
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn(), sendStatus: vi.fn() }
 
-    await handler(req, res, jest.fn())
+    await handler(req, res, vi.fn())
 
     expect(res.status).toHaveBeenCalledWith(400)
     expect(res.json).toHaveBeenCalledWith({ error: 'Invalid renderers payload' })
@@ -293,11 +323,11 @@ describe('controllers/api rendering endpoints', () => {
   it('rejects malformed renderer config JSON during save', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
     mockRendererPatch()
-    const handler = loadSaveRenderersHandler()
+    const handler = await loadSaveRenderersHandler()
     const req = { user: {}, body: { renderers: [{ key: 'markdownCore', isEnabled: true, config: [{ key: 'safeMode', value: '{bad' }] }] } }
-    const res = { status: jest.fn().mockReturnThis(), json: jest.fn(), sendStatus: jest.fn() }
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn(), sendStatus: vi.fn() }
 
-    await handler(req, res, jest.fn())
+    await handler(req, res, vi.fn())
 
     expect(res.status).toHaveBeenCalledWith(400)
     expect(res.json).toHaveBeenCalledWith({ error: 'Invalid renderers payload' })
@@ -305,13 +335,13 @@ describe('controllers/api rendering endpoints', () => {
 
   it('returns JSON errors when renderer save fails unexpectedly', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
-    const patch = jest.fn(() => ({ where: jest.fn().mockRejectedValue(new Error('database unavailable')) }))
+    const patch = vi.fn(() => ({ where: vi.fn().mockRejectedValue(new Error('database unavailable')) }))
     global.WIKI.models.renderers.query.mockReturnValue({ patch })
-    const handler = loadSaveRenderersHandler()
+    const handler = await loadSaveRenderersHandler()
     const req = { user: {}, body: { renderers: [{ key: 'markdownCore', isEnabled: true, config: [] }] } }
-    const res = { status: jest.fn().mockReturnThis(), json: jest.fn(), sendStatus: jest.fn() }
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn(), sendStatus: vi.fn() }
 
-    await handler(req, res, jest.fn())
+    await handler(req, res, vi.fn())
 
     expect(res.status).toHaveBeenCalledWith(500)
     expect(res.json).toHaveBeenCalledWith({ error: 'database unavailable' })
@@ -321,9 +351,9 @@ describe('controllers/api rendering endpoints', () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
     const err = new Error('rendering failed')
     global.WIKI.models.renderers.getRenderers.mockRejectedValue(err)
-    const handler = loadRenderersHandler()
-    const res = { sendStatus: jest.fn(), json: jest.fn() }
-    const next = jest.fn()
+    const handler = await loadRenderersHandler()
+    const res = { sendStatus: vi.fn(), json: vi.fn() }
+    const next = vi.fn()
 
     await handler({ user: {} }, res, next)
 

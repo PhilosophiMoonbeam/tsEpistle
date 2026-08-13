@@ -1,9 +1,12 @@
-/** @jest-environment node */
+/** @vitest-environment node */
 
-const fs = require('fs')
-const os = require('os')
-const path = require('path')
-const http = require('http')
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+import http from 'node:http'
+import express from 'express'
+
+const originalWIKI = global.WIKI
 
 const CRLF = '\r\n'
 
@@ -58,7 +61,9 @@ const request = ({ port, body, boundary }) => new Promise((resolve, reject) => {
       let json = null
       try {
         json = JSON.parse(text)
-      } catch (err) {}
+      } catch {
+        // Non-JSON responses are exposed through the text field.
+      }
       resolve({
         status: res.statusCode,
         text,
@@ -71,7 +76,7 @@ const request = ({ port, body, boundary }) => new Promise((resolve, reject) => {
 })
 
 const setupServer = async ({ maxFileSize = 1024 * 1024, maxFiles = 1 } = {}) => {
-  jest.resetModules()
+  vi.resetModules()
 
   tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'wiki-upload-integration-'))
   global.WIKI = {
@@ -84,19 +89,18 @@ const setupServer = async ({ maxFileSize = 1024 * 1024, maxFiles = 1 } = {}) => 
       }
     },
     auth: {
-      checkAccess: jest.fn().mockReturnValue(true)
+      checkAccess: vi.fn().mockReturnValue(true)
     },
     models: {
       assetFolders: {
-        getHierarchy: jest.fn()
+        getHierarchy: vi.fn()
       },
       assets: {
-        upload: jest.fn().mockResolvedValue()
+        upload: vi.fn().mockResolvedValue()
       }
     }
   }
 
-  const express = require('express')
   const app = express()
 
   app.use((req, res, next) => {
@@ -107,9 +111,10 @@ const setupServer = async ({ maxFileSize = 1024 * 1024, maxFiles = 1 } = {}) => 
     next()
   })
 
-  const uploadController = require('../../controllers/upload')
+  const uploadController = (await import('../../controllers/upload.ts')).default
   app.use(uploadController)
   app.use((err, req, res, next) => {
+    void next
     res.status(599).json({
       name: err.name,
       code: err.code,
@@ -142,7 +147,11 @@ afterEach(async () => {
     fs.rmSync(tempRoot, { recursive: true, force: true })
     tempRoot = null
   }
-  delete global.WIKI
+  if (originalWIKI === undefined) {
+    delete global.WIKI
+  } else {
+    global.WIKI = originalWIKI
+  }
 })
 
 describe('controllers/upload real multipart integration', () => {

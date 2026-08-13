@@ -1,14 +1,23 @@
 describe('graph/resolvers/authentication metrics state', () => {
+  let previousWiki
   let saveToDb
   let initMetrics
 
   beforeEach(() => {
-    jest.resetModules()
-    saveToDb = jest.fn().mockResolvedValue(true)
-    initMetrics = jest.fn().mockResolvedValue(true)
+    vi.resetModules()
+    previousWiki = global.WIKI
+    saveToDb = vi.fn().mockResolvedValue(true)
+    initMetrics = vi.fn().mockResolvedValue(true)
 
     global.WIKI = {
+      ROOTPATH: '/test',
+      auth: {
+        strategies: {}
+      },
       config: {
+        flags: {
+          ldapdebug: false
+        },
         metrics: {
           isEnabled: false
         }
@@ -16,20 +25,39 @@ describe('graph/resolvers/authentication metrics state', () => {
       configSvc: {
         saveToDb
       },
+      data: {
+        authentication: []
+      },
+      events: {
+        outbound: {
+          emit: vi.fn()
+        }
+      },
+      logger: {
+        warn: vi.fn()
+      },
       metrics: {
         init: initMetrics
+      },
+      models: {
+        authentication: {},
+        users: {}
       }
     }
   })
 
-  it('returns the current metrics state', () => {
-    const resolver = require('../../graph/resolvers/authentication')
+  afterEach(() => {
+    global.WIKI = previousWiki
+  })
+
+  it('returns the current metrics state', async () => {
+    const { default: resolver } = await import('../../graph/resolvers/authentication.ts')
 
     expect(resolver.AuthenticationQuery.metricsState()).toBe(false)
   })
 
   it('updates the metrics state and reinitializes metrics', async () => {
-    const resolver = require('../../graph/resolvers/authentication')
+    const { default: resolver } = await import('../../graph/resolvers/authentication.ts')
 
     const result = await resolver.AuthenticationMutation.setMetricsState(null, { enabled: true }, null)
 
@@ -41,7 +69,7 @@ describe('graph/resolvers/authentication metrics state', () => {
 
   it('rolls back the runtime state when saving fails', async () => {
     saveToDb.mockRejectedValueOnce(new Error('save failed'))
-    const resolver = require('../../graph/resolvers/authentication')
+    const { default: resolver } = await import('../../graph/resolvers/authentication.ts')
 
     const result = await resolver.AuthenticationMutation.setMetricsState(null, { enabled: true }, null)
 
@@ -52,7 +80,7 @@ describe('graph/resolvers/authentication metrics state', () => {
 
   it('rolls back the in-memory state when metrics initialization fails', async () => {
     initMetrics.mockRejectedValueOnce(new Error('init failed'))
-    const resolver = require('../../graph/resolvers/authentication')
+    const { default: resolver } = await import('../../graph/resolvers/authentication.ts')
 
     const result = await resolver.AuthenticationMutation.setMetricsState(null, { enabled: true }, null)
 

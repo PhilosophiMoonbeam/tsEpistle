@@ -1,6 +1,6 @@
 <template lang="pug">
   v-card(flat)
-    v-card-title.pb-4(:class='$vuetify.theme.dark ? `grey darken-3-d3` : `grey lighten-5`')
+    v-card-title.pb-4(:class='$vuetify.theme.current.dark ? `grey darken-3-d3` : `grey lighten-5`')
       v-text-field(
         outlined
         flat
@@ -19,7 +19,7 @@
       :items='group.users',
       :headers='headers',
       :search='search'
-      :page.sync='pagination'
+      v-model:page='pagination'
       :items-per-page='15'
       @page-count='pageCount = $event'
       must-sort,
@@ -27,20 +27,20 @@
     )
       template(v-slot:item.actions='{ item }')
         v-menu(bottom, right, min-width='200')
-          template(v-slot:activator='{ on }')
-            v-btn(icon, v-on='on', small)
+          template(v-slot:activator='{ props }')
+            v-btn(icon, v-bind='props', small)
               v-icon.grey--text.text--darken-1 mdi-dots-horizontal
           v-list(dense, nav)
             v-list-item(:to='`/users/` + item.id')
-              v-list-item-action: v-icon(color='primary') mdi-account-outline
-              v-list-item-content
+              div.v-list-item-action: v-icon(color='primary') mdi-account-outline
+              div.v-list-item-content
                 v-list-item-title View User Profile
             template(v-if='item.id !== 2')
               v-list-item(@click='unassignUser(item.id)')
-                v-list-item-action: v-icon(color='orange') mdi-account-remove-outline
-                v-list-item-content
+                div.v-list-item-action: v-icon(color='orange') mdi-account-remove-outline
+                div.v-list-item-content
                   v-list-item-title Unassign
-      template(slot='no-data')
+      template(v-slot:no-data)
         v-alert.ma-3(icon='mdi-alert', outlined) No users to display.
     .text-center.py-2(v-if='group.users.length > 15')
       v-pagination(v-model='pagination', :length='pageCount')
@@ -48,17 +48,22 @@
     user-search(v-model='searchUserDialog', @select='assignUser')
 </template>
 
-<script>
+<script lang='ts'>
+import type { PropType } from 'vue'
+
 import UserSearch from '../common/user-search.vue'
 
-import { assignGroupUser, unassignGroupUser } from '../../helpers/groups-api'
-import { loadingStart, loadingStop, showNotification } from '../../helpers/root-ui-store'
+import { assignGroupUser, createEmptyGroupEditorState, unassignGroupUser, type GroupEditorState } from '../../helpers/groups-api'
+import { getErrorMessage } from '../../helpers/root-ui-store'
+import { wikiStore } from '@/store/index.ts'
+import type { UserSearchRow } from '../../helpers/users-api'
 
 export default {
+  emits: ['refresh', 'update:modelValue'],
   props: {
-    value: {
-      type: Object,
-      default: () => ({})
+    modelValue: {
+      type: Object as PropType<GroupEditorState>,
+      default: createEmptyGroupEditorState
     }
   },
   components: {
@@ -80,56 +85,49 @@ export default {
   },
   computed: {
     group: {
-      get() { return this.value },
-      set(val) { this.$emit('input', val) }
-    },
-    pages () {
-      if (this.pagination.rowsPerPage == null || this.pagination.totalItems == null) {
-        return 0
-      }
-
-      return Math.ceil(this.pagination.totalItems / this.pagination.rowsPerPage)
+      get(): GroupEditorState { return this.modelValue },
+      set(val: GroupEditorState) { this.$emit('update:modelValue', val) }
     }
   },
   methods: {
-    async assignUser({ id, email, name }) {
-      loadingStart(this.$store, 'admin-groups-assign')
+    async assignUser(user: UserSearchRow) {
+      wikiStore.startLoading('admin-groups-assign')
       try {
-        await assignGroupUser(window.fetch.bind(window), this.group.id, id)
-        showNotification(this.$store, {
+        await assignGroupUser(window.fetch.bind(window), this.group.id, user.id)
+        wikiStore.showNotification({
           style: 'success',
           message: `User has been assigned to ${this.group.name}.`,
           icon: 'assignment_ind'
         })
         this.$emit('refresh')
       } catch (err) {
-        showNotification(this.$store, {
+        wikiStore.showNotification({
           style: 'red',
-          message: err.message,
+          message: getErrorMessage(err),
           icon: 'warning'
         })
       } finally {
-        loadingStop(this.$store, 'admin-groups-assign')
+        wikiStore.stopLoading('admin-groups-assign')
       }
     },
-    async unassignUser(id) {
-      loadingStart(this.$store, 'admin-groups-unassign')
+    async unassignUser(id: number) {
+      wikiStore.startLoading('admin-groups-unassign')
       try {
         await unassignGroupUser(window.fetch.bind(window), this.group.id, id)
-        showNotification(this.$store, {
+        wikiStore.showNotification({
           style: 'success',
           message: `User has been unassigned from ${this.group.name}.`,
           icon: 'assignment_ind'
         })
         this.$emit('refresh')
       } catch (err) {
-        showNotification(this.$store, {
+        wikiStore.showNotification({
           style: 'red',
-          message: err.message,
+          message: getErrorMessage(err),
           icon: 'warning'
         })
       } finally {
-        loadingStop(this.$store, 'admin-groups-unassign')
+        wikiStore.stopLoading('admin-groups-unassign')
       }
     }
   }

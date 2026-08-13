@@ -12,23 +12,23 @@
         .body-2.mt-3 When telemetry is enabled, only the following data is transmitted:
         v-list
           v-list-item
-            v-list-item-avatar: v-icon mdi-information-outline
-            v-list-item-content
+            v-avatar: v-icon mdi-information-outline
+            div.v-list-item-content
               v-list-item-title.body-2 Version of Wiki.js installed
               v-list-item-subtitle.caption: em e.g. v2.0.123
           v-list-item
-            v-list-item-avatar: v-icon mdi-information-outline
-            v-list-item-content
+            v-avatar: v-icon mdi-information-outline
+            div.v-list-item-content
               v-list-item-title.body-2 Basic OS information
               v-list-item-subtitle.caption: em Platform (Linux, macOS or Windows), Total CPU cores and DB type (PostgreSQL, MySQL, MariaDB, SQLite or SQL Server)
           v-list-item
-            v-list-item-avatar: v-icon mdi-information-outline
-            v-list-item-content
+            v-avatar: v-icon mdi-information-outline
+            div.v-list-item-content
               v-list-item-title.body-2 Crash debug data
               v-list-item-subtitle.caption: em Stack trace of the error
           v-list-item
-            v-list-item-avatar: v-icon mdi-information-outline
-            v-list-item-content
+            v-avatar: v-icon mdi-information-outline
+            div.v-list-item-content
               v-list-item-title.body-2 Setup analytics
               v-list-item-subtitle.caption: em Installation checkpoint reached
         .body-2 Note that crash debug data is stored for a maximum of 30 days while analytics are stored for a maximum of 16 months, after which it is permanently deleted.
@@ -37,14 +37,14 @@
         .body-2.mt-3 Telemetry is used by developers to improve Wiki.js, mostly for the following reasons:
         v-list(dense)
           v-list-item
-            v-list-item-avatar: v-icon mdi-chevron-right
-            v-list-item-content: v-list-item-title: .body-2 Identify critical bugs more easily and fix them in a timely manner.
+            v-avatar: v-icon mdi-chevron-right
+            div.v-list-item-content: v-list-item-title: .body-2 Identify critical bugs more easily and fix them in a timely manner.
           v-list-item
-            v-list-item-avatar: v-icon mdi-chevron-right
-            v-list-item-content: v-list-item-title: .body-2 Understand the upgrade rate of current installations.
+            v-avatar: v-icon mdi-chevron-right
+            div.v-list-item-content: v-list-item-title: .body-2 Understand the upgrade rate of current installations.
           v-list-item
-            v-list-item-avatar: v-icon mdi-chevron-right
-            v-list-item-content: v-list-item-title: .body-2  Optimize performance and testing scenarios based on most popular environments.
+            v-avatar: v-icon mdi-chevron-right
+            div.v-list-item-content: v-list-item-title: .body-2  Optimize performance and testing scenarios based on most popular environments.
         .body-2 Only authorized developers have access to the data. It is not shared to any 3rd party nor is it used for any other application than improving Wiki.js.
         v-divider.my-4
         .subtitle-2 Settings
@@ -59,7 +59,7 @@
         v-divider.my-4
         .subtitle-2.mt-3.grey--text.text--darken-1 Client ID
         .body-2.mt-2 {{clientId}}
-      v-card-chin
+      div.v-card-chin
         v-btn.px-3(depressed, color='success', @click='updateTelemetry')
           v-icon(left) mdi-chevron-right
           | Save Changes
@@ -70,20 +70,22 @@
 
 </template>
 
-<script>
+<script lang='ts'>
+import { defineComponent } from 'vue'
 import { fetchSystemTelemetry, resetSystemTelemetryClientId, updateSystemTelemetry } from '../../helpers/system-api'
-import { loadingStart, loadingStop, showNotification, pushGraphError } from '../../helpers/root-ui-store'
+import { wikiStore } from '@/store/index.ts'
 
-export default {
+export default defineComponent({
   data() {
     return {
+      loading: false,
       telemetry: false,
       clientId: 'N/A'
     }
   },
   methods: {
     async loadTelemetry({ notifyError = true } = {}) {
-      loadingStart(this.$store, 'admin-utilities-telemetry-refresh')
+      wikiStore.startLoading('admin-utilities-telemetry-refresh')
 
       try {
         const telemetryState = await fetchSystemTelemetry(window.fetch.bind(window))
@@ -91,47 +93,47 @@ export default {
         this.clientId = telemetryState.telemetryClientId || 'N/A'
       } catch (err) {
         if (notifyError) {
-          pushGraphError(this.$store, err)
+          wikiStore.showError(err)
         }
         throw err
       } finally {
-        loadingStop(this.$store, 'admin-utilities-telemetry-refresh')
+        wikiStore.stopLoading('admin-utilities-telemetry-refresh')
       }
     },
     async updateTelemetry() {
       this.loading = true
-      loadingStart(this.$store, 'admin-utilities-telemetry-set')
+      wikiStore.startLoading('admin-utilities-telemetry-set')
 
       try {
         await updateSystemTelemetry(window.fetch.bind(window), this.telemetry)
-        showNotification(this.$store, {
+        wikiStore.showNotification({
           message: 'Telemetry updated successfully.',
           style: 'success',
           icon: 'check'
         })
       } catch (err) {
-        pushGraphError(this.$store, err)
+        wikiStore.showError(err)
       } finally {
-        loadingStop(this.$store, 'admin-utilities-telemetry-set')
+        wikiStore.stopLoading('admin-utilities-telemetry-set')
         this.loading = false
       }
     },
     async resetClientId() {
       this.loading = true
-      loadingStart(this.$store, 'admin-utilities-telemetry-resetid')
+      wikiStore.startLoading('admin-utilities-telemetry-resetid')
 
       try {
         await resetSystemTelemetryClientId(window.fetch.bind(window))
         await this.loadTelemetry({ notifyError: false })
-        showNotification(this.$store, {
+        wikiStore.showNotification({
           message: 'Telemetry Client ID reset successfully.',
           style: 'success',
           icon: 'check'
         })
       } catch (err) {
-        pushGraphError(this.$store, err)
+        wikiStore.showError(err)
       } finally {
-        loadingStop(this.$store, 'admin-utilities-telemetry-resetid')
+        wikiStore.stopLoading('admin-utilities-telemetry-resetid')
         this.loading = false
       }
     }
@@ -139,7 +141,7 @@ export default {
   created () {
     this.loadTelemetry().catch(() => {})
   }
-}
+})
 </script>
 
 <style lang='scss'>

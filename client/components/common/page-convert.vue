@@ -25,20 +25,21 @@
           v-model='newEditor'
         )
         .caption.mt-5 {{$t('common:page.convertSubtitle')}}
-      v-card-chin
+      div.v-card-chin
         v-spacer
         v-btn(text, @click='discard', :disabled='loading') {{$t('common:actions.cancel')}}
         v-btn.px-4(color='grey darken-3', @click='convertPage', :loading='loading').white--text {{$t('common:actions.convert')}}
 </template>
 
-<script>
-import { get } from 'vuex-pathify'
+<script lang='ts'>
+import { defineComponent } from 'vue'
+import { wikiStore } from '@/store/index.ts'
 import { convertPage } from '../../helpers/pages-api'
-import { loadingStart, loadingStop, pushGraphError } from '../../helpers/root-ui-store'
 
-export default {
+export default defineComponent({
+  emits: ['update:modelValue'],
   props: {
-    value: {
+    modelValue: {
       type: Boolean,
       default: false
     }
@@ -51,39 +52,39 @@ export default {
   },
   computed: {
     isShown: {
-      get() { return this.value },
-      set(val) { this.$emit('input', val) }
+      get(): boolean { return this.modelValue },
+      set(val: boolean) { this.$emit('update:modelValue', val) }
     },
-    pageTitle: get('page/title'),
-    pagePath: get('page/path'),
-    pageLocale: get('page/locale'),
-    pageId: get('page/id'),
-    pageEditor: get('page/editor')
+    pageTitle(): string { return wikiStore.page.title },
+    pagePath(): string { return wikiStore.page.path },
+    pageLocale(): string { return wikiStore.page.locale },
+    pageId(): number { return wikiStore.page.id },
+    pageEditor(): string { return wikiStore.page.editor }
   },
   mounted () {
     this.newEditor = this.pageEditor
   },
   methods: {
-    discard() {
+    discard(): void {
       this.isShown = false
     },
-    async convertPage() {
+    async convertPage(): Promise<void> {
       this.loading = true
-      loadingStart(this.$store, 'page-convert')
+      wikiStore.startLoading('page-convert')
       this.$nextTick(async () => {
         try {
           await convertPage(window.fetch.bind(window), this.pageId, this.newEditor)
           this.isShown = false
           window.location.assign(`/e/${this.pageLocale}/${this.pagePath}`)
         } catch (err) {
-          pushGraphError(this.$store, err)
+          wikiStore.showError(err)
         }
-        loadingStop(this.$store, 'page-convert')
+        wikiStore.stopLoading('page-convert')
         this.loading = false
       })
     }
   }
-}
+})
 </script>
 
 <style lang='scss'>

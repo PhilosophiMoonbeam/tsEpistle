@@ -1,38 +1,41 @@
-jest.mock('express', () => {
+vi.mock('express', () => {
   const routers = []
 
-  return {
+  const expressMock = {
     Router: () => {
       const router = {
-        get: jest.fn(),
-        post: jest.fn(),
-        patch: jest.fn(),
-        put: jest.fn(),
-        delete: jest.fn(),
-        use: jest.fn()
+        get: vi.fn(),
+        post: vi.fn(),
+        patch: vi.fn(),
+        put: vi.fn(),
+        delete: vi.fn(),
+        use: vi.fn()
       }
       routers.push(router)
       return router
     },
     __routers: routers
   }
+
+  return { default: expressMock, ...expressMock }
 })
+
+import * as express from 'express'
 
 describe('controllers/api search endpoints', () => {
   beforeEach(() => {
-    jest.resetModules()
-    const express = require('express')
+    vi.resetModules()
     express.__routers.length = 0
 
     global.WIKI = {
       auth: {
-        checkAccess: jest.fn()
+        checkAccess: vi.fn()
       },
       data: {
         searchEngine: {
           key: 'beta',
-          rebuild: jest.fn().mockResolvedValue(true),
-          deactivate: jest.fn().mockResolvedValue(true)
+          rebuild: vi.fn().mockResolvedValue(true),
+          deactivate: vi.fn().mockResolvedValue(true)
         },
         searchEngines: [
           {
@@ -76,9 +79,9 @@ describe('controllers/api search endpoints', () => {
       },
       models: {
         searchEngines: {
-          query: jest.fn(),
-          initEngine: jest.fn().mockResolvedValue(true),
-          getSearchEngines: jest.fn().mockResolvedValue([
+          query: vi.fn(),
+          initEngine: vi.fn().mockResolvedValue(true),
+          getSearchEngines: vi.fn().mockResolvedValue([
             {
               key: 'beta',
               isEnabled: true,
@@ -107,14 +110,14 @@ describe('controllers/api search endpoints', () => {
         }
       },
       logger: {
-        warn: jest.fn()
+        warn: vi.fn()
       }
     }
 
     global.WIKI.models.searchEngines.query.mockImplementation(() => {
       const query = {
-        patch: jest.fn().mockReturnThis(),
-        where: jest.fn().mockResolvedValue(1)
+        patch: vi.fn().mockReturnThis(),
+        where: vi.fn().mockResolvedValue(1)
       }
       global.WIKI.models.searchEngines.__lastQuery = query
       global.WIKI.models.searchEngines.__queries = global.WIKI.models.searchEngines.__queries || []
@@ -123,9 +126,8 @@ describe('controllers/api search endpoints', () => {
     })
   })
 
-  const loadHandlers = () => {
-    const express = require('express')
-    require('../../controllers/api/search')
+  const loadHandlers = async () => {
+    await import('../../controllers/api/search.ts')
     const router = express.__routers[0]
     return {
       engines: router.get.mock.calls.find(([path]) => path === '/engines')[1],
@@ -134,31 +136,60 @@ describe('controllers/api search endpoints', () => {
     }
   }
 
-  const loadEnginesHandler = () => loadHandlers().engines
+  const loadEnginesHandler = async () => (await loadHandlers()).engines
 
-  it('registers search routes', () => {
-    const handlers = loadHandlers()
+  it('registers search routes', async () => {
+    const handlers = await loadHandlers()
 
     expect(typeof handlers.engines).toBe('function')
     expect(typeof handlers.saveEngines).toBe('function')
     expect(typeof handlers.rebuildIndex).toBe('function')
   })
 
-  it('is mounted by the API index router', () => {
-    const express = require('express')
-    expect(() => require('../../controllers/api')).not.toThrow()
-    const apiRouter = express.__routers[0]
+  it('is mounted by the API index router', async () => {
+    const modulePaths = [
+      '../../controllers/api/analytics.ts',
+      '../../controllers/api/assets.ts',
+      '../../controllers/api/auth.ts',
+      '../../controllers/api/comments.ts',
+      '../../controllers/api/contribute.ts',
+      '../../controllers/api/groups.ts',
+      '../../controllers/api/locales.ts',
+      '../../controllers/api/logging.ts',
+      '../../controllers/api/mail.ts',
+      '../../controllers/api/navigation.ts',
+      '../../controllers/api/pages.ts',
+      '../../controllers/api/rendering.ts',
+      '../../controllers/api/search.ts',
+      '../../controllers/api/site.ts',
+      '../../controllers/api/storage.ts',
+      '../../controllers/api/system.ts',
+      '../../controllers/api/theming.ts',
+      '../../controllers/api/users.ts'
+    ]
+    for (const modulePath of modulePaths) {
+      vi.doMock(modulePath, () => ({ default: {} }))
+    }
 
-    expect(apiRouter.use).toHaveBeenCalledWith('/search', expect.any(Object))
+    try {
+      await expect(import('../../controllers/api/index.ts')).resolves.toBeDefined()
+      const apiRouter = express.__routers[0]
+
+      expect(apiRouter.use).toHaveBeenCalledWith('/search', expect.any(Object))
+    } finally {
+      for (const modulePath of modulePaths) {
+        vi.doUnmock(modulePath)
+      }
+    }
   })
 
   it('returns 403 for unauthorized engine requests without loading models', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(false)
-    const handler = loadEnginesHandler()
+    const handler = await loadEnginesHandler()
     const req = { user: { permissions: [] } }
-    const res = { sendStatus: jest.fn(), json: jest.fn() }
+    const res = { sendStatus: vi.fn(), json: vi.fn() }
 
-    await handler(req, res, jest.fn())
+    await handler(req, res, vi.fn())
 
     expect(global.WIKI.auth.checkAccess).toHaveBeenCalledWith(req.user, ['manage:system'])
     expect(res.sendStatus).toHaveBeenCalledWith(403)
@@ -168,10 +199,10 @@ describe('controllers/api search endpoints', () => {
 
   it('loads search engines for authorized requests', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
-    const handler = loadEnginesHandler()
-    const res = { sendStatus: jest.fn(), json: jest.fn() }
+    const handler = await loadEnginesHandler()
+    const res = { sendStatus: vi.fn(), json: vi.fn() }
 
-    await handler({ user: { permissions: ['manage:system'] } }, res, jest.fn())
+    await handler({ user: { permissions: ['manage:system'] } }, res, vi.fn())
 
     expect(global.WIKI.models.searchEngines.getSearchEngines).toHaveBeenCalledTimes(1)
     expect(res.sendStatus).not.toHaveBeenCalled()
@@ -180,10 +211,10 @@ describe('controllers/api search endpoints', () => {
 
   it('returns engines sorted by title with only allowlisted top-level fields', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
-    const handler = loadEnginesHandler()
-    const res = { sendStatus: jest.fn(), json: jest.fn() }
+    const handler = await loadEnginesHandler()
+    const res = { sendStatus: vi.fn(), json: vi.fn() }
 
-    await handler({ user: {} }, res, jest.fn())
+    await handler({ user: {} }, res, vi.fn())
 
     expect(res.json).toHaveBeenCalledWith([
       {
@@ -218,10 +249,10 @@ describe('controllers/api search endpoints', () => {
 
   it('serializes only declared config metadata and persisted values as JSON strings sorted by config key', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
-    const handler = loadEnginesHandler()
-    const res = { sendStatus: jest.fn(), json: jest.fn() }
+    const handler = await loadEnginesHandler()
+    const res = { sendStatus: vi.fn(), json: vi.fn() }
 
-    await handler({ user: {} }, res, jest.fn())
+    await handler({ user: {} }, res, vi.fn())
 
     const betaConfig = res.json.mock.calls[0][0].find(row => row.key === 'beta').config
     expect(betaConfig.map(row => row.key)).toEqual(['enabledFlag', 'endpoint'])
@@ -253,9 +284,9 @@ describe('controllers/api search endpoints', () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
     const err = new Error('search failed')
     global.WIKI.models.searchEngines.getSearchEngines.mockRejectedValue(err)
-    const handler = loadEnginesHandler()
-    const res = { sendStatus: jest.fn(), json: jest.fn() }
-    const next = jest.fn()
+    const handler = await loadEnginesHandler()
+    const res = { sendStatus: vi.fn(), json: vi.fn() }
+    const next = vi.fn()
 
     await handler({ user: {} }, res, next)
 
@@ -288,8 +319,8 @@ describe('controllers/api search endpoints', () => {
 
   it('returns JSON 403 for unauthorized engine saves without mutating models', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(false)
-    const { saveEngines } = loadHandlers()
-    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+    const { saveEngines } = await loadHandlers()
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
 
     await saveEngines(createSavePayload(), res)
 
@@ -303,8 +334,8 @@ describe('controllers/api search endpoints', () => {
 
   it('saves search engines with GraphQL parity and activates the selected engine', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
-    const { saveEngines } = loadHandlers()
-    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+    const { saveEngines } = await loadHandlers()
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
 
     await saveEngines(createSavePayload(), res)
 
@@ -333,11 +364,11 @@ describe('controllers/api search endpoints', () => {
 
   it('does not deactivate the current search engine when the selected engine is unchanged', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
-    const { saveEngines } = loadHandlers()
+    const { saveEngines } = await loadHandlers()
     const req = createSavePayload()
     req.body.engines[0].isEnabled = false
     req.body.engines[1].isEnabled = true
-    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
 
     await saveEngines(req, res)
 
@@ -350,8 +381,8 @@ describe('controllers/api search endpoints', () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
     const deactivateError = new Error('deactivate failed')
     global.WIKI.data.searchEngine.deactivate.mockRejectedValueOnce(deactivateError)
-    const { saveEngines } = loadHandlers()
-    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+    const { saveEngines } = await loadHandlers()
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
 
     await saveEngines(createSavePayload(), res)
 
@@ -362,8 +393,8 @@ describe('controllers/api search endpoints', () => {
 
   it('returns JSON 400 for malformed engine save payloads', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
-    const { saveEngines } = loadHandlers()
-    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+    const { saveEngines } = await loadHandlers()
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
 
     await saveEngines({ body: { engines: [{ key: 'alpha', isEnabled: 'yes', config: [] }] }, user: {} }, res)
 
@@ -375,10 +406,10 @@ describe('controllers/api search endpoints', () => {
 
   it('returns JSON 400 for malformed engine save config JSON', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
-    const { saveEngines } = loadHandlers()
+    const { saveEngines } = await loadHandlers()
     const req = createSavePayload()
     req.body.engines[0].config[0].value = '{not-json'
-    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
 
     await saveEngines(req, res)
 
@@ -390,12 +421,12 @@ describe('controllers/api search endpoints', () => {
   it('returns JSON 500 for unexpected engine save failures', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
     const query = {
-      patch: jest.fn().mockReturnThis(),
-      where: jest.fn().mockRejectedValue(new Error('save failed'))
+      patch: vi.fn().mockReturnThis(),
+      where: vi.fn().mockRejectedValue(new Error('save failed'))
     }
     global.WIKI.models.searchEngines.query.mockReturnValue(query)
-    const { saveEngines } = loadHandlers()
-    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+    const { saveEngines } = await loadHandlers()
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
 
     await saveEngines(createSavePayload(), res)
 
@@ -406,9 +437,9 @@ describe('controllers/api search endpoints', () => {
 
   it('returns 403 for unauthorized rebuild requests without rebuilding', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(false)
-    const { rebuildIndex } = loadHandlers()
+    const { rebuildIndex } = await loadHandlers()
     const req = { user: { permissions: [] } }
-    const res = { sendStatus: jest.fn(), json: jest.fn() }
+    const res = { sendStatus: vi.fn(), json: vi.fn() }
 
     await rebuildIndex(req, res)
 
@@ -420,8 +451,8 @@ describe('controllers/api search endpoints', () => {
 
   it('rebuilds the search index for authorized requests', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
-    const { rebuildIndex } = loadHandlers()
-    const res = { sendStatus: jest.fn(), json: jest.fn() }
+    const { rebuildIndex } = await loadHandlers()
+    const res = { sendStatus: vi.fn(), json: vi.fn() }
 
     await rebuildIndex({ user: { permissions: ['manage:system'] } }, res)
 
@@ -433,8 +464,8 @@ describe('controllers/api search endpoints', () => {
   it('returns JSON error messages for search index rebuild failures', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
     global.WIKI.data.searchEngine.rebuild.mockRejectedValueOnce(new Error('index failed'))
-    const { rebuildIndex } = loadHandlers()
-    const res = { sendStatus: jest.fn(), json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const { rebuildIndex } = await loadHandlers()
+    const res = { sendStatus: vi.fn(), json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await rebuildIndex({ user: { permissions: ['manage:system'] } }, res)
 

@@ -1,23 +1,22 @@
 <template lang="pug">
   v-card(flat)
     v-container.px-3.pb-3.pt-3(fluid, grid-list-md)
-      v-layout(row, wrap)
-        v-flex(xs12, v-if='group.isSystem')
+      v-row()
+        v-col(cols='12', v-if='group.isSystem')
           v-alert.radius-7.mb-0(
             color='orange darken-2'
-            :class='$vuetify.theme.dark ? "grey darken-4" : "orange lighten-5"'
+            :class='$vuetify.theme.current.dark ? "grey darken-4" : "orange lighten-5"'
             outlined
             :value='true'
             icon='mdi-lock-outline'
             ) This is a system group. Some permissions cannot be modified.
-        v-flex(xs12, md6, lg4, v-for='pmGroup in permissions', :key='pmGroup.category')
-          v-card.md2(flat, :class='$vuetify.theme.dark ? "grey darken-3-d5" : "grey lighten-5"')
+        v-col(cols='12', md='6', lg='4', v-for='pmGroup in permissions', :key='pmGroup.category')
+          v-card.md2(flat, :class='$vuetify.theme.current.dark ? "grey darken-3-d5" : "grey lighten-5"')
             .overline.px-5.pt-5.pb-3.grey--text.text--darken-2 {{pmGroup.category}}
             v-card-text.pt-0
-              template(v-for='(pm, idx) in pmGroup.items')
+              template(v-for='(pm, idx) in pmGroup.items', :key='pm.permission')
                 v-checkbox.pt-0(
                   style='justify-content: space-between;'
-                  :key='pm.permission'
                   :label='pm.permission'
                   :hint='pm.hint'
                   persistent-hint
@@ -30,12 +29,17 @@
                 v-divider.mt-3(v-if='idx < pmGroup.items.length - 1')
 </template>
 
-<script>
+<script lang='ts'>
+import type { PropType } from 'vue'
+
+import { createEmptyGroupEditorState, type GroupEditorState } from '../../helpers/groups-api'
+
 export default {
+  emits: ['update:modelValue'],
   props: {
-    value: {
-      type: Object,
-      default: () => ({})
+    modelValue: {
+      type: Object as PropType<GroupEditorState>,
+      default: createEmptyGroupEditorState
     }
   },
   data() {
@@ -216,8 +220,8 @@ export default {
   },
   computed: {
     group: {
-      get() { return this.value },
-      set(val) { this.$emit('input', val) }
+      get(): GroupEditorState { return this.modelValue },
+      set(val: GroupEditorState) { this.$emit('update:modelValue', val) }
     }
   }
 }

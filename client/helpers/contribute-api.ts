@@ -1,21 +1,6 @@
-interface JsonHeaders {
-  get: (name: string) => string | null
-}
+type FetchImpl = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>
 
-interface JsonResponse {
-  ok: boolean
-  headers?: JsonHeaders
-  json: () => Promise<unknown>
-}
-
-type FetchImpl = (input: string, init: {
-  credentials: string
-  headers: {
-    Accept: string
-  }
-}) => Promise<JsonResponse>
-
-interface ContributorRow {
+export interface ContributorRow {
   id: string
   source: string
   name: string
@@ -25,7 +10,7 @@ interface ContributorRow {
   avatar: string | null
 }
 
-async function parseJsonResponse (response: JsonResponse, fallbackMessage: string): Promise<unknown> {
+async function parseJsonResponse (response: Response, fallbackMessage: string): Promise<unknown> {
   const hasHeaderReader = response && response.headers && typeof response.headers.get === 'function'
   const contentType = hasHeaderReader ? response.headers!.get('content-type') || '' : ''
 

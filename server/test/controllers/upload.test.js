@@ -1,33 +1,35 @@
-jest.mock('express', () => {
+import path from 'node:path'
+
+const uploadMocks = vi.hoisted(() => {
   const router = {
-    get: jest.fn(),
-    post: jest.fn(),
-    use: jest.fn()
+    get: vi.fn(),
+    post: vi.fn(),
+    use: vi.fn()
   }
+  const arrayHandler = vi.fn((req, res, next) => next())
+  const array = vi.fn(() => arrayHandler)
+  const multer = vi.fn(() => ({ array }))
 
-  return {
-    Router: () => router,
-    __router: router
-  }
+  return { router, arrayHandler, array, multer }
 })
 
-jest.mock('multer', () => {
-  const arrayHandler = jest.fn((req, res, next) => next())
-  const array = jest.fn(() => arrayHandler)
-  const multer = jest.fn(() => ({ array }))
-
-  multer.__array = array
-  multer.__arrayHandler = arrayHandler
-
-  return multer
+vi.mock('express', () => {
+  const express = {
+    Router: () => uploadMocks.router
+  }
+  return { default: express }
 })
 
-const path = require('path')
+vi.mock('multer', () => ({
+  default: uploadMocks.multer
+}))
+
+const originalWIKI = global.WIKI
 
 const makeRes = () => ({
-  status: jest.fn().mockReturnThis(),
-  json: jest.fn(),
-  send: jest.fn()
+  status: vi.fn().mockReturnThis(),
+  json: vi.fn(),
+  send: vi.fn()
 })
 
 const makeFile = overrides => ({
@@ -50,12 +52,11 @@ const makeReq = overrides => ({
   ...overrides
 })
 
-const loadHandlers = () => {
-  const express = require('express')
-  require('../../controllers/upload')
+const loadHandlers = async () => {
+  await import('../../controllers/upload.ts')
 
-  const postCall = express.__router.post.mock.calls.find(([routePath]) => routePath === '/u')
-  const getCall = express.__router.get.mock.calls.find(([routePath]) => routePath === '/u')
+  const postCall = uploadMocks.router.post.mock.calls.find(([routePath]) => routePath === '/u')
+  const getCall = uploadMocks.router.get.mock.calls.find(([routePath]) => routePath === '/u')
 
   return {
     postCall,
@@ -68,18 +69,14 @@ const loadHandlers = () => {
 
 describe('controllers/upload endpoints', () => {
   beforeEach(() => {
-    jest.resetModules()
-
-    const express = require('express')
-    express.__router.get.mockClear()
-    express.__router.post.mockClear()
-    express.__router.use.mockClear()
-
-    const multer = require('multer')
-    multer.mockClear()
-    multer.__array.mockClear()
-    multer.__arrayHandler.mockClear()
-    multer.__arrayHandler.mockImplementation((req, res, next) => next())
+    vi.resetModules()
+    uploadMocks.router.get.mockClear()
+    uploadMocks.router.post.mockClear()
+    uploadMocks.router.use.mockClear()
+    uploadMocks.multer.mockClear()
+    uploadMocks.array.mockClear()
+    uploadMocks.arrayHandler.mockClear()
+    uploadMocks.arrayHandler.mockImplementation((req, res, next) => next())
 
     global.WIKI = {
       ROOTPATH: '/wiki/root',
@@ -91,45 +88,52 @@ describe('controllers/upload endpoints', () => {
         }
       },
       auth: {
-        checkAccess: jest.fn().mockReturnValue(true)
+        checkAccess: vi.fn().mockReturnValue(true)
       },
       models: {
         assetFolders: {
-          getHierarchy: jest.fn()
+          getHierarchy: vi.fn()
         },
         assets: {
-          upload: jest.fn().mockResolvedValue()
+          upload: vi.fn().mockResolvedValue()
         }
       }
     }
   })
 
-  it('registers upload routes', () => {
-    const { postCall, getCall } = loadHandlers()
+  afterEach(() => {
+    if (originalWIKI === undefined) {
+      delete global.WIKI
+    } else {
+      global.WIKI = originalWIKI
+    }
+  })
+
+  it('registers upload routes', async () => {
+    const { postCall, getCall } = await loadHandlers()
 
     expect(postCall).toEqual(['/u', expect.any(Function), expect.any(Function)])
     expect(getCall).toEqual(['/u', expect.any(Function)])
   })
 
   it('returns the upload health response', async () => {
-    const { healthHandler } = loadHandlers()
+    const { healthHandler } = await loadHandlers()
     const res = makeRes()
 
-    await healthHandler({}, res, jest.fn())
+    await healthHandler({}, res, vi.fn())
 
     expect(res.json).toHaveBeenCalledWith({ ok: true })
   })
 
-  it('configures multer with the upload directory, limits and media field', () => {
-    const { uploadMiddleware } = loadHandlers()
-    const multer = require('multer')
+  it('configures multer with the upload directory, limits and media field', async () => {
+    const { uploadMiddleware } = await loadHandlers()
     const req = {}
     const res = {}
-    const next = jest.fn()
+    const next = vi.fn()
 
     uploadMiddleware(req, res, next)
 
-    expect(multer).toHaveBeenCalledWith({
+    expect(uploadMocks.multer).toHaveBeenCalledWith({
       dest: path.resolve('/wiki/root', 'data', 'uploads'),
       limits: {
         fileSize: 12345,
@@ -137,12 +141,12 @@ describe('controllers/upload endpoints', () => {
       },
       defParamCharset: 'utf8'
     })
-    expect(multer.__array).toHaveBeenCalledWith('mediaUpload')
-    expect(multer.__arrayHandler).toHaveBeenCalledWith(req, res, next)
+    expect(uploadMocks.array).toHaveBeenCalledWith('mediaUpload')
+    expect(uploadMocks.arrayHandler).toHaveBeenCalledWith(req, res, next)
   })
 
   it('rejects users without upload permissions before processing files', async () => {
-    const { uploadHandler } = loadHandlers()
+    const { uploadHandler } = await loadHandlers()
     const req = makeReq({
       user: {
         id: 7,
@@ -151,7 +155,7 @@ describe('controllers/upload endpoints', () => {
     })
     const res = makeRes()
 
-    await uploadHandler(req, res, jest.fn())
+    await uploadHandler(req, res, vi.fn())
 
     expect(res.status).toHaveBeenCalledWith(403)
     expect(res.json).toHaveBeenCalledWith({
@@ -164,11 +168,11 @@ describe('controllers/upload endpoints', () => {
   })
 
   it('rejects empty upload payloads', async () => {
-    const { uploadHandler } = loadHandlers()
+    const { uploadHandler } = await loadHandlers()
     const req = makeReq({ files: [] })
     const res = makeRes()
 
-    await uploadHandler(req, res, jest.fn())
+    await uploadHandler(req, res, vi.fn())
 
     expect(res.status).toHaveBeenCalledWith(400)
     expect(res.json).toHaveBeenCalledWith({
@@ -179,13 +183,13 @@ describe('controllers/upload endpoints', () => {
   })
 
   it('rejects multiple files in one request', async () => {
-    const { uploadHandler } = loadHandlers()
+    const { uploadHandler } = await loadHandlers()
     const req = makeReq({
       files: [makeFile({ originalname: 'one.png' }), makeFile({ originalname: 'two.png' })]
     })
     const res = makeRes()
 
-    await uploadHandler(req, res, jest.fn())
+    await uploadHandler(req, res, vi.fn())
 
     expect(res.status).toHaveBeenCalledWith(400)
     expect(res.json).toHaveBeenCalledWith({
@@ -199,11 +203,11 @@ describe('controllers/upload endpoints', () => {
     ['missing metadata', {}],
     ['invalid metadata json', { mediaUpload: 'not-json' }]
   ])('rejects %s', async (label, body) => {
-    const { uploadHandler } = loadHandlers()
+    const { uploadHandler } = await loadHandlers()
     const req = makeReq({ body })
     const res = makeRes()
 
-    await uploadHandler(req, res, jest.fn())
+    await uploadHandler(req, res, vi.fn())
 
     expect(res.status).toHaveBeenCalledWith(400)
     expect(res.json).toHaveBeenCalledWith({
@@ -216,7 +220,7 @@ describe('controllers/upload endpoints', () => {
   })
 
   it('normalizes folderId 0 to root and uploads with sanitized filename', async () => {
-    const { uploadHandler } = loadHandlers()
+    const { uploadHandler } = await loadHandlers()
     const req = makeReq({
       files: [makeFile({ originalname: 'My File,Name;# V1.PNG' })],
       body: {
@@ -225,7 +229,7 @@ describe('controllers/upload endpoints', () => {
     })
     const res = makeRes()
 
-    await uploadHandler(req, res, jest.fn())
+    await uploadHandler(req, res, vi.fn())
 
     expect(global.WIKI.models.assetFolders.getHierarchy).not.toHaveBeenCalled()
     expect(global.WIKI.auth.checkAccess).toHaveBeenCalledWith(req.user, ['write:assets'], {
@@ -247,7 +251,7 @@ describe('controllers/upload endpoints', () => {
       { slug: 'images' }
     ])
 
-    const { uploadHandler } = loadHandlers()
+    const { uploadHandler } = await loadHandlers()
     const req = makeReq({
       body: {
         mediaUpload: JSON.stringify({ folderId: 42 })
@@ -255,7 +259,7 @@ describe('controllers/upload endpoints', () => {
     })
     const res = makeRes()
 
-    await uploadHandler(req, res, jest.fn())
+    await uploadHandler(req, res, vi.fn())
 
     expect(global.WIKI.models.assetFolders.getHierarchy).toHaveBeenCalledWith(42)
     expect(global.WIKI.auth.checkAccess).toHaveBeenCalledWith(req.user, ['write:assets'], {
@@ -274,7 +278,7 @@ describe('controllers/upload endpoints', () => {
   it('returns 400 when folder hierarchy lookup fails', async () => {
     global.WIKI.models.assetFolders.getHierarchy.mockRejectedValueOnce(new Error('db unavailable'))
 
-    const { uploadHandler } = loadHandlers()
+    const { uploadHandler } = await loadHandlers()
     const req = makeReq({
       body: {
         mediaUpload: JSON.stringify({ folderId: 42 })
@@ -282,7 +286,7 @@ describe('controllers/upload endpoints', () => {
     })
     const res = makeRes()
 
-    await uploadHandler(req, res, jest.fn())
+    await uploadHandler(req, res, vi.fn())
 
     expect(res.status).toHaveBeenCalledWith(400)
     expect(res.json).toHaveBeenCalledWith({
@@ -296,11 +300,11 @@ describe('controllers/upload endpoints', () => {
   it('rejects uploads when path-level asset access fails', async () => {
     global.WIKI.auth.checkAccess.mockReturnValueOnce(false)
 
-    const { uploadHandler } = loadHandlers()
+    const { uploadHandler } = await loadHandlers()
     const req = makeReq()
     const res = makeRes()
 
-    await uploadHandler(req, res, jest.fn())
+    await uploadHandler(req, res, vi.fn())
 
     expect(res.status).toHaveBeenCalledWith(403)
     expect(res.json).toHaveBeenCalledWith({

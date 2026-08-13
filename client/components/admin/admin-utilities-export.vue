@@ -33,7 +33,7 @@
         .body-2 Depending on your selection, the archive could contain sensitive data such as site configuration keys and hashed user passwords. Ensure the exported archive is treated accordingly.
         .body-2 For example, you may want to encrypt the archive if stored for backup purposes.
 
-    v-card-chin
+    div.v-card-chin
       v-btn.px-3(depressed, color='deep-orange darken-2', :disabled='entities.length < 1', @click='startExport').ml-0
         v-icon(left, color='white') mdi-database-export
         span.white--text Start Export
@@ -95,19 +95,32 @@
           span {{errorMessage}}
 </template>
 
-<script>
+<script lang='ts'>
+import { defineComponent } from 'vue'
 import { SelfBuildingSquareSpinner } from 'epic-spinners'
 
 import { fetchSystemExportStatus, startSystemExport } from '../../helpers/system-api'
-import { pushGraphError } from '../../helpers/root-ui-store'
+import { wikiStore } from '@/store/index.ts'
 
-export default {
+type ExportEntity = 'assets' | 'comments' | 'navigation' | 'pages' | 'history' | 'settings' | 'groups' | 'users'
+
+type ExportEntityChoice = {
+  key: ExportEntity
+  label: string
+  hint: string
+}
+
+function getErrorMessage (err: unknown): string {
+  return err instanceof Error ? err.message : String(err)
+}
+
+export default defineComponent({
   components: {
     SelfBuildingSquareSpinner
   },
   data() {
     return {
-      entities: [],
+      entities: [] as ExportEntity[],
       filePath: './data/export',
       isLoading: false,
       isSuccess: false,
@@ -117,7 +130,7 @@ export default {
     }
   },
   computed: {
-    entityChoices () {
+    entityChoices (): ExportEntityChoice[] {
       return [
         {
           key: 'assets',
@@ -189,7 +202,7 @@ export default {
           }
         }
       } catch (err) {
-        this.errorMessage = err.message
+        this.errorMessage = getErrorMessage(err)
         this.isLoading = false
         this.isFailed = true
       }
@@ -208,15 +221,15 @@ export default {
           // -> Check for progress
           this.checkProgress()
         } catch (err) {
-          this.errorMessage = err.message
+          this.errorMessage = getErrorMessage(err)
           this.isFailed = true
-          pushGraphError(this.$store, err)
+          wikiStore.showError(err)
           this.isLoading = false
         }
       }, 1500)
     }
   }
-}
+})
 </script>
 
 <style lang='scss'>

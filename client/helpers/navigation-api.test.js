@@ -1,4 +1,4 @@
-const { fetchNavigation, saveNavigation } = require('./navigation-api')
+import { fetchNavigation, saveNavigation } from './navigation-api.ts'
 
 function createJsonResponse (payload, ok = true) {
   return {
@@ -12,7 +12,7 @@ function createJsonResponse (payload, ok = true) {
 
 describe('navigation api helper', () => {
   test('fetches and validates navigation config and tree', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({
       config: { mode: 'MIXED', extra: 'ignored' },
       tree: [
         {
@@ -44,19 +44,19 @@ describe('navigation api helper', () => {
   })
 
   test('rejects malformed navigation fetch payloads', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ config: { mode: 'invalid' }, tree: [] }))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ config: { mode: 'invalid' }, tree: [] }))
 
     await expect(fetchNavigation(fetchImpl, 'Bad navigation payload')).rejects.toThrow('Bad navigation payload')
   })
 
   test('surfaces REST JSON error fields for failed navigation fetches', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ error: 'navigation denied' }, false))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ error: 'navigation denied' }, false))
 
     await expect(fetchNavigation(fetchImpl, 'Bad navigation fetch')).rejects.toThrow('navigation denied')
   })
 
   test('rejects non-JSON successful navigation fetch responses', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue({
+    const fetchImpl = vi.fn().mockResolvedValue({
       ok: true,
       headers: {
         get: () => 'text/plain'
@@ -68,7 +68,7 @@ describe('navigation api helper', () => {
 
   test('saves navigation with same-origin JSON PUT options', async () => {
     const tree = [{ locale: 'en', items: [{ id: 'home', kind: 'link' }] }]
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ message: 'Navigation saved successfully.' }))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ message: 'Navigation saved successfully.' }))
 
     await expect(saveNavigation(fetchImpl, tree, 'MIXED')).resolves.toEqual({ message: 'Navigation saved successfully.' })
     expect(fetchImpl).toHaveBeenCalledWith('/_api/navigation', {
@@ -83,25 +83,25 @@ describe('navigation api helper', () => {
   })
 
   test('rejects malformed navigation save success payloads', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ message: '' }))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ message: '' }))
 
     await expect(saveNavigation(fetchImpl, [], 'TREE', 'Bad navigation save')).rejects.toThrow('Bad navigation save')
   })
 
   test('surfaces REST JSON error fields for failed navigation saves', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ error: 'navigation denied' }, false))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ error: 'navigation denied' }, false))
 
     await expect(saveNavigation(fetchImpl, [], 'TREE', 'Bad navigation save')).rejects.toThrow('navigation denied')
   })
 
   test('surfaces REST JSON message fields for failed navigation saves', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ message: 'navigation mode invalid' }, false))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ message: 'navigation mode invalid' }, false))
 
     await expect(saveNavigation(fetchImpl, [], 'TREE', 'Bad navigation save')).rejects.toThrow('navigation mode invalid')
   })
 
   test('rejects non-JSON successful navigation save responses', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue({
+    const fetchImpl = vi.fn().mockResolvedValue({
       ok: true,
       headers: {
         get: () => 'text/plain'

@@ -1,7 +1,7 @@
 <template lang='pug'>
   v-container(fluid, grid-list-lg)
-    v-layout(row, wrap)
-      v-flex(xs12)
+    v-row()
+      v-col(cols='12')
         .admin-header
           img.animated.fadeInUp(src='/_assets/svg/icon-male-user.svg', :alt='$t(`admin:users.edit`)', style='width: 80px;')
           .admin-header-title
@@ -26,51 +26,51 @@
           v-btn.ml-3.animated.fadeInDown.wait-p3s(color='grey', icon, outlined, to='/users')
             v-icon mdi-arrow-left
           v-menu(offset-y, origin='top right')
-            template(v-slot:activator='{ on }')
-              v-btn.ml-3.animated.fadeInDown.wait-p2s(color='black', v-on='on', depressed, dark)
+            template(v-slot:activator='{ props }')
+              v-btn.ml-3.animated.fadeInDown.wait-p2s(color='black', v-bind='props', depressed, dark)
                 span Actions
                 v-icon(right) mdi-chevron-down
             v-list(dense, nav)
               v-list-item(v-if='!user.isActive', @click='activateUser')
-                v-list-item-icon
+                div.v-list-item-icon
                   v-icon(color='purple') mdi-account-key
                 v-list-item-title Activate
               v-list-item(v-else, @click='deactivateUser', :disabled='user.id == currentUserId || user.isSystem')
-                v-list-item-icon
+                div.v-list-item-icon
                   v-icon(color='purple') mdi-account-cancel
                 v-list-item-title Deactivate
               v-list-item(@click='verifyUser', :disabled='user.isVerified')
-                v-list-item-icon
+                div.v-list-item-icon
                   v-icon(color='blue') mdi-account-check
                 v-list-item-title Set as Verified
               v-list-item(@click='deleteUserConfirm', :disabled='user.id == currentUserId || user.isSystem')
-                v-list-item-icon
+                div.v-list-item-icon
                   v-icon(color='red') mdi-trash-can-outline
                 v-list-item-title Delete
           v-btn.ml-3.animated.fadeInDown(color='primary', large, depressed, @click='updateUser')
             v-icon(left) mdi-check
             span {{$t('admin:users.updateUser')}}
-      v-flex(xs6)
+      v-col(cols='6')
         v-card.animated.fadeInUp
           v-toolbar(color='primary', dense, dark, flat)
             v-icon.mr-2 mdi-information-variant
             span {{$t('admin:users.basicInfo')}}
           v-list.py-0(two-line, dense)
             v-list-item
-              v-list-item-avatar(size='32')
+              v-avatar(size='32')
                 v-icon mdi-email-variant
-              v-list-item-content
+              div.v-list-item-content
                 v-list-item-title {{$t('admin:users.email')}}
                 v-list-item-subtitle {{ user.email }}
-              v-list-item-action(v-if='!user.isSystem && user.providerKey === `local`')
+              div.v-list-item-action(v-if='!user.isSystem && user.providerKey === `local`')
                 v-menu(
                   v-model='editPop.email'
                   :close-on-content-click='false'
                   min-width='350'
                   left
                   )
-                  template(v-slot:activator='{ on }')
-                    v-btn(icon, color='grey', x-small, v-on='on', @click='focusField(`iptEmail`)')
+                  template(v-slot:activator='{ props }')
+                    v-btn(icon, color='grey', x-small, v-bind='props', @click='focusField(`iptEmail`)')
                       v-icon mdi-pencil
                   v-card
                     v-text-field(
@@ -87,20 +87,20 @@
 
             v-divider
             v-list-item
-              v-list-item-avatar(size='32')
+              v-avatar(size='32')
                 v-icon mdi-account
-              v-list-item-content
+              div.v-list-item-content
                 v-list-item-title {{$t('admin:users.displayName')}}
                 v-list-item-subtitle {{ user.name }}
-              v-list-item-action
+              div.v-list-item-action
                 v-menu(
                   v-model='editPop.name'
                   :close-on-content-click='false'
                   min-width='350'
                   left
                   )
-                  template(v-slot:activator='{ on }')
-                    v-btn(icon, color='grey', x-small, v-on='on', @click='focusField(`iptDisplayName`)')
+                  template(v-slot:activator='{ props }')
+                    v-btn(icon, color='grey', x-small, v-bind='props', @click='focusField(`iptDisplayName`)')
                       v-icon mdi-pencil
                   v-card
                     v-text-field(
@@ -121,30 +121,30 @@
             span {{$t('admin:users.authentication')}}
           v-list.py-0(two-line, dense)
             v-list-item
-              v-list-item-avatar(size='32')
+              v-avatar(size='32')
                 v-icon mdi-domain
-              v-list-item-content
+              div.v-list-item-content
                 v-list-item-title {{$t('admin:users.authProvider')}}
                 v-list-item-subtitle {{ user.providerName }} #[em.caption ({{ user.providerKey }})]
             template(v-if='user.providerKey === `local`')
               v-divider
               v-list-item
-                v-list-item-avatar(size='32')
+                v-avatar(size='32')
                   v-icon mdi-form-textbox-password
-                v-list-item-content
+                div.v-list-item-content
                   v-list-item-title {{$t('admin:users.password')}}
                   v-list-item-subtitle &bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;
-                v-list-item-action
+                div.v-list-item-action
                   v-menu(
                     v-model='editPop.newPassword'
                     :close-on-content-click='false'
                     min-width='350'
                     left
                     )
-                    template(v-slot:activator='{ on: menu }')
+                    template(v-slot:activator='{ props: menuProps }')
                       v-tooltip(top)
-                        template(v-slot:activator='{ on: tooltip }')
-                          v-btn(icon, color='grey', x-small, v-on='{ ...menu, ...tooltip }', @click='focusField(`iptNewPassword`)')
+                        template(v-slot:activator='{ props: tooltipProps }')
+                          v-btn(icon, color='grey', x-small, v-bind='{ ...menuProps, ...tooltipProps }', @click='focusField(`iptNewPassword`)')
                             v-icon mdi-pencil
                         span {{$t('admin:users.changePassword')}}
                     v-card
@@ -160,33 +160,33 @@
                         @keydown.enter='editPop.newPassword = false'
                         @keydown.esc='editPop.newPassword = false'
                       )
-                v-list-item-action
+                div.v-list-item-action
                   v-tooltip(top)
-                    template(v-slot:activator='{ on }')
-                      v-btn(icon, color='grey', x-small, v-on='on', disabled)
+                    template(v-slot:activator='{ props }')
+                      v-btn(icon, color='grey', x-small, v-bind='props', disabled)
                         v-icon mdi-email
                     span Send Password Reset Email
             template(v-if='user.providerIs2FACapable')
               v-divider
               v-list-item
-                v-list-item-avatar(size='32')
+                v-avatar(size='32')
                   v-icon mdi-two-factor-authentication
-                v-list-item-content
+                div.v-list-item-content
                   v-list-item-title {{$t('admin:users.tfa')}}
                   v-list-item-subtitle.green--text(v-if='user.tfaIsActive') Active
                   v-list-item-subtitle.red--text(v-else) Inactive
-                v-list-item-action
+                div.v-list-item-action
                   v-tooltip(top)
-                    template(v-slot:activator='{ on }')
-                      v-btn(icon, color='grey', x-small, v-on='on', @click='toggle2FA')
+                    template(v-slot:activator='{ props }')
+                      v-btn(icon, color='grey', x-small, v-bind='props', @click='toggle2FA')
                         v-icon mdi-power
                     span {{$t('admin:users.toggle2FA')}}
             template(v-if='user.providerId')
               v-divider
               v-list-item
-                v-list-item-avatar(size='32')
+                v-avatar(size='32')
                   v-icon mdi-music-accidental-sharp
-                v-list-item-content
+                div.v-list-item-content
                   v-list-item-title {{$t('admin:users.authProviderId')}}
                   v-list-item-subtitle {{ user.providerId }}
         v-card.mt-3.animated.fadeInUp.wait-p4s
@@ -194,19 +194,19 @@
             v-icon.mr-2 mdi-account-group
             span {{$t('admin:users.groups')}}
           v-list(dense)
-            template(v-for='(group, idx) in user.groups')
-              v-list-item(:key='`group-` + group.id')
-                v-list-item-avatar(size='32')
+            template(v-for='(group, idx) in user.groups', :key='`group-` + group.id')
+              v-list-item
+                v-avatar(size='32')
                   v-icon mdi-account-group-outline
-                v-list-item-content
+                div.v-list-item-content
                   v-list-item-title {{group.name}}
-                v-list-item-action(v-if='!user.isSystem')
+                div.v-list-item-action(v-if='!user.isSystem')
                   v-btn(icon, color='red', x-small, @click='unassignGroup(group.id)')
                     v-icon mdi-close
               v-divider(v-if='idx < user.groups.length - 1')
           v-alert.mx-3(v-if='user.groups.length < 1', outlined, color='grey darken-1', icon='mdi-alert')
             .caption {{$t('admin:users.noGroupAssigned')}}
-          v-card-chin(v-if='!user.isSystem')
+          div.v-card-chin(v-if='!user.isSystem')
             v-spacer
             v-select(
               ref='iptAssignGroup'
@@ -226,31 +226,31 @@
             v-btn.ml-2.px-4(depressed, color='primary', @click='assignGroup', :disabled='newGroup === 0')
               v-icon(left) mdi-clipboard-account-outline
               span {{$t('admin:users.groupAssign')}}
-          v-system-bar(window, :color='$vuetify.theme.dark ? `grey darken-4-l3` : `grey lighten-3`')
+          v-system-bar(window, :color='$vuetify.theme.current.dark ? `grey darken-4-l3` : `grey lighten-3`')
             v-spacer
             .caption {{$t('admin:users.groupAssignNotice')}}
 
-      v-flex(xs6)
+      v-col(cols='6')
         v-card.animated.fadeInUp.wait-p2s
           v-toolbar(color='primary', dense, dark, flat)
             v-icon.mr-2 mdi-account-badge-outline
             span {{$t('admin:users.extendedMetadata')}}
           v-list.py-0(two-line, dense)
             v-list-item
-              v-list-item-avatar(size='32')
+              v-avatar(size='32')
                 v-icon mdi-map-marker
-              v-list-item-content
+              div.v-list-item-content
                 v-list-item-title {{$t('admin:users.location')}}
                 v-list-item-subtitle {{ user.location }}
-              v-list-item-action
+              div.v-list-item-action
                 v-menu(
                   v-model='editPop.location'
                   :close-on-content-click='false'
                   min-width='350'
                   left
                   )
-                  template(v-slot:activator='{ on }')
-                    v-btn(icon, color='grey', x-small, v-on='on', @click='focusField(`iptLocation`)')
+                  template(v-slot:activator='{ props }')
+                    v-btn(icon, color='grey', x-small, v-bind='props', @click='focusField(`iptLocation`)')
                       v-icon mdi-pencil
                   v-card
                     v-text-field(
@@ -266,20 +266,20 @@
                     )
             v-divider
             v-list-item
-              v-list-item-avatar(size='32')
+              v-avatar(size='32')
                 v-icon mdi-briefcase
-              v-list-item-content
+              div.v-list-item-content
                 v-list-item-title {{$t('admin:users.jobTitle')}}
                 v-list-item-subtitle {{ user.jobTitle }}
-              v-list-item-action
+              div.v-list-item-action
                 v-menu(
                   v-model='editPop.jobTitle'
                   :close-on-content-click='false'
                   min-width='350'
                   left
                   )
-                  template(v-slot:activator='{ on }')
-                    v-btn(icon, color='grey', x-small, v-on='on', @click='focusField(`iptJobTitle`)')
+                  template(v-slot:activator='{ props }')
+                    v-btn(icon, color='grey', x-small, v-bind='props', @click='focusField(`iptJobTitle`)')
                       v-icon mdi-pencil
                   v-card
                     v-text-field(
@@ -295,20 +295,20 @@
                     )
             v-divider
             v-list-item
-              v-list-item-avatar(size='32')
+              v-avatar(size='32')
                 v-icon mdi-map-clock-outline
-              v-list-item-content
+              div.v-list-item-content
                 v-list-item-title {{$t('admin:users.timezone')}}
                 v-list-item-subtitle {{ user.timezone }}
-              v-list-item-action
+              div.v-list-item-action
                 v-menu(
                   v-model='editPop.timezone'
                   :close-on-content-click='false'
                   min-width='350'
                   left
                   )
-                  template(v-slot:activator='{ on }')
-                    v-btn(icon, color='grey', x-small, v-on='on', @click='focusField(`iptTimezone`)')
+                  template(v-slot:activator='{ props }')
+                    v-btn(icon, color='grey', x-small, v-bind='props', @click='focusField(`iptTimezone`)')
                       v-icon mdi-pencil
                   v-card
                     v-select(
@@ -360,7 +360,7 @@
               strong ID {{deleteReplaceUser.id}}
               .caption {{deleteReplaceUser.name}}
               em {{deleteReplaceUser.email}}
-        v-card-chin
+        div.v-card-chin
           v-spacer
           v-btn(text, @click='deleteUserDialog = false') {{$t('common:actions.cancel')}}
           v-btn(color='red', dark, @click='deleteUser') {{$t('common:actions.delete')}}
@@ -368,24 +368,48 @@
         user-search(v-model='deleteSearchUserDialog', @select='assignDeleteUser')
 
 </template>
-<script>
+<script lang='ts'>
 import _ from 'lodash'
-import { get } from 'vuex-pathify'
-import { StatusIndicator } from 'vue-status-indicator'
+import { wikiStore } from '@/store/index.ts'
+import StatusIndicator from '@/components/common/status-indicator.vue'
 
 import UserSearch from '../common/user-search.vue'
 
-import { fetchGroupOptions } from '../../helpers/groups-api'
-import { deleteAdminUser, fetchUserDetails, setAdminUserActive, setAdminUserTfa, updateAdminUser, verifyAdminUser } from '../../helpers/users-api'
+import { fetchGroupOptions, type GroupOption } from '../../helpers/groups-api'
+import { getErrorMessage } from '../../helpers/root-ui-store'
+import {
+  deleteAdminUser,
+  fetchUserDetails,
+  setAdminUserActive,
+  setAdminUserTfa,
+  updateAdminUser,
+  verifyAdminUser,
+  type AdminUserDetail,
+  type UserGroup,
+  type UserSearchRow
+} from '../../helpers/users-api'
 
-const createEmptyUser = () => ({
+type EditableAdminUser = Omit<AdminUserDetail, 'createdAt' | 'updatedAt'> & {
+  createdAt: string | null
+  updatedAt: string | null
+}
+
+type UserEditorFieldRef = 'iptEmail' | 'iptDisplayName' | 'iptNewPassword' | 'iptAssignGroup' | 'iptLocation' | 'iptJobTitle' | 'iptTimezone'
+
+type FocusableRef = {
+  focus: () => void
+}
+
+const getRouteUserId = (routeId: string | string[]): string => Array.isArray(routeId) ? routeId[0] || '' : routeId
+
+const createEmptyUser = (): EditableAdminUser => ({
   id: 0,
   email: '',
   name: '',
   location: '',
   jobTitle: '',
   timezone: '',
-  groups: [],
+  groups: [] as UserGroup[],
   isActive: false,
   isVerified: false,
   providerKey: '',
@@ -428,6 +452,7 @@ export default {
         assignGroup: false
       },
       newGroup: 0,
+      groups: [] as GroupOption[],
       newPassword: '',
       user: createEmptyUser(),
       timezones: [
@@ -685,7 +710,7 @@ export default {
     }
   },
   computed: {
-    currentUserId: get('user/id')
+    currentUserId(): number { return wikiStore.user.id }
   },
   watch: {
     '$route.params.id' () {
@@ -718,85 +743,85 @@ export default {
     },
     async loadUser () {
       const requestId = ++this.userLoadRequestId
-      const routeUserId = this.$route.params.id
+      const routeUserId = getRouteUserId(this.$route.params.id)
 
-      this.$store.commit('loadingStart', 'admin-users-refresh')
+      wikiStore.startLoading('admin-users-refresh')
       try {
         const user = await fetchUserDetails(window.fetch.bind(window), routeUserId, 'User detail response is invalid')
-        if (requestId !== this.userLoadRequestId || routeUserId !== this.$route.params.id) {
+        if (requestId !== this.userLoadRequestId || routeUserId !== getRouteUserId(this.$route.params.id)) {
           return false
         }
         this.user = user
         return true
       } catch (err) {
-        if (requestId !== this.userLoadRequestId || routeUserId !== this.$route.params.id) {
+        if (requestId !== this.userLoadRequestId || routeUserId !== getRouteUserId(this.$route.params.id)) {
           return false
         }
         this.user = createEmptyUser()
-        this.$store.commit('pushGraphError', err)
+        wikiStore.showError(err)
         return false
       } finally {
         if (requestId === this.userLoadRequestId) {
-          this.$store.commit('loadingStop', 'admin-users-refresh')
+          wikiStore.stopLoading('admin-users-refresh')
         }
       }
     },
     async loadGroups() {
-      this.$store.commit('loadingStart', 'admin-groups-refresh')
+      wikiStore.startLoading('admin-groups-refresh')
       try {
         this.groups = await fetchGroupOptions(window.fetch.bind(window), 'Groups response is invalid')
       } catch (err) {
-        this.$store.commit('showNotification', {
+        wikiStore.showNotification({
           style: 'red',
-          message: err.message,
+          message: getErrorMessage(err),
           icon: 'alert'
         })
       }
-      this.$store.commit('loadingStop', 'admin-groups-refresh')
+      wikiStore.stopLoading('admin-groups-refresh')
     },
     /**
      * Activate a user (if previously deactivated)
      */
     async activateUser () {
-      this.$store.commit(`loadingStart`, 'admin-users-activate')
+      wikiStore.startLoading('admin-users-activate')
       try {
         await setAdminUserActive(window.fetch.bind(window), this.user.id, true)
-        this.$store.commit('showNotification', {
+        wikiStore.showNotification({
           style: 'success',
           message: this.$t('admin:users.userActivateSuccess'),
           icon: 'check'
         })
         this.user.isActive = true
       } catch (err) {
-        this.$store.commit('showNotification', {
+        wikiStore.showNotification({
           style: 'red',
-          message: err.message,
+          message: getErrorMessage(err),
           icon: 'warning'
         })
       }
-      this.$store.commit(`loadingStop`, 'admin-users-activate')
+      wikiStore.stopLoading('admin-users-activate')
     },
     /**
      * Deactivate a currently active user
      */
     async deactivateUser () {
-      this.$store.commit(`loadingStart`, 'admin-users-deactivate')
+      wikiStore.startLoading('admin-users-deactivate')
       try {
         await setAdminUserActive(window.fetch.bind(window), this.user.id, false)
-        this.$store.commit('showNotification', {
+        wikiStore.showNotification({
           style: 'success',
           message: this.$t('admin:users.userDeactivateSuccess'),
           icon: 'check'
         })
         this.user.isActive = false
       } catch (err) {
-        this.$store.commit('showNotification', {
+        wikiStore.showNotification({
           style: 'red',
-          message: err.message,
+          message: getErrorMessage(err),
           icon: 'warning'
         })
       }
-      this.$store.commit(`loadingStop`, 'admin-users-deactivate')
+      wikiStore.stopLoading('admin-users-deactivate')
     },
     /**
      * Delete a user
@@ -805,40 +830,40 @@ export default {
       this.deleteUserDialog = true
       this.deleteReplaceUser = {
         id: this.currentUserId,
-        name: this.$store.get('user/name'),
-        email: this.$store.get('user/email')
+        name: wikiStore.user.name,
+        email: wikiStore.user.email
       }
     },
     async deleteUser () {
-      this.$store.commit(`loadingStart`, 'admin-users-delete')
+      wikiStore.startLoading('admin-users-delete')
       try {
         await deleteAdminUser(window.fetch.bind(window), this.user.id, this.deleteReplaceUser.id)
-        this.$store.commit('showNotification', {
+        wikiStore.showNotification({
           style: 'success',
           message: this.$t('admin:users.userDeleteSuccess'),
           icon: 'check'
         })
         this.$router.push('/users')
       } catch (err) {
-        this.$store.commit('showNotification', {
+        wikiStore.showNotification({
           style: 'red',
-          message: err.message,
+          message: getErrorMessage(err),
           icon: 'warning'
         })
       } finally {
         this.deleteUserDialog = false
-        this.$store.commit(`loadingStop`, 'admin-users-delete')
+        wikiStore.stopLoading('admin-users-delete')
       }
     },
-    assignDeleteUser (selUsr) {
+    assignDeleteUser (selUsr: UserSearchRow) {
       if (selUsr.id === this.user.id) {
-        this.$store.commit('showNotification', {
+        wikiStore.showNotification({
           style: 'red',
           message: 'You cannot select the account you\'re about to delete!',
           icon: 'warning'
         })
       } else if (selUsr.id === 2) {
-        this.$store.commit('showNotification', {
+        wikiStore.showNotification({
           style: 'red',
           message: 'You cannot use the guest account for this operation.',
           icon: 'warning'
@@ -851,19 +876,19 @@ export default {
      * Update a user
      */
     async updateUser() {
-      this.$store.commit(`loadingStart`, 'admin-users-update')
+      wikiStore.startLoading('admin-users-update')
       try {
         await updateAdminUser(window.fetch.bind(window), this.user.id, {
           email: this.user.email,
           name: this.user.name,
           newPassword: this.newPassword,
-          groups: _.map(this.user.groups, 'id'),
+          groups: this.user.groups.map(group => group.id),
           location: this.user.location,
           jobTitle: this.user.jobTitle,
           timezone: this.user.timezone
         })
         this.newPassword = ''
-        this.$store.commit('showNotification', {
+        wikiStore.showNotification({
           style: 'success',
           message: this.$t('admin:users.userUpdateSuccess'),
           icon: 'check'
@@ -871,21 +896,21 @@ export default {
         this.$router.push('/users')
       } catch (err) {
         this.newPassword = ''
-        this.$store.commit('showNotification', {
+        wikiStore.showNotification({
           style: 'red',
-          message: err.message,
+          message: getErrorMessage(err),
           icon: 'warning'
         })
       }
-      this.$store.commit(`loadingStop`, 'admin-users-update')
+      wikiStore.stopLoading('admin-users-update')
     },
     /**
      * Focus an input after delay
      */
-    focusField (ipt) {
+    focusField (ipt: UserEditorFieldRef) {
       this.$nextTick(() => {
         _.delay(() => {
-          this.$refs[ipt].focus()
+          ;(this.$refs[ipt] as FocusableRef).focus()
         }, 200)
       })
     },
@@ -894,66 +919,69 @@ export default {
      */
     assignGroup() {
       if (_.some(this.user.groups, ['id', this.newGroup])) {
-        this.$store.commit('showNotification', {
+        wikiStore.showNotification({
           message: this.$t('admin:users.userAlreadyAssignedToGroup'),
           style: 'error',
           icon: 'alert'
         })
       } else {
-        this.user.groups.push(_.find(this.groups, ['id', this.newGroup]))
+        const group = this.groups.find(group => group.id === this.newGroup)
+        if (group) {
+          this.user.groups.push(group)
+        }
         this.newGroup = 0
       }
     },
     /**
      * Unassign group from user
      */
-    unassignGroup(gid) {
-      this.user.groups = _.reject(this.user.groups, ['id', gid])
+    unassignGroup(gid: number) {
+      this.user.groups = this.user.groups.filter(group => group.id !== gid)
     },
     /**
      * Manually set user as verified
      */
     async verifyUser () {
-      this.$store.commit(`loadingStart`, 'admin-users-verify')
+      wikiStore.startLoading('admin-users-verify')
       try {
         await verifyAdminUser(window.fetch.bind(window), this.user.id)
-        this.$store.commit('showNotification', {
+        wikiStore.showNotification({
           style: 'success',
           message: this.$t('admin:users.userVerifySuccess'),
           icon: 'check'
         })
         this.user.isVerified = true
       } catch (err) {
-        this.$store.commit('showNotification', {
+        wikiStore.showNotification({
           style: 'red',
-          message: err.message,
+          message: getErrorMessage(err),
           icon: 'warning'
         })
       }
-      this.$store.commit(`loadingStop`, 'admin-users-verify')
+      wikiStore.stopLoading('admin-users-verify')
     },
     /**
      * Toggle 2FA State
      */
     async toggle2FA () {
-      this.$store.commit(`loadingStart`, 'admin-users-toggle2fa')
+      wikiStore.startLoading('admin-users-toggle2fa')
       const enabled = !this.user.tfaIsActive
       try {
         await setAdminUserTfa(window.fetch.bind(window), this.user.id, enabled)
-        this.$store.commit('showNotification', {
+        wikiStore.showNotification({
           style: 'success',
           message: this.$t(enabled ? 'admin:users.userTFAEnableSuccess' : 'admin:users.userTFADisableSuccess'),
           icon: 'check'
         })
         this.user.tfaIsActive = enabled
       } catch (err) {
-        this.$store.commit('showNotification', {
+        wikiStore.showNotification({
           style: 'red',
-          message: err.message,
+          message: getErrorMessage(err),
           icon: 'warning'
         })
       }
-      this.$store.commit(`loadingStop`, 'admin-users-toggle2fa')
+      wikiStore.stopLoading('admin-users-toggle2fa')
     }
   },
   created() {

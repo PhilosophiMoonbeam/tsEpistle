@@ -1,48 +1,42 @@
-# ====================
-# --- Build Assets ---
-# ====================
-FROM node:24-alpine AS assets
+# syntax=docker/dockerfile:1@sha256:ecfaec9ed6d810b56388c508f4121597bfbba70d41a6dfeee4d8cad5f295fc32
 
-RUN apk add yarn g++ make cmake python3 --no-cache
+FROM node:24-alpine@sha256:d32cdf619f63fe0471182d08996dd516c6275bb5fd31ae06e55a570bd9e1ad43 AS build
+ENV CI=true
+
+RUN apk add --no-cache g++ make cmake python3
 
 WORKDIR /wiki
 
-COPY ./client ./client
-COPY ./dev ./dev
-COPY ./patches ./patches
-COPY ./package.json ./package.json
-COPY ./.babelrc ./.babelrc
-COPY ./.eslintignore ./.eslintignore
-COPY ./.eslintrc.yml ./.eslintrc.yml
+RUN corepack enable
 
-RUN yarn cache clean
-RUN yarn --frozen-lockfile --non-interactive
-RUN yarn build
-RUN rm -rf /wiki/node_modules
-RUN yarn --production --frozen-lockfile --non-interactive
-RUN yarn patch-package
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
 
-# ===============
-# --- Release ---
-# ===============
-FROM node:24-alpine
+RUN --mount=type=cache,id=wiki-pnpm,target=/pnpm/store \
+    pnpm config set store-dir /pnpm/store && \
+    pnpm install --frozen-lockfile
+
+COPY client ./client
+COPY vite.config.mts ./
+
+RUN pnpm build && pnpm prune --prod
+
+FROM node:24-alpine@sha256:d32cdf619f63fe0471182d08996dd516c6275bb5fd31ae06e55a570bd9e1ad43 AS runtime
+
 LABEL maintainer="requarks.io"
+ENV NODE_ENV=production
 
-RUN apk add bash curl git openssh gnupg sqlite --no-cache && \
-    mkdir -p /wiki && \
-    mkdir -p /logs && \
-    mkdir -p /wiki/data/content && \
+RUN apk add --no-cache bash curl git openssh gnupg sqlite && \
+    mkdir -p /wiki /logs /wiki/data/content && \
     chown -R node:node /wiki /logs
 
 WORKDIR /wiki
 
-COPY --chown=node:node --from=assets /wiki/assets ./assets
-COPY --chown=node:node --from=assets /wiki/node_modules ./node_modules
-COPY --chown=node:node ./server ./server
-COPY --chown=node:node --from=assets /wiki/server/views ./server/views
-COPY --chown=node:node ./dev/build/config.yml ./config.yml
-COPY --chown=node:node ./package.json ./package.json
-COPY --chown=node:node ./LICENSE ./LICENSE
+COPY --chown=node:node --from=build /wiki/assets ./assets
+COPY --chown=node:node --from=build /wiki/node_modules ./node_modules
+COPY --chown=node:node server ./server
+COPY --chown=node:node dev/build/config.yml ./config.yml
+COPY --chown=node:node package.json ./
+COPY --chown=node:node LICENSE ./
 
 USER node
 
@@ -51,6 +45,7 @@ VOLUME ["/wiki/data/content"]
 EXPOSE 3000
 EXPOSE 3443
 
-# HEALTHCHECK --interval=30s --timeout=30s --start-period=30s --retries=3 CMD curl -f http://localhost:3000/healthz
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD curl --fail --silent --show-error http://127.0.0.1:3000/healthz || exit 1
 
-CMD ["node", "--no-deprecation", "server"]
+CMD ["node", "server/index.ts"]

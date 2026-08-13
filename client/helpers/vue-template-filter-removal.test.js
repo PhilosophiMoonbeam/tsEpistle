@@ -1,7 +1,7 @@
-const fs = require('fs')
-const path = require('path')
+import fs from 'node:fs'
+import path from 'node:path'
 
-const repoRoot = path.resolve(__dirname, '../..')
+const repoRoot = path.resolve(import.meta.dirname, '../..')
 const scanRoot = path.join(repoRoot, 'client')
 const skippedDirs = new Set(['node_modules', 'dist', '.git'])
 const scannedExtensions = new Set(['.js', '.vue'])

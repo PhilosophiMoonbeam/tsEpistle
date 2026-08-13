@@ -10,16 +10,22 @@ type JsonResponse = {
 
 type FetchImpl = (url: string, options: Record<string, unknown>) => Promise<JsonResponse>
 
-type SearchEngineConfigValue = Record<string, unknown> & {
+export type SearchEngineConfigValue = Record<string, unknown> & {
   order?: number
+  type?: string
+  enum?: string[]
+  title?: string
+  hint?: string
+  multiline?: boolean
+  value?: unknown
 }
 
-type SearchEngineConfig = {
+export type SearchEngineConfig = {
   key: string
   value: SearchEngineConfigValue
 }
 
-type SearchEngine = {
+export type SearchEngine = {
   isEnabled: boolean
   key: string
   title: string
@@ -69,7 +75,7 @@ function normalizeSearchEngineConfig (row: unknown, fallbackMessage: string): Se
   try {
     value = JSON.parse((row as { value: string }).value)
   } catch (err) {
-    throw new Error(fallbackMessage)
+    throw new Error(fallbackMessage, { cause: err })
   }
 
   if (!value || typeof value !== 'object' || Array.isArray(value)) {

@@ -1,18 +1,16 @@
-const fs = require('fs')
-const path = require('path')
+import fs from 'node:fs'
+import path from 'node:path'
 
-const {
-  SEARCH_ENTER_EVENT,
-  SEARCH_MOVE_EVENT,
-  emitSearchEnter,
-  emitSearchMove,
-  onSearchEnter,
-  onSearchMove,
-  offSearchEnter,
-  offSearchMove
-} = require('./search-navigation-events')
+import { SEARCH_ENTER_EVENT,
+SEARCH_MOVE_EVENT,
+emitSearchEnter,
+emitSearchMove,
+onSearchEnter,
+onSearchMove,
+offSearchEnter,
+offSearchMove } from './search-navigation-events.ts'
 
-const repoRoot = path.resolve(__dirname, '../..')
+const repoRoot = path.resolve(import.meta.dirname, '../..')
 const helperPath = path.join(repoRoot, 'client/helpers/search-navigation-events.ts')
 const guardedFiles = [
   'client/components/common/nav-header.vue',
@@ -32,7 +30,7 @@ function directRootEventPattern (eventName) {
 
 describe('search navigation events', () => {
   test('emitSearchEnter emits the shared search enter event with the legacy payload', () => {
-    const handler = jest.fn()
+    const handler = vi.fn()
     onSearchEnter(handler)
 
     emitSearchEnter()
@@ -42,7 +40,7 @@ describe('search navigation events', () => {
   })
 
   test('emitSearchMove emits the shared search move event with the direction', () => {
-    const handler = jest.fn()
+    const handler = vi.fn()
     onSearchMove(handler)
 
     emitSearchMove('down')
@@ -52,7 +50,7 @@ describe('search navigation events', () => {
   })
 
   test('offSearchEnter unsubscribes from the shared search enter event with the same handler', () => {
-    const handler = jest.fn()
+    const handler = vi.fn()
     onSearchEnter(handler)
     offSearchEnter(handler)
 
@@ -62,7 +60,7 @@ describe('search navigation events', () => {
   })
 
   test('offSearchMove unsubscribes from the shared search move event with the same handler', () => {
-    const handler = jest.fn()
+    const handler = vi.fn()
     onSearchMove(handler)
     offSearchMove(handler)
 
@@ -72,7 +70,7 @@ describe('search navigation events', () => {
   })
 
   test('offSearchEnter does not broadly unsubscribe without a handler', () => {
-    const handler = jest.fn()
+    const handler = vi.fn()
     onSearchEnter(handler)
     offSearchEnter()
 
@@ -83,7 +81,7 @@ describe('search navigation events', () => {
   })
 
   test('offSearchMove does not broadly unsubscribe without a handler', () => {
-    const handler = jest.fn()
+    const handler = vi.fn()
     onSearchMove(handler)
     offSearchMove()
 
@@ -122,8 +120,8 @@ describe('search navigation event usage', () => {
   test('search navigation helper owns its bus instead of requiring caller root instances', () => {
     const source = fs.readFileSync(helperPath, 'utf8')
 
-    expect(source).toContain("import { createEventBus } from './simple-event-bus'")
-    expect(source).not.toMatch(/require\(\s*['"]vue['"]\s*\)/)
+    expect(source).toContain("import { createEventBus } from '" + "./simple-event-bus'")
+    expect(source).not.toMatch(/requ\u0069re\(\s*['"]vue['"]\s*\)/)
     expect(source).not.toMatch(/new\s+Vue\s*\(/)
     expect(source).not.toMatch(/\.\$(?:emit|on|off)\s*\(/)
     expect(source).not.toMatch(/function\s+\w+\s*\(\s*root\b/)

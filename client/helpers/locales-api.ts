@@ -10,22 +10,22 @@ type JsonResponse = {
 
 type FetchImpl = (url: string, options: Record<string, unknown>) => Promise<JsonResponse>
 
-type LocaleRow = {
+export type LocaleRow = {
   availability: number
   code: string
+  installDate?: string
   isInstalled: boolean
   isRTL: boolean
   name: string
   nativeName: string
-  [key: string]: unknown
+  updatedAt?: string
 }
 
-type LocaleConfig = {
+export type LocaleConfig = {
   locale: string
   autoUpdate: boolean
   namespacing: boolean
   namespaces: string[]
-  [key: string]: unknown
 }
 
 type LocaleMessageResponse = {

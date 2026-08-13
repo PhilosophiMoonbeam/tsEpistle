@@ -1,8 +1,8 @@
-const fs = require('fs')
-const path = require('path')
+import fs from 'node:fs'
+import path from 'node:path'
 
 const extractScript = (source) => {
-  const match = source.match(/<script>\s*([\s\S]*?)\s*<\/script>/)
+  const match = source.match(/<script(?:\s+lang=["']ts["'])?>\s*([\s\S]*?)\s*<\/script>/)
   return match && match[1]
 }
 
@@ -60,11 +60,11 @@ describe('admin-groups root UI facade migration guard', () => {
   const createGroup = script && extractMethod(script, 'createGroup')
   const directRootUiCommit = /\bthis\.\$store\.commit\s*\(\s*(?:`loading(?:Start|Stop)`|`loading\$\{[^}]+\}`|['"]loading(?:Start|Stop)['"]|`showNotification`|['"]showNotification['"]|`pushGraphError`|['"]pushGraphError['"])\s*,/
 
-  test('admin-groups.vue imports the root UI facades needed by loadGroups(), refresh(), and createGroup()', () => {
+  test('admin-groups.vue imports the typed store singleton and REST helpers needed by loadGroups(), refresh(), and createGroup()', () => {
     expect(script).not.toBeNull()
-    expect(script).toMatch(
-      /import\s+\{(?=[^}]*\bloadingStart\b)(?=[^}]*\bloadingStop\b)(?=[^}]*\bshowNotification\b)(?=[^}]*\bpushGraphError\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/root-ui-store['"]/
-    )
+    expect(source).toContain("<script lang='ts'>")
+    expect(script).toContain("import { wikiStore } from '@/store/index.ts'")
+    expect(script).toMatch(/import\s+\{\s*getErrorMessage\s*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/root-ui-store['"]/)
     expect(script).toMatch(/import\s+_\s+from\s+['"]lodash['"]/)
     expect(script).not.toMatch(/groups-mutation-create\.gql/)
     expect(script).toMatch(/import\s+\{(?=[^}]*\bcreateGroup\b)(?=[^}]*\bfetchGroupsList\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/groups-api['"]/)
@@ -73,19 +73,19 @@ describe('admin-groups root UI facade migration guard', () => {
   test('loadGroups() uses loading/notification facades while preserving fetch, local loading, returns, and cleanup order', () => {
     expect(loadGroups).not.toBeNull()
 
-    expect(loadGroups).toMatch(/async\s+loadGroups\s*\(\s*\)\s*\{\s*this\.loading\s*=\s*true\s*loadingStart\s*\(\s*this\.\$store\s*,\s*['"]admin-groups-refresh['"]\s*\)\s*try\s*\{\s*this\.groups\s*=\s*await\s+fetchGroupsList\s*\(\s*window\.fetch\.bind\(\s*window\s*\)\s*,\s*['"]Groups list response is invalid['"]\s*\)\s*return\s+true\s*\}\s*catch\s*\(\s*err\s*\)\s*\{\s*showNotification\s*\(\s*this\.\$store\s*,\s*\{\s*style:\s*['"]red['"]\s*,\s*message:\s*err\.message\s*,\s*icon:\s*['"]alert['"]\s*\}\s*\)\s*return\s+false\s*\}\s*finally\s*\{\s*this\.loading\s*=\s*false\s*loadingStop\s*\(\s*this\.\$store\s*,\s*['"]admin-groups-refresh['"]\s*\)\s*\}\s*\}/)
+    expect(loadGroups).toMatch(/async\s+loadGroups\s*\(\s*\)\s*\{\s*this\.loading\s*=\s*true\s*wikiStore\.startLoading\s*\(\s*['"]admin-groups-refresh['"]\s*\)\s*try\s*\{\s*this\.groups\s*=\s*await\s+fetchGroupsList\s*\(\s*window\.fetch\.bind\(\s*window\s*\)\s*,\s*['"]Groups list response is invalid['"]\s*\)\s*return\s+true\s*\}\s*catch\s*\(\s*err\s*\)\s*\{\s*wikiStore\.showNotification\s*\(\s*\{\s*style:\s*['"]red['"]\s*,\s*message:\s*getErrorMessage\s*\(\s*err\s*\)\s*,\s*icon:\s*['"]alert['"]\s*\}\s*\)\s*return\s+false\s*\}\s*finally\s*\{\s*this\.loading\s*=\s*false\s*wikiStore\.stopLoading\s*\(\s*['"]admin-groups-refresh['"]\s*\)\s*\}\s*\}/)
     expect(loadGroups).not.toMatch(directRootUiCommit)
 
-    expect(loadGroups.match(/\bloadingStart\s*\(/g) || []).toHaveLength(1)
+    expect(loadGroups.match(/\bstartLoading\s*\(/g) || []).toHaveLength(1)
     expect(loadGroups.match(/\bshowNotification\s*\(/g) || []).toHaveLength(1)
-    expect(loadGroups.match(/\bloadingStop\s*\(/g) || []).toHaveLength(1)
+    expect(loadGroups.match(/\bstopLoading\s*\(/g) || []).toHaveLength(1)
     expect(loadGroups.match(/\bfetchGroupsList\s*\(/g) || []).toHaveLength(1)
   })
 
   test('refresh() keeps loadGroups() success gate and routes only the refresh success notification through the facade', () => {
     expect(refresh).not.toBeNull()
 
-    expect(refresh).toMatch(/async\s+refresh\s*\(\s*\)\s*\{\s*if\s*\(\s*await\s+this\.loadGroups\s*\(\s*\)\s*\)\s*\{\s*showNotification\s*\(\s*this\.\$store\s*,\s*\{\s*message:\s*['"]Groups have been refreshed\.['"]\s*,\s*style:\s*['"]success['"]\s*,\s*icon:\s*['"]cached['"]\s*\}\s*\)\s*\}\s*\}/)
+    expect(refresh).toMatch(/async\s+refresh\s*\(\s*\)\s*\{\s*if\s*\(\s*await\s+this\.loadGroups\s*\(\s*\)\s*\)\s*\{\s*wikiStore\.showNotification\s*\(\s*\{\s*message:\s*['"]Groups have been refreshed\.['"]\s*,\s*style:\s*['"]success['"]\s*,\s*icon:\s*['"]cached['"]\s*\}\s*\)\s*\}\s*\}/)
     expect(refresh).not.toMatch(directRootUiCommit)
     expect(refresh.match(/\bshowNotification\s*\(/g) || []).toHaveLength(1)
   })
@@ -93,25 +93,25 @@ describe('admin-groups root UI facade migration guard', () => {
   test('createGroup() routes validation, REST loading, success notification, and graph error through facades', () => {
     expect(createGroup).not.toBeNull()
 
-    expect(createGroup).toMatch(/if\s*\(\s*_\.trim\s*\(\s*this\.newGroupName\s*\)\.length\s*<\s*1\s*\)\s*\{\s*showNotification\s*\(\s*this\.\$store\s*,\s*\{\s*style:\s*['"]red['"]\s*,\s*message:\s*['"]Enter a group name\.['"]\s*,\s*icon:\s*['"]warning['"]\s*\}\s*\)\s*return\s*\}/)
+    expect(createGroup).toMatch(/if\s*\(\s*_\.trim\s*\(\s*this\.newGroupName\s*\)\.length\s*<\s*1\s*\)\s*\{\s*wikiStore\.showNotification\s*\(\s*\{\s*style:\s*['"]red['"]\s*,\s*message:\s*['"]Enter a group name\.['"]\s*,\s*icon:\s*['"]warning['"]\s*\}\s*\)\s*return\s*\}/)
     expect(createGroup).toMatch(/this\.newGroupDialog\s*=\s*false/)
-    expect(createGroup).toMatch(/loadingStart\s*\(\s*this\.\$store\s*,\s*['"]admin-groups-create['"]\s*\)/)
+    expect(createGroup).toMatch(/wikiStore\.startLoading\s*\(\s*['"]admin-groups-create['"]\s*\)/)
     expect(createGroup).toMatch(/await\s+createGroup\s*\(\s*window\.fetch\.bind\(\s*window\s*\)\s*,\s*this\.newGroupName\s*\)/)
     expect(createGroup).not.toMatch(/this\.\$apollo\.mutate/)
     expect(createGroup).not.toMatch(/createGroupMutation/)
     expect(createGroup).toMatch(/data\.succeeded\s*===\s*true/)
     expect(createGroup).toMatch(/this\.newGroupName\s*=\s*['"]['"]/)
     expect(createGroup).toMatch(/if\s*\(\s*await\s+this\.loadGroups\s*\(\s*\)\s*\)/)
-    expect(createGroup).toMatch(/showNotification\s*\(\s*this\.\$store\s*,\s*\{\s*style:\s*['"]success['"]\s*,\s*message:\s*['"]Group has been created successfully\.['"]\s*,\s*icon:\s*['"]check['"]\s*\}\s*\)/)
+    expect(createGroup).toMatch(/wikiStore\.showNotification\s*\(\s*\{\s*style:\s*['"]success['"]\s*,\s*message:\s*['"]Group has been created successfully\.['"]\s*,\s*icon:\s*['"]check['"]\s*\}\s*\)/)
     expect(createGroup).toMatch(/throw\s+new\s+Error\s*\(\s*data\.message\s*\|\|\s*['"]An unexpected error occurred\.['"]\s*\)/)
-    expect(createGroup).toMatch(/pushGraphError\s*\(\s*this\.\$store\s*,\s*err\s*\)/)
-    expect(createGroup).toMatch(/finally\s*\{\s*loadingStop\s*\(\s*this\.\$store\s*,\s*['"]admin-groups-create['"]\s*\)\s*\}/)
+    expect(createGroup).toMatch(/wikiStore\.showError\s*\(\s*err\s*\)/)
+    expect(createGroup).toMatch(/finally\s*\{\s*wikiStore\.stopLoading\s*\(\s*['"]admin-groups-create['"]\s*\)\s*\}/)
     expect(createGroup).not.toMatch(directRootUiCommit)
 
     expect(createGroup.match(/\bshowNotification\s*\(/g) || []).toHaveLength(2)
-    expect(createGroup.match(/\bloadingStart\s*\(/g) || []).toHaveLength(1)
-    expect(createGroup.match(/\bloadingStop\s*\(/g) || []).toHaveLength(1)
-    expect(createGroup.match(/\bpushGraphError\s*\(/g) || []).toHaveLength(1)
+    expect(createGroup.match(/\bstartLoading\s*\(/g) || []).toHaveLength(1)
+    expect(createGroup.match(/\bstopLoading\s*\(/g) || []).toHaveLength(1)
+    expect(createGroup.match(/\bshowError\s*\(/g) || []).toHaveLength(1)
     expect(createGroup.match(/\bthis\.loadGroups\s*\(/g) || []).toHaveLength(1)
   })
 })

@@ -1,12 +1,12 @@
-jest.mock('prom-client', () => {
+vi.mock('prom-client', () => {
   const gauges = []
   const register = {
     contentType: 'text/plain',
-    setDefaultLabels: jest.fn(),
-    clear: jest.fn(() => {
+    setDefaultLabels: vi.fn(),
+    clear: vi.fn(() => {
       gauges.length = 0
     }),
-    metrics: jest.fn(async () => {
+    metrics: vi.fn(async () => {
       const values = []
       for (const gauge of gauges) {
         await gauge.collect.call({
@@ -26,11 +26,11 @@ jest.mock('prom-client', () => {
   }
 
   return {
-    collectDefaultMetrics: jest.fn(),
+    collectDefaultMetrics: vi.fn(),
     register,
     Gauge
   }
-}, { virtual: true })
+})
 
 const makeCountModel = (total) => ({
   query: () => ({
@@ -41,8 +41,12 @@ const makeCountModel = (total) => ({
 })
 
 describe('core/metrics', () => {
+  let previousWiki
+
   beforeEach(() => {
-    jest.resetModules()
+    vi.resetModules()
+    vi.clearAllMocks()
+    previousWiki = global.WIKI
     global.WIKI = {
       INSTANCE_ID: 'test-instance',
       config: {
@@ -51,7 +55,7 @@ describe('core/metrics', () => {
         }
       },
       logger: {
-        info: jest.fn()
+        info: vi.fn()
       },
       models: {
         groups: makeCountModel(2),
@@ -62,13 +66,17 @@ describe('core/metrics', () => {
     }
   })
 
+  afterEach(() => {
+    global.WIKI = previousWiki
+  })
+
   it('collects and renders wiki metrics when enabled', async () => {
-    const metrics = require('../../core/metrics')
-    const promClient = require('prom-client')
+    const { default: metrics } = await import('../../core/metrics.ts')
+    const promClient = await import('prom-client')
     const res = {
-      contentType: jest.fn(),
-      send: jest.fn(),
-      status: jest.fn(() => ({ end: jest.fn() }))
+      contentType: vi.fn(),
+      send: vi.fn(),
+      status: vi.fn(() => ({ end: vi.fn() }))
     }
 
     await metrics.init()
@@ -87,8 +95,8 @@ describe('core/metrics', () => {
 
   it('clears collectors when disabled', async () => {
     global.WIKI.config.metrics.isEnabled = false
-    const metrics = require('../../core/metrics')
-    const promClient = require('prom-client')
+    const { default: metrics } = await import('../../core/metrics.ts')
+    const promClient = await import('prom-client')
 
     await metrics.init()
 

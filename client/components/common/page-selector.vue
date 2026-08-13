@@ -20,7 +20,7 @@
           v-show='searchLoading'
           )
       .d-flex
-        v-flex.grey(xs5, :class='$vuetify.theme.dark ? `darken-4` : `lighten-3`')
+        v-col.grey(cols='5', :class='$vuetify.theme.current.dark ? `darken-4` : `lighten-3`')
           v-toolbar(color='grey darken-3', dark, dense, flat)
             .body-2 {{$t('common:pageSelector.virtualFolders')}}
             v-spacer
@@ -30,20 +30,20 @@
             vue-scroll(:ops='scrollStyle')
               v-treeview(
                 :key='`pageTree-` + treeViewCacheId'
-                :active.sync='currentNode'
-                :open.sync='openNodes'
+                v-model:activated='currentNode'
+                v-model:opened='openNodes'
                 :items='tree'
                 :load-children='fetchFolders'
                 dense
                 expand-icon='mdi-menu-down-outline'
-                item-id='path'
-                item-text='title'
+                item-value='id'
+                item-title='title'
                 activatable
                 hoverable
                 )
-                template(slot='prepend', slot-scope='{ item, open, leaf }')
-                  v-icon mdi-{{ open ? 'folder-open' : 'folder' }}
-        v-flex(xs7)
+                template(v-slot:prepend='{ isOpen }')
+                  v-icon mdi-{{ isOpen ? 'folder-open' : 'folder' }}
+        v-col(cols='7')
           v-toolbar(color='blue darken-2', dark, dense, flat)
             .body-2 {{$t('common:pageSelector.pages')}}
             //- v-spacer
@@ -56,9 +56,9 @@
                   v-model='currentPage'
                   color='primary'
                   )
-                  template(v-for='(page, idx) of currentPages')
-                    v-list-item(:key='`page-` + page.id', :value='page')
-                      v-list-item-icon: v-icon mdi-text-box
+                  template(v-for='(page, idx) of currentPages', :key='`page-` + page.id')
+                    v-list-item(:value='page')
+                      div.v-list-item-icon: v-icon mdi-text-box
                       v-list-item-title {{page.title}}
                     v-divider(v-if='idx < pages.length - 1')
           v-alert.animated.fadeIn(
@@ -69,7 +69,7 @@
             icon='mdi-alert'
             )
             .body-2 {{$t('common:pageSelector.folderEmptyWarning')}}
-      v-card-actions.grey.pa-2(:class='$vuetify.theme.dark ? `darken-2` : `lighten-1`', v-if='!mustExist')
+      v-card-actions.grey.pa-2(:class='$vuetify.theme.current.dark ? `darken-2` : `lighten-1`', v-if='!mustExist')
         v-select(
           solo
           dark
@@ -91,7 +91,7 @@
           clearable
           style='border-radius: 0 4px 4px 0;'
         )
-      v-card-chin
+      div.v-card-chin
         v-spacer
         v-btn(text, @click='close') {{$t('common:actions.cancel')}}
         v-btn.px-4(color='primary', @click='open', :disabled='!isValidPath')
@@ -99,17 +99,46 @@
           span {{$t('common:actions.select')}}
 </template>
 
-<script>
+<script lang='ts'>
+import { defineComponent, type PropType } from 'vue'
 import _ from 'lodash'
-import { fetchPageTree } from '../../helpers/pages-api'
+import { fetchPageTree, type PageTreeRow } from '../../helpers/pages-api'
 
 const localeSegmentRegex = /^[A-Z]{2}(-[A-Z]{2})?$/i
 
+type PageSelectorMode = 'create' | 'move' | 'select'
+type PageSelection = { locale: string, path: string, id: number }
+type OpenHandler = (selection: PageSelection) => boolean | void | Promise<boolean | void>
+type PageTreeItem = PageTreeRow & { children?: PageTreeItem[] }
+type PageEntry = PageTreeRow & { pageId: number }
+
+function createRootNode (locale: string): PageTreeItem {
+  return {
+    id: 0,
+    path: '',
+    title: '/ (root)',
+    isFolder: true,
+    pageId: null,
+    parent: 0,
+    locale,
+    children: []
+  }
+}
+
+function isPageEntry (item: PageTreeRow): item is PageEntry {
+  return item.pageId !== null && item.pageId > 0
+}
+
+function isPageTreeItem (item: unknown): item is PageTreeItem {
+  return typeof item === 'object' && item !== null && typeof (item as { id?: unknown }).id === 'number'
+}
+
 /* global siteLangs, siteConfig */
 
-export default {
+export default defineComponent({
+  emits: ['update:modelValue'],
   props: {
-    value: {
+    modelValue: {
       type: Boolean,
       default: false
     },
@@ -122,12 +151,12 @@ export default {
       default: 'en'
     },
     mode: {
-      type: String,
+      type: String as PropType<PageSelectorMode>,
       default: 'create'
     },
     openHandler: {
-      type: Function,
-      default: () => {}
+      type: Function as PropType<OpenHandler>,
+      default: () => undefined
     },
     mustExist: {
       type: Boolean,
@@ -140,19 +169,13 @@ export default {
       searchLoading: false,
       currentLocale: siteConfig.lang,
       currentFolderPath: '',
-      currentPath: 'new-page',
-      currentPage: null,
-      currentNode: [0],
-      openNodes: [0],
-      tree: [
-        {
-          id: 0,
-          title: '/ (root)',
-          children: []
-        }
-      ],
-      pages: [],
-      all: [],
+      currentPath: 'new-page' as string | null,
+      currentPage: null as PageEntry | null,
+      currentNode: [0] as number[],
+      openNodes: [0] as number[],
+      tree: [createRootNode(siteConfig.lang)] as PageTreeItem[],
+      pages: [] as PageEntry[],
+      all: [] as PageTreeRow[],
       namespaces: siteLangs.length ? siteLangs.map(ns => ns.code) : [siteConfig.lang],
       scrollStyle: {
         vuescroll: {},
@@ -176,13 +199,13 @@ export default {
   },
   computed: {
     isShown: {
-      get() { return this.value },
-      set(val) { this.$emit('input', val) }
+      get(): boolean { return this.modelValue },
+      set(val: boolean) { this.$emit('update:modelValue', val) }
     },
-    currentPages () {
-      return _.sortBy(_.filter(this.pages, ['parent', _.head(this.currentNode) || 0]), ['title', 'path'])
+    currentPages (): PageEntry[] {
+      return _.sortBy(_.filter(this.pages, ['parent', _.head(this.currentNode) ?? 0]), ['title', 'path'])
     },
-    isValidPath () {
+    isValidPath (): boolean {
       if (!this.currentPath) {
         return false
       }
@@ -190,7 +213,7 @@ export default {
         return false
       }
       const firstSection = _.head(this.currentPath.split('/'))
-      if (firstSection.length <= 1) {
+      if (!firstSection || firstSection.length <= 1) {
         return false
       } else if (localeSegmentRegex.test(firstSection)) {
         return false
@@ -205,16 +228,16 @@ export default {
     }
   },
   watch: {
-    isShown (newValue, oldValue) {
+    isShown (newValue: boolean, oldValue: boolean) {
       if (newValue && !oldValue) {
         this.currentPath = this.path
         this.currentLocale = this.locale
         _.delay(() => {
-          this.$refs.pathIpt.focus()
-        })
+          ;(this.$refs.pathIpt as { focus: () => void }).focus()
+        }, 0)
       }
     },
-    currentNode (newValue, oldValue) {
+    currentNode (newValue: number[], oldValue: number[]) {
       if (newValue.length < 1) { // force a selection
         this.$nextTick(() => {
           this.currentNode = oldValue
@@ -235,23 +258,17 @@ export default {
           })
         }
 
-        this.currentPath = _.compact([_.get(current, 'path', ''), _.last(this.currentPath.split('/'))]).join('/')
+        this.currentPath = _.compact([current?.path ?? '', _.last(this.currentPath?.split('/') ?? [])]).join('/')
       }
     },
-    currentPage (newValue, oldValue) {
-      if (!_.isEmpty(newValue)) {
+    currentPage (newValue: PageEntry | null) {
+      if (newValue) {
         this.currentPath = newValue.path
       }
     },
-    currentLocale (newValue, oldValue) {
+    currentLocale (newValue: string) {
       this.$nextTick(() => {
-        this.tree = [
-          {
-            id: 0,
-            title: '/ (root)',
-            children: []
-          }
-        ]
+        this.tree = [createRootNode(newValue)]
         this.currentNode = [0]
         this.openNodes = [0]
         this.pages = []
@@ -261,11 +278,12 @@ export default {
     }
   },
   methods: {
-    close() {
+    close(): void {
       this.isShown = false
     },
-    open() {
-      const exit = this.openHandler({
+    open(): void {
+      if (!this.currentPath) return
+      const exit = this.openHandler?.({
         locale: this.currentLocale,
         path: this.currentPath,
         id: (this.mustExist && this.currentPage) ? this.currentPage.pageId : 0
@@ -274,15 +292,18 @@ export default {
         this.close()
       }
     },
-    async fetchFolders (item) {
+    async fetchFolders (item: unknown): Promise<void> {
+      if (!isPageTreeItem(item)) {
+        throw new TypeError('Invalid page tree item')
+      }
       this.searchLoading = true
       const items = await fetchPageTree(window.fetch.bind(window), {
         parent: item.id,
         mode: 'ALL',
         locale: this.currentLocale
       })
-      const itemFolders = _.filter(items, ['isFolder', true]).map(f => ({...f, children: []}))
-      const itemPages = _.filter(items, i => i.pageId > 0)
+      const itemFolders: PageTreeItem[] = items.filter(item => item.isFolder).map(folder => ({...folder, children: []}))
+      const itemPages = items.filter(isPageEntry)
       if (itemFolders.length > 0) {
         item.children = itemFolders
       } else {
@@ -293,7 +314,7 @@ export default {
       this.searchLoading = false
     }
   }
-}
+})
 </script>
 
 <style lang='scss'>

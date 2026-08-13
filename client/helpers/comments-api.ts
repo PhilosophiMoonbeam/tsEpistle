@@ -10,18 +10,25 @@ type JsonResponse = {
   json: () => Promise<unknown>
 }
 
-type FetchImpl = (url: string, options: Record<string, unknown>) => Promise<JsonResponse>
+type FetchImpl = (url: string, options?: RequestInit) => Promise<JsonResponse>
 
-type CommentProviderConfigValue = Record<string, unknown> & {
+export type CommentProviderConfigValue = Record<string, unknown> & {
+  type?: string
+  title?: string
+  hint?: string | false
+  enum?: unknown[] | false
+  multiline?: boolean
+  maxWidth?: number
   order?: number
+  value?: string | number | boolean | null
 }
 
-type CommentProviderConfig = {
+export type CommentProviderConfig = {
   key: string
   value: CommentProviderConfigValue
 }
 
-type CommentProvider = {
+export type CommentProvider = {
   isEnabled: boolean
   key: string
   title: string
@@ -36,7 +43,7 @@ type CommentSaveResponse = {
   message: string
 }
 
-type CommentRow = {
+export type CommentRow = {
   id: number
   render: string
   authorName: string
@@ -130,7 +137,7 @@ function normalizeCommentProviderConfig (row: unknown, fallbackMessage: string):
   try {
     value = JSON.parse((row as { value: string }).value)
   } catch (err) {
-    throw new Error(fallbackMessage)
+    throw new Error(fallbackMessage, { cause: err })
   }
 
   if (!value || typeof value !== 'object' || Array.isArray(value)) {

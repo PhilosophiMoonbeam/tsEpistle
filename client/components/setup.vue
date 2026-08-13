@@ -1,9 +1,9 @@
 <template lang="pug">
   v-app.setup
-    v-content
+    v-main
       v-container
-        v-layout
-          v-flex(xs12, lg6, offset-lg3)
+        v-row
+          v-col(cols='12', lg='6', offset-lg='3')
             v-card.elevation-20.radius-7.animated.fadeInUp
               v-alert(v-if='isDevMode', tile, dark, color='red darken-3', icon='mdi-alert', prominent)
                 .body-2 You are running an unstable, unreleased development version. This code base is #[strong NOT] for production use!
@@ -18,8 +18,8 @@
               v-card-text
                 .overline.pl-3 Administrator Account
                 v-container.pa-3.mt-3(grid-list-xl)
-                  v-layout(row, wrap)
-                    v-flex(xs12)
+                  v-row()
+                    v-col(cols='12')
                       v-text-field(
                         outlined
                         v-model='conf.adminEmail',
@@ -29,7 +29,7 @@
                         required
                         ref='adminEmailInput'
                       )
-                    v-flex(xs6)
+                    v-col(cols='6')
                       v-text-field(
                         outlined
                         ref='adminPassword',
@@ -42,7 +42,7 @@
                         hint='At least 8 characters long.',
                         persistent-hint
                       )
-                    v-flex(xs6)
+                    v-col(cols='6')
                       v-text-field(
                         outlined
                         ref='adminPasswordConfirm',
@@ -100,14 +100,44 @@
             .caption Redirecting...
 </template>
 
-<script>
+<script lang='ts'>
 import _ from 'lodash'
 import validate from 'validate.js'
 import { BreedingRhombusSpinner } from 'epic-spinners'
 import confetti from 'canvas-confetti'
-
+import { getErrorMessage } from '../helpers/root-ui-store'
+import { isRecord } from '../helpers/type-guards'
 /* global siteConfig */
 
+
+type SetupConfig = {
+  adminEmail: string
+  adminPassword: string
+  adminPasswordConfirm: string
+  siteUrl: string
+  telemetry: boolean
+}
+
+type FinalizeResponse = {
+  ok: boolean
+  error: string
+}
+
+function focusComponent (ref: unknown): void {
+  if (!ref || typeof ref !== 'object') return
+  const candidate = ref as { focus?: unknown }
+  if (typeof candidate.focus === 'function') candidate.focus()
+}
+
+function normalizeFinalizeResponse (payload: unknown): FinalizeResponse {
+  if (!isRecord(payload) || typeof payload.ok !== 'boolean' || (payload.error !== undefined && typeof payload.error !== 'string')) {
+    throw new Error('Setup response is invalid.')
+  }
+  return {
+    ok: payload.ok,
+    error: typeof payload.error === 'string' ? payload.error : ''
+  }
+}
 export default {
   components: {
     BreedingRhombusSpinner
@@ -130,7 +160,7 @@ export default {
         adminPasswordConfirm: '',
         siteUrl: 'https://wiki.yourdomain.com',
         telemetry: true
-      },
+      } as SetupConfig,
       pwdMode: true,
       pwdConfirmMode: true,
       isDevMode: false
@@ -138,7 +168,7 @@ export default {
   },
   mounted() {
     _.delay(() => {
-      this.$refs.adminEmailInput.focus()
+      focusComponent(this.$refs.adminEmailInput)
     }, 500)
     this.isDevMode = siteConfig.devMode === true
   },
@@ -203,7 +233,7 @@ export default {
               'Content-Type': 'application/json'
             },
             body: JSON.stringify(this.conf)
-          }).then(res => res.json())
+          }).then(async res => normalizeFinalizeResponse(await res.json()))
 
           if (resp.ok === true) {
             _.delay(() => {
@@ -223,7 +253,7 @@ export default {
             this.loading = false
           }
         } catch (err) {
-          window.alert(err.message)
+          window.alert(getErrorMessage(err))
         }
       }, 1000)
     }

@@ -155,7 +155,8 @@
               autocomplete='new-password'
               light
               )
-              password-strength(slot='progress', v-model='newPassword')
+              template(v-slot:loader)
+                password-strength(v-model='newPassword')
             v-text-field.mt-2(
               type='password'
               solo
@@ -247,16 +248,16 @@
     notify(style='padding-top: 64px;')
 </template>
 
-<script>
+<script lang='ts'>
 /* global siteConfig */
 
 // <span>Photo by <a href="https://unsplash.com/@isaacquesada?utm_source=unsplash&amp;utm_medium=referral&amp;utm_content=creditCopyText">Isaac Quesada</a> on <a href="/t/textures-patterns?utm_source=unsplash&amp;utm_medium=referral&amp;utm_content=creditCopyText">Unsplash</a></span>
 
 import _ from 'lodash'
 import Cookies from 'js-cookie'
-import { sync } from 'vuex-pathify'
-
-const { fetchAuthStrategies, submitAuthRequest, submitStatusRequest } = require('../helpers/auth-api')
+import { wikiStore } from '@/store/index.ts'
+import { fetchAuthStrategies, submitAuthRequest, submitStatusRequest, type AuthResponse, type AuthStrategy } from '../helpers/auth-api'
+import { getErrorMessage } from '../helpers/root-ui-store'
 
 export default {
   i18nOptions: { namespaces: 'auth' },
@@ -277,9 +278,9 @@ export default {
   data () {
     return {
       error: false,
-      strategies: [],
+      strategies: [] as AuthStrategy[],
       selectedStrategyKey: 'unselected',
-      selectedStrategy: { key: 'unselected', strategy: { useForm: false, usernameType: 'email' } },
+      selectedStrategy: { key: 'unselected', displayName: '', order: 0, selfRegistration: false, strategy: { useForm: false, usernameType: 'email', color: '', icon: '' } } as AuthStrategy,
       screen: 'login',
       username: '',
       password: '',
@@ -300,7 +301,10 @@ export default {
     }
   },
   computed: {
-    activeModal: sync('editor/activeModal'),
+    activeModal: {
+      get(): string { return wikiStore.editor.activeModal },
+      set(value: string) { wikiStore.editor.activeModal = value }
+    },
     siteTitle () {
       return siteConfig.title
     },
@@ -321,14 +325,14 @@ export default {
     }
   },
   watch: {
-    filteredStrategies (newValue, oldValue) {
+    filteredStrategies (newValue: AuthStrategy[]) {
       const firstStrategy = _.head(newValue)
       if (firstStrategy && _.get(firstStrategy, 'strategy.useForm')) {
-        this.selectedStrategyKey = _.head(newValue).key
+        this.selectedStrategyKey = firstStrategy.key
       }
     },
-    selectedStrategyKey (newValue, oldValue) {
-      this.selectedStrategy = _.find(this.strategies, ['key', newValue]) || { key: 'unselected', strategy: { useForm: false, usernameType: 'email' } }
+    selectedStrategyKey (newValue: string) {
+      this.selectedStrategy = _.find(this.strategies, ['key', newValue]) || { key: 'unselected', displayName: '', order: 0, selfRegistration: false, strategy: { useForm: false, usernameType: 'email', color: '', icon: '' } }
       if (this.screen === 'changePwd') {
         return
       }
@@ -338,7 +342,7 @@ export default {
         window.location.assign('/login/' + newValue)
       } else {
         this.$nextTick(() => {
-          this.$refs.iptEmail.focus()
+          ;(this.$refs.iptEmail as { focus: () => void }).focus()
         })
       }
     }
@@ -353,7 +357,7 @@ export default {
   },
   methods: {
     async loadStrategies () {
-      this.$store.commit('loadingStart', 'login-strategies-refresh')
+      wikiStore.startLoading('login-strategies-refresh')
       try {
         this.strategies = await fetchAuthStrategies(window.fetch.bind(window), this.$t('auth:genericError'))
 
@@ -365,13 +369,13 @@ export default {
         }
       } catch (err) {
         console.error(err)
-        this.$store.commit('showNotification', {
+        wikiStore.showNotification({
           style: 'red',
-          message: err.message,
+          message: getErrorMessage(err),
           icon: 'alert'
         })
       } finally {
-        this.$store.commit('loadingStop', 'login-strategies-refresh')
+        wikiStore.stopLoading('login-strategies-refresh')
       }
     },
     /**
@@ -382,11 +386,11 @@ export default {
       if (this.username.length < 2) {
         this.errorMessage = this.$t('auth:invalidEmailUsername')
         this.errorShown = true
-        this.$refs.iptEmail.focus()
+        ;(this.$refs.iptEmail as { focus: () => void }).focus()
       } else if (this.password.length < 2) {
         this.errorMessage = this.$t('auth:invalidPassword')
         this.errorShown = true
-        this.$refs.iptPassword.focus()
+        ;(this.$refs.iptPassword as { focus: () => void }).focus()
       } else {
         this.loaderColor = 'grey darken-4'
         this.loaderTitle = this.$t('auth:signingIn')
@@ -400,9 +404,9 @@ export default {
           this.handleLoginResponse(respObj)
         } catch (err) {
           console.error(err)
-          this.$store.commit('showNotification', {
+          wikiStore.showNotification({
             style: 'red',
-            message: err.message,
+            message: getErrorMessage(err),
             icon: 'alert'
           })
           this.isLoading = false
@@ -414,15 +418,15 @@ export default {
      */
     async verifySecurityCode (setup = false) {
       if (this.securityCode.length !== 6) {
-        this.$store.commit('showNotification', {
+        wikiStore.showNotification({
           style: 'red',
           message: 'Enter a valid security code.',
           icon: 'alert'
         })
         if (setup) {
-          this.$refs.iptTFASetup.focus()
+          ;(this.$refs.iptTFASetup as { focus: () => void }).focus()
         } else {
-          this.$refs.iptTFA.focus()
+          ;(this.$refs.iptTFA as { focus: () => void }).focus()
         }
       } else {
         this.loaderColor = 'grey darken-4'
@@ -440,9 +444,9 @@ export default {
             this.isTFAShown = false
           }
           console.error(err)
-          this.$store.commit('showNotification', {
+          wikiStore.showNotification({
             style: 'red',
-            message: err.message,
+            message: getErrorMessage(err),
             icon: 'alert'
           })
           this.isLoading = false
@@ -464,9 +468,9 @@ export default {
         this.handleLoginResponse(respObj)
       } catch (err) {
         console.error(err)
-        this.$store.commit('showNotification', {
+        wikiStore.showNotification({
           style: 'red',
-          message: err.message,
+          message: getErrorMessage(err),
           icon: 'alert'
         })
         this.isLoading = false
@@ -478,7 +482,7 @@ export default {
     forgotPassword () {
       this.screen = 'forgot'
       this.$nextTick(() => {
-        this.$refs.iptForgotPwdEmail.focus()
+        ;(this.$refs.iptForgotPwdEmail as { focus: () => void }).focus()
       })
     },
     /**
@@ -492,7 +496,7 @@ export default {
         await submitStatusRequest(window.fetch.bind(window), '/_api/auth/forgot-password', {
           email: this.username
         }, this.$t('auth:genericError'))
-        this.$store.commit('showNotification', {
+        wikiStore.showNotification({
           style: 'success',
           message: this.$t('auth:forgotPasswordSuccess'),
           icon: 'email'
@@ -500,40 +504,41 @@ export default {
         this.screen = 'login'
       } catch (err) {
         console.error(err)
-        this.$store.commit('showNotification', {
+        wikiStore.showNotification({
           style: 'red',
-          message: err.message,
+          message: getErrorMessage(err),
           icon: 'alert'
         })
       }
       this.isLoading = false
     },
-    handleLoginResponse (respObj) {
-      this.continuationToken = respObj.continuationToken
+    handleLoginResponse (respObj: AuthResponse) {
+      this.continuationToken = respObj.continuationToken || ''
       if (respObj.mustChangePwd === true) {
         this.screen = 'changePwd'
         this.$nextTick(() => {
-          this.$refs.iptNewPassword.focus()
+          ;(this.$refs.iptNewPassword as { focus: () => void }).focus()
         })
         this.isLoading = false
       } else if (respObj.mustProvideTFA === true) {
         this.securityCode = ''
         this.isTFAShown = true
         setTimeout(() => {
-          this.$refs.iptTFA.focus()
+          ;(this.$refs.iptTFA as { focus: () => void }).focus()
         }, 500)
         this.isLoading = false
       } else if (respObj.mustSetupTFA === true) {
         this.securityCode = ''
         this.isTFASetupShown = true
-        this.tfaQRImage = respObj.tfaQRImage
+        this.tfaQRImage = respObj.tfaQRImage || ''
         setTimeout(() => {
-          this.$refs.iptTFASetup.focus()
+          ;(this.$refs.iptTFASetup as { focus: () => void }).focus()
         }, 500)
         this.isLoading = false
       } else {
         this.loaderColor = 'green darken-1'
         this.loaderTitle = this.$t('auth:loginSuccess')
+        if (!respObj.jwt) throw new Error('Authentication response did not include a token.')
         Cookies.set('jwt', respObj.jwt, { expires: 365, secure: window.location.protocol === 'https:' })
         _.delay(() => {
           const loginRedirect = Cookies.get('loginRedirect')

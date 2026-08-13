@@ -1,4 +1,4 @@
-const { fetchGroupOptions, fetchGroupsList, fetchGroupDetails, createGroup, assignGroupUser, unassignGroupUser, deleteGroup, updateGroup } = require('./groups-api')
+import { fetchGroupOptions, fetchGroupsList, fetchGroupDetails, createGroup, assignGroupUser, unassignGroupUser, deleteGroup, updateGroup } from './groups-api.ts'
 
 function createJsonResponse (payload, ok = true) {
   return {
@@ -12,7 +12,7 @@ function createJsonResponse (payload, ok = true) {
 
 describe('groups api helper', () => {
   test('fetches and validates group options', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse([
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([
       { id: 1, name: 'Administrators', isSystem: true },
       { id: 3, name: 'Editors', isSystem: false }
     ]))
@@ -31,7 +31,7 @@ describe('groups api helper', () => {
   })
 
   test('rejects malformed group rows', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse([
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([
       { id: '3', name: 'Editors', isSystem: false }
     ]))
 
@@ -39,7 +39,7 @@ describe('groups api helper', () => {
   })
 
   test('fetches and validates groups list', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse([
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([
       {
         id: 1,
         name: 'Administrators',
@@ -70,7 +70,7 @@ describe('groups api helper', () => {
   })
 
   test('rejects malformed groups list rows', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse([
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([
       {
         id: 1,
         name: 'Administrators',
@@ -85,7 +85,7 @@ describe('groups api helper', () => {
   })
 
   test('fetches and validates group detail payloads', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({
       id: 3,
       name: 'Editors',
       redirectOnLogin: '/en/home',
@@ -140,7 +140,7 @@ describe('groups api helper', () => {
   })
 
   test('rejects malformed group detail payloads', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({
       id: 3,
       name: 'Editors',
       redirectOnLogin: '/en/home',
@@ -167,7 +167,7 @@ describe('groups api helper', () => {
   })
 
   test('surfaces API error messages for group fetch failures', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue({
+    const fetchImpl = vi.fn().mockResolvedValue({
       ok: false,
       headers: {
         get: () => 'application/json; charset=utf-8'
@@ -179,7 +179,7 @@ describe('groups api helper', () => {
   })
 
   test('creates groups through the REST endpoint', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({
       succeeded: true,
       message: 'Group created successfully.',
       group: { id: 3, name: 'Editors', isSystem: false }
@@ -203,7 +203,7 @@ describe('groups api helper', () => {
   })
 
   test('rejects malformed group create responses', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({
       succeeded: false,
       message: 'Nope'
     }))
@@ -212,7 +212,7 @@ describe('groups api helper', () => {
   })
 
   test('surfaces API error messages for failed group creates', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({
       error: 'write:groups, manage:groups, or manage:system is required'
     }, false))
 
@@ -220,7 +220,7 @@ describe('groups api helper', () => {
   })
 
   test('assigns group users through the REST endpoint', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({
       succeeded: true,
       message: 'User has been assigned to group.'
     }))
@@ -240,7 +240,7 @@ describe('groups api helper', () => {
   })
 
   test('rejects malformed group user assign responses', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({
       succeeded: false,
       message: 'Nope'
     }))
@@ -249,7 +249,7 @@ describe('groups api helper', () => {
   })
 
   test('surfaces API error messages for failed group user assigns', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({
       error: 'User is already assigned to group.'
     }, false))
 
@@ -257,7 +257,7 @@ describe('groups api helper', () => {
   })
 
   test('unassigns group users through the REST endpoint', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({
       succeeded: true,
       message: 'User has been unassigned from group.'
     }))
@@ -277,7 +277,7 @@ describe('groups api helper', () => {
   })
 
   test('rejects malformed group user unassign responses', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({
       succeeded: false,
       message: 'Nope'
     }))
@@ -286,7 +286,7 @@ describe('groups api helper', () => {
   })
 
   test('surfaces API error messages for failed group user unassigns', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({
       error: 'Cannot unassign Guest user'
     }, false))
 
@@ -294,7 +294,7 @@ describe('groups api helper', () => {
   })
 
   test('deletes groups through the REST endpoint', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({
       succeeded: true,
       message: 'Group has been deleted.'
     }))
@@ -314,7 +314,7 @@ describe('groups api helper', () => {
   })
 
   test('rejects malformed group delete responses', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({
       succeeded: false,
       message: 'Nope'
     }))
@@ -323,7 +323,7 @@ describe('groups api helper', () => {
   })
 
   test('surfaces API error messages for failed group deletes', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({
       error: 'Cannot delete this group.'
     }, false))
 
@@ -337,7 +337,7 @@ describe('groups api helper', () => {
       permissions: ['read:pages'],
       pageRules: [{ id: 'rule-1', path: 'docs', roles: ['read:pages'], match: 'START', deny: false, locales: ['en'] }]
     }
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({
       succeeded: true,
       message: 'Group has been updated.'
     }))
@@ -359,7 +359,7 @@ describe('groups api helper', () => {
   })
 
   test('rejects malformed group update responses', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({
       succeeded: false,
       message: 'Nope'
     }))
@@ -368,7 +368,7 @@ describe('groups api helper', () => {
   })
 
   test('surfaces API error messages for failed group updates', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({
       error: 'Some Page Rules contains unsafe or exponential time regex.'
     }, false))
 

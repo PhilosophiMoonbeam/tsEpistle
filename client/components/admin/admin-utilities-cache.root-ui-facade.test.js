@@ -1,8 +1,8 @@
-const fs = require('fs')
-const path = require('path')
+import fs from 'node:fs'
+import path from 'node:path'
 
 const extractScript = (source) => {
-  const match = source.match(/<script>\s*([\s\S]*?)\s*<\/script>/)
+  const match = source.match(/<script(?:\s+lang=["']ts["'])?>\s*([\s\S]*?)\s*<\/script>/)
   return match && match[1]
 }
 
@@ -70,52 +70,53 @@ describe('admin utilities cache REST facade migration guard', () => {
   const flushClientLocaleCache = script && extractMethod(script, 'flushClientLocaleCache')
   const directRootUiCommit = /\$store\.commit\(\s*(?:`loading(?:Start|Stop)`|['"]loading(?:Start|Stop)['"]|`showNotification`|['"]showNotification['"]|`pushGraphError`|['"]pushGraphError['"])\s*,/
 
-  test('admin-utilities-cache.vue imports REST helpers and removes cache GraphQL mutations', () => {
+  test('admin-utilities-cache.vue imports REST helpers and the typed wiki store', () => {
     expect(script).not.toBeNull()
 
-    expect(script).toMatch(/import\s+_\s+from\s+['"]lodash['"]/) // still needed for localStorage key matching
-    expect(script).toMatch(/import\s+\{(?=[^}]*\bloadingStart\b)(?=[^}]*\bloadingStop\b)(?=[^}]*\bshowNotification\b)(?=[^}]*\bpushGraphError\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/root-ui-store['"]/)
+    expect(script).toMatch(/import\s+\{\s*defineComponent\s*\}\s+from\s+['"]vue['"]/)
+    expect(script).toMatch(/import\s+\{\s*wikiStore\s*\}\s+from\s+['"]@\/store\/index\.ts['"]/)
     expect(script).toMatch(/import\s+\{(?=[^}]*\bflushSystemCache\b)(?=[^}]*\bflushSystemTemporaryUploads\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/system-api['"]/)
     expect(script).not.toMatch(/utilities-mutation-cache-flush(?:cache|uploads)\.gql/)
     expect(script).not.toMatch(/utilityCacheFlush(?:Cache|Uploads)Mutation/)
     expect(script).not.toMatch(/\$apollo\.mutate/)
+    expect(script).not.toMatch(/import\s+_\s+from\s+['"]lodash['"]/)
   })
 
-  test('flushCache uses REST helper while preserving loading, notification, and error facades', () => {
+  test('flushCache uses REST helper while preserving loading, notification, and error behavior', () => {
     expect(flushCache).not.toBeNull()
 
     expect(flushCache).toMatch(/this\.loading\s*=\s*true/)
-    expect(flushCache).toMatch(/loadingStart\s*\(\s*this\.\$store\s*,\s*['"]admin-utilities-cache-flushCache['"]\s*\)/)
+    expect(flushCache).toMatch(/wikiStore\.startLoading\s*\(\s*['"]admin-utilities-cache-flushCache['"]\s*\)/)
     expect(flushCache).toMatch(/await\s+flushSystemCache\s*\(\s*window\.fetch\.bind\s*\(\s*window\s*\)\s*\)/)
-    expect(flushCache).toMatch(/showNotification\s*\(\s*this\.\$store\s*,\s*\{\s*message:\s*['"]Cache flushed successfully\.['"]\s*,\s*style:\s*['"]success['"]\s*,\s*icon:\s*['"]check['"]\s*\}\s*\)/)
-    expect(flushCache).toMatch(/catch\s*\(\s*err\s*\)\s*\{\s*pushGraphError\s*\(\s*this\.\$store\s*,\s*err\s*\)\s*\}/)
-    expect(flushCache).toMatch(/loadingStop\s*\(\s*this\.\$store\s*,\s*['"]admin-utilities-cache-flushCache['"]\s*\)/)
+    expect(flushCache).toMatch(/wikiStore\.showNotification\s*\(\s*\{\s*message:\s*['"]Cache flushed successfully\.['"]\s*,\s*style:\s*['"]success['"]\s*,\s*icon:\s*['"]check['"]\s*\}\s*\)/)
+    expect(flushCache).toMatch(/catch\s*\(\s*err\s*\)\s*\{\s*wikiStore\.showError\s*\(\s*err\s*\)\s*\}/)
+    expect(flushCache).toMatch(/wikiStore\.stopLoading\s*\(\s*['"]admin-utilities-cache-flushCache['"]\s*\)/)
     expect(flushCache).toMatch(/this\.loading\s*=\s*false/)
     expect(flushCache).not.toMatch(/this\.\$apollo\.mutate|utilityCacheFlushCacheMutation/)
     expect(flushCache).not.toMatch(directRootUiCommit)
   })
 
-  test('flushUploads uses REST helper while preserving loading, notification, and error facades', () => {
+  test('flushUploads uses REST helper while preserving loading, notification, and error behavior', () => {
     expect(flushUploads).not.toBeNull()
 
     expect(flushUploads).toMatch(/this\.loading\s*=\s*true/)
-    expect(flushUploads).toMatch(/loadingStart\s*\(\s*this\.\$store\s*,\s*['"]admin-utilities-cache-flushUploads['"]\s*\)/)
+    expect(flushUploads).toMatch(/wikiStore\.startLoading\s*\(\s*['"]admin-utilities-cache-flushUploads['"]\s*\)/)
     expect(flushUploads).toMatch(/await\s+flushSystemTemporaryUploads\s*\(\s*window\.fetch\.bind\s*\(\s*window\s*\)\s*\)/)
-    expect(flushUploads).toMatch(/showNotification\s*\(\s*this\.\$store\s*,\s*\{\s*message:\s*['"]Temporary Uploads flushed successfully\.['"]\s*,\s*style:\s*['"]success['"]\s*,\s*icon:\s*['"]check['"]\s*\}\s*\)/)
-    expect(flushUploads).toMatch(/catch\s*\(\s*err\s*\)\s*\{\s*pushGraphError\s*\(\s*this\.\$store\s*,\s*err\s*\)\s*\}/)
-    expect(flushUploads).toMatch(/loadingStop\s*\(\s*this\.\$store\s*,\s*['"]admin-utilities-cache-flushUploads['"]\s*\)/)
+    expect(flushUploads).toMatch(/wikiStore\.showNotification\s*\(\s*\{\s*message:\s*['"]Temporary Uploads flushed successfully\.['"]\s*,\s*style:\s*['"]success['"]\s*,\s*icon:\s*['"]check['"]\s*\}\s*\)/)
+    expect(flushUploads).toMatch(/catch\s*\(\s*err\s*\)\s*\{\s*wikiStore\.showError\s*\(\s*err\s*\)\s*\}/)
+    expect(flushUploads).toMatch(/wikiStore\.stopLoading\s*\(\s*['"]admin-utilities-cache-flushUploads['"]\s*\)/)
     expect(flushUploads).toMatch(/this\.loading\s*=\s*false/)
     expect(flushUploads).not.toMatch(/this\.\$apollo\.mutate|utilityCacheFlushUploadsMutation/)
     expect(flushUploads).not.toMatch(directRootUiCommit)
   })
 
-  test('flushClientLocaleCache remains local-only and keeps lodash usage', () => {
+  test('flushClientLocaleCache remains local-only and uses typed native key matching', () => {
     expect(flushClientLocaleCache).not.toBeNull()
 
     expect(flushClientLocaleCache).toMatch(/window\.localStorage\.length/)
-    expect(flushClientLocaleCache).toMatch(/_\.startsWith\s*\(\s*lsKey\s*,\s*['"]i18next_res['"]\s*\)/)
+    expect(flushClientLocaleCache).toMatch(/lsKey\?\.startsWith\s*\(\s*['"]i18next_res['"]\s*\)/)
     expect(flushClientLocaleCache).toMatch(/window\.localStorage\.removeItem\s*\(\s*lsKey\s*\)/)
-    expect(flushClientLocaleCache).toMatch(/message:\s*['"]Locale Client-Side Cache flushed successfully\.['"]/)
+    expect(flushClientLocaleCache).toMatch(/wikiStore\.showNotification\s*\(\s*\{\s*message:\s*['"]Locale Client-Side Cache flushed successfully\.['"]/)
     expect(flushClientLocaleCache).not.toMatch(/\bflushSystem(?:Cache|TemporaryUploads)\s*\(/)
     expect(flushClientLocaleCache).not.toMatch(directRootUiCommit)
   })

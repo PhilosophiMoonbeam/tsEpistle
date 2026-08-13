@@ -1,4 +1,4 @@
-const { fetchSearchEngines, rebuildSearchIndex, saveSearchEngines } = require('./search-api')
+import { fetchSearchEngines, rebuildSearchIndex, saveSearchEngines } from './search-api.ts'
 
 function createJsonResponse (payload, ok = true) {
   return {
@@ -12,7 +12,7 @@ function createJsonResponse (payload, ok = true) {
 
 describe('search api helper', () => {
   test('requests search engines with same-origin JSON options', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse([]))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([]))
 
     await expect(fetchSearchEngines(fetchImpl)).resolves.toEqual([])
 
@@ -25,7 +25,7 @@ describe('search api helper', () => {
   })
 
   test('validates and sanitizes search engines', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse([
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([
       {
         isEnabled: true,
         key: 'db',
@@ -63,7 +63,7 @@ describe('search api helper', () => {
   })
 
   test('parses config JSON and sorts config by parsed value order with missing orders last', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse([
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([
       {
         isEnabled: false,
         key: 'elastic',
@@ -95,7 +95,7 @@ describe('search api helper', () => {
   })
 
   test('strips extra engine and config fields', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse([
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([
       {
         isEnabled: false,
         key: 'external',
@@ -136,13 +136,13 @@ describe('search api helper', () => {
   })
 
   test('rejects malformed root payloads', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ engines: [] }))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ engines: [] }))
 
     await expect(fetchSearchEngines(fetchImpl, 'Bad search payload')).rejects.toThrow('Bad search payload')
   })
 
   test('rejects malformed engine rows', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse([
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([
       {
         isEnabled: 'yes',
         key: 'db',
@@ -159,7 +159,7 @@ describe('search api helper', () => {
   })
 
   test('rejects malformed config rows', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse([
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([
       {
         isEnabled: true,
         key: 'db',
@@ -176,7 +176,7 @@ describe('search api helper', () => {
   })
 
   test('rejects malformed config JSON', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse([
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([
       {
         isEnabled: true,
         key: 'db',
@@ -193,7 +193,7 @@ describe('search api helper', () => {
   })
 
   test('propagates API JSON errors', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue({
+    const fetchImpl = vi.fn().mockResolvedValue({
       ok: false,
       headers: {
         get: () => 'application/json; charset=utf-8'
@@ -205,7 +205,7 @@ describe('search api helper', () => {
   })
 
   test('rejects non-JSON successful responses', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue({
+    const fetchImpl = vi.fn().mockResolvedValue({
       ok: true,
       headers: {
         get: () => 'text/plain'
@@ -217,7 +217,7 @@ describe('search api helper', () => {
 
   test('saves search engines with same-origin JSON POST options', async () => {
     const engines = [{ key: 'db', isEnabled: true, config: [] }]
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ message: 'Search Engines updated successfully' }))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ message: 'Search Engines updated successfully' }))
 
     await expect(saveSearchEngines(fetchImpl, engines)).resolves.toEqual({ message: 'Search Engines updated successfully' })
     expect(fetchImpl).toHaveBeenCalledWith('/_api/search/engines', {
@@ -232,19 +232,19 @@ describe('search api helper', () => {
   })
 
   test('rejects malformed successful search engine save responses', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ ok: true }))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ ok: true }))
 
     await expect(saveSearchEngines(fetchImpl, [], 'Bad save payload')).rejects.toThrow('Bad save payload')
   })
 
   test('propagates API JSON errors for search engine saves', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ error: 'Invalid search engines payload' }, false))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ error: 'Invalid search engines payload' }, false))
 
     await expect(saveSearchEngines(fetchImpl, [], 'Bad save')).rejects.toThrow('Invalid search engines payload')
   })
 
   test('rejects non-JSON successful search engine save responses', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue({
+    const fetchImpl = vi.fn().mockResolvedValue({
       ok: true,
       headers: {
         get: () => 'text/plain'
@@ -255,7 +255,7 @@ describe('search api helper', () => {
   })
 
   test('rebuilds search index with same-origin JSON options', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ message: 'Index rebuilt successfully' }))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ message: 'Index rebuilt successfully' }))
 
     await expect(rebuildSearchIndex(fetchImpl)).resolves.toEqual({ message: 'Index rebuilt successfully' })
     expect(fetchImpl).toHaveBeenCalledWith('/_api/search/rebuild-index', {
@@ -268,13 +268,13 @@ describe('search api helper', () => {
   })
 
   test('propagates API JSON errors for search index rebuilds', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ error: 'Index rebuild failed' }, false))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ error: 'Index rebuild failed' }, false))
 
     await expect(rebuildSearchIndex(fetchImpl, 'Bad rebuild')).rejects.toThrow('Index rebuild failed')
   })
 
   test('rejects non-JSON successful search index rebuild responses', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue({
+    const fetchImpl = vi.fn().mockResolvedValue({
       ok: true,
       headers: {
         get: () => 'text/plain'

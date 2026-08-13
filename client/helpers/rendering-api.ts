@@ -10,16 +10,21 @@ type JsonResponse = {
 
 type FetchImpl = (url: string, options: Record<string, unknown>) => Promise<JsonResponse>
 
-type RendererConfigValue = Record<string, unknown> & {
+export type RendererConfigValue = Record<string, unknown> & {
   order?: number
+  type?: string
+  enum?: string[]
+  title?: string
+  hint?: string
+  value?: unknown
 }
 
-type RendererConfig = {
+export type RendererConfig = {
   key: string
   value: RendererConfigValue
 }
 
-type Renderer = {
+export type Renderer = {
   isEnabled: boolean
   key: string
   title: string
@@ -70,7 +75,7 @@ function normalizeRendererConfig (row: unknown, fallbackMessage: string): Render
   try {
     value = JSON.parse((row as { value: string }).value)
   } catch (err) {
-    throw new Error(fallbackMessage)
+    throw new Error(fallbackMessage, { cause: err })
   }
 
   if (!value || typeof value !== 'object' || Array.isArray(value)) {

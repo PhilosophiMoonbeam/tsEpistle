@@ -1,30 +1,32 @@
-jest.mock('express', () => {
+vi.mock('express', () => {
   const router = {
-    get: jest.fn(),
-    post: jest.fn(),
-    use: jest.fn()
+    get: vi.fn(),
+    post: vi.fn(),
+    use: vi.fn()
   }
-
-  return {
+  const express = {
     Router: () => router,
     __router: router
   }
+
+  return { default: express, ...express }
 })
+
+import express from 'express'
 
 describe('controllers/api locales endpoints', () => {
   beforeEach(() => {
-    jest.resetModules()
-    const express = require('express')
+    vi.resetModules()
     express.__router.get.mockClear()
     express.__router.post.mockClear()
 
     global.WIKI = {
       auth: {
-        checkAccess: jest.fn().mockReturnValue(true)
+        checkAccess: vi.fn().mockReturnValue(true)
       },
       cache: {
-        get: jest.fn().mockResolvedValue(null),
-        del: jest.fn().mockResolvedValue()
+        get: vi.fn().mockResolvedValue(null),
+        del: vi.fn().mockResolvedValue()
       },
       config: {
         lang: {
@@ -36,10 +38,10 @@ describe('controllers/api locales endpoints', () => {
       },
       models: {
         locales: {
-          query: jest.fn().mockReturnValue({
-            select: jest.fn().mockReturnThis(),
-            where: jest.fn().mockReturnThis(),
-            first: jest.fn().mockResolvedValue({ isRTL: true }),
+          query: vi.fn().mockReturnValue({
+            select: vi.fn().mockReturnThis(),
+            where: vi.fn().mockReturnThis(),
+            first: vi.fn().mockResolvedValue({ isRTL: true }),
             then: resolve => Promise.resolve([
               {
                 code: 'en',
@@ -55,26 +57,25 @@ describe('controllers/api locales endpoints', () => {
         }
       },
       configSvc: {
-        saveToDb: jest.fn().mockResolvedValue()
+        saveToDb: vi.fn().mockResolvedValue()
       },
       scheduler: {
-        registerJob: jest.fn().mockResolvedValue({
+        registerJob: vi.fn().mockResolvedValue({
           finished: Promise.resolve()
         })
       },
       lang: {
-        setCurrentLocale: jest.fn().mockResolvedValue(),
-        refreshNamespaces: jest.fn().mockResolvedValue(),
-        getByNamespace: jest.fn().mockResolvedValue([
+        setCurrentLocale: vi.fn().mockResolvedValue(),
+        refreshNamespaces: vi.fn().mockResolvedValue(),
+        getByNamespace: vi.fn().mockResolvedValue([
           { key: 'welcome', value: 'Hello' }
         ])
       }
     }
   })
 
-  const loadHandlers = () => {
-    const express = require('express')
-    require('../../controllers/api/locales')
+  const loadHandlers = async () => {
+    await import('../../controllers/api/locales.ts')
     return {
       list: express.__router.get.mock.calls.find(([path]) => path === '/')[1],
       config: express.__router.get.mock.calls.find(([path]) => path === '/config')[1],
@@ -84,19 +85,17 @@ describe('controllers/api locales endpoints', () => {
     }
   }
 
-  it('registers locale routes', () => {
-    const handlers = loadHandlers()
+  it('registers locale routes', async () => { const handlers = await loadHandlers()
 
-    expect(typeof handlers.list).toBe('function')
-    expect(typeof handlers.config).toBe('function')
-    expect(typeof handlers.saveConfig).toBe('function')
-    expect(typeof handlers.download).toBe('function')
-    expect(typeof handlers.strings).toBe('function')
-  })
+  expect(typeof handlers.list).toBe('function')
+  expect(typeof handlers.config).toBe('function')
+  expect(typeof handlers.saveConfig).toBe('function')
+  expect(typeof handlers.download).toBe('function')
+  expect(typeof handlers.strings).toBe('function') })
 
   it('returns locale list payload', async () => {
-    const { list } = loadHandlers()
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const { list } = await loadHandlers()
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await list({}, res)
 
@@ -110,8 +109,8 @@ describe('controllers/api locales endpoints', () => {
   })
 
   it('returns locale config payload for manage system users', async () => {
-    const { config } = loadHandlers()
-    const res = { json: jest.fn(), sendStatus: jest.fn() }
+    const { config } = await loadHandlers()
+    const res = { json: vi.fn(), sendStatus: vi.fn() }
 
     await config({ user: { permissions: ['manage:system'] } }, res)
 
@@ -126,8 +125,8 @@ describe('controllers/api locales endpoints', () => {
 
   it('returns 403 for locale config without manage system access', async () => {
     global.WIKI.auth.checkAccess.mockReturnValueOnce(false)
-    const { config } = loadHandlers()
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis(), sendStatus: jest.fn() }
+    const { config } = await loadHandlers()
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis(), sendStatus: vi.fn() }
 
     await config({ user: { permissions: [] } }, res)
 
@@ -138,9 +137,9 @@ describe('controllers/api locales endpoints', () => {
 
   it('returns JSON 403 for locale config saves without manage system access', async () => {
     global.WIKI.auth.checkAccess.mockReturnValueOnce(false)
-    const { saveConfig } = loadHandlers()
+    const { saveConfig } = await loadHandlers()
     const req = { user: { permissions: [] }, body: { locale: 'fr', autoUpdate: false, namespacing: true, namespaces: ['en'] } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await saveConfig(req, res)
 
@@ -150,7 +149,7 @@ describe('controllers/api locales endpoints', () => {
   })
 
   it('returns JSON 400 for malformed locale config save payloads', async () => {
-    const { saveConfig } = loadHandlers()
+    const { saveConfig } = await loadHandlers()
     const invalidPayloads = [
       {},
       { locale: '', autoUpdate: false, namespacing: true, namespaces: ['en'] },
@@ -160,7 +159,7 @@ describe('controllers/api locales endpoints', () => {
     ]
 
     for (const body of invalidPayloads) {
-      const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+      const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
       await saveConfig({ user: {}, body }, res)
       expect(res.status).toHaveBeenCalledWith(400)
       expect(res.json).toHaveBeenCalledWith({ error: 'Invalid locale config payload' })
@@ -169,8 +168,8 @@ describe('controllers/api locales endpoints', () => {
   })
 
   it('saves locale config preserving resolver side effects and namespace union', async () => {
-    const { saveConfig } = loadHandlers()
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const { saveConfig } = await loadHandlers()
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await saveConfig({
       user: { permissions: ['manage:system'] },
@@ -197,8 +196,8 @@ describe('controllers/api locales endpoints', () => {
 
   it('returns JSON 500 for locale config save failures', async () => {
     global.WIKI.configSvc.saveToDb.mockRejectedValueOnce(new Error('save failed'))
-    const { saveConfig } = loadHandlers()
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const { saveConfig } = await loadHandlers()
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await saveConfig({
       user: {},
@@ -211,8 +210,8 @@ describe('controllers/api locales endpoints', () => {
 
   it('returns JSON 403 for locale downloads without manage system access', async () => {
     global.WIKI.auth.checkAccess.mockReturnValueOnce(false)
-    const { download } = loadHandlers()
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const { download } = await loadHandlers()
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await download({ user: { permissions: [] }, params: { code: 'fr' } }, res)
 
@@ -224,8 +223,8 @@ describe('controllers/api locales endpoints', () => {
   it('downloads locales through scheduler preserving resolver job semantics', async () => {
     const finished = Promise.resolve()
     global.WIKI.scheduler.registerJob.mockResolvedValueOnce({ finished })
-    const { download } = loadHandlers()
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const { download } = await loadHandlers()
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await download({ user: { permissions: ['manage:system'] }, params: { code: 'fr' } }, res)
 
@@ -238,8 +237,8 @@ describe('controllers/api locales endpoints', () => {
   })
 
   it('returns JSON 400 when locale download code is missing', async () => {
-    const { download } = loadHandlers()
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const { download } = await loadHandlers()
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await download({ user: {}, params: { code: '' } }, res)
 
@@ -250,8 +249,8 @@ describe('controllers/api locales endpoints', () => {
 
   it('returns JSON 500 for locale download failures', async () => {
     global.WIKI.scheduler.registerJob.mockRejectedValueOnce(new Error('download failed'))
-    const { download } = loadHandlers()
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const { download } = await loadHandlers()
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await download({ user: {}, params: { code: 'fr' } }, res)
 
@@ -260,12 +259,12 @@ describe('controllers/api locales endpoints', () => {
   })
 
   it('returns namespace strings payload when namespace is provided', async () => {
-    const { strings } = loadHandlers()
+    const { strings } = await loadHandlers()
     const req = {
       params: { code: 'en' },
       query: { namespace: 'common' }
     }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await strings(req, res)
 
@@ -276,12 +275,12 @@ describe('controllers/api locales endpoints', () => {
   })
 
   it('returns 400 when namespace is missing', async () => {
-    const { strings } = loadHandlers()
+    const { strings } = await loadHandlers()
     const req = {
       params: { code: 'en' },
       query: {}
     }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await strings(req, res)
 
@@ -291,12 +290,12 @@ describe('controllers/api locales endpoints', () => {
 
   it('returns 404 when locale strings cannot be found', async () => {
     global.WIKI.lang.getByNamespace.mockRejectedValueOnce(new Error('Invalid locale or namespace'))
-    const { strings } = loadHandlers()
+    const { strings } = await loadHandlers()
     const req = {
       params: { code: 'zz' },
       query: { namespace: 'common' }
     }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await strings(req, res)
 

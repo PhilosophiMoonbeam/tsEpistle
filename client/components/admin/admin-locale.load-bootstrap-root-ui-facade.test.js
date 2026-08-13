@@ -1,8 +1,8 @@
-const fs = require('fs')
-const path = require('path')
+import fs from 'node:fs'
+import path from 'node:path'
 
 const extractScript = (source) => {
-  const match = source.match(/<script>\s*([\s\S]*?)\s*<\/script>/)
+  const match = source.match(/<script(?:\s+lang=["']ts["'])?>\s*([\s\S]*?)\s*<\/script>/)
   return match && match[1]
 }
 
@@ -60,27 +60,27 @@ describe('admin-locale loadBootstrap root UI facade migration guard', () => {
   const save = script && extractMethod(script, 'save')
   const directLoadBootstrapRootUiCommit = /\bthis\.\$store\.commit\s*\(\s*(?:['"]loadingStart['"]|['"]loadingStop['"]|['"]showNotification['"]|`loadingStart`|`loadingStop`|`showNotification`)\s*,/
 
-  test('admin-locale.vue imports REST helpers and root UI facades', () => {
+  test('admin-locale.vue imports typed REST helpers and the wiki store facade', () => {
     expect(script).not.toBeNull()
+    expect(source).toMatch(/<script\s+lang=['"]ts['"]>/)
     expect(script).toMatch(
-      /import\s+\{(?=[^}]*\bloadingStart\b)(?=[^}]*\bloadingStop\b)(?=[^}]*\bshowNotification\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/root-ui-store['"]/
+      /import\s+\{(?=[^}]*\bfetchLocales\b)(?=[^}]*\bfetchLocaleConfig\b)(?=[^}]*\bsaveLocaleConfig\b)(?=[^}]*\bdownloadLocale\b)(?=[^}]*\bLocaleRow\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/locales-api['"]/
     )
-    expect(script).toMatch(
-      /import\s+\{(?=[^}]*\bfetchLocales\b)(?=[^}]*\bfetchLocaleConfig\b)(?=[^}]*\bsaveLocaleConfig\b)(?=[^}]*\bdownloadLocale\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/locales-api['"]/
-    )
+    expect(script).toContain("import { getErrorMessage } from '../../helpers/root-ui-store'")
+    expect(script).toContain("import { wikiStore } from '@/store/index.ts'")
     expect(script).not.toMatch(/locale-mutation-save\.gql|localesSaveMutation|locale-mutation-download\.gql|localesDownloadMutation/)
   })
 
-  test('loadBootstrap() routes loading and fetch error notifications through the root UI facade', () => {
+  test('loadBootstrap() routes loading and fetch error notifications through the wiki store', () => {
     expect(loadBootstrap).not.toBeNull()
 
-    expect(loadBootstrap).toMatch(/async\s+loadBootstrap\s*\(\s*\)\s*\{\s*loadingStart\s*\(\s*this\.\$store\s*,\s*['"]admin-locale-refresh['"]\s*\)/)
+    expect(loadBootstrap).toMatch(/async\s+loadBootstrap\s*\(\s*\)\s*\{\s*wikiStore\.startLoading\s*\(\s*['"]admin-locale-refresh['"]\s*\)/)
     expect(loadBootstrap).toMatch(/Promise\.allSettled\s*\(\s*\[\s*fetchLocales\s*\(\s*window\.fetch\.bind\(\s*window\s*\)\s*,\s*['"]Locales response is invalid['"]\s*\)\s*,\s*fetchLocaleConfig\s*\(\s*window\.fetch\.bind\(\s*window\s*\)\s*,\s*['"]Locale config response is invalid['"]\s*\)\s*\]\s*\)/)
     expect(loadBootstrap).toMatch(/this\.locales\s*=\s*localesResult\.value\.map\s*\(\s*lc\s*=>\s*\(\s*\{\s*\.\.\.lc\s*,\s*isDownloading:\s*false\s*\}\s*\)\s*\)/)
-    expect(loadBootstrap).toMatch(/showNotification\s*\(\s*this\.\$store\s*,\s*\{\s*style:\s*['"]red['"]\s*,\s*message:\s*localesResult\.reason\.message\s*,\s*icon:\s*['"]alert['"]\s*\}\s*\)/)
+    expect(loadBootstrap).toMatch(/wikiStore\.showNotification\s*\(\s*\{\s*style:\s*['"]red['"]\s*,\s*message:\s*getErrorMessage\s*\(\s*localesResult\.reason\s*\)\s*,\s*icon:\s*['"]alert['"]\s*\}\s*\)/)
     expect(loadBootstrap).toMatch(/this\.selectedLocale\s*=\s*configResult\.value\.locale[\s\S]*this\.autoUpdate\s*=\s*configResult\.value\.autoUpdate[\s\S]*this\.namespacing\s*=\s*configResult\.value\.namespacing[\s\S]*this\.namespaces\s*=\s*configResult\.value\.namespaces[\s\S]*this\.configLoaded\s*=\s*true/)
-    expect(loadBootstrap).toMatch(/this\.configLoaded\s*=\s*false\s*showNotification\s*\(\s*this\.\$store\s*,\s*\{\s*style:\s*['"]red['"]\s*,\s*message:\s*configResult\.reason\.message\s*,\s*icon:\s*['"]alert['"]\s*\}\s*\)/)
-    expect(loadBootstrap).toMatch(/loadingStop\s*\(\s*this\.\$store\s*,\s*['"]admin-locale-refresh['"]\s*\)\s*\}/)
+    expect(loadBootstrap).toMatch(/this\.configLoaded\s*=\s*false\s*wikiStore\.showNotification\s*\(\s*\{\s*style:\s*['"]red['"]\s*,\s*message:\s*getErrorMessage\s*\(\s*configResult\.reason\s*\)\s*,\s*icon:\s*['"]alert['"]\s*\}\s*\)/)
+    expect(loadBootstrap).toMatch(/wikiStore\.stopLoading\s*\(\s*['"]admin-locale-refresh['"]\s*\)\s*\}/)
     expect(loadBootstrap).not.toMatch(directLoadBootstrapRootUiCommit)
   })
 
@@ -89,22 +89,23 @@ describe('admin-locale loadBootstrap root UI facade migration guard', () => {
 
     expect(save).toMatch(/if\s*\(\s*!this\.configLoaded\s*\)\s*\{\s*return\s*\}/)
     expect(save).toMatch(/this\.loading\s*=\s*true[\s\S]*await\s+saveLocaleConfig\s*\(\s*window\.fetch\.bind\(\s*window\s*\)\s*,\s*\{\s*locale:\s*this\.selectedLocale\s*,\s*autoUpdate:\s*this\.autoUpdate\s*,\s*namespacing:\s*this\.namespacing\s*,\s*namespaces:\s*this\.namespaces\s*\}\s*,\s*['"]Locale settings update failed['"]\s*\)/)
-    expect(save).toMatch(/this\.\$i18n\.i18next\.changeLanguage\s*\(\s*this\.selectedLocale\s*\)/)
+    expect(save).toMatch(/void\s+this\.\$i18n\.changeLanguage\s*\(\s*this\.selectedLocale\s*\)/)
     expect(save).toMatch(/this\.\$moment\.locale\s*\(\s*this\.selectedLocale\s*\)/)
-    expect(save).toMatch(/this\.\$vuetify\.rtl\s*=\s*curLocale\s*&&\s*curLocale\.isRTL/)
-    expect(save).toMatch(/showNotification\s*\(\s*this\.\$store\s*,\s*\{\s*message:\s*['"]Locale settings updated successfully\.['"]\s*,\s*style:\s*['"]success['"]\s*,\s*icon:\s*['"]check['"]\s*\}\s*\)/)
-    expect(save).toMatch(/window\.location\.reload\s*\(\s*true\s*\)/)
-    expect(save).toMatch(/catch\s*\(\s*err\s*\)\s*\{\s*showNotification\s*\(\s*this\.\$store\s*,\s*\{\s*message:\s*`Error:\s*\$\{err\.message\}`\s*,\s*style:\s*['"]error['"]\s*,\s*icon:\s*['"]warning['"]\s*\}\s*\)\s*\}/)
+    expect(save).toMatch(/this\.\$vuetify\.locale\.rtl\s*\[\s*this\.selectedLocale\s*\]\s*=\s*Boolean\s*\(\s*curLocale\s*&&\s*curLocale\.isRTL\s*\)/)
+    expect(save).toMatch(/wikiStore\.showNotification\s*\(\s*\{\s*message:\s*['"]Locale settings updated successfully\.['"]\s*,\s*style:\s*['"]success['"]\s*,\s*icon:\s*['"]check['"]\s*\}\s*\)/)
+    expect(save).toMatch(/window\.location\.reload\s*\(\s*\)/)
+    expect(save).toMatch(/catch\s*\(\s*err\s*\)\s*\{\s*wikiStore\.showNotification\s*\(\s*\{\s*message:\s*`Error:\s*\$\{getErrorMessage\s*\(\s*err\s*\)\}`\s*,\s*style:\s*['"]error['"]\s*,\s*icon:\s*['"]warning['"]\s*\}\s*\)\s*\}/)
     expect(save).toContain('this.loading = false')
     expect(save).not.toMatch(/this\.\$apollo\.mutate|localesSaveMutation|locale-mutation-save\.gql/)
   })
 
   test('download(), created(), and template behavior route through REST and facades', () => {
     expect(download).not.toBeNull()
+    expect(download).toMatch(/async\s+download\s*\(\s*lc\s*:\s*LocaleTableRow\s*\)/)
     expect(download).toMatch(/lc\.isDownloading\s*=\s*true[\s\S]*await\s+downloadLocale\s*\(\s*window\.fetch\.bind\(\s*window\s*\)\s*,\s*lc\.code\s*,\s*['"]Locale download failed['"]\s*\)/)
     expect(download).toMatch(/lc\.isInstalled\s*=\s*true[\s\S]*lc\.updatedAt\s*=\s*new Date\(\)\.toISOString\(\)[\s\S]*lc\.installDate\s*=\s*lc\.updatedAt/)
-    expect(download).toMatch(/showNotification\s*\(\s*this\.\$store\s*,\s*\{\s*message:\s*`Locale\s+\$\{lc\.name\}\s+has been installed successfully\.`\s*,\s*style:\s*['"]success['"]\s*,\s*icon:\s*['"]get_app['"]\s*\}\s*\)/)
-    expect(download).toMatch(/catch\s*\(\s*err\s*\)\s*\{\s*showNotification\s*\(\s*this\.\$store\s*,\s*\{\s*message:\s*`Error:\s*\$\{err\.message\}`\s*,\s*style:\s*['"]error['"]\s*,\s*icon:\s*['"]warning['"]\s*\}\s*\)\s*\}/)
+    expect(download).toMatch(/wikiStore\.showNotification\s*\(\s*\{\s*message:\s*`Locale\s+\$\{lc\.name\}\s+has been installed successfully\.`\s*,\s*style:\s*['"]success['"]\s*,\s*icon:\s*['"]get_app['"]\s*\}\s*\)/)
+    expect(download).toMatch(/catch\s*\(\s*err\s*\)\s*\{\s*wikiStore\.showNotification\s*\(\s*\{\s*message:\s*`Error:\s*\$\{getErrorMessage\s*\(\s*err\s*\)\}`\s*,\s*style:\s*['"]error['"]\s*,\s*icon:\s*['"]warning['"]\s*\}\s*\)\s*\}/)
     expect(download).toContain('lc.isDownloading = false')
     expect(download).not.toMatch(/this\.\$apollo\.mutate|localesDownloadMutation|locale-mutation-download\.gql|this\.\$store\.commit/)
     expect(script).toMatch(/created\s*\(\s*\)\s*\{\s*this\.loadBootstrap\s*\(\s*\)\s*\}/)

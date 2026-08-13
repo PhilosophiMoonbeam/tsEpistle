@@ -1,4 +1,4 @@
-const { searchUsers, fetchLastLogins, fetchAdminUsersList, createAdminUser, updateAdminUser, deleteAdminUser, setAdminUserActive, verifyAdminUser, setAdminUserTfa, fetchUserDetails } = require('./users-api')
+import { searchUsers, fetchLastLogins, fetchAdminUsersList, createAdminUser, updateAdminUser, deleteAdminUser, setAdminUserActive, verifyAdminUser, setAdminUserTfa, fetchUserDetails } from './users-api.ts'
 
 function createJsonResponse (payload, ok = true) {
   return {
@@ -12,14 +12,14 @@ function createJsonResponse (payload, ok = true) {
 
 describe('users api helper', () => {
   test('returns an empty array without fetching for short queries', async () => {
-    const fetchImpl = jest.fn()
+    const fetchImpl = vi.fn()
 
     await expect(searchUsers(fetchImpl, ' a ')).resolves.toEqual([])
     expect(fetchImpl).not.toHaveBeenCalled()
   })
 
   test('fetches and validates user search results', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse([
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([
       { id: 42, name: 'Alice', email: 'alice@example.com', providerKey: 'local' },
       { id: 77, name: 'Bob', email: 'bob@example.com', providerKey: 'ldap' }
     ]))
@@ -38,7 +38,7 @@ describe('users api helper', () => {
   })
 
   test('rejects malformed user search rows', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse([
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([
       { id: '42', name: 'Alice', email: 'alice@example.com', providerKey: 'local' }
     ]))
 
@@ -46,7 +46,7 @@ describe('users api helper', () => {
   })
 
   test('fetches and validates dashboard last-logins payloads', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse([
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([
       { id: 42, name: 'Alice', lastLoginAt: '2026-01-03T00:00:00.000Z', email: 'hidden@example.com' },
       { id: 77, name: 'Bob', lastLoginAt: '2026-01-02T00:00:00.000Z' }
     ]))
@@ -65,7 +65,7 @@ describe('users api helper', () => {
   })
 
   test('rejects malformed dashboard last-logins payloads', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse([
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([
       { id: 42, name: 'Alice', lastLoginAt: null }
     ]))
 
@@ -73,7 +73,7 @@ describe('users api helper', () => {
   })
 
   test('fetches and validates admin users list payloads', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({
       total: 2,
       users: [
         {
@@ -143,7 +143,7 @@ describe('users api helper', () => {
   })
 
   test('rejects malformed admin users list payloads', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({
       total: 1,
       users: [
         {
@@ -162,7 +162,7 @@ describe('users api helper', () => {
   })
 
   test('surfaces API error messages for failed admin users lists', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({
       error: 'manage:users or manage:system is required'
     }, false))
 
@@ -170,7 +170,7 @@ describe('users api helper', () => {
   })
 
   test('creates admin users with the expected REST payload', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({
       succeeded: true,
       message: 'User created successfully'
     }))
@@ -201,7 +201,7 @@ describe('users api helper', () => {
   })
 
   test('rejects malformed admin user create payloads', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({
       message: 'User created successfully'
     }))
 
@@ -209,7 +209,7 @@ describe('users api helper', () => {
   })
 
   test('surfaces API error messages for failed admin user creates', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({
       error: 'You are not authorized to assign a user to a group with elevated permissions.'
     }, false))
 
@@ -217,7 +217,7 @@ describe('users api helper', () => {
   })
 
   test('updates admin users with the expected REST payload', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({
       succeeded: true,
       message: 'User created successfully'
     }))
@@ -248,14 +248,14 @@ describe('users api helper', () => {
   })
 
   test('rejects invalid admin user update ids before fetching', async () => {
-    const fetchImpl = jest.fn()
+    const fetchImpl = vi.fn()
 
     await expect(updateAdminUser(fetchImpl, '42abc', {}, 'Bad user update')).rejects.toThrow('Bad user update')
     expect(fetchImpl).not.toHaveBeenCalled()
   })
 
   test('rejects malformed admin user update payloads', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({
       succeeded: true
     }))
 
@@ -263,7 +263,7 @@ describe('users api helper', () => {
   })
 
   test('surfaces API error messages for failed admin user updates', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({
       error: 'Password must be at least 6 characters!'
     }, false))
 
@@ -271,7 +271,7 @@ describe('users api helper', () => {
   })
 
   test('deletes admin users with the expected REST payload', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({
       succeeded: true,
       message: 'User deleted successfully'
     }))
@@ -293,7 +293,7 @@ describe('users api helper', () => {
   })
 
   test('rejects invalid admin user delete ids before fetching', async () => {
-    const fetchImpl = jest.fn()
+    const fetchImpl = vi.fn()
 
     await expect(deleteAdminUser(fetchImpl, '42abc', 7, 'Bad user delete')).rejects.toThrow('Bad user delete')
     await expect(deleteAdminUser(fetchImpl, 42, '7abc', 'Bad user delete')).rejects.toThrow('Bad user delete')
@@ -301,7 +301,7 @@ describe('users api helper', () => {
   })
 
   test('rejects malformed admin user delete payloads', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({
       succeeded: true
     }))
 
@@ -309,7 +309,7 @@ describe('users api helper', () => {
   })
 
   test('surfaces API error messages for failed admin user deletes', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({
       error: 'Cannot delete a protected system account.'
     }, false))
 
@@ -317,7 +317,7 @@ describe('users api helper', () => {
   })
 
   test('patches admin user active state with the expected REST payload', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({
       succeeded: true,
       message: 'User deactivated successfully'
     }))
@@ -339,7 +339,7 @@ describe('users api helper', () => {
   })
 
   test('patches admin user verification with the expected REST payload', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({
       succeeded: true,
       message: 'User verified successfully'
     }))
@@ -361,7 +361,7 @@ describe('users api helper', () => {
   })
 
   test('patches admin user 2FA state with the expected REST payload', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({
       succeeded: true,
       message: 'User 2FA enabled successfully'
     }))
@@ -383,14 +383,14 @@ describe('users api helper', () => {
   })
 
   test('rejects invalid admin user action ids before fetching', async () => {
-    const fetchImpl = jest.fn()
+    const fetchImpl = vi.fn()
 
     await expect(setAdminUserActive(fetchImpl, '42abc', true, 'Bad user status')).rejects.toThrow('Bad user status')
     expect(fetchImpl).not.toHaveBeenCalled()
   })
 
   test('rejects malformed admin user action payloads', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({
       succeeded: false,
       message: 'User activated successfully'
     }))
@@ -399,7 +399,7 @@ describe('users api helper', () => {
   })
 
   test('surfaces API error messages for failed admin user actions', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({
       error: 'Cannot deactivate system accounts.'
     }, false))
 
@@ -407,7 +407,7 @@ describe('users api helper', () => {
   })
 
   test('fetches and validates user detail payloads', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({
       id: 42,
       name: 'Alice',
       email: 'alice@example.com',
@@ -464,14 +464,14 @@ describe('users api helper', () => {
   })
 
   test('rejects invalid user detail ids before fetching', async () => {
-    const fetchImpl = jest.fn()
+    const fetchImpl = vi.fn()
 
     await expect(fetchUserDetails(fetchImpl, '42abc', 'Bad user detail payload')).rejects.toThrow('Bad user detail payload')
     expect(fetchImpl).not.toHaveBeenCalled()
   })
 
   test('rejects malformed user detail payloads', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({
       id: 42,
       name: 'Alice',
       email: 'alice@example.com',
@@ -498,7 +498,7 @@ describe('users api helper', () => {
   })
 
   test('surfaces API error messages for failed searches', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue({
+    const fetchImpl = vi.fn().mockResolvedValue({
       ok: false,
       headers: {
         get: () => 'application/json; charset=utf-8'

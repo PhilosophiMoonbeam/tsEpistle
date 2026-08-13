@@ -1,32 +1,75 @@
-jest.mock('express', () => {
+vi.mock('express', () => {
   const routers = []
-
-  return {
+  const express = {
     Router: () => {
       const router = {
-        get: jest.fn(),
-        post: jest.fn(),
-        patch: jest.fn(),
-        put: jest.fn(),
-        delete: jest.fn(),
-        use: jest.fn()
+        get: vi.fn(),
+        post: vi.fn(),
+        patch: vi.fn(),
+        put: vi.fn(),
+        delete: vi.fn(),
+        use: vi.fn()
       }
       routers.push(router)
       return router
     },
     __routers: routers
   }
+
+  return { default: express, ...express }
 })
+
+import express from 'express'
+
+const API_CONTROLLER_NAMES = [
+  'analytics',
+  'assets',
+  'auth',
+  'comments',
+  'contribute',
+  'groups',
+  'locales',
+  'logging',
+  'mail',
+  'navigation',
+  'pages',
+  'rendering',
+  'search',
+  'site',
+  'storage',
+  'system',
+  'theming',
+  'users'
+]
+
+const loadApiIndexRouter = async () => {
+  const subrouters = Object.fromEntries(API_CONTROLLER_NAMES.map(name => [name, {}]))
+
+  for (const name of API_CONTROLLER_NAMES) {
+    vi.doMock(`../../controllers/api/${name}.ts`, () => ({
+      default: subrouters[name]
+    }))
+  }
+
+  try {
+    await expect(import('../../controllers/api/index.ts')).resolves.toBeDefined()
+  } finally {
+    for (const name of API_CONTROLLER_NAMES) {
+      vi.doUnmock(`../../controllers/api/${name}.ts`)
+    }
+  }
+
+  return { apiRouter: express.__routers.at(-1), subrouters }
+}
 
 describe('controllers/api comments endpoints', () => {
   beforeEach(() => {
-    jest.resetModules()
-    const express = require('express')
+    vi.resetModules()
     express.__routers.length = 0
 
     global.WIKI = {
       auth: {
-        checkAccess: jest.fn()
+        checkAccess: vi.fn()
       },
       data: {
         commentProviders: [
@@ -65,9 +108,9 @@ describe('controllers/api comments endpoints', () => {
       },
       models: {
         commentProviders: {
-          query: jest.fn(),
-          initProvider: jest.fn().mockResolvedValue(true),
-          getProviders: jest.fn().mockResolvedValue([
+          query: vi.fn(),
+          initProvider: vi.fn().mockResolvedValue(true),
+          getProviders: vi.fn().mockResolvedValue([
             {
               key: 'default',
               isEnabled: true,
@@ -90,17 +133,17 @@ describe('controllers/api comments endpoints', () => {
           ])
         },
         comments: {
-          postNewComment: jest.fn().mockResolvedValue(73),
-          updateComment: jest.fn().mockResolvedValue('<p>Updated</p>'),
-          deleteComment: jest.fn().mockResolvedValue(true)
+          postNewComment: vi.fn().mockResolvedValue(73),
+          updateComment: vi.fn().mockResolvedValue('<p>Updated</p>'),
+          deleteComment: vi.fn().mockResolvedValue(true)
         }
       }
     }
 
     global.WIKI.models.commentProviders.query.mockImplementation(() => {
       const query = {
-        patch: jest.fn().mockReturnThis(),
-        where: jest.fn().mockResolvedValue(1)
+        patch: vi.fn().mockReturnThis(),
+        where: vi.fn().mockResolvedValue(1)
       }
       global.WIKI.models.commentProviders.__queries = global.WIKI.models.commentProviders.__queries || []
       global.WIKI.models.commentProviders.__queries.push(query)
@@ -108,9 +151,8 @@ describe('controllers/api comments endpoints', () => {
     })
   })
 
-  const loadHandlers = () => {
-    const express = require('express')
-    require('../../controllers/api/comments')
+  const loadHandlers = async () => {
+    await import('../../controllers/api/comments.ts')
     const router = express.__routers[0]
     return {
       list: router.get.mock.calls.find(([path]) => path === '/')[1],
@@ -123,35 +165,31 @@ describe('controllers/api comments endpoints', () => {
     }
   }
 
-  const loadProvidersHandler = () => loadHandlers().providers
+  const loadProvidersHandler = async () => (await loadHandlers()).providers
 
-  it('registers comment CRUD and provider routes', () => {
-    const handlers = loadHandlers()
+  it('registers comment CRUD and provider routes', async () => { const handlers = await loadHandlers()
 
-    expect(typeof handlers.list).toBe('function')
-    expect(typeof handlers.create).toBe('function')
-    expect(typeof handlers.get).toBe('function')
-    expect(typeof handlers.update).toBe('function')
-    expect(typeof handlers.remove).toBe('function')
-    expect(typeof handlers.providers).toBe('function')
-    expect(typeof handlers.saveProviders).toBe('function')
-  })
+  expect(typeof handlers.list).toBe('function')
+  expect(typeof handlers.create).toBe('function')
+  expect(typeof handlers.get).toBe('function')
+  expect(typeof handlers.update).toBe('function')
+  expect(typeof handlers.remove).toBe('function')
+  expect(typeof handlers.providers).toBe('function')
+  expect(typeof handlers.saveProviders).toBe('function') })
 
-  it('is mounted by the API index router', () => {
-    const express = require('express')
-    expect(() => require('../../controllers/api')).not.toThrow()
-    const apiRouter = express.__routers[0]
+  it('is mounted by the API index router', async () => {
+    const { apiRouter, subrouters } = await loadApiIndexRouter()
 
-    expect(apiRouter.use).toHaveBeenCalledWith('/comments', expect.any(Object))
+    expect(apiRouter.use).toHaveBeenCalledWith('/comments', subrouters.comments)
   })
 
   it('returns 403 for unauthorized provider requests without querying providers', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(false)
-    const handler = loadProvidersHandler()
+    const handler = await loadProvidersHandler()
     const req = { user: { permissions: [] } }
-    const res = { sendStatus: jest.fn(), json: jest.fn() }
+    const res = { sendStatus: vi.fn(), json: vi.fn() }
 
-    await handler(req, res, jest.fn())
+    await handler(req, res, vi.fn())
 
     expect(global.WIKI.auth.checkAccess).toHaveBeenCalledWith(req.user, ['manage:system'])
     expect(res.sendStatus).toHaveBeenCalledWith(403)
@@ -161,10 +199,10 @@ describe('controllers/api comments endpoints', () => {
 
   it('returns allowlisted provider fields without raw props or internal fields', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
-    const handler = loadProvidersHandler()
-    const res = { sendStatus: jest.fn(), json: jest.fn() }
+    const handler = await loadProvidersHandler()
+    const res = { sendStatus: vi.fn(), json: vi.fn() }
 
-    await handler({ user: {} }, res, jest.fn())
+    await handler({ user: {} }, res, vi.fn())
 
     expect(global.WIKI.models.commentProviders.getProviders).toHaveBeenCalledWith()
     expect(res.json).toHaveBeenCalledWith([
@@ -198,10 +236,10 @@ describe('controllers/api comments endpoints', () => {
 
   it('merges config with provider metadata as JSON strings sorted by config key and omits unknown config keys', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
-    const handler = loadProvidersHandler()
-    const res = { sendStatus: jest.fn(), json: jest.fn() }
+    const handler = await loadProvidersHandler()
+    const res = { sendStatus: vi.fn(), json: vi.fn() }
 
-    await handler({ user: {} }, res, jest.fn())
+    await handler({ user: {} }, res, vi.fn())
 
     const config = res.json.mock.calls[0][0][0].config
     expect(config.map(row => row.key)).toEqual(['displayMode', 'requireApproval'])
@@ -253,9 +291,9 @@ describe('controllers/api comments endpoints', () => {
 
   it('returns JSON 403 for unauthorized provider saves without mutating models', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(false)
-    const { saveProviders } = loadHandlers()
+    const { saveProviders } = await loadHandlers()
     const req = createSavePayload()
-    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
 
     await saveProviders(req, res)
 
@@ -268,8 +306,8 @@ describe('controllers/api comments endpoints', () => {
 
   it('saves providers with GraphQL parity and initializes the active comment provider', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
-    const { saveProviders } = loadHandlers()
-    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+    const { saveProviders } = await loadHandlers()
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
 
     await saveProviders(createSavePayload(), res)
 
@@ -297,8 +335,8 @@ describe('controllers/api comments endpoints', () => {
 
   it('returns JSON 400 for malformed provider save payloads', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
-    const { saveProviders } = loadHandlers()
-    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+    const { saveProviders } = await loadHandlers()
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
 
     await saveProviders({ body: { providers: [{ key: 'default', isEnabled: 'yes', config: [] }] }, user: {} }, res)
 
@@ -310,10 +348,10 @@ describe('controllers/api comments endpoints', () => {
 
   it('returns JSON 400 for malformed provider save config JSON', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
-    const { saveProviders } = loadHandlers()
+    const { saveProviders } = await loadHandlers()
     const req = createSavePayload()
     req.body.providers[0].config[0].value = '{not-json'
-    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
 
     await saveProviders(req, res)
 
@@ -325,12 +363,12 @@ describe('controllers/api comments endpoints', () => {
   it('returns JSON 500 for unexpected provider save failures', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
     const query = {
-      patch: jest.fn().mockReturnThis(),
-      where: jest.fn().mockRejectedValue(new Error('comment save failed'))
+      patch: vi.fn().mockReturnThis(),
+      where: vi.fn().mockRejectedValue(new Error('comment save failed'))
     }
     global.WIKI.models.commentProviders.query.mockReturnValue(query)
-    const { saveProviders } = loadHandlers()
-    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+    const { saveProviders } = await loadHandlers()
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
 
     await saveProviders(createSavePayload(), res)
 
@@ -342,8 +380,8 @@ describe('controllers/api comments endpoints', () => {
   it('returns JSON 500 for comment provider initialization failures', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
     global.WIKI.models.commentProviders.initProvider.mockRejectedValueOnce(new Error('init failed'))
-    const { saveProviders } = loadHandlers()
-    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+    const { saveProviders } = await loadHandlers()
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
 
     await saveProviders(createSavePayload(), res)
 
@@ -355,9 +393,9 @@ describe('controllers/api comments endpoints', () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
     const err = new Error('comments failed')
     global.WIKI.models.commentProviders.getProviders.mockRejectedValue(err)
-    const handler = loadProvidersHandler()
-    const res = { sendStatus: jest.fn(), json: jest.fn() }
-    const next = jest.fn()
+    const handler = await loadProvidersHandler()
+    const res = { sendStatus: vi.fn(), json: vi.fn() }
+    const next = vi.fn()
 
     await handler({ user: {} }, res, next)
 
@@ -366,7 +404,7 @@ describe('controllers/api comments endpoints', () => {
   })
 
   it('creates, updates, and deletes comments through shared operations', async () => {
-    const handlers = loadHandlers()
+    const handlers = await loadHandlers()
     const user = { id: 12 }
     const createReq = {
       user,
@@ -379,7 +417,7 @@ describe('controllers/api comments endpoints', () => {
         guestEmail: ''
       }
     }
-    const createRes = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+    const createRes = { status: vi.fn().mockReturnThis(), json: vi.fn() }
 
     await handlers.create(createReq, createRes)
 
@@ -392,7 +430,7 @@ describe('controllers/api comments endpoints', () => {
     expect(createRes.json).toHaveBeenCalledWith({ id: 73 })
 
     const updateReq = { user, ip: '127.0.0.2', params: { id: '73' }, body: { content: 'Updated' } }
-    const updateRes = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+    const updateRes = { status: vi.fn().mockReturnThis(), json: vi.fn() }
     await handlers.update(updateReq, updateRes)
     expect(global.WIKI.models.comments.updateComment).toHaveBeenCalledWith({
       id: 73,
@@ -403,15 +441,15 @@ describe('controllers/api comments endpoints', () => {
     expect(updateRes.json).toHaveBeenCalledWith({ render: '<p>Updated</p>' })
 
     const deleteReq = { user, ip: '127.0.0.3', params: { id: '73' } }
-    const deleteRes = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+    const deleteRes = { status: vi.fn().mockReturnThis(), json: vi.fn() }
     await handlers.remove(deleteReq, deleteRes)
     expect(global.WIKI.models.comments.deleteComment).toHaveBeenCalledWith({ id: 73, user, ip: deleteReq.ip })
     expect(deleteRes.json).toHaveBeenCalledWith({ message: 'Comment deleted successfully' })
   })
 
   it('rejects malformed comment ids before calling shared operations', async () => {
-    const handlers = loadHandlers()
-    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+    const handlers = await loadHandlers()
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
 
     await handlers.update({ params: { id: '0' }, body: { content: 'Updated' } }, res)
 

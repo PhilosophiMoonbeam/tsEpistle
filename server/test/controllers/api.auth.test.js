@@ -1,32 +1,39 @@
-jest.mock('express-brute', () => {
-  return jest.fn().mockImplementation(() => ({
-    prevent: jest.fn((req, res, next) => next())
-  }))
-})
+const authRateLimiter = vi.hoisted(() => ({
+  middleware: vi.fn((req, res, next) => next()),
+  options: [],
+  reset: vi.fn().mockResolvedValue(undefined)
+}))
 
-jest.mock('../../helpers/brute-knex', () => {
-  return jest.fn().mockImplementation(() => ({}))
-})
+vi.mock('../../helpers/auth-rate-limiter.ts', () => ({
+  createAuthRateLimiter: vi.fn(options => {
+    authRateLimiter.options.push(options)
+    return authRateLimiter
+  })
+}))
 
-jest.mock('express', () => {
+vi.mock('express', () => {
   const router = {
-    get: jest.fn(),
-    post: jest.fn(),
-    use: jest.fn()
+    get: vi.fn(),
+    post: vi.fn(),
+    use: vi.fn()
   }
-
-  return {
+  const express = {
     Router: () => router,
     __router: router
   }
+
+  return { default: express, ...express }
 })
+
+import express from 'express'
 
 describe('controllers/api auth endpoints', () => {
   beforeEach(() => {
-    jest.resetModules()
-    const express = require('express')
+    vi.resetModules()
     express.__router.get.mockClear()
     express.__router.post.mockClear()
+    authRateLimiter.reset.mockClear()
+    authRateLimiter.options.length = 0
 
     global.WIKI = {
       config: {
@@ -55,11 +62,11 @@ describe('controllers/api auth endpoints', () => {
         ]
       },
       auth: {
-        checkAccess: jest.fn().mockReturnValue(true),
-        regenerateCertificates: jest.fn().mockResolvedValue(true),
-        resetGuestUser: jest.fn().mockResolvedValue(true),
-        reloadApiKeys: jest.fn().mockResolvedValue(true),
-        activateStrategies: jest.fn().mockResolvedValue(true),
+        checkAccess: vi.fn().mockReturnValue(true),
+        regenerateCertificates: vi.fn().mockResolvedValue(true),
+        resetGuestUser: vi.fn().mockResolvedValue(true),
+        reloadApiKeys: vi.fn().mockResolvedValue(true),
+        activateStrategies: vi.fn().mockResolvedValue(true),
         strategies: {
           local: {
             key: 'local',
@@ -79,21 +86,21 @@ describe('controllers/api auth endpoints', () => {
         }
       },
       configSvc: {
-        saveToDb: jest.fn().mockResolvedValue(true)
+        saveToDb: vi.fn().mockResolvedValue(true)
       },
       events: {
         outbound: {
-          emit: jest.fn()
+          emit: vi.fn()
         }
       },
       models: {
         authentication: {
-          query: jest.fn(() => ({
-            patch: jest.fn(() => ({ where: jest.fn().mockResolvedValue(1) })),
-            insert: jest.fn().mockResolvedValue({}),
-            delete: jest.fn(() => ({ where: jest.fn().mockResolvedValue(1) }))
+          query: vi.fn(() => ({
+            patch: vi.fn(() => ({ where: vi.fn().mockResolvedValue(1) })),
+            insert: vi.fn().mockResolvedValue({}),
+            delete: vi.fn(() => ({ where: vi.fn().mockResolvedValue(1) }))
           })),
-          getStrategies: jest.fn().mockResolvedValue([
+          getStrategies: vi.fn().mockResolvedValue([
             {
               key: 'local',
               strategyKey: 'local',
@@ -125,35 +132,34 @@ describe('controllers/api auth endpoints', () => {
           ])
         },
         apiKeys: {
-          createNewKey: jest.fn().mockResolvedValue('generated-api-key'),
-          query: jest.fn(() => ({
-            orderBy: jest.fn().mockResolvedValue([]),
-            findById: jest.fn(() => ({
-              patch: jest.fn().mockResolvedValue(1)
+          createNewKey: vi.fn().mockResolvedValue('generated-api-key'),
+          query: vi.fn(() => ({
+            orderBy: vi.fn().mockResolvedValue([]),
+            findById: vi.fn(() => ({
+              patch: vi.fn().mockResolvedValue(1)
             }))
           }))
         },
         users: {
-          query: jest.fn(() => ({
-            count: jest.fn(() => ({
-              where: jest.fn(() => ({
-                first: jest.fn().mockResolvedValue({ total: '0' })
+          query: vi.fn(() => ({
+            count: vi.fn(() => ({
+              where: vi.fn(() => ({
+                first: vi.fn().mockResolvedValue({ total: '0' })
               }))
             }))
           })),
-          login: jest.fn(),
-          loginTFA: jest.fn(),
-          loginChangePassword: jest.fn(),
-          loginForgotPassword: jest.fn(),
-          register: jest.fn().mockResolvedValue(undefined)
+          login: vi.fn(),
+          loginTFA: vi.fn(),
+          loginChangePassword: vi.fn(),
+          loginForgotPassword: vi.fn(),
+          register: vi.fn().mockResolvedValue(undefined)
         }
       }
     }
   })
 
-  const loadHandlers = () => {
-    const express = require('express')
-    require('../../controllers/api/auth')
+  const loadHandlers = async () => {
+    await import('../../controllers/api/auth.ts')
     const getRouteHandler = (path) => express.__router.get.mock.calls.find(([routePath]) => routePath === path)[1]
     const postRouteHandler = (path) => {
       const call = express.__router.post.mock.calls.find(([routePath]) => routePath === path)
@@ -179,33 +185,41 @@ describe('controllers/api auth endpoints', () => {
     }
   }
 
-  it('registers the auth routes', () => {
-    const handlers = loadHandlers()
+  it('registers the auth routes', async () => { const handlers = await loadHandlers()
 
-    expect(typeof handlers.adminStrategies).toBe('function')
-    expect(typeof handlers.adminActiveStrategies).toBe('function')
-    expect(typeof handlers.strategies).toBe('function')
-    expect(typeof handlers.providers).toBe('function')
-    expect(typeof handlers.updateStrategies).toBe('function')
-    expect(typeof handlers.api).toBe('function')
-    expect(typeof handlers.setApiState).toBe('function')
-    expect(typeof handlers.createApiKey).toBe('function')
-    expect(typeof handlers.revokeApiKey).toBe('function')
-    expect(typeof handlers.regenerateCertificates).toBe('function')
-    expect(typeof handlers.resetGuestUser).toBe('function')
-    expect(typeof handlers.register).toBe('function')
-    expect(typeof handlers.forgotPassword).toBe('function')
-    expect(typeof handlers.login).toBe('function')
-    expect(typeof handlers.loginTFA).toBe('function')
-    expect(typeof handlers.loginChangePassword).toBe('function')
+  expect(typeof handlers.adminStrategies).toBe('function')
+  expect(typeof handlers.adminActiveStrategies).toBe('function')
+  expect(typeof handlers.strategies).toBe('function')
+  expect(typeof handlers.providers).toBe('function')
+  expect(typeof handlers.updateStrategies).toBe('function')
+  expect(typeof handlers.api).toBe('function')
+  expect(typeof handlers.setApiState).toBe('function')
+  expect(typeof handlers.createApiKey).toBe('function')
+  expect(typeof handlers.revokeApiKey).toBe('function')
+  expect(typeof handlers.regenerateCertificates).toBe('function')
+  expect(typeof handlers.resetGuestUser).toBe('function')
+  expect(typeof handlers.register).toBe('function')
+  expect(typeof handlers.forgotPassword).toBe('function')
+  expect(typeof handlers.login).toBe('function')
+  expect(typeof handlers.loginTFA).toBe('function')
+  expect(typeof handlers.loginChangePassword).toBe('function') })
+
+  it('configures the REST limiter with the preserved 401 JSON response', async () => {
+    await loadHandlers()
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
+
+    authRateLimiter.options[0].onLimit({}, res, 5 * 60 * 1000)
+
+    expect(res.status).toHaveBeenCalledWith(401)
+    expect(res.json).toHaveBeenCalledWith({ error: 'Too many failed attempts. Try again later.' })
   })
 
   it('returns admin authentication strategy definitions with GraphQL-compatible props', async () => {
-    const { adminStrategies } = loadHandlers()
+    const { adminStrategies } = await loadHandlers()
     const req = { user: { permissions: ['manage:system'] } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await adminStrategies(req, res, jest.fn())
+    await adminStrategies(req, res, vi.fn())
 
     expect(global.WIKI.auth.checkAccess).toHaveBeenCalledWith({ permissions: ['manage:system'] }, ['manage:system'])
     expect(res.json).toHaveBeenCalledWith([
@@ -232,22 +246,22 @@ describe('controllers/api auth endpoints', () => {
 
   it('returns 403 for unauthorized admin authentication strategy definitions requests', async () => {
     global.WIKI.auth.checkAccess.mockReturnValueOnce(false)
-    const { adminStrategies } = loadHandlers()
+    const { adminStrategies } = await loadHandlers()
     const req = { user: { permissions: ['read:pages'] } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await adminStrategies(req, res, jest.fn())
+    await adminStrategies(req, res, vi.fn())
 
     expect(res.status).toHaveBeenCalledWith(403)
     expect(res.json).toHaveBeenCalledWith({ error: 'manage:system is required' })
   })
 
   it('returns admin active authentication strategies with GraphQL-compatible config', async () => {
-    const { adminActiveStrategies } = loadHandlers()
+    const { adminActiveStrategies } = await loadHandlers()
     const req = { user: { permissions: ['manage:system'] }, query: {} }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await adminActiveStrategies(req, res, jest.fn())
+    await adminActiveStrategies(req, res, vi.fn())
 
     expect(global.WIKI.auth.checkAccess).toHaveBeenCalledWith({ permissions: ['manage:system'] }, ['manage:system'])
     expect(global.WIKI.models.authentication.getStrategies).toHaveBeenCalledTimes(1)
@@ -283,22 +297,22 @@ describe('controllers/api auth endpoints', () => {
   })
 
   it('filters admin active authentication strategies when enabledOnly is true', async () => {
-    const { adminActiveStrategies } = loadHandlers()
+    const { adminActiveStrategies } = await loadHandlers()
     const req = { user: { permissions: ['manage:system'] }, query: { enabledOnly: 'true' } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await adminActiveStrategies(req, res, jest.fn())
+    await adminActiveStrategies(req, res, vi.fn())
 
     expect(res.json.mock.calls[0][0]).toHaveLength(1)
     expect(res.json.mock.calls[0][0][0].key).toBe('local')
   })
 
   it('forwards admin active authentication strategy failures to next', async () => {
-    const next = jest.fn()
+    const next = vi.fn()
     global.WIKI.models.authentication.getStrategies.mockRejectedValueOnce(new Error('auth db down'))
-    const { adminActiveStrategies } = loadHandlers()
+    const { adminActiveStrategies } = await loadHandlers()
     const req = { user: { permissions: ['manage:system'] }, query: {} }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await adminActiveStrategies(req, res, next)
 
@@ -307,10 +321,10 @@ describe('controllers/api auth endpoints', () => {
   })
 
   it('returns only enabled authentication strategies with the public login-safe payload', async () => {
-    const { strategies } = loadHandlers()
-    const res = { json: jest.fn() }
+    const { strategies } = await loadHandlers()
+    const res = { json: vi.fn() }
 
-    await strategies({}, res, jest.fn())
+    await strategies({}, res, vi.fn())
 
     expect(global.WIKI.models.authentication.getStrategies).toHaveBeenCalledTimes(1)
     expect(res.json).toHaveBeenCalledWith([
@@ -322,18 +336,21 @@ describe('controllers/api auth endpoints', () => {
         strategy: {
           key: 'local',
           title: 'Local',
-          useForm: true
+          useForm: true,
+          color: '',
+          icon: '',
+          usernameType: 'email'
         }
       }
     ])
   })
 
   it('returns all configured providers for admin user bootstrap when authorized', async () => {
-    const { providers } = loadHandlers()
+    const { providers } = await loadHandlers()
     const req = { user: { permissions: ['manage:users'] } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await providers(req, res, jest.fn())
+    await providers(req, res, vi.fn())
 
     expect(global.WIKI.auth.checkAccess).toHaveBeenCalledWith({ permissions: ['manage:users'] }, ['manage:system', 'write:users', 'manage:users'])
     expect(res.json).toHaveBeenCalledWith([
@@ -354,18 +371,18 @@ describe('controllers/api auth endpoints', () => {
 
   it('returns 403 for unauthorized admin provider bootstrap requests', async () => {
     global.WIKI.auth.checkAccess.mockReturnValueOnce(false)
-    const { providers } = loadHandlers()
+    const { providers } = await loadHandlers()
     const req = { user: { permissions: ['manage:api'] } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await providers(req, res, jest.fn())
+    await providers(req, res, vi.fn())
 
     expect(res.status).toHaveBeenCalledWith(403)
     expect(res.json).toHaveBeenCalledWith({ error: 'manage:system, write:users, or manage:users is required' })
   })
 
   it('updates authentication strategies through REST with normalized config and side effects', async () => {
-    const { updateStrategies } = loadHandlers()
+    const { updateStrategies } = await loadHandlers()
     const req = {
       user: { permissions: ['manage:system'] },
       body: {
@@ -395,7 +412,7 @@ describe('controllers/api auth endpoints', () => {
         ]
       }
     }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await updateStrategies(req, res)
 
@@ -433,9 +450,9 @@ describe('controllers/api auth endpoints', () => {
 
   it('returns 403 for unauthorized authentication strategy updates', async () => {
     global.WIKI.auth.checkAccess.mockReturnValueOnce(false)
-    const { updateStrategies } = loadHandlers()
+    const { updateStrategies } = await loadHandlers()
     const req = { user: { permissions: [] }, body: { strategies: [] } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await updateStrategies(req, res)
 
@@ -452,8 +469,8 @@ describe('controllers/api auth endpoints', () => {
     ['non-string domain', { strategies: [{ key: 'local', strategyKey: 'local', displayName: 'Local', order: 0, isEnabled: true, config: [], selfRegistration: false, domainWhitelist: [7], autoEnrollGroups: [] }] }],
     ['non-integer group', { strategies: [{ key: 'local', strategyKey: 'local', displayName: 'Local', order: 0, isEnabled: true, config: [], selfRegistration: false, domainWhitelist: [], autoEnrollGroups: ['1'] }] }]
   ])('returns 400 for invalid authentication strategy payloads: %s', async (label, body) => {
-    const { updateStrategies } = loadHandlers()
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const { updateStrategies } = await loadHandlers()
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await updateStrategies({ user: { permissions: ['manage:system'] }, body }, res)
 
@@ -464,13 +481,13 @@ describe('controllers/api auth endpoints', () => {
 
   it('returns JSON errors when a removed authentication strategy still has users', async () => {
     global.WIKI.models.users.query.mockImplementationOnce(() => ({
-      count: jest.fn(() => ({
-        where: jest.fn(() => ({
-          first: jest.fn().mockResolvedValue({ total: '1' })
+      count: vi.fn(() => ({
+        where: vi.fn(() => ({
+          first: vi.fn().mockResolvedValue({ total: '1' })
         }))
       }))
     }))
-    const { updateStrategies } = loadHandlers()
+    const { updateStrategies } = await loadHandlers()
     const req = {
       user: { permissions: ['manage:system'] },
       body: {
@@ -489,7 +506,7 @@ describe('controllers/api auth endpoints', () => {
         ]
       }
     }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await updateStrategies(req, res)
 
@@ -500,7 +517,7 @@ describe('controllers/api auth endpoints', () => {
 
   it('returns admin api bootstrap payload when authorized', async () => {
     const fullKey = '123456789012345678901234567890'
-    const orderBy = jest.fn().mockResolvedValueOnce([
+    const orderBy = vi.fn().mockResolvedValueOnce([
       {
         id: 7,
         name: 'Deploy',
@@ -513,11 +530,11 @@ describe('controllers/api auth endpoints', () => {
       }
     ])
     global.WIKI.models.apiKeys.query.mockReturnValueOnce({ orderBy })
-    const { api } = loadHandlers()
+    const { api } = await loadHandlers()
     const req = { user: { permissions: ['manage:api'] } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await api(req, res, jest.fn())
+    await api(req, res, vi.fn())
 
     expect(global.WIKI.auth.checkAccess).toHaveBeenCalledWith({ permissions: ['manage:api'] }, ['manage:system', 'manage:api'])
     expect(global.WIKI.models.apiKeys.query).toHaveBeenCalledTimes(1)
@@ -545,7 +562,7 @@ describe('controllers/api auth endpoints', () => {
   it('redacts malformed short admin api keys instead of exposing key material', async () => {
     const shortKey = 'abc'
     const boundaryKey = 'x'.repeat(20)
-    const orderBy = jest.fn().mockResolvedValueOnce([
+    const orderBy = vi.fn().mockResolvedValueOnce([
       {
         id: 8,
         name: 'Legacy',
@@ -575,11 +592,11 @@ describe('controllers/api auth endpoints', () => {
       }
     ])
     global.WIKI.models.apiKeys.query.mockReturnValueOnce({ orderBy })
-    const { api } = loadHandlers()
+    const { api } = await loadHandlers()
     const req = { user: { permissions: ['manage:api'] } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await api(req, res, jest.fn())
+    await api(req, res, vi.fn())
 
     const payload = res.json.mock.calls[0][0]
     expect(payload.keys[0].keyShort).toBe('...[redacted]')
@@ -591,11 +608,11 @@ describe('controllers/api auth endpoints', () => {
 
   it('normalizes admin api enabled state with strict true semantics', async () => {
     global.WIKI.config.api.isEnabled = 'true'
-    const { api } = loadHandlers()
+    const { api } = await loadHandlers()
     const req = { user: { permissions: ['manage:api'] } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await api(req, res, jest.fn())
+    await api(req, res, vi.fn())
 
     expect(res.json).toHaveBeenCalledWith({
       enabled: false,
@@ -605,11 +622,11 @@ describe('controllers/api auth endpoints', () => {
 
   it('returns 403 for unauthorized admin api bootstrap requests', async () => {
     global.WIKI.auth.checkAccess.mockReturnValueOnce(false)
-    const { api } = loadHandlers()
+    const { api } = await loadHandlers()
     const req = { user: { permissions: ['manage:users'] } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await api(req, res, jest.fn())
+    await api(req, res, vi.fn())
 
     expect(res.status).toHaveBeenCalledWith(403)
     expect(res.json).toHaveBeenCalledWith({ error: 'manage:system or manage:api is required' })
@@ -618,11 +635,11 @@ describe('controllers/api auth endpoints', () => {
 
   it('allows manage:api users to request admin api bootstrap', async () => {
     global.WIKI.auth.checkAccess.mockImplementationOnce((user, permissions) => user.permissions.includes('manage:api') && permissions.includes('manage:api'))
-    const { api } = loadHandlers()
+    const { api } = await loadHandlers()
     const req = { user: { permissions: ['manage:api'] } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await api(req, res, jest.fn())
+    await api(req, res, vi.fn())
 
     expect(res.status).not.toHaveBeenCalledWith(403)
     expect(res.json).toHaveBeenCalledWith({
@@ -632,12 +649,12 @@ describe('controllers/api auth endpoints', () => {
   })
 
   it('forwards admin api bootstrap query failures to next', async () => {
-    const orderBy = jest.fn().mockRejectedValueOnce(new Error('db failed'))
+    const orderBy = vi.fn().mockRejectedValueOnce(new Error('db failed'))
     global.WIKI.models.apiKeys.query.mockReturnValueOnce({ orderBy })
-    const { api } = loadHandlers()
+    const { api } = await loadHandlers()
     const req = { user: { permissions: ['manage:api'] } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
-    const next = jest.fn()
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
+    const next = vi.fn()
 
     await api(req, res, next)
 
@@ -648,9 +665,9 @@ describe('controllers/api auth endpoints', () => {
   })
 
   it('updates admin API state through REST when authorized', async () => {
-    const { setApiState } = loadHandlers()
+    const { setApiState } = await loadHandlers()
     const req = { user: { permissions: ['manage:api'] }, body: { enabled: false } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await setApiState(req, res)
 
@@ -661,9 +678,9 @@ describe('controllers/api auth endpoints', () => {
   })
 
   it('rejects malformed admin API state payloads', async () => {
-    const { setApiState } = loadHandlers()
+    const { setApiState } = await loadHandlers()
     const req = { user: { permissions: ['manage:api'] }, body: { enabled: 'yes' } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await setApiState(req, res)
 
@@ -674,9 +691,9 @@ describe('controllers/api auth endpoints', () => {
 
   it('returns JSON errors when admin API state persistence fails', async () => {
     global.WIKI.configSvc.saveToDb.mockRejectedValueOnce(new Error('api save failed'))
-    const { setApiState } = loadHandlers()
+    const { setApiState } = await loadHandlers()
     const req = { user: { permissions: ['manage:api'] }, body: { enabled: false } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await setApiState(req, res)
 
@@ -685,7 +702,7 @@ describe('controllers/api auth endpoints', () => {
   })
 
   it('creates admin API keys through REST and reloads runtime keys', async () => {
-    const { createApiKey } = loadHandlers()
+    const { createApiKey } = await loadHandlers()
     const req = {
       user: { permissions: ['manage:api'] },
       body: {
@@ -695,7 +712,7 @@ describe('controllers/api auth endpoints', () => {
         group: 7
       }
     }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await createApiKey(req, res)
 
@@ -714,7 +731,7 @@ describe('controllers/api auth endpoints', () => {
   })
 
   it('rejects malformed admin API key creation payloads', async () => {
-    const { createApiKey } = loadHandlers()
+    const { createApiKey } = await loadHandlers()
     const req = {
       user: { permissions: ['manage:api'] },
       body: {
@@ -724,7 +741,7 @@ describe('controllers/api auth endpoints', () => {
         group: 7
       }
     }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await createApiKey(req, res)
 
@@ -735,7 +752,7 @@ describe('controllers/api auth endpoints', () => {
 
   it('returns JSON errors when admin API key creation fails', async () => {
     global.WIKI.models.apiKeys.createNewKey.mockRejectedValueOnce(new Error('key backend failed'))
-    const { createApiKey } = loadHandlers()
+    const { createApiKey } = await loadHandlers()
     const req = {
       user: { permissions: ['manage:api'] },
       body: {
@@ -745,7 +762,7 @@ describe('controllers/api auth endpoints', () => {
         group: null
       }
     }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await createApiKey(req, res)
 
@@ -754,12 +771,12 @@ describe('controllers/api auth endpoints', () => {
   })
 
   it('revokes admin API keys through REST and reloads runtime keys', async () => {
-    const patch = jest.fn().mockResolvedValue(1)
-    const findById = jest.fn(() => ({ patch }))
+    const patch = vi.fn().mockResolvedValue(1)
+    const findById = vi.fn(() => ({ patch }))
     global.WIKI.models.apiKeys.query.mockReturnValueOnce({ findById })
-    const { revokeApiKey } = loadHandlers()
+    const { revokeApiKey } = await loadHandlers()
     const req = { user: { permissions: ['manage:api'] }, params: { id: '42' } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await revokeApiKey(req, res)
 
@@ -771,9 +788,9 @@ describe('controllers/api auth endpoints', () => {
   })
 
   it.each(['0', '1.9', 'Infinity', '9007199254740992'])('rejects malformed admin API key revoke IDs: %s', async (id) => {
-    const { revokeApiKey } = loadHandlers()
+    const { revokeApiKey } = await loadHandlers()
     const req = { user: { permissions: ['manage:api'] }, params: { id } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await revokeApiKey(req, res)
 
@@ -783,12 +800,12 @@ describe('controllers/api auth endpoints', () => {
   })
 
   it('returns JSON errors when admin API key revoke fails', async () => {
-    const patch = jest.fn().mockRejectedValue(new Error('revoke backend failed'))
-    const findById = jest.fn(() => ({ patch }))
+    const patch = vi.fn().mockRejectedValue(new Error('revoke backend failed'))
+    const findById = vi.fn(() => ({ patch }))
     global.WIKI.models.apiKeys.query.mockReturnValueOnce({ findById })
-    const { revokeApiKey } = loadHandlers()
+    const { revokeApiKey } = await loadHandlers()
     const req = { user: { permissions: ['manage:api'] }, params: { id: '42' } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await revokeApiKey(req, res)
 
@@ -798,8 +815,8 @@ describe('controllers/api auth endpoints', () => {
 
   it('returns 403 for unauthorized admin API mutation requests', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(false)
-    const { setApiState, createApiKey, revokeApiKey } = loadHandlers()
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const { setApiState, createApiKey, revokeApiKey } = await loadHandlers()
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await setApiState({ user: { permissions: [] }, body: { enabled: true } }, res)
     await createApiKey({ user: { permissions: [] }, body: { name: 'Deploy', expiration: '1y', fullAccess: true, group: null } }, res)
@@ -813,9 +830,9 @@ describe('controllers/api auth endpoints', () => {
   })
 
   it('regenerates certificates for manage:system users', async () => {
-    const { regenerateCertificates } = loadHandlers()
+    const { regenerateCertificates } = await loadHandlers()
     const req = { user: { permissions: ['manage:system'] } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await regenerateCertificates(req, res)
 
@@ -826,9 +843,9 @@ describe('controllers/api auth endpoints', () => {
 
   it('rejects certificate regeneration for manage:api-only users', async () => {
     global.WIKI.auth.checkAccess.mockReturnValueOnce(false)
-    const { regenerateCertificates } = loadHandlers()
+    const { regenerateCertificates } = await loadHandlers()
     const req = { user: { permissions: ['manage:api'] } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await regenerateCertificates(req, res)
 
@@ -839,9 +856,9 @@ describe('controllers/api auth endpoints', () => {
 
   it('returns JSON error messages for certificate regeneration failures', async () => {
     global.WIKI.auth.regenerateCertificates.mockRejectedValueOnce(new Error('cert regen failed'))
-    const { regenerateCertificates } = loadHandlers()
+    const { regenerateCertificates } = await loadHandlers()
     const req = { user: { permissions: ['manage:system'] } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await regenerateCertificates(req, res)
 
@@ -850,9 +867,9 @@ describe('controllers/api auth endpoints', () => {
   })
 
   it('resets the guest user for manage:system users', async () => {
-    const { resetGuestUser } = loadHandlers()
+    const { resetGuestUser } = await loadHandlers()
     const req = { user: { permissions: ['manage:system'] } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await resetGuestUser(req, res)
 
@@ -863,9 +880,9 @@ describe('controllers/api auth endpoints', () => {
 
   it('rejects guest user reset for manage:api-only users', async () => {
     global.WIKI.auth.checkAccess.mockReturnValueOnce(false)
-    const { resetGuestUser } = loadHandlers()
+    const { resetGuestUser } = await loadHandlers()
     const req = { user: { permissions: ['manage:api'] } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await resetGuestUser(req, res)
 
@@ -876,9 +893,9 @@ describe('controllers/api auth endpoints', () => {
 
   it('returns JSON error messages for guest user reset failures', async () => {
     global.WIKI.auth.resetGuestUser.mockRejectedValueOnce(new Error('guest reset failed'))
-    const { resetGuestUser } = loadHandlers()
+    const { resetGuestUser } = await loadHandlers()
     const req = { user: { permissions: ['manage:system'] } }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await resetGuestUser(req, res)
 
@@ -887,10 +904,10 @@ describe('controllers/api auth endpoints', () => {
   })
 
   it('does not expose internal configuration or admin-only auth metadata', async () => {
-    const { strategies } = loadHandlers()
-    const res = { json: jest.fn() }
+    const { strategies } = await loadHandlers()
+    const res = { json: vi.fn() }
 
-    await strategies({}, res, jest.fn())
+    await strategies({}, res, vi.fn())
 
     const payload = res.json.mock.calls[0][0][0]
     expect(payload.strategyKey).toBeUndefined()
@@ -903,9 +920,9 @@ describe('controllers/api auth endpoints', () => {
 
   it('forwards unexpected failures from strategy loading to next', async () => {
     global.WIKI.models.authentication.getStrategies.mockRejectedValueOnce(new Error('db failed'))
-    const { strategies } = loadHandlers()
-    const next = jest.fn()
-    const res = { json: jest.fn() }
+    const { strategies } = await loadHandlers()
+    const next = vi.fn()
+    const res = { json: vi.fn() }
 
     await strategies({}, res, next)
 
@@ -915,7 +932,7 @@ describe('controllers/api auth endpoints', () => {
   })
 
   it('registers a local account through the shared authentication operation', async () => {
-    const { register } = loadHandlers()
+    const { register } = await loadHandlers()
     const req = {
       body: {
         email: 'alice@example.com',
@@ -923,9 +940,9 @@ describe('controllers/api auth endpoints', () => {
         name: 'Alice'
       }
     }
-    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
 
-    await register(req, res, jest.fn())
+    await register(req, res, vi.fn())
 
     expect(global.WIKI.models.users.register).toHaveBeenCalledWith({
       ...req.body,
@@ -936,31 +953,29 @@ describe('controllers/api auth endpoints', () => {
   })
 
   it('returns a generic success payload for forgot-password requests', async () => {
-    const { forgotPassword } = loadHandlers()
+    const { forgotPassword } = await loadHandlers()
     const req = {
       body: { email: 'alice@example.com' },
-      brute: { reset: jest.fn() }
     }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await forgotPassword(req, res, jest.fn())
+    await forgotPassword(req, res, vi.fn())
 
     expect(global.WIKI.models.users.loginForgotPassword).toHaveBeenCalledWith({
       email: 'alice@example.com'
     }, { req, res })
-    expect(req.brute.reset).not.toHaveBeenCalled()
+    expect(authRateLimiter.reset).not.toHaveBeenCalled()
     expect(res.json).toHaveBeenCalledWith({ message: 'Password reset request processed.' })
   })
 
   it('rejects missing forgot-password input with 400', async () => {
-    const { forgotPassword } = loadHandlers()
+    const { forgotPassword } = await loadHandlers()
     const req = {
       body: { email: '' },
-      brute: { reset: jest.fn() }
     }
-    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
 
-    await forgotPassword(req, res, jest.fn())
+    await forgotPassword(req, res, vi.fn())
 
     expect(global.WIKI.models.users.loginForgotPassword).not.toHaveBeenCalled()
     expect(res.status).toHaveBeenCalledWith(400)
@@ -968,14 +983,13 @@ describe('controllers/api auth endpoints', () => {
   })
 
   it('rejects malformed forgot-password input with 400', async () => {
-    const { forgotPassword } = loadHandlers()
+    const { forgotPassword } = await loadHandlers()
     const req = {
       body: { email: { nested: true } },
-      brute: { reset: jest.fn() }
     }
-    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
 
-    await forgotPassword(req, res, jest.fn())
+    await forgotPassword(req, res, vi.fn())
 
     expect(global.WIKI.models.users.loginForgotPassword).not.toHaveBeenCalled()
     expect(res.status).toHaveBeenCalledWith(400)
@@ -984,13 +998,12 @@ describe('controllers/api auth endpoints', () => {
 
   it('forwards unexpected forgot-password failures to next', async () => {
     global.WIKI.models.users.loginForgotPassword.mockRejectedValueOnce(new Error('mail failed'))
-    const { forgotPassword } = loadHandlers()
+    const { forgotPassword } = await loadHandlers()
     const req = {
       body: { email: 'alice@example.com' },
-      brute: { reset: jest.fn() }
     }
-    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() }
-    const next = jest.fn()
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
+    const next = vi.fn()
 
     await forgotPassword(req, res, next)
 
@@ -1000,11 +1013,11 @@ describe('controllers/api auth endpoints', () => {
   })
 
   it('rejects non-form auth strategies for REST login', async () => {
-    const { login } = loadHandlers()
+    const { login } = await loadHandlers()
     const req = { body: { strategy: 'github', username: 'octo', password: 'secret' } }
-    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
 
-    await login(req, res, jest.fn())
+    await login(req, res, vi.fn())
 
     expect(global.WIKI.models.users.login).not.toHaveBeenCalled()
     expect(res.status).toHaveBeenCalledWith(400)
@@ -1012,11 +1025,11 @@ describe('controllers/api auth endpoints', () => {
   })
 
   it('rejects disabled form strategies for REST login', async () => {
-    const { login } = loadHandlers()
+    const { login } = await loadHandlers()
     const req = { body: { strategy: 'disabledlocal', username: 'alice@example.com', password: 'secret' } }
-    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
 
-    await login(req, res, jest.fn())
+    await login(req, res, vi.fn())
 
     expect(global.WIKI.models.users.login).not.toHaveBeenCalled()
     expect(res.status).toHaveBeenCalledWith(400)
@@ -1029,23 +1042,22 @@ describe('controllers/api auth endpoints', () => {
       continuationToken: 'tfa-token',
       redirect: '/admin'
     })
-    const { login } = loadHandlers()
+    const { login } = await loadHandlers()
     const req = {
       body: { strategy: 'local', username: 'alice@example.com', password: 'secret' },
-      login: jest.fn(),
-      logIn: jest.fn(),
-      brute: { reset: jest.fn() }
+      login: vi.fn(),
+      logIn: vi.fn(),
     }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await login(req, res, jest.fn())
+    await login(req, res, vi.fn())
 
     expect(global.WIKI.models.users.login).toHaveBeenCalledWith({
       strategy: 'local',
       username: 'alice@example.com',
       password: 'secret'
     }, { req, res })
-    expect(req.brute.reset).toHaveBeenCalledTimes(1)
+    expect(authRateLimiter.reset).toHaveBeenCalledWith(req)
     expect(res.json).toHaveBeenCalledWith({
       jwt: null,
       mustChangePwd: false,
@@ -1058,14 +1070,13 @@ describe('controllers/api auth endpoints', () => {
   })
 
   it('rejects malformed form-auth input with 400', async () => {
-    const { login } = loadHandlers()
+    const { login } = await loadHandlers()
     const req = {
       body: { strategy: 'local', username: { nested: true }, password: ['bad'] },
-      brute: { reset: jest.fn() }
     }
-    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
 
-    await login(req, res, jest.fn())
+    await login(req, res, vi.fn())
 
     expect(global.WIKI.models.users.login).not.toHaveBeenCalled()
     expect(res.status).toHaveBeenCalledWith(400)
@@ -1074,14 +1085,14 @@ describe('controllers/api auth endpoints', () => {
 
   it('forwards login failures to next', async () => {
     global.WIKI.models.users.login.mockRejectedValueOnce(new Error('login failed'))
-    const { login } = loadHandlers()
+    const { login } = await loadHandlers()
     const req = {
       body: { strategy: 'local', username: 'alice@example.com', password: 'secret' },
-      login: jest.fn(),
-      logIn: jest.fn()
+      login: vi.fn(),
+      logIn: vi.fn()
     }
-    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() }
-    const next = jest.fn()
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
+    const next = vi.fn()
 
     await login(req, res, next)
 
@@ -1091,11 +1102,11 @@ describe('controllers/api auth endpoints', () => {
   })
 
   it('rejects missing TFA continuation fields with 400', async () => {
-    const { loginTFA } = loadHandlers()
+    const { loginTFA } = await loadHandlers()
     const req = { body: { securityCode: '', continuationToken: '' } }
-    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
 
-    await loginTFA(req, res, jest.fn())
+    await loginTFA(req, res, vi.fn())
 
     expect(global.WIKI.models.users.loginTFA).not.toHaveBeenCalled()
     expect(res.status).toHaveBeenCalledWith(400)
@@ -1107,23 +1118,22 @@ describe('controllers/api auth endpoints', () => {
       jwt: 'jwt-token',
       redirect: '/'
     })
-    const { loginTFA } = loadHandlers()
+    const { loginTFA } = await loadHandlers()
     const req = {
       body: { securityCode: '123456', continuationToken: 'tfa-token', setup: false },
-      login: jest.fn(),
-      logIn: jest.fn(),
-      brute: { reset: jest.fn() }
+      login: vi.fn(),
+      logIn: vi.fn(),
     }
-    const res = { json: jest.fn() }
+    const res = { json: vi.fn() }
 
-    await loginTFA(req, res, jest.fn())
+    await loginTFA(req, res, vi.fn())
 
     expect(global.WIKI.models.users.loginTFA).toHaveBeenCalledWith({
       securityCode: '123456',
       continuationToken: 'tfa-token',
       setup: false
     }, { req, res })
-    expect(req.brute.reset).toHaveBeenCalledTimes(1)
+    expect(authRateLimiter.reset).toHaveBeenCalledWith(req)
     expect(res.json).toHaveBeenCalledWith({
       jwt: 'jwt-token',
       mustChangePwd: false,
@@ -1136,14 +1146,13 @@ describe('controllers/api auth endpoints', () => {
   })
 
   it('rejects malformed TFA input with 400', async () => {
-    const { loginTFA } = loadHandlers()
+    const { loginTFA } = await loadHandlers()
     const req = {
       body: { securityCode: 123456, continuationToken: { bad: true }, setup: 'false' },
-      brute: { reset: jest.fn() }
     }
-    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
 
-    await loginTFA(req, res, jest.fn())
+    await loginTFA(req, res, vi.fn())
 
     expect(global.WIKI.models.users.loginTFA).not.toHaveBeenCalled()
     expect(res.status).toHaveBeenCalledWith(400)
@@ -1151,11 +1160,11 @@ describe('controllers/api auth endpoints', () => {
   })
 
   it('rejects missing change-password fields with 400', async () => {
-    const { loginChangePassword } = loadHandlers()
+    const { loginChangePassword } = await loadHandlers()
     const req = { body: { continuationToken: '', newPassword: '' } }
-    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
 
-    await loginChangePassword(req, res, jest.fn())
+    await loginChangePassword(req, res, vi.fn())
 
     expect(global.WIKI.models.users.loginChangePassword).not.toHaveBeenCalled()
     expect(res.status).toHaveBeenCalledWith(400)
@@ -1166,22 +1175,21 @@ describe('controllers/api auth endpoints', () => {
     global.WIKI.models.users.loginChangePassword.mockResolvedValueOnce({
       jwt: 'jwt-token'
     })
-    const { loginChangePassword } = loadHandlers()
+    const { loginChangePassword } = await loadHandlers()
     const req = {
       body: { continuationToken: 'pwd-token', newPassword: 'new-secret' },
-      login: jest.fn(),
-      logIn: jest.fn(),
-      brute: { reset: jest.fn() }
+      login: vi.fn(),
+      logIn: vi.fn(),
     }
-    const res = { json: jest.fn() }
+    const res = { json: vi.fn() }
 
-    await loginChangePassword(req, res, jest.fn())
+    await loginChangePassword(req, res, vi.fn())
 
     expect(global.WIKI.models.users.loginChangePassword).toHaveBeenCalledWith({
       continuationToken: 'pwd-token',
       newPassword: 'new-secret'
     }, { req, res })
-    expect(req.brute.reset).toHaveBeenCalledTimes(1)
+    expect(authRateLimiter.reset).toHaveBeenCalledWith(req)
     expect(res.json).toHaveBeenCalledWith({
       jwt: 'jwt-token',
       mustChangePwd: false,
@@ -1194,14 +1202,13 @@ describe('controllers/api auth endpoints', () => {
   })
 
   it('rejects malformed change-password input with 400', async () => {
-    const { loginChangePassword } = loadHandlers()
+    const { loginChangePassword } = await loadHandlers()
     const req = {
       body: { continuationToken: { bad: true }, newPassword: ['short'] },
-      brute: { reset: jest.fn() }
     }
-    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
 
-    await loginChangePassword(req, res, jest.fn())
+    await loginChangePassword(req, res, vi.fn())
 
     expect(global.WIKI.models.users.loginChangePassword).not.toHaveBeenCalled()
     expect(res.status).toHaveBeenCalledWith(400)
@@ -1209,38 +1216,35 @@ describe('controllers/api auth endpoints', () => {
   })
 
   it('maps expected auth errors to client-safe status codes', async () => {
-    global.WIKI.models.users.login.mockRejectedValueOnce({ message: 'Invalid email / username or password.', code: 1002 })
-    global.WIKI.models.users.loginTFA.mockRejectedValueOnce({ message: 'Invalid TFA Security Code or Login Token.', code: 1006 })
-    global.WIKI.models.users.loginChangePassword.mockRejectedValueOnce({ message: 'Password must be at least 6 characters!', code: 1012 })
-    global.WIKI.models.users.loginTFA.mockRejectedValueOnce({ message: 'Invalid validation token.', code: 1015 })
-    global.WIKI.models.users.loginChangePassword.mockRejectedValueOnce({ message: 'This user does not exist.', code: 1016 })
-    const { login, loginTFA, loginChangePassword } = loadHandlers()
+    global.WIKI.models.users.login.mockRejectedValueOnce(Object.assign(new Error('Invalid email / username or password.'), { code: 1002 }))
+    global.WIKI.models.users.loginTFA.mockRejectedValueOnce(Object.assign(new Error('Invalid TFA Security Code or Login Token.'), { code: 1006 }))
+    global.WIKI.models.users.loginChangePassword.mockRejectedValueOnce(Object.assign(new Error('Password must be at least 6 characters!'), { code: 1012 }))
+    global.WIKI.models.users.loginTFA.mockRejectedValueOnce(Object.assign(new Error('Invalid validation token.'), { code: 1015 }))
+    global.WIKI.models.users.loginChangePassword.mockRejectedValueOnce(Object.assign(new Error('This user does not exist.'), { code: 1016 }))
+    const { login, loginTFA, loginChangePassword } = await loadHandlers()
 
     const loginReq = {
       body: { strategy: 'local', username: 'alice@example.com', password: 'bad' },
-      login: jest.fn(),
-      logIn: jest.fn(),
-      brute: { reset: jest.fn() }
+      login: vi.fn(),
+      logIn: vi.fn(),
     }
     const tfaReq = {
       body: { securityCode: '123456', continuationToken: 'bad-token', setup: false },
-      login: jest.fn(),
-      logIn: jest.fn(),
-      brute: { reset: jest.fn() }
+      login: vi.fn(),
+      logIn: vi.fn(),
     }
     const changeReq = {
       body: { continuationToken: 'pwd-token', newPassword: 'short' },
-      login: jest.fn(),
-      logIn: jest.fn(),
-      brute: { reset: jest.fn() }
+      login: vi.fn(),
+      logIn: vi.fn(),
     }
-    const loginRes = { status: jest.fn().mockReturnThis(), json: jest.fn() }
-    const tfaRes = { status: jest.fn().mockReturnThis(), json: jest.fn() }
-    const changeRes = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+    const loginRes = { status: vi.fn().mockReturnThis(), json: vi.fn() }
+    const tfaRes = { status: vi.fn().mockReturnThis(), json: vi.fn() }
+    const changeRes = { status: vi.fn().mockReturnThis(), json: vi.fn() }
 
-    await login(loginReq, loginRes, jest.fn())
-    await loginTFA(tfaReq, tfaRes, jest.fn())
-    await loginChangePassword(changeReq, changeRes, jest.fn())
+    await login(loginReq, loginRes, vi.fn())
+    await loginTFA(tfaReq, tfaRes, vi.fn())
+    await loginChangePassword(changeReq, changeRes, vi.fn())
 
     expect(loginRes.status).toHaveBeenCalledWith(401)
     expect(loginRes.json).toHaveBeenCalledWith({ error: 'Invalid email / username or password.' })
@@ -1249,10 +1253,10 @@ describe('controllers/api auth endpoints', () => {
     expect(changeRes.status).toHaveBeenCalledWith(400)
     expect(changeRes.json).toHaveBeenCalledWith({ error: 'Password must be at least 6 characters!' })
 
-    const invalidTokenRes = { status: jest.fn().mockReturnThis(), json: jest.fn() }
-    const missingUserRes = { status: jest.fn().mockReturnThis(), json: jest.fn() }
-    await loginTFA(tfaReq, invalidTokenRes, jest.fn())
-    await loginChangePassword(changeReq, missingUserRes, jest.fn())
+    const invalidTokenRes = { status: vi.fn().mockReturnThis(), json: vi.fn() }
+    const missingUserRes = { status: vi.fn().mockReturnThis(), json: vi.fn() }
+    await loginTFA(tfaReq, invalidTokenRes, vi.fn())
+    await loginChangePassword(changeReq, missingUserRes, vi.fn())
 
     expect(invalidTokenRes.status).toHaveBeenCalledWith(401)
     expect(invalidTokenRes.json).toHaveBeenCalledWith({ error: 'Invalid validation token.' })
@@ -1262,14 +1266,14 @@ describe('controllers/api auth endpoints', () => {
 
   it('forwards unexpected failures to next', async () => {
     global.WIKI.models.users.login.mockRejectedValueOnce(new Error('unexpected login failure'))
-    const { login } = loadHandlers()
+    const { login } = await loadHandlers()
     const req = {
       body: { strategy: 'local', username: 'alice@example.com', password: 'secret' },
-      login: jest.fn(),
-      logIn: jest.fn()
+      login: vi.fn(),
+      logIn: vi.fn()
     }
-    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() }
-    const next = jest.fn()
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
+    const next = vi.fn()
 
     await login(req, res, next)
 

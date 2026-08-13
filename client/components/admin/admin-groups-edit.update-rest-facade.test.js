@@ -1,8 +1,8 @@
-const fs = require('fs')
-const path = require('path')
+import fs from 'node:fs'
+import path from 'node:path'
 
 const extractScript = source => {
-  const match = source.match(/<script>\s*([\s\S]*?)\s*<\/script>/)
+  const match = source.match(/<script(?:\s+lang=["']ts["'])?>\s*([\s\S]*?)\s*<\/script>/)
   return match && match[1]
 }
 
@@ -55,18 +55,18 @@ describe('admin-groups-edit update REST migration guard', () => {
   test('admin-groups-edit imports update REST helper and no longer imports graphql-tag', () => {
     expect(script).not.toBeNull()
     expect(script).toMatch(/import\s+\{(?=[^}]*\bdeleteGroup\b)(?=[^}]*\bfetchGroupDetails\b)(?=[^}]*\bupdateGroup\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/groups-api['"]/)
-    expect(script).toMatch(/import\s+\{(?=[^}]*\bloadingStart\b)(?=[^}]*\bloadingStop\b)(?=[^}]*\bpushGraphError\b)(?=[^}]*\bshowNotification\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/root-ui-store['"]/)
+    expect(script).toContain("import { wikiStore } from '@/store/index.ts'")
     expect(script).not.toMatch(/graphql-tag/)
   })
 
   test('updateGroup() calls REST while preserving loading, notification, and error behavior', () => {
     expect(updateGroup).not.toBeNull()
-    expect(updateGroup).toMatch(/loadingStart\s*\(\s*this\.\$store\s*,\s*['"]admin-groups-update['"]\s*\)/)
+    expect(updateGroup).toMatch(/wikiStore\.startLoading\s*\(\s*['"]admin-groups-update['"]\s*\)/)
     expect(updateGroup).toMatch(/await\s+updateGroup\s*\(\s*window\.fetch\.bind\(\s*window\s*\)\s*,\s*this\.group\.id\s*,\s*\{[\s\S]*name:\s*this\.group\.name[\s\S]*redirectOnLogin:\s*this\.group\.redirectOnLogin[\s\S]*permissions:\s*this\.group\.permissions[\s\S]*pageRules:\s*this\.group\.pageRules[\s\S]*\}\s*\)/)
     expect(updateGroup).not.toMatch(/this\.\$apollo\.mutate/)
     expect(updateGroup).not.toMatch(/groups\s*\{[\s\S]*update\s*\(/)
-    expect(updateGroup).toMatch(/showNotification\s*\(\s*this\.\$store\s*,\s*\{\s*style:\s*['"]success['"]\s*,\s*message:\s*`Group changes have been saved\.`\s*,\s*icon:\s*['"]check['"]\s*\}\s*\)/)
-    expect(updateGroup).toMatch(/pushGraphError\s*\(\s*this\.\$store\s*,\s*err\s*\)/)
-    expect(updateGroup).toMatch(/finally\s*\{\s*loadingStop\s*\(\s*this\.\$store\s*,\s*['"]admin-groups-update['"]\s*\)\s*\}/)
+    expect(updateGroup).toMatch(/wikiStore\.showNotification\s*\(\s*\{\s*style:\s*['"]success['"]\s*,\s*message:\s*`Group changes have been saved\.`\s*,\s*icon:\s*['"]check['"]\s*\}\s*\)/)
+    expect(updateGroup).toMatch(/wikiStore\.showError\s*\(\s*err\s*\)/)
+    expect(updateGroup).toMatch(/finally\s*\{\s*wikiStore\.stopLoading\s*\(\s*['"]admin-groups-update['"]\s*\)\s*\}/)
   })
 })

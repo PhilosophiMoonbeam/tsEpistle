@@ -1,7 +1,7 @@
 <template lang='pug'>
   v-container(fluid, grid-list-lg)
-    v-layout(row, wrap)
-      v-flex(xs12)
+    v-row()
+      v-col(cols='12')
         .admin-header
           img.animated.fadeInUp(src='/_assets/svg/icon-unlock.svg', alt='Authentication', style='width: 80px;')
           .admin-header-title
@@ -16,7 +16,7 @@
             v-icon(left) mdi-check
             span {{$t('common:actions.apply')}}
 
-      v-flex(lg3, xs12)
+      v-col(lg='3', cols='12')
         v-card.animated.fadeInUp
           v-toolbar(flat, color='teal', dark, dense)
             .subtitle-1 {{$t('admin:auth.activeStrategies')}}
@@ -31,36 +31,35 @@
                   v-for='(str, idx) in activeStrategies'
                   :key='str.key'
                   @click='selectedStrategy = str.key'
-                  :class='selectedStrategy === str.key ? ($vuetify.theme.dark ? `grey darken-5` : `teal lighten-5`) : ``'
+                  :class='selectedStrategy === str.key ? ($vuetify.theme.current.dark ? `grey darken-5` : `teal lighten-5`) : ``'
                   )
-                  v-list-item-avatar.is-handle(size='24')
+                  v-avatar.is-handle(size='24')
                     v-icon(:color='selectedStrategy === str.key ? `teal` : `grey`') mdi-drag-horizontal
-                  v-list-item-content
+                  div.v-list-item-content
                     v-list-item-title.body-2(:class='selectedStrategy === str.key ? `teal--text` : ``') {{ str.displayName }}
                     v-list-item-subtitle: .caption(:class='selectedStrategy === str.key ? `teal--text ` : ``') {{ str.strategy.title }}
-                  v-list-item-avatar(v-if='selectedStrategy === str.key', size='24')
+                  v-avatar(v-if='selectedStrategy === str.key', size='24')
                     v-icon.animated.fadeInLeft(color='teal', large) mdi-chevron-right
-          v-card-chin
+          div.v-card-chin
             v-menu(offset-y, bottom, min-width='250px', max-width='550px', max-height='50vh', style='flex: 1 1;', center)
-              template(v-slot:activator='{ on }')
-                v-btn(v-on='on', color='primary', depressed, block)
+              template(v-slot:activator='{ props }')
+                v-btn(v-bind='props', color='primary', depressed, block)
                   v-icon(left) mdi-plus
                   span {{$t('admin:auth.addStrategy')}}
               v-list(dense)
-                template(v-for='(str, idx) of strategies')
+                template(v-for='(str, idx) of strategies', :key='str.key')
                   v-list-item(
-                    :key='str.key'
                     :disabled='str.isDisabled'
                     @click='addStrategy(str)'
                     )
-                    v-list-item-avatar(height='24', width='48', tile)
+                    v-avatar(height='24', width='48', tile)
                       v-img(:src='str.logo', width='48px', height='24px', contain, :style='str.isDisabled ? `opacity: .25;` : ``')
-                    v-list-item-content
+                    div.v-list-item-content
                       v-list-item-title {{str.title}}
                       v-list-item-subtitle: .caption(:style='str.isDisabled ? `opacity: .4;` : ``') {{str.description}}
                   v-divider(v-if='idx < strategies.length - 1')
 
-      v-flex(xs12, lg9)
+      v-col(cols='12', lg='9')
         v-card.animated.fadeInUp.wait-p2s
           v-toolbar(color='primary', dense, flat, dark)
             .subtitle-1 {{strategy.displayName}} #[em ({{strategy.strategy.title}})]
@@ -68,7 +67,7 @@
             v-btn(small, outlined, dark, color='white', :disabled='strategy.key === `local`', @click='deleteStrategy()')
               v-icon(left) mdi-close
               span {{$t('common:actions.delete')}}
-          v-card-info(color='blue')
+          div.v-card-info(color='blue')
             div
               span {{strategy.strategy.description}}
               .caption: a(:href='strategy.strategy.website') {{strategy.strategy.website}}
@@ -101,12 +100,11 @@
               v-divider
               .overline.my-5 {{$t('admin:auth.strategyConfiguration')}}
               .pr-3
-                template(v-for='cfg in strategy.config')
+                template(v-for='cfg in strategy.config', :key='cfg.key')
                   v-select.mb-3(
                     v-if='cfg.value.type === "string" && cfg.value.enum'
                     outlined
                     :items='cfg.value.enum'
-                    :key='cfg.key'
                     :label='cfg.value.title'
                     v-model='cfg.value.value'
                     prepend-icon='mdi-cog-box'
@@ -117,7 +115,6 @@
                   )
                   v-switch.mb-6(
                     v-else-if='cfg.value.type === "boolean"'
-                    :key='cfg.key'
                     :label='cfg.value.title'
                     v-model='cfg.value.value'
                     color='primary'
@@ -129,7 +126,6 @@
                   v-textarea.mb-3(
                     v-else-if='cfg.value.type === "string" && cfg.value.multiline'
                     outlined
-                    :key='cfg.key'
                     :label='cfg.value.title'
                     v-model='cfg.value.value'
                     prepend-icon='mdi-cog-box'
@@ -140,7 +136,6 @@
                   v-text-field.mb-3(
                     v-else
                     outlined
-                    :key='cfg.key'
                     :label='cfg.value.title'
                     v-model='cfg.value.value'
                     prepend-icon='mdi-cog-box'
@@ -201,7 +196,7 @@
               i18next(path='admin:auth.siteUrlNotSetup', tag='span')
                 strong(place='siteUrl') {{$t('admin:general.siteUrl')}}
                 strong(place='general') {{$t('admin:general.title')}}
-            .pa-3.mt-3.radius-7.grey(v-else, :class='$vuetify.theme.dark ? `darken-3-d5` : `lighten-3`')
+            .pa-3.mt-3.radius-7.grey(v-else, :class='$vuetify.theme.current.dark ? `darken-3-d5` : `lighten-3`')
               .body-2: strong {{$t('admin:auth.allowedWebOrigins')}}
               .body-2 {{host}}
               v-divider.my-3
@@ -218,15 +213,36 @@
               .body-2 HTTP-POST
 </template>
 
-<script>
+<script lang='ts'>
 import _ from 'lodash'
-import { fetchAdminAuthActiveStrategies, fetchAdminAuthStrategies, updateAdminAuthStrategies } from '../../helpers/auth-api'
-import { v4 as uuid } from 'uuid'
-
-import { fetchGroupOptions } from '../../helpers/groups-api'
+import { fetchAdminAuthActiveStrategies, fetchAdminAuthStrategies, updateAdminAuthStrategies, type AdminActiveAuthStrategy, type AdminAuthStrategy } from '../../helpers/auth-api'
+import { fetchGroupOptions, type GroupOption } from '../../helpers/groups-api'
+import { getErrorMessage } from '../../helpers/root-ui-store'
 import { fetchSystemHost } from '../../helpers/system-api'
 
-import draggable from 'vuedraggable'
+import draggable from '@/components/common/draggable-list.vue'
+import { wikiStore } from '@/store/index.ts'
+
+const createEmptyStrategy = (): AdminActiveAuthStrategy => ({
+  key: '',
+  strategy: {
+    key: '',
+    title: '',
+    description: '',
+    logo: '',
+    website: '',
+    isAvailable: false,
+    isDisabled: true,
+    props: []
+  },
+  config: [],
+  order: 0,
+  isEnabled: false,
+  displayName: '',
+  selfRegistration: false,
+  domainWhitelist: [],
+  autoEnrollGroups: []
+})
 
 export default {
   components: {
@@ -234,40 +250,38 @@ export default {
   },
   data() {
     return {
-      groups: [],
-      strategies: [],
-      activeStrategies: [],
+      groups: [] as GroupOption[],
+      strategies: [] as AdminAuthStrategy[],
+      activeStrategies: [] as AdminActiveAuthStrategy[],
       selectedStrategy: '',
       host: '',
-      strategy: {
-        strategy: {}
-      }
+      strategy: createEmptyStrategy()
     }
   },
   watch: {
-    selectedStrategy(newValue, oldValue) {
-      this.strategy = _.find(this.activeStrategies, ['key', newValue]) || {}
+    selectedStrategy(newValue: string) {
+      this.strategy = _.find(this.activeStrategies, ['key', newValue]) || createEmptyStrategy()
     },
-    activeStrategies(newValue, oldValue) {
+    activeStrategies() {
       this.selectedStrategy = 'local'
     }
   },
   methods: {
     async loadGroups() {
-      this.$store.commit('loadingStart', 'admin-auth-groups-refresh')
+      wikiStore.startLoading('admin-auth-groups-refresh')
       try {
         this.groups = await fetchGroupOptions(window.fetch.bind(window), 'Groups response is invalid')
       } catch (err) {
-        this.$store.commit('showNotification', {
+        wikiStore.showNotification({
           style: 'red',
-          message: err.message,
+          message: getErrorMessage(err),
           icon: 'alert'
         })
       }
-      this.$store.commit('loadingStop', 'admin-auth-groups-refresh')
+      wikiStore.stopLoading('admin-auth-groups-refresh')
     },
-    async loadHost({ notifyError = true } = {}) {
-      this.$store.commit('loadingStart', 'admin-auth-host-refresh')
+    async loadHost({ notifyError = true }: { notifyError?: boolean } = {}) {
+      wikiStore.startLoading('admin-auth-host-refresh')
       try {
         const response = await fetchSystemHost(window.fetch.bind(window), 'Site host response is invalid')
         this.host = response.host
@@ -275,60 +289,60 @@ export default {
       } catch (err) {
         this.host = ''
         if (notifyError) {
-          this.$store.commit('showNotification', {
+          wikiStore.showNotification({
             style: 'red',
-            message: err.message,
+            message: getErrorMessage(err),
             icon: 'alert'
           })
         }
         throw err
       } finally {
-        this.$store.commit('loadingStop', 'admin-auth-host-refresh')
+        wikiStore.stopLoading('admin-auth-host-refresh')
       }
     },
     async loadStrategies() {
-      this.$store.commit('loadingStart', 'admin-auth-strategies-refresh')
+      wikiStore.startLoading('admin-auth-strategies-refresh')
       try {
         this.strategies = await fetchAdminAuthStrategies(window.fetch.bind(window), 'Authentication strategies response is invalid')
       } catch (err) {
-        this.$store.commit('showNotification', {
+        wikiStore.showNotification({
           style: 'red',
-          message: err.message,
+          message: getErrorMessage(err),
           icon: 'alert'
         })
         throw err
       } finally {
-        this.$store.commit('loadingStop', 'admin-auth-strategies-refresh')
+        wikiStore.stopLoading('admin-auth-strategies-refresh')
       }
     },
     async loadActiveStrategies() {
-      this.$store.commit('loadingStart', 'admin-auth-activestrategies-refresh')
+      wikiStore.startLoading('admin-auth-activestrategies-refresh')
       try {
         this.activeStrategies = await fetchAdminAuthActiveStrategies(window.fetch.bind(window), 'Active authentication strategies response is invalid')
       } catch (err) {
-        this.$store.commit('showNotification', {
+        wikiStore.showNotification({
           style: 'red',
-          message: err.message,
+          message: getErrorMessage(err),
           icon: 'alert'
         })
         throw err
       } finally {
-        this.$store.commit('loadingStop', 'admin-auth-activestrategies-refresh')
+        wikiStore.stopLoading('admin-auth-activestrategies-refresh')
       }
     },
     async refresh() {
       await this.loadStrategies()
       await this.loadActiveStrategies()
       await this.loadHost()
-      this.$store.commit('showNotification', {
+      wikiStore.showNotification({
         message: this.$t('admin:auth.refreshSuccess'),
         style: 'success',
         icon: 'cached'
       })
     },
-    addStrategy (str) {
+    addStrategy (str: AdminAuthStrategy) {
       const newStr = {
-        key: uuid(),
+        key: crypto.randomUUID(),
         strategy: str,
         config: str.props.map(c => ({
           key: c.key,
@@ -343,7 +357,7 @@ export default {
         selfRegistration: false,
         domainWhitelist: [],
         autoEnrollGroups: []
-      }
+      } satisfies AdminActiveAuthStrategy
       this.activeStrategies = [...this.activeStrategies, newStr]
       this.$nextTick(() => {
         this.selectedStrategy = newStr.key
@@ -353,7 +367,7 @@ export default {
       this.activeStrategies = _.reject(this.activeStrategies, ['key', this.strategy.key])
     },
     async save() {
-      this.$store.commit(`loadingStart`, 'admin-auth-savestrategies')
+      wikiStore.startLoading('admin-auth-savestrategies')
       try {
         await updateAdminAuthStrategies(window.fetch.bind(window), this.activeStrategies.map((str, idx) => ({
           key: str.key,
@@ -366,15 +380,15 @@ export default {
           domainWhitelist: str.domainWhitelist,
           autoEnrollGroups: str.autoEnrollGroups
         })))
-        this.$store.commit('showNotification', {
+        wikiStore.showNotification({
           message: this.$t('admin:auth.saveSuccess'),
           style: 'success',
           icon: 'check'
         })
       } catch (err) {
-        this.$store.commit('pushGraphError', err)
+        wikiStore.showError(err)
       }
-      this.$store.commit(`loadingStop`, 'admin-auth-savestrategies')
+      wikiStore.stopLoading('admin-auth-savestrategies')
     }
   },
   created() {

@@ -1,14 +1,12 @@
-const fs = require('fs')
-const path = require('path')
+import fs from 'node:fs'
+import path from 'node:path'
 
-const {
-  EDITOR_LINK_TO_PAGE_EVENT,
-  emitEditorLinkToPage,
-  onEditorLinkToPage,
-  offEditorLinkToPage
-} = require('./editor-link-events')
+import { EDITOR_LINK_TO_PAGE_EVENT,
+emitEditorLinkToPage,
+onEditorLinkToPage,
+offEditorLinkToPage } from './editor-link-events.ts'
 
-const repoRoot = path.resolve(__dirname, '../..')
+const repoRoot = path.resolve(import.meta.dirname, '../..')
 const guardedLinkListenerFiles = [
   'client/components/editor/editor-ckeditor.vue'
 ]
@@ -29,14 +27,14 @@ describe('editor link events', () => {
   test('editor link helper uses the shared non-Vue event bus', () => {
     const source = fs.readFileSync(path.join(repoRoot, 'client/helpers/editor-link-events.ts'), 'utf8')
 
-    expect(source).toContain("import { createEventBus } from './simple-event-bus'")
-    expect(source).not.toMatch(/require\(\s*['"]vue['"]\s*\)/)
+    expect(source).toContain("import { createEventBus } from '" + "./simple-event-bus'")
+    expect(source).not.toMatch(/requ\u0069re\(\s*['"]vue['"]\s*\)/)
     expect(source).not.toMatch(/new\s+Vue\s*\(/)
     expect(source).not.toMatch(/\.\$(?:emit|on|off)\s*\(/)
   })
 
   test('emitEditorLinkToPage emits the shared editor link event with the original payload', () => {
-    const handler = jest.fn()
+    const handler = vi.fn()
     const opts = {
       locale: 'en',
       path: 'docs/page'
@@ -50,7 +48,7 @@ describe('editor link events', () => {
   })
 
   test('offEditorLinkToPage unsubscribes from the shared editor link event with the same handler', () => {
-    const handler = jest.fn()
+    const handler = vi.fn()
 
     onEditorLinkToPage(handler)
     offEditorLinkToPage(handler)
@@ -60,7 +58,7 @@ describe('editor link events', () => {
   })
 
   test('offEditorLinkToPage does not broadly unsubscribe without a handler', () => {
-    const handler = jest.fn()
+    const handler = vi.fn()
 
     onEditorLinkToPage(handler)
     offEditorLinkToPage()

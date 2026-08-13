@@ -1,5 +1,5 @@
 <template lang='pug'>
-  v-toolbar.radius-7(flat, :color='$vuetify.theme.dark ? "grey darken-4-l3" : "grey lighten-3"')
+  v-toolbar.radius-7(flat, :color='$vuetify.theme.current.dark ? "grey darken-4-l3" : "grey lighten-3"')
     .body-2.mr-3 {{$t('common:duration.every')}}
     v-text-field(
       solo
@@ -52,13 +52,17 @@
     .body-2.mx-3 {{$t('common:duration.years')}}
 </template>
 
-<script>
+<script lang='ts'>
+import { defineComponent } from 'vue'
 import _ from 'lodash'
 import moment from 'moment'
 
-export default {
+type DurationUnit = 'minutes' | 'hours' | 'days' | 'months' | 'years'
+
+export default defineComponent({
+  emits: ['update:modelValue'],
   props: {
-    value: {
+    modelValue: {
       type: String,
       default: 'PT5M'
     }
@@ -71,32 +75,32 @@ export default {
   computed: {
     years: {
       get() { return this.duration.years() || 0 },
-      set(val) { this.rebuild(_.toNumber(val), 'years') }
+      set(val: string | number) { this.rebuild(_.toNumber(val), 'years') }
     },
     months: {
       get() { return this.duration.months() || 0 },
-      set(val) { this.rebuild(_.toNumber(val), 'months') }
+      set(val: string | number) { this.rebuild(_.toNumber(val), 'months') }
     },
     days: {
       get() { return this.duration.days() || 0 },
-      set(val) { this.rebuild(_.toNumber(val), 'days') }
+      set(val: string | number) { this.rebuild(_.toNumber(val), 'days') }
     },
     hours: {
       get() { return this.duration.hours() || 0 },
-      set(val) { this.rebuild(_.toNumber(val), 'hours') }
+      set(val: string | number) { this.rebuild(_.toNumber(val), 'hours') }
     },
     minutes: {
       get() { return this.duration.minutes() || 0 },
-      set(val) { this.rebuild(_.toNumber(val), 'minutes') }
+      set(val: string | number) { this.rebuild(_.toNumber(val), 'minutes') }
     }
   },
   watch: {
-    value(newValue, oldValue) {
+    modelValue(newValue: string) {
       this.duration = moment.duration(newValue)
     }
   },
   methods: {
-    rebuild(val, unit) {
+    rebuild(val: number, unit: DurationUnit) {
       if (!_.isFinite(val) || val < 0) {
         val = 0
       }
@@ -109,11 +113,11 @@ export default {
       }
       _.set(newDuration, unit, val)
       this.duration = moment.duration(newDuration)
-      this.$emit('input', this.duration.toISOString())
+      this.$emit('update:modelValue', this.duration.toISOString())
     }
   },
   mounted() {
-    this.duration = moment.duration(this.value)
+    this.duration = moment.duration(this.modelValue)
   }
-}
+})
 </script>

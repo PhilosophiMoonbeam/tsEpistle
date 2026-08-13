@@ -88,14 +88,28 @@ const makeUsersQueryFactory = (users) => {
     return builder
   }
 
-  return jest.fn(() => makeBuilder())
+  return vi.fn(() => makeBuilder())
 }
 
 describe('graph/resolvers/user list pagination', () => {
+  let previousWiki
+
   beforeEach(() => {
-    jest.resetModules()
+    vi.resetModules()
+    previousWiki = global.WIKI
     global.WIKI = {
+      Error: {},
+      auth: {
+        strategies: {}
+      },
+      data: {
+        authentication: []
+      },
+      events: {
+        outbound: {}
+      },
       models: {
+        pages: {},
         users: {
           query: makeUsersQueryFactory([
             { id: 1, name: 'Alice', email: 'alice@example.com', providerKey: 'local', isSystem: false, isActive: true, createdAt: '2024-01-01', lastLoginAt: '2024-01-10' },
@@ -107,8 +121,12 @@ describe('graph/resolvers/user list pagination', () => {
     }
   })
 
+  afterEach(() => {
+    global.WIKI = previousWiki
+  })
+
   it('returns paginated user results with total count', async () => {
-    const resolver = require('../../graph/resolvers/user')
+    const { default: resolver } = await import('../../graph/resolvers/user.ts')
 
     const result = await resolver.UserQuery.list(null, {
       page: 2,
@@ -123,7 +141,7 @@ describe('graph/resolvers/user list pagination', () => {
   })
 
   it('filters by search string and provider key', async () => {
-    const resolver = require('../../graph/resolvers/user')
+    const { default: resolver } = await import('../../graph/resolvers/user.ts')
 
     const result = await resolver.UserQuery.list(null, {
       filter: 'alice@',

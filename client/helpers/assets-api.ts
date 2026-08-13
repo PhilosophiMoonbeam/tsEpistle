@@ -20,24 +20,54 @@ async function sendJson (fetchImpl: FetchImpl, url: string, method: string, body
   await parseResponse(response, fallbackMessage)
 }
 
-export async function fetchAssets (fetchImpl: FetchImpl, folderId: number, kind = 'ALL', fallbackMessage = 'Asset list failed'): Promise<any[]> {
+export type Asset = {
+  id: number
+  filename: string
+  description: string
+  ext: string
+  fileSize: number
+  createdAt: string
+  kind: string
+}
+
+export type AssetFolder = {
+  id: number
+  name: string
+  slug: string
+}
+
+function normalizeAsset (row: unknown, fallbackMessage: string): Asset {
+  if (!isRecord(row) || !Number.isInteger(row.id) || typeof row.filename !== 'string' || typeof row.description !== 'string' || typeof row.ext !== 'string' || typeof row.fileSize !== 'number' || typeof row.createdAt !== 'string' || typeof row.kind !== 'string') {
+    throw new Error(fallbackMessage)
+  }
+  return row as unknown as Asset
+}
+
+function normalizeAssetFolder (row: unknown, fallbackMessage: string): AssetFolder {
+  if (!isRecord(row) || !Number.isInteger(row.id) || typeof row.name !== 'string' || typeof row.slug !== 'string') {
+    throw new Error(fallbackMessage)
+  }
+  return row as unknown as AssetFolder
+}
+
+export async function fetchAssets (fetchImpl: FetchImpl, folderId: number, kind = 'ALL', fallbackMessage = 'Asset list failed'): Promise<Asset[]> {
   const response = await fetchImpl(`/_api/assets?folderId=${encodeURIComponent(folderId)}&kind=${encodeURIComponent(kind)}`, {
     credentials: 'same-origin',
     headers: { Accept: 'application/json' }
   })
   const payload = await parseResponse(response, fallbackMessage)
   if (!Array.isArray(payload)) throw new Error(fallbackMessage)
-  return payload
+  return payload.map(row => normalizeAsset(row, fallbackMessage))
 }
 
-export async function fetchAssetFolders (fetchImpl: FetchImpl, parentFolderId: number, fallbackMessage = 'Asset folder list failed'): Promise<any[]> {
+export async function fetchAssetFolders (fetchImpl: FetchImpl, parentFolderId: number, fallbackMessage = 'Asset folder list failed'): Promise<AssetFolder[]> {
   const response = await fetchImpl(`/_api/assets/folders?parentFolderId=${encodeURIComponent(parentFolderId)}`, {
     credentials: 'same-origin',
     headers: { Accept: 'application/json' }
   })
   const payload = await parseResponse(response, fallbackMessage)
   if (!Array.isArray(payload)) throw new Error(fallbackMessage)
-  return payload
+  return payload.map(row => normalizeAssetFolder(row, fallbackMessage))
 }
 
 export function createAssetFolder (fetchImpl: FetchImpl, parentFolderId: number, slug: string, fallbackMessage = 'Asset folder creation failed'): Promise<void> {

@@ -1,4 +1,4 @@
-const { fetchLoggingLoggers, saveLoggingLoggers } = require('./logging-api')
+import { fetchLoggingLoggers, saveLoggingLoggers } from './logging-api.ts'
 
 function createJsonResponse (payload, ok = true) {
   return {
@@ -12,7 +12,7 @@ function createJsonResponse (payload, ok = true) {
 
 describe('logging api helper', () => {
   test('requests logging loggers with same-origin JSON options', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse([]))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([]))
 
     await expect(fetchLoggingLoggers(fetchImpl)).resolves.toEqual([])
 
@@ -25,7 +25,7 @@ describe('logging api helper', () => {
   })
 
   test('validates, sanitizes, and sorts logger config by parsed value order', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse([
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([
       {
         isEnabled: true,
         key: 'alpha',
@@ -79,7 +79,7 @@ describe('logging api helper', () => {
   })
 
   test('strips extra logger and config fields', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse([
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([
       {
         isEnabled: false,
         key: 'beta',
@@ -120,13 +120,13 @@ describe('logging api helper', () => {
   })
 
   test('rejects malformed root payloads', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ loggers: [] }))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ loggers: [] }))
 
     await expect(fetchLoggingLoggers(fetchImpl, 'Bad logging payload')).rejects.toThrow('Bad logging payload')
   })
 
   test('rejects malformed logger rows', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse([
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([
       {
         isEnabled: 'yes',
         key: 'alpha',
@@ -143,7 +143,7 @@ describe('logging api helper', () => {
   })
 
   test('rejects malformed config rows', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse([
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([
       {
         isEnabled: true,
         key: 'alpha',
@@ -160,7 +160,7 @@ describe('logging api helper', () => {
   })
 
   test('rejects malformed config JSON', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse([
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([
       {
         isEnabled: true,
         key: 'alpha',
@@ -177,7 +177,7 @@ describe('logging api helper', () => {
   })
 
   test('propagates API JSON errors', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue({
+    const fetchImpl = vi.fn().mockResolvedValue({
       ok: false,
       headers: {
         get: () => 'application/json; charset=utf-8'
@@ -189,7 +189,7 @@ describe('logging api helper', () => {
   })
 
   test('rejects non-JSON successful responses', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue({
+    const fetchImpl = vi.fn().mockResolvedValue({
       ok: true,
       headers: {
         get: () => 'text/plain'
@@ -200,7 +200,7 @@ describe('logging api helper', () => {
   })
 
   test('saves logging loggers with same-origin JSON POST options', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ message: 'Loggers updated successfully' }))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ message: 'Loggers updated successfully' }))
     const loggers = [
       {
         key: 'alpha',
@@ -224,19 +224,19 @@ describe('logging api helper', () => {
   })
 
   test('rejects malformed logging save success payloads', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ ok: true }))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ ok: true }))
 
     await expect(saveLoggingLoggers(fetchImpl, [], 'Bad logging save')).rejects.toThrow('Bad logging save')
   })
 
   test('propagates logging save REST JSON errors', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ error: 'Invalid loggers payload' }, false))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ error: 'Invalid loggers payload' }, false))
 
     await expect(saveLoggingLoggers(fetchImpl, [], 'Bad logging save')).rejects.toThrow('Invalid loggers payload')
   })
 
   test('rejects non-JSON successful logging save responses', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue({
+    const fetchImpl = vi.fn().mockResolvedValue({
       ok: true,
       headers: {
         get: () => 'text/plain'

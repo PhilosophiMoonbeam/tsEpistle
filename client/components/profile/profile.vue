@@ -1,7 +1,7 @@
 <template lang='pug'>
   v-container(fluid, grid-list-lg)
-    v-layout(row wrap)
-      v-flex(xs12)
+    v-row
+      v-col(cols='12')
         .profile-header
           img.animated.fadeInUp(src='/_assets/svg/icon-profile.svg', alt='Users', style='width: 80px;')
           .profile-header-title
@@ -14,26 +14,26 @@
           //- v-btn.animated.fadeInDown(outlined, color='primary', disabled).mr-0
           //-   v-icon(left) mdi-earth
           //-   span {{$t('profile:viewPublicProfile')}}
-      v-flex(lg6 xs12)
+      v-col(lg='6' cols='12')
         v-card.animated.fadeInUp
           v-toolbar(color='blue-grey', dark, dense, flat)
             v-toolbar-title.subtitle-1 {{$t('profile:myInfo')}}
           v-list(two-line, dense)
             v-list-item
-              v-list-item-avatar(size='32')
+              v-avatar(size='32')
                 v-icon mdi-account
-              v-list-item-content
+              div.v-list-item-content
                 v-list-item-title {{$t('profile:displayName')}}
                 v-list-item-subtitle {{ user.name }}
-              v-list-item-action
+              div.v-list-item-action
                 v-menu(
                   v-model='editPop.name'
                   :close-on-content-click='false'
                   min-width='350'
                   left
                   )
-                  template(v-slot:activator='{ on }')
-                    v-btn(text, color='grey', small, v-on='on', @click='focusField(`iptDisplayName`)')
+                  template(v-slot:activator='{ props }')
+                    v-btn(text, color='grey', small, v-bind='props', @click='focusField(`iptDisplayName`)')
                       v-icon(left) mdi-pencil
                       span {{ $t('common:actions:edit') }}
                   v-card
@@ -50,20 +50,20 @@
                     )
             v-divider
             v-list-item
-              v-list-item-avatar(size='32')
+              v-avatar(size='32')
                 v-icon mdi-map-marker
-              v-list-item-content
+              div.v-list-item-content
                 v-list-item-title {{$t('profile:location')}}
                 v-list-item-subtitle {{ user.location }}
-              v-list-item-action
+              div.v-list-item-action
                 v-menu(
                   v-model='editPop.location'
                   :close-on-content-click='false'
                   min-width='350'
                   left
                   )
-                  template(v-slot:activator='{ on }')
-                    v-btn(text, color='grey', small, v-on='on', @click='focusField(`iptLocation`)')
+                  template(v-slot:activator='{ props }')
+                    v-btn(text, color='grey', small, v-bind='props', @click='focusField(`iptLocation`)')
                       v-icon(left) mdi-pencil
                       span {{ $t('common:actions:edit') }}
                   v-card
@@ -80,20 +80,20 @@
                     )
             v-divider
             v-list-item
-              v-list-item-avatar(size='32')
+              v-avatar(size='32')
                 v-icon mdi-briefcase
-              v-list-item-content
+              div.v-list-item-content
                 v-list-item-title {{$t('profile:jobTitle')}}
                 v-list-item-subtitle {{ user.jobTitle }}
-              v-list-item-action
+              div.v-list-item-action
                 v-menu(
                   v-model='editPop.jobTitle'
                   :close-on-content-click='false'
                   min-width='350'
                   left
                   )
-                  template(v-slot:activator='{ on }')
-                    v-btn(text, color='grey', small, v-on='on', @click='focusField(`iptJobTitle`)')
+                  template(v-slot:activator='{ props }')
+                    v-btn(text, color='grey', small, v-bind='props', @click='focusField(`iptJobTitle`)')
                       v-icon(left) mdi-pencil
                       span {{ $t('common:actions:edit') }}
                   v-card
@@ -114,14 +114,14 @@
             v-toolbar-title
               .subtitle-1 {{$t('profile:auth.title')}}
           v-card-text.pt-0
-            v-subheader.pl-0: span.subtitle-2 {{$t('profile:auth.provider')}}
+            v-list-subheader.pl-0: span.subtitle-2 {{$t('profile:auth.provider')}}
             v-toolbar(
               flat
-              :color='$vuetify.theme.dark ? "grey darken-2" : "purple lighten-5"'
+              :color='$vuetify.theme.current.dark ? "grey darken-2" : "purple lighten-5"'
               dense
-              :class='$vuetify.theme.dark ? "grey--text text--lighten-1" : "purple--text text--darken-4"'
+              :class='$vuetify.theme.current.dark ? "grey--text text--lighten-1" : "purple--text text--darken-4"'
               )
-              v-icon(:color='$vuetify.theme.dark ? "grey lighten-1" : "purple darken-4"') mdi-shield-lock
+              v-icon(:color='$vuetify.theme.current.dark ? "grey lighten-1" : "purple darken-4"') mdi-shield-lock
               .subheading.ml-3 {{ user.providerName }}
             //- v-divider.mt-3
             //- v-subheader.pl-0: span.subtitle-2 Two-Factor Authentication (2FA)
@@ -131,7 +131,7 @@
             template(v-if='user.providerKey === `local`')
               form#change-password-form(@submit.prevent='changePassword')
                 v-divider.mt-3
-                v-subheader.pl-0: span.subtitle-2 {{$t('profile:auth.changePassword')}}
+                v-list-subheader.pl-0: span.subtitle-2 {{$t('profile:auth.changePassword')}}
                 v-text-field(
                   ref='iptCurrentPass'
                   v-model='currentPass'
@@ -152,7 +152,8 @@
                   counter='255'
                   loading
                   )
-                  password-strength(slot='progress', v-model='newPass')
+                  template(v-slot:loader)
+                    password-strength(v-model='newPass')
                 v-text-field(
                   ref='iptVerifyPass'
                   v-model='verifyPass'
@@ -163,12 +164,12 @@
                   autocomplete='off'
                   hide-details
                   )
-          v-card-chin(v-if='user.providerKey === `local`')
+          div.v-card-chin(v-if='user.providerKey === `local`')
             v-spacer
             v-btn.px-4(color='purple darken-4', dark, depressed, :loading='changePassLoading', type='submit', form='change-password-form')
               v-icon(left) mdi-progress-check
               span {{$t('profile:auth.changePassword')}}
-      v-flex(lg6 xs12)
+      v-col(lg='6' cols='12')
         //- v-card
         //-   v-toolbar(color='blue-grey', dark, dense, flat)
         //-     v-toolbar-title
@@ -185,12 +186,12 @@
             v-toolbar-title.subtitle-1 {{$t('profile:preferences')}}
           v-list(two-line, dense)
             v-list-item
-              v-list-item-avatar(size='32')
+              v-avatar(size='32')
                 v-icon mdi-map-clock-outline
-              v-list-item-content
+              div.v-list-item-content
                 v-list-item-title {{$t('profile:timezone')}}
                 v-list-item-subtitle {{ user.timezone }}
-              v-list-item-action
+              div.v-list-item-action
                 v-menu(
                   v-model='editPop.timezone'
                   :close-on-content-click='false'
@@ -198,8 +199,8 @@
                   max-width='350'
                   left
                   )
-                  template(v-slot:activator='{ on }')
-                    v-btn(text, color='grey', small, v-on='on', @click='focusField(`iptTimezone`)')
+                  template(v-slot:activator='{ props }')
+                    v-btn(text, color='grey', small, v-bind='props', @click='focusField(`iptTimezone`)')
                       v-icon(left) mdi-pencil
                       span {{ $t('common:actions:edit') }}
                   v-card(flat)
@@ -216,7 +217,7 @@
                       @keydown.esc='editPop.timezone = false'
                       style='height: 38px;'
                     )
-                    v-card-chin
+                    div.v-card-chin
                       v-spacer
                       v-btn(
                         small
@@ -228,12 +229,12 @@
                         span {{$t('common:actions.ok')}}
             v-divider
             v-list-item
-              v-list-item-avatar(size='32')
+              v-avatar(size='32')
                 v-icon mdi-calendar-month-outline
-              v-list-item-content
+              div.v-list-item-content
                 v-list-item-title {{$t('profile:dateFormat')}}
                 v-list-item-subtitle {{ user.dateFormat && user.dateFormat.length > 0 ? user.dateFormat : $t('profile:localeDefault') }}
-              v-list-item-action
+              div.v-list-item-action
                 v-menu(
                   v-model='editPop.dateFormat'
                   :close-on-content-click='false'
@@ -241,8 +242,8 @@
                   max-width='350'
                   left
                   )
-                  template(v-slot:activator='{ on }')
-                    v-btn(text, color='grey', small, v-on='on', @click='focusField(`iptDateFormat`)')
+                  template(v-slot:activator='{ props }')
+                    v-btn(text, color='grey', small, v-bind='props', @click='focusField(`iptDateFormat`)')
                       v-icon(left) mdi-pencil
                       span {{ $t('common:actions:edit') }}
                   v-card(flat)
@@ -259,7 +260,7 @@
                       @keydown.esc='editPop.dateFormat = false'
                       style='height: 38px;'
                     )
-                    v-card-chin
+                    div.v-card-chin
                       v-spacer
                       v-btn(
                         small
@@ -271,12 +272,12 @@
                         span {{$t('common:actions.ok')}}
             v-divider
             v-list-item
-              v-list-item-avatar(size='32')
+              v-avatar(size='32')
                 v-icon mdi-palette
-              v-list-item-content
+              div.v-list-item-content
                 v-list-item-title {{$t('profile:appearance')}}
                 v-list-item-subtitle {{ currentAppearance }}
-              v-list-item-action
+              div.v-list-item-action
                 v-menu(
                   v-model='editPop.appearance'
                   :close-on-content-click='false'
@@ -284,8 +285,8 @@
                   max-width='350'
                   left
                   )
-                  template(v-slot:activator='{ on }')
-                    v-btn(text, color='grey', small, v-on='on', @click='focusField(`iptAppearance`)')
+                  template(v-slot:activator='{ props }')
+                    v-btn(text, color='grey', small, v-bind='props', @click='focusField(`iptAppearance`)')
                       v-icon(left) mdi-pencil
                       span {{ $t('common:actions:edit') }}
                   v-card(flat)
@@ -302,7 +303,7 @@
                       @keydown.esc='editPop.appearance = false'
                       style='height: 38px;'
                     )
-                    v-card-chin
+                    div.v-card-chin
                       v-spacer
                       v-btn(
                         small
@@ -318,11 +319,11 @@
             v-toolbar-title
               .subtitle-1 {{$t('profile:groups.title')}}
           v-list(dense)
-            template(v-for='(grp, idx) of user.groups')
-              v-list-item(:key='`grp-id-` + grp')
-                v-list-item-avatar(size='32')
+            template(v-for='(grp, idx) of user.groups', :key='`grp-id-` + grp')
+              v-list-item
+                v-avatar(size='32')
                   v-icon mdi-account-group
-                v-list-item-content
+                div.v-list-item-content
                   v-list-item-title.body-2 {{grp}}
               v-divider(v-if='idx < user.groups.length - 1')
 
@@ -344,14 +345,28 @@
             .body-2: strong 0
 </template>
 
-<script>
-import { get } from 'vuex-pathify'
-import { changeProfilePassword, fetchProfile, updateProfile } from '../../helpers/users-api'
+<script lang='ts'>
+import { wikiStore } from '@/store/index.ts'
+import { changeProfilePassword, fetchProfile, updateProfile, type Profile } from '../../helpers/users-api'
 import _ from 'lodash'
 import Cookies from 'js-cookie'
 import validate from 'validate.js'
-
+import type moment from 'moment'
 import PasswordStrength from '../common/password-strength.vue'
+
+type ProfileFieldRef =
+  | 'iptDisplayName'
+  | 'iptLocation'
+  | 'iptJobTitle'
+  | 'iptTimezone'
+  | 'iptDateFormat'
+  | 'iptAppearance'
+
+function focusComponent (ref: unknown): void {
+  if (!ref || typeof ref !== 'object') return
+  const candidate = ref as { focus?: unknown }
+  if (typeof candidate.focus === 'function') candidate.focus()
+}
 
 /* global siteConfig */
 
@@ -367,7 +382,13 @@ export default {
       saveLoading: false,
       changePassLoading: false,
       user: {
+        id: 0,
+        email: '',
         name: 'unknown',
+        providerKey: '',
+        providerName: 'Unknown',
+        isSystem: false,
+        isVerified: false,
         location: '',
         jobTitle: '',
         timezone: '',
@@ -376,8 +397,9 @@ export default {
         createdAt: '1970-01-01',
         updatedAt: '1970-01-01',
         lastLoginAt: '1970-01-01',
-        groups: []
-      },
+        groups: [],
+        pagesTotal: 0
+      } as Profile,
       currentPass: '',
       newPass: '',
       verifyPass: '',
@@ -664,7 +686,9 @@ export default {
     currentAppearance () {
       return _.get(_.find(this.appearances, ['value', this.user.appearance]), 'text', false) || this.$t('profile:appearanceDefault')
     },
-    pictureUrl: get('user/pictureUrl'),
+    pictureUrl () {
+      return wikiStore.user.pictureUrl
+    },
     picture () {
       if (this.pictureUrl && this.pictureUrl.length > 1) {
         return {
@@ -673,9 +697,9 @@ export default {
         }
       } else {
         const nameParts = this.user.name.toUpperCase().split(' ')
-        let initials = _.head(nameParts).charAt(0)
+        let initials = nameParts[0]?.charAt(0) ?? ''
         if (nameParts.length > 1) {
-          initials += _.last(nameParts).charAt(0)
+          initials += nameParts[nameParts.length - 1]?.charAt(0) ?? ''
         }
         return {
           kind: 'initials',
@@ -685,25 +709,25 @@ export default {
     }
   },
   watch: {
-    'user.appearance': function (newValue, oldValue) {
-      if (newValue === '') {
-        this.$vuetify.theme.dark = siteConfig.darkMode
-      } else {
-        this.$vuetify.theme.dark = (newValue === 'dark')
-      }
+    'user.appearance': function (newValue: string, _oldValue: string) {
+      const themeName = newValue === ''
+        ? siteConfig.darkMode ? 'dark' : 'light'
+        : newValue === 'dark' ? 'dark' : 'light'
+      void this.$vuetify.theme.change(themeName)
     },
-    'user.dateFormat': function (newValue, oldValue) {
+    'user.dateFormat': function (newValue: string, _oldValue: string) {
       if (newValue === '') {
         this.$moment.updateLocale(this.$moment.locale(), null)
       } else {
-        this.$moment.updateLocale(this.$moment.locale(), {
+        const localeConfig = {
           longDateFormat: {
-            'L': newValue
+            L: newValue
           }
-        })
+        } as moment.LocaleSpecification
+        this.$moment.updateLocale(this.$moment.locale(), localeConfig)
       }
     },
-    'user.timezone': function (newValue, oldValue) {
+    'user.timezone': function (newValue: string, _oldValue: string) {
       if (newValue === '') {
         this.$moment.tz.setDefault()
       } else {
@@ -716,22 +740,22 @@ export default {
   },
   methods: {
     async loadProfile () {
-      this.$store.commit('loadingStart', 'profile-refresh')
+      wikiStore.startLoading('profile-refresh')
       try {
         this.user = await fetchProfile(window.fetch.bind(window))
       } catch (err) {
-        this.$store.commit('pushGraphError', err)
+        wikiStore.showError(err)
       } finally {
-        this.$store.commit('loadingStop', 'profile-refresh')
+        wikiStore.stopLoading('profile-refresh')
       }
     },
     /**
      * Focus an input after delay
      */
-    focusField (ipt) {
+    focusField (ipt: ProfileFieldRef) {
       this.$nextTick(() => {
         _.delay(() => {
-          this.$refs[ipt].focus()
+          focusComponent(this.$refs[ipt])
         }, 200)
       })
     },
@@ -740,7 +764,7 @@ export default {
      */
     async saveProfile () {
       this.saveLoading = true
-      this.$store.commit(`loadingStart`, 'profile-save')
+      wikiStore.startLoading('profile-save')
 
       try {
         const token = await updateProfile(window.fetch.bind(window), {
@@ -752,17 +776,17 @@ export default {
           appearance: this.user.appearance
         })
         Cookies.set('jwt', token, { expires: 365, secure: window.location.protocol === 'https:' })
-        this.$store.set('user/name', this.user.name)
-        this.$store.commit('showNotification', {
+        wikiStore.user.name = this.user.name
+        wikiStore.showNotification({
           message: this.$t('profile:save.success'),
           style: 'success',
           icon: 'check'
         })
       } catch (err) {
-        this.$store.commit('pushGraphError', err)
+        wikiStore.showError(err)
       }
 
-      this.$store.commit(`loadingStop`, 'profile-save')
+      wikiStore.stopLoading('profile-save')
       this.saveLoading = false
     },
     /**
@@ -804,30 +828,30 @@ export default {
 
       if (validation) {
         if (validation.current) {
-          this.$store.commit('showNotification', {
+          wikiStore.showNotification({
             style: 'red',
             message: validation.current[0],
             icon: 'warning'
           })
-          this.$refs.iptCurrentPass.focus()
+          focusComponent(this.$refs.iptCurrentPass)
         } else if (validation.password) {
-          this.$store.commit('showNotification', {
+          wikiStore.showNotification({
             style: 'red',
             message: validation.password[0],
             icon: 'warning'
           })
-          this.$refs.iptNewPass.focus()
+          focusComponent(this.$refs.iptNewPass)
         } else if (validation.verifyPassword) {
-          this.$store.commit('showNotification', {
+          wikiStore.showNotification({
             style: 'red',
             message: validation.verifyPassword[0],
             icon: 'warning'
           })
-          this.$refs.iptVerifyPass.focus()
+          focusComponent(this.$refs.iptVerifyPass)
         }
       } else {
         this.changePassLoading = true
-        this.$store.commit(`loadingStart`, 'profile-changepassword')
+        wikiStore.startLoading('profile-changepassword')
 
         try {
           const token = await changeProfilePassword(
@@ -839,16 +863,16 @@ export default {
           this.newPass = ''
           this.verifyPass = ''
           Cookies.set('jwt', token, { expires: 365, secure: window.location.protocol === 'https:' })
-          this.$store.commit('showNotification', {
+          wikiStore.showNotification({
             message: this.$t('profile:auth.changePassSuccess'),
             style: 'success',
             icon: 'check'
           })
         } catch (err) {
-          this.$store.commit('pushGraphError', err)
+          wikiStore.showError(err)
         }
 
-        this.$store.commit(`loadingStop`, 'profile-changepassword')
+        wikiStore.stopLoading('profile-changepassword')
         this.changePassLoading = false
       }
     }

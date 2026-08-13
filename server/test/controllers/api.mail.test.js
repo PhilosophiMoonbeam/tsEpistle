@@ -1,36 +1,79 @@
-jest.mock('express', () => {
+vi.mock('express', () => {
   const routers = []
-
-  return {
+  const express = {
     Router: () => {
       const router = {
-        get: jest.fn(),
-        post: jest.fn(),
-        patch: jest.fn(),
-        put: jest.fn(),
-        delete: jest.fn(),
-        use: jest.fn()
+        get: vi.fn(),
+        post: vi.fn(),
+        patch: vi.fn(),
+        put: vi.fn(),
+        delete: vi.fn(),
+        use: vi.fn()
       }
       routers.push(router)
       return router
     },
     __routers: routers
   }
+
+  return { default: express, ...express }
 })
+
+import express from 'express'
+
+const API_CONTROLLER_NAMES = [
+  'analytics',
+  'assets',
+  'auth',
+  'comments',
+  'contribute',
+  'groups',
+  'locales',
+  'logging',
+  'mail',
+  'navigation',
+  'pages',
+  'rendering',
+  'search',
+  'site',
+  'storage',
+  'system',
+  'theming',
+  'users'
+]
+
+const loadApiIndexRouter = async () => {
+  const subrouters = Object.fromEntries(API_CONTROLLER_NAMES.map(name => [name, {}]))
+
+  for (const name of API_CONTROLLER_NAMES) {
+    vi.doMock(`../../controllers/api/${name}.ts`, () => ({
+      default: subrouters[name]
+    }))
+  }
+
+  try {
+    await expect(import('../../controllers/api/index.ts')).resolves.toBeDefined()
+  } finally {
+    for (const name of API_CONTROLLER_NAMES) {
+      vi.doUnmock(`../../controllers/api/${name}.ts`)
+    }
+  }
+
+  return { apiRouter: express.__routers.at(-1), subrouters }
+}
 
 describe('controllers/api mail endpoints', () => {
   beforeEach(() => {
-    jest.resetModules()
-    const express = require('express')
+    vi.resetModules()
     express.__routers.length = 0
 
     global.WIKI = {
       auth: {
-        checkAccess: jest.fn()
+        checkAccess: vi.fn()
       },
       mail: {
-        send: jest.fn().mockResolvedValue(undefined),
-        init: jest.fn()
+        send: vi.fn().mockResolvedValue(undefined),
+        init: vi.fn()
       },
       config: {
         mail: {
@@ -51,7 +94,7 @@ describe('controllers/api mail endpoints', () => {
         }
       },
       configSvc: {
-        saveToDb: jest.fn().mockResolvedValue(undefined)
+        saveToDb: vi.fn().mockResolvedValue(undefined)
       },
       models: {
         knex: {}
@@ -59,49 +102,44 @@ describe('controllers/api mail endpoints', () => {
     }
   })
 
-  const loadMailRouter = () => {
-    const express = require('express')
-    require('../../controllers/api/mail')
+  const loadMailRouter = async () => {
+    await import('../../controllers/api/mail.ts')
     return express.__routers[0]
   }
 
-  const loadMailConfigHandler = () => {
-    const router = loadMailRouter()
+  const loadMailConfigHandler = async () => {
+    const router = await loadMailRouter()
     return router.get.mock.calls.find(([path]) => path === '/config')[1]
   }
 
-  const saveMailConfigHandler = () => {
-    const router = loadMailRouter()
+  const saveMailConfigHandler = async () => {
+    const router = await loadMailRouter()
     return router.post.mock.calls.find(([path]) => path === '/config')[1]
   }
 
-  const loadSendTestHandler = () => {
-    const router = loadMailRouter()
+  const loadSendTestHandler = async () => {
+    const router = await loadMailRouter()
     return router.post.mock.calls.find(([path]) => path === '/test')[1]
   }
 
-  it('registers mail test route', () => {
-    const handler = loadSendTestHandler()
+  it('registers mail test route', async () => { const handler = await loadSendTestHandler()
 
-    expect(typeof handler).toBe('function')
+  expect(typeof handler).toBe('function') })
+
+  it('is mounted by the API index router', async () => {
+    const { apiRouter, subrouters } = await loadApiIndexRouter()
+
+    expect(apiRouter.use).toHaveBeenCalledWith('/mail', subrouters.mail)
   })
 
-  it('is mounted by the API index router', () => {
-    const apiIndexSource = require('fs').readFileSync(require('path').join(__dirname, '../../controllers/api/index.js'), 'utf8')
-
-    expect(apiIndexSource).toContain("router.use('/mail', require('./mail'))")
-  })
-
-  it('registers mail config routes', () => {
-    expect(typeof loadMailConfigHandler()).toBe('function')
-    expect(typeof saveMailConfigHandler()).toBe('function')
-  })
+  it('registers mail config routes', async () => { expect(typeof await loadMailConfigHandler()).toBe('function')
+  expect(typeof await saveMailConfigHandler()).toBe('function') })
 
   it('returns JSON 403 for unauthorized mail config requests', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(false)
-    const handler = loadMailConfigHandler()
+    const handler = await loadMailConfigHandler()
     const req = { user: { permissions: [] } }
-    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
 
     await handler(req, res)
 
@@ -112,8 +150,8 @@ describe('controllers/api mail endpoints', () => {
 
   it('returns allowlisted mail config and masks stored password', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
-    const handler = loadMailConfigHandler()
-    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+    const handler = await loadMailConfigHandler()
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
 
     await handler({ user: {} }, res)
 
@@ -138,8 +176,8 @@ describe('controllers/api mail endpoints', () => {
   it('returns an empty password mask when no mail password is stored', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
     global.WIKI.config.mail.pass = ''
-    const handler = loadMailConfigHandler()
-    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+    const handler = await loadMailConfigHandler()
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
 
     await handler({ user: {} }, res)
 
@@ -148,8 +186,8 @@ describe('controllers/api mail endpoints', () => {
 
   it('rejects invalid mail config payloads with JSON error', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
-    const handler = saveMailConfigHandler()
-    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+    const handler = await saveMailConfigHandler()
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
 
     await handler({ user: {}, body: { senderName: 'Missing required fields' } }, res)
 
@@ -161,8 +199,8 @@ describe('controllers/api mail endpoints', () => {
 
   it('saves mail config while preserving masked existing password', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
-    const handler = saveMailConfigHandler()
-    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+    const handler = await saveMailConfigHandler()
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
     const body = {
       senderName: 'Updated Admin',
       senderEmail: 'updated@example.test',
@@ -193,8 +231,8 @@ describe('controllers/api mail endpoints', () => {
 
   it('saves replacement mail password when it is not masked', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
-    const handler = saveMailConfigHandler()
-    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+    const handler = await saveMailConfigHandler()
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
     const body = {
       senderName: '',
       senderEmail: '',
@@ -219,8 +257,8 @@ describe('controllers/api mail endpoints', () => {
   it('returns JSON error when mail config save fails', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
     global.WIKI.configSvc.saveToDb.mockRejectedValueOnce(new Error('db unavailable'))
-    const handler = saveMailConfigHandler()
-    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+    const handler = await saveMailConfigHandler()
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
     const body = {
       senderName: '',
       senderEmail: '',
@@ -245,9 +283,9 @@ describe('controllers/api mail endpoints', () => {
 
   it('returns JSON 403 for unauthorized mail test requests without sending mail', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(false)
-    const handler = loadSendTestHandler()
+    const handler = await loadSendTestHandler()
     const req = { user: { permissions: [] }, body: { recipientEmail: 'admin@example.test' } }
-    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
 
     await handler(req, res)
 
@@ -259,8 +297,8 @@ describe('controllers/api mail endpoints', () => {
 
   it('rejects missing or short recipient email with JSON error', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
-    const handler = loadSendTestHandler()
-    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+    const handler = await loadSendTestHandler()
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
 
     await handler({ user: {}, body: { recipientEmail: 'a@b' } }, res)
 
@@ -271,8 +309,8 @@ describe('controllers/api mail endpoints', () => {
 
   it('sends test email using resolver-compatible payload', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
-    const handler = loadSendTestHandler()
-    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+    const handler = await loadSendTestHandler()
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
 
     await handler({ user: {}, body: { recipientEmail: 'admin@example.test' } }, res)
 
@@ -292,8 +330,8 @@ describe('controllers/api mail endpoints', () => {
   it('returns JSON error when test mail send fails', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
     global.WIKI.mail.send.mockRejectedValueOnce(new Error('smtp unavailable'))
-    const handler = loadSendTestHandler()
-    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+    const handler = await loadSendTestHandler()
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
 
     await handler({ user: {}, body: { recipientEmail: 'admin@example.test' } }, res)
 

@@ -26,7 +26,7 @@
             persistent-hint
             )
           v-divider.mt-4
-          v-subheader.pl-2: strong.indigo--text {{$t('admin:api.newKeyPermissionScopes')}}
+          v-list-subheader.pl-2: strong.indigo--text {{$t('admin:api.newKeyPermissionScopes')}}
           v-list.pl-8(nav)
             v-list-item-group(v-model='fullAccess')
               v-list-item(
@@ -34,17 +34,17 @@
                 active-class='indigo--text'
                 )
                 template(v-slot:default='{ active, toggle }')
-                  v-list-item-action
+                  div.v-list-item-action
                     v-checkbox(
                       :input-value='active'
                       :true-value='true'
                       color='indigo'
                       @click='toggle'
                     )
-                  v-list-item-content
+                  div.v-list-item-content
                     v-list-item-title {{$t('admin:api.newKeyFullAccess')}}
             v-divider.mt-3
-            v-subheader.caption.indigo--text {{$t('admin:api.newKeyGroupPermissions')}}
+            v-list-subheader.caption.indigo--text {{$t('admin:api.newKeyGroupPermissions')}}
             v-list-item
               v-select(
                 :disabled='fullAccess'
@@ -58,7 +58,7 @@
                 :hint='$t(`admin:api.newKeyGroupHint`)'
                 persistent-hint
                 )
-        v-card-chin
+        div.v-card-chin
           v-spacer
           v-btn(text, @click='isShown = false', :disabled='loading') {{$t('common:actions.cancel')}}
           v-btn.px-3(depressed, color='primary', @click='generate', :loading='loading')
@@ -87,20 +87,23 @@
             :rows='10'
             hide-details
           )
-        v-card-chin
+        div.v-card-chin
           v-spacer
           v-btn.px-3(depressed, dark, color='primary', @click='isCopyKeyDialogShown = false') {{$t('common:actions.close')}}
 </template>
 
-<script>
+<script lang='ts'>
 import _ from 'lodash'
+import { wikiStore } from '@/store/index.ts'
 
 import { createAdminApiKey } from '../../helpers/auth-api'
-import { fetchGroupOptions } from '../../helpers/groups-api'
+import { fetchGroupOptions, type GroupOption } from '../../helpers/groups-api'
+import { getErrorMessage } from '../../helpers/root-ui-store'
 
 export default {
+  emits: ['update:modelValue'],
   props: {
-    value: {
+    modelValue: {
       type: Boolean,
       default: false
     },
@@ -115,16 +118,16 @@ export default {
       name: '',
       expiration: '1y',
       fullAccess: true,
-      groups: [],
-      group: null,
+      groups: [] as GroupOption[],
+      group: null as number | null,
       isCopyKeyDialogShown: false,
       key: ''
     }
   },
   computed: {
     isShown: {
-      get() { return this.value },
-      set(val) { this.$emit('input', val) }
+      get() { return this.modelValue },
+      set(val: boolean) { this.$emit('update:modelValue', val) }
     },
     expirations() {
       return [
@@ -140,24 +143,24 @@ export default {
     value (newValue, oldValue) {
       if (newValue) {
         setTimeout(() => {
-          this.$refs.keyNameInput.focus()
+          ;(this.$refs.keyNameInput as { focus: () => void }).focus()
         }, 400)
       }
     }
   },
   methods: {
     async loadGroups() {
-      this.$store.commit('loadingStart', 'admin-api-groups-refresh')
+      wikiStore.startLoading('admin-api-groups-refresh')
       try {
         this.groups = await fetchGroupOptions(window.fetch.bind(window), 'Groups response is invalid')
       } catch (err) {
-        this.$store.commit('showNotification', {
+        wikiStore.showNotification({
           style: 'red',
-          message: err.message,
+          message: getErrorMessage(err),
           icon: 'alert'
         })
       }
-      this.$store.commit('loadingStop', 'admin-api-groups-refresh')
+      wikiStore.stopLoading('admin-api-groups-refresh')
     },
     async generate () {
       try {
@@ -169,15 +172,15 @@ export default {
           throw new Error(this.$t('admin:api.newKeyGuestGroupError'))
         }
       } catch (err) {
-        return this.$store.commit('showNotification', {
+        return wikiStore.showNotification({
           style: 'red',
-          message: err,
+          message: getErrorMessage(err),
           icon: 'alert'
         })
       }
 
       this.loading = true
-      this.$store.commit('loadingStart', 'admin-api-create')
+      wikiStore.startLoading('admin-api-create')
 
       try {
         const resp = await createAdminApiKey(window.fetch.bind(window), {
@@ -186,7 +189,7 @@ export default {
           fullAccess: (this.fullAccess === true),
           group: this.group
         })
-        const refreshed = this.refreshApiKeys ? await this.refreshApiKeys(false) : true
+        const refreshed = this.refreshApiKeys ? await (this.refreshApiKeys as (notify: boolean) => Promise<boolean>)(false) : true
 
         this.name = ''
         this.expiration = '1y'
@@ -198,7 +201,7 @@ export default {
         this.isCopyKeyDialogShown = true
 
         if (refreshed) {
-          this.$store.commit('showNotification', {
+          wikiStore.showNotification({
             style: 'success',
             message: this.$t('admin:api.newKeySuccess'),
             icon: 'check'
@@ -206,12 +209,12 @@ export default {
         }
 
         setTimeout(() => {
-          this.$refs.keyContentsIpt.$refs.input.select()
+          ;(this.$refs.keyContentsIpt as { $refs: { input: HTMLInputElement } }).$refs.input.select()
         }, 400)
       } catch (err) {
-        this.$store.commit('pushGraphError', err)
+        wikiStore.showError(err)
       } finally {
-        this.$store.commit('loadingStop', 'admin-api-create')
+        wikiStore.stopLoading('admin-api-create')
         this.loading = false
       }
     }

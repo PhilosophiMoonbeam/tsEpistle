@@ -1,7 +1,7 @@
-const fs = require('fs')
-const path = require('path')
+import fs from 'node:fs'
+import path from 'node:path'
 
-const repoRoot = path.resolve(__dirname, '../..')
+const repoRoot = path.resolve(import.meta.dirname, '../..')
 const scanRoot = path.join(repoRoot, 'client')
 const skippedDirs = new Set(['node_modules', 'dist', '.git'])
 const scannedExtensions = new Set(['.js', '.vue'])
@@ -30,11 +30,11 @@ describe('Vue 2 reactivity helper removal guard', () => {
   test('admin group child v-model setters emit input updates', () => {
     groupVModelFiles.forEach(relPath => {
       const source = fs.readFileSync(path.join(repoRoot, relPath), 'utf8')
-      const scriptMatch = source.match(/<script>\s*([\s\S]*?)\s*<\/script>/)
+      const scriptMatch = source.match(/<script(?:\s+lang=["']ts["'])?>\s*([\s\S]*?)\s*<\/script>/)
       const script = scriptMatch && scriptMatch[1]
 
       expect(script).not.toBeNull()
-      expect(script).toMatch(/set\s*\(\s*val\s*\)\s*\{\s*this\.\$emit\(\s*['"]input['"]\s*,\s*val\s*\)\s*\}/)
+      expect(script).toMatch(/set\s*\(\s*val:\s*GroupEditorState\s*\)\s*\{\s*this\.\$emit\(\s*['"]update:modelValue['"]\s*,\s*val\s*\)\s*\}/)
       expect(script).not.toMatch(/this\.\$set\s*\(/)
     })
   })

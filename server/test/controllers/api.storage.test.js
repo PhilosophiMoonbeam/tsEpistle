@@ -1,19 +1,23 @@
-jest.mock('express', () => {
+vi.mock('express', () => {
   const routers = []
 
-  return {
+  const expressMock = {
     Router: () => {
       const router = {
-        get: jest.fn(),
-        post: jest.fn(),
-        put: jest.fn()
+        get: vi.fn(),
+        post: vi.fn(),
+        put: vi.fn()
       }
       routers.push(router)
       return router
     },
     __routers: routers
   }
+
+  return { default: expressMock, ...expressMock }
 })
+
+import * as express from 'express'
 
 describe('controllers/api storage endpoints', () => {
   let activeTargets
@@ -21,8 +25,7 @@ describe('controllers/api storage endpoints', () => {
   let patch
 
   beforeEach(() => {
-    jest.resetModules()
-    const express = require('express')
+    vi.resetModules()
     express.__routers.length = 0
 
     activeTargets = [
@@ -39,12 +42,12 @@ describe('controllers/api storage endpoints', () => {
         state: {}
       }
     ]
-    patchWhere = jest.fn().mockResolvedValue(1)
-    patch = jest.fn(() => ({ where: patchWhere }))
+    patchWhere = vi.fn().mockResolvedValue(1)
+    patch = vi.fn(() => ({ where: patchWhere }))
 
     global.WIKI = {
       auth: {
-        checkAccess: jest.fn(() => true)
+        checkAccess: vi.fn(() => true)
       },
       data: {
         storage: [
@@ -71,8 +74,8 @@ describe('controllers/api storage endpoints', () => {
       },
       models: {
         storage: {
-          executeAction: jest.fn().mockResolvedValue(undefined),
-          getTargets: jest.fn().mockResolvedValue([
+          executeAction: vi.fn().mockResolvedValue(undefined),
+          getTargets: vi.fn().mockResolvedValue([
             {
               key: 'git',
               isEnabled: true,
@@ -94,54 +97,53 @@ describe('controllers/api storage endpoints', () => {
               }
             }
           ]),
-          initTargets: jest.fn().mockResolvedValue(undefined),
-          query: jest.fn(() => ({
+          initTargets: vi.fn().mockResolvedValue(undefined),
+          query: vi.fn(() => ({
             patch,
-            where: jest.fn().mockResolvedValue(activeTargets)
+            where: vi.fn().mockResolvedValue(activeTargets)
           }))
         }
       }
     }
   })
 
-  const loadRouter = () => {
-    const express = require('express')
-    expect(() => require('../../controllers/api/storage')).not.toThrow()
+  const loadRouter = async () => {
+    await expect(import('../../controllers/api/storage.ts')).resolves.toBeDefined()
     return express.__routers[0]
   }
 
-  const loadGetHandler = path => {
-    const router = loadRouter()
+  const loadGetHandler = async path => {
+    const router = await loadRouter()
     return router.get.mock.calls.find(([route]) => route === path)[1]
   }
 
-  const loadPutHandler = path => {
-    const router = loadRouter()
+  const loadPutHandler = async path => {
+    const router = await loadRouter()
     return router.put.mock.calls.find(([route]) => route === path)[1]
   }
 
-  const loadExecuteActionHandler = () => {
-    const router = loadRouter()
+  const loadExecuteActionHandler = async () => {
+    const router = await loadRouter()
     return router.post.mock.calls.find(([path]) => path === '/actions/execute')[1]
   }
 
-  it('registers the storage REST routes', () => {
-    const router = loadRouter()
+  it('registers the storage REST routes', async () => {
+    const router = await loadRouter()
 
     expect(router.get.mock.calls.map(([path]) => path)).toEqual(['/targets', '/status'])
     expect(router.put.mock.calls.map(([path]) => path)).toEqual(['/targets'])
-    expect(typeof loadExecuteActionHandler()).toBe('function')
+    expect(typeof await loadExecuteActionHandler()).toBe('function')
   })
 
   it.each([
-    ['targets', () => loadGetHandler('/targets'), { body: {} }],
-    ['status', () => loadGetHandler('/status'), { body: {} }],
-    ['save targets', () => loadPutHandler('/targets'), { body: { targets: [] } }],
-    ['execute action', () => loadExecuteActionHandler(), { body: { targetKey: 'disk', handler: 'sync' } }]
+    ['targets', async () => await loadGetHandler('/targets'), { body: {} }],
+    ['status', async () => await loadGetHandler('/status'), { body: {} }],
+    ['save targets', async () => await loadPutHandler('/targets'), { body: { targets: [] } }],
+    ['execute action', async () => await loadExecuteActionHandler(), { body: { targetKey: 'disk', handler: 'sync' } }]
   ])('rejects forbidden %s requests with JSON', async (label, getHandler, req) => {
-    const handler = getHandler()
+    const handler = await getHandler()
     global.WIKI.auth.checkAccess.mockReturnValue(false)
-    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
 
     await handler({ user: {}, ...req }, res)
 
@@ -151,8 +153,8 @@ describe('controllers/api storage endpoints', () => {
   })
 
   it('returns transformed storage targets with sensitive values masked', async () => {
-    const handler = loadGetHandler('/targets')
-    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+    const handler = await loadGetHandler('/targets')
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
 
     await handler({ user: {}, body: {} }, res)
 
@@ -180,8 +182,8 @@ describe('controllers/api storage endpoints', () => {
   })
 
   it('returns active storage status with GraphQL resolver defaults', async () => {
-    const handler = loadGetHandler('/status')
-    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+    const handler = await loadGetHandler('/status')
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
 
     await handler({ user: {}, body: {} }, res)
 
@@ -213,8 +215,8 @@ describe('controllers/api storage endpoints', () => {
     [{ targets: [{ key: 'git', isEnabled: true, config: [] }] }, 'target mode is required.'],
     [{ targets: [{ key: 'git', isEnabled: true, mode: 'sync', config: {} }] }, 'target config must be an array.']
   ])('rejects invalid targets payload %#', async (body, message) => {
-    const handler = loadPutHandler('/targets')
-    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+    const handler = await loadPutHandler('/targets')
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
 
     await handler({ user: {}, body }, res)
 
@@ -225,8 +227,8 @@ describe('controllers/api storage endpoints', () => {
   })
 
   it('updates storage targets and preserves masked sensitive config', async () => {
-    const handler = loadPutHandler('/targets')
-    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+    const handler = await loadPutHandler('/targets')
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
 
     await handler({
       user: {},
@@ -275,9 +277,9 @@ describe('controllers/api storage endpoints', () => {
   })
 
   it('returns JSON errors from storage target update failures', async () => {
-    const handler = loadPutHandler('/targets')
+    const handler = await loadPutHandler('/targets')
     patchWhere.mockRejectedValue(new Error('patch failed'))
-    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
 
     await handler({
       user: {},
@@ -298,8 +300,8 @@ describe('controllers/api storage endpoints', () => {
     [{ targetKey: 7, handler: 'sync' }, 'targetKey is required.'],
     [{ targetKey: 'disk', handler: false }, 'handler is required.']
   ])('rejects invalid execute action payload %#', async (body, message) => {
-    const handler = loadExecuteActionHandler()
-    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+    const handler = await loadExecuteActionHandler()
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
 
     await handler({ user: {}, body }, res)
 
@@ -309,8 +311,8 @@ describe('controllers/api storage endpoints', () => {
   })
 
   it('executes a storage action and returns JSON success', async () => {
-    const handler = loadExecuteActionHandler()
-    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+    const handler = await loadExecuteActionHandler()
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
 
     await handler({ user: {}, body: { targetKey: 'git', handler: 'sync' } }, res)
 
@@ -320,9 +322,9 @@ describe('controllers/api storage endpoints', () => {
   })
 
   it('returns JSON errors from storage action failures', async () => {
-    const handler = loadExecuteActionHandler()
+    const handler = await loadExecuteActionHandler()
     global.WIKI.models.storage.executeAction.mockRejectedValue(new Error('Invalid Handler for Storage Target'))
-    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
 
     await handler({ user: {}, body: { targetKey: 'git', handler: 'missing' } }, res)
 

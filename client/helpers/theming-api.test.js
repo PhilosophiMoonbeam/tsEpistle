@@ -1,4 +1,4 @@
-const { fetchThemeConfig, saveThemeConfig } = require('./theming-api')
+import { fetchThemeConfig, saveThemeConfig } from './theming-api.ts'
 
 function createJsonResponse (payload, ok = true) {
   return {
@@ -25,7 +25,7 @@ function validConfig (overrides = {}) {
 
 describe('theming api helper', () => {
   test('fetches theme config with same-origin JSON options', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse(validConfig()))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse(validConfig()))
 
     await expect(fetchThemeConfig(fetchImpl)).resolves.toEqual(validConfig())
 
@@ -38,7 +38,7 @@ describe('theming api helper', () => {
   })
 
   test('validates and sanitizes a valid config payload', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse(validConfig({
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse(validConfig({
       theme: 'custom',
       iconset: 'fa',
       darkMode: true,
@@ -60,7 +60,7 @@ describe('theming api helper', () => {
   })
 
   test('strips extra fields', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse(validConfig({
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse(validConfig({
       privateField: 'must-not-return',
       nested: { raw: true }
     })))
@@ -69,7 +69,7 @@ describe('theming api helper', () => {
   })
 
   test('rejects malformed root payloads', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse([]))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([]))
 
     await expect(fetchThemeConfig(fetchImpl, 'Bad theme payload')).rejects.toThrow('Bad theme payload')
   })
@@ -86,13 +86,13 @@ describe('theming api helper', () => {
     ]
 
     for (const payload of malformedPayloads) {
-      const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse(payload))
+      const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse(payload))
       await expect(fetchThemeConfig(fetchImpl, 'Bad theme field')).rejects.toThrow('Bad theme field')
     }
   })
 
   test('surfaces JSON API error messages on non-ok responses', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue({
+    const fetchImpl = vi.fn().mockResolvedValue({
       ok: false,
       headers: {
         get: () => 'application/json; charset=utf-8'
@@ -104,7 +104,7 @@ describe('theming api helper', () => {
   })
 
   test('rejects successful non-JSON responses', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue({
+    const fetchImpl = vi.fn().mockResolvedValue({
       ok: true,
       headers: {
         get: () => 'text/plain'
@@ -116,7 +116,7 @@ describe('theming api helper', () => {
 
   test('saves theme config with same-origin JSON POST options', async () => {
     const payload = validConfig({ darkMode: true })
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ message: 'Theme config updated' }))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ message: 'Theme config updated' }))
 
     await expect(saveThemeConfig(fetchImpl, payload)).resolves.toEqual({ message: 'Theme config updated' })
 
@@ -132,13 +132,13 @@ describe('theming api helper', () => {
   })
 
   test('rejects malformed theme save success responses', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ ok: true }))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ ok: true }))
 
     await expect(saveThemeConfig(fetchImpl, validConfig(), 'Bad theme save')).rejects.toThrow('Bad theme save')
   })
 
   test('surfaces JSON API error messages on theme save failures', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ error: 'Theme CSS is invalid' }, false))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ error: 'Theme CSS is invalid' }, false))
 
     await expect(saveThemeConfig(fetchImpl, validConfig(), 'Bad theme save')).rejects.toThrow('Theme CSS is invalid')
   })

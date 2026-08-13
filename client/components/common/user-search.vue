@@ -25,21 +25,21 @@
           hide-details
           )
         v-list.grey.mt-3.py-0.radius-7(
-          :class='$vuetify.theme.dark ? `darken-3-d5` : `lighten-3`'
+          :class='$vuetify.theme.current.dark ? `darken-3-d5` : `lighten-3`'
           two-line
           dense
           )
-          template(v-for='(usr, idx) in items')
-            v-list-item(:key='usr.id', @click='setUser(usr)')
-              v-list-item-avatar(size='40', color='primary')
+          template(v-for='(usr, idx) in items', :key='usr.id')
+            v-list-item(@click='setUser(usr)')
+              v-avatar(size='40', color='primary')
                 span.body-1.white--text {{ initials(usr.name) }}
-              v-list-item-content
+              div.v-list-item-content
                 v-list-item-title.body-2 {{usr.name}}
                 v-list-item-subtitle {{usr.email}}
-              v-list-item-action
+              div.v-list-item-action
                 v-icon(color='primary') mdi-arrow-right
             v-divider.my-0(v-if='idx < items.length - 1')
-      v-card-chin
+      div.v-card-chin
         v-spacer
         v-btn(
           text
@@ -48,19 +48,21 @@
           ) {{$t('common:actions.cancel')}}
 </template>
 
-<script>
+<script lang='ts'>
+import { defineComponent } from 'vue'
 import _ from 'lodash'
 
-import { searchUsers } from '../../helpers/users-api'
-import { pushGraphError } from '../../helpers/root-ui-store'
+import { searchUsers, type UserSearchRow } from '../../helpers/users-api'
+import { wikiStore } from '@/store/index.ts'
 
-export default {
+export default defineComponent({
+  emits: ['select', 'update:modelValue'],
   props: {
     multiple: {
       type: Boolean,
       default: false
     },
-    value: {
+    modelValue: {
       type: Boolean,
       default: false
     }
@@ -70,23 +72,22 @@ export default {
       loading: false,
       searchLoading: false,
       search: '',
-      items: [],
+      items: [] as UserSearchRow[],
       searchRequestId: 0
     }
   },
   computed: {
     dialogOpen: {
-      get() { return this.value },
-      set(value) { this.$emit('input', value) }
+      get(): boolean { return this.modelValue },
+      set(value: boolean) { this.$emit('update:modelValue', value) }
     }
   },
   watch: {
-    value(newValue, oldValue) {
+    modelValue(newValue: boolean, oldValue: boolean) {
       if (newValue && !oldValue) {
         this.search = ''
         this.items = []
-        this.selectedItems = null
-        _.delay(() => { this.$refs.searchIpt.focus() }, 100)
+        _.delay(() => { (this.$refs.searchIpt as { focus: () => void }).focus() }, 100)
       }
     },
     search () {
@@ -94,10 +95,10 @@ export default {
     }
   },
   methods: {
-    initials(val) {
-      return val.split(' ').map(v => v.substring(0, 1)).join('')
+    initials(val: string): string {
+      return val.split(' ').map((value: string) => value.substring(0, 1)).join('')
     },
-    async loadUsers () {
+    async loadUsers (): Promise<UserSearchRow[]> {
       const requestId = ++this.searchRequestId
       const query = this.search
 
@@ -120,7 +121,7 @@ export default {
           return []
         }
         this.items = []
-        pushGraphError(this.$store, err)
+        wikiStore.showError(err)
         return []
       } finally {
         if (requestId === this.searchRequestId) {
@@ -128,16 +129,16 @@ export default {
         }
       }
     },
-    close() {
-      this.$emit('input', false)
+    close(): void {
+      this.$emit('update:modelValue', false)
     },
-    setUser(usr) {
+    setUser(usr: UserSearchRow): void {
       this.$emit('select', usr)
       this.close()
     },
-    searchFilter(item, queryText, itemText) {
+    searchFilter(item: UserSearchRow, queryText: string, itemText: string): boolean {
       return _.includes(_.toLower(item.email), _.toLower(queryText)) || _.includes(_.toLower(item.name), _.toLower(queryText))
     }
   }
-}
+})
 </script>

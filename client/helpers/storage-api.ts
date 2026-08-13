@@ -23,6 +23,49 @@ type MessageResponse = {
   [key: string]: unknown
 }
 
+export type StorageConfigEntry = {
+  key: string
+  value: string
+  [key: string]: unknown
+}
+
+export type StorageAction = {
+  handler: string
+  hint: string
+  label: string
+}
+
+export type StorageInterval = string | false | null
+
+export type StorageTarget = {
+  actions?: StorageAction[]
+  config: StorageConfigEntry[]
+  description: string
+  hasSchedule: boolean
+  isAvailable: boolean
+  isEnabled: boolean
+  key: string
+  logo: string
+  mode: string
+  supportedModes: string[]
+  syncInterval: string
+  syncIntervalDefault: StorageInterval
+  title: string
+  website: string
+}
+
+export type StorageStatus = {
+  key: string
+  lastAttempt: string | null
+  message: string
+  status: string
+  title: string
+}
+
+export type StorageTargetUpdate = Pick<StorageTarget, 'isEnabled' | 'key' | 'mode' | 'syncInterval'> & {
+  config: StorageConfigEntry[]
+}
+
 async function parseJsonResponse (response: JsonResponse, fallbackMessage: string): Promise<unknown> {
   const hasHeaderReader = response && response.headers && typeof response.headers.get === 'function'
   const contentType = hasHeaderReader ? response.headers!.get('content-type') || '' : ''
@@ -40,7 +83,7 @@ async function parseJsonResponse (response: JsonResponse, fallbackMessage: strin
   return payload
 }
 
-export async function fetchStorageTargets (fetchImpl: FetchImpl, fallbackMessage = 'Storage targets failed'): Promise<unknown[]> {
+export async function fetchStorageTargets (fetchImpl: FetchImpl, fallbackMessage = 'Storage targets failed'): Promise<StorageTarget[]> {
   const response = await fetchImpl('/_api/storage/targets', {
     credentials: 'same-origin',
     headers: {
@@ -53,10 +96,10 @@ export async function fetchStorageTargets (fetchImpl: FetchImpl, fallbackMessage
     throw new Error(fallbackMessage)
   }
 
-  return payload
+  return payload as StorageTarget[]
 }
 
-export async function fetchStorageStatus (fetchImpl: FetchImpl, fallbackMessage = 'Storage status failed'): Promise<unknown[]> {
+export async function fetchStorageStatus (fetchImpl: FetchImpl, fallbackMessage = 'Storage status failed'): Promise<StorageStatus[]> {
   const response = await fetchImpl('/_api/storage/status', {
     credentials: 'same-origin',
     headers: {
@@ -69,10 +112,10 @@ export async function fetchStorageStatus (fetchImpl: FetchImpl, fallbackMessage 
     throw new Error(fallbackMessage)
   }
 
-  return payload
+  return payload as StorageStatus[]
 }
 
-export async function saveStorageTargets (fetchImpl: FetchImpl, targets: unknown[], fallbackMessage = 'Storage targets update failed'): Promise<MessageResponse> {
+export async function saveStorageTargets (fetchImpl: FetchImpl, targets: StorageTargetUpdate[], fallbackMessage = 'Storage targets update failed'): Promise<MessageResponse> {
   const response = await fetchImpl('/_api/storage/targets', {
     method: 'PUT',
     credentials: 'same-origin',

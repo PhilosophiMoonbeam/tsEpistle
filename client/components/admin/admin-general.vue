@@ -1,7 +1,7 @@
 <template lang='pug'>
   v-container(fluid, grid-list-lg)
-    v-layout(row wrap)
-      v-flex(xs12)
+    v-row
+      v-col(cols='12')
         .admin-header
           img.animated.fadeInUp(src='/_assets/svg/icon-categorize.svg', alt='General', style='width: 80px;')
           .admin-header-title
@@ -12,8 +12,8 @@
             v-icon(left) mdi-check
             span {{$t('common:actions.apply')}}
         v-form.pt-3
-          v-layout(row wrap)
-            v-flex(lg6 xs12)
+          v-row
+            v-col(lg='6' cols='12')
               v-form
                 v-card.animated.fadeInUp
                   v-toolbar(color='primary', dark, dense, flat)
@@ -116,7 +116,7 @@
                       persistent-hint
                       )
 
-            v-flex(lg6 xs12)
+            v-col(lg='6' cols='12')
               v-card.animated.fadeInUp.wait-p4s
                 v-toolbar(color='indigo', dark, dense, flat)
                   v-toolbar-title.subtitle-1 Features
@@ -260,26 +260,23 @@
 
 </template>
 
-<script>
+<script lang='ts'>
 import _ from 'lodash'
-import { sync } from 'vuex-pathify'
-import { onEditorInsert, offEditorInsert } from '../../helpers/editor-insert-events'
-import { fetchSiteConfig, saveSiteConfig } from '../../helpers/site-api'
+import { wikiStore } from '@/store/index.ts'
+import { onEditorInsert, offEditorInsert, type EditorInsertPayload } from '../../helpers/editor-insert-events'
+import { fetchSiteConfig, saveSiteConfig, type SiteConfig } from '../../helpers/site-api'
 import { loadingStart, loadingStop, pushGraphError, setLoading, showNotification } from '../../helpers/root-ui-store'
 
-import store from '../../store'
-import editorStore from '../../store/editor'
 
 const titleRegex = /[<>"]/i
 
-store.registerModule('editor', editorStore)
 
 export default {
   i18nOptions: { namespaces: 'editor' },
   components: {
-    editorModalMedia: () => import(/* webpackChunkName: "editor", webpackMode: "lazy" */ '../editor/editor-modal-media.vue')
+    editorModalMedia: () => import('../editor/editor-modal-media.vue')
   },
-  data() {
+  data(): { config: SiteConfig, metaRobots: Array<{ text: string, value: string }> } {
     return {
       config: {
         host: '',
@@ -315,12 +312,30 @@ export default {
     }
   },
   computed: {
-    siteTitle: sync('site/title'),
-    logoUrl: sync('site/logoUrl'),
-    company: sync('site/company'),
-    contentLicense: sync('site/contentLicense'),
-    footerOverride: sync('site/footerOverride'),
-    activeModal: sync('editor/activeModal'),
+    siteTitle: {
+      get() { return wikiStore.site.title },
+      set(value: string) { wikiStore.site.title = value }
+    },
+    logoUrl: {
+      get() { return wikiStore.site.logoUrl },
+      set(value: string) { wikiStore.site.logoUrl = value }
+    },
+    company: {
+      get() { return wikiStore.site.company },
+      set(value: string) { wikiStore.site.company = value }
+    },
+    contentLicense: {
+      get() { return wikiStore.site.contentLicense },
+      set(value: string) { wikiStore.site.contentLicense = value }
+    },
+    footerOverride: {
+      get() { return wikiStore.site.footerOverride },
+      set(value: string) { wikiStore.site.footerOverride = value }
+    },
+    activeModal: {
+      get() { return wikiStore.editor.activeModal },
+      set(value: string) { wikiStore.editor.activeModal = value }
+    },
     contentLicenses () {
       return [
         { value: '', text: this.$t('common:license.none') },
@@ -362,60 +377,62 @@ export default {
       }
     },
     async loadConfig () {
-      setLoading(this.$store, 'admin-site-refresh', true)
+      setLoading(wikiStore, 'admin-site-refresh', true)
       try {
         this.config = _.cloneDeep(await fetchSiteConfig(window.fetch.bind(window)))
       } catch (err) {
-        pushGraphError(this.$store, err)
+        pushGraphError(wikiStore, err)
       } finally {
-        setLoading(this.$store, 'admin-site-refresh', false)
+        setLoading(wikiStore, 'admin-site-refresh', false)
       }
     },
     async save () {
       const title = _.get(this.config, 'title', '')
       if (titleRegex.test(title)) {
-        showNotification(this.$store, {
+        showNotification(wikiStore, {
           style: 'error',
           message: this.$t('admin:general.siteTitleInvalidChars'),
           icon: 'alert'
         })
         return
       }
-      loadingStart(this.$store, 'admin-site-update')
+      loadingStart(wikiStore, 'admin-site-update')
       try {
         await saveSiteConfig(window.fetch.bind(window), this.siteConfigPayload())
-        showNotification(this.$store, {
+        showNotification(wikiStore, {
           style: 'success',
           message: this.$t('admin:general.saveSuccess'),
           icon: 'check'
         })
-        this.siteTitle = this.config.title
-        this.company = this.config.company
-        this.contentLicense = this.config.contentLicense
-        this.footerOverride = this.config.footerOverride
-        this.logoUrl = this.config.logoUrl
+        this.siteTitle = this.config.title ?? ''
+        this.company = this.config.company ?? ''
+        this.contentLicense = this.config.contentLicense ?? ''
+        this.footerOverride = this.config.footerOverride ?? ''
+        this.logoUrl = this.config.logoUrl ?? ''
       } catch (err) {
-        pushGraphError(this.$store, err)
+        pushGraphError(wikiStore, err)
       } finally {
-        loadingStop(this.$store, 'admin-site-update')
+        loadingStop(wikiStore, 'admin-site-update')
       }
     },
     browseLogo () {
-      this.$store.set('editor/editorKey', 'common')
+      wikiStore.editor.editorKey = 'common'
       this.activeModal = 'editorModalMedia'
     },
     refreshLogo () {
       this.$forceUpdate()
     },
-    handleEditorInsert (opts) {
-      this.config.logoUrl = opts.path
+    handleEditorInsert (opts: EditorInsertPayload) {
+      if (typeof opts.path === 'string') {
+        this.config.logoUrl = opts.path
+      }
     }
   },
   mounted () {
     this.loadConfig()
     onEditorInsert(this.handleEditorInsert)
   },
-  beforeDestroy() {
+  beforeUnmount() {
     offEditorInsert(this.handleEditorInsert)
   }
 }

@@ -1,5 +1,5 @@
-const fs = require('fs')
-const path = require('path')
+import fs from 'node:fs'
+import path from 'node:path'
 
 const extractTemplate = (source) => {
   const match = source.match(/<template[^>]*>\s*([\s\S]*?)\s*<\/template>/)
@@ -7,7 +7,7 @@ const extractTemplate = (source) => {
 }
 
 const extractScript = (source) => {
-  const match = source.match(/<script>\s*([\s\S]*?)\s*<\/script>/)
+  const match = source.match(/<script(?:\s+lang=["']ts["'])?>\s*([\s\S]*?)\s*<\/script>/)
   return match && match[1]
 }
 
@@ -79,12 +79,14 @@ describe('nav-header assets dead method cleanup guard', () => {
     expect(script).not.toMatch(/this\.\$store\.commit\s*\(\s*['"]showNotification['"]\s*,\s*\{[\s\S]*icon:\s*['"]ferry['"]/)
   })
 
-  test('pageMoveRename routes root UI commits through the facade', () => {
-    expect(script).toMatch(/import\s+\{\s*loadingStart\s*,\s*loadingStop\s*,\s*pushGraphError\s*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/root-ui-store['"]/)
+  test('pageMoveRename routes typed root UI state through wikiStore', () => {
+    expect(script).toMatch(/import\s+\{(?=[^}]*\bdefineAsyncComponent\b)(?=[^}]*\bdefineComponent\b)[^}]*\}\s+from\s+['"]vue['"]/)
+    expect(script).toMatch(/import\s+\{\s*wikiStore\s*\}\s+from\s+['"]@\/store\/index\.ts['"]/)
     expect(pageMoveRename).not.toBeNull()
-    expect(pageMoveRename).toMatch(/loadingStart\s*\(\s*this\.\$store\s*,\s*['"]page-move['"]\s*\)/)
-    expect(pageMoveRename).toMatch(/pushGraphError\s*\(\s*this\.\$store\s*,\s*err\s*\)/)
-    expect(pageMoveRename).toMatch(/loadingStop\s*\(\s*this\.\$store\s*,\s*['"]page-move['"]\s*\)/)
-    expect(pageMoveRename).not.toMatch(/this\.\$store\.commit\s*\(\s*[`'"](?:loadingStart|loadingStop|pushGraphError)[`'"]/)
+    expect(pageMoveRename).toMatch(/async\s+pageMoveRename\s*\(\s*\{\s*path\s*,\s*locale\s*\}\s*:\s*PageLocation\s*\)\s*:\s*Promise<void>/)
+    expect(pageMoveRename).toMatch(/wikiStore\.startLoading\s*\(\s*['"]page-move['"]\s*\)/)
+    expect(pageMoveRename).toMatch(/await\s+movePage\s*\(\s*window\.fetch\.bind\(\s*window\s*\)\s*,\s*wikiStore\.page\.id\s*,\s*locale\s*,\s*path\s*\)/)
+    expect(pageMoveRename).toMatch(/catch\s*\(\s*err\s*\)\s*\{\s*wikiStore\.showError\s*\(\s*err\s*\)\s*wikiStore\.stopLoading\s*\(\s*['"]page-move['"]\s*\)\s*\}/)
+    expect(pageMoveRename).not.toMatch(/this\.\$store\.commit/)
   })
 })

@@ -2,15 +2,15 @@
   v-card(flat)
     v-card-text(v-if='group.id === 1')
       v-alert.radius-7.mb-0(
-        :class='$vuetify.theme.dark ? "grey darken-4" : "orange lighten-5"'
+        :class='$vuetify.theme.current.dark ? "grey darken-4" : "orange lighten-5"'
         color='orange darken-2'
         outlined
         icon='mdi-lock-outline'
         ) This group has access to everything.
     template(v-else)
-      v-card-title(:class='$vuetify.theme.dark ? `grey darken-3-d5` : ``')
+      v-card-title(:class='$vuetify.theme.current.dark ? `grey darken-3-d5` : ``')
         v-alert.radius-7.caption(
-          :class='$vuetify.theme.dark ? `grey darken-3-d3` : `grey lighten-4`'
+          :class='$vuetify.theme.current.dark ? `grey darken-3-d3` : `grey lighten-4`'
           color='grey'
           outlined
           icon='mdi-information'
@@ -24,33 +24,33 @@
           offset-y
           nudge-left='115'
           )
-          template(v-slot:activator='{ on }')
-            v-btn.is-icon(v-on='on', outlined, color='primary')
+          template(v-slot:activator='{ props }')
+            v-btn.is-icon(v-bind='props', outlined, color='primary')
               v-icon mdi-dots-horizontal
           v-list(dense)
             v-list-item(@click='comingSoon')
-              v-list-item-avatar
+              v-avatar
                 v-icon mdi-application-import
               v-list-item-title Load Preset
             v-divider
             v-list-item(@click='comingSoon')
-              v-list-item-avatar
+              v-avatar
                 v-icon mdi-application-export
               v-list-item-title Save As Preset
             v-divider
             v-list-item(@click='comingSoon')
-              v-list-item-avatar
+              v-avatar
                 v-icon mdi-cloud-upload
               v-list-item-title Import Rules
             v-divider
             v-list-item(@click='comingSoon')
-              v-list-item-avatar
+              v-avatar
                 v-icon mdi-cloud-download
               v-list-item-title Export Rules
-      v-card-text(:class='$vuetify.theme.dark ? `grey darken-4-l5` : `white`')
+      v-card-text(:class='$vuetify.theme.current.dark ? `grey darken-4-l5` : `white`')
         .rules
           .caption(v-if='group.pageRules.length === 0')
-            em(:class='$vuetify.theme.dark ? `grey--text` : `blue-grey--text`') This group has no page rules yet.
+            em(:class='$vuetify.theme.current.dark ? `grey--text` : `blue-grey--text`') This group has no page rules yet.
           .rule(v-for='rule of group.pageRules', :key='rule.id')
             v-btn.ma-0.radius-4.rule-deny-btn(
               solo
@@ -78,20 +78,20 @@
               clearable
               dense
               )
-              template(slot='selection', slot-scope='{ item, index }')
+              template(v-slot:selection='{ item, index }')
                 v-chip.white--text.ml-0(v-if='index <= 1', small, label, :color='rule.deny ? `red` : `green`').caption {{ item.value }}
                 v-chip.white--text.ml-0(v-if='index === 2', small, label, :color='rule.deny ? `red lighten-2` : `green lighten-2`').caption + {{ rule.roles.length - 2 }} more
-              template(slot='item', slot-scope='props')
-                v-list-item-action(style='min-width: 30px;')
+              template(v-slot:item='props')
+                div.v-list-item-action(style='min-width: 30px;')
                   v-checkbox(
                     v-model='props.attrs.inputValue'
                     hide-details
                     color='primary'
                   )
                 v-icon.mr-2(:color='rule.deny ? `red` : `green`') {{props.item.icon}}
-                v-list-item-content
+                div.v-list-item-content
                   v-list-item-title.body-2 {{props.item.text}}
-                v-chip.mr-2.grey--text(label, small, :color='$vuetify.theme.dark ? `grey darken-4` : `grey lighten-4`').caption {{props.item.value}}
+                v-chip.mr-2.grey--text(label, small, :color='$vuetify.theme.current.dark ? `grey darken-4` : `grey lighten-4`').caption {{props.item.value}}
 
             //- Match
             v-select.ml-1.mr-1(
@@ -104,16 +104,16 @@
               style='flex: 0 1 250px;'
               dense
               )
-              template(slot='selection', slot-scope='{ item, index }')
+              template(v-slot:selection='{ item, index }')
                 .body-2 {{item.text}}
-              template(slot='item', slot-scope='data')
-                v-list-item-avatar
+              template(v-slot:item='data')
+                v-avatar
                   v-avatar.white--text.radius-4(color='blue', size='30', tile) {{ data.item.icon }}
-                v-list-item-content
+                div.v-list-item-content
                   v-list-item-title(v-html='data.item.text')
             //- Locales
             v-select.mr-1(
-              :background-color='$vuetify.theme.dark ? `grey darken-3-d5` : `blue-grey lighten-5`'
+              :background-color='$vuetify.theme.current.dark ? `grey darken-3-d5` : `blue-grey lighten-5`'
               solo
               :items='locales'
               v-model='rule.locales'
@@ -127,32 +127,33 @@
               :menu-props='{ "minWidth": 250 }'
               style='flex: 0 1 150px;'
               )
-              template(slot='selection', slot-scope='{ item, index }')
+              template(v-slot:selection='{ item, index }')
                 v-chip.white--text.ml-0(v-if='rule.locales.length === 1', small, label, :color='rule.deny ? `red` : `green`').caption {{ item.code.toUpperCase() }}
                 v-chip.white--text.ml-0(v-else-if='index === 0', small, label, :color='rule.deny ? `red` : `green`').caption {{ rule.locales.length }} locales
-              v-list-item(slot='prepend-item', @click='rule.locales = []')
-                v-list-item-action(style='min-width: 30px;')
-                  v-checkbox(
-                    :input-value='rule.locales.length === 0'
-                    hide-details
-                    color='primary'
-                    readonly
-                  )
-                v-icon.mr-2(:color='rule.deny ? `red` : `green`') mdi-earth
-                v-list-item-content
-                  v-list-item-title.body-2 Any Locale
-              v-divider(slot='prepend-item')
-              template(slot='item', slot-scope='props')
-                v-list-item-action(style='min-width: 30px;')
+              template(v-slot:prepend-item)
+                v-list-item(@click='rule.locales = []')
+                  div.v-list-item-action(style='min-width: 30px;')
+                    v-checkbox(
+                      :model-value='rule.locales.length === 0'
+                      hide-details
+                      color='primary'
+                      readonly
+                    )
+                  v-icon.mr-2(:color='rule.deny ? `red` : `green`') mdi-earth
+                  div.v-list-item-content
+                    v-list-item-title.body-2 Any Locale
+                v-divider
+              template(v-slot:item='props')
+                div.v-list-item-action(style='min-width: 30px;')
                   v-checkbox(
                     v-model='props.attrs.inputValue'
                     hide-details
                     color='primary'
                   )
                 v-icon.mr-2(:color='rule.deny ? `red` : `green`') mdi-web
-                v-list-item-content
+                div.v-list-item-content
                   v-list-item-title.body-2 {{props.item.name}}
-                v-chip.mr-2.grey--text(label, small, :color='$vuetify.theme.dark ? `grey darken-4` : `grey lighten-4`').caption {{props.item.code.toUpperCase()}}
+                v-chip.mr-2.grey--text(label, small, :color='$vuetify.theme.current.dark ? `grey darken-4` : `grey lighten-4`').caption {{props.item.code.toUpperCase()}}
 
             //- Path
             v-text-field(
@@ -163,11 +164,11 @@
               :placeholder='rule.match === `REGEX` ? `Regular Expression` : rule.match === `TAG` ? `Tag` : `Path`'
               :suffix='rule.match === `REGEX` ? `/` : null'
               hide-details
-              :color='$vuetify.theme.dark ? `grey` : `blue-grey`'
+              :color='$vuetify.theme.current.dark ? `grey` : `blue-grey`'
               )
 
             v-btn.ml-2(icon, @click='removeRule(rule.id)', small)
-              v-icon(:color='$vuetify.theme.dark ? `grey` : `blue-grey`') mdi-close
+              v-icon(:color='$vuetify.theme.current.dark ? `grey` : `blue-grey`') mdi-close
 
         v-divider.mt-3
         .overline.py-3 Rules Order
@@ -195,21 +196,25 @@
 
 </template>
 
-<script>
+<script lang='ts'>
+import type { PropType } from 'vue'
+
 import _ from 'lodash'
 import { customAlphabet } from 'nanoid/non-secure'
 
-import { showNotification } from '../../helpers/root-ui-store'
+import { wikiStore } from '@/store/index.ts'
+import { createEmptyGroupEditorState, type GroupEditorState } from '../../helpers/groups-api'
 
 /* global siteLangs */
 
 const nanoid = customAlphabet('1234567890abcdef', 10)
 
 export default {
+  emits: ['update:modelValue'],
   props: {
-    value: {
-      type: Object,
-      default: () => ({})
+    modelValue: {
+      type: Object as PropType<GroupEditorState>,
+      default: createEmptyGroupEditorState
     }
   },
   data() {
@@ -241,13 +246,13 @@ export default {
   },
   computed: {
     group: {
-      get() { return this.value },
-      set(val) { this.$emit('input', val) }
+      get(): GroupEditorState { return this.modelValue },
+      set(val: GroupEditorState) { this.$emit('update:modelValue', val) }
     },
-    locales() { return siteLangs }
+    locales(): typeof siteLangs { return siteLangs }
   },
   methods: {
-    addRule(group) {
+    addRule() {
       this.group.pageRules.push({
         id: nanoid(),
         path: '',
@@ -257,18 +262,15 @@ export default {
         locales: []
       })
     },
-    removeRule(ruleId) {
+    removeRule(ruleId: string) {
       this.group.pageRules.splice(_.findIndex(this.group.pageRules, ['id', ruleId]), 1)
     },
     comingSoon() {
-      showNotification(this.$store, {
+      wikiStore.showNotification({
         style: 'indigo',
         message: `Coming soon...`,
         icon: 'directions_boat'
       })
-    },
-    dude (stuff) {
-      console.info(stuff)
     }
   }
 }

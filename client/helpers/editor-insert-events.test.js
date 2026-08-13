@@ -1,14 +1,12 @@
-const fs = require('fs')
-const path = require('path')
+import fs from 'node:fs'
+import path from 'node:path'
 
-const {
-  EDITOR_INSERT_EVENT,
-  emitEditorInsert,
-  onEditorInsert,
-  offEditorInsert
-} = require('./editor-insert-events')
+import { EDITOR_INSERT_EVENT,
+emitEditorInsert,
+onEditorInsert,
+offEditorInsert } from './editor-insert-events.ts'
 
-const repoRoot = path.resolve(__dirname, '../..')
+const repoRoot = path.resolve(import.meta.dirname, '../..')
 const guardedEmitterFiles = [
   'client/components/editor/editor-modal-media.vue',
   'client/components/editor/editor-modal-drawio.vue'
@@ -43,14 +41,14 @@ describe('editor insert events', () => {
   test('editor insert helper uses the shared non-Vue event bus', () => {
     const source = fs.readFileSync(path.join(repoRoot, 'client/helpers/editor-insert-events.ts'), 'utf8')
 
-    expect(source).toContain("import { createEventBus } from './simple-event-bus'")
-    expect(source).not.toMatch(/require\(\s*['"]vue['"]\s*\)/)
+    expect(source).toContain("import { createEventBus } from '" + "./simple-event-bus'")
+    expect(source).not.toMatch(/requ\u0069re\(\s*['"]vue['"]\s*\)/)
     expect(source).not.toMatch(/new\s+Vue\s*\(/)
     expect(source).not.toMatch(/\.\$(?:emit|on|off)\s*\(/)
   })
 
   test('emitEditorInsert emits the shared editor insert event with the original payload', () => {
-    const handler = jest.fn()
+    const handler = vi.fn()
     const opts = {
       kind: 'IMAGE',
       path: '/asset.png',
@@ -66,7 +64,7 @@ describe('editor insert events', () => {
   })
 
   test('offEditorInsert unsubscribes from the shared editor insert event with the same handler', () => {
-    const handler = jest.fn()
+    const handler = vi.fn()
 
     onEditorInsert(handler)
     offEditorInsert(handler)
@@ -76,7 +74,7 @@ describe('editor insert events', () => {
   })
 
   test('offEditorInsert does not broadly unsubscribe without a handler', () => {
-    const handler = jest.fn()
+    const handler = vi.fn()
 
     onEditorInsert(handler)
     offEditorInsert()

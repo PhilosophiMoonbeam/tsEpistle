@@ -1,4 +1,4 @@
-const { fetchSiteConfig, saveSiteConfig } = require('./site-api')
+import { fetchSiteConfig, saveSiteConfig } from './site-api.ts'
 
 function createJsonResponse (payload, ok = true) {
   return {
@@ -6,13 +6,13 @@ function createJsonResponse (payload, ok = true) {
     headers: {
       get: () => 'application/json; charset=utf-8'
     },
-    json: jest.fn().mockResolvedValue(payload)
+    json: vi.fn().mockResolvedValue(payload)
   }
 }
 
 describe('site api helper', () => {
   it('fetches site config with same-origin JSON headers', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ title: 'Wiki' }))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ title: 'Wiki' }))
 
     const result = await fetchSiteConfig(fetchImpl)
 
@@ -26,19 +26,19 @@ describe('site api helper', () => {
   })
 
   it('rejects malformed successful site config responses', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse([]))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([]))
 
     await expect(fetchSiteConfig(fetchImpl, 'Unexpected site config response')).rejects.toThrow('Unexpected site config response')
   })
 
   it('surfaces JSON REST site config fetch errors', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ error: 'fetch failed' }, false))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ error: 'fetch failed' }, false))
 
     await expect(fetchSiteConfig(fetchImpl)).rejects.toThrow('fetch failed')
   })
 
   it('saves site config with same-origin JSON PUT', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ message: 'Site configuration updated successfully', saved: true }))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ message: 'Site configuration updated successfully', saved: true }))
     const config = { title: 'Next Wiki' }
 
     const result = await saveSiteConfig(fetchImpl, config)
@@ -56,19 +56,19 @@ describe('site api helper', () => {
   })
 
   it('rejects malformed successful site config save responses', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({}))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({}))
 
     await expect(saveSiteConfig(fetchImpl, {}, 'Unexpected save response')).rejects.toThrow('Unexpected save response')
   })
 
   it('surfaces JSON REST site config save errors', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ error: 'save failed' }, false))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ error: 'save failed' }, false))
 
     await expect(saveSiteConfig(fetchImpl, {})).rejects.toThrow('save failed')
   })
 
   it('uses fallback message for non-JSON failures', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue({
+    const fetchImpl = vi.fn().mockResolvedValue({
       ok: false,
       headers: { get: () => 'text/plain' }
     })

@@ -6,25 +6,32 @@
       slot(name='content')
 </template>
 
-<script>
+<script lang='ts'>
+import { defineComponent } from 'vue'
 import { customAlphabet } from 'nanoid/non-secure'
 
 const nanoid = customAlphabet('1234567890abcdef', 10)
 
-export default {
+export default defineComponent({
   data() {
     return {
       currentTab: 0
     }
   },
   watch: {
-    currentTab (newValue, oldValue) {
+    currentTab () {
       this.setActiveTab()
     }
   },
   methods: {
+    tabElements () {
+      return Array.from((this.$refs.tabs as HTMLUListElement).children) as HTMLElement[]
+    },
+    panelElements () {
+      return Array.from((this.$refs.content as HTMLElement).children) as HTMLElement[]
+    },
     setActiveTab () {
-      this.$refs.tabs.childNodes.forEach((node, idx) => {
+      this.tabElements().forEach((node, idx) => {
         if (idx === this.currentTab) {
           node.className = 'is-active'
           node.setAttribute('aria-selected', 'true')
@@ -33,7 +40,7 @@ export default {
           node.setAttribute('aria-selected', 'false')
         }
       })
-      this.$refs.content.childNodes.forEach((node, idx) => {
+      this.panelElements().forEach((node, idx) => {
         if (idx === this.currentTab) {
           node.className = 'tabset-panel is-active'
           node.removeAttribute('hidden')
@@ -45,15 +52,12 @@ export default {
     }
   },
   mounted () {
+    const panels = this.panelElements()
+
     // Handle scroll to header on load within hidden tab content
     if (window.location.hash && window.location.hash.length > 1) {
       const headerId = decodeURIComponent(window.location.hash)
-      let foundIdx = -1
-      this.$refs.content.childNodes.forEach((node, idx) => {
-        if (node.querySelector(headerId)) {
-          foundIdx = idx
-        }
-      })
+      const foundIdx = panels.findIndex(node => node.querySelector(headerId) !== null)
       if (foundIdx >= 0) {
         this.currentTab = foundIdx
       }
@@ -62,45 +66,46 @@ export default {
     this.setActiveTab()
 
     const tabRefId = nanoid()
+    const tabs = this.tabElements()
 
-    this.$refs.tabs.childNodes.forEach((node, idx) => {
+    tabs.forEach((node, idx) => {
       node.setAttribute('id', `${tabRefId}-${idx}`)
       node.setAttribute('role', 'tab')
       node.setAttribute('aria-controls', `${tabRefId}-${idx}-tab`)
       node.setAttribute('tabindex', '0')
-      node.addEventListener('click', ev => {
-        this.currentTab = [].indexOf.call(ev.target.parentNode.children, ev.target)
+      node.addEventListener('click', () => {
+        this.currentTab = idx
       })
-      node.addEventListener('keydown', ev => {
+      node.addEventListener('keydown', (ev: KeyboardEvent) => {
         if (ev.key === 'ArrowLeft' && idx > 0) {
           this.currentTab = idx - 1
-          this.$refs.tabs.childNodes[idx - 1].focus()
-        } else if (ev.key === 'ArrowRight' && idx < this.$refs.tabs.childNodes.length - 1) {
+          tabs[idx - 1].focus()
+        } else if (ev.key === 'ArrowRight' && idx < tabs.length - 1) {
           this.currentTab = idx + 1
-          this.$refs.tabs.childNodes[idx + 1].focus()
+          tabs[idx + 1].focus()
         } else if (ev.key === 'Enter' || ev.key === ' ') {
           this.currentTab = idx
           node.focus()
         } else if (ev.key === 'Home') {
           this.currentTab = 0
           ev.preventDefault()
-          ev.target.parentNode.children[0].focus()
+          tabs[0].focus()
         } else if (ev.key === 'End') {
-          this.currentTab = this.$refs.tabs.childNodes.length - 1
+          this.currentTab = tabs.length - 1
           ev.preventDefault()
-          ev.target.parentNode.children[this.$refs.tabs.childNodes.length - 1].focus()
+          tabs[tabs.length - 1].focus()
         }
       })
     })
 
-    this.$refs.content.childNodes.forEach((node, idx) => {
+    panels.forEach((node, idx) => {
       node.setAttribute('id', `${tabRefId}-${idx}-tab`)
       node.setAttribute('role', 'tabpanel')
       node.setAttribute('aria-labelledby', `${tabRefId}-${idx}`)
       node.setAttribute('tabindex', '0')
     })
   }
-}
+})
 </script>
 
 <style lang="scss">

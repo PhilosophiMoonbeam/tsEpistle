@@ -24,12 +24,12 @@
         span Proceed
 </template>
 
-<script>
-import _ from 'lodash'
-import { loadingStart, loadingStop, showNotification, pushGraphError } from '../../helpers/root-ui-store'
+<script lang='ts'>
+import { defineComponent } from 'vue'
+import { wikiStore } from '@/store/index.ts'
 import { flushSystemCache, flushSystemTemporaryUploads } from '../../helpers/system-api'
 
-export default {
+export default defineComponent({
   data() {
     return {
       loading: false
@@ -38,55 +38,55 @@ export default {
   methods: {
     async flushCache() {
       this.loading = true
-      loadingStart(this.$store, 'admin-utilities-cache-flushCache')
+      wikiStore.startLoading('admin-utilities-cache-flushCache')
 
       try {
         await flushSystemCache(window.fetch.bind(window))
-        showNotification(this.$store, {
+        wikiStore.showNotification({
           message: 'Cache flushed successfully.',
           style: 'success',
           icon: 'check'
         })
       } catch (err) {
-        pushGraphError(this.$store, err)
+        wikiStore.showError(err)
       }
 
-      loadingStop(this.$store, 'admin-utilities-cache-flushCache')
+      wikiStore.stopLoading('admin-utilities-cache-flushCache')
       this.loading = false
     },
     async flushUploads() {
       this.loading = true
-      loadingStart(this.$store, 'admin-utilities-cache-flushUploads')
+      wikiStore.startLoading('admin-utilities-cache-flushUploads')
 
       try {
         await flushSystemTemporaryUploads(window.fetch.bind(window))
-        showNotification(this.$store, {
+        wikiStore.showNotification({
           message: 'Temporary Uploads flushed successfully.',
           style: 'success',
           icon: 'check'
         })
       } catch (err) {
-        pushGraphError(this.$store, err)
+        wikiStore.showError(err)
       }
 
-      loadingStop(this.$store, 'admin-utilities-cache-flushUploads')
+      wikiStore.stopLoading('admin-utilities-cache-flushUploads')
       this.loading = false
     },
     async flushClientLocaleCache () {
       for (let i = 0; i < window.localStorage.length; i++) {
         const lsKey = window.localStorage.key(i)
-        if (_.startsWith(lsKey, 'i18next_res')) {
+        if (lsKey?.startsWith('i18next_res')) {
           window.localStorage.removeItem(lsKey)
         }
       }
-      showNotification(this.$store, {
+      wikiStore.showNotification({
         message: 'Locale Client-Side Cache flushed successfully.',
         style: 'success',
         icon: 'check'
       })
     }
   }
-}
+})
 </script>
 
 <style lang='scss'>

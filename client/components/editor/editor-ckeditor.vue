@@ -5,7 +5,7 @@
     v-system-bar.editor-ckeditor-sysbar(dark, status, color='grey darken-3')
       .caption.editor-ckeditor-sysbar-locale {{locale.toUpperCase()}}
       .caption.px-3 /{{path}}
-      template(v-if='$vuetify.breakpoint.mdAndUp')
+      template(v-if='$vuetify.display.mdAndUp')
         v-spacer
         .caption Visual Editor
         v-spacer
@@ -14,120 +14,186 @@
     page-selector(mode='select', v-model='insertLinkDialog', :open-handler='insertLinkHandler', :path='path', :locale='locale')
 </template>
 
-<script>
+<script lang='ts'>
 import _ from 'lodash'
-import { get, sync } from 'vuex-pathify'
+import { defineComponent, type PropType } from 'vue'
+import { wikiStore } from '@/store/index.ts'
 import DecoupledEditor from '@requarks/ckeditor5'
-// import DecoupledEditor from '../../../../wiki-ckeditor5/build/ckeditor'
+import { html as beautify } from 'js-beautify'
 import EditorConflict from './ckeditor/conflict.vue'
-import { html as beautify } from 'js-beautify/js/lib/beautifier.min.js'
 import { onEditorSaveConflict, onEditorContentOverwrite, offEditorSaveConflict, offEditorContentOverwrite } from '../../helpers/editor-conflict-events'
-import { onEditorInsert, offEditorInsert } from '../../helpers/editor-insert-events'
+import { onEditorInsert, offEditorInsert, type EditorInsertPayload } from '../../helpers/editor-insert-events'
 import { onEditorLinkToPage, offEditorLinkToPage } from '../../helpers/editor-link-events'
 
 /* global siteLangs */
 
-export default {
+type EditorSaveOptions = {
+  rethrow?: boolean
+  overwrite?: boolean
+}
+
+type EditorSaveHandler = (options?: EditorSaveOptions) => void | Promise<void>
+
+type EditorMode = 'create' | 'update'
+
+type EditorStats = {
+  characters: number
+  words: number
+}
+
+type InsertLinkPayload = {
+  id: number
+  locale: string
+  path: string
+}
+
+type LinkAttributes = {
+  linkIsDownloadable: boolean
+}
+
+type ImageInsertOptions = {
+  source: string
+}
+
+interface CKEditorInstance {
+  destroy: () => Promise<unknown>
+  execute: {
+    (command: 'imageInsert', options: ImageInsertOptions): void
+    (command: 'link', href: string, attributes?: LinkAttributes): void
+  }
+  getData: () => string
+  model: {
+    document: {
+      on: (event: 'change:data', callback: () => void) => void
+    }
+  }
+  setData: (data: string) => void
+  ui: {
+    view: {
+      toolbar: {
+        element: HTMLElement
+      }
+    }
+  }
+}
+
+type CKEditorConfig = {
+  language: string
+  placeholder: string
+  disableNativeSpellChecker: boolean
+  wordCount: {
+    onUpdate: (stats: EditorStats) => void
+  }
+}
+
+interface CKEditorConstructor {
+  create: (sourceElement: HTMLElement, config: CKEditorConfig) => Promise<CKEditorInstance>
+}
+
+export default defineComponent({
   components: {
     EditorConflict
   },
   props: {
     save: {
-      type: Function,
+      type: Function as PropType<EditorSaveHandler>,
       default: () => {}
     }
   },
   data() {
     return {
-      editor: null,
+      editor: null as CKEditorInstance | null,
       stats: {
         characters: 0,
         words: 0
-      },
-      content: '',
+      } as EditorStats,
       isConflict: false,
       insertLinkDialog: false
     }
   },
   computed: {
-    isMobile() {
-      return this.$vuetify.breakpoint.smAndDown
+    locale(): string {
+      return wikiStore.page.locale
     },
-    locale: get('page/locale'),
-    path: get('page/path'),
-    activeModal: sync('editor/activeModal')
+    path(): string {
+      return wikiStore.page.path
+    },
+    mode(): EditorMode {
+      return wikiStore.editor.mode as EditorMode
+    }
   },
   methods: {
     insertLink () {
       this.insertLinkDialog = true
     },
-    insertLinkHandler ({ locale, path }) {
-      this.editor.execute('link', siteLangs.length > 0 ? `/${locale}/${path}` : `/${path}`)
+    insertLinkHandler ({ locale, path }: InsertLinkPayload) {
+      this.editor?.execute('link', siteLangs.length > 0 ? `/${locale}/${path}` : `/${path}`)
     },
     handleEditorSaveConflict () {
       this.isConflict = true
     },
     handleEditorContentOverwrite () {
-      this.editor.setData(this.$store.get('editor/content'))
+      const content = wikiStore.editor.content
+      this.editor?.setData(content)
     },
     handleEditorLinkToPage () {
       this.insertLink()
     },
-    handleEditorInsert (opts) {
+    handleEditorInsert (opts: EditorInsertPayload) {
+      const editor = this.editor
+      if (!editor) {
+        return
+      }
+
       switch (opts.kind) {
         case 'IMAGE':
-          this.editor.execute('imageInsert', {
-            source: opts.path
-          })
+          if (typeof opts.path === 'string') {
+            editor.execute('imageInsert', {
+              source: opts.path
+            })
+          }
           break
         case 'BINARY':
-          this.editor.execute('link', opts.path, {
-            linkIsDownloadable: true
-          })
+          if (typeof opts.path === 'string') {
+            editor.execute('link', opts.path, {
+              linkIsDownloadable: true
+            })
+          }
           break
         case 'DIAGRAM':
-          this.editor.execute('imageInsert', {
-            source: `data:image/svg+xml;base64,${opts.text}`
-          })
+          if (typeof opts.text === 'string') {
+            editor.execute('imageInsert', {
+              source: `data:image/svg+xml;base64,${opts.text}`
+            })
+          }
           break
       }
     }
   },
   async mounted () {
-    this.$store.set('editor/editorKey', 'ckeditor')
+    wikiStore.editor.editorKey = 'ckeditor'
 
-    this.editor = await DecoupledEditor.create(this.$refs.editor, {
+    const editorElement = this.$refs.editor as HTMLElement
+    const toolbarContainer = this.$refs.toolbarContainer as HTMLElement
+    const editor = await (DecoupledEditor as unknown as CKEditorConstructor).create(editorElement, {
       language: this.locale,
       placeholder: 'Type the page content here',
       disableNativeSpellChecker: false,
-      // TODO: Mention autocomplete
-      //
-      // mention: {
-      //   feeds: [
-      //     {
-      //       marker: '@',
-      //       feed: [ '@Barney', '@Lily', '@Marshall', '@Robin', '@Ted' ],
-      //       minimumCharacters: 1
-      //     }
-      //   ]
-      // },
       wordCount: {
         onUpdate: stats => {
-          this.stats = {
-            characters: stats.characters,
-            words: stats.words
-          }
+          this.stats = stats
         }
       }
     })
-    this.$refs.toolbarContainer.appendChild(this.editor.ui.view.toolbar.element)
+    this.editor = editor
+    toolbarContainer.appendChild(editor.ui.view.toolbar.element)
 
     if (this.mode !== 'create') {
-      this.editor.setData(this.$store.get('editor/content'))
+      editor.setData(wikiStore.editor.content)
     }
 
-    this.editor.model.document.on('change:data', _.debounce(evt => {
-      this.$store.set('editor/content', beautify(this.editor.getData(), { indent_size: 2, end_with_newline: true }))
+    editor.model.document.on('change:data', _.debounce(() => {
+      wikiStore.editor.content = beautify(editor.getData(), { indent_size: 2, end_with_newline: true })
     }, 300))
 
     onEditorInsert(this.handleEditorInsert)
@@ -137,17 +203,17 @@ export default {
     onEditorSaveConflict(this.handleEditorSaveConflict)
     onEditorContentOverwrite(this.handleEditorContentOverwrite)
   },
-  beforeDestroy () {
+  beforeUnmount () {
     offEditorInsert(this.handleEditorInsert)
     offEditorLinkToPage(this.handleEditorLinkToPage)
     offEditorSaveConflict(this.handleEditorSaveConflict)
     offEditorContentOverwrite(this.handleEditorContentOverwrite)
     if (this.editor) {
-      this.editor.destroy()
+      void this.editor.destroy()
       this.editor = null
     }
   }
-}
+})
 </script>
 
 <style lang="scss">

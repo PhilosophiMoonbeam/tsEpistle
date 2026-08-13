@@ -1,18 +1,18 @@
-type EventHandler = (...args: unknown[]) => void
+type EventHandler<Args extends unknown[]> = (...args: Args) => void
 
-type EventHandlers = Record<string, EventHandler[] | undefined>
+type EventHandlers<Args extends unknown[]> = Record<string, Array<EventHandler<Args>> | undefined>
 
-export interface SimpleEventBus {
-  emit(eventName: string, ...args: unknown[]): void
-  on(eventName: string, handler?: EventHandler): void
-  off(eventName: string, handler?: EventHandler): void
+export interface SimpleEventBus<Args extends unknown[]> {
+  emit(eventName: string, ...args: Args): void
+  on(eventName: string, handler?: EventHandler<Args>): void
+  off(eventName: string, handler?: EventHandler<Args>): void
 }
 
-export function createEventBus (): SimpleEventBus {
-  const handlers: EventHandlers = Object.create(null)
+export function createEventBus<Args extends unknown[]> (): SimpleEventBus<Args> {
+  const handlers: EventHandlers<Args> = Object.create(null)
 
   return {
-    emit (eventName: string, ...args: unknown[]): void {
+    emit (eventName: string, ...args: Args): void {
       const listeners = handlers[eventName]
       if (!listeners) {
         return
@@ -23,7 +23,7 @@ export function createEventBus (): SimpleEventBus {
       })
     },
 
-    on (eventName: string, handler?: EventHandler): void {
+    on (eventName: string, handler?: EventHandler<Args>): void {
       if (typeof handler !== 'function') {
         return
       }
@@ -35,7 +35,7 @@ export function createEventBus (): SimpleEventBus {
       handlers[eventName].push(handler)
     },
 
-    off (eventName: string, handler?: EventHandler): void {
+    off (eventName: string, handler?: EventHandler<Args>): void {
       if (!handler) {
         return
       }

@@ -1,7 +1,7 @@
 <template lang='pug'>
   v-container(fluid, grid-list-lg)
-    v-layout(row wrap)
-      v-flex(xs12)
+    v-row
+      v-col(cols='12')
         .admin-header
           img.animated.fadeInUp(src='/_assets/svg/icon-file.svg', alt='Page', style='width: 80px;')
           .admin-header-title
@@ -17,7 +17,7 @@
             v-icon(left) mdi-graph
             span Visualize
         v-card.mt-3.animated.fadeInUp
-          .pa-2.d-flex.align-center(:class='$vuetify.theme.dark ? `grey darken-3-d5` : `grey lighten-3`')
+          .pa-2.d-flex.align-center(:class='$vuetify.theme.current.dark ? `grey darken-3-d5` : `grey lighten-3`')
             v-text-field(
               solo
               flat
@@ -54,7 +54,7 @@
             :items='filteredPages'
             :headers='headers'
             :search='search'
-            :page.sync='pagination'
+            v-model:page='pagination'
             :items-per-page='15'
             :loading='loading'
             must-sort,
@@ -63,34 +63,38 @@
             hide-default-footer
             @page-count="pageTotal = $event"
           )
-            template(slot='item', slot-scope='props')
+            template(v-slot:item='props')
               tr.is-clickable(:active='props.selected', @click='$router.push(`/pages/` + props.item.id)')
                 td.text-xs-right {{ props.item.id }}
                 td
                   .body-2: strong {{ props.item.title }}
                   .caption {{ props.item.description }}
                 td.admin-pages-path
-                  v-chip(label, small, :color='$vuetify.theme.dark ? `grey darken-4` : `grey lighten-4`') {{ props.item.locale }}
-                  span.ml-2.grey--text(:class='$vuetify.theme.dark ? `text--lighten-1` : `text--darken-2`') / {{ props.item.path }}
+                  v-chip(label, small, :color='$vuetify.theme.current.dark ? `grey darken-4` : `grey lighten-4`') {{ props.item.locale }}
+                  span.ml-2.grey--text(:class='$vuetify.theme.current.dark ? `text--lighten-1` : `text--darken-2`') / {{ props.item.path }}
                 td {{ $helpers.formatMoment(props.item.createdAt, 'calendar') }}
                 td {{ $helpers.formatMoment(props.item.updatedAt, 'calendar') }}
-            template(slot='no-data')
+            template(v-slot:no-data)
               v-alert.ma-3(icon='mdi-alert', :value='true', outlined) No pages to display.
           .text-center.py-2.animated.fadeInDown(v-if='this.pageTotal > 1')
             v-pagination(v-model='pagination', :length='pageTotal')
 </template>
 
-<script>
+<script lang='ts'>
 import _ from 'lodash'
-import { fetchPageList } from '../../helpers/pages-api'
-import { showNotification, setLoading, pushGraphError } from '../../helpers/root-ui-store'
+import { fetchPageList, type PageListRow } from '../../helpers/pages-api'
+import { wikiStore } from '@/store/index.ts'
+
+type PageFilterOption<T> = {
+  text: string
+  value: T
+}
 
 export default {
   data() {
     return {
-      selectedPage: {},
       pagination: 1,
-      pages: [],
+      pages: [] as PageListRow[],
       pageTotal: 0,
       headers: [
         { text: 'ID', value: 'id', width: 80, sortable: true },
@@ -100,19 +104,19 @@ export default {
         { text: 'Last Updated', value: 'updatedAt', width: 250 }
       ],
       search: '',
-      selectedLang: null,
-      selectedState: null,
+      selectedLang: null as string | null,
+      selectedState: null as boolean | null,
       states: [
         { text: 'All Publishing States', value: null },
         { text: 'Published', value: true },
         { text: 'Not Published', value: false }
-      ],
+      ] as PageFilterOption<boolean | null>[],
       loading: false
     }
   },
   computed: {
-    filteredPages () {
-      return _.filter(this.pages, pg => {
+    filteredPages (): PageListRow[] {
+      return this.pages.filter(pg => {
         if (this.selectedLang !== null && this.selectedLang !== pg.locale) {
           return false
         }
@@ -122,43 +126,40 @@ export default {
         return true
       })
     },
-    langs () {
-      return _.concat({
+    langs (): PageFilterOption<string | null>[] {
+      return [{
         text: 'All Locales',
         value: null
-      }, _.uniqBy(this.pages, 'locale').map(pg => ({
+      }, ..._.uniqBy(this.pages, 'locale').map(pg => ({
         text: pg.locale,
         value: pg.locale
-      })))
+      }))]
     }
   },
   methods: {
-    async loadPages () {
+    async loadPages (): Promise<boolean> {
       this.loading = true
-      setLoading(this.$store, 'admin-pages-refresh', true)
+      wikiStore.startLoading('admin-pages-refresh')
       try {
         this.pages = await fetchPageList(window.fetch.bind(window))
         return true
       } catch (err) {
-        pushGraphError(this.$store, err)
+        wikiStore.showError(err)
         return false
       } finally {
         this.loading = false
-        setLoading(this.$store, 'admin-pages-refresh', false)
+        wikiStore.stopLoading('admin-pages-refresh')
       }
     },
     async refresh() {
       const isLoaded = await this.loadPages()
       if (isLoaded) {
-        showNotification(this.$store, {
+        wikiStore.showNotification({
           message: 'Page list has been refreshed.',
           style: 'success',
           icon: 'cached'
         })
       }
-    },
-    newpage() {
-      this.pageSelectorShown = true
     },
     recyclebin () { }
   },

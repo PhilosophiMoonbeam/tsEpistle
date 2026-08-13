@@ -1,39 +1,39 @@
-# =========================
-# --- BUILD NPM MODULES ---
-# =========================
-FROM node:24-alpine AS build
+# syntax=docker/dockerfile:1@sha256:ecfaec9ed6d810b56388c508f4121597bfbba70d41a6dfeee4d8cad5f295fc32
 
-RUN apk add yarn g++ make cmake python3 --no-cache
+FROM node:24-alpine@sha256:d32cdf619f63fe0471182d08996dd516c6275bb5fd31ae06e55a570bd9e1ad43 AS dependencies
+ENV CI=true
+
+RUN apk add --no-cache g++ make cmake python3
 
 WORKDIR /wiki
 
-COPY ./package.json ./package.json
-COPY ./patches ./patches
+RUN corepack enable
 
-RUN yarn --production --frozen-lockfile --non-interactive --network-timeout 100000
-RUN yarn patch-package
+COPY build/package.json ./package.json
+COPY pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
 
-# ===============
-# --- Release ---
-# ===============
-FROM node:24-alpine
+RUN --mount=type=cache,id=wiki-pnpm-arm64,target=/pnpm/store \
+    pnpm config set store-dir /pnpm/store && \
+    pnpm install --frozen-lockfile && \
+    pnpm prune --prod
+
+FROM node:24-alpine@sha256:d32cdf619f63fe0471182d08996dd516c6275bb5fd31ae06e55a570bd9e1ad43 AS runtime
+
 LABEL maintainer="requarks.io"
+ENV NODE_ENV=production
 
-RUN apk add bash curl git openssh gnupg sqlite --no-cache && \
-    mkdir -p /wiki && \
-    mkdir -p /logs && \
-    mkdir -p /wiki/data/content && \
+RUN apk add --no-cache bash curl git openssh gnupg sqlite && \
+    mkdir -p /wiki /logs /wiki/data/content && \
     chown -R node:node /wiki /logs
 
 WORKDIR /wiki
 
-COPY --chown=node:node ./build/assets ./assets
-COPY --chown=node:node --from=build /wiki/node_modules ./node_modules
-COPY --chown=node:node ./server ./server
-COPY --chown=node:node ./build/server/views ./server/views
-COPY --chown=node:node ./dev/build/config.yml ./config.yml
-COPY --chown=node:node ./build/package.json ./package.json
-COPY --chown=node:node ./LICENSE ./LICENSE
+COPY --chown=node:node build/assets ./assets
+COPY --chown=node:node --from=dependencies /wiki/node_modules ./node_modules
+COPY --chown=node:node build/server ./server
+COPY --chown=node:node dev/build/config.yml ./config.yml
+COPY --chown=node:node build/package.json ./package.json
+COPY --chown=node:node LICENSE ./
 
 USER node
 
@@ -42,4 +42,7 @@ VOLUME ["/wiki/data/content"]
 EXPOSE 3000
 EXPOSE 3443
 
-CMD ["node", "server"]
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD curl --fail --silent --show-error http://127.0.0.1:3000/healthz || exit 1
+
+CMD ["node", "server/index.ts"]

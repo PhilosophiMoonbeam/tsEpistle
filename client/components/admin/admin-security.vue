@@ -1,7 +1,7 @@
 <template lang='pug'>
   v-container(fluid, grid-list-lg)
-    v-layout(row wrap)
-      v-flex(xs12)
+    v-row
+      v-col(cols='12')
         .admin-header
           img.animated.fadeInUp(src='/_assets/svg/icon-private.svg', alt='Security', style='width: 80px;')
           .admin-header-title
@@ -12,12 +12,12 @@
             v-icon(left) mdi-check
             span {{$t('common:actions.apply')}}
         v-form.pt-3
-          v-layout(row wrap)
-            v-flex(lg6 xs12)
+          v-row
+            v-col(lg='6' cols='12')
               v-card.animated.fadeInUp
                 v-toolbar(color='red darken-2', dark, dense, flat)
                   v-toolbar-title.subtitle-1 Security
-                v-card-info(color='red')
+                div.v-card-info(color='red')
                   span Make sure to understand the implications before turning on / off a security feature.
                 v-card-text
                   v-switch(
@@ -113,11 +113,11 @@
                   //-   disabled
                   //- )
 
-            v-flex(lg6 xs12)
+            v-col(lg='6' cols='12')
               v-card.animated.fadeInUp.wait-p2s
                 v-toolbar(color='primary', dark, dense, flat)
                   v-toolbar-title.subtitle-1 {{ $t('admin:security.uploads') }}
-                v-card-info(color='blue')
+                div.v-card-info(color='blue')
                   span {{$t('admin:security.uploadsInfo')}}
                 v-card-text
                   v-text-field.mt-3(
@@ -239,22 +239,41 @@
     component(:is='activeModal')
 </template>
 
-<script>
+<script lang='ts'>
 import _ from 'lodash'
-import { sync } from 'vuex-pathify'
-import { onEditorInsert, offEditorInsert } from '../../helpers/editor-insert-events'
-import { fetchSiteConfig, saveSiteConfig } from '../../helpers/site-api'
+import { wikiStore } from '@/store/index.ts'
+import { onEditorInsert, offEditorInsert, type EditorInsertPayload } from '../../helpers/editor-insert-events'
+import { fetchSiteConfig, saveSiteConfig, type SiteConfig } from '../../helpers/site-api'
 import { loadingStart, loadingStop, pushGraphError, setLoading, showNotification } from '../../helpers/root-ui-store'
 
-import store from '../../store'
-import editorStore from '../../store/editor'
+type SecurityConfig = Required<Pick<SiteConfig,
+  | 'uploadMaxFileSize'
+  | 'uploadMaxFiles'
+  | 'uploadScanSVG'
+  | 'uploadForceDownload'
+  | 'securityOpenRedirect'
+  | 'securityIframe'
+  | 'securityReferrerPolicy'
+  | 'securityTrustProxy'
+  | 'securitySRI'
+  | 'securityHSTS'
+  | 'securityHSTSDuration'
+  | 'securityCSP'
+  | 'securityCSPDirectives'
+  | 'authAutoLogin'
+  | 'authEnforce2FA'
+  | 'authHideLocal'
+  | 'authLoginBgUrl'
+  | 'authJwtAudience'
+  | 'authJwtExpiration'
+  | 'authJwtRenewablePeriod'
+>>
 
-store.registerModule('editor', editorStore)
 
 export default {
   i18nOptions: { namespaces: 'editor' },
   components: {
-    editorModalMedia: () => import(/* webpackChunkName: "editor", webpackMode: "lazy" */ '../editor/editor-modal-media.vue')
+    editorModalMedia: () => import('../editor/editor-modal-media.vue')
   },
   data() {
     return {
@@ -273,12 +292,13 @@ export default {
         securityCSP: false,
         securityCSPDirectives: '',
         authAutoLogin: false,
+        authEnforce2FA: false,
         authHideLocal: false,
         authLoginBgUrl: '',
         authJwtAudience: 'urn:wiki.js',
         authJwtExpiration: '30m',
         authJwtRenewablePeriod: '14d'
-      },
+      } as SecurityConfig,
       hstsDurations: [
         { value: 300, text: '5 minutes' },
         { value: 86400, text: '1 day' },
@@ -290,10 +310,17 @@ export default {
     }
   },
   computed: {
-    activeModal: sync('editor/activeModal')
+    activeModal: {
+      get (): string {
+        return wikiStore.editor.activeModal
+      },
+      set (value: string) {
+        wikiStore.editor.activeModal = value
+      }
+    }
   },
   methods: {
-    siteConfigPayload () {
+    siteConfigPayload (): Record<string, unknown> {
       return {
         authAutoLogin: _.get(this.config, 'authAutoLogin', false),
         authEnforce2FA: _.get(this.config, 'authEnforce2FA', false),
@@ -318,43 +345,45 @@ export default {
       }
     },
     async loadConfig () {
-      setLoading(this.$store, 'admin-security-refresh', true)
+      setLoading(wikiStore, 'admin-security-refresh', true)
       try {
-        this.config = _.cloneDeep(await fetchSiteConfig(window.fetch.bind(window)))
+        this.config = _.cloneDeep(await fetchSiteConfig(window.fetch.bind(window))) as SecurityConfig
       } catch (err) {
-        pushGraphError(this.$store, err)
+        pushGraphError(wikiStore, err)
       } finally {
-        setLoading(this.$store, 'admin-security-refresh', false)
+        setLoading(wikiStore, 'admin-security-refresh', false)
       }
     },
     async save () {
-      loadingStart(this.$store, 'admin-site-update')
+      loadingStart(wikiStore, 'admin-site-update')
       try {
         await saveSiteConfig(window.fetch.bind(window), this.siteConfigPayload())
-        showNotification(this.$store, {
+        showNotification(wikiStore, {
           style: 'success',
           message: 'Configuration saved successfully.',
           icon: 'check'
         })
       } catch (err) {
-        pushGraphError(this.$store, err)
+        pushGraphError(wikiStore, err)
       } finally {
-        loadingStop(this.$store, 'admin-site-update')
+        loadingStop(wikiStore, 'admin-site-update')
       }
     },
     browseLoginBg () {
-      this.$store.set('editor/editorKey', 'common')
+      wikiStore.editor.editorKey = 'common'
       this.activeModal = 'editorModalMedia'
     },
-    handleEditorInsert (opts) {
-      this.config.authLoginBgUrl = opts.path
-    }
+    handleEditorInsert (opts: EditorInsertPayload) {
+      if (typeof opts.path === 'string') {
+        this.config.authLoginBgUrl = opts.path
+      }
+    },
   },
   mounted () {
     this.loadConfig()
     onEditorInsert(this.handleEditorInsert)
   },
-  beforeDestroy() {
+  beforeUnmount() {
     offEditorInsert(this.handleEditorInsert)
   }
 }

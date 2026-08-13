@@ -1,7 +1,7 @@
 <template lang='pug'>
   v-container(fluid, grid-list-lg)
-    v-layout(row, wrap)
-      v-flex(xs12)
+    v-row()
+      v-col(cols='12')
         .admin-header
           img.animated.fadeInUp(src='/_assets/svg/icon-process.svg', alt='Rendering', style='width: 80px;')
           .admin-header-title
@@ -16,7 +16,7 @@
             v-icon(left) mdi-check
             span {{$t('common:actions.apply')}}
 
-      v-flex.animated.fadeInUp(lg3, xs12)
+      v-col.animated.fadeInUp(lg='3', cols='12')
         v-toolbar(
           color='blue darken-2'
           dense
@@ -33,7 +33,7 @@
             v-for='core in renderers'
             :key='core.key'
             )
-            v-expansion-panel-header(
+            v-expansion-panel-title(
               hide-actions
               ripple
             )
@@ -48,25 +48,24 @@
                 v-icon.mx-2 mdi-arrow-right-circle
                 .caption {{core.output}}
                 v-spacer
-            v-expansion-panel-content
+            v-expansion-panel-text
               v-list.py-0(two-line, dense)
-                template(v-for='(rdr, n) in core.children')
+                template(v-for='(rdr, n) in core.children', :key='rdr.key')
                   v-list-item(
-                    :key='rdr.key'
                     @click='selectRenderer(rdr.key)'
-                    :class='currentRenderer.key === rdr.key ? ($vuetify.theme.dark ? `grey darken-4-l4` : `blue lighten-5`) : ``'
+                    :class='currentRenderer.key === rdr.key ? ($vuetify.theme.current.dark ? `grey darken-4-l4` : `blue lighten-5`) : ``'
                     )
-                    v-list-item-avatar(size='24', tile)
+                    v-avatar(size='24', tile)
                       v-icon(:color='currentRenderer.key === rdr.key ? "primary" : "grey"') {{rdr.icon}}
-                    v-list-item-content
+                    div.v-list-item-content
                       v-list-item-title {{rdr.title}}
                       v-list-item-subtitle: .caption {{rdr.description}}
-                    v-list-item-avatar(size='24')
+                    v-avatar(size='24')
                       status-indicator(v-if='rdr.isEnabled', positive, pulse)
                       status-indicator(v-else, negative, pulse)
                   v-divider.my-0(v-if='n < core.children.length - 1')
 
-      v-flex(lg9, xs12)
+      v-col(lg='9', cols='12')
         v-card.wiki-form.animated.fadeInUp
           v-toolbar(
             color='indigo'
@@ -85,19 +84,18 @@
               hide-details
               inset
               )
-          v-card-info(color='blue')
+          div.v-card-info(color='blue')
             div
               div {{currentRenderer.description}}
               span.caption: a(href='https://docs.requarks.io/en/rendering', target='_blank') Documentation
           v-card-text.pb-4.pl-4
             .overline.mb-5 Rendering Module Configuration
             .body-2.ml-3(v-if='!currentRenderer.config || currentRenderer.config.length < 1'): em This rendering module has no configuration options you can modify.
-            template(v-else, v-for='(cfg, idx) in currentRenderer.config')
+            template(v-else, v-for='(cfg, idx) in currentRenderer.config', :key='cfg.key')
               v-select(
                 v-if='cfg.value.type === "string" && cfg.value.enum'
                 outlined
                 :items='cfg.value.enum'
-                :key='cfg.key'
                 :label='cfg.value.title'
                 v-model='cfg.value.value'
                 :hint='cfg.value.hint ? cfg.value.hint : ""'
@@ -107,7 +105,6 @@
               )
               v-switch(
                 v-else-if='cfg.value.type === "boolean"'
-                :key='cfg.key'
                 :label='cfg.value.title'
                 v-model='cfg.value.value'
                 color='indigo'
@@ -118,7 +115,6 @@
               v-text-field(
                 v-else
                 outlined
-                :key='cfg.key'
                 :label='cfg.value.title'
                 v-model='cfg.value.value'
                 :hint='cfg.value.hint ? cfg.value.hint : ""'
@@ -127,19 +123,36 @@
                 color='indigo'
                 )
               v-divider.my-5(v-if='idx < currentRenderer.config.length - 1')
-          v-card-chin
+          div.v-card-chin
             v-spacer
             .caption.pr-3.grey--text Module: {{ currentRenderer.key }}
 </template>
 
-<script>
+<script lang='ts'>
 import _ from 'lodash'
 import { DepGraph } from 'dependency-graph'
 
-import { StatusIndicator } from 'vue-status-indicator'
+import StatusIndicator from '@/components/common/status-indicator.vue'
+import { wikiStore } from '@/store/index.ts'
 
-import { fetchRenderingRenderers, saveRenderingRenderers } from '../../helpers/rendering-api'
-import { loadingStart, loadingStop, showNotification } from '../../helpers/root-ui-store'
+import { fetchRenderingRenderers, saveRenderingRenderers, type Renderer } from '../../helpers/rendering-api'
+import { getErrorMessage, loadingStart, loadingStop, showNotification } from '../../helpers/root-ui-store'
+
+type RendererTree = Renderer & {
+  children: Renderer[]
+}
+
+const createEmptyRenderer = (): Renderer => ({
+  isEnabled: false,
+  key: '',
+  title: '',
+  description: null,
+  icon: null,
+  dependsOn: null,
+  input: null,
+  output: null,
+  config: []
+})
 
 export default {
   components: {
@@ -148,12 +161,12 @@ export default {
   data() {
     return {
       selectedCore: -1,
-      renderers: [],
-      currentRenderer: {}
+      renderers: [] as RendererTree[],
+      currentRenderer: createEmptyRenderer()
     }
   },
   watch: {
-    renderers(newValue, oldValue) {
+    renderers(newValue: RendererTree[]) {
       _.delay(() => {
         this.selectedCore = _.findIndex(newValue, ['key', 'markdownCore'])
         this.selectRenderer('markdownCore')
@@ -164,84 +177,79 @@ export default {
     this.loadRenderers().catch(() => {})
   },
   methods: {
-    buildRendererTree (flatRenderers) {
-      let renderers = _.cloneDeep(flatRenderers)
+    buildRendererTree (flatRenderers: Renderer[]): RendererTree[] {
+      const renderers = _.cloneDeep(flatRenderers)
       // Build tree
       const graph = new DepGraph({ circular: true })
-      const rawCores = _.filter(renderers, ['dependsOn', null]).map(core => {
-        core.children = _.concat([_.cloneDeep(core)], _.filter(renderers, ['dependsOn', core.key]))
-        return core
-      })
+      const rawCores: RendererTree[] = _.filter(renderers, ['dependsOn', null]).map(core => ({
+        ...core,
+        children: _.concat([_.cloneDeep(core)], _.filter(renderers, ['dependsOn', core.key]))
+      }))
       // Build dependency graph
-      rawCores.map(core => { graph.addNode(core.key) })
-      rawCores.map(core => {
-        rawCores.map(coreTarget => {
-          if (core.key !== coreTarget.key) {
-            if (core.output === coreTarget.input) {
-              graph.addDependency(core.key, coreTarget.key)
-            }
+      rawCores.forEach(core => { graph.addNode(core.key) })
+      rawCores.forEach(core => {
+        rawCores.forEach(coreTarget => {
+          if (core.key !== coreTarget.key && core.output === coreTarget.input) {
+            graph.addDependency(core.key, coreTarget.key)
           }
         })
       })
       // Reorder cores in reverse dependency order
-      let orderedCores = []
-      _.reverse(graph.overallOrder()).map(coreKey => {
-        orderedCores.push(_.find(rawCores, ['key', coreKey]))
-      })
-      return orderedCores
+      const coreKeys = graph.overallOrder() as string[]
+      return _.reverse(coreKeys).map(coreKey => _.find(rawCores, ['key', coreKey])!)
     },
-    async loadRenderers ({ notifyError = true } = {}) {
-      loadingStart(this.$store, 'admin-rendering-refresh')
+    async loadRenderers ({ notifyError = true }: { notifyError?: boolean } = {}) {
+      loadingStart(wikiStore, 'admin-rendering-refresh')
       try {
         const flatRenderers = await fetchRenderingRenderers(window.fetch.bind(window), 'Rendering renderers response is invalid')
         this.renderers = this.buildRendererTree(flatRenderers)
       } catch (err) {
         if (notifyError) {
-          showNotification(this.$store, {
-            message: err.message,
+          showNotification(wikiStore, {
+            message: getErrorMessage(err),
             style: 'red',
             icon: 'alert'
           })
         }
         throw err
       } finally {
-        loadingStop(this.$store, 'admin-rendering-refresh')
+        loadingStop(wikiStore, 'admin-rendering-refresh')
       }
     },
-    selectRenderer (key) {
-      this.renderers.map(rdr => {
-        if (_.some(rdr.children, ['key', key])) {
-          this.currentRenderer = _.find(rdr.children, ['key', key])
+    selectRenderer (key: string) {
+      this.renderers.forEach(rdr => {
+        const renderer = _.find(rdr.children, ['key', key])
+        if (renderer) {
+          this.currentRenderer = renderer
         }
       })
     },
     async refresh () {
       await this.loadRenderers()
-      showNotification(this.$store, {
+      showNotification(wikiStore, {
         message: 'Rendering active configuration has been reloaded.',
         style: 'success',
         icon: 'cached'
       })
     },
     async save () {
-      loadingStart(this.$store, 'admin-rendering-saverenderers')
+      loadingStart(wikiStore, 'admin-rendering-saverenderers')
       try {
-        await saveRenderingRenderers(window.fetch.bind(window), _.reduce(this.renderers, (result, core) => {
-          result = _.concat(result, core.children.map(rd => ({
+        await saveRenderingRenderers(window.fetch.bind(window), this.renderers.reduce<unknown[]>((result, core) => {
+          return result.concat(core.children.map(rd => ({
             key: rd.key,
             isEnabled: rd.isEnabled,
             config: rd.config.map(cfg => ({ key: cfg.key, value: JSON.stringify({ v: cfg.value.value }) }))
           })))
-          return result
         }, []), 'Rendering renderers update failed')
         await this.loadRenderers({ notifyError: false })
-        showNotification(this.$store, {
+        showNotification(wikiStore, {
           message: 'Rendering configuration saved successfully.',
           style: 'success',
           icon: 'check'
         })
       } finally {
-        loadingStop(this.$store, 'admin-rendering-saverenderers')
+        loadingStop(wikiStore, 'admin-rendering-saverenderers')
       }
     }
   }

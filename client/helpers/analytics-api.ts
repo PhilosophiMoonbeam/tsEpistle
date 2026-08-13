@@ -10,16 +10,16 @@ type JsonResponse = {
 
 type FetchImpl = (url: string, options: Record<string, unknown>) => Promise<JsonResponse>
 
-type AnalyticsConfigValue = Record<string, unknown> & {
+export type AnalyticsConfigValue = Record<string, unknown> & {
   order?: number
 }
 
-type AnalyticsProviderConfig = {
+export type AnalyticsProviderConfig = {
   key: string
   value: AnalyticsConfigValue
 }
 
-type AnalyticsProvider = {
+export type AnalyticsProvider = {
   isEnabled: boolean
   key: string
   title: string
@@ -69,7 +69,7 @@ function normalizeProviderConfig (row: unknown, fallbackMessage: string): Analyt
   try {
     value = JSON.parse((row as { value: string }).value)
   } catch (err) {
-    throw new Error(fallbackMessage)
+    throw new Error(fallbackMessage, { cause: err })
   }
 
   if (!value || typeof value !== 'object' || Array.isArray(value)) {

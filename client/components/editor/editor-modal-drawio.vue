@@ -7,10 +7,24 @@
     )
 </template>
 
-<script>
-import { sync, get } from 'vuex-pathify'
+<script lang='ts'>
+import { wikiStore } from '@/store/index.ts'
 import { emitEditorConflictResolved } from '../../helpers/editor-conflict-events'
 import { emitEditorInsert } from '../../helpers/editor-insert-events'
+import { isRecord } from '../../helpers/type-guards'
+
+type DrawioRequest =
+  | {
+      action: 'load'
+      autosave: 0
+      modified: 'unsavedChanges'
+      xml: string | null
+      title: string
+    }
+  | {
+      action: 'export'
+      format: 'xmlsvg'
+    }
 
 // const xmlTest = `<?xml version="1.0" encoding="UTF-8"?>
 // <mxfile version="13.4.2">
@@ -35,8 +49,17 @@ export default {
     }
   },
   computed: {
-    editorKey: get('editor/editorKey'),
-    activeModal: sync('editor/activeModal')
+    editorKey() {
+      return wikiStore.editor.editorKey
+    },
+    activeModal: {
+      get() {
+        return wikiStore.editor.activeModal
+      },
+      set(value: string) {
+        wikiStore.editor.activeModal = value
+      }
+    }
   },
   methods: {
     close () {
@@ -46,29 +69,34 @@ export default {
       emitEditorConflictResolved()
       this.close()
     },
-    send (msg) {
-      this.$refs.drawio.contentWindow.postMessage(JSON.stringify(msg), '*')
+    send (msg: DrawioRequest) {
+      const drawio = this.$refs.drawio as HTMLIFrameElement
+      drawio.contentWindow!.postMessage(JSON.stringify(msg), '*')
     },
-    receive (evt) {
-      if (evt.frame === null || evt.source !== this.$refs.drawio.contentWindow || evt.data.length < 1) {
+    receive (evt: MessageEvent<unknown>) {
+      const drawio = this.$refs.drawio as HTMLIFrameElement
+      if (evt.source !== drawio.contentWindow || typeof evt.data !== 'string' || evt.data.length < 1) {
         return
       }
       try {
-        const msg = JSON.parse(evt.data)
+        const msg: unknown = JSON.parse(evt.data)
+        if (!isRecord(msg) || typeof msg.event !== 'string') {
+          return
+        }
         switch (msg.event) {
           case 'init': {
             this.send({
               action: 'load',
               autosave: 0,
               modified: 'unsavedChanges',
-              xml: this.$store.get('editor/activeModalData'),
-              title: this.$store.get('page/title')
+              xml: wikiStore.editor.activeModalData as string | null,
+              title: wikiStore.page.title
             })
-            this.$store.set('editor/activeModalData', null)
+            wikiStore.editor.activeModalData = null
             break
           }
           case 'save': {
-            if (msg.exit) {
+            if (msg.exit === true) {
               this.send({
                 action: 'export',
                 format: 'xmlsvg'
@@ -77,6 +105,9 @@ export default {
             break
           }
           case 'export': {
+            if (typeof msg.data !== 'string') {
+              throw new Error('Draw.io export response is missing diagram data.')
+            }
             const svgDataStart = msg.data.indexOf('base64,') + 7
             emitEditorInsert({
               kind: 'DIAGRAM',
@@ -99,7 +130,7 @@ export default {
   async mounted () {
     window.addEventListener('message', this.receive)
   },
-  beforeDestroy () {
+  beforeUnmount () {
     window.removeEventListener('message', this.receive)
   }
 }

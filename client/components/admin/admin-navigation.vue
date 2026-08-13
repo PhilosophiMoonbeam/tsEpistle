@@ -1,7 +1,7 @@
 <template lang='pug'>
   v-container(fluid, grid-list-lg)
-    v-layout(row wrap)
-      v-flex(xs12)
+    v-row
+      v-col(cols='12')
         .admin-header
           img.animated.fadeInUp(src='/_assets/svg/icon-triangle-arrow.svg', alt='Navigation', style='width: 80px;')
           .admin-header-title
@@ -22,48 +22,48 @@
                 v-toolbar(color='teal', dark, dense, flat, height='56')
                   v-toolbar-title.subtitle-1 {{$t('admin:navigation.mode')}}
                 v-list(nav, two-line)
-                  v-list-item-group(v-model='config.mode', mandatory, :color='$vuetify.theme.dark ? `teal lighten-3` : `teal`')
+                  v-list-item-group(v-model='config.mode', mandatory, :color='$vuetify.theme.current.dark ? `teal lighten-3` : `teal`')
                     v-list-item(value='TREE')
-                      v-list-item-avatar
+                      v-avatar
                         img(src='/_assets/svg/icon-tree-structure-dotted.svg', alt='Site Tree')
-                      v-list-item-content
+                      div.v-list-item-content
                         v-list-item-title {{$t('admin:navigation.modeSiteTree.title')}}
                         v-list-item-subtitle {{$t('admin:navigation.modeSiteTree.description')}}
-                      v-list-item-avatar
-                        v-icon(v-if='$vuetify.theme.dark', :color='config.mode === `TREE` ? `teal lighten-3` : `grey darken-2`') mdi-check-circle
+                      v-avatar
+                        v-icon(v-if='$vuetify.theme.current.dark', :color='config.mode === `TREE` ? `teal lighten-3` : `grey darken-2`') mdi-check-circle
                         v-icon(v-else, :color='config.mode === `TREE` ? `teal` : `grey lighten-3`') mdi-check-circle
                     v-list-item(value='STATIC')
-                      v-list-item-avatar
+                      v-avatar
                         img(src='/_assets/svg/icon-features-list.svg', alt='Static Navigation')
-                      v-list-item-content
+                      div.v-list-item-content
                         v-list-item-title {{$t('admin:navigation.modeStatic.title')}}
                         v-list-item-subtitle {{$t('admin:navigation.modeStatic.description')}}
-                      v-list-item-avatar
-                        v-icon(v-if='$vuetify.theme.dark', :color='config.mode === `STATIC` ? `teal lighten-3` : `grey darken-2`') mdi-check-circle
+                      v-avatar
+                        v-icon(v-if='$vuetify.theme.current.dark', :color='config.mode === `STATIC` ? `teal lighten-3` : `grey darken-2`') mdi-check-circle
                         v-icon(v-else, :color='config.mode === `STATIC` ? `teal` : `grey lighten-3`') mdi-check-circle
                     v-list-item(value='MIXED')
-                      v-list-item-avatar
+                      v-avatar
                         img(src='/_assets/svg/icon-user-menu-male-dotted.svg', alt='Custom Navigation')
-                      v-list-item-content
+                      div.v-list-item-content
                         v-list-item-title {{$t('admin:navigation.modeCustom.title')}}
                         v-list-item-subtitle {{$t('admin:navigation.modeCustom.description')}}
-                      v-list-item-avatar
-                        v-icon(v-if='$vuetify.theme.dark', :color='config.mode === `MIXED` ? `teal lighten-3` : `grey darken-2`') mdi-check-circle
+                      v-avatar
+                        v-icon(v-if='$vuetify.theme.current.dark', :color='config.mode === `MIXED` ? `teal lighten-3` : `grey darken-2`') mdi-check-circle
                         v-icon(v-else, :color='config.mode === `MIXED` ? `teal` : `grey lighten-3`') mdi-check-circle
                     v-list-item(value='NONE')
-                      v-list-item-avatar
+                      v-avatar
                         img(src='/_assets/svg/icon-cancel-dotted.svg', alt='None')
-                      v-list-item-content
+                      div.v-list-item-content
                         v-list-item-title {{$t('admin:navigation.modeNone.title')}}
                         v-list-item-subtitle {{$t('admin:navigation.modeNone.description')}}
-                      v-list-item-avatar
-                        v-icon(v-if='$vuetify.theme.dark', :color='config.mode === `none` ? `teal lighten-3` : `grey darken-2`') mdi-check-circle
+                      v-avatar
+                        v-icon(v-if='$vuetify.theme.current.dark', :color='config.mode === `none` ? `teal lighten-3` : `grey darken-2`') mdi-check-circle
                         v-icon(v-else, :color='config.mode === `none` ? `teal` : `grey lighten-3`') mdi-check-circle
             v-col(cols='9', v-if='config.mode === `MIXED` || config.mode === `STATIC`')
               v-card.animated.fadeInUp.wait-p2s
                 v-row(no-gutters, align='stretch')
                   v-col(style='flex: 0 0 350px;')
-                    v-card.grey(flat, style='height: 100%; border-radius: 4px 0 0 4px;', :class='$vuetify.theme.dark ? `darken-4-l5` : `lighten-3`')
+                    v-card.grey(flat, style='height: 100%; border-radius: 4px 0 0 4px;', :class='$vuetify.theme.current.dark ? `darken-4-l5` : `lighten-3`')
                       .teal.lighten-1.pa-2.d-flex(style='margin-bottom: 1px; height:56px;')
                         v-select(
                           :disabled='locales.length < 2'
@@ -80,14 +80,14 @@
                           item-value='code'
                         )
                         v-tooltip(top)
-                          template(v-slot:activator='{ on }')
-                            v-btn.ml-2(icon, tile, color='white', v-on='on', @click='copyFromLocaleDialogIsShown = true')
+                          template(v-slot:activator='{ props }')
+                            v-btn.ml-2(icon, tile, color='white', v-bind='props', @click='copyFromLocaleDialogIsShown = true')
                               v-icon mdi-arrange-send-backward
                           span {{$t('admin:navigation.copyFromLocale')}}
                       v-list.py-2(dense, nav, dark, class='blue darken-2', style='border-radius: 0;')
                         v-list-item(v-if='currentTree.length < 1')
-                          v-list-item-avatar(size='24'): v-icon(color='blue lighten-3') mdi-alert
-                          v-list-item-content
+                          v-avatar(size='24'): v-icon(color='blue lighten-3') mdi-alert
+                          div.v-list-item-content
                             em.caption.blue--text.text--lighten-4 {{$t('navigation.emptyList')}}
                         draggable(v-model='currentTree')
                           template(v-for='navItem in currentTree')
@@ -97,7 +97,7 @@
                               :class='(navItem === current) ? "blue" : ""'
                               @click='selectItem(navItem)'
                               )
-                              v-list-item-avatar(size='24', tile)
+                              v-avatar(size='24', tile)
                                 v-icon(v-if='navItem.icon.match(/fa[a-z] fa-/)', size='19') {{ navItem.icon }}
                                 v-icon(v-else) {{ navItem.icon }}
                               v-list-item-title {{navItem.label}}
@@ -108,27 +108,27 @@
                               @click='selectItem(navItem)'
                               )
                               v-divider
-                            v-subheader.pl-4.clickable(
+                            v-list-subheader.pl-4.clickable(
                               v-else-if='navItem.kind === "header"'
                               :key='navItem.id'
                               :class='(navItem === current) ? "blue" : ""'
                               @click='selectItem(navItem)'
                               ) {{navItem.label}}
-                      v-card-chin
+                      div.v-card-chin
                         v-menu(offset-y, bottom, min-width='200px', style='flex: 1 1;')
-                          template(v-slot:activator='{ on }')
-                            v-btn(v-on='on', color='primary', depressed, block)
+                          template(v-slot:activator='{ props }')
+                            v-btn(v-bind='props', color='primary', depressed, block)
                               v-icon(left) mdi-plus
                               span {{$t('common:actions.add')}}
                           v-list
                             v-list-item(@click='addItem("link")')
-                              v-list-item-avatar(size='24'): v-icon mdi-link
+                              v-avatar(size='24'): v-icon mdi-link
                               v-list-item-title {{$t('navigation.link')}}
                             v-list-item(@click='addItem("header")')
-                              v-list-item-avatar(size='24'): v-icon mdi-format-title
+                              v-avatar(size='24'): v-icon mdi-format-title
                               v-list-item-title {{$t('navigation.header')}}
                             v-list-item(@click='addItem("divider")')
-                              v-list-item-avatar(size='24'): v-icon mdi-minus
+                              v-avatar(size='24'): v-icon mdi-minus
                               v-list-item-title {{$t('navigation.divider')}}
                   v-col
                     v-card(flat, style='border-radius: 0 4px 4px 0;')
@@ -262,7 +262,7 @@
             :hint='$t(`admin:navigation.sourceLocaleHint`)'
             persistent-hint
             )
-        v-card-chin
+        div.v-card-chin
           v-spacer
           v-btn(text, @click='copyFromLocaleDialogIsShown = false') {{$t('common:actions.cancel')}}
           v-btn.px-3(depressed, color='primary', @click='copyFromLocale')
@@ -272,18 +272,24 @@
     page-selector(mode='select', v-model='selectPageModal', :open-handler='selectPageHandle', path='home', :locale='currentLang')
 </template>
 
-<script>
+<script lang='ts'>
 import _ from 'lodash'
-import { v4 as uuid } from 'uuid'
 
-import { fetchGroupOptions } from '../../helpers/groups-api'
-import { fetchLocales } from '../../helpers/locales-api'
-import { fetchNavigation, saveNavigation } from '../../helpers/navigation-api'
-import { loadingStart, loadingStop, showNotification, pushGraphError } from '../../helpers/root-ui-store'
+import { fetchGroupOptions, type GroupOption } from '../../helpers/groups-api'
+import { fetchLocales, type LocaleRow } from '../../helpers/locales-api'
+import { fetchNavigation, saveNavigation, type NavigationConfig, type NavigationItem, type NavigationTreeRow } from '../../helpers/navigation-api'
+import { getErrorMessage } from '../../helpers/root-ui-store'
+import { wikiStore } from '@/store/index.ts'
 
-import draggable from 'vuedraggable'
+import draggable from '@/components/common/draggable-list.vue'
 
 /* global siteConfig, siteLangs */
+
+const createEmptyNavigationItem = (): NavigationItem => ({
+  id: '',
+  kind: '',
+  visibilityGroups: []
+})
 
 export default {
   components: {
@@ -292,15 +298,15 @@ export default {
   data() {
     return {
       selectPageModal: false,
-      trees: [],
-      current: {},
+      trees: [] as NavigationTreeRow[],
+      current: createEmptyNavigationItem(),
       currentLang: siteConfig.lang,
-      groups: [],
+      groups: [] as GroupOption[],
       copyFromLocaleDialogIsShown: false,
       config: {
         mode: 'NONE'
-      },
-      allLocales: [],
+      } as NavigationConfig,
+      allLocales: [] as LocaleRow[],
       copyFromLocaleCode: 'en'
     }
   },
@@ -315,13 +321,14 @@ export default {
       ]
     },
     locales () {
-      return _.intersectionBy(this.allLocales, _.unionBy(siteLangs, [{ code: 'en' }, { code: siteConfig.lang }], 'code'), 'code')
+      const allowedCodes = new Set([...siteLangs.map(locale => locale.code), 'en', siteConfig.lang])
+      return this.allLocales.filter(locale => allowedCodes.has(locale.code))
     },
     currentTree: {
       get () {
         return _.get(_.find(this.trees, ['locale', this.currentLang]), 'items', null) || []
       },
-      set (val) {
+      set (val: NavigationItem[]) {
         const tree = _.find(this.trees, ['locale', this.currentLang])
         if (tree) {
           tree.items = val
@@ -335,46 +342,46 @@ export default {
     }
   },
   watch: {
-    currentLang (newValue, oldValue) {
+    currentLang () {
       this.$nextTick(() => {
         if (this.currentTree.length > 0) {
-          this.current = this.currentTree[0]
+          this.current = this.currentTree[0]!
         } else {
-          this.current = {}
+          this.current = createEmptyNavigationItem()
         }
       })
     }
   },
   methods: {
     async loadAllLocales() {
-      loadingStart(this.$store, 'admin-navigation-locales')
+      wikiStore.startLoading('admin-navigation-locales')
       try {
         this.allLocales = await fetchLocales(window.fetch.bind(window), 'Locales response is invalid')
       } catch (err) {
-        showNotification(this.$store, {
+        wikiStore.showNotification({
           style: 'red',
-          message: err.message,
+          message: getErrorMessage(err),
           icon: 'alert'
         })
       }
-      loadingStop(this.$store, 'admin-navigation-locales')
+      wikiStore.stopLoading('admin-navigation-locales')
     },
     async loadGroups() {
-      loadingStart(this.$store, 'admin-navigation-groups')
+      wikiStore.startLoading('admin-navigation-groups')
       try {
         this.groups = await fetchGroupOptions(window.fetch.bind(window), 'Groups response is invalid')
       } catch (err) {
-        showNotification(this.$store, {
+        wikiStore.showNotification({
           style: 'red',
-          message: err.message,
+          message: getErrorMessage(err),
           icon: 'alert'
         })
       }
-      loadingStop(this.$store, 'admin-navigation-groups')
+      wikiStore.stopLoading('admin-navigation-groups')
     },
-    addItem(kind) {
-      let newItem = {
-        id: uuid(),
+    addItem(kind: string) {
+      let newItem: NavigationItem = {
+        id: crypto.randomUUID(),
         kind,
         visibilityMode: 'all',
         visibilityGroups: []
@@ -396,17 +403,17 @@ export default {
       this.currentTree = [...this.currentTree, newItem]
       this.current = newItem
     },
-    deleteItem(item) {
+    deleteItem(item: NavigationItem) {
       this.currentTree = _.pull(this.currentTree, item)
-      this.current = {}
+      this.current = createEmptyNavigationItem()
     },
-    selectItem(item) {
+    selectItem(item: NavigationItem) {
       this.current = item
     },
     selectPage() {
       this.selectPageModal = true
     },
-    selectPageHandle ({ path, locale }) {
+    selectPageHandle ({ path, locale }: { path: string, locale: string }) {
       this.current.target = `/${locale}/${path}`
     },
     copyFromLocale () {
@@ -414,37 +421,37 @@ export default {
       this.currentTree = [...this.currentTree, ..._.get(_.find(this.trees, ['locale', this.copyFromLocaleCode]), 'items', null) || []]
     },
     async save() {
-      loadingStart(this.$store, 'admin-navigation-save')
+      wikiStore.startLoading('admin-navigation-save')
       try {
         await saveNavigation(window.fetch.bind(window), this.trees, this.config.mode)
-        showNotification(this.$store, {
+        wikiStore.showNotification({
           message: this.$t('navigation.saveSuccess'),
           style: 'success',
           icon: 'check'
         })
       } catch (err) {
-        pushGraphError(this.$store, err)
+        wikiStore.showError(err)
       }
-      loadingStop(this.$store, 'admin-navigation-save')
+      wikiStore.stopLoading('admin-navigation-save')
     },
     async loadNavigation(notify = false) {
-      loadingStart(this.$store, 'admin-navigation-refresh')
+      wikiStore.startLoading('admin-navigation-refresh')
       try {
         const navigation = await fetchNavigation(window.fetch.bind(window), 'Navigation response is invalid')
         this.config = _.cloneDeep(navigation.config)
         this.trees = _.cloneDeep(navigation.tree)
-        this.current = {}
+        this.current = createEmptyNavigationItem()
         if (notify) {
-          showNotification(this.$store, {
+          wikiStore.showNotification({
             message: 'Navigation has been refreshed.',
             style: 'success',
             icon: 'cached'
           })
         }
       } catch (err) {
-        pushGraphError(this.$store, err)
+        wikiStore.showError(err)
       }
-      loadingStop(this.$store, 'admin-navigation-refresh')
+      wikiStore.stopLoading('admin-navigation-refresh')
     },
     async refresh() {
       await this.loadNavigation(true)

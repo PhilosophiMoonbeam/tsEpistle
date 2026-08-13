@@ -1,77 +1,91 @@
-jest.mock('express-brute', () => {
-  return jest.fn().mockImplementation(() => ({
-    prevent: jest.fn((req, res, next) => next())
-  }))
-})
-
-jest.mock('../../helpers/brute-knex', () => {
-  return jest.fn().mockImplementation(() => ({}))
-})
-
-jest.mock('express', () => {
+vi.mock('express', () => {
   const routers = []
-
-  return {
+  const express = {
     Router: () => {
       const router = {
-        delete: jest.fn(),
-        get: jest.fn(),
-        patch: jest.fn(),
-        post: jest.fn(),
-        put: jest.fn(),
-        use: jest.fn()
+        delete: vi.fn(),
+        get: vi.fn(),
+        patch: vi.fn(),
+        post: vi.fn(),
+        put: vi.fn(),
+        use: vi.fn()
       }
       routers.push(router)
       return router
     },
     __routers: routers
   }
+
+  return { default: express, ...express }
 })
+
+import express from 'express'
+
+const API_MOUNTS = [
+  ['assets', '/assets'],
+  ['system', '/system'],
+  ['analytics', '/analytics'],
+  ['search', '/search'],
+  ['theming', '/theming'],
+  ['logging', '/logging'],
+  ['navigation', '/navigation'],
+  ['mail', '/mail'],
+  ['storage', '/storage'],
+  ['site', '/site'],
+  ['rendering', '/rendering'],
+  ['comments', '/comments'],
+  ['contribute', '/contribute'],
+  ['locales', '/locales'],
+  ['groups', '/groups'],
+  ['users', '/users'],
+  ['pages', '/pages'],
+  ['auth', '/auth']
+]
+
+const loadRouter = async () => {
+  const subrouters = Object.fromEntries(API_MOUNTS.map(([name]) => [name, {}]))
+
+  for (const [name] of API_MOUNTS) {
+    vi.doMock(`../../controllers/api/${name}.ts`, () => ({
+      default: subrouters[name]
+    }))
+  }
+
+  try {
+    await expect(import('../../controllers/api/index.ts')).resolves.toBeDefined()
+  } finally {
+    for (const [name] of API_MOUNTS) {
+      vi.doUnmock(`../../controllers/api/${name}.ts`)
+    }
+  }
+
+  return {
+    router: express.__routers.at(-1),
+    subrouters
+  }
+}
 
 describe('controllers/api route shell', () => {
   beforeEach(() => {
-    jest.resetModules()
-    const express = require('express')
+    vi.resetModules()
     express.__routers.length = 0
-    global.WIKI = {
-      models: {
-        knex: {}
-      }
+    global.WIKI = { logger: { error: vi.fn() } }
+  })
+
+  it('mounts every API subrouter', async () => {
+    const { router, subrouters } = await loadRouter()
+
+    for (const [name, path] of API_MOUNTS) {
+      expect(router.use).toHaveBeenCalledWith(path, subrouters[name])
     }
   })
 
-  const loadRouter = () => {
-    const express = require('express')
-    expect(() => require('../../controllers/api')).not.toThrow()
-    return express.__routers[0]
-  }
-
-  it('mounts system, analytics, search, theming, logging, navigation, mail, storage, rendering, comments, contribute, locales, groups, and users subrouters', () => {
-    const apiRouter = loadRouter()
-
-    expect(apiRouter.use).toHaveBeenCalledWith('/system', expect.any(Object))
-    expect(apiRouter.use).toHaveBeenCalledWith('/analytics', expect.any(Object))
-    expect(apiRouter.use).toHaveBeenCalledWith('/search', expect.any(Object))
-    expect(apiRouter.use).toHaveBeenCalledWith('/theming', expect.any(Object))
-    expect(apiRouter.use).toHaveBeenCalledWith('/logging', expect.any(Object))
-    expect(apiRouter.use).toHaveBeenCalledWith('/navigation', expect.any(Object))
-    expect(apiRouter.use).toHaveBeenCalledWith('/mail', expect.any(Object))
-    expect(apiRouter.use).toHaveBeenCalledWith('/storage', expect.any(Object))
-    expect(apiRouter.use).toHaveBeenCalledWith('/site', expect.any(Object))
-    expect(apiRouter.use).toHaveBeenCalledWith('/rendering', expect.any(Object))
-    expect(apiRouter.use).toHaveBeenCalledWith('/comments', expect.any(Object))
-    expect(apiRouter.use).toHaveBeenCalledWith('/contribute', expect.any(Object))
-    expect(apiRouter.use).toHaveBeenCalledWith('/locales', expect.any(Object))
-    expect(apiRouter.use).toHaveBeenCalledWith('/groups', expect.any(Object))
-    expect(apiRouter.use).toHaveBeenCalledWith('/users', expect.any(Object))
-    expect(apiRouter.use).toHaveBeenCalledWith('/pages', expect.any(Object))
-    expect(apiRouter.use).toHaveBeenCalledWith('/auth', expect.any(Object))
-  })
-
-  it('returns a JSON 404 for unknown API routes', () => {
-    const apiRouter = loadRouter()
-    const notFoundHandler = apiRouter.use.mock.calls.find(([handler]) => typeof handler === 'function' && handler.length === 2)[0]
-    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+  it('returns a JSON 404 for unknown API routes', async () => {
+    const { router } = await loadRouter()
+    const notFoundHandler = router.use.mock.calls.find(
+      ([handler]) => typeof handler === 'function' && handler.length === 2
+    )[0]
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
 
     notFoundHandler({}, res)
 
@@ -79,13 +93,16 @@ describe('controllers/api route shell', () => {
     expect(res.json).toHaveBeenCalledWith({ error: 'Not Found' })
   })
 
-  it('returns a generic JSON 500 for unexpected API failures', () => {
-    const apiRouter = loadRouter()
-    const errorHandler = apiRouter.use.mock.calls.find(([handler]) => typeof handler === 'function' && handler.length === 4)[0]
-    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+  it('returns a generic JSON 500 for unexpected API failures', async () => {
+    const { router } = await loadRouter()
+    const errorHandler = router.use.mock.calls.find(
+      ([handler]) => typeof handler === 'function' && handler.length === 4
+    )[0]
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
     const err = new Error('boom')
 
-    errorHandler(err, {}, res, jest.fn())
+    errorHandler(err, {}, res, vi.fn())
+    expect(global.WIKI.logger.error).toHaveBeenCalledWith(err)
 
     expect(res.status).toHaveBeenCalledWith(500)
     expect(res.json).toHaveBeenCalledWith({ error: 'Internal Server Error' })

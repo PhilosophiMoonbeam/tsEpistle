@@ -1,7 +1,7 @@
 <template lang='pug'>
   v-container(fluid, grid-list-lg)
-    v-layout(row, wrap)
-      v-flex(xs12)
+    v-row()
+      v-col(cols='12')
         .admin-header
           img(src='/_assets/svg/icon-web-design.svg', alt='Editor', style='width: 80px;')
           .admin-header-title
@@ -36,11 +36,11 @@
             v-tab-item(key='code', :transition='false', :reverse-transition='false')
               v-card.wiki-form.pa-3(flat, tile)
                 v-form
-                  v-subheader Editor Configuration
+                  v-list-subheader Editor Configuration
                   .body-1.ml-3 This editor has no configuration options you can modify.
 </template>
 
-<script>
+<script lang='ts'>
 export default {
   data() {
     return {

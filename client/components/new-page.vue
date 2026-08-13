@@ -13,7 +13,7 @@
           span {{ $t('newpage.goback') }}
 </template>
 
-<script>
+<script lang='ts'>
 
 export default {
   props: {

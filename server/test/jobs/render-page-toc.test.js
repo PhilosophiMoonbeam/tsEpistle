@@ -1,4 +1,4 @@
-const { buildTocFromHtml } = require('../../jobs/render-page-toc')
+import { buildTocFromHtml } from '../../jobs/render-page-toc.ts'
 
 describe('jobs/render-page-toc/buildTocFromHtml', () => {
   it('builds a nested TOC and strips toc anchors from heading titles', () => {

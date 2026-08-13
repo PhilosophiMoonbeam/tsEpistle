@@ -120,48 +120,61 @@
     v-system-bar.editor-redirect-sysbar(dark, status, color='grey darken-3')
       .caption.editor-redirect-sysbar-locale {{locale.toUpperCase()}}
       .caption.px-3 /{{path}}
-      template(v-if='$vuetify.breakpoint.mdAndUp')
+      template(v-if='$vuetify.display.mdAndUp')
         v-spacer
         .caption Redirect
         v-spacer
         .caption 0 rules
 </template>
 
-<script>
-import { get, sync } from 'vuex-pathify'
-import { fetchGroupOptions } from '../../helpers/groups-api'
+<script lang='ts'>
+import { wikiStore } from '@/store/index.ts'
+import { fetchGroupOptions, type GroupOption } from '../../helpers/groups-api'
 import { setLoading } from '../../helpers/root-ui-store'
 
 export default {
   data() {
     return {
-      groups: [],
+      groups: [] as GroupOption[],
       fallbackMode: 'page',
       fallbackUrl: 'https://'
     }
   },
   computed: {
     isMobile() {
-      return this.$vuetify.breakpoint.smAndDown
+      return this.$vuetify.display.smAndDown
     },
-    locale: get('page/locale'),
-    path: get('page/path'),
-    mode: get('editor/mode'),
-    activeModal: sync('editor/activeModal')
+    locale() {
+      return wikiStore.page.locale
+    },
+    path() {
+      return wikiStore.page.path
+    },
+    mode() {
+      return wikiStore.editor.mode
+    },
+    activeModal: {
+      get() {
+        return wikiStore.editor.activeModal
+      },
+      set(value: string) {
+        wikiStore.editor.activeModal = value
+      }
+    }
   },
   methods: {
   },
   async mounted() {
-    this.$store.set('editor/editorKey', 'redirect')
+    wikiStore.editor.editorKey = 'redirect'
 
     if (this.mode === 'create') {
-      this.$store.set('editor/content', '<h1>Title</h1>\n\n<p>Some text here</p>')
+      wikiStore.editor.content = '<h1>Title</h1>\n\n<p>Some text here</p>'
     }
-    setLoading(this.$store, 'editor-redirect-groups', true)
+    setLoading(wikiStore, 'editor-redirect-groups', true)
     try {
       this.groups = await fetchGroupOptions(window.fetch.bind(window))
     } finally {
-      setLoading(this.$store, 'editor-redirect-groups', false)
+      setLoading(wikiStore, 'editor-redirect-groups', false)
     }
   }
 

@@ -1,4 +1,4 @@
-const { fetchCommentProviders, saveCommentProviders } = require('./comments-api')
+import { fetchCommentProviders, saveCommentProviders } from './comments-api.ts'
 
 function createJsonResponse (payload, ok = true) {
   return {
@@ -12,7 +12,7 @@ function createJsonResponse (payload, ok = true) {
 
 describe('comments api helper', () => {
   test('requests comment providers with same-origin JSON options', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse([]))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([]))
 
     await expect(fetchCommentProviders(fetchImpl)).resolves.toEqual([])
 
@@ -25,7 +25,7 @@ describe('comments api helper', () => {
   })
 
   test('validates, sanitizes, parses config JSON, and sorts by parsed value order', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse([
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([
       {
         isEnabled: true,
         key: 'default',
@@ -80,7 +80,7 @@ describe('comments api helper', () => {
   })
 
   test('strips extra provider and config fields', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse([
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([
       {
         isEnabled: false,
         key: 'external',
@@ -121,13 +121,13 @@ describe('comments api helper', () => {
   })
 
   test('rejects malformed root payloads', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ providers: [] }))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ providers: [] }))
 
     await expect(fetchCommentProviders(fetchImpl, 'Bad comments payload')).rejects.toThrow('Bad comments payload')
   })
 
   test('rejects malformed provider rows', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse([
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([
       {
         isEnabled: 'yes',
         key: 'default',
@@ -144,7 +144,7 @@ describe('comments api helper', () => {
   })
 
   test('rejects malformed config rows', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse([
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([
       {
         isEnabled: true,
         key: 'default',
@@ -161,7 +161,7 @@ describe('comments api helper', () => {
   })
 
   test('rejects malformed config JSON', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse([
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([
       {
         isEnabled: true,
         key: 'default',
@@ -178,7 +178,7 @@ describe('comments api helper', () => {
   })
 
   test('propagates API JSON errors', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue({
+    const fetchImpl = vi.fn().mockResolvedValue({
       ok: false,
       headers: {
         get: () => 'application/json; charset=utf-8'
@@ -191,7 +191,7 @@ describe('comments api helper', () => {
 
   test('saves comment providers with same-origin JSON POST options', async () => {
     const providers = [{ key: 'default', isEnabled: true, config: [] }]
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ message: 'Comment Providers updated successfully' }))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ message: 'Comment Providers updated successfully' }))
 
     await expect(saveCommentProviders(fetchImpl, providers)).resolves.toEqual({ message: 'Comment Providers updated successfully' })
     expect(fetchImpl).toHaveBeenCalledWith('/_api/comments/providers', {
@@ -206,19 +206,19 @@ describe('comments api helper', () => {
   })
 
   test('rejects malformed successful comment provider save responses', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ ok: true }))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ ok: true }))
 
     await expect(saveCommentProviders(fetchImpl, [], 'Bad save payload')).rejects.toThrow('Bad save payload')
   })
 
   test('propagates API JSON errors for comment provider saves', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(createJsonResponse({ error: 'Invalid comment providers payload' }, false))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ error: 'Invalid comment providers payload' }, false))
 
     await expect(saveCommentProviders(fetchImpl, [], 'Bad save')).rejects.toThrow('Invalid comment providers payload')
   })
 
   test('rejects non-JSON successful comment provider save responses', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue({
+    const fetchImpl = vi.fn().mockResolvedValue({
       ok: true,
       headers: {
         get: () => 'text/plain'
@@ -229,7 +229,7 @@ describe('comments api helper', () => {
   })
 
   test('rejects non-JSON successful responses', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue({
+    const fetchImpl = vi.fn().mockResolvedValue({
       ok: true,
       headers: {
         get: () => 'text/plain'

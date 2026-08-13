@@ -17,7 +17,7 @@
         .body-2.mt-5: strong {{$t('editor:conflict.whatToDo')}}
         .body-2.mt-1 #[v-icon(color='indigo') mdi-alpha-l-box] {{$t('editor:conflict.whatToDoLocal')}}
         .body-2.mt-1 #[v-icon(color='indigo') mdi-alpha-r-box] {{$t('editor:conflict.whatToDoRemote')}}
-      v-card-chin
+      div.v-card-chin
         v-spacer
         v-btn(text, @click='close') {{$t('common:actions.cancel')}}
         v-btn.px-4(color='indigo', @click='useLocal', dark, :title='$t(`editor:conflict.useLocalHint`)')
@@ -27,8 +27,8 @@
           v-model='isRemoteConfirmDiagShown'
           width='500'
           )
-          template(v-slot:activator='{ on }')
-            v-btn.ml-3(color='indigo', dark, v-on='on', :title='$t(`editor:conflict.useRemoteHint`)')
+          template(v-slot:activator='{ props }')
+            v-btn.ml-3(color='indigo', dark, v-bind='props', :title='$t(`editor:conflict.useRemoteHint`)')
               v-icon(left) mdi-alpha-r-box
               span {{$t('editor:conflict.useRemote')}}
           v-card
@@ -38,7 +38,7 @@
             v-card-text.pa-4
               i18next.body-2(tag='div', path='editor:conflict.overwrite.description')
                 strong(place='refEditsLost') {{$t('editor:conflict.overwrite.editsLost')}}
-            v-card-chin
+            div.v-card-chin
               v-spacer
               v-btn(outlined, color='indigo', @click='isRemoteConfirmDiagShown = false')
                 v-icon(left) mdi-close
@@ -48,14 +48,17 @@
                 span {{$t('common:actions.confirm')}}
 </template>
 
-<script>
+<script lang='ts'>
+import { defineComponent } from 'vue'
+import { wikiStore } from '@/store/index.ts'
 import { showNotification } from '../../../helpers/root-ui-store'
 import { emitEditorConflictReset, emitEditorConflictResolved } from '../../../helpers/editor-conflict-events'
-import { fetchPageConflictLatest } from '../../../helpers/pages-api'
+import { fetchPageConflictLatest, type PageConflictLatest } from '../../../helpers/pages-api'
 
-export default {
+export default defineComponent({
+  emits: ['update:modelValue'],
   props: {
-    value: {
+    modelValue: {
       type: Boolean,
       default: false
     }
@@ -67,15 +70,17 @@ export default {
         authorName: '',
         content: '',
         locale: '',
-        path: ''
-      },
+        path: '',
+        title: '',
+        description: ''
+      } as PageConflictLatest,
       isRemoteConfirmDiagShown: false
     }
   },
   computed: {
     isShown: {
-      get() { return this.value },
-      set(val) { this.$emit('input', val) }
+      get() { return this.modelValue },
+      set(val: boolean) { this.$emit('update:modelValue', val) }
     }
   },
   methods: {
@@ -83,27 +88,27 @@ export default {
       this.isShown = false
     },
     useLocal () {
-      this.$store.set('editor/checkoutDateActive', this.latest.updatedAt)
+      wikiStore.editor.checkoutDateActive = this.latest.updatedAt
       emitEditorConflictReset()
       this.close()
     },
     useRemote () {
-      this.$store.set('editor/checkoutDateActive', this.latest.updatedAt)
-      this.$store.set('editor/content', this.latest.content)
+      wikiStore.editor.checkoutDateActive = this.latest.updatedAt
+      wikiStore.editor.content = this.latest.content
       emitEditorConflictResolved()
       this.close()
     }
   },
   async mounted () {
-    let resp
+    let resp: PageConflictLatest | null = null
     try {
-      resp = await fetchPageConflictLatest(window.fetch.bind(window), this.$store.get('page/id'))
-    } catch (err) {
-      resp = null
+      resp = await fetchPageConflictLatest(window.fetch.bind(window), wikiStore.page.id)
+    } catch {
+      // The warning below is the user-facing error state.
     }
 
     if (!resp) {
-      return showNotification(this.$store, {
+      return showNotification(wikiStore, {
         message: 'Failed to fetch latest version.',
         style: 'warning',
         icon: 'warning'
@@ -111,5 +116,5 @@ export default {
     }
     this.latest = resp
   }
-}
+})
 </script>

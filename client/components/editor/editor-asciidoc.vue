@@ -8,100 +8,100 @@
           span {{$t('editor:backToEditor')}}
       template(v-else)
         v-tooltip(bottom, color='primary')
-          template(v-slot:activator='{ on }')
-            v-btn.animated.fadeIn(icon, tile, v-on='on', @click='toggleMarkup({ start: `**` })').mx-0
+          template(v-slot:activator='{ props }')
+            v-btn.animated.fadeIn(icon, tile, v-bind='props', @click='toggleMarkup({ start: `**` })').mx-0
               v-icon mdi-format-bold
           span {{$t('editor:markup.bold')}}
         v-tooltip(bottom, color='primary')
-          template(v-slot:activator='{ on }')
-            v-btn.animated.fadeIn.wait-p1s(icon, tile, v-on='on', @click='toggleMarkup({ start: `__` })').mx-0
+          template(v-slot:activator='{ props }')
+            v-btn.animated.fadeIn.wait-p1s(icon, tile, v-bind='props', @click='toggleMarkup({ start: `__` })').mx-0
               v-icon mdi-format-italic
           span {{$t('editor:markup.italic')}}
         v-menu(offset-y, open-on-hover)
-          template(v-slot:activator='{ on }')
-            v-btn.animated.fadeIn.wait-p3s(icon, tile, v-on='on').mx-0
+          template(v-slot:activator='{ props }')
+            v-btn.animated.fadeIn.wait-p3s(icon, tile, v-bind='props').mx-0
               v-icon mdi-format-header-pound
           v-list.py-0
-            template(v-for='(n, idx) in 6')
-              v-list-item(@click='setHeaderLine(n)', :key='idx')
-                v-list-item-action
+            template(v-for='(n, idx) in 6', :key='idx')
+              v-list-item(@click='setHeaderLine(n)')
+                div.v-list-item-action
                   v-icon(:size='24 - (idx - 1) * 2') mdi-format-header-{{n}}
                 v-list-item-title {{$t('editor:markup.heading', { level: n })}}
               v-divider(v-if='idx < 5')
         v-tooltip(bottom, color='primary')
-          template(v-slot:activator='{ on }')
-            v-btn.animated.fadeIn.wait-p4s(icon, tile, v-on='on', @click='toggleMarkup({ start: `~` })').mx-0
+          template(v-slot:activator='{ props }')
+            v-btn.animated.fadeIn.wait-p4s(icon, tile, v-bind='props', @click='toggleMarkup({ start: `~` })').mx-0
               v-icon mdi-format-subscript
           span {{$t('editor:markup.subscript')}}
         v-tooltip(bottom, color='primary')
-          template(v-slot:activator='{ on }')
-            v-btn.animated.fadeIn.wait-p5s(icon, tile, v-on='on', @click='toggleMarkup({ start: `^` })').mx-0
+          template(v-slot:activator='{ props }')
+            v-btn.animated.fadeIn.wait-p5s(icon, tile, v-bind='props', @click='toggleMarkup({ start: `^` })').mx-0
               v-icon mdi-format-superscript
           span {{$t('editor:markup.superscript')}}
         v-menu(offset-y, open-on-hover)
-          template(v-slot:activator='{ on }')
-            v-btn.animated.fadeIn.wait-p6s(icon, tile, v-on='on').mx-0
+          template(v-slot:activator='{ props }')
+            v-btn.animated.fadeIn.wait-p6s(icon, tile, v-bind='props').mx-0
               v-icon mdi-alpha-t-box-outline
           v-list.py-0
             v-list-item(@click='insertBeforeEachLine({ content: `> `})')
-              v-list-item-action
+              div.v-list-item-action
                 v-icon mdi-alpha-t-box-outline
               v-list-item-title {{$t('editor:markup.blockquote')}}
             v-divider
             v-list-item(@click='insertBeforeEachLine({ content: `NOTE: `})')
-              v-list-item-action
+              div.v-list-item-action
                 v-icon(color='blue') mdi-alpha-n-box-outline
               v-list-item-title {{'Note blockquote'}}
             v-divider
             v-list-item(@click='insertBeforeEachLine({ content: `TIP: `})')
-              v-list-item-action
+              div.v-list-item-action
                 v-icon(color='success') mdi-alpha-t-box-outline
               v-list-item-title {{'Tip blockquote'}}
             v-divider
             v-list-item(@click='insertBeforeEachLine({ content: `WARNING: `})')
-              v-list-item-action
+              div.v-list-item-action
                 v-icon(color='warning') mdi-alpha-w-box-outline
               v-list-item-title {{$t('editor:markup.blockquoteWarning')}}
             v-divider
             v-list-item(@click='insertBeforeEachLine({ content: `CAUTION: `})')
-              v-list-item-action
+              div.v-list-item-action
                 v-icon(color='purple') mdi-alpha-c-box-outline
               v-list-item-title {{'Caution blockquote'}}
             v-list-item(@click='insertBeforeEachLine({ content: `IMPORTANT: `})')
-              v-list-item-action
+              div.v-list-item-action
                 v-icon(color='error') mdi-alpha-i-box-outline
               v-list-item-title {{'Important blockquote'}}
             v-divider
-        template(v-if='$vuetify.breakpoint.mdAndUp')
+        template(v-if='$vuetify.display.mdAndUp')
           v-spacer
           v-tooltip(bottom, color='primary')
-            template(v-slot:activator='{ on }')
-              v-btn.animated.fadeIn.wait-p2s(icon, tile, v-on='on', @click='previewShown = !previewShown').mx-0
+            template(v-slot:activator='{ props }')
+              v-btn.animated.fadeIn.wait-p2s(icon, tile, v-bind='props', @click='previewShown = !previewShown').mx-0
                 v-icon mdi-book-open-outline
             span {{$t('editor:markup.togglePreviewPane')}}
 
     .editor-asciidoc-main
       .editor-asciidoc-sidebar
         v-tooltip(right, color='teal')
-          template(v-slot:activator='{ on }')
-            v-btn.animated.fadeInLeft(icon, tile, v-on='on', dark, @click='insertLink').mx-0
+          template(v-slot:activator='{ props }')
+            v-btn.animated.fadeInLeft(icon, tile, v-bind='props', dark, @click='insertLink').mx-0
               v-icon mdi-link-plus
           span {{$t('editor:markup.insertLink')}}
         v-tooltip(right, color='teal')
-          template(v-slot:activator='{ on }')
-            v-btn.mt-3.animated.fadeInLeft.wait-p1s(icon, tile, v-on='on', dark, @click='toggleModal(`editorModalMedia`)').mx-0
+          template(v-slot:activator='{ props }')
+            v-btn.mt-3.animated.fadeInLeft.wait-p1s(icon, tile, v-bind='props', dark, @click='toggleModal(`editorModalMedia`)').mx-0
               v-icon(:color='activeModal === `editorModalMedia` ? `teal` : ``') mdi-folder-multiple-image
           span {{$t('editor:markup.insertAssets')}}
         v-tooltip(right, color='teal')
-          template(v-slot:activator='{ on }')
-            v-btn.mt-3.animated.fadeInLeft.wait-p5s(icon, tile, v-on='on', dark, @click='toggleModal(`editorModalDrawio`)').mx-0
+          template(v-slot:activator='{ props }')
+            v-btn.mt-3.animated.fadeInLeft.wait-p5s(icon, tile, v-bind='props', dark, @click='toggleModal(`editorModalDrawio`)').mx-0
               v-icon mdi-chart-multiline
           span {{$t('editor:markup.insertDiagram')}}
-        template(v-if='$vuetify.breakpoint.mdAndUp')
+        template(v-if='$vuetify.display.mdAndUp')
           v-spacer
           v-tooltip(right, color='teal')
-            template(v-slot:activator='{ on }')
-              v-btn.mt-3.animated.fadeInLeft.wait-p8s(icon, tile, v-on='on', dark, @click='toggleFullscreen').mx-0
+            template(v-slot:activator='{ props }')
+              v-btn.mt-3.animated.fadeInLeft.wait-p8s(icon, tile, v-bind='props', dark, @click='toggleFullscreen').mx-0
                 v-icon mdi-arrow-expand-all
             span {{$t('editor:markup.distractionFreeMode')}}
       .editor-asciidoc-editor
@@ -117,7 +117,7 @@
     v-system-bar.editor-asciidoc-sysbar(dark, status, color='grey darken-3')
       .caption.editor-asciidoc-sysbar-locale {{locale.toUpperCase()}}
       .caption.px-3 /{{path}}
-      template(v-if='$vuetify.breakpoint.mdAndUp')
+      template(v-if='$vuetify.display.mdAndUp')
         v-spacer
         .caption AsciiDoc
         v-spacer
@@ -125,12 +125,15 @@
     page-selector(mode='select', v-model='insertLinkDialog', :open-handler='insertLinkHandler', :path='path', :locale='locale')
 </template>
 
-<script>
+<script lang='ts'>
 /* global siteLangs, siteConfig */
+import { defineComponent } from 'vue'
 import _ from 'lodash'
-import { get, sync } from 'vuex-pathify'
-import { onEditorInsert, offEditorInsert } from '../../helpers/editor-insert-events'
+import { wikiStore } from '@/store/index.ts'
+import { onEditorInsert, offEditorInsert, type EditorInsertPayload } from '../../helpers/editor-insert-events'
 import { onEditorSaveConflict, onEditorContentOverwrite, offEditorSaveConflict, offEditorContentOverwrite } from '../../helpers/editor-conflict-events'
+import type { Element } from 'domhandler'
+import type { ContentInsertOptions, LineInsertOptions, MarkupOptions, MultiLineInsertOptions, PageLinkTarget } from './common/editor-types'
 import DOMPurify from 'dompurify'
 
 // ========================================
@@ -171,16 +174,33 @@ const CtrlKey = /Mac/.test(navigator.platform) ? 'Cmd' : 'Ctrl'
 
 cmFold.register('asciidoc')
 
+type DiagramLineHandle = CodeMirror.LineHandle & {
+  height: number
+  lineNo(): number
+}
+
+type DiagramMarker = CodeMirror.TextMarker & {
+  __kind?: 'diagram'
+}
+
+interface MarkerOptions {
+  kind: 'diagram'
+  from: CodeMirror.Position
+  to: CodeMirror.Position
+  text: string
+  action: (event: MouseEvent) => void
+}
+
 // ========================================
 // Vue Component
 // ========================================
 
-export default {
+export default defineComponent({
   data() {
     return {
-      cm: null,
-      cursorPos: { ch: 0, line: 1 },
-      previewShown: true, // TODO
+      cm: null as CodeMirror.EditorFromTextArea | null,
+      cursorPos: { ch: 0, line: 1 } as CodeMirror.Position,
+      previewShown: true,
       insertLinkDialog: false,
       helpShown: false,
       previewHTML: ''
@@ -188,240 +208,218 @@ export default {
   },
   computed: {
     isMobile() {
-      return this.$vuetify.breakpoint.smAndDown
+      return this.$vuetify.display.smAndDown
     },
     isModalShown() {
       return this.helpShown || this.activeModal !== ''
     },
-    locale: get('page/locale'),
-    path: get('page/path'),
-    mode: get('editor/mode'),
-    activeModal: sync('editor/activeModal')
+    locale() {
+      return wikiStore.page.locale
+    },
+    path() {
+      return wikiStore.page.path
+    },
+    mode() {
+      return wikiStore.editor.mode
+    },
+    activeModal: {
+      get() {
+        return wikiStore.editor.activeModal
+      },
+      set(value: string) {
+        wikiStore.editor.activeModal = value
+      }
+    }
   },
-
   methods: {
-    toggleModal(key) {
-      this.activeModal = (this.activeModal === key) ? '' : key
+    toggleModal(key: string) {
+      this.activeModal = this.activeModal === key ? '' : key
       this.helpShown = false
     },
     handleEditorSaveConflict() {
-      this.toggleModal(`editorModalConflict`)
+      this.toggleModal('editorModalConflict')
     },
     handleEditorContentOverwrite() {
-      this.cm.setValue(this.$store.get('editor/content'))
+      this.editor().setValue(wikiStore.editor.content)
     },
-    handleEditorInsert(opts) {
+    handleEditorInsert(opts: EditorInsertPayload) {
       switch (opts.kind) {
         case 'IMAGE':
-          let img = `image::${opts.path}[${opts.text}]`
-          this.insertAtCursor({
-            content: img
-          })
+          this.insertAtCursor({ content: `image::${opts.path}[${opts.text}]` })
           break
         case 'BINARY':
-          this.insertAtCursor({
-            content: `link:${opts.path}[${opts.text}]`
-          })
+          this.insertAtCursor({ content: `link:${opts.path}[${opts.text}]` })
           break
-        case 'DIAGRAM':
-          const selStartLine = this.cm.getCursor('from').line
-          const selEndLine = this.cm.getCursor('to').line + 1
-          this.cm.doc.replaceSelection('```diagram\n' + opts.text + '\n```\n', 'start')
-          this.processMarkers(selStartLine, selEndLine)
+        case 'DIAGRAM': {
+          const cm = this.editor()
+          const doc = cm.getDoc()
+          const selectionStart = doc.getCursor('from').line
+          const selectionEnd = doc.getCursor('to').line + 1
+          doc.replaceSelection('```diagram\n' + opts.text + '\n```\n', 'start')
+          this.processMarkers(selectionStart, selectionEnd)
           break
+        }
       }
     },
     closeAllModal() {
       this.activeModal = ''
       this.helpShown = false
     },
-    onCmInput: _.debounce(function(newContent) {
+    editor(): CodeMirror.EditorFromTextArea {
+      if (!this.cm) throw new Error('CodeMirror editor is not initialized')
+      return this.cm
+    },
+    onCmInput: _.debounce(function (this: { processContent: (content: string) => void }, newContent: string) {
       this.processContent(newContent)
     }, 600),
-    processContent(newContent) {
-      this.processMarkers(this.cm.firstLine(), this.cm.lastLine())
-      let html = asciidoctor.convert(newContent, {
+    processContent(newContent: string) {
+      const cm = this.editor()
+      this.processMarkers(cm.firstLine(), cm.lastLine())
+      const html = asciidoctor.convert(newContent, {
         standalone: false,
         safe: 'safe',
-        attributes: {
-          showtitle: true,
-          icons: 'font'
-        }
+        attributes: { showtitle: true, icons: 'font' }
       })
-      const $ = cheerio.load(html, {
-        decodeEntities: true
+      const $ = cheerio.load(html, { decodeEntities: true })
+      $('pre.highlight > code.language-diagram').each((_index: number, element: Element) => {
+        const diagramContent = Buffer.from($(element).html(), 'base64').toString()
+        $(element).parent().replaceWith(`<pre class="diagram">${diagramContent}</div>`)
       })
-
-      $('pre.highlight > code.language-diagram').each((i, elm) => {
-        const diagramContent = Buffer.from($(elm).html(), 'base64').toString()
-        $(elm).parent().replaceWith(`<pre class="diagram">${diagramContent}</div>`)
-      })
-
       this.previewHTML = DOMPurify.sanitize($.html(), {
         ADD_TAGS: ['foreignObject'],
         HTML_INTEGRATION_POINTS: { foreignobject: true }
       })
     },
-    /**
-     * Insert content at cursor
-     */
-    insertAtCursor({ content }) {
-      const cursor = this.cm.doc.getCursor('head')
-      this.cm.doc.replaceRange(content, cursor)
+    insertAtCursor({ content }: ContentInsertOptions) {
+      const doc = this.editor().getDoc()
+      doc.replaceRange(content, doc.getCursor('head'))
     },
-    /**
-     * Insert content after current line
-     */
-    insertAfter({ content, newLine }) {
-      const curLine = this.cm.doc.getCursor('to').line
-      const lineLength = this.cm.doc.getLine(curLine).length
-      this.cm.doc.replaceRange(newLine ? `\n${content}\n` : content, { line: curLine, ch: lineLength + 1 })
+    insertAfter({ content, newLine }: LineInsertOptions) {
+      const doc = this.editor().getDoc()
+      const line = doc.getCursor('to').line
+      doc.replaceRange(newLine ? `\n${content}\n` : content, { line, ch: doc.getLine(line).length + 1 })
     },
-    /**
-     * Insert content before current line
-     */
-    insertBeforeEachLine({ content, after }) {
-      let lines = []
-      if (!this.cm.doc.somethingSelected()) {
-        lines.push(this.cm.doc.getCursor('head').line)
+    insertBeforeEachLine({ content, after }: MultiLineInsertOptions) {
+      const doc = this.editor().getDoc()
+      let lines: number[] = []
+      if (!doc.somethingSelected()) {
+        lines.push(doc.getCursor('head').line)
       } else {
-        lines = _.flatten(this.cm.doc.listSelections().map(sl => {
-          const range = Math.abs(sl.anchor.line - sl.head.line) + 1
-          const lowestLine = (sl.anchor.line > sl.head.line) ? sl.head.line : sl.anchor.line
-          return _.times(range, l => l + lowestLine)
+        lines = _.flatten(doc.listSelections().map((selection: CodeMirror.Range) => {
+          const range = Math.abs(selection.anchor.line - selection.head.line) + 1
+          const lowestLine = selection.anchor.line > selection.head.line ? selection.head.line : selection.anchor.line
+          return _.times(range, offset => offset + lowestLine)
         }))
       }
-      lines.forEach(ln => {
-        let lineContent = this.cm.doc.getLine(ln)
+      lines.forEach(line => {
+        let lineContent = doc.getLine(line)
         const lineLength = lineContent.length
-        if (_.startsWith(lineContent, content)) {
-          lineContent = lineContent.substring(content.length)
-        }
-
-        this.cm.doc.replaceRange(content + lineContent, { line: ln, ch: 0 }, { line: ln, ch: lineLength })
+        if (_.startsWith(lineContent, content)) lineContent = lineContent.substring(content.length)
+        doc.replaceRange(content + lineContent, { line, ch: 0 }, { line, ch: lineLength })
       })
       if (after) {
-        const lastLine = _.last(lines)
-        this.cm.doc.replaceRange(`\n${after}\n`, { line: lastLine, ch: this.cm.doc.getLine(lastLine).length + 1 })
+        const line = lines[lines.length - 1]
+        doc.replaceRange(`\n${after}\n`, { line, ch: doc.getLine(line).length + 1 })
       }
     },
-    /**
-     * Update cursor state
-     */
-    positionSync(cm) {
+    positionSync(cm: CodeMirror.Editor) {
       this.cursorPos = cm.getCursor('head')
     },
-    toggleMarkup({ start, end }) {
-      if (!end) { end = start }
-      if (!this.cm.doc.somethingSelected()) {
-        return this.$store.commit('showNotification', {
+    toggleMarkup({ start, end = start }: MarkupOptions) {
+      const doc = this.editor().getDoc()
+      if (!doc.somethingSelected()) {
+        return wikiStore.showNotification({
           message: this.$t('editor:markup.noSelectionError'),
           style: 'warning',
           icon: 'warning'
         })
       }
-      this.cm.doc.replaceSelections(this.cm.doc.getSelections().map(s => start + s + end))
+      doc.replaceSelections(doc.getSelections().map((selection: string) => start + selection + end))
     },
-    setHeaderLine(lvl) {
-      const curLine = this.cm.doc.getCursor('head').line
-      let lineContent = this.cm.doc.getLine(curLine)
-      const lineLength = lineContent.length
-      if (_.startsWith(lineContent, '=')) {
-        lineContent = lineContent.replace(/^(=+ )/, '')
-      }
-      lineContent = _.times(lvl, n => '=').join('') + ` ` + lineContent
-      this.cm.doc.replaceRange(lineContent, { line: curLine, ch: 0 }, { line: curLine, ch: lineLength })
+    setHeaderLine(level: number) {
+      const doc = this.editor().getDoc()
+      const line = doc.getCursor('head').line
+      let content = doc.getLine(line)
+      const length = content.length
+      if (_.startsWith(content, '=')) content = content.replace(/^(=+ )/, '')
+      content = _.times(level, () => '=').join('') + ` ` + content
+      doc.replaceRange(content, { line, ch: 0 }, { line, ch: length })
     },
-
-    toggleFullscreen () {
-      this.cm.setOption('fullScreen', true)
+    toggleFullscreen() {
+      this.editor().setOption('fullScreen', true)
     },
     refresh() {
-      this.$nextTick(() => {
-        this.cm.refresh()
-      })
+      this.$nextTick(() => this.editor().refresh())
     },
-    insertLink () {
+    insertLink() {
       this.insertLinkDialog = true
     },
-    insertLinkHandler ({ locale, path }) {
+    insertLinkHandler({ locale, path }: PageLinkTarget) {
       const lastPart = _.last(path.split('/'))
       this.insertAtCursor({
         content: siteLangs.length > 0 ? `link:/${locale}/${path}[${lastPart}]` : `link:/${path}[${lastPart}]`
       })
     },
-    processMarkers (from, to) {
-      let found = null
+    processMarkers(from: number, to: number) {
+      const cm = this.editor()
+      const doc = cm.getDoc()
+      let found: 'diagram' | null = null
       let foundStart = 0
-      this.cm.doc.getAllMarks().forEach(mk => {
-        if (mk.__kind) {
-          mk.clear()
-        }
+      ;(doc.getAllMarks() as DiagramMarker[]).forEach(marker => {
+        if (marker.__kind) marker.clear()
       })
-      this.cm.eachLine(from, to, ln => {
-        const line = ln.lineNo()
-        if (ln.text.startsWith('```diagram')) {
+      cm.eachLine(from, to, (handle: CodeMirror.LineHandle) => {
+        const line = handle as DiagramLineHandle
+        const lineNumber = line.lineNo()
+        if (line.text.startsWith('```diagram')) {
           found = 'diagram'
-          foundStart = line
-        } else if (ln.text === '```' && found) {
-          switch (found) {
-            // ------------------------------
-            // -> DIAGRAM
-            // ------------------------------
-            case 'diagram': {
-              if (line - foundStart !== 2) {
-                return
+          foundStart = lineNumber
+        } else if (line.text === '```' && found === 'diagram') {
+          if (lineNumber - foundStart !== 2) return
+          this.addMarker({
+            kind: 'diagram',
+            from: { line: foundStart, ch: 3 },
+            to: { line: foundStart, ch: 10 },
+            text: 'Edit Diagram',
+            action: ((start: number, end: number) => (_event: MouseEvent) => {
+              doc.setSelection({ line: start, ch: 0 }, { line: end, ch: 3 })
+              try {
+                const raw = doc.getLine(end - 1)
+                wikiStore.editor.activeModalData = Buffer.from(raw, 'base64').toString()
+                this.toggleModal('editorModalDrawio')
+              } catch (err) {
+                return wikiStore.showNotification({
+                  message: 'Failed to process diagram data.',
+                  style: 'warning',
+                  icon: 'warning'
+                })
               }
-              this.addMarker({
-                kind: 'diagram',
-                from: { line: foundStart, ch: 3 },
-                to: { line: foundStart, ch: 10 },
-                text: 'Edit Diagram',
-                action: ((start, end) => {
-                  return (ev) => {
-                    this.cm.doc.setSelection({ line: start, ch: 0 }, { line: end, ch: 3 })
-                    try {
-                      const raw = this.cm.doc.getLine(end - 1)
-                      this.$store.set('editor/activeModalData', Buffer.from(raw, 'base64').toString())
-                      this.toggleModal(`editorModalDrawio`)
-                    } catch (err) {
-                      return this.$store.commit('showNotification', {
-                        message: 'Failed to process diagram data.',
-                        style: 'warning',
-                        icon: 'warning'
-                      })
-                    }
-                  }
-                })(foundStart, line)
-              })
-              if (ln.height > 0) {
-                this.cm.foldCode(foundStart)
-              }
-              break
-            }
-          }
+            })(foundStart, lineNumber)
+          })
+          if (line.height > 0) cm.foldCode(foundStart)
           found = null
         }
       })
     },
-    addMarker ({ kind, from, to, text, action }) {
-      const markerElm = document.createElement('span')
-      markerElm.appendChild(document.createTextNode(text))
-      markerElm.className = 'CodeMirror-buttonmarker'
-      markerElm.addEventListener('click', action)
-      this.cm.markText(from, to, { replacedWith: markerElm, __kind: kind })
+    addMarker({ kind, from, to, text, action }: MarkerOptions) {
+      const marker = document.createElement('span')
+      marker.appendChild(document.createTextNode(text))
+      marker.className = 'CodeMirror-buttonmarker'
+      marker.addEventListener('click', action)
+      const options = { replacedWith: marker, __kind: kind } as CodeMirror.TextMarkerOptions & { __kind: 'diagram' }
+      this.editor().markText(from, to, options)
     }
   },
   mounted() {
-    this.$store.set('editor/editorKey', 'asciidoc')
+    wikiStore.editor.editorKey = 'asciidoc'
 
     if (this.mode === 'create') {
-      this.$store.set('editor/content', '== header\n\ncontent')
+      wikiStore.editor.content = '== header\n\ncontent'
     }
 
     // Initialize CodeMirror
 
-    this.cm = CodeMirror.fromTextArea(this.$refs.cm, {
+    const cm = CodeMirror.fromTextArea(this.$refs.cm as HTMLTextAreaElement, {
       tabSize: 2,
       mode: 'asciidoc',
       theme: 'wikijs-dark',
@@ -438,48 +436,46 @@ export default {
       direction: siteConfig.rtl ? 'rtl' : 'ltr',
       foldGutter: true,
       gutters: ['CodeMirror-linenumbers', 'CodeMirror-foldgutter']
-
+    } as CodeMirror.EditorConfiguration)
+    this.cm = cm
+    cm.setValue(wikiStore.editor.content)
+    cm.on('change', (changedEditor: CodeMirror.Editor) => {
+      wikiStore.editor.content = changedEditor.getValue()
+      this.onCmInput(wikiStore.editor.content)
     })
-    this.cm.setValue(this.$store.get('editor/content'))
-    this.cm.on('change', c => {
-      this.$store.set('editor/content', c.getValue())
-      this.onCmInput(this.$store.get('editor/content'))
-    })
-    if (this.$vuetify.breakpoint.mdAndUp) {
-      this.cm.setSize(null, 'calc(100vh - 137px)')
+    if (this.$vuetify.display.mdAndUp) {
+      cm.setSize(null, 'calc(100vh - 137px)')
     } else {
-      this.cm.setSize(null, 'calc(100vh - 112px - 16px)')
+      cm.setSize(null, 'calc(100vh - 112px - 16px)')
     }
 
     // Set Keybindings
 
-    const keyBindings = {
-      'F11' (c) {
-        c.setOption('fullScreen', !c.getOption('fullScreen'))
+    const keyBindings: CodeMirror.KeyMap = {
+      F11(editor: CodeMirror.Editor) {
+        editor.setOption('fullScreen', !editor.getOption('fullScreen'))
       },
-      'Esc' (c) {
-        if (c.getOption('fullScreen')) c.setOption('fullScreen', false)
+      Esc(editor: CodeMirror.Editor) {
+        if (editor.getOption('fullScreen')) editor.setOption('fullScreen', false)
       }
     }
-    _.set(keyBindings, `${CtrlKey}-B`, c => {
-      this.toggleMarkup({ start: `**` })
-      return false
-    })
-    _.set(keyBindings, `${CtrlKey}-I`, c => {
-      this.toggleMarkup({ start: `__` })
-      return false
-    })
+    keyBindings[`${CtrlKey}-B`] = () => {
+      this.toggleMarkup({ start: '**' })
+    }
+    keyBindings[`${CtrlKey}-I`] = () => {
+      this.toggleMarkup({ start: '__' })
+    }
 
-    this.cm.setOption('extraKeys', keyBindings)
+    cm.setOption('extraKeys', keyBindings)
 
     // Handle cursor movement
 
-    this.cm.on('cursorActivity', c => {
-      this.positionSync(c)
+    cm.on('cursorActivity', (activeEditor: CodeMirror.Editor) => {
+      this.positionSync(activeEditor)
     })
 
     // Render initial preview
-    this.processContent(this.$store.get('editor/content'))
+    this.processContent(wikiStore.editor.content)
 
     onEditorInsert(this.handleEditorInsert)
 
@@ -487,12 +483,15 @@ export default {
     onEditorSaveConflict(this.handleEditorSaveConflict)
     onEditorContentOverwrite(this.handleEditorContentOverwrite)
   },
-  beforeDestroy() {
+  beforeUnmount() {
     offEditorInsert(this.handleEditorInsert)
     offEditorSaveConflict(this.handleEditorSaveConflict)
     offEditorContentOverwrite(this.handleEditorContentOverwrite)
+    this.onCmInput.cancel()
+    this.cm?.toTextArea()
+    this.cm = null
   }
-}
+})
 </script>
 
 <style lang='scss'>

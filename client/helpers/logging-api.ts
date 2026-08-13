@@ -1,3 +1,5 @@
+import { isRecord } from './type-guards'
+
 type JsonHeaders = {
   get: (name: string) => string | null
 }
@@ -10,16 +12,23 @@ type JsonResponse = {
 
 type FetchImpl = (url: string, options: Record<string, unknown>) => Promise<JsonResponse>
 
-type LoggerConfigValue = Record<string, unknown> & {
+export type LoggerConfigScalar = string | number | boolean | null
+
+export type LoggerConfigValue = {
+  type?: string
+  title?: string
+  hint?: string
+  enum?: Array<string | number>
   order?: number
+  value: LoggerConfigScalar
 }
 
-type LoggerConfig = {
+export type LoggerConfig = {
   key: string
   value: LoggerConfigValue
 }
 
-type Logger = {
+export type Logger = {
   isEnabled: boolean
   key: string
   title: string
@@ -28,6 +37,10 @@ type Logger = {
   website: string
   level: string
   config: LoggerConfig[]
+}
+
+export type LoggerUpdate = Pick<Logger, 'isEnabled' | 'key' | 'level'> & {
+  config: Array<Pick<LoggerConfig, 'key'> & { value: string }>
 }
 
 type LoggingSaveResponse = {
@@ -61,24 +74,26 @@ async function parseJsonResponse (response: JsonResponse, fallbackMessage: strin
 }
 
 function normalizeLoggerConfig (row: unknown, fallbackMessage: string): LoggerConfig {
-  if (!row || typeof row !== 'object' || Array.isArray(row) || typeof (row as { key?: unknown }).key !== 'string' || typeof (row as { value?: unknown }).value !== 'string') {
+  if (!isRecord(row) || typeof row.key !== 'string' || typeof row.value !== 'string') {
     throw new Error(fallbackMessage)
   }
 
   let value: unknown
   try {
-    value = JSON.parse((row as { value: string }).value)
+    value = JSON.parse(row.value)
   } catch (err) {
+    throw new Error(fallbackMessage, { cause: err })
+  }
+
+  if (!isRecord(value)) {
     throw new Error(fallbackMessage)
   }
 
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    throw new Error(fallbackMessage)
-  }
 
+  const normalizedValue = value as LoggerConfigValue
   return {
-    key: (row as { key: string }).key,
-    value: value as LoggerConfigValue
+    key: row.key,
+    value: normalizedValue
   }
 }
 
@@ -105,8 +120,8 @@ function normalizeLogger (row: unknown, fallbackMessage: string): Logger {
     website: logger.website as string,
     level: logger.level as string,
     config: logger.config.map(cfg => normalizeLoggerConfig(cfg, fallbackMessage)).sort((a, b) => {
-      const aOrder = Number.isFinite(a.value.order) ? a.value.order! : Number.MAX_SAFE_INTEGER
-      const bOrder = Number.isFinite(b.value.order) ? b.value.order! : Number.MAX_SAFE_INTEGER
+      const aOrder = typeof a.value.order === 'number' ? a.value.order : Number.MAX_SAFE_INTEGER
+      const bOrder = typeof b.value.order === 'number' ? b.value.order : Number.MAX_SAFE_INTEGER
       return aOrder - bOrder
     })
   }
@@ -141,7 +156,7 @@ function normalizeLoggingSavePayload (payload: unknown, fallbackMessage: string)
   }
 }
 
-export async function saveLoggingLoggers (fetchImpl: FetchImpl, loggers: unknown[], fallbackMessage = 'Logging loggers update failed'): Promise<LoggingSaveResponse> {
+export async function saveLoggingLoggers (fetchImpl: FetchImpl, loggers: LoggerUpdate[], fallbackMessage = 'Logging loggers update failed'): Promise<LoggingSaveResponse> {
   const response = await fetchImpl('/_api/logging/loggers', {
     method: 'POST',
     credentials: 'same-origin',

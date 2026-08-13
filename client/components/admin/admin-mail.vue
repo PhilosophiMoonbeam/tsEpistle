@@ -1,7 +1,7 @@
 <template lang='pug'>
   v-container(fluid, grid-list-lg)
-    v-layout(row, wrap)
-      v-flex(xs12)
+    v-row()
+      v-col(cols='12')
         .admin-header
           img.animated.fadeInUp(src='/_assets/svg/icon-new-post.svg', alt='Mail', style='width: 80px;')
           .admin-header-title
@@ -12,8 +12,8 @@
             v-icon(left) mdi-check
             span {{$t('common:actions.apply')}}
         v-form.pt-3
-          v-layout(row wrap)
-            v-flex(lg6 xs12)
+          v-row
+            v-col(lg='6' cols='12')
               v-form
                 v-card.animated.fadeInUp
                   v-toolbar(color='primary', dark, dense, flat)
@@ -102,12 +102,12 @@
                       type='password'
                       )
 
-            v-flex(lg6 xs12)
+            v-col(lg='6' cols='12')
               v-card.animated.fadeInUp.wait-p2s
                 v-form
                   v-toolbar(color='primary', dark, dense, flat)
                     v-toolbar-title.subtitle-1 {{ $t('admin:mail.dkim') }}
-                  v-card-info
+                  div.v-card-info
                     span {{ $t('admin:mail.dkimHint') }}
                   .pa-4
                     v-switch(
@@ -157,7 +157,7 @@
                       prepend-icon='mdi-email-outline'
                       :disabled='testLoading'
                       )
-                  v-card-chin
+                  div.v-card-chin
                     v-spacer
                     v-btn.px-4(color='teal', dark, @click='sendTest', :loading='testLoading')
                       v-icon(left) mdi-send
@@ -165,10 +165,11 @@
 
 </template>
 
-<script>
+<script lang='ts'>
 import _ from 'lodash'
 
 import { fetchMailConfig, saveMailConfig, sendMailTest } from '../../helpers/mail-api'
+import { wikiStore } from '@/store/index.ts'
 
 export default {
   data() {
@@ -195,7 +196,7 @@ export default {
   methods: {
     async save () {
       try {
-        this.$store.commit(`loadingStart`, 'admin-mail-update')
+        wikiStore.startLoading('admin-mail-update')
         await saveMailConfig(window.fetch.bind(window), {
           senderName: this.config.senderName || '',
           senderEmail: this.config.senderEmail || '',
@@ -211,41 +212,41 @@ export default {
           dkimKeySelector: this.config.dkimKeySelector || '',
           dkimPrivateKey: this.config.dkimPrivateKey || ''
         }, 'Mail configuration update failed')
-        this.$store.commit('showNotification', {
+        wikiStore.showNotification({
           style: 'success',
           message: this.$t('admin:mail.saveSuccess'),
           icon: 'check'
         })
       } catch (err) {
-        this.$store.commit('pushGraphError', err)
+        wikiStore.showError(err)
       } finally {
-        this.$store.commit(`loadingStop`, 'admin-mail-update')
+        wikiStore.stopLoading('admin-mail-update')
       }
     },
     async loadConfig () {
       try {
-        this.$store.commit(`loadingStart`, 'admin-mail-refresh')
+        wikiStore.startLoading('admin-mail-refresh')
         this.config = _.cloneDeep(await fetchMailConfig(window.fetch.bind(window)))
       } catch (err) {
-        this.$store.commit('pushGraphError', err)
+        wikiStore.showError(err)
       } finally {
-        this.$store.commit(`loadingStop`, 'admin-mail-refresh')
+        wikiStore.stopLoading('admin-mail-refresh')
       }
     },
     async sendTest () {
       try {
-        this.$store.commit(`loadingStart`, 'admin-mail-test')
+        wikiStore.startLoading('admin-mail-test')
         await sendMailTest(window.fetch.bind(window), this.testEmail, 'An unexpected error occurred.')
         this.testEmail = ''
-        this.$store.commit('showNotification', {
+        wikiStore.showNotification({
           style: 'success',
           message: this.$t('admin:mail.sendTestSuccess'),
           icon: 'check'
         })
       } catch (err) {
-        this.$store.commit('pushGraphError', err)
+        wikiStore.showError(err)
       } finally {
-        this.$store.commit(`loadingStop`, 'admin-mail-test')
+        wikiStore.stopLoading('admin-mail-test')
       }
     }
   },

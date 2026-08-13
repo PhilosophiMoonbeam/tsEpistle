@@ -10,7 +10,7 @@
       hide-details
       v-model='newcomment'
       color='blue-grey darken-2'
-      :background-color='$vuetify.theme.dark ? `grey darken-5` : `white`'
+      :background-color='$vuetify.theme.current.dark ? `grey darken-5` : `white`'
       v-if='permissions.write'
       :aria-label='$t(`common:comments.fieldContent`)'
     )
@@ -19,7 +19,7 @@
         v-text-field(
           outlined
           color='blue-grey darken-2'
-          :background-color='$vuetify.theme.dark ? `grey darken-5` : `white`'
+          :background-color='$vuetify.theme.current.dark ? `grey darken-5` : `white`'
           :placeholder='$t(`common:comments.fieldName`)'
           hide-details
           dense
@@ -31,7 +31,7 @@
         v-text-field(
           outlined
           color='blue-grey darken-2'
-          :background-color='$vuetify.theme.dark ? `grey darken-5` : `white`'
+          :background-color='$vuetify.theme.current.dark ? `grey darken-5` : `white`'
           :placeholder='$t(`common:comments.fieldEmail`)'
           hide-details
           type='email'
@@ -98,7 +98,7 @@
                 hide-details
                 v-model='commentEditContent'
                 color='blue-grey darken-2'
-                :background-color='$vuetify.theme.dark ? `grey darken-5` : `white`'
+                :background-color='$vuetify.theme.current.dark ? `grey darken-5` : `white`'
               )
               .d-flex.align-center.pt-3
                 v-spacer
@@ -127,48 +127,87 @@
         v-card-text.pt-5
           span {{$t('common:comments.deleteWarn')}}
           .caption: strong {{$t('common:comments.deletePermanentWarn')}}
-        v-card-chin
+        div.v-card-chin
           v-spacer
           v-btn(text, @click='deleteCommentDialogShown = false') {{$t('common:actions.cancel')}}
           v-btn(color='red', dark, @click='deleteComment') {{$t('common:actions.delete')}}
 </template>
 
-<script>
+<script lang='ts'>
+import { defineComponent } from 'vue'
+import { useGoTo } from 'vuetify'
 import { createComment, deleteComment, fetchComment, fetchComments, updateComment } from '../helpers/comments-api'
-import { get } from 'vuex-pathify'
+import type { CommentRow } from '../helpers/comments-api'
+import { wikiStore } from '@/store/index.ts'
 import validate from 'validate.js'
-import _ from 'lodash'
-import { showNotification } from '../helpers/root-ui-store'
+import { getErrorMessage, showNotification } from '../helpers/root-ui-store'
 
-export default {
+type CommentWithInitials = CommentRow & {
+  initials: string
+}
+
+type CommentPermissions = {
+  write: boolean
+  manage: boolean
+}
+
+type CommentValidationRule = {
+  presence: {
+    allowEmpty: boolean
+  }
+  length?: {
+    minimum: number
+    maximum?: number
+  }
+  email?: boolean
+}
+
+type CommentValidationRules = {
+  comment: CommentValidationRule
+  name?: CommentValidationRule
+  email?: CommentValidationRule
+}
+
+type CommentScrollOptions = {
+  duration: number
+  offset: number
+  easing: 'easeInOutCubic'
+}
+
+export default defineComponent({
+  setup () {
+    return {
+      goTo: useGoTo()
+    }
+  },
   data () {
     return {
       newcomment: '',
       isLoading: true,
       hasLoadedOnce: false,
-      comments: [],
+      comments: [] as CommentWithInitials[],
       guestName: '',
       guestEmail: '',
-      commentToDelete: {},
+      commentToDelete: null as CommentWithInitials | null,
       commentEditId: 0,
-      commentEditContent: null,
+      commentEditContent: null as string | null,
       deleteCommentDialogShown: false,
       isBusy: false,
       scrollOpts: {
         duration: 1500,
         offset: 0,
         easing: 'easeInOutCubic'
-      }
+      } as CommentScrollOptions
     }
   },
   computed: {
-    pageId: get('page/id'),
-    permissions: get('page/effectivePermissions@comments'),
-    isAuthenticated: get('user/authenticated'),
-    userDisplayName: get('user/name')
+    pageId(): number { return wikiStore.page.id },
+    permissions(): CommentPermissions { return wikiStore.page.effectivePermissions.comments },
+    isAuthenticated(): boolean { return wikiStore.user.authenticated },
+    userDisplayName(): string { return wikiStore.user.name }
   },
   methods: {
-    onIntersect (entries, observer, isIntersecting) {
+    onIntersect (isIntersecting: boolean, _entries: IntersectionObserverEntry[], _observer: IntersectionObserver): void {
       if (isIntersecting) {
         this.fetch(true)
       }
@@ -178,24 +217,24 @@ export default {
       try {
         const comments = await fetchComments(
           window.fetch.bind(window),
-          this.$store.get('page/locale'),
-          this.$store.get('page/path')
+          wikiStore.page.locale,
+          wikiStore.page.path
         )
-        this.comments = comments.map(c => {
-          const nameParts = c.authorName.toUpperCase().split(' ')
-          let initials = _.head(nameParts).charAt(0)
-          if (nameParts.length > 1) {
-            initials += _.last(nameParts).charAt(0)
+        this.comments = comments.map(comment => {
+          const nameParts = comment.authorName.toUpperCase().split(' ')
+          const firstInitial = nameParts[0].charAt(0)
+          const lastInitial = nameParts.length > 1 ? nameParts[nameParts.length - 1].charAt(0) : ''
+          return {
+            ...comment,
+            initials: firstInitial + lastInitial
           }
-          c.initials = initials
-          return c
         })
       } catch (err) {
         console.warn(err)
         if (!silent) {
-          showNotification(this.$store, {
+          showNotification(wikiStore, {
             style: 'red',
-            message: err.message,
+            message: getErrorMessage(err),
             icon: 'alert'
           })
         }
@@ -207,7 +246,7 @@ export default {
      * Post New Comment
      */
     async postComment () {
-      let rules = {
+      const rules: CommentValidationRules = {
         comment: {
           presence: {
             allowEmpty: false
@@ -238,10 +277,10 @@ export default {
         comment: this.newcomment,
         name: this.guestName,
         email: this.guestEmail
-      }, rules, { format: 'flat' })
+      }, rules, { format: 'flat' }) as string[] | undefined
 
       if (validationResults) {
-        this.$store.commit('showNotification', {
+        wikiStore.showNotification({
           style: 'red',
           message: validationResults[0],
           icon: 'alert'
@@ -257,7 +296,7 @@ export default {
           guestName: this.guestName,
           guestEmail: this.guestEmail
         })
-        this.$store.commit('showNotification', {
+        wikiStore.showNotification({
           style: 'success',
           message: this.$t('common:comments.postSuccess'),
           icon: 'check'
@@ -265,12 +304,12 @@ export default {
         this.newcomment = ''
         await this.fetch()
         this.$nextTick(() => {
-          this.$vuetify.goTo(`#comment-post-id-${response.id}`, this.scrollOpts)
+          this.goTo(`#comment-post-id-${response.id}`, this.scrollOpts)
         })
       } catch (err) {
-        this.$store.commit('showNotification', {
+        wikiStore.showNotification({
           style: 'red',
-          message: err.message,
+          message: getErrorMessage(err),
           icon: 'alert'
         })
       }
@@ -278,23 +317,23 @@ export default {
     /**
      * Show Comment Editing Form
      */
-    async editComment (cm) {
-      this.$store.commit(`loadingStart`, 'comments-edit')
+    async editComment (cm: CommentWithInitials) {
+      wikiStore.startLoading('comments-edit')
       this.isBusy = true
       try {
         const comment = await fetchComment(window.fetch.bind(window), cm.id)
         this.commentEditContent = comment.content
       } catch (err) {
         console.warn(err)
-        this.$store.commit('showNotification', {
+        wikiStore.showNotification({
           style: 'red',
-          message: err.message,
+          message: getErrorMessage(err),
           icon: 'alert'
         })
       }
       this.commentEditId = cm.id
       this.isBusy = false
-      this.$store.commit(`loadingStop`, 'comments-edit')
+      wikiStore.stopLoading('comments-edit')
     },
     /**
      * Cancel Comment Edit
@@ -307,42 +346,44 @@ export default {
      * Update Comment with new content
      */
     async updateComment () {
-      this.$store.commit(`loadingStart`, 'comments-edit')
+      wikiStore.startLoading('comments-edit')
       this.isBusy = true
       try {
-        if (this.commentEditContent.length < 2) {
+        const content = this.commentEditContent
+        if (content === null || content.length < 2) {
           throw new Error(this.$t('common:comments.contentMissingError'))
         }
         const response = await updateComment(
           window.fetch.bind(window),
           this.commentEditId,
-          this.commentEditContent
+          content
         )
-        this.$store.commit('showNotification', {
+        wikiStore.showNotification({
           style: 'success',
           message: this.$t('common:comments.updateSuccess'),
           icon: 'check'
         })
 
-        const cm = _.find(this.comments, ['id', this.commentEditId])
+        const cm = this.comments.find(comment => comment.id === this.commentEditId)
+        if (!cm) throw new Error('Updated comment is missing from the current comments.')
         cm.render = response.render
         cm.updatedAt = (new Date()).toISOString()
         this.editCommentCancel()
       } catch (err) {
         console.warn(err)
-        this.$store.commit('showNotification', {
+        wikiStore.showNotification({
           style: 'red',
-          message: err.message,
+          message: getErrorMessage(err),
           icon: 'alert'
         })
       }
       this.isBusy = false
-      this.$store.commit(`loadingStop`, 'comments-edit')
+      wikiStore.stopLoading('comments-edit')
     },
     /**
      * Show Delete Comment Confirmation Dialog
      */
-    deleteCommentConfirm (cm) {
+    deleteCommentConfirm (cm: CommentWithInitials) {
       this.commentToDelete = cm
       this.deleteCommentDialogShown = true
     },
@@ -350,30 +391,32 @@ export default {
      * Delete Comment
      */
     async deleteComment () {
-      this.$store.commit(`loadingStart`, 'comments-delete')
+      const commentToDelete = this.commentToDelete
+      if (!commentToDelete) return
+      wikiStore.startLoading('comments-delete')
       this.isBusy = true
       this.deleteCommentDialogShown = false
 
       try {
-        await deleteComment(window.fetch.bind(window), this.commentToDelete.id)
-        this.$store.commit('showNotification', {
+        await deleteComment(window.fetch.bind(window), commentToDelete.id)
+        wikiStore.showNotification({
           style: 'success',
           message: this.$t('common:comments.deleteSuccess'),
           icon: 'check'
         })
-        this.comments = _.reject(this.comments, ['id', this.commentToDelete.id])
+        this.comments = this.comments.filter(comment => comment.id !== commentToDelete.id)
       } catch (err) {
-        this.$store.commit('showNotification', {
+        wikiStore.showNotification({
           style: 'red',
-          message: err.message,
+          message: getErrorMessage(err),
           icon: 'alert'
         })
       }
       this.isBusy = false
-      this.$store.commit(`loadingStop`, 'comments-delete')
+      wikiStore.stopLoading('comments-delete')
     }
   }
-}
+})
 </script>
 
 <style lang="scss">

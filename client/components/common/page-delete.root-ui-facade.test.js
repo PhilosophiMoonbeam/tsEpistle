@@ -1,8 +1,8 @@
-const fs = require('fs')
-const path = require('path')
+import fs from 'node:fs'
+import path from 'node:path'
 
 const extractScript = (source) => {
-  const match = source.match(/<script>\s*([\s\S]*?)\s*<\/script>/)
+  const match = source.match(/<script(?:\s+lang=["']ts["'])?>\s*([\s\S]*?)\s*<\/script>/)
   return match && match[1]
 }
 
@@ -57,18 +57,20 @@ describe('page-delete root UI facade migration guard', () => {
   const script = extractScript(source)
   const deletePage = script && extractMethod(script, 'deletePage')
 
-  test('imports the root UI facade helpers used by deletePage', () => {
-    expect(script).toMatch(/import\s+\{\s*loadingStart\s*,\s*loadingStop\s*,\s*pushGraphError\s*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/root-ui-store['"]/)
+  test('imports the typed component and store singleton used by deletePage', () => {
+    expect(source).toContain("<script lang='ts'>")
+    expect(script).toContain("import { defineComponent } from 'vue'")
+    expect(script).toContain("import { wikiStore } from '@/store/index.ts'")
     expect(script).toContain("import { deletePage as deletePageById } from '../../helpers/pages-api'")
     expect(script).not.toContain('common-pages-mutation-delete.gql')
     expect(script).not.toContain('deletePageMutation')
   })
 
-  test('deletePage routes loading and GraphQL errors through the facade', () => {
+  test('deletePage routes loading and errors through the store singleton', () => {
     expect(deletePage).not.toBeNull()
-    expect(deletePage).toMatch(/loadingStart\s*\(\s*this\.\$store\s*,\s*['"]page-delete['"]\s*\)/)
-    expect(deletePage).toMatch(/pushGraphError\s*\(\s*this\.\$store\s*,\s*err\s*\)/)
-    expect(deletePage).toMatch(/loadingStop\s*\(\s*this\.\$store\s*,\s*['"]page-delete['"]\s*\)/)
+    expect(deletePage).toMatch(/wikiStore\.startLoading\s*\(\s*['"]page-delete['"]\s*\)/)
+    expect(deletePage).toMatch(/wikiStore\.showError\s*\(\s*err\s*\)/)
+    expect(deletePage).toMatch(/wikiStore\.stopLoading\s*\(\s*['"]page-delete['"]\s*\)/)
     expect(deletePage).not.toMatch(/this\.\$store\.commit\([\s\S]{0,200}(?:['"]page-delete['"]|['"]pushGraphError['"])/)
   })
 
@@ -87,11 +89,11 @@ describe('page-delete root UI facade migration guard', () => {
     expect(deletePage).toContain('this.loading = false')
   })
 
-  test('keeps the dialog template and page state getters out of this slice', () => {
+  test('keeps the dialog template and typed page state getters out of this slice', () => {
     expect(source).toContain("v-btn.px-4(color='red darken-2', @click='deletePage', :loading='loading').white--text")
-    expect(script).toContain("pageTitle: get('page/title')")
-    expect(script).toContain("pagePath: get('page/path')")
-    expect(script).toContain("pageLocale: get('page/locale')")
-    expect(script).toContain("pageId: get('page/id')")
+    expect(script).toContain('pageTitle(): string { return wikiStore.page.title }')
+    expect(script).toContain('pagePath(): string { return wikiStore.page.path }')
+    expect(script).toContain('pageLocale(): string { return wikiStore.page.locale }')
+    expect(script).toContain('pageId(): number { return wikiStore.page.id }')
   })
 })

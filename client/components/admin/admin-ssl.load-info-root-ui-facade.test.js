@@ -1,8 +1,8 @@
-const fs = require('fs')
-const path = require('path')
+import fs from 'node:fs'
+import path from 'node:path'
 
 const extractScript = (source) => {
-  const match = source.match(/<script>\s*([\s\S]*?)\s*<\/script>/)
+  const match = source.match(/<script(?:\s+lang=["']ts["'])?>\s*([\s\S]*?)\s*<\/script>/)
   return match && match[1]
 }
 
@@ -75,6 +75,8 @@ describe('admin-ssl loadInfo root UI facade migration guard', () => {
 
   test('admin-ssl.vue imports the root UI facades required by SSL methods', () => {
     expect(script).not.toBeNull()
+    expect(source).toContain("<script lang='ts'>")
+    expect(script).toContain("import { wikiStore } from '@/store/index.ts'")
     expect(rootUiImportMatch).not.toBeNull()
 
     expect(script).toMatch(
@@ -88,7 +90,7 @@ describe('admin-ssl loadInfo root UI facade migration guard', () => {
   test('loadInfo() uses loading and error facades while preserving SSL fetch/reset/rethrow/cleanup behavior', () => {
     expect(loadInfo).not.toBeNull()
 
-    expect(loadInfo).toMatch(/async\s+loadInfo\s*\(\s*\{\s*notifyError\s*=\s*true\s*\}\s*=\s*\{\s*\}\s*\)\s*\{\s*loadingStart\s*\(\s*this\.\$store\s*,\s*['"]admin-ssl-refresh['"]\s*\)\s*try\s*\{\s*this\.info\s*=\s*await\s+fetchSystemSsl\s*\(\s*window\.fetch\.bind\(\s*window\s*\)\s*,\s*['"]SSL status response is invalid['"]\s*\)\s*\}\s*catch\s*\(\s*err\s*\)\s*\{\s*this\.info\s*=\s*makeDefaultSslInfo\s*\(\s*\)\s*if\s*\(\s*notifyError\s*\)\s*\{\s*pushGraphError\s*\(\s*this\.\$store\s*,\s*err\s*\)\s*\}\s*throw\s+err\s*\}\s*finally\s*\{\s*loadingStop\s*\(\s*this\.\$store\s*,\s*['"]admin-ssl-refresh['"]\s*\)\s*\}\s*\}/)
+    expect(loadInfo).toMatch(/async\s+loadInfo\s*\(\s*\{\s*notifyError\s*=\s*true\s*\}\s*=\s*\{\s*\}\s*\)\s*\{\s*loadingStart\s*\(\s*wikiStore\s*,\s*['"]admin-ssl-refresh['"]\s*\)\s*try\s*\{\s*this\.info\s*=\s*await\s+fetchSystemSsl\s*\(\s*window\.fetch\.bind\(\s*window\s*\)\s*,\s*['"]SSL status response is invalid['"]\s*\)\s*\}\s*catch\s*\(\s*err\s*\)\s*\{\s*this\.info\s*=\s*makeDefaultSslInfo\s*\(\s*\)\s*if\s*\(\s*notifyError\s*\)\s*\{\s*pushGraphError\s*\(\s*wikiStore\s*,\s*err\s*\)\s*\}\s*throw\s+err\s*\}\s*finally\s*\{\s*loadingStop\s*\(\s*wikiStore\s*,\s*['"]admin-ssl-refresh['"]\s*\)\s*\}\s*\}/)
     expect(loadInfo).not.toMatch(directRootUiCommit)
 
     expect(loadInfo.match(/\bloadingStart\s*\(/g) || []).toHaveLength(1)
@@ -103,21 +105,21 @@ describe('admin-ssl loadInfo root UI facade migration guard', () => {
     expect(script).not.toMatch(/graphql-tag/)
     expect(script).not.toMatch(/this\.\$apollo|gql`|setHTTPSRedirection|renewHTTPSCertificate/)
 
-    expect(toggleRedir).toMatch(/loadingStart\s*\(\s*this\.\$store\s*,\s*['"]admin-ssl-toggleRedirection['"]\s*\)/)
+    expect(toggleRedir).toMatch(/loadingStart\s*\(\s*wikiStore\s*,\s*['"]admin-ssl-toggleRedirection['"]\s*\)/)
     expect(toggleRedir).toMatch(/updateSystemSslRedirection\s*\(\s*window\.fetch\.bind\(\s*window\s*\)\s*,\s*_.get\(\s*this\.info\s*,\s*['"]httpRedirection['"]\s*,\s*false\s*\)\s*\)/)
-    expect(toggleRedir).toMatch(/showNotification\s*\(\s*this\.\$store\s*,\s*\{[\s\S]*?admin:ssl\.httpPortRedirectSaveSuccess[\s\S]*?\}\s*\)/)
-    expect(toggleRedir).toMatch(/pushGraphError\s*\(\s*this\.\$store\s*,\s*err\s*\)/)
+    expect(toggleRedir).toMatch(/showNotification\s*\(\s*wikiStore\s*,\s*\{[\s\S]*?admin:ssl\.httpPortRedirectSaveSuccess[\s\S]*?\}\s*\)/)
+    expect(toggleRedir).toMatch(/pushGraphError\s*\(\s*wikiStore\s*,\s*err\s*\)/)
     expect(toggleRedir).toMatch(/this\.info\.httpRedirection\s*=\s*!this\.info\.httpRedirection[\s\S]*catch\s*\(\s*err\s*\)\s*\{\s*this\.info\.httpRedirection\s*=\s*!this\.info\.httpRedirection/)
-    expect(toggleRedir).toMatch(/loadingStop\s*\(\s*this\.\$store\s*,\s*['"]admin-ssl-toggleRedirection['"]\s*\)/)
+    expect(toggleRedir).toMatch(/loadingStop\s*\(\s*wikiStore\s*,\s*['"]admin-ssl-toggleRedirection['"]\s*\)/)
     expect(toggleRedir).toMatch(/this\.loadingRedir\s*=\s*false/)
     expect(toggleRedir).not.toMatch(directRootUiCommit)
     expect(toggleRedir).not.toMatch(/this\.\$store\.commit\s*\(/)
 
-    expect(renewCertificate).toMatch(/loadingStart\s*\(\s*this\.\$store\s*,\s*['"]admin-ssl-renew['"]\s*\)/)
+    expect(renewCertificate).toMatch(/loadingStart\s*\(\s*wikiStore\s*,\s*['"]admin-ssl-renew['"]\s*\)/)
     expect(renewCertificate).toMatch(/renewSystemSslCertificate\s*\(\s*window\.fetch\.bind\(\s*window\s*\)\s*\)/)
-    expect(renewCertificate).toMatch(/showNotification\s*\(\s*this\.\$store\s*,\s*\{[\s\S]*?admin:ssl\.renewCertificateSuccess[\s\S]*?\}\s*\)/)
-    expect(renewCertificate).toMatch(/pushGraphError\s*\(\s*this\.\$store\s*,\s*err\s*\)/)
-    expect(renewCertificate).toMatch(/loadingStop\s*\(\s*this\.\$store\s*,\s*['"]admin-ssl-renew['"]\s*\)/)
+    expect(renewCertificate).toMatch(/showNotification\s*\(\s*wikiStore\s*,\s*\{[\s\S]*?admin:ssl\.renewCertificateSuccess[\s\S]*?\}\s*\)/)
+    expect(renewCertificate).toMatch(/pushGraphError\s*\(\s*wikiStore\s*,\s*err\s*\)/)
+    expect(renewCertificate).toMatch(/loadingStop\s*\(\s*wikiStore\s*,\s*['"]admin-ssl-renew['"]\s*\)/)
     expect(renewCertificate).toMatch(/this\.loadingRenew\s*=\s*false/)
     expect(renewCertificate).not.toMatch(directRootUiCommit)
     expect(renewCertificate).not.toMatch(/this\.\$store\.commit\s*\(/)

@@ -1,35 +1,38 @@
-jest.mock('express', () => {
+vi.mock('express', () => {
   const routers = []
 
-  return {
+  const expressMock = {
     Router: () => {
       const router = {
-        get: jest.fn(),
-        put: jest.fn()
+        get: vi.fn(),
+        put: vi.fn()
       }
       routers.push(router)
       return router
     },
     __routers: routers
   }
+
+  return { default: expressMock, ...expressMock }
 })
+
+import * as express from 'express'
 
 describe('controllers/api site endpoints', () => {
   beforeEach(() => {
-    jest.resetModules()
-    const express = require('express')
+    vi.resetModules()
     express.__routers.length = 0
 
     global.WIKI = {
       auth: {
-        checkAccess: jest.fn(() => true)
+        checkAccess: vi.fn(() => true)
       },
       app: {
-        enable: jest.fn(),
-        disable: jest.fn()
+        enable: vi.fn(),
+        disable: vi.fn()
       },
       configSvc: {
-        saveToDb: jest.fn().mockResolvedValue(undefined)
+        saveToDb: vi.fn().mockResolvedValue(undefined)
       },
       config: {
         host: 'https://wiki.example.com',
@@ -89,36 +92,35 @@ describe('controllers/api site endpoints', () => {
     }
   })
 
-  const loadRouter = () => {
-    const express = require('express')
-    expect(() => require('../../controllers/api/site')).not.toThrow()
+  const loadRouter = async () => {
+    await expect(import('../../controllers/api/site.ts')).resolves.toBeDefined()
     return express.__routers[0]
   }
 
-  const loadGetConfigHandler = () => {
-    const router = loadRouter()
+  const loadGetConfigHandler = async () => {
+    const router = await loadRouter()
     return router.get.mock.calls.find(([path]) => path === '/config')[1]
   }
 
-  const loadPutConfigHandler = () => {
-    const router = loadRouter()
+  const loadPutConfigHandler = async () => {
+    const router = await loadRouter()
     return router.put.mock.calls.find(([path]) => path === '/config')[1]
   }
 
-  it('registers site config routes', () => {
-    const router = loadRouter()
+  it('registers site config routes', async () => {
+    const router = await loadRouter()
 
     expect(router.get.mock.calls.map(([path]) => path)).toEqual(['/config'])
     expect(router.put.mock.calls.map(([path]) => path)).toEqual(['/config'])
   })
 
   it.each([
-    ['fetch', () => loadGetConfigHandler(), { body: {} }],
-    ['save', () => loadPutConfigHandler(), { body: {} }]
+    ['fetch', async () => await loadGetConfigHandler(), { body: {} }],
+    ['save', async () => await loadPutConfigHandler(), { body: {} }]
   ])('rejects forbidden site config %s requests with JSON', async (label, getHandler, req) => {
-    const handler = getHandler()
+    const handler = await getHandler()
     global.WIKI.auth.checkAccess.mockReturnValue(false)
-    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
 
     await handler({ user: {}, ...req }, res)
 
@@ -128,8 +130,8 @@ describe('controllers/api site endpoints', () => {
   })
 
   it('returns the flattened site config shape used by GraphQL clients', async () => {
-    const handler = loadGetConfigHandler()
-    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+    const handler = await loadGetConfigHandler()
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
 
     await handler({ user: {}, body: {} }, res)
 
@@ -164,8 +166,8 @@ describe('controllers/api site endpoints', () => {
   })
 
   it('updates site config with GraphQL-compatible normalization and save side effects', async () => {
-    const handler = loadPutConfigHandler()
-    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+    const handler = await loadPutConfigHandler()
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
 
     await handler({
       user: {},
@@ -229,8 +231,8 @@ describe('controllers/api site endpoints', () => {
   })
 
   it('disables trust proxy when the saved config sets securityTrustProxy false', async () => {
-    const handler = loadPutConfigHandler()
-    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+    const handler = await loadPutConfigHandler()
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
 
     await handler({ user: {}, body: { securityTrustProxy: false } }, res)
 
@@ -238,20 +240,20 @@ describe('controllers/api site endpoints', () => {
   })
 
   it('rejects invalid save payloads with JSON', async () => {
-    const handler = loadPutConfigHandler()
-    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+    const handler = await loadPutConfigHandler()
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
 
     await handler({ user: {}, body: [] }, res)
 
     expect(global.WIKI.configSvc.saveToDb).not.toHaveBeenCalled()
     expect(res.status).toHaveBeenCalledWith(400)
-    expect(res.json).toHaveBeenCalledWith({ error: 'Site configuration payload must be an object.' })
+    expect(res.json).toHaveBeenCalledWith({ error: 'Site configuration must be an object' })
   })
 
   it('returns JSON errors from save failures', async () => {
-    const handler = loadPutConfigHandler()
+    const handler = await loadPutConfigHandler()
     global.WIKI.configSvc.saveToDb.mockRejectedValue(new Error('save failed'))
-    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() }
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
 
     await handler({ user: {}, body: {} }, res)
 

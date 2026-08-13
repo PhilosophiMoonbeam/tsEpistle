@@ -17,11 +17,11 @@
         span Proceed
 </template>
 
-<script>
+<script lang='ts'>
 import _ from 'lodash'
 import Cookies from 'js-cookie'
 import { regenerateAuthCertificates, resetGuestUser } from '../../helpers/auth-api'
-import { loadingStart, loadingStop, showNotification, pushGraphError } from '../../helpers/root-ui-store'
+import { wikiStore } from '@/store/index.ts'
 
 export default {
   data: () => {
@@ -32,11 +32,11 @@ export default {
   methods: {
     async regenCerts() {
       this.loading = true
-      loadingStart(this.$store, 'admin-utilities-auth-regencerts')
+      wikiStore.startLoading('admin-utilities-auth-regencerts')
 
       try {
         await regenerateAuthCertificates(window.fetch.bind(window))
-        showNotification(this.$store, {
+        wikiStore.showNotification({
           message: 'New Certificates generated successfully.',
           style: 'success',
           icon: 'check'
@@ -46,28 +46,28 @@ export default {
           window.location.assign('/login')
         }, 1000)
       } catch (err) {
-        pushGraphError(this.$store, err)
+        wikiStore.showError(err)
       }
 
-      loadingStop(this.$store, 'admin-utilities-auth-regencerts')
+      wikiStore.stopLoading('admin-utilities-auth-regencerts')
       this.loading = false
     },
     async resetGuest() {
       this.loading = true
-      loadingStart(this.$store, 'admin-utilities-auth-resetguest')
+      wikiStore.startLoading('admin-utilities-auth-resetguest')
 
       try {
         await resetGuestUser(window.fetch.bind(window))
-        showNotification(this.$store, {
+        wikiStore.showNotification({
           message: 'Guest user was reset successfully.',
           style: 'success',
           icon: 'check'
         })
       } catch (err) {
-        pushGraphError(this.$store, err)
+        wikiStore.showError(err)
       }
 
-      loadingStop(this.$store, 'admin-utilities-auth-resetguest')
+      wikiStore.stopLoading('admin-utilities-auth-resetguest')
       this.loading = false
     }
   }

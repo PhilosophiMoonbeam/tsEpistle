@@ -1,32 +1,33 @@
 <template lang='pug'>
-  v-app-bar.nav-header(color='black', dark, app, :clipped-left='!$vuetify.rtl', :clipped-right='$vuetify.rtl', fixed, flat, :extended='searchIsShown && $vuetify.breakpoint.smAndDown')
-    v-toolbar(color='deep-purple', flat, slot='extension', v-if='searchIsShown && $vuetify.breakpoint.smAndDown')
-      v-text-field(
-        ref='searchFieldMobile'
-        v-model='search'
-        clearable
-        background-color='deep-purple'
-        color='white'
-        :label='$t(`common:header.search`)'
-        single-line
-        solo
-        flat
-        hide-details
-        prepend-inner-icon='mdi-magnify'
-        :loading='searchIsLoading'
-        @keyup.enter='searchEnter'
-        autocomplete='off'
-      )
-    v-layout(row)
-      v-flex(xs5, md4)
-        v-toolbar.nav-header-inner(color='black', dark, flat, :class='$vuetify.rtl ? `pr-3` : `pl-3`')
+  v-app-bar.nav-header(color='black', dark, app, :clipped-left='!$vuetify.locale.isRtl', :clipped-right='$vuetify.locale.isRtl', fixed, flat, :extended='searchIsShown && $vuetify.display.smAndDown')
+    template(v-slot:extension v-if='searchIsShown && $vuetify.display.smAndDown')
+      v-toolbar(color='deep-purple', flat)
+        v-text-field(
+          ref='searchFieldMobile'
+          v-model='search'
+          clearable
+          background-color='deep-purple'
+          color='white'
+          :label='$t(`common:header.search`)'
+          single-line
+          solo
+          flat
+          hide-details
+          prepend-inner-icon='mdi-magnify'
+          :loading='searchIsLoading'
+          @keyup.enter='searchEnter'
+          autocomplete='off'
+        )
+    v-row
+      v-col(cols='5', md='4')
+        v-toolbar.nav-header-inner(color='black', dark, flat, :class='$vuetify.locale.isRtl ? `pr-3` : `pl-3`')
           v-avatar(tile, size='34', @click='goHome')
             v-img.org-logo(:src='logoUrl')
           //- v-menu(open-on-hover, offset-y, bottom, left, min-width='250', transition='slide-y-transition')
-          //-   template(v-slot:activator='{ on }')
-          //-     v-app-bar-nav-icon.btn-animate-app(v-on='on', :class='$vuetify.rtl ? `mx-0` : ``')
+          //-   template(v-slot:activator='{ props }')
+          //-     v-app-bar-nav-icon.btn-animate-app(v-bind='props', :class='$vuetify.locale.isRtl ? `mx-0` : ``')
           //-       v-icon mdi-menu
-          //-   v-list(nav, :light='!$vuetify.theme.dark', :dark='$vuetify.theme.dark', :class='$vuetify.theme.dark ? `grey darken-4` : ``')
+          //-   v-list(nav, :light='!$vuetify.theme.current.dark', :dark='$vuetify.theme.current.dark', :class='$vuetify.theme.current.dark ? `grey darken-4` : ``')
           //-     v-list-item.pl-4(href='/')
           //-       v-list-item-avatar(size='24'): v-icon(color='blue') mdi-home
           //-       v-list-item-title.body-2 {{$t('common:header.home')}}
@@ -43,15 +44,15 @@
           //-       v-list-item-content
           //-         v-list-item-title.body-2.grey--text.text--ligten-2 {{$t('common:header.imagesFiles')}}
           //-         v-list-item-subtitle.overline.grey--text.text--lighten-2 Coming soon
-          v-toolbar-title(:class='{ "mx-3": $vuetify.breakpoint.mdAndUp, "mx-1": $vuetify.breakpoint.smAndDown }')
+          v-toolbar-title(:class='{ "mx-3": $vuetify.display.mdAndUp, "mx-1": $vuetify.display.smAndDown }')
             span.subheading {{title}}
-      v-flex(md4, v-if='$vuetify.breakpoint.mdAndUp')
+      v-col(md='4', v-if='$vuetify.display.mdAndUp')
         v-toolbar.nav-header-inner(color='black', dark, flat)
           slot(name='mid')
             transition(name='navHeaderSearch', v-if='searchIsShown')
               v-text-field(
                 ref='searchField',
-                v-if='searchIsShown && $vuetify.breakpoint.mdAndUp',
+                v-if='searchIsShown && $vuetify.display.mdAndUp',
                 v-model='search',
                 color='white',
                 :label='$t(`common:header.search`)',
@@ -71,11 +72,11 @@
                 autocomplete='off'
               )
             v-tooltip(bottom)
-              template(v-slot:activator='{ on }')
-                v-btn.ml-2.mr-0(icon, v-on='on', href='/t', :aria-label='$t(`common:header.browseTags`)')
+              template(v-slot:activator='{ props }')
+                v-btn.ml-2.mr-0(icon, v-bind='props', href='/t', :aria-label='$t(`common:header.browseTags`)')
                   v-icon(color='grey') mdi-tag-multiple
               span {{$t('common:header.browseTags')}}
-      v-flex(xs7, md4)
+      v-col(cols='7', md='4')
         v-toolbar.nav-header-inner.pr-4(color='black', dark, flat)
           v-spacer
           .navHeaderLoading.mr-3
@@ -86,7 +87,7 @@
           //- (mobile) SEARCH TOGGLE
 
           v-btn(
-            v-if='!hideSearch && $vuetify.breakpoint.smAndDown'
+            v-if='!hideSearch && $vuetify.display.smAndDown'
             @click='searchToggle'
             icon
             )
@@ -96,14 +97,13 @@
 
           template(v-if='mode === `view` && locales.length > 0')
             v-menu(offset-y, bottom, transition='slide-y-transition', max-height='320px', min-width='210px', left)
-              template(v-slot:activator='{ on: menu, attrs }')
+              template(v-slot:activator='{ props: menuProps }')
                 v-tooltip(bottom)
-                  template(v-slot:activator='{ on: tooltip }')
+                  template(v-slot:activator='{ props: tooltipProps }')
                     v-btn(
                       icon
-                      v-bind='attrs'
-                      v-on='{ ...menu, ...tooltip }'
-                      :class='$vuetify.rtl ? `ml-3` : ``'
+                      v-bind='{ ...menuProps, ...tooltipProps }'
+                      :class='$vuetify.locale.isRtl ? `ml-3` : ``'
                       tile
                       height='64'
                       :aria-label='$t(`common:header.language`)'
@@ -113,7 +113,7 @@
               v-list(nav)
                 template(v-for='(lc, idx) of locales')
                   v-list-item(@click='changeLocale(lc)')
-                    v-list-item-action(style='min-width:auto;'): v-chip(:color='lc.code === locale ? `blue` : `grey`', small, label, dark) {{lc.code.toUpperCase()}}
+                    div.v-list-item-action(style='min-width:auto;'): v-chip(:color='lc.code === locale ? `blue` : `grey`', small, label, dark) {{lc.code.toUpperCase()}}
                     v-list-item-title {{lc.name}}
             v-divider(vertical)
 
@@ -121,47 +121,46 @@
 
           template(v-if='hasAnyPagePermissions && path && mode !== `edit`')
             v-menu(offset-y, bottom, transition='slide-y-transition', left)
-              template(v-slot:activator='{ on: menu, attrs }')
+              template(v-slot:activator='{ props: menuProps }')
                 v-tooltip(bottom)
-                  template(v-slot:activator='{ on: tooltip }')
+                  template(v-slot:activator='{ props: tooltipProps }')
                     v-btn(
                       icon
-                      v-bind='attrs'
-                      v-on='{ ...menu, ...tooltip }'
-                      :class='$vuetify.rtl ? `ml-3` : ``'
+                      v-bind='{ ...menuProps, ...tooltipProps }'
+                      :class='$vuetify.locale.isRtl ? `ml-3` : ``'
                       tile
                       height='64'
                       :aria-label='$t(`common:header.pageActions`)'
                       )
                       v-icon(color='grey') mdi-file-document-edit-outline
                   span {{$t('common:header.pageActions')}}
-              v-list(nav, :light='!$vuetify.theme.dark', :dark='$vuetify.theme.dark', :class='$vuetify.theme.dark ? `grey darken-4` : ``')
+              v-list(nav, :light='!$vuetify.theme.current.dark', :dark='$vuetify.theme.current.dark', :class='$vuetify.theme.current.dark ? `grey darken-4` : ``')
                 .overline.pa-4.grey--text {{$t('common:header.currentPage')}}
                 v-list-item.pl-4(@click='pageView', v-if='mode !== `view`')
-                  v-list-item-avatar(size='24', tile): v-icon(color='indigo') mdi-file-document-outline
+                  v-avatar(size='24', tile): v-icon(color='indigo') mdi-file-document-outline
                   v-list-item-title.body-2 {{$t('common:header.view')}}
                 v-list-item.pl-4(@click='pageEdit', v-if='mode !== `edit` && hasWritePagesPermission')
-                  v-list-item-avatar(size='24', tile): v-icon(color='indigo') mdi-file-document-edit-outline
+                  v-avatar(size='24', tile): v-icon(color='indigo') mdi-file-document-edit-outline
                   v-list-item-title.body-2 {{$t('common:header.edit')}}
                 v-list-item.pl-4(@click='pageHistory', v-if='mode !== `history` && hasReadHistoryPermission')
-                  v-list-item-avatar(size='24', tile): v-icon(color='indigo') mdi-history
-                  v-list-item-content
+                  v-avatar(size='24', tile): v-icon(color='indigo') mdi-history
+                  div.v-list-item-content
                     v-list-item-title.body-2 {{$t('common:header.history')}}
                 v-list-item.pl-4(@click='pageSource', v-if='mode !== `source` && hasReadSourcePermission')
-                  v-list-item-avatar(size='24', tile): v-icon(color='indigo') mdi-code-tags
+                  v-avatar(size='24', tile): v-icon(color='indigo') mdi-code-tags
                   v-list-item-title.body-2 {{$t('common:header.viewSource')}}
                 v-list-item.pl-4(@click='pageConvert', v-if='hasWritePagesPermission')
-                  v-list-item-avatar(size='24', tile): v-icon(color='indigo') mdi-lightning-bolt
+                  v-avatar(size='24', tile): v-icon(color='indigo') mdi-lightning-bolt
                   v-list-item-title.body-2 {{$t('common:header.convert')}}
                 v-list-item.pl-4(@click='pageDuplicate', v-if='hasWritePagesPermission')
-                  v-list-item-avatar(size='24', tile): v-icon(color='indigo') mdi-content-duplicate
+                  v-avatar(size='24', tile): v-icon(color='indigo') mdi-content-duplicate
                   v-list-item-title.body-2 {{$t('common:header.duplicate')}}
                 v-list-item.pl-4(@click='pageMove', v-if='hasManagePagesPermission')
-                  v-list-item-avatar(size='24', tile): v-icon(color='indigo') mdi-content-save-move-outline
-                  v-list-item-content
+                  v-avatar(size='24', tile): v-icon(color='indigo') mdi-content-save-move-outline
+                  div.v-list-item-content
                     v-list-item-title.body-2 {{$t('common:header.move')}}
                 v-list-item.pl-4(@click='pageDelete', v-if='hasDeletePagesPermission')
-                  v-list-item-avatar(size='24', tile): v-icon(color='red darken-2') mdi-trash-can-outline
+                  v-avatar(size='24', tile): v-icon(color='red darken-2') mdi-trash-can-outline
                   v-list-item-title.body-2 {{$t('common:header.delete')}}
             v-divider(vertical)
 
@@ -169,8 +168,8 @@
 
           template(v-if='hasNewPagePermission && path && mode !== `edit`')
             v-tooltip(bottom)
-              template(v-slot:activator='{ on }')
-                v-btn(icon, tile, height='64', v-on='on', @click='pageNew', :aria-label='$t(`common:header.newPage`)')
+              template(v-slot:activator='{ props }')
+                v-btn(icon, tile, height='64', v-bind='props', @click='pageNew', :aria-label='$t(`common:header.newPage`)')
                   v-icon(color='grey') mdi-text-box-plus-outline
               span {{$t('common:header.newPage')}}
             v-divider(vertical)
@@ -179,8 +178,8 @@
 
           template(v-if='isAuthenticated && isAdmin')
             v-tooltip(bottom, v-if='mode !== `admin`')
-              template(v-slot:activator='{ on }')
-                v-btn(icon, tile, height='64', v-on='on', href='/a', :aria-label='$t(`common:header.admin`)')
+              template(v-slot:activator='{ props }')
+                v-btn(icon, tile, height='64', v-bind='props', href='/a', :aria-label='$t(`common:header.admin`)')
                   v-icon(color='grey') mdi-cog
               span {{$t('common:header.admin')}}
             v-btn(v-else, text, tile, height='64', href='/', :aria-label='$t(`common:actions.exit`)')
@@ -191,14 +190,13 @@
           //- ACCOUNT
 
           v-menu(v-if='isAuthenticated', offset-y, bottom, min-width='300', transition='slide-y-transition', left)
-            template(v-slot:activator='{ on: menu, attrs }')
+            template(v-slot:activator='{ props: menuProps }')
               v-tooltip(bottom)
-                template(v-slot:activator='{ on: tooltip }')
+                template(v-slot:activator='{ props: tooltipProps }')
                   v-btn(
                     icon
-                    v-bind='attrs'
-                    v-on='{ ...menu, ...tooltip }'
-                    :class='$vuetify.rtl ? `ml-0` : ``'
+                    v-bind='{ ...menuProps, ...tooltipProps }'
+                    :class='$vuetify.locale.isRtl ? `ml-0` : ``'
                     tile
                     height='64'
                     :aria-label='$t(`common:header.account`)'
@@ -208,13 +206,13 @@
                       v-img(:src='picture.url')
                 span {{$t('common:header.account')}}
             v-list(nav)
-              v-list-item.py-3.grey(:class='$vuetify.theme.dark ? `darken-4-l5` : `lighten-5`')
-                v-list-item-avatar
+              v-list-item.py-3.grey(:class='$vuetify.theme.current.dark ? `darken-4-l5` : `lighten-5`')
+                v-avatar
                   v-avatar.blue(v-if='picture.kind === `initials`', :size='40')
                     span.white--text.subheading {{picture.initials}}
                   v-avatar(v-else-if='picture.kind === `image`', :size='40')
                     v-img(:src='picture.url')
-                v-list-item-content
+                div.v-list-item-content
                   v-list-item-title {{name}}
                   v-list-item-subtitle {{email}}
               //- v-list-item(href='/w', disabled)
@@ -223,16 +221,16 @@
               //-     v-list-item-title {{$t('common:header.myWiki')}}
               //-     v-list-item-subtitle.overline Coming soon
               v-list-item(href='/p')
-                v-list-item-action: v-icon(color='blue-grey') mdi-face-profile
-                v-list-item-content
-                  v-list-item-title(:class='$vuetify.theme.dark ? `blue-grey--text text--lighten-3` : `blue-grey--text`') {{$t('common:header.profile')}}
+                div.v-list-item-action: v-icon(color='blue-grey') mdi-face-profile
+                div.v-list-item-content
+                  v-list-item-title(:class='$vuetify.theme.current.dark ? `blue-grey--text text--lighten-3` : `blue-grey--text`') {{$t('common:header.profile')}}
               v-list-item(@click='logout')
-                v-list-item-action: v-icon(color='red') mdi-logout
+                div.v-list-item-action: v-icon(color='red') mdi-logout
                 v-list-item-title.red--text {{$t('common:header.logout')}}
 
           v-tooltip(v-else, left)
-            template(v-slot:activator='{ on }')
-              v-btn(icon, v-on='on', color='grey darken-3', href='/login', :aria-label='$t(`common:header.login`)')
+            template(v-slot:activator='{ props }')
+              v-btn(icon, v-bind='props', color='grey darken-3', href='/login', :aria-label='$t(`common:header.login`)')
                 v-icon(color='grey') mdi-account-circle
             span {{$t('common:header.login')}}
 
@@ -249,8 +247,9 @@
         .overline This code base is NOT for production use!
 </template>
 
-<script>
-import { get, sync } from 'vuex-pathify'
+<script lang='ts'>
+import { defineAsyncComponent, defineComponent } from 'vue'
+import { wikiStore } from '@/store/index.ts'
 import _ from 'lodash'
 
 import {
@@ -269,16 +268,21 @@ import {
   onPageMove,
   onPageSource
 } from '../../helpers/page-action-events'
-import { loadingStart, loadingStop, pushGraphError } from '../../helpers/root-ui-store'
 import { emitSearchEnter, emitSearchMove } from '../../helpers/search-navigation-events'
 import { movePage } from '../../helpers/pages-api'
 
+type PageLocation = { path: string, locale: string }
+type SiteLocale = { code: string, name: string }
+type UserPicture =
+  | { kind: 'image', url: string }
+  | { kind: 'initials', initials: string }
+
 /* global siteConfig, siteLangs */
 
-export default {
+export default defineComponent({
   components: {
-    PageDelete: () => import('./page-delete.vue'),
-    PageConvert: () => import('./page-convert.vue')
+    PageDelete: defineAsyncComponent(() => import('./page-delete.vue')),
+    PageConvert: defineAsyncComponent(() => import('./page-convert.vue'))
   },
   props: {
     dense: {
@@ -309,38 +313,55 @@ export default {
     }
   },
   computed: {
-    search: sync('site/search'),
-    searchIsFocused: sync('site/searchIsFocused'),
-    searchIsLoading: sync('site/searchIsLoading'),
-    searchRestrictLocale: sync('site/searchRestrictLocale'),
-    searchRestrictPath: sync('site/searchRestrictPath'),
-    isLoading: get('isLoading'),
-    title: get('site/title'),
-    logoUrl: get('site/logoUrl'),
-    path: get('page/path'),
-    locale: get('page/locale'),
-    mode: get('page/mode'),
-    name: get('user/name'),
-    email: get('user/email'),
-    pictureUrl: get('user/pictureUrl'),
-    isAuthenticated: get('user/authenticated'),
-    permissions: get('user/permissions'),
-    picture () {
-      if (this.pictureUrl && this.pictureUrl.length > 1) {
+    search: {
+      get(): string { return wikiStore.site.search },
+      set(value: string) { wikiStore.site.search = value }
+    },
+    searchIsFocused: {
+      get(): boolean { return wikiStore.site.searchIsFocused },
+      set(value: boolean) { wikiStore.site.searchIsFocused = value }
+    },
+    searchIsLoading: {
+      get(): boolean { return wikiStore.site.searchIsLoading },
+      set(value: boolean) { wikiStore.site.searchIsLoading = value }
+    },
+    searchRestrictLocale: {
+      get(): boolean { return wikiStore.site.searchRestrictLocale },
+      set(value: boolean) { wikiStore.site.searchRestrictLocale = value }
+    },
+    searchRestrictPath: {
+      get(): boolean { return wikiStore.site.searchRestrictPath },
+      set(value: boolean) { wikiStore.site.searchRestrictPath = value }
+    },
+    isLoading(): boolean { return wikiStore.isLoading },
+    title(): string { return wikiStore.site.title },
+    logoUrl(): string { return wikiStore.site.logoUrl },
+    path(): string { return wikiStore.page.path },
+    locale(): string { return wikiStore.page.locale },
+    mode(): string { return wikiStore.page.mode },
+    name(): string { return wikiStore.user.name },
+    email(): string { return wikiStore.user.email },
+    pictureUrl(): string { return wikiStore.user.pictureUrl },
+    isAuthenticated(): boolean { return wikiStore.user.authenticated },
+    permissions(): string[] { return wikiStore.user.permissions },
+    picture (): UserPicture {
+      const pictureUrl = typeof this.pictureUrl === 'string' ? this.pictureUrl : ''
+      if (pictureUrl.length > 1) {
         return {
           kind: 'image',
-          url: (this.pictureUrl === 'internal') ? `/_userav/${this.$store.get('user/id')}` : this.pictureUrl
+          url: (pictureUrl === 'internal') ? `/_userav/${wikiStore.user.id}` : pictureUrl
         }
-      } else {
-        const nameParts = this.name.toUpperCase().split(' ')
-        let initials = _.head(nameParts).charAt(0)
-        if (nameParts.length > 1) {
-          initials += _.last(nameParts).charAt(0)
-        }
-        return {
-          kind: 'initials',
-          initials
-        }
+      }
+
+      const name = typeof this.name === 'string' ? this.name : ''
+      const nameParts = name.toUpperCase().split(' ').filter(Boolean)
+      let initials = nameParts[0]?.charAt(0) ?? ''
+      if (nameParts.length > 1) {
+        initials += nameParts[nameParts.length - 1]?.charAt(0) ?? ''
+      }
+      return {
+        kind: 'initials',
+        initials
       }
     },
     isAdmin () {
@@ -349,19 +370,19 @@ export default {
     hasNewPagePermission () {
       return this.hasAdminPermission || _.intersection(this.permissions, ['write:pages']).length > 0
     },
-    hasAdminPermission: get('page/effectivePermissions@system.manage'),
-    hasWritePagesPermission: get('page/effectivePermissions@pages.write'),
-    hasManagePagesPermission: get('page/effectivePermissions@pages.manage'),
-    hasDeletePagesPermission: get('page/effectivePermissions@pages.delete'),
-    hasReadSourcePermission: get('page/effectivePermissions@source.read'),
-    hasReadHistoryPermission: get('page/effectivePermissions@history.read'),
+    hasAdminPermission(): boolean { return wikiStore.page.effectivePermissions.system.manage },
+    hasWritePagesPermission(): boolean { return wikiStore.page.effectivePermissions.pages.write },
+    hasManagePagesPermission(): boolean { return wikiStore.page.effectivePermissions.pages.manage },
+    hasDeletePagesPermission(): boolean { return wikiStore.page.effectivePermissions.pages.delete },
+    hasReadSourcePermission(): boolean { return wikiStore.page.effectivePermissions.source.read },
+    hasReadHistoryPermission(): boolean { return wikiStore.page.effectivePermissions.history.read },
     hasAnyPagePermissions () {
       return this.hasAdminPermission || this.hasWritePagesPermission || this.hasManagePagesPermission ||
         this.hasDeletePagesPermission || this.hasReadSourcePermission || this.hasReadHistoryPermission
     }
   },
   created () {
-    if (this.hideSearch || this.dense || this.$vuetify.breakpoint.smAndDown) {
+    if (this.hideSearch || this.dense || this.$vuetify.display.smAndDown) {
       this.searchIsShown = false
     }
   },
@@ -375,7 +396,7 @@ export default {
     onPageDelete(this.pageDelete)
     this.isDevMode = siteConfig.devMode === true
   },
-  beforeDestroy () {
+  beforeUnmount () {
     offPageEdit(this.pageEdit)
     offPageHistory(this.pageHistory)
     offPageSource(this.pageSource)
@@ -399,20 +420,20 @@ export default {
       this.searchIsShown = !this.searchIsShown
       if (this.searchIsShown) {
         _.delay(() => {
-          this.$refs.searchFieldMobile.focus()
+          ;(this.$refs.searchFieldMobile as { focus: () => void }).focus()
         }, 200)
       }
     },
     searchEnter () {
       emitSearchEnter()
     },
-    searchMove(dir) {
+    searchMove(dir: string): void {
       emitSearchMove(dir)
     },
     pageNew () {
       this.newPageModal = true
     },
-    pageNewCreate ({ path, locale }) {
+    pageNewCreate ({ path, locale }: PageLocation): void {
       window.location.assign(`/e/${locale}/${path}`)
     },
     pageView () {
@@ -435,8 +456,8 @@ export default {
         modal: true
       }
     },
-    pageDuplicateHandle ({ locale, path }) {
-      window.location.assign(`/e/${locale}/${path}?from=${this.$store.get('page/id')}`)
+    pageDuplicateHandle ({ locale, path }: PageLocation): void {
+      window.location.assign(`/e/${locale}/${path}?from=${wikiStore.page.id}`)
     },
     pageConvert () {
       this.convertPageModal = true
@@ -444,26 +465,26 @@ export default {
     pageMove () {
       this.movePageModal = true
     },
-    async pageMoveRename ({ path, locale }) {
-      loadingStart(this.$store, 'page-move')
+    async pageMoveRename ({ path, locale }: PageLocation): Promise<void> {
+      wikiStore.startLoading('page-move')
       try {
         await movePage(
           window.fetch.bind(window),
-          this.$store.get('page/id'),
+          wikiStore.page.id,
           locale,
           path
         )
         window.location.replace(`/${locale}/${path}`)
       } catch (err) {
-        pushGraphError(this.$store, err)
-        loadingStop(this.$store, 'page-move')
+        wikiStore.showError(err)
+        wikiStore.stopLoading('page-move')
       }
     },
     pageDelete () {
       this.deletePageModal = true
     },
-    async changeLocale (locale) {
-      await this.$i18n.i18next.changeLanguage(locale.code)
+    async changeLocale (locale: SiteLocale): Promise<void> {
+      await this.$i18n.changeLanguage(locale.code)
       switch (this.mode) {
         case 'view':
         case 'history':
@@ -482,7 +503,7 @@ export default {
       }
     }
   }
-}
+})
 </script>
 
 <style lang='scss'>

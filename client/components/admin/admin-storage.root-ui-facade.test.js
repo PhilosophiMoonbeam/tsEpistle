@@ -1,8 +1,8 @@
-const fs = require('fs')
-const path = require('path')
+import fs from 'node:fs'
+import path from 'node:path'
 
 const extractScript = (source) => {
-  const match = source.match(/<script>\s*([\s\S]*?)\s*<\/script>/)
+  const match = source.match(/<script(?:\s+lang=["']ts["'])?>\s*([\s\S]*?)\s*<\/script>/)
   return match && match[1]
 }
 
@@ -50,18 +50,25 @@ describe('admin-storage REST loading facade migration guard', () => {
     expect(loadTargets).not.toBeNull()
     expect(loadStatus).not.toBeNull()
 
+    expect(source).toContain("<script lang='ts'>")
+    expect(script).toContain("import { wikiStore } from '@/store/index.ts'")
     expect(script).toMatch(/import\s+\{[^}]*\bsetLoading\b[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/root-ui-store['"]/)
     expect(script).toMatch(/import\s+\{(?=[^}]*\bfetchStorageStatus\b)(?=[^}]*\bfetchStorageTargets\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/storage-api['"]/)
 
-    expect(normalizeTargets).toMatch(/_\.cloneDeep\s*\(\s*targets\s*\)\.map\s*\(\s*str\s*=>\s*\(\s*\{[\s\S]*?\.\.\.str[\s\S]*?config:\s*_\.sortBy\s*\(\s*str\.config\.map\s*\(\s*cfg\s*=>\s*\(\s*\{[\s\S]*?\.\.\.cfg[\s\S]*?value:\s*JSON\.parse\s*\(\s*cfg\.value\s*\)[\s\S]*?\}\s*\)\s*\)\s*,\s*\[\s*t\s*=>\s*t\.value\.order\s*\]\s*\)[\s\S]*?\}\s*\)\s*\)/)
+    expect(normalizeTargets).toMatch(/normalizeTargets\s*\(\s*targets:\s*StorageTarget\[\]\s*\):\s*NormalizedStorageTarget\[\]/)
+    expect(normalizeTargets).toMatch(/_\.cloneDeep\s*\(\s*targets\s*\)\.map\s*\(\s*target\s*=>\s*\(\s*\{/)
+    expect(normalizeTargets).toContain('...target')
+    expect(normalizeTargets).toContain('value: JSON.parse(config.value) as StorageConfigValue')
+    expect(normalizeTargets).toMatch(/_\.sortBy\s*\(\s*target\.config\.map\s*\(\s*config\s*=>/)
+    expect(normalizeTargets).toMatch(/\[\s*config\s*=>\s*config\.value\.order\s*\]/)
 
-    expect(loadTargets).toMatch(/setLoading\s*\(\s*this\.\$store\s*,\s*['"]admin-storage-targets-refresh['"]\s*,\s*true\s*\)/)
+    expect(loadTargets).toMatch(/setLoading\s*\(\s*wikiStore\s*,\s*['"]admin-storage-targets-refresh['"]\s*,\s*true\s*\)/)
     expect(loadTargets).toMatch(/fetchStorageTargets\s*\(\s*window\.fetch\.bind\s*\(\s*window\s*\)\s*\)/)
-    expect(loadTargets).toMatch(/setLoading\s*\(\s*this\.\$store\s*,\s*['"]admin-storage-targets-refresh['"]\s*,\s*false\s*\)/)
+    expect(loadTargets).toMatch(/setLoading\s*\(\s*wikiStore\s*,\s*['"]admin-storage-targets-refresh['"]\s*,\s*false\s*\)/)
 
-    expect(loadStatus).toMatch(/setLoading\s*\(\s*this\.\$store\s*,\s*['"]admin-storage-status-refresh['"]\s*,\s*true\s*\)/)
+    expect(loadStatus).toMatch(/setLoading\s*\(\s*wikiStore\s*,\s*['"]admin-storage-status-refresh['"]\s*,\s*true\s*\)/)
     expect(loadStatus).toMatch(/fetchStorageStatus\s*\(\s*window\.fetch\.bind\s*\(\s*window\s*\)\s*\)/)
-    expect(loadStatus).toMatch(/setLoading\s*\(\s*this\.\$store\s*,\s*['"]admin-storage-status-refresh['"]\s*,\s*false\s*\)/)
+    expect(loadStatus).toMatch(/setLoading\s*\(\s*wikiStore\s*,\s*['"]admin-storage-status-refresh['"]\s*,\s*false\s*\)/)
 
     expect(script).not.toContain('apollo:')
     expect(script).not.toContain('targetsQuery')

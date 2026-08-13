@@ -1,0 +1,425 @@
+import _ from 'lodash'
+
+import errors from './errors.ts'
+
+const { ApplicationError } = errors
+
+interface TagRecord extends Record<string, unknown> { id: number, tag: string }
+interface PageRecord extends Record<string, unknown> {
+  id: number
+  path: string
+  locale?: string
+  localeCode: string
+  title: string
+  updatedAt: Date
+  editorKey: string
+  extra: Record<string, unknown>
+  tags: TagRecord[]
+}
+interface PageTreeRecord extends Record<string, unknown> {
+  parent?: number | null
+  ancestors?: string | number[]
+  path: string
+  localeCode: string
+}
+interface LinkRow { id: number, title: string, path: string, link?: string, locale?: string }
+interface LinkResult { id: number, title: string, path: string, links: string[] }
+interface QueryBuilder {
+  select(...columns: string[]): QueryBuilder
+  where(column: string, operatorOrValue: unknown, value?: unknown): QueryBuilder
+  where(criteria: Record<string, unknown>): QueryBuilder
+  whereNull(column: string): QueryBuilder
+  whereIn(column: string, values: readonly unknown[]): QueryBuilder
+  orWhere(column: string, value: unknown): QueryBuilder
+  orWhereIn(column: string, values: readonly unknown[]): QueryBuilder
+  andWhere(column: string, operatorOrValue: unknown, value?: unknown): QueryBuilder
+  andWhere(callback: (builder: QueryBuilder) => void): QueryBuilder
+  andWhereNotNull(column: string): QueryBuilder
+  limit(value: number): QueryBuilder
+  orderBy(column: unknown, direction?: string): QueryBuilder
+}
+interface PageQuery extends PromiseLike<PageRecord[]> {
+  column(columns: unknown[]): PageQuery
+  select(...columns: string[]): PageQuery
+  withGraphJoined(relation: string): PageQuery
+  modifyGraph(relation: string, callback: (builder: PageQuery) => void): PageQuery
+  modify(callback: (builder: QueryBuilder) => void): PageQuery
+  orderBy(column: unknown, direction?: string): PageQuery
+  limit(value: number): PageQuery
+  findById(id: number): Promise<PageRecord | undefined>
+}
+interface TagPatchQuery extends PromiseLike<number> {
+  patch(data: Record<string, unknown>): Promise<number>
+}
+interface TagWithRelations extends TagRecord {
+  $relatedQuery(relation: 'pages'): { unrelate(): Promise<number> }
+}
+interface RelatedTagQuery extends PromiseLike<TagRecord[]> { for(pageId: number): RelatedTagQuery }
+interface KnexFirstQuery extends PromiseLike<PageTreeRecord | undefined> {
+  where(criteria: Record<string, unknown>): KnexFirstQuery
+}
+interface KnexQuery extends PromiseLike<Array<PageTreeRecord & LinkRow>> {
+  column(...columns: unknown[]): KnexQuery
+  first(...columns: string[]): KnexFirstQuery
+  leftJoin(table: string, left: string, right: string): KnexQuery
+  fullOuterJoin(table: string, left: string, right: string): KnexQuery
+  where(criteria: Record<string, unknown> | ((builder: QueryBuilder) => void)): KnexQuery
+  unionAll(query: KnexQuery): KnexQuery
+  orderBy(columns: unknown): KnexQuery
+}
+interface SearchResult extends Record<string, unknown> { path: string, locale: string, tags?: unknown }
+interface SearchResponse extends Record<string, unknown> { results: SearchResult[] }
+interface WikiPageOperations {
+  Error: {
+    PageNotFound: new () => Error
+    PageHistoryForbidden: new () => Error
+    PageViewForbidden: new () => Error
+    PageUpdateForbidden: new () => Error
+    PageRestoreForbidden: new () => Error
+  }
+  auth: { checkAccess(user: Express.User | undefined, permissions: readonly string[], context: Record<string, unknown>): boolean }
+  config: { db: { type: string }, lang: { code: string } }
+  data: { searchEngine?: { query(query: string, options: Record<string, unknown>): Promise<SearchResponse> } }
+  models: {
+    knex(table: string): KnexQuery
+    pages: {
+      query(): PageQuery
+      relatedQuery(relation: 'tags'): RelatedTagQuery
+      getPageFromDb(input: number | { path: string, locale: string }): Promise<PageRecord | undefined>
+      deletePage(input: { id: number, user?: Express.User }): unknown
+      createPage(input: Record<string, unknown> & { user?: Express.User }): unknown
+      updatePage(input: Record<string, unknown> & { user?: Express.User }): unknown
+      convertPage(input: Record<string, unknown> & { user?: Express.User }): unknown
+      movePage(input: Record<string, unknown> & { user?: Express.User }): unknown
+    }
+    tags: {
+      query(): {
+        findById(id: number): TagPatchQuery & PromiseLike<TagWithRelations | undefined>
+        deleteById(id: number): Promise<number>
+      }
+    }
+    pageHistory: {
+      getHistory(input: { pageId: number, offsetPage: number, offsetSize: number }): unknown
+      getVersion(input: { pageId: number, versionId: number }): Promise<(Record<string, unknown> & { pageId: number }) | undefined>
+    }
+  }
+}
+interface OperationInput extends Record<string, unknown> { requester?: Express.User }
+const wiki = WIKI as unknown as WikiPageOperations
+const positiveInteger = (value: unknown, label: string): number => {
+  if (!Number.isSafeInteger(value) || (value as number) < 1) throw new ApplicationError(`${label} must be a positive integer`, { code: 'INVALID_INPUT' })
+  return value as number
+}
+const stringValue = (value: unknown, label: string): string => {
+  if (typeof value !== 'string') throw new ApplicationError(`${label} must be a string`, { code: 'INVALID_INPUT' })
+  return value
+}
+const recordValue = (value: unknown, label: string): Record<string, unknown> => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new ApplicationError(`${label} must be an object`, { code: 'INVALID_INPUT' })
+  return value as Record<string, unknown>
+}
+const withRequester = (
+  payload: Record<string, unknown>,
+  requester: Express.User | undefined
+): Record<string, unknown> & { user?: Express.User } =>
+  requester === undefined ? payload : { ...payload, user: requester }
+
+
+const list = async ({ requester, ...rawArgs }: OperationInput) => {
+  const args = {
+    limit: rawArgs.limit === undefined ? undefined : positiveInteger(rawArgs.limit, 'limit'),
+    locale: rawArgs.locale === undefined ? undefined : stringValue(rawArgs.locale, 'locale'),
+    creatorId: rawArgs.creatorId === undefined ? undefined : positiveInteger(rawArgs.creatorId, 'creatorId'),
+    authorId: rawArgs.authorId === undefined ? undefined : positiveInteger(rawArgs.authorId, 'authorId'),
+    tags: rawArgs.tags === undefined ? undefined : Array.isArray(rawArgs.tags) && rawArgs.tags.every(tag => typeof tag === 'string') ? rawArgs.tags as string[] : [],
+    orderBy: typeof rawArgs.orderBy === 'string' ? rawArgs.orderBy : '',
+    orderByDirection: typeof rawArgs.orderByDirection === 'string' ? rawArgs.orderByDirection : ''
+  }
+  const pages = await wiki.models.pages.query().column([
+    'pages.id',
+    'path',
+    { locale: 'localeCode' },
+    'title',
+    'description',
+    'isPublished',
+    'isPrivate',
+    'privateNS',
+    'contentType',
+    'createdAt',
+    'updatedAt'
+  ])
+    .withGraphJoined('tags')
+    .modifyGraph('tags', builder => { builder.select('tag') })
+    .modify(queryBuilder => {
+      if (args.limit) queryBuilder.limit(args.limit)
+      if (args.locale) queryBuilder.where('localeCode', args.locale)
+      if (args.creatorId && args.authorId && args.creatorId > 0 && args.authorId > 0) {
+        queryBuilder.where('creatorId', args.creatorId).orWhere('authorId', args.authorId)
+      } else {
+        if (args.creatorId && args.creatorId > 0) queryBuilder.where('creatorId', args.creatorId)
+        if (args.authorId && args.authorId > 0) queryBuilder.where('authorId', args.authorId)
+      }
+      if (args.tags && args.tags.length > 0) {
+        queryBuilder.whereIn('tags.tag', args.tags.map(tag => _.trim(tag).toLowerCase()))
+      }
+      const orderDirection = args.orderByDirection === 'DESC' ? 'desc' : 'asc'
+      const orderColumns = { CREATED: 'createdAt', PATH: 'path', TITLE: 'title', UPDATED: 'updatedAt' }
+      const orderColumn = orderColumns[args.orderBy as keyof typeof orderColumns] ?? 'pages.id'
+      queryBuilder.orderBy(orderColumn, orderDirection)
+    })
+
+  const accessiblePages = pages.filter(page => wiki.auth.checkAccess(requester, ['read:pages'], {
+    path: page.path,
+    locale: page.locale
+  })).map(page => ({ ...page, tags: page.tags.map(tag => tag.tag) }))
+
+  if (args.tags && args.tags.length > 0) {
+    return accessiblePages.filter(page => _.every(args.tags, tag => _.includes(page.tags, tag)))
+  }
+  return accessiblePages
+}
+
+const listTags = async (requester?: Express.User) => {
+  const pages = await wiki.models.pages.query()
+    .column(['path', { locale: 'localeCode' }])
+    .withGraphJoined('tags')
+  const tags = pages.filter(page => wiki.auth.checkAccess(requester, ['read:pages'], {
+    path: page.path,
+    locale: page.locale
+  })).flatMap(page => page.tags)
+  return _.orderBy(_.uniqBy(tags, 'id'), ['tag'], ['asc'])
+}
+
+const listRecent = async (requester?: Express.User) => {
+  const pages = await wiki.models.pages.query()
+    .column(['pages.id', 'path', { locale: 'localeCode' }, 'title', 'updatedAt'])
+    .withGraphJoined('tags')
+    .modifyGraph('tags', builder => { builder.select('tag') })
+    .orderBy('updatedAt', 'desc')
+    .limit(10)
+  return pages.filter(page => wiki.auth.checkAccess(requester, ['read:pages'], {
+    path: page.path,
+    locale: page.locale,
+    tags: page.tags
+  })).map(page => _.pick(page, ['id', 'locale', 'path', 'title', 'updatedAt']))
+}
+
+const searchTags = async (input: OperationInput) => {
+  const requester = input.requester
+  const normalizedQuery = _.trim(stringValue(input.query, 'query'))
+  const pages = await wiki.models.pages.query()
+    .column(['path', { locale: 'localeCode' }])
+    .withGraphJoined('tags')
+    .modifyGraph('tags', builder => { builder.select('tag') })
+    .modify(queryBuilder => {
+      queryBuilder.andWhere(builder => {
+        if (wiki.config.db.type === 'postgres') builder.where('tags.tag', 'ILIKE', `%${normalizedQuery}%`)
+        else builder.where('tags.tag', 'LIKE', `%${normalizedQuery}%`)
+      })
+    })
+  return _.uniq(pages.filter(page => wiki.auth.checkAccess(requester, ['read:pages'], {
+    path: page.path,
+    locale: page.locale
+  })).flatMap(page => page.tags).map(tag => tag.tag)).slice(0, 5)
+}
+
+const get = async (input: OperationInput) => {
+  const requester = input.requester
+  const page = await wiki.models.pages.getPageFromDb(positiveInteger(input.id, 'id'))
+  if (!page) throw new ApplicationError('This page does not exist.', { code: 'PAGE_NOT_FOUND', status: 404 })
+  if (!wiki.auth.checkAccess(requester, ['manage:pages', 'delete:pages'], {
+    path: page.path,
+    locale: page.localeCode
+  })) {
+    throw new ApplicationError('You are not authorized to view this page.', { code: 'PAGE_VIEW_FORBIDDEN', status: 403 })
+  }
+  return {
+    ...page,
+    locale: page.localeCode,
+    editor: page.editorKey,
+    scriptJs: _.get(page, 'extra.js'),
+    scriptCss: _.get(page, 'extra.css')
+  }
+}
+
+const listLinks = async (input: OperationInput) => {
+  const requester = input.requester
+  const locale = stringValue(input.locale, 'locale')
+  let rows
+  const columns = [{ id: 'pages.id' }, { path: 'pages.path' }, 'title', { link: 'pageLinks.path' }, { locale: 'pageLinks.localeCode' }]
+  if (['mysql', 'mariadb', 'sqlite'].includes(wiki.config.db.type)) {
+    rows = await wiki.models.knex('pages')
+      .column(...columns)
+      .leftJoin('pageLinks', 'pages.id', 'pageLinks.pageId')
+      .where({ 'pages.localeCode': locale })
+      .unionAll(
+        wiki.models.knex('pageLinks')
+          .column(...columns)
+          .leftJoin('pages', 'pageLinks.pageId', 'pages.id')
+          .where({ 'pages.localeCode': locale })
+      )
+  } else {
+    rows = await wiki.models.knex('pages')
+      .column(...columns)
+      .fullOuterJoin('pageLinks', 'pages.id', 'pageLinks.pageId')
+      .where({ 'pages.localeCode': locale })
+  }
+
+  return _.reduce<LinkRow, LinkResult[]>(rows, (result, value) => {
+    if (
+      !wiki.auth.checkAccess(requester, ['read:pages'], { path: value.path, locale }) ||
+      !wiki.auth.checkAccess(requester, ['read:pages'], { path: value.link, locale: value.locale })
+    ) return result
+
+    const existing = _.find(result, ['id', value.id])
+    if (existing) {
+      if (value.link) existing.links.push(`${value.locale}/${value.link}`)
+    } else {
+      result.push({
+        id: value.id,
+        title: value.title,
+        path: `${locale}/${value.path}`,
+        links: value.link ? [`${value.locale}/${value.link}`] : []
+      })
+    }
+    return result
+  }, [])
+}
+
+const remove = (input: OperationInput): unknown => {
+  const id = positiveInteger(input.id, 'id')
+  return input.requester === undefined
+    ? wiki.models.pages.deletePage({ id })
+    : wiki.models.pages.deletePage({ id, user: input.requester })
+}
+
+const updateTag = async (input: OperationInput): Promise<void> => {
+  const id = positiveInteger(input.id, 'id')
+  const tag = stringValue(input.tag, 'tag')
+  const title = stringValue(input.title, 'title')
+  const affectedRows = await wiki.models.tags.query().findById(id).patch({
+    tag: _.trim(tag).toLowerCase(),
+    title: _.trim(title)
+  })
+  if (affectedRows < 1) throw new ApplicationError('This tag does not exist.', { code: 'TAG_NOT_FOUND', status: 404 })
+}
+
+const removeTag = async (value: unknown): Promise<void> => {
+  const id = positiveInteger(value, 'id')
+  const tag = await wiki.models.tags.query().findById(id)
+  if (!tag) throw new ApplicationError('This tag does not exist.', { code: 'TAG_NOT_FOUND', status: 404 })
+  await tag.$relatedQuery('pages').unrelate()
+  await wiki.models.tags.query().deleteById(id)
+}
+
+const getHistory = async (input: OperationInput) => {
+  const requester = input.requester
+  const id = positiveInteger(input.id, 'id')
+  const offsetPage = input.offsetPage === undefined ? 0 : positiveInteger(input.offsetPage, 'offsetPage')
+  const offsetSize = input.offsetSize === undefined ? 100 : positiveInteger(input.offsetSize, 'offsetSize')
+  const page = await wiki.models.pages.query().select('path', 'localeCode').findById(id)
+  if (!page) throw new wiki.Error.PageNotFound()
+  if (!wiki.auth.checkAccess(requester, ['read:history'], { path: page.path, locale: page.localeCode })) throw new wiki.Error.PageHistoryForbidden()
+  return wiki.models.pageHistory.getHistory({ pageId: id, offsetPage, offsetSize })
+}
+
+const getVersion = async (input: OperationInput) => {
+  const requester = input.requester
+  const pageId = positiveInteger(input.pageId, 'pageId')
+  const versionId = positiveInteger(input.versionId, 'versionId')
+  const page = await wiki.models.pages.query().select('path', 'localeCode').findById(pageId)
+  if (!page) throw new wiki.Error.PageNotFound()
+  if (!wiki.auth.checkAccess(requester, ['read:history'], { path: page.path, locale: page.localeCode })) throw new wiki.Error.PageHistoryForbidden()
+  return wiki.models.pageHistory.getVersion({ pageId, versionId })
+}
+
+const search = async (input: OperationInput) => {
+  const requester = input.requester
+  const query = stringValue(input.query, 'query')
+  const args = _.omit(input, ['requester', 'query'])
+  if (!wiki.data.searchEngine) return { results: [], suggestions: [], totalHits: 0 }
+  const response = await wiki.data.searchEngine.query(query, { query, ...args })
+  return { ...response, results: response.results.filter(result => wiki.auth.checkAccess(requester, ['read:pages'], {
+    path: result.path, locale: result.locale, tags: result.tags
+  })) }
+}
+
+const getByPath = async (input: OperationInput) => {
+  const requester = input.requester
+  const path = stringValue(input.path, 'path')
+  const locale = stringValue(input.locale, 'locale')
+  const page = await wiki.models.pages.getPageFromDb({ path, locale })
+  if (!page) throw new wiki.Error.PageNotFound()
+  if (!wiki.auth.checkAccess(requester, ['manage:pages', 'delete:pages'], { path: page.path, locale: page.localeCode })) throw new wiki.Error.PageViewForbidden()
+  return { ...page, locale: page.localeCode, editor: page.editorKey, scriptJs: page.extra.js, scriptCss: page.extra.css }
+}
+
+const getTree = async (input: OperationInput) => {
+  const requester = input.requester
+  const locale = input.locale === undefined ? wiki.config.lang.code : stringValue(input.locale, 'locale')
+  const path = input.path === undefined ? undefined : stringValue(input.path, 'path')
+  let parentId = input.parent === undefined ? undefined : positiveInteger(input.parent, 'parent')
+  const mode = typeof input.mode === 'string' ? input.mode : ''
+  const includeAncestors = input.includeAncestors === true
+  let currentPage: PageTreeRecord | undefined
+  if (path && !parentId) {
+    currentPage = await wiki.models.knex('pageTree').first('parent', 'ancestors').where({ path, localeCode: locale })
+    if (!currentPage) return []
+    parentId = currentPage.parent || 0
+  }
+  const results = await wiki.models.knex('pageTree').where(builder => {
+    builder.where('localeCode', locale)
+    if (mode === 'FOLDERS') builder.andWhere('isFolder', true)
+    else if (mode === 'PAGES') builder.andWhereNotNull('pageId')
+    if (!parentId || parentId < 1) builder.whereNull('parent')
+    else {
+      builder.where('parent', parentId)
+      if (includeAncestors && currentPage?.ancestors && currentPage.ancestors.length > 0) {
+        builder.orWhereIn('id', _.isString(currentPage.ancestors) ? JSON.parse(currentPage.ancestors) as number[] : currentPage.ancestors)
+      }
+    }
+  }).orderBy([{ column: 'isFolder', order: 'desc' }, 'title'])
+  return results.filter(result => wiki.auth.checkAccess(requester, ['read:pages'], { path: result.path, locale: result.localeCode }))
+    .map(result => ({ ...result, parent: result.parent || 0, locale: result.localeCode }))
+}
+
+const checkConflict = async (input: OperationInput) => {
+  const requester = input.requester
+  const id = positiveInteger(input.id, 'id')
+  if (!(input.checkoutDate instanceof Date)) throw new ApplicationError('checkoutDate must be a Date', { code: 'INVALID_INPUT' })
+  const page = await wiki.models.pages.query().select('path', 'localeCode', 'updatedAt').findById(id)
+  if (!page) throw new wiki.Error.PageNotFound()
+  if (!wiki.auth.checkAccess(requester, ['write:pages', 'manage:pages'], { path: page.path, locale: page.localeCode })) throw new wiki.Error.PageUpdateForbidden()
+  return page.updatedAt > input.checkoutDate
+}
+
+const getConflictLatest = async (input: OperationInput) => {
+  const requester = input.requester
+  const page = await wiki.models.pages.getPageFromDb(positiveInteger(input.id, 'id'))
+  if (!page) throw new wiki.Error.PageNotFound()
+  if (!wiki.auth.checkAccess(requester, ['write:pages', 'manage:pages'], { path: page.path, locale: page.localeCode })) throw new wiki.Error.PageViewForbidden()
+  return { ...page, tags: page.tags.map(tag => tag.tag), locale: page.localeCode }
+}
+
+const create = (input: OperationInput): unknown => wiki.models.pages.createPage(withRequester(recordValue(input.input, 'input'), input.requester))
+const update = (input: OperationInput): unknown => wiki.models.pages.updatePage(withRequester(recordValue(input.input, 'input'), input.requester))
+const convert = (input: OperationInput): unknown => wiki.models.pages.convertPage(withRequester(recordValue(input.input, 'input'), input.requester))
+const move = (input: OperationInput): unknown => wiki.models.pages.movePage(withRequester(recordValue(input.input, 'input'), input.requester))
+
+const restore = async (input: OperationInput): Promise<void> => {
+  const requester = input.requester
+  const pageId = positiveInteger(input.pageId, 'pageId')
+  const versionId = positiveInteger(input.versionId, 'versionId')
+  const page = await wiki.models.pages.query().select('path', 'localeCode').findById(pageId)
+  if (!page) throw new wiki.Error.PageNotFound()
+  if (!wiki.auth.checkAccess(requester, ['write:pages'], { path: page.path, locale: page.localeCode })) throw new wiki.Error.PageRestoreForbidden()
+  const version = await wiki.models.pageHistory.getVersion({ pageId, versionId })
+  if (!version) throw new wiki.Error.PageNotFound()
+  await wiki.models.pages.updatePage(withRequester({ ...version, id: version.pageId, action: 'restored' }, requester))
+}
+
+const getPageTags = (value: unknown): RelatedTagQuery => wiki.models.pages.relatedQuery('tags').for(positiveInteger(value, 'pageId'))
+export default {
+  checkConflict, convert, create, get, getByPath, getConflictLatest, getHistory, getPageTags, getTree, getVersion,
+  list, listLinks, listRecent, listTags, move, remove, removeTag, restore, search, searchTags, update, updateTag
+}

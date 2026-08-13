@@ -1,7 +1,7 @@
 <template lang='pug'>
   v-container(fluid, grid-list-lg)
-    v-layout(row, wrap)
-      v-flex(xs12)
+    v-row()
+      v-col(cols='12')
         .admin-header
           img.animated.fadeInUp(src='/_assets/svg/icon-rest-api.svg', alt='API', style='width: 80px;')
           .admin-header-title
@@ -25,10 +25,10 @@
             v-icon(left) mdi-plus
             span {{$t('admin:api.newKeyButton')}}
         v-card.mt-3.animated.fadeInUp
-          v-simple-table(v-if='keys && keys.length > 0')
+          v-table(v-if='keys && keys.length > 0')
             template(v-slot:default)
               thead
-                tr.grey(:class='$vuetify.theme.dark ? `darken-4-d5` : `lighten-5`')
+                tr.grey(:class='$vuetify.theme.current.dark ? `darken-4-d5` : `lighten-5`')
                   th {{$t('admin:api.headerName')}}
                   th {{$t('admin:api.headerKeyEnding')}}
                   th {{$t('admin:api.headerExpiration')}}
@@ -62,11 +62,13 @@
           v-btn(color='red', dark, @click='revokeConfirm', :loading='revokeLoading') {{$t('admin:api.revoke')}}
 </template>
 
-<script>
-import { StatusIndicator } from 'vue-status-indicator'
+<script lang='ts'>
+import StatusIndicator from '@/components/common/status-indicator.vue'
+import { wikiStore } from '@/store/index.ts'
 
 import CreateApiKey from './admin-api-create.vue'
-import { fetchAdminApiBootstrap, revokeAdminApiKey, setAdminApiState } from '../../helpers/auth-api'
+import { fetchAdminApiBootstrap, revokeAdminApiKey, setAdminApiState, type AdminApiKey } from '../../helpers/auth-api'
+import { getErrorMessage } from '../../helpers/root-ui-store'
 
 export default {
   components: {
@@ -77,17 +79,17 @@ export default {
     return {
       enabled: false,
       isToggleLoading: false,
-      keys: [],
+      keys: [] as AdminApiKey[],
       isCreateDialogShown: false,
       isRevokeConfirmDialogShown: false,
       revokeLoading: false,
-      current: {}
+      current: null as AdminApiKey | null
     }
   },
   methods: {
     async loadApiBootstrap () {
-      this.$store.commit('loadingStart', 'admin-api-state-refresh')
-      this.$store.commit('loadingStart', 'admin-api-keys-refresh')
+      wikiStore.startLoading('admin-api-state-refresh')
+      wikiStore.startLoading('admin-api-keys-refresh')
       try {
         const bootstrap = await fetchAdminApiBootstrap(window.fetch.bind(window), 'Admin API bootstrap response is invalid')
         this.enabled = bootstrap.enabled
@@ -96,21 +98,21 @@ export default {
       } catch (err) {
         this.enabled = false
         this.keys = []
-        this.$store.commit('showNotification', {
+        wikiStore.showNotification({
           style: 'red',
-          message: err.message,
+          message: getErrorMessage(err),
           icon: 'alert'
         })
         return false
       } finally {
-        this.$store.commit('loadingStop', 'admin-api-state-refresh')
-        this.$store.commit('loadingStop', 'admin-api-keys-refresh')
+        wikiStore.stopLoading('admin-api-state-refresh')
+        wikiStore.stopLoading('admin-api-keys-refresh')
       }
     },
     async refresh (notify = true) {
       const loaded = await this.loadApiBootstrap()
       if (notify && loaded) {
-        this.$store.commit('showNotification', {
+        wikiStore.showNotification({
           message: this.$t('admin:api.refreshSuccess'),
           style: 'success',
           icon: 'cached'
@@ -121,48 +123,49 @@ export default {
     async globalSwitch () {
       const wasEnabled = this.enabled
       this.isToggleLoading = true
-      this.$store.commit('loadingStart', 'admin-api-toggle')
+      wikiStore.startLoading('admin-api-toggle')
       try {
         await setAdminApiState(window.fetch.bind(window), !this.enabled)
         const loaded = await this.refresh(false)
         if (loaded) {
-          this.$store.commit('showNotification', {
+          wikiStore.showNotification({
             style: 'success',
             message: wasEnabled ? this.$t('admin:api.toggleStateDisabledSuccess') : this.$t('admin:api.toggleStateEnabledSuccess'),
             icon: 'check'
           })
         }
       } catch (err) {
-        this.$store.commit('pushGraphError', err)
+        wikiStore.showError(err)
       } finally {
-        this.$store.commit('loadingStop', 'admin-api-toggle')
+        wikiStore.stopLoading('admin-api-toggle')
         this.isToggleLoading = false
       }
     },
     async newKey () {
       this.isCreateDialogShown = true
     },
-    revoke (key) {
+    revoke (key: AdminApiKey) {
       this.current = key
       this.isRevokeConfirmDialogShown = true
     },
     async revokeConfirm () {
       this.revokeLoading = true
-      this.$store.commit('loadingStart', 'admin-api-revoke')
+      wikiStore.startLoading('admin-api-revoke')
       try {
+        if (!this.current) throw new Error('No API key selected for revocation.')
         await revokeAdminApiKey(window.fetch.bind(window), this.current.id)
         const loaded = await this.refresh(false)
         if (loaded) {
-          this.$store.commit('showNotification', {
+          wikiStore.showNotification({
             style: 'success',
             message: this.$t('admin:api.revokeSuccess'),
             icon: 'check'
           })
         }
       } catch (err) {
-        this.$store.commit('pushGraphError', err)
+        wikiStore.showError(err)
       } finally {
-        this.$store.commit('loadingStop', 'admin-api-revoke')
+        wikiStore.stopLoading('admin-api-revoke')
         this.isRevokeConfirmDialogShown = false
         this.revokeLoading = false
       }

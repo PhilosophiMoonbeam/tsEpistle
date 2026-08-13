@@ -1,7 +1,7 @@
-const fs = require('fs')
-const path = require('path')
+import fs from 'node:fs'
+import path from 'node:path'
 
-const editorConflictEvents = require('./editor-conflict-events')
+import * as editorConflictEvents from './editor-conflict-events.ts'
 
 const {
   EDITOR_SAVE_CONFLICT_EVENT,
@@ -9,7 +9,7 @@ const {
   EDITOR_CONFLICT_RESET_EVENT
 } = editorConflictEvents
 
-const repoRoot = path.resolve(__dirname, '../..')
+const repoRoot = path.resolve(import.meta.dirname, '../..')
 const guardedFiles = [
   'client/components/editor.vue',
   'client/components/editor/editor-markdown.vue',
@@ -50,14 +50,14 @@ describe('editor conflict events', () => {
   test('editor conflict helper uses the shared non-Vue event bus', () => {
     const source = fs.readFileSync(path.join(repoRoot, 'client/helpers/editor-conflict-events.ts'), 'utf8')
 
-    expect(source).toContain("import { createEventBus } from './simple-event-bus'")
-    expect(source).not.toMatch(/require\(\s*['"]vue['"]\s*\)/)
+    expect(source).toContain("import { createEventBus } from '" + "./simple-event-bus'")
+    expect(source).not.toMatch(/requ\u0069re\(\s*['"]vue['"]\s*\)/)
     expect(source).not.toMatch(/new\s+Vue\s*\(/)
     expect(source).not.toMatch(/\.\$(?:emit|on|off)\s*\(/)
   })
 
   test.each(conflictEventCases)('emit%s emits the shared %s event on the private bus', (suffix) => {
-    const handler = jest.fn()
+    const handler = vi.fn()
 
     editorConflictEvents[`on${suffix}`](handler)
     editorConflictEvents[`emit${suffix}`]()
@@ -68,8 +68,8 @@ describe('editor conflict events', () => {
 
   test('emitEditorConflictResolved emits overwrite before reset', () => {
     const calls = []
-    const overwriteHandler = jest.fn(() => calls.push(EDITOR_CONTENT_OVERWRITE_EVENT))
-    const resetHandler = jest.fn(() => calls.push(EDITOR_CONFLICT_RESET_EVENT))
+    const overwriteHandler = vi.fn(() => calls.push(EDITOR_CONTENT_OVERWRITE_EVENT))
+    const resetHandler = vi.fn(() => calls.push(EDITOR_CONFLICT_RESET_EVENT))
 
     editorConflictEvents.onEditorContentOverwrite(overwriteHandler)
     editorConflictEvents.onEditorConflictReset(resetHandler)
@@ -83,7 +83,7 @@ describe('editor conflict events', () => {
   })
 
   test.each(conflictEventCases)('off%s unsubscribes from the private %s event with the same handler', (suffix) => {
-    const handler = jest.fn()
+    const handler = vi.fn()
 
     editorConflictEvents[`on${suffix}`](handler)
     editorConflictEvents[`off${suffix}`](handler)
@@ -93,7 +93,7 @@ describe('editor conflict events', () => {
   })
 
   test.each(conflictEventCases)('off%s does not broadly unsubscribe without a handler', (suffix) => {
-    const handler = jest.fn()
+    const handler = vi.fn()
 
     editorConflictEvents[`on${suffix}`](handler)
     editorConflictEvents[`off${suffix}`]()

@@ -1,7 +1,7 @@
 <template lang='pug'>
   v-container(fluid, grid-list-lg)
-    v-layout(row wrap)
-      v-flex(xs12)
+    v-row
+      v-col(cols='12')
         .admin-header
           img.animated.fadeInUp(src='/_assets/svg/icon-venn-diagram.svg', alt='Visualize Pages', style='width: 80px;')
           .admin-header-title
@@ -33,16 +33,68 @@
         v-alert(v-if='pages.length < 1', outlined, type='warning', style='max-width: 650px; margin: 0 auto;') Looks like there's no data yet to graph!
 </template>
 
-<script>
+<script lang='ts'>
+import { defineComponent } from 'vue'
 import _ from 'lodash'
 import * as d3 from 'd3'
-import { fetchPageLinks } from '../../helpers/pages-api'
-import { pushGraphError, setLoading } from '../../helpers/root-ui-store'
+import { fetchPageLinks, type PageLinkRow } from '../../helpers/pages-api'
+import { wikiStore } from '@/store/index.ts'
+
+type GraphMode = 'htree' | 'hradial' | 'rradial'
+
+type LocaleOption = {
+  code: string
+  name: string
+}
+
+type PageGraphNode = {
+  id?: number
+  path: string
+  title: string
+  links: string[]
+  children?: PageGraphNode[]
+}
+
+type PageBranch = [PageGraphNode, PageLinkRow[]]
+
+interface BilinkHierarchyNode extends d3.HierarchyNode<PageGraphNode> {
+  incoming: BilinkRelationship[]
+  outgoing: BilinkRelationship[]
+}
+
+type BilinkRelationship = [BilinkHierarchyNode, BilinkHierarchyNode]
+
+interface RelationPointNode extends d3.HierarchyPointNode<PageGraphNode> {
+  incoming: RelationLink[]
+  outgoing: RelationLink[]
+  text?: SVGTextElement
+}
+
+type RelationLink = [RelationPointNode, RelationPointNode] & {
+  path?: SVGPathElement
+}
+
+type TreeRootMetadata = {
+  dx: number
+  dy: number
+}
+
+type TreeHierarchyRoot = d3.HierarchyNode<PageGraphNode> & TreeRootMetadata
+type TreePointRoot = d3.HierarchyPointNode<PageGraphNode> & TreeRootMetadata
+
+type AdminPagesVisualizeState = {
+  graphMode: GraphMode
+  width: number
+  radius: number
+  pages: PageLinkRow[]
+  locales: LocaleOption[]
+  currentLocale: string
+}
 
 /* global siteConfig, siteLangs */
 
-export default {
-  data() {
+export default defineComponent({
+  data (): AdminPagesVisualizeState {
     return {
       graphMode: 'htree',
       width: 800,
@@ -64,8 +116,8 @@ export default {
     }
   },
   methods: {
-    async loadPages () {
-      setLoading(this.$store, 'admin-pages-refresh', true)
+    async loadPages (): Promise<void> {
+      wikiStore.startLoading('admin-pages-refresh')
       try {
         this.pages = await fetchPageLinks(
           window.fetch.bind(window),
@@ -73,14 +125,14 @@ export default {
           'Page links response is invalid'
         )
       } catch (err) {
-        pushGraphError(this.$store, err)
+        wikiStore.showError(err)
       }
-      setLoading(this.$store, 'admin-pages-refresh', false)
+      wikiStore.stopLoading('admin-pages-refresh')
     },
-    goToPage (d) {
-      const id = d.data.id
+    goToPage (event: MouseEvent, node: d3.HierarchyNode<PageGraphNode>): void {
+      const id = node.data.id
       if (id) {
-        if (d3.event.ctrlKey || d3.event.metaKey) {
+        if (event.ctrlKey || event.metaKey) {
           const { href } = this.$router.resolve(String(id))
           window.open(href, '_blank')
         } else {
@@ -88,48 +140,60 @@ export default {
         }
       }
     },
-    bilink (root) {
-      const map = new Map(root.descendants().map(d => [d.data.path, d]))
-      for (const d of root.descendants()) {
-        d.incoming = []
-        d.outgoing = []
-        d.data.links.forEach(i => {
-          const relNode = map.get(i)
-          if (relNode) {
-            d.outgoing.push([d, relNode])
+    bilink (root: d3.HierarchyNode<PageGraphNode>): BilinkHierarchyNode {
+      const nodes = root.descendants() as BilinkHierarchyNode[]
+      const map = new Map<string, BilinkHierarchyNode>(
+        nodes.map((node): [string, BilinkHierarchyNode] => [node.data.path, node])
+      )
+      for (const node of nodes) {
+        node.incoming = []
+        node.outgoing = []
+        node.data.links.forEach((path: string) => {
+          const relatedNode = map.get(path)
+          if (relatedNode) {
+            node.outgoing.push([node, relatedNode])
           }
         })
       }
-      for (const d of root.descendants()) {
-        for (const o of d.outgoing) {
-          if (o[1]) {
-            o[1].incoming.push(o)
-          }
+      for (const node of nodes) {
+        for (const relationship of node.outgoing) {
+          relationship[1].incoming.push(relationship)
         }
       }
-      return root
+      return root as BilinkHierarchyNode
     },
-    hierarchy (pages) {
-      const map = new Map(pages.map(p => [p.path, p]))
-      const getPage = path => map.get(path) || {
-        path: path,
+    hierarchy (pages: PageLinkRow[]): PageGraphNode {
+      const map = new Map<string, PageLinkRow>(
+        pages.map((page): [string, PageLinkRow] => [page.path, page])
+      )
+      const getPage = (path: string): PageGraphNode => map.get(path) || {
+        path,
         title: path.split('/').slice(-1)[0],
         links: []
       }
 
-      function recurse (depth, [parent, descendants]) {
-        const truncatePath = path => _.take(path.split('/'), depth).join('/')
-        const descendantsByChild =
+      function recurse (depth: number, [parent, descendants]: PageBranch): PageGraphNode {
+        const truncatePath = (path: string): string => _.take(path.split('/'), depth).join('/')
+        const descendantsByChild: PageBranch[] =
           Object.entries(_.groupBy(descendants, page => truncatePath(page.path)))
-            .map(([childPath, descendantsGroup]) => [getPage(childPath), _.sortBy(descendantsGroup, child => child.path)])
-            .map(([child, descendantsGroup]) =>
-              [child, _.filter(descendantsGroup, d => d.path !== child.path)])
+            .map(([childPath, descendantsGroup]): PageBranch => [
+              getPage(childPath),
+              _.sortBy(descendantsGroup, child => child.path)
+            ])
+            .map(([child, descendantsGroup]): PageBranch => [
+              child,
+              _.filter(descendantsGroup, descendant => descendant.path !== child.path)
+            ])
         return {
           ...parent,
-          children: descendantsByChild.map(_.partial(recurse, depth + 1))
+          children: descendantsByChild.map(branch => recurse(depth + 1, branch))
         }
       }
-      const root = { path: this.currentLocale, title: this.currentLocale, links: [] }
+      const root: PageGraphNode = {
+        path: this.currentLocale,
+        title: this.currentLocale,
+        links: []
+      }
       // start at depth=2 because we're taking {locale} as the root and
       // all paths start with {locale}/
       return recurse(2, [root, pages])
@@ -137,100 +201,128 @@ export default {
     /**
      * Relational Radial
      */
-    drawRelations () {
+    drawRelations (): void {
       const data = this.hierarchy(this.pages)
 
-      const line = d3.lineRadial()
+      const line = d3.lineRadial<RelationPointNode>()
         .curve(d3.curveBundle.beta(0.85))
-        .radius(d => d.y)
-        .angle(d => d.x)
+        .radius(node => node.y)
+        .angle(node => node.x)
 
-      const tree = d3.cluster()
+      const tree = d3.cluster<PageGraphNode>()
         .size([2 * Math.PI, this.radius - 100])
 
-      const root = tree(this.bilink(d3.hierarchy(data)
-        .sort((a, b) => d3.ascending(a.height, b.height) || d3.ascending(a.data.path, b.data.path))))
+      const hierarchyRoot = d3.hierarchy<PageGraphNode>(data)
+        .sort((a, b) => d3.ascending(a.height, b.height) || d3.ascending(a.data.path, b.data.path))
+      const root = tree(this.bilink(hierarchyRoot)) as RelationPointNode
 
       const svg = d3.create('svg')
         .attr('viewBox', [-this.width / 2, -this.width / 2, this.width, this.width])
 
       const g = svg.append('g')
 
-      svg.call(d3.zoom().on('zoom', function() {
-        g.attr('transform', d3.event.transform)
-      }))
+      const zoom = d3.zoom<SVGSVGElement, undefined>()
+        .on('zoom', (event: d3.D3ZoomEvent<SVGSVGElement, undefined>) => {
+          g.attr('transform', event.transform.toString())
+        })
+      svg.call(zoom)
 
       const link = g.append('g')
         .attr('stroke', '#CCC')
         .attr('fill', 'none')
-        .selectAll('path')
+        .selectAll<SVGPathElement, RelationLink>('path')
         .data(root.descendants().flatMap(leaf => leaf.outgoing))
         .join('path')
         .style('mix-blend-mode', 'multiply')
-        .attr('d', ([i, o]) => line(i.path(o)))
-        .each(function(d) { d.path = this })
+        .attr('d', ([source, target]) => line(source.path(target)))
+        .each(function (relationship: RelationLink) {
+          relationship.path = this
+        })
 
       g.append('g')
         .attr('font-family', 'sans-serif')
         .attr('font-size', 10)
-        .selectAll('g')
+        .selectAll<SVGGElement, RelationPointNode>('g')
         .data(root.descendants())
         .join('g')
-        .attr('transform', d => `rotate(${d.x * 180 / Math.PI - 90}) translate(${d.y},0)`)
+        .attr('transform', node => `rotate(${node.x * 180 / Math.PI - 90}) translate(${node.y},0)`)
         .append('text')
         .attr('dy', '0.31em')
-        .attr('x', d => d.x < Math.PI ? 6 : -6)
-        .attr('text-anchor', d => d.x < Math.PI ? 'start' : 'end')
-        .attr('transform', d => d.x >= Math.PI ? 'rotate(180)' : null)
-        .attr('fill', this.$vuetify.theme.dark ? 'white' : '')
+        .attr('x', node => node.x < Math.PI ? 6 : -6)
+        .attr('text-anchor', node => node.x < Math.PI ? 'start' : 'end')
+        .attr('transform', node => node.x >= Math.PI ? 'rotate(180)' : null)
+        .attr('fill', this.$vuetify.theme.current.dark ? 'white' : '')
         .attr('cursor', 'pointer')
-        .text(d => d.data.title)
-        .each(function(d) { d.text = this })
+        .text(node => node.data.title)
+        .each(function (node: RelationPointNode) {
+          node.text = this
+        })
         .on('mouseover', overed)
         .on('mouseout', outed)
-        .on('click', d => this.goToPage(d))
-        .call(text => text.append('title').text(d => `${d.data.path}
-          ${d.outgoing.length} outgoing
-          ${d.incoming.length} incoming`))
+        .on('click', (event: MouseEvent, node: RelationPointNode) => this.goToPage(event, node))
+        .call(text => text.append('title').text(node => `${node.data.path}
+          ${node.outgoing.length} outgoing
+          ${node.incoming.length} incoming`))
         .clone(true).lower()
-        .attr('stroke', this.$vuetify.theme.dark ? '#222' : 'white')
+        .attr('stroke', this.$vuetify.theme.current.dark ? '#222' : 'white')
 
-      function overed(d) {
+      function overed (this: SVGTextElement, _event: MouseEvent, node: RelationPointNode): void {
         link.style('mix-blend-mode', null)
-        d3.select(this).attr('font-weight', 'bold')
-        d3.selectAll(d.incoming.map(d => d.path)).attr('stroke', '#2196F3').raise()
-        d3.selectAll(d.incoming.map(([d]) => d.text)).attr('fill', '#2196F3').attr('font-weight', 'bold')
-        d3.selectAll(d.outgoing.map(d => d.path)).attr('stroke', '#E91E63').raise()
-        d3.selectAll(d.outgoing.map(([, d]) => d.text)).attr('fill', '#E91E63').attr('font-weight', 'bold')
+        d3.select<SVGTextElement, RelationPointNode>(this).attr('font-weight', 'bold')
+        d3.selectAll<SVGPathElement, RelationLink>(
+          node.incoming.flatMap(relationship => relationship.path ? [relationship.path] : [])
+        ).attr('stroke', '#2196F3').raise()
+        d3.selectAll<SVGTextElement, RelationPointNode>(
+          node.incoming.flatMap(([source]) => source.text ? [source.text] : [])
+        ).attr('fill', '#2196F3').attr('font-weight', 'bold')
+        d3.selectAll<SVGPathElement, RelationLink>(
+          node.outgoing.flatMap(relationship => relationship.path ? [relationship.path] : [])
+        ).attr('stroke', '#E91E63').raise()
+        d3.selectAll<SVGTextElement, RelationPointNode>(
+          node.outgoing.flatMap(([, target]) => target.text ? [target.text] : [])
+        ).attr('fill', '#E91E63').attr('font-weight', 'bold')
       }
 
-      function outed(d) {
+      function outed (this: SVGTextElement, _event: MouseEvent, node: RelationPointNode): void {
         link.style('mix-blend-mode', 'multiply')
-        d3.select(this).attr('font-weight', null)
-        d3.selectAll(d.incoming.map(d => d.path)).attr('stroke', null)
-        d3.selectAll(d.incoming.map(([d]) => d.text)).attr('fill', null).attr('font-weight', null)
-        d3.selectAll(d.outgoing.map(d => d.path)).attr('stroke', null)
-        d3.selectAll(d.outgoing.map(([, d]) => d.text)).attr('fill', null).attr('font-weight', null)
+        d3.select<SVGTextElement, RelationPointNode>(this).attr('font-weight', null)
+        d3.selectAll<SVGPathElement, RelationLink>(
+          node.incoming.flatMap(relationship => relationship.path ? [relationship.path] : [])
+        ).attr('stroke', null)
+        d3.selectAll<SVGTextElement, RelationPointNode>(
+          node.incoming.flatMap(([source]) => source.text ? [source.text] : [])
+        ).attr('fill', null).attr('font-weight', null)
+        d3.selectAll<SVGPathElement, RelationLink>(
+          node.outgoing.flatMap(relationship => relationship.path ? [relationship.path] : [])
+        ).attr('stroke', null)
+        d3.selectAll<SVGTextElement, RelationPointNode>(
+          node.outgoing.flatMap(([, target]) => target.text ? [target.text] : [])
+        ).attr('fill', null).attr('font-weight', null)
       }
 
-      this.$refs.svgContainer.appendChild(svg.node())
+      const svgNode = svg.node()
+      if (svgNode) {
+        const container = this.$refs.svgContainer as HTMLDivElement
+        container.appendChild(svgNode)
+      }
     },
     /**
      * Hierarchical Tree
      */
-    drawTree () {
+    drawTree (): void {
       const data = this.hierarchy(this.pages)
 
-      const treeRoot = d3.hierarchy(data)
+      const treeRoot = d3.hierarchy<PageGraphNode>(data) as TreeHierarchyRoot
       treeRoot.dx = 10
       treeRoot.dy = this.width / (treeRoot.height + 1)
-      const root = d3.tree().nodeSize([treeRoot.dx, treeRoot.dy])(treeRoot)
+      const root = d3.tree<PageGraphNode>()
+        .nodeSize([treeRoot.dx, treeRoot.dy])(treeRoot) as TreePointRoot
 
       let x0 = Infinity
       let x1 = -x0
-      root.each(d => {
-        if (d.x > x1) x1 = d.x
-        if (d.x < x0) x0 = d.x
+      root.each(node => {
+        if (node.x > x1) x1 = node.x
+        if (node.x < x0) x0 = node.x
       })
 
       const svg = d3.create('svg')
@@ -241,9 +333,11 @@ export default {
       // we apply the translation (`g`), or else zoom is wonky
       const gZoom = svg.append('g')
 
-      svg.call(d3.zoom().on('zoom', function() {
-        gZoom.attr('transform', d3.event.transform)
-      }))
+      const zoom = d3.zoom<SVGSVGElement, undefined>()
+        .on('zoom', (event: d3.D3ZoomEvent<SVGSVGElement, undefined>) => {
+          gZoom.attr('transform', event.transform.toString())
+        })
+      svg.call(zoom)
 
       const g = gZoom.append('g')
         .attr('font-family', 'sans-serif')
@@ -252,52 +346,60 @@ export default {
 
       g.append('g')
         .attr('fill', 'none')
-        .attr('stroke', this.$vuetify.theme.dark ? '#999' : '#555')
+        .attr('stroke', this.$vuetify.theme.current.dark ? '#999' : '#555')
         .attr('stroke-opacity', 0.4)
         .attr('stroke-width', 1.5)
-        .selectAll('path')
+        .selectAll<SVGPathElement, d3.HierarchyPointLink<PageGraphNode>>('path')
         .data(root.links())
         .join('path')
-        .attr('d', d3.linkHorizontal()
-          .x(d => d.y)
-          .y(d => d.x))
+        .attr('d', d3.linkHorizontal<
+          d3.HierarchyPointLink<PageGraphNode>,
+          d3.HierarchyPointNode<PageGraphNode>
+        >()
+          .x(node => node.y)
+          .y(node => node.x))
 
       const node = g.append('g')
         .attr('stroke-linejoin', 'round')
         .attr('stroke-width', 3)
-        .selectAll('g')
+        .selectAll<SVGGElement, d3.HierarchyPointNode<PageGraphNode>>('g')
         .data(root.descendants())
         .join('g')
-        .attr('transform', d => `translate(${d.y},${d.x})`)
+        .attr('transform', descendant => `translate(${descendant.y},${descendant.x})`)
 
       node.append('circle')
-        .attr('fill', d => d.children ? '#555' : '#999')
+        .attr('fill', descendant => descendant.children ? '#555' : '#999')
         .attr('r', 2.5)
 
       node.append('text')
         .attr('dy', '0.31em')
-        .attr('x', d => d.children ? -6 : 6)
-        .attr('text-anchor', d => d.children ? 'end' : 'start')
-        .attr('fill', this.$vuetify.theme.dark ? 'white' : '')
+        .attr('x', descendant => descendant.children ? -6 : 6)
+        .attr('text-anchor', descendant => descendant.children ? 'end' : 'start')
+        .attr('fill', this.$vuetify.theme.current.dark ? 'white' : '')
         .attr('cursor', 'pointer')
-        .text(d => d.data.title)
-        .on('click', d => this.goToPage(d))
+        .text(descendant => descendant.data.title)
+        .on('click', (event: MouseEvent, descendant: d3.HierarchyPointNode<PageGraphNode>) =>
+          this.goToPage(event, descendant))
         .clone(true).lower()
-        .attr('stroke', this.$vuetify.theme.dark ? '#222' : 'white')
+        .attr('stroke', this.$vuetify.theme.current.dark ? '#222' : 'white')
 
-      this.$refs.svgContainer.appendChild(svg.node())
+      const svgNode = svg.node()
+      if (svgNode) {
+        const container = this.$refs.svgContainer as HTMLDivElement
+        container.appendChild(svgNode)
+      }
     },
     /**
      * Hierarchical Radial
      */
-    drawRadialTree () {
+    drawRadialTree (): void {
       const data = this.hierarchy(this.pages)
 
-      const tree = d3.tree()
+      const tree = d3.tree<PageGraphNode>()
         .size([2 * Math.PI, this.radius])
         .separation((a, b) => (a.parent === b.parent ? 1 : 2) / a.depth)
 
-      const root = tree(d3.hierarchy(data)
+      const root = tree(d3.hierarchy<PageGraphNode>(data)
         .sort((a, b) => d3.ascending(a.data.title, b.data.title)))
 
       const svg = d3.create('svg')
@@ -305,64 +407,74 @@ export default {
 
       const g = svg.append('g')
 
-      svg.call(d3.zoom().on('zoom', function () {
-        g.attr('transform', d3.event.transform)
-      }))
+      const zoom = d3.zoom<SVGSVGElement, undefined>()
+        .on('zoom', (event: d3.D3ZoomEvent<SVGSVGElement, undefined>) => {
+          g.attr('transform', event.transform.toString())
+        })
+      svg.call(zoom)
 
-      // eslint-disable-next-line no-unused-vars
-      const link = g.append('g')
+      g.append('g')
         .attr('fill', 'none')
-        .attr('stroke', this.$vuetify.theme.dark ? 'white' : '#555')
+        .attr('stroke', this.$vuetify.theme.current.dark ? 'white' : '#555')
         .attr('stroke-opacity', 0.4)
         .attr('stroke-width', 1.5)
-        .selectAll('path')
+        .selectAll<SVGPathElement, d3.HierarchyPointLink<PageGraphNode>>('path')
         .data(root.links())
         .join('path')
-        .attr('d', d3.linkRadial()
-          .angle(d => d.x)
-          .radius(d => d.y))
+        .attr('d', d3.linkRadial<
+          d3.HierarchyPointLink<PageGraphNode>,
+          d3.HierarchyPointNode<PageGraphNode>
+        >()
+          .angle(node => node.x)
+          .radius(node => node.y))
 
       const node = g.append('g')
         .attr('stroke-linejoin', 'round')
         .attr('stroke-width', 3)
-        .selectAll('g')
+        .selectAll<SVGGElement, d3.HierarchyPointNode<PageGraphNode>>('g')
         .data(root.descendants().reverse())
         .join('g')
-        .attr('transform', d => `
-          rotate(${d.x * 180 / Math.PI - 90})
-          translate(${d.y},0)
+        .attr('transform', descendant => `
+          rotate(${descendant.x * 180 / Math.PI - 90})
+          translate(${descendant.y},0)
         `)
 
       node.append('circle')
-        .attr('fill', d => d.children ? '#555' : '#999')
+        .attr('fill', descendant => descendant.children ? '#555' : '#999')
         .attr('r', 2.5)
 
       node.append('text')
         .attr('dy', '0.31em')
-        /* eslint-disable no-mixed-operators */
-        .attr('x', d => d.x < Math.PI === !d.children ? 6 : -6)
-        .attr('text-anchor', d => d.x < Math.PI === !d.children ? 'start' : 'end')
-        .attr('transform', d => d.x >= Math.PI ? 'rotate(180)' : null)
-        /* eslint-enable no-mixed-operators */
-        .attr('fill', this.$vuetify.theme.dark ? 'white' : '')
+
+        .attr('x', descendant => descendant.x < Math.PI === !descendant.children ? 6 : -6)
+        .attr('text-anchor', descendant => descendant.x < Math.PI === !descendant.children ? 'start' : 'end')
+        .attr('transform', descendant => descendant.x >= Math.PI ? 'rotate(180)' : null)
+
+        .attr('fill', this.$vuetify.theme.current.dark ? 'white' : '')
         .attr('cursor', 'pointer')
-        .text(d => d.data.title)
-        .on('click', d => this.goToPage(d))
+        .text(descendant => descendant.data.title)
+        .on('click', (event: MouseEvent, descendant: d3.HierarchyPointNode<PageGraphNode>) =>
+          this.goToPage(event, descendant))
         .clone(true).lower()
-        .attr('stroke', this.$vuetify.theme.dark ? '#222' : 'white')
+        .attr('stroke', this.$vuetify.theme.current.dark ? '#222' : 'white')
 
-      this.$refs.svgContainer.appendChild(svg.node())
+      const svgNode = svg.node()
+      if (svgNode) {
+        const container = this.$refs.svgContainer as HTMLDivElement
+        container.appendChild(svgNode)
+      }
 
-      function autoBox() {
-        const {x, y, width, height} = this.getBBox()
+      function autoBox (this: SVGSVGElement): [number, number, number, number] {
+        const { x, y, width, height } = this.getBBox()
         return [x, y, width, height]
       }
 
       svg.attr('viewBox', autoBox)
     },
-    redraw () {
-      while (this.$refs.svgContainer.firstChild) {
-        this.$refs.svgContainer.firstChild.remove()
+    redraw (): void {
+      const container = this.$refs.svgContainer as HTMLDivElement
+      while (container.firstChild) {
+        container.firstChild.remove()
       }
       if (this.pages.length > 0) {
         switch (this.graphMode) {
@@ -382,7 +494,7 @@ export default {
   mounted () {
     this.loadPages()
   }
-}
+})
 </script>
 
 <style lang='scss'>

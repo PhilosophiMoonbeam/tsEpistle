@@ -45,7 +45,7 @@
       .subtitle-1.pb-3.pl-0.primary--text Migrate all pages to target locale
       .body-2 If you created content before selecting a different locale and activating the namespacing capabilities, you may want to transfer all content to the base locale.
       .body-2.red--text: strong This operation is destructive and cannot be reversed! Make sure you have proper backups!
-      v-toolbar.radius-7.mt-5(flat, :color='$vuetify.theme.dark ? `grey darken-3-d5` : `grey lighten-4`', height='80')
+      v-toolbar.radius-7.mt-5(flat, :color='$vuetify.theme.current.dark ? `grey darken-3-d5` : `grey lighten-4`', height='80')
         v-select(
           label='Source Locale'
           outlined
@@ -75,7 +75,7 @@
       .subtitle-1.pb-3.pl-0.primary--text Purge Page History
       .body-2 You may want to purge old history for pages to reduce database usage.
       .body-2 This operation only affects the database and not any history saved by a storage module (e.g. git version history)
-      v-toolbar.radius-7.mt-5(flat, :color='$vuetify.theme.dark ? `grey darken-3-d5` : `grey lighten-4`', height='80')
+      v-toolbar.radius-7.mt-5(flat, :color='$vuetify.theme.current.dark ? `grey darken-3-d5` : `grey lighten-4`', height='80')
         v-select(
           label='Delete history older than...'
           outlined
@@ -90,16 +90,17 @@
         span Proceed
 </template>
 
-<script>
+<script lang='ts'>
+import { defineComponent } from 'vue'
 import { fetchPageList } from '../../helpers/pages-api'
-import { loadingStart, loadingStop, showNotification, pushGraphError } from '../../helpers/root-ui-store'
+import { wikiStore } from '@/store/index.ts'
 import { migratePagesToLocale, purgePageHistory, rebuildPageTree, renderPage } from '../../helpers/system-api'
 
 import { SemipolarSpinner } from 'epic-spinners'
 
 /* global siteLangs, siteConfig */
 
-export default {
+export default defineComponent({
   components: {
     SemipolarSpinner
   },
@@ -137,26 +138,26 @@ export default {
   methods: {
     async rebuildTree () {
       this.loading = true
-      loadingStart(this.$store, 'admin-utilities-content-rebuildtree')
+      wikiStore.startLoading('admin-utilities-content-rebuildtree')
 
       try {
         await rebuildPageTree(window.fetch.bind(window))
-        showNotification(this.$store, {
+        wikiStore.showNotification({
           message: 'Page Tree rebuilt successfully.',
           style: 'success',
           icon: 'check'
         })
       } catch (err) {
-        pushGraphError(this.$store, err)
+        wikiStore.showError(err)
       }
 
-      loadingStop(this.$store, 'admin-utilities-content-rebuildtree')
+      wikiStore.stopLoading('admin-utilities-content-rebuildtree')
       this.loading = false
     },
     async rerenderPages () {
       this.loading = true
       this.isRerendering = true
-      loadingStart(this.$store, 'admin-utilities-content-rerender')
+      wikiStore.startLoading('admin-utilities-content-rerender')
 
       try {
         const pages = await fetchPageList(window.fetch.bind(window))
@@ -178,64 +179,64 @@ export default {
           }
         }
         if (failed > 0) {
-          showNotification(this.$store, {
+          wikiStore.showNotification({
             message: `Completed with ${failed} pages that failed to render. Check server logs for details.`,
             style: 'error',
             icon: 'alert'
           })
         } else {
-          showNotification(this.$store, {
+          wikiStore.showNotification({
             message: 'All pages have been rendered successfully.',
             style: 'success',
             icon: 'check'
           })
         }
       } catch (err) {
-        pushGraphError(this.$store, err)
+        wikiStore.showError(err)
       }
 
-      loadingStop(this.$store, 'admin-utilities-content-rerender')
+      wikiStore.stopLoading('admin-utilities-content-rerender')
       this.isRerendering = false
       this.loading = false
     },
     async migrateToLocale () {
       this.loading = true
-      loadingStart(this.$store, 'admin-utilities-content-migratelocale')
+      wikiStore.startLoading('admin-utilities-content-migratelocale')
 
       try {
         const resp = await migratePagesToLocale(window.fetch.bind(window), this.sourceLocale, this.targetLocale)
-        showNotification(this.$store, {
+        wikiStore.showNotification({
           message: `Migrated ${resp.count} page(s) to target locale successfully.`,
           style: 'success',
           icon: 'check'
         })
       } catch (err) {
-        pushGraphError(this.$store, err)
+        wikiStore.showError(err)
       }
 
-      loadingStop(this.$store, 'admin-utilities-content-migratelocale')
+      wikiStore.stopLoading('admin-utilities-content-migratelocale')
       this.loading = false
     },
     async purgeHistory () {
       this.loading = true
-      loadingStart(this.$store, 'admin-utilities-content-purgehistory')
+      wikiStore.startLoading('admin-utilities-content-purgehistory')
 
       try {
         await purgePageHistory(window.fetch.bind(window), this.purgeHistorySelection)
-        showNotification(this.$store, {
+        wikiStore.showNotification({
           message: `Purged history successfully.`,
           style: 'success',
           icon: 'check'
         })
       } catch (err) {
-        pushGraphError(this.$store, err)
+        wikiStore.showError(err)
       }
 
-      loadingStop(this.$store, 'admin-utilities-content-purgehistory')
+      wikiStore.stopLoading('admin-utilities-content-purgehistory')
       this.loading = false
     }
   }
-}
+})
 </script>
 
 <style lang='scss'>

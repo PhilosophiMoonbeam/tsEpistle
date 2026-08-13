@@ -19,19 +19,28 @@
                   .caption.grey--text {{item.description}}
 </template>
 
-<script>
+<script lang='ts'>
 import _ from 'lodash'
-import { sync } from 'vuex-pathify'
+import { wikiStore } from '@/store/index.ts'
+
+type EditorBlock = {
+  key: string
+  title: string
+  description: string
+  icon: string
+}
 
 export default {
+  emits: ['update:modelValue'],
   props: {
-    value: {
+    modelValue: {
       type: Boolean,
       default: false
     }
   },
   data() {
     return {
+      block: null as EditorBlock | null,
       blocks: [
         {
           key: 'childlist',
@@ -50,13 +59,20 @@ export default {
   },
   computed: {
     isShown: {
-      get() { return this.value },
-      set(val) { this.$emit('input', val) }
+      get() { return this.modelValue },
+      set(val: boolean) { this.$emit('update:modelValue', val) }
     },
-    activeModal: sync('editor/activeModal')
+    activeModal: {
+      get() {
+        return wikiStore.editor.activeModal
+      },
+      set(value: string) {
+        wikiStore.editor.activeModal = value
+      }
+    }
   },
   methods: {
-    selectBlock (item) {
+    selectBlock (item: EditorBlock) {
       this.block = _.cloneDeep(item)
     }
   }
