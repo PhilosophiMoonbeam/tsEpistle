@@ -16,15 +16,14 @@
             .body-2.pt-3.pl-3 {{ $t('admin:contribute.needYourHelp') }}
             v-divider.mt-3
             v-list-subheader.subtitle-2 {{ $t('admin:contribute.fundOurWork') }}
-            v-tabs.mx-3.radius-7.admin-contribute-tabs(
+            v-tabs.mx-3.radius-7.admin-contribute-tabs.text-white(
               v-model='contributeTab'
               centered
               fixed-tabs
-              background-color='primary'
+              bg-color='primary'
               color='white'
-              dark
               slider-color='#FFF'
-              icons-and-text
+              stacked
               )
               v-tab(value='github')
                 span GitHub

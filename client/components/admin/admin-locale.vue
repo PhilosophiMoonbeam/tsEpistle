@@ -78,13 +78,12 @@
                     prepend-icon='mdi-web'
                     multiple
                     chips
-                    deletable-chips
+                    closable-chips
                     v-model='namespaces'
                     item-value='code'
                     item-title='name'
                     :label='$t("admin:locale.activeNamespaces.label")'
                     persistent-hint
-                    small-chips
                     :hint='$t("admin:locale.activeNamespaces.hint")'
                     )
                     template(v-slot:item='data')

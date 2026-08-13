@@ -23,7 +23,7 @@
             v-for='tag of tagsSelected'
             :key='`tagSelected-` + tag.tag'
             color='white'
-            close
+            closable
             @click:close='toggleTag(tag.tag)'
             ) {{tag.title}}
           v-spacer

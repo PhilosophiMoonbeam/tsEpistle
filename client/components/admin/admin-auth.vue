@@ -163,8 +163,7 @@
                 :disabled='!strategy.selfRegistration'
                 :hint='$t(`admin:auth.domainsWhitelistHint`)'
                 persistent-hint
-                small-chips
-                deletable-chips
+                closable-chips
                 clearable
                 multiple
                 chips
@@ -179,9 +178,8 @@
                 v-model='strategy.autoEnrollGroups'
                 prepend-icon='mdi-account-group'
                 :hint='$t(`admin:auth.autoEnrollGroupsHint`)'
-                small-chips
                 persistent-hint
-                deletable-chips
+                closable-chips
                 clearable
                 multiple
                 chips

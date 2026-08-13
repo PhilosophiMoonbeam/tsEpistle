@@ -18,7 +18,7 @@
             span {{$t('common:actions.apply')}}
 
         v-card.mt-3
-          v-tabs(v-model='tab', color='grey darken-2', fixed-tabs, slider-color='white', show-arrows, dark)
+          v-tabs.text-white(v-model='tab', bg-color='grey-darken-2', color='white', fixed-tabs, slider-color='white', show-arrows)
             v-tab(value='settings'): v-icon settings
             v-tab(v-for='logger in activeLoggers', :key='logger.key', :value='logger.key') {{ logger.title }}
 

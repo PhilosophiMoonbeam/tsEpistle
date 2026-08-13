@@ -57,7 +57,7 @@
                                 hide-details
                                 dense
                                 chips
-                                small-chips
+                                closable-chips
                                 )
                             v-divider.my-3
                             .d-flex.align-center

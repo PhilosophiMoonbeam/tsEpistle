@@ -16,7 +16,7 @@
 
 <script lang='ts'>
 import _ from 'lodash'
-import { defineComponent, type PropType } from 'vue'
+import { defineComponent, markRaw, type PropType } from 'vue'
 import { wikiStore } from '@/store/index.ts'
 import {
   Autoformat,
@@ -247,7 +247,7 @@ export default defineComponent({
         }
       }
     })
-    this.editor = editor
+    this.editor = markRaw(editor)
     const toolbarElement = editor.ui.view.toolbar.element
     if (toolbarElement) {
       toolbarContainer.appendChild(toolbarElement)

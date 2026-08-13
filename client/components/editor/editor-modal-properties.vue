@@ -17,7 +17,7 @@
         v-icon(left) mdi-check
         span {{ $t('common:actions.ok') }}
     v-card(tile)
-      v-tabs(color='white', background-color='blue darken-1', dark, centered, v-model='currentTab')
+      v-tabs.text-white(bg-color='blue-darken-1', color='white', centered, v-model='currentTab')
         v-tab(:value='0') {{$t('editor:props.info')}}
         v-tab(:value='1') {{$t('editor:props.scheduling')}}
         v-tab(:value='2', :disabled='!hasScriptPermission') {{$t('editor:props.scripts')}}
@@ -70,26 +70,20 @@
           v-divider
           v-card-text.grey.pt-5(:class='$vuetify.theme.current.dark ? `darken-3-d5` : `lighten-4`')
             .overline.pb-5 {{$t('editor:props.categorization')}}
-            v-chip-group.radius-5.mb-5(column, v-if='tags && tags.length > 0')
-              v-chip(
-                v-for='tag of tags'
-                :key='`tag-` + tag'
-                close
-                label
-                color='teal'
-                text-color='teal lighten-5'
-                @click:close='removeTag(tag)'
-                ) {{tag}}
             v-combobox(
               :label='$t(`editor:props.tags`)'
               outlined
-              v-model='newTag'
+              v-model='tags'
+              v-model:search='newTagSearch'
               :hint='$t(`editor:props.tagsHint`)'
               :items='newTagSuggestions'
               :loading='tagSearchLoading'
+              multiple
+              chips
+              closable-chips
+              hide-selected
               persistent-hint
               hide-no-data
-              v-model:search-input='newTagSearch'
               )
         v-tabs-window-item(:value='1', transition='fade-transition', reverse-transition='fade-transition')
           v-card-text
@@ -108,10 +102,7 @@
               v-row
                 v-col(cols='6')
                   v-dialog(
-                    ref='menuPublishStart'
-                    :close-on-content-click='false'
                     v-model='isPublishStartShown'
-                    v-model:return-value='publishStartDate'
                     width='460px'
                     :disabled='!isPublished'
                     )
@@ -129,30 +120,26 @@
                         :disabled='!isPublished'
                         )
                     v-date-picker(
-                      v-model='publishStartDate'
+                      v-model='publishStartDraft'
                       :min='(new Date()).toISOString().substring(0, 10)'
                       color='primary'
-                      reactive
-                      scrollable
                       landscape
                       )
-                      v-spacer
-                      v-btn(
-                        text
-                        color='primary'
-                        @click='isPublishStartShown = false'
-                        ) {{$t('common:actions.cancel')}}
-                      v-btn(
-                        text
-                        color='primary'
-                        @click='$refs.menuPublishStart.save(publishStartDate)'
-                        ) {{$t('common:actions.ok')}}
+                      template(v-slot:actions)
+                        v-spacer
+                        v-btn(
+                          variant='text'
+                          color='primary'
+                          @click='isPublishStartShown = false'
+                          ) {{$t('common:actions.cancel')}}
+                        v-btn(
+                          variant='text'
+                          color='primary'
+                          @click='applyPublishStartDate'
+                          ) {{$t('common:actions.ok')}}
                 v-col(cols='6')
                   v-dialog(
-                    ref='menuPublishEnd'
-                    :close-on-content-click='false'
                     v-model='isPublishEndShown'
-                    v-model:return-value='publishEndDate'
                     width='460px'
                     :disabled='!isPublished'
                     )
@@ -170,24 +157,23 @@
                         :disabled='!isPublished'
                         )
                     v-date-picker(
-                      v-model='publishEndDate'
+                      v-model='publishEndDraft'
                       :min='(new Date()).toISOString().substring(0, 10)'
                       color='primary'
-                      reactive
-                      scrollable
                       landscape
                       )
-                      v-spacer
-                      v-btn(
-                        text
-                        color='primary'
-                        @click='isPublishEndShown = false'
-                        ) {{$t('common:actions.cancel')}}
-                      v-btn(
-                        text
-                        color='primary'
-                        @click='$refs.menuPublishEnd.save(publishEndDate)'
-                        ) {{$t('common:actions.ok')}}
+                      template(v-slot:actions)
+                        v-spacer
+                        v-btn(
+                          variant='text'
+                          color='primary'
+                          @click='isPublishEndShown = false'
+                          ) {{$t('common:actions.cancel')}}
+                        v-btn(
+                          variant='text'
+                          color='primary'
+                          @click='applyPublishEndDate'
+                          ) {{$t('common:actions.ok')}}
 
         v-tabs-window-item(:value='2', :transition='false', :reverse-transition='false')
           .editor-props-codeeditor-title
@@ -259,6 +245,20 @@ import { TextEditor, type TextEditorHandle } from './common/text-editor'
 
 const filenamePattern = /^(?![\#\/\.\$\^\=\*\;\:\&\?\(\)\[\]\{\}\"\'\>\<\,\@\!\%\`\~\s])(?!.*[\#\/\.\$\^\=\*\;\:\&\?\(\)\[\]\{\}\"\'\>\<\,\@\!\%\`\~\s]$)[^\#\.\$\^\=\*\;\:\&\?\(\)\[\]\{\}\"\'\>\<\,\@\!\%\`\~\s]*$/
 
+type DatePickerValue = Date | string | null
+
+function parseDatePickerValue (value: string): Date | null {
+  if (!value) return null
+  const parsed = new Date(value.length === 10 ? `${value}T00:00:00.000Z` : value)
+  return Number.isNaN(parsed.getTime()) ? null : parsed
+}
+
+function formatDatePickerValue (value: DatePickerValue): string {
+  if (!value) return ''
+  const parsed = value instanceof Date ? value : parseDatePickerValue(value)
+  return parsed && !Number.isNaN(parsed.getTime()) ? parsed.toISOString().slice(0, 10) : ''
+}
+
 export default defineComponent({
   emits: ['update:modelValue'],
   props: {
@@ -271,9 +271,10 @@ export default defineComponent({
     return {
       isPublishStartShown: false,
       isPublishEndShown: false,
+      publishStartDraft: null as DatePickerValue,
+      publishEndDraft: null as DatePickerValue,
       pageSelectorShown: false,
       namespaces: siteLangs.length ? siteLangs.map(ns => ns.code) : [siteConfig.lang],
-      newTag: '',
       newTagSuggestions: [] as string[],
       newTagSearch: '',
       tagSearchTimer: null as number | null,
@@ -325,7 +326,7 @@ export default defineComponent({
         return wikiStore.page.tags
       },
       set(value: string[]) {
-        wikiStore.page.tags = value
+        wikiStore.page.tags = _.uniq(value.map(tag => _.trim(tag).toLowerCase()).filter(Boolean))
       }
     },
     path: {
@@ -394,6 +395,16 @@ export default defineComponent({
         }, 500)
       }
     },
+    isPublishStartShown (newValue: boolean) {
+      if (newValue) {
+        this.publishStartDraft = parseDatePickerValue(this.publishStartDate)
+      }
+    },
+    isPublishEndShown (newValue: boolean) {
+      if (newValue) {
+        this.publishEndDraft = parseDatePickerValue(this.publishEndDate)
+      }
+    },
     newTagSearch (newValue: string) {
       if (this.tagSearchTimer !== null) window.clearTimeout(this.tagSearchTimer)
       if (!this.modelValue || _.isEmpty(newValue)) {
@@ -401,17 +412,6 @@ export default defineComponent({
         return
       }
       this.tagSearchTimer = window.setTimeout(() => this.loadTagSuggestions(newValue), 500)
-    },
-    newTag (newValue: string) {
-      const tagClean = _.trim(newValue || '').toLowerCase()
-      if (tagClean && tagClean.length > 0) {
-        if (!_.includes(this.tags, tagClean)) {
-          this.tags = [...this.tags, tagClean]
-        }
-        this.$nextTick(() => {
-          this.newTag = ''
-        })
-      }
     },
     currentTab (newValue: number) {
       if (this.cm) {
@@ -437,8 +437,13 @@ export default defineComponent({
     this.cm?.destroy()
   },
   methods: {
-    removeTag (tag: string) {
-      this.tags = _.without(this.tags, tag)
+    applyPublishStartDate() {
+      this.publishStartDate = formatDatePickerValue(this.publishStartDraft)
+      this.isPublishStartShown = false
+    },
+    applyPublishEndDate() {
+      this.publishEndDate = formatDatePickerValue(this.publishEndDraft)
+      this.isPublishEndShown = false
     },
     close() {
       this.isShown = false

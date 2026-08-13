@@ -70,8 +70,7 @@
               hide-details
               multiple
               chips
-              deletable-chips
-              small-chips
+              closable-chips
               height='48px'
               style='flex: 0 1 440px;'
               :menu-props='{ "maxHeight": 500 }'
