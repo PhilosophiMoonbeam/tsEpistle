@@ -7,7 +7,7 @@ import type { Express } from 'express'
 import { createYoga, type YogaServerInstance } from 'graphql-yoga'
 import { useServer } from 'graphql-ws/use/ws'
 import type { Disposable } from 'graphql-ws'
-import WebSocket, * as wsModule from 'ws'
+import { WebSocketServer } from 'ws'
 import _ from 'lodash'
 import jwt, { type JwtPayload } from 'jsonwebtoken'
 import { execute as graphqlExecute, subscribe as graphqlSubscribe } from 'graphql'
@@ -97,30 +97,19 @@ interface CookieModule {
   parse(input: string): Record<string, string | undefined>
 }
 
-interface WsModule {
-  WebSocketServer: typeof WebSocket.Server
-}
 
 function isCookieModule(value: unknown): value is CookieModule {
   return typeof value === 'object' && value !== null &&
     'parse' in value && typeof value.parse === 'function'
 }
 
-function isWsModule(value: unknown): value is WsModule {
-  return typeof value === 'object' && value !== null &&
-    'WebSocketServer' in value && typeof value.WebSocketServer === 'function'
-}
 
 const wiki = WIKI as unknown as ServerWiki
 const cookieModule: unknown = createRequire(import.meta.url)('cookie')
 if (!isCookieModule(cookieModule)) {
   throw new Error('The cookie module does not export parse')
 }
-if (!isWsModule(wsModule)) {
-  throw new Error('The ws module does not export WebSocketServer')
-}
 const cookie = cookieModule
-const { WebSocketServer } = wsModule
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
