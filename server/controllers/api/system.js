@@ -1,6 +1,7 @@
 const express = require('express')
 
 const systemOperations = require('../../operations/system')
+const importV1Operations = require('../../operations/import-v1')
 
 const router = express.Router()
 
@@ -208,6 +209,18 @@ router.post('/flags', async (req, res, next) => {
     res.json({ message: 'System flags applied successfully.' })
   } catch (err) {
     forwardError(res, next, err)
+  }
+})
+
+router.post('/import-v1/users', async (req, res) => {
+  if (!requireSystemAccess(req, res)) return
+  try {
+    res.json(await importV1Operations.importUsers({
+      mongoDbConnString: req.body && req.body.mongoDbConnString,
+      groupMode: req.body && req.body.groupMode
+    }))
+  } catch (err) {
+    sendError(res, err, 'Wiki.js 1.x user import failed')
   }
 })
 

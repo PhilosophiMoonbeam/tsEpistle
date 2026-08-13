@@ -539,6 +539,23 @@ async function performSystemUpgrade (fetchImpl, fallbackMessage = 'Upgrade faile
   return payload
 }
 
+async function importV1Users (fetchImpl, mongoDbConnString, groupMode, fallbackMessage = 'Wiki.js 1.x user import failed') {
+  const response = await fetchImpl('/_api/system/import-v1/users', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ mongoDbConnString, groupMode })
+  })
+  const payload = await parseJsonResponse(response, fallbackMessage)
+  if (!payload || !Number.isSafeInteger(payload.usersCount) || !Number.isSafeInteger(payload.groupsCount) || !Array.isArray(payload.failed)) {
+    throw new Error(fallbackMessage)
+  }
+  return payload
+}
+
 module.exports = {
   fetchSystemSummary,
   fetchSystemInfo,
@@ -560,5 +577,6 @@ module.exports = {
   migratePagesToLocale,
   renderPage,
   purgePageHistory,
-  performSystemUpgrade
+  performSystemUpgrade,
+  importV1Users
 }

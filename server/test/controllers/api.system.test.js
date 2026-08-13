@@ -13,6 +13,13 @@ jest.mock('express', () => {
 })
 
 jest.mock('../../jobs/sync-graph-updates', () => jest.fn().mockResolvedValue(true))
+jest.mock('../../operations/import-v1', () => ({
+  importUsers: jest.fn().mockResolvedValue({
+    usersCount: 4,
+    groupsCount: 2,
+    failed: [{ provider: 'local', email: 'failed@example.com', error: 'duplicate' }]
+  })
+}))
 jest.mock('getos', () => jest.fn((cb) => cb(null, {
   dist: 'Ubuntu',
   codename: 'noble',
@@ -222,6 +229,7 @@ describe('controllers/api system endpoints', () => {
       updateSslRedirection: express.__router.patch.mock.calls.find(([path]) => path === '/ssl/redirection')[1],
       renewSslCertificate: express.__router.post.mock.calls.find(([path]) => path === '/ssl/renew')[1],
       saveFlags: express.__router.post.mock.calls.find(([path]) => path === '/flags')[1],
+      importV1Users: express.__router.post.mock.calls.find(([path]) => path === '/import-v1/users')[1],
       checkForUpdate: express.__router.post.mock.calls.find(([path]) => path === '/check-for-update')[1]
     }
   }
@@ -250,12 +258,13 @@ describe('controllers/api system endpoints', () => {
     expect(typeof handlers.updateSslRedirection).toBe('function')
     expect(typeof handlers.renewSslCertificate).toBe('function')
     expect(typeof handlers.saveFlags).toBe('function')
+    expect(typeof handlers.importV1Users).toBe('function')
     expect(typeof handlers.checkForUpdate).toBe('function')
   })
 
   it('returns 403 for unauthorized system requests', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(false)
-    const { info, summary, flags, host, extensions, telemetry, updateTelemetry, resetTelemetryClientId, performUpgrade, startExport, flushSystemCache, flushSystemTemporaryUploads, rebuildPageTree, renderPage, migratePagesToLocale, purgePageHistory, exportStatus, ssl, updateSslRedirection, renewSslCertificate, saveFlags, checkForUpdate } = loadHandlers()
+    const { info, summary, flags, host, extensions, telemetry, updateTelemetry, resetTelemetryClientId, performUpgrade, startExport, flushSystemCache, flushSystemTemporaryUploads, rebuildPageTree, renderPage, migratePagesToLocale, purgePageHistory, exportStatus, ssl, updateSslRedirection, renewSslCertificate, saveFlags, importV1Users, checkForUpdate } = loadHandlers()
     const req = { user: { permissions: [] }, get: jest.fn() }
     const res = { sendStatus: jest.fn(), json: jest.fn() }
 
@@ -280,10 +289,11 @@ describe('controllers/api system endpoints', () => {
     await updateSslRedirection(req, res)
     await renewSslCertificate(req, res)
     await saveFlags(req, res)
+    await importV1Users(req, res)
     await checkForUpdate(req, res)
 
-    expect(res.sendStatus).toHaveBeenCalledTimes(22)
-    for (let idx = 1; idx <= 22; idx++) {
+    expect(res.sendStatus).toHaveBeenCalledTimes(23)
+    for (let idx = 1; idx <= 23; idx++) {
       expect(res.sendStatus).toHaveBeenNthCalledWith(idx, 403)
     }
     expect(res.json).not.toHaveBeenCalled()
@@ -1140,6 +1150,29 @@ describe('controllers/api system endpoints', () => {
       pagesTotal: 42,
       usersTotal: 11,
       tagsTotal: 7
+    })
+  })
+
+  it('imports Wiki.js 1.x users through the shared import operation', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValue(true)
+    const importV1Operations = require('../../operations/import-v1')
+    const { importV1Users } = loadHandlers()
+    const req = {
+      user: { permissions: ['manage:system'] },
+      body: {
+        mongoDbConnString: 'mongodb://legacy.example.test/wiki',
+        groupMode: 'MULTI'
+      }
+    }
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis(), sendStatus: jest.fn() }
+
+    await importV1Users(req, res)
+
+    expect(importV1Operations.importUsers).toHaveBeenCalledWith(req.body)
+    expect(res.json).toHaveBeenCalledWith({
+      usersCount: 4,
+      groupsCount: 2,
+      failed: [{ provider: 'local', email: 'failed@example.com', error: 'duplicate' }]
     })
   })
 

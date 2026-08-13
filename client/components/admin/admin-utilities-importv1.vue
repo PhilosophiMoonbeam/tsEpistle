@@ -270,8 +270,8 @@ import _ from 'lodash'
 
 import { SemipolarSpinner } from 'epic-spinners'
 
-import utilityImportv1UsersMutation from 'gql/admin/utilities/utilities-mutation-importv1-users.gql'
 import { executeStorageAction, fetchStorageStatus, fetchStorageTargets, saveStorageTargets } from '../../helpers/storage-api'
+import { importV1Users } from '../../helpers/system-api'
 import { pushGraphError } from '../../helpers/root-ui-store'
 
 export default {
@@ -334,20 +334,14 @@ export default {
 
         if (this.wantUsers) {
           try {
-            const resp = await this.$apollo.mutate({
-              mutation: utilityImportv1UsersMutation,
-              variables: {
-                mongoDbConnString: this.dbConnStr,
-                groupMode: this.groupMode
-              }
-            })
-            const respObj = _.get(resp, 'data.system.importUsersFromV1', {})
-            if (!_.get(respObj, 'responseResult.succeeded', false)) {
-              throw new Error(_.get(respObj, 'responseResult.message', 'An unexpected error occurred'))
-            }
-            this.successUsers = _.get(respObj, 'usersCount', 0)
-            this.successGroups = _.get(respObj, 'groupsCount', 0)
-            this.failedUsers = _.get(respObj, 'failed', [])
+            const result = await importV1Users(
+              window.fetch.bind(window),
+              this.dbConnStr,
+              this.groupMode
+            )
+            this.successUsers = result.usersCount
+            this.successGroups = result.groupsCount
+            this.failedUsers = result.failed
             this.progress += 50
           } catch (err) {
             pushGraphError(this.$store, err)
