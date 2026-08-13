@@ -11,6 +11,8 @@ import type { NextFunction, Request, Response } from 'express'
 import commonHelper from '../helpers/common.ts'
 import securityHelper from '../helpers/security.ts'
 import cache from './cache.ts'
+import { apiAccessContract, isInternalRestPath } from '../../shared/api-access.ts'
+
 
 type UnknownRecord = Record<string, unknown>
 type PageRuleMatch = 'START' | 'END' | 'REGEX' | 'TAG' | 'EXACT'
@@ -69,6 +71,11 @@ interface ApiPrincipal extends Express.User {
   grp: number
 }
 
+
+interface AuthenticationError extends Error {
+  code: string
+  status: number
+}
 interface StrategyConfig extends UnknownRecord {
   callbackURL?: string
   key?: string
@@ -269,6 +276,8 @@ const randomBytesPromise = (size: number): Promise<Buffer> => {
 }
 const isRevokeRequest = (value: unknown): value is RevokeRequest => isRecord(value) &&
   typeof value.id === 'number' && (value.kind === undefined || typeof value.kind === 'string')
+const createAuthenticationError = (message: string, status: number, code: string): AuthenticationError =>
+  Object.assign(new Error(message), { code, status })
 
 const auth: AuthService = {
   strategies: {},
@@ -395,8 +404,27 @@ const auth: AuthService = {
       }
 
       if (isApiPrincipal(user)) {
-        if (!wiki.config.api.isEnabled) return next(new Error('API is disabled. You must enable it from the Administration Area first.'))
-        if (!this.validApiKeys.includes(user.api)) return next(new Error('API Key is invalid or was revoked.'))
+        if (isInternalRestPath(req.path)) {
+          return next(createAuthenticationError(
+            `API keys are supported only for GraphQL requests at ${apiAccessContract.graphqlPath}. Internal REST routes require a user session.`,
+            403,
+            'API_KEY_REST_FORBIDDEN'
+          ))
+        }
+        if (!wiki.config.api.isEnabled) {
+          return next(createAuthenticationError(
+            'API access is disabled. Enable it in Administration → API Access.',
+            403,
+            'API_ACCESS_DISABLED'
+          ))
+        }
+        if (!this.validApiKeys.includes(user.api)) {
+          return next(createAuthenticationError(
+            'API key is invalid or was revoked.',
+            401,
+            'API_KEY_INVALID'
+          ))
+        }
         const permissions = this.groups[String(user.grp)]?.permissions ?? []
         const groups = [user.grp]
         req.user = {

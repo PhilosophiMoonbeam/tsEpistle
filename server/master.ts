@@ -22,6 +22,7 @@ import commonController from './controllers/common.ts'
 import sslController from './controllers/ssl.ts'
 import apiController from './controllers/api/index.ts'
 import type { ProductMetadata } from '../shared/product.ts'
+import { isInternalRestPath } from '../shared/api-access.ts'
 
 const { collectEntry } = viteAssets
 
@@ -70,6 +71,7 @@ interface MasterWiki extends Record<string, unknown> {
 }
 
 interface HttpError extends Error {
+  code?: string
   status: number
 }
 
@@ -185,6 +187,14 @@ export default async function startMaster(): Promise<true> {
           message: error.message,
           path: []
         }]
+      })
+      return
+    }
+
+    if (isInternalRestPath(req.path)) {
+      res.status(error.status || 500).json({
+        code: error.code || 'INTERNAL_REST_ERROR',
+        error: error.message
       })
       return
     }

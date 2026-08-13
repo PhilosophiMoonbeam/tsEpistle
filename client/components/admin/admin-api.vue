@@ -24,6 +24,48 @@
           v-btn.animated.fadeInDown(color='primary', depressed, large, @click='newKey', dark)
             v-icon(left) mdi-plus
             span {{$t('admin:api.newKeyButton')}}
+        v-alert.mt-3(
+          v-if='!enabled'
+          type='warning'
+          variant='tonal'
+          icon='mdi-api-off'
+        )
+          strong API-key access is disabled.
+          span.ml-1 Enable it before using a generated key. Signed-in browser sessions and internal application requests are unaffected.
+        v-row.mt-1
+          v-col(cols='12', lg='7')
+            v-card.fill-height(outlined)
+              v-card-title
+                v-icon.mr-2(color='primary') mdi-graphql
+                span Supported external API
+                v-spacer
+                v-chip(label, small, color='success').white--text Stable compatibility surface
+              v-divider
+              v-card-text
+                p Wiki.ts Preview supports API-key integrations through its retained GraphQL API.
+                .overline Endpoint
+                code.api-contract-code {{ graphqlEndpoint }}
+                .overline.mt-4 Authentication
+                p Send the generated key as an HTTP bearer token:
+                code.api-contract-code Authorization: {{ apiAccessContract.bearerScheme }} &lt;API_KEY&gt;
+                .overline.mt-4 Full-access key example
+                pre.api-contract-example {{ curlExample }}
+          v-col(cols='12', lg='5')
+            v-card.fill-height(outlined)
+              v-card-title
+                v-icon.mr-2(color='warning') mdi-shield-lock-outline
+                span Internal REST transport
+                v-spacer
+                v-chip(label, small, color='warning') Session only
+              v-divider
+              v-card-text
+                code.api-contract-code {{ internalRestEndpoint }}
+                p.mt-4 The REST routes under this prefix are application-internal and are not a public integration contract. API keys are rejected; signed-in user sessions are required.
+                v-divider.my-4
+                .overline Permission scopes
+                p.mb-2 #[strong Full access] uses the system-administrator permissions.
+                p.mb-0 #[strong Group scoped] uses the selected group's permissions. GraphQL directives still enforce every operation's required permissions.
+
         v-card.mt-3.animated.fadeInUp
           v-table(v-if='keys && keys.length > 0')
             template(v-slot:default)
@@ -69,6 +111,7 @@ import { wikiStore } from '@/store/index.ts'
 import CreateApiKey from './admin-api-create.vue'
 import { fetchAdminApiBootstrap, revokeAdminApiKey, setAdminApiState, type AdminApiKey } from '../../helpers/auth-api'
 import { getErrorMessage } from '../../helpers/root-ui-store'
+import { apiAccessContract } from '../../../shared/api-access.ts'
 
 export default {
   components: {
@@ -84,6 +127,25 @@ export default {
       isRevokeConfirmDialogShown: false,
       revokeLoading: false,
       current: null as AdminApiKey | null
+    }
+  },
+  computed: {
+    apiAccessContract() {
+      return apiAccessContract
+    },
+    graphqlEndpoint() {
+      return `${window.location.origin}${apiAccessContract.graphqlPath}`
+    },
+    internalRestEndpoint() {
+      return `${window.location.origin}${apiAccessContract.internalRestPrefix}/*`
+    },
+    curlExample() {
+      return [
+        `curl --request POST '${this.graphqlEndpoint}' \\`,
+        `  --header 'Authorization: ${apiAccessContract.bearerScheme} <API_KEY>' \\`,
+        "  --header 'Content-Type: application/json' \\",
+        "  --data '{\"query\":\"query { system { info { currentVersion product { name version } } } }\"}'"
+      ].join('\n')
     }
   },
   methods: {
@@ -178,5 +240,15 @@ export default {
 </script>
 
 <style lang='scss'>
+.api-contract-code {
+  display: block;
+  overflow-wrap: anywhere;
+}
 
+.api-contract-example {
+  margin: 0;
+  overflow-x: auto;
+  padding: 1rem;
+  white-space: pre;
+}
 </style>
