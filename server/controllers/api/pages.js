@@ -1,5 +1,6 @@
 const express = require('express')
 const _ = require('lodash')
+const pageOperations = require('../../operations/pages')
 
 const router = express.Router()
 
@@ -94,70 +95,18 @@ router.get('/', async (req, res, next) => {
   const orderByDirection = _.get(req, 'query.orderByDirection')
 
   try {
-    let pages = await WIKI.models.pages.query()
-      .column([
-        'pages.id',
-        'path',
-        { locale: 'localeCode' },
-        'title',
-        'description',
-        'isPublished',
-        'isPrivate',
-        'privateNS',
-        'contentType',
-        'createdAt',
-        'updatedAt'
-      ])
-      .withGraphJoined('tags')
-      .modifyGraph('tags', builder => {
-        builder.select('tag')
-      })
-      .modify(queryBuilder => {
-        if (limit) {
-          queryBuilder.limit(limit)
-        }
-        if (_.isString(locale) && locale.length > 0) {
-          queryBuilder.where('localeCode', locale)
-        }
-        if (creatorId && authorId) {
-          queryBuilder.where(function () {
-            this.where('creatorId', creatorId).orWhere('authorId', authorId)
-          })
-        } else {
-          if (creatorId) {
-            queryBuilder.where('creatorId', creatorId)
-          }
-          if (authorId) {
-            queryBuilder.where('authorId', authorId)
-          }
-        }
-        if (tags.length > 0) {
-          queryBuilder.whereIn('tags.tag', tags)
-        }
-        const orderDir = orderByDirection === 'DESC' ? 'desc' : 'asc'
-        switch (orderBy) {
-          case 'CREATED':
-            queryBuilder.orderBy('createdAt', orderDir)
-            break
-          case 'PATH':
-            queryBuilder.orderBy('path', orderDir)
-            break
-          case 'TITLE':
-            queryBuilder.orderBy('title', orderDir)
-            break
-          case 'UPDATED':
-            queryBuilder.orderBy('updatedAt', orderDir)
-            break
-          default:
-            queryBuilder.orderBy('pages.id', orderDir)
-            break
-        }
-      })
+    const pages = await pageOperations.list({
+      requester: req.user,
+      limit,
+      creatorId,
+      authorId,
+      locale: _.isString(locale) && locale.length > 0 ? locale : undefined,
+      tags,
+      orderBy,
+      orderByDirection
+    })
 
-    pages = pages.filter(page => WIKI.auth.checkAccess(req.user, ['read:pages'], {
-      path: page.path,
-      locale: page.locale
-    })).map(page => ({
+    return res.json(pages.map(page => ({
       id: page.id,
       path: page.path,
       locale: page.locale,
@@ -169,14 +118,8 @@ router.get('/', async (req, res, next) => {
       contentType: page.contentType,
       createdAt: page.createdAt,
       updatedAt: page.updatedAt,
-      tags: _.map(page.tags, 'tag')
-    }))
-
-    if (tags.length > 0) {
-      pages = pages.filter(page => _.every(tags, tag => _.includes(page.tags, tag)))
-    }
-
-    return res.json(pages)
+      tags: page.tags
+    })))
   } catch (err) {
     return next(err)
   }
@@ -188,17 +131,7 @@ router.get('/tags', async (req, res, next) => {
   }
 
   try {
-    const pages = await WIKI.models.pages.query()
-      .column([
-        'path',
-        { locale: 'localeCode' }
-      ])
-      .withGraphJoined('tags')
-
-    const tags = _.orderBy(_.uniqBy(pages.filter(page => WIKI.auth.checkAccess(req.user, ['read:pages'], {
-      path: page.path,
-      locale: page.locale
-    })).flatMap(page => page.tags), 'id'), ['tag'], ['asc'])
+    const tags = await pageOperations.listTags(req.user)
 
     return res.json(tags.map(tag => ({
       id: tag.id,
@@ -218,26 +151,7 @@ router.get('/recent', async (req, res, next) => {
   }
 
   try {
-    const pages = await WIKI.models.pages.query()
-      .column(['pages.id', 'path', { locale: 'localeCode' }, 'title', 'updatedAt'])
-      .withGraphJoined('tags')
-      .modifyGraph('tags', builder => {
-        builder.select('tag')
-      })
-      .orderBy('updatedAt', 'desc')
-      .limit(10)
-
-    return res.json(pages.filter(page => WIKI.auth.checkAccess(req.user, ['read:pages'], {
-      path: page.path,
-      locale: page.locale,
-      tags: page.tags
-    })).map(page => ({
-      id: page.id,
-      locale: page.locale,
-      path: page.path,
-      title: page.title,
-      updatedAt: page.updatedAt
-    })))
+    return res.json(await pageOperations.listRecent(req.user))
   } catch (err) {
     return next(err)
   }
@@ -254,54 +168,7 @@ router.get('/links', async (req, res, next) => {
   }
 
   try {
-    let results
-    if (WIKI.config.db.type === 'mysql' || WIKI.config.db.type === 'mariadb' || WIKI.config.db.type === 'sqlite') {
-      results = await WIKI.models.knex('pages')
-        .column({ id: 'pages.id' }, { path: 'pages.path' }, 'title', { link: 'pageLinks.path' }, { locale: 'pageLinks.localeCode' })
-        .leftJoin('pageLinks', 'pages.id', 'pageLinks.pageId')
-        .where({
-          'pages.localeCode': locale
-        })
-        .unionAll(
-          WIKI.models.knex('pageLinks')
-            .column({ id: 'pages.id' }, { path: 'pages.path' }, 'title', { link: 'pageLinks.path' }, { locale: 'pageLinks.localeCode' })
-            .leftJoin('pages', 'pageLinks.pageId', 'pages.id')
-            .where({
-              'pages.localeCode': locale
-            })
-        )
-    } else {
-      results = await WIKI.models.knex('pages')
-        .column({ id: 'pages.id' }, { path: 'pages.path' }, 'title', { link: 'pageLinks.path' }, { locale: 'pageLinks.localeCode' })
-        .fullOuterJoin('pageLinks', 'pages.id', 'pageLinks.pageId')
-        .where({
-          'pages.localeCode': locale
-        })
-    }
-
-    return res.json(_.reduce(results, (result, val) => {
-      if (
-        !WIKI.auth.checkAccess(req.user, ['read:pages'], { path: val.path, locale }) ||
-        !WIKI.auth.checkAccess(req.user, ['read:pages'], { path: val.link, locale: val.locale })
-      ) {
-        return result
-      }
-
-      const existingEntry = _.findIndex(result, ['id', val.id])
-      if (existingEntry >= 0) {
-        if (val.link) {
-          result[existingEntry].links.push(`${val.locale}/${val.link}`)
-        }
-      } else {
-        result.push({
-          id: val.id,
-          title: val.title,
-          path: `${locale}/${val.path}`,
-          links: val.link ? [`${val.locale}/${val.link}`] : []
-        })
-      }
-      return result
-    }, []))
+    return res.json(await pageOperations.listLinks({ requester: req.user, locale }))
   } catch (err) {
     return next(err)
   }
@@ -323,20 +190,10 @@ router.get('/:id', async (req, res, next) => {
   }
 
   try {
-    const page = await WIKI.models.pages.getPageFromDb(id)
-    if (!page) {
-      return res.status(404).json({ error: 'This page does not exist.' })
-    }
-    if (!WIKI.auth.checkAccess(req.user, ['manage:pages', 'delete:pages'], {
-      path: page.path,
-      locale: page.localeCode
-    })) {
-      return res.status(403).json({ error: 'You are not authorized to view this page.' })
-    }
+    const page = await pageOperations.get({ requester: req.user, id })
     if (!WIKI.auth.checkAccess(req.user, ['write:pages', 'manage:system'])) {
       return res.status(403).json({ error: 'write:pages or manage:system is required' })
     }
-
     return res.json({
       id: page.id,
       path: page.path,
@@ -351,8 +208,8 @@ router.get('/:id', async (req, res, next) => {
       contentType: page.contentType,
       createdAt: page.createdAt,
       updatedAt: page.updatedAt,
-      editor: page.editorKey,
-      locale: page.localeCode,
+      editor: page.editor,
+      locale: page.locale,
       authorId: page.authorId,
       authorName: page.authorName,
       authorEmail: page.authorEmail,
@@ -361,6 +218,7 @@ router.get('/:id', async (req, res, next) => {
       creatorEmail: page.creatorEmail
     })
   } catch (err) {
+    if (Number.isInteger(err.status)) return res.status(err.status).json({ error: err.message })
     return next(err)
   }
 })
@@ -381,10 +239,7 @@ router.delete('/:id', async (req, res) => {
   }
 
   try {
-    await WIKI.models.pages.deletePage({
-      id,
-      user: req.user
-    })
+    await pageOperations.remove({ requester: req.user, id })
     res.json({ message: 'Page has been deleted.' })
   } catch (err) {
     if (err.name === 'PageNotFound') {
@@ -422,18 +277,10 @@ router.patch('/tags/:id', async (req, res) => {
   }
 
   try {
-    const affectedRows = await WIKI.models.tags.query()
-      .findById(id)
-      .patch({
-        tag: _.trim(tag).toLowerCase(),
-        title: _.trim(title)
-      })
-    if (affectedRows < 1) {
-      return res.status(404).json({ error: 'This tag does not exist.' })
-    }
+    await pageOperations.updateTag({ id, tag, title })
     res.json({ message: 'Tag has been updated successfully.' })
   } catch (err) {
-    res.status(500).json({ error: err.message || 'Tag update failed' })
+    res.status(err.status || 500).json({ error: err.message || 'Tag update failed' })
   }
 })
 
@@ -453,16 +300,10 @@ router.delete('/tags/:id', async (req, res) => {
   }
 
   try {
-    const tagToDel = await WIKI.models.tags.query().findById(id)
-    if (!tagToDel) {
-      return res.status(404).json({ error: 'This tag does not exist.' })
-    }
-
-    await tagToDel.$relatedQuery('pages').unrelate()
-    await WIKI.models.tags.query().deleteById(id)
+    await pageOperations.removeTag(id)
     res.json({ message: 'Tag has been deleted.' })
   } catch (err) {
-    res.status(500).json({ error: err.message || 'Tag delete failed' })
+    res.status(err.status || 500).json({ error: err.message || 'Tag delete failed' })
   }
 })
 

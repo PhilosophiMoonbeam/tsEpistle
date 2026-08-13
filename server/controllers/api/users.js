@@ -1,5 +1,6 @@
 const express = require('express')
 const _ = require('lodash')
+const userOperations = require('../../operations/users')
 
 const router = express.Router()
 
@@ -7,7 +8,6 @@ const router = express.Router()
 
 const userActivityAccessPermissions = ['write:groups', 'manage:groups', 'write:users', 'manage:users', 'manage:system']
 const userMutationAccessPermissions = ['write:users', 'manage:users', 'manage:system']
-const userListOrderFields = ['id', 'name', 'email', 'providerKey', 'createdAt', 'lastLoginAt']
 
 const pickListUser = user => ({
   id: user.id,
@@ -19,38 +19,6 @@ const pickListUser = user => ({
   createdAt: user.createdAt,
   lastLoginAt: user.lastLoginAt || null
 })
-
-const normalizeUserListQuery = query => {
-  const page = Math.max(_.toSafeInteger(_.get(query, 'page')) || 1, 1)
-  const pageSize = Math.max(_.toSafeInteger(_.get(query, 'pageSize')) || 15, 1)
-  const orderBy = _.includes(userListOrderFields, _.get(query, 'orderBy')) ? query.orderBy : 'name'
-  const orderByDirection = _.toLower(_.get(query, 'orderByDirection')) === 'desc' ? 'desc' : 'asc'
-
-  return {
-    page,
-    pageSize,
-    offset: (page - 1) * pageSize,
-    filter: _.trim(_.get(query, 'filter', '')),
-    providerKey: _.get(query, 'providerKey', 'all'),
-    orderBy,
-    orderByDirection
-  }
-}
-
-const applyUserListFilters = (queryBuilder, options) => {
-  if (options.filter) {
-    queryBuilder.where(builder => {
-      builder.where('email', 'like', `%${options.filter}%`)
-        .orWhere('name', 'like', `%${options.filter}%`)
-    })
-  }
-
-  if (options.providerKey && options.providerKey !== 'all') {
-    queryBuilder.andWhere('providerKey', options.providerKey)
-  }
-
-  return queryBuilder
-}
 
 const normalizeUserIdParam = (value, res) => {
   if (!/^[1-9]\d*$/.test(value)) {
@@ -118,18 +86,13 @@ router.post('/', async (req, res, next) => {
   }
 
   try {
-    if (!(await WIKI.auth.checkAssignUserToGroupAccess(req.user, payload.groups))) {
-      return res.status(403).json({ error: 'You are not authorized to create a user with an assignment to an administrative group.' })
-    }
-
-    await WIKI.models.users.createNewUser(payload)
-
+    await userOperations.create({ requester: req.user, input: payload })
     return res.json({
       succeeded: true,
       message: 'User created successfully'
     })
   } catch (err) {
-    return res.status(400).json({ error: err.message || 'User could not be created.' })
+    return res.status(err.status || 400).json({ error: err.message || 'User could not be created.' })
   }
 })
 
@@ -138,22 +101,11 @@ router.get('/', async (req, res, next) => {
     return
   }
 
-  const options = normalizeUserListQuery(req.query)
-
   try {
-    const totalResult = await applyUserListFilters(WIKI.models.users.query(), options)
-      .count('* as total')
-      .first()
-
-    const users = await applyUserListFilters(WIKI.models.users.query(), options)
-      .select('id', 'email', 'name', 'providerKey', 'isSystem', 'isActive', 'createdAt', 'lastLoginAt')
-      .orderBy(options.orderBy, options.orderByDirection)
-      .offset(options.offset)
-      .limit(options.pageSize)
-
+    const result = await userOperations.list(req.query)
     return res.json({
-      total: _.toSafeInteger(_.get(totalResult, 'total')),
-      users: users.map(pickListUser)
+      total: result.total,
+      users: result.users.map(pickListUser)
     })
   } catch (err) {
     return next(err)
@@ -171,12 +123,7 @@ router.get('/search', async (req, res, next) => {
   }
 
   try {
-    const users = await WIKI.models.users.query()
-      .where('email', 'like', `%${query}%`)
-      .orWhere('name', 'like', `%${query}%`)
-      .limit(10)
-      .select('id', 'name', 'email', 'providerKey')
-
+    const users = await userOperations.search(query)
     return res.json(users.map(user => ({
       id: user.id,
       name: user.name,
@@ -194,12 +141,7 @@ router.get('/last-logins', async (req, res, next) => {
   }
 
   try {
-    const users = await WIKI.models.users.query()
-      .select('id', 'name', 'lastLoginAt')
-      .whereNotNull('lastLoginAt')
-      .orderBy('lastLoginAt', 'desc')
-      .limit(10)
-
+    const users = await userOperations.lastLogins()
     return res.json(users.map(user => ({
       id: user.id,
       name: user.name,
@@ -237,21 +179,19 @@ router.put('/:id', async (req, res, next) => {
   }
 
   try {
-    if (!(await WIKI.auth.checkAssignUserToGroupAccess(req.user, payload.groups))) {
-      return res.status(403).json({ error: 'You are not authorized to modify / assign a user from / to an administrative group.' })
-    }
-
-    await WIKI.models.users.updateUser({
-      id,
-      ...payload
+    await userOperations.update({
+      requester: req.user,
+      input: {
+        id,
+        ...payload
+      }
     })
-
     return res.json({
       succeeded: true,
       message: 'User updated successfully'
     })
   } catch (err) {
-    return res.status(400).json({ error: err.message || 'User could not be updated.' })
+    return res.status(err.status || 400).json({ error: err.message || 'User could not be updated.' })
   }
 })
 
@@ -270,26 +210,14 @@ router.delete('/:id', async (req, res, next) => {
     return
   }
 
-  if (id <= 2) {
-    return res.status(400).json({ error: 'Cannot delete a protected system account.' })
-  }
-
   try {
-    await WIKI.models.users.deleteUser(id, replaceId)
-
-    WIKI.auth.revokeUserTokens({ id, kind: 'u' })
-    WIKI.events.outbound.emit('addAuthRevoke', { id, kind: 'u' })
-
+    await userOperations.remove({ id, replaceId })
     return res.json({
       succeeded: true,
       message: 'User deleted successfully'
     })
   } catch (err) {
-    if (_.includes(_.toLower(err.message), 'foreign')) {
-      return res.status(400).json({ error: 'Cannot delete user because of content relational constraints.' })
-    }
-
-    return res.status(400).json({ error: err.message || 'User could not be deleted.' })
+    return res.status(err.status || 400).json({ error: err.message || 'User could not be deleted.' })
   }
 })
 
@@ -308,23 +236,15 @@ router.patch('/:id/status', async (req, res, next) => {
     return
   }
 
-  if (!isActive && id <= 2) {
-    return res.status(400).json({ error: 'Cannot deactivate system accounts.' })
-  }
-
   try {
-    await WIKI.models.users.query().patch({ isActive }).findById(id)
-
-    if (!isActive) {
-      WIKI.auth.revokeUserTokens({ id, kind: 'u' })
-      WIKI.events.outbound.emit('addAuthRevoke', { id, kind: 'u' })
-    }
+    await userOperations.setActive({ id, isActive })
 
     return res.json({
       succeeded: true,
       message: isActive ? 'User activated successfully' : 'User deactivated successfully'
     })
   } catch (err) {
+    if (Number.isInteger(err.status)) return res.status(err.status).json({ error: err.message })
     return next(err)
   }
 })
@@ -348,8 +268,7 @@ router.patch('/:id/verification', async (req, res, next) => {
   }
 
   try {
-    await WIKI.models.users.query().patch({ isVerified: true }).findById(id)
-
+    await userOperations.verify(id)
     return res.json({
       succeeded: true,
       message: 'User verified successfully'
@@ -375,11 +294,7 @@ router.patch('/:id/tfa', async (req, res, next) => {
   }
 
   try {
-    await WIKI.models.users.query().patch({
-      tfaIsActive: enabled,
-      tfaSecret: null
-    }).findById(id)
-
+    await userOperations.setTfa({ id, enabled })
     return res.json({
       succeeded: true,
       message: enabled ? 'User 2FA enabled successfully' : 'User 2FA disabled successfully'
@@ -400,39 +315,9 @@ router.get('/:id', async (req, res, next) => {
   }
 
   try {
-    const user = await WIKI.models.users.query().findById(id)
-    if (!user) {
-      return res.status(404).json({ error: 'user not found' })
-    }
-
-    const providerInfo = _.get(WIKI.auth, ['strategies', user.providerKey], null)
-    const strategy = providerInfo ? _.find(WIKI.data.authentication, ['key', providerInfo.strategyKey]) : null
-    const groups = await user.$relatedQuery('groups').select('id', 'name')
-
-    return res.json({
-      id: user.id,
-      name: user.name,
-      email: user.email,
-      providerKey: user.providerKey,
-      providerName: _.get(providerInfo, 'displayName', 'Unknown'),
-      providerId: _.isNil(user.providerId) ? null : user.providerId,
-      providerIs2FACapable: _.get(strategy, 'useForm', false),
-      location: user.location || '',
-      jobTitle: user.jobTitle || '',
-      timezone: user.timezone || '',
-      isSystem: Boolean(user.isSystem),
-      isActive: Boolean(user.isActive),
-      isVerified: Boolean(user.isVerified),
-      createdAt: user.createdAt,
-      updatedAt: user.updatedAt,
-      lastLoginAt: user.lastLoginAt || null,
-      tfaIsActive: Boolean(user.tfaIsActive),
-      groups: groups.map(group => ({
-        id: group.id,
-        name: group.name
-      }))
-    })
+    return res.json(await userOperations.getAdminDetail(id))
   } catch (err) {
+    if (err.status === 404) return res.status(404).json({ error: 'user not found' })
     return next(err)
   }
 })

@@ -1,7 +1,7 @@
-const _ = require('lodash')
 const fs = require('fs-extra')
 const path = require('path')
 const graphHelper = require('../../helpers/graph')
+const authenticationOperations = require('../../operations/authentication')
 
 /* global WIKI */
 
@@ -13,46 +13,15 @@ module.exports = {
     async authentication () { return {} }
   },
   AuthenticationQuery: {
-    metricsState () {
-      return WIKI.config.metrics.isEnabled
-    },
+    metricsState: authenticationOperations.getMetricsState,
     async strategies () {
-      return WIKI.data.authentication.map(stg => ({
-        ...stg,
-        isAvailable: stg.isAvailable === true,
-        props: _.sortBy(_.transform(stg.props, (res, value, key) => {
-          res.push({
-            key,
-            value: JSON.stringify(value)
-          })
-        }, []), 'key')
-      }))
+      return authenticationOperations.listDefinitions()
     },
     /**
      * Fetch active authentication strategies
      */
     async activeStrategies (obj, args, context, info) {
-      let strategies = await WIKI.models.authentication.getStrategies()
-      strategies = strategies.map(stg => {
-        const strategyInfo = _.find(WIKI.data.authentication, ['key', stg.strategyKey]) || {}
-        return {
-          ...stg,
-          strategy: strategyInfo,
-          config: _.sortBy(_.transform(stg.config, (res, value, key) => {
-            const configData = _.get(strategyInfo.props, key, false)
-            if (configData) {
-              res.push({
-                key,
-                value: JSON.stringify({
-                  ...configData,
-                  value
-                })
-              })
-            }
-          }, []), 'key')
-        }
-      })
-      return args.enabledOnly ? _.filter(strategies, 'isEnabled') : strategies
+      return authenticationOperations.listActive(args.enabledOnly)
     }
   },
   AuthenticationMutation: {
@@ -61,7 +30,7 @@ module.exports = {
      */
     async login (obj, args, context) {
       try {
-        const authResult = await WIKI.models.users.login(args, context)
+        const authResult = await authenticationOperations.login(args, context)
         return {
           ...authResult,
           responseResult: graphHelper.generateSuccess('Login success')
@@ -80,7 +49,7 @@ module.exports = {
      */
     async loginTFA (obj, args, context) {
       try {
-        const authResult = await WIKI.models.users.loginTFA(args, context)
+        const authResult = await authenticationOperations.loginTfa(args, context)
         return {
           ...authResult,
           responseResult: graphHelper.generateSuccess('TFA success')
@@ -94,7 +63,7 @@ module.exports = {
      */
     async loginChangePassword (obj, args, context) {
       try {
-        const authResult = await WIKI.models.users.loginChangePassword(args, context)
+        const authResult = await authenticationOperations.loginChangePassword(args, context)
         return {
           ...authResult,
           responseResult: graphHelper.generateSuccess('Password changed successfully')
@@ -108,7 +77,7 @@ module.exports = {
      */
     async forgotPassword (obj, args, context) {
       try {
-        await WIKI.models.users.loginForgotPassword(args, context)
+        await authenticationOperations.forgotPassword(args, context)
         return {
           responseResult: graphHelper.generateSuccess('Password reset request processed.')
         }
@@ -121,7 +90,7 @@ module.exports = {
      */
     async register (obj, args, context) {
       try {
-        await WIKI.models.users.register({ ...args, verify: true }, context)
+        await authenticationOperations.register(args, context)
         return {
           responseResult: graphHelper.generateSuccess('Registration success')
         }
@@ -133,29 +102,12 @@ module.exports = {
      * Set Metrics state
      */
     async setMetricsState (obj, args, context) {
-      const previousState = WIKI.config.metrics.isEnabled
-
       try {
-        WIKI.config.metrics.isEnabled = args.enabled
-        await WIKI.metrics.init()
-
-        const configSaved = await WIKI.configSvc.saveToDb(['metrics'])
-        if (!configSaved) {
-          throw new Error('Failed to persist metrics state change')
-        }
-
+        await authenticationOperations.setMetricsState(args.enabled)
         return {
           responseResult: graphHelper.generateSuccess('Metrics state changed successfully')
         }
       } catch (err) {
-        WIKI.config.metrics.isEnabled = previousState
-
-        try {
-          await WIKI.metrics.init()
-        } catch (rollbackErr) {
-          return graphHelper.generateError(new Error(`Failed to rollback metrics runtime state: ${rollbackErr.message}`))
-        }
-
         return graphHelper.generateError(err)
       }
     },
@@ -164,7 +116,7 @@ module.exports = {
      */
     async regenerateCertificates (obj, args, context) {
       try {
-        await WIKI.auth.regenerateCertificates()
+        await authenticationOperations.regenerateCertificates()
         return {
           responseResult: graphHelper.generateSuccess('Certificates have been regenerated successfully.')
         }
@@ -177,7 +129,7 @@ module.exports = {
      */
     async resetGuestUser (obj, args, context) {
       try {
-        await WIKI.auth.resetGuestUser()
+        await authenticationOperations.resetGuestUser()
         return {
           responseResult: graphHelper.generateSuccess('Guest user has been reset successfully.')
         }

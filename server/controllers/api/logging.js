@@ -1,113 +1,46 @@
 const express = require('express')
-const _ = require('lodash')
+
+const loggingOperations = require('../../operations/logging')
 
 const router = express.Router()
 
 /* global WIKI */
 
-const requireSystemAccess = (req, res) => {
+const requireSystemAccess = (req, res, json = false) => {
   if (!WIKI.auth.checkAccess(req.user, ['manage:system'])) {
-    res.sendStatus(403)
+    if (json) res.status(403).json({ error: 'Forbidden' })
+    else res.sendStatus(403)
     return false
   }
-
   return true
 }
 
-const buildLoggerConfig = config => {
-  if (!Array.isArray(config)) {
-    throw new Error('Invalid loggers payload')
-  }
-
-  return _.reduce(config, (result, value) => {
-    if (!value || typeof value !== 'object' || Array.isArray(value) || typeof value.key !== 'string' || typeof value.value !== 'string') {
-      throw new Error('Invalid loggers payload')
-    }
-    _.set(result, `${value.key}`, value.value)
-    return result
-  }, {})
-}
-
-const validateLoggerPayload = logger => {
-  return logger &&
-    typeof logger === 'object' &&
-    !Array.isArray(logger) &&
-    typeof logger.key === 'string' &&
-    typeof logger.isEnabled === 'boolean' &&
-    typeof logger.level === 'string' &&
-    Array.isArray(logger.config) &&
-    logger.config.every(value => value && typeof value === 'object' && !Array.isArray(value) && typeof value.key === 'string' && typeof value.value === 'string')
-}
-
-const serializeLogger = logger => {
-  const loggerInfo = _.find(WIKI.data.loggers, ['key', logger.key]) || {}
-  const mergedLogger = {
-    ...loggerInfo,
-    ...logger
-  }
-  const config = _.sortBy(_.transform(logger.config, (res, value, key) => {
-    res.push({
-      key,
-      value: JSON.stringify({
-        ..._.get(loggerInfo.props, key, {}),
-        value
-      })
-    })
-  }, []), 'key')
-
-  return {
-    isEnabled: mergedLogger.isEnabled,
-    key: mergedLogger.key,
-    title: mergedLogger.title,
-    description: mergedLogger.description,
-    logo: mergedLogger.logo,
-    website: mergedLogger.website,
-    level: mergedLogger.level,
-    config
-  }
-}
-
 router.get('/loggers', async (req, res, next) => {
-  if (!requireSystemAccess(req, res)) {
-    return
-  }
-
+  if (!requireSystemAccess(req, res)) return
   try {
-    const loggers = await WIKI.models.loggers.getLoggers()
-    res.json(_.sortBy(loggers.map(serializeLogger), ['title']))
+    const loggers = await loggingOperations.listLoggers('title')
+    res.json(loggers.map(logger => ({
+      isEnabled: logger.isEnabled,
+      key: logger.key,
+      title: logger.title,
+      description: logger.description,
+      logo: logger.logo,
+      website: logger.website,
+      level: logger.level,
+      config: logger.config
+    })))
   } catch (err) {
     next(err)
   }
 })
 
 router.post('/loggers', async (req, res) => {
-  if (!WIKI.auth.checkAccess(req.user, ['manage:system'])) {
-    res.status(403).json({ error: 'Forbidden' })
-    return
-  }
-
-  const loggers = req.body && req.body.loggers
-  if (!Array.isArray(loggers) || loggers.some(logger => !validateLoggerPayload(logger))) {
-    res.status(400).json({ error: 'Invalid loggers payload' })
-    return
-  }
-
+  if (!requireSystemAccess(req, res, true)) return
   try {
-    for (const logger of loggers) {
-      await WIKI.models.loggers.query().patch({
-        isEnabled: logger.isEnabled,
-        level: logger.level,
-        config: buildLoggerConfig(logger.config)
-      }).where('key', logger.key)
-    }
-
+    await loggingOperations.updateLoggers(req.body && req.body.loggers)
     res.json({ message: 'Loggers updated successfully' })
   } catch (err) {
-    if (err.message === 'Invalid loggers payload') {
-      res.status(400).json({ error: 'Invalid loggers payload' })
-      return
-    }
-    res.status(500).json({ error: err.message || 'Loggers update failed' })
+    res.status(err.status || 500).json({ error: err.message || 'Loggers update failed' })
   }
 })
 
