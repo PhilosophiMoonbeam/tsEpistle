@@ -11,6 +11,7 @@ RUN corepack enable
 
 COPY build/package.json ./package.json
 COPY pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
+COPY patches ./patches
 
 RUN --mount=type=cache,id=wiki-pnpm-arm64,target=/pnpm/store \
     pnpm config set store-dir /pnpm/store && \

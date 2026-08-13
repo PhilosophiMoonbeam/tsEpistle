@@ -10,6 +10,7 @@ WORKDIR /wiki
 RUN corepack enable
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
+COPY patches ./patches
 
 RUN --mount=type=cache,id=wiki-pnpm,target=/pnpm/store \
     pnpm config set store-dir /pnpm/store && \

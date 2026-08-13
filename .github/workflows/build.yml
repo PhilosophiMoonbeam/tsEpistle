@@ -350,6 +350,8 @@ jobs:
         tar -xzf "$env:GITHUB_WORKSPACE\drop\wiki-js.tar.gz" -C "$env:GITHUB_WORKSPACE\win"
         Copy-Item win\node_modules\extract-files\package.json patch-extractfile.json -Force
         Remove-Item -Path win\node_modules -Force -Recurse
+        Copy-Item pnpm-lock.yaml, pnpm-workspace.yaml, .npmrc -Destination win -Force
+        Copy-Item patches -Destination win\patches -Recurse -Force
 
     - name: Install Production Dependencies
       shell: pwsh
@@ -361,6 +363,12 @@ jobs:
     - name: Fix Patched Packages
       shell: pwsh
       run: Copy-Item patch-extractfile.json win\node_modules\extract-files\package.json -Force
+
+    - name: Remove Dependency Metadata
+      shell: pwsh
+      run: |
+        Remove-Item win\pnpm-lock.yaml, win\pnpm-workspace.yaml, win\.npmrc -Force
+        Remove-Item win\patches -Recurse -Force
 
     - name: Create Bundle
       shell: pwsh
