@@ -253,7 +253,7 @@ describe('REST and GraphQL shared operation parity', () => {
     })
 
     it('normalizes create mutations and maps success and errors per transport', async () => {
-      const group = { id: 9, name: 'Editors' }
+      const group = { id: 9, name: 'Editors', isSystem: false }
       operationMocks.groups.create.mockResolvedValue(group)
       const requester = { id: 1, permissions: ['manage:groups'] }
       const restResponse = makeResponse()
