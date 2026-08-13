@@ -2,7 +2,7 @@ import fs from 'fs-extra'
 import http from 'node:http'
 import https from 'node:https'
 import type { Socket } from 'node:net'
-import { createRequire } from 'node:module'
+import { parseCookie } from 'cookie'
 import type { Express } from 'express'
 import { createYoga, type YogaServerInstance } from 'graphql-yoga'
 import { useServer } from 'graphql-ws/use/ws'
@@ -93,23 +93,9 @@ interface ExecutionRoot {
   subscribe: typeof graphqlSubscribe
 }
 
-interface CookieModule {
-  parse(input: string): Record<string, string | undefined>
-}
-
-
-function isCookieModule(value: unknown): value is CookieModule {
-  return typeof value === 'object' && value !== null &&
-    'parse' in value && typeof value.parse === 'function'
-}
 
 
 const wiki = WIKI as unknown as ServerWiki
-const cookieModule: unknown = createRequire(import.meta.url)('cookie')
-if (!isCookieModule(cookieModule)) {
-  throw new Error('The cookie module does not export parse')
-}
-const cookie = cookieModule
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
@@ -303,7 +289,7 @@ const serversCore: ServersCore = {
       : null
     if (!token) {
       const cookieHeader = request.headers.cookie || ''
-      token = cookieHeader ? cookie.parse(cookieHeader).jwt || null : null
+      token = cookieHeader ? parseCookie(cookieHeader).jwt || null : null
     }
     if (!token) {
       throw new Error('Unauthorized')
