@@ -33,7 +33,7 @@
               label='Identity Provider'
               :items='strategyOptions'
               v-model='filterStrategy'
-              item-text='displayName'
+              item-title='displayName'
               item-value='key'
               style='max-width: 300px;'
               dense

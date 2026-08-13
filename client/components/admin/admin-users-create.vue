@@ -11,7 +11,7 @@
       v-card-text.pt-5
         v-select(
           :items='availableProviders'
-          item-text='displayName'
+          item-title='displayName'
           item-value='key'
           outlined
           prepend-icon='mdi-domain'
@@ -50,7 +50,7 @@
           )
         v-select.mt-2(
           :items='groups'
-          item-text='name'
+          item-title='name'
           item-value='id'
           item-disabled='isSystem'
           outlined

@@ -20,6 +20,7 @@
                 v-card-text
                   v-select(
                     :items='themes'
+                    item-title='text'
                     outlined
                     prepend-icon='mdi-palette'
                     v-model='config.theme'
@@ -35,6 +36,7 @@
                         v-list-item-subtitle(v-html='data.item.author')
                   v-select.mt-3(
                     :items='iconsets'
+                    item-title='text'
                     outlined
                     prepend-icon='mdi-paw'
                     v-model='config.iconset'
@@ -58,6 +60,7 @@
                 v-card-text
                   v-select(
                     :items='tocPositions'
+                    item-title='text'
                     outlined
                     prepend-icon='mdi-border-vertical'
                     v-model='config.tocPosition'

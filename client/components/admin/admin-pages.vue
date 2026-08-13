@@ -36,6 +36,7 @@
               dense
               label='Locale'
               :items='langs'
+              item-title='text'
               v-model='selectedLang'
               style='max-width: 250px;'
             )
@@ -46,6 +47,7 @@
               dense
               label='Publish State'
               :items='states'
+              item-title='text'
               v-model='selectedState'
               style='max-width: 250px;'
             )

@@ -75,7 +75,7 @@
                           dense
                           v-model='currentLang'
                           :items='locales'
-                          item-text='nativeName'
+                          item-title='nativeName'
                           item-value='code'
                         )
                         v-tooltip(top)
@@ -167,6 +167,7 @@
                             :label='$t("admin:navigation.targetType")'
                             prepend-icon='mdi-near-me'
                             :items='navTypes'
+                            item-title='text'
                             v-model='current.targetType'
                             hide-details
                           )
@@ -226,7 +227,7 @@
                           v-radio.mt-3(:label='$t("admin:navigation.visibilityMode.restricted")', value='restricted', color='primary')
                         .pl-8
                           v-select.pl-8.mt-3(
-                            item-text='name'
+                            item-title='name'
                             item-value='id'
                             outlined
                             prepend-icon='mdi-account-group'
@@ -252,7 +253,7 @@
           .body-2 {{$t('admin:navigation.copyFromLocaleInfoText')}}
           v-select.mt-3(
             :items='locales'
-            item-text='nativeName'
+            item-title='nativeName'
             item-value='code'
             outlined
             prepend-icon='mdi-web'

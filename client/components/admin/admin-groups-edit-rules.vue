@@ -119,7 +119,7 @@
               v-model='rule.locales'
               placeholder='Any Locale'
               item-value='code'
-              item-text='name'
+              item-title='name'
               multiple
               hide-details
               height='48px'

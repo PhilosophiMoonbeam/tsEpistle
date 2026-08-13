@@ -83,6 +83,7 @@
                     outlined
                     label='HSTS Max Age'
                     :items='hstsDurations'
+                    item-title='text'
                     v-model='config.securityHSTSDuration'
                     prepend-icon='mdi-subdirectory-arrow-right'
                     :disabled='!config.securityHSTS'

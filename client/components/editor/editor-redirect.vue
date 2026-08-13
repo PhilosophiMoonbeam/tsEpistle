@@ -49,7 +49,7 @@
                               v-select.ml-3(
                                 color='primary'
                                 :items='groups'
-                                item-text='name'
+                                item-title='name'
                                 item-value='id'
                                 multiple
                                 solo

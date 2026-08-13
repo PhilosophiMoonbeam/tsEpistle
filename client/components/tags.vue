@@ -62,7 +62,7 @@
             :background-color='$vuetify.theme.current.dark ? `grey darken-3` : `white`'
             hide-details
             :label='$t(`tags:locale`)'
-            item-text='name'
+            item-title='name'
             item-value='code'
             rounded
             single-line

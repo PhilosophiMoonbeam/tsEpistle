@@ -214,7 +214,7 @@
               v-model='newGroup'
               :label='$t(`admin:users.selectGroup`)'
               item-value='id'
-              item-text='name'
+              item-title='name'
               item-disabled='isSystem'
               solo
               flat

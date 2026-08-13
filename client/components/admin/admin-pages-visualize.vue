@@ -17,7 +17,7 @@
             dense
             hide-details
             item-value='code'
-            item-text='name'
+            item-title='name'
           )
           v-btn-toggle.animated.fadeInDown(v-model='graphMode', color='primary', dense, rounded)
             v-btn.px-5(value='htree')

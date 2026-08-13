@@ -173,7 +173,7 @@
                 outlined
                 :disabled='!strategy.selfRegistration'
                 :items='groups'
-                item-text='name'
+                item-title='name'
                 item-value='id'
                 :label='$t(`admin:auth.autoEnrollGroups`)'
                 v-model='strategy.autoEnrollGroups'

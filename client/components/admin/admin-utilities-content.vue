@@ -51,7 +51,7 @@
           outlined
           hide-details
           :items='locales'
-          item-text='name'
+          item-title='name'
           item-value='code'
           v-model='sourceLocale'
         )
@@ -61,7 +61,7 @@
           outlined
           hide-details
           :items='locales'
-          item-text='name'
+          item-title='name'
           item-value='code'
           v-model='targetLocale'
         )
@@ -81,7 +81,7 @@
           outlined
           hide-details
           :items='purgeHistoryOptions'
-          item-text='title'
+          item-title='title'
           item-value='key'
           v-model='purgeHistorySelection'
         )

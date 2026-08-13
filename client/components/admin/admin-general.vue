@@ -77,6 +77,7 @@
                       outlined
                       :label='$t(`admin:general.contentLicense`)'
                       :items='contentLicenses'
+                      item-title='text'
                       v-model='config.contentLicense'
                       prepend-icon='mdi-creative-commons'
                       :return-object='false'
@@ -109,6 +110,7 @@
                       :label='$t(`admin:general.metaRobots`)'
                       multiple
                       :items='metaRobots'
+                      item-title='text'
                       v-model='config.robots'
                       prepend-icon='mdi-compass'
                       :return-object='false'

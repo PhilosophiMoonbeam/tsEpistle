@@ -26,7 +26,7 @@
                     prepend-icon='mdi-web'
                     v-model='selectedLocale'
                     item-value='code'
-                    item-text='nativeName'
+                    item-title='nativeName'
                     :label='namespacing ? $t("admin:locale.base.labelWithNS") : $t("admin:locale.base.label")'
                     persistent-hint
                     :hint='$t("admin:locale.base.hint")'
@@ -81,7 +81,7 @@
                     deletable-chips
                     v-model='namespaces'
                     item-value='code'
-                    item-text='name'
+                    item-title='name'
                     :label='$t("admin:locale.activeNamespaces.label")'
                     persistent-hint
                     small-chips

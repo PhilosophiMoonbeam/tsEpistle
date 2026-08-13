@@ -40,7 +40,7 @@
               v-select(
                 :disabled='fullAccess'
                 :items='groups'
-                item-text='name'
+                item-title='name'
                 item-value='id'
                 outlined
                 color='indigo'
