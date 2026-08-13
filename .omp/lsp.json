@@ -1,0 +1,18 @@
+{
+  "servers": {
+    "typescript-language-server": {
+      "args": ["--stdio"]
+    },
+    "vue-language-server": {
+      "args": ["--stdio"],
+      "initOptions": {
+        "typescript": {
+          "tsdk": "node_modules/typescript/lib"
+        },
+        "vue": {
+          "hybridMode": false
+        }
+      }
+    }
+  }
+}
