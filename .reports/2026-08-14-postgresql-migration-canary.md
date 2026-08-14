@@ -251,4 +251,5 @@ There is no reverse synchronization. Any writes accepted after PostgreSQL promot
 - Rollback is immediate at the container/configuration level but is intentionally not a reverse data migration.
 - The original SQLite schema contains legacy `isPrivate` / `privateNS` columns. It contains zero private rows; PostgreSQL is now canonical for new owner-scoped private-page data.
 - Mail remains unconfigured, matching the pre-migration deployment.
+- A direct partial `pages.update` GraphQL mutation that omitted `tags` returned `Cannot read properties of undefined (reading 'map')`; the browser editor's full-payload create/edit path passed. This pre-existing schema/runtime mismatch is not a PostgreSQL or private-page authorization failure, but remains unresolved.
 - PostgreSQL backups require normal operational rotation and off-host retention beyond this one-time local migration backup.
