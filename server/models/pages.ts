@@ -103,11 +103,11 @@ interface CreatePageOptions {
 interface UpdatePageOptions {
   id: number
   user: PageUser
-  content: string
-  description: string
-  isPublished: boolean | number
-  title: string
-  tags: string[]
+  content?: string
+  description?: string
+  isPublished?: boolean | number
+  title?: string
+  tags?: string[]
   action?: string
   locale?: string
   path?: string
@@ -705,8 +705,8 @@ static async updatePage(opts: UpdatePageOptions): Promise<Page> {
     throw new wiki.Error.PageUpdateForbidden()
   }
 
-  // -> Check for empty content
-  if (!opts.content || _.trim(opts.content).length < 1) {
+  const content = opts.content ?? ogPage.content
+  if (!content || _.trim(content).length < 1) {
     throw new wiki.Error.PageEmptyContent()
   }
 
@@ -726,10 +726,10 @@ static async updatePage(opts: UpdatePageOptions): Promise<Page> {
   // -> Format CSS Scripts
   let scriptCss = typeof ogPage.extra.css === 'string' ? ogPage.extra.css : ''
   if (wiki.auth.checkAccess(opts.user, ['write:styles'], {
-    locale: opts.locale,
-    path: opts.path
-  })) {
-    if (typeof opts.scriptCss === 'string' && !_.isEmpty(opts.scriptCss)) {
+    locale: opts.locale ?? ogPage.localeCode,
+    path: opts.path ?? ogPage.path
+  }) && opts.scriptCss !== undefined) {
+    if (!_.isEmpty(opts.scriptCss)) {
       scriptCss = new CleanCSS({ inline: false }).minify(opts.scriptCss).styles
     } else {
       scriptCss = ''
@@ -739,21 +739,23 @@ static async updatePage(opts: UpdatePageOptions): Promise<Page> {
   // -> Format JS Scripts
   let scriptJs = typeof ogPage.extra.js === 'string' ? ogPage.extra.js : ''
   if (wiki.auth.checkAccess(opts.user, ['write:scripts'], {
-    locale: opts.locale,
-    path: opts.path
-  })) {
-    scriptJs = opts.scriptJs || ''
+    locale: opts.locale ?? ogPage.localeCode,
+    path: opts.path ?? ogPage.path
+  }) && opts.scriptJs !== undefined) {
+    scriptJs = opts.scriptJs
   }
 
   // -> Update page
   await wiki.models.pages.query().patch({
     authorId: opts.user.id,
-    content: opts.content,
-    description: opts.description,
-    isPublished: opts.isPublished === true || opts.isPublished === 1,
-    publishEndDate: opts.publishEndDate || '',
-    publishStartDate: opts.publishStartDate || '',
-    title: opts.title,
+    content,
+    description: opts.description ?? ogPage.description,
+    isPublished: opts.isPublished === undefined
+      ? (ogPage.isPublished === true || ogPage.isPublished === 1)
+      : (opts.isPublished === true || opts.isPublished === 1),
+    publishEndDate: opts.publishEndDate === undefined ? ogPage.publishEndDate : (opts.publishEndDate || ''),
+    publishStartDate: opts.publishStartDate === undefined ? ogPage.publishStartDate : (opts.publishStartDate || ''),
+    title: opts.title ?? ogPage.title,
     extra: {
       ...ogPage.extra,
       js: scriptJs,
@@ -766,8 +768,9 @@ static async updatePage(opts: UpdatePageOptions): Promise<Page> {
   }
 
   // -> Save Tags
-  await wiki.models.tags.associateTags({ tags: opts.tags, page })
-
+  if (opts.tags !== undefined) {
+    await wiki.models.tags.associateTags({ tags: opts.tags, page })
+  }
   // -> Render page to HTML
   await wiki.models.pages.renderPage(page)
   wiki.events.outbound.emit('deletePageFromCache', page.hash)

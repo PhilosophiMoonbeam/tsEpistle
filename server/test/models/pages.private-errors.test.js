@@ -87,4 +87,65 @@ describe('private page mutation existence isolation', () => {
 
     await expect(Page.deletePage({ id: 17, user: requester })).rejects.toBeInstanceOf(PageNotFound)
   })
+
+  it('preserves omitted optional fields and tags during a partial update', async () => {
+    const owner = { id: 7, permissions: [] }
+    const originalPage = {
+      ...privatePage,
+      authorId: 7,
+      content: 'original content',
+      contentType: 'markdown',
+      description: 'original description',
+      extra: { css: '.original{}', js: 'original()' },
+      hash: 'private:7:en:secret',
+      isPublished: true,
+      publishEndDate: '2030-01-01T00:00:00.000Z',
+      publishStartDate: '2026-01-01T00:00:00.000Z',
+      title: 'Original title',
+      updatedAt: '2026-08-14T00:00:00.000Z'
+    }
+    const updatedPage = {
+      ...originalPage,
+      content: 'changed content',
+      title: 'Changed title',
+      $relatedQuery: vi.fn()
+    }
+    const patch = vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue(1) })
+    const query = vi.fn()
+      .mockReturnValueOnce({ findById: vi.fn().mockResolvedValue(originalPage) })
+      .mockReturnValueOnce({ patch })
+      .mockReturnValueOnce({
+        findById: vi.fn().mockReturnValue({
+          select: vi.fn().mockResolvedValue({ updatedAt: '2026-08-14T00:01:00.000Z' })
+        })
+      })
+    const associateTags = vi.fn()
+    global.WIKI.models.pages = {
+      query,
+      getPageFromDb: vi.fn().mockResolvedValue(updatedPage),
+      renderPage: vi.fn().mockResolvedValue(undefined)
+    }
+    global.WIKI.models.tags = { associateTags }
+    global.WIKI.models.knex.table = vi.fn().mockReturnValue({
+      where: vi.fn().mockReturnValue({ update: vi.fn().mockResolvedValue(1) })
+    })
+
+    await expect(Page.updatePage({
+      id: 17,
+      user: owner,
+      content: 'changed content',
+      title: 'Changed title'
+    })).resolves.toMatchObject({ content: 'changed content', title: 'Changed title' })
+
+    expect(patch).toHaveBeenCalledWith(expect.objectContaining({
+      content: 'changed content',
+      description: 'original description',
+      isPublished: true,
+      publishEndDate: '2030-01-01T00:00:00.000Z',
+      publishStartDate: '2026-01-01T00:00:00.000Z',
+      title: 'Changed title',
+      extra: { css: '.original{}', js: 'original()' }
+    }))
+    expect(associateTags).not.toHaveBeenCalled()
+  })
 })
