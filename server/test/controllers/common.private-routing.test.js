@@ -107,6 +107,9 @@ describe('private page administration routes', () => {
     const adminResponse = response()
     await byId(request({ id: 1, permissions: ['manage:system'] }), adminResponse)
     expect(adminResponse.redirect).toHaveBeenCalledWith('/_admin/private/7')
+    expect(global.WIKI.models.pages.query.mock.results.at(-1).value.column).toHaveBeenCalledWith([
+      'id', 'path', 'localeCode', 'visibility', 'ownerId'
+    ])
   })
 
   it('returns identical not-found behavior to non-owners', async () => {

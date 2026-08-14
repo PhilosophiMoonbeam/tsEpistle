@@ -622,7 +622,7 @@ router.get(['/i', '/i/:id'], async (req, res) => {
     return res.redirect('/')
   }
 
-  const page = await WIKI.models.pages.query().column(['path', 'localeCode', 'visibility', 'ownerId']).findById(pageId)
+  const page = await WIKI.models.pages.query().column(['id', 'path', 'localeCode', 'visibility', 'ownerId']).findById(pageId)
   if (!page) {
     _.set(res.locals, 'pageMeta.title', 'Page Not Found')
     return res.status(404).render('notfound', { action: 'view' })
