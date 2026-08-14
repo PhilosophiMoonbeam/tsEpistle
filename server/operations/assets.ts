@@ -40,7 +40,8 @@ interface WikiErrors {
 }
 
 const models = WIKI.models as unknown as Models
-const auth = WIKI.auth as { checkAccess(requester: Requester, permissions: string[], context: Record<string, unknown>): boolean }
+const getAuth = (): { checkAccess(requester: Requester, permissions: string[], context: Record<string, unknown>): boolean } =>
+  WIKI.auth as { checkAccess(requester: Requester, permissions: string[], context: Record<string, unknown>): boolean }
 const errors = WIKI.Error as unknown as WikiErrors
 
 const list = async ({ requester, folderId, kind }: { requester: Requester, folderId: number, kind: string }) => {
@@ -49,7 +50,7 @@ const list = async ({ requester, folderId, kind }: { requester: Requester, folde
   const hierarchy = await models.assetFolders.getHierarchy(folderId)
   const folderPath = hierarchy.map(folder => folder.slug).join('/')
   const assets = await models.assets.query().where(condition)
-  return assets.filter(asset => auth.checkAccess(requester, ['read:assets'], {
+  return assets.filter(asset => getAuth().checkAccess(requester, ['read:assets'], {
     path: folderPath ? `${folderPath}/${asset.filename}` : asset.filename
   })).map(asset => ({ ...asset, kind: asset.kind.toUpperCase() }))
 }
@@ -58,7 +59,7 @@ const listFolders = async ({ requester, parentFolderId }: { requester: Requester
   const folders = await models.assetFolders.query().where({ parentId: parentFolderId === 0 ? null : parentFolderId })
   const hierarchy = await models.assetFolders.getHierarchy(parentFolderId)
   const parentPath = hierarchy.map(folder => folder.slug).join('/')
-  return folders.filter(folder => auth.checkAccess(requester, ['read:assets'], {
+  return folders.filter(folder => getAuth().checkAccess(requester, ['read:assets'], {
     path: parentPath ? `${parentPath}/${folder.slug}` : folder.slug
   }))
 }
@@ -81,9 +82,9 @@ const rename = async ({ requester, id, filename: requestedFilename }: { requeste
   const hierarchy = asset.folderId ? await models.assetFolders.getHierarchy(asset.folderId) : []
   const folderPath = hierarchy.map(folder => folder.slug).join('/')
   const sourcePath = asset.folderId ? `${folderPath}/${asset.filename}` : asset.filename
-  if (!auth.checkAccess(requester, ['manage:assets'], { path: sourcePath })) throw new errors.AssetRenameForbidden()
+  if (!getAuth().checkAccess(requester, ['manage:assets'], { path: sourcePath })) throw new errors.AssetRenameForbidden()
   const targetPath = asset.folderId ? `${folderPath}/${filename}` : filename
-  if (!auth.checkAccess(requester, ['write:assets'], { path: targetPath })) throw new errors.AssetRenameTargetForbidden()
+  if (!getAuth().checkAccess(requester, ['write:assets'], { path: targetPath })) throw new errors.AssetRenameTargetForbidden()
   await models.assets.query().patch({ filename, hash: assetHelper.generateHash(targetPath) }).findById(id)
   await asset.deleteAssetCache()
   await models.storage.assetEvent({
@@ -96,7 +97,7 @@ const remove = async ({ requester, id }: { requester: Requester, id: number }): 
   const asset = await models.assets.query().findById(id)
   if (!asset) throw new errors.AssetInvalid()
   const assetPath = await asset.getAssetPath()
-  if (!auth.checkAccess(requester, ['manage:assets'], { path: assetPath })) throw new errors.AssetDeleteForbidden()
+  if (!getAuth().checkAccess(requester, ['manage:assets'], { path: assetPath })) throw new errors.AssetDeleteForbidden()
   await models.knex('assetData').where('id', id).del()
   await models.assets.query().deleteById(id)
   await asset.deleteAssetCache()
