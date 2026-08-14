@@ -196,6 +196,7 @@ interface PageVersionOptions {
   title: string
   action?: string
   versionDate: string
+  transaction?: Knex.Transaction
 }
 
 interface PageRenameDetails {
@@ -908,18 +909,22 @@ static async transferOwnership(opts: TransferOwnershipOptions): Promise<Page> {
   })
   if (collision) throw new wiki.Error.PagePathCollision()
 
-  await wiki.models.pageHistory.addVersion({
-    ...page,
-    action: 'ownership-transferred',
-    versionDate: page.updatedAt
+  await wiki.models.knex.transaction(async transaction => {
+    await wiki.models.pageHistory.addVersion({
+      ...page,
+      action: 'ownership-transferred',
+      versionDate: page.updatedAt,
+      transaction
+    })
+    const hash = pageHelper.generateHash({
+      path: page.path,
+      locale: page.localeCode,
+      visibility: 'private',
+      ownerId: opts.ownerId
+    })
+    await wiki.models.pages.query(transaction).patch({ ownerId: opts.ownerId, hash }).findById(page.id)
+    await wiki.models.knex('pageHistory').transacting(transaction).where({ pageId: page.id }).update({ ownerId: opts.ownerId })
   })
-  const hash = pageHelper.generateHash({
-    path: page.path,
-    locale: page.localeCode,
-    visibility: 'private',
-    ownerId: opts.ownerId
-  })
-  await wiki.models.pages.query().patch({ ownerId: opts.ownerId, hash }).findById(page.id)
   await wiki.models.pages.deletePageFromCache(page.hash)
   wiki.events.outbound.emit('deletePageFromCache', page.hash)
   await wiki.models.pages.rebuildTree()

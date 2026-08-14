@@ -1,3 +1,4 @@
+import type { Knex } from 'knex'
 import { Model } from 'objection'
 import _ from 'lodash'
 import { DateTime, Duration } from 'luxon'
@@ -26,6 +27,7 @@ interface PageVersionOptions {
   title: string
   action?: string
   versionDate: string
+  transaction?: Knex.Transaction
 }
 
 interface VersionQuery {
@@ -153,7 +155,7 @@ static override get tableName() { return 'pageHistory' } static override get jso
  * Create Page Version
  */
 static async addVersion(opts: PageVersionOptions) {
-  await wiki.models.pageHistory.query().insert({
+  await wiki.models.pageHistory.query(opts.transaction).insert({
     pageId: opts.id,
     authorId: opts.authorId,
     content: opts.content,
