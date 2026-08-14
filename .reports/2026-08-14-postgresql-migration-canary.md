@@ -7,9 +7,9 @@ The migration passed every acceptance gate and was promoted.
 - Active service: `wiki-tailnet`
 - Active address: `127.0.0.1:3013 -> 3000/tcp`
 - Active database: PostgreSQL 17.11 in `wiki-postgres`
-- Active application image: `wiki-private-pages:a088b5fe`
-- Application image ID: `sha256:ac1ef76c8fd9f9920fb1f333fbb95588015b0147d1090ee5a61270633f24af40`
-- Source revision: `a088b5feefb7d3bab2d2ddc6831a8b3d157f6e11`
+- Active application image: `wiki-private-pages:75afc78e`
+- Application image ID: `sha256:d51e11ffa77c2a382cf5c3309a2f01eaaec0a925eede17d0848c605b77070c29`
+- Source revision: `75afc78e2195c690dc97567e1de3af4dac68b30a`
 - Upstream base: Wiki.js 2.5.314, originally deployed image digest `sha256:2f6064a10157f79ff7db90ce1f1ae8486da4a7e3892ce862976282c6d8e66434`
 - Final health: HTTP 200 `{"ok":true}` after restarting both the promoted Wiki container and PostgreSQL
 
@@ -178,13 +178,17 @@ Private-page gates:
 - private-page assets were explicitly presented as site-wide and blocked from being treated as private content
 - a system Administrator opened a private page owned by another principal through `/i/{id}` and was redirected to `/_admin/private/{id}`; the page rendered while the anonymous request returned 404
 - the temporary administrator-preview page and ephemeral verification credential were removed after the check
+- the final audit-remediation canary loaded the Administrator users surface, accepted the page-ID comment query, and created a temporary private page
+- after that page was published, its private historical revision remained visible to the Administrator but returned `null` to a non-owner with page and history-read permissions
+- after returning the fixture to private visibility, the non-owner search returned zero hits; the page, history, temporary group membership, session, and token artifacts were then removed
+- the remediated image was promoted, both Wiki and PostgreSQL were restarted, `/healthz` returned HTTP 200, and `Page Home | Wiki.js` rendered at the deployed address
 
 ## Repository verification
 
 ```text
-pnpm test
-142 test files passed, 1 skipped
-1170 tests passed, 3 skipped
+pnpm exec vitest run -u server/test/graph/schema.compatibility.test.js
+147 test files passed, 1 skipped
+1183 tests passed, 4 skipped
 
 pnpm typecheck:server
 passed
@@ -193,13 +197,13 @@ pnpm typecheck:client
 passed
 
 pnpm exec vitest run server/test/db/private-pages.postgres.integration.test.ts
-1 file passed, 3 tests passed against an isolated PostgreSQL database
+1 file passed, 4 tests passed against an isolated PostgreSQL database
 
 pnpm exec vitest run server/test/db/private-pages.sqlite.integration.test.ts
 1 file passed, 2 tests passed against in-memory SQLite
 ```
 
-The final Docker image build also completed successfully and embedded source revision `a088b5feefb7d3bab2d2ddc6831a8b3d157f6e11`.
+The final Docker image build also completed successfully and embedded source revision `75afc78e2195c690dc97567e1de3af4dac68b30a`.
 
 ## Backups
 
@@ -223,7 +227,7 @@ Current topology:
 
 - Active Wiki: `wiki-tailnet`, PostgreSQL, healthy, `127.0.0.1:3013`
 - Active database: `wiki-postgres`, PostgreSQL 17.11, healthy, no host port
-- Verified stopped canary configuration: `wiki-postgres-canary-verified-a088b5fe`, formerly `127.0.0.1:3014`
+- Preserved pre-remediation PostgreSQL container: `wiki-tailnet-pre-75afc78e`, stopped; verified canary `wiki-postgres-canary-verified-a088b5fe` also remains stopped
 - Preserved rollback container: `wiki-tailnet-sqlite-rollback-20260814`, stopped
 - Preserved rollback image ID: `sha256:3ac6fe5582b4782ab7eceef76f03d0666b905193b9093b4b6011be23ecc81b7c`
 - Preserved rollback volume: `wiki-tailnet-data:/wiki/data/content`
