@@ -168,7 +168,7 @@ const plugin = {
         description: pageData.description ?? currentPage.description ?? '',
         tags: newTags ?? currentPage.tags.flatMap(tag => typeof tag.tag === 'string' ? [tag.tag] : []),
         isPublished: pageData.isPublished ?? currentPublishedState,
-        isPrivate: false,
+        visibility: 'public',
         content: pageData.content,
         user: user,
         skipStorage: true
@@ -186,7 +186,7 @@ const plugin = {
         description: pageData.description ?? '',
         tags: newTags ?? [],
         isPublished: pageData.isPublished ?? true,
-        isPrivate: false,
+        visibility: 'public',
         content: pageData.content,
         user,
         editor: pageEditor,

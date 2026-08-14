@@ -12,4 +12,9 @@ describe('page actions helper', () => {
   test('returns versioned page source path with version query', () => {
     expect(getPageSourcePath('fr', 'guides/intro', 42)).toBe('/s/fr/guides/intro?v=42')
   })
+
+  test('keeps private source and download actions in the explicit owner scope', () => {
+    expect(getPageDownloadPath('en', 'same/path', 0, 'private')).toBe('/d/_private/en/same/path')
+    expect(getPageSourcePath('en', 'same/path', 9, 'private')).toBe('/s/_private/en/same/path?v=9')
+  })
 })

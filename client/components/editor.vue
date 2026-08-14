@@ -99,7 +99,7 @@
 <script lang='ts'>
 import { defineAsyncComponent, defineComponent, type PropType } from 'vue'
 import _ from 'lodash'
-import { checkPageConflict, createPage, updatePage } from '../helpers/pages-api'
+import { changePageVisibility, checkPageConflict, createPage, updatePage } from '../helpers/pages-api'
 import { wikiStore } from '@/store/index.ts'
 import { AtomSpinner } from 'epic-spinners'
 import { Base64 } from 'js-base64'
@@ -152,6 +152,14 @@ export default defineComponent({
     isPublished: {
       type: Boolean,
       default: true
+    },
+    visibility: {
+      type: String as PropType<'public' | 'private'>,
+      default: 'public'
+    },
+    ownerId: {
+      type: Number,
+      default: null
     },
     scriptCss: {
       type: String,
@@ -208,6 +216,7 @@ export default defineComponent({
       savedState: {
         description: '',
         isPublished: false,
+        visibility: 'public' as 'public' | 'private',
         publishEndDate: '',
         publishStartDate: '',
         tags: [] as string[],
@@ -246,6 +255,7 @@ export default defineComponent({
         this.savedState.description !== wikiStore.page.description,
         this.savedState.tags !== wikiStore.page.tags,
         this.savedState.isPublished !== wikiStore.page.isPublished,
+        this.savedState.visibility !== wikiStore.page.visibility,
         this.savedState.publishStartDate !== wikiStore.page.publishStartDate,
         this.savedState.publishEndDate !== wikiStore.page.publishEndDate,
         this.savedState.css !== wikiStore.page.scriptCss,
@@ -269,6 +279,8 @@ export default defineComponent({
     wikiStore.page.id = this.pageId
     wikiStore.page.description = this.description
     wikiStore.page.isPublished = this.isPublished
+    wikiStore.page.visibility = this.visibility
+    wikiStore.page.ownerId = this.ownerId
     wikiStore.page.publishStartDate = this.publishStartDate
     wikiStore.page.publishEndDate = this.publishEndDate
     wikiStore.page.locale = this.locale
@@ -366,7 +378,9 @@ export default defineComponent({
           wikiStore.editor.id = page.id
           wikiStore.editor.mode = 'update'
           this.exitConfirmed = true
-          window.location.assign(`/${wikiStore.page.locale}/${wikiStore.page.path}`)
+          window.location.assign(wikiStore.page.visibility === 'private'
+            ? `/_private/${wikiStore.page.locale}/${wikiStore.page.path}`
+            : `/${wikiStore.page.locale}/${wikiStore.page.path}`)
         } else {
           // --------------------------------------------
           // -> UPDATE EXISTING PAGE
@@ -382,6 +396,14 @@ export default defineComponent({
             wikiStore.page.id,
             this.getPageInput()
           )
+          if (this.savedState.visibility !== wikiStore.page.visibility) {
+            await changePageVisibility(
+              window.fetch.bind(window),
+              wikiStore.page.id,
+              wikiStore.page.visibility,
+              wikiStore.page.visibility === 'public'
+            )
+          }
           this.checkoutDateActive = page.updatedAt || this.checkoutDateActive
           this.isConflict = false
           wikiStore.showNotification({
@@ -389,9 +411,14 @@ export default defineComponent({
             style: 'success',
             icon: 'check'
           })
-          if (this.locale !== wikiStore.page.locale || this.path !== wikiStore.page.path) {
+          if (
+            this.locale !== wikiStore.page.locale ||
+            this.path !== wikiStore.page.path ||
+            this.savedState.visibility !== wikiStore.page.visibility
+          ) {
             _.delay(() => {
-              window.location.replace(`/e/${wikiStore.page.locale}/${wikiStore.page.path}`)
+              const scope = wikiStore.page.visibility === 'private' ? '/_private' : ''
+              window.location.replace(`/e${scope}/${wikiStore.page.locale}/${wikiStore.page.path}`)
             }, 1000)
           }
         }
@@ -442,7 +469,8 @@ export default defineComponent({
         if (wikiStore.editor.mode === 'create') {
           window.location.assign(`/`)
         } else {
-          window.location.assign(`/${wikiStore.page.locale}/${wikiStore.page.path}`)
+          const scope = wikiStore.page.visibility === 'private' ? '/_private' : ''
+          window.location.assign(`${scope}/${wikiStore.page.locale}/${wikiStore.page.path}`)
         }
       }, 500)
     },
@@ -452,7 +480,7 @@ export default defineComponent({
         description: wikiStore.page.description,
         editor: wikiStore.editor.editorKey,
         locale: wikiStore.page.locale,
-        isPrivate: false,
+        visibility: wikiStore.page.visibility,
         isPublished: wikiStore.page.isPublished,
         path: wikiStore.page.path,
         publishEndDate: wikiStore.page.publishEndDate || '',
@@ -467,6 +495,7 @@ export default defineComponent({
       this.savedState = {
         description: wikiStore.page.description,
         isPublished: wikiStore.page.isPublished,
+        visibility: wikiStore.page.visibility,
         publishEndDate: wikiStore.page.publishEndDate || '',
         publishStartDate: wikiStore.page.publishStartDate || '',
         tags: wikiStore.page.tags,

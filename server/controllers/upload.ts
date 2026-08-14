@@ -40,8 +40,7 @@ router.post('/u', (req, res, next) => {
     defParamCharset: 'utf8'
   }).array('mediaUpload')(req, res, next)
 }, async (req, res) => {
-  const permissions = Array.isArray(req.user?.permissions) ? req.user.permissions : []
-  if (!permissions.some(permission => ['write:assets', 'manage:system'].includes(permission))) {
+  if (!getWikiAuth().checkAccess(req.user, ['write:assets', 'manage:system'])) {
     return res.status(403).json({
       succeeded: false,
       message: 'You are not authorized to upload files.'
@@ -106,7 +105,7 @@ router.post('/u', (req, res, next) => {
 
   // Check if user can upload at path
   const assetPath = (folderId) ? hierarchy.map(h => h.slug).join('/') + `/${fileMeta.originalname}` : fileMeta.originalname
-  if (!getWikiAuth().checkAccess(req.user, ['write:assets'], { path: assetPath })) {
+  if (!getWikiAuth().checkAccess(req.user, ['write:assets', 'manage:system'], { path: assetPath })) {
     return res.status(403).json({
       succeeded: false,
       message: 'You are not authorized to upload files to this folder.'

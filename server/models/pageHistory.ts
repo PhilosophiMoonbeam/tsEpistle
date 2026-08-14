@@ -6,6 +6,7 @@ import Page from './pages.ts'
 import User from './users.ts'
 import Editor from './editors.ts'
 import Locale from './locales.ts'
+import type { PageVisibility } from '../helpers/page-access.ts'
 
 interface PageVersionOptions {
   id: number
@@ -15,7 +16,8 @@ interface PageVersionOptions {
   description: string
   editorKey: string
   hash: string
-  isPrivate: boolean | number
+  visibility: PageVisibility
+  ownerId: number | null
   isPublished: boolean | number
   localeCode: string
   path: string
@@ -70,7 +72,8 @@ declare path: string
 declare hash: string
 declare title: string
 declare description: string
-declare isPrivate: boolean
+declare visibility: PageVisibility
+declare ownerId: number | null
 declare isPublished: boolean
 declare publishStartDate: string
 declare publishEndDate: string
@@ -92,6 +95,8 @@ static override get tableName() { return 'pageHistory' } static override get jso
     title: {type: 'string'},
     description: {type: 'string'},
     isPublished: {type: 'boolean'},
+    visibility: {type: 'string', enum: ['public', 'private']},
+    ownerId: {type: ['integer', 'null']},
     publishStartDate: {type: 'string'},
     publishEndDate: {type: 'string'},
     content: {type: 'string'},
@@ -156,7 +161,8 @@ static async addVersion(opts: PageVersionOptions) {
     description: opts.description,
     editorKey: opts.editorKey,
     hash: opts.hash,
-    isPrivate: (opts.isPrivate === true || opts.isPrivate === 1),
+    visibility: opts.visibility,
+    ownerId: opts.ownerId,
     isPublished: (opts.isPublished === true || opts.isPublished === 1),
     localeCode: opts.localeCode,
     path: opts.path,
@@ -177,7 +183,8 @@ static async getVersion({ pageId, versionId }: VersionQuery) {
       'pageHistory.path',
       'pageHistory.title',
       'pageHistory.description',
-      'pageHistory.isPrivate',
+      'pageHistory.visibility',
+      'pageHistory.ownerId',
       'pageHistory.isPublished',
       'pageHistory.publishStartDate',
       'pageHistory.publishEndDate',

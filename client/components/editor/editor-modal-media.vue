@@ -127,7 +127,8 @@
 
         v-col(cols='12', lg='3')
           v-card.radius-7.animated.fadeInRight.wait-p3s(:light='!$vuetify.theme.current.dark', :dark='$vuetify.theme.current.dark')
-            v-card-text
+            v-alert.mb-0(v-if='isPrivatePage', type='info', outlined, dense) Assets are site-wide and cannot be uploaded as private page content.
+            v-card-text(v-if='!isPrivatePage')
               .d-flex
                 v-toolbar.radius-7(:color='$vuetify.theme.current.dark ? `teal` : `teal lighten-5`', dense, flat, height='44')
                   v-icon.mr-3(:color='$vuetify.theme.current.dark ? `white` : `teal`') mdi-cloud-upload
@@ -147,8 +148,8 @@
                 :allow-revert='false'
                 @processfile='onFileProcessed'
               )
-            v-divider
-            v-card-actions.pa-3
+            v-divider(v-if='!isPrivatePage')
+            v-card-actions.pa-3(v-if='!isPrivatePage')
               .caption.grey--text.text-darken-2 Max 10 files, 5 MB each
               v-spacer
               v-btn.px-4(color='teal', dark, @click='upload') {{$t('common:actions.upload')}}
@@ -348,6 +349,9 @@ export default defineComponent({
     currentAsset () {
       return _.find(this.assets, ['id', this.currentFileId])
     },
+    isPrivatePage(): boolean {
+      return wikiStore.page.visibility === 'private'
+    },
     filePondServerOpts () {
       const jwtToken = Cookies.get('jwt')
       return {
@@ -420,6 +424,9 @@ export default defineComponent({
       ;(this.$refs.pond as FilePondRef).browse()
     },
     async upload () {
+      if (this.isPrivatePage) {
+        throw new Error('Assets are site-wide and cannot be uploaded as private page content.')
+      }
       const files = (this.$refs.pond as FilePondRef).getFiles()
       if (files.length < 1) {
         return wikiStore.showNotification({

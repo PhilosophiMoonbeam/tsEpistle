@@ -239,7 +239,7 @@ const plugin: SearchPlugin<PostgresSearchConfig, PostgresSearchContext> = {
     await pipeline(
       knex.column('path', 'localeCode', 'title', 'description', 'render').select().from('pages').where({
         isPublished: true,
-        isPrivate: false
+        visibility: 'public'
       }).stream(),
       new Transform({
         objectMode: true,

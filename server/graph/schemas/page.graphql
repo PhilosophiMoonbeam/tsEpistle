@@ -49,6 +49,7 @@ type PageQuery {
   singleByPath(
     path: String!
     locale: String!
+    visibility: PageVisibility
   ): Page @auth(requires: ["read:pages", "manage:system"])
 
   tags: [PageTag]! @auth(requires: ["manage:system", "read:pages"])
@@ -89,7 +90,7 @@ type PageMutation {
     description: String!
     editor: String!
     isPublished: Boolean!
-    isPrivate: Boolean!
+    visibility: PageVisibility!
     locale: String!
     path: String!
     publishEndDate: Date
@@ -105,7 +106,7 @@ type PageMutation {
     content: String
     description: String
     editor: String
-    isPrivate: Boolean
+    
     isPublished: Boolean
     locale: String
     path: String
@@ -131,6 +132,17 @@ type PageMutation {
   delete(
     id: Int!
   ): DefaultResponse @auth(requires: ["delete:pages", "manage:system"])
+
+  changeVisibility(
+    id: Int!
+    visibility: PageVisibility!
+    confirmPublication: Boolean
+  ): PageResponse @auth(requires: ["write:pages", "manage:pages", "manage:system"])
+
+  transferOwnership(
+    id: Int!
+    ownerId: Int!
+  ): PageResponse @auth(requires: ["manage:system"])
 
 
 
@@ -170,9 +182,9 @@ type Page {
   hash: String!
   title: String!
   description: String!
-  isPrivate: Boolean! @auth(requires: ["write:pages", "manage:system"])
+  visibility: PageVisibility!
+  ownerId: Int
   isPublished: Boolean! @auth(requires: ["write:pages", "manage:system"])
-  privateNS: String @auth(requires: ["write:pages", "manage:system"])
   publishStartDate: Date! @auth(requires: ["write:pages", "manage:system"])
   publishEndDate: Date! @auth(requires: ["write:pages", "manage:system"])
   tags: [PageTag]!
@@ -222,7 +234,8 @@ type PageVersion {
   versionDate: Date!
   description: String!
   editor: String!
-  isPrivate: Boolean!
+  visibility: PageVisibility!
+  ownerId: Int
   isPublished: Boolean!
   locale: String!
   pageId: Int!
@@ -251,6 +264,7 @@ type PageSearchResult {
   description: String!
   path: String!
   locale: String!
+  visibility: PageVisibility!
 }
 
 type PageListItem {
@@ -261,8 +275,8 @@ type PageListItem {
   description: String
   contentType: String!
   isPublished: Boolean!
-  isPrivate: Boolean!
-  privateNS: String
+  visibility: PageVisibility!
+  ownerId: Int
   createdAt: Date!
   updatedAt: Date!
   tags: [String]
@@ -273,9 +287,9 @@ type PageTreeItem {
   path: String!
   depth: Int!
   title: String!
-  isPrivate: Boolean!
+  visibility: PageVisibility!
+  ownerId: Int
   isFolder: Boolean!
-  privateNS: String
   parent: Int
   pageId: Int
   locale: String!
@@ -301,6 +315,11 @@ type PageConflictLatest {
   tags: [String]
   title: String!
   updatedAt: Date!
+}
+
+enum PageVisibility {
+  public
+  private
 }
 
 enum PageOrderBy {

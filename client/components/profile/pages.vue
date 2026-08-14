@@ -23,9 +23,11 @@
             hide-default-footer
           )
             template(v-slot:item='props')
-              tr.is-clickable(:active='props.selected', @click='goToPage(props.item.id)')
+              tr.is-clickable(:active='props.selected', @click='goToPage(props.item)')
                 td
-                  .body-2: strong {{ props.item.title }}
+                  .body-2
+                    strong {{ props.item.title }}
+                    v-chip.ml-2(v-if="props.item.visibility === 'private'", x-small, color='deep-orange', dark) Private
                   .caption {{ props.item.description }}
                 td.admin-pages-path
                   v-chip(label, small, :color='$vuetify.theme.current.dark ? `grey darken-4` : `grey lighten-4`') {{ props.item.locale }}
@@ -78,8 +80,9 @@ export default {
         icon: 'cached'
       })
     },
-    goToPage(id: number) {
-      window.location.assign(`/i/` + id)
+    goToPage(page: PageListRow) {
+      const scope = page.visibility === 'private' ? '/_private' : ''
+      window.location.assign(`${scope}/${page.locale}/${page.path}`)
     },
     async loadPages() {
       this.loading = true

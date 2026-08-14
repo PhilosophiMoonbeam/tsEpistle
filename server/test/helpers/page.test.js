@@ -1,5 +1,6 @@
 const originalWIKI = global.WIKI
 
+let generateHash
 let injectPageMetadata
 
 beforeEach(async () => {
@@ -14,7 +15,7 @@ beforeEach(async () => {
       reservedPaths: []
     }
   }
-  ;({ injectPageMetadata } = (await import('../../helpers/page.ts')).default)
+  ;({ generateHash, injectPageMetadata } = (await import('../../helpers/page.ts')).default)
 })
 
 afterEach(() => {
@@ -23,6 +24,19 @@ afterEach(() => {
   } else {
     global.WIKI = originalWIKI
   }
+})
+
+describe('helpers/page/generateHash', () => {
+  it('isolates public and owner-scoped private cache identities', () => {
+    const publicHash = generateHash({ locale: 'en', path: 'same/path', visibility: 'public', ownerId: null })
+    const ownerHash = generateHash({ locale: 'en', path: 'same/path', visibility: 'private', ownerId: 7 })
+    const otherOwnerHash = generateHash({ locale: 'en', path: 'same/path', visibility: 'private', ownerId: 8 })
+
+    expect(ownerHash).not.toBe(publicHash)
+    expect(otherOwnerHash).not.toBe(publicHash)
+    expect(otherOwnerHash).not.toBe(ownerHash)
+    expect(publicHash).toBe('198d623850ff30a22fc765860bec70b60093183b')
+  })
 })
 
 describe('helpers/page/injectPageMetadata', () => {

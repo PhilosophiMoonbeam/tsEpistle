@@ -77,6 +77,18 @@ export default {
         return { responseResult: graphHelper.generateSuccess('Page has been deleted.') }
       } catch (err: unknown) { return graphHelper.generateError(err) }
     },
+    async changeVisibility (_obj: unknown, args: ResolverArgs, context: ResolverContext) {
+      try {
+        const page = await pageOperations.changeVisibility({ requester: context.req.user, ...args })
+        return { responseResult: graphHelper.generateSuccess('Page visibility has been updated.'), page }
+      } catch (err: unknown) { return graphHelper.generateError(err) }
+    },
+    async transferOwnership (_obj: unknown, args: ResolverArgs, context: ResolverContext) {
+      try {
+        const page = await pageOperations.transferOwnership({ requester: context.req.user, ...args })
+        return { responseResult: graphHelper.generateSuccess('Page ownership has been transferred.'), page }
+      } catch (err: unknown) { return graphHelper.generateError(err) }
+    },
     async flushCache () {
       try {
         await systemOperations.flushPageCache()

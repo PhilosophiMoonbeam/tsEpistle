@@ -42,6 +42,14 @@
               persistent-hint
               :hint='$t(`editor:props.shortDescriptionHint`)'
               )
+            v-switch(
+              label='Private page'
+              v-model='privatePage'
+              color='deep-orange'
+              hint='Private pages are visible only to you. Publishing makes this page available through normal page permissions.'
+              persistent-hint
+              inset
+            )
           v-divider
           v-card-text.grey.pt-5(:class='$vuetify.theme.current.dark ? `darken-3-d3` : `lighten-5`')
             .overline.pb-5 {{$t('editor:props.path')}}
@@ -343,6 +351,22 @@ export default defineComponent({
       },
       set(value: boolean) {
         wikiStore.page.isPublished = value
+      }
+    },
+    privatePage: {
+      get() {
+        return wikiStore.page.visibility === 'private'
+      },
+      set(value: boolean) {
+        if (
+          !value &&
+          this.mode !== 'create' &&
+          wikiStore.page.visibility === 'private' &&
+          !window.confirm('Publish this private page? It will become available through normal page permissions.')
+        ) {
+          return
+        }
+        wikiStore.page.visibility = value ? 'private' : 'public'
       }
     },
     publishStartDate: {

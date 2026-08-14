@@ -2,6 +2,7 @@ import express from 'express'
 import { type Request, type Response, getWikiAuth } from '../_types.ts'
 import _ from 'lodash'
 import pageOperations from '../../operations/pages.ts'
+import { principalId, type PageVisibility } from '../../helpers/page-access.ts'
 
 const router = express.Router()
 
@@ -15,8 +16,8 @@ interface PageListItem {
   title?: string | null
   description?: string | null
   isPublished: boolean | number
-  isPrivate: boolean | number
-  privateNS?: string | null
+  visibility: PageVisibility
+  ownerId: number | null
   contentType: string
   createdAt: string | Date
   updatedAt: string | Date
@@ -42,8 +43,8 @@ const isPageListItem = (page: PageOperationListItem): page is PageOperationListI
   (page.title === undefined || page.title === null || typeof page.title === 'string') &&
   (page.description === undefined || page.description === null || typeof page.description === 'string') &&
   (typeof page.isPublished === 'boolean' || typeof page.isPublished === 'number') &&
-  (typeof page.isPrivate === 'boolean' || typeof page.isPrivate === 'number') &&
-  (page.privateNS === undefined || page.privateNS === null || typeof page.privateNS === 'string') &&
+  (page.visibility === 'public' || page.visibility === 'private') &&
+  (page.ownerId === null || typeof page.ownerId === 'number') &&
   typeof page.contentType === 'string' &&
   isDateValue(page.createdAt) &&
   isDateValue(page.updatedAt) &&
@@ -89,7 +90,7 @@ const requireSystemAccess = (req: Request, res: Response): boolean => {
 }
 
 const requirePageDeleteAccess = (req: Request, res: Response): boolean => {
-  if (!getWikiAuth().checkAccess(req.user, ['delete:pages', 'manage:system'])) {
+  if (principalId(req.user) === null && !getWikiAuth().checkAccess(req.user, ['delete:pages', 'manage:system'])) {
     res.status(403).json({ error: 'delete:pages or manage:system is required' })
     return false
   }
@@ -98,7 +99,7 @@ const requirePageDeleteAccess = (req: Request, res: Response): boolean => {
 }
 
 const requireRecentPagesAccess = (req: Request, res: Response): boolean => {
-  if (!getWikiAuth().checkAccess(req.user, ['manage:system', 'read:pages'])) {
+  if (principalId(req.user) === null && !getWikiAuth().checkAccess(req.user, ['manage:system', 'read:pages'])) {
     res.status(403).json({ error: 'manage:system or read:pages is required' })
     return false
   }
@@ -107,7 +108,7 @@ const requireRecentPagesAccess = (req: Request, res: Response): boolean => {
 }
 
 const requireTagsAccess = (req: Request, res: Response): boolean => {
-  if (!getWikiAuth().checkAccess(req.user, ['manage:system', 'read:pages'])) {
+  if (principalId(req.user) === null && !getWikiAuth().checkAccess(req.user, ['manage:system', 'read:pages'])) {
     res.status(403).json({ error: 'manage:system or read:pages is required' })
     return false
   }
@@ -116,7 +117,7 @@ const requireTagsAccess = (req: Request, res: Response): boolean => {
 }
 
 const requirePageLinksAccess = (req: Request, res: Response): boolean => {
-  if (!getWikiAuth().checkAccess(req.user, ['manage:system', 'read:pages'])) {
+  if (principalId(req.user) === null && !getWikiAuth().checkAccess(req.user, ['manage:system', 'read:pages'])) {
     res.status(403).json({ error: 'manage:system or read:pages is required' })
     return false
   }
@@ -125,7 +126,7 @@ const requirePageLinksAccess = (req: Request, res: Response): boolean => {
 }
 
 const requirePageListAccess = (req: Request, res: Response): boolean => {
-  if (!getWikiAuth().checkAccess(req.user, ['manage:system', 'read:pages'])) {
+  if (principalId(req.user) === null && !getWikiAuth().checkAccess(req.user, ['manage:system', 'read:pages'])) {
     res.status(403).json({ error: 'manage:system or read:pages is required' })
     return false
   }
@@ -202,8 +203,8 @@ router.get('/', async (req, res, next) => {
         title: page.title ?? null,
         description: page.description ?? null,
         isPublished: Boolean(page.isPublished),
-        isPrivate: Boolean(page.isPrivate),
-        privateNS: page.privateNS ?? null,
+        visibility: page.visibility,
+        ownerId: page.ownerId,
         contentType: page.contentType,
         createdAt: page.createdAt,
         updatedAt: page.updatedAt,
@@ -337,6 +338,45 @@ router.put('/:id', async (req, res) => {
   }
 })
 
+router.patch('/:id/visibility', async (req, res) => {
+  const id = parsePositiveIntegerParam(req, res)
+  if (id === null) return
+  const visibility = _.get(req, 'body.visibility')
+  if (visibility !== 'public' && visibility !== 'private') {
+    return res.status(400).json({ error: 'visibility must be public or private' })
+  }
+  try {
+    const page = await pageOperations.changeVisibility({
+      ...requesterInput(req),
+      id,
+      visibility,
+      confirmPublication: _.get(req, 'body.confirmPublication') === true
+    })
+    return res.json({ page })
+  } catch (err) {
+    sendOperationError(res, err, 'Page visibility update failed')
+  }
+})
+
+router.patch('/:id/owner', async (req, res) => {
+  const id = parsePositiveIntegerParam(req, res)
+  if (id === null) return
+  const ownerId = _.get(req, 'body.ownerId')
+  if (!Number.isSafeInteger(ownerId) || (ownerId as number) < 1) {
+    return res.status(400).json({ error: 'ownerId must be a positive integer' })
+  }
+  try {
+    const page = await pageOperations.transferOwnership({
+      ...requesterInput(req),
+      id,
+      ownerId
+    })
+    return res.json({ page })
+  } catch (err) {
+    sendOperationError(res, err, 'Page ownership transfer failed')
+  }
+})
+
 router.post('/:id/convert', async (req, res) => {
   const id = parsePositiveIntegerParam(req, res)
   if (id === null) return
@@ -448,25 +488,23 @@ router.get('/:id', async (req, res, next) => {
     return res.status(400).json({ error: 'id must be a positive integer' })
   }
 
-  if (!getWikiAuth().checkAccess(req.user, ['read:pages', 'manage:system'])) {
-    return res.status(403).json({ error: 'read:pages or manage:system is required' })
+  if (principalId(req.user) === null && !getWikiAuth().checkAccess(req.user, ['read:pages', 'manage:system'])) {
+    return res.status(403).json({ error: 'authentication or read:pages is required' })
   }
 
   try {
     const page = await pageOperations.get({ ...requesterInput(req), id })
     const pageResult: Record<string, unknown> = page
-    if (!getWikiAuth().checkAccess(req.user, ['write:pages', 'manage:system'])) {
-      return res.status(403).json({ error: 'write:pages or manage:system is required' })
-    }
+
     return res.json({
       id: pageResult.id,
       path: pageResult.path,
       hash: pageResult.hash,
       title: pageResult.title,
       description: pageResult.description,
-      isPrivate: Boolean(pageResult.isPrivate),
+      visibility: pageResult.visibility,
+      ownerId: pageResult.ownerId ?? null,
       isPublished: Boolean(pageResult.isPublished),
-      privateNS: pageResult.privateNS ?? null,
       publishStartDate: pageResult.publishStartDate || null,
       publishEndDate: pageResult.publishEndDate || null,
       contentType: pageResult.contentType,

@@ -16,7 +16,7 @@
           template(v-else)
             status-indicator.mr-3(negative, pulse)
             .caption.red--text {{$t('common:page.unpublished')}}
-          template(v-if='page.isPrivate')
+          template(v-if="page.visibility === 'private'")
             status-indicator.mr-3.ml-4(intermediary, pulse)
             .caption.deep-orange--text {{$t('common:page.private')}}
           template(v-else)
@@ -31,11 +31,11 @@
                 span Actions
                 v-icon(right) mdi-chevron-down
             v-list(dense, nav)
-              v-list-item(:href='`/` + page.locale + `/` + page.path')
+              v-list-item(:href='(page.visibility === `private` ? `/_private` : ``) + `/` + page.locale + `/` + page.path')
                 div.v-list-item-icon
                   v-icon(color='indigo') mdi-text-subject
                 v-list-item-title View
-              v-list-item(:href='`/e/` + page.locale + `/` + page.path')
+              v-list-item(:href='`/e` + (page.visibility === `private` ? `/_private` : ``) + `/` + page.locale + `/` + page.path')
                 div.v-list-item-icon
                   v-icon(color='indigo') mdi-pencil
                 v-list-item-title Edit
@@ -47,11 +47,11 @@
               //-   v-list-item-icon
               //-     v-icon(color='grey') mdi-earth-remove
               //-   v-list-item-title Unpublish
-              v-list-item(:href='`/s/` + page.locale + `/` + page.path')
+              v-list-item(:href='`/s` + (page.visibility === `private` ? `/_private` : ``) + `/` + page.locale + `/` + page.path')
                 div.v-list-item-icon
                   v-icon(color='indigo') mdi-code-tags
                 v-list-item-title View Source
-              v-list-item(:href='`/h/` + page.locale + `/` + page.path')
+              v-list-item(:href='`/h` + (page.visibility === `private` ? `/_private` : ``) + `/` + page.locale + `/` + page.path')
                 div.v-list-item-icon
                   v-icon(color='indigo') mdi-history
                 v-list-item-title View History
@@ -154,6 +154,14 @@
                 v-list-item-subtitle.body-2(:class='$vuetify.theme.current.dark ? `grey--text text--lighten-2` : `grey--text text--darken-3`') {{ page.authorName }} #[em.caption ({{ page.authorEmail }})]
               div.v-list-item-action
                 span.v-list-item-action-text {{ $helpers.formatMoment(page.updatedAt, 'calendar') }}
+            template(v-if="page.visibility === 'private'")
+              v-divider
+              v-list-item
+                v-avatar(size='24')
+                  v-icon(color='deep-orange') mdi-lock-account
+                div.v-list-item-content
+                  v-list-item-title: .overline.grey--text Private Owner
+                  v-list-item-subtitle.body-2(:class='$vuetify.theme.current.dark ? `grey--text text--lighten-2` : `grey--text text--darken-3`') User #{{ page.ownerId }}
 
     v-row(align='center', v-else)
       v-progress-circular(indeterminate, width='2', color='grey')

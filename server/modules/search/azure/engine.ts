@@ -182,7 +182,7 @@ const plugin: SearchPlugin<SearchConfig, AzureSearchContext> = {
     const documents: AzureDocument[] = []
     const rows = wiki.models.knex.column({ id: 'hash' }, 'path', { locale: 'localeCode' }, 'title', 'description', 'render').select().from('pages').where({
       isPublished: true,
-      isPrivate: false
+      visibility: 'public'
     }).stream()
 
     for await (const row of rows) {

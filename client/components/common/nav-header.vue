@@ -438,16 +438,20 @@ export default defineComponent({
       window.location.assign(`/e/${locale}/${path}`)
     },
     pageView () {
-      window.location.assign(`/${this.locale}/${this.path}`)
+      const scope = wikiStore.page.visibility === 'private' ? '/_private' : ''
+      window.location.assign(`${scope}/${this.locale}/${this.path}`)
     },
     pageEdit () {
-      window.location.assign(`/e/${this.locale}/${this.path}`)
+      const scope = wikiStore.page.visibility === 'private' ? '/_private' : ''
+      window.location.assign(`/e${scope}/${this.locale}/${this.path}`)
     },
     pageHistory () {
-      window.location.assign(`/h/${this.locale}/${this.path}`)
+      const scope = wikiStore.page.visibility === 'private' ? '/_private' : ''
+      window.location.assign(`/h${scope}/${this.locale}/${this.path}`)
     },
     pageSource () {
-      window.location.assign(`/s/${this.locale}/${this.path}`)
+      const scope = wikiStore.page.visibility === 'private' ? '/_private' : ''
+      window.location.assign(`/s${scope}/${this.locale}/${this.path}`)
     },
     pageDuplicate () {
       const pathParts = this.path.split('/')
@@ -475,7 +479,8 @@ export default defineComponent({
           locale,
           path
         )
-        window.location.replace(`/${locale}/${path}`)
+        const scope = wikiStore.page.visibility === 'private' ? '/_private' : ''
+        window.location.replace(`${scope}/${locale}/${path}`)
       } catch (err) {
         wikiStore.showError(err)
         wikiStore.stopLoading('page-move')

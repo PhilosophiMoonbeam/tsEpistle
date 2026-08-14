@@ -1,6 +1,7 @@
 import express from 'express'
 import { type Request, type Response } from './_types.ts'
 import pageHelper from '../helpers/page.ts'
+import { canReadPage, canWritePage, pageRoute, principalId, type PageVisibility } from '../helpers/page-access.ts'
 import _ from 'lodash'
 import CleanCSS from 'clean-css'
 import moment from 'moment'
@@ -17,8 +18,8 @@ interface PageTag {
 interface ParsedPageArgs {
   locale: string
   path: string
-  private: boolean
-  privateNS: string
+  visibility: PageVisibility
+  ownerId: number | null
   explicitLocale: boolean
   tags?: unknown
 }
@@ -28,8 +29,8 @@ interface PageRecord {
   path: string
   locale: string
   localeCode: string
-  isPrivate: boolean
-  privateNS: string
+  visibility: PageVisibility
+  ownerId: number | null
   title: string
   description: string
   contentType: string
@@ -56,6 +57,8 @@ interface EditorPage {
   description: string | null
   contentType?: string
   content: string | null
+  visibility?: PageVisibility
+  ownerId?: number | null
   isPublished?: boolean | number | string
   updatedAt: string | Date
   createdAt?: string | Date
@@ -102,8 +105,8 @@ interface CommonWiki {
   models: {
     knex: { client: { pool: { numFree(): number; numUsed(): number } } }
     pages: {
-      getPageFromDb(input: { path: string; locale: string; userId: number; isPrivate: boolean }): Promise<PageRecord | null>
-      getPage(input: { path: string; locale: string; userId: number; isPrivate: boolean }): Promise<PageRecord | null>
+      getPageFromDb(input: number | { path: string; locale: string; visibility: PageVisibility; ownerId: number | null }): Promise<PageRecord | null>
+      getPage(input: { path: string; locale: string; visibility: PageVisibility; ownerId: number | null }): Promise<PageRecord | null>
       query(): {
         column(columns: string[]): { findById(id: number): Promise<PageRecord | null> }
         findById(id: number): Promise<PageRecord | null>
@@ -144,6 +147,41 @@ const getRequestI18n = (req: Request): RequestI18n => {
   return i18n as RequestI18n
 }
 const requesterId = (req: Request): number => typeof req.user?.id === 'number' ? req.user.id : 2
+
+const parsePageArgs = (req: Request, stripExt = false): ParsedPageArgs => {
+  const parsed = pageHelper.parsePath(req.path, { stripExt })
+  const segments = parsed.path.split('/')
+  const privateLocale = segments[1]
+  if (segments[0] === '_private' && privateLocale && segments.length > 2) {
+    return {
+      locale: privateLocale,
+      path: segments.slice(2).join('/'),
+      visibility: 'private',
+      ownerId: principalId(req.user),
+      explicitLocale: true
+    }
+  }
+  return {
+    ...parsed,
+    visibility: 'public',
+    ownerId: null
+  }
+}
+
+const applyPrivatePermissions = (
+  req: Request,
+  page: PageRecord,
+  permissions: EffectivePermissions
+): boolean => {
+  if (page.visibility !== 'private') return true
+  if (!canReadPage(req.user, page)) return false
+  permissions.pages.read = true
+  permissions.pages.write = canWritePage(req.user, page)
+  permissions.pages.manage = permissions.pages.write
+  permissions.history.read = true
+  permissions.source.read = true
+  return true
+}
 
 const requesterGroups = (req: Request): unknown[] => Array.isArray(req.user?.groups) ? req.user.groups : []
 
@@ -227,42 +265,40 @@ router.get(['/a', '/a/*adminPath'], (req, res) => {
  * Download Page / Version
  */
 router.get(['/d', '/d/*downloadPath'], async (req, res) => {
-  const pageArgs: ParsedPageArgs = pageHelper.parsePath(req.path, { stripExt: true })
+  const pageArgs = parsePageArgs(req, true)
   const versionValue: unknown = req.query.v
   const versionId = typeof versionValue === 'string' ? _.toSafeInteger(versionValue) : 0
 
   const page = await WIKI.models.pages.getPageFromDb({
     path: pageArgs.path,
     locale: pageArgs.locale,
-    userId: requesterId(req),
-    isPrivate: false
+    visibility: pageArgs.visibility,
+    ownerId: pageArgs.ownerId
   })
+
+  if (!page || (page.visibility === 'private' && !canReadPage(req.user, page))) {
+    return res.status(404).end()
+  }
 
   pageArgs.tags = _.get(page, 'tags', [])
 
   if (versionId > 0) {
-    if (!getWikiAuth().checkAccess(req.user, ['read:history'], pageArgs)) {
+    if (page.visibility === 'public' && !getWikiAuth().checkAccess(req.user, ['read:history'], pageArgs)) {
       _.set(res.locals, 'pageMeta.title', 'Unauthorized')
       return res.status(403).render('unauthorized', { action: 'downloadVersion' })
     }
-  } else {
-    if (!getWikiAuth().checkAccess(req.user, ['read:source'], pageArgs)) {
-      _.set(res.locals, 'pageMeta.title', 'Unauthorized')
-      return res.status(403).render('unauthorized', { action: 'download' })
-    }
+  } else if (page.visibility === 'public' && !getWikiAuth().checkAccess(req.user, ['read:source'], pageArgs)) {
+    _.set(res.locals, 'pageMeta.title', 'Unauthorized')
+    return res.status(403).render('unauthorized', { action: 'download' })
   }
 
-  if (page) {
-    const fileName = _.last(page.path.split('/')) + '.' + pageHelper.getFileExtension(page.contentType)
-    res.attachment(fileName)
-    if (versionId > 0) {
-      const pageVersion = await WIKI.models.pageHistory.getVersion({ pageId: page.id, versionId })
-      res.send(pageHelper.injectPageMetadata(pageVersion))
-    } else {
-      res.send(pageHelper.injectPageMetadata(page))
-    }
+  const fileName = _.last(page.path.split('/')) + '.' + pageHelper.getFileExtension(page.contentType)
+  res.attachment(fileName)
+  if (versionId > 0) {
+    const pageVersion = await WIKI.models.pageHistory.getVersion({ pageId: page.id, versionId })
+    res.send(pageHelper.injectPageMetadata(pageVersion))
   } else {
-    res.status(404).end()
+    res.send(pageHelper.injectPageMetadata(page))
   }
 })
 
@@ -270,7 +306,7 @@ router.get(['/d', '/d/*downloadPath'], async (req, res) => {
  * Create/Edit document
  */
 router.get(['/e', '/e/*editorPath'], async (req, res, next) => {
-  const pageArgs: ParsedPageArgs = pageHelper.parsePath(req.path, { stripExt: true })
+  const pageArgs = parsePageArgs(req, true)
 
   if (WIKI.config.lang.namespacing && !pageArgs.explicitLocale) {
     return res.redirect(`/e/${pageArgs.locale}/${pageArgs.path}`)
@@ -292,8 +328,8 @@ router.get(['/e', '/e/*editorPath'], async (req, res, next) => {
   const storedPage = await WIKI.models.pages.getPageFromDb({
     path: pageArgs.path,
     locale: pageArgs.locale,
-    userId: requesterId(req),
-    isPrivate: false
+    visibility: pageArgs.visibility,
+    ownerId: pageArgs.ownerId
   })
   let page: EditorPage | null = storedPage == null ? null : storedPage as EditorPage
   if (page) page.extra ??= { css: '', js: '' }
@@ -302,6 +338,13 @@ router.get(['/e', '/e/*editorPath'], async (req, res, next) => {
 
   // -> Effective Permissions
   const effectivePermissions = getWikiAuth().getEffectivePermissions(req, pageArgs)
+  if (page && !applyPrivatePermissions(req, page as PageRecord, effectivePermissions)) {
+    _.set(res.locals, 'pageMeta.title', 'Page Not Found')
+    return res.status(404).render('notfound', { action: 'edit' })
+  }
+  if (!page && pageArgs.visibility === 'private' && pageArgs.ownerId !== null) {
+    effectivePermissions.pages.write = true
+  }
 
   const injectCode = {
     css: WIKI.config.theming.injectCSS,
@@ -346,6 +389,8 @@ router.get(['/e', '/e/*editorPath'], async (req, res, next) => {
     page = {
       path: pageArgs.path,
       localeCode: pageArgs.locale,
+      visibility: pageArgs.visibility,
+      ownerId: pageArgs.ownerId,
       editorKey: null,
       mode: 'create',
       content: null,
@@ -378,9 +423,9 @@ router.get(['/e', '/e/*editorPath'], async (req, res, next) => {
           _.set(res.locals, 'pageMeta.title', 'Page Not Found')
           return res.status(404).render('notfound', { action: 'template' })
         }
-        if (!getWikiAuth().checkAccess(req.user, ['read:history'], { path: pageVersion.path, locale: pageVersion.locale })) {
-          _.set(res.locals, 'pageMeta.title', 'Unauthorized')
-          return res.status(403).render('unauthorized', { action: 'sourceVersion' })
+        if (!canReadPage(req.user, pageVersion)) {
+          _.set(res.locals, 'pageMeta.title', 'Page Not Found')
+          return res.status(404).render('notfound', { action: 'template' })
         }
         page.content = Buffer.from(pageVersion.content).toString('base64')
         page.editorKey = pageVersion.editor
@@ -393,9 +438,9 @@ router.get(['/e', '/e/*editorPath'], async (req, res, next) => {
           _.set(res.locals, 'pageMeta.title', 'Page Not Found')
           return res.status(404).render('notfound', { action: 'template' })
         }
-        if (!getWikiAuth().checkAccess(req.user, ['read:source'], { path: pageOriginal.path, locale: pageOriginal.locale })) {
-          _.set(res.locals, 'pageMeta.title', 'Unauthorized')
-          return res.status(403).render('unauthorized', { action: 'source' })
+        if (!canReadPage(req.user, pageOriginal)) {
+          _.set(res.locals, 'pageMeta.title', 'Page Not Found')
+          return res.status(404).render('notfound', { action: 'template' })
         }
         page.content = Buffer.from(pageOriginal.content).toString('base64')
         page.editorKey = pageOriginal.editorKey
@@ -412,7 +457,7 @@ router.get(['/e', '/e/*editorPath'], async (req, res, next) => {
  * History
  */
 router.get(['/h', '/h/*historyPath'], async (req, res) => {
-  const pageArgs: ParsedPageArgs = pageHelper.parsePath(req.path, { stripExt: true })
+  const pageArgs = parsePageArgs(req, true)
 
   if (WIKI.config.lang.namespacing && !pageArgs.explicitLocale) {
     return res.redirect(`/h/${pageArgs.locale}/${pageArgs.path}`)
@@ -427,8 +472,8 @@ router.get(['/h', '/h/*historyPath'], async (req, res) => {
   const page = await WIKI.models.pages.getPageFromDb({
     path: pageArgs.path,
     locale: pageArgs.locale,
-    userId: requesterId(req),
-    isPrivate: false
+    visibility: pageArgs.visibility,
+    ownerId: pageArgs.ownerId
   })
 
   if (!page) {
@@ -439,6 +484,10 @@ router.get(['/h', '/h/*historyPath'], async (req, res) => {
   pageArgs.tags = _.get(page, 'tags', [])
 
   const effectivePermissions = getWikiAuth().getEffectivePermissions(req, pageArgs)
+  if (!applyPrivatePermissions(req, page, effectivePermissions)) {
+    _.set(res.locals, 'pageMeta.title', 'Page Not Found')
+    return res.status(404).render('notfound', { action: 'history' })
+  }
 
   if (!effectivePermissions.history.read) {
     _.set(res.locals, 'pageMeta.title', 'Unauthorized')
@@ -464,22 +513,14 @@ router.get(['/i', '/i/:id'], async (req, res) => {
     return res.redirect('/')
   }
 
-  const page = await WIKI.models.pages.query().column(['path', 'localeCode', 'isPrivate', 'privateNS']).findById(pageId)
-  if (!page) {
+  const page = await WIKI.models.pages.query().column(['path', 'localeCode', 'visibility', 'ownerId']).findById(pageId)
+  if (!page || !canReadPage(req.user, page)) {
     _.set(res.locals, 'pageMeta.title', 'Page Not Found')
     return res.status(404).render('notfound', { action: 'view' })
   }
 
-  if (!getWikiAuth().checkAccess(req.user, ['read:pages'], {
-    locale: page.localeCode,
-    path: page.path,
-    private: page.isPrivate,
-    privateNS: page.privateNS,
-    explicitLocale: false,
-    tags: page.tags
-  })) {
-    _.set(res.locals, 'pageMeta.title', 'Unauthorized')
-    return res.status(403).render('unauthorized', { action: 'view' })
+  if (page.visibility === 'private') {
+    return res.redirect(pageRoute(page))
   }
 
   if (WIKI.config.lang.namespacing) {
@@ -506,15 +547,15 @@ router.get(['/p', '/p/*profilePath'], (req, res) => {
  * Source
  */
 router.get(['/s', '/s/*sourcePath'], async (req, res) => {
-  const pageArgs: ParsedPageArgs = pageHelper.parsePath(req.path, { stripExt: true })
+  const pageArgs = parsePageArgs(req, true)
   const versionValue: unknown = req.query.v
   const versionId = typeof versionValue === 'string' ? _.toSafeInteger(versionValue) : 0
 
   const page = await WIKI.models.pages.getPageFromDb({
     path: pageArgs.path,
     locale: pageArgs.locale,
-    userId: requesterId(req),
-    isPrivate: false
+    visibility: pageArgs.visibility,
+    ownerId: pageArgs.ownerId
   })
 
   pageArgs.tags = _.get(page, 'tags', [])
@@ -525,6 +566,14 @@ router.get(['/s', '/s/*sourcePath'], async (req, res) => {
 
   // -> Effective Permissions
   const effectivePermissions = getWikiAuth().getEffectivePermissions(req, pageArgs)
+  if (!page) {
+    _.set(res.locals, 'pageMeta.title', 'Page Not Found')
+    return res.status(404).render('notfound', { action: 'source' })
+  }
+  if (!applyPrivatePermissions(req, page, effectivePermissions)) {
+    _.set(res.locals, 'pageMeta.title', 'Page Not Found')
+    return res.status(404).render('notfound', { action: 'source' })
+  }
 
   const i18n = getRequestI18n(req)
   _.set(res, 'locals.siteConfig.lang', pageArgs.locale)
@@ -594,7 +643,7 @@ router.get('/_userav/:uid', async (req, res) => {
  */
 router.get('/{*pagePath}', async (req, res, next) => {
   const stripExt = _.some(WIKI.config.pageExtensions, ext => _.endsWith(req.path, `.${ext}`))
-  const pageArgs: ParsedPageArgs = pageHelper.parsePath(req.path, { stripExt })
+  const pageArgs = parsePageArgs(req, stripExt)
   const isPage = (stripExt || pageArgs.path.indexOf('.') === -1)
 
   if (isPage) {
@@ -611,13 +660,21 @@ router.get('/{*pagePath}', async (req, res, next) => {
       const page = await WIKI.models.pages.getPage({
         path: pageArgs.path,
         locale: pageArgs.locale,
-        userId: requesterId(req),
-        isPrivate: false
+        visibility: pageArgs.visibility,
+        ownerId: pageArgs.ownerId
       })
       pageArgs.tags = _.get(page, 'tags', [])
 
       // -> Effective Permissions
       const effectivePermissions = getWikiAuth().getEffectivePermissions(req, pageArgs)
+      if (page && !applyPrivatePermissions(req, page, effectivePermissions)) {
+        _.set(res.locals, 'pageMeta.title', 'Page Not Found')
+        return res.status(404).render('notfound', { action: 'view' })
+      }
+      if (!page && pageArgs.visibility === 'private') {
+        _.set(res.locals, 'pageMeta.title', 'Page Not Found')
+        return res.status(404).render('notfound', { action: 'view' })
+      }
 
       // -> Check User Access
       if (!effectivePermissions.pages.read) {

@@ -75,6 +75,8 @@ export const useWikiStore = defineStore('wiki', {
       createdAt: '',
       description: '',
       isPublished: true,
+      visibility: 'public' as 'public' | 'private',
+      ownerId: null as number | null,
       locale: 'en',
       path: '',
       publishEndDate: '',

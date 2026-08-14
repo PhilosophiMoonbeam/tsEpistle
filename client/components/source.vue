@@ -49,6 +49,10 @@ export default {
       type: String,
       default: 'home'
     },
+    visibility: {
+      type: String,
+      default: 'public'
+    },
     versionId: {
       type: Number,
       default: 0
@@ -69,6 +73,7 @@ export default {
     wikiStore.page.id = this.pageId
     wikiStore.page.locale = this.locale
     wikiStore.page.path = this.path
+    wikiStore.page.visibility = this.visibility === 'private' ? 'private' : 'public'
 
     wikiStore.page.mode = 'source'
 
@@ -78,13 +83,15 @@ export default {
   },
   methods: {
     goLive() {
-      window.location.assign(`/${this.locale}/${this.path}`)
+      const scope = this.visibility === 'private' ? '/_private' : ''
+      window.location.assign(`${scope}/${this.locale}/${this.path}`)
     },
     goDownload () {
-      window.location.assign(getPageDownloadPath(this.locale, this.path, this.versionId))
+      window.location.assign(getPageDownloadPath(this.locale, this.path, this.versionId, this.visibility === 'private' ? 'private' : 'public'))
     },
     goHistory () {
-      window.location.assign(`/h/${this.locale}/${this.path}`)
+      const scope = this.visibility === 'private' ? '/_private' : ''
+      window.location.assign(`/h${scope}/${this.locale}/${this.path}`)
     }
   }
 }

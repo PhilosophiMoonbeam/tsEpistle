@@ -31,9 +31,9 @@ export type PageDetails = {
   hash: string
   title: string | null
   description: string | null
-  isPrivate: boolean
+  visibility: 'public' | 'private'
+  ownerId: number | null
   isPublished: boolean
-  privateNS: string | null
   publishStartDate: string | null
   publishEndDate: string | null
   contentType: string
@@ -62,8 +62,8 @@ export type PageListRow = {
   title: string | null
   description: string | null
   isPublished: boolean
-  isPrivate: boolean
-  privateNS: string | null
+  visibility: 'public' | 'private'
+  ownerId: number | null
   contentType: string
   createdAt: string
   updatedAt: string
@@ -76,6 +76,7 @@ export type RecentPageRow = {
   path: string
   title: string
   updatedAt: string
+  visibility: 'public' | 'private'
 }
 
 export type PageTagRow = {
@@ -137,7 +138,9 @@ function normalizePageDetails (row: unknown, fallbackMessage: string): PageDetai
   }
 
   const page = row as Partial<PageDetails>
-  if (!Number.isInteger(page.id) || typeof page.locale !== 'string' || page.locale.length < 1 || typeof page.path !== 'string' || typeof page.hash !== 'string' || (page.title !== null && typeof page.title !== 'string') || (page.description !== null && typeof page.description !== 'string') || typeof page.isPrivate !== 'boolean' || typeof page.isPublished !== 'boolean' || (page.privateNS !== null && typeof page.privateNS !== 'string') || (page.publishStartDate !== null && typeof page.publishStartDate !== 'string') || (page.publishEndDate !== null && typeof page.publishEndDate !== 'string') || typeof page.contentType !== 'string' || typeof page.createdAt !== 'string' || page.createdAt.length < 1 || typeof page.updatedAt !== 'string' || page.updatedAt.length < 1 || typeof page.editor !== 'string' || !Number.isInteger(page.authorId) || typeof page.authorName !== 'string' || typeof page.authorEmail !== 'string' || !Number.isInteger(page.creatorId) || typeof page.creatorName !== 'string' || typeof page.creatorEmail !== 'string') {
+  const ownerId = page.ownerId
+  const validOwner = ownerId === null || (typeof ownerId === 'number' && Number.isSafeInteger(ownerId))
+  if (!Number.isInteger(page.id) || typeof page.locale !== 'string' || page.locale.length < 1 || typeof page.path !== 'string' || typeof page.hash !== 'string' || (page.title !== null && typeof page.title !== 'string') || (page.description !== null && typeof page.description !== 'string') || (page.visibility !== 'public' && page.visibility !== 'private') || !validOwner || typeof page.isPublished !== 'boolean' || (page.publishStartDate !== null && typeof page.publishStartDate !== 'string') || (page.publishEndDate !== null && typeof page.publishEndDate !== 'string') || typeof page.contentType !== 'string' || typeof page.createdAt !== 'string' || page.createdAt.length < 1 || typeof page.updatedAt !== 'string' || page.updatedAt.length < 1 || typeof page.editor !== 'string' || !Number.isInteger(page.authorId) || typeof page.authorName !== 'string' || typeof page.authorEmail !== 'string' || !Number.isInteger(page.creatorId) || typeof page.creatorName !== 'string' || typeof page.creatorEmail !== 'string') {
     throw new Error(fallbackMessage)
   }
 
@@ -148,9 +151,9 @@ function normalizePageDetails (row: unknown, fallbackMessage: string): PageDetai
     hash: page.hash,
     title: page.title,
     description: page.description,
-    isPrivate: page.isPrivate,
+    visibility: page.visibility,
+    ownerId,
     isPublished: page.isPublished,
-    privateNS: page.privateNS,
     publishStartDate: page.publishStartDate,
     publishEndDate: page.publishEndDate,
     contentType: page.contentType,
@@ -190,7 +193,9 @@ function normalizePageListRow (row: unknown, fallbackMessage: string): PageListR
   }
 
   const pageRow = row as Partial<PageListRow>
-  if (!Number.isInteger(pageRow.id) || typeof pageRow.locale !== 'string' || pageRow.locale.length < 1 || typeof pageRow.path !== 'string' || (pageRow.title !== null && typeof pageRow.title !== 'string') || (pageRow.description !== null && typeof pageRow.description !== 'string') || typeof pageRow.isPublished !== 'boolean' || typeof pageRow.isPrivate !== 'boolean' || (pageRow.privateNS !== null && typeof pageRow.privateNS !== 'string') || typeof pageRow.contentType !== 'string' || typeof pageRow.createdAt !== 'string' || pageRow.createdAt.length < 1 || typeof pageRow.updatedAt !== 'string' || pageRow.updatedAt.length < 1 || !Array.isArray(pageRow.tags) || pageRow.tags.some(tag => typeof tag !== 'string')) {
+  const ownerId = pageRow.ownerId
+  const validOwner = ownerId === null || (typeof ownerId === 'number' && Number.isSafeInteger(ownerId))
+  if (!Number.isInteger(pageRow.id) || typeof pageRow.locale !== 'string' || pageRow.locale.length < 1 || typeof pageRow.path !== 'string' || (pageRow.title !== null && typeof pageRow.title !== 'string') || (pageRow.description !== null && typeof pageRow.description !== 'string') || typeof pageRow.isPublished !== 'boolean' || (pageRow.visibility !== 'public' && pageRow.visibility !== 'private') || !validOwner || typeof pageRow.contentType !== 'string' || typeof pageRow.createdAt !== 'string' || pageRow.createdAt.length < 1 || typeof pageRow.updatedAt !== 'string' || pageRow.updatedAt.length < 1 || !Array.isArray(pageRow.tags) || pageRow.tags.some(tag => typeof tag !== 'string')) {
     throw new Error(fallbackMessage)
   }
 
@@ -201,8 +206,8 @@ function normalizePageListRow (row: unknown, fallbackMessage: string): PageListR
     title: pageRow.title,
     description: pageRow.description,
     isPublished: pageRow.isPublished,
-    isPrivate: pageRow.isPrivate,
-    privateNS: pageRow.privateNS,
+    visibility: pageRow.visibility,
+    ownerId,
     contentType: pageRow.contentType,
     createdAt: pageRow.createdAt,
     updatedAt: pageRow.updatedAt,
@@ -216,7 +221,7 @@ function normalizeRecentPageRow (row: unknown, fallbackMessage: string): RecentP
   }
 
   const pageRow = row as Partial<RecentPageRow>
-  if (!Number.isInteger(pageRow.id) || typeof pageRow.locale !== 'string' || pageRow.locale.length < 1 || typeof pageRow.path !== 'string' || typeof pageRow.title !== 'string' || typeof pageRow.updatedAt !== 'string' || pageRow.updatedAt.length < 1) {
+  if (!Number.isInteger(pageRow.id) || typeof pageRow.locale !== 'string' || pageRow.locale.length < 1 || typeof pageRow.path !== 'string' || typeof pageRow.title !== 'string' || typeof pageRow.updatedAt !== 'string' || pageRow.updatedAt.length < 1 || (pageRow.visibility !== 'public' && pageRow.visibility !== 'private')) {
     throw new Error(fallbackMessage)
   }
 
@@ -225,7 +230,8 @@ function normalizeRecentPageRow (row: unknown, fallbackMessage: string): RecentP
     locale: pageRow.locale,
     path: pageRow.path,
     title: pageRow.title,
-    updatedAt: pageRow.updatedAt
+    updatedAt: pageRow.updatedAt,
+    visibility: pageRow.visibility
   }
 }
 
@@ -370,7 +376,7 @@ type PageWriteInput = {
   content: string
   description: string
   editor: string
-  isPrivate: boolean
+  visibility: 'public' | 'private'
   isPublished: boolean
   locale: string
   path: string
@@ -400,6 +406,8 @@ export type PageTreeRow = {
   pageId: number | null
   parent: number
   locale: string
+  visibility: 'public' | 'private'
+  ownerId: number | null
 }
 
 export type PageSearchRow = {
@@ -408,6 +416,7 @@ export type PageSearchRow = {
   description: string
   path: string
   locale: string
+  visibility: 'public' | 'private'
 }
 
 export type PageSearchResult = {
@@ -450,6 +459,20 @@ export async function createPage (fetchImpl: FetchImpl, input: PageWriteInput, f
 
 export async function updatePage (fetchImpl: FetchImpl, id: number, input: PageWriteInput, fallbackMessage = 'Page update failed'): Promise<WrittenPage> {
   return normalizeWrittenPage(await sendJson(fetchImpl, `/_api/pages/${encodeURIComponent(id)}`, 'PUT', input, fallbackMessage), fallbackMessage, false)
+}
+
+export async function changePageVisibility (
+  fetchImpl: FetchImpl,
+  id: number,
+  visibility: 'public' | 'private',
+  confirmPublication = false,
+  fallbackMessage = 'Page visibility update failed'
+): Promise<WrittenPage> {
+  return normalizeWrittenPage(
+    await sendJson(fetchImpl, `/_api/pages/${encodeURIComponent(id)}/visibility`, 'PATCH', { visibility, confirmPublication }, fallbackMessage),
+    fallbackMessage,
+    true
+  )
 }
 
 export async function convertPage (fetchImpl: FetchImpl, id: number, editor: string, fallbackMessage = 'Page conversion failed'): Promise<void> {
@@ -510,7 +533,8 @@ export async function fetchPageTree (fetchImpl: FetchImpl, options: { locale: st
     if (!isRecord(row)) throw new Error(fallbackMessage)
     const pageId = row.pageId
     if (!isNullableNumber(pageId)) throw new Error(fallbackMessage)
-    if (typeof row.id !== 'number' || typeof row.path !== 'string' || typeof row.title !== 'string' || typeof row.isFolder !== 'boolean' || typeof row.parent !== 'number' || typeof row.locale !== 'string') {
+    const ownerId = row.ownerId
+    if (!isNullableNumber(ownerId) || (row.visibility !== 'public' && row.visibility !== 'private') || typeof row.id !== 'number' || typeof row.path !== 'string' || typeof row.title !== 'string' || typeof row.isFolder !== 'boolean' || typeof row.parent !== 'number' || typeof row.locale !== 'string') {
       throw new Error(fallbackMessage)
     }
     return {
@@ -520,7 +544,9 @@ export async function fetchPageTree (fetchImpl: FetchImpl, options: { locale: st
       isFolder: row.isFolder,
       pageId,
       parent: row.parent,
-      locale: row.locale
+      locale: row.locale,
+      visibility: row.visibility,
+      ownerId
     }
   })
 }
@@ -541,15 +567,18 @@ export async function searchPages (fetchImpl: FetchImpl, query: string, options:
       typeof row.title !== 'string' ||
       typeof row.description !== 'string' ||
       typeof row.path !== 'string' ||
-      typeof row.locale !== 'string') {
+      typeof row.locale !== 'string' ||
+      (row.visibility !== 'public' && row.visibility !== 'private')) {
       throw new Error(fallbackMessage)
     }
+    const visibility: 'public' | 'private' = row.visibility
     return {
       id: row.id,
       title: row.title,
       description: row.description,
       path: row.path,
-      locale: row.locale
+      locale: row.locale,
+      visibility
     }
   })
   if (payload.suggestions.some(suggestion => typeof suggestion !== 'string')) throw new Error(fallbackMessage)

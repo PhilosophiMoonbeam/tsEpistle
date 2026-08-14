@@ -16,6 +16,7 @@ block body
       author-name=page.authorName
       :author-id=page.authorId
       :is-published=page.isPublished.toString()
+      visibility=page.visibility
       live-content=page.content
       effective-permissions=Buffer.from(JSON.stringify(effectivePermissions)).toString('base64')
       )

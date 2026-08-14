@@ -158,6 +158,10 @@ export default {
       type: String,
       default: 'Untitled Page'
     },
+    visibility: {
+      type: String,
+      default: 'public'
+    },
     description: {
       type: String,
       default: ''
@@ -297,6 +301,7 @@ export default {
     wikiStore.page.id = this.pageId
     wikiStore.page.locale = this.locale
     wikiStore.page.path = this.path
+    wikiStore.page.visibility = this.visibility === 'private' ? 'private' : 'public'
 
     wikiStore.page.mode = 'history'
 
@@ -309,7 +314,8 @@ export default {
       createdAt: this.createdAt,
       description: this.description,
       editor: '',
-      isPrivate: false,
+      visibility: this.visibility === 'private' ? 'private' : 'public',
+      ownerId: wikiStore.page.ownerId,
       isPublished: this.isPublished,
       locale: this.locale,
       pageId: this.pageId,
@@ -346,10 +352,10 @@ export default {
       }
     },
     viewSource (versionId: number) {
-      window.location.assign(getPageSourcePath(this.locale, this.path, versionId))
+      window.location.assign(getPageSourcePath(this.locale, this.path, versionId, this.visibility === 'private' ? 'private' : 'public'))
     },
     download (versionId: number) {
-      window.location.assign(getPageDownloadPath(this.locale, this.path, versionId))
+      window.location.assign(getPageDownloadPath(this.locale, this.path, versionId, this.visibility === 'private' ? 'private' : 'public'))
     },
     restore (versionId: number, versionDate: string) {
       this.restoreTarget = {

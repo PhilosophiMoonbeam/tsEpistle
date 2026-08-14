@@ -57,9 +57,9 @@ describe('controllers/api pages endpoints', () => {
             hash: 'abc123',
             title: 'Alpha',
             description: 'Alpha description',
-            isPrivate: 0,
+            visibility: 'public',
+            ownerId: null,
             isPublished: 1,
-            privateNS: null,
             publishStartDate: '',
             publishEndDate: '',
             contentType: 'markdown',
@@ -75,39 +75,56 @@ describe('controllers/api pages endpoints', () => {
             creatorEmail: 'creator@example.com',
             extra: { js: 'console.log(1)', css: '.x{}' }
           }),
-          query: vi.fn().mockReturnValue({
-            column: vi.fn().mockReturnValue({
-              withGraphJoined: vi.fn().mockReturnValue({
-                modifyGraph: vi.fn((relation, applyGraphModifier) => {
-                  const builder = { select: vi.fn() }
-                  applyGraphModifier(builder)
-                  return {
-                    orderBy: vi.fn().mockReturnValue({
-                      limit: vi.fn().mockResolvedValue([
-                        {
-                          id: 10,
-                          locale: 'en',
-                          path: 'docs/alpha',
-                          title: 'Alpha',
-                          updatedAt: '2026-01-03T00:00:00.000Z',
-                          tags: [{ tag: 'alpha' }],
-                          isPrivate: true
-                        },
-                        {
-                          id: 11,
-                          locale: 'fr',
-                          path: 'docs/beta',
-                          title: 'Beta',
-                          updatedAt: '2026-01-02T00:00:00.000Z',
-                          tags: [{ tag: 'beta' }]
-                        }
-                      ])
-                    }),
-                    __tagBuilder: builder
-                  }
-                })
-              })
+          query: vi.fn(() => {
+            const rows = [
+              {
+                id: 10,
+                locale: 'en',
+                path: 'docs/alpha',
+                title: 'Alpha',
+                updatedAt: '2026-01-03T00:00:00.000Z',
+                tags: [{ tag: 'alpha' }],
+                visibility: 'public',
+                ownerId: null
+              },
+              {
+                id: 11,
+                locale: 'fr',
+                path: 'docs/beta',
+                title: 'Beta',
+                updatedAt: '2026-01-02T00:00:00.000Z',
+                tags: [{ tag: 'beta' }],
+                visibility: 'public',
+                ownerId: null
+              }
+            ]
+            const queryBuilder = {
+              andWhere: vi.fn(),
+              limit: vi.fn().mockResolvedValue(rows),
+              orWhere: vi.fn(),
+              where: vi.fn()
+            }
+            const chain = {
+              column: vi.fn(),
+              limit: queryBuilder.limit,
+              modify: vi.fn(),
+              modifyGraph: vi.fn(),
+              orderBy: vi.fn(),
+              withGraphJoined: vi.fn(),
+              __tagBuilder: { select: vi.fn() }
+            }
+            chain.column.mockReturnValue(chain)
+            chain.modify.mockImplementation(applyModifier => {
+              applyModifier(queryBuilder)
+              return chain
             })
+            chain.withGraphJoined.mockReturnValue(chain)
+            chain.modifyGraph.mockImplementation((relation, applyGraphModifier) => {
+              applyGraphModifier(chain.__tagBuilder)
+              return chain
+            })
+            chain.orderBy.mockReturnValue(chain)
+            return chain
           })
         }
       }
@@ -135,7 +152,8 @@ describe('controllers/api pages endpoints', () => {
       path: 'home',
       title: 'Home',
       isFolder: 0,
-      isPrivate: 0,
+      visibility: 'public',
+      ownerId: null,
       pageId: 1,
       parent: null,
       localeCode: 'en'
@@ -167,7 +185,8 @@ describe('controllers/api pages endpoints', () => {
     expect(res.json).toHaveBeenCalledWith([{
       ...rows[0],
       isFolder: false,
-      isPrivate: false,
+      visibility: 'public',
+      ownerId: null,
       parent: 0,
       locale: 'en'
     }])
@@ -190,8 +209,8 @@ describe('controllers/api pages endpoints', () => {
         title: 'Alpha',
         description: 'Alpha description',
         isPublished: 1,
-        isPrivate: 0,
-        privateNS: null,
+        visibility: 'public',
+        ownerId: null,
         contentType: 'markdown',
         createdAt: '2026-01-01T00:00:00.000Z',
         updatedAt: '2026-01-03T00:00:00.000Z',
@@ -204,8 +223,8 @@ describe('controllers/api pages endpoints', () => {
         title: 'Beta',
         description: 'Beta description',
         isPublished: 0,
-        isPrivate: 1,
-        privateNS: 'team',
+        visibility: 'private',
+        ownerId: 1,
         contentType: 'markdown',
         createdAt: '2026-01-02T00:00:00.000Z',
         updatedAt: '2026-01-04T00:00:00.000Z',
@@ -249,8 +268,8 @@ describe('controllers/api pages endpoints', () => {
       'title',
       'description',
       'isPublished',
-      'isPrivate',
-      'privateNS',
+      'visibility',
+      'ownerId',
       'contentType',
       'createdAt',
       'updatedAt'
@@ -261,9 +280,8 @@ describe('controllers/api pages endpoints', () => {
     expect(queryBuilder.limit).toHaveBeenCalledWith(50)
     expect(queryBuilder.where).toHaveBeenCalledWith('localeCode', 'en')
     expect(queryBuilder.whereIn).toHaveBeenCalledWith('tags.tag', ['alpha', 'docs'])
-    expect(queryBuilder.orderBy).toHaveBeenCalledWith('updatedAt', 'desc')
-    expect(global.WIKI.auth.checkAccess).toHaveBeenNthCalledWith(2, { permissions: ['read:pages'] }, ['read:pages'], { path: 'docs/alpha', locale: 'en' })
-    expect(global.WIKI.auth.checkAccess).toHaveBeenNthCalledWith(3, { permissions: ['read:pages'] }, ['read:pages'], { path: 'docs/beta', locale: 'fr' })
+    expect(global.WIKI.auth.checkAccess).toHaveBeenNthCalledWith(2, { permissions: ['read:pages'] }, ['read:pages'], { path: 'docs/alpha', locale: 'en', tags: [{ tag: 'alpha' }, { tag: 'docs' }] })
+    expect(global.WIKI.auth.checkAccess).toHaveBeenNthCalledWith(3, { permissions: ['read:pages'] }, ['manage:system'])
     expect(res.json).toHaveBeenCalledWith([
       {
         id: 10,
@@ -272,8 +290,8 @@ describe('controllers/api pages endpoints', () => {
         title: 'Alpha',
         description: 'Alpha description',
         isPublished: true,
-        isPrivate: false,
-        privateNS: null,
+        visibility: 'public',
+        ownerId: null,
         contentType: 'markdown',
         createdAt: '2026-01-01T00:00:00.000Z',
         updatedAt: '2026-01-03T00:00:00.000Z',
@@ -330,6 +348,8 @@ describe('controllers/api pages endpoints', () => {
       {
         locale: 'en',
         path: 'docs/public',
+        visibility: 'public',
+        ownerId: null,
         tags: [
           { id: 2, tag: 'zeta', title: 'Zeta', createdAt: '2026-01-02T00:00:00.000Z', updatedAt: '2026-01-03T00:00:00.000Z' },
           { id: 1, tag: 'alpha', title: 'Alpha', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-04T00:00:00.000Z' }
@@ -338,6 +358,8 @@ describe('controllers/api pages endpoints', () => {
       {
         locale: 'fr',
         path: 'docs/private',
+        visibility: 'private',
+        ownerId: 7,
         tags: [
           { id: 3, tag: 'hidden', title: 'Hidden', createdAt: '2026-01-05T00:00:00.000Z', updatedAt: '2026-01-06T00:00:00.000Z' }
         ]
@@ -345,12 +367,18 @@ describe('controllers/api pages endpoints', () => {
       {
         locale: 'en',
         path: 'docs/duplicate',
+        visibility: 'public',
+        ownerId: null,
         tags: [
           { id: 2, tag: 'zeta', title: 'Zeta Duplicate', createdAt: '2026-01-07T00:00:00.000Z', updatedAt: '2026-01-08T00:00:00.000Z' }
         ]
       }
     ])
-    const column = vi.fn().mockReturnValue({ withGraphJoined })
+    const modify = vi.fn(applyModifier => {
+      applyModifier({ where: vi.fn((callback) => callback({ where: vi.fn(), orWhere: vi.fn() })), orWhere: vi.fn() })
+      return { withGraphJoined }
+    })
+    const column = vi.fn().mockReturnValue({ modify })
     global.WIKI.models.pages.query.mockReturnValueOnce({ column })
     global.WIKI.auth.checkAccess
       .mockReturnValueOnce(true)
@@ -366,12 +394,14 @@ describe('controllers/api pages endpoints', () => {
     expect(global.WIKI.auth.checkAccess).toHaveBeenNthCalledWith(1, { permissions: ['read:pages'] }, ['manage:system', 'read:pages'])
     expect(column).toHaveBeenCalledWith([
       'path',
-      { locale: 'localeCode' }
+      { locale: 'localeCode' },
+      'visibility',
+      'ownerId'
     ])
     expect(withGraphJoined).toHaveBeenCalledWith('tags')
-    expect(global.WIKI.auth.checkAccess).toHaveBeenNthCalledWith(2, { permissions: ['read:pages'] }, ['read:pages'], { path: 'docs/public', locale: 'en' })
-    expect(global.WIKI.auth.checkAccess).toHaveBeenNthCalledWith(3, { permissions: ['read:pages'] }, ['read:pages'], { path: 'docs/private', locale: 'fr' })
-    expect(global.WIKI.auth.checkAccess).toHaveBeenNthCalledWith(4, { permissions: ['read:pages'] }, ['read:pages'], { path: 'docs/duplicate', locale: 'en' })
+    expect(global.WIKI.auth.checkAccess).toHaveBeenNthCalledWith(2, { permissions: ['read:pages'] }, ['read:pages'], { path: 'docs/public', locale: 'en', tags: expect.any(Array) })
+    expect(global.WIKI.auth.checkAccess).toHaveBeenNthCalledWith(3, { permissions: ['read:pages'] }, ['manage:system'])
+    expect(global.WIKI.auth.checkAccess).toHaveBeenNthCalledWith(4, { permissions: ['read:pages'] }, ['read:pages'], { path: 'docs/duplicate', locale: 'en', tags: expect.any(Array) })
     expect(res.json).toHaveBeenCalledWith([
       { id: 1, tag: 'alpha', title: 'Alpha', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-04T00:00:00.000Z' },
       { id: 2, tag: 'zeta', title: 'Zeta', createdAt: '2026-01-02T00:00:00.000Z', updatedAt: '2026-01-03T00:00:00.000Z' }
@@ -394,7 +424,8 @@ describe('controllers/api pages endpoints', () => {
   it('forwards unexpected page tag list failures to next', async () => {
     const next = vi.fn()
     const withGraphJoined = vi.fn().mockRejectedValue(new Error('tags db down'))
-    const column = vi.fn().mockReturnValue({ withGraphJoined })
+    const modify = vi.fn().mockReturnValue({ withGraphJoined })
+    const column = vi.fn().mockReturnValue({ modify })
     global.WIKI.models.pages.query.mockReturnValueOnce({ column })
     const { listTags } = await loadHandler()
     const req = { user: { permissions: ['manage:system'] } }
@@ -419,23 +450,18 @@ describe('controllers/api pages endpoints', () => {
 
     await recent(req, res, vi.fn())
 
-    expect(global.WIKI.auth.checkAccess).toHaveBeenNthCalledWith(1, { permissions: ['read:pages'] }, ['manage:system', 'read:pages'])
-    expect(global.WIKI.models.pages.query).toHaveBeenCalled()
+    expect(global.WIKI.auth.checkAccess).toHaveBeenNthCalledWith(1, req.user, ['manage:system', 'read:pages'])
     const queryBuilder = global.WIKI.models.pages.query.mock.results[0].value
-    expect(queryBuilder.column).toHaveBeenCalledWith(['pages.id', 'path', { locale: 'localeCode' }, 'title', 'updatedAt'])
-    const columnBuilder = queryBuilder.column.mock.results[0].value
-    expect(columnBuilder.withGraphJoined).toHaveBeenCalledWith('tags')
-    const tagJoinBuilder = columnBuilder.withGraphJoined.mock.results[0].value
-    expect(tagJoinBuilder.modifyGraph).toHaveBeenCalledWith('tags', expect.any(Function))
-    const modifiedBuilder = tagJoinBuilder.modifyGraph.mock.results[0].value
-    expect(modifiedBuilder.__tagBuilder.select).toHaveBeenCalledWith('tag')
-    expect(modifiedBuilder.orderBy).toHaveBeenCalledWith('updatedAt', 'desc')
-    expect(modifiedBuilder.orderBy.mock.results[0].value.limit).toHaveBeenCalledWith(10)
-    expect(global.WIKI.auth.checkAccess).toHaveBeenNthCalledWith(2, { permissions: ['read:pages'] }, ['read:pages'], { path: 'docs/alpha', locale: 'en', tags: [{ tag: 'alpha' }] })
-    expect(global.WIKI.auth.checkAccess).toHaveBeenNthCalledWith(3, { permissions: ['read:pages'] }, ['read:pages'], { path: 'docs/beta', locale: 'fr', tags: [{ tag: 'beta' }] })
+    expect(queryBuilder.column).toHaveBeenCalledWith(['pages.id', 'path', { locale: 'localeCode' }, 'title', 'updatedAt', 'visibility', 'ownerId'])
+    expect(queryBuilder.modify).toHaveBeenCalledWith(expect.any(Function))
+    expect(queryBuilder.withGraphJoined).toHaveBeenCalledWith('tags')
+    expect(queryBuilder.modifyGraph).toHaveBeenCalledWith('tags', expect.any(Function))
+    expect(queryBuilder.__tagBuilder.select).toHaveBeenCalledWith('tag')
+    expect(queryBuilder.orderBy).toHaveBeenCalledWith('updatedAt', 'desc')
+    expect(queryBuilder.limit).toHaveBeenCalledWith(10)
     expect(res.json).toHaveBeenCalledWith([
-      { id: 10, locale: 'en', path: 'docs/alpha', title: 'Alpha', updatedAt: '2026-01-03T00:00:00.000Z' },
-      { id: 11, locale: 'fr', path: 'docs/beta', title: 'Beta', updatedAt: '2026-01-02T00:00:00.000Z' }
+      { id: 10, locale: 'en', path: 'docs/alpha', title: 'Alpha', updatedAt: '2026-01-03T00:00:00.000Z', visibility: 'public' },
+      { id: 11, locale: 'fr', path: 'docs/beta', title: 'Beta', updatedAt: '2026-01-02T00:00:00.000Z', visibility: 'public' }
     ])
   })
 
@@ -451,7 +477,7 @@ describe('controllers/api pages endpoints', () => {
     await recent(req, res, vi.fn())
 
     expect(res.json).toHaveBeenCalledWith([
-      { id: 10, locale: 'en', path: 'docs/alpha', title: 'Alpha', updatedAt: '2026-01-03T00:00:00.000Z' }
+      { id: 10, locale: 'en', path: 'docs/alpha', title: 'Alpha', updatedAt: '2026-01-03T00:00:00.000Z', visibility: 'public' }
     ])
   })
 
@@ -472,14 +498,16 @@ describe('controllers/api pages endpoints', () => {
     const next = vi.fn()
     global.WIKI.models.pages.query.mockReturnValueOnce({
       column: vi.fn().mockReturnValue({
-        withGraphJoined: vi.fn().mockReturnValue({
-          modifyGraph: vi.fn((relation, applyGraphModifier) => {
-            applyGraphModifier({ select: vi.fn() })
-            return {
-              orderBy: vi.fn().mockReturnValue({
-                limit: vi.fn().mockRejectedValue(new Error('pages db down'))
-              })
-            }
+        modify: vi.fn().mockReturnValue({
+          withGraphJoined: vi.fn().mockReturnValue({
+            modifyGraph: vi.fn((relation, applyGraphModifier) => {
+              applyGraphModifier({ select: vi.fn() })
+              return {
+                orderBy: vi.fn().mockReturnValue({
+                  limit: vi.fn().mockRejectedValue(new Error('pages db down'))
+                })
+              }
+            })
           })
         })
       })
@@ -525,9 +553,7 @@ describe('controllers/api pages endpoints', () => {
     expect(global.WIKI.models.knex).toHaveBeenCalledWith('pages')
     expect(chain.column).toHaveBeenCalledWith({ id: 'pages.id' }, { path: 'pages.path' }, 'title', { link: 'pageLinks.path' }, { locale: 'pageLinks.localeCode' })
     expect(chain.fullOuterJoin).toHaveBeenCalledWith('pageLinks', 'pages.id', 'pageLinks.pageId')
-    expect(chain.where).toHaveBeenCalledWith({ 'pages.localeCode': 'en' })
-    expect(global.WIKI.auth.checkAccess).toHaveBeenNthCalledWith(2, { permissions: ['read:pages'] }, ['read:pages'], { path: 'docs/home', locale: 'en' })
-    expect(global.WIKI.auth.checkAccess).toHaveBeenNthCalledWith(3, { permissions: ['read:pages'] }, ['read:pages'], { path: 'docs/target', locale: 'en' })
+    expect(chain.where).toHaveBeenCalledWith({ 'pages.localeCode': 'en', 'pages.visibility': 'public' })
     expect(global.WIKI.auth.checkAccess).toHaveBeenNthCalledWith(7, { permissions: ['read:pages'] }, ['read:pages'], { path: null, locale: null })
     expect(res.json).toHaveBeenCalledWith([
       { id: 1, title: 'Home', path: 'en/docs/home', links: ['en/docs/target', 'fr/docs/other'] },
@@ -653,7 +679,6 @@ describe('controllers/api pages endpoints', () => {
     global.WIKI.auth.checkAccess
       .mockReturnValueOnce(true)
       .mockReturnValueOnce(true)
-      .mockReturnValueOnce(true)
     const { getPage } = await loadHandler()
     const req = { user: { permissions: ['manage:pages'] }, params: { id: '7' } }
     const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
@@ -662,17 +687,16 @@ describe('controllers/api pages endpoints', () => {
 
     expect(global.WIKI.auth.checkAccess).toHaveBeenNthCalledWith(1, { permissions: ['manage:pages'] }, ['read:pages', 'manage:system'])
     expect(global.WIKI.models.pages.getPageFromDb).toHaveBeenCalledWith(7)
-    expect(global.WIKI.auth.checkAccess).toHaveBeenNthCalledWith(2, { permissions: ['manage:pages'] }, ['manage:pages', 'delete:pages'], { path: 'docs/alpha', locale: 'en' })
-    expect(global.WIKI.auth.checkAccess).toHaveBeenNthCalledWith(3, { permissions: ['manage:pages'] }, ['write:pages', 'manage:system'])
+    expect(global.WIKI.auth.checkAccess).toHaveBeenNthCalledWith(2, { permissions: ['manage:pages'] }, ['read:pages'], { path: 'docs/alpha', locale: 'en', tags: undefined })
     expect(res.json).toHaveBeenCalledWith({
       id: 7,
       path: 'docs/alpha',
       hash: 'abc123',
       title: 'Alpha',
       description: 'Alpha description',
-      isPrivate: false,
+      visibility: 'public',
+      ownerId: null,
       isPublished: true,
-      privateNS: null,
       publishStartDate: null,
       publishEndDate: null,
       contentType: 'markdown',
@@ -727,11 +751,11 @@ describe('controllers/api pages endpoints', () => {
     await getPage(req, res)
 
     expect(res.status).toHaveBeenCalledWith(403)
-    expect(res.json).toHaveBeenCalledWith({ error: 'read:pages or manage:system is required' })
+    expect(res.json).toHaveBeenCalledWith({ error: 'authentication or read:pages is required' })
     expect(global.WIKI.models.pages.getPageFromDb).not.toHaveBeenCalled()
   })
 
-  it('returns 403 when scoped page detail access is denied', async () => {
+  it('returns the same not-found response when page-level access is denied', async () => {
     global.WIKI.auth.checkAccess
       .mockReturnValueOnce(true)
       .mockReturnValueOnce(false)
@@ -741,23 +765,24 @@ describe('controllers/api pages endpoints', () => {
 
     await getPage(req, res)
 
-    expect(res.status).toHaveBeenCalledWith(403)
-    expect(res.json).toHaveBeenCalledWith({ error: 'You are not authorized to view this page.' })
+    expect(res.status).toHaveBeenCalledWith(404)
+    expect(res.json).toHaveBeenCalledWith({ error: 'This page does not exist.' })
   })
 
-  it('returns 403 when page detail field access is denied', async () => {
-    global.WIKI.auth.checkAccess
-      .mockReturnValueOnce(true)
-      .mockReturnValueOnce(true)
-      .mockReturnValueOnce(false)
+  it('returns private page details to the authenticated owner without requiring global page permissions', async () => {
+    global.WIKI.models.pages.getPageFromDb.mockResolvedValueOnce({
+      ...await global.WIKI.models.pages.getPageFromDb(),
+      visibility: 'private',
+      ownerId: 7
+    })
     const { getPage } = await loadHandler()
-    const req = { user: { permissions: ['read:pages'] }, params: { id: '7' } }
+    const req = { user: { id: 7, permissions: [] }, params: { id: '7' } }
     const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await getPage(req, res)
 
-    expect(res.status).toHaveBeenCalledWith(403)
-    expect(res.json).toHaveBeenCalledWith({ error: 'write:pages or manage:system is required' })
+    expect(res.status).not.toHaveBeenCalled()
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ id: 7, visibility: 'private', ownerId: 7 }))
   })
 
   it('forwards unexpected page detail failures to next', async () => {
