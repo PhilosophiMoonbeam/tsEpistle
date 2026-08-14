@@ -6,6 +6,7 @@ import { isTag, isText } from 'domhandler'
 import type { AnyNode } from 'domhandler'
 import uslug from 'uslug'
 import pageHelper from '../../../helpers/page.ts'
+import { scopePageQueryForOwner, type PageVisibility } from '../../../helpers/page-access.ts'
 import { URL } from 'node:url'
 
 const mustacheRegExp = /(\{|&#x7b;?){2}(.+?)(\}|&#x7d;?){2}/i
@@ -45,6 +46,8 @@ interface RendererPage {
   id: number
   localeCode: string
   path: string
+  visibility: PageVisibility
+  ownerId: number | null
   $relatedQuery(relation: 'links'): Promise<unknown>
 }
 
@@ -238,7 +241,7 @@ const plugin = {
 
     if (internalRefs.length > 0) {
       // -> Find matching pages
-      const queryResult: unknown = await wiki.models.pages.query().column('id', 'path', 'localeCode').where((builder: PageQueryFilter) => {
+      const pageQuery = wiki.models.pages.query().column('id', 'path', 'localeCode').where((builder: PageQueryFilter) => {
         internalRefs.forEach((ref, idx) => {
           if (idx < 1) {
             builder.where(ref)
@@ -247,6 +250,8 @@ const plugin = {
           }
         })
       })
+      scopePageQueryForOwner(pageQuery, this.page.visibility === 'private' ? this.page.ownerId : null)
+      const queryResult: unknown = await pageQuery
       const results = requirePageReferences(queryResult)
 
       // -> Apply tag to internal links for found pages

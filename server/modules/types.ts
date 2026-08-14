@@ -67,6 +67,7 @@ export interface QueryBuilder<T> extends PromiseLike<T[]> {
   limit(limit: number): QueryBuilder<T>
   modify(callback: (builder: QueryBuilder<T>) => void): QueryBuilder<T>
   orderBy(column: string, direction?: string): QueryBuilder<T>
+  orWhere(...args: unknown[]): QueryBuilder<T>
   patch(value: UnknownRecord): QueryBuilder<T>
   select(...columns: unknown[]): QueryBuilder<T>
   stream(): Readable

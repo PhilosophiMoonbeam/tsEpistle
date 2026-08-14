@@ -213,7 +213,7 @@ input CommentProviderInput {
 }
 
 type CommentQuery {
-  list(locale: String!, path: String!): [CommentPost]!
+  list(pageId: Int!): [CommentPost]!
   providers: [CommentProvider]
   single(id: Int!): CommentPost
 }

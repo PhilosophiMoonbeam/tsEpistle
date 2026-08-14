@@ -112,7 +112,9 @@ interface CommonWiki {
         findById(id: number): Promise<PageRecord | null>
       }
     }
-    pageHistory: { getVersion(input: { pageId: number; versionId: number }): Promise<PageRecord> }
+    pageHistory: {
+      getVersion(input: { pageId: number; versionId: number; requester: Express.User | undefined }): Promise<PageRecord | null>
+    }
     users: { getUserAvatarData(userId: string): Promise<unknown> }
     navigation: {
       getTree(input: { cache: boolean; locale: string; groups: unknown[] }): Promise<NavigationItem[]>
@@ -404,7 +406,8 @@ router.get(['/d', '/d/*downloadPath'], async (req, res) => {
   const fileName = _.last(page.path.split('/')) + '.' + pageHelper.getFileExtension(page.contentType)
   res.attachment(fileName)
   if (versionId > 0) {
-    const pageVersion = await WIKI.models.pageHistory.getVersion({ pageId: page.id, versionId })
+    const pageVersion = await WIKI.models.pageHistory.getVersion({ pageId: page.id, versionId, requester: req.user })
+    if (!pageVersion) return res.status(404).end()
     res.send(pageHelper.injectPageMetadata(pageVersion))
   } else {
     res.send(pageHelper.injectPageMetadata(page))
@@ -527,7 +530,7 @@ router.get(['/e', '/e/*editorPath'], async (req, res, next) => {
 
       if (tmplVersionId > 0) {
         // -> From Page Version
-        const pageVersion = await WIKI.models.pageHistory.getVersion({ pageId: tmplPageId, versionId: tmplVersionId })
+        const pageVersion = await WIKI.models.pageHistory.getVersion({ pageId: tmplPageId, versionId: tmplVersionId, requester: req.user })
         if (!pageVersion) {
           _.set(res.locals, 'pageMeta.title', 'Page Not Found')
           return res.status(404).render('notfound', { action: 'template' })
@@ -706,7 +709,11 @@ router.get(['/s', '/s/*sourcePath'], async (req, res) => {
 
   if (page) {
     if (versionId > 0) {
-      const pageVersion = await WIKI.models.pageHistory.getVersion({ pageId: page.id, versionId })
+      const pageVersion = await WIKI.models.pageHistory.getVersion({ pageId: page.id, versionId, requester: req.user })
+      if (!pageVersion) {
+        _.set(res.locals, 'pageMeta.title', 'Page Not Found')
+        return res.status(404).render('notfound', { action: 'source' })
+      }
       _.set(res.locals, 'pageMeta.title', pageVersion.title)
       _.set(res.locals, 'pageMeta.description', pageVersion.description)
       res.render('source', {

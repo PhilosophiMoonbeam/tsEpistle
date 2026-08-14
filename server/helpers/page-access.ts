@@ -64,9 +64,11 @@ export const canDeletePage = (user: PagePrincipal, page: PageVisibilityRecord): 
   })
 }
 
-export const scopePageQuery = <T extends VisibilityQuery>(query: T, user: PagePrincipal, options: ScopeOptions = {}): T => {
-  if (options.includeAllForSystemManager && managesSystem(user)) return query
-  const ownerId = principalId(user)
+export const scopePageQueryForOwner = <T extends VisibilityQuery>(
+  query: T,
+  ownerId: number | null,
+  options: Pick<ScopeOptions, 'table'> = {}
+): T => {
   query.where(builder => {
     builder.where(column(options.table, 'visibility'), 'public')
     if (ownerId !== null) {
@@ -77,6 +79,11 @@ export const scopePageQuery = <T extends VisibilityQuery>(query: T, user: PagePr
     }
   })
   return query
+}
+
+export const scopePageQuery = <T extends VisibilityQuery>(query: T, user: PagePrincipal, options: ScopeOptions = {}): T => {
+  if (options.includeAllForSystemManager && managesSystem(user)) return query
+  return scopePageQueryForOwner(query, principalId(user), options)
 }
 
 export const pageRoute = (page: Pick<PageVisibilityRecord, 'visibility' | 'path' | 'localeCode'>): string =>

@@ -698,10 +698,9 @@ static async createPage(opts: CreatePageOptions): Promise<Page> {
 static async updatePage(opts: UpdatePageOptions): Promise<Page> {
   // -> Fetch original page
   const ogPage = await wiki.models.pages.query().findById(opts.id)
-  if (!ogPage) {
-    throw new Error('Invalid Page Id')
+  if (!ogPage || (ogPage.visibility === 'private' && !canWritePage(opts.user, ogPage))) {
+    throw new wiki.Error.PageNotFound()
   }
-
   if (!canWritePage(opts.user, ogPage)) {
     throw new wiki.Error.PageUpdateForbidden()
   }
@@ -923,7 +922,9 @@ static async transferOwnership(opts: TransferOwnershipOptions): Promise<Page> {
       ownerId: opts.ownerId
     })
     await wiki.models.pages.query(transaction).patch({ ownerId: opts.ownerId, hash }).findById(page.id)
-    await wiki.models.knex('pageHistory').transacting(transaction).where({ pageId: page.id }).update({ ownerId: opts.ownerId })
+    await wiki.models.knex('pageHistory').transacting(transaction)
+      .where({ pageId: page.id, visibility: 'private' })
+      .update({ ownerId: opts.ownerId })
   })
   await wiki.models.pages.deletePageFromCache(page.hash)
   wiki.events.outbound.emit('deletePageFromCache', page.hash)
@@ -943,16 +944,14 @@ static async transferOwnership(opts: TransferOwnershipOptions): Promise<Page> {
 static async convertPage(opts: ConvertPageOptions): Promise<void> {
   // -> Fetch original page
   const ogPage = await wiki.models.pages.query().findById(opts.id)
-  if (!ogPage) {
-    throw new Error('Invalid Page Id')
+  if (!ogPage || (ogPage.visibility === 'private' && !canWritePage(opts.user, ogPage))) {
+    throw new wiki.Error.PageNotFound()
   }
-
-  if (ogPage.editorKey === opts.editor) {
-    throw new Error('Page is already using this editor. Nothing to convert.')
-  }
-
   if (!canWritePage(opts.user, ogPage)) {
     throw new wiki.Error.PageUpdateForbidden()
+  }
+  if (ogPage.editorKey === opts.editor) {
+    throw new Error('Page is already using this editor. Nothing to convert.')
   }
 
   // -> Check content type
@@ -1125,6 +1124,12 @@ static async movePage(opts: MovePageOptions): Promise<void> {
   if (!page) {
     throw new wiki.Error.PageNotFound()
   }
+  if (page.visibility === 'private' && !canWritePage(opts.user, page)) {
+    throw new wiki.Error.PageNotFound()
+  }
+  if (!canWritePage(opts.user, page)) {
+    throw new wiki.Error.PageMoveForbidden()
+  }
 
   if (opts.destinationPath.includes('.') || opts.destinationPath.includes(' ') || opts.destinationPath.includes('\\') || opts.destinationPath.includes('//')) {
     throw new wiki.Error.PageIllegalPath()
@@ -1136,9 +1141,6 @@ static async movePage(opts: MovePageOptions): Promise<void> {
     opts.destinationPath = opts.destinationPath.slice(1)
   }
 
-  if (!canWritePage(opts.user, page)) {
-    throw new wiki.Error.PageMoveForbidden()
-  }
   if (page.visibility === 'public' && !wiki.auth.checkAccess(opts.user, ['write:pages'], {
     locale: opts.destinationLocale,
     path: opts.destinationPath
@@ -1235,10 +1237,9 @@ static async deletePage(opts: DeletePageOptions): Promise<void> {
     visibility: 'public',
     ownerId: null
   })
-  if (!page) {
+  if (!page || (page.visibility === 'private' && !canDeletePage(opts.user, page))) {
     throw new wiki.Error.PageNotFound()
   }
-
   if (!canDeletePage(opts.user, page)) {
     throw new wiki.Error.PageDeleteForbidden()
   }

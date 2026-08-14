@@ -95,6 +95,7 @@ export default class Comment extends Model {
     if (content.length < 2) throw new wiki.Error.CommentContentMissing()
     const page = await wiki.models.pages.getPageFromDb(pageId)
     if (!page) throw new wiki.Error.PageNotFound()
+    if (page.visibility === 'private' && !canReadPage(user, page)) throw new wiki.Error.PageNotFound()
     if (!canReadPage(user, page) || !wiki.auth.checkAccess(user, ['write:comments'], { path: page.path, locale: page.localeCode, tags: page.tags })) {
       throw new wiki.Error.CommentPostForbidden()
     }
@@ -111,6 +112,7 @@ export default class Comment extends Model {
     if (!pageId) throw new wiki.Error.CommentNotFound()
     const page = await wiki.models.pages.getPageFromDb(pageId)
     if (!page) throw new wiki.Error.PageNotFound()
+    if (page.visibility === 'private' && !canReadPage(user, page)) throw new wiki.Error.CommentNotFound()
     if (!canReadPage(user, page) || !wiki.auth.checkAccess(user, ['manage:comments'], { path: page.path, locale: page.localeCode, tags: page.tags })) {
       throw new wiki.Error.CommentManageForbidden()
     }
@@ -122,6 +124,7 @@ export default class Comment extends Model {
     if (!pageId) throw new wiki.Error.CommentNotFound()
     const page = await wiki.models.pages.getPageFromDb(pageId)
     if (!page) throw new wiki.Error.PageNotFound()
+    if (page.visibility === 'private' && !canReadPage(user, page)) throw new wiki.Error.CommentNotFound()
     if (!canReadPage(user, page) || !wiki.auth.checkAccess(user, ['manage:comments'], { path: page.path, locale: page.localeCode, tags: page.tags })) {
       throw new wiki.Error.CommentManageForbidden()
     }

@@ -223,8 +223,8 @@ export async function saveCommentProviders (fetchImpl: FetchImpl, providers: unk
   return normalizeCommentSavePayload(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
 }
 
-export async function fetchComments (fetchImpl: FetchImpl, locale: string, path: string, fallbackMessage = 'Comments response is invalid'): Promise<CommentRow[]> {
-  const response = await fetchImpl(`/_api/comments?locale=${encodeURIComponent(locale)}&path=${encodeURIComponent(path)}`, {
+export async function fetchComments (fetchImpl: FetchImpl, pageId: number, fallbackMessage = 'Comments response is invalid'): Promise<CommentRow[]> {
+  const response = await fetchImpl(`/_api/comments?pageId=${encodeURIComponent(pageId)}`, {
     credentials: 'same-origin',
     headers: { Accept: 'application/json' }
   })

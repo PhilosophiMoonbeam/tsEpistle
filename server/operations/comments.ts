@@ -72,12 +72,17 @@ const updateProviders = async (providers: unknown): Promise<void> => {
   await models.commentProviders.initProvider()
 }
 
-const list = async ({ requester, locale, path }: { requester: Requester, locale: string, path: string }) => {
+const list = async ({ requester, pageId }: { requester: Requester, pageId: number }) => {
   const { models, auth, Error: errors } = getWiki()
-  const page = await models.pages.query().select('pages.id', 'pages.visibility', 'pages.ownerId').findOne({ localeCode: locale, path })
-    .withGraphJoined('tags').modifyGraph('tags', builder => builder.select('tag'))
-  if (!page) return []
-  if (!canReadPage(requester, page) || !auth.checkAccess(requester, ['read:comments'], { locale, path, tags: page.tags })) {
+  if (!Number.isSafeInteger(pageId) || pageId < 1) throw new errors.CommentNotFound()
+  const page = await models.pages.query().select('pages.id', 'pages.localeCode', 'pages.path', 'pages.visibility', 'pages.ownerId')
+    .findById(pageId).withGraphJoined('tags').modifyGraph('tags', builder => builder.select('tag'))
+  if (!page || (page.visibility === 'private' && !canReadPage(requester, page))) throw new errors.CommentNotFound()
+  if (!canReadPage(requester, page) || !auth.checkAccess(requester, ['read:comments'], {
+    locale: page.localeCode,
+    path: page.path,
+    tags: page.tags
+  })) {
     throw new errors.CommentViewForbidden()
   }
   return (await models.comments.query().where('pageId', page.id).orderBy('createdAt')).map(comment => ({
@@ -93,9 +98,14 @@ const get = async ({ requester, id }: { requester: Requester, id: number }) => {
     .withGraphJoined('tags').modifyGraph('tags', builder => builder.select('tag'))
   if (!page) {
     logger.warn(`Comment #${comment.id} is linked to a page #${comment.pageId} that doesn't exist! [ERROR]`)
-    throw new errors.CommentGenericError()
+    throw new errors.CommentNotFound()
   }
-  if (!canReadPage(requester, page) || !auth.checkAccess(requester, ['read:comments'], { path: page.path, locale: page.localeCode, tags: page.tags })) {
+  if (page.visibility === 'private' && !canReadPage(requester, page)) throw new errors.CommentNotFound()
+  if (!canReadPage(requester, page) || !auth.checkAccess(requester, ['read:comments'], {
+    path: page.path,
+    locale: page.localeCode,
+    tags: page.tags
+  })) {
     throw new errors.CommentViewForbidden()
   }
   return { ...comment, authorName: comment.name, authorEmail: comment.email, authorIP: comment.ip }

@@ -217,8 +217,7 @@ export default defineComponent({
       try {
         const comments = await fetchComments(
           window.fetch.bind(window),
-          wikiStore.page.locale,
-          wikiStore.page.path
+          this.pageId
         )
         this.comments = comments.map(comment => {
           const nameParts = comment.authorName.toUpperCase().split(' ')

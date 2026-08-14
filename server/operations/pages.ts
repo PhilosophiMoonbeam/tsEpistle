@@ -109,8 +109,8 @@ interface WikiPageOperations {
       }
     }
     pageHistory: {
-      getHistory(input: { pageId: number, offsetPage: number, offsetSize: number }): unknown
-      getVersion(input: { pageId: number, versionId: number }): Promise<(Record<string, unknown> & { pageId: number }) | undefined>
+      getHistory(input: { pageId: number, offsetPage: number, offsetSize: number, requester: Express.User | undefined }): unknown
+      getVersion(input: { pageId: number, versionId: number, requester: Express.User | undefined }): Promise<(Record<string, unknown> & { pageId: number }) | undefined>
     }
   }
 }
@@ -321,11 +321,14 @@ const getHistory = async (input: OperationInput) => {
   const offsetPage = input.offsetPage === undefined ? 0 : nonNegativeInteger(input.offsetPage, 'offsetPage')
   const offsetSize = input.offsetSize === undefined ? 100 : positiveInteger(input.offsetSize, 'offsetSize')
   const page = await wiki.models.pages.query().select('path', 'localeCode', 'visibility', 'ownerId').findById(id)
-  if (!page) throw new wiki.Error.PageNotFound()
-  if (page.visibility === 'private' ? !canReadPage(requester, page) : !wiki.auth.checkAccess(requester, ['read:history'], { path: page.path, locale: page.localeCode })) {
+  if (!page || (page.visibility === 'private' && !canReadPage(requester, page))) throw new wiki.Error.PageNotFound()
+  if (page.visibility === 'public' && !wiki.auth.checkAccess(requester, ['read:history'], {
+    path: page.path,
+    locale: page.localeCode
+  })) {
     throw new wiki.Error.PageHistoryForbidden()
   }
-  return wiki.models.pageHistory.getHistory({ pageId: id, offsetPage, offsetSize })
+  return wiki.models.pageHistory.getHistory({ pageId: id, offsetPage, offsetSize, requester })
 }
 
 const getVersion = async (input: OperationInput) => {
@@ -333,11 +336,14 @@ const getVersion = async (input: OperationInput) => {
   const pageId = positiveInteger(input.pageId, 'pageId')
   const versionId = positiveInteger(input.versionId, 'versionId')
   const page = await wiki.models.pages.query().select('path', 'localeCode', 'visibility', 'ownerId').findById(pageId)
-  if (!page) throw new wiki.Error.PageNotFound()
-  if (page.visibility === 'private' ? !canReadPage(requester, page) : !wiki.auth.checkAccess(requester, ['read:history'], { path: page.path, locale: page.localeCode })) {
+  if (!page || (page.visibility === 'private' && !canReadPage(requester, page))) throw new wiki.Error.PageNotFound()
+  if (page.visibility === 'public' && !wiki.auth.checkAccess(requester, ['read:history'], {
+    path: page.path,
+    locale: page.localeCode
+  })) {
     throw new wiki.Error.PageHistoryForbidden()
   }
-  return wiki.models.pageHistory.getVersion({ pageId, versionId })
+  return wiki.models.pageHistory.getVersion({ pageId, versionId, requester })
 }
 
 const search = async (input: OperationInput) => {
@@ -446,7 +452,7 @@ const checkConflict = async (input: OperationInput) => {
   const id = positiveInteger(input.id, 'id')
   if (!(input.checkoutDate instanceof Date)) throw new ApplicationError('checkoutDate must be a Date', { code: 'INVALID_INPUT' })
   const page = await wiki.models.pages.query().select('path', 'localeCode', 'updatedAt', 'visibility', 'ownerId').findById(id)
-  if (!page) throw new wiki.Error.PageNotFound()
+  if (!page || (page.visibility === 'private' && !canWritePage(requester, page))) throw new wiki.Error.PageNotFound()
   if (!canWritePage(requester, page)) throw new wiki.Error.PageUpdateForbidden()
   return page.updatedAt > input.checkoutDate
 }
@@ -454,7 +460,7 @@ const checkConflict = async (input: OperationInput) => {
 const getConflictLatest = async (input: OperationInput) => {
   const requester = input.requester
   const page = await wiki.models.pages.getPageFromDb(positiveInteger(input.id, 'id'))
-  if (!page) throw new wiki.Error.PageNotFound()
+  if (!page || (page.visibility === 'private' && !canWritePage(requester, page))) throw new wiki.Error.PageNotFound()
   if (!canWritePage(requester, page)) throw new wiki.Error.PageViewForbidden()
   return { ...page, tags: page.tags.map(tag => tag.tag), locale: page.localeCode }
 }
@@ -520,9 +526,9 @@ const restore = async (input: OperationInput): Promise<void> => {
   const pageId = positiveInteger(input.pageId, 'pageId')
   const versionId = positiveInteger(input.versionId, 'versionId')
   const page = await wiki.models.pages.query().select('path', 'localeCode', 'visibility', 'ownerId').findById(pageId)
-  if (!page) throw new wiki.Error.PageNotFound()
+  if (!page || (page.visibility === 'private' && !canWritePage(requester, page))) throw new wiki.Error.PageNotFound()
   if (!canWritePage(requester, page)) throw new wiki.Error.PageRestoreForbidden()
-  const version = await wiki.models.pageHistory.getVersion({ pageId, versionId })
+  const version = await wiki.models.pageHistory.getVersion({ pageId, versionId, requester })
   if (!version) throw new wiki.Error.PageNotFound()
   await wiki.models.pages.updatePage(withRequester({ ...version, id: version.pageId, action: 'restored' }, requester))
 }

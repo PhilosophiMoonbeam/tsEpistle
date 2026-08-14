@@ -136,6 +136,17 @@ suite('PostgreSQL private-page schema migration', () => {
     await expect(db('pages').insert({ id: 8, localeCode: 'en', path: 'orphan', visibility: 'private', ownerId: 999 }))
       .rejects.toMatchObject({ code: '23503' })
 
+    await expect(db('pageHistory').insert({ id: 20, pageId: 1, visibility: 'public', ownerId: 7 }))
+      .rejects.toMatchObject({ code: '23514' })
+    await expect(db('pageTree').insert({
+      id: 20,
+      pageId: 1,
+      localeCode: 'en',
+      path: 'invalid-history-owner',
+      visibility: 'private',
+      ownerId: null
+    })).rejects.toMatchObject({ code: '23514' })
+
     await expect(db('users').where({ id: 7 }).delete()).rejects.toMatchObject({ code: '23503' })
     expect(await db('pages').where({ localeCode: 'en', path: 'same/path' }).count<{ count: string }[]>({ count: '*' }).first())
       .toEqual({ count: '3' })
@@ -197,6 +208,39 @@ suite('PostgreSQL private-page schema migration', () => {
       expect((await search).map(row => row.id)).toEqual([2])
     } finally {
       globalThis.WIKI = originalWiki
+    }
+  })
+
+  it('keeps private revisions hidden after their current page is published', async () => {
+    await db('pageHistory').insert([
+      { id: 10, pageId: 1, visibility: 'private', ownerId: 7 },
+      { id: 11, pageId: 1, visibility: 'public', ownerId: null }
+    ])
+    const originalWiki = globalThis.WIKI
+    globalThis.WIKI = {
+      auth: {
+        checkAccess: (user: Express.User | undefined, permissions: readonly string[]) =>
+          permissions.some(permission => user?.permissions?.includes(permission))
+      }
+    } as typeof globalThis.WIKI
+    try {
+      const visibleVersions = async (user: Express.User) => {
+        const query = db('pageHistory').select('id').whereIn('id', [10, 11]).orderBy('id')
+        scopePageQuery(query, user)
+        return (await query).map(version => version.id)
+      }
+      expect(await visibleVersions({ id: 7, permissions: ['read:history'] } as Express.User)).toEqual([10, 11])
+      expect(await visibleVersions({ id: 8, permissions: ['read:history'] } as Express.User)).toEqual([11])
+      expect(await visibleVersions({ id: 2, permissions: ['read:history'] } as Express.User)).toEqual([11])
+
+      const managerQuery = db('pageHistory').select('id').whereIn('id', [10, 11]).orderBy('id')
+      scopePageQuery(managerQuery, { id: 1, permissions: ['manage:system'] } as Express.User, {
+        includeAllForSystemManager: true
+      })
+      expect((await managerQuery).map(version => version.id)).toEqual([10, 11])
+    } finally {
+      globalThis.WIKI = originalWiki
+      await db('pageHistory').whereIn('id', [10, 11]).delete()
     }
   })
 

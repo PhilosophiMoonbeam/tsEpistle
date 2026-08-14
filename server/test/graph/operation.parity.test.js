@@ -445,18 +445,18 @@ describe('REST and GraphQL shared operation parity', () => {
       const comments = [{ id: 31, content: 'Useful guide' }]
       operationMocks.comments.list.mockResolvedValue(comments)
       const requester = { id: 2, permissions: ['read:comments'] }
-      const expectedInput = { requester, locale: 'en', path: 'guide' }
+      const expectedInput = { requester, pageId: 17 }
       const restResponse = makeResponse()
       const restNext = vi.fn()
 
       await adapters.comments.router.handler('get', '/')(
-        { user: requester, query: { locale: 'en', path: 'guide' } },
+        { user: requester, query: { pageId: '17' } },
         restResponse,
         restNext
       )
       const graphResult = await adapters.comments.resolver.CommentQuery.list(
         null,
-        { locale: 'en', path: 'guide' },
+        { pageId: 17 },
         { req: { user: requester } }
       )
 
@@ -472,13 +472,13 @@ describe('REST and GraphQL shared operation parity', () => {
       const failedRestNext = vi.fn()
 
       await adapters.comments.router.handler('get', '/')(
-        { user: requester, query: { locale: 'en', path: 'guide' } },
+        { user: requester, query: { pageId: '17' } },
         failedRestResponse,
         failedRestNext
       )
       await expect(adapters.comments.resolver.CommentQuery.list(
         null,
-        { locale: 'en', path: 'guide' },
+        { pageId: 17 },
         { req: { user: requester } }
       )).rejects.toBe(failure)
 

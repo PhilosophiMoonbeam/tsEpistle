@@ -7,7 +7,8 @@ import {
   managesSystem,
   pageRoute,
   principalId,
-  scopePageQuery
+  scopePageQuery,
+  scopePageQueryForOwner
 } from '../../helpers/page-access.ts'
 
 beforeEach(() => {
@@ -78,5 +79,24 @@ describe('owner-scoped page access', () => {
     wherePublic.mockClear()
     expect(scopePageQuery(query, administrator, { includeAllForSystemManager: true })).toBe(query)
     expect(wherePublic).not.toHaveBeenCalled()
+  })
+
+  it('scopes non-request rendering and history queries to an explicit owner', () => {
+    const where = vi.fn()
+    const orWhere = vi.fn()
+    const query = {
+      where: vi.fn(callback => {
+        callback({ where, orWhere })
+        return query
+      }),
+      orWhere
+    }
+
+    expect(scopePageQueryForOwner(query, 7, { table: 'pageHistory' })).toBe(query)
+    expect(where).toHaveBeenCalledWith('pageHistory.visibility', 'public')
+    expect(orWhere).toHaveBeenCalledWith({
+      'pageHistory.visibility': 'private',
+      'pageHistory.ownerId': 7
+    })
   })
 })
