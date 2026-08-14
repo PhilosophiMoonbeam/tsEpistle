@@ -13,9 +13,8 @@ export const up = async (knex: Knex) => {
     }
   }
 
-  await knex.schema.alterTable('pages', table => {
-    table.dropUnique(['localeCode', 'path'])
-  })
+  await knex.raw('ALTER TABLE pages DROP CONSTRAINT IF EXISTS pages_localecode_path_unique')
+  await knex.raw('DROP INDEX IF EXISTS pages_localecode_path_unique')
 
   await knex.schema.alterTable('pages', table => {
     table.string('visibility', 16).notNullable().defaultTo('public')
