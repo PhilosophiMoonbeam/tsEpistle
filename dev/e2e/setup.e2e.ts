@@ -622,4 +622,47 @@ test.describe('critical post-install workflows', () => {
     await page.getByText('Close editor', { exact: true }).click()
     await expect(page).toHaveURL('/en/home')
   })
+
+  test('routes private pages from the browse sidebar through the private namespace', async ({ page }) => {
+    await loginAsAdmin(page)
+    const privatePage = await page.evaluate(async () => {
+      const response = await fetch('/_api/pages', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {
+          Accept: 'application/json',
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          content: '# Private Sidebar Page',
+          description: 'Private browse link regression',
+          editor: 'markdown',
+          visibility: 'private',
+          isPublished: true,
+          locale: 'en',
+          path: 'private-sidebar-link',
+          publishEndDate: '',
+          publishStartDate: '',
+          scriptCss: '',
+          scriptJs: '',
+          tags: [],
+          title: 'Private Sidebar Link'
+        })
+      })
+      if (!response.ok) throw new Error(`Private page creation failed: ${response.status}`)
+      return response.json() as Promise<{ page: { id: number } }>
+    })
+
+    try {
+      await page.goto('/en/home')
+      await page.getByRole('button', { name: 'Browse', exact: true }).click()
+      const privateLink = page.getByRole('link', { name: 'Private Sidebar Link', exact: true })
+      await expect(privateLink).toHaveAttribute('href', '/_private/en/private-sidebar-link')
+      await privateLink.click()
+      await expect(page).toHaveURL('/_private/en/private-sidebar-link')
+      await expect(page.getByRole('heading', { name: 'Private Sidebar Page' })).toBeVisible()
+    } finally {
+      await page.request.delete(`/_api/pages/${privatePage.page.id}`)
+    }
+  })
 })
