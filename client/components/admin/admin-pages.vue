@@ -13,11 +13,18 @@
           //- v-btn.animated.fadeInDown.mx-3(color='primary', outlined, @click='recyclebin', disabled)
           //-   v-icon(left) mdi-delete-outline
           //-   span Recycle Bin
-          v-btn.animated.fadeInDown(color='primary', depressed, large, to='pages/visualize')
-            v-icon(left) mdi-graph
-            span Visualize
+          v-btn.animated.fadeInDown(
+            color='primary'
+            depressed
+            large
+            to='pages/visualize'
+            :icon='$vuetify.display.smAndDown'
+            aria-label='Visualize pages'
+          )
+            v-icon(:left='$vuetify.display.mdAndUp') mdi-graph
+            span(v-if='$vuetify.display.mdAndUp') Visualize
         v-card.mt-3.animated.fadeInUp
-          .pa-2.d-flex.align-center(:class='$vuetify.theme.current.dark ? `grey darken-3-d5` : `grey lighten-3`')
+          .admin-filter-bar.pa-2.d-flex.align-center(:class='$vuetify.theme.current.dark ? `grey darken-3-d5` : `grey lighten-3`')
             v-text-field(
               solo
               flat
@@ -52,10 +59,11 @@
               style='max-width: 250px;'
             )
           v-divider
-          v-data-table(
+          v-data-table.admin-responsive-table(
             :items='filteredPages'
-            :headers='headers'
+            :headers='responsiveHeaders'
             :search='search'
+            :hide-default-header='$vuetify.display.smAndDown'
             v-model:page='pagination'
             :items-per-page='15'
             :loading='loading'
@@ -65,7 +73,7 @@
             @page-count="pageTotal = $event"
           )
             template(v-slot:item='props')
-              tr.is-clickable(:active='props.selected', @click='$router.push(`/pages/` + props.item.id)')
+              tr.is-clickable(v-if='$vuetify.display.mdAndUp', :active='props.selected', @click='$router.push(`/pages/` + props.item.id)')
                 td.text-xs-right {{ props.item.id }}
                 td
                   .body-2: strong {{ props.item.title }}
@@ -75,6 +83,15 @@
                   span.ml-2.grey--text(:class='$vuetify.theme.current.dark ? `text--lighten-1` : `text--darken-2`') / {{ props.item.path }}
                 td {{ $helpers.formatMoment(props.item.createdAt, 'calendar') }}
                 td {{ $helpers.formatMoment(props.item.updatedAt, 'calendar') }}
+              tr.admin-mobile-table-row.is-clickable(v-else, @click='$router.push(`/pages/` + props.item.id)')
+                td(:colspan='responsiveHeaders.length')
+                  .admin-mobile-record
+                    .admin-mobile-record-title {{ props.item.title }}
+                    .caption.grey--text {{ props.item.description }}
+                    .admin-mobile-record-meta
+                      v-chip.mr-2(label, x-small, :color='$vuetify.theme.current.dark ? `grey darken-4` : `grey lighten-4`') {{ props.item.locale }}
+                      span /{{ props.item.path }}
+                    .caption.grey--text.mt-2 Updated {{ $helpers.formatMoment(props.item.updatedAt, 'calendar') }}
             template(v-slot:no-data)
               v-alert.ma-3(icon='mdi-alert', :value='true', outlined) No pages to display.
           .text-center.py-2.animated.fadeInDown(v-if='this.pageTotal > 1')
@@ -116,6 +133,11 @@ export default {
     }
   },
   computed: {
+    responsiveHeaders () {
+      return this.$vuetify.display.smAndDown
+        ? this.headers.filter(header => header.value === 'title')
+        : this.headers
+    },
     filteredPages (): PageListRow[] {
       return this.pages.filter(pg => {
         if (this.selectedLang !== null && this.selectedLang !== pg.locale) {

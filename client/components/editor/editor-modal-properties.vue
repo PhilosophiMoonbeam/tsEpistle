@@ -17,7 +17,7 @@
         v-icon(left) mdi-check
         span {{ $t('common:actions.ok') }}
     v-card(tile)
-      v-tabs.text-white(bg-color='blue-darken-1', color='white', centered, v-model='currentTab')
+      v-tabs.text-white(bg-color='blue-darken-1', color='white', centered, show-arrows, v-model='currentTab')
         v-tab(:value='0') {{$t('editor:props.info')}}
         v-tab(:value='1') {{$t('editor:props.scheduling')}}
         v-tab(:value='2', :disabled='!hasScriptPermission') {{$t('editor:props.scripts')}}
@@ -100,7 +100,7 @@
           v-card-text.grey.pt-5(:class='$vuetify.theme.current.dark ? `darken-3-d3` : `lighten-5`')
             v-container.pa-0(fluid, grid-list-lg)
               v-row
-                v-col(cols='6')
+                v-col(cols='12', md='6')
                   v-dialog(
                     v-model='isPublishStartShown'
                     width='460px'
@@ -123,7 +123,7 @@
                       v-model='publishStartDraft'
                       :min='(new Date()).toISOString().substring(0, 10)'
                       color='primary'
-                      landscape
+                      :landscape='$vuetify.display.mdAndUp'
                       )
                       template(v-slot:actions)
                         v-spacer
@@ -137,7 +137,7 @@
                           color='primary'
                           @click='applyPublishStartDate'
                           ) {{$t('common:actions.ok')}}
-                v-col(cols='6')
+                v-col(cols='12', md='6')
                   v-dialog(
                     v-model='isPublishEndShown'
                     width='460px'
@@ -160,7 +160,7 @@
                       v-model='publishEndDraft'
                       :min='(new Date()).toISOString().substring(0, 10)'
                       color='primary'
-                      landscape
+                      :landscape='$vuetify.display.mdAndUp'
                       )
                       template(v-slot:actions)
                         v-spacer

@@ -21,7 +21,8 @@
     v-row(no-gutters)
       v-col(cols='5', md='4')
         v-toolbar.nav-header-inner(color='black', dark, flat, :class='$vuetify.locale.isRtl ? `pr-3` : `pl-3`')
-          v-avatar(tile, size='34', @click='goHome')
+          slot(name='mobileBrand', v-if='$slots.mobileBrand && $vuetify.display.smAndDown')
+          v-avatar(v-if='!$slots.mobileBrand || $vuetify.display.mdAndUp', tile, size='34', @click='goHome')
             img.org-logo(:src='logoUrl', :alt='title')
           //- v-menu(open-on-hover, offset-y, bottom, left, min-width='250', transition='slide-y-transition')
           //-   template(v-slot:activator='{ props }')
@@ -44,7 +45,7 @@
           //-       v-list-item-content
           //-         v-list-item-title.body-2.grey--text.text--ligten-2 {{$t('common:header.imagesFiles')}}
           //-         v-list-item-subtitle.overline.grey--text.text--lighten-2 Coming soon
-          v-toolbar-title(:class='{ "mx-3": $vuetify.display.mdAndUp, "mx-1": $vuetify.display.smAndDown }')
+          v-toolbar-title(v-if='!$slots.mobileBrand || $vuetify.display.mdAndUp', :class='{ "mx-3": $vuetify.display.mdAndUp, "mx-1": $vuetify.display.smAndDown }')
             span.subheading {{title}}
       v-col(md='4', v-if='$vuetify.display.mdAndUp')
         v-toolbar.nav-header-inner(color='black', dark, flat)
