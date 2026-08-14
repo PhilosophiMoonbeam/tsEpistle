@@ -62,9 +62,9 @@ describe('pages api helper', () => {
       hash: 'abc123',
       title: 'Alpha',
       description: null,
-      isPrivate: false,
+      visibility: 'public',
+      ownerId: null,
       isPublished: true,
-      privateNS: null,
       publishStartDate: null,
       publishEndDate: null,
       contentType: 'markdown',
@@ -87,9 +87,9 @@ describe('pages api helper', () => {
       hash: 'abc123',
       title: 'Alpha',
       description: null,
-      isPrivate: false,
+      visibility: 'public',
+      ownerId: null,
       isPublished: true,
-      privateNS: null,
       publishStartDate: null,
       publishEndDate: null,
       contentType: 'markdown',
@@ -133,8 +133,8 @@ describe('pages api helper', () => {
         title: null,
         description: null,
         isPublished: true,
-        isPrivate: false,
-        privateNS: null,
+        visibility: 'public',
+        ownerId: null,
         contentType: 'markdown',
         createdAt: '2026-01-01T00:00:00.000Z',
         updatedAt: '2026-01-03T00:00:00.000Z',
@@ -151,8 +151,8 @@ describe('pages api helper', () => {
         title: null,
         description: null,
         isPublished: true,
-        isPrivate: false,
-        privateNS: null,
+        visibility: 'public',
+        ownerId: null,
         contentType: 'markdown',
         createdAt: '2026-01-01T00:00:00.000Z',
         updatedAt: '2026-01-03T00:00:00.000Z',
@@ -258,20 +258,21 @@ describe('pages api helper', () => {
         path: 'docs/alpha',
         title: 'Alpha',
         updatedAt: '2026-01-03T00:00:00.000Z',
-        isPrivate: true
+        visibility: 'private'
       },
       {
         id: 11,
         locale: 'fr',
         path: 'docs/beta',
         title: 'Beta',
-        updatedAt: '2026-01-02T00:00:00.000Z'
+        updatedAt: '2026-01-02T00:00:00.000Z',
+        visibility: 'public'
       }
     ]))
 
     await expect(fetchRecentPages(fetchImpl)).resolves.toEqual([
-      { id: 10, locale: 'en', path: 'docs/alpha', title: 'Alpha', updatedAt: '2026-01-03T00:00:00.000Z' },
-      { id: 11, locale: 'fr', path: 'docs/beta', title: 'Beta', updatedAt: '2026-01-02T00:00:00.000Z' }
+      { id: 10, locale: 'en', path: 'docs/alpha', title: 'Alpha', updatedAt: '2026-01-03T00:00:00.000Z', visibility: 'private' },
+      { id: 11, locale: 'fr', path: 'docs/beta', title: 'Beta', updatedAt: '2026-01-02T00:00:00.000Z', visibility: 'public' }
     ])
 
     expect(fetchImpl).toHaveBeenCalledWith('/_api/pages/recent', {
@@ -289,12 +290,13 @@ describe('pages api helper', () => {
         locale: 'en',
         path: '',
         title: '',
-        updatedAt: '2026-01-01T00:00:00.000Z'
+        updatedAt: '2026-01-01T00:00:00.000Z',
+        visibility: 'public'
       }
     ]))
 
     await expect(fetchRecentPages(fetchImpl)).resolves.toEqual([
-      { id: 12, locale: 'en', path: '', title: '', updatedAt: '2026-01-01T00:00:00.000Z' }
+      { id: 12, locale: 'en', path: '', title: '', updatedAt: '2026-01-01T00:00:00.000Z', visibility: 'public' }
     ])
   })
 

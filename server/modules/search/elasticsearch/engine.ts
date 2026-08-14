@@ -505,7 +505,7 @@ const plugin: ElasticsearchPlugin = {
     await pipeline(
       wiki.models.knex.column({ id: 'hash' }, 'path', { locale: 'localeCode' }, 'title', 'description', 'render', { realId: 'id' }).select().from('pages').where({
         isPublished: true,
-        isPrivate: false
+        visibility: 'public'
       }).stream(),
       new Transform({
         objectMode: true,

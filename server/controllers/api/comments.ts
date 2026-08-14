@@ -54,14 +54,13 @@ router.post('/providers', async (req, res) => {
 })
 
 router.get('/', async (req, res, next) => {
-  const locale = req.query && req.query.locale
-  const path = req.query && req.query.path
-  if (typeof locale !== 'string' || locale.length < 1 || typeof path !== 'string' || path.length < 1) {
-    return res.status(400).json({ error: 'locale and path query parameters are required' })
+  const pageId = parsePositiveInteger(req.query && req.query.pageId)
+  if (pageId === null) {
+    return res.status(400).json({ error: 'pageId query parameter must be a positive integer' })
   }
   if (!requireCommentRequester(req, res)) return
   try {
-    res.json(await commentOperations.list({ requester: req.user, locale, path }))
+    res.json(await commentOperations.list({ requester: req.user, pageId }))
   } catch (err) {
     next(err)
   }

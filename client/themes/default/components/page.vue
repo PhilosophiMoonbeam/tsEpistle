@@ -59,7 +59,9 @@
             :class='$vuetify.locale.isRtl ? `pr-4` : `pl-4`'
             )
             .page-header-headings
-              .headline.grey--text(:class='$vuetify.theme.current.dark ? `text--lighten-2` : `text--darken-3`') {{title}}
+              .d-flex.align-center
+                .headline.grey--text(:class='$vuetify.theme.current.dark ? `text--lighten-2` : `text--darken-3`') {{title}}
+                v-chip.ml-3(v-if="visibility === 'private'", small, color='deep-orange', dark) Private
               .caption.grey--text.text--darken-1 {{description}}
             .page-edit-shortcuts(
               v-if='editShortcutsObj.editMenuBar'
@@ -171,7 +173,7 @@
                     template(v-slot:activator='{ props }')
                       v-btn.btn-animate-edit(
                         icon
-                        :href='"/h/" + locale + "/" + path'
+                        :href='(visibility === `private` ? `/h/_private` : `/h`) + `/` + locale + `/` + path'
                         v-bind='props'
                         x-small
                         v-if='hasReadHistoryPermission'
@@ -479,6 +481,10 @@ export default defineComponent({
       type: Boolean,
       default: false
     },
+    visibility: {
+      type: String as PropType<'public' | 'private'>,
+      default: 'public'
+    },
     toc: {
       type: String,
       default: ''
@@ -567,10 +573,11 @@ export default defineComponent({
       }
     },
     breadcrumbs(): Breadcrumb[] {
+      const scope = this.visibility === 'private' ? '/_private' : ''
       return [{ path: '/', name: 'Home' }].concat(
         _.reduce<string, Breadcrumb[]>(this.path.split('/'), (result, value) => {
           result.push({
-            path: (_.last(result)?.path || (this.locales.length > 0 ? `/${this.locale}` : '')) + `/${value}`,
+            path: (_.last(result)?.path || `${scope}${this.locales.length > 0 ? `/${this.locale}` : ''}`) + `/${value}`,
             name: value
           })
           return result
@@ -640,6 +647,7 @@ export default defineComponent({
     wikiStore.page.id = this.pageId
     wikiStore.page.locale = this.locale
     wikiStore.page.path = this.path
+    wikiStore.page.visibility = this.visibility
     wikiStore.page.tags = this.tags
     wikiStore.page.title = this.title
     wikiStore.page.editor = this.editor

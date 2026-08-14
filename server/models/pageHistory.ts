@@ -1,3 +1,4 @@
+import type { Knex } from 'knex'
 import { Model } from 'objection'
 import _ from 'lodash'
 import { DateTime, Duration } from 'luxon'
@@ -6,6 +7,7 @@ import Page from './pages.ts'
 import User from './users.ts'
 import Editor from './editors.ts'
 import Locale from './locales.ts'
+import { scopePageQuery, type PagePrincipal, type PageVisibility } from '../helpers/page-access.ts'
 
 interface PageVersionOptions {
   id: number
@@ -15,7 +17,8 @@ interface PageVersionOptions {
   description: string
   editorKey: string
   hash: string
-  isPrivate: boolean | number
+  visibility: PageVisibility
+  ownerId: number | null
   isPublished: boolean | number
   localeCode: string
   path: string
@@ -24,16 +27,19 @@ interface PageVersionOptions {
   title: string
   action?: string
   versionDate: string
+  transaction?: Knex.Transaction
 }
 
 interface VersionQuery {
   pageId: number
   versionId: number
+  requester: PagePrincipal
 }
 
 interface HistoryQuery {
   pageId: number
   offsetPage?: number
+  requester: PagePrincipal
   offsetSize?: number
 }
 
@@ -70,7 +76,8 @@ declare path: string
 declare hash: string
 declare title: string
 declare description: string
-declare isPrivate: boolean
+declare visibility: PageVisibility
+declare ownerId: number | null
 declare isPublished: boolean
 declare publishStartDate: string
 declare publishEndDate: string
@@ -92,6 +99,8 @@ static override get tableName() { return 'pageHistory' } static override get jso
     title: {type: 'string'},
     description: {type: 'string'},
     isPublished: {type: 'boolean'},
+    visibility: {type: 'string', enum: ['public', 'private']},
+    ownerId: {type: ['integer', 'null']},
     publishStartDate: {type: 'string'},
     publishEndDate: {type: 'string'},
     content: {type: 'string'},
@@ -148,7 +157,7 @@ static override get tableName() { return 'pageHistory' } static override get jso
  * Create Page Version
  */
 static async addVersion(opts: PageVersionOptions) {
-  await wiki.models.pageHistory.query().insert({
+  await wiki.models.pageHistory.query(opts.transaction).insert({
     pageId: opts.id,
     authorId: opts.authorId,
     content: opts.content,
@@ -156,7 +165,8 @@ static async addVersion(opts: PageVersionOptions) {
     description: opts.description,
     editorKey: opts.editorKey,
     hash: opts.hash,
-    isPrivate: (opts.isPrivate === true || opts.isPrivate === 1),
+    visibility: opts.visibility,
+    ownerId: opts.ownerId,
     isPublished: (opts.isPublished === true || opts.isPublished === 1),
     localeCode: opts.localeCode,
     path: opts.path,
@@ -171,13 +181,14 @@ static async addVersion(opts: PageVersionOptions) {
 /**
  * Get Page Version
  */
-static async getVersion({ pageId, versionId }: VersionQuery) {
-  const version = await wiki.models.pageHistory.query()
+static async getVersion({ pageId, versionId, requester }: VersionQuery) {
+  const query = wiki.models.pageHistory.query()
     .column([
       'pageHistory.path',
       'pageHistory.title',
       'pageHistory.description',
-      'pageHistory.isPrivate',
+      'pageHistory.visibility',
+      'pageHistory.ownerId',
       'pageHistory.isPublished',
       'pageHistory.publishStartDate',
       'pageHistory.publishEndDate',
@@ -199,7 +210,9 @@ static async getVersion({ pageId, versionId }: VersionQuery) {
     .where({
       'pageHistory.id': versionId,
       'pageHistory.pageId': pageId
-    }).first()
+    })
+  scopePageQuery(query, requester, { table: 'pageHistory', includeAllForSystemManager: true })
+  const version = await query.first()
   if (version) {
     return {
       ...version,
@@ -214,8 +227,8 @@ static async getVersion({ pageId, versionId }: VersionQuery) {
 /**
  * Get History Trail of a Page
  */
-static async getHistory({ pageId, offsetPage = 0, offsetSize = 100 }: HistoryQuery) {
-  const history = await wiki.models.pageHistory.query()
+static async getHistory({ pageId, offsetPage = 0, offsetSize = 100, requester }: HistoryQuery) {
+  const query = wiki.models.pageHistory.query()
     .column([
       'pageHistory.id',
       'pageHistory.path',
@@ -230,6 +243,8 @@ static async getHistory({ pageId, offsetPage = 0, offsetSize = 100 }: HistoryQue
     .where({
       'pageHistory.pageId': pageId
     })
+  scopePageQuery(query, requester, { table: 'pageHistory', includeAllForSystemManager: true })
+  const history = await query
     .orderBy('pageHistory.versionDate', 'desc')
     .page(offsetPage, offsetSize)
 
@@ -237,7 +252,7 @@ static async getHistory({ pageId, offsetPage = 0, offsetSize = 100 }: HistoryQue
   const upperLimit = (offsetPage + 1) * offsetSize
 
   if (history.total >= upperLimit) {
-    prevPh = await wiki.models.pageHistory.query()
+    const previousQuery = wiki.models.pageHistory.query()
       .column([
         'pageHistory.id',
         'pageHistory.path',
@@ -252,6 +267,8 @@ static async getHistory({ pageId, offsetPage = 0, offsetSize = 100 }: HistoryQue
       .where({
         'pageHistory.pageId': pageId
       })
+    scopePageQuery(previousQuery, requester, { table: 'pageHistory', includeAllForSystemManager: true })
+    prevPh = await previousQuery
       .orderBy('pageHistory.versionDate', 'desc')
       .offset((offsetPage + 1) * offsetSize)
       .limit(1)

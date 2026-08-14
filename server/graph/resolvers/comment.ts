@@ -2,7 +2,7 @@ import graphHelper from '../../helpers/graph.ts'
 import commentOperations from '../../operations/comments.ts'
 
 type ResolverArgs = Record<string, unknown>
-interface CommentListArgs { locale: string, path: string }
+interface CommentListArgs { pageId: number }
 interface CommentIdArgs { id: number }
 interface ProviderArgs { providers?: unknown }
 interface ResolverContext { req: { user: Express.User, ip: string } }
@@ -19,8 +19,7 @@ export default {
     list (_obj: unknown, args: CommentListArgs, context: ResolverContext) {
       return commentOperations.list({
         requester: context.req.user,
-        locale: args.locale,
-        path: args.path
+        pageId: args.pageId
       })
     },
     single (_obj: unknown, args: CommentIdArgs, context: ResolverContext) {

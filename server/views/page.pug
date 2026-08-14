@@ -22,6 +22,7 @@ block body
       :author-id=page.authorId
       editor=page.editorKey
       :is-published=page.isPublished.toString()
+      visibility=page.visibility
       toc=Buffer.from(page.toc).toString('base64')
       :page-id=page.id
       sidebar=Buffer.from(JSON.stringify(sidebar)).toString('base64')

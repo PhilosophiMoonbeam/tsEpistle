@@ -1,4 +1,5 @@
 import _ from 'lodash'
+import { canReadPage, type PagePrincipal } from '../helpers/page-access.ts'
 
 import configuration, { validateRows } from './configuration.ts'
 
@@ -15,14 +16,14 @@ interface Query {
   where(column: string, value: unknown): { orderBy(column: string): Promise<Comment[]> }
   patch(data: Record<string, unknown>): { where(column: string, value: unknown): Promise<unknown> }
 }
-interface Page { id: number, localeCode: string, path: string, tags: unknown[] }
+interface Page { id: number, localeCode: string, path: string, tags: unknown[], visibility: 'public' | 'private', ownerId: number | null }
 interface Comment extends Record<string, unknown> { id: number, pageId?: number, name?: string, email?: string, ip?: string }
 interface CommentModels {
   commentProviders: { getProviders(): Promise<Provider[]>, query(): Query, initProvider(): Promise<unknown> }
   pages: { query(): Query }
   comments: { query(): Query, postNewComment(input: Record<string, unknown>): unknown, updateComment(input: Record<string, unknown>): unknown, deleteComment(input: Record<string, unknown>): unknown }
 }
-type Requester = Record<string, unknown>
+type Requester = PagePrincipal
 type ErrorConstructor = new () => Error
 interface CommentErrors {
   CommentViewForbidden: ErrorConstructor
@@ -71,12 +72,17 @@ const updateProviders = async (providers: unknown): Promise<void> => {
   await models.commentProviders.initProvider()
 }
 
-const list = async ({ requester, locale, path }: { requester: Requester, locale: string, path: string }) => {
+const list = async ({ requester, pageId }: { requester: Requester, pageId: number }) => {
   const { models, auth, Error: errors } = getWiki()
-  const page = await models.pages.query().select('pages.id').findOne({ localeCode: locale, path })
-    .withGraphJoined('tags').modifyGraph('tags', builder => builder.select('tag'))
-  if (!page) return []
-  if (!auth.checkAccess(requester, ['read:comments'], { locale, path, tags: page.tags })) {
+  if (!Number.isSafeInteger(pageId) || pageId < 1) throw new errors.CommentNotFound()
+  const page = await models.pages.query().select('pages.id', 'pages.localeCode', 'pages.path', 'pages.visibility', 'pages.ownerId')
+    .findById(pageId).withGraphJoined('tags').modifyGraph('tags', builder => builder.select('tag'))
+  if (!page || (page.visibility === 'private' && !canReadPage(requester, page))) throw new errors.CommentNotFound()
+  if (!canReadPage(requester, page) || !auth.checkAccess(requester, ['read:comments'], {
+    locale: page.localeCode,
+    path: page.path,
+    tags: page.tags
+  })) {
     throw new errors.CommentViewForbidden()
   }
   return (await models.comments.query().where('pageId', page.id).orderBy('createdAt')).map(comment => ({
@@ -88,13 +94,18 @@ const get = async ({ requester, id }: { requester: Requester, id: number }) => {
   const { models, data: definitions, auth, Error: errors, logger } = getWiki()
   const comment = await definitions.commentProvider.getCommentById(id)
   if (!comment || !comment.pageId) throw new errors.CommentNotFound()
-  const page = await models.pages.query().select('localeCode', 'path').findById(comment.pageId)
+  const page = await models.pages.query().select('localeCode', 'path', 'visibility', 'ownerId').findById(comment.pageId)
     .withGraphJoined('tags').modifyGraph('tags', builder => builder.select('tag'))
   if (!page) {
     logger.warn(`Comment #${comment.id} is linked to a page #${comment.pageId} that doesn't exist! [ERROR]`)
-    throw new errors.CommentGenericError()
+    throw new errors.CommentNotFound()
   }
-  if (!auth.checkAccess(requester, ['read:comments'], { path: page.path, locale: page.localeCode, tags: page.tags })) {
+  if (page.visibility === 'private' && !canReadPage(requester, page)) throw new errors.CommentNotFound()
+  if (!canReadPage(requester, page) || !auth.checkAccess(requester, ['read:comments'], {
+    path: page.path,
+    locale: page.localeCode,
+    tags: page.tags
+  })) {
     throw new errors.CommentViewForbidden()
   }
   return { ...comment, authorName: comment.name, authorEmail: comment.email, authorIP: comment.ip }

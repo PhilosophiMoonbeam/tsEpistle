@@ -8,6 +8,7 @@ block body
       :page-id=page.id
       locale=page.localeCode
       path=page.path
+      visibility=page.visibility
       :version-id=page.versionId
       version-date=page.versionDate
       effective-permissions=Buffer.from(JSON.stringify(effectivePermissions)).toString('base64')

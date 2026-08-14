@@ -58,6 +58,7 @@ const plugin: SearchPlugin = {
     pageQuery.modifyGraph('tags', (builder: RelatedQuery) => {
       builder.select('tag')
     })
+    pageQuery.where('visibility', 'public')
     pageQuery.where((builder: PageWhereQuery) => {
       builder.where('isPublished', true)
       if (opts.locale) {

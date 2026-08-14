@@ -10,15 +10,14 @@ interface ParsePathOptions {
 interface ParsedPath {
   locale: string
   path: string
-  private: boolean
-  privateNS: string
   explicitLocale: boolean
 }
 
 interface HashOptions {
   locale: string
   path: string
-  privateNS: string
+  visibility: 'public' | 'private'
+  ownerId: number | null
 }
 
 interface PageTag {
@@ -64,8 +63,6 @@ const pageHelper = {
     const pathObj: ParsedPath = {
       locale: wiki.config.lang.code,
       path: 'home',
-      private: false,
-      privateNS: '',
       explicitLocale: false
     }
 
@@ -110,7 +107,10 @@ const pageHelper = {
    * Generate unique hash from page
    */
   generateHash (opts: HashOptions): string {
-    return crypto.createHash('sha1').update(`${opts.locale}|${opts.path}|${opts.privateNS}`).digest('hex')
+    const cacheIdentity = opts.visibility === 'private'
+      ? `${opts.locale}|${opts.path}|private|${opts.ownerId}`
+      : `${opts.locale}|${opts.path}`
+    return crypto.createHash('sha1').update(cacheIdentity).digest('hex')
   },
   /**
    * Inject Page Metadata

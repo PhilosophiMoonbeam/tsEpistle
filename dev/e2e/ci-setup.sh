@@ -44,3 +44,15 @@ sqlite)
   echo "Invalid DB Type!"
   ;;
 esac
+
+for attempt in {1..60}; do
+  if curl --fail --silent --show-error --output /dev/null http://127.0.0.1:3000/; then
+    break
+  fi
+  if [ "$attempt" -eq 60 ]; then
+    echo "Wiki did not become ready within 60 seconds."
+    docker logs wiki
+    exit 1
+  fi
+  sleep 1
+done

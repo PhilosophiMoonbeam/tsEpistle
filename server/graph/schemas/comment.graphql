@@ -18,8 +18,7 @@ type CommentQuery {
   providers: [CommentProvider] @auth(requires: ["manage:system"])
 
   list(
-    locale: String!
-    path: String!
+    pageId: Int!
   ): [CommentPost]! @auth(requires: ["read:comments", "manage:system"])
 
   single(

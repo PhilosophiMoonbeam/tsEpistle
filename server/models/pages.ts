@@ -4,6 +4,7 @@ import type { EventEmitter } from 'node:events'
 import _ from 'lodash'
 import { Type as JSBinType } from 'js-binary'
 import pageHelper from '../helpers/page.ts'
+import { canDeletePage, canWritePage, managesSystem, principalId, type PageVisibility } from '../helpers/page-access.ts'
 import path from 'node:path'
 import fs from 'fs-extra'
 import * as yaml from 'js-yaml'
@@ -48,7 +49,8 @@ interface CachedPage {
   creatorName: string
   description: string
   editorKey: string
-  isPrivate: boolean
+  visibility: PageVisibility
+  ownerId: number
   isPublished: boolean
   publishEndDate: string
   publishStartDate: string
@@ -67,18 +69,17 @@ interface CachedPage {
   updatedAt: string
 }
 
-interface CachedPageResult extends Omit<CachedPage, 'isPrivate'> {
+interface CachedPageResult extends Omit<CachedPage, 'ownerId'> {
   path: string
   localeCode: string
-  isPrivate: boolean | undefined
+  ownerId: number | null
 }
 
 interface PageLookup {
   path: string
   locale: string
-  userId?: number
-  isPrivate?: boolean
-  privateNS?: string
+  visibility: PageVisibility
+  ownerId: number | null
 }
 
 interface CreatePageOptions {
@@ -88,7 +89,7 @@ interface CreatePageOptions {
   content: string
   editor: string
   description: string
-  isPrivate: boolean
+  visibility: PageVisibility
   isPublished: boolean | number
   title: string
   publishEndDate?: string | null
@@ -102,11 +103,11 @@ interface CreatePageOptions {
 interface UpdatePageOptions {
   id: number
   user: PageUser
-  content: string
-  description: string
-  isPublished: boolean | number
-  title: string
-  tags: string[]
+  content?: string
+  description?: string
+  isPublished?: boolean | number
+  title?: string
+  tags?: string[]
   action?: string
   locale?: string
   path?: string
@@ -116,6 +117,20 @@ interface UpdatePageOptions {
   scriptJs?: string
   skipStorage?: boolean
 }
+interface ChangeVisibilityOptions {
+  id: number
+  visibility: PageVisibility
+  user: PageUser
+  confirmPublication?: boolean
+  skipStorage?: boolean
+}
+
+interface TransferOwnershipOptions {
+  id: number
+  ownerId: number
+  user: PageUser
+}
+
 
 interface ConvertPageOptions {
   id: number
@@ -135,7 +150,6 @@ type MovePageOptions = ({
   destinationPath: string
   destinationLocale: string
   user: PageUser
-  isPrivate?: boolean
   skipStorage?: boolean
 }
 
@@ -172,7 +186,8 @@ interface PageVersionOptions {
   description: string
   editorKey: string
   hash: string
-  isPrivate: boolean | number
+  visibility: PageVisibility
+  ownerId: number | null
   isPublished: boolean | number
   localeCode: string
   path: string
@@ -181,6 +196,7 @@ interface PageVersionOptions {
   title: string
   action?: string
   versionDate: string
+  transaction?: Knex.Transaction
 }
 
 interface PageRenameDetails {
@@ -304,9 +320,9 @@ declare locale?: string
 declare hash: string
 declare title: string
 declare description: string
-declare isPrivate: boolean | number
+declare visibility: PageVisibility
+declare ownerId: number | null
 declare isPublished: boolean | number
-declare privateNS: string
 declare publishStartDate: string
 declare publishEndDate: string
 declare content: string
@@ -337,8 +353,8 @@ static override get tableName() { return 'pages' } static override get jsonSchem
     title: {type: 'string'},
     description: {type: 'string'},
     isPublished: {type: 'boolean'},
-    privateNS: {type: 'string'},
-    publishStartDate: {type: 'string'},
+    visibility: {type: 'string', enum: ['public', 'private']},
+    ownerId: {type: ['integer', 'null']},
     publishEndDate: {type: 'string'},
     content: {type: 'string'},
     contentType: {type: 'string'},
@@ -426,7 +442,8 @@ static get cacheSchema(): JSBinType<CachedPage> {
     creatorName: 'string',
     description: 'string',
     editorKey: 'string',
-    isPrivate: 'boolean',
+    visibility: 'string',
+    ownerId: 'uint',
     isPublished: 'boolean',
     publishEndDate: 'string',
     publishStartDate: 'string',
@@ -541,16 +558,26 @@ static async createPage(opts: CreatePageOptions): Promise<Page> {
     opts.path = opts.path.slice(1)
   }
 
-  // -> Check for page access
-  if (!wiki.auth.checkAccess(opts.user, ['write:pages'], {
+  const ownerId = opts.visibility === 'private' ? principalId(opts.user) : null
+  if (opts.visibility === 'private' && ownerId === null) {
+    throw new wiki.Error.PageDeleteForbidden()
+  }
+  if (opts.visibility === 'public' && !wiki.auth.checkAccess(opts.user, ['write:pages'], {
     locale: opts.locale,
     path: opts.path
   })) {
     throw new wiki.Error.PageDeleteForbidden()
   }
 
-  // -> Check for duplicate
-  const dupCheck = await wiki.models.pages.query().select('id').where('localeCode', opts.locale).where('path', opts.path).first()
+  const dupCheck = await wiki.models.pages.query()
+    .select('id')
+    .where({
+      visibility: opts.visibility,
+      ownerId,
+      localeCode: opts.locale,
+      path: opts.path
+    })
+    .first()
   if (dupCheck) {
     throw new wiki.Error.PageDuplicateCreate()
   }
@@ -582,7 +609,6 @@ static async createPage(opts: CreatePageOptions): Promise<Page> {
     scriptJs = opts.scriptJs || ''
   }
 
-  // -> Create page
   await wiki.models.pages.query().insert({
     authorId: opts.user.id,
     content: opts.content,
@@ -590,8 +616,14 @@ static async createPage(opts: CreatePageOptions): Promise<Page> {
     contentType: wiki.data.editors.find(editor => editor.key === opts.editor)?.contentType ?? 'text',
     description: opts.description,
     editorKey: opts.editor,
-    hash: pageHelper.generateHash({ path: opts.path, locale: opts.locale, privateNS: opts.isPrivate ? 'TODO' : '' }),
-    isPrivate: opts.isPrivate,
+    hash: pageHelper.generateHash({
+      path: opts.path,
+      locale: opts.locale,
+      visibility: opts.visibility,
+      ownerId
+    }),
+    visibility: opts.visibility,
+    ownerId,
     isPublished: opts.isPublished,
     localeCode: opts.locale,
     path: opts.path,
@@ -607,8 +639,8 @@ static async createPage(opts: CreatePageOptions): Promise<Page> {
   const page = await wiki.models.pages.getPageFromDb({
     path: opts.path,
     locale: opts.locale,
-    userId: opts.user.id,
-    isPrivate: opts.isPrivate
+    visibility: opts.visibility,
+    ownerId
   })
   if (!page) {
     throw new wiki.Error.PageNotFound()
@@ -625,28 +657,27 @@ static async createPage(opts: CreatePageOptions): Promise<Page> {
   // -> Rebuild page tree
   await wiki.models.pages.rebuildTree()
 
-  // -> Add to Search Index
-  const pageContents = await wiki.models.pages.query().findById(page.id).select('render')
-  if (!pageContents) {
-    throw new wiki.Error.PageNotFound()
-  }
-  page.safeContent = wiki.models.pages.cleanHTML(pageContents.render)
-  await wiki.data.searchEngine.created(page)
+  if (page.visibility === 'public') {
+    const pageContents = await wiki.models.pages.query().findById(page.id).select('render')
+    if (!pageContents) {
+      throw new wiki.Error.PageNotFound()
+    }
+    page.safeContent = wiki.models.pages.cleanHTML(pageContents.render)
+    await wiki.data.searchEngine.created(page)
 
-  // -> Add to Storage
-  if (!opts.skipStorage) {
-    await wiki.models.storage.pageEvent({
-      event: 'created',
-      page
+    if (!opts.skipStorage) {
+      await wiki.models.storage.pageEvent({
+        event: 'created',
+        page
+      })
+    }
+
+    await wiki.models.pages.reconnectLinks({
+      locale: page.localeCode,
+      path: page.path,
+      mode: 'create'
     })
   }
-
-  // -> Reconnect Links
-  await wiki.models.pages.reconnectLinks({
-    locale: page.localeCode,
-    path: page.path,
-    mode: 'create'
-  })
 
   // -> Get latest updatedAt
   const latestPage = await wiki.models.pages.query().findById(page.id).select('updatedAt')
@@ -667,20 +698,15 @@ static async createPage(opts: CreatePageOptions): Promise<Page> {
 static async updatePage(opts: UpdatePageOptions): Promise<Page> {
   // -> Fetch original page
   const ogPage = await wiki.models.pages.query().findById(opts.id)
-  if (!ogPage) {
-    throw new Error('Invalid Page Id')
+  if (!ogPage || (ogPage.visibility === 'private' && !canWritePage(opts.user, ogPage))) {
+    throw new wiki.Error.PageNotFound()
   }
-
-  // -> Check for page access
-  if (!wiki.auth.checkAccess(opts.user, ['write:pages'], {
-    locale: ogPage.localeCode,
-    path: ogPage.path
-  })) {
+  if (!canWritePage(opts.user, ogPage)) {
     throw new wiki.Error.PageUpdateForbidden()
   }
 
-  // -> Check for empty content
-  if (!opts.content || _.trim(opts.content).length < 1) {
+  const content = opts.content ?? ogPage.content
+  if (!content || _.trim(content).length < 1) {
     throw new wiki.Error.PageEmptyContent()
   }
 
@@ -700,10 +726,10 @@ static async updatePage(opts: UpdatePageOptions): Promise<Page> {
   // -> Format CSS Scripts
   let scriptCss = typeof ogPage.extra.css === 'string' ? ogPage.extra.css : ''
   if (wiki.auth.checkAccess(opts.user, ['write:styles'], {
-    locale: opts.locale,
-    path: opts.path
-  })) {
-    if (typeof opts.scriptCss === 'string' && !_.isEmpty(opts.scriptCss)) {
+    locale: opts.locale ?? ogPage.localeCode,
+    path: opts.path ?? ogPage.path
+  }) && opts.scriptCss !== undefined) {
+    if (!_.isEmpty(opts.scriptCss)) {
       scriptCss = new CleanCSS({ inline: false }).minify(opts.scriptCss).styles
     } else {
       scriptCss = ''
@@ -713,21 +739,23 @@ static async updatePage(opts: UpdatePageOptions): Promise<Page> {
   // -> Format JS Scripts
   let scriptJs = typeof ogPage.extra.js === 'string' ? ogPage.extra.js : ''
   if (wiki.auth.checkAccess(opts.user, ['write:scripts'], {
-    locale: opts.locale,
-    path: opts.path
-  })) {
-    scriptJs = opts.scriptJs || ''
+    locale: opts.locale ?? ogPage.localeCode,
+    path: opts.path ?? ogPage.path
+  }) && opts.scriptJs !== undefined) {
+    scriptJs = opts.scriptJs
   }
 
   // -> Update page
   await wiki.models.pages.query().patch({
     authorId: opts.user.id,
-    content: opts.content,
-    description: opts.description,
-    isPublished: opts.isPublished === true || opts.isPublished === 1,
-    publishEndDate: opts.publishEndDate || '',
-    publishStartDate: opts.publishStartDate || '',
-    title: opts.title,
+    content,
+    description: opts.description ?? ogPage.description,
+    isPublished: opts.isPublished === undefined
+      ? (ogPage.isPublished === true || ogPage.isPublished === 1)
+      : (opts.isPublished === true || opts.isPublished === 1),
+    publishEndDate: opts.publishEndDate === undefined ? ogPage.publishEndDate : (opts.publishEndDate || ''),
+    publishStartDate: opts.publishStartDate === undefined ? ogPage.publishStartDate : (opts.publishStartDate || ''),
+    title: opts.title ?? ogPage.title,
     extra: {
       ...ogPage.extra,
       js: scriptJs,
@@ -740,32 +768,32 @@ static async updatePage(opts: UpdatePageOptions): Promise<Page> {
   }
 
   // -> Save Tags
-  await wiki.models.tags.associateTags({ tags: opts.tags, page })
-
+  if (opts.tags !== undefined) {
+    await wiki.models.tags.associateTags({ tags: opts.tags, page })
+  }
   // -> Render page to HTML
   await wiki.models.pages.renderPage(page)
   wiki.events.outbound.emit('deletePageFromCache', page.hash)
 
-  // -> Update Search Index
-  const pageContents = await wiki.models.pages.query().findById(page.id).select('render')
-  if (!pageContents) {
-    throw new wiki.Error.PageNotFound()
-  }
-  page.safeContent = wiki.models.pages.cleanHTML(pageContents.render)
-  await wiki.data.searchEngine.updated(page)
+  if (page.visibility === 'public') {
+    const pageContents = await wiki.models.pages.query().findById(page.id).select('render')
+    if (!pageContents) {
+      throw new wiki.Error.PageNotFound()
+    }
+    page.safeContent = wiki.models.pages.cleanHTML(pageContents.render)
+    await wiki.data.searchEngine.updated(page)
 
-  // -> Update on Storage
-  if (!opts.skipStorage) {
-    await wiki.models.storage.pageEvent({
-      event: 'updated',
-      page
-    })
+    if (!opts.skipStorage) {
+      await wiki.models.storage.pageEvent({
+        event: 'updated',
+        page
+      })
+    }
   }
 
   // -> Perform move?
   if ((opts.locale && opts.locale !== page.localeCode) || (opts.path && opts.path !== page.path)) {
-    // -> Check target path access
-    if (!wiki.auth.checkAccess(opts.user, ['write:pages'], {
+    if (page.visibility === 'public' && !wiki.auth.checkAccess(opts.user, ['write:pages'], {
       locale: opts.locale,
       path: opts.path
     })) {
@@ -794,6 +822,121 @@ static async updatePage(opts: UpdatePageOptions): Promise<Page> {
 
   return page
 }
+static async changeVisibility(opts: ChangeVisibilityOptions): Promise<Page> {
+  const page = await wiki.models.pages.getPageFromDb(opts.id)
+  if (!page || !canWritePage(opts.user, page)) {
+    throw new wiki.Error.PageNotFound()
+  }
+  if (page.visibility === opts.visibility) return page
+
+  const ownerId = opts.visibility === 'private' ? principalId(opts.user) : null
+  if (opts.visibility === 'private' && ownerId === null) {
+    throw new wiki.Error.PageUpdateForbidden()
+  }
+  if (opts.visibility === 'public') {
+    if (!opts.confirmPublication || !wiki.auth.checkAccess(opts.user, ['write:pages'], {
+      locale: page.localeCode,
+      path: page.path
+    })) {
+      throw new wiki.Error.PageUpdateForbidden()
+    }
+  }
+  const collision = await wiki.models.pages.query().findOne({
+    visibility: opts.visibility,
+    ownerId,
+    localeCode: page.localeCode,
+    path: page.path
+  })
+  if (collision) throw new wiki.Error.PagePathCollision()
+
+  await wiki.models.pageHistory.addVersion({
+    ...page,
+    action: opts.visibility === 'private' ? 'made-private' : 'published',
+    versionDate: page.updatedAt
+  })
+  const hash = pageHelper.generateHash({
+    path: page.path,
+    locale: page.localeCode,
+    visibility: opts.visibility,
+    ownerId
+  })
+  await wiki.models.pages.query().patch({
+    visibility: opts.visibility,
+    ownerId,
+    hash
+  }).findById(page.id)
+  await wiki.models.pages.deletePageFromCache(page.hash)
+  wiki.events.outbound.emit('deletePageFromCache', page.hash)
+  await wiki.models.pages.rebuildTree()
+
+  const updated = await wiki.models.pages.getPageFromDb(page.id)
+  if (!updated) throw new wiki.Error.PageNotFound()
+  const pageContents = await wiki.models.pages.query().findById(page.id).select('render')
+  if (!pageContents) throw new wiki.Error.PageNotFound()
+  updated.safeContent = wiki.models.pages.cleanHTML(pageContents.render)
+
+  if (updated.visibility === 'public') {
+    await wiki.data.searchEngine.created(updated)
+    if (!opts.skipStorage) {
+      await wiki.models.storage.pageEvent({ event: 'created', page: updated })
+    }
+    await wiki.models.pages.reconnectLinks({
+      locale: updated.localeCode,
+      path: updated.path,
+      mode: 'create'
+    })
+  } else {
+    await wiki.data.searchEngine.deleted(page)
+    if (!opts.skipStorage) {
+      await wiki.models.storage.pageEvent({ event: 'deleted', page })
+    }
+    await wiki.models.pages.reconnectLinks({
+      locale: page.localeCode,
+      path: page.path,
+      mode: 'delete'
+    })
+  }
+  return updated
+}
+
+static async transferOwnership(opts: TransferOwnershipOptions): Promise<Page> {
+  if (!managesSystem(opts.user)) throw new wiki.Error.PageNotFound()
+  const page = await wiki.models.pages.getPageFromDb(opts.id)
+  if (!page || page.visibility !== 'private') throw new wiki.Error.PageNotFound()
+  const collision = await wiki.models.pages.query().findOne({
+    visibility: 'private',
+    ownerId: opts.ownerId,
+    localeCode: page.localeCode,
+    path: page.path
+  })
+  if (collision) throw new wiki.Error.PagePathCollision()
+
+  await wiki.models.knex.transaction(async transaction => {
+    await wiki.models.pageHistory.addVersion({
+      ...page,
+      action: 'ownership-transferred',
+      versionDate: page.updatedAt,
+      transaction
+    })
+    const hash = pageHelper.generateHash({
+      path: page.path,
+      locale: page.localeCode,
+      visibility: 'private',
+      ownerId: opts.ownerId
+    })
+    await wiki.models.pages.query(transaction).patch({ ownerId: opts.ownerId, hash }).findById(page.id)
+    await wiki.models.knex('pageHistory').transacting(transaction)
+      .where({ pageId: page.id, visibility: 'private' })
+      .update({ ownerId: opts.ownerId })
+  })
+  await wiki.models.pages.deletePageFromCache(page.hash)
+  wiki.events.outbound.emit('deletePageFromCache', page.hash)
+  await wiki.models.pages.rebuildTree()
+  const updated = await wiki.models.pages.getPageFromDb(page.id)
+  if (!updated) throw new wiki.Error.PageNotFound()
+  return updated
+}
+
 
 /**
  * Convert an Existing Page
@@ -804,20 +947,14 @@ static async updatePage(opts: UpdatePageOptions): Promise<Page> {
 static async convertPage(opts: ConvertPageOptions): Promise<void> {
   // -> Fetch original page
   const ogPage = await wiki.models.pages.query().findById(opts.id)
-  if (!ogPage) {
-    throw new Error('Invalid Page Id')
+  if (!ogPage || (ogPage.visibility === 'private' && !canWritePage(opts.user, ogPage))) {
+    throw new wiki.Error.PageNotFound()
   }
-
+  if (!canWritePage(opts.user, ogPage)) {
+    throw new wiki.Error.PageUpdateForbidden()
+  }
   if (ogPage.editorKey === opts.editor) {
     throw new Error('Page is already using this editor. Nothing to convert.')
-  }
-
-  // -> Check for page access
-  if (!wiki.auth.checkAccess(opts.user, ['write:pages'], {
-    locale: ogPage.localeCode,
-    path: ogPage.path
-  })) {
-    throw new wiki.Error.PageUpdateForbidden()
   }
 
   // -> Check content type
@@ -961,11 +1098,12 @@ static async convertPage(opts: ConvertPageOptions): Promise<void> {
   await wiki.models.pages.deletePageFromCache(page.hash)
   wiki.events.outbound.emit('deletePageFromCache', page.hash)
 
-  // -> Update on Storage
-  await wiki.models.storage.pageEvent({
-    event: 'updated',
-    page
-  })
+  if (page.visibility === 'public') {
+    await wiki.models.storage.pageEvent({
+      event: 'updated',
+      page
+    })
+  }
 }
 
 /**
@@ -981,11 +1119,19 @@ static async movePage(opts: MovePageOptions): Promise<void> {
   } else {
     page = await wiki.models.pages.query().findOne({
       path: opts.path,
-      localeCode: opts.locale
+      localeCode: opts.locale,
+      visibility: 'public',
+      ownerId: null
     })
   }
   if (!page) {
     throw new wiki.Error.PageNotFound()
+  }
+  if (page.visibility === 'private' && !canWritePage(opts.user, page)) {
+    throw new wiki.Error.PageNotFound()
+  }
+  if (!canWritePage(opts.user, page)) {
+    throw new wiki.Error.PageMoveForbidden()
   }
 
   if (opts.destinationPath.includes('.') || opts.destinationPath.includes(' ') || opts.destinationPath.includes('\\') || opts.destinationPath.includes('//')) {
@@ -998,13 +1144,7 @@ static async movePage(opts: MovePageOptions): Promise<void> {
     opts.destinationPath = opts.destinationPath.slice(1)
   }
 
-  if (!wiki.auth.checkAccess(opts.user, ['manage:pages'], {
-    locale: page.localeCode,
-    path: page.path
-  })) {
-    throw new wiki.Error.PageMoveForbidden()
-  }
-  if (!wiki.auth.checkAccess(opts.user, ['write:pages'], {
+  if (page.visibility === 'public' && !wiki.auth.checkAccess(opts.user, ['write:pages'], {
     locale: opts.destinationLocale,
     path: opts.destinationPath
   })) {
@@ -1013,7 +1153,9 @@ static async movePage(opts: MovePageOptions): Promise<void> {
 
   const destinationPage = await wiki.models.pages.query().findOne({
     path: opts.destinationPath,
-    localeCode: opts.destinationLocale
+    localeCode: opts.destinationLocale,
+    visibility: page.visibility,
+    ownerId: page.ownerId
   })
   if (destinationPage) {
     throw new wiki.Error.PagePathCollision()
@@ -1028,7 +1170,8 @@ static async movePage(opts: MovePageOptions): Promise<void> {
   const destinationHash = pageHelper.generateHash({
     path: opts.destinationPath,
     locale: opts.destinationLocale,
-    privateNS: opts.isPrivate ? 'TODO' : ''
+    visibility: page.visibility,
+    ownerId: page.ownerId
   })
   const destinationTitle = page.title === _.last(page.path.split('/'))
     ? (_.last(opts.destinationPath.split('/')) ?? page.title)
@@ -1044,63 +1187,63 @@ static async movePage(opts: MovePageOptions): Promise<void> {
   wiki.events.outbound.emit('deletePageFromCache', page.hash)
   await wiki.models.pages.rebuildTree()
 
-  const pageContents = await wiki.models.pages.query().findById(page.id).select('render')
-  if (!pageContents) {
-    throw new wiki.Error.PageNotFound()
-  }
-  page.safeContent = wiki.models.pages.cleanHTML(pageContents.render)
-  const renamedPage: PageRenameDetails = {
-    ...page,
-    title: destinationTitle,
-    destinationPath: opts.destinationPath,
-    destinationLocaleCode: opts.destinationLocale,
-    destinationHash
-  }
-  await wiki.data.searchEngine.renamed(renamedPage)
+  if (page.visibility === 'public') {
+    const pageContents = await wiki.models.pages.query().findById(page.id).select('render')
+    if (!pageContents) {
+      throw new wiki.Error.PageNotFound()
+    }
+    page.safeContent = wiki.models.pages.cleanHTML(pageContents.render)
+    const renamedPage: PageRenameDetails = {
+      ...page,
+      title: destinationTitle,
+      destinationPath: opts.destinationPath,
+      destinationLocaleCode: opts.destinationLocale,
+      destinationHash
+    }
+    await wiki.data.searchEngine.renamed(renamedPage)
 
-  if (!opts.skipStorage) {
-    await wiki.models.storage.pageEvent({
-      event: 'renamed',
-      page: {
-        ...page,
-        title: destinationTitle,
-        destinationPath: opts.destinationPath,
-        destinationLocaleCode: opts.destinationLocale,
-        destinationHash,
-        moveAuthorId: opts.user.id,
-        moveAuthorName: opts.user.name,
-        moveAuthorEmail: opts.user.email
-      }
+    if (!opts.skipStorage) {
+      await wiki.models.storage.pageEvent({
+        event: 'renamed',
+        page: {
+          ...page,
+          title: destinationTitle,
+          destinationPath: opts.destinationPath,
+          destinationLocaleCode: opts.destinationLocale,
+          destinationHash,
+          moveAuthorId: opts.user.id,
+          moveAuthorName: opts.user.name,
+          moveAuthorEmail: opts.user.email
+        }
+      })
+    }
+
+    await wiki.models.pages.reconnectLinks({
+      sourceLocale: page.localeCode,
+      sourcePath: page.path,
+      locale: opts.destinationLocale,
+      path: opts.destinationPath,
+      mode: 'move'
+    })
+    await wiki.models.pages.reconnectLinks({
+      locale: opts.destinationLocale,
+      path: opts.destinationPath,
+      mode: 'create'
     })
   }
-
-  await wiki.models.pages.reconnectLinks({
-    sourceLocale: page.localeCode,
-    sourcePath: page.path,
-    locale: opts.destinationLocale,
-    path: opts.destinationPath,
-    mode: 'move'
-  })
-  await wiki.models.pages.reconnectLinks({
-    locale: opts.destinationLocale,
-    path: opts.destinationPath,
-    mode: 'create'
-  })
 }
 
 static async deletePage(opts: DeletePageOptions): Promise<void> {
   const page = await wiki.models.pages.getPageFromDb(opts.id !== undefined ? opts.id : {
     path: opts.path,
-    locale: opts.locale
+    locale: opts.locale,
+    visibility: 'public',
+    ownerId: null
   })
-  if (!page) {
+  if (!page || (page.visibility === 'private' && !canDeletePage(opts.user, page))) {
     throw new wiki.Error.PageNotFound()
   }
-
-  if (!wiki.auth.checkAccess(opts.user, ['delete:pages'], {
-    locale: page.locale,
-    path: page.path
-  })) {
+  if (!canDeletePage(opts.user, page)) {
     throw new wiki.Error.PageDeleteForbidden()
   }
 
@@ -1113,19 +1256,21 @@ static async deletePage(opts: DeletePageOptions): Promise<void> {
   await wiki.models.pages.deletePageFromCache(page.hash)
   wiki.events.outbound.emit('deletePageFromCache', page.hash)
   await wiki.models.pages.rebuildTree()
-  await wiki.data.searchEngine.deleted(page)
+  if (page.visibility === 'public') {
+    await wiki.data.searchEngine.deleted(page)
 
-  if (!opts.skipStorage) {
-    await wiki.models.storage.pageEvent({
-      event: 'deleted',
-      page
+    if (!opts.skipStorage) {
+      await wiki.models.storage.pageEvent({
+        event: 'deleted',
+        page
+      })
+    }
+    await wiki.models.pages.reconnectLinks({
+      locale: page.localeCode,
+      path: page.path,
+      mode: 'delete'
     })
   }
-  await wiki.models.pages.reconnectLinks({
-    locale: page.localeCode,
-    path: page.path,
-    mode: 'delete'
-  })
 }
 
 static async reconnectLinks(opts: ReconnectLinksOptions): Promise<void | false> {
@@ -1238,9 +1383,9 @@ static async getPageFromDb(opts: number | PageLookup): Promise<Page | undefined>
         'pages.hash',
         'pages.title',
         'pages.description',
-        'pages.isPrivate',
+        'pages.visibility',
+        'pages.ownerId',
         'pages.isPublished',
-        'pages.privateNS',
         'pages.publishStartDate',
         'pages.publishEndDate',
         'pages.content',
@@ -1271,7 +1416,9 @@ static async getPageFromDb(opts: number | PageLookup): Promise<Page | undefined>
         'pages.id': opts
       } : {
         'pages.path': opts.path,
-        'pages.localeCode': opts.locale
+        'pages.localeCode': opts.locale,
+        'pages.visibility': opts.visibility,
+        'pages.ownerId': opts.ownerId
       })
       .first()
   } catch (err: unknown) {
@@ -1295,7 +1442,8 @@ static async savePageToCache(page: Page): Promise<void> {
       css: typeof page.extra.css === 'string' ? page.extra.css : '',
       js: typeof page.extra.js === 'string' ? page.extra.js : ''
     },
-    isPrivate: page.isPrivate === 1 || page.isPrivate === true,
+    visibility: page.visibility,
+    ownerId: page.ownerId ?? 0,
     isPublished: page.isPublished === 1 || page.isPublished === true,
     publishEndDate: page.publishEndDate,
     publishStartDate: page.publishStartDate,
@@ -1312,7 +1460,8 @@ static async getPageFromCache(opts: PageLookup): Promise<CachedPageResult | fals
   const pageHash = pageHelper.generateHash({
     path: opts.path,
     locale: opts.locale,
-    privateNS: opts.isPrivate ? 'TODO' : ''
+    visibility: opts.visibility,
+    ownerId: opts.ownerId
   })
   const cachePath = path.resolve(wiki.ROOTPATH, wiki.config.dataPath, `cache/${pageHash}.bin`)
   try {
@@ -1322,7 +1471,7 @@ static async getPageFromCache(opts: PageLookup): Promise<CachedPageResult | fals
       ...page,
       path: opts.path,
       localeCode: opts.locale,
-      isPrivate: opts.isPrivate
+      ownerId: page.ownerId === 0 ? null : page.ownerId
     }
   } catch (err: unknown) {
     if (typeof err === 'object' && err !== null && 'code' in err && err.code === 'ENOENT') {

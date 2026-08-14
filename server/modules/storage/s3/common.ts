@@ -198,7 +198,7 @@ export default class S3CompatibleStorage {
     // -> Pages
     await pipeline(
       wiki.models.knex.column('path', 'localeCode', 'title', 'description', 'contentType', 'content', 'isPublished', 'updatedAt', 'createdAt').select().from('pages').where({
-        isPrivate: false
+        visibility: 'public'
       }).stream(),
       new Transform({
         objectMode: true,

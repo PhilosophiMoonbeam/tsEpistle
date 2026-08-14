@@ -606,7 +606,7 @@ const plugin: GitStoragePlugin = {
     // -> Pages
     await pipeline(
       wiki.models.knex.column('id', 'path', 'localeCode', 'title', 'description', 'contentType', 'content', 'isPublished', 'updatedAt', 'createdAt', 'editorKey').select().from('pages').where({
-        isPrivate: false
+        visibility: 'public'
       }).stream(),
       new Transform({
         objectMode: true,

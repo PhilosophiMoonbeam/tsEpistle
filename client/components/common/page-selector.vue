@@ -121,6 +121,8 @@ function createRootNode (locale: string): PageTreeItem {
     pageId: null,
     parent: 0,
     locale,
+    visibility: 'public',
+    ownerId: null,
     children: []
   }
 }

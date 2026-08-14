@@ -1,4 +1,4 @@
-import { fetchCommentProviders, saveCommentProviders } from './comments-api.ts'
+import { fetchCommentProviders, fetchComments, saveCommentProviders } from './comments-api.ts'
 
 function createJsonResponse (payload, ok = true) {
   return {
@@ -21,6 +21,23 @@ describe('comments api helper', () => {
       headers: {
         Accept: 'application/json'
       }
+    })
+  })
+
+  test('scopes comment listing to an unambiguous page identifier', async () => {
+    const comments = [{
+      id: 31,
+      render: '<p>Owner comment</p>',
+      authorName: 'Owner',
+      createdAt: '2026-08-14T00:00:00.000Z',
+      updatedAt: '2026-08-14T00:00:00.000Z'
+    }]
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse(comments))
+
+    await expect(fetchComments(fetchImpl, 17)).resolves.toEqual(comments)
+    expect(fetchImpl).toHaveBeenCalledWith('/_api/comments?pageId=17', {
+      credentials: 'same-origin',
+      headers: { Accept: 'application/json' }
     })
   })
 

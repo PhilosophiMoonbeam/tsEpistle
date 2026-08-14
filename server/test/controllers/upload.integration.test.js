@@ -174,7 +174,7 @@ describe('controllers/upload real multipart integration', () => {
     expect(res.text).toBe('ok')
     expect(wiki.models.assets.upload).toHaveBeenCalledTimes(1)
     expect(wiki.models.assetFolders.getHierarchy).not.toHaveBeenCalled()
-    expect(wiki.auth.checkAccess).toHaveBeenCalledWith(expect.objectContaining({ id: 7 }), ['write:assets'], {
+    expect(wiki.auth.checkAccess).toHaveBeenCalledWith(expect.objectContaining({ id: 7 }), ['write:assets', 'manage:system'], {
       path: 'my_file_name_v1.png'
     })
     expect(wiki.models.assets.upload).toHaveBeenCalledWith(expect.objectContaining({

@@ -444,7 +444,7 @@ const plugin: SearchPlugin<AwsSearchConfig, AwsSearchContext> = {
     await pipeline(
       wiki.models.knex.column({ id: 'hash' }, 'path', { locale: 'localeCode' }, 'title', 'description', 'render').select().from('pages').where({
         isPublished: true,
-        isPrivate: false
+        visibility: 'public'
       }).stream(),
       new Transform({
         objectMode: true,
