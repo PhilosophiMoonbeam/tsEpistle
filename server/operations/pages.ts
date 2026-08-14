@@ -76,7 +76,7 @@ interface KnexQuery extends PromiseLike<Array<PageTreeRecord & LinkRow>> {
   orderBy(columns: unknown): KnexQuery
 }
 interface SearchResult extends Record<string, unknown> { path: string, locale: string, tags?: unknown }
-interface SearchResponse extends Record<string, unknown> { results: SearchResult[] }
+interface SearchResponse extends Record<string, unknown> { results: SearchResult[], suggestions?: unknown[] }
 interface WikiPageOperations {
   Error: {
     PageNotFound: new () => Error
@@ -361,13 +361,31 @@ const search = async (input: OperationInput) => {
   const publicResponse = wiki.data.searchEngine
     ? await wiki.data.searchEngine.query(query, { query, ...args })
     : { results: [], suggestions: [], totalHits: 0 }
-  const publicResults = publicResponse.results.filter(result => wiki.auth.checkAccess(requester, ['read:pages'], {
-    path: result.path,
-    locale: result.locale,
-    tags: result.tags
-  })).map(result => ({ ...result, visibility: 'public' as const }))
+  const publicIdentities = new Set<string>()
+  if (publicResponse.results.length > 0) {
+    const livePublicPages = await wiki.models.pages.query()
+      .select('localeCode', 'path')
+      .modify(builder => {
+        builder.where({ visibility: 'public' })
+        builder.andWhere(matches => {
+          for (const result of publicResponse.results) {
+            matches.orWhere({ localeCode: result.locale, path: result.path })
+          }
+        })
+      })
+    for (const page of livePublicPages) publicIdentities.add(`${page.localeCode}\u0000${page.path}`)
+  }
+  const publicResults = publicResponse.results.filter(result => (
+    publicIdentities.has(`${result.locale}\u0000${result.path}`) &&
+    wiki.auth.checkAccess(requester, ['read:pages'], {
+      path: result.path,
+      locale: result.locale,
+      tags: result.tags
+    })
+  )).map(result => ({ ...result, visibility: 'public' as const }))
   return {
     ...publicResponse,
+    suggestions: publicResults.length === publicResponse.results.length ? publicResponse.suggestions : [],
     results: [...privatePages, ...publicResults],
     totalHits: privatePages.length + publicResults.length
   }

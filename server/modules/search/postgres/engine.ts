@@ -72,6 +72,16 @@ const getKnexClient = (): Knex => {
   return client
 }
 
+const rebuildWordIndex = async (knex: Knex): Promise<void> => {
+  await knex('pagesWords').truncate()
+  await knex.raw(`
+    INSERT INTO "pagesWords" (word)
+      SELECT word FROM ts_stat(
+        'SELECT to_tsvector(''simple'', "title") || to_tsvector(''simple'', "description") || to_tsvector(''simple'', "content") FROM "pagesVector"'
+      )
+  `)
+}
+
 
 const plugin: SearchPlugin<PostgresSearchConfig, PostgresSearchContext> = {
   async activate() {
@@ -211,6 +221,7 @@ const plugin: SearchPlugin<PostgresSearchConfig, PostgresSearchContext> = {
       locale: page.localeCode,
       path: page.path
     }).delete().limit(1)
+    await rebuildWordIndex(knex)
   },
   /**
    * RENAME
@@ -259,12 +270,7 @@ const plugin: SearchPlugin<PostgresSearchConfig, PostgresSearchContext> = {
       })
     )
 
-    await knex.raw(`
-      INSERT INTO "pagesWords" (word)
-        SELECT word FROM ts_stat(
-          'SELECT to_tsvector(''simple'', "title") || to_tsvector(''simple'', "description") || to_tsvector(''simple'', "content") FROM "pagesVector"'
-        )
-      `)
+    await rebuildWordIndex(knex)
 
     wiki.logger.info(`(SEARCH/POSTGRES) Index rebuilt successfully.`)
   }
