@@ -2,14 +2,18 @@
 
 Status: authoritative product roadmap
 
-Last assessed: 2026-08-14
+Last assessed: 2026-08-14T23:59:10Z
 
 Assessed revisions:
 
-- Wiki.ts `main`: `f474de3b82b3359bb880806fe337872606953bd9`
+- Wiki.ts code baseline: `f474de3b82b3359bb880806fe337872606953bd9`
 - fork checkpoint `origin/scarlett`: `249758e3f923a77e1b62d26a47e142c312642a5f`
-- upstream `requarks/wiki:scarlett`: `c182d2c974b0b44550b7ff29f2542e378ac97c28`
-- common ancestor of Wiki.ts `main` and upstream Scarlett: `b5b4b0880ae26f4b137242267b6674b51af8688c` from 2022-04-03
+- upstream reference: `requarks/wiki:scarlett`
+- upstream commit: `c182d2c974b0b44550b7ff29f2542e378ac97c28`
+- upstream commit subject: `feat: block-gallery`
+- upstream commit authored and committed: `2026-08-14T19:39:26-04:00`
+- upstream fetch verification: `2026-08-14T23:59:10Z`; the remote still resolved to the recorded commit with zero commits of divergence
+- common ancestor of the Wiki.ts code baseline and upstream Scarlett: `b5b4b0880ae26f4b137242267b6674b51af8688c` from 2022-04-03
 
 This is a living plan. Update the revision ledger and candidate dispositions whenever upstream Scarlett moves. Never silently replace a disposition: record the new evidence and reason.
 
@@ -724,3 +728,4 @@ When this roadmap changes, append an entry here.
 | Date | Assessed upstream | Wiki.ts base | Decision |
 | --- | --- | --- | --- |
 | 2026-08-14 | `c182d2c9` | `f474de3b` | Established fork-native synthesis architecture, dispositions, dependency-ordered waves, and Wiki.ts 1.0 completion gates |
+| 2026-08-14T23:59:10Z | `c182d2c9` (`feat: block-gallery`) | `f474de3b` | Re-fetched `requarks/wiki:scarlett`; no commits existed beyond the recorded tip, so the gallery candidate and all latest upstream work were already included |
