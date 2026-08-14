@@ -106,7 +106,7 @@ type PageMutation {
     content: String
     description: String
     editor: String
-    
+
     isPublished: Boolean
     locale: String
     path: String
