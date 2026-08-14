@@ -7,9 +7,9 @@ The migration passed every acceptance gate and was promoted.
 - Active service: `wiki-tailnet`
 - Active address: `127.0.0.1:3013 -> 3000/tcp`
 - Active database: PostgreSQL 17.11 in `wiki-postgres`
-- Active application image: `wiki-private-pages:75afc78e`
-- Application image ID: `sha256:d51e11ffa77c2a382cf5c3309a2f01eaaec0a925eede17d0848c605b77070c29`
-- Source revision: `75afc78e2195c690dc97567e1de3af4dac68b30a`
+- Active application image: `wiki-private-pages:6448ad4b`
+- Application image ID: `sha256:5e6d4cefa74fd1cf4144aa2f22841613247287f7daa70ce9e9f32ba51c8f47f6`
+- Source revision: `6448ad4b9e8a97fb026aa911bd88e764c0aa6071`
 - Upstream base: Wiki.js 2.5.314, originally deployed image digest `sha256:2f6064a10157f79ff7db90ce1f1ae8486da4a7e3892ce862976282c6d8e66434`
 - Final health: HTTP 200 `{"ok":true}` after restarting both the promoted Wiki container and PostgreSQL
 
@@ -182,13 +182,14 @@ Private-page gates:
 - after that page was published, its private historical revision remained visible to the Administrator but returned `null` to a non-owner with page and history-read permissions
 - after returning the fixture to private visibility, the non-owner search returned zero hits; the page, history, temporary group membership, session, and token artifacts were then removed
 - the remediated image was promoted, both Wiki and PostgreSQL were restarted, `/healthz` returned HTTP 200, and `Page Home | Wiki.js` rendered at the deployed address
+- the final canary accepted a partial `pages.update` mutation that omitted optional fields and tags; description, publication state, scripts, dates, and the existing tag remained unchanged, and the verification page was removed
 
 ## Repository verification
 
 ```text
-pnpm exec vitest run -u server/test/graph/schema.compatibility.test.js
+pnpm test
 147 test files passed, 1 skipped
-1183 tests passed, 4 skipped
+1184 tests passed, 4 skipped
 
 pnpm typecheck:server
 passed
@@ -203,7 +204,7 @@ pnpm exec vitest run server/test/db/private-pages.sqlite.integration.test.ts
 1 file passed, 2 tests passed against in-memory SQLite
 ```
 
-The final Docker image build also completed successfully and embedded source revision `75afc78e2195c690dc97567e1de3af4dac68b30a`.
+The final Docker image build also completed successfully and embedded source revision `6448ad4b9e8a97fb026aa911bd88e764c0aa6071`.
 
 ## Backups
 
@@ -227,7 +228,7 @@ Current topology:
 
 - Active Wiki: `wiki-tailnet`, PostgreSQL, healthy, `127.0.0.1:3013`
 - Active database: `wiki-postgres`, PostgreSQL 17.11, healthy, no host port
-- Preserved pre-remediation PostgreSQL container: `wiki-tailnet-pre-75afc78e`, stopped; verified canary `wiki-postgres-canary-verified-a088b5fe` also remains stopped
+- Preserved pre-final-correction PostgreSQL container: `wiki-tailnet-pre-6448ad4b`, stopped; earlier verified containers `wiki-tailnet-pre-75afc78e` and `wiki-postgres-canary-verified-a088b5fe` also remain stopped
 - Preserved rollback container: `wiki-tailnet-sqlite-rollback-20260814`, stopped
 - Preserved rollback image ID: `sha256:3ac6fe5582b4782ab7eceef76f03d0666b905193b9093b4b6011be23ecc81b7c`
 - Preserved rollback volume: `wiki-tailnet-data:/wiki/data/content`
@@ -251,5 +252,4 @@ There is no reverse synchronization. Any writes accepted after PostgreSQL promot
 - Rollback is immediate at the container/configuration level but is intentionally not a reverse data migration.
 - The original SQLite schema contains legacy `isPrivate` / `privateNS` columns. It contains zero private rows; PostgreSQL is now canonical for new owner-scoped private-page data.
 - Mail remains unconfigured, matching the pre-migration deployment.
-- A direct partial `pages.update` GraphQL mutation that omitted `tags` returned `Cannot read properties of undefined (reading 'map')`; the browser editor's full-payload create/edit path passed. This pre-existing schema/runtime mismatch is not a PostgreSQL or private-page authorization failure, but remains unresolved.
 - PostgreSQL backups require normal operational rotation and off-host retention beyond this one-time local migration backup.
