@@ -318,7 +318,7 @@ const removeTag = async (value: unknown): Promise<void> => {
 const getHistory = async (input: OperationInput) => {
   const requester = input.requester
   const id = positiveInteger(input.id, 'id')
-  const offsetPage = input.offsetPage === undefined ? 0 : positiveInteger(input.offsetPage, 'offsetPage')
+  const offsetPage = input.offsetPage === undefined ? 0 : nonNegativeInteger(input.offsetPage, 'offsetPage')
   const offsetSize = input.offsetSize === undefined ? 100 : positiveInteger(input.offsetSize, 'offsetSize')
   const page = await wiki.models.pages.query().select('path', 'localeCode', 'visibility', 'ownerId').findById(id)
   if (!page) throw new wiki.Error.PageNotFound()

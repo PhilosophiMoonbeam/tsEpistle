@@ -173,7 +173,7 @@
                     template(v-slot:activator='{ props }')
                       v-btn.btn-animate-edit(
                         icon
-                        :href='(visibility === `private` ? `/_private` : ``) + `/h/` + locale + `/` + path'
+                        :href='(visibility === `private` ? `/h/_private` : `/h`) + `/` + locale + `/` + path'
                         v-bind='props'
                         x-small
                         v-if='hasReadHistoryPermission'
