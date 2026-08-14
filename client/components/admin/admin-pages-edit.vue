@@ -161,7 +161,7 @@
                   v-icon(color='deep-orange') mdi-lock-account
                 div.v-list-item-content
                   v-list-item-title: .overline.grey--text Private Owner
-                  v-list-item-subtitle.body-2(:class='$vuetify.theme.current.dark ? `grey--text text--lighten-2` : `grey--text text--darken-3`') User #{{ page.ownerId }}
+                  v-list-item-subtitle.body-2(:class='$vuetify.theme.current.dark ? `grey--text text--lighten-2` : `grey--text text--darken-3`') User ID: {{ page.ownerId }}
 
     v-row(align='center', v-else)
       v-progress-circular(indeterminate, width='2', color='grey')
