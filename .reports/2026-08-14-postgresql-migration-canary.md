@@ -7,11 +7,11 @@ The migration passed every acceptance gate and was promoted.
 - Active service: `wiki-tailnet`
 - Active Docker address: `127.0.0.1:3013 -> 3000/tcp`; no public or LAN bind
 - Active database: PostgreSQL 17.11 in `wiki-postgres`
-- Active application image: `wiki-private-pages:6448ad4b`
-- Application image ID: `sha256:5e6d4cefa74fd1cf4144aa2f22841613247287f7daa70ce9e9f32ba51c8f47f6`
-- Source revision: `6448ad4b9e8a97fb026aa911bd88e764c0aa6071`
+- Active application image: `wiki-private-pages:15a87230`
+- Application image ID: `sha256:ed152ffda6497f4e50fc637df12b6c48daaa25e5830b07e4a7487123ae0ca13b`
+- Source revision: `15a87230ce320def8bd8d0c0942de3f861a6a493`
 - Upstream base: Wiki.js 2.5.314, originally deployed image digest `sha256:2f6064a10157f79ff7db90ce1f1ae8486da4a7e3892ce862976282c6d8e66434`
-- Final health: HTTP 200 `{"ok":true}` after restarting both the promoted Wiki container and PostgreSQL
+- Final health: HTTP 200 `{"ok":true}` after promoting the published-revision image; both the Wiki container and PostgreSQL had also passed earlier restart-persistence checks
 - Tailnet URL: `https://agents8c48g.tail41a24a.ts.net:10443/`
 - Tailnet publication verification: Tailscale Serve exposes the loopback-only Docker port over tailnet HTTPS. `/healthz` returned HTTP 200 through the HTTPS MagicDNS URL, and a browser rendered `Page Home | Wiki.js` with no console or runtime errors.
 
@@ -204,9 +204,12 @@ pnpm exec vitest run server/test/db/private-pages.postgres.integration.test.ts
 
 pnpm exec vitest run server/test/db/private-pages.sqlite.integration.test.ts
 1 file passed, 2 tests passed against in-memory SQLite
+
 ```
 
-The final Docker image build also completed successfully and embedded source revision `6448ad4b9e8a97fb026aa911bd88e764c0aa6071`.
+GitHub protected-branch checks passed at revision `15a87230ce320def8bd8d0c0942de3f861a6a493`: Quality, image/bundle build, and Playwright on PostgreSQL, SQLite, MySQL, MariaDB, and SQL Server. Local fresh-schema startup probes also verified the visibility check and normalized owner-identity unique index on MySQL, MariaDB, and SQL Server.
+
+The final Docker image build completed successfully and embedded source revision `15a87230ce320def8bd8d0c0942de3f861a6a493`.
 
 ## Backups
 
@@ -230,7 +233,7 @@ Current topology:
 
 - Active Wiki: `wiki-tailnet`, PostgreSQL, healthy, Docker-published only on `127.0.0.1:3013`; tailnet HTTPS proxies to that loopback endpoint
 - Active database: `wiki-postgres`, PostgreSQL 17.11, healthy, no host port
-- Preserved pre-final-correction PostgreSQL container: `wiki-tailnet-pre-6448ad4b`, stopped; earlier verified containers `wiki-tailnet-pre-75afc78e` and `wiki-postgres-canary-verified-a088b5fe` also remain stopped
+- Preserved previous active PostgreSQL container: `wiki-tailnet-pre-15a87230`, stopped; earlier verified containers `wiki-tailnet-pre-6448ad4b`, `wiki-tailnet-pre-75afc78e`, and `wiki-postgres-canary-verified-a088b5fe` also remain stopped
 - Preserved rollback container: `wiki-tailnet-sqlite-rollback-20260814`, stopped
 - Preserved rollback image ID: `sha256:3ac6fe5582b4782ab7eceef76f03d0666b905193b9093b4b6011be23ecc81b7c`
 - Preserved rollback volume: `wiki-tailnet-data:/wiki/data/content`
