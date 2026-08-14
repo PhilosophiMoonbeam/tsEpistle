@@ -16,7 +16,8 @@
         v-select.mt-5(
           :items=`[
             { value: 'markdown', text: 'Markdown' },
-            { value: 'ckeditor', text: 'Visual Editor' },
+            { value: 'visual-markdown', text: 'Visual Markdown' },
+            { value: 'ckeditor', text: 'Visual Editor (HTML)' },
             { value: 'code', text: 'Raw HTML' }
           ]`
           outlined

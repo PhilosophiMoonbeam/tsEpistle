@@ -107,6 +107,7 @@ import StatusIndicator from '@/components/common/status-indicator.vue'
 import { emitEditorSaveConflict, onEditorConflictReset, offEditorConflictReset } from '../helpers/editor-conflict-events'
 import { getErrorMessage } from '../helpers/root-ui-store'
 import { decodeBase64Json } from '../helpers/base64'
+import { getEditorComponentName } from '../helpers/editor-key.ts'
 
 
 export default defineComponent({
@@ -117,6 +118,7 @@ export default defineComponent({
     editorApi: defineAsyncComponent(() => import('./editor/editor-api.vue')),
     editorCode: defineAsyncComponent(() => import('./editor/editor-code.vue')),
     editorCkeditor: defineAsyncComponent(() => import('./editor/editor-ckeditor.vue')),
+    editorVisualMarkdown: defineAsyncComponent(() => import('./editor/editor-visual-markdown.vue')),
     editorAsciidoc: defineAsyncComponent(() => import('./editor/editor-asciidoc.vue')),
     editorMarkdown: defineAsyncComponent(() => import('./editor/editor-markdown.vue')),
     editorRedirect: defineAsyncComponent(() => import('./editor/editor-redirect.vue')),
@@ -310,7 +312,7 @@ export default defineComponent({
         this.dialogEditorSelector = true
       }, 500)
     } else {
-      this.currentEditor = `editor${_.startCase(this.initEditor || 'markdown')}`
+      this.currentEditor = getEditorComponentName(this.initEditor || 'markdown')
     }
 
     window.onbeforeunload = () => {

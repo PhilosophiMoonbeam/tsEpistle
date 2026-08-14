@@ -21,6 +21,7 @@ import User from './users.ts'
 import Editor from './editors.ts'
 import Locale from './locales.ts'
 import type Comment from './comments.ts'
+import { assertVisualMarkdownCompatible } from '../../shared/visual-markdown.ts'
 
 type UnknownRecord = Record<string, unknown>
 type PageErrorConstructor = new () => Error
@@ -586,6 +587,9 @@ static async createPage(opts: CreatePageOptions): Promise<Page> {
   if (!opts.content || _.trim(opts.content).length < 1) {
     throw new wiki.Error.PageEmptyContent()
   }
+  if (opts.editor === 'visual-markdown') {
+    assertVisualMarkdownCompatible(opts.content)
+  }
 
   // -> Format CSS Scripts
   let scriptCss = ''
@@ -708,6 +712,9 @@ static async updatePage(opts: UpdatePageOptions): Promise<Page> {
   const content = opts.content ?? ogPage.content
   if (!content || _.trim(content).length < 1) {
     throw new wiki.Error.PageEmptyContent()
+  }
+  if (ogPage.editorKey === 'visual-markdown') {
+    assertVisualMarkdownCompatible(content)
   }
 
   // -> Create version snapshot
@@ -1007,7 +1014,11 @@ static async convertPage(opts: ConvertPageOptions): Promise<void> {
           $(tabElm).remove()
         })
 
-        convertedContent = $.html('body').replace('<body>', '').replace('</body>', '').replace(/&#x([0-9a-f]{1,6});/ig, (entity, code) => {
+        const serializedContent = $.root().html()
+        if (serializedContent === null) {
+          throw new TypeError('Converted page content could not be serialized.')
+        }
+        convertedContent = serializedContent.replace(/&#x([0-9a-f]{1,6});/ig, (entity, code) => {
           code = parseInt(code, 16)
 
           // Don't unescape ASCII characters, assuming they're encoded for a good reason
@@ -1072,6 +1083,9 @@ static async convertPage(opts: ConvertPageOptions): Promise<void> {
     } else {
       throw new Error('Unsupported source / destination content types combination.')
     }
+  }
+  if (opts.editor === 'visual-markdown') {
+    assertVisualMarkdownCompatible(convertedContent !== null ? convertedContent : ogPage.content)
   }
 
   // -> Create version snapshot

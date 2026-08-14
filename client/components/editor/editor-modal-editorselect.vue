@@ -6,7 +6,7 @@
         .subtitle-1.white--text {{$t('editor:select.title')}}
         v-container(grid-list-lg, fluid)
           v-row(, justify='center')
-            v-col(cols='6')
+            v-col(cols='4')
               v-card.radius-7.animated.fadeInUp.wait-p1s(
                 hover
                 light
@@ -16,7 +16,17 @@
                   img(src='/_assets/svg/editor-icon-markdown.svg', alt='Markdown', style='width: 36px;')
                   .body-2.primary--text.mt-2 Markdown
                   .caption.grey--text Plain Text Formatting
-            v-col(cols='6')
+            v-col(cols='4')
+              v-card.radius-7.animated.fadeInUp.wait-p2s(
+                hover
+                light
+                ripple
+                )
+                v-card-text.text-center(@click='selectEditor("visual-markdown")')
+                  img(src='/_assets/svg/editor-icon-ckeditor.svg', alt='Visual Markdown', style='width: 36px;')
+                  .body-2.mt-2.primary--text Visual Markdown
+                  .caption.grey--text Rich-text, Markdown output
+            v-col(cols='4')
               v-card.radius-7.animated.fadeInUp.wait-p2s(
                 hover
                 light
@@ -25,7 +35,7 @@
                 v-card-text.text-center(@click='selectEditor("ckeditor")')
                   img(src='/_assets/svg/editor-icon-ckeditor.svg', alt='Visual Editor', style='width: 36px;')
                   .body-2.mt-2.primary--text Visual Editor
-                  .caption.grey--text Rich-text WYSIWYG
+                  .caption.grey--text Rich-text, HTML output
             v-col(cols='4')
               v-card.radius-7.animated.fadeInUp.wait-p3s(
                 hover
@@ -61,10 +71,10 @@
 </template>
 
 <script lang='ts'>
-import _ from 'lodash'
 import { wikiStore } from '@/store/index.ts'
+import { getEditorComponentName } from '../../helpers/editor-key.ts'
 
-type EditorName = 'markdown' | 'ckeditor' | 'asciidoc' | 'code'
+type EditorName = 'markdown' | 'visual-markdown' | 'ckeditor' | 'asciidoc' | 'code'
 
 export default {
   emits: ['update:modelValue'],
@@ -101,7 +111,7 @@ export default {
   },
   methods: {
     selectEditor (name: EditorName) {
-      this.currentEditor = `editor${_.startCase(name)}`
+      this.currentEditor = getEditorComponentName(name)
       this.isShown = false
     },
     goBack () {

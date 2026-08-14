@@ -1,5 +1,5 @@
 <template lang='pug'>
-  ckeditor-editor(format='html', :save='save')
+  ckeditor-editor(format='markdown', :save='save')
 </template>
 
 <script lang='ts'>

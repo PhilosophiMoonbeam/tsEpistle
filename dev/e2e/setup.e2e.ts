@@ -102,6 +102,157 @@ test.describe('critical post-install workflows', () => {
     await page.reload()
     await expect(page.getByRole('heading', { name: 'Browser Workflow' })).toBeVisible()
   })
+  test('creates, publishes, and reopens a Visual Markdown page', async ({ page }) => {
+    test.setTimeout(60_000)
+    await loginAsAdmin(page)
+    await page.goto('/e/en/visual-markdown-browser')
+    await page.getByText('Visual Markdown', { exact: true }).click()
+    await page.getByRole('textbox', { name: 'Title' }).fill('Visual Markdown Browser')
+    await page.getByRole('textbox', { name: 'Short Description' }).fill('Canonical Markdown from CKEditor')
+    await page.getByRole('button', { name: 'OK' }).click()
+
+    const editor = page.locator('.editor-ckeditor > .ck-editor__editable')
+    await expect(editor).toBeVisible()
+    await editor.fill('Visual Markdown browser workflow.')
+    await page.getByRole('button', { name: 'Create' }).click()
+
+    await expect(page).toHaveURL('/en/visual-markdown-browser', { timeout: 30_000 })
+    await expect(page.getByText('Visual Markdown browser workflow.', { exact: true })).toBeVisible()
+
+    const details = await page.evaluate(async () => {
+      const pages = await fetch('/_api/pages', { credentials: 'same-origin' }).then(response => response.json())
+      const row = pages.find((candidate: { path: string }) => candidate.path === 'visual-markdown-browser')
+      return fetch(`/_api/pages/${row.id}`, { credentials: 'same-origin' }).then(response => response.json())
+    })
+    expect(details).toMatchObject({
+      editor: 'visual-markdown',
+      contentType: 'markdown'
+    })
+
+    await page.getByRole('button', { name: 'Edit Page' }).click()
+    await expect(page).toHaveURL('/e/en/visual-markdown-browser')
+    await expect(page.getByText('Visual Markdown', { exact: true })).toBeVisible()
+    await expect(editor).toContainText('Visual Markdown browser workflow.')
+    await editor.fill('Visual Markdown browser workflow updated.')
+    await page.getByRole('button', { name: 'Save' }).click()
+    await expect(page.getByRole('button', { name: 'Saved' })).toBeVisible({ timeout: 30_000 })
+    await page.getByRole('button', { name: 'Close' }).click()
+    await expect(page).toHaveURL('/en/visual-markdown-browser')
+    await expect(page.getByText('Visual Markdown browser workflow updated.', { exact: true })).toBeVisible()
+  })
+
+  test('retains the Visual HTML editor and HTML content type', async ({ page }) => {
+    test.setTimeout(60_000)
+    await loginAsAdmin(page)
+    await page.goto('/e/en/visual-html-browser')
+    await page.getByText('Visual Editor', { exact: true }).click()
+    await page.getByRole('textbox', { name: 'Title' }).fill('Visual HTML Browser')
+    await page.getByRole('textbox', { name: 'Short Description' }).fill('HTML from CKEditor')
+    await page.getByRole('button', { name: 'OK' }).click()
+
+    const editor = page.locator('.editor-ckeditor > .ck-editor__editable')
+    await expect(editor).toBeVisible()
+    await editor.fill('Visual HTML browser workflow.')
+    await page.waitForTimeout(350)
+    await page.getByRole('button', { name: 'Create' }).click()
+
+    await expect(page).toHaveURL('/en/visual-html-browser', { timeout: 30_000 })
+    await expect(page.getByText('Visual HTML browser workflow.', { exact: true })).toBeVisible()
+
+    const details = await page.evaluate(async () => {
+      const pages = await fetch('/_api/pages', { credentials: 'same-origin' }).then(response => response.json())
+      const row = pages.find((candidate: { path: string }) => candidate.path === 'visual-html-browser')
+      return fetch(`/_api/pages/${row.id}`, { credentials: 'same-origin' }).then(response => response.json())
+    })
+    expect(details).toMatchObject({
+      editor: 'ckeditor',
+      contentType: 'html'
+    })
+
+    await page.getByRole('button', { name: 'Edit Page' }).click()
+    await expect(page).toHaveURL('/e/en/visual-html-browser')
+    await expect(page.getByText('Visual Editor', { exact: true })).toBeVisible()
+    await expect(editor).toContainText('Visual HTML browser workflow.')
+  })
+  test('blocks unsupported extended Markdown before changing editors', async ({ page }) => {
+    test.setTimeout(60_000)
+    await loginAsAdmin(page)
+    await page.goto('/e/en/extended-markdown-browser')
+    await page.getByText('Markdown', { exact: true }).click()
+    await page.getByRole('textbox', { name: 'Title' }).fill('Extended Markdown Browser')
+    await page.getByRole('textbox', { name: 'Short Description' }).fill('Unsupported visual syntax')
+    await page.getByRole('button', { name: 'OK' }).click()
+
+    const source = '## Callout\n\n> Preserved source\n{.is-info}'
+    await page.locator('.cm-content').fill(source)
+    await page.getByRole('button', { name: 'Create' }).click()
+    await expect(page).toHaveURL('/en/extended-markdown-browser', { timeout: 30_000 })
+
+    const conversion = await page.evaluate(async () => {
+      const pages = await fetch('/_api/pages', { credentials: 'same-origin' }).then(response => response.json())
+      const row = pages.find((candidate: { path: string }) => candidate.path === 'extended-markdown-browser')
+      const response = await fetch(`/_api/pages/${row.id}/convert`, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ editor: 'visual-markdown' })
+      })
+      return {
+        ok: response.ok,
+        payload: await response.json()
+      }
+    })
+
+    expect(conversion.ok).toBe(false)
+    expect(JSON.stringify(conversion.payload)).toContain('Markdown attributes')
+
+    await page.goto('/e/en/extended-markdown-browser')
+    await expect(page.locator('.editor-markdown')).toBeVisible()
+    await expect(page.locator('.cm-content')).toContainText('## Callout')
+    await expect(page.locator('.cm-content')).toContainText('{.is-info}')
+  })
+  test('switches between source, Visual Markdown, and Visual HTML conversion paths', async ({ page }) => {
+    test.setTimeout(60_000)
+    await loginAsAdmin(page)
+
+    const convert = async (path: string, editor: string) => {
+      const result = await page.evaluate(async ({ path, editor }) => {
+        const pages = await fetch('/_api/pages', { credentials: 'same-origin' }).then(response => response.json())
+        const row = pages.find((candidate: { path: string }) => candidate.path === path)
+        const response = await fetch(`/_api/pages/${row.id}/convert`, {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ editor })
+        })
+        return { ok: response.ok, body: await response.json() }
+      }, { path, editor })
+      expect(result.ok, JSON.stringify(result.body)).toBe(true)
+    }
+
+    await convert('visual-markdown-browser', 'markdown')
+    await page.goto('/e/en/visual-markdown-browser')
+    await expect(page.locator('.editor-markdown')).toBeVisible()
+    await expect(page.locator('.cm-content')).toContainText('Visual Markdown browser workflow updated.')
+
+    await convert('visual-markdown-browser', 'visual-markdown')
+    await page.goto('/e/en/visual-markdown-browser')
+    await expect(page.locator('.editor-ckeditor > .ck-editor__editable')).toContainText('Visual Markdown browser workflow updated.')
+    await expect(page.getByText('Visual Markdown', { exact: true })).toBeVisible()
+
+    await convert('visual-html-browser', 'visual-markdown')
+    await page.goto('/e/en/visual-html-browser')
+    await expect(page.locator('.editor-ckeditor > .ck-editor__editable')).toContainText('Visual HTML browser workflow.')
+    await expect(page.getByText('Visual Markdown', { exact: true })).toBeVisible()
+
+    await convert('visual-html-browser', 'ckeditor')
+    await page.goto('/e/en/visual-html-browser')
+    await expect(page.locator('.editor-ckeditor > .ck-editor__editable')).toContainText('Visual HTML browser workflow.')
+    await expect(page.getByText('Visual Editor', { exact: true })).toBeVisible()
+  })
+
+
+
 
   test('edits and renders the published home page', async ({ page }) => {
     test.setTimeout(60_000)
