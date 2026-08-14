@@ -7,11 +7,11 @@ The migration passed every acceptance gate and was promoted.
 - Active service: `wiki-tailnet`
 - Active address: `127.0.0.1:3013 -> 3000/tcp`
 - Active database: PostgreSQL 17.11 in `wiki-postgres`
-- Active application image: `wiki-private-pages:e3b32afd`
-- Application image ID: `sha256:01db6a6ef5638b81dec742b814ab7d910c92c83bfc1d091f042db9bc4712bf4c`
-- Source revision: `e3b32afd7478c1ffaf89bb60f4ca29f7416fce9b`
+- Active application image: `wiki-private-pages:a088b5fe`
+- Application image ID: `sha256:ac1ef76c8fd9f9920fb1f333fbb95588015b0147d1090ee5a61270633f24af40`
+- Source revision: `a088b5feefb7d3bab2d2ddc6831a8b3d157f6e11`
 - Upstream base: Wiki.js 2.5.314, originally deployed image digest `sha256:2f6064a10157f79ff7db90ce1f1ae8486da4a7e3892ce862976282c6d8e66434`
-- Final health: HTTP 200 `{"ok":true}` before and after a promoted-container restart
+- Final health: HTTP 200 `{"ok":true}` after restarting both the promoted Wiki container and PostgreSQL
 
 The original SQLite container is stopped, not removed, under `wiki-tailnet-sqlite-rollback-20260814`. Its image, container configuration, `wiki-tailnet-data` volume, and frozen database remain intact. An isolated rollback container using that exact image and volume rendered the home page and returned HTTP 200 from `/healthz` on `127.0.0.1:3015`; the proof container was then removed.
 
@@ -139,6 +139,7 @@ The source changes provide:
 - publication confirmation and collision protection
 - PostgreSQL and SQLite migrations through `2.5.129`
 - runtime-safe asset authorization initialization
+- a system-administrator-only by-ID preview route for private pages
 
 ## Browser and runtime verification
 
@@ -156,6 +157,7 @@ Migration and deployment gates:
 - a public page was created, read, edited, moved, deleted, and its history viewed
 - a write survived both Wiki and PostgreSQL restarts
 - an SVG test asset was uploaded through the browser, listed through the API, read as `image/svg+xml`, and deleted; the read returned 404 after deletion
+- a separate 71-byte binary asset was uploaded through the browser, read with SHA-256 `3543c670f1dee09af8ff8f889c9c333e018849ce0afeb55ff568291d901ba617`, survived Wiki and PostgreSQL restarts with the same byte length and digest, remained listed with `fileSize=71`, and was deleted cleanly
 - search index rebuild and page search completed without database/runtime errors
 - promoted service passed health, home, Administrator, and administration checks after its own restart
 - application logs contained no database/runtime errors; the only warning was the pre-existing mail-not-configured warning
@@ -174,13 +176,15 @@ Private-page gates:
 - private-tag probes were absent from anonymous tag and search responses
 - ownership transfer changed access to the new owner; deletion of the former owner no longer broke the private page
 - private-page assets were explicitly presented as site-wide and blocked from being treated as private content
+- a system Administrator opened a private page owned by another principal through `/i/{id}` and was redirected to `/_admin/private/{id}`; the page rendered while the anonymous request returned 404
+- the temporary administrator-preview page and ephemeral verification credential were removed after the check
 
 ## Repository verification
 
 ```text
 pnpm test
-140 test files passed, 1 skipped
-1165 tests passed, 1 skipped
+142 test files passed, 1 skipped
+1170 tests passed, 3 skipped
 
 pnpm typecheck:server
 passed
@@ -189,10 +193,13 @@ pnpm typecheck:client
 passed
 
 pnpm exec vitest run server/test/db/private-pages.postgres.integration.test.ts
-1 file passed, 1 test passed against an isolated PostgreSQL database
+1 file passed, 3 tests passed against an isolated PostgreSQL database
+
+pnpm exec vitest run server/test/db/private-pages.sqlite.integration.test.ts
+1 file passed, 2 tests passed against in-memory SQLite
 ```
 
-The final Docker image build also completed successfully and embedded source revision `e3b32afd7478c1ffaf89bb60f4ca29f7416fce9b`.
+The final Docker image build also completed successfully and embedded source revision `a088b5feefb7d3bab2d2ddc6831a8b3d157f6e11`.
 
 ## Backups
 
@@ -216,7 +223,7 @@ Current topology:
 
 - Active Wiki: `wiki-tailnet`, PostgreSQL, healthy, `127.0.0.1:3013`
 - Active database: `wiki-postgres`, PostgreSQL 17.11, healthy, no host port
-- Verified stopped canary configuration: `wiki-postgres-canary-verified-e3b32afd`, `127.0.0.1:3014`
+- Verified stopped canary configuration: `wiki-postgres-canary-verified-a088b5fe`, formerly `127.0.0.1:3014`
 - Preserved rollback container: `wiki-tailnet-sqlite-rollback-20260814`, stopped
 - Preserved rollback image ID: `sha256:3ac6fe5582b4782ab7eceef76f03d0666b905193b9093b4b6011be23ecc81b7c`
 - Preserved rollback volume: `wiki-tailnet-data:/wiki/data/content`
