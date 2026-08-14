@@ -52,7 +52,7 @@
           :items='groups'
           item-title='name'
           item-value='id'
-          item-disabled='isSystem'
+          :item-props='group => ({ disabled: group.isSystem })'
           outlined
           prepend-icon='mdi-account-group'
           v-model='group'

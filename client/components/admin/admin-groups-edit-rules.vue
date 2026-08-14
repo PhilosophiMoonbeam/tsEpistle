@@ -65,6 +65,8 @@
             v-select.ml-1(
               solo
               :items='roles'
+              item-title='text'
+              item-value='value'
               v-model='rule.roles'
               placeholder='Select Role(s)...'
               hide-details
@@ -78,38 +80,24 @@
               dense
               )
               template(v-slot:selection='{ item, index }')
-                v-chip.white--text.ml-0(v-if='index <= 1', small, label, :color='rule.deny ? `red` : `green`').caption {{ item.value }}
+                v-chip.white--text.ml-0(v-if='index <= 1', small, label, :color='rule.deny ? `red` : `green`').caption {{ item.raw.value }}
                 v-chip.white--text.ml-0(v-if='index === 2', small, label, :color='rule.deny ? `red lighten-2` : `green lighten-2`').caption + {{ rule.roles.length - 2 }} more
-              template(v-slot:item='props')
-                div.v-list-item-action(style='min-width: 30px;')
-                  v-checkbox(
-                    v-model='props.attrs.inputValue'
-                    hide-details
-                    color='primary'
-                  )
-                v-icon.mr-2(:color='rule.deny ? `red` : `green`') {{props.item.icon}}
-                div.v-list-item-content
-                  v-list-item-title.body-2 {{props.item.text}}
-                v-chip.mr-2.grey--text(label, small, :color='$vuetify.theme.current.dark ? `grey darken-4` : `grey lighten-4`').caption {{props.item.value}}
 
             //- Match
             v-select.ml-1.mr-1(
               solo
               :items='matches'
               v-model='rule.match'
+              item-title='text'
+              item-value='value'
               placeholder='Match...'
               hide-details
               height='48px'
               style='flex: 0 1 250px;'
               dense
               )
-              template(v-slot:selection='{ item, index }')
-                .body-2 {{item.text}}
-              template(v-slot:item='data')
-                v-avatar
-                  v-avatar.white--text.radius-4(color='blue', size='30', tile) {{ data.item.icon }}
-                div.v-list-item-content
-                  v-list-item-title(v-html='data.item.text')
+              template(v-slot:selection='{ item }')
+                .body-2 {{item.raw.text}}
             //- Locales
             v-select.mr-1(
               :background-color='$vuetify.theme.current.dark ? `grey darken-3-d5` : `blue-grey lighten-5`'
@@ -127,7 +115,7 @@
               style='flex: 0 1 150px;'
               )
               template(v-slot:selection='{ item, index }')
-                v-chip.white--text.ml-0(v-if='rule.locales.length === 1', small, label, :color='rule.deny ? `red` : `green`').caption {{ item.code.toUpperCase() }}
+                v-chip.white--text.ml-0(v-if='rule.locales.length === 1', small, label, :color='rule.deny ? `red` : `green`').caption {{ item.raw.code.toUpperCase() }}
                 v-chip.white--text.ml-0(v-else-if='index === 0', small, label, :color='rule.deny ? `red` : `green`').caption {{ rule.locales.length }} locales
               template(v-slot:prepend-item)
                 v-list-item(@click='rule.locales = []')
@@ -142,17 +130,6 @@
                   div.v-list-item-content
                     v-list-item-title.body-2 Any Locale
                 v-divider
-              template(v-slot:item='props')
-                div.v-list-item-action(style='min-width: 30px;')
-                  v-checkbox(
-                    v-model='props.attrs.inputValue'
-                    hide-details
-                    color='primary'
-                  )
-                v-icon.mr-2(:color='rule.deny ? `red` : `green`') mdi-web
-                div.v-list-item-content
-                  v-list-item-title.body-2 {{props.item.name}}
-                v-chip.mr-2.grey--text(label, small, :color='$vuetify.theme.current.dark ? `grey darken-4` : `grey lighten-4`').caption {{props.item.code.toUpperCase()}}
 
             //- Path
             v-text-field(

@@ -18,11 +18,11 @@
           @keyup.enter='searchEnter'
           autocomplete='off'
         )
-    v-row
+    v-row(no-gutters)
       v-col(cols='5', md='4')
         v-toolbar.nav-header-inner(color='black', dark, flat, :class='$vuetify.locale.isRtl ? `pr-3` : `pl-3`')
           v-avatar(tile, size='34', @click='goHome')
-            v-img.org-logo(:src='logoUrl')
+            img.org-logo(:src='logoUrl', :alt='title')
           //- v-menu(open-on-hover, offset-y, bottom, left, min-width='250', transition='slide-y-transition')
           //-   template(v-slot:activator='{ props }')
           //-     v-app-bar-nav-icon.btn-animate-app(v-bind='props', :class='$vuetify.locale.isRtl ? `mx-0` : ``')
@@ -525,11 +525,21 @@ export default defineComponent({
 
   .org-logo {
     cursor: pointer;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
   }
 
   &-inner {
     .v-toolbar__content {
       padding: 0;
+
+      @include until($tablet) {
+        .v-btn--icon {
+          width: 40px;
+          min-width: 40px;
+        }
+      }
     }
   }
 

@@ -46,7 +46,7 @@
             span {{$t('editor:markup.distractionFreeMode')}}
       .editor-code-editor
         div(ref='cm')
-    v-system-bar.editor-code-sysbar(dark, status, color='grey darken-3')
+    v-system-bar.editor-status-bar.editor-code-sysbar(absolute, dark, status, color='grey darken-3')
       .caption.editor-code-sysbar-locale {{locale.toUpperCase()}}
       .caption.px-3 /{{path}}
       template(v-if='$vuetify.display.mdAndUp')

@@ -114,7 +114,7 @@
               v-html='previewHTML'
               )
 
-    v-system-bar.editor-asciidoc-sysbar(dark, status, color='grey darken-3')
+    v-system-bar.editor-status-bar.editor-asciidoc-sysbar(absolute, dark, status, color='grey darken-3')
       .caption.editor-asciidoc-sysbar-locale {{locale.toUpperCase()}}
       .caption.px-3 /{{path}}
       template(v-if='$vuetify.display.mdAndUp')

@@ -25,6 +25,8 @@ import type { ProductMetadata } from '../shared/product.ts'
 import { isInternalRestPath } from '../shared/api-access.ts'
 
 const { collectEntry } = viteAssets
+const LEGACY_DEFAULT_LOGO_URL = 'https://static.requarks.io/logo/wikijs-butterfly.svg'
+const BUNDLED_DEFAULT_LOGO_URL = '/_assets/svg/logo-wikijs.svg'
 
 
 interface MasterConfig extends Record<string, unknown> {
@@ -160,7 +162,7 @@ export default async function startMaster(): Promise<true> {
       company: wiki.config.company,
       contentLicense: wiki.config.contentLicense,
       footerOverride: wiki.config.footerOverride,
-      logoUrl: wiki.config.logoUrl,
+      logoUrl: wiki.config.logoUrl === LEGACY_DEFAULT_LOGO_URL ? BUNDLED_DEFAULT_LOGO_URL : wiki.config.logoUrl,
       product: wiki.product
     }
     res.locals.langs = await wiki.models.locales.getNavLocales({ cache: true })

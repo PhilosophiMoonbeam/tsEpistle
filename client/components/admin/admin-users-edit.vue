@@ -215,7 +215,7 @@
               :label='$t(`admin:users.selectGroup`)'
               item-value='id'
               item-title='name'
-              item-disabled='isSystem'
+              :item-props='group => ({ disabled: group.isSystem })'
               solo
               flat
               hide-details

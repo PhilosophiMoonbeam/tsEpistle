@@ -22,3 +22,11 @@
 @include meta.load-css('pages/error');
 
 @include meta.load-css('layout/_rtl');
+
+.editor-status-bar {
+  position: fixed !important;
+  inset: auto 0 0 !important;
+  width: 100% !important;
+  transform: none !important;
+  z-index: 1004 !important;
+}
