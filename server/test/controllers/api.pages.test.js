@@ -142,9 +142,28 @@ describe('controllers/api pages endpoints', () => {
       listTags: express.__router.get.mock.calls.find(([path]) => path === '/tags')[1],
       recent: express.__router.get.mock.calls.find(([path]) => path === '/recent')[1],
       updateTag: express.__router.patch.mock.calls.find(([path]) => path === '/tags/:id')[1],
+      visibility: express.__router.patch.mock.calls.find(([path]) => path === '/:id/visibility')[1],
       tree: express.__router.get.mock.calls.find(([path]) => path === '/tree')[1]
     }
   }
+
+  it('reports visibility path collisions as conflicts', async () => {
+    const collision = new Error('Destination page path already exists.')
+    collision.name = 'PagePathCollision'
+    global.WIKI.models.pages.changeVisibility = vi.fn().mockRejectedValue(collision)
+    const { visibility } = await loadHandler()
+    const req = {
+      body: { visibility: 'public', confirmPublication: true },
+      params: { id: '2' },
+      user: { id: 1, permissions: ['manage:system'] }
+    }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
+
+    await visibility(req, res)
+
+    expect(res.status).toHaveBeenCalledWith(409)
+    expect(res.json).toHaveBeenCalledWith({ error: 'Destination page path already exists.' })
+  })
 
   it('lists root page tree entries when parent is zero', async () => {
     const rows = [{

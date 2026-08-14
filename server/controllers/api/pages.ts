@@ -63,6 +63,7 @@ const errorStatus = (err: unknown, fallback: number): number => {
   if (typeof err === 'object' && err !== null && 'status' in err && typeof err.status === 'number') {
     return err.status
   }
+  if (err instanceof Error && err.name === 'PagePathCollision') return 409
   return fallback
 }
 
