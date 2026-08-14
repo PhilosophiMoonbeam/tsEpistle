@@ -543,6 +543,33 @@ test.describe('critical post-install workflows', () => {
 
     await expect(page.getByText('Administration Area', { exact: true })).toBeVisible()
     await expect(page.locator('#admin-navigation')).toBeVisible()
+
+    const sidebarLayout = await page.locator('#admin-navigation').evaluate(navigation => {
+      const measure = (label: string) => {
+        const item = [...navigation.querySelectorAll<HTMLElement>('.v-list-item')]
+          .find(candidate => candidate.textContent?.trim().startsWith(label))
+        const icon = item?.querySelector<HTMLElement>('.v-icon')
+        const title = item?.querySelector<HTMLElement>('.v-list-item-title')
+        if (!item || !icon || !title) throw new Error(`Missing ${label} navigation item layout.`)
+        const itemBox = item.getBoundingClientRect()
+        const iconBox = icon.getBoundingClientRect()
+        const titleBox = title.getBoundingClientRect()
+        return {
+          height: itemBox.height,
+          iconRight: iconBox.right,
+          iconCenterY: iconBox.top + iconBox.height / 2,
+          titleLeft: titleBox.left,
+          titleCenterY: titleBox.top + titleBox.height / 2
+        }
+      }
+      return {
+        dashboard: measure('Dashboard'),
+        pages: measure('Pages')
+      }
+    })
+    expect(sidebarLayout.dashboard.titleLeft).toBeGreaterThan(sidebarLayout.dashboard.iconRight)
+    expect(Math.abs(sidebarLayout.dashboard.titleCenterY - sidebarLayout.dashboard.iconCenterY)).toBeLessThan(2)
+    expect(sidebarLayout.pages.height).toBe(sidebarLayout.dashboard.height)
     await expect(page.getByText('Recent Pages', { exact: true })).toBeVisible()
     await expect(page.getByText('Last Logins', { exact: true })).toBeVisible()
     await expectNoHorizontalOverflow(page)
