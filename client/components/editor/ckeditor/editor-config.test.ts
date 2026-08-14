@@ -1,5 +1,6 @@
 import { afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { DecoupledEditor, Markdown } from 'ckeditor5'
+import markdownRenderer from '../../../../server/modules/rendering/markdown-core/renderer.ts'
 import {
   createVisualEditorConfig,
   getVisualEditorDefinition,
@@ -37,6 +38,23 @@ const answer = 42
 
 ![Alternative text](/assets/example.png)
 `
+async function renderServerMarkdown (input: string): Promise<string> {
+  return Reflect.apply(markdownRenderer.render, {
+    input,
+    config: {
+      allowHTML: false,
+      linebreaks: false,
+      linkify: false,
+      typographer: false,
+      quotes: 'English',
+      underline: false
+    },
+    children: [
+      { key: 'markdownTasklists', config: {} }
+    ]
+  }, []) as Promise<string>
+}
+
 
 const editors: DecoupledEditor[] = []
 class ResizeObserverStub implements ResizeObserver {
@@ -97,5 +115,22 @@ describe('CKEditor visual formats', () => {
     expect(output).toContain('```javascript')
     expect(output).toMatch(/\| Name\s+\| Value\s+\|/)
     expect(output).toContain('![Alternative text](/assets/example.png)')
+
+    const rendered = await renderServerMarkdown(output)
+    expect(rendered).toContain('<h1>Visual-safe GFM</h1>')
+    expect(rendered).toContain('<h6>Heading 6</h6>')
+    expect(rendered).toContain('<strong>bold</strong>')
+    expect(rendered).toContain('<em>italic</em>')
+    expect(rendered).toContain('<s>strikethrough</s>')
+    expect(rendered).toContain('<code>inline code</code>')
+    expect(rendered).toContain('<a href="/en/docs">a link</a>')
+    expect(rendered).toContain('<blockquote>')
+    expect(rendered).toMatch(/<ol>[\s\S]*<ol>[\s\S]*Nested/)
+    expect(rendered).toContain('class="task-list-item-checkbox" checked=""')
+    expect(rendered).toContain('<code class="language-javascript">')
+    expect(rendered).toContain('<th>Name</th>')
+    expect(rendered).toContain('<td>Alpha</td>')
+    expect(rendered).toContain('<img src="/assets/example.png" alt="Alternative text">')
+    expect(rendered).toContain('<hr>')
   })
 })

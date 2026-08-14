@@ -112,12 +112,21 @@ export default defineComponent({
       switch (opts.kind) {
         case 'IMAGE':
           if (typeof opts.path === 'string') {
-            editor.execute('imageInsert', { source: opts.path })
+            const source = this.format === 'markdown' && typeof opts.text === 'string'
+              ? [{ src: opts.path, alt: opts.text }]
+              : opts.path
+            editor.execute('imageInsert', { source })
           }
           break
         case 'BINARY':
           if (typeof opts.path === 'string') {
-            editor.execute('link', opts.path, this.format === 'html' ? { linkIsDownloadable: true } : {})
+            const label = typeof opts.text === 'string' && opts.text.length > 0 ? opts.text : opts.path
+            editor.model.change(writer => {
+              editor.model.insertContent(writer.createText(label, {
+                linkHref: opts.path,
+                linkIsDownloadable: true
+              }))
+            })
           }
           break
         case 'DIAGRAM':
@@ -177,6 +186,13 @@ export default defineComponent({
       this.syncContent = _.debounce(updateContent, 300)
       editor.model.document.on('change:data', this.syncContent)
     }
+
+    const saveShortcut = (_data: unknown, cancel: () => void) => {
+      cancel()
+      void this.save()
+    }
+    editor.keystrokes.set('Ctrl+S', saveShortcut)
+    editor.keystrokes.set('Cmd+S', saveShortcut)
 
     onEditorInsert(this.handleEditorInsert)
     onEditorLinkToPage(this.handleEditorLinkToPage)

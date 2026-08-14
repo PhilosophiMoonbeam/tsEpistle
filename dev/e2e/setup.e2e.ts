@@ -1,7 +1,99 @@
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test } from '@playwright/test'
+import type { Page } from '@playwright/test'
 
 const adminEmail = 'test@example.com'
 const adminPassword = '12345678'
+type BrowserVisualEditor = {
+  getData(): string
+  setData(data: string): void
+}
+type BrowserSourceEditor = {
+  getValue(): string
+}
+
+
+type BrowserVueInstance = {
+  parent?: BrowserVueInstance | null
+  proxy?: {
+    cm?: BrowserSourceEditor | null
+    editor?: BrowserVisualEditor | null
+  }
+}
+
+const visualMarkdownBrowserFixture = `# Visual Markdown browser
+
+## Heading 2
+
+### Heading 3
+
+#### Heading 4
+
+##### Heading 5
+
+###### Heading 6
+
+Paragraph with **bold**, *italic*, ~~strikethrough~~, and \`inline code\`.
+
+---
+
+> A blockquote.
+
+1. First
+   1. Nested
+2. Second
+
+- Bullet
+- [x] Done
+- [ ] Pending
+
+\`\`\`javascript
+const answer = 42
+\`\`\`
+
+| Name | Value |
+| --- | --- |
+| Alpha | One |
+
+Internal target`
+
+const visualHtmlBrowserFixture = `<h2>Visual HTML heading</h2>
+<p>Text with <strong>bold</strong>, <u>underline</u>, and <a href="/en/home">an internal link</a>.</p>
+<figure class="table"><table><thead><tr><th>HTML</th><th>Value</th></tr></thead><tbody><tr><td>Alpha</td><td>One</td></tr></tbody></table></figure>
+<figure class="image image-style-side"><img src="/_assets/svg/icon-image.svg" alt="Example image"><figcaption>Visual HTML caption</figcaption></figure>`
+
+async function getCkEditorData(page: Page): Promise<string> {
+  return page.evaluate(() => {
+    const host = document.querySelector<HTMLElement>('.editor-ckeditor')
+    let instance = (host as HTMLElement & { __vueParentComponent?: BrowserVueInstance }).__vueParentComponent
+    while (instance && !instance.proxy?.editor) instance = instance.parent
+    const editor = instance?.proxy?.editor
+    if (!editor) throw new Error('CKEditor instance is unavailable.')
+    return editor.getData()
+  })
+}
+
+async function setCkEditorData(page: Page, data: string): Promise<void> {
+  await page.evaluate(content => {
+    const host = document.querySelector<HTMLElement>('.editor-ckeditor')
+    let instance = (host as HTMLElement & { __vueParentComponent?: BrowserVueInstance }).__vueParentComponent
+    while (instance && !instance.proxy?.editor) instance = instance.parent
+    const editor = instance?.proxy?.editor
+    if (!editor) throw new Error('CKEditor instance is unavailable.')
+    editor.setData(content)
+  }, data)
+}
+
+async function getMarkdownSourceData(page: Page): Promise<string> {
+  return page.evaluate(() => {
+    const host = document.querySelector<HTMLElement>('.editor-markdown')
+    let instance = (host as HTMLElement & { __vueParentComponent?: BrowserVueInstance }).__vueParentComponent
+    while (instance && !instance.proxy?.cm) instance = instance.parent
+    const editor = instance?.proxy?.cm
+    if (!editor) throw new Error('Markdown source editor instance is unavailable.')
+    return editor.getValue()
+  })
+}
+
 
 async function expectWelcomePage(page: Page) {
   await expect(page).toHaveURL('/')
@@ -103,7 +195,7 @@ test.describe('critical post-install workflows', () => {
     await expect(page.getByRole('heading', { name: 'Browser Workflow' })).toBeVisible()
   })
   test('creates, publishes, and reopens a Visual Markdown page', async ({ page }) => {
-    test.setTimeout(60_000)
+    test.setTimeout(90_000)
     await loginAsAdmin(page)
     await page.goto('/e/en/visual-markdown-browser')
     await page.getByText('Visual Markdown', { exact: true }).click()
@@ -113,11 +205,71 @@ test.describe('critical post-install workflows', () => {
 
     const editor = page.locator('.editor-ckeditor > .ck-editor__editable')
     await expect(editor).toBeVisible()
-    await editor.fill('Visual Markdown browser workflow.')
-    await page.getByRole('button', { name: 'Create' }).click()
+    await setCkEditorData(page, visualMarkdownBrowserFixture)
+    await expect(editor.getByRole('heading', { name: 'Heading 6' })).toBeVisible()
+    await expect(editor.locator('table')).toBeVisible()
+    await expect(editor.getByRole('checkbox')).toHaveCount(2)
 
+
+    await editor.click()
+    await page.keyboard.press('Control+End')
+    for (let index = 0; index < 'target'.length; index += 1) {
+      await page.keyboard.press('Shift+ArrowLeft')
+    }
+    await page.evaluate(async () => {
+      const clientOrigin = new URL(document.querySelector<HTMLScriptElement>('script[src*="/client/index-app"]')?.src ?? window.location.href).origin
+      const { emitEditorLinkToPage } = await import(`${clientOrigin}/client/helpers/editor-link-events.ts`)
+      emitEditorLinkToPage({})
+    })
+    await page.locator('.page-selector .v-card-actions input:not([role="combobox"])').fill('home')
+    await page.getByRole('button', { name: 'Select' }).click()
+
+    await editor.click()
+    await page.keyboard.press('Control+End')
+    await page.evaluate(async () => {
+      const clientOrigin = new URL(document.querySelector<HTMLScriptElement>('script[src*="/client/index-app"]')?.src ?? window.location.href).origin
+      const { emitEditorInsert } = await import(`${clientOrigin}/client/helpers/editor-insert-events.ts`)
+      emitEditorInsert({ kind: 'IMAGE', path: '/_assets/svg/icon-image.svg', text: 'Example image' })
+    })
+    await expect(editor.getByRole('img', { name: 'Example image' })).toBeVisible()
+
+    await editor.click()
+    await page.keyboard.press('Control+End')
+    await page.evaluate(async () => {
+      const clientOrigin = new URL(document.querySelector<HTMLScriptElement>('script[src*="/client/index-app"]')?.src ?? window.location.href).origin
+      const { emitEditorInsert } = await import(`${clientOrigin}/client/helpers/editor-insert-events.ts`)
+      emitEditorInsert({ kind: 'BINARY', path: '/assets/document.pdf', text: 'document.pdf' })
+    })
+    await expect(editor.getByRole('link', { name: 'document.pdf' })).toHaveAttribute('href', '/assets/document.pdf')
+
+    const beforeDiagram = await getCkEditorData(page)
+    await page.evaluate(async () => {
+      const clientOrigin = new URL(document.querySelector<HTMLScriptElement>('script[src*="/client/index-app"]')?.src ?? window.location.href).origin
+      const { emitEditorInsert } = await import(`${clientOrigin}/client/helpers/editor-insert-events.ts`)
+      emitEditorInsert({ kind: 'DIAGRAM', text: 'PHN2Zz48L3N2Zz4=' })
+    })
+    await expect(page.getByText(/Diagrams are not supported by Visual Markdown/)).toBeVisible()
+    expect(await getCkEditorData(page)).toBe(beforeDiagram)
+
+    const authoredMarkdown = await getCkEditorData(page)
+    expect(authoredMarkdown).toContain('# Visual Markdown browser')
+    expect(authoredMarkdown).toContain('###### Heading 6')
+    expect(authoredMarkdown).toContain('**bold**')
+    expect(authoredMarkdown).toContain('~~strikethrough~~')
+    expect(authoredMarkdown).toMatch(/1\. First\n {3,}\d+\. Nested/)
+    expect(authoredMarkdown).toMatch(/[*-] \[x\] Done/)
+    expect(authoredMarkdown).toContain('```javascript')
+    expect(authoredMarkdown).toContain('| Name')
+    expect(authoredMarkdown).toContain('![Example image](/_assets/svg/icon-image.svg)')
+    expect(authoredMarkdown).toContain('[document.pdf](/assets/document.pdf)')
+    expect(authoredMarkdown).toMatch(/\[target\]\(\/(?:en\/)?home\)/)
+
+    await page.getByRole('button', { name: 'Create' }).click()
     await expect(page).toHaveURL('/en/visual-markdown-browser', { timeout: 30_000 })
-    await expect(page.getByText('Visual Markdown browser workflow.', { exact: true })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Visual Markdown browser' })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Heading 6' })).toBeVisible()
+    await expect(page.getByRole('table')).toBeVisible()
+    await expect(page.getByRole('img', { name: 'Example image' })).toBeVisible()
 
     const details = await page.evaluate(async () => {
       const pages = await fetch('/_api/pages', { credentials: 'same-origin' }).then(response => response.json())
@@ -129,16 +281,42 @@ test.describe('critical post-install workflows', () => {
       contentType: 'markdown'
     })
 
-    await page.getByRole('button', { name: 'Edit Page' }).click()
+    await page.goto('/e/en/visual-markdown-browser')
     await expect(page).toHaveURL('/e/en/visual-markdown-browser')
     await expect(page.getByText('Visual Markdown', { exact: true })).toBeVisible()
-    await expect(editor).toContainText('Visual Markdown browser workflow.')
-    await editor.fill('Visual Markdown browser workflow updated.')
-    await page.getByRole('button', { name: 'Save' }).click()
+    await expect(editor).toContainText('Visual Markdown browser')
+
+    await setCkEditorData(page, `${authoredMarkdown}\n\nSaved with the keyboard.`)
+    await editor.click()
+    await page.keyboard.press('Control+s')
     await expect(page.getByRole('button', { name: 'Saved' })).toBeVisible({ timeout: 30_000 })
+
+    await page.evaluate(async () => {
+      const clientOrigin = new URL(document.querySelector<HTMLScriptElement>('script[src*="/client/index-app"]')?.src ?? window.location.href).origin
+      const { emitEditorSaveConflict } = await import(`${clientOrigin}/client/helpers/editor-conflict-events.ts`)
+      emitEditorSaveConflict()
+    })
+    await expect(page.getByRole('button', { name: /Use Remote/i })).toBeVisible()
+    await page.getByRole('button', { name: /Use Remote/i }).click()
+    await page.getByRole('button', { name: 'Confirm' }).click()
+    await expect(editor).toContainText('Saved with the keyboard.')
+
+    await setCkEditorData(page, `${await getCkEditorData(page)}\n\nUnsaved draft.`)
     await page.getByRole('button', { name: 'Close' }).click()
+    await expect(page.getByRole('button', { name: 'Discard Changes' })).toBeVisible()
+    await page.getByRole('button', { name: 'Cancel' }).click()
+    await expect(page).toHaveURL('/e/en/visual-markdown-browser')
+    await page.getByRole('button', { name: 'Close' }).click()
+    await page.getByRole('button', { name: 'Discard Changes' }).click()
+
     await expect(page).toHaveURL('/en/visual-markdown-browser')
-    await expect(page.getByText('Visual Markdown browser workflow updated.', { exact: true })).toBeVisible()
+    await expect(page.getByText('Saved with the keyboard.', { exact: true })).toBeVisible()
+    await expect(page.getByText('Unsaved draft.', { exact: true })).not.toBeVisible()
+
+    await page.goto('/e/en/visual-markdown-browser')
+    await expect(page).toHaveURL('/e/en/visual-markdown-browser')
+    await expect(page.getByText('Visual Markdown', { exact: true })).toBeVisible()
+    await expect(editor).toContainText('Saved with the keyboard.')
   })
 
   test('retains the Visual HTML editor and HTML content type', async ({ page }) => {
@@ -152,12 +330,23 @@ test.describe('critical post-install workflows', () => {
 
     const editor = page.locator('.editor-ckeditor > .ck-editor__editable')
     await expect(editor).toBeVisible()
-    await editor.fill('Visual HTML browser workflow.')
+    await expect(page.getByRole('button', { name: 'Underline' })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Decrease indent' })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Increase indent' })).toBeVisible()
+    await setCkEditorData(page, visualHtmlBrowserFixture)
+    await expect(editor.getByRole('heading', { name: 'Visual HTML heading' })).toBeVisible()
+    await expect(editor.getByRole('link', { name: 'an internal link' })).toBeVisible()
+    await expect(editor.locator('table')).toBeVisible()
+    await expect(editor.getByText('Visual HTML caption', { exact: true })).toBeVisible()
+
+    await expect(editor.locator('figure.image-style-side')).toBeVisible()
     await page.waitForTimeout(350)
     await page.getByRole('button', { name: 'Create' }).click()
-
     await expect(page).toHaveURL('/en/visual-html-browser', { timeout: 30_000 })
-    await expect(page.getByText('Visual HTML browser workflow.', { exact: true })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Visual HTML heading' })).toBeVisible()
+    await expect(page.getByRole('link', { name: 'an internal link' })).toHaveAttribute('href', '/en/home')
+    await expect(page.getByRole('table')).toBeVisible()
+    await expect(page.getByText('Visual HTML caption', { exact: true })).toBeVisible()
 
     const details = await page.evaluate(async () => {
       const pages = await fetch('/_api/pages', { credentials: 'same-origin' }).then(response => response.json())
@@ -169,10 +358,12 @@ test.describe('critical post-install workflows', () => {
       contentType: 'html'
     })
 
-    await page.getByRole('button', { name: 'Edit Page' }).click()
+    await page.goto('/e/en/visual-html-browser')
     await expect(page).toHaveURL('/e/en/visual-html-browser')
     await expect(page.getByText('Visual Editor', { exact: true })).toBeVisible()
-    await expect(editor).toContainText('Visual HTML browser workflow.')
+    await expect(editor.getByRole('heading', { name: 'Visual HTML heading' })).toBeVisible()
+    await expect(editor.getByText('Visual HTML caption', { exact: true })).toBeVisible()
+    await expect(editor.locator('figure.image-style-side')).toBeVisible()
   })
   test('blocks unsupported extended Markdown before changing editors', async ({ page }) => {
     test.setTimeout(60_000)
@@ -232,22 +423,32 @@ test.describe('critical post-install workflows', () => {
 
     await convert('visual-markdown-browser', 'markdown')
     await page.goto('/e/en/visual-markdown-browser')
-    await expect(page.locator('.editor-markdown')).toBeVisible()
-    await expect(page.locator('.cm-content')).toContainText('Visual Markdown browser workflow updated.')
+    await expect(page.locator('.editor-markdown')).toBeVisible({ timeout: 30_000 })
+    const markdownBefore = await getMarkdownSourceData(page)
+    expect(markdownBefore).toContain('# Visual Markdown browser')
+    expect(markdownBefore).toContain('###### Heading 6')
+    expect(markdownBefore).toContain('![Example image](/_assets/svg/icon-image.svg)')
+    expect(markdownBefore).toMatch(/\[target\]\(\/(?:en\/)?home\)/)
 
     await convert('visual-markdown-browser', 'visual-markdown')
     await page.goto('/e/en/visual-markdown-browser')
-    await expect(page.locator('.editor-ckeditor > .ck-editor__editable')).toContainText('Visual Markdown browser workflow updated.')
+    await expect(page.locator('.editor-ckeditor > .ck-editor__editable')).toContainText('Visual Markdown browser', { timeout: 30_000 })
     await expect(page.getByText('Visual Markdown', { exact: true })).toBeVisible()
 
+    await convert('visual-markdown-browser', 'markdown')
+    await page.goto('/e/en/visual-markdown-browser')
+    await expect(page.locator('.editor-markdown')).toBeVisible({ timeout: 30_000 })
+    expect(await getMarkdownSourceData(page)).toBe(markdownBefore)
+
+    await convert('visual-markdown-browser', 'visual-markdown')
     await convert('visual-html-browser', 'visual-markdown')
     await page.goto('/e/en/visual-html-browser')
-    await expect(page.locator('.editor-ckeditor > .ck-editor__editable')).toContainText('Visual HTML browser workflow.')
+    await expect(page.locator('.editor-ckeditor > .ck-editor__editable')).toContainText('Visual HTML heading', { timeout: 30_000 })
     await expect(page.getByText('Visual Markdown', { exact: true })).toBeVisible()
 
     await convert('visual-html-browser', 'ckeditor')
     await page.goto('/e/en/visual-html-browser')
-    await expect(page.locator('.editor-ckeditor > .ck-editor__editable')).toContainText('Visual HTML browser workflow.')
+    await expect(page.locator('.editor-ckeditor > .ck-editor__editable')).toContainText('Visual HTML heading', { timeout: 30_000 })
     await expect(page.getByText('Visual Editor', { exact: true })).toBeVisible()
   })
 
