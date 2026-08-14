@@ -5,13 +5,15 @@
 The migration passed every acceptance gate and was promoted.
 
 - Active service: `wiki-tailnet`
-- Active address: `127.0.0.1:3013 -> 3000/tcp`
+- Active addresses: `127.0.0.1:3013 -> 3000/tcp` and tailnet-only `100.82.163.72:3013 -> 3000/tcp`
 - Active database: PostgreSQL 17.11 in `wiki-postgres`
 - Active application image: `wiki-private-pages:6448ad4b`
 - Application image ID: `sha256:5e6d4cefa74fd1cf4144aa2f22841613247287f7daa70ce9e9f32ba51c8f47f6`
 - Source revision: `6448ad4b9e8a97fb026aa911bd88e764c0aa6071`
 - Upstream base: Wiki.js 2.5.314, originally deployed image digest `sha256:2f6064a10157f79ff7db90ce1f1ae8486da4a7e3892ce862976282c6d8e66434`
 - Final health: HTTP 200 `{"ok":true}` after restarting both the promoted Wiki container and PostgreSQL
+- Tailnet URL: `http://agents8c48g.tail41a24a.ts.net:3013/`
+- Tailnet publication verification: Docker binds port 3013 only to loopback and the host Tailscale address; `/healthz` returned HTTP 200 through MagicDNS, and a browser rendered `Page Home | Wiki.js` with no console or runtime errors.
 
 The original SQLite container is stopped, not removed, under `wiki-tailnet-sqlite-rollback-20260814`. Its image, container configuration, `wiki-tailnet-data` volume, and frozen database remain intact. An isolated rollback container using that exact image and volume rendered the home page and returned HTTP 200 from `/healthz` on `127.0.0.1:3015`; the proof container was then removed.
 
@@ -226,9 +228,9 @@ Backups are outside Git under `/home/bbferko/.local/state/wiki-migration/2026-08
 
 Current topology:
 
-- Active Wiki: `wiki-tailnet`, PostgreSQL, healthy, `127.0.0.1:3013`
+- Active Wiki: `wiki-tailnet`, PostgreSQL, healthy, published by Docker on `127.0.0.1:3013` and tailnet-only `100.82.163.72:3013`
 - Active database: `wiki-postgres`, PostgreSQL 17.11, healthy, no host port
-- Preserved pre-final-correction PostgreSQL container: `wiki-tailnet-pre-6448ad4b`, stopped; earlier verified containers `wiki-tailnet-pre-75afc78e` and `wiki-postgres-canary-verified-a088b5fe` also remain stopped
+- Preserved pre-tailnet-publication PostgreSQL container: `wiki-tailnet-pre-tailnet-publish-6448ad4b`, stopped; earlier verified containers `wiki-tailnet-pre-6448ad4b`, `wiki-tailnet-pre-75afc78e`, and `wiki-postgres-canary-verified-a088b5fe` also remain stopped
 - Preserved rollback container: `wiki-tailnet-sqlite-rollback-20260814`, stopped
 - Preserved rollback image ID: `sha256:3ac6fe5582b4782ab7eceef76f03d0666b905193b9093b4b6011be23ecc81b7c`
 - Preserved rollback volume: `wiki-tailnet-data:/wiki/data/content`
