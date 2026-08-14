@@ -39,18 +39,15 @@ export const up = async (knex: Knex) => {
   await knex.raw(`CREATE INDEX page_history_visibility_owner_lookup ON "pageHistory" (visibility, "ownerId", "pageId")`)
   await knex.raw(`CREATE INDEX page_tree_visibility_owner_lookup ON "pageTree" (visibility, "ownerId", "localeCode", path)`)
 
-  await knex.schema.alterTable('pages', table => {
-    table.dropColumn('isPrivate')
-    table.dropColumn('privateNS')
-  })
-  await knex.schema.alterTable('pageHistory', table => {
-    table.dropColumn('isPrivate')
-    table.dropColumn('privateNS')
-  })
-  await knex.schema.alterTable('pageTree', table => {
-    table.dropColumn('isPrivate')
-    table.dropColumn('privateNS')
-  })
+  for (const tableName of ['pages', 'pageHistory', 'pageTree']) {
+    for (const columnName of ['isPrivate', 'privateNS']) {
+      if (await knex.schema.hasColumn(tableName, columnName)) {
+        await knex.schema.alterTable(tableName, table => {
+          table.dropColumn(columnName)
+        })
+      }
+    }
+  }
 }
 
 export const down = async (knex: Knex) => {

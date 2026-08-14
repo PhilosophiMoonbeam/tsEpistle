@@ -19,22 +19,16 @@ export const up = async (knex: Knex) => {
     table.string('visibility', 16).notNullable().defaultTo('public')
     table.integer('ownerId').nullable().references('id').inTable('users').onDelete('RESTRICT')
     table.check("(visibility = 'public' AND ownerId IS NULL) OR (visibility = 'private' AND ownerId IS NOT NULL)", [], 'pages_visibility_owner_check')
-    table.dropColumn('isPrivate')
-    table.dropColumn('privateNS')
   })
   await knex.schema.alterTable('pageHistory', table => {
     table.string('visibility', 16).notNullable().defaultTo('public')
     table.integer('ownerId').nullable().references('id').inTable('users').onDelete('RESTRICT')
     table.check("(visibility = 'public' AND ownerId IS NULL) OR (visibility = 'private' AND ownerId IS NOT NULL)", [], 'page_history_visibility_owner_check')
-    table.dropColumn('isPrivate')
-    table.dropColumn('privateNS')
   })
   await knex.schema.alterTable('pageTree', table => {
     table.string('visibility', 16).notNullable().defaultTo('public')
     table.integer('ownerId').nullable().references('id').inTable('users').onDelete('CASCADE')
     table.check("(visibility = 'public' AND ownerId IS NULL) OR (visibility = 'private' AND ownerId IS NOT NULL)", [], 'page_tree_visibility_owner_check')
-    table.dropColumn('isPrivate')
-    table.dropColumn('privateNS')
   })
 
   await knex.raw(`CREATE UNIQUE INDEX pages_public_identity_unique ON pages (localeCode, path) WHERE visibility = 'public'`)
@@ -42,6 +36,16 @@ export const up = async (knex: Knex) => {
   await knex.raw(`CREATE INDEX pages_visibility_owner_lookup ON pages (visibility, ownerId, localeCode, path)`)
   await knex.raw(`CREATE INDEX page_history_visibility_owner_lookup ON pageHistory (visibility, ownerId, pageId)`)
   await knex.raw(`CREATE INDEX page_tree_visibility_owner_lookup ON pageTree (visibility, ownerId, localeCode, path)`)
+
+  for (const tableName of ['pages', 'pageHistory', 'pageTree']) {
+    for (const columnName of ['isPrivate', 'privateNS']) {
+      if (await knex.schema.hasColumn(tableName, columnName)) {
+        await knex.schema.alterTable(tableName, table => {
+          table.dropColumn(columnName)
+        })
+      }
+    }
+  }
 }
 
 export const down = async (knex: Knex) => {

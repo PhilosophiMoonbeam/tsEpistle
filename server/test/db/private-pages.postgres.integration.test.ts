@@ -38,13 +38,11 @@ suite('PostgreSQL private-page schema migration', () => {
       table.string('path').notNullable()
       table.boolean('isPrivate').notNullable().defaultTo(false)
       table.string('privateNS').nullable()
-      table.unique(['localeCode', 'path'])
     })
     await db.schema.createTable('pageHistory', table => {
       table.integer('id').primary()
       table.integer('pageId').nullable()
       table.boolean('isPrivate').notNullable().defaultTo(false)
-      table.string('privateNS').nullable()
     })
     await db.schema.createTable('pageTree', table => {
       table.integer('id').primary()
