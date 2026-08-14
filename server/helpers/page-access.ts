@@ -28,7 +28,7 @@ const column = (table: string | undefined, name: string): string => table ? `${t
 
 export const principalId = (user: PagePrincipal): number | null => {
   const id = user && typeof user.id === 'number' && Number.isSafeInteger(user.id) ? user.id : null
-  return id !== null && id > 2 ? id : null
+  return id !== null && id > 0 && id !== 2 ? id : null
 }
 
 export const managesSystem = (user: PagePrincipal): boolean =>

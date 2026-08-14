@@ -54,6 +54,8 @@ describe('owner-scoped page access', () => {
 
   it('recognizes only valid principals and explicit system managers', () => {
     expect(principalId(owner)).toBe(7)
+    expect(principalId({ id: 1 })).toBe(1)
+    expect(principalId({ id: 2 })).toBeNull()
     expect(principalId({ id: 0 })).toBeNull()
     expect(principalId({ id: Number.NaN })).toBeNull()
     expect(managesSystem(administrator)).toBe(true)
