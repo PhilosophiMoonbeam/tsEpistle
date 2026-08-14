@@ -1,11 +1,11 @@
 <template lang="pug">
-  v-dialog(v-model='isShown', max-width='650', persistent)
+  v-dialog(v-model='isShown', max-width='650', persistent, :fullscreen='$vuetify.display.smAndDown')
     v-card
       .dialog-header.is-short
         v-icon.mr-3(color='white') mdi-plus
         span New User
         v-spacer
-        v-btn.mx-0(color='white', outlined, disabled, dark)
+        v-btn.mx-0(v-if='$vuetify.display.mdAndUp', color='white', outlined, disabled, dark)
           v-icon(left) mdi-database-import
           span Bulk Import
       v-card-text.pt-5
@@ -77,13 +77,13 @@
         //-   v-model='sendWelcomeEmail'
         //-   disabled
         //- )
-      div.v-card-chin
+      div.v-card-chin.admin-dialog-actions
         v-spacer
         v-btn(text, @click='isShown = false') Cancel
         v-btn.px-3(depressed, color='primary', @click='newUser(false)', :disabled='!providersLoaded || availableProviders.length < 1')
           v-icon(left) mdi-chevron-right
           span Create
-        v-btn.px-3(depressed, color='primary', @click='newUser(true)', :disabled='!providersLoaded || availableProviders.length < 1')
+        v-btn.px-3(v-if='$vuetify.display.mdAndUp', depressed, color='primary', @click='newUser(true)', :disabled='!providersLoaded || availableProviders.length < 1')
           v-icon(left) mdi-chevron-double-right
           span Create and Close
 </template>

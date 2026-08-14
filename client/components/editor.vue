@@ -1,6 +1,17 @@
 <template lang="pug">
   v-app.editor(:dark='$vuetify.theme.current.dark')
     nav-header(dense)
+      template(v-slot:mobileBrand)
+        v-text-field.editor-title-input.editor-title-input-mobile(
+          dark
+          solo
+          flat
+          v-model='currentPageTitle'
+          hide-details
+          background-color='black'
+          dense
+          aria-label='Page title'
+        )
       template(v-slot:mid)
         v-text-field.editor-title-input(
           dark
@@ -13,8 +24,16 @@
           full-width
         )
       template(v-slot:actions)
-        v-btn.mr-3.animated.fadeIn(color='amber', outlined, small, v-if='isConflict', @click='openConflict')
-          .overline.amber--text.mr-3 Conflict
+        v-btn.mr-3.animated.fadeIn(
+          color='amber'
+          outlined
+          small
+          v-if='isConflict'
+          @click='openConflict'
+          :icon='$vuetify.display.smAndDown'
+          aria-label='Resolve editing conflict'
+        )
+          .overline.amber--text.mr-3(v-if='$vuetify.display.mdAndUp') Conflict
           status-indicator(intermediary, pulse)
         v-btn.animated.fadeInDown(
           text
@@ -22,28 +41,50 @@
           @click.exact='save'
           @click.ctrl.exact='saveAndClose'
           :class='{ "is-icon": $vuetify.display.mdAndDown }'
+          :aria-label='mode === `create` ? $t(`common:actions.create`) : (isDirty ? $t(`common:actions.save`) : $t(`editor:save.saved`))'
           )
           v-icon(color='green', :left='$vuetify.display.lgAndUp') mdi-check
           span.grey--text(v-if='$vuetify.display.lgAndUp && mode !== `create` && !isDirty') {{ $t('editor:save.saved') }}
           span.white--text(v-else-if='$vuetify.display.lgAndUp') {{ mode === 'create' ? $t('common:actions.create') : $t('common:actions.save') }}
         v-btn.animated.fadeInDown.wait-p1s(
+          v-if='$vuetify.display.mdAndUp'
           text
           color='blue'
           @click='openPropsModal'
           :class='{ "is-icon": $vuetify.display.mdAndDown, "mx-0": !welcomeMode, "ml-0": welcomeMode }'
+          :aria-label='$t(`common:actions.page`)'
           )
           v-icon(color='blue', :left='$vuetify.display.lgAndUp') mdi-tag-text-outline
           span.white--text(v-if='$vuetify.display.lgAndUp') {{ $t('common:actions.page') }}
         v-btn.animated.fadeInDown.wait-p2s(
-          v-if='!welcomeMode'
+          v-if='!welcomeMode && $vuetify.display.mdAndUp'
           text
           color='red'
           :class='{ "is-icon": $vuetify.display.mdAndDown }'
+          :aria-label='$t(`common:actions.close`)'
           @click='exit'
           )
           v-icon(color='red', :left='$vuetify.display.lgAndUp') mdi-close
           span.white--text(v-if='$vuetify.display.lgAndUp') {{ $t('common:actions.close') }}
-        v-divider.ml-3(vertical)
+        v-menu(v-if='$vuetify.display.smAndDown', offset-y, bottom, left, min-width='240')
+          template(v-slot:activator='{ props }')
+            v-btn.editor-actions-menu(
+              icon
+              v-bind='props'
+              aria-label='Editor actions'
+            )
+              v-icon(color='grey') mdi-dots-vertical
+          v-list(nav)
+            v-list-item(@click='openPropsModal')
+              v-icon.mr-3(color='blue') mdi-tag-text-outline
+              v-list-item-title Page settings
+            v-list-item(@click='saveAndClose')
+              v-icon.mr-3(color='green') mdi-content-save-move
+              v-list-item-title Save and close
+            v-list-item(v-if='!welcomeMode', @click='exit')
+              v-icon.mr-3(color='red') mdi-close
+              v-list-item-title Close editor
+        v-divider.ml-3(v-if='$vuetify.display.mdAndUp', vertical)
     v-main
       component(:is='currentEditor', :save='save')
       editor-modal-properties(v-model='dialogProps')
@@ -463,6 +504,20 @@ export default defineComponent({
 
     &-title-input input {
       text-align: center;
+    }
+
+    &-title-input-mobile {
+      width: 100%;
+      min-width: 0;
+
+      .v-field {
+        padding-inline: 4px;
+      }
+
+      input {
+        font-size: .875rem;
+        text-align: left;
+      }
     }
   }
 

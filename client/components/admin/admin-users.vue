@@ -10,11 +10,18 @@
           v-spacer
           v-btn.animated.fadeInDown.wait-p2s.mr-3(outlined, color='grey', icon, @click='refresh')
             v-icon mdi-refresh
-          v-btn.animated.fadeInDown(color='primary', large, depressed, @click='createUser')
-            v-icon(left) mdi-plus
-            span New User
+          v-btn.animated.fadeInDown(
+            color='primary'
+            large
+            depressed
+            @click='createUser'
+            :icon='$vuetify.display.smAndDown'
+            aria-label='New user'
+          )
+            v-icon(:left='$vuetify.display.mdAndUp') mdi-plus
+            span(v-if='$vuetify.display.mdAndUp') New User
         v-card.mt-3.animated.fadeInUp
-          .pa-2.d-flex.align-center(:class='$vuetify.theme.current.dark ? `grey darken-3-d5` : `grey lighten-3`')
+          .admin-filter-bar.pa-2.d-flex.align-center(:class='$vuetify.theme.current.dark ? `grey darken-3-d5` : `grey lighten-3`')
             v-text-field(
               solo
               flat
@@ -39,10 +46,11 @@
               dense
             )
           v-divider
-          v-data-table(
+          v-data-table.admin-responsive-table(
             v-model='selected'
             :items='users'
-            :headers='headers'
+            :headers='responsiveHeaders'
+            :hide-default-header='$vuetify.display.smAndDown'
             v-model:page='pagination'
             v-model:sort-by='sortBy'
             :items-per-page='15'
@@ -50,9 +58,7 @@
             hide-default-footer
             )
             template(v-slot:item='props')
-              tr.is-clickable(:active='props.selected', @click='$router.push("/users/" + props.item.id)')
-                //- td
-                  v-checkbox(hide-details, :input-value='props.selected', color='blue darken-2', @click='props.selected = !props.selected')
+              tr.is-clickable(v-if='$vuetify.display.mdAndUp', :active='props.selected', @click='$router.push("/users/" + props.item.id)')
                 td {{ props.item.id }}
                 td: strong {{ props.item.name }}
                 td {{ props.item.email }}
@@ -65,6 +71,20 @@
                   v-icon.mr-3(v-if='props.item.isSystem') mdi-lock-outline
                   status-indicator(positive, pulse, v-if='props.item.isActive')
                   status-indicator(negative, pulse, v-else)
+              tr.admin-mobile-table-row.is-clickable(v-else, @click='$router.push("/users/" + props.item.id)')
+                td(:colspan='responsiveHeaders.length')
+                  .admin-mobile-record
+                    .d-flex.align-center
+                      .admin-mobile-record-title {{ props.item.name }}
+                      v-spacer
+                      v-icon.mr-2(v-if='props.item.isSystem', small) mdi-lock-outline
+                      status-indicator(positive, pulse, v-if='props.item.isActive')
+                      status-indicator(negative, pulse, v-else)
+                    .body-2 {{ props.item.email }}
+                    .admin-mobile-record-meta {{ getStrategyName(props.item.providerKey) }}
+                    .caption.grey--text.mt-2
+                      span(v-if='props.item.lastLoginAt') Last login {{ $helpers.formatMoment(props.item.lastLoginAt, 'from') }}
+                      em(v-else) Never logged in
             template(v-slot:no-data)
               .pa-3
                 v-alert.text-left(icon='mdi-alert', outlined, color='grey')
@@ -134,6 +154,11 @@ export default {
     }
   },
   computed: {
+    responsiveHeaders () {
+      return this.$vuetify.display.smAndDown
+        ? this.headers.filter(header => header.value === 'name')
+        : this.headers
+    },
     strategyOptions() {
       return this.strategies.map(strategy => ({
         ...strategy,

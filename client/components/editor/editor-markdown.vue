@@ -17,12 +17,12 @@
             v-btn.animated.fadeIn.wait-p1s(icon, tile, v-bind='props', @click='toggleMarkup({ start: `*` })').mx-0
               v-icon mdi-format-italic
           span {{$t('editor:markup.italic')}}
-        v-tooltip(bottom, color='primary')
+        v-tooltip(v-if='$vuetify.display.mdAndUp', bottom, color='primary')
           template(v-slot:activator='{ props }')
             v-btn.animated.fadeIn.wait-p2s(icon, tile, v-bind='props', @click='toggleMarkup({ start: `~~` })').mx-0
               v-icon mdi-format-strikethrough
           span {{$t('editor:markup.strikethrough')}}
-        v-menu(offset-y, open-on-hover)
+        v-menu(offset-y, :open-on-hover='$vuetify.display.mdAndUp')
           template(v-slot:activator='{ props }')
             v-btn.animated.fadeIn.wait-p3s(icon, tile, v-bind='props').mx-0
               v-icon mdi-format-header-pound
@@ -33,17 +33,17 @@
                   v-icon(:size='24 - (idx - 1) * 2') mdi-format-header-{{n}}
                 v-list-item-title {{$t('editor:markup.heading', { level: n })}}
               v-divider(v-if='idx < 5')
-        v-tooltip(bottom, color='primary')
+        v-tooltip(v-if='$vuetify.display.mdAndUp', bottom, color='primary')
           template(v-slot:activator='{ props }')
             v-btn.animated.fadeIn.wait-p4s(icon, tile, v-bind='props', @click='toggleMarkup({ start: `~` })').mx-0
               v-icon mdi-format-subscript
           span {{$t('editor:markup.subscript')}}
-        v-tooltip(bottom, color='primary')
+        v-tooltip(v-if='$vuetify.display.mdAndUp', bottom, color='primary')
           template(v-slot:activator='{ props }')
             v-btn.animated.fadeIn.wait-p5s(icon, tile, v-bind='props', @click='toggleMarkup({ start: `^` })').mx-0
               v-icon mdi-format-superscript
           span {{$t('editor:markup.superscript')}}
-        v-menu(offset-y, open-on-hover)
+        v-menu(v-if='$vuetify.display.mdAndUp', offset-y, open-on-hover)
           template(v-slot:activator='{ props }')
             v-btn.animated.fadeIn.wait-p6s(icon, tile, v-bind='props').mx-0
               v-icon mdi-alpha-t-box-outline
@@ -83,17 +83,17 @@
             v-btn.animated.fadeIn.wait-p8s(icon, tile, v-bind='props', @click='insertBeforeEachLine({ content: `1. `})').mx-0
               v-icon mdi-format-list-numbered
           span {{$t('editor:markup.orderedList')}}
-        v-tooltip(bottom, color='primary')
+        v-tooltip(v-if='$vuetify.display.mdAndUp', bottom, color='primary')
           template(v-slot:activator='{ props }')
             v-btn.animated.fadeIn.wait-p9s(icon, tile, v-bind='props', @click='toggleMarkup({ start: "`" })').mx-0
               v-icon mdi-code-tags
           span {{$t('editor:markup.inlineCode')}}
-        v-tooltip(bottom, color='primary')
+        v-tooltip(v-if='$vuetify.display.mdAndUp', bottom, color='primary')
           template(v-slot:activator='{ props }')
             v-btn.animated.fadeIn.wait-p10s(icon, tile, v-bind='props', @click='toggleMarkup({ start: `<kbd>`, end: `</kbd>` })').mx-0
               v-icon mdi-keyboard-variant
           span {{$t('editor:markup.keyboardKey')}}
-        v-tooltip(bottom, color='primary')
+        v-tooltip(v-if='$vuetify.display.mdAndUp', bottom, color='primary')
           template(v-slot:activator='{ props }')
             v-btn.animated.fadeIn.wait-p11s(icon, tile, v-bind='props', @click='insertAfter({ content: `---`, newLine: true })').mx-0
               v-icon mdi-minus
@@ -110,6 +110,52 @@
               v-btn.animated.fadeIn.wait-p2s(icon, tile, v-bind='props', @click='previewShown = !previewShown').mx-0
                 v-icon mdi-book-open-outline
             span {{$t('editor:markup.togglePreviewPane')}}
+        template(v-else)
+          v-spacer
+          v-tooltip(bottom, color='primary')
+            template(v-slot:activator='{ props }')
+              v-btn.mx-0(
+                icon
+                tile
+                v-bind='props'
+                @click='previewShown = !previewShown'
+                :aria-label='previewShown ? `Show editor` : `Show preview`'
+              )
+                v-icon {{ previewShown ? 'mdi-pencil-outline' : 'mdi-book-open-outline' }}
+            span {{ previewShown ? 'Show editor' : $t('editor:markup.togglePreviewPane') }}
+          v-menu(offset-y, left, min-width='260')
+            template(v-slot:activator='{ props }')
+              v-btn.mx-0(
+                icon
+                tile
+                v-bind='props'
+                aria-label='More formatting tools'
+              )
+                v-icon mdi-dots-horizontal
+            v-list(nav)
+              v-list-item(@click='insertLink')
+                v-icon.mr-3 mdi-link-plus
+                v-list-item-title {{$t('editor:markup.insertLink')}}
+              v-list-item(@click='toggleModal(`editorModalMedia`)')
+                v-icon.mr-3 mdi-folder-multiple-image
+                v-list-item-title {{$t('editor:markup.insertAssets')}}
+              v-list-item(@click='toggleModal(`editorModalDrawio`)')
+                v-icon.mr-3 mdi-chart-multiline
+                v-list-item-title {{$t('editor:markup.insertDiagram')}}
+              v-divider
+              v-list-item(@click='toggleMarkup({ start: `~~` })')
+                v-icon.mr-3 mdi-format-strikethrough
+                v-list-item-title {{$t('editor:markup.strikethrough')}}
+              v-list-item(@click='insertBeforeEachLine({ content: `> `})')
+                v-icon.mr-3 mdi-format-quote-open
+                v-list-item-title {{$t('editor:markup.blockquote')}}
+              v-list-item(@click='toggleMarkup({ start: "`" })')
+                v-icon.mr-3 mdi-code-tags
+                v-list-item-title {{$t('editor:markup.inlineCode')}}
+              v-divider
+              v-list-item(@click='toggleHelp')
+                v-icon.mr-3 mdi-help-circle
+                v-list-item-title {{$t('editor:markup.markdownFormattingHelp')}}
     .editor-markdown-main
       .editor-markdown-sidebar
         v-tooltip(right, color='teal')
@@ -139,7 +185,7 @@
               v-btn.mt-3.animated.fadeInLeft.wait-p4s(icon, tile, v-bind='props', dark, @click='toggleHelp').mx-0
                 v-icon(:color='helpShown ? `teal` : ``') mdi-help-circle
             span {{$t('editor:markup.markdownFormattingHelp')}}
-      .editor-markdown-editor
+      .editor-markdown-editor(:class='{ "is-mobile-hidden": previewShown && $vuetify.display.smAndDown }')
         div(ref='cm')
       transition(name='editor-markdown-preview')
         .editor-markdown-preview(v-if='previewShown')
@@ -392,7 +438,7 @@ export default defineComponent({
       fabInsertMenu: false,
       cm: null as TextEditorHandle | null,
       cursorPos: { ch: 0, line: 1 } as TextPosition,
-      previewShown: true,
+      previewShown: this.$vuetify.display.mdAndUp,
       previewHTML: '',
       helpShown: false,
       spellModeActive: false,
@@ -817,6 +863,10 @@ $editor-height-mobile: calc(100vh - 112px - 16px);
     @include until($tablet) {
       height: $editor-height-mobile;
     }
+
+      &.is-mobile-hidden {
+        display: none;
+      }
   }
 
   &-preview {
@@ -832,7 +882,11 @@ $editor-height-mobile: calc(100vh - 112px - 16px);
     }
 
     @include until($tablet) {
-      display: none;
+      display: block;
+      flex: 1 1 100%;
+      width: 100%;
+      max-width: 100vw !important;
+      padding: 12px;
     }
 
     &-enter-active, &-leave-active {
@@ -862,6 +916,7 @@ $editor-height-mobile: calc(100vh - 112px - 16px);
 
       @include until($tablet) {
         height: $editor-height-mobile;
+        width: 100%;
       }
 
       > div {
@@ -943,8 +998,7 @@ $editor-height-mobile: calc(100vh - 112px - 16px);
     padding: 24px 0;
 
     @include until($tablet) {
-      padding: 12px 0;
-      width: 40px;
+      display: none;
     }
   }
 

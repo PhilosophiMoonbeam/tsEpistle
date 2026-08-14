@@ -8,11 +8,11 @@
             .headline.blue--text.text--darken-2 Edit Group
             .subtitle-1.grey--text {{group.name}}
           v-spacer
-          v-btn(color='grey', icon, outlined, to='/groups')
+          v-btn(color='grey', icon, outlined, to='/groups', aria-label='Back to groups')
             v-icon mdi-arrow-left
-          v-dialog(v-model='deleteGroupDialog', max-width='500', v-if='!group.isSystem')
+          v-dialog(v-model='deleteGroupDialog', max-width='500', :fullscreen='$vuetify.display.smAndDown', v-if='!group.isSystem')
             template(v-slot:activator='{ props }')
-              v-btn.ml-3(color='red', icon, outlined, v-bind='props')
+              v-btn.ml-3(color='red', icon, outlined, v-bind='props', aria-label='Delete group')
                 v-icon(color='red') mdi-trash-can-outline
             v-card
               .dialog-header.is-red Delete Group?
@@ -21,9 +21,16 @@
                 v-spacer
                 v-btn(text, @click='deleteGroupDialog = false') Cancel
                 v-btn(color='red', dark, @click='deleteGroup') Delete
-          v-btn.ml-3(color='success', large, depressed, @click='updateGroup')
-            v-icon(left) mdi-check
-            span Update Group
+          v-btn.ml-3(
+            color='success'
+            large
+            depressed
+            @click='updateGroup'
+            :icon='$vuetify.display.smAndDown'
+            aria-label='Update group'
+          )
+            v-icon(:left='$vuetify.display.mdAndUp') mdi-check
+            span(v-if='$vuetify.display.mdAndUp') Update Group
         v-card.mt-3
           v-tabs.grad-tabs(v-model='tab', :color='$vuetify.theme.current.dark ? `blue` : `primary`', fixed-tabs, show-arrows, icons-and-text)
             v-tab(value='settings')

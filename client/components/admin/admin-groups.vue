@@ -8,15 +8,29 @@
             .headline.blue--text.text--darken-2.animated.fadeInLeft Groups
             .subtitle-1.grey--text.animated.fadeInLeft.wait-p4s Manage groups and their permissions
           v-spacer
-          v-btn.animated.fadeInDown.wait-p3s(icon, outlined, color='grey', href='https://docs.requarks.io/groups', target='_blank')
+          v-btn.animated.fadeInDown.wait-p3s(
+            icon
+            outlined
+            color='grey'
+            href='https://docs.requarks.io/groups'
+            target='_blank'
+            aria-label='Group documentation'
+          )
             v-icon mdi-help-circle
-          v-btn.animated.fadeInDown.wait-p2s.mx-3(color='grey', outlined, @click='refresh', icon)
+          v-btn.animated.fadeInDown.wait-p2s.mx-3(color='grey', outlined, @click='refresh', icon, aria-label='Refresh groups')
             v-icon mdi-refresh
-          v-dialog(v-model='newGroupDialog', max-width='500')
+          v-dialog(v-model='newGroupDialog', max-width='500', :fullscreen='$vuetify.display.smAndDown')
             template(v-slot:activator='{ props }')
-              v-btn.animated.fadeInDown(color='primary', depressed, v-bind='props', large)
-                v-icon(left) mdi-plus
-                span New Group
+              v-btn.animated.fadeInDown(
+                color='primary'
+                depressed
+                v-bind='props'
+                large
+                :icon='$vuetify.display.smAndDown'
+                aria-label='New group'
+              )
+                v-icon(:left='$vuetify.display.mdAndUp') mdi-plus
+                span(v-if='$vuetify.display.mdAndUp') New Group
             v-card
               .dialog-header.is-short New Group
               v-card-text.pt-5
@@ -35,9 +49,10 @@
                 v-btn(text, @click='newGroupDialog = false') Cancel
                 v-btn(color='primary', @click='createGroup') Create
         v-card.mt-3.animated.fadeInUp
-          v-data-table(
+          v-data-table.admin-responsive-table(
             :items='groups'
-            :headers='headers'
+            :headers='responsiveHeaders'
+            :hide-default-header='$vuetify.display.smAndDown'
             :search='search'
             v-model:page='pagination'
             :items-per-page='15'
@@ -47,7 +62,7 @@
             hide-default-footer
           )
             template(v-slot:item='props')
-              tr.is-clickable(:active='props.selected', @click='$router.push("/groups/" + props.item.id)')
+              tr.is-clickable(v-if='$vuetify.display.mdAndUp', :active='props.selected', @click='$router.push("/groups/" + props.item.id)')
                 td {{ props.item.id }}
                 td: strong {{ props.item.name }}
                 td {{ props.item.userCount }}
@@ -58,6 +73,15 @@
                     template(v-slot:activator='{ props }')
                       v-icon(v-bind='props') mdi-lock-outline
                     span System Group
+              tr.admin-mobile-table-row.is-clickable(v-else, @click='$router.push("/groups/" + props.item.id)')
+                td(:colspan='responsiveHeaders.length')
+                  .admin-mobile-record
+                    .d-flex.align-center
+                      .admin-mobile-record-title {{ props.item.name }}
+                      v-spacer
+                      v-icon(v-if='props.item.isSystem', small, aria-label='System group') mdi-lock-outline
+                    .admin-mobile-record-meta {{ props.item.userCount }} users
+                    .caption.grey--text.mt-2 Updated {{ $helpers.formatMoment(props.item.updatedAt, 'calendar') }}
             template(v-slot:no-data)
               v-alert.ma-3(icon='mdi-alert', :value='true', outline) No groups to display.
           .text-xs-center.py-2(v-if='pageCount > 1')
@@ -89,6 +113,13 @@ export default {
       ],
       search: '',
       loading: false
+    }
+  },
+  computed: {
+    responsiveHeaders () {
+      return this.$vuetify.display.smAndDown
+        ? this.headers.filter(header => header.value === 'name')
+        : this.headers
     }
   },
   watch: {

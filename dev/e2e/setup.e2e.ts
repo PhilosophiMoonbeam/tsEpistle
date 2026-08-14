@@ -28,6 +28,14 @@ async function loginAsAdmin(page: Page) {
   })
 }
 
+async function expectNoHorizontalOverflow(page: Page) {
+  const layout = await page.evaluate(() => ({
+    viewportWidth: window.innerWidth,
+    documentWidth: document.documentElement.scrollWidth
+  }))
+  expect(layout.documentWidth).toBeLessThanOrEqual(layout.viewportWidth + 1)
+}
+
 test.describe('critical post-install workflows', () => {
   test.describe.configure({ mode: 'serial', retries: 0 })
 
@@ -174,5 +182,65 @@ test.describe('critical post-install workflows', () => {
     })
     expect(consoleErrors).toEqual([])
     expect(failedRequests).toEqual([])
+  })
+
+  test('keeps administration workflows within the desktop viewport', async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 1100 })
+    await loginAsAdmin(page)
+    await page.goto('/a/dashboard')
+
+    await expect(page.getByText('Administration Area', { exact: true })).toBeVisible()
+    await expect(page.locator('#admin-navigation')).toBeVisible()
+    await expect(page.getByText('Recent Pages', { exact: true })).toBeVisible()
+    await expect(page.getByText('Last Logins', { exact: true })).toBeVisible()
+    await expectNoHorizontalOverflow(page)
+
+    await page.goto('/a/pages')
+    await expect(page.locator('.admin-header').getByText('Pages', { exact: true })).toBeVisible()
+    await expect(page.locator('.admin-responsive-table')).toBeVisible()
+    await expectNoHorizontalOverflow(page)
+  })
+
+  test('keeps administration and editor controls usable at a narrow viewport', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 })
+    await loginAsAdmin(page)
+    await page.goto('/a/dashboard')
+
+    const navigationButton = page.getByRole('button', { name: 'Administration navigation', exact: true })
+    await expect(navigationButton).toBeVisible()
+    await navigationButton.click()
+    await expect(page.locator('#admin-navigation')).toBeVisible()
+    await page.locator('#admin-navigation').getByText('Pages', { exact: true }).click()
+
+    await expect(page).toHaveURL('/a/pages')
+    await expect(page.locator('.admin-mobile-table-row').first()).toBeVisible()
+    await expectNoHorizontalOverflow(page)
+
+    await page.goto('/en/home')
+    await page.getByRole('button', { name: 'Edit Page' }).click()
+    await expect(page).toHaveURL('/e/en/home')
+    await expect(page.getByRole('textbox', { name: 'Page title' })).toHaveValue('Home')
+    await expect(page.getByRole('button', { name: 'Save' })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Editor actions' })).toBeVisible()
+    await expectNoHorizontalOverflow(page)
+
+    await page.getByRole('button', { name: 'Show preview' }).click()
+    await expect(page.locator('.editor-markdown-preview')).toBeVisible()
+    await expect(page.locator('.editor-markdown-editor')).toBeHidden()
+    await page.getByRole('button', { name: 'Show editor' }).click()
+    await expect(page.locator('.editor-markdown-editor')).toBeVisible()
+
+    await page.getByRole('button', { name: 'Editor actions' }).click()
+    await page.getByText('Page settings', { exact: true }).click()
+    await expect(page.getByText('Page Properties', { exact: true })).toBeVisible()
+    await page.getByRole('tab', { name: 'Scheduling' }).click()
+    await expect(page.getByRole('textbox', { name: 'Publish starting on...' })).toBeVisible()
+    await expect(page.getByRole('textbox', { name: 'Publish ending on...' })).toBeVisible()
+    await expectNoHorizontalOverflow(page)
+    await page.getByRole('button', { name: 'OK' }).click()
+
+    await page.getByRole('button', { name: 'Editor actions' }).click()
+    await page.getByText('Close editor', { exact: true }).click()
+    await expect(page).toHaveURL('/en/home')
   })
 })

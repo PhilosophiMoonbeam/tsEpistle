@@ -55,7 +55,21 @@
             v-spacer
             .overline {{$t('admin:dashboard.recentPages')}}
             v-spacer
+          v-list.dashboard-mobile-list(v-if='$vuetify.display.smAndDown', lines='three')
+            v-list-item(
+              v-for='page in recentPages'
+              :key='page.id'
+              @click='$router.push(`/pages/` + page.id)'
+            )
+              v-list-item-title: strong {{ page.title }}
+              v-list-item-subtitle
+                v-chip.mr-2(label, x-small, :color='$vuetify.theme.current.dark ? `grey darken-4` : `grey lighten-4`') {{ page.locale }}
+                span /{{ page.path }}
+              .caption.grey--text {{ $helpers.formatMoment(page.updatedAt, 'calendar') }}
+            v-list-item(v-if='!recentPagesLoading && recentPages.length === 0')
+              v-list-item-title.grey--text No recent pages
           v-data-table.pb-2(
+            v-else
             :items='recentPages'
             :headers='recentPagesHeaders'
             :loading='recentPagesLoading'
@@ -76,7 +90,18 @@
             v-spacer
             .overline {{$t('admin:dashboard.lastLogins')}}
             v-spacer
+          v-list.dashboard-mobile-list(v-if='$vuetify.display.smAndDown', lines='two')
+            v-list-item(
+              v-for='user in lastLogins'
+              :key='user.id'
+              @click='$router.push(`/users/` + user.id)'
+            )
+              v-list-item-title: strong {{ user.name }}
+              v-list-item-subtitle {{ $helpers.formatMoment(user.lastLoginAt, 'calendar') }}
+            v-list-item(v-if='!lastLoginsLoading && lastLogins.length === 0')
+              v-list-item-title.grey--text No recent logins
           v-data-table.pb-2(
+            v-else
             :items='lastLogins'
             :headers='lastLoginsHeaders'
             :loading='lastLoginsLoading'

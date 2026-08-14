@@ -2,7 +2,7 @@
   .editor-code
     .editor-code-main
       .editor-code-sidebar
-        v-tooltip(right, color='teal')
+        v-tooltip(v-if='$vuetify.display.mdAndUp', right, color='teal')
           template(v-slot:activator='{ props }')
             v-btn.animated.fadeInLeft(icon, tile, v-bind='props', dark, disabled).mx-0
               v-icon mdi-link-plus
@@ -12,27 +12,27 @@
             v-btn.mt-3.animated.fadeInLeft.wait-p1s(icon, tile, v-bind='props', dark, @click='toggleModal(`editorModalMedia`)').mx-0
               v-icon(:color='activeModal === `editorModalMedia` ? `teal` : ``') mdi-folder-multiple-image
           span {{$t('editor:markup.insertAssets')}}
-        v-tooltip(right, color='teal')
+        v-tooltip(v-if='$vuetify.display.mdAndUp', right, color='teal')
           template(v-slot:activator='{ props }')
             v-btn.mt-3.animated.fadeInLeft.wait-p2s(icon, tile, v-bind='props', dark, @click='toggleModal(`editorModalBlocks`)', disabled).mx-0
               v-icon(:color='activeModal === `editorModalBlocks` ? `teal` : ``') mdi-view-dashboard-outline
           span {{$t('editor:markup.insertBlock')}}
-        v-tooltip(right, color='teal')
+        v-tooltip(v-if='$vuetify.display.mdAndUp', right, color='teal')
           template(v-slot:activator='{ props }')
             v-btn.mt-3.animated.fadeInLeft.wait-p3s(icon, tile, v-bind='props', dark, disabled).mx-0
               v-icon mdi-code-braces
           span {{$t('editor:markup.insertCodeBlock')}}
-        v-tooltip(right, color='teal')
+        v-tooltip(v-if='$vuetify.display.mdAndUp', right, color='teal')
           template(v-slot:activator='{ props }')
             v-btn.mt-3.animated.fadeInLeft.wait-p4s(icon, tile, v-bind='props', dark, disabled).mx-0
               v-icon mdi-library-video
           span {{$t('editor:markup.insertVideoAudio')}}
-        v-tooltip(right, color='teal')
+        v-tooltip(v-if='$vuetify.display.mdAndUp', right, color='teal')
           template(v-slot:activator='{ props }')
             v-btn.mt-3.animated.fadeInLeft.wait-p5s(icon, tile, v-bind='props', dark, disabled).mx-0
               v-icon mdi-chart-multiline
           span {{$t('editor:markup.insertDiagram')}}
-        v-tooltip(right, color='teal')
+        v-tooltip(v-if='$vuetify.display.mdAndUp', right, color='teal')
           template(v-slot:activator='{ props }')
             v-btn.mt-3.animated.fadeInLeft.wait-p6s(icon, tile, v-bind='props', dark, disabled).mx-0
               v-icon mdi-function-variant
@@ -270,8 +270,8 @@ $editor-height-mobile: calc(100vh - 56px - 16px);
     padding: 24px 0;
 
     @include until($tablet) {
+      width: 48px;
       padding: 12px 0;
-      width: 40px;
     }
   }
 

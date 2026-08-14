@@ -17,7 +17,7 @@
             v-btn.animated.fadeIn.wait-p1s(icon, tile, v-bind='props', @click='toggleMarkup({ start: `__` })').mx-0
               v-icon mdi-format-italic
           span {{$t('editor:markup.italic')}}
-        v-menu(offset-y, open-on-hover)
+        v-menu(offset-y, :open-on-hover='$vuetify.display.mdAndUp')
           template(v-slot:activator='{ props }')
             v-btn.animated.fadeIn.wait-p3s(icon, tile, v-bind='props').mx-0
               v-icon mdi-format-header-pound
@@ -28,17 +28,17 @@
                   v-icon(:size='24 - (idx - 1) * 2') mdi-format-header-{{n}}
                 v-list-item-title {{$t('editor:markup.heading', { level: n })}}
               v-divider(v-if='idx < 5')
-        v-tooltip(bottom, color='primary')
+        v-tooltip(v-if='$vuetify.display.mdAndUp', bottom, color='primary')
           template(v-slot:activator='{ props }')
             v-btn.animated.fadeIn.wait-p4s(icon, tile, v-bind='props', @click='toggleMarkup({ start: `~` })').mx-0
               v-icon mdi-format-subscript
           span {{$t('editor:markup.subscript')}}
-        v-tooltip(bottom, color='primary')
+        v-tooltip(v-if='$vuetify.display.mdAndUp', bottom, color='primary')
           template(v-slot:activator='{ props }')
             v-btn.animated.fadeIn.wait-p5s(icon, tile, v-bind='props', @click='toggleMarkup({ start: `^` })').mx-0
               v-icon mdi-format-superscript
           span {{$t('editor:markup.superscript')}}
-        v-menu(offset-y, open-on-hover)
+        v-menu(v-if='$vuetify.display.mdAndUp', offset-y, open-on-hover)
           template(v-slot:activator='{ props }')
             v-btn.animated.fadeIn.wait-p6s(icon, tile, v-bind='props').mx-0
               v-icon mdi-alpha-t-box-outline
@@ -79,6 +79,48 @@
               v-btn.animated.fadeIn.wait-p2s(icon, tile, v-bind='props', @click='previewShown = !previewShown').mx-0
                 v-icon mdi-book-open-outline
             span {{$t('editor:markup.togglePreviewPane')}}
+        template(v-else)
+          v-spacer
+          v-tooltip(bottom, color='primary')
+            template(v-slot:activator='{ props }')
+              v-btn.mx-0(
+                icon
+                tile
+                v-bind='props'
+                @click='previewShown = !previewShown'
+                :aria-label='previewShown ? `Show editor` : `Show preview`'
+              )
+                v-icon {{ previewShown ? 'mdi-pencil-outline' : 'mdi-book-open-outline' }}
+            span {{ previewShown ? 'Show editor' : $t('editor:markup.togglePreviewPane') }}
+          v-menu(offset-y, left, min-width='260')
+            template(v-slot:activator='{ props }')
+              v-btn.mx-0(
+                icon
+                tile
+                v-bind='props'
+                aria-label='More formatting tools'
+              )
+                v-icon mdi-dots-horizontal
+            v-list(nav)
+              v-list-item(@click='insertLink')
+                v-icon.mr-3 mdi-link-plus
+                v-list-item-title {{$t('editor:markup.insertLink')}}
+              v-list-item(@click='toggleModal(`editorModalMedia`)')
+                v-icon.mr-3 mdi-folder-multiple-image
+                v-list-item-title {{$t('editor:markup.insertAssets')}}
+              v-list-item(@click='toggleModal(`editorModalDrawio`)')
+                v-icon.mr-3 mdi-chart-multiline
+                v-list-item-title {{$t('editor:markup.insertDiagram')}}
+              v-divider
+              v-list-item(@click='toggleMarkup({ start: `~` })')
+                v-icon.mr-3 mdi-format-subscript
+                v-list-item-title {{$t('editor:markup.subscript')}}
+              v-list-item(@click='toggleMarkup({ start: `^` })')
+                v-icon.mr-3 mdi-format-superscript
+                v-list-item-title {{$t('editor:markup.superscript')}}
+              v-list-item(@click='insertBeforeEachLine({ content: `> `})')
+                v-icon.mr-3 mdi-format-quote-open
+                v-list-item-title {{$t('editor:markup.blockquote')}}
 
     .editor-asciidoc-main
       .editor-asciidoc-sidebar
@@ -104,7 +146,7 @@
               v-btn.mt-3.animated.fadeInLeft.wait-p8s(icon, tile, v-bind='props', dark, @click='toggleFullscreen').mx-0
                 v-icon mdi-arrow-expand-all
             span {{$t('editor:markup.distractionFreeMode')}}
-      .editor-asciidoc-editor
+      .editor-asciidoc-editor(:class='{ "is-mobile-hidden": previewShown && $vuetify.display.smAndDown }')
         div(ref='cm')
       transition(name='editor-asciidoc-preview')
         .editor-asciidoc-preview(v-if='previewShown')
@@ -170,7 +212,7 @@ export default defineComponent({
       cm: null as TextEditorHandle | null,
       debouncedProcessContent: null as ReturnType<typeof _.debounce> | null,
       cursorPos: { ch: 0, line: 1 } as TextPosition,
-      previewShown: true,
+      previewShown: this.$vuetify.display.mdAndUp,
       insertLinkDialog: false,
       helpShown: false,
       previewHTML: ''
@@ -429,6 +471,10 @@ $editor-ascii-height-mobile: calc(100vh - 112px - 16px);
     @include until($tablet) {
       height: $editor-ascii-height-mobile;
     }
+
+    &.is-mobile-hidden {
+      display: none;
+    }
   }
 
   &-preview {
@@ -444,7 +490,11 @@ $editor-ascii-height-mobile: calc(100vh - 112px - 16px);
     }
 
     @include until($tablet) {
-      display: none;
+      display: block;
+      flex: 1 1 100%;
+      width: 100%;
+      max-width: 100vw !important;
+      padding: 12px;
     }
 
     &-enter-active, &-leave-active {
@@ -474,6 +524,7 @@ $editor-ascii-height-mobile: calc(100vh - 112px - 16px);
 
       @include until($tablet) {
         height: $editor-ascii-height-mobile;
+        width: 100%;
       }
 
       > div {
@@ -555,8 +606,7 @@ $editor-ascii-height-mobile: calc(100vh - 112px - 16px);
     padding: 24px 0;
 
     @include until($tablet) {
-      padding: 12px 0;
-      width: 40px;
+      display: none;
     }
   }
 

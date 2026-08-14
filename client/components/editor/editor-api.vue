@@ -452,7 +452,12 @@ $editor-height-mobile: calc(100vh - 56px - 16px);
   &-main {
     display: flex;
     width: 100%;
+    @include until($tablet) {
+      flex-direction: column;
+    }
+
   }
+
 
   &-editor {
     background-color: darken(mc('grey', '100'), 4.5%);
@@ -464,10 +469,36 @@ $editor-height-mobile: calc(100vh - 56px - 16px);
     @at-root .theme--dark & {
       background-color: darken(mc('grey', '900'), 4.5%);
     }
+
+    @include until($tablet) {
+      width: 100%;
+      height: calc(#{$editor-height-mobile} - 56px);
+      overflow-y: auto;
+    }
   }
 
   &-sidebar {
     width: 200px;
+
+    @include until($tablet) {
+      display: flex;
+      flex: 0 0 56px;
+      width: 100%;
+      overflow-x: auto;
+      overflow-y: hidden;
+      padding: 0;
+
+      .v-list-item {
+        flex: 0 0 auto;
+        min-width: 120px;
+        min-height: 56px;
+        margin-top: 0 !important;
+      }
+
+      .v-list-item-icon {
+        margin-right: 8px;
+      }
+    }
   }
 
   &-sysbar {

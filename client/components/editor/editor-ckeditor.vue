@@ -366,6 +366,7 @@ $editor-height-mobile: calc(100vh - 56px - 16px);
       width: 100%;
       margin: 0;
       min-height: calc(100vh - 56px - 24px - 76px);
+      padding: 1rem;
     }
 
     &.ck.ck-editor__editable:not(.ck-editor__nested-editable).ck-focused {
