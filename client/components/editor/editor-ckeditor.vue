@@ -2,7 +2,7 @@
   .editor-ckeditor
     div(ref='toolbarContainer')
     div.contents(ref='editor')
-    v-system-bar.editor-ckeditor-sysbar(dark, status, color='grey darken-3')
+    v-system-bar.editor-status-bar.editor-ckeditor-sysbar(absolute, dark, status, color='grey darken-3')
       .caption.editor-ckeditor-sysbar-locale {{locale.toUpperCase()}}
       .caption.px-3 /{{path}}
       template(v-if='$vuetify.display.mdAndUp')

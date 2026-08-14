@@ -338,7 +338,7 @@
     notify
     search-results
     v-fab-transition
-      v-btn(
+      v-btn.page-return-top(
         v-if='upBtnShown'
         fab
         fixed
@@ -771,6 +771,12 @@ export default defineComponent({
 </script>
 
 <style lang="scss">
+
+.page-return-top {
+  position: fixed !important;
+  bottom: 16px;
+  z-index: 8;
+}
 
 .breadcrumbs-nav {
   .v-btn {

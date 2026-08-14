@@ -5,7 +5,7 @@
         .d-flex.mb-5
           .login-logo
             v-avatar(tile, size='34')
-              v-img(:src='logoUrl')
+              img(:src='logoUrl', :alt='siteTitle')
           .login-title
             .text-h6.grey--text.text--darken-4 {{ siteTitle }}
         v-alert.mb-0(

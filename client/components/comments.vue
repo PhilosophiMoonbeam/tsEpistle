@@ -40,14 +40,14 @@
           v-model='guestEmail'
           :aria-label='$t(`common:comments.fieldEmail`)'
         )
-    .d-flex.align-center.pt-3(v-if='permissions.write')
+    .comments-actions.d-flex.align-center.pt-3(v-if='permissions.write')
       v-icon.mr-1(color='blue-grey') mdi-language-markdown-outline
       .caption.blue-grey--text {{$t('common:comments.markdownFormat')}}
       v-spacer
-      .caption.mr-3(v-if='isAuthenticated')
+      .comments-posting-as.caption(v-if='isAuthenticated')
         i18next(tag='span', path='common:comments.postingAs')
           strong(place='name') {{userDisplayName}}
-      v-btn(
+      v-btn.comments-submit(
         dark
         color='blue-grey darken-2'
         @click='postComment'
@@ -420,6 +420,21 @@ export default defineComponent({
 </script>
 
 <style lang="scss">
+.comments-actions {
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+@media (max-width: 600px) {
+  .comments-posting-as {
+    margin-left: auto;
+  }
+
+  .comments-submit {
+    flex: 1 0 100%;
+  }
+}
+
 .comments-post {
   position: relative;
 
