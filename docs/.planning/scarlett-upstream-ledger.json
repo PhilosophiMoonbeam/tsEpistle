@@ -14,7 +14,7 @@
       "commits": ["6f492f00"],
       "category": "api-contract",
       "disposition": "adapt",
-      "state": "active",
+      "state": "completed",
       "workstream": "release-assurance/rest-openapi",
       "contract": "Versioned Express REST and OpenAPI schemas share domain operations and generated client contracts without Fastify or duplicate mutation logic.",
       "lastReviewed": "2026-08-15"
@@ -24,7 +24,7 @@
       "commits": ["ee7a15fb"],
       "category": "architecture",
       "disposition": "adapt",
-      "state": "active",
+      "state": "completed",
       "workstream": "architecture-boundaries",
       "contract": "Strict client, shared, and server boundaries are enforceable without a directory or framework rewrite.",
       "lastReviewed": "2026-08-15"
@@ -44,7 +44,7 @@
       "commits": ["064e378b", "cffa39c1", "4677a7c5", "9de9b84b", "57cda516", "527b8e9f"],
       "category": "ux",
       "disposition": "compare",
-      "state": "active",
+      "state": "completed",
       "workstream": "experience-completion",
       "contract": "Reproduced defects are fixed in Vuetify surfaces and core journeys remain responsive, keyboard-complete, and accessible.",
       "lastReviewed": "2026-08-15"
@@ -164,7 +164,7 @@
       "commits": ["c00b7007"],
       "category": "extension",
       "disposition": "supersede",
-      "state": "active",
+      "state": "completed",
       "workstream": "architecture-d/extension-durability",
       "contract": "Registry changes preserve exact canonical bytes and rerender derived output through bounded recoverable jobs.",
       "lastReviewed": "2026-08-15"
@@ -224,7 +224,7 @@
       "commits": ["2acd026c", "634f4b05"],
       "category": "ux",
       "disposition": "adapt",
-      "state": "active",
+      "state": "completed",
       "workstream": "experience-completion/navigation",
       "contract": "Parent expansion and child-to-parent editing are bounded, authorized, persisted, responsive, and keyboard accessible.",
       "lastReviewed": "2026-08-15"
@@ -244,7 +244,7 @@
       "commits": ["09e9166b"],
       "category": "api-contract",
       "disposition": "split",
-      "state": "active",
+      "state": "completed",
       "workstream": "release-assurance/api-compatibility",
       "contract": "Useful administrator utilities use allowlisted operations while JWK endpoints remain until a versioned external migration is published.",
       "lastReviewed": "2026-08-15"
@@ -274,7 +274,7 @@
       "commits": [],
       "category": "dependency",
       "disposition": "compare",
-      "state": "active",
+      "state": "completed",
       "workstream": "architecture-e/dependency-policy",
       "contract": "Each direct dependency change proves current need, behavior, supply chain, license, build, runtime, and rollback independently.",
       "lastReviewed": "2026-08-15"
@@ -284,7 +284,7 @@
       "commits": ["ee7a15fb"],
       "category": "architecture",
       "disposition": "conditional",
-      "state": "active",
+      "state": "closed",
       "workstream": "architecture-a/package-boundaries",
       "contract": "Separate manifests are accepted only after enforceable imports, explicit exports, and measured build/install gains prove one clean package graph.",
       "lastReviewed": "2026-08-15"
@@ -294,7 +294,7 @@
       "commits": ["ee7a15fb", "6db53d4f"],
       "category": "architecture",
       "disposition": "conditional",
-      "state": "active",
+      "state": "closed",
       "workstream": "architecture-c/drizzle-pilot",
       "contract": "A disposable isolated repository must materially beat typed Knex while preserving one migration and transaction authority.",
       "lastReviewed": "2026-08-15"
@@ -304,7 +304,7 @@
       "commits": ["937cecea"],
       "category": "extension",
       "disposition": "conditional",
-      "state": "active",
+      "state": "closed",
       "workstream": "architecture-d/lazy-runtime",
       "contract": "A per-extension lazy runtime is retained only if it beats the native controller on correctness, accessibility, transfer, and maintenance.",
       "lastReviewed": "2026-08-15"
@@ -324,7 +324,7 @@
       "commits": ["9a1ca3b1", "aa27932c"],
       "category": "performance",
       "disposition": "conditional",
-      "state": "active",
+      "state": "closed",
       "workstream": "architecture-c/page-index",
       "contract": "Dynamic requester-time authorization remains authoritative; a rebuildable visibility-neutral projection is accepted only after measured budget failure and parity proof.",
       "lastReviewed": "2026-08-15"
