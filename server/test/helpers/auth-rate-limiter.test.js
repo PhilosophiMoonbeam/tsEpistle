@@ -104,6 +104,23 @@ describe('auth rate limiter', () => {
     expect(onLimit.mock.calls.at(-1)[2]).toBe(60 * 60 * 1000)
   })
 
+  it('shares counters and blocks across application instances using the same database', async () => {
+    const secondOnLimit = vi.fn()
+    const secondLimiter = createAuthRateLimiter({
+      knex,
+      keyPrefix: 'auth-test',
+      onLimit: secondOnLimit
+    })
+    const req = request('192.0.2.25')
+
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      expect(await invoke(limiter, req)).toHaveBeenCalledOnce()
+    }
+
+    expect(await invoke(secondLimiter, req)).not.toHaveBeenCalled()
+    expect(secondOnLimit).toHaveBeenCalledWith(req, {}, 5 * 60 * 1000)
+  })
+
   it('deletes persisted attempt and block state when reset', async () => {
     const req = request('192.0.2.30')
     for (let attempt = 0; attempt < 6; attempt += 1) await invoke(limiter, req)

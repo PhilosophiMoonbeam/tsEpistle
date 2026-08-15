@@ -45,7 +45,7 @@ This is a living release artifact. Update it whenever an authentication flow, ex
 | ID | Threat | Required control | Current implementation and executable evidence | Residual risk / release state |
 | --- | --- | --- | --- | --- |
 | AUTH-1 | Credential stuffing against HTML and REST login | Shared durable counters, escalating waits, deterministic `429`, `Retry-After`, reset only for the resolved client | `server/helpers/auth-rate-limiter.ts`; `server/controllers/auth.ts`; `server/controllers/api/auth.ts`; `server/test/helpers/auth-rate-limiter.test.js`; `server/test/controllers/auth.test.js`; `server/test/controllers/api.auth.test.js` | Controlled for configured instances. Operator must configure trusted proxies correctly. TFA/recovery browser abuse journeys remain part of the release matrix. |
-| AUTH-2 | Forwarded-header spoofing or client coalescing | Express-resolved `req.ip`; forwarding headers never parsed by limiter; trust-proxy setting is explicit | `server/helpers/auth-rate-limiter.ts`; `server/controllers/api/site.ts`; `server/test/helpers/auth-rate-limiter.test.js`; `server/test/controllers/api.site.test.js` | Zero/one/multi-hop proxy integration matrix is a release gate. |
+| AUTH-2 | Forwarded-header spoofing or client coalescing | Express-resolved `req.ip`; forwarding headers never parsed by limiter; trust-proxy setting is explicit | `server/helpers/auth-rate-limiter.ts`; `server/controllers/api/site.ts`; `server/test/helpers/auth-rate-limiter.test.js`; `server/test/core/trust-proxy.test.ts`; `server/test/controllers/api.site.test.js` | Zero, one, and multiple trusted-proxy hops are integration-tested. When trust proxy is enabled, the application port must not be directly reachable around the trusted proxy. |
 | AUTH-3 | Session fixation, stolen JWT, stale privileges, API-key privilege drift | Issuer/audience/signature checks; browser and bearer extraction; user/group revalidation; API principal receives assigned group policy | `server/core/auth.ts`; `server/helpers/security.ts`; `server/test/core/auth.api-access.test.ts`; `server/test/controllers/api.auth.test.js` | Token theft cannot be fully mitigated in application code. TLS, cookie security, key rotation, and incident revocation remain operator/maintainer controls. |
 | AUTH-4 | TFA, recovery, password-change, registration, or page-unlock brute force | Threat-weighted rate limits and continuation-token validation; no secret values in responses | Authentication controllers and operations; `server/test/controllers/api.auth.test.js`; password-page controller/model tests | Browser end-to-end TFA and recovery proof remains required. |
 | PAGE-1 | Private page enumeration or read across owner boundary | Single owner/private decision, namespace separation, query scoping, not-found non-disclosure | `server/helpers/page-access.ts`; `server/test/helpers/page-access.test.ts`; `server/test/models/pages.private-errors.test.js`; private SQLite/PostgreSQL integration tests | Route-level matrix must remain green for every derived resource. |
@@ -69,18 +69,7 @@ This is a living release artifact. Update it whenever an authentication flow, ex
 Run the focused security contract before the broader project gates:
 
 ```console
-pnpm exec vitest run \
-  server/test/helpers/page-access.test.ts \
-  server/test/core/auth.page-rules.test.ts \
-  server/test/core/auth.api-access.test.ts \
-  server/test/helpers/auth-rate-limiter.test.js \
-  server/test/controllers/auth.test.js \
-  server/test/controllers/api.auth.test.js \
-  server/test/core/webhooks.test.js \
-  server/test/content-extensions/renderer.test.ts \
-  server/test/content-extensions/api.test.ts \
-  server/test/core/collaboration.test.ts \
-  server/test/db/migration-preflight.test.ts
+pnpm test:security
 pnpm audit --prod
 pnpm typecheck:server
 ```
@@ -92,7 +81,7 @@ The full release matrix additionally owns browser non-disclosure, proxy topology
 | Finding | Severity | Owner | Required disposition |
 | --- | --- | --- | --- |
 | SEC-EXT-001 — independent security review not yet performed | Release blocker | Maintainers | Freeze revision, record reviewer/scope, resolve findings, retain retest evidence. |
-| SEC-AUTH-001 — TFA/recovery and zero/one/multi-proxy browser/integration matrix incomplete | High | Maintainers | Add deterministic integration journeys and run them in CI. |
+| SEC-AUTH-001 — TFA and recovery browser journeys incomplete | High | Maintainers | Add deterministic browser journeys and run them in CI. |
 | SEC-DATA-001 — supported-database restore/rollback fixtures incomplete | High | Maintainers | Retain sanitized fixtures and prove snapshot restore plus old-version boot. |
 | SEC-OPS-001 — real worker process-death lease recovery not yet exercised | Medium | Maintainers | Kill a claimed worker, await lease expiry, prove exactly-once recovery and bounded pool use. |
 | SEC-ADAPTER-001 — deployment-specific identity/storage/search/mail integrations are not covered by the generic release matrix | Medium | Operator | Complete an operator canary for every enabled integration. |
