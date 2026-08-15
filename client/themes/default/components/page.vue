@@ -7,8 +7,8 @@
       dark
       app
       clipped
-      mobile-breakpoint='600'
-      :temporary='$vuetify.display.smAndDown'
+      mobile-breakpoint='1280'
+      :temporary='$vuetify.display.width < 1280'
       v-model='navShown'
       :right='$vuetify.locale.isRtl'
       )
@@ -21,7 +21,7 @@
         )
 
     v-fab-transition(v-if='navMode !== `NONE`')
-      v-btn(
+      v-btn.page-nav-toggle(
         fab
         color='primary'
         fixed
@@ -31,7 +31,7 @@
         small
         @click='navShown = !navShown'
         aria-label='Toggle navigation'
-        v-if='$vuetify.display.mdAndDown'
+        v-if='$vuetify.display.width < 1280'
         v-show='!navShown'
         )
         v-icon mdi-menu
@@ -628,6 +628,7 @@
           v-btn(@click='approvalDialog = false') Close
     v-fab-transition
       v-btn.page-return-top(
+        :class='{ "page-return-top--docked": isReturnTopDocked }'
         v-if='upBtnShown'
         fab
         fixed
@@ -635,9 +636,9 @@
         :right='$vuetify.locale.isRtl'
         :left='!$vuetify.locale.isRtl'
         small
-        :depressed='this.$vuetify.display.mdAndUp'
+        :depressed='isReturnTopDocked'
         @click='goTo(0, scrollOpts)'
-        color='primary'
+        :color='upBtnColor'
         dark
         :style='upBtnPosition'
         :aria-label='$t(`common:actions.returnToTop`)'
@@ -668,6 +669,7 @@ import {
   emitPageSource
 } from '../../../helpers/page-action-events'
 import { decodeBase64Json } from '../../../helpers/base64'
+import { hydrateContentExtensions } from '../../../helpers/content-extension-runtime'
 import { pushGraphError, showNotification } from '../../../helpers/root-ui-store'
 
 /* global siteLangs */
@@ -902,7 +904,9 @@ export default defineComponent({
           }
         }
       },
-      winWidth: 0
+      winWidth: 0,
+      resizeHandler: null as (() => void) | null,
+      contentExtensionCleanup: null as (() => void) | null
     }
   },
   computed: {
@@ -938,12 +942,18 @@ export default defineComponent({
         }, []))
     },
     pageUrl () { return window.location.href },
+    isReturnTopDocked () {
+      return this.$vuetify.display.width >= 1280 && this.navMode !== 'NONE' && this.navShown
+    },
+    upBtnColor () {
+      return this.isReturnTopDocked ? 'primary lighten-1' : 'primary'
+    },
     upBtnPosition () {
-      if (this.$vuetify.display.mdAndUp) {
-        return this.$vuetify.locale.isRtl ? `right: 235px;` : `left: 235px;`
-      } else {
-        return this.$vuetify.locale.isRtl ? `right: 65px;` : `left: 65px;`
+      if (this.isReturnTopDocked) {
+        return this.$vuetify.locale.isRtl ? 'right: 0; bottom: 0;' : 'left: 216px; bottom: 0;'
       }
+      const offset = this.navMode !== 'NONE' ? 65 : 16
+      return this.$vuetify.locale.isRtl ? `right: ${offset}px;` : `left: ${offset}px;`
     },
     sidebarDecoded (): SidebarItem[] {
       return decodeBase64Json<SidebarItem[]>(this.sidebar)
@@ -1032,9 +1042,8 @@ export default defineComponent({
 
     // -> Check side navigation visibility
     this.handleSideNavVisibility()
-    window.addEventListener('resize', _.debounce(() => {
-      this.handleSideNavVisibility()
-    }, 500))
+    this.resizeHandler = () => this.handleSideNavVisibility()
+    window.addEventListener('resize', this.resizeHandler)
 
     // -> Highlight Code Blocks
     Prism.highlightAllUnder(this.$refs.container as HTMLElement)
@@ -1063,7 +1072,7 @@ export default defineComponent({
       }
     }
 
-    // -> Handle anchor links within the page contents
+    // -> Handle anchor links and activate safe content extensions within the page contents
     this.$nextTick(() => {
       const container = this.$refs.container as HTMLElement
       container.querySelectorAll<HTMLAnchorElement>(`a[href^="#"], a[href^="${window.location.href.replace(window.location.hash, '')}#"]`).forEach(el => {
@@ -1073,9 +1082,16 @@ export default defineComponent({
           this.goTo(decodeURIComponent(el.hash), this.scrollOpts)
         }
       })
+      this.contentExtensionCleanup?.()
+      this.contentExtensionCleanup = hydrateContentExtensions(container)
 
       boot.notify('page-ready')
     })
+  },
+  beforeUnmount () {
+    if (this.resizeHandler) window.removeEventListener('resize', this.resizeHandler)
+    this.contentExtensionCleanup?.()
+    this.contentExtensionCleanup = null
   },
   methods: {
     async loadPageProtection () {
@@ -1372,7 +1388,7 @@ export default defineComponent({
     handleSideNavVisibility () {
       if (window.innerWidth === this.winWidth) { return }
       this.winWidth = window.innerWidth
-      if (this.$vuetify.display.mdAndUp) {
+      if (window.innerWidth >= 1280) {
         this.navShown = true
       } else {
         this.navShown = false
@@ -1380,6 +1396,7 @@ export default defineComponent({
     },
     goToComments (focusNewComment = false) {
       this.goTo('#discussion', this.scrollOpts)
+
       if (focusNewComment) {
         document.querySelector<HTMLElement>('#discussion-new')?.focus()
       }
@@ -1390,10 +1407,34 @@ export default defineComponent({
 
 <style lang="scss">
 
+.page-nav-toggle {
+  position: fixed !important;
+  bottom: 16px !important;
+  z-index: 8;
+
+  &[left='true'] {
+    left: 16px !important;
+  }
+
+  &[right='true'] {
+    right: 16px !important;
+  }
+}
+
 .page-return-top {
   position: fixed !important;
   bottom: 16px;
   z-index: 8;
+}
+
+.page-return-top--docked {
+  border-radius: 8px 0 0 0 !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .page-return-top {
+    transition-duration: .01ms !important;
+  }
 }
 
 .breadcrumbs-nav {

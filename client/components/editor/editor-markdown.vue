@@ -178,7 +178,7 @@
           span {{$t('editor:markup.insertDiagram')}}
         v-tooltip(right, color='teal')
           template(v-slot:activator='{ props }')
-            v-btn.mt-3.animated.fadeInLeft.wait-p3s(icon, tile, v-bind='props', dark, @click='toggleModal(`editorModalBlocks`)').mx-0
+            v-btn.mt-3.animated.fadeInLeft.wait-p3s(icon, tile, v-bind='props', dark, aria-label='Insert content extension', @click='toggleModal(`editorModalBlocks`)').mx-0
               v-icon(:color='activeModal === `editorModalBlocks` ? `teal` : ``') mdi-qrcode
           span Insert content extension
         template(v-if='$vuetify.display.mdAndUp')

@@ -38,13 +38,11 @@ describe('content extension operations', () => {
       table.text('content').notNullable()
       table.text('render').notNullable()
     })
-    await db('contentExtensions').insert({
-      key: 'qr',
-      isEnabled: true,
-      version: 1,
-      updatedAt: new Date(),
-      updatedBy: null
-    })
+    await db('contentExtensions').insert([
+      { key: 'qr', isEnabled: true, version: 1, updatedAt: new Date(), updatedBy: null },
+      { key: 'gallery', isEnabled: false, version: 1, updatedAt: new Date(), updatedBy: null },
+      { key: 'index', isEnabled: false, version: 1, updatedAt: new Date(), updatedBy: null }
+    ])
     await db('pages').insert([
       { id: 1, hash: 'qr-hash', content: qrFence, render: '<svg>active QR</svg>' },
       { id: 2, hash: 'plain-hash', content: '```js\nconst wikiExtension = true\n```', render: '<pre>plain</pre>' }
@@ -95,14 +93,18 @@ describe('content extension operations', () => {
   it('reports persisted version mismatches as editor-usable incompatibility diagnostics', async () => {
     await db('contentExtensions').where({ key: 'qr' }).update({ version: 2 })
 
-    await expect(listContentExtensions()).resolves.toEqual({
-      hostVersion: 1,
-      extensions: [expect.objectContaining({
+    const status = await listContentExtensions()
+    expect(status.hostVersion).toBe(1)
+    expect(status.extensions).toHaveLength(3)
+    expect(status.extensions).toEqual(expect.arrayContaining([
+      expect.objectContaining({
         key: 'qr',
         isEnabled: true,
         compatible: false,
         diagnostic: 'Installed extension "qr" version 2 does not match renderer version 1.'
-      })]
-    })
+      }),
+      expect.objectContaining({ key: 'gallery', isEnabled: false, compatible: true, diagnostic: null }),
+      expect.objectContaining({ key: 'index', isEnabled: false, compatible: true, diagnostic: null })
+    ]))
   })
 })

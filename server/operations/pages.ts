@@ -1,5 +1,5 @@
 import _ from 'lodash'
-import { canReadPage, canWritePage, managesSystem, principalId, scopePageQuery, type PageVisibility } from '../helpers/page-access.ts'
+import { canReadPage, canWritePage, managesSystem, pageRoute, principalId, scopePageQuery, type PageVisibility } from '../helpers/page-access.ts'
 
 import errors from './errors.ts'
 
@@ -12,6 +12,7 @@ interface PageRecord extends Record<string, unknown> {
   locale?: string
   localeCode: string
   title: string
+  description?: string | null
   updatedAt: Date
   editorKey: string
   extra: Record<string, unknown>
@@ -192,6 +193,71 @@ const list = async ({ requester, ...rawArgs }: OperationInput) => {
     return accessiblePages.filter(page => _.every(args.tags, tag => _.includes(page.tags, tag)))
   }
   return accessiblePages
+}
+
+export interface PageIndexItem {
+  id: number
+  title: string
+  description: string | null
+  path: string
+  href: string
+  updatedAt: string
+}
+
+const listIndex = async ({ requester, ...rawArgs }: OperationInput): Promise<PageIndexItem[]> => {
+  const path = stringValue(rawArgs.path, 'path')
+  const locale = stringValue(rawArgs.locale, 'locale')
+  const depth = nonNegativeInteger(rawArgs.depth, 'depth')
+  const limit = positiveInteger(rawArgs.limit, 'limit')
+  const order = stringValue(rawArgs.order, 'order')
+  if (depth > 5) throw new ApplicationError('depth must not exceed 5', { code: 'INVALID_INPUT', status: 400 })
+  if (limit > 200) throw new ApplicationError('limit must not exceed 200', { code: 'INVALID_INPUT', status: 400 })
+  if (!['path', 'title', 'updated'].includes(order)) throw new ApplicationError('order must be path, title, or updated', { code: 'INVALID_INPUT', status: 400 })
+
+  const candidateLimit = 5_001
+  const pages = await wiki.models.pages.query().column([
+    'pages.id',
+    'path',
+    'localeCode',
+    'title',
+    'description',
+    'visibility',
+    'ownerId',
+    'updatedAt'
+  ])
+    .withGraphJoined('tags')
+    .modifyGraph('tags', builder => { builder.select('tag') })
+    .modify(queryBuilder => {
+      scopePageQuery(queryBuilder, requester, { table: 'pages' })
+      queryBuilder.where('localeCode', locale)
+      if (path.length > 0) queryBuilder.where('path', 'like', `${path}/%`)
+      queryBuilder.orderBy('path', 'asc').limit(candidateLimit)
+    })
+  if (pages.length >= candidateLimit) {
+    throw new ApplicationError('Page index path matches too many pages; choose a narrower path.', { code: 'PAGE_INDEX_TOO_BROAD', status: 422 })
+  }
+
+  const prefix = path.length > 0 ? `${path}/` : ''
+  const accessible = pages
+    .filter(page => page.path.startsWith(prefix))
+    .filter(page => {
+      const relativePath = page.path.slice(prefix.length)
+      return relativePath.length > 0 && relativePath.split('/').length <= depth + 1
+    })
+    .filter(page => canReadPage(requester, { ...page, tags: page.tags.map(tag => tag.tag) }))
+  accessible.sort((left, right) => {
+    if (order === 'title') return left.title.localeCompare(right.title) || left.path.localeCompare(right.path)
+    if (order === 'updated') return new Date(right.updatedAt).valueOf() - new Date(left.updatedAt).valueOf() || left.path.localeCompare(right.path)
+    return left.path.localeCompare(right.path)
+  })
+  return accessible.slice(0, limit).map(page => ({
+    id: page.id,
+    title: page.title,
+    description: page.description ?? null,
+    path: page.path,
+    href: pageRoute(page),
+    updatedAt: page.updatedAt instanceof Date ? page.updatedAt.toISOString() : String(page.updatedAt)
+  }))
 }
 
 const listTags = async (requester?: Express.User) => {
@@ -565,5 +631,5 @@ const restore = async (input: OperationInput): Promise<void> => {
 const getPageTags = (value: unknown): RelatedTagQuery => wiki.models.pages.relatedQuery('tags').for(positiveInteger(value, 'pageId'))
 export default {
   changeVisibility, checkConflict, convert, create, get, getByPath, getConflictLatest, getHistory, getPageTags, getTree, getVersion,
-  list, listLinks, listRecent, listTags, move, remove, removeTag, restore, search, searchTags, transferOwnership, update, updateTag
+  list, listIndex, listLinks, listRecent, listTags, move, remove, removeTag, restore, search, searchTags, transferOwnership, update, updateTag
 }

@@ -11,6 +11,7 @@ const escapeHtml = (value: string): string => value
   .replaceAll("'", '&#39;')
 
 export const renderQrContentExtension = async (envelope: ContentExtensionEnvelope): Promise<string> => {
+  if (envelope.key !== 'qr') throw new TypeError('QR renderer received another content extension type.')
   const { value } = envelope.props
   const label = envelope.props.label || 'QR code'
   const size = envelope.props.size ?? 256

@@ -34,7 +34,11 @@ describe('content extension Markdown rendering', () => {
       table.boolean('isEnabled').notNullable()
       table.integer('version').notNullable()
     })
-    await db('contentExtensions').insert({ key: 'qr', isEnabled: true, version: 1 })
+    await db('contentExtensions').insert([
+      { key: 'qr', isEnabled: true, version: 1 },
+      { key: 'gallery', isEnabled: true, version: 1 },
+      { key: 'index', isEnabled: true, version: 1 }
+    ])
     global.WIKI = { models: { knex: db } }
   })
 
@@ -83,6 +87,63 @@ describe('content extension Markdown rendering', () => {
 
     expect(rendered).toContain('<span class="content-extension-qr__value">javascript:alert(1)</span>')
     expect(rendered).not.toContain('href="javascript:')
+  })
+
+  it('renders a same-origin gallery with captions, accessible fallbacks, and natural image ratios', async () => {
+    const markdown = serializeContentExtensionFence({
+      key: 'gallery',
+      version: 1,
+      props: {
+        images: [
+          { src: '/uploads/launch.jpg', alt: 'Rocket launch', caption: 'First flight' },
+          { src: '/_assets/svg/icon-image.svg', alt: 'Image placeholder' }
+        ],
+        columns: 4,
+        fit: 'contain',
+        aspectRatio: 'natural'
+      }
+    })
+
+    const rendered = await renderMarkdown(markdown)
+
+    expect(rendered).toContain('content-extension-gallery--columns-4')
+    expect(rendered).toContain('content-extension-gallery--contain')
+    expect(rendered).toContain('content-extension-gallery--natural')
+    expect(rendered).toContain('href="/uploads/launch.jpg"')
+    expect(rendered).toContain('src="/uploads/launch.jpg" alt="Rocket launch" loading="lazy" decoding="async"')
+    expect(rendered).toContain('aria-label="View Rocket launch full size"')
+    expect(rendered).toContain('<figcaption class="content-extension-gallery__caption">First flight</figcaption>')
+    expect(rendered).not.toMatch(/<(?:script|dialog|iframe|style)\b/i)
+    expect(rendered).not.toMatch(/\son\w+=|\sstyle=/i)
+  })
+
+  it('renders an inert page-index placeholder without leaking page titles into stored HTML', async () => {
+    const markdown = serializeContentExtensionFence({
+      key: 'index',
+      version: 1,
+      props: {
+        path: 'guide',
+        locale: 'en',
+        depth: 2,
+        columns: 3,
+        showIcons: true,
+        order: 'title',
+        limit: 40,
+        emptyLabel: 'Nothing readable here.'
+      }
+    })
+
+    const rendered = await renderMarkdown(markdown)
+
+    expect(rendered).toContain('content-extension--index content-extension-index--columns-3')
+    expect(rendered).toContain('aria-busy="true"')
+    expect(rendered).toContain('data-index-path="guide"')
+    expect(rendered).toContain('data-index-depth="2"')
+    expect(rendered).toContain('data-index-show-icons="true"')
+    expect(rendered).toContain('data-index-order="title"')
+    expect(rendered).toContain('data-index-empty-label="Nothing readable here."')
+    expect(rendered).toContain('Loading page index…')
+    expect(rendered).not.toContain('<a')
   })
 
   it('keeps disabled, incompatible, and invalid extension source visibly escaped', async () => {

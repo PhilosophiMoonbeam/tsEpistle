@@ -3,6 +3,8 @@ import {
   type ContentExtensionDefinition,
   type ContentExtensionEnvelope
 } from '../../shared/content-extensions.ts'
+import { renderGalleryContentExtension } from './gallery.ts'
+import { renderIndexContentExtension } from './index.ts'
 import { renderQrContentExtension } from './qr.ts'
 
 export interface ContentExtensionRegistration {
@@ -15,6 +17,8 @@ const definitionByKey = Object.fromEntries(
 ) as Record<string, ContentExtensionDefinition>
 
 const rendererByKey: Record<string, ContentExtensionRegistration['render']> = {
+  gallery: renderGalleryContentExtension,
+  index: renderIndexContentExtension,
   qr: renderQrContentExtension
 }
 

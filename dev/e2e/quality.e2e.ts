@@ -113,4 +113,24 @@ test.describe('release accessibility profiles', () => {
       await expectNoBlockingAccessibilityViolations(page, `${surface} (mobile)`)
     }
   })
+
+  test('keeps page navigation and return-to-top controls reachable below desktop width', async ({ page }, testInfo) => {
+    requireProject(testInfo, 'accessibility-mobile')
+    await page.setViewportSize({ width: 1180, height: 500 })
+    await openAuthenticatedPage(page, '/en/visual-markdown-browser', '.v-main')
+
+    const drawer = page.locator('.v-navigation-drawer').first()
+    await expect(drawer).toHaveClass(/v-navigation-drawer--temporary/)
+    await expect(drawer).not.toHaveClass(/v-navigation-drawer--active/)
+    await page.getByRole('button', { name: 'Toggle navigation' }).click()
+    await expect(drawer).toHaveClass(/v-navigation-drawer--active/)
+    await page.locator('.v-navigation-drawer__scrim').click({ position: { x: 500, y: 250 } })
+    await expect(drawer).not.toHaveClass(/v-navigation-drawer--active/)
+
+    await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight))
+    const returnToTop = page.getByRole('button', { name: /return to top/i })
+    await expect(returnToTop).toBeVisible()
+    await returnToTop.click()
+    await expect.poll(() => page.evaluate(() => window.scrollY)).toBeLessThan(2)
+  })
 })

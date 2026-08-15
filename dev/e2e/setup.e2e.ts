@@ -311,6 +311,74 @@ test.describe('critical post-install workflows', () => {
     await expect(editor).toContainText('Saved with the keyboard.')
   })
 
+  test('authors and hydrates gallery and policy-filtered index extensions', async ({ page }) => {
+    test.setTimeout(90_000)
+    await authenticateAsAdmin(page)
+    const enableStatuses = await page.evaluate(async () => Promise.all(['gallery', 'index'].map(async key => {
+      const response = await fetch(`/_api/content-extensions/${key}`, {
+        method: 'PATCH',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ isEnabled: true })
+      })
+      return response.status
+    })))
+    expect(enableStatuses).toEqual([200, 200])
+
+    await page.goto('/e/en/content-extensions-browser')
+    await page.getByText('Markdown', { exact: true }).click()
+    await page.getByRole('textbox', { name: 'Title' }).fill('Content Extensions Browser')
+    await page.getByRole('textbox', { name: 'Short Description' }).fill('Gallery and index browser workflow')
+    await page.getByRole('button', { name: 'OK' }).click()
+
+    const editor = page.locator('.cm-content')
+    await expect(editor).toBeVisible()
+    await page.getByRole('button', { name: 'Insert content extension' }).click()
+    const extensionDialog = page.getByRole('dialog', { name: 'Insert content extension' })
+    await expect(extensionDialog).toBeVisible()
+    const assetPaths = extensionDialog.getByRole('textbox', { name: 'Asset path' })
+    const alternativeTexts = extensionDialog.getByRole('textbox', { name: 'Alternative text' })
+    const captions = extensionDialog.getByRole('textbox', { name: 'Caption (optional)' })
+    await assetPaths.first().fill('/_assets/svg/icon-file.svg')
+    await alternativeTexts.first().fill('File icon')
+    await captions.first().fill('First browser image')
+    await extensionDialog.getByRole('button', { name: 'Add image' }).click()
+    await assetPaths.nth(1).fill('/_assets/svg/icon-table.svg')
+    await alternativeTexts.nth(1).fill('Table icon')
+    await captions.nth(1).fill('Second browser image')
+    await extensionDialog.getByText('Square tiles', { exact: true }).click()
+    await page.getByRole('option', { name: 'Natural image ratio' }).click()
+    await extensionDialog.getByRole('button', { name: 'Insert Image gallery' }).click()
+
+    await expect.poll(() => getMarkdownSourceData(page)).toContain('"key":"gallery"')
+    const galleryFence = await getMarkdownSourceData(page)
+    const indexFence = [
+      '```wiki-extension',
+      '{"key":"index","version":1,"props":{"path":"","locale":"en","depth":1,"columns":2,"showIcons":true,"order":"title","limit":20}}',
+      '```'
+    ].join('\n')
+    await editor.fill(`# Content extension workflow\n\n${galleryFence.trim()}\n\n${indexFence}\n`)
+    await page.getByRole('button', { name: 'Create' }).click()
+
+    await expect(page).toHaveURL('/en/content-extensions-browser', { timeout: 30_000 })
+    const gallery = page.locator('.content-extension--gallery')
+    await expect(gallery.getByRole('img', { name: 'File icon' })).toBeVisible()
+    await expect(gallery.getByRole('img', { name: 'Table icon' })).toBeVisible()
+
+    const index = page.locator('.content-extension--index')
+    await expect(index).toHaveAttribute('aria-busy', 'false')
+    await expect(index.getByRole('link', { name: /Home/ })).toBeVisible()
+
+    await gallery.getByRole('link', { name: 'View File icon full size' }).click()
+    const galleryDialog = page.getByRole('dialog', { name: 'Image viewer' })
+    await expect(galleryDialog).toBeVisible()
+    await expect(galleryDialog.getByRole('img', { name: 'File icon' })).toBeVisible()
+    await galleryDialog.getByRole('button', { name: 'Next image' }).click()
+    await expect(galleryDialog.getByRole('img', { name: 'Table icon' })).toBeVisible()
+    await galleryDialog.getByRole('button', { name: 'Close image viewer' }).click()
+    await expect(gallery.getByRole('link', { name: 'View File icon full size' })).toBeFocused()
+  })
+
   test('retains the Visual HTML editor and HTML content type', async ({ page }) => {
     test.setTimeout(60_000)
     await authenticateAsAdmin(page)

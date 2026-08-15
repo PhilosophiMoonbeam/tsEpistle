@@ -571,6 +571,8 @@ Decisions (2026-08-15):
 - rerender and invalidate every page containing a toggled extension only after the registry update commits; report compatibility and disable diagnostics through the internal REST API and editor dialog;
 - treat renderer output as hostile even for bundled extensions: sanitize locally with an explicit element/attribute/protocol boundary and prohibit scripts, event handlers, style, remote SVG references, and active foreign content;
 - ship QR as the proof extension using local deterministic generation only, an accessible SVG title/label, and a safe text-or-link fallback. It has no asset authorization or external egress surface.
+- adapt Scarlett gallery and index concepts only through the shared fork-native contract: gallery accepts bounded same-origin image assets and keeps direct links as no-script/print fallbacks; index resolves at request time through the existing page policy engine rather than storing or rendering a stale privileged page list;
+- treat responsive and accessibility behavior as part of the extension contract: gallery preserves natural aspect ratios when requested, exposes captions and keyboard lightbox navigation, and restores focus; index collapses columns at narrow widths, has deterministic empty/failure states, and never renders server values through `innerHTML`.
 
 Completion evidence (2026-08-15):
 
@@ -578,6 +580,11 @@ Completion evidence (2026-08-15):
 - shared schema, canonical serialization, compatibility, API boundary, authorization, toggle/rerender, sanitizer, QR renderer, Markdown fallback, source insertion, Visual Markdown insertion/reopen, and migration-preflight contracts pass (64 focused assertions);
 - server and client typechecks pass, and targeted lint covers the shared contract, both editor hosts, API, registry, migrations, renderer, and tests;
 - browser smoke showed the disabled diagnostic, rejected an anonymous toggle with 403, enabled QR as an administrator, inserted the exact canonical fence, saved and rendered a local accessible QR SVG, then disabled it and observed immediate escaped-source fallback after page rerender;
+- migration `2.5.137` adds the disabled-by-default `gallery` and `index` registry rows without rewriting the original registry migration and rolls back only those additions;
+- the shared discriminated envelope now validates bounded gallery assets/captions/layout and bounded index path/locale/depth/order/limit controls; renderer tests cover responsive gallery HTML, escaped values, dynamic index placeholders, and fail-closed fallback;
+- the internal index endpoint parses only canonical bounded controls, applies database path/depth/locale constraints before its 5,001-row overfetch ceiling, then applies visibility, ownership, tags, and page-rule policy before ordering and the caller-visible limit; anonymous, owner, system-manager, and over-limit contracts pass;
+- browser hydration uses text/attribute DOM construction only, preserves gallery links without JavaScript, adds keyboard/native-dialog navigation when available, uses private no-store index responses, and aborts in-flight work during page replacement;
+- the editor host now configures all three bundled extensions through type-specific fields and emits the same canonical fence format; the release E2E suite covers admin enablement, authored gallery insertion, render, dynamic index hydration, lightbox navigation, and focus restoration.
 - the smoke page, administrator credential, and disabled registry state were restored after verification.
 
 #### 4C. Live collaboration
@@ -824,3 +831,4 @@ When this roadmap changes, append an entry here.
 | 2026-08-15 | `957efebe` / `c36eab67` approval WIP | `e4c8d246` | Completed Wave 3B as a fork-native revision-bound approval state machine with immutable audit history, authorization, stale-revision protection, transactional publication, and responsive inbox/workflow UI |
 | 2026-08-15 | Scarlett page-history overlay concepts | `97a452e1` plus Wave 4 authoring work | Completed Wave 3D with immutable revision metadata/tag snapshots, REST-backed responsive diff/actions, canonical content/editor restore, and transactional optimistic concurrency |
 | 2026-08-15 | `17d7b810` Yjs collaboration concept | Wave 4 policy, events, and Markdown editor foundation | Completed Wave 4C as authenticated Markdown collaboration with durable versioned rooms, acknowledged offline replay, cross-instance database fanout, continuous authorization, mutation conflicts, and explicit local-preservation UX |
+| 2026-08-15 | `aa27932c` block-index and `d0c5a8bf` block-gallery refinements | `64abdc57` plus Wave 4B expansion | Adapted the useful behavior without upstream runtime code: native typed gallery/index envelopes, disabled migrations, sanitized server renderers, policy-filtered dynamic index API, accessible browser hydration, editor configuration, responsive layout, and regression/E2E coverage; retained neither Scarlett’s Lit/Tailwind components nor unbounded/stale index rendering |
