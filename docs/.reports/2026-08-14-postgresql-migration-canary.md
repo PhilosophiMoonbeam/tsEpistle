@@ -231,9 +231,9 @@ Backups are outside Git under `/home/bbferko/.local/state/wiki-migration/2026-08
 
 Current topology:
 
-- Active Wiki: `wiki-tailnet`, PostgreSQL, healthy, Docker-published only on `127.0.0.1:3013`; tailnet HTTPS proxies to that loopback endpoint
+- Active Wiki: `wiki-tailnet`, source revision `54b6b481916cf43c89dde1bcd9f68a57986a3736`, image `wiki-tailnet-candidate:54b6b481` / `sha256:b63ba0f50132dd94779ca96453407d8363d095d726a9b99e05405dc99f770ce8`, PostgreSQL, healthy, Docker-published only on `127.0.0.1:3013`; tailnet HTTPS proxies to that loopback endpoint
 - Active database: `wiki-postgres`, PostgreSQL 17.11, healthy, no host port
-- Preserved previous active PostgreSQL container: `wiki-tailnet-pre-15a87230`, stopped; earlier verified containers `wiki-tailnet-pre-6448ad4b`, `wiki-tailnet-pre-75afc78e`, and `wiki-postgres-canary-verified-a088b5fe` also remain stopped
+- Preserved immediately previous PostgreSQL container: `wiki-tailnet-pre-54b6b481`, stopped, image `sha256:9deb3261a447c14db050332662c0c20ec99a45e158f47f7a22b09211ac83c912`, source revision `8e8a65138dda678683449b344d051fcf0428556d`; earlier verified containers remain stopped
 - Preserved rollback container: `wiki-tailnet-sqlite-rollback-20260814`, stopped
 - Preserved rollback image ID: `sha256:3ac6fe5582b4782ab7eceef76f03d0666b905193b9093b4b6011be23ecc81b7c`
 - Preserved rollback volume: `wiki-tailnet-data:/wiki/data/content`
@@ -258,3 +258,29 @@ There is no reverse synchronization. Any writes accepted after PostgreSQL promot
 - The original SQLite schema contains legacy `isPrivate` / `privateNS` columns. It contains zero private rows; PostgreSQL is now canonical for new owner-scoped private-page data.
 - Mail remains unconfigured, matching the pre-migration deployment.
 - PostgreSQL backups require normal operational rotation and off-host retention beyond this one-time local migration backup.
+
+## Content-extension deployment — 2026-08-15
+
+Revision `54b6b481916cf43c89dde1bcd9f68a57986a3736` was built from the committed tree with the production Dockerfile, exercised as an isolated canary on `127.0.0.1:3014` against the canonical PostgreSQL service, and promoted without changing the database, secret, content volume, Docker network, restart policy, or loopback-only publication boundary.
+
+Promotion evidence:
+
+- the candidate and promoted image reported OCI revision `54b6b481916cf43c89dde1bcd9f68a57986a3736`;
+- candidate and promoted `/healthz` returned HTTP 200 with `{"ok":true}`;
+- migration `2.5.138` left the complete 13-extension registry present and disabled by default;
+- the authenticated `/_api/content-extensions` response reported host version 1 and all 13 compatible extension definitions;
+- the tailnet URL `https://agents8c48g.tail41a24a.ts.net:10443/` rendered `Page Home | Wiki.js` in Chromium with no console or page errors;
+- a promoted-container restart preserved healthy status, the PostgreSQL connection, loopback health, tailnet HTTPS health, and the rendered home page;
+- runtime logs identified the exact revision, successful PostgreSQL connection, GraphQL schema load, HTTP startup, and completed page-tree rebuild; the only warning remained the pre-existing unconfigured mail service.
+
+Immediate application rollback preserves PostgreSQL and the additive disabled extension rows:
+
+```bash
+docker stop wiki-tailnet
+docker rename wiki-tailnet wiki-tailnet-post-54b6b481-rollback-$(date +%Y%m%d%H%M%S)
+docker rename wiki-tailnet-pre-54b6b481 wiki-tailnet
+docker start wiki-tailnet
+curl --fail http://127.0.0.1:3013/healthz
+```
+
+The older SQLite rollback path remains available but is still subject to the post-promotion data-loss boundary documented above.
