@@ -29,7 +29,7 @@ helm install wiki ./wiki-ts-preview-0.1.0-alpha.1.tgz \
   --set postgresql.existingSecret=wiki-postgresql
 ```
 
-The image tag defaults to the chart `appVersion`. Pin `image.tag` or, preferably, an immutable image digest through your deployment policy. Do not use `canary` or floating `preview` tags in production.
+The image tag defaults to the chart `appVersion`. Prefer an immutable platform or multi-platform digest in `image.digest`; it takes precedence over `image.tag`. Do not use `canary` or floating `preview` tags in production.
 
 ## External PostgreSQL
 
@@ -66,7 +66,7 @@ Create the Secret before installing the release. `externalPostgresql.databaseURL
 5. Upgrade with an explicit chart and values file:
 
    ```console
-   helm upgrade wiki ./wiki-ts-preview-0.1.0-alpha.1.tgz -f values.yaml --atomic --timeout 15m
+   helm upgrade wiki ./wiki-ts-preview-0.1.0-alpha.1.tgz -f values.yaml --atomic --wait --timeout 15m
    ```
 
 6. Confirm the Deployment is available, `/healthz` returns HTTP 200, login works, and a read/write page check succeeds.
@@ -75,7 +75,7 @@ Wiki.ts runs database migrations during startup. Do not run mixed application ve
 
 ## Rollback and restore
 
-`helm rollback` restores Kubernetes resources, not database contents. If the new application has migrated the database, rolling back only the Deployment can start old code against a newer schema and is unsafe.
+`helm rollback` restores Kubernetes resources, not database or `/wiki/data` contents. If the new application has migrated the database, rolling back only the Deployment can start old code against a newer schema and is unsafe.
 
 1. Stop all Wiki.ts pods.
 2. Restore the pre-upgrade database backup or volume snapshot.
@@ -94,10 +94,11 @@ Wiki.ts runs database migrations during startup. Do not run mixed application ve
 helm uninstall wiki
 ```
 
-The database PVC is intentionally retained. Delete it only after confirming that its data is no longer needed:
+The chart marks both the application-data and bundled-database PVCs with Helm's `keep` resource policy. Confirm the retained claims before deleting either one:
 
 ```console
-kubectl delete pvc data-wiki-postgresql-0
+kubectl get pvc -l app.kubernetes.io/instance=wiki
+kubectl delete pvc CLAIM_NAME
 ```
 
 ## Important values
@@ -108,10 +109,14 @@ kubectl delete pvc data-wiki-postgresql-0
 | `revisionHistoryLimit` | `2` | Deployment revisions retained |
 | `image.repository` | `ghcr.io/philosophimoonbeam/wiki` | Fork image repository |
 | `image.tag` | chart `appVersion` | Application image tag |
+| `image.digest` | unset | Immutable image digest; takes precedence over `image.tag` |
 | `image.imagePullPolicy` | `IfNotPresent` | Image pull policy |
 | `startupProbe` | `/healthz` for up to 5 minutes | Allows migrations to finish before liveness checks |
 | `readinessProbe` | `/healthz` | Removes unhealthy pods from Service endpoints |
 | `ingress.enabled` | `true` | Creates an Ingress |
+| `persistence.enabled` | `true` | Mounts persistent application data at `/wiki/data` |
+| `persistence.existingClaim` | unset | Existing application-data PVC |
+| `persistence.size` | `2Gi` | Application-data PVC request |
 | `postgresql.enabled` | `true` | Creates the bundled PostgreSQL StatefulSet |
 | `postgresql.existingSecret` | unset | Existing bundled-database credential Secret |
 | `postgresql.postgresqlPassword` | unset | Required only when the chart creates the Secret |

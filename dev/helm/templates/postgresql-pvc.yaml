@@ -5,6 +5,8 @@ metadata:
   name: {{ include "wiki.postgresql.fullname" . }}
   labels:
     {{- include "wiki.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/resource-policy: keep
 spec:
   accessModes:
     - {{ .Values.postgresql.persistence.accessMode | quote }}

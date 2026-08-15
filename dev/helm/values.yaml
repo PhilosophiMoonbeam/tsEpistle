@@ -8,6 +8,10 @@ revisionHistoryLimit: 2
 image:
   repository: ghcr.io/philosophimoonbeam/wiki
   imagePullPolicy: IfNotPresent
+  # tag defaults to the chart appVersion when digest is empty
+  tag: ""
+  # digest takes precedence over tag and must include the sha256: prefix
+  digest: ""
 
 imagePullSecrets: []
 nameOverride: ""
@@ -102,6 +106,13 @@ affinity: {}
 volumeMounts: []
 
 volumes: []
+
+persistence:
+  enabled: true
+  existingClaim: ""
+  accessMode: ReadWriteOnce
+  size: 2Gi
+  storageClass: ""
 
 # This will allow us to install locales even without internet access using a initContainer & Wiki.js "sideloading"
 sideload:
@@ -224,6 +235,8 @@ postgresql:
   image:
     repository: postgres
     tag: "18"
+    # digest takes precedence over tag and must include the sha256: prefix
+    digest: ""
     pullPolicy: IfNotPresent
 
   ## PostgreSQL Resources Configuration

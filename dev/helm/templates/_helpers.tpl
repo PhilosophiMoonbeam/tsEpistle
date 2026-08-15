@@ -63,6 +63,35 @@ Create the name of the service account to use
 {{- end -}}
 
 {{/*
+Resolve an immutable application image when a digest is provided.
+*/}}
+{{- define "wiki.image" -}}
+{{- if .Values.image.digest -}}
+{{- printf "%s@%s" .Values.image.repository .Values.image.digest -}}
+{{- else -}}
+{{- printf "%s:%s" .Values.image.repository (default .Chart.AppVersion .Values.image.tag) -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Resolve the application data claim.
+*/}}
+{{- define "wiki.persistenceClaimName" -}}
+{{- default (printf "%s-data" (include "wiki.fullname" .)) .Values.persistence.existingClaim -}}
+{{- end -}}
+
+{{/*
+Resolve an immutable PostgreSQL image when a digest is provided.
+*/}}
+{{- define "wiki.postgresql.image" -}}
+{{- if .Values.postgresql.image.digest -}}
+{{- printf "%s@%s" .Values.postgresql.image.repository .Values.postgresql.image.digest -}}
+{{- else -}}
+{{- printf "%s:%s" .Values.postgresql.image.repository .Values.postgresql.image.tag -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
 PostgreSQL fullname
 */}}
 {{- define "wiki.postgresql.fullname" -}}

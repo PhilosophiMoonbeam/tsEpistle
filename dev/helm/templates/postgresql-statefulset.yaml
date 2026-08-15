@@ -30,7 +30,7 @@ spec:
       {{- end }}
       containers:
         - name: postgresql
-          image: {{ .Values.postgresql.image.repository }}:{{ .Values.postgresql.image.tag }}
+          image: {{ include "wiki.postgresql.image" . | quote }}
           imagePullPolicy: {{ .Values.postgresql.image.pullPolicy }}
           ports:
             - containerPort: 5432

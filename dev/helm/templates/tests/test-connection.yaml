@@ -5,11 +5,13 @@ metadata:
   labels:
     {{- include "wiki.labels" . | nindent 4 }}
   annotations:
-    "helm.sh/hook": test-success
+    "helm.sh/hook": test
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
 spec:
   containers:
-    - name: wget
-      image: busybox
-      command: ['wget']
-      args: ['{{ include "wiki.fullname" . }}:{{ .Values.service.port }}']
+    - name: health
+      image: {{ include "wiki.image" . | quote }}
+      imagePullPolicy: {{ default "IfNotPresent" .Values.image.imagePullPolicy }}
+      command: ['curl']
+      args: ['--fail', '--silent', '--show-error', 'http://{{ include "wiki.fullname" . }}:{{ .Values.service.port }}/healthz']
   restartPolicy: Never

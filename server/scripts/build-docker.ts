@@ -24,7 +24,7 @@ const buildArgs = {
   WIKI_SOURCE_REPOSITORY: productDefinition.sourceRepository,
   WIKI_UPSTREAM_BASE: `${productDefinition.upstreamName} ${productDefinition.upstreamVersion}`
 }
-const args = ['build', '--file', 'dev/build/Dockerfile', '--tag', image]
+const args = ['build', '--provenance=false', '--file', 'dev/build/Dockerfile', '--tag', image]
 for (const [key, value] of Object.entries(buildArgs)) args.push('--build-arg', `${key}=${value}`)
 args.push('.')
 
