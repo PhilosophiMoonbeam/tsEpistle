@@ -78,14 +78,13 @@ esac
 wait_for_url http://127.0.0.1:3000/healthz
 
 login_response=$(curl --fail --silent --show-error \
-  --cookie-jar /tmp/wiki-upgrade-smoke.cookies \
   --header 'Content-Type: application/json' \
   --data "{\"username\":\"$ADMIN_EMAIL\",\"password\":\"$ADMIN_PASSWORD\",\"strategy\":\"local\"}" \
   http://127.0.0.1:3000/_api/auth/login)
-printf '%s' "$login_response" | jq --exit-status '.jwt | type == "string" and length > 0' >/dev/null
+jwt=$(printf '%s' "$login_response" | jq --exit-status --raw-output '.jwt | select(type == "string" and length > 0)')
 
 whoami_response=$(curl --fail --silent --show-error \
-  --cookie /tmp/wiki-upgrade-smoke.cookies \
+  --header "Authorization: Bearer $jwt" \
   http://127.0.0.1:3000/_api/users/whoami)
 printf '%s' "$whoami_response" | jq --exit-status --arg email "$ADMIN_EMAIL" \
   '.authenticated == true and .user.email == $email' >/dev/null
