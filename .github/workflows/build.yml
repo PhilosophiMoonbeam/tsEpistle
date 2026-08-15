@@ -624,7 +624,7 @@ jobs:
           --tag "$IMAGE_REPOSITORY:preview" \
           "$IMAGE_REPOSITORY:canary-$REL_VERSION_STRICT" \
           "$IMAGE_REPOSITORY:canary-arm64-$REL_VERSION_STRICT"
-        image_digest="$(jq --exit-status --raw-output '."containerimage.digest"' release-image-metadata.json)"
+        image_digest="$(jq --exit-status --raw-output '."containerimage.descriptor".digest' release-image-metadata.json)"
         [[ "$image_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
         echo "IMAGE_DIGEST=$image_digest" >> "$GITHUB_ENV"
 
