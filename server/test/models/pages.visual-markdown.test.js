@@ -171,4 +171,61 @@ describe('Visual Markdown page contracts', () => {
 
     expect(global.WIKI.models.pageHistory.addVersion).not.toHaveBeenCalled()
   })
+
+  it('validates the target editor when a revision switches into Visual Markdown', async () => {
+    global.WIKI.models.pages = {
+      query: vi.fn().mockReturnValue({ findById: vi.fn().mockResolvedValue(basePage) })
+    }
+
+    await expect(Page.updatePage({
+      id: basePage.id,
+      user: requester,
+      content: 'Math: $x + y$',
+      editor: 'visual-markdown'
+    })).rejects.toThrow(/Math syntax/)
+
+    expect(global.WIKI.models.pageHistory.addVersion).not.toHaveBeenCalled()
+  })
+
+  it('rejects a stale expected timestamp before opening the update transaction', async () => {
+    global.WIKI.models.pages = {
+      query: vi.fn().mockReturnValue({ findById: vi.fn().mockResolvedValue(basePage) })
+    }
+
+    await expect(Page.updatePage({
+      id: basePage.id,
+      user: requester,
+      content: '# Restored',
+      expectedUpdatedAt: '2026-08-14T00:00:01.000Z'
+    })).rejects.toMatchObject({ name: 'PageUpdateConflict', status: 409 })
+
+    expect(global.WIKI.models.knex.transaction).not.toHaveBeenCalled()
+    expect(global.WIKI.models.pageHistory.addVersion).not.toHaveBeenCalled()
+  })
+
+  it('stops the transaction before tag mutation when the atomic timestamp guard loses a race', async () => {
+    const pagePatch = {
+      where: vi.fn(),
+      then: resolve => resolve(0)
+    }
+    pagePatch.where.mockReturnValue(pagePatch)
+    const query = vi.fn()
+      .mockReturnValueOnce({ findById: vi.fn().mockResolvedValue(basePage) })
+      .mockReturnValueOnce({ patch: vi.fn().mockReturnValue(pagePatch) })
+    global.WIKI.models.pages = { query }
+    global.WIKI.models.tags = { associateTags: vi.fn() }
+
+    await expect(Page.updatePage({
+      id: basePage.id,
+      user: requester,
+      content: '# Restored',
+      tags: ['release'],
+      expectedUpdatedAt: basePage.updatedAt
+    })).rejects.toMatchObject({ name: 'PageUpdateConflict', status: 409 })
+
+    expect(pagePatch.where).toHaveBeenNthCalledWith(1, 'id', basePage.id)
+    expect(pagePatch.where).toHaveBeenNthCalledWith(2, 'updatedAt', basePage.updatedAt)
+    expect(global.WIKI.models.pageHistory.addVersion).toHaveBeenCalledOnce()
+    expect(global.WIKI.models.tags.associateTags).not.toHaveBeenCalled()
+  })
 })

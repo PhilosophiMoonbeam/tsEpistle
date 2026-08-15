@@ -408,6 +408,7 @@ export type PageTreeRow = {
   locale: string
   visibility: 'public' | 'private'
   ownerId: number | null
+  canEdit?: boolean
 }
 
 export type PageSearchRow = {
@@ -534,7 +535,7 @@ export async function fetchPageTree (fetchImpl: FetchImpl, options: { locale: st
     const pageId = row.pageId
     if (!isNullableNumber(pageId)) throw new Error(fallbackMessage)
     const ownerId = row.ownerId
-    if (!isNullableNumber(ownerId) || (row.visibility !== 'public' && row.visibility !== 'private') || typeof row.id !== 'number' || typeof row.path !== 'string' || typeof row.title !== 'string' || typeof row.isFolder !== 'boolean' || typeof row.parent !== 'number' || typeof row.locale !== 'string') {
+    if (!isNullableNumber(ownerId) || (row.visibility !== 'public' && row.visibility !== 'private') || typeof row.id !== 'number' || typeof row.path !== 'string' || typeof row.title !== 'string' || typeof row.isFolder !== 'boolean' || typeof row.parent !== 'number' || typeof row.locale !== 'string' || typeof row.canEdit !== 'boolean') {
       throw new Error(fallbackMessage)
     }
     return {
@@ -546,7 +547,8 @@ export async function fetchPageTree (fetchImpl: FetchImpl, options: { locale: st
       parent: row.parent,
       locale: row.locale,
       visibility: row.visibility,
-      ownerId
+      ownerId,
+      canEdit: row.canEdit
     }
   })
 }
@@ -609,9 +611,15 @@ export type PageHistoryTrailItem = {
 export type PageVersion = Record<string, unknown> & {
   versionId: number
   content: string
+  contentType: string
   title: string
   description: string
+  editor: string
+  locale: string
   path: string
+  tags: string[]
+  versionDate: string
+  visibility: 'public' | 'private'
 }
 
 export async function fetchPages (fetchImpl: FetchImpl, options: { creatorId?: number, authorId?: number, locale?: string, tags?: string[] } = {}, fallbackMessage = 'Page list response is invalid'): Promise<PageListRow[]> {
@@ -650,10 +658,10 @@ export async function fetchPageVersion (fetchImpl: FetchImpl, pageId: number, ve
     headers: { Accept: 'application/json' }
   })
   const payload = await parseJsonResponse(response, fallbackMessage)
-  if (!isRecord(payload) || !Number.isInteger(payload.versionId) || typeof payload.content !== 'string' || typeof payload.title !== 'string' || typeof payload.description !== 'string' || typeof payload.path !== 'string') throw new Error(fallbackMessage)
+  if (!isRecord(payload) || !Number.isInteger(payload.versionId) || typeof payload.content !== 'string' || typeof payload.contentType !== 'string' || typeof payload.title !== 'string' || typeof payload.description !== 'string' || typeof payload.editor !== 'string' || typeof payload.locale !== 'string' || typeof payload.path !== 'string' || !Array.isArray(payload.tags) || payload.tags.some(tag => typeof tag !== 'string') || typeof payload.versionDate !== 'string' || (payload.visibility !== 'public' && payload.visibility !== 'private')) throw new Error(fallbackMessage)
   return payload as PageVersion
 }
 
-export async function restorePageVersion (fetchImpl: FetchImpl, pageId: number, versionId: number, fallbackMessage = 'Page restore failed'): Promise<void> {
-  await sendJson(fetchImpl, `/_api/pages/${encodeURIComponent(pageId)}/history/${encodeURIComponent(versionId)}/restore`, 'POST', {}, fallbackMessage)
+export async function restorePageVersion (fetchImpl: FetchImpl, pageId: number, versionId: number, expectedUpdatedAt: string, fallbackMessage = 'Page restore failed'): Promise<void> {
+  await sendJson(fetchImpl, `/_api/pages/${encodeURIComponent(pageId)}/history/${encodeURIComponent(versionId)}/restore`, 'POST', { expectedUpdatedAt }, fallbackMessage)
 }

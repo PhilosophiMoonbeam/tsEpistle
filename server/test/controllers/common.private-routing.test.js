@@ -1,5 +1,5 @@
 vi.mock('express', () => {
-  const router = { get: vi.fn(), all: vi.fn(), use: vi.fn() }
+  const router = { get: vi.fn(), post: vi.fn(), all: vi.fn(), use: vi.fn() }
   const expressMock = { Router: () => router, __router: router }
   return { default: expressMock, ...expressMock }
 })

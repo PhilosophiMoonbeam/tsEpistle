@@ -143,6 +143,7 @@ describe('controllers/api pages endpoints', () => {
       recent: express.__router.get.mock.calls.find(([path]) => path === '/recent')[1],
       updateTag: express.__router.patch.mock.calls.find(([path]) => path === '/tags/:id')[1],
       visibility: express.__router.patch.mock.calls.find(([path]) => path === '/:id/visibility')[1],
+      restore: express.__router.post.mock.calls.find(([path]) => path === '/:id/history/:versionId/restore')[1],
       tree: express.__router.get.mock.calls.find(([path]) => path === '/tree')[1]
     }
   }
@@ -165,6 +166,77 @@ describe('controllers/api pages endpoints', () => {
     expect(res.json).toHaveBeenCalledWith({ error: 'Destination page path already exists.' })
   })
 
+
+  it('requires and forwards the observed page timestamp for revision restores', async () => {
+    const updatedAt = '2026-08-15T00:00:00.000Z'
+    const requester = { id: 1, permissions: ['write:pages', 'manage:system'] }
+    global.WIKI.models.knex = vi.fn().mockReturnValue({
+      where: vi.fn().mockReturnValue({ first: vi.fn().mockResolvedValue(undefined) })
+    })
+    global.WIKI.models.pages.query = vi.fn().mockReturnValue({
+      select: vi.fn().mockReturnValue({
+        findById: vi.fn().mockResolvedValue({
+          id: 7,
+          path: 'docs/alpha',
+          localeCode: 'en',
+          updatedAt,
+          visibility: 'public',
+          ownerId: null
+        })
+      })
+    })
+    global.WIKI.models.pages.updatePage = vi.fn().mockResolvedValue(undefined)
+    global.WIKI.models.pageHistory = {
+      getVersion: vi.fn().mockResolvedValue({
+        versionId: 3,
+        content: '# Earlier',
+        contentType: 'markdown',
+        title: 'Earlier',
+        description: '',
+        editor: 'visual-markdown',
+        locale: 'en',
+        path: 'docs/alpha',
+        tags: ['docs'],
+        versionDate: '2026-08-14T00:00:00.000Z',
+        visibility: 'public'
+      })
+    }
+    const { restore } = await loadHandler()
+    const req = {
+      body: { expectedUpdatedAt: updatedAt },
+      params: { id: '7', versionId: '3' },
+      user: requester
+    }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
+
+    await restore(req, res)
+
+    expect(global.WIKI.models.pages.updatePage).toHaveBeenCalledWith(expect.objectContaining({
+      id: 7,
+      user: requester,
+      expectedUpdatedAt: updatedAt,
+      action: 'restored'
+    }))
+    expect(res.json).toHaveBeenCalledWith({ message: 'Page version restored successfully.' })
+  })
+
+  it('rejects revision restores without a concurrency timestamp', async () => {
+    global.WIKI.models.knex = vi.fn().mockReturnValue({
+      where: vi.fn().mockReturnValue({ first: vi.fn().mockResolvedValue(undefined) })
+    })
+    const { restore } = await loadHandler()
+    const req = {
+      body: {},
+      params: { id: '7', versionId: '3' },
+      user: { id: 1, permissions: ['write:pages', 'manage:system'] }
+    }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
+
+    await restore(req, res)
+
+    expect(res.status).toHaveBeenCalledWith(400)
+    expect(res.json).toHaveBeenCalledWith({ error: 'expectedUpdatedAt must be a valid date' })
+  })
   it('lists root page tree entries when parent is zero', async () => {
     const rows = [{
       id: 1,
@@ -207,7 +279,8 @@ describe('controllers/api pages endpoints', () => {
       visibility: 'public',
       ownerId: null,
       parent: 0,
-      locale: 'en'
+      locale: 'en',
+      canEdit: true
     }])
     expect(queryBuilder.where).toHaveBeenCalledOnce()
     expect(orderBy).toHaveBeenCalledOnce()

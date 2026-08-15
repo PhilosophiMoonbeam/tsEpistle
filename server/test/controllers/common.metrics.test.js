@@ -2,6 +2,7 @@ vi.mock('express', () => {
   const router = {
     get: vi.fn(),
     all: vi.fn(),
+    post: vi.fn(),
     use: vi.fn()
   }
 
@@ -20,6 +21,7 @@ describe('controllers/common metrics endpoint', () => {
     vi.resetModules()
     express.__router.get.mockClear()
     express.__router.all.mockClear()
+    express.__router.post.mockClear()
 
     global.WIKI = {
       config: {

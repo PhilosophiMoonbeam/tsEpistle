@@ -51,10 +51,24 @@
             v-icon(small) mdi-folder-open
           v-list-item-title {{ item.title }}
         v-divider.mt-2
-        v-list-item.mt-2(v-if='currentParent.pageId > 0', :href='(currentParent.visibility === `private` ? `/_private` : ``) + `/` + currentParent.locale + `/` + currentParent.path', :key='`directorypage-` + currentParent.id', :input-value='path === currentParent.path')
-          v-avatar(size='24')
-            v-icon mdi-text-box
-          v-list-item-title {{ currentParent.title }}
+        .d-flex.align-center.mt-2(v-if='currentParent.pageId > 0')
+          v-list-item(
+            :href='pagePath(currentParent)'
+            :key='`directorypage-` + currentParent.id'
+            :input-value='path === currentParent.path'
+            style='min-width: 0;'
+          )
+            v-avatar(size='24')
+              v-icon mdi-text-box
+            v-list-item-title {{ currentParent.title }}
+          v-btn.mr-2(
+            v-if='canEditCurrentParent'
+            icon
+            small
+            :href='editPath(currentParent)'
+            :aria-label='`Edit parent page ${currentParent.title}`'
+          )
+            v-icon(small) mdi-pencil
         v-list-subheader.pl-4 {{$t('common:sidebar.currentDirectory')}}
       template(v-for='item of currentItems')
         v-list-item(v-if='item.isFolder', :key='`childfolder-` + item.id', @click='fetchBrowseItems(item)')
@@ -84,6 +98,7 @@ type NavigationTreeItem = {
   locale?: string
   pageId?: number | null
   visibility?: 'public' | 'private'
+  canEdit?: boolean
 }
 
 export type SidebarItem =
@@ -109,6 +124,10 @@ export default defineComponent({
     navMode: {
       type: String,
       default: 'MIXED'
+    },
+    expandParentByDefault: {
+      type: Boolean,
+      default: true
     }
   },
   data() {
@@ -129,14 +148,18 @@ export default defineComponent({
     },
     locale () {
       return wikiStore.page.locale
+    },
+    canEditCurrentParent () {
+      return this.currentParent.canEdit === true && this.currentParent.pageId !== wikiStore.page.id
     }
   },
   methods: {
     switchMode (mode: NavigationMode) {
       this.currentMode = mode
       window.localStorage.setItem('navPref', mode)
-      if (mode === `browse` && this.loadedCache.length < 1) {
-        this.loadFromCurrentPath()
+      if (mode === 'browse' && this.loadedCache.length < 1) {
+        if (this.expandParentByDefault) this.loadFromCurrentPath()
+        else this.fetchBrowseItems()
       }
     },
     async fetchBrowseItems (requestedItem?: NavigationTreeItem) {
@@ -202,6 +225,12 @@ export default defineComponent({
       this.currentItems = _.filter(items, ['parent', curPage.parent])
       loadingStop(wikiStore, 'browse-load')
     },
+    pagePath (item: NavigationTreeItem) {
+      return `${item.visibility === 'private' ? '/_private' : ''}/${item.locale}/${item.path}`
+    },
+    editPath (item: NavigationTreeItem) {
+      return `/e${item.visibility === 'private' ? '/_private' : ''}/${item.locale}/${item.path}`
+    },
     goHome () {
       window.location.assign(siteLangs.length > 0 ? `/${this.locale}/home` : '/')
     }
@@ -216,7 +245,8 @@ export default defineComponent({
       this.currentMode = (window.localStorage.getItem('navPref') || 'custom') as NavigationMode
     }
     if (this.currentMode === 'browse') {
-      this.loadFromCurrentPath()
+      if (this.expandParentByDefault) this.loadFromCurrentPath()
+      else this.fetchBrowseItems()
     }
   }
 })

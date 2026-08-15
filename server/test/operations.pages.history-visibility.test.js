@@ -82,18 +82,84 @@ describe('page history visibility boundaries', () => {
 
   it('cannot restore a hidden private revision after the page is published', async () => {
     const requester = { id: 8, permissions: ['write:pages'] }
+    const updatedAt = '2026-08-15T00:00:00.000Z'
     global.WIKI.models.pages.query.mockReturnValue(pageQuery({
       id: 17,
       path: 'published',
       localeCode: 'en',
       visibility: 'public',
-      ownerId: null
+      ownerId: null,
+      updatedAt
     }))
     global.WIKI.models.pageHistory.getVersion.mockResolvedValue(undefined)
     const operations = (await import('../operations/pages.ts')).default
 
-    await expect(operations.restore({ requester, pageId: 17, versionId: 4 })).rejects.toBeInstanceOf(PageNotFound)
+    await expect(operations.restore({ requester, pageId: 17, versionId: 4, expectedUpdatedAt: updatedAt })).rejects.toBeInstanceOf(PageNotFound)
     expect(global.WIKI.models.pageHistory.getVersion).toHaveBeenCalledWith({ pageId: 17, versionId: 4, requester })
     expect(global.WIKI.models.pages.updatePage).not.toHaveBeenCalled()
+  })
+
+  it('rejects a stale restore before reading or overwriting the selected revision', async () => {
+    const requester = { id: 8, permissions: ['write:pages'] }
+    global.WIKI.models.pages.query.mockReturnValue(pageQuery({
+      id: 17,
+      path: 'published',
+      localeCode: 'en',
+      visibility: 'public',
+      ownerId: null,
+      updatedAt: '2026-08-15T00:00:01.000Z'
+    }))
+    const operations = (await import('../operations/pages.ts')).default
+
+    await expect(operations.restore({
+      requester,
+      pageId: 17,
+      versionId: 4,
+      expectedUpdatedAt: '2026-08-15T00:00:00.000Z'
+    })).rejects.toMatchObject({ name: 'PAGE_RESTORE_CONFLICT', status: 409 })
+    expect(global.WIKI.models.pageHistory.getVersion).not.toHaveBeenCalled()
+    expect(global.WIKI.models.pages.updatePage).not.toHaveBeenCalled()
+  })
+
+  it('restores canonical content, editor, content type, and tags with a compare-and-swap timestamp', async () => {
+    const requester = { id: 8, permissions: ['write:pages'] }
+    const updatedAt = '2026-08-15T00:00:00.000Z'
+    global.WIKI.models.pages.query.mockReturnValue(pageQuery({
+      id: 17,
+      path: 'published',
+      localeCode: 'en',
+      visibility: 'public',
+      ownerId: null,
+      updatedAt
+    }))
+    global.WIKI.models.pageHistory.getVersion.mockResolvedValue({
+      versionId: 4,
+      content: '# Earlier',
+      contentType: 'markdown',
+      title: 'Earlier',
+      description: 'Earlier description',
+      editor: 'visual-markdown',
+      locale: 'en',
+      path: 'published',
+      tags: ['release'],
+      versionDate: '2026-08-14T00:00:00.000Z',
+      visibility: 'public'
+    })
+    const operations = (await import('../operations/pages.ts')).default
+
+    await operations.restore({ requester, pageId: 17, versionId: 4, expectedUpdatedAt: updatedAt })
+
+    expect(global.WIKI.models.pages.updatePage).toHaveBeenCalledWith({
+      id: 17,
+      user: requester,
+      content: '# Earlier',
+      contentType: 'markdown',
+      title: 'Earlier',
+      description: 'Earlier description',
+      editor: 'visual-markdown',
+      tags: ['release'],
+      action: 'restored',
+      expectedUpdatedAt: updatedAt
+    })
   })
 })

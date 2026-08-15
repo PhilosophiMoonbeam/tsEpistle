@@ -131,6 +131,7 @@ describe('controllers/api rendering endpoints', () => {
       '../../controllers/api/assets.ts',
       '../../controllers/api/auth.ts',
       '../../controllers/api/comments.ts',
+      '../../controllers/api/content-extensions.ts',
       '../../controllers/api/contribute.ts',
       '../../controllers/api/groups.ts',
       '../../controllers/api/locales.ts',
@@ -144,7 +145,8 @@ describe('controllers/api rendering endpoints', () => {
       '../../controllers/api/storage.ts',
       '../../controllers/api/system.ts',
       '../../controllers/api/theming.ts',
-      '../../controllers/api/users.ts'
+      '../../controllers/api/users.ts',
+      '../../controllers/api/webhooks.ts'
     ]
     for (const modulePath of modulePaths) {
       vi.doMock(modulePath, () => ({ default: {} }))

@@ -691,8 +691,12 @@ router.post('/:id/history/:versionId/restore', async (req, res) => {
   if (!await requireUnlockedPage(req, res, pageId)) return
   const versionId = parsePositiveIntegerParam(req, res, 'versionId')
   if (versionId === null) return
+  const expectedUpdatedAt = requestBody(req).expectedUpdatedAt
+  if (typeof expectedUpdatedAt !== 'string' || Number.isNaN(Date.parse(expectedUpdatedAt))) {
+    return res.status(400).json({ error: 'expectedUpdatedAt must be a valid date' })
+  }
   try {
-    await pageOperations.restore({ ...requesterInput(req), pageId, versionId })
+    await pageOperations.restore({ ...requesterInput(req), pageId, versionId, expectedUpdatedAt })
     res.json({ message: 'Page version restored successfully.' })
   } catch (err) {
     sendOperationError(res, err, 'Page restore failed')

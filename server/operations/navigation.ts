@@ -27,7 +27,7 @@ interface NavigationModel {
 
 const validModes = ['NONE', 'TREE', 'MIXED', 'STATIC']
 const navigationModel = (WIKI.models as { navigation: NavigationModel }).navigation
-const config = WIKI.config as { nav: { mode: string } }
+const config = WIKI.config as { nav: { mode: string, expandParent?: boolean } }
 const cache = WIKI.cache as { set(key: string, value: unknown, ttl: number): Promise<unknown> }
 const configService = WIKI.configSvc as { saveToDb(keys: string[]): Promise<unknown> }
 
@@ -51,24 +51,30 @@ const serializeItem = (item: NavigationItem): Partial<NavigationItem> => _.pick(
 const get = async () => {
   const tree = await navigationModel.getTree({ cache: false, locale: 'all', bypassAuth: true })
   return {
-    config: { mode: config.nav.mode },
+    config: {
+      mode: config.nav.mode,
+      expandParent: config.nav.expandParent !== false
+    },
     tree: tree.map(row => ({ locale: row.locale, items: row.items.map(serializeItem) }))
   }
 }
 
-const update = async (input: { tree: unknown, mode: unknown }): Promise<void> => {
-  const { tree, mode } = input
+const update = async (input: { tree: unknown, mode: unknown, expandParent: unknown }): Promise<void> => {
+  const { tree, mode, expandParent } = input
   if (!validTree(tree)) {
     throw new ApplicationError('tree must be an array of locale navigation trees with valid navigation items', { code: 'INVALID_NAVIGATION_TREE' })
   }
   if (typeof mode !== 'string' || !validModes.includes(mode)) {
     throw new ApplicationError('mode must be a valid navigation mode', { code: 'INVALID_NAVIGATION_MODE' })
   }
+  if (typeof expandParent !== 'boolean') {
+    throw new ApplicationError('expandParent must be a boolean', { code: 'INVALID_NAVIGATION_EXPANSION' })
+  }
   await navigationModel.query().patch({ config: tree }).where('key', 'site')
   for (const row of tree) {
     await cache.set(`nav:sidebar:${row.locale}`, row.items, 300)
   }
-  config.nav = { mode }
+  config.nav = { mode, expandParent }
   await configService.saveToDb(['nav'])
 }
 

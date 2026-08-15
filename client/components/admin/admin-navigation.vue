@@ -17,7 +17,7 @@
             span {{$t('common:actions.apply')}}
         v-container.pa-0.mt-3(fluid, grid-list-lg)
           v-row(dense)
-            v-col(cols='3')
+            v-col(cols='12', md='3')
               v-card.animated.fadeInUp
                 v-toolbar(color='teal', dark, dense, flat, height='56')
                   v-toolbar-title.subtitle-1 {{$t('admin:navigation.mode')}}
@@ -58,10 +58,19 @@
                     v-avatar
                       v-icon(v-if='$vuetify.theme.current.dark', :color='config.mode === `NONE` ? `teal lighten-3` : `grey darken-2`') mdi-check-circle
                       v-icon(v-else, :color='config.mode === `NONE` ? `teal` : `grey lighten-3`') mdi-check-circle
-            v-col(cols='9', v-if='config.mode === `MIXED` || config.mode === `STATIC`')
+                v-card-text.pt-0
+                  v-switch(
+                    v-model='config.expandParent'
+                    color='teal'
+                    inset
+                    hide-details
+                    label='Open the current page parent by default'
+                  )
+                  .caption.grey--text.mt-2 When enabled, Browse opens at the current page location. Disable it to start at the site root.
+            v-col(cols='12', md='9', v-if='config.mode === `MIXED` || config.mode === `STATIC`')
               v-card.animated.fadeInUp.wait-p2s
                 v-row(no-gutters, align='stretch')
-                  v-col(style='flex: 0 0 350px;')
+                  v-col(cols='12', lg='5', xl='4')
                     v-card.grey(flat, style='height: 100%; border-radius: 4px 0 0 4px;', :class='$vuetify.theme.current.dark ? `darken-4-l5` : `lighten-3`')
                       .teal.lighten-1.pa-2.d-flex(style='margin-bottom: 1px; height:56px;')
                         v-select(
@@ -129,7 +138,7 @@
                             v-list-item(@click='addItem("divider")')
                               v-avatar(size='24'): v-icon mdi-minus
                               v-list-item-title {{$t('admin:navigation.divider')}}
-                  v-col
+                  v-col(cols='12', lg='7', xl='8')
                     v-card(flat, style='border-radius: 0 4px 4px 0;')
                       template(v-if='current.kind === "link"')
                         v-toolbar(height='56', color='teal lighten-1', flat, dark)
@@ -304,7 +313,8 @@ export default {
       groups: [] as GroupOption[],
       copyFromLocaleDialogIsShown: false,
       config: {
-        mode: 'NONE'
+        mode: 'NONE',
+        expandParent: true
       } as NavigationConfig,
       allLocales: [] as LocaleRow[],
       copyFromLocaleCode: 'en'
@@ -423,7 +433,7 @@ export default {
     async save() {
       wikiStore.startLoading('admin-navigation-save')
       try {
-        await saveNavigation(window.fetch.bind(window), this.trees, this.config.mode)
+        await saveNavigation(window.fetch.bind(window), this.trees, this.config.mode, this.config.expandParent)
         wikiStore.showNotification({
           message: this.$t('admin:navigation.saveSuccess'),
           style: 'success',

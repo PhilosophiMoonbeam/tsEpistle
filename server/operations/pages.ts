@@ -455,7 +455,8 @@ const getTree = async (input: OperationInput) => {
     ...result,
     isFolder: Boolean(result.isFolder),
     parent: result.parent || 0,
-    locale: result.localeCode
+    locale: result.localeCode,
+    canEdit: typeof result.pageId === 'number' && canWritePage(requester, result)
   }))
 }
 
@@ -537,12 +538,28 @@ const restore = async (input: OperationInput): Promise<void> => {
   const requester = input.requester
   const pageId = positiveInteger(input.pageId, 'pageId')
   const versionId = positiveInteger(input.versionId, 'versionId')
-  const page = await wiki.models.pages.query().select('path', 'localeCode', 'visibility', 'ownerId').findById(pageId)
+  const expectedUpdatedAt = stringValue(input.expectedUpdatedAt, 'expectedUpdatedAt')
+  const expectedTimestamp = Date.parse(expectedUpdatedAt)
+  if (Number.isNaN(expectedTimestamp)) throw new ApplicationError('expectedUpdatedAt must be a valid date', { code: 'INVALID_INPUT' })
+  const page = await wiki.models.pages.query().select('path', 'localeCode', 'updatedAt', 'visibility', 'ownerId').findById(pageId)
   if (!page || (page.visibility === 'private' && !canWritePage(requester, page))) throw new wiki.Error.PageNotFound()
   if (!canWritePage(requester, page)) throw new wiki.Error.PageRestoreForbidden()
+  if (new Date(page.updatedAt).valueOf() !== expectedTimestamp) {
+    throw new ApplicationError('The page changed after history was opened. Reload history before restoring.', { code: 'PAGE_RESTORE_CONFLICT', status: 409 })
+  }
   const version = await wiki.models.pageHistory.getVersion({ pageId, versionId, requester })
   if (!version) throw new wiki.Error.PageNotFound()
-  await wiki.models.pages.updatePage(withRequester({ ...version, id: version.pageId, action: 'restored' }, requester))
+  await wiki.models.pages.updatePage(withRequester({
+    id: pageId,
+    content: version.content,
+    contentType: version.contentType,
+    title: version.title,
+    description: version.description,
+    editor: version.editor,
+    tags: version.tags,
+    action: 'restored',
+    expectedUpdatedAt: page.updatedAt instanceof Date ? page.updatedAt.toISOString() : page.updatedAt
+  }, requester))
 }
 
 const getPageTags = (value: unknown): RelatedTagQuery => wiki.models.pages.relatedQuery('tags').for(positiveInteger(value, 'pageId'))

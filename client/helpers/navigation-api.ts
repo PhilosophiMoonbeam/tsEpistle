@@ -16,6 +16,7 @@ type NavigationSaveResponse = {
 
 export type NavigationConfig = {
   mode: string
+  expandParent: boolean
 }
 
 export type NavigationItem = {
@@ -103,9 +104,9 @@ function normalizeNavigationPayload (payload: unknown, fallbackMessage: string):
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
     throw new Error(fallbackMessage)
   }
-
   const navPayload = payload as Partial<NavigationPayload>
-  if (!navPayload.config || typeof navPayload.config !== 'object' || Array.isArray(navPayload.config) || !VALID_NAVIGATION_MODES.includes((navPayload.config as NavigationConfig).mode)) {
+  const rawConfig = navPayload.config as Partial<NavigationConfig> | undefined
+  if (!rawConfig || typeof rawConfig !== 'object' || Array.isArray(rawConfig) || !VALID_NAVIGATION_MODES.includes(rawConfig.mode ?? '') || (rawConfig.expandParent !== undefined && typeof rawConfig.expandParent !== 'boolean')) {
     throw new Error(fallbackMessage)
   }
   if (!Array.isArray(navPayload.tree)) {
@@ -114,7 +115,8 @@ function normalizeNavigationPayload (payload: unknown, fallbackMessage: string):
 
   return {
     config: {
-      mode: (navPayload.config as NavigationConfig).mode
+      mode: rawConfig.mode!,
+      expandParent: rawConfig.expandParent !== false
     },
     tree: navPayload.tree.map(row => {
       if (!row || typeof row !== 'object' || Array.isArray(row)) {
@@ -153,7 +155,7 @@ export async function fetchNavigation (fetchImpl: FetchImpl, fallbackMessage = '
   return normalizeNavigationPayload(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
 }
 
-export async function saveNavigation (fetchImpl: FetchImpl, tree: unknown[], mode: string, fallbackMessage = 'Navigation save failed'): Promise<NavigationSaveResponse> {
+export async function saveNavigation (fetchImpl: FetchImpl, tree: unknown[], mode: string, expandParent: boolean, fallbackMessage = 'Navigation save failed'): Promise<NavigationSaveResponse> {
   const response = await fetchImpl('/_api/navigation', {
     method: 'PUT',
     credentials: 'same-origin',
@@ -161,7 +163,7 @@ export async function saveNavigation (fetchImpl: FetchImpl, tree: unknown[], mod
       Accept: 'application/json',
       'Content-Type': 'application/json'
     },
-    body: JSON.stringify({ tree, mode })
+    body: JSON.stringify({ tree, mode, expandParent })
   })
 
   return normalizeNavigationSavePayload(await parseJsonResponse(response, fallbackMessage), fallbackMessage)

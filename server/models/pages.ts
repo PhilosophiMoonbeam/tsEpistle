@@ -111,6 +111,9 @@ interface UpdatePageOptions {
   isPublished?: boolean | number
   title?: string
   tags?: string[]
+  expectedUpdatedAt?: string
+  editor?: string
+  contentType?: string
   action?: string
   locale?: string
   path?: string
@@ -304,6 +307,11 @@ interface PagesWikiContext {
 
 
 const wiki = WIKI as unknown as PagesWikiContext
+const pageUpdateConflict = (): Error & { status: number } =>
+  Object.assign(new Error('The page changed after history was opened. Reload history before restoring.'), {
+    name: 'PageUpdateConflict',
+    status: 409
+  })
 
 const writePageOutboxEvent = async (
   knex: Knex | Knex.Transaction,
@@ -740,12 +748,16 @@ static async updatePage(opts: UpdatePageOptions): Promise<Page> {
   if (!canWritePage(opts.user, ogPage)) {
     throw new wiki.Error.PageUpdateForbidden()
   }
+  if (opts.expectedUpdatedAt && new Date(ogPage.updatedAt).valueOf() !== new Date(opts.expectedUpdatedAt).valueOf()) {
+    throw pageUpdateConflict()
+  }
 
   const content = opts.content ?? ogPage.content
   if (!content || _.trim(content).length < 1) {
     throw new wiki.Error.PageEmptyContent()
   }
-  if (ogPage.editorKey === 'visual-markdown') {
+  const editorKey = opts.editor ?? ogPage.editorKey
+  if (editorKey === 'visual-markdown') {
     assertVisualMarkdownCompatible(content)
   }
 
@@ -788,10 +800,12 @@ static async updatePage(opts: UpdatePageOptions): Promise<Page> {
       versionDate: ogPage.updatedAt,
       transaction
     })
-    await wiki.models.pages.query(transaction).patch({
+    const pagePatch = wiki.models.pages.query(transaction).patch({
       authorId: opts.user.id,
       content,
+      contentType: opts.contentType ?? ogPage.contentType,
       description: opts.description ?? ogPage.description,
+      editorKey,
       isPublished: opts.isPublished === undefined
         ? (ogPage.isPublished === true || ogPage.isPublished === 1)
         : (opts.isPublished === true || opts.isPublished === 1),
@@ -804,6 +818,12 @@ static async updatePage(opts: UpdatePageOptions): Promise<Page> {
         css: scriptCss
       }
     }).where('id', ogPage.id)
+    if (opts.expectedUpdatedAt) pagePatch.where('updatedAt', ogPage.updatedAt)
+    const updatedRows = await pagePatch
+    if (updatedRows !== 1) throw pageUpdateConflict()
+    if (opts.tags !== undefined) {
+      await wiki.models.tags.associateTags({ tags: opts.tags, page: ogPage, transaction })
+    }
     if (!willMove) {
       await writePageOutboxEvent(transaction, pageEventType, {
         ...ogPage,
@@ -816,10 +836,7 @@ static async updatePage(opts: UpdatePageOptions): Promise<Page> {
     throw new wiki.Error.PageNotFound()
   }
 
-  // -> Save Tags
-  if (opts.tags !== undefined) {
-    await wiki.models.tags.associateTags({ tags: opts.tags, page })
-  }
+  // Tags are changed inside the page transaction so restore cannot expose mixed content and metadata.
   // -> Render page to HTML
   await wiki.models.pages.renderPage(page)
   wiki.events.outbound.emit('deletePageFromCache', page.hash)

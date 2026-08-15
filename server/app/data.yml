@@ -58,6 +58,7 @@ defaults:
       verifySSL: true
     nav:
       mode: 'MIXED'
+      expandParent: true
     theming:
       theme: 'default'
       iconset: 'md'

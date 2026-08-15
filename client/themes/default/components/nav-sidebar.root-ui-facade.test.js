@@ -23,5 +23,14 @@ describe('default nav-sidebar REST browse migration guard', () => {
     expect(script).toContain('this.parents = [this.currentParent, ...invertedAncestors.reverse()]')
     expect(script).toContain("window.localStorage.setItem('navPref', mode)")
     expect(script).toMatch(/window\.location\.assign\(siteLangs\.length > 0 \? `\/\$\{this\.locale\}\/home` : '\/'\)/)
+    expect(script).toContain('if (this.expandParentByDefault) this.loadFromCurrentPath()')
+    expect(script).toContain('else this.fetchBrowseItems()')
+  })
+
+  test('offers permission-scoped parent editing from a child page', () => {
+    expect(source).toContain("v-if='canEditCurrentParent'")
+    expect(source).toContain(":href='editPath(currentParent)'")
+    expect(script).toContain('this.currentParent.canEdit === true && this.currentParent.pageId !== wikiStore.page.id')
+    expect(script).toContain("return `/e${item.visibility === 'private' ? '/_private' : ''}/${item.locale}/${item.path}`")
   })
 })

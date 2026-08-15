@@ -132,7 +132,7 @@ export const publishOutboxEvents = async (knex: Knex, options: PublishOutboxOpti
       const bucketEnd = new Date(bucketStart.valueOf() + aggregationMs + 5_000)
       for (const watcher of watchers) {
         if (watcher.userId === actorId) continue
-        if (!Boolean(watcher.emailEnabled) && !Boolean(watcher.inAppEnabled)) continue
+        if (!watcher.emailEnabled && !watcher.inAppEnabled) continue
         const generatedDeliveryId = randomUUID()
         const job = await durableJobs.enqueue({
           type: 'notify-page-watcher',

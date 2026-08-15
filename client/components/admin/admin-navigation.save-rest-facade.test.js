@@ -42,7 +42,7 @@ describe('admin-navigation save REST facade', () => {
 
   test('save uses REST helper while preserving loading, success notification, and error facade', () => {
     expect(save).toContain("wikiStore.startLoading('admin-navigation-save')")
-    expect(save).toContain('await saveNavigation(window.fetch.bind(window), this.trees, this.config.mode)')
+    expect(save).toContain('await saveNavigation(window.fetch.bind(window), this.trees, this.config.mode, this.config.expandParent)')
     expect(save).toContain('wikiStore.showNotification({')
     expect(save).toContain("message: this.$t('admin:navigation.saveSuccess')")
     expect(save).toContain("style: 'success'")

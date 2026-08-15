@@ -56,6 +56,7 @@ interface HistoryTrailEntry {
 type WikiSource = typeof WIKI
 type PageHistoryWikiContext = WikiSource & {
   models: {
+    knex: Knex
     pageHistory: typeof PageHistory
   }
 }
@@ -157,7 +158,7 @@ static override get tableName() { return 'pageHistory' } static override get jso
  * Create Page Version
  */
 static async addVersion(opts: PageVersionOptions) {
-  return wiki.models.pageHistory.query(opts.transaction).insert({
+  const version = await wiki.models.pageHistory.query(opts.transaction).insert({
     pageId: opts.id,
     authorId: opts.authorId,
     content: opts.content,
@@ -176,6 +177,12 @@ static async addVersion(opts: PageVersionOptions) {
     action: opts.action || 'updated',
     versionDate: opts.versionDate
   })
+  const knex = opts.transaction ?? wiki.models.knex
+  const tags = await knex('pageTags').select('tagId').where('pageId', opts.id)
+  if (tags.length > 0) {
+    await knex('pageHistoryTags').insert(tags.map(({ tagId }) => ({ pageId: version.id, tagId })))
+  }
+  return version
 }
 
 /**
@@ -213,14 +220,12 @@ static async getVersion({ pageId, versionId, requester }: VersionQuery) {
     })
   scopePageQuery(query, requester, { table: 'pageHistory', includeAllForSystemManager: true })
   const version = await query.first()
-  if (version) {
-    return {
-      ...version,
-      updatedAt: version.createdAt || null,
-      tags: []
-    }
-  } else {
-    return null
+  if (!version) return null
+  const tags = await wiki.models.pageHistory.relatedQuery<Tag>('tags').for(versionId).select('tag').orderBy('tags.id')
+  return {
+    ...version,
+    updatedAt: version.createdAt || null,
+    tags: tags.map(tag => tag.tag)
   }
 }
 

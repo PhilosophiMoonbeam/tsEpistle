@@ -1,4 +1,4 @@
-import { deletePage, deletePageTag, fetchPage, fetchPageLinks, fetchPageList, fetchPageTags, fetchRecentPages, updatePageTag } from './pages-api.ts'
+import { deletePage, deletePageTag, fetchPage, fetchPageHistory, fetchPageLinks, fetchPageList, fetchPageTags, fetchPageTree, fetchPageVersion, fetchRecentPages, restorePageVersion, updatePageTag } from './pages-api.ts'
 
 function createJsonResponse (payload, ok = true) {
   return {
@@ -405,4 +405,108 @@ describe('pages api helper', () => {
 
     await expect(deletePageTag(fetchImpl, 7, 'Bad tag delete response')).rejects.toThrow('Bad tag delete response')
   })
+  test('validates complete immutable revision metadata', async () => {
+    const version = {
+      versionId: 9,
+      content: '# Before',
+      contentType: 'markdown',
+      title: 'Before',
+      description: 'Earlier content',
+      editor: 'visual-markdown',
+      locale: 'en',
+      path: 'docs/before',
+      tags: ['docs'],
+      versionDate: '2026-08-15T00:00:00.000Z',
+      visibility: 'private'
+    }
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse(version))
+
+    await expect(fetchPageVersion(fetchImpl, 42, 9)).resolves.toEqual(version)
+    expect(fetchImpl).toHaveBeenCalledWith('/_api/pages/42/history/9', {
+      credentials: 'same-origin',
+      headers: { Accept: 'application/json' }
+    })
+  })
+
+  test('rejects revision payloads that omit canonical editor metadata', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({
+      versionId: 9,
+      content: '# Before',
+      title: 'Before',
+      description: '',
+      path: 'before'
+    }))
+
+    await expect(fetchPageVersion(fetchImpl, 42, 9, 'Invalid revision')).rejects.toThrow('Invalid revision')
+  })
+
+  test('restores against the page timestamp observed when history opened', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ message: 'Page version restored successfully.' }))
+    const expectedUpdatedAt = '2026-08-15T00:00:00.000Z'
+
+    await expect(restorePageVersion(fetchImpl, 42, 9, expectedUpdatedAt)).resolves.toBeUndefined()
+    expect(fetchImpl).toHaveBeenCalledWith('/_api/pages/42/history/9/restore', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ expectedUpdatedAt })
+    })
+  })
+
+  test('fetches paginated revision metadata for the history timeline', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({
+      total: 1,
+      trail: [{
+        versionId: 9,
+        authorId: 7,
+        authorName: 'Owner',
+        actionType: 'edit',
+        valueBefore: null,
+        valueAfter: null,
+        versionDate: '2026-08-15T00:00:00.000Z'
+      }]
+    }))
+
+    await expect(fetchPageHistory(fetchImpl, 42, 0, 25)).resolves.toMatchObject({ total: 1 })
+    expect(fetchImpl.mock.calls[0][0]).toBe('/_api/pages/42/history?offsetPage=0&offsetSize=25')
+  })
+
+  test('preserves per-resource edit capability on page tree rows', async () => {
+    const row = {
+      id: 10,
+      path: 'docs',
+      title: 'Docs',
+      isFolder: true,
+      pageId: 7,
+      parent: 0,
+      locale: 'en',
+      visibility: 'public',
+      ownerId: null,
+      canEdit: true
+    }
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([row]))
+
+    await expect(fetchPageTree(fetchImpl, { locale: 'en', parent: 0 })).resolves.toEqual([row])
+    expect(fetchImpl.mock.calls[0][0]).toBe('/_api/pages/tree?locale=en&mode=ALL&parent=0')
+  })
+
+  test('rejects page tree rows without an explicit edit capability', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([{
+      id: 10,
+      path: 'docs',
+      title: 'Docs',
+      isFolder: true,
+      pageId: 7,
+      parent: 0,
+      locale: 'en',
+      visibility: 'public',
+      ownerId: null
+    }]))
+
+    await expect(fetchPageTree(fetchImpl, { locale: 'en' }, 'Bad page tree')).rejects.toThrow('Bad page tree')
+  })
+
 })

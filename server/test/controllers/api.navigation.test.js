@@ -89,6 +89,7 @@ describe('controllers/api navigation endpoints', () => {
       config: {
         nav: {
           mode: 'TREE',
+          expandParent: false,
           ignored: true
         }
       },
@@ -119,7 +120,8 @@ describe('controllers/api navigation endpoints', () => {
         items: []
       }
     ],
-    mode: 'MIXED'
+    mode: 'MIXED',
+    expandParent: true
   })
 
   it('registers the navigation load route', async () => { expect(typeof await loadHandler()).toBe('function') })
@@ -147,7 +149,7 @@ describe('controllers/api navigation endpoints', () => {
 
     expect(global.WIKI.models.navigation.getTree).toHaveBeenCalledWith({ cache: false, locale: 'all', bypassAuth: true })
     expect(res.json).toHaveBeenCalledWith({
-      config: { mode: 'TREE' },
+      config: { mode: 'TREE', expandParent: false },
       tree: [{
         locale: 'en',
         items: [{
@@ -238,7 +240,20 @@ describe('controllers/api navigation endpoints', () => {
     expect(global.WIKI.models.navigation.query).not.toHaveBeenCalled()
   })
 
-  it('saves navigation tree, refreshes sidebar cache per locale, persists mode, and returns JSON success', async () => {
+  it.each([null, undefined, 1, 'true'])('returns 400 for invalid parent expansion setting %p', async (expandParent) => {
+    global.WIKI.auth.checkAccess.mockReturnValue(true)
+    const handler = await saveHandler()
+    const req = { user: { permissions: ['manage:navigation'] }, body: { tree: [], mode: 'TREE', expandParent } }
+    const res = { sendStatus: vi.fn(), json: vi.fn(), status: vi.fn().mockReturnThis() }
+
+    await handler(req, res)
+
+    expect(res.status).toHaveBeenCalledWith(400)
+    expect(res.json).toHaveBeenCalledWith({ error: 'expandParent must be a boolean' })
+    expect(global.WIKI.models.navigation.query).not.toHaveBeenCalled()
+  })
+
+  it('saves navigation tree, refreshes sidebar cache per locale, persists browse expansion, and returns JSON success', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
     const handler = await saveHandler()
     const body = validBody()
@@ -254,7 +269,7 @@ describe('controllers/api navigation endpoints', () => {
     expect(where).toHaveBeenCalledWith('key', 'site')
     expect(global.WIKI.cache.set).toHaveBeenNthCalledWith(1, 'nav:sidebar:en', body.tree[0].items, 300)
     expect(global.WIKI.cache.set).toHaveBeenNthCalledWith(2, 'nav:sidebar:fr', body.tree[1].items, 300)
-    expect(global.WIKI.config.nav).toEqual({ mode: 'MIXED' })
+    expect(global.WIKI.config.nav).toEqual({ mode: 'MIXED', expandParent: true })
     expect(global.WIKI.configSvc.saveToDb).toHaveBeenCalledWith(['nav'])
     expect(res.json).toHaveBeenCalledWith({ message: 'Navigation saved successfully.' })
   })

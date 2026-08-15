@@ -2,13 +2,14 @@
   v-app(:dark='$vuetify.theme.current.dark').history
     nav-header
     v-main
-      v-toolbar(color='primary', dark)
-        .subheading Viewing history of #[strong /{{path}}]
-        template(v-if='$vuetify.display.mdAndUp')
-          v-spacer
-          .caption.blue--text.text--lighten-3.mr-4 Trail Length: {{total}}
-          .caption.blue--text.text--lighten-3 ID: {{pageId}}
-          v-btn.ml-4(depressed, color='blue darken-1', @click='goLive') Return to Live Version
+      v-toolbar.history-toolbar(color='primary', dark)
+        .subheading.history-toolbar-title Viewing history of #[strong /{{path}}]
+        v-spacer
+        .caption.blue--text.text--lighten-3.mr-4(v-if='$vuetify.display.mdAndUp') Trail Length: {{total}}
+        .caption.blue--text.text--lighten-3.mr-4(v-if='$vuetify.display.mdAndUp') ID: {{pageId}}
+        v-btn(depressed, color='blue darken-1', @click='goLive', aria-label='Return to live version')
+          v-icon(v-if='$vuetify.display.smAndDown') mdi-close
+          span(v-else) Return to Live Version
       v-container(fluid, grid-list-xl)
         v-row()
           v-col(cols='12', md='4')
@@ -29,7 +30,16 @@
                 :color='trailColor(ph.actionType)'
                 :icon='trailIcon(ph.actionType)'
                 )
-                v-card.radius-7(flat, :class='trailBgColor(ph.actionType)')
+                v-card.radius-7(
+                  flat
+                  :class='trailBgColor(ph.actionType)'
+                  role='button'
+                  tabindex='0'
+                  :aria-label='`Compare revision from ${$helpers.formatMoment(ph.versionDate, `LLL`)}`'
+                  @click='selectVersion(idx)'
+                  @keydown.enter.prevent='selectVersion(idx)'
+                  @keydown.space.prevent='selectVersion(idx)'
+                )
                   v-toolbar(flat, :color='trailBgColor(ph.actionType)', height='40')
                     .caption(:title='$helpers.formatMoment(ph.versionDate, `LLL`)') {{ $helpers.formatMoment(ph.versionDate, 'll') }}
                     v-divider.mx-3(vertical)
@@ -41,7 +51,7 @@
                     v-spacer
                     v-menu(offset-x, left)
                       template(v-slot:activator='{ props }')
-                        v-btn.mr-2.radius-4(icon, v-bind='props', small, tile): v-icon mdi-dots-horizontal
+                        v-btn.mr-2.radius-4(icon, v-bind='props', small, tile, :aria-label='`Actions for revision ${ph.versionId || `live`}`'): v-icon mdi-dots-horizontal
                       v-list(dense, nav).history-promptmenu
                         v-list-item(@click='setDiffSource(ph.versionId)', :disabled='(ph.versionId >= diffTarget && diffTarget !== 0) || ph.versionId === 0')
                           v-avatar(size='24'): v-avatar A
@@ -67,6 +77,7 @@
                       small
                       depressed
                       tile
+                      :aria-label='`Set revision ${ph.versionId} as differencing source`'
                       :class='diffSource === ph.versionId ? `pink white--text` : ($vuetify.theme.current.dark ? `grey darken-2` : `grey lighten-2`)'
                       :disabled='(ph.versionId >= diffTarget && diffTarget !== 0) || ph.versionId === 0'
                       ): strong A
@@ -76,6 +87,7 @@
                       small
                       depressed
                       tile
+                      :aria-label='`Set revision ${ph.versionId || `live`} as differencing target`'
                       :class='diffTarget === ph.versionId ? `pink white--text` : ($vuetify.theme.current.dark ? `grey darken-2` : `grey lighten-2`)'
                       :disabled='ph.versionId <= diffSource && ph.versionId !== 0'
                       ): strong B
@@ -105,11 +117,16 @@
                       v-card-text
                         .subheading {{target.title}}
                         .caption {{target.description}}
-                    v-col.text-right.py-3(cols='2', v-if='$vuetify.display.mdAndUp')
-                      v-btn.mr-3(:color='$vuetify.theme.current.dark ? `white` : `grey darken-3`', small, dark, outlined, @click='toggleViewMode')
+                        .history-revision-meta
+                          span {{ target.versionId === 0 ? 'Live version' : `Revision ${target.versionId}` }}
+                          span {{ target.editor || 'unknown editor' }} / {{ target.contentType || 'unknown format' }}
+                          span {{ target.visibility }}{{ target.isPublished === false ? ' / unpublished' : '' }}
+                          span(v-if='target.tags.length > 0') Tags: {{ target.tags.join(', ') }}
+                    v-col.text-right.py-3(cols='auto')
+                      v-btn.mr-3(:color='$vuetify.theme.current.dark ? `white` : `grey darken-3`', small, dark, outlined, @click='toggleViewMode', aria-label='Toggle diff view mode')
                         v-icon(left) mdi-eye
-                        .overline View Mode
-                v-card.mt-3(light, v-html='diffHTML', flat)
+                        span(v-if='$vuetify.display.mdAndUp').overline View Mode
+                v-card.mt-3.history-diff(light, v-html='diffHTML', flat)
 
     v-dialog(v-model='isRestoreConfirmDialogShown', max-width='650', persistent)
       v-card
@@ -138,6 +155,20 @@ import { getPageDownloadPath, getPageSourcePath } from '../helpers/page-actions'
 import { getErrorMessage, loadingStart, loadingStop, setLoading, showNotification } from '../helpers/root-ui-store'
 import { wikiStore } from '@/store/index.ts'
 import { decodeBase64Json } from '../helpers/base64'
+
+const emptyPageVersion = (versionId = 0): PageVersion => ({
+  versionId,
+  content: '',
+  contentType: 'markdown',
+  title: '',
+  description: '',
+  editor: 'markdown',
+  locale: 'en',
+  path: '',
+  tags: [],
+  versionDate: '',
+  visibility: 'public'
+})
 
 export default {
   i18nOptions: { namespaces: 'history' },
@@ -174,6 +205,14 @@ export default {
       type: String,
       default: ''
     },
+    editor: {
+      type: String,
+      default: 'markdown'
+    },
+    contentType: {
+      type: String,
+      default: 'markdown'
+    },
     tags: {
       type: Array,
       default: () => ([])
@@ -201,18 +240,8 @@ export default {
   },
   data () {
     return {
-      source: {
-        versionId: 0,
-        content: '',
-        title: '',
-        description: ''
-      },
-      target: {
-        versionId: 0,
-        content: '',
-        title: '',
-        description: ''
-      },
+      source: emptyPageVersion(),
+      target: emptyPageVersion(),
       trail: [] as PageHistoryTrailItem[],
       diffSource: 0,
       diffTarget: 0,
@@ -310,10 +339,10 @@ export default {
       authorId: this.authorId,
       authorName: this.authorName,
       content: this.liveContent,
-      contentType: '',
+      contentType: this.contentType,
       createdAt: this.createdAt,
       description: this.description,
-      editor: '',
+      editor: this.editor,
       visibility: this.visibility === 'private' ? 'private' : 'public',
       ownerId: wikiStore.page.ownerId,
       isPublished: this.isPublished,
@@ -322,7 +351,7 @@ export default {
       path: this.path,
       publishEndDate: '',
       publishStartDate: '',
-      tags: this.tags,
+      tags: this.tags.filter((tag): tag is string => typeof tag === 'string'),
       title: this.title,
       versionId: 0,
       versionDate: this.updatedAt
@@ -345,8 +374,12 @@ export default {
         this.cache.push(page)
         return page
       } catch (err) {
-        console.warn(err)
-        return { versionId, content: '', title: '', description: '', path: this.path }
+        showNotification(wikiStore, {
+          style: 'red',
+          message: getErrorMessage(err),
+          icon: 'alert'
+        })
+        return { ...emptyPageVersion(versionId), path: this.path, locale: this.locale }
       } finally {
         loadingStop(wikiStore, 'history-version-' + versionId)
       }
@@ -368,7 +401,7 @@ export default {
       this.restoreLoading = true
       loadingStart(wikiStore, 'history-restore')
       try {
-        await restorePageVersion(window.fetch.bind(window), this.pageId, this.restoreTarget.versionId)
+        await restorePageVersion(window.fetch.bind(window), this.pageId, this.restoreTarget.versionId, this.updatedAt)
         showNotification(wikiStore, {
           style: 'success',
           message: this.$t('history:restore.success'),
@@ -404,7 +437,15 @@ export default {
       this.viewMode = (this.viewMode === 'line-by-line') ? 'side-by-side' : 'line-by-line'
     },
     goLive () {
-      window.location.assign(`/${this.path}`)
+      const privatePrefix = this.visibility === 'private' ? '/_private' : ''
+      window.location.assign(`${privatePrefix}/${this.locale}/${this.path}`)
+    },
+    selectVersion (index: number) {
+      const target = this.fullTrail[index]
+      const source = this.fullTrail[index + 1]
+      if (!target) return
+      this.diffTarget = target.versionId
+      if (source && source.versionId > 0) this.diffSource = source.versionId
     },
     setDiffSource (versionId: number) {
       this.diffSource = versionId
@@ -485,6 +526,36 @@ export default {
 .history {
   &-promptmenu {
     border-top: 5px solid mc('blue', '700');
+  }
+
+  &-toolbar-title {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  &-revision-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .25rem 1rem;
+    margin-top: .5rem;
+    font-size: .75rem;
+    opacity: .75;
+  }
+
+  @media (max-width: 959.98px) {
+    &-toolbar {
+      padding-inline: .5rem;
+    }
+
+    &-diff {
+      overflow-x: auto;
+    }
+
+    .d2h-file-side-diff {
+      min-width: 32rem;
+    }
   }
 
   .d2h-file-wrapper {

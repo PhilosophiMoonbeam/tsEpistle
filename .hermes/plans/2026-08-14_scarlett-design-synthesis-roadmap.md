@@ -500,6 +500,20 @@ Adapt Scarlett’s completed overlay concepts to current history operations. Inc
 
 Exit gate: viewing and restoring a revision preserves canonical content/editor metadata and creates the expected new history entry.
 
+Decisions (2026-08-15):
+
+- keep history fork-native and REST-backed; retain the existing vertical timeline and diff engine while adding Scarlett’s revision metadata, source/download/restore/branch action model, responsive controls, and pointer/keyboard selection;
+- treat a revision as immutable canonical content: history snapshots now bind content, content type, editor key, title, description, locale/path/visibility metadata, and the page’s tag relation at snapshot time;
+- restore only canonical authoring content and metadata (`content`, `contentType`, `title`, `description`, `editor`, and `tags`); preserve the page’s current path, locale, visibility, ownership, and publication boundary;
+- require the page timestamp observed when history opens and enforce it again in the page update transaction; stale restores return HTTP 409 before mutation, while a race at the compare-and-swap patch rolls back the snapshot and tag changes.
+
+Completion evidence (2026-08-15):
+
+- history REST and model contracts cover complete revision payload validation, immutable tag snapshots, private-revision scoping, canonical restore fields, controller timestamp validation, and both early and transactional stale-write guards (116 focused assertions);
+- server/client typechecks and targeted lint pass across the history UI, REST boundary, operations, page/history models, and tests;
+- browser smoke selected revisions by pointer and keyboard, rendered an adjacent revision diff with editor/content-type metadata, exposed source/download/restore/branch actions, restored revision 6 from Markdown to Visual Markdown, and observed the new `restored` history row;
+- a second browser request replayed the pre-restore timestamp, received HTTP 409, and confirmed that the restored editor and update timestamp were unchanged; the smoke database and credential state were restored afterward.
+
 ### Wave 4 — authoring and extension platform
 
 #### 4A. Visual Markdown depth
@@ -798,3 +812,4 @@ When this roadmap changes, append an entry here.
 | 2026-08-14T23:59:10Z | `c182d2c9` (`feat: block-gallery`) | `f474de3b` | Re-fetched `requarks/wiki:scarlett`; no commits existed beyond the recorded tip, so the gallery candidate and all latest upstream work were already included |
 | 2026-08-15 | `14e1efae` page-watching WIP | `f474de3b` plus Waves 1–2 | Completed Wave 3A natively with transactional page events, aggregated durable delivery, permission-aware cleanup, independent email/in-app channels, and responsive page controls |
 | 2026-08-15 | `957efebe` / `c36eab67` approval WIP | `e4c8d246` | Completed Wave 3B as a fork-native revision-bound approval state machine with immutable audit history, authorization, stale-revision protection, transactional publication, and responsive inbox/workflow UI |
+| 2026-08-15 | Scarlett page-history overlay concepts | `97a452e1` plus Wave 4 authoring work | Completed Wave 3D with immutable revision metadata/tag snapshots, REST-backed responsive diff/actions, canonical content/editor restore, and transactional optimistic concurrency |

@@ -1,4 +1,5 @@
 import { Model } from 'objection'
+import type { Knex } from 'knex'
 import _ from 'lodash'
 import Page from './pages.ts'
 
@@ -38,8 +39,8 @@ static override get tableName() { return 'tags' } static override get jsonSchema
     }
   }
 } } override $beforeUpdate() { this.updatedAt = new Date().toISOString() } override $beforeInsert() { this.createdAt = new Date().toISOString()
-this.updatedAt = new Date().toISOString() } static async associateTags ({ tags, page }: { tags: string[], page: Page }) {
-  let existingTags = await wiki.models.tags.query().column('id', 'tag')
+this.updatedAt = new Date().toISOString() } static async associateTags ({ tags, page, transaction }: { tags: string[], page: Page, transaction?: Knex.Transaction }) {
+  let existingTags = await wiki.models.tags.query(transaction).column('id', 'tag')
 
   // Format tags
 
@@ -53,11 +54,11 @@ this.updatedAt = new Date().toISOString() } static async associateTags ({ tags, 
   }))
   if (newTags.length > 0) {
     if (wiki.config.db.type === 'postgres') {
-      const createdTags = await wiki.models.tags.query().insert(newTags)
+      const createdTags = await wiki.models.tags.query(transaction).insert(newTags)
       existingTags = _.concat(existingTags, createdTags)
     } else {
       for (const newTag of newTags) {
-        const createdTag = await wiki.models.tags.query().insert(newTag)
+        const createdTag = await wiki.models.tags.query(transaction).insert(newTag)
         existingTags.push(createdTag)
       }
     }
@@ -66,17 +67,17 @@ this.updatedAt = new Date().toISOString() } static async associateTags ({ tags, 
   // Fetch current page tags
 
   const targetTags = _.filter(existingTags, t => _.includes(tags, t.tag))
-  const currentTags = await page.$relatedQuery('tags')
+  const currentTags = await page.$relatedQuery('tags', transaction)
 
   // Tags to relate
 
   const tagsToRelate = _.differenceBy(targetTags, currentTags, 'id')
   if (tagsToRelate.length > 0) {
     if (wiki.config.db.type === 'postgres') {
-      await page.$relatedQuery('tags').relate(tagsToRelate)
+      await page.$relatedQuery('tags', transaction).relate(tagsToRelate)
     } else {
       for (const tag of tagsToRelate) {
-        await page.$relatedQuery('tags').relate(tag)
+        await page.$relatedQuery('tags', transaction).relate(tag)
       }
     }
   }
@@ -85,7 +86,7 @@ this.updatedAt = new Date().toISOString() } static async associateTags ({ tags, 
 
   const tagsToUnrelate = _.differenceBy(currentTags, targetTags, 'id')
   if (tagsToUnrelate.length > 0) {
-    await page.$relatedQuery('tags').unrelate().whereIn('tags.id', _.map(tagsToUnrelate, 'id'))
+    await page.$relatedQuery('tags', transaction).unrelate().whereIn('tags.id', _.map(tagsToUnrelate, 'id'))
   }
 
   page.tags = targetTags

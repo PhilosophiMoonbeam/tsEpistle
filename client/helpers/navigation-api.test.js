@@ -13,7 +13,7 @@ function createJsonResponse (payload, ok = true) {
 describe('navigation api helper', () => {
   test('fetches and validates navigation config and tree', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({
-      config: { mode: 'MIXED', extra: 'ignored' },
+      config: { mode: 'MIXED', expandParent: false, extra: 'ignored' },
       tree: [
         {
           locale: 'en',
@@ -25,7 +25,7 @@ describe('navigation api helper', () => {
     }))
 
     await expect(fetchNavigation(fetchImpl)).resolves.toEqual({
-      config: { mode: 'MIXED' },
+      config: { mode: 'MIXED', expandParent: false },
       tree: [
         {
           locale: 'en',
@@ -41,6 +41,27 @@ describe('navigation api helper', () => {
         Accept: 'application/json'
       }
     })
+  })
+
+  test('defaults legacy navigation payloads to opening the current parent', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({
+      config: { mode: 'TREE' },
+      tree: []
+    }))
+
+    await expect(fetchNavigation(fetchImpl)).resolves.toEqual({
+      config: { mode: 'TREE', expandParent: true },
+      tree: []
+    })
+  })
+
+  test('rejects malformed parent expansion settings', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({
+      config: { mode: 'TREE', expandParent: 'yes' },
+      tree: []
+    }))
+
+    await expect(fetchNavigation(fetchImpl, 'Bad expansion setting')).rejects.toThrow('Bad expansion setting')
   })
 
   test('rejects malformed navigation fetch payloads', async () => {
@@ -70,7 +91,7 @@ describe('navigation api helper', () => {
     const tree = [{ locale: 'en', items: [{ id: 'home', kind: 'link' }] }]
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ message: 'Navigation saved successfully.' }))
 
-    await expect(saveNavigation(fetchImpl, tree, 'MIXED')).resolves.toEqual({ message: 'Navigation saved successfully.' })
+    await expect(saveNavigation(fetchImpl, tree, 'MIXED', true)).resolves.toEqual({ message: 'Navigation saved successfully.' })
     expect(fetchImpl).toHaveBeenCalledWith('/_api/navigation', {
       method: 'PUT',
       credentials: 'same-origin',
@@ -78,26 +99,26 @@ describe('navigation api helper', () => {
         Accept: 'application/json',
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify({ tree, mode: 'MIXED' })
+      body: JSON.stringify({ tree, mode: 'MIXED', expandParent: true })
     })
   })
 
   test('rejects malformed navigation save success payloads', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ message: '' }))
 
-    await expect(saveNavigation(fetchImpl, [], 'TREE', 'Bad navigation save')).rejects.toThrow('Bad navigation save')
+    await expect(saveNavigation(fetchImpl, [], 'TREE', true, 'Bad navigation save')).rejects.toThrow('Bad navigation save')
   })
 
   test('surfaces REST JSON error fields for failed navigation saves', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ error: 'navigation denied' }, false))
 
-    await expect(saveNavigation(fetchImpl, [], 'TREE', 'Bad navigation save')).rejects.toThrow('navigation denied')
+    await expect(saveNavigation(fetchImpl, [], 'TREE', true, 'Bad navigation save')).rejects.toThrow('navigation denied')
   })
 
   test('surfaces REST JSON message fields for failed navigation saves', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ message: 'navigation mode invalid' }, false))
 
-    await expect(saveNavigation(fetchImpl, [], 'TREE', 'Bad navigation save')).rejects.toThrow('navigation mode invalid')
+    await expect(saveNavigation(fetchImpl, [], 'TREE', true, 'Bad navigation save')).rejects.toThrow('navigation mode invalid')
   })
 
   test('rejects non-JSON successful navigation save responses', async () => {
@@ -108,6 +129,6 @@ describe('navigation api helper', () => {
       }
     })
 
-    await expect(saveNavigation(fetchImpl, [], 'TREE', 'Bad navigation save content type')).rejects.toThrow('Bad navigation save content type')
+    await expect(saveNavigation(fetchImpl, [], 'TREE', true, 'Bad navigation save content type')).rejects.toThrow('Bad navigation save content type')
   })
 })
