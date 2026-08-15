@@ -12,7 +12,11 @@ interface MigrationLockRecord {
 export interface MigrationPreflightResult {
   applied: string[]
   available: string[]
-  state: 'fresh' | 'ready'
+  state: 'fresh' | 'legacy-beta' | 'ready'
+}
+
+export interface MigrationPreflightOptions {
+  legacyMigrationNames?: string[]
 }
 
 export class MigrationPreflightError extends Error {
@@ -48,7 +52,8 @@ const assertMigrationLockIsClear = async (knex: Knex): Promise<void> => {
 
 export const preflightMigrations = async (
   knex: Knex,
-  migrationSource: Knex.MigrationSource<unknown>
+  migrationSource: Knex.MigrationSource<unknown>,
+  options: MigrationPreflightOptions = {}
 ): Promise<MigrationPreflightResult> => {
   const [hasLedger, applicationTableNames, available] = await Promise.all([
     knex.schema.hasTable('migrations'),
@@ -78,6 +83,28 @@ export const preflightMigrations = async (
     return { applied, available, state: 'fresh' }
   }
 
+  const legacyMigrationNames = options.legacyMigrationNames ?? []
+  if (applied.some(name => legacyMigrationNames.includes(name))) {
+    const unknownLegacy = applied.filter(name => !legacyMigrationNames.includes(name))
+    if (unknownLegacy.length > 0) {
+      throw new MigrationPreflightError(
+        `Legacy beta migration history contains unsupported records (${unknownLegacy.join(', ')}). Restore a consistent backup before retrying.`
+      )
+    }
+    const expectedLegacyPrefix = legacyMigrationNames.slice(0, applied.length)
+    const legacyMismatchIndex = applied.findIndex((name, index) => name !== expectedLegacyPrefix[index])
+    if (legacyMismatchIndex >= 0) {
+      throw new MigrationPreflightError(
+        `Legacy beta migration history is incomplete or out of order at ${applied[legacyMismatchIndex]}. Restore a consistent backup before retrying.`
+      )
+    }
+    if (applicationTableNames.length === 0) {
+      throw new MigrationPreflightError(
+        'Database has applied legacy beta migration records but none of the expected Wiki application tables. Refusing a partial schema.'
+      )
+    }
+    return { applied, available, state: 'legacy-beta' }
+  }
   const unknown = applied.filter(name => !available.includes(name))
   if (unknown.length > 0) {
     throw new MigrationPreflightError(

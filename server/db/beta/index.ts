@@ -34,6 +34,38 @@ function isMigration (value: unknown): value is Knex.Migration {
 }
 
 const wiki = WIKI as unknown as WikiDatabaseContext
+function createLegacyMigrationSource(): Knex.MigrationSource<MigrationSpec> {
+  const baseMigrationPath = path.join(wiki.SERVERPATH, (wiki.config.db.type !== 'sqlite') ? 'db/beta/migrations' : 'db/beta/migrations-sqlite')
+  const requireMigration = createRequire(import.meta.url)
+  return {
+    async getMigrations () {
+      const migrationFiles = await fs.readdir(baseMigrationPath)
+      return migrationFiles
+        .filter(file => file.endsWith('.ts'))
+        .sort((left, right) => semver.compare(left.slice(0, -3), right.slice(0, -3)))
+        .map(file => ({
+          file,
+          directory: baseMigrationPath
+        }))
+    },
+    getMigrationName (migration) {
+      return migration.file.replace(/\.ts$/, '.js')
+    },
+    async getMigration (migration) {
+      const loaded: unknown = requireMigration(path.join(baseMigrationPath, migration.file))
+      if (!isMigration(loaded)) {
+        throw new TypeError(`Invalid beta migration module: ${migration.file}`)
+      }
+      return loaded
+    }
+  }
+}
+
+export async function getLegacyMigrationNames(): Promise<string[]> {
+  const migrationSource = createLegacyMigrationSource()
+  const migrations = await migrationSource.getMigrations([])
+  return migrations.map(migration => migrationSource.getMigrationName(migration))
+}
 
 export async function migrate (knex: Knex): Promise<void> {
   const migrationsTableExists = await knex.schema.hasTable('migrations')
@@ -103,30 +135,7 @@ export async function migrate (knex: Knex): Promise<void> {
         })
     }
 
-    const baseMigrationPath = path.join(wiki.SERVERPATH, (wiki.config.db.type !== 'sqlite') ? 'db/beta/migrations' : 'db/beta/migrations-sqlite')
-    const requireMigration = createRequire(import.meta.url)
-    const migrationSource: Knex.MigrationSource<MigrationSpec> = {
-      async getMigrations () {
-        const migrationFiles = await fs.readdir(baseMigrationPath)
-        return migrationFiles
-          .filter(file => file.endsWith('.ts'))
-          .sort((left, right) => semver.compare(left.slice(0, -3), right.slice(0, -3)))
-          .map(file => ({
-            file,
-            directory: baseMigrationPath
-          }))
-      },
-      getMigrationName (migration) {
-        return migration.file.replace(/\.ts$/, '.js')
-      },
-      async getMigration (migration) {
-        const loaded: unknown = requireMigration(path.join(baseMigrationPath, migration.file))
-        if (!isMigration(loaded)) {
-          throw new TypeError(`Invalid beta migration module: ${migration.file}`)
-        }
-        return loaded
-      }
-    }
+    const migrationSource = createLegacyMigrationSource()
 
     await knex.migrate.latest({
       tableName: 'migrations',
@@ -142,4 +151,4 @@ export async function migrate (knex: Knex): Promise<void> {
   }
 }
 
-export default { migrate }
+export default { getLegacyMigrationNames, migrate }

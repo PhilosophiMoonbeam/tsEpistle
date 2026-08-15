@@ -324,16 +324,23 @@ const database: DatabaseService = {
       async migrateFromBeta () {
         return migrateFromBeta.migrate(knex)
       },
-      // -> Refuse unknown, newer, locked, or partial schemas before Knex writes
-      async preflightMigrations () {
+      // -> Refuse unsafe schemas before the legacy beta migrator can write
+      async preflightLegacyMigrations () {
+        return preflightMigrations(knex, migrationSource, {
+          legacyMigrationNames: await migrateFromBeta.getLegacyMigrationNames()
+        })
+      },
+      // -> Recheck the normalized ledger before current Knex migrations write
+      async preflightCurrentMigrations () {
         return preflightMigrations(knex, migrationSource)
       }
     }
 
     const initTasksQueue = (wiki.IS_MASTER) ? [
       initTasks.connect,
+      initTasks.preflightLegacyMigrations,
       initTasks.migrateFromBeta,
-      initTasks.preflightMigrations,
+      initTasks.preflightCurrentMigrations,
       initTasks.syncSchemas
     ] : [
       async () => {}

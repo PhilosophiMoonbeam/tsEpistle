@@ -77,6 +77,38 @@ describe('database migration preflight', () => {
       state: 'ready'
     })
   })
+  it('accepts only an ordered legacy beta prefix before normalization', async () => {
+    const legacy = ['2.0.0-beta.1.js', '2.0.0-beta.11.js', '2.0.0-rc.2.js']
+    await createApplicationTable(db)
+    await createLedger(db, legacy.slice(0, 2))
+
+    await expect(preflightMigrations(db, migrationSource(available), {
+      legacyMigrationNames: legacy
+    })).resolves.toEqual({
+      applied: legacy.slice(0, 2),
+      available,
+      state: 'legacy-beta'
+    })
+  })
+
+  it('refuses mixed or out-of-order legacy beta ledgers before migration writes', async () => {
+    const legacy = ['2.0.0-beta.1.js', '2.0.0-beta.11.js', '2.0.0-rc.2.js']
+    await createApplicationTable(db)
+    await createLedger(db, [legacy[1]])
+
+    await expect(preflightMigrations(db, migrationSource(available), {
+      legacyMigrationNames: legacy
+    })).rejects.toThrow('Legacy beta migration history is incomplete or out of order')
+
+    await db('migrations').delete()
+    await db('migrations').insert([
+      { batch: 1, migration_time: new Date(), name: legacy[0] },
+      { batch: 1, migration_time: new Date(), name: 'custom-beta-patch.js' }
+    ])
+    await expect(preflightMigrations(db, migrationSource(available), {
+      legacyMigrationNames: legacy
+    })).rejects.toThrow('Legacy beta migration history contains unsupported records')
+  })
 
   it('refuses application tables without a migration ledger', async () => {
     await createApplicationTable(db)
