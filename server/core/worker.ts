@@ -17,12 +17,17 @@ workerWiki.logger = loggerService.init('JOB')
 const args = await yargs(hideBin(process.argv)).option('job', { type: 'string', demandOption: true }).option('data', { type: 'string' }).parse()
 
 try {
-  // Job name is selected by the scheduler process at runtime.
-  const job = await import(new URL(`../jobs/${args.job}.ts`, import.meta.url).href) as { default: (data: string | undefined) => Promise<unknown> }
-  await job.default(args.data)
-  process.exit(0)
+  const data: unknown = args.data === undefined ? undefined : JSON.parse(args.data)
+  // Runtime scheduler registry selects the job; a static import cannot identify it ahead of time.
+  const job = await import(new URL(`../jobs/${args.job}.ts`, import.meta.url).href) as { default: (data: unknown) => Promise<unknown> }
+  await job.default(data)
+  process.exitCode = 0
 } catch (error) {
   const message = error instanceof Error ? error.message : String(error)
-  await new Promise<void>(resolve => { process.stderr.write(message, () => resolve()) })
-  process.exit(1)
+  const { promise, resolve } = Promise.withResolvers<void>()
+  process.stderr.write(message, () => resolve())
+  await promise
+  process.exitCode = 1
+} finally {
+  if (process.connected) process.disconnect?.()
 }

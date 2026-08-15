@@ -38,8 +38,10 @@ const wiki = WIKI as unknown as WikiContext
 export default async function rebuildTree (_pageId?: number): Promise<void> {
   void _pageId
   wiki.logger.info('Rebuilding page tree...')
+  let models: Models | undefined
   try {
-    wiki.models = await database.init() as unknown as Models
+    models = await database.init() as unknown as Models
+    wiki.models = models
     await wiki.configSvc.loadFromDb()
     await wiki.configSvc.applyFlags()
     const pages = await wiki.models.pages.query().select('id', 'path', 'localeCode', 'title', 'visibility', 'ownerId').orderBy(['visibility', 'ownerId', 'localeCode', 'path'])
@@ -91,11 +93,12 @@ export default async function rebuildTree (_pageId?: number): Promise<void> {
       const chunkSize = wiki.config.db.type !== 'sqlite' ? 100 : 60
       for (const chunk of _.chunk(tree, chunkSize)) await wiki.models.knex.table('pageTree').insert(chunk)
     }
-    await wiki.models.knex.destroy()
     wiki.logger.info('Rebuilding page tree: [ COMPLETED ]')
   } catch (error) {
     wiki.logger.error('Rebuilding page tree: [ FAILED ]')
     wiki.logger.error(error instanceof Error ? error.stack ?? error.message : String(error))
     throw error
+  } finally {
+    await models?.knex.destroy()
   }
 }
