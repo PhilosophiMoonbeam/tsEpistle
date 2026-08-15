@@ -1,6 +1,6 @@
 import express from 'express'
 import _ from 'lodash'
-interface SslWiki {
+export interface SslWiki {
   config: {
     letsencrypt: {
       challenge: false | { token: string; keyAuthorization: string }
@@ -14,12 +14,11 @@ interface SslWiki {
   servers: { servers: { https: unknown } }
 }
 
-const wiki = WIKI as unknown as SslWiki
 
 
+export default function createSslController(wiki: SslWiki): express.Router {
 const router = express.Router()
 
-/* global WIKI */
 
 /**
  * Let's Encrypt Challenge
@@ -50,4 +49,5 @@ router.all('/{*sslRedirectPath}', (req, res, next) => {
   }
 })
 
-export default router
+return router
+}

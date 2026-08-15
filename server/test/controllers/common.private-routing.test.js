@@ -91,7 +91,8 @@ describe('private page administration routes', () => {
   })
 
   const handlers = async () => {
-    await import('../../controllers/common.ts')
+    const { default: createCommonController } = await import('../../controllers/common.ts')
+    createCommonController(global.WIKI)
     return {
       byId: express.__router.get.mock.calls.find(([path]) => Array.isArray(path) && path.includes('/i'))[1],
       admin: express.__router.get.mock.calls.find(([path]) => path === '/_admin/private/:id')[1]

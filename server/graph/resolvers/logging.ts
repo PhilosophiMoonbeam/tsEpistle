@@ -1,5 +1,6 @@
 import graphHelper from '../../helpers/graph.ts'
 import loggingOperations from '../../operations/logging.ts'
+import type { GraphRuntime } from '../index.ts'
 
 interface LoggersArgs { orderBy?: string | null }
 interface UpdateLoggersArgs { loggers: unknown }
@@ -22,12 +23,13 @@ const isGraphEmitter = (value: unknown): value is GraphEmitter =>
   typeof value === 'object' && value !== null &&
   typeof Reflect.get(value, 'asyncIterableIterator') === 'function'
 
-const graphEmitter = WIKI.GQLEmitter
-if (!isGraphEmitter(graphEmitter)) {
-  throw new TypeError('Logging subscriptions require the GraphQL event emitter')
-}
+export default function createLoggingResolvers (runtime: GraphRuntime) {
+  const graphEmitter = runtime.GQLEmitter
+  if (!isGraphEmitter(graphEmitter)) {
+    throw new TypeError('Logging subscriptions require the GraphQL event emitter')
+  }
 
-export default {
+  return {
   Query: {
     async logging () { return {} }
   },
@@ -54,4 +56,5 @@ export default {
       }
     }
   }
+}
 }

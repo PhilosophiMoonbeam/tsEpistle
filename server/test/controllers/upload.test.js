@@ -53,8 +53,8 @@ const makeReq = overrides => ({
 })
 
 const loadHandlers = async () => {
-  await import('../../controllers/upload.ts')
-
+  const { default: createUploadController } = await import('../../controllers/upload.ts')
+  createUploadController(global.WIKI)
   const postCall = uploadMocks.router.post.mock.calls.find(([routePath]) => routePath === '/u')
   const getCall = uploadMocks.router.get.mock.calls.find(([routePath]) => routePath === '/u')
 

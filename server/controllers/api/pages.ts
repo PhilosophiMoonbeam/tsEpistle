@@ -1,5 +1,5 @@
 import express from 'express'
-import { type Request, type Response, getWikiAuth } from '../_types.ts'
+import { type Request, type Response, getTransportRuntime, getWikiAuth } from '../_types.ts'
 import _ from 'lodash'
 import pageOperations from '../../operations/pages.ts'
 import { principalId, type PageVisibility } from '../../helpers/page-access.ts'
@@ -24,19 +24,23 @@ import {
   setPageProtection,
   unlockPage
 } from '../../operations/page-protection.ts'
-import { createAuthRateLimiter, setAuthRateLimitHeaders } from '../../helpers/auth-rate-limiter.ts'
+import { createAuthRateLimiter, setAuthRateLimitHeaders, type AuthRateLimiter } from '../../helpers/auth-rate-limiter.ts'
+import type { Knex } from 'knex'
 
 const router = express.Router()
 
-let pageUnlockLimiter: ReturnType<typeof createAuthRateLimiter> | undefined
-const getPageUnlockLimiter = (): ReturnType<typeof createAuthRateLimiter> => {
+interface PagesApiRuntime {
+  collaboration: {
+    issueSession(input: { pageId: number, expectedUpdatedAt: string, requester: Express.User | undefined }): Promise<unknown>
+  }
+  models: { knex: Knex }
+}
+
+let pageUnlockLimiter: AuthRateLimiter | undefined
+const getPageUnlockLimiter = (): AuthRateLimiter => {
   if (pageUnlockLimiter) return pageUnlockLimiter
-  const models: unknown = WIKI.models
-  if (!models || typeof models !== 'object' || !('knex' in models)) throw new TypeError('Wiki models are unavailable')
-  // WIKI owns the initialized Knex instance; the global declaration intentionally leaves bindings unknown.
-  const knex = models.knex as Parameters<typeof createAuthRateLimiter>[0]['knex']
   pageUnlockLimiter = createAuthRateLimiter({
-    knex,
+    knex: getTransportRuntime<PagesApiRuntime>().models.knex,
     keyPrefix: 'page-unlock-api',
     onLimit: (_req, res, retryAfterMs) => {
       setAuthRateLimitHeaders(res, retryAfterMs)
@@ -664,10 +668,7 @@ router.post('/:id/collaboration/session', async (req, res) => {
     return res.status(400).json({ error: 'expectedUpdatedAt must be a valid date' })
   }
   try {
-    const collaboration = Reflect.get(WIKI, 'collaboration') as {
-      issueSession(input: { pageId: number, expectedUpdatedAt: string, requester: Express.User | undefined }): Promise<unknown>
-    } | undefined
-    if (!collaboration) throw new Error('Collaboration service is unavailable')
+    const collaboration = getTransportRuntime<PagesApiRuntime>().collaboration
     res.json(await collaboration.issueSession({ pageId, expectedUpdatedAt, requester: req.user }))
   } catch (err) {
     sendOperationError(res, err, 'Collaboration session creation failed')

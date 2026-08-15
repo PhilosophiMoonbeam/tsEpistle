@@ -7,7 +7,7 @@ import { isValidPageRuleRegex } from '../../helpers/page-access.ts'
 const router = express.Router()
 
 
-const requireAccess = (req: Request, res: Response, permissions: readonly string[], message: string): boolean => {
+const requireAccess = (req: Request, res: Response, permissions: string[], message: string): boolean => {
   if (!getWikiAuth().checkAccess(req.user, permissions)) {
     res.status(403).json({ error: message })
     return false

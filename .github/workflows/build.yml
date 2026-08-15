@@ -51,6 +51,9 @@ jobs:
     - name: Lint
       run: pnpm run lint
 
+    - name: Typecheck Shared Contracts
+      run: pnpm run typecheck:shared
+
     - name: Typecheck Client
       run: pnpm run typecheck:client
 

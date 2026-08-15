@@ -2,20 +2,20 @@
 
 Status: authoritative product roadmap
 
-Last assessed: 2026-08-15T16:48:30Z
+Last assessed: 2026-08-15T21:39:55Z
 
 Assessed revisions:
 
-- Wiki.ts code baseline: `1c6a8b9b3f316c3b469194dd4fad6e66082e8189`
+- Wiki.ts code baseline: `5a250b1fad845951872062e4f5ebcf7231922159`
 - fork checkpoint `origin/scarlett`: `249758e3f923a77e1b62d26a47e142c312642a5f`
 - upstream reference: `requarks/wiki:scarlett`
 - upstream commit: `d0c5a8bfa90acee73a2f4c71033978bea1925468`
 - upstream commit subject: `feat: add unlock aspect ratio option to block-gallery`
 - upstream commit authored and committed: `2026-08-14T23:36:09-04:00`
-- upstream fetch verification: `2026-08-15T16:41:53Z`; the remote still resolved to the recorded commit with zero commits of divergence
+- upstream fetch verification: `2026-08-15T21:36:46Z`; the remote still resolved to the recorded commit with zero commits of divergence
 - common ancestor of the Wiki.ts code baseline and upstream Scarlett: `b5b4b0880ae26f4b137242267b6674b51af8688c` from 2022-04-03
 
-This is a living plan. Update the revision ledger and candidate dispositions whenever upstream Scarlett moves. Never silently replace a disposition: record the new evidence and reason.
+This is a living plan. Update the revision ledger and candidate dispositions whenever upstream Scarlett moves. Never silently replace a disposition: record the new evidence and reason. The machine-readable source of candidate identity, workstream, disposition, state, and acceptance contract is [`scarlett-upstream-ledger.json`](./scarlett-upstream-ledger.json); `pnpm run scarlett:report` refreshes the comparison and `.github/workflows/scarlett-upstream.yml` alerts on upstream movement.
 
 ## Mission
 
@@ -847,3 +847,4 @@ When this roadmap changes, append an entry here.
 | 2026-08-15T16:41:53Z | `d0c5a8bf` (`feat: add unlock aspect ratio option to block-gallery`) | `1c6a8b9b` | Reassessed every previously non-inherited architecture choice on merit in [the architectural adaptation plan](./2026-08-15_scarlett-architectural-adaptation-plan.md): accepted package boundaries, verified schema bridges, bounded projections, and conditional isolated runtimes; retained upgrade continuity, five-database core behavior, one UI/ORM/source authority, and the immediate remaining-block implementation handoff |
 | 2026-08-15T16:48:30Z | PostgreSQL-only Scarlett architecture | `a7ecf37e` | Superseded the five-database product decision after operator inventory confirmed zero non-PostgreSQL installations. PostgreSQL is now the sole future stable target; PostgreSQL / Wiki.js 2.x upgrade continuity remains release-blocking, Scarlett’s migration reset remains rejected, and adapter removal follows verified upgrade, backup/restore, rollback, and multi-instance proof |
 | 2026-08-15T17:36:13Z | Scarlett static, media, diagram, and map block concepts | `dd75f033` plus the fork-native extension host | Completed the visible extension handoff as ten additive versioned extensions: semantic tabs/spoiler/infobox, same-origin PDF/media, consent-gated YouTube/Kroki/PlantUML/OpenStreetMap, and locally sanitized Mermaid; added migration `2.5.138`, editor configuration, browser hydration/styles, 74 focused assertions, production gates, and durable Chromium authoring/accessibility coverage without Lit, Tailwind, arbitrary embeds, or pre-consent egress |
+| 2026-08-15T21:39:55Z | `d0c5a8bf` (`feat: add unlock aspect ratio option to block-gallery`) | `5a250b1f` | Re-fetched upstream with zero new commits and established the machine-readable 32-candidate intake ledger, deterministic Git comparison report, and scheduled alert workflow. The ledger reconciles 16 completed, 2 closed, and 14 active candidates to explicit workstreams and acceptance contracts. |

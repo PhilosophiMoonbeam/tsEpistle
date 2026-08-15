@@ -4,6 +4,7 @@ import fs from 'fs-extra'
 
 import graphHelper from '../../helpers/graph.ts'
 import authenticationOperations from '../../operations/authentication.ts'
+import type { GraphRuntime } from '../index.ts'
 
 type ResolverArgs = Record<string, unknown>
 interface ActiveStrategiesArgs { enabledOnly?: boolean | null }
@@ -39,15 +40,16 @@ const normalizeResult = (result: unknown): AuthenticationResult => {
   return result
 }
 
-const rootPath = WIKI.ROOTPATH
-const config = WIKI.config
-const logger = WIKI.logger
-if (typeof rootPath !== 'string' || !isAuthenticationConfig(config) || !isWikiLogger(logger)) {
-  throw new TypeError('Authentication resolvers require the root path, config, and logger')
-}
-const ldapDebug = config.flags.ldapdebug
+export default function createAuthenticationResolvers (runtime: GraphRuntime) {
+  const rootPath = runtime.ROOTPATH
+  const config = runtime.config
+  const logger = runtime.logger
+  if (typeof rootPath !== 'string' || !isAuthenticationConfig(config) || !isWikiLogger(logger)) {
+    throw new TypeError('Authentication resolvers require the root path, config, and logger')
+  }
+  const ldapDebug = config.flags.ldapdebug
 
-export default {
+  return {
   Query: {
     async authentication () { return {} }
   },
@@ -142,4 +144,5 @@ export default {
       })
     }
   }
+}
 }

@@ -49,15 +49,19 @@ describe('graph/resolvers/authentication metrics state', () => {
   afterEach(() => {
     global.WIKI = previousWiki
   })
+  const loadResolver = async () => {
+    const { default: createResolver } = await import('../../graph/resolvers/authentication.ts')
+    return createResolver(global.WIKI)
+  }
 
   it('returns the current metrics state', async () => {
-    const { default: resolver } = await import('../../graph/resolvers/authentication.ts')
+    const resolver = await loadResolver()
 
     expect(resolver.AuthenticationQuery.metricsState()).toBe(false)
   })
 
   it('updates the metrics state and reinitializes metrics', async () => {
-    const { default: resolver } = await import('../../graph/resolvers/authentication.ts')
+    const resolver = await loadResolver()
 
     const result = await resolver.AuthenticationMutation.setMetricsState(null, { enabled: true }, null)
 
@@ -69,7 +73,7 @@ describe('graph/resolvers/authentication metrics state', () => {
 
   it('rolls back the runtime state when saving fails', async () => {
     saveToDb.mockRejectedValueOnce(new Error('save failed'))
-    const { default: resolver } = await import('../../graph/resolvers/authentication.ts')
+    const resolver = await loadResolver()
 
     const result = await resolver.AuthenticationMutation.setMetricsState(null, { enabled: true }, null)
 
@@ -80,7 +84,7 @@ describe('graph/resolvers/authentication metrics state', () => {
 
   it('rolls back the in-memory state when metrics initialization fails', async () => {
     initMetrics.mockRejectedValueOnce(new Error('init failed'))
-    const { default: resolver } = await import('../../graph/resolvers/authentication.ts')
+    const resolver = await loadResolver()
 
     const result = await resolver.AuthenticationMutation.setMetricsState(null, { enabled: true }, null)
 

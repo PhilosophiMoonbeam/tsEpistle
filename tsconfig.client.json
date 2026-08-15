@@ -20,6 +20,9 @@
       "@/*": ["./client/*"]
     }
   },
+  "references": [
+    { "path": "./tsconfig.shared.json" }
+  ],
   "include": [
     "client/**/*.ts",
     "client/**/*.vue",

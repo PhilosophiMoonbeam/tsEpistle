@@ -1,11 +1,14 @@
 import express from 'express'
-import { errorStatus, objectValue, type Request, type Response, getWikiAuth } from '../_types.ts'
+import { errorStatus, getTransportRuntime, objectValue, type Request, type Response, getWikiAuth } from '../_types.ts'
 
 import loggingOperations from '../../operations/logging.ts'
 
 const router = express.Router()
 
-/* global WIKI */
+
+interface LoggingApiRuntime {
+  GQLEmitter: unknown
+}
 
 const requireSystemAccess = (req: Request, res: Response, json = false): boolean => { if (!getWikiAuth().checkAccess(req.user, ['manage:system'])) {
   if (json) res.status(403).json({ error: 'Forbidden' })
@@ -54,7 +57,7 @@ router.get('/live', async (req, res, next) => {
   })
   res.flushHeaders()
 
-  const emitter = WIKI.GQLEmitter
+  const emitter = getTransportRuntime<LoggingApiRuntime>().GQLEmitter
   const asyncIterator = objectValue(emitter, 'asyncIterator')
   if (typeof asyncIterator !== 'function') return next(new Error('Live log emitter is unavailable'))
   const iteratorValue: unknown = Reflect.apply(asyncIterator, emitter, ['livetrail'])

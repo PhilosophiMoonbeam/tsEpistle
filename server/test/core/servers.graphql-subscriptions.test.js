@@ -48,9 +48,8 @@ describe('core/servers GraphQL transports', () => {
     vi.doMock('jsonwebtoken', () => ({
       default: { verify }
     }))
-    vi.doMock('../../graph/index.ts', () => ({
-      schema: { kind: 'schema' }
-    }))
+    const createGraphQLArtifacts = vi.fn().mockResolvedValue({ schema: { kind: 'schema' } })
+    vi.doMock('../../graph/index.ts', () => ({ createGraphQLArtifacts }))
 
     global.WIKI = {
       IS_DEBUG: false,
@@ -67,9 +66,10 @@ describe('core/servers GraphQL transports', () => {
       }
     }
 
-    const { default: servers } = await import('../../core/servers.ts')
+    const { default: createServers } = await import('../../core/servers.ts')
+    const servers = createServers(global.WIKI)
     const createHttpServer = () => ({ on: vi.fn(), off: vi.fn() })
-    return { servers, createYoga, yoga, useServer, cleanup, WebSocketServer, wsServer, verify, createHttpServer }
+    return { servers, createGraphQLArtifacts, createYoga, yoga, useServer, cleanup, WebSocketServer, wsServer, verify, createHttpServer }
   }
 
   it('mounts Yoga on the existing GraphQL endpoint', async () => {

@@ -3,7 +3,7 @@ import type { NextFunction, Request, Response } from 'express'
 export type { NextFunction, Request, Response }
 
 export interface WikiAuth {
-  checkAccess(user: Express.User | undefined, permissions: readonly string[], context?: unknown): boolean
+  checkAccess(user: Express.User | undefined, permissions: string[], context?: unknown): boolean
   getEffectivePermissions(request: Request, context: unknown): unknown
 }
 
@@ -29,4 +29,17 @@ export const operationError = (value: unknown): OperationError => {
   return error
 }
 
-export const getWikiAuth = (): WikiAuth => WIKI.auth as WikiAuth
+let transportRuntime: unknown
+
+export const configureTransportRuntime = <Runtime extends object>(runtime: Runtime): void => {
+  transportRuntime = runtime
+}
+
+export const getTransportRuntime = <Runtime>(): Runtime => {
+  if (typeof transportRuntime !== 'object' || transportRuntime === null) {
+    throw new Error('HTTP transport runtime is unavailable')
+  }
+  return transportRuntime as Runtime
+}
+
+export const getWikiAuth = (): WikiAuth => getTransportRuntime<{ auth: WikiAuth }>().auth

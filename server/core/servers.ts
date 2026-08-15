@@ -12,7 +12,7 @@ import _ from 'lodash'
 import jwt, { type JwtPayload } from 'jsonwebtoken'
 import { execute as graphqlExecute, subscribe as graphqlSubscribe } from 'graphql'
 
-import { schema } from '../graph/index.ts'
+import { createGraphQLArtifacts, type GraphRuntime } from '../graph/index.ts'
 import letsencrypt from './letsencrypt.ts'
 
 interface ServerConfig {
@@ -33,12 +33,12 @@ interface ServerConfig {
   }
 }
 
-interface ServerWiki extends Record<string, unknown> {
+export interface ServerWiki extends GraphRuntime {
   IS_DEBUG: boolean
   app: Express
   collaboration: { install(server: NodeServer): void; dispose(server?: NodeServer | null): Promise<void> }
   config: ServerConfig
-  logger: { error(value: unknown): void; info(message: string): void }
+  logger: GraphRuntime['logger'] & { error(value: unknown): void }
 }
 
 interface AuthClaims extends JwtPayload {
@@ -97,7 +97,6 @@ interface ExecutionRoot {
 
 
 
-const wiki = WIKI as unknown as ServerWiki
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
@@ -107,18 +106,18 @@ function isListenError(error: unknown): error is NodeJS.ErrnoException {
   return error instanceof Error && 'syscall' in error && 'code' in error
 }
 
-function handleListenError(error: unknown, port: number): void {
+function handleListenError(error: unknown, port: number, logger: ServerWiki['logger']): void {
   if (!isListenError(error) || error.syscall !== 'listen') {
     throw error
   }
 
   switch (error.code) {
     case 'EACCES':
-      wiki.logger.error(`Listening on port ${port} requires elevated privileges!`)
+      logger.error(`Listening on port ${port} requires elevated privileges!`)
       process.exit(1)
       return
     case 'EADDRINUSE':
-      wiki.logger.error(`Port ${port} is already in use!`)
+      logger.error(`Port ${port} is already in use!`)
       process.exit(1)
       return
     default:
@@ -130,6 +129,7 @@ function isAuthClaims(value: string | JwtPayload): value is AuthClaims {
   return typeof value !== 'string' && Array.isArray(value.permissions) && value.permissions.every(permission => typeof permission === 'string')
 }
 
+export default function createServersCore (wiki: ServerWiki): ServersCore {
 const serversCore: ServersCore = {
   servers: {
     graph: null,
@@ -147,7 +147,7 @@ const serversCore: ServersCore = {
     wiki.collaboration.install(server)
 
     server.listen(wiki.config.port, wiki.config.bindIP)
-    server.on('error', error => handleListenError(error, wiki.config.port))
+    server.on('error', error => handleListenError(error, wiki.config.port, wiki.logger))
     server.on('listening', () => {
       wiki.logger.info('HTTP Server: [ RUNNING ]')
     })
@@ -193,7 +193,7 @@ const serversCore: ServersCore = {
     wiki.collaboration.install(server)
 
     server.listen(wiki.config.ssl.port, wiki.config.bindIP)
-    server.on('error', error => handleListenError(error, wiki.config.ssl.port))
+    server.on('error', error => handleListenError(error, wiki.config.ssl.port, wiki.logger))
     server.on('listening', () => {
       wiki.logger.info('HTTPS Server: [ RUNNING ]')
     })
@@ -207,6 +207,7 @@ const serversCore: ServersCore = {
   },
 
   async startGraphQL(): Promise<void> {
+    const { schema } = await createGraphQLArtifacts(wiki)
     const yoga = createYoga<YogaServerContext, YogaUserContext>({
       schema,
       graphqlEndpoint: '/graphql',
@@ -391,4 +392,5 @@ const serversCore: ServersCore = {
   }
 }
 
-export default serversCore
+return serversCore
+}

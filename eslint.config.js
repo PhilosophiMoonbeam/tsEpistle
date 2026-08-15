@@ -16,6 +16,12 @@ const testGlobals = {
   vi: 'readonly'
 }
 
+const crossBoundaryImportRules = {
+  client: ['**/server/**', 'server/**'],
+  server: ['**/client/**', 'client/**'],
+  shared: ['**/client/**', '**/server/**', 'client/**', 'server/**']
+}
+
 export default defineConfig(
   globalIgnores([
     '**/node_modules/**',
@@ -92,6 +98,59 @@ export default defineConfig(
           'pageMove',
           'pageDelete'
         ]
+      }]
+    }
+  },
+  {
+    files: ['client/**/*.{js,ts,vue}'],
+    rules: {
+      'no-restricted-imports': ['error', {
+        patterns: [{
+          group: crossBoundaryImportRules.client,
+          message: 'Client code may import only client, shared, and third-party modules.'
+        }]
+      }]
+    }
+  },
+  {
+    files: ['client/**/*.test.{js,ts}'],
+    rules: {
+      'no-restricted-imports': 'off'
+    }
+  },
+  {
+    files: ['server/**/*.{js,ts}'],
+    rules: {
+      'no-restricted-imports': ['error', {
+        patterns: [{
+          group: crossBoundaryImportRules.server,
+          message: 'Server code may import only server, shared, and third-party modules.'
+        }]
+      }]
+    }
+  },
+  {
+    files: ['shared/**/*.{js,ts}'],
+    rules: {
+      'no-restricted-imports': ['error', {
+        patterns: [{
+          group: crossBoundaryImportRules.shared,
+          message: 'Shared contracts must not depend on client or server implementations.'
+        }]
+      }]
+    }
+  },
+  {
+    files: ['server/controllers/**/*.{js,ts}', 'server/graph/**/*.{js,ts}', 'server/core/servers.ts', 'server/master.ts'],
+    rules: {
+      'no-restricted-globals': ['error', {
+        name: 'WIKI',
+        message: 'Transport code must receive runtime dependencies from its composition root.'
+      }],
+      'no-restricted-properties': ['error', {
+        object: 'globalThis',
+        property: 'WIKI',
+        message: 'Transport code must receive runtime dependencies from its composition root.'
       }]
     }
   },

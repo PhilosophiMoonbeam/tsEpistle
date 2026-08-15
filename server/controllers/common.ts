@@ -1,4 +1,5 @@
 import express from 'express'
+import type { Knex } from 'knex'
 import { type Request, type Response } from './_types.ts'
 import pageHelper from '../helpers/page.ts'
 import { canReadPage, canWritePage, managesSystem, pageRoute, principalId, type PageVisibility } from '../helpers/page-access.ts'
@@ -12,9 +13,8 @@ import {
   protectedAssetRequiresUnlock,
   unlockPage
 } from '../operations/page-protection.ts'
-import { createAuthRateLimiter, setAuthRateLimitHeaders } from '../helpers/auth-rate-limiter.ts'
+import { createAuthRateLimiter, setAuthRateLimitHeaders, type AuthRateLimiter } from '../helpers/auth-rate-limiter.ts'
 
-const router = express.Router()
 
 
 const tmplCreateRegex = /^[0-9]+(,[0-9]+)?$/
@@ -94,9 +94,9 @@ interface NavigationItem {
   target: unknown
 }
 
-interface CommonWiki {
+export interface CommonWiki {
   auth: {
-    checkAccess(user: Express.User | undefined, permissions: readonly string[], context?: unknown): boolean
+    checkAccess(user: Express.User | undefined, permissions: string[], context?: unknown): boolean
     getEffectivePermissions(request: Request, context: unknown): EffectivePermissions
   }
   config: {
@@ -110,7 +110,7 @@ interface CommonWiki {
   }
   metrics: { render(response: Response): unknown }
   models: {
-    knex: { client: { pool: { numFree(): number; numUsed(): number } } }
+    knex: Knex
     pages: {
       getPageFromDb(input: number | { path: string; locale: string; visibility: PageVisibility; ownerId: number | null }): Promise<PageRecord | null>
       getPage(input: { path: string; locale: string; visibility: PageVisibility; ownerId: number | null }): Promise<PageRecord | null>
@@ -138,17 +138,14 @@ interface RequestI18n {
   dir(): string
 }
 
-const WIKI = globalThis.WIKI as unknown as CommonWiki
+export default function createCommonController(wiki: CommonWiki): express.Router {
+const router = express.Router()
 
-let pageUnlockLimiter: ReturnType<typeof createAuthRateLimiter> | undefined
-const getPageUnlockLimiter = (): ReturnType<typeof createAuthRateLimiter> => {
+let pageUnlockLimiter: AuthRateLimiter | undefined
+const getPageUnlockLimiter = (): AuthRateLimiter => {
   if (pageUnlockLimiter) return pageUnlockLimiter
-  const models: unknown = globalThis.WIKI.models
-  if (!models || typeof models !== 'object' || !('knex' in models)) throw new TypeError('Wiki models are unavailable')
-  // WIKI owns the initialized Knex instance; the global declaration intentionally leaves bindings unknown.
-  const knex = models.knex as Parameters<typeof createAuthRateLimiter>[0]['knex']
   pageUnlockLimiter = createAuthRateLimiter({
-    knex,
+    knex: wiki.models.knex,
     keyPrefix: 'page-unlock-html',
     onLimit: (_req, res, retryAfterMs) => {
       setAuthRateLimitHeaders(res, retryAfterMs)
@@ -185,7 +182,6 @@ const enforcePageUnlock = async (req: Request, res: Response, page: PageRecord):
   })
   return false
 }
-const getWikiAuth = () => WIKI.auth
 
 const getRequestI18n = (req: Request): RequestI18n => {
   const i18n: unknown = (req as Request & { i18n?: unknown }).i18n
@@ -281,7 +277,7 @@ const renderResolvedPage = async (
   }
 
   let sidebarIndex = 1
-  const sidebar = (await WIKI.models.navigation.getTree({
+  const sidebar = (await wiki.models.navigation.getTree({
     cache: true,
     locale: pageArgs.locale,
     groups: requesterGroups(req)
@@ -295,9 +291,9 @@ const renderResolvedPage = async (
   }))
 
   const injectCode = {
-    css: WIKI.config.theming.injectCSS,
-    head: WIKI.config.theming.injectHead,
-    body: WIKI.config.theming.injectBody
+    css: wiki.config.theming.injectCSS,
+    head: wiki.config.theming.injectHead,
+    body: wiki.config.theming.injectBody
   }
   page.extra = page.extra || { css: '', js: '' }
   if (!_.isEmpty(page.extra.css)) injectCode.css = `${injectCode.css}\n${page.extra.css}`
@@ -305,14 +301,14 @@ const renderResolvedPage = async (
   if (!_.isString(page.toc)) page.toc = JSON.stringify(page.toc)
 
   const commentTmpl = {
-    codeTemplate: WIKI.data.commentProvider.codeTemplate,
-    head: WIKI.data.commentProvider.head,
-    body: WIKI.data.commentProvider.body,
-    main: WIKI.data.commentProvider.main
+    codeTemplate: wiki.data.commentProvider.codeTemplate,
+    head: wiki.data.commentProvider.head,
+    body: wiki.data.commentProvider.body,
+    main: wiki.data.commentProvider.main
   }
-  if (WIKI.config.features.featurePageComments && WIKI.data.commentProvider.codeTemplate) {
+  if (wiki.config.features.featurePageComments && wiki.data.commentProvider.codeTemplate) {
     for (const cfg of [
-      { key: 'pageUrl', value: `${WIKI.config.host}/i/${page.id}` },
+      { key: 'pageUrl', value: `${wiki.config.host}/i/${page.id}` },
       { key: 'pageId', value: page.id }
     ]) {
       commentTmpl.head = _.replace(commentTmpl.head, new RegExp(`{{${cfg.key}}}`, 'g'), String(cfg.value))
@@ -321,7 +317,7 @@ const renderResolvedPage = async (
     }
   }
 
-  let pageFilename = WIKI.config.lang.namespacing ? `${pageArgs.locale}/${page.path}` : page.path
+  let pageFilename = wiki.config.lang.namespacing ? `${pageArgs.locale}/${page.path}` : page.path
   pageFilename += page.contentType === 'markdown' ? '.md' : '.html'
   return res.render('page', {
     page,
@@ -357,7 +353,7 @@ router.post('/_unlock/:id', pageUnlockMiddleware, async (req, res) => {
     protectedResponseHeaders(res)
     return res.redirect(303, returnTo)
   } catch {
-    const page = pageId > 0 ? await WIKI.models.pages.getPageFromDb(pageId).catch(() => null) : null
+    const page = pageId > 0 ? await wiki.models.pages.getPageFromDb(pageId).catch(() => null) : null
     protectedResponseHeaders(res)
     return res.status(403).render('page-unlock', {
       pageId,
@@ -373,7 +369,7 @@ router.post('/_unlock/:id', pageUnlockMiddleware, async (req, res) => {
  */
 router.get('/robots.txt', (req, res) => {
   res.type('text/plain')
-  if (_.includes(WIKI.config.seo.robots, 'noindex')) {
+  if (_.includes(wiki.config.seo.robots, 'noindex')) {
     res.send('User-agent: *\nDisallow: /')
   } else {
     res.status(200).end()
@@ -384,7 +380,7 @@ router.get('/robots.txt', (req, res) => {
  * Health Endpoint
  */
 router.get('/healthz', (req, res) => {
-  if (WIKI.models.knex.client.pool.numFree() < 1 && WIKI.models.knex.client.pool.numUsed() < 1) {
+  if (wiki.models.knex.client.pool.numFree() < 1 && wiki.models.knex.client.pool.numUsed() < 1) {
     res.status(503).json({ ok: false }).end()
   } else {
     res.status(200).json({ ok: true }).end()
@@ -395,12 +391,12 @@ router.get('/healthz', (req, res) => {
  * Metrics (Prometheus)
  */
 router.get('/metrics', async (req, res, next) => {
-  if (!getWikiAuth().checkAccess(req.user, ['manage:system'])) {
+  if (!wiki.auth.checkAccess(req.user, ['manage:system'])) {
     return res.sendStatus(403)
   }
 
-  if (WIKI.config.metrics.isEnabled) {
-    return WIKI.metrics.render(res)
+  if (wiki.config.metrics.isEnabled) {
+    return wiki.metrics.render(res)
   }
 
   return next()
@@ -410,7 +406,7 @@ router.get('/metrics', async (req, res, next) => {
  * Administration
  */
 router.get(['/a', '/a/*adminPath'], (req, res) => {
-  if (!getWikiAuth().checkAccess(req.user, [
+  if (!wiki.auth.checkAccess(req.user, [
     'manage:system',
     'write:users',
     'manage:users',
@@ -437,7 +433,7 @@ router.get('/_admin/private/:id', async (req, res) => {
     return res.status(404).render('notfound', { action: 'view' })
   }
   const pageId = _.toSafeInteger(req.params.id)
-  const page = pageId > 0 ? await WIKI.models.pages.getPageFromDb(pageId) : null
+  const page = pageId > 0 ? await wiki.models.pages.getPageFromDb(pageId) : null
   if (!page || page.visibility !== 'private') {
     _.set(res.locals, 'pageMeta.title', 'Page Not Found')
     return res.status(404).render('notfound', { action: 'view' })
@@ -450,7 +446,7 @@ router.get('/_admin/private/:id', async (req, res) => {
     explicitLocale: true,
     tags: page.tags
   }
-  const effectivePermissions = getWikiAuth().getEffectivePermissions(req, pageArgs)
+  const effectivePermissions = wiki.auth.getEffectivePermissions(req, pageArgs)
   if (!applyPrivatePermissions(req, page, effectivePermissions)) {
     _.set(res.locals, 'pageMeta.title', 'Page Not Found')
     return res.status(404).render('notfound', { action: 'view' })
@@ -466,7 +462,7 @@ router.get(['/d', '/d/*downloadPath'], async (req, res) => {
   const versionValue: unknown = req.query.v
   const versionId = typeof versionValue === 'string' ? _.toSafeInteger(versionValue) : 0
 
-  const page = await WIKI.models.pages.getPageFromDb({
+  const page = await wiki.models.pages.getPageFromDb({
     path: pageArgs.path,
     locale: pageArgs.locale,
     visibility: pageArgs.visibility,
@@ -480,11 +476,11 @@ router.get(['/d', '/d/*downloadPath'], async (req, res) => {
   pageArgs.tags = _.get(page, 'tags', [])
 
   if (versionId > 0) {
-    if (page.visibility === 'public' && !getWikiAuth().checkAccess(req.user, ['read:history'], pageArgs)) {
+    if (page.visibility === 'public' && !wiki.auth.checkAccess(req.user, ['read:history'], pageArgs)) {
       _.set(res.locals, 'pageMeta.title', 'Unauthorized')
       return res.status(403).render('unauthorized', { action: 'downloadVersion' })
     }
-  } else if (page.visibility === 'public' && !getWikiAuth().checkAccess(req.user, ['read:source'], pageArgs)) {
+  } else if (page.visibility === 'public' && !wiki.auth.checkAccess(req.user, ['read:source'], pageArgs)) {
     _.set(res.locals, 'pageMeta.title', 'Unauthorized')
     return res.status(403).render('unauthorized', { action: 'download' })
   }
@@ -493,7 +489,7 @@ router.get(['/d', '/d/*downloadPath'], async (req, res) => {
   const fileName = _.last(page.path.split('/')) + '.' + pageHelper.getFileExtension(page.contentType)
   res.attachment(fileName)
   if (versionId > 0) {
-    const pageVersion = await WIKI.models.pageHistory.getVersion({ pageId: page.id, versionId, requester: req.user })
+    const pageVersion = await wiki.models.pageHistory.getVersion({ pageId: page.id, versionId, requester: req.user })
     if (!pageVersion) return res.status(404).end()
     res.send(pageHelper.injectPageMetadata(pageVersion))
   } else {
@@ -507,7 +503,7 @@ router.get(['/d', '/d/*downloadPath'], async (req, res) => {
 router.get(['/e', '/e/*editorPath'], async (req, res, next) => {
   const pageArgs = parsePageArgs(req, true)
 
-  if (WIKI.config.lang.namespacing && !pageArgs.explicitLocale) {
+  if (wiki.config.lang.namespacing && !pageArgs.explicitLocale) {
     return res.redirect(`/e/${pageArgs.locale}/${pageArgs.path}`)
   }
 
@@ -524,7 +520,7 @@ router.get(['/e', '/e/*editorPath'], async (req, res, next) => {
   }
 
   // -> Get page data from DB
-  const storedPage = await WIKI.models.pages.getPageFromDb({
+  const storedPage = await wiki.models.pages.getPageFromDb({
     path: pageArgs.path,
     locale: pageArgs.locale,
     visibility: pageArgs.visibility,
@@ -536,7 +532,7 @@ router.get(['/e', '/e/*editorPath'], async (req, res, next) => {
   pageArgs.tags = _.get(page, 'tags', [])
 
   // -> Effective Permissions
-  const effectivePermissions = getWikiAuth().getEffectivePermissions(req, pageArgs)
+  const effectivePermissions = wiki.auth.getEffectivePermissions(req, pageArgs)
   if (page && !applyPrivatePermissions(req, page as PageRecord, effectivePermissions)) {
     _.set(res.locals, 'pageMeta.title', 'Page Not Found')
     return res.status(404).render('notfound', { action: 'edit' })
@@ -546,9 +542,9 @@ router.get(['/e', '/e/*editorPath'], async (req, res, next) => {
   }
 
   const injectCode = {
-    css: WIKI.config.theming.injectCSS,
-    head: WIKI.config.theming.injectHead,
-    body: WIKI.config.theming.injectBody
+    css: wiki.config.theming.injectCSS,
+    head: wiki.config.theming.injectHead,
+    body: wiki.config.theming.injectBody
   }
 
   if (page) {
@@ -618,7 +614,7 @@ router.get(['/e', '/e/*editorPath'], async (req, res, next) => {
 
       if (tmplVersionId > 0) {
         // -> From Page Version
-        const pageVersion = await WIKI.models.pageHistory.getVersion({ pageId: tmplPageId, versionId: tmplVersionId, requester: req.user })
+        const pageVersion = await wiki.models.pageHistory.getVersion({ pageId: tmplPageId, versionId: tmplVersionId, requester: req.user })
         if (!pageVersion) {
           _.set(res.locals, 'pageMeta.title', 'Page Not Found')
           return res.status(404).render('notfound', { action: 'template' })
@@ -633,7 +629,7 @@ router.get(['/e', '/e/*editorPath'], async (req, res, next) => {
         page.description = pageVersion.description
       } else {
         // -> From Page Live
-        const pageOriginal = await WIKI.models.pages.query().findById(tmplPageId)
+        const pageOriginal = await wiki.models.pages.query().findById(tmplPageId)
         if (!pageOriginal) {
           _.set(res.locals, 'pageMeta.title', 'Page Not Found')
           return res.status(404).render('notfound', { action: 'template' })
@@ -659,7 +655,7 @@ router.get(['/e', '/e/*editorPath'], async (req, res, next) => {
 router.get(['/h', '/h/*historyPath'], async (req, res) => {
   const pageArgs = parsePageArgs(req, true)
 
-  if (WIKI.config.lang.namespacing && !pageArgs.explicitLocale) {
+  if (wiki.config.lang.namespacing && !pageArgs.explicitLocale) {
     return res.redirect(`/h/${pageArgs.locale}/${pageArgs.path}`)
   }
 
@@ -669,7 +665,7 @@ router.get(['/h', '/h/*historyPath'], async (req, res) => {
   _.set(res, 'locals.siteConfig.lang', pageArgs.locale)
   _.set(res, 'locals.siteConfig.rtl', i18n.dir() === 'rtl')
 
-  const page = await WIKI.models.pages.getPageFromDb({
+  const page = await wiki.models.pages.getPageFromDb({
     path: pageArgs.path,
     locale: pageArgs.locale,
     visibility: pageArgs.visibility,
@@ -683,7 +679,7 @@ router.get(['/h', '/h/*historyPath'], async (req, res) => {
 
   pageArgs.tags = _.get(page, 'tags', [])
 
-  const effectivePermissions = getWikiAuth().getEffectivePermissions(req, pageArgs)
+  const effectivePermissions = wiki.auth.getEffectivePermissions(req, pageArgs)
   if (!applyPrivatePermissions(req, page, effectivePermissions)) {
     _.set(res.locals, 'pageMeta.title', 'Page Not Found')
     return res.status(404).render('notfound', { action: 'history' })
@@ -714,7 +710,7 @@ router.get(['/i', '/i/:id'], async (req, res) => {
     return res.redirect('/')
   }
 
-  const page = await WIKI.models.pages.query().column(['id', 'path', 'localeCode', 'visibility', 'ownerId']).findById(pageId)
+  const page = await wiki.models.pages.query().column(['id', 'path', 'localeCode', 'visibility', 'ownerId']).findById(pageId)
   if (!page) {
     _.set(res.locals, 'pageMeta.title', 'Page Not Found')
     return res.status(404).render('notfound', { action: 'view' })
@@ -729,7 +725,7 @@ router.get(['/i', '/i/:id'], async (req, res) => {
     _.set(res.locals, 'pageMeta.title', 'Page Not Found')
     return res.status(404).render('notfound', { action: 'view' })
   }
-  if (WIKI.config.lang.namespacing) {
+  if (wiki.config.lang.namespacing) {
     return res.redirect(`/${page.localeCode}/${page.path}`)
   }
   return res.redirect(`/${page.path}`)
@@ -756,7 +752,7 @@ router.get(['/s', '/s/*sourcePath'], async (req, res) => {
   const versionValue: unknown = req.query.v
   const versionId = typeof versionValue === 'string' ? _.toSafeInteger(versionValue) : 0
 
-  const page = await WIKI.models.pages.getPageFromDb({
+  const page = await wiki.models.pages.getPageFromDb({
     path: pageArgs.path,
     locale: pageArgs.locale,
     visibility: pageArgs.visibility,
@@ -765,12 +761,12 @@ router.get(['/s', '/s/*sourcePath'], async (req, res) => {
 
   pageArgs.tags = _.get(page, 'tags', [])
 
-  if (WIKI.config.lang.namespacing && !pageArgs.explicitLocale) {
+  if (wiki.config.lang.namespacing && !pageArgs.explicitLocale) {
     return res.redirect(`/s/${pageArgs.locale}/${pageArgs.path}`)
   }
 
   // -> Effective Permissions
-  const effectivePermissions = getWikiAuth().getEffectivePermissions(req, pageArgs)
+  const effectivePermissions = wiki.auth.getEffectivePermissions(req, pageArgs)
   if (!page) {
     _.set(res.locals, 'pageMeta.title', 'Page Not Found')
     return res.status(404).render('notfound', { action: 'source' })
@@ -799,7 +795,7 @@ router.get(['/s', '/s/*sourcePath'], async (req, res) => {
 
   if (page) {
     if (versionId > 0) {
-      const pageVersion = await WIKI.models.pageHistory.getVersion({ pageId: page.id, versionId, requester: req.user })
+      const pageVersion = await wiki.models.pageHistory.getVersion({ pageId: page.id, versionId, requester: req.user })
       if (!pageVersion) {
         _.set(res.locals, 'pageMeta.title', 'Page Not Found')
         return res.status(404).render('notfound', { action: 'source' })
@@ -836,10 +832,10 @@ router.get(['/t', '/t/*tagPath'], (req, res) => {
  * User Avatar
  */
 router.get('/_userav/:uid', async (req, res) => {
-  if (!getWikiAuth().checkAccess(req.user, ['read:pages'])) {
+  if (!wiki.auth.checkAccess(req.user, ['read:pages'])) {
     return res.sendStatus(403)
   }
-  const av = await WIKI.models.users.getUserAvatarData(req.params.uid)
+  const av = await wiki.models.users.getUserAvatarData(req.params.uid)
   if (av) {
     res.set('Content-Type', 'image/jpeg')
     res.send(av)
@@ -852,12 +848,12 @@ router.get('/_userav/:uid', async (req, res) => {
  * View document / asset
  */
 router.get('/{*pagePath}', async (req, res, next) => {
-  const stripExt = _.some(WIKI.config.pageExtensions, ext => _.endsWith(req.path, `.${ext}`))
+  const stripExt = _.some(wiki.config.pageExtensions, ext => _.endsWith(req.path, `.${ext}`))
   const pageArgs = parsePageArgs(req, stripExt)
   const isPage = (stripExt || pageArgs.path.indexOf('.') === -1)
 
   if (isPage) {
-    if (WIKI.config.lang.namespacing && !pageArgs.explicitLocale) {
+    if (wiki.config.lang.namespacing && !pageArgs.explicitLocale) {
       const query = !_.isEmpty(req.query) ? `?${stringifyQuery(req.query)}` : ''
       return res.redirect(`/${pageArgs.locale}/${pageArgs.path}${query}`)
     }
@@ -867,7 +863,7 @@ router.get('/{*pagePath}', async (req, res, next) => {
 
     try {
       // -> Get Page from cache
-      const page = await WIKI.models.pages.getPage({
+      const page = await wiki.models.pages.getPage({
         path: pageArgs.path,
         locale: pageArgs.locale,
         visibility: pageArgs.visibility,
@@ -876,7 +872,7 @@ router.get('/{*pagePath}', async (req, res, next) => {
       pageArgs.tags = _.get(page, 'tags', [])
 
       // -> Effective Permissions
-      const effectivePermissions = getWikiAuth().getEffectivePermissions(req, pageArgs)
+      const effectivePermissions = wiki.auth.getEffectivePermissions(req, pageArgs)
       if (page && !applyPrivatePermissions(req, page, effectivePermissions)) {
         _.set(res.locals, 'pageMeta.title', 'Page Not Found')
         return res.status(404).render('notfound', { action: 'view' })
@@ -923,7 +919,7 @@ router.get('/{*pagePath}', async (req, res, next) => {
       next(err)
     }
   } else {
-    if (!getWikiAuth().checkAccess(req.user, ['read:assets'], pageArgs)) {
+    if (!wiki.auth.checkAccess(req.user, ['read:assets'], pageArgs)) {
       return res.sendStatus(403)
     }
     if (await protectedAssetRequiresUnlock({ requester: req.user, assetPath: pageArgs.path, sessionId: req.sessionID })) {
@@ -931,8 +927,9 @@ router.get('/{*pagePath}', async (req, res, next) => {
       return res.status(404).end()
     }
 
-    await WIKI.models.assets.getAsset(pageArgs.path, res)
+    await wiki.models.assets.getAsset(pageArgs.path, res)
   }
 })
 
-export default router
+return router
+}

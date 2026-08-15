@@ -1,19 +1,19 @@
 import express from 'express'
-import { getWikiAuth } from './_types.ts'
 import _ from 'lodash'
 import multer from 'multer'
 import path from 'node:path'
 import sanitize from 'sanitize-filename'
 
-const router = express.Router()
 
-/* global WIKI */
 interface UploadFolder {
   slug: string
 }
 
-interface UploadWiki {
+export interface UploadWiki {
   ROOTPATH: string
+  auth: {
+    checkAccess(user: Express.User | undefined, permissions: string[], context?: unknown): boolean
+  }
   config: {
     dataPath: string
     uploads: { maxFileSize: number; maxFiles: number }
@@ -23,8 +23,10 @@ interface UploadWiki {
     assets: { upload(input: Record<string, unknown>): Promise<unknown> }
   }
 }
+export default function createUploadController(wiki: UploadWiki): express.Router {
+const router = express.Router()
 
-const wiki = WIKI as unknown as UploadWiki
+
 
 
 /**
@@ -40,7 +42,7 @@ router.post('/u', (req, res, next) => {
     defParamCharset: 'utf8'
   }).array('mediaUpload')(req, res, next)
 }, async (req, res) => {
-  if (!getWikiAuth().checkAccess(req.user, ['write:assets', 'manage:system'])) {
+  if (!wiki.auth.checkAccess(req.user, ['write:assets', 'manage:system'])) {
     return res.status(403).json({
       succeeded: false,
       message: 'You are not authorized to upload files.'
@@ -105,7 +107,7 @@ router.post('/u', (req, res, next) => {
 
   // Check if user can upload at path
   const assetPath = (folderId) ? hierarchy.map(h => h.slug).join('/') + `/${fileMeta.originalname}` : fileMeta.originalname
-  if (!getWikiAuth().checkAccess(req.user, ['write:assets', 'manage:system'], { path: assetPath })) {
+  if (!wiki.auth.checkAccess(req.user, ['write:assets', 'manage:system'], { path: assetPath })) {
     return res.status(403).json({
       succeeded: false,
       message: 'You are not authorized to upload files to this folder.'
@@ -129,4 +131,5 @@ router.get('/u', async (req, res) => {
   })
 })
 
-export default router
+return router
+}

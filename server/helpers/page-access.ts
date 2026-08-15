@@ -1,4 +1,6 @@
-import { getWikiAuth, type WikiAuth } from '../controllers/_types.ts'
+import type { WikiAuth } from '../controllers/_types.ts'
+
+const getWikiAuth = (): WikiAuth => WIKI.auth as WikiAuth
 
 export type PagePrincipal = Parameters<WikiAuth['checkAccess']>[0]
 

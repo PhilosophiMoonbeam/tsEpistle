@@ -5,6 +5,8 @@ import cache from './cache.ts'
 import database from './db.ts'
 import collaboration, { type CollaborationService } from './collaboration.ts'
 import type { InitializedDatabase } from './db.ts'
+import type { ServerWiki } from './servers.ts'
+import type { HttpTransportRuntime } from '../master.ts'
 import extensions from './extensions.ts'
 import metrics from './metrics.ts'
 import scheduler from './scheduler.ts'
@@ -102,7 +104,7 @@ const kernel: KernelService = {
       wiki.extensions = extensions
       wiki.asar = asar
       // Server modules read initialized models and event services while registering GraphQL operations.
-      wiki.servers = (await import('./servers.ts')).default
+      wiki.servers = (await import('./servers.ts')).default(WIKI as unknown as ServerWiki)
     } catch (error) {
       wiki.logger.error(error)
       process.exit(1)
@@ -118,7 +120,7 @@ const kernel: KernelService = {
       } else {
         await this.preBootMaster()
         const { default: master } = await import('../master.ts')
-        await master()
+        await master(WIKI as unknown as HttpTransportRuntime)
         await this.postBootMaster()
       }
     } catch (error) {

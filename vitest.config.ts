@@ -5,6 +5,7 @@ export default defineConfig({
     environment: 'jsdom',
     globals: true,
     mockReset: true,
+    setupFiles: ['./server/test/setup-runtime.js'],
     restoreMocks: true
   }
 })

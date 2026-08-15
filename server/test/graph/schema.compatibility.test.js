@@ -64,7 +64,8 @@ describe('GraphQL external compatibility', () => {
   })
 
   it('builds the production schema with every public root operation', async () => {
-    const { schema } = await import('../../graph/index.ts')
+    const { createGraphQLArtifacts } = await import('../../graph/index.ts')
+    const { schema } = await createGraphQLArtifacts(global.WIKI)
 
     expect(validateSchema(schema)).toEqual([])
 

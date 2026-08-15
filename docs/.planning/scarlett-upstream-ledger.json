@@ -1,0 +1,333 @@
+{
+  "schemaVersion": 1,
+  "upstream": {
+    "repository": "https://github.com/requarks/wiki.git",
+    "branch": "scarlett",
+    "recordedTip": "d0c5a8bfa90acee73a2f4c71033978bea1925468",
+    "recordedAt": "2026-08-15T23:36:09-04:00",
+    "lastFetchedAt": "2026-08-15T21:36:46Z"
+  },
+  "forkCheckpoint": "249758e3f923a77e1b62d26a47e142c312642a5f",
+  "candidates": [
+    {
+      "id": "typed-api-schemas",
+      "commits": ["6f492f00"],
+      "category": "api-contract",
+      "disposition": "adapt",
+      "state": "active",
+      "workstream": "release-assurance/rest-openapi",
+      "contract": "Versioned Express REST and OpenAPI schemas share domain operations and generated client contracts without Fastify or duplicate mutation logic.",
+      "lastReviewed": "2026-08-15"
+    },
+    {
+      "id": "backend-typescript-boundaries",
+      "commits": ["ee7a15fb"],
+      "category": "architecture",
+      "disposition": "adapt",
+      "state": "active",
+      "workstream": "architecture-boundaries",
+      "contract": "Strict client, shared, and server boundaries are enforceable without a directory or framework rewrite.",
+      "lastReviewed": "2026-08-15"
+    },
+    {
+      "id": "tailwind-ui-rewrite",
+      "commits": ["937cecea"],
+      "category": "ux",
+      "disposition": "reject",
+      "state": "closed",
+      "workstream": "experience-completion",
+      "contract": "Vue, Vuetify, and scoped semantic CSS remain the sole application theme, focus, localization, and responsive authority.",
+      "lastReviewed": "2026-08-15"
+    },
+    {
+      "id": "ui-dark-responsive-fixes",
+      "commits": ["064e378b", "cffa39c1", "4677a7c5", "9de9b84b", "57cda516", "527b8e9f"],
+      "category": "ux",
+      "disposition": "compare",
+      "state": "active",
+      "workstream": "experience-completion",
+      "contract": "Reproduced defects are fixed in Vuetify surfaces and core journeys remain responsive, keyboard-complete, and accessible.",
+      "lastReviewed": "2026-08-15"
+    },
+    {
+      "id": "password-protected-pages",
+      "commits": ["c10e988c"],
+      "category": "security",
+      "disposition": "adapt",
+      "state": "completed",
+      "workstream": "wave-3/protected-pages",
+      "contract": "Session-scoped password grants compose with private ownership, assets, history, search, APIs, rate limits, and non-disclosure.",
+      "lastReviewed": "2026-08-15"
+    },
+    {
+      "id": "markdown-editor-dialogs",
+      "commits": ["9408accc", "7f53b60d", "21fac3a9", "6bffff10", "5a3be5c1", "817302d6", "ce530a40", "ad861ae3"],
+      "category": "editor",
+      "disposition": "adapt",
+      "state": "completed",
+      "workstream": "wave-4/visual-markdown",
+      "contract": "Editor-native controls preserve canonical Markdown through parse, edit, serialize, render, history, and source fallback.",
+      "lastReviewed": "2026-08-15"
+    },
+    {
+      "id": "content-block-platform",
+      "commits": ["3d13e50b", "072e1dcc", "5021b31a", "29d81640", "1aefb34d", "9a1ca3b1", "c182d2c9", "aa27932c", "d0c5a8bf"],
+      "category": "extension",
+      "disposition": "replace",
+      "state": "completed",
+      "workstream": "wave-4/extension-sdk",
+      "contract": "Versioned strict extension envelopes retain canonical source, sanitized fallbacks, authorization, consent, lifecycle, and migration safety.",
+      "lastReviewed": "2026-08-15"
+    },
+    {
+      "id": "approvals-inbox",
+      "commits": ["957efebe", "c36eab67"],
+      "category": "workflow",
+      "disposition": "adapt",
+      "state": "completed",
+      "workstream": "wave-3/approvals",
+      "contract": "Revision-bound approval transitions are authorized, atomic, audited, stale-safe, recoverable, and available through responsive inboxes.",
+      "lastReviewed": "2026-08-15"
+    },
+    {
+      "id": "page-history-experience",
+      "commits": ["c9bd96a5", "4ec69a75"],
+      "category": "workflow",
+      "disposition": "adapt",
+      "state": "completed",
+      "workstream": "wave-3/history",
+      "contract": "History diff, source, download, branch, and optimistic restore preserve canonical content and private-page authorization.",
+      "lastReviewed": "2026-08-15"
+    },
+    {
+      "id": "permission-hardening",
+      "commits": ["db99e3d6", "1105cf4b", "81fc8db4"],
+      "category": "security",
+      "disposition": "adapt",
+      "state": "completed",
+      "workstream": "wave-1/policy",
+      "contract": "One deterministic resource-access policy covers private visibility, page rules, derived resources, and non-disclosure.",
+      "lastReviewed": "2026-08-15"
+    },
+    {
+      "id": "live-collaboration",
+      "commits": ["17d7b810"],
+      "category": "editor",
+      "disposition": "adapt",
+      "state": "completed",
+      "workstream": "wave-4/collaboration",
+      "contract": "Authenticated durable Markdown rooms preserve local edits across reconnect, authorization changes, process loss, and multi-instance delivery.",
+      "lastReviewed": "2026-08-15"
+    },
+    {
+      "id": "page-watching",
+      "commits": ["14e1efae"],
+      "category": "workflow",
+      "disposition": "adapt",
+      "state": "completed",
+      "workstream": "wave-3/watching",
+      "contract": "Readable-page watches use transactional events and idempotent durable delivery with permission-loss cleanup.",
+      "lastReviewed": "2026-08-15"
+    },
+    {
+      "id": "endpoint-rate-limits",
+      "commits": ["14e1efae"],
+      "category": "security",
+      "disposition": "adapt",
+      "state": "completed",
+      "workstream": "wave-1/rate-limits",
+      "contract": "Threat- and cost-scoped limits use durable counters, trusted proxy identity, deterministic 429 responses, and operable recovery.",
+      "lastReviewed": "2026-08-15"
+    },
+    {
+      "id": "oauth-modules",
+      "commits": ["ff4a5bc6"],
+      "category": "security",
+      "disposition": "compare",
+      "state": "active",
+      "workstream": "release-assurance/authentication",
+      "contract": "Provider changes retain broad compatibility and share callback, token, profile, error, and regression contracts.",
+      "lastReviewed": "2026-08-15"
+    },
+    {
+      "id": "durable-render-webhook-scheduler",
+      "commits": ["1c6e71ee", "c1d7eef3", "23dbb272"],
+      "category": "operations",
+      "disposition": "adapt",
+      "state": "completed",
+      "workstream": "wave-2/durable-jobs",
+      "contract": "PostgreSQL leases, idempotent handlers, transactional outbox, bounded retries, recovery, and administrator visibility own background work.",
+      "lastReviewed": "2026-08-15"
+    },
+    {
+      "id": "disabled-extension-source",
+      "commits": ["c00b7007"],
+      "category": "extension",
+      "disposition": "supersede",
+      "state": "active",
+      "workstream": "architecture-d/extension-durability",
+      "contract": "Registry changes preserve exact canonical bytes and rerender derived output through bounded recoverable jobs.",
+      "lastReviewed": "2026-08-15"
+    },
+    {
+      "id": "asset-rendering",
+      "commits": ["45d2287a"],
+      "category": "security",
+      "disposition": "compare",
+      "state": "completed",
+      "workstream": "wave-1/resource-policy",
+      "contract": "Every asset render, download, and range request uses central page/asset authorization and storage abstractions.",
+      "lastReviewed": "2026-08-15"
+    },
+    {
+      "id": "page-redirection",
+      "commits": ["8e6a35de"],
+      "category": "correctness",
+      "disposition": "supersede",
+      "state": "completed",
+      "workstream": "wave-1/routing",
+      "contract": "Redirects prevent loops, preserve authorization and private non-disclosure, and retain editor parity.",
+      "lastReviewed": "2026-08-15"
+    },
+    {
+      "id": "migration-reset-and-guard",
+      "commits": ["6db53d4f", "99ccdc13"],
+      "category": "data-continuity",
+      "disposition": "synthesize",
+      "state": "active",
+      "workstream": "architecture-b/postgresql-continuity",
+      "contract": "Unknown databases are rejected before writes while recognized Wiki.js 2 and Wiki.ts PostgreSQL sources upgrade without ledger reset.",
+      "lastReviewed": "2026-08-15"
+    },
+    {
+      "id": "request-parser-limits",
+      "commits": ["4c6d5c40"],
+      "category": "security",
+      "disposition": "compare",
+      "state": "completed",
+      "workstream": "wave-1/request-boundaries",
+      "contract": "Current parser limits reject oversized inputs deterministically without format regressions.",
+      "lastReviewed": "2026-08-15"
+    },
+    {
+      "id": "compiled-spa-serving",
+      "commits": ["1cdbaf83"],
+      "category": "release",
+      "disposition": "supersede",
+      "state": "completed",
+      "workstream": "release-assurance/artifacts",
+      "contract": "Express serves the Vite application/setup manifests with immutable assets and production runtime proof.",
+      "lastReviewed": "2026-08-15"
+    },
+    {
+      "id": "navigation-parent-controls",
+      "commits": ["2acd026c", "634f4b05"],
+      "category": "ux",
+      "disposition": "adapt",
+      "state": "active",
+      "workstream": "experience-completion/navigation",
+      "contract": "Parent expansion and child-to-parent editing are bounded, authorized, persisted, responsive, and keyboard accessible.",
+      "lastReviewed": "2026-08-15"
+    },
+    {
+      "id": "folder-path-collision",
+      "commits": ["5fa9bf3f"],
+      "category": "correctness",
+      "disposition": "supersede",
+      "state": "completed",
+      "workstream": "wave-1/path-invariants",
+      "contract": "Virtual folders do not conflict with exact page paths and every real collision fails atomically before writes.",
+      "lastReviewed": "2026-08-15"
+    },
+    {
+      "id": "utilities-jwk-removal",
+      "commits": ["09e9166b"],
+      "category": "api-contract",
+      "disposition": "split",
+      "state": "active",
+      "workstream": "release-assurance/api-compatibility",
+      "contract": "Useful administrator utilities use allowlisted operations while JWK endpoints remain until a versioned external migration is published.",
+      "lastReviewed": "2026-08-15"
+    },
+    {
+      "id": "page-shadow-classes",
+      "commits": ["0c62c97e"],
+      "category": "ux",
+      "disposition": "reject",
+      "state": "closed",
+      "workstream": "experience-completion/design-system",
+      "contract": "Styling tokens are introduced only through the authoritative Vuetify and scoped page-content design system.",
+      "lastReviewed": "2026-08-15"
+    },
+    {
+      "id": "docker-ci-fixes",
+      "commits": ["0376d788", "8b0a5e37", "dd37744e"],
+      "category": "release",
+      "disposition": "compare",
+      "state": "completed",
+      "workstream": "release-assurance/artifacts",
+      "contract": "Reproducible multi-architecture images, bundles, charts, SBOMs, provenance, and manifests identify one revision.",
+      "lastReviewed": "2026-08-15"
+    },
+    {
+      "id": "dependency-modernization",
+      "commits": [],
+      "category": "dependency",
+      "disposition": "compare",
+      "state": "active",
+      "workstream": "architecture-e/dependency-policy",
+      "contract": "Each direct dependency change proves current need, behavior, supply chain, license, build, runtime, and rollback independently.",
+      "lastReviewed": "2026-08-15"
+    },
+    {
+      "id": "repository-package-split",
+      "commits": ["ee7a15fb"],
+      "category": "architecture",
+      "disposition": "conditional",
+      "state": "active",
+      "workstream": "architecture-a/package-boundaries",
+      "contract": "Separate manifests are accepted only after enforceable imports, explicit exports, and measured build/install gains prove one clean package graph.",
+      "lastReviewed": "2026-08-15"
+    },
+    {
+      "id": "drizzle-orm",
+      "commits": ["ee7a15fb", "6db53d4f"],
+      "category": "architecture",
+      "disposition": "conditional",
+      "state": "active",
+      "workstream": "architecture-c/drizzle-pilot",
+      "contract": "A disposable isolated repository must materially beat typed Knex while preserving one migration and transaction authority.",
+      "lastReviewed": "2026-08-15"
+    },
+    {
+      "id": "lit-extension-runtime",
+      "commits": ["937cecea"],
+      "category": "extension",
+      "disposition": "conditional",
+      "state": "active",
+      "workstream": "architecture-d/lazy-runtime",
+      "contract": "A per-extension lazy runtime is retained only if it beats the native controller on correctness, accessibility, transfer, and maintenance.",
+      "lastReviewed": "2026-08-15"
+    },
+    {
+      "id": "postgresql-only-platform",
+      "commits": ["ee7a15fb", "6db53d4f"],
+      "category": "data-continuity",
+      "disposition": "adopt",
+      "state": "active",
+      "workstream": "architecture-b/postgresql-only",
+      "contract": "Supported Wiki.js 2 and Wiki.ts PostgreSQL sources upgrade, restore, roll back, and operate across the declared server floor before unused adapters are removed cleanly.",
+      "lastReviewed": "2026-08-15"
+    },
+    {
+      "id": "bounded-page-projection",
+      "commits": ["9a1ca3b1", "aa27932c"],
+      "category": "performance",
+      "disposition": "conditional",
+      "state": "active",
+      "workstream": "architecture-c/page-index",
+      "contract": "Dynamic requester-time authorization remains authoritative; a rebuildable visibility-neutral projection is accepted only after measured budget failure and parity proof.",
+      "lastReviewed": "2026-08-15"
+    }
+  ]
+}

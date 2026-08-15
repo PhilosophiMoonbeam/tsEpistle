@@ -110,6 +110,16 @@ The current physical directories may remain. A later move is accepted only when 
 4. Prove a frozen clean install, application/setup Vite manifest, real Express startup, Docker prune, license inventory, and release bundle from the new boundary.
 5. Only then decide whether separate manifests reduce install/build scope. If they do, cut over every caller, build script, Docker context, license/SBOM aggregator, Windows/Linux packager, and documentation reference in one change. No parallel root-plus-split architecture remains.
 
+### Implemented boundary evidence and manifest decision
+
+The first boundary cutover is complete on the existing directory layout:
+
+- `eslint.config.js` enforces `client -> shared`, `server -> shared`, and a dependency-free `shared` layer; the transport scope also rejects direct `WIKI` / `globalThis.WIKI` access.
+- `tsconfig.shared.json` emits the shared declaration contract, `tsconfig.client.json` and `tsconfig.server.json` reference it, and `shared/index.ts` is the explicit public surface.
+- HTTP controllers receive their runtime from `master.ts` through the configured transport boundary. GraphQL schema construction and resolver factories receive a `GraphRuntime`; `core/servers.ts` receives `ServerWiki` from the kernel composition root. No controller, GraphQL module, master transport, or server transport reads the process-global runtime.
+- The root `package.json` remains authoritative. A split manifest cutover is rejected at this boundary because the client and server still produce one Vite/Express runtime and one atomic release artifact, while no measurement shows an independently installable or cacheable package. Creating `client`, `server`, or `shared` manifests now would duplicate dependency and release ownership without reducing install or build scope. Reconsider only after the clean-install, Docker prune, license/SBOM aggregation, and independently cached artifact gates demonstrate a smaller real build graph; any later cutover must replace the root graph atomically.
+- Focused transport, GraphQL, and API suites pass, as do lint, shared/server/client typechecks, and the full `1,409`-test suite. The production build is intentionally verified from the clean committed boundary because build metadata refuses dirty source trees.
+
 ### Acceptance gates
 
 - no undeclared or reverse cross-boundary imports;

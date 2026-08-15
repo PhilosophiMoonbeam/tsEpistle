@@ -1,4 +1,3 @@
-/* global WIKI */
 
 import express from 'express'
 import type { Request, Response } from 'express'
@@ -16,7 +15,7 @@ interface AuthUser {
   id: number
 }
 
-interface AuthWiki {
+export interface AuthWiki {
   models: {
     knex: Knex
     authentication: {
@@ -50,7 +49,6 @@ interface AuthWiki {
   Error: { AuthRegistrationDisabled: new () => Error }
 }
 
-const wiki = WIKI as unknown as AuthWiki
 
 const routeParam = (req: Request, name: string): string => {
   const value = req.params[name]
@@ -62,6 +60,7 @@ const routeParam = (req: Request, name: string): string => {
 
 
 
+export default function createAuthController(wiki: AuthWiki): express.Router {
 const router = express.Router()
 
 const bruteforce = createAuthRateLimiter({
@@ -222,4 +221,5 @@ router.get('/.well-known/jwk.pem', function (req, res) {
   res.send(wiki.config.certs.public)
 })
 
-export default router
+return router
+}

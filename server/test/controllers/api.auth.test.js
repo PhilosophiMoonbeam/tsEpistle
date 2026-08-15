@@ -163,10 +163,15 @@ describe('controllers/api auth endpoints', () => {
 
   const loadHandlers = async () => {
     await import('../../controllers/api/auth.ts')
-    const getRouteHandler = (path) => express.__router.get.mock.calls.find(([routePath]) => routePath === path)[1]
-    const postRouteHandler = (path) => {
+    const withRuntime = handler => (req, ...args) => {
+      req.app ??= { locals: {} }
+      req.app.locals.runtime = global.WIKI
+      return handler(req, ...args)
+    }
+    const getRouteHandler = path => withRuntime(express.__router.get.mock.calls.find(([routePath]) => routePath === path)[1])
+    const postRouteHandler = path => {
       const call = express.__router.post.mock.calls.find(([routePath]) => routePath === path)
-      return call[call.length - 1]
+      return withRuntime(call[call.length - 1])
     }
     return {
       adminStrategies: getRouteHandler('/admin/strategies'),
@@ -210,13 +215,20 @@ describe('controllers/api auth endpoints', () => {
   it('rate limits account registration before processing the request body', async () => {
     await loadHandlers()
     const registration = express.__router.post.mock.calls.find(([path]) => path === '/register')
+    const req = { app: { locals: { runtime: global.WIKI } } }
+    const res = {}
+    const next = vi.fn()
 
-    expect(registration[1]).toBe(authRateLimiter.middleware)
+    registration[1](req, res, next)
+
+    expect(authRateLimiter.middleware).toHaveBeenCalledWith(req, res, next)
   })
 
   it('configures the REST limiter with a 429 JSON response and Retry-After', async () => {
     await loadHandlers()
     const res = { json: vi.fn(), set: vi.fn(), status: vi.fn().mockReturnThis() }
+    const registration = express.__router.post.mock.calls.find(([path]) => path === '/register')
+    registration[1]({ app: { locals: { runtime: global.WIKI } } }, {}, vi.fn())
 
     authRateLimiter.options[0].onLimit({}, res, 5 * 60 * 1000)
 

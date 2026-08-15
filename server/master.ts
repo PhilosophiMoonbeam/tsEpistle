@@ -16,11 +16,12 @@ import system from './core/system.ts'
 import viteAssets from './helpers/vite-assets.ts'
 import securityMiddleware from './middlewares/security.ts'
 import seoMiddleware from './middlewares/seo.ts'
-import authController from './controllers/auth.ts'
-import uploadController from './controllers/upload.ts'
-import commonController from './controllers/common.ts'
-import sslController from './controllers/ssl.ts'
-import apiController from './controllers/api/index.ts'
+import createAuthController, { type AuthWiki } from './controllers/auth.ts'
+import createUploadController, { type UploadWiki } from './controllers/upload.ts'
+import createCommonController, { type CommonWiki } from './controllers/common.ts'
+import createSslController, { type SslWiki } from './controllers/ssl.ts'
+import apiController, { type ApiRuntime } from './controllers/api/index.ts'
+import { configureTransportRuntime } from './controllers/_types.ts'
 import apiV1Controller from './controllers/api-v1/index.ts'
 import type { ProductMetadata } from '../shared/product.ts'
 import { isExternalRestPath, isInternalRestPath } from '../shared/api-access.ts'
@@ -72,15 +73,17 @@ interface MasterWiki extends Record<string, unknown> {
   servers: { startGraphQL(): Promise<void>; startHTTP(): Promise<void>; startHTTPS(): Promise<void> }
   system: unknown
 }
+export type HttpTransportRuntime = MasterWiki & AuthWiki & UploadWiki & CommonWiki & SslWiki & ApiRuntime
+
 
 interface HttpError extends Error {
   code?: string
   status: number
 }
 
-const wiki = WIKI as MasterWiki
 
-export default async function startMaster(): Promise<true> {
+export default async function startMaster(wiki: HttpTransportRuntime): Promise<true> {
+  configureTransportRuntime(wiki)
   wiki.lang = localization.init()
   wiki.auth = authCore.init()
   wiki.mail = mail.init()
@@ -109,8 +112,7 @@ export default async function startMaster(): Promise<true> {
     index: false,
     maxAge: '7d'
   }))
-
-  app.use('/', sslController)
+  app.use('/', createSslController(wiki))
 
   app.use(cookieParser())
   app.use(session({
@@ -125,7 +127,6 @@ export default async function startMaster(): Promise<true> {
   app.use(wiki.auth.authenticate.bind(wiki.auth))
 
   await wiki.servers.startGraphQL()
-  app.use(express.json({ limit: wiki.config.bodyParserLimit || '1mb' }))
   app.use('/_api', apiController)
   app.use('/api/v1', apiV1Controller)
 
@@ -171,10 +172,9 @@ export default async function startMaster(): Promise<true> {
     res.locals.analyticsCode = await wiki.models.analytics.getCode({ cache: true })
     next()
   })
-
-  app.use('/', authController)
-  app.use('/', uploadController)
-  app.use('/', commonController)
+  app.use('/', createAuthController(wiki))
+  app.use('/', createUploadController(wiki))
+  app.use('/', createCommonController(wiki))
 
   app.use((_req, _res, next) => {
     const error = new Error('Not Found') as HttpError

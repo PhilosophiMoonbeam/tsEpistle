@@ -55,7 +55,8 @@ describe('controllers/common metrics endpoint', () => {
   })
 
   const loadMetricsHandler = async () => {
-    await import('../../controllers/common.ts')
+    const { default: createCommonController } = await import('../../controllers/common.ts')
+    createCommonController(global.WIKI)
     const metricsCall = express.__router.get.mock.calls.find(([path]) => path === '/metrics')
     return metricsCall && metricsCall[1]
   }

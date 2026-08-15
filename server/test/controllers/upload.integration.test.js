@@ -111,8 +111,8 @@ const setupServer = async ({ maxFileSize = 1024 * 1024, maxFiles = 1 } = {}) => 
     next()
   })
 
-  const uploadController = (await import('../../controllers/upload.ts')).default
-  app.use(uploadController)
+  const createUploadController = (await import('../../controllers/upload.ts')).default
+  app.use(createUploadController(global.WIKI))
   app.use((err, req, res, next) => {
     void next
     res.status(599).json({

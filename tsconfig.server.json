@@ -19,6 +19,9 @@
     "forceConsistentCasingInFileNames": true,
     "types": ["node"]
   },
+  "references": [
+    { "path": "./tsconfig.shared.json" }
+  ],
   "include": ["server/**/*.ts"],
   "exclude": ["server/test/**", "node_modules", "assets"]
 }

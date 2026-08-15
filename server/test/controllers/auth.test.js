@@ -66,7 +66,8 @@ describe('HTML auth controller rate limiting', () => {
   })
 
   const loadController = async () => {
-    await import('../../controllers/auth.ts')
+    const { default: createAuthController } = await import('../../controllers/auth.ts')
+    createAuthController(global.WIKI)
   }
 
   it('configures the HTML limiter with a 429 response and Retry-After', async () => {

@@ -1,0 +1,29 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2022", "DOM"],
+    "allowImportingTsExtensions": true,
+    "composite": true,
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "erasableSyntaxOnly": true,
+    "strict": true,
+    "noImplicitOverride": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "useUnknownInCatchVariables": true,
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "rootDir": ".",
+    "outDir": "node_modules/.cache/wiki/types/shared",
+    "tsBuildInfoFile": "node_modules/.cache/wiki/types/shared.tsbuildinfo",
+    "types": []
+  },
+  "include": ["shared/**/*.ts", "package.json"],
+  "exclude": ["shared/**/*.test.ts", "node_modules"]
+}

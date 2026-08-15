@@ -1,6 +1,7 @@
 import express from 'express'
-import { errorStatus, objectValue, type Request, type Response, getWikiAuth } from '../_types.ts'
-import { createAuthRateLimiter, setAuthRateLimitHeaders } from '../../helpers/auth-rate-limiter.ts'
+import { errorStatus, objectValue, type Request, type Response, getTransportRuntime, getWikiAuth } from '../_types.ts'
+import { createAuthRateLimiter, setAuthRateLimitHeaders, type AuthRateLimiter } from '../../helpers/auth-rate-limiter.ts'
+import type { Knex } from 'knex'
 import _ from 'lodash'
 
 import apiOperations from '../../operations/api.ts'
@@ -8,16 +9,26 @@ import authenticationOperations from '../../operations/authentication.ts'
 
 const router = express.Router()
 
-/* global WIKI */
-const wikiModels = WIKI.models as { knex: Parameters<typeof createAuthRateLimiter>[0]['knex'] }
-const bruteforce = createAuthRateLimiter({
-  knex: wikiModels.knex,
-  keyPrefix: 'auth-api',
-  onLimit: (_req, res, retryAfterMs) => {
-    setAuthRateLimitHeaders(res, retryAfterMs)
-    res.status(429).json({ error: 'Too many failed attempts. Try again later.' })
-  }
-})
+interface AuthApiRuntime {
+  models: { knex: Knex }
+}
+
+let bruteforce: AuthRateLimiter | undefined
+const getBruteforce = (): AuthRateLimiter => {
+  if (bruteforce) return bruteforce
+  bruteforce = createAuthRateLimiter({
+    knex: getTransportRuntime<AuthApiRuntime>().models.knex,
+    keyPrefix: 'auth-api',
+    onLimit: (_req, res, retryAfterMs) => {
+      setAuthRateLimitHeaders(res, retryAfterMs)
+      res.status(429).json({ error: 'Too many failed attempts. Try again later.' })
+    }
+  })
+  return bruteforce
+}
+const bruteforceMiddleware: express.RequestHandler = (req, res, next) => {
+  getBruteforce().middleware(req, res, next)
+}
 
 const toAuthResponse = (result: unknown = {}) => ({
   jwt: _.get(result, 'jwt', null),
@@ -187,7 +198,7 @@ router.post('/guest/reset', async (req, res) => {
   }
 })
 
-router.post('/register', bruteforce.middleware, async (req, res, next) => {
+router.post('/register', bruteforceMiddleware, async (req, res, next) => {
   try {
     await authenticationOperations.register({
       email: objectValue(req.body, 'email'),
@@ -200,7 +211,7 @@ router.post('/register', bruteforce.middleware, async (req, res, next) => {
   }
 })
 
-router.post('/forgot-password', bruteforce.middleware, async (req, res, next) => {
+router.post('/forgot-password', bruteforceMiddleware, async (req, res, next) => {
   const email = objectValue(req.body, 'email')
   if (!email) return res.status(400).json({ error: 'email is required' })
   if (typeof email !== 'string') return res.status(400).json({ error: 'email must be a string' })
@@ -212,7 +223,7 @@ router.post('/forgot-password', bruteforce.middleware, async (req, res, next) =>
   }
 })
 
-router.post('/login', bruteforce.middleware, async (req, res, next) => {
+router.post('/login', bruteforceMiddleware, async (req, res, next) => {
   const strategy = objectValue(req.body, 'strategy')
   const strategyKey = typeof strategy === 'string' ? strategy : ''
   try {
@@ -221,14 +232,14 @@ router.post('/login', bruteforce.middleware, async (req, res, next) => {
       username: objectValue(req.body, 'username'),
       password: objectValue(req.body, 'password')
     }, { req, res })
-    await bruteforce.reset(req)
+    await getBruteforce().reset(req)
     res.json(toAuthResponse(result))
   } catch (err) {
     if (!handleExpectedAuthError(err, res)) next(err)
   }
 })
 
-router.post('/login/tfa', bruteforce.middleware, async (req, res, next) => {
+router.post('/login/tfa', bruteforceMiddleware, async (req, res, next) => {
   const securityCode = objectValue(req.body, 'securityCode')
   const continuationToken = objectValue(req.body, 'continuationToken')
   if (!securityCode || !continuationToken) return res.status(400).json({ error: 'securityCode and continuationToken are required' })
@@ -239,21 +250,21 @@ router.post('/login/tfa', bruteforce.middleware, async (req, res, next) => {
       continuationToken,
       setup: objectValue(req.body, 'setup') === true
     }, { req, res })
-    await bruteforce.reset(req)
+    await getBruteforce().reset(req)
     res.json(toAuthResponse(result))
   } catch (err) {
     if (!handleExpectedAuthError(err, res)) next(err)
   }
 })
 
-router.post('/login/change-password', bruteforce.middleware, async (req, res, next) => {
+router.post('/login/change-password', bruteforceMiddleware, async (req, res, next) => {
   const continuationToken = objectValue(req.body, 'continuationToken')
   const newPassword = objectValue(req.body, 'newPassword')
   if (!continuationToken || !newPassword) return res.status(400).json({ error: 'continuationToken and newPassword are required' })
   if (typeof continuationToken !== 'string' || typeof newPassword !== 'string') return res.status(400).json({ error: 'continuationToken and newPassword must be strings' })
   try {
     const result = await authenticationOperations.loginChangePassword({ continuationToken, newPassword }, { req, res })
-    await bruteforce.reset(req)
+    await getBruteforce().reset(req)
     res.json(toAuthResponse(result))
   } catch (err) {
     if (!handleExpectedAuthError(err, res)) next(err)

@@ -21,7 +21,7 @@ const isAssetRequester = (user: Express.User | undefined): user is Express.User 
 const requireAccess = (
   req: Request,
   res: Response,
-  permissions: readonly string[]
+  permissions: string[]
 ): req is Request & { user: Express.User & AssetRequester } => {
   if (!getWikiAuth().checkAccess(req.user, permissions) || !isAssetRequester(req.user)) {
     res.status(403).json({ error: 'Forbidden' })
