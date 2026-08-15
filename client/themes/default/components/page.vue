@@ -290,6 +290,48 @@
                         hide-details
                         @update:model-value='savePageWatchSettings'
                       )
+                v-menu(v-if='isAuthenticated', offset-y, bottom, min-width='340', max-width='440')
+                  template(v-slot:activator='{ props: menuProps }')
+                    v-tooltip(bottom)
+                      template(v-slot:activator='{ props: tooltipProps }')
+                        v-badge(
+                          :content='approvalInbox.length'
+                          :model-value='approvalInbox.length > 0'
+                          color='primary'
+                        )
+                          v-btn(
+                            icon
+                            tile
+                            v-bind='{ ...menuProps, ...tooltipProps }'
+                            @click='loadApprovalInbox'
+                            aria-label='Approval inbox'
+                          )
+                            v-icon(color='grey') mdi-inbox-arrow-down
+                      span Approval inbox
+                  v-card
+                    v-card-title.text-subtitle-1 Approval inbox
+                    v-divider
+                    v-list(v-if='approvalInbox.length > 0', lines='three', density='compact')
+                      v-list-item(
+                        v-for='approval in approvalInbox'
+                        :key='approval.id'
+                        @click='openApprovalInboxItem(approval)'
+                      )
+                        v-list-item-title {{ approval.title }}
+                        v-list-item-subtitle {{ approvalStatusLabel(approval.status) }} · Revision {{ approval.revisionId }}
+                        v-list-item-subtitle(v-if='approval.stale') Submitted revision is stale
+                    v-card-text.text-medium-emphasis(v-else) No active approval requests.
+                v-tooltip(bottom, v-if='isAuthenticated && (hasWritePagesPermission || hasManagePagesPermission || hasAdminPermission)')
+                  template(v-slot:activator='{ props }')
+                    v-btn(
+                      icon
+                      tile
+                      v-bind='props'
+                      @click='openApprovalWorkflow'
+                      aria-label='Approval workflow'
+                    )
+                      v-icon(:color='pageApproval ? `primary` : `grey`') mdi-check-decagram-outline
+                  span Approval workflow
                 v-tooltip(bottom)
                   template(v-slot:activator='{ props }')
                     v-btn(icon, tile, v-bind='props', @click='print', :aria-label='$t(`common:page.printFormat`)')
@@ -414,6 +456,111 @@
     nav-footer
     notify
     search-results
+    v-dialog(
+      v-model='approvalDialog'
+      :fullscreen='$vuetify.display.smAndDown'
+      max-width='680'
+      scrollable
+    )
+      v-card
+        v-toolbar(color='primary', dark, flat)
+          v-toolbar-title Approval workflow
+          v-spacer
+          v-btn(icon, @click='approvalDialog = false', aria-label='Close approval workflow')
+            v-icon mdi-close
+        v-progress-linear(v-if='approvalLoading', indeterminate, color='primary')
+        v-card-text.pa-5
+          template(v-if='pageApproval')
+            .d-flex.align-center.flex-wrap.ga-2.mb-4
+              v-chip(color='primary', variant='tonal') {{ approvalStatusLabel(pageApproval.status) }}
+              v-chip(v-if='pageApproval.stale', color='warning', variant='tonal') Stale revision
+              span.text-medium-emphasis Revision {{ pageApproval.revisionId }}
+            v-alert.mb-4(
+              v-if='pageApproval.stale'
+              type='warning'
+              variant='tonal'
+            ) This page changed after submission. Request changes and resubmit before approval.
+            v-text-field(
+              v-if='pageApproval.canReview'
+              v-model.number='approvalAssigneeId'
+              type='number'
+              min='1'
+              label='Reviewer user ID'
+              hint='Leave unchanged to keep the current reviewer.'
+              persistent-hint
+            )
+            v-textarea(
+              v-model='approvalComment'
+              label='Review comment'
+              rows='3'
+              auto-grow
+              hint='Required when requesting changes or rejecting.'
+              persistent-hint
+            )
+            v-card.mt-5(variant='outlined')
+              v-card-title.text-subtitle-1 Review history
+              v-list(lines='two', density='compact')
+                v-list-item(v-for='transition in pageApproval.transitions', :key='transition.id')
+                  v-list-item-title {{ approvalStatusLabel(transition.toStatus) }}
+                  v-list-item-subtitle Reviewer {{ transition.actorId }} · {{ new Date(transition.createdAt).toLocaleString() }}
+                  v-list-item-subtitle(v-if='transition.comment') {{ transition.comment }}
+          template(v-else)
+            p.text-body-1.mb-4 Submit the current page revision for review. Later edits make the submission stale and cannot be published without resubmission.
+            v-text-field(
+              v-model.number='approvalAssigneeId'
+              type='number'
+              min='1'
+              label='Reviewer user ID (optional)'
+            )
+            v-textarea(v-model='approvalComment', label='Submission note', rows='3', auto-grow)
+        v-divider
+        v-card-actions.flex-wrap.pa-4
+          v-btn(
+            v-if='hasWritePagesPermission && (!pageApproval || [`rejected`, `cancelled`, `published`].includes(pageApproval.status))'
+            color='primary'
+            :loading='approvalLoading'
+            @click='submitPageApproval'
+          ) {{ pageApproval ? 'Submit new revision' : 'Submit for approval' }}
+          template(v-if='pageApproval')
+            v-btn(
+              v-if='pageApproval.status === `submitted` && pageApproval.canReview'
+              color='success'
+              :disabled='pageApproval.stale'
+              @click='transitionPageApproval(`approve`)'
+            ) Approve
+            v-btn(
+              v-if='pageApproval.status === `submitted` && pageApproval.canReview'
+              color='warning'
+              @click='transitionPageApproval(`request-changes`)'
+            ) Request changes
+            v-btn(
+              v-if='pageApproval.status === `submitted` && pageApproval.canReview'
+              color='error'
+              @click='transitionPageApproval(`reject`)'
+            ) Reject
+            v-btn(
+              v-if='pageApproval.status === `changes-requested` && pageApproval.canSubmitter'
+              color='primary'
+              @click='transitionPageApproval(`resubmit`)'
+            ) Resubmit
+            v-btn(
+              v-if='pageApproval.status === `approved` && pageApproval.canReview'
+              color='success'
+              :disabled='pageApproval.stale'
+              @click='transitionPageApproval(`publish`)'
+            ) Publish approved revision
+            v-btn(
+              v-if='pageApproval.canReview && [`submitted`, `approved`, `changes-requested`].includes(pageApproval.status)'
+              @click='transitionPageApproval(`reassign`)'
+            ) Reassign
+            v-btn(
+              v-if='pageApproval.canSubmitter && [`submitted`, `approved`, `changes-requested`].includes(pageApproval.status)'
+              color='error'
+              variant='text'
+              @click='transitionPageApproval(`cancel`)'
+            ) Cancel request
+          v-spacer
+          v-btn(@click='approvalDialog = false') Close
     v-fab-transition
       v-btn.page-return-top(
         v-if='upBtnShown'
@@ -482,6 +629,32 @@ type PageWatchNotification = {
   visibility: 'public' | 'private'
   createdAt: string | number
   readAt: string | null
+}
+
+type ApprovalTransition = {
+  id: string
+  fromStatus: string | null
+  toStatus: string
+  actorId: number
+  comment: string | null
+  createdAt: string | number
+}
+
+type PageApproval = {
+  id: string
+  pageId: number
+  status: 'submitted' | 'approved' | 'changes-requested' | 'rejected' | 'cancelled' | 'published'
+  submitterId: number
+  assigneeId: number | null
+  revisionId: number
+  stale: boolean
+  canReview: boolean
+  canSubmitter: boolean
+  transitions: ApprovalTransition[]
+  title?: string
+  path?: string
+  localeCode?: string
+  visibility?: 'public' | 'private'
 }
 
 Prism.plugins.toolbar.registerButton('copy-to-clipboard', (env: PrismEnvironment) => {
@@ -619,6 +792,12 @@ export default defineComponent({
       pageWatchInAppEnabled: true,
       pageWatchNotifications: [] as PageWatchNotification[],
       pageWatchUnreadCount: 0,
+      approvalDialog: false,
+      approvalLoading: false,
+      pageApproval: null as PageApproval | null,
+      approvalInbox: [] as PageApproval[],
+      approvalComment: '',
+      approvalAssigneeId: null as number | null,
       pageEditFab: false,
       scrollOpts: {
         duration: 1500,
@@ -763,6 +942,8 @@ export default defineComponent({
     if (this.isAuthenticated) {
       void this.loadPageWatchState()
       void this.loadPageWatchNotifications()
+      void this.loadPageApproval()
+      void this.loadApprovalInbox()
     }
 
     // -> Check side navigation visibility
@@ -813,6 +994,95 @@ export default defineComponent({
     })
   },
   methods: {
+    approvalStatusLabel (status: string) {
+      return status.replaceAll('-', ' ').replace(/\b\w/g, value => value.toUpperCase())
+    },
+    async approvalResponseError (response: Response, fallback: string): Promise<Error> {
+      const payload = await response.json().catch(() => ({})) as { error?: unknown }
+      return new Error(typeof payload.error === 'string' ? payload.error : `${fallback} (${response.status})`)
+    },
+    async loadPageApproval () {
+      try {
+        const response = await fetch(`/_api/pages/${this.pageId}/approval`, {
+          credentials: 'same-origin',
+          headers: { Accept: 'application/json' }
+        })
+        if (!response.ok) throw await this.approvalResponseError(response, 'Page approval request failed')
+        const payload = await response.json() as { approval?: unknown }
+        this.pageApproval = payload.approval && typeof payload.approval === 'object' ? payload.approval as PageApproval : null
+        this.approvalAssigneeId = this.pageApproval?.assigneeId ?? null
+      } catch (error) {
+        pushGraphError(wikiStore, error)
+      }
+    },
+    async loadApprovalInbox () {
+      try {
+        const response = await fetch('/_api/pages/approvals/inbox', {
+          credentials: 'same-origin',
+          headers: { Accept: 'application/json' }
+        })
+        if (!response.ok) throw await this.approvalResponseError(response, 'Approval inbox request failed')
+        const payload = await response.json() as { items?: unknown }
+        this.approvalInbox = Array.isArray(payload.items) ? payload.items as PageApproval[] : []
+      } catch (error) {
+        pushGraphError(wikiStore, error)
+      }
+    },
+    openApprovalWorkflow () {
+      this.approvalComment = ''
+      this.approvalDialog = true
+      void this.loadPageApproval()
+    },
+    openApprovalInboxItem (approval: PageApproval) {
+      const scope = approval.visibility === 'private' ? '/_private' : ''
+      window.location.assign(`${scope}/${approval.localeCode}/${approval.path}`)
+    },
+    async submitPageApproval () {
+      this.approvalLoading = true
+      try {
+        const response = await fetch(`/_api/pages/${this.pageId}/approval`, {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            ...(this.approvalAssigneeId && this.approvalAssigneeId > 0 ? { assigneeId: this.approvalAssigneeId } : {}),
+            ...(this.approvalComment.trim() ? { comment: this.approvalComment.trim() } : {})
+          })
+        })
+        if (!response.ok) throw await this.approvalResponseError(response, 'Approval submission failed')
+        this.approvalComment = ''
+        await Promise.all([this.loadPageApproval(), this.loadApprovalInbox()])
+        showNotification(wikiStore, { style: 'success', message: 'Page submitted for approval.' })
+      } catch (error) {
+        pushGraphError(wikiStore, error)
+      } finally {
+        this.approvalLoading = false
+      }
+    },
+    async transitionPageApproval (action: 'approve' | 'request-changes' | 'reject' | 'cancel' | 'resubmit' | 'publish' | 'reassign') {
+      if (!this.pageApproval) return
+      this.approvalLoading = true
+      try {
+        const response = await fetch(`/_api/pages/approvals/${encodeURIComponent(this.pageApproval.id)}/transition`, {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action,
+            ...(this.approvalComment.trim() ? { comment: this.approvalComment.trim() } : {}),
+            ...(action === 'reassign' && this.approvalAssigneeId && this.approvalAssigneeId > 0 ? { assigneeId: this.approvalAssigneeId } : {})
+          })
+        })
+        if (!response.ok) throw await this.approvalResponseError(response, 'Approval transition failed')
+        this.approvalComment = ''
+        await Promise.all([this.loadPageApproval(), this.loadApprovalInbox()])
+        showNotification(wikiStore, { style: 'success', message: `Approval ${this.approvalStatusLabel(action)} completed.` })
+      } catch (error) {
+        pushGraphError(wikiStore, error)
+      } finally {
+        this.approvalLoading = false
+      }
+    },
     async loadPageWatchState () {
       this.pageWatchLoading = true
       try {

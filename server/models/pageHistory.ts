@@ -157,7 +157,7 @@ static override get tableName() { return 'pageHistory' } static override get jso
  * Create Page Version
  */
 static async addVersion(opts: PageVersionOptions) {
-  await wiki.models.pageHistory.query(opts.transaction).insert({
+  return wiki.models.pageHistory.query(opts.transaction).insert({
     pageId: opts.id,
     authorId: opts.authorId,
     content: opts.content,

@@ -10,6 +10,12 @@ import {
   unwatchPage,
   watchPage
 } from '../../operations/page-watching.ts'
+import {
+  getPageApproval,
+  listApprovalInbox,
+  submitPageApproval,
+  transitionApproval
+} from '../../operations/approvals.ts'
 
 const router = express.Router()
 
@@ -382,6 +388,57 @@ router.patch('/:id/owner', async (req, res) => {
     return res.json({ page })
   } catch (err) {
     sendOperationError(res, err, 'Page ownership transfer failed')
+  }
+})
+
+router.get('/approvals/inbox', async (req, res) => {
+  try {
+    res.json(await listApprovalInbox(req.user))
+  } catch (err) {
+    sendOperationError(res, err, 'Approval inbox fetch failed')
+  }
+})
+
+router.post('/approvals/:requestId/transition', async (req, res) => {
+  const action = _.get(req, 'body.action')
+  if (!['approve', 'request-changes', 'reject', 'cancel', 'resubmit', 'publish', 'reassign'].includes(action)) {
+    return res.status(400).json({ error: 'A valid approval action is required' })
+  }
+  try {
+    res.json(await transitionApproval({
+      requester: req.user,
+      requestId: String(req.params.requestId || ''),
+      action,
+      comment: typeof _.get(req, 'body.comment') === 'string' ? _.get(req, 'body.comment') : undefined,
+      assigneeId: _.get(req, 'body.assigneeId')
+    }))
+  } catch (err) {
+    sendOperationError(res, err, 'Approval transition failed')
+  }
+})
+
+router.get('/:id/approval', async (req, res) => {
+  const id = parsePositiveIntegerParam(req, res)
+  if (id === null) return
+  try {
+    res.json({ approval: await getPageApproval(req.user, id) })
+  } catch (err) {
+    sendOperationError(res, err, 'Page approval fetch failed')
+  }
+})
+
+router.post('/:id/approval', async (req, res) => {
+  const id = parsePositiveIntegerParam(req, res)
+  if (id === null) return
+  try {
+    res.status(201).json(await submitPageApproval({
+      requester: req.user,
+      pageId: id,
+      assigneeId: _.get(req, 'body.assigneeId'),
+      comment: typeof _.get(req, 'body.comment') === 'string' ? _.get(req, 'body.comment') : undefined
+    }))
+  } catch (err) {
+    sendOperationError(res, err, 'Page approval submission failed')
   }
 })
 

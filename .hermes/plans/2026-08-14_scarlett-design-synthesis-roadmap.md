@@ -450,6 +450,14 @@ Define role/rule eligibility, immutable review history, stale-revision handling,
 
 Exit gate: every transition is authorized, atomic, audited, recoverable, and accessible from desktop/mobile inbox views.
 
+Completion evidence (2026-08-15):
+
+- requests bind to immutable page-history revision IDs and the page update timestamp captured at submission or resubmission;
+- role/rule-aware reviewers, optional assignment, administrator override, reassignment, submitter cancellation, required decision comments, and immutable transition rows authorize and audit every state change;
+- stale submitted or approved revisions return a conflict and cannot be approved or published; publication changes the page and records its approval transition and page event in one transaction;
+- active participant/reviewer inbox queries and a responsive page dialog expose submission, decisions, comments, history, reassignment, and terminal recovery on desktop and mobile;
+- focused SQLite contracts cover every transition family, assignment boundaries, stale revisions, exact publication, outbox events, search refresh, and migration integrity; browser smoke completed submit, approve, publish, inbox cleanup, and full-screen mobile rendering.
+
 #### 3C. Password-protected pages
 
 Design password protection as an access layer for otherwise discoverable pages, separate from owner-private visibility.
@@ -739,3 +747,4 @@ When this roadmap changes, append an entry here.
 | 2026-08-14 | `c182d2c9` | `f474de3b` | Established fork-native synthesis architecture, dispositions, dependency-ordered waves, and Wiki.ts 1.0 completion gates |
 | 2026-08-14T23:59:10Z | `c182d2c9` (`feat: block-gallery`) | `f474de3b` | Re-fetched `requarks/wiki:scarlett`; no commits existed beyond the recorded tip, so the gallery candidate and all latest upstream work were already included |
 | 2026-08-15 | `14e1efae` page-watching WIP | `f474de3b` plus Waves 1–2 | Completed Wave 3A natively with transactional page events, aggregated durable delivery, permission-aware cleanup, independent email/in-app channels, and responsive page controls |
+| 2026-08-15 | `957efebe` / `c36eab67` approval WIP | `e4c8d246` | Completed Wave 3B as a fork-native revision-bound approval state machine with immutable audit history, authorization, stale-revision protection, transactional publication, and responsive inbox/workflow UI |
