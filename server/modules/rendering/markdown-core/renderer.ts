@@ -8,6 +8,7 @@ import {
   installContentExtensionFenceRule,
   prepareContentExtensionFences
 } from '../../../content-extensions/renderer.ts'
+import { installAdmonitionRule } from './admonitions.ts'
 
 interface MarkdownRendererConfig extends UnknownRecord {
   allowHTML: boolean
@@ -125,6 +126,8 @@ const plugin = {
       }
       await rendererModule.default.init(mkdown, child.config)
     }
+
+    installAdmonitionRule(mkdown)
 
     const contentExtensionFences = await prepareContentExtensionFences(mkdown.parse(this.input, {}))
     installContentExtensionFenceRule(mkdown, contentExtensionFences)

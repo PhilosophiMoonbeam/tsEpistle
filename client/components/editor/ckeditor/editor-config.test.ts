@@ -6,6 +6,12 @@ import {
   getVisualEditorDefinition,
   serializeVisualEditorData
 } from './editor-config.ts'
+import {
+  VISUAL_MARKDOWN_GLYPHS,
+  insertVisualMarkdownAdmonition,
+  insertVisualMarkdownGlyph,
+  serializeVisualMarkdownAdmonition
+} from './visual-markdown-authoring.ts'
 
 const visualSafeGfm = `# Visual-safe GFM
 ## Heading 2
@@ -136,6 +142,65 @@ describe('CKEditor visual formats', () => {
     expect(rendered).toContain('<td>Alpha</td>')
     expect(rendered).toContain('<img src="/assets/example.png" alt="Alternative text">')
     expect(rendered).toContain('<hr>')
+  })
+
+  it('edits table rows and columns without exposing unsupported merge semantics', async () => {
+    const element = document.createElement('div')
+    document.body.appendChild(element)
+    const editor = await DecoupledEditor.create(element, createVisualEditorConfig('markdown', 'en', () => {}))
+    editors.push(editor)
+
+    editor.execute('insertTable', { rows: 2, columns: 2 })
+    editor.execute('insertTableRowBelow')
+    editor.execute('insertTableColumnRight')
+    let rows = editor.getData().trim().split('\n')
+    expect(rows).toHaveLength(5)
+    expect(rows.every(row => row.split('|').length === 5)).toBe(true)
+
+    editor.execute('removeTableRow')
+    editor.execute('removeTableColumn')
+    rows = editor.getData().trim().split('\n')
+    expect(rows).toHaveLength(4)
+    expect(createVisualEditorConfig('markdown', 'en', () => {}).table?.contentToolbar).not.toContain('mergeTableCells')
+  })
+
+  it('inserts and reopens a canonical titled admonition and local glyph', async () => {
+    const canonical = serializeVisualMarkdownAdmonition({
+      kind: 'WARNING',
+      title: 'Deployment window',
+      body: 'Restart one node at a time.'
+    })
+    expect(canonical).toBe('> **WARNING: Deployment window**\n>\n> Restart one node at a time.\n')
+    const element = document.createElement('div')
+    document.body.appendChild(element)
+    const editor = await DecoupledEditor.create(element, createVisualEditorConfig('markdown', 'en', () => {}))
+    editors.push(editor)
+
+    insertVisualMarkdownAdmonition(editor, {
+      kind: 'WARNING',
+      title: 'Deployment window',
+      body: 'Restart one node at a time.'
+    })
+    editor.model.change(writer => {
+      writer.setSelection(editor.model.document.getRoot(), 'end')
+    })
+    insertVisualMarkdownGlyph(editor, VISUAL_MARKDOWN_GLYPHS.find(glyph => glyph.label === 'Rocket')!)
+    const output = editor.getData()
+    expect(output).toContain('> **WARNING: Deployment window**')
+    expect(output).toContain('> Restart one node at a time.🚀')
+
+    const reopenedElement = document.createElement('div')
+    document.body.appendChild(reopenedElement)
+    const reopened = await DecoupledEditor.create(reopenedElement, createVisualEditorConfig('markdown', 'en', () => {}))
+    editors.push(reopened)
+    reopened.setData(output)
+    expect(reopened.getData()).toBe(output)
+
+    const rendered = await renderServerMarkdown(output)
+    expect(rendered).toContain('class="admonition is-warning"')
+    expect(rendered).toContain('class="admonition__title"')
+    expect(rendered).toContain('Deployment window')
+    expect(rendered).not.toContain('WARNING:')
   })
 
   it('preserves a canonical wiki-extension fence through insertion and reopen', async () => {

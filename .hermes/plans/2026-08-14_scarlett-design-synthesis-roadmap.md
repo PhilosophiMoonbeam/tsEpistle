@@ -517,6 +517,22 @@ Ordered additions:
 
 No toolbar button lands before its parse/edit/serialize/render/history cycle is tested.
 
+Decisions (2026-08-15):
+
+- keep CKEditor’s built-in table model limited to rectangular GFM tables: expose row/column operations, omit merge and split commands, and prove Markdown round-trips after structural edits;
+- represent titled admonitions as blockquotes whose first paragraph is `**TYPE: title**`; accept `NOTE`, `TIP`, `IMPORTANT`, `WARNING`, and `CAUTION`, map them onto the existing callout classes, and remove only the structural marker before rendering;
+- ship a small local Unicode glyph palette instead of remote icon lookup or runtime dependencies;
+- inspect every Visual Markdown document before CKEditor starts; report every unsupported construct and open the existing source editor with the original bytes intact when any are present.
+
+Completion evidence (2026-08-15):
+
+- shared capability inspection and source-fallback contracts cover all three existing unsupported constructs plus fenced-code suppression and multiple-issue reporting;
+- CKEditor contracts cover row and column editing, merge-command exclusion, titled-admonition insert/reopen/render, and local glyph insertion (25 focused assertions across the shared inspector, CKEditor, and page model);
+- server and client typechecks and targeted lint pass;
+- browser smoke inserted a titled admonition, a local rocket glyph, and a 2×2 editable table, saved them, and rendered the expected styled callout, local glyph image, and GFM table;
+- browser fallback smoke opened Markdown source without mutation for a page containing math and a footnote and displayed the first line-specific diagnostic plus the additional-issue count; the smoke page and credential were restored afterward.
+
+
 #### 4B. Extension SDK
 
 Deliver the extension contract, registry, schema validation, editor dialog host, server renderer host, sanitizer boundary, and compatibility/version diagnostics before the first rich block.

@@ -1,16 +1,47 @@
 <template lang='pug'>
   .editor-ckeditor
     div(ref='toolbarContainer')
-    v-btn.editor-ckeditor-extension-trigger(
-      v-if='format === `markdown`'
-      color='teal'
-      dark
-      tile
-      @click='toggleExtensionDialog'
-      aria-label='Insert content extension'
-    )
-      v-icon(left) mdi-qrcode
-      | Insert content extension
+    .editor-ckeditor-markdown-tools(v-if='format === `markdown`')
+      v-btn.editor-ckeditor-extension-trigger(
+        color='teal'
+        dark
+        tile
+        @click='toggleExtensionDialog'
+        aria-label='Insert content extension'
+      )
+        v-icon(left) mdi-qrcode
+        | Insert content extension
+      v-btn(
+        color='blue-grey'
+        dark
+        tile
+        aria-label='Insert admonition'
+        @click='openAdmonitionDialog'
+      )
+        v-icon(left) mdi-alert-box-outline
+        | Insert admonition
+      v-menu(offset-y, :close-on-content-click='true')
+        template(v-slot:activator='{ props }')
+          v-btn(
+            v-bind='props'
+            color='blue-grey'
+            dark
+            tile
+            aria-label='Insert icon or emoji'
+          )
+            v-icon(left) mdi-emoticon-outline
+            | Icon or emoji
+        v-card.editor-ckeditor-glyph-menu
+          v-card-title Insert icon or emoji
+          v-card-text.d-flex.flex-wrap
+            v-btn.ma-1(
+              v-for='glyph in glyphs'
+              :key='`${glyph.category}:${glyph.label}`'
+              icon
+              :aria-label='`Insert ${glyph.label}`'
+              :title='glyph.label'
+              @click='insertGlyph(glyph)'
+            ) {{glyph.value}}
     div.contents(ref='editor')
     v-system-bar.editor-status-bar.editor-ckeditor-sysbar(absolute, dark, status, color='grey darken-3')
       .caption.editor-ckeditor-sysbar-locale {{locale.toUpperCase()}}
@@ -22,6 +53,35 @@
         .caption {{$t('editor:ckeditor.stats', { chars: stats.characters, words: stats.words })}}
     editor-conflict(v-model='isConflict', v-if='isConflict')
     page-selector(mode='select', v-model='insertLinkDialog', :open-handler='insertLinkHandler', :path='path', :locale='locale')
+    v-dialog(v-model='admonitionDialog', max-width='620', persistent)
+      v-card
+        v-card-title Insert admonition
+        v-card-text
+          v-form(@submit.prevent='insertAdmonition')
+            v-select(
+              v-model='admonitionKind'
+              :items='admonitionKinds'
+              label='Type'
+            )
+            v-text-field.mt-3(
+              v-model='admonitionTitle'
+              label='Title'
+              counter='120'
+              required
+            )
+            v-textarea.mt-3(
+              v-model='admonitionBody'
+              label='Content'
+              rows='5'
+              auto-grow
+              counter='5000'
+              required
+            )
+            v-alert.mt-3(v-if='admonitionError', type='error', variant='tonal') {{admonitionError}}
+        v-card-actions
+          v-spacer
+          v-btn(text, @click='admonitionDialog = false') Cancel
+          v-btn(color='teal', dark, :disabled='!isAdmonitionValid', @click='insertAdmonition') Insert
 </template>
 
 <script lang='ts'>
@@ -30,7 +90,7 @@ import { defineComponent, markRaw, type PropType } from 'vue'
 import { DecoupledEditor } from 'ckeditor5'
 import 'ckeditor5/ckeditor5.css'
 import { wikiStore } from '@/store/index.ts'
-import { findVisualMarkdownIssue } from '../../../../shared/visual-markdown.ts'
+import { inspectVisualMarkdownCapabilities } from '../../../../shared/visual-markdown.ts'
 import EditorConflict from './conflict.vue'
 import {
   createVisualEditorConfig,
@@ -43,6 +103,14 @@ import { onEditorSaveConflict, onEditorContentOverwrite, offEditorSaveConflict, 
 import { onEditorInsert, offEditorInsert, type EditorInsertPayload } from '../../../helpers/editor-insert-events'
 import { onEditorLinkToPage, offEditorLinkToPage } from '../../../helpers/editor-link-events'
 import { contentExtensionFenceBody } from '../../../helpers/content-extension-insertion'
+import {
+  ADMONITION_KINDS,
+  VISUAL_MARKDOWN_GLYPHS,
+  insertVisualMarkdownAdmonition,
+  insertVisualMarkdownGlyph,
+  type AdmonitionKind,
+  type VisualMarkdownGlyph
+} from './visual-markdown-authoring.ts'
 
 /* global siteLangs */
 
@@ -83,7 +151,14 @@ export default defineComponent({
         words: 0
       } as VisualEditorStats,
       isConflict: false,
-      insertLinkDialog: false
+      insertLinkDialog: false,
+      admonitionDialog: false,
+      admonitionKind: 'NOTE' as AdmonitionKind,
+      admonitionTitle: '',
+      admonitionBody: '',
+      admonitionError: '',
+      admonitionKinds: ADMONITION_KINDS,
+      glyphs: VISUAL_MARKDOWN_GLYPHS
     }
   },
   computed: {
@@ -106,9 +181,48 @@ export default defineComponent({
       set(value: string) {
         wikiStore.editor.activeModal = value
       }
+    },
+    isAdmonitionValid(): boolean {
+      const titleLength = this.admonitionTitle.trim().length
+      const bodyLength = this.admonitionBody.trim().length
+      return titleLength >= 1 && titleLength <= 120 && bodyLength >= 1 && bodyLength <= 5000
     }
   },
   methods: {
+    openAdmonitionDialog () {
+      this.admonitionError = ''
+      this.admonitionDialog = true
+    },
+    insertAdmonition () {
+      const editor = this.editor as unknown as DecoupledEditor | null
+      if (!editor || !this.isAdmonitionValid) return
+      this.admonitionError = ''
+      try {
+        insertVisualMarkdownAdmonition(editor, {
+          kind: this.admonitionKind,
+          title: this.admonitionTitle,
+          body: this.admonitionBody
+        })
+        this.admonitionDialog = false
+        this.admonitionTitle = ''
+        this.admonitionBody = ''
+      } catch (err) {
+        this.admonitionError = err instanceof Error ? err.message : 'The admonition could not be inserted.'
+      }
+    },
+    insertGlyph (glyph: VisualMarkdownGlyph) {
+      const editor = this.editor as unknown as DecoupledEditor | null
+      if (!editor) return
+      try {
+        insertVisualMarkdownGlyph(editor, glyph)
+      } catch (err) {
+        wikiStore.showNotification({
+          message: err instanceof Error ? err.message : 'The icon or emoji could not be inserted.',
+          style: 'warning',
+          icon: 'warning'
+        })
+      }
+    },
     toggleExtensionDialog () {
       this.activeModal = this.activeModal === 'editorModalBlocks' ? '' : 'editorModalBlocks'
     },
@@ -188,10 +302,12 @@ export default defineComponent({
   },
   async mounted () {
     if (this.format === 'markdown') {
-      const issue = findVisualMarkdownIssue(wikiStore.editor.content)
-      if (issue) {
+      const report = inspectVisualMarkdownCapabilities(wikiStore.editor.content)
+      if (!report.compatible) {
+        const issue = report.issues[0]!
+        const additional = report.issues.length > 1 ? ` ${report.issues.length - 1} additional unsupported construct(s) were found.` : ''
         wikiStore.showNotification({
-          message: `${issue.message} Found on line ${issue.line}. Opened the Markdown source editor instead.`,
+          message: `${issue.message} Found on line ${issue.line}.${additional} Opened the Markdown source editor to preserve the original source.`,
           style: 'warning',
           icon: 'warning'
         })
@@ -294,6 +410,18 @@ $editor-height-mobile: calc(100vh - 56px - 16px);
   }
   &-extension-trigger {
     flex: 0 0 auto;
+  }
+
+  &-markdown-tools {
+    display: flex;
+    flex: 0 0 auto;
+    flex-wrap: wrap;
+    gap: 1px;
+    background: mc('blue-grey', '900');
+
+    .v-btn {
+      flex: 1 1 12rem;
+    }
   }
 
   .contents {

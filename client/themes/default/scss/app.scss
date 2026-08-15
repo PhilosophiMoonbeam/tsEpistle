@@ -266,6 +266,11 @@
       content: "\F0757";
     }
 
+    > .admonition__title {
+      padding-top: 1rem;
+      font-weight: 700;
+    }
+
     > p:first-child .emoji {
       margin-right: .5rem;
     }

@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { assertVisualMarkdownCompatible, findVisualMarkdownIssue } from './visual-markdown.ts'
+import {
+  assertVisualMarkdownCompatible,
+  findVisualMarkdownIssue,
+  findVisualMarkdownIssues,
+  inspectVisualMarkdownCapabilities
+} from './visual-markdown.ts'
 
 const visualSafeGfm = `# Visual-safe GFM
 
@@ -52,6 +57,18 @@ describe('Visual Markdown compatibility', () => {
     expect(findVisualMarkdownIssue(markdown)).toMatchObject({ kind })
     expect(() => assertVisualMarkdownCompatible(markdown)).toThrow(/Markdown source editor/)
     expect(markdown).toBe(original)
+  })
+
+  it('reports every unsupported capability while preserving source fallback', () => {
+    const markdown = 'Inline $x$ math.\n\nFootnote[^1].\n\n```mermaid\ngraph TD\n```'
+    const report = inspectVisualMarkdownCapabilities(markdown)
+
+    expect(findVisualMarkdownIssues(markdown).map(issue => issue.kind)).toEqual(['math', 'footnote', 'diagram'])
+    expect(report).toMatchObject({
+      compatible: false,
+      sourceEditorRequired: true
+    })
+    expect(report.issues).toHaveLength(3)
   })
 
   it('does not inspect extended syntax inside fenced or inline code', () => {

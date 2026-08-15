@@ -110,7 +110,8 @@ function stripInlineCode (line: string): string {
   return result
 }
 
-export function findVisualMarkdownIssue (markdown: string): VisualMarkdownIssue | null {
+export function findVisualMarkdownIssues (markdown: string): VisualMarkdownIssue[] {
+  const issues: VisualMarkdownIssue[] = []
   const lines = markdown.split(/\r?\n/)
   let fence: { marker: '`' | '~', length: number } | null = null
 
@@ -129,11 +130,11 @@ export function findVisualMarkdownIssue (markdown: string): VisualMarkdownIssue 
     if (fenceMatch) {
       const language = (fenceMatch[2] ?? '').toLowerCase()
       if (unsupportedFenceLanguages[language]) {
-        return {
+        issues.push({
           kind: 'diagram',
           line: index + 1,
           message: `${language || 'Diagram'} code blocks are not supported by Visual Markdown.`
-        }
+        })
       }
       fence = {
         marker: fenceToken.charAt(0) as '`' | '~',
@@ -146,16 +147,35 @@ export function findVisualMarkdownIssue (markdown: string): VisualMarkdownIssue 
     for (const check of lineChecks) {
       check.pattern.lastIndex = 0
       if (check.pattern.test(checkableLine)) {
-        return {
+        issues.push({
           kind: check.kind,
           line: index + 1,
           message: check.message
-        }
+        })
       }
     }
   }
 
-  return null
+  return issues
+}
+
+export function findVisualMarkdownIssue (markdown: string): VisualMarkdownIssue | null {
+  return findVisualMarkdownIssues(markdown)[0] ?? null
+}
+
+export interface VisualMarkdownCapabilityReport {
+  compatible: boolean
+  issues: VisualMarkdownIssue[]
+  sourceEditorRequired: boolean
+}
+
+export function inspectVisualMarkdownCapabilities (markdown: string): VisualMarkdownCapabilityReport {
+  const issues = findVisualMarkdownIssues(markdown)
+  return {
+    compatible: issues.length === 0,
+    issues,
+    sourceEditorRequired: issues.length > 0
+  }
 }
 
 export function assertVisualMarkdownCompatible (markdown: string): void {
