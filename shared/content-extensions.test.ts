@@ -3,7 +3,9 @@ import * as contentExtensions from './content-extensions.ts'
 import {
   BUILTIN_CONTENT_EXTENSIONS,
   CONTENT_EXTENSION_HOST_VERSION,
+  KROKI_DIAGRAM_TYPES,
   contentExtensionCompatibility,
+  isContentExtensionKey,
   isSafeContentExtensionAssetPath,
   parseContentExtensionEnvelope,
   parseContentExtensionFence,
@@ -37,7 +39,9 @@ describe('content extension contract', () => {
     expect(Object.keys(contentExtensions).sort()).toEqual([
       'BUILTIN_CONTENT_EXTENSIONS',
       'CONTENT_EXTENSION_HOST_VERSION',
+      'KROKI_DIAGRAM_TYPES',
       'contentExtensionCompatibility',
+      'isContentExtensionKey',
       'isSafeContentExtensionAssetPath',
       'parseContentExtensionEnvelope',
       'parseContentExtensionFence',
@@ -47,12 +51,14 @@ describe('content extension contract', () => {
 
   it('declares the complete built-in extension catalog', () => {
     expect(CONTENT_EXTENSION_HOST_VERSION).toBe(1)
-    expect(BUILTIN_CONTENT_EXTENSIONS.map(extension => extension.key)).toEqual(['qr', 'gallery', 'index'])
-    expect(BUILTIN_CONTENT_EXTENSIONS).toEqual(expect.arrayContaining([
-      expect.objectContaining({ key: 'qr', version: 1, icon: 'mdi-qrcode' }),
-      expect.objectContaining({ key: 'gallery', version: 1, icon: 'mdi-view-gallery-outline' }),
-      expect.objectContaining({ key: 'index', version: 1, icon: 'mdi-format-list-bulleted-square' })
-    ]))
+    expect(BUILTIN_CONTENT_EXTENSIONS.map(extension => extension.key)).toEqual([
+      'qr', 'gallery', 'index', 'tabs', 'spoiler', 'infobox', 'pdf', 'media', 'youtube', 'diagram', 'kroki', 'plantuml', 'map'
+    ])
+    expect(new Set(BUILTIN_CONTENT_EXTENSIONS.map(extension => extension.icon)).size).toBeGreaterThan(8)
+    expect(BUILTIN_CONTENT_EXTENSIONS.every(extension => extension.version === 1)).toBe(true)
+    expect(isContentExtensionKey('plantuml')).toBe(true)
+    expect(isContentExtensionKey('future')).toBe(false)
+    expect(KROKI_DIAGRAM_TYPES).toContain('graphviz')
   })
 
   it('serializes in canonical property order and round trips the JSON fence body', () => {
@@ -168,8 +174,89 @@ describe('content extension contract', () => {
   })
 
   it.each([
+    {
+      key: 'tabs',
+      props: { tabs: [{ label: 'First', content: 'Alpha' }, { label: 'Second', content: 'Beta' }] },
+      expected: { active: 0 }
+    },
+    {
+      key: 'spoiler',
+      props: { content: 'Hidden' },
+      expected: { label: 'Spoiler', hint: 'Show hidden content' }
+    },
+    {
+      key: 'infobox',
+      props: { title: 'City', facts: [{ label: 'Metro', value: true }] },
+      expected: { facts: [{ label: 'Metro', value: true }] }
+    },
+    {
+      key: 'pdf',
+      props: { src: '/uploads/guide.pdf' },
+      expected: { title: 'PDF document', page: 1, height: 720 }
+    },
+    {
+      key: 'media',
+      props: { kind: 'video', src: '/uploads/demo.mp4' },
+      expected: { title: 'Video player' }
+    },
+    {
+      key: 'youtube',
+      props: { videoId: 'abc123_DEF' },
+      expected: { title: 'YouTube video', start: 0, controls: true }
+    },
+    {
+      key: 'diagram',
+      props: { source: 'flowchart LR\nA-->B' },
+      expected: { theme: 'auto', align: 'left' }
+    },
+    {
+      key: 'kroki',
+      props: { type: 'graphviz', source: 'digraph{a->b}' },
+      expected: { format: 'svg', align: 'left' }
+    },
+    {
+      key: 'plantuml',
+      props: { source: '@startuml\nA->B\n@enduml' },
+      expected: { format: 'svg', align: 'left' }
+    },
+    {
+      key: 'map',
+      props: { latitude: 45.5, longitude: -73.5 },
+      expected: { zoom: 13, height: 400 }
+    }
+  ])('normalizes and canonically round trips the $key extension', ({ key, props, expected }) => {
+    const envelope = parseContentExtensionEnvelope({ key, version: 1, props })
+    expect(envelope.props).toMatchObject(expected)
+    const canonical = serializeContentExtensionFence(envelope)
+    expect(parseContentExtensionFence(canonical.split('\n')[1]!)).toEqual(envelope)
+  })
+
+  it('enforces static, media, diagram, and map security boundaries', () => {
+    expect(() => parseContentExtensionEnvelope({
+      key: 'tabs',
+      version: 1,
+      props: { tabs: [{ label: 'Only', content: 'one' }] }
+    })).toThrow(/between 2 and 12/)
+    expect(() => parseContentExtensionEnvelope({
+      key: 'infobox',
+      version: 1,
+      props: { title: 'Unsafe', image: 'https://evil.test/a.jpg', imageAlt: 'A', facts: [{ label: 'A', value: 'B' }] }
+    })).toThrow(/same-origin/)
+    expect(() => parseContentExtensionEnvelope({ key: 'pdf', version: 1, props: { src: '/uploads/not-pdf.txt' } })).toThrow(/PDF asset/)
+    expect(() => parseContentExtensionEnvelope({ key: 'media', version: 1, props: { kind: 'audio', src: '/a.mp3', poster: '/poster.jpg' } })).toThrow(/only for video/)
+    expect(() => parseContentExtensionEnvelope({ key: 'youtube', version: 1, props: { videoId: 'javascript:alert(1)' } })).toThrow(/identifier characters/)
+    expect(() => parseContentExtensionEnvelope({ key: 'kroki', version: 1, props: { type: 'unknown', source: 'x' } })).toThrow(/supported Kroki/)
+    expect(() => parseContentExtensionEnvelope({
+      key: 'plantuml',
+      version: 1,
+      props: { source: 'x', server: 'https://evil.test' }
+    })).toThrow(/unknown property "server"/)
+    expect(() => parseContentExtensionEnvelope({ key: 'map', version: 1, props: { latitude: 91, longitude: 0 } })).toThrow(/-90 to 90/)
+  })
+
+  it.each([
     [{ key: 'qr', version: 2, props: { value: 'x' } }, /require version 1/],
-    [{ key: 'barcode', version: 1, props: { value: 'x' } }, /"qr", "gallery", or "index"/],
+    [{ key: 'barcode', version: 1, props: { value: 'x' } }, /must be one of/],
     [{ key: 'qr', version: 1, props: { value: 1 } }, /props.value/],
     [{ key: 'qr', version: 1, props: { value: 'x', label: 1 } }, /props.label/],
     [{ key: 'qr', version: 1 }, /props must be an object/],

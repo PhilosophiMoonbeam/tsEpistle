@@ -1,7 +1,7 @@
 import createKnex, { type Knex } from 'knex'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import { serializeContentExtensionFence } from '../../../shared/content-extensions.ts'
+import { parseContentExtensionEnvelope, serializeContentExtensionFence } from '../../../shared/content-extensions.ts'
 import markdownRenderer from '../../modules/rendering/markdown-core/renderer.ts'
 
 const baseConfig = {
@@ -35,10 +35,8 @@ describe('content extension Markdown rendering', () => {
       table.integer('version').notNullable()
     })
     await db('contentExtensions').insert([
-      { key: 'qr', isEnabled: true, version: 1 },
-      { key: 'gallery', isEnabled: true, version: 1 },
-      { key: 'index', isEnabled: true, version: 1 }
-    ])
+      'qr', 'gallery', 'index', 'tabs', 'spoiler', 'infobox', 'pdf', 'media', 'youtube', 'diagram', 'kroki', 'plantuml', 'map'
+    ].map(key => ({ key, isEnabled: true, version: 1 })))
     global.WIKI = { models: { knex: db } }
   })
 
@@ -144,6 +142,47 @@ describe('content extension Markdown rendering', () => {
     expect(rendered).toContain('data-index-empty-label="Nothing readable here."')
     expect(rendered).toContain('Loading page index…')
     expect(rendered).not.toContain('<a')
+  })
+
+  it('renders the remaining extensions as sanitized static, local, or consent-gated output', async () => {
+    const render = async (input: unknown): Promise<string> => renderMarkdown(
+      serializeContentExtensionFence(parseContentExtensionEnvelope(input))
+    )
+    const [tabs, spoiler, infobox, pdf, media, youtube, diagram, kroki, plantuml, map] = await Promise.all([
+      render({ key: 'tabs', version: 1, props: { tabs: [{ label: 'A', content: '<b>Alpha</b>' }, { label: 'B', content: 'Beta' }] } }),
+      render({ key: 'spoiler', version: 1, props: { content: '<img src=x onerror=alert(1)>' } }),
+      render({ key: 'infobox', version: 1, props: { title: 'City', facts: [{ label: 'Metro', value: true }] } }),
+      render({ key: 'pdf', version: 1, props: { src: '/uploads/guide.pdf', title: 'Guide' } }),
+      render({ key: 'media', version: 1, props: { kind: 'video', src: '/uploads/demo.mp4', poster: '/uploads/poster.jpg' } }),
+      render({ key: 'youtube', version: 1, props: { videoId: 'abc123_DEF', title: 'Demo' } }),
+      render({ key: 'diagram', version: 1, props: { source: 'flowchart LR\nA-->B', caption: 'Flow' } }),
+      render({ key: 'kroki', version: 1, props: { type: 'graphviz', source: 'digraph{a->b}' } }),
+      render({ key: 'plantuml', version: 1, props: { source: '@startuml\nA->B\n@enduml' } }),
+      render({ key: 'map', version: 1, props: { latitude: 45.5, longitude: -73.5, label: 'Montreal' } })
+    ])
+
+    expect(tabs).toContain('content-extension--tabs')
+    expect(tabs).toContain('&lt;b&gt;Alpha&lt;/b&gt;')
+    expect(tabs).toContain('role="tab"')
+    expect(spoiler).toContain('data-spoiler=""')
+    expect(spoiler).toContain('&lt;img src=x onerror=alert(1)&gt;')
+    expect(infobox).toContain('<aside class="content-extension content-extension--infobox"')
+    expect(infobox).toContain('<dt>Metro</dt><dd><span')
+    expect(pdf).toContain('data-pdf-src="/uploads/guide.pdf"')
+    expect(pdf).toContain('href="/uploads/guide.pdf"')
+    expect(media).toContain('src="/uploads/demo.mp4"')
+    expect(media).toContain('poster="/uploads/poster.jpg"')
+    expect(youtube).toContain('No request is made until you continue.')
+    expect(youtube).not.toContain('youtube-nocookie.com')
+    expect(diagram).toContain('<code>flowchart LR\nA--&gt;B</code>')
+    expect(kroki).toContain('data-kroki-type="graphviz"')
+    expect(plantuml).toContain('data-plantuml-format="svg"')
+    expect(map).toContain('data-map-latitude="45.5"')
+
+    for (const rendered of [tabs, spoiler, infobox, pdf, media, youtube, diagram, kroki, plantuml, map]) {
+      expect(rendered).not.toMatch(/<(?:script|iframe|object|style)\b/i)
+      expect(rendered).not.toMatch(/<[^>]+\son\w+=|<[^>]+\sstyle=/i)
+    }
   })
 
   it('keeps disabled, incompatible, and invalid extension source visibly escaped', async () => {

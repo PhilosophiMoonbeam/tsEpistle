@@ -39,10 +39,14 @@ describe('content extension operations', () => {
       table.text('render').notNullable()
     })
     await db('contentExtensions').insert([
-      { key: 'qr', isEnabled: true, version: 1, updatedAt: new Date(), updatedBy: null },
-      { key: 'gallery', isEnabled: false, version: 1, updatedAt: new Date(), updatedBy: null },
-      { key: 'index', isEnabled: false, version: 1, updatedAt: new Date(), updatedBy: null }
-    ])
+      'qr', 'gallery', 'index', 'tabs', 'spoiler', 'infobox', 'pdf', 'media', 'youtube', 'diagram', 'kroki', 'plantuml', 'map'
+    ].map(key => ({
+      key,
+      isEnabled: key === 'qr',
+      version: 1,
+      updatedAt: new Date(),
+      updatedBy: null
+    })))
     await db('pages').insert([
       { id: 1, hash: 'qr-hash', content: qrFence, render: '<svg>active QR</svg>' },
       { id: 2, hash: 'plain-hash', content: '```js\nconst wikiExtension = true\n```', render: '<pre>plain</pre>' }
@@ -95,7 +99,7 @@ describe('content extension operations', () => {
 
     const status = await listContentExtensions()
     expect(status.hostVersion).toBe(1)
-    expect(status.extensions).toHaveLength(3)
+    expect(status.extensions).toHaveLength(13)
     expect(status.extensions).toEqual(expect.arrayContaining([
       expect.objectContaining({
         key: 'qr',
@@ -104,7 +108,8 @@ describe('content extension operations', () => {
         diagnostic: 'Installed extension "qr" version 2 does not match renderer version 1.'
       }),
       expect.objectContaining({ key: 'gallery', isEnabled: false, compatible: true, diagnostic: null }),
-      expect.objectContaining({ key: 'index', isEnabled: false, compatible: true, diagnostic: null })
+      expect.objectContaining({ key: 'index', isEnabled: false, compatible: true, diagnostic: null }),
+      expect.objectContaining({ key: 'plantuml', isEnabled: false, compatible: true, diagnostic: null })
     ]))
   })
 })

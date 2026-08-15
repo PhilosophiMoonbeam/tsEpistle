@@ -1,4 +1,4 @@
-import type { ContentExtensionDefinition, ContentExtensionKey } from '../../shared/content-extensions.ts'
+import { isContentExtensionKey, type ContentExtensionDefinition, type ContentExtensionKey } from '../../shared/content-extensions.ts'
 
 type JsonHeaders = {
   get: (name: string) => string | null
@@ -35,7 +35,7 @@ function normalizeExtension (input: unknown, fallbackMessage: string): ContentEx
   const compatible = Reflect.get(input, 'compatible')
   const diagnostic = Reflect.get(input, 'diagnostic')
   if (
-    (key !== 'qr' && key !== 'gallery' && key !== 'index') ||
+    !isContentExtensionKey(key) ||
     !Number.isInteger(version) ||
     typeof title !== 'string' ||
     typeof description !== 'string' ||

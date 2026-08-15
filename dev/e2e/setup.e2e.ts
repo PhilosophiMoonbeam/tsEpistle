@@ -1,3 +1,4 @@
+import AxeBuilder from '@axe-core/playwright'
 import { expect, test } from '@playwright/test'
 import type { Page } from '@playwright/test'
 import tfa from 'node-2fa'
@@ -311,10 +312,11 @@ test.describe('critical post-install workflows', () => {
     await expect(editor).toContainText('Saved with the keyboard.')
   })
 
-  test('authors and hydrates gallery and policy-filtered index extensions', async ({ page }) => {
+  test('authors and hydrates the complete content extension catalog', async ({ page }) => {
     test.setTimeout(90_000)
     await authenticateAsAdmin(page)
-    const enableStatuses = await page.evaluate(async () => Promise.all(['gallery', 'index'].map(async key => {
+    const extensionKeys = ['qr', 'gallery', 'index', 'tabs', 'spoiler', 'infobox', 'pdf', 'media', 'youtube', 'diagram', 'kroki', 'plantuml', 'map']
+    const enableStatuses = await page.evaluate(async keys => Promise.all(keys.map(async key => {
       const response = await fetch(`/_api/content-extensions/${key}`, {
         method: 'PATCH',
         credentials: 'same-origin',
@@ -322,8 +324,8 @@ test.describe('critical post-install workflows', () => {
         body: JSON.stringify({ isEnabled: true })
       })
       return response.status
-    })))
-    expect(enableStatuses).toEqual([200, 200])
+    })), extensionKeys)
+    expect(enableStatuses).toEqual(extensionKeys.map(() => 200))
 
     await page.goto('/e/en/content-extensions-browser')
     await page.getByText('Markdown', { exact: true }).click()
@@ -335,6 +337,8 @@ test.describe('critical post-install workflows', () => {
     await expect(editor).toBeVisible()
     await page.getByRole('button', { name: 'Insert content extension' }).click()
     const extensionDialog = page.getByRole('dialog', { name: 'Insert content extension' })
+    await extensionDialog.locator('.v-select').first().click()
+    await page.getByRole('option', { name: 'Image gallery' }).click()
     await expect(extensionDialog).toBeVisible()
     const assetPaths = extensionDialog.getByRole('textbox', { name: 'Asset path' })
     const alternativeTexts = extensionDialog.getByRole('textbox', { name: 'Alternative text' })
@@ -352,12 +356,26 @@ test.describe('critical post-install workflows', () => {
 
     await expect.poll(() => getMarkdownSourceData(page)).toContain('"key":"gallery"')
     const galleryFence = await getMarkdownSourceData(page)
-    const indexFence = [
-      '```wiki-extension',
-      '{"key":"index","version":1,"props":{"path":"","locale":"en","depth":1,"columns":2,"showIcons":true,"order":"title","limit":20}}',
-      '```'
-    ].join('\n')
-    await editor.fill(`# Content extension workflow\n\n${galleryFence.trim()}\n\n${indexFence}\n`)
+    const additionalFences = [
+      { key: 'index', version: 1, props: { path: '', locale: 'en', depth: 1, columns: 2, showIcons: true, order: 'title', limit: 20 } },
+      { key: 'tabs', version: 1, props: { tabs: [{ label: 'Overview', content: 'First panel content.' }, { label: 'Details', content: 'Second panel content.' }], active: 0 } },
+      { key: 'spoiler', version: 1, props: { label: 'Reveal answer', hint: 'Show hidden content', content: 'The hidden answer is 42.' } },
+      { key: 'infobox', version: 1, props: { title: 'Smoke facts', caption: 'Structured facts', facts: [{ label: 'Status', value: 'Verified' }, { label: 'Safe', value: true }] } },
+      { key: 'pdf', version: 1, props: { src: '/document.pdf', title: 'Example PDF', page: 1, height: 360 } },
+      { key: 'media', version: 1, props: { kind: 'audio', src: '/audio.mp3', title: 'Example audio', caption: 'Native media controls' } },
+      { key: 'youtube', version: 1, props: { videoId: 'dQw4w9WgXcQ', title: 'Consent-gated video', start: 0, controls: true } },
+      { key: 'diagram', version: 1, props: { source: 'flowchart LR\n  A[Start] --> B[Verified]', caption: 'Local Mermaid', theme: 'default', align: 'center' } },
+      { key: 'kroki', version: 1, props: { type: 'plantuml', source: '@startuml\nAlice -> Bob: Hello\n@enduml', format: 'svg', caption: 'Consent-gated Kroki', align: 'left' } },
+      { key: 'plantuml', version: 1, props: { source: '@startuml\nAlice -> Bob: Hello\n@enduml', format: 'svg', caption: 'Consent-gated PlantUML', align: 'left' } },
+      { key: 'map', version: 1, props: { latitude: 40.7128, longitude: -74.006, zoom: 12, height: 320, label: 'New York City' } }
+    ].map(envelope => ['```wiki-extension', JSON.stringify(envelope), '```'].join('\n')).join('\n\n')
+    const remoteRequests: string[] = []
+    page.on('request', request => {
+      if (['www.youtube-nocookie.com', 'kroki.io', 'www.plantuml.com', 'www.openstreetmap.org'].includes(new URL(request.url()).hostname)) {
+        remoteRequests.push(request.url())
+      }
+    })
+    await editor.fill(`# Content extension workflow\n\n${galleryFence.trim()}\n\n${additionalFences}\n`)
     await page.getByRole('button', { name: 'Create' }).click()
 
     await expect(page).toHaveURL('/en/content-extensions-browser', { timeout: 30_000 })
@@ -369,14 +387,50 @@ test.describe('critical post-install workflows', () => {
     await expect(index).toHaveAttribute('aria-busy', 'false')
     await expect(index.getByRole('link', { name: /Home/ })).toBeVisible()
 
+    const tabs = page.locator('.content-extension--tabs')
+    await tabs.getByRole('tab', { name: 'Details' }).click()
+    await expect(tabs.getByRole('tabpanel')).toContainText('Second panel content.')
+    const spoiler = page.locator('.content-extension--spoiler')
+    await spoiler.getByRole('button', { name: /Reveal answer/ }).click()
+    await expect(spoiler).toContainText('The hidden answer is 42.')
+    await expect(page.locator('.content-extension--infobox')).toContainText('Smoke facts')
+    await expect(page.locator('.content-extension--pdf').getByRole('link', { name: /Example PDF/ })).toHaveAttribute('href', '/document.pdf')
+    await expect(page.locator('.content-extension--media audio')).toHaveAttribute('controls', '')
+    await expect(page.locator('.content-extension--diagram svg')).toBeVisible({ timeout: 30_000 })
+    expect(remoteRequests).toEqual([])
+
+    await page.route('https://www.youtube-nocookie.com/**', route => route.abort())
+    await page.route('https://kroki.io/**', route => route.abort())
+    await page.route('https://www.plantuml.com/**', route => route.abort())
+    await page.route('https://www.openstreetmap.org/**', route => route.abort())
+    const youtube = page.locator('.content-extension--youtube')
+    await youtube.getByRole('button', { name: 'Load YouTube player' }).click()
+    await expect(youtube.locator('iframe')).toHaveAttribute('src', /youtube-nocookie\.com/)
+    const kroki = page.locator('.content-extension--kroki')
+    await kroki.getByRole('button', { name: 'Render with Kroki' }).click()
+    await expect(kroki.locator('img')).toHaveAttribute('src', /kroki\.io/)
+    const plantuml = page.locator('.content-extension--plantuml')
+    await plantuml.getByRole('button', { name: 'Render with PlantUML' }).click()
+    await expect(plantuml.locator('img')).toHaveAttribute('src', /plantuml\.com/)
+    const map = page.locator('.content-extension--map')
+    await map.getByRole('button', { name: 'Load OpenStreetMap' }).click()
+    await expect(map.locator('iframe')).toHaveAttribute('src', /openstreetmap\.org/)
+    await expect(page.locator('.contents')).not.toHaveCSS('overflow-x', 'scroll')
+
     await gallery.getByRole('link', { name: 'View File icon full size' }).click()
     const galleryDialog = page.getByRole('dialog', { name: 'Image viewer' })
     await expect(galleryDialog).toBeVisible()
     await expect(galleryDialog.getByRole('img', { name: 'File icon' })).toBeVisible()
     await galleryDialog.getByRole('button', { name: 'Next image' }).click()
     await expect(galleryDialog.getByRole('img', { name: 'Table icon' })).toBeVisible()
+
     await galleryDialog.getByRole('button', { name: 'Close image viewer' }).click()
     await expect(gallery.getByRole('link', { name: 'View File icon full size' })).toBeFocused()
+    await page.setViewportSize({ width: 390, height: 844 })
+    await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'reduce', forcedColors: 'active' })
+    await expectNoHorizontalOverflow(page)
+    const accessibility = await new AxeBuilder({ page }).include('.contents').analyze()
+    expect(accessibility.violations.filter(violation => violation.impact === 'serious' || violation.impact === 'critical')).toEqual([])
   })
 
   test('retains the Visual HTML editor and HTML content type', async ({ page }) => {

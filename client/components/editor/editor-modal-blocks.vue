@@ -164,6 +164,152 @@ v-card.editor-modal-blocks.animated.fadeInLeft(flat, tile, role='dialog', aria-m
                     label='Empty-state label (optional)'
                     counter='200'
                   )
+                template(v-else-if='selectedKey === `tabs`')
+                  v-alert.mb-5(type='info', variant='tonal', density='compact')
+                    | Every panel keeps a readable no-script and print fallback. Panel content is preserved as plain text in canonical page source.
+                  v-card.mb-4(v-for='(panel, panelIndex) in tabs.panels', :key='panelIndex', variant='outlined')
+                    v-card-title.d-flex.align-center.text-subtitle-1
+                      span Panel {{panelIndex + 1}}
+                      v-spacer
+                      v-btn(
+                        icon
+                        size='small'
+                        :disabled='tabs.panels.length <= 2'
+                        :aria-label='`Remove panel ${panelIndex + 1}`'
+                        @click='removeTabPanel(panelIndex)'
+                      )
+                        v-icon mdi-delete-outline
+                    v-card-text
+                      v-text-field(v-model='panel.label', label='Tab label', counter='100', required)
+                      v-textarea.mt-4(v-model='panel.content', label='Panel content', rows='4', auto-grow, counter='20000', required)
+                  v-btn.mb-5(variant='outlined', :disabled='tabs.panels.length >= 12', @click='addTabPanel')
+                    v-icon(left) mdi-plus
+                    | Add panel
+                  v-select(
+                    v-model='tabs.active'
+                    :items='tabs.panels.map((panel, panelIndex) => ({ title: panel.label || `Panel ${panelIndex + 1}`, value: panelIndex }))'
+                    label='Initially selected panel'
+                  )
+                template(v-else-if='selectedKey === `spoiler`')
+                  v-alert.mb-5(type='info', variant='tonal', density='compact')
+                    | Hidden content remains readable without JavaScript and in print. The browser disclosure control is added only after hydration.
+                  v-text-field(v-model='spoiler.label', label='Cover label', counter='200')
+                  v-text-field.mt-4(v-model='spoiler.hint', label='Cover hint', counter='200')
+                  v-textarea.mt-4(v-model='spoiler.content', label='Hidden content', rows='6', auto-grow, counter='20000', required)
+                template(v-else-if='selectedKey === `infobox`')
+                  v-text-field(v-model='infobox.title', label='Title', counter='200', required)
+                  v-text-field.mt-4(
+                    v-model='infobox.image'
+                    label='Image asset path (optional)'
+                    placeholder='/uploads/example.jpg'
+                    hint='Same-origin asset paths only.'
+                    persistent-hint
+                  )
+                  v-text-field.mt-4(v-if='infobox.image', v-model='infobox.imageAlt', label='Image alternative text', counter='200', required)
+                  v-text-field.mt-4(v-if='infobox.image', v-model='infobox.caption', label='Image caption (optional)', counter='300')
+                  v-card.mt-4.mb-4(v-for='(fact, factIndex) in infobox.facts', :key='factIndex', variant='outlined')
+                    v-card-title.d-flex.align-center.text-subtitle-1
+                      span Fact {{factIndex + 1}}
+                      v-spacer
+                      v-btn(
+                        icon
+                        size='small'
+                        :disabled='infobox.facts.length === 1'
+                        :aria-label='`Remove fact ${factIndex + 1}`'
+                        @click='removeInfoboxFact(factIndex)'
+                      )
+                        v-icon mdi-delete-outline
+                    v-card-text
+                      v-text-field(v-model='fact.label', label='Label', counter='100', required)
+                      v-select.mt-4(v-model='fact.kind', :items='factKinds', label='Value type')
+                      v-textarea.mt-4(v-if='fact.kind === `text`', v-model='fact.value', label='Value', rows='2', auto-grow, counter='1000')
+                  v-btn.mb-5(variant='outlined', :disabled='infobox.facts.length >= 50', @click='addInfoboxFact')
+                    v-icon(left) mdi-plus
+                    | Add fact
+                template(v-else-if='selectedKey === `pdf`')
+                  v-alert.mb-5(type='info', variant='tonal', density='compact')
+                    | PDFs must be same-origin assets. Readers retain a normal open/download link when the embedded viewer is unavailable.
+                  v-text-field(v-model='pdf.src', label='PDF asset path', placeholder='/uploads/document.pdf', required)
+                  v-text-field.mt-4(v-model='pdf.title', label='Accessible title', counter='200')
+                  v-row.mt-2
+                    v-col(cols='12', sm='6')
+                      v-text-field(v-model.number='pdf.page', type='number', min='1', max='100000', label='Opening page')
+                    v-col(cols='12', sm='6')
+                      v-text-field(v-model.number='pdf.height', type='number', min='320', max='1600', label='Viewer height')
+                template(v-else-if='selectedKey === `media`')
+                  v-alert.mb-5(type='info', variant='tonal', density='compact')
+                    | Audio and video files must be same-origin assets and use native browser controls.
+                  v-select(v-model='media.kind', :items='mediaKinds', label='Media type')
+                  v-text-field.mt-4(v-model='media.src', label='Media asset path', placeholder='/uploads/media.mp4', required)
+                  v-text-field.mt-4(v-model='media.title', label='Accessible title', counter='200')
+                  v-text-field.mt-4(
+                    v-if='media.kind === `video`'
+                    v-model='media.poster'
+                    label='Poster asset path (optional)'
+                    placeholder='/uploads/poster.jpg'
+                  )
+                  v-text-field.mt-4(v-model='media.caption', label='Caption (optional)', counter='300')
+                template(v-else-if='selectedKey === `youtube`')
+                  v-alert.mb-5(type='info', variant='tonal', density='compact')
+                    | The privacy-enhanced player is not requested until the reader explicitly loads it. A normal YouTube link remains available.
+                  v-text-field(
+                    v-model='youtube.url'
+                    label='YouTube video URL or ID'
+                    hint='Watch, youtu.be, shorts, live, and embed URLs are accepted.'
+                    persistent-hint
+                    required
+                  )
+                  v-text-field.mt-4(v-model='youtube.title', label='Accessible title', counter='200')
+                  v-row.mt-2
+                    v-col(cols='12', sm='6')
+                      v-text-field(v-model.number='youtube.start', type='number', min='0', max='86400', label='Start time (seconds)')
+                    v-col.d-flex.align-center(cols='12', sm='6')
+                      v-switch(v-model='youtube.controls', label='Show player controls', hide-details)
+                template(v-else-if='selectedKey === `diagram`')
+                  v-alert.mb-5(type='info', variant='tonal', density='compact')
+                    | Mermaid renders locally with strict security and no remote network request. Unsupported or unsafe SVG falls back to visible source.
+                  v-textarea(v-model='diagram.source', label='Mermaid source', rows='8', auto-grow, counter='50000', required)
+                  v-text-field.mt-4(v-model='diagram.caption', label='Caption (optional)', counter='300')
+                  v-row.mt-2
+                    v-col(cols='12', sm='6')
+                      v-select(v-model='diagram.theme', :items='diagramThemes', label='Theme')
+                    v-col(cols='12', sm='6')
+                      v-select(v-model='diagram.align', :items='diagramAlignments', label='Alignment')
+                template(v-else-if='selectedKey === `kroki`')
+                  v-alert.mb-5(type='warning', variant='tonal', density='compact')
+                    | Diagram source is sent to kroki.io only after the reader explicitly chooses to render it.
+                  v-select(v-model='kroki.type', :items='krokiTypes', label='Diagram language')
+                  v-textarea.mt-4(v-model='kroki.source', label='Diagram source', rows='8', auto-grow, counter='50000', required)
+                  v-text-field.mt-4(v-model='kroki.caption', label='Caption (optional)', counter='300')
+                  v-row.mt-2
+                    v-col(cols='12', sm='6')
+                      v-select(v-model='kroki.format', :items='diagramFormats', label='Output format')
+                    v-col(cols='12', sm='6')
+                      v-select(v-model='kroki.align', :items='diagramAlignments', label='Alignment')
+                template(v-else-if='selectedKey === `plantuml`')
+                  v-alert.mb-5(type='warning', variant='tonal', density='compact')
+                    | Diagram source is sent to plantuml.com only after the reader explicitly chooses to render it.
+                  v-textarea(v-model='plantuml.source', label='PlantUML source', rows='8', auto-grow, counter='50000', required)
+                  v-text-field.mt-4(v-model='plantuml.caption', label='Caption (optional)', counter='300')
+                  v-row.mt-2
+                    v-col(cols='12', sm='6')
+                      v-select(v-model='plantuml.format', :items='diagramFormats', label='Output format')
+                    v-col(cols='12', sm='6')
+                      v-select(v-model='plantuml.align', :items='diagramAlignments', label='Alignment')
+                template(v-else-if='selectedKey === `map`')
+                  v-alert.mb-5(type='warning', variant='tonal', density='compact')
+                    | Map data loads from OpenStreetMap only after the reader explicitly continues. Coordinates are bounded and no arbitrary embed URL is accepted.
+                  v-row
+                    v-col(cols='12', sm='6')
+                      v-text-field(v-model.number='map.latitude', type='number', min='-90', max='90', step='any', label='Latitude', required)
+                    v-col(cols='12', sm='6')
+                      v-text-field(v-model.number='map.longitude', type='number', min='-180', max='180', step='any', label='Longitude', required)
+                  v-row
+                    v-col(cols='12', sm='6')
+                      v-text-field(v-model.number='map.zoom', type='number', min='1', max='19', label='Zoom')
+                    v-col(cols='12', sm='6')
+                      v-text-field(v-model.number='map.height', type='number', min='240', max='800', label='Map height')
+                  v-text-field(v-model='map.label', label='Location label (optional)', counter='200')
                 v-alert.mt-4(v-if='submitError', type='error', variant='tonal', density='compact') {{submitError}}
                 .d-flex.flex-wrap.justify-end.mt-6
                   v-btn.mr-3(text, @click='close') Cancel
@@ -178,6 +324,7 @@ import { wikiStore } from '@/store/index.ts'
 import { emitEditorInsert } from '../../helpers/editor-insert-events'
 import { fetchContentExtensions, type ContentExtensionStatus } from '../../helpers/content-extensions-api'
 import {
+  KROKI_DIAGRAM_TYPES,
   parseContentExtensionEnvelope,
   serializeContentExtensionFence,
   type ContentExtensionKey
@@ -185,7 +332,28 @@ import {
 
 type ErrorCorrection = 'L' | 'M' | 'Q' | 'H'
 type GalleryImageForm = { src: string, alt: string, caption: string }
+type TabPanelForm = { label: string, content: string }
+type FactKind = 'text' | 'yes' | 'no'
+type InfoboxFactForm = { label: string, value: string, kind: FactKind }
 
+const readYoutubeVideoId = (source: string): string | null => {
+  const value = source.trim()
+  if (/^[A-Za-z0-9_-]{6,64}$/.test(value)) return value
+  try {
+    const url = new URL(/^[a-z]+:\/\//i.test(value) ? value : `https://${value}`)
+    const host = url.hostname.toLowerCase().replace(/^(?:www|m)\./, '')
+    let id: string | null = null
+    if (host === 'youtu.be') id = url.pathname.slice(1).split('/')[0] ?? null
+    if (host === 'youtube.com' || host === 'youtube-nocookie.com') {
+      id = url.pathname === '/watch'
+        ? url.searchParams.get('v')
+        : /^\/(?:embed|shorts|live|v)\/([^/?#]+)/.exec(url.pathname)?.[1] ?? null
+    }
+    return id && /^[A-Za-z0-9_-]{6,64}$/.test(id) ? id : null
+  } catch {
+    return null
+  }
+}
 const defaultIndexPath = (): string => wikiStore.page.path.split('/').slice(0, -1).join('/')
 
 export default defineComponent({
@@ -218,6 +386,70 @@ export default defineComponent({
         limit: 50,
         emptyLabel: ''
       },
+      tabs: {
+        panels: [
+          { label: 'First tab', content: 'Content of the first tab.' },
+          { label: 'Second tab', content: 'Content of the second tab.' }
+        ] as TabPanelForm[],
+        active: 0
+      },
+      spoiler: {
+        label: 'Spoiler',
+        hint: 'Show hidden content',
+        content: ''
+      },
+      infobox: {
+        title: '',
+        image: '',
+        imageAlt: '',
+        caption: '',
+        facts: [{ label: '', value: '', kind: 'text' as FactKind }] as InfoboxFactForm[]
+      },
+      pdf: {
+        src: '',
+        title: 'PDF document',
+        page: 1,
+        height: 720
+      },
+      media: {
+        kind: 'video' as 'audio' | 'video',
+        src: '',
+        title: 'Video player',
+        poster: '',
+        caption: ''
+      },
+      youtube: {
+        url: '',
+        title: 'YouTube video',
+        start: 0,
+        controls: true
+      },
+      diagram: {
+        source: 'flowchart LR\n  A[Start] --> B{Ready?}\n  B -->|Yes| C[Ship it]\n  B -->|No| A',
+        caption: '',
+        theme: 'auto' as 'auto' | 'default' | 'dark' | 'neutral' | 'forest',
+        align: 'left' as 'left' | 'center'
+      },
+      kroki: {
+        type: 'graphviz' as typeof KROKI_DIAGRAM_TYPES[number],
+        source: 'digraph G {\n  Hello -> World\n}',
+        format: 'svg' as 'svg' | 'png',
+        caption: '',
+        align: 'left' as 'left' | 'center'
+      },
+      plantuml: {
+        source: '@startuml\nAlice -> Bob : hello\nBob --> Alice : hi\n@enduml',
+        format: 'svg' as 'svg' | 'png',
+        caption: '',
+        align: 'left' as 'left' | 'center'
+      },
+      map: {
+        latitude: 45.5019,
+        longitude: -73.5674,
+        zoom: 13,
+        height: 400,
+        label: ''
+      },
       correctionLevels: [
         { title: 'Low (L)', value: 'L' },
         { title: 'Medium (M)', value: 'M' },
@@ -238,7 +470,20 @@ export default defineComponent({
         { title: 'Path', value: 'path' },
         { title: 'Title', value: 'title' },
         { title: 'Recently updated', value: 'updated' }
-      ]
+      ],
+      factKinds: [
+        { title: 'Text', value: 'text' },
+        { title: 'Yes', value: 'yes' },
+        { title: 'No', value: 'no' }
+      ],
+      mediaKinds: [
+        { title: 'Video', value: 'video' },
+        { title: 'Audio', value: 'audio' }
+      ],
+      diagramThemes: ['auto', 'default', 'dark', 'neutral', 'forest'],
+      diagramAlignments: ['left', 'center'],
+      diagramFormats: ['svg', 'png'],
+      krokiTypes: [...KROKI_DIAGRAM_TYPES]
     }
   },
   computed: {
@@ -260,6 +505,9 @@ export default defineComponent({
       if (!this.activeStatus.isEnabled) return 'This extension is disabled by an administrator.'
       return 'This editor host is not compatible with the installed extension.'
     },
+    youtubeVideoId(): string | null {
+      return readYoutubeVideoId(this.youtube.url)
+    },
     canSubmit(): boolean {
       if (this.selectedKey === 'qr') {
         return this.qr.value.length >= 1 && this.qr.value.length <= 2048 && this.qr.label.length <= 200 &&
@@ -270,10 +518,57 @@ export default defineComponent({
           image.src.length >= 1 && image.alt.length >= 1 && image.alt.length <= 200 && image.caption.length <= 300
         )
       }
-      return this.index.locale.length >= 2 && this.index.locale.length <= 20 &&
-        Number.isInteger(this.index.depth) && this.index.depth >= 0 && this.index.depth <= 5 &&
-        Number.isInteger(this.index.limit) && this.index.limit >= 1 && this.index.limit <= 200 &&
-        this.index.emptyLabel.length <= 200
+      if (this.selectedKey === 'index') {
+        return this.index.locale.length >= 2 && this.index.locale.length <= 20 &&
+          Number.isInteger(this.index.depth) && this.index.depth >= 0 && this.index.depth <= 5 &&
+          Number.isInteger(this.index.limit) && this.index.limit >= 1 && this.index.limit <= 200 &&
+          this.index.emptyLabel.length <= 200
+      }
+      if (this.selectedKey === 'tabs') {
+        return this.tabs.panels.length >= 2 && this.tabs.panels.length <= 12 &&
+          this.tabs.panels.every(panel => panel.label.length >= 1 && panel.label.length <= 100 &&
+            panel.content.length >= 1 && panel.content.length <= 20000) &&
+          Number.isInteger(this.tabs.active) && this.tabs.active >= 0 && this.tabs.active < this.tabs.panels.length
+      }
+      if (this.selectedKey === 'spoiler') {
+        return this.spoiler.label.length <= 200 && this.spoiler.hint.length <= 200 &&
+          this.spoiler.content.length >= 1 && this.spoiler.content.length <= 20000
+      }
+      if (this.selectedKey === 'infobox') {
+        return this.infobox.title.length >= 1 && this.infobox.title.length <= 200 &&
+          (!this.infobox.image || (this.infobox.imageAlt.length >= 1 && this.infobox.imageAlt.length <= 200)) &&
+          this.infobox.caption.length <= 300 &&
+          this.infobox.facts.length >= 1 && this.infobox.facts.length <= 50 &&
+          this.infobox.facts.every(fact => fact.label.length >= 1 && fact.label.length <= 100 &&
+            (fact.kind !== 'text' || fact.value.length <= 1000))
+      }
+      if (this.selectedKey === 'pdf') {
+        return this.pdf.src.length >= 1 && this.pdf.title.length <= 200 &&
+          Number.isInteger(this.pdf.page) && this.pdf.page >= 1 && this.pdf.page <= 100000 &&
+          Number.isInteger(this.pdf.height) && this.pdf.height >= 320 && this.pdf.height <= 1600
+      }
+      if (this.selectedKey === 'media') {
+        return this.media.src.length >= 1 && this.media.title.length <= 200 &&
+          this.media.caption.length <= 300 && (this.media.kind === 'video' || this.media.poster.length === 0)
+      }
+      if (this.selectedKey === 'youtube') {
+        return this.youtubeVideoId !== null && this.youtube.title.length <= 200 &&
+          Number.isInteger(this.youtube.start) && this.youtube.start >= 0 && this.youtube.start <= 86400
+      }
+      if (this.selectedKey === 'diagram') {
+        return this.diagram.source.length >= 1 && this.diagram.source.length <= 50000 && this.diagram.caption.length <= 300
+      }
+      if (this.selectedKey === 'kroki') {
+        return this.kroki.source.length >= 1 && this.kroki.source.length <= 50000 && this.kroki.caption.length <= 300
+      }
+      if (this.selectedKey === 'plantuml') {
+        return this.plantuml.source.length >= 1 && this.plantuml.source.length <= 50000 && this.plantuml.caption.length <= 300
+      }
+      return Number.isFinite(this.map.latitude) && this.map.latitude >= -90 && this.map.latitude <= 90 &&
+        Number.isFinite(this.map.longitude) && this.map.longitude >= -180 && this.map.longitude <= 180 &&
+        Number.isInteger(this.map.zoom) && this.map.zoom >= 1 && this.map.zoom <= 19 &&
+        Number.isInteger(this.map.height) && this.map.height >= 240 && this.map.height <= 800 &&
+        this.map.label.length <= 200
     }
   },
   methods: {
@@ -288,6 +583,185 @@ export default defineComponent({
     },
     removeGalleryImage (index: number) {
       if (this.gallery.images.length > 1) this.gallery.images.splice(index, 1)
+    },
+    addTabPanel () {
+      if (this.tabs.panels.length < 12) this.tabs.panels.push({ label: `Panel ${this.tabs.panels.length + 1}`, content: '' })
+    },
+    removeTabPanel (index: number) {
+      if (this.tabs.panels.length <= 2) return
+      this.tabs.panels.splice(index, 1)
+      if (this.tabs.active >= this.tabs.panels.length) this.tabs.active = this.tabs.panels.length - 1
+    },
+    addInfoboxFact () {
+      if (this.infobox.facts.length < 50) this.infobox.facts.push({ label: '', value: '', kind: 'text' })
+    },
+    removeInfoboxFact (index: number) {
+      if (this.infobox.facts.length > 1) this.infobox.facts.splice(index, 1)
+    },
+    extensionInput (): Record<string, unknown> {
+      if (this.selectedKey === 'qr') {
+        return {
+          key: 'qr',
+          version: 1,
+          props: {
+            value: this.qr.value,
+            ...(this.qr.label.length > 0 ? { label: this.qr.label } : {}),
+            size: this.qr.size,
+            errorCorrection: this.qr.errorCorrection
+          }
+        }
+      }
+      if (this.selectedKey === 'gallery') {
+        return {
+          key: 'gallery',
+          version: 1,
+          props: {
+            images: this.gallery.images.map(image => ({
+              src: image.src,
+              alt: image.alt,
+              ...(image.caption.length > 0 ? { caption: image.caption } : {})
+            })),
+            columns: this.gallery.columns,
+            fit: this.gallery.fit,
+            aspectRatio: this.gallery.aspectRatio
+          }
+        }
+      }
+      if (this.selectedKey === 'index') {
+        return {
+          key: 'index',
+          version: 1,
+          props: {
+            path: this.index.path,
+            locale: this.index.locale,
+            depth: this.index.depth,
+            columns: this.index.columns,
+            showIcons: this.index.showIcons,
+            order: this.index.order,
+            limit: this.index.limit,
+            ...(this.index.emptyLabel.length > 0 ? { emptyLabel: this.index.emptyLabel } : {})
+          }
+        }
+      }
+      if (this.selectedKey === 'tabs') {
+        return {
+          key: 'tabs',
+          version: 1,
+          props: {
+            tabs: this.tabs.panels.map(panel => ({ label: panel.label, content: panel.content })),
+            active: this.tabs.active
+          }
+        }
+      }
+      if (this.selectedKey === 'spoiler') {
+        return {
+          key: 'spoiler',
+          version: 1,
+          props: {
+            label: this.spoiler.label,
+            hint: this.spoiler.hint,
+            content: this.spoiler.content
+          }
+        }
+      }
+      if (this.selectedKey === 'infobox') {
+        return {
+          key: 'infobox',
+          version: 1,
+          props: {
+            title: this.infobox.title,
+            ...(this.infobox.image.length > 0 ? {
+              image: this.infobox.image,
+              imageAlt: this.infobox.imageAlt,
+              ...(this.infobox.caption.length > 0 ? { caption: this.infobox.caption } : {})
+            } : {}),
+            facts: this.infobox.facts.map(fact => ({
+              label: fact.label,
+              value: fact.kind === 'yes' ? true : fact.kind === 'no' ? false : fact.value
+            }))
+          }
+        }
+      }
+      if (this.selectedKey === 'pdf') {
+        return {
+          key: 'pdf',
+          version: 1,
+          props: { src: this.pdf.src, title: this.pdf.title, page: this.pdf.page, height: this.pdf.height }
+        }
+      }
+      if (this.selectedKey === 'media') {
+        return {
+          key: 'media',
+          version: 1,
+          props: {
+            kind: this.media.kind,
+            src: this.media.src,
+            title: this.media.title,
+            ...(this.media.kind === 'video' && this.media.poster.length > 0 ? { poster: this.media.poster } : {}),
+            ...(this.media.caption.length > 0 ? { caption: this.media.caption } : {})
+          }
+        }
+      }
+      if (this.selectedKey === 'youtube') {
+        return {
+          key: 'youtube',
+          version: 1,
+          props: {
+            videoId: this.youtubeVideoId,
+            title: this.youtube.title,
+            start: this.youtube.start,
+            controls: this.youtube.controls
+          }
+        }
+      }
+      if (this.selectedKey === 'diagram') {
+        return {
+          key: 'diagram',
+          version: 1,
+          props: {
+            source: this.diagram.source,
+            ...(this.diagram.caption.length > 0 ? { caption: this.diagram.caption } : {}),
+            theme: this.diagram.theme,
+            align: this.diagram.align
+          }
+        }
+      }
+      if (this.selectedKey === 'kroki') {
+        return {
+          key: 'kroki',
+          version: 1,
+          props: {
+            type: this.kroki.type,
+            source: this.kroki.source,
+            format: this.kroki.format,
+            ...(this.kroki.caption.length > 0 ? { caption: this.kroki.caption } : {}),
+            align: this.kroki.align
+          }
+        }
+      }
+      if (this.selectedKey === 'plantuml') {
+        return {
+          key: 'plantuml',
+          version: 1,
+          props: {
+            source: this.plantuml.source,
+            format: this.plantuml.format,
+            ...(this.plantuml.caption.length > 0 ? { caption: this.plantuml.caption } : {}),
+            align: this.plantuml.align
+          }
+        }
+      }
+      return {
+        key: 'map',
+        version: 1,
+        props: {
+          latitude: this.map.latitude,
+          longitude: this.map.longitude,
+          zoom: this.map.zoom,
+          height: this.map.height,
+          ...(this.map.label.length > 0 ? { label: this.map.label } : {})
+        }
+      }
     },
     async loadExtensions () {
       this.isLoading = true
@@ -307,49 +781,7 @@ export default defineComponent({
       this.submitError = ''
       if (!this.canInsertActive || !this.canSubmit) return
       try {
-        let input: Record<string, unknown>
-        if (this.selectedKey === 'qr') {
-          input = {
-            key: 'qr',
-            version: 1,
-            props: {
-              value: this.qr.value,
-              ...(this.qr.label.length > 0 ? { label: this.qr.label } : {}),
-              size: this.qr.size,
-              errorCorrection: this.qr.errorCorrection
-            }
-          }
-        } else if (this.selectedKey === 'gallery') {
-          input = {
-            key: 'gallery',
-            version: 1,
-            props: {
-              images: this.gallery.images.map(image => ({
-                src: image.src,
-                alt: image.alt,
-                ...(image.caption.length > 0 ? { caption: image.caption } : {})
-              })),
-              columns: this.gallery.columns,
-              fit: this.gallery.fit,
-              aspectRatio: this.gallery.aspectRatio
-            }
-          }
-        } else {
-          input = {
-            key: 'index',
-            version: 1,
-            props: {
-              path: this.index.path,
-              locale: this.index.locale,
-              depth: this.index.depth,
-              columns: this.index.columns,
-              showIcons: this.index.showIcons,
-              order: this.index.order,
-              limit: this.index.limit,
-              ...(this.index.emptyLabel.length > 0 ? { emptyLabel: this.index.emptyLabel } : {})
-            }
-          }
-        }
+        const input = this.extensionInput()
         const envelope = parseContentExtensionEnvelope(input)
         emitEditorInsert({ kind: 'EXTENSION', text: serializeContentExtensionFence(envelope) })
         this.close()

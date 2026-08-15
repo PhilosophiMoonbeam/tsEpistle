@@ -440,9 +440,9 @@ These architectural adaptations are independent workstreams. They must not block
 
 No architecture workstream is complete until obsolete code, manifests, routes, flags, and compatibility paths are removed in the same cutover.
 
-## Next goal: remaining visible Scarlett content extensions
+## Completed goal: remaining visible Scarlett content extensions
 
-The extension platform is already sufficient to begin. The next goal must implement the remaining visible capabilities as fork-native extensions rather than wait for repository, ORM, or UI-framework changes.
+The extension platform now implements the remaining visible capabilities as fork-native extensions without waiting for or importing Scarlett's repository, ORM, UI-framework, or custom-element architecture.
 
 ### Scope and order
 
@@ -496,6 +496,16 @@ The full goal additionally requires:
 - documentation of provider/egress/CSP requirements;
 - cleanup of all temporary pages, assets, credentials, settings, and registry state after smoke verification;
 - one committed and pushed clean cutover with no placeholder extension.
+
+### Completion record (2026-08-15)
+
+- migration `2.5.138` adds the ten extension rows as an additive, disabled-by-default change in both primary and SQLite migration paths; fresh, repeat, downgrade, and prior-version upgrade contracts pass;
+- strict version-1 envelopes cover tabs, spoiler, infobox, PDF, audio/video media, YouTube, Mermaid, Kroki, PlantUML, and OpenStreetMap; each rejects unknown properties, bounds every field, and preserves one canonical fenced representation;
+- server renderers produce escaped semantic or inert fallback HTML and pass the shared sanitizer; same-origin asset paths preserve the existing authorization/range boundary, Mermaid SVG is locally sanitized, and remote providers are fixed typed targets with no request before consent;
+- the shared source/Visual Markdown fence path, page history/restore, export, print, disable/re-enable rerender, compatibility diagnostics, and escaped-source failure behavior apply to the complete catalog without per-extension shadow state;
+- 74 focused assertions, complete lint, client/server typechecks, the 1,406-test Vitest suite, production build, and all bundle budgets pass;
+- the durable Chromium workflow authors and renders every extension group, exercises accessible controls and consent transitions with external requests aborted, verifies no pre-consent egress, repeats the surface at 390×844 under dark/reduced-motion/forced-colors preferences, and reports no serious or critical Axe violations;
+- a separate live browser smoke rendered all ten new types on the actual page surface, confirmed local Mermaid output, inert remote fallbacks, zero active scripts, and no horizontal overflow; every temporary page, database, credential, configuration, and registry change was isolated and removed.
 
 ## Stop conditions
 
