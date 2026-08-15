@@ -1,71 +1,273 @@
 <template lang='pug'>
   v-container(fluid, grid-list-lg)
-    v-row()
+    v-row
       v-col(cols='12')
         .admin-header
-          img.animated.fadeInUp(src='/_assets/svg/icon-winter.svg', alt='Mail', style='width: 80px;')
+          img.animated.fadeInUp(src='/_assets/svg/icon-winter.svg', alt='Webhooks', style='width: 80px;')
           .admin-header-title
             .headline.primary--text.animated.fadeInLeft {{ $t('admin:webhooks.title') }}
             .subtitle-1.grey--text.animated.fadeInLeft.wait-p4s {{ $t('admin:webhooks.subtitle') }}
           v-spacer
-          v-btn.animated.fadeInDown(color='success', depressed, large, disabled)
-            v-icon(left) check
-            span {{$t('common:actions.apply')}}
+          v-btn(color='primary', depressed, @click='newHook')
+            v-icon(left) mdi-plus
+            span New webhook
 
-      v-col(lg='3', cols='12')
-        v-card.animated.fadeInUp
-          v-toolbar(flat, color='primary', dark, dense)
-            .subtitle-1 Webhooks
+      v-col(cols='12', lg='4')
+        v-card(outlined)
+          v-card-title
+            v-icon.mr-2(color='primary') mdi-webhook
+            span Endpoints
+          v-divider
+          v-list(v-if='hooks.length', lines='two')
+            v-list-item(
+              v-for='item in hooks'
+              :key='item.id'
+              :active='draft.id === item.id'
+              @click='selectHook(item)'
+            )
+              template(v-slot:prepend)
+                v-icon(:color='item.isEnabled ? `success` : `grey`') {{ item.isEnabled ? 'mdi-check-circle' : 'mdi-pause-circle' }}
+              v-list-item-title {{ item.name }}
+              v-list-item-subtitle {{ item.url }}
+          v-card-text(v-else)
+            v-alert(type='info', variant='tonal') No webhook endpoints configured.
+
+      v-col(cols='12', lg='8')
+        v-card(outlined)
+          v-card-title
+            span {{ draft.id ? 'Edit webhook' : 'New webhook' }}
             v-spacer
-            v-btn(outline, small)
-              v-icon.mr-2 add
-              span New
-          v-list(two-line, dense).py-0
-            template(v-for='(str, idx) in hooks', :key='str.key')
-              v-list-item(@click='selectedHook = str.key')
-                v-avatar
-                  v-icon(color='primary', v-if='str.isEnabled', v-ripple, @click='str.isEnabled = false') check_box
-                  v-icon(color='grey', v-else, v-ripple, @click='str.isEnabled = true') check_box_outline_blank
-                div.v-list-item-content
-                  v-list-item-title.body-2(:class='!str.isAvailable ? `grey--text` : (selectedHook === str.key ? `primary--text` : ``)') {{ str.title }}
-                  v-list-item-subtitle.caption(:class='!str.isAvailable ? `grey--text text--lighten-1` : (selectedHook === str.key ? `blue--text ` : ``)') {{ str.description }}
-                v-avatar(v-if='selectedHook === str.key')
-                  v-icon.animated.fadeInLeft(color='primary') arrow_forward_ios
-              v-divider(v-if='idx < hooks.length - 1')
-
-      v-col(cols='12', lg='9')
-        v-card.wiki-form.animated.fadeInUp.wait-p2s
-          v-toolbar(color='primary', dense, flat, dark)
-            .subtitle-1 {{hook.title}}
+            v-progress-circular(v-if='loading', indeterminate, size='22', color='primary')
+          v-divider
           v-card-text
-            v-form
-              .authlogo
-                img(:src='hook.logo', :alt='hook.title')
-              .caption.pt-3 {{hook.description}}
-              .caption.pb-3: a(:href='hook.website') {{hook.website}}
-              .body-2(v-if='hook.isEnabled')
-                span This hook is
+            v-alert(v-if='revealedSecret', type='warning', variant='tonal', closable, @click:close='revealedSecret = ``')
+              strong Copy this signing secret now. It will not be shown again.
+              code.webhook-secret {{ revealedSecret }}
+            v-form(@submit.prevent='save')
+              v-text-field(v-model='draft.name', label='Name', maxlength='128', required)
+              v-text-field(v-model='draft.url', label='HTTPS endpoint URL', placeholder='https://hooks.example.com/wiki', required)
+              v-textarea(
+                v-model='eventsText'
+                label='Subscribed events'
+                hint='One event per line. Use * for every event.'
+                persistent-hint
+                rows='4'
+              )
+              v-switch(v-model='draft.isEnabled', color='success', label='Enabled')
+              .d-flex.flex-wrap.ga-2.mt-3
+                v-btn(color='primary', depressed, type='submit', :loading='saving')
+                  v-icon(left) mdi-content-save
+                  span Save
+                v-btn(v-if='draft.id', variant='outlined', @click='rotateSecret', :loading='rotating')
+                  v-icon(left) mdi-key-change
+                  span Rotate secret
+                v-btn(v-if='draft.id', color='error', variant='outlined', @click='deleteDialog = true')
+                  v-icon(left) mdi-delete
+                  span Delete
 
+        v-card.mt-4(v-if='draft.id', outlined)
+          v-card-title
+            span Recent deliveries
+            v-spacer
+            v-btn(icon='mdi-refresh', variant='text', aria-label='Refresh deliveries', @click='loadDeliveries')
+          v-divider
+          v-table
+            thead
+              tr
+                th Event
+                th State
+                th Attempts
+                th HTTP
+                th Created
+                th Actions
+            tbody
+              tr(v-for='delivery in deliveries', :key='delivery.id')
+                td {{ delivery.eventType }} v{{ delivery.eventVersion }}
+                td
+                  v-chip(size='small', :color='stateColor(delivery.state)') {{ delivery.state }}
+                td {{ delivery.attempts }} / {{ delivery.maxAttempts }}
+                td {{ delivery.statusCode || '—' }}
+                td {{ $helpers.formatMoment(delivery.createdAt, 'calendar') }}
+                td
+                  v-btn(
+                    v-if='delivery.state === `failed`'
+                    icon='mdi-refresh'
+                    size='small'
+                    variant='text'
+                    aria-label='Retry delivery'
+                    @click='changeDelivery(delivery.id, `retry`)'
+                  )
+                  v-btn(
+                    v-if='delivery.state === `pending` || delivery.state === `running`'
+                    icon='mdi-cancel'
+                    size='small'
+                    variant='text'
+                    color='error'
+                    aria-label='Cancel delivery'
+                    @click='changeDelivery(delivery.id, `cancel`)'
+                  )
+              tr(v-if='!deliveries.length')
+                td.text-center.text-medium-emphasis(colspan='6') No deliveries yet.
+
+    v-dialog(v-model='deleteDialog', max-width='480')
+      v-card
+        v-card-title Delete webhook?
+        v-card-text Existing delivery history for this endpoint will also be removed.
+        v-card-actions
+          v-spacer
+          v-btn(variant='text', @click='deleteDialog = false') Cancel
+          v-btn(color='error', @click='removeHook', :loading='deleting') Delete
 </template>
 
 <script lang='ts'>
-import _ from 'lodash'
+import { wikiStore } from '@/store/index.ts'
+import {
+  changeWebhookDelivery,
+  createWebhook,
+  deleteWebhook,
+  fetchWebhookDeliveries,
+  fetchWebhooks,
+  rotateWebhookSecret,
+  updateWebhook,
+  type AdminWebhook,
+  type WebhookDelivery
+} from '../../helpers/webhooks-api'
+
+type WebhookDraft = {
+  id: string | null
+  name: string
+  url: string
+  isEnabled: boolean
+}
+
+const emptyDraft = (): WebhookDraft => ({ id: null, name: '', url: '', isEnabled: true })
 
 export default {
   data() {
     return {
-      hooks: [],
-      selectedHook: ''
+      hooks: [] as AdminWebhook[],
+      deliveries: [] as WebhookDelivery[],
+      draft: emptyDraft(),
+      eventsText: 'page.created\npage.updated\npage.deleted',
+      revealedSecret: '',
+      loading: false,
+      saving: false,
+      rotating: false,
+      deleting: false,
+      deleteDialog: false
     }
   },
-  computed: {
-    hook() {
-      return _.find(this.hooks, ['id', this.selectedHook]) || {}
+  methods: {
+    async loadHooks () {
+      this.loading = true
+      try {
+        this.hooks = await fetchWebhooks(window.fetch.bind(window))
+        if (!this.draft.id && this.hooks.length) this.selectHook(this.hooks[0])
+      } catch (error) {
+        wikiStore.showError(error)
+      } finally {
+        this.loading = false
+      }
+    },
+    newHook () {
+      this.draft = emptyDraft()
+      this.eventsText = 'page.created\npage.updated\npage.deleted'
+      this.deliveries = []
+      this.revealedSecret = ''
+    },
+    selectHook (hook: AdminWebhook) {
+      this.draft = { id: hook.id, name: hook.name, url: hook.url, isEnabled: hook.isEnabled }
+      this.eventsText = hook.events.join('\n')
+      this.revealedSecret = ''
+      this.loadDeliveries()
+    },
+    events (): string[] {
+      return [...new Set(this.eventsText.split(/[\n,]/).map(value => value.trim()).filter(Boolean))]
+    },
+    async save () {
+      this.saving = true
+      try {
+        const input = {
+          name: this.draft.name,
+          url: this.draft.url,
+          events: this.events(),
+          isEnabled: this.draft.isEnabled
+        }
+        if (this.draft.id) {
+          await updateWebhook(window.fetch.bind(window), this.draft.id, input)
+        } else {
+          const created = await createWebhook(window.fetch.bind(window), input)
+          this.draft.id = created.id
+          this.revealedSecret = created.secret
+        }
+        await this.loadHooks()
+        wikiStore.showNotification({ style: 'success', message: 'Webhook saved.', icon: 'check' })
+      } catch (error) {
+        wikiStore.showError(error)
+      } finally {
+        this.saving = false
+      }
+    },
+    async rotateSecret () {
+      if (!this.draft.id) return
+      this.rotating = true
+      try {
+        this.revealedSecret = await rotateWebhookSecret(window.fetch.bind(window), this.draft.id)
+      } catch (error) {
+        wikiStore.showError(error)
+      } finally {
+        this.rotating = false
+      }
+    },
+    async removeHook () {
+      if (!this.draft.id) return
+      this.deleting = true
+      try {
+        await deleteWebhook(window.fetch.bind(window), this.draft.id)
+        this.deleteDialog = false
+        this.newHook()
+        await this.loadHooks()
+      } catch (error) {
+        wikiStore.showError(error)
+      } finally {
+        this.deleting = false
+      }
+    },
+    async loadDeliveries () {
+      if (!this.draft.id) return
+      try {
+        this.deliveries = await fetchWebhookDeliveries(window.fetch.bind(window), this.draft.id)
+      } catch (error) {
+        wikiStore.showError(error)
+      }
+    },
+    async changeDelivery (id: string, action: 'retry' | 'cancel') {
+      try {
+        await changeWebhookDelivery(window.fetch.bind(window), id, action)
+        await this.loadDeliveries()
+      } catch (error) {
+        wikiStore.showError(error)
+      }
+    },
+    stateColor (state: string): string {
+      if (state === 'succeeded') return 'success'
+      if (state === 'failed') return 'error'
+      if (state === 'running') return 'primary'
+      if (state === 'cancelled') return 'grey'
+      return 'warning'
     }
+  },
+  created () {
+    this.loadHooks()
   }
 }
 </script>
 
 <style lang='scss'>
-
+.webhook-secret {
+  display: block;
+  margin-top: 8px;
+  overflow-wrap: anywhere;
+  user-select: all;
+}
 </style>

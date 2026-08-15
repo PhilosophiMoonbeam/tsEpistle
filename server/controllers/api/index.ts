@@ -19,6 +19,7 @@ import storageRouter from './storage.ts'
 import systemRouter from './system.ts'
 import themingRouter from './theming.ts'
 import usersRouter from './users.ts'
+import webhooksRouter from './webhooks.ts'
 
 const router = express.Router()
 
@@ -40,6 +41,7 @@ router.use('/groups', groupsRouter)
 router.use('/users', usersRouter)
 router.use('/pages', pagesRouter)
 router.use('/auth', authRouter)
+router.use('/webhooks', webhooksRouter)
 
 router.use((req, res) => {
   res.status(404).json({ error: 'Not Found' })

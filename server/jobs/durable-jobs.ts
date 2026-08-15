@@ -1,8 +1,10 @@
 import type { Knex } from 'knex'
 import { DurableJobStore, runDurableJobBatch } from '../core/durable-jobs.ts'
-import { durableJobHandlers } from './durable-job-handlers.ts'
+import { publishOutboxEvents } from '../core/outbox.ts'
+import { createDurableJobHandlers } from './durable-job-handlers.ts'
 
 interface WikiContext {
+  config: { sessionSecret: string }
   INSTANCE_ID: string
   models: { knex: Knex }
 }
@@ -19,10 +21,11 @@ export default async function runDurableJobs (): Promise<void> {
     maxAttempts: 3,
     deduplicationKey: `cleanup-durable-jobs:${day}`
   })
+  await publishOutboxEvents(wiki.models.knex)
   await runDurableJobBatch(wiki.models.knex, {
     workerId: wiki.INSTANCE_ID,
     limit: 10,
     leaseMs: 30_000,
-    handlers: durableJobHandlers
+    handlers: createDurableJobHandlers(wiki.config.sessionSecret)
   })
 }
