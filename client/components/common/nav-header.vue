@@ -70,6 +70,7 @@
             v-if='!hideSearch && $vuetify.display.smAndDown'
             @click='searchToggle'
             icon
+            :aria-label='$t(`common:header.search`)'
             )
             v-icon(color='grey') mdi-magnify
 

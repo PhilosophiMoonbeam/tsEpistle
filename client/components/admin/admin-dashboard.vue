@@ -51,7 +51,7 @@
             .caption {{ info.product.upstreamBase }}
       v-col(cols='12', xl='6')
         v-card.radius-7.animated.fadeInUp.wait-p2s
-          v-toolbar(:color='$vuetify.theme.current.dark ? `grey darken-2` : `grey lighten-5`', dense, flat)
+          v-toolbar.dashboard-section-toolbar(:color='$vuetify.theme.current.dark ? `grey-darken-2` : `grey-lighten-5`', dense, flat)
             v-spacer
             .overline {{$t('admin:dashboard.recentPages')}}
             v-spacer
@@ -68,7 +68,7 @@
               .caption.grey--text {{ $helpers.formatMoment(page.updatedAt, 'calendar') }}
             v-list-item(v-if='!recentPagesLoading && recentPages.length === 0')
               v-list-item-title.grey--text No recent pages
-          v-data-table.pb-2(
+          v-data-table.dashboard-data-table.pb-2(
             v-else
             :items='recentPages'
             :headers='recentPagesHeaders'
@@ -86,7 +86,7 @@
                 td.text-right.caption(width='250') {{ $helpers.formatMoment(props.item.updatedAt, 'calendar') }}
       v-col(cols='12', xl='6')
         v-card.radius-7.animated.fadeInUp.wait-p4s
-          v-toolbar(:color='$vuetify.theme.current.dark ? `grey darken-2` : `grey lighten-5`', dense, flat)
+          v-toolbar.dashboard-section-toolbar(:color='$vuetify.theme.current.dark ? `grey-darken-2` : `grey-lighten-5`', dense, flat)
             v-spacer
             .overline {{$t('admin:dashboard.lastLogins')}}
             v-spacer
@@ -100,7 +100,7 @@
               v-list-item-subtitle {{ $helpers.formatMoment(user.lastLoginAt, 'calendar') }}
             v-list-item(v-if='!lastLoginsLoading && lastLogins.length === 0')
               v-list-item-title.grey--text No recent logins
-          v-data-table.pb-2(
+          v-data-table.dashboard-data-table.pb-2(
             v-else
             :items='lastLogins'
             :headers='lastLoginsHeaders'
@@ -260,6 +260,18 @@ export default {
     overflow: hidden;
     position: relative;
   }
+}
+
+.dashboard-section-toolbar .overline,
+.dashboard-data-table td,
+.dashboard-data-table td strong {
+  color: rgb(var(--v-theme-on-surface)) !important;
+  opacity: 1;
+}
+
+.dashboard-mobile-list .v-list-item-subtitle {
+  color: rgb(var(--v-theme-on-surface)) !important;
+  opacity: 1;
 }
 
 .dashboard-contribute {

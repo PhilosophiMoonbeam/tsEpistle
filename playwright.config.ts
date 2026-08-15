@@ -14,7 +14,26 @@ export default defineConfig({
   projects: [
     {
       name: 'chromium',
+      testMatch: '**/setup.e2e.ts',
       use: { ...devices['Desktop Chrome'] }
+    },
+    {
+      name: 'accessibility-keyboard',
+      dependencies: ['chromium'],
+      testMatch: '**/quality.e2e.ts',
+      use: { ...devices['Desktop Chrome'] }
+    },
+    {
+      name: 'accessibility-dark',
+      dependencies: ['chromium'],
+      testMatch: '**/quality.e2e.ts',
+      use: { ...devices['Desktop Chrome'], colorScheme: 'dark' }
+    },
+    {
+      name: 'accessibility-mobile',
+      dependencies: ['chromium'],
+      testMatch: '**/quality.e2e.ts',
+      use: { ...devices['Pixel 7'] }
     }
   ]
 })

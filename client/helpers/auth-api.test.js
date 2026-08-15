@@ -557,6 +557,20 @@ describe('auth api helper', () => {
     }, 'Generic auth error')).rejects.toThrow('Generic auth error')
   })
 
+  test('accepts setup-TFA responses with QR and manual setup data', async () => {
+    const payload = {
+      mustSetupTFA: true,
+      continuationToken: 'setup-token',
+      tfaQRImage: '<svg></svg>',
+      tfaSecret: 'JBSWY3DPEHPK3PXP'
+    }
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse(payload))
+
+    await expect(submitAuthRequest(fetchImpl, '/_api/auth/login', {
+      strategy: 'local'
+    }, 'Generic auth error')).resolves.toEqual(payload)
+  })
+
   test('submits status request as JSON and returns parsed body', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ message: 'Password reset request processed.' }))
 

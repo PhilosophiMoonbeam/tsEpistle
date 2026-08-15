@@ -24,7 +24,6 @@ interface SiteConfig extends Record<string, unknown> {
 
 const config = WIKI.config as SiteConfig
 const configService = WIKI.configSvc as { saveToDb(keys: string[]): Promise<unknown> }
-const app = WIKI.app as { enable(setting: string): void, disable(setting: string): void }
 
 const getConfig = () => ({
   host: config.host,
@@ -116,6 +115,7 @@ const updateConfig = async (input: unknown): Promise<void> => {
   }
 
   await configService.saveToDb(saveKeys)
+  const app = WIKI.app as { enable(setting: string): void, disable(setting: string): void }
   if (config.security.securityTrustProxy) app.enable('trust proxy')
   else app.disable('trust proxy')
 }

@@ -1079,7 +1079,8 @@ describe('controllers/api auth endpoints', () => {
       mustSetupTFA: false,
       continuationToken: 'tfa-token',
       redirect: '/admin',
-      tfaQRImage: null
+      tfaQRImage: null,
+      tfaSecret: null
     })
   })
 
@@ -1155,7 +1156,8 @@ describe('controllers/api auth endpoints', () => {
       mustSetupTFA: false,
       continuationToken: null,
       redirect: '/',
-      tfaQRImage: null
+      tfaQRImage: null,
+      tfaSecret: null
     })
   })
 
@@ -1211,7 +1213,8 @@ describe('controllers/api auth endpoints', () => {
       mustSetupTFA: false,
       continuationToken: null,
       redirect: null,
-      tfaQRImage: null
+      tfaQRImage: null,
+      tfaSecret: null
     })
   })
 

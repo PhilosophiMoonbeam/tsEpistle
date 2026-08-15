@@ -26,7 +26,8 @@ const toAuthResponse = (result: unknown = {}) => ({
   mustSetupTFA: _.get(result, 'mustSetupTFA', false),
   continuationToken: _.get(result, 'continuationToken', null),
   redirect: _.get(result, 'redirect', null),
-  tfaQRImage: _.get(result, 'tfaQRImage', null)
+  tfaQRImage: _.get(result, 'tfaQRImage', null),
+  tfaSecret: _.get(result, 'tfaSecret', null)
 })
 
 const authErrorStatus = (value: unknown): number | null => {

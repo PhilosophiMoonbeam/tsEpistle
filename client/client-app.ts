@@ -49,7 +49,7 @@ const vuetify = createVuetify({
   theme: { defaultTheme: siteConfig.darkMode ? 'dark' : 'light' }
 })
 
-const i18n = localization.init()
+const i18n = await localization.init()
 const app = createApp({})
 
 for (const [name, component] of registrations) app.component(name, component)

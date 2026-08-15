@@ -14,8 +14,9 @@ interface Asset extends Record<string, unknown> {
   getAssetPath(): Promise<string>
 }
 interface Folder extends Record<string, unknown> { slug: string }
-interface Query<Row> {
-  where(condition: Record<string, unknown> | string, value?: unknown): Query<Row> & PromiseLike<Row[]>
+interface Query<Row> extends PromiseLike<Row[]> {
+  where(condition: Record<string, unknown> | string, value?: unknown): Query<Row>
+  whereNull(column: string): Query<Row>
   first(): Promise<Row | undefined>
   findById(id: number): Promise<Row | undefined>
   insert(data: Record<string, unknown>): Promise<unknown>
@@ -45,21 +46,26 @@ const getAuth = (): { checkAccess(requester: Requester, permissions: string[], c
 const errors = WIKI.Error as unknown as WikiErrors
 
 const list = async ({ requester, folderId, kind }: { requester: Requester, folderId: number, kind: string }) => {
-  const condition: Record<string, unknown> = { folderId: folderId === 0 ? null : folderId }
-  if (kind !== 'ALL') condition.kind = kind.toLowerCase()
+  const query = models.assets.query()
+  if (folderId === 0) query.whereNull('folderId')
+  else query.where('folderId', folderId)
+  if (kind !== 'ALL') query.where('kind', kind.toLowerCase())
   const hierarchy = await models.assetFolders.getHierarchy(folderId)
   const folderPath = hierarchy.map(folder => folder.slug).join('/')
-  const assets = await models.assets.query().where(condition)
-  return assets.filter(asset => getAuth().checkAccess(requester, ['read:assets'], {
+  const assets = await query
+  return assets.filter(asset => getAuth().checkAccess(requester, ['manage:system', 'read:assets'], {
     path: folderPath ? `${folderPath}/${asset.filename}` : asset.filename
   })).map(asset => ({ ...asset, kind: asset.kind.toUpperCase() }))
 }
 
 const listFolders = async ({ requester, parentFolderId }: { requester: Requester, parentFolderId: number }) => {
-  const folders = await models.assetFolders.query().where({ parentId: parentFolderId === 0 ? null : parentFolderId })
+  const query = models.assetFolders.query()
+  if (parentFolderId === 0) query.whereNull('parentId')
+  else query.where('parentId', parentFolderId)
+  const folders = await query
   const hierarchy = await models.assetFolders.getHierarchy(parentFolderId)
   const parentPath = hierarchy.map(folder => folder.slug).join('/')
-  return folders.filter(folder => getAuth().checkAccess(requester, ['read:assets'], {
+  return folders.filter(folder => getAuth().checkAccess(requester, ['manage:system', 'read:assets'], {
     path: parentPath ? `${parentPath}/${folder.slug}` : folder.slug
   }))
 }
@@ -67,7 +73,8 @@ const listFolders = async ({ requester, parentFolderId }: { requester: Requester
 const createFolder = async ({ slug, parentFolderId }: { slug: string, parentFolderId: number }): Promise<void> => {
   const folderSlug = sanitize(slug).toLowerCase()
   const parentId = parentFolderId === 0 ? null : parentFolderId
-  const existing = await models.assetFolders.query().where({ parentId, slug: folderSlug }).first()
+  const query = models.assetFolders.query().where({ slug: folderSlug })
+  const existing = await (parentId === null ? query.whereNull('parentId') : query.where('parentId', parentId)).first()
   if (existing) throw new errors.AssetFolderExists()
   await models.assetFolders.query().insert({ slug: folderSlug, name: folderSlug, parentId })
 }
@@ -78,13 +85,15 @@ const rename = async ({ requester, id, filename: requestedFilename }: { requeste
   if (!asset) throw new errors.AssetInvalid()
   if (!_.endsWith(filename, asset.ext)) throw new errors.AssetRenameInvalidExt()
   if (asset.ext.length > 0 && filename.length - asset.ext.length < 1) throw new errors.AssetRenameInvalid()
-  if (await models.assets.query().where({ filename, folderId: asset.folderId }).first()) throw new errors.AssetRenameCollision()
+  const collisionQuery = models.assets.query().where({ filename })
+  const collision = await (asset.folderId === null ? collisionQuery.whereNull('folderId') : collisionQuery.where('folderId', asset.folderId)).first()
+  if (collision) throw new errors.AssetRenameCollision()
   const hierarchy = asset.folderId ? await models.assetFolders.getHierarchy(asset.folderId) : []
   const folderPath = hierarchy.map(folder => folder.slug).join('/')
   const sourcePath = asset.folderId ? `${folderPath}/${asset.filename}` : asset.filename
-  if (!getAuth().checkAccess(requester, ['manage:assets'], { path: sourcePath })) throw new errors.AssetRenameForbidden()
+  if (!getAuth().checkAccess(requester, ['manage:system', 'manage:assets'], { path: sourcePath })) throw new errors.AssetRenameForbidden()
   const targetPath = asset.folderId ? `${folderPath}/${filename}` : filename
-  if (!getAuth().checkAccess(requester, ['write:assets'], { path: targetPath })) throw new errors.AssetRenameTargetForbidden()
+  if (!getAuth().checkAccess(requester, ['manage:system', 'write:assets'], { path: targetPath })) throw new errors.AssetRenameTargetForbidden()
   await models.assets.query().patch({ filename, hash: assetHelper.generateHash(targetPath) }).findById(id)
   await asset.deleteAssetCache()
   await models.storage.assetEvent({
@@ -97,7 +106,7 @@ const remove = async ({ requester, id }: { requester: Requester, id: number }): 
   const asset = await models.assets.query().findById(id)
   if (!asset) throw new errors.AssetInvalid()
   const assetPath = await asset.getAssetPath()
-  if (!getAuth().checkAccess(requester, ['manage:assets'], { path: assetPath })) throw new errors.AssetDeleteForbidden()
+  if (!getAuth().checkAccess(requester, ['manage:system', 'manage:assets'], { path: assetPath })) throw new errors.AssetDeleteForbidden()
   await models.knex('assetData').where('id', id).del()
   await models.assets.query().deleteById(id)
   await asset.deleteAssetCache()

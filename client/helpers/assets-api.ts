@@ -37,10 +37,13 @@ export type AssetFolder = {
 }
 
 function normalizeAsset (row: unknown, fallbackMessage: string): Asset {
-  if (!isRecord(row) || !Number.isInteger(row.id) || typeof row.filename !== 'string' || typeof row.description !== 'string' || typeof row.ext !== 'string' || typeof row.fileSize !== 'number' || typeof row.createdAt !== 'string' || typeof row.kind !== 'string') {
+  if (!isRecord(row) || !Number.isInteger(row.id) || typeof row.filename !== 'string' || typeof row.ext !== 'string' || typeof row.fileSize !== 'number' || typeof row.createdAt !== 'string' || typeof row.kind !== 'string') {
     throw new Error(fallbackMessage)
   }
-  return row as unknown as Asset
+  if (row.description !== undefined && row.description !== null && typeof row.description !== 'string') {
+    throw new Error(fallbackMessage)
+  }
+  return { ...row, description: typeof row.description === 'string' ? row.description : '' } as Asset
 }
 
 function normalizeAssetFolder (row: unknown, fallbackMessage: string): AssetFolder {

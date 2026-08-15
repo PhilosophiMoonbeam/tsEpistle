@@ -350,6 +350,9 @@ router.post('/_unlock/:id', pageUnlockMiddleware, async (req, res) => {
       sessionId: req.sessionID
     })
     req.session.pageUnlockEstablishedAt = Date.now()
+    await new Promise<void>((resolve, reject) => {
+      req.session.save(error => error ? reject(error) : resolve())
+    })
     await getPageUnlockLimiter().reset(req)
     protectedResponseHeaders(res)
     return res.redirect(303, returnTo)

@@ -105,6 +105,7 @@ type AuthenticationLoginResponse {
   continuationToken: String
   redirect: String
   tfaQRImage: String
+  tfaSecret: String
 }
 
 type AuthenticationRegisterResponse {

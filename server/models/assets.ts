@@ -108,7 +108,8 @@ export default class Asset extends Model {
   static async upload (opts: UploadOptions): Promise<void> {
     const fileInfo = path.parse(opts.originalname)
     const fileHash = assetHelper.generateHash(opts.assetPath)
-    let asset = await wiki.models.assets.query().where({ hash: fileHash, folderId: opts.folderId }).first()
+    const assetQuery = wiki.models.assets.query().where({ hash: fileHash })
+    let asset = await (opts.folderId === null ? assetQuery.whereNull('folderId') : assetQuery.where('folderId', opts.folderId)).first()
     const assetRow: Partial<Asset> = {
       filename: opts.originalname,
       hash: fileHash,

@@ -30,6 +30,7 @@
         :left='!$vuetify.locale.isRtl'
         small
         @click='navShown = !navShown'
+        aria-label='Toggle navigation'
         v-if='$vuetify.display.mdAndDown'
         v-show='!navShown'
         )

@@ -84,7 +84,8 @@ export default {
 
   .v-footer {
     a {
-      text-decoration: none;
+      text-decoration: underline;
+      text-underline-offset: 0.15em;
     }
 
     &.altbg {

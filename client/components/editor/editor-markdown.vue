@@ -1,5 +1,5 @@
 <template lang='pug'>
-  .editor-markdown
+  .editor-markdown(ref='root')
     v-toolbar.editor-markdown-toolbar(dense, color='primary', dark, flat, style='overflow-x: hidden;')
       template(v-if='isModalShown')
         v-spacer
@@ -445,6 +445,7 @@ md.renderer.rules.emoji = (token, idx) => {
 // ========================================
 
 let mermaidId = 0
+type MarkdownEditorHost = HTMLElement & { __wikiSourceEditor?: TextEditorHandle }
 
 export default defineComponent({
   components: {
@@ -907,6 +908,10 @@ export default defineComponent({
       }
     })
     this.cm = cm
+    Object.defineProperty(this.$refs.root as MarkdownEditorHost, '__wikiSourceEditor', {
+      configurable: true,
+      value: cm
+    })
     ;(this.$refs.cm as HTMLElement).style.height = this.$vuetify.display.mdAndUp
       ? 'calc(100vh - 112px - 24px)'
       : 'calc(100vh - 112px - 16px)'
@@ -929,6 +934,7 @@ export default defineComponent({
     offEditorInsert(this.handleEditorInsert)
     offEditorSaveConflict(this.handleEditorSaveConflict)
     offEditorContentOverwrite(this.handleEditorContentOverwrite)
+    delete (this.$refs.root as MarkdownEditorHost).__wikiSourceEditor
     this.cm?.destroy()
     this.cm = null
     collaborations.get(this)?.destroy()

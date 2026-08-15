@@ -12,6 +12,17 @@ const parseKey = (key: string): { namespace: string, path: string } => {
     : { namespace: key.slice(0, separator), path: key.slice(separator + 1) }
 }
 
+export const fallbackLocalizationLabel = (key: string): string => {
+  const { path } = parseKey(key)
+  const segment = path.split('.').at(-1)
+  if (!segment) return 'Translation unavailable'
+  return _.startCase(segment)
+    .replace(/\bApi\b/g, 'API')
+    .replace(/\bId\b/g, 'ID')
+    .replace(/\bTfa\b/g, '2FA')
+    .replace(/\bUrl\b/g, 'URL')
+}
+
 const plugin = {
   install (app: App) {
     app.config.globalProperties.$t = (key: string, options?: Record<string, unknown>) => {
@@ -23,8 +34,8 @@ const plugin = {
 }
 
 export default {
-  init () {
-    void i18next
+  async init () {
+    const initialization = i18next
       .use(Backend)
       .init({
         backend: {
@@ -62,9 +73,22 @@ export default {
         lng: siteConfig.lang,
         load: 'currentOnly',
         lowerCaseLng: true,
-        fallbackLng: siteConfig.lang,
-        ns: ['common', 'auth', 'admin', 'editor', 'history', 'profile', 'tags']
+        fallbackLng: 'en',
+        ns: ['common', 'auth', 'admin', 'editor', 'history', 'profile', 'tags'],
+        parseMissingKeyHandler: fallbackLocalizationLabel
       })
+    let timeoutId: ReturnType<typeof setTimeout> | undefined
+    const initialized = await Promise.race([
+      initialization.then(() => true).catch(error => {
+        console.error('Localization initialization failed.', error)
+        return true
+      }),
+      new Promise<boolean>(resolve => {
+        timeoutId = setTimeout(() => resolve(false), 10_000)
+      })
+    ])
+    if (timeoutId !== undefined) clearTimeout(timeoutId)
+    if (!initialized) console.warn('Localization initialization timed out; continuing with fallback labels.')
     return plugin
   }
 }

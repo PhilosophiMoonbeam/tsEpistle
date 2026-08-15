@@ -57,6 +57,9 @@ jobs:
     - name: Typecheck Server
       run: pnpm run typecheck:server
 
+    - name: Validate Versioned OpenAPI Contract
+      run: pnpm run openapi:check
+
     - name: Run Vitest
       run: pnpm run test
 

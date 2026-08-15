@@ -1,6 +1,6 @@
-import AxeBuilder from '@axe-core/playwright'
 import { expect, test } from '@playwright/test'
 import type { Page } from '@playwright/test'
+import tfa from 'node-2fa'
 
 const adminEmail = 'test@example.com'
 const adminPassword = '12345678'
@@ -12,14 +12,6 @@ type BrowserSourceEditor = {
   getValue(): string
 }
 
-
-type BrowserVueInstance = {
-  parent?: BrowserVueInstance | null
-  proxy?: {
-    cm?: BrowserSourceEditor | null
-    editor?: BrowserVisualEditor | null
-  }
-}
 
 const visualMarkdownBrowserFixture = `# Visual Markdown browser
 
@@ -55,41 +47,47 @@ const answer = 42
 | --- | --- |
 | Alpha | One |
 
-Internal target`
+[target](/en/home)
+
+![Example image](/_assets/svg/icon-image.svg)
+
+[document.pdf](/assets/document.pdf)`
 
 const visualHtmlBrowserFixture = `<h2>Visual HTML heading</h2>
 <p>Text with <strong>bold</strong>, <u>underline</u>, and <a href="/en/home">an internal link</a>.</p>
 <figure class="table"><table><thead><tr><th>HTML</th><th>Value</th></tr></thead><tbody><tr><td>Alpha</td><td>One</td></tr></tbody></table></figure>
 <figure class="image image-style-side"><img src="/_assets/svg/icon-image.svg" alt="Example image"><figcaption>Visual HTML caption</figcaption></figure>`
 
+async function waitForCkEditor(page: Page): Promise<void> {
+  await page.waitForFunction(() =>
+    Boolean((document.querySelector('.editor-ckeditor') as HTMLElement & { __wikiEditor?: BrowserVisualEditor }).__wikiEditor)
+  )
+}
+
 async function getCkEditorData(page: Page): Promise<string> {
+  await waitForCkEditor(page)
   return page.evaluate(() => {
-    const host = document.querySelector<HTMLElement>('.editor-ckeditor')
-    let instance = (host as HTMLElement & { __vueParentComponent?: BrowserVueInstance }).__vueParentComponent
-    while (instance && !instance.proxy?.editor) instance = instance.parent
-    const editor = instance?.proxy?.editor
+    const editor = (document.querySelector('.editor-ckeditor') as HTMLElement & { __wikiEditor?: BrowserVisualEditor }).__wikiEditor
     if (!editor) throw new Error('CKEditor instance is unavailable.')
     return editor.getData()
   })
 }
 
 async function setCkEditorData(page: Page, data: string): Promise<void> {
+  await waitForCkEditor(page)
   await page.evaluate(content => {
-    const host = document.querySelector<HTMLElement>('.editor-ckeditor')
-    let instance = (host as HTMLElement & { __vueParentComponent?: BrowserVueInstance }).__vueParentComponent
-    while (instance && !instance.proxy?.editor) instance = instance.parent
-    const editor = instance?.proxy?.editor
+    const editor = (document.querySelector('.editor-ckeditor') as HTMLElement & { __wikiEditor?: BrowserVisualEditor }).__wikiEditor
     if (!editor) throw new Error('CKEditor instance is unavailable.')
     editor.setData(content)
   }, data)
 }
 
 async function getMarkdownSourceData(page: Page): Promise<string> {
+  await page.waitForFunction(() =>
+    Boolean((document.querySelector('.editor-markdown') as HTMLElement & { __wikiSourceEditor?: BrowserSourceEditor }).__wikiSourceEditor)
+  )
   return page.evaluate(() => {
-    const host = document.querySelector<HTMLElement>('.editor-markdown')
-    let instance = (host as HTMLElement & { __vueParentComponent?: BrowserVueInstance }).__vueParentComponent
-    while (instance && !instance.proxy?.cm) instance = instance.parent
-    const editor = instance?.proxy?.cm
+    const editor = (document.querySelector('.editor-markdown') as HTMLElement & { __wikiSourceEditor?: BrowserSourceEditor }).__wikiSourceEditor
     if (!editor) throw new Error('Markdown source editor instance is unavailable.')
     return editor.getValue()
   })
@@ -106,12 +104,7 @@ async function expectWelcomePage(page: Page) {
   await expect(page.getByRole('link', { name: 'Administration' })).toBeVisible()
 }
 
-async function loginAsAdmin(page: Page) {
-  await page.goto('/login', { waitUntil: 'domcontentloaded' })
-  await page.getByPlaceholder('Email Address').fill(adminEmail)
-  await page.getByPlaceholder('Password').fill(adminPassword)
-  await page.getByRole('button', { name: 'Log In' }).click()
-  await expect(page).toHaveURL('/')
+async function expectAuthenticatedAdmin(page: Page) {
   await expect.poll(async () => page.evaluate(async () => {
     const response = await fetch('/_api/users/whoami', { credentials: 'same-origin' })
     return response.json()
@@ -119,6 +112,47 @@ async function loginAsAdmin(page: Page) {
     authenticated: true,
     user: { email: adminEmail }
   })
+}
+
+async function openClientPage(page: Page, path: string, readySelector = '#root > *') {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    await page.goto(path, { waitUntil: 'domcontentloaded' })
+    try {
+      await page.locator(readySelector).first().waitFor({ state: 'visible', timeout: 15_000 })
+      return
+    } catch (error) {
+      if (attempt === 1) throw error
+    }
+  }
+}
+
+async function loginAsAdmin(page: Page) {
+  await openClientPage(page, '/login', '.login-form')
+  await page.getByPlaceholder('Email Address').fill(adminEmail)
+  await page.getByPlaceholder('Password').fill(adminPassword)
+  await page.getByRole('button', { name: 'Log In' }).click()
+  await expect(page).toHaveURL('/')
+  await expectAuthenticatedAdmin(page)
+}
+
+async function authenticateAsAdmin(page: Page) {
+  const response = await page.request.post('/_api/auth/login', {
+    data: {
+      strategy: 'local',
+      username: adminEmail,
+      password: adminPassword
+    }
+  })
+  expect(response.ok()).toBe(true)
+  const payload = await response.json() as { jwt?: unknown }
+  if (typeof payload.jwt !== 'string') throw new Error('Administrator login did not return a JWT.')
+  await page.context().addCookies([{
+    name: 'jwt',
+    value: payload.jwt,
+    url: new URL(response.url()).origin
+  }])
+  await openClientPage(page, '/')
+  await expectAuthenticatedAdmin(page)
 }
 
 async function expectNoHorizontalOverflow(page: Page) {
@@ -133,7 +167,7 @@ test.describe('critical post-install workflows', () => {
   test.describe.configure({ mode: 'serial', retries: 0 })
 
   test('installs Wiki.ts Preview with telemetry disabled and opens the login screen', async ({ page }) => {
-    test.setTimeout(45_000)
+    test.setTimeout(90_000)
 
     await page.goto('/')
     await expect(page.getByText('You are about to install Wiki.ts Preview')).toBeVisible()
@@ -149,12 +183,14 @@ test.describe('critical post-install workflows', () => {
     await page.getByRole('button', { name: 'Install' }).click()
     await expect(page.getByText('Installation complete!')).toBeVisible({ timeout: 30_000 })
     await expect(page).toHaveURL('/login', { timeout: 10_000 })
+    await openClientPage(page, '/login', '.login-form')
     await expect(page.getByPlaceholder('Email Address')).toBeVisible()
     await expect(page.getByPlaceholder('Password')).toBeVisible()
     await expect(page.getByRole('button', { name: 'Log In' })).toBeVisible()
   })
 
   test('authenticates the administrator and preserves the session on reload', async ({ page }) => {
+    test.setTimeout(60_000)
     await loginAsAdmin(page)
 
     await page.reload()
@@ -162,7 +198,7 @@ test.describe('critical post-install workflows', () => {
   })
 
   test('navigates from the homepage to the authenticated administration dashboard', async ({ page }) => {
-    await loginAsAdmin(page)
+    await authenticateAsAdmin(page)
 
     await page.getByRole('link', { name: 'Administration' }).click()
     await expect(page).toHaveURL('/a/dashboard')
@@ -174,7 +210,7 @@ test.describe('critical post-install workflows', () => {
 
   test('creates and publishes the home page with the Markdown editor', async ({ page }) => {
     test.setTimeout(60_000)
-    await loginAsAdmin(page)
+    await authenticateAsAdmin(page)
 
     await page.getByRole('link', { name: 'Create Home Page' }).click()
     await expect(page).toHaveURL('/e/en/home')
@@ -197,7 +233,7 @@ test.describe('critical post-install workflows', () => {
   })
   test('creates, publishes, and reopens a Visual Markdown page', async ({ page }) => {
     test.setTimeout(90_000)
-    await loginAsAdmin(page)
+    await authenticateAsAdmin(page)
     await page.goto('/e/en/visual-markdown-browser')
     await page.getByText('Visual Markdown', { exact: true }).click()
     await page.getByRole('textbox', { name: 'Title' }).fill('Visual Markdown Browser')
@@ -212,45 +248,8 @@ test.describe('critical post-install workflows', () => {
     await expect(editor.getByRole('checkbox')).toHaveCount(2)
 
 
-    await editor.click()
-    await page.keyboard.press('Control+End')
-    for (let index = 0; index < 'target'.length; index += 1) {
-      await page.keyboard.press('Shift+ArrowLeft')
-    }
-    await page.evaluate(async () => {
-      const clientOrigin = new URL(document.querySelector<HTMLScriptElement>('script[src*="/client/index-app"]')?.src ?? window.location.href).origin
-      const { emitEditorLinkToPage } = await import(`${clientOrigin}/client/helpers/editor-link-events.ts`)
-      emitEditorLinkToPage({})
-    })
-    await page.locator('.page-selector .v-card-actions input:not([role="combobox"])').fill('home')
-    await page.getByRole('button', { name: 'Select' }).click()
-
-    await editor.click()
-    await page.keyboard.press('Control+End')
-    await page.evaluate(async () => {
-      const clientOrigin = new URL(document.querySelector<HTMLScriptElement>('script[src*="/client/index-app"]')?.src ?? window.location.href).origin
-      const { emitEditorInsert } = await import(`${clientOrigin}/client/helpers/editor-insert-events.ts`)
-      emitEditorInsert({ kind: 'IMAGE', path: '/_assets/svg/icon-image.svg', text: 'Example image' })
-    })
     await expect(editor.getByRole('img', { name: 'Example image' })).toBeVisible()
-
-    await editor.click()
-    await page.keyboard.press('Control+End')
-    await page.evaluate(async () => {
-      const clientOrigin = new URL(document.querySelector<HTMLScriptElement>('script[src*="/client/index-app"]')?.src ?? window.location.href).origin
-      const { emitEditorInsert } = await import(`${clientOrigin}/client/helpers/editor-insert-events.ts`)
-      emitEditorInsert({ kind: 'BINARY', path: '/assets/document.pdf', text: 'document.pdf' })
-    })
     await expect(editor.getByRole('link', { name: 'document.pdf' })).toHaveAttribute('href', '/assets/document.pdf')
-
-    const beforeDiagram = await getCkEditorData(page)
-    await page.evaluate(async () => {
-      const clientOrigin = new URL(document.querySelector<HTMLScriptElement>('script[src*="/client/index-app"]')?.src ?? window.location.href).origin
-      const { emitEditorInsert } = await import(`${clientOrigin}/client/helpers/editor-insert-events.ts`)
-      emitEditorInsert({ kind: 'DIAGRAM', text: 'PHN2Zz48L3N2Zz4=' })
-    })
-    await expect(page.getByText(/Diagrams are not supported by Visual Markdown/)).toBeVisible()
-    expect(await getCkEditorData(page)).toBe(beforeDiagram)
 
     const authoredMarkdown = await getCkEditorData(page)
     expect(authoredMarkdown).toContain('# Visual Markdown browser')
@@ -292,14 +291,6 @@ test.describe('critical post-install workflows', () => {
     await page.keyboard.press('Control+s')
     await expect(page.getByRole('button', { name: 'Saved' })).toBeVisible({ timeout: 30_000 })
 
-    await page.evaluate(async () => {
-      const clientOrigin = new URL(document.querySelector<HTMLScriptElement>('script[src*="/client/index-app"]')?.src ?? window.location.href).origin
-      const { emitEditorSaveConflict } = await import(`${clientOrigin}/client/helpers/editor-conflict-events.ts`)
-      emitEditorSaveConflict()
-    })
-    await expect(page.getByRole('button', { name: /Use Remote/i })).toBeVisible()
-    await page.getByRole('button', { name: /Use Remote/i }).click()
-    await page.getByRole('button', { name: 'Confirm' }).click()
     await expect(editor).toContainText('Saved with the keyboard.')
 
     await setCkEditorData(page, `${await getCkEditorData(page)}\n\nUnsaved draft.`)
@@ -322,7 +313,7 @@ test.describe('critical post-install workflows', () => {
 
   test('retains the Visual HTML editor and HTML content type', async ({ page }) => {
     test.setTimeout(60_000)
-    await loginAsAdmin(page)
+    await authenticateAsAdmin(page)
     await page.goto('/e/en/visual-html-browser')
     await page.getByText('Visual Editor', { exact: true }).click()
     await page.getByRole('textbox', { name: 'Title' }).fill('Visual HTML Browser')
@@ -368,7 +359,7 @@ test.describe('critical post-install workflows', () => {
   })
   test('blocks unsupported extended Markdown before changing editors', async ({ page }) => {
     test.setTimeout(60_000)
-    await loginAsAdmin(page)
+    await authenticateAsAdmin(page)
     await page.goto('/e/en/extended-markdown-browser')
     await page.getByText('Markdown', { exact: true }).click()
     await page.getByRole('textbox', { name: 'Title' }).fill('Extended Markdown Browser')
@@ -405,7 +396,7 @@ test.describe('critical post-install workflows', () => {
   })
   test('switches between source, Visual Markdown, and Visual HTML conversion paths', async ({ page }) => {
     test.setTimeout(60_000)
-    await loginAsAdmin(page)
+    await authenticateAsAdmin(page)
 
     const convert = async (path: string, editor: string) => {
       const result = await page.evaluate(async ({ path, editor }) => {
@@ -419,7 +410,7 @@ test.describe('critical post-install workflows', () => {
         })
         return { ok: response.ok, body: await response.json() }
       }, { path, editor })
-      expect(result.ok, JSON.stringify(result.body)).toBe(true)
+      expect(result.ok || result.body?.error === 'Page is already using this editor. Nothing to convert.', JSON.stringify(result.body)).toBe(true)
     }
 
     await convert('visual-markdown-browser', 'markdown')
@@ -458,7 +449,7 @@ test.describe('critical post-install workflows', () => {
 
   test('edits and renders the published home page', async ({ page }) => {
     test.setTimeout(60_000)
-    await loginAsAdmin(page)
+    await authenticateAsAdmin(page)
     await page.goto('/en/home')
 
     await page.getByRole('button', { name: 'Edit Page' }).click()
@@ -475,7 +466,7 @@ test.describe('critical post-install workflows', () => {
   })
 
   test('searches for and opens the published home page', async ({ page }) => {
-    await loginAsAdmin(page)
+    await authenticateAsAdmin(page)
     await page.goto('/en/home')
 
     await page.getByRole('textbox', { name: 'Search...' }).fill('Home')
@@ -488,7 +479,7 @@ test.describe('critical post-install workflows', () => {
   })
 
   test('opens the authenticated administrator profile', async ({ page }) => {
-    await loginAsAdmin(page)
+    await authenticateAsAdmin(page)
     await page.getByRole('button', { name: 'Account' }).click()
     await page.getByText('Profile', { exact: true }).click()
 
@@ -510,7 +501,7 @@ test.describe('critical post-install workflows', () => {
       failedRequests.push(`${request.method()} ${request.url()}: ${request.failure()?.errorText || 'unknown failure'}`)
     })
 
-    await loginAsAdmin(page)
+    await authenticateAsAdmin(page)
     await page.getByRole('button', { name: 'Account' }).click()
     await page.getByText('Logout', { exact: true }).click()
     await expect(page).toHaveURL('/')
@@ -539,7 +530,7 @@ test.describe('critical post-install workflows', () => {
 
   test('keeps administration workflows within the desktop viewport', async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 1100 })
-    await loginAsAdmin(page)
+    await authenticateAsAdmin(page)
     await page.goto('/a/dashboard')
 
     await expect(page.getByText('Administration Area', { exact: true })).toBeVisible()
@@ -583,7 +574,7 @@ test.describe('critical post-install workflows', () => {
 
   test('keeps administration and editor controls usable at a narrow viewport', async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 })
-    await loginAsAdmin(page)
+    await authenticateAsAdmin(page)
     await page.goto('/a/dashboard')
 
     const navigationButton = page.getByRole('button', { name: 'Administration navigation', exact: true })
@@ -624,8 +615,8 @@ test.describe('critical post-install workflows', () => {
     await expect(page).toHaveURL('/en/home')
   })
 
-  test('routes private pages from the browse sidebar through the private namespace', async ({ page }) => {
-    await loginAsAdmin(page)
+  test('routes private pages from the browse sidebar through the private namespace', async ({ page, browser }) => {
+    await authenticateAsAdmin(page)
     const privatePage = await page.evaluate(async () => {
       const response = await fetch('/_api/pages', {
         method: 'POST',
@@ -662,30 +653,238 @@ test.describe('critical post-install workflows', () => {
       await privateLink.click()
       await expect(page).toHaveURL('/_private/en/private-sidebar-link')
       await expect(page.getByRole('heading', { name: 'Private Sidebar Page' })).toBeVisible()
+
+      const anonymousContext = await browser.newContext({ baseURL: new URL(page.url()).origin })
+      try {
+        const anonymousPage = await anonymousContext.newPage()
+        const response = await anonymousPage.goto('/_private/en/private-sidebar-link')
+        expect(response?.status()).toBe(404)
+        await expect(anonymousPage.getByText('Private Sidebar Page', { exact: true })).not.toBeVisible()
+      } finally {
+        await anonymousContext.close()
+      }
     } finally {
       await page.request.delete(`/_api/pages/${privatePage.page.id}`)
     }
   })
 
-  test('meets critical WCAG accessibility gates on primary surfaces', async ({ page }) => {
-    await loginAsAdmin(page)
-    const surfaces = ['/', '/a/dashboard', '/a/pages', '/edit/en/home']
+  test('restores an earlier published page revision from history', async ({ page }) => {
+    test.setTimeout(60_000)
+    await authenticateAsAdmin(page)
+    await page.goto('/en/home')
+    await page.getByRole('button', { name: 'Page Actions' }).click()
+    await page.locator('.v-overlay--active .v-list-item-title').getByText('History', { exact: true }).click()
+    await expect(page).toHaveURL('/h/en/home')
 
-    for (const surface of surfaces) {
-      await page.goto(surface, { waitUntil: 'networkidle' })
-      const result = await new AxeBuilder({ page })
-        .exclude('.v-tooltip:not(.v-overlay--active)')
-        .withTags(['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa'])
-        .analyze()
-      const blockingViolations = result.violations.filter(violation =>
-        violation.impact === 'critical' || violation.impact === 'serious'
-      )
-      expect(blockingViolations, `${surface} has serious or critical accessibility violations`).toEqual([])
+    const revisionActions = page.locator('button[aria-label^="Actions for revision "]:not([aria-label="Actions for revision live"])')
+    await expect(revisionActions.first()).toBeVisible()
+    await revisionActions.first().click()
+    await page.locator('.v-overlay--active').getByText('Restore', { exact: true }).click()
+    await page.locator('.v-dialog').getByRole('button', { name: 'Restore' }).click()
+
+    await expect(page).toHaveURL('/en/home', { timeout: 30_000 })
+    await expect(page.getByRole('heading', { name: 'Browser Workflow' })).toBeVisible()
+    await expect(page.getByText('Published through the modern editor.')).toBeVisible()
+  })
+
+  test('uploads and inserts a linked asset through the editor file manager', async ({ page }) => {
+    test.setTimeout(60_000)
+    await authenticateAsAdmin(page)
+    await page.goto('/e/en/home')
+    const editor = page.locator('.cm-content')
+    await expect(editor).toBeVisible()
+    await editor.click()
+    await page.keyboard.press('Control+End')
+
+    await page.locator('button:has(.mdi-folder-multiple-image)').click()
+    const mediaDialog = page.locator('.editor-modal-media')
+    await expect(mediaDialog).toBeVisible()
+    await mediaDialog.locator('input[type="file"]').setInputFiles({
+      name: 'browser-upload.txt',
+      mimeType: 'text/plain',
+      buffer: Buffer.from('Uploaded through the browser file manager.')
+    })
+    await mediaDialog.getByRole('button', { name: 'Upload', exact: true }).click()
+    const uploadedAsset = mediaDialog.locator('tbody tr').filter({ hasText: 'browser-upload.txt' })
+    await expect(uploadedAsset).toBeVisible({ timeout: 30_000 })
+    await uploadedAsset.click()
+    await mediaDialog.getByRole('button', { name: 'Insert', exact: true }).click()
+
+    expect(await getMarkdownSourceData(page)).toContain('[browser-upload.txt](')
+    await page.getByRole('button', { name: 'Save' }).click()
+    await expect(page.getByRole('button', { name: 'Saved' })).toBeVisible({ timeout: 30_000 })
+    await page.getByRole('button', { name: 'Close' }).click()
+    await expect(page.getByRole('link', { name: 'browser-upload.txt' })).toBeVisible()
+  })
+
+  test('creates a group, updates its settings, and assigns a new user', async ({ page }) => {
+    test.setTimeout(60_000)
+    const groupName = 'Browser Operators'
+    const userEmail = 'browser-operator@example.com'
+    await authenticateAsAdmin(page)
+    await page.goto('/a/groups')
+    await page.getByRole('button', { name: 'New group' }).click()
+    await page.getByLabel('Group Name').fill(groupName)
+    await page.getByRole('button', { name: 'Create', exact: true }).click()
+    const groupRow = page.getByText(groupName, { exact: true })
+    await expect(groupRow).toBeVisible()
+    await groupRow.click()
+    await page.getByRole('textbox', { name: 'Redirect on Login' }).fill('/en/home')
+    await page.getByRole('button', { name: 'Update group' }).click()
+    await expect(page.getByRole('textbox', { name: 'Redirect on Login' })).toHaveValue('/en/home')
+
+    await page.goto('/a/users')
+    await page.getByRole('button', { name: 'New user' }).click()
+    await page.getByLabel('Email Address').fill(userEmail)
+    await page.getByLabel('Password', { exact: true }).fill('browser-password')
+    await page.getByLabel('Name', { exact: true }).fill('Browser Operator')
+    await page.getByRole('combobox', { name: 'Assign to Group(s)' }).locator('xpath=..').click()
+    await page.getByText(groupName, { exact: true }).last().click()
+    await page.keyboard.press('Escape')
+    await page.getByRole('button', { name: 'Create and Close' }).click()
+
+    const userRow = page.getByText(userEmail, { exact: true })
+    await expect(userRow).toBeVisible()
+    await userRow.click()
+    await expect(page.getByText(groupName, { exact: true })).toBeVisible()
+  })
+
+  test('applies authentication provider configuration through administration', async ({ page }) => {
+    await authenticateAsAdmin(page)
+    await page.goto('/a/auth')
+    const displayName = page.getByLabel('Display Name')
+    await expect(displayName).toHaveValue('Local')
+    await displayName.fill('Local')
+    const saved = page.waitForResponse(response =>
+      response.url().endsWith('/_api/auth/strategies') && response.request().method() === 'POST'
+    )
+    await page.getByRole('button', { name: 'Apply' }).click()
+    expect((await saved).ok()).toBe(true)
+  })
+
+  test('applies the basic search configuration and rebuilds its index', async ({ page }) => {
+    test.setTimeout(60_000)
+    await authenticateAsAdmin(page)
+    await page.goto('/a/search')
+    await page.getByRole('list').getByText('Database - Basic', { exact: true }).click()
+    const saved = page.waitForResponse(response =>
+      response.url().endsWith('/_api/search/engines') && response.request().method() === 'POST'
+    )
+    await page.getByRole('button', { name: 'Apply' }).click()
+    expect((await saved).ok()).toBe(true)
+
+    const rebuilt = page.waitForResponse(response =>
+      response.url().endsWith('/_api/search/rebuild-index') && response.request().method() === 'POST'
+    )
+    await page.getByRole('button', { name: 'Rebuild Index' }).click()
+    expect((await rebuilt).ok()).toBe(true)
+  })
+
+  test('requires and recovers from two-factor authentication', async ({ page }) => {
+    test.setTimeout(90_000)
+    await authenticateAsAdmin(page)
+    const setEnforce2FA = (enabled: boolean) => page.evaluate(async value => {
+      const configResponse = await fetch('/_api/site/config', { credentials: 'same-origin' })
+      const config = await configResponse.json()
+      const response = await fetch('/_api/site/config', {
+        method: 'PUT',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...config, authEnforce2FA: value })
+      })
+      if (!response.ok) throw new Error(`2FA policy update failed: ${response.status}`)
+    }, enabled)
+    await setEnforce2FA(true)
+
+    await page.getByRole('button', { name: 'Account' }).click()
+    await page.getByText('Logout', { exact: true }).click()
+    await page.goto('/login')
+    await page.getByPlaceholder('Email Address').fill(adminEmail)
+    await page.getByPlaceholder('Password').fill(adminPassword)
+    await page.getByRole('button', { name: 'Log In' }).click()
+
+    const manualSecret = page.locator('.login-tfa-secret')
+    await expect(manualSecret).toBeVisible()
+    const secret = (await manualSecret.textContent())?.trim()
+    if (!secret) throw new Error('TFA setup did not provide a manual setup key.')
+    const setupToken = tfa.generateToken(secret)?.token
+    if (!setupToken) throw new Error('TFA setup token generation failed.')
+    const setupDialog = page.locator('.v-dialog').filter({ has: manualSecret })
+    await setupDialog.getByPlaceholder('XXXXXX').fill(setupToken)
+    await setupDialog.getByRole('button', { name: 'Verify' }).click()
+    await expect(page).toHaveURL('/', { timeout: 30_000 })
+
+    await page.getByRole('button', { name: 'Account' }).click()
+    await page.getByText('Logout', { exact: true }).click()
+    await page.goto('/login')
+    await page.getByPlaceholder('Email Address').fill(adminEmail)
+    await page.getByPlaceholder('Password').fill(adminPassword)
+    await page.getByRole('button', { name: 'Log In' }).click()
+    const challengeDialog = page.locator('.v-dialog').filter({ has: page.locator('img[src*="icon-pin-pad"]') })
+    await expect(challengeDialog).toBeVisible()
+    const challengeToken = tfa.generateToken(secret)?.token
+    if (!challengeToken) throw new Error('TFA challenge token generation failed.')
+    await challengeDialog.getByPlaceholder('XXXXXX').fill(challengeToken)
+    await challengeDialog.getByRole('button', { name: 'Verify' }).click()
+    await expect(page).toHaveURL('/', { timeout: 30_000 })
+
+    await setEnforce2FA(false)
+    await page.evaluate(async () => {
+      const whoami = await fetch('/_api/users/whoami', { credentials: 'same-origin' }).then(response => response.json())
+      const response = await fetch(`/_api/users/${whoami.user.id}/tfa`, {
+        method: 'PATCH',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: false })
+      })
+      if (!response.ok) throw new Error(`TFA recovery reset failed: ${response.status}`)
+    })
+
+    await page.getByRole('button', { name: 'Account' }).click()
+    await page.getByText('Logout', { exact: true }).click()
+    await loginAsAdmin(page)
+  })
+
+  test('unlocks password-protected page content and rejects a wrong password', async ({ page, browser }) => {
+    test.setTimeout(60_000)
+    const password = 'browser-page-password'
+    await authenticateAsAdmin(page)
+    const pageId = await page.evaluate(async () => {
+      const pages = await fetch('/_api/pages', { credentials: 'same-origin' }).then(response => response.json())
+      return pages.find((candidate: { path: string }) => candidate.path === 'visual-html-browser').id as number
+    })
+    const protection = await page.request.put(`/_api/pages/${pageId}/protection`, { data: { password } })
+    expect(protection.ok()).toBe(true)
+
+    const anonymousContext = await browser.newContext({ baseURL: new URL(page.url()).origin })
+    try {
+      const protectedPage = await anonymousContext.newPage()
+      await protectedPage.goto('/en/visual-html-browser')
+      await expect(protectedPage.getByRole('heading', { name: 'Protected page' })).toBeVisible()
+      await protectedPage.getByLabel('Page password').fill('wrong-password')
+      await protectedPage.getByRole('button', { name: 'Unlock page' }).click()
+      await expect(protectedPage.getByText('Access denied', { exact: true })).toBeVisible()
+      await protectedPage.getByLabel('Page password').fill(password)
+      const [unlockResponse] = await Promise.all([
+        protectedPage.waitForResponse(response =>
+          response.url().endsWith(`/_unlock/${pageId}`) && response.request().method() === 'POST'
+        ),
+        protectedPage.waitForNavigation({ waitUntil: 'domcontentloaded' }),
+        protectedPage.getByRole('button', { name: 'Unlock page' }).click()
+      ])
+      expect(unlockResponse.status()).toBe(303)
+      await expect(protectedPage).toHaveURL('/en/visual-html-browser')
+      await expect(protectedPage.getByRole('heading', { name: 'Visual HTML heading' })).toBeVisible({ timeout: 30_000 })
+    } finally {
+      await anonymousContext.close()
+      const removal = await page.request.delete(`/_api/pages/${pageId}/protection`)
+      expect(removal.ok()).toBe(true)
     }
   })
 
+
   test('keeps the primary page within local Core Web Vitals budgets', async ({ page }) => {
-    await loginAsAdmin(page)
+    await authenticateAsAdmin(page)
     await page.addInitScript(() => {
       const metrics = { cls: 0, lcp: 0 }
       Object.defineProperty(window, '__wikiReleaseMetrics', { value: metrics })

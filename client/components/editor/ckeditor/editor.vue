@@ -1,5 +1,5 @@
 <template lang='pug'>
-  .editor-ckeditor
+  .editor-ckeditor(ref='root')
     div(ref='toolbarContainer')
     .editor-ckeditor-markdown-tools(v-if='format === `markdown`')
       v-btn.editor-ckeditor-extension-trigger(
@@ -121,6 +121,7 @@ type EditorSaveOptions = {
 
 type EditorSaveHandler = (options?: EditorSaveOptions) => void | Promise<void>
 type EditorMode = 'create' | 'update'
+type EditorHost = HTMLElement & { __wikiEditor?: DecoupledEditor }
 
 type InsertLinkPayload = {
   id: number
@@ -328,6 +329,10 @@ export default defineComponent({
       }
     ))
     this.editor = markRaw(editor)
+    Object.defineProperty(this.$refs.root as EditorHost, '__wikiEditor', {
+      configurable: true,
+      value: editor
+    })
 
     const toolbarElement = editor.ui.view.toolbar.element
     if (toolbarElement) toolbarContainer.appendChild(toolbarElement)
@@ -364,6 +369,7 @@ export default defineComponent({
     offEditorLinkToPage(this.handleEditorLinkToPage)
     offEditorSaveConflict(this.handleEditorSaveConflict)
     offEditorContentOverwrite(this.handleEditorContentOverwrite)
+    delete (this.$refs.root as EditorHost).__wikiEditor
     if (this.editor) {
       void this.editor.destroy()
       this.editor = null

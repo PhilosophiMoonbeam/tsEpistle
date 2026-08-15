@@ -166,7 +166,7 @@ interface RegisterOptions {
 
 type AfterLoginResult =
   | { mustProvideTFA: true, continuationToken: string, redirect: string }
-  | { mustSetupTFA: true, continuationToken: string, tfaQRImage: string, redirect: string }
+  | { mustSetupTFA: true, continuationToken: string, tfaQRImage: string, tfaSecret: string, redirect: string }
   | { mustChangePwd: true, continuationToken: string, redirect: string }
   | { jwt: string, redirect: string }
 
@@ -348,17 +348,21 @@ async verifyPassword(pwd: string): Promise<true> {
   }
 }
 
-async generateTFA(): Promise<string> {
+async generateTFA(): Promise<{ qrImage: string, secret: string }> {
   const tfaInfo = tfa.generateSecret({
     name: wiki.config.title,
     account: this.email
   })
+  this.tfaSecret = tfaInfo.secret
   await wiki.models.users.query().findById(this.id).patch({
     tfaIsActive: false,
     tfaSecret: tfaInfo.secret
   })
   const safeTitle = wiki.config.title.replace(/[\s-.,=!@#$%?&*()+[\]{}/\\;<>]/g, '')
-  return qr.imageSync(`otpauth://totp/${safeTitle}:${this.email}?secret=${tfaInfo.secret}`, { type: 'svg' })
+  return {
+    qrImage: qr.imageSync(`otpauth://totp/${safeTitle}:${this.email}?secret=${tfaInfo.secret}`, { type: 'svg' }),
+    secret: tfaInfo.secret
+  }
 }
 
 async enableTFA(): Promise<number> {
@@ -616,7 +620,7 @@ static async afterLoginChecks (user: User, context: AuthenticationContext, { ski
       }
     } else if (wiki.config.auth.enforce2FA || (user.tfaIsActive && !user.tfaSecret)) {
       try {
-        const tfaQRImage = await user.generateTFA()
+        const { qrImage: tfaQRImage, secret: tfaSecret } = await user.generateTFA()
         const tfaToken = await wiki.models.userKeys.generateToken({
           kind: 'tfaSetup',
           userId: user.id
@@ -625,6 +629,7 @@ static async afterLoginChecks (user: User, context: AuthenticationContext, { ski
           mustSetupTFA: true,
           continuationToken: tfaToken,
           tfaQRImage,
+          tfaSecret,
           redirect
         }
       } catch (errc) {

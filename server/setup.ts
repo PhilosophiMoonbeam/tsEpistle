@@ -239,7 +239,14 @@ export default function startSetup(): void {
       }
 
       wiki.logger.info('Installing default locale...')
-      await wiki.models.locales.query().insert({ code: 'en', strings: {}, isRTL: false, name: 'English', nativeName: 'English' })
+      const defaultLocaleStrings: unknown = await fs.readJson(path.join(wiki.SERVERPATH, 'locales', 'en.json'))
+      await wiki.models.locales.query().insert({
+        code: 'en',
+        strings: defaultLocaleStrings,
+        isRTL: false,
+        name: 'English',
+        nativeName: 'English'
+      })
 
       wiki.logger.info('Creating default groups...')
       const adminGroup = await wiki.models.groups.query().insert({

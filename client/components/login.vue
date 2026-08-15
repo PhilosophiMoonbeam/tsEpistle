@@ -220,6 +220,8 @@
           .subtitle-2 {{$t('auth:tfaSetupInstrFirst')}}
           .caption (#[a(href='https://authy.com/', target='_blank', noopener) Authy], #[a(href='https://support.google.com/accounts/answer/1066447', target='_blank', noopener) Google Authenticator], #[a(href='https://www.microsoft.com/en-us/account/authenticator', target='_blank', noopener) Microsoft Authenticator], etc.)
           .login-tfa-qr.mt-5(v-if='isTFASetupShown', v-html='tfaQRImage')
+          .caption.mt-3 Manual setup key
+          code.login-tfa-secret {{tfaSecret}}
           .subtitle-2.mt-5 {{$t('auth:tfaSetupInstrSecond')}}
           v-text-field.login-tfa-field.mt-2(
             solo
@@ -295,6 +297,7 @@ export default {
       isTFAShown: false,
       isTFASetupShown: false,
       tfaQRImage: '',
+      tfaSecret: '',
       errorShown: false,
       errorMessage: ''
     }
@@ -530,6 +533,7 @@ export default {
         this.securityCode = ''
         this.isTFASetupShown = true
         this.tfaQRImage = respObj.tfaQRImage || ''
+        this.tfaSecret = respObj.tfaSecret || ''
         setTimeout(() => {
           ;(this.$refs.iptTFASetup as { focus: () => void }).focus()
         }, 500)
@@ -653,6 +657,12 @@ export default {
 
       &-field input {
         text-align: center;
+      }
+
+      &-secret {
+        display: block;
+        overflow-wrap: anywhere;
+        user-select: all;
       }
 
       &-qr {

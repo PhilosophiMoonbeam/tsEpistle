@@ -320,7 +320,7 @@ export default {
       &-meta {
         overflow: hidden;
         margin-top: 6px;
-        color: rgba(127, 127, 127, .95);
+        color: rgb(var(--v-theme-on-surface));
         text-overflow: ellipsis;
         white-space: nowrap;
       }

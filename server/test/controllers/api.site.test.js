@@ -239,6 +239,21 @@ describe('controllers/api site endpoints', () => {
     expect(global.WIKI.app.disable).toHaveBeenCalledWith('trust proxy')
   })
 
+  it('uses the initialized application when it becomes available after import', async () => {
+    const handler = await loadPutConfigHandler()
+    const initializedApp = {
+      enable: vi.fn(),
+      disable: vi.fn()
+    }
+    global.WIKI.app = initializedApp
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
+
+    await handler({ user: {}, body: { securityTrustProxy: false } }, res)
+
+    expect(initializedApp.disable).toHaveBeenCalledWith('trust proxy')
+    expect(res.status).not.toHaveBeenCalled()
+  })
+
   it('rejects invalid save payloads with JSON', async () => {
     const handler = await loadPutConfigHandler()
     const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }

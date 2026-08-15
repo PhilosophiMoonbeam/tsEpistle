@@ -491,6 +491,9 @@ importers:
       '@playwright/test':
         specifier: 1.62.1
         version: 1.62.1
+      '@redocly/cli':
+        specifier: ^2.46.1
+        version: 2.46.1
       '@types/canvas-confetti':
         specifier: 1.9.0
         version: 1.9.0
@@ -1824,6 +1827,11 @@ packages:
 
   '@profoundlogic/hogan@3.0.4':
     resolution: {integrity: sha512-pmNVGuooS30Mm7YbZd5T7E5zYVO6D5Ct91sn4T39mUvMUc3sCGridcnhAufL1/Bz2QzAtzEn0agNrdk3+5yWzw==}
+    hasBin: true
+
+  '@redocly/cli@2.46.1':
+    resolution: {integrity: sha512-FSUSq2FU8VN7DmTobTmq7zb3zPnDkRKSMd3n38D62JFJUUZKnLMQtn7BUhsD2dCFH2WgF05I3fbN7QHDQyCBeA==}
+    engines: {node: '>=22.12.0 || >=20.19.0 <21.0.0', npm: '>=10'}
     hasBin: true
 
   '@repeaterjs/repeater@3.1.0':
@@ -8215,6 +8223,8 @@ snapshots:
   '@profoundlogic/hogan@3.0.4':
     dependencies:
       nopt: 1.0.10
+
+  '@redocly/cli@2.46.1': {}
 
   '@repeaterjs/repeater@3.1.0': {}
 

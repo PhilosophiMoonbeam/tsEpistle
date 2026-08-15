@@ -1,0 +1,11 @@
+extends:
+  - recommended
+
+rules:
+  info-license: error
+  no-ambiguous-paths: error
+  no-required-schema-properties-undefined: error
+  no-unused-components: error
+  operation-4xx-response: off
+  operation-operationId: error
+  security-defined: error

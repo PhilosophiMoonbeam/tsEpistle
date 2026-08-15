@@ -12,7 +12,11 @@ export const openApiDocument = Object.freeze({
   info: {
     title: 'Wiki.ts REST API',
     version: '1.0.0',
-    description: 'Versioned external REST API for Wiki.ts. Bearer API keys use the permissions and page rules of their assigned group.'
+    description: 'Versioned external REST API for Wiki.ts. Bearer API keys use the permissions and page rules of their assigned group.',
+    license: {
+      name: 'GNU Affero General Public License v3.0',
+      identifier: 'AGPL-3.0-only'
+    },
   },
   servers: [{ url: '/api/v1' }],
   security: [{ bearerAuth: [] }],

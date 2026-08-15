@@ -23,6 +23,7 @@ export type AuthResponse = {
   mustProvideTFA?: boolean
   mustSetupTFA?: boolean
   tfaQRImage?: string
+  tfaSecret?: string
   jwt?: string
   redirect?: string
 }
@@ -50,7 +51,9 @@ function isValidAuthResponse (payload: unknown): payload is AuthResponse {
   }
 
   if (payload.mustSetupTFA === true) {
-    return typeof payload.continuationToken === 'string' && payload.continuationToken.length > 0 && typeof payload.tfaQRImage === 'string' && payload.tfaQRImage.length > 0
+    return typeof payload.continuationToken === 'string' && payload.continuationToken.length > 0 &&
+      typeof payload.tfaQRImage === 'string' && payload.tfaQRImage.length > 0 &&
+      typeof payload.tfaSecret === 'string' && payload.tfaSecret.length > 0
   }
 
   return typeof payload.jwt === 'string' && payload.jwt.length > 0

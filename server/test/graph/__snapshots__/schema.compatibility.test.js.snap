@@ -133,6 +133,7 @@ type AuthenticationLoginResponse {
   redirect: String
   responseResult: ResponseStatus
   tfaQRImage: String
+  tfaSecret: String
 }
 
 type AuthenticationMutation {
