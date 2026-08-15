@@ -2,6 +2,7 @@ import express from 'express'
 import { errorStatus, objectValue, type NextFunction, type Request, type Response, getWikiAuth } from '../_types.ts'
 
 import groupOperations from '../../operations/groups.ts'
+import { isValidPageRuleRegex } from '../../helpers/page-access.ts'
 
 const router = express.Router()
 
@@ -108,6 +109,10 @@ const normalizeGroupUpdatePayload = (body: unknown, res: Response): GroupUpdateP
       !localesValue.every((locale: unknown) => typeof locale === 'string')
     ) {
       res.status(400).json({ error: 'group page rules are invalid' })
+      return null
+    }
+    if (match === 'REGEX' && !isValidPageRuleRegex(path)) {
+      res.status(400).json({ error: 'group page rule regular expression is invalid' })
       return null
     }
     pageRules.push({

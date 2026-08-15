@@ -12,6 +12,7 @@ import commonHelper from '../helpers/common.ts'
 import securityHelper from '../helpers/security.ts'
 import cache from './cache.ts'
 import { apiAccessContract, isInternalRestPath } from '../../shared/api-access.ts'
+import { pageRuleRegexMatches } from '../helpers/page-access.ts'
 
 
 type UnknownRecord = Record<string, unknown>
@@ -199,7 +200,7 @@ interface EffectivePermissions {
 interface AuthService {
   activateStrategies(): Promise<void>
   authenticate(req: Request, res: Response, next: NextFunction): void
-  checkAccess(user: AccessUser, permissions?: string[], page?: PageContext | false): boolean
+  checkAccess(user: AccessUser | undefined, permissions?: string[], page?: PageContext | false): boolean
   checkAssignUserToGroupAccess(requester: AccessUser, groupIds?: number[]): Promise<boolean>
   checkExclusiveAccess(user: AccessUser, includePermissions?: string[], excludePermissions?: string[]): boolean
   getEffectivePermissions(req: Request, page: PageContext): EffectivePermissions
@@ -244,7 +245,8 @@ const isAccessUser = (value: unknown): value is AccessUser => isRecord(value) &&
   (value.permissions === undefined || (Array.isArray(value.permissions) && value.permissions.every(permission => typeof permission === 'string'))) &&
   (value.getGlobalPermissions === undefined || typeof value.getGlobalPermissions === 'function')
 const isExpressUser = (value: unknown): value is Express.User => isRecord(value)
-const getPermissions = (user: AccessUser): string[] => {
+const getPermissions = (user: AccessUser | undefined): string[] => {
+  if (!user) return []
   if (Array.isArray(user.permissions)) return user.permissions
   return user.getGlobalPermissions?.() ?? []
 }
@@ -448,6 +450,7 @@ const auth: AuthService = {
   },
 
   checkAccess(user, permissions = [], page = false) {
+    if (!user) return false
     const userPermissions = getPermissions(user)
     if (userPermissions.includes('manage:system')) return true
     if (!permissions.some(permission => userPermissions.includes(permission))) return false
@@ -469,7 +472,7 @@ const auth: AuthService = {
             if (page.path.endsWith(rule.path)) checkState = this._applyPageRuleSpecificity({ rule, checkState, higherPriority: ['REGEX', 'EXACT', 'TAG'] })
             break
           case 'REGEX':
-            if (new RegExp(rule.path).test(page.path)) checkState = this._applyPageRuleSpecificity({ rule, checkState, higherPriority: ['EXACT', 'TAG'] })
+            if (pageRuleRegexMatches(rule.path, page.path)) checkState = this._applyPageRuleSpecificity({ rule, checkState, higherPriority: ['EXACT', 'TAG'] })
             break
           case 'TAG':
             for (const tag of page.tags ?? []) {

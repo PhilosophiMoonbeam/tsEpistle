@@ -25,6 +25,18 @@ interface ScopeOptions {
 }
 
 const column = (table: string | undefined, name: string): string => table ? `${table}.${name}` : name
+const compilePageRuleRegex = (pattern: string): RegExp | null => {
+  try {
+    return new RegExp(pattern)
+  } catch {
+    return null
+  }
+}
+
+export const isValidPageRuleRegex = (pattern: string): boolean => compilePageRuleRegex(pattern) !== null
+
+export const pageRuleRegexMatches = (pattern: string, path: string): boolean =>
+  compilePageRuleRegex(pattern)?.test(path) ?? false
 
 export const principalId = (user: PagePrincipal): number | null => {
   const id = user && typeof user.id === 'number' && Number.isSafeInteger(user.id) ? user.id : null

@@ -4,8 +4,10 @@ import {
   canDeletePage,
   canReadPage,
   canWritePage,
+  isValidPageRuleRegex,
   managesSystem,
   pageRoute,
+  pageRuleRegexMatches,
   principalId,
   scopePageQuery,
   scopePageQueryForOwner
@@ -61,6 +63,14 @@ describe('owner-scoped page access', () => {
     expect(principalId({ id: Number.NaN })).toBeNull()
     expect(managesSystem(administrator)).toBe(true)
     expect(managesSystem(otherUser)).toBe(false)
+  })
+
+  it('validates and safely evaluates administrator-supplied regular expressions', () => {
+    expect(isValidPageRuleRegex('^docs/(public|shared)/')).toBe(true)
+    expect(pageRuleRegexMatches('^docs/(public|shared)/', 'docs/public/guide')).toBe(true)
+    expect(pageRuleRegexMatches('^docs/(public|shared)/', 'private/guide')).toBe(false)
+    expect(isValidPageRuleRegex('[invalid')).toBe(false)
+    expect(pageRuleRegexMatches('[invalid', 'docs/public/guide')).toBe(false)
   })
 
   it('scopes database queries to public rows plus the current owner, or all rows for administrators', () => {
