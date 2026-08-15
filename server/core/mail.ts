@@ -4,7 +4,7 @@ import _ from 'lodash'
 import fs from 'fs-extra'
 import path from 'node:path'
 
-interface MailOptions { template: string; to: string; subject: string; text?: string; data?: Record<string, unknown> }
+interface MailOptions { template: string; to: string; subject: string; text?: string; messageId?: string; data?: Record<string, unknown> }
 interface MailConfig { host: string; port: number; name: string; secure: boolean; verifySSL?: boolean; user?: string; pass?: string; senderName: string; senderEmail: string; dkimDomainName?: string; dkimKeySelector?: string; dkimPrivateKey?: string }
 interface WikiContext {
   SERVERPATH: string
@@ -49,6 +49,7 @@ const mail = {
       from: `"${wiki.config.mail.senderName}" <${wiki.config.mail.senderEmail}>`,
       to: opts.to,
       subject: `${opts.subject} - ${wiki.config.title}`,
+      ...(opts.messageId === undefined ? {} : { messageId: opts.messageId }),
       ...(opts.text === undefined ? {} : { text: opts.text }),
       html: template({
         logo: (wiki.config.logoUrl.startsWith('http') ? '' : wiki.config.host) + wiki.config.logoUrl,

@@ -21,6 +21,8 @@ describe('private page mutation existence isolation', () => {
 
   beforeEach(async () => {
     vi.resetModules()
+    const knex = vi.fn().mockReturnValue({ insert: vi.fn().mockResolvedValue(1) })
+    knex.transaction = vi.fn(callback => callback(knex))
     global.WIKI = {
       ROOTPATH: '/test',
       Error: {
@@ -44,7 +46,7 @@ describe('private page mutation existence isolation', () => {
       logger: { error: vi.fn(), warn: vi.fn() },
       models: {
         comments: {},
-        knex: vi.fn(),
+        knex,
         pageHistory: { addVersion: vi.fn() },
         pages: {},
         storage: { pageEvent: vi.fn() },
@@ -164,7 +166,7 @@ describe('private page mutation existence isolation', () => {
         where: vi.fn().mockReturnValue({ first: vi.fn().mockResolvedValue(undefined) })
       })
     }
-    const insert = vi.fn().mockResolvedValue(1)
+    const insert = vi.fn().mockResolvedValue(createdPage)
     const latestQuery = {
       findById: vi.fn().mockReturnValue({
         select: vi.fn().mockResolvedValue({ updatedAt: '2026-08-15T00:00:00.000Z' })

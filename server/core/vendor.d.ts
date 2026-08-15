@@ -187,6 +187,7 @@ declare module 'nodemailer' {
     from: AddressLike
     headers?: Record<string, string>
     html?: string
+    messageId?: string
     subject: string
     text?: string
     to: AddressLike | AddressLike[]

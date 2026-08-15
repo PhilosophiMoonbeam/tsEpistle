@@ -30,6 +30,8 @@ describe('Visual Markdown page contracts', () => {
 
   beforeEach(async () => {
     vi.resetModules()
+    const knex = vi.fn().mockReturnValue({ insert: vi.fn().mockResolvedValue(1) })
+    knex.transaction = vi.fn(callback => callback(knex))
     global.WIKI = {
       ROOTPATH: '/test',
       Error: {
@@ -57,7 +59,7 @@ describe('Visual Markdown page contracts', () => {
       logger: { error: vi.fn(), warn: vi.fn() },
       models: {
         comments: {},
-        knex: vi.fn(),
+        knex,
         pageHistory: { addVersion: vi.fn() },
         pages: {},
         storage: { pageEvent: vi.fn() },

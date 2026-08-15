@@ -5,6 +5,7 @@ import {
   sendSignedWebhook,
   WebhookDeliveryError
 } from '../core/webhooks.ts'
+import { createPageWatchNotificationHandler, type PageWatchWikiContext } from './page-watch-notification.ts'
 
 const cleanupRetentionMs = 30 * 24 * 60 * 60 * 1_000
 
@@ -69,7 +70,11 @@ export const createWebhookDeliveryHandler = (sessionSecret: string): DurableJobH
   }
 }
 
-export const createDurableJobHandlers = (sessionSecret: string): Readonly<Record<string, DurableJobHandler>> => Object.freeze({
+export const createDurableJobHandlers = (
+  sessionSecret: string,
+  wiki: PageWatchWikiContext
+): Readonly<Record<string, DurableJobHandler>> => Object.freeze({
   'cleanup-durable-jobs@1': cleanupDurableJobs,
-  'deliver-webhook@1': createWebhookDeliveryHandler(sessionSecret)
+  'deliver-webhook@1': createWebhookDeliveryHandler(sessionSecret),
+  'notify-page-watcher@1': createPageWatchNotificationHandler(wiki)
 })

@@ -112,6 +112,76 @@ export const publishOutboxEvents = async (knex: Knex, options: PublishOutboxOpti
         if (!existing) throw error
       }
     }
+    const pageId = Reflect.get(payload, 'pageId')
+    const actorId = Reflect.get(payload, 'actorId')
+    if (event.type.startsWith('page.') && typeof pageId === 'number' && Number.isSafeInteger(pageId) && pageId > 0) {
+      const actorName = Reflect.get(payload, 'actorName')
+      const title = Reflect.get(payload, 'title')
+      const path = Reflect.get(payload, 'path')
+      const localeCode = Reflect.get(payload, 'localeCode')
+      const visibility = Reflect.get(payload, 'visibility')
+      const watchers = await knex<{ userId: number; emailEnabled: boolean | number; inAppEnabled: boolean | number }>('pageWatchers')
+        .where('pageId', pageId)
+        .select('userId', 'emailEnabled', 'inAppEnabled')
+      if (watchers.length > 0 && [actorName, title, path, localeCode, visibility].some(value => typeof value !== 'string')) {
+        throw new TypeError(`Page event ${event.id} notification fields are invalid`)
+      }
+      const isAggregatedUpdate = event.type === 'page.updated'
+      const aggregationMs = 2 * 60 * 1_000
+      const bucketStart = new Date(Math.floor(now.valueOf() / aggregationMs) * aggregationMs)
+      const bucketEnd = new Date(bucketStart.valueOf() + aggregationMs + 5_000)
+      for (const watcher of watchers) {
+        if (watcher.userId === actorId) continue
+        if (!Boolean(watcher.emailEnabled) && !Boolean(watcher.inAppEnabled)) continue
+        const generatedDeliveryId = randomUUID()
+        const job = await durableJobs.enqueue({
+          type: 'notify-page-watcher',
+          version: 1,
+          payload: {
+            deliveryId: generatedDeliveryId,
+            eventId: event.id,
+            userId: watcher.userId,
+            emailEnabled: Boolean(watcher.emailEnabled),
+            inAppEnabled: Boolean(watcher.inAppEnabled)
+          },
+          maxAttempts: 5,
+          ...(isAggregatedUpdate ? { nextRunAt: bucketEnd } : {}),
+          deduplicationKey: isAggregatedUpdate
+            ? `page-watch-update:${watcher.userId}:${pageId}:${bucketStart.toISOString()}`
+            : `page-watch:${watcher.userId}:${event.id}`
+        })
+        const deliveryId = String(job.payload.deliveryId)
+        if (isAggregatedUpdate && job.payload.eventId !== event.id) {
+          await knex('durableJobs').where({ id: job.id, state: 'pending' }).update({
+            payload: JSON.stringify({
+              deliveryId,
+              eventId: event.id,
+              userId: watcher.userId,
+              emailEnabled: Boolean(watcher.emailEnabled),
+              inAppEnabled: Boolean(watcher.inAppEnabled)
+            }),
+            updatedAt: now
+          })
+          await knex('pageWatchDeliveries').where('id', deliveryId).update({ eventId: event.id })
+        } else {
+          try {
+            await knex('pageWatchDeliveries').insert({
+              id: deliveryId,
+              eventId: event.id,
+              userId: watcher.userId,
+              jobId: job.id,
+              createdAt: now,
+              deliveredAt: null,
+              lastError: null
+            })
+          } catch (error) {
+            const existing = await knex('pageWatchDeliveries').where({ eventId: event.id, userId: watcher.userId }).first()
+            if (!existing) throw error
+          }
+        }
+      }
+      if (event.type === 'page.deleted') await knex('pageWatchers').where('pageId', pageId).delete()
+    }
     await knex<OutboxEventRow>('outboxEvents').where({ id: event.id, publishedAt: null }).update({ publishedAt: now })
   }
   return events.length

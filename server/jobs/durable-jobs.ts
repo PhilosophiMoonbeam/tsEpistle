@@ -2,11 +2,12 @@ import type { Knex } from 'knex'
 import { DurableJobStore, runDurableJobBatch } from '../core/durable-jobs.ts'
 import { publishOutboxEvents } from '../core/outbox.ts'
 import { createDurableJobHandlers } from './durable-job-handlers.ts'
+import type { PageWatchWikiContext } from './page-watch-notification.ts'
 
-interface WikiContext {
-  config: { sessionSecret: string }
+type WikiContext = PageWatchWikiContext & {
+  config: PageWatchWikiContext['config'] & { sessionSecret: string }
   INSTANCE_ID: string
-  models: { knex: Knex }
+  models: PageWatchWikiContext['models'] & { knex: Knex }
 }
 
 const wiki = WIKI as unknown as WikiContext
@@ -26,6 +27,6 @@ export default async function runDurableJobs (): Promise<void> {
     workerId: wiki.INSTANCE_ID,
     limit: 10,
     leaseMs: 30_000,
-    handlers: createDurableJobHandlers(wiki.config.sessionSecret)
+    handlers: createDurableJobHandlers(wiki.config.sessionSecret, wiki)
   })
 }

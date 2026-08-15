@@ -215,6 +215,81 @@
                     :title='title'
                     :description='description'
                   )
+                v-menu(v-if='isAuthenticated', offset-y, bottom, min-width='340', max-width='420')
+                  template(v-slot:activator='{ props: menuProps }')
+                    v-tooltip(bottom)
+                      template(v-slot:activator='{ props: tooltipProps }')
+                        v-badge(
+                          :content='pageWatchUnreadCount'
+                          :model-value='pageWatchUnreadCount > 0'
+                          color='red'
+                        )
+                          v-btn(
+                            icon
+                            tile
+                            v-bind='{ ...menuProps, ...tooltipProps }'
+                            @click='loadPageWatchNotifications'
+                            aria-label='Page notifications'
+                          )
+                            v-icon(color='grey') mdi-bell
+                      span Page notifications
+                  v-card
+                    v-card-title.text-subtitle-1 Page notifications
+                    v-divider
+                    v-list(v-if='pageWatchNotifications.length > 0', lines='two', density='compact')
+                      v-list-item(
+                        v-for='notification in pageWatchNotifications'
+                        :key='notification.id'
+                        @click='openPageWatchNotification(notification)'
+                        :class='{ "font-weight-bold": !notification.readAt }'
+                      )
+                        v-list-item-title {{ notification.title }}
+                        v-list-item-subtitle {{ pageWatchNotificationSummary(notification) }}
+                    v-card-text.text-medium-emphasis(v-else) No page notifications.
+                v-tooltip(bottom, v-if='isAuthenticated')
+                  template(v-slot:activator='{ props }')
+                    v-btn(
+                      icon
+                      tile
+                      v-bind='props'
+                      :loading='pageWatchLoading'
+                      :disabled='pageWatchLoading'
+                      @click='togglePageWatch'
+                      :aria-label='pageWatched ? `Stop watching page` : `Watch page`'
+                    )
+                      v-icon(:color='pageWatched ? `primary` : `grey`') {{ pageWatched ? 'mdi-bell-ring' : 'mdi-bell-outline' }}
+                  span {{ pageWatched ? 'Stop watching page' : 'Watch page' }}
+                v-menu(v-if='pageWatched', offset-y, bottom, :close-on-content-click='false', min-width='260')
+                  template(v-slot:activator='{ props: menuProps }')
+                    v-tooltip(bottom)
+                      template(v-slot:activator='{ props: tooltipProps }')
+                        v-btn(
+                          icon
+                          tile
+                          v-bind='{ ...menuProps, ...tooltipProps }'
+                          aria-label='Watch settings'
+                        )
+                          v-icon(color='grey') mdi-tune
+                      span Watch settings
+                  v-card
+                    v-card-title.text-subtitle-1 Watch settings
+                    v-card-text
+                      v-switch(
+                        v-model='pageWatchEmailEnabled'
+                        label='Email notifications'
+                        color='primary'
+                        density='compact'
+                        hide-details
+                        @update:model-value='savePageWatchSettings'
+                      )
+                      v-switch(
+                        v-model='pageWatchInAppEnabled'
+                        label='In-app notifications'
+                        color='primary'
+                        density='compact'
+                        hide-details
+                        @update:model-value='savePageWatchSettings'
+                      )
                 v-tooltip(bottom)
                   template(v-slot:activator='{ props }')
                     v-btn(icon, tile, v-bind='props', @click='print', :aria-label='$t(`common:page.printFormat`)')
@@ -381,6 +456,7 @@ import {
   emitPageSource
 } from '../../../helpers/page-action-events'
 import { decodeBase64Json } from '../../../helpers/base64'
+import { pushGraphError, showNotification } from '../../../helpers/root-ui-store'
 
 /* global siteLangs */
 
@@ -393,6 +469,19 @@ type TableOfContentsItem = {
   anchor: string
   title: string
   children: TableOfContentsItem[]
+}
+
+type PageWatchNotification = {
+  id: string
+  pageId: number
+  eventType: string
+  actorName: string
+  title: string
+  path: string
+  localeCode: string
+  visibility: 'public' | 'private'
+  createdAt: string | number
+  readAt: string | null
 }
 
 Prism.plugins.toolbar.registerButton('copy-to-clipboard', (env: PrismEnvironment) => {
@@ -524,6 +613,12 @@ export default defineComponent({
       navShown: false,
       navExpanded: false,
       upBtnShown: false,
+      pageWatched: false,
+      pageWatchLoading: false,
+      pageWatchEmailEnabled: true,
+      pageWatchInAppEnabled: true,
+      pageWatchNotifications: [] as PageWatchNotification[],
+      pageWatchUnreadCount: 0,
       pageEditFab: false,
       scrollOpts: {
         duration: 1500,
@@ -665,6 +760,10 @@ export default defineComponent({
     if (this.$vuetify.theme.current.dark) {
       this.scrollStyle.bar.background = '#424242'
     }
+    if (this.isAuthenticated) {
+      void this.loadPageWatchState()
+      void this.loadPageWatchNotifications()
+    }
 
     // -> Check side navigation visibility
     this.handleSideNavVisibility()
@@ -714,6 +813,106 @@ export default defineComponent({
     })
   },
   methods: {
+    async loadPageWatchState () {
+      this.pageWatchLoading = true
+      try {
+        const response = await fetch(`/_api/pages/${this.pageId}/watch`, {
+          credentials: 'same-origin',
+          headers: { Accept: 'application/json' }
+        })
+        if (!response.ok) throw new Error(`Page watch request failed (${response.status})`)
+        const payload = await response.json() as { watched?: unknown; emailEnabled?: unknown; inAppEnabled?: unknown }
+        this.pageWatched = payload.watched === true
+        this.pageWatchEmailEnabled = payload.emailEnabled === true
+        this.pageWatchInAppEnabled = payload.inAppEnabled === true
+      } catch (error) {
+        pushGraphError(wikiStore, error)
+      } finally {
+        this.pageWatchLoading = false
+      }
+    },
+    async togglePageWatch () {
+      this.pageWatchLoading = true
+      try {
+        const response = await fetch(`/_api/pages/${this.pageId}/watch`, {
+          method: this.pageWatched ? 'DELETE' : 'PUT',
+          credentials: 'same-origin',
+          headers: { Accept: 'application/json' }
+        })
+        if (!response.ok) throw new Error(`Page watch request failed (${response.status})`)
+        const payload = await response.json() as { watched?: unknown; emailEnabled?: unknown; inAppEnabled?: unknown }
+        this.pageWatched = payload.watched === true
+        if (this.pageWatched) {
+          this.pageWatchEmailEnabled = payload.emailEnabled === true
+          this.pageWatchInAppEnabled = payload.inAppEnabled === true
+        }
+        showNotification(wikiStore, {
+          style: 'success',
+          message: this.pageWatched ? 'You are now watching this page.' : 'You are no longer watching this page.'
+        })
+      } catch (error) {
+        pushGraphError(wikiStore, error)
+      } finally {
+        this.pageWatchLoading = false
+      }
+    },
+    async savePageWatchSettings () {
+      if (!this.pageWatched || this.pageWatchLoading) return
+      this.pageWatchLoading = true
+      try {
+        const response = await fetch(`/_api/pages/${this.pageId}/watch`, {
+          method: 'PUT',
+          credentials: 'same-origin',
+          headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            emailEnabled: this.pageWatchEmailEnabled,
+            inAppEnabled: this.pageWatchInAppEnabled
+          })
+        })
+        if (!response.ok) throw new Error(`Page watch settings request failed (${response.status})`)
+      } catch (error) {
+        pushGraphError(wikiStore, error)
+        await this.loadPageWatchState()
+      } finally {
+        this.pageWatchLoading = false
+      }
+    },
+    async loadPageWatchNotifications () {
+      try {
+        const response = await fetch('/_api/pages/watches/notifications', {
+          credentials: 'same-origin',
+          headers: { Accept: 'application/json' }
+        })
+        if (!response.ok) throw new Error(`Page notifications request failed (${response.status})`)
+        const payload = await response.json() as { items?: unknown; unreadCount?: unknown }
+        this.pageWatchNotifications = Array.isArray(payload.items) ? payload.items as PageWatchNotification[] : []
+        this.pageWatchUnreadCount = typeof payload.unreadCount === 'number' ? payload.unreadCount : 0
+      } catch (error) {
+        pushGraphError(wikiStore, error)
+      }
+    },
+    pageWatchNotificationSummary (notification: PageWatchNotification) {
+      const action = ({
+        'page.updated': 'updated',
+        'page.restored': 'restored',
+        'page.moved': 'moved',
+        'page.deleted': 'deleted',
+        'page.visibility-changed': 'changed visibility for',
+        'page.ownership-transferred': 'transferred ownership of'
+      } as Record<string, string>)[notification.eventType] ?? 'changed'
+      return `${notification.actorName} ${action} this page`
+    },
+    async openPageWatchNotification (notification: PageWatchNotification) {
+      if (!notification.readAt) {
+        await fetch(`/_api/pages/watches/notifications/${encodeURIComponent(notification.id)}/read`, {
+          method: 'PATCH',
+          credentials: 'same-origin',
+          headers: { Accept: 'application/json' }
+        })
+      }
+      const scope = notification.visibility === 'private' ? '/_private' : ''
+      window.location.assign(`${scope}/${notification.localeCode}/${notification.path}`)
+    },
     goHome () {
       if (this.locales && this.locales.length > 0) {
         window.location.assign(`/${this.locale}/home`)

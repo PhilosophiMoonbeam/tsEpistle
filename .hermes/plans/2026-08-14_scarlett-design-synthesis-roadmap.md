@@ -426,6 +426,15 @@ Use transactional page events and durable jobs. Do not send email inside the pag
 
 Exit gate: page changes, permission loss, move, delete, retry, and multi-instance delivery scenarios pass.
 
+Completion evidence (2026-08-15):
+
+- page watches are self-scoped, read-authorized, and removed when delivery detects lost access;
+- create events have no page-watch recipients because a page cannot be watched before it exists; update, restore, move, visibility, ownership, and delete mutations write transactional page events;
+- two-minute update windows retain the latest event and current page state while producing one durable notification job;
+- email and in-app channels are independently configurable per watch, with a page toolbar inbox and unread state;
+- delete fan-out snapshots channel choices before removing subscriptions, while user deletion cascades watches, deliveries, and inbox rows;
+- focused SQLite contracts cover transactional fan-out, aggregation, idempotent delivery, channel independence, permission loss, migration, and existing page-mutation behavior; browser smoke covers watch, settings, and inbox rendering.
+
 #### 3B. Approvals and inbox
 
 Finish Scarlett’s WIP as a native workflow state machine:
@@ -729,3 +738,4 @@ When this roadmap changes, append an entry here.
 | --- | --- | --- | --- |
 | 2026-08-14 | `c182d2c9` | `f474de3b` | Established fork-native synthesis architecture, dispositions, dependency-ordered waves, and Wiki.ts 1.0 completion gates |
 | 2026-08-14T23:59:10Z | `c182d2c9` (`feat: block-gallery`) | `f474de3b` | Re-fetched `requarks/wiki:scarlett`; no commits existed beyond the recorded tip, so the gallery candidate and all latest upstream work were already included |
+| 2026-08-15 | `14e1efae` page-watching WIP | `f474de3b` plus Waves 1–2 | Completed Wave 3A natively with transactional page events, aggregated durable delivery, permission-aware cleanup, independent email/in-app channels, and responsive page controls |

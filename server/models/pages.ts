@@ -22,6 +22,7 @@ import Editor from './editors.ts'
 import Locale from './locales.ts'
 import type Comment from './comments.ts'
 import { assertVisualMarkdownCompatible } from '../../shared/visual-markdown.ts'
+import { writeOutboxEvent } from '../core/outbox.ts'
 
 type UnknownRecord = Record<string, unknown>
 type PageErrorConstructor = new () => Error
@@ -302,6 +303,31 @@ interface PagesWikiContext {
 
 
 const wiki = WIKI as unknown as PagesWikiContext
+
+const writePageOutboxEvent = async (
+  knex: Knex | Knex.Transaction,
+  type: string,
+  page: Pick<Page, 'id' | 'title' | 'path' | 'localeCode' | 'visibility' | 'ownerId' | 'tags'>,
+  actor: PageUser
+): Promise<void> => {
+  await writeOutboxEvent(knex, {
+    type,
+    version: 1,
+    aggregateType: 'page',
+    aggregateId: String(page.id),
+    payload: {
+      pageId: page.id,
+      actorId: actor.id,
+      actorName: actor.name,
+      title: page.title,
+      path: page.path,
+      localeCode: page.localeCode,
+      ownerId: page.ownerId,
+      tags: page.tags,
+      visibility: page.visibility
+    }
+  })
+}
 
 const frontmatterRegex = {
   html: /^(<!-{2}(?:\n|\r)([\w\W]+?)(?:\n|\r)-{2}>)?(?:\n|\r)*([\w\W]*)*/,
@@ -613,32 +639,35 @@ static async createPage(opts: CreatePageOptions): Promise<Page> {
     scriptJs = opts.scriptJs || ''
   }
 
-  await wiki.models.pages.query().insert({
-    authorId: opts.user.id,
-    content: opts.content,
-    creatorId: opts.user.id,
-    contentType: wiki.data.editors.find(editor => editor.key === opts.editor)?.contentType ?? 'text',
-    description: opts.description,
-    editorKey: opts.editor,
-    hash: pageHelper.generateHash({
-      path: opts.path,
-      locale: opts.locale,
+  await wiki.models.knex.transaction(async transaction => {
+    const inserted = await wiki.models.pages.query(transaction).insert({
+      authorId: opts.user.id,
+      content: opts.content,
+      creatorId: opts.user.id,
+      contentType: wiki.data.editors.find(editor => editor.key === opts.editor)?.contentType ?? 'text',
+      description: opts.description,
+      editorKey: opts.editor,
+      hash: pageHelper.generateHash({
+        path: opts.path,
+        locale: opts.locale,
+        visibility: opts.visibility,
+        ownerId
+      }),
       visibility: opts.visibility,
-      ownerId
-    }),
-    visibility: opts.visibility,
-    ownerId,
-    isPublished: opts.isPublished,
-    localeCode: opts.locale,
-    path: opts.path,
-    publishEndDate: opts.publishEndDate || '',
-    publishStartDate: opts.publishStartDate || '',
-    title: opts.title,
-    toc: '[]',
-    extra: {
-      js: scriptJs,
-      css: scriptCss
-    }
+      ownerId,
+      isPublished: opts.isPublished,
+      localeCode: opts.locale,
+      path: opts.path,
+      publishEndDate: opts.publishEndDate || '',
+      publishStartDate: opts.publishStartDate || '',
+      title: opts.title,
+      toc: '[]',
+      extra: {
+        js: scriptJs,
+        css: scriptCss
+      }
+    })
+    await writePageOutboxEvent(transaction, 'page.created', inserted, opts.user)
   })
   const page = await wiki.models.pages.getPageFromDb({
     path: opts.path,
@@ -717,13 +746,6 @@ static async updatePage(opts: UpdatePageOptions): Promise<Page> {
     assertVisualMarkdownCompatible(content)
   }
 
-  // -> Create version snapshot
-  await wiki.models.pageHistory.addVersion({
-    ...ogPage,
-    isPublished: ogPage.isPublished === true || ogPage.isPublished === 1,
-    action: opts.action ? opts.action : 'updated',
-    versionDate: ogPage.updatedAt
-  })
 
   // -> Format Extra Properties
   if (!_.isPlainObject(ogPage.extra)) {
@@ -752,23 +774,40 @@ static async updatePage(opts: UpdatePageOptions): Promise<Page> {
     scriptJs = opts.scriptJs
   }
 
-  // -> Update page
-  await wiki.models.pages.query().patch({
-    authorId: opts.user.id,
-    content,
-    description: opts.description ?? ogPage.description,
-    isPublished: opts.isPublished === undefined
-      ? (ogPage.isPublished === true || ogPage.isPublished === 1)
-      : (opts.isPublished === true || opts.isPublished === 1),
-    publishEndDate: opts.publishEndDate === undefined ? ogPage.publishEndDate : (opts.publishEndDate || ''),
-    publishStartDate: opts.publishStartDate === undefined ? ogPage.publishStartDate : (opts.publishStartDate || ''),
-    title: opts.title ?? ogPage.title,
-    extra: {
-      ...ogPage.extra,
-      js: scriptJs,
-      css: scriptCss
+  const pageEventType = opts.action === 'restored' ? 'page.restored' : 'page.updated'
+  const willMove = (opts.locale !== undefined && opts.locale !== ogPage.localeCode) ||
+    (opts.path !== undefined && opts.path !== ogPage.path)
+  await wiki.models.knex.transaction(async transaction => {
+    await wiki.models.pageHistory.addVersion({
+      ...ogPage,
+      isPublished: ogPage.isPublished === true || ogPage.isPublished === 1,
+      action: opts.action ? opts.action : 'updated',
+      versionDate: ogPage.updatedAt,
+      transaction
+    })
+    await wiki.models.pages.query(transaction).patch({
+      authorId: opts.user.id,
+      content,
+      description: opts.description ?? ogPage.description,
+      isPublished: opts.isPublished === undefined
+        ? (ogPage.isPublished === true || ogPage.isPublished === 1)
+        : (opts.isPublished === true || opts.isPublished === 1),
+      publishEndDate: opts.publishEndDate === undefined ? ogPage.publishEndDate : (opts.publishEndDate || ''),
+      publishStartDate: opts.publishStartDate === undefined ? ogPage.publishStartDate : (opts.publishStartDate || ''),
+      title: opts.title ?? ogPage.title,
+      extra: {
+        ...ogPage.extra,
+        js: scriptJs,
+        css: scriptCss
+      }
+    }).where('id', ogPage.id)
+    if (!willMove) {
+      await writePageOutboxEvent(transaction, pageEventType, {
+        ...ogPage,
+        title: opts.title ?? ogPage.title
+      }, opts.user)
     }
-  }).where('id', ogPage.id)
+  })
   const page = await wiki.models.pages.getPageFromDb(ogPage.id)
   if (!page) {
     throw new wiki.Error.PageNotFound()
@@ -856,22 +895,29 @@ static async changeVisibility(opts: ChangeVisibilityOptions): Promise<Page> {
   })
   if (collision) throw new wiki.Error.PagePathCollision()
 
-  await wiki.models.pageHistory.addVersion({
-    ...page,
-    action: opts.visibility === 'private' ? 'made-private' : 'published',
-    versionDate: page.updatedAt
-  })
   const hash = pageHelper.generateHash({
     path: page.path,
     locale: page.localeCode,
     visibility: opts.visibility,
     ownerId
   })
-  await wiki.models.pages.query().patch({
-    visibility: opts.visibility,
-    ownerId,
-    hash
-  }).findById(page.id)
+  await wiki.models.knex.transaction(async transaction => {
+    await wiki.models.pageHistory.addVersion({
+      ...page,
+      action: opts.visibility === 'private' ? 'made-private' : 'published',
+      versionDate: page.updatedAt,
+      transaction
+    })
+    await wiki.models.pages.query(transaction).patch({
+      visibility: opts.visibility,
+      ownerId,
+      hash
+    }).findById(page.id)
+    await writePageOutboxEvent(transaction, 'page.visibility-changed', {
+      ...page,
+      visibility: opts.visibility
+    }, opts.user)
+  })
   await wiki.models.pages.deletePageFromCache(page.hash)
   wiki.events.outbound.emit('deletePageFromCache', page.hash)
   await wiki.models.pages.rebuildTree()
@@ -935,6 +981,7 @@ static async transferOwnership(opts: TransferOwnershipOptions): Promise<Page> {
     await wiki.models.knex('pageHistory').transacting(transaction)
       .where({ pageId: page.id, visibility: 'private' })
       .update({ ownerId: opts.ownerId })
+    await writePageOutboxEvent(transaction, 'page.ownership-transferred', page, opts.user)
   })
   await wiki.models.pages.deletePageFromCache(page.hash)
   wiki.events.outbound.emit('deletePageFromCache', page.hash)
@@ -1088,22 +1135,23 @@ static async convertPage(opts: ConvertPageOptions): Promise<void> {
     assertVisualMarkdownCompatible(convertedContent !== null ? convertedContent : ogPage.content)
   }
 
-  // -> Create version snapshot
-  if (shouldConvert) {
-    await wiki.models.pageHistory.addVersion({
-      ...ogPage,
-      isPublished: ogPage.isPublished === true || ogPage.isPublished === 1,
-      action: 'updated',
-      versionDate: ogPage.updatedAt
-    })
-  }
-
-  // -> Update page
-  await wiki.models.pages.query().patch({
-    contentType: targetContentType,
-    editorKey: opts.editor,
-    ...(convertedContent ? { content: convertedContent } : {})
-  }).where('id', ogPage.id)
+  await wiki.models.knex.transaction(async transaction => {
+    if (shouldConvert) {
+      await wiki.models.pageHistory.addVersion({
+        ...ogPage,
+        isPublished: ogPage.isPublished === true || ogPage.isPublished === 1,
+        action: 'updated',
+        versionDate: ogPage.updatedAt,
+        transaction
+      })
+    }
+    await wiki.models.pages.query(transaction).patch({
+      contentType: targetContentType,
+      editorKey: opts.editor,
+      ...(convertedContent ? { content: convertedContent } : {})
+    }).where('id', ogPage.id)
+    await writePageOutboxEvent(transaction, 'page.updated', ogPage, opts.user)
+  })
   const page = await wiki.models.pages.getPageFromDb(ogPage.id)
   if (!page) {
     throw new wiki.Error.PageNotFound()
@@ -1175,11 +1223,6 @@ static async movePage(opts: MovePageOptions): Promise<void> {
     throw new wiki.Error.PagePathCollision()
   }
 
-  await wiki.models.pageHistory.addVersion({
-    ...page,
-    action: 'moved',
-    versionDate: page.updatedAt
-  })
 
   const destinationHash = pageHelper.generateHash({
     path: opts.destinationPath,
@@ -1191,12 +1234,26 @@ static async movePage(opts: MovePageOptions): Promise<void> {
     ? (_.last(opts.destinationPath.split('/')) ?? page.title)
     : page.title
 
-  await wiki.models.pages.query().patch({
-    path: opts.destinationPath,
-    localeCode: opts.destinationLocale,
-    title: destinationTitle,
-    hash: destinationHash
-  }).findById(page.id)
+  await wiki.models.knex.transaction(async transaction => {
+    await wiki.models.pageHistory.addVersion({
+      ...page,
+      action: 'moved',
+      versionDate: page.updatedAt,
+      transaction
+    })
+    await wiki.models.pages.query(transaction).patch({
+      path: opts.destinationPath,
+      localeCode: opts.destinationLocale,
+      title: destinationTitle,
+      hash: destinationHash
+    }).findById(page.id)
+    await writePageOutboxEvent(transaction, 'page.moved', {
+      ...page,
+      path: opts.destinationPath,
+      localeCode: opts.destinationLocale,
+      title: destinationTitle
+    }, opts.user)
+  })
   await wiki.models.pages.deletePageFromCache(page.hash)
   wiki.events.outbound.emit('deletePageFromCache', page.hash)
   await wiki.models.pages.rebuildTree()
@@ -1260,13 +1317,21 @@ static async deletePage(opts: DeletePageOptions): Promise<void> {
   if (!canDeletePage(opts.user, page)) {
     throw new wiki.Error.PageDeleteForbidden()
   }
+  if (!opts.user) {
+    throw new wiki.Error.PageDeleteForbidden()
+  }
+  const user = opts.user
 
-  await wiki.models.pageHistory.addVersion({
-    ...page,
-    action: 'deleted',
-    versionDate: page.updatedAt
+  await wiki.models.knex.transaction(async transaction => {
+    await wiki.models.pageHistory.addVersion({
+      ...page,
+      action: 'deleted',
+      versionDate: page.updatedAt,
+      transaction
+    })
+    await writePageOutboxEvent(transaction, 'page.deleted', page, user)
+    await wiki.models.pages.query(transaction).delete().where('id', page.id)
   })
-  await wiki.models.pages.query().delete().where('id', page.id)
   await wiki.models.pages.deletePageFromCache(page.hash)
   wiki.events.outbound.emit('deletePageFromCache', page.hash)
   await wiki.models.pages.rebuildTree()

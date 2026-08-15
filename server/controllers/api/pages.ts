@@ -3,6 +3,13 @@ import { type Request, type Response, getWikiAuth } from '../_types.ts'
 import _ from 'lodash'
 import pageOperations from '../../operations/pages.ts'
 import { principalId, type PageVisibility } from '../../helpers/page-access.ts'
+import {
+  getPageWatchState,
+  listPageWatchNotifications,
+  markPageWatchNotificationRead,
+  unwatchPage,
+  watchPage
+} from '../../operations/page-watching.ts'
 
 const router = express.Router()
 
@@ -375,6 +382,64 @@ router.patch('/:id/owner', async (req, res) => {
     return res.json({ page })
   } catch (err) {
     sendOperationError(res, err, 'Page ownership transfer failed')
+  }
+})
+
+router.get('/watches/notifications', async (req, res) => {
+  try {
+    res.json(await listPageWatchNotifications(req.user))
+  } catch (err) {
+    sendOperationError(res, err, 'Page notifications fetch failed')
+  }
+})
+
+router.patch('/watches/notifications/:notificationId/read', async (req, res) => {
+  try {
+    await markPageWatchNotificationRead(req.user, String(req.params.notificationId || ''))
+    res.sendStatus(204)
+  } catch (err) {
+    sendOperationError(res, err, 'Page notification update failed')
+  }
+})
+
+router.get('/:id/watch', async (req, res) => {
+  const id = parsePositiveIntegerParam(req, res)
+  if (id === null) return
+  try {
+    res.json(await getPageWatchState({ ...requesterInput(req), id }))
+  } catch (err) {
+    sendOperationError(res, err, 'Page watch state fetch failed')
+  }
+})
+
+router.put('/:id/watch', async (req, res) => {
+  const id = parsePositiveIntegerParam(req, res)
+  if (id === null) return
+  const emailEnabled = _.get(req, 'body.emailEnabled')
+  const inAppEnabled = _.get(req, 'body.inAppEnabled')
+  if ((emailEnabled !== undefined && typeof emailEnabled !== 'boolean') ||
+    (inAppEnabled !== undefined && typeof inAppEnabled !== 'boolean')) {
+    return res.status(400).json({ error: 'emailEnabled and inAppEnabled must be booleans' })
+  }
+  try {
+    res.json(await watchPage({
+      ...requesterInput(req),
+      id,
+      ...(emailEnabled === undefined ? {} : { emailEnabled }),
+      ...(inAppEnabled === undefined ? {} : { inAppEnabled })
+    }))
+  } catch (err) {
+    sendOperationError(res, err, 'Page watch failed')
+  }
+})
+
+router.delete('/:id/watch', async (req, res) => {
+  const id = parsePositiveIntegerParam(req, res)
+  if (id === null) return
+  try {
+    res.json(await unwatchPage({ ...requesterInput(req), id }))
+  } catch (err) {
+    sendOperationError(res, err, 'Page unwatch failed')
   }
 })
 
