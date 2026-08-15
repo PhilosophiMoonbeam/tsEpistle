@@ -601,6 +601,16 @@ Start with Markdown source collaboration or one proven editor binding, not every
 
 Exit gate: two users, reconnect, concurrent edit, process loss, permission revocation, page move, history restore, and multi-instance scenarios pass without data loss.
 
+Completion evidence (2026-08-15):
+
+- protocol/update version `1` and migration `2.5.136` persist page-id/Markdown rooms with optimistic revisions, bounded updates, safe compaction, and cascade cleanup across primary and SQLite migration paths;
+- the REST bootstrap issues five-minute RS256 room tokens only after current write-policy evaluation; the same-origin WebSocket admission and every update recheck the current page, user, format, feature flag, and canonical base revision;
+- the Markdown source editor now exposes participant, connecting, offline, and stopped states; local Yjs updates remain queued until server acknowledgement, replay after process loss, and remain editable after a permission, page, format, move, restore, or protocol conflict;
+- focused protocol, independent-store CAS, cross-instance durable fanout, reconnect acknowledgement, REST, lifecycle, deletion-transaction, and editor tests pass (90 assertions), together with server/client typechecks and targeted lint;
+- browser smoke proved two authenticated users converging concurrent edits, a coherent save followed by continued peer editing, server loss/reconnect with the complete offline edit replayed to the peer, live permission revocation with local text preserved, and immediate stopped states for format change, page deletion, page move, and history restore;
+- the multi-instance test writes through an independent room store, emits the production database-bridge inbound event, and observes the connected instance receive the durable state without session affinity; the smoke database, page path/format/content, credentials, and processes were restored after verification.
+
+
 ### Wave 5 — navigation, responsive UX, and accessibility
 
 Actions:
@@ -813,3 +823,4 @@ When this roadmap changes, append an entry here.
 | 2026-08-15 | `14e1efae` page-watching WIP | `f474de3b` plus Waves 1–2 | Completed Wave 3A natively with transactional page events, aggregated durable delivery, permission-aware cleanup, independent email/in-app channels, and responsive page controls |
 | 2026-08-15 | `957efebe` / `c36eab67` approval WIP | `e4c8d246` | Completed Wave 3B as a fork-native revision-bound approval state machine with immutable audit history, authorization, stale-revision protection, transactional publication, and responsive inbox/workflow UI |
 | 2026-08-15 | Scarlett page-history overlay concepts | `97a452e1` plus Wave 4 authoring work | Completed Wave 3D with immutable revision metadata/tag snapshots, REST-backed responsive diff/actions, canonical content/editor restore, and transactional optimistic concurrency |
+| 2026-08-15 | `17d7b810` Yjs collaboration concept | Wave 4 policy, events, and Markdown editor foundation | Completed Wave 4C as authenticated Markdown collaboration with durable versioned rooms, acknowledged offline replay, cross-instance database fanout, continuous authorization, mutation conflicts, and explicit local-preservation UX |

@@ -36,6 +36,7 @@ interface ServerConfig {
 interface ServerWiki extends Record<string, unknown> {
   IS_DEBUG: boolean
   app: Express
+  collaboration: { install(server: NodeServer): void; dispose(server?: NodeServer | null): Promise<void> }
   config: ServerConfig
   logger: { error(value: unknown): void; info(message: string): void }
 }
@@ -60,6 +61,7 @@ type SubscriptionCleanup = Disposable
 interface GraphSubscription {
   cleanup: SubscriptionCleanup
   server: NodeServer
+  upgradeListener: (request: http.IncomingMessage, socket: Socket, head: Buffer) => void
 }
 
 interface GraphServer {
@@ -142,6 +144,7 @@ const serversCore: ServersCore = {
     const server = http.createServer(wiki.app)
     this.servers.http = server
     this.installGraphQLSubscriptions(server)
+    wiki.collaboration.install(server)
 
     server.listen(wiki.config.port, wiki.config.bindIP)
     server.on('error', error => handleListenError(error, wiki.config.port))
@@ -187,6 +190,7 @@ const serversCore: ServersCore = {
     const server = https.createServer(tlsOptions, wiki.app)
     this.servers.https = server
     this.installGraphQLSubscriptions(server)
+    wiki.collaboration.install(server)
 
     server.listen(wiki.config.ssl.port, wiki.config.bindIP)
     server.on('error', error => handleListenError(error, wiki.config.ssl.port))
@@ -237,10 +241,14 @@ const serversCore: ServersCore = {
     }
 
     const yoga = graph.yoga
-    const wsServer = new WebSocketServer({
-      server,
-      path: '/graphql-subscriptions'
-    })
+    const wsServer = new WebSocketServer({ noServer: true })
+    const upgradeListener = (request: http.IncomingMessage, socket: Socket, head: Buffer): void => {
+      if (request.url?.split('?', 1)[0] !== '/graphql-subscriptions') return
+      wsServer.handleUpgrade(request, socket, head, client => {
+        wsServer.emit('connection', client, request)
+      })
+    }
+    server.on('upgrade', upgradeListener)
     const cleanup = useServer<Record<string, unknown>, SubscriptionExtra>({
       execute: args => {
         const root = args.rootValue as ExecutionRoot
@@ -279,7 +287,7 @@ const serversCore: ServersCore = {
       }
     }, wsServer)
 
-    graph.subscriptions.push({ cleanup, server })
+    graph.subscriptions.push({ cleanup, server, upgradeListener })
   },
 
   authenticateGraphQLSubscription(connectionParams: unknown, request: http.IncomingMessage): AuthClaims {
@@ -320,6 +328,7 @@ const serversCore: ServersCore = {
         remaining.push(subscription)
         continue
       }
+      subscription.server.off('upgrade', subscription.upgradeListener)
       await subscription.cleanup.dispose()
     }
     graph.subscriptions = remaining
@@ -336,6 +345,7 @@ const serversCore: ServersCore = {
 
   async stopServers(): Promise<void> {
     await this.disposeGraphQLSubscriptions()
+    await wiki.collaboration.dispose()
     this.closeConnections()
     if (this.servers.http) {
       await new Promise<void>((resolve, reject) => {
@@ -358,6 +368,7 @@ const serversCore: ServersCore = {
       case 'http':
         if (this.servers.http) {
           await this.disposeGraphQLSubscriptions(this.servers.http)
+          await wiki.collaboration.dispose(this.servers.http)
           await new Promise<void>((resolve, reject) => {
             this.servers.http?.close(error => error ? reject(error) : resolve())
           })
@@ -368,6 +379,7 @@ const serversCore: ServersCore = {
       case 'https':
         if (this.servers.https) {
           await this.disposeGraphQLSubscriptions(this.servers.https)
+          await wiki.collaboration.dispose(this.servers.https)
           await new Promise<void>((resolve, reject) => {
             this.servers.https?.close(error => error ? reject(error) : resolve())
           })

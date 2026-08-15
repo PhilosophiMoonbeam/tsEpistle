@@ -1,10 +1,12 @@
 import { isRecord } from './type-guards'
+import { parseCollaborationSession, type CollaborationSession } from '../../shared/collaboration'
 
 type JsonHeaders = {
   get: (name: string) => string | null
 }
 
 type JsonResponse = {
+  status?: number
   ok: boolean
   headers?: JsonHeaders
   json: () => Promise<unknown>
@@ -97,13 +99,14 @@ async function parseJsonResponse (response: JsonResponse, fallbackMessage: strin
   }
 
   if (!response.ok) {
-    if (payload && typeof payload === 'object' && !Array.isArray(payload) && typeof (payload as { error?: unknown }).error === 'string' && ((payload as { error: string }).error).length > 0) {
-      throw new Error((payload as { error: string }).error)
+    let message = fallbackMessage
+    if (payload && typeof payload === 'object' && !Array.isArray(payload)) {
+      const error = (payload as { error?: unknown }).error
+      const detail = (payload as { message?: unknown }).message
+      if (typeof error === 'string' && error.length > 0) message = error
+      else if (typeof detail === 'string' && detail.length > 0) message = detail
     }
-    if (payload && typeof payload === 'object' && !Array.isArray(payload) && typeof (payload as { message?: unknown }).message === 'string' && ((payload as { message: string }).message).length > 0) {
-      throw new Error((payload as { message: string }).message)
-    }
-    throw new Error(fallbackMessage)
+    throw Object.assign(new Error(message), { status: response.status })
   }
 
   if (payload === null) {
@@ -309,6 +312,24 @@ export async function fetchRecentPages (fetchImpl: FetchImpl, fallbackMessage = 
 
   return payload.map(row => normalizeRecentPageRow(row, fallbackMessage))
 }
+export async function fetchCollaborationSession (
+  fetchImpl: FetchImpl,
+  pageId: number,
+  expectedUpdatedAt: string,
+  fallbackMessage = 'Live collaboration could not start'
+): Promise<CollaborationSession> {
+  const response = await fetchImpl(`/_api/pages/${encodeURIComponent(pageId)}/collaboration/session`, {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ expectedUpdatedAt })
+  })
+  return parseCollaborationSession(await parseJsonResponse(response, fallbackMessage))
+}
+
 
 
 export async function updatePageTag (fetchImpl: FetchImpl, id: number, tag: string, title: string | null, fallbackMessage = 'Tag update failed'): Promise<MessageResponse> {

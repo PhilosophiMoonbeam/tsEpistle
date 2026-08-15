@@ -655,6 +655,25 @@ router.get('/:id/conflict-latest', async (req, res) => {
     sendOperationError(res, err, 'Latest page version fetch failed')
   }
 })
+router.post('/:id/collaboration/session', async (req, res) => {
+  const pageId = parsePositiveIntegerParam(req, res)
+  if (pageId === null) return
+  if (!await requireUnlockedPage(req, res, pageId)) return
+  const expectedUpdatedAt = requestBody(req).expectedUpdatedAt
+  if (typeof expectedUpdatedAt !== 'string' || Number.isNaN(Date.parse(expectedUpdatedAt))) {
+    return res.status(400).json({ error: 'expectedUpdatedAt must be a valid date' })
+  }
+  try {
+    const collaboration = Reflect.get(WIKI, 'collaboration') as {
+      issueSession(input: { pageId: number, expectedUpdatedAt: string, requester: Express.User | undefined }): Promise<unknown>
+    } | undefined
+    if (!collaboration) throw new Error('Collaboration service is unavailable')
+    res.json(await collaboration.issueSession({ pageId, expectedUpdatedAt, requester: req.user }))
+  } catch (err) {
+    sendOperationError(res, err, 'Collaboration session creation failed')
+  }
+})
+
 
 router.get('/:id/history', async (req, res) => {
   const id = parsePositiveIntegerParam(req, res)

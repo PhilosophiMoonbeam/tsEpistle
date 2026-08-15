@@ -3,6 +3,7 @@ import EventEmitter2Module, { type EventEmitter2 as EventEmitter2Instance } from
 import asar from './asar.ts'
 import cache from './cache.ts'
 import database from './db.ts'
+import collaboration, { type CollaborationService } from './collaboration.ts'
 import type { InitializedDatabase } from './db.ts'
 import extensions from './extensions.ts'
 import metrics from './metrics.ts'
@@ -28,6 +29,7 @@ interface WikiContext {
   IS_DEBUG: boolean
   asar?: { unload(): Promise<void> }
   auth: { activateStrategies(): Promise<void> }
+  collaboration?: CollaborationService
   cache?: unknown
   config: { setup?: boolean }
   configSvc: { applyFlags(): Promise<void>; loadFromDb(): Promise<void> }
@@ -96,6 +98,7 @@ const kernel: KernelService = {
       wiki.metrics = await metrics.init()
       wiki.scheduler = scheduler.init()
       wiki.events = { inbound: new EventEmitter2(), outbound: new EventEmitter2() }
+      wiki.collaboration = collaboration.init()
       wiki.extensions = extensions
       wiki.asar = asar
       // Server modules read initialized models and event services while registering GraphQL operations.

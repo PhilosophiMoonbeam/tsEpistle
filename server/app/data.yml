@@ -83,6 +83,7 @@ defaults:
     features:
       featurePageRatings: true
       featurePageComments: true
+      featurePageCollaboration: true
       featurePersonalWikis: true
     security:
       securityOpenRedirect: true

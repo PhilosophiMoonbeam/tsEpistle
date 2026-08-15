@@ -267,6 +267,7 @@ interface PagesWikiContext {
     PagePathCollision: PageErrorConstructor
     PageUpdateForbidden: PageErrorConstructor
   }
+  collaboration?: { pageChanged(pageId: number, forceConflict?: boolean): Promise<void> }
   auth: {
     checkAccess(user: PageUser | undefined, permissions: string[], page: PageAccessTarget): boolean
   }
@@ -307,6 +308,13 @@ interface PagesWikiContext {
 
 
 const wiki = WIKI as unknown as PagesWikiContext
+const notifyCollaboration = async (pageId: number, forceConflict = false): Promise<void> => {
+  try {
+    await wiki.collaboration?.pageChanged(pageId, forceConflict)
+  } catch (error) {
+    wiki.logger.warn(error)
+  }
+}
 const pageUpdateConflict = (): Error & { status: number } =>
   Object.assign(new Error('The page changed after history was opened. Reload history before restoring.'), {
     name: 'PageUpdateConflict',
@@ -457,13 +465,13 @@ this.updatedAt = new Date().toISOString() } /**
  * using static hooks
  * @see https://vincit.github.io/objection.js/api/types/#type-statichookarguments
  */
-static override async beforeDelete({ asFindQuery }: StaticHookArguments<Page>): Promise<void> {
+static override async beforeDelete({ asFindQuery, transaction }: StaticHookArguments<Page>): Promise<void> {
   const page = await asFindQuery().select('id')
   const deletedPage = page[0]
   if (!deletedPage) {
     throw new Error('Page deletion hook could not resolve the page id.')
   }
-  await wiki.models.comments.query().delete().where('pageId', deletedPage.id)
+  await wiki.models.comments.query(transaction).delete().where('pageId', deletedPage.id)
 }
 /**
  * Cache Schema
@@ -887,6 +895,7 @@ static async updatePage(opts: UpdatePageOptions): Promise<Page> {
     throw new wiki.Error.PageNotFound()
   }
   page.updatedAt = latestPage.updatedAt
+  await notifyCollaboration(page.id, opts.action === 'restored')
 
   return page
 }
@@ -973,6 +982,7 @@ static async changeVisibility(opts: ChangeVisibilityOptions): Promise<Page> {
       mode: 'delete'
     })
   }
+  await notifyCollaboration(updated.id)
   return updated
 }
 
@@ -1012,6 +1022,7 @@ static async transferOwnership(opts: TransferOwnershipOptions): Promise<Page> {
   await wiki.models.pages.rebuildTree()
   const updated = await wiki.models.pages.getPageFromDb(page.id)
   if (!updated) throw new wiki.Error.PageNotFound()
+  await notifyCollaboration(updated.id)
   return updated
 }
 
@@ -1190,6 +1201,7 @@ static async convertPage(opts: ConvertPageOptions): Promise<void> {
       page
     })
   }
+  await notifyCollaboration(page.id)
 }
 
 /**
@@ -1328,6 +1340,7 @@ static async movePage(opts: MovePageOptions): Promise<void> {
       mode: 'create'
     })
   }
+  await notifyCollaboration(page.id, true)
 }
 
 static async deletePage(opts: DeletePageOptions): Promise<void> {
@@ -1358,6 +1371,7 @@ static async deletePage(opts: DeletePageOptions): Promise<void> {
     await writePageOutboxEvent(transaction, 'page.deleted', page, user)
     await wiki.models.pages.query(transaction).delete().where('id', page.id)
   })
+    await notifyCollaboration(page.id)
   await wiki.models.pages.deletePageFromCache(page.hash)
   wiki.events.outbound.emit('deletePageFromCache', page.hash)
   await wiki.models.pages.rebuildTree()

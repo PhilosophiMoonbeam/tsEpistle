@@ -64,6 +64,22 @@ describe('private page mutation existence isolation', () => {
     else global.WIKI = originalWIKI
   })
 
+  it('uses the deleting query transaction for comment cleanup', async () => {
+    const transaction = { id: 'delete-transaction' }
+    const where = vi.fn().mockResolvedValue(1)
+    const deleteRelated = vi.fn().mockReturnValue({ where })
+    const commentsQuery = vi.fn().mockReturnValue({ delete: deleteRelated })
+    global.WIKI.models.comments = { query: commentsQuery }
+
+    await Page.beforeDelete({
+      asFindQuery: () => ({ select: vi.fn().mockResolvedValue([{ id: 17 }]) }),
+      transaction
+    })
+
+    expect(commentsQuery).toHaveBeenCalledWith(transaction)
+    expect(where).toHaveBeenCalledWith('pageId', 17)
+  })
+
   const requester = { id: 8, permissions: ['write:pages', 'delete:pages'] }
 
   it('returns not found before update or editor-conversion details can leak', async () => {

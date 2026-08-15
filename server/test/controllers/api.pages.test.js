@@ -36,6 +36,9 @@ describe('controllers/api pages endpoints', () => {
           type: 'postgres'
         }
       },
+      collaboration: {
+        issueSession: vi.fn()
+      },
       models: {
         knex: vi.fn(),
         tags: {
@@ -144,6 +147,7 @@ describe('controllers/api pages endpoints', () => {
       updateTag: express.__router.patch.mock.calls.find(([path]) => path === '/tags/:id')[1],
       visibility: express.__router.patch.mock.calls.find(([path]) => path === '/:id/visibility')[1],
       restore: express.__router.post.mock.calls.find(([path]) => path === '/:id/history/:versionId/restore')[1],
+      collaborationSession: express.__router.post.mock.calls.find(([path]) => path === '/:id/collaboration/session')[1],
       tree: express.__router.get.mock.calls.find(([path]) => path === '/tree')[1]
     }
   }
@@ -237,6 +241,52 @@ describe('controllers/api pages endpoints', () => {
     expect(res.status).toHaveBeenCalledWith(400)
     expect(res.json).toHaveBeenCalledWith({ error: 'expectedUpdatedAt must be a valid date' })
   })
+  it('requires and forwards the observed timestamp for collaboration sessions', async () => {
+    const expectedUpdatedAt = '2026-08-15T00:00:00.000Z'
+    const requester = { id: 7, permissions: ['write:pages'] }
+    global.WIKI.models.knex = vi.fn().mockReturnValue({
+      where: vi.fn().mockReturnValue({ first: vi.fn().mockResolvedValue(undefined) })
+    })
+    global.WIKI.collaboration.issueSession.mockResolvedValue({
+      pageId: 7,
+      protocolVersion: 1
+    })
+    const { collaborationSession } = await loadHandler()
+    const req = {
+      body: { expectedUpdatedAt },
+      params: { id: '7' },
+      user: requester
+    }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
+
+    await collaborationSession(req, res)
+
+    expect(global.WIKI.collaboration.issueSession).toHaveBeenCalledWith({
+      pageId: 7,
+      expectedUpdatedAt,
+      requester
+    })
+    expect(res.json).toHaveBeenCalledWith({ pageId: 7, protocolVersion: 1 })
+  })
+
+  it('rejects collaboration sessions without a concurrency timestamp', async () => {
+    global.WIKI.models.knex = vi.fn().mockReturnValue({
+      where: vi.fn().mockReturnValue({ first: vi.fn().mockResolvedValue(undefined) })
+    })
+    const { collaborationSession } = await loadHandler()
+    const req = {
+      body: {},
+      params: { id: '7' },
+      user: { id: 7, permissions: ['write:pages'] }
+    }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
+
+    await collaborationSession(req, res)
+
+    expect(res.status).toHaveBeenCalledWith(400)
+    expect(global.WIKI.collaboration.issueSession).not.toHaveBeenCalled()
+  })
+
   it('lists root page tree entries when parent is zero', async () => {
     const rows = [{
       id: 1,

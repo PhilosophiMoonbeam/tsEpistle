@@ -24,7 +24,9 @@ describe('core/servers GraphQL transports', () => {
     })
     const createYoga = vi.fn().mockReturnValue(yoga)
     const wsServer = {
-      close: vi.fn(callback => callback())
+      close: vi.fn(callback => callback()),
+      emit: vi.fn(),
+      handleUpgrade: vi.fn()
     }
     const cleanup = {
       dispose: vi.fn(() => new Promise((resolve, reject) => {
@@ -66,7 +68,8 @@ describe('core/servers GraphQL transports', () => {
     }
 
     const { default: servers } = await import('../../core/servers.ts')
-    return { servers, createYoga, yoga, useServer, cleanup, WebSocketServer, wsServer, verify }
+    const createHttpServer = () => ({ on: vi.fn(), off: vi.fn() })
+    return { servers, createYoga, yoga, useServer, cleanup, WebSocketServer, wsServer, verify, createHttpServer }
   }
 
   it('mounts Yoga on the existing GraphQL endpoint', async () => {
@@ -88,29 +91,44 @@ describe('core/servers GraphQL transports', () => {
   })
 
   it('attaches graphql-ws to the maintained subscription endpoint', async () => {
-    const { servers, useServer, WebSocketServer } = await setupModule()
-    const httpServer = { kind: 'http-server' }
+    const { servers, useServer, WebSocketServer, createHttpServer } = await setupModule()
+    const httpServer = createHttpServer()
 
     await servers.startGraphQL()
     servers.installGraphQLSubscriptions(httpServer)
 
-    expect(WebSocketServer).toHaveBeenCalledWith({
-      server: httpServer,
-      path: '/graphql-subscriptions'
-    })
+    expect(WebSocketServer).toHaveBeenCalledWith({ noServer: true })
+    expect(httpServer.on).toHaveBeenCalledWith('upgrade', expect.any(Function))
     expect(useServer).toHaveBeenCalledWith(expect.objectContaining({
       onConnect: expect.any(Function),
       onSubscribe: expect.any(Function)
     }), expect.any(Object))
   })
+  it('routes only the maintained GraphQL upgrade path', async () => {
+    const { servers, wsServer, createHttpServer } = await setupModule()
+    const httpServer = createHttpServer()
+    wsServer.handleUpgrade.mockImplementation((_request, _socket, _head, connected) => connected({ id: 'client' }))
+
+    await servers.startGraphQL()
+    servers.installGraphQLSubscriptions(httpServer)
+    const upgrade = httpServer.on.mock.calls[0][1]
+    upgrade({ url: '/collaboration' }, {}, Buffer.alloc(0))
+    expect(wsServer.handleUpgrade).not.toHaveBeenCalled()
+
+    const request = { url: '/graphql-subscriptions?transport=ws' }
+    upgrade(request, {}, Buffer.alloc(0))
+    expect(wsServer.handleUpgrade).toHaveBeenCalledWith(request, {}, expect.any(Buffer), expect.any(Function))
+    expect(wsServer.emit).toHaveBeenCalledWith('connection', { id: 'client' }, request)
+  })
+
 
   it('accepts a valid connection token for manage:system users', async () => {
-    const { servers, useServer, verify } = await setupModule()
+    const { servers, useServer, verify, createHttpServer } = await setupModule()
     const user = { id: 7, permissions: ['manage:system'] }
     verify.mockReturnValue(user)
 
     await servers.startGraphQL()
-    servers.installGraphQLSubscriptions({})
+    servers.installGraphQLSubscriptions(createHttpServer())
     const protocol = useServer.mock.calls[0][0]
     const context = {
       connectionParams: { token: 'direct-token' },
@@ -151,8 +169,8 @@ describe('core/servers GraphQL transports', () => {
   })
 
   it('disposes the graphql-ws handler and WebSocket server', async () => {
-    const { servers, cleanup, wsServer } = await setupModule()
-    const httpServer = { kind: 'http-server' }
+    const { servers, cleanup, wsServer, createHttpServer } = await setupModule()
+    const httpServer = createHttpServer()
 
     await servers.startGraphQL()
     servers.installGraphQLSubscriptions(httpServer)
@@ -160,6 +178,7 @@ describe('core/servers GraphQL transports', () => {
 
     expect(cleanup.dispose).toHaveBeenCalledTimes(1)
     expect(wsServer.close).toHaveBeenCalledTimes(1)
+    expect(httpServer.off).toHaveBeenCalledWith('upgrade', expect.any(Function))
     expect(servers.servers.graph.subscriptions).toEqual([])
   })
 })

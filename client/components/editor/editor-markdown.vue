@@ -209,6 +209,15 @@
     v-system-bar.editor-status-bar.editor-markdown-sysbar(absolute, dark, status, color='grey darken-3')
       .caption.editor-markdown-sysbar-locale {{locale.toUpperCase()}}
       .caption.px-3 /{{path}}
+      template(v-if='collaborationStatus')
+        v-spacer
+        .caption.d-flex.align-center(
+          role='status'
+          aria-live='polite'
+          :title='collaborationLabel'
+        )
+          v-icon.mr-1(small, :color='collaborationColor') {{collaborationIcon}}
+          span {{collaborationLabel}}
       template(v-if='$vuetify.display.mdAndUp')
         v-spacer
         .caption Markdown
@@ -237,6 +246,11 @@ import { autocompletion, type CompletionContext } from '@codemirror/autocomplete
 import { markdown } from '@codemirror/lang-markdown'
 import { keymap } from '@codemirror/view'
 import { TextEditor, type TextEditorHandle, type TextPosition } from './common/text-editor'
+import {
+  createMarkdownCollaboration,
+  type CollaborationStatus,
+  type MarkdownCollaboration
+} from './collaboration'
 
 // Markdown-it
 import MarkdownIt from 'markdown-it'
@@ -416,6 +430,7 @@ md.renderer.rules.katex_block = (tokens, idx) => {
 // ========================================
 // TWEMOJI
 // ========================================
+const collaborations = new WeakMap<object, MarkdownCollaboration>()
 
 md.renderer.rules.emoji = (token, idx) => {
   return twemoji.parse(token[idx].content, {
@@ -453,6 +468,8 @@ export default defineComponent({
       insertLinkDialog: false,
       markers: [] as AddMarkerOptions[],
       debouncedProcessContent: null as _.DebouncedFunc<(newContent: string) => void> | null,
+      collaborationStatus: null as CollaborationStatus | null,
+      editorDisposed: false,
       debouncedScrollSync: null as _.DebouncedFunc<(cm: TextEditorHandle) => void> | null
     }
   },
@@ -479,7 +496,28 @@ export default defineComponent({
       set(value: string) {
         wikiStore.editor.activeModal = value
       }
-    }
+    },
+    collaborationLabel(): string {
+      const status = this.collaborationStatus
+      if (!status) return ''
+      if (status.state === 'connected') return `${status.participants} editing`
+      if (status.state === 'connecting') return 'Live: connecting'
+      if (status.state === 'offline') return 'Live: offline — edits kept locally'
+      return 'Live stopped — reload before saving'
+    },
+    collaborationIcon(): string {
+      const state = this.collaborationStatus?.state
+      if (state === 'connected') return 'mdi-account-multiple'
+      if (state === 'connecting') return 'mdi-sync'
+      if (state === 'offline') return 'mdi-cloud-off-outline'
+      return 'mdi-alert-outline'
+    },
+    collaborationColor(): string {
+      const state = this.collaborationStatus?.state
+      if (state === 'connected') return 'green lighten-2'
+      if (state === 'conflict') return 'amber lighten-2'
+      return 'white'
+    },
   },
   watch: {
     previewShown (newValue: boolean, oldValue: boolean) {
@@ -754,7 +792,7 @@ export default defineComponent({
       this.markers.push(marker)
     }
   },
-  mounted() {
+  async mounted() {
     wikiStore.editor.editorKey = 'markdown'
 
     if (this.mode === 'create' && !wikiStore.editor.content) {
@@ -788,38 +826,77 @@ export default defineComponent({
       }
     }
 
+    const extensions = [
+      autocompletion({ override: [completePageLink] }),
+      keymap.of([
+        { key: 'F11', run: () => { this.toggleFullscreen(); return true } },
+        { key: 'Mod-s', run: () => { this.save(); return true } },
+        { key: 'Mod-b', run: () => { this.toggleMarkup({ start: '**' }); return true } },
+        { key: 'Mod-i', run: () => { this.toggleMarkup({ start: '*' }); return true } },
+        {
+          key: 'Mod-Alt-ArrowRight',
+          run: () => {
+            let level = this.getHeaderLevel(requireEditor(this.cm))
+            if (level >= 6) level = 5
+            this.setHeaderLine(level + 1)
+            return true
+          }
+        },
+        {
+          key: 'Mod-Alt-ArrowLeft',
+          run: () => {
+            let level = this.getHeaderLevel(requireEditor(this.cm))
+            if (level <= 1) level = 2
+            this.setHeaderLine(level - 1)
+            return true
+          }
+        }
+      ])
+    ]
+    if (this.mode === 'update' && Number.isSafeInteger(wikiStore.page.id) && wikiStore.page.id > 0) {
+      try {
+        const collaboration = await createMarkdownCollaboration({
+          pageId: wikiStore.page.id,
+          expectedUpdatedAt: () => wikiStore.editor.checkoutDateActive,
+          fetchImpl: window.fetch,
+          onBaseUpdatedAt: updatedAt => { wikiStore.editor.checkoutDateActive = updatedAt },
+          onStatus: status => {
+            if (this.editorDisposed) return
+            const firstConflict = status.state === 'conflict' && this.collaborationStatus?.state !== 'conflict'
+            this.collaborationStatus = status
+            if (firstConflict) {
+              wikiStore.showNotification({
+                message: 'Live collaboration stopped because the page or your access changed. Your edits remain in this editor.',
+                style: 'warning',
+                icon: 'warning'
+              })
+            }
+          }
+        })
+        if (this.editorDisposed) {
+          collaboration.destroy()
+          return
+        }
+        collaborations.set(this, collaboration)
+        wikiStore.editor.content = collaboration.content
+        extensions.push(collaboration.extension)
+      } catch {
+        if (!this.editorDisposed) {
+          wikiStore.showNotification({
+            message: 'Live collaboration is unavailable. You can continue editing locally.',
+            style: 'warning',
+            icon: 'warning'
+          })
+        }
+      }
+    }
+
     const cm = new TextEditor({
       parent: this.$refs.cm as HTMLElement,
       value: wikiStore.editor.content,
       language: markdown(),
       direction: siteConfig.rtl ? 'rtl' : 'ltr',
-      extensions: [
-        autocompletion({ override: [completePageLink] }),
-        keymap.of([
-          { key: 'F11', run: () => { this.toggleFullscreen(); return true } },
-          { key: 'Mod-s', run: () => { this.save(); return true } },
-          { key: 'Mod-b', run: () => { this.toggleMarkup({ start: '**' }); return true } },
-          { key: 'Mod-i', run: () => { this.toggleMarkup({ start: '*' }); return true } },
-          {
-            key: 'Mod-Alt-ArrowRight',
-            run: () => {
-              let level = this.getHeaderLevel(cm)
-              if (level >= 6) level = 5
-              this.setHeaderLine(level + 1)
-              return true
-            }
-          },
-          {
-            key: 'Mod-Alt-ArrowLeft',
-            run: () => {
-              let level = this.getHeaderLevel(cm)
-              if (level <= 1) level = 2
-              this.setHeaderLine(level - 1)
-              return true
-            }
-          }
-        ])
-      ],
+      extensions,
       onChange: value => {
         wikiStore.editor.content = value
         this.onCmInput(value)
@@ -846,6 +923,7 @@ export default defineComponent({
     onEditorContentOverwrite(this.handleEditorContentOverwrite)
   },
   beforeUnmount() {
+    this.editorDisposed = true
     this.debouncedProcessContent?.cancel()
     this.debouncedScrollSync?.cancel()
     offEditorInsert(this.handleEditorInsert)
@@ -853,6 +931,8 @@ export default defineComponent({
     offEditorContentOverwrite(this.handleEditorContentOverwrite)
     this.cm?.destroy()
     this.cm = null
+    collaborations.get(this)?.destroy()
+    collaborations.delete(this)
   }
 })
 </script>
