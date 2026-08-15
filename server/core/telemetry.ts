@@ -110,26 +110,7 @@ const telemetry: TelemetryService = {
           break
       }
 
-      let dbVersion = 'Unknown'
-      switch (wiki.config.db.type) {
-        case 'mariadb':
-        case 'mysql': {
-          const result = await wiki.models.knex.raw('SELECT VERSION() as version;')
-          dbVersion = _.get(result, '[0][0].version', 'Unknown') as string
-          break
-        }
-        case 'mssql': {
-          const result = await wiki.models.knex.raw('SELECT @@VERSION as version;')
-          dbVersion = _.get(result, '[0].version', 'Unknown') as string
-          break
-        }
-        case 'postgres':
-          dbVersion = wiki.models.knex.client.version ?? 'Unknown'
-          break
-        case 'sqlite':
-          dbVersion = wiki.models.knex.client.driver?.VERSION ?? 'Unknown'
-          break
-      }
+      const dbVersion = wiki.models.knex.client.version ?? 'Unknown'
 
       let arch = os.arch().toUpperCase()
       if (!['ARM', 'ARM64', 'X32', 'X64'].includes(arch)) arch = 'OTHER'

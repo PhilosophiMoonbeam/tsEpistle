@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "sourceProduct": "Wiki.js",
+  "sourceVersion": "2.5.314",
+  "sourceImage": "ghcr.io/requarks/wiki:2.5.314@sha256:68f0d1848261ae76492ba358e30a96a76fed5d97a3fff381656082bf90f70d7e",
+  "sourcePostgres": "15.19",
+  "databaseArtifact": {
+    "path": "wiki-js-2.5.314-postgres.dump",
+    "format": "pg_dump-custom",
+    "sha256": "3559d9be9b0422cdef69edecd6cb1f1a4296688ea9d2d95e3808d8d8a012b146"
+  },
+  "dataArtifact": {
+    "path": "wiki-js-2.5.314-data.tar.gz",
+    "format": "tar-gzip",
+    "sha256": "9636441ea3105616c3dc305e61100b1da338e72a59abcb391ef3cecaadf34da1"
+  },
+  "fixtureIdentity": {
+    "administratorEmail": "upgrade-fixture@example.com",
+    "administratorPassword": "UpgradeFixture123!",
+    "pagePath": "legacy-continuity",
+    "pageTitle": "Legacy Continuity",
+    "assetFilename": "continuity.txt"
+  },
+  "expectedBeforeUpgrade": {
+    "pages": 1,
+    "users": 2,
+    "groups": 2,
+    "navigation": 1,
+    "assets": 1,
+    "pageHistory": 2,
+    "tags": 2,
+    "migrations": 16
+  }
+}

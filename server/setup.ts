@@ -213,41 +213,14 @@ export default function startSetup(): void {
 
       await wiki.models.locales.query().where('code', '!=', 'x').del()
       await wiki.models.navigation.query().truncate()
-      switch (wiki.config.db.type) {
-        case 'postgres':
-          await wiki.models.knex.raw('TRUNCATE groups, users CASCADE')
-          await wiki.models.knex('contentExtensions').insert(BUILTIN_CONTENT_EXTENSIONS.map(definition => ({
-            key: definition.key,
-            isEnabled: false,
-            version: definition.version,
-            updatedAt: new Date(),
-            updatedBy: null
-          })))
-          break
-        case 'mysql':
-        case 'mariadb':
-          await wiki.models.groups.query().where('id', '>', 0).del()
-          await wiki.models.users.query().where('id', '>', 0).del()
-          await wiki.models.knex.raw('ALTER TABLE `groups` AUTO_INCREMENT = 1')
-          await wiki.models.knex.raw('ALTER TABLE `users` AUTO_INCREMENT = 1')
-          break
-        case 'mssql':
-          await wiki.models.groups.query().del()
-          await wiki.models.users.query().del()
-          await wiki.models.knex.raw(`
-            IF EXISTS (SELECT * FROM sys.identity_columns WHERE OBJECT_NAME(OBJECT_ID) = 'groups' AND last_value IS NOT NULL)
-              DBCC CHECKIDENT ([groups], RESEED, 0)
-          `)
-          await wiki.models.knex.raw(`
-            IF EXISTS (SELECT * FROM sys.identity_columns WHERE OBJECT_NAME(OBJECT_ID) = 'users' AND last_value IS NOT NULL)
-              DBCC CHECKIDENT ([users], RESEED, 0)
-          `)
-          break
-        case 'sqlite':
-          await wiki.models.groups.query().truncate()
-          await wiki.models.users.query().truncate()
-          break
-      }
+      await wiki.models.knex.raw('TRUNCATE groups, users CASCADE')
+      await wiki.models.knex('contentExtensions').insert(BUILTIN_CONTENT_EXTENSIONS.map(definition => ({
+        key: definition.key,
+        isEnabled: false,
+        version: definition.version,
+        updatedAt: new Date(),
+        updatedBy: null
+      })))
 
       wiki.logger.info('Installing default locale...')
       const defaultLocaleStrings: unknown = await fs.readJson(path.join(wiki.SERVERPATH, 'locales', 'en.json'))

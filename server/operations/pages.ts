@@ -317,25 +317,11 @@ const get = async (input: OperationInput) => {
 const listLinks = async (input: OperationInput) => {
   const requester = input.requester
   const locale = stringValue(input.locale, 'locale')
-  let rows
   const columns = [{ id: 'pages.id' }, { path: 'pages.path' }, 'title', { link: 'pageLinks.path' }, { locale: 'pageLinks.localeCode' }]
-  if (['mysql', 'mariadb', 'sqlite'].includes(wiki.config.db.type)) {
-    rows = await wiki.models.knex('pages')
-      .column(...columns)
-      .leftJoin('pageLinks', 'pages.id', 'pageLinks.pageId')
-      .where({ 'pages.localeCode': locale, 'pages.visibility': 'public' })
-      .unionAll(
-        wiki.models.knex('pageLinks')
-          .column(...columns)
-          .leftJoin('pages', 'pageLinks.pageId', 'pages.id')
-          .where({ 'pages.localeCode': locale, 'pages.visibility': 'public' })
-      )
-  } else {
-    rows = await wiki.models.knex('pages')
-      .column(...columns)
-      .fullOuterJoin('pageLinks', 'pages.id', 'pageLinks.pageId')
-      .where({ 'pages.localeCode': locale, 'pages.visibility': 'public' })
-  }
+  const rows = await wiki.models.knex('pages')
+    .column(...columns)
+    .fullOuterJoin('pageLinks', 'pages.id', 'pageLinks.pageId')
+    .where({ 'pages.localeCode': locale, 'pages.visibility': 'public' })
 
   return _.reduce<LinkRow, LinkResult[]>(rows, (result, value) => {
     if (

@@ -45,7 +45,7 @@ describe('Visual Markdown page contracts', () => {
         PageUpdateForbidden: Error
       },
       auth: { checkAccess: vi.fn().mockReturnValue(true) },
-      config: { dataPath: '/test/data', db: { type: 'sqlite' }, lang: { code: 'en' } },
+      config: { dataPath: '/test/data', db: { type: 'postgres' }, lang: { code: 'en' } },
       data: {
         editors: [
           { key: 'markdown', contentType: 'markdown' },

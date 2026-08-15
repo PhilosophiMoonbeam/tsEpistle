@@ -31,7 +31,7 @@ When a release is published:
 4. test the upgrade against a restored copy of production data;
 5. roll back by restoring both the pre-upgrade database and data-directory snapshots—database migrations are not guaranteed to be reversible.
 
-The release CI exercises PostgreSQL 15, MySQL 8.0, MariaDB 10.11, Microsoft SQL Server 2022, and the SQLite runtime bundled with Wiki.ts. These are the minimum supported database families and major versions for the preview release. Upgrade CI starts from the exact upstream base, Wiki.js 2.5.314; older Wiki.js or Wiki.ts database sources are unsupported unless a later release explicitly adds a retained upgrade fixture. Deployment-specific identity providers, object storage, search engines, mail, proxies, and multi-instance topologies still require an operator canary. Kubernetes users should start with the [fork Helm chart](dev/helm/README.md).
+Wiki.ts Preview supports PostgreSQL 15, 16, 17, and 18 and requires a current minor release within one of those major lines. Startup rejects older and newer major versions before running application migrations. Release CI performs fresh-install and retained Wiki.js 2.5.314 PostgreSQL upgrade checks on every supported major. Other database engines are unsupported; no cross-engine converter is shipped. Older Wiki.js or Wiki.ts database sources are unsupported unless a later release explicitly adds a retained upgrade fixture. Deployment-specific identity providers, object storage, search engines, mail, proxies, and multi-instance topologies still require an operator canary. Kubernetes users should start with the [fork Helm chart](dev/helm/README.md).
 
 ### Verify release provenance
 
@@ -71,17 +71,9 @@ Kubernetes installation, upgrade, backup, rollback, and restore procedures are i
 
 Stop every Wiki.ts instance before restoring. Restore the database and `/wiki/data` from the same pre-upgrade point, then start the exact previous application image digest. Never run an older application against a database migrated by a newer release.
 
-| Database | Release-tested backup | Release-tested restore |
-| --- | --- | --- |
-| PostgreSQL | `pg_dump --format=custom` | recreate the database, then `pg_restore` |
-| MySQL 8.0 | `mysqldump --single-transaction` | recreate the database, then import with `mysql` |
-| MariaDB 10.11 | `mariadb-dump --single-transaction` | recreate the database, then import with `mariadb` |
-| Microsoft SQL Server 2022 | `BACKUP DATABASE ... WITH CHECKSUM` | `RESTORE DATABASE ... WITH REPLACE` |
-| SQLite | offline archive of `/wiki/data`, including `db.sqlite` | replace the complete `/wiki/data` volume from that archive |
+PostgreSQL backups use `pg_dump --format=custom`; restore by recreating the database and running `pg_restore`. The `upgrade` CI matrix verifies the retained Wiki.js 2.5.314 fixture checksum, upgrades it on PostgreSQL 15 through 18, writes post-upgrade database and volume sentinels, restores both pre-upgrade snapshots, boots the old image, authenticates the original administrator, and rejects retained post-upgrade state. Treat that matrix as a compatibility canary, not as a substitute for testing a restored copy of production data.
 
-The `upgrade` CI matrix executes these engine-native backups, upgrades the retained Wiki.js 2.5.314 fixture, writes post-upgrade database and volume sentinels, restores both snapshots, boots the old image, authenticates the original administrator, and rejects retained post-upgrade state. Treat that matrix as a compatibility canary, not as a substitute for testing a restored copy of production data.
-
-Each database job uploads `migration-metrics-<database>.json`. The retained source fixture must migrate and reach health within 120 seconds, add no more than 256 MiB or 5× its original database size, and add no more than 64 MiB to `/wiki/data`. These are regression ceilings for the synthetic compatibility fixture; operators must establish tighter time and capacity budgets from a production-data canary.
+Each upgrade job uploads `migration-metrics-postgres-<major>.json`. The retained source fixture must migrate and reach health within 120 seconds, add no more than 256 MiB or 5× its original database size, and add no more than 64 MiB to `/wiki/data`. These are regression ceilings for the synthetic compatibility fixture; operators must establish tighter time and capacity budgets from a production-data canary.
 
 ## API compatibility
 

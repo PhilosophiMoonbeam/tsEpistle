@@ -4,7 +4,7 @@ const { databaseInit } = vi.hoisted(() => ({ databaseInit: vi.fn() }))
 vi.mock('../../core/db.ts', () => ({ default: { init: databaseInit } }))
 
 global.WIKI = {
-  config: { db: { type: 'sqlite' } },
+  config: { db: { type: 'postgres' } },
   configSvc: {
     applyFlags: vi.fn().mockResolvedValue(undefined),
     loadFromDb: vi.fn().mockResolvedValue(undefined)

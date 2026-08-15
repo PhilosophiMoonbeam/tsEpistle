@@ -25,7 +25,7 @@ describe('models/pages.parseMetadata', () => {
       config: {
         dataPath: '/test/data',
         db: {
-          type: 'sqlite'
+          type: 'postgres'
         },
         lang: {
           code: 'en'

@@ -109,7 +109,6 @@
                     v-list-item-title(v-html='dbVersion')
                     v-list-item-subtitle {{ info.dbHost }}
 
-                v-alert.mt-3.mx-4(:value='isDbLimited', color='deep-orange darken-2', icon='mdi-alert', dark) {{ $t('admin:system.dbPartialSupport') }}
 
 </template>
 
@@ -174,9 +173,6 @@ export default {
           return ''
       }
     },
-    isDbLimited () {
-      return this.info.dbType === 'MySQL' && this.dbVersion.indexOf('5.') === 0
-    }
   },
   methods: {
     async loadInfo () {

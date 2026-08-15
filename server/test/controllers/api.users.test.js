@@ -407,7 +407,7 @@ describe('controllers/api users endpoints', () => {
   })
 
   it('maps foreign constraint admin user delete failures', async () => {
-    global.WIKI.models.users.deleteUser.mockRejectedValueOnce(new Error('SQLITE_CONSTRAINT: foreign key constraint failed'))
+    global.WIKI.models.users.deleteUser.mockRejectedValueOnce(new Error('update or delete on table "users" violates foreign key constraint'))
     const { delete: deleteHandler } = await loadHandler()
     const req = { user: { permissions: ['manage:system'] }, params: { id: '42' }, body: { replaceId: 7 } }
     const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }

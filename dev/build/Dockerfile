@@ -56,7 +56,7 @@ LABEL org.opencontainers.image.created="${WIKI_BUILD_DATE}" \
       io.wikits.upstream-base="${WIKI_UPSTREAM_BASE}"
 ENV NODE_ENV=production
 
-RUN apk add --no-cache bash curl git openssh gnupg sqlite && \
+RUN apk add --no-cache bash curl git openssh gnupg && \
     mkdir -p /wiki /logs /wiki/data/content && \
     chown -R node:node /wiki /logs
 

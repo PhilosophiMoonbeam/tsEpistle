@@ -20,7 +20,7 @@
             v-avatar: v-icon mdi-information-outline
             div.v-list-item-content
               v-list-item-title.body-2 Basic OS information
-              v-list-item-subtitle.caption: em Platform (Linux, macOS or Windows), Total CPU cores and DB type (PostgreSQL, MySQL, MariaDB, SQLite or SQL Server)
+              v-list-item-subtitle.caption: em Platform (Linux, macOS or Windows), total CPU cores and PostgreSQL version
           v-list-item
             v-avatar: v-icon mdi-information-outline
             div.v-list-item-content

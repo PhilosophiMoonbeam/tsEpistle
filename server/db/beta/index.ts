@@ -10,9 +10,6 @@ import semver from 'semver'
 
 interface WikiDatabaseContext {
   SERVERPATH: string
-  config: {
-    db: { type: string }
-  }
 }
 
 interface MigrationRecord {
@@ -35,7 +32,7 @@ function isMigration (value: unknown): value is Knex.Migration {
 
 const wiki = WIKI as unknown as WikiDatabaseContext
 function createLegacyMigrationSource(): Knex.MigrationSource<MigrationSpec> {
-  const baseMigrationPath = path.join(wiki.SERVERPATH, (wiki.config.db.type !== 'sqlite') ? 'db/beta/migrations' : 'db/beta/migrations-sqlite')
+  const baseMigrationPath = path.join(wiki.SERVERPATH, 'db/beta/migrations')
   const requireMigration = createRequire(import.meta.url)
   return {
     async getMigrations () {
@@ -73,14 +70,11 @@ export async function migrate (knex: Knex): Promise<void> {
     return
   }
 
-  const dbCompat = {
-    charset: (wiki.config.db.type === 'mysql' || wiki.config.db.type === 'mariadb')
-  }
 
   const migrations = await knex<MigrationRecord>('migrations')
   if (_.some(migrations, migration => migration.name.indexOf('2.0.0-beta') >= 0)) {
     const localeColnInfo = await knex('pages').columnInfo('localeCode')
-    if (wiki.config.db.type !== 'sqlite' && localeColnInfo.maxLength === 2) {
+    if (localeColnInfo.maxLength === 2) {
       const locales = await knex('locales')
       await knex.schema
         .table('users', table => {
@@ -97,7 +91,6 @@ export async function migrate (knex: Knex): Promise<void> {
         })
         .dropTable('locales')
         .createTable('locales', table => {
-          if (dbCompat.charset) { table.charset('utf8mb4') }
           table.string('code', 5).notNullable().primary()
           table.json('strings')
           table.boolean('isRTL').notNullable().defaultTo(false)

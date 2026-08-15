@@ -13,7 +13,7 @@ The chart is preview software. Test upgrades and restores against a non-producti
 
 - Kubernetes with a default `ReadWriteOnce` storage class, or an existing PVC
 - Helm 3
-- A PostgreSQL backup captured before every application or chart upgrade
+- PostgreSQL 15, 16, 17, or 18 on a current minor release, plus a verified backup before every application or chart upgrade
 - A Kubernetes Secret for database credentials
 
 ## Install

@@ -8,6 +8,7 @@ import PGPubSub from 'pg-pubsub'
 import migrationSource from '../db/migrator-source.ts'
 import migrateFromBeta from '../db/beta/index.ts'
 import { preflightMigrations } from '../db/migration-preflight.ts'
+import { assertSupportedPostgresVersion } from '../db/postgres-version.ts'
 const { knex: createKnex } = knexModule
 
 interface SslOptions extends Record<string, unknown> {
@@ -27,42 +28,24 @@ interface DbConfig {
   port: number
   ssl: boolean | string | number
   sslOptions: SslOptions
-  socketPath?: string
-  storage: string
   schema?: string
   type: string
 }
 
-interface ConnectionConfig {
+interface NetworkConnectionConfig {
   user: string
   password: string
   database: string
-  ssl?: true | SslOptions
-  typeCast?: (field: MysqlField, next: () => unknown) => unknown
-  appName?: string
-  enableArithAbort?: boolean
-  encrypt?: boolean
-  options?: { appName?: string; enableArithAbort?: boolean; encrypt?: boolean }
-}
-
-interface NetworkConnectionConfig extends ConnectionConfig {
+  ssl?: SslOptions
   host: string
   port: number
 }
 
-interface SocketConnectionConfig extends ConnectionConfig {
-  socketPath: string
-}
-
-interface SqliteConnectionConfig { filename: string }
-type MysqlConnectionConfig = NetworkConnectionConfig | SocketConnectionConfig
-type DatabaseConnectionConfig = string | MysqlConnectionConfig | SqliteConnectionConfig
+type DatabaseConnectionConfig = string | NetworkConnectionConfig
 type DatabaseRow = Record<string, unknown>
 type KnexInstance = Knex<DatabaseRow, unknown[]>
-interface MysqlField { type: string; length: number; string(): string | null }
 interface PoolConnection {
   query(statement: string): Promise<unknown>
-  promise(): { query(statement: string): Promise<unknown> }
 }
 interface NotificationPayload { event: string; source: string; value: unknown }
 
@@ -108,9 +91,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 function isNetworkConnection(config: DatabaseConnectionConfig): config is NetworkConnectionConfig {
   return typeof config !== 'string' && 'host' in config
-}
-function isMysqlConnection(config: DatabaseConnectionConfig): config is MysqlConnectionConfig {
-  return typeof config !== 'string' && 'user' in config
 }
 function sslFile(value: string | Buffer, rootPath: string): string | Buffer {
   return typeof value === 'string' ? fs.readFileSync(path.resolve(rootPath, value)) : value
@@ -159,8 +139,8 @@ const database: DatabaseService = {
    * @return     {Object}  DB instance
    */
   async init(): Promise<InitializedDatabase> {
-    let dbClient: string
-    let dbConfig: DatabaseConnectionConfig = (!_.isEmpty(process.env.DATABASE_URL) && process.env.DATABASE_URL)
+    const dbClient = 'pg'
+    const dbConfig: DatabaseConnectionConfig = (!_.isEmpty(process.env.DATABASE_URL) && process.env.DATABASE_URL)
       ? process.env.DATABASE_URL
       : {
           host: wiki.config.db.host.toString(),
@@ -200,83 +180,25 @@ const database: DatabaseService = {
       }
     }
 
-    // Engine-specific config
-    switch (wiki.config.db.type) {
-      case 'postgres':
-        dbClient = 'pg'
-
-        if (dbUseSSL && isNetworkConnection(dbConfig)) {
-          dbConfig.ssl = (sslOptions === true) ? { rejectUnauthorized: true } : sslOptions
-        }
-        break
-      case 'mariadb':
-      case 'mysql':
-        dbClient = 'mysql2'
-
-        if (dbUseSSL && isNetworkConnection(dbConfig)) dbConfig.ssl = sslOptions
-        if (isMysqlConnection(dbConfig)) {
-          let mysqlConfig: MysqlConnectionConfig = dbConfig
-          if (wiki.config.db.socketPath && isNetworkConnection(mysqlConfig)) {
-            const prunedConfig = _.omit(mysqlConfig, ['host', 'port'])
-            const socketConfig: SocketConnectionConfig = { ...prunedConfig, socketPath: wiki.config.db.socketPath.toString() }
-            mysqlConfig = socketConfig
-          }
-          mysqlConfig.typeCast = (field: MysqlField, next: () => unknown) => {
-            if (field.type === 'TINY' && field.length === 1) {
-              const value = field.string()
-              return value ? (value === '1') : null
-            }
-            return next()
-          }
-          dbConfig = mysqlConfig
-        }
-        break
-      case 'mssql':
-        dbClient = 'mssql'
-
-        if (isNetworkConnection(dbConfig)) {
-          dbConfig.appName = 'Wiki.js'
-          dbConfig.options = { ...dbConfig.options, appName: 'Wiki.js' }
-          dbConfig.enableArithAbort = true
-          dbConfig.options.enableArithAbort = true
-          if (dbUseSSL) {
-            dbConfig.encrypt = true
-            dbConfig.options.encrypt = true
-          }
-        }
-        break
-      case 'sqlite':
-        dbClient = 'better-sqlite3'
-        dbConfig = { filename: wiki.config.db.storage }
-        break
-      default:
-        wiki.logger.error('Invalid DB Type')
-        process.exit(1)
+    if (wiki.config.db.type !== 'postgres') {
+      throw new Error(`Unsupported database type ${wiki.config.db.type}. Wiki.ts requires PostgreSQL.`)
+    }
+    if (dbUseSSL && isNetworkConnection(dbConfig)) {
+      dbConfig.ssl = (sslOptions === true) ? { rejectUnauthorized: true } : sslOptions
     }
 
     // Initialize Knex
     const knex = createKnex<DatabaseRow, unknown[]>({
       client: dbClient,
-      useNullAsDefault: true,
+      useNullAsDefault: false,
       asyncStackTraces: wiki.IS_DEBUG,
       connection: dbConfig,
       pool: {
         ...wiki.config.pool,
         afterCreate(conn: PoolConnection, done: (error?: Error) => void) {
-          let query: Promise<unknown> | undefined
-          switch (wiki.config.db.type) {
-            case 'postgres':
-              query = conn.query(`set application_name = 'Wiki.js'`)
-              if (wiki.config.db.schema && wiki.config.db.schema !== 'public') {
-                query = query.then(() => conn.query(`set search_path TO ${wiki.config.db.schema}, public;`))
-              }
-              break
-            case 'mysql':
-              query = conn.promise().query(`set autocommit = 1`)
-              break
-            default:
-              done()
-              return
+          let query = conn.query(`set application_name = 'Wiki.js'`)
+          if (wiki.config.db.schema && wiki.config.db.schema !== 'public') {
+            query = query.then(() => conn.query(`set search_path TO ${wiki.config.db.schema}, public;`))
           }
           void query.then(
             () => done(),
@@ -313,6 +235,11 @@ const database: DatabaseService = {
           }
         }
       },
+      async verifyPostgresVersion () {
+        if (wiki.config.db.type !== 'postgres') return
+        const version = await assertSupportedPostgresVersion(knex)
+        wiki.logger.info(`PostgreSQL ${version.version} is within the supported ${version.major} server line [ OK ]`)
+      },
       // -> Migrate DB Schemas
       async syncSchemas () {
         return knex.migrate.latest({
@@ -338,6 +265,7 @@ const database: DatabaseService = {
 
     const initTasksQueue = (wiki.IS_MASTER) ? [
       initTasks.connect,
+      initTasks.verifyPostgresVersion,
       initTasks.preflightLegacyMigrations,
       initTasks.migrateFromBeta,
       initTasks.preflightCurrentMigrations,
@@ -361,12 +289,7 @@ const database: DatabaseService = {
    */
   async subscribeToNotifications () {
     const useHA = (wiki.config.ha === true || (typeof wiki.config.ha === 'string' && wiki.config.ha.toLowerCase() === 'true') || wiki.config.ha === 1 || wiki.config.ha === '1')
-    if (!useHA) {
-      return
-    } else if (wiki.config.db.type !== 'postgres') {
-      wiki.logger.warn(`Database engine doesn't support pub/sub. Will not handle concurrent instances: [ DISABLED ]`)
-      return
-    }
+    if (!useHA) return
 
 
     const knex = this.knex

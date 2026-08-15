@@ -7,9 +7,6 @@ import semver from 'semver'
 
 interface WikiDatabaseContext {
   SERVERPATH: string
-  config: {
-    db: { type: string }
-  }
 }
 
 interface MigrationSpec {
@@ -27,7 +24,7 @@ function isMigration (value: unknown): value is Knex.Migration {
 }
 
 const wiki = WIKI as unknown as WikiDatabaseContext
-const baseMigrationPath = path.join(wiki.SERVERPATH, (wiki.config.db.type !== 'sqlite') ? 'db/migrations' : 'db/migrations-sqlite')
+const baseMigrationPath = path.join(wiki.SERVERPATH, 'db/migrations')
 const requireMigration = createRequire(import.meta.url)
 
 const migrationSource: Knex.MigrationSource<MigrationSpec> = {

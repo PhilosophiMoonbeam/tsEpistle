@@ -1,17 +1,22 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-: "${MATRIXENV:?MATRIXENV is required}"
 : "${WIKI_TEST_IMAGE:?WIKI_TEST_IMAGE is required}"
-WIKI_UPGRADE_SOURCE_IMAGE=${WIKI_UPGRADE_SOURCE_IMAGE:-ghcr.io/requarks/wiki:2.5.314@sha256:68f0d1848261ae76492ba358e30a96a76fed5d97a3fff381656082bf90f70d7e}
-ADMIN_EMAIL=upgrade-smoke@example.com
-ADMIN_PASSWORD=UpgradeSmoke123!
-RECOVERY_DIR=$(mktemp -d)
+: "${POSTGRES_TEST_IMAGE:?POSTGRES_TEST_IMAGE is required}"
+
+FIXTURE_DIR=${FIXTURE_DIR:-dev/e2e/fixtures}
+FIXTURE_MANIFEST=${FIXTURE_MANIFEST:-$FIXTURE_DIR/wiki-js-2.5.314-postgres.json}
+DATABASE_FIXTURE=$FIXTURE_DIR/$(jq -r '.databaseArtifact.path' "$FIXTURE_MANIFEST")
+DATA_FIXTURE=$FIXTURE_DIR/$(jq -r '.dataArtifact.path' "$FIXTURE_MANIFEST")
+SOURCE_IMAGE=$(jq -r '.sourceImage' "$FIXTURE_MANIFEST")
+ADMIN_EMAIL=$(jq -r '.fixtureIdentity.administratorEmail' "$FIXTURE_MANIFEST")
+ADMIN_PASSWORD=$(jq -r '.fixtureIdentity.administratorPassword' "$FIXTURE_MANIFEST")
 MIGRATION_MAX_SECONDS=${MIGRATION_MAX_SECONDS:-120}
 MIGRATION_MAX_DB_GROWTH_BYTES=${MIGRATION_MAX_DB_GROWTH_BYTES:-268435456}
 MIGRATION_MAX_DB_AMPLIFICATION_PERCENT=${MIGRATION_MAX_DB_AMPLIFICATION_PERCENT:-500}
 MIGRATION_MAX_DATA_GROWTH_BYTES=${MIGRATION_MAX_DATA_GROWTH_BYTES:-67108864}
-MIGRATION_METRICS_FILE=${MIGRATION_METRICS_FILE:-migration-metrics-$MATRIXENV.json}
+MIGRATION_METRICS_FILE=${MIGRATION_METRICS_FILE:-migration-metrics-postgres.json}
+RECOVERY_DIR=$(mktemp -d)
 
 cleanup() {
   if [ "${recovery_succeeded:-false}" != true ]; then
@@ -39,38 +44,24 @@ wait_for_url() {
   done
 }
 
+wait_for_postgres() {
+  for attempt in {1..90}; do
+    if docker exec db pg_isready --username=wiki --dbname=wiki >/dev/null 2>&1; then
+      return
+    fi
+    if [ "$attempt" -eq 90 ]; then
+      echo 'Timed out waiting for PostgreSQL' >&2
+      return 1
+    fi
+    sleep 1
+  done
+}
+
 start_wiki() {
   local image=$1
-  case $MATRIXENV in
-  postgres)
-    docker run -d -p 3000:3000 --name wiki --network=wiki-e2e -v wiki-data:/wiki/data \
-      -e DB_TYPE=postgres -e DB_HOST=db -e DB_PORT=5432 -e DB_NAME=wiki \
-      -e DB_USER=wiki -e 'DB_PASS=Password123!' "$image"
-    ;;
-  mysql)
-    docker run -d -p 3000:3000 --name wiki --network=wiki-e2e -v wiki-data:/wiki/data \
-      -e DB_TYPE=mysql -e DB_HOST=db -e DB_PORT=3306 -e DB_NAME=wiki \
-      -e DB_USER=wiki -e 'DB_PASS=Password123!' "$image"
-    ;;
-  mariadb)
-    docker run -d -p 3000:3000 --name wiki --network=wiki-e2e -v wiki-data:/wiki/data \
-      -e DB_TYPE=mariadb -e DB_HOST=db -e DB_PORT=3306 -e DB_NAME=wiki \
-      -e DB_USER=wiki -e 'DB_PASS=Password123!' "$image"
-    ;;
-  mssql)
-    docker run -d -p 3000:3000 --name wiki --network=wiki-e2e -v wiki-data:/wiki/data \
-      -e DB_TYPE=mssql -e DB_HOST=db -e DB_PORT=1433 -e DB_NAME=wiki \
-      -e DB_USER=sa -e 'DB_PASS=Password123!' "$image"
-    ;;
-  sqlite)
-    docker run -d -p 3000:3000 --name wiki --network=wiki-e2e -v wiki-data:/wiki/data \
-      -e DB_TYPE=sqlite -e DB_FILEPATH=/wiki/data/db.sqlite "$image"
-    ;;
-  *)
-    echo "Unsupported database engine: $MATRIXENV" >&2
-    exit 1
-    ;;
-  esac
+  docker run -d -p 3000:3000 --name wiki --network=wiki-e2e -v wiki-data:/wiki/data \
+    -e DB_TYPE=postgres -e DB_HOST=db -e DB_PORT=5432 -e DB_NAME=wiki \
+    -e DB_USER=wiki -e 'DB_PASS=Password123!' "$image" >/dev/null
 }
 
 verify_legacy_login() {
@@ -83,10 +74,67 @@ verify_legacy_login() {
     '.data.authentication.login.responseResult.succeeded == true and (.data.authentication.login.jwt | type == "string" and length > 0)' >/dev/null
 }
 
-write_data_marker() {
-  local value=$1
-  docker run --rm --user 0 --entrypoint sh -v wiki-data:/data "$WIKI_TEST_IMAGE" \
-    -c 'printf "%s" "$1" > /data/recovery-marker' sh "$value"
+resource_report() {
+  docker exec db psql --username=wiki --dbname=wiki --tuples-only --no-align --command="
+    SELECT json_build_object(
+      'pages', (SELECT COUNT(*) FROM pages),
+      'users', (SELECT COUNT(*) FROM users),
+      'groups', (SELECT COUNT(*) FROM groups),
+      'navigation', (SELECT COUNT(*) FROM navigation),
+      'assets', (SELECT COUNT(*) FROM assets),
+      'pageHistory', (SELECT COUNT(*) FROM \"pageHistory\"),
+      'tags', (SELECT COUNT(*) FROM tags),
+      'migrationNames', (SELECT json_agg(name ORDER BY id) FROM migrations),
+      'fixturePage', (SELECT json_build_object('id', id, 'path', path, 'title', title, 'content', content) FROM pages WHERE path = 'legacy-continuity'),
+      'fixtureHistory', (SELECT COUNT(*) FROM \"pageHistory\" WHERE \"pageId\" = (SELECT id FROM pages WHERE path = 'legacy-continuity')),
+      'fixtureAsset', (SELECT COUNT(*) FROM assets WHERE filename = 'continuity.txt')
+    );" | jq --compact-output .
+}
+
+assert_fixture_report() {
+  local report=$1
+  jq --exit-status --argjson report "$report" \
+    '.expectedBeforeUpgrade as $expected |
+      ($report.pages == $expected.pages) and
+      ($report.users == $expected.users) and
+      ($report.groups == $expected.groups) and
+      ($report.navigation == $expected.navigation) and
+      ($report.assets == $expected.assets) and
+      ($report.pageHistory == $expected.pageHistory) and
+      ($report.tags == $expected.tags) and
+      (($report.migrationNames | length) == $expected.migrations) and
+      ($report.fixturePage.path == .fixtureIdentity.pagePath) and
+      ($report.fixturePage.title == .fixtureIdentity.pageTitle) and
+      ($report.fixtureHistory >= 2) and
+      ($report.fixtureAsset == 1)' "$FIXTURE_MANIFEST" >/dev/null
+}
+assert_upgraded_report() {
+  local report=$1
+  jq --exit-status --argjson report "$report" \
+    '.expectedBeforeUpgrade as $expected |
+      ($report.pages == $expected.pages) and
+      ($report.users == $expected.users) and
+      ($report.groups == $expected.groups) and
+      ($report.navigation == $expected.navigation) and
+      ($report.assets == $expected.assets) and
+      ($report.pageHistory >= $expected.pageHistory) and
+      ($report.tags == $expected.tags) and
+      (($report.migrationNames | length) >= $expected.migrations) and
+      ($report.fixturePage.path == .fixtureIdentity.pagePath) and
+      ($report.fixturePage.title == .fixtureIdentity.pageTitle) and
+      ($report.fixtureHistory >= 2) and
+      ($report.fixtureAsset == 1)' "$FIXTURE_MANIFEST" >/dev/null
+}
+
+
+database_size_bytes() {
+  docker exec db psql --username=wiki --dbname=wiki --tuples-only --no-align \
+    --command="SELECT pg_database_size('wiki')"
+}
+
+data_volume_size_bytes() {
+  docker run --rm --user 0 --entrypoint sh -v wiki-data:/data:ro "$WIKI_TEST_IMAGE" \
+    -c 'set -- $(du -sk /data); echo $(( $1 * 1024 ))'
 }
 
 snapshot_data_volume() {
@@ -103,221 +151,147 @@ restore_data_volume() {
     -C /target -xzf /backup/wiki-data.tar.gz
 }
 
-database_size_bytes() {
-  case $MATRIXENV in
-  postgres)
-    docker exec db psql --username=wiki --dbname=wiki --tuples-only --no-align \
-      --command="SELECT pg_database_size('wiki')"
-    ;;
-  mysql)
-    docker exec db mysql --user=root --password='Password123!' --batch --skip-column-names \
-      -e "SELECT COALESCE(SUM(data_length + index_length), 0) FROM information_schema.tables WHERE table_schema = 'wiki'"
-    ;;
-  mariadb)
-    docker exec db mariadb --user=root --password='Password123!' --batch --skip-column-names \
-      -e "SELECT COALESCE(SUM(data_length + index_length), 0) FROM information_schema.tables WHERE table_schema = 'wiki'"
-    ;;
-  mssql)
-    docker exec db /opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P 'Password123!' \
-      -d wiki -h -1 -W -Q 'SET NOCOUNT ON; SELECT SUM(size) * 8192 FROM sys.database_files'
-    ;;
-  sqlite)
-    docker run --rm --user 0 --entrypoint stat -v wiki-data:/data:ro "$WIKI_TEST_IMAGE" \
-      -c %s /data/db.sqlite
-    ;;
-  esac
-}
+expected_database_sha=$(jq -r '.databaseArtifact.sha256' "$FIXTURE_MANIFEST")
+expected_data_sha=$(jq -r '.dataArtifact.sha256' "$FIXTURE_MANIFEST")
+printf '%s  %s\n' "$expected_database_sha" "$DATABASE_FIXTURE" | sha256sum --check --status
+printf '%s  %s\n' "$expected_data_sha" "$DATA_FIXTURE" | sha256sum --check --status
 
-data_volume_size_bytes() {
-  docker run --rm --user 0 --entrypoint sh -v wiki-data:/data:ro "$WIKI_TEST_IMAGE" \
-    -c 'set -- $(du -sk /data); echo $(( $1 * 1024 ))'
-}
+docker volume create wiki-data >/dev/null
+docker network create wiki-e2e >/dev/null
+docker run -d --name db --network=wiki-e2e \
+  -e POSTGRES_PASSWORD='Password123!' -e POSTGRES_USER=wiki -e POSTGRES_DB=wiki \
+  "$POSTGRES_TEST_IMAGE" >/dev/null
+wait_for_postgres
+postgres_version=$(docker exec db psql --username=wiki --dbname=wiki --tuples-only --no-align --command='SHOW server_version')
+postgres_version_num=$(docker exec db psql --username=wiki --dbname=wiki --tuples-only --no-align --command='SHOW server_version_num')
 
-record_and_check_migration_metrics() {
-  local seconds=$1
-  local database_before=$2
-  local database_after=$3
-  local data_before=$4
-  local data_after=$5
-  local database_growth=$((database_after - database_before))
-  local data_growth=$((data_after - data_before))
-  local amplification_percent=$(((database_after * 100 + database_before - 1) / database_before))
-  if [ "$database_growth" -lt 0 ]; then database_growth=0; fi
-  if [ "$data_growth" -lt 0 ]; then data_growth=0; fi
+docker cp "$DATABASE_FIXTURE" db:/tmp/source.dump >/dev/null
+docker exec db pg_restore --username=wiki --dbname=wiki /tmp/source.dump
+docker run --rm --user 0 --entrypoint tar \
+  -v wiki-data:/target -v "$FIXTURE_DIR":/fixtures:ro "$WIKI_TEST_IMAGE" \
+  -C /target -xzf "/fixtures/$(basename "$DATA_FIXTURE")"
 
-  jq --null-input \
-    --arg database "$MATRIXENV" \
-    --argjson seconds "$seconds" \
-    --argjson databaseBytesBefore "$database_before" \
-    --argjson databaseBytesAfter "$database_after" \
-    --argjson databaseGrowthBytes "$database_growth" \
-    --argjson databaseAmplificationPercent "$amplification_percent" \
-    --argjson dataBytesBefore "$data_before" \
-    --argjson dataBytesAfter "$data_after" \
-    --argjson dataGrowthBytes "$data_growth" \
-    --argjson maxSeconds "$MIGRATION_MAX_SECONDS" \
-    --argjson maxDatabaseGrowthBytes "$MIGRATION_MAX_DB_GROWTH_BYTES" \
-    --argjson maxDatabaseAmplificationPercent "$MIGRATION_MAX_DB_AMPLIFICATION_PERCENT" \
-    --argjson maxDataGrowthBytes "$MIGRATION_MAX_DATA_GROWTH_BYTES" \
-    '{
-      database: $database,
-      migrationSeconds: $seconds,
-      databaseBytesBefore: $databaseBytesBefore,
-      databaseBytesAfter: $databaseBytesAfter,
-      databaseGrowthBytes: $databaseGrowthBytes,
-      databaseAmplificationPercent: $databaseAmplificationPercent,
-      dataBytesBefore: $dataBytesBefore,
-      dataBytesAfter: $dataBytesAfter,
-      dataGrowthBytes: $dataGrowthBytes,
-      limits: {
-        migrationSeconds: $maxSeconds,
-        databaseGrowthBytes: $maxDatabaseGrowthBytes,
-        databaseAmplificationPercent: $maxDatabaseAmplificationPercent,
-        dataGrowthBytes: $maxDataGrowthBytes
-      }
-    }' > "$MIGRATION_METRICS_FILE"
-  cat "$MIGRATION_METRICS_FILE"
-
-  [ "$seconds" -le "$MIGRATION_MAX_SECONDS" ]
-  [ "$database_growth" -le "$MIGRATION_MAX_DB_GROWTH_BYTES" ]
-  [ "$amplification_percent" -le "$MIGRATION_MAX_DB_AMPLIFICATION_PERCENT" ]
-  [ "$data_growth" -le "$MIGRATION_MAX_DATA_GROWTH_BYTES" ]
-}
-
-backup_database() {
-  case $MATRIXENV in
-  postgres)
-    docker exec db pg_dump --username=wiki --format=custom --file=/tmp/wiki-backup.dump wiki
-    ;;
-  mysql)
-    docker exec db sh -c 'mysqldump --single-transaction --user=root --password="Password123!" wiki > /tmp/wiki-backup.sql'
-    ;;
-  mariadb)
-    docker exec db sh -c 'mariadb-dump --single-transaction --user=root --password="Password123!" wiki > /tmp/wiki-backup.sql'
-    ;;
-  mssql)
-    docker exec --user root db sh -c 'mkdir -p /var/opt/mssql/backup && chown mssql:mssql /var/opt/mssql/backup'
-    docker exec db /opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P 'Password123!' \
-      -Q "BACKUP DATABASE [wiki] TO DISK = N'/var/opt/mssql/backup/wiki-backup.bak' WITH INIT, CHECKSUM"
-    ;;
-  sqlite)
-    ;;
-  esac
-}
-
-restore_database() {
-  case $MATRIXENV in
-  postgres)
-    docker exec db dropdb --username=wiki --force wiki
-    docker exec db createdb --username=wiki --owner=wiki wiki
-    docker exec db pg_restore --username=wiki --dbname=wiki /tmp/wiki-backup.dump
-    ;;
-  mysql)
-    docker exec db mysql --user=root --password='Password123!' \
-      -e 'DROP DATABASE wiki; CREATE DATABASE wiki CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;'
-    docker exec db sh -c 'mysql --user=root --password="Password123!" wiki < /tmp/wiki-backup.sql'
-    ;;
-  mariadb)
-    docker exec db mariadb --user=root --password='Password123!' \
-      -e 'DROP DATABASE wiki; CREATE DATABASE wiki CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;'
-    docker exec db sh -c 'mariadb --user=root --password="Password123!" wiki < /tmp/wiki-backup.sql'
-    ;;
-  mssql)
-    docker exec db /opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P 'Password123!' \
-      -Q "USE [master]; ALTER DATABASE [wiki] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; RESTORE DATABASE [wiki] FROM DISK = N'/var/opt/mssql/backup/wiki-backup.bak' WITH REPLACE; ALTER DATABASE [wiki] SET MULTI_USER"
-    ;;
-  sqlite)
-    ;;
-  esac
-}
-
-assert_candidate_page_absent() {
-  local count
-  case $MATRIXENV in
-  postgres)
-    count=$(docker exec db psql --username=wiki --dbname=wiki --tuples-only --no-align \
-      --command="SELECT COUNT(*) FROM pages WHERE path = 'rollback-discarded'")
-    ;;
-  mysql)
-    count=$(docker exec db mysql --user=root --password='Password123!' --batch --skip-column-names \
-      -e "SELECT COUNT(*) FROM wiki.pages WHERE path = 'rollback-discarded'")
-    ;;
-  mariadb)
-    count=$(docker exec db mariadb --user=root --password='Password123!' --batch --skip-column-names \
-      -e "SELECT COUNT(*) FROM wiki.pages WHERE path = 'rollback-discarded'")
-    ;;
-  mssql)
-    count=$(docker exec db /opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P 'Password123!' \
-      -d wiki -h -1 -W -Q "SET NOCOUNT ON; SELECT COUNT(*) FROM pages WHERE path = 'rollback-discarded'")
-    ;;
-  sqlite)
-    return
-    ;;
-  esac
-  [ "${count//[[:space:]]/}" = 0 ]
-}
-
-chmod u+x dev/e2e/ci-setup.sh
-MATRIXENV=$MATRIXENV WIKI_TEST_IMAGE=$WIKI_UPGRADE_SOURCE_IMAGE dev/e2e/ci-setup.sh
-
-setup_response=$(curl --fail --silent --show-error \
-  --header 'Content-Type: application/json' \
-  --data "{\"siteUrl\":\"http://127.0.0.1:3000\",\"adminEmail\":\"$ADMIN_EMAIL\",\"adminPassword\":\"$ADMIN_PASSWORD\",\"telemetry\":false}" \
-  http://127.0.0.1:3000/finalize)
-printf '%s' "$setup_response" | jq --exit-status '.ok == true' >/dev/null
+before_report=$(resource_report)
+assert_fixture_report "$before_report"
+start_wiki "$SOURCE_IMAGE"
 wait_for_url http://127.0.0.1:3000/login
 verify_legacy_login
+docker rm -f wiki >/dev/null
 
-write_data_marker pre-upgrade
-backup_database
+docker exec db pg_dump --username=wiki --format=custom --compress=9 --file=/tmp/pre-upgrade.dump wiki
+backup_sha=$(docker exec db sha256sum /tmp/pre-upgrade.dump | cut -d ' ' -f 1)
 snapshot_data_volume
 database_bytes_before=$(database_size_bytes)
 database_bytes_before=${database_bytes_before//[[:space:]]/}
 data_bytes_before=$(data_volume_size_bytes)
 data_bytes_before=${data_bytes_before//[[:space:]]/}
 
-docker rm -f wiki >/dev/null
 migration_started_at=$(date +%s)
-start_wiki "$WIKI_TEST_IMAGE" >/dev/null
+start_wiki "$WIKI_TEST_IMAGE"
 wait_for_url http://127.0.0.1:3000/healthz
 migration_seconds=$(($(date +%s) - migration_started_at))
 database_bytes_after=$(database_size_bytes)
 database_bytes_after=${database_bytes_after//[[:space:]]/}
 data_bytes_after=$(data_volume_size_bytes)
 data_bytes_after=${data_bytes_after//[[:space:]]/}
-record_and_check_migration_metrics "$migration_seconds" "$database_bytes_before" "$database_bytes_after" "$data_bytes_before" "$data_bytes_after"
+after_report=$(resource_report)
+assert_upgraded_report "$after_report"
 
 login_response=$(curl --fail --silent --show-error \
   --header 'Content-Type: application/json' \
-  --data "{\"username\":\"$ADMIN_EMAIL\",\"password\":\"$ADMIN_PASSWORD\",\"strategy\":\"local\"}" \
+  --data "$(jq --null-input --arg username "$ADMIN_EMAIL" --arg password "$ADMIN_PASSWORD" '{username: $username, password: $password, strategy: "local"}')" \
   http://127.0.0.1:3000/_api/auth/login)
 jwt=$(printf '%s' "$login_response" | jq --exit-status --raw-output '.jwt | select(type == "string" and length > 0)')
-
-whoami_response=$(curl --fail --silent --show-error \
-  --header "Authorization: Bearer $jwt" \
+whoami_response=$(curl --fail --silent --show-error --header "Authorization: Bearer $jwt" \
   http://127.0.0.1:3000/_api/users/whoami)
 printf '%s' "$whoami_response" | jq --exit-status --arg email "$ADMIN_EMAIL" \
   '.authenticated == true and .user.email == $email' >/dev/null
 
-create_response=$(curl --fail --silent --show-error \
-  --request POST \
-  --header 'Content-Type: application/json' \
-  --header "Authorization: Bearer $jwt" \
+create_response=$(curl --fail --silent --show-error --request POST \
+  --header 'Content-Type: application/json' --header "Authorization: Bearer $jwt" \
   --data '{"content":"# Discard after rollback","description":"release recovery sentinel","editor":"markdown","visibility":"public","isPublished":true,"locale":"en","path":"rollback-discarded","publishEndDate":"","publishStartDate":"","scriptCss":"","scriptJs":"","tags":[],"title":"Rollback discarded"}' \
   http://127.0.0.1:3000/_api/pages)
 printf '%s' "$create_response" | jq --exit-status '.page.id | type == "number"' >/dev/null
-write_data_marker post-upgrade
+
+database_growth=$((database_bytes_after - database_bytes_before))
+data_growth=$((data_bytes_after - data_bytes_before))
+if [ "$database_growth" -lt 0 ]; then database_growth=0; fi
+if [ "$data_growth" -lt 0 ]; then data_growth=0; fi
+database_amplification_percent=$(((database_bytes_after * 100 + database_bytes_before - 1) / database_bytes_before))
+[ "$migration_seconds" -le "$MIGRATION_MAX_SECONDS" ]
+[ "$database_growth" -le "$MIGRATION_MAX_DB_GROWTH_BYTES" ]
+[ "$database_amplification_percent" -le "$MIGRATION_MAX_DB_AMPLIFICATION_PERCENT" ]
+[ "$data_growth" -le "$MIGRATION_MAX_DATA_GROWTH_BYTES" ]
 
 docker rm -f wiki >/dev/null
-restore_database
+docker exec db dropdb --username=wiki --force wiki
+docker exec db createdb --username=wiki --owner=wiki wiki
+docker exec db pg_restore --username=wiki --dbname=wiki /tmp/pre-upgrade.dump
 restore_data_volume
-assert_candidate_page_absent
-start_wiki "$WIKI_UPGRADE_SOURCE_IMAGE" >/dev/null
+rollback_report=$(resource_report)
+[ "$rollback_report" = "$before_report" ]
+rollback_discarded=$(docker exec db psql --username=wiki --dbname=wiki --tuples-only --no-align \
+  --command="SELECT COUNT(*) FROM pages WHERE path = 'rollback-discarded'")
+[ "${rollback_discarded//[[:space:]]/}" = 0 ]
+start_wiki "$SOURCE_IMAGE"
 wait_for_url http://127.0.0.1:3000/login
 verify_legacy_login
 
-restored_marker=$(docker run --rm --user 0 --entrypoint cat -v wiki-data:/data:ro "$WIKI_TEST_IMAGE" /data/recovery-marker)
-[ "$restored_marker" = pre-upgrade ]
+jq --null-input \
+  --arg sourceImage "$SOURCE_IMAGE" \
+  --arg targetImage "$WIKI_TEST_IMAGE" \
+  --arg targetPostgresImage "$POSTGRES_TEST_IMAGE" \
+  --arg targetPostgresVersion "$postgres_version" \
+  --argjson targetPostgresVersionNum "$postgres_version_num" \
+  --arg fixtureDatabaseSha256 "$expected_database_sha" \
+  --arg fixtureDataSha256 "$expected_data_sha" \
+  --arg backupSha256 "$backup_sha" \
+  --arg candidateRevision "${WIKI_BUILD_REVISION:-unknown}" \
+  --argjson before "$before_report" \
+  --argjson after "$after_report" \
+  --argjson rollback "$rollback_report" \
+  --argjson migrationSeconds "$migration_seconds" \
+  --argjson databaseBytesBefore "$database_bytes_before" \
+  --argjson databaseBytesAfter "$database_bytes_after" \
+  --argjson databaseGrowthBytes "$database_growth" \
+  --argjson databaseAmplificationPercent "$database_amplification_percent" \
+  --argjson dataBytesBefore "$data_bytes_before" \
+  --argjson dataBytesAfter "$data_bytes_after" \
+  --argjson dataGrowthBytes "$data_growth" \
+  --argjson maxSeconds "$MIGRATION_MAX_SECONDS" \
+  --argjson maxDatabaseGrowthBytes "$MIGRATION_MAX_DB_GROWTH_BYTES" \
+  --argjson maxDatabaseAmplificationPercent "$MIGRATION_MAX_DB_AMPLIFICATION_PERCENT" \
+  --argjson maxDataGrowthBytes "$MIGRATION_MAX_DATA_GROWTH_BYTES" \
+  '{
+    schemaVersion: 2,
+    candidateRevision: $candidateRevision,
+    sourceImage: $sourceImage,
+    targetImage: $targetImage,
+    targetPostgresImage: $targetPostgresImage,
+    targetPostgresVersion: $targetPostgresVersion,
+    targetPostgresVersionNum: $targetPostgresVersionNum,
+    fixture: { databaseSha256: $fixtureDatabaseSha256, dataSha256: $fixtureDataSha256 },
+    backupSha256: $backupSha256,
+    resources: { before: $before, after: $after, rollback: $rollback },
+    migration: {
+      seconds: $migrationSeconds,
+      databaseBytesBefore: $databaseBytesBefore,
+      databaseBytesAfter: $databaseBytesAfter,
+      databaseGrowthBytes: $databaseGrowthBytes,
+      databaseAmplificationPercent: $databaseAmplificationPercent,
+      dataBytesBefore: $dataBytesBefore,
+      dataBytesAfter: $dataBytesAfter,
+      dataGrowthBytes: $dataGrowthBytes
+    },
+    limits: {
+      migrationSeconds: $maxSeconds,
+      databaseGrowthBytes: $maxDatabaseGrowthBytes,
+      databaseAmplificationPercent: $maxDatabaseAmplificationPercent,
+      dataGrowthBytes: $maxDataGrowthBytes
+    },
+    rollbackVerified: true
+  }' > "$MIGRATION_METRICS_FILE"
+cat "$MIGRATION_METRICS_FILE"
 
 recovery_succeeded=true
-echo "Upgraded $MATRIXENV from $WIKI_UPGRADE_SOURCE_IMAGE, restored its backup, and authenticated the rolled-back administrator."
+echo "Upgraded tracked Wiki.js 2.5.314 fixture on PostgreSQL $postgres_version, restored its backup, and authenticated with the previous image."

@@ -673,7 +673,7 @@ describe('controllers/api pages endpoints', () => {
     expect(routes.indexOf('/links')).toBeLessThan(routes.indexOf('/:id'))
   })
 
-  it('returns GraphQL-compatible page links with default database join semantics', async () => {
+  it('returns GraphQL-compatible page links with PostgreSQL full-join semantics', async () => {
     const rows = [
       { id: 1, path: 'docs/home', title: 'Home', link: 'docs/target', locale: 'en' },
       { id: 1, path: 'docs/home', title: 'Home', link: 'docs/other', locale: 'fr' },
@@ -703,40 +703,6 @@ describe('controllers/api pages endpoints', () => {
     ])
   })
 
-  it('returns GraphQL-compatible page links with mysql-style union semantics', async () => {
-    global.WIKI.config.db.type = 'mysql'
-    const rows = [
-      { id: 1, path: 'docs/home', title: 'Home', link: 'docs/target', locale: 'en' }
-    ]
-    const primary = {
-      column: vi.fn().mockReturnThis(),
-      leftJoin: vi.fn().mockReturnThis(),
-      where: vi.fn().mockReturnThis(),
-      unionAll: vi.fn().mockResolvedValue(rows)
-    }
-    const secondary = {
-      column: vi.fn().mockReturnThis(),
-      leftJoin: vi.fn().mockReturnThis(),
-      where: vi.fn().mockReturnThis()
-    }
-    global.WIKI.models.knex
-      .mockReturnValueOnce(primary)
-      .mockReturnValueOnce(secondary)
-    const { links } = await loadHandler()
-    const req = { user: { permissions: ['read:pages'] }, query: { locale: 'en' } }
-    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
-
-    await links(req, res, vi.fn())
-
-    expect(global.WIKI.models.knex).toHaveBeenNthCalledWith(1, 'pages')
-    expect(global.WIKI.models.knex).toHaveBeenNthCalledWith(2, 'pageLinks')
-    expect(primary.leftJoin).toHaveBeenCalledWith('pageLinks', 'pages.id', 'pageLinks.pageId')
-    expect(secondary.leftJoin).toHaveBeenCalledWith('pages', 'pageLinks.pageId', 'pages.id')
-    expect(primary.unionAll).toHaveBeenCalledWith(secondary)
-    expect(res.json).toHaveBeenCalledWith([
-      { id: 1, title: 'Home', path: 'en/docs/home', links: ['en/docs/target'] }
-    ])
-  })
 
   it('filters page links when source or target page access is denied', async () => {
     const rows = [

@@ -150,25 +150,7 @@ const getSummary = async () => {
   }
 }
 
-const getDbVersion = async () => {
-  switch (wiki.config.db.type) {
-    case 'mariadb':
-    case 'mysql': {
-      const result = await wiki.models.knex.raw('SELECT VERSION() as version;')
-      return _.get(result, '[0][0].version', 'Unknown Version')
-    }
-    case 'mssql': {
-      const result = await wiki.models.knex.raw('SELECT @@VERSION as version;')
-      return _.get(result, '[0].version', 'Unknown Version')
-    }
-    case 'postgres':
-      return _.get(wiki.models, 'knex.client.version', 'Unknown Version')
-    case 'sqlite':
-      return _.get(wiki.models, 'knex.client.driver.VERSION', 'Unknown Version')
-    default:
-      return 'Unknown Version'
-  }
-}
+const getDbVersion = async () => _.get(wiki.models, 'knex.client.version', 'Unknown Version')
 
 const getOperatingSystem = async () => {
   if (os.platform() !== 'linux') return `${os.type()} (${os.platform()}) ${os.release()} ${os.arch()}`
@@ -182,8 +164,8 @@ const getInfo = async () => ({
   ...await getSummary(),
   configFile: path.join(process.cwd(), 'config.yml'),
   cpuCores: os.cpus().length,
-  dbHost: wiki.config.db.type === 'sqlite' ? wiki.config.db.storage : wiki.config.db.host,
-  dbType: _.get({ mysql: 'MySQL', mariadb: 'MariaDB', postgres: 'PostgreSQL', sqlite: 'SQLite', mssql: 'MS SQL Server' }, wiki.config.db.type, 'Unknown DB'),
+  dbHost: wiki.config.db.host,
+  dbType: 'PostgreSQL',
   dbVersion: await getDbVersion(),
   hostname: os.hostname(),
   nodeVersion: process.version.slice(1),

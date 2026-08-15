@@ -217,7 +217,7 @@ describe('controllers/api logging endpoints', () => {
     expect(row).not.toHaveProperty('unrelatedMetadata')
   })
 
-  it('uses current logger metadata and normalizes SQLite booleans', async () => {
+  it('uses current logger metadata and preserves PostgreSQL booleans', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
     const handler = await loadLoggersHandler()
     global.WIKI.data.loggers = [{
@@ -230,7 +230,7 @@ describe('controllers/api logging endpoints', () => {
     }]
     global.WIKI.models.loggers.getLoggers.mockResolvedValue([{
       key: 'late',
-      isEnabled: 1,
+      isEnabled: true,
       level: 'info',
       config: {}
     }])

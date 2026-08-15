@@ -19,14 +19,6 @@ var qs = []*survey.Question{
 		Validate: survey.Required,
 	},
 	{
-		Name: "dbtype",
-		Prompt: &survey.Select{
-			Message: "Select a DB Driver:",
-			Options: []string{"MariabDB", "MS SQL Server", "MySQL", "PostgreSQL", "SQLite"},
-			Default: "PostgreSQL",
-		},
-	},
-	{
 		Name: "port",
 		Prompt: &survey.Input{
 			Message: "Server Port:",
@@ -66,7 +58,6 @@ func main() {
 	// the answers will be written to this struct
 	answers := struct {
 		Location string
-		DBType   string `survey:"dbtype"`
 		Port     int
 	}{}
 

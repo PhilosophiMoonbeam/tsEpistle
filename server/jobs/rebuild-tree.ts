@@ -90,8 +90,7 @@ export default async function rebuildTree (_pageId?: number): Promise<void> {
 
     await wiki.models.knex.table('pageTree').truncate()
     if (tree.length > 0) {
-      const chunkSize = wiki.config.db.type !== 'sqlite' ? 100 : 60
-      for (const chunk of _.chunk(tree, chunkSize)) await wiki.models.knex.table('pageTree').insert(chunk)
+      for (const chunk of _.chunk(tree, 100)) await wiki.models.knex.table('pageTree').insert(chunk)
     }
     wiki.logger.info('Rebuilding page tree: [ COMPLETED ]')
   } catch (error) {

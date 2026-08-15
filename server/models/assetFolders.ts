@@ -42,20 +42,11 @@ export default class AssetFolder extends Model {
   }
 
   static async getHierarchy (folderId: number): Promise<AssetFolderRow[]> {
-    let hierarchy: AssetFolderRow[]
-    if (wiki.config.db.type === 'mssql') {
-      hierarchy = await wiki.models.knex.with('ancestors', (qb: Knex.QueryBuilder) => {
-        qb.select('id', 'name', 'slug', 'parentId').from('assetFolders').where('id', folderId).unionAll((sqb: Knex.QueryBuilder) => {
-          sqb.select('a.id', 'a.name', 'a.slug', 'a.parentId').from('assetFolders AS a').join('ancestors', 'ancestors.parentId', 'a.id')
-        })
-      }).select('*').from('ancestors')
-    } else {
-      hierarchy = await wiki.models.knex.withRecursive('ancestors', (qb: Knex.QueryBuilder) => {
-        qb.select('id', 'name', 'slug', 'parentId').from('assetFolders').where('id', folderId).union((sqb: Knex.QueryBuilder) => {
-          sqb.select('a.id', 'a.name', 'a.slug', 'a.parentId').from('assetFolders AS a').join('ancestors', 'ancestors.parentId', 'a.id')
-        })
-      }).select('*').from('ancestors')
-    }
+    const hierarchy = await wiki.models.knex.withRecursive('ancestors', (qb: Knex.QueryBuilder) => {
+      qb.select('id', 'name', 'slug', 'parentId').from('assetFolders').where('id', folderId).union((sqb: Knex.QueryBuilder) => {
+        sqb.select('a.id', 'a.name', 'a.slug', 'a.parentId').from('assetFolders AS a').join('ancestors', 'ancestors.parentId', 'a.id')
+      })
+    }).select('*').from('ancestors')
     return _.reverse(hierarchy)
   }
 

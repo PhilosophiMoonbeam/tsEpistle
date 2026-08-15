@@ -188,7 +188,7 @@ jobs:
         sha256sum wiki-ts-preview-linux.tar.gz
 
   e2e:
-    name: Playwright (${{ matrix.dbtype }})
+    name: Playwright (PostgreSQL ${{ matrix.pgversion }})
     runs-on: ubuntu-latest
     timeout-minutes: 30
     needs: [build]
@@ -198,7 +198,15 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        dbtype: [postgres, mysql, mariadb, mssql, sqlite]
+        include:
+        - pgversion: 15
+          postgresImage: postgres:15-alpine@sha256:4006528dcbdd9be8c1aaa50389caea4e93c46d6f54c3533bcd3253725e526e23
+        - pgversion: 16
+          postgresImage: postgres:16-alpine@sha256:44c4ee9810eff91f7eab4d822642e01115b1a9eccce4bcbdde7604752d68eac6
+        - pgversion: 17
+          postgresImage: postgres:17-alpine@sha256:d4bb0a8c1b7bb2e29f976d099e7bfb9a5d8858cffe9e46b35cd302cd1f1f8168
+        - pgversion: 18
+          postgresImage: postgres:18-alpine@sha256:a1d02e4bd40c94d3bf2bdd3678c137388e76d9efcd23c285e9429d336a834b44
 
     steps:
     - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -232,7 +240,7 @@ jobs:
 
     - name: Run Playwright Tests
       env:
-        MATRIXENV: ${{ matrix.dbtype }}
+        POSTGRES_TEST_IMAGE: ${{ matrix.postgresImage }}
         WIKI_TEST_IMAGE: wiki-ts-preview:test-${{ env.WIKI_BUILD_REVISION }}
         PLAYWRIGHT_BASE_URL: http://127.0.0.1:3000
       run: |
@@ -241,7 +249,7 @@ jobs:
         pnpm exec playwright test
 
   upgrade:
-    name: Upgrade (${{ matrix.dbtype }})
+    name: Upgrade Wiki.js 2 (PostgreSQL ${{ matrix.pgversion }})
     runs-on: ubuntu-latest
     timeout-minutes: 30
     needs: [build]
@@ -251,7 +259,15 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        dbtype: [postgres, mysql, mariadb, mssql, sqlite]
+        include:
+        - pgversion: 15
+          postgresImage: postgres:15-alpine@sha256:4006528dcbdd9be8c1aaa50389caea4e93c46d6f54c3533bcd3253725e526e23
+        - pgversion: 16
+          postgresImage: postgres:16-alpine@sha256:44c4ee9810eff91f7eab4d822642e01115b1a9eccce4bcbdde7604752d68eac6
+        - pgversion: 17
+          postgresImage: postgres:17-alpine@sha256:d4bb0a8c1b7bb2e29f976d099e7bfb9a5d8858cffe9e46b35cd302cd1f1f8168
+        - pgversion: 18
+          postgresImage: postgres:18-alpine@sha256:a1d02e4bd40c94d3bf2bdd3678c137388e76d9efcd23c285e9429d336a834b44
 
     steps:
     - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -271,26 +287,36 @@ jobs:
 
     - name: Upgrade Supported Database
       env:
-        MATRIXENV: ${{ matrix.dbtype }}
+        POSTGRES_TEST_IMAGE: ${{ matrix.postgresImage }}
         WIKI_TEST_IMAGE: wiki-ts-preview:test-${{ env.WIKI_BUILD_REVISION }}
+        MIGRATION_METRICS_FILE: migration-metrics-postgres-${{ matrix.pgversion }}.json
       run: dev/e2e/upgrade-smoke.sh
 
     - name: Upload Migration Metrics
       if: always()
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
       with:
-        name: migration-metrics-${{ matrix.dbtype }}
-        path: migration-metrics-${{ matrix.dbtype }}.json
+        name: migration-metrics-postgres-${{ matrix.pgversion }}
+        path: migration-metrics-postgres-${{ matrix.pgversion }}.json
         if-no-files-found: warn
         retention-days: 30
 
   multi-instance:
-    name: Multi-instance Recovery
+    name: Multi-instance Recovery (PostgreSQL ${{ matrix.pgversion }})
     runs-on: ubuntu-latest
     timeout-minutes: 20
     needs: [build]
     permissions:
       contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - pgversion: 15
+          postgresImage: postgres:15-alpine@sha256:4006528dcbdd9be8c1aaa50389caea4e93c46d6f54c3533bcd3253725e526e23
+        - pgversion: 18
+          postgresImage: postgres:18-alpine@sha256:a1d02e4bd40c94d3bf2bdd3678c137388e76d9efcd23c285e9429d336a834b44
+
 
     steps:
     - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -310,6 +336,7 @@ jobs:
 
     - name: Exercise Instance Loss and Recovery
       env:
+        POSTGRES_TEST_IMAGE: ${{ matrix.postgresImage }}
         WIKI_TEST_IMAGE: wiki-ts-preview:test-${{ env.WIKI_BUILD_REVISION }}
       run: dev/e2e/multi-instance-smoke.sh
 
