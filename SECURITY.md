@@ -12,6 +12,13 @@ Wiki.ts Preview is an independent community fork of Wiki.js. Security reports fo
 
 Preview releases are not recommended for deployments whose availability, confidentiality, or data-retention requirements cannot tolerate alpha software.
 
+## Threat model
+
+The maintained [security threat model](docs/security/threat-model.md) defines assets, trust boundaries, executable control evidence, residual risks, and release-blocking findings. Every authentication, authorization, renderer, extension, worker, import/export, migration, or deployment-boundary change must update that model and its regression evidence.
+
+Passing automated tests is not an independent security review. The first external release remains blocked until the threat model's external-review record is completed for a frozen revision.
+
+
 ## Reporting a vulnerability
 
 Do not create a public issue, discussion, or pull request for a suspected vulnerability.
