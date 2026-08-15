@@ -2,7 +2,7 @@
 
 Status: authoritative product roadmap
 
-Last assessed: 2026-08-15T16:41:53Z
+Last assessed: 2026-08-15T16:48:30Z
 
 Assessed revisions:
 
@@ -26,7 +26,7 @@ Complete Wiki.ts as the strongest continuity path from Wiki.js 2: modern, secure
 1. a supported, tested upgrade path for real Wiki.js 2 data;
 2. no known authorization bypasses or silent content-loss paths;
 3. stable external APIs and explicit compatibility contracts;
-4. PostgreSQL, MySQL/MariaDB, MSSQL, and SQLite support unless a feature is deliberately capability-gated;
+4. PostgreSQL as the sole deeply tested database platform, with a supported upgrade path from PostgreSQL / Wiki.js 2.x;
 5. a coherent Vue 3, Vuetify 4, Pinia, CKEditor, Vite, Express, TypeScript architecture;
 6. end-to-end complete features rather than visible WIP;
 7. observable background work, deterministic recovery, and safe multi-instance operation;
@@ -62,8 +62,8 @@ These are release-blocking constraints, not preferences.
 
 ### Data continuity
 
-- Existing Wiki.js 2 installations must receive an explicit, tested upgrade path.
-- No release may reset migration history or require a fresh database without an export/import migration tool that preserves all supported data.
+- Existing PostgreSQL / Wiki.js 2.x installations must receive an explicit, tested upgrade path.
+- No release may reset migration history or require a fresh database; every supported PostgreSQL source must upgrade in place or through a verified shadow-schema migration that preserves all supported data.
 - Upgrade tests must use representative pre-upgrade databases, not only schemas assembled by test fixtures.
 - Destructive schema changes require a reversible migration or a documented backup/restore boundary tested in CI.
 - Private-page ownership, page history ownership, assets, navigation, permissions, and editor metadata must survive upgrades.
@@ -87,12 +87,13 @@ Scarlett commits `6db53d4f` and `99ccdc13` deliberately reset migrations and rej
 - Unsupported syntax is blocked before lossy editor conversion; it is not silently normalized away.
 - Extension content has a versioned, documented serialization that remains editable when a renderer is disabled or unavailable.
 
-### Database portability
+### PostgreSQL platform
 
-- Core features use Knex/Objection-compatible primitives across supported databases.
-- PostgreSQL-specific optimizations may exist behind a capability interface with a correct portable implementation.
-- A feature cannot claim completion while silently disabling itself on a supported database.
-- Migrations and integration tests cover dialect differences in constraints, JSON storage, transactions, locking, indexes, and timestamp behavior.
+- PostgreSQL is the sole database target for the future stable product; operator inventory records zero non-PostgreSQL Wiki.ts installations.
+- PostgreSQL / Wiki.js 2.x and current-fork databases are mandatory upgrade sources. Adapter removal never permits a migration reset or fresh-database requirement.
+- Choose the PostgreSQL server-version floor from security support, required capabilities, deployment availability, and tested upgrades; Scarlett’s PostgreSQL 16 floor is evidence, not inherited policy.
+- Core features may use PostgreSQL-native transactions, locks, JSONB, indexes, search, hierarchy, and notification primitives when they improve a measured contract.
+- Remove MySQL, MariaDB, MSSQL, SQLite, their migration branches, and their CI/configuration surface only after the PostgreSQL upgrade, backup/restore, rollback, and multi-instance gates pass.
 
 ### API stability
 
@@ -184,7 +185,7 @@ Production responses expose no sensitive reason. Tests and optional administrato
 
 ### Persistence and migrations
 
-Keep Knex/Objection while repositories are gradually typed. Do not adopt Drizzle as a prerequisite for product features. If a later ORM decision is justified, prove it through one bounded repository and migration compatibility study.
+Keep Knex/Objection while the PostgreSQL-only product and installed PostgreSQL migration history are secured. Do not adopt Drizzle as a prerequisite for product features or in the same cutover as database-adapter removal. If a later ORM decision is justified, prove it through one bounded PostgreSQL repository and migration-compatibility study, then retain exactly one schema and transaction authority.
 
 Add a migration verifier that:
 
@@ -200,7 +201,7 @@ This keeps Scarlett’s “never mutate an unknown legacy database” safety ins
 
 ### Durable jobs and events
 
-Adapt Scarlett scheduler work from `c1d7eef3` and `23dbb272`, but design for all supported databases.
+Adapt Scarlett scheduler work from `c1d7eef3` and `23dbb272` against the PostgreSQL platform, including `SKIP LOCKED`, advisory-lock, connection-pool, and process-recovery behavior where measured.
 
 Required primitives:
 
@@ -255,7 +256,7 @@ The disposition is against assessed upstream Scarlett. Re-evaluate when source b
 | `14e1efae` | endpoint rate limiting | Adapt immediately in bounded slices | Existing limiter remains; correct `429`, `Retry-After`, proxy identity, route coverage |
 | `ff4a5bc6` | OAuth modules | Compare provider-by-provider | Preserve broad current provider support; share auth contracts and tests |
 | `1c6e71ee` | render-pages job | Adapt to durable jobs | Do not expose an unbounded render queue |
-| `c1d7eef3`, `23dbb272` | scheduler connections and webhook jobs | Adapt architecture | Build portable leasing/outbox, not Scarlett’s implementation |
+| `c1d7eef3`, `23dbb272` | scheduler connections and webhook jobs | Adapt architecture | Build PostgreSQL-native leasing/outbox with explicit process recovery, not Scarlett’s implementation |
 | `c00b7007` | disabled block stripping/warning | Improve design | Never strip canonical source; disable rendering with visible editor/admin diagnostics |
 | `5021b31a`, `29d81640`, `1aefb34d`, `9a1ca3b1`, `c182d2c9` | blocks and media | Implement after extension contract | Deliver PDF/YouTube/gallery/index as independent complete extensions |
 | `7f53b60d`, `21fac3a9`, `6bffff10`, `5a3be5c1`, `817302d6`, `ce530a40`, `ad861ae3` | Markdown editing improvements | Adapt by observable contract | Round-trip and unsupported-syntax safety precede toolbar breadth |
@@ -384,7 +385,7 @@ Exit gate:
 Implementation order:
 
 1. characterize current scheduler and webhook behavior;
-2. introduce portable job schema and lease algorithm;
+2. introduce a PostgreSQL job schema and lease algorithm with measured pool behavior;
 3. implement one idempotent cleanup job as proof;
 4. move webhooks with delivery idempotency and signed request tests;
 5. move page rendering and search/storage fan-out;
@@ -653,7 +654,7 @@ Exit gate: journeys pass at narrow phone, tablet, standard desktop, and wide des
 
 - Wave 1 security contracts complete;
 - no known private-resource disclosure;
-- upgrade canary and rollback procedure proven on supported databases;
+- PostgreSQL / Wiki.js 2.x upgrade canary and rollback procedure proven across the declared PostgreSQL server versions;
 - current editor and admin critical journeys pass;
 - API errors and product identity are stable enough for field testing.
 
@@ -669,7 +670,7 @@ Exit gate: journeys pass at narrow phone, tablet, standard desktop, and wide des
 #### Release candidate
 
 - no tracked WIP or placeholder production behavior;
-- all supported database upgrade matrices pass from the declared minimum source versions;
+- all supported PostgreSQL source-product and server-version upgrade matrices pass from the declared minimum versions;
 - clean-install, upgrade, backup/restore, multi-instance, worker recovery, and Docker/Helm smoke pass;
 - dependency and license inventory is reproducible;
 - threat model and external security review findings are resolved or explicitly release-blocking;
@@ -692,7 +693,7 @@ Use the narrowest proof that exercises the changed behavior, then run the applic
 | Change class | Required focused proof | Broader gate |
 | --- | --- | --- |
 | authorization | positive, negative, non-disclosure, overlapping-policy tests | server typecheck, relevant integration suites |
-| migration | real before/after database artifact and invariant query | each supported dialect; backup/restore smoke |
+| migration | real PostgreSQL before/after database artifact and invariant query | declared source/server versions; backup/restore and previous-image smoke |
 | REST/API | request/response schema, auth modes, error, pagination tests | OpenAPI validation, server typecheck |
 | job/event | idempotency, process-death, retry, lease-expiry scenario | multi-instance smoke and pool observation |
 | editor | parse/edit/serialize/render/history round trip | client typecheck, build, browser journey |
@@ -760,7 +761,7 @@ Use for UI polish, dependency changes, and framework-specific optimizations. Rep
 
 ### Reject
 
-Use when the change removes upgrade continuity, database portability, supported integrations, external compatibility, canonical source preservation, or testability without a superior replacement.
+Use when the change removes PostgreSQL upgrade continuity, supported integrations, external compatibility, canonical source preservation, or testability without a superior replacement.
 
 ### Superseded
 
@@ -778,7 +779,7 @@ Wiki.ts contract:
   user-visible result, authorization, canonical data, errors, recovery
 
 Compatibility:
-  existing data/API/editor/provider/database behavior that must remain
+  existing data/API/editor/provider/PostgreSQL behavior that must remain
 
 Targets:
   exact domain operations, policy, repositories, routes, UI, migrations
@@ -807,7 +808,7 @@ Start in this order:
 3. **Page path and migration preflight regression suite** — protects continuity before new schema work.
 4. **REST/OpenAPI contract inventory** — stabilizes the external surface and exposes duplicated domain logic.
 5. **Scheduler/job connection-lifetime characterization** — evidence before durable worker changes.
-6. **Portable durable-job proof with one cleanup handler** — validates leases, retries, shutdown, and database dialects.
+6. **PostgreSQL durable-job proof with one cleanup handler** — validates leases, retries, shutdown, connection use, and process recovery.
 7. **Transactional outbox and webhook worker** — foundation for watching and approvals.
 8. **Page watching end to end** — first completed Scarlett WIP synthesis.
 9. **Approval state machine and inbox** — second completed WIP synthesis.
@@ -834,3 +835,4 @@ When this roadmap changes, append an entry here.
 | 2026-08-15 | `17d7b810` Yjs collaboration concept | Wave 4 policy, events, and Markdown editor foundation | Completed Wave 4C as authenticated Markdown collaboration with durable versioned rooms, acknowledged offline replay, cross-instance database fanout, continuous authorization, mutation conflicts, and explicit local-preservation UX |
 | 2026-08-15 | `aa27932c` block-index and `d0c5a8bf` block-gallery refinements | `64abdc57` plus Wave 4B expansion | Adapted the useful behavior without upstream runtime code: native typed gallery/index envelopes, disabled migrations, sanitized server renderers, policy-filtered dynamic index API, accessible browser hydration, editor configuration, responsive layout, and regression/E2E coverage; retained neither Scarlett’s Lit/Tailwind components nor unbounded/stale index rendering |
 | 2026-08-15T16:41:53Z | `d0c5a8bf` (`feat: add unlock aspect ratio option to block-gallery`) | `1c6a8b9b` | Reassessed every previously non-inherited architecture choice on merit in [the architectural adaptation plan](./2026-08-15_scarlett-architectural-adaptation-plan.md): accepted package boundaries, verified schema bridges, bounded projections, and conditional isolated runtimes; retained upgrade continuity, five-database core behavior, one UI/ORM/source authority, and the immediate remaining-block implementation handoff |
+| 2026-08-15T16:48:30Z | PostgreSQL-only Scarlett architecture | `a7ecf37e` | Superseded the five-database product decision after operator inventory confirmed zero non-PostgreSQL installations. PostgreSQL is now the sole future stable target; PostgreSQL / Wiki.js 2.x upgrade continuity remains release-blocking, Scarlett’s migration reset remains rejected, and adapter removal follows verified upgrade, backup/restore, rollback, and multi-instance proof |

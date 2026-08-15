@@ -2,7 +2,8 @@
 
 **Status:** accepted fork-native decision record and implementation plan  
 **Date:** 2026-08-15  
-**Wiki.ts revision assessed:** `1c6a8b9b3f316c3b469194dd4fad6e66082e8189`  
+**Revised:** 2026-08-15T16:48:30Z — PostgreSQL-only target accepted after operator inventory confirmed zero non-PostgreSQL installations
+**Wiki.ts revision assessed:** `a7ecf37e4582834b522ee1de7f48066751bd1ada`
 **Scarlett revision assessed:** `d0c5a8bfa90acee73a2f4c71033978bea1925468` (`feat: add unlock aspect ratio option to block-gallery`)  
 **Common ancestor:** `b5b4b0880ae26f4b137242267b6674b51af8688c`
 
@@ -12,7 +13,7 @@ This report supplements the authoritative [Scarlett design-synthesis roadmap](./
 
 ## Executive decision
 
-Scarlett contains valuable architectural direction, but its repository replacement is not the valuable part. Wiki.ts should adopt clearer package ownership, typed boundaries, safer migration detection, bounded derived projections, and isolated extension runtimes where those changes prove a concrete benefit. It should not adopt a destructive migration reset, PostgreSQL-only core, parallel ORM, global Tailwind design system, stale privileged index, canonical-source deletion, unfinished workflow persistence, or dependency downgrades.
+Scarlett contains valuable architectural direction, but its repository replacement is not the valuable part. Wiki.ts should adopt clearer package ownership, typed boundaries, safer migration detection, PostgreSQL as its sole database platform, bounded derived projections, and isolated extension runtimes where those changes prove a concrete benefit. It should not adopt Scarlett’s destructive migration reset, parallel ORM, global Tailwind design system, stale privileged index, canonical-source deletion, unfinished workflow persistence, or dependency downgrades.
 
 | Previously not inherited | Merit-first disposition | What Wiki.ts gains |
 | --- | --- | --- |
@@ -21,7 +22,7 @@ Scarlett contains valuable architectural direction, but its repository replaceme
 | Drizzle ORM | **Conditional bounded pilot; no platform cutover now** | evidence on typed schema/query value before accepting a second migration and transaction model |
 | Lit block runtime | **Conditional per-extension implementation detail** | lifecycle isolation for genuinely interactive blocks, only if it beats the existing native host |
 | Tailwind UI/runtime | **Reject as a second global design system** | one theme, focus, responsive, localization, and accessibility model remains authoritative |
-| PostgreSQL-only database portfolio | **Reject for core; retain capability-gated acceleration** | five-dialect continuity while still using PostgreSQL features where a portable equivalent exists |
+| PostgreSQL-only database portfolio | **Adopt deliberately, independent of Scarlett’s reset** | one deeply supported database, stronger HA/search/job primitives, and removal of unused dialect complexity |
 | pre-rendered or unbounded page index | **Adapt as a visibility-neutral, rebuildable projection only after profiling** | scalable indexes without stale authorization decisions or privileged cached HTML |
 | broad reuse of unfinished watching/approval/collaboration code | **Reject persistence/state transplant; compare UX only** | retain the fork’s completed policy, revision, outbox, retry, and recovery contracts |
 | disabled-block source stripping | **Reject deletion; current escaped-source behavior is the target** | immediate active-output removal with exact canonical recovery |
@@ -46,8 +47,9 @@ At assessment time:
   - `957efebe`: WIP approvals/profile-auth flows.
 - Scarlett currently has independent `backend/package.json`, `frontend/package.json`, and `blocks/package.json` manifests. Its backend uses `drizzle-orm/node-postgres`, requires PostgreSQL 16, installs `ltree` and `pg_trgm`, and exposes one generated PostgreSQL initial migration at `backend/db/migrations/20260809235619_init/migration.sql`.
 - Wiki.ts is one released root package. Vite emits the setup and application browser entries consumed by Express; the Docker and release pipelines install, build, prune, inventory, attest, and package that single revision together.
-- Wiki.ts uses Vue 3, Vuetify 4, Pinia, Vue Router, CKEditor, Vite, Express, Knex, and Objection. Its database initializer supports PostgreSQL, MySQL, MariaDB, MSSQL, and SQLite. Current CI exercises all five.
-- Wiki.ts migration preflight rejects unknown, partial, out-of-order, and locked ledgers before current migrations write. Recent feature migrations are additive and retain dedicated SQLite paths where required.
+- Wiki.ts uses Vue 3, Vuetify 4, Pinia, Vue Router, CKEditor, Vite, Express, Knex, and Objection. Its current database initializer and CI still support PostgreSQL, MySQL, MariaDB, MSSQL, and SQLite.
+- Operator inventory on 2026-08-15 records zero non-PostgreSQL Wiki.ts installations. PostgreSQL is therefore the sole target for the future stable product; no cross-dialect customer-data converter is required.
+- Existing PostgreSQL / Wiki.js 2.x installations remain the mandatory upgrade source. Wiki.ts migration preflight already rejects unknown, partial, out-of-order, and locked ledgers before current migrations write.
 - The content-extension host already provides strict versioned envelopes, disabled-by-default registry rows, sanitized server rendering, escaped-source fallback, editor insertion, dynamic browser hydration, and policy-filtered page-index queries.
 
 External implementation references used for the bounded technology decisions:
@@ -62,10 +64,10 @@ These references show what the tools can do. They do not establish that introduc
 
 Every adaptation must improve at least one observable dimension without regressing a release invariant:
 
-1. **Data continuity:** existing installations upgrade without reinstallation or unverified export/import.
+1. **Data continuity:** existing PostgreSQL installations upgrade in place or through a verified shadow schema without reinstallation.
 2. **Correctness:** one policy, transaction, source, and error contract owns each behavior.
 3. **Operability:** failure, retry, rollback, and multi-instance behavior are explicit.
-4. **Portability:** core behavior remains correct on every advertised database.
+4. **PostgreSQL continuity:** behavior remains correct across every declared PostgreSQL source-product and server-version floor.
 5. **Performance:** representative p95/p99 latency, memory, connections, queue age, or bundle transfer improves.
 6. **Maintainability:** dependencies and ownership become enforceable, not merely rearranged.
 7. **Accessibility and privacy:** the change preserves the current theme/focus/localization model and does not add silent remote loading.
@@ -115,7 +117,7 @@ The current physical directories may remain. A later move is accepted only when 
 - strict client and server typechecks cover the exported boundary;
 - unchanged REST/OpenAPI, GraphQL compatibility, editor round-trip, policy, and browser behavior;
 - existing initial/lazy bundle ceilings do not increase without an approved budget change;
-- the full five-database fresh-install/upgrade matrix, multi-instance recovery, and Helm lifecycle remain green;
+- PostgreSQL fresh-install, Wiki.js 2.x upgrade, backup/restore, multi-instance recovery, and Helm lifecycle remain green across the declared PostgreSQL version floor;
 - released source, Linux, Windows, OCI, chart, SPDX, license inventory, checksums, manifest, and attestations identify the same full commit SHA.
 
 ### Rollback
@@ -132,13 +134,13 @@ Scarlett’s reset in `6db53d4f` collapses earlier Drizzle migrations into one P
 
 ### Decision
 
-**Permanently reject migration-history reset as a release mechanism. Accept major schema redesign through a verified shadow-schema or export/import bridge when the redesigned schema has independently proven value.**
+**Permanently reject migration-history reset as a release mechanism. Accept major schema redesign through a verified shadow-schema bridge when the redesigned schema has independently proven value.**
 
 Large schema work is allowed. Data abandonment is not.
 
 ### Migration strategy for a future major redesign
 
-1. **Inventory:** recognize exact source product/migration versions and database dialect before writes.
+1. **Inventory:** recognize exact PostgreSQL source product and migration versions before writes.
 2. **Backup boundary:** require and verify a restorable database plus external asset/storage inventory.
 3. **Shadow target:** create versioned target tables or a target schema without renaming/dropping source objects.
 4. **Deterministic copy:** migrate stable IDs or persist explicit ID maps; preserve pages, source, renders, history, owners, permissions, assets, navigation, auth identities, settings, editor metadata, extension envelopes, jobs, and audit rows.
@@ -149,7 +151,7 @@ Large schema work is allowed. Data abandonment is not.
 
 ### Acceptance gates
 
-For every advertised source version and dialect:
+For every advertised PostgreSQL source product version:
 
 - restore a representative, tracked pre-upgrade artifact;
 - prove preflight performs zero writes for locked, unknown/newer, partial, missing-ledger, and out-of-order states;
@@ -171,11 +173,11 @@ Scarlett demonstrates useful properties: schema definitions and query types shar
 
 ### Current disadvantage
 
-Scarlett’s implementation is specifically `drizzle-orm/node-postgres`, PostgreSQL 16, `ltree`, `pg_trgm`, arrays, `jsonb`, generated columns, GIN/GiST indexes, and one Drizzle migration ledger. Wiki.ts already owns Knex migrations, Objection models, operation transactions, five dialect implementations, and installed migration histories. Adding Drizzle now creates two schema authorities and two transaction/query semantics. Replacing Knex removes the current MSSQL path unless another complete adapter is supplied.
+Scarlett’s implementation is specifically `drizzle-orm/node-postgres`, PostgreSQL 16, `ltree`, `pg_trgm`, arrays, `jsonb`, generated columns, GIN/GiST indexes, and one Drizzle migration ledger. PostgreSQL-only removes Wiki.ts’s dialect-portability objection, but Wiki.ts still owns installed Knex migration histories, Objection models, and operation transaction boundaries. Adding Drizzle without a clean cutover would create two schema authorities and two transaction/query semantics.
 
 ### Decision
 
-**Do not adopt Drizzle platform-wide now. Run one bounded comparative pilot only after the repository boundary is explicit.** This is a decision based on duplicate ownership and missing portability, not migration effort.
+**Do not adopt Drizzle platform-wide in the same cutover as PostgreSQL-only support. Run one bounded comparative pilot after the PostgreSQL upgrade path and repository boundary are explicit.** The remaining question is whether Drizzle materially improves one-database correctness and maintenance, not whether it can reproduce five dialects.
 
 Pilot candidate: a new, isolated, low-risk repository with meaningful transactions and indexed reads, not `pages`, users, permissions, or migrations. Durable job observability or a derived projection is preferable because it can be discarded and rebuilt.
 
@@ -185,7 +187,7 @@ The pilot must compare:
 - proposed Drizzle repository;
 - identical operation and error interface;
 - identical transaction, cancellation, connection, timestamp, JSON, locking, and pagination behavior;
-- all five supported database contracts, or an explicit capability-gated PostgreSQL accelerator with a correct portable implementation.
+- PostgreSQL behavior across every declared supported server version, including transaction, lock, JSONB, timestamp, pagination, cancellation, and pool semantics.
 
 ### Promotion gates
 
@@ -197,7 +199,7 @@ Promote only if the pilot demonstrates a material improvement in at least two of
 - safer migration drift detection;
 - reduced repository implementation complexity without generated or duplicated glue.
 
-It must also show one migration authority, one transaction owner, no dual writes, no parallel ledgers, clean rollback, and no dialect reduction. Otherwise remove the pilot dependency and retain typed Knex repositories.
+It must also show one migration authority, one transaction owner, no dual writes, no parallel ledgers, clean rollback, and preservation of every installed PostgreSQL migration history. Otherwise remove the pilot dependency and retain typed Knex repositories.
 
 ## 4. Lit and Tailwind
 
@@ -232,32 +234,54 @@ Scarlett’s `937cecea` is explicitly WIP and replaces a broad component library
 
 Every experimental custom-element runtime is selected by its extension registration and lazy import. Rollback disables that runtime and returns to the server fallback/native controller without rewriting canonical source. No page migration is permitted merely to change browser frameworks.
 
-## 5. Supported database portfolio
+## 5. PostgreSQL-only platform
 
 ### Decision
 
-**Retain PostgreSQL, MySQL, MariaDB, MSSQL, and SQLite for advertised core behavior.** No evidence currently shows that removing four engines produces a net product improvement large enough to offset operator migration and lost deployment choices.
+**PostgreSQL is the sole database target for the future stable Wiki.ts product.**
 
-PostgreSQL remains the preferred capability platform for LISTEN/NOTIFY and advanced indexing. A PostgreSQL accelerator is accepted when:
+This is an affirmative fork decision, not incidental inheritance from Scarlett. The operator inventory records zero non-PostgreSQL installations, while maintaining five dialects consumes schema, migration, locking, CI, debugging, and release capacity. Concentrating that capacity on PostgreSQL should improve upgrade proof, multi-instance behavior, search, durable jobs, performance analysis, backup/restore guidance, and operational support.
 
-- a portable implementation satisfies the same observable contract;
-- capability selection is explicit and observable;
-- the feature is not silently disabled elsewhere;
-- both implementations share operation-level tests;
-- documentation describes performance, not correctness, differences.
+PostgreSQL-only does not imply:
 
-### Portfolio review trigger
+- accepting Scarlett’s fresh-database requirement;
+- resetting or replacing the installed Knex migration ledger;
+- adopting PostgreSQL 16 without a support-floor decision;
+- adopting Drizzle in the same cutover;
+- copying Scarlett’s schema;
+- abandoning an existing PostgreSQL / Wiki.js 2.x installation.
 
-Database support may be reduced in a future major release only with all of:
+### Required continuity
 
-- measured support burden and representative operator usage evidence;
-- security/EOL analysis for the advertised minimum versions;
-- at least one full release cycle of deprecation notice;
-- a tested export/import path to the retained engine preserving canonical data and identities;
-- capacity, downtime, backup, rollback, and validation guidance;
-- explicit product approval rather than an incidental ORM limitation.
+The supported source is the existing PostgreSQL schema and data produced by Wiki.js 2.x and this fork. Its upgrade path is a release blocker. It must preserve stable IDs, users, authentication identities, groups, permissions, pages, canonical source, rendered output, history, private ownership, assets, navigation, search settings, editor metadata, extensions, jobs, workflow state, and audit records.
 
-The near-term task is to align advertised minimum engine versions with versions actually tested in CI. Raising a minimum because an old engine cannot safely run the product is valid; dropping a dialect because Scarlett does not implement it is not.
+No MySQL, MariaDB, MSSQL, or SQLite converter will be built without evidence of an actual installation. Building speculative conversion tooling would retain the support burden the decision is intended to remove.
+
+### Transition sequence
+
+1. Freeze new non-PostgreSQL compatibility work; existing adapters remain only as temporary code until the cutover is proven.
+2. Choose and document the PostgreSQL minimum from security support, extension requirements, deployment availability, and upgrade testing. Scarlett’s PostgreSQL 16 floor is a candidate, not inherited authority.
+3. Add representative PostgreSQL Wiki.js 2.x and current-fork database artifacts at every declared source floor.
+4. Prove additive migration, invariant validation, backup/restore, previous-image rollback, multi-instance recovery, and Helm upgrade/rollback on the PostgreSQL version matrix.
+5. Change configuration, setup, documentation, and release metadata to PostgreSQL-only.
+6. Remove MySQL, MariaDB, MSSQL, and SQLite drivers, configuration branches, migration branches, fixtures, CI jobs, dependencies, and documentation in one clean cutover. Do not leave dormant adapters or compatibility aliases.
+7. Only after continuity proof, introduce PostgreSQL-native schema/query improvements such as JSONB/GIN, `ltree`, `pg_trgm`, `tsvector`, partial/expression indexes, `SKIP LOCKED`, advisory locks, and `LISTEN`/`NOTIFY` where each improves a measured contract.
+
+### Acceptance gates
+
+- fresh install succeeds on every declared PostgreSQL server version;
+- representative PostgreSQL Wiki.js 2.x and Wiki.ts sources upgrade without a migration-ledger reset;
+- preflight rejects unknown/newer, locked, partial, missing-ledger, and out-of-order states with zero writes;
+- stable IDs, foreign keys, canonical content hashes, ownership, permissions, history, assets, navigation, editor metadata, extension source, workflow state, and audit records survive;
+- login, read, edit, history/restore, protected content, asset, search, administration, job recovery, and multi-instance journeys pass after upgrade;
+- migration duration, lock time, storage amplification, memory, connection use, and required maintenance window are recorded on a representative dataset;
+- PostgreSQL backup/restore boots the previous image and passes the critical read/auth journey;
+- configuration and setup reject removed database types with a precise migration/support message;
+- no non-PostgreSQL runtime driver, migration path, CI job, or advertised support statement remains after cutover.
+
+### Rollback
+
+Removing unused adapters must not mutate PostgreSQL data. Before release promotion, rollback is the previous image against the same PostgreSQL database or the verified pre-upgrade backup according to the migration boundary. After a schema migration accepts new writes, rollback follows the tested reverse-delta or snapshot restore procedure defined in the migration section; adapter removal never justifies manual SQL or a fresh database.
 
 ## 6. Bounded page indexes and materialized projections
 
@@ -388,10 +412,10 @@ These architectural adaptations are independent workstreams. They must not block
 
 ### Architecture B — complete migration evidence
 
-- add representative source database artifacts for every supported dialect;
-- align tested and advertised database floors;
-- extend migration reports with source/build identity, invariant results, duration, and resource budgets;
-- prove backup/restore and old-image rollback.
+- add representative PostgreSQL Wiki.js 2.x and current-fork source artifacts;
+- choose and test the PostgreSQL server-version floor;
+- extend migration reports with source/build identity, invariant results, duration, lock time, and resource budgets;
+- prove backup/restore, previous-image rollback, and the clean removal of unused database adapters.
 
 ### Architecture C — bounded persistence experiments
 
@@ -412,7 +436,7 @@ These architectural adaptations are independent workstreams. They must not block
 - reconcile exact manifest policy;
 - make generated and tracked license inventories identical;
 - define license compatibility policy;
-- preserve all existing reproducibility, five-database, multi-instance, Helm, SBOM, provenance, and artifact-identity gates through any layout change.
+- preserve all existing reproducibility, PostgreSQL upgrade, multi-instance, Helm, SBOM, provenance, and artifact-identity gates through any layout change.
 
 No architecture workstream is complete until obsolete code, manifests, routes, flags, and compatibility paths are removed in the same cutover.
 
@@ -449,7 +473,7 @@ The extension platform is already sufficient to begin. The next goal must implem
 ### Contract required for every extension
 
 - add a discriminated, strict, bounded version-1 envelope to `shared/content-extensions.ts`;
-- seed one disabled-by-default registry row through a new additive primary/SQLite migration; never rewrite `2.5.135` or `2.5.137`;
+- seed one disabled-by-default registry row through a new additive PostgreSQL migration; never rewrite `2.5.135` or `2.5.137`;
 - register a sanitized server renderer with an accessible no-JavaScript fallback;
 - add type-specific source and Visual Markdown editor configuration while preserving the exact canonical fence;
 - authorize assets and page-derived resources at request time for the current principal;
@@ -468,7 +492,7 @@ The full goal additionally requires:
 - real browser authoring and rendering of every extension group;
 - no serious/critical accessibility findings on exercised surfaces;
 - no network request before policy/consent;
-- five-database migration coverage;
+- PostgreSQL fresh-install and Wiki.js 2.x upgrade migration coverage; while unused adapters remain before the platform cutover, do not knowingly break the transitional matrix;
 - documentation of provider/egress/CSP requirements;
 - cleanup of all temporary pages, assets, credentials, settings, and registry state after smoke verification;
 - one committed and pushed clean cutover with no placeholder extension.
@@ -479,7 +503,7 @@ Stop and redesign an adaptation when evidence shows any of:
 
 - source or migration history must be discarded;
 - two packages/frameworks/ORMs remain authoritative for the same concern;
-- a supported database receives silently weaker core behavior;
+- an existing PostgreSQL / Wiki.js 2.x installation cannot upgrade without resetting or reimporting its database;
 - authorization is cached or projected as user-neutral data;
 - extension source must change merely to enable, disable, or replace a renderer;
 - remote content loads without explicit policy and consent;
@@ -490,6 +514,6 @@ These are design failures, not reasons to narrow tests or add compatibility shim
 
 ## Verification record
 
-The report’s revision and divergence facts were refreshed directly from `upstream/scarlett` on 2026-08-15. Decisions were checked against the current root manifest, database initializer and preflight, additive extension migrations, shared extension schema, renderer fail-closed path, index API, current CI/release contracts, and the existing Scarlett synthesis roadmap.
+The report’s revision and divergence facts were refreshed directly from `upstream/scarlett` on 2026-08-15. Decisions were checked against the current root manifest, database initializer and preflight, additive extension migrations, shared extension schema, renderer fail-closed path, index API, current CI/release contracts, the existing Scarlett synthesis roadmap, and the confirmed operator inventory of zero non-PostgreSQL installations.
 
 No runtime implementation changes are made by this report. Its verification is evidence consistency: every accepted adaptation has prerequisites, observable promotion gates, rollback, and a clean rejection condition; every rejected upstream implementation has a stated superior fork-native target rather than an effort-based dismissal.
