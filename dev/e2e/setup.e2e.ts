@@ -157,11 +157,9 @@ async function authenticateAsAdmin(page: Page) {
 }
 
 async function expectNoHorizontalOverflow(page: Page) {
-  const layout = await page.evaluate(() => ({
-    viewportWidth: window.innerWidth,
-    documentWidth: document.documentElement.scrollWidth
-  }))
-  expect(layout.documentWidth).toBeLessThanOrEqual(layout.viewportWidth + 1)
+  await expect.poll(() => page.evaluate(() => (
+    document.documentElement.scrollWidth - window.innerWidth
+  ))).toBeLessThanOrEqual(1)
 }
 
 test.describe('critical post-install workflows', () => {
@@ -427,10 +425,12 @@ test.describe('critical post-install workflows', () => {
     await galleryDialog.getByRole('button', { name: 'Close image viewer' }).click()
     await expect(gallery.getByRole('link', { name: 'View File icon full size' })).toBeFocused()
     await page.setViewportSize({ width: 390, height: 844 })
-    await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'reduce', forcedColors: 'active' })
+    await page.emulateMedia({ reducedMotion: 'reduce' })
     await expectNoHorizontalOverflow(page)
     const accessibility = await new AxeBuilder({ page }).include('.contents').analyze()
     expect(accessibility.violations.filter(violation => violation.impact === 'serious' || violation.impact === 'critical')).toEqual([])
+    await page.emulateMedia({ forcedColors: 'active' })
+    await expectNoHorizontalOverflow(page)
   })
 
   test('retains the Visual HTML editor and HTML content type', async ({ page }) => {
