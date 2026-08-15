@@ -43,6 +43,7 @@ interface QueryBuilder {
   andWhere(callback: (builder: QueryBuilder) => void): QueryBuilder
   andWhereNotNull(column: string): QueryBuilder
   limit(value: number): QueryBuilder
+  offset(value: number): QueryBuilder
   orderBy(column: unknown, direction?: string): QueryBuilder
 }
 interface PageQuery extends PromiseLike<PageRecord[]> {
@@ -142,6 +143,7 @@ const withRequester = (
 const list = async ({ requester, ...rawArgs }: OperationInput) => {
   const args = {
     limit: rawArgs.limit === undefined ? undefined : positiveInteger(rawArgs.limit, 'limit'),
+    offset: rawArgs.offset === undefined ? 0 : nonNegativeInteger(rawArgs.offset, 'offset'),
     locale: rawArgs.locale === undefined ? undefined : stringValue(rawArgs.locale, 'locale'),
     creatorId: rawArgs.creatorId === undefined ? undefined : positiveInteger(rawArgs.creatorId, 'creatorId'),
     authorId: rawArgs.authorId === undefined ? undefined : positiveInteger(rawArgs.authorId, 'authorId'),
@@ -167,6 +169,7 @@ const list = async ({ requester, ...rawArgs }: OperationInput) => {
     .modify(queryBuilder => {
       scopePageQuery(queryBuilder, requester, { table: 'pages' })
       if (args.limit) queryBuilder.limit(args.limit)
+      if (args.offset > 0) queryBuilder.offset(args.offset)
       if (args.locale) queryBuilder.where('localeCode', args.locale)
       if (args.creatorId && args.authorId && args.creatorId > 0 && args.authorId > 0) {
         queryBuilder.where('creatorId', args.creatorId).orWhere('authorId', args.authorId)

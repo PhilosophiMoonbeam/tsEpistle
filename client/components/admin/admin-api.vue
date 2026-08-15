@@ -37,19 +37,23 @@
             v-card.fill-height(outlined)
               v-card-title
                 v-icon.mr-2(color='primary') mdi-graphql
-                span Supported external API
+                span Supported external APIs
                 v-spacer
                 v-chip(label, small, color='success').white--text Stable compatibility surface
               v-divider
               v-card-text
-                p Wiki.ts Preview supports API-key integrations through its retained GraphQL API.
-                .overline Endpoint
+                p Wiki.ts Preview supports API-key integrations through GraphQL and the versioned REST v1 API.
+                .overline GraphQL endpoint
                 code.api-contract-code {{ graphqlEndpoint }}
                 .overline.mt-4 Authentication
                 p Send the generated key as an HTTP bearer token:
                 code.api-contract-code Authorization: {{ apiAccessContract.bearerScheme }} &lt;API_KEY&gt;
                 .overline.mt-4 Full-access key example
                 pre.api-contract-example {{ curlExample }}
+                .overline.mt-4 REST v1 endpoint
+                code.api-contract-code {{ externalRestEndpoint }}
+                .overline.mt-4 OpenAPI 3.1 contract
+                code.api-contract-code {{ openApiEndpoint }}
           v-col(cols='12', lg='5')
             v-card.fill-height(outlined)
               v-card-title
@@ -64,7 +68,7 @@
                 v-divider.my-4
                 .overline Permission scopes
                 p.mb-2 #[strong Full access] uses the system-administrator permissions.
-                p.mb-0 #[strong Group scoped] uses the selected group's permissions. GraphQL directives still enforce every operation's required permissions.
+                p.mb-0 #[strong Group scoped] uses the selected group's permissions. GraphQL directives and REST handlers enforce every operation's required permissions and page rules.
 
         v-card.mt-3.animated.fadeInUp
           v-table(v-if='keys && keys.length > 0')
@@ -135,6 +139,12 @@ export default {
     },
     graphqlEndpoint() {
       return `${window.location.origin}${apiAccessContract.graphqlPath}`
+    },
+    externalRestEndpoint() {
+      return `${window.location.origin}${apiAccessContract.externalRestPrefix}`
+    },
+    openApiEndpoint() {
+      return `${window.location.origin}${apiAccessContract.openApiPath}`
     },
     internalRestEndpoint() {
       return `${window.location.origin}${apiAccessContract.internalRestPrefix}/*`

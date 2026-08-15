@@ -108,6 +108,18 @@ describe('API-key authentication boundary', () => {
     })
   })
 
+
+  test('maps an active API key to its group permissions for REST v1', async () => {
+    const req = createRequest('/api/v1/pages')
+
+    const next = await authenticate(req)
+
+    expect(next).toHaveBeenCalledWith()
+    expect(req.user).toMatchObject({
+      permissions: ['read:pages'],
+      groups: [3]
+    })
+  })
   test('rejects API keys from application-internal REST routes', async () => {
     const req = createRequest('/_api/system/info')
 

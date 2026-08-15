@@ -21,8 +21,9 @@ import uploadController from './controllers/upload.ts'
 import commonController from './controllers/common.ts'
 import sslController from './controllers/ssl.ts'
 import apiController from './controllers/api/index.ts'
+import apiV1Controller from './controllers/api-v1/index.ts'
 import type { ProductMetadata } from '../shared/product.ts'
-import { isInternalRestPath } from '../shared/api-access.ts'
+import { isExternalRestPath, isInternalRestPath } from '../shared/api-access.ts'
 
 const { collectEntry } = viteAssets
 const LEGACY_DEFAULT_LOGO_URL = 'https://static.requarks.io/logo/wikijs-butterfly.svg'
@@ -126,6 +127,7 @@ export default async function startMaster(): Promise<true> {
   await wiki.servers.startGraphQL()
   app.use(express.json({ limit: wiki.config.bodyParserLimit || '1mb' }))
   app.use('/_api', apiController)
+  app.use('/api/v1', apiV1Controller)
 
   app.use(seoMiddleware)
 
@@ -193,9 +195,9 @@ export default async function startMaster(): Promise<true> {
       return
     }
 
-    if (isInternalRestPath(req.path)) {
+    if (isInternalRestPath(req.path) || isExternalRestPath(req.path)) {
       res.status(error.status || 500).json({
-        code: error.code || 'INTERNAL_REST_ERROR',
+        code: error.code || (isInternalRestPath(req.path) ? 'INTERNAL_REST_ERROR' : 'REST_API_ERROR'),
         error: error.message
       })
       return
