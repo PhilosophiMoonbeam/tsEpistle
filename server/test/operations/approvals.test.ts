@@ -3,6 +3,7 @@ import createKnex, { type Knex } from 'knex'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { up as upOutbox } from '../../db/migrations/2.5.131.ts'
 import { up as upApprovals } from '../../db/migrations/2.5.133.ts'
+import { up as upProtection } from '../../db/migrations/2.5.134.ts'
 
 let knex: Knex
 let page: Record<string, unknown>
@@ -36,6 +37,7 @@ beforeEach(async () => {
   await knex('pages').insert({ id: 42, isPublished: false, authorId: 7 })
   await upOutbox(knex)
   await upApprovals(knex)
+  await upProtection(knex)
   page = {
     id: 42,
     title: 'Review me',

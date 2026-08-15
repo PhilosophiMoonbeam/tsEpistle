@@ -23,6 +23,7 @@ import Locale from './locales.ts'
 import type Comment from './comments.ts'
 import { assertVisualMarkdownCompatible } from '../../shared/visual-markdown.ts'
 import { writeOutboxEvent } from '../core/outbox.ts'
+import { redactProtectedPageForSearch, syncProtectedPageAssets } from '../operations/page-protection.ts'
 
 type UnknownRecord = Record<string, unknown>
 type PageErrorConstructor = new () => Error
@@ -691,11 +692,13 @@ static async createPage(opts: CreatePageOptions): Promise<Page> {
   await wiki.models.pages.rebuildTree()
 
   if (page.visibility === 'public') {
-    const pageContents = await wiki.models.pages.query().findById(page.id).select('render')
+    const pageContents = await wiki.models.pages.query().findById(page.id).select('content', 'render')
     if (!pageContents) {
       throw new wiki.Error.PageNotFound()
     }
     page.safeContent = wiki.models.pages.cleanHTML(pageContents.render)
+    await syncProtectedPageAssets(wiki.models.knex, page.id, pageContents.content, pageContents.render)
+    await redactProtectedPageForSearch(page)
     await wiki.data.searchEngine.created(page)
 
     if (!opts.skipStorage) {
@@ -822,11 +825,13 @@ static async updatePage(opts: UpdatePageOptions): Promise<Page> {
   wiki.events.outbound.emit('deletePageFromCache', page.hash)
 
   if (page.visibility === 'public') {
-    const pageContents = await wiki.models.pages.query().findById(page.id).select('render')
+    const pageContents = await wiki.models.pages.query().findById(page.id).select('content', 'render')
     if (!pageContents) {
       throw new wiki.Error.PageNotFound()
     }
     page.safeContent = wiki.models.pages.cleanHTML(pageContents.render)
+    await syncProtectedPageAssets(wiki.models.knex, page.id, pageContents.content, pageContents.render)
+    await redactProtectedPageForSearch(page)
     await wiki.data.searchEngine.updated(page)
 
     if (!opts.skipStorage) {
@@ -924,9 +929,11 @@ static async changeVisibility(opts: ChangeVisibilityOptions): Promise<Page> {
 
   const updated = await wiki.models.pages.getPageFromDb(page.id)
   if (!updated) throw new wiki.Error.PageNotFound()
-  const pageContents = await wiki.models.pages.query().findById(page.id).select('render')
+  const pageContents = await wiki.models.pages.query().findById(page.id).select('content', 'render')
   if (!pageContents) throw new wiki.Error.PageNotFound()
   updated.safeContent = wiki.models.pages.cleanHTML(pageContents.render)
+  await syncProtectedPageAssets(wiki.models.knex, updated.id, pageContents.content, pageContents.render)
+  await redactProtectedPageForSearch(updated)
 
   if (updated.visibility === 'public') {
     await wiki.data.searchEngine.created(updated)
@@ -1259,11 +1266,13 @@ static async movePage(opts: MovePageOptions): Promise<void> {
   await wiki.models.pages.rebuildTree()
 
   if (page.visibility === 'public') {
-    const pageContents = await wiki.models.pages.query().findById(page.id).select('render')
+    const pageContents = await wiki.models.pages.query().findById(page.id).select('content', 'render')
     if (!pageContents) {
       throw new wiki.Error.PageNotFound()
     }
     page.safeContent = wiki.models.pages.cleanHTML(pageContents.render)
+    await syncProtectedPageAssets(wiki.models.knex, page.id, pageContents.content, pageContents.render)
+    await redactProtectedPageForSearch(page)
     const renamedPage: PageRenameDetails = {
       ...page,
       title: destinationTitle,

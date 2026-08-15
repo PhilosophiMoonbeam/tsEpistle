@@ -1,5 +1,10 @@
 
 type WikiRecord = Record<string, unknown>
+declare module 'express-session' {
+  interface SessionData {
+    pageUnlockEstablishedAt?: number
+  }
+}
 
 declare global {
   namespace Express {

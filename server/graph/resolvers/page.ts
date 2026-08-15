@@ -1,18 +1,26 @@
 import graphHelper from '../../helpers/graph.ts'
 import pageOperations from '../../operations/pages.ts'
 import systemOperations from '../../operations/system.ts'
+import { assertPageUnlocked } from '../../operations/page-protection.ts'
 
 type ResolverArgs = Record<string, unknown>
-interface ResolverContext { req: { user: Express.User } }
+interface ResolverContext { req: { user: Express.User; sessionID: string } }
+
+const requireUnlocked = (context: ResolverContext, pageId: unknown): Promise<void> => {
+  if (typeof pageId !== 'number' || !Number.isSafeInteger(pageId) || pageId < 1) throw new TypeError('pageId must be a positive integer')
+  return assertPageUnlocked({ requester: context.req.user, pageId, sessionId: context.req.sessionID })
+}
 
 export default {
   Query: { async pages () { return {} } },
   Mutation: { async pages () { return {} } },
   PageQuery: {
-    history (_obj: unknown, args: ResolverArgs, context: ResolverContext) {
+    async history (_obj: unknown, args: ResolverArgs, context: ResolverContext) {
+      await requireUnlocked(context, args.id)
       return pageOperations.getHistory({ requester: context.req.user, ...args })
     },
-    version (_obj: unknown, args: ResolverArgs, context: ResolverContext) {
+    async version (_obj: unknown, args: ResolverArgs, context: ResolverContext) {
+      await requireUnlocked(context, args.pageId)
       return pageOperations.getVersion({ requester: context.req.user, ...args })
     },
     search (_obj: unknown, args: ResolverArgs, context: ResolverContext) {
@@ -21,11 +29,14 @@ export default {
     list (_obj: unknown, args: ResolverArgs, context: ResolverContext) {
       return pageOperations.list({ requester: context.req.user, ...args })
     },
-    single (_obj: unknown, args: ResolverArgs, context: ResolverContext) {
+    async single (_obj: unknown, args: ResolverArgs, context: ResolverContext) {
+      await requireUnlocked(context, args.id)
       return pageOperations.get({ requester: context.req.user, id: args.id })
     },
-    singleByPath (_obj: unknown, args: ResolverArgs, context: ResolverContext) {
-      return pageOperations.getByPath({ requester: context.req.user, ...args })
+    async singleByPath (_obj: unknown, args: ResolverArgs, context: ResolverContext) {
+      const page = await pageOperations.getByPath({ requester: context.req.user, ...args })
+      await requireUnlocked(context, Reflect.get(page, 'id'))
+      return page
     },
     tags (_obj: unknown, _args: ResolverArgs, context: ResolverContext) {
       return pageOperations.listTags(context.req.user)
@@ -42,7 +53,8 @@ export default {
     checkConflicts (_obj: unknown, args: ResolverArgs, context: ResolverContext) {
       return pageOperations.checkConflict({ requester: context.req.user, ...args })
     },
-    conflictLatest (_obj: unknown, args: ResolverArgs, context: ResolverContext) {
+    async conflictLatest (_obj: unknown, args: ResolverArgs, context: ResolverContext) {
+      await requireUnlocked(context, args.id)
       return pageOperations.getConflictLatest({ requester: context.req.user, id: args.id })
     }
   },
@@ -55,36 +67,42 @@ export default {
     },
     async update (_obj: unknown, args: ResolverArgs, context: ResolverContext) {
       try {
+        await requireUnlocked(context, args.id)
         const page = await pageOperations.update({ requester: context.req.user, input: args })
         return { responseResult: graphHelper.generateSuccess('Page has been updated.'), page }
       } catch (err: unknown) { return graphHelper.generateError(err) }
     },
     async convert (_obj: unknown, args: ResolverArgs, context: ResolverContext) {
       try {
+        await requireUnlocked(context, args.id)
         await pageOperations.convert({ requester: context.req.user, input: args })
         return { responseResult: graphHelper.generateSuccess('Page has been converted.') }
       } catch (err: unknown) { return graphHelper.generateError(err) }
     },
     async move (_obj: unknown, args: ResolverArgs, context: ResolverContext) {
       try {
+        await requireUnlocked(context, args.id)
         await pageOperations.move({ requester: context.req.user, input: args })
         return { responseResult: graphHelper.generateSuccess('Page has been moved.') }
       } catch (err: unknown) { return graphHelper.generateError(err) }
     },
     async delete (_obj: unknown, args: ResolverArgs, context: ResolverContext) {
       try {
+        await requireUnlocked(context, args.id)
         await pageOperations.remove({ requester: context.req.user, id: args.id })
         return { responseResult: graphHelper.generateSuccess('Page has been deleted.') }
       } catch (err: unknown) { return graphHelper.generateError(err) }
     },
     async changeVisibility (_obj: unknown, args: ResolverArgs, context: ResolverContext) {
       try {
+        await requireUnlocked(context, args.id)
         const page = await pageOperations.changeVisibility({ requester: context.req.user, ...args })
         return { responseResult: graphHelper.generateSuccess('Page visibility has been updated.'), page }
       } catch (err: unknown) { return graphHelper.generateError(err) }
     },
     async transferOwnership (_obj: unknown, args: ResolverArgs, context: ResolverContext) {
       try {
+        await requireUnlocked(context, args.id)
         const page = await pageOperations.transferOwnership({ requester: context.req.user, ...args })
         return { responseResult: graphHelper.generateSuccess('Page ownership has been transferred.'), page }
       } catch (err: unknown) { return graphHelper.generateError(err) }
@@ -109,6 +127,7 @@ export default {
     },
     async restore (_obj: unknown, args: ResolverArgs, context: ResolverContext) {
       try {
+        await requireUnlocked(context, args.pageId)
         await pageOperations.restore({ requester: context.req.user, ...args })
         return { responseResult: graphHelper.generateSuccess('Page version restored successfully.') }
       } catch (err: unknown) { return graphHelper.generateError(err) }

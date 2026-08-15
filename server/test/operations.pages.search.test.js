@@ -10,7 +10,7 @@ describe('page search visibility', () => {
         callback({ orWhere: vi.fn() })
       })
     }
-    const livePublicPages = [{ localeCode: 'en', path: 'public-page' }]
+    const livePublicPages = [{ id: 3, localeCode: 'en', path: 'public-page', title: 'Public Page', description: '' }]
     const pageQuery = {
       select: vi.fn().mockReturnThis(),
       modify: vi.fn(callback => {
@@ -39,6 +39,7 @@ describe('page search visibility', () => {
         }
       },
       models: {
+        knex: vi.fn().mockResolvedValue([]),
         pages: {
           query: vi.fn().mockReturnValue(pageQuery)
         }
@@ -55,5 +56,43 @@ describe('page search visibility', () => {
     })
     expect(whereBuilder.where).toHaveBeenCalledWith({ visibility: 'public' })
     expect(global.WIKI.auth.checkAccess).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not reveal protected pages through indexed content terms', async () => {
+    const whereBuilder = {
+      where: vi.fn(),
+      andWhere: vi.fn(callback => callback({ orWhere: vi.fn() }))
+    }
+    const pageQuery = {
+      select: vi.fn().mockReturnThis(),
+      modify: vi.fn(callback => {
+        callback(whereBuilder)
+        return Promise.resolve([{ id: 3, localeCode: 'en', path: 'public-page', title: 'Public Page', description: 'Visible metadata' }])
+      })
+    }
+    global.WIKI = {
+      auth: { checkAccess: vi.fn().mockReturnValue(true) },
+      config: { db: { type: 'postgres' }, lang: { code: 'en' } },
+      data: {
+        searchEngine: {
+          query: vi.fn().mockResolvedValue({
+            results: [{ id: 3, locale: 'en', path: 'public-page', title: 'Public Page' }],
+            suggestions: ['classified-content'],
+            totalHits: 1
+          })
+        }
+      },
+      models: {
+        knex: vi.fn().mockResolvedValue([{ pageId: 3 }]),
+        pages: { query: vi.fn().mockReturnValue(pageQuery) }
+      }
+    }
+
+    const { default: operations } = await import('../operations/pages.ts')
+    await expect(operations.search({ query: 'classified' })).resolves.toEqual({
+      results: [],
+      suggestions: [],
+      totalHits: 0
+    })
   })
 })

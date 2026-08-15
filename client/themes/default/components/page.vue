@@ -332,6 +332,17 @@
                     )
                       v-icon(:color='pageApproval ? `primary` : `grey`') mdi-check-decagram-outline
                   span Approval workflow
+                v-tooltip(bottom, v-if='isAuthenticated && (hasWritePagesPermission || hasManagePagesPermission || hasAdminPermission)')
+                  template(v-slot:activator='{ props }')
+                    v-btn(
+                      icon
+                      tile
+                      v-bind='props'
+                      @click='openPageProtection'
+                      aria-label='Page password protection'
+                    )
+                      v-icon(:color='pageProtection.protected ? `primary` : `grey`') {{ pageProtection.protected ? 'mdi-lock' : 'mdi-lock-open-outline' }}
+                  span Page password protection
                 v-tooltip(bottom)
                   template(v-slot:activator='{ props }')
                     v-btn(icon, tile, v-bind='props', @click='print', :aria-label='$t(`common:page.printFormat`)')
@@ -456,6 +467,54 @@
     nav-footer
     notify
     search-results
+    v-dialog(
+      v-model='protectionDialog'
+      :fullscreen='$vuetify.display.smAndDown'
+      max-width='560'
+    )
+      v-card
+        v-toolbar(color='primary', dark, flat)
+          v-toolbar-title Page password protection
+          v-spacer
+          v-btn(icon, @click='protectionDialog = false', aria-label='Close page password protection')
+            v-icon mdi-close
+        v-progress-linear(v-if='protectionLoading', indeterminate, color='primary')
+        v-card-text.pa-5
+          v-alert.mb-4(
+            :type='pageProtection.protected ? `info` : `warning`'
+            variant='tonal'
+          )
+            template(v-if='pageProtection.protected') Password protection is active. Setting a new password rotates it and immediately revokes every prior unlock.
+            template(v-else) Readers can currently access this page without a page password.
+          p.text-body-2.text-medium-emphasis.mb-4
+            | Unlocks last 12 hours in the current browser session. Group page permissions do not bypass the password; system administrators can recover access. Protected source, history, downloads, linked assets, and content APIs use the same unlock.
+          v-text-field(
+            v-model='pageProtectionPassword'
+            type='password'
+            label='New page password'
+            autocomplete='new-password'
+            minlength='12'
+            maxlength='1024'
+            hint='Use at least 12 characters. Passwords are stored only as bcrypt cost-12 hashes.'
+            persistent-hint
+          )
+        v-divider
+        v-card-actions.flex-wrap.pa-4
+          v-btn(
+            color='primary'
+            :disabled='pageProtectionPassword.length < 12'
+            :loading='protectionLoading'
+            @click='savePageProtection'
+          ) {{ pageProtection.protected ? 'Rotate password' : 'Enable protection' }}
+          v-btn(
+            v-if='pageProtection.protected'
+            color='error'
+            variant='text'
+            :disabled='protectionLoading'
+            @click='removePageProtection'
+          ) Remove protection
+          v-spacer
+          v-btn(@click='protectionDialog = false') Close
     v-dialog(
       v-model='approvalDialog'
       :fullscreen='$vuetify.display.smAndDown'
@@ -657,6 +716,13 @@ type PageApproval = {
   visibility?: 'public' | 'private'
 }
 
+type PageProtection = {
+  protected: boolean
+  version: number
+  updatedBy: number | null
+  updatedAt: string | null
+}
+
 Prism.plugins.toolbar.registerButton('copy-to-clipboard', (env: PrismEnvironment) => {
   let linkCopy = document.createElement('button')
   linkCopy.textContent = 'Copy'
@@ -798,6 +864,10 @@ export default defineComponent({
       approvalInbox: [] as PageApproval[],
       approvalComment: '',
       approvalAssigneeId: null as number | null,
+      protectionDialog: false,
+      protectionLoading: false,
+      pageProtection: { protected: false, version: 0, updatedBy: null, updatedAt: null } as PageProtection,
+      pageProtectionPassword: '',
       pageEditFab: false,
       scrollOpts: {
         duration: 1500,
@@ -946,6 +1016,10 @@ export default defineComponent({
       void this.loadApprovalInbox()
     }
 
+    if (this.hasWritePagesPermission || this.hasManagePagesPermission || this.hasAdminPermission) {
+      void this.loadPageProtection()
+    }
+
     // -> Check side navigation visibility
     this.handleSideNavVisibility()
     window.addEventListener('resize', _.debounce(() => {
@@ -994,6 +1068,63 @@ export default defineComponent({
     })
   },
   methods: {
+    async loadPageProtection () {
+      try {
+        const response = await fetch(`/_api/pages/${this.pageId}/protection`, {
+          credentials: 'same-origin',
+          headers: { Accept: 'application/json' }
+        })
+        if (!response.ok) throw new Error(`Page protection request failed (${response.status})`)
+        this.pageProtection = await response.json() as PageProtection
+      } catch (error) {
+        pushGraphError(wikiStore, error)
+      }
+    },
+    openPageProtection () {
+      this.pageProtectionPassword = ''
+      this.protectionDialog = true
+      void this.loadPageProtection()
+    },
+    async savePageProtection () {
+      this.protectionLoading = true
+      try {
+        const response = await fetch(`/_api/pages/${this.pageId}/protection`, {
+          method: 'PUT',
+          credentials: 'same-origin',
+          headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+          body: JSON.stringify({ password: this.pageProtectionPassword })
+        })
+        if (!response.ok) throw await this.approvalResponseError(response, 'Page protection update failed')
+        this.pageProtection = await response.json() as PageProtection
+        this.pageProtectionPassword = ''
+        showNotification(wikiStore, {
+          style: 'success',
+          message: this.pageProtection.version > 1 ? 'Page password rotated and prior unlocks revoked.' : 'Page password protection enabled.'
+        })
+      } catch (error) {
+        pushGraphError(wikiStore, error)
+      } finally {
+        this.protectionLoading = false
+      }
+    },
+    async removePageProtection () {
+      this.protectionLoading = true
+      try {
+        const response = await fetch(`/_api/pages/${this.pageId}/protection`, {
+          method: 'DELETE',
+          credentials: 'same-origin',
+          headers: { Accept: 'application/json' }
+        })
+        if (!response.ok) throw await this.approvalResponseError(response, 'Page protection removal failed')
+        this.pageProtection = { protected: false, version: 0, updatedBy: null, updatedAt: null }
+        this.pageProtectionPassword = ''
+        showNotification(wikiStore, { style: 'success', message: 'Page password protection removed.' })
+      } catch (error) {
+        pushGraphError(wikiStore, error)
+      } finally {
+        this.protectionLoading = false
+      }
+    },
     approvalStatusLabel (status: string) {
       return status.replaceAll('-', ' ').replace(/\b\w/g, value => value.toUpperCase())
     },

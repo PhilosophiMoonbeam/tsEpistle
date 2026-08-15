@@ -16,8 +16,38 @@ import {
   submitPageApproval,
   transitionApproval
 } from '../../operations/approvals.ts'
+import {
+  assertPageUnlocked,
+  getPageProtection,
+  isPageProtected,
+  removePageProtection,
+  setPageProtection,
+  unlockPage
+} from '../../operations/page-protection.ts'
+import { createAuthRateLimiter, setAuthRateLimitHeaders } from '../../helpers/auth-rate-limiter.ts'
 
 const router = express.Router()
+
+let pageUnlockLimiter: ReturnType<typeof createAuthRateLimiter> | undefined
+const getPageUnlockLimiter = (): ReturnType<typeof createAuthRateLimiter> => {
+  if (pageUnlockLimiter) return pageUnlockLimiter
+  const models: unknown = WIKI.models
+  if (!models || typeof models !== 'object' || !('knex' in models)) throw new TypeError('Wiki models are unavailable')
+  // WIKI owns the initialized Knex instance; the global declaration intentionally leaves bindings unknown.
+  const knex = models.knex as Parameters<typeof createAuthRateLimiter>[0]['knex']
+  pageUnlockLimiter = createAuthRateLimiter({
+    knex,
+    keyPrefix: 'page-unlock-api',
+    onLimit: (_req, res, retryAfterMs) => {
+      setAuthRateLimitHeaders(res, retryAfterMs)
+      res.status(429).json({ error: 'Too many failed attempts. Try again later.' })
+    }
+  })
+  return pageUnlockLimiter
+}
+const pageUnlockMiddleware: express.RequestHandler = (req, res, next) => {
+  getPageUnlockLimiter().middleware(req, res, next)
+}
 
 
 type TreeMode = 'ALL' | 'FOLDERS' | 'PAGES'
@@ -101,6 +131,20 @@ const requireSystemAccess = (req: Request, res: Response): boolean => {
     return false
   }
   return true
+}
+
+const requireUnlockedPage = async (req: Request, res: Response, pageId: number): Promise<boolean> => {
+  try {
+    if (await isPageProtected(pageId)) {
+      res.set('Cache-Control', 'private, no-store')
+      res.vary('Cookie')
+    }
+    await assertPageUnlocked({ requester: req.user, pageId, sessionId: req.sessionID })
+    return true
+  } catch {
+    res.status(403).json({ error: 'Access denied' })
+    return false
+  }
 }
 
 const requirePageDeleteAccess = (req: Request, res: Response): boolean => {
@@ -391,6 +435,56 @@ router.patch('/:id/owner', async (req, res) => {
   }
 })
 
+router.get('/:id/protection', async (req, res) => {
+  const id = parsePositiveIntegerParam(req, res)
+  if (id === null) return
+  try {
+    res.set('Cache-Control', 'private, no-store')
+    res.json(await getPageProtection(req.user, id))
+  } catch (err) {
+    sendOperationError(res, err, 'Page protection fetch failed')
+  }
+})
+
+router.put('/:id/protection', async (req, res) => {
+  const id = parsePositiveIntegerParam(req, res)
+  if (id === null) return
+  const password = _.get(req, 'body.password')
+  if (typeof password !== 'string') return res.status(400).json({ error: 'password is required' })
+  try {
+    res.set('Cache-Control', 'private, no-store')
+    res.json(await setPageProtection({ requester: req.user, pageId: id, password, sessionId: req.sessionID }))
+  } catch (err) {
+    sendOperationError(res, err, 'Page protection update failed')
+  }
+})
+
+router.delete('/:id/protection', async (req, res) => {
+  const id = parsePositiveIntegerParam(req, res)
+  if (id === null) return
+  try {
+    res.set('Cache-Control', 'private, no-store')
+    res.json(await removePageProtection({ requester: req.user, pageId: id }))
+  } catch (err) {
+    sendOperationError(res, err, 'Page protection removal failed')
+  }
+})
+
+router.post('/:id/unlock', pageUnlockMiddleware, async (req, res) => {
+  const id = parsePositiveIntegerParam(req, res)
+  if (id === null) return
+  const password = _.get(req, 'body.password')
+  try {
+    await unlockPage({ requester: req.user, pageId: id, password: typeof password === 'string' ? password : '', sessionId: req.sessionID })
+    req.session.pageUnlockEstablishedAt = Date.now()
+    await getPageUnlockLimiter().reset(req)
+    res.set('Cache-Control', 'private, no-store')
+    res.sendStatus(204)
+  } catch {
+    res.status(403).json({ error: 'Access denied' })
+  }
+})
+
 router.get('/approvals/inbox', async (req, res) => {
   try {
     res.json(await listApprovalInbox(req.user))
@@ -503,6 +597,7 @@ router.delete('/:id/watch', async (req, res) => {
 router.post('/:id/convert', async (req, res) => {
   const id = parsePositiveIntegerParam(req, res)
   if (id === null) return
+  if (!await requireUnlockedPage(req, res, id)) return
   try {
     const editor = _.get(req, 'body.editor')
     await pageOperations.convert({
@@ -553,6 +648,7 @@ router.post('/:id/conflicts/check', async (req, res) => {
 router.get('/:id/conflict-latest', async (req, res) => {
   const id = parsePositiveIntegerParam(req, res)
   if (id === null) return
+  if (!await requireUnlockedPage(req, res, id)) return
   try {
     res.json(await pageOperations.getConflictLatest({ ...requesterInput(req), id }))
   } catch (err) {
@@ -563,6 +659,7 @@ router.get('/:id/conflict-latest', async (req, res) => {
 router.get('/:id/history', async (req, res) => {
   const id = parsePositiveIntegerParam(req, res)
   if (id === null) return
+  if (!await requireUnlockedPage(req, res, id)) return
   const offsetPage = Number(_.get(req, 'query.offsetPage', 0))
   const offsetSize = Number(_.get(req, 'query.offsetSize', 100))
   if (!Number.isSafeInteger(offsetPage) || offsetPage < 0 || !Number.isSafeInteger(offsetSize) || offsetSize < 1) {
@@ -578,6 +675,7 @@ router.get('/:id/history', async (req, res) => {
 router.get('/:id/history/:versionId', async (req, res) => {
   const pageId = parsePositiveIntegerParam(req, res)
   if (pageId === null) return
+  if (!await requireUnlockedPage(req, res, pageId)) return
   const versionId = parsePositiveIntegerParam(req, res, 'versionId')
   if (versionId === null) return
   try {
@@ -590,6 +688,7 @@ router.get('/:id/history/:versionId', async (req, res) => {
 router.post('/:id/history/:versionId/restore', async (req, res) => {
   const pageId = parsePositiveIntegerParam(req, res)
   if (pageId === null) return
+  if (!await requireUnlockedPage(req, res, pageId)) return
   const versionId = parsePositiveIntegerParam(req, res, 'versionId')
   if (versionId === null) return
   try {

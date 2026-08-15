@@ -475,6 +475,23 @@ Required decisions:
 
 Never store page passwords reversibly. Never place unlock grants in URLs. Never render protected content into a shared cache entry.
 
+Decisions (2026-08-15):
+
+- store bcrypt cost-12 hashes only; every replacement increments a password version and atomically revokes every older grant;
+- grant unlocks for 12 hours to the exact server-side session and authenticated identity (or anonymous identity), never to a URL or browser-readable token;
+- ordinary group-authorized readers still require the password; `manage:system` administrators bypass it for recovery, while owner-private authorization runs before the password layer;
+- keep titles, descriptions, navigation, and tree placement discoverable; omit protected body matches and suggestions from search, and gate current content, source, history, revision restore, downloads, linked assets, REST operations, and GraphQL page reads/mutations;
+- use the durable database-backed authentication limiter with generic failures and progressive retry delays; incorrect, missing, and unauthorized-private unlock attempts return the same denial;
+- send `Cache-Control: private, no-store`, `Pragma: no-cache`, and `Vary: Cookie` on locked/unlocked protected HTML responses; linked assets return a non-disclosing 404 until the same session is unlocked;
+- exclude passwords, hashes, and grants from export/import. Content exports remain content-only, and imported pages start unprotected until an authorized writer sets a new password.
+
+Completion evidence (2026-08-15):
+
+- migration `2.5.134` adds password, expiring grant, and protected-asset linkage tables with cascading deletion and SQLite restart coverage;
+- focused contracts verify cost, rotation/revocation, session and identity isolation, expiry, administrator recovery, owner-private non-disclosure, asset gating, search redaction, and restoration of indexing after removal;
+- browser smoke enabled protection from the page toolbar, rendered the anonymous unlock surface with `private, no-store`, rejected a wrong password without creating a cookie, persisted a correct anonymous unlock in `connect.sid`, restored the page, and removed protection through the management dialog;
+- server and client typechecks pass; the protection, search, migration-preflight, GraphQL parity/schema, page metadata, private-page, and Visual Markdown regression contracts pass.
+
 Exit gate: direct asset/source/API requests cannot bypass unlock; rotation revokes prior grants; brute-force limits and private-page composition pass.
 
 #### 3D. Page history experience

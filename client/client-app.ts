@@ -25,6 +25,7 @@ const registrations = [
   asyncComponent('Notify', () => import('./components/common/notify.vue')),
   asyncComponent('NotFound', () => import('./components/not-found.vue')),
   asyncComponent('PageSelector', () => import('./components/common/page-selector.vue')),
+  asyncComponent('PageUnlock', () => import('./components/page-unlock.vue')),
   asyncComponent('PageSource', () => import('./components/source.vue')),
   asyncComponent('Profile', () => import('./components/profile.vue')),
   asyncComponent('Register', () => import('./components/register.vue')),

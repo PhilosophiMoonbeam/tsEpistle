@@ -3,6 +3,7 @@ import type { Knex } from 'knex'
 import { canReadPage, canWritePage, managesSystem, principalId, type PagePrincipal, type PageVisibilityRecord } from '../helpers/page-access.ts'
 import { writeOutboxEvent } from '../core/outbox.ts'
 import errors from './errors.ts'
+import { redactProtectedPageForSearch } from './page-protection.ts'
 
 const { ApplicationError } = errors
 
@@ -344,6 +345,7 @@ export const transitionApproval = async (input: {
       if (contents && typeof contents.render === 'string') {
         Reflect.set(page, 'safeContent', wiki.models.pages.cleanHTML(contents.render))
       }
+      await redactProtectedPageForSearch(page)
       await wiki.data.searchEngine.updated(page)
     }
   }

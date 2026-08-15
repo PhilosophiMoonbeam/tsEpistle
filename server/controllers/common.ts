@@ -6,6 +6,13 @@ import _ from 'lodash'
 import CleanCSS from 'clean-css'
 import moment from 'moment'
 import qs from 'node:querystring'
+import {
+  isPageProtected,
+  pageRequiresUnlock,
+  protectedAssetRequiresUnlock,
+  unlockPage
+} from '../operations/page-protection.ts'
+import { createAuthRateLimiter, setAuthRateLimitHeaders } from '../helpers/auth-rate-limiter.ts'
 
 const router = express.Router()
 
@@ -132,6 +139,52 @@ interface RequestI18n {
 }
 
 const WIKI = globalThis.WIKI as unknown as CommonWiki
+
+let pageUnlockLimiter: ReturnType<typeof createAuthRateLimiter> | undefined
+const getPageUnlockLimiter = (): ReturnType<typeof createAuthRateLimiter> => {
+  if (pageUnlockLimiter) return pageUnlockLimiter
+  const models: unknown = globalThis.WIKI.models
+  if (!models || typeof models !== 'object' || !('knex' in models)) throw new TypeError('Wiki models are unavailable')
+  // WIKI owns the initialized Knex instance; the global declaration intentionally leaves bindings unknown.
+  const knex = models.knex as Parameters<typeof createAuthRateLimiter>[0]['knex']
+  pageUnlockLimiter = createAuthRateLimiter({
+    knex,
+    keyPrefix: 'page-unlock-html',
+    onLimit: (_req, res, retryAfterMs) => {
+      setAuthRateLimitHeaders(res, retryAfterMs)
+      res.status(429).render('page-unlock', {
+        pageId: null,
+        pageTitle: 'Protected page',
+        returnTo: '/',
+        error: 'Too many failed attempts. Try again later.'
+      })
+    }
+  })
+  return pageUnlockLimiter
+}
+const pageUnlockMiddleware: express.RequestHandler = (req, res, next) => {
+  getPageUnlockLimiter().middleware(req, res, next)
+}
+
+const protectedResponseHeaders = (res: Response): void => {
+  res.set('Cache-Control', 'private, no-store')
+  res.set('Pragma', 'no-cache')
+  res.vary('Cookie')
+}
+
+const enforcePageUnlock = async (req: Request, res: Response, page: PageRecord): Promise<boolean> => {
+  if (!await isPageProtected(page.id)) return true
+  protectedResponseHeaders(res)
+  if (!await pageRequiresUnlock({ requester: req.user, pageId: page.id, sessionId: req.sessionID })) return true
+  _.set(res.locals, 'pageMeta.title', 'Protected Page')
+  res.status(401).render('page-unlock', {
+    pageId: page.id,
+    pageTitle: page.title,
+    returnTo: req.originalUrl,
+    error: null
+  })
+  return false
+}
 const getWikiAuth = () => WIKI.auth
 
 const getRequestI18n = (req: Request): RequestI18n => {
@@ -282,6 +335,36 @@ const renderResolvedPage = async (
 
 
 
+router.post('/_unlock/:id', pageUnlockMiddleware, async (req, res) => {
+  const pageId = _.toSafeInteger(req.params.id)
+  const returnToValue: unknown = req.body && typeof req.body === 'object' ? Reflect.get(req.body, 'returnTo') : undefined
+  const returnTo = typeof returnToValue === 'string' && returnToValue.startsWith('/') && !returnToValue.startsWith('//')
+    ? returnToValue
+    : '/'
+  const passwordValue: unknown = req.body && typeof req.body === 'object' ? Reflect.get(req.body, 'password') : undefined
+  try {
+    await unlockPage({
+      requester: req.user,
+      pageId,
+      password: typeof passwordValue === 'string' ? passwordValue : '',
+      sessionId: req.sessionID
+    })
+    req.session.pageUnlockEstablishedAt = Date.now()
+    await getPageUnlockLimiter().reset(req)
+    protectedResponseHeaders(res)
+    return res.redirect(303, returnTo)
+  } catch {
+    const page = pageId > 0 ? await WIKI.models.pages.getPageFromDb(pageId).catch(() => null) : null
+    protectedResponseHeaders(res)
+    return res.status(403).render('page-unlock', {
+      pageId,
+      pageTitle: page && canReadPage(req.user, page) ? page.title : 'Protected page',
+      returnTo,
+      error: 'Access denied'
+    })
+  }
+})
+
 /**
  * Robots.txt
  */
@@ -402,6 +485,7 @@ router.get(['/d', '/d/*downloadPath'], async (req, res) => {
     _.set(res.locals, 'pageMeta.title', 'Unauthorized')
     return res.status(403).render('unauthorized', { action: 'download' })
   }
+  if (!await enforcePageUnlock(req, res, page)) return
 
   const fileName = _.last(page.path.split('/')) + '.' + pageHelper.getFileExtension(page.contentType)
   res.attachment(fileName)
@@ -470,6 +554,7 @@ router.get(['/e', '/e/*editorPath'], async (req, res, next) => {
       _.set(res.locals, 'pageMeta.title', 'Unauthorized')
       return res.status(403).render('unauthorized', { action: 'edit' })
     }
+    if (!await enforcePageUnlock(req, res, page as PageRecord)) return
 
     // -> Get page tags
     if (!page.$relatedQuery) throw new Error('Page relation loader is unavailable')
@@ -605,6 +690,7 @@ router.get(['/h', '/h/*historyPath'], async (req, res) => {
     _.set(res.locals, 'pageMeta.title', 'Unauthorized')
     return res.render('unauthorized', { action: 'history' })
   }
+  if (!await enforcePageUnlock(req, res, page)) return
 
   if (page) {
     _.set(res.locals, 'pageMeta.title', page.title)
@@ -706,6 +792,7 @@ router.get(['/s', '/s/*sourcePath'], async (req, res) => {
       return res.status(403).render('unauthorized', { action: 'source' })
     }
   }
+  if (!await enforcePageUnlock(req, res, page)) return
 
   if (page) {
     if (versionId > 0) {
@@ -811,6 +898,7 @@ router.get('/{*pagePath}', async (req, res, next) => {
           action: 'view'
         })
       }
+      if (page && !await enforcePageUnlock(req, res, page)) return
 
       _.set(res, 'locals.siteConfig.lang', pageArgs.locale)
       _.set(res, 'locals.siteConfig.rtl', i18n.dir() === 'rtl')
@@ -834,6 +922,10 @@ router.get('/{*pagePath}', async (req, res, next) => {
   } else {
     if (!getWikiAuth().checkAccess(req.user, ['read:assets'], pageArgs)) {
       return res.sendStatus(403)
+    }
+    if (await protectedAssetRequiresUnlock({ requester: req.user, assetPath: pageArgs.path, sessionId: req.sessionID })) {
+      protectedResponseHeaders(res)
+      return res.status(404).end()
     }
 
     await WIKI.models.assets.getAsset(pageArgs.path, res)

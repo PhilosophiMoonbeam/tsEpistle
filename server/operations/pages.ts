@@ -370,10 +370,15 @@ const search = async (input: OperationInput) => {
   const publicResponse = wiki.data.searchEngine
     ? await wiki.data.searchEngine.query(query, { query, ...args })
     : { results: [], suggestions: [], totalHits: 0 }
+  const protectedPageIds = new Set(
+    (await wiki.models.knex('pageAccessPasswords'))
+      .map(row => Reflect.get(row, 'pageId'))
+      .filter((id): id is number => typeof id === 'number')
+  )
   const publicIdentities = new Set<string>()
   if (publicResponse.results.length > 0) {
     const livePublicPages = await wiki.models.pages.query()
-      .select('localeCode', 'path')
+      .select('id', 'localeCode', 'path', 'title', 'description')
       .modify(builder => {
         builder.where({ visibility: 'public' })
         builder.andWhere(matches => {
@@ -382,7 +387,11 @@ const search = async (input: OperationInput) => {
           }
         })
       })
-    for (const page of livePublicPages) publicIdentities.add(`${page.localeCode}\u0000${page.path}`)
+    const normalizedQuery = query.toLocaleLowerCase()
+    for (const page of livePublicPages) {
+      const metadataMatches = `${page.title} ${String(page.description ?? '')}`.toLocaleLowerCase().includes(normalizedQuery)
+      if (!protectedPageIds.has(page.id) || metadataMatches) publicIdentities.add(`${page.localeCode}\u0000${page.path}`)
+    }
   }
   const publicResults = publicResponse.results.filter(result => (
     publicIdentities.has(`${result.locale}\u0000${result.path}`) &&
