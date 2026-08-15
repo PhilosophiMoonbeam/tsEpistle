@@ -82,7 +82,7 @@ login_response=$(curl --fail --silent --show-error \
   --header 'Content-Type: application/json' \
   --data "{\"username\":\"$ADMIN_EMAIL\",\"password\":\"$ADMIN_PASSWORD\",\"strategy\":\"local\"}" \
   http://127.0.0.1:3000/_api/auth/login)
-printf '%s' "$login_response" | jq --exit-status '.status == "ok"' >/dev/null
+printf '%s' "$login_response" | jq --exit-status '.jwt | type == "string" and length > 0' >/dev/null
 
 whoami_response=$(curl --fail --silent --show-error \
   --cookie /tmp/wiki-upgrade-smoke.cookies \
