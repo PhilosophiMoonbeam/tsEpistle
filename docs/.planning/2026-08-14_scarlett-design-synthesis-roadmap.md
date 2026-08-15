@@ -2,17 +2,17 @@
 
 Status: authoritative product roadmap
 
-Last assessed: 2026-08-14T23:59:10Z
+Last assessed: 2026-08-15T16:41:53Z
 
 Assessed revisions:
 
-- Wiki.ts code baseline: `f474de3b82b3359bb880806fe337872606953bd9`
+- Wiki.ts code baseline: `1c6a8b9b3f316c3b469194dd4fad6e66082e8189`
 - fork checkpoint `origin/scarlett`: `249758e3f923a77e1b62d26a47e142c312642a5f`
 - upstream reference: `requarks/wiki:scarlett`
-- upstream commit: `c182d2c974b0b44550b7ff29f2542e378ac97c28`
-- upstream commit subject: `feat: block-gallery`
-- upstream commit authored and committed: `2026-08-14T19:39:26-04:00`
-- upstream fetch verification: `2026-08-14T23:59:10Z`; the remote still resolved to the recorded commit with zero commits of divergence
+- upstream commit: `d0c5a8bfa90acee73a2f4c71033978bea1925468`
+- upstream commit subject: `feat: add unlock aspect ratio option to block-gallery`
+- upstream commit authored and committed: `2026-08-14T23:36:09-04:00`
+- upstream fetch verification: `2026-08-15T16:41:53Z`; the remote still resolved to the recorded commit with zero commits of divergence
 - common ancestor of the Wiki.ts code baseline and upstream Scarlett: `b5b4b0880ae26f4b137242267b6674b51af8688c` from 2022-04-03
 
 This is a living plan. Update the revision ledger and candidate dispositions whenever upstream Scarlett moves. Never silently replace a disposition: record the new evidence and reason.
@@ -37,7 +37,7 @@ Complete Wiki.ts as the strongest continuity path from Wiki.js 2: modern, secure
 
 Do not merge, rebase, or broadly cherry-pick Scarlett into Wiki.ts `main`.
 
-The 71 commits between the fork checkpoint and assessed upstream Scarlett modify 521 files with 95,793 insertions and 27,146 deletions. Only seven of those paths exist on Wiki.ts `main`. A merge simulation reports conflicts throughout the server, client, database migrations, editors, build system, and deployment files.
+The 73 commits between the fork checkpoint and assessed upstream Scarlett modify 521 files with 96,069 insertions and 27,147 deletions. Only seven of those paths exist on Wiki.ts `main`. A merge simulation reports conflicts throughout the server, client, database migrations, editors, build system, and deployment files.
 
 Scarlett is a design mine and comparative implementation, not an integration branch.
 
@@ -833,3 +833,4 @@ When this roadmap changes, append an entry here.
 | 2026-08-15 | Scarlett page-history overlay concepts | `97a452e1` plus Wave 4 authoring work | Completed Wave 3D with immutable revision metadata/tag snapshots, REST-backed responsive diff/actions, canonical content/editor restore, and transactional optimistic concurrency |
 | 2026-08-15 | `17d7b810` Yjs collaboration concept | Wave 4 policy, events, and Markdown editor foundation | Completed Wave 4C as authenticated Markdown collaboration with durable versioned rooms, acknowledged offline replay, cross-instance database fanout, continuous authorization, mutation conflicts, and explicit local-preservation UX |
 | 2026-08-15 | `aa27932c` block-index and `d0c5a8bf` block-gallery refinements | `64abdc57` plus Wave 4B expansion | Adapted the useful behavior without upstream runtime code: native typed gallery/index envelopes, disabled migrations, sanitized server renderers, policy-filtered dynamic index API, accessible browser hydration, editor configuration, responsive layout, and regression/E2E coverage; retained neither Scarlett’s Lit/Tailwind components nor unbounded/stale index rendering |
+| 2026-08-15T16:41:53Z | `d0c5a8bf` (`feat: add unlock aspect ratio option to block-gallery`) | `1c6a8b9b` | Reassessed every previously non-inherited architecture choice on merit in [the architectural adaptation plan](./2026-08-15_scarlett-architectural-adaptation-plan.md): accepted package boundaries, verified schema bridges, bounded projections, and conditional isolated runtimes; retained upgrade continuity, five-database core behavior, one UI/ORM/source authority, and the immediate remaining-block implementation handoff |
