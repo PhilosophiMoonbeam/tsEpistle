@@ -21,6 +21,9 @@ docker rm "$container_id" >/dev/null
 container_id=
 rm -f "$work_dir/wiki/config.yml"
 cp config.sample.yml "$work_dir/wiki/config.sample.yml"
+rm -f \
+  "$work_dir/wiki/node_modules/.modules.yaml" \
+  "$work_dir/wiki/node_modules/.pnpm-workspace-state-v1.json"
 
 tar \
   --sort=name \

@@ -24,7 +24,8 @@ COPY patches ./patches
 RUN --mount=type=cache,id=wiki-pnpm-arm64,target=/pnpm/store \
     pnpm config set store-dir /pnpm/store && \
     pnpm install --frozen-lockfile && \
-    pnpm prune --prod
+    pnpm prune --prod && \
+    rm -f node_modules/.modules.yaml node_modules/.pnpm-workspace-state-v1.json
 
 FROM node:24-alpine@sha256:d32cdf619f63fe0471182d08996dd516c6275bb5fd31ae06e55a570bd9e1ad43 AS runtime
 
