@@ -37,8 +37,10 @@ jobs:
     - name: Install Dependencies
       run: pnpm install --frozen-lockfile
 
-    - name: Generate Production License Inventory
-      run: pnpm run licenses:inventory
+    - name: Validate Dependency and License Policy
+      run: |
+        pnpm run dependencies:check
+        pnpm run licenses:check
 
     - name: Upload License Inventory
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -62,12 +64,59 @@ jobs:
 
     - name: Validate Versioned OpenAPI Contract
       run: pnpm run openapi:check
+    - name: Reject Production Placeholders
+      run: pnpm run placeholders:check
+
 
     - name: Run Vitest
       run: pnpm run test
 
     - name: Build Vite Assets
       run: pnpm run build
+
+  page-index-benchmark:
+    name: Page Index Benchmark (PostgreSQL ${{ matrix.pgversion }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [quality]
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - pgversion: 15
+          postgresImage: postgres:15-alpine@sha256:4006528dcbdd9be8c1aaa50389caea4e93c46d6f54c3533bcd3253725e526e23
+        - pgversion: 16
+          postgresImage: postgres:16-alpine@sha256:44c4ee9810eff91f7eab4d822642e01115b1a9eccce4bcbdde7604752d68eac6
+        - pgversion: 17
+          postgresImage: postgres:17-alpine@sha256:d4bb0a8c1b7bb2e29f976d099e7bfb9a5d8858cffe9e46b35cd302cd1f1f8168
+        - pgversion: 18
+          postgresImage: postgres:18-alpine@sha256:a1d02e4bd40c94d3bf2bdd3678c137388e76d9efcd23c285e9429d336a834b44
+    steps:
+    - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+    - uses: pnpm/action-setup@a8198c4bff370c8506180b035930dea56dbd5288 # v5
+      with:
+        version: ${{ env.PNPM_VERSION }}
+    - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+      with:
+        node-version-file: .nvmrc
+        cache: pnpm
+    - name: Install Dependencies
+      run: pnpm install --frozen-lockfile
+    - name: Measure Bounded Page Index
+      env:
+        POSTGRES_TEST_IMAGE: ${{ matrix.postgresImage }}
+        PAGE_INDEX_BENCHMARK_FILE: page-index-benchmark-postgres-${{ matrix.pgversion }}.json
+      run: pnpm run benchmark:page-index
+    - name: Upload Page Index Metrics
+      if: always()
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      with:
+        name: page-index-benchmark-postgres-${{ matrix.pgversion }}
+        path: page-index-benchmark-postgres-${{ matrix.pgversion }}.json
+        if-no-files-found: error
+        retention-days: 30
 
   build:
     name: Build Test Image and Linux Bundle
@@ -243,10 +292,20 @@ jobs:
         POSTGRES_TEST_IMAGE: ${{ matrix.postgresImage }}
         WIKI_TEST_IMAGE: wiki-ts-preview:test-${{ env.WIKI_BUILD_REVISION }}
         PLAYWRIGHT_BASE_URL: http://127.0.0.1:3000
+        RUNTIME_PERFORMANCE_FILE: runtime-performance-postgres-${{ matrix.pgversion }}.json
       run: |
         chmod u+x dev/e2e/ci-setup.sh
         dev/e2e/ci-setup.sh
         pnpm exec playwright test
+
+    - name: Upload Runtime Performance Metrics
+      if: always()
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      with:
+        name: runtime-performance-postgres-${{ matrix.pgversion }}
+        path: runtime-performance-postgres-${{ matrix.pgversion }}.json
+        if-no-files-found: error
+        retention-days: 30
 
   upgrade:
     name: Upgrade Wiki.js 2 (PostgreSQL ${{ matrix.pgversion }})
@@ -404,7 +463,7 @@ jobs:
     name: Publish AMD64 Images
     runs-on: ubuntu-latest
     if: github.event_name == 'push'
-    needs: [e2e, upgrade, multi-instance, helm-lifecycle]
+    needs: [e2e, upgrade, multi-instance, helm-lifecycle, page-index-benchmark]
     permissions:
       contents: read
       packages: write
@@ -462,7 +521,7 @@ jobs:
     name: ARM Build
     runs-on: ubuntu-24.04-arm
     if: github.event_name == 'push'
-    needs: [e2e]
+    needs: [e2e, page-index-benchmark]
     permissions:
       contents: read
       packages: write
@@ -529,7 +588,7 @@ jobs:
     name: Windows Build
     runs-on: windows-latest
     if: github.event_name == 'push'
-    needs: [e2e]
+    needs: [e2e, page-index-benchmark]
     permissions:
       contents: read
 

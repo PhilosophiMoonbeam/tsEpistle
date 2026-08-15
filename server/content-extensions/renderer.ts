@@ -1,4 +1,4 @@
-import type { MarkdownIt, Token } from 'markdown-it'
+import type { MarkdownIt } from 'markdown-it'
 
 import {
   parseContentExtensionFence,
@@ -8,6 +8,11 @@ import {
 import { listContentExtensions } from './operations.ts'
 import { getContentExtensionRegistration } from './registry.ts'
 
+interface ContentExtensionFenceToken {
+  type: string
+  info: string
+  content: string
+}
 export type PreparedContentExtensionFences = ReadonlyMap<string, string>
 
 const canonicalBody = (body: string): ContentExtensionEnvelope | null => {
@@ -20,7 +25,7 @@ const canonicalBody = (body: string): ContentExtensionEnvelope | null => {
   }
 }
 
-export const prepareContentExtensionFences = async (tokens: readonly Token[]): Promise<PreparedContentExtensionFences> => {
+export const prepareContentExtensionFences = async (tokens: readonly ContentExtensionFenceToken[]): Promise<PreparedContentExtensionFences> => {
   const bodies = new Set(
     tokens
       .filter(token => token.type === 'fence' && token.info.trim() === 'wiki-extension')

@@ -109,6 +109,7 @@
                 color='primary'
                 size='96'
                 width='2'
+                :aria-label='$t(`tags:retrievingResultsLoading`)'
                 )
               .subtitle-2.grey--text.mt-5 {{$t('tags:retrievingResultsLoading')}}
           template(v-slot:no-data)

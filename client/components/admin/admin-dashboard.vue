@@ -247,7 +247,14 @@ export default {
     }
   }
 }
+
 </script>
+<style scoped>
+.dashboard-data-table,
+.dashboard-mobile-list {
+  min-height: 16rem;
+}
+</style>
 
 <style lang='scss'>
 

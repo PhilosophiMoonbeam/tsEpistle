@@ -1,4 +1,5 @@
 import type { Knex } from 'knex'
+import { DurableJobStore } from '../core/durable-jobs.ts'
 
 import {
   BUILTIN_CONTENT_EXTENSIONS,
@@ -15,20 +16,8 @@ interface ContentExtensionRow {
   updatedBy: number | null
 }
 
-interface ExtensionPage {
-  id: number
-  hash: string
-  content: string
-}
-
-interface PageModel {
-  deletePageFromCache(hash: string): Promise<unknown>
-  renderPage(page: ExtensionPage): Promise<unknown>
-}
-
 interface WikiRuntime {
-  events: { outbound: { emit(event: string, value: unknown): void } }
-  models: { knex: Knex, pages: PageModel }
+  models: { knex: Knex }
 }
 
 export interface ContentExtensionStatus extends ContentExtensionDefinition {
@@ -76,37 +65,6 @@ export const listContentExtensions = async (): Promise<ContentExtensionStatusRes
   }
 }
 
-const pageContainsExtension = (content: string, key: string): boolean => {
-  const fences = /^```wiki-extension[ \t]*\r?\n([^\r\n]*)\r?\n```[ \t]*$/gm
-  for (const match of content.matchAll(fences)) {
-    try {
-      const parsed: unknown = JSON.parse(match[1] ?? '')
-      if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed) && Reflect.get(parsed, 'key') === key) {
-        return true
-      }
-    } catch {
-      // Invalid extension fences already render as escaped source and cannot leave active output behind.
-    }
-  }
-  return false
-}
-
-export const rerenderPagesForContentExtension = async (key: string): Promise<number> => {
-  const wiki = WIKI as unknown as WikiRuntime
-  const candidates = await wiki.models.knex<ExtensionPage>('pages')
-    .select('id', 'hash', 'content')
-    .where('content', 'like', '%```wiki-extension%')
-  const pages = candidates.filter(page => pageContainsExtension(page.content, key))
-
-  for (const page of pages) {
-    await wiki.models.pages.deletePageFromCache(page.hash)
-    wiki.events.outbound.emit('deletePageFromCache', page.hash)
-  }
-  for (const page of pages) {
-    await wiki.models.pages.renderPage(page)
-  }
-  return pages.length
-}
 
 class ContentExtensionOperationError extends Error {
   readonly status: number
@@ -127,16 +85,25 @@ export const setContentExtensionEnabled = async (
 
   const wiki = WIKI as unknown as WikiRuntime
   const knex = wiki.models.knex
-  const current = await knex<ContentExtensionRow>('contentExtensions').where({ key }).first('key', 'isEnabled', 'version')
-  if (!current) throw new ContentExtensionOperationError(404, 'Content extension not found.')
-  await knex<ContentExtensionRow>('contentExtensions').where({ key }).update({
-    isEnabled,
-    updatedAt: new Date(),
-    updatedBy
+  await knex.transaction(async transaction => {
+    const current = await transaction<ContentExtensionRow>('contentExtensions')
+      .where({ key })
+      .first('key', 'isEnabled', 'version')
+    if (!current) throw new ContentExtensionOperationError(404, 'Content extension not found.')
+    if (Boolean(current.isEnabled) === isEnabled) return
+    await transaction<ContentExtensionRow>('contentExtensions').where({ key }).update({
+      isEnabled,
+      updatedAt: new Date(),
+      updatedBy
+    })
+    const jobs = new DurableJobStore(transaction)
+    await jobs.enqueue({
+      type: 'rerender-content-extension',
+      version: 1,
+      payload: { key },
+      maxAttempts: 5
+    })
   })
-  if (Boolean(current.isEnabled) !== isEnabled) {
-    await rerenderPagesForContentExtension(key)
-  }
 
   const response = await listContentExtensions()
   const updated = response.extensions.find(extension => extension.key === key)

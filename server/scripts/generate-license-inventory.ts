@@ -21,8 +21,20 @@ interface InventoryPackage {
   licenseMetadataSource?: string
 }
 
+interface LicensePolicy {
+  schemaVersion: number
+  allowedExpressions: string[]
+  deniedExpressions: string[]
+  reviewRequiredExpressions: string[]
+  unknownExpressionPolicy: 'review-required'
+}
+
 const rootPath = process.cwd()
-const outputPath = path.resolve(rootPath, process.argv[2] ?? 'third-party-licenses.json')
+const checkOnly = process.argv.includes('--check')
+const outputArgument = process.argv.slice(2).find(argument => argument !== '--check')
+const outputPath = path.resolve(rootPath, outputArgument ?? 'third-party-licenses.json')
+const policyPath = path.join(rootPath, 'license-policy.json')
+const policy = JSON.parse(fs.readFileSync(policyPath, 'utf8')) as LicensePolicy
 const pnpmCli = process.env.npm_execpath
 
 if (!pnpmCli) {
@@ -83,17 +95,64 @@ const packages: InventoryPackage[] = Object.entries(report)
   }))
   .sort((left, right) => left.name.localeCompare(right.name) || left.license.localeCompare(right.license))
 
+if (
+  policy.schemaVersion !== 1
+  || !Array.isArray(policy.allowedExpressions)
+  || !Array.isArray(policy.deniedExpressions)
+  || !Array.isArray(policy.reviewRequiredExpressions)
+  || policy.unknownExpressionPolicy !== 'review-required'
+) {
+  throw new Error('license-policy.json does not match schema version 1')
+}
+const expressionCategories = [
+  ...policy.allowedExpressions.map(expression => [expression, 'allowed'] as const),
+  ...policy.deniedExpressions.map(expression => [expression, 'denied'] as const),
+  ...policy.reviewRequiredExpressions.map(expression => [expression, 'review-required'] as const)
+]
+const duplicateExpressions = expressionCategories
+  .filter(([expression], index) => expressionCategories.findIndex(([candidate]) => candidate === expression) !== index)
+  .map(([expression]) => expression)
+if (duplicateExpressions.length > 0) {
+  throw new Error(`License expressions appear in multiple policy categories: ${[...new Set(duplicateExpressions)].sort().join(', ')}`)
+}
+const allowedExpressions = new Set(policy.allowedExpressions)
+const deniedExpressions = new Set(policy.deniedExpressions)
+const reviewRequiredExpressions = new Set(policy.reviewRequiredExpressions)
+const violations = packages
+  .filter(pkg => !allowedExpressions.has(pkg.license))
+  .map(pkg => {
+    const disposition = deniedExpressions.has(pkg.license)
+      ? 'denied'
+      : reviewRequiredExpressions.has(pkg.license) ? 'review-required' : policy.unknownExpressionPolicy
+    return `${pkg.name}@${pkg.versions.join(',')}: ${pkg.license} (${disposition})`
+  })
+if (violations.length > 0) {
+  throw new Error(`Production dependency licenses violate policy:\n${violations.join('\n')}`)
+}
+
 const lockfile = fs.readFileSync(path.join(rootPath, 'pnpm-lock.yaml'))
 const inventory = {
   schemaVersion: 1,
   source: {
     lockfile: 'pnpm-lock.yaml',
     sha256: createHash('sha256').update(lockfile).digest('hex'),
-    scope: 'production'
+    scope: 'production',
+    policy: {
+      file: path.relative(rootPath, policyPath),
+      sha256: createHash('sha256').update(fs.readFileSync(policyPath)).digest('hex')
+    },
   },
   licenseMetadataOverrides: Object.fromEntries(Object.entries(licenseMetadataOverrides).sort(([left], [right]) => left.localeCompare(right))),
   packages
 }
 
-fs.writeFileSync(outputPath, `${JSON.stringify(inventory, null, 2)}\n`)
-console.log(`Wrote ${packages.length} production dependency license records to ${path.relative(rootPath, outputPath)}`)
+const serializedInventory = `${JSON.stringify(inventory, null, 2)}\n`
+if (checkOnly) {
+  if (!fs.existsSync(outputPath) || fs.readFileSync(outputPath, 'utf8') !== serializedInventory) {
+    throw new Error(`${path.relative(rootPath, outputPath)} is stale; run pnpm run licenses:inventory and commit the result`)
+  }
+  console.log(`Verified ${packages.length} tracked production dependency license records`)
+} else {
+  fs.writeFileSync(outputPath, serializedInventory)
+  console.log(`Wrote ${packages.length} production dependency license records to ${path.relative(rootPath, outputPath)}`)
+}

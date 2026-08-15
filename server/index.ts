@@ -7,6 +7,10 @@ import path from 'node:path'
 import { nanoid } from 'nanoid'
 import { DateTime } from 'luxon'
 
+const configuredInstanceId = process.env.INSTANCE_ID?.trim()
+if (configuredInstanceId && configuredInstanceId.length > 128) {
+  throw new RangeError('INSTANCE_ID must contain at most 128 characters')
+}
 
 interface BootstrapKernel {
   init(): void
@@ -34,7 +38,7 @@ const wiki: WikiBootstrap = {
   IS_DEBUG: process.env.NODE_ENV === 'development',
   IS_MASTER: true,
   ROOTPATH: process.cwd(),
-  INSTANCE_ID: nanoid(10),
+  INSTANCE_ID: configuredInstanceId || nanoid(10),
   SERVERPATH: path.join(process.cwd(), 'server'),
   startedAt: DateTime.utc()
 }

@@ -235,6 +235,17 @@ export default {
   border-bottom: 1px solid rgba(127, 127, 127, .2);
 }
 
+.admin > .v-main {
+  padding-top: 64px !important;
+  transition: none !important;
+}
+
+.admin > .admin-sidebar {
+  top: 64px !important;
+  height: calc(100% - 64px) !important;
+  transition-property: box-shadow, transform, visibility, width, left, right !important;
+}
+
 .admin-router {
   &-enter-active, &-leave-active {
     transition: opacity .25s ease;

@@ -1,5 +1,8 @@
 import createKnex, { type Knex } from 'knex'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { runDurableJobBatch } from '../../core/durable-jobs.ts'
+import { up as createDurableJobs } from '../../db/migrations/2.5.130.ts'
+import { createContentExtensionRerenderHandler } from '../../jobs/content-extension-rerender.ts'
 
 import {
   listContentExtensions,
@@ -25,6 +28,7 @@ describe('content extension operations', () => {
       pool: { max: 1, min: 1 },
       useNullAsDefault: true
     })
+    await createDurableJobs(db)
     await db.schema.createTable('contentExtensions', table => {
       table.string('key').primary()
       table.boolean('isEnabled').notNullable()
@@ -79,7 +83,8 @@ describe('content extension operations', () => {
     await db.destroy()
   })
 
-  it('persists a toggle, invalidates cached rich output, and rerenders only matching pages', async () => {
+  it('persists a toggle and queues a durable rerender without blocking the request', async () => {
+    const sourceBefore = await db('pages').where({ id: 1 }).first('content')
     const status = await setContentExtensionEnabled('qr', false, 42)
 
     expect(status).toMatchObject({ key: 'qr', isEnabled: false, compatible: true, diagnostic: null })
@@ -87,11 +92,67 @@ describe('content extension operations', () => {
       isEnabled: 0,
       updatedBy: 42
     })
-    await expect(db('pages').where({ id: 1 }).first('render')).resolves.toMatchObject({ render: '<pre>escaped source</pre>' })
+    await expect(db('pages').where({ id: 1 }).first('render')).resolves.toMatchObject({ render: '<svg>active QR</svg>' })
+    await expect(db('durableJobs').where({ type: 'rerender-content-extension' }).first()).resolves.toMatchObject({
+      state: 'pending',
+      attempts: 0,
+      payload: JSON.stringify({ key: 'qr' })
+    })
+    expect(renderPage).not.toHaveBeenCalled()
+
+    await runDurableJobBatch(db, {
+      workerId: 'extension-worker',
+      handlers: { 'rerender-content-extension@1': createContentExtensionRerenderHandler(global.WIKI) }
+    })
+
+    await expect(db('pages').where({ id: 1 }).first('content', 'render')).resolves.toMatchObject({
+      content: sourceBefore?.content,
+      render: '<pre>escaped source</pre>'
+    })
     expect(cachedHashes.has('qr-hash')).toBe(false)
     expect(cachedHashes.has('plain-hash')).toBe(true)
     expect(events).toEqual(['cache:qr-hash', 'event:qr-hash', 'render:1'])
     expect(renderPage).toHaveBeenCalledTimes(1)
+    await expect(db('durableJobs').where({ type: 'rerender-content-extension' }).first('state', 'attempts')).resolves.toMatchObject({
+      state: 'succeeded',
+      attempts: 1
+    })
+  })
+
+  it('retries interrupted rerenders without changing stored extension bytes', async () => {
+    const sourceBefore = await db('pages').where({ id: 1 }).first('content')
+    renderPage.mockRejectedValueOnce(new Error('worker interrupted'))
+    await setContentExtensionEnabled('qr', false, 42)
+    const handlers = { 'rerender-content-extension@1': createContentExtensionRerenderHandler(global.WIKI) }
+
+    await runDurableJobBatch(db, {
+      workerId: 'extension-worker-a',
+      handlers,
+      retryDelay: () => 0
+    })
+    await expect(db('durableJobs').where({ type: 'rerender-content-extension' }).first('state', 'attempts', 'lastError')).resolves.toMatchObject({
+      state: 'pending',
+      attempts: 1,
+      lastError: expect.stringContaining('worker interrupted')
+    })
+    await expect(db('pages').where({ id: 1 }).first('content', 'render')).resolves.toMatchObject({
+      content: sourceBefore?.content,
+      render: '<svg>active QR</svg>'
+    })
+
+    await runDurableJobBatch(db, {
+      workerId: 'extension-worker-b',
+      handlers,
+      retryDelay: () => 0
+    })
+    await expect(db('durableJobs').where({ type: 'rerender-content-extension' }).first('state', 'attempts')).resolves.toMatchObject({
+      state: 'succeeded',
+      attempts: 2
+    })
+    await expect(db('pages').where({ id: 1 }).first('content', 'render')).resolves.toMatchObject({
+      content: sourceBefore?.content,
+      render: '<pre>escaped source</pre>'
+    })
   })
 
   it('reports persisted version mismatches as editor-usable incompatibility diagnostics', async () => {

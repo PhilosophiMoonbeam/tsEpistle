@@ -93,13 +93,34 @@
                       span /{{ props.item.path }}
                     .caption.grey--text.mt-2 Updated {{ $helpers.formatMoment(props.item.updatedAt, 'calendar') }}
             template(v-slot:no-data)
-              v-alert.ma-3(icon='mdi-alert', :value='true', outlined) No pages to display.
+              async-state(
+                v-if='loading'
+                state='loading'
+                title='Loading pages'
+                message='Fetching the latest page list.'
+              )
+              async-state(
+                v-else-if='errorMessage'
+                state='error'
+                title='Pages could not be loaded'
+                :message='errorMessage'
+                retry-label='Try again'
+                @retry='loadPages'
+              )
+              async-state(
+                v-else
+                state='empty'
+                title='No pages to display'
+                message='Change the filters or create a page.'
+              )
           .text-center.py-2.animated.fadeInDown(v-if='this.pageTotal > 1')
             v-pagination(v-model='pagination', :length='pageTotal')
 </template>
 
 <script lang='ts'>
 import _ from 'lodash'
+import AsyncState from '@/components/common/async-state.vue'
+import { getErrorMessage } from '../../helpers/root-ui-store'
 import { fetchPageList, type PageListRow } from '../../helpers/pages-api'
 import { wikiStore } from '@/store/index.ts'
 
@@ -109,6 +130,9 @@ type PageFilterOption<T> = {
 }
 
 export default {
+  components: {
+    AsyncState
+  },
   data() {
     return {
       pagination: 1,
@@ -129,6 +153,7 @@ export default {
         { text: 'Published', value: true },
         { text: 'Not Published', value: false }
       ] as PageFilterOption<boolean | null>[],
+      errorMessage: '',
       loading: false
     }
   },
@@ -161,12 +186,14 @@ export default {
   },
   methods: {
     async loadPages (): Promise<boolean> {
+      this.errorMessage = ''
       this.loading = true
       wikiStore.startLoading('admin-pages-refresh')
       try {
         this.pages = await fetchPageList(window.fetch.bind(window))
         return true
       } catch (err) {
+        this.errorMessage = getErrorMessage(err)
         wikiStore.showError(err)
         return false
       } finally {
@@ -193,6 +220,10 @@ export default {
 </script>
 
 <style lang='scss'>
+.admin-responsive-table {
+  min-height: min(45rem, calc(100vh - 16rem));
+}
+
 .admin-pages-path {
   display: flex;
   justify-content: flex-start;

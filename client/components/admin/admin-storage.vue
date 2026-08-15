@@ -53,7 +53,7 @@
                     v-list-item-title.body-2 {{tgt.title}}
                     v-list-item-subtitle.purple--text.caption {{tgt.status}}
                   div.v-list-item-action
-                    v-progress-circular(indeterminate, :size='20', :width='2', color='purple')
+                    v-progress-circular(indeterminate, :size='20', :width='2', color='purple', :aria-label='`Synchronizing ${tgt.title}`')
                 template(v-else-if='tgt.status === `operational`')
                   v-avatar(color='green')
                     v-icon(color='white') mdi-check-circle

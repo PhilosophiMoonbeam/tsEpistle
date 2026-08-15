@@ -164,7 +164,7 @@
                   v-list-item-subtitle.body-2(:class='$vuetify.theme.current.dark ? `grey--text text--lighten-2` : `grey--text text--darken-3`') User ID: {{ page.ownerId }}
 
     v-row(align='center', v-else)
-      v-progress-circular(indeterminate, width='2', color='grey')
+      v-progress-circular(indeterminate, width='2', color='grey', :aria-label='$t(`common:page.loading`)')
       .body-2.pl-3.grey--text {{ $t('common:page.loading') }}
 
 </template>

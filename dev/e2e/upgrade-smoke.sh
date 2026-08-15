@@ -16,10 +16,23 @@ MIGRATION_MAX_SECONDS=${MIGRATION_MAX_SECONDS:-120}
 MIGRATION_MAX_DB_GROWTH_BYTES=${MIGRATION_MAX_DB_GROWTH_BYTES:-268435456}
 MIGRATION_MAX_DB_AMPLIFICATION_PERCENT=${MIGRATION_MAX_DB_AMPLIFICATION_PERCENT:-500}
 MIGRATION_MAX_DATA_GROWTH_BYTES=${MIGRATION_MAX_DATA_GROWTH_BYTES:-67108864}
+MIGRATION_MAX_PEAK_MEMORY_BYTES=${MIGRATION_MAX_PEAK_MEMORY_BYTES:-1073741824}
 MIGRATION_METRICS_FILE=${MIGRATION_METRICS_FILE:-migration-metrics-postgres.json}
 RECOVERY_DIR=$(mktemp -d)
+MIGRATION_SAMPLES_FILE=$RECOVERY_DIR/migration-resource-samples
+MIGRATION_MONITOR_STOP=$RECOVERY_DIR/migration-resource-monitor.stop
+migration_monitor_pid=
+stop_migration_monitor() {
+  if [ -n "$migration_monitor_pid" ]; then
+    touch "$MIGRATION_MONITOR_STOP"
+    wait "$migration_monitor_pid" || true
+    migration_monitor_pid=
+  fi
+}
+
 
 cleanup() {
+  stop_migration_monitor
   if [ "${recovery_succeeded:-false}" != true ]; then
     docker logs wiki 2>/dev/null || true
     docker logs db 2>/dev/null || true
@@ -141,6 +154,21 @@ data_volume_size_bytes() {
   docker run --rm --user 0 --entrypoint sh -v wiki-data:/data:ro "$WIKI_TEST_IMAGE" \
     -c 'set -- $(du -sk /data); echo $(( $1 * 1024 ))'
 }
+monitor_migration_resources() {
+  while [ ! -e "$MIGRATION_MONITOR_STOP" ]; do
+    local database_bytes data_bytes
+    database_bytes=$(database_size_bytes 2>/dev/null || printf '0')
+    data_bytes=$(data_volume_size_bytes 2>/dev/null || printf '0')
+    database_bytes=${database_bytes//[[:space:]]/}
+    data_bytes=${data_bytes//[[:space:]]/}
+    if [[ "$database_bytes" =~ ^[0-9]+$ ]] && [[ "$data_bytes" =~ ^[0-9]+$ ]]; then
+      printf '%s %s\n' "$database_bytes" "$data_bytes" >> "$MIGRATION_SAMPLES_FILE"
+    fi
+    sleep 1
+  done
+}
+
+
 
 snapshot_data_volume() {
   docker run --rm --user 0 --entrypoint tar \
@@ -191,14 +219,28 @@ database_bytes_before=${database_bytes_before//[[:space:]]/}
 data_bytes_before=$(data_volume_size_bytes)
 data_bytes_before=${data_bytes_before//[[:space:]]/}
 
+rm -f "$MIGRATION_MONITOR_STOP"
+: > "$MIGRATION_SAMPLES_FILE"
+monitor_migration_resources &
+migration_monitor_pid=$!
 migration_started_at=$(date +%s)
 start_wiki "$WIKI_TEST_IMAGE"
 wait_for_url http://127.0.0.1:3000/healthz
 migration_seconds=$(($(date +%s) - migration_started_at))
+stop_migration_monitor
 database_bytes_after=$(database_size_bytes)
 database_bytes_after=${database_bytes_after//[[:space:]]/}
 data_bytes_after=$(data_volume_size_bytes)
 data_bytes_after=${data_bytes_after//[[:space:]]/}
+database_bytes_peak=$database_bytes_after
+data_bytes_peak=$data_bytes_after
+while read -r sampled_database_bytes sampled_data_bytes; do
+  if [ "$sampled_database_bytes" -gt "$database_bytes_peak" ]; then database_bytes_peak=$sampled_database_bytes; fi
+  if [ "$sampled_data_bytes" -gt "$data_bytes_peak" ]; then data_bytes_peak=$sampled_data_bytes; fi
+done < "$MIGRATION_SAMPLES_FILE"
+peak_memory_bytes=$(docker exec wiki cat /sys/fs/cgroup/memory.peak)
+peak_memory_bytes=${peak_memory_bytes//[[:space:]]/}
+[[ "$peak_memory_bytes" =~ ^[0-9]+$ ]]
 after_report=$(resource_report)
 assert_upgraded_report "$after_report"
 
@@ -219,13 +261,18 @@ fi
 
 database_growth=$((database_bytes_after - database_bytes_before))
 data_growth=$((data_bytes_after - data_bytes_before))
+database_peak_growth=$((database_bytes_peak - database_bytes_before))
+data_peak_growth=$((data_bytes_peak - data_bytes_before))
 if [ "$database_growth" -lt 0 ]; then database_growth=0; fi
 if [ "$data_growth" -lt 0 ]; then data_growth=0; fi
-database_amplification_percent=$(((database_bytes_after * 100 + database_bytes_before - 1) / database_bytes_before))
+if [ "$database_peak_growth" -lt 0 ]; then database_peak_growth=0; fi
+if [ "$data_peak_growth" -lt 0 ]; then data_peak_growth=0; fi
+database_peak_amplification_percent=$(((database_bytes_peak * 100 + database_bytes_before - 1) / database_bytes_before))
 [ "$migration_seconds" -le "$MIGRATION_MAX_SECONDS" ]
-[ "$database_growth" -le "$MIGRATION_MAX_DB_GROWTH_BYTES" ]
-[ "$database_amplification_percent" -le "$MIGRATION_MAX_DB_AMPLIFICATION_PERCENT" ]
-[ "$data_growth" -le "$MIGRATION_MAX_DATA_GROWTH_BYTES" ]
+[ "$database_peak_growth" -le "$MIGRATION_MAX_DB_GROWTH_BYTES" ]
+[ "$database_peak_amplification_percent" -le "$MIGRATION_MAX_DB_AMPLIFICATION_PERCENT" ]
+[ "$data_peak_growth" -le "$MIGRATION_MAX_DATA_GROWTH_BYTES" ]
+[ "$peak_memory_bytes" -le "$MIGRATION_MAX_PEAK_MEMORY_BYTES" ]
 
 docker rm -f wiki >/dev/null
 docker exec db dropdb --username=wiki --force wiki
@@ -257,17 +304,22 @@ jq --null-input \
   --argjson migrationSeconds "$migration_seconds" \
   --argjson databaseBytesBefore "$database_bytes_before" \
   --argjson databaseBytesAfter "$database_bytes_after" \
+  --argjson databaseBytesPeak "$database_bytes_peak" \
   --argjson databaseGrowthBytes "$database_growth" \
-  --argjson databaseAmplificationPercent "$database_amplification_percent" \
+  --argjson databasePeakGrowthBytes "$database_peak_growth" \
+  --argjson databasePeakAmplificationPercent "$database_peak_amplification_percent" \
   --argjson dataBytesBefore "$data_bytes_before" \
   --argjson dataBytesAfter "$data_bytes_after" \
-  --argjson dataGrowthBytes "$data_growth" \
+  --argjson dataBytesPeak "$data_bytes_peak" \
+  --argjson dataPeakGrowthBytes "$data_peak_growth" \
+  --argjson peakMemoryBytes "$peak_memory_bytes" \
   --argjson maxSeconds "$MIGRATION_MAX_SECONDS" \
   --argjson maxDatabaseGrowthBytes "$MIGRATION_MAX_DB_GROWTH_BYTES" \
   --argjson maxDatabaseAmplificationPercent "$MIGRATION_MAX_DB_AMPLIFICATION_PERCENT" \
   --argjson maxDataGrowthBytes "$MIGRATION_MAX_DATA_GROWTH_BYTES" \
+  --argjson maxPeakMemoryBytes "$MIGRATION_MAX_PEAK_MEMORY_BYTES" \
   '{
-    schemaVersion: 2,
+    schemaVersion: 3,
     candidateRevision: $candidateRevision,
     sourceImage: $sourceImage,
     targetImage: $targetImage,
@@ -281,17 +333,22 @@ jq --null-input \
       seconds: $migrationSeconds,
       databaseBytesBefore: $databaseBytesBefore,
       databaseBytesAfter: $databaseBytesAfter,
+      databaseBytesPeak: $databaseBytesPeak,
       databaseGrowthBytes: $databaseGrowthBytes,
-      databaseAmplificationPercent: $databaseAmplificationPercent,
+      databasePeakGrowthBytes: $databasePeakGrowthBytes,
+      databasePeakAmplificationPercent: $databasePeakAmplificationPercent,
       dataBytesBefore: $dataBytesBefore,
       dataBytesAfter: $dataBytesAfter,
-      dataGrowthBytes: $dataGrowthBytes
+      dataBytesPeak: $dataBytesPeak,
+      dataPeakGrowthBytes: $dataPeakGrowthBytes,
+      peakMemoryBytes: $peakMemoryBytes
     },
     limits: {
       migrationSeconds: $maxSeconds,
       databaseGrowthBytes: $maxDatabaseGrowthBytes,
       databaseAmplificationPercent: $maxDatabaseAmplificationPercent,
-      dataGrowthBytes: $maxDataGrowthBytes
+      dataGrowthBytes: $maxDataGrowthBytes,
+      peakMemoryBytes: $maxPeakMemoryBytes
     },
     rollbackVerified: true
   }' > "$MIGRATION_METRICS_FILE"

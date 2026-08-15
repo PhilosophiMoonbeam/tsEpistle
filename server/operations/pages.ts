@@ -1,5 +1,7 @@
 import _ from 'lodash'
+import type { Knex } from 'knex'
 import { canReadPage, canWritePage, managesSystem, pageRoute, principalId, scopePageQuery, type PageVisibility } from '../helpers/page-access.ts'
+import { listPageIndexCandidates, PAGE_INDEX_CANDIDATE_LIMIT } from '../repositories/page-index.ts'
 
 import errors from './errors.ts'
 
@@ -42,7 +44,8 @@ interface QueryBuilder {
   orWhereIn(column: string, values: readonly unknown[]): QueryBuilder
   andWhere(column: string, operatorOrValue: unknown, value?: unknown): QueryBuilder
   andWhere(callback: (builder: QueryBuilder) => void): QueryBuilder
-  andWhereNotNull(column: string): QueryBuilder
+  whereNotNull(column: string): QueryBuilder
+  whereRaw(sql: string, bindings: unknown[]): QueryBuilder
   limit(value: number): QueryBuilder
   offset(value: number): QueryBuilder
   orderBy(column: unknown, direction?: string): QueryBuilder
@@ -65,18 +68,6 @@ interface TagWithRelations extends TagRecord {
   $relatedQuery(relation: 'pages'): { unrelate(): Promise<number> }
 }
 interface RelatedTagQuery extends PromiseLike<TagRecord[]> { for(pageId: number): RelatedTagQuery }
-interface KnexFirstQuery extends PromiseLike<PageTreeRecord | undefined> {
-  where(criteria: Record<string, unknown>): KnexFirstQuery
-}
-interface KnexQuery extends PromiseLike<Array<PageTreeRecord & LinkRow>> {
-  column(...columns: unknown[]): KnexQuery
-  first(...columns: string[]): KnexFirstQuery
-  leftJoin(table: string, left: string, right: string): KnexQuery
-  fullOuterJoin(table: string, left: string, right: string): KnexQuery
-  where(criteria: Record<string, unknown> | ((builder: QueryBuilder) => void)): KnexQuery
-  unionAll(query: KnexQuery): KnexQuery
-  orderBy(columns: unknown): KnexQuery
-}
 interface SearchResult extends Record<string, unknown> { path: string, locale: string, tags?: unknown }
 interface SearchResponse extends Record<string, unknown> { results: SearchResult[], suggestions?: unknown[] }
 interface WikiPageOperations {
@@ -91,7 +82,7 @@ interface WikiPageOperations {
   config: { db: { type: string }, lang: { code: string } }
   data: { searchEngine?: { query(query: string, options: Record<string, unknown>): Promise<SearchResponse> } }
   models: {
-    knex(table: string): KnexQuery
+    knex: Knex
     pages: {
       query(): PageQuery
       relatedQuery(relation: 'tags'): RelatedTagQuery
@@ -214,26 +205,13 @@ const listIndex = async ({ requester, ...rawArgs }: OperationInput): Promise<Pag
   if (limit > 200) throw new ApplicationError('limit must not exceed 200', { code: 'INVALID_INPUT', status: 400 })
   if (!['path', 'title', 'updated'].includes(order)) throw new ApplicationError('order must be path, title, or updated', { code: 'INVALID_INPUT', status: 400 })
 
-  const candidateLimit = 5_001
-  const pages = await wiki.models.pages.query().column([
-    'pages.id',
-    'path',
-    'localeCode',
-    'title',
-    'description',
-    'visibility',
-    'ownerId',
-    'updatedAt'
-  ])
-    .withGraphJoined('tags')
-    .modifyGraph('tags', builder => { builder.select('tag') })
-    .modify(queryBuilder => {
-      scopePageQuery(queryBuilder, requester, { table: 'pages' })
-      queryBuilder.where('localeCode', locale)
-      if (path.length > 0) queryBuilder.where('path', 'like', `${path}/%`)
-      queryBuilder.orderBy('path', 'asc').limit(candidateLimit)
-    })
-  if (pages.length >= candidateLimit) {
+  const pages = await listPageIndexCandidates(wiki.models.knex, {
+    locale,
+    path,
+    limit: PAGE_INDEX_CANDIDATE_LIMIT,
+    scope: query => { scopePageQuery(query, requester, { table: 'pages' }) }
+  })
+  if (pages.length >= PAGE_INDEX_CANDIDATE_LIMIT) {
     throw new ApplicationError('Page index path matches too many pages; choose a narrower path.', { code: 'PAGE_INDEX_TOO_BROAD', status: 422 })
   }
 
@@ -494,7 +472,7 @@ const getTree = async (input: OperationInput) => {
     scopePageQuery(builder, requester)
     builder.where('localeCode', locale)
     if (mode === 'FOLDERS') builder.andWhere('isFolder', true)
-    else if (mode === 'PAGES') builder.andWhereNotNull('pageId')
+    else if (mode === 'PAGES') builder.whereNotNull('pageId')
     if (!parentId || parentId < 1) builder.whereNull('parent')
     else {
       builder.where('parent', parentId)

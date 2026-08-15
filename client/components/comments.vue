@@ -63,6 +63,7 @@
         size='20'
         width='1'
         color='blue-grey'
+        :aria-label='$t(`common:comments.loading`)'
       )
       .caption.blue-grey--text.pl-3: em {{$t('common:comments.loading')}}
     v-timeline(

@@ -83,6 +83,8 @@ export default {
   }
 
   .v-footer {
+    flex: 0 0 auto;
+
     a {
       text-decoration: underline;
       text-underline-offset: 0.15em;

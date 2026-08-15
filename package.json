@@ -14,7 +14,10 @@
     "dev:client": "vite --host 127.0.0.1",
     "build": "node server/scripts/generate-build-metadata.ts && vite build && node server/scripts/check-bundle-budgets.ts",
     "bundle:check": "node server/scripts/check-bundle-budgets.ts",
+    "dependencies:check": "node server/scripts/check-dependency-policy.ts",
     "openapi:check": "node server/scripts/check-openapi.ts && redocly lint node_modules/.cache/wiki/openapi-v1.json --lint-config=error",
+    "placeholders:check": "node server/scripts/check-production-placeholders.ts",
+    "benchmark:page-index": "dev/e2e/page-index-benchmark.sh",
     "scarlett:report": "node server/scripts/check-scarlett-upstream.ts --fetch",
     "scarlett:check": "node server/scripts/check-scarlett-upstream.ts --fetch --check",
     "watch": "pnpm run dev",
@@ -26,6 +29,7 @@
     "e2e": "playwright test",
     "docker:build": "node server/scripts/build-docker.ts",
     "licenses:inventory": "node server/scripts/generate-license-inventory.ts",
+    "licenses:check": "node server/scripts/generate-license-inventory.ts --check",
     "test:security": "vitest run server/test/helpers/page-access.test.ts server/test/core/auth.page-rules.test.ts server/test/core/auth.api-access.test.ts server/test/helpers/auth-rate-limiter.test.js server/test/core/trust-proxy.test.ts server/test/controllers/auth.test.js server/test/controllers/api.auth.test.js server/test/controllers/common.private-routing.test.js server/test/models/pages.private-errors.test.js server/test/operations.assets.test.js server/test/operations.comments.visibility.test.js server/test/operations.pages.history-visibility.test.js server/test/operations.pages.search.test.js server/test/modules.search.db.visibility.test.js server/test/modules.rendering.html-core.visibility.test.js server/test/operations/page-protection.test.ts server/test/core/webhooks.test.js server/test/content-extensions/renderer.test.ts server/test/content-extensions/api.test.ts server/test/core/collaboration.test.ts server/test/db/migration-preflight.test.ts"
   },
   "repository": {
@@ -207,17 +211,17 @@
     "winston": "3.19.0",
     "winston-transport": "4.9.0",
     "ws": "8.21.3",
-    "y-codemirror.next": "^0.3.5",
-    "y-protocols": "^1.0.7",
+    "y-codemirror.next": "0.3.5",
+    "y-protocols": "1.0.7",
     "yargs": "18.1.0",
-    "yjs": "^13.6.32"
+    "yjs": "13.6.32"
   },
   "devDependencies": {
-    "@axe-core/playwright": "^4.13.0",
+    "@axe-core/playwright": "4.13.0",
     "@eslint/js": "10.0.1",
     "@mdi/font": "7.4.47",
     "@playwright/test": "1.62.1",
-    "@redocly/cli": "^2.46.1",
+    "@redocly/cli": "2.46.1",
     "@types/canvas-confetti": "1.9.0",
     "@types/compression": "1.8.1",
     "@types/cookie-parser": "1.4.10",

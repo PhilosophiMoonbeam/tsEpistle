@@ -116,10 +116,10 @@
                     v-icon(v-if='item.isRTL') mdi-check
                   template(v-slot:item.availability='{ item }')
                     .d-flex.align-center.pl-4
-                      v-progress-circular(:value='item.availability', width='2', size='20', :color='item.availability <= 33 ? `red` : (item.availability <= 66) ? `orange` : `green`')
+                      v-progress-circular(:value='item.availability', width='2', size='20', :color='item.availability <= 33 ? `red` : (item.availability <= 66) ? `orange` : `green`', :aria-label='`${item.name} translation availability`', :aria-valuetext='`${item.availability}%`')
                       .caption.mx-2(:class='item.availability <= 33 ? `red--text` : (item.availability <= 66) ? `orange--text` : `green--text`') {{item.availability}}%
                   template(v-slot:item.isInstalled='{ item }')
-                    v-progress-circular(v-if='item.isDownloading', indeterminate, color='blue', size='20', :width='2')
+                    v-progress-circular(v-if='item.isDownloading', indeterminate, color='blue', size='20', :width='2', :aria-label='`Downloading ${item.name}`')
                     v-btn(v-else-if='item.isInstalled && item.installDate < item.updatedAt', icon, small, @click='download(item)')
                       v-icon.blue--text mdi-cached
                     v-btn(v-else-if='item.isInstalled', icon, small, @click='download(item)')

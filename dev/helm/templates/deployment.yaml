@@ -101,6 +101,10 @@ spec:
             - name: DB_SSL_CA
               value: "{{ default "" .Values.externalPostgresql.ca }}"
             {{- end }}
+            - name: INSTANCE_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
             - name: HA_ACTIVE
               value: {{ .Values.replicaCount | int | le 2 | quote }}
             {{- with .Values.extraEnvVars }}

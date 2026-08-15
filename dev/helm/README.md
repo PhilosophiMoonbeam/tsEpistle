@@ -31,6 +31,8 @@ helm install wiki ./wiki-ts-preview-0.1.0-alpha.1.tgz \
 
 The image tag defaults to the chart `appVersion`. Prefer an immutable platform or multi-platform digest in `image.digest`; it takes precedence over `image.tag`. Do not use `canary` or floating `preview` tags in production.
 
+Each pod receives its Kubernetes pod name as `INSTANCE_ID`. Lease ownership and cross-instance notifications therefore identify the exact process that handled the work; do not override this variable with a value shared by multiple replicas.
+
 ## External PostgreSQL
 
 Disable the bundled PostgreSQL StatefulSet and reference an existing Secret:
@@ -72,6 +74,21 @@ Create the Secret before installing the release. `externalPostgresql.databaseURL
 6. Confirm the Deployment is available, `/healthz` returns HTTP 200, login works, and a read/write page check succeeds.
 
 Wiki.ts runs database migrations during startup. Do not run mixed application versions against one database during an upgrade.
+
+## Backup verification
+
+Back up PostgreSQL in custom format and prove that the archive can restore before changing the application:
+
+```console
+pg_dump --format=custom --file=wiki-pre-upgrade.dump "$DATABASE_URL"
+pg_restore --list wiki-pre-upgrade.dump >/dev/null
+createdb wiki_restore_check
+pg_restore --exit-on-error --single-transaction --dbname=wiki_restore_check wiki-pre-upgrade.dump
+psql --dbname=wiki_restore_check --command='SELECT COUNT(*) FROM pages;'
+dropdb wiki_restore_check
+```
+
+Use a dedicated restore-check database on a non-production server. Back up or snapshot `/wiki/data` in the same write-maintenance window and record the database archive checksum, volume snapshot identifier, chart version, values file, and image digest together. A database-only backup is incomplete when local assets or other application data are stored on that volume.
 
 ## Rollback and restore
 

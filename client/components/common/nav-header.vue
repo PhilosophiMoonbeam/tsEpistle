@@ -60,7 +60,7 @@
         v-toolbar.nav-header-inner.pr-4(color='black', dark, flat)
           v-spacer
           .navHeaderLoading.mr-3
-            v-progress-circular(indeterminate, color='blue', :size='22', :width='2' v-show='isLoading')
+            v-progress-circular(indeterminate, color='blue', :size='22', :width='2' v-show='isLoading', aria-label='Page loading')
 
           slot(name='actions')
 

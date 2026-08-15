@@ -13,6 +13,7 @@
           :size='20'
           :width='2'
           v-show='searchLoading'
+          :aria-label='$t(`common:user.search`)'
           )
       v-card-text.pt-5
         v-text-field(

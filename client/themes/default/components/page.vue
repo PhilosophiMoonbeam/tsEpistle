@@ -317,7 +317,20 @@
                   v-card
                     v-card-title.text-subtitle-1 Approval inbox
                     v-divider
-                    v-list(v-if='approvalInbox.length > 0', lines='three', density='compact')
+                    async-state(
+                      v-if='approvalInboxLoading'
+                      state='loading'
+                      title='Loading approval inbox'
+                    )
+                    async-state(
+                      v-else-if='approvalInboxError'
+                      state='error'
+                      title='Approval inbox could not be loaded'
+                      :message='approvalInboxError'
+                      retry-label='Try again'
+                      @retry='loadApprovalInbox'
+                    )
+                    v-list(v-else-if='approvalInbox.length > 0', lines='three', density='compact')
                       v-list-item(
                         v-for='approval in approvalInbox'
                         :key='approval.id'
@@ -326,7 +339,11 @@
                         v-list-item-title {{ approval.title }}
                         v-list-item-subtitle {{ approvalStatusLabel(approval.status) }} · Revision {{ approval.revisionId }}
                         v-list-item-subtitle(v-if='approval.stale') Submitted revision is stale
-                    v-card-text.text-medium-emphasis(v-else) No active approval requests.
+                    async-state(
+                      v-else
+                      state='empty'
+                      title='No active approval requests'
+                    )
                 v-tooltip(bottom, v-if='isAuthenticated && (hasWritePagesPermission || hasManagePagesPermission || hasAdminPermission)')
                   template(v-slot:activator='{ props }')
                     v-btn(
@@ -649,6 +666,7 @@
 <script lang='ts'>
 import { defineComponent, type PropType } from 'vue'
 import { useGoTo } from 'vuetify'
+import AsyncState from '@/components/common/async-state.vue'
 import StatusIndicator from '@/components/common/status-indicator.vue'
 import Tabset from './tabset.vue'
 import NavSidebar, { type SidebarItem } from './nav-sidebar.vue'
@@ -670,7 +688,7 @@ import {
 } from '../../../helpers/page-action-events'
 import { decodeBase64Json } from '../../../helpers/base64'
 import { hydrateContentExtensions } from '../../../helpers/content-extension-runtime'
-import { pushGraphError, showNotification } from '../../../helpers/root-ui-store'
+import { getErrorMessage, pushGraphError, showNotification } from '../../../helpers/root-ui-store'
 
 /* global siteLangs */
 
@@ -759,6 +777,7 @@ Prism.plugins.toolbar.registerButton('copy-to-clipboard', (env: PrismEnvironment
 
 export default defineComponent({
   components: {
+    AsyncState,
     NavSidebar,
     StatusIndicator,
     Tabset
@@ -873,6 +892,8 @@ export default defineComponent({
       approvalDialog: false,
       approvalLoading: false,
       pageApproval: null as PageApproval | null,
+      approvalInboxLoading: false,
+      approvalInboxError: '',
       approvalInbox: [] as PageApproval[],
       approvalComment: '',
       approvalAssigneeId: null as number | null,
@@ -1173,6 +1194,8 @@ export default defineComponent({
       }
     },
     async loadApprovalInbox () {
+      this.approvalInboxLoading = true
+      this.approvalInboxError = ''
       try {
         const response = await fetch('/_api/pages/approvals/inbox', {
           credentials: 'same-origin',
@@ -1182,7 +1205,10 @@ export default defineComponent({
         const payload = await response.json() as { items?: unknown }
         this.approvalInbox = Array.isArray(payload.items) ? payload.items as PageApproval[] : []
       } catch (error) {
+        this.approvalInboxError = getErrorMessage(error)
         pushGraphError(wikiStore, error)
+      } finally {
+        this.approvalInboxLoading = false
       }
     },
     openApprovalWorkflow () {

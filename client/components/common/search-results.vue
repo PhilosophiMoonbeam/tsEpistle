@@ -5,15 +5,25 @@
         img(src='/_assets/svg/icon-search-alt.svg')
         .mt-4 {{$t('common:header.searchHint')}}
       .search-results-loader(v-else-if='searchIsLoading && (!results || results.length < 1)')
-        orbit-spinner(
-          :animation-duration='1000'
-          :size='100'
-          color='#FFF'
+        async-state(
+          state='loading'
+          :title='$t(`common:header.searchLoading`)'
+          message='Searching visible pages.'
         )
-        .headline.mt-5 {{$t('common:header.searchLoading')}}
-      .search-results-none(v-else-if='!searchIsLoading && (!results || results.length < 1)')
-        img(src='/_assets/svg/icon-no-results.svg', alt='No Results')
-        .subheading {{$t('common:header.searchNoResult')}}
+      .search-results-none(v-else-if='searchError')
+        async-state(
+          state='error'
+          title='Search is temporarily unavailable'
+          :message='searchError'
+          retry-label='Try again'
+          @retry='retrySearch'
+        )
+      .search-results-none(v-else-if='!results || results.length < 1')
+        async-state(
+          state='empty'
+          :title='$t(`common:header.searchNoResult`)'
+          message='Try a different term or broader scope.'
+        )
       template(v-if='search && search.length >= 2 && results && results.length > 0')
         v-list-subheader.white--text {{$t('common:header.searchResultsCount', { total: response.totalHits })}}
         v-list.search-results-items.radius-7.py-0(two-line, dense)
@@ -57,9 +67,9 @@
 <script lang='ts'>
 import { defineComponent } from 'vue'
 import _ from 'lodash'
+import AsyncState from '@/components/common/async-state.vue'
+import { getErrorMessage } from '../../helpers/root-ui-store'
 import { wikiStore } from '@/store/index.ts'
-import { OrbitSpinner } from 'epic-spinners'
-
 import { onSearchEnter, onSearchMove, offSearchEnter, offSearchMove } from '../../helpers/search-navigation-events'
 import { searchPages, type PageSearchResult, type PageSearchRow } from '../../helpers/pages-api'
 
@@ -71,7 +81,7 @@ const emptySearchResponse = (): PageSearchResult => ({
 
 export default defineComponent({
   components: {
-    OrbitSpinner
+    AsyncState
   },
   data() {
     return {
@@ -79,6 +89,8 @@ export default defineComponent({
       pagination: 1,
       perPage: 10,
       searchTimer: null as number | null,
+      searchError: '',
+      searchRequestId: 0,
       response: emptySearchResponse()
     }
   },
@@ -120,6 +132,9 @@ export default defineComponent({
   watch: {
     search(newValue: string | null) {
       this.cursor = 0
+      this.searchRequestId += 1
+      const requestId = this.searchRequestId
+      this.searchError = ''
       if (this.searchTimer !== null) window.clearTimeout(this.searchTimer)
       if (!newValue || newValue.length < 2) {
         this.searchIsLoading = false
@@ -127,7 +142,7 @@ export default defineComponent({
         return
       }
       this.searchIsLoading = true
-      this.searchTimer = window.setTimeout(() => this.runSearch(newValue), 300)
+      this.searchTimer = window.setTimeout(() => this.runSearch(newValue, requestId), 300)
     },
     results() {
       this.cursor = 0
@@ -138,6 +153,7 @@ export default defineComponent({
     onSearchEnter(this.handleSearchEnter)
   },
   beforeUnmount() {
+    this.searchRequestId += 1
     if (this.searchTimer !== null) window.clearTimeout(this.searchTimer)
     offSearchMove(this.handleSearchMove)
     offSearchEnter(this.handleSearchEnter)
@@ -172,20 +188,28 @@ export default defineComponent({
     goToPageInNewTab(item: PageSearchRow): void {
       window.open(`/${item.locale}/${item.path}`, '_blank')
     },
-    async runSearch(query: string): Promise<void> {
+    retrySearch(): void {
+      if (!this.search || this.search.length < 2) return
+      this.searchRequestId += 1
+      this.searchError = ''
+      this.searchIsLoading = true
+      void this.runSearch(this.search, this.searchRequestId)
+    },
+    async runSearch(query: string, requestId: number): Promise<void> {
       try {
-        this.response = await searchPages(window.fetch.bind(window), query, {
+        const response = await searchPages(window.fetch.bind(window), query, {
           locale: this.searchRestrictLocale ? wikiStore.page.locale : undefined,
           path: this.searchRestrictPath ? wikiStore.page.path : undefined
         })
+        if (requestId !== this.searchRequestId) return
+        this.response = response
         this.pagination = 1
       } catch (err) {
-        console.warn(err)
+        if (requestId !== this.searchRequestId) return
+        this.searchError = getErrorMessage(err)
         this.response = emptySearchResponse()
       } finally {
-        if (query === this.search) {
-          this.searchIsLoading = false
-        }
+        if (requestId === this.searchRequestId) this.searchIsLoading = false
       }
     }
   }

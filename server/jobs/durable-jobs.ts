@@ -1,13 +1,14 @@
 import type { Knex } from 'knex'
 import { DurableJobStore, runDurableJobBatch } from '../core/durable-jobs.ts'
+import type { ContentExtensionRerenderContext } from '../content-extensions/rerender.ts'
 import { publishOutboxEvents } from '../core/outbox.ts'
 import { createDurableJobHandlers } from './durable-job-handlers.ts'
 import type { PageWatchWikiContext } from './page-watch-notification.ts'
 
-type WikiContext = PageWatchWikiContext & {
+type WikiContext = PageWatchWikiContext & ContentExtensionRerenderContext & {
   config: PageWatchWikiContext['config'] & { sessionSecret: string }
   INSTANCE_ID: string
-  models: PageWatchWikiContext['models'] & { knex: Knex }
+  models: PageWatchWikiContext['models'] & ContentExtensionRerenderContext['models'] & { knex: Knex }
 }
 
 const wiki = WIKI as unknown as WikiContext

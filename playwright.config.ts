@@ -5,6 +5,7 @@ export default defineConfig({
   testMatch: '**/*.e2e.ts',
   fullyParallel: false,
   forbidOnly: Boolean(process.env.CI),
+  workers: 1,
   retries: process.env.CI ? 2 : 0,
   reporter: process.env.CI ? 'github' : 'list',
   use: {
@@ -34,6 +35,27 @@ export default defineConfig({
       dependencies: ['chromium'],
       testMatch: '**/quality.e2e.ts',
       use: { ...devices['Pixel 7'] }
+    },
+    {
+      name: 'accessibility-tablet',
+      dependencies: ['chromium'],
+      testMatch: '**/quality.e2e.ts',
+      use: { ...devices['iPad Mini'] }
+    },
+    {
+      name: 'accessibility-wide',
+      dependencies: ['chromium'],
+      testMatch: '**/quality.e2e.ts',
+      use: {
+        ...devices['Desktop Chrome'],
+        viewport: { width: 1920, height: 1080 }
+      }
+    },
+    {
+      name: 'performance-desktop',
+      dependencies: ['chromium'],
+      testMatch: '**/runtime-performance.e2e.ts',
+      use: { ...devices['Desktop Chrome'] }
     }
   ]
 })

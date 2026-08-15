@@ -81,9 +81,14 @@ The full release matrix additionally owns browser non-disclosure, proxy topology
 | Finding | Severity | Owner | Required disposition |
 | --- | --- | --- | --- |
 | SEC-EXT-001 — independent security review not yet performed | Release blocker | Maintainers | Freeze revision, record reviewer/scope, resolve findings, retain retest evidence. |
-| SEC-AUTH-001 — TFA and recovery browser journeys incomplete | High | Maintainers | Add deterministic browser journeys and run them in CI. |
-| SEC-OPS-001 — real worker process-death lease recovery not yet exercised | Medium | Maintainers | Kill a claimed worker, await lease expiry, prove exactly-once recovery and bounded pool use. |
 | SEC-ADAPTER-001 — deployment-specific identity/storage/search/mail integrations are not covered by the generic release matrix | Medium | Operator | Complete an operator canary for every enabled integration. |
+
+## Resolved findings
+
+| Finding | Resolution evidence |
+| --- | --- |
+| SEC-AUTH-001 — TFA and recovery browser journeys incomplete | Resolved 2026-08-15. `dev/e2e/setup.e2e.ts` exercises setup, required TFA, invalid-code rejection, recovery-code login, and single-use recovery codes; the Chromium release journey passes. |
+| SEC-OPS-001 — real worker process-death lease recovery not yet exercised | Resolved 2026-08-15. `dev/e2e/multi-instance-smoke.sh` gives each process a distinct lease identity, stops the lease owner, waits beyond expiry, requires the survivor to complete the job at attempt 2 with no owner, then verifies the stopped instance can rejoin. `server/test/core/durable-jobs.test.ts` additionally bounds connection-pool use. |
 
 ## External review record
 

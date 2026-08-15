@@ -171,6 +171,18 @@ For every advertised PostgreSQL source product version:
 - record migration duration, peak storage, peak memory, and maintenance-window requirements;
 - restore the backup and boot the previous image, documenting the post-cutover write-loss boundary.
 
+### Implemented PostgreSQL continuity evidence
+
+The PostgreSQL-only cutover is complete:
+
+- startup now accepts current minor releases of PostgreSQL 15, 16, 17, and 18 and rejects older or unknown major lines before application migrations;
+- the tracked Wiki.js 2.5.314 fixture contains an administrator, public page, two revisions, tags, navigation, and a stored asset, with pinned source-image, database-dump, and data-archive SHA-256 identities;
+- CI restores that fixture on every supported PostgreSQL major, verifies the exact legacy migration prefix, starts the previous image and authenticates, snapshots database and data volumes, upgrades the candidate, verifies identity and resource counts, authenticates and writes through the candidate, restores both snapshots, boots the previous image again, and proves post-snapshot writes were discarded;
+- migration artifacts record the full candidate revision, PostgreSQL image and reported version, fixture and backup identities, before/after/rollback resources, duration, peak database/data storage, peak memory, and enforced ceilings. Local proofs completed on PostgreSQL 15.19, 16.15, 17.11, and 18.6; the observed migration window was 2–3 seconds with 109% peak database amplification and no data-volume growth. The instrumented PostgreSQL 15.19 run peaked at 374,689,792 bytes of container memory;
+- legacy MySQL, MariaDB, Microsoft SQL Server, and SQLite adapters, migrations, installer choices, dependencies, and release jobs were removed only after this proof path existed. Knex/Objection remain the single PostgreSQL schema and transaction authority.
+
+The accepted rollback contract is snapshot restoration, not down migrations. Writes accepted after the snapshot are intentionally lost when an operator rolls back.
+
 ### Rollback
 
 Before cutover: discard the shadow target. After cutover but before new writes: switch back to the validated source. After new writes: rollback requires a tested reverse-delta process or restoration of the cutover snapshot; documentation must state which data written after promotion will be lost. “Run down migrations” is not sufficient proof for a major rewrite.
@@ -537,3 +549,15 @@ These are design failures, not reasons to narrow tests or add compatibility shim
 The report’s revision and divergence facts were refreshed directly from `upstream/scarlett` on 2026-08-15. Decisions were checked against the current root manifest, database initializer and preflight, additive extension migrations, shared extension schema, renderer fail-closed path, index API, current CI/release contracts, the existing Scarlett synthesis roadmap, and the confirmed operator inventory of zero non-PostgreSQL installations.
 
 No runtime implementation changes are made by this report. Its verification is evidence consistency: every accepted adaptation has prerequisites, observable promotion gates, rollback, and a clean rejection condition; every rejected upstream implementation has a stated superior fork-native target rather than an effort-based dismissal.
+
+## Adaptation program completion record (2026-08-15)
+
+The fork-native adaptation program is implemented through the release-candidate gates:
+
+- architecture boundaries are machine-enforced, transport code no longer reaches the global runtime, TypeScript project references describe the supported surfaces, and the evidence did not justify a multi-manifest cutover;
+- PostgreSQL 15–18 is the sole supported database target; retained Wiki.js 2.5.314 upgrades, exact Knex-ledger continuity, bounded migration resources, backup/restore, previous-image rollback, fresh install, multi-instance failover, expired-lease recovery, and rejoin behavior are exercised;
+- durable extension rerenders, canonical byte-preserving extension lifecycle behavior, lazy browser modules, bounded page-index queries, measured page-index and runtime budgets, and the native-Vue-over-Lit decision are recorded and enforced;
+- exact dependency versions, reproducible production-license inventory, license compatibility policy, OpenAPI v1 compatibility, aggregate release identity, placeholder rejection, responsive keyboard journeys, asynchronous states, and operator continuity are release gates;
+- the current threat model records deterministic TFA/recovery and process-death lease proofs. External publication remains blocked by `SEC-EXT-001` until an independent reviewer retests a frozen revision; deployment-specific adapters remain operator-canary obligations under `SEC-ADAPTER-001`.
+
+No Scarlett runtime tree, reset migration history, Quasar/Tailwind/Lit application shell, Drizzle authority, or second content source was imported. The useful upstream behavior was reimplemented against the fork’s existing policy, persistence, editor, Vue/Vuetify, and release contracts.

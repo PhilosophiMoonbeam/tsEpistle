@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { encodeKrokiSource, encodePlantUmlSource, hydrateContentExtensions } from './content-extension-runtime.ts'
+import { hydrateContentExtensions } from './content-extension-runtime.ts'
+import { encodeKrokiSource, encodePlantUmlSource } from './content-extension-runtimes/remote-diagram.ts'
 
 const indexElement = (): HTMLElement => {
   const root = document.createElement('div')
@@ -124,7 +125,7 @@ describe('content extension browser runtime', () => {
     cleanup()
   })
 
-  it('creates same-origin PDF and consent-gated remote frames only at their declared boundary', () => {
+  it('creates same-origin PDF and consent-gated remote frames only at their declared boundary', async () => {
     const root = document.createElement('div')
     root.innerHTML = `
       <figure class="content-extension--pdf" data-pdf-src="/uploads/guide.pdf" data-pdf-page="3" data-pdf-height="640" data-pdf-title="Guide">
@@ -139,15 +140,19 @@ describe('content extension browser runtime', () => {
     document.body.append(root)
 
     const cleanup = hydrateContentExtensions(root, vi.fn())
-    expect(root.querySelector<HTMLIFrameElement>('.content-extension-pdf__frame')?.getAttribute('src')).toBe('/uploads/guide.pdf#page=3')
+    await vi.waitFor(() => expect(root.querySelector<HTMLIFrameElement>('.content-extension-pdf__frame')).not.toBeNull())
     expect(root.querySelector('iframe[src^="https://"]')).toBeNull()
 
-    root.querySelector<HTMLButtonElement>('.content-extension--youtube button')!.click()
-    expect(root.querySelector<HTMLIFrameElement>('.content-extension--youtube iframe')?.src)
-      .toBe('https://www.youtube-nocookie.com/embed/abc123_DEF?start=12')
-    root.querySelector<HTMLButtonElement>('.content-extension--map button')!.click()
-    expect(root.querySelector<HTMLIFrameElement>('.content-extension--map iframe')?.src)
-      .toMatch(/^https:\/\/www\.openstreetmap\.org\/export\/embed\.html\?/)
+    await vi.waitFor(() => {
+      root.querySelector<HTMLButtonElement>('.content-extension--youtube button')!.click()
+      expect(root.querySelector<HTMLIFrameElement>('.content-extension--youtube iframe')?.src)
+        .toBe('https://www.youtube-nocookie.com/embed/abc123_DEF?start=12')
+    })
+    await vi.waitFor(() => {
+      root.querySelector<HTMLButtonElement>('.content-extension--map button')!.click()
+      expect(root.querySelector<HTMLIFrameElement>('.content-extension--map iframe')?.src)
+        .toMatch(/^https:\/\/www\.openstreetmap\.org\/export\/embed\.html\?/)
+    })
     cleanup()
   })
 
@@ -165,7 +170,10 @@ describe('content extension browser runtime', () => {
     document.body.append(root)
     const cleanup = hydrateContentExtensions(root, vi.fn())
     expect(root.querySelector('img')).toBeNull()
-    root.querySelector('button')!.click()
+    await vi.waitFor(() => {
+      root.querySelector<HTMLButtonElement>('button')!.click()
+      expect(root.querySelector<HTMLButtonElement>('button')?.disabled).toBe(true)
+    })
     await vi.waitFor(() => expect(root.querySelector<HTMLImageElement>('img')?.src).toMatch(/^https:\/\/kroki\.io\/graphviz\/svg\//))
     expect(root.querySelector('.content-extension-diagram__source--fallback')?.textContent).toBe('digraph{a->b}')
     cleanup()

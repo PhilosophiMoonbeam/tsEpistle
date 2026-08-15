@@ -304,7 +304,7 @@ describe('controllers/api pages endpoints', () => {
       where: vi.fn((applyWhere) => {
         const whereBuilder = {
           andWhere: vi.fn(),
-          andWhereNotNull: vi.fn(),
+          whereNotNull: vi.fn(),
           orWhereIn: vi.fn(),
           where: vi.fn(),
           whereNull: vi.fn()

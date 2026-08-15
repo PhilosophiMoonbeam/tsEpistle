@@ -18,6 +18,7 @@
           :size='20'
           :width='2'
           v-show='searchLoading'
+          aria-label='Loading pages'
           )
       .d-flex
         v-col.grey(cols='5', :class='$vuetify.theme.current.dark ? `darken-4` : `lighten-3`')

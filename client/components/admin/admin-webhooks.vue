@@ -37,7 +37,7 @@
           v-card-title
             span {{ draft.id ? 'Edit webhook' : 'New webhook' }}
             v-spacer
-            v-progress-circular(v-if='loading', indeterminate, size='22', color='primary')
+            v-progress-circular(v-if='loading', indeterminate, size='22', color='primary', aria-label='Saving webhook')
           v-divider
           v-card-text
             v-alert(v-if='revealedSecret', type='warning', variant='tonal', closable, @click:close='revealedSecret = ``')

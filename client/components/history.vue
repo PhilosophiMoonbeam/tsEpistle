@@ -20,7 +20,22 @@
               :class='$vuetify.theme.current.dark ? `grey--text text--lighten-2` : `grey--text text--darken-2`'
               )
               span Live
+            async-state(
+              v-if='trailLoading && trail.length === 0'
+              state='loading'
+              title='Loading page history'
+              message='Fetching revision metadata.'
+            )
+            async-state(
+              v-else-if='trailError && trail.length === 0'
+              state='error'
+              title='Page history could not be loaded'
+              :message='trailError'
+              retry-label='Try again'
+              @retry='loadHistory'
+            )
             v-timeline(
+              v-else
               dense
               )
               v-timeline-item.pb-2(
@@ -97,6 +112,8 @@
               block
               color='primary'
               @click='loadMore'
+              :loading='loadingMore'
+              :disabled='loadingMore'
               )
               .caption.white--text Load More...
 
@@ -149,6 +166,7 @@
 <script lang='ts'>
 import * as Diff2Html from 'diff2html'
 import { createPatch } from 'diff'
+import AsyncState from '@/components/common/async-state.vue'
 import _ from 'lodash'
 import { fetchPageHistory, fetchPageVersion, restorePageVersion, type PageHistoryTrailItem, type PageVersion } from '../helpers/pages-api'
 import { getPageDownloadPath, getPageSourcePath } from '../helpers/page-actions'
@@ -171,6 +189,9 @@ const emptyPageVersion = (versionId = 0): PageVersion => ({
 })
 
 export default {
+  components: {
+    AsyncState
+  },
   i18nOptions: { namespaces: 'history' },
   props: {
     pageId: {
@@ -260,6 +281,9 @@ export default {
         modal: false
       },
       isRestoreConfirmDialogShown: false,
+      trailError: '',
+      trailLoading: false,
+      loadingMore: false,
       restoreLoading: false
     }
   },
@@ -454,16 +478,23 @@ export default {
       this.diffTarget = versionId
     },
     async loadMore () {
-      this.offsetPage++
-      const result = await this.fetchHistoryPage(this.offsetPage)
+      const nextOffsetPage = this.offsetPage + 1
+      const result = await this.fetchHistoryPage(nextOffsetPage)
+      if (!result) return
+      this.offsetPage = nextOffsetPage
       this.trail = [...this.trail, ...result.trail]
     },
     async loadHistory () {
       const result = await this.fetchHistoryPage(0)
+      if (!result) return
+      this.offsetPage = 0
       this.total = result.total
       this.trail = result.trail
     },
-    async fetchHistoryPage (offsetPage: number) {
+    async fetchHistoryPage (offsetPage: number): Promise<{ trail: PageHistoryTrailItem[], total: number } | null> {
+      this.trailError = ''
+      this.trailLoading = offsetPage === 0
+      this.loadingMore = offsetPage > 0
       setLoading(wikiStore, 'history-trail-refresh', true)
       try {
         return await fetchPageHistory(
@@ -472,7 +503,12 @@ export default {
           offsetPage,
           this.$vuetify.display.mdAndUp ? 25 : 5
         )
+      } catch (error) {
+        this.trailError = getErrorMessage(error)
+        return null
       } finally {
+        this.trailLoading = false
+        this.loadingMore = false
         setLoading(wikiStore, 'history-trail-refresh', false)
       }
     },

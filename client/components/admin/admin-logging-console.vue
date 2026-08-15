@@ -9,6 +9,7 @@
         color='blue lighten-3'
         :size='20'
         :width='2'
+        aria-label='Streaming logs'
         )
     pre.consoleTerm(ref='consoleContainer') {{output}}
     v-toolbar(flat, color='grey darken-3', dark)

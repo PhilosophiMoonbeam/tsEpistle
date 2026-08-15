@@ -194,7 +194,7 @@
       "commits": ["6db53d4f", "99ccdc13"],
       "category": "data-continuity",
       "disposition": "synthesize",
-      "state": "active",
+      "state": "completed",
       "workstream": "architecture-b/postgresql-continuity",
       "contract": "Unknown databases are rejected before writes while recognized Wiki.js 2 and Wiki.ts PostgreSQL sources upgrade without ledger reset.",
       "lastReviewed": "2026-08-15"
@@ -314,7 +314,7 @@
       "commits": ["ee7a15fb", "6db53d4f"],
       "category": "data-continuity",
       "disposition": "adopt",
-      "state": "active",
+      "state": "completed",
       "workstream": "architecture-b/postgresql-only",
       "contract": "Supported Wiki.js 2 and Wiki.ts PostgreSQL sources upgrade, restore, roll back, and operate across the declared server floor before unused adapters are removed cleanly.",
       "lastReviewed": "2026-08-15"
