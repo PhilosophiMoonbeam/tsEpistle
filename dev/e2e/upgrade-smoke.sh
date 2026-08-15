@@ -3,7 +3,7 @@ set -euo pipefail
 
 : "${MATRIXENV:?MATRIXENV is required}"
 : "${WIKI_TEST_IMAGE:?WIKI_TEST_IMAGE is required}"
-WIKI_UPGRADE_SOURCE_IMAGE=${WIKI_UPGRADE_SOURCE_IMAGE:-ghcr.io/requarks/wiki:2.5.314}
+WIKI_UPGRADE_SOURCE_IMAGE=${WIKI_UPGRADE_SOURCE_IMAGE:-ghcr.io/requarks/wiki:2.5.314@sha256:68f0d1848261ae76492ba358e30a96a76fed5d97a3fff381656082bf90f70d7e}
 ADMIN_EMAIL=upgrade-smoke@example.com
 ADMIN_PASSWORD=UpgradeSmoke123!
 

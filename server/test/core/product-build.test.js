@@ -38,7 +38,7 @@ describe('product build and publication metadata', () => {
     expect(workflow).toContain('server/scripts/export-build-environment.ts')
     expect(workflow).toContain('IMAGE_REPOSITORY')
     expect(workflow.match(/ghcr\.io\/requarks\/wiki:[^\s]+/g)).toEqual([
-      `ghcr.io/requarks/wiki:${productDefinition.upstreamVersion}`
+      expect.stringMatching(new RegExp(`^ghcr\\.io/requarks/wiki:${productDefinition.upstreamVersion}@sha256:[a-f0-9]{64}$`))
     ])
     expect(workflow).not.toMatch(/(?:--tag|tags:)[^\n]*requarks\/wiki/)
     for (const label of ['created', 'description', 'licenses', 'revision', 'source', 'title', 'version']) {

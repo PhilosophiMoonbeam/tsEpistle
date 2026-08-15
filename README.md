@@ -31,7 +31,7 @@ When a release is published:
 4. test the upgrade against a restored copy of production data;
 5. roll back by restoring both the pre-upgrade database and data-directory snapshots—database migrations are not guaranteed to be reversible.
 
-The release CI exercises PostgreSQL, MySQL, MariaDB, Microsoft SQL Server, and SQLite. Deployment-specific identity providers, object storage, search engines, mail, proxies, and multi-instance topologies still require an operator canary. Kubernetes users should start with the [fork Helm chart](dev/helm/README.md).
+The release CI exercises PostgreSQL 15, MySQL 8.0, MariaDB 10.11, Microsoft SQL Server 2022, and the SQLite runtime bundled with Wiki.ts. These are the minimum supported database families and major versions for the preview release. Upgrade CI starts from the exact upstream base, Wiki.js 2.5.314; older Wiki.js or Wiki.ts database sources are unsupported unless a later release explicitly adds a retained upgrade fixture. Deployment-specific identity providers, object storage, search engines, mail, proxies, and multi-instance topologies still require an operator canary. Kubernetes users should start with the [fork Helm chart](dev/helm/README.md).
 
 ## Install and operate
 

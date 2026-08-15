@@ -5,6 +5,7 @@ set -euo pipefail
 ADMIN_EMAIL=multi-instance-smoke@example.com
 ADMIN_PASSWORD=MultiInstanceSmoke123!
 DB_PASSWORD=Password123!
+POSTGRES_TEST_IMAGE=${POSTGRES_TEST_IMAGE:-postgres:15-alpine@sha256:4006528dcbdd9be8c1aaa50389caea4e93c46d6f54c3533bcd3253725e526e23}
 
 cleanup() {
   if [ "${smoke_succeeded:-false}" != true ]; then
@@ -54,7 +55,7 @@ login() {
 docker network create wiki-multi-instance >/dev/null
 docker run -d --name db --network=wiki-multi-instance \
   -e "POSTGRES_PASSWORD=$DB_PASSWORD" -e POSTGRES_USER=wiki -e POSTGRES_DB=wiki \
-  postgres:17-alpine
+  "$POSTGRES_TEST_IMAGE"
 for attempt in {1..90}; do
   if docker exec db pg_isready -U wiki -d wiki >/dev/null 2>&1; then
     break

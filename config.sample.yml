@@ -1,8 +1,7 @@
 #######################################################################
-# Wiki.js - CONFIGURATION                                             #
+# Wiki.ts Preview configuration                                       #
 #######################################################################
-# Full documentation + examples:
-# https://docs.requarks.io/install
+# Release and deployment guidance: https://github.com/PhilosophiMoonbeam/wiki#install-and-operate
 
 # ---------------------------------------------------------------------
 # Port the server should listen to
@@ -13,12 +12,12 @@ port: 3000
 # ---------------------------------------------------------------------
 # Database
 # ---------------------------------------------------------------------
-# Supported Database Engines:
-# - postgres = PostgreSQL 9.5 or later
-# - mysql = MySQL 8.0 or later (5.7.8 partially supported, refer to docs)
-# - mariadb = MariaDB 10.2.7 or later
-# - mssql = MS SQL Server 2012 or later
-# - sqlite = SQLite 3.9 or later
+# Supported and release-tested Database Engines:
+# - postgres = PostgreSQL 15 or later
+# - mysql = MySQL 8.0 or later
+# - mariadb = MariaDB 10.11 or later
+# - mssql = Microsoft SQL Server 2022 or later
+# - sqlite = the SQLite version bundled with the Wiki.ts release image/runtime
 
 db:
   type: postgres
