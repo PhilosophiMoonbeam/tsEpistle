@@ -120,6 +120,11 @@ localeNamespaces:
   - auth
   - common
 jobs:
+  durableJobs:
+    onInit: true
+    schedule: PT10S
+    offlineSkip: false
+    repeat: true
   purgeUploads:
     onInit: true
     schedule: PT15M
