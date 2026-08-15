@@ -107,7 +107,7 @@
                 v-col
                   v-card.editor-markdown-help-result(flat)
                     v-card-text
-                      img(src='https://via.placeholder.com/150x50.png')
+                      .editor-markdown-help-image-example Caption Text
         v-col(cols='12', lg='6', xl='4')
           v-card.radius-7.animated.fadeInUp.wait-p1s(light)
             v-card-text
@@ -328,6 +328,17 @@ export default {
     .prismjs {
       margin: 0;
     }
+  }
+  &-image-example {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 150px;
+    height: 50px;
+    border: 1px solid mc('blue-grey', '200');
+    background: mc('blue-grey', '100');
+    color: mc('blue-grey', '700');
+    font-size: 12px;
   }
 
   &-kbd {

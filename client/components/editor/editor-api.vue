@@ -63,15 +63,6 @@
                           v-list-item-subtitle Classic REST Endpoints
                         v-avatar
                           v-icon(:color='kind === `rest` ? `primary` : `grey lighten-3`') mdi-check-circle
-                      v-list-item(value='graphql', disabled)
-                        v-avatar
-                          img(src='/_assets/svg/icon-graphql.svg', alt='GraphQL')
-                        div.v-list-item-content
-                          v-list-item-title GraphQL
-                          v-list-item-subtitle.grey--text.text--lighten-1 Schema-based API
-                        div.v-list-item-action
-                          //- v-icon(:color='kind === `graphql` ? `primary` : `grey lighten-3`') mdi-check-circle
-                          v-chip(label, small) Coming soon
         template(v-else-if='tab === `servers`')
           v-container.px-2.pt-1(fluid)
             v-row(dense)

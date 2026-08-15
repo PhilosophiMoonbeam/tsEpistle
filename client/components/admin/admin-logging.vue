@@ -6,11 +6,11 @@
           img(src='/_assets/svg/icon-registry-editor.svg', alt='Logging', style='width: 80px;')
           .admin-header-title
             .headline.primary--text Logging
-            .subtitle-1.grey--text Configure the system logger(s) #[v-chip(label, color='primary', small).white--text coming soon]
+            .subtitle-1.grey--text Configure system loggers and inspect the live trail
           v-spacer
           v-btn(outline, color='grey', @click='refresh', large)
             v-icon refresh
-          v-btn(color='black', disabled, depressed, @click='toggleConsole', large)
+          v-btn(color='black', depressed, @click='toggleConsole', large)
             v-icon check
             span Live Trail
           v-btn(color='success', @click='save', depressed, large)
@@ -35,7 +35,6 @@
                     :label='logger.title'
                     color='primary'
                     hide-details
-                    disabled
                   )
 
             v-tabs-window-item(v-for='logger in activeLoggers', :key='logger.key', :value='logger.key', :transition='false', :reverse-transition='false')

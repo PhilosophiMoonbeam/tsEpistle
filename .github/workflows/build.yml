@@ -54,6 +54,7 @@ jobs:
   build:
     name: Build Test Image and Linux Bundle
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     needs: [quality]
     permissions:
       contents: read
@@ -89,7 +90,7 @@ jobs:
         tags: wiki-ts-preview:test-${{ env.WIKI_BUILD_REVISION }}
 
     - name: Export Test Image
-      run: docker save "wiki-ts-preview:test-$WIKI_BUILD_REVISION" | gzip -n > wiki-ts-preview-test-image.tar.gz
+      run: docker save "wiki-ts-preview:test-$WIKI_BUILD_REVISION" | gzip -1 -n > wiki-ts-preview-test-image.tar.gz
 
     - name: Create Reproducible Linux Bundle
       shell: bash
@@ -124,10 +125,12 @@ jobs:
         path: wiki-ts-preview-test-image.tar.gz
         if-no-files-found: error
         retention-days: 1
+        compression-level: 0
 
   e2e:
     name: Playwright (${{ matrix.dbtype }})
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     needs: [build]
     permissions:
       contents: read

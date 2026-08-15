@@ -1,31 +1,31 @@
 # Security Policy
 
-Wiki.js is built with security in mind. We try our absolute best to deliver secure and robust applications. However, like any software, there can be security bugs, either introduced by an update or by using an attack vector that wasn't considered when designing the software.
+Wiki.ts Preview is an independent community fork of Wiki.js. Security reports for this fork must be sent to the Wiki.ts Preview maintainers, not to Requarks or the upstream Wiki.js project.
 
-If you find such vulnerability, it's important to disclose it in a quick and secure manner to the developers. Follow the instructions below to report a vulnerability.
+## Supported versions
 
-## Supported Versions
+| Version | Security support |
+| --- | --- |
+| Latest published `0.1.0-alpha.x` release | Best effort |
+| `main`, canary images, and untagged builds | Unsupported |
+| Upstream Wiki.js releases | Report to the [upstream project](https://github.com/Requarks/wiki/security/policy) |
 
-| Version | Supported          |
-| ------- | ------------------ |
-| 2.x.x   | :white_check_mark: |
-| 1.x.x   | :x:                |
+Preview releases are not recommended for deployments whose availability, confidentiality, or data-retention requirements cannot tolerate alpha software.
 
-## Reporting a Vulnerability
+## Reporting a vulnerability
 
-> [!CAUTION]
-> **DO NOT CREATE A GITHUB ISSUE / DISCUSSION** to report a potential vulnerability / security problem. Instead, use the process below:
+Do not create a public issue, discussion, or pull request for a suspected vulnerability.
 
-Submit a Vulnerability Report by filling in the form on https://github.com/requarks/wiki/security/advisories/new
+Submit a private report through [GitHub private vulnerability reporting](https://github.com/PhilosophiMoonbeam/wiki/security/advisories/new). Include:
 
-Include as much details as possible, such as:
-- The version(s) of Wiki.js that are impacted
-- How to reproduce the vulnerability (step-by-step, screenshots or a video)
-- The platform / environment it occurs on (e.g. OS version, DB type + version, etc.)
-- Any potential fixes or reference code you think might be helpful in resolving the issue
-- Your GitHub username if you'd like to be included as a collaborator on the private fix branch
+- the affected Wiki.ts Preview version and exact Git revision;
+- reproduction steps and the expected security boundary;
+- deployment details relevant to the report, including database engine and reverse proxy;
+- impact, logs, or a proof of concept with secrets and personal data removed;
+- any mitigation or proposed fix.
 
-The vulnerability will be investigated ASAP. If deemed valid, a draft security advisory will be created on GitHub and you will be included as a collaborator. A fix will be worked on in a private branch to resolves the issue. Once a fix is available, the advisory will be published.
+The maintainers will acknowledge the report through the private advisory, assess impact, and coordinate remediation and disclosure there. No response-time or bounty commitment is currently offered.
 
-> [!NOTE]
-> There's no reward for submitting a report. As this is open source project and not corporate owned, we are not able to provide monetary rewards. You will however be credited as the bug reporter in the release notes.
+## Release provenance
+
+Official releases are GitHub releases from this repository. Each release contains source and binary archives plus `SHA256SUMS`; container images are published under `ghcr.io/philosophimoonbeam/wiki`. The running application exposes its exact source revision.

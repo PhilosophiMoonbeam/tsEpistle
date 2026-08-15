@@ -69,31 +69,6 @@
                     hint='Select whether the table of contents is shown on the left, right or not at all.'
                     )
             v-col(lg='6' cols='12')
-              //- v-card.animated.fadeInUp.wait-p2s
-              //-   v-toolbar(color='teal', dark, dense, flat)
-              //-     v-toolbar-title.subtitle-1 {{$t('admin:theme.downloadThemes')}}
-              //-     v-spacer
-              //-     v-chip(label, color='white', small).teal--text coming soon
-              //-   v-data-table(
-              //-     :headers='headers',
-              //-     :items='themes',
-              //-     hide-default-footer,
-              //-     item-key='value',
-              //-     :items-per-page='1000'
-              //-   )
-              //-     template(v-slot:item='thm')
-              //-       td
-              //-         strong {{thm.item.text}}
-              //-       td
-              //-         span {{ thm.item.author }}
-              //-       td.text-xs-center
-              //-         v-progress-circular(v-if='thm.item.isDownloading', indeterminate, color='blue', size='20', :width='2')
-              //-         v-btn(v-else-if='thm.item.isInstalled && thm.item.installDate < thm.item.updatedAt', icon)
-              //-           v-icon.blue--text mdi-cached
-              //-         v-btn(v-else-if='thm.item.isInstalled', icon)
-              //-           v-icon.green--text mdi-check-bold
-              //-         v-btn(v-else, icon)
-              //-           v-icon.grey--text mdi-cloud-download
 
               v-card.animated.fadeInUp.wait-p2s
                 v-toolbar(color='primary', dark, dense, flat)

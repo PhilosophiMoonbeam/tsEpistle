@@ -24,27 +24,6 @@
           slot(name='mobileBrand', v-if='$slots.mobileBrand && $vuetify.display.smAndDown')
           v-avatar(v-if='!$slots.mobileBrand || $vuetify.display.mdAndUp', tile, size='34', @click='goHome')
             img.org-logo(:src='logoUrl', :alt='title')
-          //- v-menu(open-on-hover, offset-y, bottom, left, min-width='250', transition='slide-y-transition')
-          //-   template(v-slot:activator='{ props }')
-          //-     v-app-bar-nav-icon.btn-animate-app(v-bind='props', :class='$vuetify.locale.isRtl ? `mx-0` : ``')
-          //-       v-icon mdi-menu
-          //-   v-list(nav, :light='!$vuetify.theme.current.dark', :dark='$vuetify.theme.current.dark', :class='$vuetify.theme.current.dark ? `grey darken-4` : ``')
-          //-     v-list-item.pl-4(href='/')
-          //-       v-list-item-avatar(size='24'): v-icon(color='blue') mdi-home
-          //-       v-list-item-title.body-2 {{$t('common:header.home')}}
-          //-     v-list-item.pl-4(@click='')
-          //-       v-list-item-avatar(size='24'): v-icon(color='grey lighten-2') mdi-file-tree
-          //-       v-list-item-content
-          //-         v-list-item-title.body-2.grey--text.text--ligten-2 {{$t('common:header.siteMap')}}
-          //-         v-list-item-subtitle.overline.grey--text.text--lighten-2 Coming soon
-          //-     v-list-item.pl-4(href='/t')
-          //-       v-list-item-avatar(size='24'): v-icon(color='teal') mdi-tag-multiple
-          //-       v-list-item-title.body-2 {{$t('common:header.browseTags')}}
-          //-     v-list-item.pl-4(@click='assets')
-          //-       v-list-item-avatar(size='24'): v-icon(color='grey lighten-2') mdi-folder-multiple-image
-          //-       v-list-item-content
-          //-         v-list-item-title.body-2.grey--text.text--ligten-2 {{$t('common:header.imagesFiles')}}
-          //-         v-list-item-subtitle.overline.grey--text.text--lighten-2 Coming soon
           v-toolbar-title(v-if='!$slots.mobileBrand || $vuetify.display.mdAndUp', :class='{ "mx-3": $vuetify.display.mdAndUp, "mx-1": $vuetify.display.smAndDown }')
             span.subheading {{title}}
       v-col(md='4', v-if='$vuetify.display.mdAndUp')
@@ -216,11 +195,6 @@
                 div.v-list-item-content
                   v-list-item-title {{name}}
                   v-list-item-subtitle {{email}}
-              //- v-list-item(href='/w', disabled)
-              //-   v-list-item-action: v-icon(color='blue') mdi-view-compact-outline
-              //-   v-list-item-content
-              //-     v-list-item-title {{$t('common:header.myWiki')}}
-              //-     v-list-item-subtitle.overline Coming soon
               v-list-item(href='/p')
                 div.v-list-item-action: v-icon(color='blue-grey') mdi-face-profile
                 div.v-list-item-content

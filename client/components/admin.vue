@@ -84,6 +84,8 @@
               v-list-item-title {{ $t('admin:comments.title') }}
             v-list-item(to='/rendering', color='primary', prepend-icon='mdi-cogs')
               v-list-item-title {{ $t('admin:rendering.title') }}
+            v-list-item(to='/logging', color='primary', prepend-icon='mdi-text-box-search-outline')
+              v-list-item-title Logging
             v-list-item(to='/search', color='primary', prepend-icon='mdi-cloud-search-outline')
               v-list-item-title {{ $t('admin:search.title') }}
             v-list-item(to='/storage', color='primary', prepend-icon='mdi-harddisk')

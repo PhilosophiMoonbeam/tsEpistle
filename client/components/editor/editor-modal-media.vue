@@ -154,25 +154,6 @@
               v-spacer
               v-btn.px-4(color='teal', dark, @click='upload') {{$t('common:actions.upload')}}
 
-          //- v-card.mt-3.radius-7.animated.fadeInRight.wait-p4s(:light='!$vuetify.theme.current.dark', :dark='$vuetify.theme.current.dark')
-          //-   v-card-text.pb-0
-          //-     v-toolbar.radius-7(:color='$vuetify.theme.current.dark ? `teal` : `teal lighten-5`', dense, flat)
-          //-       v-icon.mr-3(:color='$vuetify.theme.current.dark ? `white` : `teal`') mdi-cloud-download
-          //-       .body-2(:class='$vuetify.theme.current.dark ? `white--text` : `teal--text`') {{$t('editor:assets.fetchImage')}}
-          //-       v-spacer
-          //-       v-chip(label, color='white', small).teal--text coming soon
-          //-     v-text-field.mt-3(
-          //-       v-model='remoteImageUrl'
-          //-       outlined
-          //-       color='teal'
-          //-       single-line
-          //-       placeholder='https://example.com/image.jpg'
-          //-     )
-          //-   v-divider
-          //-   v-card-actions.pa-3
-          //-     .caption.grey--text.text-darken-2 Max 5 MB
-          //-     v-spacer
-          //-     v-btn.px-4(color='teal', disabled) {{$t('common:actions.fetch')}}
 
           v-card.mt-3.radius-7.animated.fadeInRight.wait-p4s(:light='!$vuetify.theme.current.dark', :dark='$vuetify.theme.current.dark')
             v-card-text.pb-0

@@ -226,13 +226,6 @@ export default {
         wikiStore.showError(err)
       }
       wikiStore.stopLoading('page-delete')
-    },
-    async rerenderPage() {
-      wikiStore.showNotification({
-        style: 'indigo',
-        message: `Coming soon...`,
-        icon: 'directions_boat'
-      })
     }
   },
   mounted () {

@@ -19,34 +19,6 @@
         v-btn.mx-2(depressed, color='primary', @click='addRule')
           v-icon(left) mdi-plus
           | Add Rule
-        v-menu(
-          right
-          offset-y
-          nudge-left='115'
-          )
-          template(v-slot:activator='{ props }')
-            v-btn.is-icon(v-bind='props', outlined, color='primary')
-              v-icon mdi-dots-horizontal
-          v-list(dense)
-            v-list-item(@click='comingSoon')
-              v-avatar
-                v-icon mdi-application-import
-              v-list-item-title Load Preset
-            v-divider
-            v-list-item(@click='comingSoon')
-              v-avatar
-                v-icon mdi-application-export
-              v-list-item-title Save As Preset
-            v-divider
-            v-list-item(@click='comingSoon')
-              v-avatar
-                v-icon mdi-cloud-upload
-              v-list-item-title Import Rules
-            v-divider
-            v-list-item(@click='comingSoon')
-              v-avatar
-                v-icon mdi-cloud-download
-              v-list-item-title Export Rules
       v-card-text(:class='$vuetify.theme.current.dark ? `grey darken-4-l5` : `white`')
         .rules
           .caption(v-if='group.pageRules.length === 0')
@@ -178,7 +150,6 @@ import type { PropType } from 'vue'
 import _ from 'lodash'
 import { customAlphabet } from 'nanoid/non-secure'
 
-import { wikiStore } from '@/store/index.ts'
 import { createEmptyGroupEditorState, type GroupEditorState } from '../../helpers/groups-api'
 
 /* global siteLangs */
@@ -240,13 +211,6 @@ export default {
     },
     removeRule(ruleId: string) {
       this.group.pageRules.splice(_.findIndex(this.group.pageRules, ['id', ruleId]), 1)
-    },
-    comingSoon() {
-      wikiStore.showNotification({
-        style: 'indigo',
-        message: `Coming soon...`,
-        icon: 'directions_boat'
-      })
     }
   }
 }

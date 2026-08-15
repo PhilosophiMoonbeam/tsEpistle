@@ -5,60 +5,58 @@
         .admin-header
           img(src='/_assets/svg/icon-web-design.svg', alt='Editor', style='width: 80px;')
           .admin-header-title
-            .headline.primary--text Editor
-            .subtitle-1.grey--text Configure the content editors #[v-chip(label, color='primary', small).white--text coming soon]
-          v-spacer
-          v-btn(outline, color='grey', @click='refresh', large)
-            v-icon refresh
-          v-btn(color='success', @click='save', depressed, large)
-            v-icon(left) check
-            span {{$t('common:actions.apply')}}
+            .headline.primary--text Editors
+            .subtitle-1.grey--text Editors available when creating or changing a page
 
         v-card.mt-3
-          v-tabs.text-white(v-model='tab', bg-color='grey-darken-2', color='white', fixed-tabs, slider-color='white', show-arrows)
-            v-tab(value='settings'): v-icon settings
-            v-tab(value='code') Markdown
-
-          v-tabs-window(v-model='tab')
-            v-tabs-window-item(value='settings', :transition='false', :reverse-transition='false')
-              v-card.pa-3(flat, tile)
-                .body-2.grey--text.text--darken-1 Select which editors to enable:
-                .caption.grey--text.pb-2 Some editors require additional configuration in their dedicated tab (when selected).
-                v-form
-                  v-checkbox.my-0(
-                    v-for='editor in editors'
-                    v-model='editor.isEnabled'
-                    :key='editor.key'
-                    :label='editor.title'
-                    color='primary'
-                    disabled
-                    hide-details
-                  )
-            v-tabs-window-item(value='code', :transition='false', :reverse-transition='false')
-              v-card.wiki-form.pa-3(flat, tile)
-                v-form
-                  v-list-subheader Editor Configuration
-                  .body-1.ml-3 This editor has no configuration options you can modify.
+          v-card-title Available editors
+          v-card-text
+            .body-2.mb-3 Editor selection is stored per page. Open a page in edit mode to change its editor.
+            v-list(lines='two')
+              v-list-item(v-for='editor in editors', :key='editor.key')
+                template(v-slot:prepend)
+                  v-icon(color='primary') {{ editor.icon }}
+                v-list-item-title {{ editor.title }}
+                v-list-item-subtitle {{ editor.description }}
 </template>
 
 <script lang='ts'>
 export default {
   data() {
     return {
-      tab: 'settings',
       editors: [
-        { title: 'API Docs', key: 'api', isEnabled: false },
-        { title: 'Code', key: 'code', isEnabled: true },
-        { title: 'Markdown', key: 'markdown', isEnabled: true },
-        { title: 'Tabular', key: 'tabular', isEnabled: false },
-        { title: 'Visual Builder', key: 'visual', isEnabled: false },
-        { title: 'WikiText', key: 'wikitext', isEnabled: false }
+        {
+          title: 'Markdown',
+          key: 'markdown',
+          icon: 'mdi-language-markdown',
+          description: 'Source Markdown with preview, diagrams, and live collaboration.'
+        },
+        {
+          title: 'Visual Markdown',
+          key: 'visual-markdown',
+          icon: 'mdi-file-document-edit-outline',
+          description: 'Rich-text authoring that persists canonical Markdown.'
+        },
+        {
+          title: 'Visual HTML',
+          key: 'ckeditor',
+          icon: 'mdi-language-html5',
+          description: 'Rich-text authoring that persists HTML.'
+        },
+        {
+          title: 'AsciiDoc',
+          key: 'asciidoc',
+          icon: 'mdi-file-document-outline',
+          description: 'Source AsciiDoc with rendered preview.'
+        },
+        {
+          title: 'Code',
+          key: 'code',
+          icon: 'mdi-code-tags',
+          description: 'Source editor for raw HTML pages.'
+        }
       ]
     }
-  },
-  methods: {
-    save() {},
-    refresh() {}
   }
 }
 </script>

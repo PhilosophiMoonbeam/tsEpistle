@@ -337,12 +337,6 @@
             .caption.grey--text.mt-3 {{$t('profile:activity.lastLoginOn')}}
             .body-2: strong {{ $helpers.formatMoment(user.lastLoginAt, 'LLLL') }}
 
-        //- v-card.mt-3.animated.fadeInUp.wait-p6s
-        //-   v-toolbar(color='teal', dense, dark, flat)
-        //-     v-icon.mr-2 mdi-file-document-box-multiple-outline
-        //-     span Content
-        //-   v-card-text
-        //-     em.caption.grey--text Coming soon
 
     v-dialog(v-model='deleteUserDialog', max-width='500')
       v-card

@@ -19,6 +19,20 @@ Wiki.ts Preview is an experimental, long-lived community fork of [Wiki.js](https
 
 The running application exposes its exact Git revision and a **Source Code** link in Setup, Administration → System, and the site footer. That link identifies the source corresponding to the deployed artifact.
 
+## Release status
+
+No supported Wiki.ts Preview release has been published yet. Do not treat `main`, a canary image, or a locally built image as a production release. The first external release is gated on the repository's full CI matrix, upgrade/restore canaries, and an independent security review.
+
+When a release is published:
+
+1. use an immutable version tag or image digest, never `main` or `canary`;
+2. verify the downloaded archives against the attached `SHA256SUMS`;
+3. back up both the Wiki.ts data directory and database before every upgrade;
+4. test the upgrade against a restored copy of production data;
+5. roll back by restoring both the pre-upgrade database and data-directory snapshots—database migrations are not guaranteed to be reversible.
+
+The release CI exercises PostgreSQL, MySQL, MariaDB, Microsoft SQL Server, and SQLite. Deployment-specific identity providers, object storage, search engines, mail, proxies, and multi-instance topologies still require an operator canary. Kubernetes users should start with the [fork Helm chart](dev/helm/README.md).
+
 ## Branch model
 
 - [`main`](https://github.com/PhilosophiMoonbeam/wiki/tree/main) is the authoritative Wiki.ts Preview product branch. Releases and deployments originate from it.

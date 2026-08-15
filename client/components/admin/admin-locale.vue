@@ -126,14 +126,6 @@
                       v-icon.green--text mdi-check-bold
                     v-btn(v-else, icon, small, @click='download(item)')
                       v-icon.grey--text mdi-cloud-download
-              v-card.wiki-form.mt-3.animated.fadeInUp.wait-p5s
-                v-toolbar(color='teal', dark, dense, flat)
-                  v-toolbar-title.subtitle-1 {{ $t('admin:locale.sideload') }}
-                  v-spacer
-                  v-chip(label, color='white', small).teal--text coming soon
-                v-card-text
-                  div {{ $t('admin:locale.sideloadHelp') }}
-                  v-btn.ml-0.mt-3(color='teal', disabled) {{ $t('common:actions.browse') }}
 </template>
 
 <script lang='ts'>
