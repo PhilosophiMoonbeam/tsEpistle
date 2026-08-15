@@ -127,8 +127,9 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
   app.use(wiki.auth.authenticate.bind(wiki.auth))
 
   await wiki.servers.startGraphQL()
-  app.use('/_api', apiController)
-  app.use('/api/v1', apiV1Controller)
+  const jsonBodyParser = express.json({ limit: wiki.config.bodyParserLimit ?? '5mb' })
+  app.use('/_api', jsonBodyParser, apiController)
+  app.use('/api/v1', jsonBodyParser, apiV1Controller)
 
   app.use(seoMiddleware)
 

@@ -5,6 +5,7 @@ set -euo pipefail
 : "${POSTGRES_TEST_IMAGE:?POSTGRES_TEST_IMAGE is required}"
 
 FIXTURE_DIR=${FIXTURE_DIR:-dev/e2e/fixtures}
+FIXTURE_DIR=$(realpath "$FIXTURE_DIR")
 FIXTURE_MANIFEST=${FIXTURE_MANIFEST:-$FIXTURE_DIR/wiki-js-2.5.314-postgres.json}
 DATABASE_FIXTURE=$FIXTURE_DIR/$(jq -r '.databaseArtifact.path' "$FIXTURE_MANIFEST")
 DATA_FIXTURE=$FIXTURE_DIR/$(jq -r '.dataArtifact.path' "$FIXTURE_MANIFEST")
@@ -64,14 +65,18 @@ start_wiki() {
     -e DB_USER=wiki -e 'DB_PASS=Password123!' "$image" >/dev/null
 }
 
-verify_legacy_login() {
+login_graphql() {
   local response
   response=$(curl --fail --silent --show-error \
     --header 'Content-Type: application/json' \
     --data "$(jq --null-input --arg username "$ADMIN_EMAIL" --arg password "$ADMIN_PASSWORD" '{query: "mutation ($username: String!, $password: String!) { authentication { login(username: $username, password: $password, strategy: \"local\") { jwt responseResult { succeeded } } } }", variables: {username: $username, password: $password}}')" \
     http://127.0.0.1:3000/graphql)
-  printf '%s' "$response" | jq --exit-status \
-    '.data.authentication.login.responseResult.succeeded == true and (.data.authentication.login.jwt | type == "string" and length > 0)' >/dev/null
+  printf '%s' "$response" | jq --exit-status --raw-output \
+    '.data.authentication.login | select(.responseResult.succeeded == true) | .jwt | select(type == "string" and length > 0)'
+}
+
+verify_legacy_login() {
+  login_graphql >/dev/null
 }
 
 resource_report() {
@@ -197,21 +202,20 @@ data_bytes_after=${data_bytes_after//[[:space:]]/}
 after_report=$(resource_report)
 assert_upgraded_report "$after_report"
 
-login_response=$(curl --fail --silent --show-error \
-  --header 'Content-Type: application/json' \
-  --data "$(jq --null-input --arg username "$ADMIN_EMAIL" --arg password "$ADMIN_PASSWORD" '{username: $username, password: $password, strategy: "local"}')" \
-  http://127.0.0.1:3000/_api/auth/login)
-jwt=$(printf '%s' "$login_response" | jq --exit-status --raw-output '.jwt | select(type == "string" and length > 0)')
+jwt=$(login_graphql)
 whoami_response=$(curl --fail --silent --show-error --header "Authorization: Bearer $jwt" \
   http://127.0.0.1:3000/_api/users/whoami)
 printf '%s' "$whoami_response" | jq --exit-status --arg email "$ADMIN_EMAIL" \
   '.authenticated == true and .user.email == $email' >/dev/null
 
-create_response=$(curl --fail --silent --show-error --request POST \
+create_response=$(curl --silent --show-error --request POST \
   --header 'Content-Type: application/json' --header "Authorization: Bearer $jwt" \
   --data '{"content":"# Discard after rollback","description":"release recovery sentinel","editor":"markdown","visibility":"public","isPublished":true,"locale":"en","path":"rollback-discarded","publishEndDate":"","publishStartDate":"","scriptCss":"","scriptJs":"","tags":[],"title":"Rollback discarded"}' \
   http://127.0.0.1:3000/_api/pages)
-printf '%s' "$create_response" | jq --exit-status '.page.id | type == "number"' >/dev/null
+if ! printf '%s' "$create_response" | jq --exit-status '.page.id | type == "number"' >/dev/null; then
+  printf 'Could not create rollback sentinel page: %s\n' "$create_response" >&2
+  exit 1
+fi
 
 database_growth=$((database_bytes_after - database_bytes_before))
 data_growth=$((data_bytes_after - data_bytes_before))
