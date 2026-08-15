@@ -533,6 +533,23 @@ First extensions, in increasing risk:
 
 Exit gate for each extension: edit, save, reopen, render, disable, re-enable, history, export, print, unauthorized asset, and migration scenarios pass.
 
+Decisions (2026-08-15):
+
+- version the host and every extension independently; persist extension state as `key`, `isEnabled`, `version`, `updatedAt`, and `updatedBy`, with new extensions disabled until a `manage:system` administrator enables them;
+- preserve extensions as canonical single-line JSON in a fenced `wiki-extension` block so source, Visual Markdown, history, export, and print share one durable representation;
+- reject unknown envelope and property fields at the shared boundary; render only canonical, enabled, compatible, exact-version envelopes and leave all malformed, disabled, incompatible, unknown, or failed extensions as escaped source;
+- rerender and invalidate every page containing a toggled extension only after the registry update commits; report compatibility and disable diagnostics through the internal REST API and editor dialog;
+- treat renderer output as hostile even for bundled extensions: sanitize locally with an explicit element/attribute/protocol boundary and prohibit scripts, event handlers, style, remote SVG references, and active foreign content;
+- ship QR as the proof extension using local deterministic generation only, an accessible SVG title/label, and a safe text-or-link fallback. It has no asset authorization or external egress surface.
+
+Completion evidence (2026-08-15):
+
+- migration `2.5.135` creates the audited, disabled-by-default registry across primary and SQLite migration paths and passes fresh/idempotent migration contracts;
+- shared schema, canonical serialization, compatibility, API boundary, authorization, toggle/rerender, sanitizer, QR renderer, Markdown fallback, source insertion, Visual Markdown insertion/reopen, and migration-preflight contracts pass (64 focused assertions);
+- server and client typechecks pass, and targeted lint covers the shared contract, both editor hosts, API, registry, migrations, renderer, and tests;
+- browser smoke showed the disabled diagnostic, rejected an anonymous toggle with 403, enabled QR as an administrator, inserted the exact canonical fence, saved and rendered a local accessible QR SVG, then disabled it and observed immediate escaped-source fallback after page rerender;
+- the smoke page, administrator credential, and disabled registry state were restored after verification.
+
 #### 4C. Live collaboration
 
 Use Yjs only after policy, durable jobs/events, and editor canonical-content boundaries are stable.

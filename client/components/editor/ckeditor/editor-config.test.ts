@@ -83,6 +83,10 @@ describe('CKEditor visual formats', () => {
     expect(markdownConfig.toolbar.items).not.toContain('underline')
     expect(markdownConfig.toolbar.items).toContain('todoList')
     expect(markdownConfig.toolbar.items).toContain('horizontalLine')
+    expect(markdownConfig.codeBlock?.languages).toContainEqual({
+      language: 'wiki-extension',
+      label: 'Wiki content extension'
+    })
 
     expect(serializeVisualEditorData('html', '<p>One</p><p>Two</p>')).toBe('<p>One</p>\n<p>Two</p>\n')
     expect(serializeVisualEditorData('markdown', '# One\n')).toBe('# One\n')
@@ -132,5 +136,28 @@ describe('CKEditor visual formats', () => {
     expect(rendered).toContain('<td>Alpha</td>')
     expect(rendered).toContain('<img src="/assets/example.png" alt="Alternative text">')
     expect(rendered).toContain('<hr>')
+  })
+
+  it('preserves a canonical wiki-extension fence through insertion and reopen', async () => {
+    const body = '{"key":"qr","version":1,"props":{"value":"https://example.test","size":256,"errorCorrection":"M"}}'
+    const canonicalFence = `\`\`\`wiki-extension\n${body}\n\`\`\`\n`
+    const ckeditorCanonicalFence = canonicalFence.trimEnd()
+    const element = document.createElement('div')
+    document.body.appendChild(element)
+    const editor = await DecoupledEditor.create(element, createVisualEditorConfig('markdown', 'en', () => {}))
+    editors.push(editor)
+
+    editor.execute('codeBlock', { language: 'wiki-extension' })
+    editor.model.change(writer => {
+      editor.model.insertContent(writer.createText(body), editor.model.document.selection)
+    })
+    expect(editor.getData()).toBe(ckeditorCanonicalFence)
+
+    const reopenedElement = document.createElement('div')
+    document.body.appendChild(reopenedElement)
+    const reopened = await DecoupledEditor.create(reopenedElement, createVisualEditorConfig('markdown', 'en', () => {}))
+    editors.push(reopened)
+    reopened.setData(editor.getData())
+    expect(reopened.getData()).toBe(ckeditorCanonicalFence)
   })
 })

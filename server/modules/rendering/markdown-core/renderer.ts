@@ -4,6 +4,10 @@ import * as markdownItModule from 'markdown-it'
 import * as mdAttrsModule from 'markdown-it-attrs'
 import _ from 'lodash'
 import underline from './underline.ts'
+import {
+  installContentExtensionFenceRule,
+  prepareContentExtensionFences
+} from '../../../content-extensions/renderer.ts'
 
 interface MarkdownRendererConfig extends UnknownRecord {
   allowHTML: boolean
@@ -121,6 +125,9 @@ const plugin = {
       }
       await rendererModule.default.init(mkdown, child.config)
     }
+
+    const contentExtensionFences = await prepareContentExtensionFences(mkdown.parse(this.input, {}))
+    installContentExtensionFenceRule(mkdown, contentExtensionFences)
 
     return mkdown.render(this.input)
   }

@@ -142,6 +142,9 @@
               v-list-item(@click='toggleModal(`editorModalDrawio`)')
                 v-icon.mr-3 mdi-chart-multiline
                 v-list-item-title {{$t('editor:markup.insertDiagram')}}
+              v-list-item(@click='toggleModal(`editorModalBlocks`)')
+                v-icon.mr-3 mdi-qrcode
+                v-list-item-title Insert content extension
               v-divider
               v-list-item(@click='toggleMarkup({ start: `~~` })')
                 v-icon.mr-3 mdi-format-strikethrough
@@ -173,6 +176,11 @@
             v-btn.mt-3.animated.fadeInLeft.wait-p2s(icon, tile, v-bind='props', dark, @click='toggleModal(`editorModalDrawio`)').mx-0
               v-icon mdi-chart-multiline
           span {{$t('editor:markup.insertDiagram')}}
+        v-tooltip(right, color='teal')
+          template(v-slot:activator='{ props }')
+            v-btn.mt-3.animated.fadeInLeft.wait-p3s(icon, tile, v-bind='props', dark, @click='toggleModal(`editorModalBlocks`)').mx-0
+              v-icon(:color='activeModal === `editorModalBlocks` ? `teal` : ``') mdi-qrcode
+          span Insert content extension
         template(v-if='$vuetify.display.mdAndUp')
           v-spacer
           v-tooltip(right, color='teal')
@@ -528,6 +536,13 @@ export default defineComponent({
           this.processMarkers(selStartLine, selEndLine)
           break
         }
+        case 'EXTENSION':
+          if (typeof opts.text === 'string') {
+            this.insertAtCursor({
+              content: opts.text
+            })
+          }
+          break
       }
     },
     closeAllModal() {

@@ -1,6 +1,16 @@
 <template lang='pug'>
   .editor-ckeditor
     div(ref='toolbarContainer')
+    v-btn.editor-ckeditor-extension-trigger(
+      v-if='format === `markdown`'
+      color='teal'
+      dark
+      tile
+      @click='toggleExtensionDialog'
+      aria-label='Insert content extension'
+    )
+      v-icon(left) mdi-qrcode
+      | Insert content extension
     div.contents(ref='editor')
     v-system-bar.editor-status-bar.editor-ckeditor-sysbar(absolute, dark, status, color='grey darken-3')
       .caption.editor-ckeditor-sysbar-locale {{locale.toUpperCase()}}
@@ -32,6 +42,7 @@ import {
 import { onEditorSaveConflict, onEditorContentOverwrite, offEditorSaveConflict, offEditorContentOverwrite } from '../../../helpers/editor-conflict-events'
 import { onEditorInsert, offEditorInsert, type EditorInsertPayload } from '../../../helpers/editor-insert-events'
 import { onEditorLinkToPage, offEditorLinkToPage } from '../../../helpers/editor-link-events'
+import { contentExtensionFenceBody } from '../../../helpers/content-extension-insertion'
 
 /* global siteLangs */
 
@@ -87,9 +98,20 @@ export default defineComponent({
     },
     mode(): EditorMode {
       return wikiStore.editor.mode as EditorMode
+    },
+    activeModal: {
+      get(): string {
+        return wikiStore.editor.activeModal
+      },
+      set(value: string) {
+        wikiStore.editor.activeModal = value
+      }
     }
   },
   methods: {
+    toggleExtensionDialog () {
+      this.activeModal = this.activeModal === 'editorModalBlocks' ? '' : 'editorModalBlocks'
+    },
     insertLink () {
       this.insertLinkDialog = true
     },
@@ -106,7 +128,8 @@ export default defineComponent({
       this.insertLink()
     },
     handleEditorInsert (opts: EditorInsertPayload) {
-      const editor = this.editor
+      // Vue's component proxy deep-unwraps CKEditor private selection fields; the instance itself is markRaw.
+      const editor = this.editor as unknown as DecoupledEditor | null
       if (!editor) return
 
       switch (opts.kind) {
@@ -138,6 +161,26 @@ export default defineComponent({
             })
           } else if (typeof opts.text === 'string') {
             editor.execute('imageInsert', { source: `data:image/svg+xml;base64,${opts.text}` })
+          }
+          break
+        case 'EXTENSION':
+          if (this.format === 'markdown' && typeof opts.text === 'string') {
+            try {
+              const body = contentExtensionFenceBody(opts.text)
+              editor.model.change(() => {
+                editor.model.deleteContent(editor.model.document.selection)
+              })
+              editor.execute('codeBlock', { language: 'wiki-extension' })
+              editor.model.change(writer => {
+                editor.model.insertContent(writer.createText(body), editor.model.document.selection)
+              })
+            } catch (err) {
+              wikiStore.showNotification({
+                message: err instanceof Error ? err.message : 'The content extension could not be inserted.',
+                style: 'warning',
+                icon: 'warning'
+              })
+            }
           }
           break
       }
@@ -248,6 +291,9 @@ $editor-height-mobile: calc(100vh - 56px - 16px);
       justify-content: center;
       align-items: center;
     }
+  }
+  &-extension-trigger {
+    flex: 0 0 auto;
   }
 
   .contents {

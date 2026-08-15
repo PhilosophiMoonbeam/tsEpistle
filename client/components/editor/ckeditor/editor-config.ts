@@ -152,6 +152,15 @@ const markdownToolbar = [
   'horizontalLine',
   'insertTable'
 ]
+const markdownCodeBlockLanguages = [
+  { language: 'plaintext', label: 'Plain text' },
+  { language: 'javascript', label: 'JavaScript' },
+  { language: 'typescript', label: 'TypeScript' },
+  { language: 'html', label: 'HTML' },
+  { language: 'css', label: 'CSS' },
+  { language: 'json', label: 'JSON' },
+  { language: 'wiki-extension', label: 'Wiki content extension' }
+]
 const markdownHeadingOptions: HeadingOption[] = [
   { model: 'paragraph', title: 'Paragraph', class: 'ck-heading_paragraph' },
   { model: 'heading1', view: 'h1', title: 'Heading 1', class: 'ck-heading_heading1' },
@@ -187,6 +196,7 @@ export function createVisualEditorConfig (
       items: isMarkdown ? markdownToolbar : htmlToolbar
     },
     ...(isMarkdown ? { heading: { options: markdownHeadingOptions } } : {}),
+    ...(isMarkdown ? { codeBlock: { languages: markdownCodeBlockLanguages } } : {}),
     image: {
       toolbar: isMarkdown
         ? ['imageTextAlternative']
