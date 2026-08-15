@@ -1,13 +1,17 @@
 import type { Knex } from 'knex'
 
 export const up = async (knex: Knex): Promise<void> => {
+  const client = String(knex.client.config.client)
   await knex.schema.createTable('pageApprovalRequests', table => {
     table.uuid('id').primary()
     table.integer('pageId').unsigned().notNullable().references('id').inTable('pages').onDelete('CASCADE')
-    table.integer('submitterId').unsigned().notNullable().references('id').inTable('users').onDelete('CASCADE')
-    table.integer('assigneeId').unsigned().nullable().references('id').inTable('users').onDelete('SET NULL')
+    const submitterId = table.integer('submitterId').unsigned().notNullable().references('id').inTable('users')
+    if (client !== 'mssql') submitterId.onDelete('CASCADE')
+    const assigneeId = table.integer('assigneeId').unsigned().nullable().references('id').inTable('users')
+    if (client !== 'mssql') assigneeId.onDelete('SET NULL')
     table.string('status', 32).notNullable()
-    table.integer('revisionId').unsigned().notNullable().references('id').inTable('pageHistory').onDelete('CASCADE')
+    const revisionId = table.integer('revisionId').unsigned().notNullable().references('id').inTable('pageHistory')
+    if (client !== 'mssql') revisionId.onDelete('CASCADE')
     table.dateTime('revisionUpdatedAt').notNullable()
     table.dateTime('createdAt').notNullable()
     table.dateTime('updatedAt').notNullable()
@@ -22,8 +26,10 @@ export const up = async (knex: Knex): Promise<void> => {
     table.uuid('requestId').notNullable().references('id').inTable('pageApprovalRequests').onDelete('CASCADE')
     table.string('fromStatus', 32).nullable()
     table.string('toStatus', 32).notNullable()
-    table.integer('actorId').unsigned().notNullable().references('id').inTable('users').onDelete('RESTRICT')
-    table.integer('revisionId').unsigned().notNullable().references('id').inTable('pageHistory').onDelete('RESTRICT')
+    const actorId = table.integer('actorId').unsigned().notNullable().references('id').inTable('users')
+    if (client !== 'mssql') actorId.onDelete('RESTRICT')
+    const revisionId = table.integer('revisionId').unsigned().notNullable().references('id').inTable('pageHistory')
+    if (client !== 'mssql') revisionId.onDelete('RESTRICT')
     table.text('comment').nullable()
     table.dateTime('createdAt').notNullable()
     table.index(['requestId', 'createdAt'], 'page_approval_transitions_history')

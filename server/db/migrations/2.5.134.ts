@@ -1,11 +1,13 @@
 import type { Knex } from 'knex'
 
 export const up = async (knex: Knex): Promise<void> => {
+  const client = String(knex.client.config.client)
   await knex.schema.createTable('pageAccessPasswords', table => {
     table.integer('pageId').unsigned().primary().references('id').inTable('pages').onDelete('CASCADE')
     table.text('passwordHash').notNullable()
     table.integer('version').unsigned().notNullable().defaultTo(1)
-    table.integer('updatedBy').unsigned().notNullable().references('id').inTable('users').onDelete('RESTRICT')
+    const updatedBy = table.integer('updatedBy').unsigned().notNullable().references('id').inTable('users')
+    if (client !== 'mssql') updatedBy.onDelete('RESTRICT')
     table.dateTime('updatedAt').notNullable()
   })
 

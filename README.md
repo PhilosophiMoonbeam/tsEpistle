@@ -49,6 +49,20 @@ Set `WIKI_IMAGE` to an immutable version tag or digest to override the sample's 
 
 Kubernetes installation, upgrade, backup, rollback, and restore procedures are in the [fork Helm chart guide](dev/helm/README.md). Before any upgrade, preserve the database and any local asset/data volumes as one recoverable point in time. A binary or container rollback without the matching database restore is unsafe after a migration.
 
+### Backup and rollback contract
+
+Stop every Wiki.ts instance before restoring. Restore the database and `/wiki/data` from the same pre-upgrade point, then start the exact previous application image digest. Never run an older application against a database migrated by a newer release.
+
+| Database | Release-tested backup | Release-tested restore |
+| --- | --- | --- |
+| PostgreSQL | `pg_dump --format=custom` | recreate the database, then `pg_restore` |
+| MySQL 8.0 | `mysqldump --single-transaction` | recreate the database, then import with `mysql` |
+| MariaDB 10.11 | `mariadb-dump --single-transaction` | recreate the database, then import with `mariadb` |
+| Microsoft SQL Server 2022 | `BACKUP DATABASE ... WITH CHECKSUM` | `RESTORE DATABASE ... WITH REPLACE` |
+| SQLite | offline archive of `/wiki/data`, including `db.sqlite` | replace the complete `/wiki/data` volume from that archive |
+
+The `upgrade` CI matrix executes these engine-native backups, upgrades the retained Wiki.js 2.5.314 fixture, writes post-upgrade database and volume sentinels, restores both snapshots, boots the old image, authenticates the original administrator, and rejects retained post-upgrade state. Treat that matrix as a compatibility canary, not as a substitute for testing a restored copy of production data.
+
 ## API compatibility
 
 `/api/v1` is the versioned external REST contract. Its OpenAPI 3.1 document is served at `/api/v1/openapi.json` and is covered by contract tests. Additive fields and endpoints may appear in a preview release; an incompatible request or response change requires a new API version. Removal of a v1 operation requires marking it deprecated in OpenAPI and release notes for at least one published preview release first.
