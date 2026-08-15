@@ -123,5 +123,5 @@
 - Code-quality/integration review: helper/component behavior, refresh success gating, test coverage, route mounting.
 
 **Commit:**
-- Stage only implementation/test files, not `.hermes/plans/*.md` unless explicitly requested.
+- Stage only implementation/test files, not `docs/.planning/*.md` unless explicitly requested.
 - Commit message: `[verified] feat: move analytics providers bootstrap to REST`

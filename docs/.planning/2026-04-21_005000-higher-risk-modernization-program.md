@@ -23,7 +23,7 @@ Planning lanes:
 6. Frontend framework and bundler future state
 
 The first execution lane already has its own detailed plan file:
-- `.hermes/plans/2026-04-21_004800-campaign1-build-pipeline-execution-plan.md`
+- `docs/.planning/2026-04-21_004800-campaign1-build-pipeline-execution-plan.md`
 
 This document fleshes out Campaigns 2-6.
 

@@ -584,7 +584,7 @@ These are future proposals only, not implementation steps in this inventory.
 Possible additive artifacts:
 
 1. Store-shape declaration file for documentation/check-only use.
-   - Example future path: `client/types/store-shapes.d.ts` or `.hermes/plans` schema tables.
+   - Example future path: `client/types/store-shapes.d.ts` or `docs/.planning/` schema tables.
    - Must not be imported by runtime code unless a later approved lane enables it.
 
 2. JSDoc typedefs near helper wrappers.

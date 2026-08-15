@@ -99,7 +99,7 @@ Files:
 - Inspect: `.nvmrc`
 - Inspect: `.github/workflows/build.yml`
 - Inspect: `dev/build/Dockerfile`
-- Possibly create: `docs/plans/` or `.hermes/plans/` notes only
+- Possibly create: `docs/.planning/` notes only
 
 Steps:
 1. Use `corepack yarn` to install dependencies in a controlled way.

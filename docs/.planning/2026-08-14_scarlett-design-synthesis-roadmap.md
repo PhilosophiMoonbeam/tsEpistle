@@ -518,7 +518,7 @@ Completion evidence (2026-08-15):
 
 #### 4A. Visual Markdown depth
 
-Build on the existing Visual Markdown contract in `.hermes/plans/2026-08-14_visual-markdown-ckeditor-plan.md`.
+Build on the existing Visual Markdown contract in `docs/.planning/2026-08-14_visual-markdown-ckeditor-plan.md`.
 
 Ordered additions:
 

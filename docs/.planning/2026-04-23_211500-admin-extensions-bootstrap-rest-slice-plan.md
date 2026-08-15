@@ -170,4 +170,4 @@ git add server/controllers/api/system.js server/test/controllers/api.system.test
 git commit -m "[verified] feat: move admin extensions bootstrap to REST"
 ```
 
-Do not stage untracked `.hermes/plans/*.md` files unless explicitly requested.
+Do not stage untracked `docs/.planning/*.md` files unless explicitly requested.

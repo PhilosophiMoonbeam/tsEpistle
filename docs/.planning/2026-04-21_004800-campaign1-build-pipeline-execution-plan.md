@@ -95,7 +95,7 @@ Not in scope for Campaign 1:
 
 ## Preconditions before starting execution
 
-1. Branch must be clean except `.hermes/`
+1. Branch must be clean except `docs/.planning/`
 2. Current validation must pass:
    - `corepack yarn test`
    - `corepack yarn build`

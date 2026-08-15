@@ -175,7 +175,7 @@ Also run a staged added-line secret scan before commit because real search engin
 
 After implementation, targeted tests, full tests/build, secret scan, and independent reviews pass:
 ```bash
-git add .hermes/plans/2026-04-25_003336-admin-search-engines-bootstrap-rest-slice-plan.md \
+git add docs/.planning/2026-04-25_003336-admin-search-engines-bootstrap-rest-slice-plan.md \
   server/controllers/api/search.js server/controllers/api/index.js server/test/controllers/api.search.test.js server/test/controllers/api.index.test.js \
   client/helpers/search-api.js client/helpers/search-api.test.js client/components/admin/admin-search.vue
 

@@ -23,7 +23,7 @@ The safe next frontend architecture move is still planning and boundary preparat
 
 This document implements the TS-0 inventory/risk-mapping step described in:
 
-- `.hermes/plans/2026-04-25_151415-typescript-vue35-migration-planning-addendum.md`
+- `docs/.planning/2026-04-25_151415-typescript-vue35-migration-planning-addendum.md`
 
 ---
 

@@ -144,7 +144,7 @@ Secret scan:
 
 After targeted tests, full tests/build, secret scan, and independent reviews pass:
 ```bash
-git add .hermes/plans/2026-04-25_011250-admin-auth-host-bootstrap-rest-slice-plan.md \
+git add docs/.planning/2026-04-25_011250-admin-auth-host-bootstrap-rest-slice-plan.md \
   server/controllers/api/system.js server/test/controllers/api.system.test.js \
   client/helpers/system-api.js client/helpers/system-api.test.js client/components/admin/admin-auth.vue
 

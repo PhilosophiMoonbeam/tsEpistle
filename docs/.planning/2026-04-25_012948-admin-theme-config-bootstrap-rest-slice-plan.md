@@ -199,7 +199,7 @@ Secret scan:
 After targeted tests, full tests/build, staged secret scan, and independent reviews pass:
 
 ```bash
-git add .hermes/plans/2026-04-25_012948-admin-theme-config-bootstrap-rest-slice-plan.md \
+git add docs/.planning/2026-04-25_012948-admin-theme-config-bootstrap-rest-slice-plan.md \
   server/controllers/api/theming.js server/test/controllers/api.theming.test.js \
   server/controllers/api/index.js server/test/controllers/api.index.test.js \
   client/helpers/theming-api.js client/helpers/theming-api.test.js \
