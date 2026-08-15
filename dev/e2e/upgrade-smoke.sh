@@ -7,6 +7,11 @@ WIKI_UPGRADE_SOURCE_IMAGE=${WIKI_UPGRADE_SOURCE_IMAGE:-ghcr.io/requarks/wiki:2.5
 ADMIN_EMAIL=upgrade-smoke@example.com
 ADMIN_PASSWORD=UpgradeSmoke123!
 RECOVERY_DIR=$(mktemp -d)
+MIGRATION_MAX_SECONDS=${MIGRATION_MAX_SECONDS:-120}
+MIGRATION_MAX_DB_GROWTH_BYTES=${MIGRATION_MAX_DB_GROWTH_BYTES:-268435456}
+MIGRATION_MAX_DB_AMPLIFICATION_PERCENT=${MIGRATION_MAX_DB_AMPLIFICATION_PERCENT:-500}
+MIGRATION_MAX_DATA_GROWTH_BYTES=${MIGRATION_MAX_DATA_GROWTH_BYTES:-67108864}
+MIGRATION_METRICS_FILE=${MIGRATION_METRICS_FILE:-migration-metrics-$MATRIXENV.json}
 
 cleanup() {
   if [ "${recovery_succeeded:-false}" != true ]; then
@@ -98,6 +103,87 @@ restore_data_volume() {
     -C /target -xzf /backup/wiki-data.tar.gz
 }
 
+database_size_bytes() {
+  case $MATRIXENV in
+  postgres)
+    docker exec db psql --username=wiki --dbname=wiki --tuples-only --no-align \
+      --command="SELECT pg_database_size('wiki')"
+    ;;
+  mysql)
+    docker exec db mysql --user=root --password='Password123!' --batch --skip-column-names \
+      -e "SELECT COALESCE(SUM(data_length + index_length), 0) FROM information_schema.tables WHERE table_schema = 'wiki'"
+    ;;
+  mariadb)
+    docker exec db mariadb --user=root --password='Password123!' --batch --skip-column-names \
+      -e "SELECT COALESCE(SUM(data_length + index_length), 0) FROM information_schema.tables WHERE table_schema = 'wiki'"
+    ;;
+  mssql)
+    docker exec db /opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P 'Password123!' \
+      -d wiki -h -1 -W -Q 'SET NOCOUNT ON; SELECT SUM(size) * 8192 FROM sys.database_files'
+    ;;
+  sqlite)
+    docker run --rm --user 0 --entrypoint stat -v wiki-data:/data:ro "$WIKI_TEST_IMAGE" \
+      -c %s /data/db.sqlite
+    ;;
+  esac
+}
+
+data_volume_size_bytes() {
+  docker run --rm --user 0 --entrypoint sh -v wiki-data:/data:ro "$WIKI_TEST_IMAGE" \
+    -c 'set -- $(du -sk /data); echo $(( $1 * 1024 ))'
+}
+
+record_and_check_migration_metrics() {
+  local seconds=$1
+  local database_before=$2
+  local database_after=$3
+  local data_before=$4
+  local data_after=$5
+  local database_growth=$((database_after - database_before))
+  local data_growth=$((data_after - data_before))
+  local amplification_percent=$(((database_after * 100 + database_before - 1) / database_before))
+  if [ "$database_growth" -lt 0 ]; then database_growth=0; fi
+  if [ "$data_growth" -lt 0 ]; then data_growth=0; fi
+
+  jq --null-input \
+    --arg database "$MATRIXENV" \
+    --argjson seconds "$seconds" \
+    --argjson databaseBytesBefore "$database_before" \
+    --argjson databaseBytesAfter "$database_after" \
+    --argjson databaseGrowthBytes "$database_growth" \
+    --argjson databaseAmplificationPercent "$amplification_percent" \
+    --argjson dataBytesBefore "$data_before" \
+    --argjson dataBytesAfter "$data_after" \
+    --argjson dataGrowthBytes "$data_growth" \
+    --argjson maxSeconds "$MIGRATION_MAX_SECONDS" \
+    --argjson maxDatabaseGrowthBytes "$MIGRATION_MAX_DB_GROWTH_BYTES" \
+    --argjson maxDatabaseAmplificationPercent "$MIGRATION_MAX_DB_AMPLIFICATION_PERCENT" \
+    --argjson maxDataGrowthBytes "$MIGRATION_MAX_DATA_GROWTH_BYTES" \
+    '{
+      database: $database,
+      migrationSeconds: $seconds,
+      databaseBytesBefore: $databaseBytesBefore,
+      databaseBytesAfter: $databaseBytesAfter,
+      databaseGrowthBytes: $databaseGrowthBytes,
+      databaseAmplificationPercent: $databaseAmplificationPercent,
+      dataBytesBefore: $dataBytesBefore,
+      dataBytesAfter: $dataBytesAfter,
+      dataGrowthBytes: $dataGrowthBytes,
+      limits: {
+        migrationSeconds: $maxSeconds,
+        databaseGrowthBytes: $maxDatabaseGrowthBytes,
+        databaseAmplificationPercent: $maxDatabaseAmplificationPercent,
+        dataGrowthBytes: $maxDataGrowthBytes
+      }
+    }' > "$MIGRATION_METRICS_FILE"
+  cat "$MIGRATION_METRICS_FILE"
+
+  [ "$seconds" -le "$MIGRATION_MAX_SECONDS" ]
+  [ "$database_growth" -le "$MIGRATION_MAX_DB_GROWTH_BYTES" ]
+  [ "$amplification_percent" -le "$MIGRATION_MAX_DB_AMPLIFICATION_PERCENT" ]
+  [ "$data_growth" -le "$MIGRATION_MAX_DATA_GROWTH_BYTES" ]
+}
+
 backup_database() {
   case $MATRIXENV in
   postgres)
@@ -185,10 +271,21 @@ verify_legacy_login
 write_data_marker pre-upgrade
 backup_database
 snapshot_data_volume
+database_bytes_before=$(database_size_bytes)
+database_bytes_before=${database_bytes_before//[[:space:]]/}
+data_bytes_before=$(data_volume_size_bytes)
+data_bytes_before=${data_bytes_before//[[:space:]]/}
 
 docker rm -f wiki >/dev/null
+migration_started_at=$(date +%s)
 start_wiki "$WIKI_TEST_IMAGE" >/dev/null
 wait_for_url http://127.0.0.1:3000/healthz
+migration_seconds=$(($(date +%s) - migration_started_at))
+database_bytes_after=$(database_size_bytes)
+database_bytes_after=${database_bytes_after//[[:space:]]/}
+data_bytes_after=$(data_volume_size_bytes)
+data_bytes_after=${data_bytes_after//[[:space:]]/}
+record_and_check_migration_metrics "$migration_seconds" "$database_bytes_before" "$database_bytes_after" "$data_bytes_before" "$data_bytes_after"
 
 login_response=$(curl --fail --silent --show-error \
   --header 'Content-Type: application/json' \

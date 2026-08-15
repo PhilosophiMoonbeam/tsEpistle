@@ -63,6 +63,8 @@ Stop every Wiki.ts instance before restoring. Restore the database and `/wiki/da
 
 The `upgrade` CI matrix executes these engine-native backups, upgrades the retained Wiki.js 2.5.314 fixture, writes post-upgrade database and volume sentinels, restores both snapshots, boots the old image, authenticates the original administrator, and rejects retained post-upgrade state. Treat that matrix as a compatibility canary, not as a substitute for testing a restored copy of production data.
 
+Each database job uploads `migration-metrics-<database>.json`. The retained source fixture must migrate and reach health within 120 seconds, add no more than 256 MiB or 5× its original database size, and add no more than 64 MiB to `/wiki/data`. These are regression ceilings for the synthetic compatibility fixture; operators must establish tighter time and capacity budgets from a production-data canary.
+
 ## API compatibility
 
 `/api/v1` is the versioned external REST contract. Its OpenAPI 3.1 document is served at `/api/v1/openapi.json` and is covered by contract tests. Additive fields and endpoints may appear in a preview release; an incompatible request or response change requires a new API version. Removal of a v1 operation requires marking it deprecated in OpenAPI and release notes for at least one published preview release first.
