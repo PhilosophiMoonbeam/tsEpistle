@@ -26,12 +26,30 @@ No supported Wiki.ts Preview release has been published yet. Do not treat `main`
 When a release is published:
 
 1. use an immutable version tag or image digest, never `main` or `canary`;
-2. verify the attached archives, Helm chart, SBOM, and production dependency license inventory against `SHA256SUMS`;
+2. verify the release attestation, then verify the attached archives, Helm chart, SBOM, production dependency license inventory, and `release-manifest.json` against `SHA256SUMS`;
 3. back up both the Wiki.ts data directory and database before every upgrade;
 4. test the upgrade against a restored copy of production data;
 5. roll back by restoring both the pre-upgrade database and data-directory snapshots—database migrations are not guaranteed to be reversible.
 
 The release CI exercises PostgreSQL 15, MySQL 8.0, MariaDB 10.11, Microsoft SQL Server 2022, and the SQLite runtime bundled with Wiki.ts. These are the minimum supported database families and major versions for the preview release. Upgrade CI starts from the exact upstream base, Wiki.js 2.5.314; older Wiki.js or Wiki.ts database sources are unsupported unless a later release explicitly adds a retained upgrade fixture. Deployment-specific identity providers, object storage, search engines, mail, proxies, and multi-instance topologies still require an operator canary. Kubernetes users should start with the [fork Helm chart](dev/helm/README.md).
+
+### Verify release provenance
+
+Every published release includes `release-manifest.json`, `SHA256SUMS`, and `wiki-ts-preview-release.intoto.jsonl`. The manifest binds the exact source revision, immutable multi-platform image digest, and release artifact hashes. GitHub Actions signs the listed artifacts with keyless Sigstore attestations and pushes provenance plus the SPDX SBOM attestation for the image digest.
+
+```console
+gh attestation verify wiki-ts-preview-linux.tar.gz \
+  --repo PhilosophiMoonbeam/wiki \
+  --signer-workflow PhilosophiMoonbeam/wiki/.github/workflows/build.yml \
+  --bundle wiki-ts-preview-release.intoto.jsonl
+sha256sum --check SHA256SUMS
+gh attestation verify "oci://ghcr.io/philosophimoonbeam/wiki@IMAGE_DIGEST" \
+  --repo PhilosophiMoonbeam/wiki \
+  --signer-workflow PhilosophiMoonbeam/wiki/.github/workflows/build.yml \
+  --bundle-from-oci
+```
+
+Replace `IMAGE_DIGEST` with the digest in `release-manifest.json`. The tag release gate independently rebuilds the Linux bundle in a clean job and requires a byte-for-byte match before publication. Windows, source, Helm, SBOM, and license artifacts are integrity-bound and attested but are not currently claimed to be independently reproducible.
 
 ## Install and operate
 

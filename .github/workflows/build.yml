@@ -105,23 +105,7 @@ jobs:
       run: docker save "wiki-ts-preview:test-$WIKI_BUILD_REVISION" | gzip -1 -n > wiki-ts-preview-test-image.tar.gz
 
     - name: Create Reproducible Linux Bundle
-      shell: bash
-      run: |
-        mkdir -p _dist
-        container_id="$(docker create "wiki-ts-preview:test-$WIKI_BUILD_REVISION")"
-        docker cp "$container_id:/wiki" _dist
-        docker rm "$container_id"
-        rm -f _dist/wiki/config.yml
-        cp config.sample.yml _dist/wiki/config.sample.yml
-        tar \
-          --sort=name \
-          --format=gnu \
-          --owner=0 \
-          --group=0 \
-          --numeric-owner \
-          --mtime="@$SOURCE_DATE_EPOCH" \
-          -czf wiki-ts-preview-linux.tar.gz \
-          -C _dist/wiki .
+      run: dev/build/create-linux-bundle.sh "wiki-ts-preview:test-$WIKI_BUILD_REVISION" wiki-ts-preview-linux.tar.gz
 
     - name: Upload Linux Build
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -138,6 +122,64 @@ jobs:
         if-no-files-found: error
         retention-days: 1
         compression-level: 0
+
+  reproducibility:
+    name: Rebuild Linux Bundle Reproducibly
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build]
+    permissions:
+      contents: read
+
+    steps:
+    - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+    - name: Download Reference Linux Bundle
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+      with:
+        name: drop
+        path: reference
+
+    - name: Set Build Metadata
+      shell: bash
+      run: node server/scripts/export-build-environment.ts >> "$GITHUB_ENV"
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
+
+    - name: Independently Rebuild Test Image
+      uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
+      env:
+        DOCKER_BUILD_SUMMARY: false
+      with:
+        context: .
+        file: dev/build/Dockerfile
+        build-args: |
+          WIKI_BUILD_DATE=${{ env.WIKI_BUILD_DATE }}
+          WIKI_BUILD_REVISION=${{ env.WIKI_BUILD_REVISION }}
+          WIKI_PRODUCT_DESCRIPTION=${{ env.WIKI_PRODUCT_DESCRIPTION }}
+          WIKI_PRODUCT_NAME=${{ env.WIKI_PRODUCT_NAME }}
+          WIKI_PRODUCT_VERSION=${{ env.WIKI_PRODUCT_VERSION }}
+          WIKI_SOURCE_REPOSITORY=${{ env.WIKI_SOURCE_REPOSITORY }}
+          WIKI_UPSTREAM_BASE=${{ env.WIKI_UPSTREAM_BASE }}
+        load: true
+        provenance: false
+        sbom: false
+        tags: wiki-ts-preview:reproducibility-${{ env.WIKI_BUILD_REVISION }}
+
+    - name: Compare Independent Linux Bundle
+      shell: bash
+      run: |
+        dev/build/create-linux-bundle.sh \
+          "wiki-ts-preview:reproducibility-$WIKI_BUILD_REVISION" \
+          wiki-ts-preview-linux.tar.gz
+        if ! cmp --silent reference/wiki-ts-preview-linux.tar.gz wiki-ts-preview-linux.tar.gz; then
+          sha256sum reference/wiki-ts-preview-linux.tar.gz wiki-ts-preview-linux.tar.gz
+          echo 'Independent Linux bundle does not reproduce the release candidate.' >&2
+          exit 1
+        fi
+        sha256sum wiki-ts-preview-linux.tar.gz
 
   e2e:
     name: Playwright (${{ matrix.dbtype }})
@@ -544,10 +586,12 @@ jobs:
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
     environment: prod
-    needs: [beta]
+    needs: [beta, reproducibility]
     permissions:
       actions: read
+      attestations: write
       contents: write
+      id-token: write
       packages: write
 
     steps:
@@ -575,10 +619,14 @@ jobs:
       shell: bash
       run: |
         docker buildx imagetools create \
+          --metadata-file release-image-metadata.json \
           --tag "$IMAGE_REPOSITORY:$REL_VERSION_STRICT" \
           --tag "$IMAGE_REPOSITORY:preview" \
           "$IMAGE_REPOSITORY:canary-$REL_VERSION_STRICT" \
           "$IMAGE_REPOSITORY:canary-arm64-$REL_VERSION_STRICT"
+        image_digest="$(jq --exit-status --raw-output '."containerimage.digest"' release-image-metadata.json)"
+        [[ "$image_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+        echo "IMAGE_DIGEST=$image_digest" >> "$GITHUB_ENV"
 
     - name: Download Linux Build
       uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
@@ -614,29 +662,53 @@ jobs:
         helm lint dev/helm --set postgresql.postgresqlPassword=ci-validation-only
         helm package --destination dist dev/helm
 
-    - name: Stage Compliance Artifacts
-      run: cp compliance/third-party-licenses.json .
+    - name: Stage Release Artifacts
+      shell: bash
+      run: |
+        cp drop/wiki-ts-preview-linux.tar.gz .
+        cp drop-win/wiki-ts-preview-windows.tar.gz .
+        cp "dist/wiki-ts-preview-$REL_VERSION_STRICT.tgz" .
+        cp compliance/third-party-licenses.json .
 
     - name: Create Corresponding Source Archive
       run: git archive --format=tar.gz --prefix="wiki-ts-preview-$REL_VERSION_STRICT/" --output=wiki-ts-preview-source.tar.gz "$WIKI_BUILD_REVISION"
 
-    - name: Generate Release Checksums
-      shell: bash
+    - name: Generate Release Manifest and Checksums
       run: |
-        linux_sha="$(sha256sum drop/wiki-ts-preview-linux.tar.gz | cut -d ' ' -f 1)"
-        windows_sha="$(sha256sum drop-win/wiki-ts-preview-windows.tar.gz | cut -d ' ' -f 1)"
-        source_sha="$(sha256sum wiki-ts-preview-source.tar.gz | cut -d ' ' -f 1)"
-        chart_sha="$(sha256sum "dist/wiki-ts-preview-$REL_VERSION_STRICT.tgz" | cut -d ' ' -f 1)"
-        sbom_sha="$(sha256sum wiki-ts-preview.spdx.json | cut -d ' ' -f 1)"
-        licenses_sha="$(sha256sum third-party-licenses.json | cut -d ' ' -f 1)"
-        printf '%s  %s\n%s  %s\n%s  %s\n%s  %s\n%s  %s\n%s  %s\n' \
-          "$linux_sha" "wiki-ts-preview-linux.tar.gz" \
-          "$windows_sha" "wiki-ts-preview-windows.tar.gz" \
-          "$source_sha" "wiki-ts-preview-source.tar.gz" \
-          "$chart_sha" "wiki-ts-preview-$REL_VERSION_STRICT.tgz" \
-          "$sbom_sha" "wiki-ts-preview.spdx.json" \
-          "$licenses_sha" "third-party-licenses.json" \
-          > SHA256SUMS
+        node server/scripts/generate-release-manifest.ts \
+          release-manifest.json \
+          SHA256SUMS \
+          wiki-ts-preview-linux.tar.gz \
+          wiki-ts-preview-windows.tar.gz \
+          wiki-ts-preview-source.tar.gz \
+          "wiki-ts-preview-$REL_VERSION_STRICT.tgz" \
+          wiki-ts-preview.spdx.json \
+          third-party-licenses.json
+        sha256sum --check SHA256SUMS
+
+    - name: Attest Release Artifacts
+      id: attest-release
+      uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+      with:
+        subject-checksums: SHA256SUMS
+
+    - name: Stage Offline Provenance Bundle
+      run: cp "${{ steps.attest-release.outputs.bundle-path }}" wiki-ts-preview-release.intoto.jsonl
+
+    - name: Attest Release Image Provenance
+      uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+      with:
+        subject-name: ${{ env.IMAGE_REPOSITORY }}
+        subject-digest: ${{ env.IMAGE_DIGEST }}
+        push-to-registry: true
+
+    - name: Attest Release Image SBOM
+      uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+      with:
+        subject-name: ${{ env.IMAGE_REPOSITORY }}
+        subject-digest: ${{ env.IMAGE_DIGEST }}
+        sbom-path: wiki-ts-preview.spdx.json
+        push-to-registry: true
 
     - name: Generate Changelog
       id: changelog
@@ -655,7 +727,7 @@ jobs:
         name: ${{ github.ref_name }}
         body: ${{ steps.changelog.outputs.changes }}
         token: ${{ github.token }}
-        artifacts: 'drop/wiki-ts-preview-linux.tar.gz,drop-win/wiki-ts-preview-windows.tar.gz,wiki-ts-preview-source.tar.gz,dist/*.tgz,wiki-ts-preview.spdx.json,third-party-licenses.json,SHA256SUMS'
+        artifacts: 'wiki-ts-preview-linux.tar.gz,wiki-ts-preview-windows.tar.gz,wiki-ts-preview-source.tar.gz,wiki-ts-preview-*.tgz,wiki-ts-preview.spdx.json,third-party-licenses.json,release-manifest.json,SHA256SUMS,wiki-ts-preview-release.intoto.jsonl'
 
     - name: Notify Telegram Channel
       uses: appleboy/telegram-action@221e6b684967abe813051ee4a37dd61770a83ad3 # v1.0.1
