@@ -8,7 +8,7 @@
             .headline.blue--text.text--darken-2.animated.fadeInLeft Pages
             .subtitle-1.grey--text.animated.fadeInLeft.wait-p2s Manage pages
           v-spacer
-          v-btn.animated.fadeInDown.wait-p1s(icon, color='grey', outlined, @click='refresh')
+          v-btn.animated.fadeInDown.wait-p1s(icon, color='grey', outlined, @click='refresh', aria-label='Refresh pages')
             v-icon.grey--text mdi-refresh
           //- v-btn.animated.fadeInDown.mx-3(color='primary', outlined, @click='recyclebin', disabled)
           //-   v-icon(left) mdi-delete-outline

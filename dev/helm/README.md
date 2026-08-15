@@ -2,221 +2,139 @@
 
 This chart deploys **Wiki.ts Preview 0.1.0-alpha.1**, an independent community fork derived from Wiki.js 2.5.314. It is not an official Wiki.js release.
 
-- [Fork source](https://github.com/PhilosophiMoonbeam/wiki)
-- [AGPLv3 license](../../LICENSE)
+- Source: <https://github.com/PhilosophiMoonbeam/wiki>
+- License: [AGPL-3.0](../../LICENSE)
 - Container: `ghcr.io/philosophimoonbeam/wiki:0.1.0-alpha.1`
+- Support: <https://github.com/PhilosophiMoonbeam/wiki/issues>
 
-The chart was modified for this fork on 2026-08-13. Wiki.js was created by Nicolas Giard and developed by Requarks and its contributors; the historical credits below are retained as upstream attribution.
-
-<h2 align="center">Donate</h2>
-
-<div align="center">
-
-Wiki.js is an open source project that has been made possible due to the generous contributions by community [backers](https://wiki.js.org/about). If you are interested in supporting this project, please consider [becoming a sponsor](https://github.com/users/NGPixel/sponsorship), [becoming a patron](https://www.patreon.com/requarks), donating to our [OpenCollective](https://opencollective.com/wikijs), via [Paypal](https://www.paypal.com/cgi-bin/webscr?cmd=_s-xclick&hosted_button_id=FLV5X255Z9CJU&source=url) or via Ethereum (`0xe1d55c19ae86f6bcbfb17e7f06ace96bdbb22cb5`).
-  
-  [![Become a Sponsor](https://img.shields.io/badge/donate-github-ea4aaa.svg?style=popout&logo=github)](https://github.com/users/NGPixel/sponsorship)
-  [![Become a Patron](https://img.shields.io/badge/donate-patreon-orange.svg?style=popout&logo=patreon)](https://www.patreon.com/requarks)
-  [![Donate on OpenCollective](https://img.shields.io/badge/donate-open%20collective-blue.svg?style=popout&logo=data:image/svg+xml;base64,PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz48c3ZnIHdpZHRoPSIyNTZweCIgaGVpZ2h0PSIyNTZweCIgdmlld0JveD0iMCAwIDI1NiAyNTYiIHZlcnNpb249IjEuMSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIiB4bWxuczp4bGluaz0iaHR0cDovL3d3dy53My5vcmcvMTk5OS94bGluayIgcHJlc2VydmVBc3BlY3RSYXRpbz0ieE1pZFlNaWQiPjxnPjxwYXRoIGQ9Ik0yMDkuNzY1MTQ0LDEyOC4xNDk5NzkgQzIwOS43NjUxNDQsMTQ0LjE2MzMgMjA0Ljg2NDM4MSwxNTkuNDg5ODkgMTk2LjQ5ODc0NywxNzIuNzI1MDcyIEwyMjkuOTQ1Njc1LDIwNi4xNzE5OTkgQzI0Ni42ODIxMDUsMTgzLjg1Njc1OSAyNTUuNzI5MzA3LDE1Ni43MTUxNTIgMjU1LjcyOTMwNywxMjguODIxMTAyIEMyNTUuNzI5MzA3LDk5LjU1Njk5MTcgMjQ1Ljk3NDYwMyw3My4wNzEwMjA3IDIyOS4yNTg5NDQsNTEuNDg1ODEyOCBMMTk2LjQ4MzE0LDg0LjIxNDc5NCBDMjA1LjEyMjU2MSw5Ny4yMjI0NjgzIDIwOS43MzY5MDcsMTEyLjQ4NzgxIDIwOS43NDk1MzcsMTI4LjEwMzE1NiBMMjA5Ljc2NTE0NCwxMjguMTQ5OTc5IFoiIGZpbGw9IiNCOEQzRjQiPjwvcGF0aD48cGF0aCBkPSJNMTI3LjUxMzQ4NCwyMTAuMzU0ODE2IEM4Mi4xNDYwODcyLDIxMC4yNjg5NTggNDUuMzg3NTA5NCwxNzMuNTE3MzU4IDQ1LjI5MzAzOTMsMTI4LjE0OTk3OSBDNDUuMzYxNzUwMiw4Mi43NjQzMTM4IDgyLjEyNzg0ODcsNDUuOTg0MjU3IDEyNy41MTM0ODQsNDUuODk4MzE4NiBDMTQ0LjI0NDc1Miw0NS44OTgzMTg2IDE1OS41NzEzNDIsNTAuNzk5MDgxNyAxNzIuMTE5NzkyLDU5LjE2NDcxNTQgTDIwNC44NjQzODEsMjYuMzg4OTExNiBDMTgyLjU0MzY1LDkuNjY2NjUxMjkgMTU1LjQwMzQyOSwwLjYzMDg2MzI5OCAxMjcuNTEzNDg0LDAuNjM2NDk0NDAzIEM1Ny4xMjM1NDM3LDAuNjM2NDk0NDAzIDAsNTcuNzYwMDM4MSAwLDEyOC4xNDk5NzkgQzAsMTk4LjUwODcwNCA1Ny4xMjM1NDM3LDI1NS42NjM0NjMgMTI3LjUxMzQ4NCwyNTUuNjYzNDYzIEMxNTUuNTM3MzUyLDI1NS43NDA4NzYgMTgyLjc3NTk4OSwyNDYuNDA4NTEgMjA0Ljg2NDM4MSwyMjkuMTYxODg0IEwxNzEuNDE3NDU0LDE5NS43MzA1NjQgQzE1OS41NTU3MzQsMjA1LjQ4NTI2OCAxNDQuMjYwMzU5LDIxMC4zNTQ4MTYgMTI3LjUxMzQ4NCwyMTAuMzU0ODE2IEwxMjcuNTEzNDg0LDIxMC4zNTQ4MTYgWiIgZmlsbD0iIzdGQURGMiI+PC9wYXRoPjwvZz48L3N2Zz4=)](https://opencollective.com/wikijs)
-  [![Donate via Paypal](https://img.shields.io/badge/donate-paypal-blue.svg?style=popout&logo=paypal)](https://www.paypal.com/cgi-bin/webscr?cmd=_s-xclick&hosted_button_id=FLV5X255Z9CJU&source=url)  
-  [![Donate via Ethereum](https://img.shields.io/badge/donate-ethereum-999.svg?style=popout&logo=ethereum&logoColor=CCC)](https://etherscan.io/address/0xe1d55c19ae86f6bcbfb17e7f06ace96bdbb22cb5)
-  [![Donate via Bitcoin](https://img.shields.io/badge/donate-bitcoin-ff9900.svg?style=popout&logo=bitcoin&logoColor=CCC)](https://checkout.opennode.com/p/2553c612-f863-4407-82b3-1a7685268747)
-  [![Buy a T-Shirt](https://img.shields.io/badge/buy-t--shirts-teal.svg?style=popout&logo=data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHg9IjBweCIgeT0iMHB4Igp3aWR0aD0iMjQiIGhlaWdodD0iMjQiCnZpZXdCb3g9IjAgMCAxOTIgMTkyIgpzdHlsZT0iIGZpbGw6IzAwMDAwMDsiPjxnIGZpbGw9Im5vbmUiIGZpbGwtcnVsZT0ibm9uemVybyIgc3Ryb2tlPSJub25lIiBzdHJva2Utd2lkdGg9IjEiIHN0cm9rZS1saW5lY2FwPSJidXR0IiBzdHJva2UtbGluZWpvaW49Im1pdGVyIiBzdHJva2UtbWl0ZXJsaW1pdD0iMTAiIHN0cm9rZS1kYXNoYXJyYXk9IiIgc3Ryb2tlLWRhc2hvZmZzZXQ9IjAiIGZvbnQtZmFtaWx5PSJub25lIiBmb250LXdlaWdodD0ibm9uZSIgZm9udC1zaXplPSJub25lIiB0ZXh0LWFuY2hvcj0ibm9uZSIgc3R5bGU9Im1peC1ibGVuZC1tb2RlOiBub3JtYWwiPjxwYXRoIGQ9Ik0wLDE5MnYtMTkyaDE5MnYxOTJ6IiBmaWxsPSJub25lIj48L3BhdGg+PGcgZmlsbD0iIzFhYmM5YyI+PGcgaWQ9InN1cmZhY2UxIj48cGF0aCBkPSJNOTYsMGMtMTUuMjE4NzUsMCAtMjQuNjg3NSwzLjY1NjI1IC0yNS41LDRsLTIyLjUsNy4yNWMtMTAuNDA2MjUsMy4xODc1IC0xOS4wOTM3NSw5LjQzNzUgLTI1LjUsMTguMjVsLTIyLjUsNDIuNWwyNy4yNSwxNi43NWwxMi43NSwtMjR2MTE5LjI1YzAsNC40MDYyNSAyNS4wNjI1LDggNTYsOGMzMC45Mzc1LDAgNTYsLTMuNTkzNzUgNTYsLTh2LTExOS4yNWwxMi43NSwyNGwyNy4yNSwtMTYuNzVsLTIyLjUsLTQyLjVjLTYuNDA2MjUsLTguODEyNSAtMTUuMTU2MjUsLTE1LjA2MjUgLTI0Ljc1LC0xOC4yNWwtMjIuMjUsLTcuMjVjLTAuMTg3NSwwIC0xLjAzMTI1LDEuMzEyNSAtMiwyLjc1bDEuMjUsLTIuNWMwLDAgLTkuODQzNzUsLTQuMjUgLTI1Ljc1LC00LjI1ek05Niw4YzExLjQwNjI1LDAgMTguNDM3NSwyLjI1IDIxLDMuMjVjLTQuNDY4NzUsNS43NSAtMTEuNDA2MjUsMTIuNzUgLTIxLDEyLjc1Yy05LjQwNjI1LDAgLTE2LjQwNjI1LC03LjA2MjUgLTIwLjc1LC0xMi43NWMyLjg3NSwtMS4wNjI1IDkuODc1LC0zLjI1IDIwLjc1LC0zLjI1eiI+PC9wYXRoPjwvZz48L2c+PC9nPjwvc3ZnPg==)](https://wikijs.threadless.com)
-
-</div>
-
-## Introduction
-
-This chart bootstraps a Wiki.ts Preview deployment on a [Kubernetes](http://kubernetes.io) cluster using the [Helm](https://helm.sh) package manager.
-
-It also optionally deploys PostgreSQL as the database using the official PostgreSQL image from Docker Hub, but you are free to bring your own database.
+The chart is preview software. Test upgrades and restores against a non-production copy before deployment.
 
 ## Prerequisites
 
-- PV provisioner support in the underlying infrastructure (with persistence storage enabled) if you want data persistance
+- Kubernetes with a default `ReadWriteOnce` storage class, or an existing PVC
+- Helm 3
+- A PostgreSQL backup captured before every application or chart upgrade
+- A Kubernetes Secret for database credentials
 
-## Packaging and installing the chart
+## Install
 
-The repository workflow validates the chart and publishes it as a build artifact; it does not publish to the upstream Wiki.js chart repository.
-
-```console
-$ helm package dev/helm
-$ helm install my-release ./wiki-ts-preview-0.1.0-alpha.1.tgz
-```
-
-The command deploys Wiki.ts Preview on the Kubernetes cluster in the default configuration. The [configuration](#configuration) section lists the parameters that can be configured during installation.
-
-> **Tip**: List all releases using `helm list`
-
-## Uninstalling the Chart
-
-To uninstall/delete the `my-release` deployment:
+Package the chart from a tagged source checkout or download the chart archive from the matching GitHub release:
 
 ```console
-$ helm delete my-release
-```
-
-The command removes all the Kubernetes components associated with the chart and deletes the release.
-
-> **Warning**: Persistant Volume Claims for the database are not deleted automatically. They need to be manually deleted
-
-```console
-$ kubectl delete pvc/data-wiki-postgresql-0
-```
-
-## Configuration
-
-The following table lists the configurable parameters of the Wiki.ts Preview chart and their default values.
-
-| Parameter                            | Description                                 | Default                                                    |
-| -------------------------------      | -------------------------------             | ---------------------------------------------------------- |
-| `image.repository`                   | Wiki.ts Preview image                       | `ghcr.io/philosophimoonbeam/wiki`                           |
-| `image.tag`                          | Wiki.ts Preview image tag                   | `0.1.0-alpha.1`                                             |
-| `imagePullPolicy`                    | Image pull policy                           | `IfNotPresent`                                             |
-| `replicacount`                       | Number of Wiki.ts Preview pods to run        | `1`                                                        |
-| `revisionHistoryLimit`               | Total number of revision history points                   | `10`                                        |
-| `resources.limits`               | Wiki.js service resource limits                         | `nil`                               |
-| `resources.requests`             | Wiki.js service resource requests                       | `nil`                               |
-| `nodeSelector`                   | Node labels for the Wiki.js pod assignment          | `{}`                                                       |
-| `affinity`                       | Affinity settings for the Wiki.js pod assignment    | `{}`                                                       |
-| `schedulerName`                  | Name of an alternate scheduler for the Wiki.js pod  | `nil`                                                      |
-| `tolerations`                    | Toleration labels for the Wiki.js pod assignment    | `[]`                                                       |
-| `volumeMounts`                   | Volume mounts for the Wiki.js container              | `[]`                                                       |
-| `volumes`                        | Volumes for the Wiki.js pod                          | `[]`                                                       |
-| `ingress.enabled`                    | Enable ingress controller resource          | `false`                                                    |
-| `ingress.className`                  | Ingress class name                          | `""`                                                       |
-| `ingress.annotations`                | Ingress annotations                         | `{}`                                                       |
-| `ingress.hosts`                      | List of ingress rules                        | `[{"host": "wiki.local", "paths": ["/"]}]`                |
-| `ingress.tls`                        | Ingress TLS configuration                   | `[]`                                                       |
-| `sideload.enabled`                   | Enable sideloading of locale files from git | `false`                                                    |
-| `sideload.repoURL`                   | Git repository URL containing locale files  | `https://github.com/Requarks/wiki-localization`            |
-| `sideload.env`                       | Environment variables for the sideload container | `{}`                                                      |
-| `sideload.securityContext`           | Security context for the sideload container     | `nil`                                                      |
-| `sideload.resources.limits`          | Resource limits for the sideload container      | `nil`                                                      |
-| `sideload.resources.requests`        | Resource requests for the sideload container    | `nil`                                                      |
-| `nodeExtraCaCerts`                   | Trusted certificates path                   | `nil`                                                      |
-| `externalPostgresql.databaseURL`     | External postgres connection string         | `nil`                                                  |
-| `postgresql.enabled`                 | Deploy postgres server (see below)          | `true`                                                     |
-| `postgresql.postgresqlDatabase`        | Postgres database name                      | `wiki`                                                   |
-| `postgresql.postgresqlUser`            | Postgres username                           | `postgres`                                                   |
-| `postgresql.postgresqlHost`            | Postgres host                      | `nil`                                                      |
-| `postgresql.postgresqlPassword`        | Postgres password                  | `nil`                                                      |
-| `postgresql.existingSecret`            | Provide an existing `Secret` for postgres   | `nil`                                                      |
-| `postgresql.existingSecretKey`         | The postgres password key in the existing `Secret`   | `postgresql-password`                              |
-| `postgresql.existingSecretUserKey`     | The postgres username key in the existing `Secret`   | `postgresql-username`                            |
-| `postgresql.postgresqlPort`            | Postgres port                      | `5432`                                                     |
-| `postgresql.ssl`                       | Enable external postgres SSL connection     | `false`                                                   |
-| `postgresql.ca`                        | Certificate of Authority content for postgres  | `nil`                                                     |
-| `postgresql.persistence.enabled`                | Enable postgres persistence using PVC                | `true`                                                     |
-| `postgresql.persistence.existingClaim`          | Provide an existing `PersistentVolumeClaim` for postgres | `nil`                                                      |
-| `postgresql.persistence.storageClass`           | Postgres PVC Storage Class (example: `nfs`)                           | `nil`                 |
-| `postgresql.persistence.size`                   | Postgres PVC Storage Request                         | `8Gi`                                                     |
-| `postgresql.persistence.accessMode`             | Postgres Persistent Volume Access Mode                     | `ReadWriteOnce`                                          |
-| `postgresql.image.repository`                   | PostgreSQL image repository                       | `postgres`                                               |
-| `postgresql.image.tag`                          | PostgreSQL image tag                              | `18`                                                   |
-| `postgresql.image.pullPolicy`                   | PostgreSQL image pull policy                      | `IfNotPresent`                                           |
-| `postgresql.resources`                          | PostgreSQL resource requests/limits             | `{}`                                                     |
-| `postgresql.nodeSelector`                       | PostgreSQL node selector labels                   | `{}`                                                     |
-| `postgresql.tolerations`                        | PostgreSQL toleration labels                      | `[]`                                                     |
-| `postgresql.affinity`                           | PostgreSQL affinity settings                      | `{}`                                                     |
-| `postgresql.service.type`                       | PostgreSQL service type                           | `ClusterIP`                                              |
-| `postgresql.service.port`                       | PostgreSQL service port                           | `5432`                                                   |
-| `postgresql.service.annotations`                | PostgreSQL service annotations                    | `{}`                                                     |
-
-Specify each parameter using the `--set key=value[,key=value]` argument to `helm install`. For example,
-
-```console
-$ helm install my-release ./wiki-ts-preview-0.1.0-alpha.1.tgz \
-  --set postgresql.persistence.enabled=false
-```
-
-Alternatively, a YAML file that specifies the values for the above parameters can be provided while installing the chart. For example,
-
-```console
-$ helm install my-release ./wiki-ts-preview-0.1.0-alpha.1.tgz -f values.yaml
-```
-
-> **Tip**: You can use the default [values.yaml](values.yaml)
-
-## PostgreSQL
-
-By default, PostgreSQL is installed as part of the chart using the official PostgreSQL image from Docker Hub (version 18).
-
-### Using an external PostgreSQL server
-
-To use an external PostgreSQL server, set `postgresql.enabled` to `false`, then use either:
-
-#### Connection String
-
-Set `externalPostgresql.databaseURL` to the full PostgreSQL connection string.
-
-#### Connection Parameters
-
-Set `externalPostgresql.host`, `externalPostgres.port`, `externalPostgres.database`, `externalPostgres.username`, `externalPostgres.existingSecret` *(secret name)* and `externalPostgres.existingSecretKey` *(key in the secret containing the password)*
-
-Ensure the secret specified in `externalPostgresql.existingSecret` already exists, with a password set at the path specified in `externalPostgres.existingSecretKey`.
-
-To use an SSL connection you can set `externalPostgresql.ssl` to `true` and if needed the path to a Certificate of Authority can be set using `externalPostgresql.ca` to `/path/to/ca`. Default `externalPostgresql.ssl` value is `false`.
-
-### Using an existing PostgreSQL secret with built-in PostgreSQL
-
-When using the built-in PostgreSQL (default behavior with `postgresql.enabled: true`), you can still use an existing Kubernetes secret for the database credentials by setting:
-
-- `postgresql.existingSecret`: Name of the existing secret containing the credentials
-- `postgresql.existingSecretKey`: Key in the secret containing the password (defaults to `postgresql-password`)
-- `postgresql.existingSecretUserKey`: Key in the secret containing the username (defaults to `postgresql-username`)
-Example usage:
-```bash
-# Create your existing secret
-kubectl create secret generic my-postgres-secret \
+helm package dev/helm
+kubectl create secret generic wiki-postgresql \
   --from-literal=postgresql-username=postgres \
-  --from-literal=postgresql-password=yourpassword
-
-# Deploy with existing secret
-helm install my-release ./wiki-ts-preview-0.1.0-alpha.1.tgz \
-  --set postgresql.enabled=true \
-  --set postgresql.existingSecret=my-postgres-secret
+  --from-literal=postgresql-password='replace-with-a-strong-password'
+helm install wiki ./wiki-ts-preview-0.1.0-alpha.1.tgz \
+  --set postgresql.existingSecret=wiki-postgresql
 ```
 
-## Persistence
+The image tag defaults to the chart `appVersion`. Pin `image.tag` or, preferably, an immutable image digest through your deployment policy. Do not use `canary` or floating `preview` tags in production.
 
-Persistent Volume Claims are used to keep the data across deployments. This is known to work in GCE, AWS, and minikube.
-See the [Configuration](#configuration) section to configure the PVC or to disable persistence.
+## External PostgreSQL
 
-## Ingress
-
-This chart provides support for Ingress resource. If you have an available Ingress Controller such as Nginx or Traefik you maybe want to set `ingress.enabled` to true and add `ingress.hosts` for the URL. Then, you should be able to access the installation using that address.
-
-## Extra Trusted Certificates
-
-To append extra CA Certificates:
-
-1. Create a ConfigMap with CAs in PEM format, e.g.:
+Disable the bundled PostgreSQL StatefulSet and reference an existing Secret:
 
 ```yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: ca
-  namespace: your-wikijs-namespace
-data:
-  certs.pem: |-
-    -----BEGIN CERTIFICATE-----
-    XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
-    -----END CERTIFICATE-----
+postgresql:
+  enabled: false
+
+externalPostgresql:
+  host: postgres.example.internal
+  port: "5432"
+  database: wiki
+  username: wiki
+  existingSecret: wiki-database
+  existingSecretKey: password
+  ssl: true
 ```
 
-2. Mount your CAs from the ConfigMap to the Wiki.js pod and set `nodeExtraCaCerts` helm variable. Insert the following lines to your Wiki.js `values.yaml`, e.g.:
+Create the Secret before installing the release. `externalPostgresql.databaseURL` is also supported, but it places credentials in Helm values and release history; the Secret-based fields are preferred.
+
+## Upgrade
+
+1. Record the current chart version, values, image digest, and database server version.
+2. Stop writes or schedule a maintenance window.
+3. Create and verify a database backup. For bundled PostgreSQL, also snapshot the PVC if the storage provider supports consistent snapshots.
+4. Render and inspect the new manifests:
+
+   ```console
+   helm lint dev/helm
+   helm template wiki ./wiki-ts-preview-0.1.0-alpha.1.tgz -f values.yaml > rendered.yaml
+   ```
+
+5. Upgrade with an explicit chart and values file:
+
+   ```console
+   helm upgrade wiki ./wiki-ts-preview-0.1.0-alpha.1.tgz -f values.yaml --atomic --timeout 15m
+   ```
+
+6. Confirm the Deployment is available, `/healthz` returns HTTP 200, login works, and a read/write page check succeeds.
+
+Wiki.ts runs database migrations during startup. Do not run mixed application versions against one database during an upgrade.
+
+## Rollback and restore
+
+`helm rollback` restores Kubernetes resources, not database contents. If the new application has migrated the database, rolling back only the Deployment can start old code against a newer schema and is unsafe.
+
+1. Stop all Wiki.ts pods.
+2. Restore the pre-upgrade database backup or volume snapshot.
+3. Roll back the Helm release:
+
+   ```console
+   helm history wiki
+   helm rollback wiki REVISION --wait --timeout 15m
+   ```
+
+4. Confirm `/healthz`, login, and read/write page behavior before reopening traffic.
+
+## Uninstall
+
+```console
+helm uninstall wiki
+```
+
+The database PVC is intentionally retained. Delete it only after confirming that its data is no longer needed:
+
+```console
+kubectl delete pvc data-wiki-postgresql-0
+```
+
+## Important values
+
+| Parameter | Default | Purpose |
+| --- | --- | --- |
+| `replicaCount` | `1` | Wiki.ts pod count |
+| `revisionHistoryLimit` | `2` | Deployment revisions retained |
+| `image.repository` | `ghcr.io/philosophimoonbeam/wiki` | Fork image repository |
+| `image.tag` | chart `appVersion` | Application image tag |
+| `image.imagePullPolicy` | `IfNotPresent` | Image pull policy |
+| `startupProbe` | `/healthz` for up to 5 minutes | Allows migrations to finish before liveness checks |
+| `readinessProbe` | `/healthz` | Removes unhealthy pods from Service endpoints |
+| `ingress.enabled` | `true` | Creates an Ingress |
+| `postgresql.enabled` | `true` | Creates the bundled PostgreSQL StatefulSet |
+| `postgresql.existingSecret` | unset | Existing bundled-database credential Secret |
+| `postgresql.postgresqlPassword` | unset | Required only when the chart creates the Secret |
+| `postgresql.persistence.enabled` | `true` | Retains database data on a PVC |
+| `postgresql.persistence.size` | `8Gi` | Database PVC request |
+| `externalPostgresql.existingSecret` | unset | External database password Secret |
+
+See [`values.yaml`](values.yaml) for the complete set of supported values.
+
+## Extra trusted certificates
+
+Mount a PEM bundle and point `nodeExtraCaCerts` to it:
 
 ```yaml
+nodeExtraCaCerts: /cas.pem
 volumeMounts:
   - name: ca
     mountPath: /cas.pem
     subPath: certs.pem
-
 volumes:
   - name: ca
     configMap:
-      name: ca
-
-nodeExtraCaCerts: "/cas.pem"
+      name: wiki-ca
 ```
+
+The historical Wiki.js credits and license notices remain in the repository and corresponding source archive.

@@ -183,7 +183,7 @@ postgresql:
   postgresqlDatabase: wiki
   ## PostgreSQL password (will be stored in a secret)
   ##
-  postgresqlPassword: "postgres"
+  postgresqlPassword: ""
 
   ## Use existing secret for PostgreSQL credentials
   ## If set, the chart will not create a new secret and will use the existing one

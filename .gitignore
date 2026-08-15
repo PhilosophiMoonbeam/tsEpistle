@@ -18,6 +18,7 @@ npm-debug.log*
 # Generated assets
 /assets
 /server/.build-metadata.json
+/third-party-licenses.json
 
 # Webpack
 .webpack-cache

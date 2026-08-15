@@ -1,3 +1,4 @@
+import AxeBuilder from '@axe-core/playwright'
 import { expect, test } from '@playwright/test'
 import type { Page } from '@playwright/test'
 
@@ -664,5 +665,61 @@ test.describe('critical post-install workflows', () => {
     } finally {
       await page.request.delete(`/_api/pages/${privatePage.page.id}`)
     }
+  })
+
+  test('meets critical WCAG accessibility gates on primary surfaces', async ({ page }) => {
+    await loginAsAdmin(page)
+    const surfaces = ['/', '/a/dashboard', '/a/pages', '/edit/en/home']
+
+    for (const surface of surfaces) {
+      await page.goto(surface, { waitUntil: 'networkidle' })
+      const result = await new AxeBuilder({ page })
+        .exclude('.v-tooltip:not(.v-overlay--active)')
+        .withTags(['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa'])
+        .analyze()
+      const blockingViolations = result.violations.filter(violation =>
+        violation.impact === 'critical' || violation.impact === 'serious'
+      )
+      expect(blockingViolations, `${surface} has serious or critical accessibility violations`).toEqual([])
+    }
+  })
+
+  test('keeps the primary page within local Core Web Vitals budgets', async ({ page }) => {
+    await loginAsAdmin(page)
+    await page.addInitScript(() => {
+      const metrics = { cls: 0, lcp: 0 }
+      Object.defineProperty(window, '__wikiReleaseMetrics', { value: metrics })
+      new PerformanceObserver(list => {
+        for (const entry of list.getEntries()) {
+          const shift = entry as PerformanceEntry & { hadRecentInput?: boolean, value?: number }
+          if (!shift.hadRecentInput) metrics.cls += shift.value ?? 0
+        }
+      }).observe({ type: 'layout-shift', buffered: true })
+      new PerformanceObserver(list => {
+        const entry = list.getEntries().at(-1)
+        if (entry) metrics.lcp = entry.startTime
+      }).observe({ type: 'largest-contentful-paint', buffered: true })
+    })
+    await page.goto('/en/home', { waitUntil: 'networkidle' })
+
+    const metrics = await page.evaluate(() => {
+      const releaseMetrics = (window as unknown as {
+        __wikiReleaseMetrics: { cls: number, lcp: number }
+      }).__wikiReleaseMetrics
+      const navigation = performance.getEntriesByType('navigation')[0] as PerformanceNavigationTiming
+      return {
+        cls: releaseMetrics.cls,
+        domContentLoaded: navigation.domContentLoadedEventEnd,
+        lcp: releaseMetrics.lcp,
+        transferredBytes: performance.getEntriesByType('resource')
+          .reduce((total, entry) => total + (entry as PerformanceResourceTiming).transferSize, navigation.transferSize)
+      }
+    })
+
+    expect(metrics.lcp).toBeGreaterThan(0)
+    expect(metrics.lcp).toBeLessThanOrEqual(2_500)
+    expect(metrics.cls).toBeLessThanOrEqual(0.1)
+    expect(metrics.domContentLoaded).toBeLessThanOrEqual(3_000)
+    expect(metrics.transferredBytes).toBeLessThanOrEqual(5 * 1024 * 1024)
   })
 })

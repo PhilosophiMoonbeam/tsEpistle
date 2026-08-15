@@ -19,7 +19,8 @@
     "typecheck:client": "vue-tsc -p tsconfig.client.json --noEmit --pretty false",
     "typecheck:server": "tsc -p tsconfig.server.json --noEmit --pretty false",
     "e2e": "playwright test",
-    "docker:build": "node server/scripts/build-docker.ts"
+    "docker:build": "node server/scripts/build-docker.ts",
+    "licenses:inventory": "node server/scripts/generate-license-inventory.ts"
   },
   "repository": {
     "type": "git",
@@ -209,6 +210,7 @@
     "yjs": "^13.6.32"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.13.0",
     "@eslint/js": "10.0.1",
     "@mdi/font": "7.4.47",
     "@playwright/test": "1.62.1",

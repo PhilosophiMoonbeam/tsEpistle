@@ -28,4 +28,4 @@ The maintainers will acknowledge the report through the private advisory, assess
 
 ## Release provenance
 
-Official releases are GitHub releases from this repository. Each release contains source and binary archives plus `SHA256SUMS`; container images are published under `ghcr.io/philosophimoonbeam/wiki`. The running application exposes its exact source revision.
+Official releases are GitHub releases from this repository. Each release contains Linux and Windows archives, corresponding source, the Helm chart, an SPDX SBOM, a production dependency license inventory, and `SHA256SUMS`; container images are published under `ghcr.io/philosophimoonbeam/wiki` with BuildKit provenance and SBOM attestations. The running application exposes its exact source revision.

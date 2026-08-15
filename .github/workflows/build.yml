@@ -36,6 +36,17 @@ jobs:
     - name: Install Dependencies
       run: pnpm install --frozen-lockfile
 
+    - name: Generate Production License Inventory
+      run: pnpm run licenses:inventory
+
+    - name: Upload License Inventory
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      with:
+        name: compliance
+        path: third-party-licenses.json
+        if-no-files-found: error
+        retention-days: 30
+
     - name: Lint
       run: pnpm run lint
 
@@ -180,11 +191,76 @@ jobs:
         dev/e2e/ci-setup.sh
         pnpm exec playwright test
 
+  upgrade:
+    name: Upgrade (${{ matrix.dbtype }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: [build]
+    permissions:
+      contents: read
+
+    strategy:
+      fail-fast: false
+      matrix:
+        dbtype: [postgres, mysql, mariadb, mssql, sqlite]
+
+    steps:
+    - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+    - name: Download Test Image
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+      with:
+        name: test-image
+        path: test-image
+
+    - name: Load Test Image
+      run: gzip -dc test-image/wiki-ts-preview-test-image.tar.gz | docker load
+
+    - name: Set Test Metadata
+      shell: bash
+      run: node server/scripts/export-build-environment.ts >> "$GITHUB_ENV"
+
+    - name: Upgrade Supported Database
+      env:
+        MATRIXENV: ${{ matrix.dbtype }}
+        WIKI_TEST_IMAGE: wiki-ts-preview:test-${{ env.WIKI_BUILD_REVISION }}
+        WIKI_UPGRADE_SOURCE_IMAGE: ghcr.io/requarks/wiki:2.5.314
+      run: dev/e2e/upgrade-smoke.sh
+
+  multi-instance:
+    name: Multi-instance Recovery
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: [build]
+    permissions:
+      contents: read
+
+    steps:
+    - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+    - name: Download Test Image
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+      with:
+        name: test-image
+        path: test-image
+
+    - name: Load Test Image
+      run: gzip -dc test-image/wiki-ts-preview-test-image.tar.gz | docker load
+
+    - name: Set Test Metadata
+      shell: bash
+      run: node server/scripts/export-build-environment.ts >> "$GITHUB_ENV"
+
+    - name: Exercise Instance Loss and Recovery
+      env:
+        WIKI_TEST_IMAGE: wiki-ts-preview:test-${{ env.WIKI_BUILD_REVISION }}
+      run: dev/e2e/multi-instance-smoke.sh
+
   publish-amd64:
     name: Publish AMD64 Images
     runs-on: ubuntu-latest
     if: github.event_name == 'push'
-    needs: [e2e]
+    needs: [e2e, upgrade, multi-instance]
     permissions:
       contents: read
       packages: write
@@ -401,6 +477,7 @@ jobs:
     environment: prod
     needs: [beta]
     permissions:
+      actions: read
       contents: write
       packages: write
 
@@ -446,6 +523,31 @@ jobs:
         name: drop-win
         path: drop-win
 
+    - name: Download License Inventory
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+      with:
+        name: compliance
+        path: compliance
+
+    - name: Generate Release Image SBOM
+      uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
+      with:
+        image: ${{ env.IMAGE_REPOSITORY }}:${{ env.REL_VERSION_STRICT }}
+        format: spdx-json
+        output-file: wiki-ts-preview.spdx.json
+        upload-artifact: false
+        upload-release-assets: false
+
+    - name: Package Helm Chart
+      shell: bash
+      run: |
+        test "$WIKI_PRODUCT_VERSION" = "$(helm show chart dev/helm | sed -n 's/^appVersion: *//p')"
+        helm lint dev/helm --set postgresql.postgresqlPassword=ci-validation-only
+        helm package --destination dist dev/helm
+
+    - name: Stage Compliance Artifacts
+      run: cp compliance/third-party-licenses.json .
+
     - name: Create Corresponding Source Archive
       run: git archive --format=tar.gz --prefix="wiki-ts-preview-$REL_VERSION_STRICT/" --output=wiki-ts-preview-source.tar.gz "$WIKI_BUILD_REVISION"
 
@@ -455,10 +557,16 @@ jobs:
         linux_sha="$(sha256sum drop/wiki-ts-preview-linux.tar.gz | cut -d ' ' -f 1)"
         windows_sha="$(sha256sum drop-win/wiki-ts-preview-windows.tar.gz | cut -d ' ' -f 1)"
         source_sha="$(sha256sum wiki-ts-preview-source.tar.gz | cut -d ' ' -f 1)"
-        printf '%s  %s\n%s  %s\n%s  %s\n' \
+        chart_sha="$(sha256sum "dist/wiki-ts-preview-$REL_VERSION_STRICT.tgz" | cut -d ' ' -f 1)"
+        sbom_sha="$(sha256sum wiki-ts-preview.spdx.json | cut -d ' ' -f 1)"
+        licenses_sha="$(sha256sum third-party-licenses.json | cut -d ' ' -f 1)"
+        printf '%s  %s\n%s  %s\n%s  %s\n%s  %s\n%s  %s\n%s  %s\n' \
           "$linux_sha" "wiki-ts-preview-linux.tar.gz" \
           "$windows_sha" "wiki-ts-preview-windows.tar.gz" \
           "$source_sha" "wiki-ts-preview-source.tar.gz" \
+          "$chart_sha" "wiki-ts-preview-$REL_VERSION_STRICT.tgz" \
+          "$sbom_sha" "wiki-ts-preview.spdx.json" \
+          "$licenses_sha" "third-party-licenses.json" \
           > SHA256SUMS
 
     - name: Generate Changelog
@@ -478,7 +586,7 @@ jobs:
         name: ${{ github.ref_name }}
         body: ${{ steps.changelog.outputs.changes }}
         token: ${{ github.token }}
-        artifacts: 'drop/wiki-ts-preview-linux.tar.gz,drop-win/wiki-ts-preview-windows.tar.gz,wiki-ts-preview-source.tar.gz,SHA256SUMS'
+        artifacts: 'drop/wiki-ts-preview-linux.tar.gz,drop-win/wiki-ts-preview-windows.tar.gz,wiki-ts-preview-source.tar.gz,dist/*.tgz,wiki-ts-preview.spdx.json,third-party-licenses.json,SHA256SUMS'
 
     - name: Notify Telegram Channel
       uses: appleboy/telegram-action@221e6b684967abe813051ee4a37dd61770a83ad3 # v1.0.1

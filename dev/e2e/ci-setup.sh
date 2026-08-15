@@ -1,3 +1,9 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+: "${MATRIXENV:?MATRIXENV is required}"
+: "${WIKI_TEST_IMAGE:?WIKI_TEST_IMAGE is required}"
+
 case $MATRIXENV in
 postgres)
   echo "Using PostgreSQL..."
@@ -38,11 +44,12 @@ mssql)
   ;;
 sqlite)
   echo "Using SQLite..."
-  docker run -d -p 3000:3000 --name wiki --network="host" -e "DB_TYPE=sqlite" -e "DB_FILEPATH=db.sqlite" "$WIKI_TEST_IMAGE"
+  docker volume create wiki-data
+  docker run -d -p 3000:3000 --name wiki --network="host" -e "DB_TYPE=sqlite" -e "DB_FILEPATH=/wiki/data/db.sqlite" -v wiki-data:/wiki/data "$WIKI_TEST_IMAGE"
   ;;
 *)
-  echo "Invalid DB Type!"
-  ;;
+  echo "Invalid DB Type: $MATRIXENV" >&2
+  exit 1
 esac
 
 for attempt in {1..60}; do

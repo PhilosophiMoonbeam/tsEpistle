@@ -29,7 +29,7 @@
         .body-2.text-none {{$t('common:sidebar.mainMenu')}}
     v-divider
     //-> Custom Navigation
-    v-list.py-2(v-if='currentMode === `custom`', dense, :class='color', :dark='dark')
+    v-list.py-2(v-if='currentMode === `custom`', dense, :class='color', :dark='dark', role='navigation', :aria-label='$t(`common:sidebar.mainMenu`)')
       template(v-for='item of items')
         v-list-item(
           v-if='item.k === `link`'
@@ -44,7 +44,7 @@
         v-divider.my-2(v-else-if='item.k === `divider`')
         v-list-subheader.pl-4(v-else-if='item.k === `header`') {{ item.l }}
     //-> Browse
-    v-list.py-2(v-else-if='currentMode === `browse`', dense, :class='color', :dark='dark')
+    v-list.py-2(v-else-if='currentMode === `browse`', dense, :class='color', :dark='dark', role='navigation', :aria-label='$t(`common:sidebar.browse`)')
       template(v-if='currentParent.id > 0')
         v-list-item(v-for='(item, idx) of parents', :key='`parent-` + item.id', @click='fetchBrowseItems(item)', style='min-height: 30px;')
           v-avatar(size='18', :style='`padding-left: ` + (idx * 8) + `px; width: auto; margin: 0 5px 0 0;`')

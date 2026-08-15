@@ -36,7 +36,7 @@
         )
           v-icon mdi-close
       vue-scroll(:ops='scrollStyle')
-        v-list.radius-0(dense, nav)
+        v-list.radius-0(dense, nav, role='navigation', aria-label='Administration sections')
           v-list-item(to='/dashboard', color='primary', prepend-icon='mdi-view-dashboard-variant')
             v-list-item-title {{ $t('admin:dashboard.title') }}
           template(v-if='hasPermission([`manage:system`, `manage:navigation`, `write:pages`, `manage:pages`, `delete:pages`])')
@@ -111,7 +111,7 @@
               v-if='hasPermission([`manage:system`, `manage:api`])'
               )
               template(v-slot:activator='{ props }')
-                v-list-item(v-bind='props', prepend-icon='mdi-dev-to')
+                v-list-item(v-bind='props', prepend-icon='mdi-dev-to', role='button')
                   v-list-item-title {{ $t('admin:dev.title') }}
 
               v-list-item(to='/dev-flags', color='primary')

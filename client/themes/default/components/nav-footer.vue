@@ -1,6 +1,6 @@
 <template lang="pug">
   v-footer.justify-center(:color='bgColor', inset)
-    .caption.grey--text(:class='$vuetify.theme.current.dark ? `text--lighten-1` : `text--darken-1`')
+    .caption.footer-attribution(:class='$vuetify.theme.current.dark ? `footer-attribution--dark` : ``')
       template(v-if='footerOverride')
         span(v-html='footerOverrideRender + ` |&nbsp;`')
       template(v-else-if='company && company.length > 0 && contentLicense !== ``')
@@ -25,11 +25,11 @@ export default {
   props: {
     color: {
       type: String,
-      default: 'grey lighten-3'
+      default: 'grey-lighten-3'
     },
     darkColor: {
       type: String,
-      default: 'grey darken-3'
+      default: 'grey-darken-3'
     }
   },
   data() {
@@ -66,6 +66,22 @@ export default {
 </script>
 
 <style lang="scss">
+  .footer-attribution {
+    color: #424242;
+
+    a {
+      color: #0d47a1;
+    }
+
+    &--dark {
+      color: #eeeeee;
+
+      a {
+        color: #90caf9;
+      }
+    }
+  }
+
   .v-footer {
     a {
       text-decoration: none;

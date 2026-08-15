@@ -26,12 +26,34 @@ No supported Wiki.ts Preview release has been published yet. Do not treat `main`
 When a release is published:
 
 1. use an immutable version tag or image digest, never `main` or `canary`;
-2. verify the downloaded archives against the attached `SHA256SUMS`;
+2. verify the attached archives, Helm chart, SBOM, and production dependency license inventory against `SHA256SUMS`;
 3. back up both the Wiki.ts data directory and database before every upgrade;
 4. test the upgrade against a restored copy of production data;
 5. roll back by restoring both the pre-upgrade database and data-directory snapshots—database migrations are not guaranteed to be reversible.
 
 The release CI exercises PostgreSQL, MySQL, MariaDB, Microsoft SQL Server, and SQLite. Deployment-specific identity providers, object storage, search engines, mail, proxies, and multi-instance topologies still require an operator canary. Kubernetes users should start with the [fork Helm chart](dev/helm/README.md).
+
+## Install and operate
+
+The release page is the source for versioned Linux and Windows archives, the corresponding source archive, Helm chart, SPDX SBOM, dependency license inventory, and checksums.
+
+For a local PostgreSQL deployment using Docker Compose:
+
+```console
+install -m 600 /dev/null wiki-db-password
+printf '%s\n' 'replace-with-a-strong-password' > wiki-db-password
+WIKI_DB_PASSWORD_FILE="$PWD/wiki-db-password" docker compose -f dev/examples/docker-compose.yml up -d
+```
+
+Set `WIKI_IMAGE` to an immutable version tag or digest to override the sample's default version. Put TLS at a maintained reverse proxy; the sample exposes HTTP on port 80.
+
+Kubernetes installation, upgrade, backup, rollback, and restore procedures are in the [fork Helm chart guide](dev/helm/README.md). Before any upgrade, preserve the database and any local asset/data volumes as one recoverable point in time. A binary or container rollback without the matching database restore is unsafe after a migration.
+
+## API compatibility
+
+`/api/v1` is the versioned external REST contract. Its OpenAPI 3.1 document is served at `/api/v1/openapi.json` and is covered by contract tests. Additive fields and endpoints may appear in a preview release; an incompatible request or response change requires a new API version. Removal of a v1 operation requires marking it deprecated in OpenAPI and release notes for at least one published preview release first.
+
+GraphQL, `/_api`, browser payloads, database tables, and extension internals are implementation interfaces and have no cross-release compatibility guarantee. API keys inherit the permissions and page rules of their assigned group.
 
 ## Branch model
 

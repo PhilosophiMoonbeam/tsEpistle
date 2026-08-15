@@ -42,7 +42,7 @@
               )
       v-col(cols='12' md='6' lg='12' xl='3' class='d-flex')
         v-card.dashboard-card.animated.fadeInUp.wait-p6s.indigo(dark)
-          v-btn(fab, absolute, :right='!$vuetify.locale.isRtl', :left='$vuetify.locale.isRtl', top, small, light, to='system', v-if='hasPermission(`manage:system`)')
+          v-btn(fab, absolute, :right='!$vuetify.locale.isRtl', :left='$vuetify.locale.isRtl', top, small, light, to='system', v-if='hasPermission(`manage:system`)', aria-label='System information')
             v-icon(color='indigo', small) mdi-information-outline
           v-card-text
             v-icon.dashboard-icon mdi-source-fork

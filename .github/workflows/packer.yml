@@ -12,6 +12,8 @@ jobs:
   build-do-image:
     name: Build DigitalOcean Image
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
 
     steps:
     - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -20,6 +22,14 @@ jobs:
       uses: hashicorp/setup-packer@ce93c3c08a6c2ff2275bf4b54ff0d9a75f6c9789 # v3.4.0
       with:
         version: 1.16.0
+
+    - name: Verify Released Application Image
+      env:
+        GH_TOKEN: ${{ github.token }}
+        APPLICATION_VERSION: ${{ inputs.version }}
+      run: |
+        gh release view "v$APPLICATION_VERSION" --repo "$GITHUB_REPOSITORY"
+        docker manifest inspect "ghcr.io/philosophimoonbeam/wiki:$APPLICATION_VERSION" >/dev/null
 
     - name: Build Droplet Image
       env:

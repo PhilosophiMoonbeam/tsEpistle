@@ -37,8 +37,10 @@ describe('product build and publication metadata', () => {
 
     expect(workflow).toContain('server/scripts/export-build-environment.ts')
     expect(workflow).toContain('IMAGE_REPOSITORY')
-    expect(workflow).not.toMatch(/requarks\/wiki/)
-    expect(workflow).not.toContain('ghcr.io/requarks/wiki')
+    expect(workflow.match(/ghcr\.io\/requarks\/wiki:[^\s]+/g)).toEqual([
+      `ghcr.io/requarks/wiki:${productDefinition.upstreamVersion}`
+    ])
+    expect(workflow).not.toMatch(/(?:--tag|tags:)[^\n]*requarks\/wiki/)
     for (const label of ['created', 'description', 'licenses', 'revision', 'source', 'title', 'version']) {
       expect(dockerfiles).toContain(`org.opencontainers.image.${label}`)
     }
@@ -56,7 +58,7 @@ describe('product build and publication metadata', () => {
     expect(helmChart).toContain(`appVersion: '${productDefinition.version}'`)
     expect(helmValues).toContain(`repository: ${productDefinition.containerRepository}`)
     expect(helmWorkflow).toContain('helm package')
-    expect(packer).toContain(`${productDefinition.containerRepository}:${productDefinition.version}`)
+    expect(packer).toContain(`${productDefinition.containerRepository}:\${application_version}`)
     expect(deploymentSurface).not.toMatch(/ghcr\.io\/requarks|charts\.js\.wiki|wiki-update-companion/)
   })
 
