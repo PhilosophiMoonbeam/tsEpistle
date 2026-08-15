@@ -585,6 +585,7 @@ Completion evidence (2026-08-15):
 - the internal index endpoint parses only canonical bounded controls, applies database path/depth/locale constraints before its 5,001-row overfetch ceiling, then applies visibility, ownership, tags, and page-rule policy before ordering and the caller-visible limit; anonymous, owner, system-manager, and over-limit contracts pass;
 - browser hydration uses text/attribute DOM construction only, preserves gallery links without JavaScript, adds keyboard/native-dialog navigation when available, uses private no-store index responses, and aborts in-flight work during page replacement;
 - the editor host now configures all three bundled extensions through type-specific fields and emits the same canonical fence format; the release E2E suite covers admin enablement, authored gallery insertion, render, dynamic index hydration, lightbox navigation, and focus restoration.
+- PostgreSQL first-run setup restores the bundled registry rows after its intentional user/group `TRUNCATE ... CASCADE`; the complete PostgreSQL setup and post-install browser workflow passes (24/24).
 - the smoke page, administrator credential, and disabled registry state were restored after verification.
 
 #### 4C. Live collaboration

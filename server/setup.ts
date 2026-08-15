@@ -14,6 +14,7 @@ import semver from 'semver'
 import viteAssets from './helpers/vite-assets.ts'
 import system from './core/system.ts'
 
+import { BUILTIN_CONTENT_EXTENSIONS } from '../shared/content-extensions.ts'
 import type { ProductMetadata } from '../shared/product.ts'
 const { collectEntry } = viteAssets
 const randomBytesAsync = promisify(randomBytes)
@@ -62,7 +63,10 @@ interface SetupModels {
   editors: { refreshEditorsFromDisk(): Promise<void>; query(): ModelQuery<Record<string, unknown>> }
   groups: { query(): ModelQuery<GroupRecord> }
   knex: {
-    (table: string): { truncate(): Promise<unknown> }
+    (table: string): {
+      insert(values: Record<string, unknown>[]): Promise<unknown>
+      truncate(): Promise<unknown>
+    }
     raw(statement: string): Promise<unknown>
   }
   locales: { query(): ModelQuery<Record<string, unknown>> }
@@ -212,6 +216,13 @@ export default function startSetup(): void {
       switch (wiki.config.db.type) {
         case 'postgres':
           await wiki.models.knex.raw('TRUNCATE groups, users CASCADE')
+          await wiki.models.knex('contentExtensions').insert(BUILTIN_CONTENT_EXTENSIONS.map(definition => ({
+            key: definition.key,
+            isEnabled: false,
+            version: definition.version,
+            updatedAt: new Date(),
+            updatedBy: null
+          })))
           break
         case 'mysql':
         case 'mariadb':
