@@ -59,11 +59,14 @@ interface CollaborationClaims extends JwtPayload {
   baseUpdatedAt: string
   exp: number
 }
+const MAX_PENDING_MESSAGES_PER_CLIENT = 8
 
 interface CollaborationSocket {
   socket: WebSocket
   pageId: number
   userId: number
+  queue: Promise<void>
+  pendingMessages: number
 }
 interface CollaborationMount {
   webSocketServer: WebSocketServer
@@ -312,11 +315,30 @@ class CollaborationServiceImpl implements CollaborationService {
       socket.close(4409, 'Page changed')
       return
     }
-    const client: CollaborationSocket = { socket, pageId: claims.pageId, userId: claims.userId }
+    const client: CollaborationSocket = {
+      socket,
+      pageId: claims.pageId,
+      userId: claims.userId,
+      queue: Promise.resolve(),
+      pendingMessages: 0
+    }
     const roomClients = this.clients.get(claims.pageId) ?? new Set<CollaborationSocket>()
     roomClients.add(client)
     this.clients.set(claims.pageId, roomClients)
-    socket.on('message', raw => { void this.receive(client, raw) })
+    socket.on('message', raw => {
+      if (client.pendingMessages >= MAX_PENDING_MESSAGES_PER_CLIENT) {
+        this.conflict(client, 'protocol-error')
+        return
+      }
+      client.pendingMessages += 1
+      client.queue = client.queue
+        .then(() => client.socket.readyState === WebSocket.OPEN ? this.receive(client, raw) : undefined)
+        .catch(error => {
+          getWiki().logger.warn(error)
+          client.socket.close(1011, 'Collaboration temporarily unavailable')
+        })
+        .finally(() => { client.pendingMessages -= 1 })
+    })
     const refreshTimer = setTimeout(() => socket.close(4408, 'Session refresh required'), Math.max(1, claims.exp * 1_000 - Date.now()))
     socket.on('close', () => this.removeClient(client))
     socket.on('error', error => getWiki().logger.warn(error))
