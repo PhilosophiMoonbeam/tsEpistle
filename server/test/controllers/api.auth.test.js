@@ -8,6 +8,9 @@ vi.mock('../../helpers/auth-rate-limiter.ts', () => ({
   createAuthRateLimiter: vi.fn(options => {
     authRateLimiter.options.push(options)
     return authRateLimiter
+  }),
+  setAuthRateLimitHeaders: vi.fn((res, retryAfterMs) => {
+    res.set('Retry-After', String(Math.max(1, Math.ceil(retryAfterMs / 1000))))
   })
 }))
 
@@ -204,13 +207,21 @@ describe('controllers/api auth endpoints', () => {
   expect(typeof handlers.loginTFA).toBe('function')
   expect(typeof handlers.loginChangePassword).toBe('function') })
 
-  it('configures the REST limiter with the preserved 401 JSON response', async () => {
+  it('rate limits account registration before processing the request body', async () => {
     await loadHandlers()
-    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
+    const registration = express.__router.post.mock.calls.find(([path]) => path === '/register')
+
+    expect(registration[1]).toBe(authRateLimiter.middleware)
+  })
+
+  it('configures the REST limiter with a 429 JSON response and Retry-After', async () => {
+    await loadHandlers()
+    const res = { json: vi.fn(), set: vi.fn(), status: vi.fn().mockReturnThis() }
 
     authRateLimiter.options[0].onLimit({}, res, 5 * 60 * 1000)
 
-    expect(res.status).toHaveBeenCalledWith(401)
+    expect(res.set).toHaveBeenCalledWith('Retry-After', '300')
+    expect(res.status).toHaveBeenCalledWith(429)
     expect(res.json).toHaveBeenCalledWith({ error: 'Too many failed attempts. Try again later.' })
   })
 

@@ -8,6 +8,9 @@ vi.mock('../../helpers/auth-rate-limiter.ts', () => ({
   createAuthRateLimiter: vi.fn(options => {
     limiter.options.push(options)
     return limiter
+  }),
+  setAuthRateLimitHeaders: vi.fn((res, retryAfterMs) => {
+    res.set('Retry-After', String(Math.max(1, Math.ceil(retryAfterMs / 1000))))
   })
 }))
 
@@ -66,13 +69,14 @@ describe('HTML auth controller rate limiting', () => {
     await import('../../controllers/auth.ts')
   }
 
-  it('configures the HTML limiter with the preserved 401 text response', async () => {
+  it('configures the HTML limiter with a 429 response and Retry-After', async () => {
     await loadController()
-    const res = { send: vi.fn(), status: vi.fn().mockReturnThis() }
+    const res = { send: vi.fn(), set: vi.fn(), status: vi.fn().mockReturnThis() }
 
     limiter.options[0].onLimit({}, res, 5 * 60 * 1000)
 
-    expect(res.status).toHaveBeenCalledWith(401)
+    expect(res.set).toHaveBeenCalledWith('Retry-After', '300')
+    expect(res.status).toHaveBeenCalledWith(429)
     expect(res.send).toHaveBeenCalledWith('Too many failed attempts. Try again later.')
   })
 

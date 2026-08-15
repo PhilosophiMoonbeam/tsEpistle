@@ -2,7 +2,7 @@
 
 import express from 'express'
 import type { Request, Response } from 'express'
-import { createAuthRateLimiter } from '../helpers/auth-rate-limiter.ts'
+import { createAuthRateLimiter, setAuthRateLimitHeaders } from '../helpers/auth-rate-limiter.ts'
 import _ from 'lodash'
 import commonHelper from '../helpers/common.ts'
 import type { Knex } from 'knex'
@@ -67,8 +67,9 @@ const router = express.Router()
 const bruteforce = createAuthRateLimiter({
   knex: wiki.models.knex,
   keyPrefix: 'auth-html',
-  onLimit: (_req, res) => {
-    res.status(401).send('Too many failed attempts. Try again later.')
+  onLimit: (_req, res, retryAfterMs) => {
+    setAuthRateLimitHeaders(res, retryAfterMs)
+    res.status(429).send('Too many failed attempts. Try again later.')
   }
 })
 

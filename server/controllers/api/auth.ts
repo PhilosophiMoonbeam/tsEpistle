@@ -1,6 +1,6 @@
 import express from 'express'
 import { errorStatus, objectValue, type Request, type Response, getWikiAuth } from '../_types.ts'
-import { createAuthRateLimiter } from '../../helpers/auth-rate-limiter.ts'
+import { createAuthRateLimiter, setAuthRateLimitHeaders } from '../../helpers/auth-rate-limiter.ts'
 import _ from 'lodash'
 
 import apiOperations from '../../operations/api.ts'
@@ -13,8 +13,9 @@ const wikiModels = WIKI.models as { knex: Parameters<typeof createAuthRateLimite
 const bruteforce = createAuthRateLimiter({
   knex: wikiModels.knex,
   keyPrefix: 'auth-api',
-  onLimit: (_req, res) => {
-    res.status(401).json({ error: 'Too many failed attempts. Try again later.' })
+  onLimit: (_req, res, retryAfterMs) => {
+    setAuthRateLimitHeaders(res, retryAfterMs)
+    res.status(429).json({ error: 'Too many failed attempts. Try again later.' })
   }
 })
 
@@ -185,7 +186,7 @@ router.post('/guest/reset', async (req, res) => {
   }
 })
 
-router.post('/register', async (req, res, next) => {
+router.post('/register', bruteforce.middleware, async (req, res, next) => {
   try {
     await authenticationOperations.register({
       email: objectValue(req.body, 'email'),

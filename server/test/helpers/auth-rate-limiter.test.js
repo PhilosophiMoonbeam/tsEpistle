@@ -1,5 +1,5 @@
 import createKnex from 'knex'
-import { createAuthRateLimiter } from '../../helpers/auth-rate-limiter.ts'
+import { createAuthRateLimiter, setAuthRateLimitHeaders } from '../../helpers/auth-rate-limiter.ts'
 
 const request = ip => ({ ip, socket: { remoteAddress: ip } })
 
@@ -8,6 +8,16 @@ const invoke = async (limiter, req) => {
   await limiter.middleware(req, {}, next)
   return next
 }
+
+it('emits a whole-second Retry-After value with a minimum of one second', () => {
+  const res = { set: vi.fn() }
+
+  setAuthRateLimitHeaders(res, 60_001)
+  expect(res.set).toHaveBeenLastCalledWith('Retry-After', '61')
+
+  setAuthRateLimitHeaders(res, 0)
+  expect(res.set).toHaveBeenLastCalledWith('Retry-After', '1')
+})
 
 describe('auth rate limiter', () => {
   let knex
@@ -33,6 +43,27 @@ describe('auth rate limiter', () => {
     await knex.destroy()
   })
 
+
+  it('uses Express resolved client identity and never trusts forwarding headers directly', async () => {
+    const proxyResolvedRequest = {
+      headers: { 'x-forwarded-for': '198.51.100.200' },
+      ip: '192.0.2.40',
+      socket: { remoteAddress: '192.0.2.1' }
+    }
+    for (let attempt = 0; attempt < 6; attempt += 1) await invoke(limiter, proxyResolvedRequest)
+
+    const changedHeader = {
+      ...proxyResolvedRequest,
+      headers: { 'x-forwarded-for': '198.51.100.201' }
+    }
+    expect(await invoke(limiter, changedHeader)).not.toHaveBeenCalled()
+    expect(onLimit).toHaveBeenCalledWith(changedHeader, {}, 5 * 60 * 1000)
+
+    expect(await invoke(limiter, {
+      ...proxyResolvedRequest,
+      ip: '198.51.100.200'
+    })).toHaveBeenCalledOnce()
+  })
   it('allows an initial attempt and five free retries per client before blocking', async () => {
     const firstClient = request('192.0.2.10')
     for (let attempt = 0; attempt < 6; attempt += 1) {

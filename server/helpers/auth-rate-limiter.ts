@@ -35,6 +35,11 @@ export interface AuthRateLimiter {
   reset(req: Request): Promise<void>
 }
 
+export const setAuthRateLimitHeaders = (res: Response, retryAfterMs: number): void => {
+  const retryAfterSeconds = Math.max(1, Math.ceil(retryAfterMs / 1000))
+  res.set('Retry-After', String(retryAfterSeconds))
+}
+
 const tablePromises = new WeakMap<Knex, Map<string, Promise<void>>>()
 
 const ensureTable = (knex: Knex, tableName: string): Promise<void> => {
