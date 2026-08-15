@@ -7,6 +7,7 @@ import Objection from 'objection'
 import PGPubSub from 'pg-pubsub'
 import migrationSource from '../db/migrator-source.ts'
 import migrateFromBeta from '../db/beta/index.ts'
+import { preflightMigrations } from '../db/migration-preflight.ts'
 const { knex: createKnex } = knexModule
 
 interface SslOptions extends Record<string, unknown> {
@@ -322,12 +323,17 @@ const database: DatabaseService = {
       // -> Migrate DB Schemas from beta
       async migrateFromBeta () {
         return migrateFromBeta.migrate(knex)
+      },
+      // -> Refuse unknown, newer, locked, or partial schemas before Knex writes
+      async preflightMigrations () {
+        return preflightMigrations(knex, migrationSource)
       }
     }
 
     const initTasksQueue = (wiki.IS_MASTER) ? [
       initTasks.connect,
       initTasks.migrateFromBeta,
+      initTasks.preflightMigrations,
       initTasks.syncSchemas
     ] : [
       async () => {}

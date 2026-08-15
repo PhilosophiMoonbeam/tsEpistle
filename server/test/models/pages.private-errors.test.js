@@ -148,4 +148,68 @@ describe('private page mutation existence isolation', () => {
     }))
     expect(associateTags).not.toHaveBeenCalled()
   })
+
+  it('creates a page at a path already represented by a virtual folder', async () => {
+    const owner = { id: 7, permissions: [] }
+    const createdPage = {
+      id: 18,
+      localeCode: 'en',
+      ownerId: 7,
+      path: 'docs',
+      updatedAt: null,
+      visibility: 'private'
+    }
+    const duplicateQuery = {
+      select: vi.fn().mockReturnValue({
+        where: vi.fn().mockReturnValue({ first: vi.fn().mockResolvedValue(undefined) })
+      })
+    }
+    const insert = vi.fn().mockResolvedValue(1)
+    const latestQuery = {
+      findById: vi.fn().mockReturnValue({
+        select: vi.fn().mockResolvedValue({ updatedAt: '2026-08-15T00:00:00.000Z' })
+      })
+    }
+    const query = vi.fn()
+      .mockReturnValueOnce(duplicateQuery)
+      .mockReturnValueOnce({ insert })
+      .mockReturnValueOnce(latestQuery)
+    const virtualFolderLookup = vi.fn().mockResolvedValue({
+      isFolder: true,
+      localeCode: 'en',
+      path: 'docs'
+    })
+    global.WIKI.models.pageTree = { findFolder: virtualFolderLookup }
+    global.WIKI.models.pages = {
+      getPageFromDb: vi.fn().mockResolvedValue(createdPage),
+      query,
+      rebuildTree: vi.fn().mockResolvedValue(undefined),
+      renderPage: vi.fn().mockResolvedValue(undefined)
+    }
+
+    await expect(Page.createPage({
+      content: 'Page at the folder path',
+      description: '',
+      editor: 'markdown',
+      isPublished: true,
+      locale: 'en',
+      path: 'docs',
+      tags: [],
+      title: 'Docs',
+      user: owner,
+      visibility: 'private'
+    })).resolves.toMatchObject({
+      id: 18,
+      path: 'docs',
+      updatedAt: '2026-08-15T00:00:00.000Z'
+    })
+
+    expect(insert).toHaveBeenCalledWith(expect.objectContaining({
+      localeCode: 'en',
+      ownerId: 7,
+      path: 'docs',
+      visibility: 'private'
+    }))
+    expect(virtualFolderLookup).not.toHaveBeenCalled()
+  })
 })
