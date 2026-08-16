@@ -1412,6 +1412,11 @@
 
   .content-extension-index__title {
     font-weight: 600;
+    color: mc('blue', '800');
+
+    @at-root .theme--dark & {
+      color: mc('blue', '300');
+    }
   }
 
   .content-extension-index__description {
@@ -1535,7 +1540,7 @@
   }
 
   .content-extension-spoiler__hint {
-    color: mc('grey', '600');
+    color: mc('grey', '700');
     font-size: .85rem;
 
     @at-root .theme--dark & {
@@ -1623,11 +1628,19 @@
   }
 
   .content-extension-infobox__boolean--yes {
-    color: mc('green', '700');
+    color: mc('green', '800');
+
+    @at-root .theme--dark & {
+      color: mc('green', '300');
+    }
   }
 
   .content-extension-infobox__boolean--no {
-    color: mc('red', '700');
+    color: mc('red', '800');
+
+    @at-root .theme--dark & {
+      color: mc('red', '300');
+    }
   }
 
   .content-extension--pdf,
