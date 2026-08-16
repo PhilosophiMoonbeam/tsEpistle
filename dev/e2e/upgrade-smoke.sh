@@ -60,7 +60,7 @@ wait_for_url() {
 
 wait_for_postgres() {
   for attempt in {1..90}; do
-    if docker exec db pg_isready --username=wiki --dbname=wiki >/dev/null 2>&1; then
+    if docker exec db psql --username=wiki --dbname=wiki --command='SELECT 1' >/dev/null 2>&1; then
       return
     fi
     if [ "$attempt" -eq 90 ]; then

@@ -19,7 +19,7 @@ docker run -d --name "$container" -p "127.0.0.1:${requested_port}:5432" \
   "$POSTGRES_TEST_IMAGE" >/dev/null
 port=$(docker port "$container" 5432/tcp | cut -d: -f2)
 for attempt in {1..90}; do
-  if docker exec "$container" pg_isready --username=wiki --dbname=wiki_page_index_benchmark >/dev/null 2>&1; then
+  if docker exec "$container" psql --username=wiki --dbname=wiki_page_index_benchmark --command='SELECT 1' >/dev/null 2>&1; then
     break
   fi
   if [ "$attempt" -eq 90 ]; then

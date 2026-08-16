@@ -10,7 +10,7 @@ docker run -d --name db --network=wiki-e2e \
   -e POSTGRES_PASSWORD='Password123!' -e POSTGRES_USER=wiki -e POSTGRES_DB=wiki \
   "$POSTGRES_TEST_IMAGE"
 for attempt in {1..90}; do
-  if docker exec db pg_isready --username=wiki --dbname=wiki >/dev/null 2>&1; then
+  if docker exec db psql --username=wiki --dbname=wiki --command='SELECT 1' >/dev/null 2>&1; then
     break
   fi
   if [ "$attempt" -eq 90 ]; then
