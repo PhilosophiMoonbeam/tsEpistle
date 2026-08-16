@@ -285,3 +285,31 @@ curl --fail http://127.0.0.1:3013/healthz
 ```
 
 The older SQLite rollback path remains available but is still subject to the post-promotion data-loss boundary documented above.
+
+## Completed synthesis deployment — 2026-08-16
+
+Revision `6f05d1f564b56ee752e0a07cfbcbb58af7244e49` was promoted at `2026-08-16T01:03:43Z` from the immutable published image `ghcr.io/philosophimoonbeam/wiki@sha256:c6a532f98584f07ff99807c4d9190f44266076a36d15c8dd4bdb9a32d8df2776`. The replacement retained PostgreSQL 17, `wiki-postgres-data`, `wiki-postgres-content`, the database password file, `wiki-pg-migration-net`, restart policy `unless-stopped`, and the loopback-only `127.0.0.1:3013` publication boundary. No volume replacement was appropriate: the canonical database already contained migration `2.5.138`, and the completed synthesis added no later migration.
+
+Pre-promotion backups are outside Git under `/home/bbferko/.local/state/wiki-deploy/2026-08-16-6f05d1f5/`:
+
+- PostgreSQL custom-format dump `wiki-pre-6f05d1f5.dump`, SHA-256 `a3fa9d76cd8626eecd988973c9f70dcdd617162572d7cfa71918d89a6b9a697d`; `pg_restore --list` read 304 lines;
+- content-volume archive `wiki-content-pre-6f05d1f5.tar.gz`, SHA-256 `1d4d4383f93beb60a3a0400ca920f6b215130c8a578eb8ad28ed187b672fda21`.
+
+Promotion evidence:
+
+- `wiki-tailnet` is healthy, reports OCI revision `6f05d1f564b56ee752e0a07cfbcbb58af7244e49`, connects successfully to supported PostgreSQL 17.11, loads the GraphQL schema, starts HTTP on port 3000, and completes the page-tree rebuild;
+- local and tailnet `/healthz` requests return HTTP 200 with `{"ok":true}`;
+- Chromium loaded `https://agents8c48g.tail41a24a.ts.net:10443/` as `Page Home | Wiki.js` with no console errors, page errors, or failed requests;
+- the existing authenticated session read the administrator identity and the three retained pages through the REST API;
+- a promoted-container restart preserved health, the tailnet route, authentication, and the retained page data;
+- the replaced container remains stopped as `wiki-tailnet-pre-6f05d1f5`.
+
+Immediate application rollback preserves the same PostgreSQL and content volumes:
+
+```bash
+docker stop wiki-tailnet
+docker rename wiki-tailnet wiki-tailnet-post-6f05d1f5-rollback-$(date +%Y%m%d%H%M%S)
+docker rename wiki-tailnet-pre-6f05d1f5 wiki-tailnet
+docker start wiki-tailnet
+curl --fail http://127.0.0.1:3013/healthz
+```
