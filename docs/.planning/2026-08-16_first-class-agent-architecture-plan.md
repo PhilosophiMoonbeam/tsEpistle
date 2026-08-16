@@ -268,7 +268,7 @@ Write release:
 | `pages.prepareDelete` | proposal | bind page ID/revision and display impact; never delete during preparation |
 | `pages.applyProposal` | reversible or destructive write | server-only execution of one approved immutable proposal through current operation |
 
-The model does not receive a free-form `update_page` host callback in the browser agent. It prepares a proposal; approval invokes `applyProposal`. MCP exposes prepare/apply as two explicit tools and uses `input_required` before apply when the proposal’s risk requires confirmation.
+The model does not receive a free-form `update_page` host callback in the browser agent. It prepares a proposal; the native approval record authorizes `applyProposal`. MCP exposes prepare/apply as distinct tools. Modern MCP may use `input_required` only to pause and direct the client to that independently persisted Wiki approval; stateless legacy MCP does not expose apply.
 
 ### Write safety
 
