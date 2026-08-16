@@ -23,41 +23,45 @@
                   v-toolbar-title.subtitle-1 {{$t('admin:navigation.mode')}}
                 v-list(nav, two-line)
                   v-list-item(value='TREE', :active='config.mode === `TREE`', @click='config.mode = `TREE`')
-                    v-avatar
-                      img(src='/_assets/svg/icon-tree-structure-dotted.svg', alt='Site Tree')
-                    div.v-list-item-content
-                      v-list-item-title {{$t('admin:navigation.modeSiteTree.title')}}
-                      v-list-item-subtitle {{$t('admin:navigation.modeSiteTree.description')}}
-                    v-avatar
-                      v-icon(v-if='$vuetify.theme.current.dark', :color='config.mode === `TREE` ? `teal lighten-3` : `grey darken-2`') mdi-check-circle
-                      v-icon(v-else, :color='config.mode === `TREE` ? `teal` : `grey lighten-3`') mdi-check-circle
+                    template(v-slot:prepend)
+                      v-avatar
+                        img(src='/_assets/svg/icon-tree-structure-dotted.svg', alt='Site Tree')
+                    v-list-item-title {{$t('admin:navigation.modeSiteTree.title')}}
+                    v-list-item-subtitle {{$t('admin:navigation.modeSiteTree.description')}}
+                    template(v-slot:append)
+                      v-avatar
+                        v-icon(v-if='$vuetify.theme.current.dark', :color='config.mode === `TREE` ? `teal lighten-3` : `grey darken-2`') mdi-check-circle
+                        v-icon(v-else, :color='config.mode === `TREE` ? `teal` : `grey lighten-3`') mdi-check-circle
                   v-list-item(value='STATIC', :active='config.mode === `STATIC`', @click='config.mode = `STATIC`')
-                    v-avatar
-                      img(src='/_assets/svg/icon-features-list.svg', alt='Static Navigation')
-                    div.v-list-item-content
-                      v-list-item-title {{$t('admin:navigation.modeStatic.title')}}
-                      v-list-item-subtitle {{$t('admin:navigation.modeStatic.description')}}
-                    v-avatar
-                      v-icon(v-if='$vuetify.theme.current.dark', :color='config.mode === `STATIC` ? `teal lighten-3` : `grey darken-2`') mdi-check-circle
-                      v-icon(v-else, :color='config.mode === `STATIC` ? `teal` : `grey lighten-3`') mdi-check-circle
+                    template(v-slot:prepend)
+                      v-avatar
+                        img(src='/_assets/svg/icon-features-list.svg', alt='Static Navigation')
+                    v-list-item-title {{$t('admin:navigation.modeStatic.title')}}
+                    v-list-item-subtitle {{$t('admin:navigation.modeStatic.description')}}
+                    template(v-slot:append)
+                      v-avatar
+                        v-icon(v-if='$vuetify.theme.current.dark', :color='config.mode === `STATIC` ? `teal lighten-3` : `grey darken-2`') mdi-check-circle
+                        v-icon(v-else, :color='config.mode === `STATIC` ? `teal` : `grey lighten-3`') mdi-check-circle
                   v-list-item(value='MIXED', :active='config.mode === `MIXED`', @click='config.mode = `MIXED`')
-                    v-avatar
-                      img(src='/_assets/svg/icon-user-menu-male-dotted.svg', alt='Custom Navigation')
-                    div.v-list-item-content
-                      v-list-item-title {{$t('admin:navigation.modeCustom.title')}}
-                      v-list-item-subtitle {{$t('admin:navigation.modeCustom.description')}}
-                    v-avatar
-                      v-icon(v-if='$vuetify.theme.current.dark', :color='config.mode === `MIXED` ? `teal lighten-3` : `grey darken-2`') mdi-check-circle
-                      v-icon(v-else, :color='config.mode === `MIXED` ? `teal` : `grey lighten-3`') mdi-check-circle
+                    template(v-slot:prepend)
+                      v-avatar
+                        img(src='/_assets/svg/icon-user-menu-male-dotted.svg', alt='Custom Navigation')
+                    v-list-item-title {{$t('admin:navigation.modeCustom.title')}}
+                    v-list-item-subtitle {{$t('admin:navigation.modeCustom.description')}}
+                    template(v-slot:append)
+                      v-avatar
+                        v-icon(v-if='$vuetify.theme.current.dark', :color='config.mode === `MIXED` ? `teal lighten-3` : `grey darken-2`') mdi-check-circle
+                        v-icon(v-else, :color='config.mode === `MIXED` ? `teal` : `grey lighten-3`') mdi-check-circle
                   v-list-item(value='NONE', :active='config.mode === `NONE`', @click='config.mode = `NONE`')
-                    v-avatar
-                      img(src='/_assets/svg/icon-cancel-dotted.svg', alt='None')
-                    div.v-list-item-content
-                      v-list-item-title {{$t('admin:navigation.modeNone.title')}}
-                      v-list-item-subtitle {{$t('admin:navigation.modeNone.description')}}
-                    v-avatar
-                      v-icon(v-if='$vuetify.theme.current.dark', :color='config.mode === `NONE` ? `teal lighten-3` : `grey darken-2`') mdi-check-circle
-                      v-icon(v-else, :color='config.mode === `NONE` ? `teal` : `grey lighten-3`') mdi-check-circle
+                    template(v-slot:prepend)
+                      v-avatar
+                        img(src='/_assets/svg/icon-cancel-dotted.svg', alt='None')
+                    v-list-item-title {{$t('admin:navigation.modeNone.title')}}
+                    v-list-item-subtitle {{$t('admin:navigation.modeNone.description')}}
+                    template(v-slot:append)
+                      v-avatar
+                        v-icon(v-if='$vuetify.theme.current.dark', :color='config.mode === `NONE` ? `teal lighten-3` : `grey darken-2`') mdi-check-circle
+                        v-icon(v-else, :color='config.mode === `NONE` ? `teal` : `grey lighten-3`') mdi-check-circle
                 v-card-text.pt-0
                   v-switch(
                     v-model='config.expandParent'

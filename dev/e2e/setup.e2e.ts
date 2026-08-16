@@ -688,6 +688,42 @@ test.describe('critical post-install workflows', () => {
     await expect(page.getByText('Last Logins', { exact: true })).toBeVisible()
     await expectNoHorizontalOverflow(page)
 
+    await page.goto('/a/navigation')
+    await expect(page.locator('.admin-header').getByText('Navigation', { exact: true })).toBeVisible()
+
+    const modeLayouts = await page.evaluate(() => {
+      const labels = ['Site Tree', 'Static Navigation', 'Custom Navigation', 'None']
+      return labels.map(label => {
+        const title = [...document.querySelectorAll<HTMLElement>('.v-main .v-list-item-title')]
+          .find(candidate => candidate.textContent?.trim() === label)
+        const item = title?.closest<HTMLElement>('.v-list-item')
+        const icon = item?.querySelector<HTMLElement>('.v-list-item__prepend .v-avatar')
+        const content = item?.querySelector<HTMLElement>('.v-list-item__content')
+        const selection = item?.querySelector<HTMLElement>('.v-list-item__append .v-icon')
+        if (!title || !item || !icon || !content || !selection) {
+          throw new Error(`Missing ${label} navigation mode layout.`)
+        }
+        const titleBox = title.getBoundingClientRect()
+        const iconBox = icon.getBoundingClientRect()
+        const contentBox = content.getBoundingClientRect()
+        const selectionBox = selection.getBoundingClientRect()
+        return {
+          iconRight: iconBox.right,
+          iconCenterY: iconBox.top + iconBox.height / 2,
+          titleLeft: titleBox.left,
+          titleRight: titleBox.right,
+          contentCenterY: contentBox.top + contentBox.height / 2,
+          selectionLeft: selectionBox.left
+        }
+      })
+    })
+    for (const layout of modeLayouts) {
+      expect(layout.titleLeft).toBeGreaterThan(layout.iconRight)
+      expect(Math.abs(layout.contentCenterY - layout.iconCenterY)).toBeLessThan(2)
+      expect(layout.selectionLeft).toBeGreaterThan(layout.titleRight)
+    }
+    await expectNoHorizontalOverflow(page)
+
     await page.goto('/a/pages')
     await expect(page.locator('.admin-header').getByText('Pages', { exact: true })).toBeVisible()
     await expect(page.locator('.admin-responsive-table')).toBeVisible()
