@@ -40,7 +40,7 @@ export default defineConfig({
       name: 'accessibility-tablet',
       dependencies: ['chromium'],
       testMatch: '**/quality.e2e.ts',
-      use: { ...devices['iPad Mini'] }
+      use: { ...devices['iPad Mini'], browserName: 'chromium' }
     },
     {
       name: 'accessibility-wide',
