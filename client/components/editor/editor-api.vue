@@ -1,36 +1,36 @@
 <template lang='pug'>
   .editor-api
     .editor-api-main
-      v-list.editor-api-sidebar.radius-0(nav, :class='$vuetify.theme.current.dark ? `grey darken-4` : `primary`', dark)
+      v-list.editor-api-sidebar.radius-0(nav, :class='$vuetify.theme.current.dark ? `bg-grey-darken-4` : `bg-primary`')
         v-list-item.animated.fadeInLeft(value='info', :active='tab === `info`', @click='tab = `info`')
-          div.v-list-item-icon: v-icon mdi-book-information-variant
+          template(v-slot:prepend): v-icon mdi-book-information-variant
           v-list-item-title Info
         v-list-item.mt-3.animated.fadeInLeft.wait-p2s(value='servers', :active='tab === `servers`', @click='tab = `servers`')
-          div.v-list-item-icon: v-icon mdi-server
+          template(v-slot:prepend): v-icon mdi-server
           v-list-item-title Servers
         v-list-item.mt-3.animated.fadeInLeft.wait-p3s(value='endpoints', :active='tab === `endpoints`', @click='tab = `endpoints`')
-          div.v-list-item-icon: v-icon mdi-code-braces
+          template(v-slot:prepend): v-icon mdi-code-braces
           v-list-item-title Endpoints
         v-list-item.mt-3.animated.fadeInLeft.wait-p4s(value='models', :active='tab === `models`', @click='tab = `models`')
-          div.v-list-item-icon: v-icon mdi-buffer
+          template(v-slot:prepend): v-icon mdi-buffer
           v-list-item-title Models
         v-list-item.mt-3.animated.fadeInLeft.wait-p5s(value='auth', :active='tab === `auth`', @click='tab = `auth`')
-          div.v-list-item-icon: v-icon mdi-lock
+          template(v-slot:prepend): v-icon mdi-lock
           v-list-item-title Authentication
       .editor-api-editor
         template(v-if='tab === `info`')
           v-container.px-2.pt-1(fluid)
-            v-row(dense)
+            v-row(density="compact")
               v-col(cols='12')
                 .pa-3
-                  .subtitle-2 API General Information
-                  .caption.grey--text.text--darken-1 Global metadata about the API
+                  .text-label-large API General Information
+                  .text-body-small.text-grey-darken-1 Global metadata about the API
               v-col(cols='12', lg='6')
                 v-card.pt-2
                   v-card-text
                     v-text-field(
                       label='Title'
-                      outlined
+                      variant="outlined"
                       hint='Required - Title of the API'
                       persistent-hint
                       v-model='info.title'
@@ -38,7 +38,7 @@
                     v-divider.mt-2.mb-4
                     v-text-field(
                       label='Version'
-                      outlined
+                      variant="outlined"
                       hint='Required - Semantic versioning like 1.0.0 or an arbitrary string like 0.99-beta.'
                       persistent-hint
                       v-model='info.version'
@@ -46,7 +46,7 @@
                     v-divider.mt-2.mb-4
                     v-textarea(
                       label='Description'
-                      outlined
+                      variant="outlined"
                       hint='Optional - Markdown formatting is supported.'
                       persistent-hint
                       v-model='info.description'
@@ -54,37 +54,38 @@
               v-col(cols='12', lg='6')
                 v-card.pt-2
                   v-card-text
-                    v-list(nav, two-line)
+                    v-list(nav, lines="two")
                       v-list-item(value='rest', :active='kind === `rest`', @click='kind = `rest`')
-                        v-avatar
-                          img(src='/_assets/svg/icon-transaction-list.svg', alt='REST')
-                        div.v-list-item-content
-                          v-list-item-title REST API
-                          v-list-item-subtitle Classic REST Endpoints
-                        v-avatar
-                          v-icon(:color='kind === `rest` ? `primary` : `grey lighten-3`') mdi-check-circle
+                        template(v-slot:prepend)
+                          v-avatar
+                            img(src='/_assets/svg/icon-transaction-list.svg', alt='REST')
+                        v-list-item-title REST API
+                        v-list-item-subtitle Classic REST Endpoints
+                        template(v-slot:append)
+                          v-avatar
+                            v-icon(:color='kind === `rest` ? `primary` : `grey-lighten-3`') mdi-check-circle
         template(v-else-if='tab === `servers`')
           v-container.px-2.pt-1(fluid)
-            v-row(dense)
+            v-row(density="compact")
               v-col(cols='12')
                 .pa-3
                   .d-flex.align-center.justify-space-between
                     div
-                      .subtitle-2 List of servers / load balancers where this API reside
-                      .caption.grey--text.text--darken-1 Enter all environments, e.g. Integration, QA, Pre-production, Production, etc.
-                    v-btn(color='primary', large, @click='addServer')
-                      v-icon(left) mdi-plus
+                      .text-label-large List of servers / load balancers where this API reside
+                      .text-body-small.text-grey-darken-1 Enter all environments, e.g. Integration, QA, Pre-production, Production, etc.
+                    v-btn(color='primary', size="large", @click='addServer')
+                      v-icon(start) mdi-plus
                       span Add Server
               v-col(cols='12', lg='6', v-for='srv of servers', :key='srv.id')
                 v-card.pt-1
                   v-card-text
                     .d-flex
                       .d-flex.flex-column.justify-space-between
-                        v-menu(offset-y, min-width='200')
+                        v-menu(min-width='200')
                           template(v-slot:activator='{ props }')
-                            v-btn(text, x-large, style='min-width: 0;', v-bind='props')
-                              v-icon(large, :color='iconColor(srv.icon)') {{iconKey(srv.icon)}}
-                          v-list(nav, dense)
+                            v-btn(variant="text", size="x-large", style='min-width: 0;', v-bind='props')
+                              v-icon(size="large", :color='iconColor(srv.icon)') {{iconKey(srv.icon)}}
+                          v-list(nav, density="compact")
                             v-list-item(
                               v-for='(srvType, srvKey) in serverTypes'
                               :key='srvKey'
@@ -92,23 +93,23 @@
                               :active='srv.icon === srvKey'
                               @click='srv.icon = srvKey'
                             )
-                              div.v-list-item-icon: v-icon(large, :color='srvType.color', v-text='srvType.icon')
-                              div.v-list-item-content: v-list-item-title(v-text='srvType.title')
-                        v-btn.mb-2(depressed, small, @click='removeServer(srv.id)')
-                          v-icon(left) mdi-close
+                              template(v-slot:prepend): v-icon(size="large", :color='srvType.color') {{ srvType.icon }}
+                              v-list-item-title {{ srvType.title }}
+                        v-btn.mb-2(variant="flat", size="small", @click='removeServer(srv.id)')
+                          v-icon(start) mdi-close
                           span Delete
                       v-divider.ml-5(vertical)
                       .pl-5(style='flex: 1 1 100%;')
                         v-text-field(
                           label='Environment / Server Name'
-                          outlined
+                          variant="outlined"
                           hint='Required - Name of the environment (e.g. QA, Production)'
                           persistent-hint
                           v-model='srv.name'
                         )
                         v-text-field.mt-4(
                           label='URL'
-                          outlined
+                          variant="outlined"
                           hint='Required - URL of the environment (e.g. https://api.example.com/v1)'
                           persistent-hint
                           v-model='srv.url'
@@ -116,85 +117,82 @@
 
         template(v-else-if='tab === `endpoints`')
           v-container.px-2.pt-1(fluid)
-            v-row(dense)
+            v-row(density="compact")
               v-col(cols='12')
                 .pa-3
                   .d-flex.align-center.justify-space-between
                     div
-                      .subtitle-2 List of endpoints
-                      .caption.grey--text.text--darken-1 Groups of REST endpoints (GET, POST, PUT, DELETE).
-                    v-btn(color='primary', large, @click='addGroup')
-                      v-icon(left) mdi-plus
+                      .text-label-large List of endpoints
+                      .text-body-small.text-grey-darken-1 Groups of REST endpoints (GET, POST, PUT, DELETE).
+                    v-btn(color='primary', size="large", @click='addGroup')
+                      v-icon(start) mdi-plus
                       span Add Group
               v-col(cols='12', v-for='grp of endpointGroups', :key='grp.id')
-                v-card(color='grey darken-2')
+                v-card(color="grey-darken-2")
                   v-card-text
-                    v-toolbar(color='grey darken-2', flat, height='86')
+                    v-toolbar(color="grey-darken-2", flat, height='86')
                       v-text-field.mr-1(
                         flat
-                        dark
                         label='Group Name'
-                        solo
+                        variant="solo"
                         hint='Group Name'
                         persistent-hint
                         v-model='grp.name'
                       )
                       v-text-field.mx-1(
                         flat
-                        dark
                         label='Group Description'
-                        solo
+                        variant="solo"
                         hint='Group Description'
                         persistent-hint
                         v-model='grp.description'
                       )
-                      v-divider.mx-3(vertical, dark)
-                      v-btn.mx-1.align-self-start(color='grey lighten-2', @click='addEndpoint(grp)', dark, text, height='48')
-                        v-icon(left) mdi-trash-can
+                      v-divider.mx-3(vertical)
+                      v-btn.mx-1.align-self-start(color="grey-lighten-2", @click='addEndpoint(grp)', variant="text", height='48')
+                        v-icon(start) mdi-trash-can
                         span Delete
-                      v-divider.mx-3(vertical, dark)
-                      v-btn.ml-1.align-self-start(color='pink', @click='addEndpoint(grp)', dark, depressed, height='48')
-                        v-icon(left) mdi-plus
+                      v-divider.mx-3(vertical)
+                      v-btn.ml-1.align-self-start(color='pink', @click='addEndpoint(grp)', variant="flat", height='48')
+                        v-icon(start) mdi-plus
                         span Add Endpoint
                     v-container.pa-0.mt-2(fluid)
-                      v-row(dense)
+                      v-row(density="compact")
                         v-col(cols='12', v-for='ept of grp.endpoints', :key='ept.id')
                           v-card.pt-1
                             v-card-text
                               .d-flex
                                 .d-flex.flex-column
-                                  v-menu(offset-y, min-width='140')
+                                  v-menu(min-width='140')
                                     template(v-slot:activator='{ props }')
-                                      v-btn.subtitle-1(depressed, large, dark, style='min-width: 140px;', height='48', v-bind='props', :color='methodColor(ept.method)')
+                                      v-btn.text-body-large(variant="flat", size="large", style='min-width: 140px;', height='48', v-bind='props', :color='methodColor(ept.method)')
                                         strong {{ept.method}}
-                                    v-list(nav, dense)
+                                    v-list(nav, density="compact")
                                       v-list-item(:value='mtd.key', :active='ept.method === mtd.key', @click='ept.method = mtd.key', v-for='mtd of endpointMethods', :key='mtd.key')
-                                        div.v-list-item-content
-                                          v-chip.text-center(label, :color='mtd.color', dark) {{mtd.key}}
-                                  v-btn.mt-2(v-if='!ept.expanded', small, @click='ept.expanded = true', color='pink', outlined)
-                                    v-icon(left) mdi-arrow-down-box
+                                        v-chip.text-center(label, :color='mtd.color') {{mtd.key}}
+                                  v-btn.mt-2(v-if='!ept.expanded', size="small", @click='ept.expanded = true', color='pink', variant="outlined")
+                                    v-icon(start) mdi-arrow-down-box
                                     span Expand
-                                  v-btn.mt-2(v-else, small, @click='ept.expanded = false', color='pink', outlined)
-                                    v-icon(left) mdi-arrow-up-box
+                                  v-btn.mt-2(v-else, size="small", @click='ept.expanded = false', color='pink', variant="outlined")
+                                    v-icon(start) mdi-arrow-up-box
                                     span Collapse
                                   template(v-if='ept.expanded')
                                     v-spacer
-                                    v-btn.my-2(depressed, small, @click='removeEndpoint(grp, ept.id)')
-                                      v-icon(left) mdi-close
+                                    v-btn.my-2(variant="flat", size="small", @click='removeEndpoint(grp, ept.id)')
+                                      v-icon(start) mdi-close
                                       span Delete
                                 v-divider.ml-5(vertical)
                                 .pl-5(style='flex: 1 1 100%;')
                                   .d-flex
                                     v-text-field.mr-2(
                                       label='Path'
-                                      outlined
+                                      variant="outlined"
                                       hint='Required - Path to the endpoint (e.g. /planets/{planetId})'
                                       persistent-hint
                                       v-model='ept.path'
                                     )
                                     v-text-field.ml-2(
                                       label='Summary'
-                                      outlined
+                                      variant="outlined"
                                       hint='Required - A short summary of the endpoint (a few words).'
                                       persistent-hint
                                       v-model='ept.summary'
@@ -202,19 +200,18 @@
                                   template(v-if='ept.expanded')
                                     v-text-field.mt-3(
                                       label='Description'
-                                      outlined
+                                      variant="outlined"
                                       v-model='ept.description'
                                     )
 
-    v-system-bar.editor-status-bar.editor-api-sysbar(absolute, dark, status, color='grey darken-3')
-      .caption.editor-api-sysbar-locale {{locale.toUpperCase()}}
-      .caption.px-3 /{{path}}
+    v-system-bar.editor-status-bar.editor-api-sysbar(absolute, status, color="grey-darken-3")
+      .text-body-small.editor-api-sysbar-locale {{locale.toUpperCase()}}
+      .text-body-small.px-3 /{{path}}
       template(v-if='$vuetify.display.mdAndUp')
         v-spacer
-        .caption API Docs
+        .text-body-small API Docs
         v-spacer
-        .caption OpenAPI 3.0
-</template>
+        .text-body-small OpenAPI 3.0</template>
 
 <script lang='ts'>
 import { defineComponent } from 'vue'
@@ -279,7 +276,7 @@ export default defineComponent({
           title: 'AWS'
         },
         azure: {
-          color: 'blue darken-2',
+          color: 'blue-darken-2',
           icon: 'mdi-azure',
           title: 'Azure'
         },
@@ -299,17 +296,17 @@ export default defineComponent({
           title: 'Google'
         },
         kubernetes: {
-          color: 'blue darken-2',
+          color: 'blue-darken-2',
           icon: 'mdi-kubernetes',
           title: 'Kubernetes'
         },
         linux: {
-          color: 'grey darken-3',
+          color: 'grey-darken-3',
           icon: 'mdi-linux',
           title: 'Linux'
         },
         mac: {
-          color: 'grey darken-2',
+          color: 'grey-darken-2',
           icon: 'mdi-apple',
           title: 'Mac'
         },
@@ -319,7 +316,7 @@ export default defineComponent({
           title: 'Server'
         },
         windows: {
-          color: 'blue darken-2',
+          color: 'blue-darken-2',
           icon: 'mdi-windows',
           title: 'Windows'
         }
@@ -457,7 +454,7 @@ $editor-height-mobile: calc(100vh - 56px - 16px);
     height: $editor-height;
     position: relative;
 
-    @at-root .theme--dark & {
+    @at-root .v-theme--dark & {
       background-color: darken(mc('grey', '900'), 4.5%);
     }
 
@@ -486,9 +483,6 @@ $editor-height-mobile: calc(100vh - 56px - 16px);
         margin-top: 0 !important;
       }
 
-      .v-list-item-icon {
-        margin-right: 8px;
-      }
     }
   }
 

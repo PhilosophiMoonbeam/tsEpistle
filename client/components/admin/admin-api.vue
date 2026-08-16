@@ -1,28 +1,28 @@
 <template lang='pug'>
-  v-container(fluid, grid-list-lg)
-    v-row()
+  v-container(fluid)
+    v-row
       v-col(cols='12')
         .admin-header
           img.animated.fadeInUp(src='/_assets/svg/icon-rest-api.svg', alt='API', style='width: 80px;')
           .admin-header-title
-            .headline.primary--text.animated.fadeInLeft {{$t('admin:api.title')}}
-            .subtitle-1.grey--text.animated.fadeInLeft {{$t('admin:api.subtitle')}}
+            .text-headline-medium.text-primary.animated.fadeInLeft {{$t('admin:api.title')}}
+            .text-body-large.text-grey.animated.fadeInLeft {{$t('admin:api.subtitle')}}
           v-spacer
           template(v-if='enabled')
             status-indicator.mr-3(positive, pulse)
-            .caption.green--text.animated.fadeInLeft {{$t('admin:api.enabled')}}
+            .text-body-small.text-green.animated.fadeInLeft {{$t('admin:api.enabled')}}
           template(v-else)
             status-indicator.mr-3(negative, pulse)
-            .caption.red--text.animated.fadeInLeft {{$t('admin:api.disabled')}}
+            .text-body-small.text-red.animated.fadeInLeft {{$t('admin:api.disabled')}}
           v-spacer
-          v-btn.mr-3.animated.fadeInDown.wait-p2s(outlined, color='grey', icon, @click='refresh')
+          v-btn.mr-3.animated.fadeInDown.wait-p2s(variant="outlined", color='grey', icon, @click='refresh')
             v-icon mdi-refresh
-          v-btn.mr-3.animated.fadeInDown.wait-p1s(:color='enabled ? `red` : `green`', depressed, @click='globalSwitch', dark, :loading='isToggleLoading')
-            v-icon(left) mdi-power
+          v-btn.mr-3.animated.fadeInDown.wait-p1s(:color='enabled ? `red` : `green`', variant="flat", @click='globalSwitch', :loading='isToggleLoading')
+            v-icon(start) mdi-power
             span(v-if='!enabled') {{$t('admin:api.enableButton')}}
             span(v-else) {{$t('admin:api.disableButton')}}
-          v-btn.animated.fadeInDown(color='primary', depressed, large, @click='newKey', dark)
-            v-icon(left) mdi-plus
+          v-btn.animated.fadeInDown(color='primary', variant="flat", size="large", @click='newKey')
+            v-icon(start) mdi-plus
             span {{$t('admin:api.newKeyButton')}}
         v-alert.mt-3(
           v-if='!enabled'
@@ -34,39 +34,39 @@
           span.ml-1 Enable it before using a generated key. Signed-in browser sessions and internal application requests are unaffected.
         v-row.mt-1
           v-col(cols='12', lg='7')
-            v-card.fill-height(outlined)
+            v-card.fill-height(border)
               v-card-title
                 v-icon.mr-2(color='primary') mdi-graphql
                 span Supported external APIs
                 v-spacer
-                v-chip(label, small, color='success').white--text Stable compatibility surface
+                v-chip(label, size="small", color='success').text-white Stable compatibility surface
               v-divider
               v-card-text
                 p Wiki.ts Preview supports API-key integrations through GraphQL and the versioned REST v1 API.
-                .overline GraphQL endpoint
+                .text-label-small GraphQL endpoint
                 code.api-contract-code {{ graphqlEndpoint }}
-                .overline.mt-4 Authentication
+                .text-label-small.mt-4 Authentication
                 p Send the generated key as an HTTP bearer token:
                 code.api-contract-code Authorization: {{ apiAccessContract.bearerScheme }} &lt;API_KEY&gt;
-                .overline.mt-4 Full-access key example
+                .text-label-small.mt-4 Full-access key example
                 pre.api-contract-example {{ curlExample }}
-                .overline.mt-4 REST v1 endpoint
+                .text-label-small.mt-4 REST v1 endpoint
                 code.api-contract-code {{ externalRestEndpoint }}
-                .overline.mt-4 OpenAPI 3.1 contract
+                .text-label-small.mt-4 OpenAPI 3.1 contract
                 code.api-contract-code {{ openApiEndpoint }}
           v-col(cols='12', lg='5')
-            v-card.fill-height(outlined)
+            v-card.fill-height(border)
               v-card-title
                 v-icon.mr-2(color='warning') mdi-shield-lock-outline
                 span Internal REST transport
                 v-spacer
-                v-chip(label, small, color='warning') Session only
+                v-chip(label, size="small", color='warning') Session only
               v-divider
               v-card-text
                 code.api-contract-code {{ internalRestEndpoint }}
                 p.mt-4 The REST routes under this prefix are application-internal and are not a public integration contract. API keys are rejected; signed-in user sessions are required.
                 v-divider.my-4
-                .overline Permission scopes
+                .text-label-small Permission scopes
                 p.mb-2 #[strong Full access] uses the system-administrator permissions.
                 p.mb-0 #[strong Group scoped] uses the selected group's permissions. GraphQL directives and REST handlers enforce every operation's required permissions and page rules.
 
@@ -74,7 +74,7 @@
           v-table(v-if='keys && keys.length > 0')
             template(v-slot:default)
               thead
-                tr.grey(:class='$vuetify.theme.current.dark ? `darken-4-d5` : `lighten-5`')
+                tr(:class='$vuetify.theme.current.dark ? `bg-grey-darken-4-d5` : `bg-grey-lighten-5`')
                   th {{$t('admin:api.headerName')}}
                   th {{$t('admin:api.headerKeyEnding')}}
                   th {{$t('admin:api.headerExpiration')}}
@@ -84,15 +84,15 @@
               tbody
                 tr(v-for='key of keys', :key='`key-` + key.id')
                   td
-                    strong(:class='key.isRevoked ? `red--text` : ``') {{ key.name }}
-                    em.caption.ml-1.red--text(v-if='key.isRevoked') (revoked)
-                  td.caption {{ key.keyShort }}
+                    strong(:class='key.isRevoked ? `text-red` : ``') {{ key.name }}
+                    em.text-body-small.ml-1.text-red(v-if='key.isRevoked') (revoked)
+                  td.text-body-small {{ key.keyShort }}
                   td(:style='key.isRevoked ? `text-decoration: line-through;` : ``') {{ $helpers.formatMoment(key.expiration, 'LL') }}
                   td {{ $helpers.formatMoment(key.createdAt, 'calendar') }}
                   td {{ $helpers.formatMoment(key.updatedAt, 'calendar') }}
                   td: v-btn(icon, @click='revoke(key)', :disabled='key.isRevoked'): v-icon(color='error') mdi-cancel
           v-card-text(v-else)
-            v-alert.mb-0(icon='mdi-information', :value='true', outlined, color='info') {{$t('admin:api.noKeyInfo')}}
+            v-alert.mb-0(icon='mdi-information', :value='true', variant="outlined", color='info') {{$t('admin:api.noKeyInfo')}}
 
     create-api-key(v-model='isCreateDialogShown', :refresh-api-keys='refresh')
 
@@ -104,9 +104,8 @@
             strong(place='name') {{ current.name }}
         v-card-actions
           v-spacer
-          v-btn(text, @click='isRevokeConfirmDialogShown = false', :disabled='revokeLoading') {{$t('common:actions.cancel')}}
-          v-btn(color='red', dark, @click='revokeConfirm', :loading='revokeLoading') {{$t('admin:api.revoke')}}
-</template>
+          v-btn(variant="text", @click='isRevokeConfirmDialogShown = false', :disabled='revokeLoading') {{$t('common:actions.cancel')}}
+          v-btn(color='red', @click='revokeConfirm', :loading='revokeLoading') {{$t('admin:api.revoke')}}</template>
 
 <script lang='ts'>
 import StatusIndicator from '@/components/common/status-indicator.vue'

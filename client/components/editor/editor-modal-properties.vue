@@ -7,17 +7,16 @@
     )
     .dialog-header
       v-icon(color='white') mdi-tag-text-outline
-      .subtitle-1.white--text.ml-3 {{$t('editor:props.pageProperties')}}
+      .text-body-large.text-white.ml-3 {{$t('editor:props.pageProperties')}}
       v-spacer
       v-btn.mx-0(
-        outlined
-        dark
+        variant="outlined"
         @click='close'
         )
-        v-icon(left) mdi-check
+        v-icon(start) mdi-check
         span {{ $t('common:actions.ok') }}
     v-card(tile)
-      v-tabs.text-white(bg-color='blue-darken-1', color='white', centered, show-arrows, v-model='currentTab')
+      v-tabs.text-white(bg-color='blue-darken-1', color='white', align-tabs="center", show-arrows, v-model='currentTab')
         v-tab(:value='0') {{$t('editor:props.info')}}
         v-tab(:value='1') {{$t('editor:props.scheduling')}}
         v-tab(:value='2', :disabled='!hasScriptPermission') {{$t('editor:props.scripts')}}
@@ -26,16 +25,16 @@
       v-tabs-window(v-model='currentTab')
         v-tabs-window-item(:value='0', transition='fade-transition', reverse-transition='fade-transition')
           v-card-text.pt-5
-            .overline.pb-5 {{$t('editor:props.pageInfo')}}
+            .text-label-small.pb-5 {{$t('editor:props.pageInfo')}}
             v-text-field(
               ref='iptTitle'
-              outlined
+              variant="outlined"
               :label='$t(`editor:props.title`)'
               counter='255'
               v-model='title'
               )
             v-text-field(
-              outlined
+              variant="outlined"
               :label='$t(`editor:props.shortDescription`)'
               counter='255'
               v-model='description'
@@ -51,13 +50,13 @@
               inset
             )
           v-divider
-          v-card-text.grey.pt-5(:class='$vuetify.theme.current.dark ? `darken-3-d3` : `lighten-5`')
-            .overline.pb-5 {{$t('editor:props.path')}}
-            v-container.pa-0(fluid, grid-list-lg)
-              v-row()
+          v-card-text.pt-5(:class='$vuetify.theme.current.dark ? `bg-grey-darken-3-d3` : `bg-grey-lighten-5`')
+            .text-label-small.pb-5 {{$t('editor:props.path')}}
+            v-container.pa-0(fluid)
+              v-row
                 v-col(cols='12', md='2')
                   v-select(
-                    outlined
+                    variant="outlined"
                     :label='$t(`editor:props.locale`)'
                     suffix='/'
                     :items='namespaces'
@@ -66,7 +65,7 @@
                   )
                 v-col(cols='12', md='10')
                   v-text-field(
-                    outlined
+                    variant="outlined"
                     :label='$t(`editor:props.path`)'
                     append-icon='mdi-folder-search'
                     v-model='path'
@@ -76,11 +75,11 @@
                     :rules='[rules.required, rules.path]'
                     )
           v-divider
-          v-card-text.grey.pt-5(:class='$vuetify.theme.current.dark ? `darken-3-d5` : `lighten-4`')
-            .overline.pb-5 {{$t('editor:props.categorization')}}
+          v-card-text.pt-5(:class='$vuetify.theme.current.dark ? `bg-grey-darken-3-d5` : `bg-grey-lighten-4`')
+            .text-label-small.pb-5 {{$t('editor:props.categorization')}}
             v-combobox(
               :label='$t(`editor:props.tags`)'
-              outlined
+              variant="outlined"
               v-model='tags'
               v-model:search='newTagSearch'
               :hint='$t(`editor:props.tagsHint`)'
@@ -95,7 +94,7 @@
               )
         v-tabs-window-item(:value='1', transition='fade-transition', reverse-transition='fade-transition')
           v-card-text
-            .overline {{$t('editor:props.publishState')}}
+            .text-label-small {{$t('editor:props.publishState')}}
             v-switch(
               :label='$t(`editor:props.publishToggle`)'
               v-model='isPublished'
@@ -105,8 +104,8 @@
               inset
               )
           v-divider
-          v-card-text.grey.pt-5(:class='$vuetify.theme.current.dark ? `darken-3-d3` : `lighten-5`')
-            v-container.pa-0(fluid, grid-list-lg)
+          v-card-text.pt-5(:class='$vuetify.theme.current.dark ? `bg-grey-darken-3-d3` : `bg-grey-lighten-5`')
+            v-container.pa-0(fluid)
               v-row
                 v-col(cols='12', md='6')
                   v-dialog(
@@ -121,7 +120,7 @@
                         v-model='publishStartDate'
                         prepend-icon='mdi-calendar-check'
                         readonly
-                        outlined
+                        variant="outlined"
                         clearable
                         :hint='$t(`editor:props.publishStartHint`)'
                         persistent-hint
@@ -158,7 +157,7 @@
                         v-model='publishEndDate'
                         prepend-icon='mdi-calendar-remove'
                         readonly
-                        outlined
+                        variant="outlined"
                         clearable
                         :hint='$t(`editor:props.publishEndHint`)'
                         persistent-hint
@@ -185,11 +184,11 @@
 
         v-tabs-window-item(:value='2', :transition='false', :reverse-transition='false')
           .editor-props-codeeditor-title
-            .overline {{$t('editor:props.html')}}
+            .text-label-small {{$t('editor:props.html')}}
           .editor-props-codeeditor
             div(ref='codejs')
           .editor-props-codeeditor-hint
-            .caption {{$t('editor:props.htmlHint')}}
+            .text-body-small {{$t('editor:props.htmlHint')}}
 
         //- v-tabs-window-item(:value='3', transition='fade-transition', reverse-transition='fade-transition')
         //-   v-card-text
@@ -230,14 +229,13 @@
 
         v-tabs-window-item(:value='3', :transition='false', :reverse-transition='false')
           .editor-props-codeeditor-title
-            .overline {{$t('editor:props.css')}}
+            .text-label-small {{$t('editor:props.css')}}
           .editor-props-codeeditor
             div(ref='codecss')
           .editor-props-codeeditor-hint
-            .caption {{$t('editor:props.cssHint')}}
+            .text-body-small {{$t('editor:props.cssHint')}}
 
-    page-selector(:mode='pageSelectorMode', v-model='pageSelectorShown', :path='path', :locale='locale', :open-handler='setPath')
-</template>
+    page-selector(:mode='pageSelectorMode', v-model='pageSelectorShown', :path='path', :locale='locale', :open-handler='setPath')</template>
 
 <script lang='ts'>
 import { defineComponent } from 'vue'

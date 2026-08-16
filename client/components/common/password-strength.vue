@@ -5,7 +5,7 @@
       v-model='passwordStrength'
       height='2'
     )
-    .caption(v-if='!hideText', :class='passwordStrengthColor + "--text"') {{passwordStrengthText}}
+    .text-body-small(v-if='!hideText', :class='passwordStrengthColor + "--text"') {{passwordStrengthText}}
 </template>
 
 <script lang='ts'>

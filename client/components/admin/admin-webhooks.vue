@@ -1,19 +1,19 @@
 <template lang='pug'>
-  v-container(fluid, grid-list-lg)
+  v-container(fluid)
     v-row
       v-col(cols='12')
         .admin-header
           img.animated.fadeInUp(src='/_assets/svg/icon-winter.svg', alt='Webhooks', style='width: 80px;')
           .admin-header-title
-            .headline.primary--text.animated.fadeInLeft {{ $t('admin:webhooks.title') }}
-            .subtitle-1.grey--text.animated.fadeInLeft.wait-p4s {{ $t('admin:webhooks.subtitle') }}
+            .text-headline-medium.text-primary.animated.fadeInLeft {{ $t('admin:webhooks.title') }}
+            .text-body-large.text-grey.animated.fadeInLeft.wait-p4s {{ $t('admin:webhooks.subtitle') }}
           v-spacer
-          v-btn(color='primary', depressed, @click='newHook')
-            v-icon(left) mdi-plus
+          v-btn(color='primary', variant="flat", @click='newHook')
+            v-icon(start) mdi-plus
             span New webhook
 
       v-col(cols='12', lg='4')
-        v-card(outlined)
+        v-card(border)
           v-card-title
             v-icon.mr-2(color='primary') mdi-webhook
             span Endpoints
@@ -33,7 +33,7 @@
             v-alert(type='info', variant='tonal') No webhook endpoints configured.
 
       v-col(cols='12', lg='8')
-        v-card(outlined)
+        v-card(border)
           v-card-title
             span {{ draft.id ? 'Edit webhook' : 'New webhook' }}
             v-spacer
@@ -55,17 +55,17 @@
               )
               v-switch(v-model='draft.isEnabled', color='success', label='Enabled')
               .d-flex.flex-wrap.ga-2.mt-3
-                v-btn(color='primary', depressed, type='submit', :loading='saving')
-                  v-icon(left) mdi-content-save
+                v-btn(color='primary', variant="flat", type='submit', :loading='saving')
+                  v-icon(start) mdi-content-save
                   span Save
                 v-btn(v-if='draft.id', variant='outlined', @click='rotateSecret', :loading='rotating')
-                  v-icon(left) mdi-key-change
+                  v-icon(start) mdi-key-change
                   span Rotate secret
                 v-btn(v-if='draft.id', color='error', variant='outlined', @click='deleteDialog = true')
-                  v-icon(left) mdi-delete
+                  v-icon(start) mdi-delete
                   span Delete
 
-        v-card.mt-4(v-if='draft.id', outlined)
+        v-card.mt-4(v-if='draft.id', border)
           v-card-title
             span Recent deliveries
             v-spacer
@@ -116,8 +116,7 @@
         v-card-actions
           v-spacer
           v-btn(variant='text', @click='deleteDialog = false') Cancel
-          v-btn(color='error', @click='removeHook', :loading='deleting') Delete
-</template>
+          v-btn(color='error', @click='removeHook', :loading='deleting') Delete</template>
 
 <script lang='ts'>
 import { wikiStore } from '@/store/index.ts'

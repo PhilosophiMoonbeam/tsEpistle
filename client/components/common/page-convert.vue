@@ -3,16 +3,16 @@
     v-model='isShown'
     max-width='550'
     persistent
-    overlay-color='blue-grey darken-4'
-    overlay-opacity='.7'
+    scrim='blue-grey-darken-4'
+    style='--v-overlay-opacity: .7'
     )
     v-card
       .dialog-header.is-short.is-dark
         v-icon.mr-2(color='white') mdi-lightning-bolt
         span {{$t('common:page.convert')}}
       v-card-text.pt-5
-        i18next.body-2(path='common:page.convertTitle', tag='div')
-          span.blue-grey--text.text--darken-2(place='title') {{pageTitle}}
+        i18next.text-body-medium(path='common:page.convertTitle', tag='div')
+          span.text-blue-grey-darken-2(place='title') {{pageTitle}}
         v-select.mt-5(
           :items=`[
             { value: 'markdown', text: 'Markdown' },
@@ -20,16 +20,16 @@
             { value: 'ckeditor', text: 'Visual Editor (HTML)' },
             { value: 'code', text: 'Raw HTML' }
           ]`
-          outlined
-          dense
+          variant="outlined"
+          density="compact"
           hide-details
           v-model='newEditor'
         )
-        .caption.mt-5 {{$t('common:page.convertSubtitle')}}
+        .text-body-small.mt-5 {{$t('common:page.convertSubtitle')}}
       div.v-card-chin
         v-spacer
-        v-btn(text, @click='discard', :disabled='loading') {{$t('common:actions.cancel')}}
-        v-btn.px-4(color='grey darken-3', @click='convertPage', :loading='loading').white--text {{$t('common:actions.convert')}}
+        v-btn(variant="text", @click='discard', :disabled='loading') {{$t('common:actions.cancel')}}
+        v-btn.px-4(color="grey-darken-3", @click='convertPage', :loading='loading').text-white {{$t('common:actions.convert')}}
 </template>
 
 <script lang='ts'>

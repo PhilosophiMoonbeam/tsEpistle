@@ -1,24 +1,23 @@
 <template lang='pug'>
-  v-container(fluid, grid-list-lg)
-    v-row()
+  v-container(fluid)
+    v-row
       v-col(cols='12')
         .admin-header
           img(src='/_assets/svg/icon-web-design.svg', alt='Editor', style='width: 80px;')
           .admin-header-title
-            .headline.primary--text Editors
-            .subtitle-1.grey--text Editors available when creating or changing a page
+            .text-headline-medium.text-primary Editors
+            .text-body-large.text-grey Editors available when creating or changing a page
 
         v-card.mt-3
           v-card-title Available editors
           v-card-text
-            .body-2.mb-3 Editor selection is stored per page. Open a page in edit mode to change its editor.
+            .text-body-medium.mb-3 Editor selection is stored per page. Open a page in edit mode to change its editor.
             v-list(lines='two')
               v-list-item(v-for='editor in editors', :key='editor.key')
                 template(v-slot:prepend)
                   v-icon(color='primary') {{ editor.icon }}
                 v-list-item-title {{ editor.title }}
-                v-list-item-subtitle {{ editor.description }}
-</template>
+                v-list-item-subtitle {{ editor.description }}</template>
 
 <script lang='ts'>
 export default {

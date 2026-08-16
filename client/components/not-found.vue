@@ -3,10 +3,10 @@
     .notfound
       .notfound-content
         img.animated.fadeIn(src='/_assets/svg/icon-delete-file.svg', alt='Not Found')
-        .headline {{$t('notfound.title')}}
-        .subheading.mt-3 {{$t('notfound.subtitle')}}
-        v-btn.mt-5(color='red lighten-4', href='/', large, outlined)
-          v-icon(left) mdi-home
+        .text-headline-medium {{$t('notfound.title')}}
+        .text-body-large.mt-3 {{$t('notfound.subtitle')}}
+        v-btn.mt-5(color="red-lighten-4", href='/', size="large", variant="outlined")
+          v-icon(start) mdi-home
           span {{$t('notfound.gohome')}}
 </template>
 

@@ -1,43 +1,44 @@
 <template lang='pug'>
-  v-container(fluid, grid-list-lg)
+  v-container(fluid)
     v-row
       v-col(cols='12')
         .admin-header
           img.animated.fadeInUp(src='/_assets/svg/icon-paint-palette.svg', alt='Theme', style='width: 80px;')
           .admin-header-title
-            .headline.primary--text.animated.fadeInLeft {{$t('admin:theme.title')}}
-            .subtitle-1.grey--text.animated.fadeInLeft.wait-p2s {{$t('admin:theme.subtitle')}}
+            .text-headline-medium.text-primary.animated.fadeInLeft {{$t('admin:theme.title')}}
+            .text-body-large.text-grey.animated.fadeInLeft.wait-p2s {{$t('admin:theme.subtitle')}}
           v-spacer
-          v-btn.animated.fadeInRight(color='success', depressed, @click='save', large, :loading='loading')
-            v-icon(left) mdi-check
+          v-btn.animated.fadeInRight(color='success', variant="flat", @click='save', size="large", :loading='loading')
+            v-icon(start) mdi-check
             span {{$t('common:actions.apply')}}
         v-form.pt-3
           v-row
             v-col(lg='6' cols='12')
               v-card.animated.fadeInUp
-                v-toolbar(color='primary', dark, dense, flat)
-                  v-toolbar-title.subtitle-1 {{$t('admin:theme.title')}}
+                v-toolbar(color='primary', density="compact", flat)
+                  v-toolbar-title.text-body-large {{$t('admin:theme.title')}}
                 v-card-text
                   v-select(
                     :items='themes'
                     item-title='text'
-                    outlined
+                    variant="outlined"
                     prepend-icon='mdi-palette'
                     v-model='config.theme'
                     :label='$t(`admin:theme.siteTheme`)'
                     persistent-hint
                     :hint='$t(`admin:theme.siteThemeHint`)'
                     )
-                    template(v-slot:item='data')
-                      v-avatar
-                        v-icon.blue--text(dark) mdi-image-filter-frames
-                      div.v-list-item-content
-                        v-list-item-title(v-html='data.item.text')
-                        v-list-item-subtitle(v-html='data.item.author')
+                    template(v-slot:item='{ props, item }')
+                      v-list-item(v-bind='props')
+                        template(v-slot:prepend)
+                          v-avatar
+                            v-icon.text-blue mdi-image-filter-frames
+                        v-list-item-title {{ item.raw.text }}
+                        v-list-item-subtitle {{ item.raw.author }}
                   v-select.mt-3(
                     :items='iconsets'
                     item-title='text'
-                    outlined
+                    variant="outlined"
                     prepend-icon='mdi-paw'
                     v-model='config.iconset'
                     :label='$t(`admin:theme.iconset`)'
@@ -55,13 +56,13 @@
                     )
 
               v-card.mt-3.animated.fadeInUp.wait-p1s
-                v-toolbar(color='primary', dark, dense, flat)
-                  v-toolbar-title.subtitle-1 {{$t(`admin:theme.options`)}}
+                v-toolbar(color='primary', density="compact", flat)
+                  v-toolbar-title.text-body-large {{$t(`admin:theme.options`)}}
                 v-card-text
                   v-select(
                     :items='tocPositions'
                     item-title='text'
-                    outlined
+                    variant="outlined"
                     prepend-icon='mdi-border-vertical'
                     v-model='config.tocPosition'
                     label='Table of Contents Position'
@@ -71,25 +72,25 @@
             v-col(lg='6' cols='12')
 
               v-card.animated.fadeInUp.wait-p2s
-                v-toolbar(color='primary', dark, dense, flat)
-                  v-toolbar-title.subtitle-1 {{$t(`admin:theme.codeInjection`)}}
+                v-toolbar(color='primary', density="compact", flat)
+                  v-toolbar-title.text-body-large {{$t(`admin:theme.codeInjection`)}}
                 v-card-text
                   v-textarea.is-monospaced(
                     v-model='config.injectCSS'
                     :label='$t(`admin:theme.cssOverride`)'
-                    outlined
+                    variant="outlined"
                     color='primary'
                     persistent-hint
                     :hint='$t(`admin:theme.cssOverrideHint`)'
                     auto-grow
                     )
-                  i18next.caption.pl-2.ml-1(path='admin:theme.cssOverrideWarning', tag='div')
-                    strong.red--text(place='caution') {{$t('admin:theme.cssOverrideWarningCaution')}}
+                  i18next.text-body-small.pl-2.ml-1(path='admin:theme.cssOverrideWarning', tag='div')
+                    strong.text-red(place='caution') {{$t('admin:theme.cssOverrideWarningCaution')}}
                     code(place='cssClass') .contents
                   v-textarea.is-monospaced.mt-3(
                     v-model='config.injectHead'
                     :label='$t(`admin:theme.headHtmlInjection`)'
-                    outlined
+                    variant="outlined"
                     color='primary'
                     persistent-hint
                     :hint='$t(`admin:theme.headHtmlInjectionHint`)'
@@ -98,13 +99,12 @@
                   v-textarea.is-monospaced.mt-2(
                     v-model='config.injectBody'
                     :label='$t(`admin:theme.bodyHtmlInjection`)'
-                    outlined
+                    variant="outlined"
                     color='primary'
                     persistent-hint
                     :hint='$t(`admin:theme.bodyHtmlInjectionHint`)'
                     auto-grow
-                    )
-</template>
+                    )</template>
 
 <script lang='ts'>
 import { wikiStore } from '@/store/index.ts'

@@ -25,44 +25,42 @@
           message='Try a different term or broader scope.'
         )
       template(v-if='search && search.length >= 2 && results && results.length > 0')
-        v-list-subheader.white--text {{$t('common:header.searchResultsCount', { total: response.totalHits })}}
-        v-list.search-results-items.radius-7.py-0(two-line, dense)
+        v-list-subheader.text-white {{$t('common:header.searchResultsCount', { total: response.totalHits })}}
+        v-list.search-results-items.radius-7.py-0(lines="two", density="compact")
           template(v-for='(item, idx) of results', :key='item.id')
             v-list-item(@click='goToPage(item)', @click.middle="goToPageInNewTab(item)", :class='idx === cursor ? `highlighted` : ``')
-              v-avatar(tile)
-                img(src='/_assets/svg/icon-selective-highlighting.svg')
-              div.v-list-item-content
-                v-list-item-title(v-text='item.title')
-                v-list-item-subtitle.caption(v-text='item.description')
-                .caption.grey--text(v-text='item.path')
-              div.v-list-item-action
-                v-chip(label, outlined) {{item.locale.toUpperCase()}}
+              template(v-slot:prepend)
+                v-avatar(tile)
+                  img(src='/_assets/svg/icon-selective-highlighting.svg')
+              v-list-item-title {{ item.title }}
+              v-list-item-subtitle.text-body-small {{ item.description }}
+              .text-body-small.text-grey(v-text='item.path')
+              template(v-slot:append)
+                v-chip(label, variant="outlined") {{item.locale.toUpperCase()}}
             v-divider(v-if='idx < results.length - 1')
         v-pagination.mt-3(
           v-if='paginationLength > 1'
-          dark
           v-model='pagination'
           :length='paginationLength'
-          circle
+          rounded
         )
       template(v-if='suggestions && suggestions.length > 0')
-        v-list-subheader.white--text.mt-3 {{$t('common:header.searchDidYouMean')}}
-        v-list.search-results-suggestions.radius-7(dense, dark)
+        v-list-subheader.text-white.mt-3 {{$t('common:header.searchDidYouMean')}}
+        v-list.search-results-suggestions.radius-7(density="compact")
           template(v-for='(term, idx) of suggestions', :key='term')
             v-list-item(@click='setSearchTerm(term)', :class='idx + results.length === cursor ? `highlighted` : ``')
-              v-avatar
-                v-icon mdi-magnify
-              div.v-list-item-content
-                v-list-item-title(v-text='term')
+              template(v-slot:prepend)
+                v-avatar
+                  v-icon mdi-magnify
+              v-list-item-title {{ term }}
             v-divider(v-if='idx < suggestions.length - 1')
       .text-xs-center.pt-5(v-if='search && search.length > 1')
         //- v-btn.mx-2(outlined, color='orange', @click='search = ``', v-if='results.length > 0')
         //-   v-icon(left) mdi-content-save
         //-   span {{$t('common:header.searchCopyLink')}}
-        v-btn.mx-2(outlined, color='pink', @click='search = ``')
-          v-icon(left) mdi-close
-          span {{$t('common:header.searchClose')}}
-</template>
+        v-btn.mx-2(variant="outlined", color='pink', @click='search = ``')
+          v-icon(start) mdi-close
+          span {{$t('common:header.searchClose')}}</template>
 
 <script lang='ts'>
 import { defineComponent } from 'vue'
@@ -274,7 +272,7 @@ export default defineComponent({
     .highlighted {
       background: #FFF linear-gradient(to bottom, #FFF, mc('orange', '100'));
 
-      @at-root .theme--dark & {
+      @at-root .v-theme--dark & {
         background: mc('grey', '900') linear-gradient(to bottom, mc('orange', '900'), darken(mc('orange', '900'), 15%));
       }
     }

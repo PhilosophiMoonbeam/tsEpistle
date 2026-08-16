@@ -113,7 +113,7 @@ export default defineComponent({
   border-radius: 5px;
   margin-top: 10px;
 
-  @at-root .theme--dark & {
+  @at-root .v-theme--dark & {
     background-color: #292929;
   }
 
@@ -127,7 +127,7 @@ export default defineComponent({
     border-radius: 5px 5px 0 0;
     overflow: auto;
 
-    @at-root .theme--dark & {
+    @at-root .v-theme--dark & {
       background: linear-gradient(to bottom, #424242, #333);
       box-shadow: inset 0 -1px 0 0 #555;
     }
@@ -144,7 +144,7 @@ export default defineComponent({
       margin-bottom: 1px;
       user-select: none;
 
-      @at-root .theme--dark & {
+      @at-root .v-theme--dark & {
         border-right-color: #555;
       }
 
@@ -156,7 +156,7 @@ export default defineComponent({
         color: mc('blue', '700');
         border-top: 3px solid mc('blue', '700');
 
-        @at-root .theme--dark & {
+        @at-root .v-theme--dark & {
           background-color: #292929;
           color: mc('blue', '300');
         }
@@ -168,7 +168,7 @@ export default defineComponent({
         &.is-active {
           border-right: 1px solid #EEE;
 
-          @at-root .theme--dark & {
+          @at-root .v-theme--dark & {
             border-right-color: #555;
           }
         }
@@ -177,14 +177,14 @@ export default defineComponent({
       &:hover {
         background-color: rgba(#CCC, .1);
 
-        @at-root .theme--dark & {
+        @at-root .v-theme--dark & {
           background-color: rgba(#222, .25);
         }
 
         &.is-active {
           background-color: #FFF;
 
-          @at-root .theme--dark & {
+          @at-root .v-theme--dark & {
             background-color: #292929;
           }
         }
@@ -193,7 +193,7 @@ export default defineComponent({
       & + li {
         border-left: 1px solid #EEE;
 
-        @at-root .theme--dark & {
+        @at-root .v-theme--dark & {
           border-left-color: #222;
         }
       }

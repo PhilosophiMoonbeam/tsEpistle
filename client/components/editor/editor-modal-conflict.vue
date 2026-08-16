@@ -1,78 +1,77 @@
 <template lang='pug'>
   v-card.editor-modal-conflict.animated.fadeIn(flat, tile)
     .pa-4
-      v-toolbar.radius-7(flat, color='indigo', style='border-bottom-left-radius: 0; border-bottom-right-radius: 0;', dark)
+      v-toolbar.radius-7(flat, color='indigo', style='border-bottom-left-radius: 0; border-bottom-right-radius: 0;')
         v-icon.mr-3 mdi-merge
-        .subtitle-1 {{$t('editor:conflict.title')}}
+        .text-body-large {{$t('editor:conflict.title')}}
         v-spacer
-        v-btn(outlined, color='white', @click='useLocal', :title='$t(`editor:conflict.useLocalHint`)')
-          v-icon(left) mdi-alpha-l-box
+        v-btn(variant="outlined", color='white', @click='useLocal', :title='$t(`editor:conflict.useLocalHint`)')
+          v-icon(start) mdi-alpha-l-box
           span {{$t('editor:conflict.useLocal')}}
         v-dialog(
           v-model='isRemoteConfirmDiagShown'
           width='500'
           )
           template(v-slot:activator='{ props }')
-            v-btn.ml-3(outlined, color='white', v-bind='props', :title='$t(`editor:conflict.useRemoteHint`)')
-              v-icon(left) mdi-alpha-r-box
+            v-btn.ml-3(variant="outlined", color='white', v-bind='props', :title='$t(`editor:conflict.useRemoteHint`)')
+              v-icon(start) mdi-alpha-r-box
               span {{$t('editor:conflict.useRemote')}}
           v-card
             .dialog-header.is-short.is-indigo
               v-icon.mr-3(color='white') mdi-alpha-r-box
               span {{$t('editor:conflict.overwrite.title')}}
             v-card-text.pa-4
-              i18next.body-2(tag='div', path='editor:conflict.overwrite.description')
+              i18next.text-body-medium(tag='div', path='editor:conflict.overwrite.description')
                 strong(place='refEditsLost') {{$t('editor:conflict.overwrite.editsLost')}}
             div.v-card-chin
               v-spacer
-              v-btn(outlined, color='indigo', @click='isRemoteConfirmDiagShown = false')
-                v-icon(left) mdi-close
+              v-btn(variant="outlined", color='indigo', @click='isRemoteConfirmDiagShown = false')
+                v-icon(start) mdi-close
                 span {{$t('common:actions.cancel')}}
-              v-btn(@click='useRemote', color='indigo', dark)
-                v-icon(left) mdi-check
+              v-btn(@click='useRemote', color='indigo')
+                v-icon(start) mdi-check
                 span {{$t('common:actions.confirm')}}
         v-divider.mx-3(vertical)
-        v-btn(outlined, color='indigo lighten-4', @click='close')
-          v-icon(left) mdi-close
+        v-btn(variant="outlined", color="indigo-lighten-4", @click='close')
+          v-icon(start) mdi-close
           span {{$t('common:actions.cancel')}}
-      v-row.indigo.darken-1.body-2(no-gutters)
+      v-row.bg-indigo-darken-1.text-body-medium(no-gutters)
         v-col.pa-4
           v-icon.mr-3(color='white') mdi-alpha-l-box
-          i18next.white--text(tag='span', path='editor:conflict.localVersion')
-            em.indigo--text.text--lighten-4(place='refEditable') {{$t('editor:conflict.editable')}}
+          i18next.text-white(tag='span', path='editor:conflict.localVersion')
+            em.text-indigo-lighten-4(place='refEditable') {{$t('editor:conflict.editable')}}
         v-divider(vertical)
         v-col.pa-4
           v-icon.mr-3(color='white') mdi-alpha-r-box
-          i18next.white--text(tag='span', path='editor:conflict.remoteVersion')
-            em.indigo--text.text--lighten-4(place='refReadOnly') {{$t('editor:conflict.readonly')}}
-      v-row.grey.lighten-2.body-2(no-gutters)
+          i18next.text-white(tag='span', path='editor:conflict.remoteVersion')
+            em.text-indigo-lighten-4(place='refReadOnly') {{$t('editor:conflict.readonly')}}
+      v-row.bg-grey-lighten-2.text-body-medium(no-gutters)
         v-col.px-4.py-2
-          i18next.grey--text.text--darken-2(tag='em', path='editor:conflict.leftPanelInfo')
+          i18next.text-grey-darken-2(tag='em', path='editor:conflict.leftPanelInfo')
             span(place='date', :title='$helpers.formatMoment(checkoutDateActive, `LLL`)') {{ $helpers.formatMoment(checkoutDateActive, 'from') }}
         v-divider(vertical)
         v-col.px-4.py-2
-          i18next.grey--text.text--darken-2(tag='em', path='editor:conflict.rightPanelInfo')
+          i18next.text-grey-darken-2(tag='em', path='editor:conflict.rightPanelInfo')
             strong(place='authorName') {{latest.authorName}}
             span(place='date', :title='$helpers.formatMoment(latest.updatedAt, `LLL`)') {{ $helpers.formatMoment(latest.updatedAt, 'from') }}
-      v-row.grey.lighten-3.grey--text.text--darken-3(no-gutters)
+      v-row.bg-grey-lighten-3.text-grey-darken-3(no-gutters)
         v-col.pa-4
-          .body-2
-            strong.indigo--text {{$t('editor:conflict.pageTitle')}}
+          .text-body-medium
+            strong.text-indigo {{$t('editor:conflict.pageTitle')}}
             strong.pl-2 {{title}}
-          .caption
-            strong.indigo--text {{$t('editor:conflict.pageDescription')}}
+          .text-body-small
+            strong.text-indigo {{$t('editor:conflict.pageDescription')}}
             span.pl-2 {{description}}
-        v-divider(vertical, light)
+        v-divider(vertical)
         v-col.pa-4
-          .body-2
-            strong.indigo--text {{$t('editor:conflict.pageTitle')}}
+          .text-body-medium
+            strong.text-indigo {{$t('editor:conflict.pageTitle')}}
             strong.pl-2 {{latest.title}}
-          .caption
-            strong.indigo--text {{$t('editor:conflict.pageDescription')}}
+          .text-body-small
+            strong.text-indigo {{$t('editor:conflict.pageDescription')}}
             span.pl-2 {{latest.description}}
-      v-card.radius-7(:light='!$vuetify.theme.current.dark', :dark='$vuetify.theme.current.dark')
-        div(ref='cm')
-</template>
+      v-card.radius-7
+        div(ref='cm')</template>
 
 <script lang='ts'>
 import { wikiStore } from '@/store/index.ts'

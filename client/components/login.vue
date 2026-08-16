@@ -7,17 +7,15 @@
             v-avatar(tile, size='34')
               img(:src='logoUrl', :alt='siteTitle')
           .login-title
-            .text-h6.grey--text.text--darken-4 {{ siteTitle }}
+            .text-h6.text-grey-darken-4 {{ siteTitle }}
         v-alert.mb-0(
           v-model='errorShown'
-          transition='slide-y-reverse-transition'
-          color='red darken-2'
+          color="red-darken-2"
           tile
-          dark
-          dense
+          density="compact"
           icon='mdi-alert'
           )
-          .body-2 {{errorMessage}}
+          .text-body-medium {{errorMessage}}
         //-------------------------------------------------
         //- PROVIDERS LIST
         //-------------------------------------------------
@@ -25,16 +23,18 @@
           .login-subtitle
             .text-subtitle-1 {{$t('auth:selectAuthProvider')}}
           .login-list
-            v-list.elevation-1.radius-7(nav, light)
+            v-list.elevation-1.radius-7(nav)
               v-list-item(
-                v-for='(stg, idx) of filteredStrategies'
+                v-for='stg of filteredStrategies'
                 :key='stg.key'
                 :value='stg.key'
                 :color='stg.strategy.color'
                 :active='selectedStrategyKey === stg.key'
                 @click='selectedStrategyKey = stg.key'
                 )
-                v-avatar.mr-3(tile, size='24', v-html='stg.strategy.icon')
+                template(v-slot:prepend)
+                  v-avatar.mr-3(tile, size='24')
+                    v-icon(v-if='stg.strategy.icon') {{ stg.strategy.icon }}
                 span.text-none {{stg.displayName}}
         //-------------------------------------------------
         //- LOGIN FORM
@@ -44,25 +44,24 @@
             .text-subtitle-1 {{$t('auth:enterCredentials')}}
           form.login-form(@submit.prevent='login')
             v-text-field(
-              solo
+              variant="solo"
               flat
               prepend-inner-icon='mdi-clipboard-account'
-              background-color='white'
-              color='blue darken-2'
+              bg-color='white'
+              color="blue-darken-2"
               hide-details
               ref='iptEmail'
               v-model='username'
               :placeholder='isUsernameEmail ? $t(`auth:fields.email`) : $t(`auth:fields.username`)'
               :type='isUsernameEmail ? `email` : `text`'
               :autocomplete='isUsernameEmail ? `email` : `username`'
-              light
               )
             v-text-field.mt-2(
-              solo
+              variant="solo"
               flat
               prepend-inner-icon='mdi-form-textbox-password'
-              background-color='white'
-              color='blue darken-2'
+              bg-color='white'
+              color="blue-darken-2"
               hide-details
               ref='iptPassword'
               v-model='password'
@@ -71,31 +70,29 @@
               :type='hidePassword ? "password" : "text"'
               :placeholder='$t("auth:fields.password")'
               autocomplete='current-password'
-              light
             )
             v-btn.mt-2.text-none(
               width='100%'
-              large
-              color='blue darken-2'
-              dark
+              size="large"
+              color="blue-darken-2"
               type='submit'
               :loading='isLoading'
               ) {{ $t('auth:actions.login') }}
             .text-center.mt-5
               v-btn.text-none(
-                text
+                variant="text"
                 rounded
-                color='grey darken-3'
+                color="grey-darken-3"
                 @click.stop.prevent='forgotPassword'
                 href='#forgot'
-                ): .caption {{ $t('auth:forgotPasswordLink') }}
+                ): .text-body-small {{ $t('auth:forgotPasswordLink') }}
               v-btn.text-none(
                 v-if='selectedStrategyKey === `local` && selectedStrategy.selfRegistration'
-                color='indigo darken-2'
-                text
+                color="indigo-darken-2"
+                variant="text"
                 rounded
                 href='/register'
-                ): .caption {{ $t('auth:switchToRegister.link') }}
+                ): .text-body-small {{ $t('auth:switchToRegister.link') }}
         //-------------------------------------------------
         //- FORGOT PASSWORD FORM
         //-------------------------------------------------
@@ -105,35 +102,33 @@
           .login-info {{ $t('auth:forgotPasswordSubtitle') }}
           form.login-form(@submit.prevent='forgotPasswordSubmit')
             v-text-field(
-              solo
+              variant="solo"
               flat
               prepend-inner-icon='mdi-clipboard-account'
-              background-color='white'
-              color='blue darken-2'
+              bg-color='white'
+              color="blue-darken-2"
               hide-details
               ref='iptForgotPwdEmail'
               v-model='username'
               :placeholder='$t(`auth:fields.email`)'
               type='email'
               autocomplete='email'
-              light
               )
             v-btn.mt-2.text-none(
               width='100%'
-              large
-              color='blue darken-2'
-              dark
+              size="large"
+              color="blue-darken-2"
               type='submit'
               :loading='isLoading'
               ) {{ $t('auth:sendResetPassword') }}
             .text-center.mt-5
               v-btn.text-none(
-                text
+                variant="text"
                 rounded
-                color='grey darken-3'
+                color="grey-darken-3"
                 @click.stop.prevent='screen = `login`'
                 href='#forgot'
-                ): .caption {{ $t('auth:forgotPasswordCancel') }}
+                ): .text-body-small {{ $t('auth:forgotPasswordCancel') }}
         //-------------------------------------------------
         //- CHANGE PASSWORD FORM
         //-------------------------------------------------
@@ -143,38 +138,35 @@
           form.login-form(@submit.prevent='changePassword')
             v-text-field.mt-2(
               type='password'
-              solo
+              variant="solo"
               flat
               prepend-inner-icon='mdi-form-textbox-password'
-              background-color='white'
-              color='blue darken-2'
+              bg-color='white'
+              color="blue-darken-2"
               hide-details
               ref='iptNewPassword'
               v-model='newPassword'
               :placeholder='$t(`auth:changePwd.newPasswordPlaceholder`)'
               autocomplete='new-password'
-              light
               )
               template(v-slot:loader)
                 password-strength(v-model='newPassword')
             v-text-field.mt-2(
               type='password'
-              solo
+              variant="solo"
               flat
               prepend-inner-icon='mdi-form-textbox-password'
-              background-color='white'
-              color='blue darken-2'
+              bg-color='white'
+              color="blue-darken-2"
               hide-details
               v-model='newPasswordVerify'
               :placeholder='$t(`auth:changePwd.newPasswordVerifyPlaceholder`)'
               autocomplete='new-password'
-              light
             )
             v-btn.mt-2.text-none(
               width='100%'
-              large
-              color='blue darken-2'
-              dark
+              size="large"
+              color="blue-darken-2"
               type='submit'
               :loading='isLoading'
               ) {{ $t('auth:changePwd.proceed') }}
@@ -184,27 +176,25 @@
     //-------------------------------------------------
     v-dialog(v-model='isTFAShown', max-width='500', persistent)
       v-card
-        .login-tfa.text-center.pa-5.grey--text.text--darken-3
+        .login-tfa.text-center.pa-5.text-grey-darken-3
           img(src='_assets/svg/icon-pin-pad.svg')
-          .subtitle-2 {{$t('auth:tfaFormTitle')}}
+          .text-label-large {{$t('auth:tfaFormTitle')}}
           v-text-field.login-tfa-field.mt-2(
-            solo
+            variant="solo"
             flat
-            background-color='white'
-            color='blue darken-2'
+            bg-color='white'
+            color="blue-darken-2"
             hide-details
             ref='iptTFA'
             v-model='securityCode'
             :placeholder='$t("auth:tfa.placeholder")'
             autocomplete='one-time-code'
             @keyup.enter='verifySecurityCode(false)'
-            light
           )
           v-btn.mt-2.text-none(
             width='100%'
-            large
-            color='blue darken-2'
-            dark
+            size="large"
+            color="blue-darken-2"
             @click='verifySecurityCode(false)'
             :loading='isLoading'
             ) {{ $t('auth:tfa.verifyToken') }}
@@ -214,40 +204,37 @@
     //-------------------------------------------------
     v-dialog(v-model='isTFASetupShown', max-width='600', persistent)
       v-card
-        .login-tfa.text-center.pa-5.grey--text.text--darken-3
-          .subtitle-1.primary--text {{$t('auth:tfaSetupTitle')}}
+        .login-tfa.text-center.pa-5.text-grey-darken-3
+          .text-body-large.text-primary {{$t('auth:tfaSetupTitle')}}
           v-divider.my-5
-          .subtitle-2 {{$t('auth:tfaSetupInstrFirst')}}
-          .caption (#[a(href='https://authy.com/', target='_blank', noopener) Authy], #[a(href='https://support.google.com/accounts/answer/1066447', target='_blank', noopener) Google Authenticator], #[a(href='https://www.microsoft.com/en-us/account/authenticator', target='_blank', noopener) Microsoft Authenticator], etc.)
+          .text-label-large {{$t('auth:tfaSetupInstrFirst')}}
+          .text-body-small (#[a(href='https://authy.com/', target='_blank', noopener) Authy], #[a(href='https://support.google.com/accounts/answer/1066447', target='_blank', noopener) Google Authenticator], #[a(href='https://www.microsoft.com/en-us/account/authenticator', target='_blank', noopener) Microsoft Authenticator], etc.)
           .login-tfa-qr.mt-5(v-if='isTFASetupShown', v-html='tfaQRImage')
-          .caption.mt-3 Manual setup key
+          .text-body-small.mt-3 Manual setup key
           code.login-tfa-secret {{tfaSecret}}
-          .subtitle-2.mt-5 {{$t('auth:tfaSetupInstrSecond')}}
+          .text-label-large.mt-5 {{$t('auth:tfaSetupInstrSecond')}}
           v-text-field.login-tfa-field.mt-2(
-            solo
+            variant="solo"
             flat
-            background-color='white'
-            color='blue darken-2'
+            bg-color='white'
+            color="blue-darken-2"
             hide-details
             ref='iptTFASetup'
             v-model='securityCode'
             :placeholder='$t("auth:tfa.placeholder")'
             autocomplete='one-time-code'
             @keyup.enter='verifySecurityCode(true)'
-            light
           )
           v-btn.mt-2.text-none(
             width='100%'
-            large
-            color='blue darken-2'
-            dark
+            size="large"
+            color="blue-darken-2"
             @click='verifySecurityCode(true)'
             :loading='isLoading'
             ) {{ $t('auth:tfa.verifyToken') }}
 
     loader(v-model='isLoading', :color='loaderColor', :title='loaderTitle', :subtitle='$t(`auth:pleaseWait`)')
-    notify(style='padding-top: 64px;')
-</template>
+    notify(style='padding-top: 64px;')</template>
 
 <script lang='ts'>
 /* global siteConfig */
@@ -289,7 +276,7 @@ export default {
       securityCode: '',
       continuationToken: '',
       isLoading: false,
-      loaderColor: 'grey darken-4',
+      loaderColor: 'grey-darken-4',
       loaderTitle: 'Working...',
       isShown: false,
       newPassword: '',
@@ -394,7 +381,7 @@ export default {
         this.errorShown = true
         ;(this.$refs.iptPassword as { focus: () => void }).focus()
       } else {
-        this.loaderColor = 'grey darken-4'
+        this.loaderColor = 'grey-darken-4'
         this.loaderTitle = this.$t('auth:signingIn')
         this.isLoading = true
         try {
@@ -431,7 +418,7 @@ export default {
           ;(this.$refs.iptTFA as { focus: () => void }).focus()
         }
       } else {
-        this.loaderColor = 'grey darken-4'
+        this.loaderColor = 'grey-darken-4'
         this.loaderTitle = this.$t('auth:signingIn')
         this.isLoading = true
         try {
@@ -459,7 +446,7 @@ export default {
      * CHANGE PASSWORD
      */
     async changePassword () {
-      this.loaderColor = 'grey darken-4'
+      this.loaderColor = 'grey-darken-4'
       this.loaderTitle = this.$t('auth:changePwd.loading')
       this.isLoading = true
       try {
@@ -491,7 +478,7 @@ export default {
      * FORGOT PASSWORD SUBMIT
      */
     async forgotPasswordSubmit () {
-      this.loaderColor = 'grey darken-4'
+      this.loaderColor = 'grey-darken-4'
       this.loaderTitle = this.$t('auth:forgotPasswordLoading')
       this.isLoading = true
       try {
@@ -539,7 +526,7 @@ export default {
         }, 500)
         this.isLoading = false
       } else {
-        this.loaderColor = 'green darken-1'
+        this.loaderColor = 'green-darken-1'
         this.loaderTitle = this.$t('auth:loginSuccess')
         if (!respObj.jwt) throw new Error('Authentication response did not include a token.')
         Cookies.set('jwt', respObj.jwt, { expires: 365, secure: window.location.protocol === 'https:' })

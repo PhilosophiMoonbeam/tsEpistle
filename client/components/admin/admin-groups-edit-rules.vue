@@ -2,32 +2,31 @@
   v-card(flat)
     v-card-text(v-if='group.id === 1')
       v-alert.radius-7.mb-0(
-        :class='$vuetify.theme.current.dark ? "grey darken-4" : "orange lighten-5"'
-        color='orange darken-2'
-        outlined
+        :class='$vuetify.theme.current.dark ? "bg-grey-darken-4" : "bg-orange-lighten-5"'
+        color="orange-darken-2"
+        variant="outlined"
         icon='mdi-lock-outline'
         ) This group has access to everything.
     template(v-else)
-      v-card-title(:class='$vuetify.theme.current.dark ? `grey darken-3-d5` : ``')
-        v-alert.radius-7.caption(
-          :class='$vuetify.theme.current.dark ? `grey darken-3-d3` : `grey lighten-4`'
+      v-card-title(:class='$vuetify.theme.current.dark ? `bg-grey-darken-3-d5` : ``')
+        v-alert.radius-7.text-body-small(
+          :class='$vuetify.theme.current.dark ? `bg-grey-darken-3-d3` : `bg-grey-lighten-4`'
           color='grey'
-          outlined
+          variant="outlined"
           icon='mdi-information'
           ) You must enable global content permissions (under Permissions tab) for page rules to have any effect.
         v-spacer
-        v-btn.mx-2(depressed, color='primary', @click='addRule')
-          v-icon(left) mdi-plus
+        v-btn.mx-2(variant="flat", color='primary', @click='addRule')
+          v-icon(start) mdi-plus
           | Add Rule
-      v-card-text(:class='$vuetify.theme.current.dark ? `grey darken-4-l5` : `white`')
+      v-card-text(:class='$vuetify.theme.current.dark ? `bg-grey-darken-4-l5` : `bg-white`')
         .rules
-          .caption(v-if='group.pageRules.length === 0')
-            em(:class='$vuetify.theme.current.dark ? `grey--text` : `blue-grey--text`') This group has no page rules yet.
+          .text-body-small(v-if='group.pageRules.length === 0')
+            em(:class='$vuetify.theme.current.dark ? `text-grey` : `text-blue-grey`') This group has no page rules yet.
           .rule(v-for='rule of group.pageRules', :key='rule.id')
             v-btn.ma-0.radius-4.rule-deny-btn(
               solo
               :color='rule.deny ? "red" : "green"'
-              dark
               @click='rule.deny = !rule.deny'
               height='48'
               )
@@ -35,7 +34,7 @@
               v-icon(v-else) mdi-check-circle
             //- Roles
             v-select.ml-1(
-              solo
+              variant="solo"
               :items='roles'
               item-title='text'
               item-value='value'
@@ -45,35 +44,33 @@
               multiple
               chips
               closable-chips
-              height='48px'
               style='flex: 0 1 440px;'
               :menu-props='{ "maxHeight": 500 }'
               clearable
-              dense
+              density="compact"
               )
-              template(v-slot:selection='{ item, index }')
-                v-chip.white--text.ml-0(v-if='index <= 1', small, label, :color='rule.deny ? `red` : `green`').caption {{ item.raw.value }}
-                v-chip.white--text.ml-0(v-if='index === 2', small, label, :color='rule.deny ? `red lighten-2` : `green lighten-2`').caption + {{ rule.roles.length - 2 }} more
+              template(v-slot:chip='{ item, index }')
+                v-chip.text-white.ml-0(v-if='index <= 1', size="small", label, :color='rule.deny ? `red` : `green`').text-body-small {{ item.raw.value }}
+                v-chip.text-white.ml-0(v-if='index === 2', size="small", label, :color='rule.deny ? `red-lighten-2` : `green-lighten-2`').text-body-small + {{ rule.roles.length - 2 }} more
 
             //- Match
             v-select.ml-1.mr-1(
-              solo
+              variant="solo"
               :items='matches'
               v-model='rule.match'
               item-title='text'
               item-value='value'
               placeholder='Match...'
               hide-details
-              height='48px'
               style='flex: 0 1 250px;'
-              dense
+              density="compact"
               )
               template(v-slot:selection='{ item }')
-                .body-2 {{item.raw.text}}
+                .text-body-medium {{item.raw.text}}
             //- Locales
             v-select.mr-1(
-              :background-color='$vuetify.theme.current.dark ? `grey darken-3-d5` : `blue-grey lighten-5`'
-              solo
+              :bg-color='$vuetify.theme.current.dark ? `grey-darken-3-d5` : `blue-grey-lighten-5`'
+              variant="solo"
               :items='locales'
               v-model='rule.locales'
               placeholder='Any Locale'
@@ -81,31 +78,30 @@
               item-title='name'
               multiple
               hide-details
-              height='48px'
-              dense
+              density="compact"
               :menu-props='{ "minWidth": 250 }'
               style='flex: 0 1 150px;'
               )
               template(v-slot:selection='{ item, index }')
-                v-chip.white--text.ml-0(v-if='rule.locales.length === 1', small, label, :color='rule.deny ? `red` : `green`').caption {{ item.raw.code.toUpperCase() }}
-                v-chip.white--text.ml-0(v-else-if='index === 0', small, label, :color='rule.deny ? `red` : `green`').caption {{ rule.locales.length }} locales
+                v-chip.text-white.ml-0(v-if='rule.locales.length === 1', size="small", label, :color='rule.deny ? `red` : `green`').text-body-small {{ item.raw.code.toUpperCase() }}
+                v-chip.text-white.ml-0(v-else-if='index === 0', size="small", label, :color='rule.deny ? `red` : `green`').text-body-small {{ rule.locales.length }} locales
               template(v-slot:prepend-item)
                 v-list-item(@click='rule.locales = []')
-                  div.v-list-item-action(style='min-width: 30px;')
+                  template(v-slot:append)
                     v-checkbox(
                       :model-value='rule.locales.length === 0'
                       hide-details
                       color='primary'
                       readonly
                     )
-                  v-icon.mr-2(:color='rule.deny ? `red` : `green`') mdi-earth
-                  div.v-list-item-content
-                    v-list-item-title.body-2 Any Locale
+                  template(v-slot:prepend)
+                    v-icon.mr-2(:color='rule.deny ? `red` : `green`') mdi-earth
+                  v-list-item-title.text-body-medium Any Locale
                 v-divider
 
             //- Path
             v-text-field(
-              solo
+              variant="solo"
               v-model='rule.path'
               label='Path'
               :prefix='(rule.match !== `END` && rule.match !== `TAG`) ? `/` : null'
@@ -115,19 +111,19 @@
               :color='$vuetify.theme.current.dark ? `grey` : `blue-grey`'
               )
 
-            v-btn.ml-2(icon, @click='removeRule(rule.id)', small)
+            v-btn.ml-2(icon, @click='removeRule(rule.id)', size="small")
               v-icon(:color='$vuetify.theme.current.dark ? `grey` : `blue-grey`') mdi-close
 
         v-divider.mt-3
-        .overline.py-3 Rules Order
-        .body-2.pl-3 Rules are applied in order of path specificity. A more precise path will always override a less defined path.
-        .body-2.pl-5 For example, #[span.teal--text /geography/countries] will override #[span.teal--text /geography].
-        .body-2.pl-3.pt-2 When 2 rules have the same specificity, the priority is given from lowest to highest as follows:
-        .body-2.pl-3.pt-1
+        .text-label-small.py-3 Rules Order
+        .text-body-medium.pl-3 Rules are applied in order of path specificity. A more precise path will always override a less defined path.
+        .text-body-medium.pl-5 For example, #[span.text-teal /geography/countries] will override #[span.text-teal /geography].
+        .text-body-medium.pl-3.pt-2 When 2 rules have the same specificity, the priority is given from lowest to highest as follows:
+        .text-body-medium.pl-3.pt-1
           ul
             li
               strong Path Starts With...
-              em.caption.pl-1 (lowest)
+              em.text-body-small.pl-1 (lowest)
             li
               strong Path Ends With...
             li
@@ -136,10 +132,10 @@
               strong Tag Matches...
             li
               strong Path Is Exactly...
-              em.caption.pl-1 (highest)
-        .body-2.pl-3.pt-2 When 2 rules have the same path specificity AND the same match type, #[strong.red--text DENY] will always override an #[strong.green--text ALLOW] rule.
+              em.text-body-small.pl-1 (highest)
+        .text-body-medium.pl-3.pt-2 When 2 rules have the same path specificity AND the same match type, #[strong.text-red DENY] will always override an #[strong.text-green ALLOW] rule.
         v-divider.mt-3
-        .overline.py-3 Regular Expressions
+        .text-label-small.py-3 Regular Expressions
         span Expressions that are deemed unsafe or could result in exponential time processing will be rejected upon saving.
 
 </template>
@@ -223,7 +219,7 @@ export default {
   padding: 1rem;
   position: relative;
 
-  @at-root .v-application.theme--dark & {
+  @at-root .v-application.v-theme--dark & {
     background-color: mc('grey', '800');
   }
 }
@@ -242,7 +238,7 @@ export default {
     opacity: 0;
   }
 
-  @at-root .v-application.theme--dark & {
+  @at-root .v-application.v-theme--dark & {
     background-color: mc('grey', '700');
   }
 
@@ -266,7 +262,7 @@ export default {
       left: -2rem;
       top: -1.3rem;
 
-      @at-root .v-application.theme--dark & {
+      @at-root .v-application.v-theme--dark & {
         background-color: mc('grey', '800');
         color: mc('grey', '600');
       }

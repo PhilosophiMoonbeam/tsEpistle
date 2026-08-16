@@ -3,7 +3,7 @@
     .editor-redirect-main
       .editor-redirect-editor
         v-container.px-2.pt-1(fluid)
-          v-row(dense)
+          v-row(density="compact")
             v-col(
               cols='12'
               lg='8'
@@ -14,9 +14,9 @@
               v-card.pt-2
                 v-card-text
                   .pb-1
-                    .subtitle-2.primary--text When a user reaches this page
-                    .caption.grey--text.text--darken-1 and matches one of these rules...
-                  v-timeline(dense)
+                    .text-label-large.text-primary When a user reaches this page
+                    .text-body-small.text-grey-darken-1 and matches one of these rules...
+                  v-timeline(density="compact")
                     v-slide-x-reverse-transition(group, hide-on-leave)
                       v-timeline-item(
                         key='cond-add-new'
@@ -24,50 +24,48 @@
                         )
                         v-btn(
                           color='primary'
-                          @click=''
                           )
-                          v-icon(left) mdi-plus
+                          v-icon(start) mdi-plus
                           span Add Conditional Rule
                       v-timeline-item(
                         key='cond-none'
-                        small
-                        color='grey'
+                        size="small"
+                        dot-color='grey'
                         )
-                        v-card.grey.lighten-5(flat)
+                        v-card.bg-grey-lighten-5(flat)
                           v-card-text
-                            .body-2: strong No conditional rule
+                            .text-body-medium: strong No conditional rule
                             em Add conditional rules to direct users to a different page based on their group.
                       v-timeline-item(
                         key='cond-rule-1'
-                        small
-                        color='primary'
+                        size="small"
+                        dot-color='primary'
                         )
-                        v-card.blue-grey.lighten-5(flat)
+                        v-card.bg-blue-grey-lighten-5(flat)
                           v-card-text
                             .d-flex.align-center
-                              .body-2: strong User is a member of any of these groups:
+                              .text-body-medium: strong User is a member of any of these groups:
                               v-select.ml-3(
                                 color='primary'
                                 :items='groups'
                                 item-title='name'
                                 item-value='id'
                                 multiple
-                                solo
+                                variant="solo"
                                 flat
                                 hide-details
-                                dense
+                                density="compact"
                                 chips
                                 closable-chips
                                 )
                             v-divider.my-3
                             .d-flex.align-center
-                              .body-2.mr-3 then redirect to
+                              .text-body-medium.mr-3 then redirect to
                               v-btn-toggle.mr-3(
                                 v-model='fallbackMode'
                                 mandatory
                                 color='primary'
-                                borderless
-                                dense
+                                density="compact"
                                 )
                                 v-btn.text-none(value='page') Page
                                 v-btn.text-none(value='url') External URL
@@ -75,28 +73,27 @@
                                 v-if='fallbackMode === `page`'
                                 color='primary'
                                 )
-                                v-icon(left) mdi-magnify
+                                v-icon(start) mdi-magnify
                                 span Select Page...
                               v-text-field(
                                 v-if='fallbackMode === `url`'
                                 label='External URL'
-                                outlined
+                                variant="outlined"
                                 hint='Required - Title of the API'
                                 hide-details
                                 v-model='fallbackUrl'
-                                dense
+                                density="compact"
                                 single-line
                               )
                   v-divider.mb-5
-                  .subtitle-2.primary--text Otherwise, redirect to...
-                  .caption.grey--text.text--darken-1.pb-2 This fallback rule is mandatory and used if none of the conditional rules above applies.
+                  .text-label-large.text-primary Otherwise, redirect to...
+                  .text-body-small.text-grey-darken-1.pb-2 This fallback rule is mandatory and used if none of the conditional rules above applies.
                   .d-flex.align-center
                     v-btn-toggle.mr-3(
                       v-model='fallbackMode'
                       mandatory
                       color='primary'
-                      borderless
-                      dense
+                      density="compact"
                       )
                       v-btn.text-none(value='page') Page
                       v-btn.text-none(value='url') External URL
@@ -104,28 +101,27 @@
                       v-if='fallbackMode === `page`'
                       color='primary'
                       )
-                      v-icon(left) mdi-magnify
+                      v-icon(start) mdi-magnify
                       span Select Page...
                     v-text-field(
                       v-if='fallbackMode === `url`'
                       label='External URL'
-                      outlined
+                      variant="outlined"
                       hint='Required - Title of the API'
                       hide-details
                       v-model='fallbackUrl'
-                      dense
+                      density="compact"
                       single-line
                     )
 
-    v-system-bar.editor-status-bar.editor-redirect-sysbar(absolute, dark, status, color='grey darken-3')
-      .caption.editor-redirect-sysbar-locale {{locale.toUpperCase()}}
-      .caption.px-3 /{{path}}
+    v-system-bar.editor-status-bar.editor-redirect-sysbar(absolute, status, color="grey-darken-3")
+      .text-body-small.editor-redirect-sysbar-locale {{locale.toUpperCase()}}
+      .text-body-small.px-3 /{{path}}
       template(v-if='$vuetify.display.mdAndUp')
         v-spacer
-        .caption Redirect
+        .text-body-small Redirect
         v-spacer
-        .caption 0 rules
-</template>
+        .text-body-small 0 rules</template>
 
 <script lang='ts'>
 import { wikiStore } from '@/store/index.ts'
@@ -198,7 +194,7 @@ $editor-height-mobile: calc(100vh - 56px - 16px);
     height: $editor-height;
     position: relative;
 
-    @at-root .theme--dark & {
+    @at-root .v-theme--dark & {
       background-color: darken(mc('grey', '900'), 4.5%);
     }
   }

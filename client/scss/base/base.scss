@@ -24,12 +24,12 @@ html {
   }
 }
 
-.v-application--wrap {
+.v-application__wrap {
   transition: all 1.2s ease;
   transform-origin: 50% 50%;
   // background-color: #FFF;
 
-  @at-root .theme--dark & {
+  @at-root .v-theme--dark & {
     background-color: material.mc('grey', '900');
   }
 }
@@ -55,41 +55,41 @@ html {
   }
 
   @for $i from 1 through 5 {
-    .grey.darken-2-d#{$i} {
+    .bg-grey-darken-2-d#{$i} {
       background-color: color.adjust(material.mc('grey', '700'), $lightness: -(math.percentage($i*0.01))) !important;
       border-color: color.adjust(material.mc('grey', '700'), $lightness: -(math.percentage($i*0.01))) !important;
     }
-    .grey.darken-2-l#{$i} {
+    .bg-grey-darken-2-l#{$i} {
       background-color: color.adjust(material.mc('grey', '700'), $lightness: math.percentage($i*0.01)) !important;
       border-color: color.adjust(material.mc('grey', '700'), $lightness: math.percentage($i*0.01)) !important;
     }
-    .grey.darken-3-d#{$i} {
+    .bg-grey-darken-3-d#{$i} {
       background-color: color.adjust(material.mc('grey', '800'), $lightness: -(math.percentage($i*0.01))) !important;
       border-color: color.adjust(material.mc('grey', '800'), $lightness: -(math.percentage($i*0.01))) !important;
     }
-    .grey.darken-3-l#{$i} {
+    .bg-grey-darken-3-l#{$i} {
       background-color: color.adjust(material.mc('grey', '800'), $lightness: math.percentage($i*0.01)) !important;
       border-color: color.adjust(material.mc('grey', '800'), $lightness: math.percentage($i*0.01)) !important;
     }
-    .grey.darken-4-d#{$i} {
+    .bg-grey-darken-4-d#{$i} {
       background-color: color.adjust(material.mc('grey', '900'), $lightness: -(math.percentage($i*0.01))) !important;
       border-color: color.adjust(material.mc('grey', '900'), $lightness: -(math.percentage($i*0.01))) !important;
     }
-    .grey.darken-4-l#{$i} {
+    .bg-grey-darken-4-l#{$i} {
       background-color: color.adjust(material.mc('grey', '900'), $lightness: math.percentage($i*0.01)) !important;
       border-color: color.adjust(material.mc('grey', '900'), $lightness: math.percentage($i*0.01)) !important;
     }
   }
-  .grey.darken-5 {
+  .bg-grey-darken-5 {
     background-color: #0C0C0C !important;
     border-color: #0C0C0C !important;
   }
 
-  .blue.darken-5 {
+  .bg-blue-darken-5 {
     background-color: color.adjust(material.mc('blue', '900'), $lightness: -20%) !important;
     border-color: color.adjust(material.mc('blue', '900'), $lightness: -20%) !important;
   }
-  .indigo.darken-5 {
+  .bg-indigo-darken-5 {
     background-color: color.adjust(material.mc('indigo', '900'), $lightness: -10%) !important;
     border-color: color.adjust(material.mc('indigo', '900'), $lightness: -10%) !important;
   }

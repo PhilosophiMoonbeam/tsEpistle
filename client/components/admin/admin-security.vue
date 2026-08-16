@@ -1,29 +1,29 @@
 <template lang='pug'>
-  v-container(fluid, grid-list-lg)
+  v-container(fluid)
     v-row
       v-col(cols='12')
         .admin-header
           img.animated.fadeInUp(src='/_assets/svg/icon-private.svg', alt='Security', style='width: 80px;')
           .admin-header-title
-            .headline.primary--text.animated.fadeInLeft {{ $t('admin:security.title') }}
-            .subtitle-1.grey--text.animated.fadeInLeft {{ $t('admin:security.subtitle') }}
+            .text-headline-medium.text-primary.animated.fadeInLeft {{ $t('admin:security.title') }}
+            .text-body-large.text-grey.animated.fadeInLeft {{ $t('admin:security.subtitle') }}
           v-spacer
-          v-btn.animated.fadeInDown(color='success', depressed, @click='save', large)
-            v-icon(left) mdi-check
+          v-btn.animated.fadeInDown(color='success', variant="flat", @click='save', size="large")
+            v-icon(start) mdi-check
             span {{$t('common:actions.apply')}}
         v-form.pt-3
           v-row
             v-col(lg='6' cols='12')
               v-card.animated.fadeInUp
-                v-toolbar(color='red darken-2', dark, dense, flat)
-                  v-toolbar-title.subtitle-1 Security
+                v-toolbar(color="red-darken-2", density="compact", flat)
+                  v-toolbar-title.text-body-large Security
                 div.v-card-info(color='red')
                   span Make sure to understand the implications before turning on / off a security feature.
                 v-card-text
                   v-switch(
                     inset
                     label='Block Open Redirect'
-                    color='red darken-2'
+                    color="red-darken-2"
                     v-model='config.securityOpenRedirect'
                     persistent-hint
                     hint='Prevents user controlled URLs from directing to websites outside of your wiki. This provides Open Redirect protection.'
@@ -33,7 +33,7 @@
                   v-switch.mt-3(
                     inset
                     label='Block IFrame Embedding'
-                    color='red darken-2'
+                    color="red-darken-2"
                     v-model='config.securityIframe'
                     persistent-hint
                     hint='Prevents other websites from embedding your wiki in an iframe. This provides clickjacking protection.'
@@ -43,7 +43,7 @@
                   v-switch(
                     inset
                     label='Same Origin Referrer Policy'
-                    color='red darken-2'
+                    color="red-darken-2"
                     v-model='config.securityReferrerPolicy'
                     persistent-hint
                     hint='Limits the referrer header to same origin.'
@@ -53,7 +53,7 @@
                   v-switch(
                     inset
                     label='Trust X-Forwarded-* Proxy Headers'
-                    color='red darken-2'
+                    color="red-darken-2"
                     v-model='config.securityTrustProxy'
                     persistent-hint
                     hint='Should be enabled when using a reverse-proxy like nginx, apache, CloudFlare, etc in front of Wiki.js. Turn off otherwise.'
@@ -74,13 +74,13 @@
                   v-switch(
                     inset
                     label='Enforce HSTS'
-                    color='red darken-2'
+                    color="red-darken-2"
                     v-model='config.securityHSTS'
                     persistent-hint
                     hint='This ensures the connection cannot be established through an insecure HTTP connection.'
                     )
                   v-select.mt-5(
-                    outlined
+                    variant="outlined"
                     label='HSTS Max Age'
                     :items='hstsDurations'
                     item-title='text'
@@ -91,8 +91,8 @@
                     style='max-width: 450px;'
                     )
                   .pl-11.mt-3
-                    .caption Defines the duration for which the server should only deliver content through HTTPS.
-                    .caption It's a good idea to start with small values and make sure that nothing breaks on your wiki before moving to longer values.
+                    .text-body-small Defines the duration for which the server should only deliver content through HTTPS.
+                    .text-body-small It's a good idea to start with small values and make sure that nothing breaks on your wiki before moving to longer values.
 
                   //- v-divider.mt-3
                   //- v-switch(
@@ -116,13 +116,13 @@
 
             v-col(lg='6' cols='12')
               v-card.animated.fadeInUp.wait-p2s
-                v-toolbar(color='primary', dark, dense, flat)
-                  v-toolbar-title.subtitle-1 {{ $t('admin:security.uploads') }}
+                v-toolbar(color='primary', density="compact", flat)
+                  v-toolbar-title.text-body-large {{ $t('admin:security.uploads') }}
                 div.v-card-info(color='blue')
                   span {{$t('admin:security.uploadsInfo')}}
                 v-card-text
                   v-text-field.mt-3(
-                    outlined
+                    variant="outlined"
                     :label='$t(`admin:security.maxUploadSize`)'
                     required
                     v-model='config.uploadMaxFileSize'
@@ -133,7 +133,7 @@
                     style='max-width: 450px;'
                     )
                   v-text-field.mt-3(
-                    outlined
+                    variant="outlined"
                     :label='$t(`admin:security.maxUploadBatch`)'
                     required
                     v-model='config.uploadMaxFiles'
@@ -163,14 +163,14 @@
                     )
 
               v-card.mt-3.animated.fadeInUp.wait-p2s
-                v-toolbar(flat, color='primary', dark, dense)
-                  .subtitle-1 {{$t('admin:security.login')}}
+                v-toolbar(flat, color='primary', density="compact")
+                  .text-body-large {{$t('admin:security.login')}}
                 //- v-card-info(color='blue')
                 //-   span {{$t('admin:security.loginInfo')}}
-                .overline.grey--text.pa-4 {{$t('admin:security.loginScreen')}}
+                .text-label-small.text-grey.pa-4 {{$t('admin:security.loginScreen')}}
                 .px-4.pb-3
                   v-text-field(
-                    outlined
+                    variant="outlined"
                     :label='$t(`admin:security.loginBgUrl`)'
                     v-model='config.authLoginBgUrl'
                     :hint='$t(`admin:security.loginBgUrlHint`)'
@@ -198,7 +198,7 @@
                     :hint='$t(`admin:security.hideLocalLoginHint`)'
                     )
                 v-divider.mt-3
-                .overline.grey--text.pa-4 {{$t('admin:security.loginSecurity')}}
+                .text-label-small.text-grey.pa-4 {{$t('admin:security.loginSecurity')}}
                 .px-4.pb-3
                   v-switch.mt-0(
                     inset
@@ -210,11 +210,11 @@
                     persistent-hint
                   )
                 v-divider.mt-3
-                .overline.grey--text.pa-4 {{$t('admin:security.jwt')}}
+                .text-label-small.text-grey.pa-4 {{$t('admin:security.jwt')}}
                 .px-4.pb-3
                   v-text-field(
                     v-model='config.authJwtAudience'
-                    outlined
+                    variant="outlined"
                     prepend-icon='mdi-account-group-outline'
                     :label='$t(`admin:auth.jwtAudience`)'
                     :hint='$t(`admin:auth.jwtAudienceHint`)'
@@ -222,7 +222,7 @@
                   )
                   v-text-field.mt-3(
                     v-model='config.authJwtExpiration'
-                    outlined
+                    variant="outlined"
                     prepend-icon='mdi-clock-outline'
                     :label='$t(`admin:auth.tokenExpiration`)'
                     :hint='$t(`admin:auth.tokenExpirationHint`)'
@@ -230,15 +230,14 @@
                   )
                   v-text-field.mt-3(
                     v-model='config.authJwtRenewablePeriod'
-                    outlined
+                    variant="outlined"
                     prepend-icon='mdi-update'
                     :label='$t(`admin:auth.tokenRenewalPeriod`)'
                     :hint='$t(`admin:auth.tokenRenewalPeriodHint`)'
                     persistent-hint
                   )
 
-    component(:is='activeModal')
-</template>
+    component(:is='activeModal')</template>
 
 <script lang='ts'>
 import _ from 'lodash'

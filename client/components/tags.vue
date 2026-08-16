@@ -1,25 +1,25 @@
 <template lang='pug'>
-  v-app(:dark='$vuetify.theme.current.dark').tags
+  v-app().tags
     nav-header
-    v-navigation-drawer.pb-0.elevation-1(app, fixed, clipped, :right='$vuetify.locale.isRtl', permanent, width='300')
+    v-navigation-drawer.pb-0.elevation-1(:location="$vuetify.locale.isRtl ? 'right' : undefined", permanent, width='300')
       vue-scroll(:ops='scrollStyle')
-        v-list(dense, nav)
+        v-list(density="compact", nav)
           v-list-item(href='/')
-            div.v-list-item-icon: v-icon mdi-home
+            template(v-slot:prepend): v-icon mdi-home
             v-list-item-title {{$t('common:header.home')}}
           template(v-for='(tags, groupName) in tagsGrouped', :key='`tagGroup-` + groupName')
             v-divider.my-2
             v-list-subheader.pl-4 {{groupName}}
             v-list-item(v-for='tag of tags', @click='toggleTag(tag.tag)', :key='`tag-` + tag.tag')
-              div.v-list-item-icon
+              template(v-slot:prepend)
                 v-icon(v-if='isSelected(tag.tag)', color='primary') mdi-checkbox-intermediate
                 v-icon(v-else) mdi-checkbox-blank-outline
               v-list-item-title {{tag.title}}
-    v-main.grey(:class='$vuetify.theme.current.dark ? `darken-4-d5` : `lighten-3`')
-      v-toolbar(color='primary', dark, flat, height='58')
+    v-main(:class='$vuetify.theme.current.dark ? `bg-grey-darken-4-d5` : `bg-grey-lighten-3`')
+      v-toolbar(color='primary', flat, height='58')
         template(v-if='selection.length > 0')
-          .overline.mr-3.animated.fadeInLeft {{$t('tags:currentSelection')}}
-          v-chip.mr-3.primary--text(
+          .text-label-small.mr-3.animated.fadeInLeft {{$t('tags:currentSelection')}}
+          v-chip.mr-3.text-primary(
             v-for='tag of tagsSelected'
             :key='`tagSelected-` + tag.tag'
             color='white'
@@ -28,69 +28,66 @@
             ) {{tag.title}}
           v-spacer
           v-btn.animated.fadeIn(
-            small
-            outlined
-            color='blue lighten-4'
+            size="small"
+            variant="outlined"
+            color="blue-lighten-4"
             rounded
             @click='selection = []'
             )
-            v-icon(left) mdi-close
+            v-icon(start) mdi-close
             span {{$t('tags:clearSelection')}}
         template(v-else)
           v-icon.mr-3.animated.fadeInRight mdi-arrow-left
-          .overline.animated.fadeInRight {{$t('tags:selectOneMoreTags')}}
-      v-toolbar(:color='$vuetify.theme.current.dark ? `grey darken-4-l5` : `grey lighten-4`', flat, height='58')
+          .text-label-small.animated.fadeInRight {{$t('tags:selectOneMoreTags')}}
+      v-toolbar(:color='$vuetify.theme.current.dark ? `grey-darken-4-l5` : `grey-lighten-4`', flat, height='58')
         v-text-field.tags-search(
           v-model='innerSearch'
           :label='$t(`tags:searchWithinResultsPlaceholder`)'
-          solo
+          variant="solo"
           hide-details
           flat
           rounded
           single-line
-          height='40'
           prepend-icon='mdi-text-box-search-outline'
           append-icon='mdi-arrow-right'
           clearable
         )
         template(v-if='locales.length > 1')
           v-divider.mx-3(vertical)
-          .overline {{$t('tags:locale')}}
+          .text-label-small {{$t('tags:locale')}}
           v-select.ml-2(
             :items='locales'
             v-model='locale'
-            :background-color='$vuetify.theme.current.dark ? `grey darken-3` : `white`'
+            :bg-color='$vuetify.theme.current.dark ? `grey-darken-3` : `white`'
             hide-details
             :label='$t(`tags:locale`)'
             item-title='name'
             item-value='code'
             rounded
             single-line
-            dense
-            height='40'
+            density="compact"
             style='max-width: 170px;'
           )
         v-divider.mx-3(vertical)
-        .overline {{$t('tags:orderBy')}}
+        .text-label-small {{$t('tags:orderBy')}}
         v-select.ml-2(
           :items='orderByItems'
           v-model='orderBy'
-          :background-color='$vuetify.theme.current.dark ? `grey darken-3` : `white`'
+          :bg-color='$vuetify.theme.current.dark ? `grey-darken-3` : `white`'
           hide-details
           :label='$t(`tags:orderBy`)'
           rounded
           single-line
-          dense
-          height='40'
+          density="compact"
           style='max-width: 250px;'
         )
         v-btn-toggle.ml-2(v-model='orderByDirection', rounded, mandatory)
-          v-btn(text, height='40'): v-icon(size='20') mdi-chevron-double-up
-          v-btn(text, height='40'): v-icon(size='20') mdi-chevron-double-down
+          v-btn(variant="text", height='40'): v-icon(size='20') mdi-chevron-double-up
+          v-btn(variant="text", height='40'): v-icon(size='20') mdi-chevron-double-down
       v-divider
       .text-center.pt-10(v-if='selection.length < 1')
         img(src='/_assets/svg/icon-price-tag.svg')
-        .subtitle-2.grey--text {{$t('tags:selectOneMoreTagsHint')}}
+        .text-label-large.text-grey {{$t('tags:selectOneMoreTagsHint')}}
       .px-5.py-2(v-else)
         v-data-iterator(
           :items='pages'
@@ -111,17 +108,17 @@
                 width='2'
                 :aria-label='$t(`tags:retrievingResultsLoading`)'
                 )
-              .subtitle-2.grey--text.mt-5 {{$t('tags:retrievingResultsLoading')}}
+              .text-label-large.text-grey.mt-5 {{$t('tags:retrievingResultsLoading')}}
           template(v-slot:no-data)
             .text-center.pt-10
               img(src='/_assets/svg/icon-info.svg')
-              .subtitle-2.grey--text {{$t('tags:noResults')}}
+              .text-label-large.text-grey {{$t('tags:noResults')}}
           template(v-slot:no-results)
             .text-center.pt-10
               img(src='/_assets/svg/icon-info.svg')
-              .subtitle-2.grey--text {{$t('tags:noResultsWithFilter')}}
+              .text-label-large.text-grey {{$t('tags:noResultsWithFilter')}}
           template(v-slot:default='props')
-            v-row(align='stretch')
+            v-row.align-stretch
               v-col(
                 v-for='item of props.items'
                 :key='`page-` + item.id'
@@ -131,26 +128,25 @@
                 v-card.radius-7(
                   @click='goTo(item)'
                   style='height:100%;'
-                  :class='$vuetify.theme.current.dark ? `grey darken-4` : ``'
+                  :class='$vuetify.theme.current.dark ? `bg-grey-darken-4` : ``'
                   )
                   v-card-text
                     .d-flex.flex-row.align-center
-                      .body-1: strong.primary--text {{item.title}}
+                      .text-body-large: strong.text-primary {{item.title}}
                       v-spacer
-                      i18next.caption(tag='div', path='tags:pageLastUpdated')
+                      i18next.text-body-small(tag='div', path='tags:pageLastUpdated')
                         span(place='date') {{ $helpers.formatMoment(item.updatedAt, 'from') }}
-                    .body-2.grey--text {{item.description || '---'}}
+                    .text-body-medium.text-grey {{item.description || '---'}}
                     v-divider.my-2
                     .d-flex.flex-row.align-center
-                      v-chip(small, label, :color='$vuetify.theme.current.dark ? `grey darken-3-l5` : `grey lighten-4`').overline {{item.locale}}
-                      .caption.ml-1 / {{item.path}}
+                      v-chip(size="small", label, :color='$vuetify.theme.current.dark ? `grey-darken-3-l5` : `grey-lighten-4`').text-label-small {{item.locale}}
+                      .text-body-small.ml-1 / {{item.path}}
         .text-center.py-2.animated.fadeInDown(v-if='this.pageTotal > 1')
           v-pagination(v-model='pagination.page', :length='pageTotal')
 
     nav-footer
     notify
-    search-results
-</template>
+    search-results</template>
 
 <script lang='ts'>
 import _ from 'lodash'
@@ -348,7 +344,7 @@ export default {
   .v-input__control {
     min-height: initial !important;
   }
-  .v-input__prepend-outer {
+  .v-input__prepend {
     margin-top: 8px !important;
   }
 }

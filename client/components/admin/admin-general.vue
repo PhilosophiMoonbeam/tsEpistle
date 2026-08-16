@@ -1,27 +1,27 @@
 <template lang='pug'>
-  v-container(fluid, grid-list-lg)
+  v-container(fluid)
     v-row
       v-col(cols='12')
         .admin-header
           img.animated.fadeInUp(src='/_assets/svg/icon-categorize.svg', alt='General', style='width: 80px;')
           .admin-header-title
-            .headline.primary--text.animated.fadeInLeft {{ $t('admin:general.title') }}
-            .subtitle-1.grey--text.animated.fadeInLeft {{ $t('admin:general.subtitle') }}
+            .text-headline-medium.text-primary.animated.fadeInLeft {{ $t('admin:general.title') }}
+            .text-body-large.text-grey.animated.fadeInLeft {{ $t('admin:general.subtitle') }}
           v-spacer
-          v-btn.animated.fadeInDown(color='success', depressed, @click='save', large)
-            v-icon(left) mdi-check
+          v-btn.animated.fadeInDown(color='success', variant="flat", @click='save', size="large")
+            v-icon(start) mdi-check
             span {{$t('common:actions.apply')}}
         v-form.pt-3
           v-row
             v-col(lg='6' cols='12')
               v-form
                 v-card.animated.fadeInUp
-                  v-toolbar(color='primary', dark, dense, flat)
-                    v-toolbar-title.subtitle-1 {{ $t('admin:general.siteInfo') }}
-                  .overline.grey--text.pa-4 {{$t('admin:general.general')}}
+                  v-toolbar(color='primary', density="compact", flat)
+                    v-toolbar-title.text-body-large {{ $t('admin:general.siteInfo') }}
+                  .text-label-small.text-grey.pa-4 {{$t('admin:general.general')}}
                   .px-3.pb-3
                     v-text-field(
-                      outlined
+                      variant="outlined"
                       :label='$t(`admin:general.siteUrl`)'
                       required
                       :counter='255'
@@ -31,7 +31,7 @@
                       persistent-hint
                       )
                     v-text-field.mt-3(
-                      outlined
+                      variant="outlined"
                       :label='$t(`admin:general.siteTitle`)'
                       required
                       :counter='50'
@@ -41,7 +41,7 @@
                       persistent-hint
                       )
                   v-divider
-                  .overline.grey--text.pa-4 {{$t('admin:general.logo')}}
+                  .text-label-small.text-grey.pa-4 {{$t('admin:general.logo')}}
                   .pt-2.pb-7.pl-10.pr-3
                     .d-flex.align-center
                       v-avatar(size='100', tile)
@@ -52,7 +52,7 @@
                           )
                       .ml-4(style='flex: 1 1 auto;')
                         v-text-field(
-                          outlined
+                          variant="outlined"
                           :label='$t(`admin:general.logoUrl`)'
                           v-model='config.logoUrl'
                           :hint='$t(`admin:general.logoUrlHint`)'
@@ -62,10 +62,10 @@
                           @keyup.enter='refreshLogo'
                         )
                   v-divider
-                  .overline.grey--text.pa-4 {{$t('admin:general.footerCopyright')}}
+                  .text-label-small.text-grey.pa-4 {{$t('admin:general.footerCopyright')}}
                   .px-3.pb-3
                     v-text-field(
-                      outlined
+                      variant="outlined"
                       :label='$t(`admin:general.companyName`)'
                       v-model='config.company'
                       :counter='255'
@@ -74,7 +74,7 @@
                       :hint='$t(`admin:general.companyNameHint`)'
                       )
                     v-select.mt-3(
-                      outlined
+                      variant="outlined"
                       :label='$t(`admin:general.contentLicense`)'
                       :items='contentLicenses'
                       item-title='text'
@@ -85,7 +85,7 @@
                       persistent-hint
                     )
                     v-text-field.mt-3(
-                      outlined
+                      variant="outlined"
                       :label='$t(`admin:general.footerOverride`)'
                       v-model='config.footerOverride'
                       prepend-icon='mdi-page-layout-footer'
@@ -94,10 +94,10 @@
                       :hint='$t(`admin:general.footerOverrideHint`)'
                       )
                   v-divider
-                  .overline.grey--text.pa-4 SEO
+                  .text-label-small.text-grey.pa-4 SEO
                   .px-3.pb-3
                     v-text-field(
-                      outlined
+                      variant="outlined"
                       :label='$t(`admin:general.siteDescription`)'
                       :counter='255'
                       v-model='config.description'
@@ -106,7 +106,7 @@
                       persistent-hint
                       )
                     v-select.mt-3(
-                      outlined
+                      variant="outlined"
                       :label='$t(`admin:general.metaRobots`)'
                       multiple
                       :items='metaRobots'
@@ -120,8 +120,8 @@
 
             v-col(lg='6' cols='12')
               v-card.animated.fadeInUp.wait-p4s
-                v-toolbar(color='indigo', dark, dense, flat)
-                  v-toolbar-title.subtitle-1 Features
+                v-toolbar(color='indigo', density="compact", flat)
+                  v-toolbar-title.text-body-large Features
                 v-card-text
                   //- v-switch(
                   //-   inset
@@ -176,11 +176,11 @@
                   //-   )
 
               v-card.mt-5.animated.fadeInUp.wait-p6s
-                v-toolbar(color='primary', dark, dense, flat)
-                  v-toolbar-title.subtitle-1 URL Handling
+                v-toolbar(color='primary', density="compact", flat)
+                  v-toolbar-title.text-body-large URL Handling
                 v-card-text
                   v-text-field(
-                    outlined
+                    variant="outlined"
                     :label='$t(`admin:general.pageExtensions`)'
                     v-model='config.pageExtensions'
                     prepend-icon='mdi-format-text-wrapping-overflow'
@@ -189,8 +189,8 @@
                     )
 
               v-card.mt-5.animated.fadeInUp.wait-p7s
-                v-toolbar(color='primary', dark, dense, flat)
-                  v-toolbar-title.subtitle-1 {{$t('admin:general.editShortcuts')}}
+                v-toolbar(color='primary', density="compact", flat)
+                  v-toolbar-title.text-body-large {{$t('admin:general.editShortcuts')}}
                 v-card-text
                   v-switch.mt-0(
                     inset
@@ -201,7 +201,7 @@
                     :hint='$t(`admin:general.editFabHint`)'
                     )
                 v-divider
-                .overline.grey--text.pa-4 {{$t('admin:general.editMenuBar')}}
+                .text-label-small.text-grey.pa-4 {{$t('admin:general.editMenuBar')}}
                 .px-3.pb-3
                   v-switch.mt-0.ml-1(
                     inset
@@ -231,10 +231,10 @@
                     )
                 template(v-if='config.editMenuBar && config.editMenuExternalBtn')
                   v-divider
-                  .overline.grey--text.pa-4 External Edit Button
+                  .text-label-small.text-grey.pa-4 External Edit Button
                   .px-3.pb-3
                     v-text-field(
-                      outlined
+                      variant="outlined"
                       :label='$t(`admin:general.editMenuExternalName`)'
                       v-model='config.editMenuExternalName'
                       prepend-icon='mdi-format-title'
@@ -242,7 +242,7 @@
                       persistent-hint
                       )
                     v-text-field.mt-3(
-                      outlined
+                      variant="outlined"
                       :label='$t(`admin:general.editMenuExternalIcon`)'
                       v-model='config.editMenuExternalIcon'
                       prepend-icon='mdi-dice-5'
@@ -250,7 +250,7 @@
                       persistent-hint
                       )
                     v-text-field.mt-3(
-                      outlined
+                      variant="outlined"
                       :label='$t(`admin:general.editMenuExternalUrl`)'
                       v-model='config.editMenuExternalUrl'
                       prepend-icon='mdi-near-me'
@@ -259,7 +259,6 @@
                       )
 
     component(:is='activeModal')
-
 </template>
 
 <script lang='ts'>

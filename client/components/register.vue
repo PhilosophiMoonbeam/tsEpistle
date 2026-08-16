@@ -1,8 +1,8 @@
 <template lang="pug">
   v-app
     .register
-      v-container(grid-list-lg)
-        v-row()
+      v-container
+        v-row
           v-col(
             xs12
             offset-sm1, sm10
@@ -12,18 +12,18 @@
             )
             transition(name='fadeUp')
               v-card.elevation-5.md2(v-show='isShown')
-                v-toolbar(color='indigo', flat, dense, dark)
+                v-toolbar(color='indigo', flat, density="compact")
                   v-spacer
-                  .subheading {{ $t('auth:registerTitle') }}
+                  .text-body-large {{ $t('auth:registerTitle') }}
                   v-spacer
                 v-card-text.text-center
-                  h1.display-1.indigo--text.py-2 {{ siteTitle }}
-                  .body-2 {{ $t('auth:registerSubTitle') }}
+                  h1.text-headline-large.text-indigo.py-2 {{ siteTitle }}
+                  .text-body-medium {{ $t('auth:registerSubTitle') }}
                   v-text-field.md2.mt-3(
-                    solo
+                    variant="solo"
                     flat
                     prepend-icon='mdi-email'
-                    :background-color='$vuetify.theme.current.dark ? `grey darken-3` : `grey lighten-4`'
+                    :bg-color='$vuetify.theme.current.dark ? `grey-darken-3` : `grey-lighten-4`'
                     hide-details
                     ref='iptEmail'
                     v-model='email'
@@ -31,10 +31,10 @@
                     color='indigo'
                     )
                   v-text-field.md2.mt-2(
-                    solo
+                    variant="solo"
                     flat
                     prepend-icon='mdi-form-textbox-password'
-                    :background-color='$vuetify.theme.current.dark ? `grey darken-3` : `grey lighten-4`'
+                    :bg-color='$vuetify.theme.current.dark ? `grey-darken-3` : `grey-lighten-4`'
                     ref='iptPassword'
                     v-model='password'
                     :append-icon='hidePassword ? "mdi-eye-off" : "mdi-eye"'
@@ -48,10 +48,10 @@
                     template(v-slot:loader)
                       password-strength(v-model='password')
                   v-text-field.md2.mt-2(
-                    solo
+                    variant="solo"
                     flat
                     prepend-icon='mdi-form-textbox-password'
-                    :background-color='$vuetify.theme.current.dark ? `grey darken-3` : `grey lighten-4`'
+                    :bg-color='$vuetify.theme.current.dark ? `grey-darken-3` : `grey-lighten-4`'
                     hide-details
                     ref='iptVerifyPassword'
                     v-model='verifyPassword'
@@ -61,10 +61,10 @@
                     color='indigo'
                   )
                   v-text-field.md2.mt-2(
-                    solo
+                    variant="solo"
                     flat
                     prepend-icon='mdi-account'
-                    :background-color='$vuetify.theme.current.dark ? `grey darken-3` : `grey lighten-4`'
+                    :bg-color='$vuetify.theme.current.dark ? `grey-darken-3` : `grey-lighten-4`'
                     ref='iptName'
                     v-model='name'
                     :placeholder='$t("auth:fields.name")'
@@ -77,8 +77,7 @@
                   v-btn.md2(
                     width='100%'
                     max-width='250px'
-                    large
-                    dark
+                    size="large"
                     color='indigo'
                     @click='register'
                     rounded
@@ -86,16 +85,15 @@
                     ) {{ $t('auth:actions.register') }}
                   v-spacer
                 v-divider
-                v-card-actions.py-3.grey(:class='$vuetify.theme.current.dark ? `darken-4-l1` : `lighten-4`')
+                v-card-actions.py-3(:class='$vuetify.theme.current.dark ? `bg-grey-darken-4-l1` : `bg-grey-lighten-4`')
                   v-spacer
-                  i18next.caption(path='auth:switchToLogin.text', tag='div')
-                    a.caption(href='/login', place='link') {{ $t('auth:switchToLogin.link') }}
+                  i18next.text-body-small(path='auth:switchToLogin.text', tag='div')
+                    a.text-body-small(href='/login', place='link') {{ $t('auth:switchToLogin.link') }}
                   v-spacer
 
     loader(v-model='isLoading', :mode='loaderMode', :icon='loaderIcon', :color='loaderColor', :title='loaderTitle', :subtitle='loaderSubtitle')
-    nav-footer(color='grey darken-5', dark-color='grey darken-5')
-    notify(style='padding-top: 64px;')
-</template>
+    nav-footer(color='grey-darken-5', dark-color='grey-darken-5')
+    notify(style='padding-top: 64px;')</template>
 
 <script lang='ts'>
 /* global siteConfig */
@@ -126,7 +124,7 @@ export default {
       hidePassword: true,
       isLoading: false,
       isShown: false,
-      loaderColor: 'grey darken-4',
+      loaderColor: 'grey-darken-4',
       loaderTitle: 'Working...',
       loaderSubtitle: 'Please wait',
       loaderMode: 'icon',
@@ -225,7 +223,7 @@ export default {
           focusComponent(this.$refs.iptName)
         }
       } else {
-        this.loaderColor = 'grey darken-4'
+        this.loaderColor = 'grey-darken-4'
         this.loaderTitle = this.$t('auth:registering')
         this.loaderSubtitle = this.$t(`auth:pleaseWait`)
         this.loaderMode = 'loading'
@@ -236,7 +234,7 @@ export default {
             password: this.password,
             name: this.name
           }, this.$t('auth:genericError'))
-          this.loaderColor = 'grey darken-4'
+          this.loaderColor = 'grey-darken-4'
           this.loaderTitle = this.$t('auth:registerSuccess')
           this.loaderSubtitle = this.$t(`auth:registerCheckEmail`)
           this.loaderMode = 'icon'

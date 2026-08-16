@@ -3,13 +3,13 @@
     .newpage
       .newpage-content
         img.animated.fadeIn(src='/_assets/svg/icon-delete-file.svg', alt='Not Found')
-        .headline {{ $t('newpage.title') }}
-        .subtitle-1.mt-3 {{ $t('newpage.subtitle') }}
-        v-btn.mt-5(:href='`/e/` + locale + `/` + path', x-large)
-          v-icon(left) mdi-plus
+        .text-headline-medium {{ $t('newpage.title') }}
+        .text-body-large.mt-3 {{ $t('newpage.subtitle') }}
+        v-btn.mt-5(:href='`/e/` + locale + `/` + path', size="x-large")
+          v-icon(start) mdi-plus
           span {{ $t('newpage.create') }}
-        v-btn.mt-5(color='purple lighten-3', href='javascript:window.history.go(-1);', outlined)
-          v-icon(left) mdi-arrow-left
+        v-btn.mt-5(color="purple-lighten-3", href='javascript:window.history.go(-1);', variant="outlined")
+          v-icon(start) mdi-arrow-left
           span {{ $t('newpage.goback') }}
 </template>
 

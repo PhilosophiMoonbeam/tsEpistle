@@ -1,27 +1,27 @@
 <template lang='pug'>
   v-card
-    v-toolbar(flat, color='primary', dark, dense)
-      .subtitle-1 {{ $t('admin:utilities.contentTitle') }}
+    v-toolbar(flat, color='primary', density="compact")
+      .text-body-large {{ $t('admin:utilities.contentTitle') }}
     v-card-text
-      .subtitle-1.pb-3.primary--text Rebuild Page Tree
-      .body-2 The virtual structure of your wiki is automatically inferred from all page paths. You can trigger a full rebuild of the tree if some virtual folders are missing or not valid anymore.
-      v-btn(outlined, color='primary', @click='rebuildTree', :disabled='loading').ml-0.mt-3
-        v-icon(left) mdi-gesture-double-tap
+      .text-body-large.pb-3.text-primary Rebuild Page Tree
+      .text-body-medium The virtual structure of your wiki is automatically inferred from all page paths. You can trigger a full rebuild of the tree if some virtual folders are missing or not valid anymore.
+      v-btn(variant="outlined", color='primary', @click='rebuildTree', :disabled='loading').ml-0.mt-3
+        v-icon(start) mdi-gesture-double-tap
         span Proceed
 
       v-divider.my-5
 
-      .subtitle-1.pb-3.primary--text Rerender All Pages
-      .body-2 All pages will be rendered again. Useful if internal links are broken or the rendering pipeline has changed.
-      v-btn(outlined, color='primary', @click='rerenderPages', :disabled='loading', :loading='isRerendering').ml-0.mt-3
-        v-icon(left) mdi-gesture-double-tap
+      .text-body-large.pb-3.text-primary Rerender All Pages
+      .text-body-medium All pages will be rendered again. Useful if internal links are broken or the rendering pipeline has changed.
+      v-btn(variant="outlined", color='primary', @click='rerenderPages', :disabled='loading', :loading='isRerendering').ml-0.mt-3
+        v-icon(start) mdi-gesture-double-tap
         span Proceed
       v-dialog(
         v-model='isRerendering'
         persistent
         max-width='450'
         )
-        v-card(color='blue darken-2', dark)
+        v-card(color="blue-darken-2")
           v-card-text.pa-10.text-center
             semipolar-spinner.animated.fadeIn(
               :animation-duration='1500'
@@ -29,12 +29,12 @@
               color='#FFF'
               style='margin: 0 auto;'
             )
-            .mt-5.body-1.white--text Rendering all pages...
-            .caption(v-if='renderIndex > 0') Rendering {{renderCurrentPath}}... ({{renderIndex}}/{{renderTotal}}, {{renderProgress}}%)
-            .caption.mt-4 Do not leave this page.
+            .mt-5.text-body-large.text-white Rendering all pages...
+            .text-body-small(v-if='renderIndex > 0') Rendering {{renderCurrentPath}}... ({{renderIndex}}/{{renderTotal}}, {{renderProgress}}%)
+            .text-body-small.mt-4 Do not leave this page.
             v-progress-linear.mt-5(
               color='white'
-              :value='renderProgress'
+              :model-value='renderProgress'
               stream
               rounded
               :buffer-value='0'
@@ -42,53 +42,52 @@
 
       v-divider.my-5
 
-      .subtitle-1.pb-3.pl-0.primary--text Migrate all pages to target locale
-      .body-2 If you created content before selecting a different locale and activating the namespacing capabilities, you may want to transfer all content to the base locale.
-      .body-2.red--text: strong This operation is destructive and cannot be reversed! Make sure you have proper backups!
-      v-toolbar.radius-7.mt-5(flat, :color='$vuetify.theme.current.dark ? `grey darken-3-d5` : `grey lighten-4`', height='80')
+      .text-body-large.pb-3.pl-0.text-primary Migrate all pages to target locale
+      .text-body-medium If you created content before selecting a different locale and activating the namespacing capabilities, you may want to transfer all content to the base locale.
+      .text-body-medium.text-red: strong This operation is destructive and cannot be reversed! Make sure you have proper backups!
+      v-toolbar.radius-7.mt-5(flat, :color='$vuetify.theme.current.dark ? `grey-darken-3-d5` : `grey-lighten-4`', height='80')
         v-select(
           label='Source Locale'
-          outlined
+          variant="outlined"
           hide-details
           :items='locales'
           item-title='name'
           item-value='code'
           v-model='sourceLocale'
         )
-        v-icon.mx-3(large) mdi-chevron-right-box-outline
+        v-icon.mx-3(size="large") mdi-chevron-right-box-outline
         v-select(
           label='Target Locale'
-          outlined
+          variant="outlined"
           hide-details
           :items='locales'
           item-title='name'
           item-value='code'
           v-model='targetLocale'
         )
-      .body-2.mt-5 Pages that are already in the target locale will not be touched. If a page already exists at the target, the source page will not be modified as it would create a conflict. If you want to overwrite the target page, you must first delete it.
-      v-btn(outlined, color='primary', @click='migrateToLocale', :disabled='loading').ml-0.mt-3
-        v-icon(left) mdi-gesture-double-tap
+      .text-body-medium.mt-5 Pages that are already in the target locale will not be touched. If a page already exists at the target, the source page will not be modified as it would create a conflict. If you want to overwrite the target page, you must first delete it.
+      v-btn(variant="outlined", color='primary', @click='migrateToLocale', :disabled='loading').ml-0.mt-3
+        v-icon(start) mdi-gesture-double-tap
         span Proceed
 
       v-divider.my-5
 
-      .subtitle-1.pb-3.pl-0.primary--text Purge Page History
-      .body-2 You may want to purge old history for pages to reduce database usage.
-      .body-2 This operation only affects the database and not any history saved by a storage module (e.g. git version history)
-      v-toolbar.radius-7.mt-5(flat, :color='$vuetify.theme.current.dark ? `grey darken-3-d5` : `grey lighten-4`', height='80')
+      .text-body-large.pb-3.pl-0.text-primary Purge Page History
+      .text-body-medium You may want to purge old history for pages to reduce database usage.
+      .text-body-medium This operation only affects the database and not any history saved by a storage module (e.g. git version history)
+      v-toolbar.radius-7.mt-5(flat, :color='$vuetify.theme.current.dark ? `grey-darken-3-d5` : `grey-lighten-4`', height='80')
         v-select(
           label='Delete history older than...'
-          outlined
+          variant="outlined"
           hide-details
           :items='purgeHistoryOptions'
           item-title='title'
           item-value='key'
           v-model='purgeHistorySelection'
         )
-      v-btn(outlined, color='primary', @click='purgeHistory', :disabled='loading').ml-0.mt-3
-        v-icon(left) mdi-gesture-double-tap
-        span Proceed
-</template>
+      v-btn(variant="outlined", color='primary', @click='purgeHistory', :disabled='loading').ml-0.mt-3
+        v-icon(start) mdi-gesture-double-tap
+        span Proceed</template>
 
 <script lang='ts'>
 import { defineComponent } from 'vue'

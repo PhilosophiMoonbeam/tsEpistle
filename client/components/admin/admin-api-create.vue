@@ -7,7 +7,7 @@
           span {{$t('admin:api.newKeyTitle')}}
         v-card-text.pt-5
           v-text-field(
-            outlined
+            variant="outlined"
             prepend-icon='mdi-format-title'
             v-model='name'
             :label='$t(`admin:api.newKeyName`)'
@@ -18,7 +18,7 @@
             )
           v-select.mt-3(
             :items='expirations'
-            outlined
+            variant="outlined"
             prepend-icon='mdi-clock'
             v-model='expiration'
             :label='$t(`admin:api.newKeyExpiration`)'
@@ -26,7 +26,7 @@
             persistent-hint
             )
           v-divider.mt-4
-          v-list-subheader.pl-2: strong.indigo--text {{$t('admin:api.newKeyPermissionScopes')}}
+          v-list-subheader.pl-2: strong.text-indigo {{$t('admin:api.newKeyPermissionScopes')}}
           v-list.pl-8(nav)
             v-checkbox(
               v-model='fullAccess'
@@ -35,14 +35,14 @@
               :label='$t(`admin:api.newKeyFullAccess`)'
             )
             v-divider.mt-3
-            v-list-subheader.caption.indigo--text {{$t('admin:api.newKeyGroupPermissions')}}
+            v-list-subheader.text-body-small.text-indigo {{$t('admin:api.newKeyGroupPermissions')}}
             v-list-item
               v-select(
                 :disabled='fullAccess'
                 :items='groups'
                 item-title='name'
                 item-value='id'
-                outlined
+                variant="outlined"
                 color='indigo'
                 v-model='group'
                 :label='$t(`admin:api.newKeyGroup`)'
@@ -51,27 +51,27 @@
                 )
         div.v-card-chin
           v-spacer
-          v-btn(text, @click='isShown = false', :disabled='loading') {{$t('common:actions.cancel')}}
-          v-btn.px-3(depressed, color='primary', @click='generate', :loading='loading')
-            v-icon(left) mdi-chevron-right
+          v-btn(variant="text", @click='isShown = false', :disabled='loading') {{$t('common:actions.cancel')}}
+          v-btn.px-3(variant="flat", color='primary', @click='generate', :loading='loading')
+            v-icon(start) mdi-chevron-right
             span {{$t('common:actions.generate')}}
 
     v-dialog(
       v-model='isCopyKeyDialogShown'
       max-width='750'
       persistent
-      overlay-color='blue darken-5'
-      overlay-opacity='.9'
+      scrim='blue-darken-5'
+      style='--v-overlay-opacity: .9'
       )
       v-card
-        v-toolbar(dense, flat, color='primary', dark) {{$t('admin:api.newKeyTitle')}}
+        v-toolbar(density="compact", flat, color='primary') {{$t('admin:api.newKeyTitle')}}
         v-card-text.pt-5
-          .body-2.text-center
+          .text-body-medium.text-center
             i18next(tag='span', path='admin:api.newKeyCopyWarn')
               strong(place='bold') {{$t('admin:api.newKeyCopyWarnBold')}}
           v-textarea.mt-3(
             ref='keyContentsIpt'
-            filled
+            variant="filled"
             no-resize
             readonly
             v-model='key'
@@ -80,8 +80,7 @@
           )
         div.v-card-chin
           v-spacer
-          v-btn.px-3(depressed, dark, color='primary', @click='isCopyKeyDialogShown = false') {{$t('common:actions.close')}}
-</template>
+          v-btn.px-3(variant="flat", color='primary', @click='isCopyKeyDialogShown = false') {{$t('common:actions.close')}}</template>
 
 <script lang='ts'>
 import _ from 'lodash'

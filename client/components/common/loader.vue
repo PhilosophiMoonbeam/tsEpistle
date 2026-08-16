@@ -1,6 +1,6 @@
 <template lang='pug'>
-  v-dialog(:model-value='modelValue', persistent, max-width='350', :overlay-color='color', overlay-opacity='.7')
-    v-card.loader-dialog.radius-7(:color='color', dark)
+  v-dialog(:model-value='modelValue', persistent, max-width='350', :scrim='color', style='--v-overlay-opacity: .7')
+    v-card.loader-dialog.radius-7(:color='color')
       v-card-text.text-center.py-4
         atom-spinner.is-inline(
           v-if='mode === `loading`'
@@ -9,9 +9,8 @@
           color='#FFF'
           )
         img(v-else-if='mode === `icon`', :src='`/_assets/svg/icon-` + icon + `.svg`', :alt='icon')
-        .subtitle-1.white--text {{ title }}
-        .caption {{ subtitle }}
-</template>
+        .text-body-large.text-white {{ title }}
+        .text-body-small {{ subtitle }}</template>
 
 <script lang='ts'>
 import { defineComponent, type PropType } from 'vue'
@@ -30,7 +29,7 @@ export default defineComponent({
     },
     color: {
       type: String,
-      default: 'blue darken-3'
+      default: 'blue-darken-3'
     },
     title: {
       type: String,

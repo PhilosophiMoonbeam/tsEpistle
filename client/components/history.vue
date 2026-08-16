@@ -1,23 +1,23 @@
 <template lang='pug'>
-  v-app(:dark='$vuetify.theme.current.dark').history
+  v-app().history
     nav-header
     v-main
-      v-toolbar.history-toolbar(color='primary', dark)
-        .subheading.history-toolbar-title Viewing history of #[strong /{{path}}]
+      v-toolbar.history-toolbar(color='primary')
+        .text-body-large.history-toolbar-title Viewing history of #[strong /{{path}}]
         v-spacer
-        .caption.blue--text.text--lighten-3.mr-4(v-if='$vuetify.display.mdAndUp') Trail Length: {{total}}
-        .caption.blue--text.text--lighten-3.mr-4(v-if='$vuetify.display.mdAndUp') ID: {{pageId}}
-        v-btn(depressed, color='blue darken-1', @click='goLive', aria-label='Return to live version')
+        .text-body-small.text-blue-lighten-3.mr-4(v-if='$vuetify.display.mdAndUp') Trail Length: {{total}}
+        .text-body-small.text-blue-lighten-3.mr-4(v-if='$vuetify.display.mdAndUp') ID: {{pageId}}
+        v-btn(variant="flat", color="blue-darken-1", @click='goLive', aria-label='Return to live version')
           v-icon(v-if='$vuetify.display.smAndDown') mdi-close
           span(v-else) Return to Live Version
-      v-container(fluid, grid-list-xl)
-        v-row()
+      v-container(fluid)
+        v-row
           v-col(cols='12', md='4')
             v-chip.my-0.ml-6(
               label
-              small
-              :color='$vuetify.theme.current.dark ? `grey darken-2` : `grey lighten-2`'
-              :class='$vuetify.theme.current.dark ? `grey--text text--lighten-2` : `grey--text text--darken-2`'
+              size="small"
+              :color='$vuetify.theme.current.dark ? `grey-darken-2` : `grey-lighten-2`'
+              :class='$vuetify.theme.current.dark ? `text-grey-lighten-2` : `text-grey-darken-2`'
               )
               span Live
             async-state(
@@ -36,13 +36,13 @@
             )
             v-timeline(
               v-else
-              dense
+              density="compact"
               )
               v-timeline-item.pb-2(
                 v-for='(ph, idx) in fullTrail'
                 :key='ph.versionId'
-                :small='ph.actionType === `edit`'
-                :color='trailColor(ph.actionType)'
+                :size="ph.actionType === `edit` ? 'small' : undefined"
+                :dot-color='trailColor(ph.actionType)'
                 :icon='trailIcon(ph.actionType)'
                 )
                 v-card.radius-7(
@@ -56,54 +56,60 @@
                   @keydown.space.prevent='selectVersion(idx)'
                 )
                   v-toolbar(flat, :color='trailBgColor(ph.actionType)', height='40')
-                    .caption(:title='$helpers.formatMoment(ph.versionDate, `LLL`)') {{ $helpers.formatMoment(ph.versionDate, 'll') }}
+                    .text-body-small(:title='$helpers.formatMoment(ph.versionDate, `LLL`)') {{ $helpers.formatMoment(ph.versionDate, 'll') }}
                     v-divider.mx-3(vertical)
-                    .caption(v-if='ph.actionType === `edit`') Edited by #[strong {{ ph.authorName }}]
-                    .caption(v-else-if='ph.actionType === `move`') Moved from #[strong {{ph.valueBefore}}] to #[strong {{ph.valueAfter}}] by #[strong {{ ph.authorName }}]
-                    .caption(v-else-if='ph.actionType === `initial`') Created by #[strong {{ ph.authorName }}]
-                    .caption(v-else-if='ph.actionType === `live`') Last Edited by #[strong {{ ph.authorName }}]
-                    .caption(v-else) Unknown Action by #[strong {{ ph.authorName }}]
+                    .text-body-small(v-if='ph.actionType === `edit`') Edited by #[strong {{ ph.authorName }}]
+                    .text-body-small(v-else-if='ph.actionType === `move`') Moved from #[strong {{ph.valueBefore}}] to #[strong {{ph.valueAfter}}] by #[strong {{ ph.authorName }}]
+                    .text-body-small(v-else-if='ph.actionType === `initial`') Created by #[strong {{ ph.authorName }}]
+                    .text-body-small(v-else-if='ph.actionType === `live`') Last Edited by #[strong {{ ph.authorName }}]
+                    .text-body-small(v-else) Unknown Action by #[strong {{ ph.authorName }}]
                     v-spacer
-                    v-menu(offset-x, left)
+                    v-menu(location="left")
                       template(v-slot:activator='{ props }')
-                        v-btn.mr-2.radius-4(icon, v-bind='props', small, tile, :aria-label='`Actions for revision ${ph.versionId || `live`}`'): v-icon mdi-dots-horizontal
-                      v-list(dense, nav).history-promptmenu
+                        v-btn.mr-2.radius-4(icon, v-bind='props', size="small", tile, :aria-label='`Actions for revision ${ph.versionId || `live`}`'): v-icon mdi-dots-horizontal
+                      v-list(density="compact", nav).history-promptmenu
                         v-list-item(@click='setDiffSource(ph.versionId)', :disabled='(ph.versionId >= diffTarget && diffTarget !== 0) || ph.versionId === 0')
-                          v-avatar(size='24'): v-avatar A
+                          template(v-slot:prepend)
+                            v-avatar(size='24'): v-avatar A
                           v-list-item-title Set as Differencing Source
                         v-list-item(@click='setDiffTarget(ph.versionId)', :disabled='ph.versionId <= diffSource && ph.versionId !== 0')
-                          v-avatar(size='24'): v-avatar B
+                          template(v-slot:prepend)
+                            v-avatar(size='24'): v-avatar B
                           v-list-item-title Set as Differencing Target
                         v-list-item(@click='viewSource(ph.versionId)')
-                          v-avatar(size='24'): v-icon mdi-code-tags
+                          template(v-slot:prepend)
+                            v-avatar(size='24'): v-icon mdi-code-tags
                           v-list-item-title View Source
                         v-list-item(@click='download(ph.versionId)')
-                          v-avatar(size='24'): v-icon mdi-cloud-download-outline
+                          template(v-slot:prepend)
+                            v-avatar(size='24'): v-icon mdi-cloud-download-outline
                           v-list-item-title Download Version
                         v-list-item(@click='restore(ph.versionId, ph.versionDate)', :disabled='ph.versionId === 0')
-                          v-avatar(size='24'): v-icon(:disabled='ph.versionId === 0') mdi-history
+                          template(v-slot:prepend)
+                            v-avatar(size='24'): v-icon(:disabled='ph.versionId === 0') mdi-history
                           v-list-item-title Restore
                         v-list-item(@click='branchOff(ph.versionId)')
-                          v-avatar(size='24'): v-icon mdi-source-branch
+                          template(v-slot:prepend)
+                            v-avatar(size='24'): v-icon mdi-source-branch
                           v-list-item-title Branch off from here
                     v-btn.mr-2.radius-4(
                       @click='setDiffSource(ph.versionId)'
                       icon
-                      small
-                      depressed
+                      size="small"
+                      variant="flat"
                       tile
                       :aria-label='`Set revision ${ph.versionId} as differencing source`'
-                      :class='diffSource === ph.versionId ? `pink white--text` : ($vuetify.theme.current.dark ? `grey darken-2` : `grey lighten-2`)'
+                      :class='diffSource === ph.versionId ? `bg-pink text-white` : ($vuetify.theme.current.dark ? `bg-grey-darken-2` : `bg-grey-lighten-2`)'
                       :disabled='(ph.versionId >= diffTarget && diffTarget !== 0) || ph.versionId === 0'
                       ): strong A
                     v-btn.mr-0.radius-4(
                       @click='setDiffTarget(ph.versionId)'
                       icon
-                      small
-                      depressed
+                      size="small"
+                      variant="flat"
                       tile
                       :aria-label='`Set revision ${ph.versionId || `live`} as differencing target`'
-                      :class='diffTarget === ph.versionId ? `pink white--text` : ($vuetify.theme.current.dark ? `grey darken-2` : `grey lighten-2`)'
+                      :class='diffTarget === ph.versionId ? `bg-pink text-white` : ($vuetify.theme.current.dark ? `bg-grey-darken-2` : `bg-grey-lighten-2`)'
                       :disabled='ph.versionId <= diffSource && ph.versionId !== 0'
                       ): strong B
 
@@ -115,35 +121,36 @@
               :loading='loadingMore'
               :disabled='loadingMore'
               )
-              .caption.white--text Load More...
+              .text-body-small.text-white Load More...
 
             v-chip.ma-0(
               v-else
               label
-              small
-              :color='$vuetify.theme.current.dark ? `grey darken-2` : `grey lighten-2`'
-              :class='$vuetify.theme.current.dark ? `grey--text text--lighten-2` : `grey--text text--darken-2`'
+              size="small"
+              :color='$vuetify.theme.current.dark ? `grey-darken-2` : `grey-lighten-2`'
+              :class='$vuetify.theme.current.dark ? `text-grey-lighten-2` : `text-grey-darken-2`'
               ) End of history trail
 
           v-col(cols='12', md='8')
             v-card.radius-7(:class='$vuetify.display.mdAndUp ? `mt-8` : ``')
               v-card-text
-                v-card.grey.radius-7(flat, :class='$vuetify.theme.current.dark ? `darken-2` : `lighten-4`')
-                  v-row(no-gutters, align='center')
+                v-card.radius-7(flat, :class='$vuetify.theme.current.dark ? `bg-grey-darken-2` : `bg-grey-lighten-4`')
+                  v-row.align-center(no-gutters)
                     v-col
                       v-card-text
-                        .subheading {{target.title}}
-                        .caption {{target.description}}
+                        .text-body-large {{target.title}}
+                        .text-body-small {{target.description}}
                         .history-revision-meta
                           span {{ target.versionId === 0 ? 'Live version' : `Revision ${target.versionId}` }}
                           span {{ target.editor || 'unknown editor' }} / {{ target.contentType || 'unknown format' }}
                           span {{ target.visibility }}{{ target.isPublished === false ? ' / unpublished' : '' }}
                           span(v-if='target.tags.length > 0') Tags: {{ target.tags.join(', ') }}
                     v-col.text-right.py-3(cols='auto')
-                      v-btn.mr-3(:color='$vuetify.theme.current.dark ? `white` : `grey darken-3`', small, dark, outlined, @click='toggleViewMode', aria-label='Toggle diff view mode')
-                        v-icon(left) mdi-eye
-                        span(v-if='$vuetify.display.mdAndUp').overline View Mode
-                v-card.mt-3.history-diff(light, v-html='diffHTML', flat)
+                      v-btn.mr-3(:color='$vuetify.theme.current.dark ? `white` : `grey-darken-3`', size="small", variant="outlined", @click='toggleViewMode', aria-label='Toggle diff view mode')
+                        v-icon(start) mdi-eye
+                        span(v-if='$vuetify.display.mdAndUp').text-label-small View Mode
+                v-card.mt-3.history-diff(flat)
+                  div(v-html='diffHTML')
 
     v-dialog(v-model='isRestoreConfirmDialogShown', max-width='650', persistent)
       v-card
@@ -153,15 +160,14 @@
             strong(place='date') {{ $helpers.formatMoment(restoreTarget.versionDate, 'LLL') }}
         v-card-actions
           v-spacer
-          v-btn(text, @click='isRestoreConfirmDialogShown = false', :disabled='restoreLoading') {{$t('common:actions.cancel')}}
-          v-btn(color='orange darken-2', dark, @click='restoreConfirm', :loading='restoreLoading') {{$t('history:restore.confirmButton')}}
+          v-btn(variant="text", @click='isRestoreConfirmDialogShown = false', :disabled='restoreLoading') {{$t('common:actions.cancel')}}
+          v-btn(color="orange-darken-2", @click='restoreConfirm', :loading='restoreLoading') {{$t('history:restore.confirmButton')}}
 
     page-selector(mode='create', v-model='branchOffOpts.modal', :open-handler='branchOffHandle', :path='branchOffOpts.path', :locale='branchOffOpts.locale')
 
     nav-footer
     notify
-    search-results
-</template>
+    search-results</template>
 
 <script lang='ts'>
 import * as Diff2Html from 'diff2html'
@@ -543,13 +549,13 @@ export default {
     trailBgColor (actionType: string) {
       switch (actionType) {
         case 'move':
-          return this.$vuetify.theme.current.dark ? 'purple' : 'purple lighten-5'
+          return this.$vuetify.theme.current.dark ? 'purple' : 'purple-lighten-5'
         case 'initial':
-          return this.$vuetify.theme.current.dark ? 'teal darken-3' : 'teal lighten-5'
+          return this.$vuetify.theme.current.dark ? 'teal-darken-3' : 'teal-lighten-5'
         case 'live':
-          return this.$vuetify.theme.current.dark ? 'orange darken-3' : 'orange lighten-5'
+          return this.$vuetify.theme.current.dark ? 'orange-darken-3' : 'orange-lighten-5'
         default:
-          return this.$vuetify.theme.current.dark ? 'grey darken-3' : 'grey lighten-4'
+          return this.$vuetify.theme.current.dark ? 'grey-darken-3' : 'grey-lighten-4'
       }
     }
   }

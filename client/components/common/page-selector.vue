@@ -2,15 +2,15 @@
   v-dialog(
     v-model='isShown'
     max-width='850px'
-    overlay-color='blue darken-4'
-    overlay-opacity='.7'
+    scrim='blue-darken-4'
+    style='--v-overlay-opacity: .7'
     )
     v-card.page-selector
       .dialog-header.is-blue
         v-icon.mr-3(color='white') mdi-page-next-outline
-        .body-1(v-if='mode === `create`') {{$t('common:pageSelector.createTitle')}}
-        .body-1(v-else-if='mode === `move`') {{$t('common:pageSelector.moveTitle')}}
-        .body-1(v-else-if='mode === `select`') {{$t('common:pageSelector.selectTitle')}}
+        .text-body-large(v-if='mode === `create`') {{$t('common:pageSelector.createTitle')}}
+        .text-body-large(v-else-if='mode === `move`') {{$t('common:pageSelector.moveTitle')}}
+        .text-body-large(v-else-if='mode === `select`') {{$t('common:pageSelector.selectTitle')}}
         v-spacer
         v-progress-circular(
           indeterminate
@@ -21,9 +21,9 @@
           aria-label='Loading pages'
           )
       .d-flex
-        v-col.grey(cols='5', :class='$vuetify.theme.current.dark ? `darken-4` : `lighten-3`')
-          v-toolbar(color='grey darken-3', dark, dense, flat)
-            .body-2 {{$t('common:pageSelector.virtualFolders')}}
+        v-col(cols='5', :class='$vuetify.theme.current.dark ? `bg-grey-darken-4` : `bg-grey-lighten-3`')
+          v-toolbar(color="grey-darken-3", density="compact", flat)
+            .text-body-medium {{$t('common:pageSelector.virtualFolders')}}
             v-spacer
             v-btn(icon, tile, href='https://docs.requarks.io/guide/pages#folders', target='_blank')
               v-icon mdi-help-box
@@ -35,7 +35,7 @@
                 v-model:opened='openNodes'
                 :items='tree'
                 :load-children='fetchFolders'
-                dense
+                density="compact"
                 expand-icon='mdi-menu-down-outline'
                 item-value='id'
                 item-title='title'
@@ -45,21 +45,21 @@
                 template(v-slot:prepend='{ isOpen }')
                   v-icon mdi-{{ isOpen ? 'folder-open' : 'folder' }}
         v-col(cols='7')
-          v-toolbar(color='blue darken-2', dark, dense, flat)
-            .body-2 {{$t('common:pageSelector.pages')}}
+          v-toolbar(color="blue-darken-2", density="compact", flat)
+            .text-body-medium {{$t('common:pageSelector.pages')}}
             //- v-spacer
             //- v-btn(icon, tile, disabled): v-icon mdi-content-save-move-outline
             //- v-btn(icon, tile, disabled): v-icon mdi-trash-can-outline
           div(v-if='currentPages.length > 0', style='height:400px;')
             vue-scroll(:ops='scrollStyle')
-              v-list.py-0(dense)
+              v-list.py-0(density="compact")
                 template(v-for='(page, idx) of currentPages', :key='`page-` + page.id')
                   v-list-item(
                     :value='page'
                     :active='currentPage?.id === page.id'
                     @click='currentPage = page'
                   )
-                    div.v-list-item-icon: v-icon mdi-text-box
+                    template(v-slot:prepend): v-icon mdi-text-box
                     v-list-item-title {{page.title}}
                   v-divider(v-if='idx < currentPages.length - 1')
           v-alert.animated.fadeIn(
@@ -69,13 +69,12 @@
             prominent
             icon='mdi-alert'
             )
-            .body-2 {{$t('common:pageSelector.folderEmptyWarning')}}
-      v-card-actions.grey.pa-2(:class='$vuetify.theme.current.dark ? `darken-2` : `lighten-1`', v-if='!mustExist')
+            .text-body-medium {{$t('common:pageSelector.folderEmptyWarning')}}
+      v-card-actions.pa-2(:class='$vuetify.theme.current.dark ? `bg-grey-darken-2` : `bg-grey-lighten-1`', v-if='!mustExist')
         v-select(
-          solo
-          dark
+          variant="solo"
           flat
-          background-color='grey darken-3-d2'
+          bg-color='grey-darken-3-d2'
           hide-details
           single-line
           :items='namespaces'
@@ -84,7 +83,7 @@
           )
         v-text-field(
           ref='pathIpt'
-          solo
+          variant="solo"
           hide-details
           prefix='/'
           v-model='currentPath'
@@ -94,11 +93,10 @@
         )
       div.v-card-chin
         v-spacer
-        v-btn(text, @click='close') {{$t('common:actions.cancel')}}
+        v-btn(variant="text", @click='close') {{$t('common:actions.cancel')}}
         v-btn.px-4(color='primary', @click='open', :disabled='!isValidPath')
-          v-icon(left) mdi-check
-          span {{$t('common:actions.select')}}
-</template>
+          v-icon(start) mdi-check
+          span {{$t('common:actions.select')}}</template>
 
 <script lang='ts'>
 import { defineComponent, type PropType } from 'vue'
@@ -331,10 +329,10 @@ export default defineComponent({
 <style lang='scss'>
 
 .page-selector {
-  .v-treeview-node__label {
+  .v-treeview .v-list-item-title {
     font-size: 13px;
   }
-  .v-treeview-node__content {
+  .v-treeview .v-list-item {
     cursor: pointer;
   }
 }

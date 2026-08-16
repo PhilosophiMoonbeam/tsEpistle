@@ -1,83 +1,83 @@
 <template lang='pug'>
-  v-container(fluid, grid-list-lg)
-    v-row()
+  v-container(fluid)
+    v-row
       v-col(cols='12')
         .admin-header
           img.animated.fadeInUp(src='/_assets/svg/icon-male-user.svg', :alt='$t(`admin:users.edit`)', style='width: 80px;')
           .admin-header-title
-            .headline.blue--text.text--darken-2.animated.fadeInLeft {{$t('admin:users.edit')}}
-            .subtitle-1.grey--text.animated.fadeInLeft.wait-p2s {{user.name}}
+            .text-headline-medium.text-blue-darken-2.animated.fadeInLeft {{$t('admin:users.edit')}}
+            .text-body-large.text-grey.animated.fadeInLeft.wait-p2s {{user.name}}
           v-spacer
-          i18next.pr-4.caption.grey--text.animated.fadeInDown(path='admin:users.id', tag='div')
+          i18next.pr-4.text-body-small.text-grey.animated.fadeInDown(path='admin:users.id', tag='div')
             strong(place='id') {{user.id}}
           template(v-if='user.isActive')
             status-indicator.mr-3(positive, pulse)
-            .caption.green--text {{$t('admin:users.active')}}
+            .text-body-small.text-green {{$t('admin:users.active')}}
           template(v-else)
             status-indicator.mr-3(negative, pulse)
-            .caption.red--text {{$t('admin:users.inactive')}}
+            .text-body-small.text-red {{$t('admin:users.inactive')}}
           template(v-if='user.isVerified')
             status-indicator.mr-3.ml-4(active, pulse)
-            .caption.blue--text {{$t('admin:users.verified')}}
+            .text-body-small.text-blue {{$t('admin:users.verified')}}
           template(v-else)
             status-indicator.mr-3.ml-4(intermediary, pulse)
-            .caption.deep-orange--text {{$t('admin:users.unverified')}}
+            .text-body-small.text-deep-orange {{$t('admin:users.unverified')}}
           v-spacer
-          v-btn.ml-3.animated.fadeInDown.wait-p3s(color='grey', icon, outlined, to='/users')
+          v-btn.ml-3.animated.fadeInDown.wait-p3s(color='grey', icon, variant="outlined", to='/users')
             v-icon mdi-arrow-left
-          v-menu(offset-y, origin='top right')
+          v-menu(origin='top right')
             template(v-slot:activator='{ props }')
-              v-btn.ml-3.animated.fadeInDown.wait-p2s(color='black', v-bind='props', depressed, dark)
+              v-btn.ml-3.animated.fadeInDown.wait-p2s(color='black', v-bind='props', variant="flat")
                 span Actions
-                v-icon(right) mdi-chevron-down
-            v-list(dense, nav)
+                v-icon(end) mdi-chevron-down
+            v-list(density="compact", nav)
               v-list-item(v-if='!user.isActive', @click='activateUser')
-                div.v-list-item-icon
+                template(v-slot:prepend)
                   v-icon(color='purple') mdi-account-key
                 v-list-item-title Activate
               v-list-item(v-else, @click='deactivateUser', :disabled='user.id == currentUserId || user.isSystem')
-                div.v-list-item-icon
+                template(v-slot:prepend)
                   v-icon(color='purple') mdi-account-cancel
                 v-list-item-title Deactivate
               v-list-item(@click='verifyUser', :disabled='user.isVerified')
-                div.v-list-item-icon
+                template(v-slot:prepend)
                   v-icon(color='blue') mdi-account-check
                 v-list-item-title Set as Verified
               v-list-item(@click='deleteUserConfirm', :disabled='user.id == currentUserId || user.isSystem')
-                div.v-list-item-icon
+                template(v-slot:prepend)
                   v-icon(color='red') mdi-trash-can-outline
                 v-list-item-title Delete
-          v-btn.ml-3.animated.fadeInDown(color='primary', large, depressed, @click='updateUser')
-            v-icon(left) mdi-check
+          v-btn.ml-3.animated.fadeInDown(color='primary', size="large", variant="flat", @click='updateUser')
+            v-icon(start) mdi-check
             span {{$t('admin:users.updateUser')}}
       v-col(cols='6')
         v-card.animated.fadeInUp
-          v-toolbar(color='primary', dense, dark, flat)
+          v-toolbar(color='primary', density="compact", flat)
             v-icon.mr-2 mdi-information-variant
             span {{$t('admin:users.basicInfo')}}
-          v-list.py-0(two-line, dense)
+          v-list.py-0(lines="two", density="compact")
             v-list-item
-              v-avatar(size='32')
-                v-icon mdi-email-variant
-              div.v-list-item-content
-                v-list-item-title {{$t('admin:users.email')}}
-                v-list-item-subtitle {{ user.email }}
-              div.v-list-item-action(v-if='!user.isSystem && user.providerKey === `local`')
+              template(v-slot:prepend)
+                v-avatar(size='32')
+                  v-icon mdi-email-variant
+              v-list-item-title {{$t('admin:users.email')}}
+              v-list-item-subtitle {{ user.email }}
+              template(v-slot:append, v-if='!user.isSystem && user.providerKey === `local`')
                 v-menu(
                   v-model='editPop.email'
                   :close-on-content-click='false'
                   min-width='350'
-                  left
+                  location="left"
                   )
                   template(v-slot:activator='{ props }')
-                    v-btn(icon, color='grey', x-small, v-bind='props', @click='focusField(`iptEmail`)')
+                    v-btn(icon, color='grey', size="x-small", v-bind='props', @click='focusField(`iptEmail`)')
                       v-icon mdi-pencil
                   v-card
                     v-text-field(
                       ref='iptEmail'
                       v-model='user.email'
                       :label='$t(`admin:users.email`)'
-                      solo
+                      variant="solo"
                       hide-details
                       append-icon='mdi-check'
                       @click:append='editPop.email = false'
@@ -87,27 +87,27 @@
 
             v-divider
             v-list-item
-              v-avatar(size='32')
-                v-icon mdi-account
-              div.v-list-item-content
-                v-list-item-title {{$t('admin:users.displayName')}}
-                v-list-item-subtitle {{ user.name }}
-              div.v-list-item-action
+              template(v-slot:prepend)
+                v-avatar(size='32')
+                  v-icon mdi-account
+              v-list-item-title {{$t('admin:users.displayName')}}
+              v-list-item-subtitle {{ user.name }}
+              template(v-slot:append)
                 v-menu(
                   v-model='editPop.name'
                   :close-on-content-click='false'
                   min-width='350'
-                  left
+                  location="left"
                   )
                   template(v-slot:activator='{ props }')
-                    v-btn(icon, color='grey', x-small, v-bind='props', @click='focusField(`iptDisplayName`)')
+                    v-btn(icon, color='grey', size="x-small", v-bind='props', @click='focusField(`iptDisplayName`)')
                       v-icon mdi-pencil
                   v-card
                     v-text-field(
                       ref='iptDisplayName'
                       v-model='user.name'
                       :label='$t(`admin:users.displayName`)'
-                      solo
+                      variant="solo"
                       hide-details
                       append-icon='mdi-check'
                       @click:append='editPop.name = false'
@@ -116,35 +116,35 @@
                     )
 
         v-card.mt-3.animated.fadeInUp.wait-p2s(v-if='!user.isSystem')
-          v-toolbar(color='primary', dense, dark, flat)
+          v-toolbar(color='primary', density="compact", flat)
             v-icon.mr-2 mdi-lock-outline
             span {{$t('admin:users.authentication')}}
-          v-list.py-0(two-line, dense)
+          v-list.py-0(lines="two", density="compact")
             v-list-item
-              v-avatar(size='32')
-                v-icon mdi-domain
-              div.v-list-item-content
-                v-list-item-title {{$t('admin:users.authProvider')}}
-                v-list-item-subtitle {{ user.providerName }} #[em.caption ({{ user.providerKey }})]
+              template(v-slot:prepend)
+                v-avatar(size='32')
+                  v-icon mdi-domain
+              v-list-item-title {{$t('admin:users.authProvider')}}
+              v-list-item-subtitle {{ user.providerName }} #[em.text-body-small ({{ user.providerKey }})]
             template(v-if='user.providerKey === `local`')
               v-divider
               v-list-item
-                v-avatar(size='32')
-                  v-icon mdi-form-textbox-password
-                div.v-list-item-content
-                  v-list-item-title {{$t('admin:users.password')}}
-                  v-list-item-subtitle &bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;
-                div.v-list-item-action
+                template(v-slot:prepend)
+                  v-avatar(size='32')
+                    v-icon mdi-form-textbox-password
+                v-list-item-title {{$t('admin:users.password')}}
+                v-list-item-subtitle &bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;
+                template(v-slot:append)
                   v-menu(
                     v-model='editPop.newPassword'
                     :close-on-content-click='false'
                     min-width='350'
-                    left
+                    location="left"
                     )
                     template(v-slot:activator='{ props: menuProps }')
-                      v-tooltip(top)
+                      v-tooltip(location="top")
                         template(v-slot:activator='{ props: tooltipProps }')
-                          v-btn(icon, color='grey', x-small, v-bind='{ ...menuProps, ...tooltipProps }', @click='focusField(`iptNewPassword`)')
+                          v-btn(icon, color='grey', size="x-small", v-bind='{ ...menuProps, ...tooltipProps }', @click='focusField(`iptNewPassword`)')
                             v-icon mdi-pencil
                         span {{$t('admin:users.changePassword')}}
                     v-card
@@ -152,7 +152,7 @@
                         ref='iptNewPassword'
                         v-model='newPassword'
                         :label='$t(`admin:users.newPassword`)'
-                        solo
+                        variant="solo"
                         hide-details
                         append-icon='mdi-check'
                         type='password'
@@ -160,52 +160,51 @@
                         @keydown.enter='editPop.newPassword = false'
                         @keydown.esc='editPop.newPassword = false'
                       )
-                div.v-list-item-action
-                  v-tooltip(top)
+                  v-tooltip(location="top")
                     template(v-slot:activator='{ props }')
-                      v-btn(icon, color='grey', x-small, v-bind='props', disabled)
+                      v-btn(icon, color='grey', size="x-small", v-bind='props', disabled)
                         v-icon mdi-email
                     span Send Password Reset Email
             template(v-if='user.providerIs2FACapable')
               v-divider
               v-list-item
-                v-avatar(size='32')
-                  v-icon mdi-two-factor-authentication
-                div.v-list-item-content
-                  v-list-item-title {{$t('admin:users.tfa')}}
-                  v-list-item-subtitle.green--text(v-if='user.tfaIsActive') Active
-                  v-list-item-subtitle.red--text(v-else) Inactive
-                div.v-list-item-action
-                  v-tooltip(top)
+                template(v-slot:prepend)
+                  v-avatar(size='32')
+                    v-icon mdi-two-factor-authentication
+                v-list-item-title {{$t('admin:users.tfa')}}
+                v-list-item-subtitle.text-green(v-if='user.tfaIsActive') Active
+                v-list-item-subtitle.text-red(v-else) Inactive
+                template(v-slot:append)
+                  v-tooltip(location="top")
                     template(v-slot:activator='{ props }')
-                      v-btn(icon, color='grey', x-small, v-bind='props', @click='toggle2FA')
+                      v-btn(icon, color='grey', size="x-small", v-bind='props', @click='toggle2FA')
                         v-icon mdi-power
                     span {{$t('admin:users.toggle2FA')}}
             template(v-if='user.providerId')
               v-divider
               v-list-item
-                v-avatar(size='32')
-                  v-icon mdi-music-accidental-sharp
-                div.v-list-item-content
-                  v-list-item-title {{$t('admin:users.authProviderId')}}
-                  v-list-item-subtitle {{ user.providerId }}
+                template(v-slot:prepend)
+                  v-avatar(size='32')
+                    v-icon mdi-music-accidental-sharp
+                v-list-item-title {{$t('admin:users.authProviderId')}}
+                v-list-item-subtitle {{ user.providerId }}
         v-card.mt-3.animated.fadeInUp.wait-p4s
-          v-toolbar(color='primary', dense, dark, flat)
+          v-toolbar(color='primary', density="compact", flat)
             v-icon.mr-2 mdi-account-group
             span {{$t('admin:users.groups')}}
-          v-list(dense)
+          v-list(density="compact")
             template(v-for='(group, idx) in user.groups', :key='`group-` + group.id')
               v-list-item
-                v-avatar(size='32')
-                  v-icon mdi-account-group-outline
-                div.v-list-item-content
-                  v-list-item-title {{group.name}}
-                div.v-list-item-action(v-if='!user.isSystem')
-                  v-btn(icon, color='red', x-small, @click='unassignGroup(group.id)')
+                template(v-slot:prepend)
+                  v-avatar(size='32')
+                    v-icon mdi-account-group-outline
+                v-list-item-title {{group.name}}
+                template(v-slot:append, v-if='!user.isSystem')
+                  v-btn(icon, color='red', size="x-small", @click='unassignGroup(group.id)')
                     v-icon mdi-close
               v-divider(v-if='idx < user.groups.length - 1')
-          v-alert.mx-3(v-if='user.groups.length < 1', outlined, color='grey darken-1', icon='mdi-alert')
-            .caption {{$t('admin:users.noGroupAssigned')}}
+          v-alert.mx-3(v-if='user.groups.length < 1', variant="outlined", color="grey-darken-1", icon='mdi-alert')
+            .text-body-small {{$t('admin:users.noGroupAssigned')}}
           div.v-card-chin(v-if='!user.isSystem')
             v-spacer
             v-select(
@@ -216,48 +215,48 @@
               item-value='id'
               item-title='name'
               :item-props='group => ({ disabled: group.isSystem })'
-              solo
+              variant="solo"
               flat
               hide-details
               @keydown.esc='editPop.assignGroup = false'
               style='max-width: 300px;'
-              dense
+              density="compact"
             )
-            v-btn.ml-2.px-4(depressed, color='primary', @click='assignGroup', :disabled='newGroup === 0')
-              v-icon(left) mdi-clipboard-account-outline
+            v-btn.ml-2.px-4(variant="flat", color='primary', @click='assignGroup', :disabled='newGroup === 0')
+              v-icon(start) mdi-clipboard-account-outline
               span {{$t('admin:users.groupAssign')}}
-          v-system-bar(window, :color='$vuetify.theme.current.dark ? `grey darken-4-l3` : `grey lighten-3`')
+          v-system-bar(window, :color='$vuetify.theme.current.dark ? `grey-darken-4-l3` : `grey-lighten-3`')
             v-spacer
-            .caption {{$t('admin:users.groupAssignNotice')}}
+            .text-body-small {{$t('admin:users.groupAssignNotice')}}
 
       v-col(cols='6')
         v-card.animated.fadeInUp.wait-p2s
-          v-toolbar(color='primary', dense, dark, flat)
+          v-toolbar(color='primary', density="compact", flat)
             v-icon.mr-2 mdi-account-badge-outline
             span {{$t('admin:users.extendedMetadata')}}
-          v-list.py-0(two-line, dense)
+          v-list.py-0(lines="two", density="compact")
             v-list-item
-              v-avatar(size='32')
-                v-icon mdi-map-marker
-              div.v-list-item-content
-                v-list-item-title {{$t('admin:users.location')}}
-                v-list-item-subtitle {{ user.location }}
-              div.v-list-item-action
+              template(v-slot:prepend)
+                v-avatar(size='32')
+                  v-icon mdi-map-marker
+              v-list-item-title {{$t('admin:users.location')}}
+              v-list-item-subtitle {{ user.location }}
+              template(v-slot:append)
                 v-menu(
                   v-model='editPop.location'
                   :close-on-content-click='false'
                   min-width='350'
-                  left
+                  location="left"
                   )
                   template(v-slot:activator='{ props }')
-                    v-btn(icon, color='grey', x-small, v-bind='props', @click='focusField(`iptLocation`)')
+                    v-btn(icon, color='grey', size="x-small", v-bind='props', @click='focusField(`iptLocation`)')
                       v-icon mdi-pencil
                   v-card
                     v-text-field(
                       ref='iptLocation'
                       v-model='user.location'
                       :label='$t(`admin:users.location`)'
-                      solo
+                      variant="solo"
                       hide-details
                       append-icon='mdi-check'
                       @click:append='editPop.location = false'
@@ -266,27 +265,27 @@
                     )
             v-divider
             v-list-item
-              v-avatar(size='32')
-                v-icon mdi-briefcase
-              div.v-list-item-content
-                v-list-item-title {{$t('admin:users.jobTitle')}}
-                v-list-item-subtitle {{ user.jobTitle }}
-              div.v-list-item-action
+              template(v-slot:prepend)
+                v-avatar(size='32')
+                  v-icon mdi-briefcase
+              v-list-item-title {{$t('admin:users.jobTitle')}}
+              v-list-item-subtitle {{ user.jobTitle }}
+              template(v-slot:append)
                 v-menu(
                   v-model='editPop.jobTitle'
                   :close-on-content-click='false'
                   min-width='350'
-                  left
+                  location="left"
                   )
                   template(v-slot:activator='{ props }')
-                    v-btn(icon, color='grey', x-small, v-bind='props', @click='focusField(`iptJobTitle`)')
+                    v-btn(icon, color='grey', size="x-small", v-bind='props', @click='focusField(`iptJobTitle`)')
                       v-icon mdi-pencil
                   v-card
                     v-text-field(
                       ref='iptJobTitle'
                       v-model='user.jobTitle'
                       :label='$t(`admin:users.jobTitle`)'
-                      solo
+                      variant="solo"
                       hide-details
                       append-icon='mdi-check'
                       @click:append='editPop.jobTitle = false'
@@ -295,20 +294,20 @@
                     )
             v-divider
             v-list-item
-              v-avatar(size='32')
-                v-icon mdi-map-clock-outline
-              div.v-list-item-content
-                v-list-item-title {{$t('admin:users.timezone')}}
-                v-list-item-subtitle {{ user.timezone }}
-              div.v-list-item-action
+              template(v-slot:prepend)
+                v-avatar(size='32')
+                  v-icon mdi-map-clock-outline
+              v-list-item-title {{$t('admin:users.timezone')}}
+              v-list-item-subtitle {{ user.timezone }}
+              template(v-slot:append)
                 v-menu(
                   v-model='editPop.timezone'
                   :close-on-content-click='false'
                   min-width='350'
-                  left
+                  location="left"
                   )
                   template(v-slot:activator='{ props }')
-                    v-btn(icon, color='grey', x-small, v-bind='props', @click='focusField(`iptTimezone`)')
+                    v-btn(icon, color='grey', size="x-small", v-bind='props', @click='focusField(`iptTimezone`)')
                       v-icon mdi-pencil
                   v-card
                     v-select(
@@ -316,8 +315,8 @@
                       :items='timezones'
                       v-model='user.timezone'
                       :label='$t(`admin:users.timezone`)'
-                      solo
-                      dense
+                      variant="solo"
+                      density="compact"
                       hide-details
                       append-icon='mdi-check'
                       @click:append='editPop.timezone = false'
@@ -326,16 +325,16 @@
                     )
 
         v-card.mt-3.animated.fadeInUp.wait-p4s
-          v-toolbar(color='teal', dark, dense, flat)
+          v-toolbar(color='teal', density="compact", flat)
             v-toolbar-title
-              .subtitle-1 {{$t('profile:activity.title')}}
-          v-card-text.grey--text.text--darken-2
-            .caption.grey--text {{$t('profile:activity.joinedOn')}}
-            .body-2: strong {{ $helpers.formatMoment(user.createdAt, 'LLLL') }}
-            .caption.grey--text.mt-3 {{$t('profile:activity.lastUpdatedOn')}}
-            .body-2: strong {{ $helpers.formatMoment(user.updatedAt, 'LLLL') }}
-            .caption.grey--text.mt-3 {{$t('profile:activity.lastLoginOn')}}
-            .body-2: strong {{ $helpers.formatMoment(user.lastLoginAt, 'LLLL') }}
+              .text-body-large {{$t('profile:activity.title')}}
+          v-card-text.text-grey-darken-2
+            .text-body-small.text-grey {{$t('profile:activity.joinedOn')}}
+            .text-body-medium: strong {{ $helpers.formatMoment(user.createdAt, 'LLLL') }}
+            .text-body-small.text-grey.mt-3 {{$t('profile:activity.lastUpdatedOn')}}
+            .text-body-medium: strong {{ $helpers.formatMoment(user.updatedAt, 'LLLL') }}
+            .text-body-small.text-grey.mt-3 {{$t('profile:activity.lastLoginOn')}}
+            .text-body-medium: strong {{ $helpers.formatMoment(user.lastLoginAt, 'LLLL') }}
 
 
     v-dialog(v-model='deleteUserDialog', max-width='500')
@@ -347,20 +346,19 @@
           .mt-3 {{$t('admin:users.deleteConfirmReplaceWarn')}}
           v-divider.my-3
           .d-flex.align-center.mt-3
-            v-btn.text-none(color='primary', depressed, @click='deleteSearchUserDialog = true')
-              v-icon(left) mdi-clipboard-account
+            v-btn.text-none(color='primary', variant="flat", @click='deleteSearchUserDialog = true')
+              v-icon(start) mdi-clipboard-account
               | Select User...
-            .caption.pl-3
+            .text-body-small.pl-3
               strong ID {{deleteReplaceUser.id}}
-              .caption {{deleteReplaceUser.name}}
+              .text-body-small {{deleteReplaceUser.name}}
               em {{deleteReplaceUser.email}}
         div.v-card-chin
           v-spacer
-          v-btn(text, @click='deleteUserDialog = false') {{$t('common:actions.cancel')}}
-          v-btn(color='red', dark, @click='deleteUser') {{$t('common:actions.delete')}}
+          v-btn(variant="text", @click='deleteUserDialog = false') {{$t('common:actions.cancel')}}
+          v-btn(color='red', @click='deleteUser') {{$t('common:actions.delete')}}
 
         user-search(v-model='deleteSearchUserDialog', @select='assignDeleteUser')
-
 </template>
 <script lang='ts'>
 import _ from 'lodash'

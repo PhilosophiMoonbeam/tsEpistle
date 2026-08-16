@@ -17,7 +17,7 @@ describe('editor redirect REST migration guard', () => {
   test('preserves redirect editor initialization and template', () => {
     expect(source).toContain("wikiStore.editor.editorKey = 'redirect'")
     expect(source).toContain("wikiStore.editor.content = '<h1>Title</h1>\\n\\n<p>Some text here</p>'")
-    expect(source).toContain("v-system-bar.editor-status-bar.editor-redirect-sysbar(absolute, dark, status, color='grey darken-3')")
+    expect(source).toContain('v-system-bar.editor-status-bar.editor-redirect-sysbar(absolute, status, color="grey-darken-3")')
     expect(source).toContain('v-select.ml-3(')
   })
 })

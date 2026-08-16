@@ -17,7 +17,7 @@
           )
       v-card-text.pt-5
         v-text-field(
-          outlined
+          variant="outlined"
           :label='$t(`common:user.searchPlaceholder`)'
           v-model='search'
           prepend-inner-icon='mdi-account-search-outline'
@@ -25,25 +25,25 @@
           ref='searchIpt'
           hide-details
           )
-        v-list.grey.mt-3.py-0.radius-7(
-          :class='$vuetify.theme.current.dark ? `darken-3-d5` : `lighten-3`'
-          two-line
-          dense
+        v-list.mt-3.py-0.radius-7(
+          :class='$vuetify.theme.current.dark ? `bg-grey-darken-3-d5` : `bg-grey-lighten-3`'
+          lines="two"
+          density="compact"
           )
           template(v-for='(usr, idx) in items', :key='usr.id')
             v-list-item(@click='setUser(usr)')
-              v-avatar(size='40', color='primary')
-                span.body-1.white--text {{ initials(usr.name) }}
-              div.v-list-item-content
-                v-list-item-title.body-2 {{usr.name}}
-                v-list-item-subtitle {{usr.email}}
-              div.v-list-item-action
+              template(v-slot:prepend)
+                v-avatar(size='40', color='primary')
+                  span.text-body-large.text-white {{ initials(usr.name) }}
+              v-list-item-title.text-body-medium {{usr.name}}
+              v-list-item-subtitle {{usr.email}}
+              template(v-slot:append)
                 v-icon(color='primary') mdi-arrow-right
             v-divider.my-0(v-if='idx < items.length - 1')
       div.v-card-chin
         v-spacer
         v-btn(
-          text
+          variant="text"
           @click='close'
           :disabled='loading'
           ) {{$t('common:actions.cancel')}}

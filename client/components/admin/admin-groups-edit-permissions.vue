@@ -1,18 +1,18 @@
 <template lang="pug">
   v-card(flat)
-    v-container.px-3.pb-3.pt-3(fluid, grid-list-md)
-      v-row()
+    v-container.px-3.pb-3.pt-3(fluid)
+      v-row
         v-col(cols='12', v-if='group.isSystem')
           v-alert.radius-7.mb-0(
-            color='orange darken-2'
-            :class='$vuetify.theme.current.dark ? "grey darken-4" : "orange lighten-5"'
-            outlined
+            color="orange-darken-2"
+            :class='$vuetify.theme.current.dark ? "bg-grey-darken-4" : "bg-orange-lighten-5"'
+            variant="outlined"
             :value='true'
             icon='mdi-lock-outline'
             ) This is a system group. Some permissions cannot be modified.
         v-col(cols='12', md='6', lg='4', v-for='pmGroup in permissions', :key='pmGroup.category')
-          v-card.md2(flat, :class='$vuetify.theme.current.dark ? "grey darken-3-d5" : "grey lighten-5"')
-            .overline.px-5.pt-5.pb-3.grey--text.text--darken-2 {{pmGroup.category}}
+          v-card.md2(flat, :class='$vuetify.theme.current.dark ? "bg-grey-darken-3-d5" : "bg-grey-lighten-5"')
+            .text-label-small.px-5.pt-5.pb-3.text-grey-darken-2 {{pmGroup.category}}
             v-card-text.pt-0
               template(v-for='(pm, idx) in pmGroup.items', :key='pm.permission')
                 v-checkbox.pt-0(
@@ -26,8 +26,7 @@
                   :append-icon='pm.warning ? "mdi-alert" : null',
                   :disabled='(group.isSystem && pm.restrictedForSystem) || group.id === 1 || pm.disabled'
                 )
-                v-divider.mt-3(v-if='idx < pmGroup.items.length - 1')
-</template>
+                v-divider.mt-3(v-if='idx < pmGroup.items.length - 1')</template>
 
 <script lang='ts'>
 import type { PropType } from 'vue'

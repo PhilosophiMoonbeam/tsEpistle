@@ -15,12 +15,12 @@
       :width="3"
       aria-label="Loading"
     />
-    <v-icon v-else class="async-state__icon" :color="state === 'error' ? 'error' : 'grey'">
+    <v-icon v-else class="async-state__icon" :color="state === 'error' ? 'red' : 'grey'">
       {{ state === 'error' ? 'mdi-alert-circle-outline' : 'mdi-inbox-outline' }}
     </v-icon>
     <div class="async-state__copy">
-      <div class="text-body-2 font-weight-medium">{{ title }}</div>
-      <div v-if="message" class="text-caption text-medium-emphasis">{{ message }}</div>
+      <div class="text-body-medium font-weight-medium">{{ title }}</div>
+      <div v-if="message" class="text-body-small text-medium-emphasis">{{ message }}</div>
     </div>
     <v-btn
       v-if="state === 'error' && retryLabel"

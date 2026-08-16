@@ -3,24 +3,23 @@
     .dialog-header
       span Live Console
       v-spacer
-      .caption.blue--text.text--lighten-3.mr-3 Streaming...
+      .text-body-small.text-blue-lighten-3.mr-3 Streaming...
       v-progress-circular(
         indeterminate
-        color='blue lighten-3'
+        color="blue-lighten-3"
         :size='20'
         :width='2'
         aria-label='Streaming logs'
         )
     pre.consoleTerm(ref='consoleContainer') {{output}}
-    v-toolbar(flat, color='grey darken-3', dark)
+    v-toolbar(flat, color="grey-darken-3")
       v-spacer
-      v-btn(outline, @click='clear')
-        v-icon(left) cancel_presentation
+      v-btn(variant="outlined", @click='clear')
+        v-icon(start) cancel_presentation
         span Clear
-      v-btn(outline, @click='close')
-        v-icon(left) close
-        span Close
-</template>
+      v-btn(variant="outlined", @click='close')
+        v-icon(start) close
+        span Close</template>
 
 <script lang='ts'>
 import { wikiStore } from '@/store/index.ts'

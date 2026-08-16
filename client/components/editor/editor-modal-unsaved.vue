@@ -5,11 +5,11 @@
         v-icon.mr-2(color='white') mdi-alert
         span {{$t('editor:unsaved.title')}}
       v-card-text.pt-4
-        .body-2 {{$t('editor:unsaved.body')}}
+        .text-body-medium {{$t('editor:unsaved.body')}}
       div.v-card-chin
         v-spacer
-        v-btn(text, @click='isShown = false') {{$t('common:actions.cancel')}}
-        v-btn.px-4(color='red', @click='discard', dark) {{$t('common:actions.discardChanges')}}
+        v-btn(variant="text", @click='isShown = false') {{$t('common:actions.cancel')}}
+        v-btn.px-4(color='red', @click='discard') {{$t('common:actions.discardChanges')}}
 </template>
 
 <script lang='ts'>

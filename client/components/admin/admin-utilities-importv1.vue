@@ -1,22 +1,22 @@
 <template lang='pug'>
   v-card
-    v-toolbar(flat, color='primary', dark, dense)
-      .subtitle-1 {{ $t('admin:utilities.importv1Title') }}
+    v-toolbar(flat, color='primary', density="compact")
+      .text-body-large {{ $t('admin:utilities.importv1Title') }}
     v-card-text
       .text-center
         img.animated.fadeInUp.wait-p1s(src='/_assets/svg/icon-software.svg')
-        .body-2 Import from Wiki.js 1.x
+        .text-body-medium Import from Wiki.js 1.x
       v-divider.my-4
-      .body-2 Data from a Wiki.js 1.x installation can easily be imported using this tool. What do you want to import?
+      .text-body-medium Data from a Wiki.js 1.x installation can easily be imported using this tool. What do you want to import?
       v-checkbox(
         label='Content + Uploads'
         value='content'
-        color='deep-orange darken-2'
+        color="deep-orange-darken-2"
         v-model='importFilters'
         hide-details
         )
         template(v-slot:label)
-          strong.deep-orange--text.text--darken-2 Content + Uploads
+          strong.text-deep-orange-darken-2 Content + Uploads
       .pl-8(v-if='wantContent')
         v-radio-group(v-model='contentMode', hide-details)
           v-radio(
@@ -26,7 +26,7 @@
             template(v-slot:label)
               div
                 span Import from Git Connection
-                .caption: em #[strong.primary--text Recommended] | The Git storage module will also be configured for you.
+                .text-body-small: em #[strong.text-primary Recommended] | The Git storage module will also be configured for you.
         .pl-8.mt-5(v-if='needGit')
           v-row
             v-col(cols='8')
@@ -34,7 +34,7 @@
                 label='Authentication Mode'
                 :items='gitAuthModes'
                 v-model='gitAuthMode'
-                outlined
+                variant="outlined"
                 hide-details
               )
             v-col(cols='4')
@@ -46,7 +46,7 @@
               )
             v-col(cols='8')
               v-text-field(
-                outlined
+                variant="outlined"
                 label='Repository URL'
                 :placeholder='(gitAuthMode === `ssh`) ? `e.g. git@github.com:orgname/repo.git` : `e.g. https://github.com/orgname/repo.git`'
                 hide-details
@@ -57,12 +57,12 @@
                 label='Branch'
                 placeholder='e.g. master'
                 v-model='gitRepoBranch'
-                outlined
+                variant="outlined"
                 hide-details
               )
             v-col(v-if='gitAuthMode === `ssh`', cols='12')
               v-textarea(
-                outlined
+                variant="outlined"
                 label='Private Key Contents'
                 placeholder='[REDACTED PRIVATE KEY]'
                 hide-details
@@ -73,7 +73,7 @@
                 v-text-field(
                   label='Username'
                   v-model='gitUsername'
-                  outlined
+                  variant="outlined"
                   hide-details
                 )
               v-col(cols='6')
@@ -81,7 +81,7 @@
                   type='password'
                   label='Password / PAT'
                   v-model='gitPassword'
-                  outlined
+                  variant="outlined"
                   hide-details
                 )
             v-col(cols='6')
@@ -89,7 +89,7 @@
                 label='Default Author Email'
                 placeholder='e.g. name@company.com'
                 v-model='gitUserEmail'
-                outlined
+                variant="outlined"
                 hide-details
               )
             v-col(cols='6')
@@ -97,7 +97,7 @@
                 label='Default Author Name'
                 placeholder='e.g. John Smith'
                 v-model='gitUserName'
-                outlined
+                variant="outlined"
                 hide-details
               )
             v-col(cols='12')
@@ -105,13 +105,13 @@
                 label='Local Repository Path'
                 placeholder='e.g. ./data/repo'
                 v-model='gitRepoPath'
-                outlined
+                variant="outlined"
                 hide-details
               )
-              .caption.mt-2 This folder should be empty or not exist yet. #[strong.deep-orange--text.text--darken-2 DO NOT] point to your existing Wiki.js 1.x repository folder. In most cases, it should be left to the default value.
-          v-alert(color='deep-orange', outlined, icon='mdi-alert', prominent)
-            .body-2 - Note that if you already configured the git storage module, its configuration will be replaced with the above.
-            .body-2 - Although both v1 and v2 installations can use the same remote git repository, you shouldn't make edits to the same pages simultaneously.
+              .text-body-small.mt-2 This folder should be empty or not exist yet. #[strong.text-deep-orange-darken-2 DO NOT] point to your existing Wiki.js 1.x repository folder. In most cases, it should be left to the default value.
+          v-alert(color='deep-orange', variant="outlined", icon='mdi-alert', prominent)
+            .text-body-medium - Note that if you already configured the git storage module, its configuration will be replaced with the above.
+            .text-body-medium - Although both v1 and v2 installations can use the same remote git repository, you shouldn't make edits to the same pages simultaneously.
         v-radio-group(v-model='contentMode', hide-details)
           v-divider
           v-radio.mt-3(
@@ -121,10 +121,10 @@
             template(v-slot:label)
               div
                 span Import from local folder
-                .caption: em Choose this option only if you didn't have git configured in your Wiki.js 1.x installation.
+                .text-body-small: em Choose this option only if you didn't have git configured in your Wiki.js 1.x installation.
         .pl-8.mt-5(v-if='needDisk')
           v-text-field(
-            outlined
+            variant="outlined"
             label='Content Repo Path'
             hint='The absolute path to where the Wiki.js 1.x content is stored on disk.'
             persistent-hint
@@ -134,15 +134,15 @@
       v-checkbox(
         label='Users'
         value='users'
-        color='deep-orange darken-2'
+        color="deep-orange-darken-2"
         v-model='importFilters'
         hide-details
         )
         template(v-slot:label)
-          strong.deep-orange--text.text--darken-2 Users
+          strong.text-deep-orange-darken-2 Users
       .pl-8.mt-5(v-if='wantUsers')
         v-text-field(
-          outlined
+          variant="outlined"
           label='MongoDB Connection String'
           hint='The connection string to connect to the Wiki.js 1.x MongoDB database.'
           persistent-hint
@@ -156,7 +156,7 @@
             template(v-slot:label)
               div
                 span Create groups for each unique user permissions configuration
-                .caption: em #[strong.primary--text Recommended] | Users having identical permission sets will be assigned to the same group. Note that this can potentially result in a large amount of groups being created.
+                .text-body-small: em #[strong.text-primary Recommended] | Users having identical permission sets will be assigned to the same group. Note that this can potentially result in a large amount of groups being created.
           v-divider
           v-radio.mt-3(
             value='SINGLE'
@@ -165,7 +165,7 @@
             template(v-slot:label)
               div
                 span Create a single group with all imported users
-                .caption: em The new group will have read permissions enabled by default.
+                .text-body-small: em The new group will have read permissions enabled by default.
           v-divider
           v-radio.mt-3(
             value='NONE'
@@ -174,22 +174,22 @@
             template(v-slot:label)
               div
                 span Don't create any group
-                .caption: em Users will not be able to access your wiki until they are assigned to a group.
+                .text-body-small: em Users will not be able to access your wiki until they are assigned to a group.
 
-        v-alert.mt-5(color='deep-orange', outlined, icon='mdi-alert', prominent)
-          .body-2 Note that any user that already exists in this installation will not be imported. A list of skipped users will be displayed upon completion.
-          .caption.grey--text You must first delete from this installation any user you want to migrate over from the old installation.
+        v-alert.mt-5(color='deep-orange', variant="outlined", icon='mdi-alert', prominent)
+          .text-body-medium Note that any user that already exists in this installation will not be imported. A list of skipped users will be displayed upon completion.
+          .text-body-small.text-grey You must first delete from this installation any user you want to migrate over from the old installation.
 
     div.v-card-chin
-      v-btn.px-3(depressed, color='deep-orange darken-2', :disabled='!wantUsers && !wantContent', @click='startImport').ml-0
-        v-icon(left, color='white') mdi-database-import
-        span.white--text Start Import
+      v-btn.px-3(variant="flat", color="deep-orange-darken-2", :disabled='!wantUsers && !wantContent', @click='startImport').ml-0
+        v-icon(start, color='white') mdi-database-import
+        span.text-white Start Import
     v-dialog(
       v-model='isLoading'
       persistent
       max-width='350'
       )
-      v-card(color='deep-orange darken-2', dark)
+      v-card(color="deep-orange-darken-2")
         v-card-text.pa-10.text-center
           semipolar-spinner.animated.fadeIn(
             :animation-duration='1500'
@@ -197,11 +197,11 @@
             color='#FFF'
             style='margin: 0 auto;'
           )
-          .mt-5.body-1.white--text Importing from Wiki.js 1.x...
-          .caption Please wait
+          .mt-5.text-body-large.text-white Importing from Wiki.js 1.x...
+          .text-body-small Please wait
           v-progress-linear.mt-5(
             color='white'
-            :value='progress'
+            :model-value='progress'
             stream
             rounded
             :buffer-value='0'
@@ -211,28 +211,27 @@
       persistent
       max-width='350'
       )
-      v-card(color='green darken-2', dark)
+      v-card(color="green-darken-2")
         v-card-text.pa-10.text-center
           v-icon(size='60') mdi-check-circle-outline
-          .my-5.body-1.white--text Import completed
+          .my-5.text-body-large.text-white Import completed
           template(v-if='wantUsers')
-            .body-2
+            .text-body-medium
               span #[strong {{successUsers}}] users imported
               v-btn.text-none.ml-3(
                 v-if='failedUsers.length > 0'
-                text
+                variant="text"
                 color='white'
-                dark
                 @click='showFailedUsers = true'
                 )
-                v-icon(left) mdi-alert
+                v-icon(start) mdi-alert
                 span {{failedUsers.length}} failed
-            .body-2 #[strong {{successGroups}}] groups created
-        v-card-actions.green.darken-1
+            .text-body-medium #[strong {{successGroups}}] groups created
+        v-card-actions.bg-green-darken-1
           v-spacer
           v-btn.px-5(
             color='white'
-            outlined
+            variant="outlined"
             @click='isSuccess = false'
           ) Close
           v-spacer
@@ -241,17 +240,17 @@
       persistent
       max-width='800'
       )
-      v-card(color='red darken-2', dark)
-        v-toolbar(color='red darken-2', dense)
+      v-card(color="red-darken-2")
+        v-toolbar(color="red-darken-2", density="compact")
           v-icon mdi-alert
-          .body-2.pl-3 Failed User Imports
+          .text-body-medium.pl-3 Failed User Imports
           v-spacer
           v-btn.px-5(
             color='white'
-            text
+            variant="text"
             @click='showFailedUsers = false'
             ) Close
-        v-table(dense, fixed-header, height='300px')
+        v-table(density="compact", fixed-header, height='300px')
           template(v-slot:default)
             thead
               tr
@@ -262,8 +261,7 @@
               tr(v-for='(fusr, idx) in failedUsers', :key='`fusr-` + idx')
                 td {{fusr.provider}}
                 td {{fusr.email}}
-                td {{fusr.error}}
-</template>
+                td {{fusr.error}}</template>
 
 <script lang='ts'>
 import { defineComponent } from 'vue'

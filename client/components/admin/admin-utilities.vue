@@ -1,33 +1,33 @@
 <template lang='pug'>
-  v-container(fluid, grid-list-lg)
-    v-row()
+  v-container(fluid)
+    v-row
       v-col(cols='12')
         .admin-header
           img(src='/_assets/svg/icon-maintenance.svg', alt='Utilities', style='width: 80px;')
           .admin-header-title
-            .headline.primary--text {{$t('admin:utilities.title')}}
-            .subtitle-1.grey--text {{$t('admin:utilities.subtitle')}}
+            .text-headline-medium.text-primary {{$t('admin:utilities.title')}}
+            .text-body-large.text-grey {{$t('admin:utilities.subtitle')}}
 
       v-col(lg='3', cols='12')
         v-card.animated.fadeInUp
-          v-toolbar(flat, color='primary', dark, dense)
-            .subtitle-1 {{$t('admin:utilities.tools')}}
-          v-list(two-line, dense).py-0
+          v-toolbar(flat, color='primary', density="compact")
+            .text-body-large {{$t('admin:utilities.tools')}}
+          v-list(lines="two", density="compact").py-0
             template(v-for='(tool, idx) in tools', :key='tool.key')
               v-list-item(@click='selectedTool = tool.key', :disabled='!tool.isAvailable')
-                v-avatar
-                  v-icon(:color='!tool.isAvailable ? `grey lighten-1` : (selectedTool === tool.key ? `blue ` : `grey darken-1`)') {{ tool.icon }}
-                div.v-list-item-content
-                  v-list-item-title.body-2(:class='!tool.isAvailable ? `grey--text` : (selectedTool === tool.key ? `primary--text` : ``)') {{ $t('admin:utilities.' + tool.i18nKey + 'Title') }}
-                  v-list-item-subtitle: .caption(:class='!tool.isAvailable ? `grey--text text--lighten-1` : (selectedTool === tool.key ? `blue--text ` : ``)') {{ $t('admin:utilities.' + tool.i18nKey + 'Subtitle') }}
-                v-avatar(v-if='selectedTool === tool.key')
-                  v-icon.animated.fadeInLeft(color='primary', large) mdi-chevron-right
+                template(v-slot:prepend)
+                  v-avatar
+                    v-icon(:color='!tool.isAvailable ? `grey-lighten-1` : (selectedTool === tool.key ? `blue ` : `grey-darken-1`)') {{ tool.icon }}
+                v-list-item-title.text-body-medium(:class='!tool.isAvailable ? `text-grey` : (selectedTool === tool.key ? `text-primary` : ``)') {{ $t('admin:utilities.' + tool.i18nKey + 'Title') }}
+                v-list-item-subtitle: .text-body-small(:class='!tool.isAvailable ? `text-grey-lighten-1` : (selectedTool === tool.key ? `text-blue ` : ``)') {{ $t('admin:utilities.' + tool.i18nKey + 'Subtitle') }}
+                template(v-slot:append)
+                  v-avatar(v-if='selectedTool === tool.key')
+                    v-icon.animated.fadeInLeft(color='primary', size="large") mdi-chevron-right
               v-divider(v-if='idx < tools.length - 1')
 
       v-col.animated.fadeInUp.wait-p2s(cols='12', lg='9')
         transition(name='admin-router')
           component(:is='selectedTool')
-
 </template>
 
 <script lang='ts'>

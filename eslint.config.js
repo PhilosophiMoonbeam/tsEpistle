@@ -3,6 +3,7 @@ import { defineConfig, globalIgnores } from 'eslint/config'
 import globals from 'globals'
 import tseslint from 'typescript-eslint'
 import vue from 'eslint-plugin-vue'
+import vuetify from 'eslint-plugin-vuetify'
 
 const testGlobals = {
   afterAll: 'readonly',
@@ -71,6 +72,9 @@ export default defineConfig(
     languageOptions: {
       parserOptions: {
         parser: tseslint.parser,
+        templateTokenizer: {
+          pug: 'vue-eslint-parser-template-tokenizer-pug'
+        }
       },
       globals: {
         ...globals.browser,
@@ -80,8 +84,12 @@ export default defineConfig(
         siteConfig: 'readonly'
       }
     },
+    plugins: {
+      vuetify
+    },
     rules: {
       'vue/multi-word-component-names': 'off',
+      'vue/valid-v-slot': ['error', { allowModifiers: true }],
       'vue/custom-event-name-casing': ['error', 'camelCase', {
         ignores: [
           'searchEnter',
@@ -98,7 +106,17 @@ export default defineConfig(
           'pageMove',
           'pageDelete'
         ]
-      }]
+      }],
+      'vuetify/no-deprecated-classes': 'error',
+      'vuetify/no-deprecated-colors': 'error',
+      'vuetify/no-deprecated-components': 'error',
+      'vuetify/no-deprecated-events': 'error',
+      'vuetify/no-deprecated-props': 'error',
+      'vuetify/no-deprecated-slots': 'error',
+      'vuetify/no-deprecated-snackbar': 'error',
+      'vuetify/no-deprecated-typography': 'error',
+      'vuetify/no-elevation-overflow': 'error',
+      'vuetify/no-legacy-grid-props': 'error'
     }
   },
   {

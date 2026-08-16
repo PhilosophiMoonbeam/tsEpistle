@@ -1,46 +1,46 @@
 <template lang='pug'>
-  v-container(fluid, grid-list-lg)
-    v-row()
+  v-container(fluid)
+    v-row
       v-col(cols='12')
         .admin-header
           img.animated.fadeInUp(src='/_assets/svg/icon-line-chart.svg', alt='Analytics', style='width: 80px;')
           .admin-header-title
-            .headline.primary--text.animated.fadeInLeft {{ $t('admin:analytics.title') }}
-            .subtitle-1.grey--text.animated.fadeInLeft.wait-p4s {{ $t('admin:analytics.subtitle') }}
+            .text-headline-medium.text-primary.animated.fadeInLeft {{ $t('admin:analytics.title') }}
+            .text-body-large.text-grey.animated.fadeInLeft.wait-p4s {{ $t('admin:analytics.subtitle') }}
           v-spacer
-          v-btn.animated.fadeInDown.wait-p2s.mr-3(icon, outlined, color='grey', @click='refresh')
+          v-btn.animated.fadeInDown.wait-p2s.mr-3(icon, variant="outlined", color='grey', @click='refresh')
             v-icon mdi-refresh
-          v-btn.animated.fadeInDown(color='success', @click='save', depressed, large)
-            v-icon(left) mdi-check
+          v-btn.animated.fadeInDown(color='success', @click='save', variant="flat", size="large")
+            v-icon(start) mdi-check
             span {{$t('common:actions.apply')}}
 
       v-col(lg='3', cols='12')
         v-card.animated.fadeInUp
-          v-toolbar(flat, color='primary', dark, dense)
-            .subtitle-1 {{$t('admin:analytics.providers')}}
-          v-list(two-line, dense).py-0
+          v-toolbar(flat, color='primary', density="compact")
+            .text-body-large {{$t('admin:analytics.providers')}}
+          v-list(lines="two", density="compact").py-0
             template(v-for='(str, idx) in providers', :key='str.key')
               v-list-item(@click='selectedProvider = str.key', :disabled='!str.isAvailable')
-                v-avatar(size='24')
-                  v-icon(color='grey', v-if='!str.isAvailable') mdi-minus-box-outline
-                  v-icon(color='primary', v-else-if='str.isEnabled', v-ripple, @click='str.isEnabled = false') mdi-checkbox-marked-outline
-                  v-icon(color='grey', v-else, v-ripple, @click='str.isEnabled = true') mdi-checkbox-blank-outline
-                div.v-list-item-content
-                  v-list-item-title.body-2(:class='!str.isAvailable ? `grey--text` : (selectedProvider === str.key ? `primary--text` : ``)') {{ str.title }}
-                  v-list-item-subtitle: .caption(:class='!str.isAvailable ? `grey--text text--lighten-1` : (selectedProvider === str.key ? `blue--text ` : ``)') {{ str.description }}
-                v-avatar(v-if='selectedProvider === str.key', size='24')
-                  v-icon.animated.fadeInLeft(color='primary', large) mdi-chevron-right
+                template(v-slot:prepend)
+                  v-avatar(size='24')
+                    v-icon(color='grey', v-if='!str.isAvailable') mdi-minus-box-outline
+                    v-icon(color='primary', v-else-if='str.isEnabled', v-ripple, @click='str.isEnabled = false') mdi-checkbox-marked-outline
+                    v-icon(color='grey', v-else, v-ripple, @click='str.isEnabled = true') mdi-checkbox-blank-outline
+                v-list-item-title.text-body-medium(:class='!str.isAvailable ? `text-grey` : (selectedProvider === str.key ? `text-primary` : ``)') {{ str.title }}
+                v-list-item-subtitle: .text-body-small(:class='!str.isAvailable ? `text-grey-lighten-1` : (selectedProvider === str.key ? `text-blue ` : ``)') {{ str.description }}
+                template(v-slot:append)
+                  v-avatar(v-if='selectedProvider === str.key', size='24')
+                    v-icon.animated.fadeInLeft(color='primary', size="large") mdi-chevron-right
               v-divider(v-if='idx < providers.length - 1')
 
       v-col(cols='12', lg='9')
 
         v-card.animated.fadeInUp.wait-p2s
-          v-toolbar(color='primary', dense, flat, dark)
-            .subtitle-1 {{provider.title}}
+          v-toolbar(color='primary', density="compact", flat)
+            .text-body-large {{provider.title}}
             v-spacer
             v-switch(
-              dark
-              color='blue lighten-5'
+              color="blue-lighten-5"
               label='Active'
               v-model='provider.isEnabled'
               hide-details
@@ -49,18 +49,18 @@
           div.v-card-info(color='blue')
             div
               div {{provider.description}}
-              span.caption: a(:href='provider.website') {{provider.website}}
+              span.text-body-small: a(:href='provider.website') {{provider.website}}
             v-spacer
             .admin-providerlogo
               img(:src='provider.logo', :alt='provider.title')
           v-card-text
             v-form
-              .overline.pb-5 {{$t('admin:analytics.providerConfiguration')}}
-              .body-1.ml-3(v-if='!provider.config || provider.config.length < 1'): em {{$t('admin:analytics.providerNoConfiguration')}}
+              .text-label-small.pb-5 {{$t('admin:analytics.providerConfiguration')}}
+              .text-body-large.ml-3(v-if='!provider.config || provider.config.length < 1'): em {{$t('admin:analytics.providerNoConfiguration')}}
               template(v-else, v-for='cfg in provider.config', :key='cfg.key')
                 v-select(
                   v-if='cfg.value.type === "string" && cfg.value.enum'
-                  outlined
+                  variant="outlined"
                   :items='cfg.value.enum'
                   :label='cfg.value.title'
                   v-model='cfg.value.value'
@@ -81,7 +81,7 @@
                   )
                 v-textarea(
                   v-else-if='cfg.value.type === "string" && cfg.value.multiline'
-                  outlined
+                  variant="outlined"
                   :label='cfg.value.title'
                   v-model='cfg.value.value'
                   prepend-icon='mdi-cog-box'
@@ -91,7 +91,7 @@
                   )
                 v-text-field(
                   v-else
-                  outlined
+                  variant="outlined"
                   :label='cfg.value.title'
                   v-model='cfg.value.value'
                   prepend-icon='mdi-cog-box'
@@ -99,7 +99,6 @@
                   persistent-hint
                   :class='cfg.value.hint ? "mb-2" : ""'
                   )
-
 </template>
 
 <script lang='ts'>

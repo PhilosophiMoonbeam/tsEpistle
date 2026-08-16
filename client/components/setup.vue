@@ -7,21 +7,21 @@
             v-card.elevation-20.radius-7.animated.fadeInUp
               .text-center.pa-6
                 v-icon.animated.fadeInUp.wait-p2s(color='primary', size='72') mdi-source-fork
-                .text-h4.primary--text.mt-3 {{ product.name }}
-                .body-2.grey--text Independent community fork derived from {{ product.upstreamBase }}
-              v-alert(v-model='error', type='error', icon='mdi-alert', tile, dismissible) {{ errorMessage }}
-              v-alert(v-if='!error', tile, color='blue lighten-5', :value='true')
+                .text-h4.text-primary.mt-3 {{ product.name }}
+                .text-body-medium.text-grey Independent community fork derived from {{ product.upstreamBase }}
+              v-alert(v-model='error', type='error', icon='mdi-alert', tile, closable) {{ errorMessage }}
+              v-alert(v-if='!error', tile, color="blue-lighten-5", :value='true')
                 v-icon.mr-3(color='blue') mdi-package-variant
-                span.blue--text You are about to install #[strong {{ product.name }} {{ product.version }}].
-                .caption.mt-2
+                span.text-blue You are about to install #[strong {{ product.name }} {{ product.version }}].
+                .text-body-small.mt-2
                   a(:href='product.sourceUrl', target='_blank', rel='noopener noreferrer') Source Code for {{ product.revision.slice(0, 12) }}
               form#setup-form.v-card-text(@submit.prevent='install')
-                .overline.pl-3 Administrator Account
-                v-container.pa-3.mt-3(grid-list-xl)
-                  v-row()
+                .text-label-small.pl-3 Administrator Account
+                v-container.pa-3.mt-3
+                  v-row
                     v-col(cols='12')
                       v-text-field(
-                        outlined
+                        variant="outlined"
                         v-model='conf.adminEmail',
                         label='Administrator Email',
                         hint='The email address of the administrator account.',
@@ -31,7 +31,7 @@
                       )
                     v-col(cols='6')
                       v-text-field(
-                        outlined
+                        variant="outlined"
                         ref='adminPassword',
                         counter='255'
                         v-model='conf.adminPassword',
@@ -44,7 +44,7 @@
                       )
                     v-col(cols='6')
                       v-text-field(
-                        outlined
+                        variant="outlined"
                         ref='adminPasswordConfirm',
                         counter='255'
                         v-model='conf.adminPasswordConfirm',
@@ -56,9 +56,9 @@
                         persistent-hint
                       )
                 v-divider.mb-4
-                .overline.pl-3.mb-5 Site URL
+                .text-label-small.pl-3.mb-5 Site URL
                 v-text-field.mb-4.mx-3(
-                  outlined
+                  variant="outlined"
                   ref='adminSiteUrl',
                   v-model='conf.siteUrl',
                   label='Site URL',
@@ -66,7 +66,7 @@
                   persistent-hint
                 )
                 v-divider.mb-4
-                .overline.pl-3.mb-3 Telemetry
+                .text-label-small.pl-3.mb-3 Telemetry
                 v-switch.ml-3(
                   inset
                   color='primary',
@@ -78,12 +78,12 @@
                 a.pl-3(style='font-size: 12px; letter-spacing: initial;', href='https://docs.requarks.io/telemetry', target='_blank') Learn more
               v-divider.mt-2
               v-card-actions
-                v-btn(color='primary', type='submit', form='setup-form', :disabled='loading', x-large, depressed, block)
-                  v-icon(left) mdi-check
+                v-btn(color='primary', type='submit', form='setup-form', :disabled='loading', size="x-large", variant="flat", block)
+                  v-icon(start) mdi-check
                   span Install
 
     v-dialog(v-model='loading', width='450', persistent)
-      v-card(color='primary', dark).radius-7
+      v-card(color='primary').radius-7
         v-card-text.text-center.py-5
           .py-3(style='width: 64px; display:inline-block;')
             breeding-rhombus-spinner(
@@ -92,12 +92,11 @@
               color='#FFF'
               )
           template(v-if='!success')
-            .subtitle-1.white--text Finalizing your installation...
-            .caption Just a moment
+            .text-body-large.text-white Finalizing your installation...
+            .text-body-small Just a moment
           template(v-else)
-            .subtitle-1.white--text Installation complete!
-            .caption Redirecting...
-</template>
+            .text-body-large.text-white Installation complete!
+            .text-body-small Redirecting...</template>
 
 <script lang='ts'>
 import _ from 'lodash'
@@ -258,7 +257,7 @@ export default {
 
 <style lang='scss'>
 .setup {
-  .v-application--wrap {
+  .v-application__wrap {
     padding-top: 10vh;
     background-color: #111;
     background-image: linear-gradient(45deg, mc('blue', '100'), mc('blue', '700'), mc('indigo', '900'));

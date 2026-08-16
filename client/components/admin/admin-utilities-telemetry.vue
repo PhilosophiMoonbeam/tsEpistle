@@ -1,53 +1,56 @@
 <template lang='pug'>
   v-card
-    v-toolbar(flat, color='primary', dark, dense)
-      .subtitle-1 {{ $t('admin:utilities.telemetryTitle') }}
+    v-toolbar(flat, color='primary', density="compact")
+      .text-body-large {{ $t('admin:utilities.telemetryTitle') }}
     v-form
       v-card-text
-        .subtitle-2 What is telemetry?
-        .body-2.mt-3 Telemetry allows the developers of Wiki.js to improve the software by collecting basic anonymized data about its usage and the host info. #[br] This is entirely optional and #[strong absolutely no] private data (such as content or personal data) is collected.
-        .body-2.mt-3 For maximum privacy, a random client ID is generated during setup. This ID is used to group requests together while keeping complete anonymity. You can reset and generate a new one below at any time.
+        .text-label-large What is telemetry?
+        .text-body-medium.mt-3 Telemetry allows the developers of Wiki.js to improve the software by collecting basic anonymized data about its usage and the host info. #[br] This is entirely optional and #[strong absolutely no] private data (such as content or personal data) is collected.
+        .text-body-medium.mt-3 For maximum privacy, a random client ID is generated during setup. This ID is used to group requests together while keeping complete anonymity. You can reset and generate a new one below at any time.
         v-divider.my-4
-        .subtitle-2 What is collected?
-        .body-2.mt-3 When telemetry is enabled, only the following data is transmitted:
+        .text-label-large What is collected?
+        .text-body-medium.mt-3 When telemetry is enabled, only the following data is transmitted:
         v-list
           v-list-item
-            v-avatar: v-icon mdi-information-outline
-            div.v-list-item-content
-              v-list-item-title.body-2 Version of Wiki.js installed
-              v-list-item-subtitle.caption: em e.g. v2.0.123
+            template(v-slot:prepend)
+              v-avatar: v-icon mdi-information-outline
+            v-list-item-title.text-body-medium Version of Wiki.js installed
+            v-list-item-subtitle.text-body-small: em e.g. v2.0.123
           v-list-item
-            v-avatar: v-icon mdi-information-outline
-            div.v-list-item-content
-              v-list-item-title.body-2 Basic OS information
-              v-list-item-subtitle.caption: em Platform (Linux, macOS or Windows), total CPU cores and PostgreSQL version
+            template(v-slot:prepend)
+              v-avatar: v-icon mdi-information-outline
+            v-list-item-title.text-body-medium Basic OS information
+            v-list-item-subtitle.text-body-small: em Platform (Linux, macOS or Windows), total CPU cores and PostgreSQL version
           v-list-item
-            v-avatar: v-icon mdi-information-outline
-            div.v-list-item-content
-              v-list-item-title.body-2 Crash debug data
-              v-list-item-subtitle.caption: em Stack trace of the error
+            template(v-slot:prepend)
+              v-avatar: v-icon mdi-information-outline
+            v-list-item-title.text-body-medium Crash debug data
+            v-list-item-subtitle.text-body-small: em Stack trace of the error
           v-list-item
-            v-avatar: v-icon mdi-information-outline
-            div.v-list-item-content
-              v-list-item-title.body-2 Setup analytics
-              v-list-item-subtitle.caption: em Installation checkpoint reached
-        .body-2 Note that crash debug data is stored for a maximum of 30 days while analytics are stored for a maximum of 16 months, after which it is permanently deleted.
+            template(v-slot:prepend)
+              v-avatar: v-icon mdi-information-outline
+            v-list-item-title.text-body-medium Setup analytics
+            v-list-item-subtitle.text-body-small: em Installation checkpoint reached
+        .text-body-medium Note that crash debug data is stored for a maximum of 30 days while analytics are stored for a maximum of 16 months, after which it is permanently deleted.
         v-divider.my-4
-        .subtitle-2 What is it used for?
-        .body-2.mt-3 Telemetry is used by developers to improve Wiki.js, mostly for the following reasons:
-        v-list(dense)
+        .text-label-large What is it used for?
+        .text-body-medium.mt-3 Telemetry is used by developers to improve Wiki.js, mostly for the following reasons:
+        v-list(density="compact")
           v-list-item
-            v-avatar: v-icon mdi-chevron-right
-            div.v-list-item-content: v-list-item-title: .body-2 Identify critical bugs more easily and fix them in a timely manner.
+            template(v-slot:prepend)
+              v-avatar: v-icon mdi-chevron-right
+            v-list-item-title: .text-body-medium Identify critical bugs more easily and fix them in a timely manner.
           v-list-item
-            v-avatar: v-icon mdi-chevron-right
-            div.v-list-item-content: v-list-item-title: .body-2 Understand the upgrade rate of current installations.
+            template(v-slot:prepend)
+              v-avatar: v-icon mdi-chevron-right
+            v-list-item-title: .text-body-medium Understand the upgrade rate of current installations.
           v-list-item
-            v-avatar: v-icon mdi-chevron-right
-            div.v-list-item-content: v-list-item-title: .body-2  Optimize performance and testing scenarios based on most popular environments.
-        .body-2 Only authorized developers have access to the data. It is not shared to any 3rd party nor is it used for any other application than improving Wiki.js.
+            template(v-slot:prepend)
+              v-avatar: v-icon mdi-chevron-right
+            v-list-item-title: .text-body-medium  Optimize performance and testing scenarios based on most popular environments.
+        .text-body-medium Only authorized developers have access to the data. It is not shared to any 3rd party nor is it used for any other application than improving Wiki.js.
         v-divider.my-4
-        .subtitle-2 Settings
+        .text-label-large Settings
         .mt-3
           v-switch.mt-0(
             v-model='telemetry',
@@ -57,17 +60,16 @@
             persistent-hint
           )
         v-divider.my-4
-        .subtitle-2.mt-3.grey--text.text--darken-1 Client ID
-        .body-2.mt-2 {{clientId}}
+        .text-label-large.mt-3.text-grey-darken-1 Client ID
+        .text-body-medium.mt-2 {{clientId}}
       div.v-card-chin
-        v-btn.px-3(depressed, color='success', @click='updateTelemetry')
-          v-icon(left) mdi-chevron-right
+        v-btn.px-3(variant="flat", color='success', @click='updateTelemetry')
+          v-icon(start) mdi-chevron-right
           | Save Changes
         v-spacer
-        v-btn.px-3(outlined, color='grey', @click='resetClientId')
-          v-icon(left) mdi-autorenew
+        v-btn.px-3(variant="outlined", color='grey', @click='resetClientId')
+          v-icon(start) mdi-autorenew
           span Reset Client ID
-
 </template>
 
 <script lang='ts'>

@@ -1,37 +1,36 @@
 <template lang='pug'>
-  v-container(fluid, grid-list-lg)
+  v-container(fluid)
     v-row
       v-col(cols='12')
         .admin-header
           img.animated.fadeInUp(src='/_assets/svg/icon-venn-diagram.svg', alt='Visualize Pages', style='width: 80px;')
           .admin-header-title
-            .headline.blue--text.text--darken-2.animated.fadeInLeft Visualize Pages
-            .subtitle-1.grey--text.animated.fadeInLeft.wait-p2s Dendrogram representation of your pages
+            .text-headline-medium.text-blue-darken-2.animated.fadeInLeft Visualize Pages
+            .text-body-large.text-grey.animated.fadeInLeft.wait-p2s Dendrogram representation of your pages
           v-spacer
           v-select.mx-5.animated.fadeInDown.wait-p1s(
             v-if='locales.length > 0'
             v-model='currentLocale'
             :items='locales'
             style='flex: 0 1 120px;'
-            solo
-            dense
+            variant="solo"
+            density="compact"
             hide-details
             item-value='code'
             item-title='name'
           )
-          v-btn-toggle.animated.fadeInDown(v-model='graphMode', color='primary', dense, rounded)
+          v-btn-toggle.animated.fadeInDown(v-model='graphMode', color='primary', density="compact", rounded)
             v-btn.px-5(value='htree')
-              v-icon(left, :color='graphMode === `htree` ? `primary` : `grey darken-3`') mdi-sitemap
+              v-icon(start, :color='graphMode === `htree` ? `primary` : `grey-darken-3`') mdi-sitemap
               span.text-none Hierarchical Tree
             v-btn.px-5(value='hradial')
-              v-icon(left, :color='graphMode === `hradial` ? `primary` : `grey darken-3`') mdi-chart-donut-variant
+              v-icon(start, :color='graphMode === `hradial` ? `primary` : `grey-darken-3`') mdi-chart-donut-variant
               span.text-none Hierarchical Radial
             v-btn.px-5(value='rradial')
-              v-icon(left, :color='graphMode === `rradial` ? `primary` : `grey darken-3`') mdi-blur-radial
+              v-icon(start, :color='graphMode === `rradial` ? `primary` : `grey-darken-3`') mdi-blur-radial
               span.text-none Relational Radial
         .admin-pages-visualize-svg(ref='svgContainer', v-show='pages.length >= 1')
-        v-alert(v-if='pages.length < 1', outlined, type='warning', style='max-width: 650px; margin: 0 auto;') Looks like there's no data yet to graph!
-</template>
+        v-alert(v-if='pages.length < 1', variant="outlined", type='warning', style='max-width: 650px; margin: 0 auto;') Looks like there's no data yet to graph!</template>
 
 <script lang='ts'>
 import { defineComponent } from 'vue'

@@ -1,26 +1,26 @@
 <template lang='pug'>
-  v-container(fluid, grid-list-lg)
-    v-row()
+  v-container(fluid)
+    v-row
       v-col(cols='12')
         .admin-header
           img.animated.fadeInUp(src='/_assets/svg/icon-unlock.svg', alt='Authentication', style='width: 80px;')
           .admin-header-title
-            .headline.primary--text.animated.fadeInLeft {{ $t('admin:auth.title') }}
-            .subtitle-1.grey--text.animated.fadeInLeft.wait-p4s {{ $t('admin:auth.subtitle') }}
+            .text-headline-medium.text-primary.animated.fadeInLeft {{ $t('admin:auth.title') }}
+            .text-body-large.text-grey.animated.fadeInLeft.wait-p4s {{ $t('admin:auth.subtitle') }}
           v-spacer
-          v-btn.animated.fadeInDown.wait-p3s(icon, outlined, color='grey', href='https://docs.requarks.io/auth', target='_blank')
+          v-btn.animated.fadeInDown.wait-p3s(icon, variant="outlined", color='grey', href='https://docs.requarks.io/auth', target='_blank')
             v-icon mdi-help-circle
-          v-btn.animated.fadeInDown.wait-p2s.mx-3(icon, outlined, color='grey', @click='refresh')
+          v-btn.animated.fadeInDown.wait-p2s.mx-3(icon, variant="outlined", color='grey', @click='refresh')
             v-icon mdi-refresh
-          v-btn.animated.fadeInDown(color='success', @click='save', depressed, large)
-            v-icon(left) mdi-check
+          v-btn.animated.fadeInDown(color='success', @click='save', variant="flat", size="large")
+            v-icon(start) mdi-check
             span {{$t('common:actions.apply')}}
 
       v-col(lg='3', cols='12')
         v-card.animated.fadeInUp
-          v-toolbar(flat, color='teal', dark, dense)
-            .subtitle-1 {{$t('admin:auth.activeStrategies')}}
-          v-list(two-line, dense).py-0
+          v-toolbar(flat, color='teal', density="compact")
+            .text-body-large {{$t('admin:auth.activeStrategies')}}
+          v-list(lines="two", density="compact").py-0
             draggable(
               v-model='activeStrategies'
               handle='.is-handle'
@@ -28,49 +28,50 @@
               )
               transition-group
                 v-list-item(
-                  v-for='(str, idx) in activeStrategies'
+                  v-for='str in activeStrategies'
                   :key='str.key'
                   @click='selectedStrategy = str.key'
-                  :class='selectedStrategy === str.key ? ($vuetify.theme.current.dark ? `grey darken-5` : `teal lighten-5`) : ``'
+                  :class='selectedStrategy === str.key ? ($vuetify.theme.current.dark ? `bg-grey-darken-5` : `bg-teal-lighten-5`) : ``'
                   )
-                  v-avatar.is-handle(size='24')
-                    v-icon(:color='selectedStrategy === str.key ? `teal` : `grey`') mdi-drag-horizontal
-                  div.v-list-item-content
-                    v-list-item-title.body-2(:class='selectedStrategy === str.key ? `teal--text` : ``') {{ str.displayName }}
-                    v-list-item-subtitle: .caption(:class='selectedStrategy === str.key ? `teal--text ` : ``') {{ str.strategy.title }}
-                  v-avatar(v-if='selectedStrategy === str.key', size='24')
-                    v-icon.animated.fadeInLeft(color='teal', large) mdi-chevron-right
+                  template(v-slot:prepend)
+                    v-avatar.is-handle(size='24')
+                      v-icon(:color='selectedStrategy === str.key ? `teal` : `grey`') mdi-drag-horizontal
+                  v-list-item-title.text-body-medium(:class='selectedStrategy === str.key ? `text-teal` : ``') {{ str.displayName }}
+                  v-list-item-subtitle: .text-body-small(:class='selectedStrategy === str.key ? `text-teal ` : ``') {{ str.strategy.title }}
+                  template(v-slot:append)
+                    v-avatar(v-if='selectedStrategy === str.key', size='24')
+                      v-icon.animated.fadeInLeft(color='teal', size="large") mdi-chevron-right
           div.v-card-chin
-            v-menu(offset-y, bottom, min-width='250px', max-width='550px', max-height='50vh', style='flex: 1 1;', center)
+            v-menu(location="bottom", min-width='250px', max-width='550px', max-height='50vh', style='flex: 1 1;', center)
               template(v-slot:activator='{ props }')
-                v-btn(v-bind='props', color='primary', depressed, block)
-                  v-icon(left) mdi-plus
+                v-btn(v-bind='props', color='primary', variant="flat", block)
+                  v-icon(start) mdi-plus
                   span {{$t('admin:auth.addStrategy')}}
-              v-list(dense)
+              v-list(density="compact")
                 template(v-for='(str, idx) of strategies', :key='str.key')
                   v-list-item(
                     :disabled='str.isDisabled'
                     @click='addStrategy(str)'
                     )
-                    v-avatar(height='24', width='48', tile)
-                      v-img(:src='str.logo', width='48px', height='24px', contain, :style='str.isDisabled ? `opacity: .25;` : ``')
-                    div.v-list-item-content
-                      v-list-item-title {{str.title}}
-                      v-list-item-subtitle: .caption(:style='str.isDisabled ? `opacity: .4;` : ``') {{str.description}}
+                    template(v-slot:prepend)
+                      v-avatar(size='48', rounded='0', style='height: 24px')
+                        v-img(:src='str.logo', width='48px', height='24px', :style='str.isDisabled ? `opacity: .25;` : ``')
+                    v-list-item-title {{str.title}}
+                    v-list-item-subtitle: .text-body-small(:style='str.isDisabled ? `opacity: .4;` : ``') {{str.description}}
                   v-divider(v-if='idx < strategies.length - 1')
 
       v-col(cols='12', lg='9')
         v-card.animated.fadeInUp.wait-p2s
-          v-toolbar(color='primary', dense, flat, dark)
-            .subtitle-1 {{strategy.displayName}} #[em ({{strategy.strategy.title}})]
+          v-toolbar(color='primary', density="compact", flat)
+            .text-body-large {{strategy.displayName}} #[em ({{strategy.strategy.title}})]
             v-spacer
-            v-btn(small, outlined, dark, color='white', :disabled='strategy.key === `local`', @click='deleteStrategy()')
-              v-icon(left) mdi-close
+            v-btn(size="small", variant="outlined", color='white', :disabled='strategy.key === `local`', @click='deleteStrategy()')
+              v-icon(start) mdi-close
               span {{$t('common:actions.delete')}}
           div.v-card-info(color='blue')
             div
               span {{strategy.strategy.description}}
-              .caption: a(:href='strategy.strategy.website') {{strategy.strategy.website}}
+              .text-body-small: a(:href='strategy.strategy.website') {{strategy.strategy.website}}
             v-spacer
             .admin-providerlogo
               img(:src='strategy.strategy.logo', :alt='strategy.strategy.title')
@@ -78,7 +79,7 @@
             .row
               .col-8
                 v-text-field(
-                  outlined
+                  variant="outlined"
                   :label='$t(`admin:auth.displayName`)'
                   v-model='strategy.displayName'
                   prepend-icon='mdi-format-title'
@@ -98,12 +99,12 @@
                   )
             template(v-if='strategy.config && Object.keys(strategy.config).length > 0')
               v-divider
-              .overline.my-5 {{$t('admin:auth.strategyConfiguration')}}
+              .text-label-small.my-5 {{$t('admin:auth.strategyConfiguration')}}
               .pr-3
                 template(v-for='cfg in strategy.config', :key='cfg.key')
                   v-select.mb-3(
                     v-if='cfg.value.type === "string" && cfg.value.enum'
-                    outlined
+                    variant="outlined"
                     :items='cfg.value.enum'
                     :label='cfg.value.title'
                     v-model='cfg.value.value'
@@ -125,7 +126,7 @@
                     )
                   v-textarea.mb-3(
                     v-else-if='cfg.value.type === "string" && cfg.value.multiline'
-                    outlined
+                    variant="outlined"
                     :label='cfg.value.title'
                     v-model='cfg.value.value'
                     prepend-icon='mdi-cog-box'
@@ -135,7 +136,7 @@
                     )
                   v-text-field.mb-3(
                     v-else
-                    outlined
+                    variant="outlined"
                     :label='cfg.value.title'
                     v-model='cfg.value.value'
                     prepend-icon='mdi-cog-box'
@@ -145,7 +146,7 @@
                     :style='cfg.value.maxWidth > 0 ? `max-width:` + cfg.value.maxWidth + `px;` : ``'
                     )
             v-divider
-            .overline.my-5 {{$t('admin:auth.registration')}}
+            .text-label-small.my-5 {{$t('admin:auth.registration')}}
             .pr-3
               v-switch.ml-3(
                 v-model='strategy.selfRegistration'
@@ -159,7 +160,7 @@
                 :label='$t(`admin:auth.domainsWhitelist`)'
                 v-model='strategy.domainWhitelist'
                 prepend-icon='mdi-email-check-outline'
-                outlined
+                variant="outlined"
                 :disabled='!strategy.selfRegistration'
                 :hint='$t(`admin:auth.domainsWhitelistHint`)'
                 persistent-hint
@@ -169,7 +170,7 @@
                 chips
                 )
               v-autocomplete.mt-3.ml-3(
-                outlined
+                variant="outlined"
                 :disabled='!strategy.selfRegistration'
                 :items='groups'
                 item-title='name'
@@ -186,30 +187,29 @@
                 )
 
         v-card.mt-4.wiki-form.animated.fadeInUp.wait-p4s(v-if='selectedStrategy !== `local`')
-          v-toolbar(color='primary', dense, flat, dark)
-            .subtitle-1 {{$t('admin:auth.configReference')}}
+          v-toolbar(color='primary', density="compact", flat)
+            .text-body-large {{$t('admin:auth.configReference')}}
           v-card-text
-            .body-2 {{$t('admin:auth.configReferenceSubtitle')}}
-            v-alert.mt-3.radius-7(v-if='host.length < 8', color='red', outlined, :value='true', icon='mdi-alert')
+            .text-body-medium {{$t('admin:auth.configReferenceSubtitle')}}
+            v-alert.mt-3.radius-7(v-if='host.length < 8', color='red', variant="outlined", :value='true', icon='mdi-alert')
               i18next(path='admin:auth.siteUrlNotSetup', tag='span')
                 strong(place='siteUrl') {{$t('admin:general.siteUrl')}}
                 strong(place='general') {{$t('admin:general.title')}}
-            .pa-3.mt-3.radius-7.grey(v-else, :class='$vuetify.theme.current.dark ? `darken-3-d5` : `lighten-3`')
-              .body-2: strong {{$t('admin:auth.allowedWebOrigins')}}
-              .body-2 {{host}}
+            .pa-3.mt-3.radius-7(v-else, :class='$vuetify.theme.current.dark ? `bg-grey-darken-3-d5` : `bg-grey-lighten-3`')
+              .text-body-medium: strong {{$t('admin:auth.allowedWebOrigins')}}
+              .text-body-medium {{host}}
               v-divider.my-3
-              .body-2: strong {{$t('admin:auth.callbackUrl')}}
-              .body-2 {{host}}/login/{{strategy.key}}/callback
+              .text-body-medium: strong {{$t('admin:auth.callbackUrl')}}
+              .text-body-medium {{host}}/login/{{strategy.key}}/callback
               v-divider.my-3
-              .body-2: strong {{$t('admin:auth.loginUrl')}}
-              .body-2 {{host}}/login
+              .text-body-medium: strong {{$t('admin:auth.loginUrl')}}
+              .text-body-medium {{host}}/login
               v-divider.my-3
-              .body-2: strong {{$t('admin:auth.logoutUrl')}}
-              .body-2 {{host}}
+              .text-body-medium: strong {{$t('admin:auth.logoutUrl')}}
+              .text-body-medium {{host}}
               v-divider.my-3
-              .body-2: strong {{$t('admin:auth.tokenEndpointAuthMethod')}}
-              .body-2 HTTP-POST
-</template>
+              .text-body-medium: strong {{$t('admin:auth.tokenEndpointAuthMethod')}}
+              .text-body-medium HTTP-POST</template>
 
 <script lang='ts'>
 import _ from 'lodash'

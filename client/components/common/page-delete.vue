@@ -3,25 +3,25 @@
     v-model='isShown'
     max-width='550'
     persistent
-    overlay-color='red darken-4'
-    overlay-opacity='.7'
+    scrim='red-darken-4'
+    style='--v-overlay-opacity: .7'
     )
     v-card
       .dialog-header.is-short.is-red
         v-icon.mr-2(color='white') mdi-file-document-box-remove-outline
         span {{$t('common:page.delete')}}
       v-card-text.pt-5
-        i18next.body-1(path='common:page.deleteTitle', tag='div')
-          span.red--text.text--darken-2(place='title') {{pageTitle}}
-        .caption {{$t('common:page.deleteSubtitle')}}
-        v-chip.mt-3.ml-0.mr-1(label, color='red lighten-4', small)
-          .caption.red--text.text--darken-2 {{pageLocale.toUpperCase()}}
-        v-chip.mt-3.mx-0(label, color='red lighten-5', small)
-          span.red--text.text--darken-2 /{{pagePath}}
+        i18next.text-body-large(path='common:page.deleteTitle', tag='div')
+          span.text-red-darken-2(place='title') {{pageTitle}}
+        .text-body-small {{$t('common:page.deleteSubtitle')}}
+        v-chip.mt-3.ml-0.mr-1(label, color="red-lighten-4", size="small")
+          .text-body-small.text-red-darken-2 {{pageLocale.toUpperCase()}}
+        v-chip.mt-3.mx-0(label, color="red-lighten-5", size="small")
+          span.text-red-darken-2 /{{pagePath}}
       div.v-card-chin
         v-spacer
-        v-btn(text, @click='discard', :disabled='loading') {{$t('common:actions.cancel')}}
-        v-btn.px-4(color='red darken-2', @click='deletePage', :loading='loading').white--text {{$t('common:actions.delete')}}
+        v-btn(variant="text", @click='discard', :disabled='loading') {{$t('common:actions.cancel')}}
+        v-btn.px-4(color="red-darken-2", @click='deletePage', :loading='loading').text-white {{$t('common:actions.delete')}}
 </template>
 
 <script lang='ts'>
@@ -103,7 +103,7 @@ export default defineComponent({
     .application {
       background-color: mc('grey', '900');
     }
-    .application--wrap {
+    .v-application__wrap {
       transform-style: preserve-3d;
       transform: translateZ(-5vw) rotateX(2deg);
       border-radius: 7px;
@@ -113,7 +113,7 @@ export default defineComponent({
   body.page-deleted {
     perspective: 50vw;
 
-    .application--wrap {
+    .v-application__wrap {
       transform-style: preserve-3d;
       transform: translateZ(-1000vw) rotateX(60deg);
       opacity: 0;

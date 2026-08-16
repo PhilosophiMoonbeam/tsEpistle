@@ -1,16 +1,16 @@
 <template lang='pug'>
-  v-app-bar.nav-header(color='black', dark, app, :clipped-left='!$vuetify.locale.isRtl', :clipped-right='$vuetify.locale.isRtl', fixed, flat, :extended='searchIsShown && $vuetify.display.smAndDown')
+  v-app-bar.nav-header(color='black', flat, :extended='searchIsShown && $vuetify.display.smAndDown')
     template(v-slot:extension v-if='searchIsShown && $vuetify.display.smAndDown')
       v-toolbar(color='deep-purple', flat)
         v-text-field(
           ref='searchFieldMobile'
           v-model='search'
           clearable
-          background-color='deep-purple'
+          bg-color='deep-purple'
           color='white'
           :label='$t(`common:header.search`)'
           single-line
-          solo
+          variant="solo"
           flat
           hide-details
           prepend-inner-icon='mdi-magnify'
@@ -20,14 +20,14 @@
         )
     v-row(no-gutters)
       v-col(cols='5', md='4')
-        v-toolbar.nav-header-inner(color='black', dark, flat, :class='$vuetify.locale.isRtl ? `pr-3` : `pl-3`')
+        v-toolbar.nav-header-inner(color='black', flat, :class='$vuetify.locale.isRtl ? `pr-3` : `pl-3`')
           slot(name='mobileBrand', v-if='$slots.mobileBrand && $vuetify.display.smAndDown')
           v-avatar(v-if='!$slots.mobileBrand || $vuetify.display.mdAndUp', tile, size='34', @click='goHome')
             img.org-logo(:src='logoUrl', :alt='title')
           v-toolbar-title(v-if='!$slots.mobileBrand || $vuetify.display.mdAndUp', :class='{ "mx-3": $vuetify.display.mdAndUp, "mx-1": $vuetify.display.smAndDown }')
-            span.subheading {{title}}
+            span.text-body-large {{title}}
       v-col(md='4', v-if='$vuetify.display.mdAndUp')
-        v-toolbar.nav-header-inner(color='black', dark, flat)
+        v-toolbar.nav-header-inner(color='black', flat)
           slot(name='mid')
             transition(name='navHeaderSearch', v-if='searchIsShown')
               v-text-field(
@@ -37,7 +37,7 @@
                 color='white',
                 :label='$t(`common:header.search`)',
                 single-line,
-                solo
+                variant="solo"
                 flat
                 rounded
                 hide-details,
@@ -51,13 +51,13 @@
                 @keyup.up='searchMove(`up`)'
                 autocomplete='off'
               )
-            v-tooltip(bottom)
+            v-tooltip(location="bottom")
               template(v-slot:activator='{ props }')
                 v-btn.ml-2.mr-0(icon, v-bind='props', href='/t', :aria-label='$t(`common:header.browseTags`)')
                   v-icon(color='grey') mdi-tag-multiple
               span {{$t('common:header.browseTags')}}
       v-col(cols='7', md='4')
-        v-toolbar.nav-header-inner.pr-4(color='black', dark, flat)
+        v-toolbar.nav-header-inner.pr-4(color='black', flat)
           v-spacer
           .navHeaderLoading.mr-3
             v-progress-circular(indeterminate, color='blue', :size='22', :width='2' v-show='isLoading', aria-label='Page loading')
@@ -77,9 +77,9 @@
           //- LANGUAGES
 
           template(v-if='mode === `view` && locales.length > 0')
-            v-menu(offset-y, bottom, transition='slide-y-transition', max-height='320px', min-width='210px', left)
+            v-menu(location="bottom left", transition='slide-y-transition', max-height='320px', min-width='210px')
               template(v-slot:activator='{ props: menuProps }')
-                v-tooltip(bottom)
+                v-tooltip(location="bottom")
                   template(v-slot:activator='{ props: tooltipProps }')
                     v-btn(
                       icon
@@ -92,18 +92,18 @@
                       v-icon(color='grey') mdi-web
                   span {{$t('common:header.language')}}
               v-list(nav)
-                template(v-for='(lc, idx) of locales')
+                template(v-for='lc of locales', :key='lc.code')
                   v-list-item(@click='changeLocale(lc)')
-                    div.v-list-item-action(style='min-width:auto;'): v-chip(:color='lc.code === locale ? `blue` : `grey`', small, label, dark) {{lc.code.toUpperCase()}}
+                    template(v-slot:append): v-chip(:color='lc.code === locale ? `blue` : `grey`', size="small", label) {{lc.code.toUpperCase()}}
                     v-list-item-title {{lc.name}}
             v-divider(vertical)
 
           //- PAGE ACTIONS
 
           template(v-if='hasAnyPagePermissions && path && mode !== `edit`')
-            v-menu(offset-y, bottom, transition='slide-y-transition', left)
+            v-menu(location="bottom left", transition='slide-y-transition')
               template(v-slot:activator='{ props: menuProps }')
-                v-tooltip(bottom)
+                v-tooltip(location="bottom")
                   template(v-slot:activator='{ props: tooltipProps }')
                     v-btn(
                       icon
@@ -115,40 +115,46 @@
                       )
                       v-icon(color='grey') mdi-file-document-edit-outline
                   span {{$t('common:header.pageActions')}}
-              v-list(nav, :light='!$vuetify.theme.current.dark', :dark='$vuetify.theme.current.dark', :class='$vuetify.theme.current.dark ? `grey darken-4` : ``')
-                .overline.pa-4.grey--text {{$t('common:header.currentPage')}}
+              v-list(nav, :class='$vuetify.theme.current.dark ? `bg-grey-darken-4` : ``')
+                .text-label-small.pa-4.text-grey {{$t('common:header.currentPage')}}
                 v-list-item.pl-4(@click='pageView', v-if='mode !== `view`')
-                  v-avatar(size='24', tile): v-icon(color='indigo') mdi-file-document-outline
-                  v-list-item-title.body-2 {{$t('common:header.view')}}
+                  template(v-slot:prepend)
+                    v-avatar(size='24', tile): v-icon(color='indigo') mdi-file-document-outline
+                  v-list-item-title.text-body-medium {{$t('common:header.view')}}
                 v-list-item.pl-4(@click='pageEdit', v-if='mode !== `edit` && hasWritePagesPermission')
-                  v-avatar(size='24', tile): v-icon(color='indigo') mdi-file-document-edit-outline
-                  v-list-item-title.body-2 {{$t('common:header.edit')}}
+                  template(v-slot:prepend)
+                    v-avatar(size='24', tile): v-icon(color='indigo') mdi-file-document-edit-outline
+                  v-list-item-title.text-body-medium {{$t('common:header.edit')}}
                 v-list-item.pl-4(@click='pageHistory', v-if='mode !== `history` && hasReadHistoryPermission')
-                  v-avatar(size='24', tile): v-icon(color='indigo') mdi-history
-                  div.v-list-item-content
-                    v-list-item-title.body-2 {{$t('common:header.history')}}
+                  template(v-slot:prepend)
+                    v-avatar(size='24', tile): v-icon(color='indigo') mdi-history
+                  v-list-item-title.text-body-medium {{$t('common:header.history')}}
                 v-list-item.pl-4(@click='pageSource', v-if='mode !== `source` && hasReadSourcePermission')
-                  v-avatar(size='24', tile): v-icon(color='indigo') mdi-code-tags
-                  v-list-item-title.body-2 {{$t('common:header.viewSource')}}
+                  template(v-slot:prepend)
+                    v-avatar(size='24', tile): v-icon(color='indigo') mdi-code-tags
+                  v-list-item-title.text-body-medium {{$t('common:header.viewSource')}}
                 v-list-item.pl-4(@click='pageConvert', v-if='hasWritePagesPermission')
-                  v-avatar(size='24', tile): v-icon(color='indigo') mdi-lightning-bolt
-                  v-list-item-title.body-2 {{$t('common:header.convert')}}
+                  template(v-slot:prepend)
+                    v-avatar(size='24', tile): v-icon(color='indigo') mdi-lightning-bolt
+                  v-list-item-title.text-body-medium {{$t('common:header.convert')}}
                 v-list-item.pl-4(@click='pageDuplicate', v-if='hasWritePagesPermission')
-                  v-avatar(size='24', tile): v-icon(color='indigo') mdi-content-duplicate
-                  v-list-item-title.body-2 {{$t('common:header.duplicate')}}
+                  template(v-slot:prepend)
+                    v-avatar(size='24', tile): v-icon(color='indigo') mdi-content-duplicate
+                  v-list-item-title.text-body-medium {{$t('common:header.duplicate')}}
                 v-list-item.pl-4(@click='pageMove', v-if='hasManagePagesPermission')
-                  v-avatar(size='24', tile): v-icon(color='indigo') mdi-content-save-move-outline
-                  div.v-list-item-content
-                    v-list-item-title.body-2 {{$t('common:header.move')}}
+                  template(v-slot:prepend)
+                    v-avatar(size='24', tile): v-icon(color='indigo') mdi-content-save-move-outline
+                  v-list-item-title.text-body-medium {{$t('common:header.move')}}
                 v-list-item.pl-4(@click='pageDelete', v-if='hasDeletePagesPermission')
-                  v-avatar(size='24', tile): v-icon(color='red darken-2') mdi-trash-can-outline
-                  v-list-item-title.body-2 {{$t('common:header.delete')}}
+                  template(v-slot:prepend)
+                    v-avatar(size='24', tile): v-icon(color="red-darken-2") mdi-trash-can-outline
+                  v-list-item-title.text-body-medium {{$t('common:header.delete')}}
             v-divider(vertical)
 
           //- NEW PAGE
 
           template(v-if='hasNewPagePermission && path && mode !== `edit`')
-            v-tooltip(bottom)
+            v-tooltip(location="bottom")
               template(v-slot:activator='{ props }')
                 v-btn(icon, tile, height='64', v-bind='props', @click='pageNew', :aria-label='$t(`common:header.newPage`)')
                   v-icon(color='grey') mdi-text-box-plus-outline
@@ -158,21 +164,21 @@
           //- ADMIN
 
           template(v-if='isAuthenticated && isAdmin')
-            v-tooltip(bottom, v-if='mode !== `admin`')
+            v-tooltip(location="bottom", v-if='mode !== `admin`')
               template(v-slot:activator='{ props }')
                 v-btn(icon, tile, height='64', v-bind='props', href='/a', :aria-label='$t(`common:header.admin`)')
                   v-icon(color='grey') mdi-cog
               span {{$t('common:header.admin')}}
-            v-btn(v-else, text, tile, height='64', href='/', :aria-label='$t(`common:actions.exit`)')
-              v-icon(left, color='grey') mdi-exit-to-app
+            v-btn(v-else, variant="text", tile, height='64', href='/', :aria-label='$t(`common:actions.exit`)')
+              v-icon(start, color='grey') mdi-exit-to-app
               span {{$t('common:actions.exit')}}
             v-divider(vertical)
 
           //- ACCOUNT
 
-          v-menu(v-if='isAuthenticated', offset-y, bottom, min-width='300', transition='slide-y-transition', left)
+          v-menu(v-if='isAuthenticated', location="bottom left", min-width='300', transition='slide-y-transition')
             template(v-slot:activator='{ props: menuProps }')
-              v-tooltip(bottom)
+              v-tooltip(location="bottom")
                 template(v-slot:activator='{ props: tooltipProps }')
                   v-btn(
                     icon
@@ -187,26 +193,25 @@
                       v-img(:src='picture.url')
                 span {{$t('common:header.account')}}
             v-list(nav)
-              v-list-item.py-3.grey(:class='$vuetify.theme.current.dark ? `darken-4-l5` : `lighten-5`')
-                v-avatar
-                  v-avatar.blue(v-if='picture.kind === `initials`', :size='40')
-                    span.white--text.subheading {{picture.initials}}
-                  v-avatar(v-else-if='picture.kind === `image`', :size='40')
-                    v-img(:src='picture.url')
-                div.v-list-item-content
-                  v-list-item-title {{name}}
-                  v-list-item-subtitle {{email}}
+              v-list-item.py-3(:class='$vuetify.theme.current.dark ? `bg-grey-darken-4-l5` : `bg-grey-lighten-5`')
+                template(v-slot:prepend)
+                  v-avatar
+                    v-avatar.bg-blue(v-if='picture.kind === `initials`', :size='40')
+                      span.text-white.text-body-large {{picture.initials}}
+                    v-avatar(v-else-if='picture.kind === `image`', :size='40')
+                      v-img(:src='picture.url')
+                v-list-item-title {{name}}
+                v-list-item-subtitle {{email}}
               v-list-item(href='/p')
-                div.v-list-item-action: v-icon(color='blue-grey') mdi-face-profile
-                div.v-list-item-content
-                  v-list-item-title(:class='$vuetify.theme.current.dark ? `blue-grey--text text--lighten-3` : `blue-grey--text`') {{$t('common:header.profile')}}
+                template(v-slot:append): v-icon(color='blue-grey') mdi-face-profile
+                v-list-item-title(:class='$vuetify.theme.current.dark ? `text-blue-grey-lighten-3` : `text-blue-grey`') {{$t('common:header.profile')}}
               v-list-item(@click='logout')
-                div.v-list-item-action: v-icon(color='red') mdi-logout
-                v-list-item-title.red--text {{$t('common:header.logout')}}
+                template(v-slot:append): v-icon(color='red') mdi-logout
+                v-list-item-title.text-red {{$t('common:header.logout')}}
 
-          v-tooltip(v-else, left)
+          v-tooltip(v-else, location="left")
             template(v-slot:activator='{ props }')
-              v-btn(icon, v-bind='props', color='grey darken-3', href='/login', :aria-label='$t(`common:header.login`)')
+              v-btn(icon, v-bind='props', color="grey-darken-3", href='/login', :aria-label='$t(`common:header.login`)')
                 v-icon(color='grey') mdi-account-circle
             span {{$t('common:header.login')}}
 
@@ -219,9 +224,8 @@
     .nav-header-dev(v-if='isDevMode')
       v-icon mdi-alert
       div
-        .overline DEVELOPMENT VERSION
-        .overline This code base is NOT for production use!
-</template>
+        .text-label-small DEVELOPMENT VERSION
+        .text-label-small This code base is NOT for production use!</template>
 
 <script lang='ts'>
 import { defineAsyncComponent, defineComponent } from 'vue'
@@ -498,7 +502,7 @@ export default defineComponent({
     .v-toolbar__content {
       padding: 0;
     }
-    .v-text-field .v-input__prepend-inner {
+    .v-text-field .v-field__prepend-inner {
       padding: 0 14px 0 5px;
       padding-right: 14px;
     }
@@ -530,7 +534,7 @@ export default defineComponent({
     right: 12px;
     border-radius: 4px !important;
 
-    @at-root .v-application--is-rtl & {
+    @at-root .v-locale--is-rtl & {
       right: initial;
       left: 12px;
     }

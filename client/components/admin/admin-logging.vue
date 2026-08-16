@@ -1,20 +1,20 @@
 <template lang='pug'>
-  v-container(fluid, grid-list-lg)
-    v-row()
+  v-container(fluid)
+    v-row
       v-col(cols='12')
         .admin-header
           img(src='/_assets/svg/icon-registry-editor.svg', alt='Logging', style='width: 80px;')
           .admin-header-title
-            .headline.primary--text Logging
-            .subtitle-1.grey--text Configure system loggers and inspect the live trail
+            .text-headline-medium.text-primary Logging
+            .text-body-large.text-grey Configure system loggers and inspect the live trail
           v-spacer
-          v-btn(outline, color='grey', @click='refresh', large)
+          v-btn(variant="outlined", color='grey', @click='refresh', size="large")
             v-icon refresh
-          v-btn(color='black', depressed, @click='toggleConsole', large)
+          v-btn(color='black', variant="flat", @click='toggleConsole', size="large")
             v-icon check
             span Live Trail
-          v-btn(color='success', @click='save', depressed, large)
-            v-icon(left) check
+          v-btn(color='success', @click='save', variant="flat", size="large")
+            v-icon(start) check
             span {{$t('common:actions.apply')}}
 
         v-card.mt-3
@@ -25,11 +25,11 @@
           v-tabs-window(v-model='tab')
             v-tabs-window-item(value='settings', :transition='false', :reverse-transition='false')
               v-card.pa-3(flat, tile)
-                .body-2.grey--text.text--darken-1 Select which logging service to enable:
-                .caption.grey--text.pb-2 Some loggers require additional configuration in their dedicated tab (when selected).
+                .text-body-medium.text-grey-darken-1 Select which logging service to enable:
+                .text-body-small.text-grey.pb-2 Some loggers require additional configuration in their dedicated tab (when selected).
                 v-form
                   v-checkbox.my-0(
-                    v-for='(logger, n) in loggers'
+                    v-for='logger in loggers'
                     v-model='logger.isEnabled'
                     :key='logger.key'
                     :label='logger.title'
@@ -43,16 +43,16 @@
                   .loggerlogo
                     img(:src='logger.logo', :alt='logger.title')
                   v-list-subheader.pl-0 {{logger.title}}
-                  .caption {{logger.description}}
-                  .caption: a(:href='logger.website') {{logger.website}}
+                  .text-body-small {{logger.description}}
+                  .text-body-small: a(:href='logger.website') {{logger.website}}
                   v-divider.mt-3
                   v-list-subheader.pl-0 Logger Configuration
-                  .body-1.ml-3(v-if='!logger.config || logger.config.length < 1') This logger has no configuration options you can modify.
+                  .text-body-large.ml-3(v-if='!logger.config || logger.config.length < 1') This logger has no configuration options you can modify.
                   template(v-else, v-for='cfg in logger.config')
                     v-select(
                       v-if='cfg.value.type === "string" && cfg.value.enum'
-                      outline
-                      background-color='grey lighten-2'
+                      variant="outlined"
+                      bg-color='grey-lighten-2'
                       :items='cfg.value.enum'
                       :key='cfg.key'
                       :label='cfg.value.title'
@@ -74,8 +74,8 @@
                       )
                     v-text-field(
                       v-else
-                      outline
-                      background-color='grey lighten-2'
+                      variant="outlined"
+                      bg-color='grey-lighten-2'
                       :key='cfg.key'
                       :label='cfg.value.title'
                       v-model='cfg.value.value'
@@ -86,14 +86,14 @@
                       )
                   v-divider.mt-3
                   v-list-subheader.pl-0 Log Level
-                  .body-1.ml-3 Select the minimum error level that will be reported to this logger.
+                  .text-body-large.ml-3 Select the minimum error level that will be reported to this logger.
                   v-row
                     v-col(cols='12', md='6', lg='4')
                       .pt-3
                         v-select(
                           single-line
-                          outline
-                          background-color='grey lighten-2'
+                          variant="outlined"
+                          bg-color='grey-lighten-2'
                           :items='levels'
                           label='Level'
                           v-model='logger.level'
@@ -102,8 +102,7 @@
                           persistent-hint
                         )
 
-    logging-console(v-model='showConsole')
-</template>
+    logging-console(v-model='showConsole')</template>
 
 <script lang='ts'>
 import _ from 'lodash'

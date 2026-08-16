@@ -1,55 +1,55 @@
 <template lang='pug'>
-  v-toolbar.radius-7(flat, :color='$vuetify.theme.current.dark ? "grey darken-4-l3" : "grey lighten-3"')
-    .body-2.mr-3 {{$t('common:duration.every')}}
+  v-toolbar.radius-7(flat, :color='$vuetify.theme.current.dark ? "grey-darken-4-l3" : "grey-lighten-3"')
+    .text-body-medium.mr-3 {{$t('common:duration.every')}}
     v-text-field(
-      solo
+      variant="solo"
       hide-details
       flat
       reverse
       v-model='minutes'
       style='flex: 1 1 70px;'
     )
-    .body-2.mx-3 {{$t('common:duration.minutes')}}
+    .text-body-medium.mx-3 {{$t('common:duration.minutes')}}
     v-divider.mr-3
     v-text-field(
-      solo
+      variant="solo"
       hide-details
       flat
       reverse
       v-model='hours'
       style='flex: 1 1 70px;'
     )
-    .body-2.mx-3 {{$t('common:duration.hours')}}
+    .text-body-medium.mx-3 {{$t('common:duration.hours')}}
     v-divider.mr-3
     v-text-field(
-      solo
+      variant="solo"
       hide-details
       flat
       reverse
       v-model='days'
       style='flex: 1 1 70px;'
     )
-    .body-2.mx-3 {{$t('common:duration.days')}}
+    .text-body-medium.mx-3 {{$t('common:duration.days')}}
     v-divider.mr-3
     v-text-field(
-      solo
+      variant="solo"
       hide-details
       flat
       reverse
       v-model='months'
       style='flex: 1 1 70px;'
     )
-    .body-2.mx-3 {{$t('common:duration.months')}}
+    .text-body-medium.mx-3 {{$t('common:duration.months')}}
     v-divider.mr-3
     v-text-field(
-      solo
+      variant="solo"
       hide-details
       flat
       reverse
       v-model='years'
       style='flex: 1 1 70px;'
     )
-    .body-2.mx-3 {{$t('common:duration.years')}}
+    .text-body-medium.mx-3 {{$t('common:duration.years')}}
 </template>
 
 <script lang='ts'>

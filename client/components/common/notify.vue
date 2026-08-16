@@ -1,13 +1,13 @@
 <template lang='pug'>
   v-snackbar.nav-notify(
     :color='notification.style'
-    top
-    multi-line
+    location="top"
+    min-height="68"
     v-model='notificationState'
     :timeout='6000'
     )
     .text-left
-      v-icon.mr-3(dark) mdi-{{ notification.icon }}
+      v-icon.mr-3 mdi-{{ notification.icon }}
       span {{ notification.message }}
 </template>
 
@@ -34,7 +34,7 @@ export default {
   padding-top: 0;
   z-index: 999;
 
-  .v-snack__wrapper {
+  .v-snackbar__wrapper {
     border-top-left-radius: 0;
     border-top-right-radius: 0;
     position: relative;

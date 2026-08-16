@@ -1,25 +1,22 @@
 <template lang='pug'>
-  v-app(:dark='$vuetify.theme.current.dark').profile
+  v-app().profile
     nav-header
-    v-navigation-drawer.pb-0(v-model='profileDrawerShown', app, fixed, clipped, left, permanent)
-      v-list(dense, nav)
+    v-navigation-drawer.pb-0(v-model='profileDrawerShown', left, permanent)
+      v-list(density="compact", nav)
         v-list-item(to='/profile', color='primary')
-          div.v-list-item-action: v-icon mdi-face-profile
-          div.v-list-item-content
-            v-list-item-title {{$t('profile:title')}}
+          template(v-slot:append): v-icon mdi-face-profile
+          v-list-item-title {{$t('profile:title')}}
         v-list-item(to='/pages', color='primary')
-          div.v-list-item-action: v-icon mdi-file-document-outline
-          div.v-list-item-content
-            v-list-item-title {{$t('profile:pages.title')}}
+          template(v-slot:append): v-icon mdi-file-document-outline
+          v-list-item-title {{$t('profile:pages.title')}}
 
-    v-main(:class='$vuetify.theme.current.dark ? "grey darken-4" : "grey lighten-5"')
+    v-main(:class='$vuetify.theme.current.dark ? "bg-grey-darken-4" : "bg-grey-lighten-5"')
       transition(name='profile-router')
         router-view
 
     nav-footer
     notify
-    search-results
-</template>
+    search-results</template>
 
 <script lang='ts'>
 import { wikiStore } from '@/store/index.ts'

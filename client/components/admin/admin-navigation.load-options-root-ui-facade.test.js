@@ -95,6 +95,6 @@ describe('admin-navigation root UI facade for read-only option loaders and refre
     expect(source).toContain("wikiStore.startLoading('admin-navigation-save')")
     expect(source).toContain('wikiStore.showError(err)')
     expect(source).toContain("wikiStore.stopLoading('admin-navigation-save')")
-    expect(source).toContain("v-btn.animated.fadeInDown(color='success', depressed, @click='save', large)")
+    expect(source).toContain('v-btn.animated.fadeInDown(color=\'success\', variant="flat", @click=\'save\', size="large")')
   })
 })

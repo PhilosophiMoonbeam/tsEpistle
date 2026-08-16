@@ -1,60 +1,59 @@
 <template lang="pug">
   div(v-intersect.once='onIntersect')
     v-textarea#discussion-new(
-      outlined
+      variant="outlined"
       flat
       :placeholder='$t(`common:comments.newPlaceholder`)'
       auto-grow
-      dense
+      density="compact"
       rows='3'
       hide-details
       v-model='newcomment'
-      color='blue-grey darken-2'
-      :background-color='$vuetify.theme.current.dark ? `grey darken-5` : `white`'
+      color="blue-grey-darken-2"
+      :bg-color='$vuetify.theme.current.dark ? `grey-darken-5` : `white`'
       v-if='permissions.write'
       :aria-label='$t(`common:comments.fieldContent`)'
     )
-    v-row.mt-2(dense, v-if='!isAuthenticated && permissions.write')
+    v-row.mt-2(density="compact", v-if='!isAuthenticated && permissions.write')
       v-col(cols='12', lg='6')
         v-text-field(
-          outlined
-          color='blue-grey darken-2'
-          :background-color='$vuetify.theme.current.dark ? `grey darken-5` : `white`'
+          variant="outlined"
+          color="blue-grey-darken-2"
+          :bg-color='$vuetify.theme.current.dark ? `grey-darken-5` : `white`'
           :placeholder='$t(`common:comments.fieldName`)'
           hide-details
-          dense
+          density="compact"
           autocomplete='name'
           v-model='guestName'
           :aria-label='$t(`common:comments.fieldName`)'
         )
       v-col(cols='12', lg='6')
         v-text-field(
-          outlined
-          color='blue-grey darken-2'
-          :background-color='$vuetify.theme.current.dark ? `grey darken-5` : `white`'
+          variant="outlined"
+          color="blue-grey-darken-2"
+          :bg-color='$vuetify.theme.current.dark ? `grey-darken-5` : `white`'
           :placeholder='$t(`common:comments.fieldEmail`)'
           hide-details
           type='email'
-          dense
+          density="compact"
           autocomplete='email'
           v-model='guestEmail'
           :aria-label='$t(`common:comments.fieldEmail`)'
         )
     .comments-actions.d-flex.align-center.pt-3(v-if='permissions.write')
       v-icon.mr-1(color='blue-grey') mdi-language-markdown-outline
-      .caption.blue-grey--text {{$t('common:comments.markdownFormat')}}
+      .text-body-small.text-blue-grey {{$t('common:comments.markdownFormat')}}
       v-spacer
-      .comments-posting-as.caption(v-if='isAuthenticated')
+      .comments-posting-as.text-body-small(v-if='isAuthenticated')
         i18next(tag='span', path='common:comments.postingAs')
           strong(place='name') {{userDisplayName}}
       v-btn.comments-submit(
-        dark
-        color='blue-grey darken-2'
+        color="blue-grey-darken-2"
         @click='postComment'
-        depressed
+        variant="flat"
         :aria-label='$t(`common:comments.postComment`)'
         )
-        v-icon(left) mdi-comment
+        v-icon(start) mdi-comment
         span.text-none {{$t('common:comments.postComment')}}
     v-divider.mt-3(v-if='permissions.write')
     .pa-5.d-flex.align-center.justify-center(v-if='isLoading && !hasLoadedOnce')
@@ -65,14 +64,14 @@
         color='blue-grey'
         :aria-label='$t(`common:comments.loading`)'
       )
-      .caption.blue-grey--text.pl-3: em {{$t('common:comments.loading')}}
+      .text-body-small.text-blue-grey.pl-3: em {{$t('common:comments.loading')}}
     v-timeline(
-      dense
+      density="compact"
       v-else-if='comments && comments.length > 0'
       )
       v-timeline-item.comments-post(
-        color='pink darken-4'
-        large
+        dot-color="pink-darken-4"
+        size="large"
         v-for='cm of comments'
         :key='`comment-` + cm.id'
         :id='`comment-post-id-` + cm.id'
@@ -80,58 +79,56 @@
         template(v-slot:icon)
           v-avatar(color='blue-grey')
             //- v-img(src='http://i.pravatar.cc/64')
-            span.white--text.title {{cm.initials}}
+            span.text-white.text-headline-small {{cm.initials}}
         v-card.elevation-1
           v-card-text
             .comments-post-actions(v-if='permissions.manage && !isBusy && commentEditId === 0')
-              v-icon.mr-3(small, @click='editComment(cm)') mdi-pencil
-              v-icon(small, @click='deleteCommentConfirm(cm)') mdi-delete
-            .comments-post-name.caption: strong {{cm.authorName}}
-            .comments-post-date.overline.grey--text {{ $helpers.formatMoment(cm.createdAt, 'from') }} #[em(v-if='cm.createdAt !== cm.updatedAt') - {{$t('common:comments.modified', { reldate: $helpers.formatMoment(cm.updatedAt, 'from') })}}]
+              v-icon.mr-3(size="small", @click='editComment(cm)') mdi-pencil
+              v-icon(size="small", @click='deleteCommentConfirm(cm)') mdi-delete
+            .comments-post-name.text-body-small: strong {{cm.authorName}}
+            .comments-post-date.text-label-small.text-grey {{ $helpers.formatMoment(cm.createdAt, 'from') }} #[em(v-if='cm.createdAt !== cm.updatedAt') - {{$t('common:comments.modified', { reldate: $helpers.formatMoment(cm.updatedAt, 'from') })}}]
             .comments-post-content.mt-3(v-if='commentEditId !== cm.id', v-html='cm.render')
             .comments-post-editcontent.mt-3(v-else)
               v-textarea(
-                outlined
+                variant="outlined"
                 flat
                 auto-grow
-                dense
+                density="compact"
                 rows='3'
                 hide-details
                 v-model='commentEditContent'
-                color='blue-grey darken-2'
-                :background-color='$vuetify.theme.current.dark ? `grey darken-5` : `white`'
+                color="blue-grey-darken-2"
+                :bg-color='$vuetify.theme.current.dark ? `grey-darken-5` : `white`'
               )
               .d-flex.align-center.pt-3
                 v-spacer
                 v-btn.mr-3(
-                  dark
-                  color='blue-grey darken-2'
+                  color="blue-grey-darken-2"
                   @click='editCommentCancel'
-                  outlined
+                  variant="outlined"
                   )
-                  v-icon(left) mdi-close
+                  v-icon(start) mdi-close
                   span.text-none {{$t('common:actions.cancel')}}
                 v-btn(
-                  dark
-                  color='blue-grey darken-2'
+                  color="blue-grey-darken-2"
                   @click='updateComment'
-                  depressed
+                  variant="flat"
                   )
-                  v-icon(left) mdi-comment
+                  v-icon(start) mdi-comment
                   span.text-none {{$t('common:comments.updateComment')}}
-    .pt-5.text-center.body-2.blue-grey--text(v-else-if='permissions.write') {{$t('common:comments.beFirst')}}
-    .text-center.body-2.blue-grey--text(v-else) {{$t('common:comments.none')}}
+    .pt-5.text-center.text-body-medium.text-blue-grey(v-else-if='permissions.write') {{$t('common:comments.beFirst')}}
+    .text-center.text-body-medium.text-blue-grey(v-else) {{$t('common:comments.none')}}
 
     v-dialog(v-model='deleteCommentDialogShown', max-width='500')
       v-card
         .dialog-header.is-red {{$t('common:comments.deleteConfirmTitle')}}
         v-card-text.pt-5
           span {{$t('common:comments.deleteWarn')}}
-          .caption: strong {{$t('common:comments.deletePermanentWarn')}}
+          .text-body-small: strong {{$t('common:comments.deletePermanentWarn')}}
         div.v-card-chin
           v-spacer
-          v-btn(text, @click='deleteCommentDialogShown = false') {{$t('common:actions.cancel')}}
-          v-btn(color='red', dark, @click='deleteComment') {{$t('common:actions.delete')}}
+          v-btn(variant="text", @click='deleteCommentDialogShown = false') {{$t('common:actions.cancel')}}
+          v-btn(color='red', @click='deleteComment') {{$t('common:actions.delete')}}
 </template>
 
 <script lang='ts'>

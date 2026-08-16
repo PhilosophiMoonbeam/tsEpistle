@@ -1,41 +1,41 @@
 <template lang='pug'>
-  v-container(fluid, grid-list-lg)
+  v-container(fluid)
     v-row
       v-col(cols='12')
         .admin-header
           img.animated.fadeInUp(src='/_assets/svg/icon-people.svg', alt='Groups', style='width: 80px;')
           .admin-header-title
-            .headline.blue--text.text--darken-2.animated.fadeInLeft Groups
-            .subtitle-1.grey--text.animated.fadeInLeft.wait-p4s Manage groups and their permissions
+            .text-headline-medium.text-blue-darken-2.animated.fadeInLeft Groups
+            .text-body-large.text-grey.animated.fadeInLeft.wait-p4s Manage groups and their permissions
           v-spacer
           v-btn.animated.fadeInDown.wait-p3s(
             icon
-            outlined
+            variant="outlined"
             color='grey'
             href='https://docs.requarks.io/groups'
             target='_blank'
             aria-label='Group documentation'
           )
             v-icon mdi-help-circle
-          v-btn.animated.fadeInDown.wait-p2s.mx-3(color='grey', outlined, @click='refresh', icon, aria-label='Refresh groups')
+          v-btn.animated.fadeInDown.wait-p2s.mx-3(color='grey', variant="outlined", @click='refresh', icon, aria-label='Refresh groups')
             v-icon mdi-refresh
           v-dialog(v-model='newGroupDialog', max-width='500', :fullscreen='$vuetify.display.smAndDown')
             template(v-slot:activator='{ props }')
               v-btn.animated.fadeInDown(
                 color='primary'
-                depressed
+                variant="flat"
                 v-bind='props'
-                large
+                size="large"
                 :icon='$vuetify.display.smAndDown'
                 aria-label='New group'
               )
-                v-icon(:left='$vuetify.display.mdAndUp') mdi-plus
+                v-icon(:start='$vuetify.display.mdAndUp') mdi-plus
                 span(v-if='$vuetify.display.mdAndUp') New Group
             v-card
               .dialog-header.is-short New Group
               v-card-text.pt-5
                 v-text-field.md2(
-                  outlined
+                  variant="outlined"
                   prepend-icon='mdi-account-group'
                   v-model='newGroupName'
                   label='Group Name'
@@ -46,7 +46,7 @@
                   )
               div.v-card-chin
                 v-spacer
-                v-btn(text, @click='newGroupDialog = false') Cancel
+                v-btn(variant="text", @click='newGroupDialog = false') Cancel
                 v-btn(color='primary', @click='createGroup') Create
         v-card.mt-3.animated.fadeInUp
           v-data-table.admin-responsive-table(
@@ -69,7 +69,7 @@
                 td {{ $helpers.formatMoment(props.item.createdAt, 'calendar') }}
                 td {{ $helpers.formatMoment(props.item.updatedAt, 'calendar') }}
                 td
-                  v-tooltip(left, v-if='props.item.isSystem')
+                  v-tooltip(location="left", v-if='props.item.isSystem')
                     template(v-slot:activator='{ props }')
                       v-icon(v-bind='props') mdi-lock-outline
                     span System Group
@@ -79,14 +79,13 @@
                     .d-flex.align-center
                       .admin-mobile-record-title {{ props.item.name }}
                       v-spacer
-                      v-icon(v-if='props.item.isSystem', small, aria-label='System group') mdi-lock-outline
+                      v-icon(v-if='props.item.isSystem', size="small", aria-label='System group') mdi-lock-outline
                     .admin-mobile-record-meta {{ props.item.userCount }} users
-                    .caption.grey--text.mt-2 Updated {{ $helpers.formatMoment(props.item.updatedAt, 'calendar') }}
+                    .text-body-small.text-grey.mt-2 Updated {{ $helpers.formatMoment(props.item.updatedAt, 'calendar') }}
             template(v-slot:no-data)
-              v-alert.ma-3(icon='mdi-alert', :value='true', outline) No groups to display.
+              v-alert.ma-3(icon='mdi-alert', :value='true', variant="outlined") No groups to display.
           .text-xs-center.py-2(v-if='pageCount > 1')
-            v-pagination(v-model='pagination', :length='pageCount')
-</template>
+            v-pagination(v-model='pagination', :length='pageCount')</template>
 
 <script lang='ts'>
 import _ from 'lodash'

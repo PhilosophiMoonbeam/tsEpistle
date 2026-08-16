@@ -1,19 +1,19 @@
 <template lang="pug">
   v-card(flat)
-    v-card-title.pb-4(:class='$vuetify.theme.current.dark ? `grey darken-3-d3` : `grey lighten-5`')
+    v-card-title.pb-4(:class='$vuetify.theme.current.dark ? `bg-grey-darken-3-d3` : `bg-grey-lighten-5`')
       v-text-field(
-        outlined
+        variant="outlined"
         flat
         prepend-inner-icon='mdi-magnify'
         v-model='search'
         label='Search Group Users...'
         hide-details
-        dense
+        density="compact"
         style='max-width: 450px;'
       )
       v-spacer
-      v-btn(color='primary', depressed, @click='searchUserDialog = true', :disabled='group.id === 2')
-        v-icon(left) mdi-clipboard-account
+      v-btn(color='primary', variant="flat", @click='searchUserDialog = true', :disabled='group.id === 2')
+        v-icon(start) mdi-clipboard-account
         | Assign User
     v-data-table(
       :items='group.users',
@@ -26,22 +26,20 @@
       hide-default-footer
     )
       template(v-slot:item.actions='{ item }')
-        v-menu(bottom, right, min-width='200')
+        v-menu(location="bottom right", min-width='200')
           template(v-slot:activator='{ props }')
-            v-btn(icon, v-bind='props', small)
-              v-icon.grey--text.text--darken-1 mdi-dots-horizontal
-          v-list(dense, nav)
+            v-btn(icon, v-bind='props', size="small")
+              v-icon.text-grey-darken-1 mdi-dots-horizontal
+          v-list(density="compact", nav)
             v-list-item(:to='`/users/` + item.id')
-              div.v-list-item-action: v-icon(color='primary') mdi-account-outline
-              div.v-list-item-content
-                v-list-item-title View User Profile
+              template(v-slot:append): v-icon(color='primary') mdi-account-outline
+              v-list-item-title View User Profile
             template(v-if='item.id !== 2')
               v-list-item(@click='unassignUser(item.id)')
-                div.v-list-item-action: v-icon(color='orange') mdi-account-remove-outline
-                div.v-list-item-content
-                  v-list-item-title Unassign
+                template(v-slot:append): v-icon(color='orange') mdi-account-remove-outline
+                v-list-item-title Unassign
       template(v-slot:no-data)
-        v-alert.ma-3(icon='mdi-alert', outlined) No users to display.
+        v-alert.ma-3(icon='mdi-alert', variant="outlined") No users to display.
     .text-center.py-2(v-if='group.users.length > 15')
       v-pagination(v-model='pagination', :length='pageCount')
 

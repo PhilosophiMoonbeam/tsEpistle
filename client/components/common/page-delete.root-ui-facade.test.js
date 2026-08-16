@@ -90,7 +90,7 @@ describe('page-delete root UI facade migration guard', () => {
   })
 
   test('keeps the dialog template and typed page state getters out of this slice', () => {
-    expect(source).toContain("v-btn.px-4(color='red darken-2', @click='deletePage', :loading='loading').white--text")
+    expect(source).toContain('v-btn.px-4(color="red-darken-2", @click=\'deletePage\', :loading=\'loading\').text-white')
     expect(script).toContain('pageTitle(): string { return wikiStore.page.title }')
     expect(script).toContain('pagePath(): string { return wikiStore.page.path }')
     expect(script).toContain('pageLocale(): string { return wikiStore.page.locale }')

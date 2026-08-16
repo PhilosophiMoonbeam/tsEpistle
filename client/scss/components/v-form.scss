@@ -3,33 +3,34 @@
 
 .wiki-form {
 
-  &.theme--light {
+  &.v-theme--light {
     background-color: material.mc('grey', '50');
   }
 
-  .v-text-field--outline {
-    .v-input__slot {
-      background-color: #FFF !important;
-      border-color: material.mc('grey', '300') !important;
-      border-radius: 7px;
+  .v-text-field .v-field--variant-outlined {
+    background-color: #FFF !important;
+    border-radius: 7px;
 
-      @at-root .theme--dark & {
-        background-color: color.adjust(material.mc('grey', '900'), $lightness: 5%) !important;
-        border-color: material.mc('grey', '700') !important;
-
-        .v-label.v-label--active.primary--text {
-          color: material.mc('blue', '500') !important;
-        }
-      }
-    }
-    &.v-input--is-focused .v-input__slot {
-      border-color: material.mc('blue', '500') !important;
+    .v-field__outline {
+      color: material.mc('grey', '300') !important;
     }
 
-    @at-root .theme--dark & {
-      .v-icon.primary--text {
-        color: material.mc('blue', '500') !important;
+    &.v-field--focused .v-field__outline {
+      color: material.mc('blue', '500') !important;
+    }
+
+    @at-root .v-theme--dark & {
+      background-color: color.adjust(material.mc('grey', '900'), $lightness: 5%) !important;
+
+      .v-field__outline {
+        color: material.mc('grey', '700') !important;
       }
+    }
+  }
+
+  @at-root .v-theme--dark & {
+    .v-icon.text-primary {
+      color: material.mc('blue', '500') !important;
     }
   }
 }

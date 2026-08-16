@@ -1,21 +1,21 @@
 <template lang='pug'>
-  v-container(fluid, grid-list-lg)
-    v-row()
+  v-container(fluid)
+    v-row
       v-col(cols='12')
         .admin-header
           img(src='/_assets/svg/icon-console.svg', alt='Developer Tools', style='width: 80px;')
           .admin-header-title
-            .headline.primary--text Developer Tools
-            .subtitle-1.grey--text Flags
+            .text-headline-medium.text-primary Developer Tools
+            .text-body-large.text-grey Flags
           v-spacer
-          v-btn(color='success', depressed, @click='save', large, :disabled='!flagsLoaded')
-            v-icon(left) mdi-check
+          v-btn(color='success', variant="flat", @click='save', size="large", :disabled='!flagsLoaded')
+            v-icon(start) mdi-check
             span {{$t('common:actions.apply')}}
 
-        v-card.mt-3(:class='$vuetify.theme.current.dark ? `grey darken-3-d5` : `white grey--text text--darken-3`')
-          v-alert(color='red', :value='true', icon='mdi-alert', dark, prominent)
+        v-card.mt-3(:class='$vuetify.theme.current.dark ? `bg-grey-darken-3-d5` : `bg-white text-grey-darken-3`')
+          v-alert(color='red', :value='true', icon='mdi-alert', prominent)
             span Do NOT enable these flags unless you know what you're doing!
-            .caption Doing so may result in data loss or broken installation!
+            .text-body-small Doing so may result in data loss or broken installation!
           v-card-text
             v-switch.mt-3(
               color='primary'
@@ -33,8 +33,7 @@
               label='SQL Query Logging'
               v-model='flags.sqllog'
               inset
-            )
-</template>
+            )</template>
 
 <script lang='ts'>
 import { fetchSystemFlags, updateSystemFlags, type SystemFlags } from '../../helpers/system-api'

@@ -1,15 +1,15 @@
 <template lang='pug'>
-  v-container(fluid, grid-list-lg)
+  v-container(fluid)
     v-row
       v-col(cols='12')
         .profile-header
           img.animated.fadeInUp(src='/_assets/svg/icon-file.svg', alt='Users', style='width: 80px;')
           .profile-header-title
-            .headline.primary--text.animated.fadeInLeft {{$t('profile:pages.title')}}
-            .subheading.grey--text.animated.fadeInLeft {{$t('profile:pages.subtitle')}}
+            .text-headline-medium.text-primary.animated.fadeInLeft {{$t('profile:pages.title')}}
+            .text-body-large.text-grey.animated.fadeInLeft {{$t('profile:pages.subtitle')}}
           v-spacer
-          v-btn.animated.fadeInDown.wait-p1s(color='grey', outlined, @click='refresh', large)
-            v-icon.grey--text mdi-refresh
+          v-btn.animated.fadeInDown.wait-p1s(color='grey', variant="outlined", @click='refresh', size="large")
+            v-icon.text-grey mdi-refresh
       v-col(cols='12')
         v-card.animated.fadeInUp
           v-data-table(
@@ -25,21 +25,20 @@
             template(v-slot:item='props')
               tr.is-clickable(:active='props.selected', @click='goToPage(props.item)')
                 td
-                  .body-2
+                  .text-body-medium
                     strong {{ props.item.title }}
-                    v-chip.ml-2(v-if="props.item.visibility === 'private'", x-small, color='deep-orange', dark) Private
-                  .caption {{ props.item.description }}
+                    v-chip.ml-2(v-if="props.item.visibility === 'private'", size="x-small", color='deep-orange') Private
+                  .text-body-small {{ props.item.description }}
                 td.admin-pages-path
-                  v-chip(label, small, :color='$vuetify.theme.current.dark ? `grey darken-4` : `grey lighten-4`') {{ props.item.locale }}
-                  span.ml-2.grey--text(:class='$vuetify.theme.current.dark ? `text--lighten-1` : `text--darken-2`') / {{ props.item.path }}
+                  v-chip(label, size="small", :color='$vuetify.theme.current.dark ? `grey-darken-4` : `grey-lighten-4`') {{ props.item.locale }}
+                  span.ml-2(:class='$vuetify.theme.current.dark ? `text-grey-lighten-1` : `text-grey-darken-2`') / {{ props.item.path }}
                 td {{ $helpers.formatMoment(props.item.createdAt, 'calendar') }}
                 td {{ $helpers.formatMoment(props.item.updatedAt, 'calendar') }}
             template(v-slot:no-data)
-              v-alert.ma-3(icon='mdi-alert', :value='true', outlined, color='grey')
-                em.caption {{$t('profile:pages.emptyList')}}
+              v-alert.ma-3(icon='mdi-alert', :value='true', variant="outlined", color='grey')
+                em.text-body-small {{$t('profile:pages.emptyList')}}
           .text-center.py-2.animated.fadeInDown(v-if='this.pageTotal > 1')
-            v-pagination(v-model='pagination', :length='pageTotal')
-</template>
+            v-pagination(v-model='pagination', :length='pageTotal')</template>
 
 <script lang='ts'>
 import { fetchPages, type PageListRow } from '../../helpers/pages-api'

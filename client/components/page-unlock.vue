@@ -1,7 +1,7 @@
 <template lang='pug'>
   v-app
     .page-unlock
-      v-card.page-unlock-card(elevation='10', max-width='480')
+      v-card.page-unlock-card(elevation='5', max-width='480')
         v-card-text.pa-8.text-center
           v-icon.mb-4(color='primary', size='64') mdi-lock-outline
           h1.text-h5.mb-2 Protected page

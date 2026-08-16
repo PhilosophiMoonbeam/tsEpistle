@@ -1,46 +1,46 @@
 <template lang='pug'>
-  v-container(fluid, grid-list-lg)
+  v-container(fluid)
     v-row
       v-col(cols='12')
         .admin-header
           img.animated.fadeInUp(src='/_assets/svg/icon-file.svg', alt='Page', style='width: 80px;')
           .admin-header-title
-            .headline.blue--text.text--darken-2.animated.fadeInLeft Pages
-            .subtitle-1.grey--text.animated.fadeInLeft.wait-p2s Manage pages
+            .text-headline-medium.text-blue-darken-2.animated.fadeInLeft Pages
+            .text-body-large.text-grey.animated.fadeInLeft.wait-p2s Manage pages
           v-spacer
-          v-btn.animated.fadeInDown.wait-p1s(icon, color='grey', outlined, @click='refresh', aria-label='Refresh pages')
-            v-icon.grey--text mdi-refresh
+          v-btn.animated.fadeInDown.wait-p1s(icon, color='grey', variant="outlined", @click='refresh', aria-label='Refresh pages')
+            v-icon.text-grey mdi-refresh
           //- v-btn.animated.fadeInDown.mx-3(color='primary', outlined, @click='recyclebin', disabled)
           //-   v-icon(left) mdi-delete-outline
           //-   span Recycle Bin
           v-btn.animated.fadeInDown(
             color='primary'
-            depressed
-            large
+            variant="flat"
+            size="large"
             to='pages/visualize'
             :icon='$vuetify.display.smAndDown'
             aria-label='Visualize pages'
           )
-            v-icon(:left='$vuetify.display.mdAndUp') mdi-graph
+            v-icon(:start='$vuetify.display.mdAndUp') mdi-graph
             span(v-if='$vuetify.display.mdAndUp') Visualize
         v-card.mt-3.animated.fadeInUp
-          .admin-filter-bar.pa-2.d-flex.align-center(:class='$vuetify.theme.current.dark ? `grey darken-3-d5` : `grey lighten-3`')
+          .admin-filter-bar.pa-2.d-flex.align-center(:class='$vuetify.theme.current.dark ? `bg-grey-darken-3-d5` : `bg-grey-lighten-3`')
             v-text-field(
-              solo
+              variant="solo"
               flat
               v-model='search'
               prepend-inner-icon='mdi-file-search-outline'
               label='Search Pages...'
               hide-details
-              dense
+              density="compact"
               style='max-width: 400px;'
               )
             v-spacer
             v-select.ml-2(
-              solo
+              variant="solo"
               flat
               hide-details
-              dense
+              density="compact"
               label='Locale'
               :items='langs'
               item-title='text'
@@ -48,10 +48,10 @@
               style='max-width: 250px;'
             )
             v-select.ml-2(
-              solo
+              variant="solo"
               flat
               hide-details
-              dense
+              density="compact"
               label='Publish State'
               :items='states'
               item-title='text'
@@ -76,22 +76,22 @@
               tr.is-clickable(v-if='$vuetify.display.mdAndUp', :active='props.selected', @click='$router.push(`/pages/` + props.item.id)')
                 td.text-xs-right {{ props.item.id }}
                 td
-                  .body-2: strong {{ props.item.title }}
-                  .caption {{ props.item.description }}
+                  .text-body-medium: strong {{ props.item.title }}
+                  .text-body-small {{ props.item.description }}
                 td.admin-pages-path
-                  v-chip(label, small, :color='$vuetify.theme.current.dark ? `grey darken-4` : `grey lighten-4`') {{ props.item.locale }}
-                  span.ml-2.grey--text(:class='$vuetify.theme.current.dark ? `text--lighten-1` : `text--darken-2`') / {{ props.item.path }}
+                  v-chip(label, size="small", :color='$vuetify.theme.current.dark ? `grey-darken-4` : `grey-lighten-4`') {{ props.item.locale }}
+                  span.ml-2(:class='$vuetify.theme.current.dark ? `text-grey-lighten-1` : `text-grey-darken-2`') / {{ props.item.path }}
                 td {{ $helpers.formatMoment(props.item.createdAt, 'calendar') }}
                 td {{ $helpers.formatMoment(props.item.updatedAt, 'calendar') }}
               tr.admin-mobile-table-row.is-clickable(v-else, @click='$router.push(`/pages/` + props.item.id)')
                 td(:colspan='responsiveHeaders.length')
                   .admin-mobile-record
                     .admin-mobile-record-title {{ props.item.title }}
-                    .caption.grey--text {{ props.item.description }}
+                    .text-body-small.text-grey {{ props.item.description }}
                     .admin-mobile-record-meta
-                      v-chip.mr-2(label, x-small, :color='$vuetify.theme.current.dark ? `grey darken-4` : `grey lighten-4`') {{ props.item.locale }}
+                      v-chip.mr-2(label, size="x-small", :color='$vuetify.theme.current.dark ? `grey-darken-4` : `grey-lighten-4`') {{ props.item.locale }}
                       span /{{ props.item.path }}
-                    .caption.grey--text.mt-2 Updated {{ $helpers.formatMoment(props.item.updatedAt, 'calendar') }}
+                    .text-body-small.text-grey.mt-2 Updated {{ $helpers.formatMoment(props.item.updatedAt, 'calendar') }}
             template(v-slot:no-data)
               async-state(
                 v-if='loading'
@@ -114,8 +114,7 @@
                 message='Change the filters or create a page.'
               )
           .text-center.py-2.animated.fadeInDown(v-if='this.pageTotal > 1')
-            v-pagination(v-model='pagination', :length='pageTotal')
-</template>
+            v-pagination(v-model='pagination', :length='pageTotal')</template>
 
 <script lang='ts'>
 import _ from 'lodash'

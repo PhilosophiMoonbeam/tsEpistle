@@ -1,40 +1,40 @@
 <template lang='pug'>
-  v-container(fluid, grid-list-lg)
-    v-row()
+  v-container(fluid)
+    v-row
       v-col(cols='12')
         .admin-header
           img.animated.fadeInUp(src='/_assets/svg/icon-customer.svg', alt='Users', style='width: 80px;')
           .admin-header-title
-            .headline.blue--text.text--darken-2.animated.fadeInLeft Users
-            .subtitle-1.grey--text.animated.fadeInLeft.wait-p2s Manage users
+            .text-headline-medium.text-blue-darken-2.animated.fadeInLeft Users
+            .text-body-large.text-grey.animated.fadeInLeft.wait-p2s Manage users
           v-spacer
-          v-btn.animated.fadeInDown.wait-p2s.mr-3(outlined, color='grey', icon, @click='refresh')
+          v-btn.animated.fadeInDown.wait-p2s.mr-3(variant="outlined", color='grey', icon, @click='refresh')
             v-icon mdi-refresh
           v-btn.animated.fadeInDown(
             color='primary'
-            large
-            depressed
+            size="large"
+            variant="flat"
             @click='createUser'
             :icon='$vuetify.display.smAndDown'
             aria-label='New user'
           )
-            v-icon(:left='$vuetify.display.mdAndUp') mdi-plus
+            v-icon(:start='$vuetify.display.mdAndUp') mdi-plus
             span(v-if='$vuetify.display.mdAndUp') New User
         v-card.mt-3.animated.fadeInUp
-          .admin-filter-bar.pa-2.d-flex.align-center(:class='$vuetify.theme.current.dark ? `grey darken-3-d5` : `grey lighten-3`')
+          .admin-filter-bar.pa-2.d-flex.align-center(:class='$vuetify.theme.current.dark ? `bg-grey-darken-3-d5` : `bg-grey-lighten-3`')
             v-text-field(
-              solo
+              variant="solo"
               flat
               v-model='search'
               prepend-inner-icon='mdi-account-search-outline'
               label='Search Users...'
               hide-details
               style='max-width: 400px;'
-              dense
+              density="compact"
               )
             v-spacer
             v-select(
-              solo
+              variant="solo"
               flat
               hide-details
               label='Identity Provider'
@@ -43,7 +43,7 @@
               item-title='displayName'
               item-value='key'
               style='max-width: 300px;'
-              dense
+              density="compact"
             )
           v-divider
           v-data-table.admin-responsive-table(
@@ -66,7 +66,7 @@
                 td {{ $helpers.formatMoment(props.item.createdAt, 'from') }}
                 td
                   span(v-if='props.item.lastLoginAt') {{ $helpers.formatMoment(props.item.lastLoginAt, 'from') }}
-                  em.grey--text(v-else) Never
+                  em.text-grey(v-else) Never
                 td.text-right
                   v-icon.mr-3(v-if='props.item.isSystem') mdi-lock-outline
                   status-indicator(positive, pulse, v-if='props.item.isActive')
@@ -77,25 +77,24 @@
                     .d-flex.align-center
                       .admin-mobile-record-title {{ props.item.name }}
                       v-spacer
-                      v-icon.mr-2(v-if='props.item.isSystem', small) mdi-lock-outline
+                      v-icon.mr-2(v-if='props.item.isSystem', size="small") mdi-lock-outline
                       status-indicator(positive, pulse, v-if='props.item.isActive')
                       status-indicator(negative, pulse, v-else)
-                    .body-2 {{ props.item.email }}
+                    .text-body-medium {{ props.item.email }}
                     .admin-mobile-record-meta {{ getStrategyName(props.item.providerKey) }}
-                    .caption.grey--text.mt-2
+                    .text-body-small.text-grey.mt-2
                       span(v-if='props.item.lastLoginAt') Last login {{ $helpers.formatMoment(props.item.lastLoginAt, 'from') }}
                       em(v-else) Never logged in
             template(v-slot:no-data)
               .pa-3
-                v-alert.text-left(icon='mdi-alert', outlined, color='grey')
-                  em.body-2 No users to display!
+                v-alert.text-left(icon='mdi-alert', variant="outlined", color='grey')
+                  em.text-body-medium No users to display!
           div.v-card-chin(v-if='pageCount > 1')
             v-spacer
             v-pagination(v-model='pagination', :length='pageCount')
             v-spacer
 
-    user-create(v-model='isCreateDialogShown', @refresh='refresh(false)')
-</template>
+    user-create(v-model='isCreateDialogShown', @refresh='refresh(false)')</template>
 
 <script lang='ts'>
 

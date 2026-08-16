@@ -3,7 +3,7 @@
     nav-header(hide-search)
       template(v-slot:mid)
         v-spacer
-        .overline.grey--text {{$t('admin:adminArea')}}
+        .text-label-small.text-grey {{$t('admin:adminArea')}}
         v-spacer
       template(v-slot:actions)
         v-btn.admin-nav-toggle(
@@ -17,17 +17,14 @@
           v-icon mdi-menu
     v-navigation-drawer#admin-navigation.pb-0.admin-sidebar(
       v-model='adminDrawerShown'
-      app
-      fixed
-      clipped
-      :right='$vuetify.locale.isRtl'
+      :location="$vuetify.locale.isRtl ? 'right' : undefined"
       :permanent='$vuetify.display.mdAndUp'
       :temporary='$vuetify.display.smAndDown'
       :width='$vuetify.display.smAndDown ? 320 : 300'
-      :class='$vuetify.theme.current.dark ? `grey darken-4` : ``'
+      :class='$vuetify.theme.current.dark ? `bg-grey-darken-4` : ``'
     )
       .admin-sidebar-mobile-header(v-if='$vuetify.display.smAndDown')
-        .subtitle-2 Administration
+        .text-label-large Administration
         v-spacer
         v-btn(
           icon
@@ -36,7 +33,7 @@
         )
           v-icon mdi-close
       vue-scroll(:ops='scrollStyle')
-        v-list.radius-0(dense, nav, role='navigation', aria-label='Administration sections')
+        v-list.radius-0(density="compact", nav, role='navigation', aria-label='Administration sections')
           v-list-item(to='/dashboard', color='primary', prepend-icon='mdi-view-dashboard-variant')
             v-list-item-title {{ $t('admin:dashboard.title') }}
           template(v-if='hasPermission([`manage:system`, `manage:navigation`, `write:pages`, `manage:pages`, `delete:pages`])')
@@ -51,13 +48,13 @@
             v-list-item(to='/pages', color='primary', prepend-icon='mdi-file-document-outline', v-if='hasPermission([`manage:system`, `write:pages`, `manage:pages`, `delete:pages`])')
               v-list-item-title {{ $t('admin:pages.title') }}
               template(v-slot:append)
-                v-chip(x-small, :color='$vuetify.theme.current.dark ? `grey darken-3-d4` : `grey lighten-5`')
-                  .caption.grey--text {{ info.pagesTotal }}
+                v-chip(size="x-small", :color='$vuetify.theme.current.dark ? `grey-darken-3-d4` : `grey-lighten-5`')
+                  .text-body-small.text-grey {{ info.pagesTotal }}
             v-list-item(to='/tags', prepend-icon='mdi-tag-multiple', v-if='hasPermission([`manage:system`])')
               v-list-item-title {{ $t('admin:tags.title') }}
               template(v-slot:append)
-                v-chip(x-small, :color='$vuetify.theme.current.dark ? `grey darken-3-d4` : `grey lighten-5`')
-                  .caption.grey--text {{ info.tagsTotal }}
+                v-chip(size="x-small", :color='$vuetify.theme.current.dark ? `grey-darken-3-d4` : `grey-lighten-5`')
+                  .text-body-small.text-grey {{ info.tagsTotal }}
             v-list-item(to='/theme', color='primary', prepend-icon='mdi-palette-outline', v-if='hasPermission([`manage:system`, `manage:theme`])')
               v-list-item-title {{ $t('admin:theme.title') }}
           template(v-if='hasPermission([`manage:system`, `manage:groups`, `write:groups`, `manage:users`, `write:users`])')
@@ -66,13 +63,13 @@
             v-list-item(to='/groups', color='primary', prepend-icon='mdi-account-group', v-if='hasPermission([`manage:system`, `manage:groups`, `write:groups`])')
               v-list-item-title {{ $t('admin:groups.title') }}
               template(v-slot:append)
-                v-chip(x-small, :color='$vuetify.theme.current.dark ? `grey darken-3-d4` : `grey lighten-4`')
-                  .caption.grey--text {{ info.groupsTotal }}
+                v-chip(size="x-small", :color='$vuetify.theme.current.dark ? `grey-darken-3-d4` : `grey-lighten-4`')
+                  .text-body-small.text-grey {{ info.groupsTotal }}
             v-list-item(to='/users', color='primary', prepend-icon='mdi-account-box', v-if='hasPermission([`manage:system`, `manage:groups`, `write:groups`, `manage:users`, `write:users`])')
               v-list-item-title {{ $t('admin:users.title') }}
               template(v-slot:append)
-                v-chip(x-small, :color='$vuetify.theme.current.dark ? `grey darken-3-d4` : `grey lighten-4`')
-                  .caption.grey--text {{ info.usersTotal }}
+                v-chip(size="x-small", :color='$vuetify.theme.current.dark ? `grey-darken-3-d4` : `grey-lighten-4`')
+                  .text-body-small.text-grey {{ info.usersTotal }}
           template(v-if='hasPermission(`manage:system`)')
             v-divider.my-2
             v-list-subheader.pl-4 {{ $t('admin:nav.modules') }}
@@ -107,7 +104,6 @@
               v-list-item-title {{ $t('admin:utilities.title') }}
             v-list-group(
               to='/dev'
-              no-action
               v-if='hasPermission([`manage:system`, `manage:api`])'
               )
               template(v-slot:activator='{ props }')
@@ -126,7 +122,7 @@
           v-list-item(to='/contribute', color='primary', prepend-icon='mdi-heart-outline')
             v-list-item-title {{ $t('admin:contribute.title') }}
 
-    v-main(:class='$vuetify.theme.current.dark ? "grey darken-5" : "grey lighten-5"')
+    v-main(:class='$vuetify.theme.current.dark ? "bg-grey-darken-5" : "bg-grey-lighten-5"')
       transition(name='admin-router')
         router-view
 
@@ -222,7 +218,7 @@ export default {
 <style lang='scss'>
 
 .admin {
-  &.theme--light .application--wrap {
+  &.v-theme--light .v-application__wrap {
     background-color: lighten(mc('grey', '200'), 2%);
   }
 }
@@ -260,7 +256,7 @@ export default {
 }
 
 .admin-sidebar {
-  .v-list__tile--active {
+  .v-list-item--active {
     background-color: rgba(mc('theme', 'primary'), .1);
 
     .v-icon {
@@ -363,8 +359,8 @@ export default {
   }
 }
 
-.theme--dark {
-  .admin-sidebar .v-list__tile--active {
+.v-theme--dark {
+  .admin-sidebar .v-list-item--active {
     background-color: rgba(0,0,0, .2);
     color: mc('blue', '500') !important;
 

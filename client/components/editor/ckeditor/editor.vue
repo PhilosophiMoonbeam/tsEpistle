@@ -4,32 +4,29 @@
     .editor-ckeditor-markdown-tools(v-if='format === `markdown`')
       v-btn.editor-ckeditor-extension-trigger(
         color='teal'
-        dark
         tile
         @click='toggleExtensionDialog'
         aria-label='Insert content extension'
       )
-        v-icon(left) mdi-qrcode
+        v-icon(start) mdi-qrcode
         | Insert content extension
       v-btn(
         color='blue-grey'
-        dark
         tile
         aria-label='Insert admonition'
         @click='openAdmonitionDialog'
       )
-        v-icon(left) mdi-alert-box-outline
+        v-icon(start) mdi-alert-box-outline
         | Insert admonition
-      v-menu(offset-y, :close-on-content-click='true')
+      v-menu(:close-on-content-click='true')
         template(v-slot:activator='{ props }')
           v-btn(
             v-bind='props'
             color='blue-grey'
-            dark
             tile
             aria-label='Insert icon or emoji'
           )
-            v-icon(left) mdi-emoticon-outline
+            v-icon(start) mdi-emoticon-outline
             | Icon or emoji
         v-card.editor-ckeditor-glyph-menu
           v-card-title Insert icon or emoji
@@ -43,14 +40,14 @@
               @click='insertGlyph(glyph)'
             ) {{glyph.value}}
     div.contents(ref='editor')
-    v-system-bar.editor-status-bar.editor-ckeditor-sysbar(absolute, dark, status, color='grey darken-3')
-      .caption.editor-ckeditor-sysbar-locale {{locale.toUpperCase()}}
-      .caption.px-3 /{{path}}
+    v-system-bar.editor-status-bar.editor-ckeditor-sysbar(absolute, status, color="grey-darken-3")
+      .text-body-small.editor-ckeditor-sysbar-locale {{locale.toUpperCase()}}
+      .text-body-small.px-3 /{{path}}
       template(v-if='$vuetify.display.mdAndUp')
         v-spacer
-        .caption {{definition.label}}
+        .text-body-small {{definition.label}}
         v-spacer
-        .caption {{$t('editor:ckeditor.stats', { chars: stats.characters, words: stats.words })}}
+        .text-body-small {{$t('editor:ckeditor.stats', { chars: stats.characters, words: stats.words })}}
     editor-conflict(v-model='isConflict', v-if='isConflict')
     page-selector(mode='select', v-model='insertLinkDialog', :open-handler='insertLinkHandler', :path='path', :locale='locale')
     v-dialog(v-model='admonitionDialog', max-width='620', persistent)
@@ -80,9 +77,8 @@
             v-alert.mt-3(v-if='admonitionError', type='error', variant='tonal') {{admonitionError}}
         v-card-actions
           v-spacer
-          v-btn(text, @click='admonitionDialog = false') Cancel
-          v-btn(color='teal', dark, :disabled='!isAdmonitionValid', @click='insertAdmonition') Insert
-</template>
+          v-btn(variant="text", @click='admonitionDialog = false') Cancel
+          v-btn(color='teal', :disabled='!isAdmonitionValid', @click='insertAdmonition') Insert</template>
 
 <script lang='ts'>
 import _ from 'lodash'
@@ -392,7 +388,7 @@ $editor-height-mobile: calc(100vh - 56px - 16px);
   max-height: $editor-height;
   position: relative;
 
-  @at-root .theme--dark & {
+  @at-root .v-theme--dark & {
     background-color: mc('grey', '900');
   }
 
@@ -463,7 +459,7 @@ $editor-height-mobile: calc(100vh - 56px - 16px);
     min-height: calc(100vh - 64px - 24px - 1rem - 40px);
     border-radius: 5px;
 
-    @at-root .theme--dark & {
+    @at-root .v-theme--dark & {
       background-color: #303030;
       color: #FFF;
     }
@@ -485,7 +481,7 @@ $editor-height-mobile: calc(100vh - 56px - 16px);
       border-color: #FFF;
       box-shadow: 0 0 10px rgba(mc('blue', '700'), .25);
 
-      @at-root .theme--dark & {
+      @at-root .v-theme--dark & {
         border-color: #444;
         border-bottom: none;
         box-shadow: 0 0 10px rgba(#000, 0.25);
@@ -498,7 +494,7 @@ $editor-height-mobile: calc(100vh - 56px - 16px);
     .ck-widget.table th.ck-editor__nested-editable.ck-editor__nested-editable_focused {
       background-color: mc('grey', '100');
 
-      @at-root .theme--dark & {
+      @at-root .v-theme--dark & {
         background-color: mc('grey', '900');
       }
     }

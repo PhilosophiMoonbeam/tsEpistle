@@ -1,20 +1,17 @@
 <template lang="pug">
-  v-app(v-scroll='upBtnScroll', :dark='$vuetify.theme.current.dark', :class='$vuetify.locale.isRtl ? `is-rtl` : `is-ltr`')
+  v-app(v-scroll='upBtnScroll', :class='$vuetify.locale.isRtl ? `is-rtl` : `is-ltr`')
     nav-header(v-if='!printView')
     v-navigation-drawer(
       v-if='navMode !== `NONE` && !printView'
-      :class='$vuetify.theme.current.dark ? `grey darken-4-d4` : `primary`'
-      dark
-      app
-      clipped
+      :class='$vuetify.theme.current.dark ? `bg-grey-darken-4-d4` : `bg-primary`'
       mobile-breakpoint='1280'
       :temporary='$vuetify.display.width < 1280'
       v-model='navShown'
-      :right='$vuetify.locale.isRtl'
+      :location="$vuetify.locale.isRtl ? 'right' : undefined"
       )
       vue-scroll(:ops='scrollStyle')
         nav-sidebar(
-          :color='$vuetify.theme.current.dark ? `grey darken-4-d4` : `primary`'
+          :color='$vuetify.theme.current.dark ? `grey-darken-4-d4` : `primary`'
           :items='sidebarDecoded'
           :nav-mode='navMode'
           :expand-parent-by-default='navExpandParent'
@@ -22,13 +19,11 @@
 
     v-fab-transition(v-if='navMode !== `NONE`')
       v-btn.page-nav-toggle(
-        fab
+        icon
         color='primary'
         fixed
-        bottom
-        :right='$vuetify.locale.isRtl'
-        :left='!$vuetify.locale.isRtl'
-        small
+        location='bottom start'
+        size="small"
         @click='navShown = !navShown'
         aria-label='Toggle navigation'
         v-if='$vuetify.display.width < 1280'
@@ -38,7 +33,7 @@
 
     v-main(ref='content')
       template(v-if='path !== `home`')
-        v-toolbar(:color='$vuetify.theme.current.dark ? `grey darken-4-d3` : `grey lighten-3`', flat, dense, v-if='$vuetify.display.smAndUp')
+        v-toolbar(:color='$vuetify.theme.current.dark ? `grey-darken-4-d3` : `grey-lighten-3`', flat, density="compact", v-if='$vuetify.display.smAndUp')
           //- v-btn.pl-0(v-if='$vuetify.display.xsOnly', flat, @click='toggleNavigation')
           //-   v-icon(color='grey darken-2', left) menu
           //-   span Navigation
@@ -47,15 +42,15 @@
             divider='/'
             )
             template(v-slot:item='props')
-              v-icon(v-if='props.item.path === "/"', small, @click='goHome') mdi-home
-              v-btn.ma-0(v-else, :href='props.item.path', small, text) {{props.item.name}}
+              v-icon(v-if='props.item.path === "/"', size="small", @click='goHome') mdi-home
+              v-btn.ma-0(v-else, :href='props.item.path', size="small", variant="text") {{props.item.name}}
           template(v-if='!isPublished')
             v-spacer
-            .caption.red--text {{$t('common:page.unpublished')}}
+            .text-body-small.text-red {{$t('common:page.unpublished')}}
             status-indicator.ml-3(negative, pulse)
         v-divider
-      v-container.grey.pa-0(fluid, :class='$vuetify.theme.current.dark ? `darken-4-l3` : `lighten-4`')
-        v-row.page-header-section(no-gutters, align-content='center', style='height: 90px;')
+      v-container.pa-0(fluid, :class='$vuetify.theme.current.dark ? `bg-grey-darken-4-l3` : `bg-grey-lighten-4`')
+        v-row.page-header-section.align-content-center(no-gutters, style='height: 90px;')
           v-col.page-col-content.is-page-header(
             :offset-xl='tocPosition === `left` ? 2 : 0'
             :offset-lg='tocPosition === `left` ? 3 : 0'
@@ -66,9 +61,9 @@
             )
             .page-header-headings
               .d-flex.align-center
-                .headline.grey--text(:class='$vuetify.theme.current.dark ? `text--lighten-2` : `text--darken-3`') {{title}}
-                v-chip.ml-3(v-if="visibility === 'private'", small, color='deep-orange', dark) Private
-              .caption.grey--text.text--darken-1 {{description}}
+                .text-headline-medium(:class='$vuetify.theme.current.dark ? `text-grey-lighten-2` : `text-grey-darken-3`') {{title}}
+                v-chip.ml-3(v-if="visibility === 'private'", size="small", color='deep-orange') Private
+              .text-body-small.text-grey-darken-1 {{description}}
             .page-edit-shortcuts(
               v-if='editShortcutsObj.editMenuBar'
               :class='tocPosition === `right` ? `is-right` : ``'
@@ -76,22 +71,22 @@
               v-btn(
                 v-if='editShortcutsObj.editMenuBtn'
                 @click='pageEdit'
-                depressed
-                small
+                variant="flat"
+                size="small"
                 )
-                v-icon.mr-2(small) mdi-pencil
+                v-icon.mr-2(size="small") mdi-pencil
                 span.text-none {{$t(`common:actions.edit`)}}
               v-btn(
                 v-if='editShortcutsObj.editMenuExternalBtn'
                 :href='editMenuExternalUrl'
                 target='_blank'
-                depressed
-                small
+                variant="flat"
+                size="small"
                 )
-                v-icon.mr-2(small) {{ editShortcutsObj.editMenuExternalIcon }}
+                v-icon.mr-2(size="small") {{ editShortcutsObj.editMenuExternalIcon }}
                 span.text-none {{$t(`common:page.editExternal`, { name: editShortcutsObj.editMenuExternalName })}}
       v-divider
-      v-container.pl-5.pt-4(fluid, grid-list-xl)
+      v-container.pl-5.pt-4(fluid)
         v-row
           v-col.page-col-sd(
             v-if='tocPosition !== `off` && $vuetify.display.lgAndUp'
@@ -101,42 +96,44 @@
             xl2
             )
             v-card.page-toc-card.mb-5(v-if='tocDecoded.length')
-              .overline.pa-5.pb-0(:class='$vuetify.theme.current.dark ? `blue--text text--lighten-2` : `primary--text`') {{$t('common:page.toc')}}
-              v-list.pb-3(dense, nav, :class='$vuetify.theme.current.dark ? `darken-3-d3` : ``')
-                template(v-for='(tocItem, tocIdx) in tocDecoded')
+              .text-label-small.pa-5.pb-0(:class='$vuetify.theme.current.dark ? `text-blue-lighten-2` : `text-primary`') {{$t('common:page.toc')}}
+              v-list.pb-3(density="compact", nav, :class='$vuetify.theme.current.dark ? `bg-grey-darken-3-d3` : ``')
+                template(v-for='tocItem in tocDecoded', :key='tocItem.anchor')
                   v-list-item(@click='goTo(tocItem.anchor, scrollOpts)')
-                    v-icon(color='grey', small) {{ $vuetify.locale.isRtl ? `mdi-chevron-left` : `mdi-chevron-right` }}
+                    template(v-slot:prepend)
+                      v-icon(color='grey', size="small") {{ $vuetify.locale.isRtl ? `mdi-chevron-left` : `mdi-chevron-right` }}
                     v-list-item-title.px-3 {{tocItem.title}}
                   //- v-divider(v-if='tocIdx < toc.length - 1 || tocItem.children.length')
-                  template(v-for='tocSubItem in tocItem.children')
+                  template(v-for='tocSubItem in tocItem.children', :key='tocSubItem.anchor')
                     v-list-item(@click='goTo(tocSubItem.anchor, scrollOpts)')
-                      v-icon.px-3(color='grey lighten-1', small) {{ $vuetify.locale.isRtl ? `mdi-chevron-left` : `mdi-chevron-right` }}
-                      v-list-item-title.px-3.caption.grey--text(:class='$vuetify.theme.current.dark ? `text--lighten-1` : `text--darken-1`') {{tocSubItem.title}}
+                      template(v-slot:prepend)
+                        v-icon.px-3(color="grey-lighten-1", size="small") {{ $vuetify.locale.isRtl ? `mdi-chevron-left` : `mdi-chevron-right` }}
+                      v-list-item-title.px-3.text-body-small(:class='$vuetify.theme.current.dark ? `text-grey-lighten-1` : `text-grey-darken-1`') {{tocSubItem.title}}
                     //- v-divider(inset, v-if='tocIdx < toc.length - 1')
 
             v-card.page-tags-card.mb-5(v-if='tags.length > 0')
               .pa-5
-                .overline.teal--text.pb-2(:class='$vuetify.theme.current.dark ? `text--lighten-3` : ``') {{$t('common:page.tags')}}
+                .text-label-small.pb-2(:class='$vuetify.theme.current.dark ? `text-teal-lighten-3` : `text-teal`') {{$t('common:page.tags')}}
                 v-chip.mr-1.mb-1(
                   label
-                  :color='$vuetify.theme.current.dark ? `teal darken-1` : `teal lighten-5`'
-                  v-for='(tag, idx) in tags'
+                  :color='$vuetify.theme.current.dark ? `teal-darken-1` : `teal-lighten-5`'
+                  v-for='tag in tags'
                   :href='`/t/` + tag.tag'
                   :key='`tag-` + tag.tag'
                   )
-                  v-icon(:color='$vuetify.theme.current.dark ? `teal lighten-3` : `teal`', left, small) mdi-tag
-                  span(:class='$vuetify.theme.current.dark ? `teal--text text--lighten-5` : `teal--text text--darken-2`') {{tag.title}}
+                  v-icon(:color='$vuetify.theme.current.dark ? `teal-lighten-3` : `teal`', start, size="small") mdi-tag
+                  span(:class='$vuetify.theme.current.dark ? `text-teal-lighten-5` : `text-teal-darken-2`') {{tag.title}}
                 v-chip.mr-1.mb-1(
                   label
-                  :color='$vuetify.theme.current.dark ? `teal darken-1` : `teal lighten-5`'
+                  :color='$vuetify.theme.current.dark ? `teal-darken-1` : `teal-lighten-5`'
                   :href='`/t/` + tags.map(t => t.tag).join(`/`)'
                   :aria-label='$t(`common:page.tagsMatching`)'
                   )
-                  v-icon(:color='$vuetify.theme.current.dark ? `teal lighten-3` : `teal`', size='20') mdi-tag-multiple
+                  v-icon(:color='$vuetify.theme.current.dark ? `teal-lighten-3` : `teal`', size='20') mdi-tag-multiple
 
             v-card.page-comments-card.mb-5(v-if='commentsEnabled && commentsPerms.read')
               .pa-5
-                .overline.pb-2.blue-grey--text.d-flex.align-center(:class='$vuetify.theme.current.dark ? `text--lighten-3` : `text--darken-2`')
+                .text-label-small.pb-2.d-flex.align-center(:class='$vuetify.theme.current.dark ? `text-blue-grey-lighten-3` : `text-blue-grey-darken-2`')
                   span {{$t('common:comments.sdTitle')}}
                   //- v-spacer
                   //- v-chip.text-center(
@@ -151,44 +148,44 @@
                 .d-flex
                   v-btn.text-none(
                     @click='goToComments()'
-                    :color='$vuetify.theme.current.dark ? `blue-grey` : `blue-grey darken-2`'
-                    outlined
+                    :color='$vuetify.theme.current.dark ? `blue-grey` : `blue-grey-darken-2`'
+                    variant="outlined"
                     style='flex: 1 1 100%;'
-                    small
+                    size="small"
                     )
-                    span.blue-grey--text(:class='$vuetify.theme.current.dark ? `text--lighten-1` : `text--darken-2`') {{$t('common:comments.viewDiscussion')}}
-                  v-tooltip(right, v-if='commentsPerms.write')
+                    span(:class='$vuetify.theme.current.dark ? `text-blue-grey-lighten-1` : `text-blue-grey-darken-2`') {{$t('common:comments.viewDiscussion')}}
+                  v-tooltip(location="right", v-if='commentsPerms.write')
                     template(v-slot:activator='{ props }')
                       v-btn.ml-2(
                         @click='goToComments(true)'
                         v-bind='props'
-                        outlined
-                        small
-                        :color='$vuetify.theme.current.dark ? `blue-grey` : `blue-grey darken-2`'
+                        variant="outlined"
+                        size="small"
+                        :color='$vuetify.theme.current.dark ? `blue-grey` : `blue-grey-darken-2`'
                         :aria-label='$t(`common:comments.newComment`)'
                         )
-                        v-icon(:color='$vuetify.theme.current.dark ? `blue-grey lighten-1` : `blue-grey darken-2`', dense) mdi-comment-plus
+                        v-icon(:color='$vuetify.theme.current.dark ? `blue-grey-lighten-1` : `blue-grey-darken-2`', size="small") mdi-comment-plus
                     span {{$t('common:comments.newComment')}}
 
             v-card.page-author-card.mb-5
               .pa-5
-                .overline.indigo--text.d-flex(:class='$vuetify.theme.current.dark ? `text--lighten-3` : ``')
+                .text-label-small.d-flex(:class='$vuetify.theme.current.dark ? `text-indigo-lighten-3` : `text-indigo`')
                   span {{$t('common:page.lastEditedBy')}}
                   v-spacer
-                  v-tooltip(right, v-if='isAuthenticated')
+                  v-tooltip(location="right", v-if='isAuthenticated')
                     template(v-slot:activator='{ props }')
                       v-btn.btn-animate-edit(
                         icon
                         :href='(visibility === `private` ? `/h/_private` : `/h`) + `/` + locale + `/` + path'
                         v-bind='props'
-                        x-small
+                        size="x-small"
                         v-if='hasReadHistoryPermission'
                         :aria-label='$t(`common:header.history`)'
                         )
-                        v-icon(color='indigo', dense) mdi-history
+                        v-icon(color='indigo', size="small") mdi-history
                     span {{$t('common:header.history')}}
-                .page-author-card-name.body-2.grey--text(:class='$vuetify.theme.current.dark ? `` : `text--darken-3`') {{ authorName }}
-                .page-author-card-date.caption.grey--text.text--darken-1 {{ $helpers.formatMoment(updatedAt, 'calendar') }}
+                .page-author-card-name.text-body-medium(:class='$vuetify.theme.current.dark ? `text-grey` : `text-grey-darken-3`') {{ authorName }}
+                .page-author-card-date.text-body-small.text-grey-darken-1 {{ $helpers.formatMoment(updatedAt, 'calendar') }}
 
             //- v-card.mb-5
             //-   .pa-5
@@ -204,15 +201,15 @@
             //-       .caption.grey--text 5 votes
 
             v-card.page-shortcuts-card(flat)
-              v-toolbar(:color='$vuetify.theme.current.dark ? `grey darken-4-d3` : `grey lighten-3`', flat, dense)
+              v-toolbar(:color='$vuetify.theme.current.dark ? `grey-darken-4-d3` : `grey-lighten-3`', flat, density="compact")
                 v-spacer
                 //- v-tooltip(bottom)
                 //-   template(v-slot:activator='{ props }')
                 //-     v-btn(icon, tile, v-bind='props', :aria-label='$t(`common:page.bookmark`)'): v-icon(color='grey') mdi-bookmark
                 //-   span {{$t('common:page.bookmark')}}
-                v-menu(offset-y, bottom, min-width='300')
+                v-menu(location="bottom", min-width='300')
                   template(v-slot:activator='{ props: menuProps }')
-                    v-tooltip(bottom)
+                    v-tooltip(location="bottom")
                       template(v-slot:activator='{ props: tooltipProps }')
                         v-btn(icon, tile, v-bind='{ ...menuProps, ...tooltipProps }', :aria-label='$t(`common:page.share`)'): v-icon(color='grey') mdi-share-variant
                       span {{$t('common:page.share')}}
@@ -221,9 +218,9 @@
                     :title='title'
                     :description='description'
                   )
-                v-menu(v-if='isAuthenticated', offset-y, bottom, min-width='340', max-width='420')
+                v-menu(v-if='isAuthenticated', location="bottom", min-width='340', max-width='420')
                   template(v-slot:activator='{ props: menuProps }')
-                    v-tooltip(bottom)
+                    v-tooltip(location="bottom")
                       template(v-slot:activator='{ props: tooltipProps }')
                         v-badge(
                           :content='pageWatchUnreadCount'
@@ -252,7 +249,7 @@
                         v-list-item-title {{ notification.title }}
                         v-list-item-subtitle {{ pageWatchNotificationSummary(notification) }}
                     v-card-text.text-medium-emphasis(v-else) No page notifications.
-                v-tooltip(bottom, v-if='isAuthenticated')
+                v-tooltip(location="bottom", v-if='isAuthenticated')
                   template(v-slot:activator='{ props }')
                     v-btn(
                       icon
@@ -265,9 +262,9 @@
                     )
                       v-icon(:color='pageWatched ? `primary` : `grey`') {{ pageWatched ? 'mdi-bell-ring' : 'mdi-bell-outline' }}
                   span {{ pageWatched ? 'Stop watching page' : 'Watch page' }}
-                v-menu(v-if='pageWatched', offset-y, bottom, :close-on-content-click='false', min-width='260')
+                v-menu(v-if='pageWatched', location="bottom", :close-on-content-click='false', min-width='260')
                   template(v-slot:activator='{ props: menuProps }')
-                    v-tooltip(bottom)
+                    v-tooltip(location="bottom")
                       template(v-slot:activator='{ props: tooltipProps }')
                         v-btn(
                           icon
@@ -296,9 +293,9 @@
                         hide-details
                         @update:model-value='savePageWatchSettings'
                       )
-                v-menu(v-if='isAuthenticated', offset-y, bottom, min-width='340', max-width='440')
+                v-menu(v-if='isAuthenticated', location="bottom", min-width='340', max-width='440')
                   template(v-slot:activator='{ props: menuProps }')
-                    v-tooltip(bottom)
+                    v-tooltip(location="bottom")
                       template(v-slot:activator='{ props: tooltipProps }')
                         v-badge(
                           :content='approvalInbox.length'
@@ -344,7 +341,7 @@
                       state='empty'
                       title='No active approval requests'
                     )
-                v-tooltip(bottom, v-if='isAuthenticated && (hasWritePagesPermission || hasManagePagesPermission || hasAdminPermission)')
+                v-tooltip(location="bottom", v-if='isAuthenticated && (hasWritePagesPermission || hasManagePagesPermission || hasAdminPermission)')
                   template(v-slot:activator='{ props }')
                     v-btn(
                       icon
@@ -355,7 +352,7 @@
                     )
                       v-icon(:color='pageApproval ? `primary` : `grey`') mdi-check-decagram-outline
                   span Approval workflow
-                v-tooltip(bottom, v-if='isAuthenticated && (hasWritePagesPermission || hasManagePagesPermission || hasAdminPermission)')
+                v-tooltip(location="bottom", v-if='isAuthenticated && (hasWritePagesPermission || hasManagePagesPermission || hasAdminPermission)')
                   template(v-slot:activator='{ props }')
                     v-btn(
                       icon
@@ -366,7 +363,7 @@
                     )
                       v-icon(:color='pageProtection.protected ? `primary` : `grey`') {{ pageProtection.protected ? 'mdi-lock' : 'mdi-lock-open-outline' }}
                   span Page password protection
-                v-tooltip(bottom)
+                v-tooltip(location="bottom")
                   template(v-slot:activator='{ props }')
                     v-btn(icon, tile, v-bind='props', @click='print', :aria-label='$t(`common:page.printFormat`)')
                       v-icon(:color='printView ? `primary` : `grey`') mdi-printer
@@ -380,8 +377,8 @@
             :order-xs1='tocPosition === `right`'
             :order-xs2='tocPosition !== `right`'
             )
-            v-tooltip(:right='$vuetify.locale.isRtl', :left='!$vuetify.locale.isRtl', v-if='hasAnyPagePermissions && editShortcutsObj.editFab')
-              template(v-slot:activator='{ on: onEditActivator }')
+            v-tooltip(location='start', v-if='hasAnyPagePermissions && editShortcutsObj.editFab')
+              template(v-slot:activator='{ props }')
                 v-speed-dial(
                   v-model='pageEditFab'
                   direction='top'
@@ -391,85 +388,78 @@
                   :right='!$vuetify.locale.isRtl'
                   :left='$vuetify.locale.isRtl'
                   fixed
-                  dark
                   )
                   template(v-slot:activator)
                     v-btn.btn-animate-edit(
-                      fab
+                      icon
                       color='primary'
                       v-model='pageEditFab'
                       @click='pageEdit'
-                      v-on='onEditActivator'
+                      v-bind="props"
                       :disabled='!hasWritePagesPermission'
                       :aria-label='$t(`common:page.editPage`)'
                       )
                       v-icon mdi-pencil
-                  v-tooltip(:right='$vuetify.locale.isRtl', :left='!$vuetify.locale.isRtl', v-if='hasReadHistoryPermission')
+                  v-tooltip(location='start', v-if='hasReadHistoryPermission')
                     template(v-slot:activator='{ props }')
                       v-btn(
-                        fab
-                        small
+                        icon
+                        size="small"
                         color='white'
-                        light
                         v-bind='props'
                         @click='pageHistory'
                         )
                         v-icon(size='20') mdi-history
                     span {{$t('common:header.history')}}
-                  v-tooltip(:right='$vuetify.locale.isRtl', :left='!$vuetify.locale.isRtl', v-if='hasReadSourcePermission')
+                  v-tooltip(location='start', v-if='hasReadSourcePermission')
                     template(v-slot:activator='{ props }')
                       v-btn(
-                        fab
-                        small
+                        icon
+                        size="small"
                         color='white'
-                        light
                         v-bind='props'
                         @click='pageSource'
                         )
                         v-icon(size='20') mdi-code-tags
                     span {{$t('common:header.viewSource')}}
-                  v-tooltip(:right='$vuetify.locale.isRtl', :left='!$vuetify.locale.isRtl', v-if='hasWritePagesPermission')
+                  v-tooltip(location='start', v-if='hasWritePagesPermission')
                     template(v-slot:activator='{ props }')
                       v-btn(
-                        fab
-                        small
+                        icon
+                        size="small"
                         color='white'
-                        light
                         v-bind='props'
                         @click='pageConvert'
                         )
                         v-icon(size='20') mdi-lightning-bolt
                     span {{$t('common:header.convert')}}
-                  v-tooltip(:right='$vuetify.locale.isRtl', :left='!$vuetify.locale.isRtl', v-if='hasWritePagesPermission')
+                  v-tooltip(location='start', v-if='hasWritePagesPermission')
                     template(v-slot:activator='{ props }')
                       v-btn(
-                        fab
-                        small
+                        icon
+                        size="small"
                         color='white'
-                        light
                         v-bind='props'
                         @click='pageDuplicate'
                         )
                         v-icon(size='20') mdi-content-duplicate
                     span {{$t('common:header.duplicate')}}
-                  v-tooltip(:right='$vuetify.locale.isRtl', :left='!$vuetify.locale.isRtl', v-if='hasManagePagesPermission')
+                  v-tooltip(location='start', v-if='hasManagePagesPermission')
                     template(v-slot:activator='{ props }')
                       v-btn(
-                        fab
-                        small
+                        icon
+                        size="small"
                         color='white'
-                        light
                         v-bind='props'
                         @click='pageMove'
                         )
                         v-icon(size='20') mdi-content-save-move-outline
                     span {{$t('common:header.move')}}
-                  v-tooltip(:right='$vuetify.locale.isRtl', :left='!$vuetify.locale.isRtl', v-if='hasDeletePagesPermission')
+                  v-tooltip(location='start', v-if='hasDeletePagesPermission')
                     template(v-slot:activator='{ props }')
                       v-btn(
-                        fab
-                        dark
-                        small
+                        icon
+                        size="small"
                         color='red'
                         v-bind='props'
                         @click='pageDelete'
@@ -477,13 +467,13 @@
                         v-icon(size='20') mdi-trash-can-outline
                     span {{$t('common:header.delete')}}
               span {{$t('common:page.editPage')}}
-            v-alert.mb-5(v-if='!isPublished', color='red', outlined, icon='mdi-minus-circle', dense)
-              .caption {{$t('common:page.unpublishedWarning')}}
+            v-alert.mb-5(v-if='!isPublished', color='red', variant="outlined", icon='mdi-minus-circle', density="compact")
+              .text-body-small {{$t('common:page.unpublishedWarning')}}
             .contents(ref='container')
               slot(name='contents')
             .comments-container#discussion(v-if='commentsEnabled && commentsPerms.read && !printView')
               .comments-header
-                v-icon.mr-2(dark) mdi-comment-text-outline
+                v-icon.mr-2 mdi-comment-text-outline
                 span {{$t('common:comments.title')}}
               .comments-main
                 slot(name='comments')
@@ -496,7 +486,7 @@
       max-width='560'
     )
       v-card
-        v-toolbar(color='primary', dark, flat)
+        v-toolbar(color='primary', flat)
           v-toolbar-title Page password protection
           v-spacer
           v-btn(icon, @click='protectionDialog = false', aria-label='Close page password protection')
@@ -545,7 +535,7 @@
       scrollable
     )
       v-card
-        v-toolbar(color='primary', dark, flat)
+        v-toolbar(color='primary', flat)
           v-toolbar-title Approval workflow
           v-spacer
           v-btn(icon, @click='approvalDialog = false', aria-label='Close approval workflow')
@@ -647,28 +637,23 @@
       v-btn.page-return-top(
         :class='{ "page-return-top--docked": isReturnTopDocked }'
         v-if='upBtnShown'
-        fab
+        icon
         fixed
-        bottom
-        :right='$vuetify.locale.isRtl'
-        :left='!$vuetify.locale.isRtl'
-        small
-        :depressed='isReturnTopDocked'
+        location='bottom start'
+        size="small"
+        :variant="isReturnTopDocked ? 'flat' : undefined"
         @click='goTo(0, scrollOpts)'
         :color='upBtnColor'
-        dark
         :style='upBtnPosition'
         :aria-label='$t(`common:actions.returnToTop`)'
         )
-        v-icon mdi-arrow-up
-</template>
+        v-icon mdi-arrow-up</template>
 
 <script lang='ts'>
 import { defineComponent, type PropType } from 'vue'
 import { useGoTo } from 'vuetify'
 import AsyncState from '@/components/common/async-state.vue'
 import StatusIndicator from '@/components/common/status-indicator.vue'
-import Tabset from './tabset.vue'
 import NavSidebar, { type SidebarItem } from './nav-sidebar.vue'
 import type { Environment as PrismEnvironment } from 'prismjs'
 import Prism from '../../../libs/prism/setup'
@@ -780,7 +765,6 @@ export default defineComponent({
     AsyncState,
     NavSidebar,
     StatusIndicator,
-    Tabset
   },
   setup () {
     return {
@@ -967,7 +951,7 @@ export default defineComponent({
       return this.$vuetify.display.width >= 1280 && this.navMode !== 'NONE' && this.navShown
     },
     upBtnColor () {
-      return this.isReturnTopDocked ? 'primary lighten-1' : 'primary'
+      return this.isReturnTopDocked ? 'primary-lighten-1' : 'primary'
     },
     upBtnPosition () {
       if (this.isReturnTopDocked) {
@@ -1470,10 +1454,10 @@ export default defineComponent({
       text-transform: none;
     }
   }
-  .v-breadcrumbs__divider:nth-child(2n) {
+  .v-breadcrumbs-divider:nth-child(2n) {
     padding: 0 6px;
   }
-  .v-breadcrumbs__divider:nth-child(2) {
+  .v-breadcrumbs-divider:nth-child(2) {
     padding: 0 6px 0 12px;
   }
 }
@@ -1518,7 +1502,7 @@ export default defineComponent({
       color: #777;
       background-color: #FFF !important;
 
-      @at-root .theme--dark & {
+      @at-root .v-theme--dark & {
         background-color: #222 !important;
         border-right-color: #444 !important;
         border-bottom-color: #444 !important;

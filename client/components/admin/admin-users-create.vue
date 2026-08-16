@@ -5,21 +5,21 @@
         v-icon.mr-3(color='white') mdi-plus
         span New User
         v-spacer
-        v-btn.mx-0(v-if='$vuetify.display.mdAndUp', color='white', outlined, disabled, dark)
-          v-icon(left) mdi-database-import
+        v-btn.mx-0(v-if='$vuetify.display.mdAndUp', color='white', variant="outlined", disabled)
+          v-icon(start) mdi-database-import
           span Bulk Import
       v-card-text.pt-5
         v-select(
           :items='availableProviders'
           item-title='displayName'
           item-value='key'
-          outlined
+          variant="outlined"
           prepend-icon='mdi-domain'
           v-model='provider'
           label='Provider'
           )
         v-text-field(
-          outlined
+          variant="outlined"
           prepend-icon='mdi-at'
           v-model='email'
           label='Email Address'
@@ -29,7 +29,7 @@
           )
         v-text-field(
           v-if='provider === `local`'
-          outlined
+          variant="outlined"
           prepend-icon='mdi-lock-outline'
           append-icon='mdi-dice-5'
           v-model='password'
@@ -40,7 +40,7 @@
           persistent-hint
           )
         v-text-field(
-          outlined
+          variant="outlined"
           prepend-icon='mdi-account-outline'
           v-model='name'
           label='Name'
@@ -53,7 +53,7 @@
           item-title='name'
           item-value='id'
           :item-props='group => ({ disabled: group.isSystem })'
-          outlined
+          variant="outlined"
           prepend-icon='mdi-account-group'
           v-model='group'
           label='Assign to Group(s)...'
@@ -79,12 +79,12 @@
         //- )
       div.v-card-chin.admin-dialog-actions
         v-spacer
-        v-btn(text, @click='isShown = false') Cancel
-        v-btn.px-3(depressed, color='primary', @click='newUser(false)', :disabled='!providersLoaded || availableProviders.length < 1')
-          v-icon(left) mdi-chevron-right
+        v-btn(variant="text", @click='isShown = false') Cancel
+        v-btn.px-3(variant="flat", color='primary', @click='newUser(false)', :disabled='!providersLoaded || availableProviders.length < 1')
+          v-icon(start) mdi-chevron-right
           span Create
-        v-btn.px-3(v-if='$vuetify.display.mdAndUp', depressed, color='primary', @click='newUser(true)', :disabled='!providersLoaded || availableProviders.length < 1')
-          v-icon(left) mdi-chevron-double-right
+        v-btn.px-3(v-if='$vuetify.display.mdAndUp', variant="flat", color='primary', @click='newUser(true)', :disabled='!providersLoaded || availableProviders.length < 1')
+          v-icon(start) mdi-chevron-double-right
           span Create and Close
 </template>
 

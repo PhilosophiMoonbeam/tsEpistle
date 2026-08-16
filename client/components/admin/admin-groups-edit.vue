@@ -1,38 +1,38 @@
 <template lang='pug'>
-  v-container(fluid, grid-list-lg)
+  v-container(fluid)
     v-row
       v-col(cols='12')
         .admin-header
           img(src='/_assets/svg/icon-social-group.svg', alt='Edit Group', style='width: 80px;')
           .admin-header-title
-            .headline.blue--text.text--darken-2 Edit Group
-            .subtitle-1.grey--text {{group.name}}
+            .text-headline-medium.text-blue-darken-2 Edit Group
+            .text-body-large.text-grey {{group.name}}
           v-spacer
-          v-btn(color='grey', icon, outlined, to='/groups', aria-label='Back to groups')
+          v-btn(color='grey', icon, variant="outlined", to='/groups', aria-label='Back to groups')
             v-icon mdi-arrow-left
           v-dialog(v-model='deleteGroupDialog', max-width='500', :fullscreen='$vuetify.display.smAndDown', v-if='!group.isSystem')
             template(v-slot:activator='{ props }')
-              v-btn.ml-3(color='red', icon, outlined, v-bind='props', aria-label='Delete group')
+              v-btn.ml-3(color='red', icon, variant="outlined", v-bind='props', aria-label='Delete group')
                 v-icon(color='red') mdi-trash-can-outline
             v-card
               .dialog-header.is-red Delete Group?
               v-card-text.pa-4 Are you sure you want to delete group #[strong {{ group.name }}]? All users will be unassigned from this group.
               v-card-actions
                 v-spacer
-                v-btn(text, @click='deleteGroupDialog = false') Cancel
-                v-btn(color='red', dark, @click='deleteGroup') Delete
+                v-btn(variant="text", @click='deleteGroupDialog = false') Cancel
+                v-btn(color='red', @click='deleteGroup') Delete
           v-btn.ml-3(
             color='success'
-            large
-            depressed
+            size="large"
+            variant="flat"
             @click='updateGroup'
             :icon='$vuetify.display.smAndDown'
             aria-label='Update group'
           )
-            v-icon(:left='$vuetify.display.mdAndUp') mdi-check
+            v-icon(:start='$vuetify.display.mdAndUp') mdi-check
             span(v-if='$vuetify.display.mdAndUp') Update Group
         v-card.mt-3
-          v-tabs.grad-tabs(v-model='tab', :color='$vuetify.theme.current.dark ? `blue` : `primary`', fixed-tabs, show-arrows, icons-and-text)
+          v-tabs.grad-tabs(v-model='tab', :color='$vuetify.theme.current.dark ? `blue` : `primary`', fixed-tabs, show-arrows, stacked)
             v-tab(value='settings')
               span Settings
               v-icon mdi-cog-box
@@ -52,16 +52,16 @@
                 template(v-if='group.id <= 2')
                   v-card-text
                     v-alert.radius-7.mb-0(
-                      color='orange darken-2'
-                      :class='$vuetify.theme.current.dark ? "grey darken-4" : "orange lighten-5"'
-                      outlined
+                      color="orange-darken-2"
+                      :class='$vuetify.theme.current.dark ? "bg-grey-darken-4" : "bg-orange-lighten-5"'
+                      variant="outlined"
                       :value='true'
                       icon='mdi-lock-outline'
                       ) This is a system group and its settings cannot be modified.
                   v-divider
                 v-card-text
                   v-text-field(
-                    outlined
+                    variant="outlined"
                     v-model='group.name'
                     label='Group Name'
                     hide-details
@@ -73,7 +73,7 @@
                   v-divider
                   v-card-text
                     v-text-field(
-                      outlined
+                      variant="outlined"
                       v-model='group.redirectOnLogin'
                       label='Redirect on Login'
                       persistent-hint
@@ -96,10 +96,9 @@
 
           div.v-card-chin
             v-spacer
-            .caption.grey--text.pr-2 Group ID #[strong {{group.id}}]
+            .text-body-small.text-grey.pr-2 Group ID #[strong {{group.id}}]
 
-    page-selector(mode='select', v-model='selectPageModal', :open-handler='selectPageHandle', path='home', :locale='currentLang')
-</template>
+    page-selector(mode='select', v-model='selectPageModal', :open-handler='selectPageHandle', path='home', :locale='currentLang')</template>
 
 <script lang='ts'>
 import _ from 'lodash'

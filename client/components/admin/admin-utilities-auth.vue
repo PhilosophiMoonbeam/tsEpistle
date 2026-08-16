@@ -1,21 +1,20 @@
 <template lang='pug'>
   v-card
-    v-toolbar(flat, color='primary', dark, dense)
-      .subtitle-1 {{ $t('admin:utilities.authTitle') }}
+    v-toolbar(flat, color='primary', density="compact")
+      .text-body-large {{ $t('admin:utilities.authTitle') }}
     v-card-text
-      .subtitle-1.pb-3.primary--text Generate New Authentication Public / Private Key Certificates
-      .body-2 This will invalidate all current session tokens and cause all users to be logged out.
-      .body-2.red--text You will need to log back in after the operation.
-      v-btn(outlined, color='primary', @click='regenCerts', :disabled='loading').ml-0.mt-3
-        v-icon(left) mdi-gesture-double-tap
+      .text-body-large.pb-3.text-primary Generate New Authentication Public / Private Key Certificates
+      .text-body-medium This will invalidate all current session tokens and cause all users to be logged out.
+      .text-body-medium.text-red You will need to log back in after the operation.
+      v-btn(variant="outlined", color='primary', @click='regenCerts', :disabled='loading').ml-0.mt-3
+        v-icon(start) mdi-gesture-double-tap
         span Proceed
       v-divider.my-5
-      .subtitle-1.pb-3.primary--text Reset Guest User
-      .body-2 This will reset the guest user to its default parameters and permissions.
-      v-btn(outlined, color='primary', @click='resetGuest', :disabled='loading').ml-0.mt-3
-        v-icon(left) mdi-gesture-double-tap
-        span Proceed
-</template>
+      .text-body-large.pb-3.text-primary Reset Guest User
+      .text-body-medium This will reset the guest user to its default parameters and permissions.
+      v-btn(variant="outlined", color='primary', @click='resetGuest', :disabled='loading').ml-0.mt-3
+        v-icon(start) mdi-gesture-double-tap
+        span Proceed</template>
 
 <script lang='ts'>
 import _ from 'lodash'

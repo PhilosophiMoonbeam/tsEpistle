@@ -1,18 +1,18 @@
 <template lang='pug'>
 v-card.editor-modal-blocks.animated.fadeInLeft(flat, tile, role='dialog', aria-modal='true', aria-labelledby='content-extension-title')
-  v-toolbar(color='grey darken-4', dark, flat)
-    v-icon.mr-3(color='teal lighten-2') {{activeStatus?.icon || 'mdi-shape-outline'}}
+  v-toolbar(color="grey-darken-4", flat)
+    v-icon.mr-3(color="teal-lighten-2") {{activeStatus?.icon || 'mdi-shape-outline'}}
     v-toolbar-title#content-extension-title Insert content extension
     v-spacer
     v-btn(icon, aria-label='Close content extension dialog', @click='close')
       v-icon mdi-close
   v-container.py-6(fluid)
-    v-row(justify='center')
+    v-row.justify-center
       v-col(cols='12', md='9', lg='7', xl='6')
         v-skeleton-loader(v-if='isLoading', type='heading, paragraph, paragraph, actions')
         template(v-else-if='loadError')
           v-alert.mb-4(type='error', variant='tonal') {{loadError}}
-          v-btn(color='teal', dark, @click='loadExtensions') Retry
+          v-btn(color='teal', @click='loadExtensions') Retry
         template(v-else)
           v-select.mb-5(
             v-model='selectedKey'
@@ -25,7 +25,7 @@ v-card.editor-modal-blocks.animated.fadeInLeft(flat, tile, role='dialog', aria-m
           v-alert(v-if='!activeStatus || !canInsertActive', type='warning', variant='tonal')
             .font-weight-medium {{activeStatus?.title || 'Content extension'}} is unavailable
             .mt-1 {{availabilityDiagnostic}}
-          v-card.radius-7(v-else, light, flat)
+          v-card.radius-7(v-else, flat)
             v-card-title.d-flex.align-center
               span {{activeStatus.title}}
               v-spacer
@@ -109,7 +109,7 @@ v-card.editor-modal-blocks.animated.fadeInLeft(flat, tile, role='dialog', aria-m
                         counter='300'
                       )
                   v-btn.mb-5(variant='outlined', :disabled='gallery.images.length >= 50', @click='addGalleryImage')
-                    v-icon(left) mdi-plus
+                    v-icon(start) mdi-plus
                     | Add image
                   v-row
                     v-col(cols='12', sm='4')
@@ -183,7 +183,7 @@ v-card.editor-modal-blocks.animated.fadeInLeft(flat, tile, role='dialog', aria-m
                       v-text-field(v-model='panel.label', label='Tab label', counter='100', required)
                       v-textarea.mt-4(v-model='panel.content', label='Panel content', rows='4', auto-grow, counter='20000', required)
                   v-btn.mb-5(variant='outlined', :disabled='tabs.panels.length >= 12', @click='addTabPanel')
-                    v-icon(left) mdi-plus
+                    v-icon(start) mdi-plus
                     | Add panel
                   v-select(
                     v-model='tabs.active'
@@ -224,7 +224,7 @@ v-card.editor-modal-blocks.animated.fadeInLeft(flat, tile, role='dialog', aria-m
                       v-select.mt-4(v-model='fact.kind', :items='factKinds', label='Value type')
                       v-textarea.mt-4(v-if='fact.kind === `text`', v-model='fact.value', label='Value', rows='2', auto-grow, counter='1000')
                   v-btn.mb-5(variant='outlined', :disabled='infobox.facts.length >= 50', @click='addInfoboxFact')
-                    v-icon(left) mdi-plus
+                    v-icon(start) mdi-plus
                     | Add fact
                 template(v-else-if='selectedKey === `pdf`')
                   v-alert.mb-5(type='info', variant='tonal', density='compact')
@@ -312,11 +312,10 @@ v-card.editor-modal-blocks.animated.fadeInLeft(flat, tile, role='dialog', aria-m
                   v-text-field(v-model='map.label', label='Location label (optional)', counter='200')
                 v-alert.mt-4(v-if='submitError', type='error', variant='tonal', density='compact') {{submitError}}
                 .d-flex.flex-wrap.justify-end.mt-6
-                  v-btn.mr-3(text, @click='close') Cancel
-                  v-btn(color='teal', dark, type='submit', :disabled='!canSubmit || !canInsertActive')
-                    v-icon(left) mdi-plus
-                    | Insert {{activeStatus.title}}
-</template>
+                  v-btn.mr-3(variant="text", @click='close') Cancel
+                  v-btn(color='teal', type='submit', :disabled='!canSubmit || !canInsertActive')
+                    v-icon(start) mdi-plus
+                    | Insert {{activeStatus.title}}</template>
 
 <script lang='ts'>
 import { defineComponent } from 'vue'

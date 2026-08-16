@@ -1,27 +1,27 @@
 <template lang='pug'>
-  v-container(fluid, grid-list-lg)
+  v-container(fluid)
     v-row
       v-col(cols='12')
         .admin-header
           img.animated.fadeInUp(src='/_assets/svg/icon-triangle-arrow.svg', alt='Navigation', style='width: 80px;')
           .admin-header-title
-            .headline.primary--text.animated.fadeInLeft {{$t('admin:navigation.title')}}
-            .subtitle-1.grey--text.animated.fadeInLeft.wait-p4s {{$t('admin:navigation.subtitle')}}
+            .text-headline-medium.text-primary.animated.fadeInLeft {{$t('admin:navigation.title')}}
+            .text-body-large.text-grey.animated.fadeInLeft.wait-p4s {{$t('admin:navigation.subtitle')}}
           v-spacer
-          v-btn.animated.fadeInDown.wait-p3s(icon, outlined, color='grey', href='https://docs.requarks.io/navigation', target='_blank')
+          v-btn.animated.fadeInDown.wait-p3s(icon, variant="outlined", color='grey', href='https://docs.requarks.io/navigation', target='_blank')
             v-icon mdi-help-circle
-          v-btn.mx-3.animated.fadeInDown.wait-p2s.mr-3(icon, outlined, color='grey', @click='refresh')
+          v-btn.mx-3.animated.fadeInDown.wait-p2s.mr-3(icon, variant="outlined", color='grey', @click='refresh')
             v-icon mdi-refresh
-          v-btn.animated.fadeInDown(color='success', depressed, @click='save', large)
-            v-icon(left) mdi-check
+          v-btn.animated.fadeInDown(color='success', variant="flat", @click='save', size="large")
+            v-icon(start) mdi-check
             span {{$t('common:actions.apply')}}
-        v-container.pa-0.mt-3(fluid, grid-list-lg)
-          v-row(dense)
+        v-container.pa-0.mt-3(fluid)
+          v-row(density="compact")
             v-col(cols='12', md='3')
               v-card.animated.fadeInUp
-                v-toolbar(color='teal', dark, dense, flat, height='56')
-                  v-toolbar-title.subtitle-1 {{$t('admin:navigation.mode')}}
-                v-list(nav, two-line)
+                v-toolbar(color='teal', density="compact", flat, height='56')
+                  v-toolbar-title.text-body-large {{$t('admin:navigation.mode')}}
+                v-list(nav, lines="two")
                   v-list-item(value='TREE', :active='config.mode === `TREE`', @click='config.mode = `TREE`')
                     template(v-slot:prepend)
                       v-avatar
@@ -30,8 +30,8 @@
                     v-list-item-subtitle {{$t('admin:navigation.modeSiteTree.description')}}
                     template(v-slot:append)
                       v-avatar
-                        v-icon(v-if='$vuetify.theme.current.dark', :color='config.mode === `TREE` ? `teal lighten-3` : `grey darken-2`') mdi-check-circle
-                        v-icon(v-else, :color='config.mode === `TREE` ? `teal` : `grey lighten-3`') mdi-check-circle
+                        v-icon(v-if='$vuetify.theme.current.dark', :color='config.mode === `TREE` ? `teal-lighten-3` : `grey-darken-2`') mdi-check-circle
+                        v-icon(v-else, :color='config.mode === `TREE` ? `teal` : `grey-lighten-3`') mdi-check-circle
                   v-list-item(value='STATIC', :active='config.mode === `STATIC`', @click='config.mode = `STATIC`')
                     template(v-slot:prepend)
                       v-avatar
@@ -40,8 +40,8 @@
                     v-list-item-subtitle {{$t('admin:navigation.modeStatic.description')}}
                     template(v-slot:append)
                       v-avatar
-                        v-icon(v-if='$vuetify.theme.current.dark', :color='config.mode === `STATIC` ? `teal lighten-3` : `grey darken-2`') mdi-check-circle
-                        v-icon(v-else, :color='config.mode === `STATIC` ? `teal` : `grey lighten-3`') mdi-check-circle
+                        v-icon(v-if='$vuetify.theme.current.dark', :color='config.mode === `STATIC` ? `teal-lighten-3` : `grey-darken-2`') mdi-check-circle
+                        v-icon(v-else, :color='config.mode === `STATIC` ? `teal` : `grey-lighten-3`') mdi-check-circle
                   v-list-item(value='MIXED', :active='config.mode === `MIXED`', @click='config.mode = `MIXED`')
                     template(v-slot:prepend)
                       v-avatar
@@ -50,8 +50,8 @@
                     v-list-item-subtitle {{$t('admin:navigation.modeCustom.description')}}
                     template(v-slot:append)
                       v-avatar
-                        v-icon(v-if='$vuetify.theme.current.dark', :color='config.mode === `MIXED` ? `teal lighten-3` : `grey darken-2`') mdi-check-circle
-                        v-icon(v-else, :color='config.mode === `MIXED` ? `teal` : `grey lighten-3`') mdi-check-circle
+                        v-icon(v-if='$vuetify.theme.current.dark', :color='config.mode === `MIXED` ? `teal-lighten-3` : `grey-darken-2`') mdi-check-circle
+                        v-icon(v-else, :color='config.mode === `MIXED` ? `teal` : `grey-lighten-3`') mdi-check-circle
                   v-list-item(value='NONE', :active='config.mode === `NONE`', @click='config.mode = `NONE`')
                     template(v-slot:prepend)
                       v-avatar
@@ -60,8 +60,8 @@
                     v-list-item-subtitle {{$t('admin:navigation.modeNone.description')}}
                     template(v-slot:append)
                       v-avatar
-                        v-icon(v-if='$vuetify.theme.current.dark', :color='config.mode === `NONE` ? `teal lighten-3` : `grey darken-2`') mdi-check-circle
-                        v-icon(v-else, :color='config.mode === `NONE` ? `teal` : `grey lighten-3`') mdi-check-circle
+                        v-icon(v-if='$vuetify.theme.current.dark', :color='config.mode === `NONE` ? `teal-lighten-3` : `grey-darken-2`') mdi-check-circle
+                        v-icon(v-else, :color='config.mode === `NONE` ? `teal` : `grey-lighten-3`') mdi-check-circle
                 v-card-text.pt-0
                   v-switch(
                     v-model='config.expandParent'
@@ -70,113 +70,116 @@
                     hide-details
                     label='Open the current page parent by default'
                   )
-                  .caption.grey--text.mt-2 When enabled, Browse opens at the current page location. Disable it to start at the site root.
+                  .text-body-small.text-grey.mt-2 When enabled, Browse opens at the current page location. Disable it to start at the site root.
             v-col(cols='12', md='9', v-if='config.mode === `MIXED` || config.mode === `STATIC`')
               v-card.animated.fadeInUp.wait-p2s
-                v-row(no-gutters, align='stretch')
+                v-row.align-stretch(no-gutters)
                   v-col(cols='12', lg='5', xl='4')
-                    v-card.grey(flat, style='height: 100%; border-radius: 4px 0 0 4px;', :class='$vuetify.theme.current.dark ? `darken-4-l5` : `lighten-3`')
-                      .teal.lighten-1.pa-2.d-flex(style='margin-bottom: 1px; height:56px;')
+                    v-card(flat, style='height: 100%; border-radius: 4px 0 0 4px;', :class='$vuetify.theme.current.dark ? `bg-grey-darken-4-l5` : `bg-grey-lighten-3`')
+                      .bg-teal-lighten-1.pa-2.d-flex(style='margin-bottom: 1px; height:56px;')
                         v-select(
                           :disabled='locales.length < 2'
                           label='Locale'
                           hide-details
-                          solo
+                          variant="solo"
                           flat
-                          background-color='teal darken-2'
-                          dark
-                          dense
+                          bg-color='teal-darken-2'
+                          density="compact"
                           v-model='currentLang'
                           :items='locales'
                           item-title='nativeName'
                           item-value='code'
                         )
-                        v-tooltip(top)
+                        v-tooltip(location="top")
                           template(v-slot:activator='{ props }')
                             v-btn.ml-2(icon, tile, color='white', v-bind='props', @click='copyFromLocaleDialogIsShown = true')
                               v-icon mdi-arrange-send-backward
                           span {{$t('admin:navigation.copyFromLocale')}}
-                      v-list.py-2(dense, nav, dark, class='blue darken-2', style='border-radius: 0;')
+                      v-list.py-2(density="compact", nav, class="bg-blue-darken-2", style='border-radius: 0;')
                         v-list-item(v-if='currentTree.length < 1')
-                          v-avatar(size='24'): v-icon(color='blue lighten-3') mdi-alert
-                          div.v-list-item-content
-                            em.caption.blue--text.text--lighten-4 {{$t('admin:navigation.emptyList')}}
+                          template(v-slot:prepend)
+                            v-avatar(size='24'): v-icon(color="blue-lighten-3") mdi-alert
+                          em.text-body-small.text-blue-lighten-4 {{$t('admin:navigation.emptyList')}}
                         draggable(v-model='currentTree')
                           template(v-for='navItem in currentTree')
                             v-list-item(
                               v-if='navItem.kind === "link"'
                               :key='navItem.id'
-                              :class='(navItem === current) ? "blue" : ""'
+                              :class='(navItem === current) ? "bg-blue" : ""'
                               @click='selectItem(navItem)'
                               )
-                              v-avatar(size='24', tile)
-                                v-icon(v-if='navItem.icon.match(/fa[a-z] fa-/)', size='19') {{ navItem.icon }}
-                                v-icon(v-else) {{ navItem.icon }}
+                              template(v-slot:prepend)
+                                v-avatar(size='24', tile)
+                                  v-icon(v-if='navItem.icon.match(/fa[a-z] fa-/)', size='19') {{ navItem.icon }}
+                                  v-icon(v-else) {{ navItem.icon }}
                               v-list-item-title {{navItem.label}}
                             .py-2.clickable(
                               v-else-if='navItem.kind === "divider"'
                               :key='navItem.id'
-                              :class='(navItem === current) ? "blue" : ""'
+                              :class='(navItem === current) ? "bg-blue" : ""'
                               @click='selectItem(navItem)'
                               )
                               v-divider
                             v-list-subheader.pl-4.clickable(
                               v-else-if='navItem.kind === "header"'
                               :key='navItem.id'
-                              :class='(navItem === current) ? "blue" : ""'
+                              :class='(navItem === current) ? "bg-blue" : ""'
                               @click='selectItem(navItem)'
                               ) {{navItem.label}}
                       div.v-card-chin
-                        v-menu(offset-y, bottom, min-width='200px', style='flex: 1 1;')
+                        v-menu(location="bottom", min-width='200px', style='flex: 1 1;')
                           template(v-slot:activator='{ props }')
-                            v-btn(v-bind='props', color='primary', depressed, block)
-                              v-icon(left) mdi-plus
+                            v-btn(v-bind='props', color='primary', variant="flat", block)
+                              v-icon(start) mdi-plus
                               span {{$t('common:actions.add')}}
                           v-list
                             v-list-item(@click='addItem("link")')
-                              v-avatar(size='24'): v-icon mdi-link
+                              template(v-slot:prepend)
+                                v-avatar(size='24'): v-icon mdi-link
                               v-list-item-title {{$t('admin:navigation.link')}}
                             v-list-item(@click='addItem("header")')
-                              v-avatar(size='24'): v-icon mdi-format-title
+                              template(v-slot:prepend)
+                                v-avatar(size='24'): v-icon mdi-format-title
                               v-list-item-title {{$t('admin:navigation.header')}}
                             v-list-item(@click='addItem("divider")')
-                              v-avatar(size='24'): v-icon mdi-minus
+                              template(v-slot:prepend)
+                                v-avatar(size='24'): v-icon mdi-minus
                               v-list-item-title {{$t('admin:navigation.divider')}}
                   v-col(cols='12', lg='7', xl='8')
                     v-card(flat, style='border-radius: 0 4px 4px 0;')
                       template(v-if='current.kind === "link"')
-                        v-toolbar(height='56', color='teal lighten-1', flat, dark)
-                          .subtitle-1 {{$t('admin:navigation.edit', { kind: $t('admin:navigation.link') })}}
+                        v-toolbar(height='56', color="teal-lighten-1", flat)
+                          .text-body-large {{$t('admin:navigation.edit', { kind: $t('admin:navigation.link') })}}
                           v-spacer
-                          v-btn.px-5(color='white', outlined, @click='deleteItem(current)')
-                            v-icon(left) mdi-delete
+                          v-btn.px-5(color='white', variant="outlined", @click='deleteItem(current)')
+                            v-icon(start) mdi-delete
                             span {{$t('admin:navigation.delete', { kind: $t('admin:navigation.link') })}}
                         v-card-text
                           v-text-field(
-                            outlined
+                            variant="outlined"
                             :label='$t("admin:navigation.label")'
                             prepend-icon='mdi-format-title'
                             v-model='current.label'
                             counter='255'
                           )
                           v-text-field(
-                            outlined
+                            variant="outlined"
                             :label='$t("admin:navigation.icon")'
                             prepend-icon='mdi-dice-5'
                             v-model='current.icon'
                             hide-details
                           )
-                          .caption.pt-3.pl-5 The default icon set is #[strong Material Design Icons]. In order to use another icon set, you must first select it in the Theme administration section.
-                          .caption.pt-3.pl-5: strong Material Design Icons
-                          .caption.pl-5 Refer to the #[a(href='https://materialdesignicons.com/', target='_blank') Material Design Icons Reference] for the list of all possible values. You must prefix all values with #[code mdi-], e.g. #[code mdi-home]
-                          .caption.pt-3.pl-5: strong Font Awesome 5
-                          .caption.pl-5 Refer to the #[a(href='https://fontawesome.com/icons?d=gallery&m=free', target='_blank') Font Awesome 5 Reference] for the list of all possible values. You must prefix all values with #[code fas fa-], e.g. #[code fas fa-home]. Note that some icons use different prefixes (e.g. #[code fab], #[code fad], #[code fal], #[code far]).
-                          .caption.pt-3.pl-5: strong Font Awesome 4
-                          .caption.pl-5 Refer to the #[a(href='https://fontawesome.com/v4.7.0/icons/', target='_blank') Font Awesome 4 Reference] for the list of all possible values. You must prefix all values with #[code fa fa-], e.g. #[code fa fa-home]
+                          .text-body-small.pt-3.pl-5 The default icon set is #[strong Material Design Icons]. In order to use another icon set, you must first select it in the Theme administration section.
+                          .text-body-small.pt-3.pl-5: strong Material Design Icons
+                          .text-body-small.pl-5 Refer to the #[a(href='https://materialdesignicons.com/', target='_blank') Material Design Icons Reference] for the list of all possible values. You must prefix all values with #[code mdi-], e.g. #[code mdi-home]
+                          .text-body-small.pt-3.pl-5: strong Font Awesome 5
+                          .text-body-small.pl-5 Refer to the #[a(href='https://fontawesome.com/icons?d=gallery&m=free', target='_blank') Font Awesome 5 Reference] for the list of all possible values. You must prefix all values with #[code fas fa-], e.g. #[code fas fa-home]. Note that some icons use different prefixes (e.g. #[code fab], #[code fad], #[code fal], #[code far]).
+                          .text-body-small.pt-3.pl-5: strong Font Awesome 4
+                          .text-body-small.pl-5 Refer to the #[a(href='https://fontawesome.com/v4.7.0/icons/', target='_blank') Font Awesome 4 Reference] for the list of all possible values. You must prefix all values with #[code fa fa-], e.g. #[code fa fa-home]
                         v-divider
                         v-card-text
                           v-select(
-                            outlined
+                            variant="outlined"
                             :label='$t("admin:navigation.targetType")'
                             prepend-icon='mdi-near-me'
                             :items='navTypes'
@@ -186,7 +189,7 @@
                           )
                           v-text-field.mt-4(
                             v-if='current.targetType === `external` || current.targetType === `externalblank`'
-                            outlined
+                            variant="outlined"
                             :label='$t("admin:navigation.target")'
                             prepend-icon='mdi-near-me'
                             v-model='current.target'
@@ -195,15 +198,14 @@
                           .d-flex.align-center.mt-4(v-else-if='current.targetType === "page"')
                             v-btn.ml-8(
                               color='primary'
-                              dark
                               @click='selectPage'
                               )
-                              v-icon(left) mdi-magnify
+                              v-icon(start) mdi-magnify
                               span {{$t('admin:navigation.selectPageButton')}}
-                            .caption.ml-4.primary--text {{current.target}}
+                            .text-body-small.ml-4.text-primary {{current.target}}
                           v-text-field(
                             v-else-if='current.targetType === `search`'
-                            outlined
+                            variant="outlined"
                             :label='$t("admin:navigation.navType.searchQuery")'
                             prepend-icon='search'
                             v-model='current.target'
@@ -211,15 +213,15 @@
                         v-divider
 
                       template(v-else-if='current.kind === "header"')
-                        v-toolbar(height='56', color='teal lighten-1', flat, dark)
-                          .subtitle-1 {{$t('admin:navigation.edit', { kind: $t('admin:navigation.header') })}}
+                        v-toolbar(height='56', color="teal-lighten-1", flat)
+                          .text-body-large {{$t('admin:navigation.edit', { kind: $t('admin:navigation.header') })}}
                           v-spacer
-                          v-btn.px-5(color='white', outlined, @click='deleteItem(current)')
-                            v-icon(left) mdi-delete
+                          v-btn.px-5(color='white', variant="outlined", @click='deleteItem(current)')
+                            v-icon(start) mdi-delete
                             span {{$t('admin:navigation.delete', { kind: $t('admin:navigation.header') })}}
                         v-card-text
                           v-text-field(
-                            outlined
+                            variant="outlined"
                             :label='$t("admin:navigation.label")'
                             prepend-icon='mdi-format-title'
                             v-model='current.label'
@@ -227,11 +229,11 @@
                         v-divider
 
                       div(v-else-if='current.kind === "divider"')
-                        v-toolbar(height='56', color='teal lighten-1', flat, dark)
-                          .subtitle-1 {{$t('admin:navigation.edit', { kind: $t('admin:navigation.divider') })}}
+                        v-toolbar(height='56', color="teal-lighten-1", flat)
+                          .text-body-large {{$t('admin:navigation.edit', { kind: $t('admin:navigation.divider') })}}
                           v-spacer
-                          v-btn.px-5(color='white', outlined, @click='deleteItem(current)')
-                            v-icon(left) mdi-delete
+                          v-btn.px-5(color='white', variant="outlined", @click='deleteItem(current)')
+                            v-icon(start) mdi-delete
                             span {{$t('admin:navigation.delete', { kind: $t('admin:navigation.divider') })}}
 
                       v-card-text(v-if='current.kind')
@@ -242,7 +244,7 @@
                           v-select.pl-8.mt-3(
                             item-title='name'
                             item-value='id'
-                            outlined
+                            variant="outlined"
                             prepend-icon='mdi-account-group'
                             label='Groups'
                             :disabled='current.visibilityMode !== `restricted`'
@@ -253,9 +255,9 @@
                             multiple
                           )
                       template(v-else)
-                        v-toolbar(height='56', color='teal lighten-1', flat, dark)
-                        v-card-text.grey--text(v-if='currentTree.length > 0') {{$t('admin:navigation.noSelectionText')}}
-                        v-card-text.grey--text(v-else) {{$t('admin:navigation.noItemsText')}}
+                        v-toolbar(height='56', color="teal-lighten-1", flat)
+                        v-card-text.text-grey(v-if='currentTree.length > 0') {{$t('admin:navigation.noSelectionText')}}
+                        v-card-text.text-grey(v-else) {{$t('admin:navigation.noItemsText')}}
 
     v-dialog(v-model='copyFromLocaleDialogIsShown', max-width='650', persistent)
       v-card
@@ -263,12 +265,12 @@
           v-icon.mr-3(color='white') mdi-arrange-send-backward
           span {{$t('admin:navigation.copyFromLocale')}}
         v-card-text.pt-5
-          .body-2 {{$t('admin:navigation.copyFromLocaleInfoText')}}
+          .text-body-medium {{$t('admin:navigation.copyFromLocaleInfoText')}}
           v-select.mt-3(
             :items='locales'
             item-title='nativeName'
             item-value='code'
-            outlined
+            variant="outlined"
             prepend-icon='mdi-web'
             v-model='copyFromLocaleCode'
             :label='$t(`admin:navigation.sourceLocale`)'
@@ -277,13 +279,12 @@
             )
         div.v-card-chin
           v-spacer
-          v-btn(text, @click='copyFromLocaleDialogIsShown = false') {{$t('common:actions.cancel')}}
-          v-btn.px-3(depressed, color='primary', @click='copyFromLocale')
-            v-icon(left) mdi-chevron-right
+          v-btn(variant="text", @click='copyFromLocaleDialogIsShown = false') {{$t('common:actions.cancel')}}
+          v-btn.px-3(variant="flat", color='primary', @click='copyFromLocale')
+            v-icon(start) mdi-chevron-right
             span {{$t('common:actions.copy')}}
 
-    page-selector(mode='select', v-model='selectPageModal', :open-handler='selectPageHandle', path='home', :locale='currentLang')
-</template>
+    page-selector(mode='select', v-model='selectPageModal', :open-handler='selectPageHandle', path='home', :locale='currentLang')</template>
 
 <script lang='ts'>
 import _ from 'lodash'

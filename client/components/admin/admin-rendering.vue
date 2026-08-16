@@ -1,32 +1,31 @@
 <template lang='pug'>
-  v-container(fluid, grid-list-lg)
-    v-row()
+  v-container(fluid)
+    v-row
       v-col(cols='12')
         .admin-header
           img.animated.fadeInUp(src='/_assets/svg/icon-process.svg', alt='Rendering', style='width: 80px;')
           .admin-header-title
-            .headline.primary--text.animated.fadeInLeft {{ $t('admin:rendering.title') }}
-            .subtitle-1.grey--text.animated.fadeInLeft.wait-p4s {{ $t('admin:rendering.subtitle') }}
+            .text-headline-medium.text-primary.animated.fadeInLeft {{ $t('admin:rendering.title') }}
+            .text-body-large.text-grey.animated.fadeInLeft.wait-p4s {{ $t('admin:rendering.subtitle') }}
           v-spacer
-          v-btn.animated.fadeInDown.wait-p3s(icon, outlined, color='grey', href='https://docs.requarks.io/rendering', target='_blank')
+          v-btn.animated.fadeInDown.wait-p3s(icon, variant="outlined", color='grey', href='https://docs.requarks.io/rendering', target='_blank')
             v-icon mdi-help-circle
-          v-btn.mx-3.animated.fadeInDown.wait-p2s(icon, outlined, color='grey', @click='refresh')
+          v-btn.mx-3.animated.fadeInDown.wait-p2s(icon, variant="outlined", color='grey', @click='refresh')
             v-icon mdi-refresh
-          v-btn.animated.fadeInDown(color='success', @click='save', depressed, large)
-            v-icon(left) mdi-check
+          v-btn.animated.fadeInDown(color='success', @click='save', variant="flat", size="large")
+            v-icon(start) mdi-check
             span {{$t('common:actions.apply')}}
 
       v-col.animated.fadeInUp(lg='3', cols='12')
         v-toolbar(
-          color='blue darken-2'
-          dense
+          color="blue-darken-2"
+          density="compact"
           flat
-          dark
           )
-          .subtitle-1 Pipeline
+          .text-body-large Pipeline
         v-expansion-panels.adm-rendering-pipeline(
           v-model='selectedCore'
-          accordion
+          variant="accordion"
           mandatory
           )
           v-expansion-panel(
@@ -39,45 +38,43 @@
             )
               v-toolbar(
                 color='blue'
-                dense
-                dark
+                density="compact"
                 flat
                 )
                 v-spacer
-                .body-2 {{core.input}}
+                .text-body-medium {{core.input}}
                 v-icon.mx-2 mdi-arrow-right-circle
-                .caption {{core.output}}
+                .text-body-small {{core.output}}
                 v-spacer
             v-expansion-panel-text
-              v-list.py-0(two-line, dense)
+              v-list.py-0(lines="two", density="compact")
                 template(v-for='(rdr, n) in core.children', :key='rdr.key')
                   v-list-item(
                     @click='selectRenderer(rdr.key)'
-                    :class='currentRenderer.key === rdr.key ? ($vuetify.theme.current.dark ? `grey darken-4-l4` : `blue lighten-5`) : ``'
+                    :class='currentRenderer.key === rdr.key ? ($vuetify.theme.current.dark ? `bg-grey-darken-4-l4` : `bg-blue-lighten-5`) : ``'
                     )
-                    v-avatar(size='24', tile)
-                      v-icon(:color='currentRenderer.key === rdr.key ? "primary" : "grey"') {{rdr.icon}}
-                    div.v-list-item-content
-                      v-list-item-title {{rdr.title}}
-                      v-list-item-subtitle: .caption {{rdr.description}}
-                    v-avatar(size='24')
-                      status-indicator(v-if='rdr.isEnabled', positive, pulse)
-                      status-indicator(v-else, negative, pulse)
+                    template(v-slot:prepend)
+                      v-avatar(size='24', tile)
+                        v-icon(:color='currentRenderer.key === rdr.key ? "primary" : "grey"') {{rdr.icon}}
+                    v-list-item-title {{rdr.title}}
+                    v-list-item-subtitle: .text-body-small {{rdr.description}}
+                    template(v-slot:append)
+                      v-avatar(size='24')
+                        status-indicator(v-if='rdr.isEnabled', positive, pulse)
+                        status-indicator(v-else, negative, pulse)
                   v-divider.my-0(v-if='n < core.children.length - 1')
 
       v-col(lg='9', cols='12')
         v-card.wiki-form.animated.fadeInUp
           v-toolbar(
             color='indigo'
-            dark
             flat
-            dense
+            density="compact"
             )
             v-icon.mr-2 {{currentRenderer.icon}}
-            .subtitle-1 {{currentRenderer.title}}
+            .text-body-large {{currentRenderer.title}}
             v-spacer
             v-switch(
-              dark
               color='white'
               label='Enabled'
               v-model='currentRenderer.isEnabled'
@@ -87,14 +84,14 @@
           div.v-card-info(color='blue')
             div
               div {{currentRenderer.description}}
-              span.caption: a(href='https://docs.requarks.io/en/rendering', target='_blank') Documentation
+              span.text-body-small: a(href='https://docs.requarks.io/en/rendering', target='_blank') Documentation
           v-card-text.pb-4.pl-4
-            .overline.mb-5 Rendering Module Configuration
-            .body-2.ml-3(v-if='!currentRenderer.config || currentRenderer.config.length < 1'): em This rendering module has no configuration options you can modify.
+            .text-label-small.mb-5 Rendering Module Configuration
+            .text-body-medium.ml-3(v-if='!currentRenderer.config || currentRenderer.config.length < 1'): em This rendering module has no configuration options you can modify.
             template(v-else, v-for='(cfg, idx) in currentRenderer.config', :key='cfg.key')
               v-select(
                 v-if='cfg.value.type === "string" && cfg.value.enum'
-                outlined
+                variant="outlined"
                 :items='cfg.value.enum'
                 :label='cfg.value.title'
                 v-model='cfg.value.value'
@@ -114,7 +111,7 @@
                 )
               v-text-field(
                 v-else
-                outlined
+                variant="outlined"
                 :label='cfg.value.title'
                 v-model='cfg.value.value'
                 :hint='cfg.value.hint ? cfg.value.hint : ""'
@@ -125,8 +122,7 @@
               v-divider.my-5(v-if='idx < currentRenderer.config.length - 1')
           div.v-card-chin
             v-spacer
-            .caption.pr-3.grey--text Module: {{ currentRenderer.key }}
-</template>
+            .text-body-small.pr-3.text-grey Module: {{ currentRenderer.key }}</template>
 
 <script lang='ts'>
 import _ from 'lodash'
@@ -258,16 +254,16 @@ export default {
 
 <style lang='scss'>
 .adm-rendering-pipeline {
-  .v-expansion-panel--active .v-expansion-panel-header {
+  .v-expansion-panel--active .v-expansion-panel-title {
     min-height: 0;
   }
 
-  .v-expansion-panel-header {
+  .v-expansion-panel-title {
     padding: 0;
     margin-top: 1px;
   }
 
-  .v-expansion-panel-content__wrap {
+  .v-expansion-panel-text__wrapper {
     padding: 0;
   }
 }

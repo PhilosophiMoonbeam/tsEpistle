@@ -1,59 +1,59 @@
 <template lang='pug'>
-  v-container(fluid, grid-list-lg)
-    v-row()
+  v-container(fluid)
+    v-row
       v-col(cols='12')
         .admin-header
           img.animated.fadeInUp(src='/_assets/svg/icon-browse-page.svg', alt='Dashboard', style='width: 80px;')
           .admin-header-title
-            .headline.primary--text.animated.fadeInLeft {{ $t('admin:dashboard.title') }}
-            .subtitle-1.grey--text.animated.fadeInLeft.wait-p2s {{ $t('admin:dashboard.subtitle') }}
+            .text-headline-medium.text-primary.animated.fadeInLeft {{ $t('admin:dashboard.title') }}
+            .text-body-large.text-grey.animated.fadeInLeft.wait-p2s {{ $t('admin:dashboard.subtitle') }}
       v-col(cols='12' md='6' lg='4' xl='3' class='d-flex')
-        v-card.primary.dashboard-card.animated.fadeInUp(dark)
+        v-card.bg-primary.dashboard-card.animated.fadeInUp
           v-card-text
             v-icon.dashboard-icon mdi-file-document-outline
-            .overline {{$t('admin:dashboard.pages')}}
-            animated-number.display-1(
+            .text-label-small {{$t('admin:dashboard.pages')}}
+            animated-number.text-headline-large(
               :value='info.pagesTotal'
               :duration='2000'
               :formatValue='round'
               easing='easeOutQuint'
               )
       v-col(cols='12' md='6' lg='4' xl='3' class='d-flex')
-        v-card.blue.darken-3.dashboard-card.animated.fadeInUp.wait-p2s(dark)
+        v-card.bg-blue-darken-3.dashboard-card.animated.fadeInUp.wait-p2s
           v-card-text
             v-icon.dashboard-icon mdi-account
-            .overline {{$t('admin:dashboard.users')}}
-            animated-number.display-1(
+            .text-label-small {{$t('admin:dashboard.users')}}
+            animated-number.text-headline-large(
               :value='info.usersTotal'
               :duration='2000'
               :formatValue='round'
               easing='easeOutQuint'
               )
       v-col(cols='12' md='6' lg='4' xl='3' class='d-flex')
-        v-card.blue.darken-4.dashboard-card.animated.fadeInUp.wait-p4s(dark)
+        v-card.bg-blue-darken-4.dashboard-card.animated.fadeInUp.wait-p4s
           v-card-text
             v-icon.dashboard-icon mdi-account-group
-            .overline {{$t('admin:dashboard.groups')}}
-            animated-number.display-1(
+            .text-label-small {{$t('admin:dashboard.groups')}}
+            animated-number.text-headline-large(
               :value='info.groupsTotal'
               :duration='2000'
               :formatValue='round'
               easing='easeOutQuint'
               )
       v-col(cols='12' md='6' lg='12' xl='3' class='d-flex')
-        v-card.dashboard-card.animated.fadeInUp.wait-p6s.indigo(dark)
-          v-btn(fab, absolute, :right='!$vuetify.locale.isRtl', :left='$vuetify.locale.isRtl', top, small, light, to='system', v-if='hasPermission(`manage:system`)', aria-label='System information')
-            v-icon(color='indigo', small) mdi-information-outline
+        v-card.dashboard-card.animated.fadeInUp.wait-p6s.bg-indigo
+          v-btn(icon, absolute, location='top end', size="small", to='system', v-if='hasPermission(`manage:system`)', aria-label='System information')
+            v-icon(color='indigo', size="small") mdi-information-outline
           v-card-text
             v-icon.dashboard-icon mdi-source-fork
-            .subtitle-1 {{ info.product.name }} {{ info.product.version }}
-            .body-2 Preview update checks are unavailable
-            .caption {{ info.product.upstreamBase }}
+            .text-body-large {{ info.product.name }} {{ info.product.version }}
+            .text-body-medium Preview update checks are unavailable
+            .text-body-small {{ info.product.upstreamBase }}
       v-col(cols='12', xl='6')
         v-card.radius-7.animated.fadeInUp.wait-p2s
-          v-toolbar.dashboard-section-toolbar(:color='$vuetify.theme.current.dark ? `grey-darken-2` : `grey-lighten-5`', dense, flat)
+          v-toolbar.dashboard-section-toolbar(:color='$vuetify.theme.current.dark ? `grey-darken-2` : `grey-lighten-5`', density="compact", flat)
             v-spacer
-            .overline {{$t('admin:dashboard.recentPages')}}
+            .text-label-small {{$t('admin:dashboard.recentPages')}}
             v-spacer
           v-list.dashboard-mobile-list(v-if='$vuetify.display.smAndDown', lines='three')
             v-list-item(
@@ -63,11 +63,11 @@
             )
               v-list-item-title: strong {{ page.title }}
               v-list-item-subtitle
-                v-chip.mr-2(label, x-small, :color='$vuetify.theme.current.dark ? `grey darken-4` : `grey lighten-4`') {{ page.locale }}
+                v-chip.mr-2(label, size="x-small", :color='$vuetify.theme.current.dark ? `grey-darken-4` : `grey-lighten-4`') {{ page.locale }}
                 span /{{ page.path }}
-              .caption.grey--text {{ $helpers.formatMoment(page.updatedAt, 'calendar') }}
+              .text-body-small.text-grey {{ $helpers.formatMoment(page.updatedAt, 'calendar') }}
             v-list-item(v-if='!recentPagesLoading && recentPages.length === 0')
-              v-list-item-title.grey--text No recent pages
+              v-list-item-title.text-grey No recent pages
           v-data-table.dashboard-data-table.pb-2(
             v-else
             :items='recentPages'
@@ -79,16 +79,16 @@
             template(v-slot:item='props')
               tr.is-clickable(:active='props.selected', @click='$router.push(`/pages/` + props.item.id)')
                 td
-                  .body-2: strong {{ props.item.title }}
+                  .text-body-medium: strong {{ props.item.title }}
                 td.admin-pages-path
-                  v-chip(label, small, :color='$vuetify.theme.current.dark ? `grey darken-4` : `grey lighten-4`') {{ props.item.locale }}
-                  span.ml-2.grey--text(:class='$vuetify.theme.current.dark ? `text--lighten-1` : `text--darken-2`') / {{ props.item.path }}
-                td.text-right.caption(width='250') {{ $helpers.formatMoment(props.item.updatedAt, 'calendar') }}
+                  v-chip(label, size="small", :color='$vuetify.theme.current.dark ? `grey-darken-4` : `grey-lighten-4`') {{ props.item.locale }}
+                  span.ml-2(:class='$vuetify.theme.current.dark ? `text-grey-lighten-1` : `text-grey-darken-2`') / {{ props.item.path }}
+                td.text-right.text-body-small(width='250') {{ $helpers.formatMoment(props.item.updatedAt, 'calendar') }}
       v-col(cols='12', xl='6')
         v-card.radius-7.animated.fadeInUp.wait-p4s
-          v-toolbar.dashboard-section-toolbar(:color='$vuetify.theme.current.dark ? `grey-darken-2` : `grey-lighten-5`', dense, flat)
+          v-toolbar.dashboard-section-toolbar(:color='$vuetify.theme.current.dark ? `grey-darken-2` : `grey-lighten-5`', density="compact", flat)
             v-spacer
-            .overline {{$t('admin:dashboard.lastLogins')}}
+            .text-label-small {{$t('admin:dashboard.lastLogins')}}
             v-spacer
           v-list.dashboard-mobile-list(v-if='$vuetify.display.smAndDown', lines='two')
             v-list-item(
@@ -99,7 +99,7 @@
               v-list-item-title: strong {{ user.name }}
               v-list-item-subtitle {{ $helpers.formatMoment(user.lastLoginAt, 'calendar') }}
             v-list-item(v-if='!lastLoginsLoading && lastLogins.length === 0')
-              v-list-item-title.grey--text No recent logins
+              v-list-item-title.text-grey No recent logins
           v-data-table.dashboard-data-table.pb-2(
             v-else
             :items='lastLogins'
@@ -111,20 +111,19 @@
             template(v-slot:item='props')
               tr.is-clickable(:active='props.selected', @click='$router.push(`/users/` + props.item.id)')
                 td
-                  .body-2: strong {{ props.item.name }}
-                td.text-right.caption(width='250') {{ $helpers.formatMoment(props.item.lastLoginAt, 'calendar') }}
+                  .text-body-medium: strong {{ props.item.name }}
+                td.text-right.text-body-small(width='250') {{ $helpers.formatMoment(props.item.lastLoginAt, 'calendar') }}
 
       v-col(cols='12')
         v-card.dashboard-contribute.animated.fadeInUp.wait-p4s
           v-card-text
             img(src='/_assets/svg/icon-heart-health.svg', alt='Contribute', style='height: 80px;')
             .pl-5
-              .subtitle-1 {{$t('admin:contribute.title')}}
-              .body-2.mt-3: strong {{$t('admin:dashboard.contributeSubtitle')}}
-              .body-2 {{$t('admin:dashboard.contributeHelp')}}
-              v-btn.mx-0.mt-4(:color='$vuetify.theme.current.dark ? `indigo lighten-3` : `indigo`', outlined, small, to='/contribute')
-                .caption: strong {{$t('admin:dashboard.contributeLearnMore')}}
-
+              .text-body-large {{$t('admin:contribute.title')}}
+              .text-body-medium.mt-3: strong {{$t('admin:dashboard.contributeSubtitle')}}
+              .text-body-medium {{$t('admin:dashboard.contributeHelp')}}
+              v-btn.mx-0.mt-4(:color='$vuetify.theme.current.dark ? `indigo-lighten-3` : `indigo`', variant="outlined", size="small", to='/contribute')
+                .text-body-small: strong {{$t('admin:dashboard.contributeLearnMore')}}
 </template>
 
 <script lang='ts'>
@@ -263,7 +262,7 @@ export default {
   width: 100%;
   border-radius: 7px;
 
-  .v-card__text {
+  .v-card-text {
     overflow: hidden;
     position: relative;
   }
@@ -286,17 +285,17 @@ export default {
   background-image: linear-gradient(to bottom, #FFF 0%, lighten(mc('indigo', '50'), 3%) 100%);
   border-radius: 7px;
 
-  @at-root .theme--dark & {
+  @at-root .v-theme--dark & {
     background-color: mc('grey', '800');
     background-image: linear-gradient(to bottom, mc('grey', '800') 0%, darken(mc('grey', '800'), 6%) 100%);
   }
 
-  .v-card__text {
+  .v-card-text {
     display: flex;
     align-items: center;
     color: mc('indigo', '500') !important;
 
-    @at-root .theme--dark & {
+    @at-root .v-theme--dark & {
       color: mc('grey', '300') !important;
     }
   }
@@ -309,7 +308,7 @@ export default {
   font-size: 100px !important;
   opacity: .25;
 
-  @at-root .v-application--is-rtl & {
+  @at-root .v-locale--is-rtl & {
     left: 0;
     right: initial;
   }
