@@ -46,12 +46,14 @@ describe('ordinary-origin agent session API', () => {
   let ownerId = 7
   const csrf = 'csrf-token'
   let runtime: AgentProductRuntime
+  let engineCurrentPage: unknown
 
   beforeAll(async () => {
     db = createKnex({ client: 'better-sqlite3', connection: { filename: ':memory:' }, useNullAsDefault: true, pool: { min: 1, max: 1 } })
     await createTables(db)
     const fakeEngine: AgentEngine = {
-      async execute(_request, sink) {
+      async execute(request, sink) {
+        engineCurrentPage = request.currentPage
         await sink.text('Hello ')
         await sink.text('from the deterministic engine.')
         return { inputTokens: 3, outputTokens: 5, costMicros: 8, suggestions: [{ id: 'continue', label: 'Continue', prompt: 'Continue' }] }
@@ -151,7 +153,8 @@ describe('ordinary-origin agent session API', () => {
       clientRequestId: '00000000-0000-4000-8000-000000000071',
       expectedSessionVersion: state.session.version,
       profileResolutionToken: state.session.profileResolutionToken,
-      content: 'Answer deterministically.'
+      content: 'Answer deterministically.',
+      currentPage: { id: 42, locale: 'en', path: 'home', observedUpdatedAt: '2026-08-17T00:00:00.000Z' },
     }
     const admitted = await fetch(`${baseUrl}/_api/agents/sessions/${state.session.id}/messages`, { method: 'POST', headers, body: JSON.stringify(request) })
     expect(admitted.status).toBe(202)
@@ -176,6 +179,7 @@ describe('ordinary-origin agent session API', () => {
     expect((await retry.json() as { run: { id: string }, replayed: boolean })).toMatchObject({ run: { id: admission.run.id }, replayed: true })
 
     expect(await runtime.runOnce()).toBe(true)
+    expect(engineCurrentPage).toEqual(request.currentPage)
     const reconnected = await fetch(`${baseUrl}/_api/agents/sessions/${state.session.id}`, { headers: { cookie } })
     const thread = await reconnected.json() as { messages: Array<{ role: string, status: string, content: string }> }
     expect(thread.messages.at(-1)).toMatchObject({ role: 'assistant', status: 'complete', content: 'Hello from the deterministic engine.' })

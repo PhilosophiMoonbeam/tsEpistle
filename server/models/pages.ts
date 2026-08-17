@@ -1640,6 +1640,7 @@ static async getPageFromDb(opts: number | PageLookup): Promise<Page | undefined>
         'pages.id',
         'pages.path',
         'pages.hash',
+        'pages.sourceRevision',
         'pages.title',
         'pages.description',
         'pages.visibility',

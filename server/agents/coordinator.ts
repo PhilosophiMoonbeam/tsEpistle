@@ -212,8 +212,8 @@ const nextMessageOrdinal = async (transaction: Knex.Transaction, sessionId: stri
   return Number(latest?.ordinal ?? 0) + 1
 }
 
-const queuedEventData = (runId: string): { data: string, dataSha256: string } => {
-  const value: AgentEventData = { runId, status: 'queued' }
+const queuedEventData = (runId: string, currentPage?: Readonly<Record<string, unknown>>): { data: string, dataSha256: string } => {
+  const value: AgentEventData = { runId, status: 'queued', ...(currentPage === undefined ? {} : { currentPage }) }
   const data = canonicalJson(value)
   return { data, dataSha256: sha256(data) }
 }
@@ -286,7 +286,7 @@ export const admitAgentRun = async (knex: Knex, input: AdmitAgentRunInput): Prom
     await transaction('agentMessages').whereIn('id', [userMessageId, assistantMessageId]).update({ runId })
     if (input.skillVersionIds.length > 0) await transaction('agentRunSkills').insert(input.skillVersionIds.map((skillVersionId, ordinal) => ({ runId, skillVersionId, ordinal })))
     await reserveQuotaInTransaction(transaction, runId, input.ownerId, input.quota, input.quotaLimits, now, input.reservationExpiresAt)
-    const event = queuedEventData(runId)
+    const event = queuedEventData(runId, input.currentPage)
     await transaction('agentEvents').insert({ id: input.queuedEventId ?? randomUUID(), runId, sequence: 1, type: 'run.queued', attempt: 0, schemaVersion: 1, dataSha256: event.dataSha256, data: event.data, createdAt: now })
     if (transaction.client.config.client === 'pg' || transaction.client.config.client === 'postgresql') {
       await transaction.raw("SELECT pg_notify('wiki_agent_events', ?)", [runId])

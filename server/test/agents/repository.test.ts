@@ -335,6 +335,7 @@ describe('durable agent repositories', () => {
       expectedSessionVersion: 1,
       profileResolutionSha256: 'a'.repeat(64),
       content: 'Durable question',
+      currentPage: { id: 42, locale: 'en', path: 'guide', observedUpdatedAt: '2026-08-17T00:00:00.000Z' },
       providerProfileVersionId: '00000000-0000-4000-8000-000000000037',
       transportKind: 'openai-responses',
       model: 'test',
@@ -356,7 +357,9 @@ describe('durable agent repositories', () => {
     expect(replay).toMatchObject({ replayed: true, run: { id: input.id, eventSequence: 1, status: 'queued' } })
     await expect(admitAgentRun(knex, { ...input, content: 'Different' })).rejects.toMatchObject({ code: 'RUN_IDEMPOTENCY_MISMATCH', status: 409 })
     expect(await knex('agentMessages').where({ sessionId: secondSessionId }).orderBy('ordinal').pluck('status')).toEqual(['complete', 'pending'])
-    expect(await knex('agentEvents').where({ runId: input.id }).pluck('type')).toEqual(['run.queued'])
+    const queuedEvent = await knex('agentEvents').where({ runId: input.id }).first('type', 'data')
+    expect(queuedEvent?.type).toBe('run.queued')
+    expect(JSON.parse(String(queuedEvent?.data))).toMatchObject({ runId: input.id, status: 'queued', currentPage: input.currentPage })
 
     const failedSessionId = '00000000-0000-4000-8000-000000000038'
     await createAgentSession(knex, { id: failedSessionId, ownerId: 8, retention: 'temporary', providerProfileId: null, executionMode: 'agent' })

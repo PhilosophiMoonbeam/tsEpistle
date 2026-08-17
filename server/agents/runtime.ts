@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto'
 import type { Knex } from 'knex'
-import type { AgentEventData, AgentEventType, AgentExecutionMode } from '../../shared/agents/contracts.ts'
+import type { AgentCurrentPageHint, AgentEventData, AgentEventType, AgentExecutionMode } from '../../shared/agents/contracts.ts'
 import { canonicalJson } from '../helpers/canonical-json.ts'
 import {
   AgentRunCoordinator,
@@ -57,6 +57,7 @@ export interface AgentEngineSkill {
 export interface AgentEngineRequest {
   readonly run: AgentRunClaim
   readonly messages: readonly AgentEngineMessage[]
+  readonly currentPage?: AgentCurrentPageHint
   readonly skills: readonly AgentEngineSkill[]
   readonly signal: AbortSignal
 }
@@ -99,6 +100,27 @@ export interface AgentProductRuntimeOptions {
 
 interface RuntimeMessageRow { role: 'user' | 'assistant'; content: string; providerStateCiphertext: Uint8Array | null }
 interface RuntimeSkillRow { id: string; name: string; skillMarkdown: string }
+interface RuntimeContextRow { data: string }
+
+const currentPageHint = (value: string | undefined): AgentCurrentPageHint | undefined => {
+  if (value === undefined) return undefined
+  if (Buffer.byteLength(value, 'utf8') > 16 * 1_024) throw new AgentRepositoryError('AGENT_RUN_CONTEXT_CORRUPT', 'Stored run context is too large', 500)
+  try {
+    const parsed: unknown = JSON.parse(value)
+    const currentPage = typeof parsed === 'object' && parsed !== null ? Reflect.get(parsed, 'currentPage') : undefined
+    if (currentPage === undefined) return undefined
+    if (typeof currentPage !== 'object' || currentPage === null) throw new Error('invalid page context')
+    const id = Reflect.get(currentPage, 'id')
+    const locale = Reflect.get(currentPage, 'locale')
+    const path = Reflect.get(currentPage, 'path')
+    const observedUpdatedAt = Reflect.get(currentPage, 'observedUpdatedAt')
+    if (!Number.isSafeInteger(id) || id < 1 || typeof locale !== 'string' || locale.length < 1 || locale.length > 16 || typeof path !== 'string' || path.length < 1 || path.length > 1_024 || typeof observedUpdatedAt !== 'string' || !Number.isFinite(Date.parse(observedUpdatedAt))) throw new Error('invalid page context')
+    return { id, locale, path, observedUpdatedAt }
+  } catch (error) {
+    if (error instanceof AgentRepositoryError) throw error
+    throw new AgentRepositoryError('AGENT_RUN_CONTEXT_CORRUPT', 'Stored run context is invalid', 500)
+  }
+}
 
 const nonNegativeUsage = (value: number, label: string): number => {
   if (!Number.isSafeInteger(value) || value < 0) throw new AgentRepositoryError('INVALID_AGENT_USAGE', `${label} must be a non-negative safe integer`, 500)
@@ -164,18 +186,22 @@ export class AgentProductRuntime {
     let content = ''
     let quotaReconciled = false
     try {
-      const messageRows = await this.#knex('agentMessages').where({ sessionId: claim.sessionId }).andWhere('id', '!=', claim.assistantMessageId).orderBy('ordinal').select('role', 'content', 'providerStateCiphertext') as RuntimeMessageRow[]
+      const [messageRows, skills, contextRow] = await Promise.all([
+        this.#knex('agentMessages').where({ sessionId: claim.sessionId }).andWhere('id', '!=', claim.assistantMessageId).orderBy('ordinal').select('role', 'content', 'providerStateCiphertext') as unknown as Promise<RuntimeMessageRow[]>,
+        this.#knex('agentRunSkills').join('agentSkillVersions', 'agentSkillVersions.id', 'agentRunSkills.skillVersionId').join('agentSkills', 'agentSkills.id', 'agentSkillVersions.skillId').where('agentRunSkills.runId', claim.id).orderBy('agentRunSkills.ordinal').select('agentSkillVersions.id', 'agentSkills.name', 'agentSkillVersions.skillMarkdown') as unknown as Promise<RuntimeSkillRow[]>,
+        this.#knex('agentEvents').where({ runId: claim.id, type: 'run.queued' }).orderBy('sequence').first('data') as unknown as Promise<RuntimeContextRow | undefined>
+      ])
+      const currentPage = currentPageHint(contextRow?.data)
       const messages: AgentEngineMessage[] = messageRows.map(message => {
         const state = providerState(message.providerStateCiphertext)
         return state === undefined
           ? { role: message.role, content: message.content }
           : { role: message.role, content: message.content, providerState: state }
       })
-      const skills = await this.#knex('agentRunSkills').join('agentSkillVersions', 'agentSkillVersions.id', 'agentRunSkills.skillVersionId').join('agentSkills', 'agentSkills.id', 'agentSkillVersions.skillId').where('agentRunSkills.runId', claim.id).orderBy('agentRunSkills.ordinal').select('agentSkillVersions.id', 'agentSkills.name', 'agentSkillVersions.skillMarkdown') as RuntimeSkillRow[]
       await this.#appendPresentationEvent(claim, 'run.attemptStarted', { runId: claim.id, attempt: claim.attempts })
       if (claim.attempts > 1) await this.#appendPresentationEvent(claim, 'run.attemptSuperseded', { runId: claim.id, supersededThroughAttempt: claim.attempts - 1 })
       await this.#appendPresentationEvent(claim, 'message.started', { messageId: claim.assistantMessageId }, { status: 'streaming', content: '', citations: null })
-      const result = await this.#engine.execute({ run: claim, messages, skills, signal }, {
+      const result = await this.#engine.execute({ run: claim, messages, skills, signal, ...(currentPage === undefined ? {} : { currentPage }) }, {
         text: async delta => {
           if (signal.aborted) throw signal.reason
           if (typeof delta !== 'string' || delta.length === 0 || delta.length > 16_000 || content.length + delta.length > 128_000) throw new AgentRepositoryError('INVALID_ENGINE_DELTA', 'Inference engine emitted an invalid text delta', 500)
