@@ -9,11 +9,11 @@
             <v-select v-model="profileId" :items="profileItems" label="Provider profile" :disabled="disabled" />
           </v-col>
           <v-col cols="12" md="5">
-            <v-select v-model="mode" :items="modeItems" label="Execution mode" :disabled="disabled" />
+            <v-select v-model="mode" :items="modeItems" label="How this session uses the model" :disabled="disabled || modeItems.length === 1" />
           </v-col>
         </v-row>
-        <v-alert v-if="mode === 'generation-only'" type="warning" variant="tonal" density="compact" class="mb-3">
-          Generation-only mode cannot call Wiki actions. Its output is unverified model text.
+        <v-alert v-if="mode === 'generation-only'" type="info" variant="tonal" density="compact" class="mb-3">
+          Text generation does not receive or call Wiki actions. The result is unverified model text.
         </v-alert>
         <v-btn color="primary" variant="tonal" :disabled="disabled || !profileChanged" @click="applyProfile">Apply provider and mode</v-btn>
         <v-divider class="my-5" />
@@ -51,7 +51,7 @@ const skillVersionIds = ref(props.session.skills.map(skill => skill.versionId))
 watch(() => props.session, session => { profileId.value = session.providerProfileId; mode.value = session.executionMode; skillVersionIds.value = session.skills.map(skill => skill.versionId) })
 const profileItems = computed(() => [{ title: 'Use current default', value: null }, ...props.profiles.map(profile => ({ title: `${profile.name} · ${profile.model}`, value: profile.id }))])
 const selectedProfile = computed(() => profileId.value === null ? props.profiles.find(profile => profile.isGlobalDefault) : props.profiles.find(profile => profile.id === profileId.value))
-const modeItems = computed(() => (selectedProfile.value?.executionModes ?? ['generation-only']).map(value => ({ title: value === 'agent' ? 'Agent (Wiki actions enabled)' : 'Generation only', value })))
+const modeItems = computed(() => (selectedProfile.value?.executionModes ?? ['generation-only']).map(value => ({ title: value === 'agent' ? 'Agent — Wiki actions available' : 'Text generation — no Wiki actions', value })))
 watch(selectedProfile, profile => { if (profile && !profile.executionModes.includes(mode.value)) mode.value = 'generation-only' })
 const skillItems = computed(() => props.skills.map(skill => ({ title: `${skill.name} · ${skill.description}`, value: skill.versionId })))
 const profileChanged = computed(() => profileId.value !== props.session.providerProfileId || mode.value !== props.session.executionMode)

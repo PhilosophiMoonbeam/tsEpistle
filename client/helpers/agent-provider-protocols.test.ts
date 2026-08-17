@@ -2,8 +2,11 @@ import { describe, expect, it } from 'vitest'
 
 import { AGENT_PROVIDER_TRANSPORTS } from '../../shared/agents/contracts.ts'
 import {
+  AGENT_PROVIDER_PRICING_REVISION,
   AGENT_PROVIDER_PROTOCOL_OPTIONS,
+  agentProviderCapabilityRevision,
   agentProviderProtocolDefaults,
+  agentProviderProtocolExecutionModes,
   agentProviderProtocolOption,
   isAgentProviderTransport
 } from './agent-provider-protocols.ts'
@@ -22,10 +25,9 @@ describe('agent provider protocol presentation', () => {
       authMode: 'bearer',
       streaming: true,
       functions: true,
+      parallelFunctions: true,
       structuredOutput: 'tool-result',
       usage: 'stream',
-      agentMode: true,
-      generationMode: true
     })
     expect(agentProviderProtocolDefaults('legacy-completions')).toEqual({
       baseUrl: '',
@@ -36,9 +38,14 @@ describe('agent provider protocol presentation', () => {
       functions: false,
       parallelFunctions: false,
       cancellation: true,
-      agentMode: false,
-      generationMode: true
     })
+  })
+
+  it('enables multiple tool calls only for tool-capable protocols', () => {
+    for (const transport of ['openai-responses', 'openresponses', 'openai-chat', 'anthropic-messages'] as const) {
+      expect(agentProviderProtocolDefaults(transport)).toMatchObject({ functions: true, parallelFunctions: true })
+    }
+    expect(agentProviderProtocolDefaults('legacy-completions')).toMatchObject({ functions: false, parallelFunctions: false })
   })
 
   it('applies vendor defaults only to native vendor protocols', () => {
@@ -49,6 +56,15 @@ describe('agent provider protocol presentation', () => {
       structuredOutput: 'tool-result'
     })
     expect(agentProviderProtocolDefaults('openresponses').baseUrl).toBe('')
+  })
+
+  it('derives execution modes and internal revisions instead of asking operators', () => {
+    expect(agentProviderProtocolExecutionModes('openai-responses')).toEqual(['agent', 'generation-only'])
+    expect(agentProviderProtocolExecutionModes('openai-chat')).toEqual(['agent', 'generation-only'])
+    expect(agentProviderProtocolExecutionModes('anthropic-messages')).toEqual(['agent', 'generation-only'])
+    expect(agentProviderProtocolExecutionModes('legacy-completions')).toEqual(['generation-only'])
+    expect(agentProviderCapabilityRevision('openresponses')).toBe('wiki-protocol-capabilities-v1:openresponses')
+    expect(AGENT_PROVIDER_PRICING_REVISION).toBe('unpriced-v1')
   })
 
   it('rejects unknown transport values before form state changes', () => {

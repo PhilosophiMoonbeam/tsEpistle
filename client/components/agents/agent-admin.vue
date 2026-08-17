@@ -51,36 +51,54 @@
 
     <v-dialog v-model="profileDialog" max-width="60rem" scrollable>
       <v-card :title="editingProfile ? `New version of ${editingProfile.displayName}` : 'Add provider profile'">
-        <v-card-text><v-form ref="profileForm"><div class="form-grid">
-          <v-text-field v-if="!editingProfile" v-model="profileDraft.displayName" label="Display name" required/>
-          <div class="protocol-field">
-            <v-select v-model="profileDraft.transportKind" :items="protocolOptions" item-title="title" item-value="value" label="API protocol" required @update:model-value="selectProtocol">
-              <template #item="{ props: itemProps, internalItem }">
-                <v-list-subheader v-if="internalItem.raw.startsGroup">{{ internalItem.raw.group }}</v-list-subheader>
-                <v-list-item v-bind="itemProps" :title="internalItem.raw.title" :subtitle="internalItem.raw.description"/>
-              </template>
-            </v-select>
-            <p class="text-body-small text-medium-emphasis mt-n4 mb-4">{{ selectedProtocol.description }} Endpoint: <code>{{ selectedProtocol.endpoint }}</code>.</p>
+        <v-card-text><v-form ref="profileForm">
+          <div class="form-grid">
+            <v-text-field v-if="!editingProfile" v-model="profileDraft.displayName" label="Display name" required/>
+            <div class="protocol-field">
+              <v-select v-model="profileDraft.transportKind" :items="protocolOptions" item-title="title" item-value="value" label="API protocol" required @update:model-value="selectProtocol">
+                <template #item="{ props: itemProps, internalItem }">
+                  <v-list-subheader v-if="internalItem.raw.startsGroup">{{ internalItem.raw.group }}</v-list-subheader>
+                  <v-list-item v-bind="itemProps" :title="internalItem.raw.title" :subtitle="internalItem.raw.description"/>
+                </template>
+              </v-select>
+              <p class="text-body-small text-medium-emphasis mt-n4 mb-4">{{ selectedProtocol.description }} Endpoint: <code>{{ selectedProtocol.endpoint }}</code>.</p>
+            </div>
+            <v-text-field v-model="profileDraft.model" label="Model" required/>
+            <v-text-field v-model="profileDraft.baseUrl" label="Base URL" hint="Public HTTPS API root; the selected endpoint path is appended" required/>
+            <v-select v-if="availableAuthModes.length > 1" v-model="profileDraft.authMode" :items="availableAuthModes" label="Authentication mode"/>
+            <v-text-field v-model="profileDraft.secretReference" label="Server secret reference" hint="Reference only; secret material is never returned"/>
+            <v-select v-if="!editingProfile" v-model="profileDraft.exposureMode" :items="exposureModes" label="Exposure"/>
+            <v-text-field v-if="!editingProfile && profileDraft.exposureMode === 'groups'" v-model="profileDraft.groupIds" label="Group IDs" hint="Comma-separated positive IDs"/>
           </div>
-          <v-text-field v-model="profileDraft.model" label="Model" required/>
-          <v-text-field v-model="profileDraft.baseUrl" label="Base URL" hint="Public HTTPS API root; the selected endpoint path is appended" required/>
-          <v-select v-model="profileDraft.authMode" :items="availableAuthModes" label="Authentication mode" :disabled="availableAuthModes.length === 1"/>
-          <v-text-field v-model="profileDraft.secretReference" label="Server secret reference" hint="Reference only; secret material is never returned"/>
-          <v-select v-if="!editingProfile" v-model="profileDraft.exposureMode" :items="exposureModes" label="Exposure"/>
-          <v-text-field v-if="!editingProfile && profileDraft.exposureMode === 'groups'" v-model="profileDraft.groupIds" label="Group IDs" hint="Comma-separated positive IDs"/>
-          <v-text-field v-model.number="profileDraft.maxContextTokens" type="number" label="Maximum context tokens"/>
-          <v-text-field v-model.number="profileDraft.maxOutputTokens" type="number" label="Maximum output tokens"/>
-          <v-text-field v-model.number="profileDraft.dailyTokens" type="number" label="Daily token limit"/>
-          <v-text-field v-model.number="profileDraft.dailyCostMicros" type="number" label="Daily cost limit (micros)"/>
-          <v-text-field v-model.number="profileDraft.reservationTokens" type="number" label="Per-run token reservation"/>
-          <v-text-field v-model.number="profileDraft.reservationCostMicros" type="number" label="Per-run cost reservation (micros)"/>
-          <v-text-field v-model.number="profileDraft.timeoutMs" type="number" label="Request timeout (ms)"/>
-          <v-text-field v-model.number="profileDraft.maxAttempts" type="number" label="Maximum attempts"/>
-          <v-text-field v-model="profileDraft.capabilityRevision" label="Capability revision" required/>
-          <v-text-field v-model="profileDraft.pricingRevision" label="Pricing revision" required/>
-          <v-select v-model="profileDraft.structuredOutput" :items="structuredModes" label="Structured output" :disabled="legacyProtocol"/>
-          <v-select v-model="profileDraft.usage" :items="usageModes" label="Usage reporting" :disabled="legacyProtocol"/>
-        </div><div class="d-flex flex-wrap ga-4"><v-checkbox v-model="profileDraft.streaming" label="Streaming" :disabled="legacyProtocol"/><v-checkbox v-model="profileDraft.functions" label="Functions" :disabled="legacyProtocol"/><v-checkbox v-model="profileDraft.parallelFunctions" label="Parallel functions" :disabled="legacyProtocol || !profileDraft.functions"/><v-checkbox v-model="profileDraft.cancellation" label="Cancellation"/><v-checkbox v-model="profileDraft.agentMode" label="Agent mode" :disabled="legacyProtocol || !agentModeAvailable"/><v-checkbox v-model="profileDraft.generationMode" label="Generation-only mode"/></div></v-form></v-card-text>
+          <v-sheet class="pa-4 mt-2" rounded="lg" border>
+            <h3 class="text-title-medium">Protocol-derived behavior</h3>
+            <p class="text-body-small text-medium-emphasis mb-3">Wiki selects conservative behavior from the API protocol. The immutable profile must still pass conformance before it can be enabled.</p>
+            <dl class="protocol-summary">
+              <div v-for="row in protocolBehaviorRows" :key="row.label">
+                <dt>{{ row.label }}</dt>
+                <dd>{{ row.value }}</dd>
+              </div>
+            </dl>
+          </v-sheet>
+          <v-expansion-panels variant="accordion" class="mt-4">
+            <v-expansion-panel>
+              <v-expansion-panel-title>Advanced limits and quotas</v-expansion-panel-title>
+              <v-expansion-panel-text>
+                <div class="form-grid">
+                  <v-text-field v-model.number="profileDraft.maxContextTokens" type="number" label="Maximum context tokens"/>
+                  <v-text-field v-model.number="profileDraft.maxOutputTokens" type="number" label="Maximum output tokens"/>
+                  <v-text-field v-model.number="profileDraft.dailyTokens" type="number" label="Daily token limit"/>
+                  <v-text-field v-model.number="profileDraft.dailyCostMicros" type="number" label="Daily cost reservation (micros)"/>
+                  <v-text-field v-model.number="profileDraft.reservationTokens" type="number" label="Per-run token reservation"/>
+                  <v-text-field v-model.number="profileDraft.reservationCostMicros" type="number" label="Per-run cost reservation (micros)"/>
+                  <v-text-field v-model.number="profileDraft.timeoutMs" type="number" label="Request timeout (ms)"/>
+                  <v-text-field v-model.number="profileDraft.maxAttempts" type="number" label="Maximum attempts"/>
+                </div>
+                <v-alert type="info" variant="tonal" density="compact">Cost values are reservation ceilings. Provider billing is not calculated in this release, so immutable profiles record the automatic pricing revision <code>unpriced-v1</code>.</v-alert>
+              </v-expansion-panel-text>
+            </v-expansion-panel>
+          </v-expansion-panels>
+        </v-form></v-card-text>
         <v-card-actions><v-spacer/><v-btn @click="profileDialog = false">Cancel</v-btn><v-btn color="primary" :loading="saving" @click="saveProfile">Save immutable version</v-btn></v-card-actions>
       </v-card>
     </v-dialog>
@@ -91,11 +109,14 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import type { AgentProviderTransport } from '../../../shared/agents/contracts.ts'
 import {
+  AGENT_PROVIDER_PRICING_REVISION,
   AGENT_PROVIDER_PROTOCOL_OPTIONS,
+  agentProviderCapabilityRevision,
   agentProviderProtocolDefaults,
+  agentProviderProtocolExecutionModes,
   agentProviderProtocolOption,
   isAgentProviderTransport,
   type AgentProviderAuthMode,
@@ -107,7 +128,7 @@ import SkillAdmin from './skill-admin.vue'
 interface RuntimePolicy { enabled: boolean; providerEnabled: boolean; skillsEnabled: boolean; browserEnabled: boolean; proposalsEnabled: boolean; writes: { enabled: boolean; create: boolean; patch: boolean; move: boolean; restore: boolean; delete: boolean }; mcpEnabled: boolean; quotas: { globalConcurrency: number; perUserConcurrency: number; pollingMilliseconds: number; maximumSseConnectionsPerUser: number }; retention: { temporarySessionHours: number; mcpContentDays: number; auditDays: number; maintenanceBatchSize: number } }
 interface Profile { id: string; displayName: string; status: 'enabled' | 'disabled'; isGlobalDefault: boolean; exposureMode: 'all_agent_users' | 'groups'; conformed: boolean; currentVersion: number; currentVersionId: string; transportKind: AgentProviderTransport; model: string; destinationHost: string; secretConfigured: boolean; capabilities: { streaming: boolean; functions: boolean; parallelFunctions: boolean; structuredOutput: AgentProviderStructuredOutput; usage: AgentProviderUsageMode; cancellation: boolean; maxContextTokens: number; maxOutputTokens: number }; capabilityRevision: string; pricingRevision: string }
 interface BrowserTarget { id: string; canonicalUrl: string; enabled: boolean; policySha256: string }
-interface ProfileDraft { displayName: string; transportKind: AgentProviderTransport; model: string; baseUrl: string; authMode: AgentProviderAuthMode; secretReference: string; exposureMode: 'all_agent_users' | 'groups'; groupIds: string; maxContextTokens: number; maxOutputTokens: number; dailyTokens: number; dailyCostMicros: number; reservationTokens: number; reservationCostMicros: number; timeoutMs: number; maxAttempts: number; capabilityRevision: string; pricingRevision: string; structuredOutput: AgentProviderStructuredOutput; usage: AgentProviderUsageMode; streaming: boolean; functions: boolean; parallelFunctions: boolean; cancellation: boolean; agentMode: boolean; generationMode: boolean }
+interface ProfileDraft { displayName: string; transportKind: AgentProviderTransport; model: string; baseUrl: string; authMode: AgentProviderAuthMode; secretReference: string; exposureMode: 'all_agent_users' | 'groups'; groupIds: string; maxContextTokens: number; maxOutputTokens: number; dailyTokens: number; dailyCostMicros: number; reservationTokens: number; reservationCostMicros: number; timeoutMs: number; maxAttempts: number; structuredOutput: AgentProviderStructuredOutput; usage: AgentProviderUsageMode; streaming: boolean; functions: boolean; parallelFunctions: boolean; cancellation: boolean }
 
 const props = withDefaults(defineProps<{ csrfToken: string; embedded?: boolean }>(), { embedded: false })
 const { embedded } = props
@@ -128,24 +149,42 @@ const browserEnabled = ref(false)
 const grantDraft = reactive({ exposureMode: 'all_agent_users' as 'all_agent_users' | 'groups', groupIds: '' })
 const protocolOptions = AGENT_PROVIDER_PROTOCOL_OPTIONS
 const exposureModes = [{ title: 'All agent users', value: 'all_agent_users' }, { title: 'Selected groups', value: 'groups' }]
-const structuredModes: AgentProviderStructuredOutput[] = ['native-json-schema', 'tool-result', 'prompt-only']
-const usageModes: AgentProviderUsageMode[] = ['stream', 'terminal', 'estimated']
-const defaults = (): ProfileDraft => ({ displayName: '', transportKind: 'openai-responses', model: '', ...agentProviderProtocolDefaults('openai-responses'), secretReference: '', exposureMode: 'all_agent_users', groupIds: '', maxContextTokens: 128000, maxOutputTokens: 8192, dailyTokens: 1000000, dailyCostMicros: 10000000, reservationTokens: 32000, reservationCostMicros: 1000000, timeoutMs: 120000, maxAttempts: 3, capabilityRevision: 'operator-declared-1', pricingRevision: 'operator-declared-1' })
+const defaults = (): ProfileDraft => ({ displayName: '', transportKind: 'openai-responses', model: '', ...agentProviderProtocolDefaults('openai-responses'), secretReference: '', exposureMode: 'all_agent_users', groupIds: '', maxContextTokens: 128000, maxOutputTokens: 8192, dailyTokens: 1000000, dailyCostMicros: 10000000, reservationTokens: 32000, reservationCostMicros: 1000000, timeoutMs: 120000, maxAttempts: 3 })
 const profileDraft = reactive<ProfileDraft>(defaults())
 const availableAuthModes = computed<AgentProviderAuthMode[]>(() => profileDraft.transportKind === 'legacy-completions' ? ['bearer', 'api-key-header'] : [agentProviderProtocolDefaults(profileDraft.transportKind).authMode])
 
 const selectedProtocol = computed(() => agentProviderProtocolOption(profileDraft.transportKind))
-const legacyProtocol = computed(() => profileDraft.transportKind === 'legacy-completions')
-const agentModeAvailable = computed(() => profileDraft.streaming && profileDraft.functions && profileDraft.cancellation)
+const protocolBehaviorRows = computed(() => {
+  const modes = agentProviderProtocolExecutionModes(profileDraft.transportKind)
+  const structuredOutput = {
+    'native-json-schema': 'Native JSON Schema',
+    'tool-result': 'Tool-result schema',
+    'prompt-only': 'Prompt-validated text'
+  }[profileDraft.structuredOutput]
+  const usage = {
+    stream: 'Provider token counts from the response stream',
+    terminal: 'Provider token counts from the final response',
+    estimated: 'Estimated token counts'
+  }[profileDraft.usage]
+  const authentication = {
+    bearer: 'Bearer token',
+    'api-key-header': 'API-key header',
+    'anthropic-api-key': 'Anthropic API key'
+  }[profileDraft.authMode]
+  return [
+    { label: 'Available use', value: modes.includes('agent') ? 'Agent with Wiki actions, or text generation without actions' : 'Text generation only; Wiki actions unavailable' },
+    { label: 'Tool calls', value: !profileDraft.functions ? 'Unavailable' : profileDraft.parallelFunctions ? 'Multiple calls per model turn; Wiki executes them in order' : 'One call per model turn' },
+    { label: 'Response delivery', value: profileDraft.streaming ? `Streamed; ${profileDraft.cancellation ? 'cancellable' : 'not cancellable'}` : 'One buffered response' },
+    { label: 'Structured output', value: structuredOutput },
+    { label: 'Usage accounting', value: usage },
+    { label: 'Authentication', value: authentication }
+  ]
+})
 const selectProtocol = (value: unknown) => {
   if (!isAgentProviderTransport(value)) return
   profileDraft.transportKind = value
   Object.assign(profileDraft, agentProviderProtocolDefaults(value))
 }
-watch(() => [profileDraft.streaming, profileDraft.functions, profileDraft.cancellation] as const, () => {
-  if (!profileDraft.functions) profileDraft.parallelFunctions = false
-  if (!agentModeAvailable.value) profileDraft.agentMode = false
-})
 
 const capabilityRows = computed(() => runtime.value ? [
   { label: 'Inline agent', enabled: runtime.value.enabled }, { label: 'Provider inference', enabled: runtime.value.providerEnabled }, { label: 'Approved skills', enabled: runtime.value.skillsEnabled }, { label: 'Isolated browser', enabled: runtime.value.browserEnabled }, { label: 'Proposals', enabled: runtime.value.proposalsEnabled }, { label: 'All writes', enabled: runtime.value.writes.enabled }, { label: 'Create', enabled: runtime.value.writes.create }, { label: 'Patch', enabled: runtime.value.writes.patch }, { label: 'Move', enabled: runtime.value.writes.move }, { label: 'Restore', enabled: runtime.value.writes.restore }, { label: 'Delete', enabled: runtime.value.writes.delete }, { label: 'MCP', enabled: runtime.value.mcpEnabled }
@@ -159,8 +198,8 @@ const request = async <T>(path: string, init: RequestInit = {}): Promise<T> => {
 const ids = (value: string): number[] => [...new Set(value.split(',').map(part => Number(part.trim())).filter(id => Number.isSafeInteger(id) && id > 0))]
 const run = async (operation: () => Promise<void>) => { saving.value = true; error.value = ''; try { await operation() } catch (value) { error.value = value instanceof Error ? value.message : 'Agent administration request failed.' } finally { saving.value = false } }
 const load = async () => { loading.value = true; error.value = ''; try { const [runtimeResult, profileResult, browserResult] = await Promise.all([request<{ runtime: RuntimePolicy }>('/_api/agents/admin/runtime'), request<{ profiles: Profile[] }>('/_api/agents/admin/profiles'), request<{ targets: BrowserTarget[] }>('/_api/agents/admin/browser-targets')]); runtime.value = runtimeResult.runtime; profiles.value = profileResult.profiles; browserTargets.value = browserResult.targets } catch (value) { error.value = value instanceof Error ? value.message : 'Agent administration could not be loaded.' } finally { loading.value = false } }
-const openProfile = (profile?: Profile) => { editingProfile.value = profile ?? null; Object.assign(profileDraft, defaults(), profile ? { ...agentProviderProtocolDefaults(profile.transportKind), transportKind: profile.transportKind, model: profile.model, maxContextTokens: profile.capabilities.maxContextTokens, maxOutputTokens: profile.capabilities.maxOutputTokens, capabilityRevision: profile.capabilityRevision, pricingRevision: profile.pricingRevision, structuredOutput: profile.capabilities.structuredOutput, usage: profile.capabilities.usage, streaming: profile.capabilities.streaming, functions: profile.capabilities.functions, parallelFunctions: profile.capabilities.parallelFunctions, cancellation: profile.capabilities.cancellation } : {}); profileDialog.value = true }
-const profilePayload = () => ({ transportKind: profileDraft.transportKind, model: profileDraft.model, baseUrl: profileDraft.baseUrl, authMode: profileDraft.authMode, secretReference: profileDraft.secretReference.trim() || null, adapterConfig: { timeoutMs: profileDraft.timeoutMs, maxRetries: 0, additionalHeaders: {} }, capabilities: { streaming: profileDraft.streaming, functions: profileDraft.functions, parallelFunctions: profileDraft.parallelFunctions, structuredOutput: profileDraft.structuredOutput, usage: profileDraft.usage, cancellation: profileDraft.cancellation, maxContextTokens: profileDraft.maxContextTokens, maxOutputTokens: profileDraft.maxOutputTokens }, capabilityRevision: profileDraft.capabilityRevision, policies: { allowedModes: [profileDraft.agentMode ? 'agent' : null, profileDraft.generationMode ? 'generation-only' : null].filter(Boolean), dailyTokens: profileDraft.dailyTokens, dailyCostMicros: profileDraft.dailyCostMicros, reservationTokens: profileDraft.reservationTokens, reservationCostMicros: profileDraft.reservationCostMicros, reservationMilliseconds: 300000, promptVersion: 1, maxAttempts: profileDraft.maxAttempts }, pricingRevision: profileDraft.pricingRevision })
+const openProfile = (profile?: Profile) => { editingProfile.value = profile ?? null; Object.assign(profileDraft, defaults(), profile ? { ...agentProviderProtocolDefaults(profile.transportKind), transportKind: profile.transportKind, model: profile.model, maxContextTokens: profile.capabilities.maxContextTokens, maxOutputTokens: profile.capabilities.maxOutputTokens, structuredOutput: profile.capabilities.structuredOutput, usage: profile.capabilities.usage, streaming: profile.capabilities.streaming, functions: profile.capabilities.functions, parallelFunctions: profile.capabilities.parallelFunctions, cancellation: profile.capabilities.cancellation } : {}); profileDialog.value = true }
+const profilePayload = () => ({ transportKind: profileDraft.transportKind, model: profileDraft.model, baseUrl: profileDraft.baseUrl, authMode: profileDraft.authMode, secretReference: profileDraft.secretReference.trim() || null, adapterConfig: { timeoutMs: profileDraft.timeoutMs, maxRetries: 0, additionalHeaders: {} }, capabilities: { streaming: profileDraft.streaming, functions: profileDraft.functions, parallelFunctions: profileDraft.parallelFunctions, structuredOutput: profileDraft.structuredOutput, usage: profileDraft.usage, cancellation: profileDraft.cancellation, maxContextTokens: profileDraft.maxContextTokens, maxOutputTokens: profileDraft.maxOutputTokens }, capabilityRevision: agentProviderCapabilityRevision(profileDraft.transportKind), policies: { allowedModes: [...agentProviderProtocolExecutionModes(profileDraft.transportKind)], dailyTokens: profileDraft.dailyTokens, dailyCostMicros: profileDraft.dailyCostMicros, reservationTokens: profileDraft.reservationTokens, reservationCostMicros: profileDraft.reservationCostMicros, reservationMilliseconds: 300000, promptVersion: 1, maxAttempts: profileDraft.maxAttempts }, pricingRevision: AGENT_PROVIDER_PRICING_REVISION })
 const saveProfile = () => run(async () => { const payload = profilePayload(); if (editingProfile.value) await request(`/_api/agents/admin/profiles/${encodeURIComponent(editingProfile.value.id)}/versions`, { method: 'POST', body: JSON.stringify(payload) }); else await request('/_api/agents/admin/profiles', { method: 'POST', body: JSON.stringify({ ...payload, displayName: profileDraft.displayName, exposureMode: profileDraft.exposureMode, ...(profileDraft.exposureMode === 'groups' ? { groupIds: ids(profileDraft.groupIds) } : {}) }) }); profileDialog.value = false; await load() })
 const setProfileEnabled = (profile: Profile, enabled: boolean) => run(async () => { await request(`/_api/agents/admin/profiles/${profile.id}/enabled`, { method: 'POST', body: JSON.stringify({ enabled }) }); await load() })
 const setDefault = (profile: Profile) => run(async () => { await request(`/_api/agents/admin/profiles/${profile.id}/default`, { method: 'POST', body: '{}' }); await load() })
@@ -176,6 +215,10 @@ onMounted(() => void load())
 .policy-grid { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr)); }
 .form-grid { display: grid; gap: 0 1rem; grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .protocol-field { grid-column: 1 / -1; }
+.protocol-summary { display: grid; gap: .65rem; margin: 0; }
+.protocol-summary > div { display: grid; gap: .25rem; grid-template-columns: minmax(9rem, .45fr) minmax(0, 1fr); }
+.protocol-summary dt { font-weight: 600; }
+.protocol-summary dd { margin: 0; color: rgb(var(--v-theme-on-surface-variant)); }
 code { overflow-wrap: anywhere; }
 @media (max-width: 700px) { .form-grid { grid-template-columns: 1fr; } .protocol-field { grid-column: auto; } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; } }

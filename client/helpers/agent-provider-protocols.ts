@@ -3,6 +3,10 @@ import { AGENT_PROVIDER_TRANSPORTS, type AgentProviderTransport } from '../../sh
 export type AgentProviderAuthMode = 'bearer' | 'api-key-header' | 'anthropic-api-key'
 export type AgentProviderStructuredOutput = 'native-json-schema' | 'tool-result' | 'prompt-only'
 export type AgentProviderUsageMode = 'stream' | 'terminal' | 'estimated'
+export type AgentProviderExecutionMode = 'agent' | 'generation-only'
+
+export const AGENT_PROVIDER_PRICING_REVISION = 'unpriced-v1'
+
 
 export interface AgentProviderProtocolOption {
   readonly value: AgentProviderTransport
@@ -22,8 +26,6 @@ export interface AgentProviderProtocolDefaults {
   readonly functions: boolean
   readonly parallelFunctions: boolean
   readonly cancellation: boolean
-  readonly agentMode: boolean
-  readonly generationMode: boolean
 }
 
 export const AGENT_PROVIDER_PROTOCOL_OPTIONS = [
@@ -81,10 +83,8 @@ const defaultsByTransport: Readonly<Record<AgentProviderTransport, AgentProvider
     usage: 'stream',
     streaming: true,
     functions: true,
-    parallelFunctions: false,
-    cancellation: true,
-    agentMode: true,
-    generationMode: true
+    parallelFunctions: true,
+    cancellation: true
   },
   openresponses: {
     baseUrl: '',
@@ -93,10 +93,8 @@ const defaultsByTransport: Readonly<Record<AgentProviderTransport, AgentProvider
     usage: 'stream',
     streaming: true,
     functions: true,
-    parallelFunctions: false,
-    cancellation: true,
-    agentMode: true,
-    generationMode: true
+    parallelFunctions: true,
+    cancellation: true
   },
   'openai-chat': {
     baseUrl: '',
@@ -105,10 +103,8 @@ const defaultsByTransport: Readonly<Record<AgentProviderTransport, AgentProvider
     usage: 'stream',
     streaming: true,
     functions: true,
-    parallelFunctions: false,
-    cancellation: true,
-    agentMode: true,
-    generationMode: true
+    parallelFunctions: true,
+    cancellation: true
   },
   'legacy-completions': {
     baseUrl: '',
@@ -118,9 +114,7 @@ const defaultsByTransport: Readonly<Record<AgentProviderTransport, AgentProvider
     streaming: false,
     functions: false,
     parallelFunctions: false,
-    cancellation: true,
-    agentMode: false,
-    generationMode: true
+    cancellation: true
   },
   'anthropic-messages': {
     baseUrl: 'https://api.anthropic.com/v1',
@@ -129,12 +123,21 @@ const defaultsByTransport: Readonly<Record<AgentProviderTransport, AgentProvider
     usage: 'stream',
     streaming: true,
     functions: true,
-    parallelFunctions: false,
-    cancellation: true,
-    agentMode: true,
-    generationMode: true
+    parallelFunctions: true,
+    cancellation: true
   }
 }
+const executionModesByTransport: Readonly<Record<AgentProviderTransport, readonly AgentProviderExecutionMode[]>> = {
+  'openai-responses': ['agent', 'generation-only'],
+  openresponses: ['agent', 'generation-only'],
+  'openai-chat': ['agent', 'generation-only'],
+  'legacy-completions': ['generation-only'],
+  'anthropic-messages': ['agent', 'generation-only']
+}
+
+export const agentProviderProtocolExecutionModes = (transport: AgentProviderTransport): readonly AgentProviderExecutionMode[] => executionModesByTransport[transport]
+
+export const agentProviderCapabilityRevision = (transport: AgentProviderTransport): string => `wiki-protocol-capabilities-v1:${transport}`
 
 export const agentProviderProtocolOption = (transport: AgentProviderTransport): AgentProviderProtocolOption => {
   const option = optionByTransport.get(transport)

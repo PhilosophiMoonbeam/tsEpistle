@@ -99,7 +99,7 @@ Provider inference is intentionally unavailable until an administrator adds a se
 
 ### Provider API protocols
 
-A provider profile describes one approved destination, credential reference, model, capability declaration, and policy. Its API protocol selects the exact wire contract used at that destination; it is not inferred from the URL.
+A provider profile describes one approved destination, credential reference, model, protocol-derived capability descriptor, and policy. Its API protocol selects the exact wire contract used at that destination; it is not inferred from the URL. The ordinary admin form derives low-level transport behavior instead of asking operators to declare protocol facts.
 
 | API protocol | Endpoint | Intended use |
 | --- | --- | --- |
@@ -110,6 +110,10 @@ A provider profile describes one approved destination, credential reference, mod
 | Anthropic Messages API | `POST /v1/messages` | Native Anthropic message and tool-block protocol |
 
 Chat Completions and text Completions are not aliases. Chat Completions accepts structured message history and can return tool calls; legacy text Completions accepts one flattened prompt and returns text. Likewise, OpenAI Responses and OpenResponses share an item-oriented shape but represent different compatibility promises. Administrators must choose the server's documented protocol and pass conformance rather than relying on endpoint probing.
+
+For every tool-capable protocol, the preset accepts multiple tool calls from one model turn; Wiki executes those calls serially in model order. This is distinct from **Agent** use, which controls whether the model receives any Wiki action definitions and may continue through action-result turns. **Text generation** use never receives Wiki actions and rejects unexpected tool calls. Tool-capable profiles allow both uses; legacy text Completions allows text generation only. New sessions prefer Agent use and automatically fall back to text generation when the selected profile cannot use actions.
+
+Streaming, cancellation, tool-call shape, structured-output mapping, usage-accounting source, authentication, and allowed uses are protocol-derived and shown read-only. Context/output limits and quotas remain model/deployment settings under Advanced limits and quotas. Capability revisions are generated from the versioned Wiki protocol preset, while pricing remains `unpriced-v1` until provider billing calculation exists; neither internal ledger field is operator input. A profile remains disabled until its immutable version passes conformance.
 
 Required cryptographic environment:
 
