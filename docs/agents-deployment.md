@@ -97,6 +97,20 @@ Startup rejects provider concurrency, polling, SSE, and retention values outside
 
 Provider inference is intentionally unavailable until an administrator adds a secret reference and an immutable provider profile in `/admin/agents`, runs conformance, enables that profile, and then enables provider inference. Profiles store references, never secret values.
 
+### Provider API protocols
+
+A provider profile describes one approved destination, credential reference, model, capability declaration, and policy. Its API protocol selects the exact wire contract used at that destination; it is not inferred from the URL.
+
+| API protocol | Endpoint | Intended use |
+| --- | --- | --- |
+| OpenAI Responses API | `POST /v1/responses` | OpenAI's current item-based API and the preferred OpenAI integration |
+| OpenResponses-compatible API | `POST /v1/responses` | Vendor-neutral OpenResponses contract with strict request, semantic-event, sequence, and terminal-marker validation |
+| OpenAI-compatible Chat Completions | `POST /v1/chat/completions` | Message-based compatibility API; agent mode requires conformed streaming, function tools, and cancellation |
+| Legacy text Completions | `POST /v1/completions` | Prompt-in/text-out compatibility only; buffered generation-only runs with no tools |
+| Anthropic Messages API | `POST /v1/messages` | Native Anthropic message and tool-block protocol |
+
+Chat Completions and text Completions are not aliases. Chat Completions accepts structured message history and can return tool calls; legacy text Completions accepts one flattened prompt and returns text. Likewise, OpenAI Responses and OpenResponses share an item-oriented shape but represent different compatibility promises. Administrators must choose the server's documented protocol and pass conformance rather than relying on endpoint probing.
+
 Required cryptographic environment:
 
 | Variable | Required when |
