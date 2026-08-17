@@ -31,6 +31,7 @@ const usage = (response: AxChatResponse): { input: number; output: number } => (
 interface ToolCall {
   readonly id: string
   readonly name: string
+  readonly providerName: string
   readonly params: string | object
 }
 
@@ -57,15 +58,19 @@ const parseToolInput = (params: string | object): unknown => {
   }
 }
 
-const appendCalls = (target: Map<string, ToolCall>, results: readonly AxChatResponseResult[]): void => {
+const appendCalls = (target: Map<string, ToolCall>, results: readonly AxChatResponseResult[], actionNames?: ReadonlyMap<string, string>): void => {
   for (const result of results) {
     for (const call of result.functionCalls ?? []) {
       const prior = target.get(call.id)
       const nextParams = call.function.params ?? ''
-      if (prior && prior.name !== call.function.name) throw new AgentRepositoryError('INVALID_PROVIDER_RESPONSE', 'Provider changed an action name while streaming', 502)
+      const providerName = call.function.name
+      const name = actionNames?.get(providerName) ?? providerName
+      if (actionNames && !actionNames.has(providerName)) throw new AgentRepositoryError('INVALID_PROVIDER_RESPONSE', 'Provider requested an unknown action name', 502)
+      if (prior && prior.providerName !== providerName) throw new AgentRepositoryError('INVALID_PROVIDER_RESPONSE', 'Provider changed an action name while streaming', 502)
       target.set(call.id, {
         id: call.id,
-        name: call.function.name,
+        name,
+        providerName,
         params: typeof prior?.params === 'string' && typeof nextParams === 'string' ? `${prior.params}${nextParams}` : nextParams
       })
     }
@@ -73,6 +78,25 @@ const appendCalls = (target: Map<string, ToolCall>, results: readonly AxChatResp
 }
 
 const encryptedThoughtBlocks = (blocks: readonly NonNullable<AxChatResponseResult['thoughtBlocks']>[number][]): NonNullable<AxChatResponseResult['thoughtBlocks']> => blocks.filter(block => block.encrypted).map(block => ({ data: block.data, encrypted: true, ...(block.signature === undefined ? {} : { signature: block.signature }) }))
+
+interface ProviderFunctions {
+  readonly functions: NonNullable<AxChatRequest['functions']>
+  readonly actionNames: ReadonlyMap<string, string>
+}
+
+const providerFunctionName = (actionName: string): string => actionName.replaceAll('.', '_')
+
+const providerFunctions = (actionSession: AxActionSession | null): ProviderFunctions | null => {
+  if (actionSession === null) return null
+  const actionNames = new Map<string, string>()
+  const functions = actionSession.functions.map(fn => {
+    const name = providerFunctionName(fn.name)
+    if (!/^[A-Za-z0-9_-]{1,64}$/.test(name) || actionNames.has(name)) throw new AgentRepositoryError('INVALID_ACTION_NAME', 'Action names cannot be represented safely for provider tool calling', 500)
+    actionNames.set(name, fn.name)
+    return { name, description: fn.description, parameters: fn.parameters as AxFunctionJSONSchema }
+  })
+  return { functions, actionNames }
+}
 
 export class AxAgentEngine implements AgentEngine {
   readonly #factory: AgentProviderFactory
@@ -83,7 +107,7 @@ export class AxAgentEngine implements AgentEngine {
     this.#actions = actions
   }
 
-  async #turn(provider: AgentProviderService, chatPrompt: AxChatRequest['chatPrompt'], actionSession: AxActionSession | null, request: AgentEngineRequest, sink: AgentEngineSink): Promise<TurnResult> {
+  async #turn(provider: AgentProviderService, chatPrompt: AxChatRequest['chatPrompt'], tools: ProviderFunctions | null, request: AgentEngineRequest, sink: AgentEngineSink): Promise<TurnResult> {
     let content = ''
     let inputTokens = 0
     let outputTokens = 0
@@ -93,7 +117,7 @@ export class AxAgentEngine implements AgentEngine {
       const responseUsage = usage(response)
       inputTokens = Math.max(inputTokens, responseUsage.input)
       outputTokens = Math.max(outputTokens, responseUsage.output)
-      appendCalls(calls, response.results)
+      appendCalls(calls, response.results, tools?.actionNames)
       for (const result of response.results) {
         if (result.content) {
           content += result.content
@@ -105,8 +129,8 @@ export class AxAgentEngine implements AgentEngine {
     const response = await provider.service.chat({
       chatPrompt,
       model: provider.model,
-      ...(actionSession === null ? {} : {
-        functions: actionSession.functions.map(fn => ({ name: fn.name, description: fn.description, parameters: fn.parameters as AxFunctionJSONSchema })),
+      ...(tools === null ? {} : {
+        functions: tools.functions,
         functionCall: 'auto' as const
       })
     }, { stream: provider.capabilities.streaming, abortSignal: request.signal })
@@ -136,6 +160,7 @@ export class AxAgentEngine implements AgentEngine {
     } catch (error) {
       throw publicError(error)
     }
+    const tools = providerFunctions(actionSession)
     const chatPrompt: AxChatRequest['chatPrompt'] = [
       { role: 'system', content: prompt(request) },
       ...request.messages.filter(message => message.content.length > 0).map(message => message.role === 'assistant'
@@ -148,7 +173,7 @@ export class AxAgentEngine implements AgentEngine {
     let providerState: AgentEngineResult['providerState']
     try {
       for (let turn = 0; turn < MAX_TURNS; turn++) {
-        const result = await this.#turn(provider, chatPrompt, actionSession, request, sink)
+        const result = await this.#turn(provider, chatPrompt, tools, request, sink)
         inputTokens += result.inputTokens
         outputTokens += result.outputTokens
         if (result.thoughtBlocks.length > 0) providerState = { thoughtBlocks: result.thoughtBlocks }
@@ -163,7 +188,7 @@ export class AxAgentEngine implements AgentEngine {
           role: 'assistant',
           ...(result.content.length === 0 ? {} : { content: result.content }),
           ...(result.thoughtBlocks.length === 0 ? {} : { thoughtBlocks: result.thoughtBlocks }),
-          functionCalls: result.calls.map(call => ({ id: call.id, type: 'function', function: { name: call.name, params: call.params } }))
+          functionCalls: result.calls.map(call => ({ id: call.id, type: 'function', function: { name: call.providerName, params: call.params } }))
         })
         for (const call of result.calls) {
           const descriptor = actionSession.functions.find(fn => fn.name === call.name)

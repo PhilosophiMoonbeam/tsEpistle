@@ -22,7 +22,7 @@ import {
 } from '../agents/providers/registry.ts'
 import type { AgentProviderConformanceRunner } from '../agents/providers/conformance.ts'
 import type { AgentProductRuntime } from '../agents/runtime.ts'
-import { projectAgentThread } from '../agents/projection.ts'
+import { projectAgentRun, projectAgentThread } from '../agents/projection.ts'
 import {
   AgentRepositoryError,
   createAgentSession,
@@ -219,7 +219,7 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
       content: input.content,
       ...(input.currentPage === undefined ? {} : { currentPage: input.currentPage })
     })
-    return res.status(202).json({ run: admitted.run, replayed: admitted.replayed })
+    return res.status(202).json({ run: projectAgentRun(admitted.run), replayed: admitted.replayed })
   }))
   router.get(`${apiPrefix}/mcp-proposals/:proposalId`, asyncRoute(async (req, res) => {
     const proposalId = UUIDSchema.parse(routeParameter(req, 'proposalId'))

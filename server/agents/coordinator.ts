@@ -42,13 +42,18 @@ export interface AgentRunRecord {
   readonly sideEffectsStarted: boolean
   readonly errorCode: string | null
   readonly errorMessage: string | null
+  readonly queuedAt: string
+  readonly startedAt: string | null
+  readonly completedAt: string | null
 }
 
-interface RunRow extends Omit<AgentRunRecord, 'status' | 'leaseExpiresAt' | 'cancelRequestedAt'> {
+interface RunRow extends Omit<AgentRunRecord, 'status' | 'leaseExpiresAt' | 'cancelRequestedAt' | 'queuedAt' | 'startedAt' | 'completedAt'> {
   status: string
   leaseExpiresAt: Date | string | null
   cancelRequestedAt: Date | string | null
+  queuedAt: Date | string
   startedAt: Date | string | null
+  completedAt: Date | string | null
 }
 
 const runStatus = (value: string): AgentRunStatus => {
@@ -60,7 +65,10 @@ const runRecord = (row: RunRow): AgentRunRecord => ({
   ...row,
   status: runStatus(row.status),
   leaseExpiresAt: row.leaseExpiresAt === null ? null : new Date(row.leaseExpiresAt).toISOString(),
-  cancelRequestedAt: row.cancelRequestedAt === null ? null : new Date(row.cancelRequestedAt).toISOString()
+  cancelRequestedAt: row.cancelRequestedAt === null ? null : new Date(row.cancelRequestedAt).toISOString(),
+  queuedAt: new Date(row.queuedAt).toISOString(),
+  startedAt: row.startedAt === null ? null : new Date(row.startedAt).toISOString(),
+  completedAt: row.completedAt === null ? null : new Date(row.completedAt).toISOString()
 })
 
 export interface AgentQuotaLimits {

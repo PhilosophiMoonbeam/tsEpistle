@@ -155,8 +155,22 @@ describe('ordinary-origin agent session API', () => {
     }
     const admitted = await fetch(`${baseUrl}/_api/agents/sessions/${state.session.id}/messages`, { method: 'POST', headers, body: JSON.stringify(request) })
     expect(admitted.status).toBe(202)
-    const admission = await admitted.json() as { run: { id: string }, replayed: boolean }
-    expect(admission.replayed).toBe(false)
+    const admission = await admitted.json() as { run: { id: string, sessionId: string, status: string, attempt: number, eventSequence: number, canCancel: boolean, createdAt: string, startedAt: string | null, completedAt: string | null, errorCode: string | null, errorMessage: string | null }, replayed: boolean }
+    expect(admission).toMatchObject({
+      replayed: false,
+      run: {
+        sessionId: state.session.id,
+        status: 'queued',
+        attempt: 0,
+        eventSequence: 1,
+        canCancel: true,
+        createdAt: expect.any(String),
+        startedAt: null,
+        completedAt: null,
+        errorCode: null,
+        errorMessage: null
+      }
+    })
     const retry = await fetch(`${baseUrl}/_api/agents/sessions/${state.session.id}/messages`, { method: 'POST', headers, body: JSON.stringify(request) })
     expect(retry.status).toBe(202)
     expect((await retry.json() as { run: { id: string }, replayed: boolean })).toMatchObject({ run: { id: admission.run.id }, replayed: true })

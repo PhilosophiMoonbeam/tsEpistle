@@ -137,20 +137,20 @@ export const reduceAgentEvents = (events: readonly AgentEvent[]): ReducedAgentEv
   return { tools: [...tools.values()].map(tool => ({ ...tool })), suggestions }
 }
 
-interface RunRow {
-  id: string
-  sessionId: string
-  status: string
-  attempts: number
-  eventSequence: number
-  queuedAt: Date | string
-  startedAt: Date | string | null
-  completedAt: Date | string | null
-  errorCode: string | null
-  errorMessage: string | null
+export interface ProjectAgentRunInput {
+  readonly id: string
+  readonly sessionId: string
+  readonly status: string
+  readonly attempts: number
+  readonly eventSequence: number
+  readonly queuedAt: Date | string
+  readonly startedAt: Date | string | null
+  readonly completedAt: Date | string | null
+  readonly errorCode: string | null
+  readonly errorMessage: string | null
 }
 
-const runView = (row: RunRow): AgentRunView => {
+export const projectAgentRun = (row: ProjectAgentRunInput): AgentRunView => {
   const status = runStatusSchema.parse(row.status)
   return {
     id: row.id,
@@ -309,7 +309,7 @@ export const projectAgentThread = async (knex: Knex, ownerId: number, sessionId:
   const now = options.now ?? new Date()
   const [messageRows, runRows, skillRows, proposalRows, approvalRows, artifactRows] = await Promise.all([
     listOwnedAgentMessages(knex, ownerId, sessionId, 0, 500),
-    knex<RunRow>('agentRuns').where('sessionId', sessionId).andWhere('ownerId', ownerId).orderBy('queuedAt', 'desc'),
+    knex<ProjectAgentRunInput>('agentRuns').where('sessionId', sessionId).andWhere('ownerId', ownerId).orderBy('queuedAt', 'desc'),
     knex<SkillRow>('agentSessionSkills')
       .join('agentSkillVersions', 'agentSkillVersions.id', 'agentSessionSkills.skillVersionId')
       .join('agentSkills', 'agentSkills.id', 'agentSkillVersions.skillId')
@@ -325,7 +325,7 @@ export const projectAgentThread = async (knex: Knex, ownerId: number, sessionId:
     knex<ArtifactRow>('agentArtifacts').where('sessionId', sessionId).andWhere('ownerId', ownerId).select('id', 'kind', 'mimeType', 'byteLength', 'width', 'height', 'createdAt', 'expiresAt').orderBy('createdAt')
   ])
 
-  const runs = runRows.map(runView)
+  const runs = runRows.map(projectAgentRun)
   const currentRun = runs.find(run => run.canCancel) ?? null
   const allEvents = (await Promise.all(runRows.map(run => listOwnedAgentEvents(knex, ownerId, run.id, 0, 1_000)))).flat()
   const reduced = reduceAgentEvents(allEvents)

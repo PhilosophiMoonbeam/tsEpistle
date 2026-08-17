@@ -17,7 +17,7 @@ describe('Ax agent engine', () => {
   it('runs bounded provider tool turns and returns encrypted continuation only', async () => {
     const calls: Readonly<AxChatRequest<unknown>>[] = []
     const responses: AxChatResponse[] = [
-      { results: [{ index: 0, functionCalls: [{ id: 'call-1', type: 'function', function: { name: 'pages.get', params: '{"id":42}' } }], thoughtBlocks: [{ data: 'encrypted-state', encrypted: true }, { data: 'hidden thought', encrypted: false }] }], modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 5, completionTokens: 2, totalTokens: 7 } } },
+      { results: [{ index: 0, functionCalls: [{ id: 'call-1', type: 'function', function: { name: 'pages_get', params: '{"id":42}' } }], thoughtBlocks: [{ data: 'encrypted-state', encrypted: true }, { data: 'hidden thought', encrypted: false }] }], modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 5, completionTokens: 2, totalTokens: 7 } } },
       { results: [{ index: 0, content: 'The page title is Guide.' }], modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 8, completionTokens: 4, totalTokens: 12 } } }
     ]
     const chat = vi.fn(async (input: Readonly<AxChatRequest<unknown>>) => {
@@ -36,6 +36,8 @@ describe('Ax agent engine', () => {
     const result = await engine.execute(request(new AbortController().signal), { text, event })
     expect(chat).toHaveBeenCalledTimes(2)
     expect(invoke).toHaveBeenCalledWith('pages.get', { id: 42 }, expect.objectContaining({ aborted: false }), 'call-1')
+    expect(calls[0]?.functions).toContainEqual(expect.objectContaining({ name: 'pages_get' }))
+    expect(calls[1]?.chatPrompt).toContainEqual(expect.objectContaining({ role: 'assistant', functionCalls: [expect.objectContaining({ function: expect.objectContaining({ name: 'pages_get' }) })] }))
     expect(calls[1]?.chatPrompt).toContainEqual(expect.objectContaining({ role: 'function', functionId: 'call-1', result: '{"id":42,"title":"Guide"}' }))
     expect(text).toHaveBeenCalledWith('The page title is Guide.')
     expect(event.mock.calls.map(([type]) => type)).toEqual(['tool.started', 'tool.completed'])
