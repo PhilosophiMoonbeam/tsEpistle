@@ -31,6 +31,8 @@ import { streamOwnedAgentEvents } from '../agents/sse.ts'
 
 interface AgentAuthenticationStrategy {
   readonly key: string
+  readonly displayName?: string
+  readonly strategyKey?: string
 }
 
 interface AgentHostWiki {
@@ -117,6 +119,12 @@ const routeParameter = (req: Request, name: string): string | null => {
 
 const hasAgentPermission = (user: Express.User | undefined): boolean =>
   user?.permissions?.some(permission => permission === 'use:agents' || permission === 'manage:system') === true
+
+const requestErrorStatus = (error: unknown): number | null => {
+  if (!error || typeof error !== 'object') return null
+  const status = Reflect.get(error, 'status') ?? Reflect.get(error, 'statusCode')
+  return typeof status === 'number' && Number.isInteger(status) ? status : null
+}
 
 const requestState = (req: Request): string | null => {
   const queryState = req.query.state
@@ -255,15 +263,36 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
     })
     return res.redirect(303, '/')
   })
+  router.get('/auth/login', (_req, res) => {
+    const strategies = Object.entries(wiki.auth.agentStrategies)
+    if (strategies.length === 0) return res.status(503).render('agent-login', { strategy: null, state: null })
+    if (strategies.length === 1) return res.redirect(303, `/auth/login/${encodeURIComponent(strategies[0]![0])}`)
+    return res.render('agent-login', {
+      strategies: strategies.map(([name, strategy]) => ({
+        displayName: strategy.displayName ?? name,
+        href: `/auth/login/${encodeURIComponent(name)}`
+      }))
+    })
+  })
+
 
 
   router.get('/auth/login/:strategy', (req, res, next) => {
     const strategyName = routeParameter(req, 'strategy')
     const strategy = strategyName ? wiki.auth.agentStrategies[strategyName] : undefined
-    if (!strategy) return res.sendStatus(404)
+    if (!strategyName || !strategy) return res.sendStatus(404)
 
     const state = randomBytes(32).toString('base64url')
     res.cookie(STATE_COOKIE, state, stateCookieOptions)
+    if (strategy.strategyKey === 'local' || strategyName === 'local') {
+      return res.render('agent-login', {
+        strategy: {
+          displayName: strategy.displayName ?? 'Local',
+          callbackPath: `/auth/login/${encodeURIComponent(strategyName)}/callback`
+        },
+        state
+      })
+    }
     return wiki.auth.passport.authenticate(strategy.key, {
       nonce: state,
       session: false,
@@ -697,13 +726,18 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
   })
 
 
-  router.get(['/', '/sessions/:sessionId', '/approvals/:proposalId', '/admin'], wiki.auth.authenticateAgent.bind(wiki.auth), (req, res) => {
-    if (!req.authContext || req.authContext.kind !== 'user') return res.sendStatus(401)
-    return res.render('agent', {
-      agentBootstrap: JSON.stringify({
-        csrfToken: csrfToken(req),
-        isAdmin: req.user?.permissions?.includes('manage:system') ?? false,
-        userId: req.authContext.userId
+  router.get(['/', '/sessions/:sessionId', '/approvals/:proposalId', '/admin'], (req, res, next) => {
+    wiki.auth.authenticateAgent(req, res, error => {
+      if (requestErrorStatus(error) === 401) return res.redirect(303, '/auth/login')
+      if (error) return next(error)
+      if (!req.authContext || req.authContext.kind !== 'user') return res.redirect(303, '/auth/login')
+      if (!hasAgentPermission(req.user)) return res.sendStatus(403)
+      return res.render('agent', {
+        agentBootstrap: JSON.stringify({
+          csrfToken: csrfToken(req),
+          isAdmin: req.user?.permissions?.includes('manage:system') ?? false,
+          userId: req.authContext.userId
+        })
       })
     })
   })

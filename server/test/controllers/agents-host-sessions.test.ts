@@ -1,5 +1,6 @@
 /** @vitest-environment node */
 import { createHash } from 'node:crypto'
+import path from 'node:path'
 import type { AddressInfo } from 'node:net'
 import type { Server } from 'node:http'
 import cookieParser from 'cookie-parser'
@@ -47,6 +48,7 @@ describe('isolated agents host session API', () => {
   let baseUrl: string
   let cookie: string
   let ownerId = 7
+  let authenticated = true
   const csrf = 'csrf-token'
   let runtime: AgentProductRuntime
 
@@ -81,19 +83,35 @@ describe('isolated agents host session API', () => {
       }
     }, fakeEngine, { workerId: 'test-worker', globalConcurrency: 1, perUserConcurrency: 1 })
     const app = express()
+    app.set('views', path.join(process.cwd(), 'server/views'))
+    app.set('view engine', 'pug')
     app.use(cookieParser())
     app.use(session({ secret: 'isolated-host-test-secret', resave: false, saveUninitialized: true }))
     app.get('/seed', (req, res) => { const state = req.session as typeof req.session & TestSessionState; state.agentCsrfToken = csrf; res.sendStatus(204) })
     app.use(createAgentsHostController({
       IS_DEBUG: false,
       auth: {
-        agentStrategies: {},
+        agentStrategies: {
+          local: { key: 'agents:local', displayName: 'Local', strategyKey: 'local' }
+        },
         authenticateAgent(req, _res, next) {
+          if (!authenticated) {
+            const error = Object.assign(new Error('Agents authentication is required.'), { status: 401 })
+            return next(error)
+          }
           req.authContext = { kind: 'user', userId: ownerId, ownershipUserId: ownerId, principal: { id: ownerId } }
           req.user = { id: ownerId, groups: [], permissions: ['use:agents'] } as Express.User
           next()
         },
-        passport: { authenticate: () => (_req, _res, next) => next() }
+        passport: {
+          authenticate: (_strategy, _options, callback) => (_req, _res, next) => {
+            if (callback) {
+              callback(null, { id: ownerId } as Express.User)
+              return
+            }
+            next()
+          }
+        }
       },
       config: { sessionSecret: 'profile-resolution-secret', agents: { enabled: true, cookieAudience: 'wiki-agents-ui', publicOrigin: 'https://agents.example.test', launchTokenTtlSeconds: 300, provider: { enabled: true }, retention: { temporarySessionHours: 24 }, skills: { enabled: true, namespace: 'system/agent-skills' } } },
       models: { knex: db, users: { refreshToken: async () => ({ token: 'token', user: { id: ownerId } as Express.User }) } },
@@ -128,6 +146,41 @@ describe('isolated agents host session API', () => {
     expect(setCookie).toMatch(/Secure/i)
     expect(setCookie).toMatch(/SameSite=Lax/i)
     expect(response.headers.get('location')).not.toContain(token)
+  })
+
+  it('redirects unauthenticated shell requests to an isolated local login form', async () => {
+    authenticated = false
+    try {
+      const shell = await fetch(`${baseUrl}/`, { redirect: 'manual' })
+      expect(shell.status).toBe(303)
+      expect(shell.headers.get('location')).toBe('/auth/login')
+
+      const chooser = await fetch(`${baseUrl}/auth/login`, { redirect: 'manual' })
+      expect(chooser.status).toBe(303)
+      expect(chooser.headers.get('location')).toBe('/auth/login/local')
+
+      const login = await fetch(`${baseUrl}/auth/login/local`)
+      expect(login.status).toBe(200)
+      const body = await login.text()
+      const state = body.match(/name="state" value="([A-Za-z0-9_-]{43})"/)?.[1]
+      expect(state).toBeTruthy()
+      expect(body).toContain('Sign in to Wiki Agents')
+      expect(body).toContain('autocomplete="username"')
+      expect(body).toContain('autocomplete="current-password"')
+
+      const stateCookie = login.headers.get('set-cookie')?.split(';', 1)[0] ?? ''
+      const callback = await fetch(`${baseUrl}/auth/login/local/callback`, {
+        method: 'POST',
+        redirect: 'manual',
+        headers: { cookie: stateCookie, 'content-type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ state: state!, email: 'admin@example.test', password: 'secret' })
+      })
+      expect(callback.status).toBe(302)
+      expect(callback.headers.get('location')).toBe('/')
+      expect(callback.headers.get('set-cookie')).toContain('wiki_agents=token')
+    } finally {
+      authenticated = true
+    }
   })
 
   it('requires same-origin metadata and CSRF for session mutations', async () => {
