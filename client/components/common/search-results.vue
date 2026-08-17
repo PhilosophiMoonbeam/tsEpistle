@@ -314,6 +314,12 @@ export default defineComponent({
       radial-gradient(circle at 50% 0, rgba(63, 81, 181, .32), transparent 42rem),
       rgba(8, 10, 18, .94);
     overflow: hidden;
+    box-sizing: border-box;
+    padding-left: 256px;
+
+    @media #{map-get($display-breakpoints, 'sm-and-down')} {
+      padding-left: 0;
+    }
   }
 
   &-container {
