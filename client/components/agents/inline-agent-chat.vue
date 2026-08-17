@@ -55,7 +55,7 @@
 
       <div class="inline-agent__body">
         <v-alert
-          class="mb-4"
+          class="inline-agent__alert mb-4"
           v-if="!loading && !providerAvailable"
           variant="tonal"
           icon="mdi-connection"
@@ -72,6 +72,7 @@
         >{{ error }}</v-alert>
 
         <AgentSessionSettings
+          class="inline-agent__settings"
           v-if="thread"
           :session="thread.session"
           :profiles="profiles"
@@ -225,6 +226,11 @@ watch(currentPage, page => agents.setCurrentPage(page), { immediate: true })
 watch(
   () => [thread.value?.messages.length, thread.value?.tools.length, thread.value?.artifacts.length, connection.value],
   async () => {
+    if (!hasConversation.value) {
+      await nextTick()
+      if (transcript.value) transcript.value.scrollTop = 0
+      return
+    }
     const element = transcript.value
     const nearBottom = !element || element.scrollHeight - element.scrollTop - element.clientHeight < 160
     await nextTick()
@@ -242,6 +248,7 @@ defineExpose({ sendPrompt })
 .inline-agent__toolbar { flex: 0 0 auto; }
 .inline-agent__heading { min-width: 0; }
 .inline-agent__history { max-height: min(28rem, 70vh); min-width: min(24rem, 90vw); overflow-y: auto; }
+.inline-agent__alert, .inline-agent__settings { flex: 0 0 auto; }
 .inline-agent__body { display: flex; flex: 1 1 auto; flex-direction: column; min-height: 0; overflow: hidden; padding: 1rem 1.25rem 0; }
 .inline-agent__transcript { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: .25rem .25rem 1rem; scroll-behavior: smooth; }
 .inline-agent__welcome { align-items: center; display: flex; flex-direction: column; margin: auto; max-width: 46rem; padding: clamp(1.5rem, 5vh, 4rem) 1rem; text-align: center; }
