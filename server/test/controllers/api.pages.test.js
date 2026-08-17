@@ -68,6 +68,7 @@ describe('controllers/api pages endpoints', () => {
             contentType: 'markdown',
             createdAt: '2026-01-01T00:00:00.000Z',
             updatedAt: '2026-01-02T00:00:00.000Z',
+            sourceRevision: 8,
             editorKey: 'markdown',
             localeCode: 'en',
             authorId: 2,
@@ -152,13 +153,13 @@ describe('controllers/api pages endpoints', () => {
     }
   }
 
-  it('reports visibility path collisions as conflicts', async () => {
+  it('reports visibility path collisions as conflicts after validating the source revision', async () => {
     const collision = new Error('Destination page path already exists.')
     collision.name = 'PagePathCollision'
     global.WIKI.models.pages.changeVisibility = vi.fn().mockRejectedValue(collision)
     const { visibility } = await loadHandler()
     const req = {
-      body: { visibility: 'public', confirmPublication: true },
+      body: { visibility: 'public', confirmPublication: true, expectedSourceRevision: '8' },
       params: { id: '2' },
       user: { id: 1, permissions: ['manage:system'] }
     }
@@ -171,8 +172,8 @@ describe('controllers/api pages endpoints', () => {
   })
 
 
-  it('requires and forwards the observed page timestamp for revision restores', async () => {
-    const updatedAt = '2026-08-15T00:00:00.000Z'
+  it('requires and forwards the observed source revision for revision restores', async () => {
+    const sourceRevision = '8'
     const requester = { id: 1, permissions: ['write:pages', 'manage:system'] }
     global.WIKI.models.knex = vi.fn().mockReturnValue({
       where: vi.fn().mockReturnValue({ first: vi.fn().mockResolvedValue(undefined) })
@@ -183,7 +184,7 @@ describe('controllers/api pages endpoints', () => {
           id: 7,
           path: 'docs/alpha',
           localeCode: 'en',
-          updatedAt,
+          sourceRevision,
           visibility: 'public',
           ownerId: null
         })
@@ -207,7 +208,7 @@ describe('controllers/api pages endpoints', () => {
     }
     const { restore } = await loadHandler()
     const req = {
-      body: { expectedUpdatedAt: updatedAt },
+      body: { expectedSourceRevision: sourceRevision },
       params: { id: '7', versionId: '3' },
       user: requester
     }
@@ -218,13 +219,13 @@ describe('controllers/api pages endpoints', () => {
     expect(global.WIKI.models.pages.updatePage).toHaveBeenCalledWith(expect.objectContaining({
       id: 7,
       user: requester,
-      expectedUpdatedAt: updatedAt,
+      expectedSourceRevision: sourceRevision,
       action: 'restored'
     }))
     expect(res.json).toHaveBeenCalledWith({ message: 'Page version restored successfully.' })
   })
 
-  it('rejects revision restores without a concurrency timestamp', async () => {
+  it('rejects revision restores without a source revision', async () => {
     global.WIKI.models.knex = vi.fn().mockReturnValue({
       where: vi.fn().mockReturnValue({ first: vi.fn().mockResolvedValue(undefined) })
     })
@@ -239,7 +240,7 @@ describe('controllers/api pages endpoints', () => {
     await restore(req, res)
 
     expect(res.status).toHaveBeenCalledWith(400)
-    expect(res.json).toHaveBeenCalledWith({ error: 'expectedUpdatedAt must be a valid date' })
+    expect(res.json).toHaveBeenCalledWith({ error: 'expectedSourceRevision must be a non-empty string' })
   })
   it('requires and forwards the observed timestamp for collaboration sessions', async () => {
     const expectedUpdatedAt = '2026-08-15T00:00:00.000Z'
@@ -810,6 +811,7 @@ describe('controllers/api pages endpoints', () => {
       contentType: 'markdown',
       createdAt: '2026-01-01T00:00:00.000Z',
       updatedAt: '2026-01-02T00:00:00.000Z',
+      sourceRevision: '8',
       editor: 'markdown',
       locale: 'en',
       authorId: 2,
@@ -946,13 +948,14 @@ describe('controllers/api pages endpoints', () => {
 
   it('deletes pages through the model with GraphQL-compatible user context', async () => {
     const { deletePage } = await loadHandler()
-    const req = { user: { id: 5, permissions: ['delete:pages'] }, params: { id: '7' } }
+    const req = { user: { id: 5, permissions: ['delete:pages'] }, params: { id: '7' }, body: { expectedSourceRevision: '8' } }
     const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await deletePage(req, res)
 
     expect(global.WIKI.models.pages.deletePage).toHaveBeenCalledWith({
       id: 7,
+      expectedSourceRevision: '8',
       user: { id: 5, permissions: ['delete:pages'] }
     })
     expect(res.json).toHaveBeenCalledWith({ message: 'Page has been deleted.' })
@@ -963,7 +966,7 @@ describe('controllers/api pages endpoints', () => {
     err.name = 'PageNotFound'
     global.WIKI.models.pages.deletePage.mockRejectedValueOnce(err)
     const { deletePage } = await loadHandler()
-    const req = { user: { permissions: ['delete:pages'] }, params: { id: '7' } }
+    const req = { user: { permissions: ['delete:pages'] }, params: { id: '7' }, body: { expectedSourceRevision: '8' } }
     const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await deletePage(req, res)
@@ -977,7 +980,7 @@ describe('controllers/api pages endpoints', () => {
     err.name = 'PageDeleteForbidden'
     global.WIKI.models.pages.deletePage.mockRejectedValueOnce(err)
     const { deletePage } = await loadHandler()
-    const req = { user: { permissions: ['delete:pages'] }, params: { id: '7' } }
+    const req = { user: { permissions: ['delete:pages'] }, params: { id: '7' }, body: { expectedSourceRevision: '8' } }
     const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await deletePage(req, res)
@@ -989,7 +992,7 @@ describe('controllers/api pages endpoints', () => {
   it('returns JSON errors for unexpected page delete failures', async () => {
     global.WIKI.models.pages.deletePage.mockRejectedValueOnce(new Error('page db down'))
     const { deletePage } = await loadHandler()
-    const req = { user: { permissions: ['delete:pages'] }, params: { id: '7' } }
+    const req = { user: { permissions: ['delete:pages'] }, params: { id: '7' }, body: { expectedSourceRevision: '8' } }
     const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await deletePage(req, res)

@@ -41,6 +41,12 @@ export const pageRuleRegexMatches = (pattern: string, path: string): boolean =>
   compilePageRuleRegex(pattern)?.test(path) ?? false
 
 export const principalId = (user: PagePrincipal): number | null => {
+  if (user && Object.hasOwn(user, 'ownershipUserId')) {
+    const ownershipUserId = user.ownershipUserId
+    return typeof ownershipUserId === 'number' && Number.isSafeInteger(ownershipUserId) && ownershipUserId > 0
+      ? ownershipUserId
+      : null
+  }
   const id = user && typeof user.id === 'number' && Number.isSafeInteger(user.id) ? user.id : null
   return id !== null && id > 0 && id !== 2 ? id : null
 }

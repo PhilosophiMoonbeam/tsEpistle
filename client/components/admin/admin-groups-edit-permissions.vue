@@ -148,6 +148,32 @@ export default {
           ]
         },
         {
+          category: 'Agents',
+          items: [
+            {
+              permission: 'use:agents',
+              hint: 'Can use the isolated Wiki agent application and own private agent sessions',
+              warning: true,
+              restrictedForSystem: true,
+              disabled: false
+            },
+            {
+              permission: 'use:agent-browser',
+              hint: 'Can use enabled open-world browser actions; also requires use:agents',
+              warning: true,
+              restrictedForSystem: true,
+              disabled: false
+            },
+            {
+              permission: 'use:mcp',
+              hint: 'Can use the dedicated MCP endpoint through API keys issued for this group',
+              warning: true,
+              restrictedForSystem: true,
+              disabled: false
+            }
+          ]
+        },
+        {
           category: 'Users',
           items: [
             {

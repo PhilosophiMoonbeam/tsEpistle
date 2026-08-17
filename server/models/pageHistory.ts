@@ -27,6 +27,7 @@ interface PageVersionOptions {
   title: string
   action?: string
   versionDate: string
+  sourceRevision?: string | number
   transaction?: Knex.Transaction
 }
 
@@ -50,6 +51,7 @@ interface HistoryTrailEntry {
   actionType: string
   valueBefore: string | null
   valueAfter: string | null
+  sourceRevision: string | number
   versionDate: string
 }
 
@@ -88,6 +90,7 @@ declare editorKey: string
 declare localeCode: string
 declare action: string
 declare versionDate: string
+declare sourceRevision: string | number
 declare createdAt: string
 static override get tableName() { return 'pageHistory' } static override get jsonSchema() { return {
   type: 'object',
@@ -107,6 +110,7 @@ static override get tableName() { return 'pageHistory' } static override get jso
     content: {type: 'string'},
     contentType: {type: 'string'},
 
+    sourceRevision: {type: 'integer'},
     createdAt: {type: 'string'}
   }
 } } static override get relationMappings() { return {
@@ -175,6 +179,7 @@ static async addVersion(opts: PageVersionOptions) {
     publishStartDate: opts.publishStartDate || '',
     title: opts.title,
     action: opts.action || 'updated',
+    sourceRevision: Number(opts.sourceRevision ?? 1),
     versionDate: opts.versionDate
   })
   const knex = opts.transaction ?? wiki.models.knex
@@ -205,6 +210,7 @@ static async getVersion({ pageId, versionId, requester }: VersionQuery) {
       'pageHistory.action',
       'pageHistory.authorId',
       'pageHistory.pageId',
+      'pageHistory.sourceRevision',
       'pageHistory.versionDate',
       {
         versionId: 'pageHistory.id',
@@ -239,6 +245,7 @@ static async getHistory({ pageId, offsetPage = 0, offsetSize = 100, requester }:
       'pageHistory.path',
       'pageHistory.authorId',
       'pageHistory.action',
+      'pageHistory.sourceRevision',
       'pageHistory.versionDate',
       {
         authorName: 'author.name'
@@ -300,6 +307,7 @@ static async getHistory({ pageId, offsetPage = 0, offsetSize = 100, requester }:
         authorName: ph.authorName,
         actionType,
         valueBefore,
+        sourceRevision: ph.sourceRevision,
         valueAfter,
         versionDate: ph.versionDate
       })

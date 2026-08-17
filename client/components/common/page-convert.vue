@@ -60,7 +60,8 @@ export default defineComponent({
     pagePath(): string { return wikiStore.page.path },
     pageLocale(): string { return wikiStore.page.locale },
     pageId(): number { return wikiStore.page.id },
-    pageEditor(): string { return wikiStore.page.editor }
+    pageEditor(): string { return wikiStore.page.editor },
+    pageSourceRevision(): string { return wikiStore.page.sourceRevision }
   },
   mounted () {
     this.newEditor = this.pageEditor
@@ -74,7 +75,7 @@ export default defineComponent({
       wikiStore.startLoading('page-convert')
       this.$nextTick(async () => {
         try {
-          await convertPage(window.fetch.bind(window), this.pageId, this.newEditor)
+          await convertPage(window.fetch.bind(window), this.pageId, this.newEditor, this.pageSourceRevision)
           this.isShown = false
           window.location.assign(`/e/${this.pageLocale}/${this.pagePath}`)
         } catch (err) {

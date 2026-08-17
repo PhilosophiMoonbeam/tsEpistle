@@ -60,6 +60,7 @@ export default defineConfig(({ command }) => ({
     rolldownOptions: {
       input: {
         app: resolve(root, 'client/index-app.ts'),
+        agents: resolve(root, 'client/index-agents.ts'),
         setup: resolve(root, 'client/index-setup.ts')
       },
       output: {

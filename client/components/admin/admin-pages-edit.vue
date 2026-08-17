@@ -206,6 +206,7 @@ export default {
         await deletePageById(
           window.fetch.bind(window),
           page.id,
+          page.sourceRevision,
           this.$t('common:error.unexpected')
         )
         wikiStore.showNotification({

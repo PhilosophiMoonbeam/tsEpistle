@@ -37,6 +37,7 @@ const createSchema = async (): Promise<void> => {
     table.string('localeCode').notNullable()
     table.string('action').notNullable()
     table.string('versionDate').notNullable()
+    table.bigInteger('sourceRevision').notNullable().defaultTo(1)
     table.string('createdAt').notNullable()
   })
   await db.schema.createTable('pageTags', table => {

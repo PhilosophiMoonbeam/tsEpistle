@@ -670,7 +670,7 @@ static async afterLoginChecks (user: User, context: AuthenticationContext, { ski
 /**
  * Generate a new token for a user
  */
-static async refreshToken(user: number | User): Promise<{ token: string, user: User }> {
+static async refreshToken(user: number | User, options: { audience?: NonNullable<SignOptions['audience']> } = {}): Promise<{ token: string, user: User }> {
   let currentUser: User
   if (typeof user === 'number') {
     if (!Number.isSafeInteger(user)) {
@@ -719,7 +719,7 @@ static async refreshToken(user: number | User): Promise<{ token: string, user: U
     }, {
       algorithm: 'RS256',
       expiresIn: wiki.config.auth.tokenExpiration,
-      audience: wiki.config.auth.audience,
+      audience: options.audience ?? wiki.config.auth.audience,
       issuer: 'urn:wiki.js'
     }),
     user: currentUser

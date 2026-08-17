@@ -27,6 +27,44 @@ defaults:
     offline: false
     ha: false
     bodyParserLimit: 5mb
+    agents:
+      enabled: false
+      publicOrigin: ''
+      cookieAudience: 'wiki-agents-ui'
+      launchTokenTtlSeconds: 300
+      retention:
+        temporarySessionHours: 24
+        mcpContentDays: 7
+        auditDays: 90
+        maintenanceBatchSize: 100
+      provider:
+        enabled: false
+        globalConcurrency: 4
+        perUserConcurrency: 1
+        pollingMilliseconds: 1000
+      skills:
+        enabled: false
+        namespace: 'system/agent-skills'
+      browser:
+        enabled: false
+      proposals:
+        enabled: false
+      writes:
+        enabled: false
+        create:
+          enabled: false
+        patch:
+          enabled: false
+        move:
+          enabled: false
+        restore:
+          enabled: false
+        delete:
+          enabled: false
+      mcp:
+        enabled: false
+        publicOrigin: ''
+        resourceUrl: ''
     # DB defaults
     api:
       isEnabled: false

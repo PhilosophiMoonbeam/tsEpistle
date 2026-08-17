@@ -2,6 +2,7 @@ import express from 'express'
 import type { ErrorRequestHandler } from 'express'
 import { errorStatus, getTransportRuntime } from '../_types.ts'
 import analyticsRouter from './analytics.ts'
+import agentsRouter from './agents.ts'
 import assetsRouter from './assets.ts'
 import authRouter from './auth.ts'
 import commentsRouter from './comments.ts'
@@ -28,6 +29,7 @@ export interface ApiRuntime {
 
 const router = express.Router()
 
+router.use('/agents', agentsRouter)
 router.use('/assets', assetsRouter)
 router.use('/system', systemRouter)
 router.use('/analytics', analyticsRouter)

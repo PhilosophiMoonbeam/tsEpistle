@@ -1,4 +1,5 @@
 export * from './api-access.ts'
+export * from './agents/contracts.ts'
 export * from './collaboration.ts'
 export * from './content-extensions.ts'
 export { default as markdownItImageSize } from './markdown-it-image-size.ts'

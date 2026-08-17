@@ -10,7 +10,7 @@ describe('page-convert REST migration guard', () => {
     expect(script).toContain("import { defineComponent } from 'vue'")
     expect(script).toContain("import { wikiStore } from '@/store/index.ts'")
     expect(script).toContain("import { convertPage } from '../../helpers/pages-api'")
-    expect(script).toContain('await convertPage(window.fetch.bind(window), this.pageId, this.newEditor)')
+    expect(script).toContain('await convertPage(window.fetch.bind(window), this.pageId, this.newEditor, this.pageSourceRevision)')
     expect(script).not.toMatch(/graphql-tag|\$apollo/)
   })
 

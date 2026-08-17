@@ -198,6 +198,10 @@ export default defineComponent({
       type: String,
       default: new Date().toISOString()
     },
+    sourceRevision: {
+      type: String,
+      default: ''
+    },
     effectivePermissions: {
       type: String,
       default: ''
@@ -290,6 +294,7 @@ export default defineComponent({
     wikiStore.page.title = this.title
     wikiStore.page.scriptCss = this.scriptCss
     wikiStore.page.scriptJs = this.scriptJs
+    wikiStore.page.sourceRevision = this.sourceRevision
 
     wikiStore.page.mode = 'edit'
 
@@ -395,15 +400,19 @@ export default defineComponent({
           const page = await updatePage(
             window.fetch.bind(window),
             wikiStore.page.id,
-            this.getPageInput()
+            this.getPageInput(),
+            wikiStore.page.sourceRevision
           )
+          wikiStore.page.sourceRevision = page.sourceRevision
           if (this.savedState.visibility !== wikiStore.page.visibility) {
-            await changePageVisibility(
+            const visibilityPage = await changePageVisibility(
               window.fetch.bind(window),
               wikiStore.page.id,
               wikiStore.page.visibility,
+              wikiStore.page.sourceRevision,
               wikiStore.page.visibility === 'public'
             )
+            wikiStore.page.sourceRevision = visibilityPage.sourceRevision
           }
           this.checkoutDateActive = page.updatedAt || this.checkoutDateActive
           this.isConflict = false

@@ -82,19 +82,18 @@ describe('page history visibility boundaries', () => {
 
   it('cannot restore a hidden private revision after the page is published', async () => {
     const requester = { id: 8, permissions: ['write:pages'] }
-    const updatedAt = '2026-08-15T00:00:00.000Z'
     global.WIKI.models.pages.query.mockReturnValue(pageQuery({
       id: 17,
       path: 'published',
       localeCode: 'en',
       visibility: 'public',
       ownerId: null,
-      updatedAt
+      sourceRevision: '8'
     }))
     global.WIKI.models.pageHistory.getVersion.mockResolvedValue(undefined)
     const operations = (await import('../operations/pages.ts')).default
 
-    await expect(operations.restore({ requester, pageId: 17, versionId: 4, expectedUpdatedAt: updatedAt })).rejects.toBeInstanceOf(PageNotFound)
+    await expect(operations.restore({ requester, pageId: 17, versionId: 4, expectedSourceRevision: '8' })).rejects.toBeInstanceOf(PageNotFound)
     expect(global.WIKI.models.pageHistory.getVersion).toHaveBeenCalledWith({ pageId: 17, versionId: 4, requester })
     expect(global.WIKI.models.pages.updatePage).not.toHaveBeenCalled()
   })
@@ -107,7 +106,7 @@ describe('page history visibility boundaries', () => {
       localeCode: 'en',
       visibility: 'public',
       ownerId: null,
-      updatedAt: '2026-08-15T00:00:01.000Z'
+      sourceRevision: '9'
     }))
     const operations = (await import('../operations/pages.ts')).default
 
@@ -115,22 +114,22 @@ describe('page history visibility boundaries', () => {
       requester,
       pageId: 17,
       versionId: 4,
-      expectedUpdatedAt: '2026-08-15T00:00:00.000Z'
+      expectedSourceRevision: '8'
     })).rejects.toMatchObject({ name: 'PAGE_RESTORE_CONFLICT', status: 409 })
     expect(global.WIKI.models.pageHistory.getVersion).not.toHaveBeenCalled()
     expect(global.WIKI.models.pages.updatePage).not.toHaveBeenCalled()
   })
 
-  it('restores canonical content, editor, content type, and tags with a compare-and-swap timestamp', async () => {
+  it('restores canonical content, editor, content type, and tags with a source-revision compare-and-swap', async () => {
     const requester = { id: 8, permissions: ['write:pages'] }
-    const updatedAt = '2026-08-15T00:00:00.000Z'
+    const sourceRevision = '8'
     global.WIKI.models.pages.query.mockReturnValue(pageQuery({
       id: 17,
       path: 'published',
       localeCode: 'en',
       visibility: 'public',
       ownerId: null,
-      updatedAt
+      sourceRevision
     }))
     global.WIKI.models.pageHistory.getVersion.mockResolvedValue({
       versionId: 4,
@@ -147,7 +146,7 @@ describe('page history visibility boundaries', () => {
     })
     const operations = (await import('../operations/pages.ts')).default
 
-    await operations.restore({ requester, pageId: 17, versionId: 4, expectedUpdatedAt: updatedAt })
+    await operations.restore({ requester, pageId: 17, versionId: 4, expectedSourceRevision: sourceRevision })
 
     expect(global.WIKI.models.pages.updatePage).toHaveBeenCalledWith({
       id: 17,
@@ -159,7 +158,7 @@ describe('page history visibility boundaries', () => {
       editor: 'visual-markdown',
       tags: ['release'],
       action: 'restored',
-      expectedUpdatedAt: updatedAt
+      expectedSourceRevision: sourceRevision
     })
   })
 })

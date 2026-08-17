@@ -18,6 +18,8 @@ export type SiteConfig = {
   footerOverride: string
   logoUrl: string
   product: ProductMetadata
+  agentsEnabled: boolean
+  agentLaunchCsrfToken: string
   path?: string
   devMode?: boolean
 }

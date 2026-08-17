@@ -106,6 +106,13 @@ describe('API-key authentication boundary', () => {
       permissions: ['read:pages'],
       groups: [3]
     })
+    expect(req.authContext).toEqual({
+      kind: 'apiKey',
+      apiKeyId: 7,
+      groupId: 3,
+      ownershipUserId: null,
+      principal: req.user
+    })
   })
 
 
@@ -141,6 +148,12 @@ describe('API-key authentication boundary', () => {
 
     expect(req.logIn).toHaveBeenCalledWith(sessionUser, { session: false }, expect.any(Function))
     expect(next).toHaveBeenCalledWith()
+    expect(req.authContext).toEqual({
+      kind: 'user',
+      userId: 42,
+      ownershipUserId: 42,
+      principal: sessionUser
+    })
   })
 
   test('rejects disabled API access with a stable error', async () => {

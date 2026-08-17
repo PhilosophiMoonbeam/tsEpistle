@@ -103,6 +103,7 @@ type PageMutation {
 
   update(
     id: Int!
+    expectedSourceRevision: String!
     content: String
     description: String
     editor: String
@@ -121,27 +122,32 @@ type PageMutation {
   convert(
     id: Int!
     editor: String!
+    expectedSourceRevision: String!
   ): DefaultResponse @auth(requires: ["write:pages", "manage:pages", "manage:system"])
 
   move(
     id: Int!
     destinationPath: String!
     destinationLocale: String!
+    expectedSourceRevision: String!
   ): DefaultResponse @auth(requires: ["manage:pages", "manage:system"])
 
   delete(
     id: Int!
+    expectedSourceRevision: String!
   ): DefaultResponse @auth(requires: ["delete:pages", "manage:system"])
 
   changeVisibility(
     id: Int!
     visibility: PageVisibility!
     confirmPublication: Boolean
+    expectedSourceRevision: String!
   ): PageResponse @auth(requires: ["write:pages", "manage:pages", "manage:system"])
 
   transferOwnership(
     id: Int!
     ownerId: Int!
+    expectedSourceRevision: String!
   ): PageResponse @auth(requires: ["manage:system"])
 
 
@@ -158,6 +164,7 @@ type PageMutation {
   restore(
     pageId: Int!
     versionId: Int!
+    expectedSourceRevision: String!
   ): DefaultResponse @auth(requires: ["write:pages", "manage:pages", "manage:system"])
 
 }
@@ -194,6 +201,7 @@ type Page {
   contentType: String!
   createdAt: Date!
   updatedAt: Date!
+  sourceRevision: String!
   editor: String! @auth(requires: ["write:pages", "manage:system"])
   locale: String!
   scriptCss: String

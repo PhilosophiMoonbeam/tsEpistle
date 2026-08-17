@@ -23,6 +23,7 @@ import Locale from './locales.ts'
 import type Comment from './comments.ts'
 import { assertVisualMarkdownCompatible } from '../../shared/visual-markdown.ts'
 import { writeOutboxEvent } from '../core/outbox.ts'
+import { enqueuePageMutationEffects, type PageProjectionPayload } from '../core/page-mutation-outbox.ts'
 import { redactProtectedPageForSearch, syncProtectedPageAssets } from '../operations/page-protection.ts'
 
 type UnknownRecord = Record<string, unknown>
@@ -112,6 +113,7 @@ interface UpdatePageOptions {
   title?: string
   tags?: string[]
   expectedUpdatedAt?: string
+  expectedSourceRevision?: string
   editor?: string
   contentType?: string
   action?: string
@@ -129,12 +131,14 @@ interface ChangeVisibilityOptions {
   user: PageUser
   confirmPublication?: boolean
   skipStorage?: boolean
+  expectedSourceRevision?: string
 }
 
 interface TransferOwnershipOptions {
   id: number
   ownerId: number
   user: PageUser
+  expectedSourceRevision?: string
 }
 
 
@@ -142,6 +146,7 @@ interface ConvertPageOptions {
   id: number
   editor: string
   user: PageUser
+  expectedSourceRevision?: string
 }
 
 type MovePageOptions = ({
@@ -157,6 +162,7 @@ type MovePageOptions = ({
   destinationLocale: string
   user: PageUser
   skipStorage?: boolean
+  expectedSourceRevision?: string
 }
 
 type DeletePageOptions = ({
@@ -170,6 +176,7 @@ type DeletePageOptions = ({
 }) & {
   user?: PageUser
   skipStorage?: boolean
+  expectedSourceRevision?: string
 }
 
 type ReconnectLinksOptions = {
@@ -346,6 +353,46 @@ const writePageOutboxEvent = async (
   })
 }
 
+interface ProjectionPageRow {
+  readonly id: number
+  readonly sourceRevision: string | number
+  readonly content: string
+  readonly localeCode: string
+  readonly path: string
+  readonly visibility: PageVisibility
+  readonly ownerId: number | null
+}
+
+const projectionLocation = (page: Pick<ProjectionPageRow, 'localeCode' | 'path' | 'visibility' | 'ownerId'>) => ({
+  locale: page.localeCode,
+  path: page.path,
+  visibility: page.visibility,
+  ownerId: page.ownerId
+})
+
+const enqueueCurrentPageProjections = async (
+  transaction: Knex.Transaction,
+  pageId: number,
+  action: PageProjectionPayload['action'],
+  previousLocation?: ReturnType<typeof projectionLocation>
+): Promise<void> => {
+  const page = await transaction<ProjectionPageRow>('pages')
+    .select('id', 'sourceRevision', 'content', 'localeCode', 'path', 'visibility', 'ownerId')
+    .where({ id: pageId })
+    .forUpdate()
+    .first()
+  if (!page) throw new wiki.Error.PageNotFound()
+  await enqueuePageMutationEffects(transaction, {
+    pageId,
+    sourceRevision: page.sourceRevision,
+    desiredState: 'present',
+    action,
+    source: page.content,
+    location: projectionLocation(page),
+    ...(previousLocation ? { previousLocation } : {})
+  })
+}
+
 const frontmatterRegex = {
   html: /^(<!-{2}(?:\n|\r)([\w\W]+?)(?:\n|\r)-{2}>)?(?:\n|\r)*([\w\W]*)*/,
   legacy: /^(<!-- TITLE: ?([\w\W]+?) ?-{2}>)?(?:\n|\r)?(<!-- SUBTITLE: ?([\w\W]+?) ?-{2}>)?(?:\n|\r)*([\w\W]*)*/i,
@@ -375,6 +422,7 @@ declare toc: string | unknown[]
 declare contentType: string
 declare createdAt: string
 declare updatedAt: string
+declare sourceRevision: string | number
 declare editorKey: string
 declare localeCode: string
 declare authorId: number
@@ -404,6 +452,7 @@ static override get tableName() { return 'pages' } static override get jsonSchem
     contentType: {type: 'string'},
 
     createdAt: {type: 'string'},
+    sourceRevision: {type: 'integer'},
     updatedAt: {type: 'string'}
   }
 } } static override get jsonAttributes() { return ['extra'] } static override get relationMappings() { return {
@@ -684,6 +733,10 @@ static async createPage(opts: CreatePageOptions): Promise<Page> {
         css: scriptCss
       }
     })
+    if (opts.tags && opts.tags.length > 0) {
+      await wiki.models.tags.associateTags({ tags: opts.tags, page: inserted, transaction })
+    }
+    await enqueueCurrentPageProjections(transaction, inserted.id, 'create')
     await writePageOutboxEvent(transaction, 'page.created', inserted, opts.user)
   })
   const page = await wiki.models.pages.getPageFromDb({
@@ -696,10 +749,6 @@ static async createPage(opts: CreatePageOptions): Promise<Page> {
     throw new wiki.Error.PageNotFound()
   }
 
-  // -> Save Tags
-  if (opts.tags && opts.tags.length > 0) {
-    await wiki.models.tags.associateTags({ tags: opts.tags, page })
-  }
 
   // -> Render page to HTML
   await wiki.models.pages.renderPage(page)
@@ -759,6 +808,7 @@ static async updatePage(opts: UpdatePageOptions): Promise<Page> {
   if (opts.expectedUpdatedAt && new Date(ogPage.updatedAt).valueOf() !== new Date(opts.expectedUpdatedAt).valueOf()) {
     throw pageUpdateConflict()
   }
+  if (opts.expectedSourceRevision && String(ogPage.sourceRevision) !== opts.expectedSourceRevision) throw pageUpdateConflict()
 
   const content = opts.content ?? ogPage.content
   if (!content || _.trim(content).length < 1) {
@@ -797,9 +847,37 @@ static async updatePage(opts: UpdatePageOptions): Promise<Page> {
     scriptJs = opts.scriptJs
   }
 
-  const pageEventType = opts.action === 'restored' ? 'page.restored' : 'page.updated'
-  const willMove = (opts.locale !== undefined && opts.locale !== ogPage.localeCode) ||
-    (opts.path !== undefined && opts.path !== ogPage.path)
+  const destinationLocale = opts.locale ?? ogPage.localeCode
+  let destinationPath = opts.path ?? ogPage.path
+  if (destinationPath.includes('.') || destinationPath.includes(' ') || destinationPath.includes('\\') || destinationPath.includes('//')) {
+    throw new wiki.Error.PageIllegalPath()
+  }
+  if (destinationPath.endsWith('/')) destinationPath = destinationPath.slice(0, -1)
+  if (destinationPath.startsWith('/')) destinationPath = destinationPath.slice(1)
+  const willMove = destinationLocale !== ogPage.localeCode || destinationPath !== ogPage.path
+  if (willMove && ogPage.visibility === 'public' && !wiki.auth.checkAccess(opts.user, ['write:pages'], {
+    locale: destinationLocale,
+    path: destinationPath
+  })) throw new wiki.Error.PageMoveForbidden()
+  if (willMove) {
+    const collision = await wiki.models.pages.query().findOne({
+      path: destinationPath,
+      localeCode: destinationLocale,
+      visibility: ogPage.visibility,
+      ownerId: ogPage.ownerId
+    })
+    if (collision && collision.id !== ogPage.id) throw new wiki.Error.PagePathCollision()
+  }
+  const destinationTitle = opts.title ?? (willMove && ogPage.title === _.last(ogPage.path.split('/'))
+    ? (_.last(destinationPath.split('/')) ?? ogPage.title)
+    : ogPage.title)
+  const destinationHash = willMove ? pageHelper.generateHash({
+    path: destinationPath,
+    locale: destinationLocale,
+    visibility: ogPage.visibility,
+    ownerId: ogPage.ownerId
+  }) : ogPage.hash
+  const pageEventType = opts.action === 'restored' ? 'page.restored' : willMove ? 'page.moved' : 'page.updated'
   await wiki.models.knex.transaction(async transaction => {
     await wiki.models.pageHistory.addVersion({
       ...ogPage,
@@ -819,7 +897,8 @@ static async updatePage(opts: UpdatePageOptions): Promise<Page> {
         : (opts.isPublished === true || opts.isPublished === 1),
       publishEndDate: opts.publishEndDate === undefined ? ogPage.publishEndDate : (opts.publishEndDate || ''),
       publishStartDate: opts.publishStartDate === undefined ? ogPage.publishStartDate : (opts.publishStartDate || ''),
-      title: opts.title ?? ogPage.title,
+      title: destinationTitle,
+      ...(willMove ? { path: destinationPath, localeCode: destinationLocale, hash: destinationHash } : {}),
       extra: {
         ...ogPage.extra,
         js: scriptJs,
@@ -827,17 +906,29 @@ static async updatePage(opts: UpdatePageOptions): Promise<Page> {
       }
     }).where('id', ogPage.id)
     if (opts.expectedUpdatedAt) pagePatch.where('updatedAt', ogPage.updatedAt)
+    if (ogPage.sourceRevision !== undefined) pagePatch.where('sourceRevision', ogPage.sourceRevision)
     const updatedRows = await pagePatch
     if (updatedRows !== 1) throw pageUpdateConflict()
     if (opts.tags !== undefined) {
-      await wiki.models.tags.associateTags({ tags: opts.tags, page: ogPage, transaction })
+      const tagsChanged = await wiki.models.tags.associateTags({ tags: opts.tags, page: ogPage, transaction })
+      if (tagsChanged && ogPage.sourceRevision !== undefined) {
+        await transaction('pages')
+          .where({ id: ogPage.id, sourceRevision: ogPage.sourceRevision })
+          .update({ sourceRevision: transaction.raw('"sourceRevision" + 1') })
+      }
     }
-    if (!willMove) {
-      await writePageOutboxEvent(transaction, pageEventType, {
-        ...ogPage,
-        title: opts.title ?? ogPage.title
-      }, opts.user)
-    }
+    await writePageOutboxEvent(transaction, pageEventType, {
+      ...ogPage,
+      path: destinationPath,
+      localeCode: destinationLocale,
+      title: destinationTitle
+    }, opts.user)
+    await enqueueCurrentPageProjections(
+      transaction,
+      ogPage.id,
+      opts.action === 'restored' ? 'restore' : willMove ? 'move' : 'update',
+      willMove ? projectionLocation(ogPage) : undefined
+    )
   })
   const page = await wiki.models.pages.getPageFromDb(ogPage.id)
   if (!page) {
@@ -848,45 +939,64 @@ static async updatePage(opts: UpdatePageOptions): Promise<Page> {
   // -> Render page to HTML
   await wiki.models.pages.renderPage(page)
   wiki.events.outbound.emit('deletePageFromCache', page.hash)
+  if (willMove) wiki.events.outbound.emit('deletePageFromCache', ogPage.hash)
 
   if (page.visibility === 'public') {
     const pageContents = await wiki.models.pages.query().findById(page.id).select('content', 'render')
-    if (!pageContents) {
-      throw new wiki.Error.PageNotFound()
-    }
+    if (!pageContents) throw new wiki.Error.PageNotFound()
     page.safeContent = wiki.models.pages.cleanHTML(pageContents.render)
     await syncProtectedPageAssets(wiki.models.knex, page.id, pageContents.content, pageContents.render)
     await redactProtectedPageForSearch(page)
-    await wiki.data.searchEngine.updated(page)
-
-    if (!opts.skipStorage) {
-      await wiki.models.storage.pageEvent({
-        event: 'updated',
-        page
-      })
+    if (willMove) {
+      const renamedPage: PageRenameDetails = {
+        ...page,
+        hash: ogPage.hash,
+        path: ogPage.path,
+        localeCode: ogPage.localeCode,
+        destinationPath,
+        destinationLocaleCode: destinationLocale,
+        destinationHash
+      }
+      await wiki.data.searchEngine.renamed(renamedPage)
+      if (!opts.skipStorage) {
+        await wiki.models.storage.pageEvent({
+          event: 'renamed',
+          page: {
+            ...renamedPage,
+            authorName: page.authorName,
+            authorEmail: page.authorEmail,
+            updatedAt: page.updatedAt,
+            tags: page.tags,
+            moveAuthorId: opts.user.id,
+            moveAuthorName: opts.user.name,
+            moveAuthorEmail: opts.user.email
+          }
+        })
+      }
+    } else {
+      await wiki.data.searchEngine.updated(page)
+      if (!opts.skipStorage) await wiki.models.storage.pageEvent({ event: 'updated', page })
     }
   }
 
-  // -> Perform move?
-  if ((opts.locale && opts.locale !== page.localeCode) || (opts.path && opts.path !== page.path)) {
-    if (page.visibility === 'public' && !wiki.auth.checkAccess(opts.user, ['write:pages'], {
-      locale: opts.locale,
-      path: opts.path
-    })) {
-      throw new wiki.Error.PageMoveForbidden()
+  if (willMove) {
+    await wiki.models.pages.rebuildTree()
+    if (page.visibility === 'public') {
+      await wiki.models.pages.reconnectLinks({
+        sourceLocale: ogPage.localeCode,
+        sourcePath: ogPage.path,
+        locale: destinationLocale,
+        path: destinationPath,
+        mode: 'move'
+      })
+      await wiki.models.pages.reconnectLinks({
+        locale: destinationLocale,
+        path: destinationPath,
+        mode: 'create'
+      })
     }
-
-    await wiki.models.pages.movePage({
-      id: page.id,
-      destinationLocale: opts.locale ?? page.localeCode,
-      destinationPath: opts.path ?? page.path,
-      user: opts.user
-    })
   } else {
-    // -> Update title of page tree entry
-    await wiki.models.knex.table('pageTree').where({
-      pageId: page.id
-    }).update('title', page.title)
+    await wiki.models.knex.table('pageTree').where({ pageId: page.id }).update('title', page.title)
   }
 
   // -> Get latest updatedAt
@@ -907,6 +1017,7 @@ static async changeVisibility(opts: ChangeVisibilityOptions): Promise<Page> {
   if (page.visibility === opts.visibility) return page
 
   const ownerId = opts.visibility === 'private' ? principalId(opts.user) : null
+  if (opts.expectedSourceRevision && String(page.sourceRevision) !== opts.expectedSourceRevision) throw pageUpdateConflict()
   if (opts.visibility === 'private' && ownerId === null) {
     throw new wiki.Error.PageUpdateForbidden()
   }
@@ -939,15 +1050,17 @@ static async changeVisibility(opts: ChangeVisibilityOptions): Promise<Page> {
       versionDate: page.updatedAt,
       transaction
     })
-    await wiki.models.pages.query(transaction).patch({
+    const changedRows = await wiki.models.pages.query(transaction).patch({
       visibility: opts.visibility,
       ownerId,
       hash
-    }).findById(page.id)
+    }).where({ id: page.id, sourceRevision: page.sourceRevision })
+    if (changedRows !== 1) throw pageUpdateConflict()
     await writePageOutboxEvent(transaction, 'page.visibility-changed', {
       ...page,
       visibility: opts.visibility
     }, opts.user)
+    await enqueueCurrentPageProjections(transaction, page.id, 'visibility', projectionLocation(page))
   })
   await wiki.models.pages.deletePageFromCache(page.hash)
   wiki.events.outbound.emit('deletePageFromCache', page.hash)
@@ -990,6 +1103,7 @@ static async transferOwnership(opts: TransferOwnershipOptions): Promise<Page> {
   if (!managesSystem(opts.user)) throw new wiki.Error.PageNotFound()
   const page = await wiki.models.pages.getPageFromDb(opts.id)
   if (!page || page.visibility !== 'private') throw new wiki.Error.PageNotFound()
+  if (opts.expectedSourceRevision && String(page.sourceRevision) !== opts.expectedSourceRevision) throw pageUpdateConflict()
   const collision = await wiki.models.pages.query().findOne({
     visibility: 'private',
     ownerId: opts.ownerId,
@@ -1011,11 +1125,13 @@ static async transferOwnership(opts: TransferOwnershipOptions): Promise<Page> {
       visibility: 'private',
       ownerId: opts.ownerId
     })
-    await wiki.models.pages.query(transaction).patch({ ownerId: opts.ownerId, hash }).findById(page.id)
+    const changedRows = await wiki.models.pages.query(transaction).patch({ ownerId: opts.ownerId, hash }).where({ id: page.id, sourceRevision: page.sourceRevision })
+    if (changedRows !== 1) throw pageUpdateConflict()
     await wiki.models.knex('pageHistory').transacting(transaction)
       .where({ pageId: page.id, visibility: 'private' })
       .update({ ownerId: opts.ownerId })
     await writePageOutboxEvent(transaction, 'page.ownership-transferred', page, opts.user)
+    await enqueueCurrentPageProjections(transaction, page.id, 'ownership', projectionLocation(page))
   })
   await wiki.models.pages.deletePageFromCache(page.hash)
   wiki.events.outbound.emit('deletePageFromCache', page.hash)
@@ -1039,6 +1155,7 @@ static async convertPage(opts: ConvertPageOptions): Promise<void> {
   if (!ogPage || (ogPage.visibility === 'private' && !canWritePage(opts.user, ogPage))) {
     throw new wiki.Error.PageNotFound()
   }
+  if (opts.expectedSourceRevision && String(ogPage.sourceRevision) !== opts.expectedSourceRevision) throw pageUpdateConflict()
   if (!canWritePage(opts.user, ogPage)) {
     throw new wiki.Error.PageUpdateForbidden()
   }
@@ -1180,12 +1297,14 @@ static async convertPage(opts: ConvertPageOptions): Promise<void> {
         transaction
       })
     }
-    await wiki.models.pages.query(transaction).patch({
+    const changedRows = await wiki.models.pages.query(transaction).patch({
       contentType: targetContentType,
       editorKey: opts.editor,
       ...(convertedContent ? { content: convertedContent } : {})
-    }).where('id', ogPage.id)
+    }).where({ id: ogPage.id, sourceRevision: ogPage.sourceRevision })
+    if (changedRows !== 1) throw pageUpdateConflict()
     await writePageOutboxEvent(transaction, 'page.updated', ogPage, opts.user)
+    await enqueueCurrentPageProjections(transaction, ogPage.id, 'convert')
   })
   const page = await wiki.models.pages.getPageFromDb(ogPage.id)
   if (!page) {
@@ -1228,6 +1347,7 @@ static async movePage(opts: MovePageOptions): Promise<void> {
   if (page.visibility === 'private' && !canWritePage(opts.user, page)) {
     throw new wiki.Error.PageNotFound()
   }
+  if (opts.expectedSourceRevision && String(page.sourceRevision) !== opts.expectedSourceRevision) throw pageUpdateConflict()
   if (!canWritePage(opts.user, page)) {
     throw new wiki.Error.PageMoveForbidden()
   }
@@ -1277,18 +1397,20 @@ static async movePage(opts: MovePageOptions): Promise<void> {
       versionDate: page.updatedAt,
       transaction
     })
-    await wiki.models.pages.query(transaction).patch({
+    const changedRows = await wiki.models.pages.query(transaction).patch({
       path: opts.destinationPath,
       localeCode: opts.destinationLocale,
       title: destinationTitle,
       hash: destinationHash
-    }).findById(page.id)
+    }).where({ id: page.id, sourceRevision: page.sourceRevision })
+    if (changedRows !== 1) throw pageUpdateConflict()
     await writePageOutboxEvent(transaction, 'page.moved', {
       ...page,
       path: opts.destinationPath,
       localeCode: opts.destinationLocale,
       title: destinationTitle
     }, opts.user)
+    await enqueueCurrentPageProjections(transaction, page.id, 'move', projectionLocation(page))
   })
   await wiki.models.pages.deletePageFromCache(page.hash)
   wiki.events.outbound.emit('deletePageFromCache', page.hash)
@@ -1356,6 +1478,7 @@ static async deletePage(opts: DeletePageOptions): Promise<void> {
   if (!canDeletePage(opts.user, page)) {
     throw new wiki.Error.PageDeleteForbidden()
   }
+  if (opts.expectedSourceRevision && String(page.sourceRevision) !== opts.expectedSourceRevision) throw pageUpdateConflict()
   if (!opts.user) {
     throw new wiki.Error.PageDeleteForbidden()
   }
@@ -1367,6 +1490,23 @@ static async deletePage(opts: DeletePageOptions): Promise<void> {
       action: 'deleted',
       versionDate: page.updatedAt,
       transaction
+    })
+    const bumpedRows = await transaction('pages')
+      .where({ id: page.id, sourceRevision: page.sourceRevision })
+      .update({ sourceRevision: transaction.raw('"sourceRevision" + 1') })
+    if (bumpedRows !== 1) throw pageUpdateConflict()
+    const deletionRevision = await transaction('pages')
+      .select('sourceRevision')
+      .where({ id: page.id })
+      .forUpdate()
+      .first() as { sourceRevision: string | number } | undefined
+    if (!deletionRevision) throw new wiki.Error.PageNotFound()
+    await enqueuePageMutationEffects(transaction, {
+      pageId: page.id,
+      sourceRevision: deletionRevision.sourceRevision,
+      desiredState: 'absent',
+      action: 'delete',
+      previousLocation: projectionLocation(page)
     })
     await writePageOutboxEvent(transaction, 'page.deleted', page, user)
     await wiki.models.pages.query(transaction).delete().where('id', page.id)

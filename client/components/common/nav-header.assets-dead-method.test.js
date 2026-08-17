@@ -85,7 +85,7 @@ describe('nav-header assets dead method cleanup guard', () => {
     expect(pageMoveRename).not.toBeNull()
     expect(pageMoveRename).toMatch(/async\s+pageMoveRename\s*\(\s*\{\s*path\s*,\s*locale\s*\}\s*:\s*PageLocation\s*\)\s*:\s*Promise<void>/)
     expect(pageMoveRename).toMatch(/wikiStore\.startLoading\s*\(\s*['"]page-move['"]\s*\)/)
-    expect(pageMoveRename).toMatch(/await\s+movePage\s*\(\s*window\.fetch\.bind\(\s*window\s*\)\s*,\s*wikiStore\.page\.id\s*,\s*locale\s*,\s*path\s*\)/)
+    expect(pageMoveRename).toMatch(/await\s+movePage\s*\(\s*window\.fetch\.bind\(\s*window\s*\)\s*,\s*wikiStore\.page\.id\s*,\s*locale\s*,\s*path\s*,\s*wikiStore\.page\.sourceRevision\s*\)/)
     expect(pageMoveRename).toMatch(/catch\s*\(\s*err\s*\)\s*\{\s*wikiStore\.showError\s*\(\s*err\s*\)\s*wikiStore\.stopLoading\s*\(\s*['"]page-move['"]\s*\)\s*\}/)
     expect(pageMoveRename).not.toMatch(/this\.\$store\.commit/)
   })

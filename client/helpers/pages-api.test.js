@@ -70,6 +70,7 @@ describe('pages api helper', () => {
       contentType: 'markdown',
       createdAt: '2026-01-01T00:00:00.000Z',
       updatedAt: '2026-01-02T00:00:00.000Z',
+      sourceRevision: 8,
       editor: 'markdown',
       authorId: 2,
       authorName: 'Author',
@@ -95,6 +96,7 @@ describe('pages api helper', () => {
       contentType: 'markdown',
       createdAt: '2026-01-01T00:00:00.000Z',
       updatedAt: '2026-01-02T00:00:00.000Z',
+      sourceRevision: '8',
       editor: 'markdown',
       authorId: 2,
       authorName: 'Author',
@@ -326,30 +328,32 @@ describe('pages api helper', () => {
     await expect(fetchRecentPages(fetchImpl, 'Bad recent pages payload')).rejects.toThrow('manage:system or read:pages is required')
   })
 
-  test('deletes pages with same-origin JSON DELETE', async () => {
+  test('deletes pages with a source-revision compare-and-swap', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ message: 'Page has been deleted.' }))
 
-    await expect(deletePage(fetchImpl, 7)).resolves.toEqual({ message: 'Page has been deleted.' })
+    await expect(deletePage(fetchImpl, 7, '8')).resolves.toEqual({ message: 'Page has been deleted.' })
 
     expect(fetchImpl).toHaveBeenCalledWith('/_api/pages/7', {
       method: 'DELETE',
       credentials: 'same-origin',
       headers: {
-        Accept: 'application/json'
-      }
+        Accept: 'application/json',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ expectedSourceRevision: '8' })
     })
   })
 
   test('surfaces API error messages for failed page delete requests', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ error: 'This page does not exist.' }, false))
 
-    await expect(deletePage(fetchImpl, 7)).rejects.toThrow('This page does not exist.')
+    await expect(deletePage(fetchImpl, 7, '8')).rejects.toThrow('This page does not exist.')
   })
 
   test('rejects malformed successful page delete responses', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({}))
 
-    await expect(deletePage(fetchImpl, 7, 'Bad page delete response')).rejects.toThrow('Bad page delete response')
+    await expect(deletePage(fetchImpl, 7, '8', 'Bad page delete response')).rejects.toThrow('Bad page delete response')
   })
 
   test('updates page tags with same-origin JSON PATCH', async () => {
@@ -440,11 +444,11 @@ describe('pages api helper', () => {
     await expect(fetchPageVersion(fetchImpl, 42, 9, 'Invalid revision')).rejects.toThrow('Invalid revision')
   })
 
-  test('restores against the page timestamp observed when history opened', async () => {
+  test('restores against the page source revision observed when history opened', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ message: 'Page version restored successfully.' }))
-    const expectedUpdatedAt = '2026-08-15T00:00:00.000Z'
+    const expectedSourceRevision = '8'
 
-    await expect(restorePageVersion(fetchImpl, 42, 9, expectedUpdatedAt)).resolves.toBeUndefined()
+    await expect(restorePageVersion(fetchImpl, 42, 9, expectedSourceRevision)).resolves.toBeUndefined()
     expect(fetchImpl).toHaveBeenCalledWith('/_api/pages/42/history/9/restore', {
       method: 'POST',
       credentials: 'same-origin',
@@ -452,7 +456,7 @@ describe('pages api helper', () => {
         Accept: 'application/json',
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify({ expectedUpdatedAt })
+      body: JSON.stringify({ expectedSourceRevision })
     })
   })
 

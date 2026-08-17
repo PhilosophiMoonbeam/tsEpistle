@@ -85,11 +85,13 @@ this.updatedAt = new Date().toISOString() } static async associateTags ({ tags, 
   // Tags to unrelate
 
   const tagsToUnrelate = _.differenceBy(currentTags, targetTags, 'id')
+  const changed = tagsToRelate.length > 0 || tagsToUnrelate.length > 0
   if (tagsToUnrelate.length > 0) {
     await page.$relatedQuery('tags', transaction).unrelate().whereIn('tags.id', _.map(tagsToUnrelate, 'id'))
   }
 
   page.tags = targetTags
+  return changed
 } }
 
 const wiki = WIKI as unknown as {

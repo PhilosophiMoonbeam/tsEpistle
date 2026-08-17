@@ -1,0 +1,25 @@
+# syntax=docker/dockerfile:1.7
+ARG PLAYWRIGHT_IMAGE=mcr.microsoft.com/playwright:v1.62.1-noble@sha256:dcc5531e97840b9b5e794f2814476b21571c5124a3fca2267d73041f56e7580e
+FROM ${PLAYWRIGHT_IMAGE} AS dependencies
+USER root
+WORKDIR /srv/wiki
+ENV COREPACK_HOME=/opt/corepack
+RUN corepack enable && corepack prepare pnpm@11.12.0 --activate
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
+COPY patches ./patches
+RUN pnpm install --prod --frozen-lockfile --ignore-scripts && pnpm store prune
+
+FROM ${PLAYWRIGHT_IMAGE}
+USER root
+WORKDIR /srv/wiki
+ENV NODE_ENV=production \
+    HOME=/tmp \
+    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+COPY --from=dependencies --chown=pwuser:pwuser /srv/wiki/node_modules ./node_modules
+COPY --chown=pwuser:pwuser package.json ./
+COPY --chown=pwuser:pwuser server/agents/browser ./server/agents/browser
+COPY --chown=pwuser:pwuser server/helpers/canonical-json.ts ./server/helpers/canonical-json.ts
+COPY --chown=pwuser:pwuser shared/agents ./shared/agents
+USER pwuser
+EXPOSE 9443
+ENTRYPOINT ["node", "server/agents/browser/worker.ts"]

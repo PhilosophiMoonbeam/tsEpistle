@@ -87,13 +87,13 @@ interface WikiPageOperations {
       query(): PageQuery
       relatedQuery(relation: 'tags'): RelatedTagQuery
       getPageFromDb(input: number | { path: string, locale: string, visibility: PageVisibility, ownerId: number | null }): Promise<PageRecord | undefined>
-      deletePage(input: { id: number, user?: Express.User }): unknown
+      deletePage(input: { id: number, expectedSourceRevision?: string, user?: Express.User }): unknown
       createPage(input: Record<string, unknown> & { user?: Express.User }): unknown
       updatePage(input: Record<string, unknown> & { user?: Express.User }): unknown
       convertPage(input: Record<string, unknown> & { user?: Express.User }): unknown
       movePage(input: Record<string, unknown> & { user?: Express.User }): unknown
-      changeVisibility(input: { id: number, visibility: PageVisibility, confirmPublication?: boolean, user?: Express.User }): unknown
-      transferOwnership(input: { id: number, ownerId: number, user?: Express.User }): unknown
+      changeVisibility(input: { id: number, visibility: PageVisibility, confirmPublication?: boolean, expectedSourceRevision?: string, user?: Express.User }): unknown
+      transferOwnership(input: { id: number, ownerId: number, expectedSourceRevision?: string, user?: Express.User }): unknown
     }
     tags: {
       query(): {
@@ -120,6 +120,12 @@ const nonNegativeInteger = (value: unknown, label: string): number => {
 const stringValue = (value: unknown, label: string): string => {
   if (typeof value !== 'string') throw new ApplicationError(`${label} must be a string`, { code: 'INVALID_INPUT' })
   return value
+}
+const expectedSourceRevision = (value: unknown): string | undefined => {
+  if (value === undefined) return undefined
+  const revision = stringValue(value, 'expectedSourceRevision')
+  if (!/^[1-9][0-9]*$/.test(revision)) throw new ApplicationError('expectedSourceRevision must be a canonical positive decimal', { code: 'INVALID_INPUT' })
+  return revision
 }
 const recordValue = (value: unknown, label: string): Record<string, unknown> => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new ApplicationError(`${label} must be an object`, { code: 'INVALID_INPUT' })
@@ -324,9 +330,11 @@ const listLinks = async (input: OperationInput) => {
 
 const remove = (input: OperationInput): unknown => {
   const id = positiveInteger(input.id, 'id')
+  const expected = expectedSourceRevision(input.expectedSourceRevision)
+  const payload = expected === undefined ? { id } : { id, expectedSourceRevision: expected }
   return input.requester === undefined
-    ? wiki.models.pages.deletePage({ id })
-    : wiki.models.pages.deletePage({ id, user: input.requester })
+    ? wiki.models.pages.deletePage(payload)
+    : wiki.models.pages.deletePage({ ...payload, user: input.requester })
 }
 
 const updateTag = async (input: OperationInput): Promise<void> => {
@@ -541,10 +549,12 @@ const changeVisibility = (input: OperationInput): unknown => {
     throw new ApplicationError('Publishing a private page requires explicit confirmation', { code: 'CONFIRMATION_REQUIRED' })
   }
   const visibility: PageVisibility = input.visibility
+  const expected = expectedSourceRevision(input.expectedSourceRevision)
   const payload = {
     id,
     visibility,
-    confirmPublication: input.confirmPublication === true
+    confirmPublication: input.confirmPublication === true,
+    ...(expected === undefined ? {} : { expectedSourceRevision: expected })
   }
   return wiki.models.pages.changeVisibility(
     input.requester === undefined ? payload : { ...payload, user: input.requester }
@@ -555,9 +565,11 @@ const transferOwnership = (input: OperationInput): unknown => {
   if (!managesSystem(input.requester)) {
     throw new ApplicationError('This page does not exist.', { code: 'PAGE_NOT_FOUND', status: 404 })
   }
+  const expected = expectedSourceRevision(input.expectedSourceRevision)
   const payload = {
     id: positiveInteger(input.id, 'id'),
-    ownerId: positiveInteger(input.ownerId, 'ownerId')
+    ownerId: positiveInteger(input.ownerId, 'ownerId'),
+    ...(expected === undefined ? {} : { expectedSourceRevision: expected })
   }
   return wiki.models.pages.transferOwnership(
     input.requester === undefined ? payload : { ...payload, user: input.requester }
@@ -568,13 +580,12 @@ const restore = async (input: OperationInput): Promise<void> => {
   const requester = input.requester
   const pageId = positiveInteger(input.pageId, 'pageId')
   const versionId = positiveInteger(input.versionId, 'versionId')
-  const expectedUpdatedAt = stringValue(input.expectedUpdatedAt, 'expectedUpdatedAt')
-  const expectedTimestamp = Date.parse(expectedUpdatedAt)
-  if (Number.isNaN(expectedTimestamp)) throw new ApplicationError('expectedUpdatedAt must be a valid date', { code: 'INVALID_INPUT' })
-  const page = await wiki.models.pages.query().select('path', 'localeCode', 'updatedAt', 'visibility', 'ownerId').findById(pageId)
+  const expected = expectedSourceRevision(input.expectedSourceRevision)
+  if (expected === undefined) throw new ApplicationError('expectedSourceRevision must be a non-empty string', { code: 'INVALID_INPUT' })
+  const page = await wiki.models.pages.query().select('path', 'localeCode', 'sourceRevision', 'visibility', 'ownerId').findById(pageId)
   if (!page || (page.visibility === 'private' && !canWritePage(requester, page))) throw new wiki.Error.PageNotFound()
   if (!canWritePage(requester, page)) throw new wiki.Error.PageRestoreForbidden()
-  if (new Date(page.updatedAt).valueOf() !== expectedTimestamp) {
+  if (String(page.sourceRevision) !== expected) {
     throw new ApplicationError('The page changed after history was opened. Reload history before restoring.', { code: 'PAGE_RESTORE_CONFLICT', status: 409 })
   }
   const version = await wiki.models.pageHistory.getVersion({ pageId, versionId, requester })
@@ -588,7 +599,8 @@ const restore = async (input: OperationInput): Promise<void> => {
     editor: version.editor,
     tags: version.tags,
     action: 'restored',
-    expectedUpdatedAt: page.updatedAt instanceof Date ? page.updatedAt.toISOString() : page.updatedAt
+    expectedUpdatedAt: page.updatedAt instanceof Date ? page.updatedAt.toISOString() : page.updatedAt,
+    expectedSourceRevision: String(page.sourceRevision)
   }, requester))
 }
 

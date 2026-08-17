@@ -66,6 +66,8 @@ jobs:
       run: pnpm run openapi:check
     - name: Reject Production Placeholders
       run: pnpm run placeholders:check
+    - name: Validate Frozen Agent Release Inputs
+      run: pnpm run agents:release-check
 
 
     - name: Run Vitest
@@ -74,6 +76,77 @@ jobs:
     - name: Build Vite Assets
       run: pnpm run build
 
+
+  agent-postgres:
+    name: Agent Ledger (PostgreSQL ${{ matrix.pgversion }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [quality]
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - pgversion: 15
+          postgresImage: postgres:15-alpine@sha256:4006528dcbdd9be8c1aaa50389caea4e93c46d6f54c3533bcd3253725e526e23
+        - pgversion: 18
+          postgresImage: postgres:18-alpine@sha256:a1d02e4bd40c94d3bf2bdd3678c137388e76d9efcd23c285e9429d336a834b44
+    services:
+      postgres:
+        image: ${{ matrix.postgresImage }}
+        env:
+          POSTGRES_DB: wiki_agents_test
+          POSTGRES_PASSWORD: test
+          POSTGRES_USER: wiki
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U wiki -d wiki_agents_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+    - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+    - uses: pnpm/action-setup@a8198c4bff370c8506180b035930dea56dbd5288 # v5
+      with:
+        version: ${{ env.PNPM_VERSION }}
+    - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+      with:
+        node-version-file: .nvmrc
+        cache: pnpm
+    - run: pnpm install --frozen-lockfile
+    - name: Exercise Agent Migration and Rollback
+      env:
+        WIKI_TEST_POSTGRES_DATABASE: wiki_agents_test
+        WIKI_TEST_POSTGRES_HOST: 127.0.0.1
+        WIKI_TEST_POSTGRES_PASSWORD: test
+        WIKI_TEST_POSTGRES_PORT: 5432
+        WIKI_TEST_POSTGRES_USER: wiki
+      run: pnpm exec vitest run server/test/db/agents-migration.postgres.integration.test.ts
+
+  agent-browser-image:
+    name: Agent Browser Multi-arch Image
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: [quality]
+    permissions:
+      contents: read
+    steps:
+    - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+    - uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4
+      with:
+        image: docker.io/tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
+        platforms: arm64
+    - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
+    - name: Build AMD64 and ARM64 Browser Worker
+      run: |
+        docker buildx build \
+          --file dev/build/Dockerfile.agent-browser \
+          --platform linux/amd64,linux/arm64 \
+          --output type=oci,dest=/tmp/wiki-agent-browser.oci.tar \
+          .
+        test -s /tmp/wiki-agent-browser.oci.tar
   page-index-benchmark:
     name: Page Index Benchmark (PostgreSQL ${{ matrix.pgversion }})
     runs-on: ubuntu-latest
@@ -463,7 +536,7 @@ jobs:
     name: Publish AMD64 Images
     runs-on: ubuntu-latest
     if: github.event_name == 'push'
-    needs: [e2e, upgrade, multi-instance, helm-lifecycle, page-index-benchmark]
+    needs: [e2e, upgrade, multi-instance, helm-lifecycle, page-index-benchmark, agent-postgres, agent-browser-image]
     permissions:
       contents: read
       packages: write
@@ -517,11 +590,26 @@ jobs:
           ${{ env.IMAGE_REPOSITORY }}:canary
           ${{ env.IMAGE_REPOSITORY }}:canary-${{ env.REL_VERSION_STRICT }}
 
+    - name: Build and Push AMD64 Agent Browser Image
+      uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
+      env:
+        DOCKER_BUILD_SUMMARY: false
+      with:
+        context: .
+        file: dev/build/Dockerfile.agent-browser
+        platforms: linux/amd64
+        provenance: mode=max
+        sbom: true
+        push: true
+        tags: |
+          ${{ env.IMAGE_REPOSITORY }}-agent-browser:canary
+          ${{ env.IMAGE_REPOSITORY }}-agent-browser:canary-${{ env.REL_VERSION_STRICT }}
+
   arm:
     name: ARM Build
     runs-on: ubuntu-24.04-arm
     if: github.event_name == 'push'
-    needs: [e2e, page-index-benchmark]
+    needs: [e2e, page-index-benchmark, agent-postgres, agent-browser-image]
     permissions:
       contents: read
       packages: write
@@ -537,8 +625,6 @@ jobs:
       if: startsWith(github.ref, 'refs/tags/v')
       run: test "$GITHUB_REF_NAME" = "v$WIKI_PRODUCT_VERSION"
 
-    - name: Set up QEMU
-      uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4
 
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
@@ -583,6 +669,20 @@ jobs:
         push: true
         tags: |
           ${{ env.IMAGE_REPOSITORY }}:canary-arm64-${{ env.REL_VERSION_STRICT }}
+
+    - name: Build and Push ARM64 Agent Browser Image
+      uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
+      env:
+        DOCKER_BUILD_SUMMARY: false
+      with:
+        context: .
+        file: dev/build/Dockerfile.agent-browser
+        platforms: linux/arm64
+        provenance: mode=max
+        sbom: true
+        push: true
+        tags: |
+          ${{ env.IMAGE_REPOSITORY }}-agent-browser:canary-arm64-${{ env.REL_VERSION_STRICT }}
 
   windows:
     name: Windows Build
@@ -672,6 +772,10 @@ jobs:
           --tag "$IMAGE_REPOSITORY:preview-$REL_VERSION_STRICT" \
           "$IMAGE_REPOSITORY:canary-$REL_VERSION_STRICT" \
           "$IMAGE_REPOSITORY:canary-arm64-$REL_VERSION_STRICT"
+        docker buildx imagetools create \
+          --tag "$IMAGE_REPOSITORY-agent-browser:preview-$REL_VERSION_STRICT" \
+          "$IMAGE_REPOSITORY-agent-browser:canary-$REL_VERSION_STRICT" \
+          "$IMAGE_REPOSITORY-agent-browser:canary-arm64-$REL_VERSION_STRICT"
 
   release:
     name: Publish Release Images
@@ -719,6 +823,15 @@ jobs:
         image_digest="$(jq --exit-status --raw-output '."containerimage.descriptor".digest' release-image-metadata.json)"
         [[ "$image_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
         echo "IMAGE_DIGEST=$image_digest" >> "$GITHUB_ENV"
+        docker buildx imagetools create \
+          --metadata-file agent-browser-image-metadata.json \
+          --tag "$IMAGE_REPOSITORY-agent-browser:$REL_VERSION_STRICT" \
+          --tag "$IMAGE_REPOSITORY-agent-browser:preview" \
+          "$IMAGE_REPOSITORY-agent-browser:canary-$REL_VERSION_STRICT" \
+          "$IMAGE_REPOSITORY-agent-browser:canary-arm64-$REL_VERSION_STRICT"
+        agent_browser_image_digest="$(jq --exit-status --raw-output '."containerimage.descriptor".digest' agent-browser-image-metadata.json)"
+        [[ "$agent_browser_image_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+        echo "AGENT_BROWSER_IMAGE_DIGEST=$agent_browser_image_digest" >> "$GITHUB_ENV"
 
     - name: Download Linux Build
       uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
@@ -744,6 +857,15 @@ jobs:
         image: ${{ env.IMAGE_REPOSITORY }}:${{ env.REL_VERSION_STRICT }}
         format: spdx-json
         output-file: wiki-ts-preview.spdx.json
+        upload-artifact: false
+        upload-release-assets: false
+
+    - name: Generate Agent Browser Image SBOM
+      uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
+      with:
+        image: ${{ env.IMAGE_REPOSITORY }}-agent-browser:${{ env.REL_VERSION_STRICT }}
+        format: spdx-json
+        output-file: wiki-agent-browser.spdx.json
         upload-artifact: false
         upload-release-assets: false
 
@@ -775,6 +897,7 @@ jobs:
           wiki-ts-preview-source.tar.gz \
           "wiki-ts-preview-$REL_VERSION_STRICT.tgz" \
           wiki-ts-preview.spdx.json \
+          wiki-agent-browser.spdx.json \
           third-party-licenses.json
         sha256sum --check SHA256SUMS
 
@@ -802,6 +925,21 @@ jobs:
         sbom-path: wiki-ts-preview.spdx.json
         push-to-registry: true
 
+    - name: Attest Agent Browser Image Provenance
+      uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+      with:
+        subject-name: ${{ env.IMAGE_REPOSITORY }}-agent-browser
+        subject-digest: ${{ env.AGENT_BROWSER_IMAGE_DIGEST }}
+        push-to-registry: true
+
+    - name: Attest Agent Browser Image SBOM
+      uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+      with:
+        subject-name: ${{ env.IMAGE_REPOSITORY }}-agent-browser
+        subject-digest: ${{ env.AGENT_BROWSER_IMAGE_DIGEST }}
+        sbom-path: wiki-agent-browser.spdx.json
+        push-to-registry: true
+
     - name: Generate Changelog
       id: changelog
       uses: Requarks/changelog-action@b78a3354a01f4a1affb484b9264b506a815c46b1 # v1
@@ -819,7 +957,7 @@ jobs:
         name: ${{ github.ref_name }}
         body: ${{ steps.changelog.outputs.changes }}
         token: ${{ github.token }}
-        artifacts: 'wiki-ts-preview-linux.tar.gz,wiki-ts-preview-windows.tar.gz,wiki-ts-preview-source.tar.gz,wiki-ts-preview-*.tgz,wiki-ts-preview.spdx.json,third-party-licenses.json,release-manifest.json,SHA256SUMS,wiki-ts-preview-release.intoto.jsonl'
+        artifacts: 'wiki-ts-preview-linux.tar.gz,wiki-ts-preview-windows.tar.gz,wiki-ts-preview-source.tar.gz,wiki-ts-preview-*.tgz,wiki-ts-preview.spdx.json,wiki-agent-browser.spdx.json,third-party-licenses.json,release-manifest.json,SHA256SUMS,wiki-ts-preview-release.intoto.jsonl'
 
     - name: Notify Telegram Channel
       uses: appleboy/telegram-action@221e6b684967abe813051ee4a37dd61770a83ad3 # v1.0.1

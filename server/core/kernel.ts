@@ -33,6 +33,7 @@ interface WikiContext {
   auth: { activateStrategies(): Promise<void> }
   collaboration?: CollaborationService
   cache?: unknown
+  agentRuntime?: { shutdown(): Promise<void> }
   config: { setup?: boolean }
   configSvc: { applyFlags(): Promise<void>; loadFromDb(): Promise<void> }
   events?: { inbound: EventEmitter2Instance; outbound: EventEmitter2Instance }
@@ -151,6 +152,7 @@ const kernel: KernelService = {
     process.on('uncaughtException', (error: Error) => { wiki.logger.warn(error); wiki.telemetry.sendError(error) })
   },
   async shutdown(devMode = false) {
+    if (wiki.agentRuntime) await wiki.agentRuntime.shutdown()
     if (wiki.servers) await wiki.servers.stopServers()
     if (wiki.scheduler) await wiki.scheduler.stop()
     await wiki.models.unsubscribeToNotifications()

@@ -232,6 +232,10 @@ export default {
       type: String,
       default: ''
     },
+    sourceRevision: {
+      type: String,
+      default: ''
+    },
     editor: {
       type: String,
       default: 'markdown'
@@ -431,7 +435,7 @@ export default {
       this.restoreLoading = true
       loadingStart(wikiStore, 'history-restore')
       try {
-        await restorePageVersion(window.fetch.bind(window), this.pageId, this.restoreTarget.versionId, this.updatedAt)
+        await restorePageVersion(window.fetch.bind(window), this.pageId, this.restoreTarget.versionId, this.sourceRevision)
         showNotification(wikiStore, {
           style: 'success',
           message: this.$t('history:restore.success'),

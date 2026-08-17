@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "source": {
     "lockfile": "pnpm-lock.yaml",
-    "sha256": "0f69afaf08d3ef5bf870b01dc382fe73d5a52cc6022f9f489fdec2da92b6ba5e",
+    "sha256": "9705373545a0f701af00f709490bdac23a9c7abeb975863e76542e39d3b7fe46",
     "scope": "production",
     "policy": {
       "file": "license-policy.json",
@@ -379,6 +379,15 @@
       "license": "Apache-2.0",
       "author": "Amazon Web Services",
       "homepage": "https://github.com/awslabs/aws-lambda-invoke-store"
+    },
+    {
+      "name": "@ax-llm/ax",
+      "versions": [
+        "23.0.15"
+      ],
+      "license": "Apache-2.0",
+      "author": "Vikram",
+      "homepage": "https://github.com/ax-llm/ax#readme"
     },
     {
       "name": "@azure-rest/core-client",
@@ -877,6 +886,15 @@
       "homepage": "https://github.com/mscdex/socksv5#readme"
     },
     {
+      "name": "@hono/node-server",
+      "versions": [
+        "1.19.17"
+      ],
+      "license": "MIT",
+      "author": "Yusuke Wada",
+      "homepage": "https://github.com/honojs/node-server"
+    },
+    {
       "name": "@joplin/turndown-plugin-gfm",
       "versions": [
         "1.0.67"
@@ -997,6 +1015,42 @@
       "license": "BSD-2-Clause",
       "author": "Felix Gnass",
       "homepage": "https://github.com/mixmark-io/domino#readme"
+    },
+    {
+      "name": "@modelcontextprotocol/core",
+      "versions": [
+        "2.0.0"
+      ],
+      "license": "MIT",
+      "author": "Anthropic, PBC",
+      "homepage": "https://modelcontextprotocol.io"
+    },
+    {
+      "name": "@modelcontextprotocol/express",
+      "versions": [
+        "2.0.0"
+      ],
+      "license": "MIT",
+      "author": "Anthropic, PBC",
+      "homepage": "https://modelcontextprotocol.io"
+    },
+    {
+      "name": "@modelcontextprotocol/node",
+      "versions": [
+        "2.0.0"
+      ],
+      "license": "MIT",
+      "author": "Anthropic, PBC",
+      "homepage": "https://modelcontextprotocol.io"
+    },
+    {
+      "name": "@modelcontextprotocol/server",
+      "versions": [
+        "2.0.0"
+      ],
+      "license": "MIT",
+      "author": "Anthropic, PBC",
+      "homepage": "https://modelcontextprotocol.io"
     },
     {
       "name": "@mongodb-js/saslprep",
@@ -3112,6 +3166,15 @@
       "homepage": "https://highlightjs.org/"
     },
     {
+      "name": "hono",
+      "versions": [
+        "4.13.2"
+      ],
+      "license": "MIT",
+      "author": "Yusuke Wada",
+      "homepage": "https://hono.dev"
+    },
+    {
       "name": "hpagent",
       "versions": [
         "1.2.0"
@@ -4468,6 +4531,15 @@
       "author": "Charlie Robbins",
       "homepage": "https://github.com/indexzero/node-pkginfo#readme",
       "licenseMetadataSource": "https://github.com/indexzero/node-pkginfo/blob/master/LICENSE"
+    },
+    {
+      "name": "playwright-core",
+      "versions": [
+        "1.62.1"
+      ],
+      "license": "Apache-2.0",
+      "author": "Microsoft Corporation",
+      "homepage": "https://playwright.dev"
     },
     {
       "name": "pngjs",
@@ -5853,6 +5925,15 @@
       "license": "MIT",
       "author": "Kevin Jahns",
       "homepage": "https://docs.yjs.dev"
+    },
+    {
+      "name": "zod",
+      "versions": [
+        "4.4.3"
+      ],
+      "license": "MIT",
+      "author": "Colin McDonnell",
+      "homepage": "https://zod.dev"
     }
   ]
 }

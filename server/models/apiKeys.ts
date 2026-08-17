@@ -57,9 +57,13 @@ export default class ApiKey extends Model {
       expiration: moment.utc().add(ms(expiration), 'ms').toISOString(),
       isRevoked: true
     })
+    const configuredMcpResource = wiki.config.agents?.mcp?.resourceUrl?.trim()
     const key = jwt.sign({
       api: entry.id,
-      grp: fullAccess ? 1 : group
+      grp: fullAccess ? 1 : group,
+      ...(configuredMcpResource
+        ? { mcpResource: configuredMcpResource, mcpResourceVersion: 1 }
+        : {})
     }, {
       key: wiki.config.certs.private,
       passphrase: wiki.config.sessionSecret
@@ -76,6 +80,7 @@ export default class ApiKey extends Model {
 
 const wiki = WIKI as unknown as {
   config: {
+    agents?: { mcp?: { resourceUrl?: string } }
     auth: { audience: string }
     certs: { private: string | Buffer }
     sessionSecret: string

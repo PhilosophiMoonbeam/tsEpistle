@@ -41,6 +41,7 @@ export type PageDetails = {
   contentType: string
   createdAt: string
   updatedAt: string
+  sourceRevision: string
   editor: string
   authorId: number
   authorName: string
@@ -142,8 +143,9 @@ function normalizePageDetails (row: unknown, fallbackMessage: string): PageDetai
 
   const page = row as Partial<PageDetails>
   const ownerId = page.ownerId
+  const sourceRevision: unknown = page.sourceRevision
   const validOwner = ownerId === null || (typeof ownerId === 'number' && Number.isSafeInteger(ownerId))
-  if (!Number.isInteger(page.id) || typeof page.locale !== 'string' || page.locale.length < 1 || typeof page.path !== 'string' || typeof page.hash !== 'string' || (page.title !== null && typeof page.title !== 'string') || (page.description !== null && typeof page.description !== 'string') || (page.visibility !== 'public' && page.visibility !== 'private') || !validOwner || typeof page.isPublished !== 'boolean' || (page.publishStartDate !== null && typeof page.publishStartDate !== 'string') || (page.publishEndDate !== null && typeof page.publishEndDate !== 'string') || typeof page.contentType !== 'string' || typeof page.createdAt !== 'string' || page.createdAt.length < 1 || typeof page.updatedAt !== 'string' || page.updatedAt.length < 1 || typeof page.editor !== 'string' || !Number.isInteger(page.authorId) || typeof page.authorName !== 'string' || typeof page.authorEmail !== 'string' || !Number.isInteger(page.creatorId) || typeof page.creatorName !== 'string' || typeof page.creatorEmail !== 'string') {
+  if (!Number.isInteger(page.id) || typeof page.locale !== 'string' || page.locale.length < 1 || typeof page.path !== 'string' || typeof page.hash !== 'string' || (page.title !== null && typeof page.title !== 'string') || (page.description !== null && typeof page.description !== 'string') || (page.visibility !== 'public' && page.visibility !== 'private') || !validOwner || typeof page.isPublished !== 'boolean' || (page.publishStartDate !== null && typeof page.publishStartDate !== 'string') || (page.publishEndDate !== null && typeof page.publishEndDate !== 'string') || typeof page.contentType !== 'string' || typeof page.createdAt !== 'string' || page.createdAt.length < 1 || typeof page.updatedAt !== 'string' || page.updatedAt.length < 1 || ((typeof sourceRevision !== 'string' || sourceRevision.length < 1) && typeof sourceRevision !== 'number') || typeof page.editor !== 'string' || !Number.isInteger(page.authorId) || typeof page.authorName !== 'string' || typeof page.authorEmail !== 'string' || !Number.isInteger(page.creatorId) || typeof page.creatorName !== 'string' || typeof page.creatorEmail !== 'string') {
     throw new Error(fallbackMessage)
   }
 
@@ -162,6 +164,7 @@ function normalizePageDetails (row: unknown, fallbackMessage: string): PageDetai
     contentType: page.contentType,
     createdAt: page.createdAt,
     updatedAt: page.updatedAt,
+    sourceRevision: String(sourceRevision),
     editor: page.editor,
     authorId: page.authorId!,
     authorName: page.authorName,
@@ -374,13 +377,15 @@ export async function deletePageTag (fetchImpl: FetchImpl, id: number, fallbackM
 }
 
 
-export async function deletePage (fetchImpl: FetchImpl, id: number, fallbackMessage = 'Page delete failed'): Promise<MessageResponse> {
+export async function deletePage (fetchImpl: FetchImpl, id: number, expectedSourceRevision: string, fallbackMessage = 'Page delete failed'): Promise<MessageResponse> {
   const response = await fetchImpl(`/_api/pages/${encodeURIComponent(id)}`, {
     method: 'DELETE',
     credentials: 'same-origin',
     headers: {
-      Accept: 'application/json'
-    }
+      Accept: 'application/json',
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ expectedSourceRevision })
   })
 
   const payload = await parseJsonResponse(response, fallbackMessage)
@@ -463,13 +468,16 @@ async function sendJson (fetchImpl: FetchImpl, url: string, method: string, body
 type WrittenPage = {
   id: number
   updatedAt: string
+  sourceRevision: string
 }
 
 function normalizeWrittenPage (payload: unknown, fallbackMessage: string, requireId: boolean): WrittenPage {
   if (!isRecord(payload) || !isRecord(payload.page) || typeof payload.page.updatedAt !== 'string') throw new Error(fallbackMessage)
+  const sourceRevision = payload.page.sourceRevision
+  if ((typeof sourceRevision !== 'string' || sourceRevision.length < 1) && typeof sourceRevision !== 'number') throw new Error(fallbackMessage)
   const id = payload.page.id
   if (requireId && (typeof id !== 'number' || !Number.isSafeInteger(id) || id < 1)) throw new Error(fallbackMessage)
-  return { id: typeof id === 'number' ? id : 0, updatedAt: payload.page.updatedAt }
+  return { id: typeof id === 'number' ? id : 0, updatedAt: payload.page.updatedAt, sourceRevision: String(sourceRevision) }
 }
 function isNullableNumber (value: unknown): value is number | null {
   return value === null || typeof value === 'number'
@@ -479,30 +487,31 @@ export async function createPage (fetchImpl: FetchImpl, input: PageWriteInput, f
   return normalizeWrittenPage(await sendJson(fetchImpl, '/_api/pages', 'POST', input, fallbackMessage), fallbackMessage, true)
 }
 
-export async function updatePage (fetchImpl: FetchImpl, id: number, input: PageWriteInput, fallbackMessage = 'Page update failed'): Promise<WrittenPage> {
-  return normalizeWrittenPage(await sendJson(fetchImpl, `/_api/pages/${encodeURIComponent(id)}`, 'PUT', input, fallbackMessage), fallbackMessage, false)
+export async function updatePage (fetchImpl: FetchImpl, id: number, input: PageWriteInput, expectedSourceRevision: string, fallbackMessage = 'Page update failed'): Promise<WrittenPage> {
+  return normalizeWrittenPage(await sendJson(fetchImpl, `/_api/pages/${encodeURIComponent(id)}`, 'PUT', { ...input, expectedSourceRevision }, fallbackMessage), fallbackMessage, false)
 }
 
 export async function changePageVisibility (
   fetchImpl: FetchImpl,
   id: number,
   visibility: 'public' | 'private',
+  expectedSourceRevision: string,
   confirmPublication = false,
   fallbackMessage = 'Page visibility update failed'
 ): Promise<WrittenPage> {
   return normalizeWrittenPage(
-    await sendJson(fetchImpl, `/_api/pages/${encodeURIComponent(id)}/visibility`, 'PATCH', { visibility, confirmPublication }, fallbackMessage),
+    await sendJson(fetchImpl, `/_api/pages/${encodeURIComponent(id)}/visibility`, 'PATCH', { visibility, confirmPublication, expectedSourceRevision }, fallbackMessage),
     fallbackMessage,
     true
   )
 }
 
-export async function convertPage (fetchImpl: FetchImpl, id: number, editor: string, fallbackMessage = 'Page conversion failed'): Promise<void> {
-  await sendJson(fetchImpl, `/_api/pages/${encodeURIComponent(id)}/convert`, 'POST', { editor }, fallbackMessage)
+export async function convertPage (fetchImpl: FetchImpl, id: number, editor: string, expectedSourceRevision: string, fallbackMessage = 'Page conversion failed'): Promise<void> {
+  await sendJson(fetchImpl, `/_api/pages/${encodeURIComponent(id)}/convert`, 'POST', { editor, expectedSourceRevision }, fallbackMessage)
 }
 
-export async function movePage (fetchImpl: FetchImpl, id: number, destinationLocale: string, destinationPath: string, fallbackMessage = 'Page move failed'): Promise<void> {
-  await sendJson(fetchImpl, `/_api/pages/${encodeURIComponent(id)}/move`, 'POST', { destinationLocale, destinationPath }, fallbackMessage)
+export async function movePage (fetchImpl: FetchImpl, id: number, destinationLocale: string, destinationPath: string, expectedSourceRevision: string, fallbackMessage = 'Page move failed'): Promise<void> {
+  await sendJson(fetchImpl, `/_api/pages/${encodeURIComponent(id)}/move`, 'POST', { destinationLocale, destinationPath, expectedSourceRevision }, fallbackMessage)
 }
 
 export async function checkPageConflict (fetchImpl: FetchImpl, id: number, checkoutDate: string, fallbackMessage = 'Page conflict check failed'): Promise<boolean> {
@@ -683,6 +692,6 @@ export async function fetchPageVersion (fetchImpl: FetchImpl, pageId: number, ve
   return payload as PageVersion
 }
 
-export async function restorePageVersion (fetchImpl: FetchImpl, pageId: number, versionId: number, expectedUpdatedAt: string, fallbackMessage = 'Page restore failed'): Promise<void> {
-  await sendJson(fetchImpl, `/_api/pages/${encodeURIComponent(pageId)}/history/${encodeURIComponent(versionId)}/restore`, 'POST', { expectedUpdatedAt }, fallbackMessage)
+export async function restorePageVersion (fetchImpl: FetchImpl, pageId: number, versionId: number, expectedSourceRevision: string, fallbackMessage = 'Page restore failed'): Promise<void> {
+  await sendJson(fetchImpl, `/_api/pages/${encodeURIComponent(pageId)}/history/${encodeURIComponent(versionId)}/restore`, 'POST', { expectedSourceRevision }, fallbackMessage)
 }

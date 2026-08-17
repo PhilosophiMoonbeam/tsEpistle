@@ -1,0 +1,82 @@
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import createKnex, { type Knex } from 'knex'
+import type { LookupAddress } from 'node:dns'
+import { AgentProviderFactory } from '../../agents/providers/factory.ts'
+
+const publicResolver = async (): Promise<LookupAddress[]> => [{ address: '203.0.113.10', family: 4 }]
+const capabilities = { streaming: false, functions: false, parallelFunctions: false, structuredOutput: 'prompt-only', usage: 'terminal', cancellation: true, maxContextTokens: 100_000, maxOutputTokens: 4_000 }
+
+describe('additional provider transports', () => {
+  let db: Knex
+  beforeEach(async () => {
+    db = createKnex({ client: 'better-sqlite3', connection: { filename: ':memory:' }, useNullAsDefault: true })
+    await db.schema.createTable('agentProviderProfileVersions', table => {
+      table.uuid('id').primary(); table.string('transportKind'); table.string('model'); table.string('baseUrl'); table.string('authMode'); table.string('secretReference'); table.text('adapterConfig'); table.text('capabilities'); table.string('capabilityRevision'); table.string('pricingRevision'); table.boolean('conformed')
+    })
+  })
+  afterEach(async () => db.destroy())
+
+  const insert = async (values: { id: string; transportKind: string; baseUrl: string; authMode: string }): Promise<void> => {
+    await db('agentProviderProfileVersions').insert({
+      ...values,
+      model: 'model-test',
+      secretReference: 'env:TRANSPORT_TEST_KEY',
+      adapterConfig: JSON.stringify({ timeoutMs: 10_000, maxRetries: 0, additionalHeaders: {} }),
+      capabilities: JSON.stringify(capabilities),
+      capabilityRevision: 'cap-1',
+      pricingRevision: 'price-1',
+      conformed: true
+    })
+  }
+
+  it('runs OpenResponses through the storage-off Responses protocol', async () => {
+    const id = '00000000-0000-4000-8000-000000000011'
+    await insert({ id, transportKind: 'openresponses', baseUrl: 'https://openresponses.example.test/v1', authMode: 'bearer' })
+    let payload: Record<string, unknown> = {}
+    const fetchImplementation = async (_input: URL | RequestInfo, init?: RequestInit): Promise<Response> => {
+      payload = JSON.parse(String(init?.body)) as Record<string, unknown>
+      return Response.json({ id: 'resp_1', object: 'response', created_at: 1, status: 'completed', error: null, incomplete_details: null, instructions: null, max_output_tokens: null, model: 'model-test', parallel_tool_calls: false, previous_response_id: null, output: [{ type: 'message', id: 'msg_1', status: 'completed', role: 'assistant', content: [{ type: 'output_text', text: 'open', annotations: [] }] }], usage: { input_tokens: 2, input_tokens_details: { cached_tokens: 0 }, output_tokens: 1, output_tokens_details: { reasoning_tokens: 0 }, total_tokens: 3 } })
+    }
+    const provider = await new AgentProviderFactory(db, { get: () => 'key' }, fetchImplementation as typeof fetch, publicResolver as never).create(id)
+    const response = await provider.service.chat({ chatPrompt: [{ role: 'user', content: 'hello' }] }, { stream: false })
+    expect(response).not.toBeInstanceOf(ReadableStream)
+    expect(payload).toMatchObject({ store: false, previous_response_id: null })
+    expect(payload.include).toContain('reasoning.encrypted_content')
+  })
+
+  it('maps Anthropic Messages using its native header and response format', async () => {
+    const id = '00000000-0000-4000-8000-000000000012'
+    await insert({ id, transportKind: 'anthropic-messages', baseUrl: 'https://api.anthropic.com/v1', authMode: 'anthropic-api-key' })
+    let request: { url: string; headers: Headers } | undefined
+    const fetchImplementation = async (input: URL | RequestInfo, init?: RequestInit): Promise<Response> => {
+      request = { url: String(input), headers: new Headers(init?.headers) }
+      return Response.json({ id: 'msg_1', type: 'message', role: 'assistant', content: [{ type: 'text', text: 'anthropic' }], model: 'model-test', stop_reason: 'end_turn', stop_sequence: null, usage: { input_tokens: 2, output_tokens: 1 } })
+    }
+    const provider = await new AgentProviderFactory(db, { get: () => 'anthropic-key' }, fetchImplementation as typeof fetch, publicResolver as never).create(id)
+    const response = await provider.service.chat({ chatPrompt: [{ role: 'user', content: 'hello' }] }, { stream: false })
+    expect(request?.url).toBe('https://api.anthropic.com/v1/messages')
+    expect(request?.headers.get('x-api-key')).toBe('anthropic-key')
+    expect(request?.headers.get('anthropic-version')).toBeTruthy()
+    expect(response).not.toBeInstanceOf(ReadableStream)
+    if (!(response instanceof ReadableStream)) expect(response.results[0]?.content).toBe('anthropic')
+  })
+
+  it('keeps legacy completions buffered and generation-only', async () => {
+    const id = '00000000-0000-4000-8000-000000000013'
+    await insert({ id, transportKind: 'legacy-completions', baseUrl: 'https://legacy.example.test/v1', authMode: 'api-key-header' })
+    let payload: Record<string, unknown> = {}
+    let headers = new Headers()
+    const fetchImplementation = async (_input: URL | RequestInfo, init?: RequestInit): Promise<Response> => {
+      payload = JSON.parse(String(init?.body)) as Record<string, unknown>
+      headers = new Headers(init?.headers)
+      return Response.json({ choices: [{ text: 'legacy' }], usage: { prompt_tokens: 4, completion_tokens: 2 } })
+    }
+    const provider = await new AgentProviderFactory(db, { get: () => 'legacy-key' }, fetchImplementation as typeof fetch, publicResolver as never).create(id)
+    const response = await provider.service.chat({ chatPrompt: [{ role: 'system', content: 'system' }, { role: 'user', content: 'hello' }] }, { stream: true })
+    expect(response).not.toBeInstanceOf(ReadableStream)
+    expect(payload).toMatchObject({ model: 'model-test', prompt: 'system: system\n\nuser: hello', stream: false })
+    expect(headers.get('x-api-key')).toBe('legacy-key')
+    if (!(response instanceof ReadableStream)) expect(response).toMatchObject({ results: [{ content: 'legacy' }], modelUsage: { tokens: { promptTokens: 4, completionTokens: 2, totalTokens: 6 } } })
+    await expect(provider.service.chat({ chatPrompt: [{ role: 'user', content: 'hello' }], functions: [{ name: 'pages.get', description: 'read' }] })).rejects.toMatchObject({ code: 'INVALID_LEGACY_PROMPT' })
+  })
+})

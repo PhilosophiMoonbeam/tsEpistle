@@ -48,6 +48,19 @@ describe('owner-scoped page access', () => {
     expect(canDeletePage(owner, privatePage)).toBe(true)
   })
 
+  it('never treats a synthetic API principal as private-page owner', () => {
+    const apiPrincipal = {
+      id: 1,
+      ownershipUserId: null,
+      permissions: ['read:pages', 'write:pages', 'delete:pages']
+    }
+    const userOnePrivatePage = { ...privatePage, ownerId: 1 }
+    expect(principalId(apiPrincipal)).toBeNull()
+    expect(canReadPage(apiPrincipal, userOnePrivatePage)).toBe(false)
+    expect(canWritePage(apiPrincipal, userOnePrivatePage)).toBe(false)
+    expect(canDeletePage(apiPrincipal, userOnePrivatePage)).toBe(false)
+  })
+
   it('preserves normal permission checks for public pages', () => {
     expect(canReadPage({ id: 2, permissions: ['read:pages'] }, publicPage)).toBe(true)
     expect(canWritePage(owner, publicPage)).toBe(false)

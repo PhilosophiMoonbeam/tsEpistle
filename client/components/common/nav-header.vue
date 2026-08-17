@@ -15,7 +15,7 @@
           hide-details
           prepend-inner-icon='mdi-magnify'
           :loading='searchIsLoading'
-          @keyup.enter='searchEnter'
+          @keyup.enter='searchEnter($event)'
           autocomplete='off'
         )
     v-row(no-gutters)
@@ -43,7 +43,7 @@
                 hide-details,
                 prepend-inner-icon='mdi-magnify',
                 :loading='searchIsLoading',
-                @keyup.enter='searchEnter'
+                @keyup.enter='searchEnter($event)'
                 @keyup.esc='searchClose'
                 @focus='searchFocus'
                 @blur='searchBlur'
@@ -297,6 +297,10 @@ export default defineComponent({
       get(): string { return wikiStore.site.search },
       set(value: string) { wikiStore.site.search = value }
     },
+    searchMode: {
+      get(): 'search' | 'ask' { return wikiStore.site.searchMode },
+      set(value: 'search' | 'ask') { wikiStore.site.searchMode = value }
+    },
     searchIsFocused: {
       get(): boolean { return wikiStore.site.searchIsFocused },
       set(value: boolean) { wikiStore.site.searchIsFocused = value }
@@ -399,12 +403,16 @@ export default defineComponent({
     searchToggle () {
       this.searchIsShown = !this.searchIsShown
       if (this.searchIsShown) {
+        this.searchMode = 'search'
         _.delay(() => {
           ;(this.$refs.searchFieldMobile as { focus: () => void }).focus()
         }, 200)
       }
     },
-    searchEnter () {
+    searchEnter (event: KeyboardEvent) {
+      if ((event.ctrlKey || event.metaKey) && siteConfig.agentsEnabled && this.isAuthenticated && this.permissions.includes('use:agents')) {
+        this.searchMode = 'ask'
+      }
       emitSearchEnter()
     },
     searchMove(dir: string): void {
@@ -456,7 +464,8 @@ export default defineComponent({
           window.fetch.bind(window),
           wikiStore.page.id,
           locale,
-          path
+          path,
+          wikiStore.page.sourceRevision
         )
         const scope = wikiStore.page.visibility === 'private' ? '/_private' : ''
         window.location.replace(`${scope}/${locale}/${path}`)

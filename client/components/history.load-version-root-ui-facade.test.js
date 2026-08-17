@@ -9,7 +9,7 @@ describe('history REST migration guard', () => {
     expect(source).toContain("import { fetchPageHistory, fetchPageVersion, restorePageVersion, type PageHistoryTrailItem, type PageVersion } from '../helpers/pages-api'")
     expect(source).toContain("import { wikiStore } from '@/store/index.ts'")
     expect(source).toContain('const page = await fetchPageVersion(window.fetch.bind(window), this.pageId, versionId)')
-    expect(source).toContain('await restorePageVersion(window.fetch.bind(window), this.pageId, this.restoreTarget.versionId, this.updatedAt)')
+    expect(source).toContain('await restorePageVersion(window.fetch.bind(window), this.pageId, this.restoreTarget.versionId, this.sourceRevision)')
     expect(source).toContain('return { ...emptyPageVersion(versionId), path: this.path, locale: this.locale }')
     expect(source).not.toMatch(/graphql-tag|\$apollo/)
   })

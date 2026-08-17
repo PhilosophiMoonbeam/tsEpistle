@@ -19,8 +19,7 @@ const canVerifyPassword = (user: WikiUser): user is PasswordUser => (
 
 const plugin: AuthenticationPlugin = {
   init (passport, conf) {
-    void conf
-    passport.use('local',
+    passport.use(conf.key,
       new LocalStrategy({
         usernameField: 'email',
         passwordField: 'password'

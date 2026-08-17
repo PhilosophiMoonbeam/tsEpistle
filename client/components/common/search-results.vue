@@ -1,6 +1,16 @@
 <template lang="pug">
   .search-results(v-if='searchIsFocused || (search && search.length > 1)')
     .search-results-container
+      v-btn-toggle.search-results-mode(
+        v-if='canAsk'
+        v-model='searchMode'
+        mandatory
+        density='compact'
+        color='primary'
+        :aria-label='$t(`common:header.searchModeLabel`)'
+      )
+        v-btn(value='search') {{$t('common:header.searchMode')}}
+        v-btn(value='ask') {{$t('common:header.askMode')}}
       .search-results-help(v-if='!search || (search && search.length < 2)')
         img(src='/_assets/svg/icon-search-alt.svg')
         .mt-4 {{$t('common:header.searchHint')}}
@@ -54,6 +64,36 @@
                   v-icon mdi-magnify
               v-list-item-title {{ term }}
             v-divider(v-if='idx < suggestions.length - 1')
+      form.search-results-ask(
+        v-if='canAsk && search && search.length >= 2'
+        ref='askForm'
+        method='post'
+        action='/api/agents/launch'
+        target='_blank'
+        rel='noopener'
+      )
+        input(type='hidden', name='csrfToken', :value='agentLaunchCsrfToken')
+        template(v-if='currentPageId > 0')
+          input(type='hidden', name='pageId', :value='currentPageId')
+          input(type='hidden', name='pageLocale', :value='currentPageLocale')
+          input(type='hidden', name='pagePath', :value='currentPagePath')
+          input(type='hidden', name='pageUpdatedAt', :value='currentPageUpdatedAt')
+        v-btn.search-results-ask-command(
+          type='submit'
+          block
+          variant='tonal'
+          color='primary'
+          prepend-icon='mdi-creation'
+          :class='askCursorIndex === cursor ? `highlighted` : ``'
+          @click='searchMode = `ask`'
+        ) {{$t('common:header.askWikiAbout', { query: search })}}
+        v-btn.mt-2(
+          type='submit'
+          formtarget='_self'
+          variant='text'
+          size='small'
+          @click='searchMode = `ask`'
+        ) {{$t('common:header.askOpenSameTab')}}
       .text-xs-center.pt-5(v-if='search && search.length > 1')
         //- v-btn.mx-2(outlined, color='orange', @click='search = ``', v-if='results.length > 0')
         //-   v-icon(left) mdi-content-save
@@ -97,6 +137,10 @@ export default defineComponent({
       get(): string { return wikiStore.site.search },
       set(value: string) { wikiStore.site.search = value }
     },
+    searchMode: {
+      get(): 'search' | 'ask' { return wikiStore.site.searchMode },
+      set(value: 'search' | 'ask') { wikiStore.site.searchMode = value }
+    },
     searchIsFocused: {
       get(): boolean { return wikiStore.site.searchIsFocused },
       set(value: boolean) { wikiStore.site.searchIsFocused = value }
@@ -123,6 +167,15 @@ export default defineComponent({
     suggestions(): string[] {
       return this.response.suggestions ? this.response.suggestions : []
     },
+    canAsk(): boolean {
+      return siteConfig.agentsEnabled && wikiStore.user.authenticated && wikiStore.user.permissions.includes('use:agents')
+    },
+    agentLaunchCsrfToken(): string { return siteConfig.agentLaunchCsrfToken },
+    currentPageId(): number { return wikiStore.page.id },
+    currentPageLocale(): string { return wikiStore.page.locale },
+    currentPagePath(): string { return wikiStore.page.path },
+    currentPageUpdatedAt(): string { return wikiStore.page.updatedAt },
+    askCursorIndex(): number { return this.results.length + this.suggestions.length },
     paginationLength() {
       return (this.response.totalHits > 0) ? Math.ceil(this.response.totalHits / this.perPage) : 0
     }
@@ -159,21 +212,22 @@ export default defineComponent({
   methods: {
     handleSearchMove(dir: string): void {
       this.cursor += ((dir === 'up') ? -1 : 1)
+      const lastIndex = this.results.length + this.suggestions.length + (this.canAsk && this.search.length >= 2 ? 1 : 0) - 1
       if (this.cursor < -1) {
         this.cursor = -1
-      } else if (this.cursor > this.results.length + this.suggestions.length - 1) {
-        this.cursor = this.results.length + this.suggestions.length - 1
+      } else if (this.cursor > lastIndex) {
+        this.cursor = lastIndex
       }
     },
     handleSearchEnter() {
-      if (!this.results) {
+      if (this.canAsk && this.search.length >= 2 && (this.searchMode === 'ask' || this.cursor === this.askCursorIndex)) {
+        ;(this.$refs.askForm as HTMLFormElement).requestSubmit()
         return
       }
-
       if (this.cursor >= 0 && this.cursor < this.results.length) {
         const result = _.nth(this.results, this.cursor)
         if (result) this.goToPage(result)
-      } else if (this.cursor >= 0) {
+      } else if (this.cursor >= 0 && this.cursor < this.askCursorIndex) {
         this.setSearchTerm(_.nth(this.suggestions, this.cursor - this.results.length))
       }
     },
@@ -236,6 +290,20 @@ export default defineComponent({
     width: 90vw;
     max-width: 1024px;
   }
+  &-mode {
+    margin-bottom: 12px;
+  }
+
+  &-ask {
+    margin: 12px auto 0;
+    max-width: 48rem;
+
+    .highlighted {
+      outline: 3px solid currentColor;
+      outline-offset: 2px;
+    }
+  }
+
 
   &-help {
     text-align: center;

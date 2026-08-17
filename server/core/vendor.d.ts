@@ -25,10 +25,18 @@ declare module 'cuint' {
 }
 
 declare module 'js-yaml' {
-  export function load(input: string): unknown
+  export type Schema = object
+
+  export interface LoadOptions {
+    readonly json?: boolean
+    readonly schema?: Schema
+  }
+
+  export const JSON_SCHEMA: Schema
+  export function load(input: string, options?: LoadOptions): unknown
 
   interface JsYaml {
-    load(input: string): unknown
+    load(input: string, options?: LoadOptions): unknown
   }
 
   const yaml: JsYaml

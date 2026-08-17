@@ -21,7 +21,38 @@ describe('private page mutation existence isolation', () => {
 
   beforeEach(async () => {
     vi.resetModules()
-    const knex = vi.fn().mockReturnValue({ insert: vi.fn().mockResolvedValue(1) })
+    let insertedProjection
+    const knex = vi.fn(table => {
+      if (table === 'pages') {
+        return {
+          select: vi.fn().mockReturnValue({
+            where: vi.fn().mockReturnValue({
+              forUpdate: vi.fn().mockReturnValue({
+                first: vi.fn().mockResolvedValue({
+                  id: 17,
+                  sourceRevision: '2',
+                  content: 'changed content',
+                  localeCode: 'en',
+                  path: 'secret',
+                  visibility: 'private',
+                  ownerId: 7
+                })
+              })
+            })
+          })
+        }
+      }
+      if (table === 'pageMutationOutbox') {
+        return {
+          insert: vi.fn(row => {
+            insertedProjection = row
+            return { onConflict: vi.fn().mockReturnValue({ ignore: vi.fn().mockResolvedValue([]) }) }
+          }),
+          where: vi.fn().mockReturnValue({ first: vi.fn(async () => insertedProjection) })
+        }
+      }
+      return { insert: vi.fn().mockResolvedValue(1) }
+    })
     knex.transaction = vi.fn(callback => callback(knex))
     global.WIKI = {
       ROOTPATH: '/test',

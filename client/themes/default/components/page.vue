@@ -800,6 +800,10 @@ export default defineComponent({
       type: String,
       default: ''
     },
+    sourceRevision: {
+      type: String,
+      default: ''
+    },
     tags: {
       type: Array as PropType<string[]>,
       default: () => ([])
@@ -1021,6 +1025,7 @@ export default defineComponent({
     wikiStore.page.title = this.title
     wikiStore.page.editor = this.editor
     wikiStore.page.updatedAt = this.updatedAt
+    wikiStore.page.sourceRevision = this.sourceRevision
     if (this.effectivePermissions) {
       wikiStore.page.effectivePermissions = decodeBase64Json(this.effectivePermissions)
     }

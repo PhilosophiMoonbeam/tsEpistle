@@ -52,7 +52,8 @@ export default defineComponent({
     pageTitle(): string { return wikiStore.page.title },
     pagePath(): string { return wikiStore.page.path },
     pageLocale(): string { return wikiStore.page.locale },
-    pageId(): number { return wikiStore.page.id }
+    pageId(): number { return wikiStore.page.id },
+    pageSourceRevision(): string { return wikiStore.page.sourceRevision }
   },
   watch: {
     isShown(newValue: boolean) {
@@ -74,6 +75,7 @@ export default defineComponent({
           await deletePageById(
             window.fetch.bind(window),
             this.pageId,
+            this.pageSourceRevision,
             this.$t('common:error.unexpected')
           )
           this.isShown = false

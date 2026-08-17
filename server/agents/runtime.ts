@@ -1,0 +1,224 @@
+import { createHash, randomUUID } from 'node:crypto'
+import type { Knex } from 'knex'
+import type { AgentEventData, AgentEventType, AgentExecutionMode } from '../../shared/agents/contracts.ts'
+import { canonicalJson } from '../helpers/canonical-json.ts'
+import {
+  AgentRunCoordinator,
+  admitAgentRun,
+  reconcileAgentRunQuota,
+  type AgentQuotaLimits,
+  type AgentQuotaRequest,
+  type AgentRunClaim,
+  type AgentRunRecord
+} from './coordinator.ts'
+import { AgentRepositoryError } from './repository.ts'
+
+const sha256 = (value: string): string => createHash('sha256').update(value).digest('hex')
+
+export interface AgentResolvedAdmission {
+  readonly profileResolutionSha256: string
+  readonly providerProfileVersionId: string
+  readonly transportKind: string
+  readonly model: string
+  readonly executionMode: AgentExecutionMode
+  readonly profilePolicyVersion: number
+  readonly defaultGeneration: number
+  readonly capabilityRevision: string
+  readonly pricingRevision: string
+  readonly promptVersion: number
+  readonly skillVersionIds: readonly string[]
+  readonly quota: AgentQuotaRequest
+  readonly quotaLimits: AgentQuotaLimits
+  readonly reservationMilliseconds: number
+}
+
+export interface AgentAdmissionResolver {
+  resolve(input: { readonly ownerId: number; readonly sessionId: string; readonly profileResolutionToken: string }): Promise<AgentResolvedAdmission>
+}
+
+export interface AgentEngineMessage {
+  readonly role: 'user' | 'assistant'
+  readonly content: string
+  readonly providerState?: {
+    readonly thoughtBlocks: readonly {
+      readonly data: string
+      readonly encrypted: true
+      readonly signature?: string
+    }[]
+  }
+}
+
+export interface AgentEngineSkill {
+  readonly id: string
+  readonly name: string
+  readonly skillMarkdown: string
+}
+
+export interface AgentEngineRequest {
+  readonly run: AgentRunClaim
+  readonly messages: readonly AgentEngineMessage[]
+  readonly skills: readonly AgentEngineSkill[]
+  readonly signal: AbortSignal
+}
+
+export interface AgentEngineSink {
+  text(delta: string): Promise<void>
+  event(type: AgentEventType, data: AgentEventData): Promise<void>
+}
+
+export interface AgentEngineResult {
+  readonly citations?: readonly Readonly<Record<string, unknown>>[]
+  readonly suggestions?: readonly Readonly<Record<string, unknown>>[]
+  readonly inputTokens: number
+  readonly outputTokens: number
+  readonly costMicros: number
+  readonly providerState?: Readonly<Record<string, unknown>>
+}
+
+export interface AgentEngine {
+  execute(request: AgentEngineRequest, sink: AgentEngineSink): Promise<AgentEngineResult>
+}
+
+export interface SubmitAgentMessageInput {
+  readonly ownerId: number
+  readonly sessionId: string
+  readonly profileResolutionToken: string
+  readonly clientRequestId: string
+  readonly expectedSessionVersion: number
+  readonly content: string
+  readonly currentPage?: Readonly<Record<string, unknown>>
+}
+
+export interface AgentProductRuntimeOptions {
+  readonly workerId: string
+  readonly globalConcurrency: number
+  readonly perUserConcurrency: number
+  readonly leaseMilliseconds?: number
+  readonly heartbeatMilliseconds?: number
+}
+
+interface RuntimeMessageRow { role: 'user' | 'assistant'; content: string; providerStateCiphertext: Uint8Array | null }
+interface RuntimeSkillRow { id: string; name: string; skillMarkdown: string }
+
+const nonNegativeUsage = (value: number, label: string): number => {
+  if (!Number.isSafeInteger(value) || value < 0) throw new AgentRepositoryError('INVALID_AGENT_USAGE', `${label} must be a non-negative safe integer`, 500)
+  return value
+}
+
+const providerState = (value: Uint8Array | null): AgentEngineMessage['providerState'] => {
+  if (value === null) return undefined
+  if (value.byteLength > 256 * 1_024) throw new AgentRepositoryError('AGENT_PROVIDER_STATE_CORRUPT', 'Stored provider continuation is too large', 500)
+  try {
+    const parsed: unknown = JSON.parse(Buffer.from(value).toString('utf8'))
+    const state = parsed as AgentEngineMessage['providerState']
+    if (!state || !Array.isArray(state.thoughtBlocks) || state.thoughtBlocks.some(block => typeof block?.data !== 'string' || block.encrypted !== true || (block.signature !== undefined && typeof block.signature !== 'string'))) throw new Error('invalid state')
+    return state
+  } catch {
+    throw new AgentRepositoryError('AGENT_PROVIDER_STATE_CORRUPT', 'Stored provider continuation is invalid', 500)
+  }
+}
+
+export class AgentProductRuntime {
+  readonly #knex: Knex
+  readonly #resolver: AgentAdmissionResolver
+  readonly #engine: AgentEngine
+  readonly #coordinator: AgentRunCoordinator
+
+  constructor (knex: Knex, resolver: AgentAdmissionResolver, engine: AgentEngine, options: AgentProductRuntimeOptions) {
+    this.#knex = knex
+    this.#resolver = resolver
+    this.#engine = engine
+    this.#coordinator = new AgentRunCoordinator(knex, options)
+  }
+
+  async submit (input: SubmitAgentMessageInput): Promise<{ readonly run: AgentRunRecord, readonly replayed: boolean }> {
+    const resolved = await this.#resolver.resolve({ ownerId: input.ownerId, sessionId: input.sessionId, profileResolutionToken: input.profileResolutionToken })
+    if (!Number.isSafeInteger(resolved.reservationMilliseconds) || resolved.reservationMilliseconds < 1) throw new AgentRepositoryError('INVALID_PROFILE_RESOLUTION', 'Quota reservation duration is invalid', 500)
+    return admitAgentRun(this.#knex, {
+      ownerId: input.ownerId,
+      sessionId: input.sessionId,
+      clientRequestId: input.clientRequestId,
+      expectedSessionVersion: input.expectedSessionVersion,
+      content: input.content,
+      ...(input.currentPage === undefined ? {} : { currentPage: input.currentPage }),
+      ...resolved,
+      reservationExpiresAt: new Date(Date.now() + resolved.reservationMilliseconds)
+    })
+  }
+
+  async #appendPresentationEvent(claim: AgentRunClaim, type: AgentEventType, data: AgentEventData, messagePatch?: Readonly<Record<string, unknown>>): Promise<void> {
+    await this.#knex.transaction(async transaction => {
+      const run = await transaction('agentRuns').where({ id: claim.id, ownerId: claim.ownerId, leaseOwner: claim.leaseOwner, leaseToken: claim.leaseToken }).whereIn('status', ['running', 'awaiting_approval']).whereNull('cancelRequestedAt').forUpdate().first('eventSequence', 'assistantMessageId') as { eventSequence: number, assistantMessageId: string } | undefined
+      if (!run) throw new AgentRepositoryError('RUN_LEASE_LOST', 'Agent run lease was lost while recording output', 409)
+      const encoded = canonicalJson(data)
+      const sequence = Number(run.eventSequence) + 1
+      await transaction('agentEvents').insert({ id: randomUUID(), runId: claim.id, sequence, type, attempt: claim.attempts, schemaVersion: 1, dataSha256: sha256(encoded), data: encoded, createdAt: new Date() })
+      if (messagePatch) await transaction('agentMessages').where({ id: run.assistantMessageId, runId: claim.id }).update({ ...messagePatch, updatedAt: new Date() })
+      const changed = await transaction('agentRuns').where({ id: claim.id, leaseOwner: claim.leaseOwner, leaseToken: claim.leaseToken, eventSequence: run.eventSequence }).update({ eventSequence: sequence, updatedAt: new Date() })
+      if (changed !== 1) throw new AgentRepositoryError('RUN_LEASE_LOST', 'Agent run event fence changed concurrently', 409)
+      if (transaction.client.config.client === 'pg' || transaction.client.config.client === 'postgresql') await transaction.raw("SELECT pg_notify('wiki_agent_events', ?)", [claim.id])
+    })
+  }
+
+  async #execute(claim: AgentRunClaim, signal: AbortSignal): Promise<{ status: 'succeeded' | 'failed'; errorCode?: string; errorMessage?: string }> {
+    let content = ''
+    let quotaReconciled = false
+    try {
+      const messageRows = await this.#knex('agentMessages').where({ sessionId: claim.sessionId }).andWhere('id', '!=', claim.assistantMessageId).orderBy('ordinal').select('role', 'content', 'providerStateCiphertext') as RuntimeMessageRow[]
+      const messages: AgentEngineMessage[] = messageRows.map(message => {
+        const state = providerState(message.providerStateCiphertext)
+        return state === undefined
+          ? { role: message.role, content: message.content }
+          : { role: message.role, content: message.content, providerState: state }
+      })
+      const skills = await this.#knex('agentRunSkills').join('agentSkillVersions', 'agentSkillVersions.id', 'agentRunSkills.skillVersionId').join('agentSkills', 'agentSkills.id', 'agentSkillVersions.skillId').where('agentRunSkills.runId', claim.id).orderBy('agentRunSkills.ordinal').select('agentSkillVersions.id', 'agentSkills.name', 'agentSkillVersions.skillMarkdown') as RuntimeSkillRow[]
+      await this.#appendPresentationEvent(claim, 'run.attemptStarted', { runId: claim.id, attempt: claim.attempts })
+      if (claim.attempts > 1) await this.#appendPresentationEvent(claim, 'run.attemptSuperseded', { runId: claim.id, supersededThroughAttempt: claim.attempts - 1 })
+      await this.#appendPresentationEvent(claim, 'message.started', { messageId: claim.assistantMessageId }, { status: 'streaming', content: '', citations: null })
+      const result = await this.#engine.execute({ run: claim, messages, skills, signal }, {
+        text: async delta => {
+          if (signal.aborted) throw signal.reason
+          if (typeof delta !== 'string' || delta.length === 0 || delta.length > 16_000 || content.length + delta.length > 128_000) throw new AgentRepositoryError('INVALID_ENGINE_DELTA', 'Inference engine emitted an invalid text delta', 500)
+          content += delta
+          await this.#appendPresentationEvent(claim, 'message.delta', { messageId: claim.assistantMessageId, delta }, { status: 'streaming', content })
+        },
+        event: async (type, data) => {
+          if (signal.aborted) throw signal.reason
+          await this.#appendPresentationEvent(claim, type, data)
+        }
+      })
+      if (signal.aborted) throw signal.reason
+      const inputTokens = nonNegativeUsage(result.inputTokens, 'Input tokens')
+      const outputTokens = nonNegativeUsage(result.outputTokens, 'Output tokens')
+      const costMicros = nonNegativeUsage(result.costMicros, 'Cost')
+      const citations = result.citations === undefined ? null : canonicalJson(result.citations)
+      const providerStateJson = result.providerState === undefined ? null : canonicalJson(result.providerState)
+      if (providerStateJson !== null && Buffer.byteLength(providerStateJson, 'utf8') > 256 * 1_024) throw new AgentRepositoryError('AGENT_PROVIDER_STATE_TOO_LARGE', 'Provider continuation exceeds its size limit', 500)
+      await this.#appendPresentationEvent(claim, 'message.completed', { messageId: claim.assistantMessageId }, { status: 'complete', content, citations, providerStateCiphertext: providerStateJson === null ? null : Buffer.from(providerStateJson), providerStateSha256: providerStateJson === null ? null : sha256(providerStateJson) })
+      if (result.suggestions !== undefined) await this.#appendPresentationEvent(claim, 'suggestions.updated', { suggestions: result.suggestions })
+      await this.#appendPresentationEvent(claim, 'usage.updated', { inputTokens, outputTokens, costMicros })
+      await this.#knex('agentRuns').where({ id: claim.id, leaseOwner: claim.leaseOwner, leaseToken: claim.leaseToken }).update({ inputTokens, outputTokens, estimatedCostMicros: costMicros, updatedAt: new Date() })
+      await reconcileAgentRunQuota(this.#knex, { runId: claim.id, ownerId: claim.ownerId, consumedTokens: inputTokens + outputTokens, consumedCostMicros: costMicros, status: 'consumed' })
+      quotaReconciled = true
+      await this.#appendPresentationEvent(claim, 'run.completed', { runId: claim.id, status: 'succeeded' })
+      return { status: 'succeeded' }
+    } catch (error) {
+      if (!quotaReconciled) {
+        try { await reconcileAgentRunQuota(this.#knex, { runId: claim.id, ownerId: claim.ownerId, consumedTokens: 0, consumedCostMicros: 0, status: 'released' }) } catch { /* the retention reconciler owns missing/lost reservations */ }
+      }
+      try { await this.#appendPresentationEvent(claim, 'run.failed', { runId: claim.id, status: 'failed', errorCode: 'AGENT_ENGINE_FAILED' }) } catch { /* the coordinator owns terminal recovery when the lease is already gone */ }
+      if (signal.aborted) throw error
+      void error
+      await this.#knex('agentMessages').where({ id: claim.assistantMessageId, runId: claim.id }).update({ status: 'failed', updatedAt: new Date() })
+      return { status: 'failed', errorCode: 'AGENT_ENGINE_FAILED', errorMessage: 'Agent inference failed' }
+    }
+  }
+
+  runOnce (): Promise<boolean> {
+    return this.#coordinator.runOnce((claim, signal) => this.#execute(claim, signal))
+  }
+
+  shutdown (): Promise<void> {
+    return this.#coordinator.shutdown()
+  }
+}

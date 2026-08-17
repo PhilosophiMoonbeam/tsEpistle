@@ -1,3 +1,5 @@
+import type { RequestAuthContext } from '../shared/agents/contracts.ts'
+
 
 type WikiRecord = Record<string, unknown>
 declare module 'express-session' {
@@ -11,6 +13,19 @@ declare global {
     interface User extends WikiRecord {
       id?: number
       permissions?: string[]
+      ownershipUserId?: number | null
+    }
+
+    interface Request {
+      authContext?: RequestAuthContext<User>
+      apiKeyAuth?: {
+        apiKeyId: number
+        groupId: number
+        expiresAt: number | null
+        mcpResource: string | null
+        mcpResourceVersion: number | null
+        bearerToken: string | null
+      }
     }
   }
 

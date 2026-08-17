@@ -1,0 +1,710 @@
+import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
+import express, { type NextFunction, type Request, type Response } from 'express'
+import type { Knex } from 'knex'
+import { z, ZodError } from 'zod'
+
+import { SkillValidationError } from '../agents/skills/parser.ts'
+import { SkillRegistry } from '../agents/skills/registry.ts'
+import { SkillRuntime, type SkillPrincipal } from '../agents/skills/runtime.ts'
+import { requestAgentRunCancellation } from '../agents/coordinator.ts'
+import { ACTION_CATALOG } from '../agents/actions/catalog.ts'
+import { decideProposal } from '../agents/proposals/execution.ts'
+import { BrowserTargetRegistry } from '../agents/browser/registry.ts'
+import { getMcpProposalForApproval, type ProposalRecord } from '../agents/proposals/repository.ts'
+import { requestAgentSessionDeletion } from '../agents/maintenance.ts'
+import {
+  AgentProviderVersionInputSchema,
+  CreateAgentProviderProfileSchema,
+  type AgentProviderRegistry
+} from '../agents/providers/registry.ts'
+import type { AgentProviderConformanceRunner } from '../agents/providers/conformance.ts'
+import type { AgentProductRuntime } from '../agents/runtime.ts'
+import { projectAgentThread } from '../agents/projection.ts'
+import {
+  AgentRepositoryError,
+  createAgentSession,
+  createAgentSessionFromHandoff,
+  listOwnedAgentSessions,
+  updateAgentSession
+} from '../agents/repository.ts'
+import { streamOwnedAgentEvents } from '../agents/sse.ts'
+
+interface AgentAuthenticationStrategy {
+  readonly key: string
+}
+
+interface AgentHostWiki {
+  readonly IS_DEBUG: boolean
+  readonly auth: {
+    readonly agentStrategies: Record<string, AgentAuthenticationStrategy>
+    authenticateAgent(req: Request, res: Response, next: NextFunction): void
+    readonly passport: {
+      authenticate(
+        strategy: string,
+        options: Record<string, unknown>,
+        callback?: (error: unknown, user: Express.User | false | null | undefined) => void
+      ): (req: Request, res: Response, next: NextFunction) => void
+    }
+  }
+  readonly config: {
+    readonly sessionSecret: string
+    readonly agents: {
+      readonly enabled: boolean
+      readonly cookieAudience: string
+      readonly publicOrigin: string
+      readonly launchTokenTtlSeconds: number
+      readonly provider: { readonly enabled: boolean; readonly globalConcurrency?: number; readonly perUserConcurrency?: number; readonly pollingMilliseconds?: number }
+      readonly retention: { readonly temporarySessionHours: number; readonly mcpContentDays?: number; readonly auditDays?: number; readonly maintenanceBatchSize?: number }
+      readonly skills: { readonly enabled: boolean; readonly namespace: string }
+      readonly browser?: { readonly enabled: boolean }
+      readonly mcp?: { readonly enabled: boolean }
+      readonly proposals: { readonly enabled: boolean }
+      readonly writes: {
+        readonly enabled: boolean
+        readonly create: { readonly enabled: boolean }
+        readonly patch: { readonly enabled: boolean }
+        readonly move: { readonly enabled: boolean }
+        readonly restore: { readonly enabled: boolean }
+        readonly delete: { readonly enabled: boolean }
+      }
+    }
+  }
+  readonly models: {
+    readonly knex: Knex
+    readonly users: {
+      refreshToken(user: number | Express.User, options: { audience: string }): Promise<{ token: string, user: Express.User }>
+    }
+  }
+  readonly agentRuntime?: Pick<AgentProductRuntime, 'submit'>
+  readonly providerRegistry?: Pick<AgentProviderRegistry, 'create' | 'get' | 'issueResolutionToken' | 'listAll' | 'listVisible' | 'revise' | 'setDefault' | 'setEnabled' | 'setGrants' | 'setSessionProfile'>
+  readonly providerConformance?: Pick<AgentProviderConformanceRunner, 'list' | 'run'>
+}
+
+const STATE_COOKIE = 'wiki_agents_oauth_state'
+const SESSION_COOKIE = 'wiki_agents'
+const HANDOFF_COOKIE = 'wiki_agents_handoff'
+const stateCookieOptions = {
+  httpOnly: true,
+  maxAge: 10 * 60 * 1000,
+  path: '/auth/login',
+  sameSite: 'lax' as const,
+  secure: true
+}
+const sessionCookieOptions = {
+  httpOnly: true,
+  path: '/',
+  sameSite: 'lax' as const,
+  secure: true
+}
+
+const agentContentSecurityPolicy = (agentVite: unknown): string => {
+  const client = agentVite && typeof agentVite === 'object' ? Reflect.get(agentVite, 'client') : null
+  let scriptSources = "'self'"
+  let connectSources = "'self'"
+  if (typeof client === 'string') {
+    const origin = new URL(client).origin
+    const socketOrigin = origin.replace(/^http:/, 'ws:').replace(/^https:/, 'wss:')
+    scriptSources += ` ${origin}`
+    connectSources += ` ${origin} ${socketOrigin}`
+  }
+  return `default-src 'none'; base-uri 'none'; connect-src ${connectSources}; font-src 'self'; form-action 'self'; frame-ancestors 'none'; img-src 'self' data:; script-src ${scriptSources}; style-src 'self' 'unsafe-inline'`
+}
+
+const routeParameter = (req: Request, name: string): string | null => {
+  const value = req.params[name]
+  return typeof value === 'string' && value.length > 0 ? value : null
+}
+
+const requestState = (req: Request): string | null => {
+  const queryState = req.query.state
+  if (typeof queryState === 'string') return queryState
+  const body: unknown = req.body
+  if (!body || typeof body !== 'object') return null
+  const candidate = Reflect.get(body, 'state') ?? Reflect.get(body, 'RelayState')
+  return typeof candidate === 'string' ? candidate : null
+}
+
+const statesMatch = (expected: unknown, received: string | null): boolean => {
+  if (typeof expected !== 'string' || received === null) return false
+  const expectedBytes = Buffer.from(expected)
+  const receivedBytes = Buffer.from(received)
+  return expectedBytes.length === receivedBytes.length && timingSafeEqual(expectedBytes, receivedBytes)
+}
+
+interface AgentSessionState {
+  agentCsrfToken?: string
+}
+
+const csrfToken = (req: Request): string => {
+  const session = req.session as typeof req.session & AgentSessionState
+  if (!session.agentCsrfToken) session.agentCsrfToken = randomBytes(32).toString('base64url')
+  return session.agentCsrfToken
+}
+
+const requestOriginMatches = (origin: string | undefined, expectedOrigin: string): boolean => {
+  if (!origin) return false
+  try {
+    return new URL(origin).origin === new URL(expectedOrigin).origin
+  } catch {
+    return false
+  }
+}
+
+const GroupIdsSchema = z.array(z.number().int().positive()).max(256)
+
+const requestSkillPrincipal = (req: Request): SkillPrincipal => {
+  if (!req.authContext || req.authContext.kind !== 'user') throw new SkillValidationError('Authenticated user is required')
+  const groups = req.user ? Reflect.get(req.user, 'groups') : []
+  const parsedGroups = GroupIdsSchema.safeParse(groups ?? [])
+  if (!parsedGroups.success) throw new SkillValidationError('Authenticated user groups are invalid')
+  return { userId: req.authContext.userId, groupIds: parsedGroups.data }
+}
+
+const requestTokenMatches = (req: Request): boolean => statesMatch(csrfToken(req), req.get('x-wiki-csrf') ?? null)
+
+const asyncRoute = (handler: (req: Request, res: Response) => Promise<unknown>) =>
+  (req: Request, res: Response, next: NextFunction): void => {
+    handler(req, res).catch(next)
+  }
+
+const CreateSessionSchema = z.strictObject({
+  retention: z.enum(['temporary', 'saved']),
+  executionMode: z.enum(['agent', 'generation-only']),
+  providerProfileId: z.uuid().nullable()
+})
+const UpdateSessionSchema = z.strictObject({
+  expectedSessionVersion: z.number().int().positive(),
+  title: z.string().max(255).optional(),
+  retention: z.enum(['temporary', 'saved']).optional()
+}).refine(value => value.title !== undefined || value.retention !== undefined)
+const SubmitMessageSchema = z.strictObject({
+  clientRequestId: z.uuid(),
+  expectedSessionVersion: z.number().int().positive(),
+  profileResolutionToken: z.string().min(1).max(4_096),
+  content: z.string().min(1).max(32_000),
+  currentPage: z.strictObject({
+    id: z.number().int().positive(),
+    locale: z.string().min(1).max(16),
+    path: z.string().min(1).max(1_024),
+    observedUpdatedAt: z.iso.datetime()
+  }).optional()
+})
+const UUIDSchema = z.uuid()
+const DecisionSchema = z.strictObject({ decision: z.enum(['approved', 'denied']), decisionNote: z.string().max(4_000).optional(), confirmationPath: z.string().max(1_024).optional() })
+
+const proposalActionEnabled = (config: AgentHostWiki['config']['agents'], actionName: keyof typeof ACTION_CATALOG): boolean => {
+  if (!config.proposals.enabled || !config.writes.enabled) return false
+  if (actionName === 'pages.prepareCreate') return config.writes.create.enabled
+  if (actionName === 'pages.preparePatch') return config.writes.patch.enabled
+  if (actionName === 'pages.prepareMove') return config.writes.move.enabled
+  if (actionName === 'pages.prepareRestore') return config.writes.restore.enabled
+  if (actionName === 'pages.prepareDelete') return config.writes.delete.enabled
+  return false
+}
+
+const proposalInput = (proposal: ProposalRecord): Record<string, unknown> => {
+  let value: unknown
+  try {
+    value = JSON.parse(proposal.input ?? 'null')
+  } catch {
+    throw new AgentRepositoryError('PROPOSAL_LEDGER_CORRUPT', 'Proposal input is invalid', 500)
+  }
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new AgentRepositoryError('PROPOSAL_LEDGER_CORRUPT', 'Proposal input is invalid', 500)
+  }
+  return value as Record<string, unknown>
+}
+
+const authorizeProposalTarget = async (req: Request, proposal: ProposalRecord): Promise<void> => {
+  if (proposal.pageId === null) return
+  if (!req.user) throw new AgentRepositoryError('AUTHENTICATION_REQUIRED', 'Authenticated user is required', 401)
+  const pageOperations = (await import('../operations/pages.ts')).default
+  await pageOperations.get({ id: proposal.pageId, requester: req.user })
+}
+
+export default function createAgentsHostController(wiki: AgentHostWiki): express.Router {
+  const router = express.Router()
+  const skillRegistry = new SkillRegistry(wiki.models.knex, wiki.config.agents.skills.namespace)
+  const skillRuntime = new SkillRuntime(wiki.models.knex)
+  const browserTargets = new BrowserTargetRegistry(wiki.models.knex)
+
+  router.use((req, res, next) => {
+    if (!wiki.config.agents.enabled) return res.sendStatus(404)
+    res.set({
+      'Cache-Control': 'no-store',
+      'Content-Security-Policy': agentContentSecurityPolicy(res.locals.agentVite),
+      'Cross-Origin-Resource-Policy': 'same-origin',
+      'Referrer-Policy': 'no-referrer',
+      'X-Content-Type-Options': 'nosniff'
+    })
+    return next()
+  })
+  router.get('/', (req, res, next) => {
+    const handoff = typeof req.query.handoff === 'string' ? req.query.handoff : null
+    if (handoff === null) return next()
+    if (!/^[A-Za-z0-9_-]{43}$/.test(handoff)) return res.sendStatus(400)
+    res.cookie(HANDOFF_COOKIE, handoff, {
+      httpOnly: true,
+      maxAge: wiki.config.agents.launchTokenTtlSeconds * 1_000,
+      path: '/',
+      sameSite: 'lax',
+      secure: true
+    })
+    return res.redirect(303, '/')
+  })
+
+
+  router.get('/auth/login/:strategy', (req, res, next) => {
+    const strategyName = routeParameter(req, 'strategy')
+    const strategy = strategyName ? wiki.auth.agentStrategies[strategyName] : undefined
+    if (!strategy) return res.sendStatus(404)
+
+    const state = randomBytes(32).toString('base64url')
+    res.cookie(STATE_COOKIE, state, stateCookieOptions)
+    return wiki.auth.passport.authenticate(strategy.key, {
+      nonce: state,
+      session: false,
+      state
+    })(req, res, next)
+  })
+
+  router.all('/auth/login/:strategy/callback', express.urlencoded({ extended: false, limit: '64kb' }), (req, res, next) => {
+    if (req.method !== 'GET' && req.method !== 'POST') return next()
+    const strategyName = routeParameter(req, 'strategy')
+    const strategy = strategyName ? wiki.auth.agentStrategies[strategyName] : undefined
+    if (!strategy) return res.sendStatus(404)
+    if (!statesMatch(req.cookies?.[STATE_COOKIE], requestState(req))) {
+      return res.status(400).send('Invalid authentication state')
+    }
+    res.clearCookie(STATE_COOKIE, stateCookieOptions)
+
+    return wiki.auth.passport.authenticate(strategy.key, { session: false }, async (error, user) => {
+      if (error) return next(error)
+      if (!user || typeof user.id !== 'number') return res.status(401).send('Authentication failed')
+      try {
+        const refreshed = await wiki.models.users.refreshToken(user.id, { audience: wiki.config.agents.cookieAudience })
+        res.cookie(SESSION_COOKIE, refreshed.token, sessionCookieOptions)
+        return res.redirect('/')
+      } catch (refreshError: unknown) {
+        return next(refreshError)
+      }
+    })(req, res, next)
+  })
+
+  router.post('/auth/logout', wiki.auth.authenticateAgent.bind(wiki.auth), (req, res) => {
+    res.clearCookie(SESSION_COOKIE, sessionCookieOptions)
+    req.logout(() => res.sendStatus(204))
+  })
+  const apiPrefix = '/_api/agents'
+  const sseConnections = new Map<number, number>()
+  const fallbackProfileResolutionToken = (session: { readonly id: string, readonly version: number, readonly providerProfileId: string | null, readonly executionMode: string }): string =>
+    createHmac('sha256', wiki.config.sessionSecret)
+      .update(JSON.stringify([session.id, session.version, session.providerProfileId, session.executionMode]))
+      .digest('base64url')
+  const projectSession = async (ownerId: number, sessionId: string) => {
+    const issued = wiki.providerRegistry ? await wiki.providerRegistry.issueResolutionToken(ownerId, sessionId) : null
+    return projectAgentThread(wiki.models.knex, ownerId, sessionId, { profileResolutionToken: session => issued ?? fallbackProfileResolutionToken(session) })
+  }
+
+  router.use(apiPrefix, wiki.auth.authenticateAgent.bind(wiki.auth), (req, res, next) => {
+    if (!req.authContext || req.authContext.kind !== 'user') return res.sendStatus(401)
+    if (!req.user?.permissions?.some(permission => permission === 'use:agents' || permission === 'manage:system')) return res.sendStatus(403)
+    return next()
+  })
+  router.use(apiPrefix, express.json({ limit: '1mb', strict: true }))
+  router.use(apiPrefix, (req, res, next) => {
+    if (req.method === 'GET' || req.method === 'HEAD') return next()
+    if (!requestOriginMatches(req.get('origin'), wiki.config.agents.publicOrigin) || req.get('sec-fetch-site') !== 'same-origin' || !requestTokenMatches(req)) return res.sendStatus(403)
+    return next()
+  })
+
+  router.post(`${apiPrefix}/sessions`, asyncRoute(async (req, res) => {
+    const input = CreateSessionSchema.parse(req.body)
+    const ownerId = requestSkillPrincipal(req).userId
+    const sessionInput = {
+      ownerId,
+      retention: input.retention,
+      providerProfileId: input.providerProfileId,
+      executionMode: input.executionMode,
+      expiresAt: input.retention === 'temporary' ? new Date(Date.now() + wiki.config.agents.retention.temporarySessionHours * 3_600_000) : null
+    }
+    const handoffToken = typeof req.cookies?.[HANDOFF_COOKIE] === 'string' ? req.cookies[HANDOFF_COOKIE] : null
+    const created = handoffToken
+      ? await createAgentSessionFromHandoff(wiki.models.knex, sessionInput, handoffToken)
+      : { session: await createAgentSession(wiki.models.knex, sessionInput), handoff: null }
+    if (handoffToken) res.clearCookie(HANDOFF_COOKIE, { path: '/', sameSite: 'lax', secure: true })
+    return res.status(201).json({ ...(await projectSession(ownerId, created.session.id)), launchPage: created.handoff })
+  }))
+  router.get(`${apiPrefix}/sessions`, asyncRoute(async (req, res) => {
+    const ownerId = requestSkillPrincipal(req).userId
+    const before = typeof req.query.before === 'string' ? z.iso.datetime().parse(req.query.before) : undefined
+    const limit = typeof req.query.limit === 'string' ? z.coerce.number().int().min(1).max(100).parse(req.query.limit) : 50
+    const sessions = await listOwnedAgentSessions(wiki.models.knex, ownerId, limit, before ? new Date(before) : undefined)
+    return res.json({ sessions })
+  }))
+  router.post(`${apiPrefix}/sessions/:sessionId/messages`, asyncRoute(async (req, res) => {
+    if (!wiki.config.agents.provider.enabled || !wiki.agentRuntime) return res.sendStatus(404)
+    const sessionId = UUIDSchema.parse(routeParameter(req, 'sessionId'))
+    const input = SubmitMessageSchema.parse(req.body)
+    const admitted = await wiki.agentRuntime.submit({
+      ownerId: requestSkillPrincipal(req).userId,
+      sessionId,
+      clientRequestId: input.clientRequestId,
+      expectedSessionVersion: input.expectedSessionVersion,
+      profileResolutionToken: input.profileResolutionToken,
+      content: input.content,
+      ...(input.currentPage === undefined ? {} : { currentPage: input.currentPage })
+    })
+    return res.status(202).json({ run: admitted.run, replayed: admitted.replayed })
+  }))
+  router.get(`${apiPrefix}/mcp-proposals/:proposalId`, asyncRoute(async (req, res) => {
+    const proposalId = UUIDSchema.parse(routeParameter(req, 'proposalId'))
+    const persisted = await getMcpProposalForApproval(wiki.models.knex, proposalId)
+    await authorizeProposalTarget(req, persisted.proposal)
+    const definition = ACTION_CATALOG[persisted.proposal.actionName]
+    const permissions = req.user?.permissions ?? []
+    if (!definition.descriptor.requiredPermissions.every(permission => permissions.includes(permission))) {
+      throw new AgentRepositoryError('ACTION_PERMISSION_DENIED', 'Proposal approval permission is required', 403)
+    }
+    const input = proposalInput(persisted.proposal)
+    return res.json({
+      proposal: {
+        id: persisted.proposal.id,
+        actionName: persisted.proposal.actionName,
+        risk: persisted.proposal.risk,
+        status: persisted.proposal.status,
+        summary: persisted.proposal.summary,
+        pageId: persisted.proposal.pageId ?? null,
+        path: typeof input.path === 'string'
+          ? input.path
+          : typeof input.destinationPath === 'string'
+            ? input.destinationPath
+            : typeof input.confirmationPath === 'string' ? input.confirmationPath : null,
+        baseSourceRevision: persisted.proposal.baseSourceRevision === undefined ? null : String(persisted.proposal.baseSourceRevision),
+        inputHash: persisted.proposal.inputHash,
+        patchHash: persisted.proposal.patchSha256 ?? null,
+        diffHash: persisted.proposal.diffSha256 ?? null,
+        diff: persisted.proposal.contentPurgedAt === null ? persisted.proposal.diff ?? null : null,
+        confirmationPath: persisted.proposal.risk === 'destructive-write' && typeof input.confirmationPath === 'string' ? input.confirmationPath : null,
+        approval: {
+          id: persisted.approval.id,
+          status: persisted.approval.status,
+          requestedAt: new Date(persisted.approval.requestedAt).toISOString(),
+          expiresAt: new Date(persisted.approval.expiresAt).toISOString(),
+          decidedAt: persisted.approval.decidedAt === null ? null : new Date(persisted.approval.decidedAt).toISOString()
+        }
+      }
+    })
+  }))
+  router.post(`${apiPrefix}/proposals/:proposalId/approvals/:approvalId/decision`, asyncRoute(async (req, res) => {
+    const proposalId = UUIDSchema.parse(routeParameter(req, 'proposalId'))
+    const approvalId = UUIDSchema.parse(routeParameter(req, 'approvalId'))
+    const input = DecisionSchema.parse(req.body)
+    const userId = requestSkillPrincipal(req).userId
+    const result = await decideProposal(wiki.models.knex, {
+      proposalId,
+      approvalId,
+      userId,
+      decision: input.decision,
+      ...(input.decisionNote === undefined ? {} : { decisionNote: input.decisionNote }),
+      authorize: async ({ proposal }) => {
+        await authorizeProposalTarget(req, proposal)
+        const definition = ACTION_CATALOG[proposal.actionName]
+        if (proposal.risk === 'destructive-write' && input.decision === 'approved') {
+          const inputValue = proposalInput(proposal)
+          const requiredPath = inputValue.confirmationPath
+          if (typeof requiredPath !== 'string' || input.confirmationPath !== requiredPath) throw new AgentRepositoryError('DESTRUCTIVE_CONFIRMATION_REQUIRED', 'Exact page path confirmation is required', 409)
+        }
+        if (!proposalActionEnabled(wiki.config.agents, proposal.actionName)) throw new AgentRepositoryError('ACTION_DISABLED', 'Proposal action is disabled', 403)
+        const permissions = req.user?.permissions ?? []
+        if (!definition.descriptor.requiredPermissions.every(permission => permissions.includes(permission))) {
+          throw new AgentRepositoryError('ACTION_PERMISSION_DENIED', 'Proposal approval permission was revoked', 403)
+        }
+      }
+    })
+    return res.json({ proposalId: result.proposal.id, approvalId: result.approval.id, status: result.approval.status, decidedAt: result.approval.decidedAt })
+  }))
+  router.get(`${apiPrefix}/profiles`, asyncRoute(async (req, res) => {
+    if (!wiki.config.agents.provider.enabled || !wiki.providerRegistry) return res.json({ profiles: [] })
+    return res.json({ profiles: await wiki.providerRegistry.listVisible(requestSkillPrincipal(req).userId) })
+  }))
+  router.put(`${apiPrefix}/sessions/:sessionId/profile`, asyncRoute(async (req, res) => {
+    if (!wiki.config.agents.provider.enabled || !wiki.providerRegistry) return res.sendStatus(404)
+    const sessionId = UUIDSchema.parse(routeParameter(req, 'sessionId'))
+    const input = z.strictObject({ expectedSessionVersion: z.number().int().positive(), profileId: z.uuid().nullable(), executionMode: z.enum(['agent', 'generation-only']) }).parse(req.body)
+    const ownerId = requestSkillPrincipal(req).userId
+    await wiki.providerRegistry.setSessionProfile({ ownerId, sessionId, ...input })
+    return res.json(await projectSession(ownerId, sessionId))
+  }))
+  router.get(`${apiPrefix}/sessions/:sessionId`, asyncRoute(async (req, res) => {
+    const sessionId = UUIDSchema.parse(routeParameter(req, 'sessionId'))
+    return res.json(await projectSession(requestSkillPrincipal(req).userId, sessionId))
+  }))
+  router.patch(`${apiPrefix}/sessions/:sessionId`, asyncRoute(async (req, res) => {
+    const sessionId = UUIDSchema.parse(routeParameter(req, 'sessionId'))
+    const input = UpdateSessionSchema.parse(req.body)
+    const ownerId = requestSkillPrincipal(req).userId
+    await updateAgentSession(wiki.models.knex, {
+      ownerId,
+      sessionId,
+      expectedVersion: input.expectedSessionVersion,
+      ...(input.title === undefined ? {} : { title: input.title }),
+      ...(input.retention === undefined
+        ? {}
+        : {
+            retention: input.retention,
+            expiresAt: input.retention === 'temporary' ? new Date(Date.now() + wiki.config.agents.retention.temporarySessionHours * 3_600_000) : null
+          })
+    })
+    return res.json(await projectSession(ownerId, sessionId))
+  }))
+  router.delete(`${apiPrefix}/sessions/:sessionId`, asyncRoute(async (req, res) => {
+    const sessionId = UUIDSchema.parse(routeParameter(req, 'sessionId'))
+    await requestAgentSessionDeletion(wiki.models.knex, requestSkillPrincipal(req).userId, sessionId)
+    return res.sendStatus(204)
+  }))
+  router.get(`${apiPrefix}/runs/:runId`, asyncRoute(async (req, res) => {
+    const runId = UUIDSchema.parse(routeParameter(req, 'runId'))
+    const ownerId = requestSkillPrincipal(req).userId
+    const run = await wiki.models.knex('agentRuns').where({ id: runId, ownerId }).first('id', 'sessionId', 'status', 'attempts', 'eventSequence', 'queuedAt', 'startedAt', 'completedAt', 'errorCode', 'errorMessage')
+    if (!run) throw new AgentRepositoryError('AGENT_RESOURCE_NOT_FOUND', 'Agent resource was not found', 404)
+    return res.json({ run })
+  }))
+  router.get(`${apiPrefix}/artifacts/:artifactId/content`, asyncRoute(async (req, res) => {
+    const artifactId = UUIDSchema.parse(routeParameter(req, 'artifactId'))
+    const ownerId = requestSkillPrincipal(req).userId
+    const artifact = await wiki.models.knex('agentArtifacts').where({ id: artifactId, ownerId, kind: 'browser-screenshot', mimeType: 'image/png' }).first('payload', 'byteLength', 'sha256', 'expiresAt') as { payload: Buffer | null; byteLength: number; sha256: string; expiresAt: Date | string | null } | undefined
+    if (!artifact || artifact.payload === null || (artifact.expiresAt !== null && new Date(artifact.expiresAt).getTime() <= Date.now())) throw new AgentRepositoryError('AGENT_RESOURCE_NOT_FOUND', 'Agent artifact was not found', 404)
+    if (artifact.payload.byteLength !== artifact.byteLength) throw new AgentRepositoryError('AGENT_ARTIFACT_CORRUPT', 'Agent artifact size is invalid', 500)
+    const actualSha256 = createHash('sha256').update(artifact.payload).digest('hex')
+    if (actualSha256 !== artifact.sha256) throw new AgentRepositoryError('AGENT_ARTIFACT_CORRUPT', 'Agent artifact hash is invalid', 500)
+    res.set({
+      'Cache-Control': 'private, no-store',
+      'Content-Disposition': `inline; filename="${artifactId}.png"`,
+      'Content-Security-Policy': "sandbox; default-src 'none'",
+      'Content-Type': 'image/png',
+      'X-Content-Type-Options': 'nosniff',
+      'X-Wiki-Content-Sha256': artifact.sha256
+    })
+    return res.send(artifact.payload)
+  }))
+  router.get(`${apiPrefix}/runs/:runId/events`, asyncRoute(async (req, res) => {
+    const runId = UUIDSchema.parse(routeParameter(req, 'runId'))
+    await streamOwnedAgentEvents(wiki.models.knex, req, res, requestSkillPrincipal(req).userId, runId, sseConnections, { maximumConnectionsPerUser: 3 })
+  }))
+  router.post(`${apiPrefix}/runs/:runId/cancel`, asyncRoute(async (req, res) => {
+    const runId = UUIDSchema.parse(routeParameter(req, 'runId'))
+    return res.json({ run: await requestAgentRunCancellation(wiki.models.knex, requestSkillPrincipal(req).userId, runId) })
+  }))
+
+
+  router.use(['/_api/agents/skills', '/_api/agents/sessions/:sessionId/skills'], (req, res, next) => {
+    if (!wiki.config.agents.skills.enabled) return res.sendStatus(404)
+    if (!req.user?.permissions?.includes('use:agents')) return res.sendStatus(403)
+    return next()
+  })
+  router.get('/_api/agents/skills', asyncRoute(async (req, res) => {
+    return res.json({ skills: await skillRuntime.listVisible(requestSkillPrincipal(req)) })
+  }))
+  router.get('/_api/agents/sessions/:sessionId/skills', asyncRoute(async (req, res) => {
+    const sessionId = routeParameter(req, 'sessionId')
+    if (!sessionId) return res.sendStatus(400)
+    return res.json({ skills: await skillRuntime.listSessionSkills(sessionId, requestSkillPrincipal(req)) })
+  }))
+  router.put('/_api/agents/sessions/:sessionId/skills', asyncRoute(async (req, res) => {
+    const sessionId = routeParameter(req, 'sessionId')
+    if (!sessionId) return res.sendStatus(400)
+    const input = z.strictObject({ expectedSessionVersion: z.number().int().positive(), skillVersionIds: z.array(z.uuid()).max(8), transportRequestId: z.uuid() }).parse(req.body)
+    const version = await skillRuntime.setSessionSkills({ sessionId, expectedVersion: input.expectedSessionVersion, skillVersionIds: input.skillVersionIds, transportRequestId: input.transportRequestId, principal: requestSkillPrincipal(req) })
+    return res.json({ version })
+  }))
+  router.get('/_api/agents/sessions/:sessionId/skills/:skillName/:versionId/resource', asyncRoute(async (req, res) => {
+    const sessionId = routeParameter(req, 'sessionId')
+    const skillName = routeParameter(req, 'skillName')
+    const versionId = routeParameter(req, 'versionId')
+    const path = typeof req.query.path === 'string' ? req.query.path : null
+    const transportRequestId = typeof req.query.requestId === 'string' ? req.query.requestId : null
+    if (!sessionId || !skillName || !versionId || !path || !transportRequestId) return res.sendStatus(400)
+    const resource = await skillRuntime.readSessionResource({
+      sessionId,
+      skillName,
+      versionId,
+      path,
+      transportRequestId,
+      principal: requestSkillPrincipal(req)
+    })
+    res.set({
+      'Content-Type': resource.mediaType,
+      'X-Wiki-Content-Sha256': resource.contentHash,
+      'X-Wiki-Source-Id': resource.sourceId,
+      'X-Wiki-Source-Revision': resource.sourceRevision
+    })
+    return res.send(resource.bytes)
+  }))
+  router.use(['/_api/agents/skills', '/_api/agents/sessions/:sessionId/skills'], (error: unknown, _req: Request, res: Response, next: NextFunction) => {
+    if (error instanceof ZodError) return res.status(400).json({ error: 'INVALID_REQUEST', details: error.issues })
+    if (error instanceof SkillValidationError) return res.status(409).json({ error: error.code, message: error.message })
+    return next(error)
+  })
+
+  router.use(['/_api/agents/admin/runtime', '/_api/agents/admin/skills', '/_api/agents/admin/profiles', '/_api/agents/admin/browser-targets'], wiki.auth.authenticateAgent.bind(wiki.auth), (req, res, next) => {
+    if (!req.authContext || req.authContext.kind !== 'user') return res.sendStatus(401)
+    if (!req.user?.permissions?.includes('manage:system')) return res.sendStatus(403)
+    return next()
+  })
+  router.get('/_api/agents/admin/runtime', (_req, res) => {
+    const config = wiki.config.agents
+    return res.json({
+      runtime: {
+        enabled: config.enabled,
+        providerEnabled: config.provider.enabled,
+        skillsEnabled: config.skills.enabled,
+        browserEnabled: config.browser?.enabled ?? false,
+        proposalsEnabled: config.proposals.enabled,
+        writes: {
+          enabled: config.writes.enabled,
+          create: config.writes.create.enabled,
+          patch: config.writes.patch.enabled,
+          move: config.writes.move.enabled,
+          restore: config.writes.restore.enabled,
+          delete: config.writes.delete.enabled
+        },
+        mcpEnabled: config.mcp?.enabled ?? false,
+        quotas: {
+          globalConcurrency: config.provider.globalConcurrency ?? 4,
+          perUserConcurrency: config.provider.perUserConcurrency ?? 2,
+          pollingMilliseconds: config.provider.pollingMilliseconds ?? 1_000
+        },
+        retention: {
+          temporarySessionHours: config.retention.temporarySessionHours,
+          mcpContentDays: config.retention.mcpContentDays ?? 7,
+          auditDays: config.retention.auditDays ?? 90,
+          maintenanceBatchSize: config.retention.maintenanceBatchSize ?? 100
+        }
+      }
+    })
+  })
+  router.get('/_api/agents/admin/browser-targets', asyncRoute(async (_req, res) => {
+    return res.json({ targets: await browserTargets.list() })
+  }))
+  router.post('/_api/agents/admin/browser-targets', asyncRoute(async (req, res) => {
+    const input = z.strictObject({ canonicalUrl: z.string().min(1).max(4_096), enabled: z.boolean().default(false) }).parse(req.body)
+    return res.status(201).json({ target: await browserTargets.create({ ...input, actorId: req.authContext?.kind === 'user' ? req.authContext.userId : 0 }) })
+  }))
+  router.put('/_api/agents/admin/browser-targets/:targetId', asyncRoute(async (req, res) => {
+    const targetId = UUIDSchema.parse(routeParameter(req, 'targetId'))
+    const input = z.strictObject({ enabled: z.boolean() }).parse(req.body)
+    return res.json({ target: await browserTargets.setEnabled({ id: targetId, enabled: input.enabled, actorId: req.authContext?.kind === 'user' ? req.authContext.userId : 0 }) })
+  }))
+  router.get('/_api/agents/admin/skills', asyncRoute(async (_req, res) => {
+    res.json({ skills: await skillRegistry.list() })
+  }))
+  router.post('/_api/agents/admin/skills', asyncRoute(async (req, res) => {
+    const skillId = await skillRegistry.create({ ...req.body, actorId: req.authContext?.kind === 'user' ? req.authContext.userId : 0 })
+    res.status(201).json({ skillId })
+  }))
+  router.get('/_api/agents/admin/skills/:skillId/preview', asyncRoute(async (req, res) => {
+    const skillId = routeParameter(req, 'skillId')
+    if (!skillId) return res.sendStatus(400)
+    return res.json(await skillRegistry.preview(skillId))
+  }))
+  router.post('/_api/agents/admin/skills/:skillId/policy', asyncRoute(async (req, res) => {
+    const skillId = routeParameter(req, 'skillId')
+    if (!skillId) return res.sendStatus(400)
+    await skillRegistry.updatePolicy({ ...req.body, skillId, actorId: req.authContext?.kind === 'user' ? req.authContext.userId : 0 })
+    return res.sendStatus(204)
+  }))
+  router.post('/_api/agents/admin/skills/:skillId/approve', asyncRoute(async (req, res) => {
+    const skillId = routeParameter(req, 'skillId')
+    if (!skillId) return res.sendStatus(400)
+    const versionId = await skillRegistry.approve({ ...req.body, skillId, actorId: req.authContext?.kind === 'user' ? req.authContext.userId : 0 })
+    return res.json({ versionId })
+  }))
+  router.post('/_api/agents/admin/skills/:skillId/reject', asyncRoute(async (req, res) => {
+    const skillId = routeParameter(req, 'skillId')
+    if (!skillId) return res.sendStatus(400)
+    const versionId = await skillRegistry.reject({ ...req.body, skillId, actorId: req.authContext?.kind === 'user' ? req.authContext.userId : 0 })
+    return res.json({ versionId })
+  }))
+  router.post('/_api/agents/admin/skills/:skillId/enabled', asyncRoute(async (req, res) => {
+    const skillId = routeParameter(req, 'skillId')
+    if (!skillId) return res.sendStatus(400)
+    const enabled = z.object({ enabled: z.boolean() }).strict().parse(req.body).enabled
+    await skillRegistry.setEnabled(skillId, req.authContext?.kind === 'user' ? req.authContext.userId : 0, enabled)
+    return res.sendStatus(204)
+  }))
+  router.get('/_api/agents/admin/profiles', asyncRoute(async (_req, res) => {
+    if (!wiki.providerRegistry) return res.json({ profiles: [] })
+    return res.json({ profiles: await wiki.providerRegistry.listAll() })
+  }))
+  router.get('/_api/agents/admin/profiles/:profileId', asyncRoute(async (req, res) => {
+    if (!wiki.providerRegistry) return res.sendStatus(404)
+    return res.json({ profile: await wiki.providerRegistry.get(UUIDSchema.parse(routeParameter(req, 'profileId'))) })
+  }))
+  router.post('/_api/agents/admin/profiles', asyncRoute(async (req, res) => {
+    if (!wiki.providerRegistry) return res.sendStatus(404)
+    const { groupIds, ...profileInput } = CreateAgentProviderProfileSchema.parse(req.body)
+    const profile = await wiki.providerRegistry.create({ ...profileInput, ...(groupIds === undefined ? {} : { groupIds }), actorId: requestSkillPrincipal(req).userId })
+    return res.status(201).json({ profile })
+  }))
+  router.post('/_api/agents/admin/profiles/:profileId/versions', asyncRoute(async (req, res) => {
+    if (!wiki.providerRegistry) return res.sendStatus(404)
+    const profile = await wiki.providerRegistry.revise(UUIDSchema.parse(routeParameter(req, 'profileId')), { ...AgentProviderVersionInputSchema.parse(req.body), actorId: requestSkillPrincipal(req).userId })
+    return res.status(201).json({ profile })
+  }))
+  router.post('/_api/agents/admin/profiles/:profileId/conformance', asyncRoute(async (req, res) => {
+    if (!wiki.providerConformance) return res.sendStatus(404)
+    const input = z.strictObject({ versionId: z.uuid() }).parse(req.body)
+    const report = await wiki.providerConformance.run(UUIDSchema.parse(routeParameter(req, 'profileId')), input.versionId, requestSkillPrincipal(req).userId)
+    return res.status(report.status === 'passed' ? 200 : 409).json({ report })
+  }))
+  router.get('/_api/agents/admin/profiles/:profileId/conformance', asyncRoute(async (req, res) => {
+    if (!wiki.providerConformance) return res.sendStatus(404)
+    void UUIDSchema.parse(routeParameter(req, 'profileId'))
+    const versionId = UUIDSchema.parse(req.query.versionId)
+    return res.json({ reports: await wiki.providerConformance.list(versionId) })
+  }))
+  router.post('/_api/agents/admin/profiles/:profileId/enabled', asyncRoute(async (req, res) => {
+    if (!wiki.providerRegistry) return res.sendStatus(404)
+    const enabled = z.strictObject({ enabled: z.boolean() }).parse(req.body).enabled
+    await wiki.providerRegistry.setEnabled(UUIDSchema.parse(routeParameter(req, 'profileId')), enabled, requestSkillPrincipal(req).userId)
+    return res.sendStatus(204)
+  }))
+  router.post('/_api/agents/admin/profiles/:profileId/default', asyncRoute(async (req, res) => {
+    if (!wiki.providerRegistry) return res.sendStatus(404)
+    await wiki.providerRegistry.setDefault(UUIDSchema.parse(routeParameter(req, 'profileId')), requestSkillPrincipal(req).userId)
+    return res.sendStatus(204)
+  }))
+  router.put('/_api/agents/admin/profiles/:profileId/grants', asyncRoute(async (req, res) => {
+    if (!wiki.providerRegistry) return res.sendStatus(404)
+    const input = z.strictObject({ exposureMode: z.enum(['all_agent_users', 'groups']), groupIds: z.array(z.number().int().positive()).max(1_000) }).parse(req.body)
+    await wiki.providerRegistry.setGrants(UUIDSchema.parse(routeParameter(req, 'profileId')), input.exposureMode, input.groupIds, requestSkillPrincipal(req).userId)
+    return res.sendStatus(204)
+  }))
+  router.use('/_api/agents/admin/skills', (error: unknown, _req: Request, res: Response, next: NextFunction) => {
+    if (error instanceof ZodError) return res.status(400).json({ error: 'INVALID_REQUEST', details: error.issues })
+    if (error instanceof SkillValidationError) return res.status(409).json({ error: error.code, message: error.message })
+    return next(error)
+  })
+  router.use(apiPrefix, (error: unknown, _req: Request, res: Response, next: NextFunction) => {
+    if (res.headersSent) return next(error)
+    if (error instanceof ZodError) return res.status(400).json({ error: 'INVALID_REQUEST', details: error.issues })
+    if (error instanceof AgentRepositoryError) return res.status(error.status).json({ error: error.code, message: error.status >= 500 ? 'Agent request failed' : error.message })
+    return next(error)
+  })
+
+
+  router.get(['/', '/sessions/:sessionId', '/approvals/:proposalId', '/admin'], wiki.auth.authenticateAgent.bind(wiki.auth), (req, res) => {
+    if (!req.authContext || req.authContext.kind !== 'user') return res.sendStatus(401)
+    return res.render('agent', {
+      agentBootstrap: JSON.stringify({
+        csrfToken: csrfToken(req),
+        isAdmin: req.user?.permissions?.includes('manage:system') ?? false,
+        userId: req.authContext.userId
+      })
+    })
+  })
+
+  router.use((_req, res) => res.sendStatus(404))
+  return router
+}

@@ -121,6 +121,14 @@ const requestBody = (req: Request): Record<string, unknown> => {
 
 const optionalStringQuery = (value: unknown): string | undefined =>
   typeof value === 'string' && value.length > 0 ? value : undefined
+const requiredSourceRevision = (req: Request, res: Response): string | null => {
+  const value = requestBody(req).expectedSourceRevision
+  if (typeof value !== 'string' || value.length < 1 || value.length > 64) {
+    res.status(400).json({ error: 'expectedSourceRevision must be a non-empty string' })
+    return null
+  }
+  return value
+}
 
 const parseTreeMode = (value: unknown): TreeMode | null =>
   value === 'ALL' || value === 'FOLDERS' || value === 'PAGES' ? value : null
@@ -392,8 +400,10 @@ router.post('/', async (req, res) => {
 router.put('/:id', async (req, res) => {
   const id = parsePositiveIntegerParam(req, res)
   if (id === null) return
+  const expectedSourceRevision = requiredSourceRevision(req, res)
+  if (expectedSourceRevision === null) return
   try {
-    const page = await pageOperations.update({ ...requesterInput(req), input: { ...requestBody(req), id } })
+    const page = await pageOperations.update({ ...requesterInput(req), input: { ...requestBody(req), id, expectedSourceRevision } })
     res.json({ page })
   } catch (err) {
     sendOperationError(res, err, 'Page update failed')
@@ -403,6 +413,8 @@ router.put('/:id', async (req, res) => {
 router.patch('/:id/visibility', async (req, res) => {
   const id = parsePositiveIntegerParam(req, res)
   if (id === null) return
+  const expectedSourceRevision = requiredSourceRevision(req, res)
+  if (expectedSourceRevision === null) return
   const visibility = _.get(req, 'body.visibility')
   if (visibility !== 'public' && visibility !== 'private') {
     return res.status(400).json({ error: 'visibility must be public or private' })
@@ -412,7 +424,8 @@ router.patch('/:id/visibility', async (req, res) => {
       ...requesterInput(req),
       id,
       visibility,
-      confirmPublication: _.get(req, 'body.confirmPublication') === true
+      confirmPublication: _.get(req, 'body.confirmPublication') === true,
+      expectedSourceRevision
     })
     return res.json({ page })
   } catch (err) {
@@ -423,6 +436,8 @@ router.patch('/:id/visibility', async (req, res) => {
 router.patch('/:id/owner', async (req, res) => {
   const id = parsePositiveIntegerParam(req, res)
   if (id === null) return
+  const expectedSourceRevision = requiredSourceRevision(req, res)
+  if (expectedSourceRevision === null) return
   const ownerId = _.get(req, 'body.ownerId')
   if (!Number.isSafeInteger(ownerId) || (ownerId as number) < 1) {
     return res.status(400).json({ error: 'ownerId must be a positive integer' })
@@ -431,7 +446,8 @@ router.patch('/:id/owner', async (req, res) => {
     const page = await pageOperations.transferOwnership({
       ...requesterInput(req),
       id,
-      ownerId
+      ownerId,
+      expectedSourceRevision
     })
     return res.json({ page })
   } catch (err) {
@@ -601,12 +617,14 @@ router.delete('/:id/watch', async (req, res) => {
 router.post('/:id/convert', async (req, res) => {
   const id = parsePositiveIntegerParam(req, res)
   if (id === null) return
+  const expectedSourceRevision = requiredSourceRevision(req, res)
+  if (expectedSourceRevision === null) return
   if (!await requireUnlockedPage(req, res, id)) return
   try {
     const editor = _.get(req, 'body.editor')
     await pageOperations.convert({
       ...requesterInput(req),
-      input: { id, ...(typeof editor === 'string' ? { editor } : {}) }
+      input: { id, expectedSourceRevision, ...(typeof editor === 'string' ? { editor } : {}) }
     })
     res.json({ message: 'Page has been converted.' })
   } catch (err) {
@@ -617,6 +635,8 @@ router.post('/:id/convert', async (req, res) => {
 router.post('/:id/move', async (req, res) => {
   const id = parsePositiveIntegerParam(req, res)
   if (id === null) return
+  const expectedSourceRevision = requiredSourceRevision(req, res)
+  if (expectedSourceRevision === null) return
   try {
     const destinationLocale = _.get(req, 'body.destinationLocale')
     const destinationPath = _.get(req, 'body.destinationPath')
@@ -625,7 +645,7 @@ router.post('/:id/move', async (req, res) => {
     }
     await pageOperations.move({
       ...requesterInput(req),
-      input: { id, destinationLocale, destinationPath }
+      input: { id, destinationLocale, destinationPath, expectedSourceRevision }
     })
     res.json({ message: 'Page has been moved.' })
   } catch (err) {
@@ -711,12 +731,10 @@ router.post('/:id/history/:versionId/restore', async (req, res) => {
   if (!await requireUnlockedPage(req, res, pageId)) return
   const versionId = parsePositiveIntegerParam(req, res, 'versionId')
   if (versionId === null) return
-  const expectedUpdatedAt = requestBody(req).expectedUpdatedAt
-  if (typeof expectedUpdatedAt !== 'string' || Number.isNaN(Date.parse(expectedUpdatedAt))) {
-    return res.status(400).json({ error: 'expectedUpdatedAt must be a valid date' })
-  }
+  const expectedSourceRevision = requiredSourceRevision(req, res)
+  if (expectedSourceRevision === null) return
   try {
-    await pageOperations.restore({ ...requesterInput(req), pageId, versionId, expectedUpdatedAt })
+    await pageOperations.restore({ ...requesterInput(req), pageId, versionId, expectedSourceRevision })
     res.json({ message: 'Page version restored successfully.' })
   } catch (err) {
     sendOperationError(res, err, 'Page restore failed')
@@ -756,6 +774,7 @@ router.get('/:id', async (req, res, next) => {
       contentType: pageResult.contentType,
       createdAt: pageResult.createdAt,
       updatedAt: pageResult.updatedAt,
+      sourceRevision: String(pageResult.sourceRevision),
       editor: pageResult.editor,
       locale: pageResult.locale,
       authorId: pageResult.authorId,
@@ -785,9 +804,11 @@ router.delete('/:id', async (req, res) => {
   if (!Number.isSafeInteger(id)) {
     return res.status(400).json({ error: 'id must be a positive integer' })
   }
+  const expectedSourceRevision = requiredSourceRevision(req, res)
+  if (expectedSourceRevision === null) return
 
   try {
-    await pageOperations.remove({ ...requesterInput(req), id })
+    await pageOperations.remove({ ...requesterInput(req), id, expectedSourceRevision })
     res.json({ message: 'Page has been deleted.' })
   } catch (err) {
     if (err instanceof Error && err.name === 'PageNotFound') {

@@ -1,0 +1,24 @@
+# syntax=docker/dockerfile:1.7
+FROM mcr.microsoft.com/playwright:v1.62.1-noble@sha256:dcc5531e97840b9b5e794f2814476b21571c5124a3fca2267d73041f56e7580e
+
+ARG WIKI_BUILD_REVISION=unknown
+LABEL org.opencontainers.image.title="Wiki.ts isolated agent browser worker" \
+      org.opencontainers.image.revision="$WIKI_BUILD_REVISION" \
+      org.opencontainers.image.source="https://github.com/PhilosophiMoonbeam/wiki"
+
+ENV NODE_ENV=production \
+    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
+    AGENT_BROWSER_PORT=9443
+WORKDIR /wiki
+
+RUN corepack enable && corepack prepare pnpm@11.12.0 --activate
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
+COPY patches ./patches
+RUN pnpm install --prod --frozen-lockfile --ignore-scripts
+COPY server ./server
+COPY shared ./shared
+COPY tsconfig.server.json tsconfig.shared.json ./
+
+USER pwuser
+EXPOSE 9443
+ENTRYPOINT ["node", "server/agents/browser/worker.ts"]

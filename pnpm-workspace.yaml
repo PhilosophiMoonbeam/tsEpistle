@@ -1,5 +1,6 @@
 allowBuilds:
   '@apollo/protobufjs': true
+  '@ax-llm/ax': false
   '@parcel/watcher': true
   '@root/acme': true
   better-sqlite3: false
