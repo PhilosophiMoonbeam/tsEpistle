@@ -63,10 +63,12 @@ const appendCalls = (target: Map<string, ToolCall>, results: readonly AxChatResp
     for (const call of result.functionCalls ?? []) {
       const prior = target.get(call.id)
       const nextParams = call.function.params ?? ''
-      const providerName = call.function.name
+      const streamedName = call.function.name
+      const providerName = streamedName || prior?.providerName
+      if (!providerName) throw new AgentRepositoryError('INVALID_PROVIDER_RESPONSE', 'Provider omitted an action name', 502)
       const name = actionNames?.get(providerName) ?? providerName
       if (actionNames && !actionNames.has(providerName)) throw new AgentRepositoryError('INVALID_PROVIDER_RESPONSE', 'Provider requested an unknown action name', 502)
-      if (prior && prior.providerName !== providerName) throw new AgentRepositoryError('INVALID_PROVIDER_RESPONSE', 'Provider changed an action name while streaming', 502)
+      if (prior && streamedName && prior.providerName !== streamedName) throw new AgentRepositoryError('INVALID_PROVIDER_RESPONSE', 'Provider changed an action name while streaming', 502)
       target.set(call.id, {
         id: call.id,
         name,
