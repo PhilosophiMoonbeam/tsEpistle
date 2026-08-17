@@ -81,7 +81,7 @@ const appendCalls = (target: Map<string, ToolCall>, results: readonly AxChatResp
   }
 }
 
-const encryptedThoughtBlocks = (blocks: readonly NonNullable<AxChatResponseResult['thoughtBlocks']>[number][]): NonNullable<AxChatResponseResult['thoughtBlocks']> => blocks.filter(block => block.encrypted).map(block => ({ data: block.data, encrypted: true, ...(block.signature === undefined ? {} : { signature: block.signature }) }))
+const encryptedThoughtBlocks = (provider: AgentProviderService, result: AxChatResponseResult): NonNullable<AxChatResponseResult['thoughtBlocks']> => (result.thoughtBlocks ?? []).filter(block => block.encrypted).map(block => provider.preserveThoughtBlock?.(result.id ?? '', block) ?? ({ ...block }))
 
 interface ProviderFunctions {
   readonly functions: NonNullable<AxChatRequest['functions']>
@@ -116,7 +116,7 @@ export class AxAgentEngine implements AgentEngine {
     let inputTokens = 0
     let outputTokens = 0
     const calls = new Map<string, ToolCall>()
-    const thoughtBlocks: NonNullable<AxChatResponseResult['thoughtBlocks']> = []
+    const thoughtBlocks = new Map<string, NonNullable<AxChatResponseResult['thoughtBlocks']>[number]>()
     const accept = async (response: AxChatResponse): Promise<void> => {
       const responseUsage = usage(response)
       inputTokens = Math.max(inputTokens, responseUsage.input)
@@ -127,7 +127,12 @@ export class AxAgentEngine implements AgentEngine {
           content += result.content
           await sink.text(result.content)
         }
-        if (result.thoughtBlocks) thoughtBlocks.push(...encryptedThoughtBlocks(result.thoughtBlocks))
+        for (const block of encryptedThoughtBlocks(provider, result)) {
+          const key = (provider.transportKind === 'openai-responses' || provider.transportKind === 'openresponses') && result.id !== undefined
+            ? result.id
+            : `${result.id ?? 'thought'}:${thoughtBlocks.size}`
+          thoughtBlocks.set(key, block)
+        }
       }
     }
     const response = await provider.service.chat({
@@ -152,7 +157,7 @@ export class AxAgentEngine implements AgentEngine {
     } else {
       await accept(response)
     }
-    return { content, calls: [...calls.values()], thoughtBlocks, inputTokens, outputTokens }
+    return { content, calls: [...calls.values()], thoughtBlocks: [...thoughtBlocks.values()], inputTokens, outputTokens }
   }
 
   async execute(request: AgentEngineRequest, sink: AgentEngineSink): Promise<AgentEngineResult> {

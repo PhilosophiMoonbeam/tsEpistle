@@ -88,6 +88,21 @@ describe('Ax provider factory', () => {
     expect(payload.include).toContain('reasoning.encrypted_content')
     expect(payload).not.toHaveProperty('temperature')
     expect(payload).not.toHaveProperty('top_p')
+    const continuation = provider.preserveThoughtBlock('rs_1', { data: 'encrypted-reasoning', encrypted: true })
+    await provider.service.chat({
+      chatPrompt: [
+        { role: 'assistant', content: 'Prior answer', thoughtBlocks: [continuation] },
+        { role: 'user', content: 'Continue' }
+      ],
+      model: 'gpt-test'
+    }, { stream: false })
+    const continuationPayload = JSON.parse(String(request?.init?.body)) as { input: unknown[] }
+    expect(continuationPayload.input).toContainEqual({
+      type: 'reasoning',
+      id: 'rs_1',
+      content: [],
+      encrypted_content: 'encrypted-reasoning'
+    })
   })
 
   it('fails closed for missing provider settings', async () => {

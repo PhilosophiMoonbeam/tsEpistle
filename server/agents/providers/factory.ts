@@ -15,6 +15,7 @@ import {
   type AxAIServiceOptions,
   type AxChatRequest,
   type AxChatResponse,
+  type AxChatResponseResult,
   type AxAIOpenAIChatRequest,
   type AxAIOpenAIResponsesRequest
 } from '@ax-llm/ax'
@@ -30,6 +31,39 @@ import type { AgentSecretRegistry } from './secrets.ts'
 
 const MAX_RETRY_AFTER_MS = 300_000
 const MAX_PROVIDER_ERROR_BYTES = 64 * 1_024
+const OPENAI_REASONING_STATE_PREFIX = 'wiki.openai.reasoning.v1:'
+const MAX_PROVIDER_STATE_ITEM_BYTES = 256 * 1_024
+
+type ProviderThoughtBlock = NonNullable<AxChatResponseResult['thoughtBlocks']>[number]
+
+const openAIReasoningState = (resultId: string, block: ProviderThoughtBlock): ProviderThoughtBlock => {
+  if (!/^rs_[A-Za-z0-9_-]{1,256}$/.test(resultId) || typeof block.data !== 'string' || Buffer.byteLength(block.data, 'utf8') > MAX_PROVIDER_STATE_ITEM_BYTES) {
+    throw new AgentRepositoryError('INVALID_PROVIDER_RESPONSE', 'Provider returned invalid reasoning continuation state', 502)
+  }
+  return {
+    data: `${OPENAI_REASONING_STATE_PREFIX}${JSON.stringify([resultId, block.data])}`,
+    encrypted: true
+  }
+}
+
+const restoreOpenAIReasoningItem = (item: unknown): unknown => {
+  if (typeof item !== 'object' || item === null || Reflect.get(item, 'type') !== 'reasoning') return item
+  const content = Reflect.get(item, 'content')
+  if (typeof content !== 'string' || !content.startsWith(OPENAI_REASONING_STATE_PREFIX)) return item
+  try {
+    const encoded = content.slice(OPENAI_REASONING_STATE_PREFIX.length)
+    if (Buffer.byteLength(encoded, 'utf8') > MAX_PROVIDER_STATE_ITEM_BYTES) throw new Error('too large')
+    const value: unknown = JSON.parse(encoded)
+    if (!Array.isArray(value) || value.length !== 2 || typeof value[0] !== 'string' || !/^rs_[A-Za-z0-9_-]{1,256}$/.test(value[0]) || typeof value[1] !== 'string') throw new Error('invalid')
+    return { type: 'reasoning', id: value[0], content: [], encrypted_content: value[1] }
+  } catch {
+    throw new AgentRepositoryError('AGENT_PROVIDER_STATE_CORRUPT', 'Stored provider continuation is invalid', 500)
+  }
+}
+
+const restoreOpenAIReasoningInput = (input: AxAIOpenAIResponsesRequest<string>['input']): AxAIOpenAIResponsesRequest<string>['input'] => Array.isArray(input)
+  ? input.map(restoreOpenAIReasoningItem) as AxAIOpenAIResponsesRequest<string>['input']
+  : input
 
 export class AgentProviderAttemptError extends Error {
   readonly code: string
@@ -70,6 +104,7 @@ export interface AgentProviderService {
   readonly model: string
   readonly capabilityRevision: string
   readonly pricingRevision: string
+  readonly preserveThoughtBlock: (resultId: string, block: ProviderThoughtBlock) => ProviderThoughtBlock
 }
 
 const blockedProviderAddresses = new BlockList()
@@ -278,7 +313,13 @@ export class AgentProviderFactory {
         modelInfo: [],
         supportFor: features,
         responsesReqUpdater: request => {
-          const updated = { ...request, store: false, previous_response_id: null, include: [...new Set([...(request.include ?? []), 'reasoning.encrypted_content' as const])] }
+          const updated = {
+            ...request,
+            input: restoreOpenAIReasoningInput(request.input),
+            store: false,
+            previous_response_id: null,
+            include: [...new Set([...(request.include ?? []), 'reasoning.encrypted_content' as const])]
+          }
           delete updated.temperature
           delete updated.top_p
           return updated
@@ -312,6 +353,16 @@ export class AgentProviderFactory {
     } else {
       throw new AgentRepositoryError('UNSUPPORTED_PROVIDER_TRANSPORT', 'Provider transport is not supported by this factory', 409)
     }
-    return { service, capabilities, transportKind: row.transportKind, model: row.model, capabilityRevision: row.capabilityRevision, pricingRevision: row.pricingRevision }
+    return {
+      service,
+      capabilities,
+      transportKind: row.transportKind,
+      model: row.model,
+      capabilityRevision: row.capabilityRevision,
+      pricingRevision: row.pricingRevision,
+      preserveThoughtBlock: row.transportKind === 'openai-responses' || row.transportKind === 'openresponses'
+        ? openAIReasoningState
+        : (_resultId, block) => ({ ...block })
+    }
   }
 }
