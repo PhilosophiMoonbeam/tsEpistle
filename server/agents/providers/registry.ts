@@ -2,7 +2,7 @@ import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto
 import { isIP } from 'node:net'
 import type { Knex } from 'knex'
 import { z } from 'zod'
-import type { AgentExecutionMode } from '../../../shared/agents/contracts.ts'
+import type { AgentExecutionMode, AgentProviderProfileView as AgentProviderSelectionView } from '../../../shared/agents/contracts.ts'
 import { canonicalJson } from '../../helpers/canonical-json.ts'
 import type { AgentAdmissionResolver, AgentResolvedAdmission } from '../runtime.ts'
 import { AgentRepositoryError } from '../repository.ts'
@@ -457,9 +457,21 @@ export class AgentProviderRegistry implements AgentAdmissionResolver {
     })
   }
 
-  async listVisible(ownerId: number, limit = 100): Promise<AgentProviderProfileView[]> {
+  async listVisible(ownerId: number, limit = 100): Promise<AgentProviderSelectionView[]> {
     const profileIds = await this.#knex('agentProviderProfiles').where({ status: 'enabled', conformed: true }).whereNull('deletedAt').andWhere(query => query.where({ exposureMode: 'all_agent_users' }).orWhereExists(this.#knex('agentProviderGrants').join('userGroups', 'userGroups.groupId', 'agentProviderGrants.groupId').whereRaw('"agentProviderGrants"."profileId" = "agentProviderProfiles"."id"').andWhere('userGroups.userId', ownerId).select(this.#knex.raw('1')))).orderBy('displayName').limit(Math.max(1, Math.min(100, limit))).pluck<string>('id')
-    return Promise.all(profileIds.map(id => this.get(id)))
+    const profiles = await Promise.all(profileIds.map(id => this.getAdmin(id)))
+    return profiles.map(profile => ({
+      id: profile.id,
+      name: profile.displayName,
+      transport: profile.transportKind,
+      model: profile.model,
+      destinationHost: profile.destinationHost,
+      executionModes: profile.policies.allowedModes,
+      capabilities: profile.capabilities,
+      capabilityRevision: profile.capabilityRevision,
+      policyVersion: profile.policyVersion,
+      isGlobalDefault: profile.isGlobalDefault
+    }))
   }
 
   async issueResolutionToken(ownerId: number, sessionId: string, ttlSeconds = 300): Promise<string> {

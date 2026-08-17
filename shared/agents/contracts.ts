@@ -170,7 +170,6 @@ export type AgentProviderTransport = typeof AGENT_PROVIDER_TRANSPORTS[number]
 
 export interface AgentProviderProfileView {
   readonly id: string
-  readonly versionId: string
   readonly name: string
   readonly transport: AgentProviderTransport
   readonly model: string
@@ -180,7 +179,6 @@ export interface AgentProviderProfileView {
   readonly capabilityRevision: string
   readonly policyVersion: number
   readonly isGlobalDefault: boolean
-  readonly storageDescription: string
 }
 
 export interface AgentSkillMetadataView {

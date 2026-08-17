@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { createAgentThread, deleteAgentSession } from './agents-api.ts'
+import { createAgentThread, deleteAgentSession, listAgentProfiles } from './agents-api.ts'
 import { renderSafeAgentMarkdown } from './agent-markdown.ts'
 
 describe('agents client boundary', () => {
@@ -12,6 +12,23 @@ describe('agents client boundary', () => {
     const fetcher = vi.fn(async () => new Response(null, { status: 204 })) as unknown as typeof fetch
     await deleteAgentSession(fetcher, 'csrf-token', '00000000-0000-4000-8000-000000000001')
     expect(fetcher).toHaveBeenCalledWith('/_api/agents/sessions/00000000-0000-4000-8000-000000000001', expect.objectContaining({ method: 'DELETE', credentials: 'same-origin', headers: { 'x-wiki-csrf': 'csrf-token' } }))
+  })
+
+  it('accepts the mutable provider selection contract without internal version fields', async () => {
+    const profile = {
+      id: '00000000-0000-4000-8000-000000000001',
+      name: 'OpenAI',
+      transport: 'openai-responses',
+      model: 'gpt-test',
+      destinationHost: 'api.example.test',
+      executionModes: ['agent', 'generation-only'],
+      capabilities: { streaming: true, functions: true, parallelFunctions: true, structuredOutput: 'native-json-schema', usage: 'terminal', cancellation: true, maxContextTokens: 100_000, maxOutputTokens: 4_000 },
+      capabilityRevision: 'cap-1',
+      policyVersion: 2,
+      isGlobalDefault: true
+    }
+    const fetcher = vi.fn(async () => Response.json({ profiles: [profile] })) as unknown as typeof fetch
+    await expect(listAgentProfiles(fetcher, 'csrf')).resolves.toEqual([profile])
   })
 
   it('renders Markdown with raw HTML and active URL schemes disabled', () => {
