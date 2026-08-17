@@ -1,4 +1,5 @@
 import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto'
+import { readFileSync } from 'node:fs'
 import { isIP } from 'node:net'
 import type { Knex } from 'knex'
 import { z } from 'zod'
@@ -7,6 +8,7 @@ import { canonicalJson } from '../../helpers/canonical-json.ts'
 import type { AgentAdmissionResolver, AgentResolvedAdmission } from '../runtime.ts'
 import { AgentRepositoryError } from '../repository.ts'
 
+const MAX_ENVIRONMENT_SECRET_BYTES = 64 * 1_024
 const TransportKindSchema = z.enum(['openai-responses', 'openresponses', 'openai-chat', 'legacy-completions', 'anthropic-messages'])
 const AuthModeSchema = z.enum(['bearer', 'api-key-header', 'anthropic-api-key'])
 export const AgentProviderCapabilitiesSchema = z.strictObject({
@@ -107,19 +109,28 @@ export interface AgentSecretRegistry {
   has(reference: string): boolean
 }
 
+export const environmentSecretValue = (name: string): string | null => {
+  const inlineValue = process.env[name]
+  if (inlineValue !== undefined && inlineValue.length > 0) return inlineValue
+  const filePath = process.env[`${name}_FILE`]
+  if (!filePath) return null
+  const bytes = readFileSync(filePath)
+  if (bytes.byteLength > MAX_ENVIRONMENT_SECRET_BYTES) throw new Error(`${name}_FILE exceeds the 64 KiB secret limit`)
+  const fileValue = bytes.toString('utf8').trim()
+  return fileValue.length > 0 ? fileValue : null
+}
+
 export class EnvironmentAgentSecretRegistry implements AgentSecretRegistry {
   has(reference: string): boolean {
     const match = /^env:([A-Z][A-Z0-9_]{0,127})$/.exec(reference)
     const name = match?.[1]
-    return name !== undefined && typeof process.env[name] === 'string' && process.env[name]!.length > 0
+    return name !== undefined && environmentSecretValue(name) !== null
   }
 
   get(reference: string): string | null {
     const match = /^env:([A-Z][A-Z0-9_]{0,127})$/.exec(reference)
     const name = match?.[1]
-    if (name === undefined) return null
-    const value = process.env[name]
-    return typeof value === 'string' && value.length > 0 ? value : null
+    return name === undefined ? null : environmentSecretValue(name)
   }
 }
 

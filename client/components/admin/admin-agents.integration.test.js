@@ -31,6 +31,10 @@ describe('ordinary Wiki agent administration integration', () => {
     expect(sessionSettings).toMatch(/Agent — Wiki actions available/)
     expect(sessionSettings).toMatch(/Text generation — no Wiki actions/)
     expect(sessionSettings).toMatch(/does not receive or call Wiki actions/)
+    expect(agentAdmin).toMatch(/runtime\?\.providerEnabled !== true/)
+    expect(agentAdmin).toMatch(/Provider administration is unavailable while provider inference is disabled/)
+    expect(agentAdmin).toMatch(/profileError/)
+    expect(agentAdmin).toMatch(/do not paste the API key here/)
   })
 
   test('has no isolated agent application or host routing', () => {

@@ -95,7 +95,7 @@ agents:
 
 Startup rejects provider concurrency, polling, SSE, and retention values outside their bounded ranges. `perUserConcurrency` cannot exceed `globalConcurrency`. Flags are independent kill switches; write application requires `writes.enabled`, proposals, and the exact action flag.
 
-Provider inference is intentionally unavailable until an administrator adds a secret reference and an immutable provider profile in `/admin/agents`, runs conformance, enables that profile, and then enables provider inference. Profiles store references, never secret values.
+Provider inference is intentionally unavailable until an operator enables the provider subsystem with its signing and profile-resolution keys, then an administrator adds an immutable provider profile in `/admin/agents`, runs conformance, and enables that profile. Enabling the subsystem alone offers no usable model destination: profiles remain disabled until conformance passes and an administrator enables them. Profiles store references, never secret values.
 
 ### Provider API protocols
 
@@ -119,11 +119,11 @@ Required cryptographic environment:
 
 | Variable | Required when |
 | --- | --- |
-| `AGENT_SNAPSHOT_SIGNING_SECRET` | Provider or MCP actions are enabled |
-| `AGENT_PROFILE_RESOLUTION_KEYS` | Providers are enabled |
+| `AGENT_SNAPSHOT_SIGNING_SECRET` or `AGENT_SNAPSHOT_SIGNING_SECRET_FILE` | Provider or MCP actions are enabled |
+| `AGENT_PROFILE_RESOLUTION_KEYS` or `AGENT_PROFILE_RESOLUTION_KEYS_FILE` | Providers are enabled |
 | `AGENT_MCP_REQUEST_STATE_KEYS` | MCP is enabled |
 
-Each key contains at least 32 random bytes encoded as required by the corresponding parser. Retain prior verification keys only through the maximum token lifetime. Never log these keys, provider credentials, prompts, page/skill/browser content, approval payloads, or signed state tokens.
+Each key contains at least 32 random bytes encoded as required by the corresponding parser. The `_FILE` forms read the value from a mounted secret file and take effect when the matching inline variable is absent. Provider references use `env:NAME`; Wiki reads `NAME` directly or the mounted file named by `NAME_FILE`, so `env:OPENAI_API_KEY` can resolve `OPENAI_API_KEY_FILE=/run/secrets/openai_api_key`. Retain prior verification keys only through the maximum token lifetime. Never log these keys, provider credentials, prompts, page/skill/browser content, approval payloads, or signed state tokens.
 
 ## Browser worker
 

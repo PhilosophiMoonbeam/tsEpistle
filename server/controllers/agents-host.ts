@@ -97,6 +97,9 @@ const asyncRoute = (handler: (req: Request, res: Response) => Promise<unknown>) 
     handler(req, res).catch(next)
   }
 
+const providerAdminUnavailable = (): AgentRepositoryError =>
+  new AgentRepositoryError('AGENT_PROVIDER_ADMIN_DISABLED', 'Provider administration is unavailable. Enable agents.provider.enabled, configure the provider runtime keys, and restart Wiki.', 409)
+
 const CreateSessionSchema = z.strictObject({
   retention: z.enum(['temporary', 'saved']),
   executionMode: z.enum(['agent', 'generation-only']),
@@ -502,45 +505,45 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
     return res.json({ profiles: await wiki.providerRegistry.listAll() })
   }))
   router.get('/_api/agents/admin/profiles/:profileId', asyncRoute(async (req, res) => {
-    if (!wiki.providerRegistry) return res.sendStatus(404)
+    if (!wiki.providerRegistry) throw providerAdminUnavailable()
     return res.json({ profile: await wiki.providerRegistry.get(UUIDSchema.parse(routeParameter(req, 'profileId'))) })
   }))
   router.post('/_api/agents/admin/profiles', asyncRoute(async (req, res) => {
-    if (!wiki.providerRegistry) return res.sendStatus(404)
+    if (!wiki.providerRegistry) throw providerAdminUnavailable()
     const { groupIds, ...profileInput } = CreateAgentProviderProfileSchema.parse(req.body)
     const profile = await wiki.providerRegistry.create({ ...profileInput, ...(groupIds === undefined ? {} : { groupIds }), actorId: requestSkillPrincipal(req).userId })
     return res.status(201).json({ profile })
   }))
   router.post('/_api/agents/admin/profiles/:profileId/versions', asyncRoute(async (req, res) => {
-    if (!wiki.providerRegistry) return res.sendStatus(404)
+    if (!wiki.providerRegistry) throw providerAdminUnavailable()
     const profile = await wiki.providerRegistry.revise(UUIDSchema.parse(routeParameter(req, 'profileId')), { ...AgentProviderVersionInputSchema.parse(req.body), actorId: requestSkillPrincipal(req).userId })
     return res.status(201).json({ profile })
   }))
   router.post('/_api/agents/admin/profiles/:profileId/conformance', asyncRoute(async (req, res) => {
-    if (!wiki.providerConformance) return res.sendStatus(404)
+    if (!wiki.providerConformance) throw providerAdminUnavailable()
     const input = z.strictObject({ versionId: z.uuid() }).parse(req.body)
     const report = await wiki.providerConformance.run(UUIDSchema.parse(routeParameter(req, 'profileId')), input.versionId, requestSkillPrincipal(req).userId)
     return res.status(report.status === 'passed' ? 200 : 409).json({ report })
   }))
   router.get('/_api/agents/admin/profiles/:profileId/conformance', asyncRoute(async (req, res) => {
-    if (!wiki.providerConformance) return res.sendStatus(404)
+    if (!wiki.providerConformance) throw providerAdminUnavailable()
     void UUIDSchema.parse(routeParameter(req, 'profileId'))
     const versionId = UUIDSchema.parse(req.query.versionId)
     return res.json({ reports: await wiki.providerConformance.list(versionId) })
   }))
   router.post('/_api/agents/admin/profiles/:profileId/enabled', asyncRoute(async (req, res) => {
-    if (!wiki.providerRegistry) return res.sendStatus(404)
+    if (!wiki.providerRegistry) throw providerAdminUnavailable()
     const enabled = z.strictObject({ enabled: z.boolean() }).parse(req.body).enabled
     await wiki.providerRegistry.setEnabled(UUIDSchema.parse(routeParameter(req, 'profileId')), enabled, requestSkillPrincipal(req).userId)
     return res.sendStatus(204)
   }))
   router.post('/_api/agents/admin/profiles/:profileId/default', asyncRoute(async (req, res) => {
-    if (!wiki.providerRegistry) return res.sendStatus(404)
+    if (!wiki.providerRegistry) throw providerAdminUnavailable()
     await wiki.providerRegistry.setDefault(UUIDSchema.parse(routeParameter(req, 'profileId')), requestSkillPrincipal(req).userId)
     return res.sendStatus(204)
   }))
   router.put('/_api/agents/admin/profiles/:profileId/grants', asyncRoute(async (req, res) => {
-    if (!wiki.providerRegistry) return res.sendStatus(404)
+    if (!wiki.providerRegistry) throw providerAdminUnavailable()
     const input = z.strictObject({ exposureMode: z.enum(['all_agent_users', 'groups']), groupIds: z.array(z.number().int().positive()).max(1_000) }).parse(req.body)
     await wiki.providerRegistry.setGrants(UUIDSchema.parse(routeParameter(req, 'profileId')), input.exposureMode, input.groupIds, requestSkillPrincipal(req).userId)
     return res.sendStatus(204)

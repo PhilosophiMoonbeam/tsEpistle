@@ -28,7 +28,7 @@ import apiV1Controller from './controllers/api-v1/index.ts'
 import type { ProductMetadata } from '../shared/product.ts'
 import { isExternalRestPath, isInternalRestPath } from '../shared/api-access.ts'
 
-import { AgentProviderRegistry, EnvironmentAgentSecretRegistry, type AgentProfileTokenKeys } from './agents/providers/registry.ts'
+import { AgentProviderRegistry, EnvironmentAgentSecretRegistry, environmentSecretValue, type AgentProfileTokenKeys } from './agents/providers/registry.ts'
 import { AgentProviderFactory } from './agents/providers/factory.ts'
 import { AxAgentEngine } from './agents/providers/engine.ts'
 import { AgentProductRuntime } from './agents/runtime.ts'
@@ -149,9 +149,9 @@ const decodeMcpRequestStateKeys = (encoded: string | undefined): readonly Uint8A
 }
 
 const snapshotSigningSecret = (required: boolean): Uint8Array => {
-  const encoded = process.env.AGENT_SNAPSHOT_SIGNING_SECRET
+  const encoded = environmentSecretValue('AGENT_SNAPSHOT_SIGNING_SECRET')
   const secret = encoded ? Buffer.from(encoded, 'base64') : Buffer.alloc(0)
-  if (required && secret.byteLength < 32) throw new Error('AGENT_SNAPSHOT_SIGNING_SECRET must be at least 32 base64-encoded bytes when agents or MCP actions are enabled')
+  if (required && secret.byteLength < 32) throw new Error('AGENT_SNAPSHOT_SIGNING_SECRET or AGENT_SNAPSHOT_SIGNING_SECRET_FILE must provide at least 32 base64-encoded bytes when agents or MCP actions are enabled')
   return secret
 }
 
@@ -243,8 +243,8 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
   let agentRuntime: AgentProductRuntime | undefined
   let providerConformance: AgentProviderConformanceRunner | undefined
   if (wiki.config.agents.provider.enabled) {
-    const encodedKeys = process.env.AGENT_PROFILE_RESOLUTION_KEYS
-    if (!encodedKeys) throw new Error('AGENT_PROFILE_RESOLUTION_KEYS is required when agent providers are enabled')
+    const encodedKeys = environmentSecretValue('AGENT_PROFILE_RESOLUTION_KEYS')
+    if (!encodedKeys) throw new Error('AGENT_PROFILE_RESOLUTION_KEYS or AGENT_PROFILE_RESOLUTION_KEYS_FILE is required when agent providers are enabled')
     let keys: AgentProfileTokenKeys
     try {
       keys = JSON.parse(encodedKeys) as AgentProfileTokenKeys

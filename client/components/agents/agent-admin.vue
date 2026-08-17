@@ -31,7 +31,8 @@
 
       <v-window-item value="profiles">
         <v-sheet class="pa-5" rounded="lg" border>
-          <div class="d-flex flex-wrap align-center ga-3 mb-3"><div><h2 class="text-headline-small">Provider profiles</h2><p class="text-medium-emphasis mb-0">Immutable versions remain disabled until conformance passes.</p></div><v-spacer/><v-btn color="primary" prepend-icon="mdi-plus" @click="openProfile()">Add profile</v-btn></div>
+          <div class="d-flex flex-wrap align-center ga-3 mb-3"><div><h2 class="text-headline-small">Provider profiles</h2><p class="text-medium-emphasis mb-0">Immutable versions remain disabled until conformance passes.</p></div><v-spacer/><v-btn color="primary" prepend-icon="mdi-plus" :disabled="runtime?.providerEnabled !== true" @click="openProfile()">Add profile</v-btn></div>
+          <v-alert v-if="runtime?.providerEnabled === false" type="info" variant="tonal" class="mb-4">Provider administration is unavailable while provider inference is disabled in deployment configuration. Enable <code>agents.provider.enabled</code>, configure the provider runtime keys, and restart Wiki before adding profiles.</v-alert>
           <v-table>
             <thead><tr><th>Name</th><th>API protocol</th><th>Destination</th><th>State</th><th class="text-right">Actions</th></tr></thead>
             <tbody><tr v-for="profile in profiles" :key="profile.id"><td><strong>{{ profile.displayName }}</strong><div class="text-body-small">v{{ profile.currentVersion }} · {{ profile.model }}</div></td><td>{{ agentProviderProtocolOption(profile.transportKind).title }}</td><td>{{ profile.destinationHost }}</td><td><div class="d-flex flex-wrap ga-1"><v-chip size="x-small" :color="profile.status === 'enabled' ? 'success' : undefined">{{ profile.status }}</v-chip><v-chip size="x-small" :color="profile.conformed ? 'success' : 'warning'">{{ profile.conformed ? 'conformed' : 'not conformed' }}</v-chip><v-chip v-if="profile.isGlobalDefault" size="x-small" color="primary">default</v-chip><v-chip v-if="!profile.secretConfigured" size="x-small" color="warning">secret unavailable</v-chip></div></td><td class="text-right"><v-menu><template #activator="{ props: menuProps }"><v-btn v-bind="menuProps" icon="mdi-dots-vertical" variant="text" :aria-label="`Actions for ${profile.displayName}`"/></template><v-list><v-list-item title="Create immutable version" @click="openProfile(profile)"/><v-list-item title="Run conformance" @click="conform(profile)"/><v-list-item title="Edit access grants" @click="openGrants(profile)"/><v-list-item v-if="profile.status === 'disabled'" title="Enable" @click="setProfileEnabled(profile, true)"/><v-list-item v-else title="Disable" @click="setProfileEnabled(profile, false)"/><v-list-item title="Set global default" :disabled="!profile.conformed || profile.status !== 'enabled' || profile.exposureMode !== 'all_agent_users'" @click="setDefault(profile)"/></v-list></v-menu></td></tr><tr v-if="!profiles.length"><td colspan="5" class="text-center text-medium-emphasis py-8">No provider profiles configured.</td></tr></tbody>
@@ -52,6 +53,7 @@
     <v-dialog v-model="profileDialog" max-width="60rem" scrollable>
       <v-card :title="editingProfile ? `New version of ${editingProfile.displayName}` : 'Add provider profile'">
         <v-card-text><v-form ref="profileForm">
+          <v-alert v-if="profileError" type="error" variant="tonal" density="compact" class="mb-4" closable @click:close="profileError = ''">{{ profileError }}</v-alert>
           <div class="form-grid">
             <v-text-field v-if="!editingProfile" v-model="profileDraft.displayName" label="Display name" required/>
             <div class="protocol-field">
@@ -66,7 +68,7 @@
             <v-text-field v-model="profileDraft.model" label="Model" required/>
             <v-text-field v-model="profileDraft.baseUrl" label="Base URL" hint="Public HTTPS API root; the selected endpoint path is appended" required/>
             <v-select v-if="availableAuthModes.length > 1" v-model="profileDraft.authMode" :items="availableAuthModes" label="Authentication mode"/>
-            <v-text-field v-model="profileDraft.secretReference" label="Server secret reference" hint="Reference only; secret material is never returned"/>
+            <v-text-field v-model="profileDraft.secretReference" label="Server secret reference" hint="For example, env:OPENAI_API_KEY. Configure the secret in the Wiki process; do not paste the API key here." persistent-hint/>
             <v-select v-if="!editingProfile" v-model="profileDraft.exposureMode" :items="exposureModes" label="Exposure"/>
             <v-text-field v-if="!editingProfile && profileDraft.exposureMode === 'groups'" v-model="profileDraft.groupIds" label="Group IDs" hint="Comma-separated positive IDs"/>
           </div>
@@ -136,6 +138,7 @@ const tab = ref('runtime')
 const loading = ref(false)
 const saving = ref(false)
 const error = ref('')
+const profileError = ref('')
 const runtime = ref<RuntimePolicy | null>(null)
 const profiles = ref<Profile[]>([])
 const browserTargets = ref<BrowserTarget[]>([])
@@ -198,9 +201,23 @@ const request = async <T>(path: string, init: RequestInit = {}): Promise<T> => {
 const ids = (value: string): number[] => [...new Set(value.split(',').map(part => Number(part.trim())).filter(id => Number.isSafeInteger(id) && id > 0))]
 const run = async (operation: () => Promise<void>) => { saving.value = true; error.value = ''; try { await operation() } catch (value) { error.value = value instanceof Error ? value.message : 'Agent administration request failed.' } finally { saving.value = false } }
 const load = async () => { loading.value = true; error.value = ''; try { const [runtimeResult, profileResult, browserResult] = await Promise.all([request<{ runtime: RuntimePolicy }>('/_api/agents/admin/runtime'), request<{ profiles: Profile[] }>('/_api/agents/admin/profiles'), request<{ targets: BrowserTarget[] }>('/_api/agents/admin/browser-targets')]); runtime.value = runtimeResult.runtime; profiles.value = profileResult.profiles; browserTargets.value = browserResult.targets } catch (value) { error.value = value instanceof Error ? value.message : 'Agent administration could not be loaded.' } finally { loading.value = false } }
-const openProfile = (profile?: Profile) => { editingProfile.value = profile ?? null; Object.assign(profileDraft, defaults(), profile ? { ...agentProviderProtocolDefaults(profile.transportKind), transportKind: profile.transportKind, model: profile.model, maxContextTokens: profile.capabilities.maxContextTokens, maxOutputTokens: profile.capabilities.maxOutputTokens, structuredOutput: profile.capabilities.structuredOutput, usage: profile.capabilities.usage, streaming: profile.capabilities.streaming, functions: profile.capabilities.functions, parallelFunctions: profile.capabilities.parallelFunctions, cancellation: profile.capabilities.cancellation } : {}); profileDialog.value = true }
+const openProfile = (profile?: Profile) => { profileError.value = ''; editingProfile.value = profile ?? null; Object.assign(profileDraft, defaults(), profile ? { ...agentProviderProtocolDefaults(profile.transportKind), transportKind: profile.transportKind, model: profile.model, maxContextTokens: profile.capabilities.maxContextTokens, maxOutputTokens: profile.capabilities.maxOutputTokens, structuredOutput: profile.capabilities.structuredOutput, usage: profile.capabilities.usage, streaming: profile.capabilities.streaming, functions: profile.capabilities.functions, parallelFunctions: profile.capabilities.parallelFunctions, cancellation: profile.capabilities.cancellation } : {}); profileDialog.value = true }
 const profilePayload = () => ({ transportKind: profileDraft.transportKind, model: profileDraft.model, baseUrl: profileDraft.baseUrl, authMode: profileDraft.authMode, secretReference: profileDraft.secretReference.trim() || null, adapterConfig: { timeoutMs: profileDraft.timeoutMs, maxRetries: 0, additionalHeaders: {} }, capabilities: { streaming: profileDraft.streaming, functions: profileDraft.functions, parallelFunctions: profileDraft.parallelFunctions, structuredOutput: profileDraft.structuredOutput, usage: profileDraft.usage, cancellation: profileDraft.cancellation, maxContextTokens: profileDraft.maxContextTokens, maxOutputTokens: profileDraft.maxOutputTokens }, capabilityRevision: agentProviderCapabilityRevision(profileDraft.transportKind), policies: { allowedModes: [...agentProviderProtocolExecutionModes(profileDraft.transportKind)], dailyTokens: profileDraft.dailyTokens, dailyCostMicros: profileDraft.dailyCostMicros, reservationTokens: profileDraft.reservationTokens, reservationCostMicros: profileDraft.reservationCostMicros, reservationMilliseconds: 300000, promptVersion: 1, maxAttempts: profileDraft.maxAttempts }, pricingRevision: AGENT_PROVIDER_PRICING_REVISION })
-const saveProfile = () => run(async () => { const payload = profilePayload(); if (editingProfile.value) await request(`/_api/agents/admin/profiles/${encodeURIComponent(editingProfile.value.id)}/versions`, { method: 'POST', body: JSON.stringify(payload) }); else await request('/_api/agents/admin/profiles', { method: 'POST', body: JSON.stringify({ ...payload, displayName: profileDraft.displayName, exposureMode: profileDraft.exposureMode, ...(profileDraft.exposureMode === 'groups' ? { groupIds: ids(profileDraft.groupIds) } : {}) }) }); profileDialog.value = false; await load() })
+const saveProfile = async (): Promise<void> => {
+  saving.value = true
+  profileError.value = ''
+  try {
+    const payload = profilePayload()
+    if (editingProfile.value) await request(`/_api/agents/admin/profiles/${encodeURIComponent(editingProfile.value.id)}/versions`, { method: 'POST', body: JSON.stringify(payload) })
+    else await request('/_api/agents/admin/profiles', { method: 'POST', body: JSON.stringify({ ...payload, displayName: profileDraft.displayName, exposureMode: profileDraft.exposureMode, ...(profileDraft.exposureMode === 'groups' ? { groupIds: ids(profileDraft.groupIds) } : {}) }) })
+    profileDialog.value = false
+    await load()
+  } catch (value) {
+    profileError.value = value instanceof Error ? value.message : 'Provider profile could not be saved.'
+  } finally {
+    saving.value = false
+  }
+}
 const setProfileEnabled = (profile: Profile, enabled: boolean) => run(async () => { await request(`/_api/agents/admin/profiles/${profile.id}/enabled`, { method: 'POST', body: JSON.stringify({ enabled }) }); await load() })
 const setDefault = (profile: Profile) => run(async () => { await request(`/_api/agents/admin/profiles/${profile.id}/default`, { method: 'POST', body: '{}' }); await load() })
 const conform = (profile: Profile) => run(async () => { await request(`/_api/agents/admin/profiles/${profile.id}/conformance`, { method: 'POST', body: JSON.stringify({ versionId: profile.currentVersionId }) }); await load() })

@@ -151,6 +151,19 @@ describe('agents-host skill administration', () => {
     expect(await db('agentSkills').select('createdBy').first()).toEqual({ createdBy: 7 })
   })
 
+  it('explains unavailable provider administration instead of returning an opaque 404', async () => {
+    const response = await fetch(`${baseUrl}/_api/agents/admin/profiles`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', cookie, origin: 'https://wiki.example.test', 'sec-fetch-site': 'same-origin', 'x-wiki-csrf': csrf },
+      body: '{}'
+    })
+    expect(response.status).toBe(409)
+    await expect(response.json()).resolves.toEqual({
+      error: 'AGENT_PROVIDER_ADMIN_DISABLED',
+      message: 'Provider administration is unavailable. Enable agents.provider.enabled, configure the provider runtime keys, and restart Wiki.'
+    })
+  })
+
   it('returns the ordinary administration registry view', async () => {
     const response = await fetch(`${baseUrl}/_api/agents/admin/skills`, { headers: { cookie } })
     expect(response.status).toBe(200)
