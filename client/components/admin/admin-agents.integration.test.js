@@ -34,7 +34,10 @@ describe('ordinary Wiki agent administration integration', () => {
     expect(agentAdmin).toMatch(/runtime\?\.providerEnabled !== true/)
     expect(agentAdmin).toMatch(/Provider administration is unavailable while provider inference is disabled/)
     expect(agentAdmin).toMatch(/profileError/)
-    expect(agentAdmin).toMatch(/do not paste the API key here/)
+    expect(agentAdmin).toMatch(/Secret reference \(never the API key\)/)
+    expect(agentAdmin).toMatch(/Literal API keys are rejected/)
+    expect(agentAdmin).toMatch(/Run conformance" :disabled="!profile\.secretConfigured"/)
+    expect(agentAdmin).toMatch(/Enable" :disabled="!profile\.conformed \|\| !profile\.secretConfigured"/)
   })
 
   test('has no isolated agent application or host routing', () => {

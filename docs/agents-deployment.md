@@ -123,7 +123,7 @@ Required cryptographic environment:
 | `AGENT_PROFILE_RESOLUTION_KEYS` or `AGENT_PROFILE_RESOLUTION_KEYS_FILE` | Providers are enabled |
 | `AGENT_MCP_REQUEST_STATE_KEYS` | MCP is enabled |
 
-Each key contains at least 32 random bytes encoded as required by the corresponding parser. The `_FILE` forms read the value from a mounted secret file and take effect when the matching inline variable is absent. Provider references use `env:NAME`; Wiki reads `NAME` directly or the mounted file named by `NAME_FILE`, so `env:OPENAI_API_KEY` can resolve `OPENAI_API_KEY_FILE=/run/secrets/openai_api_key`. Retain prior verification keys only through the maximum token lifetime. Never log these keys, provider credentials, prompts, page/skill/browser content, approval payloads, or signed state tokens.
+Each key contains at least 32 random bytes encoded as required by the corresponding parser. The `_FILE` forms read the value from a mounted secret file and take effect when the matching inline variable is absent. Provider references must match `env:[A-Z][A-Z0-9_]{0,127}`; Wiki reads `NAME` directly or the mounted file named by `NAME_FILE`, so `env:OPENAI_API_KEY` can resolve `OPENAI_API_KEY_FILE=/run/secrets/openai_api_key`. Literal API keys are rejected. If one is accidentally entered as a reference, remove it from retained data and rotate it before use. Retain prior verification keys only through the maximum token lifetime. Never log these keys, provider credentials, prompts, page/skill/browser content, approval payloads, or signed state tokens.
 
 ## Browser worker
 

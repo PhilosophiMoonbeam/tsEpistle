@@ -33,9 +33,38 @@
         <v-sheet class="pa-5" rounded="lg" border>
           <div class="d-flex flex-wrap align-center ga-3 mb-3"><div><h2 class="text-headline-small">Provider profiles</h2><p class="text-medium-emphasis mb-0">Immutable versions remain disabled until conformance passes.</p></div><v-spacer/><v-btn color="primary" prepend-icon="mdi-plus" :disabled="runtime?.providerEnabled !== true" @click="openProfile()">Add profile</v-btn></div>
           <v-alert v-if="runtime?.providerEnabled === false" type="info" variant="tonal" class="mb-4">Provider administration is unavailable while provider inference is disabled in deployment configuration. Enable <code>agents.provider.enabled</code>, configure the provider runtime keys, and restart Wiki before adding profiles.</v-alert>
+          <v-alert v-if="profiles.some(profile => !profile.secretConfigured)" type="warning" variant="tonal" class="mb-4">A provider secret is unavailable. Configure the named <code>env:NAME</code> reference in the Wiki process, restart Wiki, then run conformance before enabling the profile. API keys must never be pasted into a profile.</v-alert>
           <v-table>
             <thead><tr><th>Name</th><th>API protocol</th><th>Destination</th><th>State</th><th class="text-right">Actions</th></tr></thead>
-            <tbody><tr v-for="profile in profiles" :key="profile.id"><td><strong>{{ profile.displayName }}</strong><div class="text-body-small">v{{ profile.currentVersion }} · {{ profile.model }}</div></td><td>{{ agentProviderProtocolOption(profile.transportKind).title }}</td><td>{{ profile.destinationHost }}</td><td><div class="d-flex flex-wrap ga-1"><v-chip size="x-small" :color="profile.status === 'enabled' ? 'success' : undefined">{{ profile.status }}</v-chip><v-chip size="x-small" :color="profile.conformed ? 'success' : 'warning'">{{ profile.conformed ? 'conformed' : 'not conformed' }}</v-chip><v-chip v-if="profile.isGlobalDefault" size="x-small" color="primary">default</v-chip><v-chip v-if="!profile.secretConfigured" size="x-small" color="warning">secret unavailable</v-chip></div></td><td class="text-right"><v-menu><template #activator="{ props: menuProps }"><v-btn v-bind="menuProps" icon="mdi-dots-vertical" variant="text" :aria-label="`Actions for ${profile.displayName}`"/></template><v-list><v-list-item title="Create immutable version" @click="openProfile(profile)"/><v-list-item title="Run conformance" @click="conform(profile)"/><v-list-item title="Edit access grants" @click="openGrants(profile)"/><v-list-item v-if="profile.status === 'disabled'" title="Enable" @click="setProfileEnabled(profile, true)"/><v-list-item v-else title="Disable" @click="setProfileEnabled(profile, false)"/><v-list-item title="Set global default" :disabled="!profile.conformed || profile.status !== 'enabled' || profile.exposureMode !== 'all_agent_users'" @click="setDefault(profile)"/></v-list></v-menu></td></tr><tr v-if="!profiles.length"><td colspan="5" class="text-center text-medium-emphasis py-8">No provider profiles configured.</td></tr></tbody>
+            <tbody>
+              <tr v-for="profile in profiles" :key="profile.id">
+                <td><strong>{{ profile.displayName }}</strong><div class="text-body-small">v{{ profile.currentVersion }} · {{ profile.model }}</div></td>
+                <td>{{ agentProviderProtocolOption(profile.transportKind).title }}</td>
+                <td>{{ profile.destinationHost }}</td>
+                <td>
+                  <div class="d-flex flex-wrap ga-1">
+                    <v-chip size="x-small" :color="profile.status === 'enabled' ? 'success' : undefined">{{ profile.status }}</v-chip>
+                    <v-chip size="x-small" :color="profile.conformed ? 'success' : 'warning'">{{ profile.conformed ? 'conformed' : 'not conformed' }}</v-chip>
+                    <v-chip v-if="profile.isGlobalDefault" size="x-small" color="primary">default</v-chip>
+                    <v-chip v-if="!profile.secretConfigured" size="x-small" color="warning">secret unavailable</v-chip>
+                  </div>
+                </td>
+                <td class="text-right">
+                  <v-menu>
+                    <template #activator="{ props: menuProps }"><v-btn v-bind="menuProps" icon="mdi-dots-vertical" variant="text" :aria-label="`Actions for ${profile.displayName}`"/></template>
+                    <v-list>
+                      <v-list-item title="Create immutable version" @click="openProfile(profile)"/>
+                      <v-list-item title="Run conformance" :disabled="!profile.secretConfigured" @click="conform(profile)"/>
+                      <v-list-item title="Edit access grants" @click="openGrants(profile)"/>
+                      <v-list-item v-if="profile.status === 'disabled'" title="Enable" :disabled="!profile.conformed || !profile.secretConfigured" @click="setProfileEnabled(profile, true)"/>
+                      <v-list-item v-else title="Disable" @click="setProfileEnabled(profile, false)"/>
+                      <v-list-item title="Set global default" :disabled="!profile.conformed || profile.status !== 'enabled' || profile.exposureMode !== 'all_agent_users'" @click="setDefault(profile)"/>
+                    </v-list>
+                  </v-menu>
+                </td>
+              </tr>
+              <tr v-if="!profiles.length"><td colspan="5" class="text-center text-medium-emphasis py-8">No provider profiles configured.</td></tr>
+            </tbody>
           </v-table>
         </v-sheet>
       </v-window-item>
@@ -68,7 +97,7 @@
             <v-text-field v-model="profileDraft.model" label="Model" required/>
             <v-text-field v-model="profileDraft.baseUrl" label="Base URL" hint="Public HTTPS API root; the selected endpoint path is appended" required/>
             <v-select v-if="availableAuthModes.length > 1" v-model="profileDraft.authMode" :items="availableAuthModes" label="Authentication mode"/>
-            <v-text-field v-model="profileDraft.secretReference" label="Server secret reference" hint="For example, env:OPENAI_API_KEY. Configure the secret in the Wiki process; do not paste the API key here." persistent-hint/>
+            <v-text-field v-model="profileDraft.secretReference" label="Secret reference (never the API key)" placeholder="env:OPENAI_API_KEY" hint="Configure NAME or NAME_FILE in the Wiki process. Literal API keys are rejected." persistent-hint required/>
             <v-select v-if="!editingProfile" v-model="profileDraft.exposureMode" :items="exposureModes" label="Exposure"/>
             <v-text-field v-if="!editingProfile && profileDraft.exposureMode === 'groups'" v-model="profileDraft.groupIds" label="Group IDs" hint="Comma-separated positive IDs"/>
           </div>

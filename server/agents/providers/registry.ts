@@ -221,6 +221,7 @@ const normalizeBaseUrl = (value: string): string => {
 const validateHeaders = (headers: Readonly<Record<string, string>>): void => {
   for (const name of Object.keys(headers)) if (FORBIDDEN_HEADERS.has(name.toLowerCase()) || name.toLowerCase().startsWith('x-forwarded-')) throw new AgentRepositoryError('INVALID_PROVIDER_HEADERS', `Provider header ${name} is not allowed`, 400)
 }
+const EnvironmentSecretReference = /^env:[A-Z][A-Z0-9_]{0,127}$/
 
 const validateVersion = (input: AgentProviderVersionInput) => {
   const transportKind = TransportKindSchema.parse(input.transportKind)
@@ -228,7 +229,7 @@ const validateVersion = (input: AgentProviderVersionInput) => {
   const baseUrl = normalizeBaseUrl(input.baseUrl)
   const authMode = AuthModeSchema.parse(input.authMode)
   const secretReference = input.secretReference === null ? null : normalizedString(input.secretReference, 'Secret reference', 255)
-  if (secretReference === null) throw new AgentRepositoryError('INVALID_PROVIDER_SECRET', 'Provider profile requires a secret reference', 400)
+  if (secretReference === null || !EnvironmentSecretReference.test(secretReference)) throw new AgentRepositoryError('INVALID_PROVIDER_SECRET', 'Secret reference must use env:NAME and must not contain the API key', 400)
   if ((transportKind === 'openai-responses' || transportKind === 'openresponses' || transportKind === 'openai-chat') && authMode !== 'bearer') throw new AgentRepositoryError('INVALID_PROVIDER_AUTH', 'Selected provider transport requires bearer authentication', 400)
   if (transportKind === 'anthropic-messages' && authMode !== 'anthropic-api-key') throw new AgentRepositoryError('INVALID_PROVIDER_AUTH', 'Anthropic Messages requires Anthropic API key authentication', 400)
   if (transportKind === 'legacy-completions' && authMode === 'anthropic-api-key') throw new AgentRepositoryError('INVALID_PROVIDER_AUTH', 'Legacy completions do not support Anthropic authentication', 400)

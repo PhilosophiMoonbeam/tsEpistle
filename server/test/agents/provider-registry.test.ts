@@ -61,6 +61,7 @@ describe('agent provider profile registry', () => {
   it('fails closed for private endpoints, forbidden headers, incompatible modes, and group visibility', async () => {
     await expect(registry.create({ ...profileInput, baseUrl: 'https://127.0.0.1/v1', displayName: 'Private', exposureMode: 'all_agent_users', actorId: 1 })).rejects.toMatchObject({ code: 'INVALID_PROVIDER_URL' })
     await expect(registry.create({ ...profileInput, adapterConfig: { timeoutMs: 30_000, maxRetries: 0, additionalHeaders: { Authorization: 'secret' } }, displayName: 'Headers', exposureMode: 'all_agent_users', actorId: 1 })).rejects.toMatchObject({ code: 'INVALID_PROVIDER_HEADERS' })
+    await expect(registry.create({ ...profileInput, secretReference: 'sk-literal-secret', displayName: 'Literal secret', exposureMode: 'all_agent_users', actorId: 1 })).rejects.toMatchObject({ code: 'INVALID_PROVIDER_SECRET', status: 400 })
     await expect(registry.create({ ...profileInput, transportKind: 'legacy-completions', displayName: 'Legacy', exposureMode: 'all_agent_users', actorId: 1 })).rejects.toMatchObject({ code: 'INVALID_PROVIDER_CAPABILITIES' })
 
     const grouped = await registry.create({ ...profileInput, displayName: 'Grouped', exposureMode: 'groups', groupIds: [4], actorId: 1 })
