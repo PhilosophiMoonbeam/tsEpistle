@@ -1,10 +1,10 @@
 /** @vitest-environment node */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import createKnex, { type Knex } from 'knex'
-import { AgentProviderRegistry, type AgentProviderVersionInput } from '../../agents/providers/registry.ts'
+import { AgentProviderRegistry, type AgentProviderSettingsInput } from '../../agents/providers/registry.ts'
 import { DatabaseAgentSecretRegistry } from '../../agents/providers/secrets.ts'
 
-const profileInput: AgentProviderVersionInput = {
+const profileInput: AgentProviderSettingsInput = {
   transportKind: 'openai-responses',
   model: 'gpt-test',
   baseUrl: 'https://api.example.test/v1/',
@@ -29,6 +29,12 @@ const createTables = async (knex: Knex): Promise<void> => {
   await knex.schema.createTable('agentRuns', table => { table.string('id'); table.string('sessionId'); table.string('status') })
   await knex.schema.createTable('agentSessionSkills', table => { table.string('sessionId'); table.string('skillVersionId'); table.integer('ordinal') })
 }
+const currentSettingsId = async (knex: Knex, profileId: string): Promise<string> => {
+  const profile = await knex('agentProviderProfiles').where({ id: profileId }).first('currentVersionId') as { currentVersionId: string | null } | undefined
+  if (!profile?.currentVersionId) throw new Error('Current provider settings are missing')
+  return profile.currentVersionId
+}
+
 
 describe('agent provider profile registry', () => {
   let knex: Knex
@@ -40,12 +46,14 @@ describe('agent provider profile registry', () => {
   })
   afterEach(async () => knex.destroy())
 
-  it('pins a conformed immutable version and rejects stale resolution after an admin revision', async () => {
+  it('updates mutable settings in place and rejects stale resolution after an admin change', async () => {
     const created = await registry.create({ ...profileInput, displayName: 'Primary', exposureMode: 'all_agent_users', actorId: 1 })
+    const settingsId = await currentSettingsId(knex, created.id)
     expect(created).toMatchObject({ status: 'disabled', conformed: false, secretConfigured: true, destinationHost: 'api.example.test' })
     expect(created).not.toHaveProperty('secretReference')
+    expect(created).not.toHaveProperty('currentVersionId')
     await expect(registry.setEnabled(created.id, true, 1)).rejects.toMatchObject({ code: 'PROFILE_NOT_READY' })
-    await registry.setConformed(created.id, created.currentVersionId, true, 1)
+    await registry.setConformed(created.id, settingsId, true, 1)
     await registry.setEnabled(created.id, true, 1)
     await registry.setDefault(created.id, 1)
     await knex('agentSessions').insert({ id: 'session-1', ownerId: 7, version: 1, providerProfileId: null, executionMode: 'agent', deletedAt: null, updatedAt: new Date() })
@@ -53,11 +61,11 @@ describe('agent provider profile registry', () => {
 
     const token = await registry.issueResolutionToken(7, 'session-1')
     const resolved = await registry.resolve({ ownerId: 7, sessionId: 'session-1', profileResolutionToken: token })
-    expect(resolved).toMatchObject({ providerProfileVersionId: created.currentVersionId, transportKind: 'openai-responses', executionMode: 'agent', skillVersionIds: ['skill-v1'], quotaLimits: { dailyTokens: 100_000 } })
+    expect(resolved).toMatchObject({ providerProfileVersionId: settingsId, transportKind: 'openai-responses', executionMode: 'agent', skillVersionIds: ['skill-v1'], quotaLimits: { dailyTokens: 100_000 } })
 
-    const revised = await registry.revise(created.id, { ...profileInput, model: 'gpt-test-2', capabilityRevision: 'fixture-v2', actorId: 1 })
-    expect(revised).toMatchObject({ currentVersion: 2, status: 'disabled', conformed: false, model: 'gpt-test-2' })
-    expect(await knex('agentProviderProfileVersions').where({ profileId: created.id }).orderBy('version').pluck('model')).toEqual(['gpt-test', 'gpt-test-2'])
+    const updated = await registry.update(created.id, { ...profileInput, model: 'gpt-test-2', capabilityRevision: 'fixture-v2', actorId: 1 })
+    expect(updated).toMatchObject({ status: 'disabled', conformed: false, model: 'gpt-test-2' })
+    expect(await knex('agentProviderProfileVersions').where({ profileId: created.id }).select('id', 'model')).toEqual([{ id: settingsId, model: 'gpt-test-2' }])
     await expect(registry.resolve({ ownerId: 7, sessionId: 'session-1', profileResolutionToken: token })).rejects.toMatchObject({ code: 'PROFILE_RESOLUTION_CHANGED', status: 409 })
   })
   it('stores a UI-supplied credential as an encrypted managed reference in the profile transaction', async () => {
@@ -72,23 +80,25 @@ describe('agent provider profile registry', () => {
     expect(await vault.get(version.secretReference)).toBe('provider-key-from-ui')
   })
 
-  it('edits settings as an immutable version while retaining an unrevealed credential', async () => {
+  it('edits mutable settings while retaining an unrevealed credential', async () => {
     const vault = new DatabaseAgentSecretRegistry(knex, { currentKeyId: 'primary', keys: { primary: Buffer.alloc(32, 8) } })
     const managedRegistry = new AgentProviderRegistry(knex, vault, { currentKeyId: 'primary', keys: { primary: 'a-profile-resolution-secret-with-rotation-room' } })
     const created = await managedRegistry.create({ ...profileInput, secretReference: null, secretValue: 'retained-provider-key', displayName: 'Editable', exposureMode: 'all_agent_users', actorId: 1 })
-    const revised = await managedRegistry.revise(created.id, { ...profileInput, displayName: 'Renamed', model: 'gpt-revised', baseUrl: 'https://gateway.example.test/api', secretReference: null, actorId: 1 })
-    expect(revised).toMatchObject({ displayName: 'Renamed', currentVersion: 2, model: 'gpt-revised', baseUrl: 'https://gateway.example.test/api', destinationHost: 'gateway.example.test', secretConfigured: true })
-    expect(revised).not.toHaveProperty('secretReference')
-    const references = await knex('agentProviderProfileVersions').where({ profileId: created.id }).orderBy('version').pluck<string>('secretReference')
-    expect(references[1]).toBe(references[0])
-    expect(await vault.get(references[1]!)).toBe('retained-provider-key')
+    const settingsId = await currentSettingsId(knex, created.id)
+    const previousReference = (await knex('agentProviderProfileVersions').where({ id: settingsId }).first('secretReference') as { secretReference: string }).secretReference
+    const updated = await managedRegistry.update(created.id, { ...profileInput, displayName: 'Renamed', model: 'gpt-revised', baseUrl: 'https://gateway.example.test/api', secretReference: null, actorId: 1 })
+    expect(updated).toMatchObject({ displayName: 'Renamed', model: 'gpt-revised', baseUrl: 'https://gateway.example.test/api', destinationHost: 'gateway.example.test', secretConfigured: true })
+    expect(updated).not.toHaveProperty('secretReference')
+    const settings = await knex('agentProviderProfileVersions').where({ profileId: created.id }).first('id', 'secretReference') as { id: string; secretReference: string }
+    expect(settings).toEqual({ id: settingsId, secretReference: previousReference })
+    expect(await vault.get(settings.secretReference)).toBe('retained-provider-key')
   })
 
   it('soft-removes a profile, revokes resolution, deletes managed credentials, and permits name reuse', async () => {
     const vault = new DatabaseAgentSecretRegistry(knex, { currentKeyId: 'primary', keys: { primary: Buffer.alloc(32, 9) } })
     const managedRegistry = new AgentProviderRegistry(knex, vault, { currentKeyId: 'primary', keys: { primary: 'a-profile-resolution-secret-with-rotation-room' } })
     const created = await managedRegistry.create({ ...profileInput, secretReference: null, secretValue: 'removed-provider-key', displayName: 'Removable', exposureMode: 'all_agent_users', actorId: 1 })
-    await managedRegistry.setConformed(created.id, created.currentVersionId, true, 1)
+    await managedRegistry.setConformed(created.id, await currentSettingsId(knex, created.id), true, 1)
     await managedRegistry.setEnabled(created.id, true, 1)
     await managedRegistry.setDefault(created.id, 1)
     await knex('agentSessions').insert({ id: 'session-remove', ownerId: 7, version: 1, providerProfileId: null, executionMode: 'agent', deletedAt: null, updatedAt: new Date() })
@@ -113,7 +123,7 @@ describe('agent provider profile registry', () => {
     await expect(registry.create({ ...profileInput, transportKind: 'legacy-completions', displayName: 'Legacy', exposureMode: 'all_agent_users', actorId: 1 })).rejects.toMatchObject({ code: 'INVALID_PROVIDER_CAPABILITIES' })
 
     const grouped = await registry.create({ ...profileInput, displayName: 'Grouped', exposureMode: 'groups', groupIds: [4], actorId: 1 })
-    await registry.setConformed(grouped.id, grouped.currentVersionId, true, 1)
+    await registry.setConformed(grouped.id, await currentSettingsId(knex, grouped.id), true, 1)
     await registry.setEnabled(grouped.id, true, 1)
     expect(await registry.listVisible(7)).toEqual([])
     await knex('userGroups').insert({ userId: 7, groupId: 4 })

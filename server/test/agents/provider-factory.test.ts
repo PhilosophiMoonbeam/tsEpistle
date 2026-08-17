@@ -29,6 +29,8 @@ describe('guarded provider fetch', () => {
     const error = await failed('https://provider.example.test/v1/responses').catch(error => error) as AgentProviderAttemptError
     expect(error).toMatchObject({ code: 'rate_limit', status: 429, retryAfterMilliseconds: 2_000, retryable: true, message: 'Provider request failed' })
     expect(JSON.stringify(error)).not.toContain('secret provider detail')
+    const invalid = createGuardedProviderFetch('https://provider.example.test/v1', '/responses', {}, (async () => Response.json({ error: { code: 'unsupported_value', param: 'temperature', message: 'Unsupported value' } }, { status: 400 })) as typeof fetch, publicResolver as never)
+    await expect(invalid('https://provider.example.test/v1/responses')).rejects.toMatchObject({ code: 'unsupported_value', status: 400, parameter: 'temperature', message: 'Provider request failed' })
   })
 })
 
@@ -36,7 +38,7 @@ describe('Ax provider factory', () => {
   let db: Knex | undefined
   afterEach(async () => db?.destroy())
 
-  it('pins an OpenAI Responses version and forces storage-off encrypted reasoning requests', async () => {
+  it('loads OpenAI Responses settings and forces storage-off encrypted reasoning requests', async () => {
     db = createKnex({ client: 'better-sqlite3', connection: { filename: ':memory:' }, useNullAsDefault: true })
     await db.schema.createTable('agentProviderProfileVersions', table => {
       table.uuid('id').primary()
@@ -58,7 +60,7 @@ describe('Ax provider factory', () => {
       baseUrl: 'https://provider.example.test/v1',
       authMode: 'bearer',
       secretReference: 'env:TEST_PROVIDER_KEY',
-      adapterConfig: JSON.stringify({ timeoutMs: 10_000, maxRetries: 0, additionalHeaders: { 'x-tenant': 'wiki' } }),
+      adapterConfig: JSON.stringify({ timeoutMs: 10_000, maxRetries: 0, temperature: 0.42, additionalHeaders: { 'x-tenant': 'wiki' } }),
       capabilities: JSON.stringify({ streaming: true, functions: true, parallelFunctions: true, structuredOutput: 'native-json-schema', usage: 'terminal', cancellation: true, maxContextTokens: 100_000, maxOutputTokens: 4_000 }),
       capabilityRevision: 'cap-1',
       pricingRevision: 'price-1',
@@ -84,9 +86,11 @@ describe('Ax provider factory', () => {
     const payload = JSON.parse(String(request?.init?.body)) as Record<string, unknown>
     expect(payload).toMatchObject({ model: 'gpt-test', store: false, previous_response_id: null })
     expect(payload.include).toContain('reasoning.encrypted_content')
+    expect(payload).not.toHaveProperty('temperature')
+    expect(payload).not.toHaveProperty('top_p')
   })
 
-  it('fails closed for missing and unsupported immutable profile versions', async () => {
+  it('fails closed for missing provider settings', async () => {
     db = createKnex({ client: 'better-sqlite3', connection: { filename: ':memory:' }, useNullAsDefault: true })
     await db.schema.createTable('agentProviderProfileVersions', table => {
       table.uuid('id').primary(); table.string('transportKind'); table.string('model'); table.string('baseUrl'); table.string('authMode'); table.string('secretReference'); table.text('adapterConfig'); table.text('capabilities'); table.string('capabilityRevision'); table.string('pricingRevision'); table.boolean('conformed')

@@ -40,7 +40,7 @@ export const AgentProviderPoliciesSchema = z.strictObject({
   maxAttempts: z.number().int().min(1).max(10).default(3)
 })
 
-export const AgentProviderVersionInputSchema = z.strictObject({
+export const AgentProviderSettingsInputSchema = z.strictObject({
   transportKind: TransportKindSchema,
   model: z.string(),
   baseUrl: z.string(),
@@ -54,13 +54,13 @@ export const AgentProviderVersionInputSchema = z.strictObject({
   pricingRevision: z.string()
 })
 
-export const CreateAgentProviderProfileSchema = AgentProviderVersionInputSchema.extend({
+export const CreateAgentProviderProfileSchema = AgentProviderSettingsInputSchema.extend({
   displayName: z.string(),
   exposureMode: z.enum(['all_agent_users', 'groups']),
   groupIds: z.array(z.number().int().positive()).max(1_000).optional()
 }).strict()
 
-export const ReviseAgentProviderProfileSchema = AgentProviderVersionInputSchema.extend({
+export const UpdateAgentProviderProfileSchema = AgentProviderSettingsInputSchema.extend({
   displayName: z.string().optional()
 }).strict()
 
@@ -68,7 +68,7 @@ export type AgentProviderCapabilities = z.infer<typeof AgentProviderCapabilities
 export type AgentProviderPolicies = z.infer<typeof AgentProviderPoliciesSchema>
 export type AgentProviderTransportKind = z.infer<typeof TransportKindSchema>
 
-export interface AgentProviderVersionInput {
+export interface AgentProviderSettingsInput {
   readonly transportKind: AgentProviderTransportKind
   readonly model: string
   readonly baseUrl: string
@@ -82,14 +82,14 @@ export interface AgentProviderVersionInput {
   readonly pricingRevision: string
 }
 
-export interface CreateAgentProviderProfileInput extends AgentProviderVersionInput {
+export interface CreateAgentProviderProfileInput extends AgentProviderSettingsInput {
   readonly displayName: string
   readonly exposureMode: 'all_agent_users' | 'groups'
   readonly groupIds?: readonly number[]
   readonly actorId: number
 }
 
-export interface ReviseAgentProviderProfileInput extends AgentProviderVersionInput {
+export interface UpdateAgentProviderProfileInput extends AgentProviderSettingsInput {
   readonly displayName?: string | undefined
   readonly actorId: number
 }
@@ -102,8 +102,6 @@ export interface AgentProviderProfileView {
   readonly exposureMode: 'all_agent_users' | 'groups'
   readonly policyVersion: number
   readonly conformed: boolean
-  readonly currentVersion: number
-  readonly currentVersionId: string
   readonly transportKind: AgentProviderTransportKind
   readonly model: string
   readonly destinationHost: string
@@ -213,7 +211,7 @@ const validateHeaders = (headers: Readonly<Record<string, string>>): void => {
 const EnvironmentSecretReference = /^env:[A-Z][A-Z0-9_]{0,127}$/
 const ManagedSecretReference = /^managed:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
-const validateVersion = (input: AgentProviderVersionInput, allowManagedReference = false) => {
+const validateSettings = (input: AgentProviderSettingsInput, allowManagedReference = false) => {
   const transportKind = TransportKindSchema.parse(input.transportKind)
   const model = normalizedString(input.model, 'Provider model', 255)
   const baseUrl = normalizeBaseUrl(input.baseUrl)
@@ -285,7 +283,7 @@ export class AgentProviderRegistry implements AgentAdmissionResolver {
   }
 
   async create(input: CreateAgentProviderProfileInput): Promise<AgentProviderProfileView> {
-    const value = validateVersion(input)
+    const value = validateSettings(input)
     const displayName = normalizedString(input.displayName, 'Profile display name', 255)
     const exposureMode = z.enum(['all_agent_users', 'groups']).parse(input.exposureMode)
     const groupIds = [...new Set(input.groupIds ?? [])]
@@ -304,23 +302,20 @@ export class AgentProviderRegistry implements AgentAdmissionResolver {
     return this.get(profileId)
   }
 
-  async revise(profileId: string, input: ReviseAgentProviderProfileInput): Promise<AgentProviderProfileAdminView> {
+  async update(profileId: string, input: UpdateAgentProviderProfileInput): Promise<AgentProviderProfileAdminView> {
     const displayName = input.displayName === undefined ? undefined : normalizedString(input.displayName, 'Profile display name', 255)
     await this.#knex.transaction(async transaction => {
       const profile = await transaction<ProfileRow>('agentProviderProfiles').where({ id: profileId }).whereNull('deletedAt').forUpdate().first()
       const currentVersionId = profile?.currentVersionId
       if (!profile || !currentVersionId) throw new AgentRepositoryError('AGENT_RESOURCE_NOT_FOUND', 'Provider profile was not found', 404)
-      const currentVersion = await transaction<VersionRow>('agentProviderProfileVersions').where({ id: currentVersionId, profileId }).first()
-      if (!currentVersion) throw new AgentRepositoryError('PROVIDER_PROFILE_CORRUPT', 'Current provider version is missing', 500)
+      const currentSettings = await transaction<VersionRow>('agentProviderProfileVersions').where({ id: currentVersionId, profileId }).first()
+      if (!currentSettings) throw new AgentRepositoryError('PROVIDER_PROFILE_CORRUPT', 'Current provider settings are missing', 500)
       const reusingSecret = input.secretReference === null && input.secretValue === undefined
-      const value = validateVersion(reusingSecret ? { ...input, secretReference: currentVersion.secretReference } : input, reusingSecret)
-      const latest = await transaction('agentProviderProfileVersions').where({ profileId }).max('version as version').first() as { version: number | string | null }
-      const version = Number(latest.version ?? 0) + 1
-      const id = randomUUID()
+      const value = validateSettings(reusingSecret ? { ...input, secretReference: currentSettings.secretReference } : input, reusingSecret)
       const secretReference = value.secretValue === undefined ? value.secretReference : await this.#secrets.store(value.secretValue, input.actorId, transaction)
-      await transaction('agentProviderProfileVersions').insert({ id, profileId, version, transportKind: value.transportKind, model: value.model, baseUrl: value.baseUrl, authMode: value.authMode, secretReference, adapterConfig: canonicalJson(value.adapterConfig), capabilities: canonicalJson(value.capabilities), capabilityRevision: value.capabilityRevision, policies: canonicalJson(value.policies), pricingRevision: value.pricingRevision, conformed: false, createdBy: input.actorId, createdAt: new Date() })
-      await transaction('agentProviderProfiles').where({ id: profileId }).update({ ...(displayName === undefined ? {} : { displayName }), currentVersionId: id, status: 'disabled', isGlobalDefault: false, conformed: false, policyVersion: Number(profile.policyVersion) + 1, updatedBy: input.actorId, updatedAt: new Date() })
-      await transaction('agentProviderConfiguration').where({ id: 1 }).update({ defaultGeneration: transaction.raw('?? + 1', ['defaultGeneration']), updatedBy: input.actorId, updatedAt: new Date() })
+      await transaction('agentProviderProfileVersions').where({ id: currentVersionId, profileId }).update({ transportKind: value.transportKind, model: value.model, baseUrl: value.baseUrl, authMode: value.authMode, secretReference, adapterConfig: canonicalJson(value.adapterConfig), capabilities: canonicalJson(value.capabilities), capabilityRevision: value.capabilityRevision, policies: canonicalJson(value.policies), pricingRevision: value.pricingRevision, conformed: false })
+      await transaction('agentProviderProfiles').where({ id: profileId }).update({ ...(displayName === undefined ? {} : { displayName }), status: 'disabled', isGlobalDefault: false, conformed: false, policyVersion: Number(profile.policyVersion) + 1, updatedBy: input.actorId, updatedAt: new Date() })
+      if (currentSettings.secretReference && currentSettings.secretReference !== secretReference) await this.#secrets.delete(currentSettings.secretReference, transaction)
     })
     return this.getAdmin(profileId)
   }
@@ -382,8 +377,6 @@ export class AgentProviderRegistry implements AgentAdmissionResolver {
       exposureMode: z.enum(['all_agent_users', 'groups']).parse(row.exposureMode),
       policyVersion: Number(row.policyVersion),
       conformed: Boolean(row.conformed),
-      currentVersion: Number(row.version),
-      currentVersionId: row.currentVersionId,
       transportKind: TransportKindSchema.parse(row.transportKind),
       model: row.model,
       destinationHost: new URL(row.baseUrl).host,
@@ -409,8 +402,6 @@ export class AgentProviderRegistry implements AgentAdmissionResolver {
       exposureMode: profile.exposureMode,
       policyVersion: profile.policyVersion,
       conformed: profile.conformed,
-      currentVersion: profile.currentVersion,
-      currentVersionId: profile.currentVersionId,
       transportKind: profile.transportKind,
       model: profile.model,
       destinationHost: profile.destinationHost,

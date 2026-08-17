@@ -37,11 +37,12 @@ describe('ordinary Wiki agent administration integration', () => {
     expect(agentAdmin).toMatch(/v-model="profileDraft\.secretValue"[^\n]*label="API key"[^\n]*type="password"/)
     expect(agentAdmin).toMatch(/Encrypted with the server-managed provider key and never returned/)
     expect(agentAdmin).toMatch(/secretReference: null, \.\.\.\(profileDraft\.secretValue \? \{ secretValue: profileDraft\.secretValue \} : \{\}\)/)
-    expect(agentAdmin).toMatch(/Run conformance" :disabled="!profile\.secretConfigured"/)
+    expect(agentAdmin).toMatch(/'Test and enable' : 'Test connection'[^]*:disabled="!profile\.secretConfigured"/)
     expect(agentAdmin).toMatch(/Enable" :disabled="!profile\.conformed \|\| !profile\.secretConfigured"/)
-    expect(agentAdmin).toMatch(/Edit settings[^]*Creates an immutable version/)
-    expect(agentAdmin).toMatch(/Remove provider[^]*removeProfile/)
-    expect(agentAdmin).toMatch(/immutable profile and version history remain for audit integrity/)
+    expect(agentAdmin).toMatch(/Saving automatically verifies the connection/)
+    expect(agentAdmin).toMatch(/Edit settings[^]*Updates this profile/)
+    expect(agentAdmin).not.toMatch(/immutable profile|immutable version/)
+    expect(agentAdmin).toMatch(/server-managed API keys are permanently deleted/)
   })
 
   test('has no isolated agent application or host routing', () => {

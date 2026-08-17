@@ -3,17 +3,24 @@ import type { Knex } from 'knex'
 import type { AxChatResponse } from '@ax-llm/ax'
 import { canonicalJson } from '../../helpers/canonical-json.ts'
 import { AgentRepositoryError } from '../repository.ts'
-import { AgentProviderFactory } from './factory.ts'
+import { AgentProviderAttemptError, AgentProviderFactory } from './factory.ts'
 import type { AgentProviderRegistry } from './registry.ts'
 
 const MAX_SMOKE_OUTPUT = 16_000
+
+interface AgentProviderConformanceCheck {
+  readonly name: string
+  readonly passed: boolean
+  readonly detail?: string
+}
 
 export interface AgentProviderConformanceReport {
   readonly id: string
   readonly profileVersionId: string
   readonly status: 'passed' | 'failed'
-  readonly checks: readonly { readonly name: string; readonly passed: boolean }[]
+  readonly checks: readonly AgentProviderConformanceCheck[]
   readonly errorCode: string | null
+  readonly message: string | null
   readonly startedAt: string
   readonly completedAt: string
 }
@@ -28,19 +35,53 @@ interface ReportRow {
   completedAt: Date | string
 }
 
-const reportView = (row: ReportRow): AgentProviderConformanceReport => ({
-  id: row.id,
-  profileVersionId: row.profileVersionId,
-  status: row.status,
-  checks: JSON.parse(row.checks) as AgentProviderConformanceReport['checks'],
-  errorCode: row.errorCode,
-  startedAt: new Date(row.startedAt).toISOString(),
-  completedAt: new Date(row.completedAt).toISOString()
-})
+const reportView = (row: ReportRow): AgentProviderConformanceReport => {
+  const checks = JSON.parse(row.checks) as AgentProviderConformanceReport['checks']
+  return {
+    id: row.id,
+    profileVersionId: row.profileVersionId,
+    status: row.status,
+    checks,
+    errorCode: row.errorCode,
+    message: checks.find(check => !check.passed && check.detail)?.detail ?? null,
+    startedAt: new Date(row.startedAt).toISOString(),
+    completedAt: new Date(row.completedAt).toISOString()
+  }
+}
+
+const nestedError = (error: unknown): unknown => {
+  let current = error
+  for (let depth = 0; depth < 4; depth++) {
+    if (current instanceof AgentProviderAttemptError || current instanceof AgentRepositoryError) return current
+    if (typeof current !== 'object' || current === null) return current
+    const original = Reflect.get(current, 'originalError')
+    if (original === undefined || original === current) return current
+    current = original
+  }
+  return current
+}
 
 const errorCode = (error: unknown): string => {
-  if (typeof error === 'object' && error !== null && typeof Reflect.get(error, 'code') === 'string' && /^[A-Z0-9_.-]{1,128}$/i.test(String(Reflect.get(error, 'code')))) return String(Reflect.get(error, 'code'))
-  return 'PROVIDER_CONFORMANCE_FAILED'
+  const value = nestedError(error)
+  if (typeof value === 'object' && value !== null && typeof Reflect.get(value, 'code') === 'string' && /^[A-Z0-9_.-]{1,128}$/i.test(String(Reflect.get(value, 'code')))) return String(Reflect.get(value, 'code'))
+  return 'PROVIDER_CONNECTION_FAILED'
+}
+
+const failureDetail = (error: unknown): string => {
+  const value = nestedError(error)
+  if (value instanceof AgentProviderAttemptError) {
+    const suffix = value.code === `HTTP_${value.status}` ? '' : ` (${value.code})`
+    if (value.status === 400 && value.parameter) return `Provider rejected the “${value.parameter}” setting${suffix}.`
+    if (value.status === 401) return `Provider rejected the API key${suffix}.`
+    if (value.status === 403) return `Provider denied access for this API key or model${suffix}.`
+    if (value.status === 404) return `Provider endpoint or model was not found${suffix}.`
+    if (value.status === 408) return `Provider connection check timed out${suffix}.`
+    if (value.status === 429) return `Provider rate limit blocked the connection check${suffix}.`
+    if (value.status >= 500) return `Provider was unavailable during the connection check${suffix}.`
+    return `Provider connection check failed with HTTP ${value.status}${suffix}.`
+  }
+  if (value instanceof AgentRepositoryError) return value.message
+  return 'Provider connection check failed.'
 }
 
 const consume = async (response: AxChatResponse | ReadableStream<AxChatResponse>, usageMode: 'stream' | 'terminal' | 'estimated'): Promise<string> => {
@@ -101,12 +142,13 @@ export class AgentProviderConformanceRunner {
     this.#registry = registry
   }
 
-  async run(profileId: string, profileVersionId: string, actorId: number): Promise<AgentProviderConformanceReport> {
-    const current = await this.#knex('agentProviderProfiles').where({ id: profileId, currentVersionId: profileVersionId }).whereNull('deletedAt').first('id')
-    if (!current) throw new AgentRepositoryError('PROFILE_VERSION_CHANGED', 'Provider profile version changed before conformance', 409)
+  async run(profileId: string, actorId: number): Promise<AgentProviderConformanceReport> {
+    const current = await this.#knex('agentProviderProfiles').where({ id: profileId }).whereNull('deletedAt').first('currentVersionId') as { currentVersionId: string | null } | undefined
+    if (!current?.currentVersionId) throw new AgentRepositoryError('AGENT_RESOURCE_NOT_FOUND', 'Provider profile was not found', 404)
+    const profileVersionId = current.currentVersionId
     const id = randomUUID()
     const startedAt = new Date()
-    const checks: { name: string; passed: boolean }[] = []
+    const checks: AgentProviderConformanceCheck[] = []
     let status: 'passed' | 'failed' = 'failed'
     let failureCode: string | null = null
     try {
@@ -122,7 +164,7 @@ export class AgentProviderConformanceRunner {
       status = 'passed'
     } catch (error) {
       failureCode = errorCode(error)
-      checks.push({ name: 'provider-smoke', passed: false })
+      checks.push({ name: 'provider-smoke', passed: false, detail: failureDetail(error) })
     }
     const completedAt = new Date()
     await this.#knex('agentProviderConformanceReports').insert({ id, profileVersionId, status, checks: canonicalJson(checks), errorCode: failureCode, actorId, startedAt, completedAt })
@@ -132,8 +174,14 @@ export class AgentProviderConformanceRunner {
     return reportView(row)
   }
 
-  async list(profileVersionId: string, limit = 20): Promise<readonly AgentProviderConformanceReport[]> {
-    const rows = await this.#knex<ReportRow>('agentProviderConformanceReports').where({ profileVersionId }).orderBy('completedAt', 'desc').limit(Math.max(1, Math.min(100, limit)))
+  async list(profileId: string, limit = 20): Promise<readonly AgentProviderConformanceReport[]> {
+    const profile = await this.#knex('agentProviderProfiles').where({ id: profileId }).whereNull('deletedAt').first('currentVersionId') as { currentVersionId: string | null } | undefined
+    if (!profile?.currentVersionId) throw new AgentRepositoryError('AGENT_RESOURCE_NOT_FOUND', 'Provider profile was not found', 404)
+    const rows = await this.#knex<ReportRow>('agentProviderConformanceReports').where({ profileVersionId: profile.currentVersionId }).orderBy('completedAt', 'desc').limit(Math.max(1, Math.min(100, limit)))
     return rows.map(reportView)
+  }
+
+  async latest(profileId: string): Promise<AgentProviderConformanceReport | null> {
+    return (await this.list(profileId, 1))[0] ?? null
   }
 }

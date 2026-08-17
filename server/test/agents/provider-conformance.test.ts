@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import createKnex, { type Knex } from 'knex'
-import type { AgentProviderFactory } from '../../agents/providers/factory.ts'
+import { AgentProviderAttemptError, type AgentProviderFactory } from '../../agents/providers/factory.ts'
 import { AgentProviderConformanceRunner } from '../../agents/providers/conformance.ts'
 
 const service = (chat: () => Promise<unknown>, capabilityOverrides: Record<string, unknown> = {}) => ({
@@ -24,24 +24,39 @@ describe('provider conformance runner', () => {
   })
   afterEach(async () => db.destroy())
 
-  it('marks only a successful exact profile version conformed and retains bounded evidence', async () => {
+  it('marks only the current profile settings conformed and retains bounded evidence', async () => {
     const setConformed = vi.fn(async () => {})
     const factory = { create: vi.fn(async () => service(async () => ({ results: [{ index: 0, content: 'ok' }], modelUsage: { ai: 'test', model: 'model-test', tokens: { promptTokens: 1, completionTokens: 1, totalTokens: 2 } } }))) } as unknown as AgentProviderFactory
     const runner = new AgentProviderConformanceRunner(db, factory, { setConformed } as never)
-    const report = await runner.run('00000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000002', 7)
+    const report = await runner.run('00000000-0000-4000-8000-000000000001', 7)
     expect(report).toMatchObject({ status: 'passed', errorCode: null, checks: [{ name: 'profile-load', passed: true }, { name: 'pre-dispatch-cancellation', passed: true }, { name: 'buffered-response', passed: true }, { name: 'bounded-text-output', passed: true }, { name: 'declared-usage', passed: true }] })
     expect(factory.create).toHaveBeenCalledWith('00000000-0000-4000-8000-000000000002', { requireConformed: false })
     expect(setConformed).toHaveBeenCalledWith('00000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000002', true, 7)
-    await expect(runner.list('00000000-0000-4000-8000-000000000002')).resolves.toEqual([report])
+    await expect(runner.list('00000000-0000-4000-8000-000000000001')).resolves.toEqual([report])
   })
 
   it('fails closed on malformed or empty provider output', async () => {
     const setConformed = vi.fn(async () => {})
     const factory = { create: async () => service(async () => ({ results: [] })) } as unknown as AgentProviderFactory
     const runner = new AgentProviderConformanceRunner(db, factory, { setConformed } as never)
-    const report = await runner.run('00000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000002', 7)
+    const report = await runner.run('00000000-0000-4000-8000-000000000001', 7)
     expect(report).toMatchObject({ status: 'failed', errorCode: 'CONFORMANCE_EMPTY_OUTPUT' })
     expect(setConformed).toHaveBeenCalledWith(expect.any(String), expect.any(String), false, 7)
+  })
+
+  it('preserves actionable provider validation details from wrapped Ax errors', async () => {
+    const setConformed = vi.fn(async () => {})
+    const providerError = new AgentProviderAttemptError('unsupported_value', 400, null, 'temperature')
+    const wrapped = Object.assign(new Error('Network Error: Provider request failed'), { originalError: providerError })
+    const factory = { create: async () => service(async () => { throw wrapped }) } as unknown as AgentProviderFactory
+    const report = await new AgentProviderConformanceRunner(db, factory, { setConformed } as never)
+      .run('00000000-0000-4000-8000-000000000001', 7)
+    expect(report).toMatchObject({
+      status: 'failed',
+      errorCode: 'unsupported_value',
+      message: 'Provider rejected the “temperature” setting (unsupported_value).',
+      checks: expect.arrayContaining([{ name: 'provider-smoke', passed: false, detail: 'Provider rejected the “temperature” setting (unsupported_value).' }])
+    })
   })
 
   it('rejects a profile whose transport ignores pre-dispatch cancellation', async () => {
@@ -53,7 +68,7 @@ describe('provider conformance runner', () => {
       })
     } as unknown as AgentProviderFactory
     const report = await new AgentProviderConformanceRunner(db, factory, { setConformed } as never)
-      .run('00000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000002', 7)
+      .run('00000000-0000-4000-8000-000000000001', 7)
     expect(report).toMatchObject({ status: 'failed', errorCode: 'CONFORMANCE_CANCELLATION_IGNORED' })
   })
 
@@ -68,7 +83,7 @@ describe('provider conformance runner', () => {
     })
     const factory = { create: async () => service(async () => stream, { streaming: true }) } as unknown as AgentProviderFactory
     const report = await new AgentProviderConformanceRunner(db, factory, { setConformed } as never)
-      .run('00000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000002', 7)
+      .run('00000000-0000-4000-8000-000000000001', 7)
     expect(report).toMatchObject({ status: 'passed', checks: expect.arrayContaining([{ name: 'stream-response', passed: true }]) })
   })
 
@@ -79,8 +94,8 @@ describe('provider conformance runner', () => {
     const setConformed = vi.fn(async () => {})
     const factory = { create: async () => service(async () => response) } as unknown as AgentProviderFactory
     const report = await new AgentProviderConformanceRunner(db, factory, { setConformed } as never)
-      .run('00000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000002', 7)
-    expect(report).toMatchObject({ status: 'failed', errorCode: expectedCode, checks: expect.arrayContaining([{ name: 'provider-smoke', passed: false }]) })
+      .run('00000000-0000-4000-8000-000000000001', 7)
+    expect(report).toMatchObject({ status: 'failed', errorCode: expectedCode, checks: expect.arrayContaining([expect.objectContaining({ name: 'provider-smoke', passed: false })]) })
     expect(JSON.stringify(report)).not.toContain('x'.repeat(256))
   })
 })

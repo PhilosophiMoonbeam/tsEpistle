@@ -17,7 +17,7 @@ import { requestAgentSessionDeletion } from '../agents/maintenance.ts'
 import type { AgentOperationalLimits } from '../agents/config.ts'
 import {
   CreateAgentProviderProfileSchema,
-  ReviseAgentProviderProfileSchema,
+  UpdateAgentProviderProfileSchema,
   type AgentProviderRegistry
 } from '../agents/providers/registry.ts'
 import type { AgentProviderConformanceRunner } from '../agents/providers/conformance.ts'
@@ -61,8 +61,8 @@ interface AgentHostWiki {
     readonly knex: Knex
   }
   readonly agentRuntime?: Pick<AgentProductRuntime, 'submit'>
-  readonly providerRegistry?: Pick<AgentProviderRegistry, 'create' | 'getAdmin' | 'issueResolutionToken' | 'listAll' | 'listVisible' | 'remove' | 'revise' | 'setDefault' | 'setEnabled' | 'setGrants' | 'setSessionProfile'>
-  readonly providerConformance?: Pick<AgentProviderConformanceRunner, 'list' | 'run'>
+  readonly providerRegistry?: Pick<AgentProviderRegistry, 'create' | 'getAdmin' | 'issueResolutionToken' | 'listAll' | 'listVisible' | 'remove' | 'setDefault' | 'setEnabled' | 'setGrants' | 'setSessionProfile' | 'update'>
+  readonly providerConformance?: Pick<AgentProviderConformanceRunner, 'latest' | 'list' | 'run'>
   readonly agentLimits?: AgentOperationalLimits
 }
 
@@ -502,39 +502,54 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
   }))
   router.get('/_api/agents/admin/profiles', asyncRoute(async (_req, res) => {
     if (!wiki.providerRegistry) return res.json({ profiles: [] })
-    return res.json({ profiles: await wiki.providerRegistry.listAll() })
+    const profiles = await wiki.providerRegistry.listAll()
+    return res.json({
+      profiles: await Promise.all(profiles.map(async profile => ({
+        ...profile,
+        connectionCheck: wiki.providerConformance ? await wiki.providerConformance.latest(profile.id) : null
+      })))
+    })
   }))
   router.get('/_api/agents/admin/profiles/:profileId', asyncRoute(async (req, res) => {
     if (!wiki.providerRegistry) throw providerAdminUnavailable()
     return res.json({ profile: await wiki.providerRegistry.getAdmin(UUIDSchema.parse(routeParameter(req, 'profileId'))) })
   }))
   router.post('/_api/agents/admin/profiles', asyncRoute(async (req, res) => {
-    if (!wiki.providerRegistry) throw providerAdminUnavailable()
+    if (!wiki.providerRegistry || !wiki.providerConformance) throw providerAdminUnavailable()
+    const actorId = requestSkillPrincipal(req).userId
     const { groupIds, ...profileInput } = CreateAgentProviderProfileSchema.parse(req.body)
-    const profile = await wiki.providerRegistry.create({ ...profileInput, ...(groupIds === undefined ? {} : { groupIds }), actorId: requestSkillPrincipal(req).userId })
-    return res.status(201).json({ profile })
+    const created = await wiki.providerRegistry.create({ ...profileInput, ...(groupIds === undefined ? {} : { groupIds }), actorId })
+    const connectionCheck = await wiki.providerConformance.run(created.id, actorId)
+    if (connectionCheck.status === 'passed') await wiki.providerRegistry.setEnabled(created.id, true, actorId)
+    return res.status(201).json({ profile: await wiki.providerRegistry.getAdmin(created.id), connectionCheck })
   }))
-  router.post('/_api/agents/admin/profiles/:profileId/versions', asyncRoute(async (req, res) => {
-    if (!wiki.providerRegistry) throw providerAdminUnavailable()
-    const profile = await wiki.providerRegistry.revise(UUIDSchema.parse(routeParameter(req, 'profileId')), { ...ReviseAgentProviderProfileSchema.parse(req.body), actorId: requestSkillPrincipal(req).userId })
-    return res.status(201).json({ profile })
+  router.put('/_api/agents/admin/profiles/:profileId', asyncRoute(async (req, res) => {
+    if (!wiki.providerRegistry || !wiki.providerConformance) throw providerAdminUnavailable()
+    const profileId = UUIDSchema.parse(routeParameter(req, 'profileId'))
+    const actorId = requestSkillPrincipal(req).userId
+    const current = await wiki.providerRegistry.getAdmin(profileId)
+    const profile = await wiki.providerRegistry.update(profileId, { ...UpdateAgentProviderProfileSchema.parse(req.body), actorId })
+    const connectionCheck = await wiki.providerConformance.run(profile.id, actorId)
+    if (connectionCheck.status === 'passed' && (current.status === 'enabled' || !current.conformed)) await wiki.providerRegistry.setEnabled(profile.id, true, actorId)
+    return res.json({ profile: await wiki.providerRegistry.getAdmin(profile.id), connectionCheck })
   }))
   router.delete('/_api/agents/admin/profiles/:profileId', asyncRoute(async (req, res) => {
     if (!wiki.providerRegistry) throw providerAdminUnavailable()
     await wiki.providerRegistry.remove(UUIDSchema.parse(routeParameter(req, 'profileId')), requestSkillPrincipal(req).userId)
     return res.sendStatus(204)
   }))
-  router.post('/_api/agents/admin/profiles/:profileId/conformance', asyncRoute(async (req, res) => {
-    if (!wiki.providerConformance) throw providerAdminUnavailable()
-    const input = z.strictObject({ versionId: z.uuid() }).parse(req.body)
-    const report = await wiki.providerConformance.run(UUIDSchema.parse(routeParameter(req, 'profileId')), input.versionId, requestSkillPrincipal(req).userId)
-    return res.status(report.status === 'passed' ? 200 : 409).json({ report })
+  router.post('/_api/agents/admin/profiles/:profileId/connection-check', asyncRoute(async (req, res) => {
+    if (!wiki.providerConformance || !wiki.providerRegistry) throw providerAdminUnavailable()
+    const profileId = UUIDSchema.parse(routeParameter(req, 'profileId'))
+    const actorId = requestSkillPrincipal(req).userId
+    const input = z.strictObject({ enableOnSuccess: z.boolean().default(false) }).parse(req.body)
+    const connectionCheck = await wiki.providerConformance.run(profileId, actorId)
+    if (connectionCheck.status === 'passed' && input.enableOnSuccess) await wiki.providerRegistry.setEnabled(profileId, true, actorId)
+    return res.json({ profile: await wiki.providerRegistry.getAdmin(profileId), connectionCheck })
   }))
-  router.get('/_api/agents/admin/profiles/:profileId/conformance', asyncRoute(async (req, res) => {
+  router.get('/_api/agents/admin/profiles/:profileId/connection-checks', asyncRoute(async (req, res) => {
     if (!wiki.providerConformance) throw providerAdminUnavailable()
-    void UUIDSchema.parse(routeParameter(req, 'profileId'))
-    const versionId = UUIDSchema.parse(req.query.versionId)
-    return res.json({ reports: await wiki.providerConformance.list(versionId) })
+    return res.json({ connectionChecks: await wiki.providerConformance.list(UUIDSchema.parse(routeParameter(req, 'profileId'))) })
   }))
   router.post('/_api/agents/admin/profiles/:profileId/enabled', asyncRoute(async (req, res) => {
     if (!wiki.providerRegistry) throw providerAdminUnavailable()

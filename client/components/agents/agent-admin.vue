@@ -31,30 +31,31 @@
 
       <v-window-item value="profiles">
         <v-sheet class="pa-5" rounded="lg" border>
-          <div class="d-flex flex-wrap align-center ga-3 mb-3"><div><h2 class="text-headline-small">Provider profiles</h2><p class="text-medium-emphasis mb-0">Editing creates an immutable version; prior versions remain in the audit history.</p></div><v-spacer/><v-btn color="primary" prepend-icon="mdi-plus" :disabled="runtime?.providerEnabled !== true" @click="openProfile()">Add profile</v-btn></div>
+          <div class="d-flex flex-wrap align-center ga-3 mb-3"><div><h2 class="text-headline-small">Provider profiles</h2><p class="text-medium-emphasis mb-0">Provider settings are mutable. Saving automatically verifies the connection.</p></div><v-spacer/><v-btn color="primary" prepend-icon="mdi-plus" :disabled="runtime?.providerEnabled !== true" @click="openProfile()">Add profile</v-btn></div>
           <v-alert v-if="runtime?.providerEnabled === false" type="info" variant="tonal" class="mb-4">Provider administration is unavailable while provider inference is disabled in deployment configuration. Enable <code>agents.provider.enabled</code>, configure the provider runtime keys, and restart Wiki before adding profiles.</v-alert>
-          <v-alert v-if="profiles.some(profile => !profile.secretConfigured)" type="warning" variant="tonal" class="mb-4">A provider credential is unavailable. Create an immutable version and enter its API key before running conformance and enabling the profile.</v-alert>
+          <v-alert v-if="profiles.some(profile => !profile.secretConfigured)" type="warning" variant="tonal" class="mb-4">A provider credential is unavailable. Edit the profile and enter its API key to verify and enable it.</v-alert>
           <v-table>
             <thead><tr><th>Name</th><th>API protocol</th><th>Destination</th><th>State</th><th class="text-right">Actions</th></tr></thead>
             <tbody>
               <tr v-for="profile in profiles" :key="profile.id">
-                <td><strong>{{ profile.displayName }}</strong><div class="text-body-small">v{{ profile.currentVersion }} · {{ profile.model }}</div></td>
+                <td><strong>{{ profile.displayName }}</strong><div class="text-body-small">{{ profile.model }}</div></td>
                 <td>{{ agentProviderProtocolOption(profile.transportKind).title }}</td>
                 <td>{{ profile.destinationHost }}</td>
                 <td>
                   <div class="d-flex flex-wrap ga-1">
                     <v-chip size="x-small" :color="profile.status === 'enabled' ? 'success' : undefined">{{ profile.status }}</v-chip>
-                    <v-chip size="x-small" :color="profile.conformed ? 'success' : 'warning'">{{ profile.conformed ? 'conformed' : 'not conformed' }}</v-chip>
+                    <v-chip size="x-small" :color="profile.conformed ? 'success' : 'warning'">{{ profile.conformed ? 'connection verified' : profile.connectionCheck?.status === 'failed' ? 'connection failed' : 'connection not checked' }}</v-chip>
                     <v-chip v-if="profile.isGlobalDefault" size="x-small" color="primary">default</v-chip>
                     <v-chip v-if="!profile.secretConfigured" size="x-small" color="warning">secret unavailable</v-chip>
+                    <p v-if="!profile.conformed && profile.connectionCheck?.message" class="text-body-small text-error mt-1 mb-0">{{ profile.connectionCheck.message }}</p>
                   </div>
                 </td>
                 <td class="text-right">
                   <v-menu>
                     <template #activator="{ props: menuProps }"><v-btn v-bind="menuProps" icon="mdi-dots-vertical" variant="text" :aria-label="`Actions for ${profile.displayName}`"/></template>
                     <v-list>
-                      <v-list-item title="Edit settings" subtitle="Creates an immutable version" @click="openProfile(profile)"/>
-                      <v-list-item title="Run conformance" :disabled="!profile.secretConfigured" @click="conform(profile)"/>
+                      <v-list-item title="Edit settings" subtitle="Updates this profile" @click="openProfile(profile)"/>
+                      <v-list-item :title="profile.status === 'disabled' ? 'Test and enable' : 'Test connection'" :disabled="!profile.secretConfigured" @click="testConnection(profile)"/>
                       <v-list-item title="Edit access grants" @click="openGrants(profile)"/>
                       <v-list-item v-if="profile.status === 'disabled'" title="Enable" :disabled="!profile.conformed || !profile.secretConfigured" @click="setProfileEnabled(profile, true)"/>
                       <v-list-item v-else title="Disable" @click="setProfileEnabled(profile, false)"/>
@@ -105,7 +106,7 @@
           </div>
           <v-sheet class="pa-4 mt-2" rounded="lg" border>
             <h3 class="text-title-medium">Protocol-derived behavior</h3>
-            <p class="text-body-small text-medium-emphasis mb-3">Wiki selects conservative behavior from the API protocol. The immutable profile must still pass conformance before it can be enabled.</p>
+            <p class="text-body-small text-medium-emphasis mb-3">Wiki verifies the provider connection automatically after every save. A new profile is enabled only after that check succeeds.</p>
             <dl class="protocol-summary">
               <div v-for="row in protocolBehaviorRows" :key="row.label">
                 <dt>{{ row.label }}</dt>
@@ -127,12 +128,12 @@
                   <v-text-field v-model.number="profileDraft.timeoutMs" type="number" label="Request timeout (ms)"/>
                   <v-text-field v-model.number="profileDraft.maxAttempts" type="number" label="Maximum attempts"/>
                 </div>
-                <v-alert type="info" variant="tonal" density="compact">Cost values are reservation ceilings. Provider billing is not calculated in this release, so immutable profiles record the automatic pricing revision <code>unpriced-v1</code>.</v-alert>
+                <v-alert type="info" variant="tonal" density="compact">Cost values are reservation ceilings. Provider billing is not calculated in this release, so profiles use the automatic pricing revision <code>unpriced-v1</code>.</v-alert>
               </v-expansion-panel-text>
             </v-expansion-panel>
           </v-expansion-panels>
         </v-form></v-card-text>
-        <v-card-actions><v-spacer/><v-btn @click="profileDialog = false">Cancel</v-btn><v-btn color="primary" :loading="saving" @click="saveProfile">Save immutable version</v-btn></v-card-actions>
+        <v-card-actions><v-spacer/><v-btn @click="profileDialog = false">Cancel</v-btn><v-btn color="primary" :loading="saving" @click="saveProfile">Save profile</v-btn></v-card-actions>
       </v-card>
     </v-dialog>
 
@@ -140,7 +141,7 @@
       <v-card title="Remove provider profile?">
         <v-card-text>
           <p><strong>{{ removingProfile?.displayName }}</strong> will no longer be available to sessions or new runs.</p>
-          <p class="mb-0">Its immutable profile and version history remain for audit integrity. Server-managed API keys for its versions are permanently deleted.</p>
+          <p class="mb-0">The configuration is removed from use and its server-managed API keys are permanently deleted. Audit records are retained.</p>
         </v-card-text>
         <v-card-actions><v-spacer/><v-btn @click="removingProfile = null">Cancel</v-btn><v-btn color="error" :loading="saving" @click="removeProfile">Remove provider</v-btn></v-card-actions>
       </v-card>
@@ -169,7 +170,8 @@ import {
 import SkillAdmin from './skill-admin.vue'
 
 interface RuntimePolicy { enabled: boolean; providerEnabled: boolean; skillsEnabled: boolean; browserEnabled: boolean; proposalsEnabled: boolean; writes: { enabled: boolean; create: boolean; patch: boolean; move: boolean; restore: boolean; delete: boolean }; mcpEnabled: boolean; quotas: { globalConcurrency: number; perUserConcurrency: number; pollingMilliseconds: number; maximumSseConnectionsPerUser: number }; retention: { temporarySessionHours: number; mcpContentDays: number; auditDays: number; maintenanceBatchSize: number } }
-interface Profile { id: string; displayName: string; status: 'enabled' | 'disabled'; isGlobalDefault: boolean; exposureMode: 'all_agent_users' | 'groups'; conformed: boolean; currentVersion: number; currentVersionId: string; transportKind: AgentProviderTransport; model: string; baseUrl: string; destinationHost: string; authMode: AgentProviderAuthMode; secretConfigured: boolean; adapterConfig: { timeoutMs: number; maxRetries: number; additionalHeaders: Record<string, string> }; capabilities: { streaming: boolean; functions: boolean; parallelFunctions: boolean; structuredOutput: AgentProviderStructuredOutput; usage: AgentProviderUsageMode; cancellation: boolean; maxContextTokens: number; maxOutputTokens: number }; policies: { allowedModes: string[]; dailyTokens: number; dailyCostMicros: number; reservationTokens: number; reservationCostMicros: number; reservationMilliseconds: number; promptVersion: number; maxAttempts: number }; capabilityRevision: string; pricingRevision: string }
+interface ConnectionCheck { status: 'passed' | 'failed'; errorCode: string | null; message: string | null; completedAt: string }
+interface Profile { id: string; displayName: string; status: 'enabled' | 'disabled'; isGlobalDefault: boolean; exposureMode: 'all_agent_users' | 'groups'; conformed: boolean; connectionCheck: ConnectionCheck | null; transportKind: AgentProviderTransport; model: string; baseUrl: string; destinationHost: string; authMode: AgentProviderAuthMode; secretConfigured: boolean; adapterConfig: { timeoutMs: number; maxRetries: number; additionalHeaders: Record<string, string> }; capabilities: { streaming: boolean; functions: boolean; parallelFunctions: boolean; structuredOutput: AgentProviderStructuredOutput; usage: AgentProviderUsageMode; cancellation: boolean; maxContextTokens: number; maxOutputTokens: number }; policies: { allowedModes: string[]; dailyTokens: number; dailyCostMicros: number; reservationTokens: number; reservationCostMicros: number; reservationMilliseconds: number; promptVersion: number; maxAttempts: number } }
 interface BrowserTarget { id: string; canonicalUrl: string; enabled: boolean; policySha256: string }
 interface ProfileDraft { displayName: string; transportKind: AgentProviderTransport; model: string; baseUrl: string; authMode: AgentProviderAuthMode; secretValue: string; exposureMode: 'all_agent_users' | 'groups'; groupIds: string; maxContextTokens: number; maxOutputTokens: number; dailyTokens: number; dailyCostMicros: number; reservationTokens: number; reservationCostMicros: number; reservationMilliseconds: number; timeoutMs: number; maxRetries: number; maxAttempts: number; promptVersion: number; additionalHeaders: Record<string, string>; structuredOutput: AgentProviderStructuredOutput; usage: AgentProviderUsageMode; streaming: boolean; functions: boolean; parallelFunctions: boolean; cancellation: boolean }
 
@@ -250,10 +252,12 @@ const saveProfile = async (): Promise<void> => {
   profileError.value = ''
   try {
     const payload = profilePayload()
-    if (editingProfile.value) await request(`/_api/agents/admin/profiles/${encodeURIComponent(editingProfile.value.id)}/versions`, { method: 'POST', body: JSON.stringify({ ...payload, displayName: profileDraft.displayName }) })
-    else await request('/_api/agents/admin/profiles', { method: 'POST', body: JSON.stringify({ ...payload, displayName: profileDraft.displayName, exposureMode: profileDraft.exposureMode, ...(profileDraft.exposureMode === 'groups' ? { groupIds: ids(profileDraft.groupIds) } : {}) }) })
+    const result = editingProfile.value
+      ? await request<{ profile: Profile; connectionCheck: ConnectionCheck }>(`/_api/agents/admin/profiles/${encodeURIComponent(editingProfile.value.id)}`, { method: 'PUT', body: JSON.stringify({ ...payload, displayName: profileDraft.displayName }) })
+      : await request<{ profile: Profile; connectionCheck: ConnectionCheck }>('/_api/agents/admin/profiles', { method: 'POST', body: JSON.stringify({ ...payload, displayName: profileDraft.displayName, exposureMode: profileDraft.exposureMode, ...(profileDraft.exposureMode === 'groups' ? { groupIds: ids(profileDraft.groupIds) } : {}) }) })
     profileDialog.value = false
     await load()
+    if (result.connectionCheck.status === 'failed') error.value = `Profile saved, but its connection check failed: ${result.connectionCheck.message ?? result.connectionCheck.errorCode ?? 'Unknown provider error'}`
   } catch (value) {
     profileError.value = value instanceof Error ? value.message : 'Provider profile could not be saved.'
   } finally {
@@ -264,7 +268,11 @@ const confirmRemove = (profile: Profile) => { removingProfile.value = profile }
 const removeProfile = () => run(async () => { if (!removingProfile.value) return; await request(`/_api/agents/admin/profiles/${encodeURIComponent(removingProfile.value.id)}`, { method: 'DELETE' }); removingProfile.value = null; await load() })
 const setProfileEnabled = (profile: Profile, enabled: boolean) => run(async () => { await request(`/_api/agents/admin/profiles/${profile.id}/enabled`, { method: 'POST', body: JSON.stringify({ enabled }) }); await load() })
 const setDefault = (profile: Profile) => run(async () => { await request(`/_api/agents/admin/profiles/${profile.id}/default`, { method: 'POST', body: '{}' }); await load() })
-const conform = (profile: Profile) => run(async () => { await request(`/_api/agents/admin/profiles/${profile.id}/conformance`, { method: 'POST', body: JSON.stringify({ versionId: profile.currentVersionId }) }); await load() })
+const testConnection = (profile: Profile) => run(async () => {
+  const result = await request<{ profile: Profile; connectionCheck: ConnectionCheck }>(`/_api/agents/admin/profiles/${profile.id}/connection-check`, { method: 'POST', body: JSON.stringify({ enableOnSuccess: profile.status === 'disabled' }) })
+  await load()
+  if (result.connectionCheck.status === 'failed') throw new Error(result.connectionCheck.message ?? result.connectionCheck.errorCode ?? 'Provider connection check failed.')
+})
 const openGrants = (profile: Profile) => { grantProfile.value = profile; grantDraft.exposureMode = profile.exposureMode; grantDraft.groupIds = ''; grantsDialog.value = true }
 const saveGrants = () => run(async () => { if (!grantProfile.value) return; await request(`/_api/agents/admin/profiles/${grantProfile.value.id}/grants`, { method: 'PUT', body: JSON.stringify({ exposureMode: grantDraft.exposureMode, groupIds: grantDraft.exposureMode === 'groups' ? ids(grantDraft.groupIds) : [] }) }); grantsDialog.value = false; await load() })
 const createBrowserTarget = () => run(async () => { await request('/_api/agents/admin/browser-targets', { method: 'POST', body: JSON.stringify({ canonicalUrl: browserUrl.value, enabled: browserEnabled.value }) }); browserDialog.value = false; browserUrl.value = ''; browserEnabled.value = false; await load() })

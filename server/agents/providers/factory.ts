@@ -36,13 +36,15 @@ export class AgentProviderAttemptError extends Error {
   readonly status: number
   readonly retryAfterMilliseconds: number | null
   readonly retryable: boolean
-  constructor (code: string, status: number, retryAfterMilliseconds: number | null) {
+  readonly parameter: string | null
+  constructor (code: string, status: number, retryAfterMilliseconds: number | null, parameter: string | null = null) {
     super('Provider request failed')
     this.name = 'AgentProviderAttemptError'
     this.code = code
     this.status = status
     this.retryAfterMilliseconds = retryAfterMilliseconds
     this.retryable = status === 408 || status === 409 || status === 429 || status >= 500
+    this.parameter = parameter
   }
 }
 
@@ -99,20 +101,25 @@ const retryAfter = (value: string | null, now = Date.now()): number | null => {
   return Math.min(MAX_RETRY_AFTER_MS, Math.ceil(milliseconds))
 }
 
-const providerCode = async (response: Response): Promise<string> => {
+const providerFailure = async (response: Response): Promise<{ code: string; parameter: string | null }> => {
+  const fallback = { code: `HTTP_${response.status}`, parameter: null }
   const length = Number(response.headers.get('content-length') ?? 0)
-  if (length > MAX_PROVIDER_ERROR_BYTES) return `HTTP_${response.status}`
+  if (length > MAX_PROVIDER_ERROR_BYTES) return fallback
   try {
     const bytes = new Uint8Array(await response.clone().arrayBuffer())
-    if (bytes.byteLength > MAX_PROVIDER_ERROR_BYTES) return `HTTP_${response.status}`
+    if (bytes.byteLength > MAX_PROVIDER_ERROR_BYTES) return fallback
     const value: unknown = JSON.parse(new TextDecoder().decode(bytes))
-    if (typeof value === 'object' && value !== null) {
-      const error = Reflect.get(value, 'error')
-      const code = typeof error === 'object' && error !== null ? Reflect.get(error, 'code') : Reflect.get(value, 'code')
-      if (typeof code === 'string' && /^[A-Za-z0-9_.-]{1,128}$/.test(code)) return code
-    }
-  } catch { /* response details are deliberately discarded */ }
-  return `HTTP_${response.status}`
+    if (typeof value !== 'object' || value === null) return fallback
+    const error = Reflect.get(value, 'error')
+    const detail = typeof error === 'object' && error !== null ? error : value
+    const rawCode = Reflect.get(detail, 'code')
+    const rawParameter = Reflect.get(detail, 'param')
+    const code = typeof rawCode === 'string' && /^[A-Za-z0-9_.-]{1,128}$/.test(rawCode) ? rawCode : fallback.code
+    const parameter = typeof rawParameter === 'string' && /^[A-Za-z0-9_.-]{1,128}$/.test(rawParameter) ? rawParameter : null
+    return { code, parameter }
+  } catch {
+    return fallback
+  }
 }
 const providerDispatchers = new WeakMap<typeof lookup, Agent>()
 const pinnedProviderDispatcher = (resolve: typeof lookup): Agent => {
@@ -155,7 +162,10 @@ export const createGuardedProviderFetch = (baseUrl: string, endpoint: '/response
     for (const [name, value] of Object.entries(additionalHeaders)) headers.set(name, value)
     const response = await implementation(url, { ...init, headers, redirect: 'manual', credentials: 'omit', dispatcher } as RequestInit)
     if (response.status >= 300 && response.status < 400) throw new AgentProviderAttemptError('PROVIDER_REDIRECT_DENIED', response.status, null)
-    if (!response.ok) throw new AgentProviderAttemptError(await providerCode(response), response.status, retryAfter(response.headers.get('retry-after')))
+    if (!response.ok) {
+      const failure = await providerFailure(response)
+      throw new AgentProviderAttemptError(failure.code, response.status, retryAfter(response.headers.get('retry-after')), failure.parameter)
+    }
     return response
   }
 }
@@ -258,8 +268,7 @@ export class AgentProviderFactory {
         ...axAIOpenAIResponsesDefaultConfig(),
         model: row.model,
         store: false,
-        ...(adapterConfig.reasoningEffort === undefined ? {} : { reasoningEffort: adapterConfig.reasoningEffort }),
-        ...(adapterConfig.temperature === undefined ? {} : { temperature: adapterConfig.temperature })
+        ...(adapterConfig.reasoningEffort === undefined ? {} : { reasoningEffort: adapterConfig.reasoningEffort })
       }
       service = new AxAIOpenAIResponsesBase<string, AxAIOpenAIEmbedModel, string, AxAIOpenAIResponsesRequest<string>>({
         apiKey: secret,
@@ -268,7 +277,12 @@ export class AgentProviderFactory {
         options,
         modelInfo: [],
         supportFor: features,
-        responsesReqUpdater: request => ({ ...request, store: false, previous_response_id: null, include: [...new Set([...(request.include ?? []), 'reasoning.encrypted_content' as const])] })
+        responsesReqUpdater: request => {
+          const updated = { ...request, store: false, previous_response_id: null, include: [...new Set([...(request.include ?? []), 'reasoning.encrypted_content' as const])] }
+          delete updated.temperature
+          delete updated.top_p
+          return updated
+        }
       })
     } else if (row.transportKind === 'openai-chat') {
       const config = {

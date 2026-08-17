@@ -95,7 +95,7 @@ agents:
 
 Startup rejects provider concurrency, polling, SSE, and retention values outside their bounded ranges. `perUserConcurrency` cannot exceed `globalConcurrency`. Flags are independent kill switches; write application requires `writes.enabled`, proposals, and the exact action flag.
 
-Provider inference is intentionally unavailable until an operator enables the provider subsystem with its signing, profile-resolution, and provider-credential encryption keyrings, then an administrator adds an immutable provider profile in `/admin/agents`, runs conformance, and enables that profile. Enabling the subsystem alone offers no usable model destination: profiles remain disabled until conformance passes and an administrator enables them. The admin API accepts a credential only on profile-version creation, encrypts it before the transaction commits, and never returns it.
+Provider inference is intentionally unavailable until an operator enables the provider subsystem with its signing, profile-resolution, and provider-credential encryption keyrings, then an administrator adds a provider profile in `/admin/agents`. Wiki runs a connection check automatically after every save. A new profile is enabled when that check succeeds; a failed check leaves it disabled and displays the provider's bounded, sanitized error. Enabling the subsystem alone offers no usable model destination. The admin API encrypts credentials inside the profile transaction and never returns them.
 
 ### Provider API protocols
 
@@ -109,13 +109,13 @@ A provider profile describes one approved destination, encrypted credential, mod
 | Legacy text Completions | `POST /v1/completions` | Prompt-in/text-out compatibility only; buffered generation-only runs with no tools |
 | Anthropic Messages API | `POST /v1/messages` | Native Anthropic message and tool-block protocol |
 
-Chat Completions and text Completions are not aliases. Chat Completions accepts structured message history and can return tool calls; legacy text Completions accepts one flattened prompt and returns text. Likewise, OpenAI Responses and OpenResponses share an item-oriented shape but represent different compatibility promises. Administrators must choose the server's documented protocol and pass conformance rather than relying on endpoint probing.
+Chat Completions and text Completions are not aliases. Chat Completions accepts structured message history and can return tool calls; legacy text Completions accepts one flattened prompt and returns text. Likewise, OpenAI Responses and OpenResponses share an item-oriented shape but represent different compatibility promises. Administrators must choose the server's documented protocol; Wiki verifies the selected connection and protocol behavior rather than probing endpoints heuristically.
 
 For every tool-capable protocol, the preset accepts multiple tool calls from one model turn; Wiki executes those calls serially in model order. This is distinct from **Agent** use, which controls whether the model receives any Wiki action definitions and may continue through action-result turns. **Text generation** use never receives Wiki actions and rejects unexpected tool calls. Tool-capable profiles allow both uses; legacy text Completions allows text generation only. New sessions prefer Agent use and automatically fall back to text generation when the selected profile cannot use actions.
 
-Streaming, cancellation, tool-call shape, structured-output mapping, usage-accounting source, authentication, and allowed uses are protocol-derived and shown read-only. Context/output limits and quotas remain model/deployment settings under Advanced limits and quotas. Capability revisions are generated from the versioned Wiki protocol preset, while pricing remains `unpriced-v1` until provider billing calculation exists; neither internal ledger field is operator input. A profile remains disabled until its immutable version passes conformance.
+Streaming, cancellation, tool-call shape, structured-output mapping, usage-accounting source, authentication, and allowed uses are protocol-derived and shown read-only. Context/output limits and quotas remain model/deployment settings under Advanced limits and quotas. Capability revisions are generated from the versioned Wiki protocol preset, while pricing remains `unpriced-v1` until provider billing calculation exists; neither internal ledger field is operator input. A profile remains disabled until its current settings pass the connection check.
 
-Editing a provider profile creates a new immutable version, disables the profile, and requires conformance before it can be enabled again. The current encrypted credential is retained when the administrator leaves the API-key field blank; entering a value creates a new managed credential for the new version. Removing a profile immediately excludes it from administration, session selection, default resolution, and new run admission. The profile and version ledger is retained for audit integrity, while its managed provider credentials are permanently deleted. A removed display name can be reused by a new profile.
+Editing updates the existing provider profile, temporarily disables it, and runs the same connection check. A previously enabled profile is enabled again when the check succeeds; an intentionally disabled profile remains disabled. The current encrypted credential is retained when the administrator leaves the API-key field blank; entering a value replaces the managed credential. Removing a profile immediately excludes it from administration, session selection, default resolution, and new run admission. Audit records remain, while managed provider credentials are permanently deleted. A removed display name can be reused by a new profile.
 
 Required cryptographic environment:
 
@@ -126,7 +126,7 @@ Required cryptographic environment:
 | `AGENT_PROVIDER_SECRET_KEYS` or `AGENT_PROVIDER_SECRET_KEYS_FILE` | Providers are enabled |
 | `AGENT_MCP_REQUEST_STATE_KEYS` | MCP is enabled |
 
-Each keyring uses `{ "currentKeyId": "name", "keys": { "name": "<base64>" } }`. Provider credential encryption keys must decode to exactly 32 bytes. Wiki encrypts each UI-supplied credential with AES-256-GCM, a fresh 96-bit nonce, and authenticated record identity, stores only ciphertext in `agentProviderSecrets`, and writes an opaque `managed:<uuid>` reference into the immutable profile version. Retain every encryption key ID referenced by stored credentials when rotating `currentKeyId`; removing an in-use key fails closed. Existing operator-managed `env:NAME` references remain readable for compatibility, including `NAME_FILE`, but the admin UI creates managed encrypted credentials. The `_FILE` forms read a mounted keyring when the matching inline variable is absent. Never log these keys, provider credentials, prompts, page/skill/browser content, approval payloads, or signed state tokens.
+Each keyring uses `{ "currentKeyId": "name", "keys": { "name": "<base64>" } }`. Provider credential encryption keys must decode to exactly 32 bytes. Wiki encrypts each UI-supplied credential with AES-256-GCM, a fresh 96-bit nonce, and authenticated record identity, stores only ciphertext in `agentProviderSecrets`, and writes an opaque `managed:<uuid>` reference into internal provider storage. Retain every encryption key ID referenced by stored credentials when rotating `currentKeyId`; removing an in-use key fails closed. Existing operator-managed `env:NAME` references remain readable for compatibility, including `NAME_FILE`, but the admin UI creates managed encrypted credentials. The `_FILE` forms read a mounted keyring when the matching inline variable is absent.
 
 ## Browser worker
 
@@ -182,7 +182,7 @@ Schedule at least hourly with single-job concurrency. The command emits one boun
 
 1. Apply migrations with all flags false. Verify ordinary Wiki routes, backup, restore, and both rollback paths on PostgreSQL 16 and 17.
 2. Configure approved skills and provider profiles in `/admin/agents`; keep user access false.
-3. Run transport conformance. Perform one controlled real read only after credentials and egress policy are ready.
+3. Save each provider profile and confirm its automatic connection check passes. Perform one controlled real read only after credentials and egress policy are ready.
 4. Enable `agents.enabled` and one read-only provider for an explicit canary group. Keep browser, proposals, writes, and MCP false.
 5. Observe queue depth, concurrency, reconnects, token/cost reservations, retention, and provider errors.
 6. Enable browser only after the separate worker and no-bypass network proof.
