@@ -1,12 +1,22 @@
 # First-class agent architecture and implementation plan
 
-- **Status:** proposed fork-native architecture and staged implementation plan
+- **Status:** implementation complete at A1-J3; installed with all rollout flags disabled by default
 - **Date:** 2026-08-17
 - **Wiki.ts revision assessed:** `05ee166091c0858f5df231a7f82cec960e2befe16` (`docs: clarify MCP approval boundary`)
 - **Ax reference:** `@ax-llm/ax` `23.0.15`, source revision `3ff5ff4689f01afc1d8498a64f698bc5e5a3cf6a`
 - **MCP TypeScript SDK reference:** `@modelcontextprotocol/server`, `@modelcontextprotocol/node`, `@modelcontextprotocol/express`, and test-client `@modelcontextprotocol/client` `2.0.0`, source revision `03842cd9cae9a9b142c77d2fb65e829fc4e03eab`, MCP specification `2026-07-28`
 - **Harness references:** Codex source revision `c8ddb210d2429cacacf86593e157114b00634f13`; Oh My Pi source revision `37eee71978951fccf66b21f7e3e2b74596ac9d74`; Agent Skills specification retrieved 2026-08-17
 - **CopilotKit pattern reference:** source revision `ea9ccff81fa46bf6d732d92a499735fbdc8ab169`
+
+## Implementation progress
+
+- **Completed source revision:** `cea142b55f6acb3ea0b2b431e3e51d1da447e6af` (`feat: implement first-class agent architecture`)
+- **Scope completed:** all A1-J3 beads, including shared contracts and action policy, page-native skills, durable PostgreSQL sessions/runs/events, provider transports and conformance, the isolated user/admin client, browser-worker isolation, proposal-first writes, MCP transport, observability, deployment documentation, and release gates.
+- **Automated evidence:** 1,603 tests passed with 7 skipped across 215 passing files and 2 skipped files; shared/server/client typechecks, dependency policy, 664-record production license inventory, frozen agent release inputs, PostgreSQL migration/rollback integration, and the AMD64/ARM64 browser-worker OCI build passed.
+- **Installed deployment:** `wiki-tailnet:cea142b5` (image `sha256:56badf5a97ee392b19bbb247261a25bba781b663536e2eccc5a1f90e2b992181`) replaced revision `d437decd` on 2026-08-17. Runtime environment, persistent content volume, PostgreSQL service, loopback port `3013`, Docker network, and `unless-stopped` policy were preserved.
+- **Database state:** migration `2.5.139.js` is applied. A verified pre-upgrade PostgreSQL custom-format backup with 301 restore entries is retained at `~/.local/state/wiki-migration/2026-08-17/wiki-pre-agent-cea142b5.dump`.
+- **Tailnet verification:** `https://agents8c48g.tail41a24a.ts.net:10443/` still proxies to `http://127.0.0.1:3013`; the rebuilt container is healthy, `/healthz` returns HTTP 200 through the tailnet URL, and the persisted Home page renders there.
+- **Rollout state:** capability defaults remain inert. Provider egress, user access, skills, browser tools, proposals, writes, and MCP must still be enabled deliberately through the staged rollout below.
 
 This plan defines agents as a Wiki.ts product capability, not as a chat widget attached to a privileged backend. The same policy-aware action kernel will serve the in-product Ax agent and authenticated external MCP clients. Wiki.ts remains authoritative for identity, page visibility, permissions, approvals, persistence, audit, quotas, and transport. Ax owns model orchestration only. The MCP SDK owns protocol conformance only. CopilotKit is a UX and interaction-state reference only and is not a dependency.
 
