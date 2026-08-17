@@ -1,5 +1,4 @@
 import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto'
-import { readFileSync } from 'node:fs'
 import { isIP } from 'node:net'
 import type { Knex } from 'knex'
 import { z } from 'zod'
@@ -7,8 +6,8 @@ import type { AgentExecutionMode } from '../../../shared/agents/contracts.ts'
 import { canonicalJson } from '../../helpers/canonical-json.ts'
 import type { AgentAdmissionResolver, AgentResolvedAdmission } from '../runtime.ts'
 import { AgentRepositoryError } from '../repository.ts'
+import type { AgentSecretRegistry } from './secrets.ts'
 
-const MAX_ENVIRONMENT_SECRET_BYTES = 64 * 1_024
 const TransportKindSchema = z.enum(['openai-responses', 'openresponses', 'openai-chat', 'legacy-completions', 'anthropic-messages'])
 const AuthModeSchema = z.enum(['bearer', 'api-key-header', 'anthropic-api-key'])
 export const AgentProviderCapabilitiesSchema = z.strictObject({
@@ -47,6 +46,7 @@ export const AgentProviderVersionInputSchema = z.strictObject({
   baseUrl: z.string(),
   authMode: AuthModeSchema,
   secretReference: z.string().nullable(),
+  secretValue: z.string().optional(),
   adapterConfig: AgentProviderAdapterConfigSchema,
   capabilities: AgentProviderCapabilitiesSchema,
   capabilityRevision: z.string(),
@@ -70,6 +70,7 @@ export interface AgentProviderVersionInput {
   readonly baseUrl: string
   readonly authMode: z.infer<typeof AuthModeSchema>
   readonly secretReference: string | null
+  readonly secretValue?: string | undefined
   readonly adapterConfig: z.input<typeof AgentProviderAdapterConfigSchema>
   readonly capabilities: AgentProviderCapabilities
   readonly capabilityRevision: string
@@ -105,34 +106,6 @@ export interface AgentProviderProfileView {
   readonly createdAt: string
 }
 
-export interface AgentSecretRegistry {
-  has(reference: string): boolean
-}
-
-export const environmentSecretValue = (name: string): string | null => {
-  const inlineValue = process.env[name]
-  if (inlineValue !== undefined && inlineValue.length > 0) return inlineValue
-  const filePath = process.env[`${name}_FILE`]
-  if (!filePath) return null
-  const bytes = readFileSync(filePath)
-  if (bytes.byteLength > MAX_ENVIRONMENT_SECRET_BYTES) throw new Error(`${name}_FILE exceeds the 64 KiB secret limit`)
-  const fileValue = bytes.toString('utf8').trim()
-  return fileValue.length > 0 ? fileValue : null
-}
-
-export class EnvironmentAgentSecretRegistry implements AgentSecretRegistry {
-  has(reference: string): boolean {
-    const match = /^env:([A-Z][A-Z0-9_]{0,127})$/.exec(reference)
-    const name = match?.[1]
-    return name !== undefined && environmentSecretValue(name) !== null
-  }
-
-  get(reference: string): string | null {
-    const match = /^env:([A-Z][A-Z0-9_]{0,127})$/.exec(reference)
-    const name = match?.[1]
-    return name === undefined ? null : environmentSecretValue(name)
-  }
-}
 
 interface TokenPayload {
   readonly v: 1
@@ -229,7 +202,9 @@ const validateVersion = (input: AgentProviderVersionInput) => {
   const baseUrl = normalizeBaseUrl(input.baseUrl)
   const authMode = AuthModeSchema.parse(input.authMode)
   const secretReference = input.secretReference === null ? null : normalizedString(input.secretReference, 'Secret reference', 255)
-  if (secretReference === null || !EnvironmentSecretReference.test(secretReference)) throw new AgentRepositoryError('INVALID_PROVIDER_SECRET', 'Secret reference must use env:NAME and must not contain the API key', 400)
+  const secretValue = input.secretValue
+  if (secretValue !== undefined && secretReference !== null) throw new AgentRepositoryError('INVALID_PROVIDER_SECRET', 'Provide either a credential or a secret reference, not both', 400)
+  if (secretValue === undefined && (secretReference === null || !EnvironmentSecretReference.test(secretReference))) throw new AgentRepositoryError('INVALID_PROVIDER_SECRET', 'Secret reference must use env:NAME and must not contain the API key', 400)
   if ((transportKind === 'openai-responses' || transportKind === 'openresponses' || transportKind === 'openai-chat') && authMode !== 'bearer') throw new AgentRepositoryError('INVALID_PROVIDER_AUTH', 'Selected provider transport requires bearer authentication', 400)
   if (transportKind === 'anthropic-messages' && authMode !== 'anthropic-api-key') throw new AgentRepositoryError('INVALID_PROVIDER_AUTH', 'Anthropic Messages requires Anthropic API key authentication', 400)
   if (transportKind === 'legacy-completions' && authMode === 'anthropic-api-key') throw new AgentRepositoryError('INVALID_PROVIDER_AUTH', 'Legacy completions do not support Anthropic authentication', 400)
@@ -249,6 +224,7 @@ const validateVersion = (input: AgentProviderVersionInput) => {
     capabilities,
     capabilityRevision: normalizedString(input.capabilityRevision, 'Capability revision', 128),
     policies,
+    secretValue,
     pricingRevision: normalizedString(input.pricingRevision, 'Pricing revision', 128)
   }
 }
@@ -302,8 +278,9 @@ export class AgentProviderRegistry implements AgentAdmissionResolver {
     await this.#knex.transaction(async transaction => {
       await this.#configuration(transaction)
       const now = new Date()
+      const secretReference = value.secretValue === undefined ? value.secretReference : await this.#secrets.store(value.secretValue, input.actorId, transaction)
       await transaction('agentProviderProfiles').insert({ id: profileId, displayName, status: 'disabled', isGlobalDefault: false, exposureMode, currentVersionId: null, policyVersion: 1, conformed: false, createdBy: input.actorId, updatedBy: input.actorId, createdAt: now, updatedAt: now })
-      await transaction('agentProviderProfileVersions').insert({ id: versionId, profileId, version: 1, transportKind: value.transportKind, model: value.model, baseUrl: value.baseUrl, authMode: value.authMode, secretReference: value.secretReference, adapterConfig: canonicalJson(value.adapterConfig), capabilities: canonicalJson(value.capabilities), capabilityRevision: value.capabilityRevision, policies: canonicalJson(value.policies), pricingRevision: value.pricingRevision, conformed: false, createdBy: input.actorId, createdAt: now })
+      await transaction('agentProviderProfileVersions').insert({ id: versionId, profileId, version: 1, transportKind: value.transportKind, model: value.model, baseUrl: value.baseUrl, authMode: value.authMode, secretReference, adapterConfig: canonicalJson(value.adapterConfig), capabilities: canonicalJson(value.capabilities), capabilityRevision: value.capabilityRevision, policies: canonicalJson(value.policies), pricingRevision: value.pricingRevision, conformed: false, createdBy: input.actorId, createdAt: now })
       await transaction('agentProviderProfiles').where({ id: profileId }).update({ currentVersionId: versionId })
       if (groupIds.length > 0) await transaction('agentProviderGrants').insert(groupIds.map(groupId => ({ profileId, groupId })))
     })
@@ -318,7 +295,8 @@ export class AgentProviderRegistry implements AgentAdmissionResolver {
       const latest = await transaction('agentProviderProfileVersions').where({ profileId }).max('version as version').first() as { version: number | string | null }
       const version = Number(latest.version ?? 0) + 1
       const id = randomUUID()
-      await transaction('agentProviderProfileVersions').insert({ id, profileId, version, transportKind: value.transportKind, model: value.model, baseUrl: value.baseUrl, authMode: value.authMode, secretReference: value.secretReference, adapterConfig: canonicalJson(value.adapterConfig), capabilities: canonicalJson(value.capabilities), capabilityRevision: value.capabilityRevision, policies: canonicalJson(value.policies), pricingRevision: value.pricingRevision, conformed: false, createdBy: input.actorId, createdAt: new Date() })
+      const secretReference = value.secretValue === undefined ? value.secretReference : await this.#secrets.store(value.secretValue, input.actorId, transaction)
+      await transaction('agentProviderProfileVersions').insert({ id, profileId, version, transportKind: value.transportKind, model: value.model, baseUrl: value.baseUrl, authMode: value.authMode, secretReference, adapterConfig: canonicalJson(value.adapterConfig), capabilities: canonicalJson(value.capabilities), capabilityRevision: value.capabilityRevision, policies: canonicalJson(value.policies), pricingRevision: value.pricingRevision, conformed: false, createdBy: input.actorId, createdAt: new Date() })
       await transaction('agentProviderProfiles').where({ id: profileId }).update({ currentVersionId: id, status: 'disabled', isGlobalDefault: false, conformed: false, policyVersion: Number(profile.policyVersion) + 1, updatedBy: input.actorId, updatedAt: new Date() })
       await transaction('agentProviderConfiguration').where({ id: 1 }).update({ defaultGeneration: transaction.raw('?? + 1', ['defaultGeneration']), updatedBy: input.actorId, updatedAt: new Date() })
     })
@@ -340,7 +318,7 @@ export class AgentProviderRegistry implements AgentAdmissionResolver {
       if (!profile || !profile.currentVersionId) throw new AgentRepositoryError('AGENT_RESOURCE_NOT_FOUND', 'Provider profile was not found', 404)
       const version = await transaction<VersionRow>('agentProviderProfileVersions').where({ id: profile.currentVersionId }).first()
       if (!version) throw new AgentRepositoryError('PROVIDER_PROFILE_CORRUPT', 'Current provider version is missing', 500)
-      if (enabled && (!profile.conformed || !version.conformed || !version.secretReference || !this.#secrets.has(version.secretReference))) throw new AgentRepositoryError('PROFILE_NOT_READY', 'Provider profile is not conformed or its secret is unavailable', 409)
+      if (enabled && (!profile.conformed || !version.conformed || !version.secretReference || !await this.#secrets.has(version.secretReference))) throw new AgentRepositoryError('PROFILE_NOT_READY', 'Provider profile is not conformed or its secret is unavailable', 409)
       await transaction('agentProviderProfiles').where({ id: profileId }).update({ status: enabled ? 'enabled' : 'disabled', ...(enabled ? {} : { isGlobalDefault: false }), policyVersion: Number(profile.policyVersion) + 1, updatedBy: actorId, updatedAt: new Date() })
       if (!enabled && profile.isGlobalDefault) await transaction('agentProviderConfiguration').where({ id: 1 }).update({ defaultGeneration: transaction.raw('?? + 1', ['defaultGeneration']), updatedBy: actorId, updatedAt: new Date() })
     })
@@ -374,7 +352,7 @@ export class AgentProviderRegistry implements AgentAdmissionResolver {
       model: row.model,
       destinationHost: new URL(row.baseUrl).host,
       authMode: AuthModeSchema.parse(row.authMode),
-      secretConfigured: row.secretReference !== null && this.#secrets.has(row.secretReference),
+      secretConfigured: row.secretReference !== null && await this.#secrets.has(row.secretReference),
       capabilities: parseJson(AgentProviderCapabilitiesSchema, row.capabilities, 'PROVIDER_PROFILE_CORRUPT'),
       capabilityRevision: row.capabilityRevision,
       pricingRevision: row.pricingRevision,
@@ -413,7 +391,7 @@ export class AgentProviderRegistry implements AgentAdmissionResolver {
       if (!profile?.currentVersionId) throw new AgentRepositoryError('PROFILE_UNAVAILABLE', 'Selected provider profile is unavailable', 409)
       const allowed = profile.exposureMode === 'all_agent_users' || Boolean(await transaction('agentProviderGrants').join('userGroups', 'userGroups.groupId', 'agentProviderGrants.groupId').where('agentProviderGrants.profileId', profile.id).andWhere('userGroups.userId', input.ownerId).first('agentProviderGrants.profileId'))
       const version = await transaction<VersionRow>('agentProviderProfileVersions').where({ id: profile.currentVersionId, conformed: true }).first()
-      if (!version?.secretReference || !allowed || !this.#secrets.has(version.secretReference)) throw new AgentRepositoryError('PROFILE_UNAVAILABLE', 'Selected provider profile is unavailable', 409)
+      if (!version?.secretReference || !allowed || !await this.#secrets.has(version.secretReference)) throw new AgentRepositoryError('PROFILE_UNAVAILABLE', 'Selected provider profile is unavailable', 409)
       const capabilities = parseJson(AgentProviderCapabilitiesSchema, version.capabilities, 'PROVIDER_PROFILE_CORRUPT')
       const policies = parseJson(AgentProviderPoliciesSchema, version.policies, 'PROVIDER_PROFILE_CORRUPT')
       if (!policies.allowedModes.includes(input.executionMode) || (input.executionMode === 'agent' && (!capabilities.streaming || !capabilities.functions || !capabilities.cancellation))) throw new AgentRepositoryError('PROFILE_MODE_INCOMPATIBLE', 'Provider profile does not support the selected mode', 409)
@@ -457,7 +435,7 @@ export class AgentProviderRegistry implements AgentAdmissionResolver {
       const expectedProfileId = session?.providerProfileId ?? (await transaction('agentProviderProfiles').where({ isGlobalDefault: true, status: 'enabled', conformed: true }).first('id') as { id: string } | undefined)?.id
       if (!session || !profile || !version || expectedProfileId !== payload.profileId || configuration.defaultGeneration !== payload.defaultGeneration) throw new AgentRepositoryError('PROFILE_RESOLUTION_CHANGED', 'Profile resolution changed before admission', 409)
       const allowed = profile.exposureMode === 'all_agent_users' || Boolean(await transaction('agentProviderGrants').join('userGroups', 'userGroups.groupId', 'agentProviderGrants.groupId').where('agentProviderGrants.profileId', profile.id).andWhere('userGroups.userId', input.ownerId).first('agentProviderGrants.profileId'))
-      if (!allowed || !version.secretReference || !this.#secrets.has(version.secretReference)) throw new AgentRepositoryError('PROFILE_UNAVAILABLE', 'Provider profile is not available to this user', 409)
+      if (!allowed || !version.secretReference || !await this.#secrets.has(version.secretReference)) throw new AgentRepositoryError('PROFILE_UNAVAILABLE', 'Provider profile is not available to this user', 409)
       parseJson(AgentProviderCapabilitiesSchema, version.capabilities, 'PROVIDER_PROFILE_CORRUPT')
       const policies = parseJson(AgentProviderPoliciesSchema, version.policies, 'PROVIDER_PROFILE_CORRUPT')
       const skillVersionIds = await transaction('agentSessionSkills').where({ sessionId: input.sessionId }).orderBy('ordinal').pluck<string>('skillVersionId')

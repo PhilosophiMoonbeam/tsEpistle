@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import createKnex, { type Knex } from 'knex'
 import { AgentProviderRegistry, type AgentProviderVersionInput } from '../../agents/providers/registry.ts'
+import { DatabaseAgentSecretRegistry } from '../../agents/providers/secrets.ts'
 
 const profileInput: AgentProviderVersionInput = {
   transportKind: 'openai-responses',
@@ -19,6 +20,7 @@ const profileInput: AgentProviderVersionInput = {
 const createTables = async (knex: Knex): Promise<void> => {
   await knex.schema.createTable('agentProviderProfiles', table => { table.string('id').primary(); table.string('displayName').unique(); table.string('status'); table.boolean('isGlobalDefault'); table.string('exposureMode'); table.string('currentVersionId').nullable(); table.integer('policyVersion'); table.boolean('conformed'); table.integer('createdBy'); table.integer('updatedBy'); table.dateTime('createdAt'); table.dateTime('updatedAt') })
   await knex.schema.createTable('agentProviderProfileVersions', table => { table.string('id').primary(); table.string('profileId'); table.integer('version'); table.string('transportKind'); table.string('model'); table.text('baseUrl'); table.string('authMode'); table.string('secretReference').nullable(); table.text('adapterConfig'); table.text('capabilities'); table.string('capabilityRevision'); table.text('policies'); table.string('pricingRevision'); table.boolean('conformed'); table.integer('createdBy'); table.dateTime('createdAt') })
+  await knex.schema.createTable('agentProviderSecrets', table => { table.string('id').primary(); table.string('keyId'); table.string('algorithm'); table.binary('nonce'); table.binary('ciphertext'); table.binary('authTag'); table.integer('createdBy'); table.dateTime('createdAt') })
   await knex.schema.createTable('agentProviderConfiguration', table => { table.integer('id').primary(); table.integer('defaultGeneration'); table.dateTime('updatedAt'); table.integer('updatedBy').nullable() })
   await knex.schema.createTable('agentProviderGrants', table => { table.string('profileId'); table.integer('groupId') })
   await knex.schema.createTable('userGroups', table => { table.integer('userId'); table.integer('groupId') })
@@ -33,7 +35,7 @@ describe('agent provider profile registry', () => {
   beforeEach(async () => {
     knex = createKnex({ client: 'better-sqlite3', connection: { filename: ':memory:' }, useNullAsDefault: true })
     await createTables(knex)
-    registry = new AgentProviderRegistry(knex, { has: reference => reference === 'env:TEST_PROVIDER_KEY' }, { currentKeyId: 'primary', keys: { primary: 'a-profile-resolution-secret-with-rotation-room' } })
+    registry = new AgentProviderRegistry(knex, { has: reference => reference === 'env:TEST_PROVIDER_KEY', get: () => null, store: () => { throw new Error('unexpected managed secret') } }, { currentKeyId: 'primary', keys: { primary: 'a-profile-resolution-secret-with-rotation-room' } })
   })
   afterEach(async () => knex.destroy())
 
@@ -56,6 +58,17 @@ describe('agent provider profile registry', () => {
     expect(revised).toMatchObject({ currentVersion: 2, status: 'disabled', conformed: false, model: 'gpt-test-2' })
     expect(await knex('agentProviderProfileVersions').where({ profileId: created.id }).orderBy('version').pluck('model')).toEqual(['gpt-test', 'gpt-test-2'])
     await expect(registry.resolve({ ownerId: 7, sessionId: 'session-1', profileResolutionToken: token })).rejects.toMatchObject({ code: 'PROFILE_RESOLUTION_CHANGED', status: 409 })
+  })
+  it('stores a UI-supplied credential as an encrypted managed reference in the profile transaction', async () => {
+    const vault = new DatabaseAgentSecretRegistry(knex, { currentKeyId: 'primary', keys: { primary: Buffer.alloc(32, 7) } })
+    const managedRegistry = new AgentProviderRegistry(knex, vault, { currentKeyId: 'primary', keys: { primary: 'a-profile-resolution-secret-with-rotation-room' } })
+    const created = await managedRegistry.create({ ...profileInput, secretReference: null, secretValue: 'provider-key-from-ui', displayName: 'Managed', exposureMode: 'all_agent_users', actorId: 1 })
+    expect(created).toMatchObject({ secretConfigured: true, status: 'disabled', conformed: false })
+    const version = await knex('agentProviderProfileVersions').where({ profileId: created.id }).first('secretReference') as { secretReference: string }
+    expect(version.secretReference).toMatch(/^managed:/)
+    const stored = await knex('agentProviderSecrets').first('ciphertext') as { ciphertext: Buffer }
+    expect(stored.ciphertext.toString('utf8')).not.toContain('provider-key-from-ui')
+    expect(await vault.get(version.secretReference)).toBe('provider-key-from-ui')
   })
 
   it('fails closed for private endpoints, forbidden headers, incompatible modes, and group visibility', async () => {

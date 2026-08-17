@@ -4,6 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 import { down as downAgentLedger, up as upAgentLedger } from '../../db/migrations/2.5.139.ts'
 import { down as restoreLegacyHandoffTable, up as removeLegacyHandoffTable } from '../../db/migrations/2.5.140.ts'
+import { down as downProviderSecrets, up as upProviderSecrets } from '../../db/migrations/2.5.141.ts'
 
 const databaseName = process.env.WIKI_TEST_POSTGRES_DATABASE ?? ''
 const passwordFile = process.env.WIKI_TEST_POSTGRES_PASSWORD_FILE
@@ -60,6 +61,7 @@ suite('PostgreSQL first-class agent migration', () => {
     await db('assetFolders').insert({ id: 1 })
     await upAgentLedger(db)
     await removeLegacyHandoffTable(db)
+    await upProviderSecrets(db)
   })
 
   afterAll(async () => {
@@ -71,7 +73,7 @@ suite('PostgreSQL first-class agent migration', () => {
   })
 
   it('adds the authoritative tables, removes obsolete handoffs, and adds source revision columns', async () => {
-    for (const table of ['agentSessions', 'agentRuns', 'agentEvents', 'agentSkills', 'agentProviderProfiles', 'agentProposals', 'agentApprovals', 'agentActionExecutions', 'pageMutationOutbox']) {
+    for (const table of ['agentSessions', 'agentRuns', 'agentEvents', 'agentSkills', 'agentProviderProfiles', 'agentProviderSecrets', 'agentProposals', 'agentApprovals', 'agentActionExecutions', 'pageMutationOutbox']) {
       await expect(db.schema.hasTable(table)).resolves.toBe(true)
     }
     await expect(db.schema.hasTable('agentLaunchHandoffs')).resolves.toBe(false)
@@ -125,6 +127,7 @@ suite('PostgreSQL first-class agent migration', () => {
     await db('agentProviderProfiles').delete()
     await db('pages').delete()
     await restoreLegacyHandoffTable(db)
+    await downProviderSecrets(db)
     await downAgentLedger(db)
     await expect(db.schema.hasTable('agentSessions')).resolves.toBe(false)
     await expect(db.schema.hasColumn('pages', 'sourceRevision')).resolves.toBe(false)

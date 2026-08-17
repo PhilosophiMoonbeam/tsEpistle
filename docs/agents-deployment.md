@@ -95,11 +95,11 @@ agents:
 
 Startup rejects provider concurrency, polling, SSE, and retention values outside their bounded ranges. `perUserConcurrency` cannot exceed `globalConcurrency`. Flags are independent kill switches; write application requires `writes.enabled`, proposals, and the exact action flag.
 
-Provider inference is intentionally unavailable until an operator enables the provider subsystem with its signing and profile-resolution keys, then an administrator adds an immutable provider profile in `/admin/agents`, runs conformance, and enables that profile. Enabling the subsystem alone offers no usable model destination: profiles remain disabled until conformance passes and an administrator enables them. Profiles store references, never secret values.
+Provider inference is intentionally unavailable until an operator enables the provider subsystem with its signing, profile-resolution, and provider-credential encryption keyrings, then an administrator adds an immutable provider profile in `/admin/agents`, runs conformance, and enables that profile. Enabling the subsystem alone offers no usable model destination: profiles remain disabled until conformance passes and an administrator enables them. The admin API accepts a credential only on profile-version creation, encrypts it before the transaction commits, and never returns it.
 
 ### Provider API protocols
 
-A provider profile describes one approved destination, credential reference, model, protocol-derived capability descriptor, and policy. Its API protocol selects the exact wire contract used at that destination; it is not inferred from the URL. The ordinary admin form derives low-level transport behavior instead of asking operators to declare protocol facts.
+A provider profile describes one approved destination, encrypted credential, model, protocol-derived capability descriptor, and policy. Its API protocol selects the exact wire contract used at that destination; it is not inferred from the URL. The ordinary admin form derives low-level transport behavior instead of asking operators to declare protocol facts.
 
 | API protocol | Endpoint | Intended use |
 | --- | --- | --- |
@@ -121,9 +121,10 @@ Required cryptographic environment:
 | --- | --- |
 | `AGENT_SNAPSHOT_SIGNING_SECRET` or `AGENT_SNAPSHOT_SIGNING_SECRET_FILE` | Provider or MCP actions are enabled |
 | `AGENT_PROFILE_RESOLUTION_KEYS` or `AGENT_PROFILE_RESOLUTION_KEYS_FILE` | Providers are enabled |
+| `AGENT_PROVIDER_SECRET_KEYS` or `AGENT_PROVIDER_SECRET_KEYS_FILE` | Providers are enabled |
 | `AGENT_MCP_REQUEST_STATE_KEYS` | MCP is enabled |
 
-Each key contains at least 32 random bytes encoded as required by the corresponding parser. The `_FILE` forms read the value from a mounted secret file and take effect when the matching inline variable is absent. Provider references must match `env:[A-Z][A-Z0-9_]{0,127}`; Wiki reads `NAME` directly or the mounted file named by `NAME_FILE`, so `env:OPENAI_API_KEY` can resolve `OPENAI_API_KEY_FILE=/run/secrets/openai_api_key`. Literal API keys are rejected. If one is accidentally entered as a reference, remove it from retained data and rotate it before use. Retain prior verification keys only through the maximum token lifetime. Never log these keys, provider credentials, prompts, page/skill/browser content, approval payloads, or signed state tokens.
+Each keyring uses `{ "currentKeyId": "name", "keys": { "name": "<base64>" } }`. Provider credential encryption keys must decode to exactly 32 bytes. Wiki encrypts each UI-supplied credential with AES-256-GCM, a fresh 96-bit nonce, and authenticated record identity, stores only ciphertext in `agentProviderSecrets`, and writes an opaque `managed:<uuid>` reference into the immutable profile version. Retain every encryption key ID referenced by stored credentials when rotating `currentKeyId`; removing an in-use key fails closed. Existing operator-managed `env:NAME` references remain readable for compatibility, including `NAME_FILE`, but the admin UI creates managed encrypted credentials. The `_FILE` forms read a mounted keyring when the matching inline variable is absent. Never log these keys, provider credentials, prompts, page/skill/browser content, approval payloads, or signed state tokens.
 
 ## Browser worker
 

@@ -28,7 +28,8 @@ import apiV1Controller from './controllers/api-v1/index.ts'
 import type { ProductMetadata } from '../shared/product.ts'
 import { isExternalRestPath, isInternalRestPath } from '../shared/api-access.ts'
 
-import { AgentProviderRegistry, EnvironmentAgentSecretRegistry, environmentSecretValue, type AgentProfileTokenKeys } from './agents/providers/registry.ts'
+import { AgentProviderRegistry, type AgentProfileTokenKeys } from './agents/providers/registry.ts'
+import { DatabaseAgentSecretRegistry, decodeAgentProviderSecretKeys, environmentSecretValue } from './agents/providers/secrets.ts'
 import { AgentProviderFactory } from './agents/providers/factory.ts'
 import { AxAgentEngine } from './agents/providers/engine.ts'
 import { AgentProductRuntime } from './agents/runtime.ts'
@@ -251,8 +252,10 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
     } catch {
       throw new Error('AGENT_PROFILE_RESOLUTION_KEYS must be valid JSON')
     }
+    const encodedSecretKeys = environmentSecretValue('AGENT_PROVIDER_SECRET_KEYS')
+    if (!encodedSecretKeys) throw new Error('AGENT_PROVIDER_SECRET_KEYS or AGENT_PROVIDER_SECRET_KEYS_FILE is required when agent providers are enabled')
+    const secrets = new DatabaseAgentSecretRegistry(wiki.models.knex, decodeAgentProviderSecretKeys(encodedSecretKeys))
     const snapshotSigningSecret = actionSnapshotSigningSecret
-    const secrets = new EnvironmentAgentSecretRegistry()
     providerRegistry = new AgentProviderRegistry(wiki.models.knex, secrets, keys)
     const actionSessions = createWikiActionSessionProvider(wiki.models.knex, {
       enabled: wiki.config.agents.enabled,

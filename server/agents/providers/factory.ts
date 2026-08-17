@@ -26,6 +26,7 @@ import {
 } from './registry.ts'
 import { AgentRepositoryError } from '../repository.ts'
 import { createOpenResponsesFetch } from './openresponses.ts'
+import type { AgentSecretRegistry } from './secrets.ts'
 
 const MAX_RETRY_AFTER_MS = 300_000
 const MAX_PROVIDER_ERROR_BYTES = 64 * 1_024
@@ -45,18 +46,6 @@ export class AgentProviderAttemptError extends Error {
   }
 }
 
-export interface AgentProviderSecretProvider {
-  get(reference: string): string | null
-}
-
-export class EnvironmentAgentProviderSecretProvider implements AgentProviderSecretProvider {
-  get(reference: string): string | null {
-    const name = /^env:([A-Z][A-Z0-9_]{0,127})$/.exec(reference)?.[1]
-    if (!name) return null
-    const value = process.env[name]
-    return typeof value === 'string' && value.length > 0 ? value : null
-  }
-}
 
 interface ProviderVersionRow {
   id: string
@@ -218,10 +207,10 @@ const createLegacyCompletionService = (row: ProviderVersionRow, secret: string, 
 
 export class AgentProviderFactory {
   readonly #knex: Knex
-  readonly #secrets: AgentProviderSecretProvider
+  readonly #secrets: Pick<AgentSecretRegistry, 'get'>
   readonly #fetch: typeof fetch
   readonly #resolve: typeof lookup
-  constructor (knex: Knex, secrets: AgentProviderSecretProvider, fetchImplementation: typeof fetch = undiciFetch as unknown as typeof fetch, resolve: typeof lookup = lookup) {
+  constructor (knex: Knex, secrets: Pick<AgentSecretRegistry, 'get'>, fetchImplementation: typeof fetch = undiciFetch as unknown as typeof fetch, resolve: typeof lookup = lookup) {
     this.#knex = knex
     this.#secrets = secrets
     this.#fetch = fetchImplementation
@@ -232,7 +221,7 @@ export class AgentProviderFactory {
     if (loadOptions.requireConformed !== false) query.andWhere({ conformed: true })
     const row = await query.first()
     if (!row || !row.secretReference) throw new AgentRepositoryError('PROFILE_VERSION_UNAVAILABLE', 'Provider profile version is unavailable', 409)
-    const secret = this.#secrets.get(row.secretReference)
+    const secret = await this.#secrets.get(row.secretReference)
     if (!secret) throw new AgentRepositoryError('PROFILE_SECRET_UNAVAILABLE', 'Provider profile secret is unavailable', 503)
     let adapterConfig: ReturnType<typeof AgentProviderAdapterConfigSchema.parse>
     let capabilities: AgentProviderCapabilities
