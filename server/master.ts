@@ -316,12 +316,14 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
     tick()
     setInterval(tick, wiki.config.agents.provider.pollingMilliseconds ?? 1_000).unref()
   }
-  const agentsHostController = createAgentsHostController({
+  const agentsHostWiki = {
     ...wiki,
     ...(providerRegistry === undefined ? {} : { providerRegistry }),
     ...(agentRuntime === undefined ? {} : { agentRuntime }),
     ...(providerConformance === undefined ? {} : { providerConformance })
-  })
+  }
+  const agentsHostController = createAgentsHostController(agentsHostWiki)
+  const embeddedAgentsController = createAgentsHostController(agentsHostWiki, { surface: 'embedded' })
   app.use((req, res, next) => {
     const host = req.get('host')
     if (origins.agentsPublicOrigin && requestMatchesOriginHost(host, origins.agentsPublicOrigin)) {
@@ -334,6 +336,7 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
     return next()
   })
   app.use(wiki.auth.authenticate.bind(wiki.auth))
+  app.use(embeddedAgentsController)
 
   await wiki.servers.startGraphQL()
   const jsonBodyParser = express.json({ limit: wiki.config.bodyParserLimit ?? '5mb' })
@@ -377,6 +380,7 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
       logoUrl: wiki.config.logoUrl === LEGACY_DEFAULT_LOGO_URL ? BUNDLED_DEFAULT_LOGO_URL : wiki.config.logoUrl,
       product: wiki.product,
       agentsEnabled: wiki.config.agents.enabled,
+      agentProviderEnabled: wiki.config.agents.provider.enabled,
       agentLaunchCsrfToken: wiki.config.agents.enabled ? agentLaunchCsrfToken(_req) : ''
     }
     res.locals.langs = await wiki.models.locales.getNavLocales({ cache: true })

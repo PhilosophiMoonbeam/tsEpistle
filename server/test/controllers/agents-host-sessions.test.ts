@@ -299,3 +299,125 @@ describe('ordinary-origin agent launch handoff', () => {
     await db.destroy()
   })
 })
+
+describe('ordinary-origin embedded agent API', () => {
+  let db: Knex
+  let server: Server
+  let baseUrl: string
+  let cookie: string
+  let permissions: string[] = ['use:agents']
+  let ordinaryAuthCalls = 0
+  let isolatedAuthCalls = 0
+  const csrf = 'ordinary-origin-agent-csrf-token-at-least-thirty-two-bytes'
+
+  beforeAll(async () => {
+    db = createKnex({ client: 'better-sqlite3', connection: { filename: ':memory:' }, useNullAsDefault: true, pool: { min: 1, max: 1 } })
+    await createTables(db)
+    const app = express()
+    app.use(cookieParser())
+    app.use(session({ secret: 'ordinary-agent-host-test-secret', resave: false, saveUninitialized: true }))
+    app.get('/seed', (req, res) => {
+      Reflect.set(req.session, 'agentLaunchCsrfToken', csrf)
+      res.sendStatus(204)
+    })
+    app.use(createAgentsHostController({
+      IS_DEBUG: false,
+      auth: {
+        agentStrategies: {},
+        authenticate(req, _res, next) {
+          ordinaryAuthCalls += 1
+          req.authContext = { kind: 'user', userId: 7, ownershipUserId: 7, principal: { id: 7 } }
+          req.user = { id: 7, groups: [], permissions } as Express.User
+          next()
+        },
+        authenticateAgent(_req, res) {
+          isolatedAuthCalls += 1
+          res.sendStatus(418)
+        },
+        passport: { authenticate: () => (_req, _res, next) => next() }
+      },
+      config: {
+        host: 'https://wiki.example.test',
+        sessionSecret: 'embedded-profile-resolution-secret',
+        agents: {
+          enabled: true,
+          cookieAudience: 'wiki-agents-ui',
+          publicOrigin: 'https://agents.example.test',
+          launchTokenTtlSeconds: 300,
+          provider: { enabled: false },
+          retention: { temporarySessionHours: 24 },
+          skills: { enabled: false, namespace: 'system/agent-skills' },
+          browser: { enabled: false },
+          mcp: { enabled: false },
+          proposals: { enabled: false },
+          writes: {
+            enabled: false,
+            create: { enabled: false },
+            patch: { enabled: false },
+            move: { enabled: false },
+            restore: { enabled: false },
+            delete: { enabled: false }
+          }
+        }
+      },
+      models: {
+        knex: db,
+        users: { refreshToken: async () => ({ token: 'unused', user: { id: 7 } as Express.User }) }
+      }
+    }, { surface: 'embedded' }))
+    app.get('/ordinary', (_req, res) => res.sendStatus(204))
+    server = app.listen(0, '127.0.0.1')
+    const listening = Promise.withResolvers<void>()
+    server.once('listening', listening.resolve)
+    await listening.promise
+    const address = server.address() as AddressInfo
+    baseUrl = `http://127.0.0.1:${address.port}`
+    const seeded = await fetch(`${baseUrl}/seed`)
+    cookie = seeded.headers.get('set-cookie')?.split(';', 1)[0] ?? ''
+  })
+
+  afterAll(async () => {
+    const closed = Promise.withResolvers<void>()
+    server.close(error => error ? closed.reject(error) : closed.resolve())
+    await closed.promise
+    await db.destroy()
+  })
+
+  it('falls through ordinary routes without applying isolated host behavior', async () => {
+    const response = await fetch(`${baseUrl}/ordinary`)
+    expect(response.status).toBe(204)
+    expect(ordinaryAuthCalls).toBe(0)
+    expect(isolatedAuthCalls).toBe(0)
+  })
+
+  it('uses ordinary user auth and session CSRF for same-origin mutations', async () => {
+    const body = JSON.stringify({ retention: 'saved', executionMode: 'agent', providerProfileId: null })
+    const headers = {
+      cookie,
+      'content-type': 'application/json',
+      origin: 'https://wiki.example.test',
+      'sec-fetch-site': 'same-origin',
+      'x-wiki-csrf': csrf
+    }
+    const wrongOrigin = await fetch(`${baseUrl}/_api/agents/sessions`, {
+      method: 'POST',
+      headers: { ...headers, origin: 'https://attacker.example.test' },
+      body
+    })
+    expect(wrongOrigin.status).toBe(403)
+    const accepted = await fetch(`${baseUrl}/_api/agents/sessions`, { method: 'POST', headers, body })
+    expect(accepted.status).toBe(201)
+    expect(ordinaryAuthCalls).toBe(2)
+    expect(isolatedAuthCalls).toBe(0)
+  })
+
+  it('exposes administration only to ordinary manage:system users', async () => {
+    permissions = ['use:agents']
+    expect((await fetch(`${baseUrl}/_api/agents/admin/runtime`, { headers: { cookie } })).status).toBe(403)
+    permissions = ['manage:system']
+    const response = await fetch(`${baseUrl}/_api/agents/admin/runtime`, { headers: { cookie } })
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({ runtime: { enabled: true, providerEnabled: false } })
+    expect(isolatedAuthCalls).toBe(0)
+  })
+})

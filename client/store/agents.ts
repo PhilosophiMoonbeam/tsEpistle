@@ -4,6 +4,12 @@ import type { AgentCurrentPageHint, AgentEventType, AgentProviderProfileView, Ag
 import { cancelAgentRun, createAgentThread, decideAgentProposal, deleteAgentSession, getAgentThread, listAgentProfiles, listAgentSessions, listAgentSkills, submitAgentMessage, subscribeAgentRun, updateAgentProfile, updateAgentSkills, type AgentSessionSummary, type CreatedAgentThread, type VisibleAgentSkill } from '../helpers/agents-api.ts'
 
 const terminalEvents = new Set<AgentEventType>(['run.completed', 'run.failed', 'run.cancelled', 'run.recovery_required'])
+export interface AgentStoreInitializeOptions {
+  readonly routeSync?: boolean
+  readonly currentPage?: AgentCurrentPageHint | null
+  readonly reuseLatest?: boolean
+}
+
 
 export const useAgentsStore = defineStore('agents', {
   state: () => ({
@@ -13,6 +19,8 @@ export const useAgentsStore = defineStore('agents', {
     skills: [] as VisibleAgentSkill[],
     profiles: [] as AgentProviderProfileView[],
     launchPage: null as AgentCurrentPageHint | null,
+    contextPage: null as AgentCurrentPageHint | null,
+    routeSync: true,
     loading: false,
     sending: false,
     error: '',
@@ -23,12 +31,14 @@ export const useAgentsStore = defineStore('agents', {
     decidingApprovalId: null as string | null
   }),
   actions: {
-    async initialize(csrfToken: string) {
+    async initialize(csrfToken: string, options: AgentStoreInitializeOptions = {}) {
       this.csrfToken = csrfToken
+      this.routeSync = options.routeSync ?? true
+      this.contextPage = options.currentPage ?? null
       this.loading = true
       this.error = ''
       try {
-        const pathMatch = /^\/sessions\/([0-9a-f-]{36})$/i.exec(window.location.pathname)
+        const pathMatch = this.routeSync ? /^\/sessions\/([0-9a-f-]{36})$/i.exec(window.location.pathname) : null
         const [sessions, profiles, skills] = await Promise.all([
           listAgentSessions(window.fetch.bind(window), csrfToken),
           listAgentProfiles(window.fetch.bind(window), csrfToken),
@@ -37,19 +47,29 @@ export const useAgentsStore = defineStore('agents', {
         this.profiles = profiles
         this.skills = skills
         this.sessions = sessions
-        if (pathMatch?.[1]) await this.openSession(pathMatch[1])
-        else await this.newSession('saved')
+        if (pathMatch?.[1]) {
+          await this.openSession(pathMatch[1])
+        } else if (!this.routeSync && this.thread) {
+          await this.openSession(this.thread.session.id)
+        } else if (options.reuseLatest && sessions[0]) {
+          await this.openSession(sessions[0].id)
+        } else {
+          await this.newSession('saved')
+        }
       } catch (error) {
         this.error = error instanceof Error ? error.message : 'Agent session failed to load.'
       } finally {
         this.loading = false
       }
     },
+    setCurrentPage(page: AgentCurrentPageHint | null) {
+      this.contextPage = page
+    },
     async newSession(retention: 'temporary' | 'saved') {
       this.closeStream()
       const created = await createAgentThread(window.fetch.bind(window), this.csrfToken, { retention, executionMode: 'agent', providerProfileId: null })
       this.applyCreatedThread(created)
-      window.history.replaceState(null, '', `/sessions/${created.session.id}`)
+      if (this.routeSync) window.history.replaceState(null, '', `/sessions/${created.session.id}`)
       await this.reloadSessions()
     },
     applyCreatedThread(created: CreatedAgentThread) {
@@ -64,7 +84,7 @@ export const useAgentsStore = defineStore('agents', {
       this.closeStream()
       this.thread = await getAgentThread(window.fetch.bind(window), this.csrfToken, sessionId)
       this.launchPage = null
-      window.history.replaceState(null, '', `/sessions/${sessionId}`)
+      if (this.routeSync) window.history.replaceState(null, '', `/sessions/${sessionId}`)
       this.connectCurrentRun()
     },
     async refreshThread() {
@@ -77,10 +97,11 @@ export const useAgentsStore = defineStore('agents', {
     async reloadSessions() {
       this.sessions = await listAgentSessions(window.fetch.bind(window), this.csrfToken)
     },
-    async send(content: string) {
+    async send(content: string): Promise<boolean> {
       const thread = this.thread
       const trimmed = content.trim()
-      if (!thread || !trimmed || this.sending || thread.session.currentRun?.canCancel) return
+      const currentPage = this.contextPage ?? this.launchPage
+      if (!thread || !trimmed || this.sending || thread.session.currentRun?.canCancel) return false
       this.sending = true
       this.error = ''
       try {
@@ -89,13 +110,15 @@ export const useAgentsStore = defineStore('agents', {
           expectedSessionVersion: thread.session.version,
           profileResolutionToken: thread.session.profileResolutionToken,
           content: trimmed,
-          ...(this.launchPage ? { currentPage: this.launchPage } : {})
+          ...(currentPage ? { currentPage } : {})
         })
         await this.refreshThread()
         this.eventSequence = run.eventSequence
         this.connect(run.id, run.eventSequence)
+        return true
       } catch (error) {
         this.error = error instanceof Error ? error.message : 'Message could not be sent.'
+        return false
       } finally {
         this.sending = false
       }

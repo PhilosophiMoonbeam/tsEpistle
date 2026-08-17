@@ -9,7 +9,6 @@ import AgentShell from './components/agents/agent-shell.vue'
 
 const AgentBootstrapSchema = z.object({
   csrfToken: z.string().min(32).max(128),
-  isAdmin: z.boolean(),
   userId: z.number().int().positive()
 }).strict()
 

@@ -19,6 +19,7 @@ export type SiteConfig = {
   logoUrl: string
   product: ProductMetadata
   agentsEnabled: boolean
+  agentProviderEnabled: boolean
   agentLaunchCsrfToken: string
   path?: string
   devMode?: boolean

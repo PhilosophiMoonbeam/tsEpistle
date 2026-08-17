@@ -1,8 +1,11 @@
 <template>
   <main aria-labelledby="admin-title">
-    <div class="d-flex flex-wrap align-center ga-3 mb-5">
+    <div v-if="!embedded" class="d-flex flex-wrap align-center ga-3 mb-5">
       <div><h1 id="admin-title" class="text-headline-large">Agent administration</h1><p class="text-medium-emphasis mb-0">Profiles, skills, browser policy, kill switches, quotas, and retention.</p></div>
       <v-spacer />
+      <v-btn variant="outlined" prepend-icon="mdi-refresh" :loading="loading" @click="load">Refresh</v-btn>
+    </div>
+    <div v-else class="d-flex justify-end mb-3">
       <v-btn variant="outlined" prepend-icon="mdi-refresh" :loading="loading" @click="load">Refresh</v-btn>
     </div>
     <v-alert v-if="error" class="mb-4" type="error" variant="tonal" closable @click:close="error = ''">{{ error }}</v-alert>
@@ -88,7 +91,8 @@ interface Profile { id: string; displayName: string; status: 'enabled' | 'disabl
 interface BrowserTarget { id: string; canonicalUrl: string; enabled: boolean; policySha256: string }
 interface ProfileDraft { displayName: string; transportKind: string; model: string; baseUrl: string; authMode: string; secretReference: string; exposureMode: 'all_agent_users' | 'groups'; groupIds: string; maxContextTokens: number; maxOutputTokens: number; dailyTokens: number; dailyCostMicros: number; reservationTokens: number; reservationCostMicros: number; timeoutMs: number; maxAttempts: number; capabilityRevision: string; pricingRevision: string; structuredOutput: string; usage: string; streaming: boolean; functions: boolean; parallelFunctions: boolean; cancellation: boolean; agentMode: boolean; generationMode: boolean }
 
-const props = defineProps<{ csrfToken: string }>()
+const props = withDefaults(defineProps<{ csrfToken: string; embedded?: boolean }>(), { embedded: false })
+const { embedded } = props
 const tab = ref('runtime')
 const loading = ref(false)
 const saving = ref(false)

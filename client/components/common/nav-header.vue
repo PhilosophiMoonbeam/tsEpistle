@@ -8,14 +8,19 @@
           clearable
           bg-color='deep-purple'
           color='white'
-          :label='$t(`common:header.search`)'
+          :label='searchInputLabel'
           single-line
           variant="solo"
           flat
           hide-details
-          prepend-inner-icon='mdi-magnify'
+          :prepend-inner-icon='searchInputIcon'
           :loading='searchIsLoading'
           @keyup.enter='searchEnter($event)'
+          @keyup.esc='searchClose'
+          @focus='searchFocus'
+          @blur='searchBlur'
+          @keyup.down='searchMove(`down`)'
+          @keyup.up='searchMove(`up`)'
           autocomplete='off'
         )
     v-row(no-gutters)
@@ -35,13 +40,13 @@
                 v-if='searchIsShown && $vuetify.display.mdAndUp',
                 v-model='search',
                 color='white',
-                :label='$t(`common:header.search`)',
+                :label='searchInputLabel',
                 single-line,
                 variant="solo"
                 flat
                 rounded
                 hide-details,
-                prepend-inner-icon='mdi-magnify',
+                :prepend-inner-icon='searchInputIcon',
                 :loading='searchIsLoading',
                 @keyup.enter='searchEnter($event)'
                 @keyup.esc='searchClose'
@@ -328,6 +333,8 @@ export default defineComponent({
     pictureUrl(): string { return wikiStore.user.pictureUrl },
     isAuthenticated(): boolean { return wikiStore.user.authenticated },
     permissions(): string[] { return wikiStore.user.permissions },
+    searchInputLabel(): string { return this.searchMode === 'ask' ? this.$t('common:header.askPlaceholder') : this.$t('common:header.search') },
+    searchInputIcon(): string { return this.searchMode === 'ask' ? 'mdi-auto-fix' : 'mdi-magnify' },
     picture (): UserPicture {
       const pictureUrl = typeof this.pictureUrl === 'string' ? this.pictureUrl : ''
       if (pictureUrl.length > 1) {
@@ -379,6 +386,7 @@ export default defineComponent({
     onPageDuplicate(this.pageDuplicate)
     onPageDelete(this.pageDelete)
     this.isDevMode = siteConfig.devMode === true
+    window.addEventListener('keydown', this.handleSearchShortcut)
   },
   beforeUnmount () {
     offPageEdit(this.pageEdit)
@@ -388,26 +396,39 @@ export default defineComponent({
     offPageConvert(this.pageConvert)
     offPageDuplicate(this.pageDuplicate)
     offPageDelete(this.pageDelete)
+    window.removeEventListener('keydown', this.handleSearchShortcut)
   },
   methods: {
     searchFocus () {
       this.searchIsFocused = true
     },
     searchBlur () {
-      this.searchIsFocused = false
+      _.delay(() => {
+        if (this.searchMode !== 'ask') this.searchIsFocused = false
+      }, 100)
     },
     searchClose () {
       this.search = ''
-      this.searchBlur()
+      this.searchIsFocused = false
+    },
+    async focusSearchField(): Promise<void> {
+      this.searchIsShown = true
+      this.searchIsFocused = true
+      await this.$nextTick()
+      const field = this.$vuetify.display.smAndDown ? this.$refs.searchFieldMobile : this.$refs.searchField
+      ;(field as { focus?: () => void } | undefined)?.focus?.()
     },
     searchToggle () {
       this.searchIsShown = !this.searchIsShown
-      if (this.searchIsShown) {
-        this.searchMode = 'search'
-        _.delay(() => {
-          ;(this.$refs.searchFieldMobile as { focus: () => void }).focus()
-        }, 200)
-      }
+      if (this.searchIsShown) void this.focusSearchField()
+      else this.searchClose()
+    },
+    handleSearchShortcut(event: KeyboardEvent): void {
+      if (!(event.ctrlKey || event.metaKey) || !event.shiftKey || event.key.toLowerCase() !== 'a') return
+      if (!siteConfig.agentsEnabled || !this.isAuthenticated || !this.permissions.some(permission => permission === 'use:agents' || permission === 'manage:system')) return
+      event.preventDefault()
+      this.searchMode = this.searchMode === 'ask' ? 'search' : 'ask'
+      void this.focusSearchField()
     },
     searchEnter (event: KeyboardEvent) {
       if ((event.ctrlKey || event.metaKey) && siteConfig.agentsEnabled && this.isAuthenticated && this.permissions.some(permission => permission === 'use:agents' || permission === 'manage:system')) {

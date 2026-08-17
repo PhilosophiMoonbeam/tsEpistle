@@ -4,7 +4,6 @@
       <v-app-bar-nav-icon v-if="isConversationPage" aria-label="Open session history" @click="drawer = !drawer" />
       <v-app-bar-title>Wiki Agents</v-app-bar-title>
       <v-chip v-if="isConversationPage" class="mr-2" size="small" :color="connectionColor" variant="tonal">{{ connectionLabel }}</v-chip>
-      <v-btn v-if="bootstrap.isAdmin" href="/admin" variant="text">Administration</v-btn>
       <v-form action="/auth/logout" method="post"><v-btn type="submit" variant="text">Sign out</v-btn></v-form>
     </v-app-bar>
 
@@ -37,8 +36,6 @@
     <v-main>
       <v-container class="agent-shell" fluid>
         <AgentMcpApproval v-if="isApprovalPage" :csrf-token="bootstrap.csrfToken" />
-        <AgentAdmin v-else-if="isAdminPage && bootstrap.isAdmin" :csrf-token="bootstrap.csrfToken" />
-        <v-alert v-else-if="isAdminPage" type="error" variant="tonal">System administration permission is required.</v-alert>
         <template v-else>
           <v-progress-linear v-if="loading" indeterminate color="primary" aria-label="Loading agent session" />
           <v-alert v-if="error" type="error" closable class="mb-4" @click:close="agents.error = ''">{{ error }}</v-alert>
@@ -85,13 +82,11 @@ import AgentMcpApproval from './agent-mcp-approval.vue'
 import AgentComposer from './agent-composer.vue'
 import AgentThread from './agent-thread.vue'
 import AgentSessionSettings from './agent-session-settings.vue'
-import AgentAdmin from './agent-admin.vue'
 
-interface AgentBootstrap { readonly csrfToken: string; readonly isAdmin: boolean; readonly userId: number }
+interface AgentBootstrap { readonly csrfToken: string; readonly userId: number }
 const props = defineProps<{ bootstrap: AgentBootstrap }>()
-const isAdminPage = window.location.pathname === '/admin'
 const isApprovalPage = /^\/approvals\/[0-9a-f-]{36}$/i.test(window.location.pathname)
-const isConversationPage = !isAdminPage && !isApprovalPage
+const isConversationPage = !isApprovalPage
 const drawer = ref(true)
 const agents = useAgentsStore()
 const { connection, decidingApprovalId, error, launchPage, loading, profiles, sending, sessions, skills, thread } = storeToRefs(agents)

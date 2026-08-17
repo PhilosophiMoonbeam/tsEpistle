@@ -26,6 +26,7 @@ const adminRoutes: RouteRecordRaw[] = [
   { path: '/extensions', component: () => import('./components/admin/admin-extensions.vue') },
   { path: '/logging', component: () => import('./components/admin/admin-logging.vue') },
   { path: '/search', component: () => import('./components/admin/admin-search.vue') },
+  { path: '/agents', component: () => import('./components/admin/admin-agents.vue') },
   { path: '/storage', component: () => import('./components/admin/admin-storage.vue') },
   { path: '/api', component: () => import('./components/admin/admin-api.vue') },
   { path: '/mail', component: () => import('./components/admin/admin-mail.vue') },

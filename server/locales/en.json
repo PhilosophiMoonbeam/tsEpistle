@@ -55,8 +55,7 @@
       "searchModeLabel": "Choose Search or Ask",
       "searchMode": "Search",
       "askMode": "Ask",
-      "askWikiAbout": "Ask Wiki about “{{query}}”",
-      "askOpenSameTab": "Open Ask in this tab",
+      "askPlaceholder": "Ask Wiki Agent…",
       "account": "Account",
       "convert": "Convert",
       "history": "History",
@@ -305,6 +304,10 @@
     "forgotPasswordSubtitle": "Enter your email address to receive the instructions to reset your password:"
   },
   "admin": {
+    "agents": {
+      "title": "Agents",
+      "subtitle": "Configure agent runtime policy, providers, approved skills, browser access, quotas, and retention"
+    },
     "api": {
       "title": "API Access",
       "revoke": "Revoke",

@@ -1,111 +1,113 @@
 <template lang="pug">
-  .search-results(v-if='searchIsFocused || (search && search.length > 1)')
-    .search-results-container
-      v-btn-toggle.search-results-mode(
-        v-if='canAsk'
-        v-model='searchMode'
-        mandatory
-        density='compact'
-        color='primary'
-        :aria-label='$t(`common:header.searchModeLabel`)'
-      )
-        v-btn(value='search') {{$t('common:header.searchMode')}}
-        v-btn(value='ask') {{$t('common:header.askMode')}}
-      .search-results-help(v-if='!search || (search && search.length < 2)')
-        img(src='/_assets/svg/icon-search-alt.svg')
-        .mt-4 {{$t('common:header.searchHint')}}
-      .search-results-loader(v-else-if='searchIsLoading && (!results || results.length < 1)')
-        async-state(
-          state='loading'
-          :title='$t(`common:header.searchLoading`)'
-          message='Searching visible pages.'
-        )
-      .search-results-none(v-else-if='searchError')
-        async-state(
-          state='error'
-          title='Search is temporarily unavailable'
-          :message='searchError'
-          retry-label='Try again'
-          @retry='retrySearch'
-        )
-      .search-results-none(v-else-if='!results || results.length < 1')
-        async-state(
-          state='empty'
-          :title='$t(`common:header.searchNoResult`)'
-          message='Try a different term or broader scope.'
-        )
-      template(v-if='search && search.length >= 2 && results && results.length > 0')
-        v-list-subheader.text-white {{$t('common:header.searchResultsCount', { total: response.totalHits })}}
-        v-list.search-results-items.radius-7.py-0(lines="two", density="compact")
-          template(v-for='(item, idx) of results', :key='item.id')
-            v-list-item(@click='goToPage(item)', @click.middle="goToPageInNewTab(item)", :class='idx === cursor ? `highlighted` : ``')
-              template(v-slot:prepend)
-                v-avatar(tile)
-                  img(src='/_assets/svg/icon-selective-highlighting.svg')
-              v-list-item-title {{ item.title }}
-              v-list-item-subtitle.text-body-small {{ item.description }}
-              .text-body-small.text-grey(v-text='item.path')
-              template(v-slot:append)
-                v-chip(label, variant="outlined") {{item.locale.toUpperCase()}}
-            v-divider(v-if='idx < results.length - 1')
-        v-pagination.mt-3(
-          v-if='paginationLength > 1'
-          v-model='pagination'
-          :length='paginationLength'
-          rounded
-        )
-      template(v-if='suggestions && suggestions.length > 0')
-        v-list-subheader.text-white.mt-3 {{$t('common:header.searchDidYouMean')}}
-        v-list.search-results-suggestions.radius-7(density="compact")
-          template(v-for='(term, idx) of suggestions', :key='term')
-            v-list-item(@click='setSearchTerm(term)', :class='idx + results.length === cursor ? `highlighted` : ``')
-              template(v-slot:prepend)
-                v-avatar
-                  v-icon mdi-magnify
-              v-list-item-title {{ term }}
-            v-divider(v-if='idx < suggestions.length - 1')
-      form.search-results-ask(
-        v-if='canAsk && search && search.length >= 2'
-        ref='askForm'
-        method='post'
-        action='/_api/agents/launch'
-        target='_blank'
-        rel='noopener'
-      )
-        input(type='hidden', name='csrfToken', :value='agentLaunchCsrfToken')
-        template(v-if='currentPageId > 0')
-          input(type='hidden', name='pageId', :value='currentPageId')
-          input(type='hidden', name='pageLocale', :value='currentPageLocale')
-          input(type='hidden', name='pagePath', :value='currentPagePath')
-          input(type='hidden', name='pageUpdatedAt', :value='currentPageUpdatedAt')
-        v-btn.search-results-ask-command(
-          type='submit'
-          block
-          variant='tonal'
+  .search-results(v-if='searchIsFocused || (search && search.length > 1)' :class='canAsk && searchMode === `ask` ? `search-results--ask` : ``' role='region' aria-label='Wiki search and agent')
+    .search-results-container(:class='canAsk && searchMode === `ask` ? `search-results-container--ask` : ``')
+      .search-results-controls
+        v-btn-toggle.search-results-mode(
+          v-if='canAsk'
+          v-model='searchMode'
+          mandatory
+          density='compact'
           color='primary'
-          prepend-icon='mdi-creation'
-          :class='askCursorIndex === cursor ? `highlighted` : ``'
-          @click='searchMode = `ask`'
-        ) {{$t('common:header.askWikiAbout', { query: search })}}
-        v-btn.mt-2(
-          type='submit'
-          formtarget='_self'
+          :aria-label='$t(`common:header.searchModeLabel`)'
+        )
+          v-btn(value='search' prepend-icon='mdi-magnify') {{$t('common:header.searchMode')}}
+          v-btn(value='ask' prepend-icon='mdi-auto-fix') {{$t('common:header.askMode')}}
+        v-chip.search-results-shortcut(
+          v-if='canAsk'
+          color='white'
           variant='text'
           size='small'
-          @click='searchMode = `ask`'
-        ) {{$t('common:header.askOpenSameTab')}}
-      .text-xs-center.pt-5(v-if='search && search.length > 1')
-        //- v-btn.mx-2(outlined, color='orange', @click='search = ``', v-if='results.length > 0')
-        //-   v-icon(left) mdi-content-save
-        //-   span {{$t('common:header.searchCopyLink')}}
-        v-btn.mx-2(variant="outlined", color='pink', @click='search = ``')
-          v-icon(start) mdi-close
-          span {{$t('common:header.searchClose')}}</template>
+          prepend-icon='mdi-keyboard-outline'
+        ) Ctrl/⌘ + Shift + A
+        v-btn.search-results-close(
+          icon='mdi-close'
+          variant='text'
+          color='white'
+          :aria-label='$t(`common:header.searchClose`)'
+          @click='closeSearch'
+        )
+      InlineAgentChat(
+        v-if='canAsk && searchMode === `ask`'
+        ref='inlineAgent'
+        :csrf-token='agentLaunchCsrfToken'
+        :provider-enabled='agentProviderEnabled'
+        :page-id='currentPageId'
+        :page-locale='currentPageLocale'
+        :page-path='currentPagePath'
+        :page-updated-at='currentPageUpdatedAt'
+      )
+      template(v-else)
+        .search-results-help(v-if='!search || (search && search.length < 2)')
+          img(src='/_assets/svg/icon-search-alt.svg')
+          .mt-4 {{$t('common:header.searchHint')}}
+        .search-results-loader(v-else-if='searchIsLoading && (!results || results.length < 1)')
+          async-state(
+            state='loading'
+            :title='$t(`common:header.searchLoading`)'
+            message='Searching visible pages.'
+          )
+        .search-results-none(v-else-if='searchError')
+          async-state(
+            state='error'
+            title='Search is temporarily unavailable'
+            :message='searchError'
+            retry-label='Try again'
+            @retry='retrySearch'
+          )
+        .search-results-none(v-else-if='!results || results.length < 1')
+          async-state(
+            state='empty'
+            :title='$t(`common:header.searchNoResult`)'
+            message='Try a different term or broader scope.'
+          )
+        template(v-if='search && search.length >= 2 && results && results.length > 0')
+          v-list-subheader.text-white {{$t('common:header.searchResultsCount', { total: response.totalHits })}}
+          v-list.search-results-items.radius-7.py-0(lines='two' density='compact')
+            template(v-for='(item, idx) of results' :key='item.id')
+              v-list-item(
+                :class='idx === cursor ? `highlighted` : ``'
+                @click='goToPage(item)'
+                @click.middle='goToPageInNewTab(item)'
+              )
+                template(v-slot:prepend)
+                  v-avatar(tile)
+                    img(src='/_assets/svg/icon-selective-highlighting.svg')
+                v-list-item-title {{ item.title }}
+                v-list-item-subtitle.text-body-small {{ item.description }}
+                .text-body-small.text-grey(v-text='item.path')
+                template(v-slot:append)
+                  v-chip(label variant='outlined') {{item.locale.toUpperCase()}}
+              v-divider(v-if='idx < results.length - 1')
+          v-pagination.mt-3(
+            v-if='paginationLength > 1'
+            v-model='pagination'
+            :length='paginationLength'
+            rounded
+          )
+        template(v-if='suggestions && suggestions.length > 0')
+          v-list-subheader.text-white.mt-3 {{$t('common:header.searchDidYouMean')}}
+          v-list.search-results-suggestions.radius-7(density='compact')
+            template(v-for='(term, idx) of suggestions' :key='term')
+              v-list-item(
+                :class='idx + results.length === cursor ? `highlighted` : ``'
+                @click='setSearchTerm(term)'
+              )
+                template(v-slot:prepend)
+                  v-avatar
+                    v-icon mdi-magnify
+                v-list-item-title {{ term }}
+              v-divider(v-if='idx < suggestions.length - 1')
+        .text-xs-center.pt-5(v-if='search && search.length > 1')
+          v-btn.mx-2(variant='outlined' color='pink' @click='closeSearch')
+            v-icon(start) mdi-close
+            span {{$t('common:header.searchClose')}}
+</template>
 
 <script lang='ts'>
 import { defineComponent } from 'vue'
 import _ from 'lodash'
 import AsyncState from '@/components/common/async-state.vue'
+import InlineAgentChat from '../agents/inline-agent-chat.vue'
 import { getErrorMessage } from '../../helpers/root-ui-store'
 import { wikiStore } from '@/store/index.ts'
 import { onSearchEnter, onSearchMove, offSearchEnter, offSearchMove } from '../../helpers/search-navigation-events'
@@ -116,10 +118,15 @@ const emptySearchResponse = (): PageSearchResult => ({
   suggestions: [],
   totalHits: 0
 })
+interface InlineAgentChatRef {
+  sendPrompt(content: string): Promise<boolean>
+}
+
 
 export default defineComponent({
   components: {
-    AsyncState
+    AsyncState,
+    InlineAgentChat
   },
   data() {
     return {
@@ -171,29 +178,21 @@ export default defineComponent({
       return siteConfig.agentsEnabled && wikiStore.user.authenticated && wikiStore.user.permissions.some(permission => permission === 'use:agents' || permission === 'manage:system')
     },
     agentLaunchCsrfToken(): string { return siteConfig.agentLaunchCsrfToken },
+    agentProviderEnabled(): boolean { return siteConfig.agentProviderEnabled },
     currentPageId(): number { return wikiStore.page.id },
     currentPageLocale(): string { return wikiStore.page.locale },
     currentPagePath(): string { return wikiStore.page.path },
     currentPageUpdatedAt(): string { return wikiStore.page.updatedAt },
-    askCursorIndex(): number { return this.results.length + this.suggestions.length },
     paginationLength() {
       return (this.response.totalHits > 0) ? Math.ceil(this.response.totalHits / this.perPage) : 0
     }
   },
   watch: {
     search(newValue: string | null) {
-      this.cursor = 0
-      this.searchRequestId += 1
-      const requestId = this.searchRequestId
-      this.searchError = ''
-      if (this.searchTimer !== null) window.clearTimeout(this.searchTimer)
-      if (!newValue || newValue.length < 2) {
-        this.searchIsLoading = false
-        this.response = emptySearchResponse()
-        return
-      }
-      this.searchIsLoading = true
-      this.searchTimer = window.setTimeout(() => this.runSearch(newValue, requestId), 300)
+      this.queueSearch(newValue ?? '')
+    },
+    searchMode() {
+      this.queueSearch(this.search)
     },
     results() {
       this.cursor = 0
@@ -210,26 +209,50 @@ export default defineComponent({
     offSearchEnter(this.handleSearchEnter)
   },
   methods: {
-    handleSearchMove(dir: string): void {
-      this.cursor += ((dir === 'up') ? -1 : 1)
-      const lastIndex = this.results.length + this.suggestions.length + (this.canAsk && this.search.length >= 2 ? 1 : 0) - 1
-      if (this.cursor < -1) {
-        this.cursor = -1
-      } else if (this.cursor > lastIndex) {
-        this.cursor = lastIndex
+    queueSearch(query: string): void {
+      this.cursor = 0
+      this.searchRequestId += 1
+      const requestId = this.searchRequestId
+      this.searchError = ''
+      if (this.searchTimer !== null) window.clearTimeout(this.searchTimer)
+      this.searchTimer = null
+      if (this.searchMode !== 'search' || query.length < 2) {
+        this.searchIsLoading = false
+        this.response = emptySearchResponse()
+        return
       }
+      this.searchIsLoading = true
+      this.searchTimer = window.setTimeout(() => this.runSearch(query, requestId), 300)
     },
-    handleSearchEnter() {
-      if (this.canAsk && this.search.length >= 2 && (this.searchMode === 'ask' || this.cursor === this.askCursorIndex)) {
-        ;(this.$refs.askForm as HTMLFormElement).requestSubmit()
+    handleSearchMove(dir: string): void {
+      if (this.searchMode === 'ask') return
+      this.cursor += dir === 'up' ? -1 : 1
+      const lastIndex = this.results.length + this.suggestions.length - 1
+      if (this.cursor < -1) this.cursor = -1
+      else if (this.cursor > lastIndex) this.cursor = lastIndex
+    },
+    async handleSearchEnter(): Promise<void> {
+      if (this.canAsk && this.searchMode === 'ask') {
+        await this.submitAskPrompt()
         return
       }
       if (this.cursor >= 0 && this.cursor < this.results.length) {
         const result = _.nth(this.results, this.cursor)
         if (result) this.goToPage(result)
-      } else if (this.cursor >= 0 && this.cursor < this.askCursorIndex) {
+      } else if (this.cursor >= this.results.length && this.cursor < this.results.length + this.suggestions.length) {
         this.setSearchTerm(_.nth(this.suggestions, this.cursor - this.results.length))
       }
+    },
+    async submitAskPrompt(): Promise<void> {
+      const prompt = this.search.trim()
+      if (!this.canAsk || this.searchMode !== 'ask' || !prompt) return
+      await this.$nextTick()
+      const inlineAgent = this.$refs.inlineAgent as InlineAgentChatRef | undefined
+      if (await inlineAgent?.sendPrompt(prompt)) this.search = ''
+    },
+    closeSearch(): void {
+      this.search = ''
+      this.searchIsFocused = false
     },
     setSearchTerm(term: string | undefined): void {
       if (term !== undefined) this.search = term
@@ -279,28 +302,67 @@ export default defineComponent({
   background-color: rgba(0,0,0,.9);
   z-index: 100;
   text-align: center;
-  animation: searchResultsReveal .6s ease;
+  animation: searchResultsReveal .24s ease-out;
 
   @media #{map-get($display-breakpoints, 'sm-and-down')} {
+    height: calc(100% - 112px);
     top: 112px;
+  }
+
+  &--ask {
+    background:
+      radial-gradient(circle at 50% 0, rgba(63, 81, 181, .32), transparent 42rem),
+      rgba(8, 10, 18, .94);
+    overflow: hidden;
   }
 
   &-container {
     margin: 12px auto;
     width: 90vw;
     max-width: 1024px;
+
+    &--ask {
+      height: 100%;
+      margin: 0 auto;
+      max-width: none;
+      width: 100%;
+    }
   }
+
+  &-controls {
+    align-items: center;
+    display: flex;
+    justify-content: center;
+    min-height: 3.25rem;
+    padding: .4rem clamp(.5rem, 2vw, 1.5rem);
+    position: relative;
+  }
+
   &-mode {
-    margin-bottom: 12px;
+    margin: 0;
   }
 
-  &-ask {
-    margin: 12px auto 0;
-    max-width: 48rem;
+  &-close {
+    position: absolute !important;
+    right: clamp(.5rem, 2vw, 1.5rem);
+  }
 
-    .highlighted {
-      outline: 3px solid currentColor;
-      outline-offset: 2px;
+  &-shortcut {
+    left: clamp(.5rem, 2vw, 1.5rem);
+    position: absolute !important;
+
+    @media #{map-get($display-breakpoints, 'sm-and-down')} {
+      display: none !important;
+    }
+  }
+
+  &--ask .inline-agent__card {
+    height: min(calc(100vh - 64px - 4.5rem), 54rem);
+  }
+
+  @media #{map-get($display-breakpoints, 'sm-and-down')} {
+    &--ask .inline-agent__card {
+      height: calc(100vh - 112px - 3.25rem);
     }
   }
 
@@ -362,5 +424,9 @@ export default defineComponent({
     background-color: rgba(0,0,0,.9);
     padding-top: 0;
   }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .search-results { animation: none; }
 }
 </style>

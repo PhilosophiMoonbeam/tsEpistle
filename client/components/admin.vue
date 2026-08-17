@@ -85,6 +85,8 @@
               v-list-item-title Logging
             v-list-item(to='/search', color='primary', prepend-icon='mdi-cloud-search-outline')
               v-list-item-title {{ $t('admin:search.title') }}
+            v-list-item(to='/agents', color='primary', prepend-icon='mdi-robot-outline', v-if='agentsEnabled')
+              v-list-item-title {{ $t('admin:agents.title') }}
             v-list-item(to='/storage', color='primary', prepend-icon='mdi-harddisk')
               v-list-item-title {{ $t('admin:storage.title') }}
           template(v-if='hasPermission([`manage:system`, `manage:api`])')
@@ -172,7 +174,8 @@ export default {
       get(): typeof wikiStore.admin.info { return wikiStore.admin.info },
       set(value: typeof wikiStore.admin.info) { wikiStore.admin.info = value }
     },
-    permissions(): string[] { return wikiStore.user.permissions }
+    permissions(): string[] { return wikiStore.user.permissions },
+    agentsEnabled(): boolean { return siteConfig.agentsEnabled }
   },
   created() {
     wikiStore.page.mode = 'admin'
