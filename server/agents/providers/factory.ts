@@ -55,7 +55,7 @@ const restoreOpenAIReasoningItem = (item: unknown): unknown => {
     if (Buffer.byteLength(encoded, 'utf8') > MAX_PROVIDER_STATE_ITEM_BYTES) throw new Error('too large')
     const value: unknown = JSON.parse(encoded)
     if (!Array.isArray(value) || value.length !== 2 || typeof value[0] !== 'string' || !/^rs_[A-Za-z0-9_-]{1,256}$/.test(value[0]) || typeof value[1] !== 'string') throw new Error('invalid')
-    return { type: 'reasoning', id: value[0], content: [], encrypted_content: value[1] }
+    return { type: 'reasoning', id: value[0], content: [], summary: [], encrypted_content: value[1] }
   } catch {
     throw new AgentRepositoryError('AGENT_PROVIDER_STATE_CORRUPT', 'Stored provider continuation is invalid', 500)
   }

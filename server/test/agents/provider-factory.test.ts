@@ -100,6 +100,7 @@ describe('Ax provider factory', () => {
     expect(continuationPayload.input).toContainEqual({
       type: 'reasoning',
       id: 'rs_1',
+      summary: [],
       content: [],
       encrypted_content: 'encrypted-reasoning'
     })
