@@ -68,7 +68,7 @@
         v-if='canAsk && search && search.length >= 2'
         ref='askForm'
         method='post'
-        action='/api/agents/launch'
+        action='/_api/agents/launch'
         target='_blank'
         rel='noopener'
       )
