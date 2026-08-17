@@ -132,7 +132,7 @@ describe('Wiki MCP transport', () => {
     movePage = vi.fn(async () => ({}))
     authorizeMutation = vi.fn(async () => {})
     const app = express()
-    app.use(createWikiMcpController({
+    const mcpController = createWikiMcpController({
       knex: db,
       operations: {
         search: vi.fn(),
@@ -166,9 +166,7 @@ describe('Wiki MCP transport', () => {
       resolveUser: async () => humanPrincipal(),
       config: {
         enabled: true,
-        publicOrigin: 'http://127.0.0.1',
-        resourceUrl: 'http://127.0.0.1/mcp',
-        wikiPublicOrigin: 'https://wiki.example.test',
+        wikiPublicOrigin: 'http://127.0.0.1',
         agentsEnabled: true,
         skillsEnabled: true,
         proposalsEnabled: true,
@@ -181,7 +179,9 @@ describe('Wiki MCP transport', () => {
         requestStateKeys: [key],
         snapshotSigningSecret: Buffer.alloc(32, 8)
       }
-    }))
+    })
+    app.all('/mcp', mcpController)
+    app.get('/health', (_req, res) => res.sendStatus(204))
     server = app.listen(0, '127.0.0.1')
     const listening = Promise.withResolvers<void>()
     server.once('listening', listening.resolve)
@@ -192,6 +192,12 @@ describe('Wiki MCP transport', () => {
     await client?.close()
     await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()))
     await db.destroy()
+  })
+
+  it('leaves non-MCP routes to the ordinary Wiki application', async () => {
+    const port = (server.address() as AddressInfo).port
+    const response = await fetch(`http://127.0.0.1:${port}/health`)
+    expect(response.status).toBe(204)
   })
 
   it('negotiates with the official modern client and advertises the admitted catalog', async () => {

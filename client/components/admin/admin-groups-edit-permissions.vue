@@ -166,7 +166,7 @@ export default {
             },
             {
               permission: 'use:mcp',
-              hint: 'Can use the dedicated MCP endpoint through API keys issued for this group',
+              hint: 'Can use the MCP endpoint at /mcp on this Wiki through API keys issued for this group',
               warning: true,
               restrictedForSystem: true,
               disabled: false

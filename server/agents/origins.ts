@@ -1,19 +1,8 @@
-export interface AgentOriginConfiguration {
-  readonly wikiPublicOrigin: string
-  readonly mcpPublicOrigin: string
-}
+const MCP_PATH = '/mcp'
 
-export interface NormalizedAgentOrigins {
-  readonly wikiPublicOrigin: string
-  readonly mcpPublicOrigin: string | null
-}
-
-const parseExactOrigin = (value: string, label: string, required: boolean): string | null => {
+const parseExactOrigin = (value: string, label: string): string => {
   const candidate = value.trim()
-  if (candidate.length === 0) {
-    if (required) throw new Error(`${label} must be configured`)
-    return null
-  }
+  if (candidate.length === 0) throw new Error(`${label} must be configured`)
 
   let parsed: URL
   try {
@@ -33,24 +22,8 @@ const parseExactOrigin = (value: string, label: string, required: boolean): stri
   return normalized
 }
 
-export const normalizeAgentOrigins = (configuration: AgentOriginConfiguration): NormalizedAgentOrigins => {
-  const wikiPublicOrigin = parseExactOrigin(configuration.wikiPublicOrigin, 'wiki.publicOrigin', true)
-  if (wikiPublicOrigin === null) throw new Error('wiki.publicOrigin must be configured')
-  const mcpPublicOrigin = parseExactOrigin(configuration.mcpPublicOrigin, 'mcp.publicOrigin', false)
+export const canonicalMcpResource = (wikiPublicOrigin: string): URL => new URL(MCP_PATH, parseExactOrigin(wikiPublicOrigin, 'wiki.publicOrigin'))
 
-  const configured = [wikiPublicOrigin, mcpPublicOrigin].filter((value): value is string => value !== null)
-  if (new Set(configured).size !== configured.length) {
-    throw new Error('Wiki and MCP public origins must be distinct')
-  }
-
-  return { wikiPublicOrigin, mcpPublicOrigin }
-}
-
-export const requestMatchesOriginHost = (hostHeader: string | undefined, origin: string): boolean => {
-  if (!hostHeader) return false
-  const expected = new URL(origin).host.toLowerCase()
-  return hostHeader.trim().toLowerCase() === expected
-}
 
 export const requestOriginMatches = (originHeader: string | undefined, expectedOrigin: string): boolean => {
   if (!originHeader) return false

@@ -32,7 +32,7 @@ Build the capability, with these boundaries:
 7. **Treat provider protocol as configuration, not product architecture.** OpenAI Responses is the primary transport; OpenResponses, OpenAI-compatible Chat Completions, capability-limited legacy text Completions, and Anthropic Messages are explicit adapters behind one Ax-facing contract. Model/tool capabilities are measured and allowlisted per profile rather than inferred from a provider name.
 8. **Support standard, versioned skills without granting authority.** Approved `SKILL.md` snapshots are ordinary versioned Wiki content, progressively disclosed and pinned to sessions/runs. Skill text can guide the model but never grants tools or bypasses live permissions. External MCP clients can list/read the same exact snapshots.
 9. **Offer browsing as an isolated optional tool.** A separately deployable Chromium worker provides bounded navigate/observe/act/extract/screenshot actions with no arbitrary JavaScript, credentials, uploads, local-network access, or cross-run browser state. Browser output is untrusted evidence, not instructions.
-10. **Serve MCP over the official Streamable HTTP implementation.** Mount v2 `/mcp` only on a dedicated configured origin behind API-key, Host/Origin/resource, limits, and the shared kernel. Do not shadow Wiki pages or expose a bespoke nested-agent API.
+10. **Serve MCP over the official Streamable HTTP implementation.** Mount v2 `/mcp` on the configured Wiki origin behind API-key, Host/Origin/resource, limits, and the shared kernel. Reserve that exact path only while MCP is enabled and expose no bespoke nested-agent API.
 11. **Borrow coding-harness safety contracts, not their runtimes.** Codex contributes preflight/atomic patch semantics and durable response-item history; Oh My Pi contributes snapshot-tagged line anchors, all-or-nothing patching, progressive skill injection, and append-only custom session state. Wiki.ts implements those contracts over pages and PostgreSQL.
 12. **Borrow CopilotKit’s useful interaction contracts, not its runtime.** Adopt explicit thread/run state, tool lifecycle cards, renderer registration, render-and-wait approvals, follow-up suggestions, and headless state separation in native Vue/Vuetify components.
 13. **Ship disabled and progress through read-only, skills, canary browser, write, then MCP gates.** A migration does not enable egress. Provider, inline Ask, skill loading, browsing, writes, and MCP each have independent kill switches.
@@ -80,7 +80,7 @@ The plan adapts to the current code rather than assuming a greenfield applicatio
 - The application is PostgreSQL-only, runs Node.js 24 in current build/deployment flows, and uses additive Knex migrations with migration preflight and upgrade smoke coverage.
 - The application is a single Vite/Express release artifact. New dependencies belong in the root manifest; no artificial frontend/backend package split is introduced.
 - The client is Vue 3 + Vuetify 4 + Pinia. Native components remain the UI authority.
-- `/a`, `/p`, and every ordinary page route remain ordinary Wiki shells. Agent REST is an authenticated internal API under `/_api/agents`; the inline user surface lives inside the existing search overlay, and administration lives under `/admin/agents`. Only MCP retains a dedicated origin.
+- `/a`, `/p`, and ordinary page routes remain ordinary Wiki shells. Agent REST is an authenticated internal API under `/_api/agents`; the inline user surface lives inside the existing search overlay, administration lives under `/admin/agents`, and MCP uses the exact `/mcp` endpoint on the same configured Wiki origin.
 - `package.json` already carries `@playwright/test` `1.62.1` for E2E, but the production image prunes development dependencies and installs no browser. Production browsing therefore needs an exact `playwright-core` dependency plus a separate browser-worker image; it must not assume the E2E runner or host Chrome exists.
 - The current page update path compares millisecond `expectedUpdatedAt` and writes history inside a transaction, but renderer-only patches also advance that field. Agent authority therefore needs a source-only monotonic revision rather than extending timestamp CAS.
 
@@ -166,7 +166,7 @@ Decision details:
 - Use `createMcpHandler(factory, { responseMode: 'auto', legacy: 'stateless', keepAliveMs: 15000, maxSubscriptions: 0 })` and adapt it once with `toNodeHandler`.
 - Keep tool calls stateless. Wiki actions do not require MCP session affinity. Do not introduce an in-memory session map or event bus.
 - Pass validated Wiki authentication as request-local SDK `AuthInfo`; never ask the SDK to reinterpret an already validated Wiki JWT.
-- Use the SDK’s Host and Origin validators. Independently bind the API-key token's versioned MCP resource claim to the normalized configured canonical MCP URL before constructing `AuthInfo`; those middleware do not validate the resource claim.
+- Use the SDK’s Host and Origin validators. Independently bind the API-key token's versioned MCP resource claim to the canonical MCP URL derived from the configured Wiki origin before constructing `AuthInfo`; those middleware do not validate the resource claim.
 - Use `input_required` plus signed, expiring request state for modern high-risk MCP interaction. It is advisory and cannot replace the native approval record. The signing key is a dedicated shared secret, not a process-local random value and not an API token.
 - Declare tool annotations accurately (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`). An annotation informs clients; server policy still enforces behavior.
 - Register read-only skill resources in addition to tools because standard `SKILL.md` retrieval is a concrete client need. Continue to defer prompts, sampling, and subscriptions. Set `maxSubscriptions: 0` until a durable PostgreSQL-backed bus is delivered.
@@ -847,7 +847,7 @@ Browser content is open-world untrusted evidence. Results carry source URL/time 
 
 ### REST surface
 
-Mount `/_api/agents` on the ordinary Wiki application after ordinary user authentication and before the general internal-API 404. The controller handles only its exact prefix and falls through for every other Wiki route. It accepts authenticated user sessions only; API-key principals remain confined to GraphQL and the dedicated MCP transport. Every non-GET request requires the ordinary session-bound agent CSRF header, an exact configured Wiki `Origin`, and `Sec-Fetch-Site: same-origin`.
+Mount `/_api/agents` on the ordinary Wiki application after ordinary user authentication and before the general internal-API 404. The controller handles only its exact prefix and falls through for every other Wiki route. It accepts authenticated user sessions only; API-key principals remain confined to GraphQL and the exact `/mcp` transport. Every non-GET request requires the ordinary session-bound agent CSRF header, an exact configured Wiki `Origin`, and `Sec-Fetch-Site: same-origin`.
 
 No dedicated agent Passport strategies, callback URLs, JWT audience, cookie namespace, login pages, or cross-origin launch endpoint exist. Authentication lifecycle, revocation, localization, and account state are exactly the ordinary Wiki behavior.
 
@@ -966,7 +966,7 @@ Unknown tool names use a visible generic card. Missing renderers are not silentl
 
 ### Endpoint and authentication
 
-Serve `app.all('/mcp', ...)` only on an exact, dedicated `mcp.publicOrigin` virtual host with its own bounded parser, before that host's 404 fallback. The ordinary Wiki host does not reserve or mount `/mcp`; existing pages named `mcp` or `_agent` remain reachable. Startup/enablement rejects an MCP origin equal to the Wiki origin, and ingress/Host/certificate/canonical-resource preflight must pass before the feature route activates.
+Serve `app.all('/mcp', ...)` on the configured Wiki origin with its own bounded parser before ordinary user authentication and page routing. The canonical resource is always `${wiki.config.host}/mcp`; there is no second MCP origin or independently configurable resource URL. The route is absent while MCP is disabled and reserved for MCP while enabled, so a Wiki page at `/mcp` is available only when MCP is disabled. Host/Origin/certificate/canonical-resource preflight must pass before the feature route activates.
 
 Request pipeline:
 
@@ -974,11 +974,11 @@ Request pipeline:
 2. Existing JWT/API-key authentication populates `RequestAuthContext`.
 3. Reject browser-user sessions and guests; MCP requires `kind: 'apiKey'`.
 4. Require global API access enabled, valid/non-revoked key, MCP feature enabled, and `use:mcp` on the key’s group.
-5. Run the official Host and Origin validators as separate checks. Require a versioned `mcpResource` claim on the API-key JWT, normalize it, and compare it to the configured canonical `/mcp` URL. Existing tokens without the claim remain valid for existing APIs but are rejected at MCP until regenerated.
+5. Run the official Host and Origin validators as separate checks. Require a versioned `mcpResource` claim on the API-key JWT, normalize it, and compare it to the canonical `/mcp` URL derived from the configured Wiki origin. Existing tokens without the claim remain valid for existing APIs but are rejected at MCP until regenerated.
 6. Construct request-local `req.auth: AuthInfo` with the SDK-required raw validated bearer `token`, `clientId`, scopes, expiry, canonical resource, and safe principal identifiers in `extra`. The token is used only for this handler call: never log, persist, emit, trace, or copy it into `extra`/action context.
 7. Invoke the Node adapter around a per-request `McpServer` factory.
 
-MCP is disabled by default and exposed only through its configured ingress host, normally private. When disabled or the exact Host is absent, the MCP virtual host returns 404 and ordinary Wiki routing is untouched. Rate limits apply by API key, IP, and tool risk.
+MCP is disabled by default and exposed only through exact-path ingress, normally private during rollout. When disabled, `/mcp` falls through to ordinary Wiki routing. When enabled, the route rejects browser sessions and requires a resource-bound API key. Rate limits apply by API key, IP, and tool risk.
 
 ### Tool mapping
 
@@ -1097,7 +1097,7 @@ A disabled provider rejects new dispatches and aborts in-flight model requests a
 | malicious Markdown output | raw HTML disabled, sanitize, URL allowlist | XSS fixture in streamed/final output |
 | stale permissions during long run | live identity/permission reload before every action, approval, and apply | revoke user group/API key while run waits and prove next boundary denies |
 | MCP DNS rebinding / bad Host | official host validation and canonical resource metadata | invalid Host/Origin integration tests |
-| route shadowing | internal `/_api/agents` handles only its exact prefix and falls through otherwise; MCP uses a dedicated virtual host; ordinary `/mcp` and `/_agent` pages remain routable | existing `mcp` and `_agent` pages plus non-agent internal routes before/after disabled deployment |
+| route shadowing | internal `/_api/agents` handles only its exact prefix; `/mcp` falls through while disabled and is intentionally reserved while MCP is enabled; `_agent` remains an ordinary page | disabled `/mcp` page, enabled MCP reservation, `_agent`, and unrelated routes before/after enablement |
 
 Security posture:
 
@@ -1184,9 +1184,9 @@ Each Bead is one reviewable, reversible commit series with named dependencies an
 
 | Bead | Owner | Depends on | Concrete deliverable | Required proof before merge |
 | --- | --- | --- | --- | --- |
-| A1 Shared contract/dependency freeze | contract/data | none | exact dependencies; shared contracts; ordinary authenticated internal agent API, dedicated MCP-origin rules, and license/SBOM inputs | typecheck; package/lock/license diff; trust-boundary review |
+| A1 Shared contract/dependency freeze | contract/data | none | exact dependencies; shared contracts; ordinary authenticated internal agent API, same-origin exact-path MCP rules, and license/SBOM inputs | typecheck; package/lock/license diff; trust-boundary review |
 | A2 Typed auth and permissions | contract/data | A1 | typed user/API-key ownership and permission contexts; ordinary user session for agent REST; resource-bound API-key identity for MCP | user/guest/API-key matrix; CSRF/origin/revocation tests |
-| A3 Inert inline shell/settings | contract/data + client | A1,A2 | flags false, inline Ask surface and ordinary `/admin/agents`; no separate agent entry, login, host, or launch route | startup/page/admin smoke; existing `/mcp`/`_agent` pages; disabled-route and zero-egress checks |
+| A3 Inert inline shell/settings | contract/data + client | A1,A2 | flags false, inline Ask surface and ordinary `/admin/agents`; no separate agent entry, login, host, or launch route | startup/page/admin smoke; disabled `/mcp` fallthrough, `_agent`, and zero-egress checks |
 | A4 Additive schema and rollback contract | contract/data | A1 | source-revision/agent/outbox migration, forward removal of obsolete handoff data, and N-1 tag-CAS compatibility patch | fresh/up/empty-down/upgrade PostgreSQL 16–17; actual N-1 field/tag writes |
 | B1 Page-native skill parser | skill | A1,A2 | page/asset-to-virtual-path mapper, YAML/frontmatter validator, one-level resolver, byte/media/path rules | real router corpus plus traversal/recursion/alias/active-content cases |
 | B2 Immutable skill registry + minimal admin | skill + contract/data + client | A3,A4,B1 | versions/approval/revoke/drift repositories plus ordinary-admin list/validate/diff/approve/revoke surface | source-change race; admin permission/CSRF; exact hash/version rendering; no script execution |
@@ -1219,11 +1219,11 @@ Each Bead is one reviewable, reversible commit series with named dependencies an
 | H3 Move apply | policy/page + verification | H2 | typed move through shared primitive; migrate callers; gate | parity/stale/crash/projection |
 | H4 Restore apply | policy/page + verification | H3 | exact-version restore through shared primitive; gate | history parity/stale/crash/projection |
 | H5 Delete apply | policy/page + verification | H4 | one-page delete through shared primitive; gate | delete parity/stale/crash/projection |
-| I1 MCP transport/auth | MCP | A2,C1 | dedicated-host `/mcp`, parser, official v2 adapter, resource-bound auth | ordinary `/mcp` page unshadowed; Host/Origin/resource/legacy tests |
+| I1 MCP transport/auth | MCP | A2,C1 | same-origin `/mcp`, parser, official v2 adapter, resource-bound auth | disabled route fallthrough; enabled reservation; Host/Origin/resource/legacy tests |
 | I2 MCP read/skill surface | MCP + skill | B3,C2,I1 | tools and nested skill resource, progress/cancel | official-client bytes/hash/path tests |
 | I3 MCP prepare/apply | MCP + policy/page | H2,I1 | caller UUID/hash, modern apply, legacy prepare, signed state, dual principal | reuse/tamper/replay/wrong-key/expiry tests |
 | J1 Observability/capacity safeguards | verification/security | C4,D4,E5,F4,G3,I2,I3 | bounded metrics/logs, configuration limits, focused race/backpressure checks, quotas, and no-content telemetry | outage/purge/cost/security and configuration-boundary reports |
-| J2 Deployment/documentation | lead/release | F5,G1,J1 | ordinary Wiki plus dedicated MCP ingress, app/browser/maintenance container procedures, N-1 compatibility, and runbooks | install/auth/upgrade/rollback/drain and retention during N-1 |
+| J2 Deployment/documentation | lead/release | F5,G1,J1 | ordinary Wiki with exact-path MCP ingress, app/browser/maintenance container procedures, N-1 compatibility, and runbooks | install/auth/upgrade/rollback/drain and retention during N-1 |
 | J3 Frozen-revision release gate | lead + independent security | C4,H5,J2 | remediation, provenance, manifest, flags/canary policy | all A1–I3 evidence; no stubs/secrets/test data; signed review |
 
 ### Integration gates
@@ -1349,7 +1349,7 @@ Show only to the owning user and authorized operators:
 
 - guest/user/API-key/auth-kind/ownership matrix;
 - permissions, page rules, private ownership, system manager, and mid-run revocation;
-- ordinary user session versus guest/API-key, hostile Origin/Fetch-Metadata, CSRF, privileged `extra.js` trust boundary, sanitized agent output, and ordinary `/mcp`/`/_agent` page continuity;
+- ordinary user session versus guest/API-key, hostile Origin/Fetch-Metadata, CSRF, privileged `extra.js` trust boundary, sanitized agent output, disabled `/mcp` fallthrough, enabled MCP reservation, and `_agent` page continuity;
 - page/skill/browser prompt injection and cross-owner enumeration;
 - provider URL SSRF, profile-resolution race, and secret/header/error redaction;
 - browser canonical/raw disagreement, framework decoding, DNS/subresource rebinding, every-socket gateway proof, private ranges, unsafe GET, blocked HEAD/alternate methods/protocols/credentials;
@@ -1359,7 +1359,7 @@ Show only to the owning user and authorized operators:
 
 ### Behavioral/runtime
 
-- actual startup with all flags disabled, exact-prefix fallthrough, dedicated MCP-host rejection, and ordinary route/health behavior;
+- actual startup with all flags disabled, exact-prefix fallthrough, `/mcp` page continuity, and ordinary route/health behavior; enabled startup with same-origin MCP Host/Origin/resource enforcement;
 - fake engine through ordinary-origin REST/SSE with cancel/reconnect/quota/restart;
 - provider corpora, getFeatures/descriptor equality, encrypted Responses continuation, distinct OpenResponses request/event validation, legacy rejection, and one controlled real read smoke;
 - exact create/patch/move/restore/delete approval in a disposable namespace;
@@ -1386,7 +1386,7 @@ Show only to the owning user and authorized operators:
 - Wiki.js 2 upgrade and PostgreSQL 16–17 matrix;
 - backup/restore, additive rollback, compatibility app plus maintenance retention;
 - multi-instance failover/rejoin/drain;
-- container install/upgrade/rollback with ordinary Wiki and dedicated MCP ingress, SSE, maintenance, and optional browser worker;
+- container install/upgrade/rollback with ordinary Wiki and exact-path MCP ingress, SSE, maintenance, and optional browser worker;
 - AMD64/ARM64 app/browser/maintenance OCI plus ordinary Linux/Windows bundles with unsupported capability absent;
 - exact license/SBOM/checksum/manifest/provenance.
 
@@ -1409,7 +1409,7 @@ Expected existing-file updates:
 - `server/app/data.yml` agent/MCP settings without a dedicated agent origin;
 - `server/db/migrations/<next>.ts`;
 - page operations/models, renderer/link projection, storage/collaboration effect interfaces and jobs;
-- ordinary internal agent controller plus dedicated MCP virtual-host composition;
+- ordinary internal agent controller plus same-origin exact-path MCP composition;
 - header/search inline Ask controls and ordinary `/admin/agents` navigation/view;
 - Docker/workflow/container procedures for Wiki/MCP ingress, SSE, browser gateway/image, maintenance, smoke, and provenance.
 
@@ -1446,7 +1446,7 @@ The feature is complete only when all are true:
 10. Create and `wiki-line-patch-v1` share strict UTF-8/line-ending validation and durably prove exact source/base/disclosure/engine/diff/result authority.
 11. No write occurs without exact single-use approval and live dual-principal checks; one monotonic source revision/execution commits, local projections are revision-fenced, and desired-state sinks either reconcile idempotently/prove postconditions or surface explicit non-replayed recovery.
 12. Process death never blindly replays provider/browser/mutation/external effects; durable evidence yields a safe result or recovery.
-13. MCP uses official v2 packages on a dedicated origin and passes API-key/Host/Origin/resource, payload-bound idempotency, tools/resources, progress/cancel/modern/legacy tests.
+13. MCP uses official v2 packages at `${wiki.config.host}/mcp` and passes API-key/Host/Origin/resource, payload-bound idempotency, tools/resources, progress/cancel/modern/legacy tests.
 14. Quotas atomically bound provider/browser concurrency, tokens, time, context, output, events, artifacts, requests, and streams.
 15. Agent REST accepts only ordinary authenticated user sessions on its exact internal prefix, enforces same-origin CSRF on mutations, rejects API-key principals, preserves unrelated Wiki routes, and exposes no separate agent host/login/launch surface.
 16. Additive migrations preserve data; the forward cleanup removes obsolete handoff state; guarded rollback permits pre-enable N-1 while tested compatibility code plus standalone maintenance preserve the authoritative ledger.

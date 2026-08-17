@@ -3,6 +3,7 @@ import moment from 'moment'
 import ms from 'ms'
 import { Model } from 'objection'
 import type { ModelOptions, QueryContext } from 'objection'
+import { canonicalMcpResource } from '../agents/origins.ts'
 
 interface CreateKeyOptions {
   name: string
@@ -57,7 +58,7 @@ export default class ApiKey extends Model {
       expiration: moment.utc().add(ms(expiration), 'ms').toISOString(),
       isRevoked: true
     })
-    const configuredMcpResource = wiki.config.agents?.mcp?.resourceUrl?.trim()
+    const configuredMcpResource = wiki.config.agents?.mcp?.enabled ? canonicalMcpResource(wiki.config.host).href : undefined
     const key = jwt.sign({
       api: entry.id,
       grp: fullAccess ? 1 : group,
@@ -80,9 +81,10 @@ export default class ApiKey extends Model {
 
 const wiki = WIKI as unknown as {
   config: {
-    agents?: { mcp?: { resourceUrl?: string } }
+    agents?: { mcp?: { enabled?: boolean } }
     auth: { audience: string }
     certs: { private: string | Buffer }
+    host: string
     sessionSecret: string
   }
   models: { apiKeys: typeof ApiKey }

@@ -1,40 +1,20 @@
 import { describe, expect, it } from 'vitest'
-import { normalizeAgentOrigins, requestMatchesOriginHost, requestOriginMatches } from '../../agents/origins.ts'
+import { canonicalMcpResource, requestOriginMatches } from '../../agents/origins.ts'
 
-describe('Wiki and MCP origin policy', () => {
-  it('accepts distinct canonical Wiki and MCP origins', () => {
-    expect(normalizeAgentOrigins({
-      wikiPublicOrigin: 'https://wiki.example.test',
-      mcpPublicOrigin: 'https://mcp.example.test'
-    })).toEqual({
-      wikiPublicOrigin: 'https://wiki.example.test',
-      mcpPublicOrigin: 'https://mcp.example.test'
-    })
+describe('Wiki origin policy', () => {
+  it('derives the MCP resource from the canonical Wiki origin', () => {
+    expect(canonicalMcpResource('https://wiki.example.test').href).toBe('https://wiki.example.test/mcp')
+    expect(canonicalMcpResource('http://127.0.0.1:3000').href).toBe('http://127.0.0.1:3000/mcp')
   })
 
   it.each([
-    'https://mcp.example.test/path',
-    'https://mcp.example.test?query=1',
-    'https://user@mcp.example.test',
-    'http://mcp.example.test',
-    'https://MCP.example.test'
-  ])('rejects a noncanonical or unsafe MCP origin: %s', mcpPublicOrigin => {
-    expect(() => normalizeAgentOrigins({
-      wikiPublicOrigin: 'https://wiki.example.test',
-      mcpPublicOrigin
-    })).toThrow()
-  })
-
-  it('rejects colliding Wiki and MCP virtual hosts', () => {
-    expect(() => normalizeAgentOrigins({
-      wikiPublicOrigin: 'https://wiki.example.test',
-      mcpPublicOrigin: 'https://wiki.example.test'
-    })).toThrow('must be distinct')
-  })
-
-  it('matches an exact virtual host including a non-default port', () => {
-    expect(requestMatchesOriginHost('mcp.example.test:8443', 'https://mcp.example.test:8443')).toBe(true)
-    expect(requestMatchesOriginHost('mcp.example.test', 'https://mcp.example.test:8443')).toBe(false)
+    'https://wiki.example.test/path',
+    'https://wiki.example.test?query=1',
+    'https://user@wiki.example.test',
+    'http://wiki.example.test',
+    'https://WIKI.example.test'
+  ])('rejects a noncanonical or unsafe Wiki origin: %s', wikiPublicOrigin => {
+    expect(() => canonicalMcpResource(wikiPublicOrigin)).toThrow()
   })
 
   it('accepts only the canonical same-origin request header', () => {

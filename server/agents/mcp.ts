@@ -22,6 +22,7 @@ import { registerPageReadActions, type PageReadActionDependencies } from './acti
 import { registerPageProposalActions, type PageProposalActionDependencies } from './actions/page-proposals.ts'
 import { registerSkillReadActions } from './actions/skill-reads.ts'
 import { getMcpProposal } from './proposals/repository.ts'
+import { canonicalMcpResource } from './origins.ts'
 import { SkillRuntime } from './skills/runtime.ts'
 import { validateSkillVirtualPath } from './skills/virtual-path.ts'
 
@@ -39,8 +40,6 @@ type McpApprovalState = z.infer<typeof StateSchema>
 
 export interface WikiMcpConfiguration {
   readonly enabled: boolean
-  readonly publicOrigin: string
-  readonly resourceUrl: string
   readonly wikiPublicOrigin: string
   readonly agentsEnabled: boolean
   readonly skillsEnabled: boolean
@@ -65,15 +64,7 @@ export interface WikiMcpDependencies {
   readonly logger?: { warn(value: unknown): void }
 }
 
-const normalizedMcpUrl = (config: WikiMcpConfiguration): URL => {
-  const origin = new URL(config.publicOrigin)
-  if (origin.pathname !== '/' || origin.search || origin.hash) throw new Error('MCP public origin must not contain a path, query, or fragment')
-  const expected = new URL('/mcp', origin)
-  const configured = new URL(config.resourceUrl)
-  configured.hash = ''
-  if (configured.href !== expected.href) throw new Error(`MCP resource URL must be ${expected.href}`)
-  return expected
-}
+const normalizedMcpUrl = (config: WikiMcpConfiguration): URL => canonicalMcpResource(config.wikiPublicOrigin)
 
 const featureFlags = (config: WikiMcpConfiguration): AgentFeatureFlags => ({
   'agents.enabled': config.agentsEnabled,

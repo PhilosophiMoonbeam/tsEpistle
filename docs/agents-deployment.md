@@ -1,14 +1,14 @@
 # Agent deployment and operations
 
-Wiki agents use one ordinary user surface plus two isolated service boundaries:
+Wiki agents use the ordinary Wiki origin plus one isolated browser-service boundary:
 
 | Surface | Example | Purpose | Exposure |
 | --- | --- | --- | --- |
 | Wiki | `https://wiki.example.com` | Existing UI, inline Search/Ask, `/admin/agents`, internal agent REST/SSE, approvals | Existing authenticated users |
-| MCP | `https://mcp.example.com/mcp` | Streamable HTTP MCP | Resource-bound API keys only |
+| MCP | `https://wiki.example.com/mcp` | Streamable HTTP MCP | Resource-bound API keys only |
 | Browser worker | private mTLS endpoint | Playwright execution in a separate unprivileged process/container | Wiki application replicas only |
 
-There is no agent-specific public origin, login, cookie, launch token, popup, iframe, or sidecar application. The internal agent controller handles only `/_api/agents`; all other Wiki paths continue through the ordinary router. MCP remains on a distinct canonical origin because it has a different API-key trust boundary.
+There is no agent-specific public origin, login, cookie, launch token, popup, iframe, or sidecar application. The internal agent controller handles only `/_api/agents`. When MCP is enabled, the exact `/mcp` endpoint on the Wiki origin is reserved for MCP; its API-key authentication remains independent from Wiki browser sessions.
 
 ## Database and compatibility
 
@@ -28,7 +28,7 @@ Never run a destructive down migration while an application, MCP client, browser
 
 ## Ingress
 
-Route the Wiki hostname normally. Route only `/mcp` on the exact MCP hostname to the same application replicas. Preserve `Host`, terminate TLS at trusted ingress, reject unknown hosts, disable proxy buffering for SSE/MCP, and apply an ingress rate limit to MCP.
+Route the Wiki hostname normally and apply a stricter exact-path policy to `/mcp` on that same hostname. Preserve `Host`, terminate TLS at trusted ingress, reject unknown hosts, disable proxy buffering for SSE/MCP, and apply an ingress rate limit to MCP.
 
 Representative policy:
 
@@ -36,18 +36,6 @@ Representative policy:
 server {
   listen 443 ssl http2;
   server_name wiki.example.com;
-  location / {
-    proxy_set_header Host $host;
-    proxy_set_header X-Forwarded-Proto https;
-    proxy_buffering off;
-    proxy_read_timeout 10m;
-    proxy_pass http://wiki_app;
-  }
-}
-
-server {
-  listen 443 ssl http2;
-  server_name mcp.example.com;
   location = /mcp {
     limit_req zone=mcp burst=20 nodelay;
     proxy_set_header Host $host;
@@ -56,11 +44,17 @@ server {
     proxy_read_timeout 10m;
     proxy_pass http://wiki_app;
   }
-  location / { return 404; }
+  location / {
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Proto https;
+    proxy_buffering off;
+    proxy_read_timeout 10m;
+    proxy_pass http://wiki_app;
+  }
 }
 ```
 
-The application rejects MCP `Host`, `Origin`, and canonical resource mismatches. Ordinary Wiki paths named `/mcp` or `/_agent` remain normal Wiki content on the Wiki hostname.
+The application derives the canonical MCP resource as `${wiki.config.host}/mcp` and rejects MCP `Host`, `Origin`, and resource-claim mismatches. `/mcp` is reserved while MCP is enabled; `_agent` remains an ordinary Wiki page path.
 
 ## Configuration
 
@@ -97,8 +91,6 @@ agents:
     delete: { enabled: false }
   mcp:
     enabled: false
-    publicOrigin: ''
-    resourceUrl: ''
 ```
 
 Startup rejects provider concurrency, polling, SSE, and retention values outside their bounded ranges. `perUserConcurrency` cannot exceed `globalConcurrency`. Flags are independent kill switches; write application requires `writes.enabled`, proposals, and the exact action flag.
@@ -159,7 +151,7 @@ Schedule at least hourly with single-job concurrency. The command emits one boun
 ## Security and privacy
 
 - Internal agent REST accepts ordinary authenticated user sessions only. Mutations require exact same-origin `Origin`, `Sec-Fetch-Site: same-origin`, and the session CSRF token. API keys are rejected.
-- MCP accepts resource-bound API keys only on its dedicated origin.
+- MCP accepts resource-bound API keys only at `/mcp` on the configured Wiki origin; ordinary browser sessions are rejected.
 - Wiki `extra.js` is administrator-installed privileged code. It can act as the signed-in user on the Wiki origin; do not treat it as untrusted tenant content. Provider text, skill text, and page content never execute as code and are rendered through the existing sanitizer.
 - Permission and ownership checks occur when actions are offered and again at execution. Write approvals are immutable, single-use, revision-fenced records.
 - Browser contexts are per run. Cookies, storage, cache, live DOM, and browser profiles are not persisted into sessions.
@@ -174,7 +166,7 @@ Schedule at least hourly with single-job concurrency. The command emits one boun
 5. Observe queue depth, concurrency, reconnects, token/cost reservations, retention, and provider errors.
 6. Enable browser only after the separate worker and no-bypass network proof.
 7. Enable proposals, then create and patch separately. Enable move, restore, and delete only after action-specific review.
-8. Enable MCP first on private ingress for a dedicated `use:mcp` API-key group.
+8. Enable MCP first behind private exact-path ingress for a dedicated `use:mcp` API-key group.
 
 Disable the smallest failing capability. Existing session history remains reconstructable from PostgreSQL.
 

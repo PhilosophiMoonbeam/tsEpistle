@@ -62,8 +62,6 @@ defaults:
           enabled: false
       mcp:
         enabled: false
-        publicOrigin: ''
-        resourceUrl: ''
     # DB defaults
     api:
       isEnabled: false

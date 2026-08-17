@@ -28,7 +28,6 @@ import apiV1Controller from './controllers/api-v1/index.ts'
 import type { ProductMetadata } from '../shared/product.ts'
 import { isExternalRestPath, isInternalRestPath } from '../shared/api-access.ts'
 
-import { normalizeAgentOrigins, requestMatchesOriginHost } from './agents/origins.ts'
 import { AgentProviderRegistry, EnvironmentAgentSecretRegistry, type AgentProfileTokenKeys } from './agents/providers/registry.ts'
 import { AgentProviderFactory } from './agents/providers/factory.ts'
 import { AxAgentEngine } from './agents/providers/engine.ts'
@@ -50,7 +49,7 @@ interface MasterConfig extends Record<string, unknown> {
   auth: Record<string, unknown>
   agents: {
     enabled: boolean
-    mcp: { enabled: boolean; publicOrigin: string; resourceUrl: string }
+    mcp: { enabled: boolean }
     provider: { enabled: boolean; globalConcurrency?: number; perUserConcurrency?: number; pollingMilliseconds?: number }
     retention: { temporarySessionHours: number; mcpContentDays: number; auditDays: number; maintenanceBatchSize: number }
     skills: { enabled: boolean; namespace: string }
@@ -165,10 +164,6 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
 
   const app = express()
   wiki.app = app
-  const origins = normalizeAgentOrigins({
-    wikiPublicOrigin: wiki.config.host,
-    mcpPublicOrigin: wiki.config.agents.mcp.publicOrigin
-  })
   const agentLimits = parseAgentOperationalLimits(wiki.config.agents)
   app.set('views', path.join(wiki.SERVERPATH, 'views'))
   app.set('view engine', 'pug')
@@ -177,13 +172,6 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
   app.use(securityMiddleware)
   app.use(cors({ origin: false }))
   app.options('/{*corsPreflightPath}', cors({ origin: false }))
-  app.use((req, res, next) => {
-    const host = req.get('host')
-    if (origins.mcpPublicOrigin && requestMatchesOriginHost(host, origins.mcpPublicOrigin) && !wiki.config.agents.mcp.enabled) {
-      return res.sendStatus(404)
-    }
-    return next()
-  })
   if (wiki.config.security.securityTrustProxy) {
     app.enable('trust proxy')
   }
@@ -235,8 +223,6 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
         resolveUser: loadWikiAgentUser,
         config: {
           enabled: true,
-          publicOrigin: wiki.config.agents.mcp.publicOrigin,
-          resourceUrl: wiki.config.agents.mcp.resourceUrl,
           wikiPublicOrigin: wiki.config.host,
           agentsEnabled: wiki.config.agents.enabled,
           skillsEnabled: wiki.config.agents.skills.enabled,
@@ -306,13 +292,7 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
     ...(agentRuntime === undefined ? {} : { agentRuntime }),
     ...(providerConformance === undefined ? {} : { providerConformance })
   })
-  app.use((req, res, next) => {
-    const host = req.get('host')
-    if (origins.mcpPublicOrigin && requestMatchesOriginHost(host, origins.mcpPublicOrigin)) {
-      return mcpController ? mcpController(req, res, next) : res.sendStatus(404)
-    }
-    return next()
-  })
+  if (mcpController) app.all('/mcp', mcpController)
   app.use(wiki.auth.authenticate.bind(wiki.auth))
   app.use(agentsController)
 
