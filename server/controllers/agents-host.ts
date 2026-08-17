@@ -16,8 +16,8 @@ import { getMcpProposalForApproval, type ProposalRecord } from '../agents/propos
 import { requestAgentSessionDeletion } from '../agents/maintenance.ts'
 import type { AgentOperationalLimits } from '../agents/config.ts'
 import {
-  AgentProviderVersionInputSchema,
   CreateAgentProviderProfileSchema,
+  ReviseAgentProviderProfileSchema,
   type AgentProviderRegistry
 } from '../agents/providers/registry.ts'
 import type { AgentProviderConformanceRunner } from '../agents/providers/conformance.ts'
@@ -61,7 +61,7 @@ interface AgentHostWiki {
     readonly knex: Knex
   }
   readonly agentRuntime?: Pick<AgentProductRuntime, 'submit'>
-  readonly providerRegistry?: Pick<AgentProviderRegistry, 'create' | 'get' | 'issueResolutionToken' | 'listAll' | 'listVisible' | 'revise' | 'setDefault' | 'setEnabled' | 'setGrants' | 'setSessionProfile'>
+  readonly providerRegistry?: Pick<AgentProviderRegistry, 'create' | 'getAdmin' | 'issueResolutionToken' | 'listAll' | 'listVisible' | 'remove' | 'revise' | 'setDefault' | 'setEnabled' | 'setGrants' | 'setSessionProfile'>
   readonly providerConformance?: Pick<AgentProviderConformanceRunner, 'list' | 'run'>
   readonly agentLimits?: AgentOperationalLimits
 }
@@ -506,7 +506,7 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
   }))
   router.get('/_api/agents/admin/profiles/:profileId', asyncRoute(async (req, res) => {
     if (!wiki.providerRegistry) throw providerAdminUnavailable()
-    return res.json({ profile: await wiki.providerRegistry.get(UUIDSchema.parse(routeParameter(req, 'profileId'))) })
+    return res.json({ profile: await wiki.providerRegistry.getAdmin(UUIDSchema.parse(routeParameter(req, 'profileId'))) })
   }))
   router.post('/_api/agents/admin/profiles', asyncRoute(async (req, res) => {
     if (!wiki.providerRegistry) throw providerAdminUnavailable()
@@ -516,8 +516,13 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
   }))
   router.post('/_api/agents/admin/profiles/:profileId/versions', asyncRoute(async (req, res) => {
     if (!wiki.providerRegistry) throw providerAdminUnavailable()
-    const profile = await wiki.providerRegistry.revise(UUIDSchema.parse(routeParameter(req, 'profileId')), { ...AgentProviderVersionInputSchema.parse(req.body), actorId: requestSkillPrincipal(req).userId })
+    const profile = await wiki.providerRegistry.revise(UUIDSchema.parse(routeParameter(req, 'profileId')), { ...ReviseAgentProviderProfileSchema.parse(req.body), actorId: requestSkillPrincipal(req).userId })
     return res.status(201).json({ profile })
+  }))
+  router.delete('/_api/agents/admin/profiles/:profileId', asyncRoute(async (req, res) => {
+    if (!wiki.providerRegistry) throw providerAdminUnavailable()
+    await wiki.providerRegistry.remove(UUIDSchema.parse(routeParameter(req, 'profileId')), requestSkillPrincipal(req).userId)
+    return res.sendStatus(204)
   }))
   router.post('/_api/agents/admin/profiles/:profileId/conformance', asyncRoute(async (req, res) => {
     if (!wiki.providerConformance) throw providerAdminUnavailable()

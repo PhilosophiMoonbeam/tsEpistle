@@ -102,7 +102,7 @@ export class AgentProviderConformanceRunner {
   }
 
   async run(profileId: string, profileVersionId: string, actorId: number): Promise<AgentProviderConformanceReport> {
-    const current = await this.#knex('agentProviderProfiles').where({ id: profileId, currentVersionId: profileVersionId }).first('id')
+    const current = await this.#knex('agentProviderProfiles').where({ id: profileId, currentVersionId: profileVersionId }).whereNull('deletedAt').first('id')
     if (!current) throw new AgentRepositoryError('PROFILE_VERSION_CHANGED', 'Provider profile version changed before conformance', 409)
     const id = randomUUID()
     const startedAt = new Date()

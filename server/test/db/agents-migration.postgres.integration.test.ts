@@ -5,6 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { down as downAgentLedger, up as upAgentLedger } from '../../db/migrations/2.5.139.ts'
 import { down as restoreLegacyHandoffTable, up as removeLegacyHandoffTable } from '../../db/migrations/2.5.140.ts'
 import { down as downProviderSecrets, up as upProviderSecrets } from '../../db/migrations/2.5.141.ts'
+import { down as downProviderProfileLifecycle, up as upProviderProfileLifecycle } from '../../db/migrations/2.5.142.ts'
 
 const databaseName = process.env.WIKI_TEST_POSTGRES_DATABASE ?? ''
 const passwordFile = process.env.WIKI_TEST_POSTGRES_PASSWORD_FILE
@@ -62,6 +63,7 @@ suite('PostgreSQL first-class agent migration', () => {
     await upAgentLedger(db)
     await removeLegacyHandoffTable(db)
     await upProviderSecrets(db)
+    await upProviderProfileLifecycle(db)
   })
 
   afterAll(async () => {
@@ -79,6 +81,7 @@ suite('PostgreSQL first-class agent migration', () => {
     await expect(db.schema.hasTable('agentLaunchHandoffs')).resolves.toBe(false)
     await expect(db.schema.hasColumn('pages', 'sourceRevision')).resolves.toBe(true)
     await expect(db.schema.hasColumn('pageHistory', 'sourceRevision')).resolves.toBe(true)
+    await expect(db.schema.hasColumn('agentProviderProfiles', 'deletedAt')).resolves.toBe(true)
   })
 
   it('increments source revision only for authoritative page fields', async () => {
@@ -123,7 +126,11 @@ suite('PostgreSQL first-class agent migration', () => {
       createdBy: 7,
       updatedBy: 7
     })
+    await db('agentProviderProfiles').where({ id: '00000000-0000-4000-8000-000000000001' }).update({ deletedAt: db.fn.now() })
+    await expect(downProviderProfileLifecycle(db)).rejects.toThrow('contains removed profiles')
     await expect(downAgentLedger(db)).rejects.toThrow('agentProviderProfiles contains data')
+    await db('agentProviderProfiles').where({ id: '00000000-0000-4000-8000-000000000001' }).update({ deletedAt: null })
+    await downProviderProfileLifecycle(db)
     await db('agentProviderProfiles').delete()
     await db('pages').delete()
     await restoreLegacyHandoffTable(db)

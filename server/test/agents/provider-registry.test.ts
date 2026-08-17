@@ -18,7 +18,8 @@ const profileInput: AgentProviderVersionInput = {
 }
 
 const createTables = async (knex: Knex): Promise<void> => {
-  await knex.schema.createTable('agentProviderProfiles', table => { table.string('id').primary(); table.string('displayName').unique(); table.string('status'); table.boolean('isGlobalDefault'); table.string('exposureMode'); table.string('currentVersionId').nullable(); table.integer('policyVersion'); table.boolean('conformed'); table.integer('createdBy'); table.integer('updatedBy'); table.dateTime('createdAt'); table.dateTime('updatedAt') })
+  await knex.schema.createTable('agentProviderProfiles', table => { table.string('id').primary(); table.string('displayName'); table.string('status'); table.boolean('isGlobalDefault'); table.string('exposureMode'); table.string('currentVersionId').nullable(); table.integer('policyVersion'); table.boolean('conformed'); table.integer('createdBy'); table.integer('updatedBy'); table.dateTime('createdAt'); table.dateTime('updatedAt'); table.dateTime('deletedAt').nullable() })
+  await knex.raw('CREATE UNIQUE INDEX agent_provider_profiles_active_name_unique ON agentProviderProfiles (displayName) WHERE deletedAt IS NULL')
   await knex.schema.createTable('agentProviderProfileVersions', table => { table.string('id').primary(); table.string('profileId'); table.integer('version'); table.string('transportKind'); table.string('model'); table.text('baseUrl'); table.string('authMode'); table.string('secretReference').nullable(); table.text('adapterConfig'); table.text('capabilities'); table.string('capabilityRevision'); table.text('policies'); table.string('pricingRevision'); table.boolean('conformed'); table.integer('createdBy'); table.dateTime('createdAt') })
   await knex.schema.createTable('agentProviderSecrets', table => { table.string('id').primary(); table.string('keyId'); table.string('algorithm'); table.binary('nonce'); table.binary('ciphertext'); table.binary('authTag'); table.integer('createdBy'); table.dateTime('createdAt') })
   await knex.schema.createTable('agentProviderConfiguration', table => { table.integer('id').primary(); table.integer('defaultGeneration'); table.dateTime('updatedAt'); table.integer('updatedBy').nullable() })
@@ -35,7 +36,7 @@ describe('agent provider profile registry', () => {
   beforeEach(async () => {
     knex = createKnex({ client: 'better-sqlite3', connection: { filename: ':memory:' }, useNullAsDefault: true })
     await createTables(knex)
-    registry = new AgentProviderRegistry(knex, { has: reference => reference === 'env:TEST_PROVIDER_KEY', get: () => null, store: () => { throw new Error('unexpected managed secret') } }, { currentKeyId: 'primary', keys: { primary: 'a-profile-resolution-secret-with-rotation-room' } })
+    registry = new AgentProviderRegistry(knex, { has: reference => reference === 'env:TEST_PROVIDER_KEY', get: () => null, store: () => { throw new Error('unexpected managed secret') }, delete: () => false }, { currentKeyId: 'primary', keys: { primary: 'a-profile-resolution-secret-with-rotation-room' } })
   })
   afterEach(async () => knex.destroy())
 
@@ -69,6 +70,40 @@ describe('agent provider profile registry', () => {
     const stored = await knex('agentProviderSecrets').first('ciphertext') as { ciphertext: Buffer }
     expect(stored.ciphertext.toString('utf8')).not.toContain('provider-key-from-ui')
     expect(await vault.get(version.secretReference)).toBe('provider-key-from-ui')
+  })
+
+  it('edits settings as an immutable version while retaining an unrevealed credential', async () => {
+    const vault = new DatabaseAgentSecretRegistry(knex, { currentKeyId: 'primary', keys: { primary: Buffer.alloc(32, 8) } })
+    const managedRegistry = new AgentProviderRegistry(knex, vault, { currentKeyId: 'primary', keys: { primary: 'a-profile-resolution-secret-with-rotation-room' } })
+    const created = await managedRegistry.create({ ...profileInput, secretReference: null, secretValue: 'retained-provider-key', displayName: 'Editable', exposureMode: 'all_agent_users', actorId: 1 })
+    const revised = await managedRegistry.revise(created.id, { ...profileInput, displayName: 'Renamed', model: 'gpt-revised', baseUrl: 'https://gateway.example.test/api', secretReference: null, actorId: 1 })
+    expect(revised).toMatchObject({ displayName: 'Renamed', currentVersion: 2, model: 'gpt-revised', baseUrl: 'https://gateway.example.test/api', destinationHost: 'gateway.example.test', secretConfigured: true })
+    expect(revised).not.toHaveProperty('secretReference')
+    const references = await knex('agentProviderProfileVersions').where({ profileId: created.id }).orderBy('version').pluck<string>('secretReference')
+    expect(references[1]).toBe(references[0])
+    expect(await vault.get(references[1]!)).toBe('retained-provider-key')
+  })
+
+  it('soft-removes a profile, revokes resolution, deletes managed credentials, and permits name reuse', async () => {
+    const vault = new DatabaseAgentSecretRegistry(knex, { currentKeyId: 'primary', keys: { primary: Buffer.alloc(32, 9) } })
+    const managedRegistry = new AgentProviderRegistry(knex, vault, { currentKeyId: 'primary', keys: { primary: 'a-profile-resolution-secret-with-rotation-room' } })
+    const created = await managedRegistry.create({ ...profileInput, secretReference: null, secretValue: 'removed-provider-key', displayName: 'Removable', exposureMode: 'all_agent_users', actorId: 1 })
+    await managedRegistry.setConformed(created.id, created.currentVersionId, true, 1)
+    await managedRegistry.setEnabled(created.id, true, 1)
+    await managedRegistry.setDefault(created.id, 1)
+    await knex('agentSessions').insert({ id: 'session-remove', ownerId: 7, version: 1, providerProfileId: null, executionMode: 'agent', deletedAt: null, updatedAt: new Date() })
+    const token = await managedRegistry.issueResolutionToken(7, 'session-remove')
+    const reference = (await knex('agentProviderProfileVersions').where({ profileId: created.id }).first('secretReference') as { secretReference: string }).secretReference
+
+    await managedRegistry.remove(created.id, 2)
+
+    await expect(managedRegistry.get(created.id)).rejects.toMatchObject({ code: 'AGENT_RESOURCE_NOT_FOUND', status: 404 })
+    expect(await managedRegistry.listAll()).toEqual([])
+    expect(await vault.get(reference)).toBeNull()
+    expect(await knex('agentProviderProfiles').where({ id: created.id }).first('status', 'isGlobalDefault', 'deletedAt')).toMatchObject({ status: 'disabled', isGlobalDefault: 0, deletedAt: expect.anything() })
+    await expect(managedRegistry.resolve({ ownerId: 7, sessionId: 'session-remove', profileResolutionToken: token })).rejects.toMatchObject({ code: 'PROFILE_RESOLUTION_CHANGED', status: 409 })
+    await expect(managedRegistry.remove(created.id, 2)).rejects.toMatchObject({ code: 'AGENT_RESOURCE_NOT_FOUND', status: 404 })
+    await expect(managedRegistry.create({ ...profileInput, displayName: 'Removable', exposureMode: 'all_agent_users', actorId: 1 })).resolves.toMatchObject({ displayName: 'Removable' })
   })
 
   it('fails closed for private endpoints, forbidden headers, incompatible modes, and group visibility', async () => {

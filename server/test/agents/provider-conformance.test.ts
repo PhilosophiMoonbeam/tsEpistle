@@ -18,7 +18,7 @@ describe('provider conformance runner', () => {
   let db: Knex
   beforeEach(async () => {
     db = createKnex({ client: 'better-sqlite3', connection: { filename: ':memory:' }, useNullAsDefault: true })
-    await db.schema.createTable('agentProviderProfiles', table => { table.string('id').primary(); table.string('currentVersionId') })
+    await db.schema.createTable('agentProviderProfiles', table => { table.string('id').primary(); table.string('currentVersionId'); table.dateTime('deletedAt').nullable() })
     await db.schema.createTable('agentProviderConformanceReports', table => { table.string('id').primary(); table.string('profileVersionId'); table.string('status'); table.text('checks'); table.string('errorCode').nullable(); table.integer('actorId'); table.dateTime('startedAt'); table.dateTime('completedAt') })
     await db('agentProviderProfiles').insert({ id: '00000000-0000-4000-8000-000000000001', currentVersionId: '00000000-0000-4000-8000-000000000002' })
   })

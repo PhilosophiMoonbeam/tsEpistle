@@ -19,9 +19,10 @@ export interface AgentProviderSecretKeys {
 }
 
 export interface AgentSecretRegistry {
-  has(reference: string): boolean | Promise<boolean>
+  has(reference: string, transaction?: Knex | Knex.Transaction): boolean | Promise<boolean>
   get(reference: string): string | null | Promise<string | null>
   store(value: string, actorId: number, transaction: Knex | Knex.Transaction): string | Promise<string>
+  delete(reference: string, transaction: Knex | Knex.Transaction): boolean | Promise<boolean>
 }
 
 interface SecretRow {
@@ -69,12 +70,12 @@ export class DatabaseAgentSecretRegistry implements AgentSecretRegistry {
     this.#keys = keys
   }
 
-  async has(reference: string): Promise<boolean> {
+  async has(reference: string, transaction?: Knex | Knex.Transaction): Promise<boolean> {
     const environmentName = ENVIRONMENT_REFERENCE_PATTERN.exec(reference)?.[1]
     if (environmentName) return environmentSecretValue(environmentName) !== null
     const id = managedId(reference)
     if (!id) return false
-    const row = await this.#knex<SecretRow>('agentProviderSecrets').where({ id }).first('keyId', 'algorithm', 'nonce', 'authTag')
+    const row = await (transaction ?? this.#knex)<SecretRow>('agentProviderSecrets').where({ id }).first('keyId', 'algorithm', 'nonce', 'authTag')
     return row?.algorithm === 'aes-256-gcm' && this.#keys.keys[row.keyId] !== undefined && Buffer.from(row.nonce).byteLength === NONCE_BYTES && Buffer.from(row.authTag).byteLength === AUTH_TAG_BYTES
   }
 
@@ -123,5 +124,11 @@ export class DatabaseAgentSecretRegistry implements AgentSecretRegistry {
     } finally {
       plaintext.fill(0)
     }
+  }
+
+  async delete(reference: string, transaction: Knex | Knex.Transaction): Promise<boolean> {
+    const id = managedId(reference)
+    if (!id) return false
+    return await transaction('agentProviderSecrets').where({ id }).delete() > 0
   }
 }

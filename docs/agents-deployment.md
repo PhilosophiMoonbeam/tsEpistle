@@ -115,6 +115,8 @@ For every tool-capable protocol, the preset accepts multiple tool calls from one
 
 Streaming, cancellation, tool-call shape, structured-output mapping, usage-accounting source, authentication, and allowed uses are protocol-derived and shown read-only. Context/output limits and quotas remain model/deployment settings under Advanced limits and quotas. Capability revisions are generated from the versioned Wiki protocol preset, while pricing remains `unpriced-v1` until provider billing calculation exists; neither internal ledger field is operator input. A profile remains disabled until its immutable version passes conformance.
 
+Editing a provider profile creates a new immutable version, disables the profile, and requires conformance before it can be enabled again. The current encrypted credential is retained when the administrator leaves the API-key field blank; entering a value creates a new managed credential for the new version. Removing a profile immediately excludes it from administration, session selection, default resolution, and new run admission. The profile and version ledger is retained for audit integrity, while its managed provider credentials are permanently deleted. A removed display name can be reused by a new profile.
+
 Required cryptographic environment:
 
 | Variable | Required when |
