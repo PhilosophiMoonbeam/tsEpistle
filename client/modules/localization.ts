@@ -41,7 +41,7 @@ export default {
         backend: {
           backends: [LocalStorageBackend, HttpBackend],
           backendOptions: [
-            { expirationTime: 1000 * 60 * 60 * 24 },
+            { expirationTime: 1000 * 60 * 60 * 24, defaultVersion: siteConfig.product.revision },
             {
               loadPath: '/_api/locales/{{lng}}/strings?namespace={{ns}}',
               requestOptions: {
