@@ -32,6 +32,14 @@ const localization = {
     const middleware = i18nMiddleware.handle(this.engine)
     app.use((req, res, next) => Reflect.apply(middleware, undefined, [req, res, next]))
   },
+  async loadBundledEnglish() {
+    const entries: unknown = await fs.readJson(path.join(wiki.SERVERPATH, 'locales/en.json'))
+    if (!_.isPlainObject(entries)) throw new Error('Bundled English locale is invalid.')
+    _.forOwn(entries as Record<string, unknown>, (data, ns) => {
+      this.namespaces.push(ns)
+      this.engine.addResourceBundle('en', ns, data, true, true)
+    })
+  },
   async getByNamespace(locale: string, namespace: string) {
     if (!this.engine.hasResourceBundle(locale, namespace)) throw new Error('Invalid locale or namespace')
     const data = this.engine.getResourceBundle(locale, namespace) as Record<string, unknown>
@@ -66,6 +74,7 @@ const localization = {
     }
   },
   async refreshNamespaces(silent = false) {
+    await this.loadBundledEnglish()
     await this.loadLocale(wiki.config.lang.code, { silent })
     if (wiki.config.lang.namespacing) {
       for (const ns of wiki.config.lang.namespaces) await this.loadLocale(ns, { silent })
