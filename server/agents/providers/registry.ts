@@ -331,13 +331,19 @@ export class AgentProviderRegistry implements AgentAdmissionResolver {
 
   async setEnabled(profileId: string, enabled: boolean, actorId: number): Promise<void> {
     await this.#knex.transaction(async transaction => {
+      await this.#configuration(transaction)
+      await transaction('agentProviderConfiguration').where({ id: 1 }).forUpdate().first('id')
       const profile = await transaction<ProfileRow>('agentProviderProfiles').where({ id: profileId }).whereNull('deletedAt').forUpdate().first()
       if (!profile || !profile.currentVersionId) throw new AgentRepositoryError('AGENT_RESOURCE_NOT_FOUND', 'Provider profile was not found', 404)
       const version = await transaction<VersionRow>('agentProviderProfileVersions').where({ id: profile.currentVersionId }).first()
       if (!version) throw new AgentRepositoryError('PROVIDER_PROFILE_CORRUPT', 'Current provider version is missing', 500)
       if (enabled && (!profile.conformed || !version.conformed || !version.secretReference || !await this.#secrets.has(version.secretReference, transaction))) throw new AgentRepositoryError('PROFILE_NOT_READY', 'Provider profile is not conformed or its secret is unavailable', 409)
-      await transaction('agentProviderProfiles').where({ id: profileId }).update({ status: enabled ? 'enabled' : 'disabled', ...(enabled ? {} : { isGlobalDefault: false }), policyVersion: Number(profile.policyVersion) + 1, updatedBy: actorId, updatedAt: new Date() })
-      if (!enabled && profile.isGlobalDefault) await transaction('agentProviderConfiguration').where({ id: 1 }).update({ defaultGeneration: transaction.raw('?? + 1', ['defaultGeneration']), updatedBy: actorId, updatedAt: new Date() })
+      const hasDefault = enabled && profile.exposureMode === 'all_agent_users'
+        ? Boolean(await transaction('agentProviderProfiles').where({ isGlobalDefault: true, status: 'enabled', conformed: true, exposureMode: 'all_agent_users' }).whereNull('deletedAt').first('id'))
+        : true
+      const becomesDefault = enabled && profile.exposureMode === 'all_agent_users' && !hasDefault
+      await transaction('agentProviderProfiles').where({ id: profileId }).update({ status: enabled ? 'enabled' : 'disabled', ...(enabled ? becomesDefault ? { isGlobalDefault: true } : {} : { isGlobalDefault: false }), policyVersion: Number(profile.policyVersion) + 1, updatedBy: actorId, updatedAt: new Date() })
+      if ((!enabled && profile.isGlobalDefault) || becomesDefault) await transaction('agentProviderConfiguration').where({ id: 1 }).update({ defaultGeneration: transaction.raw('?? + 1', ['defaultGeneration']), updatedBy: actorId, updatedAt: new Date() })
     })
   }
 
@@ -482,7 +488,7 @@ export class AgentProviderRegistry implements AgentAdmissionResolver {
       const profile = session.providerProfileId
         ? await transaction<ProfileRow>('agentProviderProfiles').where({ id: session.providerProfileId }).whereNull('deletedAt').first()
         : await transaction<ProfileRow>('agentProviderProfiles').where({ isGlobalDefault: true, status: 'enabled', conformed: true }).whereNull('deletedAt').first()
-      if (!profile?.currentVersionId) throw new AgentRepositoryError('PROFILE_UNAVAILABLE', 'No eligible provider profile is configured', 409)
+      if (!profile?.currentVersionId) throw new AgentRepositoryError('PROFILE_UNAVAILABLE', session.providerProfileId ? 'Selected provider profile is unavailable' : 'No default provider profile is configured. Set an enabled, connection-verified provider as the global default in Agent administration.', 409)
       const version = await transaction<VersionRow>('agentProviderProfileVersions').where({ id: profile.currentVersionId, profileId: profile.id }).first()
       if (!version) throw new AgentRepositoryError('PROVIDER_PROFILE_CORRUPT', 'Current provider version is missing', 500)
       return { v: 1, kid: this.#keys.currentKeyId, ownerId, sessionId, sessionVersion: Number(session.version), profileId: profile.id, profileVersionId: version.id, profileVersion: Number(version.version), profilePolicyVersion: Number(profile.policyVersion), defaultGeneration: configuration.defaultGeneration, executionMode: session.executionMode, exp: Math.floor(Date.now() / 1000) + Math.max(30, Math.min(900, ttlSeconds)) } satisfies TokenPayload

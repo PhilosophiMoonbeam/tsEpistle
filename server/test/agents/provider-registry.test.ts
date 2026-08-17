@@ -68,6 +68,23 @@ describe('agent provider profile registry', () => {
     expect(await knex('agentProviderProfileVersions').where({ profileId: created.id }).select('id', 'model')).toEqual([{ id: settingsId, model: 'gpt-test-2' }])
     await expect(registry.resolve({ ownerId: 7, sessionId: 'session-1', profileResolutionToken: token })).rejects.toMatchObject({ code: 'PROFILE_RESOLUTION_CHANGED', status: 409 })
   })
+
+  it('automatically makes the first eligible all-user profile the global default', async () => {
+    const primary = await registry.create({ ...profileInput, displayName: 'Primary', exposureMode: 'all_agent_users', actorId: 1 })
+    await registry.setConformed(primary.id, await currentSettingsId(knex, primary.id), true, 1)
+    await registry.setEnabled(primary.id, true, 1)
+
+    expect(await knex('agentProviderProfiles').where({ id: primary.id }).first('status', 'isGlobalDefault')).toMatchObject({ status: 'enabled', isGlobalDefault: 1 })
+    expect(await knex('agentProviderConfiguration').where({ id: 1 }).first('defaultGeneration')).toMatchObject({ defaultGeneration: 2 })
+
+    const secondary = await registry.create({ ...profileInput, displayName: 'Secondary', exposureMode: 'all_agent_users', actorId: 1 })
+    await registry.setConformed(secondary.id, await currentSettingsId(knex, secondary.id), true, 1)
+    await registry.setEnabled(secondary.id, true, 1)
+
+    expect(await knex('agentProviderProfiles').where({ id: primary.id }).first('isGlobalDefault')).toMatchObject({ isGlobalDefault: 1 })
+    expect(await knex('agentProviderProfiles').where({ id: secondary.id }).first('isGlobalDefault')).toMatchObject({ isGlobalDefault: 0 })
+    expect(await knex('agentProviderConfiguration').where({ id: 1 }).first('defaultGeneration')).toMatchObject({ defaultGeneration: 2 })
+  })
   it('stores a UI-supplied credential as an encrypted managed reference in the profile transaction', async () => {
     const vault = new DatabaseAgentSecretRegistry(knex, { currentKeyId: 'primary', keys: { primary: Buffer.alloc(32, 7) } })
     const managedRegistry = new AgentProviderRegistry(knex, vault, { currentKeyId: 'primary', keys: { primary: 'a-profile-resolution-secret-with-rotation-room' } })
