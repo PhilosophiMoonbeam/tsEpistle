@@ -159,7 +159,6 @@ interface WikiModels {
 
 interface WikiConfig extends UnknownRecord {
   api: { isEnabled: boolean }
-  agents?: { publicOrigin?: string, cookieAudience?: string }
   auth: { audience: string, tokenExpiration: string, tokenRenewal: string }
   certs: { jwk?: JsonWebKey, private: string | Buffer, public: string | Buffer }
   features: { featurePageComments: boolean }
@@ -206,9 +205,7 @@ interface EffectivePermissions {
 }
 
 interface AuthService {
-  agentStrategies: Record<string, ActiveStrategy>
   activateStrategies(): Promise<void>
-  authenticateAgent(req: Request, res: Response, next: NextFunction): void
   authenticate(req: Request, res: Response, next: NextFunction): void
   checkAccess(user: AccessUser | undefined, permissions?: string[], page?: PageContext | false): boolean
   checkAssignUserToGroupAccess(requester: AccessUser, groupIds?: number[]): Promise<boolean>
@@ -292,10 +289,6 @@ const extractBearerToken = (req: Request): string | null => {
   const match = /^Bearer ([^\\s]+)$/.exec(authorization)
   return match?.[1] ?? null
 }
-const extractAgentsJwt = (req: Request): string | null => {
-  const token: unknown = req.cookies?.wiki_agents
-  return typeof token === 'string' && token.length > 0 ? token : null
-}
 const isRevokeRequest = (value: unknown): value is RevokeRequest => isRecord(value) &&
   typeof value.id === 'number' && (value.kind === undefined || typeof value.kind === 'string')
 const createAuthenticationError = (message: string, status: number, code: string): AuthenticationError =>
@@ -303,7 +296,6 @@ const createAuthenticationError = (message: string, status: number, code: string
 
 const auth: AuthService = {
   strategies: {},
-  agentStrategies: {},
   passport,
   guest: { cacheExpiration: DateTime.utc().minus({ days: 1 }) },
   groups: {},
@@ -332,7 +324,6 @@ const auth: AuthService = {
     const wiki = getWiki()
     try {
       this.strategies = {}
-      this.agentStrategies = {}
       for (const strategyName of getPassportStrategyNames()) {
         if (strategyName !== 'session') passport.unuse(strategyName)
       }
@@ -344,15 +335,6 @@ const auth: AuthService = {
         issuer: 'urn:wiki.js',
         algorithms: ['RS256']
       }, (jwtPayload: unknown, done) => done(null, jwtPayload)))
-      if (wiki.config.agents?.publicOrigin?.trim()) {
-        passport.use('agents-jwt', new passportJwt.Strategy({
-          jwtFromRequest: extractAgentsJwt,
-          secretOrKey: wiki.config.certs.public,
-          audience: wiki.config.agents.cookieAudience ?? 'wiki-agents-ui',
-          issuer: 'urn:wiki.js',
-          algorithms: ['RS256']
-        }, (jwtPayload: unknown, done) => done(null, jwtPayload)))
-      }
 
       const enabledStrategies = await wiki.models.authentication.getStrategies()
       for (const strategyRecord of enabledStrategies) {
@@ -376,33 +358,6 @@ const auth: AuthService = {
           this.strategies[strategyRecord.key] = { ...strategy, ...strategyRecord, config }
           wiki.logger.info(`Authentication Strategy ${strategyRecord.displayName}: [ OK ]`)
 
-          const agentsOrigin = wiki.config.agents?.publicOrigin?.trim()
-          if (agentsOrigin) {
-            try {
-              const agentKey = `agents:${strategyRecord.key}`
-              const agentCallbackURL = `${agentsOrigin}/auth/login/${strategyRecord.key}/callback`
-              const agentConfig: StrategyConfig = {
-                ...strategyRecord.config,
-                audience: wiki.config.agents?.cookieAudience ?? 'wiki-agents-ui',
-                callbackURL: agentCallbackURL,
-                cookieName: 'wiki_agents',
-                key: agentKey,
-                redirectUri: agentCallbackURL,
-                sessionNamespace: 'wiki-agents'
-              }
-              await strategy.init(passport, agentConfig)
-              this.agentStrategies[strategyRecord.key] = {
-                ...strategy,
-                ...strategyRecord,
-                key: agentKey,
-                config: agentConfig
-              }
-              wiki.logger.info(`Agents Authentication Strategy ${strategyRecord.displayName}: [ OK ]`)
-            } catch (agentError: unknown) {
-              wiki.logger.warn(`Agents Authentication Strategy ${strategyRecord.displayName} (${strategyRecord.key}): [ UNAVAILABLE ]`)
-              wiki.logger.warn(agentError)
-            }
-          }
         } catch (error: unknown) {
           wiki.logger.error(`Authentication Strategy ${strategyRecord.displayName} (${strategyRecord.key}): [ FAILED ]`)
           wiki.logger.error(error)
@@ -534,31 +489,6 @@ const auth: AuthService = {
     })(req, res, next)
   },
 
-  authenticateAgent(req, _res, next) {
-    passport.authenticate('agents-jwt', { session: false }, async (error: unknown, authenticatedUser: Express.User | false | null | undefined) => {
-      if (error || !authenticatedUser || typeof authenticatedUser.id !== 'number') {
-        return next(createAuthenticationError('Agents authentication is required.', 401, 'AGENT_AUTH_REQUIRED'))
-      }
-      try {
-        const user = await getWiki().models.users.query().findById(authenticatedUser.id)
-          .withGraphFetched('groups')
-          .modifyGraph('groups', builder => {
-            builder.select('groups.id', 'permissions')
-          })
-        if (!user || user.id === 2) {
-          return next(createAuthenticationError('Agents authentication is invalid.', 401, 'AGENT_AUTH_INVALID'))
-        }
-        user.permissions = user.getGlobalPermissions?.() ?? []
-        user.groups = user.getGroups?.() ?? user.groups
-        user.ownershipUserId = user.id
-        req.user = user
-        req.authContext = { kind: 'user', userId: user.id, ownershipUserId: user.id, principal: user }
-        return next()
-      } catch (lookupError: unknown) {
-        return next(lookupError)
-      }
-    })(req, _res, next)
-  },
 
   checkAccess(user, permissions = [], page = false) {
     if (!user) return false

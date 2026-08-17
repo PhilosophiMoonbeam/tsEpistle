@@ -41,7 +41,7 @@ export interface WikiMcpConfiguration {
   readonly enabled: boolean
   readonly publicOrigin: string
   readonly resourceUrl: string
-  readonly agentsPublicOrigin: string
+  readonly wikiPublicOrigin: string
   readonly agentsEnabled: boolean
   readonly skillsEnabled: boolean
   readonly proposalsEnabled: boolean
@@ -258,12 +258,13 @@ export const createWikiMcpController = (dependencies: WikiMcpDependencies): expr
                 requesterApiKeyId: identity.apiKeyId,
                 expiresAt: new Date(persisted.proposal.expiresAt).toISOString()
               }, context)
-              const approvalUrl = new URL(`/approvals/${persisted.proposal.id}`, dependencies.config.agentsPublicOrigin).href
+              const approvalUrl = new URL('/', dependencies.config.wikiPublicOrigin)
+              approvalUrl.searchParams.set('agentApproval', persisted.proposal.id)
               return inputRequired({
                 requestState,
                 inputRequests: {
                   approval: inputRequired.elicit({
-                    message: `Approve this immutable Wiki proposal at ${approvalUrl}, then acknowledge to retry.`,
+                    message: `Approve this immutable Wiki proposal at ${approvalUrl.href}, then acknowledge to retry.`,
                     requestedSchema: ApprovalResponseSchema
                   })
                 }

@@ -75,30 +75,27 @@ describe('agents-host skill administration', () => {
       res.sendStatus(204)
     })
     app.use(createAgentsHostController({
-      IS_DEBUG: false,
       auth: {
-        agentStrategies: {},
-        authenticateAgent(req, _res, next) {
+        authenticate(req, _res, next) {
           req.authContext = { kind: 'user', userId: 7, ownershipUserId: 7, principal: { id: 7 } }
           req.user = { id: 7, permissions: admin ? ['manage:system'] : [] } as Express.User
           next()
-        },
-        passport: { authenticate: () => (_req, _res, next) => next() }
+        }
       },
       config: {
+        host: 'https://wiki.example.test',
         sessionSecret: 'agent-host-admin-token-secret',
         agents: {
           enabled: true,
-          cookieAudience: 'wiki-agents',
-          publicOrigin: 'https://agents.example.test',
           provider: { enabled: false },
           retention: { temporarySessionHours: 24 },
-          skills: { enabled: true, namespace: 'system/agent-skills' }
+          skills: { enabled: true, namespace: 'system/agent-skills' },
+          proposals: { enabled: false },
+          writes: { enabled: false, create: { enabled: false }, patch: { enabled: false }, move: { enabled: false }, restore: { enabled: false }, delete: { enabled: false } }
         }
       },
       models: {
-        knex: db,
-        users: { refreshToken: async () => ({ token: 'token', user: { id: 7 } as Express.User }) }
+        knex: db
       }
     }))
     server = app.listen(0, '127.0.0.1')
@@ -133,7 +130,7 @@ describe('agents-host skill administration', () => {
     })
     const noCsrf = await fetch(`${baseUrl}/_api/agents/admin/skills`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', cookie, origin: 'https://agents.example.test', 'sec-fetch-site': 'same-origin' },
+      headers: { 'content-type': 'application/json', cookie, origin: 'https://wiki.example.test', 'sec-fetch-site': 'same-origin' },
       body
     })
     expect(noCsrf.status).toBe(403)
@@ -147,14 +144,14 @@ describe('agents-host skill administration', () => {
 
     const accepted = await fetch(`${baseUrl}/_api/agents/admin/skills`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', cookie, origin: 'https://agents.example.test', 'sec-fetch-site': 'same-origin', 'x-wiki-csrf': csrf },
+      headers: { 'content-type': 'application/json', cookie, origin: 'https://wiki.example.test', 'sec-fetch-site': 'same-origin', 'x-wiki-csrf': csrf },
       body
     })
     expect(accepted.status).toBe(201)
     expect(await db('agentSkills').select('createdBy').first()).toEqual({ createdBy: 7 })
   })
 
-  it('returns only the isolated admin registry view', async () => {
+  it('returns the ordinary administration registry view', async () => {
     const response = await fetch(`${baseUrl}/_api/agents/admin/skills`, { headers: { cookie } })
     expect(response.status).toBe(200)
     const payload = await response.json() as { skills: Array<{ name: string }> }

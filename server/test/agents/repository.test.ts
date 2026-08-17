@@ -4,11 +4,9 @@ import createKnex, { type Knex } from 'knex'
 import {
   appendAgentEvent,
   appendAgentMessage,
-  consumeAgentLaunchHandoff,
   createAgentSession,
   getOwnedAgentArtifact,
   getOwnedAgentSession,
-  issueAgentLaunchHandoff,
   listOwnedAgentEvents,
   storeAgentScreenshot,
   updateAgentSession
@@ -112,19 +110,6 @@ const createTables = async (knex: Knex): Promise<void> => {
     table.text('data').notNullable()
     table.dateTime('createdAt').notNullable()
     table.unique(['runId', 'sequence'])
-  })
-  await knex.schema.createTable('agentLaunchHandoffs', table => {
-    table.uuid('id').primary()
-    table.binary('tokenSha256').notNullable().unique()
-    table.integer('ownerId').notNullable()
-    table.integer('pageId').nullable()
-    table.string('localeCode').nullable()
-    table.text('path').nullable()
-    table.dateTime('observedUpdatedAt').nullable()
-    table.binary('pageHintSha256').notNullable()
-    table.dateTime('createdAt').notNullable()
-    table.dateTime('expiresAt').notNullable()
-    table.dateTime('consumedAt').nullable()
   })
   await knex.schema.createTable('agentArtifacts', table => {
     table.uuid('id').primary()
@@ -302,15 +287,6 @@ describe('durable agent repositories', () => {
     await expect(listOwnedAgentEvents(knex, 7, runId)).rejects.toMatchObject({ code: 'AGENT_EVENT_CORRUPT', status: 500 })
   })
 
-  it('atomically consumes opaque launch handoffs once for the owning user', async () => {
-    const handoff = await issueAgentLaunchHandoff(knex, { ownerId: 7, pageId: 42, locale: 'en', path: 'docs/start', observedUpdatedAt: '2026-08-17T00:00:00.000Z', ttlSeconds: 300 })
-    await expect(consumeAgentLaunchHandoff(knex, 8, handoff.token)).rejects.toMatchObject({ code: 'AGENT_RESOURCE_NOT_FOUND' })
-    const outcomes = await Promise.allSettled([consumeAgentLaunchHandoff(knex, 7, handoff.token), consumeAgentLaunchHandoff(knex, 7, handoff.token)])
-    expect(outcomes.filter(outcome => outcome.status === 'fulfilled')).toHaveLength(1)
-    expect(outcomes.filter(outcome => outcome.status === 'rejected')).toHaveLength(1)
-    const success = outcomes.find(outcome => outcome.status === 'fulfilled')
-    expect(success?.status === 'fulfilled' ? success.value : null).toEqual({ pageId: 42, locale: 'en', path: 'docs/start', observedUpdatedAt: '2026-08-17T00:00:00.000Z' })
-  })
 
   it('integrity-checks owner-scoped artifact payloads', async () => {
     const payload = Buffer.from('89504e470d0a1a0a00', 'hex')

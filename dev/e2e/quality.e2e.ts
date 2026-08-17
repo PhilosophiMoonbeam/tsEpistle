@@ -170,6 +170,30 @@ test.describe('release accessibility profiles', () => {
     await expect(page.getByRole('status')).toContainText('Try a different term or broader scope.')
   })
 
+  test('keeps the inline agent keyboard-accessible at desktop and mobile widths', async ({ page }, testInfo) => {
+    requireAnyProject(testInfo, ['accessibility-keyboard', 'accessibility-mobile'])
+    await authenticateAsAdmin(page)
+    await page.goto('/', { waitUntil: 'networkidle' })
+    await page.evaluate('siteConfig.agentsEnabled = true')
+    if (testInfo.project.name === 'accessibility-mobile') {
+      await page.getByRole('button', { name: /^search$/i }).click()
+    } else {
+      await page.getByRole('textbox', { name: /search/i }).focus()
+    }
+    await page.getByRole('button', { name: /^ask$/i }).click()
+    await expect(page.getByRole('region', { name: 'Wiki Agent' })).toBeVisible()
+    await expect(page.getByText('Provider inference is disabled by the administrator.')).toBeVisible()
+    const layout = await page.evaluate(() => ({
+      viewportWidth: window.innerWidth,
+      documentWidth: document.documentElement.scrollWidth
+    }))
+    expect(layout.documentWidth).toBeLessThanOrEqual(layout.viewportWidth + 1)
+    await expectNoBlockingAccessibilityViolations(page, `inline agent (${testInfo.project.name})`)
+    if (testInfo.project.name === 'accessibility-keyboard') {
+      expect(await tabToControl(page, /open agent conversation history/i), 'Agent history must be reachable in the tab order').toBe(true)
+    }
+  })
+
   test('keeps page navigation and return-to-top controls reachable below desktop width', async ({ page }, testInfo) => {
     requireProject(testInfo, 'accessibility-mobile')
     await page.setViewportSize({ width: 1180, height: 500 })

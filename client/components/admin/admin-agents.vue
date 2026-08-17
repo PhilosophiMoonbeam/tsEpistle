@@ -13,7 +13,7 @@ v-container.admin-agents(fluid)
 <script setup lang="ts">
 import AgentAdmin from '../agents/agent-admin.vue'
 
-const csrfToken = siteConfig.agentLaunchCsrfToken
+const csrfToken = siteConfig.agentCsrfToken
 </script>
 
 <style scoped>

@@ -53,6 +53,8 @@
       <v-divider />
       <v-progress-linear v-if="loading" indeterminate color="primary" aria-label="Loading Wiki Agent" />
 
+      <AgentMcpApproval v-if="approvalId" :csrf-token="csrfToken" :proposal-id="approvalId" />
+      <template v-else>
       <div class="inline-agent__body">
         <v-alert
           class="inline-agent__alert mb-4"
@@ -131,6 +133,7 @@
           Answers respect your Wiki permissions. Verify cited sources before relying on model output.
         </div>
       </footer>
+      </template>
     </v-card>
   </section>
 </template>
@@ -141,11 +144,13 @@ import { storeToRefs } from 'pinia'
 import type { AgentCurrentPageHint } from '../../../shared/agents/contracts.ts'
 import { useAgentsStore } from '../../store/agents.ts'
 import AgentComposer from './agent-composer.vue'
+import AgentMcpApproval from './agent-mcp-approval.vue'
 import AgentSessionSettings from './agent-session-settings.vue'
 import AgentThread from './agent-thread.vue'
 
 const props = defineProps<{
   csrfToken: string
+  approvalId?: string
   providerEnabled: boolean
   pageId: number
   pageLocale: string

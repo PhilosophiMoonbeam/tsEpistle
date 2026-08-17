@@ -29,9 +29,6 @@ defaults:
     bodyParserLimit: 5mb
     agents:
       enabled: false
-      publicOrigin: ''
-      cookieAudience: 'wiki-agents-ui'
-      launchTokenTtlSeconds: 300
       retention:
         temporarySessionHours: 24
         mcpContentDays: 7
@@ -42,6 +39,8 @@ defaults:
         globalConcurrency: 4
         perUserConcurrency: 1
         pollingMilliseconds: 1000
+      sse:
+        maximumConnectionsPerUser: 3
       skills:
         enabled: false
         namespace: 'system/agent-skills'

@@ -8,7 +8,8 @@ LABEL org.opencontainers.image.title="Wiki.ts isolated agent browser worker" \
 
 ENV NODE_ENV=production \
     PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
-    AGENT_BROWSER_PORT=9443
+    AGENT_BROWSER_PORT=9443 \
+    AGENT_BROWSER_MAX_CONTEXTS=8
 WORKDIR /wiki
 
 RUN corepack enable && corepack prepare pnpm@11.12.0 --activate

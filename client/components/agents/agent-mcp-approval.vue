@@ -55,7 +55,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { decideAgentProposal, getMcpAgentProposal, type McpAgentProposal } from '../../helpers/agents-api.ts'
 
-const props = defineProps<{ csrfToken: string }>()
+const props = defineProps<{ csrfToken: string; proposalId: string }>()
 const collapsedLineCount = 300
 const loading = ref(true)
 const deciding = ref(false)
@@ -64,7 +64,6 @@ const proposal = ref<McpAgentProposal | null>(null)
 const expanded = ref(false)
 const decisionNote = ref('')
 const confirmationPath = ref('')
-const proposalId = /^\/approvals\/([0-9a-f-]{36})$/i.exec(window.location.pathname)?.[1] ?? ''
 const actionLabel = computed(() => proposal.value?.actionName.replace('pages.prepare', '') ?? '')
 const diffLines = computed(() => (proposal.value?.diff ?? '').split('\n').map(text => ({
   text,
@@ -73,13 +72,13 @@ const diffLines = computed(() => (proposal.value?.diff ?? '').split('\n').map(te
 const visibleDiff = computed(() => expanded.value ? diffLines.value : diffLines.value.slice(0, collapsedLineCount))
 
 const load = async (): Promise<void> => {
-  if (!proposalId) {
+  if (!props.proposalId) {
     error.value = 'Proposal URL is invalid.'
     loading.value = false
     return
   }
   try {
-    proposal.value = await getMcpAgentProposal(window.fetch.bind(window), props.csrfToken, proposalId)
+    proposal.value = await getMcpAgentProposal(window.fetch.bind(window), props.csrfToken, props.proposalId)
   } catch (value) {
     error.value = value instanceof Error ? value.message : 'Proposal could not be loaded.'
   } finally {

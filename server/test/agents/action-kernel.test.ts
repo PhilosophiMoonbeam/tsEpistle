@@ -113,6 +113,28 @@ describe('action authority and execution', () => {
     await expect(kernel.execute({ authority, actionCallId: 'call-2', input: { id: 42, unexpected: true }, signal: controller.signal, refreshAdmission })).rejects.toMatchObject({ code: 'INVALID_ACTION_INPUT' })
   })
 
+  it('reauthorizes and persists the run side-effect fence before handler dispatch', async () => {
+    const order: string[] = []
+    const kernel = new ActionKernel()
+    kernel.register('browser.navigate', async (_input, context) => {
+      await context.fenceSideEffect()
+      order.push('dispatch')
+      return { contextId: 'context-value-0001', documentEpoch: requestId, url: 'https://example.com/', title: 'Example', text: 'page', refs: [], observedAt: '2026-08-17T00:00:00.000Z' }
+    })
+    const authority = createActionAuthority('browser.navigate', requestId, auth, admission())
+    const refreshAdmission = vi.fn(async () => admission())
+    await expect(kernel.execute({
+      authority,
+      actionCallId: 'browser-call',
+      input: { url: 'https://example.com/' },
+      signal: new AbortController().signal,
+      refreshAdmission,
+      fenceSideEffect: async () => { order.push('fence') }
+    })).resolves.toMatchObject({ url: 'https://example.com/' })
+    expect(order).toEqual(['fence', 'dispatch'])
+    expect(refreshAdmission).toHaveBeenCalledTimes(2)
+  })
+
   it('checks live permission and kill switches before handler dispatch', async () => {
     const kernel = new ActionKernel()
     const handler = vi.fn(async () => page)

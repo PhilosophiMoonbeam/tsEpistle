@@ -62,7 +62,7 @@ export interface SkillRegistryListItem {
 }
 
 export interface SkillSourceResolver {
-  (db: Knex, mapping: SkillSourceMapping): Promise<ResolvedPageNativeSkillSource>
+  (db: Knex, mapping: SkillSourceMapping, requester: Express.User): Promise<ResolvedPageNativeSkillSource>
 }
 
 interface SkillRow {
@@ -146,11 +146,11 @@ export class SkillRegistry {
     })
   }
 
-  async preview(skillId: string): Promise<SkillApprovalPreview> {
+  async preview(skillId: string, requester: Express.User): Promise<SkillApprovalPreview> {
     SkillIdSchema.parse(skillId)
     return this.knex.transaction(async transaction => {
       const skill = await this.getSkillForUpdate(transaction, skillId)
-      const source = await this.sourceResolver(transaction, skill)
+      const source = await this.sourceResolver(transaction, skill, requester)
       const previous = skill.currentVersionId === null
         ? null
         : await transaction('agentSkillVersions').select('skillMarkdown').where({ id: skill.currentVersionId }).first() as { skillMarkdown: string } | undefined
@@ -158,15 +158,16 @@ export class SkillRegistry {
     })
   }
 
-  async approve(input: { readonly skillId: string; readonly actorId: number; readonly expectedContentHash: string; readonly expectedSourceRevision: string }): Promise<string> {
+  async approve(input: { readonly skillId: string; readonly actorId: number; readonly requester: Express.User; readonly expectedContentHash: string; readonly expectedSourceRevision: string }): Promise<string> {
     const skillId = SkillIdSchema.parse(input.skillId)
     const actorId = ActorIdSchema.parse(input.actorId)
+    if (input.requester.id !== actorId) throw new SkillValidationError('Skill review actor does not match the authenticated user')
     const expectedContentHash = z.string().regex(/^[a-f0-9]{64}$/).parse(input.expectedContentHash)
     const expectedSourceRevision = z.string().min(1).max(64).parse(input.expectedSourceRevision)
 
     return this.knex.transaction(async transaction => {
       const skill = await this.getSkillForUpdate(transaction, skillId)
-      const source = await this.sourceResolver(transaction, skill)
+      const source = await this.sourceResolver(transaction, skill, input.requester)
       if (source.bundle.contentHash !== expectedContentHash || source.sourceRevision !== expectedSourceRevision) {
         throw new SkillValidationError('Skill source changed after approval preview')
       }
@@ -176,14 +177,15 @@ export class SkillRegistry {
     })
   }
 
-  async reject(input: { readonly skillId: string; readonly actorId: number; readonly expectedContentHash: string; readonly expectedSourceRevision: string }): Promise<string> {
+  async reject(input: { readonly skillId: string; readonly actorId: number; readonly requester: Express.User; readonly expectedContentHash: string; readonly expectedSourceRevision: string }): Promise<string> {
     const skillId = SkillIdSchema.parse(input.skillId)
     const actorId = ActorIdSchema.parse(input.actorId)
+    if (input.requester.id !== actorId) throw new SkillValidationError('Skill review actor does not match the authenticated user')
     const expectedContentHash = z.string().regex(/^[a-f0-9]{64}$/).parse(input.expectedContentHash)
     const expectedSourceRevision = z.string().min(1).max(64).parse(input.expectedSourceRevision)
     return this.knex.transaction(async transaction => {
       const skill = await this.getSkillForUpdate(transaction, skillId)
-      const source = await this.sourceResolver(transaction, skill)
+      const source = await this.sourceResolver(transaction, skill, input.requester)
       if (source.bundle.contentHash !== expectedContentHash || source.sourceRevision !== expectedSourceRevision) {
         throw new SkillValidationError('Skill source changed after approval preview')
       }

@@ -23,21 +23,31 @@ describe('browser action service', () => {
 
   it('passes only live approved HTTPS targets and monotonic run identity to the worker', async () => {
     const calls: Array<{ sequence: number; action: BrowserWorkerAction }> = []
+    const order: string[] = []
     const execute = vi.fn(async (identity: { sequence: number }, _limits: unknown, action: BrowserWorkerAction): Promise<BrowserWorkerResult> => {
+      order.push('dispatch')
       calls.push({ sequence: identity.sequence, action })
       return action.kind === 'navigate' ? { kind: 'navigated', observation } : { kind: 'observed', observation }
     })
     const service = new BrowserActionService(db, { execute } as never)
-    await expect(service.navigate({ url: 'https://example.com/docs' }, { authority, signal: new AbortController().signal })).resolves.toEqual(observation)
-    await expect(service.observe({}, { authority, signal: new AbortController().signal })).resolves.toEqual(observation)
+    const context = (actionCallId: string) => ({
+      authority,
+      actionCallId,
+      signal: new AbortController().signal,
+      reauthorize: async () => {},
+      fenceSideEffect: async () => { order.push('fence') }
+    })
+    await expect(service.navigate({ url: 'https://example.com/docs' }, context('call-1'))).resolves.toEqual(observation)
+    await expect(service.observe({}, context('call-2'))).resolves.toEqual(observation)
     expect(calls.map(call => call.sequence)).toEqual([1, 2])
     expect(calls[0]?.action).toMatchObject({ kind: 'navigate', attestedUrls: ['https://example.com/docs'] })
+    expect(order).toEqual(['fence', 'dispatch', 'fence', 'dispatch'])
   })
 
   it('persists a bounded screenshot as a private expiring artifact', async () => {
     const png = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 1])
     const service = new BrowserActionService(db, { execute: async (): Promise<BrowserWorkerResult> => ({ kind: 'screenshot', bytes: png, mimeType: 'image/png', width: 1280, height: 720 }) } as never)
-    const result = await service.screenshot({}, { authority, signal: new AbortController().signal })
+    const result = await service.screenshot({}, { authority, actionCallId: 'screenshot-call', signal: new AbortController().signal, reauthorize: async () => {}, fenceSideEffect: async () => {} })
     expect(result).toMatchObject({ mimeType: 'image/png', width: 1280, height: 720 })
     const row = await db('agentArtifacts').where({ id: result.artifactId }).first()
     expect(row).toMatchObject({ sessionId, runId, ownerId: 7, kind: 'browser-screenshot', byteLength: png.byteLength })

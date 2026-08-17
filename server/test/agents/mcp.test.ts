@@ -11,11 +11,17 @@ import { decideProposal } from '../../agents/proposals/execution.ts'
 
 const key = Buffer.alloc(32, 7)
 
-const principal = (): Express.User => ({
-  id: 1,
+const apiPrincipal = (): Express.User => ({
+  id: 90,
   permissions: ['use:mcp', 'read:pages', 'read:history', 'write:pages', 'delete:pages'],
   groups: [3],
   ownershipUserId: null
+})
+const humanPrincipal = (): Express.User => ({
+  id: 7,
+  permissions: ['read:pages', 'read:history', 'write:pages', 'delete:pages'],
+  groups: [3],
+  ownershipUserId: 7
 })
 const postInitialize = (port: number, headers: Record<string, string>): Promise<number> => new Promise((resolve, reject) => {
   const body = JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: {} })
@@ -118,11 +124,13 @@ describe('Wiki MCP transport', () => {
   let server: ReturnType<express.Express['listen']>
   let client: Client | undefined
   let movePage: ReturnType<typeof vi.fn>
+  let authorizeMutation: ReturnType<typeof vi.fn>
 
   beforeEach(async () => {
     db = createKnex({ client: 'better-sqlite3', connection: { filename: ':memory:' }, useNullAsDefault: true })
     await createProposalTables(db)
     movePage = vi.fn(async () => ({}))
+    authorizeMutation = vi.fn(async () => {})
     const app = express()
     app.use(createWikiMcpController({
       knex: db,
@@ -138,10 +146,11 @@ describe('Wiki MCP transport', () => {
         update: vi.fn(),
         move: movePage,
         restore: vi.fn(),
-        remove: vi.fn()
+        remove: vi.fn(),
+        authorizeMutation
       },
       authenticate: (req, _res, next) => {
-        const user = principal()
+        const user = apiPrincipal()
         Reflect.set(req, 'user', user)
         Reflect.set(req, 'authContext', { kind: 'apiKey', apiKeyId: 9, groupId: 3, ownershipUserId: null, principal: user })
         Reflect.set(req, 'apiKeyAuth', {
@@ -153,13 +162,13 @@ describe('Wiki MCP transport', () => {
         })
         next()
       },
-      resolvePrincipal: async () => principal(),
-      resolveUser: async () => principal(),
+      resolvePrincipal: async () => apiPrincipal(),
+      resolveUser: async () => humanPrincipal(),
       config: {
         enabled: true,
         publicOrigin: 'http://127.0.0.1',
         resourceUrl: 'http://127.0.0.1/mcp',
-        agentsPublicOrigin: 'https://agents.example.test',
+        wikiPublicOrigin: 'https://wiki.example.test',
         agentsEnabled: true,
         skillsEnabled: true,
         proposalsEnabled: true,
@@ -284,8 +293,9 @@ describe('Wiki MCP transport', () => {
     expect(movePage).toHaveBeenCalledOnce()
     expect(movePage).toHaveBeenCalledWith(expect.objectContaining({
       input: expect.objectContaining({ id: 42, destinationPath: 'docs/next' }),
-      requester: expect.objectContaining({ id: 1 })
+      requester: expect.objectContaining({ id: 7 })
     }))
+    expect(authorizeMutation.mock.calls.map(call => call[0].requester.id)).toEqual([90, 7, 90, 7])
   })
 
   it('rejects wrong Host and Origin values before authentication', async () => {

@@ -1,6 +1,6 @@
 import _ from 'lodash'
 import type { Knex } from 'knex'
-import { canReadPage, canWritePage, managesSystem, pageRoute, principalId, scopePageQuery, type PageVisibility } from '../helpers/page-access.ts'
+import { canDeletePage, canReadPage, canWritePage, managesSystem, pageRoute, principalId, scopePageQuery, type PageVisibility } from '../helpers/page-access.ts'
 import { listPageIndexCandidates, PAGE_INDEX_CANDIDATE_LIMIT } from '../repositories/page-index.ts'
 
 import errors from './errors.ts'
@@ -77,6 +77,8 @@ interface WikiPageOperations {
     PageViewForbidden: new () => Error
     PageUpdateForbidden: new () => Error
     PageRestoreForbidden: new () => Error
+    PageDeleteForbidden: new () => Error
+    PageMoveForbidden: new () => Error
   }
   auth: { checkAccess(user: Express.User | undefined, permissions: readonly string[], context: Record<string, unknown>): boolean }
   config: { db: { type: string }, lang: { code: string } }
@@ -539,6 +541,39 @@ const move = (input: OperationInput): unknown => wiki.models.pages.movePage(with
   _.omit(recordValue(input.input, 'input'), ['visibility', 'ownerId', 'isPrivate', 'privateNS']),
   input.requester
 ))
+const authorizeMutation = async (input: OperationInput): Promise<void> => {
+  const requester = input.requester
+  const kind = stringValue(input.kind, 'kind')
+  const operationInput = recordValue(input.input, 'input')
+  if (kind === 'create') {
+    const path = stringValue(operationInput.path, 'path')
+    const locale = stringValue(operationInput.locale, 'locale')
+    if (!wiki.auth.checkAccess(requester, ['write:pages', 'manage:pages', 'manage:system'], { path, locale, tags: operationInput.tags })) {
+      throw new wiki.Error.PageUpdateForbidden()
+    }
+    return
+  }
+  const rawId = kind === 'restore' ? operationInput.pageId : operationInput.id
+  const page = await wiki.models.pages.query().findById(positiveInteger(rawId, kind === 'restore' ? 'pageId' : 'id'))
+  if (!page) throw new wiki.Error.PageNotFound()
+  const canMutate = kind === 'delete' ? canDeletePage(requester, page) : canWritePage(requester, page)
+  if (page.visibility === 'private' && !canMutate) throw new wiki.Error.PageNotFound()
+  if (!canMutate) {
+    if (kind === 'delete') throw new wiki.Error.PageDeleteForbidden()
+    if (kind === 'move') throw new wiki.Error.PageMoveForbidden()
+    if (kind === 'restore') throw new wiki.Error.PageRestoreForbidden()
+    throw new wiki.Error.PageUpdateForbidden()
+  }
+  if (kind === 'move') {
+    const destinationPath = stringValue(operationInput.destinationPath, 'destinationPath')
+    const destinationLocale = stringValue(operationInput.destinationLocale, 'destinationLocale')
+    if (page.visibility === 'public' && !wiki.auth.checkAccess(requester, ['write:pages', 'manage:pages', 'manage:system'], {
+      path: destinationPath,
+      locale: destinationLocale,
+      tags: page.tags
+    })) throw new wiki.Error.PageMoveForbidden()
+  }
+}
 
 const changeVisibility = (input: OperationInput): unknown => {
   const id = positiveInteger(input.id, 'id')
@@ -606,6 +641,6 @@ const restore = async (input: OperationInput): Promise<void> => {
 
 const getPageTags = (value: unknown): RelatedTagQuery => wiki.models.pages.relatedQuery('tags').for(positiveInteger(value, 'pageId'))
 export default {
-  changeVisibility, checkConflict, convert, create, get, getByPath, getConflictLatest, getHistory, getPageTags, getTree, getVersion,
+  authorizeMutation, changeVisibility, checkConflict, convert, create, get, getByPath, getConflictLatest, getHistory, getPageTags, getTree, getVersion,
   list, listIndex, listLinks, listRecent, listTags, move, remove, removeTag, restore, search, searchTags, transferOwnership, update, updateTag
 }

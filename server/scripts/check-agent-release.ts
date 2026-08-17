@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises'
+import { access, readFile } from 'node:fs/promises'
 import { load as loadYaml } from 'js-yaml'
 
 interface DataFile {
@@ -40,15 +40,41 @@ else {
 }
 
 const browserDockerfile = await readFile('dev/build/Dockerfile.agent-browser', 'utf8')
+const browserRuntime = await readFile('server/agents/browser/runtime.ts', 'utf8')
 if (!browserDockerfile.includes('mcr.microsoft.com/playwright:v1.62.1-noble@sha256:dcc5531e97840b9b5e794f2814476b21571c5124a3fca2267d73041f56e7580e')) {
   failures.push('browser worker base image must retain the reviewed Playwright 1.62.1 multi-arch digest')
 }
 if (!browserDockerfile.includes('USER pwuser')) failures.push('browser worker image must run as pwuser')
+if (!browserRuntime.includes('chromiumSandbox: true')) failures.push('browser worker must launch Chromium with its sandbox enabled')
+if (!browserDockerfile.includes('AGENT_BROWSER_MAX_CONTEXTS=8')) failures.push('browser worker image must retain a bounded context default')
 
+
+const retiredIsolatedSurface = [
+  'client/agents-app.ts',
+  'client/index-agents.ts',
+  'client/components/agents/agent-shell.vue',
+  'server/agents/launch-csrf.ts',
+  'server/views/agent-login.pug',
+  'server/views/agent.pug'
+]
+for (const file of retiredIsolatedSurface) {
+  try {
+    await access(file)
+    failures.push(`obsolete isolated-agent surface must be removed: ${file}`)
+  } catch { /* absence is the required clean cutover */ }
+}
+
+const master = await readFile('server/master.ts', 'utf8')
+for (const obsolete of ['agentsPublicOrigin', 'agentVite', 'agentLaunchHandoff']) {
+  if (master.includes(obsolete)) failures.push(`server/master.ts retains obsolete isolated-agent wiring: ${obsolete}`)
+}
 const workflowText = await readFile('.github/workflows/build.yml', 'utf8')
 const workflow = loadYaml(workflowText) as { jobs?: Record<string, unknown> }
 for (const job of ['agent-postgres', 'agent-browser-image', 'publish-amd64', 'arm', 'beta', 'release']) {
   if (!workflow.jobs?.[job]) failures.push(`release workflow is missing required job ${job}`)
+}
+for (const pgversion of [16, 17]) {
+  if (!workflowText.includes(`pgversion: ${pgversion}`)) failures.push(`agent PostgreSQL release matrix must include PostgreSQL ${pgversion}`)
 }
 for (const evidence of [
   'server/test/db/agents-migration.postgres.integration.test.ts',
@@ -62,7 +88,11 @@ for (const evidence of [
 }
 
 const requiredReleaseInputs = [
+  'client/components/agents/inline-agent-chat.vue',
+  'server/agents/config.ts',
+  'server/agents/providers/openresponses.ts',
   'server/db/migrations/2.5.139.ts',
+  'server/db/migrations/2.5.140.ts',
   'server/scripts/agent-maintenance.ts',
   'server/scripts/generate-release-manifest.ts',
   'docs/agents-deployment.md'

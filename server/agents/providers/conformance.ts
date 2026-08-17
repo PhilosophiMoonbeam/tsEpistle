@@ -43,13 +43,21 @@ const errorCode = (error: unknown): string => {
   return 'PROVIDER_CONFORMANCE_FAILED'
 }
 
-const consume = async (response: AxChatResponse | ReadableStream<AxChatResponse>): Promise<string> => {
+const consume = async (response: AxChatResponse | ReadableStream<AxChatResponse>, usageMode: 'stream' | 'terminal' | 'estimated'): Promise<string> => {
   let output = ''
+  let usageObserved = false
   const accept = (value: AxChatResponse): void => {
     for (const result of value.results) {
       if (result.functionCalls?.length) throw new AgentRepositoryError('CONFORMANCE_UNEXPECTED_TOOL', 'Provider emitted an unexpected action during conformance', 502)
       if (result.content) output += result.content
       if (output.length > MAX_SMOKE_OUTPUT) throw new AgentRepositoryError('CONFORMANCE_OUTPUT_TOO_LARGE', 'Provider conformance output exceeded its limit', 502)
+    }
+    const tokens = value.modelUsage?.tokens
+    if (tokens) {
+      if (![tokens.promptTokens, tokens.completionTokens, tokens.totalTokens].every(token => Number.isSafeInteger(token) && token >= 0) || tokens.totalTokens < tokens.promptTokens + tokens.completionTokens) {
+        throw new AgentRepositoryError('CONFORMANCE_USAGE_INVALID', 'Provider conformance returned invalid usage accounting', 502)
+      }
+      usageObserved = true
     }
   }
   if (response instanceof ReadableStream) {
@@ -63,7 +71,23 @@ const consume = async (response: AxChatResponse | ReadableStream<AxChatResponse>
     } finally { reader.releaseLock() }
   } else accept(response)
   if (output.trim().length === 0) throw new AgentRepositoryError('CONFORMANCE_EMPTY_OUTPUT', 'Provider conformance returned no text', 502)
+  if (usageMode !== 'estimated' && !usageObserved) throw new AgentRepositoryError('CONFORMANCE_USAGE_MISSING', 'Provider conformance did not return its declared usage accounting', 502)
   return output
+}
+
+const verifyCancellation = async (provider: Awaited<ReturnType<AgentProviderFactory['create']>>): Promise<void> => {
+  if (!provider.capabilities.cancellation) throw new AgentRepositoryError('CONFORMANCE_CANCELLATION_UNDECLARED', 'Provider profile must declare cancellation support', 502)
+  const controller = new AbortController()
+  controller.abort(new Error('provider conformance cancellation probe'))
+  try {
+    await provider.service.chat(
+      { chatPrompt: [{ role: 'user', content: 'This pre-cancelled request must not be dispatched.' }], model: provider.model },
+      { stream: false, abortSignal: controller.signal }
+    )
+  } catch {
+    return
+  }
+  throw new AgentRepositoryError('CONFORMANCE_CANCELLATION_IGNORED', 'Provider accepted a request whose signal was already aborted', 502)
 }
 
 export class AgentProviderConformanceRunner {
@@ -88,11 +112,13 @@ export class AgentProviderConformanceRunner {
     try {
       const provider = await this.#factory.create(profileVersionId, { requireConformed: false })
       checks.push({ name: 'profile-load', passed: true })
+      await verifyCancellation(provider)
+      checks.push({ name: 'pre-dispatch-cancellation', passed: true })
       const signal = AbortSignal.timeout(30_000)
       const response = await provider.service.chat({ chatPrompt: [{ role: 'user', content: 'Reply with a short acknowledgement.' }], model: provider.model }, { stream: provider.capabilities.streaming, abortSignal: signal })
       checks.push({ name: provider.capabilities.streaming ? 'stream-response' : 'buffered-response', passed: true })
-      await consume(response)
-      checks.push({ name: 'bounded-text-output', passed: true })
+      await consume(response, provider.capabilities.usage)
+      checks.push({ name: 'bounded-text-output', passed: true }, { name: 'declared-usage', passed: true })
       status = 'passed'
     } catch (error) {
       failureCode = errorCode(error)

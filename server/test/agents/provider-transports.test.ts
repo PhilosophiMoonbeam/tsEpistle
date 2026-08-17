@@ -2,8 +2,9 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import createKnex, { type Knex } from 'knex'
 import type { LookupAddress } from 'node:dns'
 import { AgentProviderFactory } from '../../agents/providers/factory.ts'
+import { createOpenResponsesFetch } from '../../agents/providers/openresponses.ts'
 
-const publicResolver = async (): Promise<LookupAddress[]> => [{ address: '203.0.113.10', family: 4 }]
+const publicResolver = async (): Promise<LookupAddress[]> => [{ address: '93.184.216.34', family: 4 }]
 const capabilities = { streaming: false, functions: false, parallelFunctions: false, structuredOutput: 'prompt-only', usage: 'terminal', cancellation: true, maxContextTokens: 100_000, maxOutputTokens: 4_000 }
 
 describe('additional provider transports', () => {
@@ -32,15 +33,19 @@ describe('additional provider transports', () => {
   it('runs OpenResponses through the storage-off Responses protocol', async () => {
     const id = '00000000-0000-4000-8000-000000000011'
     await insert({ id, transportKind: 'openresponses', baseUrl: 'https://openresponses.example.test/v1', authMode: 'bearer' })
+    await db('agentProviderProfileVersions').where({ id }).update({ capabilities: JSON.stringify({ ...capabilities, functions: true }) })
     let payload: Record<string, unknown> = {}
     const fetchImplementation = async (_input: URL | RequestInfo, init?: RequestInit): Promise<Response> => {
       payload = JSON.parse(String(init?.body)) as Record<string, unknown>
       return Response.json({ id: 'resp_1', object: 'response', created_at: 1, status: 'completed', error: null, incomplete_details: null, instructions: null, max_output_tokens: null, model: 'model-test', parallel_tool_calls: false, previous_response_id: null, output: [{ type: 'message', id: 'msg_1', status: 'completed', role: 'assistant', content: [{ type: 'output_text', text: 'open', annotations: [] }] }], usage: { input_tokens: 2, input_tokens_details: { cached_tokens: 0 }, output_tokens: 1, output_tokens_details: { reasoning_tokens: 0 }, total_tokens: 3 } })
     }
     const provider = await new AgentProviderFactory(db, { get: () => 'key' }, fetchImplementation as typeof fetch, publicResolver as never).create(id)
-    const response = await provider.service.chat({ chatPrompt: [{ role: 'user', content: 'hello' }] }, { stream: false })
+    const response = await provider.service.chat({
+      chatPrompt: [{ role: 'user', content: 'hello' }],
+      functions: [{ name: 'pages.get', description: 'Read a page', parameters: { type: 'object', properties: { id: { type: 'number' } } } }]
+    }, { stream: false })
     expect(response).not.toBeInstanceOf(ReadableStream)
-    expect(payload).toMatchObject({ store: false, previous_response_id: null })
+    expect(payload).toMatchObject({ store: false, previous_response_id: null, tools: [{ type: 'function', name: 'pages.get' }] })
     expect(payload.include).toContain('reasoning.encrypted_content')
   })
 
@@ -78,5 +83,61 @@ describe('additional provider transports', () => {
     expect(headers.get('x-api-key')).toBe('legacy-key')
     if (!(response instanceof ReadableStream)) expect(response).toMatchObject({ results: [{ content: 'legacy' }], modelUsage: { tokens: { promptTokens: 4, completionTokens: 2, totalTokens: 6 } } })
     await expect(provider.service.chat({ chatPrompt: [{ role: 'user', content: 'hello' }], functions: [{ name: 'pages.get', description: 'read' }] })).rejects.toMatchObject({ code: 'INVALID_LEGACY_PROMPT' })
+  })
+})
+
+describe('OpenResponses protocol validation', () => {
+  const request = (overrides: Record<string, unknown> = {}): RequestInit => ({
+    method: 'POST',
+    body: JSON.stringify({ model: 'model-test', input: [{ role: 'user', content: 'hello' }], store: false, stream: false, ...overrides })
+  })
+
+  it('rejects unknown request fields before provider egress', async () => {
+    let calls = 0
+    const transport = createOpenResponsesFetch(async () => {
+      calls += 1
+      return Response.json({})
+    })
+    await expect(transport('https://openresponses.example.test/v1/responses', request({ unsupported: true }))).rejects.toMatchObject({ code: 'INVALID_OPENRESPONSES_PROTOCOL' })
+    expect(calls).toBe(0)
+  })
+
+  it('rejects malformed buffered responses before Ax parsing', async () => {
+    const transport = createOpenResponsesFetch(async () => Response.json({
+      id: 'resp_1',
+      object: 'response',
+      created_at: 1,
+      status: 'completed',
+      model: 'model-test',
+      output: [{ id: 'unknown_1', type: 'provider_private_item', status: 'completed' }]
+    }))
+    await expect(transport('https://openresponses.example.test/v1/responses', request())).rejects.toMatchObject({ code: 'INVALID_OPENRESPONSES_PROTOCOL' })
+  })
+
+  it('validates streaming event names, sequences, terminal response, and marker', async () => {
+    const terminal = {
+      id: 'resp_1',
+      object: 'response',
+      created_at: 1,
+      status: 'completed',
+      model: 'model-test',
+      output: []
+    }
+    const validBody = [
+      'event: response.in_progress',
+      'data: {"type":"response.in_progress","sequence_number":0}',
+      '',
+      'event: response.completed',
+      `data: ${JSON.stringify({ type: 'response.completed', sequence_number: 1, response: terminal })}`,
+      '',
+      'data: [DONE]',
+      ''
+    ].join('\n')
+    const validTransport = createOpenResponsesFetch(async () => new Response(validBody, { headers: { 'content-type': 'text/event-stream' } }))
+    await expect((await validTransport('https://openresponses.example.test/v1/responses', request({ stream: true }))).text()).resolves.toContain('[DONE]')
+
+    const invalidBody = 'event: response.output_text.delta\ndata: {"type":"response.output_text.done","sequence_number":0}\n\n'
+    const invalidTransport = createOpenResponsesFetch(async () => new Response(invalidBody, { headers: { 'content-type': 'text/event-stream' } }))
+    await expect((await invalidTransport('https://openresponses.example.test/v1/responses', request({ stream: true }))).text()).rejects.toMatchObject({ code: 'INVALID_OPENRESPONSES_PROTOCOL' })
   })
 })

@@ -60,20 +60,25 @@ interface WorkerContext {
   allowedUrls: Set<string>
 }
 
-export interface BrowserWorkerOptions { readonly executablePath?: string; readonly now?: () => number }
+export interface BrowserWorkerOptions { readonly executablePath?: string; readonly now?: () => number; readonly maximumContexts?: number }
 
 export class IsolatedBrowserWorker {
   readonly #options: BrowserWorkerOptions
   readonly #contexts = new Map<string, WorkerContext>()
   #browser: Browser | null = null
-  constructor(options: BrowserWorkerOptions = {}) { this.#options = options }
+  constructor(options: BrowserWorkerOptions = {}) {
+    const maximumContexts = options.maximumContexts ?? 8
+    if (!Number.isSafeInteger(maximumContexts) || maximumContexts < 1 || maximumContexts > 64) throw new BrowserWorkerError('INVALID_BROWSER_CAPACITY', 'Browser worker context capacity must be between 1 and 64', 500)
+    this.#options = { ...options, maximumContexts }
+  }
 
   async #browserInstance(): Promise<Browser> {
-    this.#browser ??= await chromium.launch({ headless: true, ...(this.#options.executablePath ? { executablePath: this.#options.executablePath } : {}) })
+    this.#browser ??= await chromium.launch({ headless: true, chromiumSandbox: true, ...(this.#options.executablePath ? { executablePath: this.#options.executablePath } : {}) })
     return this.#browser
   }
 
   async #create(request: BrowserWorkerRequest): Promise<WorkerContext> {
+    if (this.#contexts.size >= (this.#options.maximumContexts ?? 8)) throw new BrowserWorkerError('BROWSER_CAPACITY_EXCEEDED', 'Browser worker context capacity is exhausted', 429)
     if (request.sequence !== 1 || request.action.kind !== 'navigate') throw new BrowserWorkerError('CONTEXT_LOST', 'Browser context does not exist', 404)
     const browserContext = await (await this.#browserInstance()).newContext({ acceptDownloads: false, bypassCSP: false, ignoreHTTPSErrors: false, javaScriptEnabled: true, serviceWorkers: 'block', viewport: { width: 1280, height: 720 } })
     const page = await browserContext.newPage()

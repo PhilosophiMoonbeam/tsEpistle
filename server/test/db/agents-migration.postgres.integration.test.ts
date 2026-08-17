@@ -2,7 +2,8 @@ import fs from 'node:fs'
 import knexModule, { type Knex } from 'knex'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
-import { down, up } from '../../db/migrations/2.5.139.ts'
+import { down as downAgentLedger, up as upAgentLedger } from '../../db/migrations/2.5.139.ts'
+import { down as restoreLegacyHandoffTable, up as removeLegacyHandoffTable } from '../../db/migrations/2.5.140.ts'
 
 const databaseName = process.env.WIKI_TEST_POSTGRES_DATABASE ?? ''
 const passwordFile = process.env.WIKI_TEST_POSTGRES_PASSWORD_FILE
@@ -57,7 +58,8 @@ suite('PostgreSQL first-class agent migration', () => {
     await db('groups').insert({ id: 1 })
     await db('apiKeys').insert({ id: 1 })
     await db('assetFolders').insert({ id: 1 })
-    await up(db)
+    await upAgentLedger(db)
+    await removeLegacyHandoffTable(db)
   })
 
   afterAll(async () => {
@@ -68,10 +70,11 @@ suite('PostgreSQL first-class agent migration', () => {
     await db.destroy()
   })
 
-  it('adds the authoritative tables, indexes, and source revision columns', async () => {
+  it('adds the authoritative tables, removes obsolete handoffs, and adds source revision columns', async () => {
     for (const table of ['agentSessions', 'agentRuns', 'agentEvents', 'agentSkills', 'agentProviderProfiles', 'agentProposals', 'agentApprovals', 'agentActionExecutions', 'pageMutationOutbox']) {
       await expect(db.schema.hasTable(table)).resolves.toBe(true)
     }
+    await expect(db.schema.hasTable('agentLaunchHandoffs')).resolves.toBe(false)
     await expect(db.schema.hasColumn('pages', 'sourceRevision')).resolves.toBe(true)
     await expect(db.schema.hasColumn('pageHistory', 'sourceRevision')).resolves.toBe(true)
   })
@@ -118,10 +121,11 @@ suite('PostgreSQL first-class agent migration', () => {
       createdBy: 7,
       updatedBy: 7
     })
-    await expect(down(db)).rejects.toThrow('agentProviderProfiles contains data')
+    await expect(downAgentLedger(db)).rejects.toThrow('agentProviderProfiles contains data')
     await db('agentProviderProfiles').delete()
     await db('pages').delete()
-    await down(db)
+    await restoreLegacyHandoffTable(db)
+    await downAgentLedger(db)
     await expect(db.schema.hasTable('agentSessions')).resolves.toBe(false)
     await expect(db.schema.hasColumn('pages', 'sourceRevision')).resolves.toBe(false)
   })

@@ -1,43 +1,46 @@
 import { describe, expect, it } from 'vitest'
-import { normalizeAgentOrigins, requestMatchesOriginHost } from '../../agents/origins.ts'
+import { normalizeAgentOrigins, requestMatchesOriginHost, requestOriginMatches } from '../../agents/origins.ts'
 
-describe('agent origin policy', () => {
-  it('accepts distinct canonical origins', () => {
+describe('Wiki and MCP origin policy', () => {
+  it('accepts distinct canonical Wiki and MCP origins', () => {
     expect(normalizeAgentOrigins({
       wikiPublicOrigin: 'https://wiki.example.test',
-      agentsPublicOrigin: 'https://agents.example.test',
       mcpPublicOrigin: 'https://mcp.example.test'
     })).toEqual({
       wikiPublicOrigin: 'https://wiki.example.test',
-      agentsPublicOrigin: 'https://agents.example.test',
       mcpPublicOrigin: 'https://mcp.example.test'
     })
   })
 
   it.each([
-    'https://agents.example.test/path',
-    'https://agents.example.test?query=1',
-    'https://user@agents.example.test',
-    'http://agents.example.test',
-    'https://AGENTS.example.test'
-  ])('rejects a noncanonical or unsafe origin: %s', agentsPublicOrigin => {
+    'https://mcp.example.test/path',
+    'https://mcp.example.test?query=1',
+    'https://user@mcp.example.test',
+    'http://mcp.example.test',
+    'https://MCP.example.test'
+  ])('rejects a noncanonical or unsafe MCP origin: %s', mcpPublicOrigin => {
     expect(() => normalizeAgentOrigins({
       wikiPublicOrigin: 'https://wiki.example.test',
-      agentsPublicOrigin,
-      mcpPublicOrigin: ''
+      mcpPublicOrigin
     })).toThrow()
   })
 
-  it('rejects colliding virtual hosts', () => {
+  it('rejects colliding Wiki and MCP virtual hosts', () => {
     expect(() => normalizeAgentOrigins({
       wikiPublicOrigin: 'https://wiki.example.test',
-      agentsPublicOrigin: 'https://wiki.example.test',
-      mcpPublicOrigin: ''
+      mcpPublicOrigin: 'https://wiki.example.test'
     })).toThrow('must be distinct')
   })
 
-  it('matches the exact host including a non-default port', () => {
-    expect(requestMatchesOriginHost('agents.example.test:8443', 'https://agents.example.test:8443')).toBe(true)
-    expect(requestMatchesOriginHost('agents.example.test', 'https://agents.example.test:8443')).toBe(false)
+  it('matches an exact virtual host including a non-default port', () => {
+    expect(requestMatchesOriginHost('mcp.example.test:8443', 'https://mcp.example.test:8443')).toBe(true)
+    expect(requestMatchesOriginHost('mcp.example.test', 'https://mcp.example.test:8443')).toBe(false)
+  })
+
+  it('accepts only the canonical same-origin request header', () => {
+    expect(requestOriginMatches('https://wiki.example.test', 'https://wiki.example.test')).toBe(true)
+    expect(requestOriginMatches('https://WIKI.example.test', 'https://wiki.example.test')).toBe(false)
+    expect(requestOriginMatches('https://wiki.example.test/', 'https://wiki.example.test')).toBe(false)
+    expect(requestOriginMatches(undefined, 'https://wiki.example.test')).toBe(false)
   })
 })

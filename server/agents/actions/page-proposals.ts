@@ -54,6 +54,7 @@ interface PageOperations {
   move(input: Record<string, unknown>): unknown
   restore(input: Record<string, unknown>): unknown
   remove(input: Record<string, unknown>): unknown
+  authorizeMutation(input: Record<string, unknown>): Promise<void>
 }
 
 export interface PageProposalActionDependencies {
@@ -260,7 +261,7 @@ const prepareRestore = async (dependencies: PageProposalActionDependencies, cont
   if (page.sourceRevision !== parsed.sourceRevision) throw new ActionKernelError('PAGE_REVISION_CONFLICT', 'Page source revision changed before proposal preparation', 409)
   const version = VersionSchema.parse(await dependencies.operations.getVersion({ pageId: page.id, versionId: parsed.versionId, requester: user }))
   const resultIdentity = { actionName: context.authority.actionName, pageId: page.id, sourceRevision: nextRevision(page.sourceRevision), versionId: parsed.versionId, contentSha256: canonicalSourceHash(version.content) }
-  return { pageId: page.id, path: page.path, locale: page.locale, baseSourceRevision: page.sourceRevision, sourceCanonicalSha256: canonicalSourceHash(page.content), resultIdentity, diff: pageDiff(`${page.locale}/${page.path}`, page.content, version.content), patchSha256: null, patchFormat: null, patchEngineVersion: null, patchMetadata: { kind: 'restore', operationInput: { id: page.id, versionId: parsed.versionId, expectedSourceRevision: page.sourceRevision }, pageId: page.id, path: page.path, locale: page.locale, resultIdentity }, summary: `Restore ${page.locale}/${page.path} from version ${parsed.versionId}` }
+  return { pageId: page.id, path: page.path, locale: page.locale, baseSourceRevision: page.sourceRevision, sourceCanonicalSha256: canonicalSourceHash(page.content), resultIdentity, diff: pageDiff(`${page.locale}/${page.path}`, page.content, version.content), patchSha256: null, patchFormat: null, patchEngineVersion: null, patchMetadata: { kind: 'restore', operationInput: { pageId: page.id, versionId: parsed.versionId, expectedSourceRevision: page.sourceRevision }, pageId: page.id, path: page.path, locale: page.locale, resultIdentity }, summary: `Restore ${page.locale}/${page.path} from version ${parsed.versionId}` }
 }
 
 const prepareDelete = async (dependencies: PageProposalActionDependencies, context: ActionHandlerContext, input: Record<string, unknown>): Promise<PreparedProposal> => {
@@ -268,8 +269,65 @@ const prepareDelete = async (dependencies: PageProposalActionDependencies, conte
   const page = await readPage(dependencies, context.authority, parsed.pageId)
   if (parsed.confirmationPath !== page.path) throw new ActionKernelError('DESTRUCTIVE_CONFIRMATION_REQUIRED', 'Deletion confirmation path does not match the page', 409)
   if (page.sourceRevision !== parsed.sourceRevision) throw new ActionKernelError('PAGE_REVISION_CONFLICT', 'Page source revision changed before proposal preparation', 409)
-  const resultIdentity = { actionName: context.authority.actionName, pageId: page.id, sourceRevision: page.sourceRevision, deleted: true }
+  const resultIdentity = { actionName: context.authority.actionName, pageId: page.id, sourceRevision: nextRevision(page.sourceRevision), deleted: true }
   return { pageId: page.id, path: page.path, locale: page.locale, baseSourceRevision: page.sourceRevision, sourceCanonicalSha256: canonicalSourceHash(page.content), resultIdentity, diff: pageDiff(`${page.locale}/${page.path}`, page.content, ''), patchSha256: null, patchFormat: null, patchEngineVersion: null, patchMetadata: { kind: 'delete', operationInput: { id: page.id, expectedSourceRevision: page.sourceRevision }, pageId: page.id, path: page.path, locale: page.locale, resultIdentity }, summary: `Delete ${page.locale}/${page.path}` }
+}
+const reconcileAppliedProposal = async (
+  dependencies: PageProposalActionDependencies,
+  metadata: z.infer<typeof MetadataSchema>,
+  requester: Express.User
+): Promise<unknown | null> => {
+  if (metadata.kind === 'delete') {
+    if (metadata.pageId === null) return null
+    try {
+      await dependencies.operations.get({ id: metadata.pageId, requester })
+      return null
+    } catch (error: unknown) {
+      if (!pageNotFound(error)) throw error
+    }
+    const revision = Reflect.get(metadata.resultIdentity, 'sourceRevision')
+    if (typeof revision !== 'string') return null
+    const rows = await dependencies.knex('pageMutationOutbox')
+      .where({ pageId: metadata.pageId, sourceRevision: revision, desiredState: 'absent' })
+      .select('payload') as Array<{ payload: string }>
+    if (rows.length === 0 || rows.some(row => {
+      try {
+        const payload: unknown = JSON.parse(row.payload)
+        return typeof payload !== 'object' || payload === null || Reflect.get(payload, 'action') !== 'delete'
+      } catch {
+        return true
+      }
+    })) return null
+    return metadata.resultIdentity
+  }
+
+  let page: ReturnType<typeof parsePage>
+  try {
+    page = metadata.pageId === null
+      ? parsePage(await dependencies.operations.getByPath({ path: metadata.path, locale: metadata.locale, visibility: 'public', requester }))
+      : parsePage(await dependencies.operations.get({ id: metadata.pageId, requester }))
+  } catch (error: unknown) {
+    if (pageNotFound(error)) return null
+    throw error
+  }
+  const actionName = Reflect.get(metadata.resultIdentity, 'actionName')
+  let actual: Record<string, unknown>
+  if (metadata.kind === 'create') {
+    actual = { actionName, path: page.path, locale: page.locale, contentSha256: canonicalSourceHash(page.content) }
+  } else if (metadata.kind === 'patch') {
+    actual = { actionName, pageId: page.id, sourceRevision: page.sourceRevision, contentSha256: canonicalSourceHash(page.content) }
+  } else if (metadata.kind === 'move') {
+    actual = { actionName, pageId: page.id, sourceRevision: page.sourceRevision, destinationLocale: page.locale, destinationPath: page.path }
+  } else {
+    actual = {
+      actionName,
+      pageId: page.id,
+      sourceRevision: page.sourceRevision,
+      versionId: Reflect.get(metadata.resultIdentity, 'versionId'),
+      contentSha256: canonicalSourceHash(page.content)
+    }
+  }
+  return canonicalJson(actual) === canonicalJson(metadata.resultIdentity) ? metadata.resultIdentity : null
 }
 
 const apply = async (dependencies: PageProposalActionDependencies, context: ActionHandlerContext, input: { proposalId: string, approvalId: string }) => {
@@ -306,8 +364,17 @@ const apply = async (dependencies: PageProposalActionDependencies, context: Acti
           }
         }
       }
+      await dependencies.operations.authorizeMutation({ kind: metadata.kind, input: metadata.operationInput, requester: requestingUser })
+      if (context.authority.requester.kind === 'apiKey') {
+        await dependencies.operations.authorizeMutation({ kind: metadata.kind, input: metadata.operationInput, requester: approverUser })
+      }
     },
     mutate: async () => {
+      await context.fenceSideEffect()
+      await dependencies.operations.authorizeMutation({ kind: metadata.kind, input: metadata.operationInput, requester: requestingUser })
+      if (context.authority.requester.kind === 'apiKey') {
+        await dependencies.operations.authorizeMutation({ kind: metadata.kind, input: metadata.operationInput, requester: approverUser })
+      }
       const operationInput = { ...metadata.operationInput, requester: approverUser }
       if (metadata.kind === 'create') await dependencies.operations.create({ input: metadata.operationInput, requester: approverUser })
       else if (metadata.kind === 'patch') await dependencies.operations.update({ input: metadata.operationInput, requester: approverUser })
@@ -315,7 +382,8 @@ const apply = async (dependencies: PageProposalActionDependencies, context: Acti
       else if (metadata.kind === 'restore') await dependencies.operations.restore(operationInput)
       else await dependencies.operations.remove(operationInput)
       return metadata.resultIdentity
-    }
+    },
+    reconcile: async () => reconcileAppliedProposal(dependencies, metadata, approverUser)
   })
   let page = null
   if (metadata.kind !== 'delete') {

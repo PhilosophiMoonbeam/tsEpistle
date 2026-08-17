@@ -29,7 +29,8 @@
       InlineAgentChat(
         v-if='canAsk && searchMode === `ask`'
         ref='inlineAgent'
-        :csrf-token='agentLaunchCsrfToken'
+        :csrf-token='agentCsrfToken'
+        :approval-id='approvalId'
         :provider-enabled='agentProviderEnabled'
         :page-id='currentPageId'
         :page-locale='currentPageLocale'
@@ -131,6 +132,7 @@ export default defineComponent({
   data() {
     return {
       cursor: 0,
+      approvalId: '',
       pagination: 1,
       perPage: 10,
       searchTimer: null as number | null,
@@ -177,7 +179,7 @@ export default defineComponent({
     canAsk(): boolean {
       return siteConfig.agentsEnabled && wikiStore.user.authenticated && wikiStore.user.permissions.some(permission => permission === 'use:agents' || permission === 'manage:system')
     },
-    agentLaunchCsrfToken(): string { return siteConfig.agentLaunchCsrfToken },
+    agentCsrfToken(): string { return siteConfig.agentCsrfToken },
     agentProviderEnabled(): boolean { return siteConfig.agentProviderEnabled },
     currentPageId(): number { return wikiStore.page.id },
     currentPageLocale(): string { return wikiStore.page.locale },
@@ -199,6 +201,12 @@ export default defineComponent({
     }
   },
   mounted() {
+    const approvalId = new URL(window.location.href).searchParams.get('agentApproval')
+    if (approvalId && /^[0-9a-f-]{36}$/i.test(approvalId) && this.canAsk) {
+      this.approvalId = approvalId
+      this.searchMode = 'ask'
+      this.searchIsFocused = true
+    }
     onSearchMove(this.handleSearchMove)
     onSearchEnter(this.handleSearchEnter)
   },
@@ -253,6 +261,10 @@ export default defineComponent({
     closeSearch(): void {
       this.search = ''
       this.searchIsFocused = false
+      this.approvalId = ''
+      const url = new URL(window.location.href)
+      url.searchParams.delete('agentApproval')
+      window.history.replaceState(window.history.state, '', url)
     },
     setSearchTerm(term: string | undefined): void {
       if (term !== undefined) this.search = term

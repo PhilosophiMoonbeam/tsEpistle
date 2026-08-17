@@ -7,6 +7,7 @@ import { reconcileAgentRunQuota } from './coordinator.ts'
 const TERMINAL_RUN_STATUSES = ['succeeded', 'failed', 'cancelled', 'recovery_required'] as const
 const TERMINAL_PROPOSAL_STATUSES = ['denied', 'expired', 'applied', 'failed', 'cancelled'] as const
 const sha256 = (value: string): string => createHash('sha256').update(value).digest('hex')
+const PROPOSAL_RECOVERY_MILLISECONDS = 5 * 60_000
 const before = (now: Date, days: number): Date => new Date(now.valueOf() - days * 86_400_000)
 
 export interface AgentMaintenancePolicy {
@@ -34,8 +35,8 @@ export interface AgentMaintenanceResult {
   readonly cancelledRuns: number
   readonly recoveredRuns: number
   readonly requeuedRuns: number
+  readonly recoveredProposalExecutions: number
   readonly expiredApprovals: number
-  readonly expiredHandoffs: number
   readonly expiredArtifacts: number
   readonly tombstonedSessions: number
   readonly purgedSessions: number
@@ -88,6 +89,25 @@ const recoverRuns = async (knex: Knex, now: Date, batchSize: number): Promise<{ 
   return { cancelled, recovered, requeued }
 })
 
+const recoverProposalExecutions = async (knex: Knex, now: Date, batchSize: number): Promise<number> => knex.transaction(async transaction => {
+  const rows = await transaction('agentActionExecutions')
+    .where({ status: 'applying' })
+    .andWhere('startedAt', '<=', new Date(now.valueOf() - PROPOSAL_RECOVERY_MILLISECONDS))
+    .orderBy('startedAt')
+    .limit(batchSize)
+    .forUpdate()
+    .select<{ id: string, proposalId: string }[]>('id', 'proposalId')
+  let recovered = 0
+  for (const row of rows) {
+    const executionChanged = await transaction('agentActionExecutions').where({ id: row.id, status: 'applying' }).update({ status: 'recovery_required' })
+    if (executionChanged !== 1) continue
+    const proposalChanged = await transaction('agentProposals').where({ id: row.proposalId, status: 'applying' }).update({ status: 'recovery_required' })
+    if (proposalChanged !== 1) throw new AgentRepositoryError('PROPOSAL_RECOVERY_CORRUPT', 'Applying proposal execution has no matching applying proposal', 500)
+    recovered += 1
+  }
+  return recovered
+})
+
 const expireApprovals = async (knex: Knex, now: Date, batchSize: number): Promise<number> => knex.transaction(async transaction => {
   const proposalIds = await transaction('agentProposals').whereIn('status', ['pending', 'approved']).andWhere('expiresAt', '<=', now).orderBy('expiresAt').limit(batchSize).forUpdate().pluck<string>('id')
   if (proposalIds.length === 0) return 0
@@ -97,15 +117,54 @@ const expireApprovals = async (knex: Knex, now: Date, batchSize: number): Promis
 })
 
 const tombstoneExpiredSessions = async (knex: Knex, now: Date, batchSize: number): Promise<number> => {
-  const ids = await knex('agentSessions').where({ retention: 'temporary' }).whereNull('deletedAt').andWhere('expiresAt', '<=', now).orderBy('expiresAt').limit(batchSize).pluck<string>('id')
+  const ids = await knex('agentSessions')
+    .where({ retention: 'temporary' })
+    .whereNull('deletedAt')
+    .andWhere('expiresAt', '<=', now)
+    .whereNotExists(function activeRun () {
+      this.select(knex.raw('1'))
+        .from('agentRuns')
+        .where('agentRuns.sessionId', knex.ref('agentSessions.id'))
+        .whereIn('agentRuns.status', ['queued', 'running', 'awaiting_approval'])
+    })
+    .orderBy('expiresAt')
+    .limit(batchSize)
+    .pluck<string>('id')
   if (ids.length === 0) return 0
-  return knex('agentSessions').whereIn('id', ids).whereNull('deletedAt').update({ deletedAt: now, updatedAt: now })
+  return knex('agentSessions')
+    .whereIn('id', ids)
+    .whereNull('deletedAt')
+    .whereNotExists(function activeRun () {
+      this.select(knex.raw('1'))
+        .from('agentRuns')
+        .where('agentRuns.sessionId', knex.ref('agentSessions.id'))
+        .whereIn('agentRuns.status', ['queued', 'running', 'awaiting_approval'])
+    })
+    .update({ deletedAt: now, updatedAt: now })
 }
 
 const purgeTombstonedSessions = async (knex: Knex, batchSize: number): Promise<number> => {
-  const ids = await knex('agentSessions').whereNotNull('deletedAt').orderBy('deletedAt').limit(batchSize).pluck<string>('id')
+  const ids = await knex('agentSessions')
+    .whereNotNull('deletedAt')
+    .whereNotExists(function activeRun () {
+      this.select(knex.raw('1'))
+        .from('agentRuns')
+        .where('agentRuns.sessionId', knex.ref('agentSessions.id'))
+        .whereIn('agentRuns.status', ['queued', 'running', 'awaiting_approval'])
+    })
+    .orderBy('deletedAt')
+    .limit(batchSize)
+    .pluck<string>('id')
   if (ids.length === 0) return 0
-  return knex('agentSessions').whereIn('id', ids).delete()
+  return knex('agentSessions')
+    .whereIn('id', ids)
+    .whereNotExists(function activeRun () {
+      this.select(knex.raw('1'))
+        .from('agentRuns')
+        .where('agentRuns.sessionId', knex.ref('agentSessions.id'))
+        .whereIn('agentRuns.status', ['queued', 'running', 'awaiting_approval'])
+    })
+    .delete()
 }
 
 const scrubMcpProposals = async (knex: Knex, cutoff: Date, now: Date, batchSize: number): Promise<number> => knex.transaction(async transaction => {
@@ -168,8 +227,8 @@ const expireArtifactPayloads = async (knex: Knex, now: Date, batchSize: number):
 export const runAgentMaintenance = async (knex: Knex, inputPolicy: AgentMaintenancePolicy = DEFAULT_AGENT_MAINTENANCE_POLICY, now = new Date()): Promise<AgentMaintenanceResult> => {
   const policy = boundedPolicy(inputPolicy)
   const recovered = await recoverRuns(knex, now, policy.batchSize)
+  const recoveredProposalExecutions = await recoverProposalExecutions(knex, now, policy.batchSize)
   const expiredApprovals = await expireApprovals(knex, now, policy.batchSize)
-  const expiredHandoffs = await deleteExpiredRows(knex, 'agentLaunchHandoffs', 'expiresAt', now, policy.batchSize)
   const expiredArtifacts = await expireArtifactPayloads(knex, now, policy.batchSize)
   const tombstonedSessions = await tombstoneExpiredSessions(knex, now, policy.batchSize)
   const scrubbedMcpProposals = await scrubMcpProposals(knex, before(now, policy.mcpContentDays), now, policy.batchSize)
@@ -182,10 +241,10 @@ export const runAgentMaintenance = async (knex: Knex, inputPolicy: AgentMaintena
   const purgedSessions = await purgeTombstonedSessions(knex, policy.batchSize)
   return {
     cancelledRuns: recovered.cancelled,
+    recoveredProposalExecutions,
     recoveredRuns: recovered.recovered,
     requeuedRuns: recovered.requeued,
     expiredApprovals,
-    expiredHandoffs,
     expiredArtifacts,
     tombstonedSessions,
     purgedSessions,

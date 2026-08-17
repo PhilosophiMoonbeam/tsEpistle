@@ -31,13 +31,16 @@ export class BrowserActionService {
     return rows.map(row => parseCanonicalBrowserTarget(row.canonicalUrl)).filter(target => target.scheme === 'https:').map(target => target.canonicalUrl)
   }
 
-  async #execute(authority: ActionAuthority, signal: AbortSignal, action: (targets: readonly string[]) => BrowserWorkerAction): Promise<unknown> {
-    const run = await this.#run(authority)
-    let state = this.#states.get(run.id)
-    if (!state) { state = { contextId: randomUUID(), sequence: 0 }; this.#states.set(run.id, state) }
+  async #execute(context: ActionHandlerContext, action: (targets: readonly string[]) => BrowserWorkerAction): Promise<unknown> {
+    const initialRun = await this.#run(context.authority)
+    let state = this.#states.get(initialRun.id)
+    if (!state) { state = { contextId: randomUUID(), sequence: 0 }; this.#states.set(initialRun.id, state) }
     const targets = await this.#targets()
+    await context.fenceSideEffect()
+    const run = await this.#run(context.authority)
+    if (run.leaseToken !== initialRun.leaseToken) throw new AgentRepositoryError('RUN_LEASE_LOST', 'Agent run lease changed before browser dispatch', 409)
     const nextSequence = state.sequence + 1
-    const result = await this.#client.execute({ runId: run.id, ownerId: run.ownerId, leaseToken: run.leaseToken!, contextId: state.contextId, actionCallId: randomUUID(), sequence: nextSequence }, limits, action(targets), signal)
+    const result = await this.#client.execute({ runId: run.id, ownerId: run.ownerId, leaseToken: run.leaseToken!, contextId: state.contextId, actionCallId: context.actionCallId, sequence: nextSequence }, limits, action(targets), context.signal)
     state.sequence = nextSequence
     return result
   }
@@ -45,25 +48,25 @@ export class BrowserActionService {
   async navigate(input: { url: string }, context: ActionHandlerContext): Promise<BrowserObservation> {
     const target = parseCanonicalBrowserTarget(input.url)
     if (target.scheme !== 'https:') throw new AgentRepositoryError('BROWSER_HTTPS_REQUIRED', 'Browser targets must use HTTPS', 400)
-    const result = await this.#execute(context.authority, context.signal, targets => ({ kind: 'navigate', url: target.canonicalUrl, attestedUrls: targets }))
+    const result = await this.#execute(context, targets => ({ kind: 'navigate', url: target.canonicalUrl, attestedUrls: targets }))
     if (typeof result !== 'object' || result === null || Reflect.get(result, 'kind') !== 'navigated') throw new AgentRepositoryError('BROWSER_RESULT_INVALID', 'Browser worker returned an unexpected result', 502)
     return Reflect.get(result, 'observation') as BrowserObservation
   }
 
   async observe(_input: unknown, context: ActionHandlerContext): Promise<BrowserObservation> {
-    const result = await this.#execute(context.authority, context.signal, () => ({ kind: 'observe' }))
+    const result = await this.#execute(context, () => ({ kind: 'observe' }))
     if (typeof result !== 'object' || result === null || Reflect.get(result, 'kind') !== 'observed') throw new AgentRepositoryError('BROWSER_RESULT_INVALID', 'Browser worker returned an unexpected result', 502)
     return Reflect.get(result, 'observation') as BrowserObservation
   }
 
   async act(input: { action: 'scrollIntoView' | 'followLink'; ref: string; documentEpoch: string }, context: ActionHandlerContext): Promise<BrowserObservation> {
-    const result = await this.#execute(context.authority, context.signal, targets => ({ kind: 'act', action: input.action, ref: input.ref, documentEpoch: input.documentEpoch, attestedUrls: targets }))
+    const result = await this.#execute(context, targets => ({ kind: 'act', action: input.action, ref: input.ref, documentEpoch: input.documentEpoch, attestedUrls: targets }))
     if (typeof result !== 'object' || result === null || Reflect.get(result, 'kind') !== 'acted') throw new AgentRepositoryError('BROWSER_RESULT_INVALID', 'Browser worker returned an unexpected result', 502)
     return Reflect.get(result, 'observation') as BrowserObservation
   }
 
   async extract(input: { maxCharacters: number }, context: ActionHandlerContext): Promise<{ url: string; text: string; truncated: boolean }> {
-    const result = await this.#execute(context.authority, context.signal, () => ({ kind: 'extract' }))
+    const result = await this.#execute(context, () => ({ kind: 'extract' }))
     if (typeof result !== 'object' || result === null || Reflect.get(result, 'kind') !== 'extracted') throw new AgentRepositoryError('BROWSER_RESULT_INVALID', 'Browser worker returned an unexpected result', 502)
     const text = String(Reflect.get(result, 'text'))
     return { url: String(Reflect.get(result, 'url')), text: text.slice(0, input.maxCharacters), truncated: text.length > input.maxCharacters }
@@ -71,7 +74,7 @@ export class BrowserActionService {
 
   async screenshot(_input: unknown, context: ActionHandlerContext): Promise<{ artifactId: string; mimeType: 'image/png'; width: number; height: number }> {
     const run = await this.#run(context.authority)
-    const result = await this.#execute(context.authority, context.signal, () => ({ kind: 'screenshot' }))
+    const result = await this.#execute(context, () => ({ kind: 'screenshot' }))
     if (typeof result !== 'object' || result === null || Reflect.get(result, 'kind') !== 'screenshot') throw new AgentRepositoryError('BROWSER_RESULT_INVALID', 'Browser worker returned an unexpected result', 502)
     const bytes = Reflect.get(result, 'bytes') as Buffer
     const width = Number(Reflect.get(result, 'width')); const height = Number(Reflect.get(result, 'height')); const artifactId = randomUUID()

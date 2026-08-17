@@ -1,7 +1,7 @@
 import compression from 'compression'
 import cookieParser from 'cookie-parser'
 import cors from 'cors'
-import express, { type ErrorRequestHandler, type Express, type NextFunction, type Request, type RequestHandler, type Response } from 'express'
+import express, { type ErrorRequestHandler, type Express, type RequestHandler } from 'express'
 import session from 'express-session'
 import { ConnectSessionKnexStore } from 'connect-session-knex'
 import type { Knex } from 'knex'
@@ -35,9 +35,10 @@ import { AxAgentEngine } from './agents/providers/engine.ts'
 import { AgentProductRuntime } from './agents/runtime.ts'
 import { createWikiActionSessionProvider } from './agents/providers/wiki-actions.ts'
 import { AgentProviderConformanceRunner } from './agents/providers/conformance.ts'
-import { agentLaunchCsrfToken } from './agents/launch-csrf.ts'
+import { agentCsrfToken } from './agents/csrf.ts'
 import { BrowserWorkerClient } from './agents/browser/client.ts'
 import { createWikiMcpController } from './agents/mcp.ts'
+import { parseAgentOperationalLimits } from './agents/config.ts'
 import { loadWikiAgentUser } from './agents/providers/wiki-actions.ts'
 import pageOperations from './operations/pages.ts'
 const { collectEntry } = viteAssets
@@ -48,10 +49,7 @@ const BUNDLED_DEFAULT_LOGO_URL = '/_assets/svg/logo-wikijs.svg'
 interface MasterConfig extends Record<string, unknown> {
   auth: Record<string, unknown>
   agents: {
-    cookieAudience: string
     enabled: boolean
-    publicOrigin: string
-    launchTokenTtlSeconds: number
     mcp: { enabled: boolean; publicOrigin: string; resourceUrl: string }
     provider: { enabled: boolean; globalConcurrency?: number; perUserConcurrency?: number; pollingMilliseconds?: number }
     retention: { temporarySessionHours: number; mcpContentDays: number; auditDays: number; maintenanceBatchSize: number }
@@ -98,15 +96,8 @@ const browserWorkerClientFromEnvironment = (): BrowserWorkerClient => {
 }
 
 interface WikiAuth {
-  agentStrategies: Record<string, { key: string }>
   authenticate: RequestHandler
-  authenticateAgent: RequestHandler
   passport: {
-    authenticate(
-      strategy: string,
-      options: Record<string, unknown>,
-      callback?: (error: unknown, user: Express.User | false | null | undefined) => void
-    ): (req: Request, res: Response, next: NextFunction) => void
     initialize(): RequestHandler
   }
   groups: Record<string, { permissions?: string[] }>
@@ -176,16 +167,11 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
   wiki.app = app
   const origins = normalizeAgentOrigins({
     wikiPublicOrigin: wiki.config.host,
-    agentsPublicOrigin: wiki.config.agents.publicOrigin,
     mcpPublicOrigin: wiki.config.agents.mcp.publicOrigin
   })
+  const agentLimits = parseAgentOperationalLimits(wiki.config.agents)
   app.set('views', path.join(wiki.SERVERPATH, 'views'))
   app.set('view engine', 'pug')
-  const viteOrigin = process.env.WIKI_VITE_ORIGIN
-  app.locals.agentVite = collectEntry('client/index-agents.ts', {
-    dev: wiki.IS_DEBUG,
-    ...(viteOrigin === undefined ? {} : { origin: viteOrigin })
-  })
   app.use(compression())
 
   app.use(securityMiddleware)
@@ -193,9 +179,6 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
   app.options('/{*corsPreflightPath}', cors({ origin: false }))
   app.use((req, res, next) => {
     const host = req.get('host')
-    if (origins.agentsPublicOrigin && requestMatchesOriginHost(host, origins.agentsPublicOrigin) && !wiki.config.agents.enabled) {
-      return res.sendStatus(404)
-    }
     if (origins.mcpPublicOrigin && requestMatchesOriginHost(host, origins.mcpPublicOrigin) && !wiki.config.agents.mcp.enabled) {
       return res.sendStatus(404)
     }
@@ -254,7 +237,7 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
           enabled: true,
           publicOrigin: wiki.config.agents.mcp.publicOrigin,
           resourceUrl: wiki.config.agents.mcp.resourceUrl,
-          agentsPublicOrigin: wiki.config.agents.publicOrigin,
+          wikiPublicOrigin: wiki.config.host,
           agentsEnabled: wiki.config.agents.enabled,
           skillsEnabled: wiki.config.agents.skills.enabled,
           proposalsEnabled: wiki.config.agents.proposals.enabled,
@@ -303,8 +286,8 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
     providerConformance = new AgentProviderConformanceRunner(wiki.models.knex, providerFactory, providerRegistry)
     agentRuntime = new AgentProductRuntime(wiki.models.knex, providerRegistry, new AxAgentEngine(providerFactory, actionSessions), {
       workerId: `http-${process.pid}`,
-      globalConcurrency: wiki.config.agents.provider.globalConcurrency ?? 4,
-      perUserConcurrency: wiki.config.agents.provider.perUserConcurrency ?? 1
+      globalConcurrency: agentLimits.provider.globalConcurrency,
+      perUserConcurrency: agentLimits.provider.perUserConcurrency
     })
     wiki.agentRuntime = agentRuntime
     let workerActive = false
@@ -314,29 +297,24 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
       void agentRuntime!.runOnce().catch(() => undefined).finally(() => { workerActive = false })
     }
     tick()
-    setInterval(tick, wiki.config.agents.provider.pollingMilliseconds ?? 1_000).unref()
+    setInterval(tick, agentLimits.provider.pollingMilliseconds).unref()
   }
-  const agentsHostWiki = {
+  const agentsController = createAgentsHostController({
     ...wiki,
+    agentLimits,
     ...(providerRegistry === undefined ? {} : { providerRegistry }),
     ...(agentRuntime === undefined ? {} : { agentRuntime }),
     ...(providerConformance === undefined ? {} : { providerConformance })
-  }
-  const agentsHostController = createAgentsHostController(agentsHostWiki)
-  const embeddedAgentsController = createAgentsHostController(agentsHostWiki, { surface: 'embedded' })
+  })
   app.use((req, res, next) => {
     const host = req.get('host')
-    if (origins.agentsPublicOrigin && requestMatchesOriginHost(host, origins.agentsPublicOrigin)) {
-      res.locals.agentVite = app.locals.agentVite
-      return agentsHostController(req, res, next)
-    }
     if (origins.mcpPublicOrigin && requestMatchesOriginHost(host, origins.mcpPublicOrigin)) {
       return mcpController ? mcpController(req, res, next) : res.sendStatus(404)
     }
     return next()
   })
   app.use(wiki.auth.authenticate.bind(wiki.auth))
-  app.use(embeddedAgentsController)
+  app.use(agentsController)
 
   await wiki.servers.startGraphQL()
   const jsonBodyParser = express.json({ limit: wiki.config.bodyParserLimit ?? '5mb' })
@@ -361,6 +339,7 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
     url: '/'
   }
 
+  const viteOrigin = process.env.WIKI_VITE_ORIGIN
   app.locals.vite = collectEntry('client/index-app.ts', {
     dev: wiki.IS_DEBUG,
     ...(viteOrigin === undefined ? {} : { origin: viteOrigin })
@@ -381,7 +360,7 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
       product: wiki.product,
       agentsEnabled: wiki.config.agents.enabled,
       agentProviderEnabled: wiki.config.agents.provider.enabled,
-      agentLaunchCsrfToken: wiki.config.agents.enabled ? agentLaunchCsrfToken(_req) : ''
+      agentCsrfToken: wiki.config.agents.enabled ? agentCsrfToken(_req) : ''
     }
     res.locals.langs = await wiki.models.locales.getNavLocales({ cache: true })
     res.locals.analyticsCode = await wiki.models.analytics.getCode({ cache: true })

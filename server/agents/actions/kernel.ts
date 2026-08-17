@@ -47,6 +47,8 @@ export interface ActionHandlerContext {
   readonly authority: ActionAuthority
   readonly actionCallId: string
   readonly signal: AbortSignal
+  readonly reauthorize: () => Promise<void>
+  readonly fenceSideEffect: () => Promise<void>
 }
 
 export interface ActionHandler {
@@ -59,6 +61,7 @@ export interface ActionExecutionRequest {
   readonly input: unknown
   readonly signal: AbortSignal
   readonly refreshAdmission: (authority: ActionAuthority, input: unknown) => Promise<ActionAdmissionSnapshot>
+  readonly fenceSideEffect?: () => Promise<void>
 }
 
 export interface AxActionDescriptor {
@@ -265,7 +268,19 @@ export class ActionKernel {
     assertAdmission(definition, liveAdmission)
     const handler = this.handlers.get(authority.actionName)
     if (!handler) throw new ActionKernelError('ACTION_HANDLER_MISSING', `Action ${authority.actionName} has no registered handler`, 501)
-    const output = await handler(input, { authority, actionCallId: z.string().min(1).max(128).parse(request.actionCallId), signal: request.signal })
+    const reauthorize = async (): Promise<void> => {
+      if (request.signal.aborted) throw new ActionKernelError('ACTION_CANCELLED', 'Action was cancelled before side-effect dispatch', 409)
+      const currentAdmission = await request.refreshAdmission(authority, input)
+      if (currentAdmission.transport !== authority.transport) throw new ActionKernelError('INVALID_AUTHORITY', 'Action transport changed after admission', 400)
+      assertAdmission(definition, currentAdmission)
+      if (request.signal.aborted) throw new ActionKernelError('ACTION_CANCELLED', 'Action was cancelled before side-effect dispatch', 409)
+    }
+    const fenceSideEffect = async (): Promise<void> => {
+      await reauthorize()
+      await request.fenceSideEffect?.()
+      if (request.signal.aborted) throw new ActionKernelError('ACTION_CANCELLED', 'Action was cancelled before side-effect dispatch', 409)
+    }
+    const output = await handler(input, { authority, actionCallId: z.string().min(1).max(128).parse(request.actionCallId), signal: request.signal, reauthorize, fenceSideEffect })
     if (request.signal.aborted) throw new ActionKernelError('ACTION_CANCELLED', 'Action was cancelled during execution', 409)
     try {
       return definition.output.parse(output)

@@ -5,9 +5,12 @@ class PageHistoryForbidden extends Error {}
 class PageRestoreForbidden extends Error {}
 class PageViewForbidden extends Error {}
 class PageUpdateForbidden extends Error {}
+class PageDeleteForbidden extends Error {}
+class PageMoveForbidden extends Error {}
 
 const pageQuery = page => ({
-  select: vi.fn().mockReturnValue({ findById: vi.fn().mockResolvedValue(page) })
+  select: vi.fn().mockReturnValue({ findById: vi.fn().mockResolvedValue(page) }),
+  findById: vi.fn().mockResolvedValue(page)
 })
 
 describe('page history visibility boundaries', () => {
@@ -19,7 +22,7 @@ describe('page history visibility boundaries', () => {
       },
       config: { db: { type: 'postgres' }, lang: { code: 'en' } },
       data: { searchEngine: null },
-      Error: { PageNotFound, PageHistoryForbidden, PageRestoreForbidden, PageViewForbidden, PageUpdateForbidden },
+      Error: { PageNotFound, PageHistoryForbidden, PageRestoreForbidden, PageViewForbidden, PageUpdateForbidden, PageDeleteForbidden, PageMoveForbidden },
       models: {
         knex: vi.fn(),
         pages: {
@@ -160,5 +163,28 @@ describe('page history visibility boundaries', () => {
       action: 'restored',
       expectedSourceRevision: sourceRevision
     })
+  })
+
+  it('reauthorizes both the current page and move destination against live page rules', async () => {
+    const requester = { id: 8, permissions: ['write:pages'] }
+    global.WIKI.auth.checkAccess.mockImplementation((user, permissions, context) =>
+      permissions.some(permission => user?.permissions?.includes(permission)) && context?.path !== 'restricted/next'
+    )
+    global.WIKI.models.pages.query.mockReturnValue(pageQuery({
+      id: 17,
+      path: 'published',
+      localeCode: 'en',
+      visibility: 'public',
+      ownerId: null,
+      tags: [{ id: 1, tag: 'release' }]
+    }))
+    const operations = (await import('../operations/pages.ts')).default
+
+    await expect(operations.authorizeMutation({
+      kind: 'move',
+      input: { id: 17, destinationPath: 'restricted/next', destinationLocale: 'en' },
+      requester
+    })).rejects.toBeInstanceOf(PageMoveForbidden)
+    expect(global.WIKI.auth.checkAccess).toHaveBeenCalledWith(requester, expect.arrayContaining(['write:pages']), expect.objectContaining({ path: 'restricted/next', locale: 'en' }))
   })
 })

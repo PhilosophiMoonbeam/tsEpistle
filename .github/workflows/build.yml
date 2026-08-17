@@ -88,10 +88,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-        - pgversion: 15
-          postgresImage: postgres:15-alpine@sha256:4006528dcbdd9be8c1aaa50389caea4e93c46d6f54c3533bcd3253725e526e23
-        - pgversion: 18
-          postgresImage: postgres:18-alpine@sha256:a1d02e4bd40c94d3bf2bdd3678c137388e76d9efcd23c285e9429d336a834b44
+        - pgversion: 16
+          postgresImage: postgres:16-alpine@sha256:44c4ee9810eff91f7eab4d822642e01115b1a9eccce4bcbdde7604752d68eac6
+        - pgversion: 17
+          postgresImage: postgres:17-alpine@sha256:d4bb0a8c1b7bb2e29f976d099e7bfb9a5d8858cffe9e46b35cd302cd1f1f8168
     services:
       postgres:
         image: ${{ matrix.postgresImage }}

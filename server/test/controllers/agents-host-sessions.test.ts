@@ -1,6 +1,5 @@
 /** @vitest-environment node */
 import { createHash } from 'node:crypto'
-import path from 'node:path'
 import type { AddressInfo } from 'node:net'
 import type { Server } from 'node:http'
 import cookieParser from 'cookie-parser'
@@ -9,8 +8,6 @@ import session from 'express-session'
 import createKnex, { type Knex } from 'knex'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import createAgentsHostController from '../../controllers/agents-host.ts'
-import { createAgentLaunchRouter } from '../../controllers/api/agents.ts'
-import { consumeAgentLaunchHandoff } from '../../agents/repository.ts'
 import { AgentProductRuntime, type AgentEngine } from '../../agents/runtime.ts'
 
 interface TestSessionState { agentCsrfToken?: string }
@@ -36,19 +33,17 @@ const createTables = async (db: Knex): Promise<void> => {
   await db.schema.createTable('agentProposals', table => { table.uuid('id'); table.uuid('sessionId'); table.string('sourceKind'); table.string('actionName'); table.string('risk'); table.string('status'); table.integer('pageId'); table.integer('baseSourceRevision'); table.string('authoritySha256'); table.string('inputHash'); table.string('patchSha256'); table.string('resultCanonicalSha256'); table.string('diffSha256'); table.text('diff'); table.dateTime('contentPurgedAt'); table.dateTime('expiresAt'); table.dateTime('createdAt') })
   await db.schema.createTable('agentApprovals', table => { table.uuid('id'); table.uuid('proposalId'); table.string('status'); table.dateTime('requestedAt'); table.dateTime('expiresAt'); table.dateTime('decidedAt'); table.text('decisionNote') })
   await db.schema.createTable('agentArtifacts', table => { table.uuid('id'); table.uuid('sessionId'); table.uuid('runId'); table.integer('ownerId'); table.string('kind'); table.string('mimeType'); table.integer('byteLength'); table.binary('payload'); table.string('sha256'); table.integer('width'); table.integer('height'); table.dateTime('createdAt'); table.dateTime('expiresAt') })
-  await db.schema.createTable('agentLaunchHandoffs', table => { table.uuid('id').primary(); table.binary('tokenSha256').notNullable().unique(); table.integer('ownerId').notNullable(); table.integer('pageId').nullable(); table.string('localeCode').nullable(); table.text('path').nullable(); table.dateTime('observedUpdatedAt').nullable(); table.binary('pageHintSha256').notNullable(); table.dateTime('createdAt').notNullable(); table.dateTime('expiresAt').notNullable(); table.dateTime('consumedAt').nullable() })
   await db.schema.createTable('agentSkillUses', table => { table.uuid('id'); table.uuid('skillVersionId'); table.uuid('runId'); table.uuid('sessionId'); table.integer('requesterUserId'); table.integer('requesterApiKeyId'); table.uuid('transportRequestId'); table.string('externalSessionSha256'); table.text('resourcePath'); table.string('purpose'); table.string('contentHash'); table.dateTime('createdAt') })
   await db.schema.createTable('agentQuotaDaily', table => { table.integer('ownerId'); table.date('day'); table.bigInteger('reservedTokens'); table.bigInteger('consumedTokens'); table.bigInteger('reservedCostMicros'); table.bigInteger('consumedCostMicros'); table.dateTime('updatedAt'); table.primary(['ownerId', 'day']) })
   await db.schema.createTable('agentQuotaReservations', table => { table.uuid('runId').primary(); table.integer('ownerId'); table.date('day'); table.bigInteger('reservedTokens'); table.bigInteger('reservedCostMicros'); table.bigInteger('consumedTokens'); table.bigInteger('consumedCostMicros'); table.string('status'); table.dateTime('expiresAt'); table.dateTime('heartbeatAt'); table.dateTime('reconciledAt').nullable() })
 }
 
-describe('isolated agents host session API', () => {
+describe('ordinary-origin agent session API', () => {
   let db: Knex
   let server: Server
   let baseUrl: string
   let cookie: string
   let ownerId = 7
-  let authenticated = true
   const csrf = 'csrf-token'
   let runtime: AgentProductRuntime
 
@@ -83,38 +78,19 @@ describe('isolated agents host session API', () => {
       }
     }, fakeEngine, { workerId: 'test-worker', globalConcurrency: 1, perUserConcurrency: 1 })
     const app = express()
-    app.set('views', path.join(process.cwd(), 'server/views'))
-    app.set('view engine', 'pug')
     app.use(cookieParser())
-    app.use(session({ secret: 'isolated-host-test-secret', resave: false, saveUninitialized: true }))
+    app.use(session({ secret: 'ordinary-host-test-secret', resave: false, saveUninitialized: true }))
     app.get('/seed', (req, res) => { const state = req.session as typeof req.session & TestSessionState; state.agentCsrfToken = csrf; res.sendStatus(204) })
     app.use(createAgentsHostController({
-      IS_DEBUG: false,
       auth: {
-        agentStrategies: {
-          local: { key: 'agents:local', displayName: 'Local', strategyKey: 'local' }
-        },
-        authenticateAgent(req, _res, next) {
-          if (!authenticated) {
-            const error = Object.assign(new Error('Agents authentication is required.'), { status: 401 })
-            return next(error)
-          }
+        authenticate(req, _res, next) {
           req.authContext = { kind: 'user', userId: ownerId, ownershipUserId: ownerId, principal: { id: ownerId } }
           req.user = { id: ownerId, groups: [], permissions: ['use:agents'] } as Express.User
           next()
-        },
-        passport: {
-          authenticate: (_strategy, _options, callback) => (_req, _res, next) => {
-            if (callback) {
-              callback(null, { id: ownerId } as Express.User)
-              return
-            }
-            next()
-          }
         }
       },
-      config: { sessionSecret: 'profile-resolution-secret', agents: { enabled: true, cookieAudience: 'wiki-agents-ui', publicOrigin: 'https://agents.example.test', launchTokenTtlSeconds: 300, provider: { enabled: true }, retention: { temporarySessionHours: 24 }, skills: { enabled: true, namespace: 'system/agent-skills' } } },
-      models: { knex: db, users: { refreshToken: async () => ({ token: 'token', user: { id: ownerId } as Express.User }) } },
+      config: { host: 'https://wiki.example.test', sessionSecret: 'profile-resolution-secret', agents: { enabled: true, provider: { enabled: true }, retention: { temporarySessionHours: 24 }, skills: { enabled: true, namespace: 'system/agent-skills' }, proposals: { enabled: false }, writes: { enabled: false, create: { enabled: false }, patch: { enabled: false }, move: { enabled: false }, restore: { enabled: false }, delete: { enabled: false } } } },
+      models: { knex: db },
       agentRuntime: runtime
     }))
     server = app.listen(0, '127.0.0.1')
@@ -135,59 +111,12 @@ describe('isolated agents host session API', () => {
     await db.destroy()
   })
 
-  it('strips the handoff query into a short-lived HttpOnly cookie before rendering', async () => {
-    const token = 'a'.repeat(43)
-    const response = await fetch(`${baseUrl}/?handoff=${token}`, { redirect: 'manual' })
-    expect(response.status).toBe(303)
-    expect(response.headers.get('location')).toBe('/')
-    const setCookie = response.headers.get('set-cookie') ?? ''
-    expect(setCookie).toContain(`wiki_agents_handoff=${token}`)
-    expect(setCookie).toMatch(/HttpOnly/i)
-    expect(setCookie).toMatch(/Secure/i)
-    expect(setCookie).toMatch(/SameSite=Lax/i)
-    expect(response.headers.get('location')).not.toContain(token)
-  })
-
-  it('redirects unauthenticated shell requests to an isolated local login form', async () => {
-    authenticated = false
-    try {
-      const shell = await fetch(`${baseUrl}/`, { redirect: 'manual' })
-      expect(shell.status).toBe(303)
-      expect(shell.headers.get('location')).toBe('/auth/login')
-
-      const chooser = await fetch(`${baseUrl}/auth/login`, { redirect: 'manual' })
-      expect(chooser.status).toBe(303)
-      expect(chooser.headers.get('location')).toBe('/auth/login/local')
-
-      const login = await fetch(`${baseUrl}/auth/login/local`)
-      expect(login.status).toBe(200)
-      const body = await login.text()
-      const state = body.match(/name="state" value="([A-Za-z0-9_-]{43})"/)?.[1]
-      expect(state).toBeTruthy()
-      expect(body).toContain('Sign in to Wiki Agents')
-      expect(body).toContain('autocomplete="username"')
-      expect(body).toContain('autocomplete="current-password"')
-
-      const stateCookie = login.headers.get('set-cookie')?.split(';', 1)[0] ?? ''
-      const callback = await fetch(`${baseUrl}/auth/login/local/callback`, {
-        method: 'POST',
-        redirect: 'manual',
-        headers: { cookie: stateCookie, 'content-type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({ state: state!, email: 'admin@example.test', password: 'secret' })
-      })
-      expect(callback.status).toBe(302)
-      expect(callback.headers.get('location')).toBe('/')
-      expect(callback.headers.get('set-cookie')).toContain('wiki_agents=token')
-    } finally {
-      authenticated = true
-    }
-  })
 
   it('requires same-origin metadata and CSRF for session mutations', async () => {
     const body = JSON.stringify({ retention: 'saved', executionMode: 'agent', providerProfileId: null })
-    const denied = await fetch(`${baseUrl}/_api/agents/sessions`, { method: 'POST', headers: { cookie, 'content-type': 'application/json', origin: 'https://agents.example.test', 'sec-fetch-site': 'same-origin' }, body })
+    const denied = await fetch(`${baseUrl}/_api/agents/sessions`, { method: 'POST', headers: { cookie, 'content-type': 'application/json', origin: 'https://wiki.example.test', 'sec-fetch-site': 'same-origin' }, body })
     expect(denied.status).toBe(403)
-    const accepted = await fetch(`${baseUrl}/_api/agents/sessions`, { method: 'POST', headers: { cookie, 'content-type': 'application/json', origin: 'https://agents.example.test', 'sec-fetch-site': 'same-origin', 'x-wiki-csrf': csrf }, body })
+    const accepted = await fetch(`${baseUrl}/_api/agents/sessions`, { method: 'POST', headers: { cookie, 'content-type': 'application/json', origin: 'https://wiki.example.test', 'sec-fetch-site': 'same-origin', 'x-wiki-csrf': csrf }, body })
     expect(accepted.status).toBe(201)
     const state = await accepted.json() as { session: { id: string, profileResolutionToken: string } }
     expect(state.session.profileResolutionToken).toMatch(/^[A-Za-z0-9_-]{43}$/)
@@ -215,7 +144,7 @@ describe('isolated agents host session API', () => {
     expect(text).toContain('"status":"succeeded"')
   })
   it('submits, executes, reconnects, and replays a deterministic engine run through REST and SSE', async () => {
-    const headers = { cookie, 'content-type': 'application/json', origin: 'https://agents.example.test', 'sec-fetch-site': 'same-origin', 'x-wiki-csrf': csrf }
+    const headers = { cookie, 'content-type': 'application/json', origin: 'https://wiki.example.test', 'sec-fetch-site': 'same-origin', 'x-wiki-csrf': csrf }
     const created = await fetch(`${baseUrl}/_api/agents/sessions`, { method: 'POST', headers, body: JSON.stringify({ retention: 'saved', executionMode: 'agent', providerProfileId: null }) })
     const state = await created.json() as { session: { id: string, version: number, profileResolutionToken: string } }
     const request = {
@@ -273,41 +202,14 @@ describe('isolated agents host session API', () => {
   })
 })
 
-describe('ordinary-origin agent launch handoff', () => {
-  it('stores only a hash and issues a query-bound one-time handoff', async () => {
-    const launchCsrf = 'launch-csrf-token-with-at-least-thirty-two-bytes'
-    const db = createKnex({ client: 'better-sqlite3', connection: { filename: ':memory:' }, useNullAsDefault: true })
-    await db.schema.createTable('agentLaunchHandoffs', table => { table.uuid('id').primary(); table.binary('tokenSha256').notNullable().unique(); table.integer('ownerId').notNullable(); table.integer('pageId').nullable(); table.string('localeCode').nullable(); table.text('path').nullable(); table.dateTime('observedUpdatedAt').nullable(); table.binary('pageHintSha256').notNullable(); table.dateTime('createdAt').notNullable(); table.dateTime('expiresAt').notNullable(); table.dateTime('consumedAt').nullable() })
-    const agentsLaunchRouter = createAgentLaunchRouter(() => ({ config: { host: 'https://wiki.example.test', agents: { enabled: true, publicOrigin: 'https://agents.example.test', launchTokenTtlSeconds: 300 } }, models: { knex: db } }))
-    const app = express()
-    app.use(express.json())
-    app.use(session({ secret: 'launch-test-secret', resave: false, saveUninitialized: true }))
-    app.use((req, _res, next) => { Reflect.set(req.session, 'agentLaunchCsrfToken', launchCsrf); req.authContext = { kind: 'user', userId: 7, ownershipUserId: 7, principal: { id: 7 } }; req.user = { id: 7, permissions: ['use:agents'] } as Express.User; next() })
-    app.use('/_api/agents', agentsLaunchRouter)
-    const server = app.listen(0, '127.0.0.1')
-    const listening = Promise.withResolvers<void>(); server.once('listening', listening.resolve); await listening.promise
-    const address = server.address() as AddressInfo
-    const response = await fetch(`http://127.0.0.1:${address.port}/_api/agents/launch`, { method: 'POST', headers: { 'content-type': 'application/json', origin: 'https://wiki.example.test', 'sec-fetch-site': 'same-origin' }, body: JSON.stringify({ csrfToken: launchCsrf, page: null }) })
-    expect(response.status, await response.clone().text()).toBe(201)
-    const result = await response.json() as { url: string }
-    const token = new URL(result.url).searchParams.get('handoff') ?? ''
-    const row = await db('agentLaunchHandoffs').first('tokenSha256') as { tokenSha256: Buffer }
-    expect(Buffer.from(row.tokenSha256).toString('utf8')).not.toContain(token)
-    await expect(consumeAgentLaunchHandoff(db, 7, token)).resolves.toMatchObject({ pageId: null, path: null })
-    await expect(consumeAgentLaunchHandoff(db, 7, token)).rejects.toMatchObject({ code: 'AGENT_RESOURCE_NOT_FOUND' })
-    const closed = Promise.withResolvers<void>(); server.close(error => error ? closed.reject(error) : closed.resolve()); await closed.promise
-    await db.destroy()
-  })
-})
 
-describe('ordinary-origin embedded agent API', () => {
+describe('ordinary-origin agent API routing', () => {
   let db: Knex
   let server: Server
   let baseUrl: string
   let cookie: string
   let permissions: string[] = ['use:agents']
   let ordinaryAuthCalls = 0
-  let isolatedAuthCalls = 0
   const csrf = 'ordinary-origin-agent-csrf-token-at-least-thirty-two-bytes'
 
   beforeAll(async () => {
@@ -317,33 +219,23 @@ describe('ordinary-origin embedded agent API', () => {
     app.use(cookieParser())
     app.use(session({ secret: 'ordinary-agent-host-test-secret', resave: false, saveUninitialized: true }))
     app.get('/seed', (req, res) => {
-      Reflect.set(req.session, 'agentLaunchCsrfToken', csrf)
+      Reflect.set(req.session, 'agentCsrfToken', csrf)
       res.sendStatus(204)
     })
     app.use(createAgentsHostController({
-      IS_DEBUG: false,
       auth: {
-        agentStrategies: {},
         authenticate(req, _res, next) {
           ordinaryAuthCalls += 1
           req.authContext = { kind: 'user', userId: 7, ownershipUserId: 7, principal: { id: 7 } }
           req.user = { id: 7, groups: [], permissions } as Express.User
           next()
         },
-        authenticateAgent(_req, res) {
-          isolatedAuthCalls += 1
-          res.sendStatus(418)
-        },
-        passport: { authenticate: () => (_req, _res, next) => next() }
       },
       config: {
         host: 'https://wiki.example.test',
         sessionSecret: 'embedded-profile-resolution-secret',
         agents: {
           enabled: true,
-          cookieAudience: 'wiki-agents-ui',
-          publicOrigin: 'https://agents.example.test',
-          launchTokenTtlSeconds: 300,
           provider: { enabled: false },
           retention: { temporarySessionHours: 24 },
           skills: { enabled: false, namespace: 'system/agent-skills' },
@@ -361,10 +253,9 @@ describe('ordinary-origin embedded agent API', () => {
         }
       },
       models: {
-        knex: db,
-        users: { refreshToken: async () => ({ token: 'unused', user: { id: 7 } as Express.User }) }
+        knex: db
       }
-    }, { surface: 'embedded' }))
+    }))
     app.get('/ordinary', (_req, res) => res.sendStatus(204))
     server = app.listen(0, '127.0.0.1')
     const listening = Promise.withResolvers<void>()
@@ -387,7 +278,6 @@ describe('ordinary-origin embedded agent API', () => {
     const response = await fetch(`${baseUrl}/ordinary`)
     expect(response.status).toBe(204)
     expect(ordinaryAuthCalls).toBe(0)
-    expect(isolatedAuthCalls).toBe(0)
   })
 
   it('uses ordinary user auth and session CSRF for same-origin mutations', async () => {
@@ -408,7 +298,6 @@ describe('ordinary-origin embedded agent API', () => {
     const accepted = await fetch(`${baseUrl}/_api/agents/sessions`, { method: 'POST', headers, body })
     expect(accepted.status).toBe(201)
     expect(ordinaryAuthCalls).toBe(2)
-    expect(isolatedAuthCalls).toBe(0)
   })
 
   it('exposes administration only to ordinary manage:system users', async () => {
@@ -418,6 +307,5 @@ describe('ordinary-origin embedded agent API', () => {
     const response = await fetch(`${baseUrl}/_api/agents/admin/runtime`, { headers: { cookie } })
     expect(response.status).toBe(200)
     expect(await response.json()).toMatchObject({ runtime: { enabled: true, providerEnabled: false } })
-    expect(isolatedAuthCalls).toBe(0)
   })
 })

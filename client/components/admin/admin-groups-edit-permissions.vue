@@ -152,7 +152,7 @@ export default {
           items: [
             {
               permission: 'use:agents',
-              hint: 'Can use the isolated Wiki agent application and own private agent sessions',
+              hint: 'Can use the inline Wiki agent and own private agent sessions',
               warning: true,
               restrictedForSystem: true,
               disabled: false

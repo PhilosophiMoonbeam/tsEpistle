@@ -6,8 +6,8 @@ describe('ordinary Wiki agent administration integration', () => {
   const router = read('client/router.ts')
   const navigation = read('client/components/admin.vue')
   const page = read('client/components/admin/admin-agents.vue')
-  const isolatedShell = read('client/components/agents/agent-shell.vue')
-  const isolatedBootstrap = read('client/agents-app.ts')
+  const vite = read('vite.config.mts')
+  const master = read('server/master.ts')
 
   test('registers Agents in the ordinary administration router and sidebar', () => {
     expect(router).toMatch(/path:\s*['"]\/agents['"][^\n]*admin-agents\.vue/)
@@ -17,12 +17,14 @@ describe('ordinary Wiki agent administration integration', () => {
 
   test('embeds the complete administration console with ordinary session CSRF', () => {
     expect(page).toMatch(/AgentAdmin[^\n]*:csrf-token=['"]csrfToken['"][^\n]*embedded/)
-    expect(page).toMatch(/const csrfToken = siteConfig\.agentLaunchCsrfToken/)
+    expect(page).toMatch(/const csrfToken = siteConfig\.agentCsrfToken/)
   })
 
-  test('removes the obsolete isolated administration destination', () => {
-    expect(isolatedShell).not.toMatch(/href=['"]\/admin['"]/)
-    expect(isolatedShell).not.toMatch(/AgentAdmin|isAdminPage/)
-    expect(isolatedBootstrap).not.toMatch(/isAdmin:\s*z\.boolean/)
+  test('has no isolated agent application or host routing', () => {
+    expect(fs.existsSync(path.join(process.cwd(), 'client/agents-app.ts'))).toBe(false)
+    expect(fs.existsSync(path.join(process.cwd(), 'client/index-agents.ts'))).toBe(false)
+    expect(fs.existsSync(path.join(process.cwd(), 'server/views/agent.pug'))).toBe(false)
+    expect(vite).not.toMatch(/index-agents/)
+    expect(master).not.toMatch(/agentsPublicOrigin|agentVite|surface:\s*['"]embedded['"]/)
   })
 })

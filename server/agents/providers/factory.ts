@@ -1,6 +1,7 @@
 import { lookup } from 'node:dns/promises'
-import { isIP } from 'node:net'
+import { BlockList, isIP } from 'node:net'
 import type { Knex } from 'knex'
+import { Agent, fetch as undiciFetch } from 'undici'
 import {
   AxAIAnthropic,
   AxAIAnthropicModel,
@@ -24,6 +25,7 @@ import {
   type AgentProviderTransportKind
 } from './registry.ts'
 import { AgentRepositoryError } from '../repository.ts'
+import { createOpenResponsesFetch } from './openresponses.ts'
 
 const MAX_RETRY_AFTER_MS = 300_000
 const MAX_PROVIDER_ERROR_BYTES = 64 * 1_024
@@ -79,15 +81,25 @@ export interface AgentProviderService {
   readonly pricingRevision: string
 }
 
-const isPrivateAddress = (address: string): boolean => {
-  if (isIP(address) === 4) {
-    const octets = address.split('.').map(Number)
-    const a = octets[0] ?? -1
-    const b = octets[1] ?? -1
-    return a === 0 || a === 10 || a === 127 || (a === 100 && b >= 64 && b <= 127) || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || a >= 224
+const blockedProviderAddresses = new BlockList()
+for (const [network, prefix] of [
+  ['0.0.0.0', 8], ['10.0.0.0', 8], ['100.64.0.0', 10], ['127.0.0.0', 8], ['169.254.0.0', 16],
+  ['172.16.0.0', 12], ['192.0.0.0', 24], ['192.0.2.0', 24], ['192.88.99.0', 24], ['192.168.0.0', 16],
+  ['198.18.0.0', 15], ['198.51.100.0', 24], ['203.0.113.0', 24], ['224.0.0.0', 4], ['240.0.0.0', 4]
+] as const) blockedProviderAddresses.addSubnet(network, prefix, 'ipv4')
+for (const [network, prefix] of [
+  ['::', 128], ['::1', 128], ['64:ff9b::', 96], ['100::', 64], ['2001::', 23], ['2002::', 16],
+  ['fc00::', 7], ['fe80::', 10], ['ff00::', 8]
+] as const) blockedProviderAddresses.addSubnet(network, prefix, 'ipv6')
+
+const assertPublicProviderAddresses = (addresses: readonly { readonly address: string; readonly family: number }[]): void => {
+  if (addresses.length === 0) throw new AgentRepositoryError('PROVIDER_EGRESS_DENIED', 'Provider hostname did not resolve to a public address', 502)
+  for (const entry of addresses) {
+    const family = isIP(entry.address)
+    if ((family !== 4 && family !== 6) || blockedProviderAddresses.check(entry.address, family === 4 ? 'ipv4' : 'ipv6')) {
+      throw new AgentRepositoryError('PROVIDER_EGRESS_DENIED', 'Provider hostname resolved to a prohibited address', 502)
+    }
   }
-  const value = address.toLowerCase()
-  return value === '::' || value === '::1' || value.startsWith('fc') || value.startsWith('fd') || /^fe[89ab]/.test(value)
 }
 
 const retryAfter = (value: string | null, now = Date.now()): number | null => {
@@ -113,17 +125,46 @@ const providerCode = async (response: Response): Promise<string> => {
   } catch { /* response details are deliberately discarded */ }
   return `HTTP_${response.status}`
 }
-export const createGuardedProviderFetch = (baseUrl: string, endpoint: '/responses' | '/chat/completions' | '/messages' | '/completions', additionalHeaders: Readonly<Record<string, string>>, implementation: typeof fetch = fetch, resolve: typeof lookup = lookup): typeof fetch => {
+const providerDispatchers = new WeakMap<typeof lookup, Agent>()
+const pinnedProviderDispatcher = (resolve: typeof lookup): Agent => {
+  const existing = providerDispatchers.get(resolve)
+  if (existing) return existing
+  const dispatcher = new Agent({
+    connect: {
+      lookup: (hostname, options, callback) => {
+        void resolve(hostname, { all: true, verbatim: true }).then(addresses => {
+          try {
+            assertPublicProviderAddresses(addresses)
+            if (options.all) callback(null, addresses)
+            else {
+              const matching = options.family === 4 || options.family === 6
+                ? addresses.find(address => address.family === options.family)
+                : addresses[0]
+              if (!matching) return callback(Object.assign(new Error('Provider hostname has no address in the requested family'), { code: 'ENOTFOUND' }), '', 0)
+              callback(null, matching.address, matching.family)
+            }
+          } catch (error: unknown) {
+            callback(error instanceof Error ? error : new Error('Provider DNS validation failed'), '', 0)
+          }
+        }, error => callback(error instanceof Error ? error : new Error('Provider DNS resolution failed'), '', 0))
+      }
+    }
+  })
+  providerDispatchers.set(resolve, dispatcher)
+  return dispatcher
+}
+
+export const createGuardedProviderFetch = (baseUrl: string, endpoint: '/responses' | '/chat/completions' | '/messages' | '/completions', additionalHeaders: Readonly<Record<string, string>>, implementation: typeof fetch = undiciFetch as unknown as typeof fetch, resolve: typeof lookup = lookup): typeof fetch => {
   const base = new URL(baseUrl)
   const allowedPath = `${base.pathname.replace(/\/$/, '')}${endpoint}`
+  const dispatcher = pinnedProviderDispatcher(resolve)
   return async (input, init) => {
     const url = new URL(typeof input === 'string' || input instanceof URL ? input : input.url)
     if (url.protocol !== 'https:' || url.origin !== base.origin || url.pathname !== allowedPath || url.search || url.hash || url.username || url.password) throw new AgentRepositoryError('PROVIDER_EGRESS_DENIED', 'Provider request destination is not allowlisted', 502)
-    const addresses = await resolve(url.hostname, { all: true, verbatim: true })
-    if (addresses.length === 0 || addresses.some(entry => isPrivateAddress(entry.address))) throw new AgentRepositoryError('PROVIDER_EGRESS_DENIED', 'Provider hostname resolved to a prohibited address', 502)
+    assertPublicProviderAddresses(await resolve(url.hostname, { all: true, verbatim: true }))
     const headers = new Headers(init?.headers)
     for (const [name, value] of Object.entries(additionalHeaders)) headers.set(name, value)
-    const response = await implementation(url, { ...init, headers, redirect: 'manual', credentials: 'omit' })
+    const response = await implementation(url, { ...init, headers, redirect: 'manual', credentials: 'omit', dispatcher } as RequestInit)
     if (response.status >= 300 && response.status < 400) throw new AgentProviderAttemptError('PROVIDER_REDIRECT_DENIED', response.status, null)
     if (!response.ok) throw new AgentProviderAttemptError(await providerCode(response), response.status, retryAfter(response.headers.get('retry-after')))
     return response
@@ -180,7 +221,7 @@ export class AgentProviderFactory {
   readonly #secrets: AgentProviderSecretProvider
   readonly #fetch: typeof fetch
   readonly #resolve: typeof lookup
-  constructor (knex: Knex, secrets: AgentProviderSecretProvider, fetchImplementation: typeof fetch = fetch, resolve: typeof lookup = lookup) {
+  constructor (knex: Knex, secrets: AgentProviderSecretProvider, fetchImplementation: typeof fetch = undiciFetch as unknown as typeof fetch, resolve: typeof lookup = lookup) {
     this.#knex = knex
     this.#secrets = secrets
     this.#fetch = fetchImplementation
@@ -201,20 +242,21 @@ export class AgentProviderFactory {
     } catch {
       throw new AgentRepositoryError('PROVIDER_PROFILE_CORRUPT', 'Stored provider profile data is invalid', 500)
     }
+    const guardedFetch = createGuardedProviderFetch(
+      row.baseUrl,
+      row.transportKind === 'openai-responses' || row.transportKind === 'openresponses'
+        ? '/responses'
+        : row.transportKind === 'anthropic-messages'
+          ? '/messages'
+          : row.transportKind === 'legacy-completions'
+            ? '/completions'
+            : '/chat/completions',
+      adapterConfig.additionalHeaders,
+      this.#fetch,
+      this.#resolve
+    )
     const options = {
-      fetch: createGuardedProviderFetch(
-        row.baseUrl,
-        row.transportKind === 'openai-responses' || row.transportKind === 'openresponses'
-          ? '/responses'
-          : row.transportKind === 'anthropic-messages'
-            ? '/messages'
-            : row.transportKind === 'legacy-completions'
-              ? '/completions'
-              : '/chat/completions',
-        adapterConfig.additionalHeaders,
-        this.#fetch,
-        this.#resolve
-      ),
+      fetch: row.transportKind === 'openresponses' ? createOpenResponsesFetch(guardedFetch) : guardedFetch,
       timeout: adapterConfig.timeoutMs,
       retry: { maxRetries: 0 },
       includeRequestBodyInErrors: false,

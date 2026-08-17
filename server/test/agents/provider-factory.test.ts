@@ -4,7 +4,7 @@ import type { LookupAddress } from 'node:dns'
 import { AgentProviderAttemptError, AgentProviderFactory, createGuardedProviderFetch } from '../../agents/providers/factory.ts'
 import { AgentRepositoryError } from '../../agents/repository.ts'
 
-const publicResolver = async (): Promise<LookupAddress[]> => [{ address: '203.0.113.10', family: 4 }]
+const publicResolver = async (): Promise<LookupAddress[]> => [{ address: '93.184.216.34', family: 4 }]
 const privateResolver = async (): Promise<LookupAddress[]> => [{ address: '127.0.0.1', family: 4 }]
 
 describe('guarded provider fetch', () => {

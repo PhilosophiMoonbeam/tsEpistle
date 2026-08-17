@@ -1,9 +1,8 @@
-import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import type { Knex } from 'knex'
 import { z } from 'zod'
 import {
   AGENT_EVENT_TYPES,
-  type AgentCurrentPageHint,
   type AgentEvent,
   type AgentEventData,
   type AgentEventType,
@@ -23,7 +22,6 @@ const messageStatusSchema = z.enum(['pending', 'streaming', 'complete', 'failed'
 
 const iso = (value: Date | string): string => value instanceof Date ? value.toISOString() : new Date(value).toISOString()
 const digest = (value: string | Buffer): string => createHash('sha256').update(value).digest('hex')
-const digestBuffer = (value: string | Buffer): Buffer => createHash('sha256').update(value).digest()
 
 export class AgentRepositoryError extends Error {
   readonly code: string
@@ -321,91 +319,6 @@ export const listOwnedAgentEvents = async (knex: Knex, ownerId: number, runId: s
   return rows.map(eventRecord)
 }
 
-export interface AgentLaunchHandoff {
-  readonly id: string
-  readonly token: string
-  readonly expiresAt: string
-}
-
-export interface AgentLaunchHandoffPayload {
-  readonly pageId: number | null
-  readonly locale: string | null
-  readonly path: string | null
-  readonly observedUpdatedAt: string | null
-}
-
-export interface IssueAgentLaunchHandoffInput extends AgentLaunchHandoffPayload {
-  readonly ownerId: number
-  readonly ttlSeconds: number
-}
-
-const handoffPayload = (row: { pageId: number | null, localeCode: string | null, path: string | null, observedUpdatedAt: Date | string | null }): AgentLaunchHandoffPayload => ({
-  pageId: row.pageId,
-  locale: row.localeCode,
-  path: row.path,
-  observedUpdatedAt: row.observedUpdatedAt === null ? null : iso(row.observedUpdatedAt)
-})
-
-export const issueAgentLaunchHandoff = async (knex: Knex, input: IssueAgentLaunchHandoffInput): Promise<AgentLaunchHandoff> => {
-  if (!Number.isSafeInteger(input.ttlSeconds) || input.ttlSeconds < 1 || input.ttlSeconds > 900) throw new AgentRepositoryError('INVALID_HANDOFF_TTL', 'Launch handoff TTL is invalid', 400)
-  const id = randomUUID()
-  const token = randomBytes(32).toString('base64url')
-  const now = new Date()
-  const expiresAt = new Date(now.valueOf() + input.ttlSeconds * 1_000)
-  const payload = handoffPayload({ pageId: input.pageId, localeCode: input.locale, path: input.path, observedUpdatedAt: input.observedUpdatedAt })
-  await knex('agentLaunchHandoffs').insert({
-    id,
-    tokenSha256: digestBuffer(token),
-    ownerId: input.ownerId,
-    pageId: input.pageId,
-    localeCode: input.locale,
-    path: input.path,
-    observedUpdatedAt: input.observedUpdatedAt,
-    pageHintSha256: digestBuffer(canonicalJson(payload)),
-    createdAt: now,
-    expiresAt,
-    consumedAt: null
-  })
-  return { id, token, expiresAt: expiresAt.toISOString() }
-}
-
-interface HandoffRow {
-  id: string
-  tokenSha256: Buffer
-  ownerId: number
-  pageId: number | null
-  localeCode: string | null
-  path: string | null
-  observedUpdatedAt: Date | string | null
-  pageHintSha256: Buffer
-  expiresAt: Date | string
-  consumedAt: Date | string | null
-}
-
-const consumeAgentLaunchHandoffInTransaction = async (transaction: Knex.Transaction, ownerId: number, token: string): Promise<AgentLaunchHandoffPayload> => {
-  if (!/^[A-Za-z0-9_-]{43}$/.test(token)) return notFound()
-  const tokenSha256 = digestBuffer(token)
-  const row = await transaction<HandoffRow>('agentLaunchHandoffs').where({ ownerId, tokenSha256 }).forUpdate().first()
-  if (!row || row.consumedAt !== null || new Date(row.expiresAt).valueOf() <= Date.now()) return notFound()
-  if (!timingSafeEqual(Buffer.from(row.tokenSha256), tokenSha256)) return notFound()
-  const payload = handoffPayload(row)
-  const payloadHash = digestBuffer(canonicalJson(payload))
-  if (!timingSafeEqual(Buffer.from(row.pageHintSha256), payloadHash)) throw new AgentRepositoryError('LAUNCH_HANDOFF_CORRUPT', 'Launch handoff payload hash mismatch', 500)
-  const consumedAt = new Date()
-  const changed = await transaction('agentLaunchHandoffs').where({ id: row.id, ownerId }).whereNull('consumedAt').update({ consumedAt })
-  if (changed !== 1) return conflict('LAUNCH_HANDOFF_CONSUMED', 'Launch handoff was already consumed')
-  return payload
-}
-
-export const consumeAgentLaunchHandoff = async (knex: Knex, ownerId: number, token: string): Promise<AgentLaunchHandoffPayload> =>
-  knex.transaction(transaction => consumeAgentLaunchHandoffInTransaction(transaction, ownerId, token))
-
-export const createAgentSessionFromHandoff = async (knex: Knex, input: CreateAgentSessionInput, token: string): Promise<{ readonly session: AgentSessionRecord, readonly handoff: AgentLaunchHandoffPayload }> =>
-  knex.transaction(async transaction => {
-    const handoff = await consumeAgentLaunchHandoffInTransaction(transaction, input.ownerId, token)
-    const session = await createAgentSession(transaction, input)
-    return { session, handoff }
-  })
 
 export interface StoreAgentArtifactInput {
   readonly id?: string
@@ -446,9 +359,4 @@ export const getOwnedAgentArtifact = async (knex: Knex, ownerId: number, id: str
   const payload = Buffer.from(row.payload)
   if (row.mimeType !== 'image/png' || row.byteLength !== payload.length || digest(payload) !== row.sha256) throw new AgentRepositoryError('AGENT_ARTIFACT_CORRUPT', 'Agent artifact integrity check failed', 500)
   return { id: row.id, payload, sha256: row.sha256, mimeType: 'image/png', byteLength: row.byteLength, expiresAt: row.expiresAt === null ? null : iso(row.expiresAt) }
-}
-
-export const currentPageHint = (payload: AgentLaunchHandoffPayload): AgentCurrentPageHint | null => {
-  if (payload.pageId === null || payload.locale === null || payload.path === null || payload.observedUpdatedAt === null) return null
-  return { id: payload.pageId, locale: payload.locale, path: payload.path, observedUpdatedAt: payload.observedUpdatedAt }
 }

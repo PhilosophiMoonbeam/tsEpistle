@@ -1,66 +1,74 @@
 # Agent deployment and operations
 
-Wiki agents are three separate trust surfaces backed by one PostgreSQL ledger:
+Wiki agents use one ordinary user surface plus two isolated service boundaries:
 
-| Surface | Example origin | Purpose | Required exposure |
+| Surface | Example | Purpose | Exposure |
 | --- | --- | --- | --- |
-| Wiki | `https://wiki.example.com` | Existing Wiki UI, API, and one-time agent launch | Existing users |
-| Agents | `https://agents.example.com` | Session UI, admin console, approvals, REST, and SSE | Authenticated Wiki users |
+| Wiki | `https://wiki.example.com` | Existing UI, inline Search/Ask, `/admin/agents`, internal agent REST/SSE, approvals | Existing authenticated users |
 | MCP | `https://mcp.example.com/mcp` | Streamable HTTP MCP | Resource-bound API keys only |
+| Browser worker | private mTLS endpoint | Playwright execution in a separate unprivileged process/container | Wiki application replicas only |
 
-Use distinct canonical origins. The application dispatches by the exact `Host` header; it does not mount the agent shell or MCP route on the ordinary Wiki origin. Terminate TLS at a trusted ingress, preserve the original `Host`, reject unknown hosts, and route all three hosts to the same Wiki application replicas. Do not rewrite paths between origins.
+There is no agent-specific public origin, login, cookie, launch token, popup, iframe, or sidecar application. The internal agent controller handles only `/_api/agents`; all other Wiki paths continue through the ordinary router. MCP remains on a distinct canonical origin because it has a different API-key trust boundary.
 
 ## Database and compatibility
 
-Agents require PostgreSQL for multi-replica lease notification. Apply migration `2.5.139` before enabling any flag. The migration is additive and all agent flags default to false.
+Agents require PostgreSQL for multi-replica leases and notification. Apply migrations through `2.5.140` before enabling any flag:
+
+- `2.5.139` adds the source-revision ledger and agent tables.
+- `2.5.140` removes the obsolete cross-origin launch-handoff table. Its down migration recreates only the empty compatibility shape.
+
+All agent flags default to false. Back up PostgreSQL before upgrade or rollback.
 
 Two rollback paths are supported:
 
-1. If no agent data must remain, disable every flag, drain coordinators, run the `2.5.139` down migration, and start the exact prior application image.
-2. If the additive ledger must remain, disable every flag and run the release-produced N-1 compatibility image. Do not run an older image whose migration preflight does not recognize `2.5.139`.
+1. With no authoritative agent data to retain: disable all agent flags, drain coordinators and maintenance, apply `2.5.140` down, then apply the guarded `2.5.139` down and start the prior image.
+2. With agent data to retain: disable all flags and run the release-produced N-1 compatibility image. Keep the schema-compatible maintenance command active. Do not run an arbitrary older image.
 
-Never run the migration down while an application, browser worker, MCP client, or maintenance job can write the agent tables. Back up the database before either path.
+Never run a destructive down migration while an application, MCP client, browser worker, or maintenance job can write agent state.
 
 ## Ingress
 
-A representative reverse-proxy policy is:
+Route the Wiki hostname normally. Route only `/mcp` on the exact MCP hostname to the same application replicas. Preserve `Host`, terminate TLS at trusted ingress, reject unknown hosts, disable proxy buffering for SSE/MCP, and apply an ingress rate limit to MCP.
+
+Representative policy:
 
 ```nginx
-map $host $wiki_agents_upstream {
-  hostnames;
-  wiki.example.com   wiki_app;
-  agents.example.com wiki_app;
-  mcp.example.com    wiki_app;
-  default            "";
+server {
+  listen 443 ssl http2;
+  server_name wiki.example.com;
+  location / {
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Proto https;
+    proxy_buffering off;
+    proxy_read_timeout 10m;
+    proxy_pass http://wiki_app;
+  }
 }
 
 server {
   listen 443 ssl http2;
-  server_name wiki.example.com agents.example.com mcp.example.com;
-  if ($wiki_agents_upstream = "") { return 421; }
-  location / {
+  server_name mcp.example.com;
+  location = /mcp {
+    limit_req zone=mcp burst=20 nodelay;
     proxy_set_header Host $host;
     proxy_set_header X-Forwarded-Proto https;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_buffering off; # required for agent SSE and MCP streaming
+    proxy_buffering off;
     proxy_read_timeout 10m;
-    proxy_pass http://$wiki_agents_upstream;
+    proxy_pass http://wiki_app;
   }
+  location / { return 404; }
 }
 ```
 
-Permit `/mcp` only on the MCP host. Apply an ingress request-rate limit before the application and retain the SDK `Host` and `Origin` checks. The agent origin uses the existing Wiki authentication strategies and an audience-bound cookie. Login redirects return only to the configured agent origin; arbitrary return URLs are rejected. Users launch from the Wiki origin through a hashed, single-use, five-minute database handoff.
+The application rejects MCP `Host`, `Origin`, and canonical resource mismatches. Ordinary Wiki paths named `/mcp` or `/_agent` remain normal Wiki content on the Wiki hostname.
 
 ## Configuration
 
-Start with all flags false:
+Start with every capability disabled:
 
 ```yaml
 agents:
   enabled: false
-  publicOrigin: https://agents.example.com
-  cookieAudience: wiki-agents-ui
-  launchTokenTtlSeconds: 300
   retention:
     temporarySessionHours: 24
     mcpContentDays: 7
@@ -71,6 +79,8 @@ agents:
     globalConcurrency: 4
     perUserConcurrency: 1
     pollingMilliseconds: 1000
+  sse:
+    maximumConnectionsPerUser: 3
   skills:
     enabled: false
     namespace: system/agent-skills
@@ -87,27 +97,27 @@ agents:
     delete: { enabled: false }
   mcp:
     enabled: false
-    publicOrigin: https://mcp.example.com
-    resourceUrl: https://mcp.example.com/mcp
+    publicOrigin: ''
+    resourceUrl: ''
 ```
 
-Flags are independent kill switches. `writes.enabled` and the exact action flag must both be true. Browser, MCP, provider, skill, and proposal failures never change `/healthz`.
+Startup rejects provider concurrency, polling, SSE, and retention values outside their bounded ranges. `perUserConcurrency` cannot exceed `globalConcurrency`. Flags are independent kill switches; write application requires `writes.enabled`, proposals, and the exact action flag.
 
-Provider secrets are environment-backed references. A profile stores only the reference name. Configure the referenced value on every application replica before conformance or enablement. Provider profiles are immutable revisions and remain unselectable until the current revision passes the isolated-admin conformance runner.
+Provider inference is intentionally unavailable until an administrator adds a secret reference and an immutable provider profile in `/admin/agents`, runs conformance, enables that profile, and then enables provider inference. Profiles store references, never secret values.
 
-Required cryptographic environment variables:
+Required cryptographic environment:
 
-| Variable | Format | Required when |
-| --- | --- | --- |
-| `AGENT_SNAPSHOT_SIGNING_SECRET` | Base64, at least 32 decoded bytes | Providers or MCP actions enabled |
-| `AGENT_PROFILE_RESOLUTION_KEYS` | JSON key-ring accepted by the provider registry | Providers enabled |
-| `AGENT_MCP_REQUEST_STATE_KEYS` | JSON array of Base64 keys, newest first, each at least 32 bytes | MCP enabled |
+| Variable | Required when |
+| --- | --- |
+| `AGENT_SNAPSHOT_SIGNING_SECRET` | Provider or MCP actions are enabled |
+| `AGENT_PROFILE_RESOLUTION_KEYS` | Providers are enabled |
+| `AGENT_MCP_REQUEST_STATE_KEYS` | MCP is enabled |
 
-Retain the prior request-state and profile-resolution verification key during rotation until every issued token has expired. Never log these values, provider credentials, prompts, page content, patches, browser text, or MCP request-state payloads.
+Each key contains at least 32 random bytes encoded as required by the corresponding parser. Retain prior verification keys only through the maximum token lifetime. Never log these keys, provider credentials, prompts, page/skill/browser content, approval payloads, or signed state tokens.
 
-## Isolated browser worker
+## Browser worker
 
-Build `dev/build/Dockerfile.agent-browser`. It pins Playwright and both architecture manifests through the OCI index digest. Publish one multi-architecture manifest for `linux/amd64` and `linux/arm64`:
+Build `dev/build/Dockerfile.agent-browser`. It pins Playwright/Chromium, runs as `pwuser`, launches Chromium with its sandbox enabled, and executes outside the Wiki application process.
 
 ```sh
 docker buildx build \
@@ -118,47 +128,62 @@ docker buildx build \
   --tag registry.example.com/wiki-agent-browser:"$WIKI_BUILD_REVISION" .
 ```
 
-Run the worker as an unprivileged user with a read-only root filesystem, writable temporary directory only, no application/database/provider secrets, bounded memory/PIDs/CPU, and no ingress except mTLS from Wiki application replicas. Required worker variables:
+Run it with a read-only root filesystem, writable temporary storage only, no application/database/provider secrets, bounded memory/PIDs/CPU, and ingress only from Wiki replicas over mTLS. Worker variables:
 
-- `AGENT_BROWSER_TLS_CERT`, `AGENT_BROWSER_TLS_KEY`, `AGENT_BROWSER_TLS_CA`: mounted mTLS files.
-- `AGENT_BROWSER_SIGNING_KEYS`: JSON object from key ID to Base64 verification key.
-- `AGENT_BROWSER_PORT`: defaults to `9443`.
-- `AGENT_BROWSER_CHROMIUM_PATH`: optional explicit bundled Chromium path.
+- `AGENT_BROWSER_TLS_CERT`, `AGENT_BROWSER_TLS_KEY`, `AGENT_BROWSER_TLS_CA`
+- `AGENT_BROWSER_SIGNING_KEYS`
+- `AGENT_BROWSER_PORT` (default `9443`)
+- `AGENT_BROWSER_MAX_CONTEXTS` (default `8`, allowed `1..64`)
+- `AGENT_BROWSER_CHROMIUM_PATH` when overriding the bundled executable
 
 Application replicas use `AGENT_BROWSER_WORKER_URL`, `AGENT_BROWSER_WORKER_SIGNING_KEY_ID`, `AGENT_BROWSER_WORKER_SIGNING_SECRET`, `AGENT_BROWSER_WORKER_CA_PATH`, `AGENT_BROWSER_WORKER_CERT_PATH`, and `AGENT_BROWSER_WORKER_KEY_PATH`.
 
-The worker must have no general network route. Force all egress through a Layer 3/4 gateway that resolves and filters destinations independently. The in-process URL policy is defense in depth: exact HTTPS allowlist, public-address validation, anonymous GET-only navigation, redirect revalidation, and request interception. Do not enable `agents.browser.enabled` until packet-capture or gateway logs prove that Chromium cannot bypass the gateway.
+The worker validates signed request identity, sequence, replay nonce, context/action/navigation/time/byte limits, canonical HTTPS GET targets, public DNS answers, stale refs, and screenshot format. Chromium request interception blocks non-attested requests, alternate methods, sockets, downloads, service workers, and popups.
 
-Drain a worker by first disabling browser admission, waiting for active contexts to finish, and then sending `SIGTERM`. The worker closes Chromium contexts before exit. Keep the prior signing verification key during a rotation and remove it only after the maximum request lifetime.
+In-process checks are not a network sandbox. Deploy the container in a network namespace with no direct external route and force egress through an independently filtered Layer 3/4 gateway. Do not enable `agents.browser.enabled` until packet capture or gateway logs prove Chromium cannot bypass that route. This repository cannot install a universal host-network policy because enforcement belongs to the deployment network.
 
-## Maintenance image and schedule
+Drain by disabling browser admission, waiting for active contexts, then sending `SIGTERM`. Keep the prior signing verification key only through the maximum request lifetime.
 
-Use the normal Wiki application image with an alternate command; no HTTP listener is needed:
+## Maintenance
+
+Run the normal application image with:
 
 ```sh
 node server/scripts/agent-maintenance.ts
 ```
 
-Set `AGENT_MAINTENANCE_DATABASE_URL`. Optional positive integers are `AGENT_MAINTENANCE_BATCH_SIZE`, `AGENT_MAINTENANCE_MCP_CONTENT_DAYS`, `AGENT_MAINTENANCE_AUDIT_DAYS`, `AGENT_MAINTENANCE_COMPACT_DELTA_DAYS`, and `AGENT_MAINTENANCE_MAX_BATCHES`.
+Set `AGENT_MAINTENANCE_DATABASE_URL`. Optional positive bounds are `AGENT_MAINTENANCE_BATCH_SIZE`, `AGENT_MAINTENANCE_MCP_CONTENT_DAYS`, `AGENT_MAINTENANCE_AUDIT_DAYS`, `AGENT_MAINTENANCE_COMPACT_DELTA_DAYS`, and `AGENT_MAINTENANCE_MAX_BATCHES`.
 
-Run one scheduled job at least hourly. Concurrent jobs are safe but waste capacity; use the scheduler's single-concurrency policy. The command prints one bounded JSON summary and exits nonzero on failure. Alert if it fails twice, if expired artifact/proposal/session backlog rises across runs, or if a run remains `recovery_required`.
+Schedule at least hourly with single-job concurrency. The command emits one bounded JSON summary and exits nonzero on failure. Alert on repeated failure, growing expiry backlog, or `recovery_required` runs. Continue maintenance while capabilities are disabled and during an N-1 compatibility rollback. Stop it only during database restore or destructive down migration.
 
-Continue maintenance during a disabled-feature rollout and while the N-1 compatibility image runs. Stop it only for a database restore or the destructive down migration.
+## Security and privacy
+
+- Internal agent REST accepts ordinary authenticated user sessions only. Mutations require exact same-origin `Origin`, `Sec-Fetch-Site: same-origin`, and the session CSRF token. API keys are rejected.
+- MCP accepts resource-bound API keys only on its dedicated origin.
+- Wiki `extra.js` is administrator-installed privileged code. It can act as the signed-in user on the Wiki origin; do not treat it as untrusted tenant content. Provider text, skill text, and page content never execute as code and are rendered through the existing sanitizer.
+- Permission and ownership checks occur when actions are offered and again at execution. Write approvals are immutable, single-use, revision-fenced records.
+- Browser contexts are per run. Cookies, storage, cache, live DOM, and browser profiles are not persisted into sessions.
+- Logs and metrics contain IDs, states, hashes, durations, bounded error codes, token counts, and costs—not conversation or hidden reasoning content.
 
 ## Rollout
 
-1. Deploy the additive migration and origins with every agent flag false. Verify ordinary Wiki routes, backup, restore, and the two rollback paths.
-2. Configure approved page-native skills and provider profiles from `https://agents.example.com/admin`. Run provider conformance; do not enable user access.
-3. Enable `agents.enabled` and OpenAI Responses for one explicit canary group. Keep browser, writes, proposals, and MCP false.
-4. Expand read-only use. Observe queue latency, per-user/global concurrency, reconnect behavior, token/cost gauges, retention, and provider errors.
-5. Enable browser only after the separate worker egress proof.
-6. Enable proposals, then create and patch separately. Enable move, restore, and delete only after action-specific review.
-7. Enable MCP on private ingress for a dedicated API-key group with `use:mcp`. Public exposure requires rate-limit, Host/Origin/resource, approval, and incident-response evidence.
+1. Apply migrations with all flags false. Verify ordinary Wiki routes, backup, restore, and both rollback paths on PostgreSQL 16 and 17.
+2. Configure approved skills and provider profiles in `/admin/agents`; keep user access false.
+3. Run transport conformance. Perform one controlled real read only after credentials and egress policy are ready.
+4. Enable `agents.enabled` and one read-only provider for an explicit canary group. Keep browser, proposals, writes, and MCP false.
+5. Observe queue depth, concurrency, reconnects, token/cost reservations, retention, and provider errors.
+6. Enable browser only after the separate worker and no-bypass network proof.
+7. Enable proposals, then create and patch separately. Enable move, restore, and delete only after action-specific review.
+8. Enable MCP first on private ingress for a dedicated `use:mcp` API-key group.
 
-At any stage, disable the smallest failing capability. Existing sessions remain reconstructable from PostgreSQL. Disabling a provider prevents new selection without changing retained history.
+Disable the smallest failing capability. Existing session history remains reconstructable from PostgreSQL.
 
-## Monitoring and incident response
+## Incident runbook
 
-The existing metrics endpoint exports low-cardinality `wiki_agent_runs{status}`, `wiki_agent_proposals{status}`, `wiki_agent_artifacts_total`, and `wiki_agent_usage_total{kind}` gauges. Alert on sustained queue growth, `recovery_required`, failed maintenance, quota saturation, artifact growth, provider error rate, browser worker mTLS failures, and MCP authentication/rate denials. Metrics and logs contain IDs, states, hashes, durations, token counts, costs, and bounded error codes only.
-
-For suspected provider exfiltration: disable `agents.provider.enabled`, revoke provider secrets, retain the audit ledger, and inspect profile/version, skill-use, action, and destination metadata. For browser escape: disable `agents.browser.enabled`, revoke worker client certificates and signing keys, isolate the worker network, and retain gateway logs and artifact hashes. For MCP key compromise: revoke the API key, rotate request-state keys, keep the compromised key only in offline forensic material, and review proposals by requester API-key ID. For unsafe writes: disable `writes.enabled`, preserve proposals/approvals/executions/outbox rows, reconcile the page projection, and restore only through the normal page revision operation.
+- **Provider exfiltration or outage:** disable `agents.provider.enabled`, revoke provider secrets, retain the audit ledger, and inspect profile/version, skill-use, action, and destination metadata.
+- **Browser escape:** disable `agents.browser.enabled`, revoke worker certificates/signing keys, isolate the worker network, and retain gateway logs and artifact hashes.
+- **MCP key compromise:** revoke the API key, rotate request-state keys, preserve the compromised key only as offline evidence, and review proposals by requester API-key ID.
+- **Unsafe writes:** disable `writes.enabled`, preserve proposals/approvals/executions/outbox rows, reconcile the page projection, and restore only through normal page revision operations.
+- **Lease or queue growth:** stop new admission, drain healthy workers, inspect expired leases and `recovery_required`, then run bounded maintenance. Never manually replay a run after an ambiguous side effect.
+- **SSE pressure:** reduce per-user connection bounds or disable agent admission; reconnect uses durable `Last-Event-ID`.
+- **Rollback:** disable flags, drain, back up, choose the empty-ledger or compatibility path above, and verify retention before restoring traffic.

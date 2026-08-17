@@ -35,6 +35,11 @@ export interface LockedProposalContext {
   readonly approval: ApprovalRecord
   readonly input: unknown
 }
+export interface ProposalExecutionContext {
+  readonly proposal: ProposalRecord
+  readonly approval: ApprovalRecord
+  readonly input: unknown
+}
 
 export interface DecideProposalInput {
   readonly proposalId: string
@@ -52,7 +57,8 @@ export interface ApplyProposalInput {
   readonly signal: AbortSignal
   readonly leaseToken?: string
   readonly reauthorize: (context: LockedProposalContext & { readonly approverUserId: number; readonly authority: ActionAuthority }) => Promise<void>
-  readonly mutate: (context: LockedProposalContext) => Promise<unknown>
+  readonly mutate: (context: ProposalExecutionContext) => Promise<unknown>
+  readonly reconcile: (context: ProposalExecutionContext) => Promise<unknown | null>
 }
 
 export interface AppliedProposalResult {
@@ -173,14 +179,65 @@ const completedResult = (execution: ExecutionRow): AppliedProposalResult | null 
 
 export const applyApprovedProposal = async (knex: Knex, input: ApplyProposalInput): Promise<AppliedProposalResult> => {
   if (input.signal.aborted) throw new AgentProposalError('ACTION_CANCELLED', 'Proposal apply was cancelled', 409)
+
+  const commitResult = async (executionId: string, rawResult: unknown): Promise<AppliedProposalResult> => knex.transaction(async transaction => {
+    const execution = await transaction<ExecutionRow>('agentActionExecutions').where({ id: executionId, proposalId: input.proposalId }).forUpdate().first()
+    if (!execution) throw new AgentProposalError('PROPOSAL_LEDGER_CORRUPT', 'Proposal execution claim disappeared', 500)
+    const completed = completedResult(execution)
+    if (completed) return completed
+    if (execution.status !== 'applying' && execution.status !== 'recovery_required') {
+      throw new AgentProposalError('PROPOSAL_EXECUTION_TERMINAL', 'Proposal execution is already terminal', 409)
+    }
+    const proposal = await transaction<ProposalRecord>('agentProposals').where({ id: input.proposalId }).forUpdate().first()
+    if (!proposal || (proposal.status !== 'applying' && proposal.status !== 'recovery_required')) {
+      throw new AgentProposalError('PROPOSAL_STATE_CHANGED', 'Proposal completion lost its execution fence', 409)
+    }
+    const result = canonicalJson(rawResult)
+    const resultHash = sha256(result)
+    if (proposal.resultCanonicalSha256 !== null && resultHash !== proposal.resultCanonicalSha256) {
+      throw new AgentProposalError('PROPOSAL_RESULT_MISMATCH', 'Mutation result does not match the approved immutable proposal', 409)
+    }
+    const completedAt = new Date().toISOString()
+    const executionUpdated = await transaction('agentActionExecutions')
+      .where({ id: execution.id, inputHash: proposal.inputHash })
+      .whereIn('status', ['applying', 'recovery_required'])
+      .update({ status: 'committed', completedAt, result, error: null })
+    const proposalUpdated = await transaction('agentProposals')
+      .where({ id: proposal.id, inputHash: proposal.inputHash })
+      .whereIn('status', ['applying', 'recovery_required'])
+      .update({ status: 'applied', appliedAt: completedAt, applyResult: result })
+    if (executionUpdated !== 1 || proposalUpdated !== 1) throw new AgentProposalError('PROPOSAL_STATE_CHANGED', 'Proposal completion lost its execution fence', 409)
+    return { proposalId: proposal.id, status: 'applied', result: rawResult, resultHash }
+  })
+
+  const loadRecoveryContext = async (execution: ExecutionRow): Promise<ProposalExecutionContext> => knex.transaction(async transaction => {
+    const context = await lockProposal(transaction, input.proposalId, input.approvalId)
+    assertApplyingAuthority(context.proposal, input.authority)
+    if (context.approval.status !== 'approved' || context.approval.approvedByUserId === null) {
+      throw new AgentProposalError('PROPOSAL_NOT_APPROVED', 'Proposal is not approved', 409)
+    }
+    if (context.proposal.status !== 'applying' && context.proposal.status !== 'recovery_required') {
+      throw new AgentProposalError('PROPOSAL_STATE_CHANGED', 'Proposal execution state is inconsistent', 409)
+    }
+    if (execution.inputHash !== context.proposal.inputHash) throw new AgentProposalError('PROPOSAL_LEDGER_TAMPERED', 'Proposal execution input hash does not match', 409)
+    return { proposal: context.proposal, approval: context.approval, input: context.input }
+  })
+
   const prior = await knex<ExecutionRow>('agentActionExecutions').where({ proposalId: input.proposalId }).first()
   if (prior) {
     const completed = completedResult(prior)
     if (completed) return completed
-    throw new AgentProposalError('PROPOSAL_EXECUTION_IN_PROGRESS', 'Proposal already has a non-terminal execution claim', 409)
+    const recoveryContext = await loadRecoveryContext(prior)
+    const recovered = await input.reconcile(recoveryContext)
+    if (recovered !== null) return commitResult(prior.id, recovered)
+    throw new AgentProposalError(
+      prior.status === 'recovery_required' ? 'PROPOSAL_RECOVERY_REQUIRED' : 'PROPOSAL_EXECUTION_IN_PROGRESS',
+      prior.status === 'recovery_required' ? 'Proposal execution requires recovery before it can continue' : 'Proposal already has a non-terminal execution claim',
+      409
+    )
   }
 
-  return knex.transaction(async transaction => {
+  const claim = await knex.transaction(async transaction => {
     const context = await lockProposal(transaction, input.proposalId, input.approvalId)
     assertApplyingAuthority(context.proposal, input.authority)
     if (context.proposal.status !== 'approved' || context.approval.status !== 'approved' || context.approval.approvedByUserId === null) {
@@ -189,13 +246,8 @@ export const applyApprovedProposal = async (knex: Knex, input: ApplyProposalInpu
     if (dateValue(context.proposal.expiresAt) <= Date.now()) throw new AgentProposalError('PROPOSAL_EXPIRED', 'Proposal has expired', 409)
     if (input.signal.aborted) throw new AgentProposalError('ACTION_CANCELLED', 'Proposal apply was cancelled', 409)
     await input.reauthorize({ ...context, approverUserId: context.approval.approvedByUserId, authority: input.authority })
-
     const existing = await transaction<ExecutionRow>('agentActionExecutions').where({ proposalId: input.proposalId }).forUpdate().first()
-    if (existing) {
-      const completed = completedResult(existing)
-      if (completed) return completed
-      throw new AgentProposalError('PROPOSAL_EXECUTION_IN_PROGRESS', 'Proposal already has a non-terminal execution claim', 409)
-    }
+    if (existing) throw new AgentProposalError('PROPOSAL_EXECUTION_IN_PROGRESS', 'Proposal already has a non-terminal execution claim', 409)
 
     const idempotencyKey = sha256(canonicalJson({
       version: 1,
@@ -224,18 +276,27 @@ export const applyApprovedProposal = async (knex: Knex, input: ApplyProposalInpu
     })
     const applying = await transaction('agentProposals').where({ id: context.proposal.id, status: 'approved' }).update({ status: 'applying' })
     if (applying !== 1) throw new AgentProposalError('PROPOSAL_STATE_CHANGED', 'Proposal state changed concurrently', 409)
-
-    const rawResult = await input.mutate(context)
-    if (input.signal.aborted) throw new AgentProposalError('ACTION_CANCELLED', 'Proposal apply was cancelled', 409)
-    const result = canonicalJson(rawResult)
-    const resultHash = sha256(result)
-    if (context.proposal.resultCanonicalSha256 !== null && resultHash !== context.proposal.resultCanonicalSha256) {
-      throw new AgentProposalError('PROPOSAL_RESULT_MISMATCH', 'Mutation result does not match the approved immutable proposal', 409)
+    return {
+      executionId,
+      context: { proposal: { ...context.proposal, status: 'applying' as const }, approval: context.approval, input: context.input }
     }
-    const completedAt = new Date().toISOString()
-    const executionUpdated = await transaction('agentActionExecutions').where({ id: executionId, status: 'applying', inputHash: context.proposal.inputHash }).update({ status: 'committed', completedAt, result })
-    const proposalUpdated = await transaction('agentProposals').where({ id: context.proposal.id, status: 'applying', inputHash: context.proposal.inputHash }).update({ status: 'applied', appliedAt: completedAt, applyResult: result })
-    if (executionUpdated !== 1 || proposalUpdated !== 1) throw new AgentProposalError('PROPOSAL_STATE_CHANGED', 'Proposal completion lost its execution fence', 409)
-    return { proposalId: context.proposal.id, status: 'applied', result: rawResult, resultHash }
   })
+
+  try {
+    if (input.signal.aborted) throw new AgentProposalError('ACTION_CANCELLED', 'Proposal apply was cancelled before mutation dispatch', 409)
+    const rawResult = await input.mutate(claim.context)
+    return await commitResult(claim.executionId, rawResult)
+  } catch (error: unknown) {
+    const recovered = await input.reconcile(claim.context)
+    if (recovered !== null) return commitResult(claim.executionId, recovered)
+    await knex.transaction(async transaction => {
+      await transaction('agentActionExecutions').where({ id: claim.executionId, status: 'applying' }).update({
+        status: 'failed',
+        completedAt: transaction.fn.now(),
+        error: 'mutation_failed'
+      })
+      await transaction('agentProposals').where({ id: input.proposalId, status: 'applying' }).update({ status: 'failed' })
+    })
+    throw error
+  }
 }

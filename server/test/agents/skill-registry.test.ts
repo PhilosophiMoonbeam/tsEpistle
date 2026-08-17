@@ -1,9 +1,10 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import createKnex, { type Knex } from 'knex'
 
 import { decodeSkillResourceBundle, encodeSkillResourceBundle } from '../../agents/skills/bundle.ts'
 import { buildApprovedSkillBundle, type SkillResourceInput } from '../../agents/skills/parser.ts'
 import { SkillRegistry, type SkillSourceResolver } from '../../agents/skills/registry.ts'
+import { resolvePageNativeSkillSource } from '../../agents/skills/wiki-source.ts'
 
 const entryBytes = (description: string) => Buffer.from(`---\nname: release-notes\ndescription: ${description}\nallowed-tools: pages.search\n---\nSummarize recent pages.\n`)
 
@@ -59,6 +60,7 @@ describe('immutable skill registry', () => {
   let sourceRevision: string
   let sourceDescription: string
   let registry: SkillRegistry
+  const requester = { id: 1 } as Express.User
 
   beforeEach(async () => {
     db = createKnex({ client: 'better-sqlite3', connection: { filename: ':memory:' }, useNullAsDefault: true })
@@ -105,12 +107,13 @@ describe('immutable skill registry', () => {
 
   it('rejects source drift between preview and approval', async () => {
     const skillId = await createSkill()
-    const preview = await registry.preview(skillId)
+    const preview = await registry.preview(skillId, requester)
     sourceRevision = '2'
     sourceDescription = 'Changed revision'
     await expect(registry.approve({
       skillId,
       actorId: 1,
+      requester,
       expectedContentHash: preview.contentHash,
       expectedSourceRevision: preview.sourceRevision
     })).rejects.toThrow('changed after approval preview')
@@ -119,10 +122,11 @@ describe('immutable skill registry', () => {
 
   it('pins immutable approved versions, enables explicitly, and reports source drift', async () => {
     const skillId = await createSkill()
-    const firstPreview = await registry.preview(skillId)
+    const firstPreview = await registry.preview(skillId, requester)
     const firstVersion = await registry.approve({
       skillId,
       actorId: 1,
+      requester,
       expectedContentHash: firstPreview.contentHash,
       expectedSourceRevision: firstPreview.sourceRevision
     })
@@ -134,10 +138,11 @@ describe('immutable skill registry', () => {
     await db('pages').where({ id: 42 }).update({ sourceRevision: 2, content: entryBytes(sourceDescription).toString('utf8') })
     expect((await registry.list())[0]).toMatchObject({ currentVersionId: firstVersion, drifted: true })
 
-    const secondPreview = await registry.preview(skillId)
+    const secondPreview = await registry.preview(skillId, requester)
     const secondVersion = await registry.approve({
       skillId,
       actorId: 1,
+      requester,
       expectedContentHash: secondPreview.contentHash,
       expectedSourceRevision: secondPreview.sourceRevision
     })
@@ -150,10 +155,11 @@ describe('immutable skill registry', () => {
 
   it('persists terminal rejection and cannot reinterpret it as approval', async () => {
     const skillId = await createSkill()
-    const preview = await registry.preview(skillId)
+    const preview = await registry.preview(skillId, requester)
     const rejectedVersion = await registry.reject({
       skillId,
       actorId: 1,
+      requester,
       expectedContentHash: preview.contentHash,
       expectedSourceRevision: preview.sourceRevision
     })
@@ -161,6 +167,7 @@ describe('immutable skill registry', () => {
     await expect(registry.approve({
       skillId,
       actorId: 1,
+      requester,
       expectedContentHash: preview.contentHash,
       expectedSourceRevision: preview.sourceRevision
     })).rejects.toThrow('different terminal review')
@@ -188,5 +195,53 @@ describe('skill resource bundle codec', () => {
     expect(decoded[0]?.bytes.equals(resourceInput.bytes)).toBe(true)
     encoded[encoded.byteLength - 1] ^= 1
     expect(() => decodeSkillResourceBundle(encoded)).toThrow('hash does not match')
+  })
+})
+
+describe('page-native skill source authorization', () => {
+  let db: Knex
+  const previousWiki = Reflect.get(globalThis, 'WIKI')
+  beforeEach(async () => {
+    db = createKnex({ client: 'better-sqlite3', connection: { filename: ':memory:' }, useNullAsDefault: true })
+    await db.schema.createTable('pages', table => {
+      table.integer('id').primary()
+      table.string('path')
+      table.string('localeCode')
+      table.string('visibility')
+      table.integer('ownerId').nullable()
+      table.text('content')
+      table.string('contentType')
+      table.bigInteger('sourceRevision')
+      table.string('updatedAt')
+    })
+    await db.schema.createTable('pageTags', table => { table.integer('pageId'); table.integer('tagId') })
+    await db.schema.createTable('tags', table => { table.integer('id'); table.string('tag') })
+    await db.schema.createTable('pageHistory', table => { table.integer('id'); table.integer('pageId'); table.bigInteger('sourceRevision') })
+    await db('pages').insert({
+      id: 42,
+      path: 'system/agent-skills/release-notes',
+      localeCode: 'en',
+      visibility: 'public',
+      ownerId: null,
+      content: entryBytes('Authorized source').toString('utf8'),
+      contentType: 'markdown',
+      sourceRevision: 1,
+      updatedAt: '2026-08-17T00:00:00.000Z'
+    })
+  })
+  afterEach(async () => {
+    await db.destroy()
+    Reflect.set(globalThis, 'WIKI', previousWiki)
+  })
+
+  it('fails closed when the reviewing administrator cannot read the mapped page', async () => {
+    const checkAccess = vi.fn().mockReturnValue(false)
+    Reflect.set(globalThis, 'WIKI', { auth: { checkAccess } })
+    await expect(resolvePageNativeSkillSource(db, {
+      rootPageId: 42,
+      rootPath: 'system/agent-skills/release-notes',
+      assetFolderId: null
+    }, { id: 7 } as Express.User)).rejects.toThrow('Skill source page is unavailable')
+    expect(checkAccess).toHaveBeenCalledWith(expect.objectContaining({ id: 7 }), ['read:pages'], expect.objectContaining({ path: 'system/agent-skills/release-notes', locale: 'en' }))
   })
 })

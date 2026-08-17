@@ -2,6 +2,7 @@ import type { Knex } from 'knex'
 import type { AgentFeatureFlags, RequestAuthContext } from '../../../shared/agents/contracts.ts'
 import { ActionKernel, type ActionAdmissionSnapshot } from '../actions/kernel.ts'
 import type { AgentEngineRequest } from '../runtime.ts'
+import { markAgentRunSideEffectsStarted } from '../coordinator.ts'
 import { AgentRepositoryError } from '../repository.ts'
 import { AxSessionHarness, type AxActionSession } from './session-harness.ts'
 import type { AgentActionSessionProvider } from './engine.ts'
@@ -55,7 +56,8 @@ export class KernelActionSessionProvider implements AgentActionSessionProvider {
         actionCallId,
         input,
         signal,
-        refreshAdmission: () => this.#dependencies.refreshAdmission(request)
+        refreshAdmission: () => this.#dependencies.refreshAdmission(request),
+        fenceSideEffect: () => markAgentRunSideEffectsStarted(this.#dependencies.knex, request.run)
       })
     })
     return harness.open(offered, decodeSnapshot(row.runtimeStateCiphertext))

@@ -205,7 +205,7 @@ describe('agent proposal repository', () => {
       summary: 'Move page'
     })).rejects.toMatchObject({ code: 'INVALID_PROPOSAL_SCOPE', status: 400 })
   })
-  it('decides and applies once through one transaction-fenced execution claim', async () => {
+  it('persists an execution claim before mutation and applies once', async () => {
     const draft = {
       authority: authority(),
       runId: '00000000-0000-4000-8000-000000000010',
@@ -227,8 +227,8 @@ describe('agent proposal repository', () => {
       decision: 'approved',
       authorize
     })
-    const mutate = vi.fn(async ({ transaction }) => {
-      await transaction('appliedPages').insert({ id: 42, path: 'docs/next' })
+    const mutate = vi.fn(async () => {
+      await knex('appliedPages').insert({ id: 42, path: 'docs/next' })
       return { page: { id: 42, path: 'docs/next' } }
     })
     const request = {
@@ -237,7 +237,8 @@ describe('agent proposal repository', () => {
       authority: applyingAuthority(),
       signal: new AbortController().signal,
       reauthorize: vi.fn().mockResolvedValue(undefined),
-      mutate
+      mutate,
+      reconcile: async () => null
     }
 
     const first = await applyApprovedProposal(knex, request)
@@ -253,7 +254,44 @@ describe('agent proposal repository', () => {
     await expect(knex('agentProposals').select('status')).resolves.toEqual([{ status: 'applied' }])
   })
 
-  it('rolls back the execution claim and domain mutation on apply failure', async () => {
+  it('reconciles a committed domain mutation when execution loses its response', async () => {
+    const persisted = await persistProposal(knex, {
+      authority: authority(),
+      runId: '00000000-0000-4000-8000-000000000010',
+      sessionId: '00000000-0000-4000-8000-000000000020',
+      risk: 'proposal',
+      actionCallId: 'call-recovery',
+      input: { pageId: 42, destinationPath: 'docs/next' },
+      operation: { kind: 'move' },
+      summary: 'Move page',
+      pageId: 42,
+      baseSourceRevision: '8'
+    })
+    await decideProposal(knex, {
+      proposalId: persisted.proposal.id,
+      approvalId: persisted.approval.id,
+      userId: 7,
+      decision: 'approved',
+      authorize: async () => {}
+    })
+    const expected = { page: { id: 42, path: 'docs/next' } }
+    const result = await applyApprovedProposal(knex, {
+      proposalId: persisted.proposal.id,
+      approvalId: persisted.approval.id,
+      authority: applyingAuthority(),
+      signal: new AbortController().signal,
+      reauthorize: async () => {},
+      mutate: async () => {
+        await knex('appliedPages').insert({ id: 42, path: 'docs/next' })
+        throw new Error('connection lost after commit')
+      },
+      reconcile: async () => await knex('appliedPages').where({ id: 42, path: 'docs/next' }).first() ? expected : null
+    })
+    expect(result).toMatchObject({ status: 'applied', result: expected })
+    await expect(knex('agentActionExecutions').select('status', 'error')).resolves.toEqual([{ status: 'committed', error: null }])
+  })
+
+  it('records a terminal failed claim when the domain transaction rolls back', async () => {
     const persisted = await persistProposal(knex, {
       authority: authority(),
       runId: '00000000-0000-4000-8000-000000000010',
@@ -280,15 +318,16 @@ describe('agent proposal repository', () => {
       authority: applyingAuthority(),
       signal: new AbortController().signal,
       reauthorize: async () => {},
-      mutate: async ({ transaction }) => {
+      mutate: async () => knex.transaction(async transaction => {
         await transaction('appliedPages').insert({ id: 42, path: 'docs/next' })
         throw new Error('domain write failed')
-      }
+      }),
+      reconcile: async () => null
     })).rejects.toThrow('domain write failed')
 
     await expect(knex('appliedPages')).resolves.toHaveLength(0)
-    await expect(knex('agentActionExecutions')).resolves.toHaveLength(0)
-    await expect(knex('agentProposals').select('status')).resolves.toEqual([{ status: 'approved' }])
+    await expect(knex('agentActionExecutions').select('status')).resolves.toEqual([{ status: 'failed' }])
+    await expect(knex('agentProposals').select('status')).resolves.toEqual([{ status: 'failed' }])
   })
 
   it('commits expiry before returning an expired decision error', async () => {
@@ -345,6 +384,7 @@ describe('agent proposal repository', () => {
         const input = value.input as { destinationPath: string; destinationLocale: string }
         currentPage = { ...currentPage, path: input.destinationPath, locale: input.destinationLocale, sourceRevision: '9' }
       }),
+      authorizeMutation: vi.fn(async () => {}),
       restore: vi.fn(),
       remove: vi.fn()
     }

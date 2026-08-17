@@ -20,7 +20,7 @@ export type SiteConfig = {
   product: ProductMetadata
   agentsEnabled: boolean
   agentProviderEnabled: boolean
-  agentLaunchCsrfToken: string
+  agentCsrfToken: string
   path?: string
   devMode?: boolean
 }

@@ -1,6 +1,6 @@
 # First-class agent architecture and implementation plan
 
-- **Status:** implementation complete at A1-J3; installed with all rollout flags disabled by default
+- **Status:** implemented product baseline; ordinary-Wiki inline architecture authoritative; release evidence must be regenerated for the final revision
 - **Date:** 2026-08-17
 - **Wiki.ts revision assessed:** `05ee166091c0858f5df231a7f82cec960e2befe16` (`docs: clarify MCP approval boundary`)
 - **Ax reference:** `@ax-llm/ax` `23.0.15`, source revision `3ff5ff4689f01afc1d8498a64f698bc5e5a3cf6a`
@@ -10,13 +10,10 @@
 
 ## Implementation progress
 
-- **Completed source revision:** `cea142b55f6acb3ea0b2b431e3e51d1da447e6af` (`feat: implement first-class agent architecture`)
-- **Scope completed:** all A1-J3 beads, including shared contracts and action policy, page-native skills, durable PostgreSQL sessions/runs/events, provider transports and conformance, the isolated user/admin client, browser-worker isolation, proposal-first writes, MCP transport, observability, deployment documentation, and release gates.
-- **Automated evidence:** 1,603 tests passed with 7 skipped across 215 passing files and 2 skipped files; shared/server/client typechecks, dependency policy, 664-record production license inventory, frozen agent release inputs, PostgreSQL migration/rollback integration, and the AMD64/ARM64 browser-worker OCI build passed.
-- **Installed deployment:** `wiki-tailnet:330e44c7` (image `sha256:9b0d63bf325e3144ae9443320d3d09138cd56c46245b953992a6fb8c6d1779ee`) replaced revision `d437decd` on 2026-08-17. Runtime environment, persistent content volume, PostgreSQL service, loopback port `3013`, Docker network, and `unless-stopped` policy were preserved.
-- **Database state:** migration `2.5.139.js` is applied. A verified pre-upgrade PostgreSQL custom-format backup with 301 restore entries is retained at `~/.local/state/wiki-migration/2026-08-17/wiki-pre-agent-cea142b5.dump`.
-- **Tailnet verification:** `https://agents8c48g.tail41a24a.ts.net:10443/` proxies the ordinary Wiki origin and `https://agents8c48g.tail41a24a.ts.net:11443/` proxies the isolated agents origin. The rebuilt container is healthy; `/healthz` returns HTTP 200; persisted content renders; the homepage Ask form issues a one-time handoff; isolated local authentication succeeds; and the handoff creates an owned agent session.
-- **Rollout state:** the agent shell is enabled for users with `use:agents` and administrators with `manage:system`. Provider inference, skills, browser tools, proposals, writes, and MCP remain disabled. A provider credential, enabled conformed profile, and controlled provider kill-switch rollout are still required before model responses can run.
+- **Architecture decision:** the Wiki agent is an inline mode of the ordinary header search surface. It reuses the authenticated Wiki user session, ordinary-origin CSRF protection, routing, localization, and administration layout. There is no separate agent web application, origin, login, launch handoff, popup, or sidecar window.
+- **Implemented baseline:** shared contracts and policy, page-native skills, durable PostgreSQL sessions/runs/events, provider transports, the inline user/admin client, browser-worker isolation, proposal-first writes, MCP transport, metrics, and maintenance exist in source.
+- **Evidence status:** evidence attributed to earlier isolated-origin revisions is historical and does not satisfy the corrected release. Gate J must regenerate tests, accessibility results, manifests, checksums, SBOM, provenance, deployment, and rollback evidence for one final revision.
+- **Installed deployment:** the ordinary Wiki origin currently exposes Search and Ask inline. Provider inference, skills, browser tools, proposals, writes, and MCP remain controlled by independent disabled-by-default settings.
 
 This plan defines agents as a Wiki.ts product capability, not as a chat widget attached to a privileged backend. The same policy-aware action kernel will serve the in-product Ax agent and authenticated external MCP clients. Wiki.ts remains authoritative for identity, page visibility, permissions, approvals, persistence, audit, quotas, and transport. Ax owns model orchestration only. The MCP SDK owns protocol conformance only. CopilotKit is a UX and interaction-state reference only and is not a dependency.
 
@@ -38,7 +35,7 @@ Build the capability, with these boundaries:
 10. **Serve MCP over the official Streamable HTTP implementation.** Mount v2 `/mcp` only on a dedicated configured origin behind API-key, Host/Origin/resource, limits, and the shared kernel. Do not shadow Wiki pages or expose a bespoke nested-agent API.
 11. **Borrow coding-harness safety contracts, not their runtimes.** Codex contributes preflight/atomic patch semantics and durable response-item history; Oh My Pi contributes snapshot-tagged line anchors, all-or-nothing patching, progressive skill injection, and append-only custom session state. Wiki.ts implements those contracts over pages and PostgreSQL.
 12. **Borrow CopilotKit’s useful interaction contracts, not its runtime.** Adopt explicit thread/run state, tool lifecycle cards, renderer registration, render-and-wait approvals, follow-up suggestions, and headless state separation in native Vue/Vuetify components.
-13. **Ship disabled and progress through read-only, skills, canary browser, write, then MCP gates.** A migration does not enable egress. Provider, agent UI, skill loading, browsing, writes, and MCP each have independent kill switches.
+13. **Ship disabled and progress through read-only, skills, canary browser, write, then MCP gates.** A migration does not enable egress. Provider, inline Ask, skill loading, browsing, writes, and MCP each have independent kill switches.
 
 ## Product contract
 
@@ -83,7 +80,7 @@ The plan adapts to the current code rather than assuming a greenfield applicatio
 - The application is PostgreSQL-only, runs Node.js 24 in current build/deployment flows, and uses additive Knex migrations with migration preflight and upgrade smoke coverage.
 - The application is a single Vite/Express release artifact. New dependencies belong in the root manifest; no artificial frontend/backend package split is introduced.
 - The client is Vue 3 + Vuetify 4 + Pinia. Native components remain the UI authority.
-- `/a` and `/p` remain ordinary Wiki shells. Agent user/admin surfaces use a dedicated origin; ordinary `/_agent` and `/mcp` page paths are never reserved or shadowed.
+- `/a`, `/p`, and every ordinary page route remain ordinary Wiki shells. Agent REST is an authenticated internal API under `/_api/agents`; the inline user surface lives inside the existing search overlay, and administration lives under `/admin/agents`. Only MCP retains a dedicated origin.
 - `package.json` already carries `@playwright/test` `1.62.1` for E2E, but the production image prunes development dependencies and installs no browser. Production browsing therefore needs an exact `playwright-core` dependency plus a separate browser-worker image; it must not assume the E2E runner or host Chrome exists.
 - The current page update path compares millisecond `expectedUpdatedAt` and writes history inside a transaction, but renderer-only patches also advance that field. Agent authority therefore needs a source-only monotonic revision rather than extending timestamp CAS.
 
@@ -198,11 +195,9 @@ Wiki.ts will implement the same useful concepts in native Pinia/Vue:
 
 ```mermaid
 flowchart LR
-  Header["Wiki header Search / Ask"] --> Launch["Opaque one-time launch handoff"]
-  Launch --> Client["Top-level Vue shell on isolated agents origin"]
-  DeepLink["agents origin /sessions/:id"] --> Client
-  Client --> Rest["Agent REST controller"]
-  Client --> SSE["Durable SSE event stream"]
+  Header["Wiki header Search / Ask"] --> Inline["Inline Vue Ask conversation"]
+  Inline --> Rest["Authenticated internal Agent REST"]
+  Inline --> SSE["Durable SSE event stream"]
   Rest --> Coordinator["Agent run coordinator"]
   Coordinator --> Engine["Ax AgentEngine adapter"]
   Profiles["Configured inference profiles"] <--> Engine
@@ -217,8 +212,8 @@ flowchart LR
   Skills --> DB
   Coordinator --> DB
   SSE --> DB
-  AgentAuth["Host-only agents-origin auth"] --> Rest
-  AgentAuth --> SSE
+  WikiAuth["Ordinary Wiki user session + CSRF"] --> Rest
+  WikiAuth --> SSE
   MCPAuth["Resource-bound API-key auth"] --> MCPAdapter
 ```
 
@@ -447,16 +442,9 @@ The additive migration adds `pages.sourceRevision bigint not null default 1` (in
 
 Indexes: `(ownerId, lastActivityAt desc)`, `(expiresAt)` for temporary purge. No cross-user sharing fields in the first schema.
 
-### `agentLaunchHandoffs`
+### Removed launch-handoff schema
 
-- `id uuid primary key`
-- `tokenSha256 bytea not null unique` — hash of a CSPRNG 256-bit single-use token; raw token is never persisted or logged
-- `ownerId integer not null references users(id) on delete cascade`
-- `pageId integer nullable`, `localeCode varchar(16) nullable`, `path text nullable`, `observedUpdatedAt dateTime nullable`
-- `pageHintSha256 bytea not null` — hash of the canonical bounded hint fields
-- `createdAt dateTime not null`, `expiresAt dateTime not null`, `consumedAt dateTime nullable`
-
-Index `(expiresAt)`. Issue requires ordinary-origin CSRF/Fetch-Metadata and current page read authorization. Redeem uses one atomic `UPDATE ... WHERE tokenSha256 = ? AND ownerId = ? AND consumedAt IS NULL AND expiresAt > now() RETURNING ...`, then reauthorizes the current page. No page content, session, profile, skill, or action grant is stored.
+The earlier isolated-window design introduced `agentLaunchHandoffs`. The inline architecture has no cross-origin launch or credential transfer, so no handoff repository is part of the product contract. A forward cleanup migration drops the transient table after application code stops reading it; its down migration recreates only the empty compatibility shape. Ordinary Wiki session authentication and the existing session-bound `agentCsrfToken` protect internal agent mutations.
 
 ### `agentMessages`
 
@@ -611,7 +599,7 @@ Store only bounded artifacts required to replay the user-visible session, initia
 - MCP proposal/approval/execution content defaults to seven days; terminal scrub retains content-free action/security identity for 90 days, then cascades deletion. Sessionless MCP skill-use audit retains only API-key/skill-version/operation/status/time—not path or returned bytes—for 90 days. Provider usage/cost ledgers are content-free and default to 90 days. D4 owns scrub/expiry.
 - Saved-session messages, citations, cards, skill/use provenance, artifact references, proposals, approvals, and results share the session clock. Terminal deltas compact only after complete message/renderer state materializes.
 
-Ship D4 as a standalone `wiki-agent-maintenance` entrypoint/image with only repository, retention, and lease capabilities. Helm keeps its scrub/expiry schedule at the current schema-compatible release even when the application rolls back to N-1; it cannot dispatch providers, browser calls, actions, or page outbox effects.
+Ship D4 as a standalone `wiki-agent-maintenance` entrypoint/image with only repository, retention, and lease capabilities. The deployment scheduler keeps its scrub/expiry job at the current schema-compatible release even when the application rolls back to N-1; it cannot dispatch providers, browser calls, actions, or page outbox effects.
 
 - Aggregate operational metrics may remain after content deletion but must not retain prompts, page/skill/browser content, tool arguments, screenshot bytes, or response text.
 - Normal application logs never contain message content, page/skill/browser content, provider keys, bearer tokens, approval payloads, request bodies, full tool results, or signed snapshot/request-state tokens.
@@ -661,7 +649,7 @@ One active run per session is the initial invariant. A second message returns `4
 
 ### Run execution
 
-1. Lock session and verify agents-origin owner/permission. Look up `(sessionId, clientRequestId)` first: exact canonical-hash match returns the original run without re-admission; hash mismatch conflicts.
+1. Lock session and verify the ordinary authenticated owner/permission. Look up `(sessionId, clientRequestId)` first: exact canonical-hash match returns the original run without re-admission; hash mismatch conflicts.
 2. Only for a new UUID, verify session version and profile-resolution MAC/revisions/mode/grants/conformance. Before egress atomically write messages, run with exact provider/capabilities and skill pins, quota reservation, and `run.queued`.
 3. Claim a run and construct a current principal snapshot reference, not an authorization grant.
 4. Build bounded context from PostgreSQL: summary through ordinal N, recent complete turns after N, exact selected skill versions, current-page identity, and current request. If the measured summary threshold is crossed, select the next complete older-turn range but make no provider call yet. Never depend on Ax process memory for a prior turn.
@@ -859,11 +847,9 @@ Browser content is open-world untrusted evidence. Results carry source URL/time 
 
 ### REST surface
 
-Serve `/_api/agents` only on the configured dedicated `agents.publicOrigin` virtual host, before that host's shell fallback. The ordinary Wiki host never mounts these routes and retains existing page resolution:
+Mount `/_api/agents` on the ordinary Wiki application after ordinary user authentication and before the general internal-API 404. The controller handles only its exact prefix and falls through for every other Wiki route. It accepts authenticated user sessions only; API-key principals remain confined to GraphQL and the dedicated MCP transport. Every non-GET request requires the ordinary session-bound agent CSRF header, an exact configured Wiki `Origin`, and `Sec-Fetch-Site: same-origin`.
 
-
-Refactor `server/core/auth.ts` composition so strategy factories take an explicit callback origin, audience, cookie/session namespace, and redirect URI. Instantiate separate agents-origin Passport/strategy registrations with independent state/nonce/PKCE and callback routes while mapping the verified subject to the same Wiki user. Administrators must register each enabled provider's agents-origin redirect URI; local login and every enabled SSO strategy need callback/logout tests. A strategy that cannot support the second exact callback is marked unavailable for agents—never bridged by transferring the ordinary Wiki session.
-Authentication on that host reuses configured identity strategies but issues a distinct `Secure`, host-only, `HttpOnly`, audience=`wiki-agents-ui` session cookie after an exact agents-origin callback. The launch token cannot mint or transfer this cookie, no authentication bearer appears in a URL, and the ordinary Wiki cookie domain/audience is rejected.
+No dedicated agent Passport strategies, callback URLs, JWT audience, cookie namespace, login pages, or cross-origin launch endpoint exist. Authentication lifecycle, revocation, localization, and account state are exactly the ordinary Wiki behavior.
 
 | Method | Path | Contract |
 | --- | --- | --- |
@@ -886,7 +872,7 @@ Authentication on that host reuses configured identity strategies but issues a d
 
 Session `PATCH`/profile/skill mutations require `expectedSessionVersion`, lock the owner row, reject active runs, and increment the version. Session creation requires explicit `executionMode`; an optional profile UUID defaults to null and resolves the current global default in the same transaction. Profile PUT accepts UUID or null. Create/PUT rechecks the resolved profile, grants, conformance, and mode; absent/incompatible defaults fail rather than switching mode or destination.
 
-Cross-owner IDs return 404. Agent proposals are owner-only; MCP proposal decisions additionally require an authenticated eligible human. Agent UI/API/artifacts use a host-only, audience-bound agents-origin session cookie obtained through authentication on that origin; the ordinary Wiki session cookie is not accepted. The agents host serves no page-authored content and enforces a closed CSP, `frame-ancestors 'none'`, no CORS, exact Host/Origin/Fetch-Metadata, JSON mutations, and reauthentication for approval decisions. The ordinary Wiki origin is rejected even though it is same-site.
+Cross-owner IDs return 404. Agent proposals are owner-only; MCP proposal decisions additionally require an authenticated eligible human. Agent UI/API/artifacts use the ordinary authenticated Wiki user session. Internal JSON mutations enforce exact Wiki Origin, Fetch Metadata, and session CSRF; approval execution also reauthorizes the current user, page authority, immutable hashes, and feature flags. CORS remains disabled. Agent routes never accept an API-key principal.
 
 `POST /messages` accepts:
 
@@ -939,23 +925,22 @@ Keep the existing search path intact:
 - The mobile extension receives the same mode and command row, not a separate behavior.
 - Guests and users without the feature see the existing search unchanged.
 
-### Isolated agent sidecar and deep link
+### Inline Ask conversation and approval deep links
 
-- Starting Ask submits a CSRF-protected same-origin HTML `POST` form under the direct user gesture with `target="_blank"`/`noopener`; the ordinary launch endpoint inserts the handoff and returns a `303` to the exact agents origin. A blocked popup exposes an explicit “Open Ask in this tab” form submit. The agent application is never embedded in an iframe and uses no parent `postMessage`; page-authored Wiki JavaScript therefore cannot read, script, or clickjack its credentialed surface.
-- The shell contains session history, temporary-chat toggle, provider/skill pickers, messages, citations, tool/browser/proposal cards, approvals, follow-ups, composer, Stop, and reconnect state. Its layout is right-panel compact at desktop sidecar widths and full-screen responsive on mobile.
-- `https://<agents-origin>/` starts a session and `/sessions/:sessionId` deep-links to an owned live session. The ordinary Wiki host reserves neither `/_agent` nor agent API paths.
-- The redirect carries the short-lived random handoff once in the `Location` query. The agents server validates it, applies `Referrer-Policy: no-referrer`, stores it only in a short-lived `Secure`/`HttpOnly`/`SameSite=Lax` path-scoped pre-auth cookie if login is required, and immediately redirects to a token-free URL. After agents-origin authentication it atomically consumes the hashed row for the same owner, clears the cookie, and reauthorizes the page. The handoff grants no authentication, session, action, provider, or skill authority.
-- The separate window can remain open across Wiki navigation. Context, profile, and skills are captured at message admission and cannot change during a run.
+- Selecting Ask switches the existing search overlay to an inline conversation without navigation, popup, iframe, separate bundle, or authentication transfer. The first submitted prompt creates the durable session through `/_api/agents`.
+- The inline surface contains session history, temporary-chat toggle, provider/skill pickers, messages, citations, tool/browser/proposal cards, approvals, follow-ups, composer, Stop, and reconnect state. It preserves ordinary Wiki navigation and focus; desktop and mobile use the same component tree.
+- Session context, profile, and skills are captured at message admission and cannot change during a run. Navigating Wiki pages does not mutate a running request.
 - Temporary sessions persist briefly for correctness; saved sessions are private, paginated, renameable, deletable, absent from search, and reconstructed from PostgreSQL.
+- MCP approval URLs target the ordinary Wiki origin with a bounded `agentApproval=<uuid>` query. The search overlay opens in Ask mode and embeds the exact approval renderer; loading and deciding still use the authenticated internal API and ordinary CSRF. The query contains only a proposal UUID, never a credential or authority grant.
 
 ### Native component/state layout
 
-Proposed files:
+Implemented files:
 
 - `shared/agents/contracts.ts` — runtime-free REST/event/session/action view types;
-- a dedicated agents-origin Vue entry, Pinia store, validated REST/SSE adapter, and responsive `agent-shell.vue`;
-- thread, composer, tool/proposal/approval/citation/skill/browser components under `client/components/agents/`;
-- `server/views/agent.pug` plus exact-host shell/auth/launch controllers.
+- `client/store/agents.ts` and `client/helpers/agents-api.ts` — Pinia state plus the validated ordinary-origin REST/SSE adapter;
+- `client/components/agents/inline-agent-chat.vue` plus thread, composer, tool/proposal/approval/citation/skill/browser components;
+- `client/components/admin/admin-agents.vue` embedding the complete control plane in the ordinary administration layout.
 
 Tool renderers receive a discriminated state:
 
@@ -981,7 +966,7 @@ Unknown tool names use a visible generic card. Missing renderers are not silentl
 
 ### Endpoint and authentication
 
-Serve `app.all('/mcp', ...)` only on an exact, dedicated `mcp.publicOrigin` virtual host with its own bounded parser, before that host's 404 fallback. The ordinary Wiki host does not reserve or mount `/mcp`; existing pages named `mcp` or `_agent` remain reachable. Startup/enablement rejects agent/MCP origins equal to the Wiki origin or each other, and ingress/Host/certificate/canonical-resource preflight must pass before either feature route activates.
+Serve `app.all('/mcp', ...)` only on an exact, dedicated `mcp.publicOrigin` virtual host with its own bounded parser, before that host's 404 fallback. The ordinary Wiki host does not reserve or mount `/mcp`; existing pages named `mcp` or `_agent` remain reachable. Startup/enablement rejects an MCP origin equal to the Wiki origin, and ingress/Host/certificate/canonical-resource preflight must pass before the feature route activates.
 
 Request pipeline:
 
@@ -1049,8 +1034,7 @@ Add native group-editor entries:
 
 ### Admin Agents page
 
-Add the complete admin console at `/admin` on the isolated agents origin; the ordinary Wiki admin surface contains only a status/launch link:
-
+Add the complete console at `/admin/agents` in the ordinary Wiki administration router and sidebar. It uses the same authenticated admin session, localization loader, navigation, and CSRF boundary as other administration pages:
 - proposal visibility plus sink-conformance/recovery readiness and independently gated create, patch, move, restore, and delete application;
 - inference profile enabled/status, transport kind, allowlisted models, measured capabilities, approved base URL, secret-reference status, connection/conformance test;
 - user-agent enabled;
@@ -1097,7 +1081,7 @@ A disabled provider rejects new dispatches and aborts in-flight model requests a
 | patch/create representation ambiguity | strict UTF-8 validator at prepare/apply, exact endings/hashes, signed disclosure and deterministic engine; no rebase | create and patch NUL/surrogate/CR/mixed/NFC/NFD/bidi/EOF/stale/tamper corpus |
 | duplicate/ambiguous mutation effect | one execution/revision; revision-fenced local projections; stable sink key; conforming receiver dedupe/postcondition or no agent write; ambiguity requires recovery | kill before/after commit and success-before-ack at every sink; reversed N/N+1 |
 | cross-user session/artifact access | owner predicates; 404 foreign IDs; no sharing; artifact no-store | REST/SSE/proposal/artifact enumeration |
-| page-script/cross-origin abuse | top-level dedicated agents origin, host-only audience cookie, no page content/iframe/CORS, exact Host/Origin, reauth approval | authored `extra.js`, hostile origin, clickjacking, cookie-audience, launch-token misuse |
+| page/script abuse on the ordinary origin | untrusted page/provider Markdown is sanitized and cannot execute; agent output is never bound as raw HTML; administrator-installed `extra.js` remains trusted with the same session authority as every other ordinary Wiki API; writes still require immutable approval and live authorization | streamed/final XSS corpus, authored page markup, hostile Origin/Fetch-Metadata, CSRF, and approval reauthorization tests; document the privileged `extra.js` trust boundary |
 | API-key confusion | typed auth context; API keys have no private ownership identity; MCP accepts API key only; `use:mcp`; revocation and dual-principal recheck | user cookie, revoked/wrong-group key, user-1 private page, wrong requester key, stale approver tests |
 | provider dialect/capability or stale-destination mismatch | immutable conformance, Ax/Wiki feature comparison, profile policy/default generation and admission token | all dialect fixtures plus profile replacement/default race rejected before egress |
 | token/provider secret leakage | env secret refs, request-body error output disabled, strict allowlisted error mapper, redacted logs/events, no token in `AuthInfo.extra`, bounded error text | failure paths prove request/response bodies, credential URLs, tokens, and content never reach logs/events/traces |
@@ -1113,7 +1097,7 @@ A disabled provider rejects new dispatches and aborts in-flight model requests a
 | malicious Markdown output | raw HTML disabled, sanitize, URL allowlist | XSS fixture in streamed/final output |
 | stale permissions during long run | live identity/permission reload before every action, approval, and apply | revoke user group/API key while run waits and prove next boundary denies |
 | MCP DNS rebinding / bad Host | official host validation and canonical resource metadata | invalid Host/Origin integration tests |
-| route shadowing | dedicated agents/MCP virtual hosts; ordinary host reserves no new page path; exact-host activation preflight | existing `mcp` and `_agent` pages before/after disabled deployment |
+| route shadowing | internal `/_api/agents` handles only its exact prefix and falls through otherwise; MCP uses a dedicated virtual host; ordinary `/mcp` and `/_agent` pages remain routable | existing `mcp` and `_agent` pages plus non-agent internal routes before/after disabled deployment |
 
 Security posture:
 
@@ -1159,25 +1143,20 @@ Initial observability does not inject OpenTelemetry into Ax. Wiki creates spans 
 
 ## Performance and capacity
 
-### Budgets to establish before general availability
+### Bounded configuration and focused checks before general availability
 
-Measure on the existing PostgreSQL 15–18 matrix and current container images:
+Keep hard safeguards even where a full synthetic capacity program is unnecessary: configurable global/per-user provider concurrency, browser context caps, SSE connection caps, run/message/context/output/event/artifact size limits, provider timeout, lease heartbeat/expiry, quota reservations, bounded retention batches, and bounded retry delay. Defaults must be conservative and invalid or unbounded configuration must fail startup.
 
-- header Search mode p95 unchanged within noise; no Ax/MCP code in the initial page bundle;
-- agents-origin application shell stays within an approved compressed/interactive budget;
-- `POST /messages` admission p95 under the ordinary internal API budget, excluding provider work;
-- SSE replay of 1,000 bounded events without unbounded heap growth;
-- event coalescing limits PostgreSQL writes per streamed response;
-- no more than configured per-user/fleet provider concurrency under races;
-- worker heartbeat/claim queries remain index-only/bounded at idle and load;
-- temporary purge uses bounded batches and does not hold long locks;
-- Node/Ax worker memory and termination remain inside container limits;
-- ingress maintains SSE without buffering and without exhausting upstream connections.
-- browser worker cold start/context creation/action p95, memory/PID caps, and egress proxy saturation;
-- skill registry listing and exact-version reads remain indexed/bounded;
-- patch preflight on maximum supported page/hunk sizes remains below the synchronous proposal budget.
+Focused verification covers:
 
-The ordinary Wiki bundle includes only the small Ask/launch control; it never imports the agents-origin application, Ax, or MCP. Search mode contacts no provider.
+- Search mode remains provider-free and responsive; the client bundle contains no Ax or MCP server runtime.
+- `POST /messages` admission performs no provider work and respects global/per-user concurrency under a race test.
+- SSE replay is bounded, coalesces deltas, applies per-user connection limits/backpressure, and closes on terminal events.
+- coordinator claim/heartbeat and maintenance queries use bounded batches and indexed predicates;
+- Node/Ax and browser workers honor configured time, memory, PID, action, context, and artifact limits;
+- browser/skill/patch inputs are capped before expensive processing.
+
+Operational metrics retain queue depth, admission latency, reconnect count, projection lag, browser contexts, maintenance backlog, token/cost reservations, and MCP active request/stream counts. Release evidence needs focused regression and configuration-boundary results, not an unrelated production-scale benchmark.
 
 ## Implementation roadmap
 
@@ -1205,33 +1184,33 @@ Each Bead is one reviewable, reversible commit series with named dependencies an
 
 | Bead | Owner | Depends on | Concrete deliverable | Required proof before merge |
 | --- | --- | --- | --- | --- |
-| A1 Shared contract/dependency freeze | contract/data | none | exact dependencies; shared contracts; dedicated agents/MCP origin, launch-token, cookie-audience, and virtual-host rules; license/SBOM inputs | typecheck; package/lock/license diff; origin threat review |
-| A2 Typed auth and permissions | contract/data | A1 | typed ownership/permissions plus separate agents-origin Passport strategies, callback/audience/cookie namespaces, API-key identity | local and each configured SSO callback/logout/state test; cross-origin/user/API-key matrix |
-| A3 Inert isolated shell/settings | contract/data + client | A1,A2 | flags false, exact-host agents shell/admin skeleton and disabled ordinary-host launch endpoint/link | startup/page/admin smoke; existing `/mcp`/`_agent` pages; host/collision/disabled-route; zero external network |
-| A4 Additive schema and rollback contract | contract/data | A1 | dependency-free source-revision/agent/outbox/launch-handoff migration plus N-1 tag-CAS compatibility patch | fresh/up/empty-down/upgrade PostgreSQL 15–18; actual N-1 field/tag writes |
+| A1 Shared contract/dependency freeze | contract/data | none | exact dependencies; shared contracts; ordinary authenticated internal agent API, dedicated MCP-origin rules, and license/SBOM inputs | typecheck; package/lock/license diff; trust-boundary review |
+| A2 Typed auth and permissions | contract/data | A1 | typed user/API-key ownership and permission contexts; ordinary user session for agent REST; resource-bound API-key identity for MCP | user/guest/API-key matrix; CSRF/origin/revocation tests |
+| A3 Inert inline shell/settings | contract/data + client | A1,A2 | flags false, inline Ask surface and ordinary `/admin/agents`; no separate agent entry, login, host, or launch route | startup/page/admin smoke; existing `/mcp`/`_agent` pages; disabled-route and zero-egress checks |
+| A4 Additive schema and rollback contract | contract/data | A1 | source-revision/agent/outbox migration, forward removal of obsolete handoff data, and N-1 tag-CAS compatibility patch | fresh/up/empty-down/upgrade PostgreSQL 16–17; actual N-1 field/tag writes |
 | B1 Page-native skill parser | skill | A1,A2 | page/asset-to-virtual-path mapper, YAML/frontmatter validator, one-level resolver, byte/media/path rules | real router corpus plus traversal/recursion/alias/active-content cases |
-| B2 Immutable skill registry + minimal admin | skill + contract/data + client | A3,A4,B1 | versions/approval/revoke/drift repositories plus isolated-origin list/validate/diff/approve/revoke surface | source-change race; admin permission/CSRF; exact hash/version rendering; no script execution |
+| B2 Immutable skill registry + minimal admin | skill + contract/data + client | A3,A4,B1 | versions/approval/revoke/drift repositories plus ordinary-admin list/validate/diff/approve/revoke surface | source-change race; admin permission/CSRF; exact hash/version rendering; no script execution |
 | B3 Skill selection, REST, runtime reads | skill | B2,C1,D1,D3 | ordered pins, principal `/skills`, versioned session mutation, `skills.list/read`, provenance/use audit, tool intersection | list-to-select revoke; restart exact version; allowed-tools cannot grant |
 | C1 Shared action kernel | policy/page | A1,A2 | catalog, Zod authority, executor, feature/risk/exposure gates | Ax/MCP schema/annotation parity without network |
 | C2 Permission-safe page reads | policy/page | C1 | search/get/recent/history/version/links over operations; bounded evidence | global/page-rule/private/manager/API-key parity |
 | C3 Hashline snapshot/patch engine | policy/page | C1 | source-revision snapshot/CAS, strict patch, disclosed ranges, create/source validator, deterministic diff/hash | Unicode/endings/create/patch/repeated-line/render-race/same-ms/stale/tamper corpus |
 | C4 Kernel adversarial review | verification/security | C2,C3 | independent authorization/input/redaction/prompt-injection matrix | no bypass; unavailable action unreachable |
 | C5 Transactional mutation/outbox core | policy/page + verification | A4,C1 | one source revision, immutable render/link projection, desired-state reconcile interfaces; migrate all callers | parity; N/N+1; rapid lifecycle; success-before-ack; nonconforming sink fails closed |
-| D1 Durable repositories/projection | contract/data | A4 | session/message/run/event/run-skill/artifact plus hashed launch-handoff repositories and reducer | sequence/idempotency/payload hash, atomic one-time consume, owner isolation |
+| D1 Durable repositories/projection | contract/data | A4 | session/message/run/event/run-skill/artifact repositories and reducer | sequence/idempotency/payload hash and owner isolation |
 | D2 Coordinator, lease, quota | contract/data | D1 | claim/heartbeat/fence/reservation/reconcile/cancel/shutdown | two-instance/lease-loss/no sleeping slot |
-| D3 Isolated-origin core REST/SSE | contract/data | A3,D1,D2 | exact-host session/run API/SSE plus ordinary-origin launch issue and agents-origin redeem | host audience, atomic cross-replica consume, ordinary-origin rejection, reconnect/foreign-ID |
-| D4 Retention and crash recovery | contract/data + verification | D2,D5 | session/use cascades, MCP scrub/audit expiry, launch-token expiry, compaction/recovery, maintenance entrypoint | kills; use purge; launch expiry; 7/90-day jobs; artifact expiry |
-| D5 Engine-neutral fake product loop | contract/data + verification | C2,D2,D3 | deterministic test-only engine through real isolated REST/SSE | end-to-end/restart before effects; no provider network |
-| E1 Profile registry, REST, minimal admin | inference + client | A3,A4,D3 | immutable versions, policy/default generations, resolution tokens, closed secret/URL schemas, isolated CRUD/default UI | default/list-to-select/message-egress races; mode/grant/redaction/DNS |
+| D3 Ordinary-origin core REST/SSE | contract/data | A3,D1,D2 | authenticated internal session/run API/SSE with same-origin CSRF and exact prefix fallthrough | user/API-key boundary, Origin/Fetch-Metadata/CSRF, reconnect/foreign-ID |
+| D4 Retention and crash recovery | contract/data + verification | D2,D5 | session/use cascades, MCP scrub/audit expiry, compaction/recovery, maintenance entrypoint | kills; use purge; 7/90-day jobs; artifact expiry |
+| D5 Engine-neutral fake product loop | contract/data + verification | C2,D2,D3 | deterministic test-only engine through real ordinary-origin REST/SSE | end-to-end/restart before effects; no provider network |
+| E1 Profile registry, REST, minimal admin | inference + client | A3,A4,D3 | immutable versions, policy/default generations, resolution tokens, closed secret/URL schemas, ordinary-admin CRUD/default UI | default/list-to-select/message-egress races; mode/grant/redaction/DNS |
 | E2 OpenAI transports | inference | E1 | Responses service with encrypted reasoning continuation plus Ax Chat factory; storage-off typed mapping and one-attempt parser | reasoning/call/result, include field, fragments/refusal/usage/abort/429 |
-| E3 OpenResponses, legacy, Anthropic | inference | E1 | generated OpenResponses, generation-only legacy, native Anthropic | dialect fixtures; legacy rejection before network |
+| E3 OpenResponses, legacy, Anthropic | inference | E1 | schema-validated OpenResponses adapter, generation-only legacy, native Anthropic | dialect fixtures; malformed request/event rejection; legacy rejection before network |
 | E4 Ax session harness | inference | D5,E2 | production engine, deterministic typed context, wrappers, citations, summary/title, bounded reduction | field-order, exact getFeatures overlap, descriptor branches, multi-turn/restart |
-| E5 Provider conformance and smoke | inference + verification | E2,E3,E4 | universal/capability gates, supported isolated-admin runner, one real read smoke | exact revision selectable; AxAgent-level measured/advertised equality; credentials removed |
-| F1 Search/Ask launch | client | D3,E4 | explicit Search/Ask and top-level form-POST/303 isolated sidecar launch | search baseline; blocked-popup fallback; token stripped; no provider before submit |
-| F2 Session client/renderers | client | D3,E4 | isolated-origin Pinia/API/SSE shell, history, Stop, reconnect, citations, tool states | saved/temporary/reconnect/cancel/delete desktop/mobile |
+| E5 Provider conformance and smoke | inference + verification | E2,E3,E4 | universal/capability gates, ordinary-admin runner, one real read smoke | exact revision selectable; measured/advertised equality; credentials removed |
+| F1 Inline Search/Ask | client | D3,E4 | explicit Search/Ask mode in the existing search overlay with no navigation or popup | search baseline, keyboard switch, no provider before submit |
+| F2 Session client/renderers | client | D3,E4 | inline Pinia/API/SSE conversation, history, Stop, reconnect, citations, tool states | saved/temporary/reconnect/cancel/delete desktop/mobile |
 | F3 Profile/mode/skill UX | client + skill | B3,E1,F2 | safe picker, explicit generation-only, drift/provenance cards, resolution-token conflict UI | exact reconstruction; replace/default/revoke/mode races |
-| F4 Accessibility/localization gate | client + verification | F1,F2,F3 | focus/keyboard/live-region/theme/reduced-motion/forced-color | Chromium desktop/390x844; no serious Axe issue |
-| F5 Complete isolated admin console | client + lead | A3,B2,D4,E1,G1,H5,I3,J1 | extend early skill/provider sections with browser/write/MCP/quota/retention/metrics and all kill switches | desktop/mobile/a11y/admin-permission/degraded; no scaffold |
+| F4 Accessibility/localization gate | client + verification | F1,F2,F3 | focus/keyboard/live-region/theme/reduced-motion/forced-color and localized labels | Chromium desktop/390x844; keyboard flow; no serious Axe issue |
+| F5 Complete ordinary admin console | client + lead | A3,B2,D4,E1,G1,H5,I3,J1 | extend early skill/provider sections with browser/write/MCP/quota/retention/metrics and all kill switches | desktop/mobile/a11y/admin-permission/degraded; no scaffold |
 | G1 Browser worker release image | browser | A1,D2 | pinned Playwright/Chromium, signed affinity/idempotency protocol, sandbox/limits/drain | multi-arch; lost/duplicate/reorder/key rotation; no secrets |
 | G2 Browser URL/egress/actions | browser + verification | G1,C1 | shared canonical target, Chromium exact-URL/GET interception, forced L3/4 gateway, actions/refs/budgets | alias/decode, blocked HEAD/POST, every-socket proof, rebinding/alternate protocols |
 | G3 Browser artifacts/UI/REST | browser + client | D3,F2,G2 | canonical PNG, `GET /artifacts/:id` exact headers/auth, cards/unavailable states | owner/expiry/quota/polyglot plus visual smoke |
@@ -1243,8 +1222,8 @@ Each Bead is one reviewable, reversible commit series with named dependencies an
 | I1 MCP transport/auth | MCP | A2,C1 | dedicated-host `/mcp`, parser, official v2 adapter, resource-bound auth | ordinary `/mcp` page unshadowed; Host/Origin/resource/legacy tests |
 | I2 MCP read/skill surface | MCP + skill | B3,C2,I1 | tools and nested skill resource, progress/cancel | official-client bytes/hash/path tests |
 | I3 MCP prepare/apply | MCP + policy/page | H2,I1 | caller UUID/hash, modern apply, legacy prepare, signed state, dual principal | reuse/tamper/replay/wrong-key/expiry tests |
-| J1 Observability/capacity | verification/security | C4,D4,E5,F4,G3,I2,I3 | bounded metrics/logs/benchmarks/quotas/no-content telemetry | load/outage/purge/cost/security reports |
-| J2 Deployment/documentation | lead/release | F5,G1,J1 | three ingress surfaces, agents SSO redirects, app/browser/maintenance images, N-1 compatibility, runbooks | install/auth/upgrade/rollback/drain and retention during N-1 |
+| J1 Observability/capacity safeguards | verification/security | C4,D4,E5,F4,G3,I2,I3 | bounded metrics/logs, configuration limits, focused race/backpressure checks, quotas, and no-content telemetry | outage/purge/cost/security and configuration-boundary reports |
+| J2 Deployment/documentation | lead/release | F5,G1,J1 | ordinary Wiki plus dedicated MCP ingress, app/browser/maintenance container procedures, N-1 compatibility, and runbooks | install/auth/upgrade/rollback/drain and retention during N-1 |
 | J3 Frozen-revision release gate | lead + independent security | C4,H5,J2 | remediation, provenance, manifest, flags/canary policy | all A1–I3 evidence; no stubs/secrets/test data; signed review |
 
 ### Integration gates
@@ -1255,7 +1234,7 @@ Complete A1–A4. All flags remain false. Existing browser/API authentication, G
 
 #### Gate B — approved skills without inference
 
-Complete B1–B2. The supported isolated admin surface can validate, diff, approve, disable, and revoke skills without inference or script execution. B3 integrates after D3 supplies durable session/run endpoints and pins.
+Complete B1–B2. The ordinary `/admin/agents` surface can validate, diff, approve, disable, and revoke skills without inference or script execution. B3 integrates after D3 supplies durable session/run endpoints and pins.
 
 #### Gate C — policy kernel and patch proof
 
@@ -1291,7 +1270,7 @@ Complete every A1–I3 Bead and J1–J3, including F5. Full quality, build, upgr
 
 ## Rollout
 1. **Land additive schema and disabled settings.** Deploy with every agent flag false. Verify ordinary Wiki behavior, exact-prior-image boot after an empty down migration, and actual N-1 compatibility-image field/tag writes while retaining the additive ledger.
-2. **Approve sample skills and conformance-test profiles in the isolated admin surface.** Keep user access false. Verify source drift/versioning and zero content egress from startup/health.
+2. **Approve sample skills and conformance-test profiles in `/admin/agents`.** Keep user access false. Verify source drift/versioning and zero content egress from startup/health.
 3. **Enable OpenAI Responses read-only for an explicit canary group.** Monitor search latency, provider egress/storage, policy denials, costs, SSE, memory, and exact session reconstruction.
 4. **Canary the remaining conformed transports one at a time.** A failing OpenResponses/Chat/legacy/Anthropic profile is disabled independently; legacy remains generation-only.
 5. **Enable approved skill selection.** Start with an internal skill namespace and inspect injection/read audit. Revocation must stop new use without breaking retained history.
@@ -1370,7 +1349,7 @@ Show only to the owning user and authorized operators:
 
 - guest/user/API-key/auth-kind/ownership matrix;
 - permissions, page rules, private ownership, system manager, and mid-run revocation;
-- page-authored `extra.js`, hostile origin, audience-cookie isolation, clickjacking, launch-token, exact virtual hosts, and ordinary `/mcp`/`/_agent` page continuity;
+- ordinary user session versus guest/API-key, hostile Origin/Fetch-Metadata, CSRF, privileged `extra.js` trust boundary, sanitized agent output, and ordinary `/mcp`/`/_agent` page continuity;
 - page/skill/browser prompt injection and cross-owner enumeration;
 - provider URL SSRF, profile-resolution race, and secret/header/error redaction;
 - browser canonical/raw disagreement, framework decoding, DNS/subresource rebinding, every-socket gateway proof, private ranges, unsafe GET, blocked HEAD/alternate methods/protocols/credentials;
@@ -1380,48 +1359,45 @@ Show only to the owning user and authorized operators:
 
 ### Behavioral/runtime
 
-- actual startup with all flags disabled, dedicated-host fallthrough, and ordinary route/health behavior;
-- fake engine through isolated REST/SSE with cancel/reconnect/quota/restart;
-- provider corpora, getFeatures/descriptor equality, encrypted Responses continuation, legacy rejection, real read smoke;
+- actual startup with all flags disabled, exact-prefix fallthrough, dedicated MCP-host rejection, and ordinary route/health behavior;
+- fake engine through ordinary-origin REST/SSE with cancel/reconnect/quota/restart;
+- provider corpora, getFeatures/descriptor equality, encrypted Responses continuation, distinct OpenResponses request/event validation, legacy rejection, and one controlled real read smoke;
 - exact create/patch/move/restore/delete approval in a disposable namespace;
 - browser actions against canonical/alias/malicious egress fixtures;
 - official MCP tool/resource/progress/cancel/input-required client;
 - process kills, multi-instance, approval reclaim, projection recovery, browser cleanup;
-- exact release, N-1 compatibility plus active retention maintenance, Helm Wiki/agents/MCP ingress, browser image/gateway.
+- exact release, PostgreSQL 16–17 migration/rollback, N-1 compatibility plus active retention maintenance, container deployment, SSE/MCP ingress, and optional browser worker.
 
 ### Browser/accessibility
 
 - existing Search keyboard/mouse/mobile/performance baseline;
-- explicit Ask, popup-block fallback, and no implicit provider call;
-- desktop sidecar/mobile top-level agents-origin shell, profile/skill choice, saved session;
+- explicit inline Ask mode and no implicit provider call;
+- desktop and 390x844 inline conversation, profile/skill choice, saved session, and ordinary navigation preservation;
 - reconnect/Last-Event-ID and temporary/delete/artifact-expiry;
-- tool/skill/browser/proposal/decision states;
+- tool/skill/browser/proposal/decision and MCP approval-deep-link states;
 - keyboard/focus/screen-reader/theme/motion/forced-colors;
-- no serious/critical Axe issue or layout shift from lazy launch controls.
+- no serious/critical Axe issue or layout shift from opening Ask.
 
 ### Release
 
 - lint and shared/server/client typechecks;
 - focused and full test suite;
-- production build, lazy bundle budgets, and provider-free initial client graph;
-- Wiki.js 2 upgrade and PostgreSQL 15–18 matrix;
+- production build and applicable bundle budgets;
+- Wiki.js 2 upgrade and PostgreSQL 16–17 matrix;
 - backup/restore, additive rollback, compatibility app plus maintenance retention;
 - multi-instance failover/rejoin/drain;
-- Helm install/upgrade/rollback with dedicated agents/MCP hosts, SSE, maintenance, optional browser;
+- container install/upgrade/rollback with ordinary Wiki and dedicated MCP ingress, SSE, maintenance, and optional browser worker;
 - AMD64/ARM64 app/browser/maintenance OCI plus ordinary Linux/Windows bundles with unsupported capability absent;
 - exact license/SBOM/checksum/manifest/provenance.
 
 ## Documentation deliverables
 
-Before enabling each surface:
+Keep documentation cohesive rather than creating one guide per subsystem:
 
-- user guide: Search versus Ask, providers, skills, browser privacy/limits, temporary/saved sessions, Stop, citations, proposals, approvals, conflicts, artifacts, deletion;
-- skill author guide: page namespace, `SKILL.md` frontmatter/resources, approval/version/drift/revoke, no script execution;
-- admin guide: isolated origin/auth, provider egress/secrets/conformance, skills, browser gateway, quotas, retention, writes, MCP, diagnostics, kill switches;
-- MCP guide: dedicated origin, API-key group/resource, clients, tools/resources, confirmation/progress/cancel/errors;
-- security document: origin isolation, data flows, provider storage, skills, browser canonicalization/egress, approvals/outbox/sink semantics, retention/logging;
-- operator runbook: outages, quota, leases, revoke, browser, SSE, MCP abuse, recovery, maintenance, disable/drain/rollback;
-- release notes: tables/settings, three public origins/ingress, secrets, browser/maintenance images, compatibility, default-disabled behavior.
+- extend the existing user/admin documentation with concise Search-versus-Ask, session, provider, skill, browser, proposal/approval, MCP, retention, and kill-switch sections;
+- maintain one agent security and privacy document covering ordinary-session trust, privileged `extra.js`, data/provider flows, prompt injection, browser canonicalization/egress, approvals/outbox/sink semantics, retention, and redacted logging;
+- maintain one operator runbook covering deployment, secrets, outages, quotas, leases, revocation, browser/SSE/MCP incidents, maintenance, backup, restore, disable, drain, N-1 compatibility, and rollback;
+- record user-visible behavior and migration/settings changes in the normal release notes.
 
 ## File-level implementation map
 
@@ -1429,14 +1405,13 @@ Expected existing-file updates:
 
 - `package.json`, lockfile, exact dependency/license/SBOM inputs;
 - `shared/index.ts` and `shared/agents/contracts.ts`;
-- `server/core/auth.ts`, Express request typings, `server/master.ts`;
-- `server/app/data.yml` default origin/settings configuration without reserving ordinary Wiki page paths;
+- Express request typings, `server/master.ts`, and ordinary authentication composition;
+- `server/app/data.yml` agent/MCP settings without a dedicated agent origin;
 - `server/db/migrations/<next>.ts`;
-- virtual-host composition/auth plus ordinary launch controller and MCP/agent controllers;
 - page operations/models, renderer/link projection, storage/collaboration effect interfaces and jobs;
-- header/search launch controls;
-- dedicated agents-origin client entry/shell and isolated admin navigation/views;
-- Docker/Helm/workflows for three origins, SSE/MCP, browser gateway/image, maintenance image/CronJob, smoke, and provenance.
+- ordinary internal agent controller plus dedicated MCP virtual-host composition;
+- header/search inline Ask controls and ordinary `/admin/agents` navigation/view;
+- Docker/workflow/container procedures for Wiki/MCP ingress, SSE, browser gateway/image, maintenance, smoke, and provenance.
 
 Expected new cohesive server modules:
 
@@ -1449,8 +1424,8 @@ Expected new cohesive server modules:
 - `server/agents/run-coordinator.ts`, `usage.ts`, `artifacts.ts`
 - `server/agents/browser/*` — signed client and browser action boundary
 - `server/agent-browser/*` — isolated Playwright worker executable
-- `server/controllers/api/agents.ts`
-- `server/controllers/mcp.ts`
+- `server/controllers/agents-host.ts`
+- `server/agents/mcp.ts`
 - `client/store/agents.ts`, `client/helpers/agents-api.ts`, and `client/components/agents/*`
 
 These are one feature boundary, not an invitation to split the root package or duplicate global runtime access. Controllers receive dependencies from the composition root; new modules do not reach through untyped `WIKI` globals where an injected interface is available.
@@ -1473,9 +1448,9 @@ The feature is complete only when all are true:
 12. Process death never blindly replays provider/browser/mutation/external effects; durable evidence yields a safe result or recovery.
 13. MCP uses official v2 packages on a dedicated origin and passes API-key/Host/Origin/resource, payload-bound idempotency, tools/resources, progress/cancel/modern/legacy tests.
 14. Quotas atomically bound provider/browser concurrency, tokens, time, context, output, events, artifacts, requests, and streams.
-15. The top-level agents origin accepts only its host-only audience credential and serves no page-authored content; ordinary Wiki pages/routes remain unchanged and cannot access agent sessions, approvals, or artifacts.
-16. Additive migrations preserve data; guarded empty-down permits pre-enable N-1, while tested compatibility app plus standalone maintenance preserve ledger and retention during rollback.
-17. Isolated native Vue/Vuetify user/admin surfaces pass responsive, keyboard, theme, motion, forced-color, reconnect, degraded, and accessibility gates; no scaffold remains.
+15. Agent REST accepts only ordinary authenticated user sessions on its exact internal prefix, enforces same-origin CSRF on mutations, rejects API-key principals, preserves unrelated Wiki routes, and exposes no separate agent host/login/launch surface.
+16. Additive migrations preserve data; the forward cleanup removes obsolete handoff state; guarded rollback permits pre-enable N-1 while tested compatibility code plus standalone maintenance preserve the authoritative ledger.
+17. Inline native Vue/Vuetify user and ordinary-admin surfaces pass responsive, keyboard, theme, motion, forced-color, reconnect, degraded, localization, and accessibility gates; no isolated client scaffold remains.
 18. Deployment, rollback/recovery, retention, privacy, provider/browser egress, skill governance, approvals/outbox/sink semantics, and incidents are documented and exercised.
 19. All artifacts retain one revision, dependency/license inventory, SBOM, checksums, manifest, and provenance.
 

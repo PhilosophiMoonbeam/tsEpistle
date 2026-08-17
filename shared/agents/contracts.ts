@@ -76,7 +76,7 @@ export type AgentSessionStatus = 'active' | 'deletion_pending'
 export type AgentRunStatus = 'queued' | 'running' | 'awaiting_approval' | 'succeeded' | 'failed' | 'cancelled' | 'recovery_required'
 export type AgentMessageRole = 'user' | 'assistant'
 export type AgentMessageStatus = 'pending' | 'streaming' | 'complete' | 'failed' | 'cancelled'
-export type AgentProposalStatus = 'pending' | 'approved' | 'denied' | 'expired' | 'applying' | 'applied' | 'failed' | 'cancelled'
+export type AgentProposalStatus = 'pending' | 'approved' | 'denied' | 'expired' | 'applying' | 'applied' | 'failed' | 'cancelled' | 'recovery_required'
 export type AgentApprovalStatus = 'pending' | 'approved' | 'denied' | 'expired' | 'cancelled'
 export type AgentToolState = 'preparing' | 'running' | 'awaitingApproval' | 'complete' | 'failed' | 'denied' | 'cancelled'
 
