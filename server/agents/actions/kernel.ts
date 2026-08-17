@@ -129,16 +129,20 @@ const requesterFromAuth = (auth: RequestAuthContext): ActionRequester => {
   return { kind: 'apiKey', apiKeyId: auth.apiKeyId, groupId: auth.groupId }
 }
 
+const hasAdmissionPermission = (snapshot: ActionAdmissionSnapshot, permission: string): boolean =>
+  snapshot.permissions.includes(permission) ||
+  (snapshot.transport === 'agent' && permission !== 'use:agent-browser' && snapshot.permissions.includes('manage:system'))
+
 const assertAdmission = (definition: ActionDefinition, snapshot: ActionAdmissionSnapshot): void => {
   const descriptor = definition.descriptor
   if (!descriptor.exposure[snapshot.transport]) throw new ActionKernelError('ACTION_NOT_EXPOSED', 'Action is not exposed on this transport', 404)
   if (snapshot.executionMode !== 'agent' || !snapshot.supportsTools) throw new ActionKernelError('TOOLS_UNAVAILABLE', 'The selected execution profile cannot use actions', 409)
   const basePermission = snapshot.transport === 'agent' ? 'use:agents' : 'use:mcp'
-  if (!snapshot.permissions.includes(basePermission)) throw new ActionKernelError('ACTION_FORBIDDEN', `Missing ${basePermission}`, 403)
+  if (!hasAdmissionPermission(snapshot, basePermission)) throw new ActionKernelError('ACTION_FORBIDDEN', `Missing ${basePermission}`, 403)
   for (const permission of descriptor.requiredPermissions) {
-    if (!snapshot.permissions.includes(permission)) throw new ActionKernelError('ACTION_FORBIDDEN', `Missing ${permission}`, 403)
+    if (!hasAdmissionPermission(snapshot, permission)) throw new ActionKernelError('ACTION_FORBIDDEN', `Missing ${permission}`, 403)
   }
-  if (descriptor.name === 'pages.applyProposal' && !snapshot.permissions.some(permission => permission === 'write:pages' || permission === 'delete:pages')) {
+  if (descriptor.name === 'pages.applyProposal' && !hasAdmissionPermission(snapshot, 'write:pages') && !hasAdmissionPermission(snapshot, 'delete:pages')) {
     throw new ActionKernelError('ACTION_FORBIDDEN', 'Missing page mutation permission', 403)
   }
   if (snapshot.transport === 'agent' && !snapshot.featureFlags['agents.provider.enabled']) {

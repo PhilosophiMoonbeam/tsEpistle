@@ -45,7 +45,7 @@ export const createAgentLaunchRouter = (getRuntime: () => AgentLaunchRuntime): e
       const wiki = getRuntime()
       if (!wiki.config.agents.enabled || !wiki.config.agents.publicOrigin) return res.sendStatus(404)
       if (!req.authContext || req.authContext.kind !== 'user') return res.sendStatus(401)
-      if (!req.user?.permissions?.includes('use:agents')) return res.sendStatus(403)
+      if (!req.user?.permissions?.some(permission => permission === 'use:agents' || permission === 'manage:system')) return res.sendStatus(403)
       const requestOrigin = req.get('origin')
       if (!requestOrigin || new URL(requestOrigin).origin !== new URL(wiki.config.host).origin || req.get('sec-fetch-site') !== 'same-origin') return res.sendStatus(403)
       const input = LaunchSchema.parse(req.body)

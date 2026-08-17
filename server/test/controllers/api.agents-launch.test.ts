@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import express from 'express'
 import session from 'express-session'
 import createKnex, { type Knex } from 'knex'
@@ -10,6 +10,7 @@ vi.mock('../../operations/pages.ts', () => ({
 }))
 
 const csrf = 'launch-csrf-token-with-at-least-thirty-two-bytes'
+let permissions = ['use:agents']
 
 describe('ordinary-origin agent launch', () => {
   let db: Knex
@@ -28,7 +29,7 @@ describe('ordinary-origin agent launch', () => {
     app.get('/seed', (req, res) => { Reflect.set(req.session, 'agentLaunchCsrfToken', csrf); res.sendStatus(204) })
     app.use((req, _res, next) => {
       req.authContext = { kind: 'user', userId: 7, ownershipUserId: 7, principal: { id: 7 } }
-      req.user = { id: 7, permissions: ['use:agents'] } as Express.User
+      req.user = { id: 7, permissions } as Express.User
       next()
     })
     app.use('/api/agents', createAgentLaunchRouter(() => ({ config: { host: 'https://wiki.example.test', agents: { enabled: true, publicOrigin: 'https://agents.example.test', launchTokenTtlSeconds: 300 } }, models: { knex: db } })))
@@ -46,6 +47,10 @@ describe('ordinary-origin agent launch', () => {
     await db.destroy()
   })
 
+  beforeEach(() => {
+    permissions = ['use:agents']
+  })
+
   it('reauthorizes the page and returns a one-time agents-origin 303 to form submissions', async () => {
     const body = new URLSearchParams({ csrfToken: csrf, pageId: '42', pageLocale: 'en', pagePath: 'guide', pageUpdatedAt: '2026-08-17T00:00:00.000Z' })
     const response = await fetch(`${baseUrl}/api/agents/launch`, { method: 'POST', redirect: 'manual', headers: { cookie, origin: 'https://wiki.example.test', 'sec-fetch-site': 'same-origin', 'content-type': 'application/x-www-form-urlencoded' }, body })
@@ -58,5 +63,13 @@ describe('ordinary-origin agent launch', () => {
   it('rejects a missing session-bound CSRF token before creating a handoff', async () => {
     const response = await fetch(`${baseUrl}/api/agents/launch`, { method: 'POST', headers: { cookie, origin: 'https://wiki.example.test', 'sec-fetch-site': 'same-origin', 'content-type': 'application/json' }, body: JSON.stringify({ page: null }) })
     expect(response.status).toBe(403)
+  })
+
+  it('allows a root administrator to launch without duplicating every global permission', async () => {
+    permissions = ['manage:system']
+    const body = new URLSearchParams({ csrfToken: csrf })
+    const response = await fetch(`${baseUrl}/api/agents/launch`, { method: 'POST', redirect: 'manual', headers: { cookie, origin: 'https://wiki.example.test', 'sec-fetch-site': 'same-origin', 'content-type': 'application/x-www-form-urlencoded' }, body })
+    expect(response.status).toBe(303)
+    expect(response.headers.get('location')).toMatch(/^https:\/\/agents\.example\.test\/\?handoff=[A-Za-z0-9_-]{43}$/)
   })
 })

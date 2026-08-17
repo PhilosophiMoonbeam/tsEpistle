@@ -410,7 +410,7 @@ export default defineComponent({
       }
     },
     searchEnter (event: KeyboardEvent) {
-      if ((event.ctrlKey || event.metaKey) && siteConfig.agentsEnabled && this.isAuthenticated && this.permissions.includes('use:agents')) {
+      if ((event.ctrlKey || event.metaKey) && siteConfig.agentsEnabled && this.isAuthenticated && this.permissions.some(permission => permission === 'use:agents' || permission === 'manage:system')) {
         this.searchMode = 'ask'
       }
       emitSearchEnter()

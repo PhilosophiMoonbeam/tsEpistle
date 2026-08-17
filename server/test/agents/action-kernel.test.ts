@@ -58,6 +58,13 @@ describe('shared action catalog admission', () => {
     expect(kernel.offer(auth, admission({ executionMode: 'generation-only' }), requestId)).toEqual([])
     expect(kernel.offer(auth, admission({ permissions: ['use:agents'] }), requestId).map(action => action.definition.descriptor.name)).toEqual(['skills.list', 'skills.read'])
     expect(kernel.offer(auth, admission({ featureFlags: { ...flags, 'agents.provider.enabled': false } }), requestId)).toEqual([])
+
+    const administratorActions = kernel.offer(auth, admission({ permissions: ['manage:system'] }), requestId).map(action => action.definition.descriptor.name)
+    expect(administratorActions).toContain('pages.get')
+    expect(administratorActions).not.toContain('browser.navigate')
+
+    const mcpAdministratorActions = kernel.offer(auth, admission({ transport: 'mcp', permissions: ['manage:system'] }), requestId)
+    expect(mcpAdministratorActions).toEqual([])
   })
 
   it('never advertises catalog actions without registered handlers', () => {

@@ -115,6 +115,9 @@ const routeParameter = (req: Request, name: string): string | null => {
   return typeof value === 'string' && value.length > 0 ? value : null
 }
 
+const hasAgentPermission = (user: Express.User | undefined): boolean =>
+  user?.permissions?.some(permission => permission === 'use:agents' || permission === 'manage:system') === true
+
 const requestState = (req: Request): string | null => {
   const queryState = req.query.state
   if (typeof queryState === 'string') return queryState
@@ -308,7 +311,7 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
 
   router.use(apiPrefix, wiki.auth.authenticateAgent.bind(wiki.auth), (req, res, next) => {
     if (!req.authContext || req.authContext.kind !== 'user') return res.sendStatus(401)
-    if (!req.user?.permissions?.some(permission => permission === 'use:agents' || permission === 'manage:system')) return res.sendStatus(403)
+    if (!hasAgentPermission(req.user)) return res.sendStatus(403)
     return next()
   })
   router.use(apiPrefix, express.json({ limit: '1mb', strict: true }))
@@ -500,7 +503,7 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
 
   router.use(['/_api/agents/skills', '/_api/agents/sessions/:sessionId/skills'], (req, res, next) => {
     if (!wiki.config.agents.skills.enabled) return res.sendStatus(404)
-    if (!req.user?.permissions?.includes('use:agents')) return res.sendStatus(403)
+    if (!hasAgentPermission(req.user)) return res.sendStatus(403)
     return next()
   })
   router.get('/_api/agents/skills', asyncRoute(async (req, res) => {

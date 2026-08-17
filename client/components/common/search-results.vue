@@ -168,7 +168,7 @@ export default defineComponent({
       return this.response.suggestions ? this.response.suggestions : []
     },
     canAsk(): boolean {
-      return siteConfig.agentsEnabled && wikiStore.user.authenticated && wikiStore.user.permissions.includes('use:agents')
+      return siteConfig.agentsEnabled && wikiStore.user.authenticated && wikiStore.user.permissions.some(permission => permission === 'use:agents' || permission === 'manage:system')
     },
     agentLaunchCsrfToken(): string { return siteConfig.agentLaunchCsrfToken },
     currentPageId(): number { return wikiStore.page.id },
