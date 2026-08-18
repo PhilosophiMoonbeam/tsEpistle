@@ -5,9 +5,9 @@
       Ask a question to search and read Wiki pages you are allowed to access.
     </v-alert>
     <article v-for="message in thread.messages" :key="message.id" class="agent-message" :class="`agent-message--${message.role}`">
-      <header class="text-body-small text-medium-emphasis mb-1">
+      <div class="text-body-small text-medium-emphasis mb-1">
         {{ message.role === 'user' ? 'You' : 'Wiki Agent' }} · {{ message.status }}
-      </header>
+      </div>
       <AgentMarkdown :content="message.content || (message.status === 'streaming' ? '…' : '')" />
       <nav v-if="message.citations.length" class="mt-3" aria-label="Citations">
         <v-chip

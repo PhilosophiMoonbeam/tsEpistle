@@ -85,7 +85,7 @@ interface PreparedProposal {
 const sha256 = (value: string | Uint8Array): string => createHash('sha256').update(value).digest('hex')
 const iso = (value: Date | string): string => (value instanceof Date ? value : new Date(value)).toISOString()
 const nextRevision = (revision: string): string => /^[0-9]+$/.test(revision) ? (BigInt(revision) + 1n).toString() : revision
-const pageNotFound = (error: unknown): boolean => error instanceof Error && (('code' in error && error.code === 'PAGE_NOT_FOUND') || error.name.includes('PageNotFound'))
+const pageNotFound = (error: unknown): boolean => error instanceof Error && (error.name === 'PAGE_NOT_FOUND' || ('code' in error && error.code === 'PAGE_NOT_FOUND') || error.name.includes('PageNotFound'))
 
 const parsePage = (value: unknown) => {
   const page = PageSchema.parse(value)
@@ -139,15 +139,37 @@ const appendRunEvent = async (dependencies: PageProposalActionDependencies, auth
 
 const waitForApproval = async (dependencies: PageProposalActionDependencies, context: ActionHandlerContext, persisted: PersistedProposal): Promise<ProposalStatus> => {
   const { proposal, approval: initialApproval } = persisted
-  if (proposal.status !== 'pending') return proposal.status
   const run = RunRowSchema.parse(await dependencies.knex('agentRuns').where({ id: context.authority.requestId }).first('attempts', 'leaseToken', 'status'))
-  const changed = await dependencies.knex('agentRuns')
-    .where({ id: context.authority.requestId, leaseToken: run.leaseToken, status: 'running' })
-    .whereNull('cancelRequestedAt')
-    .update({ status: 'awaiting_approval', updatedAt: dependencies.knex.fn.now() })
-  if (changed !== 1) throw new ActionKernelError('RUN_LEASE_LOST', 'Run lease was lost before approval', 409)
-  await appendRunEvent(dependencies, context.authority, proposal.id, 'proposal.created', { actionCallId: context.actionCallId, proposalId: proposal.id })
-  await appendRunEvent(dependencies, context.authority, initialApproval.id, 'approval.requested', { actionCallId: context.actionCallId, proposalId: proposal.id, approvalId: initialApproval.id })
+  let awaiting = run.status === 'awaiting_approval'
+  const resume = async (status: ProposalStatus): Promise<ProposalStatus> => {
+    if (!awaiting) return status
+    const resumed = await dependencies.knex('agentRuns')
+      .where({ id: context.authority.requestId, leaseToken: run.leaseToken, status: 'awaiting_approval' })
+      .whereNull('cancelRequestedAt')
+      .update({ status: 'running', updatedAt: dependencies.knex.fn.now() })
+    if (resumed !== 1) throw new ActionKernelError('RUN_LEASE_LOST', 'Run lease was lost while resolving approval', 409)
+    await appendRunEvent(dependencies, context.authority, randomUUID(), 'approval.resolved', {
+      actionCallId: context.actionCallId,
+      proposalId: proposal.id,
+      approvalId: initialApproval.id,
+      status
+    })
+    return status
+  }
+
+  if (proposal.status !== 'pending') return resume(proposal.status)
+  if (run.status === 'running') {
+    const changed = await dependencies.knex('agentRuns')
+      .where({ id: context.authority.requestId, leaseToken: run.leaseToken, status: 'running' })
+      .whereNull('cancelRequestedAt')
+      .update({ status: 'awaiting_approval', updatedAt: dependencies.knex.fn.now() })
+    if (changed !== 1) throw new ActionKernelError('RUN_LEASE_LOST', 'Run lease was lost before approval', 409)
+    awaiting = true
+    await appendRunEvent(dependencies, context.authority, proposal.id, 'proposal.created', { actionCallId: context.actionCallId, proposalId: proposal.id })
+    await appendRunEvent(dependencies, context.authority, initialApproval.id, 'approval.requested', { actionCallId: context.actionCallId, proposalId: proposal.id, approvalId: initialApproval.id })
+  } else if (run.status !== 'awaiting_approval') {
+    throw new ActionKernelError('RUN_LEASE_LOST', 'Run is not awaiting proposal approval', 409)
+  }
 
   for (;;) {
     if (context.signal.aborted) throw new ActionKernelError('ACTION_CANCELLED', 'Action was cancelled while awaiting approval', 409)
@@ -160,15 +182,7 @@ const waitForApproval = async (dependencies: PageProposalActionDependencies, con
       })
       status = 'expired'
     }
-    if (status !== 'pending') {
-      const resumed = await dependencies.knex('agentRuns')
-        .where({ id: context.authority.requestId, leaseToken: run.leaseToken, status: 'awaiting_approval' })
-        .whereNull('cancelRequestedAt')
-        .update({ status: 'running', updatedAt: dependencies.knex.fn.now() })
-      if (resumed !== 1) throw new ActionKernelError('RUN_LEASE_LOST', 'Run lease was lost while resolving approval', 409)
-      await appendRunEvent(dependencies, context.authority, randomUUID(), 'approval.resolved', { actionCallId: context.actionCallId, proposalId: proposal.id, approvalId: approval.id, status })
-      return status
-    }
+    if (status !== 'pending') return resume(status)
     await delay(250, undefined, { signal: context.signal })
   }
 }

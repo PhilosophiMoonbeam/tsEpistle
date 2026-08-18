@@ -7,6 +7,7 @@ import { AgentRepositoryError } from '../repository.ts'
 const MAX_SNAPSHOT_BYTES = 256 * 1_024
 const MAX_ACTION_RESULT_BYTES = 128 * 1_024
 const RESERVED_NAMES = ['__wikiActions'] as const
+const ACTION_FAILURE_KEY = '__wikiActionFailure'
 
 export interface AxHarnessFunction {
   readonly name: AgentActionName
@@ -69,9 +70,17 @@ export class AxSessionHarness {
     let invocationActionCallId: string | undefined
     const callbacks = Object.fromEntries(actions.map(action => [action.definition.descriptor.name, async (input: unknown) => {
       if (!invocationSignal || !invocationActionCallId) throw new AgentRepositoryError('ACTION_SESSION_INVALID', 'Action callback was invoked outside an active request', 500)
-      const output = await this.#execute(action, input, invocationSignal, invocationActionCallId)
-      boundedJson(output, MAX_ACTION_RESULT_BYTES, 'ACTION_RESULT_TOO_LARGE')
-      return output
+      try {
+        const output = await this.#execute(action, input, invocationSignal, invocationActionCallId)
+        boundedJson(output, MAX_ACTION_RESULT_BYTES, 'ACTION_RESULT_TOO_LARGE')
+        return output
+      } catch (error: unknown) {
+        const rawCode = typeof error === 'object' && error !== null ? Reflect.get(error, 'code') : undefined
+        const rawStatus = typeof error === 'object' && error !== null ? Reflect.get(error, 'status') : undefined
+        const code = typeof rawCode === 'string' && /^[A-Za-z0-9_.-]{1,128}$/.test(rawCode) ? rawCode : 'ACTION_FAILED'
+        const status = Number.isInteger(rawStatus) && Number(rawStatus) >= 400 && Number(rawStatus) <= 599 ? Number(rawStatus) : 500
+        return { [ACTION_FAILURE_KEY]: { code, status } }
+      }
     }]))
     const session: AxCodeSession = this.#runtime.createSession({ __wikiActions: Object.freeze(callbacks) })
     if (initialSnapshot) {
@@ -100,7 +109,14 @@ export class AxSessionHarness {
         invocationSignal = signal
         invocationActionCallId = actionCallId
         try {
-          return await session.execute(`await __wikiActions[${JSON.stringify(name)}](${inputJson})`, { signal, reservedNames: RESERVED_NAMES })
+          const result = await session.execute(`await __wikiActions[${JSON.stringify(name)}](${inputJson})`, { signal, reservedNames: RESERVED_NAMES })
+          if (typeof result === 'object' && result !== null && Object.hasOwn(result, ACTION_FAILURE_KEY)) {
+            const failure = Reflect.get(result, ACTION_FAILURE_KEY)
+            const code = typeof failure === 'object' && failure !== null ? Reflect.get(failure, 'code') : undefined
+            const status = typeof failure === 'object' && failure !== null ? Reflect.get(failure, 'status') : undefined
+            throw new AgentRepositoryError(typeof code === 'string' ? code : 'ACTION_FAILED', 'Action failed', Number.isInteger(status) ? Number(status) : 500)
+          }
+          return result
         } finally {
           invocationSignal = undefined
           invocationActionCallId = undefined

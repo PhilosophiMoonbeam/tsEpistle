@@ -60,7 +60,7 @@ interface AgentHostWiki {
   readonly models: {
     readonly knex: Knex
   }
-  readonly agentRuntime?: Pick<AgentProductRuntime, 'submit'>
+  readonly agentRuntime?: Pick<AgentProductRuntime, 'cancel' | 'submit'>
   readonly providerRegistry?: Pick<AgentProviderRegistry, 'create' | 'getAdmin' | 'issueResolutionToken' | 'listAll' | 'listVisible' | 'remove' | 'setDefault' | 'setEnabled' | 'setGrants' | 'setSessionProfile' | 'update'>
   readonly providerConformance?: Pick<AgentProviderConformanceRunner, 'latest' | 'list' | 'run'>
   readonly agentLimits?: AgentOperationalLimits
@@ -147,6 +147,25 @@ const proposalInput = (proposal: ProposalRecord): Record<string, unknown> => {
   }
   return value as Record<string, unknown>
 }
+const ProposalMutationOperationSchema = z.object({
+  kind: z.enum(['create', 'patch', 'move', 'restore', 'delete']),
+  operationInput: z.record(z.string(), z.unknown())
+})
+
+const authorizeProposalMutation = async (req: Request, proposal: ProposalRecord): Promise<void> => {
+  if (!req.user) throw new AgentRepositoryError('AUTHENTICATION_REQUIRED', 'Authenticated user is required', 401)
+  let operation: unknown
+  try {
+    operation = JSON.parse(proposal.operation)
+  } catch {
+    throw new AgentRepositoryError('PROPOSAL_LEDGER_CORRUPT', 'Proposal operation is invalid', 500)
+  }
+  const parsed = ProposalMutationOperationSchema.safeParse(operation)
+  if (!parsed.success) throw new AgentRepositoryError('PROPOSAL_LEDGER_CORRUPT', 'Proposal operation is invalid', 500)
+  const pageOperations = (await import('../operations/pages.ts')).default
+  await pageOperations.authorizeMutation({ kind: parsed.data.kind, input: parsed.data.operationInput, requester: req.user })
+}
+
 
 const authorizeProposalTarget = async (req: Request, proposal: ProposalRecord): Promise<void> => {
   if (proposal.pageId === null) return
@@ -225,11 +244,7 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
     const proposalId = UUIDSchema.parse(routeParameter(req, 'proposalId'))
     const persisted = await getMcpProposalForApproval(wiki.models.knex, proposalId)
     await authorizeProposalTarget(req, persisted.proposal)
-    const definition = ACTION_CATALOG[persisted.proposal.actionName]
-    const permissions = req.user?.permissions ?? []
-    if (!definition.descriptor.requiredPermissions.every(permission => permissions.includes(permission))) {
-      throw new AgentRepositoryError('ACTION_PERMISSION_DENIED', 'Proposal approval permission is required', 403)
-    }
+    await authorizeProposalMutation(req, persisted.proposal)
     const input = proposalInput(persisted.proposal)
     return res.json({
       proposal: {
@@ -273,17 +288,13 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
       ...(input.decisionNote === undefined ? {} : { decisionNote: input.decisionNote }),
       authorize: async ({ proposal }) => {
         await authorizeProposalTarget(req, proposal)
-        const definition = ACTION_CATALOG[proposal.actionName]
+        await authorizeProposalMutation(req, proposal)
         if (proposal.risk === 'destructive-write' && input.decision === 'approved') {
           const inputValue = proposalInput(proposal)
           const requiredPath = inputValue.confirmationPath
           if (typeof requiredPath !== 'string' || input.confirmationPath !== requiredPath) throw new AgentRepositoryError('DESTRUCTIVE_CONFIRMATION_REQUIRED', 'Exact page path confirmation is required', 409)
         }
         if (!proposalActionEnabled(wiki.config.agents, proposal.actionName)) throw new AgentRepositoryError('ACTION_DISABLED', 'Proposal action is disabled', 403)
-        const permissions = req.user?.permissions ?? []
-        if (!definition.descriptor.requiredPermissions.every(permission => permissions.includes(permission))) {
-          throw new AgentRepositoryError('ACTION_PERMISSION_DENIED', 'Proposal approval permission was revoked', 403)
-        }
       }
     })
     return res.json({ proposalId: result.proposal.id, approvalId: result.approval.id, status: result.approval.status, decidedAt: result.approval.decidedAt })
@@ -358,7 +369,11 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
   }))
   router.post(`${apiPrefix}/runs/:runId/cancel`, asyncRoute(async (req, res) => {
     const runId = UUIDSchema.parse(routeParameter(req, 'runId'))
-    return res.json({ run: await requestAgentRunCancellation(wiki.models.knex, requestSkillPrincipal(req).userId, runId) })
+    const ownerId = requestSkillPrincipal(req).userId
+    const run = wiki.agentRuntime
+      ? await wiki.agentRuntime.cancel(ownerId, runId)
+      : await requestAgentRunCancellation(wiki.models.knex, ownerId, runId)
+    return res.json({ run })
   }))
 
 

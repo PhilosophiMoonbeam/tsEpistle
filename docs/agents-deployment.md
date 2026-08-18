@@ -143,6 +143,23 @@ docker buildx build \
 
 Run it with a read-only root filesystem, writable temporary storage only, no application/database/provider secrets, bounded memory/PIDs/CPU, and ingress only from Wiki replicas over mTLS. Worker variables:
 
+The repository includes Playwright `1.62.1`'s reviewed `dev/build/agent-browser-seccomp.json`. The default Docker seccomp profile blocks the user namespaces required by Chromium's sandbox; do not disable the Chromium sandbox or use `seccomp=unconfined`. A hardened container invocation must preserve the minimal `SYS_CHROOT` capability required by the sandbox:
+
+```sh
+docker run --detach --name wiki-agent-browser \
+  --network wiki-agent-browser-egress \
+  --read-only --tmpfs /tmp:rw,nosuid,nodev,size=256m --shm-size=256m \
+  --pids-limit=256 --memory=1g --cpus=1 \
+  --cap-drop=ALL --cap-add=SYS_CHROOT \
+  --security-opt no-new-privileges=true \
+  --security-opt seccomp="$(pwd)/dev/build/agent-browser-seccomp.json" \
+  --mount type=bind,src=/run/wiki-agent-browser-tls,dst=/run/browser-tls,readonly \
+  --env-file /run/wiki-agent-browser.env \
+  registry.example.com/wiki-agent-browser:"$WIKI_BUILD_REVISION"
+```
+
+The signing-key environment file and TLS mount contain only browser-worker credentials. The worker image needs no Wiki configuration, database credentials, provider keys, host mounts, or Docker socket.
+
 - `AGENT_BROWSER_TLS_CERT`, `AGENT_BROWSER_TLS_KEY`, `AGENT_BROWSER_TLS_CA`
 - `AGENT_BROWSER_SIGNING_KEYS`
 - `AGENT_BROWSER_PORT` (default `9443`)

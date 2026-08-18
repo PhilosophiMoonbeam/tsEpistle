@@ -152,6 +152,14 @@ describe('permission-safe page read actions', () => {
     expect(get).toHaveBeenCalledOnce()
   })
 
+  it('accepts an explicit null continuation token for an initial patch snapshot', async () => {
+    const { execute } = setup({ get: async () => page({ content: 'one\ntwo\n' }) })
+    await expect(execute('pages.readForPatch', { pageId: 42, previousSnapshotToken: null })).resolves.toMatchObject({
+      version: 'wiki-line-snapshot-v1',
+      disclosed: [{ startLine: 1, endLine: 2 }]
+    })
+  })
+
   it('issues signed bounded patch snapshots and unions disclosures for the same request', async () => {
     const source = 'one\ntwo\nthree\n'
     const { execute } = setup({ get: async () => page({ content: source }) })

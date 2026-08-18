@@ -229,19 +229,32 @@ export class AgentProductRuntime {
       await this.#appendPresentationEvent(claim, 'run.completed', { runId: claim.id, status: 'succeeded' })
       return { status: 'succeeded' }
     } catch (error) {
-      if (!quotaReconciled) {
-        try { await reconcileAgentRunQuota(this.#knex, { runId: claim.id, ownerId: claim.ownerId, consumedTokens: 0, consumedCostMicros: 0, status: 'released' }) } catch { /* the retention reconciler owns missing/lost reservations */ }
-      }
-      try { await this.#appendPresentationEvent(claim, 'run.failed', { runId: claim.id, status: 'failed', errorCode: 'AGENT_ENGINE_FAILED' }) } catch { /* the coordinator owns terminal recovery when the lease is already gone */ }
+      let ownsRunningRun = false
+      try {
+        const owned = await this.#knex('agentRuns')
+          .where({ id: claim.id, ownerId: claim.ownerId, leaseOwner: claim.leaseOwner, leaseToken: claim.leaseToken })
+          .first('status') as { status: string } | undefined
+        ownsRunningRun = owned?.status === 'running'
+        if (ownsRunningRun && !quotaReconciled) {
+          await reconcileAgentRunQuota(this.#knex, { runId: claim.id, ownerId: claim.ownerId, consumedTokens: 0, consumedCostMicros: 0, status: 'released' })
+        }
+      } catch { /* the retention reconciler owns missing/lost reservations */ }
       if (signal.aborted) throw error
       void error
-      await this.#knex('agentMessages').where({ id: claim.assistantMessageId, runId: claim.id }).update({ status: 'failed', updatedAt: new Date() })
+      if (ownsRunningRun) {
+        try { await this.#appendPresentationEvent(claim, 'run.failed', { runId: claim.id, status: 'failed', errorCode: 'AGENT_ENGINE_FAILED' }) } catch { /* the coordinator owns terminal recovery when the lease is already gone */ }
+        await this.#knex('agentMessages').where({ id: claim.assistantMessageId, runId: claim.id }).update({ status: 'failed', updatedAt: new Date() })
+      }
       return { status: 'failed', errorCode: 'AGENT_ENGINE_FAILED', errorMessage: 'Agent inference failed' }
     }
   }
 
   runOnce (): Promise<boolean> {
     return this.#coordinator.runOnce((claim, signal) => this.#execute(claim, signal))
+  }
+
+  cancel (ownerId: number, runId: string): Promise<AgentRunRecord> {
+    return this.#coordinator.cancel(ownerId, runId)
   }
 
   shutdown (): Promise<void> {

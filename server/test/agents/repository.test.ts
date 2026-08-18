@@ -23,6 +23,7 @@ import {
   reserveAgentRunQuota,
   transitionAgentRun
 } from '../../agents/coordinator.ts'
+import { AgentProductRuntime, type AgentEngine } from '../../agents/runtime.ts'
 
 const sessionId = '00000000-0000-4000-8000-000000000001'
 const runId = '00000000-0000-4000-8000-000000000002'
@@ -143,6 +144,7 @@ const createTables = async (knex: Knex): Promise<void> => {
     table.text('frontmatter').notNullable()
     table.string('contentHash').notNullable()
     table.dateTime('createdAt').notNullable()
+    table.text('skillMarkdown').notNullable().defaultTo('')
   })
   await knex.schema.createTable('agentSkills', table => {
     table.uuid('id').primary()
@@ -165,6 +167,7 @@ const createTables = async (knex: Knex): Promise<void> => {
     table.string('actionName').notNullable()
     table.string('risk').notNullable()
     table.string('status').notNullable()
+    table.text('summary').notNullable().defaultTo('')
     table.integer('pageId').nullable()
     table.integer('baseSourceRevision').nullable()
     table.string('authoritySha256').notNullable()
@@ -321,6 +324,45 @@ describe('durable agent repositories', () => {
     await expect(knex('agentQuotaDaily').where({ ownerId: 7 }).first()).resolves.toMatchObject({ reservedTokens: 0, consumedTokens: 80, reservedCostMicros: 0, consumedCostMicros: 150 })
   })
 
+  it('retains quota and durable approval state during worker shutdown', async () => {
+    const now = new Date('2026-08-17T00:00:00.000Z')
+    await knex('agentRuns').where({ id: runId }).update({
+      status: 'queued',
+      attempts: 0,
+      leaseOwner: null,
+      leaseToken: null,
+      leaseExpiresAt: null,
+      availableAt: now,
+      completedAt: null
+    })
+    await reserveAgentRunQuota(knex, runId, 7, { tokens: 100, costMicros: 200 }, { dailyTokens: 150, dailyCostMicros: 300 }, new Date('2026-08-17T00:05:00.000Z'), now)
+    const entered = Promise.withResolvers<void>()
+    const engine: AgentEngine = {
+      async execute(request) {
+        await knex('agentRuns')
+          .where({ id: request.run.id, leaseOwner: request.run.leaseOwner, leaseToken: request.run.leaseToken, status: 'running' })
+          .update({ status: 'awaiting_approval' })
+        entered.resolve()
+        await new Promise<void>((_resolve, reject) => request.signal.addEventListener('abort', () => reject(request.signal.reason), { once: true }))
+        throw new Error('unreachable')
+      }
+    }
+    const runtime = new AgentProductRuntime(knex, { async resolve() { throw new Error('not used') } }, engine, {
+      workerId: 'worker-approval-shutdown',
+      globalConcurrency: 1,
+      perUserConcurrency: 1,
+      leaseMilliseconds: 60_000,
+      heartbeatMilliseconds: 5_000
+    })
+    const running = runtime.runOnce()
+    await entered.promise
+    await runtime.shutdown()
+    await expect(running).resolves.toBe(true)
+    await expect(knex('agentRuns').where({ id: runId }).first('status')).resolves.toEqual({ status: 'awaiting_approval' })
+    await expect(knex('agentQuotaReservations').where({ runId }).first('status')).resolves.toEqual({ status: 'reserved' })
+    await expect(knex('agentEvents').where({ runId }).orderBy('sequence').pluck('type')).resolves.toEqual(['run.attemptStarted', 'message.started'])
+  })
+
   it('admits a run atomically and binds exact retries to a canonical input hash', async () => {
     const secondSessionId = '00000000-0000-4000-8000-000000000031'
     await createAgentSession(knex, { id: secondSessionId, ownerId: 7, title: '', retention: 'temporary', providerProfileId: null, executionMode: 'agent' })
@@ -407,6 +449,67 @@ describe('durable agent repositories', () => {
     await expect(knex('agentRuns').where({ id: runId }).first('status', 'leaseToken')).resolves.toMatchObject({ status: 'succeeded', leaseToken: null })
     await coordinator.shutdown()
     await expect(coordinator.runOnce(async () => ({ status: 'succeeded' }))).resolves.toBe(false)
+  })
+
+  it('aborts an active handler and commits cancellation as the terminal state', async () => {
+    await knex('agentRuns').where({ id: runId }).update({
+      status: 'queued',
+      attempts: 0,
+      leaseOwner: null,
+      leaseToken: null,
+      leaseExpiresAt: null,
+      cancelRequestedAt: null,
+      completedAt: null,
+      errorCode: null,
+      errorMessage: null,
+      availableAt: new Date('2026-08-17T00:00:00.000Z')
+    })
+    const coordinator = new AgentRunCoordinator(knex, { workerId: 'worker-cancel', globalConcurrency: 1, perUserConcurrency: 1, leaseMilliseconds: 60_000, heartbeatMilliseconds: 5_000, now: new Date('2026-08-17T00:02:00.000Z') })
+    const entered = Promise.withResolvers<void>()
+    const running = coordinator.runOnce(async (_claim, signal) => {
+      entered.resolve()
+      await new Promise<void>(resolve => signal.addEventListener('abort', () => resolve(), { once: true }))
+      return { status: 'failed', errorCode: 'AGENT_ENGINE_FAILED' }
+    })
+    await entered.promise
+    await expect(coordinator.cancel(7, runId)).resolves.toMatchObject({ cancelRequestedAt: expect.any(String) })
+    await expect(running).resolves.toBe(true)
+    await expect(knex('agentRuns').where({ id: runId }).first('status', 'errorCode', 'completedAt')).resolves.toMatchObject({ status: 'cancelled', errorCode: null, completedAt: expect.anything() })
+    await expect(knex('agentMessages').where({ runId, role: 'assistant' }).first('status')).resolves.toEqual({ status: 'cancelled' })
+    await expect(knex('agentEvents').where({ runId, type: 'run.cancelled' }).first('sequence', 'data')).resolves.toMatchObject({ sequence: expect.any(Number), data: expect.stringContaining('"status":"cancelled"') })
+    await coordinator.shutdown()
+  })
+
+  it('finishes from the live run state after an approval wait', async () => {
+    const reset = {
+      status: 'queued',
+      attempts: 0,
+      sideEffectsStarted: false,
+      leaseOwner: null,
+      leaseToken: null,
+      leaseExpiresAt: null,
+      availableAt: new Date('2026-08-17T00:00:00.000Z'),
+      cancelRequestedAt: null,
+      completedAt: null,
+      errorCode: null,
+      errorMessage: null
+    }
+    await knex('agentRuns').where({ id: runId }).update(reset)
+    const coordinator = new AgentRunCoordinator(knex, { workerId: 'worker-approval', globalConcurrency: 1, perUserConcurrency: 1, leaseMilliseconds: 60_000, heartbeatMilliseconds: 5_000, now: new Date('2026-08-17T00:02:00.000Z') })
+    await coordinator.runOnce(async claim => {
+      await knex('agentRuns').where({ id: claim.id, leaseToken: claim.leaseToken, status: 'running' }).update({ status: 'awaiting_approval' })
+      await knex('agentRuns').where({ id: claim.id, leaseToken: claim.leaseToken, status: 'awaiting_approval' }).update({ status: 'running' })
+      return { status: 'succeeded' }
+    })
+    await expect(knex('agentRuns').where({ id: runId }).first('status')).resolves.toEqual({ status: 'succeeded' })
+
+    await knex('agentRuns').where({ id: runId }).update(reset)
+    await coordinator.runOnce(async claim => {
+      await knex('agentRuns').where({ id: claim.id, leaseToken: claim.leaseToken, status: 'running' }).update({ status: 'awaiting_approval' })
+      return { status: 'failed', errorCode: 'PROVIDER_REPLAY_FAILED' }
+    })
+    await expect(knex('agentRuns').where({ id: runId }).first('status', 'errorCode')).resolves.toEqual({ status: 'recovery_required', errorCode: 'PROVIDER_REPLAY_FAILED' })
+    await coordinator.shutdown()
   })
 
   it('aborts and drains active handlers before shutdown returns', async () => {

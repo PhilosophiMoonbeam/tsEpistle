@@ -90,11 +90,11 @@ export const ACTION_CATALOG = {
     requiredFlags: baseFlags
   },
   'pages.readForPatch': {
-    descriptor: descriptor('pages.readForPatch', 'Read page for patch', 'Read a bounded hashline snapshot for an exact page source revision.', 'read', ['read:pages'], both, readAnnotations),
+    descriptor: descriptor('pages.readForPatch', 'Read page for patch', 'Read a bounded hashline snapshot for an exact page source revision. On the initial read, set previousSnapshotToken to null; only reuse a non-null token returned by an earlier result for the same page.', 'read', ['read:pages'], both, readAnnotations),
     input: strict({
       pageId: PositiveId,
       ranges: z.array(strict({ startLine: PositiveId, endLine: PositiveId })).max(100).optional(),
-      previousSnapshotToken: z.string().min(1).max(16_384).optional()
+      previousSnapshotToken: z.string().min(1).max(16_384).nullable().optional().describe('Set null on the initial read. Only pass a non-null token returned by an earlier pages.readForPatch result for this same page; never invent a token.')
     }),
     output: WikiLineSnapshotV1Schema,
     requiredFlags: baseFlags

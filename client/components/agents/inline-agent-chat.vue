@@ -1,7 +1,7 @@
 <template>
   <section class="inline-agent" aria-label="Wiki Agent">
     <v-card class="inline-agent__card" elevation="5" rounded="xl">
-      <v-toolbar class="inline-agent__toolbar" color="transparent" density="comfortable">
+      <v-toolbar class="inline-agent__toolbar" color="transparent" density="comfortable" tag="div">
         <v-avatar class="ml-3" color="primary" size="38" variant="tonal">
           <v-icon icon="mdi-auto-fix" />
         </v-avatar>

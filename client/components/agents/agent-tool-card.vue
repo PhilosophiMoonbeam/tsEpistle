@@ -13,6 +13,7 @@
         </v-alert>
         <dl class="proposal-metadata mb-3">
           <dt>Action</dt><dd>{{ proposal.actionName }}</dd>
+          <dt>Summary</dt><dd>{{ proposal.summary }}</dd>
           <template v-if="proposal.target"><dt>Page</dt><dd>{{ proposal.target.locale }}/{{ proposal.target.path }}</dd></template>
           <dt>Expires</dt><dd>{{ formattedExpiry }}</dd>
         </dl>

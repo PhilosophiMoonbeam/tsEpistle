@@ -199,6 +199,29 @@ const readPersisted = async (knex: Knex | Knex.Transaction, draft: ProposalDraft
   if (approval.operationSha256 !== proposal.operationSha256) throw new AgentProposalError('PROPOSAL_LEDGER_CORRUPT', 'Proposal approval operation hash does not match', 500)
   return { proposal, approval, replayed, summary: draft.summary }
 }
+const readRecoverable = async (knex: Knex | Knex.Transaction, draft: ProposalDraft): Promise<PersistedProposal | null> => {
+  if (draft.authority.transport !== 'agent') return null
+  const run = await knex('agentRuns').where({ id: draft.runId! }).first('status', 'attempts') as { status: string; attempts: number } | undefined
+  if (!run || (run.status !== 'awaiting_approval' && Number(run.attempts) <= 1)) return null
+  const matching = knex<ProposalRecord>('agentProposals')
+    .where({
+      sourceKind: 'agent',
+      runId: draft.runId!,
+      actionName: draft.authority.actionName,
+      input: canonicalJson(draft.input),
+      operation: canonicalJson(draft.operation)
+    })
+  const decided = await matching.clone().whereIn('status', ['approved', 'denied', 'expired']).orderBy('createdAt').first()
+  const proposal = decided ?? await matching.where({ status: 'pending' }).orderBy('createdAt').first()
+  if (!proposal) return null
+  assertStoredOperation(proposal)
+  const expectedInputHash = sha256(canonicalProposalEnvelope({ ...draft, actionCallId: proposal.actionCallId }))
+  if (proposal.inputHash !== expectedInputHash) throw new AgentProposalError('PROPOSAL_LEDGER_CORRUPT', 'Recoverable proposal does not match its immutable payload', 500)
+  const approval = await knex<ApprovalRecord>('agentApprovals').where({ proposalId: proposal.id }).first()
+  if (!approval || approval.operationSha256 !== proposal.operationSha256) throw new AgentProposalError('PROPOSAL_LEDGER_CORRUPT', 'Recoverable proposal approval is invalid', 500)
+  return { proposal, approval, replayed: true, summary: proposal.summary }
+}
+
 
 export const persistProposal = async (knex: Knex, draft: ProposalDraft): Promise<PersistedProposal> => {
   validateDraft(draft)
@@ -206,10 +229,14 @@ export const persistProposal = async (knex: Knex, draft: ProposalDraft): Promise
   const inputHash = sha256(envelope)
   const prior = await readPersisted(knex, draft, inputHash, true)
   if (prior) return prior
+  const recoverable = await readRecoverable(knex, draft)
+  if (recoverable) return recoverable
 
   return knex.transaction(async transaction => {
     const existing = await readPersisted(transaction, draft, inputHash, true)
     if (existing) return existing
+    const recoverable = await readRecoverable(transaction, draft)
+    if (recoverable) return recoverable
 
     const proposalId = randomUUID()
     const approvalId = randomUUID()

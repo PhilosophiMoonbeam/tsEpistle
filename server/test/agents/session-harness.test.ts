@@ -35,6 +35,23 @@ describe('Ax session harness', () => {
     await expect(session.invoke('pages.get', { id: 42 }, new AbortController().signal, 'call-3')).rejects.toMatchObject({ code: 'ACTION_SESSION_CLOSED' })
   })
 
+  it('preserves structured action errors across the worker boundary', async () => {
+    const execute = vi.fn(async () => {
+      throw Object.assign(new Error('sensitive detail'), { code: 'INVALID_SNAPSHOT_TOKEN', status: 409 })
+    })
+    const harness = new AxSessionHarness({ execute, timeoutMilliseconds: 5_000 })
+    const session = await harness.open([offered('pages.get')])
+    try {
+      await expect(session.invoke('pages.get', { id: 42 }, new AbortController().signal, 'call-1')).rejects.toMatchObject({
+        code: 'INVALID_SNAPSHOT_TOKEN',
+        status: 409,
+        message: 'Action failed'
+      })
+    } finally {
+      session.close()
+    }
+  })
+
   it('round-trips bounded snapshots without reserved host capabilities', async () => {
     const harness = new AxSessionHarness({ execute: async () => ({}) })
     const first = await harness.open([])

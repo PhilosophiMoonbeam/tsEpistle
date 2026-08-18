@@ -376,7 +376,37 @@ export interface TransitionAgentRunInput {
   readonly now?: Date
 }
 
-export const transitionAgentRun = async (knex: Knex, input: TransitionAgentRunInput): Promise<AgentRunRecord> => {
+const recordRunCancelled = async (
+  transaction: Knex.Transaction,
+  run: Pick<RunRow, 'id' | 'assistantMessageId' | 'attempts' | 'eventSequence'>,
+  now: Date
+): Promise<number> => {
+  const sequence = Number(run.eventSequence) + 1
+  const data = canonicalJson({ runId: run.id, status: 'cancelled' })
+  await transaction('agentEvents').insert({
+    id: randomUUID(),
+    runId: run.id,
+    sequence,
+    type: 'run.cancelled',
+    attempt: run.attempts,
+    schemaVersion: 1,
+    dataSha256: sha256(data),
+    data,
+    createdAt: now
+  })
+  await transaction('agentMessages')
+    .where({ id: run.assistantMessageId, runId: run.id })
+    .whereIn('status', ['pending', 'streaming'])
+    .update({ status: 'cancelled', updatedAt: now })
+  const changed = await transaction('agentRuns')
+    .where({ id: run.id, status: 'cancelled', eventSequence: run.eventSequence })
+    .update({ eventSequence: sequence, updatedAt: now })
+  if (changed !== 1) throw new AgentRepositoryError('RUN_EVENT_FENCE_CHANGED', 'Agent run event fence changed concurrently', 409)
+  if (isPostgres(transaction)) await transaction.raw("SELECT pg_notify('wiki_agent_events', ?)", [run.id])
+  return sequence
+}
+
+export const transitionAgentRun = async (knex: Knex, input: TransitionAgentRunInput): Promise<AgentRunRecord> => knex.transaction(async transaction => {
   const allowed = input.from === 'running'
     ? ['awaiting_approval', 'succeeded', 'failed', 'cancelled', 'queued', 'recovery_required']
     : ['running', 'cancelled', 'recovery_required']
@@ -396,12 +426,14 @@ export const transitionAgentRun = async (knex: Knex, input: TransitionAgentRunIn
     patch.leaseToken = null
     patch.leaseExpiresAt = null
   }
-  const changed = await knex('agentRuns').where({ id: input.claim.id, status: input.from, leaseOwner: input.claim.leaseOwner, leaseToken: input.claim.leaseToken }).update(patch)
+  const changed = await transaction('agentRuns').where({ id: input.claim.id, status: input.from, leaseOwner: input.claim.leaseOwner, leaseToken: input.claim.leaseToken }).update(patch)
   if (changed !== 1) throw new AgentRepositoryError('RUN_LEASE_LOST', 'Agent run lease was lost', 409)
-  const row = await knex<RunRow>('agentRuns').where({ id: input.claim.id }).first()
+  const row = await transaction<RunRow>('agentRuns').where({ id: input.claim.id }).first()
   if (!row) throw new AgentRepositoryError('AGENT_RUN_CORRUPT', 'Agent run disappeared after transition', 500)
-  return runRecord(row)
-}
+  if (input.to !== 'cancelled') return runRecord(row)
+  const eventSequence = await recordRunCancelled(transaction, row, now)
+  return runRecord({ ...row, eventSequence })
+})
 
 export const markAgentRunSideEffectsStarted = async (knex: Knex, claim: AgentRunClaim, now = new Date()): Promise<void> => {
   const changed = await knex('agentRuns').where({ id: claim.id, status: 'running', leaseOwner: claim.leaseOwner, leaseToken: claim.leaseToken }).whereNull('cancelRequestedAt').update({ sideEffectsStarted: true, updatedAt: now })
@@ -414,7 +446,8 @@ export const requestAgentRunCancellation = async (knex: Knex, ownerId: number, r
   if (TERMINAL_STATUSES.includes(runStatus(row.status))) return runRecord(row)
   if (row.status === 'queued') {
     await transaction('agentRuns').where({ id: runId, status: 'queued' }).update({ status: 'cancelled', cancelRequestedAt: now, completedAt: now, updatedAt: now })
-    return runRecord({ ...row, status: 'cancelled', cancelRequestedAt: now })
+    const eventSequence = await recordRunCancelled(transaction, row, now)
+    return runRecord({ ...row, status: 'cancelled', cancelRequestedAt: now, completedAt: now, eventSequence })
   }
   await transaction('agentRuns').where({ id: runId }).whereIn('status', ['running', 'awaiting_approval']).update({ cancelRequestedAt: now, updatedAt: now })
   return runRecord({ ...row, cancelRequestedAt: now })
@@ -427,6 +460,18 @@ export interface AgentRunHandlerResult {
 }
 
 export type AgentRunHandler = (claim: AgentRunClaim, signal: AbortSignal) => Promise<AgentRunHandlerResult>
+interface CurrentClaimState {
+  readonly status: 'running' | 'awaiting_approval'
+  readonly cancelRequestedAt: Date | string | null
+}
+const currentClaimState = async (knex: Knex, claim: AgentRunClaim): Promise<CurrentClaimState> => {
+  const row = await knex('agentRuns')
+    .where({ id: claim.id, ownerId: claim.ownerId, leaseOwner: claim.leaseOwner, leaseToken: claim.leaseToken })
+    .first('status', 'cancelRequestedAt') as { status: string, cancelRequestedAt: Date | string | null } | undefined
+  if (!row || (row.status !== 'running' && row.status !== 'awaiting_approval')) throw new AgentRepositoryError('RUN_LEASE_LOST', 'Agent run lease was lost', 409)
+  return { status: row.status, cancelRequestedAt: row.cancelRequestedAt }
+}
+
 
 export interface AgentRunCoordinatorOptions extends ClaimAgentRunOptions {
   readonly heartbeatMilliseconds?: number
@@ -469,16 +514,32 @@ export class AgentRunCoordinator {
     heartbeatTimer.unref()
     try {
       const result = await handler(claim, controller.signal)
-      if (controller.signal.aborted) return true
-      await transitionAgentRun(this.#knex, { claim, from: claim.status === 'awaiting_approval' ? 'awaiting_approval' : 'running', to: result.status, errorCode: result.errorCode ?? null, errorMessage: result.errorMessage ?? null })
+      const current = await currentClaimState(this.#knex, claim)
+      if (current.cancelRequestedAt !== null) {
+        await transitionAgentRun(this.#knex, { claim, from: current.status, to: 'cancelled' })
+      } else if (!controller.signal.aborted && current.status !== result.status) {
+        const to = current.status === 'awaiting_approval' && result.status !== 'recovery_required'
+          ? 'recovery_required'
+          : result.status
+        await transitionAgentRun(this.#knex, { claim, from: current.status, to, errorCode: result.errorCode ?? null, errorMessage: result.errorMessage ?? null })
+      }
     } catch (error) {
-      if (!controller.signal.aborted) {
-        void error
-        try {
-          await transitionAgentRun(this.#knex, { claim, from: claim.status === 'awaiting_approval' ? 'awaiting_approval' : 'running', to: 'failed', errorCode: 'AGENT_RUN_HANDLER_FAILED', errorMessage: 'Agent run handler failed' })
-        } catch (transitionError) {
-          if (!(transitionError instanceof AgentRepositoryError && transitionError.code === 'RUN_LEASE_LOST')) throw transitionError
+      try {
+        const current = await currentClaimState(this.#knex, claim)
+        if (current.cancelRequestedAt !== null) {
+          await transitionAgentRun(this.#knex, { claim, from: current.status, to: 'cancelled' })
+        } else if (!controller.signal.aborted) {
+          void error
+          await transitionAgentRun(this.#knex, {
+            claim,
+            from: current.status,
+            to: current.status === 'awaiting_approval' ? 'recovery_required' : 'failed',
+            errorCode: 'AGENT_RUN_HANDLER_FAILED',
+            errorMessage: 'Agent run handler failed'
+          })
         }
+      } catch (transitionError) {
+        if (!(transitionError instanceof AgentRepositoryError && transitionError.code === 'RUN_LEASE_LOST')) throw transitionError
       }
     } finally {
       clearInterval(heartbeatTimer)
@@ -487,6 +548,14 @@ export class AgentRunCoordinator {
       this.#drains.delete(claim.id)
     }
     return true
+  }
+
+  async cancel (ownerId: number, runId: string): Promise<AgentRunRecord> {
+    const run = await requestAgentRunCancellation(this.#knex, ownerId, runId)
+    if (run.cancelRequestedAt !== null && !TERMINAL_STATUSES.includes(run.status)) {
+      this.#controllers.get(runId)?.abort(new AgentRepositoryError('RUN_CANCELLED', 'Agent run was cancelled', 409))
+    }
+    return run
   }
 
   async shutdown (): Promise<void> {

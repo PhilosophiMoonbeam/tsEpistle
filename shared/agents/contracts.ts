@@ -248,6 +248,7 @@ export interface AgentProposalView {
   readonly actionName: AgentActionName
   readonly risk: AgentActionRisk
   readonly status: AgentProposalStatus
+  readonly summary: string
   readonly target: AgentPageReference | null
   readonly baseSourceRevision: string | null
   readonly authoritySha256: string
