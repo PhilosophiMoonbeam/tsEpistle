@@ -469,6 +469,7 @@
               span {{$t('common:page.editPage')}}
             v-alert.mb-5(v-if='!isPublished', color='red', variant="outlined", icon='mdi-minus-circle', density="compact")
               .text-body-small {{$t('common:page.unpublishedWarning')}}
+            site-banner(:banner='siteBanner')
             .contents(ref='container')
               slot(name='contents')
             .comments-container#discussion(v-if='commentsEnabled && commentsPerms.read && !printView')
@@ -654,6 +655,7 @@ import { defineComponent, type PropType } from 'vue'
 import { useGoTo } from 'vuetify'
 import AsyncState from '@/components/common/async-state.vue'
 import StatusIndicator from '@/components/common/status-indicator.vue'
+import SiteBanner from '@/components/common/site-banner.vue'
 import NavSidebar, { type SidebarItem } from './nav-sidebar.vue'
 import type { Environment as PrismEnvironment } from 'prismjs'
 import Prism from '../../../libs/prism/setup'
@@ -765,6 +767,7 @@ export default defineComponent({
     AsyncState,
     NavSidebar,
     StatusIndicator,
+    SiteBanner,
   },
   setup () {
     return {
@@ -972,6 +975,9 @@ export default defineComponent({
     },
     tocPosition () {
       return wikiStore.site.tocPosition
+    },
+    siteBanner () {
+      return wikiStore.site.banner
     },
     hasAdminPermission () {
       return wikiStore.page.effectivePermissions.system.manage

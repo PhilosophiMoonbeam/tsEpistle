@@ -67,6 +67,7 @@ describe('admin-general site REST facade migration guard', () => {
     expect(save).toMatch(/this\.company\s*=\s*this\.config\.company/)
     expect(save).toMatch(/this\.contentLicense\s*=\s*this\.config\.contentLicense/)
     expect(save).toMatch(/this\.footerOverride\s*=\s*this\.config\.footerOverride/)
+    expect(save).toMatch(/wikiStore\.site\.banner\s*=\s*_\.cloneDeep\s*\(\s*this\.config\.banner\s*\)/)
     expect(save).toMatch(/this\.logoUrl\s*=\s*this\.config\.logoUrl/)
     expect(save).toMatch(/pushGraphError\s*\(\s*wikiStore\s*,\s*err\s*\)/)
     expect(save).toMatch(/loadingStop\s*\(\s*wikiStore\s*,\s*['"]admin-site-update['"]\s*\)/)
@@ -74,7 +75,7 @@ describe('admin-general site REST facade migration guard', () => {
 
   test('general payload preserves the former site update config fields', () => {
     expect(siteConfigPayload).not.toBeNull()
-    for (const field of ['host', 'title', 'description', 'robots', 'analyticsService', 'analyticsId', 'company', 'contentLicense', 'footerOverride', 'logoUrl', 'pageExtensions', 'featurePageRatings', 'featurePageComments', 'featurePersonalWikis', 'editFab', 'editMenuBar', 'editMenuBtn', 'editMenuExternalBtn', 'editMenuExternalName', 'editMenuExternalIcon', 'editMenuExternalUrl']) {
+    for (const field of ['host', 'title', 'description', 'robots', 'analyticsService', 'analyticsId', 'company', 'contentLicense', 'footerOverride', 'banner', 'logoUrl', 'pageExtensions', 'featurePageRatings', 'featurePageComments', 'featurePersonalWikis', 'editFab', 'editMenuBar', 'editMenuBtn', 'editMenuExternalBtn', 'editMenuExternalName', 'editMenuExternalIcon', 'editMenuExternalUrl']) {
       expect(siteConfigPayload).toContain(field)
     }
   })

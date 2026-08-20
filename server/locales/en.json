@@ -688,7 +688,15 @@
       "editMenuExternalIconHint": "The icon to display on the edit button. For example, mdi-github to display the GitHub icon.",
       "editMenuExternalNameHint": "The name of the external site to display on the edit button. Do not include the \"Edit on\" prefix.",
       "displayEditMenuExternalBtn": "Display External Edit Button",
-      "displayEditMenuExternalBtnHint": "Display a button linking to an external repository (e.g. GitHub) where users can edit or submit a PR for the current page."
+      "displayEditMenuExternalBtnHint": "Display a button linking to an external repository (e.g. GitHub) where users can edit or submit a PR for the current page.",
+      "siteBanner": "Site-wide Banner",
+      "siteBannerEnabled": "Show the banner above every page",
+      "siteBannerEnabledHint": "Enable a site-wide notice for readers. The banner is hidden when disabled.",
+      "siteBannerTitle": "Banner Title",
+      "siteBannerTitleHint": "A short, single-line heading. Maximum 160 characters.",
+      "siteBannerContent": "Banner Content",
+      "siteBannerContentHint": "Markdown is supported; raw HTML is ignored. Maximum 8,000 characters.",
+      "siteBannerPreview": "Preview"
     },
     "logging": {
       "title": "Logging"

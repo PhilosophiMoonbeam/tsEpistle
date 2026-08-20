@@ -12,7 +12,10 @@ function createJsonResponse (payload, ok = true) {
 
 describe('site api helper', () => {
   it('fetches site config with same-origin JSON headers', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ title: 'Wiki' }))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({
+      title: 'Wiki',
+      banner: { isEnabled: true, title: 'Notice', content: '**Planned maintenance.**' }
+    }))
 
     const result = await fetchSiteConfig(fetchImpl)
 
@@ -22,13 +25,25 @@ describe('site api helper', () => {
         Accept: 'application/json'
       }
     })
-    expect(result).toEqual({ title: 'Wiki' })
+    expect(result).toEqual({
+      title: 'Wiki',
+      banner: { isEnabled: true, title: 'Notice', content: '**Planned maintenance.**' }
+    })
   })
 
   it('rejects malformed successful site config responses', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([]))
 
     await expect(fetchSiteConfig(fetchImpl, 'Unexpected site config response')).rejects.toThrow('Unexpected site config response')
+  })
+
+  it('rejects malformed site banner responses', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({
+      title: 'Wiki',
+      banner: { isEnabled: true, title: '', content: '' }
+    }))
+
+    await expect(fetchSiteConfig(fetchImpl, 'Unexpected site banner')).rejects.toThrow('Unexpected site banner')
   })
 
   it('surfaces JSON REST site config fetch errors', async () => {

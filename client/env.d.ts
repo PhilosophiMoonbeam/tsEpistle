@@ -5,6 +5,7 @@ import type moment from 'moment-timezone'
 import type { helpers } from './helpers/index.ts'
 import type { Router } from 'vue-router'
 import type { ProductMetadata } from '../shared/product.ts'
+import type { SiteBannerConfig } from '../shared/site-banner.ts'
 
 export type SiteConfig = {
   title: string
@@ -16,6 +17,7 @@ export type SiteConfig = {
   company: string
   contentLicense: string
   footerOverride: string
+  banner: SiteBannerConfig
   logoUrl: string
   product: ProductMetadata
   agentsEnabled: boolean

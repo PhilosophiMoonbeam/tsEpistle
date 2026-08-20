@@ -105,6 +105,7 @@ export const useWikiStore = defineStore('wiki', {
       company: window.siteConfig.company,
       contentLicense: window.siteConfig.contentLicense,
       footerOverride: window.siteConfig.footerOverride,
+      banner: window.siteConfig.banner,
       dark: window.siteConfig.darkMode,
       tocPosition: window.siteConfig.tocPosition,
       mascot: true,

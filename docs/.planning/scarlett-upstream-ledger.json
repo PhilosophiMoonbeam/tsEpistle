@@ -3,11 +3,11 @@
   "upstream": {
     "repository": "https://github.com/requarks/wiki.git",
     "branch": "scarlett",
-    "recordedTip": "d0c5a8bfa90acee73a2f4c71033978bea1925468",
-    "recordedAt": "2026-08-15T23:36:09-04:00",
-    "lastFetchedAt": "2026-08-15T21:36:46Z"
+    "recordedTip": "d39e063371c46c816f95c021abe31dbd2324a82c",
+    "recordedAt": "2026-08-17T21:00:02-04:00",
+    "lastFetchedAt": "2026-08-20T17:16:06Z"
   },
-  "forkCheckpoint": "249758e3f923a77e1b62d26a47e142c312642a5f",
+  "forkCheckpoint": "f0ce59f0f96df157ad44742aafed7d7f93f1bf7b",
   "candidates": [
     {
       "id": "typed-api-schemas",
@@ -328,6 +328,16 @@
       "workstream": "architecture-c/page-index",
       "contract": "Dynamic requester-time authorization remains authoritative; a rebuildable visibility-neutral projection is accepted only after measured budget failure and parity proof.",
       "lastReviewed": "2026-08-15"
+    },
+    {
+      "id": "site-wide-banner",
+      "commits": ["d39e0633"],
+      "category": "reader-experience",
+      "disposition": "adapt",
+      "state": "completed",
+      "workstream": "site-config/site-wide-banner",
+      "contract": "Administrators configure one bounded Markdown notice; readers receive sanitized content above every page; malformed persisted settings fail closed.",
+      "lastReviewed": "2026-08-20"
     }
   ]
 }

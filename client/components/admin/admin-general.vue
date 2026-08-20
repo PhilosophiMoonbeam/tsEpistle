@@ -118,6 +118,42 @@
                       persistent-hint
                       )
 
+              v-card.mt-5.animated.fadeInUp.wait-p4s
+                v-toolbar(color='warning', density='compact', flat)
+                  v-toolbar-title.text-body-large {{ $t('admin:general.siteBanner') }}
+                v-card-text
+                  v-switch.mt-0(
+                    inset
+                    color='warning'
+                    v-model='config.banner.isEnabled'
+                    :label='$t(`admin:general.siteBannerEnabled`)'
+                    :hint='$t(`admin:general.siteBannerEnabledHint`)'
+                    persistent-hint
+                  )
+                  v-text-field.mt-3(
+                    variant='outlined'
+                    v-model='config.banner.title'
+                    :label='$t(`admin:general.siteBannerTitle`)'
+                    :hint='$t(`admin:general.siteBannerTitleHint`)'
+                    :counter='160'
+                    prepend-icon='mdi-format-title'
+                    persistent-hint
+                  )
+                  v-textarea.mt-3(
+                    variant='outlined'
+                    v-model='config.banner.content'
+                    :label='$t(`admin:general.siteBannerContent`)'
+                    :hint='$t(`admin:general.siteBannerContentHint`)'
+                    :counter='8000'
+                    prepend-icon='mdi-language-markdown'
+                    auto-grow
+                    rows='4'
+                    persistent-hint
+                  )
+                  template(v-if='config.banner.isEnabled && (config.banner.title || config.banner.content)')
+                    .text-label-small.text-grey.mb-2 {{ $t('admin:general.siteBannerPreview') }}
+                    site-banner(:banner='config.banner')
+
             v-col(lg='6' cols='12')
               v-card.animated.fadeInUp.wait-p4s
                 v-toolbar(color='indigo', density="compact", flat)
@@ -267,6 +303,7 @@ import { wikiStore } from '@/store/index.ts'
 import { onEditorInsert, offEditorInsert, type EditorInsertPayload } from '../../helpers/editor-insert-events'
 import { fetchSiteConfig, saveSiteConfig, type SiteConfig } from '../../helpers/site-api'
 import { loadingStart, loadingStop, pushGraphError, setLoading, showNotification } from '../../helpers/root-ui-store'
+import SiteBanner from '../common/site-banner.vue'
 
 
 const titleRegex = /[<>"]/i
@@ -275,6 +312,7 @@ const titleRegex = /[<>"]/i
 export default {
   i18nOptions: { namespaces: 'editor' },
   components: {
+    SiteBanner,
     editorModalMedia: () => import('../editor/editor-modal-media.vue')
   },
   data(): { config: SiteConfig, metaRobots: Array<{ text: string, value: string }> } {
@@ -289,6 +327,11 @@ export default {
         company: '',
         contentLicense: '',
         footerOverride: '',
+        banner: {
+          isEnabled: false,
+          title: '',
+          content: ''
+        },
         logoUrl: '',
         featureAnalytics: false,
         featurePageRatings: false,
@@ -363,6 +406,11 @@ export default {
         company: _.get(this.config, 'company', ''),
         contentLicense: _.get(this.config, 'contentLicense', ''),
         footerOverride: _.get(this.config, 'footerOverride', ''),
+        banner: _.get(this.config, 'banner', {
+          isEnabled: false,
+          title: '',
+          content: ''
+        }),
         logoUrl: _.get(this.config, 'logoUrl', ''),
         pageExtensions: _.get(this.config, 'pageExtensions', ''),
         featurePageRatings: _.get(this.config, 'featurePageRatings', false),
@@ -409,6 +457,7 @@ export default {
         this.company = this.config.company ?? ''
         this.contentLicense = this.config.contentLicense ?? ''
         this.footerOverride = this.config.footerOverride ?? ''
+        wikiStore.site.banner = _.cloneDeep(this.config.banner)
         this.logoUrl = this.config.logoUrl ?? ''
       } catch (err) {
         pushGraphError(wikiStore, err)

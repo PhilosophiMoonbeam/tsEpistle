@@ -4,10 +4,10 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import { renderSafeAgentMarkdown } from '../../helpers/agent-markdown.ts'
+import { renderSafeMarkdown } from '../../helpers/safe-markdown.ts'
 
 const props = defineProps<{ content: string }>()
-const rendered = computed(() => renderSafeAgentMarkdown(props.content))
+const rendered = computed(() => renderSafeMarkdown(props.content))
 </script>
 
 <style scoped>

@@ -1,3 +1,5 @@
+import { type SiteBannerConfig, validateSiteBanner } from '../../shared/site-banner.ts'
+
 type JsonHeaders = {
   get: (name: string) => string | null
 }
@@ -28,6 +30,7 @@ export type SiteConfig = Record<string, unknown> & {
   company?: string
   contentLicense?: string
   footerOverride?: string
+  banner: SiteBannerConfig
   logoUrl?: string
   featureAnalytics?: boolean
   featurePageRatings?: boolean
@@ -143,10 +146,13 @@ function assertSiteConfig (payload: Record<string, unknown>, fallbackMessage: st
     'securityHSTSDuration'
   ]
 
+  const bannerValidation = validateSiteBanner(payload.banner)
+
   if (stringFields.some(field => field in payload && typeof payload[field] !== 'string') ||
     booleanFields.some(field => field in payload && typeof payload[field] !== 'boolean') ||
     numberFields.some(field => field in payload && typeof payload[field] !== 'number') ||
-    ('robots' in payload && (!Array.isArray(payload.robots) || payload.robots.some(robot => typeof robot !== 'string')))) {
+    ('robots' in payload && (!Array.isArray(payload.robots) || payload.robots.some(robot => typeof robot !== 'string'))) ||
+    !bannerValidation.ok) {
     throw new Error(fallbackMessage)
   }
 }

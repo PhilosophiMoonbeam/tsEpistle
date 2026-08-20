@@ -40,6 +40,11 @@ describe('controllers/api site endpoints', () => {
         company: 'Company',
         contentLicense: 'ccby',
         footerOverride: 'Footer',
+        banner: {
+          isEnabled: true,
+          title: 'Maintenance',
+          content: 'Read the **status page**.'
+        },
         logoUrl: '/logo.svg',
         pageExtensions: ['md', 'markdown'],
         seo: {
@@ -146,6 +151,11 @@ describe('controllers/api site endpoints', () => {
       company: 'Company',
       contentLicense: 'ccby',
       footerOverride: 'Footer',
+      banner: {
+        isEnabled: true,
+        title: 'Maintenance',
+        content: 'Read the **status page**.'
+      },
       logoUrl: '/logo.svg',
       pageExtensions: 'md, markdown',
       authAutoLogin: false,
@@ -177,6 +187,11 @@ describe('controllers/api site endpoints', () => {
         company: ' Next Company ',
         contentLicense: 'cc0',
         footerOverride: '<strong>Footer</strong>',
+        banner: {
+          isEnabled: true,
+          title: ' Planned maintenance ',
+          content: ' **Starts at 20:00 UTC.** '
+        },
         logoUrl: ' /next.svg ',
         pageExtensions: ' MD, Wiki,  ',
         description: 'Next description',
@@ -197,6 +212,11 @@ describe('controllers/api site endpoints', () => {
     expect(global.WIKI.config.host).toBe('https://next.example.com')
     expect(global.WIKI.config.title).toBe('Next Wiki')
     expect(global.WIKI.config.company).toBe('Next Company')
+    expect(global.WIKI.config.banner).toEqual({
+      isEnabled: true,
+      title: 'Planned maintenance',
+      content: '**Starts at 20:00 UTC.**'
+    })
     expect(global.WIKI.config.logoUrl).toBe('/next.svg')
     expect(global.WIKI.config.pageExtensions).toEqual(['md', 'wiki'])
     expect(global.WIKI.config.seo).toEqual({
@@ -223,11 +243,23 @@ describe('controllers/api site endpoints', () => {
     expect(global.WIKI.config.uploads.maxFileSize).toBe(2097152)
     expect(global.WIKI.config.uploads.maxFiles).toBe(20)
     expect(global.WIKI.config.uploads.forceDownload).toBe(true)
-    expect(global.WIKI.configSvc.saveToDb).toHaveBeenCalledWith(['host', 'title', 'company', 'contentLicense', 'footerOverride', 'seo', 'logoUrl', 'pageExtensions', 'auth', 'editShortcuts', 'features', 'security', 'uploads'])
+    expect(global.WIKI.configSvc.saveToDb).toHaveBeenCalledWith(['host', 'title', 'company', 'contentLicense', 'footerOverride', 'banner', 'seo', 'logoUrl', 'pageExtensions', 'auth', 'editShortcuts', 'features', 'security', 'uploads'])
     expect(global.WIKI.app.enable).toHaveBeenCalledWith('trust proxy')
     expect(global.WIKI.app.disable).not.toHaveBeenCalled()
     expect(res.status).not.toHaveBeenCalled()
     expect(res.json).toHaveBeenCalledWith({ message: 'Site configuration updated successfully' })
+  })
+
+  it('normalizes missing legacy banner configuration before saving other settings', async () => {
+    const handler = await loadPutConfigHandler()
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
+    delete global.WIKI.config.banner
+
+    await handler({ user: {}, body: { securityTrustProxy: false } }, res)
+
+    expect(global.WIKI.config.banner).toEqual({ isEnabled: false, title: '', content: '' })
+    expect(global.WIKI.configSvc.saveToDb).toHaveBeenCalled()
+    expect(res.status).not.toHaveBeenCalled()
   })
 
   it('disables trust proxy when the saved config sets securityTrustProxy false', async () => {
@@ -263,6 +295,24 @@ describe('controllers/api site endpoints', () => {
     expect(global.WIKI.configSvc.saveToDb).not.toHaveBeenCalled()
     expect(res.status).toHaveBeenCalledWith(400)
     expect(res.json).toHaveBeenCalledWith({ error: 'Site configuration must be an object' })
+  })
+
+  it('rejects invalid site banners before mutating or saving configuration', async () => {
+    const handler = await loadPutConfigHandler()
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
+
+    await handler({
+      user: {},
+      body: {
+        title: 'Should not be applied',
+        banner: { isEnabled: true, title: '', content: '' }
+      }
+    }, res)
+
+    expect(global.WIKI.config.title).toBe('Wiki')
+    expect(global.WIKI.configSvc.saveToDb).not.toHaveBeenCalled()
+    expect(res.status).toHaveBeenCalledWith(400)
+    expect(res.json).toHaveBeenCalledWith({ error: 'An enabled site banner must have a title or content.' })
   })
 
   it('returns JSON errors from save failures', async () => {

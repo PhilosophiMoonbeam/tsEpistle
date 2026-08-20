@@ -1,12 +1,14 @@
 import _ from 'lodash'
+import { siteBannerOrDefault, validateSiteBanner } from '../../shared/site-banner.ts'
 
 import errors from './errors.ts'
 
 const { ApplicationError } = errors
 
-const saveKeys = ['host', 'title', 'company', 'contentLicense', 'footerOverride', 'seo', 'logoUrl', 'pageExtensions', 'auth', 'editShortcuts', 'features', 'security', 'uploads']
+const saveKeys = ['host', 'title', 'company', 'contentLicense', 'footerOverride', 'banner', 'seo', 'logoUrl', 'pageExtensions', 'auth', 'editShortcuts', 'features', 'security', 'uploads']
 
 interface SiteConfig extends Record<string, unknown> {
+  banner?: unknown
   host: string
   title: string
   company: string
@@ -31,6 +33,7 @@ const getConfig = () => ({
   company: config.company,
   contentLicense: config.contentLicense,
   footerOverride: config.footerOverride,
+  banner: siteBannerOrDefault(config.banner),
   logoUrl: config.logoUrl,
   pageExtensions: config.pageExtensions.join(', '),
   ...config.seo,
@@ -55,6 +58,15 @@ const updateConfig = async (input: unknown): Promise<void> => {
     throw new ApplicationError('Site configuration payload must be an object.', { code: 'INVALID_SITE_CONFIGURATION' })
   }
   const args = input as Record<string, unknown>
+  if (Object.prototype.hasOwnProperty.call(args, 'banner')) {
+    const result = validateSiteBanner(args.banner)
+    if (!result.ok) {
+      throw new ApplicationError(result.message, { code: 'INVALID_SITE_BANNER' })
+    }
+    config.banner = result.value
+  } else {
+    config.banner = siteBannerOrDefault(config.banner)
+  }
   if (Object.prototype.hasOwnProperty.call(args, 'host')) {
     config.host = _.trim(args.host as string).replace(/\/$/, '')
   }

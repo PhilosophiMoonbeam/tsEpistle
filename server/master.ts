@@ -27,6 +27,7 @@ import { configureTransportRuntime } from './controllers/_types.ts'
 import apiV1Controller from './controllers/api-v1/index.ts'
 import type { ProductMetadata } from '../shared/product.ts'
 import { isExternalRestPath, isInternalRestPath } from '../shared/api-access.ts'
+import { siteBannerOrDefault } from '../shared/site-banner.ts'
 
 import { AgentProviderRegistry, type AgentProfileTokenKeys } from './agents/providers/registry.ts'
 import { DatabaseAgentSecretRegistry, decodeAgentProviderSecretKeys, environmentSecretValue } from './agents/providers/secrets.ts'
@@ -47,6 +48,7 @@ const BUNDLED_DEFAULT_LOGO_URL = '/_assets/svg/logo-wikijs.svg'
 
 
 interface MasterConfig extends Record<string, unknown> {
+  banner?: unknown
   auth: Record<string, unknown>
   agents: {
     enabled: boolean
@@ -339,6 +341,7 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
       company: wiki.config.company,
       contentLicense: wiki.config.contentLicense,
       footerOverride: wiki.config.footerOverride,
+      banner: siteBannerOrDefault(wiki.config.banner),
       logoUrl: wiki.config.logoUrl === LEGACY_DEFAULT_LOGO_URL ? BUNDLED_DEFAULT_LOGO_URL : wiki.config.logoUrl,
       product: wiki.product,
       agentsEnabled: wiki.config.agents.enabled,

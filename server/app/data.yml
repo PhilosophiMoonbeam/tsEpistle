@@ -77,6 +77,10 @@ defaults:
     telemetry:
       clientId: ''
       isEnabled: false
+    banner:
+      isEnabled: false
+      title: ''
+      content: ''
     title: Wiki.js
     company: ''
     contentLicense: ''

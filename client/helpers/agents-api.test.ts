@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createAgentThread, deleteAgentSession, listAgentProfiles } from './agents-api.ts'
-import { renderSafeAgentMarkdown } from './agent-markdown.ts'
+import { renderSafeMarkdown } from './safe-markdown.ts'
 
 describe('agents client boundary', () => {
   it('rejects malformed thread responses instead of rendering unvalidated provider data', async () => {
@@ -32,7 +32,7 @@ describe('agents client boundary', () => {
   })
 
   it('renders Markdown with raw HTML and active URL schemes disabled', () => {
-    const rendered = renderSafeAgentMarkdown('[safe](https://wiki.example.test/page) <img src=x onerror=alert(1)> [bad](javascript:alert(1))')
+    const rendered = renderSafeMarkdown('[safe](https://wiki.example.test/page) <img src=x onerror=alert(1)> [bad](javascript:alert(1))')
     expect(rendered).toContain('https://wiki.example.test/page')
     expect(rendered).toContain('noopener noreferrer')
     expect(rendered).not.toMatch(/<img|href="javascript:|onerror="/i)
