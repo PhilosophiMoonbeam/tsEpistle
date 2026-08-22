@@ -56,8 +56,11 @@ describe('controllers/api storage endpoints', () => {
             title: 'Git',
             description: 'Git storage',
             schedule: 'PT5M',
+            isAvailable: true,
+            supportedModes: ['sync', 'push'],
             actions: [{ handler: 'sync', label: 'Sync', hint: 'Synchronize' }],
             props: {
+              authType: { type: 'string', enum: ['ssh', 'basic'], order: 3 },
               repoUrl: { type: 'string', order: 2 },
               credential: { type: 'string', sensitive: true, order: 1 }
             }
@@ -66,6 +69,8 @@ describe('controllers/api storage endpoints', () => {
             key: 'disk',
             title: 'Disk',
             schedule: false,
+            isAvailable: true,
+            supportedModes: ['push'],
             props: {
               path: { type: 'string', order: 1 }
             }
@@ -257,13 +262,6 @@ describe('controllers/api storage endpoints', () => {
               { key: 'credential', value: JSON.stringify({ v: '********' }) }
             ]
           },
-          {
-            key: 'missing',
-            isEnabled: true,
-            mode: 'sync',
-            syncInterval: 'PT1M',
-            config: []
-          }
         ]
       }
     }, res)
@@ -287,6 +285,87 @@ describe('controllers/api storage endpoints', () => {
     expect(global.WIKI.models.storage.initTargets).toHaveBeenCalled()
     expect(res.status).not.toHaveBeenCalled()
     expect(res.json).toHaveBeenCalledWith({ message: 'Storage targets updated successfully' })
+  })
+
+  it.each([
+    [
+      [{ key: 'missing', isEnabled: true, mode: 'sync', syncInterval: 'PT1M', config: [] }],
+      'Storage target missing does not exist.'
+    ],
+    [
+      [{ key: 'git', isEnabled: true, mode: 'pull', syncInterval: 'PT1M', config: [] }],
+      'Storage target git does not support mode pull.'
+    ],
+    [
+      [{ key: 'git', isEnabled: true, mode: 'sync', syncInterval: 'soon', config: [] }],
+      'target syncInterval must be a valid ISO 8601 duration.'
+    ],
+    [
+      [{ key: 'git', isEnabled: true, mode: 'sync', syncInterval: 'PT1M', config: [{ key: 'unknown', value: JSON.stringify({ v: 'x' }) }] }],
+      'target git config must contain unique, known entries.'
+    ],
+    [
+      [{
+        key: 'git',
+        isEnabled: true,
+        mode: 'sync',
+        syncInterval: 'PT1M',
+        config: [
+          { key: 'repoUrl', value: JSON.stringify({ v: 'first' }) },
+          { key: 'repoUrl', value: JSON.stringify({ v: 'second' }) }
+        ]
+      }],
+      'target git config must contain unique, known entries.'
+    ],
+    [
+      [{ key: 'git', isEnabled: true, mode: 'sync', syncInterval: 'PT1M', config: [{ key: 'repoUrl', value: JSON.stringify({ v: false }) }] }],
+      'target git config value repoUrl has an invalid type.'
+    ],
+    [
+      [{ key: 'git', isEnabled: true, mode: 'sync', syncInterval: 'PT1M', config: [{ key: 'authType', value: JSON.stringify({ v: 'token' }) }] }],
+      'target git config value authType is not allowed.'
+    ]
+  ])('rejects invalid target semantics %# before mutation', async (targets, message) => {
+    const handler = await loadPutHandler('/targets')
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
+
+    await handler({ user: {}, body: { targets } }, res)
+
+    expect(patch).not.toHaveBeenCalled()
+    expect(global.WIKI.models.storage.initTargets).not.toHaveBeenCalled()
+    expect(res.status).toHaveBeenCalledWith(400)
+    expect(res.json).toHaveBeenCalledWith({ error: message })
+  })
+
+  it('validates every target before writing any target', async () => {
+    const handler = await loadPutHandler('/targets')
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
+
+    await handler({
+      user: {},
+      body: {
+        targets: [
+          {
+            key: 'git',
+            isEnabled: true,
+            mode: 'sync',
+            syncInterval: 'PT15M',
+            config: [{ key: 'repoUrl', value: JSON.stringify({ v: 'https://example.com/next.git' }) }]
+          },
+          {
+            key: 'disk',
+            isEnabled: true,
+            mode: 'push',
+            syncInterval: 'P0D',
+            config: [{ key: 'unknown', value: JSON.stringify({ v: '/tmp' }) }]
+          }
+        ]
+      }
+    }, res)
+
+    expect(patch).not.toHaveBeenCalled()
+    expect(global.WIKI.models.storage.initTargets).not.toHaveBeenCalled()
+    expect(res.status).toHaveBeenCalledWith(400)
   })
 
   it('returns JSON errors from storage target update failures', async () => {
@@ -334,14 +413,14 @@ describe('controllers/api storage endpoints', () => {
     expect(res.json).toHaveBeenCalledWith({ message: 'Action completed.' })
   })
 
-  it('returns JSON errors from storage action failures', async () => {
+  it('rejects undeclared storage actions before runtime dispatch', async () => {
     const handler = await loadExecuteActionHandler()
-    global.WIKI.models.storage.executeAction.mockRejectedValue(new Error('Invalid Handler for Storage Target'))
     const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
 
     await handler({ user: {}, body: { targetKey: 'git', handler: 'missing' } }, res)
 
-    expect(res.status).toHaveBeenCalledWith(500)
-    expect(res.json).toHaveBeenCalledWith({ error: 'Invalid Handler for Storage Target' })
+    expect(global.WIKI.models.storage.executeAction).not.toHaveBeenCalled()
+    expect(res.status).toHaveBeenCalledWith(400)
+    expect(res.json).toHaveBeenCalledWith({ error: 'Storage target git does not declare action missing.' })
   })
 })

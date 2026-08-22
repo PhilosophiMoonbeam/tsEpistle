@@ -3,11 +3,11 @@
   "upstream": {
     "repository": "https://github.com/requarks/wiki.git",
     "branch": "scarlett",
-    "recordedTip": "d39e063371c46c816f95c021abe31dbd2324a82c",
-    "recordedAt": "2026-08-17T21:00:02-04:00",
-    "lastFetchedAt": "2026-08-20T17:16:06Z"
+    "recordedTip": "91eede058e417e107c9053a384fa3ba37f15af6b",
+    "recordedAt": "2026-08-21T03:29:09-04:00",
+    "lastFetchedAt": "2026-08-22T02:01:10Z"
   },
-  "forkCheckpoint": "f0ce59f0f96df157ad44742aafed7d7f93f1bf7b",
+  "forkCheckpoint": "e40feddbf9bebfe991a3052a89dd48f6008aebb3",
   "candidates": [
     {
       "id": "typed-api-schemas",
@@ -338,6 +338,16 @@
       "workstream": "site-config/site-wide-banner",
       "contract": "Administrators configure one bounded Markdown notice; readers receive sanitized content above every page; malformed persisted settings fail closed.",
       "lastReviewed": "2026-08-20"
+    },
+    {
+      "id": "storage-target-runtime",
+      "commits": ["91eede05"],
+      "category": "storage",
+      "disposition": "split",
+      "state": "completed",
+      "workstream": "storage/target-safety",
+      "contract": "Mature storage targets retain data continuity while configuration is validated before writes, actions are allowlisted and observable, and disk paths remain inside configured roots; WIP multisite content routing and database offload remain rejected until migration and rollback are proven.",
+      "lastReviewed": "2026-08-22"
     }
   ]
 }

@@ -52,6 +52,8 @@
                     v-icon(color='white') mdi-clock-outline
                   v-avatar(v-else-if='tgt.status === `operational`', color='green')
                     v-icon(color='white') mdi-check-circle
+                  v-avatar(v-else-if='tgt.status === `warning`', color='orange')
+                    v-icon(color='white') mdi-alert
                   v-avatar(v-else, color='red')
                     v-icon(color='white') mdi-close-circle-outline
                 template(v-if='tgt.status === `pending`')
@@ -60,6 +62,9 @@
                 template(v-else-if='tgt.status === `operational`')
                   v-list-item-title.text-body-medium {{tgt.title}}
                   v-list-item-subtitle.text-green.text-body-small {{$t('admin:storage.lastSync', { time: $helpers.formatMoment(tgt.lastAttempt, 'from') })}}
+                template(v-else-if='tgt.status === `warning`')
+                  v-list-item-title.text-body-medium {{tgt.title}}
+                  v-list-item-subtitle.text-orange.text-body-small {{$t('admin:storage.lastSyncAttempt', { time: $helpers.formatMoment(tgt.lastAttempt, 'from') })}}
                 template(v-else)
                   v-list-item-title.text-body-medium {{tgt.title}}
                   v-list-item-subtitle.text-red.text-body-small {{$t('admin:storage.lastSyncAttempt', { time: $helpers.formatMoment(tgt.lastAttempt, 'from') })}}
@@ -68,9 +73,9 @@
                   v-menu(v-else-if='tgt.status !== `operational`')
                     template(v-slot:activator='{ props }')
                       v-btn(icon, v-bind='props')
-                        v-icon(color='red') mdi-information
+                        v-icon(:color='tgt.status === `warning` ? `orange` : `red`') mdi-information
                     v-card(width='450')
-                      v-toolbar(flat, color='red', density="compact") {{$t('admin:storage.errorMsg')}}
+                      v-toolbar(flat, :color='tgt.status === `warning` ? `orange` : `red`', density="compact") {{$t('admin:storage.errorMsg')}}
                       v-card-text {{tgt.message}}
 
               v-divider(v-if='n < status.length - 1')
@@ -199,8 +204,8 @@
                     v-col(cols='12', lg='6', xl='4', v-for='act of target.actions', :key='act.handler')
                       v-card.radius-7(flat, :class='$vuetify.theme.current.dark ? `bg-grey-darken-3-d5` : `bg-grey-lighten-3`', height='100%')
                         v-card-text
-                          .text-body-large(v-html='act.label')
-                          .text-body-medium.mt-4(v-html='act.hint')
+                          .text-body-large {{act.label}}
+                          .text-body-medium.mt-4 {{act.hint}}
                           v-btn.mx-0.mt-5(
                             @click='executeAction(target.key, act.handler)'
                             variant="outlined"
@@ -218,7 +223,7 @@ import momentDurationFormatSetup from 'moment-duration-format'
 import DurationPicker from '../common/duration-picker.vue'
 import { LoopingRhombusesSpinner } from 'epic-spinners'
 import { wikiStore } from '@/store/index.ts'
-import { loadingStart, loadingStop, showNotification, setLoading } from '../../helpers/root-ui-store'
+import { loadingStart, loadingStop, pushGraphError, showNotification, setLoading } from '../../helpers/root-ui-store'
 import { executeStorageAction, fetchStorageStatus, fetchStorageTargets, saveStorageTargets } from '../../helpers/storage-api'
 import type {
   StorageConfigEntry,
@@ -335,6 +340,8 @@ export default {
       setLoading(wikiStore, 'admin-storage-targets-refresh', true)
       try {
         this.targets = this.normalizeTargets(await fetchStorageTargets(window.fetch.bind(window)))
+      } catch (err) {
+        pushGraphError(wikiStore, err)
       } finally {
         setLoading(wikiStore, 'admin-storage-targets-refresh', false)
       }
@@ -343,6 +350,8 @@ export default {
       setLoading(wikiStore, 'admin-storage-status-refresh', true)
       try {
         this.status = await fetchStorageStatus(window.fetch.bind(window))
+      } catch (err) {
+        pushGraphError(wikiStore, err)
       } finally {
         setLoading(wikiStore, 'admin-storage-status-refresh', false)
       }
@@ -357,13 +366,18 @@ export default {
     },
     async save() {
       loadingStart(wikiStore, 'admin-storage-savetargets')
-      await saveStorageTargets(window.fetch.bind(window), this.storageTargetsPayload())
-      showNotification(wikiStore, {
-        message: 'Storage configuration saved successfully.',
-        style: 'success',
-        icon: 'check'
-      })
-      loadingStop(wikiStore, 'admin-storage-savetargets')
+      try {
+        await saveStorageTargets(window.fetch.bind(window), this.storageTargetsPayload())
+        showNotification(wikiStore, {
+          message: 'Storage configuration saved successfully.',
+          style: 'success',
+          icon: 'check'
+        })
+      } catch (err) {
+        pushGraphError(wikiStore, err)
+      } finally {
+        loadingStop(wikiStore, 'admin-storage-savetargets')
+      }
     },
     getDefaultSchedule(val: StorageInterval | undefined) {
       if (!val) { return 'N/A' }
@@ -374,18 +388,20 @@ export default {
       this.runningAction = true
       this.runningActionHandler = handler
       try {
-        await executeStorageAction(window.fetch.bind(window), targetKey, handler)
+        const result = await executeStorageAction(window.fetch.bind(window), targetKey, handler)
         showNotification(wikiStore, {
-          message: 'Action completed.',
+          message: result.message || 'Action completed.',
           style: 'success',
           icon: 'check'
         })
+        await this.loadStatus()
       } catch (err) {
-        console.warn(err)
+        pushGraphError(wikiStore, err)
+      } finally {
+        this.runningAction = false
+        this.runningActionHandler = ''
+        loadingStop(wikiStore, 'admin-storage-executeaction')
       }
-      this.runningAction = false
-      this.runningActionHandler = ''
-      loadingStop(wikiStore, 'admin-storage-executeaction')
     }
   }
 }

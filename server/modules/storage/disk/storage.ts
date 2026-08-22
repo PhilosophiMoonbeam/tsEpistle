@@ -7,6 +7,7 @@ import zlib from 'node:zlib'
 import { pipeline } from 'node:stream/promises'
 import { Transform, type TransformCallback } from 'node:stream'
 import moment from 'moment'
+import { randomUUID } from 'node:crypto'
 
 import pageHelper from '../../../helpers/page.ts'
 import commonDisk from './common.ts'
@@ -71,6 +72,39 @@ function serializeContent (content: string | Record<string, unknown>): string {
 function toError (value: unknown): Error {
   return value instanceof Error ? value : new Error(String(value))
 }
+function storageRoot (config: StorageConfig): string {
+  return path.resolve(wiki.ROOTPATH, config.path)
+}
+
+function storagePath (config: StorageConfig, relativePath: string): string {
+  const root = storageRoot(config)
+  const resolved = path.resolve(root, relativePath)
+  if (resolved !== root && !resolved.startsWith(`${root}${path.sep}`)) {
+    throw new Error(`Storage path escapes the configured root: ${relativePath}`)
+  }
+  return resolved
+}
+
+async function writeFileAtomic (
+  filePath: string,
+  data: string | Buffer,
+  encoding?: BufferEncoding
+): Promise<void> {
+  await fs.ensureDir(path.dirname(filePath))
+  const tempPath = `${filePath}.${process.pid}.${randomUUID()}.tmp`
+  try {
+    if (encoding) {
+      await fs.writeFile(tempPath, data, { encoding })
+    } else {
+      await fs.writeFile(tempPath, data)
+    }
+    await fs.rename(tempPath, filePath)
+  } catch (err) {
+    await fs.remove(tempPath)
+    throw err
+  }
+}
+
 
 
 const plugin: StoragePlugin<StorageConfig, DiskStorageContext> = {
@@ -82,25 +116,25 @@ const plugin: StoragePlugin<StorageConfig, DiskStorageContext> = {
   },
   async init() {
     wiki.logger.info('(STORAGE/DISK) Initializing...')
-    await fs.ensureDir(this.config.path)
+    await fs.ensureDir(storageRoot(this.config))
     wiki.logger.info('(STORAGE/DISK) Initialization completed.')
   },
   async sync({ manual } = { manual: false }) {
     if (this.config.createDailyBackups || manual) {
-      const dirPath = path.join(this.config.path, manual ? '_manual' : '_daily')
+      const dirPath = storagePath(this.config, manual ? '_manual' : '_daily')
       await fs.ensureDir(dirPath)
 
       const dateFilename = moment().format(manual ? 'YYYYMMDD-HHmmss' : 'DD')
 
       wiki.logger.info(`(STORAGE/DISK) Creating backup archive...`)
       await pipeline(
-        tar.pack(this.config.path, {
-          ignore: (filePath) => {
+        tar.pack(storageRoot(this.config), {
+          ignore: (filePath: string) => {
             return filePath.indexOf('_daily') >= 0 || filePath.indexOf('_manual') >= 0
           }
         }),
         zlib.createGzip(),
-        fs.createWriteStream(path.join(dirPath, `wiki-${dateFilename}.tar.gz`))
+        fs.createWriteStream(storagePath(this.config, `${manual ? '_manual' : '_daily'}/wiki-${dateFilename}.tar.gz`))
       )
       wiki.logger.info('(STORAGE/DISK) Backup archive created successfully.')
     }
@@ -111,8 +145,8 @@ const plugin: StoragePlugin<StorageConfig, DiskStorageContext> = {
     if (wiki.config.lang.code !== page.localeCode) {
       fileName = `${page.localeCode}/${fileName}`
     }
-    const filePath = path.join(this.config.path, fileName)
-    await fs.outputFile(filePath, page.injectMetadata(), 'utf8')
+    const filePath = storagePath(this.config, fileName)
+    await writeFileAtomic(filePath, page.injectMetadata(), 'utf8')
   },
   async updated(page) {
     wiki.logger.info(`(STORAGE/DISK) Updating file [${page.localeCode}] ${page.path}...`)
@@ -120,8 +154,8 @@ const plugin: StoragePlugin<StorageConfig, DiskStorageContext> = {
     if (wiki.config.lang.code !== page.localeCode) {
       fileName = `${page.localeCode}/${fileName}`
     }
-    const filePath = path.join(this.config.path, fileName)
-    await fs.outputFile(filePath, page.injectMetadata(), 'utf8')
+    const filePath = storagePath(this.config, fileName)
+    await writeFileAtomic(filePath, page.injectMetadata(), 'utf8')
   },
   async deleted(page) {
     wiki.logger.info(`(STORAGE/DISK) Deleting file [${page.localeCode}] ${page.path}...`)
@@ -129,8 +163,8 @@ const plugin: StoragePlugin<StorageConfig, DiskStorageContext> = {
     if (wiki.config.lang.code !== page.localeCode) {
       fileName = `${page.localeCode}/${fileName}`
     }
-    const filePath = path.join(this.config.path, fileName)
-    await fs.unlink(filePath)
+    const filePath = storagePath(this.config, fileName)
+    await fs.remove(filePath)
   },
   async renamed(page) {
     wiki.logger.info(`(STORAGE/DISK) Renaming file [${page.localeCode}] ${page.path} to [${page.destinationLocaleCode}] ${page.destinationPath}...`)
@@ -147,7 +181,7 @@ const plugin: StoragePlugin<StorageConfig, DiskStorageContext> = {
       }
     }
 
-    await fs.move(path.join(this.config.path, sourceFilePath), path.join(this.config.path, destinationFilePath), { overwrite: true })
+    await fs.move(storagePath(this.config, sourceFilePath), storagePath(this.config, destinationFilePath), { overwrite: true })
   },
   /**
    * ASSET UPLOAD
@@ -156,7 +190,7 @@ const plugin: StoragePlugin<StorageConfig, DiskStorageContext> = {
    */
   async assetUploaded (asset) {
     wiki.logger.info(`(STORAGE/DISK) Creating new file ${asset.path}...`)
-    await fs.outputFile(path.join(this.config.path, asset.path), asset.data)
+    await writeFileAtomic(storagePath(this.config, asset.path), asset.data)
   },
   /**
    * ASSET DELETE
@@ -165,7 +199,7 @@ const plugin: StoragePlugin<StorageConfig, DiskStorageContext> = {
    */
   async assetDeleted (asset) {
     wiki.logger.info(`(STORAGE/DISK) Deleting file ${asset.path}...`)
-    await fs.remove(path.join(this.config.path, asset.path))
+    await fs.remove(storagePath(this.config, asset.path))
   },
   /**
    * ASSET RENAME
@@ -174,10 +208,10 @@ const plugin: StoragePlugin<StorageConfig, DiskStorageContext> = {
    */
   async assetRenamed (asset) {
     wiki.logger.info(`(STORAGE/DISK) Renaming file from ${asset.path} to ${asset.destinationPath}...`)
-    await fs.move(path.join(this.config.path, asset.path), path.join(this.config.path, asset.destinationPath), { overwrite: true })
+    await fs.move(storagePath(this.config, asset.path), storagePath(this.config, asset.destinationPath), { overwrite: true })
   },
   async getLocalLocation (asset) {
-    return path.join(this.config.path, asset.path)
+    return storagePath(this.config, asset.path)
   },
   /**
    * HANDLERS
@@ -211,8 +245,8 @@ const plugin: StoragePlugin<StorageConfig, DiskStorageContext> = {
               fileName = `${page.localeCode}/${fileName}`
             }
             wiki.logger.info(`(STORAGE/DISK) Dumping page ${fileName}...`)
-            const filePath = path.join(this.config.path, fileName)
-            await fs.outputFile(filePath, serializeContent(pageHelper.injectPageMetadata(page)), 'utf8')
+            const filePath = storagePath(this.config, fileName)
+            await writeFileAtomic(filePath, serializeContent(pageHelper.injectPageMetadata(page)), 'utf8')
             callback()
           } catch (error: unknown) {
             callback(toError(error))
@@ -242,7 +276,7 @@ const plugin: StoragePlugin<StorageConfig, DiskStorageContext> = {
               filename = `${folderPath}/${filename}`
             }
             wiki.logger.info(`(STORAGE/DISK) Dumping asset ${filename}...`)
-            await fs.outputFile(path.join(this.config.path, filename), value.data)
+            await writeFileAtomic(storagePath(this.config, filename), value.data)
             callback()
           } catch (error: unknown) {
             callback(toError(error))
@@ -259,7 +293,7 @@ const plugin: StoragePlugin<StorageConfig, DiskStorageContext> = {
   async importAll() {
     wiki.logger.info(`(STORAGE/DISK) Importing all content from local disk folder to the DB...`)
     await commonDisk.importFromDisk({
-      fullPath: this.config.path,
+      fullPath: storageRoot(this.config),
       moduleName: 'DISK'
     })
     wiki.logger.info('(STORAGE/DISK) Import completed.')

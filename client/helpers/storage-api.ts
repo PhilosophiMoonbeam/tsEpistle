@@ -1,3 +1,5 @@
+import { isRecord } from './type-guards'
+
 type JsonHeaders = {
   get: (name: string) => string | null
 }
@@ -66,6 +68,53 @@ export type StorageTargetUpdate = Pick<StorageTarget, 'isEnabled' | 'key' | 'mod
   config: StorageConfigEntry[]
 }
 
+type StorageTargetPayload = Omit<StorageTarget, 'supportedModes' | 'syncIntervalDefault'> & {
+  supportedModes?: string[]
+  syncIntervalDefault?: StorageInterval
+}
+
+function isStorageConfigEntry (value: unknown): value is StorageConfigEntry {
+  return isRecord(value) && typeof value.key === 'string' && typeof value.value === 'string'
+}
+
+function isStorageAction (value: unknown): value is StorageAction {
+  return isRecord(value) &&
+    typeof value.handler === 'string' &&
+    typeof value.hint === 'string' &&
+    typeof value.label === 'string'
+}
+
+function isStorageTargetPayload (value: unknown): value is StorageTargetPayload {
+  if (!isRecord(value)) return false
+  const actions = value.actions
+  const intervalDefault = value.syncIntervalDefault
+  return (actions === undefined || (Array.isArray(actions) && actions.every(isStorageAction))) &&
+    Array.isArray(value.config) && value.config.every(isStorageConfigEntry) &&
+    typeof value.description === 'string' &&
+    typeof value.hasSchedule === 'boolean' &&
+    typeof value.isAvailable === 'boolean' &&
+    typeof value.isEnabled === 'boolean' &&
+    typeof value.key === 'string' &&
+    typeof value.logo === 'string' &&
+    typeof value.mode === 'string' &&
+    (value.supportedModes === undefined ||
+      (Array.isArray(value.supportedModes) && value.supportedModes.every(mode => typeof mode === 'string'))) &&
+    typeof value.syncInterval === 'string' &&
+    (intervalDefault === undefined || typeof intervalDefault === 'string' || intervalDefault === false || intervalDefault === null) &&
+    typeof value.title === 'string' &&
+    typeof value.website === 'string'
+}
+
+function isStorageStatus (value: unknown): value is StorageStatus {
+  return isRecord(value) &&
+    typeof value.key === 'string' &&
+    (typeof value.lastAttempt === 'string' || value.lastAttempt === null) &&
+    typeof value.message === 'string' &&
+    typeof value.status === 'string' &&
+    typeof value.title === 'string'
+}
+
+
 async function parseJsonResponse (response: JsonResponse, fallbackMessage: string): Promise<unknown> {
   const hasHeaderReader = response && response.headers && typeof response.headers.get === 'function'
   const contentType = hasHeaderReader ? response.headers!.get('content-type') || '' : ''
@@ -92,13 +141,16 @@ export async function fetchStorageTargets (fetchImpl: FetchImpl, fallbackMessage
   })
   const payload = await parseJsonResponse(response, fallbackMessage)
 
-  if (!Array.isArray(payload)) {
+  if (!Array.isArray(payload) || !payload.every(isStorageTargetPayload)) {
     throw new Error(fallbackMessage)
   }
 
-  return payload as StorageTarget[]
+  return payload.map(target => ({
+    ...target,
+    supportedModes: target.supportedModes ?? [],
+    syncIntervalDefault: target.syncIntervalDefault ?? null
+  }))
 }
-
 export async function fetchStorageStatus (fetchImpl: FetchImpl, fallbackMessage = 'Storage status failed'): Promise<StorageStatus[]> {
   const response = await fetchImpl('/_api/storage/status', {
     credentials: 'same-origin',
@@ -108,11 +160,11 @@ export async function fetchStorageStatus (fetchImpl: FetchImpl, fallbackMessage 
   })
   const payload = await parseJsonResponse(response, fallbackMessage)
 
-  if (!Array.isArray(payload)) {
+  if (!Array.isArray(payload) || !payload.every(isStorageStatus)) {
     throw new Error(fallbackMessage)
   }
 
-  return payload as StorageStatus[]
+  return payload
 }
 
 export async function saveStorageTargets (fetchImpl: FetchImpl, targets: StorageTargetUpdate[], fallbackMessage = 'Storage targets update failed'): Promise<MessageResponse> {

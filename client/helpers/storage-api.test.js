@@ -10,9 +10,40 @@ function createJsonResponse (payload, ok = true) {
   }
 }
 
+function storageTarget (overrides = {}) {
+  return {
+    actions: [{ handler: 'sync', hint: 'Synchronize now', label: 'Sync' }],
+    config: [{ key: 'repoUrl', value: JSON.stringify({ type: 'String', value: 'https://example.com/wiki.git' }) }],
+    description: 'Git storage',
+    hasSchedule: true,
+    isAvailable: true,
+    isEnabled: true,
+    key: 'git',
+    logo: '/_assets/svg/mime-icon-32.svg',
+    mode: 'sync',
+    supportedModes: ['sync', 'push', 'pull'],
+    syncInterval: 'PT5M',
+    syncIntervalDefault: 'PT5M',
+    title: 'Git',
+    website: 'https://git-scm.com/',
+    ...overrides
+  }
+}
+
+function storageStatus (overrides = {}) {
+  return {
+    key: 'git',
+    lastAttempt: '2026-08-21T00:00:00.000Z',
+    message: 'Ready',
+    status: 'operational',
+    title: 'Git',
+    ...overrides
+  }
+}
+
 describe('storage api helper', () => {
   it('fetches storage targets with same-origin JSON headers', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([{ key: 'git' }]))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([storageTarget()]))
 
     const result = await fetchStorageTargets(fetchImpl)
 
@@ -22,11 +53,27 @@ describe('storage api helper', () => {
         Accept: 'application/json'
       }
     })
-    expect(result).toEqual([{ key: 'git' }])
+    expect(result).toEqual([storageTarget()])
+  })
+
+  it('normalizes omitted legacy capability fields', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([
+      storageTarget({ supportedModes: undefined, syncIntervalDefault: undefined })
+    ]))
+
+    await expect(fetchStorageTargets(fetchImpl)).resolves.toEqual([
+      storageTarget({ supportedModes: [], syncIntervalDefault: null })
+    ])
   })
 
   it('rejects malformed successful targets responses', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ targets: [] }))
+
+    await expect(fetchStorageTargets(fetchImpl, 'Unexpected targets response')).rejects.toThrow('Unexpected targets response')
+  })
+
+  it('rejects malformed entries in successful targets responses', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([storageTarget({ supportedModes: 'sync' })]))
 
     await expect(fetchStorageTargets(fetchImpl, 'Unexpected targets response')).rejects.toThrow('Unexpected targets response')
   })
@@ -38,7 +85,7 @@ describe('storage api helper', () => {
   })
 
   it('fetches storage status with same-origin JSON headers', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([{ key: 'git', status: 'operational' }]))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([storageStatus()]))
 
     const result = await fetchStorageStatus(fetchImpl)
 
@@ -48,11 +95,17 @@ describe('storage api helper', () => {
         Accept: 'application/json'
       }
     })
-    expect(result).toEqual([{ key: 'git', status: 'operational' }])
+    expect(result).toEqual([storageStatus()])
   })
 
   it('rejects malformed successful status responses', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ status: [] }))
+
+    await expect(fetchStorageStatus(fetchImpl, 'Unexpected status response')).rejects.toThrow('Unexpected status response')
+  })
+
+  it('rejects malformed entries in successful status responses', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([storageStatus({ lastAttempt: 123 })]))
 
     await expect(fetchStorageStatus(fetchImpl, 'Unexpected status response')).rejects.toThrow('Unexpected status response')
   })

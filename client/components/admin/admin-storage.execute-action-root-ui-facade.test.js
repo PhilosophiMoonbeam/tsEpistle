@@ -75,13 +75,13 @@ describe('admin-storage executeAction root UI facade migration guard', () => {
     expect(source).toMatch(/<script\s+lang=["']ts["']>/)
     expect(executeAction).not.toBeNull()
 
-    expect(script).toMatch(/import\s+\{(?=[^}]*\bloadingStart\b)(?=[^}]*\bloadingStop\b)(?=[^}]*\bshowNotification\b)(?=[^}]*\bsetLoading\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/root-ui-store['"]/)
+    expect(script).toMatch(/import\s+\{(?=[^}]*\bloadingStart\b)(?=[^}]*\bloadingStop\b)(?=[^}]*\bpushGraphError\b)(?=[^}]*\bshowNotification\b)(?=[^}]*\bsetLoading\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/root-ui-store['"]/)
     expect(script).toMatch(/import\s+\{(?=[^}]*\bexecuteStorageAction\b)(?=[^}]*\bfetchStorageStatus\b)(?=[^}]*\bfetchStorageTargets\b)(?=[^}]*\bsaveStorageTargets\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/storage-api['"]/)
     expect(script).toContain("import { wikiStore } from '@/store/index.ts'")
     expect(script).not.toContain('gql/admin/storage/')
     expect(script).not.toContain('apollo:')
     expect(executeAction).toMatch(/\bloadingStart\s*\(\s*wikiStore\s*,\s*['"]admin-storage-executeaction['"]\s*\)/)
-    expect(executeAction).toMatch(/\bshowNotification\s*\(\s*wikiStore\s*,\s*\{\s*message:\s*['"]Action completed\.['"]\s*,\s*style:\s*['"]success['"]\s*,\s*icon:\s*['"]check['"]\s*\}\s*\)/)
+    expect(executeAction).toMatch(/\bshowNotification\s*\(\s*wikiStore\s*,\s*\{\s*message:\s*result\.message\s*\|\|\s*['"]Action completed\.['"]\s*,\s*style:\s*['"]success['"]\s*,\s*icon:\s*['"]check['"]\s*\}\s*\)/)
     expect(executeAction).toMatch(/\bloadingStop\s*\(\s*wikiStore\s*,\s*['"]admin-storage-executeaction['"]\s*\)/)
 
     expect(executeAction).not.toMatch(/this\.\$store\.commit\s*\(\s*(?:`loadingStart`|['"]loadingStart['"])\s*,\s*['"]admin-storage-executeaction['"]\s*\)/)
@@ -109,9 +109,11 @@ describe('admin-storage executeAction root UI facade migration guard', () => {
       ['store running action handler', /this\.runningActionHandler\s*=\s*handler/],
       ['enter try block', /try\s*\{/],
       ['execute storage REST action', /await\s+executeStorageAction\s*\(\s*window\.fetch\.bind\s*\(\s*window\s*\)\s*,\s*targetKey\s*,\s*handler\s*\)/],
-      ['show success notification via facade', /\bshowNotification\s*\(\s*wikiStore\s*,\s*\{\s*message:\s*['"]Action completed\.['"]\s*,\s*style:\s*['"]success['"]\s*,\s*icon:\s*['"]check['"]\s*\}\s*\)/],
+      ['show success notification via facade', /\bshowNotification\s*\(\s*wikiStore\s*,\s*\{\s*message:\s*result\.message\s*\|\|\s*['"]Action completed\.['"]\s*,\s*style:\s*['"]success['"]\s*,\s*icon:\s*['"]check['"]\s*\}\s*\)/],
+      ['refresh status after action', /await\s+this\.loadStatus\s*\(\s*\)/],
       ['catch mutation errors', /\}\s*catch\s*\(\s*err\s*\)\s*\{/],
-      ['warn on caught error', /console\.warn\s*\(\s*err\s*\)/],
+      ['surface caught error', /pushGraphError\s*\(\s*wikiStore\s*,\s*err\s*\)/],
+      ['enter cleanup', /\}\s*finally\s*\{/],
       ['clear running action flag', /this\.runningAction\s*=\s*false/],
       ['clear running action handler', /this\.runningActionHandler\s*=\s*['"]['"]/],
       ['stop loading via facade', /\bloadingStop\s*\(\s*wikiStore\s*,\s*['"]admin-storage-executeaction['"]\s*\)/]

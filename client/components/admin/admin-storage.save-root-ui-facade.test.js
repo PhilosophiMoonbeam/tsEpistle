@@ -49,13 +49,14 @@ describe('admin-storage save root UI facade migration guard', () => {
     expect(source).toMatch(/<script\s+lang=["']ts["']>/)
     expect(saveMethod).not.toBeNull()
 
-    expect(script).toMatch(/import\s+\{(?=[^}]*\bsetLoading\b)(?=[^}]*\bloadingStart\b)(?=[^}]*\bloadingStop\b)(?=[^}]*\bshowNotification\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/root-ui-store['"]/)
+    expect(script).toMatch(/import\s+\{(?=[^}]*\bsetLoading\b)(?=[^}]*\bloadingStart\b)(?=[^}]*\bloadingStop\b)(?=[^}]*\bpushGraphError\b)(?=[^}]*\bshowNotification\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/root-ui-store['"]/)
     expect(script).toMatch(/import\s+\{(?=[^}]*\bsaveStorageTargets\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/storage-api['"]/)
     expect(script).toContain("import { wikiStore } from '@/store/index.ts'")
 
     expect(saveMethod).toMatch(/\bloadingStart\s*\(\s*wikiStore\s*,\s*['"]admin-storage-savetargets['"]\s*\)/)
     expect(saveMethod).toMatch(/\bshowNotification\s*\(\s*wikiStore\s*,\s*\{\s*message:\s*['"]Storage configuration saved successfully\.['"]\s*,\s*style:\s*['"]success['"]\s*,\s*icon:\s*['"]check['"]\s*\}\s*\)/)
     expect(saveMethod).toMatch(/\bloadingStop\s*\(\s*wikiStore\s*,\s*['"]admin-storage-savetargets['"]\s*\)/)
+    expect(saveMethod).toMatch(/\}\s*catch\s*\(\s*err\s*\)\s*\{\s*pushGraphError\s*\(\s*wikiStore\s*,\s*err\s*\)\s*\}\s*finally\s*\{/)
 
     expect(saveMethod).not.toMatch(/this\.\$store\.commit\s*\(\s*`loadingStart`\s*,\s*['"]admin-storage-savetargets['"]\s*\)/)
     expect(saveMethod).not.toMatch(/this\.\$store\.commit\s*\(\s*['"]loadingStart['"]\s*,\s*['"]admin-storage-savetargets['"]\s*\)/)

@@ -20,12 +20,20 @@ interface StorageDefinition extends LoadedModuleDefinition {
   defaultMode?: string
   schedule?: string | false
   internalSchedule?: string | false
+  actions?: Array<{ handler: string }>
 }
 
 interface StorageState {
   status: string
   message: string
   lastAttempt: string | null
+}
+
+interface StatefulStorageTarget {
+  state?: StorageState
+  $query(): {
+    patch(data: { state: StorageState }): PromiseLike<unknown>
+  }
 }
 
 interface StoragePagePath {
@@ -240,6 +248,21 @@ function isStorageAction (value: unknown): value is () => unknown {
   return typeof value === 'function'
 }
 
+async function recordTargetState (
+  target: StatefulStorageTarget,
+  status: string,
+  message = ''
+): Promise<void> {
+  if (target.state?.status === status && target.state.message === message) return
+  const state = {
+    status,
+    message,
+    lastAttempt: new Date().toISOString()
+  }
+  target.state = state
+  await target.$query().patch({ state })
+}
+
 /**
  * Storage model
  */
@@ -386,13 +409,7 @@ export default class Storage extends Model {
           await target.fn.init()
 
           // -> Save succeeded init state
-          await wiki.models.storage.query().patch({
-            state: {
-              status: 'operational',
-              message: '',
-              lastAttempt: new Date().toISOString()
-            }
-          }).where('key', target.key)
+          await recordTargetState(target, 'operational')
 
           // -> Set recurring sync job
           if (targetDef.schedule && target.syncInterval !== 'P0D') {
@@ -417,13 +434,7 @@ export default class Storage extends Model {
           }
         } catch (err) {
           // -> Save initialization error
-          await wiki.models.storage.query().patch({
-            state: {
-              status: 'error',
-              message: errorMessage(err),
-              lastAttempt: new Date().toISOString()
-            }
-          }).where('key', target.key)
+          await recordTargetState(target, 'error', errorMessage(err))
         }
       }
     } catch (err) {
@@ -434,8 +445,8 @@ export default class Storage extends Model {
 
   static async pageEvent (payload: StoragePageEvent): Promise<void> {
     const wiki = getWiki()
-    try {
-      for (const target of this.targets) {
+    for (const target of this.targets) {
+      try {
         switch (payload.event) {
           case 'created':
             await target.fn.created(payload.page)
@@ -450,17 +461,22 @@ export default class Storage extends Model {
             await target.fn.renamed(payload.page)
             break
         }
+        await recordTargetState(target, 'operational')
+      } catch (err) {
+        wiki.logger.warn(err)
+        try {
+          await recordTargetState(target, 'warning', errorMessage(err))
+        } catch (statusError) {
+          wiki.logger.warn(statusError)
+        }
       }
-    } catch (err) {
-      wiki.logger.warn(err)
-      throw err
     }
   }
 
   static async assetEvent (payload: StorageAssetEvent): Promise<void> {
     const wiki = getWiki()
-    try {
-      for (const target of this.targets) {
+    for (const target of this.targets) {
+      try {
         switch (payload.event) {
           case 'uploaded':
             await target.fn.assetUploaded(payload.asset)
@@ -472,10 +488,15 @@ export default class Storage extends Model {
             await target.fn.assetRenamed(payload.asset)
             break
         }
+        await recordTargetState(target, 'operational')
+      } catch (err) {
+        wiki.logger.warn(err)
+        try {
+          await recordTargetState(target, 'warning', errorMessage(err))
+        } catch (statusError) {
+          wiki.logger.warn(statusError)
+        }
       }
-    } catch (err) {
-      wiki.logger.warn(err)
-      throw err
     }
   }
 
@@ -501,20 +522,29 @@ export default class Storage extends Model {
 
   static async executeAction (targetKey: string, handler: string): Promise<void> {
     const wiki = getWiki()
+    const target = this.targets.find(candidate => candidate.key === targetKey)
+    if (!target) {
+      throw new Error('Invalid or Inactive Storage Target')
+    }
+    const definition = wiki.data.storage?.find(candidate => candidate.key === targetKey)
+    if (!definition?.actions?.some(action => action.handler === handler)) {
+      throw new Error('Invalid Handler for Storage Target')
+    }
+    const action = target.fn[handler]
+    if (!isStorageAction(action)) {
+      throw new Error('Invalid Handler for Storage Target')
+    }
+
     try {
-      const target = this.targets.find(candidate => candidate.key === targetKey)
-      if (target) {
-        const action = target.fn[handler]
-        if (isStorageAction(action)) {
-          await action.call(target.fn)
-        } else {
-          throw new Error('Invalid Handler for Storage Target')
-        }
-      } else {
-        throw new Error('Invalid or Inactive Storage Target')
-      }
+      await action.call(target.fn)
+      await recordTargetState(target, 'operational')
     } catch (err) {
       wiki.logger.warn(err)
+      try {
+        await recordTargetState(target, 'error', errorMessage(err))
+      } catch (statusError) {
+        wiki.logger.warn(statusError)
+      }
       throw err
     }
   }
