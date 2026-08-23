@@ -39,11 +39,7 @@ const unsupportedFixtures = [
   ['abbreviation', '*[HTML]: Hyper Text Markup Language'],
   ['image-size', '![Image](/image.png =100x200)'],
   ['math', 'Inline $x + y$ math'],
-  ['highlight', 'This is ==marked== text'],
-  ['subscript', 'H~2~O'],
-  ['superscript', 'x^2^'],
   ['multiline-table', '| value ^^ |'],
-  ['diagram', '```mermaid\ngraph TD\nA --> B\n```']
 ] as const
 
 describe('Visual Markdown compatibility', () => {
@@ -51,6 +47,24 @@ describe('Visual Markdown compatibility', () => {
     expect(findVisualMarkdownIssue(visualSafeGfm)).toBeNull()
     expect(() => assertVisualMarkdownCompatible(visualSafeGfm)).not.toThrow()
   })
+  it('accepts source-editor formatting and diagram constructs with visual representations', () => {
+    const markdown = [
+      'This is ==marked== text with H~2~O, x^2^, and <kbd>Ctrl</kbd>.',
+      '',
+      'Term',
+      ': Definition',
+      '',
+      '```mermaid',
+      'graph TD',
+      'A --> B',
+      '```'
+    ].join('\n')
+    expect(inspectVisualMarkdownCapabilities(markdown)).toMatchObject({
+      compatible: true,
+      sourceEditorRequired: false
+    })
+  })
+
 
   it.each(unsupportedFixtures)('rejects unsupported %s syntax without changing the input', (kind, markdown) => {
     const original = markdown
@@ -60,15 +74,15 @@ describe('Visual Markdown compatibility', () => {
   })
 
   it('reports every unsupported capability while preserving source fallback', () => {
-    const markdown = 'Inline $x$ math.\n\nFootnote[^1].\n\n```mermaid\ngraph TD\n```'
+    const markdown = 'Inline $x$ math.\n\nFootnote[^1].'
     const report = inspectVisualMarkdownCapabilities(markdown)
 
-    expect(findVisualMarkdownIssues(markdown).map(issue => issue.kind)).toEqual(['math', 'footnote', 'diagram'])
+    expect(findVisualMarkdownIssues(markdown).map(issue => issue.kind)).toEqual(['math', 'footnote'])
     expect(report).toMatchObject({
       compatible: false,
       sourceEditorRequired: true
     })
-    expect(report.issues).toHaveLength(3)
+    expect(report.issues).toHaveLength(2)
   })
 
   it('does not inspect extended syntax inside fenced or inline code', () => {

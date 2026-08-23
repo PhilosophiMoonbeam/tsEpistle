@@ -5,6 +5,7 @@ import {
   Code,
   CodeBlock,
   Essentials,
+  GeneralHtmlSupport,
   Heading,
   HorizontalLine,
   Image,
@@ -32,6 +33,7 @@ import {
   type HeadingOption
 } from 'ckeditor5'
 import { html as beautify } from 'js-beautify'
+import { serializeVisualMarkdownData, VisualMarkdownFidelity } from './visual-markdown-fidelity.ts'
 
 export type VisualEditorFormat = 'html' | 'markdown'
 
@@ -87,6 +89,8 @@ const htmlPlugins = [
 const markdownPlugins = [
   Markdown,
   Essentials,
+  GeneralHtmlSupport,
+  VisualMarkdownFidelity,
   Paragraph,
   Heading,
   Bold,
@@ -140,6 +144,10 @@ const markdownToolbar = [
   'bold',
   'italic',
   'strikethrough',
+  'wikiHighlight',
+  'wikiSubscript',
+  'wikiSuperscript',
+  'wikiKeyboard',
   'code',
   'link',
   '|',
@@ -159,6 +167,10 @@ const markdownCodeBlockLanguages = [
   { language: 'html', label: 'HTML' },
   { language: 'css', label: 'CSS' },
   { language: 'json', label: 'JSON' },
+  { language: 'diagram', label: 'Draw.io diagram' },
+  { language: 'mermaid', label: 'Mermaid diagram' },
+  { language: 'plantuml', label: 'PlantUML diagram' },
+  { language: 'kroki', label: 'Kroki diagram' },
   { language: 'wiki-extension', label: 'Wiki content extension' }
 ]
 const markdownHeadingOptions: HeadingOption[] = [
@@ -179,7 +191,7 @@ export function getVisualEditorDefinition (format: VisualEditorFormat): VisualEd
 export function serializeVisualEditorData (format: VisualEditorFormat, data: string): string {
   return format === 'html'
     ? beautify(data, { indent_size: 2, end_with_newline: true })
-    : data
+    : serializeVisualMarkdownData(data)
 }
 
 export function createVisualEditorConfig (
@@ -197,6 +209,17 @@ export function createVisualEditorConfig (
     },
     ...(isMarkdown ? { heading: { options: markdownHeadingOptions } } : {}),
     ...(isMarkdown ? { codeBlock: { languages: markdownCodeBlockLanguages } } : {}),
+    ...(isMarkdown
+      ? {
+          htmlSupport: {
+            allow: [{
+              name: /^(?:dl|dt|dd)$/,
+              attributes: true,
+              classes: true
+            }]
+          }
+        }
+      : {}),
     image: {
       toolbar: isMarkdown
         ? ['imageTextAlternative']

@@ -18,6 +18,14 @@
       )
         v-icon(start) mdi-alert-box-outline
         | Insert admonition
+      v-btn(
+        color='blue-grey'
+        tile
+        aria-label='Insert definition list'
+        @click='insertDefinitionList'
+      )
+        v-icon(start) mdi-format-list-group-plus
+        | {{$t('editor:markup.insertDefinitionList')}}
       v-menu(:close-on-content-click='true')
         template(v-slot:activator='{ props }')
           v-btn(
@@ -107,6 +115,10 @@ import {
   type AdmonitionKind,
   type VisualMarkdownGlyph
 } from './visual-markdown-authoring.ts'
+import {
+  insertVisualMarkdownDefinitionList,
+  prepareVisualMarkdownData
+} from './visual-markdown-fidelity.ts'
 
 /* global siteLangs */
 
@@ -207,6 +219,10 @@ export default defineComponent({
         this.admonitionError = err instanceof Error ? err.message : 'The admonition could not be inserted.'
       }
     },
+    insertDefinitionList () {
+      const editor = this.editor as unknown as DecoupledEditor | null
+      if (editor) insertVisualMarkdownDefinitionList(editor)
+    },
     insertGlyph (glyph: VisualMarkdownGlyph) {
       const editor = this.editor as unknown as DecoupledEditor | null
       if (!editor) return
@@ -233,7 +249,11 @@ export default defineComponent({
       this.isConflict = true
     },
     handleEditorContentOverwrite () {
-      this.editor?.setData(wikiStore.editor.content)
+      if (this.editor) {
+        this.editor.setData(this.format === 'markdown'
+          ? prepareVisualMarkdownData(wikiStore.editor.content)
+          : wikiStore.editor.content)
+      }
     },
     handleEditorLinkToPage () {
       this.insertLink()
@@ -264,11 +284,13 @@ export default defineComponent({
           }
           break
         case 'DIAGRAM':
-          if (this.format === 'markdown') {
-            wikiStore.showNotification({
-              message: 'Diagrams are not supported by Visual Markdown. Use the Markdown source editor to preserve diagram syntax.',
-              style: 'warning',
-              icon: 'warning'
+          if (this.format === 'markdown' && typeof opts.text === 'string') {
+            editor.model.change(() => {
+              editor.model.deleteContent(editor.model.document.selection)
+            })
+            editor.execute('codeBlock', { language: 'diagram' })
+            editor.model.change(writer => {
+              editor.model.insertContent(writer.createText(opts.text!), editor.model.document.selection)
             })
           } else if (typeof opts.text === 'string') {
             editor.execute('imageInsert', { source: `data:image/svg+xml;base64,${opts.text}` })
@@ -334,7 +356,9 @@ export default defineComponent({
     if (toolbarElement) toolbarContainer.appendChild(toolbarElement)
 
     if (this.mode !== 'create' || (this.format === 'markdown' && wikiStore.editor.content.length > 0)) {
-      editor.setData(wikiStore.editor.content)
+      editor.setData(this.format === 'markdown'
+        ? prepareVisualMarkdownData(wikiStore.editor.content)
+        : wikiStore.editor.content)
     }
 
     const updateContent = () => {
@@ -427,6 +451,38 @@ $editor-height-mobile: calc(100vh - 56px - 16px);
   }
 
   .contents {
+    dl {
+      margin: 1em 0;
+    }
+    dt {
+      font-weight: 600;
+    }
+    dd {
+      margin: .25em 0 .75em 2em;
+    }
+    kbd[data-wiki-highlight],
+    kbd[data-wiki-subscript],
+    kbd[data-wiki-superscript] {
+      border: 0;
+      box-shadow: none;
+      color: inherit;
+      font-family: inherit;
+      padding: 0;
+    }
+    kbd[data-wiki-highlight] {
+      background: var(--ck-content-highlight-marker-yellow);
+    }
+    kbd[data-wiki-subscript],
+    kbd[data-wiki-superscript] {
+      background: none;
+      font-size: .75em;
+    }
+    kbd[data-wiki-subscript] {
+      vertical-align: sub;
+    }
+    kbd[data-wiki-superscript] {
+      vertical-align: super;
+    }
     table {
       margin: inherit;
     }

@@ -1,15 +1,11 @@
 export type VisualMarkdownIssueKind =
   | 'abbreviation'
   | 'attributes'
-  | 'diagram'
   | 'footnote'
-  | 'highlight'
   | 'html'
   | 'image-size'
   | 'math'
   | 'multiline-table'
-  | 'subscript'
-  | 'superscript'
 
 export interface VisualMarkdownIssue {
   kind: VisualMarkdownIssueKind
@@ -26,7 +22,7 @@ type Check = {
 const lineChecks: Check[] = [
   {
     kind: 'html',
-    pattern: /<!--|<\/?[A-Za-z][A-Za-z0-9-]*(?:\s[^>]*)?\s*\/?>/,
+    pattern: /<!--|<(?!\/?kbd(?:\s|>))\/?[A-Za-z][A-Za-z0-9-]*(?:\s[^>]*)?\s*\/?>/i,
     message: 'Raw HTML is not supported by Visual Markdown.'
   },
   {
@@ -55,33 +51,12 @@ const lineChecks: Check[] = [
     message: 'Math syntax is not supported by Visual Markdown.'
   },
   {
-    kind: 'highlight',
-    pattern: /==[^=\n]+==/,
-    message: 'Marked or highlighted text is not supported by Visual Markdown.'
-  },
-  {
-    kind: 'subscript',
-    pattern: /(^|[^~])~[^~\n]+~($|[^~])/,
-    message: 'Subscript syntax is not supported by Visual Markdown.'
-  },
-  {
-    kind: 'superscript',
-    pattern: /\^[^^\s][^^\n]*\^/,
-    message: 'Superscript syntax is not supported by Visual Markdown.'
-  },
-  {
     kind: 'multiline-table',
     pattern: /^\s*\|.*(?:\^\^|\\)\s*\|?\s*$/,
     message: 'Extended multiline or rowspan tables are not supported by Visual Markdown.'
   }
 ]
 
-const unsupportedFenceLanguages: Record<string, true> = {
-  diagram: true,
-  kroki: true,
-  mermaid: true,
-  plantuml: true
-}
 
 function stripInlineCode (line: string): string {
   let result = ''
@@ -128,14 +103,6 @@ export function findVisualMarkdownIssues (markdown: string): VisualMarkdownIssue
     }
 
     if (fenceMatch) {
-      const language = (fenceMatch[2] ?? '').toLowerCase()
-      if (unsupportedFenceLanguages[language]) {
-        issues.push({
-          kind: 'diagram',
-          line: index + 1,
-          message: `${language || 'Diagram'} code blocks are not supported by Visual Markdown.`
-        })
-      }
       fence = {
         marker: fenceToken.charAt(0) as '`' | '~',
         length: fenceToken.length

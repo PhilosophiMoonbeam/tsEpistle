@@ -7,6 +7,10 @@ import {
   serializeVisualEditorData
 } from './editor-config.ts'
 import {
+  insertVisualMarkdownDefinitionList,
+  prepareVisualMarkdownData
+} from './visual-markdown-fidelity.ts'
+import {
   VISUAL_MARKDOWN_GLYPHS,
   insertVisualMarkdownAdmonition,
   insertVisualMarkdownGlyph,
@@ -89,6 +93,18 @@ describe('CKEditor visual formats', () => {
     expect(markdownConfig.toolbar.items).not.toContain('underline')
     expect(markdownConfig.toolbar.items).toContain('todoList')
     expect(markdownConfig.toolbar.items).toContain('horizontalLine')
+    expect(markdownConfig.toolbar.items).toEqual(expect.arrayContaining([
+      'wikiHighlight',
+      'wikiSubscript',
+      'wikiSuperscript',
+      'wikiKeyboard'
+    ]))
+    expect(markdownConfig.codeBlock?.languages).toEqual(expect.arrayContaining([
+      { language: 'diagram', label: 'Draw.io diagram' },
+      { language: 'mermaid', label: 'Mermaid diagram' },
+      { language: 'plantuml', label: 'PlantUML diagram' },
+      { language: 'kroki', label: 'Kroki diagram' }
+    ]))
     expect(markdownConfig.codeBlock?.languages).toContainEqual({
       language: 'wiki-extension',
       label: 'Wiki content extension'
@@ -143,6 +159,89 @@ describe('CKEditor visual formats', () => {
     expect(rendered).toContain('<img src="/assets/example.png" alt="Alternative text">')
     expect(rendered).toContain('<hr>')
   })
+  it('round-trips highlights and definition lists as canonical Markdown', async () => {
+    const source = [
+      '# Extended Markdown',
+      '',
+      'A ==highlighted== value.',
+      'Formula H~2~O and x^2^; press <kbd>Ctrl</kbd>.',
+      '',
+      'First term',
+      ': First **definition**',
+      '',
+      'Second term',
+      ': Second definition'
+    ].join('\n')
+    const element = document.createElement('div')
+    document.body.appendChild(element)
+    const editor = await DecoupledEditor.create(element, createVisualEditorConfig('markdown', 'en', () => {}))
+    editors.push(editor)
+
+    editor.setData(prepareVisualMarkdownData(source))
+    const output = serializeVisualEditorData('markdown', editor.getData())
+
+    expect(output).toContain('A ==highlighted== value.')
+    expect(output).toContain('Formula H~2~O and x^2^; press <kbd>Ctrl</kbd>.')
+    expect(output).toContain('First term\n: First **definition**')
+    expect(output).toContain('Second term\n: Second definition')
+
+    const reopenedElement = document.createElement('div')
+    document.body.appendChild(reopenedElement)
+    const reopened = await DecoupledEditor.create(reopenedElement, createVisualEditorConfig('markdown', 'en', () => {}))
+    editors.push(reopened)
+    reopened.setData(prepareVisualMarkdownData(output))
+    expect(serializeVisualEditorData('markdown', reopened.getData())).toBe(output)
+  })
+
+  it('authors highlights and definition lists through visual editor commands', async () => {
+    const element = document.createElement('div')
+    document.body.appendChild(element)
+    const editor = await DecoupledEditor.create(element, createVisualEditorConfig('markdown', 'en', () => {}))
+    editors.push(editor)
+
+    editor.setData('Important')
+    editor.model.change(writer => {
+      const paragraph = editor.model.document.getRoot().getChild(0)!
+      writer.setSelection(writer.createRangeIn(paragraph))
+    })
+    editor.execute('wikiHighlight')
+    expect(serializeVisualEditorData('markdown', editor.getData())).toBe('==Important==')
+
+    editor.setData('H2O x2')
+    editor.model.change(writer => {
+      const paragraph = editor.model.document.getRoot().getChild(0)!
+      writer.setSelection(writer.createRange(
+        writer.createPositionAt(paragraph, 1),
+        writer.createPositionAt(paragraph, 2)
+      ))
+    })
+    editor.execute('wikiSubscript')
+    editor.model.change(writer => {
+      const paragraph = editor.model.document.getRoot().getChild(0)!
+      writer.setSelection(writer.createRange(
+        writer.createPositionAt(paragraph, 5),
+        writer.createPositionAt(paragraph, 6)
+      ))
+    })
+    editor.execute('wikiSuperscript')
+    expect(serializeVisualEditorData('markdown', editor.getData())).toBe('H~2~O x^2^')
+
+    editor.setData('Ctrl')
+    editor.model.change(writer => {
+      const paragraph = editor.model.document.getRoot().getChild(0)!
+      writer.setSelection(writer.createRangeIn(paragraph))
+    })
+    editor.execute('wikiKeyboard')
+    expect(serializeVisualEditorData('markdown', editor.getData())).toBe('<kbd>Ctrl</kbd>')
+
+    editor.model.change(writer => {
+      writer.setSelection(editor.model.document.getRoot(), 'end')
+    })
+    insertVisualMarkdownDefinitionList(editor)
+    const output = serializeVisualEditorData('markdown', editor.getData())
+    expect(output).toContain('Term\n: Definition')
+  })
+
 
   it('edits table rows and columns without exposing unsupported merge semantics', async () => {
     const element = document.createElement('div')
