@@ -181,6 +181,14 @@ v-card.editor-modal-blocks.animated.fadeInLeft(flat, tile, role='dialog', aria-m
                         v-icon mdi-delete-outline
                     v-card-text
                       v-text-field(v-model='panel.label', label='Tab label', counter='100', required)
+                      v-select.mt-4(
+                        v-model='panel.headingLevel'
+                        :items='tabHeadingLevels'
+                        label='Contents heading level (optional)'
+                        hint='Lists this tab label in the page table of contents. Opening that entry reveals this panel.'
+                        persistent-hint
+                        clearable
+                      )
                       v-textarea.mt-4(v-model='panel.content', label='Panel content', rows='4', auto-grow, counter='20000', required)
                   v-btn.mb-5(variant='outlined', :disabled='tabs.panels.length >= 12', @click='addTabPanel')
                     v-icon(start) mdi-plus
@@ -331,7 +339,8 @@ import {
 
 type ErrorCorrection = 'L' | 'M' | 'Q' | 'H'
 type GalleryImageForm = { src: string, alt: string, caption: string }
-type TabPanelForm = { label: string, content: string }
+type TabHeadingLevel = 1 | 2 | 3 | 4 | 5 | 6
+type TabPanelForm = { label: string, content: string, headingLevel: TabHeadingLevel | null }
 type FactKind = 'text' | 'yes' | 'no'
 type InfoboxFactForm = { label: string, value: string, kind: FactKind }
 
@@ -387,8 +396,8 @@ export default defineComponent({
       },
       tabs: {
         panels: [
-          { label: 'First tab', content: 'Content of the first tab.' },
-          { label: 'Second tab', content: 'Content of the second tab.' }
+          { label: 'First tab', content: 'Content of the first tab.', headingLevel: null },
+          { label: 'Second tab', content: 'Content of the second tab.', headingLevel: null }
         ] as TabPanelForm[],
         active: 0
       },
@@ -470,6 +479,7 @@ export default defineComponent({
         { title: 'Title', value: 'title' },
         { title: 'Recently updated', value: 'updated' }
       ],
+      tabHeadingLevels: [1, 2, 3, 4, 5, 6].map(level => ({ title: `Heading ${level}`, value: level as TabHeadingLevel })),
       factKinds: [
         { title: 'Text', value: 'text' },
         { title: 'Yes', value: 'yes' },
@@ -526,7 +536,8 @@ export default defineComponent({
       if (this.selectedKey === 'tabs') {
         return this.tabs.panels.length >= 2 && this.tabs.panels.length <= 12 &&
           this.tabs.panels.every(panel => panel.label.length >= 1 && panel.label.length <= 100 &&
-            panel.content.length >= 1 && panel.content.length <= 20000) &&
+            panel.content.length >= 1 && panel.content.length <= 20000 &&
+            (panel.headingLevel === null || (Number.isInteger(panel.headingLevel) && panel.headingLevel >= 1 && panel.headingLevel <= 6))) &&
           Number.isInteger(this.tabs.active) && this.tabs.active >= 0 && this.tabs.active < this.tabs.panels.length
       }
       if (this.selectedKey === 'spoiler') {
@@ -584,7 +595,7 @@ export default defineComponent({
       if (this.gallery.images.length > 1) this.gallery.images.splice(index, 1)
     },
     addTabPanel () {
-      if (this.tabs.panels.length < 12) this.tabs.panels.push({ label: `Panel ${this.tabs.panels.length + 1}`, content: '' })
+      if (this.tabs.panels.length < 12) this.tabs.panels.push({ label: `Panel ${this.tabs.panels.length + 1}`, content: '', headingLevel: null })
     },
     removeTabPanel (index: number) {
       if (this.tabs.panels.length <= 2) return
@@ -647,7 +658,11 @@ export default defineComponent({
           key: 'tabs',
           version: 1,
           props: {
-            tabs: this.tabs.panels.map(panel => ({ label: panel.label, content: panel.content })),
+            tabs: this.tabs.panels.map(panel => ({
+              label: panel.label,
+              content: panel.content,
+              ...(panel.headingLevel === null ? {} : { headingLevel: panel.headingLevel })
+            })),
             active: this.tabs.active
           }
         }

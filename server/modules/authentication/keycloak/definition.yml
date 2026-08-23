@@ -31,6 +31,7 @@ props:
     type: String
     title: Client Secret
     hint: Application Client Secret
+    sensitive: true
     order: 4
   authorizationURL:
     type: String

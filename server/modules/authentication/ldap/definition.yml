@@ -26,6 +26,7 @@ props:
     title: Admin Bind Credentials
     type: String
     hint: The password of the account used above for binding.
+    sensitive: true
     maxWidth: 600
     order: 3
   searchBase:

@@ -3,7 +3,7 @@ import _ from 'lodash'
 import configuration from './configuration.ts'
 import errors from './errors.ts'
 
-const { parseConfig } = configuration
+const { parseConfig, preserveSensitiveConfig, serializeConfig } = configuration
 const { ApplicationError } = errors
 
 interface ConfigEntry { key: string, value: string }
@@ -84,9 +84,11 @@ const listDefinitions = () => getDefinitions().map(strategy => ({
 const listActive = async (enabledOnly?: boolean) => {
   const strategies = (await getAuthenticationModel().getStrategies()).map(strategy => {
     const definition = _.find(getDefinitions(), ['key', strategy.strategyKey]) ?? { key: strategy.strategyKey }
-    const serializedConfig = Object.entries(strategy.config as Record<string, unknown>).flatMap(([key, value]) => {
-      const property = definition.props?.[key]
-      return property ? [{ key, value: JSON.stringify({ ...property, value }) }] : []
+    const serializedConfig = serializeConfig({
+      config: strategy.config as Record<string, unknown>,
+      definition,
+      knownOnly: true,
+      maskSensitive: true
     })
     return {
       ...strategy,
@@ -127,12 +129,26 @@ const updateStrategies = async (strategies: unknown): Promise<void> => {
   if (!Array.isArray(strategies) || strategies.some(strategy => !validStrategy(strategy))) {
     throw new ApplicationError('strategies must be an array of valid authentication strategies', { code: 'INVALID_AUTHENTICATION_STRATEGIES' })
   }
-  const updates = strategies.map(strategy => ({
+  const parsedUpdates = strategies.map(strategy => ({
     ...strategy,
-    config: parseConfig(strategy.config, { errorMessage: 'strategies must be an array of valid authentication strategies', code: 'INVALID_AUTHENTICATION_STRATEGIES' })
+    config: parseConfig(strategy.config, {
+      errorMessage: 'strategies must be an array of valid authentication strategies',
+      code: 'INVALID_AUTHENTICATION_STRATEGIES'
+    })
   }))
   const authenticationModel = getAuthenticationModel()
   const previousStrategies = await authenticationModel.getStrategies()
+  const updates = parsedUpdates.map(strategy => {
+    const definition = _.find(getDefinitions(), ['key', strategy.strategyKey])
+    const previous = _.find(previousStrategies, ['key', strategy.key])
+    const current = previous && _.isPlainObject(previous.config)
+      ? previous.config as Record<string, unknown>
+      : {}
+    return {
+      ...strategy,
+      config: preserveSensitiveConfig({ config: strategy.config, current, definition: definition ?? {} })
+    }
+  })
   for (const strategy of updates) {
     const patch = {
       key: strategy.key, strategyKey: strategy.strategyKey, displayName: strategy.displayName, order: strategy.order,

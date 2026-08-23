@@ -13,6 +13,20 @@ const tabsCleanup = (tabs: HTMLElement): Cleanup => {
   const instance = ++tabsInstance
   let active = Number(tabs.dataset.tabsActive)
   if (!Number.isInteger(active) || active < 0 || active >= buttons.length) active = 0
+  const applyScrollMargin = (): void => {
+    const activePanel = panels[active]
+    const above = activePanel
+      ? Math.round(activePanel.getBoundingClientRect().top - tabs.getBoundingClientRect().top)
+      : tabs.querySelector<HTMLElement>('.content-extension-tabs__list')?.offsetHeight ?? 0
+    const margin = `${above + 20}px`
+    for (const panel of panels) {
+      panel.style.scrollMarginTop = margin
+      for (const child of panel.children) {
+        if (child instanceof HTMLElement) child.style.scrollMarginTop = margin
+      }
+    }
+  }
+
 
   const select = (index: number, focus: boolean): void => {
     active = index
@@ -23,16 +37,21 @@ const tabsCleanup = (tabs: HTMLElement): Cleanup => {
     })
     panels.forEach((panel, panelIndex) => { panel.hidden = panelIndex !== index })
     if (focus) buttons[index]?.focus()
+    applyScrollMargin()
   }
   const clickHandlers = buttons.map((button, index) => {
     const buttonId = `content-extension-tabs-${instance}-tab-${index}`
-    const panelId = `content-extension-tabs-${instance}-panel-${index}`
+    const panel = panels[index]!
+    const fallbackLabel = panel.querySelector<HTMLElement>('.content-extension-tabs__fallback-label')
+    const headingId = fallbackLabel?.matches('h1, h2, h3, h4, h5, h6') ? fallbackLabel.id : ''
+    const panelId = headingId || `content-extension-tabs-${instance}-panel-${index}`
+    if (headingId) fallbackLabel?.removeAttribute('id')
     button.id = buttonId
     button.hidden = false
     button.setAttribute('aria-controls', panelId)
-    panels[index]!.id = panelId
-    panels[index]!.setAttribute('aria-labelledby', buttonId)
-    panels[index]!.querySelector<HTMLElement>('.content-extension-tabs__fallback-label')?.setAttribute('hidden', '')
+    panel.id = panelId
+    panel.setAttribute('aria-labelledby', buttonId)
+    fallbackLabel?.setAttribute('hidden', '')
     const handler = (): void => select(index, false)
     button.addEventListener('click', handler)
     return { button, handler }
@@ -49,12 +68,36 @@ const tabsCleanup = (tabs: HTMLElement): Cleanup => {
   }
   const tablist = tabs.querySelector<HTMLElement>('.content-extension-tabs__list')
   tablist?.addEventListener('keydown', onKeydown)
-  select(active, false)
+  let hashTarget: HTMLElement | null = null
+  if (window.location.hash.length > 1) {
+    try {
+      hashTarget = document.getElementById(decodeURIComponent(window.location.hash.slice(1)))
+    } catch {
+      hashTarget = null
+    }
+  }
+  const hashPanel = hashTarget?.closest<HTMLElement>('.content-extension-tabs__panel')
+  const hashIndex = hashPanel && tabs.contains(hashPanel) ? panels.indexOf(hashPanel) : -1
+  select(hashIndex >= 0 ? hashIndex : active, false)
+  if (hashIndex >= 0) requestAnimationFrame(() => hashTarget?.scrollIntoView())
 
   return () => {
     for (const { button, handler } of clickHandlers) button.removeEventListener('click', handler)
     tablist?.removeEventListener('keydown', onKeydown)
   }
+}
+
+export const revealContentExtensionTarget = (root: ParentNode, anchor: string): boolean => {
+  if (!anchor.startsWith('#') || anchor.length < 2) return false
+  const target = document.getElementById(anchor.slice(1))
+  if (!target || (root instanceof Node && !root.contains(target))) return false
+  const panel = target.closest<HTMLElement>('.content-extension-tabs__panel')
+  const tabs = panel?.closest<HTMLElement>('.content-extension--tabs')
+  const index = panel?.dataset.tabIndex
+  const button = tabs?.querySelector<HTMLButtonElement>(`.content-extension-tabs__tab[data-tab-index="${index}"]`)
+  if (!button) return false
+  button.click()
+  return true
 }
 
 const spoilerCleanup = (spoiler: HTMLElement): Cleanup => {

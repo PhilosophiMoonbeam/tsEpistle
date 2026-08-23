@@ -27,6 +27,7 @@ props:
     title: Client Secret
     type: String
     hint: 40 chars alphanumeric string with a hyphen(s)
+    sensitive: true
     maxWidth: 600
     order: 3
   idp:

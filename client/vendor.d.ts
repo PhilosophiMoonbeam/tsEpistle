@@ -69,6 +69,11 @@ declare module 'markdown-it-mark' {
   export default plugin
 }
 
+declare module 'markdown-it-deflist' {
+  const plugin: MarkdownItPlugin
+  export default plugin
+}
+
 declare module 'markdown-it-footnote' {
   const plugin: MarkdownItPlugin
   export default plugin

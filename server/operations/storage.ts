@@ -4,7 +4,7 @@ import { Duration } from 'luxon'
 import configuration from './configuration.ts'
 import errors from './errors.ts'
 
-const { parseConfig, serializeConfig } = configuration
+const { parseConfig, preserveSensitiveConfig, serializeConfig } = configuration
 const { ApplicationError } = errors
 
 interface StorageTarget extends Record<string, unknown> {
@@ -119,11 +119,9 @@ const validateConfig = (
     ) {
       throw new ApplicationError(`target ${target.key} config value ${key} is not allowed.`, { code: 'INVALID_STORAGE_TARGETS' })
     }
-    if (property?.sensitive && value === '********') {
-      config[key] = _.get(current.config, key, '')
-    }
   }
-  return config
+  return preserveSensitiveConfig({ config, current: current.config, definition })
+
 }
 
 const listTargets = async () => {

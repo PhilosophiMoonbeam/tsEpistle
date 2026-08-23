@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "source": {
     "lockfile": "pnpm-lock.yaml",
-    "sha256": "419e531926d63ef7a18c693208d78161a9ef33176d2237345d77b67dcc674802",
+    "sha256": "809463682fc853ce671ef8500864238056364ef883a9fc2e4e4df4e353e092f0",
     "scope": "production",
     "policy": {
       "file": "license-policy.json",
@@ -3719,6 +3719,14 @@
       "license": "MIT",
       "author": "Arve Seljebu",
       "homepage": "https://github.com/arve0/markdown-it-attrs"
+    },
+    {
+      "name": "markdown-it-deflist",
+      "versions": [
+        "4.0.0"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/markdown-it/markdown-it-deflist#readme"
     },
     {
       "name": "markdown-it-emoji",

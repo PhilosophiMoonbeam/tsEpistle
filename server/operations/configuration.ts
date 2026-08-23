@@ -31,6 +31,12 @@ interface SerializeConfigOptions {
   knownOnly?: boolean
   maskSensitive?: boolean
 }
+interface PreserveSensitiveConfigOptions {
+  config: Record<string, unknown>
+  current?: Record<string, unknown>
+  definition?: ConfigDefinition
+}
+
 
 const isConfigEntry = (entry: unknown): entry is ConfigEntry => Boolean(
   entry &&
@@ -88,6 +94,20 @@ const serializeConfig = ({
   }
   return _.sortBy(result, 'key')
 }
+const preserveSensitiveConfig = ({
+  config,
+  current = {},
+  definition = {}
+}: PreserveSensitiveConfigOptions): Record<string, unknown> => {
+  const result = { ...config }
+  for (const [key, property] of Object.entries(definition.props ?? {})) {
+    if (property.sensitive && result[key] === '********') {
+      result[key] = current[key] ?? ''
+    }
+  }
+  return result
+}
+
 
 function validateRows<Row>(
   rows: unknown,
@@ -100,4 +120,4 @@ function validateRows<Row>(
 }
 
 export { validateRows }
-export default { parseConfig, serializeConfig }
+export default { parseConfig, preserveSensitiveConfig, serializeConfig }

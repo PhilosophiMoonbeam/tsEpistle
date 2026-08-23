@@ -149,7 +149,7 @@ describe('content extension Markdown rendering', () => {
       serializeContentExtensionFence(parseContentExtensionEnvelope(input))
     )
     const [tabs, spoiler, infobox, pdf, media, youtube, diagram, kroki, plantuml, map] = await Promise.all([
-      render({ key: 'tabs', version: 1, props: { tabs: [{ label: 'A', content: '<b>Alpha</b>' }, { label: 'B', content: 'Beta' }] } }),
+      render({ key: 'tabs', version: 1, props: { tabs: [{ label: 'A', content: '<b>Alpha</b>', headingLevel: 2 }, { label: 'B', content: 'Beta' }] } }),
       render({ key: 'spoiler', version: 1, props: { content: '<img src=x onerror=alert(1)>' } }),
       render({ key: 'infobox', version: 1, props: { title: 'City', facts: [{ label: 'Metro', value: true }] } }),
       render({ key: 'pdf', version: 1, props: { src: '/uploads/guide.pdf', title: 'Guide' } }),
@@ -164,6 +164,7 @@ describe('content extension Markdown rendering', () => {
     expect(tabs).toContain('content-extension--tabs')
     expect(tabs).toContain('&lt;b&gt;Alpha&lt;/b&gt;')
     expect(tabs).toContain('role="tab"')
+    expect(tabs).toMatch(/<h2[^>]*class="content-extension-tabs__fallback-label"[^>]*>A<\/h2>/)
     expect(spoiler).toContain('data-spoiler=""')
     expect(spoiler).toContain('&lt;img src=x onerror=alert(1)&gt;')
     expect(infobox).toContain('<aside class="content-extension content-extension--infobox"')

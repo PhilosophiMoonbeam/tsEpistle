@@ -93,6 +93,7 @@ export interface IndexContentExtensionEnvelope {
 export interface TabsContentExtensionPanel {
   label: string
   content: string
+  headingLevel?: 1 | 2 | 3 | 4 | 5 | 6
 }
 
 export interface TabsContentExtensionEnvelope {
@@ -492,10 +493,14 @@ function parseTabsEnvelope (propsInput: unknown): TabsContentExtensionEnvelope {
   }
   const tabs = props.tabs.map((input, index): TabsContentExtensionPanel => {
     const tab = requireJsonObject(input, `Content extension props.tabs[${index}]`)
-    rejectUnknownProperties(tab, ['label', 'content'], `Content extension props.tabs[${index}]`)
+    rejectUnknownProperties(tab, ['label', 'content', 'headingLevel'], `Content extension props.tabs[${index}]`)
+    const headingLevel = tab.headingLevel === undefined
+      ? undefined
+      : boundedInteger(tab.headingLevel, `Content extension props.tabs[${index}].headingLevel`, 1, 6, 1) as 1 | 2 | 3 | 4 | 5 | 6
     return {
       label: boundedString(tab.label, `Content extension props.tabs[${index}].label`, 1, 100),
-      content: boundedString(tab.content, `Content extension props.tabs[${index}].content`, 1, 20000)
+      content: boundedString(tab.content, `Content extension props.tabs[${index}].content`, 1, 20000),
+      ...(headingLevel === undefined ? {} : { headingLevel })
     }
   })
   const active = boundedInteger(props.active, 'Content extension props.active', 0, tabs.length - 1, 0)
@@ -669,7 +674,7 @@ function canonicalProps (envelope: ContentExtensionEnvelope): Record<string, unk
     case 'index':
       return { path: envelope.props.path, locale: envelope.props.locale, depth: envelope.props.depth, columns: envelope.props.columns, showIcons: envelope.props.showIcons, order: envelope.props.order, limit: envelope.props.limit, ...(envelope.props.emptyLabel === undefined ? {} : { emptyLabel: envelope.props.emptyLabel }) }
     case 'tabs':
-      return { tabs: envelope.props.tabs.map(tab => ({ label: tab.label, content: tab.content })), active: envelope.props.active }
+      return { tabs: envelope.props.tabs.map(tab => ({ label: tab.label, content: tab.content, ...(tab.headingLevel === undefined ? {} : { headingLevel: tab.headingLevel }) })), active: envelope.props.active }
     case 'spoiler':
       return { label: envelope.props.label, hint: envelope.props.hint, content: envelope.props.content }
     case 'infobox':

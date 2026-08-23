@@ -112,6 +112,7 @@ export type AdminActiveAuthConfig = {
   value: Record<string, unknown> & {
     value?: unknown
     order?: number
+    sensitive?: boolean
   }
 }
 

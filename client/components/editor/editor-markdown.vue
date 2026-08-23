@@ -22,6 +22,11 @@
             v-btn.animated.fadeIn.wait-p2s(icon, tile, v-bind='props', @click='toggleMarkup({ start: `~~` })').mx-0
               v-icon mdi-format-strikethrough
           span {{$t('editor:markup.strikethrough')}}
+        v-tooltip(v-if='$vuetify.display.mdAndUp', location="bottom", color='primary')
+          template(v-slot:activator='{ props }')
+            v-btn.animated.fadeIn.wait-p3s(icon, tile, v-bind='props', @click='toggleMarkup({ start: `==` })').mx-0
+              v-icon mdi-format-color-highlight
+          span {{$t('editor:markup.highlight')}}
         v-menu(:open-on-hover='$vuetify.display.mdAndUp')
           template(v-slot:activator='{ props }')
             v-btn.animated.fadeIn.wait-p3s(icon, tile, v-bind='props').mx-0
@@ -149,6 +154,10 @@
                 template(v-slot:prepend)
                   v-icon.mr-3 mdi-qrcode
                 v-list-item-title Insert content extension
+              v-list-item(@click='insertDefinitionList')
+                template(v-slot:prepend)
+                  v-icon.mr-3 mdi-format-list-group-plus
+                v-list-item-title {{$t('editor:markup.insertDefinitionList')}}
               v-divider
               v-list-item(@click='toggleMarkup({ start: `~~` })')
                 template(v-slot:prepend)
@@ -162,6 +171,10 @@
                 template(v-slot:prepend)
                   v-icon.mr-3 mdi-code-tags
                 v-list-item-title {{$t('editor:markup.inlineCode')}}
+              v-list-item(@click='toggleMarkup({ start: `==` })')
+                template(v-slot:prepend)
+                  v-icon.mr-3 mdi-format-color-highlight
+                v-list-item-title {{$t('editor:markup.highlight')}}
               v-divider
               v-list-item(@click='toggleHelp')
                 template(v-slot:prepend)
@@ -189,6 +202,11 @@
             v-btn.mt-3.animated.fadeInLeft.wait-p3s(icon, tile, v-bind='props', aria-label='Insert content extension', @click='toggleModal(`editorModalBlocks`)').mx-0
               v-icon(:color='activeModal === `editorModalBlocks` ? `teal` : ``') mdi-qrcode
           span Insert content extension
+        v-tooltip(location="right", color='teal')
+          template(v-slot:activator='{ props }')
+            v-btn.mt-3.animated.fadeInLeft.wait-p4s(icon, tile, v-bind='props', @click='insertDefinitionList').mx-0
+              v-icon mdi-format-list-group-plus
+          span {{$t('editor:markup.insertDefinitionList')}}
         template(v-if='$vuetify.display.mdAndUp')
           v-spacer
           v-tooltip(location="right", color='teal')
@@ -269,6 +287,7 @@ import mdAbbr from 'markdown-it-abbr'
 import mdSup from 'markdown-it-sup'
 import mdSub from 'markdown-it-sub'
 import mdMark from 'markdown-it-mark'
+import mdDeflist from 'markdown-it-deflist'
 import mdMultiTable from 'markdown-it-multimd-table'
 import mdFootnote from 'markdown-it-footnote'
 import mdImsize from '../../../shared/markdown-it-image-size'
@@ -362,6 +381,7 @@ const md = new MarkdownIt({
   .use(mdSub)
   .use(mdMultiTable, { multiline: true, rowspan: true, headerless: true })
   .use(mdMark)
+  .use(mdDeflist)
   .use(mdFootnote)
   .use(mdImsize)
 
@@ -693,6 +713,22 @@ export default defineComponent({
       if (after && lastLine !== undefined) {
         editor.replaceRange(`\n${after}\n`, { line: lastLine, ch: editor.getLine(lastLine).length })
       }
+    },
+    insertDefinitionList() {
+      const editor = requireEditor(this.cm)
+      const position = editor.cursor()
+      const line = editor.getLine(position.line)
+      const term = String(this.$t('editor:markup.definitionListTerm'))
+      const definition = String(this.$t('editor:markup.definitionListDefinition'))
+      const skeleton = `${term}\n: ${definition}\n\n${term}\n: ${definition}`
+      const before = line.slice(0, position.ch).trim().length > 0 ? '\n\n' : ''
+      const after = line.slice(position.ch).trim().length > 0 ? '\n\n' : '\n'
+      editor.replaceRange(`${before}${skeleton}${after}`, position)
+      const firstTermLine = position.line + (before ? 2 : 0)
+      editor.setSelection(
+        { line: firstTermLine, ch: 0 },
+        { line: firstTermLine, ch: term.length }
+      )
     },
     /**
      * Update scroll sync

@@ -17,4 +17,5 @@ props:
     type: String
     title: App Secret
     hint: Application Client Secret
+    sensitive: true
     order: 2

@@ -59,7 +59,7 @@ describe('controllers/api auth endpoints', () => {
             title: 'GitHub',
             useForm: false,
             props: {
-              clientId: { type: 'string', default: '', order: 2 }, clientSharedKey: { type: 'string', default: '', order: 1 }
+              clientId: { type: 'string', default: '', order: 2 }, clientSharedKey: { type: 'string', default: '', sensitive: true, order: 1 }
             }
           }
         ]
@@ -261,7 +261,7 @@ describe('controllers/api auth endpoints', () => {
         isAvailable: false,
         props: [
           { key: 'clientId', value: JSON.stringify({ type: 'string', default: '', order: 2 }) },
-          { key: 'clientSharedKey', value: JSON.stringify({ type: 'string', default: '', order: 1 }) }
+          { key: 'clientSharedKey', value: JSON.stringify({ type: 'string', default: '', sensitive: true, order: 1 }) }
         ]
       })
     ])
@@ -307,7 +307,7 @@ describe('controllers/api auth endpoints', () => {
         strategy: expect.objectContaining({ key: 'github', title: 'GitHub' }),
         config: [
           { key: 'clientId', value: JSON.stringify({ type: 'string', default: '', order: 2, value: 'abc123' }) },
-          { key: 'clientSharedKey', value: JSON.stringify({ type: 'string', default: '', order: 1, value: 'shh' }) }
+          { key: 'clientSharedKey', value: JSON.stringify({ type: 'string', default: '', sensitive: true, order: 1, value: '********' }) }
         ],
         order: 2,
         isEnabled: false,
@@ -469,6 +469,35 @@ describe('controllers/api auth endpoints', () => {
     expect(global.WIKI.auth.activateStrategies).toHaveBeenCalledTimes(1)
     expect(global.WIKI.events.outbound.emit).toHaveBeenCalledWith('reloadAuthStrategies')
     expect(res.json).toHaveBeenCalledWith({ message: 'Strategies updated successfully' })
+  })
+
+  it('preserves a stored authentication secret when the masked value is saved', async () => {
+    const { updateStrategies } = await loadHandlers()
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
+    const body = {
+      strategies: [
+        {
+          key: 'local', strategyKey: 'local', displayName: 'Local Login', order: 1, isEnabled: true,
+          config: [{ key: 'usernameFormat', value: JSON.stringify({ v: 'email' }) }],
+          selfRegistration: false, domainWhitelist: ['example.com'], autoEnrollGroups: [1]
+        },
+        {
+          key: 'github', strategyKey: 'github', displayName: 'GitHub Login', order: 2, isEnabled: false,
+          config: [
+            { key: 'clientId', value: JSON.stringify({ v: 'abc123' }) },
+            { key: 'clientSharedKey', value: JSON.stringify({ v: '********' }) }
+          ],
+          selfRegistration: true, domainWhitelist: [], autoEnrollGroups: []
+        }
+      ]
+    }
+    await updateStrategies({ user: { permissions: ['manage:system'] }, body }, res)
+
+    const githubQuery = global.WIKI.models.authentication.query.mock.results[1].value
+    expect(githubQuery.patch).toHaveBeenCalledWith(expect.objectContaining({
+      key: 'github',
+      config: { clientId: 'abc123', clientSharedKey: 'shh' }
+    }))
   })
 
   it('returns 403 for unauthorized authentication strategy updates', async () => {

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { hydrateContentExtensions } from './content-extension-runtime.ts'
+import { hydrateContentExtensions, revealContentExtensionTarget } from './content-extension-runtime.ts'
 import { encodeKrokiSource, encodePlantUmlSource } from './content-extension-runtimes/remote-diagram.ts'
 
 const indexElement = (): HTMLElement => {
@@ -91,11 +91,11 @@ describe('content extension browser runtime', () => {
     root.innerHTML = `
       <section class="content-extension--tabs" data-tabs-active="0">
         <div class="content-extension-tabs__list" role="tablist">
-          <button class="content-extension-tabs__tab" type="button" role="tab" hidden>A</button>
-          <button class="content-extension-tabs__tab" type="button" role="tab" hidden>B</button>
+          <button class="content-extension-tabs__tab" data-tab-index="0" type="button" role="tab" hidden>A</button>
+          <button class="content-extension-tabs__tab" data-tab-index="1" type="button" role="tab" hidden>B</button>
         </div>
-        <section class="content-extension-tabs__panel" role="tabpanel"><p class="content-extension-tabs__fallback-label">A</p><p>Alpha</p></section>
-        <section class="content-extension-tabs__panel" role="tabpanel"><p class="content-extension-tabs__fallback-label">B</p><p>Beta</p></section>
+        <section class="content-extension-tabs__panel" data-tab-index="0" role="tabpanel"><p class="content-extension-tabs__fallback-label">A</p><p>Alpha</p></section>
+        <section class="content-extension-tabs__panel" data-tab-index="1" role="tabpanel"><h2 id="details" class="content-extension-tabs__fallback-label">B</h2><p>Beta</p></section>
       </section>
       <section class="content-extension--spoiler">
         <button class="content-extension-spoiler__toggle" type="button" hidden>Reveal</button>
@@ -109,9 +109,12 @@ describe('content extension browser runtime', () => {
     expect(buttons.map(button => button.hidden)).toEqual([false, false])
     expect(buttons.map(button => button.getAttribute('aria-selected'))).toEqual(['true', 'false'])
     expect(panels.map(panel => panel.hidden)).toEqual([false, true])
+    expect(panels[1]?.id).toBe('details')
+    expect(panels[1]?.querySelector('.content-extension-tabs__fallback-label')?.id).toBe('')
 
-    buttons[1]!.click()
+    expect(revealContentExtensionTarget(root, '#details')).toBe(true)
     expect(panels.map(panel => panel.hidden)).toEqual([true, false])
+    expect(panels[1]?.style.scrollMarginTop).toBe('20px')
     buttons[1]!.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'ArrowLeft' }))
     expect(document.activeElement).toBe(buttons[0])
 

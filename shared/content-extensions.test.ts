@@ -173,6 +173,32 @@ describe('content extension contract', () => {
     expect(() => index({ key: 'index', version: 1, props: { path: 'guide', locale: 'en', showIcons: 'false' } })).toThrow(/boolean/)
   })
 
+  it('preserves optional tab heading levels in canonical source and rejects invalid levels', () => {
+    const envelope = parseContentExtensionEnvelope({
+      key: 'tabs',
+      version: 1,
+      props: {
+        tabs: [
+          { label: 'Overview', content: 'Alpha', headingLevel: 2 },
+          { label: 'Details', content: 'Beta' }
+        ]
+      }
+    })
+    expect(envelope.key).toBe('tabs')
+    if (envelope.key === 'tabs') expect(envelope.props.tabs[0]?.headingLevel).toBe(2)
+    expect(serializeContentExtensionFence(envelope)).toContain('"headingLevel":2')
+    expect(() => parseContentExtensionEnvelope({
+      key: 'tabs',
+      version: 1,
+      props: {
+        tabs: [
+          { label: 'Overview', content: 'Alpha', headingLevel: 7 },
+          { label: 'Details', content: 'Beta' }
+        ]
+      }
+    })).toThrow(/headingLevel.*1 to 6/)
+  })
+
   it.each([
     {
       key: 'tabs',

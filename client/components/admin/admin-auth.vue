@@ -133,6 +133,7 @@
                     :hint='cfg.value.hint ? cfg.value.hint : ""'
                     persistent-hint
                     :class='cfg.value.hint ? "mb-2" : ""'
+                    @update:focused='selectStoredSecret($event, cfg.value)'
                     )
                   v-text-field.mb-3(
                     v-else
@@ -144,6 +145,7 @@
                     persistent-hint
                     :class='cfg.value.hint ? "mb-2" : ""'
                     :style='cfg.value.maxWidth > 0 ? `max-width:` + cfg.value.maxWidth + `px;` : ``'
+                    @update:focused='selectStoredSecret($event, cfg.value)'
                     )
             v-divider
             .text-label-small.my-5 {{$t('admin:auth.registration')}}
@@ -363,6 +365,15 @@ export default {
     },
     deleteStrategy () {
       this.activeStrategies = _.reject(this.activeStrategies, ['key', this.strategy.key])
+    },
+    selectStoredSecret(focused: boolean, config: { sensitive?: boolean, value?: unknown }) {
+      if (!focused || !config.sensitive || config.value !== '********') return
+      requestAnimationFrame(() => {
+        const input = document.activeElement
+        if (input instanceof HTMLInputElement || input instanceof HTMLTextAreaElement) {
+          input.select()
+        }
+      })
     },
     async save() {
       wikiStore.startLoading('admin-auth-savestrategies')

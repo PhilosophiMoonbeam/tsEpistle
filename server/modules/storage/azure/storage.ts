@@ -14,11 +14,13 @@ import { pipeline } from 'node:stream/promises'
 import { Transform, type TransformCallback } from 'node:stream'
 import pageHelper from '../../../helpers/page.ts'
 import _ from 'lodash'
+import { storageObjectKey } from '../object-key.ts'
 
 interface AzureStorageConfig extends StorageConfig {
   accountKey: string
   accountName: string
   containerName: string
+  pathPrefix: string
 }
 
 interface AzureStorageContext extends StorageContext<AzureStorageConfig> {
@@ -84,12 +86,14 @@ function isAssetExportRow(value: unknown): value is AssetExportRow {
 }
 
 const getFilePath = <K extends 'destinationPath' | 'path'>(
-  page: { contentType: string, localeCode: string } & Record<K, string>,
-  pathKey: K
+  page: { contentType: string } & Record<K, string>,
+  pathKey: K,
+  pathPrefix: unknown,
+  localeCode: string
 ): string => {
   const fileName = `${page[pathKey]}.${pageHelper.getFileExtension(page.contentType)}`
-  const withLocaleCode = wiki.config.lang.namespacing && wiki.config.lang.code !== page.localeCode
-  return withLocaleCode ? `${page.localeCode}/${fileName}` : fileName
+  const withLocaleCode = wiki.config.lang.namespacing && wiki.config.lang.code !== localeCode
+  return storageObjectKey(pathPrefix, withLocaleCode ? `${localeCode}/${fileName}` : fileName)
 }
 
 const plugin: StoragePlugin<AzureStorageConfig, AzureStorageContext> = {
@@ -119,21 +123,21 @@ const plugin: StoragePlugin<AzureStorageConfig, AzureStorageContext> = {
   },
   async created (page) {
     wiki.logger.info(`(STORAGE/AZURE) Creating file ${page.path}...`)
-    const filePath = getFilePath(page, 'path')
+    const filePath = getFilePath(page, 'path', this.config.pathPrefix, page.localeCode)
     const pageContent = page.injectMetadata()
     const blockBlobClient = this.container.getBlockBlobClient(filePath)
     await blockBlobClient.upload(pageContent, pageContent.length, { tier: this.config.storageTier })
   },
   async updated (page) {
     wiki.logger.info(`(STORAGE/AZURE) Updating file ${page.path}...`)
-    const filePath = getFilePath(page, 'path')
+    const filePath = getFilePath(page, 'path', this.config.pathPrefix, page.localeCode)
     const pageContent = page.injectMetadata()
     const blockBlobClient = this.container.getBlockBlobClient(filePath)
     await blockBlobClient.upload(pageContent, pageContent.length, { tier: this.config.storageTier })
   },
   async deleted (page) {
     wiki.logger.info(`(STORAGE/AZURE) Deleting file ${page.path}...`)
-    const filePath = getFilePath(page, 'path')
+    const filePath = getFilePath(page, 'path', this.config.pathPrefix, page.localeCode)
     const blockBlobClient = this.container.getBlockBlobClient(filePath)
     await blockBlobClient.delete({
       deleteSnapshots: 'include'
@@ -141,16 +145,13 @@ const plugin: StoragePlugin<AzureStorageConfig, AzureStorageContext> = {
   },
   async renamed(page) {
     wiki.logger.info(`(STORAGE/${this.storageName}) Renaming file ${page.path} to ${page.destinationPath}...`)
-    let sourceFilePath = getFilePath(page, 'path')
-    let destinationFilePath = getFilePath(page, 'destinationPath')
-    if (wiki.config.lang.namespacing) {
-      if (wiki.config.lang.code !== page.localeCode) {
-        sourceFilePath = `${page.localeCode}/${sourceFilePath}`
-      }
-      if (wiki.config.lang.code !== page.destinationLocaleCode) {
-        destinationFilePath = `${page.destinationLocaleCode}/${destinationFilePath}`
-      }
-    }
+    const sourceFilePath = getFilePath(page, 'path', this.config.pathPrefix, page.localeCode)
+    const destinationFilePath = getFilePath(
+      page,
+      'destinationPath',
+      this.config.pathPrefix,
+      page.destinationLocaleCode
+    )
     const sourceBlockBlobClient = this.container.getBlockBlobClient(sourceFilePath)
     const destBlockBlobClient = this.container.getBlockBlobClient(destinationFilePath)
     await destBlockBlobClient.syncCopyFromURL(sourceBlockBlobClient.url)
@@ -165,7 +166,7 @@ const plugin: StoragePlugin<AzureStorageConfig, AzureStorageContext> = {
    */
   async assetUploaded (asset) {
     wiki.logger.info(`(STORAGE/AZURE) Creating new file ${asset.path}...`)
-    const blockBlobClient = this.container.getBlockBlobClient(asset.path)
+    const blockBlobClient = this.container.getBlockBlobClient(storageObjectKey(this.config.pathPrefix, asset.path))
     await blockBlobClient.upload(asset.data, asset.data.length, { tier: this.config.storageTier })
   },
   /**
@@ -175,7 +176,7 @@ const plugin: StoragePlugin<AzureStorageConfig, AzureStorageContext> = {
    */
   async assetDeleted (asset) {
     wiki.logger.info(`(STORAGE/AZURE) Deleting file ${asset.path}...`)
-    const blockBlobClient = this.container.getBlockBlobClient(asset.path)
+    const blockBlobClient = this.container.getBlockBlobClient(storageObjectKey(this.config.pathPrefix, asset.path))
     await blockBlobClient.delete({
       deleteSnapshots: 'include'
     })
@@ -187,8 +188,8 @@ const plugin: StoragePlugin<AzureStorageConfig, AzureStorageContext> = {
    */
   async assetRenamed (asset) {
     wiki.logger.info(`(STORAGE/AZURE) Renaming file from ${asset.path} to ${asset.destinationPath}...`)
-    const sourceBlockBlobClient = this.container.getBlockBlobClient(asset.path)
-    const destBlockBlobClient = this.container.getBlockBlobClient(asset.destinationPath)
+    const sourceBlockBlobClient = this.container.getBlockBlobClient(storageObjectKey(this.config.pathPrefix, asset.path))
+    const destBlockBlobClient = this.container.getBlockBlobClient(storageObjectKey(this.config.pathPrefix, asset.destinationPath))
     await destBlockBlobClient.syncCopyFromURL(sourceBlockBlobClient.url)
     await sourceBlockBlobClient.delete({
       deleteSnapshots: 'include'
@@ -215,7 +216,7 @@ const plugin: StoragePlugin<AzureStorageConfig, AzureStorageContext> = {
             callback(new TypeError('Invalid page export row'))
             return
           }
-          const filePath = getFilePath(value, 'path')
+          const filePath = getFilePath(value, 'path', this.config.pathPrefix, value.localeCode)
           wiki.logger.info(`(STORAGE/AZURE) Adding page ${filePath}...`)
           const metadata = pageHelper.injectPageMetadata(value)
           const pageContent = typeof metadata === 'string' ? metadata : JSON.stringify(metadata)
@@ -240,7 +241,7 @@ const plugin: StoragePlugin<AzureStorageConfig, AzureStorageContext> = {
           }
           const filename = (value.folderId && value.folderId > 0) ? `${_.get(assetFolders, value.folderId)}/${value.filename}` : value.filename
           wiki.logger.info(`(STORAGE/AZURE) Adding asset ${filename}...`)
-          const blockBlobClient = this.container.getBlockBlobClient(filename)
+          const blockBlobClient = this.container.getBlockBlobClient(storageObjectKey(this.config.pathPrefix, filename))
           await blockBlobClient.upload(value.data, value.data.length, { tier: this.config.storageTier })
           callback()
         }

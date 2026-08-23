@@ -3,9 +3,9 @@
   "upstream": {
     "repository": "https://github.com/requarks/wiki.git",
     "branch": "scarlett",
-    "recordedTip": "91eede058e417e107c9053a384fa3ba37f15af6b",
-    "recordedAt": "2026-08-21T03:29:09-04:00",
-    "lastFetchedAt": "2026-08-22T02:01:10Z"
+    "recordedTip": "5ff4f1dda7ae7bb5e06a8a57c9c357b12456b29f",
+    "recordedAt": "2026-08-22T19:45:18-04:00",
+    "lastFetchedAt": "2026-08-23T18:24:02Z"
   },
   "forkCheckpoint": "e40feddbf9bebfe991a3052a89dd48f6008aebb3",
   "candidates": [
@@ -348,6 +348,36 @@
       "workstream": "storage/target-safety",
       "contract": "Mature storage targets retain data continuity while configuration is validated before writes, actions are allowlisted and observable, and disk paths remain inside configured roots; WIP multisite content routing and database offload remain rejected until migration and rollback are proven.",
       "lastReviewed": "2026-08-22"
+    },
+    {
+      "id": "cloud-storage-prefix-and-secrets",
+      "commits": ["49555480", "8ce6b6e6"],
+      "category": "storage-security",
+      "disposition": "split",
+      "state": "completed",
+      "workstream": "storage/cloud-object-keys",
+      "contract": "S3-compatible and Azure targets apply one normalized prefix to pages and assets, locale renames address source and destination exactly once, copy sources are encoded, and authentication and storage secrets remain write-only; Scarlett's WIP provider replacement and multisite content delivery remain rejected.",
+      "lastReviewed": "2026-08-23"
+    },
+    {
+      "id": "markdown-highlights-definitions-tab-headings",
+      "commits": ["aae07973", "b1261f46"],
+      "category": "editor",
+      "disposition": "adapt",
+      "state": "completed",
+      "workstream": "editor/markdown-authoring",
+      "contract": "Highlight and definition-list syntax match editor preview and server rendering, while optional tab heading levels enter the table of contents and reveal the correct panel before scrolling.",
+      "lastReviewed": "2026-08-23"
+    },
+    {
+      "id": "crowdin-build-upload",
+      "commits": ["b1261f46", "c7c26c45", "b1572792", "5ff4f1dd"],
+      "category": "release",
+      "disposition": "conditional",
+      "state": "closed",
+      "workstream": "release-assurance/localization",
+      "contract": "Crowdin upload automation is added only with an owned project, repository secret, authoritative locale source path, and a release workflow that cannot fail unrelated builds when translation infrastructure is unavailable.",
+      "lastReviewed": "2026-08-23"
     }
   ]
 }

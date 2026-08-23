@@ -141,6 +141,7 @@
                   :hint='cfg.value.hint ? cfg.value.hint : ""'
                   persistent-hint
                   :class='cfg.value.hint ? "mb-2" : ""'
+                  @update:focused='selectStoredSecret($event, cfg.value)'
                   )
                 v-text-field(
                   v-else
@@ -151,6 +152,7 @@
                   :hint='cfg.value.hint ? cfg.value.hint : ""'
                   persistent-hint
                   :class='cfg.value.hint ? "mb-2" : ""'
+                  @update:focused='selectStoredSecret($event, cfg.value)'
                   )
               v-divider.mt-3
               .text-label-small.my-5 {{$t('admin:storage.syncDirection')}}
@@ -241,6 +243,7 @@ type StorageConfigValue = {
   multiline?: boolean
   order?: number
   title?: string
+  sensitive?: boolean
   type: string
   value: unknown
 }
@@ -335,6 +338,15 @@ export default {
         mode: target.mode,
         syncInterval: target.syncInterval
       }))
+    },
+    selectStoredSecret(focused: boolean, config: StorageConfigValue) {
+      if (!focused || !config.sensitive || config.value !== '********') return
+      requestAnimationFrame(() => {
+        const input = document.activeElement
+        if (input instanceof HTMLInputElement || input instanceof HTMLTextAreaElement) {
+          input.select()
+        }
+      })
     },
     async loadTargets() {
       setLoading(wikiStore, 'admin-storage-targets-refresh', true)

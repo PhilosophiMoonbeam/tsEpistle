@@ -99,13 +99,13 @@
               .text-label-small.pa-5.pb-0(:class='$vuetify.theme.current.dark ? `text-blue-lighten-2` : `text-primary`') {{$t('common:page.toc')}}
               v-list.pb-3(density="compact", nav, :class='$vuetify.theme.current.dark ? `bg-grey-darken-3-d3` : ``')
                 template(v-for='tocItem in tocDecoded', :key='tocItem.anchor')
-                  v-list-item(@click='goTo(tocItem.anchor, scrollOpts)')
+                  v-list-item(@click='scrollToPageAnchor(tocItem.anchor)')
                     template(v-slot:prepend)
                       v-icon(color='grey', size="small") {{ $vuetify.locale.isRtl ? `mdi-chevron-left` : `mdi-chevron-right` }}
                     v-list-item-title.px-3 {{tocItem.title}}
                   //- v-divider(v-if='tocIdx < toc.length - 1 || tocItem.children.length')
                   template(v-for='tocSubItem in tocItem.children', :key='tocSubItem.anchor')
-                    v-list-item(@click='goTo(tocSubItem.anchor, scrollOpts)')
+                    v-list-item(@click='scrollToPageAnchor(tocSubItem.anchor)')
                       template(v-slot:prepend)
                         v-icon.px-3(color="grey-lighten-1", size="small") {{ $vuetify.locale.isRtl ? `mdi-chevron-left` : `mdi-chevron-right` }}
                       v-list-item-title.px-3.text-body-small(:class='$vuetify.theme.current.dark ? `text-grey-lighten-1` : `text-grey-darken-1`') {{tocSubItem.title}}
@@ -674,7 +674,7 @@ import {
   emitPageSource
 } from '../../../helpers/page-action-events'
 import { decodeBase64Json } from '../../../helpers/base64'
-import { hydrateContentExtensions } from '../../../helpers/content-extension-runtime'
+import { hydrateContentExtensions, revealContentExtensionTarget } from '../../../helpers/content-extension-runtime'
 import { getErrorMessage, pushGraphError, showNotification } from '../../../helpers/root-ui-store'
 
 /* global siteLangs */
@@ -1079,11 +1079,11 @@ export default defineComponent({
     if (window.location.hash && window.location.hash.length > 1) {
       if (document.readyState === 'complete') {
         this.$nextTick(() => {
-          this.goTo(decodeURIComponent(window.location.hash), this.scrollOpts)
+          this.scrollToPageAnchor(decodeURIComponent(window.location.hash))
         })
       } else {
         window.addEventListener('load', () => {
-          this.goTo(decodeURIComponent(window.location.hash), this.scrollOpts)
+          this.scrollToPageAnchor(decodeURIComponent(window.location.hash))
         })
       }
     }
@@ -1095,7 +1095,7 @@ export default defineComponent({
         el.onclick = (ev: MouseEvent) => {
           ev.preventDefault()
           ev.stopPropagation()
-          this.goTo(decodeURIComponent(el.hash), this.scrollOpts)
+          this.scrollToPageAnchor(decodeURIComponent(el.hash))
         }
       })
       this.contentExtensionCleanup?.()
@@ -1110,6 +1110,11 @@ export default defineComponent({
     this.contentExtensionCleanup = null
   },
   methods: {
+    scrollToPageAnchor(anchor: string) {
+      const container = this.$refs.container as HTMLElement
+      revealContentExtensionTarget(container, anchor)
+      requestAnimationFrame(() => this.goTo(anchor, this.scrollOpts))
+    },
     async loadPageProtection () {
       try {
         const response = await fetch(`/_api/pages/${this.pageId}/protection`, {

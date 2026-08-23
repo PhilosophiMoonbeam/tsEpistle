@@ -38,6 +38,12 @@ props:
     enum:
         - 'Hot'
         - 'Cool'
+  pathPrefix:
+    type: String
+    title: Path Prefix
+    hint: Optional folder path prepended to every stored page and asset.
+    default: ''
+    order: 5
 actions:
   - handler: exportAll
     label: Export All

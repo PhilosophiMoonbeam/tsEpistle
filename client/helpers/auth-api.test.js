@@ -166,7 +166,7 @@ describe('auth api helper', () => {
         strategy: { key: 'github', title: 'GitHub' },
         config: [
           { key: 'clientId', value: JSON.stringify({ type: 'string', order: 2, value: 'abc' }) },
-          { key: 'clientSharedKey', value: JSON.stringify({ type: 'string', order: 1, value: 'def' }) }
+          { key: 'clientSharedKey', value: JSON.stringify({ type: 'string', order: 1, sensitive: true, value: '********' }) }
         ],
         order: 2,
         isEnabled: true,
@@ -198,7 +198,7 @@ describe('auth api helper', () => {
         key: 'github',
         order: 2,
         config: [
-          { key: 'clientSharedKey', value: { type: 'string', order: 1, value: 'def' } },
+          { key: 'clientSharedKey', value: { type: 'string', order: 1, sensitive: true, value: '********' } },
           { key: 'clientId', value: { type: 'string', order: 2, value: 'abc' } }
         ]
       })

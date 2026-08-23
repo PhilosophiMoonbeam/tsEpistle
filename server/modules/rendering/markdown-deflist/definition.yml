@@ -1,0 +1,8 @@
+key: markdownDeflist
+title: Definition Lists
+description: Parse term and definition lists
+author: requarks.io
+icon: mdi-format-list-group
+enabledDefault: true
+dependsOn: markdownCore
+props: {}

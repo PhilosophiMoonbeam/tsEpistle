@@ -1,0 +1,8 @@
+key: markdownMark
+title: Highlights
+description: Parse highlighted text into mark tags
+author: requarks.io
+icon: mdi-format-color-highlight
+enabledDefault: true
+dependsOn: markdownCore
+props: {}
