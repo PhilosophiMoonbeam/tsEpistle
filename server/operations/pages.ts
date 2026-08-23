@@ -416,6 +416,7 @@ const search = async (input: OperationInput) => {
       .filter((id): id is number => typeof id === 'number')
   )
   const publicIdentities = new Set<string>()
+  const livePublicPagesByIdentity = new Map<string, PageRecord>()
   if (publicResponse.results.length > 0) {
     const livePublicPages = await wiki.models.pages.query()
       .select('id', 'localeCode', 'path', 'title', 'description')
@@ -429,8 +430,10 @@ const search = async (input: OperationInput) => {
       })
     const normalizedQuery = query.toLocaleLowerCase()
     for (const page of livePublicPages) {
+      const identity = `${page.localeCode}\u0000${page.path}`
+      livePublicPagesByIdentity.set(identity, page)
       const metadataMatches = `${page.title} ${String(page.description ?? '')}`.toLocaleLowerCase().includes(normalizedQuery)
-      if (!protectedPageIds.has(page.id) || metadataMatches) publicIdentities.add(`${page.localeCode}\u0000${page.path}`)
+      if (!protectedPageIds.has(page.id) || metadataMatches) publicIdentities.add(identity)
     }
   }
   const publicResults = publicResponse.results.filter(result => (
@@ -440,7 +443,16 @@ const search = async (input: OperationInput) => {
       locale: result.locale,
       tags: result.tags
     })
-  )).map(result => ({ ...result, visibility: 'public' as const }))
+  )).map(result => {
+    const livePage = livePublicPagesByIdentity.get(`${result.locale}\u0000${result.path}`)
+    return {
+      ...result,
+      id: livePage?.id,
+      title: livePage?.title,
+      description: livePage?.description ?? '',
+      visibility: 'public' as const
+    }
+  })
   return {
     ...publicResponse,
     suggestions: publicResults.length === publicResponse.results.length ? publicResponse.suggestions : [],

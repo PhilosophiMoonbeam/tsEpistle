@@ -31,7 +31,7 @@ describe('page search visibility', () => {
           query: vi.fn().mockResolvedValue({
             results: [
               { id: 2, locale: 'en', path: 'private-page', title: 'Private Secret' },
-              { id: 3, locale: 'en', path: 'public-page', title: 'Public Page' }
+              { id: 99, locale: 'en', path: 'public-page', title: 'Stale Indexed Title', description: 'Stale indexed description' }
             ],
             suggestions: ['private-secret'],
             totalHits: 2
@@ -50,7 +50,7 @@ describe('page search visibility', () => {
     const result = await operations.search({ query: 'secret' })
 
     expect(result).toEqual({
-      results: [{ id: 3, locale: 'en', path: 'public-page', title: 'Public Page', visibility: 'public' }],
+      results: [{ id: 3, locale: 'en', path: 'public-page', title: 'Public Page', description: '', visibility: 'public' }],
       suggestions: [],
       totalHits: 1
     })
