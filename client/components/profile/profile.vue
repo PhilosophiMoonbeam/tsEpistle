@@ -207,6 +207,8 @@
                     v-select(
                       ref='iptTimezone'
                       :items='timezones'
+                      item-title='text'
+                      item-value='value'
                       v-model='user.timezone'
                       :label='$t(`profile:timezone`)'
                       variant="solo"
@@ -250,6 +252,8 @@
                     v-select(
                       ref='iptDateFormat'
                       :items='dateFormats'
+                      item-title='text'
+                      item-value='value'
                       v-model='user.dateFormat'
                       :label='$t(`profile:dateFormat`)'
                       variant="solo"
@@ -294,6 +298,8 @@
                       ref='iptAppearance'
                       :items='appearances'
                       v-model='user.appearance'
+                      item-title='text'
+                      item-value='value'
                       :label='$t(`profile:appearance`)'
                       variant="solo"
                       flat
