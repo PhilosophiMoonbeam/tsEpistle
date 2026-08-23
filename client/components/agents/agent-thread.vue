@@ -9,20 +9,34 @@
         <div class="text-body-small text-medium-emphasis mb-1">
           {{ message.role === 'user' ? 'You' : 'Wiki Agent' }} · {{ message.status }}
         </div>
-        <AgentMarkdown :content="message.content || (message.status === 'streaming' ? '…' : '')" />
-        <nav v-if="message.citations.length" class="mt-3" aria-label="Citations">
-          <v-chip
-            v-for="citation in message.citations"
-            :key="citation.evidenceId"
-            class="mr-2 mb-2"
-            size="small"
-            :href="citation.href || undefined"
-            :disabled="!citation.href"
-            target="_blank"
-            rel="noopener noreferrer"
-            prepend-icon="mdi-book-open-page-variant-outline"
-          >{{ citation.label }}</v-chip>
-        </nav>
+        <AgentMarkdown
+          :content="message.content || (message.status === 'streaming' ? '…' : '')"
+          :citations="message.citations"
+        />
+        <aside v-if="message.citations.length" class="agent-sources mt-3" aria-label="Sources">
+          <div class="agent-sources__heading">
+            <v-icon icon="mdi-book-open-page-variant-outline" size="18" />
+            <strong>Sources</strong>
+          </div>
+          <ol>
+            <li v-for="(citation, index) in message.citations" :key="citation.evidenceId">
+              <component
+                :is="citation.href ? 'a' : 'span'"
+                :href="citation.href || undefined"
+                :target="citation.href ? '_blank' : undefined"
+                :rel="citation.href ? 'noopener noreferrer' : undefined"
+                :aria-label="`Citation ${index + 1}: ${citation.label}`"
+              >
+                <span class="agent-sources__number">{{ index + 1 }}</span>
+                <span class="agent-sources__label">
+                  <strong>{{ citationPageLabel(citation.label) }}</strong>
+                  <small v-if="citationSectionLabel(citation.label)">{{ citationSectionLabel(citation.label) }}</small>
+                </span>
+                <v-icon v-if="citation.href" icon="mdi-open-in-new" size="15" aria-hidden="true" />
+              </component>
+            </li>
+          </ol>
+        </aside>
         <details
           v-if="message.role === 'assistant' && activityForRun(message.runId).length"
           class="agent-activity mt-3"
@@ -80,7 +94,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import type { AgentToolCallView, AgentToolState, AgentThreadState } from '../../../shared/agents/contracts.ts'
+import type { AgentCitation, AgentToolCallView, AgentToolState, AgentThreadState } from '../../../shared/agents/contracts.ts'
 import AgentMarkdown from './agent-markdown.vue'
 import AgentToolCard from './agent-tool-card.vue'
 import {
@@ -96,6 +110,9 @@ const groupedTools = computed(() => groupAgentToolsByRun(props.thread.tools, pro
 const activityForRun = (runId: string | null): readonly AgentToolCallView[] => runId ? groupedTools.value.get(runId)?.activity ?? [] : []
 const proposalToolsForRun = (runId: string | null): readonly AgentProposalTool[] => runId ? groupedTools.value.get(runId)?.proposals ?? [] : []
 const activityLabel = agentActivityLabel
+const citationLabelParts = (citation: AgentCitation['label']): readonly string[] => citation.split(' › ').filter(Boolean)
+const citationPageLabel = (citation: AgentCitation['label']): string => citationLabelParts(citation)[0] ?? citation
+const citationSectionLabel = (citation: AgentCitation['label']): string => citationLabelParts(citation).slice(1).join(' › ')
 const stateLabels: Record<AgentToolState, string> = { preparing: 'Preparing', running: 'Running', awaitingApproval: 'Awaiting approval', complete: 'Complete', failed: 'Failed', denied: 'Denied', cancelled: 'Cancelled' }
 const stateIcons: Record<AgentToolState, string> = { preparing: 'mdi-dots-horizontal', running: 'mdi-progress-clock', awaitingApproval: 'mdi-shield-alert-outline', complete: 'mdi-check-circle-outline', failed: 'mdi-alert-circle-outline', denied: 'mdi-cancel', cancelled: 'mdi-stop-circle-outline' }
 const toolStateLabel = (state: AgentToolState): string => stateLabels[state]
@@ -115,6 +132,18 @@ const liveSummary = computed(() => {
 .agent-thread { min-height: 12rem; }
 .agent-message { border-radius: .75rem; margin-bottom: 1rem; max-width: 54rem; padding: 1rem; background: rgb(var(--v-theme-surface-variant)); }
 .agent-message--user { margin-inline-start: auto; background: rgb(var(--v-theme-primary)); color: rgb(var(--v-theme-on-primary)); }
+.agent-sources { border-top: 1px solid rgb(var(--v-theme-outline-variant)); padding-top: .75rem; }
+.agent-sources__heading { align-items: center; display: flex; gap: .4rem; margin-bottom: .45rem; }
+.agent-sources ol { display: grid; gap: .35rem; list-style: none; margin: 0; padding: 0; }
+.agent-sources li > a,
+.agent-sources li > span { align-items: center; border-radius: .5rem; color: inherit; display: grid; gap: .55rem; grid-template-columns: auto minmax(0, 1fr) auto; min-height: 2.5rem; padding: .4rem .5rem; text-decoration: none; }
+.agent-sources li > a:hover { background: rgb(var(--v-theme-surface)); }
+.agent-sources li > a:focus-visible { outline: 2px solid rgb(var(--v-theme-primary)); outline-offset: 2px; }
+.agent-sources__number { align-items: center; background: rgb(var(--v-theme-primary-container)); border-radius: 999px; color: rgb(var(--v-theme-on-primary-container)); display: inline-flex; font-size: .72rem; font-weight: 700; height: 1.4rem; justify-content: center; width: 1.4rem; }
+.agent-sources__label { min-width: 0; }
+.agent-sources__label strong,
+.agent-sources__label small { display: block; overflow-wrap: anywhere; }
+.agent-sources__label small { color: rgb(var(--v-theme-on-surface-variant)); margin-top: .08rem; }
 .agent-activity { border-top: 1px solid rgb(var(--v-theme-outline-variant)); padding-top: .65rem; }
 .agent-activity summary { align-items: center; cursor: pointer; display: flex; gap: .5rem; list-style: none; min-height: 2rem; }
 .agent-activity summary::-webkit-details-marker { display: none; }

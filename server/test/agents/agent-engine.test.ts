@@ -19,14 +19,19 @@ describe('Ax agent engine', () => {
     const calls: Readonly<AxChatRequest<unknown>>[] = []
     const responses: AxChatResponse[] = [
       { results: [{ index: 0, functionCalls: [{ id: 'call-1', type: 'function', function: { name: 'pages_get', params: '{"id":' } }, { id: 'call-1', type: 'function', function: { name: '', params: '42}' } }], thoughtBlocks: [{ data: 'encrypted-state', encrypted: true }, { data: 'hidden thought', encrypted: false }] }], modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 5, completionTokens: 2, totalTokens: 7 } } },
-      { results: [{ index: 0, content: 'The page title is Guide.' }], modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 8, completionTokens: 4, totalTokens: 12 } } }
+      { results: [{ index: 0, content: 'The install steps are documented.[[cite:page:42:section:1]]' }], modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 8, completionTokens: 4, totalTokens: 12 } } }
     ]
     const chat = vi.fn(async (input: Readonly<AxChatRequest<unknown>>) => {
       calls.push(input)
       return responses.shift()!
     })
     const factory = { create: async () => ({ service: { chat }, capabilities: { streaming: false, functions: true, parallelFunctions: true, structuredOutput: 'native-json-schema', usage: 'terminal', cancellation: true, maxContextTokens: 100_000, maxOutputTokens: 4_000 }, transportKind: 'openai-responses', model: 'gpt-test', capabilityRevision: 'cap-1', pricingRevision: 'price-1' }) } as unknown as AgentProviderFactory
-    const invoke = vi.fn(async () => ({ id: 42, title: 'Guide' }))
+    const invoke = vi.fn(async () => ({
+      id: 42,
+      title: 'Guide',
+      citation: { evidenceId: 'page:42', label: 'Guide', href: '/en/guide' },
+      citationSections: [{ evidenceId: 'page:42:section:1', label: 'Guide › Install', href: '/en/guide#install' }]
+    }))
     const close = vi.fn()
     const actions: AgentActionSessionProvider = {
       open: async () => ({ functions: [{ name: 'pages.get', title: 'Read page', description: 'Reads a page', parameters: { type: 'object', properties: { id: { type: 'number' } } }, risk: 'read' }], invoke, snapshot: async () => ({}), close })
@@ -40,10 +45,15 @@ describe('Ax agent engine', () => {
     expect(calls[0]?.functions).toContainEqual(expect.objectContaining({ name: 'pages_get' }))
     expect(calls[0]?.chatPrompt).toContainEqual(expect.objectContaining({ role: 'system', content: expect.stringContaining('"id":42,"locale":"en","path":"guide"') }))
     expect(calls[1]?.chatPrompt).toContainEqual(expect.objectContaining({ role: 'assistant', functionCalls: [expect.objectContaining({ function: expect.objectContaining({ name: 'pages_get' }) })] }))
-    expect(calls[1]?.chatPrompt).toContainEqual(expect.objectContaining({ role: 'function', functionId: 'call-1', result: '{"id":42,"title":"Guide"}' }))
-    expect(text).toHaveBeenCalledWith('The page title is Guide.')
+    expect(calls[1]?.chatPrompt).toContainEqual(expect.objectContaining({ role: 'function', functionId: 'call-1', result: expect.stringContaining('"citationSections"') }))
+    expect(text).toHaveBeenCalledWith('The install steps are documented.[[cite:page:42:section:1]]')
     expect(event.mock.calls.map(([type]) => type)).toEqual(['tool.started', 'tool.completed'])
-    expect(result).toMatchObject({ inputTokens: 13, outputTokens: 6, providerState: { thoughtBlocks: [{ data: 'encrypted-state', encrypted: true }] } })
+    expect(result).toMatchObject({
+      inputTokens: 13,
+      outputTokens: 6,
+      citations: [{ evidenceId: 'page:42:section:1', kind: 'page', label: 'Guide › Install', href: '/en/guide#install' }],
+      providerState: { thoughtBlocks: [{ data: 'encrypted-state', encrypted: true }] }
+    })
     expect(JSON.stringify(result)).not.toContain('hidden thought')
     expect(close).toHaveBeenCalledOnce()
   })
@@ -78,6 +88,7 @@ describe('Ax agent engine', () => {
     expect(system?.content).toContain('"name":"wiki-authoring"')
     expect(system?.content).toContain('load an applicable skill')
     expect(system?.content).toContain('very next action must be pages.applyProposal')
+    expect(system?.content).toContain('[[cite:EVIDENCE_ID]]')
   })
 
   it('fails closed when a generation-only provider emits a tool call', async () => {

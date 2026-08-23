@@ -91,13 +91,30 @@ describe('permission-safe page read actions', () => {
     })
     await expect(execute('pages.search', { query: 'notes', limit: 3, offset: 0 })).resolves.toEqual({
       results: [
-        { id: 42, locale: 'en', path: 'docs/start', title: 'Start', description: '', contentType: 'markdown', sourceRevision: '8' },
-        { id: 43, locale: 'en', path: 'private/notes', title: 'Start', description: '', contentType: 'markdown', sourceRevision: '2' }
+        { id: 42, locale: 'en', path: 'docs/start', title: 'Start', description: '', contentType: 'markdown', sourceRevision: '8', citation: { evidenceId: 'page:42', label: 'Start', href: '/en/docs/start' } },
+        { id: 43, locale: 'en', path: 'private/notes', title: 'Start', description: '', contentType: 'markdown', sourceRevision: '2', citation: { evidenceId: 'page:43', label: 'Start', href: '/_private/en/private/notes' } }
       ],
       total: 3,
       truncated: true
     })
     expect(operations.search).toHaveBeenCalledWith(expect.objectContaining({ requester: principal, limit: 3 }))
+  })
+
+  it('exposes canonical rendered heading anchors as precise citation destinations', async () => {
+    const toc = JSON.stringify([{
+      title: 'Start',
+      anchor: '#start',
+      children: [{ title: 'Installation', anchor: '#installation', children: [] }]
+    }])
+    const { execute } = setup({ get: async () => page({ toc }) })
+
+    await expect(execute('pages.get', { id: 42 })).resolves.toMatchObject({
+      citation: { evidenceId: 'page:42', label: 'Start', href: '/en/docs/start' },
+      citationSections: [
+        { evidenceId: 'page:42:section:1', label: 'Start', href: '/en/docs/start#start' },
+        { evidenceId: 'page:42:section:2', label: 'Start › Installation', href: '/en/docs/start#installation' }
+      ]
+    })
   })
 
   it('prefers the caller-owned private page for path identity and falls back only on not-found', async () => {
@@ -191,7 +208,7 @@ describe('permission-safe page read actions', () => {
       get: async input => input.id === 42 ? page() : page({ id: 43, localeCode: 'fr', path: 'fr/start' })
     })
     await expect(execute('pages.listRecent', { locale: 'en', limit: 2 })).resolves.toEqual({
-      pages: [{ id: 42, locale: 'en', path: 'docs/start', title: 'Start', description: '', contentType: 'markdown', sourceRevision: '8' }]
+      pages: [{ id: 42, locale: 'en', path: 'docs/start', title: 'Start', description: '', contentType: 'markdown', sourceRevision: '8', citation: { evidenceId: 'page:42', label: 'Start', href: '/en/docs/start' } }]
     })
     expect(operations.listRecent).toHaveBeenCalledWith(principal)
   })
@@ -208,7 +225,8 @@ describe('permission-safe page read actions', () => {
       id: 42,
       versionId: 9,
       sourceRevision: '6',
-      content: '# Start'
+      content: '# Start',
+      citation: { evidenceId: 'page:42', label: 'Start', href: '/en/docs/start?v=9' }
     })
   })
 

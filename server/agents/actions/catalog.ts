@@ -25,6 +25,11 @@ const PageSelector = z.union([
   strict({ id: PositiveId }),
   strict({ path: Path, locale: Locale })
 ])
+const PageCitation = strict({
+  evidenceId: z.string().min(1).max(128),
+  label: z.string().min(1).max(512),
+  href: z.string().min(1).max(2_048)
+})
 const PageSummary = strict({
   id: PositiveId,
   locale: Locale,
@@ -32,9 +37,14 @@ const PageSummary = strict({
   title: BoundedTitle,
   description: BoundedDescription,
   contentType: z.string().max(128),
-  sourceRevision: z.string().max(64)
+  sourceRevision: z.string().max(64),
+  citation: PageCitation
 })
-const PageResult = PageSummary.extend({ content: BoundedPageContent, updatedAt: z.string().max(32) })
+const PageResult = PageSummary.extend({
+  content: BoundedPageContent,
+  updatedAt: z.string().max(32),
+  citationSections: z.array(PageCitation).max(99)
+})
 const ProposalResult = strict({
   proposalId: Uuid,
   approvalId: Uuid,

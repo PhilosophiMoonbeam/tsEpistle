@@ -15,7 +15,8 @@ const PageRowSchema = z.looseObject({
   sourceRevision: z.union([z.string(), z.number()]),
   content: z.string().optional(),
   updatedAt: z.union([z.string(), z.date()]),
-  visibility: z.enum(['public', 'private']).optional()
+  visibility: z.enum(['public', 'private']).optional(),
+  toc: z.unknown().optional()
 })
 const SearchResponseSchema = z.looseObject({
   results: z.array(z.looseObject({
@@ -70,6 +71,62 @@ interface VersionInput { readonly pageId: number; readonly versionId: number }
 interface LinksInput { readonly pageId: number; readonly limit: number }
 
 const operationFailure = (message: string): ActionKernelError => new ActionKernelError('INVALID_PAGE_RESULT', message, 500)
+interface CitationSection {
+  readonly titlePath: readonly string[]
+  readonly anchor: string
+}
+
+const tocSections = (value: unknown): readonly CitationSection[] => {
+  let root = value
+  if (typeof root === 'string') {
+    try {
+      root = JSON.parse(root)
+    } catch {
+      return []
+    }
+  }
+  if (!Array.isArray(root)) return []
+  const sections: CitationSection[] = []
+  const visit = (nodes: readonly unknown[], parents: readonly string[], depth: number): void => {
+    if (depth > 6 || sections.length >= 99) return
+    for (const value of nodes) {
+      if (sections.length >= 99 || typeof value !== 'object' || value === null) break
+      const node = value as Record<string, unknown>
+      const title = typeof node.title === 'string' ? node.title.trim() : ''
+      const anchor = typeof node.anchor === 'string' ? node.anchor : ''
+      const titlePath = title ? [...parents, title] : parents
+      if (title && anchor.startsWith('#') && !anchor.includes('\n')) sections.push({ titlePath, anchor })
+      if (Array.isArray(node.children)) visit(node.children, titlePath, depth + 1)
+    }
+  }
+  visit(root, [], 1)
+  return sections
+}
+
+const boundedCitationLabel = (value: string): string => value.length <= 512 ? value : `${value.slice(0, 511)}…`
+
+const versionedCitationHref = (href: string, versionId: number): string => {
+  const anchorIndex = href.indexOf('#')
+  return anchorIndex < 0
+    ? `${href}?v=${versionId}`
+    : `${href.slice(0, anchorIndex)}?v=${versionId}${href.slice(anchorIndex)}`
+}
+
+const pageCitation = (row: z.infer<typeof PageRowSchema>, id: number, locale: string) => {
+  const href = `${row.visibility === 'private' ? '/_private' : ''}/${locale}/${row.path}`
+  const citationTitle = row.title.trim() || row.path
+  return {
+    citation: { evidenceId: `page:${id}`, label: citationTitle, href },
+    citationSections: tocSections(row.toc).flatMap((section, index) => {
+      const sectionHref = `${href}${section.anchor}`
+      const titlePath = section.titlePath[0] === citationTitle ? section.titlePath.slice(1) : section.titlePath
+      return sectionHref.length <= 2_048
+        ? [{ evidenceId: `page:${id}:section:${index + 1}`, label: boundedCitationLabel([citationTitle, ...titlePath].join(' › ')), href: sectionHref }]
+        : []
+    })
+  }
+}
+
 
 const parsePage = (value: unknown, includeContent: boolean) => {
   const parsed = PageRowSchema.safeParse(value)
@@ -78,6 +135,7 @@ const parsePage = (value: unknown, includeContent: boolean) => {
   const id = row.id ?? row.pageId
   const locale = row.locale ?? row.localeCode
   if (!id || !locale) throw operationFailure('Page operation omitted page identity')
+  const citation = pageCitation(row, id, locale)
   return {
     id,
     locale,
@@ -86,7 +144,14 @@ const parsePage = (value: unknown, includeContent: boolean) => {
     description: row.description ?? '',
     contentType: row.contentType,
     sourceRevision: String(row.sourceRevision),
-    ...(includeContent ? { content: row.content as string, updatedAt: row.updatedAt instanceof Date ? row.updatedAt.toISOString() : row.updatedAt } : {})
+    citation: citation.citation,
+    ...(includeContent
+      ? {
+          content: row.content as string,
+          updatedAt: row.updatedAt instanceof Date ? row.updatedAt.toISOString() : row.updatedAt,
+          citationSections: citation.citationSections
+        }
+      : {})
   }
 }
 
@@ -214,8 +279,11 @@ export const registerPageReadActions = (kernel: ActionKernel, dependencies: Page
     const parsed = parsePage(value, true)
     const versionDate = z.looseObject({ versionDate: z.union([z.string(), z.date()]) }).safeParse(value)
     if (!versionDate.success) throw operationFailure('Page version operation omitted its date')
+    const citationSections = 'citationSections' in parsed ? parsed.citationSections ?? [] : []
     return {
       ...parsed,
+      citation: { ...parsed.citation, href: versionedCitationHref(parsed.citation.href, input.versionId) },
+      citationSections: citationSections.map(citation => ({ ...citation, href: versionedCitationHref(citation.href, input.versionId) })),
       versionId: input.versionId,
       versionDate: versionDate.data.versionDate instanceof Date ? versionDate.data.versionDate.toISOString() : versionDate.data.versionDate
     }
