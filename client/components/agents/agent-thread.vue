@@ -130,7 +130,7 @@ const liveSummary = computed(() => {
 
 <style scoped>
 .agent-thread { min-height: 12rem; }
-.agent-message { border-radius: .75rem; margin-bottom: 1rem; max-width: 54rem; padding: 1rem; background: rgb(var(--v-theme-surface-variant)); }
+.agent-message { border: 1px solid color-mix(in srgb, rgb(var(--v-theme-secondary)) 38%, rgb(var(--v-theme-surface))); border-radius: .75rem; margin-bottom: 1rem; max-width: 54rem; padding: 1rem; background: color-mix(in srgb, rgb(var(--v-theme-secondary)) 18%, rgb(var(--v-theme-surface))); color: rgb(var(--v-theme-on-surface)); }
 .agent-message--user { margin-inline-start: auto; background: rgb(var(--v-theme-primary)); color: rgb(var(--v-theme-on-primary)); }
 .agent-sources { border-top: 1px solid rgb(var(--v-theme-outline-variant)); padding-top: .75rem; }
 .agent-sources__heading { align-items: center; display: flex; gap: .4rem; margin-bottom: .45rem; }
