@@ -84,7 +84,13 @@
           @skills="agents.setSkills"
         />
 
-        <div ref="transcript" class="inline-agent__transcript" tabindex="-1">
+        <div
+          ref="transcript"
+          class="inline-agent__transcript"
+          :class="{ 'inline-agent__transcript--approval-jump': approvalJumpVisible }"
+          tabindex="-1"
+          @scroll.passive="updateApprovalJump"
+        >
           <div v-if="thread && !hasConversation" class="inline-agent__welcome">
             <v-avatar color="primary" size="64" variant="tonal">
               <v-icon icon="mdi-book-open-page-variant-outline" size="34" />
@@ -117,6 +123,15 @@
             @decision="agents.decideProposal"
           />
         </div>
+        <v-btn
+          v-if="approvalJumpVisible"
+          class="inline-agent__approval-jump"
+          color="warning"
+          variant="elevated"
+          prepend-icon="mdi-shield-alert-outline"
+          append-icon="mdi-arrow-down"
+          @click="jumpToApproval"
+        >Approval required</v-btn>
       </div>
 
       <v-divider />
@@ -147,6 +162,7 @@ import AgentComposer from './agent-composer.vue'
 import AgentMcpApproval from './agent-mcp-approval.vue'
 import AgentSessionSettings from './agent-session-settings.vue'
 import AgentThread from './agent-thread.vue'
+import { isAgentApprovalOutsideViewport } from './agent-thread-presentation.ts'
 
 const props = defineProps<{
   csrfToken: string
@@ -161,6 +177,7 @@ const props = defineProps<{
 const agents = useAgentsStore()
 const { connection, decidingApprovalId, error, loading, profiles, sending, sessions, skills, thread } = storeToRefs(agents)
 const transcript = ref<HTMLElement | null>(null)
+const approvalJumpVisible = ref(false)
 let initialization: Promise<void> | null = null
 
 const currentPage = computed<AgentCurrentPageHint | null>(() => {
@@ -169,6 +186,7 @@ const currentPage = computed<AgentCurrentPageHint | null>(() => {
 })
 const activeRun = computed(() => thread.value?.session.currentRun?.canCancel ? thread.value.session.currentRun : null)
 const hasConversation = computed(() => Boolean(thread.value && (thread.value.messages.length || thread.value.tools.length || thread.value.artifacts.length)))
+const pendingApprovalId = computed(() => thread.value?.proposals.find(proposal => proposal.status === 'pending' && proposal.approval?.status === 'pending')?.id ?? null)
 const providerAvailable = computed(() => props.providerEnabled && profiles.value.length > 0)
 const providerUnavailableMessage = computed(() => props.providerEnabled
   ? 'No enabled provider profile is available for your account. Ask an administrator to grant one in Administration → Agents.'
@@ -227,19 +245,49 @@ const formatSessionDate = (value: string): string => new Intl.DateTimeFormat(und
   timeStyle: 'short'
 }).format(new Date(value))
 
+const updateApprovalJump = (): void => {
+  const container = transcript.value
+  const proposalId = pendingApprovalId.value
+  if (!container || !proposalId) {
+    approvalJumpVisible.value = false
+    return
+  }
+  const approval = container.querySelector<HTMLElement>(`#agent-approval-${proposalId}`)
+  if (!approval) {
+    approvalJumpVisible.value = false
+    return
+  }
+  const containerRect = container.getBoundingClientRect()
+  const approvalRect = approval.getBoundingClientRect()
+  approvalJumpVisible.value = isAgentApprovalOutsideViewport(containerRect, approvalRect)
+}
+
+const jumpToApproval = async (): Promise<void> => {
+  const proposalId = pendingApprovalId.value
+  if (!proposalId) return
+  const approval = transcript.value?.querySelector<HTMLElement>(`#agent-approval-${proposalId}`)
+  if (!approval) return
+  approval.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  await nextTick()
+  approval.focus({ preventScroll: true })
+  approvalJumpVisible.value = false
+}
+
 watch(currentPage, page => agents.setCurrentPage(page), { immediate: true })
 watch(
-  () => [thread.value?.messages.length, thread.value?.tools.length, thread.value?.artifacts.length, connection.value],
+  () => [thread.value?.messages.length, thread.value?.tools.length, thread.value?.artifacts.length, pendingApprovalId.value, connection.value],
   async () => {
     if (!hasConversation.value) {
       await nextTick()
       if (transcript.value) transcript.value.scrollTop = 0
+      approvalJumpVisible.value = false
       return
     }
     const element = transcript.value
     const nearBottom = !element || element.scrollHeight - element.scrollTop - element.clientHeight < 160
     await nextTick()
     if (nearBottom && transcript.value) transcript.value.scrollTo({ top: transcript.value.scrollHeight, behavior: 'smooth' })
+    updateApprovalJump()
   }
 )
 
@@ -254,8 +302,10 @@ defineExpose({ sendPrompt })
 .inline-agent__heading { min-width: 0; }
 .inline-agent__history { max-height: min(28rem, 70vh); min-width: min(24rem, 90vw); overflow-y: auto; }
 .inline-agent__alert, .inline-agent__settings { flex: 0 0 auto; }
-.inline-agent__body { display: flex; flex: 1 1 auto; flex-direction: column; min-height: 0; overflow: hidden; padding: 1rem 1.25rem 0; }
+.inline-agent__body { display: flex; flex: 1 1 auto; flex-direction: column; min-height: 0; overflow: hidden; padding: 1rem 1.25rem 0; position: relative; }
 .inline-agent__transcript { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: .25rem .25rem 1rem; scroll-behavior: smooth; }
+.inline-agent__transcript--approval-jump { padding-bottom: 4.5rem; }
+.inline-agent__approval-jump { bottom: 1rem; position: absolute; right: 1.75rem; z-index: 2; }
 .inline-agent__welcome { align-items: center; display: flex; flex-direction: column; margin: auto; max-width: 46rem; padding: clamp(1.5rem, 5vh, 4rem) 1rem; text-align: center; }
 .inline-agent__starters { display: grid; gap: .75rem; grid-template-columns: repeat(auto-fit, minmax(min(14rem, 100%), 1fr)); width: 100%; }
 .inline-agent__starter { height: auto; justify-content: flex-start; min-height: 3rem; padding: .75rem 1rem; text-transform: none; white-space: normal; }
@@ -266,6 +316,7 @@ defineExpose({ sendPrompt })
   .inline-agent__card { border-radius: 0 !important; height: calc(100vh - 64px); min-height: 0; }
   .inline-agent__body { padding-inline: .75rem; }
   .inline-agent__composer { padding: .75rem; }
+  .inline-agent__approval-jump { bottom: .75rem; left: 1.5rem; right: 1.5rem; }
   .inline-agent__notice { display: none; }
 }
 @media (forced-colors: active) {
