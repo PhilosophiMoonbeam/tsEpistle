@@ -77,7 +77,7 @@ describe('Ax agent engine', () => {
     const system = calls[0]?.chatPrompt.find(message => message.role === 'system')
     expect(system?.content).toContain('"name":"wiki-authoring"')
     expect(system?.content).toContain('load an applicable skill')
-    expect(system?.content).toContain('call pages.applyProposal')
+    expect(system?.content).toContain('very next action must be pages.applyProposal')
   })
 
   it('fails closed when a generation-only provider emits a tool call', async () => {

@@ -210,18 +210,28 @@ export const useAgentsStore = defineStore('agents', {
           this.scheduleRefresh(terminalEvents.has(type))
         },
         error: () => {
-          if (this.connection !== 'closed') this.connection = 'reconnecting'
+          if (this.connection !== 'closed') {
+            this.connection = 'reconnecting'
+            this.scheduleRefresh(false, 250)
+          }
         }
       }))
+      this.scheduleRefresh(false, 1_000)
     },
-    scheduleRefresh(terminal: boolean) {
+    scheduleRefresh(terminal: boolean, delay = 50) {
       if (this.refreshTimer !== null) window.clearTimeout(this.refreshTimer)
       this.refreshTimer = window.setTimeout(() => {
         this.refreshTimer = null
-        void this.refreshThread().finally(() => {
-          if (terminal) this.closeStream()
+        void this.refreshThread().catch(() => {
+          if (this.connection !== 'closed') this.connection = 'reconnecting'
+        }).finally(() => {
+          if (terminal || !this.thread?.session.currentRun?.canCancel) {
+            this.closeStream()
+          } else if (this.connection !== 'closed') {
+            this.scheduleRefresh(false, 1_000)
+          }
         })
-      }, 50)
+      }, delay)
     },
     closeStream() {
       if (this.refreshTimer !== null) window.clearTimeout(this.refreshTimer)
