@@ -116,6 +116,35 @@ describe('Visual Markdown page contracts', () => {
     return { patch, where }
   }
 
+  function arrangeUpdate (page, editorKey) {
+    const pagePatch = {
+      where: vi.fn(),
+      then: resolve => Promise.resolve(1).then(resolve)
+    }
+    pagePatch.where.mockReturnValue(pagePatch)
+    const updatedPage = {
+      ...page,
+      content: 'Math: $x + y$',
+      editorKey,
+      updatedAt: '2026-08-14T00:00:01.000Z'
+    }
+    global.WIKI.models.pages = {
+      query: vi.fn()
+        .mockReturnValueOnce({ findById: vi.fn().mockResolvedValue(page) })
+        .mockReturnValueOnce({ patch: vi.fn().mockReturnValue(pagePatch) })
+        .mockReturnValueOnce({
+          findById: vi.fn().mockReturnValue({
+            select: vi.fn().mockResolvedValue({ updatedAt: updatedPage.updatedAt })
+          })
+        }),
+      getPageFromDb: vi.fn().mockResolvedValue(updatedPage),
+      renderPage: vi.fn().mockResolvedValue(undefined)
+    }
+    global.WIKI.models.knex.table = vi.fn().mockReturnValue({
+      where: vi.fn().mockReturnValue({ update: vi.fn().mockResolvedValue(1) })
+    })
+  }
+
   it('changes Markdown to Visual Markdown without rewriting content or creating a conversion snapshot', async () => {
     const { patch } = arrangeConversion(basePage)
 
@@ -128,14 +157,16 @@ describe('Visual Markdown page contracts', () => {
     expect(global.WIKI.models.pageHistory.addVersion).not.toHaveBeenCalled()
   })
 
-  it('rejects unsupported Markdown before changing the editor key', async () => {
+  it('changes extended Markdown to Visual Markdown without rewriting content', async () => {
     const page = { ...basePage, content: '## Callout\n{.is-info}' }
     const { patch } = arrangeConversion(page)
 
-    await expect(Page.convertPage({ id: page.id, editor: 'visual-markdown', user: requester }))
-      .rejects.toThrow(/Markdown attributes/)
+    await Page.convertPage({ id: page.id, editor: 'visual-markdown', user: requester })
 
-    expect(patch).not.toHaveBeenCalled()
+    expect(patch).toHaveBeenCalledWith({
+      contentType: 'markdown',
+      editorKey: 'visual-markdown'
+    })
     expect(global.WIKI.models.pageHistory.addVersion).not.toHaveBeenCalled()
   })
 
@@ -178,36 +209,35 @@ describe('Visual Markdown page contracts', () => {
   })
 
 
-  it('rejects unsupported content when a Visual Markdown page is updated', async () => {
-    global.WIKI.models.pages = {
-      query: vi.fn().mockReturnValue({ findById: vi.fn().mockResolvedValue({
-        ...basePage,
-        editorKey: 'visual-markdown'
-      }) })
-    }
+  it('accepts extended content when a Visual Markdown page is updated', async () => {
+    arrangeUpdate({
+      ...basePage,
+      editorKey: 'visual-markdown'
+    }, 'visual-markdown')
 
-    await expect(Page.updatePage({
+    const page = await Page.updatePage({
       id: basePage.id,
       user: requester,
       content: 'Math: $x + y$'
-    })).rejects.toThrow(/Math syntax/)
+    })
 
-    expect(global.WIKI.models.pageHistory.addVersion).not.toHaveBeenCalled()
+    expect(page.content).toBe('Math: $x + y$')
+    expect(page.editorKey).toBe('visual-markdown')
+    expect(global.WIKI.models.pageHistory.addVersion).toHaveBeenCalledOnce()
   })
 
-  it('validates the target editor when a revision switches into Visual Markdown', async () => {
-    global.WIKI.models.pages = {
-      query: vi.fn().mockReturnValue({ findById: vi.fn().mockResolvedValue(basePage) })
-    }
+  it('accepts extended content when a revision switches into Visual Markdown', async () => {
+    arrangeUpdate(basePage, 'visual-markdown')
 
-    await expect(Page.updatePage({
+    const page = await Page.updatePage({
       id: basePage.id,
       user: requester,
       content: 'Math: $x + y$',
       editor: 'visual-markdown'
-    })).rejects.toThrow(/Math syntax/)
+    })
 
-    expect(global.WIKI.models.pageHistory.addVersion).not.toHaveBeenCalled()
+    expect(page.editorKey).toBe('visual-markdown')
+    expect(global.WIKI.models.pageHistory.addVersion).toHaveBeenCalledOnce()
   })
 
   it('rejects a stale expected timestamp before opening the update transaction', async () => {

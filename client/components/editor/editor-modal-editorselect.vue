@@ -21,7 +21,7 @@
                 ripple
                 )
                 v-card-text.text-center(@click='selectEditor("visual-markdown")')
-                  img(src='/_assets/svg/editor-icon-ckeditor.svg', alt='Visual Markdown', style='width: 36px;')
+                  img(src='/_assets/svg/editor-icon-markdown.svg', alt='Visual Markdown', style='width: 36px;')
                   .text-body-medium.mt-2.text-primary Visual Markdown
                   .text-body-small.text-grey Rich-text, Markdown output
             v-col(cols='4')
@@ -30,7 +30,7 @@
                 ripple
                 )
                 v-card-text.text-center(@click='selectEditor("ckeditor")')
-                  img(src='/_assets/svg/editor-icon-ckeditor.svg', alt='Visual Editor', style='width: 36px;')
+                  img(src='/_assets/svg/editor-icon-html.svg', alt='Visual Editor', style='width: 36px;')
                   .text-body-medium.mt-2.text-primary Visual Editor
                   .text-body-small.text-grey Rich-text, HTML output
             v-col(cols='4')

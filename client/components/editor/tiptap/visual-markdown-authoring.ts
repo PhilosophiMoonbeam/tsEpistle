@@ -1,4 +1,4 @@
-import type { DecoupledEditor } from 'ckeditor5'
+import type { Editor } from '@tiptap/core'
 
 export const ADMONITION_KINDS = ['NOTE', 'TIP', 'IMPORTANT', 'WARNING', 'CAUTION'] as const
 export type AdmonitionKind = typeof ADMONITION_KINDS[number]
@@ -43,18 +43,37 @@ export function serializeVisualMarkdownAdmonition (input: AdmonitionInput): stri
   return `> **${input.kind}: ${escapeMarkdownInline(title)}**\n>\n${body.split('\n').map(line => `> ${line}`).join('\n')}\n`
 }
 
-export function insertVisualMarkdownAdmonition (editor: DecoupledEditor, input: AdmonitionInput): void {
-  const source = serializeVisualMarkdownAdmonition(input)
-  const view = editor.data.processor.toView(source)
-  const model = editor.data.toModel(view)
-  editor.model.insertContent(model, editor.model.document.selection)
+export function insertVisualMarkdownAdmonition (editor: Editor, input: AdmonitionInput): void {
+  editor.commands.insertContent(serializeVisualMarkdownAdmonition(input), { contentType: 'markdown' })
 }
 
-export function insertVisualMarkdownGlyph (editor: DecoupledEditor, glyph: VisualMarkdownGlyph): void {
+export function insertVisualMarkdownGlyph (editor: Editor, glyph: VisualMarkdownGlyph): void {
   if (!VISUAL_MARKDOWN_GLYPHS.some(candidate => candidate.value === glyph.value && candidate.label === glyph.label)) {
     throw new TypeError('Unsupported Visual Markdown glyph.')
   }
-  editor.model.change(writer => {
-    editor.model.insertContent(writer.createText(glyph.value), editor.model.document.selection)
+  editor.commands.insertContent(glyph.value)
+}
+
+export function insertVisualMarkdownDefinitionList (editor: Editor): void {
+  editor.commands.insertContent({
+    type: 'definitionList',
+    content: [
+      {
+        type: 'definitionTerm',
+        content: [{ type: 'text', text: 'Term' }]
+      },
+      {
+        type: 'definitionDescription',
+        content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Definition' }] }]
+      },
+      {
+        type: 'definitionTerm',
+        content: [{ type: 'text', text: 'Term' }]
+      },
+      {
+        type: 'definitionDescription',
+        content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Definition' }] }]
+      }
+    ]
   })
 }

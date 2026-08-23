@@ -10,8 +10,8 @@ const readScript = (relativePath) => {
 }
 
 describe('editor conflict REST migration guard', () => {
-  test('ckeditor conflict fetches the latest page through the REST helper', () => {
-    const script = readScript('client/components/editor/ckeditor/conflict.vue')
+  test('Tiptap conflict fetches the latest page through the REST helper', () => {
+    const script = readScript('client/components/editor/tiptap/conflict.vue')
 
     expect(script).toContain("import { defineComponent } from 'vue'")
     expect(script).toContain("import { wikiStore } from '@/store/index.ts'")

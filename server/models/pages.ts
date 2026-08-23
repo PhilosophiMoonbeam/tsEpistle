@@ -21,7 +21,6 @@ import User from './users.ts'
 import Editor from './editors.ts'
 import Locale from './locales.ts'
 import type Comment from './comments.ts'
-import { assertVisualMarkdownCompatible } from '../../shared/visual-markdown.ts'
 import { writeOutboxEvent } from '../core/outbox.ts'
 import { enqueuePageMutationEffects, type PageProjectionPayload } from '../core/page-mutation-outbox.ts'
 import { redactProtectedPageForSearch, syncProtectedPageAssets } from '../operations/page-protection.ts'
@@ -679,9 +678,6 @@ static async createPage(opts: CreatePageOptions): Promise<Page> {
   if (!opts.content || _.trim(opts.content).length < 1) {
     throw new wiki.Error.PageEmptyContent()
   }
-  if (opts.editor === 'visual-markdown') {
-    assertVisualMarkdownCompatible(opts.content)
-  }
 
   // -> Format CSS Scripts
   let scriptCss = ''
@@ -815,9 +811,6 @@ static async updatePage(opts: UpdatePageOptions): Promise<Page> {
     throw new wiki.Error.PageEmptyContent()
   }
   const editorKey = opts.editor ?? ogPage.editorKey
-  if (editorKey === 'visual-markdown') {
-    assertVisualMarkdownCompatible(content)
-  }
 
 
   // -> Format Extra Properties
@@ -1282,9 +1275,6 @@ static async convertPage(opts: ConvertPageOptions): Promise<void> {
     } else {
       throw new Error('Unsupported source / destination content types combination.')
     }
-  }
-  if (opts.editor === 'visual-markdown') {
-    assertVisualMarkdownCompatible(convertedContent !== null ? convertedContent : ogPage.content)
   }
 
   await wiki.models.knex.transaction(async transaction => {

@@ -8,7 +8,8 @@ offEditorLinkToPage } from './editor-link-events.ts'
 
 const repoRoot = path.resolve(import.meta.dirname, '../..')
 const guardedLinkListenerFiles = [
-  'client/components/editor/editor-ckeditor.vue'
+  'client/components/editor/editor-ckeditor.vue',
+  'client/components/editor/tiptap/editor.vue'
 ]
 
 function getLineNumber (content, index) {

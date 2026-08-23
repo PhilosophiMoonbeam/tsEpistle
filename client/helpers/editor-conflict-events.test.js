@@ -17,7 +17,8 @@ const guardedFiles = [
   'client/components/editor/editor-asciidoc.vue',
   'client/components/editor/editor-ckeditor.vue',
   'client/components/editor/editor-modal-conflict.vue',
-  'client/components/editor/ckeditor/conflict.vue',
+  'client/components/editor/tiptap/editor.vue',
+  'client/components/editor/tiptap/conflict.vue',
   'client/components/editor/editor-modal-drawio.vue'
 ]
 const conflictEventNames = [
