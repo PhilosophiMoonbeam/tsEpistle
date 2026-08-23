@@ -1,17 +1,27 @@
+import { randomUUID } from 'node:crypto'
+
 import type { AgentActionName } from '../../../shared/agents/contracts.ts'
 import { SkillRuntime } from '../skills/runtime.ts'
 import { ActionKernel, ActionKernelError } from './kernel.ts'
 
 export const registerSkillReadActions = (kernel: ActionKernel, runtime: SkillRuntime): void => {
   kernel.register('skills.list', async (_input, context) => {
-    if (context.authority.requester.kind !== 'apiKey') throw new ActionKernelError('AUTHENTICATION_REQUIRED', 'MCP skill reads require an API key', 401)
-    const skills = await runtime.listVisibleForApiKey({
-      principal: {
-        apiKeyId: context.authority.requester.apiKeyId,
-        groupIds: context.authority.groupIds
-      },
-      transportRequestId: context.authority.requestId
-    })
+    const skills = context.authority.requester.kind === 'user'
+      ? await runtime.listVisibleForRun({
+        runId: context.authority.requestId,
+        principal: {
+          userId: context.authority.requester.userId,
+          groupIds: context.authority.groupIds
+        },
+        transportRequestId: randomUUID()
+      })
+      : await runtime.listVisibleForApiKey({
+        principal: {
+          apiKeyId: context.authority.requester.apiKeyId,
+          groupIds: context.authority.groupIds
+        },
+        transportRequestId: context.authority.requestId
+      })
     return {
       skills: skills.slice(0, 100).map(skill => ({
         name: skill.name,
@@ -23,18 +33,29 @@ export const registerSkillReadActions = (kernel: ActionKernel, runtime: SkillRun
   })
 
   kernel.register('skills.read', async (rawInput, context) => {
-    if (context.authority.requester.kind !== 'apiKey') throw new ActionKernelError('AUTHENTICATION_REQUIRED', 'MCP skill reads require an API key', 401)
     const input = rawInput as { name: string; versionId: string; path: string }
-    const resource = await runtime.readVisibleResourceForApiKey({
-      skillName: input.name,
-      versionId: input.versionId,
-      path: input.path,
-      principal: {
-        apiKeyId: context.authority.requester.apiKeyId,
-        groupIds: context.authority.groupIds
-      },
-      transportRequestId: context.authority.requestId
-    })
+    const resource = context.authority.requester.kind === 'user'
+      ? await runtime.readVisibleResourceForRun({
+        runId: context.authority.requestId,
+        skillName: input.name,
+        versionId: input.versionId,
+        path: input.path,
+        principal: {
+          userId: context.authority.requester.userId,
+          groupIds: context.authority.groupIds
+        },
+        transportRequestId: randomUUID()
+      })
+      : await runtime.readVisibleResourceForApiKey({
+        skillName: input.name,
+        versionId: input.versionId,
+        path: input.path,
+        principal: {
+          apiKeyId: context.authority.requester.apiKeyId,
+          groupIds: context.authority.groupIds
+        },
+        transportRequestId: context.authority.requestId
+      })
     if (!resource.mediaType.startsWith('text/') && resource.mediaType !== 'application/json') {
       throw new ActionKernelError('SKILL_RESOURCE_BINARY', 'Binary skill resources must be read through the MCP resource interface', 409)
     }

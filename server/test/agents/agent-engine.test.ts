@@ -48,6 +48,38 @@ describe('Ax agent engine', () => {
     expect(close).toHaveBeenCalledOnce()
   })
 
+  it('loads the visible skill catalog before the model chooses task actions', async () => {
+    const calls: Readonly<AxChatRequest<unknown>>[] = []
+    const chat = vi.fn(async (input: Readonly<AxChatRequest<unknown>>) => {
+      calls.push(input)
+      return { results: [{ index: 0, content: 'Ready.' }] }
+    })
+    const factory = { create: async () => ({ service: { chat }, capabilities: { streaming: false, functions: true, parallelFunctions: true, structuredOutput: 'native-json-schema', usage: 'terminal', cancellation: true, maxContextTokens: 100_000, maxOutputTokens: 4_000 }, transportKind: 'openai-responses', model: 'gpt-test', capabilityRevision: 'cap-1', pricingRevision: 'price-1' }) } as unknown as AgentProviderFactory
+    const invoke = vi.fn(async (name: string) => name === 'skills.list'
+      ? { skills: [{ name: 'wiki-authoring', description: 'Create and edit compatible Wiki pages', versionId: '00000000-0000-4000-8000-000000000009', contentHash: 'b'.repeat(64) }] }
+      : {})
+    const actions: AgentActionSessionProvider = {
+      open: async () => ({
+        functions: [
+          { name: 'skills.list', title: 'List skills', description: 'Lists visible skills', parameters: { type: 'object', properties: {} }, risk: 'read' },
+          { name: 'skills.read', title: 'Read skill', description: 'Reads one skill', parameters: { type: 'object', properties: {} }, risk: 'read' }
+        ],
+        invoke,
+        snapshot: async () => ({}),
+        close: vi.fn()
+      })
+    }
+
+    await new AxAgentEngine(factory, actions).execute(request(new AbortController().signal), { text: async () => {}, event: async () => {} })
+
+    expect(invoke).toHaveBeenCalledWith('skills.list', {}, expect.objectContaining({ aborted: false }), 'skill-catalog-bootstrap')
+    expect(calls[0]?.functions).toContainEqual(expect.objectContaining({ name: 'skills_read' }))
+    const system = calls[0]?.chatPrompt.find(message => message.role === 'system')
+    expect(system?.content).toContain('"name":"wiki-authoring"')
+    expect(system?.content).toContain('load an applicable skill')
+    expect(system?.content).toContain('call pages.applyProposal')
+  })
+
   it('fails closed when a generation-only provider emits a tool call', async () => {
     const factory = { create: async () => ({ service: { chat: async () => ({ results: [{ index: 0, functionCalls: [{ id: 'call-1', type: 'function', function: { name: 'pages.get', params: '{}' } }] }] }) }, capabilities: { streaming: false, functions: true, parallelFunctions: false, structuredOutput: 'tool-result', usage: 'terminal', cancellation: true, maxContextTokens: 10_000, maxOutputTokens: 1_000 }, transportKind: 'openai-chat', model: 'gpt-test', capabilityRevision: 'cap-1', pricingRevision: 'price-1' }) } as unknown as AgentProviderFactory
     const input = request(new AbortController().signal)

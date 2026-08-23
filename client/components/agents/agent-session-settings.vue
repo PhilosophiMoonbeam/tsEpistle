@@ -20,12 +20,12 @@
         <v-select
           v-model="skillVersionIds"
           :items="skillItems"
-          label="Approved skills"
+          label="Pinned skills (always loaded)"
           multiple
           chips
           closable-chips
           :disabled="disabled"
-          hint="Skills add approved instructions; they do not grant tools or page permissions."
+          hint="Pinned skills are always loaded. The agent also sees your visible skill catalog and loads relevant skills before acting. Skills never grant tools or page permissions."
           persistent-hint
         />
         <v-btn class="mt-3" color="primary" variant="tonal" :disabled="disabled || !skillsChanged" @click="applySkills">Apply skills</v-btn>

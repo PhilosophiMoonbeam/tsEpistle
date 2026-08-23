@@ -174,6 +174,53 @@ export class SkillRuntime {
     }))
   }
 
+  async listVisibleForRun(input: {
+    readonly runId: string
+    readonly principal: SkillPrincipal
+    readonly transportRequestId: string
+  }): Promise<readonly VisibleSkill[]> {
+    const runId = UuidSchema.parse(input.runId)
+    const principal = normalizePrincipal(input.principal)
+    const transportRequestId = UuidSchema.parse(input.transportRequestId)
+    return this.knex.transaction(async transaction => {
+      const run = await transaction('agentRuns')
+        .select('sessionId', 'ownerId')
+        .where({ id: runId })
+        .first() as { sessionId: string; ownerId: number } | undefined
+      if (!run || run.ownerId !== principal.userId) throw new SkillValidationError('Agent run is unavailable')
+      const rows = await visibleSkillQuery(transaction, principal.groupIds)
+        .select(
+          'skills.id', 'skills.name', 'skills.exposureMode', 'versions.id as versionId',
+          'versions.contentHash', 'versions.sourceRevision', 'versions.frontmatter'
+        )
+        .orderBy('skills.name') as Array<Omit<VisibleSkill, 'description' | 'sourceRevision'> & { frontmatter: string; sourceRevision: string | number }>
+      if (rows.length > 0) {
+        await transaction('agentSkillUses').insert(rows.map(row => ({
+          id: randomUUID(),
+          skillVersionId: row.versionId,
+          runId,
+          sessionId: run.sessionId,
+          requesterUserId: principal.userId,
+          requesterApiKeyId: null,
+          transportRequestId,
+          externalSessionSha256: null,
+          resourcePath: null,
+          purpose: 'listed',
+          contentHash: row.contentHash
+        })))
+      }
+      return rows.map(row => ({
+        id: row.id,
+        name: row.name,
+        description: parseFrontmatter(row.frontmatter).description,
+        versionId: row.versionId,
+        contentHash: row.contentHash,
+        sourceRevision: String(row.sourceRevision),
+        exposureMode: row.exposureMode
+      }))
+    })
+  }
+
   async listVisibleForApiKey(input: {
     readonly principal: ApiKeySkillPrincipal
     readonly transportRequestId: string
@@ -211,6 +258,68 @@ export class SkillRuntime {
         sourceRevision: String(row.sourceRevision),
         exposureMode: row.exposureMode
       }))
+    })
+  }
+
+  async readVisibleResourceForRun(input: {
+    readonly runId: string
+    readonly skillName: string
+    readonly versionId: string
+    readonly path: string
+    readonly principal: SkillPrincipal
+    readonly transportRequestId: string
+  }): Promise<SkillResourceResult> {
+    const runId = UuidSchema.parse(input.runId)
+    const versionId = UuidSchema.parse(input.versionId)
+    const transportRequestId = UuidSchema.parse(input.transportRequestId)
+    const path = validateSkillVirtualPath(input.path)
+    const principal = normalizePrincipal(input.principal)
+    return this.knex.transaction(async transaction => {
+      const run = await transaction('agentRuns')
+        .select('sessionId', 'ownerId')
+        .where({ id: runId })
+        .first() as { sessionId: string; ownerId: number } | undefined
+      if (!run || run.ownerId !== principal.userId) throw new SkillValidationError('Agent run is unavailable')
+      const row = await transaction('agentSkillVersions as versions')
+        .innerJoin('agentSkills as skills', 'skills.id', 'versions.skillId')
+        .select(
+          'skills.id as skillId', 'skills.name', 'skills.exposureMode', 'versions.id as versionId',
+          'versions.contentHash', 'versions.sourceRevision', 'versions.skillMarkdown', 'versions.resourceBundle'
+        )
+        .where({
+          'versions.id': versionId,
+          'versions.approvalStatus': 'approved',
+          'skills.name': input.skillName,
+          'skills.status': 'enabled'
+        })
+        .where(exposure => {
+          exposure.where('skills.exposureMode', 'all_agent_users')
+          if (principal.groupIds.length > 0) {
+            exposure.orWhereExists(function groupGrant() {
+              this.select(transaction.raw('1'))
+                .from('agentSkillGrants as grants')
+                .whereRaw('grants."skillId" = skills.id')
+                .whereIn('grants.groupId', principal.groupIds)
+            })
+          }
+        })
+        .first() as (SkillVersionRow & { skillId: string }) | undefined
+      if (!row) throw new SkillValidationError('Approved skill resource is unavailable')
+      const result = skillResourceResult(row, path, 'Approved skill resource is unavailable')
+      await transaction('agentSkillUses').insert({
+        id: randomUUID(),
+        skillVersionId: row.versionId,
+        runId,
+        sessionId: run.sessionId,
+        requesterUserId: principal.userId,
+        requesterApiKeyId: null,
+        transportRequestId,
+        externalSessionSha256: null,
+        resourcePath: path,
+        purpose: 'read',
+        contentHash: result.contentHash
+      })
+      return result
     })
   }
 

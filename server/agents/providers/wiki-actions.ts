@@ -5,10 +5,12 @@ import { ACTION_CATALOG } from '../actions/catalog.ts'
 import { ActionKernel, type ActionAdmissionSnapshot, type ActionAuthority } from '../actions/kernel.ts'
 import { registerPageReadActions } from '../actions/page-reads.ts'
 import { registerPageProposalActions } from '../actions/page-proposals.ts'
+import { registerSkillReadActions } from '../actions/skill-reads.ts'
 import type { AgentEngineRequest } from '../runtime.ts'
 import { AgentRepositoryError } from '../repository.ts'
 import { agentFeatureFlags, KernelActionSessionProvider } from './action-sessions.ts'
 import { BrowserActionService } from '../browser/actions.ts'
+import { SkillRuntime } from '../skills/runtime.ts'
 import type { BrowserWorkerClient } from '../browser/client.ts'
 
 interface GroupLike { id?: number; permissions?: unknown }
@@ -62,7 +64,7 @@ const groupIdsFor = (user: UserLike): readonly number[] => [...new Set((user.gro
 const allowedActionsFor = async (knex: Knex, runId: string): Promise<readonly AgentActionName[] | undefined> => {
   const rows = await knex('agentRunSkills').join('agentSkillVersions', 'agentSkillVersions.id', 'agentRunSkills.skillVersionId').where('agentRunSkills.runId', runId).select('agentSkillVersions.frontmatter') as { frontmatter: string }[]
   if (rows.length === 0) return undefined
-  const allowed = new Set<AgentActionName>()
+  const allowed = new Set<AgentActionName>(['skills.list', 'skills.read'])
   for (const row of rows) {
     let value: unknown
     try { value = JSON.parse(row.frontmatter) } catch { throw new AgentRepositoryError('SKILL_VERSION_CORRUPT', 'Pinned skill metadata is invalid', 500) }
@@ -81,6 +83,7 @@ export const createWikiActionSessionProvider = (knex: Knex, config: WikiActionSe
   }
   registerPageReadActions(kernel, { operations: pageOperations, resolveRequester: requester, snapshotSigningSecret: config.snapshotSigningSecret })
   registerPageProposalActions(kernel, { knex, operations: pageOperations, resolveRequester: requester, resolveApprover: loadWikiAgentUser, snapshotSigningSecret: config.snapshotSigningSecret })
+  registerSkillReadActions(kernel, new SkillRuntime(knex))
   if (config.browserEnabled && browserClient) new BrowserActionService(knex, browserClient).register(kernel)
   const resolveAdmission = async (request: AgentEngineRequest): Promise<ActionAdmissionSnapshot> => {
     const user = await loadUser(request.run.ownerId)

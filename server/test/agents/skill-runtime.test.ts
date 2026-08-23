@@ -126,6 +126,37 @@ describe('skill selection and pinned runtime', () => {
     expect(await runtime.listVisible({ userId: 7, groupIds: [9] })).toEqual([])
   })
 
+  it('lets an active run discover and read visible skills with provenance', async () => {
+    await db('agentRuns').insert({ id: runId, sessionId, ownerId: 7, status: 'running' })
+    expect(await runtime.listVisibleForRun({
+      runId,
+      principal: { userId: 7, groupIds: [3] },
+      transportRequestId: requestId
+    })).toMatchObject([{ name: 'release-notes', versionId, description: 'Release notes' }])
+
+    const resource = await runtime.readVisibleResourceForRun({
+      runId,
+      skillName: 'release-notes',
+      versionId,
+      path: 'SKILL.md',
+      principal: { userId: 7, groupIds: [3] },
+      transportRequestId: requestId
+    })
+    expect(resource.bytes.toString('utf8')).toBe(entry.toString('utf8'))
+    expect(await db('agentSkillUses').select('runId', 'sessionId', 'requesterUserId', 'purpose', 'resourcePath')).toEqual([
+      { runId, sessionId, requesterUserId: 7, purpose: 'listed', resourcePath: null },
+      { runId, sessionId, requesterUserId: 7, purpose: 'read', resourcePath: 'SKILL.md' }
+    ])
+    await expect(runtime.readVisibleResourceForRun({
+      runId,
+      skillName: 'release-notes',
+      versionId,
+      path: 'SKILL.md',
+      principal: { userId: 8, groupIds: [3] },
+      transportRequestId: requestId
+    })).rejects.toThrow('run is unavailable')
+  })
+
   it('pins an ordered immutable version and rejects stale session mutation', async () => {
     const nextVersion = await runtime.setSessionSkills({ sessionId,
     expectedVersion: 1,

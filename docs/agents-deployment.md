@@ -128,6 +128,79 @@ Required cryptographic environment:
 
 Each keyring uses `{ "currentKeyId": "name", "keys": { "name": "<base64>" } }`. Provider credential encryption keys must decode to exactly 32 bytes. Wiki encrypts each UI-supplied credential with AES-256-GCM, a fresh 96-bit nonce, and authenticated record identity, stores only ciphertext in `agentProviderSecrets`, and writes an opaque `managed:<uuid>` reference into internal provider storage. Retain every encryption key ID referenced by stored credentials when rotating `currentKeyId`; removing an in-use key fails closed. Existing operator-managed `env:NAME` references remain readable for compatibility, including `NAME_FILE`, but the admin UI creates managed encrypted credentials. The `_FILE` forms read a mounted keyring when the matching inline variable is absent.
 
+## Approved skills and Wiki authoring
+
+When skills and a tool-capable Agent profile are enabled, each run receives the names, descriptions, exact version IDs, and content hashes of the approved skills visible to that user. The model must inspect that catalog and load a matching `SKILL.md` with `skills.read` before it calls task actions. Skills pinned in Session configuration are always loaded in full. Catalog visibility and each resource read are recorded in `agentSkillUses`; neither path grants a tool or page permission.
+
+Install the following operational skill as the Markdown source page `system/agent-skills/wiki-authoring`, then register the page as `wiki-authoring`, approve its exact version, and expose it to the intended groups in `/admin/agents`. Edit skill source pages with the Markdown source editor because YAML frontmatter is part of the signed skill bytes. Reapprove after every source change.
+
+```markdown
+---
+name: wiki-authoring
+description: Create and edit Wiki pages while preserving Markdown, links, and human-editor compatibility.
+compatibility: Wiki.ts Preview Visual Markdown and Markdown source editors
+metadata:
+  owner: wiki-operations
+allowed-tools:
+  - pages.search
+  - pages.get
+  - pages.readForPatch
+  - pages.listRecent
+  - pages.listHistory
+  - pages.getVersion
+  - pages.listLinks
+  - pages.prepareCreate
+  - pages.preparePatch
+  - pages.prepareMove
+  - pages.prepareRestore
+  - pages.applyProposal
+---
+# Wiki authoring
+
+Use this skill for any request to create, edit, move, or restore a Wiki page, or to draft Wiki-compatible page source.
+
+## Before acting
+
+1. Resolve the exact locale and path with page search/read actions. Never infer an existing page identity from display text.
+2. Read the target before editing. Only Markdown pages support hashline patches. Do not convert or rewrite an HTML page; explain that it requires a human HTML-editor workflow.
+3. Preserve the page's language, terminology, heading hierarchy, link style, line ending, and final-newline state unless the user explicitly requests a change.
+4. Make the smallest source change that fulfills the request. Do not normalize unrelated text or reserialize the whole document.
+
+## Compatible Markdown
+
+For new pages, write canonical GitHub Flavored Markdown that round-trips through Visual Markdown:
+
+- paragraphs and ATX headings (`#` through `######`);
+- bold, italic, strikethrough, inline code, and fenced code blocks with language identifiers;
+- ordered, unordered, nested, and task lists;
+- blockquotes, horizontal rules, basic images, and rectangular GFM tables;
+- ordinary links. For internal pages, prefer the root-relative path form already used by nearby pages and preserve locale prefixes where the Wiki uses them.
+
+Do not add raw HTML, Markdown attributes, custom classes or IDs, merged/multiline tables, tabsets, math, diagrams, footnotes, or other extended syntax unless the existing page already uses that construct and the user specifically asks to preserve or change it. Never replace supported source with rendered HTML. These constraints keep the page editable in both Visual Markdown and Markdown source editors.
+
+Skill source pages are a deliberate exception: preserve their YAML frontmatter and edit them only as Markdown source.
+
+## Create workflow
+
+1. Check both the requested path and likely collisions with `pages.search` or `pages.get`.
+2. Supply a concise title and description, canonical Markdown content, `contentType: "markdown"`, the resolved locale/path, publication state, and intentional tags to `pages.prepareCreate`.
+3. A prepare result is only a proposal. Wait for the human decision.
+4. If approved, call `pages.applyProposal` with the exact proposal and approval IDs.
+5. Confirm the applied result. Use `pages.get` when the final source or metadata must be verified.
+
+## Edit workflow
+
+1. Read the page, then call `pages.readForPatch` with `previousSnapshotToken: null` and only the ranges needed. Use a returned token only for later reads of the same page.
+2. Build `wiki-line-patch-v1` from the exact document tag, snapshot token, line numbers, and line tags. Keep undisclosed lines untouched. Preserve the snapshot's final-newline state unless the requested edit changes it.
+3. Submit the patch with `pages.preparePatch`. If the revision or an anchor changed, reread and rebuild; never guess a token or tag.
+4. Wait for the human decision. If approved, call `pages.applyProposal` with the exact IDs.
+5. Do not say the page changed until `pages.applyProposal` returns `status: "applied"`.
+
+Move and restore follow the same prepare, human approval, and apply sequence. Never claim that approval alone changed a page.
+```
+
+This skill intentionally omits deletion. Keep destructive deletion in a separate, narrowly exposed skill and rollout.
+
 ## Browser worker
 
 Build `dev/build/Dockerfile.agent-browser`. It pins Playwright/Chromium, runs as `pwuser`, launches Chromium with its sandbox enabled, and executes outside the Wiki application process.

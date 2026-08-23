@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { createAgentThread, deleteAgentSession, listAgentProfiles } from './agents-api.ts'
+import { createAgentThread, deleteAgentSession, listAgentProfiles, submitAgentMessage } from './agents-api.ts'
 import { renderSafeMarkdown } from './safe-markdown.ts'
 
 describe('agents client boundary', () => {
@@ -12,6 +12,16 @@ describe('agents client boundary', () => {
     const fetcher = vi.fn(async () => new Response(null, { status: 204 })) as unknown as typeof fetch
     await deleteAgentSession(fetcher, 'csrf-token', '00000000-0000-4000-8000-000000000001')
     expect(fetcher).toHaveBeenCalledWith('/_api/agents/sessions/00000000-0000-4000-8000-000000000001', expect.objectContaining({ method: 'DELETE', credentials: 'same-origin', headers: { 'x-wiki-csrf': 'csrf-token' } }))
+  })
+
+  it('turns an empty 403 response into an actionable chat error', async () => {
+    const fetcher = vi.fn(async () => new Response(null, { status: 403 })) as unknown as typeof fetch
+    await expect(submitAgentMessage(fetcher, 'csrf', '00000000-0000-4000-8000-000000000001', {
+      clientRequestId: '00000000-0000-4000-8000-000000000002',
+      expectedSessionVersion: 1,
+      profileResolutionToken: 'token',
+      content: 'Create a page'
+    })).rejects.toThrow('Refresh the page')
   })
 
   it('accepts the mutable provider selection contract without internal version fields', async () => {

@@ -156,13 +156,13 @@ export const ACTION_CATALOG = {
     input: strict({ ref: z.string().max(128).optional() }), output: strict({ artifactId: Uuid, mimeType: z.literal('image/png'), width: z.number().int().positive().max(16_384), height: z.number().int().positive().max(16_384) }), requiredFlags: browserFlags
   },
   'pages.prepareCreate': {
-    descriptor: descriptor('pages.prepareCreate', 'Prepare page creation', 'Validate and prepare an immutable page-create proposal without applying it.', 'proposal', ['write:pages'], both, proposalAnnotations),
-    input: strict({ path: Path, locale: Locale, title: z.string().min(1).max(255), description: z.string().max(1000), content: z.string().max(1_000_000), contentType: z.literal('markdown'), isPublished: z.boolean().default(true), tags: z.array(z.string().max(255)).max(100).default([]) }),
+    descriptor: descriptor('pages.prepareCreate', 'Prepare page creation', 'Validate and prepare an immutable Markdown page-create proposal without applying it. Author canonical GFM unless an approved skill requires supported extended syntax.', 'proposal', ['write:pages'], both, proposalAnnotations),
+    input: strict({ path: Path, locale: Locale, title: z.string().min(1).max(255), description: z.string().max(1000), content: z.string().max(1_000_000).describe('Canonical Wiki Markdown source. Prefer the Visual Markdown-safe GFM subset and avoid raw HTML so human editors can round-trip the page.'), contentType: z.literal('markdown'), isPublished: z.boolean().default(true), tags: z.array(z.string().max(255)).max(100).default([]) }),
     output: ProposalResult,
     requiredFlags: [...proposalFlags, 'agents.writes.create.enabled']
   },
   'pages.preparePatch': {
-    descriptor: descriptor('pages.preparePatch', 'Prepare page patch', 'Validate a strict hashline patch against an exact page snapshot.', 'proposal', ['write:pages'], both, proposalAnnotations),
+    descriptor: descriptor('pages.preparePatch', 'Prepare page patch', 'Validate a strict hashline patch against an exact Markdown page snapshot while preserving undisclosed source and human-editor compatibility.', 'proposal', ['write:pages'], both, proposalAnnotations),
     input: strict({ patch: WikiLinePatchV1Schema }), output: ProposalResult,
     requiredFlags: [...proposalFlags, 'agents.writes.patch.enabled']
   },

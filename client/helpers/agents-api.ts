@@ -50,12 +50,21 @@ export type VisibleAgentSkill = z.infer<typeof VisibleSkill>
 export interface CreatedAgentThread extends AgentThreadState { readonly launchPage?: z.infer<typeof LaunchPage> }
 export type McpAgentProposal = z.infer<typeof McpProposal>
 
+const fallbackErrorMessage = (status: number): string => {
+  if (status === 401) return 'Your Wiki session expired. Sign in again and retry.'
+  if (status === 403) return 'Wiki Agent rejected this request. Refresh the page, then verify your Agent permission and the configured Site Host if it persists.'
+  if (status === 409) return 'The Wiki Agent conversation changed. Refresh it and retry.'
+  if (status === 429) return 'Wiki Agent is at its current usage limit. Retry later.'
+  return `Agent request failed (${status})`
+}
+
 const errorMessage = async (response: Response): Promise<string> => {
+  const fallback = fallbackErrorMessage(response.status)
   try {
     const parsed = z.object({ message: z.string().optional(), error: z.string().optional() }).parse(await response.json())
-    return (parsed.message ?? parsed.error ?? `Agent request failed (${response.status})`).slice(0, 512)
+    return (parsed.message ?? parsed.error ?? fallback).slice(0, 512)
   } catch {
-    return `Agent request failed (${response.status})`
+    return fallback
   }
 }
 
