@@ -36,7 +36,7 @@ v-container.admin-theme(fluid)
               prepend-inner-icon='mdi-palette-outline'
               :label='$t(`admin:theme.siteTheme`)'
               persistent-hint
-              :hint='$t(`admin:theme.siteThemeHint`)'
+              :hint='$t(`admin:theme.siteThemeScopeHint`, { defaultValue: `Themes define the structure and presentation of public, editor, profile, and administration surfaces.` })'
             )
             v-select.mt-3(
               v-model='config.iconset'
@@ -56,7 +56,7 @@ v-container.admin-theme(fluid)
               color='primary'
               :label='$t(`admin:theme.darkMode`)'
               persistent-hint
-              :hint='$t(`admin:theme.darkModeHint`)'
+              :hint='$t(`admin:theme.defaultAppearanceHint`, { defaultValue: `Default appearance for visitors who have not chosen a personal preference.` })'
             )
             v-select.mt-3(
               v-model='config.tocPosition'

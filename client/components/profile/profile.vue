@@ -679,7 +679,7 @@ export default {
     appearances () {
       return [
         { text: this.$t('profile:appearanceDefault'), value: '' },
-        { text: this.$t('profile:appearanceSystem'), value: 'system' },
+        { text: this.$t('profile:appearanceSystem', { defaultValue: 'Match Device' }), value: 'system' },
         { text: this.$t('profile:appearanceLight'), value: 'light' },
         { text: this.$t('profile:appearanceDark'), value: 'dark' }
       ]
