@@ -1,5 +1,5 @@
 <template lang='pug'>
-  v-card.editor-modal-drawio.animated.fadeIn(flat, tile)
+  v-card.editor-modal-drawio.animated.fadeIn(flat, rounded='0')
     iframe(
       ref='drawio'
       src='https://embed.diagrams.net/?embed=1&proto=json&spin=1&saveAndExit=1&noSaveBtn=1&noExitBtn=0'

@@ -28,6 +28,7 @@ export default defineConfig(({ command }) => ({
   resolve: {
     alias: {
       '@': resolve(root, 'client'),
+      // Server Pug views provide the root component template mounted by client-app.ts.
       vue: 'vue/dist/vue.esm-bundler.js',
       'uc.micro': resolve(root, 'node_modules/uc.micro')
     }

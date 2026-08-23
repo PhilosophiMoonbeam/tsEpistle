@@ -21,7 +21,6 @@
       :permanent='$vuetify.display.mdAndUp'
       :temporary='$vuetify.display.smAndDown'
       :width='$vuetify.display.smAndDown ? 320 : 300'
-      :class='$vuetify.theme.current.dark ? `bg-grey-darken-4` : ``'
     )
       .admin-sidebar-mobile-header(v-if='$vuetify.display.smAndDown')
         .text-label-large Administration
@@ -48,13 +47,11 @@
             v-list-item(to='/pages', color='primary', prepend-icon='mdi-file-document-outline', v-if='hasPermission([`manage:system`, `write:pages`, `manage:pages`, `delete:pages`])')
               v-list-item-title {{ $t('admin:pages.title') }}
               template(v-slot:append)
-                v-chip(size="x-small", :color='$vuetify.theme.current.dark ? `grey-darken-3-d4` : `grey-lighten-5`')
-                  .text-body-small.text-grey {{ info.pagesTotal }}
+                v-chip(size='x-small', color='primary', variant='tonal') {{ info.pagesTotal }}
             v-list-item(to='/tags', prepend-icon='mdi-tag-multiple', v-if='hasPermission([`manage:system`])')
               v-list-item-title {{ $t('admin:tags.title') }}
               template(v-slot:append)
-                v-chip(size="x-small", :color='$vuetify.theme.current.dark ? `grey-darken-3-d4` : `grey-lighten-5`')
-                  .text-body-small.text-grey {{ info.tagsTotal }}
+                v-chip(size='x-small', color='primary', variant='tonal') {{ info.tagsTotal }}
             v-list-item(to='/theme', color='primary', prepend-icon='mdi-palette-outline', v-if='hasPermission([`manage:system`, `manage:theme`])')
               v-list-item-title {{ $t('admin:theme.title') }}
           template(v-if='hasPermission([`manage:system`, `manage:groups`, `write:groups`, `manage:users`, `write:users`])')
@@ -63,13 +60,11 @@
             v-list-item(to='/groups', color='primary', prepend-icon='mdi-account-group', v-if='hasPermission([`manage:system`, `manage:groups`, `write:groups`])')
               v-list-item-title {{ $t('admin:groups.title') }}
               template(v-slot:append)
-                v-chip(size="x-small", :color='$vuetify.theme.current.dark ? `grey-darken-3-d4` : `grey-lighten-4`')
-                  .text-body-small.text-grey {{ info.groupsTotal }}
+                v-chip(size='x-small', color='primary', variant='tonal') {{ info.groupsTotal }}
             v-list-item(to='/users', color='primary', prepend-icon='mdi-account-box', v-if='hasPermission([`manage:system`, `manage:groups`, `write:groups`, `manage:users`, `write:users`])')
               v-list-item-title {{ $t('admin:users.title') }}
               template(v-slot:append)
-                v-chip(size="x-small", :color='$vuetify.theme.current.dark ? `grey-darken-3-d4` : `grey-lighten-4`')
-                  .text-body-small.text-grey {{ info.usersTotal }}
+                v-chip(size='x-small', color='primary', variant='tonal') {{ info.usersTotal }}
           template(v-if='hasPermission(`manage:system`)')
             v-divider.my-2
             v-list-subheader.pl-4 {{ $t('admin:nav.modules') }}
@@ -124,7 +119,7 @@
           v-list-item(to='/contribute', color='primary', prepend-icon='mdi-heart-outline')
             v-list-item-title {{ $t('admin:contribute.title') }}
 
-    v-main(:class='$vuetify.theme.current.dark ? "bg-grey-darken-5" : "bg-grey-lighten-5"')
+    v-main.admin-main
       transition(name='admin-router')
         router-view
 
@@ -220,11 +215,6 @@ export default {
 
 <style lang='scss'>
 
-.admin {
-  &.v-theme--light .v-application__wrap {
-    background-color: lighten(mc('grey', '200'), 2%);
-  }
-}
 
 .admin-sidebar-mobile-header {
   display: flex;
@@ -232,6 +222,14 @@ export default {
   min-height: 56px;
   padding: 0 8px 0 16px;
   border-bottom: 1px solid rgba(127, 127, 127, .2);
+}
+
+.admin-main {
+  background: rgb(var(--v-theme-background));
+}
+
+.admin-sidebar {
+  background: rgb(var(--v-theme-surface));
 }
 
 .admin > .v-main {
@@ -260,10 +258,11 @@ export default {
 
 .admin-sidebar {
   .v-list-item--active {
-    background-color: rgba(mc('theme', 'primary'), .1);
+    background-color: rgba(var(--v-theme-primary), .12);
+    color: rgb(var(--v-theme-primary));
 
     .v-icon {
-      color: mc('theme', 'primary');
+      color: rgb(var(--v-theme-primary));
     }
   }
 
@@ -360,18 +359,15 @@ export default {
     flex-wrap: wrap;
     min-height: 64px;
   }
-}
 
-.v-theme--dark {
-  .admin-sidebar .v-list-item--active {
-    background-color: rgba(0,0,0, .2);
-    color: mc('blue', '500') !important;
-
-    .v-icon {
-      color: mc('blue', '500');
-    }
+  .v-dialog > .v-overlay__content {
+    width: calc(100vw - 24px);
+    max-width: calc(100vw - 24px) !important;
+    max-height: calc(100dvh - 24px);
+    margin: 12px;
   }
 }
+
 
 .admin-header {
   display: flex;

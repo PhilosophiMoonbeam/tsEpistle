@@ -205,13 +205,13 @@
                 v-spacer
                 //- v-tooltip(bottom)
                 //-   template(v-slot:activator='{ props }')
-                //-     v-btn(icon, tile, v-bind='props', :aria-label='$t(`common:page.bookmark`)'): v-icon(color='grey') mdi-bookmark
+                //-     v-btn(icon, rounded='0', v-bind='props', :aria-label='$t(`common:page.bookmark`)'): v-icon(color='grey') mdi-bookmark
                 //-   span {{$t('common:page.bookmark')}}
                 v-menu(location="bottom", min-width='300')
                   template(v-slot:activator='{ props: menuProps }')
                     v-tooltip(location="bottom")
                       template(v-slot:activator='{ props: tooltipProps }')
-                        v-btn(icon, tile, v-bind='{ ...menuProps, ...tooltipProps }', :aria-label='$t(`common:page.share`)'): v-icon(color='grey') mdi-share-variant
+                        v-btn(icon, rounded='0', v-bind='{ ...menuProps, ...tooltipProps }', :aria-label='$t(`common:page.share`)'): v-icon(color='grey') mdi-share-variant
                       span {{$t('common:page.share')}}
                   social-sharing(
                     :url='pageUrl'
@@ -229,7 +229,7 @@
                         )
                           v-btn(
                             icon
-                            tile
+                            rounded='0'
                             v-bind='{ ...menuProps, ...tooltipProps }'
                             @click='loadPageWatchNotifications'
                             aria-label='Page notifications'
@@ -253,7 +253,7 @@
                   template(v-slot:activator='{ props }')
                     v-btn(
                       icon
-                      tile
+                      rounded='0'
                       v-bind='props'
                       :loading='pageWatchLoading'
                       :disabled='pageWatchLoading'
@@ -268,7 +268,7 @@
                       template(v-slot:activator='{ props: tooltipProps }')
                         v-btn(
                           icon
-                          tile
+                          rounded='0'
                           v-bind='{ ...menuProps, ...tooltipProps }'
                           aria-label='Watch settings'
                         )
@@ -304,7 +304,7 @@
                         )
                           v-btn(
                             icon
-                            tile
+                            rounded='0'
                             v-bind='{ ...menuProps, ...tooltipProps }'
                             @click='loadApprovalInbox'
                             aria-label='Approval inbox'
@@ -345,7 +345,7 @@
                   template(v-slot:activator='{ props }')
                     v-btn(
                       icon
-                      tile
+                      rounded='0'
                       v-bind='props'
                       @click='openApprovalWorkflow'
                       aria-label='Approval workflow'
@@ -356,7 +356,7 @@
                   template(v-slot:activator='{ props }')
                     v-btn(
                       icon
-                      tile
+                      rounded='0'
                       v-bind='props'
                       @click='openPageProtection'
                       aria-label='Page password protection'
@@ -365,7 +365,7 @@
                   span Page password protection
                 v-tooltip(location="bottom")
                   template(v-slot:activator='{ props }')
-                    v-btn(icon, tile, v-bind='props', @click='print', :aria-label='$t(`common:page.printFormat`)')
+                    v-btn(icon, rounded='0', v-bind='props', @click='print', :aria-label='$t(`common:page.printFormat`)')
                       v-icon(:color='printView ? `primary` : `grey`') mdi-printer
                   span {{$t('common:page.printFormat')}}
                 v-spacer

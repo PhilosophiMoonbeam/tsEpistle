@@ -22,6 +22,7 @@ vi.mock('express', () => {
 })
 
 import * as express from 'express'
+import { cloneThemeColors, DEFAULT_THEME_COLORS } from '../../../shared/theme-colors.ts'
 
 describe('controllers/api theming endpoints', () => {
   beforeEach(() => {
@@ -37,6 +38,7 @@ describe('controllers/api theming endpoints', () => {
           theme: 'default',
           iconset: 'mdi',
           darkMode: false,
+          colors: cloneThemeColors(DEFAULT_THEME_COLORS),
           tocPosition: 'right',
           injectCSS: '.contents{color:red}',
           injectHead: '<meta name="test" content="head">',
@@ -192,6 +194,30 @@ describe('controllers/api theming endpoints', () => {
     expect(global.WIKI.configSvc.saveToDb).not.toHaveBeenCalled()
   })
 
+
+  it('rejects malformed theme colors before persisting', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValue(true)
+    const handler = await loadSaveHandler()
+    const req = {
+      user: {},
+      body: {
+        theme: 'default',
+        iconset: 'mdi',
+        darkMode: false,
+        colors: {
+          ...cloneThemeColors(DEFAULT_THEME_COLORS),
+          light: { ...DEFAULT_THEME_COLORS.light, primary: 'blue' }
+        }
+      }
+    }
+    const res = { sendStatus: vi.fn(), json: vi.fn(), status: vi.fn().mockReturnThis() }
+
+    await handler(req, res, vi.fn())
+
+    expect(res.status).toHaveBeenCalledWith(400)
+    expect(res.json).toHaveBeenCalledWith({ error: 'Invalid theme color configuration' })
+    expect(global.WIKI.configSvc.saveToDb).not.toHaveBeenCalled()
+  })
   it('returns exactly the expected config fields for authorized requests', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
     const handler = await loadConfigHandler()
@@ -205,12 +231,14 @@ describe('controllers/api theming endpoints', () => {
       theme: 'default',
       iconset: 'mdi',
       darkMode: false,
+      colors: cloneThemeColors(DEFAULT_THEME_COLORS),
       tocPosition: 'right',
       injectCSS: expect.any(String),
       injectHead: '<meta name="test" content="head">',
       injectBody: '<div>body</div>'
     })
     expect(Object.keys(res.json.mock.calls[0][0]).sort()).toEqual([
+      'colors',
       'darkMode',
       'iconset',
       'injectBody',
@@ -280,6 +308,10 @@ describe('controllers/api theming endpoints', () => {
         theme: 'default',
         iconset: 'fa',
         darkMode: true,
+        colors: {
+          ...cloneThemeColors(DEFAULT_THEME_COLORS),
+          dark: { ...DEFAULT_THEME_COLORS.dark, primary: '#ABCDEF' }
+        },
         tocPosition: '',
         injectCSS: '.contents{color:red}',
         injectHead: '<meta name="saved" content="head">',
@@ -294,6 +326,9 @@ describe('controllers/api theming endpoints', () => {
       theme: 'default',
       iconset: 'fa',
       darkMode: true,
+      colors: expect.objectContaining({
+        dark: expect.objectContaining({ primary: '#ABCDEF' })
+      }),
       tocPosition: 'left',
       injectHead: '<meta name="saved" content="head">',
       injectBody: '<div>saved body</div>',

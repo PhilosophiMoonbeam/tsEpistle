@@ -66,7 +66,7 @@
                     v-spacer
                     v-menu(location="left")
                       template(v-slot:activator='{ props }')
-                        v-btn.mr-2.radius-4(icon, v-bind='props', size="small", tile, :aria-label='`Actions for revision ${ph.versionId || `live`}`'): v-icon mdi-dots-horizontal
+                        v-btn.mr-2.radius-4(icon, v-bind='props', size="small", rounded='0', :aria-label='`Actions for revision ${ph.versionId || `live`}`'): v-icon mdi-dots-horizontal
                       v-list(density="compact", nav).history-promptmenu
                         v-list-item(@click='setDiffSource(ph.versionId)', :disabled='(ph.versionId >= diffTarget && diffTarget !== 0) || ph.versionId === 0')
                           template(v-slot:prepend)
@@ -97,7 +97,7 @@
                       icon
                       size="small"
                       variant="flat"
-                      tile
+                      rounded='0'
                       :aria-label='`Set revision ${ph.versionId} as differencing source`'
                       :class='diffSource === ph.versionId ? `bg-pink text-white` : ($vuetify.theme.current.dark ? `bg-grey-darken-2` : `bg-grey-lighten-2`)'
                       :disabled='(ph.versionId >= diffTarget && diffTarget !== 0) || ph.versionId === 0'
@@ -107,7 +107,7 @@
                       icon
                       size="small"
                       variant="flat"
-                      tile
+                      rounded='0'
                       :aria-label='`Set revision ${ph.versionId || `live`} as differencing target`'
                       :class='diffTarget === ph.versionId ? `bg-pink text-white` : ($vuetify.theme.current.dark ? `bg-grey-darken-2` : `bg-grey-lighten-2`)'
                       :disabled='ph.versionId <= diffSource && ph.versionId !== 0'

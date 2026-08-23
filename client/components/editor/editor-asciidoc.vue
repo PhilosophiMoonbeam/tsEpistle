@@ -9,17 +9,17 @@
       template(v-else)
         v-tooltip(location="bottom", color='primary')
           template(v-slot:activator='{ props }')
-            v-btn.animated.fadeIn(icon, tile, v-bind='props', @click='toggleMarkup({ start: `**` })').mx-0
+            v-btn.animated.fadeIn(icon, rounded='0', v-bind='props', @click='toggleMarkup({ start: `**` })').mx-0
               v-icon mdi-format-bold
           span {{$t('editor:markup.bold')}}
         v-tooltip(location="bottom", color='primary')
           template(v-slot:activator='{ props }')
-            v-btn.animated.fadeIn.wait-p1s(icon, tile, v-bind='props', @click='toggleMarkup({ start: `__` })').mx-0
+            v-btn.animated.fadeIn.wait-p1s(icon, rounded='0', v-bind='props', @click='toggleMarkup({ start: `__` })').mx-0
               v-icon mdi-format-italic
           span {{$t('editor:markup.italic')}}
         v-menu(:open-on-hover='$vuetify.display.mdAndUp')
           template(v-slot:activator='{ props }')
-            v-btn.animated.fadeIn.wait-p3s(icon, tile, v-bind='props').mx-0
+            v-btn.animated.fadeIn.wait-p3s(icon, rounded='0', v-bind='props').mx-0
               v-icon mdi-format-header-pound
           v-list.py-0
             template(v-for='(n, idx) in 6', :key='idx')
@@ -30,17 +30,17 @@
               v-divider(v-if='idx < 5')
         v-tooltip(v-if='$vuetify.display.mdAndUp', location="bottom", color='primary')
           template(v-slot:activator='{ props }')
-            v-btn.animated.fadeIn.wait-p4s(icon, tile, v-bind='props', @click='toggleMarkup({ start: `~` })').mx-0
+            v-btn.animated.fadeIn.wait-p4s(icon, rounded='0', v-bind='props', @click='toggleMarkup({ start: `~` })').mx-0
               v-icon mdi-format-subscript
           span {{$t('editor:markup.subscript')}}
         v-tooltip(v-if='$vuetify.display.mdAndUp', location="bottom", color='primary')
           template(v-slot:activator='{ props }')
-            v-btn.animated.fadeIn.wait-p5s(icon, tile, v-bind='props', @click='toggleMarkup({ start: `^` })').mx-0
+            v-btn.animated.fadeIn.wait-p5s(icon, rounded='0', v-bind='props', @click='toggleMarkup({ start: `^` })').mx-0
               v-icon mdi-format-superscript
           span {{$t('editor:markup.superscript')}}
         v-menu(v-if='$vuetify.display.mdAndUp', open-on-hover)
           template(v-slot:activator='{ props }')
-            v-btn.animated.fadeIn.wait-p6s(icon, tile, v-bind='props').mx-0
+            v-btn.animated.fadeIn.wait-p6s(icon, rounded='0', v-bind='props').mx-0
               v-icon mdi-alpha-t-box-outline
           v-list.py-0
             v-list-item(@click='insertBeforeEachLine({ content: `> `})')
@@ -76,7 +76,7 @@
           v-spacer
           v-tooltip(location="bottom", color='primary')
             template(v-slot:activator='{ props }')
-              v-btn.animated.fadeIn.wait-p2s(icon, tile, v-bind='props', @click='previewShown = !previewShown').mx-0
+              v-btn.animated.fadeIn.wait-p2s(icon, rounded='0', v-bind='props', @click='previewShown = !previewShown').mx-0
                 v-icon mdi-book-open-outline
             span {{$t('editor:markup.togglePreviewPane')}}
         template(v-else)
@@ -85,7 +85,7 @@
             template(v-slot:activator='{ props }')
               v-btn.mx-0(
                 icon
-                tile
+                rounded='0'
                 v-bind='props'
                 @click='previewShown = !previewShown'
                 :aria-label='previewShown ? `Show editor` : `Show preview`'
@@ -96,7 +96,7 @@
             template(v-slot:activator='{ props }')
               v-btn.mx-0(
                 icon
-                tile
+                rounded='0'
                 v-bind='props'
                 aria-label='More formatting tools'
               )
@@ -132,24 +132,24 @@
       .editor-asciidoc-sidebar
         v-tooltip(location="right", color='teal')
           template(v-slot:activator='{ props }')
-            v-btn.animated.fadeInLeft(icon, tile, v-bind='props', @click='insertLink').mx-0
+            v-btn.animated.fadeInLeft(icon, rounded='0', v-bind='props', @click='insertLink').mx-0
               v-icon mdi-link-plus
           span {{$t('editor:markup.insertLink')}}
         v-tooltip(location="right", color='teal')
           template(v-slot:activator='{ props }')
-            v-btn.mt-3.animated.fadeInLeft.wait-p1s(icon, tile, v-bind='props', @click='toggleModal(`editorModalMedia`)').mx-0
+            v-btn.mt-3.animated.fadeInLeft.wait-p1s(icon, rounded='0', v-bind='props', @click='toggleModal(`editorModalMedia`)').mx-0
               v-icon(:color='activeModal === `editorModalMedia` ? `teal` : ``') mdi-folder-multiple-image
           span {{$t('editor:markup.insertAssets')}}
         v-tooltip(location="right", color='teal')
           template(v-slot:activator='{ props }')
-            v-btn.mt-3.animated.fadeInLeft.wait-p5s(icon, tile, v-bind='props', @click='toggleModal(`editorModalDrawio`)').mx-0
+            v-btn.mt-3.animated.fadeInLeft.wait-p5s(icon, rounded='0', v-bind='props', @click='toggleModal(`editorModalDrawio`)').mx-0
               v-icon mdi-chart-multiline
           span {{$t('editor:markup.insertDiagram')}}
         template(v-if='$vuetify.display.mdAndUp')
           v-spacer
           v-tooltip(location="right", color='teal')
             template(v-slot:activator='{ props }')
-              v-btn.mt-3.animated.fadeInLeft.wait-p8s(icon, tile, v-bind='props', @click='toggleFullscreen').mx-0
+              v-btn.mt-3.animated.fadeInLeft.wait-p8s(icon, rounded='0', v-bind='props', @click='toggleFullscreen').mx-0
                 v-icon mdi-arrow-expand-all
             span {{$t('editor:markup.distractionFreeMode')}}
       .editor-asciidoc-editor(:class='{ "is-mobile-hidden": previewShown && $vuetify.display.smAndDown }')

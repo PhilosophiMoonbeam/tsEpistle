@@ -227,12 +227,11 @@ export default defineComponent({
       svg.call(zoom)
 
       const link = g.append('g')
-        .attr('stroke', '#CCC')
+        .attr('stroke', 'rgba(var(--v-theme-on-background), .24)')
         .attr('fill', 'none')
         .selectAll<SVGPathElement, RelationLink>('path')
         .data(root.descendants().flatMap(leaf => leaf.outgoing))
         .join('path')
-        .style('mix-blend-mode', 'multiply')
         .attr('d', ([source, target]) => line(source.path(target)))
         .each(function (relationship: RelationLink) {
           relationship.path = this
@@ -250,7 +249,7 @@ export default defineComponent({
         .attr('x', node => node.x < Math.PI ? 6 : -6)
         .attr('text-anchor', node => node.x < Math.PI ? 'start' : 'end')
         .attr('transform', node => node.x >= Math.PI ? 'rotate(180)' : null)
-        .attr('fill', this.$vuetify.theme.current.dark ? 'white' : '')
+        .attr('fill', 'rgb(var(--v-theme-on-background))')
         .attr('cursor', 'pointer')
         .text(node => node.data.title)
         .each(function (node: RelationPointNode) {
@@ -263,27 +262,26 @@ export default defineComponent({
           ${node.outgoing.length} outgoing
           ${node.incoming.length} incoming`))
         .clone(true).lower()
-        .attr('stroke', this.$vuetify.theme.current.dark ? '#222' : 'white')
+        .attr('stroke', 'rgb(var(--v-theme-background))')
 
       function overed (this: SVGTextElement, _event: MouseEvent, node: RelationPointNode): void {
         link.style('mix-blend-mode', null)
         d3.select<SVGTextElement, RelationPointNode>(this).attr('font-weight', 'bold')
         d3.selectAll<SVGPathElement, RelationLink>(
           node.incoming.flatMap(relationship => relationship.path ? [relationship.path] : [])
-        ).attr('stroke', '#2196F3').raise()
+        ).attr('stroke', 'rgb(var(--v-theme-primary))').raise()
         d3.selectAll<SVGTextElement, RelationPointNode>(
           node.incoming.flatMap(([source]) => source.text ? [source.text] : [])
-        ).attr('fill', '#2196F3').attr('font-weight', 'bold')
+        ).attr('fill', 'rgb(var(--v-theme-primary))').attr('font-weight', 'bold')
         d3.selectAll<SVGPathElement, RelationLink>(
           node.outgoing.flatMap(relationship => relationship.path ? [relationship.path] : [])
-        ).attr('stroke', '#E91E63').raise()
+        ).attr('stroke', 'rgb(var(--v-theme-accent))').raise()
         d3.selectAll<SVGTextElement, RelationPointNode>(
           node.outgoing.flatMap(([, target]) => target.text ? [target.text] : [])
-        ).attr('fill', '#E91E63').attr('font-weight', 'bold')
+        ).attr('fill', 'rgb(var(--v-theme-accent))').attr('font-weight', 'bold')
       }
 
       function outed (this: SVGTextElement, _event: MouseEvent, node: RelationPointNode): void {
-        link.style('mix-blend-mode', 'multiply')
         d3.select<SVGTextElement, RelationPointNode>(this).attr('font-weight', null)
         d3.selectAll<SVGPathElement, RelationLink>(
           node.incoming.flatMap(relationship => relationship.path ? [relationship.path] : [])

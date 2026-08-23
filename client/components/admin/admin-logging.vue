@@ -24,7 +24,7 @@
 
           v-tabs-window(v-model='tab')
             v-tabs-window-item(value='settings', :transition='false', :reverse-transition='false')
-              v-card.pa-3(flat, tile)
+              v-card.pa-3(flat, rounded='0')
                 .text-body-medium.text-grey-darken-1 Select which logging service to enable:
                 .text-body-small.text-grey.pb-2 Some loggers require additional configuration in their dedicated tab (when selected).
                 v-form
@@ -38,7 +38,7 @@
                   )
 
             v-tabs-window-item(v-for='logger in activeLoggers', :key='logger.key', :value='logger.key', :transition='false', :reverse-transition='false')
-              v-card.wiki-form.pa-3(flat, tile)
+              v-card.wiki-form.pa-3(flat, rounded='0')
                 v-form
                   .loggerlogo
                     img(:src='logger.logo', :alt='logger.title')

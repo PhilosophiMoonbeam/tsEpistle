@@ -35,7 +35,13 @@ const page = {
   contentType: 'markdown',
   sourceRevision: '8',
   content: '# Start',
-  updatedAt: '2026-08-17T00:00:00.000Z'
+  updatedAt: '2026-08-17T00:00:00.000Z',
+  citation: {
+    evidenceId: 'page:42',
+    label: 'Start',
+    href: '/en/docs/start'
+  },
+  citationSections: []
 }
 const completeKernel = (): ActionKernel => {
   const kernel = new ActionKernel()

@@ -1,3 +1,5 @@
+import { ThemeColorsSchema, type ThemeColors } from '../../shared/theme-colors.ts'
+
 type JsonHeaders = {
   get: (name: string) => string | null
 }
@@ -18,10 +20,11 @@ type FetchImpl = (url: string, init: {
   body?: string
 }) => Promise<JsonResponse>
 
-type ThemeConfig = {
+export type ThemeConfig = {
   theme: string
   iconset: string
   darkMode: boolean
+  colors: ThemeColors
   tocPosition: string
   injectCSS: string
   injectHead: string
@@ -64,11 +67,15 @@ function normalizeThemeConfigPayload (payload: unknown, fallbackMessage: string)
   }
 
   const themePayload = payload as Partial<ThemeConfig>
-  const requiredStringFields: Array<keyof Omit<ThemeConfig, 'darkMode'>> = ['theme', 'iconset', 'tocPosition', 'injectCSS', 'injectHead', 'injectBody']
+  const requiredStringFields: Array<keyof Omit<ThemeConfig, 'colors' | 'darkMode'>> = ['theme', 'iconset', 'tocPosition', 'injectCSS', 'injectHead', 'injectBody']
   if (requiredStringFields.some(field => typeof themePayload[field] !== 'string')) {
     throw new Error(fallbackMessage)
   }
   if (typeof themePayload.darkMode !== 'boolean') {
+    throw new Error(fallbackMessage)
+  }
+  const colors = ThemeColorsSchema.safeParse(themePayload.colors)
+  if (!colors.success) {
     throw new Error(fallbackMessage)
   }
 
@@ -76,6 +83,7 @@ function normalizeThemeConfigPayload (payload: unknown, fallbackMessage: string)
     theme: themePayload.theme!,
     iconset: themePayload.iconset!,
     darkMode: themePayload.darkMode,
+    colors: colors.data,
     tocPosition: themePayload.tocPosition!,
     injectCSS: themePayload.injectCSS!,
     injectHead: themePayload.injectHead!,

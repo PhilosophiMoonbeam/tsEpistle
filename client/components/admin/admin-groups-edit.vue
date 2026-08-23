@@ -55,7 +55,7 @@
                       color="orange-darken-2"
                       :class='$vuetify.theme.current.dark ? "bg-grey-darken-4" : "bg-orange-lighten-5"'
                       variant="outlined"
-                      :value='true'
+                      :model-value='true'
                       icon='mdi-lock-outline'
                       ) This is a system group and its settings cannot be modified.
                   v-divider

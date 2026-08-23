@@ -1,5 +1,5 @@
 <template lang='pug'>
-  v-card.editor-markdown-help.animated.fadeInLeft(flat, tile)
+  v-card.editor-markdown-help.animated.fadeInLeft(flat, rounded='0')
     v-container.pa-3(fluid)
       v-row
         v-col(cols='12', lg='6', xl='4')

@@ -9,8 +9,8 @@
                 v-icon.animated.fadeInUp.wait-p2s(color='primary', size='72') mdi-source-fork
                 .text-h4.text-primary.mt-3 {{ product.name }}
                 .text-body-medium.text-grey Independent community fork derived from {{ product.upstreamBase }}
-              v-alert(v-model='error', type='error', icon='mdi-alert', tile, closable) {{ errorMessage }}
-              v-alert(v-if='!error', tile, color="blue-lighten-5", :value='true')
+              v-alert(v-model='error', type='error', icon='mdi-alert', rounded='0', closable) {{ errorMessage }}
+              v-alert(v-if='!error', rounded='0', color="blue-lighten-5", :model-value='true')
                 v-icon.mr-3(color='blue') mdi-package-variant
                 span.text-blue You are about to install #[strong {{ product.name }} {{ product.version }}].
                 .text-body-small.mt-2

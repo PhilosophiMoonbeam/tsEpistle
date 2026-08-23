@@ -101,6 +101,27 @@ defaults:
       theme: 'default'
       iconset: 'md'
       darkMode: false
+      colors:
+        light:
+          background: '#FFFFFF'
+          surface: '#FFFFFF'
+          primary: '#1867C0'
+          secondary: '#48A9A6'
+          accent: '#82B1FF'
+          info: '#2196F3'
+          success: '#4CAF50'
+          warning: '#FB8C00'
+          error: '#B00020'
+        dark:
+          background: '#121212'
+          surface: '#212121'
+          primary: '#2196F3'
+          secondary: '#54B6B2'
+          accent: '#448AFF'
+          info: '#64B5F6'
+          success: '#66BB6A'
+          warning: '#FFA726'
+          error: '#CF6679'
       tocPosition: 'left'
     auth:
       autoLogin: false

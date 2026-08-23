@@ -34,7 +34,7 @@
                     template(v-slot:item='{ props, item }')
                       v-list-item(v-bind='props')
                         template(v-slot:prepend)
-                          v-avatar.bg-blue.text-white(tile, size='40') {{ item.raw.code.toUpperCase() }}
+                          v-avatar.bg-blue.text-white(rounded='0', size='40') {{ item.raw.code.toUpperCase() }}
                         v-list-item-title {{ item.raw.name }}
                         v-list-item-subtitle {{ item.raw.nativeName }}
                   v-divider.mt-3
@@ -62,7 +62,7 @@
                   v-alert.mt-3(
                     variant="outlined"
                     color='orange'
-                    :value='true'
+                    :model-value='true'
                     icon='mdi-alert'
                     )
                     span {{ $t('admin:locale.namespacingPrefixWarning.title', { langCode: selectedLocale }) }}
@@ -86,7 +86,7 @@
                     template(v-slot:item='{ props, item }')
                       v-list-item(v-bind='props')
                         template(v-slot:prepend)
-                          v-avatar.bg-blue.text-white(tile, size='40') {{ item.raw.code.toUpperCase() }}
+                          v-avatar.bg-blue.text-white(rounded='0', size='40') {{ item.raw.code.toUpperCase() }}
                         v-list-item-title {{ item.raw.name }}
                         v-list-item-subtitle {{ item.raw.nativeName }}
                         template(v-slot:append)
@@ -99,7 +99,7 @@
                   :headers='headers',
                   :items='locales',
                   hide-default-footer,
-                  item-key='code',
+                  item-value='code',
                   :items-per-page='1000'
                   )
                   template(v-slot:item.code='{ item }')

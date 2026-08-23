@@ -1,4 +1,5 @@
 import CleanCSS from 'clean-css'
+import { isThemeColors, normalizeThemeColors } from '../../shared/theme-colors.ts'
 
 import errors from './errors.ts'
 
@@ -8,6 +9,7 @@ interface ThemingConfig extends Record<string, unknown> {
   theme: string
   iconset: string
   darkMode: boolean
+  colors?: unknown
   tocPosition?: string
   injectCSS: string
   injectHead: string
@@ -21,6 +23,7 @@ const getConfig = () => ({
   theme: config.theming.theme,
   iconset: config.theming.iconset,
   darkMode: config.theming.darkMode,
+  colors: normalizeThemeColors(config.theming.colors),
   tocPosition: config.theming.tocPosition || 'left',
   injectCSS: new CleanCSS({ format: 'beautify' }).minify(config.theming.injectCSS).styles,
   injectHead: config.theming.injectHead,
@@ -43,6 +46,9 @@ const updateConfig = async (input: unknown): Promise<void> => {
       throw new ApplicationError('Invalid theme config payload', { code: 'INVALID_THEME_CONFIGURATION' })
     }
   }
+  if (input.colors !== undefined && !isThemeColors(input.colors)) {
+    throw new ApplicationError('Invalid theme color configuration', { code: 'INVALID_THEME_CONFIGURATION', status: 400 })
+  }
   const injectCSS = input.injectCSS
     ? new CleanCSS({ inline: false }).minify(input.injectCSS).styles
     : ''
@@ -51,6 +57,7 @@ const updateConfig = async (input: unknown): Promise<void> => {
     theme: input.theme,
     iconset: input.iconset,
     darkMode: input.darkMode,
+    colors: normalizeThemeColors(input.colors ?? config.theming.colors),
     tocPosition: input.tocPosition || 'left',
     injectCSS,
     injectHead: input.injectHead || '',

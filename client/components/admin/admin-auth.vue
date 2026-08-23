@@ -42,7 +42,7 @@
                     v-avatar(v-if='selectedStrategy === str.key', size='24')
                       v-icon.animated.fadeInLeft(color='teal', size="large") mdi-chevron-right
           div.v-card-chin
-            v-menu(location="bottom", min-width='250px', max-width='550px', max-height='50vh', style='flex: 1 1;', center)
+            v-menu(location="bottom", min-width='250px', max-width='550px', max-height='50vh', style='flex: 1 1;')
               template(v-slot:activator='{ props }')
                 v-btn(v-bind='props', color='primary', variant="flat", block)
                   v-icon(start) mdi-plus
@@ -193,7 +193,7 @@
             .text-body-large {{$t('admin:auth.configReference')}}
           v-card-text
             .text-body-medium {{$t('admin:auth.configReferenceSubtitle')}}
-            v-alert.mt-3.radius-7(v-if='host.length < 8', color='red', variant="outlined", :value='true', icon='mdi-alert')
+            v-alert.mt-3.radius-7(v-if='host.length < 8', color='red', variant="outlined", :model-value='true', icon='mdi-alert')
               i18next(path='admin:auth.siteUrlNotSetup', tag='span')
                 strong(place='siteUrl') {{$t('admin:general.siteUrl')}}
                 strong(place='general') {{$t('admin:general.title')}}

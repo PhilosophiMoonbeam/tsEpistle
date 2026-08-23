@@ -92,7 +92,7 @@
                   td {{ $helpers.formatMoment(key.updatedAt, 'calendar') }}
                   td: v-btn(icon, @click='revoke(key)', :disabled='key.isRevoked'): v-icon(color='error') mdi-cancel
           v-card-text(v-else)
-            v-alert.mb-0(icon='mdi-information', :value='true', variant="outlined", color='info') {{$t('admin:api.noKeyInfo')}}
+            v-alert.mb-0(icon='mdi-information', :model-value='true', variant="outlined", color='info') {{$t('admin:api.noKeyInfo')}}
 
     create-api-key(v-model='isCreateDialogShown', :refresh-api-keys='refresh')
 

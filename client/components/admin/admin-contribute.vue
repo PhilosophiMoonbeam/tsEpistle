@@ -159,7 +159,7 @@
             v-divider
             v-list-item
               template(v-slot:prepend)
-                v-avatar(tile)
+                v-avatar(rounded='0')
                   img(src='/_assets/svg/logo-icons8.svg', alt='Icons8')
               v-list-item-title Icons8
               v-list-item-subtitle All the Icons You Need. Guaranteed.
@@ -169,7 +169,7 @@
             v-divider
             v-list-item
               template(v-slot:prepend)
-                v-avatar(tile)
+                v-avatar(rounded='0')
                   img(src='https://static.requarks.io/logo/lokalise.png', alt='Lokalise')
               v-list-item-title Lokalise
               v-list-item-subtitle Lokalise is a translation management system built for agile teams who want to automate their localization process.
@@ -179,7 +179,7 @@
             v-divider
             v-list-item
               template(v-slot:prepend)
-                v-avatar(tile)
+                v-avatar(rounded='0')
                   img(src='https://static.requarks.io/logo/netlify.svg', alt='Netlify')
               v-list-item-title Netlify
               v-list-item-subtitle Deploy modern static websites with Netlify. Get CDN, Continuous deployment, 1-click HTTPS, and all the services you need.

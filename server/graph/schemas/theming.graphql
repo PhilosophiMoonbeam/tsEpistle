@@ -28,6 +28,7 @@ type ThemingMutation {
     theme: String!
     iconset: String!
     darkMode: Boolean!
+    colors: ThemingColorsInput
     tocPosition: String
     injectCSS: String
     injectHead: String
@@ -43,10 +44,45 @@ type ThemingConfig {
   theme: String!
   iconset: String!
   darkMode: Boolean!
+  colors: ThemingColors!
   tocPosition: String
   injectCSS: String
   injectHead: String
   injectBody: String
+}
+
+type ThemingColors {
+  light: ThemingModeColors!
+  dark: ThemingModeColors!
+}
+
+type ThemingModeColors {
+  background: String!
+  surface: String!
+  primary: String!
+  secondary: String!
+  accent: String!
+  info: String!
+  success: String!
+  warning: String!
+  error: String!
+}
+
+input ThemingColorsInput {
+  light: ThemingModeColorsInput!
+  dark: ThemingModeColorsInput!
+}
+
+input ThemingModeColorsInput {
+  background: String!
+  surface: String!
+  primary: String!
+  secondary: String!
+  accent: String!
+  info: String!
+  success: String!
+  warning: String!
+  error: String!
 }
 
 type ThemingTheme {

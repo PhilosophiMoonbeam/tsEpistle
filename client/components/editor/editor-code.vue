@@ -4,44 +4,44 @@
       .editor-code-sidebar
         v-tooltip(v-if='$vuetify.display.mdAndUp', location="right", color='teal')
           template(v-slot:activator='{ props }')
-            v-btn.animated.fadeInLeft(icon, tile, v-bind='props', disabled).mx-0
+            v-btn.animated.fadeInLeft(icon, rounded='0', v-bind='props', disabled).mx-0
               v-icon mdi-link-plus
           span {{$t('editor:markup.insertLink')}}
         v-tooltip(location="right", color='teal')
           template(v-slot:activator='{ props }')
-            v-btn.mt-3.animated.fadeInLeft.wait-p1s(icon, tile, v-bind='props', @click='toggleModal(`editorModalMedia`)').mx-0
+            v-btn.mt-3.animated.fadeInLeft.wait-p1s(icon, rounded='0', v-bind='props', @click='toggleModal(`editorModalMedia`)').mx-0
               v-icon(:color='activeModal === `editorModalMedia` ? `teal` : ``') mdi-folder-multiple-image
           span {{$t('editor:markup.insertAssets')}}
         v-tooltip(v-if='$vuetify.display.mdAndUp', location="right", color='teal')
           template(v-slot:activator='{ props }')
-            v-btn.mt-3.animated.fadeInLeft.wait-p2s(icon, tile, v-bind='props', @click='toggleModal(`editorModalBlocks`)', disabled).mx-0
+            v-btn.mt-3.animated.fadeInLeft.wait-p2s(icon, rounded='0', v-bind='props', @click='toggleModal(`editorModalBlocks`)', disabled).mx-0
               v-icon(:color='activeModal === `editorModalBlocks` ? `teal` : ``') mdi-view-dashboard-outline
           span {{$t('editor:markup.insertBlock')}}
         v-tooltip(v-if='$vuetify.display.mdAndUp', location="right", color='teal')
           template(v-slot:activator='{ props }')
-            v-btn.mt-3.animated.fadeInLeft.wait-p3s(icon, tile, v-bind='props', disabled).mx-0
+            v-btn.mt-3.animated.fadeInLeft.wait-p3s(icon, rounded='0', v-bind='props', disabled).mx-0
               v-icon mdi-code-braces
           span {{$t('editor:markup.insertCodeBlock')}}
         v-tooltip(v-if='$vuetify.display.mdAndUp', location="right", color='teal')
           template(v-slot:activator='{ props }')
-            v-btn.mt-3.animated.fadeInLeft.wait-p4s(icon, tile, v-bind='props', disabled).mx-0
+            v-btn.mt-3.animated.fadeInLeft.wait-p4s(icon, rounded='0', v-bind='props', disabled).mx-0
               v-icon mdi-library-video
           span {{$t('editor:markup.insertVideoAudio')}}
         v-tooltip(v-if='$vuetify.display.mdAndUp', location="right", color='teal')
           template(v-slot:activator='{ props }')
-            v-btn.mt-3.animated.fadeInLeft.wait-p5s(icon, tile, v-bind='props', disabled).mx-0
+            v-btn.mt-3.animated.fadeInLeft.wait-p5s(icon, rounded='0', v-bind='props', disabled).mx-0
               v-icon mdi-chart-multiline
           span {{$t('editor:markup.insertDiagram')}}
         v-tooltip(v-if='$vuetify.display.mdAndUp', location="right", color='teal')
           template(v-slot:activator='{ props }')
-            v-btn.mt-3.animated.fadeInLeft.wait-p6s(icon, tile, v-bind='props', disabled).mx-0
+            v-btn.mt-3.animated.fadeInLeft.wait-p6s(icon, rounded='0', v-bind='props', disabled).mx-0
               v-icon mdi-function-variant
           span {{$t('editor:markup.insertMathExpression')}}
         template(v-if='$vuetify.display.mdAndUp')
           v-spacer
           v-tooltip(location="right", color='teal')
             template(v-slot:activator='{ props }')
-              v-btn.mt-3.animated.fadeInLeft.wait-p8s(icon, tile, v-bind='props', @click='toggleFullscreen').mx-0
+              v-btn.mt-3.animated.fadeInLeft.wait-p8s(icon, rounded='0', v-bind='props', @click='toggleFullscreen').mx-0
                 v-icon mdi-arrow-expand-all
             span {{$t('editor:markup.distractionFreeMode')}}
       .editor-code-editor

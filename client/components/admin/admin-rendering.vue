@@ -54,7 +54,7 @@
                     :class='currentRenderer.key === rdr.key ? ($vuetify.theme.current.dark ? `bg-grey-darken-4-l4` : `bg-blue-lighten-5`) : ``'
                     )
                     template(v-slot:prepend)
-                      v-avatar(size='24', tile)
+                      v-avatar(size='24', rounded='0')
                         v-icon(:color='currentRenderer.key === rdr.key ? "primary" : "grey"') {{rdr.icon}}
                     v-list-item-title {{rdr.title}}
                     v-list-item-subtitle: .text-body-small {{rdr.description}}

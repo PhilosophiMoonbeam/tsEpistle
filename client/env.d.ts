@@ -6,11 +6,13 @@ import type { helpers } from './helpers/index.ts'
 import type { Router } from 'vue-router'
 import type { ProductMetadata } from '../shared/product.ts'
 import type { SiteBannerConfig } from '../shared/site-banner.ts'
+import type { ThemeColors } from '../shared/theme-colors.ts'
 
 export type SiteConfig = {
   title: string
   theme: string
   darkMode: boolean
+  themeColors: ThemeColors
   tocPosition: string
   lang: string
   rtl: boolean

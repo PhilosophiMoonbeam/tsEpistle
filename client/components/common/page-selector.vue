@@ -25,7 +25,7 @@
           v-toolbar(color="grey-darken-3", density="compact", flat)
             .text-body-medium {{$t('common:pageSelector.virtualFolders')}}
             v-spacer
-            v-btn(icon, tile, href='https://docs.requarks.io/guide/pages#folders', target='_blank')
+            v-btn(icon, rounded='0', href='https://docs.requarks.io/guide/pages#folders', target='_blank')
               v-icon mdi-help-box
           div(style='height:400px;')
             vue-scroll(:ops='scrollStyle')
@@ -48,8 +48,8 @@
           v-toolbar(color="blue-darken-2", density="compact", flat)
             .text-body-medium {{$t('common:pageSelector.pages')}}
             //- v-spacer
-            //- v-btn(icon, tile, disabled): v-icon mdi-content-save-move-outline
-            //- v-btn(icon, tile, disabled): v-icon mdi-trash-can-outline
+            //- v-btn(icon, rounded='0', disabled): v-icon mdi-content-save-move-outline
+            //- v-btn(icon, rounded='0', disabled): v-icon mdi-trash-can-outline
           div(v-if='currentPages.length > 0', style='height:400px;')
             vue-scroll(:ops='scrollStyle')
               v-list.py-0(density="compact")

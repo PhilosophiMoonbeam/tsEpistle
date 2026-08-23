@@ -21,16 +21,20 @@ html {
 
   &.is-fullscreen {
     height: 100vh;
+    height: 100dvh;
   }
 }
 
 .v-application__wrap {
-  transition: all 1.2s ease;
+  background-color: rgb(var(--v-theme-background));
+  color: rgb(var(--v-theme-on-background));
+  transition: background-color 180ms ease, color 180ms ease;
   transform-origin: 50% 50%;
-  // background-color: #FFF;
+}
 
-  @at-root .v-theme--dark & {
-    background-color: material.mc('grey', '900');
+@media (prefers-reduced-motion: reduce) {
+  .v-application__wrap {
+    transition: none;
   }
 }
 

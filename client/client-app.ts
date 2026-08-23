@@ -1,7 +1,5 @@
-import { createApp, defineAsyncComponent, reactive, type AsyncComponentLoader } from 'vue'
+import { createApp, defineAsyncComponent, type AsyncComponentLoader } from 'vue'
 import { createVuetify } from 'vuetify'
-import * as components from 'vuetify/components'
-import * as directives from 'vuetify/directives'
 import Hammer from 'hammerjs'
 import moment from 'moment-timezone'
 import _ from 'lodash'
@@ -10,6 +8,8 @@ import boot from './modules/boot.ts'
 import localization from './modules/localization.ts'
 import { pinia, wikiStore } from './store/index.ts'
 import { router } from './router'
+import { createWikiThemes, resolveThemeName } from './helpers/theme.ts'
+import { normalizeThemeColors } from '../shared/theme-colors.ts'
 
 const asyncComponent = (name: string, loader: AsyncComponentLoader) => [name, defineAsyncComponent(loader)] as const
 
@@ -42,11 +42,15 @@ const registrations = [
 ]
 
 
+wikiStore.refreshAuth()
+
 const vuetify = createVuetify({
-  components,
-  directives,
   locale: { rtl: { [siteConfig.lang]: siteConfig.rtl }, locale: siteConfig.lang },
-  theme: { defaultTheme: siteConfig.darkMode ? 'dark' : 'light' }
+  theme: {
+    defaultTheme: resolveThemeName(wikiStore.user.appearance, siteConfig.darkMode),
+    themes: createWikiThemes(normalizeThemeColors(siteConfig.themeColors)),
+    transition: { duration: '180ms' }
+  }
 })
 
 const i18n = await localization.init()
@@ -59,14 +63,7 @@ app.use(router)
 app.use(vuetify)
 app.use(i18n)
 app.use(helpersPlugin)
-app.config.globalProperties.$vuetify = reactive({
-  date: vuetify.date.instance,
-  defaults: vuetify.defaults,
-  display: vuetify.display,
-  icons: vuetify.icons,
-  locale: vuetify.locale,
-  theme: vuetify.theme
-})
+
 
 app.config.globalProperties.$lodash = _
 app.config.globalProperties.$moment = moment
@@ -74,7 +71,6 @@ app.config.globalProperties.$moment = moment
 window.Hammer = Hammer
 window.WIKI = app
 window.boot = boot
-wikiStore.refreshAuth()
 
 moment.locale(siteConfig.lang)
 if (wikiStore.user.dateFormat) {

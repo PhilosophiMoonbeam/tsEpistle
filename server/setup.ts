@@ -16,6 +16,7 @@ import system from './core/system.ts'
 
 import { BUILTIN_CONTENT_EXTENSIONS } from '../shared/content-extensions.ts'
 import type { ProductMetadata } from '../shared/product.ts'
+import { cloneThemeColors, DEFAULT_THEME_COLORS } from '../shared/theme-colors.ts'
 const { collectEntry } = viteAssets
 const randomBytesAsync = promisify(randomBytes)
 const { pem2jwk } = pemJwk
@@ -179,7 +180,13 @@ export default function startSetup(): void {
       _.set(wiki.config, 'sessionSecret', (await randomBytesAsync(32)).toString('hex'))
       _.set(wiki.config, 'telemetry', { isEnabled: body.telemetry === true, clientId: randomUUID() })
       _.set(wiki.config, 'theming', {
-        theme: 'default', darkMode: false, iconset: 'mdi', injectCSS: '', injectHead: '', injectBody: ''
+        theme: 'default',
+        darkMode: false,
+        colors: cloneThemeColors(DEFAULT_THEME_COLORS),
+        iconset: 'mdi',
+        injectCSS: '',
+        injectHead: '',
+        injectBody: ''
       })
       _.set(wiki.config, 'title', wiki.product.name)
 

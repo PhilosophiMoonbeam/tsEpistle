@@ -83,7 +83,7 @@
                     .admin-mobile-record-meta {{ props.item.userCount }} users
                     .text-body-small.text-grey.mt-2 Updated {{ $helpers.formatMoment(props.item.updatedAt, 'calendar') }}
             template(v-slot:no-data)
-              v-alert.ma-3(icon='mdi-alert', :value='true', variant="outlined") No groups to display.
+              v-alert.ma-3(icon='mdi-alert', :model-value='true', variant="outlined") No groups to display.
           .text-xs-center.py-2(v-if='pageCount > 1')
             v-pagination(v-model='pagination', :length='pageCount')</template>
 

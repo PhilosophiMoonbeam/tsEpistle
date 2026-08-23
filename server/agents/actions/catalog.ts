@@ -30,16 +30,16 @@ const PageCitation = strict({
   label: z.string().min(1).max(512),
   href: z.string().min(1).max(2_048)
 })
-const PageSummary = strict({
+const BasePageSummary = strict({
   id: PositiveId,
   locale: Locale,
   path: Path,
   title: BoundedTitle,
   description: BoundedDescription,
   contentType: z.string().max(128),
-  sourceRevision: z.string().max(64),
-  citation: PageCitation
+  sourceRevision: z.string().max(64)
 })
+const PageSummary = BasePageSummary.extend({ citation: PageCitation })
 const PageResult = PageSummary.extend({
   content: BoundedPageContent,
   updatedAt: z.string().max(32),
@@ -194,7 +194,7 @@ export const ACTION_CATALOG = {
   'pages.applyProposal': {
     descriptor: descriptor('pages.applyProposal', 'Apply approved proposal', 'Mandatory next step after a page preparation action returns status approved. Apply that exact proposal after live reauthorization; approval alone never changes a page.', 'reversible-write', [], both, applyAnnotations),
     input: strict({ proposalId: Uuid, approvalId: Uuid }),
-    output: strict({ proposalId: Uuid, status: z.literal('applied'), resultHash: ContentHash, page: PageSummary.nullable() }),
+    output: strict({ proposalId: Uuid, status: z.literal('applied'), resultHash: ContentHash, page: BasePageSummary.nullable() }),
     requiredFlags: proposalFlags
   }
 } as const satisfies Record<AgentActionName, ActionDefinition>

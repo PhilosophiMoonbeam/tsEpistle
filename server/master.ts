@@ -28,6 +28,7 @@ import apiV1Controller from './controllers/api-v1/index.ts'
 import type { ProductMetadata } from '../shared/product.ts'
 import { isExternalRestPath, isInternalRestPath } from '../shared/api-access.ts'
 import { siteBannerOrDefault } from '../shared/site-banner.ts'
+import { normalizeThemeColors } from '../shared/theme-colors.ts'
 
 import { AgentProviderRegistry, type AgentProfileTokenKeys } from './agents/providers/registry.ts'
 import { DatabaseAgentSecretRegistry, decodeAgentProviderSecretKeys, environmentSecretValue } from './agents/providers/secrets.ts'
@@ -73,7 +74,7 @@ interface MasterConfig extends Record<string, unknown> {
   sessionSecret: string
   ssl: { enabled: boolean | number | string }
   title: string
-  theming: { darkMode: boolean; theme: string; tocPosition?: string }
+  theming: { colors?: unknown; darkMode: boolean; theme: string; tocPosition?: string }
 }
 
 const requiredEnvironment = (name: string): string => {
@@ -335,6 +336,7 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
       title: wiki.config.title,
       theme: wiki.config.theming.theme,
       darkMode: wiki.config.theming.darkMode,
+      themeColors: normalizeThemeColors(wiki.config.theming.colors),
       tocPosition: wiki.config.theming.tocPosition || 'left',
       lang: wiki.config.lang.code,
       rtl: wiki.config.lang.rtl,

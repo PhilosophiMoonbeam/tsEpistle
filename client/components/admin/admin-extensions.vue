@@ -20,7 +20,7 @@
                       v-chip(label, color='success', size="small", v-if='ext.isInstalled') Installed
                       v-chip(label, color='warning', size="small", v-else) Not Installed
                   v-expansion-panel-text.pa-0
-                    v-card(flat, :class='$vuetify.theme.current.dark ? `bg-grey-darken-3` : `bg-grey-lighten-5`', tile)
+                    v-card(flat, :class='$vuetify.theme.current.dark ? `bg-grey-darken-3` : `bg-grey-lighten-5`', rounded='0')
                       v-card-text
                         .text-body-medium {{ext.description}}
                         v-divider.my-4

@@ -1,5 +1,5 @@
 <template lang='pug'>
-  v-card.editor-modal-media.animated.fadeInLeft(flat, tile, :class='`is-editor-` + editorKey')
+  v-card.editor-modal-media.animated.fadeInLeft(flat, rounded='0', :class='`is-editor-` + editorKey')
     v-container.pa-3(fluid)
       v-row
         v-col(cols='12', lg='9')
@@ -79,7 +79,7 @@
                     td(v-if='$vuetify.display.smAndUp')
                       v-menu(min-width='200')
                         template(v-slot:activator='{ props }')
-                          v-btn(icon, v-bind='props', tile, size="small", @click.left='currentFileId = props.item.id')
+                          v-btn(icon, v-bind='props', rounded='0', size="small", @click.left='currentFileId = props.item.id')
                             v-icon(color="grey-darken-2") mdi-dots-horizontal
                         v-list(nav, style='border-top: 5px solid #444;')
                           //- v-list-item(@click='', disabled)
@@ -114,7 +114,7 @@
                                 v-icon(color='red') mdi-file-hidden
                             v-list-item-title {{$t('common:actions.delete')}}
                 template(v-slot:no-data)
-                  v-alert.mt-3.radius-7(icon='mdi-folder-open-outline', :value='true', variant="outlined", color='teal') {{$t('editor:assets.folderEmpty')}}
+                  v-alert.mt-3.radius-7(icon='mdi-folder-open-outline', :model-value='true', variant="outlined", color='teal') {{$t('editor:assets.folderEmpty')}}
               .text-xs-center.py-2(v-if='this.pageTotal > 1')
                 v-pagination(v-model='pagination', :length='pageTotal', color='teal')
               .d-flex.mt-3

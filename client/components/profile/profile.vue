@@ -352,6 +352,7 @@ import Cookies from 'js-cookie'
 import validateValues from '../../../shared/validation'
 import type moment from 'moment'
 import PasswordStrength from '../common/password-strength.vue'
+import { resolveThemeName } from '../../helpers/theme.ts'
 
 type ProfileFieldRef =
   | 'iptDisplayName'
@@ -678,6 +679,7 @@ export default {
     appearances () {
       return [
         { text: this.$t('profile:appearanceDefault'), value: '' },
+        { text: this.$t('profile:appearanceSystem'), value: 'system' },
         { text: this.$t('profile:appearanceLight'), value: 'light' },
         { text: this.$t('profile:appearanceDark'), value: 'dark' }
       ]
@@ -709,10 +711,7 @@ export default {
   },
   watch: {
     'user.appearance': function (newValue: string, _oldValue: string) {
-      const themeName = newValue === ''
-        ? siteConfig.darkMode ? 'dark' : 'light'
-        : newValue === 'dark' ? 'dark' : 'light'
-      void this.$vuetify.theme.change(themeName)
+      void this.$vuetify.theme.change(resolveThemeName(newValue, siteConfig.darkMode))
     },
     'user.dateFormat': function (newValue: string, _oldValue: string) {
       if (newValue === '') {
@@ -776,6 +775,7 @@ export default {
         })
         Cookies.set('jwt', token, { expires: 365, secure: window.location.protocol === 'https:' })
         wikiStore.user.name = this.user.name
+        wikiStore.user.appearance = this.user.appearance
         wikiStore.showNotification({
           message: this.$t('profile:save.success'),
           style: 'success',

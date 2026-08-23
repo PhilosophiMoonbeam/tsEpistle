@@ -1,11 +1,9 @@
 import { createApp, defineAsyncComponent } from 'vue'
 import { createVuetify } from 'vuetify'
-import * as components from 'vuetify/components'
-import * as directives from 'vuetify/directives'
 import boot from './modules/boot.ts'
 
 const Setup = defineAsyncComponent(() => import('./components/setup.vue'))
-const vuetify = createVuetify({ components, directives })
+const vuetify = createVuetify()
 
 window.WIKI = null
 window.boot = boot

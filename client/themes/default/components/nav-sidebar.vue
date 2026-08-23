@@ -38,7 +38,7 @@
           :rel='item.y === `externalblank` ? `noopener` : ``'
           )
           template(v-slot:prepend)
-            v-avatar(size='24', tile)
+            v-avatar(size='24', rounded='0')
               v-icon(v-if='item.c.match(/fa[a-z] fa-/)', size='19') {{ item.c }}
               v-icon(v-else) {{ item.c }}
           v-list-item-title {{ item.l }}

@@ -40,7 +40,7 @@
                     @click='selectTag(tag)'
                     )
                     template(v-slot:prepend)
-                      v-avatar(size='24', tile): v-icon(size='18', :color='tag.id === current.id ? `white` : `teal`') mdi-tag
+                      v-avatar(size='24', rounded='0'): v-icon(size='18', :color='tag.id === current.id ? `white` : `teal`') mdi-tag
                     v-list-item-title(:class='tag.id === current.id ? `text-white` : ``') {{tag.tag}}
             v-col.animated.fadeInUp.wait-p2s
               template(v-if='current.id')

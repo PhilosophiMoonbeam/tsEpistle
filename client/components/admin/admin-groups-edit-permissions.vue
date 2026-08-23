@@ -7,7 +7,7 @@
             color="orange-darken-2"
             :class='$vuetify.theme.current.dark ? "bg-grey-darken-4" : "bg-orange-lighten-5"'
             variant="outlined"
-            :value='true'
+            :model-value='true'
             icon='mdi-lock-outline'
             ) This is a system group. Some permissions cannot be modified.
         v-col(cols='12', md='6', lg='4', v-for='pmGroup in permissions', :key='pmGroup.category')

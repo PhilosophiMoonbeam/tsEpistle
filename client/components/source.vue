@@ -18,7 +18,7 @@
             v-icon(start) mdi-download
             span {{$t('common:actions.download')}}
           v-btn.ml-4(variant="flat", color="blue-darken-1", @click='goLive') {{$t('common:page.returnNormalView')}}
-      v-card(tile)
+      v-card(rounded='0')
         v-card-text
           v-card.radius-7(flat, :class='$vuetify.theme.current.dark ? `bg-grey-darken-4` : `bg-grey-lighten-4`')
             v-card-text

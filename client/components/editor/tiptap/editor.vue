@@ -79,18 +79,18 @@
         v-icon(start) mdi-code-block-tags
         | Edit source
     .editor-tiptap-markdown-tools(v-if='format === `markdown`')
-      v-btn.editor-tiptap-extension-trigger(color='teal', tile, @click='toggleExtensionDialog', aria-label='Insert content extension')
+      v-btn.editor-tiptap-extension-trigger(color='teal', rounded='0', @click='toggleExtensionDialog', aria-label='Insert content extension')
         v-icon(start) mdi-qrcode
         | Insert content extension
-      v-btn(color='blue-grey', tile, aria-label='Insert admonition', @click='openAdmonitionDialog')
+      v-btn(color='blue-grey', rounded='0', aria-label='Insert admonition', @click='openAdmonitionDialog')
         v-icon(start) mdi-alert-box-outline
         | Insert admonition
-      v-btn(color='blue-grey', tile, aria-label='Insert definition list', @click='insertDefinitionList')
+      v-btn(color='blue-grey', rounded='0', aria-label='Insert definition list', @click='insertDefinitionList')
         v-icon(start) mdi-format-list-group-plus
         | {{$t('editor:markup.insertDefinitionList')}}
       v-menu(:close-on-content-click='true')
         template(v-slot:activator='{ props }')
-          v-btn(v-bind='props', color='blue-grey', tile, aria-label='Insert icon or emoji')
+          v-btn(v-bind='props', color='blue-grey', rounded='0', aria-label='Insert icon or emoji')
             v-icon(start) mdi-emoticon-outline
             | Icon or emoji
         v-card.editor-tiptap-glyph-menu

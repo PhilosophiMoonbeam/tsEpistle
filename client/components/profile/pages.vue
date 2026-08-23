@@ -35,7 +35,7 @@
                 td {{ $helpers.formatMoment(props.item.createdAt, 'calendar') }}
                 td {{ $helpers.formatMoment(props.item.updatedAt, 'calendar') }}
             template(v-slot:no-data)
-              v-alert.ma-3(icon='mdi-alert', :value='true', variant="outlined", color='grey')
+              v-alert.ma-3(icon='mdi-alert', :model-value='true', variant="outlined", color='grey')
                 em.text-body-small {{$t('profile:pages.emptyList')}}
           .text-center.py-2.animated.fadeInDown(v-if='this.pageTotal > 1')
             v-pagination(v-model='pagination', :length='pageTotal')</template>

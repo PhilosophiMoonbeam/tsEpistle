@@ -71,7 +71,7 @@
                 @click.middle='goToPageInNewTab(item)'
               )
                 template(v-slot:prepend)
-                  v-avatar(tile)
+                  v-avatar(rounded='0')
                     img(src='/_assets/svg/icon-selective-highlighting.svg')
                 v-list-item-title {{ item.title }}
                 v-list-item-subtitle.text-body-small {{ item.description }}

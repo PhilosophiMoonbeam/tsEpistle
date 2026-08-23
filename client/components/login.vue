@@ -4,14 +4,14 @@
       .login-sd
         .d-flex.mb-5
           .login-logo
-            v-avatar(tile, size='34')
+            v-avatar(rounded='0', size='34')
               img(:src='logoUrl', :alt='siteTitle')
           .login-title
             .text-h6.text-grey-darken-4 {{ siteTitle }}
         v-alert.mb-0(
           v-model='errorShown'
           color="red-darken-2"
-          tile
+          rounded='0'
           density="compact"
           icon='mdi-alert'
           )
@@ -33,7 +33,7 @@
                 @click='selectedStrategyKey = stg.key'
                 )
                 template(v-slot:prepend)
-                  v-avatar.mr-3(tile, size='24')
+                  v-avatar.mr-3(rounded='0', size='24')
                     v-icon(v-if='stg.strategy.icon') {{ stg.strategy.icon }}
                 span.text-none {{stg.displayName}}
         //-------------------------------------------------

@@ -27,7 +27,7 @@
       v-col(cols='5', md='4')
         v-toolbar.nav-header-inner(color='black', flat, :class='$vuetify.locale.isRtl ? `pr-3` : `pl-3`')
           slot(name='mobileBrand', v-if='$slots.mobileBrand && $vuetify.display.smAndDown')
-          v-avatar(v-if='!$slots.mobileBrand || $vuetify.display.mdAndUp', tile, size='34', @click='goHome')
+          v-avatar(v-if='!$slots.mobileBrand || $vuetify.display.mdAndUp', rounded='0', size='34', @click='goHome')
             img.org-logo(:src='logoUrl', :alt='title')
           v-toolbar-title(v-if='!$slots.mobileBrand || $vuetify.display.mdAndUp', :class='{ "mx-3": $vuetify.display.mdAndUp, "mx-1": $vuetify.display.smAndDown }')
             span.text-body-large {{title}}
@@ -90,7 +90,7 @@
                       icon
                       v-bind='{ ...menuProps, ...tooltipProps }'
                       :class='$vuetify.locale.isRtl ? `ml-3` : ``'
-                      tile
+                      rounded='0'
                       height='64'
                       :aria-label='$t(`common:header.language`)'
                       )
@@ -114,7 +114,7 @@
                       icon
                       v-bind='{ ...menuProps, ...tooltipProps }'
                       :class='$vuetify.locale.isRtl ? `ml-3` : ``'
-                      tile
+                      rounded='0'
                       height='64'
                       :aria-label='$t(`common:header.pageActions`)'
                       )
@@ -124,35 +124,35 @@
                 .text-label-small.pa-4.text-grey {{$t('common:header.currentPage')}}
                 v-list-item.pl-4(@click='pageView', v-if='mode !== `view`')
                   template(v-slot:prepend)
-                    v-avatar(size='24', tile): v-icon(color='indigo') mdi-file-document-outline
+                    v-avatar(size='24', rounded='0'): v-icon(color='indigo') mdi-file-document-outline
                   v-list-item-title.text-body-medium {{$t('common:header.view')}}
                 v-list-item.pl-4(@click='pageEdit', v-if='mode !== `edit` && hasWritePagesPermission')
                   template(v-slot:prepend)
-                    v-avatar(size='24', tile): v-icon(color='indigo') mdi-file-document-edit-outline
+                    v-avatar(size='24', rounded='0'): v-icon(color='indigo') mdi-file-document-edit-outline
                   v-list-item-title.text-body-medium {{$t('common:header.edit')}}
                 v-list-item.pl-4(@click='pageHistory', v-if='mode !== `history` && hasReadHistoryPermission')
                   template(v-slot:prepend)
-                    v-avatar(size='24', tile): v-icon(color='indigo') mdi-history
+                    v-avatar(size='24', rounded='0'): v-icon(color='indigo') mdi-history
                   v-list-item-title.text-body-medium {{$t('common:header.history')}}
                 v-list-item.pl-4(@click='pageSource', v-if='mode !== `source` && hasReadSourcePermission')
                   template(v-slot:prepend)
-                    v-avatar(size='24', tile): v-icon(color='indigo') mdi-code-tags
+                    v-avatar(size='24', rounded='0'): v-icon(color='indigo') mdi-code-tags
                   v-list-item-title.text-body-medium {{$t('common:header.viewSource')}}
                 v-list-item.pl-4(@click='pageConvert', v-if='hasWritePagesPermission')
                   template(v-slot:prepend)
-                    v-avatar(size='24', tile): v-icon(color='indigo') mdi-lightning-bolt
+                    v-avatar(size='24', rounded='0'): v-icon(color='indigo') mdi-lightning-bolt
                   v-list-item-title.text-body-medium {{$t('common:header.convert')}}
                 v-list-item.pl-4(@click='pageDuplicate', v-if='hasWritePagesPermission')
                   template(v-slot:prepend)
-                    v-avatar(size='24', tile): v-icon(color='indigo') mdi-content-duplicate
+                    v-avatar(size='24', rounded='0'): v-icon(color='indigo') mdi-content-duplicate
                   v-list-item-title.text-body-medium {{$t('common:header.duplicate')}}
                 v-list-item.pl-4(@click='pageMove', v-if='hasManagePagesPermission')
                   template(v-slot:prepend)
-                    v-avatar(size='24', tile): v-icon(color='indigo') mdi-content-save-move-outline
+                    v-avatar(size='24', rounded='0'): v-icon(color='indigo') mdi-content-save-move-outline
                   v-list-item-title.text-body-medium {{$t('common:header.move')}}
                 v-list-item.pl-4(@click='pageDelete', v-if='hasDeletePagesPermission')
                   template(v-slot:prepend)
-                    v-avatar(size='24', tile): v-icon(color="red-darken-2") mdi-trash-can-outline
+                    v-avatar(size='24', rounded='0'): v-icon(color="red-darken-2") mdi-trash-can-outline
                   v-list-item-title.text-body-medium {{$t('common:header.delete')}}
             v-divider(vertical)
 
@@ -161,7 +161,7 @@
           template(v-if='hasNewPagePermission && path && mode !== `edit`')
             v-tooltip(location="bottom")
               template(v-slot:activator='{ props }')
-                v-btn(icon, tile, height='64', v-bind='props', @click='pageNew', :aria-label='$t(`common:header.newPage`)')
+                v-btn(icon, rounded='0', height='64', v-bind='props', @click='pageNew', :aria-label='$t(`common:header.newPage`)')
                   v-icon(color='grey') mdi-text-box-plus-outline
               span {{$t('common:header.newPage')}}
             v-divider(vertical)
@@ -171,10 +171,10 @@
           template(v-if='isAuthenticated && isAdmin')
             v-tooltip(location="bottom", v-if='mode !== `admin`')
               template(v-slot:activator='{ props }')
-                v-btn(icon, tile, height='64', v-bind='props', href='/a', :aria-label='$t(`common:header.admin`)')
+                v-btn(icon, rounded='0', height='64', v-bind='props', href='/a', :aria-label='$t(`common:header.admin`)')
                   v-icon(color='grey') mdi-cog
               span {{$t('common:header.admin')}}
-            v-btn(v-else, variant="text", tile, height='64', href='/', :aria-label='$t(`common:actions.exit`)')
+            v-btn(v-else, variant="text", rounded='0', height='64', href='/', :aria-label='$t(`common:actions.exit`)')
               v-icon(start, color='grey') mdi-exit-to-app
               span {{$t('common:actions.exit')}}
             v-divider(vertical)
@@ -189,7 +189,7 @@
                     icon
                     v-bind='{ ...menuProps, ...tooltipProps }'
                     :class='$vuetify.locale.isRtl ? `ml-0` : ``'
-                    tile
+                    rounded='0'
                     height='64'
                     :aria-label='$t(`common:header.account`)'
                     )

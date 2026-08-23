@@ -833,7 +833,18 @@ type SystemQuery {
   info: SystemInfo
 }
 
+type ThemingColors {
+  dark: ThemingModeColors!
+  light: ThemingModeColors!
+}
+
+input ThemingColorsInput {
+  dark: ThemingModeColorsInput!
+  light: ThemingModeColorsInput!
+}
+
 type ThemingConfig {
+  colors: ThemingColors!
   darkMode: Boolean!
   iconset: String!
   injectBody: String
@@ -843,8 +854,32 @@ type ThemingConfig {
   tocPosition: String
 }
 
+type ThemingModeColors {
+  accent: String!
+  background: String!
+  error: String!
+  info: String!
+  primary: String!
+  secondary: String!
+  success: String!
+  surface: String!
+  warning: String!
+}
+
+input ThemingModeColorsInput {
+  accent: String!
+  background: String!
+  error: String!
+  info: String!
+  primary: String!
+  secondary: String!
+  success: String!
+  surface: String!
+  warning: String!
+}
+
 type ThemingMutation {
-  setConfig(darkMode: Boolean!, iconset: String!, injectBody: String, injectCSS: String, injectHead: String, theme: String!, tocPosition: String): DefaultResponse
+  setConfig(colors: ThemingColorsInput, darkMode: Boolean!, iconset: String!, injectBody: String, injectCSS: String, injectHead: String, theme: String!, tocPosition: String): DefaultResponse
 }
 
 type ThemingQuery {

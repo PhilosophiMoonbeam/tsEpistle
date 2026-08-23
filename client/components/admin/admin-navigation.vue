@@ -92,7 +92,7 @@
                         )
                         v-tooltip(location="top")
                           template(v-slot:activator='{ props }')
-                            v-btn.ml-2(icon, tile, color='white', v-bind='props', @click='copyFromLocaleDialogIsShown = true')
+                            v-btn.ml-2(icon, rounded='0', color='white', v-bind='props', @click='copyFromLocaleDialogIsShown = true')
                               v-icon mdi-arrange-send-backward
                           span {{$t('admin:navigation.copyFromLocale')}}
                       v-list.py-2(density="compact", nav, class="bg-blue-darken-2", style='border-radius: 0;')
@@ -109,7 +109,7 @@
                               @click='selectItem(navItem)'
                               )
                               template(v-slot:prepend)
-                                v-avatar(size='24', tile)
+                                v-avatar(size='24', rounded='0')
                                   v-icon(v-if='navItem.icon.match(/fa[a-z] fa-/)', size='19') {{ navItem.icon }}
                                   v-icon(v-else) {{ navItem.icon }}
                               v-list-item-title {{navItem.label}}

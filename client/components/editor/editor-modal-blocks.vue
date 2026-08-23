@@ -1,5 +1,5 @@
 <template lang='pug'>
-v-card.editor-modal-blocks.animated.fadeInLeft(flat, tile, role='dialog', aria-modal='true', aria-labelledby='content-extension-title')
+v-card.editor-modal-blocks.animated.fadeInLeft(flat, rounded='0', role='dialog', aria-modal='true', aria-labelledby='content-extension-title')
   v-toolbar(color="grey-darken-4", flat)
     v-icon.mr-3(color="teal-lighten-2") {{activeStatus?.icon || 'mdi-shape-outline'}}
     v-toolbar-title#content-extension-title Insert content extension

@@ -1,4 +1,5 @@
 import { fetchThemeConfig, saveThemeConfig } from './theming-api.ts'
+import { cloneThemeColors, DEFAULT_THEME_COLORS } from '../../shared/theme-colors.ts'
 
 function createJsonResponse (payload, ok = true) {
   return {
@@ -15,6 +16,7 @@ function validConfig (overrides = {}) {
     theme: 'default',
     iconset: 'mdi',
     darkMode: false,
+    colors: cloneThemeColors(DEFAULT_THEME_COLORS),
     tocPosition: 'left',
     injectCSS: '.contents { color: red; }',
     injectHead: '<meta name="test" content="head">',
@@ -52,6 +54,7 @@ describe('theming api helper', () => {
       theme: 'custom',
       iconset: 'fa',
       darkMode: true,
+      colors: cloneThemeColors(DEFAULT_THEME_COLORS),
       tocPosition: 'right',
       injectCSS: '',
       injectHead: '',
@@ -79,6 +82,9 @@ describe('theming api helper', () => {
       validConfig({ theme: undefined }),
       validConfig({ iconset: 42 }),
       validConfig({ darkMode: 'false' }),
+      validConfig({ colors: undefined }),
+      validConfig({ colors: { light: {}, dark: {} } }),
+      validConfig({ colors: { ...cloneThemeColors(DEFAULT_THEME_COLORS), dark: { ...DEFAULT_THEME_COLORS.dark, primary: 'blue' } } }),
       validConfig({ tocPosition: null }),
       validConfig({ injectCSS: null }),
       validConfig({ injectHead: false }),

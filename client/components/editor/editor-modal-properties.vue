@@ -15,7 +15,7 @@
         )
         v-icon(start) mdi-check
         span {{ $t('common:actions.ok') }}
-    v-card(tile)
+    v-card(rounded='0')
       v-tabs.text-white(bg-color='blue-darken-1', color='white', align-tabs="center", show-arrows, v-model='currentTab')
         v-tab(:value='0') {{$t('editor:props.info')}}
         v-tab(:value='1') {{$t('editor:props.scheduling')}}

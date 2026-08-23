@@ -304,7 +304,7 @@ const updateProfile = async ({ requester, input: value }: UserRequest): Promise<
   const dateFormat = stringValue(input.dateFormat, 'dateFormat')
   const appearance = stringValue(input.appearance, 'appearance')
   if (!['', 'DD/MM/YYYY', 'DD.MM.YYYY', 'MM/DD/YYYY', 'YYYY-MM-DD', 'YYYY/MM/DD'].includes(dateFormat)) throw new wiki.Error.InputInvalid()
-  if (!['', 'light', 'dark'].includes(appearance)) throw new wiki.Error.InputInvalid()
+  if (!['', 'light', 'dark', 'system'].includes(appearance)) throw new wiki.Error.InputInvalid()
   await wiki.models.users.updateUser({ id: user.id, name: _.trim(name), jobTitle: _.trim(jobTitle), location: _.trim(location), timezone, dateFormat, appearance })
   return (await wiki.models.users.refreshToken(user.id)).token
 }
