@@ -255,6 +255,7 @@
 
 <script lang='ts'>
 import { defineComponent, type PropType } from 'vue'
+import { useDisplay } from 'vuetify'
 import _ from 'lodash'
 import { wikiStore } from '@/store/index.ts'
 import { onEditorInsert, offEditorInsert, type EditorInsertPayload } from '../../helpers/editor-insert-events'
@@ -484,12 +485,16 @@ export default defineComponent({
       default: () => {}
     }
   },
+  setup() {
+    const { mdAndUp } = useDisplay()
+    return { mdAndUp }
+  },
   data() {
     return {
       fabInsertMenu: false,
       cm: null as TextEditorHandle | null,
       cursorPos: { ch: 0, line: 1 } as TextPosition,
-      previewShown: this.$vuetify.display.mdAndUp,
+      previewShown: this.mdAndUp,
       previewHTML: '',
       helpShown: false,
       spellModeActive: false,

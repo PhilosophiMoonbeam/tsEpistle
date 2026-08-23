@@ -175,6 +175,7 @@
 <script lang='ts'>
 /* global siteLangs, siteConfig */
 import { defineComponent } from 'vue'
+import { useDisplay } from 'vuetify'
 import _ from 'lodash'
 import { wikiStore } from '@/store/index.ts'
 import { onEditorInsert, offEditorInsert, type EditorInsertPayload } from '../../helpers/editor-insert-events'
@@ -212,12 +213,16 @@ interface MarkerOptions {
 // ========================================
 
 export default defineComponent({
+  setup() {
+    const { mdAndUp } = useDisplay()
+    return { mdAndUp }
+  },
   data() {
     return {
       cm: null as TextEditorHandle | null,
       debouncedProcessContent: null as ReturnType<typeof _.debounce> | null,
       cursorPos: { ch: 0, line: 1 } as TextPosition,
-      previewShown: this.$vuetify.display.mdAndUp,
+      previewShown: this.mdAndUp,
       insertLinkDialog: false,
       helpShown: false,
       previewHTML: ''

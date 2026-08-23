@@ -130,39 +130,45 @@
 
 <script lang='ts'>
 import _ from 'lodash'
+import { defineComponent, ref, watch } from 'vue'
+import { useDisplay, useLocale } from 'vuetify'
 import { wikiStore } from '@/store/index.ts'
 
 import { fetchSystemSummary } from '../helpers/system-api'
 import { getErrorMessage, loadingStart, loadingStop, showNotification } from '../helpers/root-ui-store'
 
 
-export default {
+export default defineComponent({
   i18nOptions: { namespaces: 'admin' },
-  data() {
-    return {
-      adminDrawerShown: this.$vuetify.display.mdAndUp,
-      scrollStyle: {
-        vuescroll: {},
-        scrollPanel: {
-          initialScrollY: 0,
-          initialScrollX: 0,
-          scrollingX: false,
-          easing: 'easeOutQuad',
-          speed: 1000,
-          verticalNativeBarPos: this.$vuetify.locale.isRtl ? `left` : `right`
-        },
-        rail: {
-          gutterOfEnds: '2px'
-        },
-        bar: {
-          onlyShowBarOnScroll: false,
-          background: '#CCC',
-          hoverStyle: {
-            background: '#999'
-          }
+  setup() {
+    const { mdAndUp } = useDisplay()
+    const { isRtl } = useLocale()
+    const adminDrawerShown = ref(mdAndUp.value)
+    watch(mdAndUp, isDesktop => {
+      adminDrawerShown.value = isDesktop
+    })
+    const scrollStyle = {
+      vuescroll: {},
+      scrollPanel: {
+        initialScrollY: 0,
+        initialScrollX: 0,
+        scrollingX: false,
+        easing: 'easeOutQuad',
+        speed: 1000,
+        verticalNativeBarPos: isRtl.value ? `left` : `right`
+      },
+      rail: {
+        gutterOfEnds: '2px'
+      },
+      bar: {
+        onlyShowBarOnScroll: false,
+        background: '#CCC',
+        hoverStyle: {
+          background: '#999'
         }
       }
     }
+    return { adminDrawerShown, scrollStyle }
   },
   computed: {
     info: {
@@ -181,9 +187,6 @@ export default {
       if (this.$vuetify.display.smAndDown) {
         this.adminDrawerShown = false
       }
-    },
-    '$vuetify.display.mdAndUp' (isDesktop: boolean) {
-      this.adminDrawerShown = isDesktop
     }
   },
   methods: {
@@ -210,7 +213,7 @@ export default {
       }
     }
   }
-}
+})
 </script>
 
 <style lang='scss'>
