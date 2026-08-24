@@ -185,6 +185,19 @@ describe('skill selection and pinned runtime', () => {
       transportRequestId: requestId
     })
     expect(resource.bytes.toString('utf8')).toBe(entry.toString('utf8'))
+    await expect(runtime.readVisibleResourceForRun({
+      runId,
+      skillName: 'release-notes',
+      versionId,
+      path: 'SKILL.md',
+      principal: { userId: 7, groupIds: [3] },
+      transportRequestId: requestId
+    })).rejects.toThrow('already loaded')
+    await expect(runtime.listVisibleForRun({
+      runId,
+      principal: { userId: 7, groupIds: [3] },
+      transportRequestId: requestId
+    })).resolves.toEqual([])
     expect(await db('agentSkillUses').select('runId', 'sessionId', 'requesterUserId', 'purpose', 'resourcePath')).toEqual([
       { runId, sessionId, requesterUserId: 7, purpose: 'listed', resourcePath: null },
       { runId, sessionId, requesterUserId: 7, purpose: 'read', resourcePath: 'SKILL.md' }

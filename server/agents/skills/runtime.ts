@@ -232,6 +232,15 @@ export class SkillRuntime {
             .where('loadedRunSkills.runId', runId)
             .whereRaw('loadedVersions."skillId" = skills.id')
         })
+        .whereNotExists(function excludeReadSkillInstructions() {
+          this.select(transaction.raw('1'))
+            .from('agentSkillUses as loadedSkillUses')
+            .innerJoin('agentSkillVersions as loadedVersions', 'loadedVersions.id', 'loadedSkillUses.skillVersionId')
+            .where('loadedSkillUses.runId', runId)
+            .where('loadedSkillUses.purpose', 'read')
+            .where('loadedSkillUses.resourcePath', 'SKILL.md')
+            .whereRaw('loadedVersions."skillId" = skills.id')
+        })
         .select(
           'skills.id', 'skills.name', 'skills.exposureMode', 'skills.isAgentDiscoverable', 'versions.id as versionId',
           'versions.contentHash', 'versions.sourceRevision', 'versions.frontmatter'
@@ -348,6 +357,14 @@ export class SkillRuntime {
           .where('loadedVersions.skillId', row.skillId)
           .first('loadedRunSkills.skillVersionId')
         if (loaded) throw new SkillValidationError('Skill instructions are already loaded for this run')
+        const previouslyRead = await transaction('agentSkillUses as loadedSkillUses')
+          .innerJoin('agentSkillVersions as loadedVersions', 'loadedVersions.id', 'loadedSkillUses.skillVersionId')
+          .where('loadedSkillUses.runId', runId)
+          .where('loadedSkillUses.purpose', 'read')
+          .where('loadedSkillUses.resourcePath', 'SKILL.md')
+          .where('loadedVersions.skillId', row.skillId)
+          .first('loadedSkillUses.skillVersionId')
+        if (previouslyRead) throw new SkillValidationError('Skill instructions are already loaded for this run')
       }
       const result = skillResourceResult(row, path, 'Approved skill resource is unavailable')
       await transaction('agentSkillUses').insert({
