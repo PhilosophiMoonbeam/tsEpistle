@@ -1,6 +1,5 @@
 import { expect } from '@playwright/test'
 import {
-  authenticateAsAdmin,
   expectLocatorWithinViewport,
   expectResponsiveLayout,
   openAuthenticatedPage,
@@ -50,7 +49,6 @@ test.describe('responsive UI quality matrix', () => {
   })
 
   test('keeps search interaction and results inside every viewport', async ({ page }) => {
-    await authenticateAsAdmin(page)
     await page.route('**/_api/pages/search?**', async route => {
       await route.fulfill({
         status: 200,
@@ -79,7 +77,7 @@ test.describe('responsive UI quality matrix', () => {
         })
       })
     })
-    await page.goto('/', { waitUntil: 'networkidle' })
+    await openAuthenticatedPage(page, '/', '.page-header-section')
     const search = await openSearch(page)
     await search.fill('responsive')
 
@@ -91,14 +89,12 @@ test.describe('responsive UI quality matrix', () => {
   })
 
   test('keeps the Admin Dashboard and page management responsive', async ({ page }) => {
-    await authenticateAsAdmin(page)
     const viewport = page.viewportSize()
     expect(viewport).not.toBeNull()
     if (!viewport) return
 
     for (const path of ['/a/dashboard', '/a/pages']) {
-      await page.goto(path, { waitUntil: 'networkidle' })
-      await expect(page.locator('.admin-main'), `${path} must render the administration layout`).toBeVisible({ timeout: 15_000 })
+      await openAuthenticatedPage(page, path, '.admin-main')
       await expectResponsiveLayout(page, path)
     }
 
@@ -122,8 +118,7 @@ test.describe('responsive UI quality matrix', () => {
   })
 
   test('keeps Agent Chat readable and operable', async ({ page }) => {
-    await authenticateAsAdmin(page)
-    await page.goto('/', { waitUntil: 'networkidle' })
+    await openAuthenticatedPage(page, '/', '.page-header-section')
     await page.evaluate('siteConfig.agentsEnabled = true')
     await openSearch(page)
     await page.getByRole('button', { name: /^ask$/i }).click()
