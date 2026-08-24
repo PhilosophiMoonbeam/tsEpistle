@@ -1,7 +1,7 @@
 <template lang='pug'>
   v-snackbar.nav-notify(
     :color='notification.style'
-    location="top"
+    location='top center'
     min-height="68"
     v-model='notificationState'
     :timeout='6000'
@@ -30,9 +30,6 @@ export default {
 
 <style lang='scss'>
 .nav-notify {
-  top: -64px;
-  padding-top: 0;
-  z-index: 999;
 
   .v-snackbar__wrapper {
     border-top-left-radius: 0;
