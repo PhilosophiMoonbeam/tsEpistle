@@ -122,6 +122,11 @@ export interface AgentPageReference {
   readonly sourceRevision: string
 }
 
+export interface AgentPageActionLink {
+  readonly label: string
+  readonly href: string
+}
+
 export interface AgentCitation {
   readonly evidenceId: string
   readonly kind: 'page' | 'search-result' | 'skill' | 'browser'
@@ -250,6 +255,7 @@ export interface AgentProposalView {
   readonly status: AgentProposalStatus
   readonly summary: string
   readonly target: AgentPageReference | null
+  readonly pageLink: AgentPageActionLink | null
   readonly baseSourceRevision: string | null
   readonly authoritySha256: string
   readonly inputHash: string

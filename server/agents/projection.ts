@@ -11,6 +11,7 @@ import {
   type AgentFollowUpSuggestion,
   type AgentMessageView,
   type AgentProposalView,
+  type AgentPageActionLink,
   type AgentRunView,
   type AgentSessionSkillView,
   type AgentSessionView,
@@ -207,6 +208,7 @@ interface ProposalRow {
   risk: string
   status: string
   summary: string
+  operation: string
   pageId: number | null
   pageLocale: string | null
   pagePath: string | null
@@ -223,8 +225,29 @@ interface ProposalRow {
   expiresAt: Date | string
 }
 
+const linkedPageActions = new Set<AgentActionName>([
+  'pages.prepareCreate',
+  'pages.preparePatch',
+  'pages.prepareMove',
+  'pages.prepareRestore'
+])
+
+const proposalPageLink = (row: ProposalRow, status: AgentProposalView['status']): AgentPageActionLink | null => {
+  if (status !== 'applied' || !linkedPageActions.has(row.actionName as AgentActionName)) return null
+  const operation = parseJson(row.operation, 'AGENT_PROPOSAL_CORRUPT')
+  if (typeof operation !== 'object' || operation === null) throw new AgentRepositoryError('AGENT_PROPOSAL_CORRUPT', 'Agent proposal operation is invalid', 500)
+  const locale = stringValue(Reflect.get(operation, 'locale'), 16)
+  const path = stringValue(Reflect.get(operation, 'path'), 1_024)
+  if (!locale || !path) throw new AgentRepositoryError('AGENT_PROPOSAL_CORRUPT', 'Applied proposal target is invalid', 500)
+  return {
+    label: `/${path}`,
+    href: `/${encodeURIComponent(locale)}/${path.split('/').map(segment => encodeURIComponent(segment)).join('/')}`
+  }
+}
+
 const proposalView = (row: ProposalRow, approval: AgentApprovalView | null): AgentProposalView => {
   if (!actionNames.has(row.actionName)) throw new AgentRepositoryError('AGENT_PROPOSAL_CORRUPT', 'Agent proposal action is invalid', 500)
+  const status = proposalStatusSchema.parse(row.status)
   const target = row.pageId === null
     ? null
     : {
@@ -240,9 +263,10 @@ const proposalView = (row: ProposalRow, approval: AgentApprovalView | null): Age
     sourceKind: row.sourceKind,
     actionName: row.actionName as AgentActionName,
     risk: riskSchema.parse(row.risk),
-    status: proposalStatusSchema.parse(row.status),
+    status,
     summary: row.summary,
     target,
+    pageLink: proposalPageLink(row, status),
     baseSourceRevision: row.baseSourceRevision === null ? null : String(row.baseSourceRevision),
     authoritySha256: row.authoritySha256,
     inputHash: row.inputHash,
@@ -322,6 +346,7 @@ export const projectAgentThread = async (knex: Knex, ownerId: number, sessionId:
       .leftJoin('pages', 'pages.id', 'agentProposals.pageId')
       .where('agentProposals.sessionId', sessionId)
       .select({ id: 'agentProposals.id', sourceKind: 'agentProposals.sourceKind', actionName: 'agentProposals.actionName', risk: 'agentProposals.risk', status: 'agentProposals.status', summary: 'agentProposals.summary', pageId: 'agentProposals.pageId', pageLocale: 'pages.localeCode', pagePath: 'pages.path', pageTitle: 'pages.title', pageContentType: 'pages.contentType', baseSourceRevision: 'agentProposals.baseSourceRevision', authoritySha256: 'agentProposals.authoritySha256', inputHash: 'agentProposals.inputHash', patchSha256: 'agentProposals.patchSha256', resultCanonicalSha256: 'agentProposals.resultCanonicalSha256', diffSha256: 'agentProposals.diffSha256', diff: 'agentProposals.diff', contentPurgedAt: 'agentProposals.contentPurgedAt', expiresAt: 'agentProposals.expiresAt' })
+      .select({ operation: 'agentProposals.operation' })
       .orderBy('agentProposals.createdAt'),
     knex<ApprovalRow>('agentApprovals').join('agentProposals', 'agentProposals.id', 'agentApprovals.proposalId').where('agentProposals.sessionId', sessionId).select('agentApprovals.*'),
     knex<ArtifactRow>('agentArtifacts').where('sessionId', sessionId).andWhere('ownerId', ownerId).select('id', 'kind', 'mimeType', 'byteLength', 'width', 'height', 'createdAt', 'expiresAt').orderBy('createdAt')

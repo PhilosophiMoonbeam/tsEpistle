@@ -1,5 +1,6 @@
 import type {
   AgentActionName,
+  AgentPageActionLink,
   AgentProposalStatus,
   AgentProposalView,
   AgentToolCallView
@@ -34,6 +35,17 @@ export const groupAgentToolsByRun = (
     else run.activity.push(tool)
   }
   return runs
+}
+
+export const agentAppliedPageLinks = (entries: readonly AgentProposalTool[]): readonly AgentPageActionLink[] => {
+  const seen = new Set<string>()
+  const links: AgentPageActionLink[] = []
+  for (const { proposal } of entries) {
+    if (proposal.status !== 'applied' || proposal.pageLink === null || seen.has(proposal.pageLink.href)) continue
+    seen.add(proposal.pageLink.href)
+    links.push(proposal.pageLink)
+  }
+  return links
 }
 
 const actionCount = (count: number): string => `${count} ${count === 1 ? 'action' : 'actions'}`

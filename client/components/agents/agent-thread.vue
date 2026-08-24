@@ -37,6 +37,21 @@
             </li>
           </ol>
         </aside>
+        <nav
+          v-if="message.role === 'assistant' && pageLinksForRun(message.runId).length"
+          class="agent-page-links mt-3"
+          aria-label="Changed pages"
+        >
+          <a
+            v-for="link in pageLinksForRun(message.runId)"
+            :key="link.href"
+            :href="link.href"
+            :title="`Open ${link.label}`"
+          >
+            <v-icon icon="mdi-file-link-outline" size="18" aria-hidden="true" />
+            <span>{{ link.label }}</span>
+          </a>
+        </nav>
         <details
           v-if="message.role === 'assistant' && activityForRun(message.runId).length"
           class="agent-activity mt-3"
@@ -94,11 +109,12 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import type { AgentCitation, AgentToolCallView, AgentToolState, AgentThreadState } from '../../../shared/agents/contracts.ts'
+import type { AgentCitation, AgentPageActionLink, AgentToolCallView, AgentToolState, AgentThreadState } from '../../../shared/agents/contracts.ts'
 import AgentMarkdown from './agent-markdown.vue'
 import AgentToolCard from './agent-tool-card.vue'
 import {
   agentActivityLabel,
+  agentAppliedPageLinks,
   groupAgentToolsByRun,
   type AgentProposalTool
 } from './agent-thread-presentation.ts'
@@ -109,6 +125,7 @@ defineEmits<{ suggest: [prompt: string]; decision: [proposalId: string, approval
 const groupedTools = computed(() => groupAgentToolsByRun(props.thread.tools, props.thread.proposals))
 const activityForRun = (runId: string | null): readonly AgentToolCallView[] => runId ? groupedTools.value.get(runId)?.activity ?? [] : []
 const proposalToolsForRun = (runId: string | null): readonly AgentProposalTool[] => runId ? groupedTools.value.get(runId)?.proposals ?? [] : []
+const pageLinksForRun = (runId: string | null): readonly AgentPageActionLink[] => agentAppliedPageLinks(proposalToolsForRun(runId))
 const activityLabel = agentActivityLabel
 const citationLabelParts = (citation: AgentCitation['label']): readonly string[] => citation.split(' › ').filter(Boolean)
 const citationPageLabel = (citation: AgentCitation['label']): string => citationLabelParts(citation)[0] ?? citation
@@ -144,6 +161,10 @@ const liveSummary = computed(() => {
 .agent-sources__label strong,
 .agent-sources__label small { display: block; overflow-wrap: anywhere; }
 .agent-sources__label small { color: rgb(var(--v-theme-on-surface-variant)); margin-top: .08rem; }
+.agent-page-links { border-top: 1px solid rgb(var(--v-theme-outline-variant)); display: flex; flex-wrap: wrap; gap: .5rem; padding-top: .75rem; }
+.agent-page-links a { align-items: center; background: rgb(var(--v-theme-surface)); border: 1px solid rgb(var(--v-theme-outline-variant)); border-radius: .5rem; color: rgb(var(--v-theme-primary)); display: inline-flex; gap: .4rem; min-height: 2.25rem; overflow-wrap: anywhere; padding: .35rem .65rem; text-decoration: none; }
+.agent-page-links a:hover { background: rgb(var(--v-theme-primary-container)); color: rgb(var(--v-theme-on-primary-container)); }
+.agent-page-links a:focus-visible { outline: 2px solid rgb(var(--v-theme-primary)); outline-offset: 2px; }
 .agent-activity { border-top: 1px solid rgb(var(--v-theme-outline-variant)); padding-top: .65rem; }
 .agent-activity summary { align-items: center; cursor: pointer; display: flex; gap: .5rem; list-style: none; min-height: 2rem; }
 .agent-activity summary::-webkit-details-marker { display: none; }

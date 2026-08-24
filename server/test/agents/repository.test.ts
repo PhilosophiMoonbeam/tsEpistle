@@ -168,6 +168,7 @@ const createTables = async (knex: Knex): Promise<void> => {
     table.string('risk').notNullable()
     table.string('status').notNullable()
     table.text('summary').notNullable().defaultTo('')
+    table.text('operation').notNullable().defaultTo('{}')
     table.integer('pageId').nullable()
     table.integer('baseSourceRevision').nullable()
     table.string('authoritySha256').notNullable()
@@ -311,6 +312,48 @@ describe('durable agent repositories', () => {
     expect(projected.suggestions).toEqual(reduced.suggestions)
     expect(projected.session.currentRun).toMatchObject({ id: runId, eventSequence: 3, canCancel: true })
     expect(projected.messages.map(message => message.content)).toEqual(['Question', ''])
+  })
+
+  it('projects durable links for applied page destinations', async () => {
+    await knex('pages').insert({ id: 42, localeCode: 'en', path: 'old-path', title: 'Old page', contentType: 'markdown' })
+    const createdAt = new Date('2026-08-17T00:00:00.000Z')
+    const expiresAt = new Date('2026-08-17T00:10:00.000Z')
+    const row = {
+      sessionId,
+      sourceKind: 'agent',
+      risk: 'proposal',
+      status: 'applied',
+      summary: 'Change a page',
+      pageId: null,
+      baseSourceRevision: null,
+      authoritySha256: 'a'.repeat(64),
+      inputHash: 'b'.repeat(64),
+      patchSha256: null,
+      resultCanonicalSha256: null,
+      diffSha256: null,
+      diff: null,
+      contentPurgedAt: null,
+      expiresAt,
+      createdAt
+    }
+    await knex('agentProposals').insert([
+      { ...row, id: '00000000-0000-4000-8000-000000000041', actionName: 'pages.prepareCreate', operation: JSON.stringify({ locale: 'en', path: 'example-page' }) },
+      { ...row, id: '00000000-0000-4000-8000-000000000042', actionName: 'pages.preparePatch', pageId: 42, baseSourceRevision: 3, operation: JSON.stringify({ locale: 'en', path: 'old-path' }) },
+      { ...row, id: '00000000-0000-4000-8000-000000000043', actionName: 'pages.prepareMove', pageId: 42, baseSourceRevision: 3, operation: JSON.stringify({ locale: 'en', path: 'handbook/example-page' }) },
+      { ...row, id: '00000000-0000-4000-8000-000000000044', actionName: 'pages.prepareDelete', pageId: 42, baseSourceRevision: 3, operation: JSON.stringify({ locale: 'en', path: 'old-path' }) }
+    ])
+
+    const projected = await projectAgentThread(knex, 7, sessionId, {
+      profileResolutionToken: session => `profile:${session.id}:${session.version}`,
+      now: createdAt
+    })
+
+    expect(projected.proposals.map(proposal => proposal.pageLink)).toEqual([
+      { label: '/example-page', href: '/en/example-page' },
+      { label: '/old-path', href: '/en/old-path' },
+      { label: '/handbook/example-page', href: '/en/handbook/example-page' },
+      null
+    ])
   })
 
   it('reserves and reconciles quota without double-counting retries', async () => {

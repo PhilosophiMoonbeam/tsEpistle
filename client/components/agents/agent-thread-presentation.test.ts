@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { AgentProposalView, AgentToolCallView } from '../../../shared/agents/contracts.ts'
 import {
   agentActivityLabel,
+  agentAppliedPageLinks,
   agentApprovalTitle,
   agentProposalReceiptLabel,
   groupAgentToolsByRun,
@@ -27,6 +28,7 @@ const proposal = (input: Partial<AgentProposalView> & Pick<AgentProposalView, 'i
   status: 'pending',
   summary: 'Add a release checklist.',
   target: { id: 12, locale: 'en', path: 'release-notes', title: 'Release notes', contentType: 'markdown', sourceRevision: '4' },
+  pageLink: null,
   baseSourceRevision: '4',
   authoritySha256: 'a'.repeat(64),
   inputHash: 'b'.repeat(64),
@@ -59,6 +61,42 @@ describe('Agent thread presentation', () => {
     expect(runs.get('run-1')?.activity.map(entry => entry.id)).toEqual(['read-1'])
     expect(runs.get('run-1')?.proposals.map(entry => entry.proposal.id)).toEqual(['proposal-1'])
     expect(runs.get('run-2')?.activity.map(entry => entry.id)).toEqual(['search-2'])
+  })
+
+  it('links applied page changes once per destination', () => {
+    const created = proposal({
+      id: 'proposal-create',
+      actionName: 'pages.prepareCreate',
+      status: 'applied',
+      pageLink: { label: '/release-notes', href: '/en/release-notes' }
+    })
+    const edited = proposal({
+      id: 'proposal-edit',
+      status: 'applied',
+      pageLink: { label: '/release-notes', href: '/en/release-notes' }
+    })
+    const moved = proposal({
+      id: 'proposal-move',
+      actionName: 'pages.prepareMove',
+      status: 'applied',
+      pageLink: { label: '/handbook/releases', href: '/en/handbook/releases' }
+    })
+    const pending = proposal({
+      id: 'proposal-pending',
+      actionName: 'pages.prepareRestore',
+      pageLink: { label: '/archived', href: '/en/archived' }
+    })
+    const entries = groupAgentToolsByRun([
+      tool({ id: 'create', runId: 'run', proposalId: created.id }),
+      tool({ id: 'edit', runId: 'run', proposalId: edited.id }),
+      tool({ id: 'move', runId: 'run', proposalId: moved.id }),
+      tool({ id: 'restore', runId: 'run', proposalId: pending.id })
+    ], [created, edited, moved, pending]).get('run')?.proposals ?? []
+
+    expect(agentAppliedPageLinks(entries)).toEqual([
+      { label: '/release-notes', href: '/en/release-notes' },
+      { label: '/handbook/releases', href: '/en/handbook/releases' }
+    ])
   })
 
   it('keeps routine activity compact while surfacing current and failed states', () => {
