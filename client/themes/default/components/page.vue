@@ -375,24 +375,20 @@
             :class='tocPosition === `right` ? `order-lg-1` : `order-lg-2`'
             )
             v-tooltip(location='start', v-if='hasAnyPagePermissions && editShortcutsObj.editFab')
-              template(v-slot:activator='{ props }')
+              template(v-slot:activator='{ props: tooltipProps }')
                 v-speed-dial(
                   v-model='pageEditFab'
-                  direction='top'
+                  :activator-props='tooltipProps'
+                  location='top center'
                   open-on-hover
                   transition='scale-transition'
-                  bottom
-                  :right='!$vuetify.locale.isRtl'
-                  :left='$vuetify.locale.isRtl'
-                  fixed
                   )
-                  template(v-slot:activator)
-                    v-btn.btn-animate-edit(
+                  template(v-slot:activator='{ props: speedDialProps }')
+                    v-btn.btn-animate-edit.page-edit-fab(
                       icon
                       color='primary'
-                      v-model='pageEditFab'
                       @click='pageEdit'
-                      v-bind="props"
+                      v-bind='speedDialProps'
                       :disabled='!hasWritePagesPermission'
                       :aria-label='$t(`common:page.editPage`)'
                       )
@@ -1429,6 +1425,13 @@ export default defineComponent({
 </script>
 
 <style lang="scss">
+
+.page-edit-fab {
+  position: fixed !important;
+  inset-block-end: calc(var(--v-layout-bottom, 0px) + 16px);
+  inset-inline-end: 16px;
+  z-index: 8;
+}
 
 .page-nav-toggle {
   position: fixed !important;
