@@ -73,7 +73,7 @@ defineEmits<{
   flex: 0 0 auto;
 }
 
-@media (max-width: 599px) {
+@media (max-width: 599.98px) {
   .async-state {
     flex-direction: column;
     text-align: center;

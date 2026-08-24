@@ -417,8 +417,8 @@ export default defineComponent({
 
     const container = this.$refs.cm as HTMLElement
     container.style.height = this.$vuetify.display.mdAndUp
-      ? 'calc(100vh - 137px)'
-      : 'calc(100vh - 112px - 16px)'
+      ? 'calc(100dvh - 137px)'
+      : 'calc(100dvh - 112px - 16px)'
     this.debouncedProcessContent = _.debounce((newContent: string) => {
       void this.processContent(newContent)
     }, 600)
@@ -462,8 +462,8 @@ export default defineComponent({
 </script>
 
 <style lang='scss'>
-$editor-ascii-height: calc(100vh - 137px);
-$editor-ascii-height-mobile: calc(100vh - 112px - 16px);
+$editor-ascii-height: calc(100dvh - 137px);
+$editor-ascii-height-mobile: calc(100dvh - 112px - 16px);
 
 .editor-asciidoc {
   &-main {
@@ -516,7 +516,7 @@ $editor-ascii-height-mobile: calc(100vh - 112px - 16px);
         overflow:hidden;
       }
     }
-    &-enter, &-leave-to {
+    &-enter-from, &-leave-to {
       max-width: 0;
     }
 

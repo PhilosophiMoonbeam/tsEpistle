@@ -422,7 +422,7 @@ export default defineComponent({
   gap: 12px;
 }
 
-@media (max-width: 600px) {
+@media (max-width: 599.98px) {
   .comments-posting-as {
     margin-left: auto;
   }

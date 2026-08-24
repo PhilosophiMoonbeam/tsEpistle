@@ -116,6 +116,6 @@ onMounted(load)
 .proposal-diff ins, .proposal-diff del, .proposal-diff span { display: inline; text-decoration: none; }
 .proposal-diff ins { border-inline-start: 3px solid currentColor; background: rgba(0, 128, 0, .16); }
 .proposal-diff del { border-inline-start: 3px double currentColor; background: rgba(180, 0, 0, .16); text-decoration: line-through; }
-@media (max-width: 600px) { .proposal-facts { grid-template-columns: 1fr; } .proposal-facts dt { margin-top: .5rem; } }
+@media (max-width: 599.98px) { .proposal-facts { grid-template-columns: 1fr; } .proposal-facts dt { margin-top: .5rem; } }
 @media (forced-colors: active) { .proposal-diff ins { border-inline-start-style: solid; } .proposal-diff del { border-inline-start-style: double; } }
 </style>

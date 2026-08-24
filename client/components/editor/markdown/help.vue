@@ -291,7 +291,7 @@ export default {
   left: 64px;
   z-index: 10;
   width: calc(100vw - 64px - 17px);
-  height: calc(100vh - 112px - 24px);
+  height: calc(100dvh - 112px - 24px);
   background-color: rgba(darken(mc('grey', '900'), 3%), .9) !important;
   overflow: auto;
 

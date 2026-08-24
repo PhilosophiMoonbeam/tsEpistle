@@ -31,7 +31,7 @@
                   v-for='str in activeStrategies'
                   :key='str.key'
                   @click='selectedStrategy = str.key'
-                  :class='selectedStrategy === str.key ? ($vuetify.theme.current.dark ? `bg-grey-darken-5` : `bg-teal-lighten-5`) : ``'
+                  :class='selectedStrategy === str.key ? ($vuetify.theme.current.dark ? `bg-grey-darken-4` : `bg-teal-lighten-5`) : ``'
                   )
                   template(v-slot:prepend)
                     v-avatar.is-handle(size='24')
@@ -197,7 +197,7 @@
               i18next(path='admin:auth.siteUrlNotSetup', tag='span')
                 strong(place='siteUrl') {{$t('admin:general.siteUrl')}}
                 strong(place='general') {{$t('admin:general.title')}}
-            .pa-3.mt-3.radius-7(v-else, :class='$vuetify.theme.current.dark ? `bg-grey-darken-3-d5` : `bg-grey-lighten-3`')
+            .pa-3.mt-3.radius-7(v-else, :class='$vuetify.theme.current.dark ? `bg-grey-darken-3` : `bg-grey-lighten-3`')
               .text-body-medium: strong {{$t('admin:auth.allowedWebOrigins')}}
               .text-body-medium {{host}}
               v-divider.my-3

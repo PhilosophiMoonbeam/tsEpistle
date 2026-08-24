@@ -51,7 +51,7 @@
                 template(v-for='(rdr, n) in core.children', :key='rdr.key')
                   v-list-item(
                     @click='selectRenderer(rdr.key)'
-                    :class='currentRenderer.key === rdr.key ? ($vuetify.theme.current.dark ? `bg-grey-darken-4-l4` : `bg-blue-lighten-5`) : ``'
+                    :class='currentRenderer.key === rdr.key ? ($vuetify.theme.current.dark ? `bg-grey-darken-4` : `bg-blue-lighten-5`) : ``'
                     )
                     template(v-slot:prepend)
                       v-avatar(size='24', rounded='0')

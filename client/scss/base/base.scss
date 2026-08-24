@@ -38,11 +38,6 @@ html {
   }
 }
 
-@media only screen and (min-width:960px) {
-  .v-application .v-footer {
-    padding-left: 272px
-  }
-}
 
 #root .v-application {
   .text-label-small {
@@ -58,43 +53,4 @@ html {
     }
   }
 
-  @for $i from 1 through 5 {
-    .bg-grey-darken-2-d#{$i} {
-      background-color: color.adjust(material.mc('grey', '700'), $lightness: -(math.percentage($i*0.01))) !important;
-      border-color: color.adjust(material.mc('grey', '700'), $lightness: -(math.percentage($i*0.01))) !important;
-    }
-    .bg-grey-darken-2-l#{$i} {
-      background-color: color.adjust(material.mc('grey', '700'), $lightness: math.percentage($i*0.01)) !important;
-      border-color: color.adjust(material.mc('grey', '700'), $lightness: math.percentage($i*0.01)) !important;
-    }
-    .bg-grey-darken-3-d#{$i} {
-      background-color: color.adjust(material.mc('grey', '800'), $lightness: -(math.percentage($i*0.01))) !important;
-      border-color: color.adjust(material.mc('grey', '800'), $lightness: -(math.percentage($i*0.01))) !important;
-    }
-    .bg-grey-darken-3-l#{$i} {
-      background-color: color.adjust(material.mc('grey', '800'), $lightness: math.percentage($i*0.01)) !important;
-      border-color: color.adjust(material.mc('grey', '800'), $lightness: math.percentage($i*0.01)) !important;
-    }
-    .bg-grey-darken-4-d#{$i} {
-      background-color: color.adjust(material.mc('grey', '900'), $lightness: -(math.percentage($i*0.01))) !important;
-      border-color: color.adjust(material.mc('grey', '900'), $lightness: -(math.percentage($i*0.01))) !important;
-    }
-    .bg-grey-darken-4-l#{$i} {
-      background-color: color.adjust(material.mc('grey', '900'), $lightness: math.percentage($i*0.01)) !important;
-      border-color: color.adjust(material.mc('grey', '900'), $lightness: math.percentage($i*0.01)) !important;
-    }
-  }
-  .bg-grey-darken-5 {
-    background-color: #0C0C0C !important;
-    border-color: #0C0C0C !important;
-  }
-
-  .bg-blue-darken-5 {
-    background-color: color.adjust(material.mc('blue', '900'), $lightness: -20%) !important;
-    border-color: color.adjust(material.mc('blue', '900'), $lightness: -20%) !important;
-  }
-  .bg-indigo-darken-5 {
-    background-color: color.adjust(material.mc('indigo', '900'), $lightness: -10%) !important;
-    border-color: color.adjust(material.mc('indigo', '900'), $lightness: -10%) !important;
-  }
 }

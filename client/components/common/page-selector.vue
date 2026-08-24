@@ -74,7 +74,7 @@
         v-select(
           variant="solo"
           flat
-          bg-color='grey-darken-3-d2'
+          bg-color='grey-darken-3'
           hide-details
           single-line
           :items='namespaces'

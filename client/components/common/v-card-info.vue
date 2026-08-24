@@ -22,17 +22,17 @@ export default {
       switch (this.color) {
         case 'blue':
           return {
-            cls: this.$vuetify.theme.current.dark ? 'bg-grey-darken-4-l5 text-blue-lighten-4' : 'bg-blue-lighten-5 text-blue-darken-3',
+            cls: this.$vuetify.theme.current.dark ? 'bg-grey-darken-4 text-blue-lighten-4' : 'bg-blue-lighten-5 text-blue-darken-3',
             icon: 'blue-lighten-3'
           }
         case 'red':
           return {
-            cls: this.$vuetify.theme.current.dark ? 'bg-grey-darken-4-l5 text-red-lighten-4' : 'bg-red-lighten-5 text-red-darken-2',
+            cls: this.$vuetify.theme.current.dark ? 'bg-grey-darken-4 text-red-lighten-4' : 'bg-red-lighten-5 text-red-darken-2',
             icon: 'red-lighten-3'
           }
         default:
           return {
-            cls: this.$vuetify.theme.current.dark ? 'bg-grey-darken-4-l5' : 'bg-grey-lighten-4',
+            cls: this.$vuetify.theme.current.dark ? 'bg-grey-darken-4' : 'bg-grey-lighten-4',
             icon: 'grey-darken-2'
           }
       }

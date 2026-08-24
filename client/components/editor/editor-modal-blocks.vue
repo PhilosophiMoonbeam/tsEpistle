@@ -821,7 +821,7 @@ export default defineComponent({
   left: 64px;
   z-index: 10;
   width: calc(100vw - 64px - 17px);
-  height: calc(100vh - 112px - 24px);
+  height: calc(100dvh - 112px - 24px);
   overflow-y: auto;
   background-color: rgba(darken(mc('grey', '900'), 3%), .96) !important;
 
@@ -836,7 +836,7 @@ export default defineComponent({
     top: 64px;
     left: 0;
     width: 100vw;
-    height: calc(100vh - 64px);
+    height: calc(100dvh - 64px);
 
     .v-container {
       padding-right: 12px !important;

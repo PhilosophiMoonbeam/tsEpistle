@@ -45,7 +45,7 @@
       .text-body-large.pb-3.pl-0.text-primary Migrate all pages to target locale
       .text-body-medium If you created content before selecting a different locale and activating the namespacing capabilities, you may want to transfer all content to the base locale.
       .text-body-medium.text-red: strong This operation is destructive and cannot be reversed! Make sure you have proper backups!
-      v-toolbar.radius-7.mt-5(flat, :color='$vuetify.theme.current.dark ? `grey-darken-3-d5` : `grey-lighten-4`', height='80')
+      v-toolbar.radius-7.mt-5(flat, :color='$vuetify.theme.current.dark ? `grey-darken-3` : `grey-lighten-4`', height='80')
         v-select(
           label='Source Locale'
           variant="outlined"
@@ -75,7 +75,7 @@
       .text-body-large.pb-3.pl-0.text-primary Purge Page History
       .text-body-medium You may want to purge old history for pages to reduce database usage.
       .text-body-medium This operation only affects the database and not any history saved by a storage module (e.g. git version history)
-      v-toolbar.radius-7.mt-5(flat, :color='$vuetify.theme.current.dark ? `grey-darken-3-d5` : `grey-lighten-4`', height='80')
+      v-toolbar.radius-7.mt-5(flat, :color='$vuetify.theme.current.dark ? `grey-darken-3` : `grey-lighten-4`', height='80')
         v-select(
           label='Delete history older than...'
           variant="outlined"

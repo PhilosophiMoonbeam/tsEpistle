@@ -3,7 +3,7 @@
     nav-header(v-if='!printView')
     v-navigation-drawer(
       v-if='navMode !== `NONE` && !printView'
-      :class='$vuetify.theme.current.dark ? `bg-grey-darken-4-d4` : `bg-primary`'
+      :class='$vuetify.theme.current.dark ? `bg-grey-darken-4` : `bg-primary`'
       mobile-breakpoint='1280'
       :temporary='$vuetify.display.width < 1280'
       v-model='navShown'
@@ -11,7 +11,7 @@
       )
       vue-scroll(:ops='scrollStyle')
         nav-sidebar(
-          :color='$vuetify.theme.current.dark ? `grey-darken-4-d4` : `primary`'
+          :color='$vuetify.theme.current.dark ? `bg-grey-darken-4` : `bg-primary`'
           :items='sidebarDecoded'
           :nav-mode='navMode'
           :expand-parent-by-default='navExpandParent'
@@ -33,7 +33,7 @@
 
     v-main(ref='content')
       template(v-if='path !== `home`')
-        v-toolbar(:color='$vuetify.theme.current.dark ? `grey-darken-4-d3` : `grey-lighten-3`', flat, density="compact", v-if='$vuetify.display.smAndUp')
+        v-toolbar(:color='$vuetify.theme.current.dark ? `grey-darken-4` : `grey-lighten-3`', flat, density="compact", v-if='$vuetify.display.smAndUp')
           //- v-btn.pl-0(v-if='$vuetify.display.xsOnly', variant='flat', @click='toggleNavigation')
           //-   v-icon(color='grey-darken-2', start) menu
           //-   span Navigation
@@ -49,7 +49,7 @@
             .text-body-small.text-red {{$t('common:page.unpublished')}}
             status-indicator.ml-3(negative, pulse)
         v-divider
-      v-container.pa-0(fluid, :class='$vuetify.theme.current.dark ? `bg-grey-darken-4-l3` : `bg-grey-lighten-4`')
+      v-container.pa-0(fluid, :class='$vuetify.theme.current.dark ? `bg-grey-darken-4` : `bg-grey-lighten-4`')
         v-row.page-header-section.align-content-center(no-gutters, style='height: 90px;')
           v-col.page-col-content.is-page-header(
             :offset-xl='tocPosition === `left` ? 2 : 0'
@@ -96,7 +96,7 @@
             )
             v-card.page-toc-card.mb-5(v-if='tocDecoded.length')
               .text-label-small.pa-5.pb-0(:class='$vuetify.theme.current.dark ? `text-blue-lighten-2` : `text-primary`') {{$t('common:page.toc')}}
-              v-list.pb-3(density="compact", nav, :class='$vuetify.theme.current.dark ? `bg-grey-darken-3-d3` : ``')
+              v-list.pb-3(density="compact", nav, :class='$vuetify.theme.current.dark ? `bg-grey-darken-3` : ``')
                 template(v-for='tocItem in tocDecoded', :key='tocItem.anchor')
                   v-list-item(@click='scrollToPageAnchor(tocItem.anchor)')
                     template(v-slot:prepend)
@@ -199,7 +199,7 @@
             //-       .text-body-small.text-grey 5 votes
 
             v-card.page-shortcuts-card(flat)
-              v-toolbar(:color='$vuetify.theme.current.dark ? `grey-darken-4-d3` : `grey-lighten-3`', flat, density="compact")
+              v-toolbar(:color='$vuetify.theme.current.dark ? `grey-darken-4` : `grey-lighten-3`', flat, density="compact")
                 v-spacer
                 //- v-tooltip(bottom)
                 //-   template(v-slot:activator='{ props }')
@@ -1435,13 +1435,6 @@ export default defineComponent({
   bottom: 16px !important;
   z-index: 8;
 
-  &[left='true'] {
-    left: 16px !important;
-  }
-
-  &[right='true'] {
-    right: 16px !important;
-  }
 }
 
 .page-return-top {
@@ -1480,7 +1473,7 @@ export default defineComponent({
   align-self: flex-start;
   position: sticky;
   top: 64px;
-  max-height: calc(100vh - 64px);
+  max-height: calc(100dvh - 64px);
   overflow-y: auto;
   -ms-overflow-style: none;
 }

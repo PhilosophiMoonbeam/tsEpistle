@@ -961,8 +961,8 @@ export default defineComponent({
       value: cm
     })
     ;(this.$refs.cm as HTMLElement).style.height = this.$vuetify.display.mdAndUp
-      ? 'calc(100vh - 112px - 24px)'
-      : 'calc(100vh - 112px - 16px)'
+      ? 'calc(100dvh - 112px - 24px)'
+      : 'calc(100dvh - 112px - 16px)'
 
     // Render initial preview
 
@@ -993,8 +993,8 @@ export default defineComponent({
 
 <style lang='scss'>
 
-$editor-height: calc(100vh - 112px - 24px);
-$editor-height-mobile: calc(100vh - 112px - 16px);
+$editor-height: calc(100dvh - 112px - 24px);
+$editor-height-mobile: calc(100dvh - 112px - 16px);
 
 .editor-markdown {
   &-main {
@@ -1047,7 +1047,7 @@ $editor-height-mobile: calc(100vh - 112px - 16px);
         overflow:hidden;
       }
     }
-    &-enter, &-leave-to {
+    &-enter-from, &-leave-to {
       max-width: 0;
     }
 

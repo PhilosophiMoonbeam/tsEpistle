@@ -21,7 +21,6 @@
 @include meta.load-css('pages/welcome');
 @include meta.load-css('pages/error');
 
-@include meta.load-css('layout/_rtl');
 
 .editor-status-bar {
   position: fixed !important;

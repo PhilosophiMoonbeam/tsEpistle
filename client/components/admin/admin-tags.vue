@@ -14,7 +14,7 @@
           v-row
             v-col(style='flex: 0 0 350px;')
               v-card.animated.fadeInUp
-                v-toolbar(:color='$vuetify.theme.current.dark ? `grey-darken-3-d5` : `grey-lighten-4`', flat)
+                v-toolbar(:color='$vuetify.theme.current.dark ? `grey-darken-3` : `grey-lighten-4`', flat)
                   v-text-field(
                     v-model='filter'
                     :label='$t(`admin:tags.filter`)'

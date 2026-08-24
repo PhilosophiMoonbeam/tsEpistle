@@ -149,7 +149,7 @@ const decide = (decision: 'approved' | 'denied') => {
 .agent-approval-receipt summary span { display: grid; }
 .agent-approval-receipt summary small { color: rgb(var(--v-theme-on-surface-variant)); font-weight: 400; overflow-wrap: anywhere; }
 .agent-approval-receipt__details { border-top: 1px solid rgb(var(--v-theme-outline-variant)); margin-top: .75rem; padding-top: .75rem; }
-@media (max-width: 600px) {
+@media (max-width: 599.98px) {
   .agent-approval__actions { align-items: stretch; flex-direction: column; }
   .agent-approval__actions :deep(.v-btn) { width: 100%; }
 }

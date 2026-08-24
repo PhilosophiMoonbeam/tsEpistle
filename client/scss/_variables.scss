@@ -1,8 +1,5 @@
 @use "sass:map";
 
-$tablet: 769px !default;
-$desktop: 980px !default;
-$widescreen: 1180px !default;
 
 $grid-breakpoints: (
   'xs': 0,
@@ -12,6 +9,9 @@ $grid-breakpoints: (
   'xl': 1545px,
   'xxl': 2138px
 ) !default;
+$tablet: map.get($grid-breakpoints, 'md') !default;
+$desktop: map.get($grid-breakpoints, 'lg') !default;
+$widescreen: map.get($grid-breakpoints, 'xl') !default;
 
 $display-breakpoints: (
   'print-only': 'only print',

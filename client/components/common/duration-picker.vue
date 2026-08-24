@@ -1,5 +1,5 @@
 <template lang='pug'>
-  v-toolbar.radius-7(flat, :color='$vuetify.theme.current.dark ? "grey-darken-4-l3" : "grey-lighten-3"')
+  v-toolbar.radius-7(flat, :color='$vuetify.theme.current.dark ? "grey-darken-4" : "grey-lighten-3"')
     .text-body-medium.mr-3 {{$t('common:duration.every')}}
     v-text-field(
       variant="solo"

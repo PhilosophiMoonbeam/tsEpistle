@@ -377,12 +377,12 @@ export default defineComponent({
   }
 
   &--ask .inline-agent__card {
-    height: min(calc(100vh - 64px - 4.5rem), 54rem);
+    height: min(calc(100dvh - 64px - 4.5rem), 54rem);
   }
 
   @media #{map-get($display-breakpoints, 'sm-and-down')} {
     &--ask .inline-agent__card {
-      height: calc(100vh - 112px - 3.25rem);
+      height: calc(100dvh - 112px - 3.25rem);
     }
   }
 

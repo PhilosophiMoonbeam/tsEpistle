@@ -100,6 +100,7 @@ export default defineComponent({
   body.page-deleted-pending {
     perspective: 50vw;
     height: 100vh;
+    height: 100dvh;
     overflow: hidden;
 
     .application {

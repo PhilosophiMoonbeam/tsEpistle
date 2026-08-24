@@ -26,7 +26,7 @@
           hide-details
           )
         v-list.mt-3.py-0.radius-7(
-          :class='$vuetify.theme.current.dark ? `bg-grey-darken-3-d5` : `bg-grey-lighten-3`'
+          :class='$vuetify.theme.current.dark ? `bg-grey-darken-3` : `bg-grey-lighten-3`'
           lines="two"
           density="compact"
           )

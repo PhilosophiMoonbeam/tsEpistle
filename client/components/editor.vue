@@ -536,6 +536,7 @@ export default defineComponent({
   .editor {
     background-color: mc('grey', '900') !important;
     min-height: 100vh;
+    min-height: 100dvh;
 
     .v-application__wrap {
       background-color: mc('grey', '900');

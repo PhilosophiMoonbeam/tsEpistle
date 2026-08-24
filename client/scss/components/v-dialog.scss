@@ -1,6 +1,4 @@
 @use "../base/material";
-@use "../base/mixins";
-@use "../global";
 
 .dialog-header {
   background-color: material.mc('blue', '700');
@@ -44,8 +42,3 @@
   }
 }
 
-.v-dialog--fullscreen {
-  @include mixins.until(global.$tablet) {
-    padding-top: 56px;
-  }
-}

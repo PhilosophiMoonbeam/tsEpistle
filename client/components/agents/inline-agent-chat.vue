@@ -331,9 +331,9 @@ defineExpose({ sendPrompt })
 .inline-agent__starter { height: auto; justify-content: flex-start; min-height: 3rem; padding: .75rem 1rem; text-transform: none; white-space: normal; }
 .inline-agent__composer { background: rgb(var(--v-theme-surface)); flex: 0 0 auto; padding: 1rem 1.25rem 1.1rem; }
 .inline-agent__notice { align-items: center; display: flex; gap: .35rem; justify-content: center; text-align: center; }
-@media (max-width: 600px) {
+@media (max-width: 599.98px) {
   .inline-agent { padding: 0; }
-  .inline-agent__card { border-radius: 0 !important; height: calc(100vh - 64px); min-height: 0; }
+  .inline-agent__card { border-radius: 0 !important; height: calc(100dvh - 64px); min-height: 0; }
   .inline-agent__body { padding-inline: .75rem; }
   .inline-agent__composer { padding: .75rem; }
   .inline-agent__approval-jump { bottom: .75rem; left: 1.5rem; right: 1.5rem; }

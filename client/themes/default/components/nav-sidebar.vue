@@ -1,6 +1,6 @@
 <template lang="pug">
   div
-    .pa-3.d-flex(v-if='navMode === `MIXED`', :class='$vuetify.theme.current.dark ? `bg-grey-darken-5` : `bg-blue-darken-3`')
+    .pa-3.d-flex(v-if='navMode === `MIXED`', :class='$vuetify.theme.current.dark ? `bg-grey-darken-4` : `bg-blue-darken-3`')
       v-btn(
         variant="flat"
         :color='$vuetify.theme.current.dark ? `grey-darken-4` : `blue-darken-2`'
@@ -114,7 +114,7 @@ export default defineComponent({
   props: {
     color: {
       type: String,
-      default: 'primary'
+      default: 'bg-primary'
     },
     dark: {
       type: Boolean,

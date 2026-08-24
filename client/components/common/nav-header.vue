@@ -198,7 +198,7 @@
                       v-img(:src='picture.url')
                 span {{$t('common:header.account')}}
             v-list(nav)
-              v-list-item.py-3(:class='$vuetify.theme.current.dark ? `bg-grey-darken-4-l5` : `bg-grey-lighten-5`')
+              v-list-item.py-3(:class='$vuetify.theme.current.dark ? `bg-grey-darken-4` : `bg-grey-lighten-5`')
                 template(v-slot:prepend)
                   v-avatar
                     v-avatar.bg-blue(v-if='picture.kind === `initials`', :size='40')
@@ -609,7 +609,7 @@ export default defineComponent({
   &-enter-active {
     transition-delay: .25s;
   }
-  &-enter, &-leave-to {
+  &-enter-from, &-leave-to {
     opacity: 0;
     transform: scale(.7, .7);
   }

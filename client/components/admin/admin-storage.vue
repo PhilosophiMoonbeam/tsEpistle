@@ -36,7 +36,7 @@
               v-divider(v-if='idx < targets.length - 1')
 
         v-card.mt-3.animated.fadeInUp.wait-p2s
-          v-toolbar(flat, :color='$vuetify.theme.current.dark ? `grey-darken-3-l5` : `grey-darken-3`', density="compact")
+          v-toolbar(flat, color='grey-darken-3', density="compact")
             .text-body-large {{$t('admin:storage.status')}}
             v-spacer
             looping-rhombuses-spinner(
@@ -204,7 +204,7 @@
                 v-container.pt-0(fluid)
                   v-row(class='fill-height')
                     v-col(cols='12', lg='6', xl='4', v-for='act of target.actions', :key='act.handler')
-                      v-card.radius-7(flat, :class='$vuetify.theme.current.dark ? `bg-grey-darken-3-d5` : `bg-grey-lighten-3`', height='100%')
+                      v-card.radius-7(flat, :class='$vuetify.theme.current.dark ? `bg-grey-darken-3` : `bg-grey-lighten-3`', height='100%')
                         v-card-text
                           .text-body-large {{act.label}}
                           .text-body-medium.mt-4 {{act.hint}}

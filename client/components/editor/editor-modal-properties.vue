@@ -50,7 +50,7 @@
               inset
             )
           v-divider
-          v-card-text.pt-5(:class='$vuetify.theme.current.dark ? `bg-grey-darken-3-d3` : `bg-grey-lighten-5`')
+          v-card-text.pt-5(:class='$vuetify.theme.current.dark ? `bg-grey-darken-3` : `bg-grey-lighten-5`')
             .text-label-small.pb-5 {{$t('editor:props.path')}}
             v-container.pa-0(fluid)
               v-row
@@ -75,7 +75,7 @@
                     :rules='[rules.required, rules.path]'
                     )
           v-divider
-          v-card-text.pt-5(:class='$vuetify.theme.current.dark ? `bg-grey-darken-3-d5` : `bg-grey-lighten-4`')
+          v-card-text.pt-5(:class='$vuetify.theme.current.dark ? `bg-grey-darken-3` : `bg-grey-lighten-4`')
             .text-label-small.pb-5 {{$t('editor:props.categorization')}}
             v-combobox(
               :label='$t(`editor:props.tags`)'
@@ -104,7 +104,7 @@
               inset
               )
           v-divider
-          v-card-text.pt-5(:class='$vuetify.theme.current.dark ? `bg-grey-darken-3-d3` : `bg-grey-lighten-5`')
+          v-card-text.pt-5(:class='$vuetify.theme.current.dark ? `bg-grey-darken-3` : `bg-grey-lighten-5`')
             v-container.pa-0(fluid)
               v-row
                 v-col(cols='12', md='6')

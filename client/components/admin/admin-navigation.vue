@@ -75,7 +75,7 @@
               v-card.animated.fadeInUp.wait-p2s
                 v-row.align-stretch(no-gutters)
                   v-col(cols='12', lg='5', xl='4')
-                    v-card(flat, style='height: 100%; border-radius: 4px 0 0 4px;', :class='$vuetify.theme.current.dark ? `bg-grey-darken-4-l5` : `bg-grey-lighten-3`')
+                    v-card(flat, style='height: 100%; border-radius: 4px 0 0 4px;', :class='$vuetify.theme.current.dark ? `bg-grey-darken-4` : `bg-grey-lighten-3`')
                       .bg-teal-lighten-1.pa-2.d-flex(style='margin-bottom: 1px; height:56px;')
                         v-select(
                           :disabled='locales.length < 2'

@@ -433,8 +433,8 @@ export default defineComponent({
 </script>
 
 <style lang='scss'>
-$editor-height: calc(100vh - 64px - 24px);
-$editor-height-mobile: calc(100vh - 56px - 16px);
+$editor-height: calc(100dvh - 64px - 24px);
+$editor-height-mobile: calc(100dvh - 56px - 16px);
 
 .editor-api {
   &-main {

@@ -225,7 +225,7 @@
             v-btn.ml-2.px-4(variant="flat", color='primary', @click='assignGroup', :disabled='newGroup === 0')
               v-icon(start) mdi-clipboard-account-outline
               span {{$t('admin:users.groupAssign')}}
-          v-system-bar(window, :color='$vuetify.theme.current.dark ? `grey-darken-4-l3` : `grey-lighten-3`')
+          v-system-bar(window, :color='$vuetify.theme.current.dark ? `grey-darken-4` : `grey-lighten-3`')
             v-spacer
             .text-body-small {{$t('admin:users.groupAssignNotice')}}
 

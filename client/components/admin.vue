@@ -235,16 +235,6 @@ export default defineComponent({
   background: rgb(var(--v-theme-surface));
 }
 
-.admin > .v-main {
-  padding-top: 64px !important;
-  transition: none !important;
-}
-
-.admin > .admin-sidebar {
-  top: 64px !important;
-  height: calc(100% - 64px) !important;
-  transition-property: box-shadow, transform, visibility, width, left, right !important;
-}
 
 .admin-router {
   &-enter-active, &-leave-active {
@@ -254,7 +244,7 @@ export default defineComponent({
   &-enter-active {
     transition-delay: .25s;
   }
-  &-enter, &-leave-to {
+  &-enter-from, &-leave-to {
     opacity: 0;
   }
 }

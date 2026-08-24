@@ -65,7 +65,7 @@
                   tr.is-clickable(
                     @click.left='currentFileId = props.item.id'
                     @click.right.prevent=''
-                    :class='currentFileId === props.item.id ? ($vuetify.theme.current.dark ? `bg-grey-darken-3-d5` : `bg-teal-lighten-5`) : ``'
+                    :class='currentFileId === props.item.id ? ($vuetify.theme.current.dark ? `bg-grey-darken-3` : `bg-teal-lighten-5`) : ``'
                     )
                     td.text-body-small(v-if='$vuetify.display.smAndUp') {{ props.item.id }}
                     td
@@ -550,37 +550,37 @@ export default defineComponent({
   left: 64px;
   z-index: 10;
   width: calc(100vw - 64px - 17px);
-  height: calc(100vh - 112px - 24px);
+  height: calc(100dvh - 112px - 24px);
   background-color: rgba(darken(mc('grey', '900'), 3%), .9) !important;
   overflow: auto;
 
   @include until($tablet) {
     left: 40px;
     width: calc(100vw - 40px);
-    height: calc(100vh - 112px - 24px);
+    height: calc(100dvh - 112px - 24px);
   }
 
   &.is-editor-ckeditor {
     top: 64px;
     left: 0;
     width: 100%;
-    height: calc(100vh - 64px - 26px);
+    height: calc(100dvh - 64px - 26px);
 
     @include until($tablet) {
       top: 56px;
       left: 0;
       width: 100%;
-      height: calc(100vh - 56px - 24px);
+      height: calc(100dvh - 56px - 24px);
     }
   }
 
   &.is-editor-code {
     top: 64px;
-    height: calc(100vh - 64px - 26px);
+    height: calc(100dvh - 64px - 26px);
 
     @include until($tablet) {
       top: 56px;
-      height: calc(100vh - 56px - 24px);
+      height: calc(100dvh - 56px - 24px);
     }
   }
 
@@ -588,13 +588,13 @@ export default defineComponent({
     top: 64px;
     left: 0;
     width: 100%;
-    height: calc(100vh - 64px);
+    height: calc(100dvh - 64px);
 
     @include until($tablet) {
       top: 56px;
       left: 0;
       width: 100%;
-      height: calc(100vh - 56px);
+      height: calc(100dvh - 56px);
     }
   }
 

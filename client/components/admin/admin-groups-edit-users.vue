@@ -1,6 +1,6 @@
 <template lang="pug">
   v-card(flat)
-    v-card-title.pb-4(:class='$vuetify.theme.current.dark ? `bg-grey-darken-3-d3` : `bg-grey-lighten-5`')
+    v-card-title.pb-4(:class='$vuetify.theme.current.dark ? `bg-grey-darken-3` : `bg-grey-lighten-5`')
       v-text-field(
         variant="outlined"
         flat

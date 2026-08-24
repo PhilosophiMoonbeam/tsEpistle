@@ -24,7 +24,7 @@
             v-icon(:start='$vuetify.display.mdAndUp') mdi-graph
             span(v-if='$vuetify.display.mdAndUp') Visualize
         v-card.mt-3.animated.fadeInUp
-          .admin-filter-bar.pa-2.d-flex.align-center(:class='$vuetify.theme.current.dark ? `bg-grey-darken-3-d5` : `bg-grey-lighten-3`')
+          .admin-filter-bar.pa-2.d-flex.align-center(:class='$vuetify.theme.current.dark ? `bg-grey-darken-3` : `bg-grey-lighten-3`')
             v-text-field(
               variant="solo"
               flat
@@ -220,7 +220,7 @@ export default {
 
 <style lang='scss'>
 .admin-responsive-table {
-  min-height: min(45rem, calc(100vh - 16rem));
+  min-height: min(45rem, calc(100dvh - 16rem));
 }
 
 .admin-pages-path {

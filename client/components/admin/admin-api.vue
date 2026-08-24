@@ -74,7 +74,7 @@
           v-table(v-if='keys && keys.length > 0')
             template(v-slot:default)
               thead
-                tr(:class='$vuetify.theme.current.dark ? `bg-grey-darken-4-d5` : `bg-grey-lighten-5`')
+                tr(:class='$vuetify.theme.current.dark ? `bg-grey-darken-4` : `bg-grey-lighten-5`')
                   th {{$t('admin:api.headerName')}}
                   th {{$t('admin:api.headerKeyEnding')}}
                   th {{$t('admin:api.headerExpiration')}}

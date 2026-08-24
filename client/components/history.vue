@@ -590,7 +590,7 @@ export default {
     opacity: .75;
   }
 
-  @media (max-width: 959.98px) {
+  @media #{map-get($display-breakpoints, 'sm-and-down')} {
     &-toolbar {
       padding-inline: .5rem;
     }

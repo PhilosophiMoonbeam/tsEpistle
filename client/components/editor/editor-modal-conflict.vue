@@ -177,7 +177,7 @@ export default {
     this.latest = resp
 
     const container = this.$refs.cm as HTMLElement
-    container.style.height = 'calc(100vh - 265px)'
+    container.style.height = 'calc(100dvh - 265px)'
     this.cm = new TextEditor({
       parent: container,
       value: wikiStore.editor.content,
@@ -210,6 +210,7 @@ export default {
   z-index: 10;
   width: 100%;
   height: 100vh;
+  height: 100dvh;
   background-color: rgba(0, 0, 0, .9) !important;
   overflow: auto;
 }

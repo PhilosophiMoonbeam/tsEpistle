@@ -206,7 +206,7 @@ watch(open, value => { if (value) void load() })
   border-inline-end: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
 }
 .agent-personal-skills__editor :deep(textarea) { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; line-height: 1.5; }
-@media (max-width: 959px) {
+@media (max-width: 839.98px) {
   .agent-personal-skills__layout { min-height: 0; }
   .agent-personal-skills__list {
     max-height: 14rem;

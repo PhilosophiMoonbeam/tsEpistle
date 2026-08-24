@@ -89,14 +89,14 @@
                     ) {{ $t('auth:actions.register') }}
                   v-spacer
                 v-divider
-                v-card-actions.py-3(:class='$vuetify.theme.current.dark ? `bg-grey-darken-4-l1` : `bg-grey-lighten-4`')
+                v-card-actions.py-3(:class='$vuetify.theme.current.dark ? `bg-grey-darken-4` : `bg-grey-lighten-4`')
                   v-spacer
                   i18next.text-body-small(path='auth:switchToLogin.text', tag='div')
                     a.text-body-small(href='/login', place='link') {{ $t('auth:switchToLogin.link') }}
                   v-spacer
 
     loader(v-model='isLoading', :mode='loaderMode', :icon='loaderIcon', :color='loaderColor', :title='loaderTitle', :subtitle='loaderSubtitle')
-    nav-footer(color='grey-darken-5', dark-color='grey-darken-5')
+    nav-footer(color='grey-darken-4', dark-color='grey-darken-4')
     notify(style='padding-top: 64px;')</template>
 
 <script lang='ts'>
@@ -288,6 +288,7 @@ export default {
       left: 0;
       width: 100vw;
       height: 100vh;
+      height: 100dvh;
     }
 
     > .container {

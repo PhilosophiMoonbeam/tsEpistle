@@ -21,7 +21,7 @@
             v-icon(:start='$vuetify.display.mdAndUp') mdi-plus
             span(v-if='$vuetify.display.mdAndUp') New User
         v-card.mt-3.animated.fadeInUp
-          .admin-filter-bar.pa-2.d-flex.align-center(:class='$vuetify.theme.current.dark ? `bg-grey-darken-3-d5` : `bg-grey-lighten-3`')
+          .admin-filter-bar.pa-2.d-flex.align-center(:class='$vuetify.theme.current.dark ? `bg-grey-darken-3` : `bg-grey-lighten-3`')
             v-text-field(
               variant="solo"
               flat

@@ -636,6 +636,7 @@ export default {
     &-main {
       flex: 1 0 100vw;
       height: 100vh;
+      height: 100dvh;
     }
 
     &-tfa {

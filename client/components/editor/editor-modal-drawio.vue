@@ -144,12 +144,14 @@ export default {
   z-index: 10;
   width: 100%;
   height: 100vh;
+  height: 100dvh;
   background-color: rgba(255,255,255, 1) !important;
   overflow: hidden;
 
   > iframe {
     width: 100%;
     height: 100vh;
+    height: 100dvh;
     border: 0;
     padding: 0;
     background-color: #FFF;

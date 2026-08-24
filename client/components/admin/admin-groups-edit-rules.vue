@@ -8,9 +8,9 @@
         icon='mdi-lock-outline'
         ) This group has access to everything.
     template(v-else)
-      v-card-title(:class='$vuetify.theme.current.dark ? `bg-grey-darken-3-d5` : ``')
+      v-card-title(:class='$vuetify.theme.current.dark ? `bg-grey-darken-3` : ``')
         v-alert.radius-7.text-body-small(
-          :class='$vuetify.theme.current.dark ? `bg-grey-darken-3-d3` : `bg-grey-lighten-4`'
+          :class='$vuetify.theme.current.dark ? `bg-grey-darken-3` : `bg-grey-lighten-4`'
           color='grey'
           variant="outlined"
           icon='mdi-information'
@@ -19,7 +19,7 @@
         v-btn.mx-2(variant="flat", color='primary', @click='addRule')
           v-icon(start) mdi-plus
           | Add Rule
-      v-card-text(:class='$vuetify.theme.current.dark ? `bg-grey-darken-4-l5` : `bg-white`')
+      v-card-text(:class='$vuetify.theme.current.dark ? `bg-grey-darken-4` : `bg-white`')
         .rules
           .text-body-small(v-if='group.pageRules.length === 0')
             em(:class='$vuetify.theme.current.dark ? `text-grey` : `text-blue-grey`') This group has no page rules yet.
@@ -69,7 +69,7 @@
                 .text-body-medium {{item.raw.text}}
             //- Locales
             v-select.mr-1(
-              :bg-color='$vuetify.theme.current.dark ? `grey-darken-3-d5` : `blue-grey-lighten-5`'
+              :bg-color='$vuetify.theme.current.dark ? `grey-darken-3` : `blue-grey-lighten-5`'
               variant="solo"
               :items='locales'
               v-model='rule.locales'
@@ -234,7 +234,7 @@ export default {
   &-enter-active, &-leave-active {
     transition: all .5s ease;
   }
-  &-enter, &-leave-to {
+  &-enter-from, &-leave-to {
     opacity: 0;
   }
 

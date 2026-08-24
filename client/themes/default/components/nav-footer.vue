@@ -1,5 +1,5 @@
 <template lang="pug">
-  v-footer.justify-center(:color='bgColor', inset)
+  v-footer.justify-center(:color='bgColor', app)
     .text-body-small.footer-attribution
       template(v-if='footerOverride')
         span(v-html='footerOverrideRender + ` |&nbsp;`')

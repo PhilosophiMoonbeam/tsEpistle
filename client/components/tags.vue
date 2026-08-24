@@ -15,7 +15,7 @@
                 v-icon(v-if='isSelected(tag.tag)', color='primary') mdi-checkbox-intermediate
                 v-icon(v-else) mdi-checkbox-blank-outline
               v-list-item-title {{tag.title}}
-    v-main(:class='$vuetify.theme.current.dark ? `bg-grey-darken-4-d5` : `bg-grey-lighten-3`')
+    v-main(:class='$vuetify.theme.current.dark ? `bg-grey-darken-4` : `bg-grey-lighten-3`')
       v-toolbar(color='primary', flat, height='58')
         template(v-if='selection.length > 0')
           .text-label-small.mr-3.animated.fadeInLeft {{$t('tags:currentSelection')}}
@@ -39,7 +39,7 @@
         template(v-else)
           v-icon.mr-3.animated.fadeInRight mdi-arrow-left
           .text-label-small.animated.fadeInRight {{$t('tags:selectOneMoreTags')}}
-      v-toolbar(:color='$vuetify.theme.current.dark ? `grey-darken-4-l5` : `grey-lighten-4`', flat, height='58')
+      v-toolbar(:color='$vuetify.theme.current.dark ? `grey-darken-4` : `grey-lighten-4`', flat, height='58')
         v-text-field.tags-search(
           v-model='innerSearch'
           :label='$t(`tags:searchWithinResultsPlaceholder`)'
@@ -139,7 +139,7 @@
                     .text-body-medium.text-grey {{item.description || '---'}}
                     v-divider.my-2
                     .d-flex.flex-row.align-center
-                      v-chip(size="small", label, :color='$vuetify.theme.current.dark ? `grey-darken-3-l5` : `grey-lighten-4`').text-label-small {{item.locale}}
+                      v-chip(size="small", label, :color='$vuetify.theme.current.dark ? `grey-darken-3` : `grey-lighten-4`').text-label-small {{item.locale}}
                       .text-body-small.ml-1 / {{item.path}}
         .text-center.py-2.animated.fadeInDown(v-if='this.pageTotal > 1')
           v-pagination(v-model='pagination.page', :length='pageTotal')

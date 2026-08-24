@@ -652,7 +652,7 @@
         }
       }
 
-      @media (max-width: 600px) {
+      @media (max-width: 599.98px) {
         > li > a > em,
         > li > p > a > em {
           display: block;
@@ -1940,14 +1940,14 @@
     right: .75rem;
   }
 
-  @media (max-width: 600px) {
+  @media (max-width: 599.98px) {
     width: 100vw;
-    height: 100vh;
+    height: 100dvh;
     padding: 3.5rem .75rem 4rem;
     border-radius: 0;
 
     &__image {
-      max-height: calc(100vh - 9rem);
+      max-height: calc(100dvh - 9rem);
     }
 
     &__previous,

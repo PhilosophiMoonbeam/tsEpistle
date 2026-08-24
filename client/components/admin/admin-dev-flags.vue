@@ -12,7 +12,7 @@
             v-icon(start) mdi-check
             span {{$t('common:actions.apply')}}
 
-        v-card.mt-3(:class='$vuetify.theme.current.dark ? `bg-grey-darken-3-d5` : `bg-white text-grey-darken-3`')
+        v-card.mt-3(:class='$vuetify.theme.current.dark ? `bg-grey-darken-3` : `bg-white text-grey-darken-3`')
           v-alert(color='red', :model-value='true', icon='mdi-alert', prominent)
             span Do NOT enable these flags unless you know what you're doing!
             .text-body-small Doing so may result in data loss or broken installation!

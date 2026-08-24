@@ -514,8 +514,8 @@ export default defineComponent({
 </script>
 
 <style lang='scss'>
-$editor-height: calc(100vh - 64px - 24px);
-$editor-height-mobile: calc(100vh - 56px - 16px);
+$editor-height: calc(100dvh - 64px - 24px);
+$editor-height-mobile: calc(100dvh - 56px - 16px);
 
 .editor-tiptap {
   background-color: mc('grey', '200');
@@ -579,7 +579,7 @@ $editor-height-mobile: calc(100vh - 56px - 16px);
     box-shadow: 0 0 5px hsla(0, 0%, 0%, .1);
     margin: 1rem auto 0;
     width: calc(100vw - 256px - 16vw);
-    min-height: calc(100vh - 64px - 24px - 1rem - 40px);
+    min-height: calc(100dvh - 64px - 24px - 1rem - 40px);
     border-radius: 5px;
 
     @at-root .v-theme--dark & {
@@ -595,7 +595,7 @@ $editor-height-mobile: calc(100vh - 56px - 16px);
     @include until($tablet) {
       width: 100%;
       margin: 0;
-      min-height: calc(100vh - 56px - 24px - 76px);
+      min-height: calc(100dvh - 56px - 24px - 76px);
       padding: 1rem;
     }
   }
