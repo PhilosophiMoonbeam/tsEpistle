@@ -634,12 +634,17 @@ export default {
       border-top: 1px solid rgba(255,255,255,.85);
     }
     @media (max-height: 480px) {
+      &-sd > .d-flex {
+        margin-bottom: 0 !important;
+      }
+
       &-subtitle {
         padding-top: 12px;
       }
 
       &-form {
         padding-top: 8px;
+        padding-bottom: 8px;
 
         .text-center {
           margin-top: 8px !important;

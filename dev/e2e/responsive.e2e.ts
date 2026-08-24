@@ -3,6 +3,7 @@ import {
   authenticateAsAdmin,
   expectLocatorWithinViewport,
   expectResponsiveLayout,
+  openAuthenticatedPage,
   openSearch,
   responsiveTest as test
 } from './helpers.ts'
@@ -13,10 +14,8 @@ test.describe('responsive UI quality matrix', () => {
   })
 
   test('keeps public pages, navigation, and fixed actions usable', async ({ page }) => {
-    await authenticateAsAdmin(page)
     for (const path of ['/en/home', '/en/visual-markdown-browser']) {
-      await page.goto(path, { waitUntil: 'networkidle' })
-      await expect(page.locator('.page-header-section').first()).toBeVisible()
+      await openAuthenticatedPage(page, path, '.page-header-section')
       await expectResponsiveLayout(page, path)
     }
 
