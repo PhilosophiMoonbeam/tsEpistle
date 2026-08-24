@@ -26,6 +26,7 @@ const createSchema = async (db: Knex): Promise<void> => {
     table.string('status').notNullable()
     table.string('exposureMode').notNullable()
     table.integer('ownerUserId').nullable()
+    table.boolean('isAgentDiscoverable').notNullable().defaultTo(true)
     table.dateTime('deletedAt').nullable()
     table.string('currentVersionId').nullable()
   })
@@ -137,6 +138,7 @@ describe('skill selection and pinned runtime', () => {
       status: 'enabled',
       exposureMode: 'owner',
       ownerUserId: 7,
+      isAgentDiscoverable: false,
       currentVersionId: personalVersionId
     })
     await db('agentSkillVersions').insert({
@@ -152,12 +154,18 @@ describe('skill selection and pinned runtime', () => {
 
     await expect(runtime.assertVisibleVersions([personalVersionId], { userId: 7, groupIds: [] })).resolves.toEqual([personalVersionId])
     await expect(runtime.assertVisibleVersions([personalVersionId], { userId: 8, groupIds: [] })).rejects.toThrow('unavailable')
-    expect(await runtime.listVisible({ userId: 7, groupIds: [] })).toMatchObject([{ id: personalSkillId, exposureMode: 'owner' }])
+    expect(await runtime.listVisible({ userId: 7, groupIds: [] })).toMatchObject([{ id: personalSkillId, exposureMode: 'owner', isAgentDiscoverable: false }])
     expect(await runtime.listVisible({ userId: 8, groupIds: [] })).toEqual([])
     expect(await runtime.listVisibleForApiKey({
       principal: { apiKeyId: 9, groupIds: [3] },
       transportRequestId: requestId
     })).toMatchObject([{ id: skillId, exposureMode: 'groups' }])
+    await db('agentRuns').insert({ id: runId, sessionId, ownerId: 7, status: 'running' })
+    expect(await runtime.listVisibleForRun({
+      runId,
+      principal: { userId: 7, groupIds: [] },
+      transportRequestId: requestId
+    })).toEqual([])
   })
 
   it('lets an active run discover and read visible skills with provenance', async () => {

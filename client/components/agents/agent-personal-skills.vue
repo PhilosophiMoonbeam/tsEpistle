@@ -22,7 +22,15 @@
                 :subtitle="skill.description"
                 prepend-icon="mdi-file-document-outline"
                 @click="edit(skill)"
-              />
+              >
+                <template #append>
+                  <v-icon
+                    :icon="skill.isAgentDiscoverable ? 'mdi-eye-outline' : 'mdi-eye-off-outline'"
+                    :color="skill.isAgentDiscoverable ? 'primary' : undefined"
+                    :aria-label="skill.isAgentDiscoverable ? 'Available to the agent automatically' : 'Only available by explicit invocation'"
+                  />
+                </template>
+              </v-list-item>
             </v-list>
             <v-alert v-else-if="!loading" type="info" variant="tonal" density="compact">Create a SKILL.md document to give the agent reusable instructions.</v-alert>
           </v-col>
@@ -42,6 +50,16 @@
               maxlength="64"
               autocomplete="off"
               class="mb-3"
+            />
+            <v-switch
+              v-model="isAgentDiscoverable"
+              label="Available to the agent automatically"
+              hint="When off, you can still invoke this skill explicitly with / or the Skills menu."
+              persistent-hint
+              color="primary"
+              inset
+              class="mb-3"
+              :disabled="saving"
             />
             <v-textarea
               v-model="skillMarkdown"
@@ -98,6 +116,7 @@ const skills = ref<PersonalAgentSkill[]>([])
 const editingId = ref<string | null>(null)
 const name = ref('my-skill')
 const skillMarkdown = ref('')
+const isAgentDiscoverable = ref(true)
 const loading = ref(false)
 const saving = ref(false)
 const error = ref('')
@@ -111,12 +130,14 @@ const beginNew = (): void => {
   editingId.value = null
   name.value = 'my-skill'
   skillMarkdown.value = templateFor(name.value)
+  isAgentDiscoverable.value = true
   error.value = ''
 }
 const edit = (skill: PersonalAgentSkill): void => {
   editingId.value = skill.id
   name.value = skill.name
   skillMarkdown.value = skill.skillMarkdown
+  isAgentDiscoverable.value = skill.isAgentDiscoverable
   error.value = ''
 }
 const load = async (selectedId?: string): Promise<void> => {
@@ -141,8 +162,8 @@ const save = async (): Promise<void> => {
   try {
     const current = selectedSkill.value
     const saved = current
-      ? await updatePersonalAgentSkill(fetcher, props.csrfToken, current.id, { expectedVersionId: current.versionId, skillMarkdown: skillMarkdown.value })
-      : await createPersonalAgentSkill(fetcher, props.csrfToken, { name: name.value, skillMarkdown: skillMarkdown.value })
+      ? await updatePersonalAgentSkill(fetcher, props.csrfToken, current.id, { expectedVersionId: current.versionId, skillMarkdown: skillMarkdown.value, isAgentDiscoverable: isAgentDiscoverable.value })
+      : await createPersonalAgentSkill(fetcher, props.csrfToken, { name: name.value, skillMarkdown: skillMarkdown.value, isAgentDiscoverable: isAgentDiscoverable.value })
     editingId.value = saved.id
     await load(saved.id)
     emit('changed')

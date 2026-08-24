@@ -17,6 +17,7 @@ const createSchema = async (db: Knex): Promise<void> => {
     table.string('status').notNullable()
     table.string('exposureMode').notNullable()
     table.string('currentVersionId').nullable()
+    table.boolean('isAgentDiscoverable').notNullable().defaultTo(true)
     table.integer('ownerUserId').nullable()
     table.dateTime('deletedAt').nullable()
     table.integer('createdBy').notNullable()
@@ -59,7 +60,7 @@ describe('personal skill registry', () => {
   })
 
   it('creates immutable revisions and soft-removes the current document', async () => {
-    const created = await registry.create({ ownerId: 7, name: 'release-helper', skillMarkdown: skillDocument('release-helper', 'Prepare releases') })
+    const created = await registry.create({ ownerId: 7, name: 'release-helper', skillMarkdown: skillDocument('release-helper', 'Prepare releases'), isAgentDiscoverable: true })
     expect(created).toMatchObject({ name: 'release-helper', description: 'Prepare releases' })
     expect(await registry.list(7)).toEqual([created])
 
@@ -67,13 +68,15 @@ describe('personal skill registry', () => {
       ownerId: 7,
       skillId: created.id,
       expectedVersionId: created.versionId,
-      skillMarkdown: skillDocument('release-helper', 'Prepare safer releases', '# Instructions\n\nCheck the release notes first.\n')
+      skillMarkdown: skillDocument('release-helper', 'Prepare safer releases', '# Instructions\n\nCheck the release notes first.\n'),
+      isAgentDiscoverable: false
     })
     expect(updated.versionId).not.toBe(created.versionId)
     expect(updated.description).toBe('Prepare safer releases')
+    expect(updated.isAgentDiscoverable).toBe(false)
     expect(await db('agentSkillVersions').where({ skillId: created.id }).orderBy('sourceRevision').pluck('sourceRevision')).toEqual([1, 2])
 
-    await expect(registry.update({ ownerId: 7, skillId: created.id, expectedVersionId: created.versionId, skillMarkdown: updated.skillMarkdown })).rejects.toThrow('changed')
+    await expect(registry.update({ ownerId: 7, skillId: created.id, expectedVersionId: created.versionId, skillMarkdown: updated.skillMarkdown, isAgentDiscoverable: true })).rejects.toThrow('changed')
     await registry.remove({ ownerId: 7, skillId: created.id, expectedVersionId: updated.versionId })
     expect(await registry.list(7)).toEqual([])
     expect(await db('agentSkills').where({ id: created.id }).first('status', 'deletedAt')).toMatchObject({ status: 'disabled', deletedAt: expect.anything() })
@@ -81,18 +84,18 @@ describe('personal skill registry', () => {
   })
 
   it('isolates owners while allowing the same personal name', async () => {
-    const first = await registry.create({ ownerId: 7, name: 'my-guide', skillMarkdown: skillDocument('my-guide', 'Owner seven') })
-    const second = await registry.create({ ownerId: 8, name: 'my-guide', skillMarkdown: skillDocument('my-guide', 'Owner eight') })
+    const first = await registry.create({ ownerId: 7, name: 'my-guide', skillMarkdown: skillDocument('my-guide', 'Owner seven'), isAgentDiscoverable: true })
+    const second = await registry.create({ ownerId: 8, name: 'my-guide', skillMarkdown: skillDocument('my-guide', 'Owner eight'), isAgentDiscoverable: false })
 
     expect((await registry.list(7)).map(skill => skill.id)).toEqual([first.id])
     expect((await registry.list(8)).map(skill => skill.id)).toEqual([second.id])
     await expect(registry.get(8, first.id)).rejects.toThrow('unavailable')
-    await expect(registry.create({ ownerId: 7, name: 'my-guide', skillMarkdown: skillDocument('my-guide', 'Duplicate') })).rejects.toThrow('already exists')
+    await expect(registry.create({ ownerId: 7, name: 'my-guide', skillMarkdown: skillDocument('my-guide', 'Duplicate'), isAgentDiscoverable: true })).rejects.toThrow('already exists')
   })
 
   it('rejects mismatched names, remote resources, and likely secrets', async () => {
-    await expect(registry.create({ ownerId: 7, name: 'expected-name', skillMarkdown: skillDocument('wrong-name', 'Wrong') })).rejects.toThrow('must match')
-    await expect(registry.create({ ownerId: 7, name: 'remote-guide', skillMarkdown: skillDocument('remote-guide', 'Remote', 'Read [this](https://example.com/guide).\n') })).rejects.toThrow('mutable remote URLs')
-    await expect(registry.create({ ownerId: 7, name: 'secret-guide', skillMarkdown: skillDocument('secret-guide', 'Secret', 'Authorization: Bearer abcdefghijklmnopqrstuvwxyz1234567890.\n') })).rejects.toThrow('secret')
+    await expect(registry.create({ ownerId: 7, name: 'expected-name', skillMarkdown: skillDocument('wrong-name', 'Wrong'), isAgentDiscoverable: true })).rejects.toThrow('must match')
+    await expect(registry.create({ ownerId: 7, name: 'remote-guide', skillMarkdown: skillDocument('remote-guide', 'Remote', 'Read [this](https://example.com/guide).\n'), isAgentDiscoverable: true })).rejects.toThrow('mutable remote URLs')
+    await expect(registry.create({ ownerId: 7, name: 'secret-guide', skillMarkdown: skillDocument('secret-guide', 'Secret', 'Authorization: Bearer abcdefghijklmnopqrstuvwxyz1234567890.\n'), isAgentDiscoverable: true })).rejects.toThrow('secret')
   })
 })

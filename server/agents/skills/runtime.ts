@@ -37,6 +37,7 @@ export interface VisibleSkill {
   readonly contentHash: string
   readonly sourceRevision: string
   readonly exposureMode: 'all_agent_users' | 'groups' | 'owner'
+  readonly isAgentDiscoverable: boolean
 }
 
 export interface PinnedSkillPrompt {
@@ -155,6 +156,10 @@ const skillVisibility = (db: Knex, principal: SkillVisibilityPrincipal) => (quer
   query.where('skills.ownerUserId', principal.userId).orWhere(system => applySystemSkillVisibility(system, db, principal.groupIds))
 }
 
+const agentDiscoveryVisibility = (query: Knex.QueryBuilder): void => {
+  query.whereNull('skills.ownerUserId').orWhere('skills.isAgentDiscoverable', true)
+}
+
 const visibleSkillQuery = (db: Knex, principal: SkillVisibilityPrincipal) =>
   db('agentSkills as skills')
     .innerJoin('agentSkillVersions as versions', 'versions.id', 'skills.currentVersionId')
@@ -175,7 +180,7 @@ export class SkillRuntime {
     const principal = normalizePrincipal(principalValue)
     const rows = await visibleSkillQuery(this.knex, principal)
       .select(
-        'skills.id', 'skills.name', 'skills.exposureMode', 'versions.id as versionId',
+        'skills.id', 'skills.name', 'skills.exposureMode', 'skills.isAgentDiscoverable', 'versions.id as versionId',
         'versions.contentHash', 'versions.sourceRevision', 'versions.frontmatter'
       )
       .orderBy('skills.name') as Array<Omit<VisibleSkill, 'description' | 'sourceRevision'> & { frontmatter: string; sourceRevision: string | number }>
@@ -186,7 +191,8 @@ export class SkillRuntime {
       versionId: row.versionId,
       contentHash: row.contentHash,
       sourceRevision: String(row.sourceRevision),
-      exposureMode: row.exposureMode
+      exposureMode: row.exposureMode,
+      isAgentDiscoverable: Boolean(row.isAgentDiscoverable)
     }))
   }
 
@@ -218,8 +224,9 @@ export class SkillRuntime {
         .first() as { sessionId: string; ownerId: number } | undefined
       if (!run || run.ownerId !== principal.userId) throw new SkillValidationError('Agent run is unavailable')
       const rows = await visibleSkillQuery(transaction, principal)
+        .where(agentDiscoveryVisibility)
         .select(
-          'skills.id', 'skills.name', 'skills.exposureMode', 'versions.id as versionId',
+          'skills.id', 'skills.name', 'skills.exposureMode', 'skills.isAgentDiscoverable', 'versions.id as versionId',
           'versions.contentHash', 'versions.sourceRevision', 'versions.frontmatter'
         )
         .orderBy('skills.name') as Array<Omit<VisibleSkill, 'description' | 'sourceRevision'> & { frontmatter: string; sourceRevision: string | number }>
@@ -245,7 +252,8 @@ export class SkillRuntime {
         versionId: row.versionId,
         contentHash: row.contentHash,
         sourceRevision: String(row.sourceRevision),
-        exposureMode: row.exposureMode
+        exposureMode: row.exposureMode,
+        isAgentDiscoverable: Boolean(row.isAgentDiscoverable)
       }))
     })
   }
@@ -259,7 +267,7 @@ export class SkillRuntime {
     return this.knex.transaction(async transaction => {
       const rows = await visibleSkillQuery(transaction, { groupIds: principal.groupIds })
         .select(
-          'skills.id', 'skills.name', 'skills.exposureMode', 'versions.id as versionId',
+          'skills.id', 'skills.name', 'skills.exposureMode', 'skills.isAgentDiscoverable', 'versions.id as versionId',
           'versions.contentHash', 'versions.sourceRevision', 'versions.frontmatter'
         )
         .orderBy('skills.name') as Array<Omit<VisibleSkill, 'description' | 'sourceRevision'> & { frontmatter: string; sourceRevision: string | number }>
@@ -285,7 +293,8 @@ export class SkillRuntime {
         versionId: row.versionId,
         contentHash: row.contentHash,
         sourceRevision: String(row.sourceRevision),
-        exposureMode: row.exposureMode
+        exposureMode: row.exposureMode,
+        isAgentDiscoverable: Boolean(row.isAgentDiscoverable)
       }))
     })
   }

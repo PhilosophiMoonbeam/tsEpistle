@@ -16,6 +16,7 @@ interface PersonalSkillRow {
   readonly id: string
   readonly name: string
   readonly currentVersionId: string
+  readonly isAgentDiscoverable: boolean | number
   readonly contentHash: string
   readonly skillMarkdown: string
   readonly frontmatter: string
@@ -34,6 +35,7 @@ export interface PersonalSkillDocument {
   readonly id: string
   readonly name: string
   readonly description: string
+  readonly isAgentDiscoverable: boolean
   readonly versionId: string
   readonly contentHash: string
   readonly skillMarkdown: string
@@ -58,6 +60,7 @@ const iso = (value: Date | string): string => {
 const documentFromRow = (row: PersonalSkillRow): PersonalSkillDocument => ({
   id: row.id,
   name: row.name,
+  isAgentDiscoverable: Boolean(row.isAgentDiscoverable),
   description: storedDescription(row.frontmatter),
   versionId: row.currentVersionId,
   contentHash: row.contentHash,
@@ -85,10 +88,11 @@ export class PersonalSkillRegistry {
     return rows.map(documentFromRow)
   }
 
-  async create(input: { readonly ownerId: number; readonly name: string; readonly skillMarkdown: string }): Promise<PersonalSkillDocument> {
+  async create(input: { readonly ownerId: number; readonly name: string; readonly skillMarkdown: string; readonly isAgentDiscoverable: boolean }): Promise<PersonalSkillDocument> {
     const ownerId = OwnerIdSchema.parse(input.ownerId)
     const name = PersonalSkillNameSchema.parse(input.name)
     const skillMarkdown = PersonalSkillMarkdownSchema.parse(input.skillMarkdown)
+    const isAgentDiscoverable = z.boolean().parse(input.isAgentDiscoverable)
     const bundle = buildApprovedSkillBundle(Buffer.from(skillMarkdown, 'utf8'), name, [])
     const id = randomUUID()
     const versionId = randomUUID()
@@ -109,6 +113,7 @@ export class PersonalSkillRegistry {
           status: 'enabled',
           exposureMode: 'owner',
           currentVersionId: null,
+          isAgentDiscoverable,
           ownerUserId: ownerId,
           deletedAt: null,
           createdBy: ownerId,
@@ -126,11 +131,12 @@ export class PersonalSkillRegistry {
     return this.get(ownerId, id)
   }
 
-  async update(input: { readonly ownerId: number; readonly skillId: string; readonly expectedVersionId: string; readonly skillMarkdown: string }): Promise<PersonalSkillDocument> {
+  async update(input: { readonly ownerId: number; readonly skillId: string; readonly expectedVersionId: string; readonly skillMarkdown: string; readonly isAgentDiscoverable: boolean }): Promise<PersonalSkillDocument> {
     const ownerId = OwnerIdSchema.parse(input.ownerId)
     const skillId = SkillIdSchema.parse(input.skillId)
     const expectedVersionId = VersionIdSchema.parse(input.expectedVersionId)
     const skillMarkdown = PersonalSkillMarkdownSchema.parse(input.skillMarkdown)
+    const isAgentDiscoverable = z.boolean().parse(input.isAgentDiscoverable)
 
     await this.#knex.transaction(async transaction => {
       const skill = await transaction<OwnedSkillRow>('agentSkills')
@@ -153,7 +159,7 @@ export class PersonalSkillRegistry {
         versionId = randomUUID()
         await this.#insertVersion(transaction, { id: versionId, skillId, ownerId, sourceRevision, now, bundle })
       }
-      await transaction('agentSkills').where({ id: skillId, ownerUserId: ownerId }).update({ currentVersionId: versionId, status: 'enabled', updatedBy: ownerId, updatedAt: now })
+      await transaction('agentSkills').where({ id: skillId, ownerUserId: ownerId }).update({ currentVersionId: versionId, isAgentDiscoverable, status: 'enabled', updatedBy: ownerId, updatedAt: now })
     })
     return this.get(ownerId, skillId)
   }
@@ -189,7 +195,7 @@ export class PersonalSkillRegistry {
       .where({ 'skills.ownerUserId': ownerId, 'skills.exposureMode': 'owner' })
       .whereNull('skills.deletedAt')
       .select(
-        'skills.id', 'skills.name', 'skills.currentVersionId', 'skills.createdAt', 'skills.updatedAt',
+        'skills.id', 'skills.name', 'skills.currentVersionId', 'skills.isAgentDiscoverable', 'skills.createdAt', 'skills.updatedAt',
         'versions.contentHash', 'versions.skillMarkdown', 'versions.frontmatter'
       )
   }

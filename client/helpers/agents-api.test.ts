@@ -46,6 +46,7 @@ describe('agents client boundary', () => {
       id: '00000000-0000-4000-8000-000000000011',
       name: 'qa-helper',
       description: 'QA helper',
+      isAgentDiscoverable: false,
       versionId: '00000000-0000-4000-8000-000000000012',
       contentHash: 'a'.repeat(64),
       skillMarkdown: '---\nname: qa-helper\ndescription: QA helper\n---\nCheck it.\n',
@@ -60,10 +61,16 @@ describe('agents client boundary', () => {
     ]
     const fetcher = vi.fn(async () => responses.shift() ?? Response.json({})) as unknown as typeof fetch
 
-    await expect(createPersonalAgentSkill(fetcher, 'csrf', { name: skill.name, skillMarkdown: skill.skillMarkdown })).resolves.toEqual(skill)
+    await expect(createPersonalAgentSkill(fetcher, 'csrf', { name: skill.name, skillMarkdown: skill.skillMarkdown, isAgentDiscoverable: false })).resolves.toEqual(skill)
     await expect(listPersonalAgentSkills(fetcher, 'csrf')).resolves.toEqual([skill])
-    await expect(updatePersonalAgentSkill(fetcher, 'csrf', skill.id, { expectedVersionId: skill.versionId, skillMarkdown: skill.skillMarkdown })).resolves.toMatchObject({ versionId: '00000000-0000-4000-8000-000000000013' })
+    await expect(updatePersonalAgentSkill(fetcher, 'csrf', skill.id, { expectedVersionId: skill.versionId, skillMarkdown: skill.skillMarkdown, isAgentDiscoverable: true })).resolves.toMatchObject({ versionId: '00000000-0000-4000-8000-000000000013' })
     await expect(removePersonalAgentSkill(fetcher, 'csrf', skill.id, skill.versionId)).resolves.toBeUndefined()
+    expect(fetcher).toHaveBeenNthCalledWith(1, '/_api/agents/personal-skills', expect.objectContaining({
+      body: JSON.stringify({ name: skill.name, skillMarkdown: skill.skillMarkdown, isAgentDiscoverable: false })
+    }))
+    expect(fetcher).toHaveBeenNthCalledWith(3, `/_api/agents/personal-skills/${skill.id}`, expect.objectContaining({
+      body: JSON.stringify({ expectedVersionId: skill.versionId, skillMarkdown: skill.skillMarkdown, isAgentDiscoverable: true })
+    }))
     expect(fetcher).toHaveBeenNthCalledWith(4, `/_api/agents/personal-skills/${skill.id}`, expect.objectContaining({
       method: 'DELETE',
       credentials: 'same-origin',

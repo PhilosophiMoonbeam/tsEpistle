@@ -20,8 +20,8 @@ const LaunchPage = z.object({ pageId: z.number().int().positive().nullable(), lo
 const CreatedThread = Thread.extend({ launchPage: LaunchPage.optional() })
 const SessionSummary = z.object({ id: Uuid, title: z.string(), retention: z.enum(['temporary', 'saved']), executionMode: z.enum(['agent', 'generation-only']), version: z.number().int().positive(), providerProfileId: Uuid.nullable(), createdAt: Iso, updatedAt: Iso, lastActivityAt: Iso, expiresAt: Iso.nullable(), deletedAt: Iso.nullable() })
 const Profile = z.object({ id: Uuid, name: z.string(), transport: z.enum(['openai-responses', 'openresponses', 'openai-chat', 'legacy-completions', 'anthropic-messages']), model: z.string(), destinationHost: z.string(), executionModes: z.array(z.enum(['agent', 'generation-only'])), capabilities: z.object({ streaming: z.boolean(), functions: z.boolean(), parallelFunctions: z.boolean(), structuredOutput: z.enum(['native-json-schema', 'tool-result', 'prompt-only']), usage: z.enum(['stream', 'terminal', 'estimated']), cancellation: z.boolean(), maxContextTokens: z.number(), maxOutputTokens: z.number() }), capabilityRevision: z.string(), policyVersion: z.number().int().positive(), isGlobalDefault: z.boolean() })
-const VisibleSkill = z.object({ id: Uuid, versionId: Uuid, name: z.string(), description: z.string(), contentHash: z.string(), sourceRevision: z.string(), exposureMode: z.enum(['all_agent_users', 'groups', 'owner']) })
-const PersonalSkill = z.object({ id: Uuid, name: z.string(), description: z.string(), versionId: Uuid, contentHash: z.string(), skillMarkdown: z.string(), createdAt: Iso, updatedAt: Iso })
+const VisibleSkill = z.object({ id: Uuid, versionId: Uuid, name: z.string(), description: z.string(), contentHash: z.string(), sourceRevision: z.string(), exposureMode: z.enum(['all_agent_users', 'groups', 'owner']), isAgentDiscoverable: z.boolean() })
+const PersonalSkill = z.object({ id: Uuid, name: z.string(), description: z.string(), isAgentDiscoverable: z.boolean(), versionId: Uuid, contentHash: z.string(), skillMarkdown: z.string(), createdAt: Iso, updatedAt: Iso })
 const McpProposal = z.object({
   id: Uuid,
   actionName: z.enum(AGENT_ACTION_NAMES),
@@ -137,7 +137,7 @@ export const listPersonalAgentSkills = async (fetcher: typeof fetch, csrfToken: 
 export const createPersonalAgentSkill = async (
   fetcher: typeof fetch,
   csrfToken: string,
-  input: { readonly name: string; readonly skillMarkdown: string }
+  input: { readonly name: string; readonly skillMarkdown: string; readonly isAgentDiscoverable: boolean }
 ): Promise<PersonalAgentSkill> =>
   (await requestJson(fetcher, csrfToken, '/_api/agents/personal-skills', z.object({ skill: PersonalSkill }), { method: 'POST', body: JSON.stringify(input) })).skill
 
@@ -145,7 +145,7 @@ export const updatePersonalAgentSkill = async (
   fetcher: typeof fetch,
   csrfToken: string,
   skillId: string,
-  input: { readonly expectedVersionId: string; readonly skillMarkdown: string }
+  input: { readonly expectedVersionId: string; readonly skillMarkdown: string; readonly isAgentDiscoverable: boolean }
 ): Promise<PersonalAgentSkill> =>
   (await requestJson(fetcher, csrfToken, `/_api/agents/personal-skills/${encodeURIComponent(skillId)}`, z.object({ skill: PersonalSkill }), { method: 'PUT', body: JSON.stringify(input) })).skill
 

@@ -126,11 +126,13 @@ const SubmitMessageSchema = z.strictObject({
 })
 const CreatePersonalSkillSchema = z.strictObject({
   name: PersonalSkillNameSchema,
-  skillMarkdown: PersonalSkillMarkdownSchema
+  skillMarkdown: PersonalSkillMarkdownSchema,
+  isAgentDiscoverable: z.boolean()
 })
 const UpdatePersonalSkillSchema = z.strictObject({
   expectedVersionId: z.uuid(),
-  skillMarkdown: PersonalSkillMarkdownSchema
+  skillMarkdown: PersonalSkillMarkdownSchema,
+  isAgentDiscoverable: z.boolean()
 })
 const RemovePersonalSkillSchema = z.strictObject({ expectedVersionId: z.uuid() })
 const UUIDSchema = z.uuid()

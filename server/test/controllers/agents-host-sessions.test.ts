@@ -29,7 +29,7 @@ const createTables = async (db: Knex): Promise<void> => {
   })
   await db.schema.createTable('agentSessionSkills', table => { table.uuid('sessionId'); table.uuid('skillVersionId'); table.integer('ordinal') })
   await db.schema.createTable('agentSkillVersions', table => { table.uuid('id').primary(); table.uuid('skillId'); table.bigInteger('sourceRevision'); table.dateTime('sourceUpdatedAt'); table.integer('sourceHistoryId'); table.text('frontmatter'); table.text('skillMarkdown'); table.binary('resourceBundle'); table.text('resourceManifest'); table.string('contentHash'); table.string('approvalStatus'); table.integer('approvedBy'); table.dateTime('approvedAt'); table.dateTime('createdAt') })
-  await db.schema.createTable('agentSkills', table => { table.uuid('id').primary(); table.string('name'); table.integer('rootPageId'); table.text('rootPath'); table.integer('assetFolderId'); table.string('status'); table.string('exposureMode'); table.uuid('currentVersionId'); table.integer('ownerUserId'); table.dateTime('deletedAt'); table.integer('createdBy'); table.integer('updatedBy'); table.dateTime('createdAt'); table.dateTime('updatedAt') })
+  await db.schema.createTable('agentSkills', table => { table.uuid('id').primary(); table.string('name'); table.integer('rootPageId'); table.text('rootPath'); table.integer('assetFolderId'); table.string('status'); table.string('exposureMode'); table.uuid('currentVersionId'); table.boolean('isAgentDiscoverable').notNullable().defaultTo(true); table.integer('ownerUserId'); table.dateTime('deletedAt'); table.integer('createdBy'); table.integer('updatedBy'); table.dateTime('createdAt'); table.dateTime('updatedAt') })
   await db.schema.createTable('agentSkillGrants', table => { table.uuid('skillId'); table.integer('groupId') })
   await db.schema.createTable('agentRunSkills', table => { table.uuid('runId'); table.uuid('skillVersionId'); table.integer('ordinal') })
   await db.schema.createTable('pages', table => { table.integer('id'); table.string('localeCode'); table.text('path'); table.string('title'); table.string('contentType') })
@@ -202,12 +202,13 @@ describe('ordinary-origin agent session API', () => {
     const createdResponse = await fetch(`${baseUrl}/_api/agents/personal-skills`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ name: 'qa-helper', skillMarkdown: markdown })
+      body: JSON.stringify({ name: 'qa-helper', skillMarkdown: markdown, isAgentDiscoverable: false })
     })
     expect(createdResponse.status).toBe(201)
-    const created = (await createdResponse.json() as { skill: { id: string; versionId: string } }).skill
+    const created = (await createdResponse.json() as { skill: { id: string; versionId: string; isAgentDiscoverable: boolean } }).skill
+    expect(created.isAgentDiscoverable).toBe(false)
     expect(await (await fetch(`${baseUrl}/_api/agents/skills`, { headers: { cookie } })).json()).toMatchObject({
-      skills: [{ id: created.id, versionId: created.versionId, exposureMode: 'owner' }]
+      skills: [{ id: created.id, versionId: created.versionId, exposureMode: 'owner', isAgentDiscoverable: false }]
     })
     ownerId = 8
     expect(await (await fetch(`${baseUrl}/_api/agents/personal-skills`, { headers: { cookie } })).json()).toEqual({ skills: [] })
@@ -236,7 +237,7 @@ describe('ordinary-origin agent session API', () => {
     const updatedResponse = await fetch(`${baseUrl}/_api/agents/personal-skills/${created.id}`, {
       method: 'PUT',
       headers,
-      body: JSON.stringify({ expectedVersionId: created.versionId, skillMarkdown: markdown.replace('acceptance criteria', 'acceptance criteria and evidence') })
+      body: JSON.stringify({ expectedVersionId: created.versionId, skillMarkdown: markdown.replace('acceptance criteria', 'acceptance criteria and evidence'), isAgentDiscoverable: true })
     })
     expect(updatedResponse.status).toBe(200)
     const updated = (await updatedResponse.json() as { skill: { versionId: string } }).skill
