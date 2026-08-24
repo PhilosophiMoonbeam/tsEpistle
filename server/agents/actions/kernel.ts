@@ -49,6 +49,7 @@ export interface ActionHandlerContext {
   readonly signal: AbortSignal
   readonly reauthorize: () => Promise<void>
   readonly fenceSideEffect: () => Promise<void>
+  readonly executeAction: (actionName: AgentActionName, input: unknown) => Promise<unknown>
 }
 
 export interface ActionHandler {
@@ -131,6 +132,11 @@ const requesterFromAuth = (auth: RequestAuthContext): ActionRequester => {
   if (auth.kind === 'user') return { kind: 'user', userId: auth.userId }
   return { kind: 'apiKey', apiKeyId: auth.apiKeyId, groupId: auth.groupId }
 }
+
+const authFromAuthority = (authority: ActionAuthority): RequestAuthContext =>
+  authority.requester.kind === 'user'
+    ? { kind: 'user', userId: authority.requester.userId, ownershipUserId: authority.requester.userId, principal: null }
+    : { kind: 'apiKey', apiKeyId: authority.requester.apiKeyId, groupId: authority.requester.groupId, ownershipUserId: null, principal: null }
 
 const hasAdmissionPermission = (snapshot: ActionAdmissionSnapshot, permission: string): boolean =>
   snapshot.permissions.includes(permission) ||
@@ -280,7 +286,13 @@ export class ActionKernel {
       await request.fenceSideEffect?.()
       if (request.signal.aborted) throw new ActionKernelError('ACTION_CANCELLED', 'Action was cancelled before side-effect dispatch', 409)
     }
-    const output = await handler(input, { authority, actionCallId: z.string().min(1).max(128).parse(request.actionCallId), signal: request.signal, reauthorize, fenceSideEffect })
+    const executeAction = async (actionName: AgentActionName, nestedInput: unknown): Promise<unknown> => {
+      const currentAdmission = await request.refreshAdmission(authority, input)
+      if (currentAdmission.transport !== authority.transport) throw new ActionKernelError('INVALID_AUTHORITY', 'Action transport changed after admission', 400)
+      const nestedAuthority = createActionAuthority(actionName, authority.requestId, authFromAuthority(authority), currentAdmission)
+      return this.execute({ ...request, authority: nestedAuthority, input: nestedInput })
+    }
+    const output = await handler(input, { authority, actionCallId: z.string().min(1).max(128).parse(request.actionCallId), signal: request.signal, reauthorize, fenceSideEffect, executeAction })
     if (request.signal.aborted) throw new ActionKernelError('ACTION_CANCELLED', 'Action was cancelled during execution', 409)
     try {
       return definition.output.parse(output)

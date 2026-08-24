@@ -184,19 +184,19 @@ Skill source pages are a deliberate exception: preserve their YAML frontmatter a
 
 1. Check both the requested path and likely collisions with `pages.search` or `pages.get`.
 2. Supply a concise title and description, canonical Markdown content, `contentType: "markdown"`, the resolved locale/path, publication state, and intentional tags to `pages.prepareCreate`.
-3. A prepare result is only a proposal. Wait for the human decision.
-4. If approved, call `pages.applyProposal` with the exact proposal and approval IDs.
-5. Confirm the applied result. Use `pages.get` when the final source or metadata must be verified.
+3. The prepare action waits for the human decision. A denial leaves the page unchanged.
+4. Approval triggers live reauthorization and automatic application of the exact immutable proposal. The prepare action returns `status: "applied"` only after the mutation commits.
+5. Use `pages.get` when the final source or metadata must be verified.
 
 ## Edit workflow
 
 1. Read the page, then call `pages.readForPatch` with `previousSnapshotToken: null` and only the ranges needed. Use a returned token only for later reads of the same page.
 2. Build `wiki-line-patch-v1` from the exact document tag, snapshot token, line numbers, and line tags. Keep undisclosed lines untouched. Preserve the snapshot's final-newline state unless the requested edit changes it.
 3. Submit the patch with `pages.preparePatch`. If the revision or an anchor changed, reread and rebuild; never guess a token or tag.
-4. Wait for the human decision. If approved, call `pages.applyProposal` with the exact IDs.
-5. Do not say the page changed until `pages.applyProposal` returns `status: "applied"`.
+4. Wait for the human decision. Approval triggers live reauthorization and automatic application of the exact immutable proposal.
+5. Do not say the page changed until the prepare action returns `status: "applied"`.
 
-Move and restore follow the same prepare, human approval, and apply sequence. Never claim that approval alone changed a page.
+Move and restore follow the same prepare, human approval, and automatic application sequence. `pages.applyProposal` remains available for MCP clients and idempotent recovery; Agent chat does not rely on another model-selected tool call after approval.
 ```
 
 This skill intentionally omits deletion. Keep destructive deletion in a separate, narrowly exposed skill and rollout.

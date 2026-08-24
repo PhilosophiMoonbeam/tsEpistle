@@ -49,7 +49,7 @@ const ProposalResult = strict({
   proposalId: Uuid,
   approvalId: Uuid,
   actionName: z.string().max(128),
-  status: z.enum(['pending', 'approved', 'denied', 'expired', 'cancelled']),
+  status: z.enum(['pending', 'approved', 'applied', 'denied', 'expired', 'cancelled']),
   inputHash: ContentHash,
   diffHash: ContentHash.nullable(),
   summary: z.string().max(4_000),
@@ -166,33 +166,33 @@ export const ACTION_CATALOG = {
     input: strict({ ref: z.string().max(128).optional() }), output: strict({ artifactId: Uuid, mimeType: z.literal('image/png'), width: z.number().int().positive().max(16_384), height: z.number().int().positive().max(16_384) }), requiredFlags: browserFlags
   },
   'pages.prepareCreate': {
-    descriptor: descriptor('pages.prepareCreate', 'Prepare page creation', 'Validate and prepare an immutable Markdown page-create proposal without applying it. Author canonical GFM unless an approved skill requires supported extended syntax. In Agent chat this waits for the human decision; if the result is approved, immediately call pages.applyProposal with its IDs.', 'proposal', ['write:pages'], both, proposalAnnotations),
+    descriptor: descriptor('pages.prepareCreate', 'Prepare page creation', 'Validate and prepare an immutable Markdown page-create proposal without applying it before approval. Author canonical GFM unless an approved skill requires supported extended syntax. In Agent chat this waits for the human decision and applies the exact proposal automatically when approved.', 'proposal', ['write:pages'], both, proposalAnnotations),
     input: strict({ path: Path, locale: Locale, title: z.string().min(1).max(255), description: z.string().max(1000), content: z.string().max(1_000_000).describe('Canonical Wiki Markdown source. Prefer the Visual Markdown-safe GFM subset and avoid raw HTML so human editors can round-trip the page.'), contentType: z.literal('markdown'), isPublished: z.boolean().default(true), tags: z.array(z.string().max(255)).max(100).default([]) }),
     output: ProposalResult,
     requiredFlags: [...proposalFlags, 'agents.writes.create.enabled']
   },
   'pages.preparePatch': {
-    descriptor: descriptor('pages.preparePatch', 'Prepare page patch', 'Validate a strict hashline patch against an exact Markdown page snapshot while preserving undisclosed source and human-editor compatibility. In Agent chat this waits for the human decision; if the result is approved, immediately call pages.applyProposal with its IDs.', 'proposal', ['write:pages'], both, proposalAnnotations),
+    descriptor: descriptor('pages.preparePatch', 'Prepare page patch', 'Validate a strict hashline patch against an exact Markdown page snapshot while preserving undisclosed source and human-editor compatibility. In Agent chat this waits for the human decision and applies the exact proposal automatically when approved.', 'proposal', ['write:pages'], both, proposalAnnotations),
     input: strict({ patch: WikiLinePatchV1Schema }), output: ProposalResult,
     requiredFlags: [...proposalFlags, 'agents.writes.patch.enabled']
   },
   'pages.prepareMove': {
-    descriptor: descriptor('pages.prepareMove', 'Prepare page move', 'Prepare an immutable page move proposal against an exact revision. In Agent chat this waits for the human decision; if the result is approved, immediately call pages.applyProposal with its IDs.', 'proposal', ['write:pages'], both, proposalAnnotations),
+    descriptor: descriptor('pages.prepareMove', 'Prepare page move', 'Prepare an immutable page move proposal against an exact revision. In Agent chat this waits for the human decision and applies the exact proposal automatically when approved.', 'proposal', ['write:pages'], both, proposalAnnotations),
     input: strict({ pageId: PositiveId, sourceRevision: z.string().max(64), destinationPath: Path, destinationLocale: Locale }), output: ProposalResult,
     requiredFlags: [...proposalFlags, 'agents.writes.move.enabled']
   },
   'pages.prepareRestore': {
-    descriptor: descriptor('pages.prepareRestore', 'Prepare page restore', 'Prepare an immutable restore proposal from one authorized historical version. In Agent chat this waits for the human decision; if the result is approved, immediately call pages.applyProposal with its IDs.', 'proposal', ['write:pages'], both, proposalAnnotations),
+    descriptor: descriptor('pages.prepareRestore', 'Prepare page restore', 'Prepare an immutable restore proposal from one authorized historical version. In Agent chat this waits for the human decision and applies the exact proposal automatically when approved.', 'proposal', ['write:pages'], both, proposalAnnotations),
     input: strict({ pageId: PositiveId, versionId: PositiveId, sourceRevision: z.string().max(64) }), output: ProposalResult,
     requiredFlags: [...proposalFlags, 'agents.writes.restore.enabled']
   },
   'pages.prepareDelete': {
-    descriptor: descriptor('pages.prepareDelete', 'Prepare page deletion', 'Prepare an immutable destructive page deletion proposal. In Agent chat this waits for the human decision; if the result is approved, immediately call pages.applyProposal with its IDs.', 'destructive-write', ['delete:pages'], both, proposalAnnotations),
+    descriptor: descriptor('pages.prepareDelete', 'Prepare page deletion', 'Prepare an immutable destructive page deletion proposal. In Agent chat this waits for the human decision and applies the exact proposal automatically when approved.', 'destructive-write', ['delete:pages'], both, proposalAnnotations),
     input: strict({ pageId: PositiveId, sourceRevision: z.string().max(64), confirmationPath: Path }), output: ProposalResult,
     requiredFlags: [...proposalFlags, 'agents.writes.delete.enabled']
   },
   'pages.applyProposal': {
-    descriptor: descriptor('pages.applyProposal', 'Apply approved proposal', 'Mandatory next step after a page preparation action returns status approved. Apply that exact proposal after live reauthorization; approval alone never changes a page.', 'reversible-write', [], both, applyAnnotations),
+    descriptor: descriptor('pages.applyProposal', 'Apply approved proposal', 'Apply an approved proposal explicitly after live reauthorization. Agent chat preparation actions perform this step automatically; explicit invocation remains available for MCP and idempotent recovery.', 'reversible-write', [], both, applyAnnotations),
     input: strict({ proposalId: Uuid, approvalId: Uuid }),
     output: strict({ proposalId: Uuid, status: z.literal('applied'), resultHash: ContentHash, page: BasePageSummary.nullable() }),
     requiredFlags: proposalFlags

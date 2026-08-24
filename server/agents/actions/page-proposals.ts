@@ -210,6 +210,13 @@ const prepareAndWait = async (dependencies: PageProposalActionDependencies, cont
     ttlMs: dependencies.approvalTtlMilliseconds ?? 15 * 60_000
   })
   const status = context.authority.transport === 'agent' ? await waitForApproval(dependencies, context, proposal) : proposal.proposal.status
+  if (context.authority.transport === 'agent' && status === 'approved') {
+    await context.executeAction('pages.applyProposal', {
+      proposalId: proposal.proposal.id,
+      approvalId: proposal.approval.id
+    })
+    return proposalResult(proposal, 'applied')
+  }
   return proposalResult(proposal, status)
 }
 

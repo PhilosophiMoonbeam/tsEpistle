@@ -35,6 +35,27 @@ describe('Ax session harness', () => {
     await expect(session.invoke('pages.get', { id: 42 }, new AbortController().signal, 'call-3')).rejects.toMatchObject({ code: 'ACTION_SESSION_CLOSED' })
   })
 
+  it('returns the authoritative host result after an approval-length pause', async () => {
+    const entered = Promise.withResolvers<void>()
+    const approved = Object.freeze({ proposalId: 'proposal-1', status: 'approved' })
+    const gate = Promise.withResolvers<void>()
+    const execute = vi.fn(async () => {
+      entered.resolve()
+      await gate.promise
+      return approved
+    })
+    const harness = new AxSessionHarness({ execute, timeoutMilliseconds: 5_000 })
+    const session = await harness.open([offered('pages.get')])
+    try {
+      const invocation = session.invoke('pages.get', { id: 42 }, new AbortController().signal, 'call-paused')
+      await entered.promise
+      gate.resolve()
+      await expect(invocation).resolves.toBe(approved)
+    } finally {
+      session.close()
+    }
+  })
+
   it('preserves structured action errors across the worker boundary', async () => {
     const execute = vi.fn(async () => {
       throw Object.assign(new Error('sensitive detail'), { code: 'INVALID_SNAPSHOT_TOKEN', status: 409 })

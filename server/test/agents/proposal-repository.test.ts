@@ -401,6 +401,92 @@ describe('agent proposal repository', () => {
     await expect(knex('agentApprovals').select('status')).resolves.toEqual([{ status: 'expired' }])
   })
 
+  it('creates a page automatically after the user approves its proposal', async () => {
+    const runId = '00000000-0000-4000-8000-000000000001'
+    const sessionId = '00000000-0000-4000-8000-000000000020'
+    const leaseToken = '00000000-0000-4000-8000-000000000030'
+    await knex('agentRuns').insert({ id: runId, sessionId, ownerId: 7, status: 'running', attempts: 1, leaseToken, eventSequence: 0, updatedAt: new Date() })
+    let currentPage: Record<string, unknown> | null = null
+    const missingPage = (): Error => Object.assign(new Error('missing'), { name: 'PageNotFoundError' })
+    const operations = {
+      get: vi.fn(async () => {
+        if (!currentPage) throw missingPage()
+        return { ...currentPage }
+      }),
+      getByPath: vi.fn(async () => {
+        if (!currentPage) throw missingPage()
+        return { ...currentPage }
+      }),
+      getVersion: vi.fn(),
+      create: vi.fn(async (value: { input: Record<string, unknown> }) => {
+        currentPage = {
+          id: 43,
+          ...value.input,
+          editor: 'markdown',
+          sourceRevision: '1'
+        }
+      }),
+      update: vi.fn(),
+      move: vi.fn(),
+      authorizeMutation: vi.fn(async () => {}),
+      restore: vi.fn(),
+      remove: vi.fn()
+    }
+    const kernel = new ActionKernel()
+    registerPageProposalActions(kernel, {
+      knex,
+      operations,
+      resolveRequester: async () => ({} as Express.User),
+      snapshotSigningSecret: Buffer.alloc(32, 7)
+    })
+    const admissionSnapshot = {
+      transport: 'agent' as const,
+      executionMode: 'agent' as const,
+      supportsTools: true,
+      permissions: ['use:agents', 'write:pages'],
+      groupIds: [3],
+      featureFlags: flags
+    }
+    const prepareAuthority = createActionAuthority(
+      'pages.prepareCreate',
+      runId,
+      { kind: 'user', userId: 7, ownershipUserId: 7, principal: null },
+      admissionSnapshot
+    )
+    const preparedPromise = kernel.execute({
+      authority: prepareAuthority,
+      actionCallId: 'create-call',
+      input: {
+        path: 'docs/new-page',
+        locale: 'en',
+        title: 'New page',
+        description: 'Created by the agent',
+        content: '# New page\n',
+        contentType: 'markdown',
+        isPublished: true,
+        tags: []
+      },
+      signal: new AbortController().signal,
+      refreshAdmission: async () => admissionSnapshot
+    })
+    let approval: { id: string; proposalId: string } | undefined
+    await vi.waitFor(async () => {
+      approval = await knex('agentApprovals').first('id', 'proposalId')
+      expect(approval).toBeTruthy()
+      await expect(knex('agentRuns').where({ id: runId }).first('status')).resolves.toEqual({ status: 'awaiting_approval' })
+    })
+    if (!approval) throw new Error('approval missing')
+    expect(operations.create).not.toHaveBeenCalled()
+
+    await decideProposal(knex, { proposalId: approval.proposalId, approvalId: approval.id, userId: 7, decision: 'approved', authorize: async () => {} })
+
+    await expect(preparedPromise).resolves.toMatchObject({ proposalId: approval.proposalId, approvalId: approval.id, status: 'applied' })
+    expect(operations.create).toHaveBeenCalledOnce()
+    expect(currentPage).toMatchObject({ path: 'docs/new-page', locale: 'en', sourceRevision: '1' })
+    await expect(knex('agentProposals').where({ id: approval.proposalId }).first('status')).resolves.toEqual({ status: 'applied' })
+    await expect(knex('agentActionExecutions').where({ proposalId: approval.proposalId }).first('status')).resolves.toEqual({ status: 'committed' })
+  })
+
   it('pauses a prepared move for approval and applies only the approved immutable operation', async () => {
     const runId = '00000000-0000-4000-8000-000000000001'
     const sessionId = '00000000-0000-4000-8000-000000000020'
@@ -466,19 +552,11 @@ describe('agent proposal repository', () => {
     if (!approval) throw new Error('approval missing')
     expect(operations.move).not.toHaveBeenCalled()
     await decideProposal(knex, { proposalId: approval.proposalId, approvalId: approval.id, userId: 7, decision: 'approved', authorize: async () => {} })
-    await expect(preparedPromise).resolves.toMatchObject({ proposalId: approval.proposalId, approvalId: approval.id, status: 'approved' })
+    await expect(preparedPromise).resolves.toMatchObject({ proposalId: approval.proposalId, approvalId: approval.id, status: 'applied' })
     await expect(knex('agentRuns').where({ id: runId }).first('status')).resolves.toEqual({ status: 'running' })
-    expect(operations.move).not.toHaveBeenCalled()
-
-    const applyAuthority = createActionAuthority('pages.applyProposal', runId, { kind: 'user', userId: 7, ownershipUserId: 7, principal: null }, admissionSnapshot)
-    await expect(kernel.execute({
-      authority: applyAuthority,
-      actionCallId: 'apply-call',
-      input: { proposalId: approval.proposalId, approvalId: approval.id },
-      signal: new AbortController().signal,
-      refreshAdmission: async () => admissionSnapshot
-    })).resolves.toMatchObject({ proposalId: approval.proposalId, status: 'applied', page: { id: 42, path: 'docs/next', sourceRevision: '9' } })
     expect(operations.move).toHaveBeenCalledOnce()
+    await expect(knex('agentProposals').where({ id: approval.proposalId }).first('status')).resolves.toEqual({ status: 'applied' })
+    await expect(knex('agentActionExecutions').where({ proposalId: approval.proposalId }).first('status')).resolves.toEqual({ status: 'committed' })
     await expect(knex('agentEvents').orderBy('sequence').pluck('type')).resolves.toEqual(['proposal.created', 'approval.requested', 'approval.resolved'])
   })
   it('reconciles a completed delete when missing pages use the application error name', async () => {
@@ -559,21 +637,8 @@ describe('agent proposal repository', () => {
     })
     if (!approval) throw new Error('approval missing')
     await decideProposal(knex, { proposalId: approval.proposalId, approvalId: approval.id, userId: 7, decision: 'approved', authorize: async () => {} })
-    await expect(preparedPromise).resolves.toMatchObject({ status: 'approved' })
-
-    const applyAuthority = createActionAuthority(
-      'pages.applyProposal',
-      runId,
-      { kind: 'user', userId: 7, ownershipUserId: 7, principal: null },
-      admissionSnapshot
-    )
-    await expect(kernel.execute({
-      authority: applyAuthority,
-      actionCallId: 'apply-delete-call',
-      input: { proposalId: approval.proposalId, approvalId: approval.id },
-      signal: new AbortController().signal,
-      refreshAdmission: async () => admissionSnapshot
-    })).resolves.toMatchObject({ proposalId: approval.proposalId, status: 'applied', page: null })
+    await expect(preparedPromise).resolves.toMatchObject({ proposalId: approval.proposalId, status: 'applied' })
+    await expect(knex('agentProposals').where({ id: approval.proposalId }).first('status')).resolves.toEqual({ status: 'applied' })
     expect(operations.remove).toHaveBeenCalledOnce()
     await expect(knex('agentActionExecutions').select('status')).resolves.toEqual([{ status: 'committed' }])
   })
