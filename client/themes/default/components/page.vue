@@ -90,10 +90,9 @@
         v-row
           v-col.page-col-sd(
             v-if='tocPosition !== `off` && $vuetify.display.lgAndUp'
-            :order-xs1='tocPosition !== `right`'
-            :order-xs2='tocPosition === `right`'
-            lg3
-            xl2
+            :class='tocPosition === `right` ? `order-lg-2` : `order-lg-1`'
+            lg='3'
+            xl='2'
             )
             v-card.page-toc-card.mb-5(v-if='tocDecoded.length')
               .text-label-small.pa-5.pb-0(:class='$vuetify.theme.current.dark ? `text-blue-lighten-2` : `text-primary`') {{$t('common:page.toc')}}
@@ -371,11 +370,10 @@
                 v-spacer
 
           v-col.page-col-content(
-            xs12
-            :lg9='tocPosition !== `off`'
-            :xl10='tocPosition !== `off`'
-            :order-xs1='tocPosition === `right`'
-            :order-xs2='tocPosition !== `right`'
+            cols='12'
+            :lg='tocPosition !== `off` ? 9 : 12'
+            :xl='tocPosition !== `off` ? 10 : 12'
+            :class='tocPosition === `right` ? `order-lg-1` : `order-lg-2`'
             )
             v-tooltip(location='start', v-if='hasAnyPagePermissions && editShortcutsObj.editFab')
               template(v-slot:activator='{ props }')
