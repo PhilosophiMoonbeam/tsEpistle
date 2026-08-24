@@ -323,7 +323,7 @@ defineExpose({ sendPrompt })
 .inline-agent__history { max-height: min(28rem, 70vh); min-width: min(24rem, 90vw); overflow-y: auto; }
 .inline-agent__alert { flex: 0 0 auto; }
 .inline-agent__settings { flex: 0 0 auto; max-height: 100%; overflow-y: auto; overscroll-behavior: contain; }
-.inline-agent__settings:has(.v-expansion-panel-title[aria-expanded="true"]) { flex: 1 1 auto; min-height: 3rem; }
+.inline-agent__settings:has(.v-expansion-panel-title[aria-expanded="true"]) { flex: 1 1 auto; min-height: clamp(9rem, 45dvh, 18rem); }
 .inline-agent__body { display: flex; flex: 1 1 auto; flex-direction: column; min-height: 0; overflow: hidden; padding: 1rem 1.25rem 0; position: relative; }
 .inline-agent__transcript { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: .25rem .25rem 1rem; scroll-behavior: smooth; }
 .inline-agent__transcript--approval-jump { padding-bottom: 4.5rem; }
