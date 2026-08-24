@@ -6,8 +6,9 @@
     </v-alert>
     <template v-for="message in thread.messages" :key="message.id">
       <article class="agent-message" :class="`agent-message--${message.role}`">
-        <div class="text-body-small text-medium-emphasis mb-1">
-          {{ message.role === 'user' ? 'You' : 'Wiki Agent' }} · {{ message.status }}
+        <div class="agent-message__meta text-body-small text-medium-emphasis mb-1">
+          <span>{{ message.role === 'user' ? 'You' : 'Wiki Agent' }}</span>
+          <span v-if="message.status !== 'complete'"> · {{ message.status }}</span>
         </div>
         <AgentMarkdown
           :content="message.content || (message.status === 'streaming' ? '…' : '')"
@@ -146,9 +147,11 @@ const liveSummary = computed(() => {
 </script>
 
 <style scoped>
-.agent-thread { min-height: 12rem; }
-.agent-message { border: 1px solid color-mix(in srgb, rgb(var(--v-theme-secondary)) 38%, rgb(var(--v-theme-surface))); border-radius: .75rem; margin-bottom: 1rem; max-width: 54rem; padding: 1rem; background: color-mix(in srgb, rgb(var(--v-theme-secondary)) 18%, rgb(var(--v-theme-surface))); color: rgb(var(--v-theme-on-surface)); }
-.agent-message--user { margin-inline-start: auto; background: rgb(var(--v-theme-primary)); color: rgb(var(--v-theme-on-primary)); }
+.agent-thread { margin: 0 auto; max-width: 48rem; min-height: 12rem; width: 100%; }
+.agent-message { color: rgb(var(--v-theme-on-surface)); margin-bottom: 1.25rem; max-width: 100%; padding: .35rem 0 1rem; }
+.agent-message--assistant { border-bottom: 1px solid color-mix(in srgb, rgb(var(--v-theme-outline)) 16%, transparent); }
+.agent-message--user { background: rgb(var(--v-theme-primary-container)); border-radius: 1rem 1rem .3rem 1rem; color: rgb(var(--v-theme-on-primary-container)); margin-inline-start: auto; max-width: min(38rem, 88%); padding: .75rem 1rem; }
+.agent-message--user .agent-message__meta { color: inherit !important; opacity: .72; }
 .agent-sources { border-top: 1px solid rgb(var(--v-theme-outline-variant)); padding-top: .75rem; }
 .agent-sources__heading { align-items: center; display: flex; gap: .4rem; margin-bottom: .45rem; }
 .agent-sources ol { display: grid; gap: .35rem; list-style: none; margin: 0; padding: 0; }

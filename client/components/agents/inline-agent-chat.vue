@@ -1,12 +1,12 @@
 <template>
   <section class="inline-agent" aria-label="Wiki Agent">
-    <v-card class="inline-agent__card" elevation="5" rounded="xl">
+    <v-card class="inline-agent__card" elevation="0" rounded="xl">
       <v-toolbar class="inline-agent__toolbar" color="transparent" density="comfortable" tag="div">
-        <v-avatar class="ml-3" color="primary" size="38" variant="tonal">
-          <v-icon icon="mdi-auto-fix" />
+        <v-avatar class="ml-4" color="primary" size="34" variant="tonal">
+          <v-icon icon="mdi-auto-fix" size="19" />
         </v-avatar>
         <div class="inline-agent__heading ml-3">
-          <div class="text-body-large font-weight-bold">Wiki Agent</div>
+          <div class="text-title-medium font-weight-medium">Wiki Agent</div>
           <div class="text-body-small text-medium-emphasis text-truncate">{{ sessionTitle }}</div>
         </div>
         <v-spacer />
@@ -50,7 +50,6 @@
         />
       </v-toolbar>
 
-      <v-divider />
       <v-progress-linear v-if="loading" indeterminate color="primary" aria-label="Loading Wiki Agent" />
 
       <AgentMcpApproval v-if="approvalId" :csrf-token="csrfToken" :proposal-id="approvalId" />
@@ -90,12 +89,12 @@
           @scroll.passive="updateApprovalJump"
         >
           <div v-if="thread && !hasConversation" class="inline-agent__welcome">
-            <v-avatar color="primary" size="64" variant="tonal">
-              <v-icon icon="mdi-book-open-page-variant-outline" size="34" />
+            <v-avatar color="primary" size="52" variant="tonal">
+              <v-icon icon="mdi-book-open-page-variant-outline" size="27" />
             </v-avatar>
-            <h2 class="text-headline-medium font-weight-bold mt-4">What would you like to know?</h2>
-            <p class="text-body-large text-medium-emphasis mt-2 mb-5">
-              Ask questions across pages you can access. Answers include Wiki citations, and proposed edits always require review.
+            <h2 class="text-headline-small font-weight-medium mt-4">What would you like to know?</h2>
+            <p class="text-body-medium text-medium-emphasis mt-2 mb-5">
+              Ask from the bar above or choose a place to start. Answers cite the Wiki pages you can access.
             </p>
             <div class="inline-agent__starters" aria-label="Suggested questions">
               <v-btn
@@ -104,7 +103,7 @@
                 class="inline-agent__starter"
                 color="primary"
                 variant="tonal"
-                rounded="lg"
+                rounded="xl"
                 @click="sendPrompt(starter.prompt)"
               >
                 <v-icon start :icon="starter.icon" />
@@ -132,7 +131,6 @@
         >Approval required</v-btn>
       </div>
 
-      <v-divider />
       <footer class="inline-agent__composer">
         <AgentComposer
           :sending="sending"
@@ -314,27 +312,49 @@ defineExpose({ sendPrompt })
 </script>
 
 <style scoped>
-.inline-agent { margin: 0 auto; max-width: 76rem; padding: clamp(.75rem, 2vw, 1.5rem); width: 100%; }
-.inline-agent__card { background: rgb(var(--v-theme-surface)); display: flex; flex-direction: column; height: min(78vh, 54rem); min-height: 32rem; overflow: hidden; text-align: start; }
-.inline-agent__toolbar { flex: 0 0 auto; }
+.inline-agent {
+  margin: 0 auto;
+  max-width: 64rem;
+  width: 100%;
+}
+.inline-agent__card {
+  background: color-mix(in srgb, rgb(var(--v-theme-surface)) 98%, rgb(var(--v-theme-background)));
+  border: 1px solid color-mix(in srgb, rgb(var(--v-theme-outline)) 28%, transparent);
+  box-shadow: 0 1.25rem 4rem rgba(0, 0, 0, .22);
+  display: flex;
+  flex-direction: column;
+  height: min(78vh, 52rem);
+  min-height: 32rem;
+  overflow: hidden;
+  text-align: start;
+}
+.inline-agent__toolbar {
+  border-bottom: 1px solid color-mix(in srgb, rgb(var(--v-theme-outline)) 18%, transparent);
+  flex: 0 0 auto;
+}
 .inline-agent__heading { min-width: 0; }
 .inline-agent__history { max-height: min(28rem, 70vh); min-width: min(24rem, 90vw); overflow-y: auto; }
 .inline-agent__alert { flex: 0 0 auto; }
 .inline-agent__settings { flex: 0 0 auto; max-height: 100%; overflow-y: auto; overscroll-behavior: contain; }
 .inline-agent__settings:has(.v-expansion-panel-title[aria-expanded="true"]) { flex: 1 1 auto; min-height: clamp(9rem, 45dvh, 18rem); }
 .inline-agent__body { display: flex; flex: 1 1 auto; flex-direction: column; min-height: 0; overflow: hidden; padding: 1rem 1.25rem 0; position: relative; }
-.inline-agent__transcript { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: .25rem .25rem 1rem; scroll-behavior: smooth; }
+.inline-agent__transcript { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: .5rem .5rem 1.25rem; scroll-behavior: smooth; }
 .inline-agent__transcript--approval-jump { padding-bottom: 4.5rem; }
 .inline-agent__approval-jump { bottom: 1rem; position: absolute; right: 1.75rem; z-index: 2; }
-.inline-agent__welcome { align-items: center; display: flex; flex-direction: column; margin: auto; max-width: 46rem; padding: clamp(1.5rem, 5vh, 4rem) 1rem; text-align: center; }
-.inline-agent__starters { display: grid; gap: .75rem; grid-template-columns: repeat(auto-fit, minmax(min(14rem, 100%), 1fr)); width: 100%; }
-.inline-agent__starter { height: auto; justify-content: flex-start; min-height: 3rem; padding: .75rem 1rem; text-transform: none; white-space: normal; }
-.inline-agent__composer { background: rgb(var(--v-theme-surface)); flex: 0 0 auto; padding: 1rem 1.25rem 1.1rem; }
+.inline-agent__welcome { align-items: center; display: flex; flex-direction: column; margin: auto; max-width: 40rem; padding: clamp(2rem, 6vh, 5rem) 1rem; text-align: center; }
+.inline-agent__starters { display: grid; gap: .65rem; grid-template-columns: repeat(auto-fit, minmax(min(13rem, 100%), 1fr)); width: 100%; }
+.inline-agent__starter { height: auto; justify-content: flex-start; min-height: 2.75rem; padding: .65rem .9rem; text-transform: none; white-space: normal; }
+.inline-agent__composer {
+  background: color-mix(in srgb, rgb(var(--v-theme-surface)) 98%, rgb(var(--v-theme-primary)) 2%);
+  border-top: 1px solid color-mix(in srgb, rgb(var(--v-theme-outline)) 18%, transparent);
+  flex: 0 0 auto;
+  padding: .9rem 1.25rem 1rem;
+}
 .inline-agent__notice { align-items: center; display: flex; gap: .35rem; justify-content: center; text-align: center; }
 @media (max-width: 599.98px) {
-  .inline-agent { padding: 0; }
-  .inline-agent__card { border-radius: 0 !important; height: calc(100dvh - 64px); min-height: 0; }
+  .inline-agent__card { border: 0; border-radius: 0 !important; box-shadow: none; height: 100%; min-height: 0; }
   .inline-agent__body { padding-inline: .75rem; }
+  .inline-agent__transcript { padding-inline: 0; }
   .inline-agent__composer { padding: .75rem; }
   .inline-agent__approval-jump { bottom: .75rem; left: 1.5rem; right: 1.5rem; }
   .inline-agent__notice { display: none; }

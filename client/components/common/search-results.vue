@@ -316,7 +316,7 @@ export default defineComponent({
   background-color: rgba(0,0,0,.9);
   z-index: 1006;
   text-align: center;
-  animation: searchResultsReveal .24s ease-out;
+  animation: searchResultsReveal .2s ease-out;
 
   @media #{map-get($display-breakpoints, 'sm-and-down')} {
     height: calc(100% - 112px);
@@ -325,19 +325,14 @@ export default defineComponent({
 
   &--ask {
     background:
-      radial-gradient(circle at 50% 0, rgba(63, 81, 181, .32), transparent 42rem),
-      rgba(8, 10, 18, .94);
-    overflow: hidden;
+      radial-gradient(ellipse 44rem 24rem at 50% -8rem, rgba(82, 113, 255, .22), transparent),
+      rgba(8, 10, 17, .9);
     box-sizing: border-box;
-    padding-left: 256px;
-
-    @media #{map-get($display-breakpoints, 'md-and-down')} {
-      padding-left: 0;
-    }
+    overflow: hidden;
 
     @media #{map-get($display-breakpoints, 'sm-and-down')} {
-      height: calc(100% - 64px);
-      top: 64px;
+      height: calc(100% - 56px);
+      top: 56px;
     }
   }
 
@@ -347,11 +342,13 @@ export default defineComponent({
     max-width: 1024px;
 
     &--ask {
+      align-items: center;
+      box-sizing: border-box;
       display: flex;
       flex-direction: column;
       height: 100%;
       margin: 0 auto;
-      max-width: none;
+      padding: 0 clamp(.75rem, 2vw, 1.5rem) clamp(.75rem, 2vw, 1.5rem);
       width: 100%;
     }
   }
@@ -359,10 +356,12 @@ export default defineComponent({
   &-controls {
     align-items: center;
     display: flex;
+    flex: 0 0 auto;
     justify-content: center;
-    min-height: 3.25rem;
-    padding: .4rem clamp(.5rem, 2vw, 1.5rem);
+    min-height: 3.5rem;
+    padding: .4rem 0;
     position: relative;
+    width: min(64rem, 100%);
   }
 
   &-mode {
@@ -386,7 +385,9 @@ export default defineComponent({
   &--ask .inline-agent {
     box-sizing: border-box;
     flex: 1 1 auto;
+    max-width: 64rem;
     min-height: 0;
+    padding: 0;
   }
 
   &--ask .inline-agent__card {
@@ -395,9 +396,8 @@ export default defineComponent({
   }
 
   @media #{map-get($display-breakpoints, 'sm-and-down')} {
-    &--ask .inline-agent {
-      padding: 0;
-    }
+    &-container--ask { padding: 0; }
+    &--ask &-controls { padding-inline: .75rem; }
   }
 
 
@@ -450,13 +450,13 @@ export default defineComponent({
 }
 
 @keyframes searchResultsReveal {
-  0% {
-    background-color: rgba(0,0,0,0);
-    padding-top: 32px;
+  from {
+    opacity: 0;
+    transform: translateY(-.75rem);
   }
-  100% {
-    background-color: rgba(0,0,0,.9);
-    padding-top: 0;
+  to {
+    opacity: 1;
+    transform: translateY(0);
   }
 }
 

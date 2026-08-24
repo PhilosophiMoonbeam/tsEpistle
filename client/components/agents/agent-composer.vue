@@ -46,14 +46,18 @@
       </v-list>
     </v-card>
     <v-textarea
+      class="agent-composer__input"
       ref="messageInput"
       v-model="draft"
-      label="Message Wiki Agent"
-      placeholder="Ask about pages you can access · Type / to invoke a skill"
-      rows="2"
-      max-rows="8"
+      aria-label="Message Wiki Agent"
+      placeholder="Ask a follow-up · Type / for skills"
+      rows="1"
+      max-rows="7"
       auto-grow
-      counter="32000"
+      variant="solo"
+      flat
+      hide-details
+      rounded="xl"
       :disabled="disabled"
       :aria-expanded="skillCommandOpen"
       :aria-controls="skillCommandOpen ? 'agent-skill-command-results' : undefined"
@@ -263,7 +267,20 @@ const submit = (): void => {
 </script>
 
 <style scoped>
-.agent-composer { position: relative; }
+.agent-composer {
+  background: color-mix(in srgb, rgb(var(--v-theme-surface)) 94%, rgb(var(--v-theme-primary)) 6%);
+  border: 1px solid color-mix(in srgb, rgb(var(--v-theme-outline)) 34%, transparent);
+  border-radius: 1rem;
+  padding: .2rem .55rem .5rem;
+  position: relative;
+  transition: border-color .16s ease, box-shadow .16s ease;
+}
+.agent-composer:focus-within {
+  border-color: color-mix(in srgb, rgb(var(--v-theme-primary)) 62%, rgb(var(--v-theme-outline)));
+  box-shadow: 0 0 0 3px color-mix(in srgb, rgb(var(--v-theme-primary)) 13%, transparent);
+}
+.agent-composer__input :deep(.v-field) { background: transparent; box-shadow: none; }
+.agent-composer__input :deep(.v-field__input) { min-height: 2.75rem; padding: .75rem .45rem .45rem; }
 .agent-composer__command-menu {
   bottom: calc(100% + .5rem);
   left: 0;
@@ -272,9 +289,12 @@ const submit = (): void => {
   width: min(38rem, 100%);
   z-index: 10;
 }
-.agent-composer__actions { flex-wrap: wrap; }
+.agent-composer__actions { flex-wrap: wrap; min-height: 2.25rem; }
 .agent-composer__skill-menu :deep(.v-selection-control) { pointer-events: none; }
-@media (max-width: 520px) {
-  .agent-composer__hint { order: 2; text-align: center; width: 100%; }
+@media (max-width: 680px) {
+  .agent-composer__hint { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .agent-composer { transition: none; }
 }
 </style>

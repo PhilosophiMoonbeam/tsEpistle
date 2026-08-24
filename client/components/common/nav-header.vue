@@ -1,6 +1,6 @@
 <template lang='pug'>
-  v-app-bar.nav-header(color='black', flat, :extended='searchIsShown && $vuetify.display.smAndDown')
-    template(v-slot:extension v-if='searchIsShown && $vuetify.display.smAndDown')
+  v-app-bar.nav-header(color='black', flat, :extended='searchIsShown && searchMode !== `ask` && $vuetify.display.smAndDown')
+    template(v-slot:extension v-if='searchIsShown && searchMode !== `ask` && $vuetify.display.smAndDown')
       v-toolbar(color='deep-purple', flat)
         v-text-field(
           ref='searchFieldMobile'
