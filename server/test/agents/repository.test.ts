@@ -463,6 +463,57 @@ describe('durable agent repositories', () => {
     expect(await knex('agentMessages').where({ sessionId: failedSessionId }).count<{ count: number }[]>({ count: '*' }).first()).toMatchObject({ count: 0 })
   })
 
+  it('deduplicates pinned and invoked versions by skill identity with pins taking precedence', async () => {
+    const dedupeSessionId = '00000000-0000-4000-8000-000000000080'
+    const pinnedVersionId = '00000000-0000-4000-8000-000000000081'
+    const newerVersionId = '00000000-0000-4000-8000-000000000082'
+    const otherVersionId = '00000000-0000-4000-8000-000000000083'
+    const firstSkillId = '00000000-0000-4000-8000-000000000084'
+    const secondSkillId = '00000000-0000-4000-8000-000000000085'
+    const now = new Date()
+    await createAgentSession(knex, { id: dedupeSessionId, ownerId: 7, retention: 'saved', providerProfileId: null, executionMode: 'agent' })
+    await knex('agentSkillVersions').insert([
+      { id: pinnedVersionId, skillId: firstSkillId, frontmatter: '{}', contentHash: 'pinned', skillMarkdown: 'Pinned', createdAt: now },
+      { id: newerVersionId, skillId: firstSkillId, frontmatter: '{}', contentHash: 'newer', skillMarkdown: 'Newer', createdAt: now },
+      { id: otherVersionId, skillId: secondSkillId, frontmatter: '{}', contentHash: 'other', skillMarkdown: 'Other', createdAt: now }
+    ])
+    const runtime = new AgentProductRuntime(knex, {
+      async resolve() {
+        return {
+          profileResolutionSha256: 'd'.repeat(64),
+          providerProfileVersionId: '00000000-0000-4000-8000-000000000086',
+          transportKind: 'test',
+          model: 'test',
+          executionMode: 'agent',
+          profilePolicyVersion: 1,
+          defaultGeneration: 1,
+          capabilityRevision: 'v1',
+          pricingRevision: 'v1',
+          promptVersion: 1,
+          skillVersionIds: [pinnedVersionId],
+          quota: { tokens: 100, costMicros: 100 },
+          quotaLimits: { dailyTokens: 1_000, dailyCostMicros: 1_000 },
+          reservationMilliseconds: 60_000
+        }
+      }
+    }, {
+      async execute() {
+        return { inputTokens: 0, outputTokens: 0, costMicros: 0 }
+      }
+    }, { workerId: 'dedupe-test', globalConcurrency: 1, perUserConcurrency: 1 })
+    const admitted = await runtime.submit({
+      ownerId: 7,
+      sessionId: dedupeSessionId,
+      profileResolutionToken: 'token',
+      clientRequestId: '00000000-0000-4000-8000-000000000087',
+      expectedSessionVersion: 1,
+      content: 'Use the available skills.',
+      invokedSkillVersionIds: [newerVersionId, otherVersionId]
+    })
+    expect(await knex('agentRunSkills').where({ runId: admitted.run.id }).orderBy('ordinal').pluck('skillVersionId')).toEqual([pinnedVersionId, otherVersionId])
+    await runtime.shutdown()
+  })
+
   it('claims, fences, heartbeats, cancels, and refuses replay after side effects', async () => {
     const now = new Date('2026-08-17T00:02:00.000Z')
     const claim = await claimAgentRun(knex, { workerId: 'worker-b', globalConcurrency: 4, perUserConcurrency: 1, now })

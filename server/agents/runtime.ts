@@ -141,6 +141,29 @@ const providerState = (value: Uint8Array | null): AgentEngineMessage['providerSt
   }
 }
 
+const uniqueSkillVersionsBySkill = async (
+  knex: Knex,
+  pinnedSkillVersionIds: readonly string[],
+  invokedSkillVersionIds: readonly string[]
+): Promise<readonly string[]> => {
+  const orderedVersionIds = [...new Set([...pinnedSkillVersionIds, ...invokedSkillVersionIds])]
+  if (orderedVersionIds.length === 0) return []
+  const rows = await knex('agentSkillVersions')
+    .whereIn('id', orderedVersionIds)
+    .select('id', 'skillId') as Array<{ id: string, skillId: string }>
+  const skillIdByVersionId = new Map(rows.map(row => [row.id, row.skillId]))
+  if (skillIdByVersionId.size !== orderedVersionIds.length) {
+    throw new AgentRepositoryError('SKILL_SELECTION_CHANGED', 'A selected skill version is no longer available', 409)
+  }
+  const selectedSkillIds = new Set<string>()
+  return orderedVersionIds.filter(versionId => {
+    const skillId = skillIdByVersionId.get(versionId)!
+    if (selectedSkillIds.has(skillId)) return false
+    selectedSkillIds.add(skillId)
+    return true
+  })
+}
+
 export class AgentProductRuntime {
   readonly #knex: Knex
   readonly #resolver: AgentAdmissionResolver
@@ -157,7 +180,7 @@ export class AgentProductRuntime {
   async submit (input: SubmitAgentMessageInput): Promise<{ readonly run: AgentRunRecord, readonly replayed: boolean }> {
     const resolved = await this.#resolver.resolve({ ownerId: input.ownerId, sessionId: input.sessionId, profileResolutionToken: input.profileResolutionToken })
     if (!Number.isSafeInteger(resolved.reservationMilliseconds) || resolved.reservationMilliseconds < 1) throw new AgentRepositoryError('INVALID_PROFILE_RESOLUTION', 'Quota reservation duration is invalid', 500)
-    const skillVersionIds = [...new Set([...(input.invokedSkillVersionIds ?? []), ...resolved.skillVersionIds])]
+    const skillVersionIds = await uniqueSkillVersionsBySkill(this.#knex, resolved.skillVersionIds, input.invokedSkillVersionIds ?? [])
     if (skillVersionIds.length > 8) throw new AgentRepositoryError('TOO_MANY_SKILLS', 'A run can use at most 8 skills', 400)
     return admitAgentRun(this.#knex, {
       ownerId: input.ownerId,

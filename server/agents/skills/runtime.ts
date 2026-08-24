@@ -225,6 +225,13 @@ export class SkillRuntime {
       if (!run || run.ownerId !== principal.userId) throw new SkillValidationError('Agent run is unavailable')
       const rows = await visibleSkillQuery(transaction, principal)
         .where(agentDiscoveryVisibility)
+        .whereNotExists(function excludeLoadedSkills() {
+          this.select(transaction.raw('1'))
+            .from('agentRunSkills as loadedRunSkills')
+            .innerJoin('agentSkillVersions as loadedVersions', 'loadedVersions.id', 'loadedRunSkills.skillVersionId')
+            .where('loadedRunSkills.runId', runId)
+            .whereRaw('loadedVersions."skillId" = skills.id')
+        })
         .select(
           'skills.id', 'skills.name', 'skills.exposureMode', 'skills.isAgentDiscoverable', 'versions.id as versionId',
           'versions.contentHash', 'versions.sourceRevision', 'versions.frontmatter'
@@ -334,6 +341,14 @@ export class SkillRuntime {
         .where(skillVisibility(transaction, principal))
         .first() as (SkillVersionRow & { skillId: string }) | undefined
       if (!row) throw new SkillValidationError('Approved skill resource is unavailable')
+      if (path === 'SKILL.md') {
+        const loaded = await transaction('agentRunSkills as loadedRunSkills')
+          .innerJoin('agentSkillVersions as loadedVersions', 'loadedVersions.id', 'loadedRunSkills.skillVersionId')
+          .where('loadedRunSkills.runId', runId)
+          .where('loadedVersions.skillId', row.skillId)
+          .first('loadedRunSkills.skillVersionId')
+        if (loaded) throw new SkillValidationError('Skill instructions are already loaded for this run')
+      }
       const result = skillResourceResult(row, path, 'Approved skill resource is unavailable')
       await transaction('agentSkillUses').insert({
         id: randomUUID(),

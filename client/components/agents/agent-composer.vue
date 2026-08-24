@@ -154,7 +154,7 @@ const selectedSkillIds = ref<string[]>([])
 const messageInput = ref<{ focus: () => void } | null>(null)
 const commandDismissed = ref(false)
 const activeCommandIndex = ref(0)
-const pinned = computed(() => new Set(props.pinnedSkills.map(skill => skill.versionId)))
+const pinnedSkillIds = computed(() => new Set(props.pinnedSkills.map(skill => skill.skillId)))
 const selectedSkills = computed(() => selectedSkillIds.value.flatMap(id => {
   const skill = props.skills.find(candidate => candidate.versionId === id)
   return skill ? [skill] : []
@@ -162,15 +162,21 @@ const selectedSkills = computed(() => selectedSkillIds.value.flatMap(id => {
 const skillMenuItems = computed(() => [
   ...props.skills,
   ...props.pinnedSkills
-    .filter(skill => !props.skills.some(candidate => candidate.versionId === skill.versionId))
+    .filter(skill => !props.skills.some(candidate => candidate.id === skill.skillId))
     .map(skill => ({ ...skill, exposureMode: undefined }))
 ])
-const isPinned = (versionId: string): boolean => pinned.value.has(versionId)
+const skillIdForVersion = (versionId: string): string | undefined =>
+  props.skills.find(skill => skill.versionId === versionId)?.id ?? props.pinnedSkills.find(skill => skill.versionId === versionId)?.skillId
+const isPinned = (versionId: string): boolean => {
+  const skillId = skillIdForVersion(versionId)
+  return skillId !== undefined && pinnedSkillIds.value.has(skillId)
+}
 const isSelected = (versionId: string): boolean => selectedSkillIds.value.includes(versionId)
 const togglePin = (versionId: string): void => {
   if (props.disabled) return
   const versionIds = props.pinnedSkills.map(skill => skill.versionId)
-  const index = versionIds.indexOf(versionId)
+  const skillId = skillIdForVersion(versionId)
+  const index = props.pinnedSkills.findIndex(skill => skill.skillId === skillId)
   if (index >= 0) versionIds.splice(index, 1)
   else {
     if (props.invocationLimit === 0) return

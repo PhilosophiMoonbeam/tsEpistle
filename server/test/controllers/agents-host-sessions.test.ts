@@ -121,7 +121,7 @@ describe('ordinary-origin agent session API', () => {
 
 
   it('requires same-origin metadata and CSRF for session mutations', async () => {
-    const body = JSON.stringify({ retention: 'saved', executionMode: 'agent', providerProfileId: null })
+    const body = JSON.stringify({ retention: 'saved', providerProfileId: null })
     const denied = await fetch(`${baseUrl}/_api/agents/sessions`, { method: 'POST', headers: { cookie, 'content-type': 'application/json', origin: 'https://wiki.example.test', 'sec-fetch-site': 'same-origin' }, body })
     expect(denied.status).toBe(403)
     const accepted = await fetch(`${baseUrl}/_api/agents/sessions`, { method: 'POST', headers: { cookie, 'content-type': 'application/json', origin: 'https://wiki.example.test', 'sec-fetch-site': 'same-origin', 'x-wiki-csrf': csrf }, body })
@@ -153,7 +153,7 @@ describe('ordinary-origin agent session API', () => {
   })
   it('submits, executes, reconnects, and replays a deterministic engine run through REST and SSE', async () => {
     const headers = { cookie, 'content-type': 'application/json', origin: 'https://wiki.example.test', 'sec-fetch-site': 'same-origin', 'x-wiki-csrf': csrf }
-    const created = await fetch(`${baseUrl}/_api/agents/sessions`, { method: 'POST', headers, body: JSON.stringify({ retention: 'saved', executionMode: 'agent', providerProfileId: null }) })
+    const created = await fetch(`${baseUrl}/_api/agents/sessions`, { method: 'POST', headers, body: JSON.stringify({ retention: 'saved', providerProfileId: null }) })
     const state = await created.json() as { session: { id: string, version: number, profileResolutionToken: string } }
     const request = {
       clientRequestId: '00000000-0000-4000-8000-000000000071',
@@ -216,7 +216,7 @@ describe('ordinary-origin agent session API', () => {
     expect(await (await fetch(`${baseUrl}/_api/agents/skills`, { headers: { cookie } })).json()).toEqual({ skills: [] })
     ownerId = 7
 
-    const sessionResponse = await fetch(`${baseUrl}/_api/agents/sessions`, { method: 'POST', headers, body: JSON.stringify({ retention: 'saved', executionMode: 'agent', providerProfileId: null }) })
+    const sessionResponse = await fetch(`${baseUrl}/_api/agents/sessions`, { method: 'POST', headers, body: JSON.stringify({ retention: 'saved', providerProfileId: null }) })
     const state = await sessionResponse.json() as { session: { id: string; version: number; profileResolutionToken: string } }
     const admittedResponse = await fetch(`${baseUrl}/_api/agents/sessions/${state.session.id}/messages`, {
       method: 'POST',
@@ -358,7 +358,7 @@ describe('ordinary-origin agent API routing', () => {
   })
 
   it('uses ordinary user auth and session CSRF for same-origin mutations', async () => {
-    const body = JSON.stringify({ retention: 'saved', executionMode: 'agent', providerProfileId: null })
+    const body = JSON.stringify({ retention: 'saved', providerProfileId: null })
     const headers = {
       cookie,
       'content-type': 'application/json',

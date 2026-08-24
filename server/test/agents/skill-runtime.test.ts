@@ -199,6 +199,51 @@ describe('skill selection and pinned runtime', () => {
     })).rejects.toThrow('run is unavailable')
   })
 
+  it('omits loaded skill identities from discovery and blocks redundant instruction reads', async () => {
+    const priorVersionId = '00000000-0000-4000-8000-000000000008'
+    await db('agentSkillVersions').insert({
+      id: priorVersionId,
+      skillId,
+      approvalStatus: 'approved',
+      contentHash: 'prior-content',
+      sourceRevision: 6,
+      skillMarkdown: entry,
+      frontmatter: JSON.stringify({
+        name: 'release-notes',
+        description: 'Prior release notes',
+        license: null,
+        compatibility: null,
+        metadata: {},
+        'allowed-tools': ['pages.get']
+      }),
+      resourceBundle: encodeSkillResourceBundle(bundle.resources)
+    })
+    await db('agentRuns').insert({ id: runId, sessionId, ownerId: 7, status: 'running' })
+    await db('agentRunSkills').insert({ runId, skillVersionId: priorVersionId, ordinal: 0 })
+
+    await expect(runtime.listVisibleForRun({
+      runId,
+      principal: { userId: 7, groupIds: [3] },
+      transportRequestId: requestId
+    })).resolves.toEqual([])
+    await expect(runtime.readVisibleResourceForRun({
+      runId,
+      skillName: 'release-notes',
+      versionId,
+      path: 'SKILL.md',
+      principal: { userId: 7, groupIds: [3] },
+      transportRequestId: requestId
+    })).rejects.toThrow('already loaded')
+    await expect(runtime.readVisibleResourceForRun({
+      runId,
+      skillName: 'release-notes',
+      versionId,
+      path: 'references/GUIDE.md',
+      principal: { userId: 7, groupIds: [3] },
+      transportRequestId: requestId
+    })).resolves.toMatchObject({ contentHash: expect.any(String) })
+  })
+
   it('pins an ordered immutable version and rejects stale session mutation', async () => {
     const nextVersion = await runtime.setSessionSkills({ sessionId,
     expectedVersion: 1,

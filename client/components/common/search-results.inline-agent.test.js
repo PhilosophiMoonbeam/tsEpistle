@@ -43,6 +43,8 @@ describe('inline Ask mode contract', () => {
     expect(inline).toMatch(/@pin-skills="agents\.setSkills"/)
     expect(composer).toMatch(/@click\.stop="togglePin\(skill\.versionId\)"/)
     expect(composer).toMatch(/pin to this session/)
+    expect(composer).toMatch(/candidate\.id === skill\.skillId/)
+    expect(composer).toMatch(/pinnedSkillIds\.value\.has\(skillId\)/)
   })
 
   test('supports direct mode switching and submission from the Wiki search field', () => {
