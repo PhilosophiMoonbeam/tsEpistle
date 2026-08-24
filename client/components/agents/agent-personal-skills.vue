@@ -26,7 +26,6 @@
             </v-list>
             <v-alert v-else-if="!loading" type="info" variant="tonal" density="compact">Create a SKILL.md document to give the agent reusable instructions.</v-alert>
           </v-col>
-          <v-divider :vertical="mdAndUp" />
           <v-col cols="12" md="8" class="pa-4">
             <v-alert v-if="error" type="error" variant="tonal" density="compact" closable class="mb-4" @click:close="error = ''">{{ error }}</v-alert>
             <div class="d-flex align-center ga-2 mb-3">
@@ -94,7 +93,7 @@ import {
 const props = defineProps<{ csrfToken: string }>()
 const emit = defineEmits<{ changed: [] }>()
 const open = defineModel<boolean>({ required: true })
-const { smAndDown, mdAndUp } = useDisplay()
+const { smAndDown } = useDisplay()
 const skills = ref<PersonalAgentSkill[]>([])
 const editingId = ref<string | null>(null)
 const name = ref('my-skill')
@@ -181,10 +180,18 @@ watch(open, value => { if (value) void load() })
 
 <style scoped>
 .agent-personal-skills__layout { min-height: min(38rem, 75dvh); }
-.agent-personal-skills__list { background: rgb(var(--v-theme-surface-variant)); }
+.agent-personal-skills__list {
+  background: color-mix(in srgb, rgb(var(--v-theme-surface)) 94%, rgb(var(--v-theme-primary)) 6%);
+  border-inline-end: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+}
 .agent-personal-skills__editor :deep(textarea) { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; line-height: 1.5; }
 @media (max-width: 959px) {
   .agent-personal-skills__layout { min-height: 0; }
-  .agent-personal-skills__list { max-height: 14rem; overflow-y: auto; }
+  .agent-personal-skills__list {
+    max-height: 14rem;
+    overflow-y: auto;
+    border-inline-end: 0;
+    border-bottom: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+  }
 }
 </style>
