@@ -19,7 +19,7 @@
                   v-card
                     .dialog-header.is-short.text-body-large {{$t('editor:assets.newFolder')}}
                     v-card-text.pt-5
-                      v-text-field.md2(
+                      v-text-field(
                         variant="outlined"
                         prepend-icon='mdi-folder-outline'
                         v-model='newFolderName'
@@ -71,7 +71,7 @@
                     td
                       .text-body-medium: strong(:class='currentFileId === props.item.id ? `text-teal` : ``') {{ props.item.filename }}
                       .text-body-small.text-grey {{ props.item.description }}
-                    td.text-xs-center(v-if='$vuetify.display.lgAndUp')
+                    td.text-center(v-if='$vuetify.display.lgAndUp')
                       v-chip.ma-0(size="x-small", :color='$vuetify.theme.current.dark ? `grey-darken-4` : `grey-lighten-4`')
                         .text-label-small {{props.item.ext.toUpperCase().substring(1)}}
                     td.text-body-small(v-if='$vuetify.display.mdAndUp') {{ prettyBytes(props.item.fileSize) }}
@@ -83,31 +83,36 @@
                             v-icon(color="grey-darken-2") mdi-dots-horizontal
                         v-list(nav, style='border-top: 5px solid #444;')
                           //- v-list-item(@click='', disabled)
-                          //-   v-list-item-avatar(size='24')
-                          //-     v-icon(color='teal') mdi-text-short
-                          //-   v-list-item-content {{$t('common:actions.properties')}}
+                          //-   template(v-slot:prepend)
+                          //-     v-avatar(size='24')
+                          //-       v-icon(color='teal') mdi-text-short
+                          //-   v-list-item-title {{$t('common:actions.properties')}}
                           //- template(v-if='props.item.kind === `IMAGE`')
                           //-   v-list-item(@click='previewDialog = true', disabled)
-                          //-     v-list-item-avatar(size='24')
-                          //-       v-icon(color='green') mdi-image-search-outline
-                          //-     v-list-item-content {{$t('common:actions.preview')}}
+                          //-     template(v-slot:prepend)
+                          //-       v-avatar(size='24')
+                          //-         v-icon(color='green') mdi-image-search-outline
+                          //-     v-list-item-title {{$t('common:actions.preview')}}
                           //-   v-list-item(@click='', disabled)
-                          //-     v-list-item-avatar(size='24')
-                          //-       v-icon(color='indigo') mdi-crop-rotate
-                          //-     v-list-item-content {{$t('common:actions.edit')}}
+                          //-     template(v-slot:prepend)
+                          //-       v-avatar(size='24')
+                          //-         v-icon(color='indigo') mdi-crop-rotate
+                          //-     v-list-item-title {{$t('common:actions.edit')}}
                           //-   v-list-item(@click='', disabled)
-                          //-     v-list-item-avatar(size='24')
-                          //-       v-icon(color='purple') mdi-flash-circle
-                          //-     v-list-item-content {{$t('common:actions.optimize')}}
+                          //-     template(v-slot:prepend)
+                          //-       v-avatar(size='24')
+                          //-         v-icon(color='purple') mdi-flash-circle
+                          //-     v-list-item-title {{$t('common:actions.optimize')}}
                           v-list-item(@click='openRenameDialog')
                             template(v-slot:prepend)
                               v-avatar(size='24')
                                 v-icon(color='orange') mdi-keyboard-outline
                             v-list-item-title {{$t('common:actions.rename')}}
                           //- v-list-item(@click='', disabled)
-                          //-   v-list-item-avatar(size='24')
-                          //-     v-icon(color='blue') mdi-file-move
-                          //-   v-list-item-content {{$t('common:actions.move')}}
+                          //-   template(v-slot:prepend)
+                          //-     v-avatar(size='24')
+                          //-       v-icon(color='blue') mdi-file-move
+                          //-   v-list-item-title {{$t('common:actions.move')}}
                           v-list-item(@click='deleteDialog = true')
                             template(v-slot:prepend)
                               v-avatar(size='24')
@@ -115,7 +120,7 @@
                             v-list-item-title {{$t('common:actions.delete')}}
                 template(v-slot:no-data)
                   v-alert.mt-3.radius-7(icon='mdi-folder-open-outline', :model-value='true', variant="outlined", color='teal') {{$t('editor:assets.folderEmpty')}}
-              .text-xs-center.py-2(v-if='this.pageTotal > 1')
+              .text-center.py-2(v-if='this.pageTotal > 1')
                 v-pagination(v-model='pagination', :length='pageTotal', color='teal')
               .d-flex.mt-3
                 v-toolbar.radius-7(flat, :color='$vuetify.theme.current.dark ? `grey-darken-2` : `grey-lighten-4`', density="compact", height='44')

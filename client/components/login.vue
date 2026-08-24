@@ -7,7 +7,7 @@
             v-avatar(rounded='0', size='34')
               img(:src='logoUrl', :alt='siteTitle')
           .login-title
-            .text-h6.text-grey-darken-4 {{ siteTitle }}
+            .text-headline-small.text-grey-darken-4 {{ siteTitle }}
         v-alert.mb-0(
           v-model='errorShown'
           color="red-darken-2"
@@ -21,7 +21,7 @@
         //-------------------------------------------------
         template(v-if='screen === `login` && filteredStrategies.length > 1')
           .login-subtitle
-            .text-subtitle-1 {{$t('auth:selectAuthProvider')}}
+            .text-body-large {{$t('auth:selectAuthProvider')}}
           .login-list
             v-list.elevation-1.radius-7(nav)
               v-list-item(
@@ -41,7 +41,7 @@
         //-------------------------------------------------
         template(v-if='screen === `login` && selectedStrategy.strategy.useForm')
           .login-subtitle
-            .text-subtitle-1 {{$t('auth:enterCredentials')}}
+            .text-body-large {{$t('auth:enterCredentials')}}
           form.login-form(@submit.prevent='login')
             v-text-field(
               variant="solo"
@@ -98,7 +98,7 @@
         //-------------------------------------------------
         template(v-if='screen === `forgot`')
           .login-subtitle
-            .text-subtitle-1 {{$t('auth:forgotPasswordTitle')}}
+            .text-body-large {{$t('auth:forgotPasswordTitle')}}
           .login-info {{ $t('auth:forgotPasswordSubtitle') }}
           form.login-form(@submit.prevent='forgotPasswordSubmit')
             v-text-field(
@@ -134,7 +134,7 @@
         //-------------------------------------------------
         template(v-if='screen === `changePwd`')
           .login-subtitle
-            .text-subtitle-1 {{ $t('auth:changePwd.subtitle') }}
+            .text-body-large {{ $t('auth:changePwd.subtitle') }}
           form.login-form(@submit.prevent='changePassword')
             v-text-field.mt-2(
               type='password'

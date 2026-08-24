@@ -58,7 +58,7 @@ export default defineComponent({
     .atom-spinner.is-inline {
       display: inline-block;
     }
-    .caption {
+    .text-body-small {
       color: rgba(255,255,255,.7);
     }
 

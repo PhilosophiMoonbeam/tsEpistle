@@ -20,7 +20,7 @@
         template(v-slot:label)
           div
             strong.text-deep-orange-darken-2 {{choice.label}}
-            .text-caption {{choice.hint}}
+            .text-body-small {{choice.hint}}
       v-text-field.mt-7(
         variant="outlined"
         label='Target Folder Path'

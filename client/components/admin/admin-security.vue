@@ -63,7 +63,7 @@
                   //- v-switch(
                   //-   inset
                   //-   label='Subresource Integrity (SRI)'
-                  //-   color='red darken-2'
+                  //-   color='red-darken-2'
                   //-   v-model='config.securitySRI'
                   //-   persistent-hint
                   //-   hint='This ensure that resources such as CSS and JS files are not altered during delivery.'
@@ -98,7 +98,7 @@
                   //- v-switch(
                   //-   inset
                   //-   label='Enforce CSP'
-                  //-   color='red darken-2'
+                  //-   color='red-darken-2'
                   //-   v-model='config.securityCSP'
                   //-   persistent-hint
                   //-   hint='Restricts scripts to pre-approved content sources.'
@@ -106,7 +106,7 @@
                   //-   )
                   //- v-textarea.mt-5(
                   //-   label='CSP Directives'
-                  //-   outlined
+                  //-   variant='outlined'
                   //-   v-model='config.securityCSPDirectives'
                   //-   prepend-icon='mdi-subdirectory-arrow-right'
                   //-   persistent-hint

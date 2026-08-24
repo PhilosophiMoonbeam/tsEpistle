@@ -30,7 +30,7 @@ export const hydrateMermaid = async (figure: HTMLElement, signal: AbortSignal): 
   if (!output || !sourceElement) return
   const source = sourceElement.textContent ?? ''
   const requestedTheme = figure.dataset.diagramTheme ?? 'auto'
-  const theme = requestedTheme === 'auto' ? (figure.closest('.theme--dark') ? 'dark' : 'default') : requestedTheme
+  const theme = requestedTheme === 'auto' ? (figure.closest('.v-theme--dark') ? 'dark' : 'default') : requestedTheme
   const id = `content-extension-diagram-${++diagramInstance}`
   const drawing = mermaidQueue.then(async () => {
     const { default: mermaid } = await import('mermaid')

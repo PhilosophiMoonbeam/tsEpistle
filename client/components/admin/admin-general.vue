@@ -169,7 +169,7 @@
                   //-   disabled
                   //-   )
                   //- v-text-field.mt-3(
-                  //-   outlined
+                  //-   variant='outlined'
                   //-   label='TinyPNG API Key'
                   //-   :counter='255'
                   //-   v-model='config.description'

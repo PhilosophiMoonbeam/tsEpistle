@@ -40,11 +40,11 @@
                   v-icon(color='indigo') mdi-pencil
                 v-list-item-title Edit
               //- v-list-item(@click='', disabled)
-              //-   v-list-item-icon
+              //-   template(v-slot:prepend)
               //-     v-icon(color='grey') mdi-cube-scan
               //-   v-list-item-title Re-Render
               //- v-list-item(@click='', disabled)
-              //-   v-list-item-icon
+              //-   template(v-slot:prepend)
               //-     v-icon(color='grey') mdi-earth-remove
               //-   v-list-item-title Unpublish
               v-list-item(:href='`/s` + (page.visibility === `private` ? `/_private` : ``) + `/` + page.locale + `/` + page.path')
@@ -56,11 +56,11 @@
                   v-icon(color='indigo') mdi-history
                 v-list-item-title View History
               //- v-list-item(@click='', disabled)
-              //-   v-list-item-icon
+              //-   template(v-slot:prepend)
               //-     v-icon(color='grey') mdi-content-duplicate
               //-   v-list-item-title Duplicate
               //- v-list-item(@click='', disabled)
-              //-   v-list-item-icon
+              //-   template(v-slot:prepend)
               //-     v-icon(color='grey') mdi-content-save-move-outline
               //-   v-list-item-title Move / Rename
               v-dialog(v-model='deletePageDialog', max-width='500')

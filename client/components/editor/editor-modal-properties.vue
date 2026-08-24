@@ -192,7 +192,7 @@
 
         //- v-tabs-window-item(:value='3', transition='fade-transition', reverse-transition='fade-transition')
         //-   v-card-text
-        //-     .overline {{$t('editor:props.socialFeatures')}}
+        //-     .text-label-small {{$t('editor:props.socialFeatures')}}
         //-     v-switch(
         //-       :label='$t(`editor:props.allowComments`)'
         //-       v-model='isPublished'

@@ -1995,25 +1995,6 @@
   }
 }
 
-// ---------------
-// RTL FIXES
-// Vuetify GH Issue: https://github.com/vuetifyjs/vuetify/issues/6317
-// ---------------
-
-.is-rtl {
-  .page-col-content.is-page-header {
-    @each $size, $width in $grid-breakpoints {
-      @media (min-width: $width) {
-        @for $n from 0 through 12 {
-          &.offset-#{$size}-#{$n} {
-            margin-left: 0;
-            margin-right: (math.div($n, 12) * 100) * 1%;
-          }
-        }
-      }
-    }
-  }
-}
 
 // ---------------
 // PRINT OVERRIDES

@@ -4,8 +4,8 @@
       v-card.page-unlock-card(elevation='5', max-width='480')
         v-card-text.pa-8.text-center
           v-icon.mb-4(color='primary', size='64') mdi-lock-outline
-          h1.text-h5.mb-2 Protected page
-          p.text-body-1.text-medium-emphasis.mb-6 Enter the page password to continue to {{ pageTitle }}.
+          h1.text-headline-medium.mb-2 Protected page
+          p.text-body-large.text-medium-emphasis.mb-6 Enter the page password to continue to {{ pageTitle }}.
           v-alert.mb-4(v-if='error', type='error', variant='tonal') {{ error }}
           form(:action='`/_unlock/${pageId}`', method='post')
             input(type='hidden', name='returnTo', :value='returnTo')

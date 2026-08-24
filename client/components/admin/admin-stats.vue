@@ -1,5 +1,5 @@
 <template lang='pug'>
-  v-container(fluid, fill-height)
+  v-container.fill-height(fluid)
     v-row
       v-col(cols='12')
         .admin-header-icon: v-icon(size='80', color="grey-lighten-2") show_chart

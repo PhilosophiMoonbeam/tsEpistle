@@ -11,8 +11,8 @@
           v-btn.animated.fadeInDown(color='success', variant="flat", @click='saveProfile', :loading='saveLoading', size="large")
             v-icon(start) mdi-check
             span {{$t('common:actions.save')}}
-          //- v-btn.animated.fadeInDown(outlined, color='primary', disabled).mr-0
-          //-   v-icon(left) mdi-earth
+          //- v-btn.animated.fadeInDown.mr-0(variant='outlined', color='primary', disabled)
+          //-   v-icon(start) mdi-earth
           //-   span {{$t('profile:viewPublicProfile')}}
       v-col(lg='6' cols='12')
         v-card.animated.fadeInUp
@@ -124,10 +124,10 @@
               v-icon(:color='$vuetify.theme.current.dark ? "grey-lighten-1" : "purple-darken-4"') mdi-shield-lock
               .text-body-large.ml-3 {{ user.providerName }}
             //- v-divider.mt-3
-            //- v-subheader.pl-0: span.subtitle-2 Two-Factor Authentication (2FA)
-            //- .caption.mb-2 2FA adds an extra layer of security by requiring a unique code generated on your smartphone when signing in.
-            //- v-btn(color='purple darken-4', disabled).ml-0 Enable 2FA
-            //- v-btn(color='purple darken-4', dark, depressed, disabled).ml-0 Disable 2FA
+            //- v-list-subheader.pl-0: span.text-label-large Two-Factor Authentication (2FA)
+            //- .text-body-small.mb-2 2FA adds an extra layer of security by requiring a unique code generated on your smartphone when signing in.
+            //- v-btn.ml-0(color='purple-darken-4', disabled) Enable 2FA
+            //- v-btn.ml-0(color='purple-darken-4', variant='flat', disabled) Disable 2FA
             template(v-if='user.providerKey === `local`')
               form#change-password-form(@submit.prevent='changePassword')
                 v-divider.mt-3
@@ -171,16 +171,16 @@
               span {{$t('profile:auth.changePassword')}}
       v-col(lg='6' cols='12')
         //- v-card
-        //-   v-toolbar(color='blue-grey', dark, dense, flat)
+        //-   v-toolbar.text-white(color='blue-grey', density='compact', flat)
         //-     v-toolbar-title
-        //-       .subtitle-1 Picture
+        //-       .text-body-large Picture
         //-   v-card-title
-        //-     v-avatar.blue(v-if='picture.kind === `initials`', :size='40')
-        //-       span.white--text.subheading {{picture.initials}}
-        //-     v-avatar(v-else-if='picture.kind === `image`', :size='40')
+        //-     v-avatar.bg-blue(v-if='picture.kind === `initials`', size='40')
+        //-       span.text-white.text-body-large {{picture.initials}}
+        //-     v-avatar(v-else-if='picture.kind === `image`', size='40')
         //-       v-img(:src='picture.url')
-        //-     v-btn(outlined).mx-4 Upload Picture
-        //-     v-btn(outlined, disabled) Remove Picture
+        //-     v-btn.mx-4(variant='outlined') Upload Picture
+        //-     v-btn(variant='outlined', disabled) Remove Picture
         v-card.animated.fadeInUp.wait-p2s
           v-toolbar(color='blue-grey', density="compact", flat)
             v-toolbar-title.text-body-large {{$t('profile:preferences')}}

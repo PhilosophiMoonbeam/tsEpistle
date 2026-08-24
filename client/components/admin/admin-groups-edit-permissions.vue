@@ -11,7 +11,7 @@
             icon='mdi-lock-outline'
             ) This is a system group. Some permissions cannot be modified.
         v-col(cols='12', md='6', lg='4', v-for='pmGroup in permissions', :key='pmGroup.category')
-          v-card.md2(flat, :class='$vuetify.theme.current.dark ? "bg-grey-darken-3-d5" : "bg-grey-lighten-5"')
+          v-card(flat, :class='$vuetify.theme.current.dark ? "bg-grey-darken-3-d5" : "bg-grey-lighten-5"')
             .text-label-small.px-5.pt-5.pb-3.text-grey-darken-2 {{pmGroup.category}}
             v-card-text.pt-0
               template(v-for='(pm, idx) in pmGroup.items', :key='pm.permission')

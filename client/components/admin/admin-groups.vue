@@ -34,7 +34,7 @@
             v-card
               .dialog-header.is-short New Group
               v-card-text.pt-5
-                v-text-field.md2(
+                v-text-field(
                   variant="outlined"
                   prepend-icon='mdi-account-group'
                   v-model='newGroupName'
@@ -84,7 +84,7 @@
                     .text-body-small.text-grey.mt-2 Updated {{ $helpers.formatMoment(props.item.updatedAt, 'calendar') }}
             template(v-slot:no-data)
               v-alert.ma-3(icon='mdi-alert', :model-value='true', variant="outlined") No groups to display.
-          .text-xs-center.py-2(v-if='pageCount > 1')
+          .text-center.py-2(v-if='pageCount > 1')
             v-pagination(v-model='pagination', :length='pageCount')</template>
 
 <script lang='ts'>

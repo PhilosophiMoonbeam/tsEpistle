@@ -268,7 +268,7 @@ export default {
   }
 }
 
-.dashboard-section-toolbar .overline,
+.dashboard-section-toolbar .text-label-small,
 .dashboard-data-table td,
 .dashboard-data-table td strong {
   color: rgb(var(--v-theme-on-surface)) !important;

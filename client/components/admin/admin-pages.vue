@@ -10,8 +10,8 @@
           v-spacer
           v-btn.animated.fadeInDown.wait-p1s(icon, color='grey', variant="outlined", @click='refresh', aria-label='Refresh pages')
             v-icon.text-grey mdi-refresh
-          //- v-btn.animated.fadeInDown.mx-3(color='primary', outlined, @click='recyclebin', disabled)
-          //-   v-icon(left) mdi-delete-outline
+          //- v-btn.animated.fadeInDown.mx-3(color='primary', variant='outlined', @click='recyclebin', disabled)
+          //-   v-icon(start) mdi-delete-outline
           //-   span Recycle Bin
           v-btn.animated.fadeInDown(
             color='primary'
@@ -74,7 +74,7 @@
           )
             template(v-slot:item='props')
               tr.is-clickable(v-if='$vuetify.display.mdAndUp', :active='props.selected', @click='$router.push(`/pages/` + props.item.id)')
-                td.text-xs-right {{ props.item.id }}
+                td.text-right {{ props.item.id }}
                 td
                   .text-body-medium: strong {{ props.item.title }}
                   .text-body-small {{ props.item.description }}

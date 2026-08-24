@@ -34,8 +34,8 @@
     v-main(ref='content')
       template(v-if='path !== `home`')
         v-toolbar(:color='$vuetify.theme.current.dark ? `grey-darken-4-d3` : `grey-lighten-3`', flat, density="compact", v-if='$vuetify.display.smAndUp')
-          //- v-btn.pl-0(v-if='$vuetify.display.xsOnly', flat, @click='toggleNavigation')
-          //-   v-icon(color='grey darken-2', left) menu
+          //- v-btn.pl-0(v-if='$vuetify.display.xsOnly', variant='flat', @click='toggleNavigation')
+          //-   v-icon(color='grey-darken-2', start) menu
           //-   span Navigation
           v-breadcrumbs.breadcrumbs-nav.pl-0(
             :items='breadcrumbs'
@@ -135,12 +135,11 @@
                 .text-label-small.pb-2.d-flex.align-center(:class='$vuetify.theme.current.dark ? `text-blue-grey-lighten-3` : `text-blue-grey-darken-2`')
                   span {{$t('common:comments.sdTitle')}}
                   //- v-spacer
-                  //- v-chip.text-center(
+                  //- v-chip.text-center.text-white(
                   //-   v-if='!commentsExternal'
                   //-   label
-                  //-   x-small
-                  //-   :color='$vuetify.theme.current.dark ? `blue-grey darken-3` : `blue-grey darken-2`'
-                  //-   dark
+                  //-   size='x-small'
+                  //-   :color='$vuetify.theme.current.dark ? `blue-grey-darken-3` : `blue-grey-darken-2`'
                   //-   style='min-width: 50px; justify-content: center;'
                   //-   )
                   //-   span {{commentsCount}}
@@ -188,16 +187,16 @@
 
             //- v-card.mb-5
             //-   .pa-5
-            //-     .overline.pb-2.yellow--text(:class='$vuetify.theme.current.dark ? `text--darken-3` : `text--darken-4`') Rating
+            //-     .text-label-small.pb-2(:class='$vuetify.theme.current.dark ? `text-yellow-darken-3` : `text-yellow-darken-4`') Rating
             //-     .text-center
             //-       v-rating(
             //-         v-model='rating'
-            //-         color='yellow darken-3'
-            //-         background-color='grey lighten-1'
+            //-         color='yellow-darken-3'
+            //-         bg-color='grey-lighten-1'
             //-         half-increments
             //-         hover
-            //-       )
-            //-       .caption.grey--text 5 votes
+            //-         )
+            //-       .text-body-small.text-grey 5 votes
 
             v-card.page-shortcuts-card(flat)
               v-toolbar(:color='$vuetify.theme.current.dark ? `grey-darken-4-d3` : `grey-lighten-3`', flat, density="compact")
@@ -236,7 +235,7 @@
                             v-icon(color='grey') mdi-bell
                       span Page notifications
                   v-card
-                    v-card-title.text-subtitle-1 Page notifications
+                    v-card-title.text-body-large Page notifications
                     v-divider
                     v-list(v-if='pageWatchNotifications.length > 0', lines='two', density='compact')
                       v-list-item(
@@ -274,7 +273,7 @@
                           v-icon(color='grey') mdi-tune
                       span Watch settings
                   v-card
-                    v-card-title.text-subtitle-1 Watch settings
+                    v-card-title.text-body-large Watch settings
                     v-card-text
                       v-switch(
                         v-model='pageWatchEmailEnabled'
@@ -311,7 +310,7 @@
                             v-icon(color='grey') mdi-inbox-arrow-down
                       span Approval inbox
                   v-card
-                    v-card-title.text-subtitle-1 Approval inbox
+                    v-card-title.text-body-large Approval inbox
                     v-divider
                     async-state(
                       v-if='approvalInboxLoading'
@@ -498,7 +497,7 @@
           )
             template(v-if='pageProtection.protected') Password protection is active. Setting a new password rotates it and immediately revokes every prior unlock.
             template(v-else) Readers can currently access this page without a page password.
-          p.text-body-2.text-medium-emphasis.mb-4
+          p.text-body-medium.text-medium-emphasis.mb-4
             | Unlocks last 12 hours in the current browser session. Group page permissions do not bypass the password; system administrators can recover access. Protected source, history, downloads, linked assets, and content APIs use the same unlock.
           v-text-field(
             v-model='pageProtectionPassword'
@@ -569,14 +568,14 @@
               persistent-hint
             )
             v-card.mt-5(variant='outlined')
-              v-card-title.text-subtitle-1 Review history
+              v-card-title.text-body-large Review history
               v-list(lines='two', density='compact')
                 v-list-item(v-for='transition in pageApproval.transitions', :key='transition.id')
                   v-list-item-title {{ approvalStatusLabel(transition.toStatus) }}
                   v-list-item-subtitle Reviewer {{ transition.actorId }} · {{ new Date(transition.createdAt).toLocaleString() }}
                   v-list-item-subtitle(v-if='transition.comment') {{ transition.comment }}
           template(v-else)
-            p.text-body-1.mb-4 Submit the current page revision for review. Later edits make the submission stale and cannot be published without resubmission.
+            p.text-body-large.mb-4 Submit the current page revision for review. Later edits make the submission stale and cannot be published without resubmission.
             v-text-field(
               v-model.number='approvalAssigneeId'
               type='number'

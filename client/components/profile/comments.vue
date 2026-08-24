@@ -1,5 +1,5 @@
 <template lang='pug'>
-  v-container(fluid, fill-height)
+  v-container.fill-height(fluid)
     v-row
       v-col(cols='12')
         .text-headline-medium.text-primary Comments

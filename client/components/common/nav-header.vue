@@ -595,7 +595,7 @@ export default defineComponent({
       margin-right: 15px;
     }
 
-    .overline:nth-child(2) {
+    .text-label-small:nth-child(2) {
       text-transform: none;
     }
   }

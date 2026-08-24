@@ -4,10 +4,10 @@
       v-container
         v-row
           v-col(cols='12', lg='6', offset-lg='3')
-            v-card.elevation-20.radius-7.animated.fadeInUp
+            v-card.elevation-5.radius-7.animated.fadeInUp
               .text-center.pa-6
                 v-icon.animated.fadeInUp.wait-p2s(color='primary', size='72') mdi-source-fork
-                .text-h4.text-primary.mt-3 {{ product.name }}
+                .text-headline-large.text-primary.mt-3 {{ product.name }}
                 .text-body-medium.text-grey Independent community fork derived from {{ product.upstreamBase }}
               v-alert(v-model='error', type='error', icon='mdi-alert', rounded='0', closable) {{ errorMessage }}
               v-alert(v-if='!error', rounded='0', color="blue-lighten-5", :model-value='true')

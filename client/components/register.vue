@@ -4,14 +4,18 @@
       v-container
         v-row
           v-col(
-            xs12
-            offset-sm1, sm10
-            offset-md2, md8
-            offset-lg3, lg6
-            offset-xl4, xl4
+            cols='12'
+            sm='10'
+            offset-sm='1'
+            md='8'
+            offset-md='2'
+            lg='6'
+            offset-lg='3'
+            xl='4'
+            offset-xl='4'
             )
             transition(name='fadeUp')
-              v-card.elevation-5.md2(v-show='isShown')
+              v-card.elevation-5(v-show='isShown')
                 v-toolbar(color='indigo', flat, density="compact")
                   v-spacer
                   .text-body-large {{ $t('auth:registerTitle') }}
@@ -19,7 +23,7 @@
                 v-card-text.text-center
                   h1.text-headline-large.text-indigo.py-2 {{ siteTitle }}
                   .text-body-medium {{ $t('auth:registerSubTitle') }}
-                  v-text-field.md2.mt-3(
+                  v-text-field.mt-3(
                     variant="solo"
                     flat
                     prepend-icon='mdi-email'
@@ -30,7 +34,7 @@
                     :placeholder='$t("auth:fields.email")'
                     color='indigo'
                     )
-                  v-text-field.md2.mt-2(
+                  v-text-field.mt-2(
                     variant="solo"
                     flat
                     prepend-icon='mdi-form-textbox-password'
@@ -47,7 +51,7 @@
                     )
                     template(v-slot:loader)
                       password-strength(v-model='password')
-                  v-text-field.md2.mt-2(
+                  v-text-field.mt-2(
                     variant="solo"
                     flat
                     prepend-icon='mdi-form-textbox-password'
@@ -60,7 +64,7 @@
                     :placeholder='$t("auth:fields.verifyPassword")'
                     color='indigo'
                   )
-                  v-text-field.md2.mt-2(
+                  v-text-field.mt-2(
                     variant="solo"
                     flat
                     prepend-icon='mdi-account'
@@ -74,7 +78,7 @@
                     )
                 v-card-actions.pb-4
                   v-spacer
-                  v-btn.md2(
+                  v-btn(
                     width='100%'
                     max-width='250px'
                     size="large"

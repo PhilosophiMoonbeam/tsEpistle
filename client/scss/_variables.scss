@@ -7,9 +7,10 @@ $widescreen: 1180px !default;
 $grid-breakpoints: (
   'xs': 0,
   'sm': 600px,
-  'md': 960px,
-  'lg': 1280px - 16px,
-  'xl': 1920px - 16px
+  'md': 840px,
+  'lg': 1145px,
+  'xl': 1545px,
+  'xxl': 2138px
 ) !default;
 
 $display-breakpoints: (
@@ -25,5 +26,8 @@ $display-breakpoints: (
   'lg-only': 'only screen and (min-width: #{map.get($grid-breakpoints, 'lg')}) and (max-width: #{map.get($grid-breakpoints, 'xl') - 1})',
   'lg-and-down': 'only screen and (max-width: #{map.get($grid-breakpoints, 'xl') - 1})',
   'lg-and-up': 'only screen and (min-width: #{map.get($grid-breakpoints, 'lg')})',
-  'xl-only': 'only screen and (min-width: #{map.get($grid-breakpoints, 'xl')})'
+  'xl-only': 'only screen and (min-width: #{map.get($grid-breakpoints, 'xl')}) and (max-width: #{map.get($grid-breakpoints, 'xxl') - 1})',
+  'xl-and-down': 'only screen and (max-width: #{map.get($grid-breakpoints, 'xxl') - 1})',
+  'xl-and-up': 'only screen and (min-width: #{map.get($grid-breakpoints, 'xl')})',
+  'xxl-only': 'only screen and (min-width: #{map.get($grid-breakpoints, 'xxl')})'
 ) !default;

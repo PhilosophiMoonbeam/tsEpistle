@@ -99,7 +99,7 @@
                     v-icon mdi-magnify
                 v-list-item-title {{ term }}
               v-divider(v-if='idx < suggestions.length - 1')
-        .text-xs-center.pt-5(v-if='search && search.length > 1')
+        .text-center.pt-5(v-if='search && search.length > 1')
           v-btn.mx-2(variant='outlined' color='pink' @click='closeSearch')
             v-icon(start) mdi-close
             span {{$t('common:header.searchClose')}}

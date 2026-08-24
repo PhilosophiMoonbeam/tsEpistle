@@ -77,7 +77,7 @@ v-card.editor-modal-blocks.animated.fadeInLeft(flat, rounded='0', role='dialog',
                   v-alert.mb-5(type='info', variant='tonal', density='compact')
                     | Gallery images must be same-origin asset paths. Each image requires alternative text and remains available as a normal link without JavaScript.
                   v-card.mb-4(v-for='(image, index) in gallery.images', :key='index', variant='outlined')
-                    v-card-title.d-flex.align-center.text-subtitle-1
+                    v-card-title.d-flex.align-center.text-body-large
                       span Image {{index + 1}}
                       v-spacer
                       v-btn(
@@ -168,7 +168,7 @@ v-card.editor-modal-blocks.animated.fadeInLeft(flat, rounded='0', role='dialog',
                   v-alert.mb-5(type='info', variant='tonal', density='compact')
                     | Every panel keeps a readable no-script and print fallback. Panel content is preserved as plain text in canonical page source.
                   v-card.mb-4(v-for='(panel, panelIndex) in tabs.panels', :key='panelIndex', variant='outlined')
-                    v-card-title.d-flex.align-center.text-subtitle-1
+                    v-card-title.d-flex.align-center.text-body-large
                       span Panel {{panelIndex + 1}}
                       v-spacer
                       v-btn(
@@ -216,7 +216,7 @@ v-card.editor-modal-blocks.animated.fadeInLeft(flat, rounded='0', role='dialog',
                   v-text-field.mt-4(v-if='infobox.image', v-model='infobox.imageAlt', label='Image alternative text', counter='200', required)
                   v-text-field.mt-4(v-if='infobox.image', v-model='infobox.caption', label='Image caption (optional)', counter='300')
                   v-card.mt-4.mb-4(v-for='(fact, factIndex) in infobox.facts', :key='factIndex', variant='outlined')
-                    v-card-title.d-flex.align-center.text-subtitle-1
+                    v-card-title.d-flex.align-center.text-body-large
                       span Fact {{factIndex + 1}}
                       v-spacer
                       v-btn(
