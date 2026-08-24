@@ -38,7 +38,7 @@
           :rel='item.y === `externalblank` ? `noopener` : ``'
           )
           template(v-slot:prepend)
-            v-avatar(size='24', rounded='0')
+            v-avatar(size='24', rounded='0', variant='text')
               v-icon(v-if='item.c.match(/fa[a-z] fa-/)', size='19') {{ item.c }}
               v-icon(v-else) {{ item.c }}
           v-list-item-title {{ item.l }}
@@ -49,7 +49,7 @@
       template(v-if='currentParent.id > 0')
         v-list-item(v-for='(item, idx) of parents', :key='`parent-` + item.id', @click='fetchBrowseItems(item)', style='min-height: 30px;')
           template(v-slot:prepend)
-            v-avatar(size='18', :style='`padding-left: ` + (idx * 8) + `px; width: auto; margin: 0 5px 0 0;`')
+            v-avatar(size='18', variant='text', :style='`padding-left: ` + (idx * 8) + `px; width: auto; margin: 0 5px 0 0;`')
               v-icon(size="small") mdi-folder-open
           v-list-item-title {{ item.title }}
         v-divider.mt-2
@@ -60,7 +60,7 @@
             :active='path === currentParent.path'
             style='min-width: 0;'
           )
-            v-avatar(size='24')
+            v-avatar(size='24', variant='text')
               v-icon mdi-text-box
             v-list-item-title {{ currentParent.title }}
           v-btn.mr-2(
@@ -75,12 +75,12 @@
       template(v-for='item of currentItems')
         v-list-item(v-if='item.isFolder', :key='`childfolder-` + item.id', @click='fetchBrowseItems(item)')
           template(v-slot:prepend)
-            v-avatar(size='24')
+            v-avatar(size='24', variant='text')
               v-icon mdi-folder
           v-list-item-title {{ item.title }}
         v-list-item(v-else, :href='(item.visibility === `private` ? `/_private` : ``) + `/` + item.locale + `/` + item.path', :key='`childpage-` + item.id', :active='path === item.path')
           template(v-slot:prepend)
-            v-avatar(size='24')
+            v-avatar(size='24', variant='text')
               v-icon mdi-text-box
           v-list-item-title {{ item.title }}</template>
 
