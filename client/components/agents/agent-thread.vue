@@ -6,71 +6,85 @@
     </v-alert>
     <template v-for="message in thread.messages" :key="message.id">
       <article class="agent-message" :class="`agent-message--${message.role}`">
-        <div class="agent-message__meta text-body-small text-medium-emphasis mb-1">
-          <span>{{ message.role === 'user' ? 'You' : 'Wiki Agent' }}</span>
-          <span v-if="message.status !== 'complete'"> · {{ message.status }}</span>
+        <div v-if="message.role === 'assistant'" class="agent-message__identity" aria-hidden="true">
+          <v-avatar color="primary" size="28" variant="tonal">
+            <v-icon icon="mdi-auto-fix" size="16" />
+          </v-avatar>
         </div>
-        <AgentMarkdown
-          :content="message.content || (message.status === 'streaming' ? '…' : '')"
-          :citations="message.citations"
-        />
-        <aside v-if="message.citations.length" class="agent-sources mt-3" aria-label="Sources">
-          <div class="agent-sources__heading">
-            <v-icon icon="mdi-book-open-page-variant-outline" size="18" />
-            <strong>Sources</strong>
+        <div class="agent-message__content">
+          <div class="agent-message__meta text-body-small">
+            <span class="agent-message__role">{{ message.role === 'user' ? 'You' : 'Wiki Agent' }}</span>
+            <span
+              v-if="messageStatusLabel(message.role, message.status)"
+              class="agent-message__status"
+              :class="`agent-message__status--${message.status}`"
+            >
+              <span class="agent-message__status-dot" aria-hidden="true" />
+              {{ messageStatusLabel(message.role, message.status) }}
+            </span>
           </div>
-          <ol>
-            <li v-for="(citation, index) in message.citations" :key="citation.evidenceId">
-              <component
-                :is="citation.href ? 'a' : 'span'"
-                :href="citation.href || undefined"
-                :target="citation.href ? '_blank' : undefined"
-                :rel="citation.href ? 'noopener noreferrer' : undefined"
-                :aria-label="`Citation ${index + 1}: ${citation.label}`"
-              >
-                <span class="agent-sources__number">{{ index + 1 }}</span>
-                <span class="agent-sources__label">
-                  <strong>{{ citationPageLabel(citation.label) }}</strong>
-                  <small v-if="citationSectionLabel(citation.label)">{{ citationSectionLabel(citation.label) }}</small>
-                </span>
-                <v-icon v-if="citation.href" icon="mdi-open-in-new" size="15" aria-hidden="true" />
-              </component>
-            </li>
-          </ol>
-        </aside>
-        <nav
-          v-if="message.role === 'assistant' && pageLinksForRun(message.runId).length"
-          class="agent-page-links mt-3"
-          aria-label="Changed pages"
-        >
-          <a
-            v-for="link in pageLinksForRun(message.runId)"
-            :key="link.href"
-            :href="link.href"
-            :title="`Open ${link.label}`"
+          <AgentMarkdown
+            :content="message.content || (message.status === 'streaming' ? '…' : '')"
+            :citations="message.citations"
+          />
+          <aside v-if="message.citations.length" class="agent-sources mt-3" aria-label="Sources">
+            <div class="agent-sources__heading">
+              <v-icon icon="mdi-book-open-page-variant-outline" size="18" />
+              <strong>Sources</strong>
+            </div>
+            <ol>
+              <li v-for="(citation, index) in message.citations" :key="citation.evidenceId">
+                <component
+                  :is="citation.href ? 'a' : 'span'"
+                  :href="citation.href || undefined"
+                  :target="citation.href ? '_blank' : undefined"
+                  :rel="citation.href ? 'noopener noreferrer' : undefined"
+                  :aria-label="`Citation ${index + 1}: ${citation.label}`"
+                >
+                  <span class="agent-sources__number">{{ index + 1 }}</span>
+                  <span class="agent-sources__label">
+                    <strong>{{ citationPageLabel(citation.label) }}</strong>
+                    <small v-if="citationSectionLabel(citation.label)">{{ citationSectionLabel(citation.label) }}</small>
+                  </span>
+                  <v-icon v-if="citation.href" icon="mdi-open-in-new" size="15" aria-hidden="true" />
+                </component>
+              </li>
+            </ol>
+          </aside>
+          <nav
+            v-if="message.role === 'assistant' && pageLinksForRun(message.runId).length"
+            class="agent-page-links mt-3"
+            aria-label="Changed pages"
           >
-            <v-icon icon="mdi-file-link-outline" size="18" aria-hidden="true" />
-            <span>{{ link.label }}</span>
-          </a>
-        </nav>
-        <details
-          v-if="message.role === 'assistant' && activityForRun(message.runId).length"
-          class="agent-activity mt-3"
-        >
-          <summary>
-            <v-icon icon="mdi-format-list-checks" size="18" />
-            <span>{{ activityLabel(activityForRun(message.runId)) }}</span>
-          </summary>
-          <ul class="agent-activity__list">
-            <li v-for="tool in activityForRun(message.runId)" :key="tool.id">
-              <v-icon :icon="toolStateIcon(tool.state)" :color="toolStateColor(tool.state)" size="18" />
-              <span>
-                <strong>{{ tool.title }}</strong>
-                <small>{{ tool.actionName }} · {{ toolStateLabel(tool.state) }}</small>
-              </span>
-            </li>
-          </ul>
-        </details>
+            <a
+              v-for="link in pageLinksForRun(message.runId)"
+              :key="link.href"
+              :href="link.href"
+              :title="`Open ${link.label}`"
+            >
+              <v-icon icon="mdi-file-link-outline" size="18" aria-hidden="true" />
+              <span>{{ link.label }}</span>
+            </a>
+          </nav>
+          <details
+            v-if="message.role === 'assistant' && activityForRun(message.runId).length"
+            class="agent-activity mt-3"
+          >
+            <summary>
+              <v-icon icon="mdi-format-list-checks" size="18" />
+              <span>{{ activityLabel(activityForRun(message.runId)) }}</span>
+            </summary>
+            <ul class="agent-activity__list">
+              <li v-for="tool in activityForRun(message.runId)" :key="tool.id">
+                <v-icon :icon="toolStateIcon(tool.state)" :color="toolStateColor(tool.state)" size="18" />
+                <span>
+                  <strong>{{ tool.title }}</strong>
+                  <small>{{ tool.actionName }} · {{ toolStateLabel(tool.state) }}</small>
+                </span>
+              </li>
+            </ul>
+          </details>
+        </div>
       </article>
       <AgentToolCard
         v-for="entry in proposalToolsForRun(message.role === 'assistant' ? message.runId : null)"
@@ -110,7 +124,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import type { AgentCitation, AgentPageActionLink, AgentToolCallView, AgentToolState, AgentThreadState } from '../../../shared/agents/contracts.ts'
+import type { AgentCitation, AgentMessageRole, AgentMessageStatus, AgentPageActionLink, AgentToolCallView, AgentToolState, AgentThreadState } from '../../../shared/agents/contracts.ts'
 import AgentMarkdown from './agent-markdown.vue'
 import AgentToolCard from './agent-tool-card.vue'
 import {
@@ -128,6 +142,14 @@ const activityForRun = (runId: string | null): readonly AgentToolCallView[] => r
 const proposalToolsForRun = (runId: string | null): readonly AgentProposalTool[] => runId ? groupedTools.value.get(runId)?.proposals ?? [] : []
 const pageLinksForRun = (runId: string | null): readonly AgentPageActionLink[] => agentAppliedPageLinks(proposalToolsForRun(runId))
 const activityLabel = agentActivityLabel
+const messageStatusLabels: Record<Exclude<AgentMessageStatus, 'complete'>, string> = {
+  pending: 'Preparing',
+  streaming: 'Responding',
+  failed: 'Failed',
+  cancelled: 'Cancelled'
+}
+const messageStatusLabel = (role: AgentMessageRole, status: AgentMessageStatus): string =>
+  status === 'complete' ? '' : role === 'user' && status === 'pending' ? 'Sending' : messageStatusLabels[status]
 const citationLabelParts = (citation: AgentCitation['label']): readonly string[] => citation.split(' › ').filter(Boolean)
 const citationPageLabel = (citation: AgentCitation['label']): string => citationLabelParts(citation)[0] ?? citation
 const citationSectionLabel = (citation: AgentCitation['label']): string => citationLabelParts(citation).slice(1).join(' › ')
@@ -148,10 +170,35 @@ const liveSummary = computed(() => {
 
 <style scoped>
 .agent-thread { margin: 0 auto; max-width: 48rem; min-height: 12rem; width: 100%; }
-.agent-message { color: rgb(var(--v-theme-on-surface)); margin-bottom: 1.25rem; max-width: 100%; padding: .35rem 0 1rem; }
-.agent-message--assistant { border-bottom: 1px solid color-mix(in srgb, rgb(var(--v-theme-outline)) 16%, transparent); }
-.agent-message--user { background: rgb(var(--v-theme-primary-container)); border-radius: 1rem 1rem .3rem 1rem; color: rgb(var(--v-theme-on-primary-container)); margin-inline-start: auto; max-width: min(38rem, 88%); padding: .75rem 1rem; }
-.agent-message--user .agent-message__meta { color: inherit !important; opacity: .72; }
+.agent-message { color: rgb(var(--v-theme-on-surface)); margin-bottom: 1.5rem; max-width: 100%; overflow-wrap: anywhere; }
+.agent-message__content { min-width: 0; }
+.agent-message__meta { align-items: center; color: rgb(var(--v-theme-on-surface)); display: flex; gap: .5rem; margin-bottom: .45rem; min-height: 1.35rem; }
+.agent-message__role { font-weight: 600; letter-spacing: .01em; }
+.agent-message__status { align-items: center; display: inline-flex; font-size: .72rem; gap: .3rem; }
+.agent-message__status-dot { background: rgb(var(--v-theme-primary)); border-radius: 999px; height: .4rem; width: .4rem; }
+.agent-message__status--streaming .agent-message__status-dot { animation: agentStatusPulse 1.6s ease-in-out infinite; }
+.agent-message__status--failed { color: rgb(var(--v-theme-error)); }
+.agent-message__status--failed .agent-message__status-dot { background: currentColor; }
+.agent-message__status--cancelled .agent-message__status-dot { background: rgb(var(--v-theme-outline)); }
+.agent-message--assistant .agent-message__status { opacity: .68; }
+.agent-message--assistant {
+  border-bottom: 1px solid color-mix(in srgb, rgb(var(--v-theme-outline)) 18%, transparent);
+  display: grid;
+  gap: .75rem;
+  grid-template-columns: 1.75rem minmax(0, 1fr);
+  padding: .25rem 0 1.35rem;
+}
+.agent-message__identity { align-self: start; padding-top: .05rem; }
+.agent-message--user {
+  background: color-mix(in srgb, rgb(var(--v-theme-primary)) 24%, rgb(var(--v-theme-surface)));
+  border: 1px solid color-mix(in srgb, rgb(var(--v-theme-primary)) 38%, rgb(var(--v-theme-outline)));
+  border-radius: 1.1rem 1.1rem .35rem 1.1rem;
+  color: rgb(var(--v-theme-on-surface));
+  margin-inline-start: auto;
+  max-width: min(36rem, 76%);
+  padding: .8rem 1rem .9rem;
+}
+.agent-message--user .agent-message__meta { color: inherit; font-size: .72rem !important; margin-bottom: .3rem; opacity: .72; }
 .agent-sources { border-top: 1px solid rgb(var(--v-theme-outline-variant)); padding-top: .75rem; }
 .agent-sources__heading { align-items: center; display: flex; gap: .4rem; margin-bottom: .45rem; }
 .agent-sources ol { display: grid; gap: .35rem; list-style: none; margin: 0; padding: 0; }
@@ -180,5 +227,16 @@ const liveSummary = computed(() => {
 .artifact-grid { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(min(18rem, 100%), 1fr)); }
 .artifact-card { margin: 0; }
 .artifact-card img { border: 1px solid rgb(var(--v-theme-outline)); border-radius: .5rem; display: block; height: auto; max-width: 100%; }
-@media (prefers-reduced-motion: reduce) { .agent-activity summary::after { transition: none; } }
+@keyframes agentStatusPulse {
+  0%, 100% { opacity: .4; transform: scale(.8); }
+  50% { opacity: 1; transform: scale(1); }
+}
+@media (max-width: 599.98px) {
+  .agent-message--assistant { gap: .55rem; }
+  .agent-message--user { max-width: 90%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .agent-activity summary::after { transition: none; }
+  .agent-message__status-dot { animation: none !important; }
+}
 </style>
