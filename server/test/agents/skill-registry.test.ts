@@ -20,12 +20,14 @@ const createSchema = async (db: Knex): Promise<void> => {
   await db.schema.createTable('agentSkills', table => {
     table.string('id').primary()
     table.string('name').notNullable().unique()
-    table.integer('rootPageId').notNullable()
+    table.integer('rootPageId').nullable()
     table.text('rootPath').notNullable()
     table.integer('assetFolderId').nullable()
     table.string('status').notNullable()
     table.string('exposureMode').notNullable()
     table.string('currentVersionId').nullable()
+    table.integer('ownerUserId').nullable()
+    table.dateTime('deletedAt').nullable()
     table.integer('createdBy').notNullable()
     table.integer('updatedBy').notNullable()
     table.dateTime('createdAt').defaultTo(db.fn.now())
@@ -171,6 +173,26 @@ describe('immutable skill registry', () => {
       expectedContentHash: preview.contentHash,
       expectedSourceRevision: preview.sourceRevision
     })).rejects.toThrow('different terminal review')
+  })
+
+  it('keeps owner-authored documents outside the system skill registry', async () => {
+    const personalId = '00000000-0000-4000-8000-000000000090'
+    await db('agentSkills').insert({
+      id: personalId,
+      name: 'personal-guide',
+      rootPageId: null,
+      rootPath: 'personal/7/personal-guide',
+      assetFolderId: null,
+      status: 'enabled',
+      exposureMode: 'owner',
+      currentVersionId: null,
+      ownerUserId: 7,
+      createdBy: 7,
+      updatedBy: 7
+    })
+    expect(await registry.list()).toEqual([])
+    await expect(registry.preview(personalId, requester)).rejects.toThrow('does not exist')
+    await expect(registry.setEnabled(personalId, 1, false)).rejects.toThrow('does not exist')
   })
 })
 

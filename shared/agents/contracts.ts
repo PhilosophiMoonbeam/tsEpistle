@@ -371,6 +371,7 @@ export interface SubmitAgentMessageRequest {
   readonly expectedSessionVersion: number
   readonly profileResolutionToken: string
   readonly content: string
+  readonly invokedSkillVersionIds?: readonly string[]
   readonly currentPage?: AgentCurrentPageHint
 }
 

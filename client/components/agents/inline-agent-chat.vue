@@ -79,6 +79,7 @@
           :session="thread.session"
           :profiles="profiles"
           :skills="skills"
+          :skills-enabled="skillsEnabled"
           :disabled="Boolean(activeRun)"
           @profile="agents.setProfile"
           @skills="agents.setSkills"
@@ -139,9 +140,14 @@
         <AgentComposer
           :sending="sending"
           :can-stop="Boolean(activeRun?.canCancel)"
+          :disabled="!providerAvailable || loading || !thread || Boolean(activeRun)"
+          :skills-enabled="skillsEnabled"
+          :skills="skills"
+          :pinned-skill-version-ids="pinnedSkillVersionIds"
+          :invocation-limit="invocationLimit"
           @send="sendPrompt"
           @stop="agents.stop"
-          :disabled="!providerAvailable || loading || !thread || Boolean(activeRun)"
+          @manage-skills="skillManagerOpen = true"
         />
         <div class="inline-agent__notice text-body-small text-medium-emphasis mt-2">
           <v-icon icon="mdi-shield-check-outline" size="15" />
@@ -151,6 +157,7 @@
       </template>
     </v-card>
   </section>
+  <AgentPersonalSkills v-if="skillsEnabled" v-model="skillManagerOpen" :csrf-token="csrfToken" @changed="reloadSkillCatalog" />
 </template>
 
 <script setup lang="ts">
@@ -159,6 +166,7 @@ import { storeToRefs } from 'pinia'
 import type { AgentCurrentPageHint } from '../../../shared/agents/contracts.ts'
 import { useAgentsStore } from '../../store/agents.ts'
 import AgentComposer from './agent-composer.vue'
+import AgentPersonalSkills from './agent-personal-skills.vue'
 import AgentMcpApproval from './agent-mcp-approval.vue'
 import AgentSessionSettings from './agent-session-settings.vue'
 import AgentThread from './agent-thread.vue'
@@ -168,6 +176,7 @@ const props = defineProps<{
   csrfToken: string
   approvalId?: string
   providerEnabled: boolean
+  skillsEnabled: boolean
   pageId: number
   pageLocale: string
   pagePath: string
@@ -178,6 +187,7 @@ const agents = useAgentsStore()
 const { connection, decidingApprovalId, error, loading, profiles, sending, sessions, skills, thread } = storeToRefs(agents)
 const transcript = ref<HTMLElement | null>(null)
 const approvalJumpVisible = ref(false)
+const skillManagerOpen = ref(false)
 let initialization: Promise<void> | null = null
 
 const currentPage = computed<AgentCurrentPageHint | null>(() => {
@@ -188,6 +198,8 @@ const activeRun = computed(() => thread.value?.session.currentRun?.canCancel ? t
 const hasConversation = computed(() => Boolean(thread.value && (thread.value.messages.length || thread.value.tools.length || thread.value.artifacts.length)))
 const pendingApprovalId = computed(() => thread.value?.proposals.find(proposal => proposal.status === 'pending' && proposal.approval?.status === 'pending')?.id ?? null)
 const providerAvailable = computed(() => props.providerEnabled && profiles.value.length > 0)
+const pinnedSkillVersionIds = computed(() => thread.value?.session.skills.map(skill => skill.versionId) ?? [])
+const invocationLimit = computed(() => Math.max(0, 8 - pinnedSkillVersionIds.value.length))
 const providerUnavailableMessage = computed(() => props.providerEnabled
   ? 'No enabled provider profile is available for your account. Ask an administrator to grant one in Administration → Agents.'
   : 'Agent inference is currently disabled. An administrator can configure it in Administration → Agents.')
@@ -214,12 +226,20 @@ const ensureInitialized = (): Promise<void> => {
   return pending
 }
 
-const sendPrompt = async (content: string): Promise<boolean> => {
+const sendPrompt = async (content: string, invokedSkillVersionIds: readonly string[] = []): Promise<boolean> => {
   const prompt = content.trim()
   if (!prompt) return false
   await ensureInitialized()
   if (!providerAvailable.value || !thread.value) return false
-  return agents.send(prompt)
+  return agents.send(prompt, invokedSkillVersionIds)
+}
+
+const reloadSkillCatalog = async (): Promise<void> => {
+  try {
+    await agents.reloadSkills()
+  } catch (value) {
+    agents.error = value instanceof Error ? value.message : 'The skill catalog could not be refreshed.'
+  }
 }
 
 const newSession = async (): Promise<void> => {

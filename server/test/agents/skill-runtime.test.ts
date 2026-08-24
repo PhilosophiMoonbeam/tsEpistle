@@ -25,6 +25,8 @@ const createSchema = async (db: Knex): Promise<void> => {
     table.string('name').notNullable()
     table.string('status').notNullable()
     table.string('exposureMode').notNullable()
+    table.integer('ownerUserId').nullable()
+    table.dateTime('deletedAt').nullable()
     table.string('currentVersionId').nullable()
   })
   await db.schema.createTable('agentSkillVersions', table => {
@@ -124,6 +126,38 @@ describe('skill selection and pinned runtime', () => {
   it('lists only skills visible through live group grants', async () => {
     expect(await runtime.listVisible({ userId: 7, groupIds: [3] })).toMatchObject([{ id: skillId, versionId, description: 'Release notes' }])
     expect(await runtime.listVisible({ userId: 7, groupIds: [9] })).toEqual([])
+  })
+
+  it('exposes personal skills only to their owner and never to API keys', async () => {
+    const personalSkillId = '00000000-0000-4000-8000-000000000006'
+    const personalVersionId = '00000000-0000-4000-8000-000000000007'
+    await db('agentSkills').insert({
+      id: personalSkillId,
+      name: 'personal-guide',
+      status: 'enabled',
+      exposureMode: 'owner',
+      ownerUserId: 7,
+      currentVersionId: personalVersionId
+    })
+    await db('agentSkillVersions').insert({
+      id: personalVersionId,
+      skillId: personalSkillId,
+      approvalStatus: 'approved',
+      contentHash: 'personal-content',
+      sourceRevision: 1,
+      skillMarkdown: '---\nname: personal-guide\ndescription: Personal guide\n---\nUse it.\n',
+      frontmatter: JSON.stringify({ name: 'personal-guide', description: 'Personal guide', license: null, compatibility: null, metadata: {}, 'allowed-tools': [] }),
+      resourceBundle: encodeSkillResourceBundle([])
+    })
+
+    await expect(runtime.assertVisibleVersions([personalVersionId], { userId: 7, groupIds: [] })).resolves.toEqual([personalVersionId])
+    await expect(runtime.assertVisibleVersions([personalVersionId], { userId: 8, groupIds: [] })).rejects.toThrow('unavailable')
+    expect(await runtime.listVisible({ userId: 7, groupIds: [] })).toMatchObject([{ id: personalSkillId, exposureMode: 'owner' }])
+    expect(await runtime.listVisible({ userId: 8, groupIds: [] })).toEqual([])
+    expect(await runtime.listVisibleForApiKey({
+      principal: { apiKeyId: 9, groupIds: [3] },
+      transportRequestId: requestId
+    })).toMatchObject([{ id: skillId, exposureMode: 'groups' }])
   })
 
   it('lets an active run discover and read visible skills with provenance', async () => {

@@ -13,6 +13,8 @@ import { AgentProductRuntime, type AgentEngine } from '../../agents/runtime.ts'
 interface TestSessionState { agentCsrfToken?: string }
 
 const createTables = async (db: Knex): Promise<void> => {
+  await db.schema.createTable('users', table => table.integer('id').primary())
+  await db('users').insert([{ id: 7 }, { id: 8 }])
   await db.schema.createTable('agentSessions', table => {
     table.uuid('id').primary(); table.integer('ownerId').notNullable(); table.string('title').notNullable(); table.string('retention').notNullable(); table.uuid('providerProfileId').nullable(); table.string('executionMode').notNullable(); table.integer('version').notNullable(); table.text('summary').nullable(); table.integer('summaryThroughOrdinal').nullable(); table.dateTime('createdAt').notNullable(); table.dateTime('updatedAt').notNullable(); table.dateTime('lastActivityAt').notNullable(); table.dateTime('expiresAt').nullable(); table.dateTime('deletedAt').nullable()
   })
@@ -26,8 +28,9 @@ const createTables = async (db: Knex): Promise<void> => {
     table.uuid('id').primary(); table.uuid('runId').notNullable(); table.integer('sequence').notNullable(); table.string('type').notNullable(); table.integer('attempt').notNullable(); table.integer('schemaVersion').notNullable(); table.string('dataSha256').notNullable(); table.text('data').notNullable(); table.dateTime('createdAt').notNullable()
   })
   await db.schema.createTable('agentSessionSkills', table => { table.uuid('sessionId'); table.uuid('skillVersionId'); table.integer('ordinal') })
-  await db.schema.createTable('agentSkillVersions', table => { table.uuid('id'); table.uuid('skillId'); table.text('frontmatter'); table.text('skillMarkdown'); table.string('contentHash'); table.dateTime('createdAt') })
-  await db.schema.createTable('agentSkills', table => { table.uuid('id'); table.string('name'); table.text('rootPath'); table.string('status'); table.uuid('currentVersionId') })
+  await db.schema.createTable('agentSkillVersions', table => { table.uuid('id').primary(); table.uuid('skillId'); table.bigInteger('sourceRevision'); table.dateTime('sourceUpdatedAt'); table.integer('sourceHistoryId'); table.text('frontmatter'); table.text('skillMarkdown'); table.binary('resourceBundle'); table.text('resourceManifest'); table.string('contentHash'); table.string('approvalStatus'); table.integer('approvedBy'); table.dateTime('approvedAt'); table.dateTime('createdAt') })
+  await db.schema.createTable('agentSkills', table => { table.uuid('id').primary(); table.string('name'); table.integer('rootPageId'); table.text('rootPath'); table.integer('assetFolderId'); table.string('status'); table.string('exposureMode'); table.uuid('currentVersionId'); table.integer('ownerUserId'); table.dateTime('deletedAt'); table.integer('createdBy'); table.integer('updatedBy'); table.dateTime('createdAt'); table.dateTime('updatedAt') })
+  await db.schema.createTable('agentSkillGrants', table => { table.uuid('skillId'); table.integer('groupId') })
   await db.schema.createTable('agentRunSkills', table => { table.uuid('runId'); table.uuid('skillVersionId'); table.integer('ordinal') })
   await db.schema.createTable('pages', table => { table.integer('id'); table.string('localeCode'); table.text('path'); table.string('title'); table.string('contentType') })
   await db.schema.createTable('agentProposals', table => { table.uuid('id'); table.uuid('sessionId'); table.string('sourceKind'); table.string('actionName'); table.string('risk'); table.string('status'); table.string('summary'); table.integer('pageId'); table.integer('baseSourceRevision'); table.string('authoritySha256'); table.string('inputHash'); table.string('patchSha256'); table.string('resultCanonicalSha256'); table.string('diffSha256'); table.text('diff'); table.dateTime('contentPurgedAt'); table.dateTime('expiresAt'); table.dateTime('createdAt') })
@@ -47,6 +50,7 @@ describe('ordinary-origin agent session API', () => {
   const csrf = 'csrf-token'
   let runtime: AgentProductRuntime
   let engineCurrentPage: unknown
+  let engineSkills: readonly { readonly id: string; readonly name: string }[] = []
 
   beforeAll(async () => {
     db = createKnex({ client: 'better-sqlite3', connection: { filename: ':memory:' }, useNullAsDefault: true, pool: { min: 1, max: 1 } })
@@ -54,6 +58,7 @@ describe('ordinary-origin agent session API', () => {
     const fakeEngine: AgentEngine = {
       async execute(request, sink) {
         engineCurrentPage = request.currentPage
+        engineSkills = request.skills.map(skill => ({ id: skill.id, name: skill.name }))
         await sink.text('Hello ')
         await sink.text('from the deterministic engine.')
         return { inputTokens: 3, outputTokens: 5, costMicros: 8, suggestions: [{ id: 'continue', label: 'Continue', prompt: 'Continue' }] }
@@ -190,6 +195,58 @@ describe('ordinary-origin agent session API', () => {
     expect(replay).toContain('event: message.delta')
     expect(replay).toContain('event: message.completed')
     expect(replay).toContain('event: suggestions.updated')
+  })
+  it('manages owner-scoped skills and applies a manual invocation to one run', async () => {
+    const headers = { cookie, 'content-type': 'application/json', origin: 'https://wiki.example.test', 'sec-fetch-site': 'same-origin', 'x-wiki-csrf': csrf }
+    const markdown = '---\nname: qa-helper\ndescription: Follow the QA checklist\n---\n# Instructions\n\nCheck the acceptance criteria.\n'
+    const createdResponse = await fetch(`${baseUrl}/_api/agents/personal-skills`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ name: 'qa-helper', skillMarkdown: markdown })
+    })
+    expect(createdResponse.status).toBe(201)
+    const created = (await createdResponse.json() as { skill: { id: string; versionId: string } }).skill
+    expect(await (await fetch(`${baseUrl}/_api/agents/skills`, { headers: { cookie } })).json()).toMatchObject({
+      skills: [{ id: created.id, versionId: created.versionId, exposureMode: 'owner' }]
+    })
+    ownerId = 8
+    expect(await (await fetch(`${baseUrl}/_api/agents/personal-skills`, { headers: { cookie } })).json()).toEqual({ skills: [] })
+    expect(await (await fetch(`${baseUrl}/_api/agents/skills`, { headers: { cookie } })).json()).toEqual({ skills: [] })
+    ownerId = 7
+
+    const sessionResponse = await fetch(`${baseUrl}/_api/agents/sessions`, { method: 'POST', headers, body: JSON.stringify({ retention: 'saved', executionMode: 'agent', providerProfileId: null }) })
+    const state = await sessionResponse.json() as { session: { id: string; version: number; profileResolutionToken: string } }
+    const admittedResponse = await fetch(`${baseUrl}/_api/agents/sessions/${state.session.id}/messages`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        clientRequestId: '00000000-0000-4000-8000-000000000072',
+        expectedSessionVersion: state.session.version,
+        profileResolutionToken: state.session.profileResolutionToken,
+        content: 'Use my QA process.',
+        invokedSkillVersionIds: [created.versionId]
+      })
+    })
+    expect(admittedResponse.status).toBe(202)
+    const admitted = await admittedResponse.json() as { run: { id: string } }
+    expect(await db('agentRunSkills').where({ runId: admitted.run.id }).select('skillVersionId', 'ordinal')).toEqual([{ skillVersionId: created.versionId, ordinal: 0 }])
+    expect(await runtime.runOnce()).toBe(true)
+    expect(engineSkills).toEqual([{ id: created.versionId, name: 'qa-helper' }])
+
+    const updatedResponse = await fetch(`${baseUrl}/_api/agents/personal-skills/${created.id}`, {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify({ expectedVersionId: created.versionId, skillMarkdown: markdown.replace('acceptance criteria', 'acceptance criteria and evidence') })
+    })
+    expect(updatedResponse.status).toBe(200)
+    const updated = (await updatedResponse.json() as { skill: { versionId: string } }).skill
+    expect(updated.versionId).not.toBe(created.versionId)
+    expect((await fetch(`${baseUrl}/_api/agents/personal-skills/${created.id}`, {
+      method: 'DELETE',
+      headers,
+      body: JSON.stringify({ expectedVersionId: updated.versionId })
+    })).status).toBe(200)
+    expect(await (await fetch(`${baseUrl}/_api/agents/skills`, { headers: { cookie } })).json()).toEqual({ skills: [] })
   })
   it('serves intact unexpired screenshot artifacts only to their owner', async () => {
     const artifactId = '00000000-0000-4000-8000-000000000068'

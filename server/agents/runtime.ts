@@ -87,6 +87,7 @@ export interface SubmitAgentMessageInput {
   readonly clientRequestId: string
   readonly expectedSessionVersion: number
   readonly content: string
+  readonly invokedSkillVersionIds?: readonly string[]
   readonly currentPage?: Readonly<Record<string, unknown>>
 }
 
@@ -156,6 +157,8 @@ export class AgentProductRuntime {
   async submit (input: SubmitAgentMessageInput): Promise<{ readonly run: AgentRunRecord, readonly replayed: boolean }> {
     const resolved = await this.#resolver.resolve({ ownerId: input.ownerId, sessionId: input.sessionId, profileResolutionToken: input.profileResolutionToken })
     if (!Number.isSafeInteger(resolved.reservationMilliseconds) || resolved.reservationMilliseconds < 1) throw new AgentRepositoryError('INVALID_PROFILE_RESOLUTION', 'Quota reservation duration is invalid', 500)
+    const skillVersionIds = [...new Set([...(input.invokedSkillVersionIds ?? []), ...resolved.skillVersionIds])]
+    if (skillVersionIds.length > 8) throw new AgentRepositoryError('TOO_MANY_SKILLS', 'A run can use at most 8 skills', 400)
     return admitAgentRun(this.#knex, {
       ownerId: input.ownerId,
       sessionId: input.sessionId,
@@ -164,6 +167,7 @@ export class AgentProductRuntime {
       content: input.content,
       ...(input.currentPage === undefined ? {} : { currentPage: input.currentPage }),
       ...resolved,
+      skillVersionIds,
       reservationExpiresAt: new Date(Date.now() + resolved.reservationMilliseconds)
     })
   }

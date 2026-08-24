@@ -4,7 +4,7 @@ import { z } from 'zod'
 
 import { encodeSkillResourceBundle } from './bundle.ts'
 import type { ApprovedSkillBundle } from './parser.ts'
-import { SkillValidationError } from './parser.ts'
+import { serializeSkillFrontmatter, SkillValidationError } from './parser.ts'
 import { resolvePageNativeSkillSource, type ResolvedPageNativeSkillSource, type SkillSourceMapping } from './wiki-source.ts'
 import { validateSkillVirtualPath } from './virtual-path.ts'
 
@@ -76,15 +76,6 @@ interface SkillRow {
   readonly currentVersionId: string | null
 }
 
-const normalizedFrontmatterJson = (bundle: ApprovedSkillBundle): string => JSON.stringify({
-  name: bundle.entry.frontmatter.name,
-  description: bundle.entry.frontmatter.description,
-  license: bundle.entry.frontmatter.license,
-  compatibility: bundle.entry.frontmatter.compatibility,
-  metadata: bundle.entry.frontmatter.metadata,
-  'allowed-tools': bundle.entry.frontmatter.allowedTools,
-  ...bundle.entry.frontmatter.unknown
-})
 
 export class SkillRegistry {
   private readonly knex: Knex
@@ -134,7 +125,7 @@ export class SkillRegistry {
     if (value.exposureMode === 'all_agent_users' && value.groupIds.length > 0) throw new SkillValidationError('Global skill exposure cannot include group grants')
 
     await this.knex.transaction(async transaction => {
-      const updated = await transaction('agentSkills').where({ id: value.skillId }).update({
+      const updated = await transaction('agentSkills').where({ id: value.skillId }).whereNull('ownerUserId').update({
         assetFolderId: value.assetFolderId,
         exposureMode: value.exposureMode,
         updatedBy: value.actorId,
@@ -172,7 +163,7 @@ export class SkillRegistry {
         throw new SkillValidationError('Skill source changed after approval preview')
       }
       const versionId = await this.persistReview(transaction, skill, source, actorId, 'approved')
-      await transaction('agentSkills').where({ id: skill.id }).update({ currentVersionId: versionId, updatedBy: actorId, updatedAt: transaction.fn.now() })
+      await transaction('agentSkills').where({ id: skill.id }).whereNull('ownerUserId').update({ currentVersionId: versionId, updatedBy: actorId, updatedAt: transaction.fn.now() })
       return versionId
     })
   }
@@ -199,7 +190,7 @@ export class SkillRegistry {
     await this.knex.transaction(async transaction => {
       const skill = await this.getSkillForUpdate(transaction, skillId)
       if (enabled && skill.currentVersionId === null) throw new SkillValidationError('Skill has no approved version')
-      await transaction('agentSkills').where({ id: skillId }).update({
+      await transaction('agentSkills').where({ id: skillId }).whereNull('ownerUserId').update({
         status: enabled ? 'enabled' : 'disabled',
         updatedBy: actorId,
         updatedAt: transaction.fn.now()
@@ -211,6 +202,8 @@ export class SkillRegistry {
     const rows = await this.knex('agentSkills as skills')
       .innerJoin('pages as source', 'source.id', 'skills.rootPageId')
       .leftJoin('agentSkillVersions as versions', 'versions.id', 'skills.currentVersionId')
+      .whereNull('skills.ownerUserId')
+      .whereNull('skills.deletedAt')
       .select(
         'skills.id', 'skills.name', 'skills.rootPageId', 'skills.rootPath', 'skills.assetFolderId', 'skills.status',
         'skills.exposureMode', 'skills.currentVersionId', 'versions.contentHash as currentContentHash',
@@ -234,7 +227,7 @@ export class SkillRegistry {
   }
 
   private async getSkillForUpdate(transaction: Knex.Transaction, skillId: string): Promise<SkillRow> {
-    const skill = await transaction<SkillRow>('agentSkills').select('*').where({ id: skillId }).forUpdate().first()
+    const skill = await transaction<SkillRow>('agentSkills').select('*').where({ id: skillId }).whereNull('ownerUserId').whereNull('deletedAt').forUpdate().first()
     if (!skill) throw new SkillValidationError('Skill mapping does not exist')
     return skill
   }
@@ -278,7 +271,7 @@ export class SkillRegistry {
       sourceUpdatedAt: source.sourceUpdatedAt,
       sourceHistoryId: source.sourceHistoryId,
       skillMarkdown: source.bundle.entry.text,
-      frontmatter: normalizedFrontmatterJson(source.bundle),
+      frontmatter: serializeSkillFrontmatter(source.bundle.entry.frontmatter),
       resourceBundle: encodeSkillResourceBundle(source.bundle.resources),
       resourceManifest: source.bundle.manifestJson,
       contentHash: source.bundle.contentHash,

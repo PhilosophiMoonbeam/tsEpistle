@@ -97,7 +97,7 @@ export const useAgentsStore = defineStore('agents', {
     async reloadSessions() {
       this.sessions = await listAgentSessions(window.fetch.bind(window), this.csrfToken)
     },
-    async send(content: string): Promise<boolean> {
+    async send(content: string, invokedSkillVersionIds: readonly string[] = []): Promise<boolean> {
       const thread = this.thread
       const trimmed = content.trim()
       const currentPage = this.contextPage ?? this.launchPage
@@ -110,6 +110,7 @@ export const useAgentsStore = defineStore('agents', {
           expectedSessionVersion: thread.session.version,
           profileResolutionToken: thread.session.profileResolutionToken,
           content: trimmed,
+          ...(invokedSkillVersionIds.length > 0 ? { invokedSkillVersionIds } : {}),
           ...(currentPage ? { currentPage } : {})
         })
         await this.refreshThread()

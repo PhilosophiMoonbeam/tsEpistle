@@ -6,6 +6,7 @@ import { down as downAgentLedger, up as upAgentLedger } from '../../db/migration
 import { down as restoreLegacyHandoffTable, up as removeLegacyHandoffTable } from '../../db/migrations/2.5.140.ts'
 import { down as downProviderSecrets, up as upProviderSecrets } from '../../db/migrations/2.5.141.ts'
 import { down as downProviderProfileLifecycle, up as upProviderProfileLifecycle } from '../../db/migrations/2.5.142.ts'
+import { down as downPersonalSkills, up as upPersonalSkills } from '../../db/migrations/2.5.143.ts'
 
 const databaseName = process.env.WIKI_TEST_POSTGRES_DATABASE ?? ''
 const passwordFile = process.env.WIKI_TEST_POSTGRES_PASSWORD_FILE
@@ -64,6 +65,7 @@ suite('PostgreSQL first-class agent migration', () => {
     await removeLegacyHandoffTable(db)
     await upProviderSecrets(db)
     await upProviderProfileLifecycle(db)
+    await upPersonalSkills(db)
   })
 
   afterAll(async () => {
@@ -82,6 +84,9 @@ suite('PostgreSQL first-class agent migration', () => {
     await expect(db.schema.hasColumn('pages', 'sourceRevision')).resolves.toBe(true)
     await expect(db.schema.hasColumn('pageHistory', 'sourceRevision')).resolves.toBe(true)
     await expect(db.schema.hasColumn('agentProviderProfiles', 'deletedAt')).resolves.toBe(true)
+    await expect(db.schema.hasColumn('agentSkills', 'ownerUserId')).resolves.toBe(true)
+    await expect(db.schema.hasColumn('agentSkills', 'deletedAt')).resolves.toBe(true)
+    await expect(db('agentSkills').columnInfo('rootPageId')).resolves.toMatchObject({ nullable: true })
   })
 
   it('increments source revision only for authoritative page fields', async () => {
@@ -130,6 +135,7 @@ suite('PostgreSQL first-class agent migration', () => {
     await expect(downProviderProfileLifecycle(db)).rejects.toThrow('contains removed profiles')
     await expect(downAgentLedger(db)).rejects.toThrow('agentProviderProfiles contains data')
     await db('agentProviderProfiles').where({ id: '00000000-0000-4000-8000-000000000001' }).update({ deletedAt: null })
+    await downPersonalSkills(db)
     await downProviderProfileLifecycle(db)
     await db('agentProviderProfiles').delete()
     await db('pages').delete()

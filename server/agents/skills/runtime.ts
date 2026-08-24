@@ -36,7 +36,7 @@ export interface VisibleSkill {
   readonly versionId: string
   readonly contentHash: string
   readonly sourceRevision: string
-  readonly exposureMode: 'all_agent_users' | 'groups'
+  readonly exposureMode: 'all_agent_users' | 'groups' | 'owner'
 }
 
 export interface PinnedSkillPrompt {
@@ -69,7 +69,7 @@ export interface SkillResourceResult {
 interface SkillVersionRow {
   readonly skillId: string
   readonly name: string
-  readonly exposureMode: 'all_agent_users' | 'groups'
+  readonly exposureMode: 'all_agent_users' | 'groups' | 'owner'
   readonly versionId: string
   readonly contentHash: string
   readonly sourceRevision: string | number
@@ -128,25 +128,41 @@ const skillResourceResult = (row: SkillVersionRow & { readonly skillId: string }
   }
 }
 
-const visibleSkillQuery = (db: Knex, groupIds: readonly number[]) => {
-  const query = db('agentSkills as skills')
+interface SkillVisibilityPrincipal {
+  readonly userId?: number
+  readonly groupIds: readonly number[]
+}
+
+const applySystemSkillVisibility = (query: Knex.QueryBuilder, db: Knex, groupIds: readonly number[]): void => {
+  query.whereNull('skills.ownerUserId').andWhere(exposure => {
+    exposure.where('skills.exposureMode', 'all_agent_users')
+    if (groupIds.length > 0) {
+      exposure.orWhereExists(function groupGrant() {
+        this.select(db.raw('1'))
+          .from('agentSkillGrants as grants')
+          .whereRaw('grants."skillId" = skills.id')
+          .whereIn('grants.groupId', groupIds)
+      })
+    }
+  })
+}
+
+const skillVisibility = (db: Knex, principal: SkillVisibilityPrincipal) => (query: Knex.QueryBuilder): void => {
+  if (principal.userId === undefined) {
+    applySystemSkillVisibility(query, db, principal.groupIds)
+    return
+  }
+  query.where('skills.ownerUserId', principal.userId).orWhere(system => applySystemSkillVisibility(system, db, principal.groupIds))
+}
+
+const visibleSkillQuery = (db: Knex, principal: SkillVisibilityPrincipal) =>
+  db('agentSkills as skills')
     .innerJoin('agentSkillVersions as versions', 'versions.id', 'skills.currentVersionId')
     .where('skills.status', 'enabled')
     .where('versions.approvalStatus', 'approved')
     .whereNotNull('skills.currentVersionId')
-    .where(exposure => {
-      exposure.where('skills.exposureMode', 'all_agent_users')
-      if (groupIds.length > 0) {
-        exposure.orWhereExists(function groupGrant() {
-          this.select(db.raw('1'))
-            .from('agentSkillGrants as grants')
-            .whereRaw('grants."skillId" = skills.id')
-            .whereIn('grants.groupId', groupIds)
-        })
-      }
-    })
-  return query
-}
+    .whereNull('skills.deletedAt')
+    .where(skillVisibility(db, principal))
 
 export class SkillRuntime {
   private readonly knex: Knex
@@ -157,7 +173,7 @@ export class SkillRuntime {
 
   async listVisible(principalValue: SkillPrincipal): Promise<readonly VisibleSkill[]> {
     const principal = normalizePrincipal(principalValue)
-    const rows = await visibleSkillQuery(this.knex, principal.groupIds)
+    const rows = await visibleSkillQuery(this.knex, principal)
       .select(
         'skills.id', 'skills.name', 'skills.exposureMode', 'versions.id as versionId',
         'versions.contentHash', 'versions.sourceRevision', 'versions.frontmatter'
@@ -174,6 +190,19 @@ export class SkillRuntime {
     }))
   }
 
+  async assertVisibleVersions(skillVersionIdsValue: readonly string[], principalValue: SkillPrincipal): Promise<readonly string[]> {
+    const skillVersionIds = SkillSelectionSchema.parse([...skillVersionIdsValue])
+    if (new Set(skillVersionIds).size !== skillVersionIds.length) throw new SkillValidationError('Skill selection contains duplicates')
+    if (skillVersionIds.length === 0) return []
+    const principal = normalizePrincipal(principalValue)
+    const rows = await visibleSkillQuery(this.knex, principal)
+      .select('versions.id')
+      .whereIn('versions.id', skillVersionIds) as Array<{ id: string }>
+    const visible = new Set(rows.map(row => row.id))
+    if (skillVersionIds.some(id => !visible.has(id))) throw new SkillValidationError('Selected skill is unavailable')
+    return skillVersionIds
+  }
+
   async listVisibleForRun(input: {
     readonly runId: string
     readonly principal: SkillPrincipal
@@ -188,7 +217,7 @@ export class SkillRuntime {
         .where({ id: runId })
         .first() as { sessionId: string; ownerId: number } | undefined
       if (!run || run.ownerId !== principal.userId) throw new SkillValidationError('Agent run is unavailable')
-      const rows = await visibleSkillQuery(transaction, principal.groupIds)
+      const rows = await visibleSkillQuery(transaction, principal)
         .select(
           'skills.id', 'skills.name', 'skills.exposureMode', 'versions.id as versionId',
           'versions.contentHash', 'versions.sourceRevision', 'versions.frontmatter'
@@ -228,7 +257,7 @@ export class SkillRuntime {
     const principal = normalizeApiKeyPrincipal(input.principal)
     const transportRequestId = UuidSchema.parse(input.transportRequestId)
     return this.knex.transaction(async transaction => {
-      const rows = await visibleSkillQuery(transaction, principal.groupIds)
+      const rows = await visibleSkillQuery(transaction, { groupIds: principal.groupIds })
         .select(
           'skills.id', 'skills.name', 'skills.exposureMode', 'versions.id as versionId',
           'versions.contentHash', 'versions.sourceRevision', 'versions.frontmatter'
@@ -292,17 +321,8 @@ export class SkillRuntime {
           'skills.name': input.skillName,
           'skills.status': 'enabled'
         })
-        .where(exposure => {
-          exposure.where('skills.exposureMode', 'all_agent_users')
-          if (principal.groupIds.length > 0) {
-            exposure.orWhereExists(function groupGrant() {
-              this.select(transaction.raw('1'))
-                .from('agentSkillGrants as grants')
-                .whereRaw('grants."skillId" = skills.id')
-                .whereIn('grants.groupId', principal.groupIds)
-            })
-          }
-        })
+        .whereNull('skills.deletedAt')
+        .where(skillVisibility(transaction, principal))
         .first() as (SkillVersionRow & { skillId: string }) | undefined
       if (!row) throw new SkillValidationError('Approved skill resource is unavailable')
       const result = skillResourceResult(row, path, 'Approved skill resource is unavailable')
@@ -348,17 +368,8 @@ export class SkillRuntime {
           'skills.name': input.skillName,
           'skills.status': 'enabled'
         })
-        .where(exposure => {
-          exposure.where('skills.exposureMode', 'all_agent_users')
-          if (principal.groupIds.length > 0) {
-            exposure.orWhereExists(function groupGrant() {
-              this.select(transaction.raw('1'))
-                .from('agentSkillGrants as grants')
-                .whereRaw('grants."skillId" = skills.id')
-                .whereIn('grants.groupId', principal.groupIds)
-            })
-          }
-        })
+        .whereNull('skills.deletedAt')
+        .where(skillVisibility(transaction, { groupIds: principal.groupIds }))
         .first() as (SkillVersionRow & { skillId: string }) | undefined
       if (!row) throw new SkillValidationError('Approved skill resource is unavailable')
       const result = skillResourceResult(row, path, 'Approved skill resource is unavailable')
@@ -407,7 +418,7 @@ export class SkillRuntime {
       if (activeRun) throw new SkillValidationError('Skills cannot change while a run is active')
 
       if (skillVersionIds.length > 0) {
-        const visible = await visibleSkillQuery(transaction, principal.groupIds)
+        const visible = await visibleSkillQuery(transaction, principal)
           .select('skills.id', 'versions.id as versionId', 'versions.contentHash')
           .whereIn('versions.id', skillVersionIds) as Array<{ id: string; versionId: string; contentHash: string }>
         if (visible.length !== skillVersionIds.length) throw new SkillValidationError('One or more selected skills are unavailable')

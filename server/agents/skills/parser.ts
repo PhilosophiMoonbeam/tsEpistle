@@ -282,6 +282,16 @@ export const buildApprovedSkillBundle = (entryBytes: Uint8Array, expectedName: s
   return { entry, resources: approved, manifestJson, contentHash: hash.digest('hex'), totalBytes }
 }
 
+export const serializeSkillFrontmatter = (frontmatter: ParsedSkillFrontmatter): string => JSON.stringify({
+  name: frontmatter.name,
+  description: frontmatter.description,
+  license: frontmatter.license,
+  compatibility: frontmatter.compatibility,
+  metadata: frontmatter.metadata,
+  'allowed-tools': frontmatter.allowedTools,
+  ...frontmatter.unknown
+})
+
 export const intersectAllowedTools = (available: readonly string[], allowedTools: readonly string[]): readonly string[] => {
   if (allowedTools.length === 0) return [...available]
   const allowed = new Set(allowedTools)

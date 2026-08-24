@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { createAgentThread, deleteAgentSession, listAgentProfiles, submitAgentMessage } from './agents-api.ts'
+import { createAgentThread, createPersonalAgentSkill, deleteAgentSession, listAgentProfiles, listPersonalAgentSkills, removePersonalAgentSkill, submitAgentMessage, updatePersonalAgentSkill } from './agents-api.ts'
 import { renderSafeMarkdown } from './safe-markdown.ts'
 
 describe('agents client boundary', () => {
@@ -39,6 +39,65 @@ describe('agents client boundary', () => {
     }
     const fetcher = vi.fn(async () => Response.json({ profiles: [profile] })) as unknown as typeof fetch
     await expect(listAgentProfiles(fetcher, 'csrf')).resolves.toEqual([profile])
+  })
+
+  it('validates personal skill documents across create, list, update, and remove requests', async () => {
+    const skill = {
+      id: '00000000-0000-4000-8000-000000000011',
+      name: 'qa-helper',
+      description: 'QA helper',
+      versionId: '00000000-0000-4000-8000-000000000012',
+      contentHash: 'a'.repeat(64),
+      skillMarkdown: '---\nname: qa-helper\ndescription: QA helper\n---\nCheck it.\n',
+      createdAt: '2026-08-17T00:00:00.000Z',
+      updatedAt: '2026-08-17T00:00:00.000Z'
+    }
+    const responses = [
+      Response.json({ skill }, { status: 201 }),
+      Response.json({ skills: [skill] }),
+      Response.json({ skill: { ...skill, versionId: '00000000-0000-4000-8000-000000000013' } }),
+      Response.json({ deleted: true })
+    ]
+    const fetcher = vi.fn(async () => responses.shift() ?? Response.json({})) as unknown as typeof fetch
+
+    await expect(createPersonalAgentSkill(fetcher, 'csrf', { name: skill.name, skillMarkdown: skill.skillMarkdown })).resolves.toEqual(skill)
+    await expect(listPersonalAgentSkills(fetcher, 'csrf')).resolves.toEqual([skill])
+    await expect(updatePersonalAgentSkill(fetcher, 'csrf', skill.id, { expectedVersionId: skill.versionId, skillMarkdown: skill.skillMarkdown })).resolves.toMatchObject({ versionId: '00000000-0000-4000-8000-000000000013' })
+    await expect(removePersonalAgentSkill(fetcher, 'csrf', skill.id, skill.versionId)).resolves.toBeUndefined()
+    expect(fetcher).toHaveBeenNthCalledWith(4, `/_api/agents/personal-skills/${skill.id}`, expect.objectContaining({
+      method: 'DELETE',
+      credentials: 'same-origin',
+      body: JSON.stringify({ expectedVersionId: skill.versionId })
+    }))
+  })
+
+  it('sends explicitly invoked skill versions with one message', async () => {
+    const versionId = '00000000-0000-4000-8000-000000000021'
+    const fetcher = vi.fn(async () => Response.json({
+      run: {
+        id: '00000000-0000-4000-8000-000000000022',
+        sessionId: '00000000-0000-4000-8000-000000000023',
+        status: 'queued',
+        attempt: 0,
+        eventSequence: 1,
+        canCancel: true,
+        createdAt: '2026-08-17T00:00:00.000Z',
+        startedAt: null,
+        completedAt: null,
+        errorCode: null,
+        errorMessage: null
+      },
+      replayed: false
+    }, { status: 202 })) as unknown as typeof fetch
+    const input = {
+      clientRequestId: '00000000-0000-4000-8000-000000000024',
+      expectedSessionVersion: 1,
+      profileResolutionToken: 'token',
+      content: 'Use my process',
+      invokedSkillVersionIds: [versionId]
+    }
+    await submitAgentMessage(fetcher, 'csrf', '00000000-0000-4000-8000-000000000023', input)
+    expect(fetcher).toHaveBeenCalledWith(expect.stringContaining('/messages'), expect.objectContaining({ body: JSON.stringify(input) }))
   })
 
   it('renders Markdown with raw HTML and active URL schemes disabled', () => {

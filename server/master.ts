@@ -348,6 +348,7 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
       product: wiki.product,
       agentsEnabled: wiki.config.agents.enabled,
       agentProviderEnabled: wiki.config.agents.provider.enabled,
+      agentSkillsEnabled: wiki.config.agents.skills.enabled,
       agentCsrfToken: wiki.config.agents.enabled ? agentCsrfToken(_req) : ''
     }
     res.locals.langs = await wiki.models.locales.getNavLocales({ cache: true })

@@ -32,6 +32,7 @@
         :csrf-token='agentCsrfToken'
         :approval-id='approvalId'
         :provider-enabled='agentProviderEnabled'
+        :skills-enabled='agentSkillsEnabled'
         :page-id='currentPageId'
         :page-locale='currentPageLocale'
         :page-path='currentPagePath'
@@ -181,6 +182,7 @@ export default defineComponent({
     },
     agentCsrfToken(): string { return siteConfig.agentCsrfToken },
     agentProviderEnabled(): boolean { return siteConfig.agentProviderEnabled },
+    agentSkillsEnabled(): boolean { return siteConfig.agentSkillsEnabled },
     currentPageId(): number { return wikiStore.page.id },
     currentPageLocale(): string { return wikiStore.page.locale },
     currentPagePath(): string { return wikiStore.page.path },

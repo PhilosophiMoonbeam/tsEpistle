@@ -26,6 +26,13 @@ describe('inline Ask mode contract', () => {
     expect(inline).not.toMatch(/window\.(?:open|location)/)
   })
 
+  test('passes the skills feature flag and exposes one-shot personal skill controls', () => {
+    expect(search).toMatch(/:skills-enabled=['"]agentSkillsEnabled['"]/)
+    expect(inline).toMatch(/<AgentPersonalSkills/)
+    expect(inline).toMatch(/:invocation-limit="invocationLimit"/)
+    expect(inline).toMatch(/agents\.send\(prompt, invokedSkillVersionIds\)/)
+  })
+
   test('supports direct mode switching and submission from the Wiki search field', () => {
     expect(header).toMatch(/event\.key\.toLowerCase\(\)\s*!==\s*['"]a['"]/)
     expect(header).toMatch(/this\.searchMode\s*=\s*this\.searchMode\s*===\s*['"]ask['"]\s*\?\s*['"]search['"]\s*:\s*['"]ask['"]/)

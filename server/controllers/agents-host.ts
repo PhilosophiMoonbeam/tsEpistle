@@ -5,6 +5,7 @@ import { z, ZodError } from 'zod'
 
 import { SkillValidationError } from '../agents/skills/parser.ts'
 import { agentCsrfMatches } from '../agents/csrf.ts'
+import { PersonalSkillMarkdownSchema, PersonalSkillNameSchema, PersonalSkillRegistry } from '../agents/skills/personal.ts'
 import { requestOriginMatches } from '../agents/origins.ts'
 import { SkillRegistry } from '../agents/skills/registry.ts'
 import { SkillRuntime, type SkillPrincipal } from '../agents/skills/runtime.ts'
@@ -115,6 +116,7 @@ const SubmitMessageSchema = z.strictObject({
   expectedSessionVersion: z.number().int().positive(),
   profileResolutionToken: z.string().min(1).max(4_096),
   content: z.string().min(1).max(32_000),
+  invokedSkillVersionIds: z.array(z.uuid()).max(8).optional(),
   currentPage: z.strictObject({
     id: z.number().int().positive(),
     locale: z.string().min(1).max(16),
@@ -122,6 +124,15 @@ const SubmitMessageSchema = z.strictObject({
     observedUpdatedAt: z.iso.datetime()
   }).optional()
 })
+const CreatePersonalSkillSchema = z.strictObject({
+  name: PersonalSkillNameSchema,
+  skillMarkdown: PersonalSkillMarkdownSchema
+})
+const UpdatePersonalSkillSchema = z.strictObject({
+  expectedVersionId: z.uuid(),
+  skillMarkdown: PersonalSkillMarkdownSchema
+})
+const RemovePersonalSkillSchema = z.strictObject({ expectedVersionId: z.uuid() })
 const UUIDSchema = z.uuid()
 const DecisionSchema = z.strictObject({ decision: z.enum(['approved', 'denied']), decisionNote: z.string().max(4_000).optional(), confirmationPath: z.string().max(1_024).optional() })
 
@@ -179,6 +190,7 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
   const router = express.Router()
   const skillRegistry = new SkillRegistry(wiki.models.knex, wiki.config.agents.skills.namespace)
   const skillRuntime = new SkillRuntime(wiki.models.knex)
+  const personalSkillRegistry = new PersonalSkillRegistry(wiki.models.knex)
   const browserTargets = new BrowserTargetRegistry(wiki.models.knex)
   const apiPrefix = '/_api/agents'
 
@@ -229,13 +241,17 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
     if (!wiki.config.agents.provider.enabled || !wiki.agentRuntime) return res.sendStatus(404)
     const sessionId = UUIDSchema.parse(routeParameter(req, 'sessionId'))
     const input = SubmitMessageSchema.parse(req.body)
+    const principal = requestSkillPrincipal(req)
+    if ((input.invokedSkillVersionIds?.length ?? 0) > 0 && !wiki.config.agents.skills.enabled) return res.sendStatus(404)
+    const invokedSkillVersionIds = await skillRuntime.assertVisibleVersions(input.invokedSkillVersionIds ?? [], principal)
     const admitted = await wiki.agentRuntime.submit({
-      ownerId: requestSkillPrincipal(req).userId,
+      ownerId: principal.userId,
       sessionId,
       clientRequestId: input.clientRequestId,
       expectedSessionVersion: input.expectedSessionVersion,
       profileResolutionToken: input.profileResolutionToken,
       content: input.content,
+      invokedSkillVersionIds,
       ...(input.currentPage === undefined ? {} : { currentPage: input.currentPage })
     })
     return res.status(202).json({ run: projectAgentRun(admitted.run), replayed: admitted.replayed })
@@ -377,13 +393,39 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
   }))
 
 
-  router.use(['/_api/agents/skills', '/_api/agents/sessions/:sessionId/skills'], (req, res, next) => {
+  router.use(['/_api/agents/skills', '/_api/agents/personal-skills', '/_api/agents/sessions/:sessionId/skills'], (req, res, next) => {
     if (!wiki.config.agents.skills.enabled) return res.sendStatus(404)
     if (!hasAgentPermission(req.user)) return res.sendStatus(403)
     return next()
   })
   router.get('/_api/agents/skills', asyncRoute(async (req, res) => {
     return res.json({ skills: await skillRuntime.listVisible(requestSkillPrincipal(req)) })
+  }))
+  router.get('/_api/agents/personal-skills', asyncRoute(async (req, res) => {
+    return res.json({ skills: await personalSkillRegistry.list(requestSkillPrincipal(req).userId) })
+  }))
+  router.post('/_api/agents/personal-skills', asyncRoute(async (req, res) => {
+    const input = CreatePersonalSkillSchema.parse(req.body)
+    const skill = await personalSkillRegistry.create({ ...input, ownerId: requestSkillPrincipal(req).userId })
+    return res.status(201).json({ skill })
+  }))
+  router.put('/_api/agents/personal-skills/:skillId', asyncRoute(async (req, res) => {
+    const input = UpdatePersonalSkillSchema.parse(req.body)
+    const skill = await personalSkillRegistry.update({
+      ...input,
+      ownerId: requestSkillPrincipal(req).userId,
+      skillId: UUIDSchema.parse(routeParameter(req, 'skillId'))
+    })
+    return res.json({ skill })
+  }))
+  router.delete('/_api/agents/personal-skills/:skillId', asyncRoute(async (req, res) => {
+    const input = RemovePersonalSkillSchema.parse(req.body)
+    await personalSkillRegistry.remove({
+      ...input,
+      ownerId: requestSkillPrincipal(req).userId,
+      skillId: UUIDSchema.parse(routeParameter(req, 'skillId'))
+    })
+    return res.json({ deleted: true })
   }))
   router.get('/_api/agents/sessions/:sessionId/skills', asyncRoute(async (req, res) => {
     const sessionId = routeParameter(req, 'sessionId')
@@ -420,7 +462,7 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
     })
     return res.send(resource.bytes)
   }))
-  router.use(['/_api/agents/skills', '/_api/agents/sessions/:sessionId/skills'], (error: unknown, _req: Request, res: Response, next: NextFunction) => {
+  router.use(['/_api/agents/skills', '/_api/agents/personal-skills', '/_api/agents/sessions/:sessionId/skills'], (error: unknown, _req: Request, res: Response, next: NextFunction) => {
     if (error instanceof ZodError) return res.status(400).json({ error: 'INVALID_REQUEST', details: error.issues })
     if (error instanceof SkillValidationError) return res.status(409).json({ error: error.code, message: error.message })
     return next(error)
@@ -591,6 +633,7 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
   router.use(apiPrefix, (error: unknown, _req: Request, res: Response, next: NextFunction) => {
     if (res.headersSent) return next(error)
     if (error instanceof ZodError) return res.status(400).json({ error: 'INVALID_REQUEST', details: error.issues })
+    if (error instanceof SkillValidationError) return res.status(409).json({ error: error.code, message: error.message })
     if (error instanceof AgentRepositoryError) return res.status(error.status).json({ error: error.code, message: error.status >= 500 ? 'Agent request failed' : error.message })
     return next(error)
   })

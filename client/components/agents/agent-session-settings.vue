@@ -16,24 +16,26 @@
           Text generation does not receive or call Wiki actions. The result is unverified model text.
         </v-alert>
         <v-btn color="primary" variant="tonal" :disabled="disabled || !profileChanged" @click="applyProfile">Apply provider and mode</v-btn>
-        <v-divider class="my-5" />
-        <v-select
-          v-model="skillVersionIds"
-          :items="skillItems"
-          label="Pinned skills (always loaded)"
-          multiple
-          chips
-          closable-chips
-          :disabled="disabled"
-          hint="Pinned skills are always loaded. The agent also sees your visible skill catalog and loads relevant skills before acting. Skills never grant tools or page permissions."
-          persistent-hint
-        />
-        <v-btn class="mt-3" color="primary" variant="tonal" :disabled="disabled || !skillsChanged" @click="applySkills">Apply skills</v-btn>
-        <v-list v-if="session.skills.length" class="mt-4" density="compact" aria-label="Pinned skill provenance">
-          <v-list-item v-for="skill in session.skills" :key="skill.versionId" :title="skill.name" :subtitle="`${skill.sourcePath} · ${skill.contentHash.slice(0, 12)} · version ${skill.versionId}`">
-            <template #append><v-chip :color="skill.drifted ? 'warning' : 'success'" size="small">{{ skill.drifted ? 'New version available' : 'Pinned exact version' }}</v-chip></template>
-          </v-list-item>
-        </v-list>
+        <template v-if="skillsEnabled">
+          <v-divider class="my-5" />
+          <v-select
+            v-model="skillVersionIds"
+            :items="skillItems"
+            label="Pinned skills (always loaded)"
+            multiple
+            chips
+            closable-chips
+            :disabled="disabled"
+            hint="Pinned skills are always loaded. The agent also sees your visible skill catalog and loads relevant skills before acting. Skills never grant tools or page permissions."
+            persistent-hint
+          />
+          <v-btn class="mt-3" color="primary" variant="tonal" :disabled="disabled || !skillsChanged" @click="applySkills">Apply skills</v-btn>
+          <v-list v-if="session.skills.length" class="mt-4" density="compact" aria-label="Pinned skill provenance">
+            <v-list-item v-for="skill in session.skills" :key="skill.versionId" :title="skill.name" :subtitle="`${skill.sourcePath} · ${skill.contentHash.slice(0, 12)} · version ${skill.versionId}`">
+              <template #append><v-chip :color="skill.drifted ? 'warning' : 'success'" size="small">{{ skill.drifted ? 'New version available' : 'Pinned exact version' }}</v-chip></template>
+            </v-list-item>
+          </v-list>
+        </template>
       </v-expansion-panel-text>
     </v-expansion-panel>
   </v-expansion-panels>
@@ -43,7 +45,7 @@
 import { computed, ref, watch } from 'vue'
 import type { AgentProviderProfileView, AgentSessionView } from '../../../shared/agents/contracts.ts'
 import type { VisibleAgentSkill } from '../../helpers/agents-api.ts'
-const props = defineProps<{ session: AgentSessionView; profiles: AgentProviderProfileView[]; skills: VisibleAgentSkill[]; disabled: boolean }>()
+const props = defineProps<{ session: AgentSessionView; profiles: AgentProviderProfileView[]; skills: VisibleAgentSkill[]; skillsEnabled: boolean; disabled: boolean }>()
 const emit = defineEmits<{ profile: [profileId: string | null, mode: 'agent' | 'generation-only']; skills: [versionIds: string[]] }>()
 const profileId = ref<string | null>(props.session.providerProfileId)
 const mode = ref<'agent' | 'generation-only'>(props.session.executionMode)
