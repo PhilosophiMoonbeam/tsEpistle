@@ -103,7 +103,6 @@ const providerAdminUnavailable = (): AgentRepositoryError =>
 
 const CreateSessionSchema = z.strictObject({
   retention: z.enum(['temporary', 'saved']),
-  executionMode: z.enum(['agent', 'generation-only']),
   providerProfileId: z.uuid().nullable()
 })
 const UpdateSessionSchema = z.strictObject({
@@ -227,7 +226,7 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
       ownerId,
       retention: input.retention,
       providerProfileId: input.providerProfileId,
-      executionMode: input.executionMode,
+      executionMode: 'agent',
       expiresAt: input.retention === 'temporary' ? new Date(Date.now() + (wiki.agentLimits?.retention.temporarySessionHours ?? 24) * 3_600_000) : null
     })
     return res.status(201).json({ ...(await projectSession(ownerId, session.id)), launchPage: null })
@@ -324,7 +323,7 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
   router.put(`${apiPrefix}/sessions/:sessionId/profile`, asyncRoute(async (req, res) => {
     if (!wiki.config.agents.provider.enabled || !wiki.providerRegistry) return res.sendStatus(404)
     const sessionId = UUIDSchema.parse(routeParameter(req, 'sessionId'))
-    const input = z.strictObject({ expectedSessionVersion: z.number().int().positive(), profileId: z.uuid().nullable(), executionMode: z.enum(['agent', 'generation-only']) }).parse(req.body)
+    const input = z.strictObject({ expectedSessionVersion: z.number().int().positive(), profileId: z.uuid().nullable() }).parse(req.body)
     const ownerId = requestSkillPrincipal(req).userId
     await wiki.providerRegistry.setSessionProfile({ ownerId, sessionId, ...input })
     return res.json(await projectSession(ownerId, sessionId))

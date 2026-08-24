@@ -22,15 +22,15 @@ describe('ordinary Wiki agent administration integration', () => {
     expect(page).toMatch(/const csrfToken = siteConfig\.agentCsrfToken/)
   })
 
-  test('derives protocol behavior and explains the session execution boundary', () => {
+  test('derives Agent-only protocol behavior and group-scoped capability access', () => {
     expect(agentAdmin).toMatch(/Protocol-derived behavior/)
     expect(agentAdmin).toMatch(/Multiple calls per model turn; Wiki executes them in order/)
-    expect(agentAdmin).toMatch(/agentProviderProtocolExecutionModes\(profileDraft\.transportKind\)/)
+    expect(agentAdmin).toMatch(/agentProviderProtocolExecutionModes\(option\.value\)\.includes\('agent'\)/)
+    expect(agentAdmin).toMatch(/policies: \{ allowedModes: \['agent'\]/)
     expect(agentAdmin).toMatch(/Advanced limits and quotas/)
     expect(agentAdmin).not.toMatch(/label="(?:Parallel functions|Agent mode|Generation-only mode|Capability revision|Pricing revision|Structured output|Usage reporting)"/)
-    expect(sessionSettings).toMatch(/Agent — Wiki actions available/)
-    expect(sessionSettings).toMatch(/Text generation — no Wiki actions/)
-    expect(sessionSettings).toMatch(/does not receive or call Wiki actions/)
+    expect(sessionSettings).not.toMatch(/generation-only|Text generation|How this session uses the model/)
+    expect(sessionSettings).toMatch(/v-if="profiles\.length > 1"/)
     expect(agentAdmin).toMatch(/runtime\?\.providerEnabled !== true/)
     expect(agentAdmin).toMatch(/Provider administration is unavailable while provider inference is disabled/)
     expect(agentAdmin).toMatch(/profileError/)
@@ -41,7 +41,8 @@ describe('ordinary Wiki agent administration integration', () => {
     expect(agentAdmin).toMatch(/Enable" :disabled="!profile\.conformed \|\| !profile\.secretConfigured"/)
     expect(agentAdmin).toMatch(/Saving automatically verifies the connection/)
     expect(agentAdmin).toMatch(/Edit settings[^]*Updates this profile/)
-    expect(agentAdmin).not.toMatch(/immutable profile|immutable version/)
+    expect(agentAdmin).toMatch(/v-model="grantDraft\.groupIds"[^]*item-title="name"/)
+    expect(agentAdmin).not.toMatch(/Group IDs|immutable profile|immutable version/)
     expect(agentAdmin).toMatch(/server-managed API keys are permanently deleted/)
   })
 

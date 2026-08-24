@@ -3,11 +3,12 @@
     <div class="d-flex flex-wrap align-center ga-3 mb-5">
       <div>
         <h1 class="text-headline-large">Approved skills</h1>
-        <p class="text-body-medium">Page-native skills stay disabled until an exact source revision is approved.</p>
+        <p class="text-body-medium">Approved skills augment the Agent for everyone or selected Wiki groups. Exact page revisions stay disabled until approved.</p>
       </div>
       <v-spacer />
       <v-btn color="primary" prepend-icon="mdi-plus" @click="createOpen = true">Map skill</v-btn>
     </div>
+    <v-alert class="mb-4" type="info" variant="tonal">Agent tools are admitted from each user’s Wiki group permissions and deployment policy. Skills add group-scoped instructions and tool guidance; they never bypass page, write, browser, or approval permissions.</v-alert>
 
     <v-alert v-if="error" class="mb-4" type="error" variant="tonal" closable @click:close="error = ''">{{ error }}</v-alert>
     <v-progress-linear v-if="loading" indeterminate aria-label="Loading skills" />
@@ -18,6 +19,7 @@
           <th scope="col">Root page</th>
           <th scope="col">State</th>
           <th scope="col">Revision</th>
+          <th scope="col">Audience</th>
           <th scope="col"><span class="sr-only">Actions</span></th>
         </tr>
       </thead>
@@ -30,14 +32,16 @@
             <v-chip v-if="skill.drifted" class="ml-2" color="warning" size="small">source changed</v-chip>
           </td>
           <td><code>{{ skill.approvedSourceRevision ?? 'not approved' }}</code></td>
+          <td>{{ skill.exposureMode === 'all_agent_users' ? 'Everyone' : groupNames(skill.groupIds) }}</td>
           <td class="text-right">
             <v-btn size="small" variant="text" @click="openPreview(skill.id)">Review</v-btn>
+            <v-btn size="small" variant="text" @click="openAccess(skill)">Access</v-btn>
             <v-btn v-if="skill.status === 'enabled'" size="small" variant="text" color="warning" @click="setEnabled(skill.id, false)">Revoke</v-btn>
             <v-btn v-else-if="skill.currentVersionId" size="small" variant="text" color="success" @click="setEnabled(skill.id, true)">Enable</v-btn>
           </td>
         </tr>
         <tr v-if="skills.length === 0">
-          <td colspan="5" class="text-center text-medium-emphasis py-8">No skills are mapped.</td>
+          <td colspan="6" class="text-center text-medium-emphasis py-8">No skills are mapped.</td>
         </tr>
       </tbody>
     </v-table>
@@ -51,8 +55,8 @@
           <v-text-field v-model.number="create.rootPageId" label="Root page ID" type="number" min="1" required />
           <v-text-field v-model="create.rootPath" label="Root page path" required />
           <v-text-field v-model="create.assetFolderId" label="Asset folder ID (optional)" type="number" min="1" />
-          <v-select v-model="create.exposureMode" :items="exposureModes" item-title="title" item-value="value" label="Exposure" />
-          <v-text-field v-if="create.exposureMode === 'groups'" v-model="create.groupIds" label="Group IDs" hint="Comma-separated" />
+          <v-select v-model="create.exposureMode" :items="exposureModes" item-title="title" item-value="value" label="Available to" />
+          <v-autocomplete v-if="create.exposureMode === 'groups'" v-model="create.groupIds" :items="groups" item-title="name" item-value="id" label="Wiki groups" multiple chips closable-chips />
         </v-form>
       </v-card-text>
       <v-card-actions>
@@ -60,6 +64,15 @@
         <v-btn @click="createOpen = false">Cancel</v-btn>
         <v-btn color="primary" form="skill-create-form" type="submit">Map skill</v-btn>
       </v-card-actions>
+    </v-card>
+  </v-dialog>
+  <v-dialog v-model="accessOpen" max-width="36rem" scrollable>
+    <v-card :title="policySkill ? `Access for ${policySkill.name}` : 'Skill access'">
+      <v-card-text>
+        <v-select v-model="policy.exposureMode" :items="exposureModes" label="Available to" />
+        <v-autocomplete v-if="policy.exposureMode === 'groups'" v-model="policy.groupIds" :items="groups" item-title="name" item-value="id" label="Wiki groups" multiple chips closable-chips hint="Users receive this skill through any selected group." persistent-hint />
+      </v-card-text>
+      <v-card-actions><v-spacer/><v-btn @click="accessOpen = false">Cancel</v-btn><v-btn color="primary" :disabled="policy.exposureMode === 'groups' && policy.groupIds.length === 0" @click="saveAccess">Save access</v-btn></v-card-actions>
     </v-card>
   </v-dialog>
 
@@ -110,6 +123,7 @@ const SkillSchema = z.object({
   drifted: z.boolean(),
   groupIds: z.array(z.number())
 })
+const GroupSchema = z.object({ id: z.number().int().positive(), name: z.string(), isSystem: z.boolean() })
 const PreviewSchema = z.object({
   skillId: z.uuid(),
   name: z.string(),
@@ -126,22 +140,26 @@ type Skill = z.infer<typeof SkillSchema>
 type Preview = z.infer<typeof PreviewSchema>
 
 const skills = ref<Skill[]>([])
+const groups = ref<z.infer<typeof GroupSchema>[]>([])
 const preview = ref<Preview | null>(null)
 const loading = ref(true)
 const error = ref('')
 const createOpen = ref(false)
+const accessOpen = ref(false)
 const previewOpen = ref(false)
+const policySkill = ref<Skill | null>(null)
+const policy = reactive({ exposureMode: 'all_agent_users' as 'all_agent_users' | 'groups', groupIds: [] as number[] })
 const create = reactive({
   name: '',
   rootPageId: 0,
   rootPath: '',
   assetFolderId: '',
   exposureMode: 'all_agent_users' as 'all_agent_users' | 'groups',
-  groupIds: ''
+  groupIds: [] as number[]
 })
 const exposureModes = [
-  { title: 'All agent users', value: 'all_agent_users' },
-  { title: 'Selected groups', value: 'groups' }
+  { title: 'Everyone (default)', value: 'all_agent_users' },
+  { title: 'Selected Wiki groups', value: 'groups' }
 ]
 
 const request = async (url: string, init: RequestInit = {}): Promise<unknown> => {
@@ -155,8 +173,8 @@ const request = async (url: string, init: RequestInit = {}): Promise<unknown> =>
     }
   })
   if (!response.ok) {
-    const message = await response.json().then(value => z.object({ message: z.string().optional() }).passthrough().parse(value).message).catch(() => undefined)
-    throw new Error(message ?? `Request failed with status ${response.status}`)
+    const message: { message?: string; error?: string } = await response.json().then(value => z.object({ message: z.string().optional(), error: z.string().optional() }).passthrough().parse(value)).catch(() => ({}))
+    throw new Error(message.message ?? message.error ?? `Request failed with status ${response.status}`)
   }
   return response.status === 204 ? null : response.json()
 }
@@ -165,8 +183,12 @@ const reload = async (): Promise<void> => {
   loading.value = true
   error.value = ''
   try {
-    const result = z.object({ skills: z.array(SkillSchema) }).parse(await request('/_api/agents/admin/skills'))
-    skills.value = result.skills
+    const [result, groupResult] = await Promise.all([
+      request('/_api/agents/admin/skills'),
+      request('/api/groups')
+    ])
+    skills.value = z.object({ skills: z.array(SkillSchema) }).parse(result).skills
+    groups.value = z.array(GroupSchema).parse(groupResult)
   } catch (requestError: unknown) {
     error.value = requestError instanceof Error ? requestError.message : 'Unable to load skills'
   } finally {
@@ -176,9 +198,7 @@ const reload = async (): Promise<void> => {
 
 const createSkill = async (): Promise<void> => {
   error.value = ''
-  const groupIds = create.exposureMode === 'groups'
-    ? create.groupIds.split(',').map(value => Number(value.trim())).filter(Number.isSafeInteger)
-    : []
+  const groupIds = create.exposureMode === 'groups' ? create.groupIds : []
   try {
     await request('/_api/agents/admin/skills', {
       method: 'POST',
@@ -197,6 +217,33 @@ const createSkill = async (): Promise<void> => {
     error.value = requestError instanceof Error ? requestError.message : 'Unable to map skill'
   }
 }
+const groupNames = (groupIds: readonly number[]): string => groupIds.map(id => groups.value.find(group => group.id === id)?.name ?? `Group ${id}`).join(', ')
+const openAccess = (skill: Skill): void => {
+  policySkill.value = skill
+  policy.exposureMode = skill.exposureMode
+  policy.groupIds = [...skill.groupIds]
+  accessOpen.value = true
+}
+const saveAccess = async (): Promise<void> => {
+  const skill = policySkill.value
+  if (!skill) return
+  error.value = ''
+  try {
+    await request(`/_api/agents/admin/skills/${skill.id}/policy`, {
+      method: 'POST',
+      body: JSON.stringify({
+        assetFolderId: skill.assetFolderId,
+        exposureMode: policy.exposureMode,
+        groupIds: policy.exposureMode === 'groups' ? policy.groupIds : []
+      })
+    })
+    accessOpen.value = false
+    await reload()
+  } catch (requestError: unknown) {
+    error.value = requestError instanceof Error ? requestError.message : 'Unable to change skill access'
+  }
+}
+
 
 const openPreview = async (skillId: string): Promise<void> => {
   error.value = ''

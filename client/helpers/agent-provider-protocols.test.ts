@@ -58,11 +58,11 @@ describe('agent provider protocol presentation', () => {
     expect(agentProviderProtocolDefaults('openresponses').baseUrl).toBe('')
   })
 
-  it('derives execution modes and internal revisions instead of asking operators', () => {
-    expect(agentProviderProtocolExecutionModes('openai-responses')).toEqual(['agent', 'generation-only'])
-    expect(agentProviderProtocolExecutionModes('openai-chat')).toEqual(['agent', 'generation-only'])
-    expect(agentProviderProtocolExecutionModes('anthropic-messages')).toEqual(['agent', 'generation-only'])
-    expect(agentProviderProtocolExecutionModes('legacy-completions')).toEqual(['generation-only'])
+  it('exposes only protocols capable of Wiki Agent actions', () => {
+    expect(agentProviderProtocolExecutionModes('openai-responses')).toEqual(['agent'])
+    expect(agentProviderProtocolExecutionModes('openai-chat')).toEqual(['agent'])
+    expect(agentProviderProtocolExecutionModes('anthropic-messages')).toEqual(['agent'])
+    expect(agentProviderProtocolExecutionModes('legacy-completions')).toEqual([])
     expect(agentProviderCapabilityRevision('openresponses')).toBe('wiki-protocol-capabilities-v1:openresponses')
     expect(AGENT_PROVIDER_PRICING_REVISION).toBe('unpriced-v1')
   })

@@ -5,7 +5,7 @@ import { renderSafeMarkdown } from './safe-markdown.ts'
 describe('agents client boundary', () => {
   it('rejects malformed thread responses instead of rendering unvalidated provider data', async () => {
     const fetcher = vi.fn(async () => new Response(JSON.stringify({ session: { id: 'not-a-uuid' }, messages: '<script>' }), { status: 201, headers: { 'content-type': 'application/json' } })) as unknown as typeof fetch
-    await expect(createAgentThread(fetcher, 'csrf', { retention: 'saved', executionMode: 'agent', providerProfileId: null })).rejects.toThrow()
+    await expect(createAgentThread(fetcher, 'csrf', { retention: 'saved', providerProfileId: null })).rejects.toThrow()
   })
 
   it('sends mutating requests with same-origin credentials and the session CSRF token', async () => {
@@ -31,7 +31,6 @@ describe('agents client boundary', () => {
       transport: 'openai-responses',
       model: 'gpt-test',
       destinationHost: 'api.example.test',
-      executionModes: ['agent', 'generation-only'],
       capabilities: { streaming: true, functions: true, parallelFunctions: true, structuredOutput: 'native-json-schema', usage: 'terminal', cancellation: true, maxContextTokens: 100_000, maxOutputTokens: 4_000 },
       capabilityRevision: 'cap-1',
       policyVersion: 2,

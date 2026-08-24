@@ -3,7 +3,7 @@ import { AGENT_PROVIDER_TRANSPORTS, type AgentProviderTransport } from '../../sh
 export type AgentProviderAuthMode = 'bearer' | 'api-key-header' | 'anthropic-api-key'
 export type AgentProviderStructuredOutput = 'native-json-schema' | 'tool-result' | 'prompt-only'
 export type AgentProviderUsageMode = 'stream' | 'terminal' | 'estimated'
-export type AgentProviderExecutionMode = 'agent' | 'generation-only'
+export type AgentProviderExecutionMode = 'agent'
 
 export const AGENT_PROVIDER_PRICING_REVISION = 'unpriced-v1'
 
@@ -128,11 +128,11 @@ const defaultsByTransport: Readonly<Record<AgentProviderTransport, AgentProvider
   }
 }
 const executionModesByTransport: Readonly<Record<AgentProviderTransport, readonly AgentProviderExecutionMode[]>> = {
-  'openai-responses': ['agent', 'generation-only'],
-  openresponses: ['agent', 'generation-only'],
-  'openai-chat': ['agent', 'generation-only'],
-  'legacy-completions': ['generation-only'],
-  'anthropic-messages': ['agent', 'generation-only']
+  'openai-responses': ['agent'],
+  openresponses: ['agent'],
+  'openai-chat': ['agent'],
+  'legacy-completions': [],
+  'anthropic-messages': ['agent']
 }
 
 export const agentProviderProtocolExecutionModes = (transport: AgentProviderTransport): readonly AgentProviderExecutionMode[] => executionModesByTransport[transport]

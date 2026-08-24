@@ -179,7 +179,6 @@ export interface AgentProviderProfileView {
   readonly transport: AgentProviderTransport
   readonly model: string
   readonly destinationHost: string
-  readonly executionModes: readonly AgentExecutionMode[]
   readonly capabilities: AgentProviderCapabilities
   readonly capabilityRevision: string
   readonly policyVersion: number
@@ -351,7 +350,6 @@ export interface AgentRunState {
 
 export interface CreateAgentSessionRequest {
   readonly retention: AgentSessionRetention
-  readonly executionMode: AgentExecutionMode
   readonly providerProfileId: string | null
 }
 
@@ -369,7 +367,6 @@ export interface UpdateAgentSessionSkillsRequest {
 export interface UpdateAgentSessionProfileRequest {
   readonly expectedSessionVersion: number
   readonly providerProfileId: string | null
-  readonly executionMode: AgentExecutionMode
 }
 
 export interface SubmitAgentMessageRequest {

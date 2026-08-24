@@ -67,7 +67,7 @@ export const useAgentsStore = defineStore('agents', {
     },
     async newSession(retention: 'temporary' | 'saved') {
       this.closeStream()
-      const created = await createAgentThread(window.fetch.bind(window), this.csrfToken, { retention, executionMode: 'agent', providerProfileId: null })
+      const created = await createAgentThread(window.fetch.bind(window), this.csrfToken, { retention, providerProfileId: null })
       this.applyCreatedThread(created)
       if (this.routeSync) window.history.replaceState(null, '', `/sessions/${created.session.id}`)
       await this.reloadSessions()
@@ -151,14 +151,13 @@ export const useAgentsStore = defineStore('agents', {
         this.decidingApprovalId = null
       }
     },
-    async setProfile(providerProfileId: string | null, executionMode: 'agent' | 'generation-only') {
+    async setProfile(providerProfileId: string | null) {
       const thread = this.thread
       if (!thread || thread.session.currentRun?.canCancel) return
       try {
         this.thread = await updateAgentProfile(window.fetch.bind(window), this.csrfToken, thread.session.id, {
           expectedSessionVersion: thread.session.version,
-          providerProfileId,
-          executionMode
+          providerProfileId
         })
       } catch (error) {
         await Promise.all([this.refreshThread(), this.reloadProfiles()])

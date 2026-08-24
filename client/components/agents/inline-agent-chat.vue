@@ -74,8 +74,8 @@
         >{{ error }}</v-alert>
 
         <AgentSessionSettings
+          v-if="thread && (profiles.length > 1 || skillsEnabled)"
           class="inline-agent__settings"
-          v-if="thread"
           :session="thread.session"
           :profiles="profiles"
           :skills="skills"
@@ -321,7 +321,8 @@ defineExpose({ sendPrompt })
 .inline-agent__toolbar { flex: 0 0 auto; }
 .inline-agent__heading { min-width: 0; }
 .inline-agent__history { max-height: min(28rem, 70vh); min-width: min(24rem, 90vw); overflow-y: auto; }
-.inline-agent__alert, .inline-agent__settings { flex: 0 0 auto; }
+.inline-agent__alert { flex: 0 0 auto; }
+.inline-agent__settings { flex: 0 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
 .inline-agent__body { display: flex; flex: 1 1 auto; flex-direction: column; min-height: 0; overflow: hidden; padding: 1rem 1.25rem 0; position: relative; }
 .inline-agent__transcript { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: .25rem .25rem 1rem; scroll-behavior: smooth; }
 .inline-agent__transcript--approval-jump { padding-bottom: 4.5rem; }
