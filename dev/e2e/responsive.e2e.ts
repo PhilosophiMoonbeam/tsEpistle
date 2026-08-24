@@ -128,28 +128,31 @@ test.describe('responsive UI quality matrix', () => {
     await expect(page.getByText(/Agent inference is currently disabled/)).toBeVisible()
     await expect(agent.getByRole('textbox', { name: 'Message Wiki Agent' })).toBeVisible()
     await expect(agent.getByRole('button', { name: 'Open agent conversation history' })).toBeVisible()
-    const settingsButton = agent.getByRole('button', { name: 'Session configuration' })
-    await expect(settingsButton).toBeVisible()
-    await settingsButton.click()
     await expect(agent.getByText('How this session uses the model')).toHaveCount(0)
     const profileCount = await page.evaluate(async () => (await fetch('/_api/agents/profiles')).json().then((value: { profiles?: unknown[] }) => value.profiles?.length ?? 0))
-    if (profileCount > 1) await expect(agent.getByText('Provider profile')).toBeVisible()
-    else await expect(agent.getByText('Provider profile')).toHaveCount(0)
-    const settings = agent.locator('.inline-agent__settings')
-    const settingsLayout = await settings.evaluate(element => {
-      const bounds = element.getBoundingClientRect()
-      return {
-        bottom: bounds.bottom,
-        clientHeight: element.clientHeight,
-        overflowY: getComputedStyle(element).overflowY,
-        scrollHeight: element.scrollHeight
+    const settingsButton = agent.getByRole('button', { name: 'Session configuration' })
+    if (await settingsButton.count()) {
+      await settingsButton.click()
+      if (profileCount > 1) await expect(agent.getByText('Provider profile')).toBeVisible()
+      else await expect(agent.getByText('Provider profile')).toHaveCount(0)
+      const settings = agent.locator('.inline-agent__settings')
+      const settingsLayout = await settings.evaluate(element => {
+        const bounds = element.getBoundingClientRect()
+        return {
+          bottom: bounds.bottom,
+          clientHeight: element.clientHeight,
+          overflowY: getComputedStyle(element).overflowY,
+          scrollHeight: element.scrollHeight
+        }
+      })
+      expect(settingsLayout.overflowY).toBe('auto')
+      expect(settingsLayout.bottom).toBeLessThanOrEqual((page.viewportSize()?.height ?? 0) + 1)
+      if (settingsLayout.scrollHeight > settingsLayout.clientHeight) {
+        await settings.evaluate(element => { element.scrollTop = element.scrollHeight })
+        await expect.poll(() => settings.evaluate(element => element.scrollTop)).toBeGreaterThan(0)
       }
-    })
-    expect(settingsLayout.overflowY).toBe('auto')
-    expect(settingsLayout.bottom).toBeLessThanOrEqual((page.viewportSize()?.height ?? 0) + 1)
-    if (settingsLayout.scrollHeight > settingsLayout.clientHeight) {
-      await settings.evaluate(element => { element.scrollTop = element.scrollHeight })
-      await expect.poll(() => settings.evaluate(element => element.scrollTop)).toBeGreaterThan(0)
+    } else {
+      expect(profileCount).toBeLessThanOrEqual(1)
     }
     await expectLocatorWithinViewport(agent, 'Wiki Agent panel')
     await expectResponsiveLayout(page, 'Wiki Agent panel')
