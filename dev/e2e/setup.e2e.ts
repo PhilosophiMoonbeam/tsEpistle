@@ -2,17 +2,18 @@ import AxeBuilder from '@axe-core/playwright'
 import { expect, test } from '@playwright/test'
 import type { Page } from '@playwright/test'
 import tfa from 'node-2fa'
+import { adminEmail, adminPassword } from './helpers.ts'
 
-const adminEmail = 'test@example.com'
-const adminPassword = '12345678'
 type BrowserVisualEditor = {
-  getData(): string
-  setData(data: string): void
+  commands: {
+    setContent(data: string, options: { contentType: 'html' | 'markdown' }): void
+  }
+  getHTML(): string
+  getMarkdown(): string
 }
 type BrowserSourceEditor = {
   getValue(): string
 }
-
 
 const visualMarkdownBrowserFixture = `# Visual Markdown browser
 
@@ -59,27 +60,28 @@ const visualHtmlBrowserFixture = `<h2>Visual HTML heading</h2>
 <figure class="table"><table><thead><tr><th>HTML</th><th>Value</th></tr></thead><tbody><tr><td>Alpha</td><td>One</td></tr></tbody></table></figure>
 <figure class="image image-style-side"><img src="/_assets/svg/icon-image.svg" alt="Example image"><figcaption>Visual HTML caption</figcaption></figure>`
 
-async function waitForCkEditor(page: Page): Promise<void> {
+async function waitForVisualEditor(page: Page): Promise<void> {
   await page.waitForFunction(() =>
-    Boolean((document.querySelector('.editor-ckeditor') as HTMLElement & { __wikiEditor?: BrowserVisualEditor }).__wikiEditor)
+    Boolean((document.querySelector('.editor-tiptap') as HTMLElement & { __wikiEditor?: BrowserVisualEditor }).__wikiEditor)
   )
 }
 
-async function getCkEditorData(page: Page): Promise<string> {
-  await waitForCkEditor(page)
+async function getVisualEditorData(page: Page): Promise<string> {
+  await waitForVisualEditor(page)
   return page.evaluate(() => {
-    const editor = (document.querySelector('.editor-ckeditor') as HTMLElement & { __wikiEditor?: BrowserVisualEditor }).__wikiEditor
-    if (!editor) throw new Error('CKEditor instance is unavailable.')
-    return editor.getData()
+    const editor = (document.querySelector('.editor-tiptap') as HTMLElement & { __wikiEditor?: BrowserVisualEditor }).__wikiEditor
+    if (!editor) throw new Error('Tiptap editor instance is unavailable.')
+    return document.querySelector('.editor-tiptap-markdown-tools') ? editor.getMarkdown() : editor.getHTML()
   })
 }
 
-async function setCkEditorData(page: Page, data: string): Promise<void> {
-  await waitForCkEditor(page)
+async function setVisualEditorData(page: Page, data: string): Promise<void> {
+  await waitForVisualEditor(page)
   await page.evaluate(content => {
-    const editor = (document.querySelector('.editor-ckeditor') as HTMLElement & { __wikiEditor?: BrowserVisualEditor }).__wikiEditor
-    if (!editor) throw new Error('CKEditor instance is unavailable.')
-    editor.setData(content)
+    const editor = (document.querySelector('.editor-tiptap') as HTMLElement & { __wikiEditor?: BrowserVisualEditor }).__wikiEditor
+    if (!editor) throw new Error('Tiptap editor instance is unavailable.')
+    const contentType = document.querySelector('.editor-tiptap-markdown-tools') ? 'markdown' : 'html'
+    editor.commands.setContent(content, { contentType })
   }, data)
 }
 
@@ -236,12 +238,12 @@ test.describe('critical post-install workflows', () => {
     await page.goto('/e/en/visual-markdown-browser')
     await page.getByText('Visual Markdown', { exact: true }).click()
     await page.getByRole('textbox', { name: 'Title' }).fill('Visual Markdown Browser')
-    await page.getByRole('textbox', { name: 'Short Description' }).fill('Canonical Markdown from CKEditor')
+    await page.getByRole('textbox', { name: 'Short Description' }).fill('Canonical Markdown from Tiptap')
     await page.getByRole('button', { name: 'OK' }).click()
 
-    const editor = page.locator('.editor-ckeditor > .ck-editor__editable')
+    const editor = page.locator('.editor-tiptap .ProseMirror')
     await expect(editor).toBeVisible()
-    await setCkEditorData(page, visualMarkdownBrowserFixture)
+    await setVisualEditorData(page, visualMarkdownBrowserFixture)
     await expect(editor.getByRole('heading', { name: 'Heading 6' })).toBeVisible()
     await expect(editor.locator('table')).toBeVisible()
     await expect(editor.getByRole('checkbox')).toHaveCount(2)
@@ -250,12 +252,12 @@ test.describe('critical post-install workflows', () => {
     await expect(editor.getByRole('img', { name: 'Example image' })).toBeVisible()
     await expect(editor.getByRole('link', { name: 'document.pdf' })).toHaveAttribute('href', '/assets/document.pdf')
 
-    const authoredMarkdown = await getCkEditorData(page)
+    const authoredMarkdown = await getVisualEditorData(page)
     expect(authoredMarkdown).toContain('# Visual Markdown browser')
     expect(authoredMarkdown).toContain('###### Heading 6')
     expect(authoredMarkdown).toContain('**bold**')
     expect(authoredMarkdown).toContain('~~strikethrough~~')
-    expect(authoredMarkdown).toMatch(/1\. First\n {3,}\d+\. Nested/)
+    expect(authoredMarkdown).toMatch(/1\. First\n {2,}\d+\. Nested/)
     expect(authoredMarkdown).toMatch(/[*-] \[x\] Done/)
     expect(authoredMarkdown).toContain('```javascript')
     expect(authoredMarkdown).toContain('| Name')
@@ -282,17 +284,17 @@ test.describe('critical post-install workflows', () => {
 
     await page.goto('/e/en/visual-markdown-browser')
     await expect(page).toHaveURL('/e/en/visual-markdown-browser')
-    await expect(page.getByText('Visual Markdown', { exact: true })).toBeVisible()
+    await expect(page.locator('.editor-tiptap-sysbar')).toContainText('Visual Markdown')
     await expect(editor).toContainText('Visual Markdown browser')
 
-    await setCkEditorData(page, `${authoredMarkdown}\n\nSaved with the keyboard.`)
+    await setVisualEditorData(page, `${authoredMarkdown}\n\nSaved with the keyboard.`)
     await editor.click()
     await page.keyboard.press('Control+s')
     await expect(page.getByRole('button', { name: 'Saved' })).toBeVisible({ timeout: 30_000 })
 
     await expect(editor).toContainText('Saved with the keyboard.')
 
-    await setCkEditorData(page, `${await getCkEditorData(page)}\n\nUnsaved draft.`)
+    await setVisualEditorData(page, `${await getVisualEditorData(page)}\n\nUnsaved draft.`)
     await page.getByRole('button', { name: 'Close' }).click()
     await expect(page.getByRole('button', { name: 'Discard Changes' })).toBeVisible()
     await page.getByRole('button', { name: 'Cancel' }).click()
@@ -306,7 +308,7 @@ test.describe('critical post-install workflows', () => {
 
     await page.goto('/e/en/visual-markdown-browser')
     await expect(page).toHaveURL('/e/en/visual-markdown-browser')
-    await expect(page.getByText('Visual Markdown', { exact: true })).toBeVisible()
+    await expect(page.locator('.editor-tiptap-sysbar')).toContainText('Visual Markdown')
     await expect(editor).toContainText('Saved with the keyboard.')
   })
 
@@ -439,21 +441,21 @@ test.describe('critical post-install workflows', () => {
     await page.goto('/e/en/visual-html-browser')
     await page.getByText('Visual Editor', { exact: true }).click()
     await page.getByRole('textbox', { name: 'Title' }).fill('Visual HTML Browser')
-    await page.getByRole('textbox', { name: 'Short Description' }).fill('HTML from CKEditor')
+    await page.getByRole('textbox', { name: 'Short Description' }).fill('HTML from Tiptap')
     await page.getByRole('button', { name: 'OK' }).click()
 
-    const editor = page.locator('.editor-ckeditor > .ck-editor__editable')
+    const editor = page.locator('.editor-tiptap .ProseMirror')
     await expect(editor).toBeVisible()
     await expect(page.getByRole('button', { name: 'Underline' })).toBeVisible()
     await expect(page.getByRole('button', { name: 'Decrease indent' })).toBeVisible()
     await expect(page.getByRole('button', { name: 'Increase indent' })).toBeVisible()
-    await setCkEditorData(page, visualHtmlBrowserFixture)
+    await setVisualEditorData(page, visualHtmlBrowserFixture)
     await expect(editor.getByRole('heading', { name: 'Visual HTML heading' })).toBeVisible()
     await expect(editor.getByRole('link', { name: 'an internal link' })).toBeVisible()
     await expect(editor.locator('table')).toBeVisible()
     await expect(editor.getByText('Visual HTML caption', { exact: true })).toBeVisible()
 
-    await expect(editor.locator('figure.image-style-side')).toBeVisible()
+    await expect(editor.getByRole('img', { name: 'Example image' })).toBeVisible()
     await page.waitForTimeout(350)
     await page.getByRole('button', { name: 'Create' }).click()
     await expect(page).toHaveURL('/en/visual-html-browser', { timeout: 30_000 })
@@ -474,18 +476,18 @@ test.describe('critical post-install workflows', () => {
 
     await page.goto('/e/en/visual-html-browser')
     await expect(page).toHaveURL('/e/en/visual-html-browser')
-    await expect(page.getByText('Visual Editor', { exact: true })).toBeVisible()
+    await expect(page.locator('.editor-tiptap-sysbar')).toContainText('Visual Editor')
     await expect(editor.getByRole('heading', { name: 'Visual HTML heading' })).toBeVisible()
     await expect(editor.getByText('Visual HTML caption', { exact: true })).toBeVisible()
-    await expect(editor.locator('figure.image-style-side')).toBeVisible()
+    await expect(editor.getByRole('img', { name: 'Example image' })).toBeVisible()
   })
-  test('blocks unsupported extended Markdown before changing editors', async ({ page }) => {
+  test('preserves extended Markdown when changing editors', async ({ page }) => {
     test.setTimeout(60_000)
     await authenticateAsAdmin(page)
     await page.goto('/e/en/extended-markdown-browser')
     await page.getByText('Markdown', { exact: true }).click()
     await page.getByRole('textbox', { name: 'Title' }).fill('Extended Markdown Browser')
-    await page.getByRole('textbox', { name: 'Short Description' }).fill('Unsupported visual syntax')
+    await page.getByRole('textbox', { name: 'Short Description' }).fill('Extended visual syntax')
     await page.getByRole('button', { name: 'OK' }).click()
 
     const source = '## Callout\n\n> Preserved source\n{.is-info}'
@@ -496,11 +498,12 @@ test.describe('critical post-install workflows', () => {
     const conversion = await page.evaluate(async () => {
       const pages = await fetch('/_api/pages', { credentials: 'same-origin' }).then(response => response.json())
       const row = pages.find((candidate: { path: string }) => candidate.path === 'extended-markdown-browser')
+      const details = await fetch(`/_api/pages/${row.id}`, { credentials: 'same-origin' }).then(response => response.json())
       const response = await fetch(`/_api/pages/${row.id}/convert`, {
         method: 'POST',
         credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ editor: 'visual-markdown' })
+        body: JSON.stringify({ editor: 'visual-markdown', expectedSourceRevision: String(details.sourceRevision) })
       })
       return {
         ok: response.ok,
@@ -508,13 +511,15 @@ test.describe('critical post-install workflows', () => {
       }
     })
 
-    expect(conversion.ok).toBe(false)
-    expect(JSON.stringify(conversion.payload)).toContain('Markdown attributes')
+    expect(conversion.ok, JSON.stringify(conversion.payload)).toBe(true)
 
     await page.goto('/e/en/extended-markdown-browser')
-    await expect(page.locator('.editor-markdown')).toBeVisible()
-    await expect(page.locator('.cm-content')).toContainText('## Callout')
-    await expect(page.locator('.cm-content')).toContainText('{.is-info}')
+    await expect(page.locator('.editor-tiptap .ProseMirror')).toBeVisible()
+    await expect(page.locator('.editor-tiptap-sysbar')).toContainText('Visual Markdown')
+    const convertedSource = await getVisualEditorData(page)
+    expect(convertedSource).toContain('## Callout')
+    expect(convertedSource).toContain('> Preserved source')
+    expect(convertedSource).toContain('{.is-info}')
   })
   test('switches between source, Visual Markdown, and Visual HTML conversion paths', async ({ page }) => {
     test.setTimeout(60_000)
@@ -524,11 +529,12 @@ test.describe('critical post-install workflows', () => {
       const result = await page.evaluate(async ({ path, editor }) => {
         const pages = await fetch('/_api/pages', { credentials: 'same-origin' }).then(response => response.json())
         const row = pages.find((candidate: { path: string }) => candidate.path === path)
+        const details = await fetch(`/_api/pages/${row.id}`, { credentials: 'same-origin' }).then(response => response.json())
         const response = await fetch(`/_api/pages/${row.id}/convert`, {
           method: 'POST',
           credentials: 'same-origin',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ editor })
+          body: JSON.stringify({ editor, expectedSourceRevision: String(details.sourceRevision) })
         })
         return { ok: response.ok, body: await response.json() }
       }, { path, editor })
@@ -546,8 +552,8 @@ test.describe('critical post-install workflows', () => {
 
     await convert('visual-markdown-browser', 'visual-markdown')
     await page.goto('/e/en/visual-markdown-browser')
-    await expect(page.locator('.editor-ckeditor > .ck-editor__editable')).toContainText('Visual Markdown browser', { timeout: 30_000 })
-    await expect(page.getByText('Visual Markdown', { exact: true })).toBeVisible()
+    await expect(page.locator('.editor-tiptap .ProseMirror')).toContainText('Visual Markdown browser', { timeout: 30_000 })
+    await expect(page.locator('.editor-tiptap-sysbar')).toContainText('Visual Markdown')
 
     await convert('visual-markdown-browser', 'markdown')
     await page.goto('/e/en/visual-markdown-browser')
@@ -557,13 +563,13 @@ test.describe('critical post-install workflows', () => {
     await convert('visual-markdown-browser', 'visual-markdown')
     await convert('visual-html-browser', 'visual-markdown')
     await page.goto('/e/en/visual-html-browser')
-    await expect(page.locator('.editor-ckeditor > .ck-editor__editable')).toContainText('Visual HTML heading', { timeout: 30_000 })
-    await expect(page.getByText('Visual Markdown', { exact: true })).toBeVisible()
+    await expect(page.locator('.editor-tiptap .ProseMirror')).toContainText('Visual HTML heading', { timeout: 30_000 })
+    await expect(page.locator('.editor-tiptap-sysbar')).toContainText('Visual Markdown')
 
     await convert('visual-html-browser', 'ckeditor')
     await page.goto('/e/en/visual-html-browser')
-    await expect(page.locator('.editor-ckeditor > .ck-editor__editable')).toContainText('Visual HTML heading', { timeout: 30_000 })
-    await expect(page.getByText('Visual Editor', { exact: true })).toBeVisible()
+    await expect(page.locator('.editor-tiptap .ProseMirror')).toContainText('Visual HTML heading', { timeout: 30_000 })
+    await expect(page.locator('.editor-tiptap-sysbar')).toContainText('Visual Editor')
   })
 
 

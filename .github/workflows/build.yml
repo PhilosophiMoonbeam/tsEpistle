@@ -312,7 +312,7 @@ jobs:
   e2e:
     name: Playwright (PostgreSQL ${{ matrix.pgversion }})
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     needs: [build]
     permissions:
       contents: read
@@ -346,6 +346,9 @@ jobs:
       run: |
         pnpm install --frozen-lockfile
         pnpm exec playwright install --with-deps chromium
+        if [ "${{ matrix.pgversion }}" = "18" ]; then
+          pnpm exec playwright install --with-deps firefox webkit
+        fi
 
     - name: Download Test Image
       uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
@@ -369,7 +372,26 @@ jobs:
       run: |
         chmod u+x dev/e2e/ci-setup.sh
         dev/e2e/ci-setup.sh
-        pnpm exec playwright test
+        pnpm exec playwright test \
+          --project=chromium \
+          --project=accessibility-keyboard \
+          --project=accessibility-dark \
+          --project=accessibility-mobile \
+          --project=accessibility-tablet \
+          --project=accessibility-wide \
+          --project=performance-desktop
+        if [ "${{ matrix.pgversion }}" = "18" ]; then
+          pnpm run e2e:responsive --no-deps
+        fi
+
+    - name: Upload Playwright Failure Artifacts
+      if: failure()
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      with:
+        name: playwright-failures-postgres-${{ matrix.pgversion }}
+        path: test-results
+        if-no-files-found: ignore
+        retention-days: 14
 
     - name: Upload Runtime Performance Metrics
       if: always()

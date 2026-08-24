@@ -29,6 +29,7 @@
     "typecheck:client": "vue-tsc -p tsconfig.client.json --noEmit --pretty false",
     "typecheck:server": "tsc -p tsconfig.server.json --noEmit --pretty false",
     "e2e": "playwright test",
+    "e2e:responsive": "playwright test --project=responsive-chromium-desktop --project=responsive-firefox-desktop --project=responsive-webkit-desktop --project=responsive-chromium-wide --project=responsive-chromium-tablet --project=responsive-chromium-mobile --project=responsive-webkit-mobile --project=responsive-webkit-mobile-landscape",
     "docker:build": "node server/scripts/build-docker.ts",
     "licenses:inventory": "node server/scripts/generate-license-inventory.ts",
     "licenses:check": "node server/scripts/generate-license-inventory.ts --check",

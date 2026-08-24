@@ -1430,23 +1430,24 @@ export default defineComponent({
   position: fixed !important;
   inset-block-end: calc(var(--v-layout-bottom, 0px) + 16px);
   inset-inline-end: 16px;
-  z-index: 8;
+  z-index: 1005;
 }
 
 .page-nav-toggle {
   position: fixed !important;
   bottom: 16px !important;
-  z-index: 8;
+  z-index: 1005;
 
 }
 
 .page-return-top {
   position: fixed !important;
   bottom: 16px;
-  z-index: 8;
+  z-index: 1005;
 }
 
 .page-return-top--docked {
+  z-index: 1007;
   border-radius: 8px 0 0 0 !important;
 }
 

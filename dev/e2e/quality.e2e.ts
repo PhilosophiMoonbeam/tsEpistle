@@ -1,40 +1,12 @@
 import AxeBuilder from '@axe-core/playwright'
 import { expect, test } from '@playwright/test'
 import type { Page, TestInfo } from '@playwright/test'
-
-const adminEmail = 'test@example.com'
-const adminPassword = '12345678'
-
-async function authenticateAsAdmin(page: Page) {
-  const response = await page.request.post('/_api/auth/login', {
-    data: {
-      strategy: 'local',
-      username: adminEmail,
-      password: adminPassword
-    }
-  })
-  expect(response.ok()).toBe(true)
-  const payload = await response.json() as { jwt?: string }
-  if (!payload.jwt) throw new Error('Administrator login did not return a JWT')
-  await page.context().addCookies([{
-    name: 'jwt',
-    value: payload.jwt,
-    url: new URL(response.url()).origin
-  }])
-}
-
-async function openAuthenticatedPage(page: Page, path: string, readySelector: string) {
-  await authenticateAsAdmin(page)
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    await page.goto(path, { waitUntil: 'networkidle' })
-    try {
-      await page.locator(readySelector).first().waitFor({ state: 'visible', timeout: 15_000 })
-      return
-    } catch (error) {
-      if (attempt === 1) throw error
-    }
-  }
-}
+import {
+  authenticateAsAdmin,
+  expectResponsiveLayout,
+  openAuthenticatedPage,
+  openSearch
+} from './helpers.ts'
 
 async function expectNoBlockingAccessibilityViolations(page: Page, surface: string) {
   await page.locator('.animated').evaluateAll(elements => {
@@ -121,11 +93,7 @@ test.describe('release accessibility profiles', () => {
     await authenticateAsAdmin(page)
     for (const surface of ['/', '/a/dashboard', '/a/pages']) {
       await page.goto(surface, { waitUntil: 'networkidle' })
-      const layout = await page.evaluate(() => ({
-        viewportWidth: window.innerWidth,
-        documentWidth: document.documentElement.scrollWidth
-      }))
-      expect(layout.documentWidth).toBeLessThanOrEqual(layout.viewportWidth + 1)
+      await expectResponsiveLayout(page, surface)
       await expectNoBlockingAccessibilityViolations(page, `${surface} (mobile)`)
     }
   })
@@ -175,19 +143,11 @@ test.describe('release accessibility profiles', () => {
     await authenticateAsAdmin(page)
     await page.goto('/', { waitUntil: 'networkidle' })
     await page.evaluate('siteConfig.agentsEnabled = true')
-    if (testInfo.project.name === 'accessibility-mobile') {
-      await page.getByRole('button', { name: /^search$/i }).click()
-    } else {
-      await page.getByRole('textbox', { name: /search/i }).focus()
-    }
+    await openSearch(page)
     await page.getByRole('button', { name: /^ask$/i }).click()
     await expect(page.getByRole('region', { name: 'Wiki Agent' })).toBeVisible()
-    await expect(page.getByText('Provider inference is disabled by the administrator.')).toBeVisible()
-    const layout = await page.evaluate(() => ({
-      viewportWidth: window.innerWidth,
-      documentWidth: document.documentElement.scrollWidth
-    }))
-    expect(layout.documentWidth).toBeLessThanOrEqual(layout.viewportWidth + 1)
+    await expect(page.getByText(/Agent inference is currently disabled/)).toBeVisible()
+    await expectResponsiveLayout(page, `inline agent (${testInfo.project.name})`)
     await expectNoBlockingAccessibilityViolations(page, `inline agent (${testInfo.project.name})`)
     if (testInfo.project.name === 'accessibility-keyboard') {
       expect(await tabToControl(page, /open agent conversation history/i), 'Agent history must be reachable in the tab order').toBe(true)

@@ -2,9 +2,8 @@ import fs from 'node:fs'
 
 import { expect, test } from '@playwright/test'
 import type { Page } from '@playwright/test'
+import { authenticateAsAdmin } from './helpers.ts'
 
-const adminEmail = 'test@example.com'
-const adminPassword = '12345678'
 const outputPath = process.env.RUNTIME_PERFORMANCE_FILE ?? 'runtime-performance.json'
 const budgets = {
   cumulativeLayoutShift: Number(process.env.RUNTIME_MAX_CLS ?? 0.1),
@@ -23,20 +22,6 @@ type SurfaceMetrics = {
 type RuntimePerformanceState = {
   cumulativeLayoutShift: number
   largestContentfulPaintMilliseconds: number
-}
-
-async function authenticateAsAdmin(page: Page) {
-  const response = await page.request.post('/_api/auth/login', {
-    data: { strategy: 'local', username: adminEmail, password: adminPassword }
-  })
-  expect(response.ok()).toBe(true)
-  const payload = await response.json() as { jwt?: string }
-  if (!payload.jwt) throw new Error('Administrator login did not return a JWT')
-  await page.context().addCookies([{
-    name: 'jwt',
-    value: payload.jwt,
-    url: new URL(response.url()).origin
-  }])
 }
 
 async function measureSurface(page: Page, path: string, readySelector: string): Promise<SurfaceMetrics> {
