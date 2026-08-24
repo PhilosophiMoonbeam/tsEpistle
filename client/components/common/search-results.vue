@@ -314,7 +314,7 @@ export default defineComponent({
   width: 100%;
   height: calc(100% - 64px);
   background-color: rgba(0,0,0,.9);
-  z-index: 100;
+  z-index: 1006;
   text-align: center;
   animation: searchResultsReveal .24s ease-out;
 
@@ -331,8 +331,13 @@ export default defineComponent({
     box-sizing: border-box;
     padding-left: 256px;
 
-    @media #{map-get($display-breakpoints, 'sm-and-down')} {
+    @media #{map-get($display-breakpoints, 'md-and-down')} {
       padding-left: 0;
+    }
+
+    @media #{map-get($display-breakpoints, 'sm-and-down')} {
+      height: calc(100% - 64px);
+      top: 64px;
     }
   }
 
@@ -342,6 +347,8 @@ export default defineComponent({
     max-width: 1024px;
 
     &--ask {
+      display: flex;
+      flex-direction: column;
       height: 100%;
       margin: 0 auto;
       max-width: none;
@@ -376,13 +383,20 @@ export default defineComponent({
     }
   }
 
+  &--ask .inline-agent {
+    box-sizing: border-box;
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+
   &--ask .inline-agent__card {
-    height: min(calc(100dvh - 64px - 4.5rem), 54rem);
+    height: 100%;
+    min-height: 0;
   }
 
   @media #{map-get($display-breakpoints, 'sm-and-down')} {
-    &--ask .inline-agent__card {
-      height: calc(100dvh - 112px - 3.25rem);
+    &--ask .inline-agent {
+      padding: 0;
     }
   }
 

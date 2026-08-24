@@ -32,7 +32,9 @@ test.describe('responsive UI quality matrix', () => {
       await expect(drawer).toHaveClass(/v-navigation-drawer--active/)
       await expectLocatorWithinViewport(drawer, 'Open page navigation')
       await expectResponsiveLayout(page, 'Open page navigation')
-      await page.locator('.v-navigation-drawer__scrim').click({ position: { x: viewport.width - 1, y: 1 } })
+      await page.locator('.v-navigation-drawer__scrim').click({
+        position: { x: viewport.width - 16, y: viewport.height / 2 }
+      })
       await expect(drawer).not.toHaveClass(/v-navigation-drawer--active/)
     } else {
       await expect(drawer).not.toHaveClass(/v-navigation-drawer--temporary/)

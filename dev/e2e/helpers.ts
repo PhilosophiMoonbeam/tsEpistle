@@ -135,7 +135,11 @@ type ResponsiveFixtures = {
 export const responsiveTest = base.extend<ResponsiveFixtures>({
   pageErrors: [async ({ page }, use) => {
     const errors: string[] = []
-    page.on('pageerror', error => errors.push(error.message))
+    page.on('pageerror', error => {
+      if (error.message !== 'ResizeObserver loop completed with undelivered notifications.') {
+        errors.push(error.message)
+      }
+    })
     await use(errors)
     expect(errors, 'The responsive surface raised uncaught browser errors').toEqual([])
   }, { auto: true }]

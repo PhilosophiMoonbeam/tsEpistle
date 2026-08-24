@@ -574,6 +574,7 @@ export default {
       width: 450px;
       height: 100%;
       margin-left: 5vw;
+      overflow-y: auto;
 
       @at-root .no-backdropfilter & {
         background-color: rgba(255,255,255,.95);
@@ -631,6 +632,19 @@ export default {
     &-form {
       padding: 12px;
       border-top: 1px solid rgba(255,255,255,.85);
+    }
+    @media (max-height: 480px) {
+      &-subtitle {
+        padding-top: 12px;
+      }
+
+      &-form {
+        padding-top: 8px;
+
+        .text-center {
+          margin-top: 8px !important;
+        }
+      }
     }
 
     &-main {

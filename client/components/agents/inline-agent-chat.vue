@@ -339,6 +339,11 @@ defineExpose({ sendPrompt })
   .inline-agent__approval-jump { bottom: .75rem; left: 1.5rem; right: 1.5rem; }
   .inline-agent__notice { display: none; }
 }
+@media (max-height: 500px) {
+  .inline-agent__body { overflow-y: auto; padding: .5rem .75rem 0; }
+  .inline-agent__composer { padding: .5rem .75rem; }
+  .inline-agent__composer :deep(.v-input__details), .inline-agent__notice { display: none; }
+}
 @media (forced-colors: active) {
   .inline-agent__card { border: 1px solid CanvasText; }
 }
