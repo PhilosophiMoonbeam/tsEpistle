@@ -9,6 +9,7 @@ import { down as downProviderProfileLifecycle, up as upProviderProfileLifecycle 
 import { down as downPersonalSkills, up as upPersonalSkills } from '../../db/migrations/2.5.143.ts'
 import { down as downPersonalSkillDiscovery, up as upPersonalSkillDiscovery } from '../../db/migrations/2.5.144.ts'
 import { down as downSkillPreferences, up as upSkillPreferences } from '../../db/migrations/2.5.146.ts'
+import { projectAgentThread } from '../../agents/projection.ts'
 
 const databaseName = process.env.WIKI_TEST_POSTGRES_DATABASE ?? ''
 const passwordFile = process.env.WIKI_TEST_POSTGRES_PASSWORD_FILE
@@ -29,11 +30,15 @@ suite('PostgreSQL first-class agent migration', () => {
 
   beforeAll(async () => {
     db = knexModule({ client: 'pg', connection: connection ?? undefined })
-    for (const table of ['pageHistory', 'pages', 'assetFolders', 'apiKeys', 'groups', 'users']) {
+    for (const table of ['pageHistory', 'pages', 'assetFolders', 'apiKeys', 'userGroups', 'groups', 'users']) {
       await db.schema.dropTableIfExists(table)
     }
     await db.schema.createTable('users', table => table.integer('id').primary())
     await db.schema.createTable('groups', table => table.integer('id').primary())
+    await db.schema.createTable('userGroups', table => {
+      table.integer('userId').notNullable()
+      table.integer('groupId').notNullable()
+    })
     await db.schema.createTable('apiKeys', table => table.integer('id').primary())
     await db.schema.createTable('assetFolders', table => table.integer('id').primary())
     await db.schema.createTable('pages', table => {
@@ -61,6 +66,7 @@ suite('PostgreSQL first-class agent migration', () => {
     await db.schema.createTable('pageHistory', table => table.increments('id').primary())
     await db('users').insert([{ id: 1 }, { id: 7 }])
     await db('groups').insert({ id: 1 })
+    await db('userGroups').insert({ userId: 7, groupId: 1 })
     await db('apiKeys').insert({ id: 1 })
     await db('assetFolders').insert({ id: 1 })
     await upAgentLedger(db)
@@ -74,7 +80,7 @@ suite('PostgreSQL first-class agent migration', () => {
 
   afterAll(async () => {
     if (!db) return
-    for (const table of ['pageHistory', 'pages', 'assetFolders', 'apiKeys', 'groups', 'users']) {
+    for (const table of ['pageHistory', 'pages', 'assetFolders', 'apiKeys', 'userGroups', 'groups', 'users']) {
       await db.schema.dropTableIfExists(table)
     }
     await db.destroy()
@@ -95,6 +101,68 @@ suite('PostgreSQL first-class agent migration', () => {
     await expect(db('agentSkills').columnInfo('isAgentDiscoverable')).resolves.toMatchObject({ nullable: false, defaultValue: 'true' })
     await expect(db('agentSkills').columnInfo('rootPageId')).resolves.toMatchObject({ nullable: true })
   })
+  it('projects group-visible preferences with PostgreSQL-safe aliases', async () => {
+    const sessionId = '00000000-0000-4000-8000-000000000101'
+    const skillId = '00000000-0000-4000-8000-000000000102'
+    const versionId = '00000000-0000-4000-8000-000000000103'
+    let pageId: number | undefined
+    try {
+      const [page] = await db('pages').insert({
+        path: 'agent-projection',
+        hash: 'public:en:agent-projection',
+        title: 'Agent projection',
+        description: '',
+        visibility: 'public',
+        ownerId: null,
+        isPublished: true,
+        publishStartDate: '',
+        publishEndDate: '',
+        content: '# Agent projection\n',
+        render: '<h1>Agent projection</h1>',
+        toc: '[]',
+        contentType: 'markdown',
+        editorKey: 'markdown',
+        localeCode: 'en',
+        authorId: 7,
+        creatorId: 7,
+        extra: {},
+        updatedAt: db.fn.now()
+      }).returning('id')
+      pageId = page?.id
+      await db('agentSessions').insert({ id: sessionId, ownerId: 7, title: 'Projection', retention: 'saved', executionMode: 'agent' })
+      await db('agentSkills').insert({ id: skillId, name: 'projection-skill', rootPageId: pageId, rootPath: 'agent-projection', status: 'enabled', exposureMode: 'groups', currentVersionId: null, createdBy: 7, updatedBy: 7 })
+      await db('agentSkillVersions').insert({
+        id: versionId,
+        skillId,
+        sourceRevision: 1,
+        sourceUpdatedAt: db.fn.now(),
+        sourceHistoryId: null,
+        skillMarkdown: '# Projection skill\n',
+        frontmatter: JSON.stringify({ description: 'Projection skill' }),
+        resourceBundle: Buffer.alloc(0),
+        resourceManifest: '[]',
+        contentHash: 'a'.repeat(64),
+        approvalStatus: 'approved',
+        approvedBy: 7,
+        approvedAt: db.fn.now()
+      })
+      await db('agentSkills').where({ id: skillId }).update({ currentVersionId: versionId })
+      await db('agentSkillGrants').insert({ skillId, groupId: 1 })
+      await db('agentUserSkillPreferences').insert({ ownerId: 7, skillId, ordinal: 0 })
+
+      const thread = await projectAgentThread(db, 7, sessionId, { profileResolutionToken: () => 'token' })
+      expect(thread.session.skills).toMatchObject([{ skillId, versionId, name: 'projection-skill' }])
+    } finally {
+      await db('agentUserSkillPreferences').where({ ownerId: 7, skillId }).delete()
+      await db('agentSkillGrants').where({ skillId }).delete()
+      await db('agentSkills').where({ id: skillId }).update({ currentVersionId: null })
+      await db('agentSkillVersions').where({ id: versionId }).delete()
+      await db('agentSkills').where({ id: skillId }).delete()
+      await db('agentSessions').where({ id: sessionId }).delete()
+      if (pageId !== undefined) await db('pages').where({ id: pageId }).delete()
+    }
+  })
+
 
   it('increments source revision only for authoritative page fields', async () => {
     const inserted = await db('pages').insert({
