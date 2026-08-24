@@ -27,7 +27,6 @@ const createTables = async (knex: Knex): Promise<void> => {
   await knex.schema.createTable('userGroups', table => { table.integer('userId'); table.integer('groupId') })
   await knex.schema.createTable('agentSessions', table => { table.string('id').primary(); table.integer('ownerId'); table.integer('version'); table.string('providerProfileId').nullable(); table.string('executionMode'); table.dateTime('deletedAt').nullable(); table.dateTime('updatedAt') })
   await knex.schema.createTable('agentRuns', table => { table.string('id'); table.string('sessionId'); table.string('status') })
-  await knex.schema.createTable('agentSessionSkills', table => { table.string('sessionId'); table.string('skillVersionId'); table.integer('ordinal') })
 }
 const currentSettingsId = async (knex: Knex, profileId: string): Promise<string> => {
   const profile = await knex('agentProviderProfiles').where({ id: profileId }).first('currentVersionId') as { currentVersionId: string | null } | undefined
@@ -57,11 +56,10 @@ describe('agent provider profile registry', () => {
     await registry.setEnabled(created.id, true, 1)
     await registry.setDefault(created.id, 1)
     await knex('agentSessions').insert({ id: 'session-1', ownerId: 7, version: 1, providerProfileId: null, executionMode: 'agent', deletedAt: null, updatedAt: new Date() })
-    await knex('agentSessionSkills').insert({ sessionId: 'session-1', skillVersionId: 'skill-v1', ordinal: 0 })
 
     const token = await registry.issueResolutionToken(7, 'session-1')
     const resolved = await registry.resolve({ ownerId: 7, sessionId: 'session-1', profileResolutionToken: token })
-    expect(resolved).toMatchObject({ providerProfileVersionId: settingsId, transportKind: 'openai-responses', executionMode: 'agent', skillVersionIds: ['skill-v1'], quotaLimits: { dailyTokens: 100_000 } })
+    expect(resolved).toMatchObject({ providerProfileVersionId: settingsId, transportKind: 'openai-responses', executionMode: 'agent', quotaLimits: { dailyTokens: 100_000 } })
 
     const updated = await registry.update(created.id, { ...profileInput, model: 'gpt-test-2', capabilityRevision: 'fixture-v2', actorId: 1 })
     expect(updated).toMatchObject({ status: 'disabled', conformed: false, model: 'gpt-test-2' })

@@ -140,12 +140,12 @@
           :disabled="!providerAvailable || loading || !thread || Boolean(activeRun)"
           :skills-enabled="skillsEnabled"
           :skills="skills"
-          :pinned-skills="thread?.session.skills ?? []"
+          :preferred-skills="thread?.session.skills ?? []"
           :invocation-limit="invocationLimit"
           @send="sendPrompt"
           @stop="agents.stop"
           @manage-skills="skillManagerOpen = true"
-          @pin-skills="agents.setSkills"
+          @update-skill-preferences="agents.setSkillPreferences"
         />
         <div class="inline-agent__notice text-body-small text-medium-emphasis mt-2">
           <v-icon icon="mdi-shield-check-outline" size="15" />
@@ -196,8 +196,8 @@ const activeRun = computed(() => thread.value?.session.currentRun?.canCancel ? t
 const hasConversation = computed(() => Boolean(thread.value && (thread.value.messages.length || thread.value.tools.length || thread.value.artifacts.length)))
 const pendingApprovalId = computed(() => thread.value?.proposals.find(proposal => proposal.status === 'pending' && proposal.approval?.status === 'pending')?.id ?? null)
 const providerAvailable = computed(() => props.providerEnabled && profiles.value.length > 0)
-const pinnedSkillVersionIds = computed(() => thread.value?.session.skills.map(skill => skill.versionId) ?? [])
-const invocationLimit = computed(() => Math.max(0, 8 - pinnedSkillVersionIds.value.length))
+const preferredSkillIds = computed(() => thread.value?.session.skills.map(skill => skill.skillId) ?? [])
+const invocationLimit = computed(() => Math.max(0, 8 - preferredSkillIds.value.length))
 const providerUnavailableMessage = computed(() => props.providerEnabled
   ? 'No enabled provider profile is available for your account. Ask an administrator to grant one in Administration → Agents.'
   : 'Agent inference is currently disabled. An administrator can configure it in Administration → Agents.')

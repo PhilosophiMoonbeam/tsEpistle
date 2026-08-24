@@ -8,6 +8,7 @@ import { down as downProviderSecrets, up as upProviderSecrets } from '../../db/m
 import { down as downProviderProfileLifecycle, up as upProviderProfileLifecycle } from '../../db/migrations/2.5.142.ts'
 import { down as downPersonalSkills, up as upPersonalSkills } from '../../db/migrations/2.5.143.ts'
 import { down as downPersonalSkillDiscovery, up as upPersonalSkillDiscovery } from '../../db/migrations/2.5.144.ts'
+import { down as downSkillPreferences, up as upSkillPreferences } from '../../db/migrations/2.5.146.ts'
 
 const databaseName = process.env.WIKI_TEST_POSTGRES_DATABASE ?? ''
 const passwordFile = process.env.WIKI_TEST_POSTGRES_PASSWORD_FILE
@@ -68,6 +69,7 @@ suite('PostgreSQL first-class agent migration', () => {
     await upProviderProfileLifecycle(db)
     await upPersonalSkills(db)
     await upPersonalSkillDiscovery(db)
+    await upSkillPreferences(db)
   })
 
   afterAll(async () => {
@@ -79,10 +81,11 @@ suite('PostgreSQL first-class agent migration', () => {
   })
 
   it('adds the authoritative tables, removes obsolete handoffs, and adds source revision columns', async () => {
-    for (const table of ['agentSessions', 'agentRuns', 'agentEvents', 'agentSkills', 'agentProviderProfiles', 'agentProviderSecrets', 'agentProposals', 'agentApprovals', 'agentActionExecutions', 'pageMutationOutbox']) {
+    for (const table of ['agentSessions', 'agentRuns', 'agentEvents', 'agentSkills', 'agentUserSkillPreferences', 'agentProviderProfiles', 'agentProviderSecrets', 'agentProposals', 'agentApprovals', 'agentActionExecutions', 'pageMutationOutbox']) {
       await expect(db.schema.hasTable(table)).resolves.toBe(true)
     }
     await expect(db.schema.hasTable('agentLaunchHandoffs')).resolves.toBe(false)
+    await expect(db.schema.hasTable('agentSessionSkills')).resolves.toBe(false)
     await expect(db.schema.hasColumn('pages', 'sourceRevision')).resolves.toBe(true)
     await expect(db.schema.hasColumn('pageHistory', 'sourceRevision')).resolves.toBe(true)
     await expect(db.schema.hasColumn('agentProviderProfiles', 'deletedAt')).resolves.toBe(true)
@@ -140,6 +143,7 @@ suite('PostgreSQL first-class agent migration', () => {
     await expect(downAgentLedger(db)).rejects.toThrow('agentProviderProfiles contains data')
     await db('agentProviderProfiles').where({ id: '00000000-0000-4000-8000-000000000001' }).update({ deletedAt: null })
     await downPersonalSkillDiscovery(db)
+    await downSkillPreferences(db)
     await downPersonalSkills(db)
     await downProviderProfileLifecycle(db)
     await db('agentProviderProfiles').delete()

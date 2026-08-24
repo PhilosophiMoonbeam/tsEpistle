@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { createAgentThread, createPersonalAgentSkill, deleteAgentSession, listAgentProfiles, listPersonalAgentSkills, removePersonalAgentSkill, submitAgentMessage, updatePersonalAgentSkill } from './agents-api.ts'
+import { createAgentThread, createPersonalAgentSkill, deleteAgentSession, listAgentProfiles, listPersonalAgentSkills, removePersonalAgentSkill, submitAgentMessage, updateAgentSkillPreferences, updatePersonalAgentSkill } from './agents-api.ts'
 import { renderSafeMarkdown } from './safe-markdown.ts'
 
 describe('agents client boundary', () => {
@@ -76,6 +76,22 @@ describe('agents client boundary', () => {
       body: JSON.stringify({ expectedVersionId: skill.versionId })
     }))
   })
+  it('stores cross-conversation skill preferences by stable skill identity', async () => {
+    const skillId = '00000000-0000-4000-8000-000000000020'
+    const fetchMock = vi.fn(async () => Response.json({ skillIds: [skillId] }))
+    const fetcher = fetchMock as unknown as typeof fetch
+
+    await expect(updateAgentSkillPreferences(fetcher, 'csrf', { skillIds: [skillId] })).resolves.toEqual([skillId])
+    expect(fetcher).toHaveBeenCalledWith('/_api/agents/skill-preferences', expect.objectContaining({
+      method: 'PUT',
+      credentials: 'same-origin',
+      body: expect.any(String)
+    }))
+    const request = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body)) as { skillIds: string[]; transportRequestId: string }
+    expect(request.skillIds).toEqual([skillId])
+    expect(request.transportRequestId).toMatch(/^[0-9a-f-]{36}$/)
+  })
+
 
   it('sends explicitly invoked skill versions with one message', async () => {
     const versionId = '00000000-0000-4000-8000-000000000021'

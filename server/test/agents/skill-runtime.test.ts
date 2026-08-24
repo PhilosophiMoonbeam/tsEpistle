@@ -44,6 +44,10 @@ const createSchema = async (db: Knex): Promise<void> => {
     table.string('skillId').notNullable()
     table.integer('groupId').notNullable()
   })
+  await db.schema.createTable('userGroups', table => {
+    table.integer('userId').notNullable()
+    table.integer('groupId').notNullable()
+  })
   await db.schema.createTable('agentSessions', table => {
     table.string('id').primary()
     table.integer('ownerId').notNullable()
@@ -56,11 +60,10 @@ const createSchema = async (db: Knex): Promise<void> => {
     table.integer('ownerId').notNullable()
     table.string('status').notNullable()
   })
-  await db.schema.createTable('agentSessionSkills', table => {
-    table.string('sessionId').notNullable()
-    table.string('skillVersionId').notNullable()
+  await db.schema.createTable('agentUserSkillPreferences', table => {
+    table.integer('ownerId').notNullable()
+    table.string('skillId').notNullable()
     table.integer('ordinal').notNullable()
-    table.integer('selectedBy').notNullable()
     table.dateTime('selectedAt').defaultTo(db.fn.now())
   })
   await db.schema.createTable('agentRunSkills', table => {
@@ -84,7 +87,7 @@ const createSchema = async (db: Knex): Promise<void> => {
   })
 }
 
-describe('skill selection and pinned runtime', () => {
+describe('skill preferences and run version history', () => {
   let db: Knex
   let runtime: SkillRuntime
 
@@ -116,6 +119,7 @@ describe('skill selection and pinned runtime', () => {
       resourceBundle: encodeSkillResourceBundle(bundle.resources)
     })
     await db('agentSkillGrants').insert({ skillId, groupId: 3 })
+    await db('userGroups').insert({ userId: 7, groupId: 3 })
     await db('agentSessions').insert({ id: sessionId, ownerId: 7, version: 1 })
     runtime = new SkillRuntime(db)
   })
@@ -257,61 +261,76 @@ describe('skill selection and pinned runtime', () => {
     })).resolves.toMatchObject({ contentHash: expect.any(String) })
   })
 
-  it('pins an ordered immutable version and rejects stale session mutation', async () => {
-    const nextVersion = await runtime.setSessionSkills({ sessionId,
-    expectedVersion: 1,
-    skillVersionIds: [versionId],
-    principal: { userId: 7, groupIds: [3] }, transportRequestId: requestId })
-    expect(nextVersion).toBe(2)
-    expect(await runtime.listSessionSkills(sessionId, { userId: 7, groupIds: [] })).toEqual([{
+  it('stores skill identities and resolves their latest approved versions', async () => {
+    const nextVersionId = '00000000-0000-4000-8000-000000000008'
+    await runtime.setUserSkillPreferences({
+      skillIds: [skillId],
+      principal: { userId: 7, groupIds: [3] },
+      transportRequestId: requestId
+    })
+    expect(await runtime.listUserSkillPreferences({ userId: 7, groupIds: [3] })).toEqual([{
       id: skillId,
       name: 'release-notes',
       versionId,
       contentHash: bundle.contentHash,
       ordinal: 0
     }])
-    await expect(runtime.setSessionSkills({ sessionId,
-    expectedVersion: 1,
-    skillVersionIds: [],
-    principal: { userId: 7, groupIds: [3] }, transportRequestId: requestId })).rejects.toThrow('version changed')
+    await expect(runtime.resolvePreferredVersionIdsForUser(7)).resolves.toEqual([versionId])
+
+    await db('agentSkillVersions').insert({
+      id: nextVersionId,
+      skillId,
+      approvalStatus: 'approved',
+      contentHash: 'next-content',
+      sourceRevision: 8,
+      skillMarkdown: bundle.entry.text,
+      frontmatter: JSON.stringify({
+        name: 'release-notes',
+        description: 'Release notes',
+        license: null,
+        compatibility: null,
+        metadata: {},
+        'allowed-tools': ['pages.get']
+      }),
+      resourceBundle: encodeSkillResourceBundle(bundle.resources)
+    })
+    await db('agentSkills').where({ id: skillId }).update({ currentVersionId: nextVersionId })
+
+    await expect(runtime.resolvePreferredVersionIdsForUser(7)).resolves.toEqual([nextVersionId])
+    expect(await runtime.listUserSkillPreferences({ userId: 7, groupIds: [3] })).toMatchObject([{ id: skillId, versionId: nextVersionId }])
+    expect(await db('agentUserSkillPreferences').select('ownerId', 'skillId', 'ordinal')).toEqual([{ ownerId: 7, skillId, ordinal: 0 }])
+    expect(await db('agentSkillVersions').where({ skillId }).orderBy('sourceRevision').pluck('id')).toEqual([versionId, nextVersionId])
   })
 
-  it('stops new selection after revocation without breaking retained pinned history', async () => {
-    await runtime.setSessionSkills({ sessionId,
-    expectedVersion: 1,
-    skillVersionIds: [versionId],
-    principal: { userId: 7, groupIds: [3] }, transportRequestId: requestId })
-    await db('agentSkills').where({ id: skillId }).update({ status: 'disabled' })
-    expect(await runtime.listVisible({ userId: 7, groupIds: [3] })).toEqual([])
-
-    const resource = await runtime.readSessionResource({
-      sessionId,
-      skillName: 'release-notes',
-      versionId,
-      path: 'references/GUIDE.md',
+  it('retains preferences but stops resolving a skill after revocation', async () => {
+    await runtime.setUserSkillPreferences({
+      skillIds: [skillId],
       principal: { userId: 7, groupIds: [3] },
       transportRequestId: requestId
     })
-    expect(resource.bytes.toString('utf8')).toBe('# Guidance\n')
-    expect(await db('agentSkillUses').select('purpose', 'resourcePath')).toEqual(expect.arrayContaining([
-      { purpose: 'selected', resourcePath: null },
-      { purpose: 'read', resourcePath: 'references/GUIDE.md' }
-    ]))
+    await db('agentSkills').where({ id: skillId }).update({ status: 'disabled' })
 
-    await runtime.setSessionSkills({ sessionId, expectedVersion: 2, skillVersionIds: [], principal: { userId: 7, groupIds: [3] }, transportRequestId: requestId })
-    await expect(runtime.setSessionSkills({ sessionId,
-    expectedVersion: 3,
-    skillVersionIds: [versionId],
-    principal: { userId: 7, groupIds: [3] }, transportRequestId: requestId })).rejects.toThrow('unavailable')
+    expect(await runtime.listVisible({ userId: 7, groupIds: [3] })).toEqual([])
+    await expect(runtime.resolvePreferredVersionIdsForUser(7)).resolves.toEqual([])
+    expect(await db('agentUserSkillPreferences').select('ownerId', 'skillId')).toEqual([{ ownerId: 7, skillId }])
+    await expect(runtime.setUserSkillPreferences({
+      skillIds: [skillId],
+      principal: { userId: 7, groupIds: [3] },
+      transportRequestId: requestId
+    })).rejects.toThrow('unavailable')
+    await runtime.setUserSkillPreferences({ skillIds: [], principal: { userId: 7, groupIds: [3] }, transportRequestId: requestId })
+    expect(await db('agentUserSkillPreferences')).toEqual([])
   })
 
-  it('copies session pins to a run and allowed-tools cannot grant unavailable actions', async () => {
-    await runtime.setSessionSkills({ sessionId,
-    expectedVersion: 1,
-    skillVersionIds: [versionId],
-    principal: { userId: 7, groupIds: [3] }, transportRequestId: requestId })
+  it('keeps an admitted run on its exact version after later revocation', async () => {
+    await runtime.setUserSkillPreferences({
+      skillIds: [skillId],
+      principal: { userId: 7, groupIds: [3] },
+      transportRequestId: requestId
+    })
+    const [resolvedVersionId] = await runtime.resolvePreferredVersionIdsForUser(7)
     await db('agentRuns').insert({ id: runId, sessionId, ownerId: 7, status: 'queued' })
-    await runtime.pinRunSkills(runId, sessionId)
+    await db('agentRunSkills').insert({ runId, skillVersionId: resolvedVersionId, ordinal: 0 })
     await db('agentSkills').where({ id: skillId }).update({ status: 'disabled' })
 
     const prompts = await runtime.getRunPrompts({
@@ -327,11 +346,22 @@ describe('skill selection and pinned runtime', () => {
     ]))
   })
 
-  it('blocks skill mutation while a run is active', async () => {
+  it('changes future preferences without altering an active run', async () => {
+    await runtime.setUserSkillPreferences({
+      skillIds: [skillId],
+      principal: { userId: 7, groupIds: [3] },
+      transportRequestId: requestId
+    })
     await db('agentRuns').insert({ id: runId, sessionId, ownerId: 7, status: 'running' })
-    await expect(runtime.setSessionSkills({ sessionId,
-    expectedVersion: 1,
-    skillVersionIds: [versionId],
-    principal: { userId: 7, groupIds: [3] }, transportRequestId: requestId })).rejects.toThrow('run is active')
+    await db('agentRunSkills').insert({ runId, skillVersionId: versionId, ordinal: 0 })
+
+    await runtime.setUserSkillPreferences({ skillIds: [], principal: { userId: 7, groupIds: [3] }, transportRequestId: requestId })
+    expect(await db('agentUserSkillPreferences')).toEqual([])
+    await expect(runtime.getRunPrompts({
+      runId,
+      principal: { userId: 7, groupIds: [3] },
+      transportRequestId: requestId,
+      availableTools: ['pages.get']
+    })).resolves.toMatchObject([{ versionId }])
   })
 })

@@ -562,7 +562,6 @@ export class AgentProviderRegistry implements AgentAdmissionResolver {
       const capabilities = parseJson(AgentProviderCapabilitiesSchema, version.capabilities, 'PROVIDER_PROFILE_CORRUPT')
       const policies = parseJson(AgentProviderPoliciesSchema, version.policies, 'PROVIDER_PROFILE_CORRUPT')
       if (!supportsAgentExecution(capabilities, policies)) throw new AgentRepositoryError('PROFILE_MODE_INCOMPATIBLE', 'Provider profile does not support Wiki Agent actions', 409)
-      const skillVersionIds = await transaction('agentSessionSkills').where({ sessionId: input.sessionId }).orderBy('ordinal').pluck<string>('skillVersionId')
       return {
         profileResolutionSha256: digest(canonicalJson(payload)),
         providerProfileVersionId: version.id,
@@ -574,7 +573,6 @@ export class AgentProviderRegistry implements AgentAdmissionResolver {
         capabilityRevision: version.capabilityRevision,
         pricingRevision: version.pricingRevision,
         promptVersion: policies.promptVersion,
-        skillVersionIds,
         quota: { tokens: policies.reservationTokens, costMicros: policies.reservationCostMicros },
         quotaLimits: { dailyTokens: policies.dailyTokens, dailyCostMicros: policies.dailyCostMicros },
         reservationMilliseconds: policies.reservationMilliseconds

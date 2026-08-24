@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { markRaw } from 'vue'
 import type { AgentCurrentPageHint, AgentEventType, AgentProviderProfileView, AgentThreadState } from '../../shared/agents/contracts.ts'
-import { cancelAgentRun, createAgentThread, decideAgentProposal, deleteAgentSession, getAgentThread, listAgentProfiles, listAgentSessions, listAgentSkills, submitAgentMessage, subscribeAgentRun, updateAgentProfile, updateAgentSkills, type AgentSessionSummary, type CreatedAgentThread, type VisibleAgentSkill } from '../helpers/agents-api.ts'
+import { cancelAgentRun, createAgentThread, decideAgentProposal, deleteAgentSession, getAgentThread, listAgentProfiles, listAgentSessions, listAgentSkills, submitAgentMessage, subscribeAgentRun, updateAgentProfile, updateAgentSkillPreferences, type AgentSessionSummary, type CreatedAgentThread, type VisibleAgentSkill } from '../helpers/agents-api.ts'
 
 const terminalEvents = new Set<AgentEventType>(['run.completed', 'run.failed', 'run.cancelled', 'run.recovery_required'])
 export interface AgentStoreInitializeOptions {
@@ -164,18 +164,14 @@ export const useAgentsStore = defineStore('agents', {
         this.error = error instanceof Error ? error.message : 'Provider selection changed concurrently.'
       }
     },
-    async setSkills(skillVersionIds: readonly string[]) {
-      const thread = this.thread
-      if (!thread || thread.session.currentRun?.canCancel) return
+    async setSkillPreferences(skillIds: readonly string[]) {
+      if (!this.thread) return
       try {
-        await updateAgentSkills(window.fetch.bind(window), this.csrfToken, thread.session.id, {
-          expectedSessionVersion: thread.session.version,
-          skillVersionIds
-        })
+        await updateAgentSkillPreferences(window.fetch.bind(window), this.csrfToken, { skillIds })
         await this.refreshThread()
       } catch (error) {
         await Promise.all([this.refreshThread(), this.reloadSkills()])
-        this.error = error instanceof Error ? error.message : 'Skill selection changed concurrently.'
+        this.error = error instanceof Error ? error.message : 'Skill preferences could not be updated.'
       }
     },
     async reloadProfiles() {

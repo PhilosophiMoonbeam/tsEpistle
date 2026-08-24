@@ -128,9 +128,9 @@ const createTables = async (knex: Knex): Promise<void> => {
     table.dateTime('expiresAt').nullable()
     table.text('metadata').nullable()
   })
-  await knex.schema.createTable('agentSessionSkills', table => {
-    table.uuid('sessionId').notNullable()
-    table.uuid('skillVersionId').notNullable()
+  await knex.schema.createTable('agentUserSkillPreferences', table => {
+    table.integer('ownerId').notNullable()
+    table.uuid('skillId').notNullable()
     table.integer('ordinal').notNullable()
   })
   await knex.schema.createTable('agentRunSkills', table => {
@@ -143,6 +143,7 @@ const createTables = async (knex: Knex): Promise<void> => {
     table.uuid('skillId').notNullable()
     table.text('frontmatter').notNullable()
     table.string('contentHash').notNullable()
+    table.string('approvalStatus').notNullable().defaultTo('approved')
     table.dateTime('createdAt').notNullable()
     table.text('skillMarkdown').notNullable().defaultTo('')
   })
@@ -151,7 +152,19 @@ const createTables = async (knex: Knex): Promise<void> => {
     table.string('name').notNullable()
     table.text('rootPath').notNullable()
     table.string('status').notNullable()
+    table.string('exposureMode').notNullable().defaultTo('all_agent_users')
+    table.integer('ownerUserId').nullable()
+    table.boolean('isAgentDiscoverable').notNullable().defaultTo(true)
     table.uuid('currentVersionId').nullable()
+    table.dateTime('deletedAt').nullable()
+  })
+  await knex.schema.createTable('agentSkillGrants', table => {
+    table.uuid('skillId').notNullable()
+    table.integer('groupId').notNullable()
+  })
+  await knex.schema.createTable('userGroups', table => {
+    table.integer('userId').notNullable()
+    table.integer('groupId').notNullable()
   })
   await knex.schema.createTable('pages', table => {
     table.integer('id').primary()
@@ -463,20 +476,25 @@ describe('durable agent repositories', () => {
     expect(await knex('agentMessages').where({ sessionId: failedSessionId }).count<{ count: number }[]>({ count: '*' }).first()).toMatchObject({ count: 0 })
   })
 
-  it('deduplicates pinned and invoked versions by skill identity with pins taking precedence', async () => {
+  it('deduplicates preferred and invoked versions by skill identity with preferences taking precedence', async () => {
     const dedupeSessionId = '00000000-0000-4000-8000-000000000080'
-    const pinnedVersionId = '00000000-0000-4000-8000-000000000081'
-    const newerVersionId = '00000000-0000-4000-8000-000000000082'
+    const preferredVersionId = '00000000-0000-4000-8000-000000000081'
+    const alternateVersionId = '00000000-0000-4000-8000-000000000082'
     const otherVersionId = '00000000-0000-4000-8000-000000000083'
     const firstSkillId = '00000000-0000-4000-8000-000000000084'
     const secondSkillId = '00000000-0000-4000-8000-000000000085'
     const now = new Date()
     await createAgentSession(knex, { id: dedupeSessionId, ownerId: 7, retention: 'saved', providerProfileId: null, executionMode: 'agent' })
+    await knex('agentSkills').insert([
+      { id: firstSkillId, name: 'preferred-skill', rootPath: 'skills/preferred', status: 'enabled', currentVersionId: preferredVersionId },
+      { id: secondSkillId, name: 'other-skill', rootPath: 'skills/other', status: 'enabled', currentVersionId: otherVersionId }
+    ])
     await knex('agentSkillVersions').insert([
-      { id: pinnedVersionId, skillId: firstSkillId, frontmatter: '{}', contentHash: 'pinned', skillMarkdown: 'Pinned', createdAt: now },
-      { id: newerVersionId, skillId: firstSkillId, frontmatter: '{}', contentHash: 'newer', skillMarkdown: 'Newer', createdAt: now },
+      { id: preferredVersionId, skillId: firstSkillId, frontmatter: '{}', contentHash: 'preferred', skillMarkdown: 'Preferred', createdAt: now },
+      { id: alternateVersionId, skillId: firstSkillId, frontmatter: '{}', contentHash: 'alternate', skillMarkdown: 'Alternate', createdAt: now },
       { id: otherVersionId, skillId: secondSkillId, frontmatter: '{}', contentHash: 'other', skillMarkdown: 'Other', createdAt: now }
     ])
+    await knex('agentUserSkillPreferences').insert({ ownerId: 7, skillId: firstSkillId, ordinal: 0 })
     const runtime = new AgentProductRuntime(knex, {
       async resolve() {
         return {
@@ -490,7 +508,6 @@ describe('durable agent repositories', () => {
           capabilityRevision: 'v1',
           pricingRevision: 'v1',
           promptVersion: 1,
-          skillVersionIds: [pinnedVersionId],
           quota: { tokens: 100, costMicros: 100 },
           quotaLimits: { dailyTokens: 1_000, dailyCostMicros: 1_000 },
           reservationMilliseconds: 60_000
@@ -508,9 +525,9 @@ describe('durable agent repositories', () => {
       clientRequestId: '00000000-0000-4000-8000-000000000087',
       expectedSessionVersion: 1,
       content: 'Use the available skills.',
-      invokedSkillVersionIds: [newerVersionId, otherVersionId]
+      invokedSkillVersionIds: [alternateVersionId, otherVersionId]
     })
-    expect(await knex('agentRunSkills').where({ runId: admitted.run.id }).orderBy('ordinal').pluck('skillVersionId')).toEqual([pinnedVersionId, otherVersionId])
+    expect(await knex('agentRunSkills').where({ runId: admitted.run.id }).orderBy('ordinal').pluck('skillVersionId')).toEqual([preferredVersionId, otherVersionId])
     await runtime.shutdown()
   })
 

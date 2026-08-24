@@ -40,7 +40,7 @@ export interface VisibleSkill {
   readonly isAgentDiscoverable: boolean
 }
 
-export interface PinnedSkillPrompt {
+export interface AgentSkillPrompt {
   readonly name: string
   readonly versionId: string
   readonly contentHash: string
@@ -48,7 +48,7 @@ export interface PinnedSkillPrompt {
   readonly allowedTools: readonly string[]
 }
 
-export interface SelectedSkill {
+export interface PreferredSkill {
   readonly id: string
   readonly name: string
   readonly versionId: string
@@ -433,97 +433,75 @@ export class SkillRuntime {
     })
   }
 
-  async setSessionSkills(input: {
-    readonly sessionId: string
-    readonly expectedVersion: number
-    readonly skillVersionIds: readonly string[]
+  async setUserSkillPreferences(input: {
+    readonly skillIds: readonly string[]
     readonly transportRequestId: string
     readonly principal: SkillPrincipal
-  }): Promise<number> {
-    const sessionId = UuidSchema.parse(input.sessionId)
-    const expectedVersion = z.number().int().positive().parse(input.expectedVersion)
-    const skillVersionIds = SkillSelectionSchema.parse(input.skillVersionIds)
+  }): Promise<readonly string[]> {
+    const skillIds = SkillSelectionSchema.parse(input.skillIds)
     const transportRequestId = UuidSchema.parse(input.transportRequestId)
-    if (new Set(skillVersionIds).size !== skillVersionIds.length) throw new SkillValidationError('Skill selection contains duplicates')
+    if (new Set(skillIds).size !== skillIds.length) throw new SkillValidationError('Skill preferences contain duplicates')
     const principal = normalizePrincipal(input.principal)
 
     return this.knex.transaction(async transaction => {
-      const session = await transaction('agentSessions')
-        .select('id', 'ownerId', 'version')
-        .where({ id: sessionId })
-        .forUpdate()
-        .first() as { id: string; ownerId: number; version: number } | undefined
-      if (!session || session.ownerId !== principal.userId) throw new SkillValidationError('Agent session is unavailable')
-      if (session.version !== expectedVersion) throw new SkillValidationError('Agent session version changed')
-      const activeRun = await transaction('agentRuns').select('id').where({ sessionId }).whereIn('status', ['queued', 'running', 'awaiting_approval']).first()
-      if (activeRun) throw new SkillValidationError('Skills cannot change while a run is active')
-
-      if (skillVersionIds.length > 0) {
-        const visible = await visibleSkillQuery(transaction, principal)
+      const visible = skillIds.length === 0
+        ? []
+        : await visibleSkillQuery(transaction, principal)
           .select('skills.id', 'versions.id as versionId', 'versions.contentHash')
-          .whereIn('versions.id', skillVersionIds) as Array<{ id: string; versionId: string; contentHash: string }>
-        if (visible.length !== skillVersionIds.length) throw new SkillValidationError('One or more selected skills are unavailable')
-        const versionById = new Map(visible.map(row => [row.versionId, row]))
-        await transaction('agentSessionSkills').where({ sessionId }).delete()
-        await transaction('agentSessionSkills').insert(skillVersionIds.map((skillVersionId, ordinal) => ({
-          sessionId,
-          skillVersionId,
-          ordinal,
-          selectedBy: principal.userId
+          .whereIn('skills.id', skillIds) as Array<{ id: string, versionId: string, contentHash: string }>
+      if (visible.length !== skillIds.length) throw new SkillValidationError('One or more preferred skills are unavailable')
+      const versionBySkillId = new Map(visible.map(row => [row.id, row]))
+      await transaction('agentUserSkillPreferences').where({ ownerId: principal.userId }).delete()
+      if (skillIds.length > 0) {
+        await transaction('agentUserSkillPreferences').insert(skillIds.map((skillId, ordinal) => ({
+          ownerId: principal.userId,
+          skillId,
+          ordinal
         })))
-        await transaction('agentSkillUses').insert(skillVersionIds.map(skillVersionId => ({
+        await transaction('agentSkillUses').insert(skillIds.map(skillId => ({
           id: randomUUID(),
-          skillVersionId,
+          skillVersionId: versionBySkillId.get(skillId)!.versionId,
           runId: null,
-          sessionId,
+          sessionId: null,
           requesterUserId: principal.userId,
           requesterApiKeyId: null,
           transportRequestId,
           externalSessionSha256: null,
           resourcePath: null,
           purpose: 'selected',
-          contentHash: versionById.get(skillVersionId)?.contentHash
+          contentHash: versionBySkillId.get(skillId)!.contentHash
         })))
-      } else {
-        await transaction('agentSessionSkills').where({ sessionId }).delete()
       }
-      const nextVersion = expectedVersion + 1
-      await transaction('agentSessions').where({ id: sessionId, version: expectedVersion }).update({ version: nextVersion, updatedAt: transaction.fn.now() })
-      return nextVersion
+      return skillIds
     })
   }
-  async listSessionSkills(sessionIdValue: string, principalValue: SkillPrincipal): Promise<readonly SelectedSkill[]> {
-    const sessionId = UuidSchema.parse(sessionIdValue)
+  async listUserSkillPreferences(principalValue: SkillPrincipal): Promise<readonly PreferredSkill[]> {
     const principal = normalizePrincipal(principalValue)
-    return this.knex('agentSessionSkills as pins')
-      .innerJoin('agentSessions as sessions', 'sessions.id', 'pins.sessionId')
-      .innerJoin('agentSkillVersions as versions', 'versions.id', 'pins.skillVersionId')
-      .innerJoin('agentSkills as skills', 'skills.id', 'versions.skillId')
-      .select('skills.id', 'skills.name', 'versions.id as versionId', 'versions.contentHash', 'pins.ordinal')
-      .where({ 'pins.sessionId': sessionId, 'sessions.ownerId': principal.userId })
-      .orderBy('pins.ordinal') as Promise<SelectedSkill[]>
+    return visibleSkillQuery(this.knex, principal)
+      .innerJoin('agentUserSkillPreferences as preferences', 'preferences.skillId', 'skills.id')
+      .select('skills.id', 'skills.name', 'versions.id as versionId', 'versions.contentHash', 'preferences.ordinal')
+      .where('preferences.ownerId', principal.userId)
+      .orderBy('preferences.ordinal') as Promise<PreferredSkill[]>
+  }
+
+  async resolvePreferredVersionIdsForUser(userIdValue: number): Promise<readonly string[]> {
+    const userId = UserIdSchema.parse(userIdValue)
+    const groupIds = await this.knex('userGroups').where({ userId }).pluck('groupId') as number[]
+    return visibleSkillQuery(this.knex, { userId, groupIds })
+      .innerJoin('agentUserSkillPreferences as preferences', 'preferences.skillId', 'skills.id')
+      .where('preferences.ownerId', userId)
+      .orderBy('preferences.ordinal')
+      .pluck('versions.id') as Promise<string[]>
   }
 
 
-  async pinRunSkills(runIdValue: string, sessionIdValue: string): Promise<void> {
-    const runId = UuidSchema.parse(runIdValue)
-    const sessionId = UuidSchema.parse(sessionIdValue)
-    await this.knex.transaction(async transaction => {
-      const run = await transaction('agentRuns').select('id').where({ id: runId, sessionId }).forUpdate().first()
-      if (!run) throw new SkillValidationError('Agent run is unavailable')
-      const existing = await transaction('agentRunSkills').select('runId').where({ runId }).first()
-      if (existing) throw new SkillValidationError('Agent run skills are already pinned')
-      const selected = await transaction('agentSessionSkills').select('skillVersionId', 'ordinal').where({ sessionId }).orderBy('ordinal')
-      if (selected.length > 0) await transaction('agentRunSkills').insert(selected.map(row => ({ runId, skillVersionId: row.skillVersionId, ordinal: row.ordinal })))
-    })
-  }
 
   async getRunPrompts(input: {
     readonly runId: string
     readonly principal: SkillPrincipal
     readonly transportRequestId: string
     readonly availableTools: readonly string[]
-  }): Promise<readonly PinnedSkillPrompt[]> {
+  }): Promise<readonly AgentSkillPrompt[]> {
     const runId = UuidSchema.parse(input.runId)
     const transportRequestId = UuidSchema.parse(input.transportRequestId)
     const principal = normalizePrincipal(input.principal)
@@ -567,48 +545,4 @@ export class SkillRuntime {
     })
   }
 
-  async readSessionResource(input: {
-    readonly sessionId: string
-    readonly skillName: string
-    readonly versionId: string
-    readonly path: string
-    readonly principal: SkillPrincipal
-    readonly transportRequestId: string
-  }): Promise<SkillResourceResult> {
-    const sessionId = UuidSchema.parse(input.sessionId)
-    const versionId = UuidSchema.parse(input.versionId)
-    const transportRequestId = UuidSchema.parse(input.transportRequestId)
-    const path = validateSkillVirtualPath(input.path)
-    const principal = normalizePrincipal(input.principal)
-
-    return this.knex.transaction(async transaction => {
-      const row = await transaction('agentSessionSkills as pins')
-        .innerJoin('agentSessions as sessions', 'sessions.id', 'pins.sessionId')
-        .innerJoin('agentSkillVersions as versions', 'versions.id', 'pins.skillVersionId')
-        .innerJoin('agentSkills as skills', 'skills.id', 'versions.skillId')
-        .select(
-          'skills.id as skillId', 'skills.name', 'versions.id as versionId', 'versions.contentHash',
-          'versions.sourceRevision', 'versions.skillMarkdown', 'versions.resourceBundle'
-        )
-        .where({ 'pins.sessionId': sessionId, 'versions.id': versionId, 'skills.name': input.skillName, 'sessions.ownerId': principal.userId })
-        .first() as SkillVersionRow | undefined
-      if (!row) throw new SkillValidationError('Pinned skill resource is unavailable')
-
-      const result = skillResourceResult(row as SkillVersionRow & { skillId: string }, path, 'Pinned skill resource is unavailable')
-      await transaction('agentSkillUses').insert({
-        id: randomUUID(),
-        skillVersionId: row.versionId,
-        runId: null,
-        sessionId,
-        requesterUserId: principal.userId,
-        requesterApiKeyId: null,
-        transportRequestId,
-        externalSessionSha256: null,
-        resourcePath: path,
-        purpose: 'read',
-        contentHash: result.contentHash
-      })
-      return result
-    })
-  }
 }

@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { AGENT_ACTION_NAMES, AGENT_EVENT_TYPES, type AgentEventType, type AgentProviderProfileView, type AgentThreadState, type CreateAgentSessionRequest, type SubmitAgentMessageRequest, type UpdateAgentSessionProfileRequest, type UpdateAgentSessionSkillsRequest } from '../../shared/agents/contracts.ts'
+import { AGENT_ACTION_NAMES, AGENT_EVENT_TYPES, type AgentEventType, type AgentProviderProfileView, type AgentThreadState, type CreateAgentSessionRequest, type SubmitAgentMessageRequest, type UpdateAgentSessionProfileRequest, type UpdateAgentSkillPreferencesRequest } from '../../shared/agents/contracts.ts'
 
 const Iso = z.iso.datetime()
 const Uuid = z.uuid()
@@ -158,8 +158,8 @@ export const removePersonalAgentSkill = async (
 ): Promise<void> => {
   await requestJson(fetcher, csrfToken, `/_api/agents/personal-skills/${encodeURIComponent(skillId)}`, z.object({ deleted: z.literal(true) }), { method: 'DELETE', body: JSON.stringify({ expectedVersionId }) })
 }
-export const updateAgentSkills = async (fetcher: typeof fetch, csrfToken: string, sessionId: string, input: UpdateAgentSessionSkillsRequest): Promise<number> =>
-  (await requestJson(fetcher, csrfToken, `/_api/agents/sessions/${encodeURIComponent(sessionId)}/skills`, z.object({ version: z.number().int().positive() }), { method: 'PUT', body: JSON.stringify({ ...input, transportRequestId: crypto.randomUUID() }) })).version
+export const updateAgentSkillPreferences = async (fetcher: typeof fetch, csrfToken: string, input: UpdateAgentSkillPreferencesRequest): Promise<readonly string[]> =>
+  (await requestJson(fetcher, csrfToken, '/_api/agents/skill-preferences', z.object({ skillIds: z.array(Uuid).max(8) }), { method: 'PUT', body: JSON.stringify({ ...input, transportRequestId: crypto.randomUUID() }) })).skillIds
 
 export const subscribeAgentRun = (runId: string, after: number, handlers: { readonly event: (type: AgentEventType, sequence: number) => void; readonly error: () => void }): EventSource => {
   const source = new EventSource(`/_api/agents/runs/${encodeURIComponent(runId)}/events?after=${after}`)

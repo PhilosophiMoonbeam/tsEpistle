@@ -37,14 +37,15 @@ describe('inline Ask mode contract', () => {
     expect(inline).toMatch(/agents\.send\(prompt, invokedSkillVersionIds\)/)
   })
 
-  test('keeps session pins in the composer Skills menu and hides empty configuration', () => {
+  test('keeps cross-conversation skill preferences in the composer and hides empty configuration', () => {
     expect(settings).not.toMatch(/Pinned skills/)
     expect(inline).toMatch(/v-if="thread && profiles\.length > 1"/)
-    expect(inline).toMatch(/@pin-skills="agents\.setSkills"/)
-    expect(composer).toMatch(/@click\.stop="togglePin\(skill\.versionId\)"/)
-    expect(composer).toMatch(/pin to this session/)
+    expect(inline).toMatch(/@update-skill-preferences="agents\.setSkillPreferences"/)
+    expect(composer).toMatch(/@click\.stop="togglePreference\(skill\.versionId\)"/)
+    expect(composer).toMatch(/always load in conversations/)
     expect(composer).toMatch(/candidate\.id === skill\.skillId/)
-    expect(composer).toMatch(/pinnedSkillIds\.value\.has\(skillId\)/)
+    expect(composer).toMatch(/preferredSkillIds\.value\.has\(skillId\)/)
+    expect(composer).not.toMatch(/pin(?:ned)? to this session/i)
   })
 
   test('supports direct mode switching and submission from the Wiki search field', () => {

@@ -394,7 +394,7 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
   }))
 
 
-  router.use(['/_api/agents/skills', '/_api/agents/personal-skills', '/_api/agents/sessions/:sessionId/skills'], (req, res, next) => {
+  router.use(['/_api/agents/skills', '/_api/agents/skill-preferences', '/_api/agents/personal-skills'], (req, res, next) => {
     if (!wiki.config.agents.skills.enabled) return res.sendStatus(404)
     if (!hasAgentPermission(req.user)) return res.sendStatus(403)
     return next()
@@ -428,42 +428,19 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
     })
     return res.json({ deleted: true })
   }))
-  router.get('/_api/agents/sessions/:sessionId/skills', asyncRoute(async (req, res) => {
-    const sessionId = routeParameter(req, 'sessionId')
-    if (!sessionId) return res.sendStatus(400)
-    return res.json({ skills: await skillRuntime.listSessionSkills(sessionId, requestSkillPrincipal(req)) })
+  router.get('/_api/agents/skill-preferences', asyncRoute(async (req, res) => {
+    return res.json({ skills: await skillRuntime.listUserSkillPreferences(requestSkillPrincipal(req)) })
   }))
-  router.put('/_api/agents/sessions/:sessionId/skills', asyncRoute(async (req, res) => {
-    const sessionId = routeParameter(req, 'sessionId')
-    if (!sessionId) return res.sendStatus(400)
-    const input = z.strictObject({ expectedSessionVersion: z.number().int().positive(), skillVersionIds: z.array(z.uuid()).max(8), transportRequestId: z.uuid() }).parse(req.body)
-    const version = await skillRuntime.setSessionSkills({ sessionId, expectedVersion: input.expectedSessionVersion, skillVersionIds: input.skillVersionIds, transportRequestId: input.transportRequestId, principal: requestSkillPrincipal(req) })
-    return res.json({ version })
-  }))
-  router.get('/_api/agents/sessions/:sessionId/skills/:skillName/:versionId/resource', asyncRoute(async (req, res) => {
-    const sessionId = routeParameter(req, 'sessionId')
-    const skillName = routeParameter(req, 'skillName')
-    const versionId = routeParameter(req, 'versionId')
-    const path = typeof req.query.path === 'string' ? req.query.path : null
-    const transportRequestId = typeof req.query.requestId === 'string' ? req.query.requestId : null
-    if (!sessionId || !skillName || !versionId || !path || !transportRequestId) return res.sendStatus(400)
-    const resource = await skillRuntime.readSessionResource({
-      sessionId,
-      skillName,
-      versionId,
-      path,
-      transportRequestId,
+  router.put('/_api/agents/skill-preferences', asyncRoute(async (req, res) => {
+    const input = z.strictObject({ skillIds: z.array(z.uuid()).max(8), transportRequestId: z.uuid() }).parse(req.body)
+    const skillIds = await skillRuntime.setUserSkillPreferences({
+      skillIds: input.skillIds,
+      transportRequestId: input.transportRequestId,
       principal: requestSkillPrincipal(req)
     })
-    res.set({
-      'Content-Type': resource.mediaType,
-      'X-Wiki-Content-Sha256': resource.contentHash,
-      'X-Wiki-Source-Id': resource.sourceId,
-      'X-Wiki-Source-Revision': resource.sourceRevision
-    })
-    return res.send(resource.bytes)
+    return res.json({ skillIds })
   }))
-  router.use(['/_api/agents/skills', '/_api/agents/personal-skills', '/_api/agents/sessions/:sessionId/skills'], (error: unknown, _req: Request, res: Response, next: NextFunction) => {
+  router.use(['/_api/agents/skills', '/_api/agents/skill-preferences', '/_api/agents/personal-skills'], (error: unknown, _req: Request, res: Response, next: NextFunction) => {
     if (error instanceof ZodError) return res.status(400).json({ error: 'INVALID_REQUEST', details: error.issues })
     if (error instanceof SkillValidationError) return res.status(409).json({ error: error.code, message: error.message })
     return next(error)

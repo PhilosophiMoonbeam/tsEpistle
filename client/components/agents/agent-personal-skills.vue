@@ -88,7 +88,7 @@
 
   <v-dialog :model-value="removing !== null" max-width="32rem" @update:model-value="value => { if (!value) removing = null }">
     <v-card title="Remove personal skill?">
-      <v-card-text><strong>{{ removing?.name }}</strong> will no longer be available for new selection. Existing session pins and run history remain intact.</v-card-text>
+      <v-card-text><strong>{{ removing?.name }}</strong> will no longer be available or automatically loaded. Existing run history remains intact.</v-card-text>
       <v-card-actions>
         <v-spacer />
         <v-btn @click="removing = null">Cancel</v-btn>

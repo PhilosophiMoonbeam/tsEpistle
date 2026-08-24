@@ -27,10 +27,11 @@ const createTables = async (db: Knex): Promise<void> => {
   await db.schema.createTable('agentEvents', table => {
     table.uuid('id').primary(); table.uuid('runId').notNullable(); table.integer('sequence').notNullable(); table.string('type').notNullable(); table.integer('attempt').notNullable(); table.integer('schemaVersion').notNullable(); table.string('dataSha256').notNullable(); table.text('data').notNullable(); table.dateTime('createdAt').notNullable()
   })
-  await db.schema.createTable('agentSessionSkills', table => { table.uuid('sessionId'); table.uuid('skillVersionId'); table.integer('ordinal') })
+  await db.schema.createTable('agentUserSkillPreferences', table => { table.integer('ownerId'); table.uuid('skillId'); table.integer('ordinal'); table.dateTime('selectedAt') })
   await db.schema.createTable('agentSkillVersions', table => { table.uuid('id').primary(); table.uuid('skillId'); table.bigInteger('sourceRevision'); table.dateTime('sourceUpdatedAt'); table.integer('sourceHistoryId'); table.text('frontmatter'); table.text('skillMarkdown'); table.binary('resourceBundle'); table.text('resourceManifest'); table.string('contentHash'); table.string('approvalStatus'); table.integer('approvedBy'); table.dateTime('approvedAt'); table.dateTime('createdAt') })
   await db.schema.createTable('agentSkills', table => { table.uuid('id').primary(); table.string('name'); table.integer('rootPageId'); table.text('rootPath'); table.integer('assetFolderId'); table.string('status'); table.string('exposureMode'); table.uuid('currentVersionId'); table.boolean('isAgentDiscoverable').notNullable().defaultTo(true); table.integer('ownerUserId'); table.dateTime('deletedAt'); table.integer('createdBy'); table.integer('updatedBy'); table.dateTime('createdAt'); table.dateTime('updatedAt') })
   await db.schema.createTable('agentSkillGrants', table => { table.uuid('skillId'); table.integer('groupId') })
+  await db.schema.createTable('userGroups', table => { table.integer('userId'); table.integer('groupId') })
   await db.schema.createTable('agentRunSkills', table => { table.uuid('runId'); table.uuid('skillVersionId'); table.integer('ordinal') })
   await db.schema.createTable('pages', table => { table.integer('id'); table.string('localeCode'); table.text('path'); table.string('title'); table.string('contentType') })
   await db.schema.createTable('agentProposals', table => { table.uuid('id'); table.uuid('sessionId'); table.string('sourceKind'); table.string('actionName'); table.string('risk'); table.string('status'); table.string('summary'); table.integer('pageId'); table.integer('baseSourceRevision'); table.string('authoritySha256'); table.string('inputHash'); table.string('patchSha256'); table.string('resultCanonicalSha256'); table.string('diffSha256'); table.text('diff'); table.dateTime('contentPurgedAt'); table.dateTime('expiresAt'); table.dateTime('createdAt') })
@@ -78,7 +79,6 @@ describe('ordinary-origin agent session API', () => {
           capabilityRevision: 'test-v1',
           pricingRevision: 'test-v1',
           promptVersion: 1,
-          skillVersionIds: [],
           quota: { tokens: 100, costMicros: 100 },
           quotaLimits: { dailyTokens: 1_000, dailyCostMicros: 1_000 },
           reservationMilliseconds: 60_000
@@ -197,7 +197,7 @@ describe('ordinary-origin agent session API', () => {
     expect(replay).toContain('event: message.completed')
     expect(replay).toContain('event: suggestions.updated')
   })
-  it('manages owner-scoped skills and applies a manual invocation to one run', async () => {
+  it('applies user skill preferences at the latest version across conversations', async () => {
     const headers = { cookie, 'content-type': 'application/json', origin: 'https://wiki.example.test', 'sec-fetch-site': 'same-origin', 'x-wiki-csrf': csrf }
     const markdown = '---\nname: qa-helper\ndescription: Follow the QA checklist\n---\n# Instructions\n\nCheck the acceptance criteria.\n'
     const createdResponse = await fetch(`${baseUrl}/_api/agents/personal-skills`, {
@@ -216,24 +216,16 @@ describe('ordinary-origin agent session API', () => {
     expect(await (await fetch(`${baseUrl}/_api/agents/skills`, { headers: { cookie } })).json()).toEqual({ skills: [] })
     ownerId = 7
 
-    const sessionResponse = await fetch(`${baseUrl}/_api/agents/sessions`, { method: 'POST', headers, body: JSON.stringify({ retention: 'saved', providerProfileId: null }) })
-    const state = await sessionResponse.json() as { session: { id: string; version: number; profileResolutionToken: string } }
-    const admittedResponse = await fetch(`${baseUrl}/_api/agents/sessions/${state.session.id}/messages`, {
-      method: 'POST',
+    const preferenceResponse = await fetch(`${baseUrl}/_api/agents/skill-preferences`, {
+      method: 'PUT',
       headers,
-      body: JSON.stringify({
-        clientRequestId: '00000000-0000-4000-8000-000000000072',
-        expectedSessionVersion: state.session.version,
-        profileResolutionToken: state.session.profileResolutionToken,
-        content: 'Use my QA process.',
-        invokedSkillVersionIds: [created.versionId]
-      })
+      body: JSON.stringify({ skillIds: [created.id], transportRequestId: '00000000-0000-4000-8000-000000000073' })
     })
-    expect(admittedResponse.status).toBe(202)
-    const admitted = await admittedResponse.json() as { run: { id: string } }
-    expect(await db('agentRunSkills').where({ runId: admitted.run.id }).select('skillVersionId', 'ordinal')).toEqual([{ skillVersionId: created.versionId, ordinal: 0 }])
-    expect(await runtime.runOnce()).toBe(true)
-    expect(engineSkills).toEqual([{ id: created.versionId, name: 'qa-helper' }])
+    expect(preferenceResponse.status).toBe(200)
+    expect(await preferenceResponse.json()).toEqual({ skillIds: [created.id] })
+    const firstSessionResponse = await fetch(`${baseUrl}/_api/agents/sessions`, { method: 'POST', headers, body: JSON.stringify({ retention: 'saved', providerProfileId: null }) })
+    const firstThread = await firstSessionResponse.json() as { session: { id: string; version: number; profileResolutionToken: string; skills: Array<{ skillId: string; versionId: string }> } }
+    expect(firstThread.session.skills).toMatchObject([{ skillId: created.id, versionId: created.versionId }])
 
     const updatedResponse = await fetch(`${baseUrl}/_api/agents/personal-skills/${created.id}`, {
       method: 'PUT',
@@ -243,6 +235,29 @@ describe('ordinary-origin agent session API', () => {
     expect(updatedResponse.status).toBe(200)
     const updated = (await updatedResponse.json() as { skill: { versionId: string } }).skill
     expect(updated.versionId).not.toBe(created.versionId)
+
+    const refreshed = await (await fetch(`${baseUrl}/_api/agents/sessions/${firstThread.session.id}`, { headers: { cookie } })).json() as typeof firstThread
+    expect(refreshed.session.skills).toMatchObject([{ skillId: created.id, versionId: updated.versionId }])
+    const admittedResponse = await fetch(`${baseUrl}/_api/agents/sessions/${firstThread.session.id}/messages`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        clientRequestId: '00000000-0000-4000-8000-000000000072',
+        expectedSessionVersion: refreshed.session.version,
+        profileResolutionToken: refreshed.session.profileResolutionToken,
+        content: 'Use my QA process.'
+      })
+    })
+    expect(admittedResponse.status).toBe(202)
+    const admitted = await admittedResponse.json() as { run: { id: string } }
+    expect(await db('agentRunSkills').where({ runId: admitted.run.id }).select('skillVersionId', 'ordinal')).toEqual([{ skillVersionId: updated.versionId, ordinal: 0 }])
+    expect(await runtime.runOnce()).toBe(true)
+    expect(engineSkills).toEqual([{ id: updated.versionId, name: 'qa-helper' }])
+    expect(await db('agentSkillVersions').where({ skillId: created.id }).orderBy('createdAt').pluck('id')).toEqual([created.versionId, updated.versionId])
+
+    const secondSession = await (await fetch(`${baseUrl}/_api/agents/sessions`, { method: 'POST', headers, body: JSON.stringify({ retention: 'saved', providerProfileId: null }) })).json() as typeof firstThread
+    expect(secondSession.session.skills).toMatchObject([{ skillId: created.id, versionId: updated.versionId }])
+
     expect((await fetch(`${baseUrl}/_api/agents/personal-skills/${created.id}`, {
       method: 'DELETE',
       headers,

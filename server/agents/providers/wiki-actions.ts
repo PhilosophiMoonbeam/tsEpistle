@@ -67,7 +67,7 @@ const allowedActionsFor = async (knex: Knex, runId: string): Promise<readonly Ag
   const allowed = new Set<AgentActionName>(['skills.list', 'skills.read'])
   for (const row of rows) {
     let value: unknown
-    try { value = JSON.parse(row.frontmatter) } catch { throw new AgentRepositoryError('SKILL_VERSION_CORRUPT', 'Pinned skill metadata is invalid', 500) }
+    try { value = JSON.parse(row.frontmatter) } catch { throw new AgentRepositoryError('SKILL_VERSION_CORRUPT', 'Loaded skill metadata is invalid', 500) }
     const tools = typeof value === 'object' && value !== null ? Reflect.get(value, 'allowed-tools') : undefined
     if (!Array.isArray(tools) || tools.length === 0) return undefined
     for (const tool of tools) if (typeof tool === 'string' && tool in ACTION_CATALOG) allowed.add(tool as AgentActionName)

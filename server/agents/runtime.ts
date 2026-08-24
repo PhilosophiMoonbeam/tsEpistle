@@ -12,6 +12,7 @@ import {
   type AgentRunRecord
 } from './coordinator.ts'
 import { AgentRepositoryError } from './repository.ts'
+import { SkillRuntime } from './skills/runtime.ts'
 
 const sha256 = (value: string): string => createHash('sha256').update(value).digest('hex')
 
@@ -26,7 +27,6 @@ export interface AgentResolvedAdmission {
   readonly capabilityRevision: string
   readonly pricingRevision: string
   readonly promptVersion: number
-  readonly skillVersionIds: readonly string[]
   readonly quota: AgentQuotaRequest
   readonly quotaLimits: AgentQuotaLimits
   readonly reservationMilliseconds: number
@@ -143,10 +143,10 @@ const providerState = (value: Uint8Array | null): AgentEngineMessage['providerSt
 
 const uniqueSkillVersionsBySkill = async (
   knex: Knex,
-  pinnedSkillVersionIds: readonly string[],
+  preferredSkillVersionIds: readonly string[],
   invokedSkillVersionIds: readonly string[]
 ): Promise<readonly string[]> => {
-  const orderedVersionIds = [...new Set([...pinnedSkillVersionIds, ...invokedSkillVersionIds])]
+  const orderedVersionIds = [...new Set([...preferredSkillVersionIds, ...invokedSkillVersionIds])]
   if (orderedVersionIds.length === 0) return []
   const rows = await knex('agentSkillVersions')
     .whereIn('id', orderedVersionIds)
@@ -169,18 +169,21 @@ export class AgentProductRuntime {
   readonly #resolver: AgentAdmissionResolver
   readonly #engine: AgentEngine
   readonly #coordinator: AgentRunCoordinator
+  readonly #skills: SkillRuntime
 
   constructor (knex: Knex, resolver: AgentAdmissionResolver, engine: AgentEngine, options: AgentProductRuntimeOptions) {
     this.#knex = knex
     this.#resolver = resolver
     this.#engine = engine
     this.#coordinator = new AgentRunCoordinator(knex, options)
+    this.#skills = new SkillRuntime(knex)
   }
 
   async submit (input: SubmitAgentMessageInput): Promise<{ readonly run: AgentRunRecord, readonly replayed: boolean }> {
     const resolved = await this.#resolver.resolve({ ownerId: input.ownerId, sessionId: input.sessionId, profileResolutionToken: input.profileResolutionToken })
     if (!Number.isSafeInteger(resolved.reservationMilliseconds) || resolved.reservationMilliseconds < 1) throw new AgentRepositoryError('INVALID_PROFILE_RESOLUTION', 'Quota reservation duration is invalid', 500)
-    const skillVersionIds = await uniqueSkillVersionsBySkill(this.#knex, resolved.skillVersionIds, input.invokedSkillVersionIds ?? [])
+    const preferredSkillVersionIds = await this.#skills.resolvePreferredVersionIdsForUser(input.ownerId)
+    const skillVersionIds = await uniqueSkillVersionsBySkill(this.#knex, preferredSkillVersionIds, input.invokedSkillVersionIds ?? [])
     if (skillVersionIds.length > 8) throw new AgentRepositoryError('TOO_MANY_SKILLS', 'A run can use at most 8 skills', 400)
     return admitAgentRun(this.#knex, {
       ownerId: input.ownerId,

@@ -333,15 +333,34 @@ export interface ProjectAgentThreadOptions {
 export const projectAgentThread = async (knex: Knex, ownerId: number, sessionId: string, options: ProjectAgentThreadOptions): Promise<AgentThreadState> => {
   const session = await getOwnedAgentSession(knex, ownerId, sessionId)
   const now = options.now ?? new Date()
+  const groupIds = await knex('userGroups').where({ userId: ownerId }).pluck('groupId') as number[]
   const [messageRows, runRows, skillRows, proposalRows, approvalRows, artifactRows] = await Promise.all([
     listOwnedAgentMessages(knex, ownerId, sessionId, 0, 500),
     knex<ProjectAgentRunInput>('agentRuns').where('sessionId', sessionId).andWhere('ownerId', ownerId).orderBy('queuedAt', 'desc'),
-    knex<SkillRow>('agentSessionSkills')
-      .join('agentSkillVersions', 'agentSkillVersions.id', 'agentSessionSkills.skillVersionId')
-      .join('agentSkills', 'agentSkills.id', 'agentSkillVersions.skillId')
-      .where('agentSessionSkills.sessionId', sessionId)
-      .select({ skillId: 'agentSkills.id', versionId: 'agentSkillVersions.id', name: 'agentSkills.name', frontmatter: 'agentSkillVersions.frontmatter', contentHash: 'agentSkillVersions.contentHash', sourcePath: 'agentSkills.rootPath', versionCreatedAt: 'agentSkillVersions.createdAt', status: 'agentSkills.status', currentVersionId: 'agentSkills.currentVersionId', ordinal: 'agentSessionSkills.ordinal' })
-      .orderBy('agentSessionSkills.ordinal'),
+    knex<SkillRow>('agentUserSkillPreferences')
+      .join('agentSkills', 'agentSkills.id', 'agentUserSkillPreferences.skillId')
+      .join('agentSkillVersions', 'agentSkillVersions.id', 'agentSkills.currentVersionId')
+      .where('agentUserSkillPreferences.ownerId', ownerId)
+      .where('agentSkills.status', 'enabled')
+      .where('agentSkillVersions.approvalStatus', 'approved')
+      .whereNull('agentSkills.deletedAt')
+      .where(visibility => {
+        visibility.where('agentSkills.ownerUserId', ownerId).orWhere(system => {
+          system.whereNull('agentSkills.ownerUserId').andWhere(exposure => {
+            exposure.where('agentSkills.exposureMode', 'all_agent_users')
+            if (groupIds.length > 0) {
+              exposure.orWhereExists(function groupGrant () {
+                this.select(knex.raw('1'))
+                  .from('agentSkillGrants')
+                  .whereRaw('agentSkillGrants."skillId" = agentSkills.id')
+                  .whereIn('agentSkillGrants.groupId', groupIds)
+              })
+            }
+          })
+        })
+      })
+      .select({ skillId: 'agentSkills.id', versionId: 'agentSkillVersions.id', name: 'agentSkills.name', frontmatter: 'agentSkillVersions.frontmatter', contentHash: 'agentSkillVersions.contentHash', sourcePath: 'agentSkills.rootPath', versionCreatedAt: 'agentSkillVersions.createdAt', status: 'agentSkills.status', currentVersionId: 'agentSkills.currentVersionId', ordinal: 'agentUserSkillPreferences.ordinal' })
+      .orderBy('agentUserSkillPreferences.ordinal'),
     knex<ProposalRow>('agentProposals')
       .leftJoin('pages', 'pages.id', 'agentProposals.pageId')
       .where('agentProposals.sessionId', sessionId)

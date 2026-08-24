@@ -359,9 +359,8 @@ export interface UpdateAgentSessionRequest {
   readonly retention?: AgentSessionRetention
 }
 
-export interface UpdateAgentSessionSkillsRequest {
-  readonly expectedSessionVersion: number
-  readonly skillVersionIds: readonly string[]
+export interface UpdateAgentSkillPreferencesRequest {
+  readonly skillIds: readonly string[]
 }
 
 export interface UpdateAgentSessionProfileRequest {

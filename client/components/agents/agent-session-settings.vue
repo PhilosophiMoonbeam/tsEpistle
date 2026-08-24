@@ -3,7 +3,7 @@
     <v-expansion-panel>
       <v-expansion-panel-title>Session configuration</v-expansion-panel-title>
       <v-expansion-panel-text>
-        <v-alert v-if="disabled" type="info" variant="tonal" density="compact" class="mb-3">Configuration is pinned for the active run.</v-alert>
+        <v-alert v-if="disabled" type="info" variant="tonal" density="compact" class="mb-3">Configuration cannot change during the active run.</v-alert>
         <template v-if="profiles.length > 1">
           <v-select v-model="profileId" :items="profileItems" label="Provider profile" :disabled="disabled" />
           <v-btn color="primary" variant="tonal" :disabled="disabled || !profileChanged" @click="applyProfile">Apply provider</v-btn>
