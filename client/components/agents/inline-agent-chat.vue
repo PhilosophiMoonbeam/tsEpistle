@@ -17,6 +17,7 @@
           size="small"
           variant="tonal"
         >{{ connectionLabel }}</v-chip>
+        <AgentMemoryManager :csrf-token="csrfToken" />
         <v-menu location="bottom end">
           <template #activator="{ props: menuProps }">
             <v-btn
@@ -27,7 +28,20 @@
             />
           </template>
           <v-list class="inline-agent__history" density="compact" aria-label="Agent conversation history">
-            <v-list-subheader>Recent conversations</v-list-subheader>
+            <div class="inline-agent__history-header px-4 pt-3 pb-2">
+              <div>
+                <div class="text-label-large">Recent conversations</div>
+                <div class="text-body-small text-medium-emphasis">Automatically removed after 90 days</div>
+              </div>
+              <v-btn
+                color="error"
+                prepend-icon="mdi-delete-sweep-outline"
+                size="small"
+                variant="text"
+                :disabled="resetting || sessions.length === 0"
+                @click="resetHistoryOpen = true"
+              >Reset</v-btn>
+            </div>
             <v-list-item
               v-for="session in sessions"
               :key="session.id"
@@ -154,6 +168,22 @@
     </v-card>
   </section>
   <AgentPersonalSkills v-if="skillsEnabled" v-model="skillManagerOpen" :csrf-token="csrfToken" @changed="reloadSkillCatalog" />
+  <v-dialog v-model="resetHistoryOpen" max-width="30rem">
+    <v-card rounded="xl">
+      <v-card-title class="d-flex align-center ga-3 pt-5 px-5">
+        <v-avatar color="error" size="38" variant="tonal"><v-icon icon="mdi-delete-sweep-outline" /></v-avatar>
+        Reset conversation history?
+      </v-card-title>
+      <v-card-text class="px-5">
+        Every Agent conversation will be permanently removed and a clean conversation will open. Your curated Agent memory stays intact.
+      </v-card-text>
+      <v-card-actions class="px-5 pb-4">
+        <v-spacer />
+        <v-btn variant="text" @click="resetHistoryOpen = false">Cancel</v-btn>
+        <v-btn color="error" :loading="resetting" @click="resetHistory">Reset history</v-btn>
+      </v-card-actions>
+    </v-card>
+  </v-dialog>
 </template>
 
 <script setup lang="ts">
@@ -162,6 +192,7 @@ import { storeToRefs } from 'pinia'
 import type { AgentCurrentPageHint } from '../../../shared/agents/contracts.ts'
 import { useAgentsStore } from '../../store/agents.ts'
 import AgentComposer from './agent-composer.vue'
+import AgentMemoryManager from './agent-memory-manager.vue'
 import AgentPersonalSkills from './agent-personal-skills.vue'
 import AgentMcpApproval from './agent-mcp-approval.vue'
 import AgentSessionSettings from './agent-session-settings.vue'
@@ -184,6 +215,8 @@ const { connection, decidingApprovalId, error, loading, profiles, sending, sessi
 const transcript = ref<HTMLElement | null>(null)
 const approvalJumpVisible = ref(false)
 const skillManagerOpen = ref(false)
+const resetHistoryOpen = ref(false)
+const resetting = ref(false)
 let initialization: Promise<void> | null = null
 
 const currentPage = computed<AgentCurrentPageHint | null>(() => {
@@ -253,6 +286,17 @@ const openSession = async (sessionId: string): Promise<void> => {
     await agents.openSession(sessionId)
   } catch (value) {
     agents.error = value instanceof Error ? value.message : 'The conversation could not be opened.'
+  }
+}
+const resetHistory = async (): Promise<void> => {
+  resetting.value = true
+  try {
+    await agents.resetHistory()
+    resetHistoryOpen.value = false
+  } catch (value) {
+    agents.error = value instanceof Error ? value.message : 'Conversation history could not be reset.'
+  } finally {
+    resetting.value = false
   }
 }
 
@@ -334,6 +378,7 @@ defineExpose({ sendPrompt })
 }
 .inline-agent__heading { min-width: 0; }
 .inline-agent__history { max-height: min(28rem, 70vh); min-width: min(24rem, 90vw); overflow-y: auto; }
+.inline-agent__history-header { align-items: center; display: flex; gap: 1rem; justify-content: space-between; }
 .inline-agent__alert { flex: 0 0 auto; }
 .inline-agent__settings { flex: 0 0 auto; max-height: 100%; overflow-y: auto; overscroll-behavior: contain; }
 .inline-agent__settings:has(.v-expansion-panel-title[aria-expanded="true"]) { flex: 1 1 auto; min-height: clamp(9rem, 45dvh, 18rem); }

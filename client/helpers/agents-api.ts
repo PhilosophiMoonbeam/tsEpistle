@@ -23,6 +23,11 @@ const SessionSummary = z.object({ id: Uuid, title: z.string(), retention: z.enum
 const Profile = z.object({ id: Uuid, name: z.string(), transport: z.enum(['openai-responses', 'openresponses', 'openai-chat', 'anthropic-messages']), model: z.string(), destinationHost: z.string(), capabilities: z.object({ streaming: z.literal(true), functions: z.literal(true), parallelFunctions: z.boolean(), structuredOutput: z.enum(['native-json-schema', 'tool-result', 'prompt-only']), usage: z.enum(['stream', 'terminal', 'estimated']), cancellation: z.literal(true), maxContextTokens: z.number(), maxOutputTokens: z.number() }), capabilityRevision: z.string(), policyVersion: z.number().int().positive(), isGlobalDefault: z.boolean() })
 const VisibleSkill = z.object({ id: Uuid, versionId: Uuid, name: z.string(), description: z.string(), contentHash: z.string(), sourceRevision: z.string(), exposureMode: z.enum(['all_agent_users', 'groups', 'owner']), isAgentDiscoverable: z.boolean() })
 const PersonalSkill = z.object({ id: Uuid, name: z.string(), description: z.string(), isAgentDiscoverable: z.boolean(), versionId: Uuid, contentHash: z.string(), skillMarkdown: z.string(), createdAt: Iso, updatedAt: Iso })
+const MemoryTarget = z.enum(['agent', 'user'])
+const MemoryEntry = z.object({ id: Uuid, target: MemoryTarget, content: z.string(), version: z.number().int().positive(), createdAt: Iso, updatedAt: Iso })
+const MemoryStore = z.object({ entries: z.array(MemoryEntry), characters: z.number().int().nonnegative(), limit: z.number().int().positive() })
+const MemoryView = z.object({ agent: MemoryStore, user: MemoryStore })
+const MemoryMutation = z.object({ changed: z.boolean(), message: z.string(), target: MemoryTarget, entries: z.array(z.string()), characters: z.number().int().nonnegative(), limit: z.number().int().positive() })
 const McpProposal = z.object({
   id: Uuid,
   actionName: z.enum(AGENT_ACTION_NAMES),
@@ -50,6 +55,9 @@ const McpProposal = z.object({
 export type AgentSessionSummary = z.infer<typeof SessionSummary>
 export type VisibleAgentSkill = z.infer<typeof VisibleSkill>
 export type PersonalAgentSkill = z.infer<typeof PersonalSkill>
+export type AgentMemoryTarget = z.infer<typeof MemoryTarget>
+export type AgentMemoryEntry = z.infer<typeof MemoryEntry>
+export type AgentMemoryView = z.infer<typeof MemoryView>
 export interface CreatedAgentThread extends AgentThreadState { readonly launchPage?: z.infer<typeof LaunchPage> }
 export type McpAgentProposal = z.infer<typeof McpProposal>
 
@@ -99,6 +107,25 @@ export const deleteAgentSession = async (fetcher: typeof fetch, csrfToken: strin
   const response = await fetcher(`/_api/agents/sessions/${encodeURIComponent(sessionId)}`, { method: 'DELETE', credentials: 'same-origin', headers: { 'x-wiki-csrf': csrfToken } })
   if (!response.ok) throw new Error(await errorMessage(response))
 }
+export const resetAgentHistory = async (fetcher: typeof fetch, csrfToken: string): Promise<void> => {
+  const response = await fetcher('/_api/agents/sessions', { method: 'DELETE', credentials: 'same-origin', headers: { 'x-wiki-csrf': csrfToken } })
+  if (!response.ok) throw new Error(await errorMessage(response))
+}
+
+export const getAgentMemories = (fetcher: typeof fetch, csrfToken: string): Promise<AgentMemoryView> =>
+  requestJson(fetcher, csrfToken, '/_api/agents/memories', MemoryView)
+
+export const createAgentMemory = (fetcher: typeof fetch, csrfToken: string, input: { readonly target: AgentMemoryTarget, readonly content: string }) =>
+  requestJson(fetcher, csrfToken, '/_api/agents/memories', MemoryMutation, { method: 'POST', body: JSON.stringify(input) })
+
+export const updateAgentMemory = (fetcher: typeof fetch, csrfToken: string, memoryId: string, input: { readonly expectedVersion: number, readonly target: AgentMemoryTarget, readonly content: string }) =>
+  requestJson(fetcher, csrfToken, `/_api/agents/memories/${encodeURIComponent(memoryId)}`, MemoryMutation, { method: 'PUT', body: JSON.stringify(input) })
+
+export const removeAgentMemory = (fetcher: typeof fetch, csrfToken: string, memoryId: string, expectedVersion: number) =>
+  requestJson(fetcher, csrfToken, `/_api/agents/memories/${encodeURIComponent(memoryId)}?expectedVersion=${encodeURIComponent(String(expectedVersion))}`, MemoryMutation, { method: 'DELETE' })
+
+export const clearAgentMemories = async (fetcher: typeof fetch, csrfToken: string): Promise<number> =>
+  (await requestJson(fetcher, csrfToken, '/_api/agents/memories', z.object({ removed: z.number().int().nonnegative() }), { method: 'DELETE' })).removed
 
 export const submitAgentMessage = async (fetcher: typeof fetch, csrfToken: string, sessionId: string, input: SubmitAgentMessageRequest) =>
   (await requestJson(fetcher, csrfToken, `/_api/agents/sessions/${encodeURIComponent(sessionId)}/messages`, z.object({ run: Run, replayed: z.boolean() }), { method: 'POST', body: JSON.stringify(input) })).run

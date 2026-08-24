@@ -65,6 +65,7 @@ agents:
   enabled: false
   retention:
     temporarySessionHours: 24
+    savedSessionDays: 90
     mcpContentDays: 7
     auditDays: 90
     maintenanceBatchSize: 100
@@ -247,6 +248,23 @@ In-process checks are not a network sandbox. Deploy the container in a network n
 
 Drain by disabling browser admission, waiting for active contexts, then sending `SIGTERM`. Keep the prior signing verification key only through the maximum request lifetime.
 
+## Conversation history and personal memory
+
+Saved conversations are bounded history, not durable memory. Maintenance permanently removes saved sessions after `savedSessionDays` without activity (90 days by default); temporary sessions continue to use `temporarySessionHours`. Active runs fence deletion until they become terminal. The history menu exposes a user-scoped **Reset** action that cancels owned active work, tombstones every owned conversation in one transaction, and opens a clean saved conversation. Reset never deletes personal memory.
+
+Wiki adopts the bounded, curated shape of Hermes Agent's default memory rather than treating every transcript as memory:
+
+| Store | Purpose | Capacity |
+| --- | --- | ---: |
+| About you | Identity, preferences, communication style, and working habits | 1,375 characters |
+| Agent notes | Stable project, environment, convention, workflow, correction, and completed-work facts | 2,200 characters |
+
+Entries are rows in `agentMemories`, scoped by `ownerId`, exact-deduplicated by content hash, and deleted with the owning user. `memory.manage` gives the Agent add/replace/remove operations; the Memory dialog gives the user equivalent review, edit, remove, and clear controls. Writes reject invisible control characters, role/context fences, instruction-override language, embedded credentials, ambiguous substring matches, stale versions, and over-capacity results.
+
+Each new conversation captures one immutable JSON snapshot in `agentSessions.memorySnapshot`. Every run in that conversation receives the same snapshot, preserving a stable prompt prefix and preventing a mid-conversation memory write from silently changing prior context. Live writes are immediately durable and their tool result reports the current store, but prompt recall begins with the next conversation. The prompt labels recalled entries as user-specific data: useful preferences and facts, never authorization, tool input, or policy.
+
+This first-class path deliberately omits automatic transcript extraction, embeddings, and unbounded conversation search. Curated memory covers the high-value always-on context with fixed token cost; 90-day history remains a separate privacy-bounded record. A future semantic provider would need an explicit opt-in flag, per-user index isolation, deletion propagation, provenance, retention semantics independent from chat history, prompt-injection defenses, quality evaluation, and a visible recall/write audit surface before it could replace this store.
+
 ## Maintenance
 
 Run the normal application image with:
@@ -255,7 +273,7 @@ Run the normal application image with:
 node server/scripts/agent-maintenance.ts
 ```
 
-Set `AGENT_MAINTENANCE_DATABASE_URL`. Optional positive bounds are `AGENT_MAINTENANCE_BATCH_SIZE`, `AGENT_MAINTENANCE_MCP_CONTENT_DAYS`, `AGENT_MAINTENANCE_AUDIT_DAYS`, `AGENT_MAINTENANCE_COMPACT_DELTA_DAYS`, and `AGENT_MAINTENANCE_MAX_BATCHES`.
+Set `AGENT_MAINTENANCE_DATABASE_URL`. Optional positive bounds are `AGENT_MAINTENANCE_BATCH_SIZE`, `AGENT_MAINTENANCE_SAVED_SESSION_DAYS`, `AGENT_MAINTENANCE_MCP_CONTENT_DAYS`, `AGENT_MAINTENANCE_AUDIT_DAYS`, `AGENT_MAINTENANCE_COMPACT_DELTA_DAYS`, and `AGENT_MAINTENANCE_MAX_BATCHES`.
 
 Schedule at least hourly with single-job concurrency. The command emits one bounded JSON summary and exits nonzero on failure. Alert on repeated failure, growing expiry backlog, or `recovery_required` runs. Continue maintenance while capabilities are disabled and during an N-1 compatibility rollback. Stop it only during database restore or destructive down migration.
 
@@ -265,6 +283,8 @@ Schedule at least hourly with single-job concurrency. The command emits one boun
 - MCP accepts resource-bound API keys only at `/mcp` on the configured Wiki origin; ordinary browser sessions are rejected.
 - Wiki `extra.js` is administrator-installed privileged code. It can act as the signed-in user on the Wiki origin; do not treat it as untrusted tenant content. Provider text, skill text, and page content never execute as code and are rendered through the existing sanitizer.
 - Permission and ownership checks occur when actions are offered and again at execution. Write approvals are immutable, single-use, revision-fenced records.
+- Conversation reset, retention, memory reads, and memory mutations are owner-scoped. Clearing history cannot clear memory, and clearing memory cannot alter history.
+- Memory enters the system prompt only through a bounded, frozen snapshot. Unsafe control text and embedded credentials are rejected before persistence; recalled content never grants permissions.
 - Browser contexts are per run. Cookies, storage, cache, live DOM, and browser profiles are not persisted into sessions.
 - Logs and metrics contain IDs, states, hashes, durations, bounded error codes, token counts, and costs—not conversation or hidden reasoning content.
 

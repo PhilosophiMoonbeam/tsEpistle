@@ -9,6 +9,7 @@ import { down as downProviderProfileLifecycle, up as upProviderProfileLifecycle 
 import { down as downPersonalSkills, up as upPersonalSkills } from '../../db/migrations/2.5.143.ts'
 import { down as downPersonalSkillDiscovery, up as upPersonalSkillDiscovery } from '../../db/migrations/2.5.144.ts'
 import { down as downSkillPreferences, up as upSkillPreferences } from '../../db/migrations/2.5.146.ts'
+import { down as downAgentMemory, up as upAgentMemory } from '../../db/migrations/2.5.147.ts'
 import { projectAgentThread } from '../../agents/projection.ts'
 import { SkillRuntime } from '../../agents/skills/runtime.ts'
 
@@ -77,6 +78,7 @@ suite('PostgreSQL first-class agent migration', () => {
     await upPersonalSkills(db)
     await upPersonalSkillDiscovery(db)
     await upSkillPreferences(db)
+    await upAgentMemory(db)
   })
 
   afterAll(async () => {
@@ -88,7 +90,7 @@ suite('PostgreSQL first-class agent migration', () => {
   })
 
   it('adds the authoritative tables, removes obsolete handoffs, and adds source revision columns', async () => {
-    for (const table of ['agentSessions', 'agentRuns', 'agentEvents', 'agentSkills', 'agentUserSkillPreferences', 'agentProviderProfiles', 'agentProviderSecrets', 'agentProposals', 'agentApprovals', 'agentActionExecutions', 'pageMutationOutbox']) {
+    for (const table of ['agentSessions', 'agentRuns', 'agentEvents', 'agentSkills', 'agentUserSkillPreferences', 'agentMemories', 'agentProviderProfiles', 'agentProviderSecrets', 'agentProposals', 'agentApprovals', 'agentActionExecutions', 'pageMutationOutbox']) {
       await expect(db.schema.hasTable(table)).resolves.toBe(true)
     }
     await expect(db.schema.hasTable('agentLaunchHandoffs')).resolves.toBe(false)
@@ -101,6 +103,7 @@ suite('PostgreSQL first-class agent migration', () => {
     await expect(db.schema.hasColumn('agentSkills', 'isAgentDiscoverable')).resolves.toBe(true)
     await expect(db('agentSkills').columnInfo('isAgentDiscoverable')).resolves.toMatchObject({ nullable: false, defaultValue: 'true' })
     await expect(db('agentSkills').columnInfo('rootPageId')).resolves.toMatchObject({ nullable: true })
+    await expect(db.schema.hasColumn('agentSessions', 'memorySnapshot')).resolves.toBe(true)
   })
   it('projects group-visible preferences with PostgreSQL-safe aliases', async () => {
     const sessionId = '00000000-0000-4000-8000-000000000101'
@@ -227,6 +230,7 @@ suite('PostgreSQL first-class agent migration', () => {
     await expect(downProviderProfileLifecycle(db)).rejects.toThrow('contains removed profiles')
     await expect(downAgentLedger(db)).rejects.toThrow('agentProviderProfiles contains data')
     await db('agentProviderProfiles').where({ id: '00000000-0000-4000-8000-000000000001' }).update({ deletedAt: null })
+    await downAgentMemory(db)
     await downPersonalSkillDiscovery(db)
     await downSkillPreferences(db)
     await downPersonalSkills(db)

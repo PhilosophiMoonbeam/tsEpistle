@@ -1,14 +1,14 @@
 /** @vitest-environment node */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import createKnex, { type Knex } from 'knex'
-import { runAgentMaintenance } from '../../agents/maintenance.ts'
+import { requestAgentHistoryReset, runAgentMaintenance } from '../../agents/maintenance.ts'
 
 const now = new Date('2026-08-17T12:00:00.000Z')
 const old = new Date('2026-05-01T00:00:00.000Z')
 const expired = new Date('2026-08-10T00:00:00.000Z')
 
 const createTables = async (knex: Knex): Promise<void> => {
-  await knex.schema.createTable('agentSessions', table => { table.string('id').primary(); table.integer('ownerId'); table.string('retention'); table.dateTime('expiresAt').nullable(); table.dateTime('deletedAt').nullable(); table.dateTime('updatedAt'); table.integer('version') })
+  await knex.schema.createTable('agentSessions', table => { table.string('id').primary(); table.integer('ownerId'); table.string('retention'); table.dateTime('expiresAt').nullable(); table.dateTime('deletedAt').nullable(); table.dateTime('updatedAt'); table.dateTime('lastActivityAt'); table.integer('version') })
   await knex.schema.createTable('agentRuns', table => { table.string('id').primary(); table.string('sessionId'); table.integer('ownerId'); table.string('status'); table.boolean('sideEffectsStarted'); table.dateTime('cancelRequestedAt').nullable(); table.dateTime('leaseExpiresAt').nullable(); table.string('leaseOwner').nullable(); table.string('leaseToken').nullable(); table.dateTime('availableAt').nullable(); table.dateTime('updatedAt'); table.dateTime('completedAt').nullable(); table.string('errorCode').nullable(); table.string('errorMessage').nullable() })
   await knex.schema.createTable('agentProposals', table => { table.string('id').primary(); table.string('sourceKind'); table.string('sessionId').nullable(); table.string('status'); table.dateTime('expiresAt'); table.dateTime('createdAt'); table.dateTime('contentPurgedAt').nullable(); table.text('input').nullable(); table.text('patch').nullable(); table.text('diff').nullable(); table.text('applyResult').nullable() })
   await knex.schema.createTable('agentApprovals', table => { table.string('id').primary(); table.string('proposalId'); table.string('status'); table.dateTime('decidedAt').nullable(); table.text('decisionNote').nullable() })
@@ -31,8 +31,8 @@ describe('agent retention maintenance', () => {
 
   it('recovers leases and applies bounded content, artifact, audit, and quota retention', async () => {
     await knex('agentSessions').insert([
-      { id: 'session-live', ownerId: 7, retention: 'saved', expiresAt: null, deletedAt: null, updatedAt: old, version: 1 },
-      { id: 'session-expired', ownerId: 7, retention: 'temporary', expiresAt: expired, deletedAt: null, updatedAt: old, version: 1 }
+      { id: 'session-live', ownerId: 7, retention: 'saved', expiresAt: null, deletedAt: null, updatedAt: old, lastActivityAt: now, version: 1 },
+      { id: 'session-expired', ownerId: 7, retention: 'temporary', expiresAt: expired, deletedAt: null, updatedAt: old, lastActivityAt: old, version: 1 }
     ])
     const run = (id: string, status: string, sideEffectsStarted: boolean, cancelRequestedAt: Date | null = null) => ({ id, sessionId: 'session-live', ownerId: 7, status, sideEffectsStarted, cancelRequestedAt, leaseExpiresAt: expired, leaseOwner: 'dead-worker', leaseToken: `lease-${id}`, availableAt: old, updatedAt: old, completedAt: null, errorCode: null, errorMessage: null })
     await knex('agentRuns').insert([run('run-safe', 'running', false), run('run-unsafe', 'running', true), run('run-cancel', 'queued', false, expired), { ...run('run-complete', 'succeeded', false), completedAt: old }])
@@ -54,7 +54,7 @@ describe('agent retention maintenance', () => {
     await knex('agentQuotaReservations').insert({ runId: 'run-safe', ownerId: 7, day: '2026-08-17', reservedTokens: 10, reservedCostMicros: 20, consumedTokens: 0, consumedCostMicros: 0, status: 'reserved', expiresAt: expired, heartbeatAt: old, reconciledAt: null })
     await knex('agentUsageLedger').insert({ id: 'usage-old', createdAt: old })
 
-    const result = await runAgentMaintenance(knex, { batchSize: 100, mcpContentDays: 7, auditDays: 90, compactDeltaDays: 1 }, now)
+    const result = await runAgentMaintenance(knex, { batchSize: 100, savedSessionDays: 90, mcpContentDays: 7, auditDays: 90, compactDeltaDays: 1 }, now)
 
     expect(result).toMatchObject({ cancelledRuns: 1, recoveredRuns: 1, requeuedRuns: 1, recoveredProposalExecutions: 1, expiredApprovals: 1, expiredArtifacts: 1, tombstonedSessions: 1, purgedSessions: 1, scrubbedMcpProposals: 1, purgedMcpProposals: 1, scrubbedSkillUses: 1, purgedSkillUses: 1, purgedUsageRows: 1, compactedEvents: 1, reconciledReservations: 1 })
     expect(await knex('agentRuns').where({ id: 'run-safe' }).first('status')).toMatchObject({ status: 'queued' })
@@ -71,7 +71,7 @@ describe('agent retention maintenance', () => {
   })
 
   it('retains an expired temporary session until its active run becomes terminal', async () => {
-    await knex('agentSessions').insert({ id: 'session-active', ownerId: 7, retention: 'temporary', expiresAt: expired, deletedAt: null, updatedAt: old, version: 1 })
+    await knex('agentSessions').insert({ id: 'session-active', ownerId: 7, retention: 'temporary', expiresAt: expired, deletedAt: null, updatedAt: old, lastActivityAt: old, version: 1 })
     await knex('agentRuns').insert({
       id: 'run-active',
       sessionId: 'session-active',
@@ -89,13 +89,49 @@ describe('agent retention maintenance', () => {
       errorMessage: null
     })
 
-    const activeResult = await runAgentMaintenance(knex, { batchSize: 100, mcpContentDays: 7, auditDays: 90, compactDeltaDays: 1 }, now)
+    const activeResult = await runAgentMaintenance(knex, { batchSize: 100, savedSessionDays: 90, mcpContentDays: 7, auditDays: 90, compactDeltaDays: 1 }, now)
     expect(activeResult.tombstonedSessions).toBe(0)
     expect(await knex('agentSessions').where({ id: 'session-active' }).first()).toBeDefined()
 
     await knex('agentRuns').where({ id: 'run-active' }).update({ status: 'succeeded', completedAt: now })
-    const terminalResult = await runAgentMaintenance(knex, { batchSize: 100, mcpContentDays: 7, auditDays: 90, compactDeltaDays: 1 }, now)
+    const terminalResult = await runAgentMaintenance(knex, { batchSize: 100, savedSessionDays: 90, mcpContentDays: 7, auditDays: 90, compactDeltaDays: 1 }, now)
     expect(terminalResult.tombstonedSessions).toBe(1)
     expect(await knex('agentSessions').where({ id: 'session-active' }).first()).toBeUndefined()
+  })
+
+  it('removes saved conversations after ninety inactive days and preserves recent history', async () => {
+    await knex('agentSessions').insert([
+      { id: 'saved-stale', ownerId: 7, retention: 'saved', expiresAt: null, deletedAt: null, updatedAt: old, lastActivityAt: old, version: 1 },
+      { id: 'saved-recent', ownerId: 7, retention: 'saved', expiresAt: null, deletedAt: null, updatedAt: now, lastActivityAt: now, version: 1 },
+      { id: 'saved-other-user', ownerId: 8, retention: 'saved', expiresAt: null, deletedAt: null, updatedAt: now, lastActivityAt: now, version: 1 }
+    ])
+
+    const result = await runAgentMaintenance(knex, { batchSize: 1, savedSessionDays: 90, mcpContentDays: 7, auditDays: 90, compactDeltaDays: 1 }, now)
+
+    expect(result.tombstonedSessions).toBe(1)
+    expect(await knex('agentSessions').where({ id: 'saved-stale' }).first()).toBeUndefined()
+    expect(await knex('agentSessions').where({ id: 'saved-recent' }).first()).toBeDefined()
+    expect(await knex('agentSessions').where({ id: 'saved-other-user' }).first()).toBeDefined()
+  })
+
+  it('resets every owned conversation while preserving another user history', async () => {
+    await knex('agentSessions').insert([
+      { id: 'owned-one', ownerId: 7, retention: 'saved', expiresAt: null, deletedAt: null, updatedAt: now, lastActivityAt: now, version: 1 },
+      { id: 'owned-two', ownerId: 7, retention: 'saved', expiresAt: null, deletedAt: null, updatedAt: now, lastActivityAt: now, version: 1 },
+      { id: 'other-one', ownerId: 8, retention: 'saved', expiresAt: null, deletedAt: null, updatedAt: now, lastActivityAt: now, version: 1 }
+    ])
+    const run = (id: string, sessionId: string, ownerId: number, status: string) => ({ id, sessionId, ownerId, status, sideEffectsStarted: false, cancelRequestedAt: null, leaseExpiresAt: now, leaseOwner: 'worker', leaseToken: `lease-${id}`, availableAt: now, updatedAt: now, completedAt: null, errorCode: null, errorMessage: null })
+    await knex('agentRuns').insert([run('owned-queued', 'owned-one', 7, 'queued'), run('owned-running', 'owned-two', 7, 'running'), run('other-running', 'other-one', 8, 'running')])
+    await knex('agentProposals').insert({ id: 'owned-proposal', sourceKind: 'agent', sessionId: 'owned-two', status: 'pending', expiresAt: now, createdAt: now, contentPurgedAt: null, input: '{}', patch: null, diff: null, applyResult: null })
+    await knex('agentApprovals').insert({ id: 'owned-approval', proposalId: 'owned-proposal', status: 'pending', decidedAt: null, decisionNote: null })
+
+    expect(await requestAgentHistoryReset(knex, 7, now)).toBe(2)
+
+    expect(await knex('agentSessions').where({ ownerId: 7 }).whereNull('deletedAt')).toHaveLength(0)
+    expect(await knex('agentSessions').where({ id: 'other-one' }).whereNull('deletedAt').first()).toBeDefined()
+    expect(await knex('agentRuns').where({ id: 'owned-queued' }).first('status')).toMatchObject({ status: 'cancelled' })
+    expect((await knex('agentRuns').where({ id: 'owned-running' }).first('cancelRequestedAt'))?.cancelRequestedAt).not.toBeNull()
+    expect(await knex('agentRuns').where({ id: 'other-running' }).first('cancelRequestedAt')).toMatchObject({ cancelRequestedAt: null })
+    expect(await knex('agentApprovals').where({ id: 'owned-approval' }).first('status')).toMatchObject({ status: 'cancelled' })
   })
 })

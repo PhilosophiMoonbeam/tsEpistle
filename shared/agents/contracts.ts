@@ -34,6 +34,7 @@ export const AGENT_ACTION_NAMES = [
   'pages.listLinks',
   'skills.list',
   'skills.read',
+  'memory.manage',
   'browser.navigate',
   'browser.observe',
   'browser.act',

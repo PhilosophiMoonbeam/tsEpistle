@@ -8,6 +8,7 @@ const AgentOperationalLimitsSchema = z.object({
   }).passthrough(),
   retention: z.object({
     temporarySessionHours: z.number().int().min(1).max(30 * 24).default(24),
+    savedSessionDays: z.number().int().min(1).max(10 * 365).default(90),
     mcpContentDays: z.number().int().min(1).max(365).default(7),
     auditDays: z.number().int().min(1).max(10 * 365).default(90),
     maintenanceBatchSize: z.number().int().min(1).max(10_000).default(100)

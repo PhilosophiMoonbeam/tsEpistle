@@ -55,7 +55,7 @@ interface MasterConfig extends Record<string, unknown> {
     enabled: boolean
     mcp: { enabled: boolean }
     provider: { enabled: boolean; globalConcurrency?: number; perUserConcurrency?: number; pollingMilliseconds?: number }
-    retention: { temporarySessionHours: number; mcpContentDays: number; auditDays: number; maintenanceBatchSize: number }
+    retention: { temporarySessionHours: number; savedSessionDays: number; mcpContentDays: number; auditDays: number; maintenanceBatchSize: number }
     skills: { enabled: boolean; namespace: string }
     browser: { enabled: boolean }
     proposals: { enabled: boolean }

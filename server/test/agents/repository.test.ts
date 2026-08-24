@@ -41,6 +41,7 @@ const createTables = async (knex: Knex): Promise<void> => {
     table.integer('version').notNullable()
     table.text('summary').nullable()
     table.integer('summaryThroughOrdinal').nullable()
+    table.text('memorySnapshot').notNullable().defaultTo('{"agent":[],"user":[]}')
     table.dateTime('createdAt').notNullable()
     table.dateTime('updatedAt').notNullable()
     table.dateTime('lastActivityAt').notNullable()

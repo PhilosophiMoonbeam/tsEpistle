@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { createAgentThread, createPersonalAgentSkill, deleteAgentSession, listAgentProfiles, listPersonalAgentSkills, removePersonalAgentSkill, submitAgentMessage, updateAgentSkillPreferences, updatePersonalAgentSkill } from './agents-api.ts'
+import { createAgentMemory, createAgentThread, createPersonalAgentSkill, deleteAgentSession, getAgentMemories, listAgentProfiles, listPersonalAgentSkills, removePersonalAgentSkill, resetAgentHistory, submitAgentMessage, updateAgentSkillPreferences, updatePersonalAgentSkill } from './agents-api.ts'
 import { renderSafeMarkdown } from './safe-markdown.ts'
 
 describe('agents client boundary', () => {
@@ -12,6 +12,25 @@ describe('agents client boundary', () => {
     const fetcher = vi.fn(async () => new Response(null, { status: 204 })) as unknown as typeof fetch
     await deleteAgentSession(fetcher, 'csrf-token', '00000000-0000-4000-8000-000000000001')
     expect(fetcher).toHaveBeenCalledWith('/_api/agents/sessions/00000000-0000-4000-8000-000000000001', expect.objectContaining({ method: 'DELETE', credentials: 'same-origin', headers: { 'x-wiki-csrf': 'csrf-token' } }))
+  })
+
+  it('resets all history through the CSRF-protected collection endpoint', async () => {
+    const fetcher = vi.fn(async () => new Response(null, { status: 204 })) as unknown as typeof fetch
+    await resetAgentHistory(fetcher, 'csrf-token')
+    expect(fetcher).toHaveBeenCalledWith('/_api/agents/sessions', expect.objectContaining({ method: 'DELETE', credentials: 'same-origin', headers: { 'x-wiki-csrf': 'csrf-token' } }))
+  })
+
+  it('validates and writes bounded personal memory through owner-scoped endpoints', async () => {
+    const entry = { id: '00000000-0000-4000-8000-000000000031', target: 'user', content: 'Prefers concise answers.', version: 1, createdAt: '2026-08-17T00:00:00.000Z', updatedAt: '2026-08-17T00:00:00.000Z' }
+    const responses = [
+      Response.json({ user: { entries: [entry], characters: 24, limit: 1_375 }, agent: { entries: [], characters: 0, limit: 2_200 } }),
+      Response.json({ changed: true, message: 'Saved', target: 'user', entries: [entry.content], characters: 24, limit: 1_375 }, { status: 201 })
+    ]
+    const fetcher = vi.fn(async () => responses.shift()!) as unknown as typeof fetch
+
+    await expect(getAgentMemories(fetcher, 'csrf')).resolves.toMatchObject({ user: { entries: [entry] } })
+    await expect(createAgentMemory(fetcher, 'csrf', { target: 'user', content: entry.content })).resolves.toMatchObject({ changed: true, target: 'user' })
+    expect(fetcher).toHaveBeenNthCalledWith(2, '/_api/agents/memories', expect.objectContaining({ method: 'POST', body: JSON.stringify({ target: 'user', content: entry.content }) }))
   })
 
   it('turns an empty 403 response into an actionable chat error', async () => {

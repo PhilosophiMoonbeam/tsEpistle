@@ -12,7 +12,7 @@ describe('agent operational limits', () => {
   it('applies conservative bounded defaults', () => {
     expect(parseAgentOperationalLimits(base)).toMatchObject({
       provider: { globalConcurrency: 4, perUserConcurrency: 1, pollingMilliseconds: 1_000 },
-      retention: { temporarySessionHours: 24, mcpContentDays: 7, auditDays: 90, maintenanceBatchSize: 100 },
+      retention: { temporarySessionHours: 24, savedSessionDays: 90, mcpContentDays: 7, auditDays: 90, maintenanceBatchSize: 100 },
       sse: { maximumConnectionsPerUser: 3 }
     })
   })
@@ -22,6 +22,7 @@ describe('agent operational limits', () => {
     { ...base, provider: { globalConcurrency: 4, perUserConcurrency: 5 } },
     { ...base, provider: { pollingMilliseconds: 61_000 } },
     { ...base, retention: { temporarySessionHours: 0 } },
+    { ...base, retention: { savedSessionDays: 0 } },
     { ...base, retention: { maintenanceBatchSize: 10_001 } },
     { ...base, sse: { maximumConnectionsPerUser: 21 } }
   ])('rejects invalid or unbounded limits', value => {

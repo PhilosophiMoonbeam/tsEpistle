@@ -16,6 +16,7 @@ if (!connection) throw new Error('AGENT_MAINTENANCE_DATABASE_URL is required')
 
 const policy: AgentMaintenancePolicy = {
   batchSize: positiveInteger('AGENT_MAINTENANCE_BATCH_SIZE', 100),
+  savedSessionDays: positiveInteger('AGENT_MAINTENANCE_SAVED_SESSION_DAYS', 90),
   mcpContentDays: positiveInteger('AGENT_MAINTENANCE_MCP_CONTENT_DAYS', 7),
   auditDays: positiveInteger('AGENT_MAINTENANCE_AUDIT_DAYS', 90),
   compactDeltaDays: positiveInteger('AGENT_MAINTENANCE_COMPACT_DELTA_DAYS', 1)

@@ -12,6 +12,7 @@ import {
   type AgentRunRecord
 } from './coordinator.ts'
 import { AgentRepositoryError } from './repository.ts'
+import { decodeAgentMemorySnapshot, type AgentMemorySnapshot } from './memory.ts'
 import { SkillRuntime } from './skills/runtime.ts'
 
 const sha256 = (value: string): string => createHash('sha256').update(value).digest('hex')
@@ -57,6 +58,7 @@ export interface AgentEngineSkill {
 export interface AgentEngineRequest {
   readonly run: AgentRunClaim
   readonly messages: readonly AgentEngineMessage[]
+  readonly memory: AgentMemorySnapshot
   readonly currentPage?: AgentCurrentPageHint
   readonly skills: readonly AgentEngineSkill[]
   readonly signal: AbortSignal
@@ -102,6 +104,7 @@ export interface AgentProductRuntimeOptions {
 interface RuntimeMessageRow { role: 'user' | 'assistant'; content: string; providerStateCiphertext: Uint8Array | null }
 interface RuntimeSkillRow { id: string; name: string; skillMarkdown: string }
 interface RuntimeContextRow { data: string }
+interface RuntimeSessionRow { memorySnapshot: string }
 
 const currentPageHint = (value: string | undefined): AgentCurrentPageHint | undefined => {
   if (value === undefined) return undefined
@@ -216,12 +219,15 @@ export class AgentProductRuntime {
     let content = ''
     let quotaReconciled = false
     try {
-      const [messageRows, skills, contextRow] = await Promise.all([
+      const [messageRows, skills, contextRow, sessionRow] = await Promise.all([
         this.#knex('agentMessages').where({ sessionId: claim.sessionId }).andWhere('id', '!=', claim.assistantMessageId).orderBy('ordinal').select('role', 'content', 'providerStateCiphertext') as unknown as Promise<RuntimeMessageRow[]>,
         this.#knex('agentRunSkills').join('agentSkillVersions', 'agentSkillVersions.id', 'agentRunSkills.skillVersionId').join('agentSkills', 'agentSkills.id', 'agentSkillVersions.skillId').where('agentRunSkills.runId', claim.id).orderBy('agentRunSkills.ordinal').select('agentSkillVersions.id', 'agentSkills.name', 'agentSkillVersions.skillMarkdown') as unknown as Promise<RuntimeSkillRow[]>,
-        this.#knex('agentEvents').where({ runId: claim.id, type: 'run.queued' }).orderBy('sequence').first('data') as unknown as Promise<RuntimeContextRow | undefined>
+        this.#knex('agentEvents').where({ runId: claim.id, type: 'run.queued' }).orderBy('sequence').first('data') as unknown as Promise<RuntimeContextRow | undefined>,
+        this.#knex('agentSessions').where({ id: claim.sessionId, ownerId: claim.ownerId }).whereNull('deletedAt').first('memorySnapshot') as unknown as Promise<RuntimeSessionRow | undefined>
       ])
+      if (!sessionRow) throw new AgentRepositoryError('AGENT_RESOURCE_NOT_FOUND', 'Agent session was not found', 404)
       const currentPage = currentPageHint(contextRow?.data)
+      const memory = decodeAgentMemorySnapshot(sessionRow.memorySnapshot)
       const messages: AgentEngineMessage[] = messageRows.map(message => {
         const state = providerState(message.providerStateCiphertext)
         return state === undefined
@@ -231,7 +237,7 @@ export class AgentProductRuntime {
       await this.#appendPresentationEvent(claim, 'run.attemptStarted', { runId: claim.id, attempt: claim.attempts })
       if (claim.attempts > 1) await this.#appendPresentationEvent(claim, 'run.attemptSuperseded', { runId: claim.id, supersededThroughAttempt: claim.attempts - 1 })
       await this.#appendPresentationEvent(claim, 'message.started', { messageId: claim.assistantMessageId }, { status: 'streaming', content: '', citations: null })
-      const result = await this.#engine.execute({ run: claim, messages, skills, signal, ...(currentPage === undefined ? {} : { currentPage }) }, {
+      const result = await this.#engine.execute({ run: claim, messages, memory, skills, signal, ...(currentPage === undefined ? {} : { currentPage }) }, {
         text: async delta => {
           if (signal.aborted) throw signal.reason
           if (typeof delta !== 'string' || delta.length === 0 || delta.length > 16_000 || content.length + delta.length > 128_000) throw new AgentRepositoryError('INVALID_ENGINE_DELTA', 'Inference engine emitted an invalid text delta', 500)

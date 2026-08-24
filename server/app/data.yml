@@ -31,6 +31,7 @@ defaults:
       enabled: false
       retention:
         temporarySessionHours: 24
+        savedSessionDays: 90
         mcpContentDays: 7
         auditDays: 90
         maintenanceBatchSize: 100

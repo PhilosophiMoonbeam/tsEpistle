@@ -21,6 +21,16 @@ const BoundedDescription = z.string().max(2_000)
 const BoundedPageContent = z.string().max(1_048_576)
 const BoundedPathLike = z.string().max(4_096)
 const EmptyInput = strict({})
+const MemoryTarget = z.enum(['agent', 'user'])
+const MemoryContent = z.string().min(1).max(2_200)
+const MemoryResult = strict({
+  changed: z.boolean(),
+  message: z.string().max(512),
+  target: MemoryTarget,
+  entries: z.array(z.string().max(2_200)).max(64),
+  characters: z.number().int().nonnegative().max(2_200),
+  limit: z.number().int().positive().max(2_200)
+})
 const PageSelector = z.union([
   strict({ id: PositiveId }),
   strict({ path: Path, locale: Locale })
@@ -144,6 +154,16 @@ export const ACTION_CATALOG = {
     input: strict({ name: z.string().min(1).max(64), versionId: Uuid, path: z.string().min(1).max(512) }),
     output: strict({ name: z.string().max(64), versionId: Uuid, path: z.string().max(512), mediaType: z.string().max(255), contentHash: ContentHash, content: BoundedPageContent }),
     requiredFlags: skillFlags
+  },
+  'memory.manage': {
+    descriptor: descriptor('memory.manage', 'Manage personal memory', 'Curate bounded user-specific memory for future conversations. Save durable user preferences to target user and stable environment, project, or workflow facts to target agent. Skip secrets, easily rediscovered facts, raw data, and conversation-only details. Use a unique oldText substring to replace or remove an entry.', 'reversible-write', [], agentOnly, applyAnnotations),
+    input: z.discriminatedUnion('action', [
+      strict({ action: z.literal('add'), target: MemoryTarget, content: MemoryContent }),
+      strict({ action: z.literal('replace'), target: MemoryTarget, oldText: z.string().min(1).max(2_200), content: MemoryContent }),
+      strict({ action: z.literal('remove'), target: MemoryTarget, oldText: z.string().min(1).max(2_200) })
+    ]),
+    output: MemoryResult,
+    requiredFlags: baseFlags
   },
   'browser.navigate': {
     descriptor: descriptor('browser.navigate', 'Navigate browser', 'Navigate an isolated credential-free browser to an allowed public URL.', 'open-world-read', ['use:agent-browser'], agentOnly, browserAnnotations),

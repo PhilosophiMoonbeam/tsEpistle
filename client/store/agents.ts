@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { markRaw } from 'vue'
 import type { AgentCurrentPageHint, AgentEventType, AgentProviderProfileView, AgentThreadState } from '../../shared/agents/contracts.ts'
-import { cancelAgentRun, createAgentThread, decideAgentProposal, deleteAgentSession, getAgentThread, listAgentProfiles, listAgentSessions, listAgentSkills, submitAgentMessage, subscribeAgentRun, updateAgentProfile, updateAgentSkillPreferences, type AgentSessionSummary, type CreatedAgentThread, type VisibleAgentSkill } from '../helpers/agents-api.ts'
+import { cancelAgentRun, createAgentThread, decideAgentProposal, deleteAgentSession, getAgentThread, listAgentProfiles, listAgentSessions, listAgentSkills, resetAgentHistory, submitAgentMessage, subscribeAgentRun, updateAgentProfile, updateAgentSkillPreferences, type AgentSessionSummary, type CreatedAgentThread, type VisibleAgentSkill } from '../helpers/agents-api.ts'
 
 const terminalEvents = new Set<AgentEventType>(['run.completed', 'run.failed', 'run.cancelled', 'run.recovery_required'])
 export interface AgentStoreInitializeOptions {
@@ -189,6 +189,14 @@ export const useAgentsStore = defineStore('agents', {
       } else {
         await this.reloadSessions()
       }
+    },
+    async resetHistory() {
+      this.closeStream()
+      await resetAgentHistory(window.fetch.bind(window), this.csrfToken)
+      this.thread = null
+      this.sessions = []
+      this.error = ''
+      if (this.profiles.length > 0) await this.newSession('saved')
     },
     connectCurrentRun() {
       const run = this.thread?.session.currentRun

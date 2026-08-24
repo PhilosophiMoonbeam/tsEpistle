@@ -16,7 +16,10 @@ const createTables = async (db: Knex): Promise<void> => {
   await db.schema.createTable('users', table => table.integer('id').primary())
   await db('users').insert([{ id: 7 }, { id: 8 }])
   await db.schema.createTable('agentSessions', table => {
-    table.uuid('id').primary(); table.integer('ownerId').notNullable(); table.string('title').notNullable(); table.string('retention').notNullable(); table.uuid('providerProfileId').nullable(); table.string('executionMode').notNullable(); table.integer('version').notNullable(); table.text('summary').nullable(); table.integer('summaryThroughOrdinal').nullable(); table.dateTime('createdAt').notNullable(); table.dateTime('updatedAt').notNullable(); table.dateTime('lastActivityAt').notNullable(); table.dateTime('expiresAt').nullable(); table.dateTime('deletedAt').nullable()
+    table.uuid('id').primary(); table.integer('ownerId').notNullable(); table.string('title').notNullable(); table.string('retention').notNullable(); table.uuid('providerProfileId').nullable(); table.string('executionMode').notNullable(); table.integer('version').notNullable(); table.text('summary').nullable(); table.integer('summaryThroughOrdinal').nullable(); table.text('memorySnapshot').notNullable().defaultTo('{"agent":[],"user":[]}'); table.dateTime('createdAt').notNullable(); table.dateTime('updatedAt').notNullable(); table.dateTime('lastActivityAt').notNullable(); table.dateTime('expiresAt').nullable(); table.dateTime('deletedAt').nullable()
+  })
+  await db.schema.createTable('agentMemories', table => {
+    table.uuid('id').primary(); table.integer('ownerId').notNullable(); table.string('target').notNullable(); table.text('content').notNullable(); table.string('contentSha256').notNullable(); table.integer('version').notNullable(); table.dateTime('createdAt').notNullable(); table.dateTime('updatedAt').notNullable(); table.unique(['ownerId', 'target', 'contentSha256'])
   })
   await db.schema.createTable('agentMessages', table => {
     table.uuid('id').primary(); table.uuid('sessionId').notNullable(); table.uuid('runId').nullable(); table.integer('ordinal').notNullable(); table.string('role').notNullable(); table.string('status').notNullable(); table.text('content').notNullable(); table.text('citations').nullable(); table.binary('providerStateCiphertext').nullable(); table.string('providerStateSha256').nullable(); table.dateTime('createdAt').notNullable(); table.dateTime('updatedAt').notNullable()
@@ -53,6 +56,7 @@ describe('ordinary-origin agent session API', () => {
   let runtime: AgentProductRuntime
   let engineCurrentPage: unknown
   let engineSkills: readonly { readonly id: string; readonly name: string }[] = []
+  let engineMemory: unknown
 
   beforeAll(async () => {
     db = createKnex({ client: 'better-sqlite3', connection: { filename: ':memory:' }, useNullAsDefault: true, pool: { min: 1, max: 1 } })
@@ -61,6 +65,7 @@ describe('ordinary-origin agent session API', () => {
       async execute(request, sink) {
         engineCurrentPage = request.currentPage
         engineSkills = request.skills.map(skill => ({ id: skill.id, name: skill.name }))
+        engineMemory = request.memory
         await sink.text('Hello ')
         await sink.text('from the deterministic engine.')
         return { inputTokens: 3, outputTokens: 5, costMicros: 8, suggestions: [{ id: 'continue', label: 'Continue', prompt: 'Continue' }] }
@@ -186,6 +191,7 @@ describe('ordinary-origin agent session API', () => {
 
     expect(await runtime.runOnce()).toBe(true)
     expect(engineCurrentPage).toEqual(request.currentPage)
+    expect(engineMemory).toEqual({ user: [], agent: [] })
     const reconnected = await fetch(`${baseUrl}/_api/agents/sessions/${state.session.id}`, { headers: { cookie } })
     const thread = await reconnected.json() as { messages: Array<{ role: string, status: string, content: string }> }
     expect(thread.messages.at(-1)).toMatchObject({ role: 'assistant', status: 'complete', content: 'Hello from the deterministic engine.' })
@@ -291,6 +297,34 @@ describe('ordinary-origin agent session API', () => {
     ownerId = 8
     expect((await fetch(`${baseUrl}/_api/agents/artifacts/${artifactId}/content`, { headers: { cookie } })).status).toBe(404)
     ownerId = 7
+  })
+  it('keeps personal memory owner-scoped and independent from history reset', async () => {
+    const headers = { cookie, 'content-type': 'application/json', origin: 'https://wiki.example.test', 'sec-fetch-site': 'same-origin', 'x-wiki-csrf': csrf }
+    const createdMemory = await fetch(`${baseUrl}/_api/agents/memories`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ target: 'user', content: 'Prefers concise, evidence-first answers.' })
+    })
+    expect(createdMemory.status).toBe(201)
+    expect(await createdMemory.json()).toMatchObject({ changed: true, target: 'user', entries: ['Prefers concise, evidence-first answers.'], limit: 1_375 })
+
+    ownerId = 8
+    expect(await (await fetch(`${baseUrl}/_api/agents/memories`, { headers: { cookie } })).json()).toMatchObject({ user: { entries: [] }, agent: { entries: [] } })
+    ownerId = 7
+
+    const createdSession = await (await fetch(`${baseUrl}/_api/agents/sessions`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ retention: 'saved', providerProfileId: null })
+    })).json() as { session: { id: string } }
+    expect(JSON.parse(String((await db('agentSessions').where({ id: createdSession.session.id }).first('memorySnapshot'))?.memorySnapshot))).toEqual({
+      agent: [],
+      user: ['Prefers concise, evidence-first answers.']
+    })
+
+    expect((await fetch(`${baseUrl}/_api/agents/sessions`, { method: 'DELETE', headers })).status).toBe(204)
+    expect(await db('agentSessions').where({ ownerId: 7 }).whereNull('deletedAt')).toHaveLength(0)
+    expect((await db('agentMemories').where({ ownerId: 7 })).map(row => row.content)).toEqual(['Prefers concise, evidence-first answers.'])
   })
 })
 

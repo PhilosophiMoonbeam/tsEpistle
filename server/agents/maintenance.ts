@@ -12,6 +12,7 @@ const before = (now: Date, days: number): Date => new Date(now.valueOf() - days 
 
 export interface AgentMaintenancePolicy {
   readonly batchSize: number
+  readonly savedSessionDays: number
   readonly mcpContentDays: number
   readonly auditDays: number
   readonly compactDeltaDays: number
@@ -19,6 +20,7 @@ export interface AgentMaintenancePolicy {
 
 export const DEFAULT_AGENT_MAINTENANCE_POLICY: AgentMaintenancePolicy = {
   batchSize: 100,
+  savedSessionDays: 90,
   mcpContentDays: 7,
   auditDays: 90,
   compactDeltaDays: 1
@@ -49,22 +51,33 @@ export interface AgentMaintenanceResult {
   readonly reconciledReservations: number
 }
 
+const tombstoneOwnedSessions = async (transaction: Knex.Transaction, ownerId: number, sessionIds: readonly string[], now: Date): Promise<number> => {
+  if (sessionIds.length === 0) return 0
+  await transaction('agentRuns').where({ ownerId, status: 'queued' }).whereIn('sessionId', sessionIds).update({ status: 'cancelled', cancelRequestedAt: now, completedAt: now, updatedAt: now, leaseOwner: null, leaseToken: null, leaseExpiresAt: null })
+  await transaction('agentRuns').where({ ownerId }).whereIn('sessionId', sessionIds).whereIn('status', ['running', 'awaiting_approval']).update({ cancelRequestedAt: now, updatedAt: now })
+  const proposalIds = await transaction('agentProposals').whereIn('sessionId', sessionIds).whereIn('status', ['pending', 'approved']).pluck<string>('id')
+  if (proposalIds.length > 0) {
+    await transaction('agentProposals').whereIn('id', proposalIds).update({ status: 'cancelled' })
+    await transaction('agentApprovals').whereIn('proposalId', proposalIds).where({ status: 'pending' }).update({ status: 'cancelled', decidedAt: now })
+  }
+  const changed = await transaction('agentSessions').where({ ownerId }).whereIn('id', sessionIds).whereNull('deletedAt').update({ deletedAt: now, updatedAt: now, version: transaction.raw('?? + 1', ['version']) })
+  return changed
+}
+
 export const requestAgentSessionDeletion = async (knex: Knex, ownerId: number, sessionId: string, now = new Date()): Promise<void> => {
   await knex.transaction(async transaction => {
     const session = await transaction('agentSessions').where({ id: sessionId, ownerId }).forUpdate().first('id', 'deletedAt') as { id: string, deletedAt: Date | string | null } | undefined
     if (!session) throw new AgentRepositoryError('AGENT_RESOURCE_NOT_FOUND', 'Agent resource was not found', 404)
     if (session.deletedAt !== null) return
-    await transaction('agentRuns').where({ sessionId, ownerId, status: 'queued' }).update({ status: 'cancelled', cancelRequestedAt: now, completedAt: now, updatedAt: now, leaseOwner: null, leaseToken: null, leaseExpiresAt: null })
-    await transaction('agentRuns').where({ sessionId, ownerId }).whereIn('status', ['running', 'awaiting_approval']).update({ cancelRequestedAt: now, updatedAt: now })
-    const proposalIds = await transaction('agentProposals').where({ sessionId }).whereIn('status', ['pending', 'approved']).pluck<string>('id')
-    if (proposalIds.length > 0) {
-      await transaction('agentProposals').whereIn('id', proposalIds).update({ status: 'cancelled' })
-      await transaction('agentApprovals').whereIn('proposalId', proposalIds).where({ status: 'pending' }).update({ status: 'cancelled', decidedAt: now })
-    }
-    const changed = await transaction('agentSessions').where({ id: sessionId, ownerId }).whereNull('deletedAt').update({ deletedAt: now, updatedAt: now, version: transaction.raw('?? + 1', ['version']) })
+    const changed = await tombstoneOwnedSessions(transaction, ownerId, [sessionId], now)
     if (changed !== 1) throw new AgentRepositoryError('SESSION_VERSION_CHANGED', 'Agent session changed concurrently', 409)
   })
 }
+
+export const requestAgentHistoryReset = async (knex: Knex, ownerId: number, now = new Date()): Promise<number> => knex.transaction(async transaction => {
+  const sessionIds = await transaction('agentSessions').where({ ownerId }).whereNull('deletedAt').orderBy('id').forUpdate().pluck<string>('id')
+  return tombstoneOwnedSessions(transaction, ownerId, sessionIds, now)
+})
 
 const recoverRuns = async (knex: Knex, now: Date, batchSize: number): Promise<{ cancelled: number, recovered: number, requeued: number }> => knex.transaction(async transaction => {
   const rows = await transaction('agentRuns')
@@ -116,18 +129,21 @@ const expireApprovals = async (knex: Knex, now: Date, batchSize: number): Promis
   return proposalIds.length
 })
 
-const tombstoneExpiredSessions = async (knex: Knex, now: Date, batchSize: number): Promise<number> => {
+const tombstoneExpiredSessions = async (knex: Knex, now: Date, savedCutoff: Date, batchSize: number): Promise<number> => {
   const ids = await knex('agentSessions')
-    .where({ retention: 'temporary' })
     .whereNull('deletedAt')
-    .andWhere('expiresAt', '<=', now)
+    .where(expired => {
+      expired
+        .where(temporary => temporary.where({ retention: 'temporary' }).andWhere('expiresAt', '<=', now))
+        .orWhere(saved => saved.where({ retention: 'saved' }).andWhere('lastActivityAt', '<=', savedCutoff))
+    })
     .whereNotExists(function activeRun () {
       this.select(knex.raw('1'))
         .from('agentRuns')
         .where('agentRuns.sessionId', knex.ref('agentSessions.id'))
         .whereIn('agentRuns.status', ['queued', 'running', 'awaiting_approval'])
     })
-    .orderBy('expiresAt')
+    .orderBy('lastActivityAt')
     .limit(batchSize)
     .pluck<string>('id')
   if (ids.length === 0) return 0
@@ -230,7 +246,7 @@ export const runAgentMaintenance = async (knex: Knex, inputPolicy: AgentMaintena
   const recoveredProposalExecutions = await recoverProposalExecutions(knex, now, policy.batchSize)
   const expiredApprovals = await expireApprovals(knex, now, policy.batchSize)
   const expiredArtifacts = await expireArtifactPayloads(knex, now, policy.batchSize)
-  const tombstonedSessions = await tombstoneExpiredSessions(knex, now, policy.batchSize)
+  const tombstonedSessions = await tombstoneExpiredSessions(knex, now, before(now, policy.savedSessionDays), policy.batchSize)
   const scrubbedMcpProposals = await scrubMcpProposals(knex, before(now, policy.mcpContentDays), now, policy.batchSize)
   const scrubbedSkillUses = await scrubSkillUses(knex, before(now, policy.mcpContentDays), policy.batchSize)
   const compactedEvents = await compactEvents(knex, before(now, policy.compactDeltaDays), policy.batchSize)

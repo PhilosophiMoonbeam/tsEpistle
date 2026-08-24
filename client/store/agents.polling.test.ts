@@ -67,3 +67,39 @@ describe('Agent chat refresh fallback', () => {
     expect(store.connection).toBe('closed')
   })
 })
+
+describe('Agent history reset', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('completes without creating a replacement session when no provider profile is available', async () => {
+    setActivePinia(createPinia())
+    const store = useAgentsStore()
+    store.csrfToken = 'csrf-token'
+    store.thread = activeThread()
+    store.sessions = [{
+      id: '00000000-0000-4000-8000-000000000001',
+      title: 'Reset verification',
+      retention: 'saved',
+      executionMode: 'agent',
+      version: 1,
+      providerProfileId: null,
+      createdAt: '2026-08-23T00:00:00.000Z',
+      updatedAt: '2026-08-23T00:00:00.000Z',
+      lastActivityAt: '2026-08-23T00:00:00.000Z',
+      expiresAt: null,
+      deletedAt: null
+    }]
+    store.error = 'No default provider profile is configured for your groups.'
+    const fetcher = vi.spyOn(window, 'fetch').mockResolvedValue(new Response(null, { status: 204 }))
+
+    await expect(store.resetHistory()).resolves.toBeUndefined()
+
+    expect(fetcher).toHaveBeenCalledTimes(1)
+    expect(fetcher).toHaveBeenCalledWith('/_api/agents/sessions', expect.objectContaining({ method: 'DELETE' }))
+    expect(store.thread).toBeNull()
+    expect(store.sessions).toEqual([])
+    expect(store.error).toBe('')
+  })
+})

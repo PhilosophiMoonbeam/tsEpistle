@@ -14,8 +14,9 @@ import { ACTION_CATALOG } from '../agents/actions/catalog.ts'
 import { decideProposal } from '../agents/proposals/execution.ts'
 import { BrowserTargetRegistry } from '../agents/browser/registry.ts'
 import { getMcpProposalForApproval, type ProposalRecord } from '../agents/proposals/repository.ts'
-import { requestAgentSessionDeletion } from '../agents/maintenance.ts'
+import { requestAgentHistoryReset, requestAgentSessionDeletion } from '../agents/maintenance.ts'
 import type { AgentOperationalLimits } from '../agents/config.ts'
+import { AgentMemoryRepository, encodeAgentMemorySnapshot } from '../agents/memory.ts'
 import {
   CreateAgentProviderProfileSchema,
   UpdateAgentProviderProfileSchema,
@@ -43,7 +44,7 @@ interface AgentHostWiki {
     readonly agents: {
       readonly enabled: boolean
       readonly provider: { readonly enabled: boolean; readonly globalConcurrency?: number; readonly perUserConcurrency?: number; readonly pollingMilliseconds?: number }
-      readonly retention: { readonly temporarySessionHours: number; readonly mcpContentDays?: number; readonly auditDays?: number; readonly maintenanceBatchSize?: number }
+      readonly retention: { readonly temporarySessionHours: number; readonly savedSessionDays?: number; readonly mcpContentDays?: number; readonly auditDays?: number; readonly maintenanceBatchSize?: number }
       readonly skills: { readonly enabled: boolean; readonly namespace: string }
       readonly browser?: { readonly enabled: boolean }
       readonly mcp?: { readonly enabled: boolean }
@@ -136,6 +137,8 @@ const UpdatePersonalSkillSchema = z.strictObject({
 const RemovePersonalSkillSchema = z.strictObject({ expectedVersionId: z.uuid() })
 const UUIDSchema = z.uuid()
 const DecisionSchema = z.strictObject({ decision: z.enum(['approved', 'denied']), decisionNote: z.string().max(4_000).optional(), confirmationPath: z.string().max(1_024).optional() })
+const CreateMemorySchema = z.strictObject({ target: z.enum(['agent', 'user']), content: z.string().min(1).max(2_200) })
+const UpdateMemorySchema = z.strictObject({ expectedVersion: z.number().int().positive(), target: z.enum(['agent', 'user']), content: z.string().min(1).max(2_200) })
 
 const proposalActionEnabled = (config: AgentHostWiki['config']['agents'], actionName: keyof typeof ACTION_CATALOG): boolean => {
   if (!config.proposals.enabled || !config.writes.enabled) return false
@@ -193,6 +196,7 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
   const skillRuntime = new SkillRuntime(wiki.models.knex)
   const personalSkillRegistry = new PersonalSkillRegistry(wiki.models.knex)
   const browserTargets = new BrowserTargetRegistry(wiki.models.knex)
+  const memoryRepository = new AgentMemoryRepository(wiki.models.knex)
   const apiPrefix = '/_api/agents'
 
 
@@ -227,6 +231,7 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
       retention: input.retention,
       providerProfileId: input.providerProfileId,
       executionMode: 'agent',
+      memorySnapshot: encodeAgentMemorySnapshot(await memoryRepository.snapshot(ownerId)),
       expiresAt: input.retention === 'temporary' ? new Date(Date.now() + (wiki.agentLimits?.retention.temporarySessionHours ?? 24) * 3_600_000) : null
     })
     return res.status(201).json({ ...(await projectSession(ownerId, session.id)), launchPage: null })
@@ -237,6 +242,31 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
     const limit = typeof req.query.limit === 'string' ? z.coerce.number().int().min(1).max(100).parse(req.query.limit) : 50
     const sessions = await listOwnedAgentSessions(wiki.models.knex, ownerId, limit, before ? new Date(before) : undefined)
     return res.json({ sessions })
+  }))
+  router.delete(`${apiPrefix}/sessions`, asyncRoute(async (req, res) => {
+    await requestAgentHistoryReset(wiki.models.knex, requestSkillPrincipal(req).userId)
+    return res.sendStatus(204)
+  }))
+  router.get(`${apiPrefix}/memories`, asyncRoute(async (req, res) => {
+    return res.json(await memoryRepository.list(requestSkillPrincipal(req).userId))
+  }))
+  router.post(`${apiPrefix}/memories`, asyncRoute(async (req, res) => {
+    const input = CreateMemorySchema.parse(req.body)
+    const result = await memoryRepository.add(requestSkillPrincipal(req).userId, input.target, input.content)
+    return res.status(result.changed ? 201 : 200).json(result)
+  }))
+  router.put(`${apiPrefix}/memories/:memoryId`, asyncRoute(async (req, res) => {
+    const memoryId = UUIDSchema.parse(routeParameter(req, 'memoryId'))
+    const input = UpdateMemorySchema.parse(req.body)
+    return res.json(await memoryRepository.update(requestSkillPrincipal(req).userId, memoryId, input.expectedVersion, input.target, input.content))
+  }))
+  router.delete(`${apiPrefix}/memories/:memoryId`, asyncRoute(async (req, res) => {
+    const memoryId = UUIDSchema.parse(routeParameter(req, 'memoryId'))
+    const expectedVersion = z.coerce.number().int().positive().parse(req.query.expectedVersion)
+    return res.json(await memoryRepository.remove(requestSkillPrincipal(req).userId, memoryId, expectedVersion))
+  }))
+  router.delete(`${apiPrefix}/memories`, asyncRoute(async (req, res) => {
+    return res.json({ removed: await memoryRepository.clear(requestSkillPrincipal(req).userId) })
   }))
   router.post(`${apiPrefix}/sessions/:sessionId/messages`, asyncRoute(async (req, res) => {
     if (!wiki.config.agents.provider.enabled || !wiki.agentRuntime) return res.sendStatus(404)
@@ -477,6 +507,7 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
         },
         retention: {
           temporarySessionHours: wiki.agentLimits?.retention.temporarySessionHours ?? 24,
+          savedSessionDays: wiki.agentLimits?.retention.savedSessionDays ?? 90,
           mcpContentDays: wiki.agentLimits?.retention.mcpContentDays ?? 7,
           auditDays: wiki.agentLimits?.retention.auditDays ?? 90,
           maintenanceBatchSize: wiki.agentLimits?.retention.maintenanceBatchSize ?? 100
