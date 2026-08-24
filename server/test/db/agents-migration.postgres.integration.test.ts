@@ -10,6 +10,7 @@ import { down as downPersonalSkills, up as upPersonalSkills } from '../../db/mig
 import { down as downPersonalSkillDiscovery, up as upPersonalSkillDiscovery } from '../../db/migrations/2.5.144.ts'
 import { down as downSkillPreferences, up as upSkillPreferences } from '../../db/migrations/2.5.146.ts'
 import { projectAgentThread } from '../../agents/projection.ts'
+import { SkillRuntime } from '../../agents/skills/runtime.ts'
 
 const databaseName = process.env.WIKI_TEST_POSTGRES_DATABASE ?? ''
 const passwordFile = process.env.WIKI_TEST_POSTGRES_PASSWORD_FILE
@@ -161,6 +162,22 @@ suite('PostgreSQL first-class agent migration', () => {
       await db('agentSessions').where({ id: sessionId }).delete()
       if (pageId !== undefined) await db('pages').where({ id: pageId }).delete()
     }
+  })
+
+  it('executes run skill discovery with PostgreSQL-safe aliases', async () => {
+    const runId = '00000000-0000-4000-8000-000000000111'
+    const sessionId = '00000000-0000-4000-8000-000000000112'
+    const transportRequestId = '00000000-0000-4000-8000-000000000113'
+    await db.transaction(async transaction => {
+      await transaction.raw('CREATE TEMP TABLE "agentRuns" (id uuid PRIMARY KEY, "sessionId" uuid NOT NULL, "ownerId" integer NOT NULL) ON COMMIT DROP')
+      await transaction('agentRuns').insert({ id: runId, sessionId, ownerId: 7 })
+      const runtime = new SkillRuntime(transaction)
+      await expect(runtime.listVisibleForRun({
+        runId,
+        principal: { userId: 7, groupIds: [] },
+        transportRequestId
+      })).resolves.toEqual([])
+    })
   })
 
 
