@@ -5,8 +5,12 @@ describe('inline Ask mode contract', () => {
   const searchPath = path.join(process.cwd(), 'client/components/common/search-results.vue')
   const inlinePath = path.join(process.cwd(), 'client/components/agents/inline-agent-chat.vue')
   const headerPath = path.join(process.cwd(), 'client/components/common/nav-header.vue')
+  const composerPath = path.join(process.cwd(), 'client/components/agents/agent-composer.vue')
+  const settingsPath = path.join(process.cwd(), 'client/components/agents/agent-session-settings.vue')
   const search = fs.readFileSync(searchPath, 'utf8')
   const inline = fs.readFileSync(inlinePath, 'utf8')
+  const composer = fs.readFileSync(composerPath, 'utf8')
+  const settings = fs.readFileSync(settingsPath, 'utf8')
   const header = fs.readFileSync(headerPath, 'utf8')
   const template = search.match(/<template[^>]*>\s*([\s\S]*?)\s*<\/template>/)?.[1] ?? ''
 
@@ -31,6 +35,14 @@ describe('inline Ask mode contract', () => {
     expect(inline).toMatch(/<AgentPersonalSkills/)
     expect(inline).toMatch(/:invocation-limit="invocationLimit"/)
     expect(inline).toMatch(/agents\.send\(prompt, invokedSkillVersionIds\)/)
+  })
+
+  test('keeps session pins in the composer Skills menu and hides empty configuration', () => {
+    expect(settings).not.toMatch(/Pinned skills/)
+    expect(inline).toMatch(/v-if="thread && profiles\.length > 1"/)
+    expect(inline).toMatch(/@pin-skills="agents\.setSkills"/)
+    expect(composer).toMatch(/@click\.stop="togglePin\(skill\.versionId\)"/)
+    expect(composer).toMatch(/pin to this session/)
   })
 
   test('supports direct mode switching and submission from the Wiki search field', () => {

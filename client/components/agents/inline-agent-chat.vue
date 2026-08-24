@@ -74,15 +74,12 @@
         >{{ error }}</v-alert>
 
         <AgentSessionSettings
-          v-if="thread && (profiles.length > 1 || skillsEnabled)"
+          v-if="thread && profiles.length > 1"
           class="inline-agent__settings"
           :session="thread.session"
           :profiles="profiles"
-          :skills="skills"
-          :skills-enabled="skillsEnabled"
           :disabled="Boolean(activeRun)"
           @profile="agents.setProfile"
-          @skills="agents.setSkills"
         />
 
         <div
@@ -143,11 +140,12 @@
           :disabled="!providerAvailable || loading || !thread || Boolean(activeRun)"
           :skills-enabled="skillsEnabled"
           :skills="skills"
-          :pinned-skill-version-ids="pinnedSkillVersionIds"
+          :pinned-skills="thread?.session.skills ?? []"
           :invocation-limit="invocationLimit"
           @send="sendPrompt"
           @stop="agents.stop"
           @manage-skills="skillManagerOpen = true"
+          @pin-skills="agents.setSkills"
         />
         <div class="inline-agent__notice text-body-small text-medium-emphasis mt-2">
           <v-icon icon="mdi-shield-check-outline" size="15" />

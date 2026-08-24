@@ -131,10 +131,11 @@ test.describe('responsive UI quality matrix', () => {
     await expect(agent.getByText('How this session uses the model')).toHaveCount(0)
     const profileCount = await page.evaluate(async () => (await fetch('/_api/agents/profiles')).json().then((value: { profiles?: unknown[] }) => value.profiles?.length ?? 0))
     const settingsButton = agent.getByRole('button', { name: 'Session configuration' })
-    if (await settingsButton.count()) {
+    if (profileCount > 1) {
+      await expect(settingsButton).toBeVisible()
       await settingsButton.click()
-      if (profileCount > 1) await expect(agent.getByText('Provider profile')).toBeVisible()
-      else await expect(agent.getByText('Provider profile')).toHaveCount(0)
+      await expect(agent.getByText('Provider profile')).toBeVisible()
+      await expect(agent.getByText('Pinned skills (always loaded)')).toHaveCount(0)
       const settings = agent.locator('.inline-agent__settings')
       const settingsLayout = await settings.evaluate(element => {
         const bounds = element.getBoundingClientRect()
@@ -152,7 +153,7 @@ test.describe('responsive UI quality matrix', () => {
         await expect.poll(() => settings.evaluate(element => element.scrollTop)).toBeGreaterThan(0)
       }
     } else {
-      expect(profileCount).toBeLessThanOrEqual(1)
+      await expect(settingsButton).toHaveCount(0)
     }
     await expectLocatorWithinViewport(agent, 'Wiki Agent panel')
     await expectResponsiveLayout(page, 'Wiki Agent panel')
