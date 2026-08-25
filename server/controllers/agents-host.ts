@@ -16,6 +16,7 @@ import { BrowserTargetRegistry } from '../agents/browser/registry.ts'
 import { getMcpProposalForApproval, type ProposalRecord } from '../agents/proposals/repository.ts'
 import { requestAgentHistoryReset, requestAgentSessionDeletion } from '../agents/maintenance.ts'
 import type { AgentOperationalLimits } from '../agents/config.ts'
+import { exportAgentSessionDiagnostics } from '../agents/diagnostics.ts'
 import { AgentMemoryRepository, encodeAgentMemorySnapshot } from '../agents/memory.ts'
 import {
   CreateAgentProviderProfileSchema,
@@ -476,7 +477,7 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
     return next(error)
   })
 
-  router.use(['/_api/agents/admin/runtime', '/_api/agents/admin/skills', '/_api/agents/admin/profiles', '/_api/agents/admin/browser-targets'], (req, res, next) => {
+  router.use(['/_api/agents/admin/runtime', '/_api/agents/admin/sessions', '/_api/agents/admin/skills', '/_api/agents/admin/profiles', '/_api/agents/admin/browser-targets'], (req, res, next) => {
     if (!req.authContext || req.authContext.kind !== 'user') return res.sendStatus(401)
     if (!req.user?.permissions?.includes('manage:system')) return res.sendStatus(403)
     return next()
@@ -515,6 +516,17 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
       }
     })
   })
+  router.get('/_api/agents/admin/sessions/:sessionId/diagnostics.json', asyncRoute(async (req, res) => {
+    const sessionId = UUIDSchema.parse(routeParameter(req, 'sessionId'))
+    const diagnostics = await exportAgentSessionDiagnostics(wiki.models.knex, sessionId)
+    res.set({
+      'Cache-Control': 'private, no-store',
+      'Content-Disposition': `attachment; filename="wiki-agent-conversation-${sessionId}.json"`,
+      'Content-Type': 'application/json; charset=utf-8',
+      'X-Content-Type-Options': 'nosniff'
+    })
+    return res.json(diagnostics)
+  }))
   router.get('/_api/agents/admin/browser-targets', asyncRoute(async (_req, res) => {
     return res.json({ targets: await browserTargets.list() })
   }))

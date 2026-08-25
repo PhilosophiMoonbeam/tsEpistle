@@ -32,22 +32,35 @@
               <v-icon icon="mdi-book-open-page-variant-outline" size="18" />
               <strong>Sources</strong>
             </div>
-            <ol>
-              <li v-for="(citation, index) in message.citations" :key="citation.evidenceId">
+            <ol class="agent-sources__groups">
+              <li v-for="group in citationGroups(message.citations)" :key="group.key" class="agent-sources__group">
                 <component
-                  :is="citation.href ? 'a' : 'span'"
-                  :href="citation.href || undefined"
-                  :target="citation.href ? '_blank' : undefined"
-                  :rel="citation.href ? 'noopener noreferrer' : undefined"
-                  :aria-label="`Citation ${index + 1}: ${citation.label}`"
+                  :is="group.pageHref ? 'a' : 'div'"
+                  class="agent-sources__page"
+                  :href="group.pageHref || undefined"
+                  :target="group.pageHref ? '_blank' : undefined"
+                  :rel="group.pageHref ? 'noopener noreferrer' : undefined"
                 >
-                  <span class="agent-sources__number">{{ index + 1 }}</span>
-                  <span class="agent-sources__label">
-                    <strong>{{ citationPageLabel(citation.label) }}</strong>
-                    <small v-if="citationSectionLabel(citation.label)">{{ citationSectionLabel(citation.label) }}</small>
-                  </span>
-                  <v-icon v-if="citation.href" icon="mdi-open-in-new" size="15" aria-hidden="true" />
+                  <span v-if="group.pageCitation" class="agent-sources__number">{{ group.pageCitation.number }}</span>
+                  <v-icon v-else icon="mdi-file-document-outline" size="18" aria-hidden="true" />
+                  <strong>{{ group.pageLabel }}</strong>
+                  <v-icon v-if="group.pageHref" icon="mdi-open-in-new" size="15" aria-hidden="true" />
                 </component>
+                <ol v-if="group.sections.length" class="agent-sources__sections">
+                  <li v-for="entry in group.sections" :key="entry.citation.evidenceId">
+                    <component
+                      :is="entry.citation.href ? 'a' : 'span'"
+                      :href="entry.citation.href || undefined"
+                      :target="entry.citation.href ? '_blank' : undefined"
+                      :rel="entry.citation.href ? 'noopener noreferrer' : undefined"
+                      :aria-label="`Citation ${entry.number}: ${entry.citation.label}`"
+                    >
+                      <span class="agent-sources__number">{{ entry.number }}</span>
+                      <span>{{ entry.sectionLabel }}</span>
+                      <v-icon v-if="entry.citation.href" icon="mdi-open-in-new" size="14" aria-hidden="true" />
+                    </component>
+                  </li>
+                </ol>
               </li>
             </ol>
           </aside>
@@ -78,8 +91,8 @@
               <li v-for="tool in activityForRun(message.runId)" :key="tool.id">
                 <v-icon :icon="toolStateIcon(tool.state)" :color="toolStateColor(tool.state)" size="18" />
                 <span>
-                  <strong>{{ tool.title }}</strong>
-                  <small>{{ tool.actionName }} · {{ toolStateLabel(tool.state) }}</small>
+                  <strong>{{ tool.summary || tool.title }}</strong>
+                  <small>{{ tool.summary ? `${tool.title} · ` : '' }}{{ tool.actionName }} · {{ toolStateLabel(tool.state) }}</small>
                 </span>
               </li>
             </ul>
@@ -131,6 +144,7 @@ import {
   agentActivityLabel,
   agentAppliedPageLinks,
   groupAgentToolsByRun,
+  groupAgentCitations,
   type AgentProposalTool
 } from './agent-thread-presentation.ts'
 
@@ -142,6 +156,7 @@ const activityForRun = (runId: string | null): readonly AgentToolCallView[] => r
 const proposalToolsForRun = (runId: string | null): readonly AgentProposalTool[] => runId ? groupedTools.value.get(runId)?.proposals ?? [] : []
 const pageLinksForRun = (runId: string | null): readonly AgentPageActionLink[] => agentAppliedPageLinks(proposalToolsForRun(runId))
 const activityLabel = agentActivityLabel
+const citationGroups = groupAgentCitations
 const messageStatusLabels: Record<Exclude<AgentMessageStatus, 'complete'>, string> = {
   pending: 'Preparing',
   streaming: 'Responding',
@@ -150,9 +165,6 @@ const messageStatusLabels: Record<Exclude<AgentMessageStatus, 'complete'>, strin
 }
 const messageStatusLabel = (role: AgentMessageRole, status: AgentMessageStatus): string =>
   status === 'complete' ? '' : role === 'user' && status === 'pending' ? 'Sending' : messageStatusLabels[status]
-const citationLabelParts = (citation: AgentCitation['label']): readonly string[] => citation.split(' › ').filter(Boolean)
-const citationPageLabel = (citation: AgentCitation['label']): string => citationLabelParts(citation)[0] ?? citation
-const citationSectionLabel = (citation: AgentCitation['label']): string => citationLabelParts(citation).slice(1).join(' › ')
 const stateLabels: Record<AgentToolState, string> = { preparing: 'Preparing', running: 'Running', awaitingApproval: 'Awaiting approval', complete: 'Complete', failed: 'Failed', denied: 'Denied', cancelled: 'Cancelled' }
 const stateIcons: Record<AgentToolState, string> = { preparing: 'mdi-dots-horizontal', running: 'mdi-progress-clock', awaitingApproval: 'mdi-shield-alert-outline', complete: 'mdi-check-circle-outline', failed: 'mdi-alert-circle-outline', denied: 'mdi-cancel', cancelled: 'mdi-stop-circle-outline' }
 const toolStateLabel = (state: AgentToolState): string => stateLabels[state]
@@ -201,16 +213,21 @@ const liveSummary = computed(() => {
 .agent-message--user .agent-message__meta { color: inherit; font-size: .72rem !important; margin-bottom: .3rem; opacity: .72; }
 .agent-sources { border-top: 1px solid rgb(var(--v-theme-outline-variant)); padding-top: .75rem; }
 .agent-sources__heading { align-items: center; display: flex; gap: .4rem; margin-bottom: .45rem; }
-.agent-sources ol { display: grid; gap: .35rem; list-style: none; margin: 0; padding: 0; }
-.agent-sources li > a,
-.agent-sources li > span { align-items: center; border-radius: .5rem; color: inherit; display: grid; gap: .55rem; grid-template-columns: auto minmax(0, 1fr) auto; min-height: 2.5rem; padding: .4rem .5rem; text-decoration: none; }
-.agent-sources li > a:hover { background: rgb(var(--v-theme-surface)); }
-.agent-sources li > a:focus-visible { outline: 2px solid rgb(var(--v-theme-primary)); outline-offset: 2px; }
+.agent-sources__groups { display: grid; gap: .45rem; list-style: none; margin: 0; padding: 0; }
+.agent-sources__group { background: color-mix(in srgb, rgb(var(--v-theme-surface)) 70%, transparent); border: 1px solid rgb(var(--v-theme-outline-variant)); border-radius: .65rem; overflow: hidden; }
+.agent-sources__page,
+.agent-sources__sections a,
+.agent-sources__sections span { align-items: center; color: inherit; display: grid; gap: .55rem; grid-template-columns: auto minmax(0, 1fr) auto; min-height: 2.5rem; padding: .45rem .6rem; text-decoration: none; }
+.agent-sources__page:hover,
+.agent-sources__sections a:hover { background: color-mix(in srgb, rgb(var(--v-theme-primary-container)) 38%, transparent); }
+.agent-sources__page:focus-visible,
+.agent-sources__sections a:focus-visible { outline: 2px solid rgb(var(--v-theme-primary)); outline-offset: -2px; }
+.agent-sources__page strong { min-width: 0; overflow-wrap: anywhere; }
+.agent-sources__sections { border-top: 1px solid rgb(var(--v-theme-outline-variant)); list-style: none; margin: 0; padding: .25rem 0 .3rem 1.35rem; }
+.agent-sources__sections li { position: relative; }
+.agent-sources__sections li::before { background: rgb(var(--v-theme-outline-variant)); content: ''; height: 100%; inset-inline-start: -.65rem; position: absolute; top: -50%; width: 1px; }
+.agent-sources__sections span { min-width: 0; overflow-wrap: anywhere; }
 .agent-sources__number { align-items: center; background: rgb(var(--v-theme-primary-container)); border-radius: 999px; color: rgb(var(--v-theme-on-primary-container)); display: inline-flex; font-size: .72rem; font-weight: 700; height: 1.4rem; justify-content: center; width: 1.4rem; }
-.agent-sources__label { min-width: 0; }
-.agent-sources__label strong,
-.agent-sources__label small { display: block; overflow-wrap: anywhere; }
-.agent-sources__label small { color: rgb(var(--v-theme-on-surface-variant)); margin-top: .08rem; }
 .agent-page-links { border-top: 1px solid rgb(var(--v-theme-outline-variant)); display: flex; flex-wrap: wrap; gap: .5rem; padding-top: .75rem; }
 .agent-page-links a { align-items: center; background: rgb(var(--v-theme-surface)); border: 1px solid rgb(var(--v-theme-outline-variant)); border-radius: .5rem; color: rgb(var(--v-theme-primary)); display: inline-flex; gap: .4rem; min-height: 2.25rem; overflow-wrap: anywhere; padding: .35rem .65rem; text-decoration: none; }
 .agent-page-links a:hover { background: rgb(var(--v-theme-primary-container)); color: rgb(var(--v-theme-on-primary-container)); }

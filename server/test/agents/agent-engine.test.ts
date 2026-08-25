@@ -13,6 +13,23 @@ const request = (signal: AbortSignal): AgentEngineRequest => ({
   memory: { user: ['Prefers concise, evidence-first answers.'], agent: ['Wiki project uses PostgreSQL and pnpm.'] },
   currentPage: { id: 42, locale: 'en', path: 'guide', observedUpdatedAt: '2026-08-17T00:00:00.000Z' },
   skills: [{ id: '00000000-0000-4000-8000-000000000008', name: 'wiki-reader', skillMarkdown: '# Reader\nUse page tools.' }],
+  priorActivity: [{
+    runId: '00000000-0000-4000-8000-000000000009',
+    status: 'succeeded',
+    userMessageOrdinal: 1,
+    assistantMessageOrdinal: 2,
+    modelTurns: 3,
+    rejectedEvidenceDrafts: 1,
+    tools: [{
+      actionCallId: 'prior-get',
+      actionName: 'pages.get',
+      state: 'complete',
+      input: { id: 6 },
+      target: { id: 6, title: 'Incident Runbook', sourceRevision: '1' },
+      cacheHit: false,
+      duplicateOfActionCallId: null
+    }]
+  }],
   signal
 })
 
@@ -50,12 +67,13 @@ describe('Ax agent engine', () => {
     expect(calls[0]?.chatPrompt?.[0]).toEqual(expect.objectContaining({ role: 'system', content: expect.stringMatching(new RegExp(`^${WIKI_AGENT_SOUL.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')}\\n\\n`)) }))
     expect(calls[0]?.chatPrompt).toContainEqual(expect.objectContaining({ role: 'system', content: expect.stringContaining('"id":42,"locale":"en","path":"guide"') }))
     expect(calls[0]?.chatPrompt).toContainEqual(expect.objectContaining({ role: 'system', content: expect.stringContaining('"userProfile":["Prefers concise, evidence-first answers."]') }))
+    expect(calls[0]?.chatPrompt).toContainEqual(expect.objectContaining({ role: 'system', content: expect.stringContaining('"rejectedEvidenceDrafts":1') }))
     expect(calls[1]?.chatPrompt).toContainEqual(expect.objectContaining({ role: 'assistant', functionCalls: [expect.objectContaining({ function: expect.objectContaining({ name: 'pages_get' }) })] }))
     expect(calls[1]?.chatPrompt).toContainEqual(expect.objectContaining({ role: 'function', functionId: 'call-1', result: expect.stringContaining('"citationSections"') }))
     expect(calls[1]?.chatPrompt).toContainEqual(expect.objectContaining({ role: 'assistant', content: 'Let me check.' }))
     expect(text).toHaveBeenCalledWith('The install steps are documented.[[cite:page:42:section:1]]')
     expect(text).not.toHaveBeenCalledWith('Let me check.')
-    expect(event.mock.calls.map(([type]) => type)).toEqual(['tool.started', 'tool.completed', 'evidence.provenance'])
+    expect(event.mock.calls.map(([type]) => type)).toEqual(['model.turn', 'tool.started', 'tool.completed', 'model.turn', 'evidence.provenance'])
     expect(event).toHaveBeenLastCalledWith('evidence.provenance', expect.objectContaining({
       accepted: true,
       retrievals: [{ actionCallId: 'call-1', actionName: 'pages.get', evidenceIds: ['page:42', 'page:42:section:1'] }],
@@ -71,6 +89,95 @@ describe('Ax agent engine', () => {
     expect(JSON.stringify(result)).not.toContain('hidden thought')
     expect(close).toHaveBeenCalledOnce()
   })
+  it('accepts a citation placed after sentence punctuation and rejects an uncited page answer', async () => {
+    const responses: AxChatResponse[] = [
+      { results: [{ index: 0, functionCalls: [{ id: 'get-1', type: 'function', function: { name: 'pages_get', params: '{"id":6}' } }] }] },
+      { results: [{ index: 0, content: 'Amber Falcon.' }] },
+      { results: [{ index: 0, content: 'Amber Falcon is a synthetic incident. [[cite:page:6:section:1]]' }] }
+    ]
+    const chat = vi.fn(async () => responses.shift()!)
+    const factory = { create: async () => ({ service: { chat }, capabilities: { streaming: false, toolCalling: 'native', parallelToolCalls: true, structuredOutput: 'native-json-schema', usage: 'terminal', cancellation: true, maxContextTokens: 100_000, maxOutputTokens: 4_000 }, transportKind: 'openai-responses', model: 'gpt-test', capabilityRevision: 'cap-1', pricingRevision: 'price-1' }) } as unknown as AgentProviderFactory
+    const invoke = vi.fn(async () => ({
+      id: 6,
+      sourceRevision: '1',
+      title: 'Incident Runbook',
+      contentType: 'markdown',
+      content: '# Incident Runbook\n\nAmber Falcon is a synthetic incident.',
+      citation: { evidenceId: 'page:6', label: 'Incident Runbook', href: '/en/runbook' },
+      citationSections: [{ evidenceId: 'page:6:section:1', label: 'Incident Runbook', href: '/en/runbook#incident-runbook' }]
+    }))
+    const actions: AgentActionSessionProvider = {
+      open: async () => ({
+        functions: [{ name: 'pages.get', title: 'Read page', description: 'Reads a page', parameters: { type: 'object', properties: {} }, risk: 'read' }],
+        invoke,
+        snapshot: async () => ({}),
+        close: vi.fn()
+      })
+    }
+    const text = vi.fn(async () => {})
+    const event = vi.fn(async (...args: [string, unknown]) => { void args })
+    await new AxAgentEngine(factory, actions).execute(request(new AbortController().signal), { text, event })
+
+    expect(chat).toHaveBeenCalledTimes(3)
+    expect(text).toHaveBeenCalledWith('Amber Falcon is a synthetic incident. [[cite:page:6:section:1]]')
+    expect(event.mock.calls.filter(([type]) => type === 'evidence.provenance').map(([, data]) => data)).toEqual([
+      expect.objectContaining({
+        accepted: false,
+        issues: ['A final answer following a successful page read must include at least one citation.']
+      }),
+      expect.objectContaining({
+        accepted: true,
+        issues: [],
+        claims: [expect.objectContaining({ claim: 'Amber Falcon is a synthetic incident.', supported: true })]
+      })
+    ])
+  })
+
+  it('reuses identical page reads while preserving every model-requested action in diagnostics', async () => {
+    const responses: AxChatResponse[] = [
+      { results: [{ index: 0, functionCalls: [{ id: 'get-1', type: 'function', function: { name: 'pages_get', params: '{"id":6}' } }] }] },
+      { results: [{ index: 0, functionCalls: [{ id: 'get-2', type: 'function', function: { name: 'pages_get', params: '{"id":6}' } }] }] },
+      { results: [{ index: 0, content: 'Amber Falcon is a synthetic incident.[[cite:page:6:section:1]]' }] }
+    ]
+    const chat = vi.fn(async () => responses.shift()!)
+    const factory = { create: async () => ({ service: { chat }, capabilities: { streaming: false, toolCalling: 'native', parallelToolCalls: true, structuredOutput: 'native-json-schema', usage: 'terminal', cancellation: true, maxContextTokens: 100_000, maxOutputTokens: 4_000 }, transportKind: 'openai-responses', model: 'gpt-test', capabilityRevision: 'cap-1', pricingRevision: 'price-1' }) } as unknown as AgentProviderFactory
+    const page = {
+      id: 6,
+      sourceRevision: '1',
+      title: 'Incident Runbook',
+      contentType: 'markdown',
+      content: '# Incident Runbook\n\nAmber Falcon is a synthetic incident.',
+      citation: { evidenceId: 'page:6', label: 'Incident Runbook', href: '/en/runbook' },
+      citationSections: [{ evidenceId: 'page:6:section:1', label: 'Incident Runbook', href: '/en/runbook#incident-runbook' }]
+    }
+    const invoke = vi.fn(async () => page)
+    const actions: AgentActionSessionProvider = {
+      open: async () => ({
+        functions: [{ name: 'pages.get', title: 'Read page', description: 'Reads a page', parameters: { type: 'object', properties: {} }, risk: 'read' }],
+        invoke,
+        snapshot: async () => ({}),
+        close: vi.fn()
+      })
+    }
+    const event = vi.fn(async (...args: [string, Record<string, unknown>]) => { void args })
+    await new AxAgentEngine(factory, actions).execute(request(new AbortController().signal), { text: async () => {}, event })
+
+    expect(invoke).toHaveBeenCalledOnce()
+    expect(event.mock.calls.filter(([type]) => type === 'tool.started').map(([, data]) => data)).toEqual([
+      expect.objectContaining({ actionCallId: 'get-1', turn: 1, input: '{"id":6}' }),
+      expect.objectContaining({ actionCallId: 'get-2', turn: 2, input: '{"id":6}' })
+    ])
+    expect(event.mock.calls.filter(([type]) => type === 'tool.completed').map(([, data]) => data)).toEqual([
+      expect.objectContaining({ actionCallId: 'get-1', cacheHit: false, reusedActionCallId: null, summary: 'Incident Runbook' }),
+      expect.objectContaining({ actionCallId: 'get-2', cacheHit: true, reusedActionCallId: 'get-1', summary: 'Incident Runbook · Reused earlier read' })
+    ])
+    expect(event.mock.calls.filter(([type]) => type === 'model.turn').map(([, data]) => data)).toEqual([
+      expect.objectContaining({ turn: 1, outcome: 'tool_calls', actionCallIds: ['get-1'] }),
+      expect.objectContaining({ turn: 2, outcome: 'tool_calls', actionCallIds: ['get-2'] }),
+      expect.objectContaining({ turn: 3, outcome: 'answer_accepted', actionCallIds: [] })
+    ])
+  })
+
 
   it('rejects search-result citations until the page is read and records grouped claim provenance', async () => {
     const providerCalls: Readonly<AxChatRequest<unknown>>[] = []

@@ -55,6 +55,26 @@ export interface AgentEngineSkill {
   readonly name: string
   readonly skillMarkdown: string
 }
+export interface AgentPriorToolActivity {
+  readonly actionCallId: string
+  readonly actionName: string
+  readonly state: 'complete' | 'failed' | 'running'
+  readonly input: unknown
+  readonly target: Readonly<Record<string, unknown>> | null
+  readonly cacheHit: boolean
+  readonly duplicateOfActionCallId: string | null
+}
+
+export interface AgentPriorRunActivity {
+  readonly runId: string
+  readonly status: string
+  readonly userMessageOrdinal: number
+  readonly assistantMessageOrdinal: number
+  readonly modelTurns: number
+  readonly rejectedEvidenceDrafts: number
+  readonly tools: readonly AgentPriorToolActivity[]
+}
+
 
 export interface AgentEngineRequest {
   readonly run: AgentRunClaim
@@ -62,6 +82,7 @@ export interface AgentEngineRequest {
   readonly memory: AgentMemorySnapshot
   readonly currentPage?: AgentCurrentPageHint
   readonly skills: readonly AgentEngineSkill[]
+  readonly priorActivity?: readonly AgentPriorRunActivity[]
   readonly signal: AbortSignal
 }
 
@@ -107,6 +128,132 @@ interface RuntimeMessageRow { role: 'user' | 'assistant'; content: string; provi
 interface RuntimeSkillRow { id: string; name: string; skillMarkdown: string }
 interface RuntimeContextRow { data: string }
 interface RuntimeSessionRow { memorySnapshot: string; title: string; titleSource: 'none' | 'manual' | 'utility' | 'fallback'; version: number }
+interface RuntimePriorEventRow {
+  runId: string
+  status: string
+  userMessageOrdinal: number
+  assistantMessageOrdinal: number
+  sequence: number
+  type: 'model.turn' | 'evidence.provenance' | 'tool.started' | 'tool.completed' | 'tool.failed'
+  data: string
+}
+
+interface MutablePriorToolActivity {
+  actionCallId: string
+  actionName: string
+  state: 'complete' | 'failed' | 'running'
+  input: unknown
+  target: Record<string, unknown> | null
+  cacheHit: boolean
+  duplicateOfActionCallId: string | null
+}
+
+const parsedObject = (value: string, code: string): Record<string, unknown> => {
+  try {
+    const parsed: unknown = JSON.parse(value)
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) throw new Error('not an object')
+    return parsed as Record<string, unknown>
+  } catch {
+    throw new AgentRepositoryError(code, 'Stored agent diagnostic context is invalid', 500)
+  }
+}
+
+const priorRunActivity = (rows: readonly RuntimePriorEventRow[]): readonly AgentPriorRunActivity[] => {
+  const runs = new Map<string, {
+    status: string
+    userMessageOrdinal: number
+    assistantMessageOrdinal: number
+    modelTurns: number
+    rejectedEvidenceDrafts: number
+    tools: MutablePriorToolActivity[]
+    toolsById: Map<string, MutablePriorToolActivity>
+  }>()
+  for (const row of rows) {
+    let run = runs.get(row.runId)
+    if (!run) {
+      run = {
+        status: row.status,
+        userMessageOrdinal: Number(row.userMessageOrdinal),
+        assistantMessageOrdinal: Number(row.assistantMessageOrdinal),
+        modelTurns: 0,
+        rejectedEvidenceDrafts: 0,
+        tools: [],
+        toolsById: new Map()
+      }
+      runs.set(row.runId, run)
+    }
+    const data = parsedObject(row.data, 'AGENT_PRIOR_ACTIVITY_CORRUPT')
+    if (row.type === 'model.turn') {
+      run.modelTurns += 1
+      continue
+    }
+    if (row.type === 'evidence.provenance') {
+      if (data.accepted === false) run.rejectedEvidenceDrafts += 1
+      continue
+    }
+    const actionCallId = typeof data.actionCallId === 'string' ? data.actionCallId : ''
+    if (!actionCallId) continue
+    if (row.type === 'tool.started') {
+      let input: unknown = null
+      if (typeof data.input === 'string') {
+        try { input = JSON.parse(data.input) } catch { input = null }
+      }
+      const tool: MutablePriorToolActivity = {
+        actionCallId,
+        actionName: typeof data.actionName === 'string' ? data.actionName : 'unknown',
+        state: 'running',
+        input,
+        target: null,
+        cacheHit: false,
+        duplicateOfActionCallId: null
+      }
+      run.tools.push(tool)
+      run.toolsById.set(actionCallId, tool)
+      continue
+    }
+    const tool = run.toolsById.get(actionCallId)
+    if (!tool) continue
+    if (row.type === 'tool.failed') {
+      tool.state = 'failed'
+      continue
+    }
+    tool.state = 'complete'
+    tool.cacheHit = data.cacheHit === true
+    tool.duplicateOfActionCallId = typeof data.reusedActionCallId === 'string' ? data.reusedActionCallId : null
+    if (typeof data.result === 'string') {
+      try {
+        const result: unknown = JSON.parse(data.result)
+        if (typeof result === 'object' && result !== null && !Array.isArray(result)) {
+          const candidate = result as Record<string, unknown>
+          tool.target = Object.fromEntries(['id', 'title', 'path', 'sourceRevision'].flatMap(key => candidate[key] === undefined ? [] : [[key, candidate[key]]]))
+        }
+      } catch { /* diagnostic context remains useful without a target */ }
+    }
+  }
+  return [...runs.entries()].slice(0, 8).map(([runId, run]) => {
+    const firstReadByTarget = new Map<string, string>()
+    for (const tool of run.tools) {
+      if (tool.duplicateOfActionCallId !== null || (tool.actionName !== 'pages.get' && tool.actionName !== 'pages.getVersion')) continue
+      const id = tool.target?.id
+      const sourceRevision = tool.target?.sourceRevision
+      if ((typeof id !== 'number' && typeof id !== 'string') || (typeof sourceRevision !== 'number' && typeof sourceRevision !== 'string')) continue
+      const key = `${tool.actionName}:${id}:${sourceRevision}`
+      const first = firstReadByTarget.get(key)
+      if (first) tool.duplicateOfActionCallId = first
+      else firstReadByTarget.set(key, tool.actionCallId)
+    }
+    return {
+      runId,
+      status: run.status,
+      userMessageOrdinal: run.userMessageOrdinal,
+      assistantMessageOrdinal: run.assistantMessageOrdinal,
+      modelTurns: run.modelTurns,
+      rejectedEvidenceDrafts: run.rejectedEvidenceDrafts,
+      tools: run.tools
+    }
+  })
+}
+
 
 const currentPageHint = (value: string | undefined): AgentCurrentPageHint | undefined => {
   if (value === undefined) return undefined
@@ -261,15 +408,35 @@ export class AgentProductRuntime {
     let content = ''
     let quotaReconciled = false
     try {
-      const [messageRows, skills, contextRow, sessionRow] = await Promise.all([
+      const [messageRows, skills, contextRow, sessionRow, priorEventRows] = await Promise.all([
         this.#knex('agentMessages').where({ sessionId: claim.sessionId }).andWhere('id', '!=', claim.assistantMessageId).orderBy('ordinal').select('role', 'content', 'providerStateCiphertext') as unknown as Promise<RuntimeMessageRow[]>,
         this.#knex('agentRunSkills').join('agentSkillVersions', 'agentSkillVersions.id', 'agentRunSkills.skillVersionId').join('agentSkills', 'agentSkills.id', 'agentSkillVersions.skillId').where('agentRunSkills.runId', claim.id).orderBy('agentRunSkills.ordinal').select('agentSkillVersions.id', 'agentSkills.name', 'agentSkillVersions.skillMarkdown') as unknown as Promise<RuntimeSkillRow[]>,
         this.#knex('agentEvents').where({ runId: claim.id, type: 'run.queued' }).orderBy('sequence').first('data') as unknown as Promise<RuntimeContextRow | undefined>,
-        this.#knex('agentSessions').where({ id: claim.sessionId, ownerId: claim.ownerId }).whereNull('deletedAt').first('memorySnapshot', 'title', 'titleSource', 'version') as unknown as Promise<RuntimeSessionRow | undefined>
+        this.#knex('agentSessions').where({ id: claim.sessionId, ownerId: claim.ownerId }).whereNull('deletedAt').first('memorySnapshot', 'title', 'titleSource', 'version') as unknown as Promise<RuntimeSessionRow | undefined>,
+        this.#knex('agentRuns as runs')
+          .join('agentMessages as userMessages', 'userMessages.id', 'runs.userMessageId')
+          .join('agentMessages as assistantMessages', 'assistantMessages.id', 'runs.assistantMessageId')
+          .join('agentEvents as events', 'events.runId', 'runs.id')
+          .where('runs.sessionId', claim.sessionId)
+          .andWhere('runs.id', '!=', claim.id)
+          .whereIn('events.type', ['model.turn', 'evidence.provenance', 'tool.started', 'tool.completed', 'tool.failed'])
+          .orderBy('runs.queuedAt', 'desc')
+          .orderBy('events.sequence')
+          .limit(256)
+          .select({
+            runId: 'runs.id',
+            status: 'runs.status',
+            userMessageOrdinal: 'userMessages.ordinal',
+            assistantMessageOrdinal: 'assistantMessages.ordinal',
+            sequence: 'events.sequence',
+            type: 'events.type',
+            data: 'events.data'
+          }) as unknown as Promise<RuntimePriorEventRow[]>
       ])
       if (!sessionRow) throw new AgentRepositoryError('AGENT_RESOURCE_NOT_FOUND', 'Agent session was not found', 404)
       const currentPage = currentPageHint(contextRow?.data)
       const memory = decodeAgentMemorySnapshot(sessionRow.memorySnapshot)
+      const priorActivity = priorRunActivity(priorEventRows)
       const messages: AgentEngineMessage[] = messageRows.map(message => {
         const state = providerState(message.providerStateCiphertext)
         return state === undefined
@@ -279,7 +446,7 @@ export class AgentProductRuntime {
       await this.#appendPresentationEvent(claim, 'run.attemptStarted', { runId: claim.id, attempt: claim.attempts })
       if (claim.attempts > 1) await this.#appendPresentationEvent(claim, 'run.attemptSuperseded', { runId: claim.id, supersededThroughAttempt: claim.attempts - 1 })
       await this.#appendPresentationEvent(claim, 'message.started', { messageId: claim.assistantMessageId }, { status: 'streaming', content: '', citations: null })
-      const result = await this.#engine.execute({ run: claim, messages, memory, skills, signal, ...(currentPage === undefined ? {} : { currentPage }) }, {
+      const result = await this.#engine.execute({ run: claim, messages, memory, skills, priorActivity, signal, ...(currentPage === undefined ? {} : { currentPage }) }, {
         text: async delta => {
           if (signal.aborted) throw signal.reason
           if (typeof delta !== 'string' || delta.length === 0 || delta.length > 16_000 || content.length + delta.length > 128_000) throw new AgentRepositoryError('INVALID_ENGINE_DELTA', 'Inference engine emitted an invalid text delta', 500)
@@ -301,7 +468,13 @@ export class AgentProductRuntime {
       if (providerStateJson !== null && Buffer.byteLength(providerStateJson, 'utf8') > 256 * 1_024) throw new AgentRepositoryError('AGENT_PROVIDER_STATE_TOO_LARGE', 'Provider continuation exceeds its size limit', 500)
       await this.#appendPresentationEvent(claim, 'message.completed', { messageId: claim.assistantMessageId }, { status: 'complete', content, citations, providerStateCiphertext: providerStateJson === null ? null : Buffer.from(providerStateJson), providerStateSha256: providerStateJson === null ? null : sha256(providerStateJson) })
       if (result.suggestions !== undefined) await this.#appendPresentationEvent(claim, 'suggestions.updated', { suggestions: result.suggestions })
-      await this.#appendPresentationEvent(claim, 'usage.updated', { inputTokens, outputTokens, costMicros })
+      await this.#appendPresentationEvent(claim, 'usage.updated', {
+        inputTokens,
+        outputTokens,
+        costMicros,
+        model: { inputTokens: result.inputTokens, outputTokens: result.outputTokens, costMicros: result.costMicros },
+        utility: { inputTokens: titleUsage.inputTokens, outputTokens: titleUsage.outputTokens, purpose: 'conversation_title' }
+      })
       await this.#knex('agentRuns').where({ id: claim.id, leaseOwner: claim.leaseOwner, leaseToken: claim.leaseToken }).update({ inputTokens, outputTokens, estimatedCostMicros: costMicros, updatedAt: new Date() })
       await reconcileAgentRunQuota(this.#knex, { runId: claim.id, ownerId: claim.ownerId, consumedTokens: inputTokens + outputTokens, consumedCostMicros: costMicros, status: 'consumed' })
       quotaReconciled = true

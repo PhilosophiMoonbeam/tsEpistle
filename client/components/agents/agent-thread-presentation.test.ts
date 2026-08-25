@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import type { AgentProposalView, AgentToolCallView } from '../../../shared/agents/contracts.ts'
+import type { AgentCitation, AgentProposalView, AgentToolCallView } from '../../../shared/agents/contracts.ts'
 import {
   agentActivityLabel,
   agentAppliedPageLinks,
   agentApprovalTitle,
   agentProposalReceiptLabel,
+  groupAgentCitations,
   groupAgentToolsByRun,
   isAgentApprovalOutsideViewport
 } from './agent-thread-presentation.ts'
@@ -98,6 +99,34 @@ describe('Agent thread presentation', () => {
       { label: '/handbook/releases', href: '/en/handbook/releases' }
     ])
   })
+  it('nests numbered section citations under one page source', () => {
+    const citations: readonly AgentCitation[] = [
+      { evidenceId: 'page:6:section:1', kind: 'page', label: 'Incident Runbook', href: '/en/runbook#incident-runbook' },
+      { evidenceId: 'page:6:section:2', kind: 'page', label: 'Incident Runbook › Response sequence', href: '/en/runbook#response-sequence' },
+      { evidenceId: 'page:19', kind: 'page', label: 'Assessment', href: '/en/assessment' }
+    ]
+
+    expect(groupAgentCitations(citations)).toEqual([
+      {
+        key: 'page:6',
+        pageLabel: 'Incident Runbook',
+        pageHref: '/en/runbook',
+        pageCitation: null,
+        sections: [
+          { citation: citations[0], number: 1, sectionLabel: 'Page overview' },
+          { citation: citations[1], number: 2, sectionLabel: 'Response sequence' }
+        ]
+      },
+      {
+        key: 'page:19',
+        pageLabel: 'Assessment',
+        pageHref: '/en/assessment',
+        pageCitation: { citation: citations[2], number: 3, sectionLabel: 'Page overview' },
+        sections: []
+      }
+    ])
+  })
+
 
   it('keeps routine activity compact while surfacing current and failed states', () => {
     expect(agentActivityLabel([

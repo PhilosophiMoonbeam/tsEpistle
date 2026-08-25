@@ -1,5 +1,6 @@
 import type {
   AgentActionName,
+  AgentCitation,
   AgentPageActionLink,
   AgentProposalStatus,
   AgentProposalView,
@@ -15,6 +16,56 @@ export interface AgentRunTools {
   readonly activity: readonly AgentToolCallView[]
   readonly proposals: readonly AgentProposalTool[]
 }
+export interface AgentCitationEntry {
+  readonly citation: AgentCitation
+  readonly number: number
+  readonly sectionLabel: string
+}
+
+export interface AgentCitationGroup {
+  readonly key: string
+  readonly pageLabel: string
+  readonly pageHref: string | null
+  readonly pageCitation: AgentCitationEntry | null
+  readonly sections: readonly AgentCitationEntry[]
+}
+
+const citationLabelParts = (label: string): readonly string[] => label.split(' › ').filter(Boolean)
+
+export const groupAgentCitations = (citations: readonly AgentCitation[]): readonly AgentCitationGroup[] => {
+  const groups = new Map<string, {
+    key: string
+    pageLabel: string
+    pageHref: string | null
+    pageCitation: AgentCitationEntry | null
+    sections: AgentCitationEntry[]
+  }>()
+  for (const [index, citation] of citations.entries()) {
+    const pageEvidenceId = citation.kind === 'page' ? citation.evidenceId.match(/^(page:[^:]+)/u)?.[1] : undefined
+    const key = pageEvidenceId ?? citation.evidenceId
+    const labelParts = citationLabelParts(citation.label)
+    let group = groups.get(key)
+    if (!group) {
+      group = {
+        key,
+        pageLabel: labelParts[0] ?? citation.label,
+        pageHref: citation.href?.split('#', 1)[0] ?? null,
+        pageCitation: null,
+        sections: []
+      }
+      groups.set(key, group)
+    }
+    const entry = {
+      citation,
+      number: index + 1,
+      sectionLabel: labelParts.slice(1).join(' › ') || 'Page overview'
+    }
+    if (citation.evidenceId === pageEvidenceId || pageEvidenceId === undefined) group.pageCitation ??= entry
+    else group.sections.push(entry)
+  }
+  return [...groups.values()]
+}
+
 
 const emptyRunTools = (): { activity: AgentToolCallView[], proposals: AgentProposalTool[] } => ({
   activity: [],

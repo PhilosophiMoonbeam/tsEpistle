@@ -52,6 +52,7 @@ describe('ordinary-origin agent session API', () => {
   let baseUrl: string
   let cookie: string
   let ownerId = 7
+  let administrator = false
   const csrf = 'csrf-token'
   let runtime: AgentProductRuntime
   let engineCurrentPage: unknown
@@ -98,7 +99,7 @@ describe('ordinary-origin agent session API', () => {
       auth: {
         authenticate(req, _res, next) {
           req.authContext = { kind: 'user', userId: ownerId, ownershipUserId: ownerId, principal: { id: ownerId } }
-          req.user = { id: ownerId, groups: [], permissions: ['use:agents'] } as Express.User
+          req.user = { id: ownerId, groups: [], permissions: administrator ? ['manage:system'] : ['use:agents'] } as Express.User
           next()
         }
       },
@@ -142,6 +143,28 @@ describe('ordinary-origin agent session API', () => {
     expect(foreign.status).toBe(404)
     ownerId = 7
   })
+  it('keeps conversation diagnostics hidden from non-admins and exports any session for system admins', async () => {
+    const sessionId = '00000000-0000-4000-8000-000000000059'
+    const now = '2026-08-17T00:00:00.000Z'
+    await db('agentSessions').insert({ id: sessionId, ownerId: 8, title: 'Diagnostic session', titleSource: 'manual', retention: 'saved', providerProfileId: null, executionMode: 'agent', version: 1, summary: null, summaryThroughOrdinal: null, memorySnapshot: '{"agent":[],"user":[]}', createdAt: now, updatedAt: now, lastActivityAt: now, expiresAt: null, deletedAt: null })
+
+    const denied = await fetch(`${baseUrl}/_api/agents/admin/sessions/${sessionId}/diagnostics.json`, { headers: { cookie } })
+    expect(denied.status).toBe(403)
+
+    administrator = true
+    const accepted = await fetch(`${baseUrl}/_api/agents/admin/sessions/${sessionId}/diagnostics.json`, { headers: { cookie } })
+    administrator = false
+    expect(accepted.status).toBe(200)
+    expect(accepted.headers.get('cache-control')).toBe('private, no-store')
+    expect(accepted.headers.get('content-disposition')).toContain(`wiki-agent-conversation-${sessionId}.json`)
+    await expect(accepted.json()).resolves.toMatchObject({
+      schemaVersion: 1,
+      session: { id: sessionId, ownerId: 8 },
+      messages: [],
+      runs: []
+    })
+  })
+
 
   it('replays validated SSE events and closes at the terminal sequence', async () => {
     const now = '2026-08-17T00:00:00.000Z'
@@ -206,6 +229,8 @@ describe('ordinary-origin agent session API', () => {
     expect(replay).toContain('event: message.delta')
     expect(replay).toContain('event: message.completed')
     expect(replay).toContain('event: suggestions.updated')
+    expect(replay).toContain('"model":{"costMicros":8,"inputTokens":3,"outputTokens":5}')
+    expect(replay).toContain('"utility":{"inputTokens":0,"outputTokens":0,"purpose":"conversation_title"}')
   })
   it('applies user skill preferences at the latest version across conversations', async () => {
     const headers = { cookie, 'content-type': 'application/json', origin: 'https://wiki.example.test', 'sec-fetch-site': 'same-origin', 'x-wiki-csrf': csrf }
