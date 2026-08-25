@@ -3,6 +3,7 @@ import { z } from 'zod'
 import type { RequestAuthContext } from '../../../shared/agents/contracts.ts'
 import { type ActionAuthority, ActionKernel, ActionKernelError } from './kernel.ts'
 import { issueWikiLineSnapshot } from '../patch/wiki-line-patch.ts'
+const SearchMatchFieldSchema = z.enum(['title', 'tag', 'path', 'description', 'content', 'graph'])
 const PageRowSchema = z.looseObject({
   id: z.coerce.number().int().positive().optional(),
   pageId: z.coerce.number().int().positive().optional(),
@@ -16,13 +17,17 @@ const PageRowSchema = z.looseObject({
   content: z.string().optional(),
   updatedAt: z.union([z.string(), z.date()]),
   visibility: z.enum(['public', 'private']).optional(),
+  tags: z.array(z.union([z.string(), z.looseObject({ tag: z.string() })])).optional(),
   toc: z.unknown().optional()
 })
 const SearchResponseSchema = z.looseObject({
   results: z.array(z.looseObject({
     path: z.string(),
     locale: z.string(),
-    visibility: z.enum(['public', 'private']).optional()
+    visibility: z.enum(['public', 'private']).optional(),
+    tags: z.array(z.string()).max(50).default([]),
+    score: z.number().finite().nonnegative().default(0),
+    matchedFields: z.array(SearchMatchFieldSchema).max(6).default([])
   })),
   totalHits: z.coerce.number().int().nonnegative()
 })
@@ -206,7 +211,12 @@ export const registerPageReadActions = (kernel: ActionKernel, dependencies: Page
           visibility: result.visibility ?? 'public',
           requester
         })
-        return parsePage(page, false)
+        return {
+          ...parsePage(page, false),
+          tags: result.tags,
+          score: result.score,
+          matchedFields: result.matchedFields
+        }
       } catch (error: unknown) {
         if (pageNotFound(error)) return null
         throw error

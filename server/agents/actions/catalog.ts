@@ -50,6 +50,11 @@ const BasePageSummary = strict({
   sourceRevision: z.string().max(64)
 })
 const PageSummary = BasePageSummary.extend({ citation: PageCitation })
+const SearchPageSummary = PageSummary.extend({
+  tags: z.array(z.string().min(1).max(255)).max(50),
+  score: z.number().finite().nonnegative(),
+  matchedFields: z.array(z.enum(['title', 'tag', 'path', 'description', 'content', 'graph'])).max(6)
+})
 const PageResult = PageSummary.extend({
   content: BoundedPageContent,
   updatedAt: z.string().max(32),
@@ -98,9 +103,9 @@ const proposalFlags = ['agents.enabled', 'agents.proposals.enabled', 'agents.wri
 
 export const ACTION_CATALOG = {
   'pages.search': {
-    descriptor: descriptor('pages.search', 'Search pages', 'Search page titles and content visible to the current principal.', 'read', ['read:pages'], both, readAnnotations),
+    descriptor: descriptor('pages.search', 'Search pages', 'Rank visible pages using titles, tags, paths, descriptions, content, and the Wiki link graph. Results include match evidence; read promising pages with pages.get before answering.', 'read', ['read:pages'], both, readAnnotations),
     input: strict({ query: z.string().min(1).max(1000), locale: Locale.optional(), limit: z.number().int().min(1).max(20).default(10), offset: z.number().int().min(0).max(200).default(0) }),
-    output: strict({ results: z.array(PageSummary).max(20), total: z.number().int().nonnegative(), truncated: z.boolean() }),
+    output: strict({ results: z.array(SearchPageSummary).max(20), total: z.number().int().nonnegative(), truncated: z.boolean() }),
     requiredFlags: baseFlags
   },
   'pages.get': {

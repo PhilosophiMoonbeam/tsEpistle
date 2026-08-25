@@ -68,7 +68,17 @@ interface TagWithRelations extends TagRecord {
   $relatedQuery(relation: 'pages'): { unrelate(): Promise<number> }
 }
 interface RelatedTagQuery extends PromiseLike<TagRecord[]> { for(pageId: number): RelatedTagQuery }
-interface SearchResult extends Record<string, unknown> { path: string, locale: string, tags?: unknown }
+const SEARCH_MATCH_FIELDS = ['title', 'tag', 'path', 'description', 'content', 'graph'] as const
+type SearchMatchField = typeof SEARCH_MATCH_FIELDS[number]
+interface SearchResult extends Record<string, unknown> {
+  path: string
+  locale: string
+  title?: unknown
+  description?: unknown
+  tags?: unknown
+  score?: unknown
+  matchedFields?: unknown
+}
 interface SearchResponse extends Record<string, unknown> { results: SearchResult[], suggestions?: unknown[] }
 interface WikiPageOperations {
   Error: {
@@ -389,6 +399,52 @@ const getVersion = async (input: OperationInput) => {
   return wiki.models.pageHistory.getVersion({ pageId, versionId, requester })
 }
 
+const resultTags = (value: unknown): string[] => {
+  if (!Array.isArray(value)) return []
+  const tags = value.flatMap(item => {
+    if (typeof item === 'string') return [item]
+    if (item && typeof item === 'object' && typeof Reflect.get(item, 'tag') === 'string') return [Reflect.get(item, 'tag') as string]
+    return []
+  }).map(tag => tag.trim().toLocaleLowerCase()).filter(Boolean)
+  return [...new Set(tags)].sort().slice(0, 50)
+}
+
+const rankedSearchResult = (result: SearchResult, query: string): SearchResult & {
+  tags: string[]
+  score: number
+  matchedFields: SearchMatchField[]
+} => {
+  const normalizedQuery = query.trim().toLocaleLowerCase()
+  const tags = resultTags(result.tags)
+  const title = typeof result.title === 'string' ? result.title.toLocaleLowerCase() : ''
+  const description = typeof result.description === 'string' ? result.description.toLocaleLowerCase() : ''
+  const path = result.path.toLocaleLowerCase()
+  const reportedFields = Array.isArray(result.matchedFields)
+    ? result.matchedFields.filter((field): field is SearchMatchField => typeof field === 'string' && SEARCH_MATCH_FIELDS.includes(field as SearchMatchField))
+    : []
+  const derivedFields: SearchMatchField[] = []
+  if (title.includes(normalizedQuery)) derivedFields.push('title')
+  if (tags.some(tag => tag.includes(normalizedQuery))) derivedFields.push('tag')
+  if (path.includes(normalizedQuery)) derivedFields.push('path')
+  if (description.includes(normalizedQuery)) derivedFields.push('description')
+  if (derivedFields.length === 0) derivedFields.push('content')
+  const matchedFields = [...new Set(reportedFields.length > 0 ? reportedFields : derivedFields)]
+  const exactTitle = title === normalizedQuery
+  const exactTag = tags.includes(normalizedQuery)
+  const derivedScore =
+    (exactTitle ? 10 : title.includes(normalizedQuery) ? 4 : 0) +
+    (exactTag ? 7 : tags.some(tag => tag.includes(normalizedQuery)) ? 2 : 0) +
+    (path.includes(normalizedQuery) ? 3 : 0) +
+    (description.includes(normalizedQuery) ? 1.5 : 0) +
+    (matchedFields.includes('content') ? 1 : 0)
+  return {
+    ...result,
+    tags,
+    score: typeof result.score === 'number' && Number.isFinite(result.score) ? Math.max(0, result.score) : derivedScore,
+    matchedFields
+  }
+}
+
 const search = async (input: OperationInput) => {
   const requester = input.requester
   const query = stringValue(input.query, 'query')
@@ -398,6 +454,8 @@ const search = async (input: OperationInput) => {
     ? []
     : await wiki.models.pages.query()
       .column(['pages.id', 'path', { locale: 'localeCode' }, 'title', 'description', 'visibility', 'ownerId'])
+      .withGraphJoined('tags')
+      .modifyGraph('tags', builder => { builder.select('tag') })
       .modify(builder => {
         builder.where({ visibility: 'private', ownerId })
         builder.andWhere(match => {
@@ -420,6 +478,8 @@ const search = async (input: OperationInput) => {
   if (publicResponse.results.length > 0) {
     const livePublicPages = await wiki.models.pages.query()
       .select('id', 'localeCode', 'path', 'title', 'description')
+      .withGraphJoined('tags')
+      .modifyGraph('tags', builder => { builder.select('tag') })
       .modify(builder => {
         builder.where({ visibility: 'public' })
         builder.andWhere(matches => {
@@ -432,8 +492,8 @@ const search = async (input: OperationInput) => {
     for (const page of livePublicPages) {
       const identity = `${page.localeCode}\u0000${page.path}`
       livePublicPagesByIdentity.set(identity, page)
-      const metadataMatches = `${page.title} ${String(page.description ?? '')}`.toLocaleLowerCase().includes(normalizedQuery)
-      if (!protectedPageIds.has(page.id) || metadataMatches) publicIdentities.add(identity)
+      const searchableMetadata = [page.title, page.description ?? '', page.path, ...resultTags(page.tags)].join(' ').toLocaleLowerCase()
+      if (!protectedPageIds.has(page.id) || searchableMetadata.includes(normalizedQuery)) publicIdentities.add(identity)
     }
   }
   const publicResults = publicResponse.results.filter(result => (
@@ -453,11 +513,15 @@ const search = async (input: OperationInput) => {
       visibility: 'public' as const
     }
   })
+  const results = [
+    ...privatePages.map(page => rankedSearchResult({ ...page, locale: page.locale ?? page.localeCode }, query)),
+    ...publicResults.map(result => rankedSearchResult(result, query))
+  ].sort((left, right) => right.score - left.score || String(left.title).localeCompare(String(right.title)) || String(left.path).localeCompare(String(right.path)))
   return {
     ...publicResponse,
     suggestions: publicResults.length === publicResponse.results.length ? publicResponse.suggestions : [],
-    results: [...privatePages, ...publicResults],
-    totalHits: privatePages.length + publicResults.length
+    results,
+    totalHits: results.length
   }
 }
 

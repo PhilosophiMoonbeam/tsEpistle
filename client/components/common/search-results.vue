@@ -77,6 +77,15 @@
                 v-list-item-title {{ item.title }}
                 v-list-item-subtitle.text-body-small {{ item.description }}
                 .text-body-small.text-grey(v-text='item.path')
+                .search-results-tags(v-if='item.tags.length')
+                  v-chip(
+                    v-for='tag of item.tags.slice(0, 3)'
+                    :key='tag'
+                    size='x-small'
+                    variant='tonal'
+                    color='blue-grey-lighten-2'
+                  ) {{ tag }}
+                  span.text-caption.text-medium-emphasis(v-if='item.tags.length > 3') +{{ item.tags.length - 3 }}
                 template(v-slot:append)
                   v-chip(label variant='outlined') {{item.locale.toUpperCase()}}
               v-divider(v-if='idx < results.length - 1')
@@ -440,6 +449,14 @@ export default defineComponent({
         background: mc('grey', '900') linear-gradient(to bottom, mc('orange', '900'), darken(mc('orange', '900'), 15%));
       }
     }
+  }
+
+  &-tags {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: .3rem;
+    margin-top: .35rem;
   }
 
   &-suggestions {

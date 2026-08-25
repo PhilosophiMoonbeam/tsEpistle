@@ -273,6 +273,9 @@ type PageSearchResult {
   path: String!
   locale: String!
   visibility: PageVisibility!
+  tags: [String!]!
+  score: Float!
+  matchedFields: [String!]!
 }
 
 type PageListItem {

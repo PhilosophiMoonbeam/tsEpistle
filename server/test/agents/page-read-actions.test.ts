@@ -76,7 +76,7 @@ describe('permission-safe page read actions', () => {
     const { execute, operations } = setup({
       search: vi.fn(async () => ({
         results: [
-          { path: 'docs/start', locale: 'en', visibility: 'public' },
+          { path: 'docs/start', locale: 'en', visibility: 'public', tags: ['runbook'], score: 12.5, matchedFields: ['tag', 'graph'] },
           { path: 'private/notes', locale: 'en', visibility: 'private' },
           { path: 'deleted', locale: 'en', visibility: 'public' }
         ],
@@ -91,8 +91,8 @@ describe('permission-safe page read actions', () => {
     })
     await expect(execute('pages.search', { query: 'notes', limit: 3, offset: 0 })).resolves.toEqual({
       results: [
-        { id: 42, locale: 'en', path: 'docs/start', title: 'Start', description: '', contentType: 'markdown', sourceRevision: '8', citation: { evidenceId: 'page:42', label: 'Start', href: '/en/docs/start' } },
-        { id: 43, locale: 'en', path: 'private/notes', title: 'Start', description: '', contentType: 'markdown', sourceRevision: '2', citation: { evidenceId: 'page:43', label: 'Start', href: '/_private/en/private/notes' } }
+        { id: 42, locale: 'en', path: 'docs/start', title: 'Start', description: '', contentType: 'markdown', sourceRevision: '8', citation: { evidenceId: 'page:42', label: 'Start', href: '/en/docs/start' }, tags: ['runbook'], score: 12.5, matchedFields: ['tag', 'graph'] },
+        { id: 43, locale: 'en', path: 'private/notes', title: 'Start', description: '', contentType: 'markdown', sourceRevision: '2', citation: { evidenceId: 'page:43', label: 'Start', href: '/_private/en/private/notes' }, tags: [], score: 0, matchedFields: [] }
       ],
       total: 3,
       truncated: true

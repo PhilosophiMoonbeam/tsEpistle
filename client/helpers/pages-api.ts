@@ -437,6 +437,8 @@ export type PageTreeRow = {
   canEdit?: boolean
 }
 
+export type PageSearchMatchField = 'title' | 'tag' | 'path' | 'description' | 'content' | 'graph'
+
 export type PageSearchRow = {
   id: string | number
   title: string
@@ -444,6 +446,9 @@ export type PageSearchRow = {
   path: string
   locale: string
   visibility: 'public' | 'private'
+  tags: string[]
+  score: number
+  matchedFields: PageSearchMatchField[]
 }
 
 export type PageSearchResult = {
@@ -600,7 +605,13 @@ export async function searchPages (fetchImpl: FetchImpl, query: string, options:
       typeof row.description !== 'string' ||
       typeof row.path !== 'string' ||
       typeof row.locale !== 'string' ||
-      (row.visibility !== 'public' && row.visibility !== 'private')) {
+      (row.visibility !== 'public' && row.visibility !== 'private') ||
+      !Array.isArray(row.tags) ||
+      row.tags.some(tag => typeof tag !== 'string') ||
+      typeof row.score !== 'number' ||
+      !Number.isFinite(row.score) ||
+      !Array.isArray(row.matchedFields) ||
+      row.matchedFields.some(field => !['title', 'tag', 'path', 'description', 'content', 'graph'].includes(String(field)))) {
       throw new Error(fallbackMessage)
     }
     const visibility: 'public' | 'private' = row.visibility
@@ -610,7 +621,10 @@ export async function searchPages (fetchImpl: FetchImpl, query: string, options:
       description: row.description,
       path: row.path,
       locale: row.locale,
-      visibility
+      visibility,
+      tags: row.tags as string[],
+      score: row.score,
+      matchedFields: row.matchedFields as PageSearchMatchField[]
     }
   })
   if (payload.suggestions.some(suggestion => typeof suggestion !== 'string')) throw new Error(fallbackMessage)
