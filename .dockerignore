@@ -1,0 +1,26 @@
+# Version-control and local dependency trees must never enter the build context.
+.git
+.github
+node_modules
+**/node_modules
+
+# Local caches and test output are not image inputs.
+.cache
+.pnpm-store
+coverage
+**/coverage
+playwright-report
+test-results
+**/test-results
+
+# Generated packages and archives are passed explicitly when required.
+*.tar
+*.tar.gz
+*.tgz
+*.zip
+
+# Local configuration and logs may contain secrets or high-churn data.
+.env
+.env.*
+!.env.example
+*.log
