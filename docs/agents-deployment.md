@@ -248,6 +248,14 @@ In-process checks are not a network sandbox. Deploy the container in a network n
 
 Drain by disabling browser admission, waiting for active contexts, then sending `SIGTERM`. Keep the prior signing verification key only through the maximum request lifetime.
 
+## Agent identity
+
+Wiki follows Hermes Agent's separation of identity from operations. The source-controlled `server/agents/SOUL.md` is the first system-prompt section and defines only durable character, voice, and conversational defaults. Permission boundaries, tool protocols, citations, skills, and Wiki-specific behavior remain in code-owned core instructions. User memory, page hints, skill material, browser content, and tool results follow both sections as explicitly untrusted data.
+
+The shipped soul gives every user the same recognizable baseline: warm without flattery, curious without interrogating, concise by default, willing to recommend and respectfully disagree, and responsive to frustration, ambiguity, playfulness, and routine work. Personal memory can tune that baseline with a user's durable communication preferences; it cannot replace identity or policy. Users can also request a temporary tone naturally in conversation. Wiki deliberately does not expose a per-user soul editor: a shared product identity is predictable, reviewable, cache-friendly, and does not create another persistent prompt-injection surface.
+
+At process start, Wiki reads the soul beside its loader, strips a UTF-8 BOM, normalizes line endings, and rejects empty content, unsafe role/control text, or more than 4 KiB. The validated bytes are loaded once and stay stable for the life of that process. A deployment can revise the soul under normal source review; no database state, conversation migration, or user-memory rewrite is involved.
+
 ## Conversation history and personal memory
 
 Saved conversations are bounded history, not durable memory. Maintenance permanently removes saved sessions after `savedSessionDays` without activity (90 days by default); temporary sessions continue to use `temporarySessionHours`. Active runs fence deletion until they become terminal. The history menu exposes a user-scoped **Reset** action that cancels owned active work, tombstones every owned conversation in one transaction, and opens a clean saved conversation. Reset never deletes personal memory.

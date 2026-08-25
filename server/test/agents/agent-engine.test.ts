@@ -3,6 +3,7 @@ import type { AxChatRequest, AxChatResponse } from '@ax-llm/ax'
 import { AxAgentEngine, type AgentActionSessionProvider } from '../../agents/providers/engine.ts'
 import type { AgentProviderFactory } from '../../agents/providers/factory.ts'
 import type { AgentEngineRequest } from '../../agents/runtime.ts'
+import { WIKI_AGENT_SOUL } from '../../agents/soul.ts'
 
 const request = (signal: AbortSignal): AgentEngineRequest => ({
   run: {
@@ -44,6 +45,7 @@ describe('Ax agent engine', () => {
     expect(chat).toHaveBeenCalledTimes(2)
     expect(invoke).toHaveBeenCalledWith('pages.get', { id: 42 }, expect.objectContaining({ aborted: false }), 'call-1')
     expect(calls[0]?.functions).toContainEqual(expect.objectContaining({ name: 'pages_get' }))
+    expect(calls[0]?.chatPrompt?.[0]).toEqual(expect.objectContaining({ role: 'system', content: expect.stringMatching(new RegExp(`^${WIKI_AGENT_SOUL.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')}\\n\\n`)) }))
     expect(calls[0]?.chatPrompt).toContainEqual(expect.objectContaining({ role: 'system', content: expect.stringContaining('"id":42,"locale":"en","path":"guide"') }))
     expect(calls[0]?.chatPrompt).toContainEqual(expect.objectContaining({ role: 'system', content: expect.stringContaining('"userProfile":["Prefers concise, evidence-first answers."]') }))
     expect(calls[1]?.chatPrompt).toContainEqual(expect.objectContaining({ role: 'assistant', functionCalls: [expect.objectContaining({ function: expect.objectContaining({ name: 'pages_get' }) })] }))
