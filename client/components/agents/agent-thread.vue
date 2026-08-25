@@ -195,8 +195,8 @@ const liveSummary = computed(() => {
 
 <style scoped>
 .agent-thread {
-  --agent-thread-border: color-mix(in srgb, rgb(var(--v-theme-outline)) 28%, transparent);
-  --agent-thread-divider: color-mix(in srgb, rgb(var(--v-theme-outline)) 20%, transparent);
+  --agent-thread-border: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 16%, transparent);
+  --agent-thread-divider: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 11%, transparent);
   --agent-thread-surface: color-mix(in srgb, rgb(var(--v-theme-surface)) 94%, rgb(var(--v-theme-primary)) 6%);
   --agent-thread-user-surface: color-mix(in srgb, rgb(var(--v-theme-surface)) 84%, rgb(var(--v-theme-primary)) 16%);
   color: rgb(var(--v-theme-on-surface));
@@ -246,7 +246,7 @@ const liveSummary = computed(() => {
 .agent-message__status--streaming .agent-message__status-dot { animation: agentStatusPulse 1.6s ease-in-out infinite; }
 .agent-message__status--failed { color: rgb(var(--v-theme-error)); }
 .agent-message__status--failed .agent-message__status-dot { background: currentColor; }
-.agent-message__status--cancelled .agent-message__status-dot { background: rgb(var(--v-theme-outline)); }
+.agent-message__status--cancelled .agent-message__status-dot { background: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 48%, transparent); }
 .agent-message--assistant {
   align-items: start;
   display: grid;
@@ -288,7 +288,7 @@ const liveSummary = computed(() => {
 }
 .agent-message--user .agent-message__surface {
   background: var(--agent-thread-user-surface);
-  border: 1px solid color-mix(in srgb, rgb(var(--v-theme-primary)) 36%, rgb(var(--v-theme-outline)));
+  border: 1px solid color-mix(in srgb, rgb(var(--v-theme-primary)) 36%, rgb(var(--v-theme-on-surface)) 16%);
   border-radius: .875rem;
   border-end-start-radius: .375rem;
   padding-block: .75rem;
@@ -368,7 +368,7 @@ const liveSummary = computed(() => {
 }
 .agent-sources__page:hover,
 .agent-sources__sections a:hover {
-  background: color-mix(in srgb, rgb(var(--v-theme-primary-container)) 42%, transparent);
+  background: color-mix(in srgb, rgb(var(--v-theme-primary)) 12%, rgb(var(--v-theme-surface)));
 }
 .agent-sources__page:focus-visible,
 .agent-sources__sections a:focus-visible {
@@ -398,9 +398,9 @@ const liveSummary = computed(() => {
 }
 .agent-sources__number {
   align-items: center;
-  background: rgb(var(--v-theme-primary-container));
+  background: color-mix(in srgb, rgb(var(--v-theme-primary)) 16%, rgb(var(--v-theme-surface)));
   border-radius: 999px;
-  color: rgb(var(--v-theme-on-primary-container));
+  color: rgb(var(--v-theme-on-surface));
   display: inline-flex;
   font-size: .72rem;
   font-weight: 700;
@@ -431,8 +431,8 @@ const liveSummary = computed(() => {
   text-decoration: none;
 }
 .agent-page-links a:hover {
-  background: rgb(var(--v-theme-primary-container));
-  color: rgb(var(--v-theme-on-primary-container));
+  background: color-mix(in srgb, rgb(var(--v-theme-primary)) 16%, rgb(var(--v-theme-surface)));
+  color: rgb(var(--v-theme-on-surface));
 }
 .agent-page-links a:focus-visible {
   outline: 2px solid rgb(var(--v-theme-primary));

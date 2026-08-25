@@ -381,7 +381,7 @@ defineExpose({ sendPrompt })
 }
 .inline-agent__card {
   background: color-mix(in srgb, rgb(var(--v-theme-surface)) 98%, rgb(var(--v-theme-background)));
-  border: 1px solid color-mix(in srgb, rgb(var(--v-theme-outline)) 28%, transparent);
+  border: 1px solid color-mix(in srgb, rgb(var(--v-theme-on-surface)) 16%, transparent);
   box-shadow: 0 1.25rem 4rem color-mix(in srgb, rgb(var(--v-theme-on-surface)) 16%, transparent);
   display: flex;
   flex-direction: column;
@@ -393,7 +393,7 @@ defineExpose({ sendPrompt })
 }
 .inline-agent__toolbar {
   background: color-mix(in srgb, rgb(var(--v-theme-surface)) 92%, rgb(var(--v-theme-primary)) 8%);
-  border-bottom: 1px solid color-mix(in srgb, rgb(var(--v-theme-outline)) 18%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, rgb(var(--v-theme-on-surface)) 11%, transparent);
   flex: 0 0 auto;
   min-height: 4.25rem;
   padding-inline: .5rem;
@@ -435,7 +435,7 @@ defineExpose({ sendPrompt })
   background:
     radial-gradient(circle at 92% 8%, color-mix(in srgb, rgb(var(--v-theme-primary)) 19%, transparent), transparent 38%),
     color-mix(in srgb, rgb(var(--v-theme-surface-variant)) 34%, rgb(var(--v-theme-surface)));
-  border: 1px solid color-mix(in srgb, rgb(var(--v-theme-primary)) 24%, rgb(var(--v-theme-outline-variant)));
+  border: 1px solid color-mix(in srgb, rgb(var(--v-theme-primary)) 24%, rgb(var(--v-theme-on-surface)) 12%);
   border-radius: 1.5rem;
   box-shadow: 0 1rem 3rem color-mix(in srgb, rgb(var(--v-theme-on-surface)) 8%, transparent);
   display: flex;
@@ -449,10 +449,10 @@ defineExpose({ sendPrompt })
 }
 .inline-agent__welcome-mark {
   align-items: center;
-  background: rgb(var(--v-theme-primary-container));
+  background: color-mix(in srgb, rgb(var(--v-theme-primary)) 16%, rgb(var(--v-theme-surface)));
   border: 1px solid color-mix(in srgb, rgb(var(--v-theme-primary)) 30%, transparent);
   border-radius: 1.1rem;
-  color: rgb(var(--v-theme-on-primary-container));
+  color: rgb(var(--v-theme-on-surface));
   display: flex;
   height: 3.4rem;
   justify-content: center;
@@ -465,7 +465,7 @@ defineExpose({ sendPrompt })
 .inline-agent__starter { height: auto; justify-content: flex-start; letter-spacing: 0; min-height: 2.9rem; padding: .65rem .9rem; text-transform: none; white-space: normal; }
 .inline-agent__composer {
   background: color-mix(in srgb, rgb(var(--v-theme-surface)) 96%, rgb(var(--v-theme-primary)) 4%);
-  border-top: 1px solid color-mix(in srgb, rgb(var(--v-theme-outline)) 18%, transparent);
+  border-top: 1px solid color-mix(in srgb, rgb(var(--v-theme-on-surface)) 11%, transparent);
   flex: 0 0 auto;
   padding: 1rem clamp(1rem, 3vw, 2rem) 1.1rem;
 }

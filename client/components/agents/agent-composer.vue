@@ -287,7 +287,7 @@ onBeforeUnmount(() => {
 <style scoped>
 .agent-composer {
   background: color-mix(in srgb, rgb(var(--v-theme-surface)) 94%, rgb(var(--v-theme-primary)) 6%);
-  border: 1px solid color-mix(in srgb, rgb(var(--v-theme-outline)) 34%, transparent);
+  border: 1px solid color-mix(in srgb, rgb(var(--v-theme-on-surface)) 16%, transparent);
   border-radius: 1rem;
   font-family: 'WikiAgentSans', 'Roboto', system-ui, sans-serif;
   min-width: 0;
@@ -296,7 +296,7 @@ onBeforeUnmount(() => {
   transition: border-color .16s ease, box-shadow .16s ease;
 }
 .agent-composer:focus-within {
-  border-color: color-mix(in srgb, rgb(var(--v-theme-primary)) 62%, rgb(var(--v-theme-outline)));
+  border-color: color-mix(in srgb, rgb(var(--v-theme-primary)) 62%, rgb(var(--v-theme-on-surface)) 18%);
   box-shadow: 0 0 0 3px color-mix(in srgb, rgb(var(--v-theme-primary)) 13%, transparent);
 }
 .agent-composer__input :deep(.v-field) { background: transparent; box-shadow: none; }
