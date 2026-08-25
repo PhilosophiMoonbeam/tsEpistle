@@ -248,13 +248,13 @@ watch(open, value => { if (value) void load() })
 .agent-memory__body { max-height: min(68vh, 44rem); }
 .agent-memory__editor { background: color-mix(in srgb, rgb(var(--v-theme-primary)) 4%, rgb(var(--v-theme-surface))); }
 .agent-memory__capacity { opacity: .72; }
-.agent-memory__entries { border: 1px solid color-mix(in srgb, rgb(var(--v-theme-outline)) 18%, transparent); border-radius: .75rem; overflow: hidden; }
+.agent-memory__entries { border: 1px solid color-mix(in srgb, rgb(var(--v-theme-on-surface)) 16%, transparent); border-radius: .75rem; overflow: hidden; }
 .agent-memory__entry { align-items: flex-start; display: flex; gap: .75rem; justify-content: space-between; }
-.agent-memory__entry + .agent-memory__entry { border-top: 1px solid color-mix(in srgb, rgb(var(--v-theme-outline)) 14%, transparent); }
+.agent-memory__entry + .agent-memory__entry { border-top: 1px solid color-mix(in srgb, rgb(var(--v-theme-on-surface)) 12%, transparent); }
 .agent-memory__entry p { overflow-wrap: anywhere; white-space: pre-wrap; }
 .agent-memory__entry-actions { display: flex; flex: 0 0 auto; opacity: .62; }
 .agent-memory__entry:hover .agent-memory__entry-actions, .agent-memory__entry:focus-within .agent-memory__entry-actions { opacity: 1; }
-.agent-memory__empty { background: color-mix(in srgb, rgb(var(--v-theme-surface-variant)) 38%, transparent); border: 1px dashed color-mix(in srgb, rgb(var(--v-theme-outline)) 24%, transparent); }
+.agent-memory__empty { background: color-mix(in srgb, rgb(var(--v-theme-surface-variant)) 38%, transparent); border: 1px dashed color-mix(in srgb, rgb(var(--v-theme-on-surface)) 18%, transparent); }
 @media (max-width: 599.98px) {
   .agent-memory__body { padding: 1rem !important; }
   .agent-memory__entry-actions { opacity: 1; }

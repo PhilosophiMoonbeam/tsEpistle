@@ -229,7 +229,7 @@ const liveSummary = computed(() => {
 }
 .agent-message__status {
   align-items: center;
-  color: rgb(var(--v-theme-on-surface-variant));
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 70%, transparent);
   display: inline-flex;
   font-size: .72rem;
   gap: .3rem;
@@ -328,7 +328,7 @@ const liveSummary = computed(() => {
 }
 .agent-sources__heading {
   align-items: center;
-  color: rgb(var(--v-theme-on-surface-variant));
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 72%, transparent);
   display: flex;
   font-size: .82rem;
   gap: .4rem;
@@ -478,7 +478,7 @@ const liveSummary = computed(() => {
   grid-template-columns: auto minmax(0, 1fr);
 }
 .agent-activity__list small {
-  color: rgb(var(--v-theme-on-surface-variant));
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 70%, transparent);
   display: block;
   line-height: 1.45;
   overflow-wrap: anywhere;

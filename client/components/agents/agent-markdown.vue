@@ -15,14 +15,14 @@ const rendered = computed(() => renderSafeMarkdown(formatAgentCitationMarkers(pr
 </script>
 
 <style scoped>
-.agent-markdown :deep(pre) { overflow-x: auto; padding: .75rem; border: 1px solid rgb(var(--v-theme-outline)); border-radius: .5rem; }
+.agent-markdown :deep(pre) { overflow-x: auto; padding: .75rem; border: 1px solid color-mix(in srgb, rgb(var(--v-theme-on-surface)) 16%, transparent); border-radius: .5rem; }
 .agent-markdown :deep(p:last-child) { margin-bottom: 0; }
 .agent-markdown :deep(a) { overflow-wrap: anywhere; }
 .agent-markdown :deep(a[title^='Citation ']) {
   align-items: center;
-  background: rgb(var(--v-theme-primary-container));
+  background: color-mix(in srgb, rgb(var(--v-theme-primary)) 16%, rgb(var(--v-theme-surface)));
   border-radius: 999px;
-  color: rgb(var(--v-theme-on-primary-container));
+  color: rgb(var(--v-theme-on-surface));
   display: inline-flex;
   font-size: .72rem;
   font-weight: 700;

@@ -135,20 +135,20 @@ const decide = (decision: 'approved' | 'denied') => {
 .proposal-metadata { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: .25rem 1rem; }
 .proposal-metadata dt { font-weight: 600; }
 .proposal-metadata dd { margin: 0; overflow-wrap: anywhere; }
-.proposal-review { border: 1px solid rgb(var(--v-theme-outline-variant)); border-radius: .5rem; padding: .65rem .75rem; }
+.proposal-review { border: 1px solid color-mix(in srgb, rgb(var(--v-theme-on-surface)) 16%, transparent); border-radius: .5rem; padding: .65rem .75rem; }
 .proposal-review summary, .agent-approval-receipt summary { align-items: center; cursor: pointer; display: flex; gap: .55rem; list-style: none; }
 .proposal-review summary::-webkit-details-marker, .agent-approval-receipt summary::-webkit-details-marker { display: none; }
 .proposal-review summary::after, .agent-approval-receipt summary::after { content: '›'; font-size: 1.25rem; margin-inline-start: auto; transform: rotate(90deg); }
 .proposal-review[open] summary::after, .agent-approval-receipt[open] summary::after { transform: rotate(270deg); }
-.proposal-diff { border: 1px solid rgb(var(--v-theme-outline-variant)); border-radius: .5rem; overflow: hidden; }
+.proposal-diff { border: 1px solid color-mix(in srgb, rgb(var(--v-theme-on-surface)) 16%, transparent); border-radius: .5rem; overflow: hidden; }
 .proposal-diff pre { margin: 0; max-height: 30rem; overflow: auto; padding: .75rem; white-space: pre-wrap; word-break: break-word; }
 .proposal-diff ins, .proposal-diff del, .proposal-diff span { display: inline; text-decoration: none; }
 .proposal-diff ins { background: rgba(46, 160, 67, .22); }
 .proposal-diff del { background: rgba(248, 81, 73, .22); }
-.agent-approval-receipt { border: 1px solid rgb(var(--v-theme-outline-variant)); border-radius: .75rem; margin: 0 0 1rem; max-width: 54rem; padding: .75rem 1rem; }
+.agent-approval-receipt { border: 1px solid color-mix(in srgb, rgb(var(--v-theme-on-surface)) 16%, transparent); border-radius: .75rem; margin: 0 0 1rem; max-width: 54rem; padding: .75rem 1rem; }
 .agent-approval-receipt summary span { display: grid; }
-.agent-approval-receipt summary small { color: rgb(var(--v-theme-on-surface-variant)); font-weight: 400; overflow-wrap: anywhere; }
-.agent-approval-receipt__details { border-top: 1px solid rgb(var(--v-theme-outline-variant)); margin-top: .75rem; padding-top: .75rem; }
+.agent-approval-receipt summary small { color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 70%, transparent); font-weight: 400; overflow-wrap: anywhere; }
+.agent-approval-receipt__details { border-top: 1px solid color-mix(in srgb, rgb(var(--v-theme-on-surface)) 12%, transparent); margin-top: .75rem; padding-top: .75rem; }
 @media (max-width: 599.98px) {
   .agent-approval__actions { align-items: stretch; flex-direction: column; }
   .agent-approval__actions :deep(.v-btn) { width: 100%; }
