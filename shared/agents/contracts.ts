@@ -306,6 +306,7 @@ export const AGENT_EVENT_TYPES = [
   'message.started',
   'message.delta',
   'message.completed',
+  'evidence.provenance',
   'tool.started',
   'tool.progress',
   'tool.completed',

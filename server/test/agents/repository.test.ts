@@ -322,7 +322,30 @@ describe('durable agent repositories', () => {
     expect(replay).toEqual(first)
     await expect(appendAgentEvent(knex, { ...eventInput, data: { ...eventInput.data, title: 'Changed' } })).rejects.toMatchObject({ code: 'AGENT_EVENT_IDEMPOTENCY_MISMATCH', status: 409 })
     await appendAgentEvent(knex, { id: '00000000-0000-4000-8000-000000000011', runId, ownerId: 7, type: 'tool.completed', attempt: 1, data: { actionCallId: 'call-1', summary: 'Done' } })
-    expect((await listOwnedAgentEvents(knex, 7, runId)).map(event => event.sequence)).toEqual([1, 2])
+    await appendAgentEvent(knex, {
+      id: '00000000-0000-4000-8000-000000000012',
+      runId,
+      ownerId: 7,
+      type: 'evidence.provenance',
+      attempt: 1,
+      data: {
+        accepted: true,
+        retrievals: [{ actionCallId: 'call-1', actionName: 'pages.get', evidenceIds: ['page:42', 'page:42:section:1'] }],
+        claims: [{ claim: 'Install the package.', evidenceId: 'page:42:section:1', pageEvidenceId: 'page:42', sourceActionCallId: 'call-1', sourceActionName: 'pages.get', section: true, supported: true, matchedTerms: ['install', 'package'] }],
+        finalCitationIds: ['page:42:section:1']
+      }
+    })
+    const events = await listOwnedAgentEvents(knex, 7, runId)
+    expect(events.map(event => event.sequence)).toEqual([1, 2, 3])
+    expect(events[2]).toMatchObject({
+      type: 'evidence.provenance',
+      data: {
+        accepted: true,
+        retrievals: [{ actionCallId: 'call-1', actionName: 'pages.get', evidenceIds: ['page:42', 'page:42:section:1'] }],
+        claims: [expect.objectContaining({ evidenceId: 'page:42:section:1', sourceActionCallId: 'call-1', section: true, supported: true })],
+        finalCitationIds: ['page:42:section:1']
+      }
+    })
     await knex('agentEvents').where({ id: eventInput.id }).update({ data: '{}' })
     await expect(listOwnedAgentEvents(knex, 7, runId)).rejects.toMatchObject({ code: 'AGENT_EVENT_CORRUPT', status: 500 })
   })

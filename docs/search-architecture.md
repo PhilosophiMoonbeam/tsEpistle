@@ -123,6 +123,23 @@ The cursor is bound to the requester, seed page, and optional `maxDepth`. Tamper
 
 The action descriptions instruct the model to use search evidence to select seeds, expand explicit relationships when useful, and call `pages.get` before answering. Search and graph evidence guide selection; page content remains the citable source of truth.
 
+### Citation evidence gate
+
+Search, recent-page, discovery, and related-page outputs are candidate metadata. Their evidence IDs cannot enter a final answer until the same page has been read by `pages.get` or `pages.getVersion` during the active run. Evidence from prior conversation turns is intentionally ineligible because the page may have changed.
+
+Final drafts are buffered before publication and checked as follows:
+
+1. Every `[[cite:...]]` marker must resolve to a successful active-run page read.
+2. The immediately preceding clause is retained as the claim associated with that marker.
+3. Page-level claims are compared with the complete read content. Markdown section claims are compared only with the corresponding heading scope and its citation label.
+4. Significant normalized claim terms must overlap the evidence by at least 60 percent, or by at least six terms, with a one- or two-term minimum for short claims. Claim negation must also occur in the evidence.
+5. Verification language such as “I verified,” “I checked,” or “the page says” requires both a completed page read and an associated citation.
+6. A final answer may contain at most 20 citation markers.
+
+An invalid draft is never streamed to the user. The provider receives bounded correction feedback and may read the missing page, select the correct section, or rewrite the claim within the normal turn limit. Adjacent claims from one page should remain in one readable sentence or paragraph, with each section marker immediately following its own supported clause.
+
+Every checked draft emits a bounded `evidence.provenance` event. It records whether the draft was accepted, ordered retrieval action IDs and evidence IDs, each claim's page and section evidence, the originating read action, matched terms, validation issues, and final citation order. Existing `tool.completed` events retain the full ordered tool outputs, so debugging can distinguish candidate discovery, page retrieval, claim attribution, and final rendering.
+
 ## Performance envelope
 
 Measured on PostgreSQL 17.11 with 20,000 synthetic published pages, 20,001 links, and 20,000 page-tag relations:
@@ -148,5 +165,6 @@ After activating or upgrading the PostgreSQL engine:
 7. Confirm tag search, tag pagination, and structured discovery return only authorized records and reject an over-broad discovery scope.
 8. Confirm `pages.related` returns authorized direct links and backlinks, continues a connected component with its opaque cursor, rejects a modified cursor, and does not traverse through a denied page.
 9. Confirm the Wiki Agent calls search or discovery, optionally `pages.related`, then `pages.get`, and emits a page citation.
+10. Use an adversarial page where an incident name appears in the introduction and procedures appear in another section. Confirm the wrong section is rejected, the corrected grouped answer is accepted, unsupported verification language is withheld, and `evidence.provenance` records the claim-to-section mapping.
 
 No embedding generation, asynchronous vector queue, or document chunk synchronization is required.
