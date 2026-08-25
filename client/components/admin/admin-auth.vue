@@ -68,7 +68,7 @@
             v-btn(size="small", variant="outlined", color='white', :disabled='strategy.key === `local`', @click='deleteStrategy()')
               v-icon(start) mdi-close
               span {{$t('common:actions.delete')}}
-          div.v-card-info(color='blue')
+          div.v-card-info(color='info')
             div
               span {{strategy.strategy.description}}
               .text-body-small: a(:href='strategy.strategy.website') {{strategy.strategy.website}}

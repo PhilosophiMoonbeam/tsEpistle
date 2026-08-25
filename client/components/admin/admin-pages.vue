@@ -5,8 +5,8 @@
         .admin-header
           img.animated.fadeInUp(src='/_assets/svg/icon-file.svg', alt='Page', style='width: 80px;')
           .admin-header-title
-            .text-headline-medium.text-blue-darken-2.animated.fadeInLeft Pages
-            .text-body-large.text-grey.animated.fadeInLeft.wait-p2s Manage pages
+            .text-headline-medium.text-primary.animated.fadeInLeft Pages
+            .text-body-large.text-medium-emphasis.animated.fadeInLeft.wait-p2s Manage pages
           v-spacer
           v-btn.animated.fadeInDown.wait-p1s(icon, color='grey', variant="outlined", @click='refresh', aria-label='Refresh pages')
             v-icon.text-grey mdi-refresh

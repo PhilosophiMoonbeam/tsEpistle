@@ -8,7 +8,7 @@ import boot from './modules/boot.ts'
 import localization from './modules/localization.ts'
 import { pinia, wikiStore } from './store/index.ts'
 import { router } from './router'
-import { createWikiThemes, resolveThemeName } from './helpers/theme.ts'
+import { createWikiThemes, resolveThemeName, WIKI_THEME_VARIATIONS } from './helpers/theme.ts'
 import { normalizeThemeColors } from '../shared/theme-colors.ts'
 
 const asyncComponent = (name: string, loader: AsyncComponentLoader) => [name, defineAsyncComponent(loader)] as const
@@ -48,6 +48,7 @@ const vuetify = createVuetify({
   locale: { rtl: { [siteConfig.lang]: siteConfig.rtl }, locale: siteConfig.lang },
   theme: {
     defaultTheme: resolveThemeName(wikiStore.user.appearance, siteConfig.darkMode),
+    variations: WIKI_THEME_VARIATIONS,
     themes: createWikiThemes(normalizeThemeColors(siteConfig.themeColors)),
     transition: { duration: '180ms' }
   }

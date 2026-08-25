@@ -1,9 +1,9 @@
 <template lang="pug">
   div
-    .pa-3.d-flex(v-if='navMode === `MIXED`', :class='$vuetify.theme.current.dark ? `bg-grey-darken-4` : `bg-blue-darken-3`')
+    .pa-3.d-flex.bg-primary-darken-1(v-if='navMode === `MIXED`')
       v-btn(
         variant="flat"
-        :color='$vuetify.theme.current.dark ? `grey-darken-4` : `blue-darken-2`'
+        color='primary'
         style='min-width:0;'
         @click='goHome'
         :aria-label='$t(`common:header.home`)'
@@ -12,7 +12,7 @@
       v-btn.ml-3(
         v-if='currentMode === `custom`'
         variant="flat"
-        :color='$vuetify.theme.current.dark ? `grey-darken-4` : `blue-darken-2`'
+        color='primary'
         style='flex: 1 1 100%;'
         @click='switchMode(`browse`)'
         )
@@ -21,7 +21,7 @@
       v-btn.ml-3(
         v-else-if='currentMode === `browse`'
         variant="flat"
-        :color='$vuetify.theme.current.dark ? `grey-darken-4` : `blue-darken-2`'
+        color='primary'
         style='flex: 1 1 100%;'
         @click='switchMode(`custom`)'
         )

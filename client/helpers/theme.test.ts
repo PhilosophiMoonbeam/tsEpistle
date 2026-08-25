@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'vitest'
 import type { ThemeInstance } from 'vuetify'
 import { cloneThemeColors, DEFAULT_THEME_COLORS } from '../../shared/theme-colors.ts'
-import { applyWikiThemeColors, createWikiThemes, resolveThemeName } from './theme.ts'
+import { applyWikiThemeColors, createWikiThemes, resolveThemeName, WIKI_THEME_VARIATIONS } from './theme.ts'
 
 describe('frontend theme helpers', () => {
   test('resolves user appearance before the site default', () => {
@@ -19,6 +19,14 @@ describe('frontend theme helpers', () => {
     expect(createWikiThemes(colors)).toMatchObject({
       light: { dark: false, colors: { primary: DEFAULT_THEME_COLORS.light.primary } },
       dark: { dark: true, colors: { primary: '#ABCDEF' } }
+    })
+  })
+
+  test('derives palette variations for every configurable semantic color', () => {
+    expect(WIKI_THEME_VARIATIONS).toEqual({
+      colors: ['primary', 'secondary', 'accent', 'info', 'success', 'warning', 'error'],
+      lighten: 1,
+      darken: 1
     })
   })
 

@@ -8,6 +8,12 @@ export const resolveThemeName = (appearance: string, siteDarkMode: boolean): Wik
   return siteDarkMode ? 'dark' : 'light'
 }
 
+export const WIKI_THEME_VARIATIONS = {
+  colors: ['primary', 'secondary', 'accent', 'info', 'success', 'warning', 'error'],
+  lighten: 1,
+  darken: 1
+}
+
 export const createWikiThemes = (colors: ThemeColors): Record<'light' | 'dark', ThemeDefinition> => ({
   light: {
     dark: false,

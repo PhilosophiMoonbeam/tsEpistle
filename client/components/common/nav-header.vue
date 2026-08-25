@@ -1,13 +1,13 @@
 <template lang='pug'>
   v-app-bar.nav-header(color='black', flat, :extended='searchIsShown && searchMode !== `ask` && $vuetify.display.smAndDown')
     template(v-slot:extension v-if='searchIsShown && searchMode !== `ask` && $vuetify.display.smAndDown')
-      v-toolbar(color='deep-purple', flat)
+      v-toolbar(color='primary-darken-1', flat)
         v-text-field(
           ref='searchFieldMobile'
           v-model='search'
           clearable
-          bg-color='deep-purple'
-          color='white'
+          bg-color='primary-darken-1'
+          color='primary'
           :label='searchInputLabel'
           single-line
           variant="solo"
@@ -65,7 +65,7 @@
         v-toolbar.nav-header-inner.pr-4(color='black', flat)
           v-spacer
           .navHeaderLoading.mr-3
-            v-progress-circular(indeterminate, color='blue', :size='22', :width='2' v-show='isLoading', aria-label='Page loading')
+            v-progress-circular(indeterminate, color='primary', :size='22', :width='2' v-show='isLoading', aria-label='Page loading')
 
           slot(name='actions')
 
@@ -99,7 +99,7 @@
               v-list(nav)
                 template(v-for='lc of locales', :key='lc.code')
                   v-list-item(@click='changeLocale(lc)')
-                    template(v-slot:append): v-chip(:color='lc.code === locale ? `blue` : `grey`', size="small", label) {{lc.code.toUpperCase()}}
+                    template(v-slot:append): v-chip(:color='lc.code === locale ? `primary` : `grey`', size="small", label) {{lc.code.toUpperCase()}}
                     v-list-item-title {{lc.name}}
             v-divider(vertical)
 
@@ -124,35 +124,35 @@
                 .text-label-small.pa-4.text-grey {{$t('common:header.currentPage')}}
                 v-list-item.pl-4(@click='pageView', v-if='mode !== `view`')
                   template(v-slot:prepend)
-                    v-avatar(size='24', rounded='0'): v-icon(color='indigo') mdi-file-document-outline
+                    v-avatar(size='24', rounded='0'): v-icon(color='primary') mdi-file-document-outline
                   v-list-item-title.text-body-medium {{$t('common:header.view')}}
                 v-list-item.pl-4(@click='pageEdit', v-if='mode !== `edit` && hasWritePagesPermission')
                   template(v-slot:prepend)
-                    v-avatar(size='24', rounded='0'): v-icon(color='indigo') mdi-file-document-edit-outline
+                    v-avatar(size='24', rounded='0'): v-icon(color='primary') mdi-file-document-edit-outline
                   v-list-item-title.text-body-medium {{$t('common:header.edit')}}
                 v-list-item.pl-4(@click='pageHistory', v-if='mode !== `history` && hasReadHistoryPermission')
                   template(v-slot:prepend)
-                    v-avatar(size='24', rounded='0'): v-icon(color='indigo') mdi-history
+                    v-avatar(size='24', rounded='0'): v-icon(color='primary') mdi-history
                   v-list-item-title.text-body-medium {{$t('common:header.history')}}
                 v-list-item.pl-4(@click='pageSource', v-if='mode !== `source` && hasReadSourcePermission')
                   template(v-slot:prepend)
-                    v-avatar(size='24', rounded='0'): v-icon(color='indigo') mdi-code-tags
+                    v-avatar(size='24', rounded='0'): v-icon(color='primary') mdi-code-tags
                   v-list-item-title.text-body-medium {{$t('common:header.viewSource')}}
                 v-list-item.pl-4(@click='pageConvert', v-if='hasWritePagesPermission')
                   template(v-slot:prepend)
-                    v-avatar(size='24', rounded='0'): v-icon(color='indigo') mdi-lightning-bolt
+                    v-avatar(size='24', rounded='0'): v-icon(color='primary') mdi-lightning-bolt
                   v-list-item-title.text-body-medium {{$t('common:header.convert')}}
                 v-list-item.pl-4(@click='pageDuplicate', v-if='hasWritePagesPermission')
                   template(v-slot:prepend)
-                    v-avatar(size='24', rounded='0'): v-icon(color='indigo') mdi-content-duplicate
+                    v-avatar(size='24', rounded='0'): v-icon(color='primary') mdi-content-duplicate
                   v-list-item-title.text-body-medium {{$t('common:header.duplicate')}}
                 v-list-item.pl-4(@click='pageMove', v-if='hasManagePagesPermission')
                   template(v-slot:prepend)
-                    v-avatar(size='24', rounded='0'): v-icon(color='indigo') mdi-content-save-move-outline
+                    v-avatar(size='24', rounded='0'): v-icon(color='primary') mdi-content-save-move-outline
                   v-list-item-title.text-body-medium {{$t('common:header.move')}}
                 v-list-item.pl-4(@click='pageDelete', v-if='hasDeletePagesPermission')
                   template(v-slot:prepend)
-                    v-avatar(size='24', rounded='0'): v-icon(color="red-darken-2") mdi-trash-can-outline
+                    v-avatar(size='24', rounded='0'): v-icon(color='error') mdi-trash-can-outline
                   v-list-item-title.text-body-medium {{$t('common:header.delete')}}
             v-divider(vertical)
 
@@ -201,18 +201,18 @@
               v-list-item.py-3(:class='$vuetify.theme.current.dark ? `bg-grey-darken-4` : `bg-grey-lighten-5`')
                 template(v-slot:prepend)
                   v-avatar
-                    v-avatar.bg-blue(v-if='picture.kind === `initials`', :size='40')
-                      span.text-white.text-body-large {{picture.initials}}
+                    v-avatar.bg-primary(v-if='picture.kind === `initials`', :size='40')
+                      span.text-on-primary.text-body-large {{picture.initials}}
                     v-avatar(v-else-if='picture.kind === `image`', :size='40')
                       v-img(:src='picture.url')
                 v-list-item-title {{name}}
                 v-list-item-subtitle {{email}}
               v-list-item(href='/p')
-                template(v-slot:append): v-icon(color='blue-grey') mdi-face-profile
-                v-list-item-title(:class='$vuetify.theme.current.dark ? `text-blue-grey-lighten-3` : `text-blue-grey`') {{$t('common:header.profile')}}
+                template(v-slot:append): v-icon(color='secondary') mdi-face-profile
+                v-list-item-title.text-secondary {{$t('common:header.profile')}}
               v-list-item(@click='logout')
-                template(v-slot:append): v-icon(color='red') mdi-logout
-                v-list-item-title.text-red {{$t('common:header.logout')}}
+                template(v-slot:append): v-icon(color='error') mdi-logout
+                v-list-item-title.text-error {{$t('common:header.logout')}}
 
           v-tooltip(v-else, location="left")
             template(v-slot:activator='{ props }')

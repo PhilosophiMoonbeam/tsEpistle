@@ -3,7 +3,7 @@
     nav-header(v-if='!printView')
     v-navigation-drawer(
       v-if='navMode !== `NONE` && !printView'
-      :class='$vuetify.theme.current.dark ? `bg-grey-darken-4` : `bg-primary`'
+      class='bg-primary'
       mobile-breakpoint='1280'
       :temporary='$vuetify.display.width < 1280'
       v-model='navShown'
@@ -11,7 +11,7 @@
       )
       vue-scroll(:ops='scrollStyle')
         nav-sidebar(
-          :color='$vuetify.theme.current.dark ? `bg-grey-darken-4` : `bg-primary`'
+          color='bg-primary'
           :items='sidebarDecoded'
           :nav-mode='navMode'
           :expand-parent-by-default='navExpandParent'
@@ -33,7 +33,7 @@
 
     v-main(ref='content')
       template(v-if='path !== `home`')
-        v-toolbar(:color='$vuetify.theme.current.dark ? `grey-darken-4` : `grey-lighten-3`', flat, density="compact", v-if='$vuetify.display.smAndUp')
+        v-toolbar(color='surface', flat, density="compact", v-if='$vuetify.display.smAndUp')
           //- v-btn.pl-0(v-if='$vuetify.display.xsOnly', variant='flat', @click='toggleNavigation')
           //-   v-icon(color='grey-darken-2', start) menu
           //-   span Navigation
@@ -46,10 +46,10 @@
               v-btn.ma-0(v-else, :href='props.item.path', size="small", variant="text") {{props.item.name}}
           template(v-if='!isPublished')
             v-spacer
-            .text-body-small.text-red {{$t('common:page.unpublished')}}
+            .text-body-small.text-warning {{$t('common:page.unpublished')}}
             status-indicator.ml-3(negative, pulse)
         v-divider
-      v-container.pa-0(fluid, :class='$vuetify.theme.current.dark ? `bg-grey-darken-4` : `bg-grey-lighten-4`')
+      v-container.pa-0.bg-background(fluid)
         v-row.page-header-section.align-content-center(no-gutters, style='height: 90px;')
           v-col.page-col-content.is-page-header(
             :offset-xl='tocPosition === `left` ? 2 : 0'
@@ -61,9 +61,9 @@
             )
             .page-header-headings
               .d-flex.align-center
-                .text-headline-medium(:class='$vuetify.theme.current.dark ? `text-grey-lighten-2` : `text-grey-darken-3`') {{title}}
-                v-chip.ml-3(v-if="visibility === 'private'", size="small", color='deep-orange') Private
-              .text-body-small.text-grey-darken-1 {{description}}
+                .text-headline-medium {{title}}
+                v-chip.ml-3(v-if="visibility === 'private'", size="small", color='warning', variant='tonal') Private
+              .text-body-small.text-medium-emphasis {{description}}
             .page-edit-shortcuts(
               v-if='editShortcutsObj.editMenuBar'
               :class='tocPosition === `right` ? `is-right` : ``'
@@ -95,8 +95,8 @@
             xl='2'
             )
             v-card.page-toc-card.mb-5(v-if='tocDecoded.length')
-              .text-label-small.pa-5.pb-0(:class='$vuetify.theme.current.dark ? `text-blue-lighten-2` : `text-primary`') {{$t('common:page.toc')}}
-              v-list.pb-3(density="compact", nav, :class='$vuetify.theme.current.dark ? `bg-grey-darken-3` : ``')
+              .text-label-small.pa-5.pb-0.text-primary {{$t('common:page.toc')}}
+              v-list.pb-3(density="compact", nav)
                 template(v-for='tocItem in tocDecoded', :key='tocItem.anchor')
                   v-list-item(@click='scrollToPageAnchor(tocItem.anchor)')
                     template(v-slot:prepend)
@@ -112,27 +112,29 @@
 
             v-card.page-tags-card.mb-5(v-if='tags.length > 0')
               .pa-5
-                .text-label-small.pb-2(:class='$vuetify.theme.current.dark ? `text-teal-lighten-3` : `text-teal`') {{$t('common:page.tags')}}
+                .text-label-small.pb-2.text-secondary {{$t('common:page.tags')}}
                 v-chip.mr-1.mb-1(
                   label
-                  :color='$vuetify.theme.current.dark ? `teal-darken-1` : `teal-lighten-5`'
+                  color='secondary'
+                  variant='tonal'
                   v-for='tag in tags'
                   :href='`/t/` + tag.tag'
                   :key='`tag-` + tag.tag'
                   )
-                  v-icon(:color='$vuetify.theme.current.dark ? `teal-lighten-3` : `teal`', start, size="small") mdi-tag
-                  span(:class='$vuetify.theme.current.dark ? `text-teal-lighten-5` : `text-teal-darken-2`') {{tag.title}}
+                  v-icon(start, size="small") mdi-tag
+                  span {{tag.title}}
                 v-chip.mr-1.mb-1(
                   label
-                  :color='$vuetify.theme.current.dark ? `teal-darken-1` : `teal-lighten-5`'
+                  color='secondary'
+                  variant='tonal'
                   :href='`/t/` + tags.map(t => t.tag).join(`/`)'
                   :aria-label='$t(`common:page.tagsMatching`)'
                   )
-                  v-icon(:color='$vuetify.theme.current.dark ? `teal-lighten-3` : `teal`', size='20') mdi-tag-multiple
+                  v-icon(size='20') mdi-tag-multiple
 
             v-card.page-comments-card.mb-5(v-if='commentsEnabled && commentsPerms.read')
               .pa-5
-                .text-label-small.pb-2.d-flex.align-center(:class='$vuetify.theme.current.dark ? `text-blue-grey-lighten-3` : `text-blue-grey-darken-2`')
+                .text-label-small.pb-2.d-flex.align-center.text-secondary
                   span {{$t('common:comments.sdTitle')}}
                   //- v-spacer
                   //- v-chip.text-center.text-white(
@@ -146,12 +148,12 @@
                 .d-flex
                   v-btn.text-none(
                     @click='goToComments()'
-                    :color='$vuetify.theme.current.dark ? `blue-grey` : `blue-grey-darken-2`'
+                    color='secondary'
                     variant="outlined"
                     style='flex: 1 1 100%;'
                     size="small"
                     )
-                    span(:class='$vuetify.theme.current.dark ? `text-blue-grey-lighten-1` : `text-blue-grey-darken-2`') {{$t('common:comments.viewDiscussion')}}
+                    span {{$t('common:comments.viewDiscussion')}}
                   v-tooltip(location="right", v-if='commentsPerms.write')
                     template(v-slot:activator='{ props }')
                       v-btn.ml-2(
@@ -159,15 +161,15 @@
                         v-bind='props'
                         variant="outlined"
                         size="small"
-                        :color='$vuetify.theme.current.dark ? `blue-grey` : `blue-grey-darken-2`'
+                        color='secondary'
                         :aria-label='$t(`common:comments.newComment`)'
                         )
-                        v-icon(:color='$vuetify.theme.current.dark ? `blue-grey-lighten-1` : `blue-grey-darken-2`', size="small") mdi-comment-plus
+                        v-icon(size="small") mdi-comment-plus
                     span {{$t('common:comments.newComment')}}
 
             v-card.page-author-card.mb-5
               .pa-5
-                .text-label-small.d-flex(:class='$vuetify.theme.current.dark ? `text-indigo-lighten-3` : `text-indigo`')
+                .text-label-small.d-flex.text-accent
                   span {{$t('common:page.lastEditedBy')}}
                   v-spacer
                   v-tooltip(location="right", v-if='isAuthenticated')
@@ -180,10 +182,10 @@
                         v-if='hasReadHistoryPermission'
                         :aria-label='$t(`common:header.history`)'
                         )
-                        v-icon(color='indigo', size="small") mdi-history
+                        v-icon(color='accent', size="small") mdi-history
                     span {{$t('common:header.history')}}
-                .page-author-card-name.text-body-medium(:class='$vuetify.theme.current.dark ? `text-grey` : `text-grey-darken-3`') {{ authorName }}
-                .page-author-card-date.text-body-small.text-grey-darken-1 {{ $helpers.formatMoment(updatedAt, 'calendar') }}
+                .page-author-card-name.text-body-medium {{ authorName }}
+                .page-author-card-date.text-body-small.text-medium-emphasis {{ $helpers.formatMoment(updatedAt, 'calendar') }}
 
             //- v-card.mb-5
             //-   .pa-5
@@ -199,7 +201,7 @@
             //-       .text-body-small.text-grey 5 votes
 
             v-card.page-shortcuts-card(flat)
-              v-toolbar(:color='$vuetify.theme.current.dark ? `grey-darken-4` : `grey-lighten-3`', flat, density="compact")
+              v-toolbar(color='surface', flat, density="compact")
                 v-spacer
                 //- v-tooltip(bottom)
                 //-   template(v-slot:activator='{ props }')
@@ -223,7 +225,7 @@
                         v-badge(
                           :content='pageWatchUnreadCount'
                           :model-value='pageWatchUnreadCount > 0'
-                          color='red'
+                          color='error'
                         )
                           v-btn(
                             icon
@@ -453,14 +455,14 @@
                       v-btn(
                         icon
                         size="small"
-                        color='red'
+                        color='error'
                         v-bind='props'
                         @click='pageDelete'
                         )
                         v-icon(size='20') mdi-trash-can-outline
                     span {{$t('common:header.delete')}}
               span {{$t('common:page.editPage')}}
-            v-alert.mb-5(v-if='!isPublished', color='red', variant="outlined", icon='mdi-minus-circle', density="compact")
+            v-alert.mb-5(v-if='!isPublished', color='warning', variant="outlined", icon='mdi-minus-circle', density="compact")
               .text-body-small {{$t('common:page.unpublishedWarning')}}
             site-banner(:banner='siteBanner')
             .contents(ref='container')
@@ -903,9 +905,9 @@ export default defineComponent({
         },
         bar: {
           onlyShowBarOnScroll: false,
-          background: '#42A5F5',
+          background: 'rgb(var(--v-theme-primary))',
           hoverStyle: {
-            background: '#64B5F6'
+            background: 'rgb(var(--v-theme-primary-darken-1))'
           }
         }
       },
@@ -1035,9 +1037,6 @@ export default defineComponent({
     wikiStore.page.mode = 'view'
   },
   mounted () {
-    if (this.$vuetify.theme.current.dark) {
-      this.scrollStyle.bar.background = '#424242'
-    }
     if (this.isAuthenticated) {
       void this.loadPageWatchState()
       void this.loadPageWatchNotifications()
@@ -1506,21 +1505,19 @@ export default defineComponent({
     right: 10px;
 
     .v-btn {
-      border-right: 1px solid #DDD !important;
-      border-bottom: 1px solid #DDD !important;
+      border-right: 1px solid rgba(var(--v-border-color), var(--v-border-opacity)) !important;
+      border-bottom: 1px solid rgba(var(--v-border-color), var(--v-border-opacity)) !important;
       border-radius: 0;
-      color: #777;
-      background-color: #FFF !important;
+      color: rgb(var(--v-theme-on-surface));
+      background-color: rgb(var(--v-theme-surface)) !important;
 
       @at-root .v-theme--dark & {
-        background-color: #222 !important;
-        border-right-color: #444 !important;
-        border-bottom-color: #444 !important;
-        color: #CCC;
+        border-right-color: rgba(var(--v-border-color), var(--v-border-opacity)) !important;
+        border-bottom-color: rgba(var(--v-border-color), var(--v-border-opacity)) !important;
       }
 
       .v-icon {
-        color: mc('blue', '700');
+        color: rgb(var(--v-theme-primary));
       }
 
       &:first-child {

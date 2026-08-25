@@ -17,7 +17,7 @@
               v-card.animated.fadeInUp
                 v-toolbar(color="red-darken-2", density="compact", flat)
                   v-toolbar-title.text-body-large Security
-                div.v-card-info(color='red')
+                div.v-card-info(color='error')
                   span Make sure to understand the implications before turning on / off a security feature.
                 v-card-text
                   v-switch(
@@ -118,7 +118,7 @@
               v-card.animated.fadeInUp.wait-p2s
                 v-toolbar(color='primary', density="compact", flat)
                   v-toolbar-title.text-body-large {{ $t('admin:security.uploads') }}
-                div.v-card-info(color='blue')
+                div.v-card-info(color='info')
                   span {{$t('admin:security.uploadsInfo')}}
                 v-card-text
                   v-text-field.mt-3(

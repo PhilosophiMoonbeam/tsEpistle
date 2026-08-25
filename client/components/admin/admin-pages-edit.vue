@@ -5,8 +5,8 @@
         .admin-header
           img.animated.fadeInUp(src='/_assets/svg/icon-view-details.svg', alt='Edit Page', style='width: 80px;')
           .admin-header-title
-            .text-headline-medium.text-blue-darken-2.animated.fadeInLeft Page Details
-            .text-body-large.text-grey.animated.fadeInLeft.wait-p2s
+            .text-headline-medium.text-primary.animated.fadeInLeft Page Details
+            .text-body-large.text-medium-emphasis.animated.fadeInLeft.wait-p2s
               v-chip.ml-0.mr-2(label, size="small").text-body-small ID {{page.id}}
               span /{{page.locale}}/{{page.path}}
           v-spacer

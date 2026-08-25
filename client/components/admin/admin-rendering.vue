@@ -81,7 +81,7 @@
               hide-details
               inset
               )
-          div.v-card-info(color='blue')
+          div.v-card-info(color='info')
             div
               div {{currentRenderer.description}}
               span.text-body-small: a(href='https://docs.requarks.io/en/rendering', target='_blank') Documentation

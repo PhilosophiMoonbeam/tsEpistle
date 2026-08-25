@@ -39,7 +39,7 @@
         v-card.animated.fadeInUp.wait-p2s
           v-toolbar(color='primary', density="compact", flat)
             .text-body-large {{provider.title}}
-          div.v-card-info(color='blue')
+          div.v-card-info(color='info')
             div
               div {{provider.description}}
               span.text-body-small: a(:href='provider.website') {{provider.website}}

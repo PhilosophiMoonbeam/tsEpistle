@@ -6,7 +6,7 @@
           img.animated.fadeInUp(src='/_assets/svg/icon-browse-page.svg', alt='Dashboard', style='width: 80px;')
           .admin-header-title
             .text-headline-medium.text-primary.animated.fadeInLeft {{ $t('admin:dashboard.title') }}
-            .text-body-large.text-grey.animated.fadeInLeft.wait-p2s {{ $t('admin:dashboard.subtitle') }}
+            .text-body-large.text-medium-emphasis.animated.fadeInLeft.wait-p2s {{ $t('admin:dashboard.subtitle') }}
       v-col(cols='12' md='6' lg='4' xl='3' class='d-flex')
         v-card.bg-primary.dashboard-card.animated.fadeInUp
           v-card-text
@@ -19,7 +19,7 @@
               easing='easeOutQuint'
               )
       v-col(cols='12' md='6' lg='4' xl='3' class='d-flex')
-        v-card.bg-blue-darken-3.dashboard-card.animated.fadeInUp.wait-p2s
+        v-card.bg-secondary.dashboard-card.animated.fadeInUp.wait-p2s
           v-card-text
             v-icon.dashboard-icon mdi-account
             .text-label-small {{$t('admin:dashboard.users')}}
@@ -30,7 +30,7 @@
               easing='easeOutQuint'
               )
       v-col(cols='12' md='6' lg='4' xl='3' class='d-flex')
-        v-card.bg-blue-darken-4.dashboard-card.animated.fadeInUp.wait-p4s
+        v-card.bg-accent.dashboard-card.animated.fadeInUp.wait-p4s
           v-card-text
             v-icon.dashboard-icon mdi-account-group
             .text-label-small {{$t('admin:dashboard.groups')}}
@@ -41,9 +41,9 @@
               easing='easeOutQuint'
               )
       v-col(cols='12' md='6' lg='12' xl='3' class='d-flex')
-        v-card.dashboard-card.animated.fadeInUp.wait-p6s.bg-indigo
-          v-btn(icon, absolute, location='top end', size="small", to='system', v-if='hasPermission(`manage:system`)', aria-label='System information')
-            v-icon(color='indigo', size="small") mdi-information-outline
+        v-card.dashboard-card.animated.fadeInUp.wait-p6s.bg-info
+          v-btn(icon, absolute, location='top end', size="small", color='on-info', variant='text', to='system', v-if='hasPermission(`manage:system`)', aria-label='System information')
+            v-icon(size="small") mdi-information-outline
           v-card-text
             v-icon.dashboard-icon mdi-source-fork
             .text-body-large {{ info.product.name }} {{ info.product.version }}
@@ -51,7 +51,7 @@
             .text-body-small {{ info.product.upstreamBase }}
       v-col(cols='12', xl='6')
         v-card.radius-7.animated.fadeInUp.wait-p2s
-          v-toolbar.dashboard-section-toolbar(:color='$vuetify.theme.current.dark ? `grey-darken-2` : `grey-lighten-5`', density="compact", flat)
+          v-toolbar.dashboard-section-toolbar(density="compact", flat)
             v-spacer
             .text-label-small {{$t('admin:dashboard.recentPages')}}
             v-spacer
@@ -63,11 +63,11 @@
             )
               v-list-item-title: strong {{ page.title }}
               v-list-item-subtitle
-                v-chip.mr-2(label, size="x-small", :color='$vuetify.theme.current.dark ? `grey-darken-4` : `grey-lighten-4`') {{ page.locale }}
+                v-chip.mr-2(label, size="x-small", color='secondary', variant='tonal') {{ page.locale }}
                 span /{{ page.path }}
-              .text-body-small.text-grey {{ $helpers.formatMoment(page.updatedAt, 'calendar') }}
+              .text-body-small.text-medium-emphasis {{ $helpers.formatMoment(page.updatedAt, 'calendar') }}
             v-list-item(v-if='!recentPagesLoading && recentPages.length === 0')
-              v-list-item-title.text-grey No recent pages
+              v-list-item-title.text-medium-emphasis No recent pages
           v-data-table.dashboard-data-table.pb-2(
             v-else
             :items='recentPages'
@@ -81,12 +81,12 @@
                 td
                   .text-body-medium: strong {{ props.item.title }}
                 td.admin-pages-path
-                  v-chip(label, size="small", :color='$vuetify.theme.current.dark ? `grey-darken-4` : `grey-lighten-4`') {{ props.item.locale }}
-                  span.ml-2(:class='$vuetify.theme.current.dark ? `text-grey-lighten-1` : `text-grey-darken-2`') / {{ props.item.path }}
+                  v-chip(label, size="small", color='secondary', variant='tonal') {{ props.item.locale }}
+                  span.ml-2.text-medium-emphasis / {{ props.item.path }}
                 td.text-right.text-body-small(width='250') {{ $helpers.formatMoment(props.item.updatedAt, 'calendar') }}
       v-col(cols='12', xl='6')
         v-card.radius-7.animated.fadeInUp.wait-p4s
-          v-toolbar.dashboard-section-toolbar(:color='$vuetify.theme.current.dark ? `grey-darken-2` : `grey-lighten-5`', density="compact", flat)
+          v-toolbar.dashboard-section-toolbar(density="compact", flat)
             v-spacer
             .text-label-small {{$t('admin:dashboard.lastLogins')}}
             v-spacer
@@ -99,7 +99,7 @@
               v-list-item-title: strong {{ user.name }}
               v-list-item-subtitle {{ $helpers.formatMoment(user.lastLoginAt, 'calendar') }}
             v-list-item(v-if='!lastLoginsLoading && lastLogins.length === 0')
-              v-list-item-title.text-grey No recent logins
+              v-list-item-title.text-medium-emphasis No recent logins
           v-data-table.dashboard-data-table.pb-2(
             v-else
             :items='lastLogins'
@@ -122,7 +122,7 @@
               .text-body-large {{$t('admin:contribute.title')}}
               .text-body-medium.mt-3: strong {{$t('admin:dashboard.contributeSubtitle')}}
               .text-body-medium {{$t('admin:dashboard.contributeHelp')}}
-              v-btn.mx-0.mt-4(:color='$vuetify.theme.current.dark ? `indigo-lighten-3` : `indigo`', variant="outlined", size="small", to='/contribute')
+              v-btn.mx-0.mt-4(color='primary', variant="outlined", size="small", to='/contribute')
                 .text-body-small: strong {{$t('admin:dashboard.contributeLearnMore')}}
 </template>
 
@@ -260,7 +260,7 @@ export default {
 .dashboard-card {
   display: flex;
   width: 100%;
-  border-radius: 7px;
+  border-radius: 12px;
 
   .v-card-text {
     overflow: hidden;
@@ -268,7 +268,16 @@ export default {
   }
 }
 
-.dashboard-section-toolbar .text-label-small,
+.dashboard-section-toolbar {
+  background: color-mix(in srgb, rgb(var(--v-theme-primary)) 8%, rgb(var(--v-theme-surface))) !important;
+  border-bottom: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+
+  .text-label-small {
+    color: rgb(var(--v-theme-on-surface)) !important;
+    opacity: 1;
+  }
+}
+
 .dashboard-data-table td,
 .dashboard-data-table td strong {
   color: rgb(var(--v-theme-on-surface)) !important;
@@ -281,23 +290,19 @@ export default {
 }
 
 .dashboard-contribute {
-  background-color: #FFF;
-  background-image: linear-gradient(to bottom, #FFF 0%, lighten(mc('indigo', '50'), 3%) 100%);
-  border-radius: 7px;
-
-  @at-root .v-theme--dark & {
-    background-color: mc('grey', '800');
-    background-image: linear-gradient(to bottom, mc('grey', '800') 0%, darken(mc('grey', '800'), 6%) 100%);
-  }
+  background-color: rgb(var(--v-theme-surface));
+  background-image: linear-gradient(
+    145deg,
+    rgb(var(--v-theme-surface)) 0%,
+    color-mix(in srgb, rgb(var(--v-theme-primary)) 10%, rgb(var(--v-theme-surface))) 100%
+  );
+  border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+  border-radius: 12px;
 
   .v-card-text {
     display: flex;
     align-items: center;
-    color: mc('indigo', '500') !important;
-
-    @at-root .v-theme--dark & {
-      color: mc('grey', '300') !important;
-    }
+    color: rgb(var(--v-theme-on-surface)) !important;
   }
 }
 

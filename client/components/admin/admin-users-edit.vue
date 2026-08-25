@@ -5,8 +5,8 @@
         .admin-header
           img.animated.fadeInUp(src='/_assets/svg/icon-male-user.svg', :alt='$t(`admin:users.edit`)', style='width: 80px;')
           .admin-header-title
-            .text-headline-medium.text-blue-darken-2.animated.fadeInLeft {{$t('admin:users.edit')}}
-            .text-body-large.text-grey.animated.fadeInLeft.wait-p2s {{user.name}}
+            .text-headline-medium.text-primary.animated.fadeInLeft {{$t('admin:users.edit')}}
+            .text-body-large.text-medium-emphasis.animated.fadeInLeft.wait-p2s {{user.name}}
           v-spacer
           i18next.pr-4.text-body-small.text-grey.animated.fadeInDown(path='admin:users.id', tag='div')
             strong(place='id') {{user.id}}

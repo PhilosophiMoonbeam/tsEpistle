@@ -5,8 +5,8 @@
         .admin-header
           img.animated.fadeInUp(src='/_assets/svg/icon-customer.svg', alt='Users', style='width: 80px;')
           .admin-header-title
-            .text-headline-medium.text-blue-darken-2.animated.fadeInLeft Users
-            .text-body-large.text-grey.animated.fadeInLeft.wait-p2s Manage users
+            .text-headline-medium.text-primary.animated.fadeInLeft Users
+            .text-body-large.text-medium-emphasis.animated.fadeInLeft.wait-p2s Manage users
           v-spacer
           v-btn.animated.fadeInDown.wait-p2s.mr-3(variant="outlined", color='grey', icon, @click='refresh')
             v-icon mdi-refresh

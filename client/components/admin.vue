@@ -162,11 +162,11 @@ export default defineComponent({
       },
       bar: {
         onlyShowBarOnScroll: false,
-        background: '#CCC',
+        background: 'rgba(var(--v-theme-on-surface), .28)',
         hoverStyle: {
-          background: '#999'
-        }
+          background: 'rgba(var(--v-theme-on-surface), .48)'
       }
+    }
     }
     return { adminDrawerShown, scrollStyle }
   },
@@ -196,7 +196,7 @@ export default defineComponent({
         this.info = await fetchSystemSummary(window.fetch.bind(window), 'System summary response is invalid')
       } catch (err) {
         showNotification(wikiStore, {
-          style: 'red',
+          style: 'error',
           message: getErrorMessage(err),
           icon: 'alert'
         })

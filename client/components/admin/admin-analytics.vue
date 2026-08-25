@@ -46,7 +46,7 @@
               hide-details
               inset
               )
-          div.v-card-info(color='blue')
+          div.v-card-info(color='info')
             div
               div {{provider.description}}
               span.text-body-small: a(:href='provider.website') {{provider.website}}

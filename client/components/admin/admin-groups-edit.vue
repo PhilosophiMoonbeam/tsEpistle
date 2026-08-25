@@ -5,8 +5,8 @@
         .admin-header
           img(src='/_assets/svg/icon-social-group.svg', alt='Edit Group', style='width: 80px;')
           .admin-header-title
-            .text-headline-medium.text-blue-darken-2 Edit Group
-            .text-body-large.text-grey {{group.name}}
+            .text-headline-medium.text-primary Edit Group
+            .text-body-large.text-medium-emphasis {{group.name}}
           v-spacer
           v-btn(color='grey', icon, variant="outlined", to='/groups', aria-label='Back to groups')
             v-icon mdi-arrow-left

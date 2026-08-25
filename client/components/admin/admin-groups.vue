@@ -5,8 +5,8 @@
         .admin-header
           img.animated.fadeInUp(src='/_assets/svg/icon-people.svg', alt='Groups', style='width: 80px;')
           .admin-header-title
-            .text-headline-medium.text-blue-darken-2.animated.fadeInLeft Groups
-            .text-body-large.text-grey.animated.fadeInLeft.wait-p4s Manage groups and their permissions
+            .text-headline-medium.text-primary.animated.fadeInLeft Groups
+            .text-body-large.text-medium-emphasis.animated.fadeInLeft.wait-p4s Manage groups and their permissions
           v-spacer
           v-btn.animated.fadeInDown.wait-p3s(
             icon

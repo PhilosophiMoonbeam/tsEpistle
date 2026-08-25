@@ -1,44 +1,56 @@
-@use "../base/material";
 
 .dialog-header {
-  background-color: material.mc('blue', '700');
-  background-image: radial-gradient(ellipse at top, material.mc('blue', '500'), material.mc('blue', '700')),
-                    radial-gradient(ellipse at bottom, material.mc('blue', '800'), material.mc('blue', '700'));
+  background-color: rgb(var(--v-theme-primary));
+  background-image:
+    radial-gradient(ellipse at top, rgb(var(--v-theme-primary-lighten-1)), rgb(var(--v-theme-primary))),
+    radial-gradient(ellipse at bottom, rgb(var(--v-theme-primary-darken-1)), rgb(var(--v-theme-primary)));
   height: 60px;
-  color: #FFF;
+  color: rgb(var(--v-theme-on-primary));
   display: flex;
   align-items: center;
   padding: 0 1rem;
   font-size: 1.2rem;
 
+  .v-icon {
+    color: inherit !important;
+  }
+
   &.is-red {
-    background-color: material.mc('red', '700');
-    background-image: radial-gradient(ellipse at top, material.mc('red', '500'), material.mc('red', '700')),
-                      radial-gradient(ellipse at bottom, material.mc('red', '800'), material.mc('red', '700'));
+    background-color: rgb(var(--v-theme-error));
+    background-image:
+      radial-gradient(ellipse at top, rgb(var(--v-theme-error-lighten-1)), rgb(var(--v-theme-error))),
+      radial-gradient(ellipse at bottom, rgb(var(--v-theme-error-darken-1)), rgb(var(--v-theme-error)));
+    color: rgb(var(--v-theme-on-error));
   }
 
   &.is-orange {
-    background-color: material.mc('orange', '700');
-    background-image: radial-gradient(ellipse at top, material.mc('orange', '600'), material.mc('orange', '800')),
-                      radial-gradient(ellipse at bottom, material.mc('orange', '900'), material.mc('orange', '800'));
+    background-color: rgb(var(--v-theme-warning));
+    background-image:
+      radial-gradient(ellipse at top, rgb(var(--v-theme-warning-lighten-1)), rgb(var(--v-theme-warning))),
+      radial-gradient(ellipse at bottom, rgb(var(--v-theme-warning-darken-1)), rgb(var(--v-theme-warning)));
+    color: rgb(var(--v-theme-on-warning));
   }
 
   &.is-indigo {
-    background-color: material.mc('indigo', '700');
-    background-image: radial-gradient(ellipse at top, material.mc('indigo', '500'), material.mc('indigo', '700')),
-                      radial-gradient(ellipse at bottom, material.mc('indigo', '800'), material.mc('indigo', '700'));
+    background-color: rgb(var(--v-theme-accent));
+    background-image:
+      radial-gradient(ellipse at top, rgb(var(--v-theme-accent-lighten-1)), rgb(var(--v-theme-accent))),
+      radial-gradient(ellipse at bottom, rgb(var(--v-theme-accent-darken-1)), rgb(var(--v-theme-accent)));
+    color: rgb(var(--v-theme-on-accent));
   }
 
   &.is-dark {
-    background-color: material.mc('grey', '900');
-    background-image: radial-gradient(ellipse at top, material.mc('grey', '800'), material.mc('grey', '900')),
-                      radial-gradient(ellipse at bottom, material.mc('grey', '800'), material.mc('grey', '900'));
+    background-color: rgb(var(--v-theme-surface));
+    background-image: none;
+    color: rgb(var(--v-theme-on-surface));
   }
 
   &.is-teal {
-    background-color: material.mc('teal', '700');
-    background-image: radial-gradient(ellipse at top, material.mc('teal', '500'), material.mc('teal', '700')),
-                      radial-gradient(ellipse at bottom, material.mc('teal', '800'), material.mc('teal', '700'));
+    background-color: rgb(var(--v-theme-secondary));
+    background-image:
+      radial-gradient(ellipse at top, rgb(var(--v-theme-secondary-lighten-1)), rgb(var(--v-theme-secondary))),
+      radial-gradient(ellipse at bottom, rgb(var(--v-theme-secondary-darken-1)), rgb(var(--v-theme-secondary)));
+    color: rgb(var(--v-theme-on-secondary));
   }
 }
 

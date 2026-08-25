@@ -42,7 +42,7 @@
         v-card.animated.fadeInUp.wait-p2s
           v-toolbar(color='primary', density="compact", flat)
             .text-body-large {{engine.title}}
-          div.v-card-info(color='blue')
+          div.v-card-info(color='info')
             div
               div {{engine.description}}
               span.text-body-small: a(:href='engine.website') {{engine.website}}

@@ -1,36 +1,23 @@
-@use "sass:color";
-@use "../base/material";
 
 .wiki-form {
 
   &.v-theme--light {
-    background-color: material.mc('grey', '50');
+    background-color: rgb(var(--v-theme-surface));
   }
 
   .v-text-field .v-field--variant-outlined {
-    background-color: #FFF !important;
+    background-color: rgb(var(--v-theme-surface)) !important;
     border-radius: 7px;
 
     .v-field__outline {
-      color: material.mc('grey', '300') !important;
+      color: rgb(var(--v-border-color)) !important;
+      opacity: var(--v-border-opacity);
     }
 
     &.v-field--focused .v-field__outline {
-      color: material.mc('blue', '500') !important;
-    }
-
-    @at-root .v-theme--dark & {
-      background-color: color.adjust(material.mc('grey', '900'), $lightness: 5%) !important;
-
-      .v-field__outline {
-        color: material.mc('grey', '700') !important;
-      }
+      color: rgb(var(--v-theme-primary)) !important;
+      opacity: 1;
     }
   }
 
-  @at-root .v-theme--dark & {
-    .v-icon.text-primary {
-      color: material.mc('blue', '500') !important;
-    }
-  }
 }
