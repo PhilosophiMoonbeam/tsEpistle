@@ -293,6 +293,28 @@ describe('durable agent repositories', () => {
     await expect(updateAgentSession(knex, { ownerId: 7, sessionId, expectedVersion: 1, title: 'Lost race' })).rejects.toMatchObject({ code: 'SESSION_VERSION_CHANGED', status: 409 })
   })
 
+  it('persists bounded immutable memory snapshots at session creation', async () => {
+    const snapshotSessionId = '00000000-0000-4000-8000-000000000005'
+    const memorySnapshot = '{"agent":["Use citations."],"user":["Prefers concise answers."]}'
+    await createAgentSession(knex, {
+      id: snapshotSessionId,
+      ownerId: 7,
+      retention: 'saved',
+      providerProfileId: null,
+      executionMode: 'agent',
+      memorySnapshot
+    })
+    await expect(knex('agentSessions').where({ id: snapshotSessionId }).first('memorySnapshot')).resolves.toMatchObject({ memorySnapshot })
+    await expect(createAgentSession(knex, {
+      id: '00000000-0000-4000-8000-000000000006',
+      ownerId: 7,
+      retention: 'saved',
+      providerProfileId: null,
+      executionMode: 'agent',
+      memorySnapshot: 'x'.repeat(16_385)
+    })).rejects.toMatchObject({ code: 'INVALID_AGENT_MEMORY', status: 400 })
+  })
+
   it('appends contiguous hash-verified events and makes exact IDs idempotent', async () => {
     const eventInput = { id: '00000000-0000-4000-8000-000000000010', runId, ownerId: 7, type: 'tool.started' as const, attempt: 1, data: { actionCallId: 'call-1', actionName: 'pages.get', title: 'Read page', risk: 'read' } }
     const first = await appendAgentEvent(knex, eventInput)

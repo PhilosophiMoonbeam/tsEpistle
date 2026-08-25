@@ -99,12 +99,14 @@ export interface CreateAgentSessionInput {
   readonly providerProfileId: string | null
   readonly executionMode: AgentExecutionMode
   readonly expiresAt?: Date | null
+  readonly memorySnapshot?: string
   readonly id?: string
 }
 
 export const createAgentSession = async (knex: Knex | Knex.Transaction, input: CreateAgentSessionInput): Promise<AgentSessionRecord> => {
   const retention = retentionSchema.parse(input.retention)
   const executionMode = executionModeSchema.parse(input.executionMode)
+  if (input.memorySnapshot !== undefined && Buffer.byteLength(input.memorySnapshot, 'utf8') > 16 * 1_024) throw new AgentRepositoryError('INVALID_AGENT_MEMORY', 'Memory snapshot exceeds 16 KiB', 400)
   const now = new Date()
   const row = {
     id: input.id ?? randomUUID(),
@@ -122,7 +124,7 @@ export const createAgentSession = async (knex: Knex | Knex.Transaction, input: C
     expiresAt: input.expiresAt ?? null,
     deletedAt: null
   }
-  await knex('agentSessions').insert(row)
+  await knex('agentSessions').insert(input.memorySnapshot === undefined ? row : { ...row, memorySnapshot: input.memorySnapshot })
   return sessionRecord(row)
 }
 
