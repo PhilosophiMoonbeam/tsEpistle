@@ -41,6 +41,9 @@ class PageNotFound extends Error {
 
 const setup = (overrides: Partial<{
   search: (input: Record<string, unknown>) => Promise<unknown>
+  searchTags: (input: Record<string, unknown>) => Promise<unknown>
+  listTags: (requester?: Express.User) => Promise<unknown>
+  discover: (input: Record<string, unknown>) => Promise<unknown>
   get: (input: Record<string, unknown>) => Promise<unknown>
   getByPath: (input: Record<string, unknown>) => Promise<unknown>
   listRecent: (requester?: Express.User) => Promise<unknown>
@@ -50,7 +53,10 @@ const setup = (overrides: Partial<{
   listRelated: (input: Record<string, unknown>) => Promise<unknown>
 }> = {}) => {
   const operations = {
-    search: vi.fn(async () => ({ results: [], totalHits: 0 })),
+    search: vi.fn(async () => ({ results: [], suggestions: [], totalHits: 0, windowLimit: 150, windowTruncated: false })),
+    searchTags: vi.fn(async () => []),
+    listTags: vi.fn(async () => []),
+    discover: vi.fn(async () => ({ pages: [], totalInWindow: 0, windowLimit: 5_000, nextOffset: null })),
     get: vi.fn(async () => page()),
     getByPath: vi.fn(async () => page()),
     listRecent: vi.fn(async () => []),
@@ -82,7 +88,10 @@ describe('permission-safe page read actions', () => {
           { path: 'private/notes', locale: 'en', visibility: 'private' },
           { path: 'deleted', locale: 'en', visibility: 'public' }
         ],
-        totalHits: 3
+        suggestions: ['notes'],
+        totalHits: 3,
+        windowLimit: 150,
+        windowTruncated: true
       })),
       getByPath: async input => {
         if (input.path === 'deleted') throw new PageNotFound()
@@ -91,15 +100,72 @@ describe('permission-safe page read actions', () => {
           : page()
       }
     })
-    await expect(execute('pages.search', { query: 'notes', limit: 3, offset: 0 })).resolves.toEqual({
+    await expect(execute('pages.search', { query: 'notes', path: 'docs', limit: 3, offset: 0 })).resolves.toEqual({
       results: [
         { id: 42, locale: 'en', path: 'docs/start', title: 'Start', description: '', contentType: 'markdown', sourceRevision: '8', citation: { evidenceId: 'page:42', label: 'Start', href: '/en/docs/start' }, tags: ['runbook'], score: 12.5, matchedFields: ['tag', 'graph'] },
         { id: 43, locale: 'en', path: 'private/notes', title: 'Start', description: '', contentType: 'markdown', sourceRevision: '2', citation: { evidenceId: 'page:43', label: 'Start', href: '/_private/en/private/notes' }, tags: [], score: 0, matchedFields: [] }
       ],
-      total: 3,
-      truncated: true
+      suggestions: ['notes'],
+      totalInWindow: 3,
+      windowLimit: 150,
+      windowTruncated: true,
+      nextOffset: null
     })
-    expect(operations.search).toHaveBeenCalledWith(expect.objectContaining({ requester: principal, limit: 3 }))
+    expect(operations.search).toHaveBeenCalledWith(expect.objectContaining({ requester: principal, path: 'docs', limit: 3 }))
+  })
+
+  it('searches and pages the visible tag taxonomy', async () => {
+    const { execute, operations } = setup({
+      searchTags: vi.fn(async () => ['runbook', 'release']),
+      listTags: vi.fn(async () => [
+        { tag: 'Runbook', title: 'Operational runbooks' },
+        { tag: 'Release', title: null }
+      ])
+    })
+    await expect(execute('pages.searchTags', { query: 'run', limit: 1 })).resolves.toEqual({ tags: ['runbook'] })
+    await expect(execute('pages.listTags', { limit: 1, offset: 0 })).resolves.toEqual({
+      tags: [{ tag: 'Release', title: null }],
+      nextOffset: 1
+    })
+    expect(operations.searchTags).toHaveBeenCalledWith({ query: 'run', limit: 1, requester: principal })
+    expect(operations.listTags).toHaveBeenCalledWith(principal)
+  })
+
+  it('hydrates structured path and tag discovery results', async () => {
+    const { execute, operations } = setup({
+      discover: vi.fn(async () => ({
+        pages: [{
+          id: 42,
+          locale: 'en',
+          path: 'docs/start',
+          title: 'Start',
+          description: null,
+          updatedAt: new Date('2026-08-17T00:00:00.000Z'),
+          tags: ['Runbook']
+        }],
+        totalInWindow: 1,
+        windowLimit: 5_000,
+        nextOffset: null
+      }))
+    })
+    await expect(execute('pages.discover', { locale: 'en', path: 'docs', tags: ['runbook'], limit: 10, offset: 0 })).resolves.toEqual({
+      pages: [{
+        id: 42,
+        locale: 'en',
+        path: 'docs/start',
+        title: 'Start',
+        description: '',
+        contentType: 'markdown',
+        sourceRevision: '8',
+        citation: { evidenceId: 'page:42', label: 'Start', href: '/en/docs/start' },
+        tags: ['runbook'],
+        updatedAt: '2026-08-17T00:00:00.000Z'
+      }],
+      totalInWindow: 1,
+      windowLimit: 5_000,
+      nextOffset: null
+    })
+    expect(operations.discover).toHaveBeenCalledWith(expect.objectContaining({ locale: 'en', path: 'docs', depth: 1, order: 'path', requester: principal }))
   })
 
   it('exposes canonical rendered heading anchors as precise citation destinations', async () => {
@@ -148,7 +214,10 @@ describe('permission-safe page read actions', () => {
     const kernel = new ActionKernel()
     registerPageReadActions(kernel, {
       operations: {
-        search: async () => ({ results: [], totalHits: 0 }),
+        search: async () => ({ results: [], suggestions: [], totalHits: 0, windowLimit: 100, windowTruncated: false }),
+        searchTags: async () => [],
+        listTags: async () => [],
+        discover: async () => ({ pages: [], totalInWindow: 0, windowLimit: 5_000, nextOffset: null }),
         get,
         getByPath: async () => { throw denied },
         listRecent: async () => [],
@@ -243,23 +312,29 @@ describe('permission-safe page read actions', () => {
     })
   })
 
-  it('returns paginated cited graph neighbors with traversal evidence', async () => {
+  it('continues cited graph traversal with a principal-bound opaque cursor', async () => {
     const { execute, operations } = setup({
-      listRelated: vi.fn(async () => ({
-        pages: [page({
-          id: 43,
-          path: 'docs/next',
-          title: 'Next',
-          tags: [{ tag: 'Runbook' }],
-          distance: 2,
-          direction: 'incoming',
-          viaPageId: 41
-        })],
-        truncated: true,
-        nextOffset: 1
-      }))
+      listRelated: vi.fn(async input => Number(input.offset) === 0
+        ? {
+            pages: [page({
+              id: 43,
+              path: 'docs/next',
+              title: 'Next',
+              tags: [{ tag: 'Runbook' }],
+              distance: 2,
+              direction: 'incoming',
+              viaPageId: 41
+            })],
+            truncated: true,
+            nextOffset: 1
+          }
+        : { pages: [], truncated: false, nextOffset: null })
     })
-    await expect(execute('pages.related', { pageId: 42, limit: 1, offset: 0 })).resolves.toEqual({
+    const first = await execute('pages.related', { pageId: 42, limit: 1, cursor: null }) as {
+      pages: Array<Record<string, unknown>>
+      nextCursor: string | null
+    }
+    expect(first).toEqual({
       pages: [{
         id: 43,
         locale: 'en',
@@ -274,9 +349,14 @@ describe('permission-safe page read actions', () => {
         direction: 'incoming',
         viaPageId: 41
       }],
-      truncated: true,
-      nextOffset: 1
+      nextCursor: expect.any(String)
     })
-    expect(operations.listRelated).toHaveBeenCalledWith(expect.objectContaining({ pageId: 42, limit: 1, offset: 0, requester: principal }))
+    await expect(execute('pages.related', { pageId: 42, limit: 1, cursor: first.nextCursor })).resolves.toEqual({
+      pages: [],
+      nextCursor: null
+    })
+    await expect(execute('pages.related', { pageId: 42, limit: 1, cursor: `${first.nextCursor}x` })).rejects.toMatchObject({ code: 'INVALID_RELATED_CURSOR' })
+    expect(operations.listRelated).toHaveBeenNthCalledWith(1, expect.objectContaining({ pageId: 42, limit: 1, offset: 0, requester: principal }))
+    expect(operations.listRelated).toHaveBeenNthCalledWith(2, expect.objectContaining({ pageId: 42, limit: 1, offset: 1, requester: principal }))
   })
 })

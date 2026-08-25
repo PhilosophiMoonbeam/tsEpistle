@@ -55,6 +55,11 @@ const SearchPageSummary = PageSummary.extend({
   score: z.number().finite().nonnegative(),
   matchedFields: z.array(z.enum(['title', 'tag', 'path', 'description', 'content', 'graph'])).max(6)
 })
+const DiscoveryPageSummary = PageSummary.extend({
+  tags: z.array(z.string().min(1).max(255)).max(50),
+  updatedAt: z.string().max(32)
+})
+const TagSummary = strict({ tag: z.string().min(1).max(255), title: BoundedTitle.nullable() })
 const RelatedPageSummary = PageSummary.extend({
   tags: z.array(z.string().min(1).max(255)).max(50),
   distance: z.number().int().positive().max(32),
@@ -109,9 +114,47 @@ const proposalFlags = ['agents.enabled', 'agents.proposals.enabled', 'agents.wri
 
 export const ACTION_CATALOG = {
   'pages.search': {
-    descriptor: descriptor('pages.search', 'Search pages', 'Rank visible pages using titles, tags, paths, descriptions, content, and the Wiki link graph. Results include match evidence; read promising pages with pages.get before answering.', 'read', ['read:pages'], both, readAnnotations),
-    input: strict({ query: z.string().min(1).max(1000), locale: Locale.optional(), limit: z.number().int().min(1).max(20).default(10), offset: z.number().int().min(0).max(200).default(0) }),
-    output: strict({ results: z.array(SearchPageSummary).max(20), total: z.number().int().nonnegative(), truncated: z.boolean() }),
+    descriptor: descriptor('pages.search', 'Search pages', 'Rank visible pages using titles, tags, paths, descriptions, content, and the Wiki link graph. Natural-language queries are supported; the PostgreSQL backend also supports quoted phrases and -negation. Use path to restrict retrieval to one page or its descendants. Results include match evidence and spelling suggestions; read promising pages with pages.get before answering.', 'read', ['read:pages'], both, readAnnotations),
+    input: strict({ query: z.string().min(1).max(1000), locale: Locale.optional(), path: Path.optional(), limit: z.number().int().min(1).max(20).default(10), offset: z.number().int().min(0).max(500).default(0) }),
+    output: strict({
+      results: z.array(SearchPageSummary).max(20),
+      suggestions: z.array(z.string().min(1).max(1_000)).max(20),
+      totalInWindow: z.number().int().nonnegative(),
+      windowLimit: z.number().int().positive(),
+      windowTruncated: z.boolean(),
+      nextOffset: z.number().int().nonnegative().nullable()
+    }),
+    requiredFlags: baseFlags
+  },
+  'pages.searchTags': {
+    descriptor: descriptor('pages.searchTags', 'Search tags', 'Find visible Wiki tags by partial name before using a precise tag in page discovery or authoring.', 'read', ['read:pages'], both, readAnnotations),
+    input: strict({ query: z.string().min(1).max(255), limit: z.number().int().min(1).max(20).default(5) }),
+    output: strict({ tags: z.array(z.string().min(1).max(255)).max(20) }),
+    requiredFlags: baseFlags
+  },
+  'pages.listTags': {
+    descriptor: descriptor('pages.listTags', 'List tags', 'Page through the visible Wiki tag taxonomy in stable name order.', 'read', ['read:pages'], both, readAnnotations),
+    input: strict({ limit: z.number().int().min(1).max(100).default(50), offset: z.number().int().min(0).max(5_000).default(0) }),
+    output: strict({ tags: z.array(TagSummary).max(100), nextOffset: z.number().int().nonnegative().nullable() }),
+    requiredFlags: baseFlags
+  },
+  'pages.discover': {
+    descriptor: descriptor('pages.discover', 'Discover pages', 'Browse visible pages structurally by locale, descendant path depth, exact tags, and stable path, title, or update order. Narrow the path if the bounded discovery window is too broad, then read promising pages with pages.get.', 'read', ['read:pages'], both, readAnnotations),
+    input: strict({
+      locale: Locale,
+      path: z.string().max(1_024).default(''),
+      depth: z.number().int().min(0).max(5).default(1).describe('Additional nested levels below direct children; 0 returns direct children only.'),
+      tags: z.array(z.string().min(1).max(255)).max(20).default([]),
+      order: z.enum(['path', 'title', 'updated']).default('path'),
+      limit: z.number().int().min(1).max(100).default(50),
+      offset: z.number().int().min(0).max(5_000).default(0)
+    }),
+    output: strict({
+      pages: z.array(DiscoveryPageSummary).max(100),
+      totalInWindow: z.number().int().nonnegative(),
+      windowLimit: z.number().int().positive(),
+      nextOffset: z.number().int().nonnegative().nullable()
+    }),
     requiredFlags: baseFlags
   },
   'pages.get': {
@@ -149,15 +192,15 @@ export const ACTION_CATALOG = {
     requiredFlags: baseFlags
   },
   'pages.listLinks': {
-    descriptor: descriptor('pages.listLinks', 'List page links', 'List links from one visible page without fetching external targets.', 'read', ['read:pages'], both, readAnnotations),
+    descriptor: descriptor('pages.listLinks', 'List page links', 'List bounded canonical outgoing internal Wiki page links from one visible page.', 'read', ['read:pages'], both, readAnnotations),
     input: strict({ pageId: PositiveId, limit: z.number().int().min(1).max(100).default(50) }),
-    output: strict({ links: z.array(strict({ label: BoundedPathLike, target: BoundedPathLike, kind: z.enum(['page', 'external', 'asset']) })).max(100), truncated: z.boolean() }),
+    output: strict({ links: z.array(strict({ label: BoundedPathLike, target: BoundedPathLike, kind: z.literal('page') })).max(100), truncated: z.boolean() }),
     requiredFlags: baseFlags
   },
   'pages.related': {
-    descriptor: descriptor('pages.related', 'Get related pages', 'Traverse visible published pages connected by explicit internal Wiki links and backlinks. Use a search result as the seed, page through the connected graph as needed, and read promising pages with pages.get before relying on their content.', 'read', ['read:pages'], both, readAnnotations),
-    input: strict({ pageId: PositiveId, limit: z.number().int().min(1).max(100).default(20), offset: z.number().int().min(0).max(5_000).default(0), maxDepth: z.number().int().min(1).max(32).optional() }),
-    output: strict({ pages: z.array(RelatedPageSummary).max(100), truncated: z.boolean(), nextOffset: z.number().int().nonnegative().nullable() }),
+    descriptor: descriptor('pages.related', 'Get related pages', 'Traverse visible published pages connected by explicit internal Wiki links and backlinks. Start with cursor null, then pass each returned nextCursor unchanged until it is null. Read promising pages with pages.get before relying on their content.', 'read', ['read:pages'], both, readAnnotations),
+    input: strict({ pageId: PositiveId, limit: z.number().int().min(1).max(100).default(20), cursor: z.string().min(1).max(4_096).nullable().default(null), maxDepth: z.number().int().min(1).max(32).optional() }),
+    output: strict({ pages: z.array(RelatedPageSummary).max(100), nextCursor: z.string().min(1).max(4_096).nullable() }),
     requiredFlags: baseFlags
   },
   'skills.list': {

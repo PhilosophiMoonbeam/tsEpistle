@@ -26,6 +26,9 @@ export type AgentFeatureFlags = Readonly<Record<AgentFeatureFlagKey, boolean>>
 
 export const AGENT_ACTION_NAMES = [
   'pages.search',
+  'pages.searchTags',
+  'pages.listTags',
+  'pages.discover',
   'pages.get',
   'pages.readForPatch',
   'pages.listRecent',
@@ -53,6 +56,9 @@ export type AgentActionName = typeof AGENT_ACTION_NAMES[number]
 
 export const MCP_ACTION_ALIASES = {
   'pages.search': 'wiki_search_pages',
+  'pages.searchTags': 'wiki_search_tags',
+  'pages.listTags': 'wiki_list_tags',
+  'pages.discover': 'wiki_discover_pages',
   'pages.get': 'wiki_get_page',
   'pages.readForPatch': 'wiki_read_page_for_patch',
   'pages.listRecent': 'wiki_list_recent_pages',

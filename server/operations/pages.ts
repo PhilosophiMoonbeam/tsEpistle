@@ -6,8 +6,10 @@ import { listPageIndexCandidates, PAGE_INDEX_CANDIDATE_LIMIT } from '../reposito
 import errors from './errors.ts'
 
 const { ApplicationError } = errors
+const PRIVATE_SEARCH_WINDOW_LIMIT = 50
+const DEFAULT_PUBLIC_SEARCH_WINDOW_LIMIT = 100
 
-interface TagRecord extends Record<string, unknown> { id: number, tag: string }
+interface TagRecord extends Record<string, unknown> { id: number, tag: string, title?: string | null }
 interface PageRecord extends Record<string, unknown> {
   id: number
   path: string
@@ -91,7 +93,7 @@ interface SearchResult extends Record<string, unknown> {
   score?: unknown
   matchedFields?: unknown
 }
-interface SearchResponse extends Record<string, unknown> { results: SearchResult[], suggestions?: unknown[] }
+interface SearchResponse extends Record<string, unknown> { results: SearchResult[], suggestions?: unknown[], totalHits?: number }
 interface WikiPageOperations {
   Error: {
     PageNotFound: new () => Error
@@ -103,7 +105,7 @@ interface WikiPageOperations {
     PageMoveForbidden: new () => Error
   }
   auth: { checkAccess(user: Express.User | undefined, permissions: readonly string[], context: Record<string, unknown>): boolean }
-  config: { db: { type: string }, lang: { code: string } }
+  config: { db: { type: string }, lang: { code: string }, search?: { maxHits?: number } }
   data: { searchEngine?: { query(query: string, options: Record<string, unknown>): Promise<SearchResponse> } }
   models: {
     knex: Knex
@@ -268,6 +270,65 @@ const listIndex = async ({ requester, ...rawArgs }: OperationInput): Promise<Pag
   }))
 }
 
+const discover = async ({ requester, ...rawArgs }: OperationInput) => {
+  const locale = stringValue(rawArgs.locale, 'locale')
+  const path = rawArgs.path === undefined ? '' : stringValue(rawArgs.path, 'path')
+  const depth = rawArgs.depth === undefined ? 1 : nonNegativeInteger(rawArgs.depth, 'depth')
+  const limit = rawArgs.limit === undefined ? 50 : positiveInteger(rawArgs.limit, 'limit')
+  const offset = rawArgs.offset === undefined ? 0 : nonNegativeInteger(rawArgs.offset, 'offset')
+  const order = rawArgs.order === undefined ? 'path' : stringValue(rawArgs.order, 'order')
+  const tags = rawArgs.tags === undefined
+    ? []
+    : Array.isArray(rawArgs.tags) && rawArgs.tags.every(tag => typeof tag === 'string')
+      ? [...new Set(rawArgs.tags.map(tag => tag.trim().toLocaleLowerCase()).filter(Boolean))]
+      : null
+  if (depth > 5) throw new ApplicationError('depth must not exceed 5', { code: 'INVALID_INPUT', status: 400 })
+  if (limit > 100) throw new ApplicationError('limit must not exceed 100', { code: 'INVALID_INPUT', status: 400 })
+  if (offset > PAGE_INDEX_CANDIDATE_LIMIT - 1) throw new ApplicationError(`offset must not exceed ${PAGE_INDEX_CANDIDATE_LIMIT - 1}`, { code: 'INVALID_INPUT', status: 400 })
+  if (!['path', 'title', 'updated'].includes(order)) throw new ApplicationError('order must be path, title, or updated', { code: 'INVALID_INPUT', status: 400 })
+  if (tags === null || tags.length > 20) throw new ApplicationError('tags must contain at most 20 strings', { code: 'INVALID_INPUT', status: 400 })
+
+  const candidates = await listPageIndexCandidates(wiki.models.knex, {
+    locale,
+    path,
+    limit: PAGE_INDEX_CANDIDATE_LIMIT,
+    scope: query => { scopePageQuery(query, requester, { table: 'pages' }) }
+  })
+  if (candidates.length >= PAGE_INDEX_CANDIDATE_LIMIT) {
+    throw new ApplicationError('Page discovery path matches too many pages; choose a narrower path.', { code: 'PAGE_INDEX_TOO_BROAD', status: 422 })
+  }
+  const prefix = path.length > 0 ? `${path}/` : ''
+  const pages = candidates.filter(page => {
+    if (!page.path.startsWith(prefix)) return false
+    const relativePath = page.path.slice(prefix.length)
+    const pageTags = page.tags.map(tag => tag.tag.trim().toLocaleLowerCase())
+    return relativePath.length > 0 &&
+      relativePath.split('/').length <= depth + 1 &&
+      tags.every(tag => pageTags.includes(tag)) &&
+      canReadPage(requester, { ...page, tags: pageTags })
+  })
+  pages.sort((left, right) => {
+    if (order === 'title') return left.title.localeCompare(right.title) || left.path.localeCompare(right.path) || left.id - right.id
+    if (order === 'updated') return new Date(right.updatedAt).valueOf() - new Date(left.updatedAt).valueOf() || left.path.localeCompare(right.path) || left.id - right.id
+    return left.path.localeCompare(right.path) || left.id - right.id
+  })
+  const selected = pages.slice(offset, offset + limit)
+  return {
+    pages: selected.map(page => ({
+      id: page.id,
+      locale: page.localeCode,
+      path: page.path,
+      title: page.title,
+      description: page.description,
+      updatedAt: page.updatedAt instanceof Date ? page.updatedAt.toISOString() : String(page.updatedAt),
+      tags: page.tags.map(tag => tag.tag)
+    })),
+    totalInWindow: pages.length,
+    windowLimit: PAGE_INDEX_CANDIDATE_LIMIT - 1,
+    nextOffset: offset + selected.length < pages.length ? offset + selected.length : null
+  }
+}
+
 const listTags = async (requester?: Express.User) => {
   const pages = await wiki.models.pages.query()
     .column(['path', { locale: 'localeCode' }, 'visibility', 'ownerId'])
@@ -292,6 +353,9 @@ const listRecent = async (requester?: Express.User) => {
 const searchTags = async (input: OperationInput) => {
   const requester = input.requester
   const normalizedQuery = _.trim(stringValue(input.query, 'query'))
+  const limit = input.limit === undefined ? 5 : positiveInteger(input.limit, 'limit')
+  if (!normalizedQuery) throw new ApplicationError('query must not be empty', { code: 'INVALID_INPUT', status: 400 })
+  if (limit > 20) throw new ApplicationError('limit must not exceed 20', { code: 'INVALID_INPUT', status: 400 })
   const pages = await wiki.models.pages.query()
     .column(['path', { locale: 'localeCode' }, 'visibility', 'ownerId'])
     .withGraphJoined('tags')
@@ -304,7 +368,9 @@ const searchTags = async (input: OperationInput) => {
       })
     })
   return _.uniq(pages.filter(page => canReadPage(requester, page))
-    .flatMap(page => page.tags).map(tag => tag.tag)).slice(0, 5)
+    .flatMap(page => page.tags).map(tag => tag.tag))
+    .sort((left, right) => left.localeCompare(right))
+    .slice(0, limit)
 }
 
 const get = async (input: OperationInput) => {
@@ -361,7 +427,7 @@ const listRelated = async (input: OperationInput): Promise<RelatedPagesResult> =
   const offset = input.offset === undefined ? 0 : nonNegativeInteger(input.offset, 'offset')
   const maxDepth = input.maxDepth === undefined ? undefined : positiveInteger(input.maxDepth, 'maxDepth')
   if (limit > 100) throw new ApplicationError('limit must not exceed 100', { code: 'INVALID_INPUT', status: 400 })
-  if (offset > 5_000) throw new ApplicationError('offset must not exceed 5000', { code: 'INVALID_INPUT', status: 400 })
+  if (!Number.isSafeInteger(offset + limit)) throw new ApplicationError('offset and limit exceed the safe traversal range', { code: 'INVALID_INPUT', status: 400 })
   if (maxDepth !== undefined && maxDepth > 32) throw new ApplicationError('maxDepth must not exceed 32', { code: 'INVALID_INPUT', status: 400 })
 
   const source = await get({ id: pageId, ...(requester === undefined ? {} : { requester }) })
@@ -554,7 +620,9 @@ const rankedSearchResult = (result: SearchResult, query: string): SearchResult &
 const search = async (input: OperationInput) => {
   const requester = input.requester
   const query = stringValue(input.query, 'query')
-  const args = _.omit(input, ['requester', 'query'])
+  const locale = input.locale === undefined ? undefined : stringValue(input.locale, 'locale')
+  const path = input.path === undefined ? undefined : stringValue(input.path, 'path')
+  const args = { ..._.omit(input, ['requester', 'query', 'locale', 'path']), ...(locale === undefined ? {} : { locale }), ...(path === undefined ? {} : { path }) }
   const ownerId = principalId(requester)
   const privatePages = ownerId === null
     ? []
@@ -563,14 +631,24 @@ const search = async (input: OperationInput) => {
       .withGraphJoined('tags')
       .modifyGraph('tags', builder => { builder.select('tag') })
       .modify(builder => {
+        const operator = wiki.config.db.type === 'postgres' ? 'ILIKE' : 'LIKE'
+        const value = `%${query}%`
         builder.where({ visibility: 'private', ownerId })
+        if (locale !== undefined) builder.andWhere('localeCode', locale)
+        if (path !== undefined) {
+          builder.andWhere(pathScope => {
+            pathScope.where('path', path).orWhere('path', 'LIKE', `${path}/%`)
+          })
+        }
         builder.andWhere(match => {
-          const operator = wiki.config.db.type === 'postgres' ? 'ILIKE' : 'LIKE'
-          const value = `%${query}%`
-          match.where('title', operator, value).orWhere('description', operator, value).orWhere('content', operator, value)
+          match.where('title', operator, value)
+            .orWhere('description', operator, value)
+            .orWhere('content', operator, value)
+            .orWhere('path', operator, value)
+            .orWhere('tags.tag', operator, value)
         })
       })
-      .limit(50)
+      .limit(PRIVATE_SEARCH_WINDOW_LIMIT)
   const publicResponse = wiki.data.searchEngine
     ? await wiki.data.searchEngine.query(query, { query, ...args })
     : { results: [], suggestions: [], totalHits: 0 }
@@ -623,11 +701,17 @@ const search = async (input: OperationInput) => {
     ...privatePages.map(page => rankedSearchResult({ ...page, locale: page.locale ?? page.localeCode }, query)),
     ...publicResults.map(result => rankedSearchResult(result, query))
   ].sort((left, right) => right.score - left.score || String(left.title).localeCompare(String(right.title)) || String(left.path).localeCompare(String(right.path)))
+  const configuredPublicLimit = wiki.config.search?.maxHits
+  const publicWindowLimit = Number.isSafeInteger(configuredPublicLimit) && Number(configuredPublicLimit) > 0
+    ? Number(configuredPublicLimit)
+    : DEFAULT_PUBLIC_SEARCH_WINDOW_LIMIT
   return {
     ...publicResponse,
     suggestions: publicResults.length === publicResponse.results.length ? publicResponse.suggestions : [],
     results,
-    totalHits: results.length
+    totalHits: results.length,
+    windowLimit: publicWindowLimit + (ownerId === null ? 0 : PRIVATE_SEARCH_WINDOW_LIMIT),
+    windowTruncated: publicResponse.results.length >= publicWindowLimit || privatePages.length >= PRIVATE_SEARCH_WINDOW_LIMIT
   }
 }
 
@@ -823,6 +907,6 @@ const restore = async (input: OperationInput): Promise<void> => {
 
 const getPageTags = (value: unknown): RelatedTagQuery => wiki.models.pages.relatedQuery('tags').for(positiveInteger(value, 'pageId'))
 export default {
-  authorizeMutation, changeVisibility, checkConflict, convert, create, get, getByPath, getConflictLatest, getHistory, getPageTags, getTree, getVersion,
+  authorizeMutation, changeVisibility, checkConflict, convert, create, discover, get, getByPath, getConflictLatest, getHistory, getPageTags, getTree, getVersion,
   list, listIndex, listLinks, listRecent, listRelated, listTags, move, remove, removeTag, restore, search, searchTags, transferOwnership, update, updateTag
 }

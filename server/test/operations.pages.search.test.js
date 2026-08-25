@@ -54,7 +54,9 @@ describe('page search visibility', () => {
     expect(result).toEqual({
       results: [{ id: 3, locale: 'en', path: 'public-page', title: 'Public Page', description: '', visibility: 'public', tags: [], score: 1, matchedFields: ['content'] }],
       suggestions: [],
-      totalHits: 1
+      totalHits: 1,
+      windowLimit: 100,
+      windowTruncated: false
     })
     expect(whereBuilder.where).toHaveBeenCalledWith({ visibility: 'public' })
     expect(pageQuery.select).toHaveBeenCalledWith('pages.id', 'pages.localeCode', 'pages.path', 'pages.title', 'pages.description')
@@ -97,7 +99,9 @@ describe('page search visibility', () => {
     await expect(operations.search({ query: 'classified' })).resolves.toEqual({
       results: [],
       suggestions: [],
-      totalHits: 0
+      totalHits: 0,
+      windowLimit: 100,
+      windowTruncated: false
     })
   })
 
@@ -149,5 +153,69 @@ describe('page search visibility', () => {
       score: 8,
       matchedFields: ['tag', 'graph']
     })
+  })
+
+  it('matches caller-owned private pages by locale-scoped path and tag', async () => {
+    const nested = {
+      where: vi.fn().mockReturnThis(),
+      orWhere: vi.fn().mockReturnThis()
+    }
+    const whereBuilder = {
+      where: vi.fn().mockReturnThis(),
+      andWhere: vi.fn(value => {
+        if (typeof value === 'function') value(nested)
+        return whereBuilder
+      })
+    }
+    const privateQuery = {
+      column: vi.fn().mockReturnThis(),
+      withGraphJoined: vi.fn().mockReturnThis(),
+      modifyGraph: vi.fn().mockReturnThis(),
+      modify: vi.fn(callback => {
+        callback(whereBuilder)
+        return privateQuery
+      }),
+      limit: vi.fn(async () => [{
+        id: 21,
+        locale: 'en',
+        localeCode: 'en',
+        path: 'private/runbook',
+        title: 'Personal Notes',
+        description: '',
+        visibility: 'private',
+        ownerId: 7,
+        tags: [{ tag: 'runbook' }]
+      }])
+    }
+    const searchEngine = {
+      query: vi.fn().mockResolvedValue({ results: [], suggestions: [], totalHits: 0 })
+    }
+    global.WIKI = {
+      auth: { checkAccess: vi.fn().mockReturnValue(true) },
+      config: { db: { type: 'postgres' }, lang: { code: 'en' }, search: { maxHits: 100 } },
+      data: { searchEngine },
+      models: {
+        knex: vi.fn().mockResolvedValue([]),
+        pages: { query: vi.fn().mockReturnValue(privateQuery) }
+      }
+    }
+
+    const { default: operations } = await import('../operations/pages.ts')
+    const response = await operations.search({
+      requester: { id: 7 },
+      query: 'runbook',
+      locale: 'en',
+      path: 'private'
+    })
+
+    expect(response).toMatchObject({
+      results: [{ id: 21, visibility: 'private', tags: ['runbook'], matchedFields: ['tag', 'path'] }],
+      totalHits: 1,
+      windowLimit: 150,
+      windowTruncated: false
+    })
+    expect(whereBuilder.andWhere).toHaveBeenCalledWith('localeCode', 'en')
+    expect(nested.orWhere).toHaveBeenCalledWith('tags.tag', 'ILIKE', '%runbook%')
+    expect(searchEngine.query).toHaveBeenCalledWith('runbook', expect.objectContaining({ locale: 'en', path: 'private' }))
   })
 })

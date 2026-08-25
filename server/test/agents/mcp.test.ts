@@ -125,24 +125,48 @@ describe('Wiki MCP transport', () => {
   let client: Client | undefined
   let movePage: ReturnType<typeof vi.fn>
   let authorizeMutation: ReturnType<typeof vi.fn>
+  let listRelated: ReturnType<typeof vi.fn>
 
   beforeEach(async () => {
     db = createKnex({ client: 'better-sqlite3', connection: { filename: ':memory:' }, useNullAsDefault: true })
     await createProposalTables(db)
     movePage = vi.fn(async () => ({}))
     authorizeMutation = vi.fn(async () => {})
+    listRelated = vi.fn(async input => Number(input.offset) === 0
+      ? {
+          pages: [{
+            id: 43,
+            path: 'docs/next',
+            localeCode: 'en',
+            title: 'Next',
+            description: '',
+            contentType: 'markdown',
+            sourceRevision: '9',
+            updatedAt: new Date('2026-08-25T00:00:00.000Z'),
+            tags: [],
+            distance: 1,
+            direction: 'outgoing',
+            viaPageId: 42
+          }],
+          truncated: true,
+          nextOffset: 1
+        }
+      : { pages: [], truncated: false, nextOffset: null })
     const app = express()
     const mcpController = createWikiMcpController({
       knex: db,
       operations: {
         search: vi.fn(),
+        searchTags: vi.fn(),
+        listTags: vi.fn(),
+        discover: vi.fn(),
         get: vi.fn(async () => ({ id: 42, path: 'docs/start', locale: 'en', title: 'Start', description: '', content: '# Start\n', contentType: 'markdown', sourceRevision: '8' })),
         getByPath: vi.fn(async () => ({ id: 42, path: 'docs/next', locale: 'en', title: 'Start', description: '', content: '# Start\n', contentType: 'markdown', sourceRevision: '9' })),
         listRecent: vi.fn(),
         getHistory: vi.fn(),
         getVersion: vi.fn(),
         listLinks: vi.fn(),
-        listRelated: vi.fn(),
+        listRelated,
         create: vi.fn(),
         update: vi.fn(),
         move: movePage,
@@ -214,6 +238,9 @@ describe('Wiki MCP transport', () => {
     const listed = await client.listTools()
     const names = listed.tools.map(tool => tool.name)
     expect(names).toContain('wiki_search_pages')
+    expect(names).toContain('wiki_search_tags')
+    expect(names).toContain('wiki_list_tags')
+    expect(names).toContain('wiki_discover_pages')
     expect(names).toContain('wiki_get_related_pages')
     expect(names).toContain('wiki_read_skill')
     expect(names).toContain('wiki_prepare_page_patch')
@@ -233,6 +260,31 @@ describe('Wiki MCP transport', () => {
     const legacyNames = (await client.listTools()).tools.map(tool => tool.name)
     expect(legacyNames).toContain('wiki_prepare_page_patch')
     expect(legacyNames).not.toContain('wiki_apply_page_proposal')
+  })
+
+  it('continues related-page traversal across independent MCP requests', async () => {
+    const port = (server.address() as AddressInfo).port
+    const transport = new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${port}/mcp`), {
+      authProvider: { token: async () => 'test-api-token' }
+    })
+    client = new Client({ name: 'wiki-mcp-related-test', version: '1.0.0' }, {
+      capabilities: {},
+      versionNegotiation: { mode: 'auto' }
+    })
+    await client.connect(transport)
+    const first = await client.callTool({
+      name: 'wiki_get_related_pages',
+      arguments: { pageId: 42, limit: 1, cursor: null }
+    })
+    const firstResult = JSON.parse(String(Reflect.get(first.content[0] ?? {}, 'text'))) as { pages: unknown[]; nextCursor: string | null }
+    expect(firstResult).toMatchObject({ pages: [expect.objectContaining({ id: 43 })], nextCursor: expect.any(String) })
+    const second = await client.callTool({
+      name: 'wiki_get_related_pages',
+      arguments: { pageId: 42, limit: 1, cursor: firstResult.nextCursor }
+    })
+    expect(JSON.parse(String(Reflect.get(second.content[0] ?? {}, 'text')))).toEqual({ pages: [], nextCursor: null })
+    expect(listRelated).toHaveBeenNthCalledWith(1, expect.objectContaining({ offset: 0 }))
+    expect(listRelated).toHaveBeenNthCalledWith(2, expect.objectContaining({ offset: 1 }))
   })
 
   it('prepares and applies a proposal with API-key and live human authority', async () => {

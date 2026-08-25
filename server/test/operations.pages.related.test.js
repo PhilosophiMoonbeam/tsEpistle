@@ -99,6 +99,11 @@ describe('related page graph traversal', () => {
       truncated: false,
       nextOffset: null
     })
+    await expect(operations.listRelated({ pageId: 1, limit: 100, offset: 5_001, requester })).resolves.toMatchObject({
+      pages: [],
+      truncated: false,
+      nextOffset: null
+    })
     expect(checkAccess).toHaveBeenCalledWith(requester, ['read:pages'], expect.objectContaining({ path: 'hidden' }))
   })
 })

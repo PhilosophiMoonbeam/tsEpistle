@@ -54,21 +54,25 @@ The graph score is deliberately capped at `1.25`. Links can settle close lexical
 
 Locale and path filters are part of both exact and fuzzy candidate selection. Path scope means the selected path itself or descendants under `path/`; wildcard characters remain literal.
 
+Search accepts PostgreSQL web-search syntax: quote a phrase to require adjacent terms and prefix an unwanted term with `-` to exclude it. Agent and MCP callers can apply the same exact-locale and path-or-descendant filters as the UI.
+
 ## Wiki content as Agent and MCP memory
 
 Wiki pages are shared, mutable, citable external knowledge. They complement the Wiki Agent's bounded personal memory rather than replacing it. Durable preferences and stable user-specific facts belong in dedicated memory; facts that can be rediscovered from Wiki pages stay in the Wiki and are retrieved when needed.
 
 Both Agent chat and MCP expose the same grounded retrieval sequence:
 
-1. `pages.search` / `wiki_search_pages` finds lexical, tag, path, and graph-supported seeds.
-2. `pages.related` / `wiki_get_related_pages` optionally expands a seed through explicit internal Wiki links and backlinks.
-3. `pages.get` / `wiki_get_page` reads each promising page before its content is used.
-4. Answers cite the retrieved page evidence.
+1. `pages.search` / `wiki_search_pages` finds lexical, tag, path, and graph-supported seeds, including spelling suggestions.
+2. `pages.searchTags` / `wiki_search_tags` searches the existing taxonomy while `pages.listTags` / `wiki_list_tags` pages through it deterministically.
+3. `pages.discover` / `wiki_discover_pages` browses authorized page summaries by locale, descendants beneath a path, nested depth, exact tags, and stable path, title, or update order.
+4. `pages.related` / `wiki_get_related_pages` optionally expands a seed through explicit internal Wiki links and backlinks.
+5. `pages.get` / `wiki_get_page` reads each promising page before its content is used.
+6. Answers cite the retrieved page evidence.
 
 `pages.related` is deliberately separate from the latency-sensitive search reranker. It constructs an undirected adjacency graph from canonical `pageLinks`, then performs deterministic breadth-first traversal:
 
 - every directly linked page is distance one; traversal depth counts edges, not the number of neighbors;
-- pagination bounds each response while an omitted `maxDepth` allows traversal to continue until the connected component is exhausted;
+- each response contains at most 100 pages; an opaque signed `nextCursor` continues from the exact requester, seed page, and depth scope until the connected component is exhausted;
 - an optional `maxDepth` from 1 through 32 supports deliberately local exploration;
 - ordering is shortest distance, then title, path, and page ID;
 - results include distance, incoming/outgoing/bidirectional direction, and the preceding page ID;
@@ -78,6 +82,8 @@ The breadth-first walk runs over a set-based PostgreSQL edge read rather than in
 
 Internal Wiki links are durable graph edges. Rendering a created or patched page synchronously replaces its `pageLinks` records from the canonical authored content. Agent instructions and Agent/MCP proposal descriptions therefore require authors to search and read related pages before a knowledge-changing create or patch, then add canonical links and precise tags only when supported by the page content. Links remain visible, reviewable, and reproducible from page history; the Agent must not invent invisible edges merely to influence retrieval.
 
+`pages.listLinks` / `wiki_list_page_links` reports only canonical internal page links. External URLs and rendered asset references are not stored in `pageLinks` and are therefore not advertised by this contract.
+
 ## Mutation and rebuild lifecycle
 
 - Create and update events upsert the page vector and replace only that page's suggestion terms in one transaction.
@@ -86,17 +92,24 @@ Internal Wiki links are durable graph edges. Rendering a created or patched page
 - Activation detects the legacy search schema, replaces the derived tables, creates the required indexes, and performs one rebuild.
 - Rebuild truncates and repopulates both derived tables in one transaction. It uses set-based SQL rather than one insert per page.
 
-Protected pages never contribute content tokens during either incremental indexing or rebuild. Their visible title, path, description, and tags remain searchable. Private pages stay outside the shared index and are searched only inside the requester's owner scope before being merged into the same deterministic result ordering.
+Protected pages never contribute content tokens during either incremental indexing or rebuild. Their visible title, path, description, and tags remain searchable. Private pages stay outside the shared index and are searched only inside the requester's owner scope. Private retrieval applies the requested locale and path scope and matches title, description, content, path, and tags before merging results into the same deterministic ordering.
 
 ## Wiki Agent contract
 
 `pages.search` returns bounded hydrated page summaries with:
 
 - citations and canonical page identity;
-- tags;
-- numeric rank;
-- matched fields;
-- total and truncation state.
+- tags, numeric rank, and matched fields;
+- spelling `suggestions`;
+- `totalInWindow`, the number of authorized raw hits available inside the bounded search window;
+- `windowLimit` and `windowTruncated`, which distinguish an exhausted result set from one capped by the public or private retrieval window;
+- `nextOffset`, which advances through raw hits even if a page is deleted between retrieval and hydration.
+
+The shared PostgreSQL index contributes at most the configured search maximum, 100 by default. An owner-scoped private search contributes at most 50 additional hits. These are candidate-window semantics, not a whole-wiki total.
+
+`pages.searchTags` returns at most 20 normalized matching tag values. `pages.listTags` returns at most 100 stable tag records per call with `nextOffset`.
+
+`pages.discover` returns authorized summaries without requiring a keyword. It supports one locale, descendants beneath a path, up to five additional nested levels below direct children (`depth: 0` returns direct children), up to 20 exact normalized tags that must all match, and stable path, title, or update order. Each response contains at most 100 pages. Discovery considers at most 5,000 candidates and rejects broader scopes with `PAGE_INDEX_TOO_BROAD`; the caller must choose a narrower path. Its `totalInWindow`, `windowLimit`, and `nextOffset` describe that bounded set.
 
 `pages.related` returns bounded hydrated graph neighbors with:
 
@@ -104,7 +117,9 @@ Protected pages never contribute content tokens during either incremental indexi
 - shortest link distance;
 - incoming, outgoing, or bidirectional edge direction;
 - the preceding page ID on the deterministic breadth-first route;
-- continuation state for exhaustive pagination.
+- opaque signed `nextCursor` continuation state instead of a client-controlled offset.
+
+The cursor is bound to the requester, seed page, and optional `maxDepth`. Tampering or reusing it with a different traversal returns `INVALID_RELATED_CURSOR`.
 
 The action descriptions instruct the model to use search evidence to select seeds, expand explicit relationships when useful, and call `pages.get` before answering. Search and graph evidence guide selection; page content remains the citable source of truth.
 
@@ -127,9 +142,11 @@ After activating or upgrading the PostgreSQL engine:
 1. Rebuild the search index once if activation did not already replace the legacy schema.
 2. Confirm `pagesVector` has one row per published public page.
 3. Confirm the `pages_vector_tokens_idx` and `pages_vector_facets_trgm_idx` indexes are valid.
-4. Search an exact title, a tag, a content-only phrase, and a misspelling.
-5. Confirm a protected content-only term is absent while the protected page's visible metadata remains searchable.
-6. Confirm `pages.related` returns authorized direct links and backlinks, paginates a connected component, and does not traverse through a denied page.
-7. Confirm the Wiki Agent calls `pages.search`, optionally `pages.related`, then `pages.get`, and emits a page citation.
+4. Search an exact title, a tag, a content-only phrase, a quoted phrase, an excluded term, and a misspelling; confirm suggestions and window metadata.
+5. Confirm locale and path scope work for public results and the owner's private title, content, path, and tag matches.
+6. Confirm a protected content-only term is absent while the protected page's visible metadata remains searchable.
+7. Confirm tag search, tag pagination, and structured discovery return only authorized records and reject an over-broad discovery scope.
+8. Confirm `pages.related` returns authorized direct links and backlinks, continues a connected component with its opaque cursor, rejects a modified cursor, and does not traverse through a denied page.
+9. Confirm the Wiki Agent calls search or discovery, optionally `pages.related`, then `pages.get`, and emits a page citation.
 
 No embedding generation, asynchronous vector queue, or document chunk synchronization is required.

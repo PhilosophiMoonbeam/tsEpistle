@@ -1,3 +1,4 @@
+import { createHmac, timingSafeEqual } from 'node:crypto'
 import { z } from 'zod'
 
 import type { RequestAuthContext } from '../../../shared/agents/contracts.ts'
@@ -29,7 +30,25 @@ const SearchResponseSchema = z.looseObject({
     score: z.number().finite().nonnegative().default(0),
     matchedFields: z.array(SearchMatchFieldSchema).max(6).default([])
   })),
-  totalHits: z.coerce.number().int().nonnegative()
+  suggestions: z.array(z.string()).max(20),
+  totalHits: z.coerce.number().int().nonnegative(),
+  windowLimit: z.coerce.number().int().positive(),
+  windowTruncated: z.boolean()
+})
+const TagRowSchema = z.looseObject({ tag: z.string(), title: z.string().nullish() })
+const DiscoveryResponseSchema = z.strictObject({
+  pages: z.array(z.looseObject({
+    id: z.coerce.number().int().positive(),
+    locale: z.string(),
+    path: z.string(),
+    title: z.string(),
+    description: z.string().nullish(),
+    updatedAt: z.union([z.string(), z.date()]),
+    tags: z.array(z.string()).max(50)
+  })).max(100),
+  totalInWindow: z.coerce.number().int().nonnegative(),
+  windowLimit: z.coerce.number().int().positive(),
+  nextOffset: z.coerce.number().int().nonnegative().nullable()
 })
 const RecentRowSchema = z.looseObject({ id: z.coerce.number().int().positive() })
 const HistorySchema = z.looseObject({
@@ -58,6 +77,9 @@ const RelatedResponseSchema = z.strictObject({
 
 interface PageOperations {
   search(input: Record<string, unknown>): Promise<unknown>
+  searchTags(input: Record<string, unknown>): Promise<unknown>
+  listTags(requester?: Express.User): Promise<unknown>
+  discover(input: Record<string, unknown>): Promise<unknown>
   get(input: Record<string, unknown>): Promise<unknown>
   getByPath(input: Record<string, unknown>): Promise<unknown>
   listRecent(requester?: Express.User): Promise<unknown>
@@ -74,7 +96,18 @@ export interface PageReadActionDependencies {
 }
 
 type PageGetInput = { readonly id: number } | { readonly path: string; readonly locale: string }
-interface SearchInput { readonly query: string; readonly locale?: string; readonly limit: number; readonly offset: number }
+interface SearchInput { readonly query: string; readonly locale?: string; readonly path?: string; readonly limit: number; readonly offset: number }
+interface SearchTagsInput { readonly query: string; readonly limit: number }
+interface ListTagsInput { readonly limit: number; readonly offset: number }
+interface DiscoverInput {
+  readonly locale: string
+  readonly path: string
+  readonly depth: number
+  readonly tags: readonly string[]
+  readonly order: 'path' | 'title' | 'updated'
+  readonly limit: number
+  readonly offset: number
+}
 interface PatchReadInput {
   readonly pageId: number
   readonly ranges?: readonly { readonly startLine: number; readonly endLine: number }[]
@@ -84,7 +117,7 @@ interface RecentInput { readonly locale?: string; readonly limit: number }
 interface HistoryInput { readonly pageId: number; readonly limit: number }
 interface VersionInput { readonly pageId: number; readonly versionId: number }
 interface LinksInput { readonly pageId: number; readonly limit: number }
-interface RelatedInput { readonly pageId: number; readonly limit: number; readonly offset: number; readonly maxDepth?: number }
+interface RelatedInput { readonly pageId: number; readonly limit: number; readonly cursor: string | null; readonly maxDepth?: number }
 
 const operationFailure = (message: string): ActionKernelError => new ActionKernelError('INVALID_PAGE_RESULT', message, 500)
 interface CitationSection {
@@ -198,6 +231,39 @@ export const snapshotRequesterScope = (authority: ActionAuthority): string => au
   ? `request:${authority.requestId}:user:${authority.requester.userId}`
   : `request:${authority.requestId}:api-key:${authority.requester.apiKeyId}:group:${authority.requester.groupId}`
 
+const RelatedCursorPayloadSchema = z.strictObject({
+  version: z.literal(1),
+  requesterScope: z.string().min(1).max(512),
+  pageId: z.number().int().positive(),
+  maxDepth: z.number().int().min(1).max(32).nullable(),
+  offset: z.number().int().nonnegative()
+})
+type RelatedCursorPayload = z.infer<typeof RelatedCursorPayloadSchema>
+const relatedRequesterScope = (authority: ActionAuthority): string => authority.requester.kind === 'user'
+  ? `user:${authority.requester.userId}`
+  : `api-key:${authority.requester.apiKeyId}:group:${authority.requester.groupId}`
+const invalidRelatedCursor = (): never => {
+  throw new ActionKernelError('INVALID_RELATED_CURSOR', 'Related-page cursor is invalid or does not match this traversal', 400)
+}
+const relatedCursorSignature = (payload: string, secret: Uint8Array): string =>
+  createHmac('sha256', secret).update(payload).digest('base64url')
+const issueRelatedCursor = (payload: RelatedCursorPayload, secret: Uint8Array): string => {
+  const encoded = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url')
+  return `${encoded}.${relatedCursorSignature(encoded, secret)}`
+}
+const readRelatedCursor = (token: string, secret: Uint8Array): RelatedCursorPayload => {
+  const [encoded, suppliedSignature, extra] = token.split('.')
+  if (!encoded || !suppliedSignature || extra !== undefined) return invalidRelatedCursor()
+  const expected = Buffer.from(relatedCursorSignature(encoded, secret), 'base64url')
+  const supplied = Buffer.from(suppliedSignature, 'base64url')
+  if (expected.length !== supplied.length || !timingSafeEqual(expected, supplied)) return invalidRelatedCursor()
+  try {
+    return RelatedCursorPayloadSchema.parse(JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8')) as unknown)
+  } catch {
+    return invalidRelatedCursor()
+  }
+}
+
 
 const normalizedPageTags = (value: unknown): string[] => {
   if (!Array.isArray(value)) return []
@@ -218,6 +284,7 @@ export const registerPageReadActions = (kernel: ActionKernel, dependencies: Page
     const rawResponse = await operations.search({
       query: input.query,
       ...(input.locale ? { locale: input.locale } : {}),
+      ...(input.path !== undefined ? { path: input.path } : {}),
       limit: input.offset + input.limit,
       requester
     })
@@ -243,8 +310,65 @@ export const registerPageReadActions = (kernel: ActionKernel, dependencies: Page
         throw error
       }
     }))
-    const results = hydrated.filter(result => result !== null)
-    return { results, total: response.data.totalHits, truncated: response.data.totalHits > input.offset + results.length }
+    const consumedThrough = input.offset + selected.length
+    return {
+      results: hydrated.filter(result => result !== null),
+      suggestions: response.data.suggestions,
+      totalInWindow: response.data.totalHits,
+      windowLimit: response.data.windowLimit,
+      windowTruncated: response.data.windowTruncated,
+      nextOffset: consumedThrough < response.data.totalHits ? consumedThrough : null
+    }
+  })
+
+  kernel.register('pages.searchTags', async (rawInput, context) => {
+    const input = rawInput as SearchTagsInput
+    const requester = await requesterFor(dependencies.resolveRequester, context.authority)
+    const tags = z.array(z.string()).max(20).safeParse(await operations.searchTags({ query: input.query, limit: input.limit, requester }))
+    if (!tags.success) throw operationFailure('Tag search returned an invalid result')
+    return { tags: tags.data.slice(0, input.limit) }
+  })
+
+  kernel.register('pages.listTags', async (rawInput, context) => {
+    const input = rawInput as ListTagsInput
+    const requester = await requesterFor(dependencies.resolveRequester, context.authority)
+    const response = z.array(TagRowSchema).safeParse(await operations.listTags(requester))
+    if (!response.success) throw operationFailure('Tag listing returned an invalid result')
+    const unique = [...new Map(response.data.map(item => {
+      const tag = item.tag.trim()
+      return [tag.toLocaleLowerCase(), { tag, title: item.title?.trim().slice(0, 255) || null }] as const
+    }).filter((entry): entry is readonly [string, { tag: string, title: string | null }] => Boolean(entry[0]))).values()]
+      .sort((left, right) => left.tag.localeCompare(right.tag))
+    const selected = unique.slice(input.offset, input.offset + input.limit)
+    return {
+      tags: selected,
+      nextOffset: input.offset + selected.length < unique.length ? input.offset + selected.length : null
+    }
+  })
+
+  kernel.register('pages.discover', async (rawInput, context) => {
+    const input = rawInput as DiscoverInput
+    const requester = await requesterFor(dependencies.resolveRequester, context.authority)
+    const response = DiscoveryResponseSchema.safeParse(await operations.discover({ ...input, requester }))
+    if (!response.success) throw operationFailure('Page discovery returned an invalid result')
+    const hydrated = await Promise.all(response.data.pages.map(async item => {
+      try {
+        return {
+          ...parsePage(await operations.get({ id: item.id, requester }), false),
+          tags: normalizedPageTags(item.tags),
+          updatedAt: item.updatedAt instanceof Date ? item.updatedAt.toISOString() : item.updatedAt
+        }
+      } catch (error: unknown) {
+        if (pageNotFound(error)) return null
+        throw error
+      }
+    }))
+    return {
+      pages: hydrated.filter(result => result !== null),
+      totalInWindow: response.data.totalInWindow,
+      windowLimit: response.data.windowLimit,
+      nextOffset: response.data.nextOffset
+    }
   })
 
   kernel.register('pages.get', async (rawInput, context) => {
@@ -330,7 +454,7 @@ export const registerPageReadActions = (kernel: ActionKernel, dependencies: Page
     const links = (selected?.links ?? []).slice(0, input.limit).map(target => ({
       label: target,
       target,
-      kind: /^[A-Za-z][A-Za-z0-9+.-]*:/.test(target) ? 'external' as const : 'page' as const
+      kind: 'page' as const
     }))
     return { links, truncated: (selected?.links.length ?? 0) > links.length }
   })
@@ -338,14 +462,23 @@ export const registerPageReadActions = (kernel: ActionKernel, dependencies: Page
   kernel.register('pages.related', async (rawInput, context) => {
     const input = rawInput as RelatedInput
     const requester = await requesterFor(dependencies.resolveRequester, context.authority)
+    const requesterScope = relatedRequesterScope(context.authority)
+    const expectedMaxDepth = input.maxDepth ?? null
+    const cursor = input.cursor === null ? null : readRelatedCursor(input.cursor, dependencies.snapshotSigningSecret)
+    if (cursor && (
+      cursor.requesterScope !== requesterScope ||
+      cursor.pageId !== input.pageId ||
+      cursor.maxDepth !== expectedMaxDepth
+    )) return invalidRelatedCursor()
     const response = RelatedResponseSchema.safeParse(await operations.listRelated({
       pageId: input.pageId,
       limit: input.limit,
-      offset: input.offset,
+      offset: cursor?.offset ?? 0,
       ...(input.maxDepth === undefined ? {} : { maxDepth: input.maxDepth }),
       requester
     }))
     if (!response.success) throw operationFailure('Related pages operation returned an invalid result')
+    if (response.data.truncated !== (response.data.nextOffset !== null)) throw operationFailure('Related pages operation returned inconsistent continuation state')
     return {
       pages: response.data.pages.map(page => ({
         ...parsePage(page, false),
@@ -354,8 +487,15 @@ export const registerPageReadActions = (kernel: ActionKernel, dependencies: Page
         direction: page.direction,
         viaPageId: page.viaPageId
       })),
-      truncated: response.data.truncated,
-      nextOffset: response.data.nextOffset
+      nextCursor: response.data.nextOffset === null
+        ? null
+        : issueRelatedCursor({
+          version: 1,
+          requesterScope,
+          pageId: input.pageId,
+          maxDepth: expectedMaxDepth,
+          offset: response.data.nextOffset
+        }, dependencies.snapshotSigningSecret)
     }
   })
 }
