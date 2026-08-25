@@ -187,6 +187,7 @@ export interface AgentProviderProfileView {
   readonly name: string
   readonly transport: AgentProviderTransport
   readonly model: string
+  readonly utilityModel: string | null
   readonly destinationHost: string
   readonly capabilities: AgentProviderCapabilities
   readonly capabilityRevision: string

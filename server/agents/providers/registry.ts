@@ -43,6 +43,7 @@ export const AgentProviderPoliciesSchema = z.strictObject({
 export const AgentProviderSettingsInputSchema = z.strictObject({
   transportKind: TransportKindSchema,
   model: z.string(),
+  utilityModel: z.string().nullable(),
   baseUrl: z.string(),
   authMode: AuthModeSchema,
   secretReference: z.string().nullable(),
@@ -71,6 +72,7 @@ export type AgentProviderTransportKind = z.infer<typeof TransportKindSchema>
 export interface AgentProviderSettingsInput {
   readonly transportKind: AgentProviderTransportKind
   readonly model: string
+  readonly utilityModel: string | null
   readonly baseUrl: string
   readonly authMode: z.infer<typeof AuthModeSchema>
   readonly secretReference: string | null
@@ -104,6 +106,7 @@ export interface AgentProviderProfileView {
   readonly conformed: boolean
   readonly transportKind: AgentProviderTransportKind
   readonly model: string
+  readonly utilityModel: string | null
   readonly destinationHost: string
   readonly authMode: z.infer<typeof AuthModeSchema>
   readonly secretConfigured: boolean
@@ -159,6 +162,7 @@ interface VersionRow {
   version: number
   transportKind: string
   model: string
+  utilityModel: string | null
   baseUrl: string
   authMode: string
   secretReference: string | null
@@ -215,6 +219,7 @@ const ManagedSecretReference = /^managed:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[8
 const validateSettings = (input: AgentProviderSettingsInput, allowManagedReference = false) => {
   const transportKind = TransportKindSchema.parse(input.transportKind)
   const model = normalizedString(input.model, 'Provider model', 255)
+  const utilityModel = input.utilityModel === null ? null : normalizedString(input.utilityModel, 'Utility model', 255)
   const baseUrl = normalizeBaseUrl(input.baseUrl)
   const authMode = AuthModeSchema.parse(input.authMode)
   const secretReference = input.secretReference === null ? null : normalizedString(input.secretReference, 'Secret reference', 255)
@@ -234,6 +239,7 @@ const validateSettings = (input: AgentProviderSettingsInput, allowManagedReferen
   return {
     transportKind,
     model,
+    utilityModel,
     baseUrl,
     authMode,
     secretReference,
@@ -337,7 +343,7 @@ export class AgentProviderRegistry implements AgentAdmissionResolver {
       const now = new Date()
       const secretReference = value.secretValue === undefined ? value.secretReference : await this.#secrets.store(value.secretValue, input.actorId, transaction)
       await transaction('agentProviderProfiles').insert({ id: profileId, displayName, status: 'disabled', isGlobalDefault: false, exposureMode, currentVersionId: null, policyVersion: 1, conformed: false, createdBy: input.actorId, updatedBy: input.actorId, createdAt: now, updatedAt: now })
-      await transaction('agentProviderProfileVersions').insert({ id: versionId, profileId, version: 1, transportKind: value.transportKind, model: value.model, baseUrl: value.baseUrl, authMode: value.authMode, secretReference, adapterConfig: canonicalJson(value.adapterConfig), capabilities: canonicalJson(value.capabilities), capabilityRevision: value.capabilityRevision, policies: canonicalJson(value.policies), pricingRevision: value.pricingRevision, conformed: false, createdBy: input.actorId, createdAt: now })
+      await transaction('agentProviderProfileVersions').insert({ id: versionId, profileId, version: 1, transportKind: value.transportKind, model: value.model, utilityModel: value.utilityModel, baseUrl: value.baseUrl, authMode: value.authMode, secretReference, adapterConfig: canonicalJson(value.adapterConfig), capabilities: canonicalJson(value.capabilities), capabilityRevision: value.capabilityRevision, policies: canonicalJson(value.policies), pricingRevision: value.pricingRevision, conformed: false, createdBy: input.actorId, createdAt: now })
       await transaction('agentProviderProfiles').where({ id: profileId }).update({ currentVersionId: versionId })
       if (groupIds.length > 0) await transaction('agentProviderGrants').insert(groupIds.map(groupId => ({ profileId, groupId })))
     })
@@ -355,7 +361,7 @@ export class AgentProviderRegistry implements AgentAdmissionResolver {
       const reusingSecret = input.secretReference === null && input.secretValue === undefined
       const value = validateSettings(reusingSecret ? { ...input, secretReference: currentSettings.secretReference } : input, reusingSecret)
       const secretReference = value.secretValue === undefined ? value.secretReference : await this.#secrets.store(value.secretValue, input.actorId, transaction)
-      await transaction('agentProviderProfileVersions').where({ id: currentVersionId, profileId }).update({ transportKind: value.transportKind, model: value.model, baseUrl: value.baseUrl, authMode: value.authMode, secretReference, adapterConfig: canonicalJson(value.adapterConfig), capabilities: canonicalJson(value.capabilities), capabilityRevision: value.capabilityRevision, policies: canonicalJson(value.policies), pricingRevision: value.pricingRevision, conformed: false })
+      await transaction('agentProviderProfileVersions').where({ id: currentVersionId, profileId }).update({ transportKind: value.transportKind, model: value.model, utilityModel: value.utilityModel, baseUrl: value.baseUrl, authMode: value.authMode, secretReference, adapterConfig: canonicalJson(value.adapterConfig), capabilities: canonicalJson(value.capabilities), capabilityRevision: value.capabilityRevision, policies: canonicalJson(value.policies), pricingRevision: value.pricingRevision, conformed: false })
       await transaction('agentProviderProfiles').where({ id: profileId }).update({ ...(displayName === undefined ? {} : { displayName }), status: 'disabled', isGlobalDefault: false, conformed: false, policyVersion: Number(profile.policyVersion) + 1, updatedBy: input.actorId, updatedAt: new Date() })
       if (currentSettings.secretReference && currentSettings.secretReference !== secretReference) await this.#secrets.delete(currentSettings.secretReference, transaction)
     })
@@ -415,7 +421,7 @@ export class AgentProviderRegistry implements AgentAdmissionResolver {
   }
 
   async #getProfile(profileId: string): Promise<AgentProviderProfileAdminView> {
-    const row = await this.#knex<ProfileRow>('agentProviderProfiles').where('agentProviderProfiles.id', profileId).whereNull('agentProviderProfiles.deletedAt').join('agentProviderProfileVersions', 'agentProviderProfileVersions.id', 'agentProviderProfiles.currentVersionId').select('agentProviderProfiles.*', 'agentProviderProfileVersions.version', 'agentProviderProfileVersions.transportKind', 'agentProviderProfileVersions.model', 'agentProviderProfileVersions.baseUrl', 'agentProviderProfileVersions.authMode', 'agentProviderProfileVersions.secretReference', 'agentProviderProfileVersions.adapterConfig', 'agentProviderProfileVersions.capabilities', 'agentProviderProfileVersions.capabilityRevision', 'agentProviderProfileVersions.policies', 'agentProviderProfileVersions.pricingRevision').first() as (ProfileRow & VersionRow) | undefined
+    const row = await this.#knex<ProfileRow>('agentProviderProfiles').where('agentProviderProfiles.id', profileId).whereNull('agentProviderProfiles.deletedAt').join('agentProviderProfileVersions', 'agentProviderProfileVersions.id', 'agentProviderProfiles.currentVersionId').select('agentProviderProfiles.*', 'agentProviderProfileVersions.version', 'agentProviderProfileVersions.transportKind', 'agentProviderProfileVersions.model', 'agentProviderProfileVersions.utilityModel', 'agentProviderProfileVersions.baseUrl', 'agentProviderProfileVersions.authMode', 'agentProviderProfileVersions.secretReference', 'agentProviderProfileVersions.adapterConfig', 'agentProviderProfileVersions.capabilities', 'agentProviderProfileVersions.capabilityRevision', 'agentProviderProfileVersions.policies', 'agentProviderProfileVersions.pricingRevision').first() as (ProfileRow & VersionRow) | undefined
     if (!row || !row.currentVersionId) throw new AgentRepositoryError('AGENT_RESOURCE_NOT_FOUND', 'Provider profile was not found', 404)
     const groupIds = await this.#knex('agentProviderGrants').where({ profileId }).orderBy('groupId').pluck('groupId') as number[]
     return {
@@ -429,6 +435,7 @@ export class AgentProviderRegistry implements AgentAdmissionResolver {
       conformed: Boolean(row.conformed),
       transportKind: TransportKindSchema.parse(row.transportKind),
       model: row.model,
+      utilityModel: row.utilityModel,
       destinationHost: new URL(row.baseUrl).host,
       authMode: AuthModeSchema.parse(row.authMode),
       secretConfigured: row.secretReference !== null && await this.#secrets.has(row.secretReference),
@@ -454,6 +461,7 @@ export class AgentProviderRegistry implements AgentAdmissionResolver {
       conformed: profile.conformed,
       transportKind: profile.transportKind,
       model: profile.model,
+      utilityModel: profile.utilityModel,
       destinationHost: profile.destinationHost,
       authMode: profile.authMode,
       secretConfigured: profile.secretConfigured,
@@ -516,6 +524,7 @@ export class AgentProviderRegistry implements AgentAdmissionResolver {
       name: profile.displayName,
       transport: profile.transportKind,
       model: profile.model,
+      utilityModel: profile.utilityModel,
       destinationHost: profile.destinationHost,
       capabilities: profile.capabilities,
       capabilityRevision: profile.capabilityRevision,

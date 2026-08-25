@@ -46,7 +46,7 @@
               v-for="session in sessions"
               :key="session.id"
               :active="session.id === thread?.session.id"
-              :title="session.title || 'Untitled conversation'"
+              :title="session.title || 'New conversation'"
               :subtitle="formatSessionDate(session.updatedAt)"
               prepend-icon="mdi-message-text-outline"
               @click="openSession(session.id)"

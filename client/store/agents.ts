@@ -226,7 +226,10 @@ export const useAgentsStore = defineStore('agents', {
       if (this.refreshTimer !== null) window.clearTimeout(this.refreshTimer)
       this.refreshTimer = window.setTimeout(() => {
         this.refreshTimer = null
-        void this.refreshThread().catch(() => {
+        void this.refreshThread().then(() => {
+          if (terminal || !this.thread?.session.currentRun?.canCancel) return this.reloadSessions()
+          return undefined
+        }).catch(() => {
           if (this.connection !== 'closed') this.connection = 'reconnecting'
         }).finally(() => {
           if (terminal || !this.thread?.session.currentRun?.canCancel) {

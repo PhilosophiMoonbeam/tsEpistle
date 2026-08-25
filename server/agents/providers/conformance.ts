@@ -270,6 +270,13 @@ export class AgentProviderConformanceRunner {
       checks.push({ name: provider.capabilities.streaming ? 'stream-response' : 'buffered-response', passed: true })
       requireText(response)
       checks.push({ name: 'bounded-text-output', passed: true }, { name: 'declared-usage', passed: true })
+      const utilityProvider = await this.#factory.create(profileVersionId, { requireConformed: false, purpose: 'utility' })
+      if (utilityProvider.model === provider.model) {
+        checks.push({ name: 'utility-model-fallback', passed: true })
+      } else {
+        requireText(await providerChat(utilityProvider, { chatPrompt: [{ role: 'user', content: 'Reply with exactly READY.' }], model: utilityProvider.model }), 'Utility model conformance returned no text')
+        checks.push({ name: 'utility-model-text-output', passed: true })
+      }
       checks.push({ name: await verifyToolCalling(provider), passed: true })
       status = 'passed'
     } catch (error) {

@@ -55,14 +55,17 @@ describe('Agent chat refresh fallback', () => {
     const refresh = vi.spyOn(store, 'refreshThread').mockImplementation(async () => {
       if (refresh.mock.calls.length === 2 && store.thread) store.thread = { ...store.thread, session: { ...store.thread.session, currentRun: null } }
     })
+    const reloadSessions = vi.spyOn(store, 'reloadSessions').mockResolvedValue()
 
     store.scheduleRefresh(false, 1_000)
     await vi.advanceTimersByTimeAsync(1_000)
     expect(refresh).toHaveBeenCalledTimes(1)
+    expect(reloadSessions).not.toHaveBeenCalled()
     expect(store.refreshTimer).not.toBeNull()
 
     await vi.advanceTimersByTimeAsync(1_000)
     expect(refresh).toHaveBeenCalledTimes(2)
+    expect(reloadSessions).toHaveBeenCalledTimes(1)
     expect(store.refreshTimer).toBeNull()
     expect(store.connection).toBe('closed')
   })

@@ -14,6 +14,7 @@ import {
 import { AgentRepositoryError } from './repository.ts'
 import { decodeAgentMemorySnapshot, type AgentMemorySnapshot } from './memory.ts'
 import { SkillRuntime } from './skills/runtime.ts'
+import type { AgentConversationTitleGenerator, AgentConversationTitleResult } from './providers/utility.ts'
 
 const sha256 = (value: string): string => createHash('sha256').update(value).digest('hex')
 
@@ -99,12 +100,13 @@ export interface AgentProductRuntimeOptions {
   readonly perUserConcurrency: number
   readonly leaseMilliseconds?: number
   readonly heartbeatMilliseconds?: number
+  readonly utilityModel?: AgentConversationTitleGenerator
 }
 
 interface RuntimeMessageRow { role: 'user' | 'assistant'; content: string; providerStateCiphertext: Uint8Array | null }
 interface RuntimeSkillRow { id: string; name: string; skillMarkdown: string }
 interface RuntimeContextRow { data: string }
-interface RuntimeSessionRow { memorySnapshot: string }
+interface RuntimeSessionRow { memorySnapshot: string; title: string; version: number }
 
 const currentPageHint = (value: string | undefined): AgentCurrentPageHint | undefined => {
   if (value === undefined) return undefined
@@ -173,6 +175,7 @@ export class AgentProductRuntime {
   readonly #engine: AgentEngine
   readonly #coordinator: AgentRunCoordinator
   readonly #skills: SkillRuntime
+  readonly #utilityModel: AgentConversationTitleGenerator | undefined
 
   constructor (knex: Knex, resolver: AgentAdmissionResolver, engine: AgentEngine, options: AgentProductRuntimeOptions) {
     this.#knex = knex
@@ -180,6 +183,7 @@ export class AgentProductRuntime {
     this.#engine = engine
     this.#coordinator = new AgentRunCoordinator(knex, options)
     this.#skills = new SkillRuntime(knex)
+    this.#utilityModel = options.utilityModel
   }
 
   async submit (input: SubmitAgentMessageInput): Promise<{ readonly run: AgentRunRecord, readonly replayed: boolean }> {
@@ -215,6 +219,38 @@ export class AgentProductRuntime {
     })
   }
 
+  async #generateConversationTitle(claim: AgentRunClaim, session: RuntimeSessionRow, messages: readonly AgentEngineMessage[], assistantMessage: string, signal: AbortSignal): Promise<AgentConversationTitleResult> {
+    const empty = { title: '', inputTokens: 0, outputTokens: 0 }
+    const userMessage = messages.find(message => message.role === 'user')?.content
+    if (!this.#utilityModel || session.title.trim().length > 0 || !userMessage) return empty
+    let generated: AgentConversationTitleResult
+    try {
+      generated = await this.#utilityModel.generateConversationTitle({
+        profileVersionId: claim.providerProfileVersionId,
+        userMessage,
+        assistantMessage,
+        signal
+      })
+    } catch {
+      return empty
+    }
+    if (generated.title.length > 0) {
+      try {
+        await this.#knex('agentSessions')
+          .where({ id: claim.sessionId, ownerId: claim.ownerId, version: session.version, title: session.title })
+          .whereNull('deletedAt')
+          .update({
+            title: generated.title,
+            version: this.#knex.raw('?? + 1', ['version']),
+            updatedAt: new Date()
+          })
+      } catch {
+        return generated
+      }
+    }
+    return generated
+  }
+
   async #execute(claim: AgentRunClaim, signal: AbortSignal): Promise<{ status: 'succeeded' | 'failed'; errorCode?: string; errorMessage?: string }> {
     let content = ''
     let quotaReconciled = false
@@ -223,7 +259,7 @@ export class AgentProductRuntime {
         this.#knex('agentMessages').where({ sessionId: claim.sessionId }).andWhere('id', '!=', claim.assistantMessageId).orderBy('ordinal').select('role', 'content', 'providerStateCiphertext') as unknown as Promise<RuntimeMessageRow[]>,
         this.#knex('agentRunSkills').join('agentSkillVersions', 'agentSkillVersions.id', 'agentRunSkills.skillVersionId').join('agentSkills', 'agentSkills.id', 'agentSkillVersions.skillId').where('agentRunSkills.runId', claim.id).orderBy('agentRunSkills.ordinal').select('agentSkillVersions.id', 'agentSkills.name', 'agentSkillVersions.skillMarkdown') as unknown as Promise<RuntimeSkillRow[]>,
         this.#knex('agentEvents').where({ runId: claim.id, type: 'run.queued' }).orderBy('sequence').first('data') as unknown as Promise<RuntimeContextRow | undefined>,
-        this.#knex('agentSessions').where({ id: claim.sessionId, ownerId: claim.ownerId }).whereNull('deletedAt').first('memorySnapshot') as unknown as Promise<RuntimeSessionRow | undefined>
+        this.#knex('agentSessions').where({ id: claim.sessionId, ownerId: claim.ownerId }).whereNull('deletedAt').first('memorySnapshot', 'title', 'version') as unknown as Promise<RuntimeSessionRow | undefined>
       ])
       if (!sessionRow) throw new AgentRepositoryError('AGENT_RESOURCE_NOT_FOUND', 'Agent session was not found', 404)
       const currentPage = currentPageHint(contextRow?.data)
@@ -250,8 +286,9 @@ export class AgentProductRuntime {
         }
       })
       if (signal.aborted) throw signal.reason
-      const inputTokens = nonNegativeUsage(result.inputTokens, 'Input tokens')
-      const outputTokens = nonNegativeUsage(result.outputTokens, 'Output tokens')
+      const titleUsage = await this.#generateConversationTitle(claim, sessionRow, messages, content, signal)
+      const inputTokens = nonNegativeUsage(result.inputTokens + titleUsage.inputTokens, 'Input tokens')
+      const outputTokens = nonNegativeUsage(result.outputTokens + titleUsage.outputTokens, 'Output tokens')
       const costMicros = nonNegativeUsage(result.costMicros, 'Cost')
       const citations = result.citations === undefined ? null : canonicalJson(result.citations)
       const providerStateJson = result.providerState === undefined ? null : canonicalJson(result.providerState)

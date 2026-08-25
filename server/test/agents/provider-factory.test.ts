@@ -44,6 +44,7 @@ describe('Ax provider factory', () => {
       table.uuid('id').primary()
       table.string('transportKind').notNullable()
       table.string('model').notNullable()
+      table.string('utilityModel').nullable()
       table.string('baseUrl').notNullable()
       table.string('authMode').notNullable()
       table.string('secretReference').nullable()
@@ -57,6 +58,7 @@ describe('Ax provider factory', () => {
       id: '00000000-0000-4000-8000-000000000001',
       transportKind: 'openai-responses',
       model: 'gpt-test',
+      utilityModel: 'gpt-test-mini',
       baseUrl: 'https://provider.example.test/v1',
       authMode: 'bearer',
       secretReference: 'env:TEST_PROVIDER_KEY',
@@ -88,6 +90,10 @@ describe('Ax provider factory', () => {
     expect(payload.include).toContain('reasoning.encrypted_content')
     expect(payload).not.toHaveProperty('temperature')
     expect(payload).not.toHaveProperty('top_p')
+    const utilityProvider = await factory.create('00000000-0000-4000-8000-000000000001', { purpose: 'utility' })
+    expect(utilityProvider.model).toBe('gpt-test-mini')
+    await utilityProvider.service.chat({ chatPrompt: [{ role: 'user', content: 'title' }], model: utilityProvider.model }, { stream: false })
+    expect(JSON.parse(String(request?.init?.body))).toMatchObject({ model: 'gpt-test-mini', store: false })
     const continuation = provider.preserveThoughtBlock('rs_1', { data: 'encrypted-reasoning', encrypted: true })
     await provider.service.chat({
       chatPrompt: [

@@ -37,6 +37,7 @@ import { AxAgentEngine } from './agents/providers/engine.ts'
 import { AgentProductRuntime } from './agents/runtime.ts'
 import { createWikiActionSessionProvider } from './agents/providers/wiki-actions.ts'
 import { AgentProviderConformanceRunner } from './agents/providers/conformance.ts'
+import { AgentUtilityModel } from './agents/providers/utility.ts'
 import { agentCsrfToken } from './agents/csrf.ts'
 import { BrowserWorkerClient } from './agents/browser/client.ts'
 import { createWikiMcpController } from './agents/mcp.ts'
@@ -279,7 +280,8 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
     agentRuntime = new AgentProductRuntime(wiki.models.knex, providerRegistry, new AxAgentEngine(providerFactory, actionSessions), {
       workerId: `http-${process.pid}`,
       globalConcurrency: agentLimits.provider.globalConcurrency,
-      perUserConcurrency: agentLimits.provider.perUserConcurrency
+      perUserConcurrency: agentLimits.provider.perUserConcurrency,
+      utilityModel: new AgentUtilityModel(providerFactory)
     })
     wiki.agentRuntime = agentRuntime
     let workerActive = false

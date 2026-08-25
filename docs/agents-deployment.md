@@ -100,7 +100,7 @@ Provider inference is intentionally unavailable until an operator enables the pr
 
 ### Provider API protocols
 
-A provider profile describes one approved destination, encrypted credential, model, explicit tool-calling mode, protocol-derived capability descriptor, and policy. Its API protocol selects the exact wire contract used at that destination; it is not inferred from the URL. The ordinary admin form derives the remaining low-level transport behavior.
+A provider profile describes one approved destination, encrypted credential, primary Agent model, optional utility model, explicit tool-calling mode, protocol-derived capability descriptor, and policy. The utility model shares the profile's destination, credential, API protocol, and transport policy; leaving it blank routes bounded utility work to the Agent model. Its API protocol selects the exact wire contract used at that destination; it is not inferred from the URL. The ordinary admin form derives the remaining low-level transport behavior.
 
 | API protocol | Endpoint | Native action mapping |
 | --- | --- | --- |
@@ -116,7 +116,7 @@ A provider profile describes one approved destination, encrypted credential, mod
 
 The prompt protocol is a compatibility path, not equivalent provider behavior: instruction-following is model-dependent, parallel calls are unavailable, and intermediate model text is buffered until a final no-action answer. Prefer native tools whenever the provider implements them correctly.
 
-Every save runs a live conformance check for the selected mode. In addition to cancellation, bounded output, streaming, and usage accounting, the check forces a temporary echo action, verifies its exact arguments, returns a result using that protocol, and requires a final text response. A provider profile remains disabled until the current settings pass. Capability revision 2 invalidates older conformance evidence; the migration disables existing profiles so an administrator must save or recheck them before use.
+Every save runs a live conformance check for the selected mode. In addition to cancellation, bounded output, streaming, and usage accounting, the check forces a temporary echo action, verifies its exact arguments, returns a result using that protocol, and requires a final text response. When a distinct utility model is configured, the same check also requires bounded text from that model before enabling the profile. A provider profile remains disabled until the current settings pass. Capability revision 2 invalidates older conformance evidence; the migration disables existing profiles so an administrator must save or recheck them before use.
 
 Chat Completions and text Completions are not aliases. Chat Completions accepts structured message history and may use native tools; legacy text Completions accepts one flattened prompt and can use only prompt emulation. Likewise, OpenAI Responses and OpenResponses share an item-oriented shape but represent different compatibility promises. Administrators must choose the server's documented protocol and tool mode; Wiki verifies the selected behavior instead of probing endpoints heuristically.
 
@@ -263,6 +263,8 @@ At process start, Wiki reads the soul beside its loader, strips a UTF-8 BOM, nor
 ## Conversation history and personal memory
 
 Saved conversations are bounded history, not durable memory. Maintenance permanently removes saved sessions after `savedSessionDays` without activity (90 days by default); temporary sessions continue to use `temporarySessionHours`. Active runs fence deletion until they become terminal. The history menu exposes a user-scoped **Reset** action that cancels owned active work, tombstones every owned conversation in one transaction, and opens a clean saved conversation. Reset never deletes personal memory.
+
+After the first successful exchange, Wiki asks the profile's utility model for a concise conversation title and persists it only while the session title is still empty. The title request receives bounded excerpts from that exchange, has no tools, treats the transcript as untrusted data, and uses a 15-second ceiling. Malformed output or provider failure falls back to a bounded title derived from the user's first message, so history never depends on the utility call succeeding. Utility tokens are added to that run's usage accounting.
 
 Wiki adopts the bounded, curated shape of Hermes Agent's default memory rather than treating every transcript as memory:
 

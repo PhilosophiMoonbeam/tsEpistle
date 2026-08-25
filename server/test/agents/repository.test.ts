@@ -577,6 +577,56 @@ describe('durable agent repositories', () => {
     await runtime.shutdown()
   })
 
+  it('titles the first successful exchange with utility usage included in the run', async () => {
+    const titledSessionId = '00000000-0000-4000-8000-000000000090'
+    const profileVersionId = '00000000-0000-4000-8000-000000000091'
+    await knex('agentRuns').where({ id: runId }).delete()
+    await createAgentSession(knex, { id: titledSessionId, ownerId: 9, retention: 'saved', providerProfileId: null, executionMode: 'agent' })
+    const generateConversationTitle = async () => ({ title: 'Deployment Pipeline Failures', inputTokens: 2, outputTokens: 3 })
+    const runtime = new AgentProductRuntime(knex, {
+      async resolve() {
+        return {
+          profileResolutionSha256: 'e'.repeat(64),
+          providerProfileVersionId: profileVersionId,
+          transportKind: 'test',
+          model: 'test',
+          executionMode: 'agent',
+          profilePolicyVersion: 1,
+          defaultGeneration: 1,
+          capabilityRevision: 'v1',
+          pricingRevision: 'v1',
+          promptVersion: 1,
+          quota: { tokens: 100, costMicros: 100 },
+          quotaLimits: { dailyTokens: 1_000, dailyCostMicros: 1_000 },
+          reservationMilliseconds: 60_000
+        }
+      }
+    }, {
+      async execute(_request, sink) {
+        await sink.text('I found a stale runner configuration.')
+        return { inputTokens: 10, outputTokens: 5, costMicros: 0 }
+      }
+    }, {
+      workerId: 'title-test',
+      globalConcurrency: 4,
+      perUserConcurrency: 1,
+      utilityModel: { generateConversationTitle }
+    })
+    const admitted = await runtime.submit({
+      ownerId: 9,
+      sessionId: titledSessionId,
+      profileResolutionToken: 'token',
+      clientRequestId: '00000000-0000-4000-8000-000000000092',
+      expectedSessionVersion: 1,
+      content: 'Investigate intermittent deployment pipeline failures.'
+    })
+
+    await expect(runtime.runOnce()).resolves.toBe(true)
+    await expect(knex('agentSessions').where({ id: titledSessionId }).first('title', 'version')).resolves.toMatchObject({ title: 'Deployment Pipeline Failures', version: 2 })
+    await expect(knex('agentRuns').where({ id: admitted.run.id }).first('status', 'inputTokens', 'outputTokens')).resolves.toMatchObject({ status: 'succeeded', inputTokens: 12, outputTokens: 8 })
+    await runtime.shutdown()
+  })
+
   it('claims, fences, heartbeats, cancels, and refuses replay after side effects', async () => {
     const now = new Date('2026-08-17T00:02:00.000Z')
     const claim = await claimAgentRun(knex, { workerId: 'worker-b', globalConcurrency: 4, perUserConcurrency: 1, now })

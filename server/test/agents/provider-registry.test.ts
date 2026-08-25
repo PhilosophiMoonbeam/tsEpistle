@@ -7,6 +7,7 @@ import { DatabaseAgentSecretRegistry } from '../../agents/providers/secrets.ts'
 const profileInput: AgentProviderSettingsInput = {
   transportKind: 'openai-responses',
   model: 'gpt-test',
+  utilityModel: null,
   baseUrl: 'https://api.example.test/v1/',
   authMode: 'bearer',
   secretReference: 'env:TEST_PROVIDER_KEY',
@@ -20,7 +21,7 @@ const profileInput: AgentProviderSettingsInput = {
 const createTables = async (knex: Knex): Promise<void> => {
   await knex.schema.createTable('agentProviderProfiles', table => { table.string('id').primary(); table.string('displayName'); table.string('status'); table.boolean('isGlobalDefault'); table.string('exposureMode'); table.string('currentVersionId').nullable(); table.integer('policyVersion'); table.boolean('conformed'); table.integer('createdBy'); table.integer('updatedBy'); table.dateTime('createdAt'); table.dateTime('updatedAt'); table.dateTime('deletedAt').nullable() })
   await knex.raw('CREATE UNIQUE INDEX agent_provider_profiles_active_name_unique ON agentProviderProfiles (displayName) WHERE deletedAt IS NULL')
-  await knex.schema.createTable('agentProviderProfileVersions', table => { table.string('id').primary(); table.string('profileId'); table.integer('version'); table.string('transportKind'); table.string('model'); table.text('baseUrl'); table.string('authMode'); table.string('secretReference').nullable(); table.text('adapterConfig'); table.text('capabilities'); table.string('capabilityRevision'); table.text('policies'); table.string('pricingRevision'); table.boolean('conformed'); table.integer('createdBy'); table.dateTime('createdAt') })
+  await knex.schema.createTable('agentProviderProfileVersions', table => { table.string('id').primary(); table.string('profileId'); table.integer('version'); table.string('transportKind'); table.string('model'); table.string('utilityModel').nullable(); table.text('baseUrl'); table.string('authMode'); table.string('secretReference').nullable(); table.text('adapterConfig'); table.text('capabilities'); table.string('capabilityRevision'); table.text('policies'); table.string('pricingRevision'); table.boolean('conformed'); table.integer('createdBy'); table.dateTime('createdAt') })
   await knex.schema.createTable('agentProviderSecrets', table => { table.string('id').primary(); table.string('keyId'); table.string('algorithm'); table.binary('nonce'); table.binary('ciphertext'); table.binary('authTag'); table.integer('createdBy'); table.dateTime('createdAt') })
   await knex.schema.createTable('agentProviderConfiguration', table => { table.integer('id').primary(); table.integer('defaultGeneration'); table.dateTime('updatedAt'); table.integer('updatedBy').nullable() })
   await knex.schema.createTable('agentProviderGrants', table => { table.string('profileId'); table.integer('groupId') })
@@ -61,9 +62,9 @@ describe('agent provider profile registry', () => {
     const resolved = await registry.resolve({ ownerId: 7, sessionId: 'session-1', profileResolutionToken: token })
     expect(resolved).toMatchObject({ providerProfileVersionId: settingsId, transportKind: 'openai-responses', executionMode: 'agent', quotaLimits: { dailyTokens: 100_000 } })
 
-    const updated = await registry.update(created.id, { ...profileInput, model: 'gpt-test-2', capabilityRevision: 'fixture-v2', actorId: 1 })
-    expect(updated).toMatchObject({ status: 'disabled', conformed: false, model: 'gpt-test-2' })
-    expect(await knex('agentProviderProfileVersions').where({ profileId: created.id }).select('id', 'model')).toEqual([{ id: settingsId, model: 'gpt-test-2' }])
+    const updated = await registry.update(created.id, { ...profileInput, model: 'gpt-test-2', utilityModel: 'gpt-test-mini', capabilityRevision: 'fixture-v2', actorId: 1 })
+    expect(updated).toMatchObject({ status: 'disabled', conformed: false, model: 'gpt-test-2', utilityModel: 'gpt-test-mini' })
+    expect(await knex('agentProviderProfileVersions').where({ profileId: created.id }).select('id', 'model', 'utilityModel')).toEqual([{ id: settingsId, model: 'gpt-test-2', utilityModel: 'gpt-test-mini' }])
     await expect(registry.resolve({ ownerId: 7, sessionId: 'session-1', profileResolutionToken: token })).rejects.toMatchObject({ code: 'PROFILE_RESOLUTION_CHANGED', status: 409 })
   })
 

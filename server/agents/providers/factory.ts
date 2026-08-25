@@ -87,6 +87,7 @@ interface ProviderVersionRow {
   id: string
   transportKind: AgentProviderTransportKind
   model: string
+  utilityModel: string | null
   baseUrl: string
   authMode: string
   secretReference: string | null
@@ -265,11 +266,12 @@ export class AgentProviderFactory {
     this.#fetch = fetchImplementation
     this.#resolve = resolve
   }
-  async create(profileVersionId: string, loadOptions: { readonly requireConformed?: boolean } = {}): Promise<AgentProviderService> {
+  async create(profileVersionId: string, loadOptions: { readonly requireConformed?: boolean; readonly purpose?: 'agent' | 'utility' } = {}): Promise<AgentProviderService> {
     const query = this.#knex<ProviderVersionRow>('agentProviderProfileVersions').where({ id: profileVersionId })
     if (loadOptions.requireConformed !== false) query.andWhere({ conformed: true })
     const row = await query.first()
     if (!row || !row.secretReference) throw new AgentRepositoryError('PROFILE_VERSION_UNAVAILABLE', 'Provider profile version is unavailable', 409)
+    const model = loadOptions.purpose === 'utility' ? row.utilityModel ?? row.model : row.model
     const secret = await this.#secrets.get(row.secretReference)
     if (!secret) throw new AgentRepositoryError('PROFILE_SECRET_UNAVAILABLE', 'Provider profile secret is unavailable', 503)
     let adapterConfig: ReturnType<typeof AgentProviderAdapterConfigSchema.parse>
@@ -305,7 +307,7 @@ export class AgentProviderFactory {
     if (row.transportKind === 'openai-responses' || row.transportKind === 'openresponses') {
       const config = {
         ...axAIOpenAIResponsesDefaultConfig(),
-        model: row.model,
+        model,
         store: false,
         parallelToolCalls: capabilities.toolCalling === 'native' && capabilities.parallelToolCalls,
         ...(adapterConfig.reasoningEffort === undefined ? {} : { reasoningEffort: adapterConfig.reasoningEffort })
@@ -334,7 +336,7 @@ export class AgentProviderFactory {
     } else if (row.transportKind === 'openai-chat') {
       const config = {
         ...axAIOpenAIDefaultConfig(),
-        model: row.model,
+        model,
         ...(adapterConfig.temperature === undefined ? {} : { temperature: adapterConfig.temperature })
       }
       service = new AxAIOpenAIBase<string, AxAIOpenAIEmbedModel, string, WikiOpenAIChatRequest>({
@@ -352,13 +354,13 @@ export class AgentProviderFactory {
       service = new AxAIAnthropic({
         apiKey: secret,
         config: {
-          model: row.model as AxAIAnthropicModel,
+          model: model as AxAIAnthropicModel,
           ...(adapterConfig.temperature === undefined ? {} : { temperature: adapterConfig.temperature })
         },
         options
       })
     } else if (row.transportKind === 'legacy-completions') {
-      service = createLegacyCompletionService(row, secret, adapterConfig, options.fetch)
+      service = createLegacyCompletionService({ ...row, model }, secret, adapterConfig, options.fetch)
     } else {
       throw new AgentRepositoryError('UNSUPPORTED_PROVIDER_TRANSPORT', 'Provider transport is not supported by this factory', 409)
     }
@@ -366,7 +368,7 @@ export class AgentProviderFactory {
       service,
       capabilities,
       transportKind: row.transportKind,
-      model: row.model,
+      model,
       capabilityRevision: row.capabilityRevision,
       pricingRevision: row.pricingRevision,
       preserveThoughtBlock: row.transportKind === 'openai-responses' || row.transportKind === 'openresponses'
