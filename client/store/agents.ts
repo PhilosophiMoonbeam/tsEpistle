@@ -66,7 +66,11 @@ export const useAgentsStore = defineStore('agents', {
       this.contextPage = page
     },
     async newSession(retention: 'temporary' | 'saved') {
+      const disposableSessionId = this.thread && this.thread.messages.length === 0 && !this.thread.session.currentRun
+        ? this.thread.session.id
+        : null
       this.closeStream()
+      if (disposableSessionId) await deleteAgentSession(window.fetch.bind(window), this.csrfToken, disposableSessionId)
       const created = await createAgentThread(window.fetch.bind(window), this.csrfToken, { retention, providerProfileId: null })
       this.applyCreatedThread(created)
       if (this.routeSync) window.history.replaceState(null, '', `/sessions/${created.session.id}`)

@@ -112,6 +112,7 @@ export const createAgentSession = async (knex: Knex | Knex.Transaction, input: C
     id: input.id ?? randomUUID(),
     ownerId: input.ownerId,
     title: (input.title ?? '').trim().slice(0, 255),
+    titleSource: (input.title ?? '').trim().length > 0 ? 'manual' : 'none',
     retention,
     providerProfileId: input.providerProfileId,
     executionMode,
@@ -138,7 +139,15 @@ export const getOwnedAgentSession = async (knex: Knex | Knex.Transaction, ownerI
 
 export const listOwnedAgentSessions = async (knex: Knex, ownerId: number, limit = 50, before?: Date): Promise<AgentSessionRecord[]> => {
   const boundedLimit = Math.max(1, Math.min(100, Math.floor(limit)))
-  const query = knex<SessionRow>('agentSessions').where({ ownerId }).whereNull('deletedAt')
+  const query = knex<SessionRow>('agentSessions')
+    .where({ ownerId })
+    .whereNull('deletedAt')
+    .whereExists(function persistedConversation () {
+      this.select(knex.raw('1'))
+        .from('agentMessages')
+        .where('agentMessages.sessionId', knex.ref('agentSessions.id'))
+        .where({ role: 'user', status: 'complete' })
+    })
   if (before) query.where('lastActivityAt', '<', before)
   const rows = await query.orderBy('lastActivityAt', 'desc').orderBy('id', 'desc').limit(boundedLimit)
   return rows.map(sessionRecord)
@@ -157,7 +166,10 @@ export const updateAgentSession = async (knex: Knex, input: UpdateAgentSessionIn
   await getOwnedAgentSession(knex, input.ownerId, input.sessionId)
   const now = new Date()
   const patch: Record<string, unknown> = { version: knex.raw('?? + 1', ['version']), updatedAt: now, lastActivityAt: now }
-  if (input.title !== undefined) patch.title = input.title.trim().slice(0, 255)
+  if (input.title !== undefined) {
+    patch.title = input.title.trim().slice(0, 255)
+    patch.titleSource = input.title.trim().length > 0 ? 'manual' : 'none'
+  }
   if (input.retention !== undefined) patch.retention = retentionSchema.parse(input.retention)
   if (input.expiresAt !== undefined) patch.expiresAt = input.expiresAt
   const changed = await knex('agentSessions')

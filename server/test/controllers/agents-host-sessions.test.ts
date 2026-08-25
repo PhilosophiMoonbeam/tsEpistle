@@ -16,7 +16,7 @@ const createTables = async (db: Knex): Promise<void> => {
   await db.schema.createTable('users', table => table.integer('id').primary())
   await db('users').insert([{ id: 7 }, { id: 8 }])
   await db.schema.createTable('agentSessions', table => {
-    table.uuid('id').primary(); table.integer('ownerId').notNullable(); table.string('title').notNullable(); table.string('retention').notNullable(); table.uuid('providerProfileId').nullable(); table.string('executionMode').notNullable(); table.integer('version').notNullable(); table.text('summary').nullable(); table.integer('summaryThroughOrdinal').nullable(); table.text('memorySnapshot').notNullable().defaultTo('{"agent":[],"user":[]}'); table.dateTime('createdAt').notNullable(); table.dateTime('updatedAt').notNullable(); table.dateTime('lastActivityAt').notNullable(); table.dateTime('expiresAt').nullable(); table.dateTime('deletedAt').nullable()
+    table.uuid('id').primary(); table.integer('ownerId').notNullable(); table.string('title').notNullable(); table.string('titleSource').notNullable().defaultTo('none'); table.string('retention').notNullable(); table.uuid('providerProfileId').nullable(); table.string('executionMode').notNullable(); table.integer('version').notNullable(); table.text('summary').nullable(); table.integer('summaryThroughOrdinal').nullable(); table.text('memorySnapshot').notNullable().defaultTo('{"agent":[],"user":[]}'); table.dateTime('createdAt').notNullable(); table.dateTime('updatedAt').notNullable(); table.dateTime('lastActivityAt').notNullable(); table.dateTime('expiresAt').nullable(); table.dateTime('deletedAt').nullable()
   })
   await db.schema.createTable('agentMemories', table => {
     table.uuid('id').primary(); table.integer('ownerId').notNullable(); table.string('target').notNullable(); table.text('content').notNullable(); table.string('contentSha256').notNullable(); table.integer('version').notNullable(); table.dateTime('createdAt').notNullable(); table.dateTime('updatedAt').notNullable(); table.unique(['ownerId', 'target', 'contentSha256'])
@@ -135,6 +135,8 @@ describe('ordinary-origin agent session API', () => {
     expect(state.session.profileResolutionToken).toMatch(/^[A-Za-z0-9_-]{43}$/)
     const own = await fetch(`${baseUrl}/_api/agents/sessions/${state.session.id}`, { headers: { cookie } })
     expect(own.status).toBe(200)
+    const emptyHistory = await fetch(`${baseUrl}/_api/agents/sessions`, { headers: { cookie } })
+    expect((await emptyHistory.json() as { sessions: Array<{ id: string }> }).sessions).not.toEqual(expect.arrayContaining([expect.objectContaining({ id: state.session.id })]))
     ownerId = 8
     const foreign = await fetch(`${baseUrl}/_api/agents/sessions/${state.session.id}`, { headers: { cookie } })
     expect(foreign.status).toBe(404)
@@ -197,6 +199,8 @@ describe('ordinary-origin agent session API', () => {
     expect(thread.messages.at(-1)).toMatchObject({ role: 'assistant', status: 'complete', content: 'Hello from the deterministic engine.' })
     const completed = await fetch(`${baseUrl}/_api/agents/runs/${admission.run.id}`, { headers: { cookie } })
     expect(await completed.json()).toMatchObject({ run: { status: 'succeeded' } })
+    const populatedHistory = await fetch(`${baseUrl}/_api/agents/sessions`, { headers: { cookie } })
+    expect((await populatedHistory.json() as { sessions: Array<{ id: string }> }).sessions).toEqual(expect.arrayContaining([expect.objectContaining({ id: state.session.id })]))
     const events = await fetch(`${baseUrl}/_api/agents/runs/${admission.run.id}/events`, { headers: { cookie, accept: 'text/event-stream' } })
     const replay = await events.text()
     expect(replay).toContain('event: message.delta')

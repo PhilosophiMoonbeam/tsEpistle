@@ -1,5 +1,5 @@
 /** @vitest-environment node */
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import createKnex, { type Knex } from 'knex'
 import {
   appendAgentEvent,
@@ -8,6 +8,7 @@ import {
   getOwnedAgentArtifact,
   getOwnedAgentSession,
   listOwnedAgentEvents,
+  listOwnedAgentSessions,
   storeAgentScreenshot,
   updateAgentSession
 } from '../../agents/repository.ts'
@@ -35,6 +36,7 @@ const createTables = async (knex: Knex): Promise<void> => {
     table.uuid('id').primary()
     table.integer('ownerId').notNullable()
     table.string('title').notNullable()
+    table.string('titleSource').notNullable().defaultTo('none')
     table.string('retention').notNullable()
     table.uuid('providerProfileId').nullable()
     table.string('executionMode').notNullable()
@@ -290,7 +292,17 @@ describe('durable agent repositories', () => {
     await expect(getOwnedAgentSession(knex, 8, sessionId)).rejects.toMatchObject({ code: 'AGENT_RESOURCE_NOT_FOUND', status: 404 })
     const updated = await updateAgentSession(knex, { ownerId: 7, sessionId, expectedVersion: 1, title: 'Renamed' })
     expect(updated).toMatchObject({ title: 'Renamed', version: 2 })
+    await expect(knex('agentSessions').where({ id: sessionId }).first('titleSource')).resolves.toEqual({ titleSource: 'manual' })
     await expect(updateAgentSession(knex, { ownerId: 7, sessionId, expectedVersion: 1, title: 'Lost race' })).rejects.toMatchObject({ code: 'SESSION_VERSION_CHANGED', status: 409 })
+  })
+
+  it('lists only conversations that contain a completed user message', async () => {
+    const emptySessionId = '00000000-0000-4000-8000-000000000098'
+    await createAgentSession(knex, { id: emptySessionId, ownerId: 7, retention: 'saved', providerProfileId: null, executionMode: 'agent' })
+    await expect(listOwnedAgentSessions(knex, 7)).resolves.toMatchObject([{ id: sessionId }])
+
+    await appendAgentMessage(knex, { ownerId: 7, sessionId: emptySessionId, role: 'user', status: 'complete', content: 'Now this is a conversation.' })
+    await expect(listOwnedAgentSessions(knex, 7)).resolves.toEqual(expect.arrayContaining([expect.objectContaining({ id: emptySessionId }), expect.objectContaining({ id: sessionId })]))
   })
 
   it('persists bounded immutable memory snapshots at session creation', async () => {
@@ -582,7 +594,9 @@ describe('durable agent repositories', () => {
     const profileVersionId = '00000000-0000-4000-8000-000000000091'
     await knex('agentRuns').where({ id: runId }).delete()
     await createAgentSession(knex, { id: titledSessionId, ownerId: 9, retention: 'saved', providerProfileId: null, executionMode: 'agent' })
-    const generateConversationTitle = async () => ({ title: 'Deployment Pipeline Failures', inputTokens: 2, outputTokens: 3 })
+    const generateConversationTitle = vi.fn()
+      .mockResolvedValueOnce({ title: 'Deployment Pipeline Failures', source: 'utility', inputTokens: 2, outputTokens: 3 })
+      .mockResolvedValueOnce({ title: 'Runner Rollover Configuration Failures', source: 'utility', inputTokens: 4, outputTokens: 2 })
     const runtime = new AgentProductRuntime(knex, {
       async resolve() {
         return {
@@ -622,8 +636,30 @@ describe('durable agent repositories', () => {
     })
 
     await expect(runtime.runOnce()).resolves.toBe(true)
-    await expect(knex('agentSessions').where({ id: titledSessionId }).first('title', 'version')).resolves.toMatchObject({ title: 'Deployment Pipeline Failures', version: 2 })
+    await expect(knex('agentSessions').where({ id: titledSessionId }).first('title', 'titleSource', 'version')).resolves.toMatchObject({ title: 'Deployment Pipeline Failures', titleSource: 'utility', version: 2 })
     await expect(knex('agentRuns').where({ id: admitted.run.id }).first('status', 'inputTokens', 'outputTokens')).resolves.toMatchObject({ status: 'succeeded', inputTokens: 12, outputTokens: 8 })
+    expect(generateConversationTitle.mock.calls[0]?.[0].messages).toEqual([
+      { role: 'user', content: 'Investigate intermittent deployment pipeline failures.' },
+      { role: 'assistant', content: 'I found a stale runner configuration.' }
+    ])
+
+    const refined = await runtime.submit({
+      ownerId: 9,
+      sessionId: titledSessionId,
+      profileResolutionToken: 'token',
+      clientRequestId: '00000000-0000-4000-8000-000000000093',
+      expectedSessionVersion: 2,
+      content: 'The failures happen during runner rollover.'
+    })
+    await expect(runtime.runOnce()).resolves.toBe(true)
+    await expect(knex('agentSessions').where({ id: titledSessionId }).first('title', 'titleSource', 'version')).resolves.toMatchObject({ title: 'Runner Rollover Configuration Failures', titleSource: 'utility', version: 3 })
+    await expect(knex('agentRuns').where({ id: refined.run.id }).first('status', 'inputTokens', 'outputTokens')).resolves.toMatchObject({ status: 'succeeded', inputTokens: 14, outputTokens: 7 })
+    expect(generateConversationTitle.mock.calls[1]?.[0].messages).toEqual([
+      { role: 'user', content: 'Investigate intermittent deployment pipeline failures.' },
+      { role: 'assistant', content: 'I found a stale runner configuration.' },
+      { role: 'user', content: 'The failures happen during runner rollover.' },
+      { role: 'assistant', content: 'I found a stale runner configuration.' }
+    ])
     await runtime.shutdown()
   })
 

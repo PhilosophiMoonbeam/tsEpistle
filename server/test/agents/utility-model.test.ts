@@ -4,8 +4,12 @@ import { AgentUtilityModel, conversationTitleFallback, normalizeConversationTitl
 
 const request = {
   profileVersionId: '00000000-0000-4000-8000-000000000001',
-  userMessage: 'Investigate intermittent failures in the deployment pipeline',
-  assistantMessage: 'I found a stale runner configuration and proposed a correction.',
+  messages: [
+    { role: 'user' as const, content: 'Investigate intermittent failures in the deployment pipeline' },
+    { role: 'assistant' as const, content: 'I found a stale runner configuration.' },
+    { role: 'user' as const, content: 'Focus on rollover failures after deployments.' },
+    { role: 'assistant' as const, content: 'The rollover leaves runners attached to the previous release.' }
+  ],
   signal: new AbortController().signal
 }
 
@@ -31,16 +35,19 @@ describe('agent utility model', () => {
 
     await expect(utility.generateConversationTitle(request)).resolves.toEqual({
       title: 'Deployment Pipeline Failures',
+      source: 'utility',
       inputTokens: 19,
       outputTokens: 4
     })
     expect(create).toHaveBeenCalledWith(request.profileVersionId, { purpose: 'utility' })
     expect(chat).toHaveBeenCalledWith(expect.objectContaining({
       model: 'model-mini',
-      modelConfig: { maxTokens: 32 },
+      modelConfig: { maxTokens: 128 },
       chatPrompt: expect.arrayContaining([expect.objectContaining({ role: 'system' }), expect.objectContaining({ role: 'user' })])
     }), expect.objectContaining({ stream: false, abortSignal: expect.any(AbortSignal) }))
     expect(chat.mock.calls[0]?.[0]).not.toHaveProperty('functions')
+    const prompt = chat.mock.calls[0]?.[0] as { chatPrompt: Array<{ role: string, content: string }> }
+    expect(JSON.parse(prompt.chatPrompt.at(-1)?.content ?? '')).toEqual({ transcript: request.messages })
   })
 
   it('falls back to the first user message when utility inference fails', async () => {
@@ -49,6 +56,7 @@ describe('agent utility model', () => {
 
     await expect(utility.generateConversationTitle(request)).resolves.toEqual({
       title: 'Investigate intermittent failures in the deployment pipeline',
+      source: 'fallback',
       inputTokens: 0,
       outputTokens: 0
     })

@@ -71,6 +71,45 @@ describe('Agent chat refresh fallback', () => {
   })
 })
 
+describe('Agent empty conversation lifecycle', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('deletes an unused draft before creating its replacement', async () => {
+    setActivePinia(createPinia())
+    const store = useAgentsStore()
+    store.csrfToken = 'csrf-token'
+    const running = activeThread()
+    const empty = { ...running, session: { ...running.session, currentRun: null } }
+    store.thread = empty
+    const replacement = {
+      ...empty,
+      session: {
+        ...empty.session,
+        id: '00000000-0000-4000-8000-000000000099',
+        profileResolutionToken: 'replacement-token'
+      },
+      launchPage: null
+    }
+    const json = { headers: { 'content-type': 'application/json' } }
+    const fetcher = vi.spyOn(window, 'fetch')
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(replacement), { status: 201, ...json }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ sessions: [] }), { status: 200, ...json }))
+
+    await expect(store.newSession('saved')).resolves.toBeUndefined()
+
+    expect(fetcher.mock.calls.map(call => [call[0], (call[1] as RequestInit | undefined)?.method ?? 'GET'])).toEqual([
+      ['/_api/agents/sessions/00000000-0000-4000-8000-000000000001', 'DELETE'],
+      ['/_api/agents/sessions', 'POST'],
+      ['/_api/agents/sessions', 'GET']
+    ])
+    expect(store.thread?.session.id).toBe('00000000-0000-4000-8000-000000000099')
+    expect(store.sessions).toEqual([])
+  })
+})
+
 describe('Agent history reset', () => {
   afterEach(() => {
     vi.restoreAllMocks()

@@ -106,7 +106,7 @@ export interface AgentProductRuntimeOptions {
 interface RuntimeMessageRow { role: 'user' | 'assistant'; content: string; providerStateCiphertext: Uint8Array | null }
 interface RuntimeSkillRow { id: string; name: string; skillMarkdown: string }
 interface RuntimeContextRow { data: string }
-interface RuntimeSessionRow { memorySnapshot: string; title: string; version: number }
+interface RuntimeSessionRow { memorySnapshot: string; title: string; titleSource: 'none' | 'manual' | 'utility' | 'fallback'; version: number }
 
 const currentPageHint = (value: string | undefined): AgentCurrentPageHint | undefined => {
   if (value === undefined) return undefined
@@ -220,15 +220,20 @@ export class AgentProductRuntime {
   }
 
   async #generateConversationTitle(claim: AgentRunClaim, session: RuntimeSessionRow, messages: readonly AgentEngineMessage[], assistantMessage: string, signal: AbortSignal): Promise<AgentConversationTitleResult> {
-    const empty = { title: '', inputTokens: 0, outputTokens: 0 }
-    const userMessage = messages.find(message => message.role === 'user')?.content
-    if (!this.#utilityModel || session.title.trim().length > 0 || !userMessage) return empty
+    const empty: AgentConversationTitleResult = { title: '', source: 'fallback', inputTokens: 0, outputTokens: 0 }
+    const titleMessages = [
+      ...messages.map(message => ({ role: message.role, content: message.content })),
+      { role: 'assistant' as const, content: assistantMessage }
+    ]
+    const userTurnCount = titleMessages.filter(message => message.role === 'user').length
+    const titleMayBeGenerated = session.titleSource === 'none' ||
+      ((session.titleSource === 'utility' || session.titleSource === 'fallback') && userTurnCount <= 2)
+    if (!this.#utilityModel || !titleMayBeGenerated || userTurnCount < 1) return empty
     let generated: AgentConversationTitleResult
     try {
       generated = await this.#utilityModel.generateConversationTitle({
         profileVersionId: claim.providerProfileVersionId,
-        userMessage,
-        assistantMessage,
+        messages: titleMessages,
         signal
       })
     } catch {
@@ -237,10 +242,11 @@ export class AgentProductRuntime {
     if (generated.title.length > 0) {
       try {
         await this.#knex('agentSessions')
-          .where({ id: claim.sessionId, ownerId: claim.ownerId, version: session.version, title: session.title })
+          .where({ id: claim.sessionId, ownerId: claim.ownerId, version: session.version, title: session.title, titleSource: session.titleSource })
           .whereNull('deletedAt')
           .update({
             title: generated.title,
+            titleSource: generated.source,
             version: this.#knex.raw('?? + 1', ['version']),
             updatedAt: new Date()
           })
@@ -259,7 +265,7 @@ export class AgentProductRuntime {
         this.#knex('agentMessages').where({ sessionId: claim.sessionId }).andWhere('id', '!=', claim.assistantMessageId).orderBy('ordinal').select('role', 'content', 'providerStateCiphertext') as unknown as Promise<RuntimeMessageRow[]>,
         this.#knex('agentRunSkills').join('agentSkillVersions', 'agentSkillVersions.id', 'agentRunSkills.skillVersionId').join('agentSkills', 'agentSkills.id', 'agentSkillVersions.skillId').where('agentRunSkills.runId', claim.id).orderBy('agentRunSkills.ordinal').select('agentSkillVersions.id', 'agentSkills.name', 'agentSkillVersions.skillMarkdown') as unknown as Promise<RuntimeSkillRow[]>,
         this.#knex('agentEvents').where({ runId: claim.id, type: 'run.queued' }).orderBy('sequence').first('data') as unknown as Promise<RuntimeContextRow | undefined>,
-        this.#knex('agentSessions').where({ id: claim.sessionId, ownerId: claim.ownerId }).whereNull('deletedAt').first('memorySnapshot', 'title', 'version') as unknown as Promise<RuntimeSessionRow | undefined>
+        this.#knex('agentSessions').where({ id: claim.sessionId, ownerId: claim.ownerId }).whereNull('deletedAt').first('memorySnapshot', 'title', 'titleSource', 'version') as unknown as Promise<RuntimeSessionRow | undefined>
       ])
       if (!sessionRow) throw new AgentRepositoryError('AGENT_RESOURCE_NOT_FOUND', 'Agent session was not found', 404)
       const currentPage = currentPageHint(contextRow?.data)
