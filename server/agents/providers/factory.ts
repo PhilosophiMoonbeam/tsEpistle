@@ -324,7 +324,7 @@ export class AgentProviderFactory {
             store: false,
             previous_response_id: null,
             include: [...new Set([...(request.include ?? []), 'reasoning.encrypted_content' as const])],
-            tools: request.tools == null ? null : request.tools.map(tool => tool.type === 'function' ? { ...tool, strict: true } : tool)
+            tools: request.tools == null ? null : request.tools.map(tool => tool.type === 'function' ? { ...tool, strict: false } : tool)
           }
           delete updated.temperature
           delete updated.top_p

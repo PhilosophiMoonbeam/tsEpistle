@@ -45,7 +45,7 @@ describe('additional provider transports', () => {
       functions: [{ name: 'pages_get', description: 'Read a page', parameters: { type: 'object', properties: { id: { type: 'number', description: 'Page ID' } } } }]
     }, { stream: false })
     expect(response).not.toBeInstanceOf(ReadableStream)
-    expect(payload).toMatchObject({ store: false, previous_response_id: null, parallel_tool_calls: true, tools: [{ type: 'function', name: 'pages_get', strict: true }] })
+    expect(payload).toMatchObject({ store: false, previous_response_id: null, parallel_tool_calls: true, tools: [{ type: 'function', name: 'pages_get', strict: false }] })
     expect(payload.include).toContain('reasoning.encrypted_content')
   })
 

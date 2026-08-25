@@ -84,7 +84,7 @@ describe('Ax provider factory', () => {
     expect(new Headers(request?.init?.headers).get('authorization')).toBe('Bearer test-key')
     expect(request?.init).toMatchObject({ redirect: 'manual', credentials: 'omit' })
     const payload = JSON.parse(String(request?.init?.body)) as Record<string, unknown>
-    expect(payload).toMatchObject({ model: 'gpt-test', store: false, previous_response_id: null, parallel_tool_calls: true, tools: [{ type: 'function', name: 'pages_get', strict: true }] })
+    expect(payload).toMatchObject({ model: 'gpt-test', store: false, previous_response_id: null, parallel_tool_calls: true, tools: [{ type: 'function', name: 'pages_get', strict: false }] })
     expect(payload.include).toContain('reasoning.encrypted_content')
     expect(payload).not.toHaveProperty('temperature')
     expect(payload).not.toHaveProperty('top_p')
