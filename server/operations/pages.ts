@@ -16,6 +16,7 @@ interface PageRecord extends Record<string, unknown> {
   title: string
   description?: string | null
   updatedAt: Date
+  isPublished?: boolean
   editorKey: string
   extra: Record<string, unknown>
   visibility: PageVisibility
@@ -31,6 +32,17 @@ interface PageTreeRecord extends Record<string, unknown> {
   ownerId: number | null
 }
 interface LinkRow { id: number, title: string, path: string, link?: string, locale?: string }
+interface PageGraphEdgeRow { sourceId: number, targetId: number }
+interface RelatedPageRecord extends PageRecord {
+  distance: number
+  direction: 'incoming' | 'outgoing' | 'bidirectional'
+  viaPageId: number
+}
+interface RelatedPagesResult {
+  pages: RelatedPageRecord[]
+  truncated: boolean
+  nextOffset: number | null
+}
 interface LinkResult { id: number, title: string, path: string, links: string[] }
 interface QueryBuilder {
   select(...columns: string[]): QueryBuilder
@@ -338,6 +350,100 @@ const listLinks = async (input: OperationInput) => {
     }
     return result
   }, [])
+}
+const relatedPageOrder = (left: PageRecord, right: PageRecord): number =>
+  left.title.localeCompare(right.title) || left.path.localeCompare(right.path) || left.id - right.id
+
+const listRelated = async (input: OperationInput): Promise<RelatedPagesResult> => {
+  const requester = input.requester
+  const pageId = positiveInteger(input.pageId, 'pageId')
+  const limit = input.limit === undefined ? 20 : positiveInteger(input.limit, 'limit')
+  const offset = input.offset === undefined ? 0 : nonNegativeInteger(input.offset, 'offset')
+  const maxDepth = input.maxDepth === undefined ? undefined : positiveInteger(input.maxDepth, 'maxDepth')
+  if (limit > 100) throw new ApplicationError('limit must not exceed 100', { code: 'INVALID_INPUT', status: 400 })
+  if (offset > 5_000) throw new ApplicationError('offset must not exceed 5000', { code: 'INVALID_INPUT', status: 400 })
+  if (maxDepth !== undefined && maxDepth > 32) throw new ApplicationError('maxDepth must not exceed 32', { code: 'INVALID_INPUT', status: 400 })
+
+  const source = await get({ id: pageId, ...(requester === undefined ? {} : { requester }) })
+  if (source.visibility !== 'public' || source.isPublished === false) return { pages: [], truncated: false, nextOffset: null }
+
+  const visiblePages = await wiki.models.pages.query()
+    .column(['pages.id', 'pages.path', 'pages.localeCode', 'pages.title', 'pages.description', 'pages.visibility', 'pages.ownerId', 'pages.contentType', 'pages.sourceRevision'])
+    .withGraphJoined('tags')
+    .modifyGraph('tags', builder => { builder.select('tag') })
+    .modify(builder => { builder.where({ 'pages.visibility': 'public', 'pages.isPublished': true }) })
+  const pagesById = new Map<number, PageRecord>()
+  for (const page of visiblePages) {
+    if (canReadPage(requester, page)) pagesById.set(page.id, page)
+  }
+  if (!pagesById.has(pageId)) return { pages: [], truncated: false, nextOffset: null }
+
+  const rawEdges = await wiki.models.knex('pageLinks as links')
+    .join('pages as source', 'source.id', 'links.pageId')
+    .join('pages as target', function () {
+      this.on('target.localeCode', '=', 'links.localeCode').andOn('target.path', '=', 'links.path')
+    })
+    .where({
+      'source.visibility': 'public',
+      'source.isPublished': true,
+      'target.visibility': 'public',
+      'target.isPublished': true
+    })
+    .select({ sourceId: 'source.id', targetId: 'target.id' }) as PageGraphEdgeRow[]
+
+  const adjacency = new Map<number, Map<number, number>>()
+  const connect = (from: number, to: number, direction: number): void => {
+    if (from === to || !pagesById.has(from) || !pagesById.has(to)) return
+    const neighbors = adjacency.get(from) ?? new Map<number, number>()
+    neighbors.set(to, (neighbors.get(to) ?? 0) | direction)
+    adjacency.set(from, neighbors)
+  }
+  for (const edge of rawEdges) {
+    const sourceId = Number(edge.sourceId)
+    const targetId = Number(edge.targetId)
+    connect(sourceId, targetId, 1)
+    connect(targetId, sourceId, 2)
+  }
+
+  const discovered: RelatedPageRecord[] = []
+  const seen = new Set<number>([pageId])
+  let frontier = [pageId]
+  let depth = 0
+  const requestedEnd = offset + limit
+  while (frontier.length > 0 && discovered.length <= requestedEnd && (maxDepth === undefined || depth < maxDepth)) {
+    depth++
+    const candidates = new Map<number, { direction: number, viaPageId: number }>()
+    for (const from of frontier) {
+      for (const [to, direction] of adjacency.get(from) ?? []) {
+        if (!seen.has(to) && !candidates.has(to)) candidates.set(to, { direction, viaPageId: from })
+      }
+    }
+    const ordered = [...candidates.entries()]
+      .map(([id, connection]) => ({ page: pagesById.get(id), connection }))
+      .filter((entry): entry is { page: PageRecord, connection: { direction: number, viaPageId: number } } => entry.page !== undefined)
+      .sort((left, right) => relatedPageOrder(left.page, right.page))
+    frontier = []
+    for (const { page, connection } of ordered) {
+      seen.add(page.id)
+      frontier.push(page.id)
+      discovered.push({
+        ...page,
+        locale: page.localeCode,
+        tags: page.tags,
+        distance: depth,
+        direction: connection.direction === 3 ? 'bidirectional' : connection.direction === 1 ? 'outgoing' : 'incoming',
+        viaPageId: connection.viaPageId
+      })
+    }
+  }
+
+  const selected = discovered.slice(offset, requestedEnd)
+  const truncated = discovered.length > requestedEnd
+  return {
+    pages: selected,
+    truncated,
+    nextOffset: truncated ? offset + selected.length : null
+  }
 }
 
 const remove = (input: OperationInput): unknown => {
@@ -718,5 +824,5 @@ const restore = async (input: OperationInput): Promise<void> => {
 const getPageTags = (value: unknown): RelatedTagQuery => wiki.models.pages.relatedQuery('tags').for(positiveInteger(value, 'pageId'))
 export default {
   authorizeMutation, changeVisibility, checkConflict, convert, create, get, getByPath, getConflictLatest, getHistory, getPageTags, getTree, getVersion,
-  list, listIndex, listLinks, listRecent, listTags, move, remove, removeTag, restore, search, searchTags, transferOwnership, update, updateTag
+  list, listIndex, listLinks, listRecent, listRelated, listTags, move, remove, removeTag, restore, search, searchTags, transferOwnership, update, updateTag
 }

@@ -55,6 +55,12 @@ const SearchPageSummary = PageSummary.extend({
   score: z.number().finite().nonnegative(),
   matchedFields: z.array(z.enum(['title', 'tag', 'path', 'description', 'content', 'graph'])).max(6)
 })
+const RelatedPageSummary = PageSummary.extend({
+  tags: z.array(z.string().min(1).max(255)).max(50),
+  distance: z.number().int().positive().max(32),
+  direction: z.enum(['incoming', 'outgoing', 'bidirectional']),
+  viaPageId: PositiveId
+})
 const PageResult = PageSummary.extend({
   content: BoundedPageContent,
   updatedAt: z.string().max(32),
@@ -148,6 +154,12 @@ export const ACTION_CATALOG = {
     output: strict({ links: z.array(strict({ label: BoundedPathLike, target: BoundedPathLike, kind: z.enum(['page', 'external', 'asset']) })).max(100), truncated: z.boolean() }),
     requiredFlags: baseFlags
   },
+  'pages.related': {
+    descriptor: descriptor('pages.related', 'Get related pages', 'Traverse visible published pages connected by explicit internal Wiki links and backlinks. Use a search result as the seed, page through the connected graph as needed, and read promising pages with pages.get before relying on their content.', 'read', ['read:pages'], both, readAnnotations),
+    input: strict({ pageId: PositiveId, limit: z.number().int().min(1).max(100).default(20), offset: z.number().int().min(0).max(5_000).default(0), maxDepth: z.number().int().min(1).max(32).optional() }),
+    output: strict({ pages: z.array(RelatedPageSummary).max(100), truncated: z.boolean(), nextOffset: z.number().int().nonnegative().nullable() }),
+    requiredFlags: baseFlags
+  },
   'skills.list': {
     descriptor: descriptor('skills.list', 'List approved skills', 'List approved skills visible to the current principal.', 'read', [], both, readAnnotations),
     input: EmptyInput,
@@ -191,13 +203,13 @@ export const ACTION_CATALOG = {
     input: strict({ ref: z.string().max(128).optional() }), output: strict({ artifactId: Uuid, mimeType: z.literal('image/png'), width: z.number().int().positive().max(16_384), height: z.number().int().positive().max(16_384) }), requiredFlags: browserFlags
   },
   'pages.prepareCreate': {
-    descriptor: descriptor('pages.prepareCreate', 'Prepare page creation', 'Validate and prepare an immutable Markdown page-create proposal without applying it before approval. Author canonical GFM unless an approved skill requires supported extended syntax. In Agent chat this waits for the human decision and applies the exact proposal automatically when approved.', 'proposal', ['write:pages'], both, proposalAnnotations),
+    descriptor: descriptor('pages.prepareCreate', 'Prepare page creation', 'Validate and prepare an immutable Markdown page-create proposal without applying it before approval. First search and read potential duplicates or related pages; include canonical internal links and precise tags only for relationships supported by the new content. Author canonical GFM unless an approved skill requires supported extended syntax. In Agent chat this waits for the human decision and applies the exact proposal automatically when approved.', 'proposal', ['write:pages'], both, proposalAnnotations),
     input: strict({ path: Path, locale: Locale, title: z.string().min(1).max(255), description: z.string().max(1000), content: z.string().max(1_000_000).describe('Canonical Wiki Markdown source. Prefer the Visual Markdown-safe GFM subset and avoid raw HTML so human editors can round-trip the page.'), contentType: z.literal('markdown'), isPublished: z.boolean().default(true), tags: z.array(z.string().max(255)).max(100).default([]) }),
     output: ProposalResult,
     requiredFlags: [...proposalFlags, 'agents.writes.create.enabled']
   },
   'pages.preparePatch': {
-    descriptor: descriptor('pages.preparePatch', 'Prepare page patch', 'Validate a strict hashline patch against an exact Markdown page snapshot while preserving undisclosed source and human-editor compatibility. In Agent chat this waits for the human decision and applies the exact proposal automatically when approved.', 'proposal', ['write:pages'], both, proposalAnnotations),
+    descriptor: descriptor('pages.preparePatch', 'Prepare page patch', 'Validate a strict hashline patch against an exact Markdown page snapshot while preserving undisclosed source and human-editor compatibility. When the change affects knowledge relationships, first search and read related pages, then maintain canonical internal links and precise tags without manufacturing retrieval signals. In Agent chat this waits for the human decision and applies the exact proposal automatically when approved.', 'proposal', ['write:pages'], both, proposalAnnotations),
     input: strict({ patch: WikiLinePatchV1Schema }), output: ProposalResult,
     requiredFlags: [...proposalFlags, 'agents.writes.patch.enabled']
   },

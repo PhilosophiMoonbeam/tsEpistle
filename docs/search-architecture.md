@@ -54,6 +54,30 @@ The graph score is deliberately capped at `1.25`. Links can settle close lexical
 
 Locale and path filters are part of both exact and fuzzy candidate selection. Path scope means the selected path itself or descendants under `path/`; wildcard characters remain literal.
 
+## Wiki content as Agent and MCP memory
+
+Wiki pages are shared, mutable, citable external knowledge. They complement the Wiki Agent's bounded personal memory rather than replacing it. Durable preferences and stable user-specific facts belong in dedicated memory; facts that can be rediscovered from Wiki pages stay in the Wiki and are retrieved when needed.
+
+Both Agent chat and MCP expose the same grounded retrieval sequence:
+
+1. `pages.search` / `wiki_search_pages` finds lexical, tag, path, and graph-supported seeds.
+2. `pages.related` / `wiki_get_related_pages` optionally expands a seed through explicit internal Wiki links and backlinks.
+3. `pages.get` / `wiki_get_page` reads each promising page before its content is used.
+4. Answers cite the retrieved page evidence.
+
+`pages.related` is deliberately separate from the latency-sensitive search reranker. It constructs an undirected adjacency graph from canonical `pageLinks`, then performs deterministic breadth-first traversal:
+
+- every directly linked page is distance one; traversal depth counts edges, not the number of neighbors;
+- pagination bounds each response while an omitted `maxDepth` allows traversal to continue until the connected component is exhausted;
+- an optional `maxDepth` from 1 through 32 supports deliberately local exploration;
+- ordering is shortest distance, then title, path, and page ID;
+- results include distance, incoming/outgoing/bidirectional direction, and the preceding page ID;
+- only published public pages authorized for the requester enter the adjacency graph, so an inaccessible page can neither appear nor act as a hidden bridge.
+
+The breadth-first walk runs over a set-based PostgreSQL edge read rather than inside the search CTE. Authorization rules can depend on live path, locale, and tags, so filtering nodes before constructing adjacency is safer than traversing the database graph first and filtering results afterward. The search CTE remains a candidate-only depth-two reranker; `pages.related` provides intentional broad graph retrieval.
+
+Internal Wiki links are durable graph edges. Rendering a created or patched page synchronously replaces its `pageLinks` records from the canonical authored content. Agent instructions and Agent/MCP proposal descriptions therefore require authors to search and read related pages before a knowledge-changing create or patch, then add canonical links and precise tags only when supported by the page content. Links remain visible, reviewable, and reproducible from page history; the Agent must not invent invisible edges merely to influence retrieval.
+
 ## Mutation and rebuild lifecycle
 
 - Create and update events upsert the page vector and replace only that page's suggestion terms in one transaction.
@@ -74,7 +98,15 @@ Protected pages never contribute content tokens during either incremental indexi
 - matched fields;
 - total and truncation state.
 
-The action description instructs the model to use this evidence to select candidates and call `pages.get` before answering. Search evidence helps selection; page content remains the citable source of truth.
+`pages.related` returns bounded hydrated graph neighbors with:
+
+- citations, canonical identity, and tags;
+- shortest link distance;
+- incoming, outgoing, or bidirectional edge direction;
+- the preceding page ID on the deterministic breadth-first route;
+- continuation state for exhaustive pagination.
+
+The action descriptions instruct the model to use search evidence to select seeds, expand explicit relationships when useful, and call `pages.get` before answering. Search and graph evidence guide selection; page content remains the citable source of truth.
 
 ## Performance envelope
 
@@ -97,6 +129,7 @@ After activating or upgrading the PostgreSQL engine:
 3. Confirm the `pages_vector_tokens_idx` and `pages_vector_facets_trgm_idx` indexes are valid.
 4. Search an exact title, a tag, a content-only phrase, and a misspelling.
 5. Confirm a protected content-only term is absent while the protected page's visible metadata remains searchable.
-6. Confirm the Wiki Agent calls `pages.search`, then `pages.get`, and emits a page citation.
+6. Confirm `pages.related` returns authorized direct links and backlinks, paginates a connected component, and does not traverse through a denied page.
+7. Confirm the Wiki Agent calls `pages.search`, optionally `pages.related`, then `pages.get`, and emits a page citation.
 
 No embedding generation, asynchronous vector queue, or document chunk synchronization is required.

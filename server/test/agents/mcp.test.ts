@@ -142,6 +142,7 @@ describe('Wiki MCP transport', () => {
         getHistory: vi.fn(),
         getVersion: vi.fn(),
         listLinks: vi.fn(),
+        listRelated: vi.fn(),
         create: vi.fn(),
         update: vi.fn(),
         move: movePage,
@@ -213,6 +214,7 @@ describe('Wiki MCP transport', () => {
     const listed = await client.listTools()
     const names = listed.tools.map(tool => tool.name)
     expect(names).toContain('wiki_search_pages')
+    expect(names).toContain('wiki_get_related_pages')
     expect(names).toContain('wiki_read_skill')
     expect(names).toContain('wiki_prepare_page_patch')
     expect(names).toContain('wiki_apply_page_proposal')

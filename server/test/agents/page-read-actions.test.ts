@@ -47,6 +47,7 @@ const setup = (overrides: Partial<{
   getHistory: (input: Record<string, unknown>) => Promise<unknown>
   getVersion: (input: Record<string, unknown>) => Promise<unknown>
   listLinks: (input: Record<string, unknown>) => Promise<unknown>
+  listRelated: (input: Record<string, unknown>) => Promise<unknown>
 }> = {}) => {
   const operations = {
     search: vi.fn(async () => ({ results: [], totalHits: 0 })),
@@ -56,6 +57,7 @@ const setup = (overrides: Partial<{
     getHistory: vi.fn(async () => ({ trail: [], total: 0 })),
     getVersion: vi.fn(async () => null),
     listLinks: vi.fn(async () => []),
+    listRelated: vi.fn(async () => ({ pages: [], truncated: false, nextOffset: null })),
     ...overrides
   }
   const resolveRequester = vi.fn(async () => principal)
@@ -152,7 +154,8 @@ describe('permission-safe page read actions', () => {
         listRecent: async () => [],
         getHistory: async () => ({ trail: [], total: 0 }),
         getVersion: async () => null,
-        listLinks: async () => []
+        listLinks: async () => [],
+        listRelated: async () => ({ pages: [], truncated: false, nextOffset: null })
       },
       resolveRequester: async () => apiPrincipal,
       snapshotSigningSecret: Buffer.alloc(32, 4)
@@ -238,5 +241,42 @@ describe('permission-safe page read actions', () => {
       links: [{ label: 'en/docs/next', target: 'en/docs/next', kind: 'page' }],
       truncated: true
     })
+  })
+
+  it('returns paginated cited graph neighbors with traversal evidence', async () => {
+    const { execute, operations } = setup({
+      listRelated: vi.fn(async () => ({
+        pages: [page({
+          id: 43,
+          path: 'docs/next',
+          title: 'Next',
+          tags: [{ tag: 'Runbook' }],
+          distance: 2,
+          direction: 'incoming',
+          viaPageId: 41
+        })],
+        truncated: true,
+        nextOffset: 1
+      }))
+    })
+    await expect(execute('pages.related', { pageId: 42, limit: 1, offset: 0 })).resolves.toEqual({
+      pages: [{
+        id: 43,
+        locale: 'en',
+        path: 'docs/next',
+        title: 'Next',
+        description: '',
+        contentType: 'markdown',
+        sourceRevision: '8',
+        citation: { evidenceId: 'page:43', label: 'Next', href: '/en/docs/next' },
+        tags: ['runbook'],
+        distance: 2,
+        direction: 'incoming',
+        viaPageId: 41
+      }],
+      truncated: true,
+      nextOffset: 1
+    })
+    expect(operations.listRelated).toHaveBeenCalledWith(expect.objectContaining({ pageId: 42, limit: 1, offset: 0, requester: principal }))
   })
 })

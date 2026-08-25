@@ -46,6 +46,15 @@ const LinksSchema = z.array(z.looseObject({
   id: z.coerce.number().int().positive(),
   links: z.array(z.string())
 }))
+const RelatedResponseSchema = z.strictObject({
+  pages: z.array(PageRowSchema.extend({
+    distance: z.coerce.number().int().positive().max(32),
+    direction: z.enum(['incoming', 'outgoing', 'bidirectional']),
+    viaPageId: z.coerce.number().int().positive()
+  })).max(100),
+  truncated: z.boolean(),
+  nextOffset: z.coerce.number().int().nonnegative().nullable()
+})
 
 interface PageOperations {
   search(input: Record<string, unknown>): Promise<unknown>
@@ -55,6 +64,7 @@ interface PageOperations {
   getHistory(input: Record<string, unknown>): Promise<unknown>
   getVersion(input: Record<string, unknown>): Promise<unknown>
   listLinks(input: Record<string, unknown>): Promise<unknown>
+  listRelated(input: Record<string, unknown>): Promise<unknown>
 }
 
 export interface PageReadActionDependencies {
@@ -74,6 +84,7 @@ interface RecentInput { readonly locale?: string; readonly limit: number }
 interface HistoryInput { readonly pageId: number; readonly limit: number }
 interface VersionInput { readonly pageId: number; readonly versionId: number }
 interface LinksInput { readonly pageId: number; readonly limit: number }
+interface RelatedInput { readonly pageId: number; readonly limit: number; readonly offset: number; readonly maxDepth?: number }
 
 const operationFailure = (message: string): ActionKernelError => new ActionKernelError('INVALID_PAGE_RESULT', message, 500)
 interface CitationSection {
@@ -187,6 +198,16 @@ export const snapshotRequesterScope = (authority: ActionAuthority): string => au
   ? `request:${authority.requestId}:user:${authority.requester.userId}`
   : `request:${authority.requestId}:api-key:${authority.requester.apiKeyId}:group:${authority.requester.groupId}`
 
+
+const normalizedPageTags = (value: unknown): string[] => {
+  if (!Array.isArray(value)) return []
+  const tags = value.flatMap(item => {
+    if (typeof item === 'string') return [item]
+    if (item && typeof item === 'object' && typeof Reflect.get(item, 'tag') === 'string') return [String(Reflect.get(item, 'tag'))]
+    return []
+  }).map(tag => tag.trim().toLocaleLowerCase()).filter(Boolean)
+  return [...new Set(tags)].sort().slice(0, 50)
+}
 
 export const registerPageReadActions = (kernel: ActionKernel, dependencies: PageReadActionDependencies): void => {
   const operations = dependencies.operations
@@ -312,6 +333,30 @@ export const registerPageReadActions = (kernel: ActionKernel, dependencies: Page
       kind: /^[A-Za-z][A-Za-z0-9+.-]*:/.test(target) ? 'external' as const : 'page' as const
     }))
     return { links, truncated: (selected?.links.length ?? 0) > links.length }
+  })
+
+  kernel.register('pages.related', async (rawInput, context) => {
+    const input = rawInput as RelatedInput
+    const requester = await requesterFor(dependencies.resolveRequester, context.authority)
+    const response = RelatedResponseSchema.safeParse(await operations.listRelated({
+      pageId: input.pageId,
+      limit: input.limit,
+      offset: input.offset,
+      ...(input.maxDepth === undefined ? {} : { maxDepth: input.maxDepth }),
+      requester
+    }))
+    if (!response.success) throw operationFailure('Related pages operation returned an invalid result')
+    return {
+      pages: response.data.pages.map(page => ({
+        ...parsePage(page, false),
+        tags: normalizedPageTags(page.tags),
+        distance: page.distance,
+        direction: page.direction,
+        viaPageId: page.viaPageId
+      })),
+      truncated: response.data.truncated,
+      nextOffset: response.data.nextOffset
+    }
   })
 }
 

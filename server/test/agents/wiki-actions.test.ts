@@ -66,7 +66,8 @@ describe('Wiki action sessions', () => {
 
     expect(session?.functions).toEqual(expect.arrayContaining([
       expect.objectContaining({ name: 'pages.search', risk: 'read' }),
-      expect.objectContaining({ name: 'pages.get', risk: 'read' })
+      expect.objectContaining({ name: 'pages.get', risk: 'read' }),
+      expect.objectContaining({ name: 'pages.related', risk: 'read' })
     ]))
     session?.close()
   })
