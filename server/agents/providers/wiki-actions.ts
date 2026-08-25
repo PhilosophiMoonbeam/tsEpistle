@@ -10,6 +10,7 @@ import { registerSkillReadActions } from '../actions/skill-reads.ts'
 import type { AgentEngineRequest } from '../runtime.ts'
 import { AgentRepositoryError } from '../repository.ts'
 import { agentFeatureFlags, KernelActionSessionProvider } from './action-sessions.ts'
+import { AgentProviderCapabilitiesSchema } from './registry.ts'
 import { BrowserActionService } from '../browser/actions.ts'
 import { SkillRuntime } from '../skills/runtime.ts'
 import { AgentMemoryRepository } from '../memory.ts'
@@ -94,8 +95,8 @@ export const createWikiActionSessionProvider = (knex: Knex, config: WikiActionSe
     if (!version) throw new AgentRepositoryError('PROFILE_VERSION_UNAVAILABLE', 'Provider profile version is unavailable', 409)
     let supportsTools: boolean
     try {
-      const capabilities: unknown = JSON.parse(version.capabilities)
-      supportsTools = typeof capabilities === 'object' && capabilities !== null && Reflect.get(capabilities, 'functions') === true
+      const capabilities = AgentProviderCapabilitiesSchema.parse(JSON.parse(version.capabilities) as unknown)
+      supportsTools = capabilities.toolCalling === 'native' || capabilities.toolCalling === 'prompt'
     } catch { throw new AgentRepositoryError('PROVIDER_PROFILE_CORRUPT', 'Stored provider capabilities are invalid', 500) }
     const allowedActions = await allowedActionsFor(knex, request.run.id)
     return {
