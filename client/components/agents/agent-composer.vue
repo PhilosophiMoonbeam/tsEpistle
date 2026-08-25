@@ -52,8 +52,6 @@
       aria-label="Message Wiki Agent"
       placeholder="Ask a follow-up · Type / for skills"
       rows="1"
-      max-rows="7"
-      auto-grow
       variant="solo"
       flat
       hide-details
@@ -81,6 +79,7 @@
         <template #activator="{ props: activatorProps }">
           <v-btn
             v-bind="activatorProps"
+            class="agent-composer__skill-button"
             variant="text"
             prepend-icon="mdi-puzzle-outline"
             :text="selectedSkills.length > 0 ? `Skills (${selectedSkills.length})` : 'Skills'"
@@ -129,7 +128,7 @@
         </v-card>
       </v-menu>
       <span class="agent-composer__hint text-body-small text-medium-emphasis">Enter to send · Shift+Enter for a new line</span>
-      <v-spacer />
+      <span class="agent-composer__action-spacer" aria-hidden="true" />
       <v-btn v-if="canStop" color="warning" variant="outlined" prepend-icon="mdi-stop" @click="$emit('stop')">Stop</v-btn>
       <v-btn type="submit" color="primary" prepend-icon="mdi-send" :loading="sending" :disabled="disabled || !draft.trim()">Send</v-btn>
     </div>
@@ -137,7 +136,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { AgentSessionSkillView } from '../../../shared/agents/contracts.ts'
 import type { VisibleAgentSkill } from '../../helpers/agents-api.ts'
 import { filterSkillsForCommand } from './agent-skill-command.ts'
@@ -155,7 +154,7 @@ const emit = defineEmits<{ send: [content: string, invokedSkillVersionIds: reado
 const draft = ref('')
 const skillMenuOpen = ref(false)
 const selectedSkillIds = ref<string[]>([])
-const messageInput = ref<{ focus: () => void } | null>(null)
+const messageInput = ref<{ focus: () => void; $el?: HTMLElement } | null>(null)
 const commandDismissed = ref(false)
 const activeCommandIndex = ref(0)
 const preferredSkillIds = computed(() => new Set(props.preferredSkills.map(skill => skill.skillId)))
@@ -176,6 +175,17 @@ const isPreferred = (versionId: string): boolean => {
   return skillId !== undefined && preferredSkillIds.value.has(skillId)
 }
 const isSelected = (versionId: string): boolean => selectedSkillIds.value.includes(versionId)
+const resizeInput = (): void => {
+  const textarea = messageInput.value?.$el?.querySelector('textarea')
+  if (!(textarea instanceof HTMLTextAreaElement)) return
+  textarea.style.height = 'auto'
+  const styles = window.getComputedStyle(textarea)
+  const minHeight = Number.parseFloat(styles.minHeight) || 0
+  const maxHeight = Number.parseFloat(styles.maxHeight) || Number.POSITIVE_INFINITY
+  const height = Math.min(Math.max(textarea.scrollHeight, minHeight), maxHeight)
+  textarea.style.height = `${height}px`
+  textarea.style.overflowY = textarea.scrollHeight > maxHeight ? 'auto' : 'hidden'
+}
 const togglePreference = (versionId: string): void => {
   if (props.disabled) return
   const skillIds = props.preferredSkills.map(skill => skill.skillId)
@@ -248,6 +258,7 @@ watch(
 )
 watch(draft, value => {
   if (!value.startsWith('/')) commandDismissed.value = false
+  void nextTick(resizeInput)
 })
 watch(skillCommandQuery, () => {
   activeCommandIndex.value = 0
@@ -264,6 +275,13 @@ const submit = (): void => {
   selectedSkillIds.value = []
   emit('send', content, invokedSkillVersionIds)
 }
+onMounted(() => {
+  resizeInput()
+  window.addEventListener('resize', resizeInput)
+})
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', resizeInput)
+})
 </script>
 
 <style scoped>
@@ -271,6 +289,8 @@ const submit = (): void => {
   background: color-mix(in srgb, rgb(var(--v-theme-surface)) 94%, rgb(var(--v-theme-primary)) 6%);
   border: 1px solid color-mix(in srgb, rgb(var(--v-theme-outline)) 34%, transparent);
   border-radius: 1rem;
+  font-family: 'WikiAgentSans', 'Roboto', system-ui, sans-serif;
+  min-width: 0;
   padding: .2rem .55rem .5rem;
   position: relative;
   transition: border-color .16s ease, box-shadow .16s ease;
@@ -280,7 +300,18 @@ const submit = (): void => {
   box-shadow: 0 0 0 3px color-mix(in srgb, rgb(var(--v-theme-primary)) 13%, transparent);
 }
 .agent-composer__input :deep(.v-field) { background: transparent; box-shadow: none; }
-.agent-composer__input :deep(.v-field__input) { min-height: 2.75rem; padding: .75rem .45rem .45rem; }
+.agent-composer__input :deep(.v-field__input) { min-height: 3.25rem; padding: .75rem .45rem .45rem; }
+.agent-composer__input :deep(textarea) {
+  line-height: 1.5;
+  max-height: min(11rem, 42vh);
+  min-height: 3.25rem;
+  overflow-y: hidden;
+  resize: none;
+}
+.agent-composer__input :deep(textarea:focus-visible) {
+  outline: 2px solid rgb(var(--v-theme-primary));
+  outline-offset: 2px;
+}
 .agent-composer__command-menu {
   bottom: calc(100% + .5rem);
   left: 0;
@@ -289,10 +320,16 @@ const submit = (): void => {
   width: min(38rem, 100%);
   z-index: 10;
 }
-.agent-composer__actions { flex-wrap: wrap; min-height: 2.25rem; }
+.agent-composer__actions { flex-wrap: wrap; min-height: 2.75rem; min-width: 0; }
+.agent-composer__actions :deep(.v-btn) { min-height: 2.75rem; }
+.agent-composer__skill-button { max-width: 100%; }
+.agent-composer__hint { flex: 1 1 10rem; min-width: 0; }
+.agent-composer__action-spacer { flex: 1 1 2rem; min-width: 0; }
 .agent-composer__skill-menu :deep(.v-selection-control) { pointer-events: none; }
 @media (max-width: 680px) {
+  .agent-composer { padding-inline: .35rem; }
   .agent-composer__hint { display: none; }
+  .agent-composer__action-spacer { flex-basis: 1rem; }
 }
 @media (prefers-reduced-motion: reduce) {
   .agent-composer { transition: none; }

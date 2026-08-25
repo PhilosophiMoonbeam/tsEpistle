@@ -2,17 +2,17 @@
   <section class="inline-agent" aria-label="Wiki Agent">
     <v-card class="inline-agent__card" elevation="0" rounded="xl">
       <v-toolbar class="inline-agent__toolbar" color="transparent" density="comfortable" tag="div">
-        <v-avatar class="ml-4" color="primary" size="34" variant="tonal">
+        <v-avatar class="ms-4" color="primary" size="34" variant="tonal">
           <v-icon icon="mdi-auto-fix" size="19" />
         </v-avatar>
-        <div class="inline-agent__heading ml-3">
+        <div class="inline-agent__heading ms-3">
           <div class="text-title-medium font-weight-medium">Wiki Agent</div>
           <div class="text-body-small text-medium-emphasis text-truncate">{{ sessionTitle }}</div>
         </div>
         <v-spacer />
         <v-chip
           v-if="activeRun || connection === 'reconnecting'"
-          class="mr-2"
+          class="me-2"
           :color="connectionColor"
           size="small"
           variant="tonal"
@@ -55,7 +55,7 @@
           </v-list>
         </v-menu>
         <v-btn
-          class="mr-2"
+          class="me-2"
           icon="mdi-plus"
           variant="text"
           aria-label="Start a new agent conversation"
@@ -358,33 +358,75 @@ defineExpose({ sendPrompt })
 
 <style scoped>
 .inline-agent {
+  color: rgb(var(--v-theme-on-surface));
+  font-family: 'WikiAgentSans', 'Tajawal', 'Roboto', system-ui, sans-serif;
   margin: 0 auto;
-  max-width: 64rem;
+  max-width: 68rem;
+  text-align: start;
   width: 100%;
+}
+.inline-agent:dir(rtl),
+.inline-agent:lang(ar) {
+  font-family: 'Tajawal', 'WikiAgentSans', 'Roboto', system-ui, sans-serif;
+}
+.inline-agent :deep(.v-alert),
+.inline-agent :deep(.v-btn),
+.inline-agent :deep(.v-card),
+.inline-agent :deep(.v-chip),
+.inline-agent :deep(.v-field),
+.inline-agent :deep(.v-input),
+.inline-agent :deep(.v-list),
+.inline-agent :deep(.v-toolbar) {
+  font-family: inherit;
 }
 .inline-agent__card {
   background: color-mix(in srgb, rgb(var(--v-theme-surface)) 98%, rgb(var(--v-theme-background)));
   border: 1px solid color-mix(in srgb, rgb(var(--v-theme-outline)) 28%, transparent);
-  box-shadow: 0 1.25rem 4rem rgba(0, 0, 0, .22);
+  box-shadow: 0 1.25rem 4rem color-mix(in srgb, rgb(var(--v-theme-on-surface)) 16%, transparent);
   display: flex;
   flex-direction: column;
-  height: min(78vh, 52rem);
-  min-height: 32rem;
+  height: min(82dvh, 54rem);
+  max-height: calc(100dvh - 1rem);
+  min-height: min(34rem, calc(100dvh - 1rem));
   overflow: hidden;
   text-align: start;
 }
 .inline-agent__toolbar {
+  background: color-mix(in srgb, rgb(var(--v-theme-surface)) 92%, rgb(var(--v-theme-primary)) 8%);
   border-bottom: 1px solid color-mix(in srgb, rgb(var(--v-theme-outline)) 18%, transparent);
   flex: 0 0 auto;
+  min-height: 4.25rem;
+  padding-inline: .5rem;
 }
 .inline-agent__heading { min-width: 0; }
-.inline-agent__history { max-height: min(28rem, 70vh); min-width: min(24rem, 90vw); overflow-y: auto; }
+.inline-agent__history { max-height: min(28rem, 70dvh); min-width: min(24rem, 90vw); overflow-y: auto; }
 .inline-agent__history-header { align-items: center; display: flex; gap: 1rem; justify-content: space-between; }
 .inline-agent__alert { flex: 0 0 auto; }
 .inline-agent__settings { flex: 0 0 auto; max-height: 100%; overflow-y: auto; overscroll-behavior: contain; }
 .inline-agent__settings:has(.v-expansion-panel-title[aria-expanded="true"]) { flex: 1 1 auto; min-height: clamp(9rem, 45dvh, 18rem); }
-.inline-agent__body { display: flex; flex: 1 1 auto; flex-direction: column; min-height: 0; overflow: hidden; padding: 1rem 1.25rem 0; position: relative; }
-.inline-agent__transcript { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: .5rem .5rem 1.25rem; scroll-behavior: smooth; }
+.inline-agent__body {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  padding: 1.1rem clamp(1rem, 3vw, 2rem) 0;
+  position: relative;
+}
+.inline-agent__transcript {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: .5rem .25rem 1.5rem;
+  scroll-behavior: smooth;
+  scroll-padding-block: 1rem;
+}
+.inline-agent__transcript :deep(.agent-thread) {
+  margin-inline: auto;
+  max-width: 56rem;
+  width: 100%;
+}
 .inline-agent__transcript:has(> .inline-agent__welcome) { display: flex; }
 .inline-agent__transcript--approval-jump { padding-bottom: 4.5rem; }
 .inline-agent__approval-jump { bottom: 1rem; position: absolute; right: 1.75rem; z-index: 2; }
@@ -399,9 +441,9 @@ defineExpose({ sendPrompt })
   display: flex;
   flex-direction: column;
   margin: auto;
-  max-width: 44rem;
+  max-width: 48rem;
   overflow: hidden;
-  padding: clamp(1.75rem, 5vw, 3rem);
+  padding: clamp(1.75rem, 5vw, 3.25rem);
   text-align: center;
   width: 100%;
 }
@@ -422,14 +464,15 @@ defineExpose({ sendPrompt })
 .inline-agent__starters { display: grid; gap: .65rem; grid-template-columns: repeat(3, minmax(0, 1fr)); width: 100%; }
 .inline-agent__starter { height: auto; justify-content: flex-start; letter-spacing: 0; min-height: 2.9rem; padding: .65rem .9rem; text-transform: none; white-space: normal; }
 .inline-agent__composer {
-  background: color-mix(in srgb, rgb(var(--v-theme-surface)) 98%, rgb(var(--v-theme-primary)) 2%);
+  background: color-mix(in srgb, rgb(var(--v-theme-surface)) 96%, rgb(var(--v-theme-primary)) 4%);
   border-top: 1px solid color-mix(in srgb, rgb(var(--v-theme-outline)) 18%, transparent);
   flex: 0 0 auto;
-  padding: .9rem 1.25rem 1rem;
+  padding: 1rem clamp(1rem, 3vw, 2rem) 1.1rem;
 }
 .inline-agent__notice { align-items: center; display: flex; gap: .35rem; justify-content: center; text-align: center; }
 @media (max-width: 599.98px) {
-  .inline-agent__card { border: 0; border-radius: 0 !important; box-shadow: none; height: 100%; min-height: 0; }
+  .inline-agent__card { border: 0; border-radius: 0 !important; box-shadow: none; height: 100dvh; max-height: none; min-height: 0; }
+  .inline-agent__toolbar { padding-inline: .25rem; }
   .inline-agent__body { padding-inline: .75rem; }
   .inline-agent__transcript { padding-inline: 0; }
   .inline-agent__welcome { border-radius: 1.25rem; padding: 1.4rem 1rem; }
@@ -439,9 +482,11 @@ defineExpose({ sendPrompt })
   .inline-agent__notice { display: none; }
 }
 @media (max-height: 500px) {
+  .inline-agent__card { height: 100dvh; max-height: none; min-height: 0; }
   .inline-agent__body { overflow-y: auto; padding: .5rem .75rem 0; }
   .inline-agent__composer { padding: .5rem .75rem; }
   .inline-agent__composer :deep(.v-input__details), .inline-agent__notice { display: none; }
+  .inline-agent__welcome { padding-block: 1.25rem; }
 }
 @media (forced-colors: active) {
   .inline-agent__card { border: 1px solid CanvasText; }
