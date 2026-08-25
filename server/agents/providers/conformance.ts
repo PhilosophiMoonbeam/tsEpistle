@@ -148,9 +148,9 @@ const consume = async (response: AxChatResponse | ReadableStream<AxChatResponse>
   return { content, calls: [...calls.values()] }
 }
 
-const requireText = (response: ConsumedResponse): string => {
+const requireText = (response: ConsumedResponse, emptyMessage = 'Provider conformance returned no text'): string => {
   if (response.calls.length > 0) throw new AgentRepositoryError('CONFORMANCE_UNEXPECTED_TOOL', 'Provider emitted an unexpected action during conformance', 502)
-  if (response.content.trim().length === 0) throw new AgentRepositoryError('CONFORMANCE_EMPTY_OUTPUT', 'Provider conformance returned no text', 502)
+  if (response.content.trim().length === 0) throw new AgentRepositoryError('CONFORMANCE_EMPTY_OUTPUT', emptyMessage, 502)
   return response.content
 }
 
@@ -188,7 +188,7 @@ const providerChat = async (provider: AgentProviderService, request: Readonly<Ax
 
 const verifyToolCalling = async (provider: AgentProviderService): Promise<'native-tool-round-trip' | 'prompt-tool-round-trip'> => {
   const token = randomUUID()
-  const userMessage = `Call ${PROBE_TOOL.name} exactly once with token ${token}.`
+  const userMessage = `Call ${PROBE_TOOL.name} exactly once with token ${token}. After receiving the action result, reply with exactly ACKNOWLEDGED and do not call any action again.`
   if (provider.capabilities.toolCalling === 'native') {
     const first = await providerChat(provider, {
       chatPrompt: [{ role: 'user', content: userMessage }],
@@ -212,7 +212,7 @@ const verifyToolCalling = async (provider: AgentProviderService): Promise<'nativ
       functions: [PROBE_TOOL],
       functionCall: 'auto'
     })
-    requireText(final)
+    requireText(final, 'Provider returned no final text after the native conformance action result')
     return 'native-tool-round-trip'
   }
 
@@ -236,7 +236,7 @@ const verifyToolCalling = async (provider: AgentProviderService): Promise<'nativ
     ],
     model: provider.model
   })
-  requireText(final)
+  requireText(final, 'Provider returned no final text after the prompt conformance action result')
   if (parsePromptToolCall(final.content, new Set([PROBE_TOOL.name])) !== null) throw new AgentRepositoryError('CONFORMANCE_TOOL_INVALID', 'Provider repeated the prompt conformance action', 502)
   return 'prompt-tool-round-trip'
 }

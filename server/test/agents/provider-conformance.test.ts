@@ -8,7 +8,7 @@ const usage = { ai: 'test', model: 'model-test', tokens: { promptTokens: 1, comp
 const successfulPromptResponse = (input: Readonly<AxChatRequest>): AxChatResponse => {
   const request = [...input.chatPrompt].reverse().find(message => message.role === 'user')?.content
   const text = typeof request === 'string' ? request : ''
-  const token = /^Call wiki_conformance_echo exactly once with token ([0-9a-f-]+)\.$/u.exec(text)?.[1]
+  const token = /^Call wiki_conformance_echo exactly once with token ([0-9a-f-]+)\. After receiving the action result, reply with exactly ACKNOWLEDGED and do not call any action again\.$/u.exec(text)?.[1]
   const content = token
     ? `<wiki-tool-call>{"name":"wiki_conformance_echo","arguments":{"token":"${token}"}}</wiki-tool-call>`
     : 'ok'
@@ -63,6 +63,30 @@ describe('provider conformance runner', () => {
       .run('00000000-0000-4000-8000-000000000001', 7)
 
     expect(report).toMatchObject({ status: 'passed', checks: expect.arrayContaining([{ name: 'native-tool-round-trip', passed: true }]) })
+  })
+
+  it('reports when a native provider omits its final answer after the action result', async () => {
+    const setConformed = vi.fn(async () => {})
+    const factory = {
+      create: async () => service(async input => {
+        if (!input.functions?.length) return { results: [{ index: 0, content: 'ok' }], modelUsage: usage }
+        if (typeof input.functionCall === 'object') {
+          const prompt = input.chatPrompt.find(message => message.role === 'user')?.content
+          const token = typeof prompt === 'string' ? /token ([0-9a-f-]+)/u.exec(prompt)?.[1] : undefined
+          return { results: [{ index: 0, functionCalls: [{ id: 'native-call-1', type: 'function', function: { name: 'wiki_conformance_echo', params: JSON.stringify({ token }) } }] }], modelUsage: usage }
+        }
+        return { results: [{ index: 0, content: '' }], modelUsage: usage }
+      }, { toolCalling: 'native', parallelToolCalls: true, structuredOutput: 'tool-result' })
+    } as unknown as AgentProviderFactory
+
+    const report = await new AgentProviderConformanceRunner(db, factory, { setConformed } as never)
+      .run('00000000-0000-4000-8000-000000000001', 7)
+
+    expect(report).toMatchObject({
+      status: 'failed',
+      errorCode: 'CONFORMANCE_EMPTY_OUTPUT',
+      message: 'Provider returned no final text after the native conformance action result'
+    })
   })
 
 
