@@ -14,11 +14,25 @@ describe('frontend theme helpers', () => {
 
   test('creates independent light and dark Vuetify definitions', () => {
     const colors = cloneThemeColors(DEFAULT_THEME_COLORS)
+    colors.light.primary = '#F9A134'
     colors.dark.primary = '#ABCDEF'
+    colors.dark.secondary = '#A6A8AA'
+    colors.dark.info = '#73ADD3'
 
     expect(createWikiThemes(colors)).toMatchObject({
-      light: { dark: false, colors: { primary: DEFAULT_THEME_COLORS.light.primary } },
-      dark: { dark: true, colors: { primary: '#ABCDEF' } }
+      light: { dark: false, colors: { primary: '#F9A134', 'on-primary': '#000000', 'on-background': '#000000' } },
+      dark: {
+        dark: true,
+        colors: {
+          primary: '#ABCDEF',
+          secondary: '#A6A8AA',
+          info: '#73ADD3',
+          'on-primary': '#000000',
+          'on-secondary': '#000000',
+          'on-info': '#000000',
+          'on-background': '#FFFFFF'
+        }
+      }
     })
   })
 
@@ -30,13 +44,13 @@ describe('frontend theme helpers', () => {
     })
   })
 
-  test('updates both installed themes without discarding generated colors', () => {
+  test('updates base and contrast colors without discarding Vuetify-only colors', () => {
     const colors = cloneThemeColors(DEFAULT_THEME_COLORS)
-    colors.light.primary = '#123456'
+    colors.light.primary = '#F9A134'
     const theme = {
       themes: {
         value: {
-          light: { dark: false, colors: { ...DEFAULT_THEME_COLORS.light, 'on-primary': '#FFFFFF' }, variables: {} },
+          light: { dark: false, colors: { ...DEFAULT_THEME_COLORS.light, 'on-primary': '#FFFFFF', 'surface-bright': '#EEEEEE' }, variables: {} },
           dark: { dark: true, colors: { ...DEFAULT_THEME_COLORS.dark, 'on-primary': '#000000' }, variables: {} }
         }
       }
@@ -44,8 +58,10 @@ describe('frontend theme helpers', () => {
 
     applyWikiThemeColors(theme, colors)
 
-    expect(theme.themes.value.light.colors.primary).toBe('#123456')
-    expect(theme.themes.value.light.colors['on-primary']).toBe('#FFFFFF')
+    expect(theme.themes.value.light.colors.primary).toBe('#F9A134')
+    expect(theme.themes.value.light.colors['on-primary']).toBe('#000000')
     expect(theme.themes.value.dark.colors.background).toBe(DEFAULT_THEME_COLORS.dark.background)
+    expect(theme.themes.value.light.colors['surface-bright']).toBe('#EEEEEE')
+    expect(theme.themes.value.dark.colors['on-primary']).toBe('#000000')
   })
 })
