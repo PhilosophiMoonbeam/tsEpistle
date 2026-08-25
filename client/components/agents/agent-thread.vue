@@ -68,7 +68,7 @@
                         :aria-label="`Citation ${entry.number}: ${entry.citation.label}`"
                       >
                         <span class="agent-sources__number">{{ entry.number }}</span>
-                        <span>{{ entry.sectionLabel }}</span>
+                        <span class="agent-sources__label">{{ entry.sectionLabel }}</span>
                         <v-icon v-if="entry.citation.href" icon="mdi-open-in-new" size="14" aria-hidden="true" />
                       </component>
                     </li>
@@ -348,8 +348,8 @@ const liveSummary = computed(() => {
   overflow: hidden;
 }
 .agent-sources__page,
-.agent-sources__sections a,
-.agent-sources__sections span {
+.agent-sources__sections > li > a,
+.agent-sources__sections > li > span {
   align-items: center;
   color: inherit;
   display: grid;
@@ -392,21 +392,25 @@ const liveSummary = computed(() => {
   position: absolute;
   width: 1px;
 }
-.agent-sources__sections span {
+.agent-sources__label {
   min-width: 0;
   overflow-wrap: anywhere;
 }
 .agent-sources__number {
   align-items: center;
   background: color-mix(in srgb, rgb(var(--v-theme-primary)) 16%, rgb(var(--v-theme-surface)));
-  border-radius: 999px;
+  block-size: 1.4rem;
+  border-radius: 50%;
+  box-sizing: border-box;
   color: rgb(var(--v-theme-on-surface));
-  display: inline-flex;
+  display: inline-grid;
   font-size: .72rem;
   font-weight: 700;
-  height: 1.4rem;
-  justify-content: center;
-  width: 1.4rem;
+  inline-size: 1.4rem;
+  justify-items: center;
+  justify-self: start;
+  line-height: 1;
+  padding: 0;
 }
 .agent-page-links {
   border-block-start: 1px solid var(--agent-thread-divider);
