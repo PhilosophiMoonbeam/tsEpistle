@@ -155,8 +155,8 @@ export interface AgentMessageView {
 
 export interface AgentProviderCapabilities {
   readonly streaming: boolean
-  readonly functions: boolean
-  readonly parallelFunctions: boolean
+  readonly toolCalling: 'native' | 'prompt'
+  readonly parallelToolCalls: boolean
   readonly structuredOutput: 'native-json-schema' | 'tool-result' | 'prompt-only'
   readonly usage: 'stream' | 'terminal' | 'estimated'
   readonly cancellation: boolean

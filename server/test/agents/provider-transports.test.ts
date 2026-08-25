@@ -5,7 +5,7 @@ import { AgentProviderFactory } from '../../agents/providers/factory.ts'
 import { createOpenResponsesFetch } from '../../agents/providers/openresponses.ts'
 
 const publicResolver = async (): Promise<LookupAddress[]> => [{ address: '93.184.216.34', family: 4 }]
-const capabilities = { streaming: false, functions: false, parallelFunctions: false, structuredOutput: 'prompt-only', usage: 'terminal', cancellation: true, maxContextTokens: 100_000, maxOutputTokens: 4_000 }
+const capabilities = { streaming: false, toolCalling: 'prompt', parallelToolCalls: false, structuredOutput: 'prompt-only', usage: 'terminal', cancellation: true, maxContextTokens: 100_000, maxOutputTokens: 4_000 }
 
 describe('additional provider transports', () => {
   let db: Knex
@@ -33,7 +33,7 @@ describe('additional provider transports', () => {
   it('runs OpenResponses through the storage-off Responses protocol', async () => {
     const id = '00000000-0000-4000-8000-000000000011'
     await insert({ id, transportKind: 'openresponses', baseUrl: 'https://openresponses.example.test/v1', authMode: 'bearer' })
-    await db('agentProviderProfileVersions').where({ id }).update({ capabilities: JSON.stringify({ ...capabilities, functions: true }) })
+    await db('agentProviderProfileVersions').where({ id }).update({ capabilities: JSON.stringify({ ...capabilities, toolCalling: 'native', parallelToolCalls: true }) })
     let payload: Record<string, unknown> = {}
     const fetchImplementation = async (_input: URL | RequestInfo, init?: RequestInit): Promise<Response> => {
       payload = JSON.parse(String(init?.body)) as Record<string, unknown>
@@ -42,31 +42,77 @@ describe('additional provider transports', () => {
     const provider = await new AgentProviderFactory(db, { get: () => 'key' }, fetchImplementation as typeof fetch, publicResolver as never).create(id)
     const response = await provider.service.chat({
       chatPrompt: [{ role: 'user', content: 'hello' }],
-      functions: [{ name: 'pages.get', description: 'Read a page', parameters: { type: 'object', properties: { id: { type: 'number' } } } }]
+      functions: [{ name: 'pages_get', description: 'Read a page', parameters: { type: 'object', properties: { id: { type: 'number', description: 'Page ID' } } } }]
     }, { stream: false })
     expect(response).not.toBeInstanceOf(ReadableStream)
-    expect(payload).toMatchObject({ store: false, previous_response_id: null, tools: [{ type: 'function', name: 'pages.get' }] })
+    expect(payload).toMatchObject({ store: false, previous_response_id: null, parallel_tool_calls: true, tools: [{ type: 'function', name: 'pages_get', strict: true }] })
     expect(payload.include).toContain('reasoning.encrypted_content')
   })
 
-  it('maps Anthropic Messages using its native header and response format', async () => {
+  it('maps Anthropic native tools, tool use, and tool results', async () => {
     const id = '00000000-0000-4000-8000-000000000012'
     await insert({ id, transportKind: 'anthropic-messages', baseUrl: 'https://api.anthropic.com/v1', authMode: 'anthropic-api-key' })
-    let request: { url: string; headers: Headers } | undefined
+    await db('agentProviderProfileVersions').where({ id }).update({ capabilities: JSON.stringify({ ...capabilities, toolCalling: 'native', parallelToolCalls: true }) })
+    const requests: Array<{ url: string; headers: Headers; body: Record<string, unknown> }> = []
     const fetchImplementation = async (input: URL | RequestInfo, init?: RequestInit): Promise<Response> => {
-      request = { url: String(input), headers: new Headers(init?.headers) }
-      return Response.json({ id: 'msg_1', type: 'message', role: 'assistant', content: [{ type: 'text', text: 'anthropic' }], model: 'model-test', stop_reason: 'end_turn', stop_sequence: null, usage: { input_tokens: 2, output_tokens: 1 } })
+      requests.push({ url: String(input), headers: new Headers(init?.headers), body: JSON.parse(String(init?.body)) as Record<string, unknown> })
+      return requests.length === 1
+        ? Response.json({ id: 'msg_1', type: 'message', role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_1', name: 'pages_get', input: { id: 42 } }], model: 'model-test', stop_reason: 'tool_use', stop_sequence: null, usage: { input_tokens: 2, output_tokens: 1 } })
+        : Response.json({ id: 'msg_2', type: 'message', role: 'assistant', content: [{ type: 'text', text: 'anthropic' }], model: 'model-test', stop_reason: 'end_turn', stop_sequence: null, usage: { input_tokens: 4, output_tokens: 1 } })
     }
     const provider = await new AgentProviderFactory(db, { get: () => 'anthropic-key' }, fetchImplementation as typeof fetch, publicResolver as never).create(id)
-    const response = await provider.service.chat({ chatPrompt: [{ role: 'user', content: 'hello' }] }, { stream: false })
-    expect(request?.url).toBe('https://api.anthropic.com/v1/messages')
-    expect(request?.headers.get('x-api-key')).toBe('anthropic-key')
-    expect(request?.headers.get('anthropic-version')).toBeTruthy()
-    expect(response).not.toBeInstanceOf(ReadableStream)
-    if (!(response instanceof ReadableStream)) expect(response.results[0]?.content).toBe('anthropic')
+    const definition = { name: 'pages_get', description: 'Read a page', parameters: { type: 'object' as const, properties: { id: { type: 'number' as const, description: 'Page ID' } } } }
+    const first = await provider.service.chat({ chatPrompt: [{ role: 'user', content: 'hello' }], functions: [definition] }, { stream: false })
+    if (first instanceof ReadableStream) throw new Error('Expected a buffered Anthropic response')
+    const [call] = first.results[0]?.functionCalls ?? []
+    expect(call).toMatchObject({ id: 'toolu_1', function: { name: 'pages_get' } })
+    await provider.service.chat({
+      chatPrompt: [
+        { role: 'user', content: 'hello' },
+        { role: 'assistant', functionCalls: call ? [call] : [] },
+        { role: 'function', functionId: 'toolu_1', result: '{"id":42}' }
+      ],
+      functions: [definition]
+    }, { stream: false })
+    expect(requests[0]?.url).toBe('https://api.anthropic.com/v1/messages')
+    expect(requests[0]?.headers.get('x-api-key')).toBe('anthropic-key')
+    expect(requests[0]?.headers.get('anthropic-version')).toBeTruthy()
+    expect(requests[0]?.body).toMatchObject({ tools: [{ name: 'pages_get', input_schema: { type: 'object' } }] })
+    expect(JSON.stringify(requests[1]?.body)).toContain('tool_result')
+    expect(JSON.stringify(requests[1]?.body)).toContain('toolu_1')
   })
 
-  it('keeps legacy completions buffered and generation-only', async () => {
+
+  it('maps Chat Completions native tools, calls, and results', async () => {
+    const id = '00000000-0000-4000-8000-000000000014'
+    await insert({ id, transportKind: 'openai-chat', baseUrl: 'https://chat.example.test/v1', authMode: 'bearer' })
+    await db('agentProviderProfileVersions').where({ id }).update({ capabilities: JSON.stringify({ ...capabilities, toolCalling: 'native', parallelToolCalls: true, structuredOutput: 'tool-result' }) })
+    const payloads: Record<string, unknown>[] = []
+    const fetchImplementation = async (_input: URL | RequestInfo, init?: RequestInit): Promise<Response> => {
+      payloads.push(JSON.parse(String(init?.body)) as Record<string, unknown>)
+      return payloads.length === 1
+        ? Response.json({ id: 'chatcmpl_1', object: 'chat.completion', created: 1, model: 'model-test', choices: [{ index: 0, message: { role: 'assistant', content: null, tool_calls: [{ id: 'call_1', type: 'function', function: { name: 'pages_get', arguments: '{"id":42}' } }] }, finish_reason: 'tool_calls' }], usage: { prompt_tokens: 2, completion_tokens: 1, total_tokens: 3 } })
+        : Response.json({ id: 'chatcmpl_2', object: 'chat.completion', created: 2, model: 'model-test', choices: [{ index: 0, message: { role: 'assistant', content: 'chat' }, finish_reason: 'stop' }], usage: { prompt_tokens: 4, completion_tokens: 1, total_tokens: 5 } })
+    }
+    const provider = await new AgentProviderFactory(db, { get: () => 'chat-key' }, fetchImplementation as typeof fetch, publicResolver as never).create(id)
+    const definition = { name: 'pages_get', description: 'Read a page', parameters: { type: 'object' as const, properties: { id: { type: 'number' as const, description: 'Page ID' } } } }
+    const first = await provider.service.chat({ chatPrompt: [{ role: 'user', content: 'hello' }], functions: [definition] }, { stream: false })
+    if (first instanceof ReadableStream) throw new Error('Expected a buffered Chat Completions response')
+    const [call] = first.results[0]?.functionCalls ?? []
+    expect(call).toMatchObject({ id: 'call_1', function: { name: 'pages_get', params: '{"id":42}' } })
+    await provider.service.chat({
+      chatPrompt: [
+        { role: 'user', content: 'hello' },
+        { role: 'assistant', functionCalls: call ? [call] : [] },
+        { role: 'function', functionId: 'call_1', result: '{"id":42}' }
+      ],
+      functions: [definition]
+    }, { stream: false })
+    expect(payloads[0]).toMatchObject({ parallel_tool_calls: true, tools: [{ type: 'function', function: { name: 'pages_get' } }] })
+    expect(payloads[1]).toMatchObject({ messages: expect.arrayContaining([{ role: 'tool', tool_call_id: 'call_1', content: '{"id":42}' }]) })
+  })
+
+  it('keeps legacy completions buffered for prompt-emulated tools', async () => {
     const id = '00000000-0000-4000-8000-000000000013'
     await insert({ id, transportKind: 'legacy-completions', baseUrl: 'https://legacy.example.test/v1', authMode: 'api-key-header' })
     let payload: Record<string, unknown> = {}

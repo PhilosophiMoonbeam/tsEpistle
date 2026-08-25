@@ -50,7 +50,7 @@ describe('agents client boundary', () => {
       transport: 'openai-responses',
       model: 'gpt-test',
       destinationHost: 'api.example.test',
-      capabilities: { streaming: true, functions: true, parallelFunctions: true, structuredOutput: 'native-json-schema', usage: 'terminal', cancellation: true, maxContextTokens: 100_000, maxOutputTokens: 4_000 },
+      capabilities: { streaming: true, toolCalling: 'native', parallelToolCalls: true, structuredOutput: 'native-json-schema', usage: 'terminal', cancellation: true, maxContextTokens: 100_000, maxOutputTokens: 4_000 },
       capabilityRevision: 'cap-1',
       policyVersion: 2,
       isGlobalDefault: true

@@ -7,7 +7,7 @@ import { WIKI_AGENT_SOUL } from '../../agents/soul.ts'
 
 const request = (signal: AbortSignal): AgentEngineRequest => ({
   run: {
-    id: '00000000-0000-4000-8000-000000000001', sessionId: '00000000-0000-4000-8000-000000000002', userMessageId: '00000000-0000-4000-8000-000000000003', assistantMessageId: '00000000-0000-4000-8000-000000000004', ownerId: 7, clientRequestId: '00000000-0000-4000-8000-000000000005', clientRequestSha256: 'a'.repeat(64), status: 'running', providerProfileVersionId: '00000000-0000-4000-8000-000000000006', transportKind: 'openai-responses', model: 'gpt-test', executionMode: 'agent', capabilityRevision: 'cap-1', pricingRevision: 'price-1', promptVersion: 1, attempts: 1, maxAttempts: 3, eventSequence: 0, leaseOwner: 'worker', leaseToken: '00000000-0000-4000-8000-000000000007', leaseExpiresAt: new Date(Date.now() + 60_000).toISOString(), cancelRequestedAt: null, sideEffectsStarted: false, errorCode: null, errorMessage: null
+    id: '00000000-0000-4000-8000-000000000001', sessionId: '00000000-0000-4000-8000-000000000002', userMessageId: '00000000-0000-4000-8000-000000000003', assistantMessageId: '00000000-0000-4000-8000-000000000004', ownerId: 7, clientRequestId: '00000000-0000-4000-8000-000000000005', clientRequestSha256: 'a'.repeat(64), status: 'running', providerProfileVersionId: '00000000-0000-4000-8000-000000000006', transportKind: 'openai-responses', model: 'gpt-test', executionMode: 'agent', capabilityRevision: 'cap-1', pricingRevision: 'price-1', promptVersion: 1, attempts: 1, maxAttempts: 3, eventSequence: 0, leaseOwner: 'worker', leaseToken: '00000000-0000-4000-8000-000000000007', leaseExpiresAt: new Date(Date.now() + 60_000).toISOString(), cancelRequestedAt: null, sideEffectsStarted: false, errorCode: null, errorMessage: null, queuedAt: '2026-08-17T00:00:00.000Z', startedAt: '2026-08-17T00:00:00.000Z', completedAt: null
   },
   messages: [{ role: 'user', content: 'Read page 42' }],
   memory: { user: ['Prefers concise, evidence-first answers.'], agent: ['Wiki project uses PostgreSQL and pnpm.'] },
@@ -20,14 +20,14 @@ describe('Ax agent engine', () => {
   it('runs bounded provider tool turns and returns encrypted continuation only', async () => {
     const calls: Readonly<AxChatRequest<unknown>>[] = []
     const responses: AxChatResponse[] = [
-      { results: [{ index: 0, functionCalls: [{ id: 'call-1', type: 'function', function: { name: 'pages_get', params: '{"id":' } }, { id: 'call-1', type: 'function', function: { name: '', params: '42}' } }], thoughtBlocks: [{ data: 'encrypted-state', encrypted: true }, { data: 'hidden thought', encrypted: false }] }], modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 5, completionTokens: 2, totalTokens: 7 } } },
+      { results: [{ index: 0, content: 'Let me check.', functionCalls: [{ id: 'call-1', type: 'function', function: { name: 'pages_get', params: '{"id":' } }, { id: 'call-1', type: 'function', function: { name: '', params: '42}' } }], thoughtBlocks: [{ data: 'encrypted-state', encrypted: true }, { data: 'hidden thought', encrypted: false }] }], modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 5, completionTokens: 2, totalTokens: 7 } } },
       { results: [{ index: 0, content: 'The install steps are documented.[[cite:page:42:section:1]]' }], modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 8, completionTokens: 4, totalTokens: 12 } } }
     ]
     const chat = vi.fn(async (input: Readonly<AxChatRequest<unknown>>) => {
       calls.push(input)
       return responses.shift()!
     })
-    const factory = { create: async () => ({ service: { chat }, capabilities: { streaming: false, functions: true, parallelFunctions: true, structuredOutput: 'native-json-schema', usage: 'terminal', cancellation: true, maxContextTokens: 100_000, maxOutputTokens: 4_000 }, transportKind: 'openai-responses', model: 'gpt-test', capabilityRevision: 'cap-1', pricingRevision: 'price-1' }) } as unknown as AgentProviderFactory
+    const factory = { create: async () => ({ service: { chat }, capabilities: { streaming: false, toolCalling: 'native', parallelToolCalls: true, structuredOutput: 'native-json-schema', usage: 'terminal', cancellation: true, maxContextTokens: 100_000, maxOutputTokens: 4_000 }, transportKind: 'openai-responses', model: 'gpt-test', capabilityRevision: 'cap-1', pricingRevision: 'price-1' }) } as unknown as AgentProviderFactory
     const invoke = vi.fn(async () => ({
       id: 42,
       title: 'Guide',
@@ -40,7 +40,7 @@ describe('Ax agent engine', () => {
     }
     const engine = new AxAgentEngine(factory, actions)
     const text = vi.fn(async () => {})
-    const event = vi.fn(async () => {})
+    const event = vi.fn(async (...args: [string, unknown]) => { void args })
     const result = await engine.execute(request(new AbortController().signal), { text, event })
     expect(chat).toHaveBeenCalledTimes(2)
     expect(invoke).toHaveBeenCalledWith('pages.get', { id: 42 }, expect.objectContaining({ aborted: false }), 'call-1')
@@ -50,7 +50,9 @@ describe('Ax agent engine', () => {
     expect(calls[0]?.chatPrompt).toContainEqual(expect.objectContaining({ role: 'system', content: expect.stringContaining('"userProfile":["Prefers concise, evidence-first answers."]') }))
     expect(calls[1]?.chatPrompt).toContainEqual(expect.objectContaining({ role: 'assistant', functionCalls: [expect.objectContaining({ function: expect.objectContaining({ name: 'pages_get' }) })] }))
     expect(calls[1]?.chatPrompt).toContainEqual(expect.objectContaining({ role: 'function', functionId: 'call-1', result: expect.stringContaining('"citationSections"') }))
+    expect(calls[1]?.chatPrompt).toContainEqual(expect.objectContaining({ role: 'assistant', content: 'Let me check.' }))
     expect(text).toHaveBeenCalledWith('The install steps are documented.[[cite:page:42:section:1]]')
+    expect(text).not.toHaveBeenCalledWith('Let me check.')
     expect(event.mock.calls.map(([type]) => type)).toEqual(['tool.started', 'tool.completed'])
     expect(result).toMatchObject({
       inputTokens: 13,
@@ -68,7 +70,7 @@ describe('Ax agent engine', () => {
       calls.push(input)
       return { results: [{ index: 0, content: 'Ready.' }] }
     })
-    const factory = { create: async () => ({ service: { chat }, capabilities: { streaming: false, functions: true, parallelFunctions: true, structuredOutput: 'native-json-schema', usage: 'terminal', cancellation: true, maxContextTokens: 100_000, maxOutputTokens: 4_000 }, transportKind: 'openai-responses', model: 'gpt-test', capabilityRevision: 'cap-1', pricingRevision: 'price-1' }) } as unknown as AgentProviderFactory
+    const factory = { create: async () => ({ service: { chat }, capabilities: { streaming: false, toolCalling: 'native', parallelToolCalls: true, structuredOutput: 'native-json-schema', usage: 'terminal', cancellation: true, maxContextTokens: 100_000, maxOutputTokens: 4_000 }, transportKind: 'openai-responses', model: 'gpt-test', capabilityRevision: 'cap-1', pricingRevision: 'price-1' }) } as unknown as AgentProviderFactory
     const invoke = vi.fn(async (name: string) => name === 'skills.list'
       ? { skills: [{ name: 'wiki-authoring', description: 'Create and edit compatible Wiki pages', versionId: '00000000-0000-4000-8000-000000000009', contentHash: 'b'.repeat(64) }] }
       : {})
@@ -95,8 +97,43 @@ describe('Ax agent engine', () => {
     expect(system?.content).toContain('[[cite:EVIDENCE_ID]]')
   })
 
+  it('emulates one strict tool call for providers without native tools', async () => {
+    const providerCalls: Readonly<AxChatRequest<unknown>>[] = []
+    const responses: AxChatResponse[] = [
+      { results: [{ index: 0, content: '<wiki-tool-call>{"name":"pages_get","arguments":{"id":42}}</wiki-tool-call>' }] },
+      { results: [{ index: 0, content: 'The page is ready.' }] }
+    ]
+    const chat = vi.fn(async (input: Readonly<AxChatRequest<unknown>>) => {
+      providerCalls.push(input)
+      return responses.shift()!
+    })
+    const factory = { create: async () => ({ service: { chat }, capabilities: { streaming: false, toolCalling: 'prompt', parallelToolCalls: false, structuredOutput: 'prompt-only', usage: 'estimated', cancellation: true, maxContextTokens: 10_000, maxOutputTokens: 1_000 }, transportKind: 'legacy-completions', model: 'text-test', capabilityRevision: 'cap-2', pricingRevision: 'price-1' }) } as unknown as AgentProviderFactory
+    const invoke = vi.fn(async () => ({ id: 42, title: 'Guide' }))
+    const actions: AgentActionSessionProvider = {
+      open: async () => ({
+        functions: [{ name: 'pages.get', title: 'Read page', description: 'Reads a page', parameters: { type: 'object', properties: { id: { type: 'number' } }, required: ['id'] }, risk: 'read' }],
+        invoke,
+        snapshot: async () => ({}),
+        close: vi.fn()
+      })
+    }
+    const text = vi.fn(async () => {})
+
+    await new AxAgentEngine(factory, actions).execute(request(new AbortController().signal), { text, event: async () => {} })
+
+    expect(providerCalls[0]).not.toHaveProperty('functions')
+    expect(providerCalls[0]?.chatPrompt[0]).toEqual(expect.objectContaining({ role: 'system', content: expect.stringContaining('strict text tool protocol') }))
+    expect(providerCalls[0]?.chatPrompt[0]).toEqual(expect.objectContaining({ content: expect.stringContaining('"name":"pages_get"') }))
+    expect(invoke).toHaveBeenCalledWith('pages.get', { id: 42 }, expect.objectContaining({ aborted: false }), expect.any(String))
+    expect(providerCalls[1]?.chatPrompt).toContainEqual({ role: 'assistant', content: '<wiki-tool-call>{"name":"pages_get","arguments":{"id":42}}</wiki-tool-call>' })
+    expect(providerCalls[1]?.chatPrompt).toContainEqual(expect.objectContaining({ role: 'user', content: expect.stringContaining('<wiki-tool-result>') }))
+    expect(providerCalls[1]?.chatPrompt.some(message => message.role === 'function')).toBe(false)
+    expect(text).toHaveBeenCalledOnce()
+    expect(text).toHaveBeenCalledWith('The page is ready.')
+  })
+
   it('fails closed when a generation-only provider emits a tool call', async () => {
-    const factory = { create: async () => ({ service: { chat: async () => ({ results: [{ index: 0, functionCalls: [{ id: 'call-1', type: 'function', function: { name: 'pages.get', params: '{}' } }] }] }) }, capabilities: { streaming: false, functions: true, parallelFunctions: false, structuredOutput: 'tool-result', usage: 'terminal', cancellation: true, maxContextTokens: 10_000, maxOutputTokens: 1_000 }, transportKind: 'openai-chat', model: 'gpt-test', capabilityRevision: 'cap-1', pricingRevision: 'price-1' }) } as unknown as AgentProviderFactory
+    const factory = { create: async () => ({ service: { chat: async () => ({ results: [{ index: 0, functionCalls: [{ id: 'call-1', type: 'function', function: { name: 'pages.get', params: '{}' } }] }] }) }, capabilities: { streaming: false, toolCalling: 'native', parallelToolCalls: false, structuredOutput: 'tool-result', usage: 'terminal', cancellation: true, maxContextTokens: 10_000, maxOutputTokens: 1_000 }, transportKind: 'openai-chat', model: 'gpt-test', capabilityRevision: 'cap-1', pricingRevision: 'price-1' }) } as unknown as AgentProviderFactory
     const input = request(new AbortController().signal)
     const generationOnly = { ...input, run: { ...input.run, executionMode: 'generation-only' } }
     await expect(new AxAgentEngine(factory).execute(generationOnly, { text: async () => {}, event: async () => {} })).rejects.toMatchObject({ code: 'UNEXPECTED_PROVIDER_TOOL_CALL' })

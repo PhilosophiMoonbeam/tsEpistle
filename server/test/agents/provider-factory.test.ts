@@ -61,7 +61,7 @@ describe('Ax provider factory', () => {
       authMode: 'bearer',
       secretReference: 'env:TEST_PROVIDER_KEY',
       adapterConfig: JSON.stringify({ timeoutMs: 10_000, maxRetries: 0, temperature: 0.42, additionalHeaders: { 'x-tenant': 'wiki' } }),
-      capabilities: JSON.stringify({ streaming: true, functions: true, parallelFunctions: true, structuredOutput: 'native-json-schema', usage: 'terminal', cancellation: true, maxContextTokens: 100_000, maxOutputTokens: 4_000 }),
+      capabilities: JSON.stringify({ streaming: true, toolCalling: 'native', parallelToolCalls: true, structuredOutput: 'native-json-schema', usage: 'terminal', cancellation: true, maxContextTokens: 100_000, maxOutputTokens: 4_000 }),
       capabilityRevision: 'cap-1',
       pricingRevision: 'price-1',
       conformed: true
@@ -77,14 +77,14 @@ describe('Ax provider factory', () => {
     }
     const factory = new AgentProviderFactory(db, { get: reference => reference === 'env:TEST_PROVIDER_KEY' ? 'test-key' : null }, implementation as typeof fetch, publicResolver as never)
     const provider = await factory.create('00000000-0000-4000-8000-000000000001')
-    const result = await provider.service.chat({ chatPrompt: [{ role: 'user', content: 'hello' }], model: 'gpt-test' }, { stream: false })
+    const result = await provider.service.chat({ chatPrompt: [{ role: 'user', content: 'hello' }], model: 'gpt-test', functions: [{ name: 'pages_get', description: 'Read a page', parameters: { type: 'object', properties: { id: { type: 'number', description: 'Page ID' } } } }] }, { stream: false })
     expect(result).not.toBeInstanceOf(ReadableStream)
     expect(request?.url.href).toBe('https://provider.example.test/v1/responses')
     expect(new Headers(request?.init?.headers).get('x-tenant')).toBe('wiki')
     expect(new Headers(request?.init?.headers).get('authorization')).toBe('Bearer test-key')
     expect(request?.init).toMatchObject({ redirect: 'manual', credentials: 'omit' })
     const payload = JSON.parse(String(request?.init?.body)) as Record<string, unknown>
-    expect(payload).toMatchObject({ model: 'gpt-test', store: false, previous_response_id: null })
+    expect(payload).toMatchObject({ model: 'gpt-test', store: false, previous_response_id: null, parallel_tool_calls: true, tools: [{ type: 'function', name: 'pages_get', strict: true }] })
     expect(payload.include).toContain('reasoning.encrypted_content')
     expect(payload).not.toHaveProperty('temperature')
     expect(payload).not.toHaveProperty('top_p')

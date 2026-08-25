@@ -96,6 +96,10 @@ interface ProviderVersionRow {
   pricingRevision: string
   conformed: boolean
 }
+type WikiOpenAIChatRequest = AxAIOpenAIChatRequest<string> & {
+  readonly parallel_tool_calls?: boolean
+}
+
 
 export interface AgentProviderService {
   readonly service: Pick<AxAIService, 'chat'>
@@ -206,7 +210,7 @@ export const createGuardedProviderFetch = (baseUrl: string, endpoint: '/response
 }
 
 const axFeatures = (capabilities: AgentProviderCapabilities): AxAIFeatures => ({
-  functions: capabilities.functions,
+  functions: capabilities.toolCalling === 'native',
   streaming: capabilities.streaming,
   structuredOutputs: capabilities.structuredOutput === 'native-json-schema',
   media: { images: { supported: false, formats: [] }, audio: { supported: false, formats: [] }, files: { supported: false, formats: [], uploadMethod: 'none' }, urls: { supported: false, webSearch: false, contextFetching: false } },
@@ -303,6 +307,7 @@ export class AgentProviderFactory {
         ...axAIOpenAIResponsesDefaultConfig(),
         model: row.model,
         store: false,
+        parallelToolCalls: capabilities.toolCalling === 'native' && capabilities.parallelToolCalls,
         ...(adapterConfig.reasoningEffort === undefined ? {} : { reasoningEffort: adapterConfig.reasoningEffort })
       }
       service = new AxAIOpenAIResponsesBase<string, AxAIOpenAIEmbedModel, string, AxAIOpenAIResponsesRequest<string>>({
@@ -318,7 +323,8 @@ export class AgentProviderFactory {
             input: restoreOpenAIReasoningInput(request.input),
             store: false,
             previous_response_id: null,
-            include: [...new Set([...(request.include ?? []), 'reasoning.encrypted_content' as const])]
+            include: [...new Set([...(request.include ?? []), 'reasoning.encrypted_content' as const])],
+            tools: request.tools == null ? null : request.tools.map(tool => tool.type === 'function' ? { ...tool, strict: true } : tool)
           }
           delete updated.temperature
           delete updated.top_p
@@ -331,13 +337,16 @@ export class AgentProviderFactory {
         model: row.model,
         ...(adapterConfig.temperature === undefined ? {} : { temperature: adapterConfig.temperature })
       }
-      service = new AxAIOpenAIBase<string, AxAIOpenAIEmbedModel, string, AxAIOpenAIChatRequest<string>>({
+      service = new AxAIOpenAIBase<string, AxAIOpenAIEmbedModel, string, WikiOpenAIChatRequest>({
         apiKey: secret,
         apiURL: row.baseUrl,
         config,
         options,
         modelInfo: [],
-        supportFor: features
+        supportFor: features,
+        chatReqUpdater: request => request.tools?.length
+          ? { ...request, parallel_tool_calls: capabilities.parallelToolCalls }
+          : request
       })
     } else if (row.transportKind === 'anthropic-messages') {
       service = new AxAIAnthropic({

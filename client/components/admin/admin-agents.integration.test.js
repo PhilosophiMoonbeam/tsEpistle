@@ -24,7 +24,10 @@ describe('ordinary Wiki agent administration integration', () => {
 
   test('derives Agent-only protocol behavior and group-scoped capability access', () => {
     expect(agentAdmin).toMatch(/Protocol-derived behavior/)
-    expect(agentAdmin).toMatch(/Multiple calls per model turn; Wiki executes them in order/)
+    expect(agentAdmin).toMatch(/label="Tool calling"/)
+    expect(agentAdmin).toMatch(/Native API tools/)
+    expect(agentAdmin).toMatch(/Prompt-emulated tools/)
+    expect(agentAdmin).toMatch(/Prompt-emulated; one action per model turn/)
     expect(agentAdmin).toMatch(/agentProviderProtocolExecutionModes\(option\.value\)\.includes\('agent'\)/)
     expect(agentAdmin).toMatch(/policies: \{ allowedModes: \['agent'\]/)
     expect(agentAdmin).toMatch(/Advanced limits and quotas/)

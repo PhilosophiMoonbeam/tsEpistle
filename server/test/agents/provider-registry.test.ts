@@ -11,7 +11,7 @@ const profileInput: AgentProviderSettingsInput = {
   authMode: 'bearer',
   secretReference: 'env:TEST_PROVIDER_KEY',
   adapterConfig: { timeoutMs: 30_000, maxRetries: 0, additionalHeaders: {} },
-  capabilities: { streaming: true, functions: true, parallelFunctions: false, structuredOutput: 'native-json-schema', usage: 'terminal', cancellation: true, maxContextTokens: 32_000, maxOutputTokens: 4_000 },
+  capabilities: { streaming: true, toolCalling: 'native', parallelToolCalls: false, structuredOutput: 'native-json-schema', usage: 'terminal', cancellation: true, maxContextTokens: 32_000, maxOutputTokens: 4_000 },
   capabilityRevision: 'fixture-v1',
   policies: { allowedModes: ['agent'], dailyTokens: 100_000, dailyCostMicros: 1_000_000, reservationTokens: 10_000, reservationCostMicros: 100_000, reservationMilliseconds: 60_000, promptVersion: 1, maxAttempts: 3 },
   pricingRevision: 'price-v1'
@@ -136,6 +136,14 @@ describe('agent provider profile registry', () => {
     await expect(registry.create({ ...profileInput, adapterConfig: { timeoutMs: 30_000, maxRetries: 0, additionalHeaders: { Authorization: 'secret' } }, displayName: 'Headers', exposureMode: 'all_agent_users', actorId: 1 })).rejects.toMatchObject({ code: 'INVALID_PROVIDER_HEADERS' })
     await expect(registry.create({ ...profileInput, secretReference: 'sk-literal-secret', displayName: 'Literal secret', exposureMode: 'all_agent_users', actorId: 1 })).rejects.toMatchObject({ code: 'INVALID_PROVIDER_SECRET', status: 400 })
     await expect(registry.create({ ...profileInput, transportKind: 'legacy-completions', displayName: 'Legacy', exposureMode: 'all_agent_users', actorId: 1 })).rejects.toMatchObject({ code: 'INVALID_PROVIDER_CAPABILITIES' })
+    await expect(registry.create({
+      ...profileInput,
+      transportKind: 'legacy-completions',
+      capabilities: { ...profileInput.capabilities, streaming: false, toolCalling: 'prompt', parallelToolCalls: false, structuredOutput: 'prompt-only' },
+      displayName: 'Legacy prompt tools',
+      exposureMode: 'all_agent_users',
+      actorId: 1
+    })).resolves.toMatchObject({ transportKind: 'legacy-completions', capabilities: { toolCalling: 'prompt', parallelToolCalls: false } })
 
     const grouped = await registry.create({ ...profileInput, displayName: 'Grouped', exposureMode: 'groups', groupIds: [4], actorId: 1 })
     await registry.setConformed(grouped.id, await currentSettingsId(knex, grouped.id), true, 1)

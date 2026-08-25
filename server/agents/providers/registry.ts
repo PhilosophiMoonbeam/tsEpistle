@@ -12,8 +12,8 @@ const TransportKindSchema = z.enum(['openai-responses', 'openresponses', 'openai
 const AuthModeSchema = z.enum(['bearer', 'api-key-header', 'anthropic-api-key'])
 export const AgentProviderCapabilitiesSchema = z.strictObject({
   streaming: z.boolean(),
-  functions: z.boolean(),
-  parallelFunctions: z.boolean(),
+  toolCalling: z.enum(['native', 'prompt']),
+  parallelToolCalls: z.boolean(),
   structuredOutput: z.enum(['native-json-schema', 'tool-result', 'prompt-only']),
   usage: z.enum(['stream', 'terminal', 'estimated']),
   cancellation: z.boolean(),
@@ -228,8 +228,9 @@ const validateSettings = (input: AgentProviderSettingsInput, allowManagedReferen
   validateHeaders(adapterConfig.additionalHeaders)
   const capabilities = AgentProviderCapabilitiesSchema.parse(input.capabilities)
   const policies = AgentProviderPoliciesSchema.parse(input.policies)
-  if (transportKind === 'legacy-completions' && (capabilities.functions || capabilities.streaming || policies.allowedModes.includes('agent'))) throw new AgentRepositoryError('INVALID_PROVIDER_CAPABILITIES', 'Legacy completions must be buffered generation-only', 400)
-  if (policies.allowedModes.includes('agent') && (!capabilities.streaming || !capabilities.functions || !capabilities.cancellation)) throw new AgentRepositoryError('INVALID_PROVIDER_CAPABILITIES', 'Agent mode requires streaming, function tools, and cancellation', 400)
+  if (transportKind === 'legacy-completions' && (capabilities.toolCalling !== 'prompt' || capabilities.parallelToolCalls || capabilities.streaming || capabilities.structuredOutput !== 'prompt-only')) throw new AgentRepositoryError('INVALID_PROVIDER_CAPABILITIES', 'Legacy completions require buffered prompt tool calling and prompt-only output', 400)
+  if (capabilities.toolCalling === 'prompt' && capabilities.parallelToolCalls) throw new AgentRepositoryError('INVALID_PROVIDER_CAPABILITIES', 'Prompt tool calling supports one action per model turn', 400)
+  if (policies.allowedModes.includes('agent') && !capabilities.cancellation) throw new AgentRepositoryError('INVALID_PROVIDER_CAPABILITIES', 'Agent mode requires cancellation support', 400)
   return {
     transportKind,
     model,
@@ -258,7 +259,7 @@ const safeEqual = (left: string, right: string): boolean => {
 const supportsAgentExecution = (
   capabilities: AgentProviderCapabilities,
   policies: z.infer<typeof AgentProviderPoliciesSchema>
-): boolean => policies.allowedModes.includes('agent') && capabilities.streaming && capabilities.functions && capabilities.cancellation
+): boolean => policies.allowedModes.includes('agent') && capabilities.cancellation
 
 export class AgentProviderRegistry implements AgentAdmissionResolver {
   readonly #knex: Knex

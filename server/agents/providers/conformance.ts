@@ -1,12 +1,23 @@
 import { randomUUID } from 'node:crypto'
 import type { Knex } from 'knex'
-import type { AxChatResponse } from '@ax-llm/ax'
+import type { AxChatRequest, AxChatResponse } from '@ax-llm/ax'
 import { canonicalJson } from '../../helpers/canonical-json.ts'
 import { AgentRepositoryError } from '../repository.ts'
-import { AgentProviderAttemptError, AgentProviderFactory } from './factory.ts'
+import { AgentProviderAttemptError, AgentProviderFactory, type AgentProviderService } from './factory.ts'
+import { parsePromptToolCall, promptToolInstructions, promptToolResultMessage } from './prompt-tools.ts'
 import type { AgentProviderRegistry } from './registry.ts'
 
 const MAX_SMOKE_OUTPUT = 16_000
+const PROBE_TOOL = {
+  name: 'wiki_conformance_echo',
+  description: 'Echo the supplied conformance token. Use only when explicitly requested by the provider connection check.',
+  parameters: {
+    type: 'object',
+    properties: { token: { type: 'string', description: 'The exact conformance token from the request.' } },
+    required: ['token'],
+    additionalProperties: false
+  }
+} as const satisfies NonNullable<AxChatRequest['functions']>[number]
 
 interface AgentProviderConformanceCheck {
   readonly name: string
@@ -84,14 +95,36 @@ const failureDetail = (error: unknown): string => {
   return 'Provider connection check failed.'
 }
 
-const consume = async (response: AxChatResponse | ReadableStream<AxChatResponse>, usageMode: 'stream' | 'terminal' | 'estimated'): Promise<string> => {
-  let output = ''
+interface ConsumedCall {
+  readonly id: string
+  readonly name: string
+  readonly params: string | object
+}
+
+interface ConsumedResponse {
+  readonly content: string
+  readonly calls: readonly ConsumedCall[]
+}
+
+const consume = async (response: AxChatResponse | ReadableStream<AxChatResponse>, usageMode: 'stream' | 'terminal' | 'estimated'): Promise<ConsumedResponse> => {
+  let content = ''
   let usageObserved = false
+  const calls = new Map<string, ConsumedCall>()
   const accept = (value: AxChatResponse): void => {
     for (const result of value.results) {
-      if (result.functionCalls?.length) throw new AgentRepositoryError('CONFORMANCE_UNEXPECTED_TOOL', 'Provider emitted an unexpected action during conformance', 502)
-      if (result.content) output += result.content
-      if (output.length > MAX_SMOKE_OUTPUT) throw new AgentRepositoryError('CONFORMANCE_OUTPUT_TOO_LARGE', 'Provider conformance output exceeded its limit', 502)
+      if (result.content) content += result.content
+      if (Buffer.byteLength(content, 'utf8') > MAX_SMOKE_OUTPUT) throw new AgentRepositoryError('CONFORMANCE_OUTPUT_TOO_LARGE', 'Provider conformance output exceeded its limit', 502)
+      for (const call of result.functionCalls ?? []) {
+        if (typeof call.id !== 'string' || call.id.length < 1 || call.id.length > 256) throw new AgentRepositoryError('CONFORMANCE_TOOL_INVALID', 'Provider returned an invalid action call ID', 502)
+        const prior = calls.get(call.id)
+        const name = call.function.name || prior?.name
+        if (!name) throw new AgentRepositoryError('CONFORMANCE_TOOL_INVALID', 'Provider omitted the conformance action name', 502)
+        if (prior && call.function.name && prior.name !== call.function.name) throw new AgentRepositoryError('CONFORMANCE_TOOL_INVALID', 'Provider changed the conformance action name while streaming', 502)
+        const next = call.function.params ?? ''
+        const params = typeof prior?.params === 'string' && typeof next === 'string' ? `${prior.params}${next}` : next
+        if (Buffer.byteLength(typeof params === 'string' ? params : JSON.stringify(params), 'utf8') > MAX_SMOKE_OUTPUT) throw new AgentRepositoryError('CONFORMANCE_TOOL_INVALID', 'Provider conformance action arguments exceeded their limit', 502)
+        calls.set(call.id, { id: call.id, name, params })
+      }
     }
     const tokens = value.modelUsage?.tokens
     if (tokens) {
@@ -111,9 +144,23 @@ const consume = async (response: AxChatResponse | ReadableStream<AxChatResponse>
       }
     } finally { reader.releaseLock() }
   } else accept(response)
-  if (output.trim().length === 0) throw new AgentRepositoryError('CONFORMANCE_EMPTY_OUTPUT', 'Provider conformance returned no text', 502)
   if (usageMode !== 'estimated' && !usageObserved) throw new AgentRepositoryError('CONFORMANCE_USAGE_MISSING', 'Provider conformance did not return its declared usage accounting', 502)
-  return output
+  return { content, calls: [...calls.values()] }
+}
+
+const requireText = (response: ConsumedResponse): string => {
+  if (response.calls.length > 0) throw new AgentRepositoryError('CONFORMANCE_UNEXPECTED_TOOL', 'Provider emitted an unexpected action during conformance', 502)
+  if (response.content.trim().length === 0) throw new AgentRepositoryError('CONFORMANCE_EMPTY_OUTPUT', 'Provider conformance returned no text', 502)
+  return response.content
+}
+
+const parseParams = (params: string | object): Readonly<Record<string, unknown>> => {
+  let value: unknown = params
+  if (typeof value === 'string') {
+    try { value = JSON.parse(value) } catch { throw new AgentRepositoryError('CONFORMANCE_TOOL_INVALID', 'Provider returned invalid conformance action JSON', 502) }
+  }
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new AgentRepositoryError('CONFORMANCE_TOOL_INVALID', 'Provider returned invalid conformance action arguments', 502)
+  return value as Readonly<Record<string, unknown>>
 }
 
 const verifyCancellation = async (provider: Awaited<ReturnType<AgentProviderFactory['create']>>): Promise<void> => {
@@ -129,6 +176,69 @@ const verifyCancellation = async (provider: Awaited<ReturnType<AgentProviderFact
     return
   }
   throw new AgentRepositoryError('CONFORMANCE_CANCELLATION_IGNORED', 'Provider accepted a request whose signal was already aborted', 502)
+}
+const providerChat = async (provider: AgentProviderService, request: Readonly<AxChatRequest>): Promise<ConsumedResponse> => consume(
+  await provider.service.chat(request, {
+    stream: provider.capabilities.streaming,
+    abortSignal: AbortSignal.timeout(30_000),
+    functionCallMode: 'native'
+  }),
+  provider.capabilities.usage
+)
+
+const verifyToolCalling = async (provider: AgentProviderService): Promise<'native-tool-round-trip' | 'prompt-tool-round-trip'> => {
+  const token = randomUUID()
+  const userMessage = `Call ${PROBE_TOOL.name} exactly once with token ${token}.`
+  if (provider.capabilities.toolCalling === 'native') {
+    const first = await providerChat(provider, {
+      chatPrompt: [{ role: 'user', content: userMessage }],
+      model: provider.model,
+      functions: [PROBE_TOOL],
+      functionCall: { type: 'function', function: { name: PROBE_TOOL.name } }
+    })
+    const [call] = first.calls
+    if (!call || first.calls.length !== 1 || call.name !== PROBE_TOOL.name || parseParams(call.params).token !== token) throw new AgentRepositoryError('CONFORMANCE_TOOL_INVALID', 'Provider did not return the required native conformance action', 502)
+    const final = await providerChat(provider, {
+      chatPrompt: [
+        { role: 'user', content: userMessage },
+        {
+          role: 'assistant',
+          ...(first.content ? { content: first.content } : {}),
+          functionCalls: [{ id: call.id, type: 'function', function: { name: call.name, params: call.params } }]
+        },
+        { role: 'function', functionId: call.id, result: JSON.stringify({ token, matched: true }) }
+      ],
+      model: provider.model,
+      functions: [PROBE_TOOL],
+      functionCall: 'auto'
+    })
+    requireText(final)
+    return 'native-tool-round-trip'
+  }
+
+  const instructions = promptToolInstructions([PROBE_TOOL])
+  const first = await providerChat(provider, {
+    chatPrompt: [
+      { role: 'system', content: instructions },
+      { role: 'user', content: userMessage }
+    ],
+    model: provider.model
+  })
+  if (first.calls.length > 0) throw new AgentRepositoryError('CONFORMANCE_TOOL_INVALID', 'Prompt tool provider emitted a native action call', 502)
+  const call = parsePromptToolCall(first.content, new Set([PROBE_TOOL.name]))
+  if (!call || call.name !== PROBE_TOOL.name || call.params.token !== token) throw new AgentRepositoryError('CONFORMANCE_TOOL_INVALID', 'Provider did not follow the prompt action protocol', 502)
+  const final = await providerChat(provider, {
+    chatPrompt: [
+      { role: 'system', content: instructions },
+      { role: 'user', content: userMessage },
+      { role: 'assistant', content: first.content },
+      { role: 'user', content: promptToolResultMessage(randomUUID(), call.name, { token, matched: true }) }
+    ],
+    model: provider.model
+  })
+  requireText(final)
+  if (parsePromptToolCall(final.content, new Set([PROBE_TOOL.name])) !== null) throw new AgentRepositoryError('CONFORMANCE_TOOL_INVALID', 'Provider repeated the prompt conformance action', 502)
+  return 'prompt-tool-round-trip'
 }
 
 export class AgentProviderConformanceRunner {
@@ -156,11 +266,11 @@ export class AgentProviderConformanceRunner {
       checks.push({ name: 'profile-load', passed: true })
       await verifyCancellation(provider)
       checks.push({ name: 'pre-dispatch-cancellation', passed: true })
-      const signal = AbortSignal.timeout(30_000)
-      const response = await provider.service.chat({ chatPrompt: [{ role: 'user', content: 'Reply with a short acknowledgement.' }], model: provider.model }, { stream: provider.capabilities.streaming, abortSignal: signal })
+      const response = await providerChat(provider, { chatPrompt: [{ role: 'user', content: 'Reply with a short acknowledgement.' }], model: provider.model })
       checks.push({ name: provider.capabilities.streaming ? 'stream-response' : 'buffered-response', passed: true })
-      await consume(response, provider.capabilities.usage)
+      requireText(response)
       checks.push({ name: 'bounded-text-output', passed: true }, { name: 'declared-usage', passed: true })
+      checks.push({ name: await verifyToolCalling(provider), passed: true })
       status = 'passed'
     } catch (error) {
       failureCode = errorCode(error)

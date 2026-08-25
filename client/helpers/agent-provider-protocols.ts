@@ -3,6 +3,7 @@ import { AGENT_PROVIDER_TRANSPORTS, type AgentProviderTransport } from '../../sh
 export type AgentProviderAuthMode = 'bearer' | 'api-key-header' | 'anthropic-api-key'
 export type AgentProviderStructuredOutput = 'native-json-schema' | 'tool-result' | 'prompt-only'
 export type AgentProviderUsageMode = 'stream' | 'terminal' | 'estimated'
+export type AgentProviderToolCalling = 'native' | 'prompt'
 export type AgentProviderExecutionMode = 'agent'
 
 export const AGENT_PROVIDER_PRICING_REVISION = 'unpriced-v1'
@@ -23,8 +24,8 @@ export interface AgentProviderProtocolDefaults {
   readonly structuredOutput: AgentProviderStructuredOutput
   readonly usage: AgentProviderUsageMode
   readonly streaming: boolean
-  readonly functions: boolean
-  readonly parallelFunctions: boolean
+  readonly toolCalling: AgentProviderToolCalling
+  readonly parallelToolCalls: boolean
   readonly cancellation: boolean
 }
 
@@ -50,15 +51,15 @@ export const AGENT_PROVIDER_PROTOCOL_OPTIONS = [
     title: 'OpenAI-compatible Chat Completions',
     group: 'Compatibility APIs',
     startsGroup: true,
-    description: 'Message-based POST /v1/chat/completions API. Tools and streaming must pass conformance for agent mode.',
+    description: 'Message-based POST /v1/chat/completions API with native or prompt-emulated tool calling verified during conformance.',
     endpoint: '/chat/completions'
   },
   {
     value: 'legacy-completions',
-    title: 'Legacy text Completions — generation only',
+    title: 'Legacy text Completions',
     group: 'Compatibility APIs',
     startsGroup: false,
-    description: 'Prompt-in/text-out POST /v1/completions API. No messages, streaming, or tools; generation-only runs.',
+    description: 'Prompt-in/text-out POST /v1/completions API with strict prompt-emulated, single-action tool turns.',
     endpoint: '/completions'
   },
   {
@@ -82,8 +83,8 @@ const defaultsByTransport: Readonly<Record<AgentProviderTransport, AgentProvider
     structuredOutput: 'native-json-schema',
     usage: 'stream',
     streaming: true,
-    functions: true,
-    parallelFunctions: true,
+    toolCalling: 'native',
+    parallelToolCalls: true,
     cancellation: true
   },
   openresponses: {
@@ -92,8 +93,8 @@ const defaultsByTransport: Readonly<Record<AgentProviderTransport, AgentProvider
     structuredOutput: 'native-json-schema',
     usage: 'stream',
     streaming: true,
-    functions: true,
-    parallelFunctions: true,
+    toolCalling: 'native',
+    parallelToolCalls: true,
     cancellation: true
   },
   'openai-chat': {
@@ -102,8 +103,8 @@ const defaultsByTransport: Readonly<Record<AgentProviderTransport, AgentProvider
     structuredOutput: 'tool-result',
     usage: 'stream',
     streaming: true,
-    functions: true,
-    parallelFunctions: true,
+    toolCalling: 'native',
+    parallelToolCalls: true,
     cancellation: true
   },
   'legacy-completions': {
@@ -112,8 +113,8 @@ const defaultsByTransport: Readonly<Record<AgentProviderTransport, AgentProvider
     structuredOutput: 'prompt-only',
     usage: 'terminal',
     streaming: false,
-    functions: false,
-    parallelFunctions: false,
+    toolCalling: 'prompt',
+    parallelToolCalls: false,
     cancellation: true
   },
   'anthropic-messages': {
@@ -122,8 +123,8 @@ const defaultsByTransport: Readonly<Record<AgentProviderTransport, AgentProvider
     structuredOutput: 'tool-result',
     usage: 'stream',
     streaming: true,
-    functions: true,
-    parallelFunctions: true,
+    toolCalling: 'native',
+    parallelToolCalls: true,
     cancellation: true
   }
 }
@@ -131,13 +132,13 @@ const executionModesByTransport: Readonly<Record<AgentProviderTransport, readonl
   'openai-responses': ['agent'],
   openresponses: ['agent'],
   'openai-chat': ['agent'],
-  'legacy-completions': [],
+  'legacy-completions': ['agent'],
   'anthropic-messages': ['agent']
 }
 
 export const agentProviderProtocolExecutionModes = (transport: AgentProviderTransport): readonly AgentProviderExecutionMode[] => executionModesByTransport[transport]
 
-export const agentProviderCapabilityRevision = (transport: AgentProviderTransport): string => `wiki-protocol-capabilities-v1:${transport}`
+export const agentProviderCapabilityRevision = (transport: AgentProviderTransport): string => `wiki-protocol-capabilities-v2:${transport}`
 
 export const agentProviderProtocolOption = (transport: AgentProviderTransport): AgentProviderProtocolOption => {
   const option = optionByTransport.get(transport)
