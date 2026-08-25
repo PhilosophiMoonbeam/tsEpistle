@@ -185,7 +185,7 @@ const reload = async (): Promise<void> => {
   try {
     const [result, groupResult] = await Promise.all([
       request('/_api/agents/admin/skills'),
-      request('/api/groups')
+      request('/_api/groups')
     ])
     skills.value = z.object({ skills: z.array(SkillSchema) }).parse(result).skills
     groups.value = z.array(GroupSchema).parse(groupResult)
