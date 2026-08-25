@@ -155,7 +155,7 @@ describe('Ax agent engine', () => {
   it('regenerates a cross-section attribution that does not support the associated claim', async () => {
     const responses: AxChatResponse[] = [
       { results: [{ index: 0, functionCalls: [{ id: 'get-1', type: 'function', function: { name: 'pages_get', params: '{"id":6}' } }] }] },
-      { results: [{ index: 0, content: 'Amber Falcon is a synthetic incident drill.[[cite:page:6:section:2]]' }] },
+      { results: [{ index: 0, content: 'Amber Falcon is a synthetic incident and its response sequence confirms alerts, freezes deployments, and drains the queue.[[cite:page:6:section:2]]' }] },
       { results: [{ index: 0, content: 'Amber Falcon is a synthetic incident drill.[[cite:page:6:section:1]]' }] }
     ]
     const chat = vi.fn(async () => responses.shift()!)

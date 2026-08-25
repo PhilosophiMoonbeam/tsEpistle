@@ -243,13 +243,16 @@ const assessDraft = (content: string, registry: ReadonlyMap<string, CitationEvid
       claims.push({ claim, evidenceId, pageEvidenceId: null, sourceActionCallId: null, sourceActionName: null, section: null, supported: false, matchedTerms: [] })
       continue
     }
-    const claimTerms = normalizedTerms(claim)
     const evidenceTerms = evidence.terms
+    const claimTerms = normalizedTerms(claim)
+    const claimTermGroups = claim.split(/(?:\s+(?:and|but|while|whereas|then)\s+|[;:]\s*)/iu).map(normalizedTerms).filter(terms => terms.length > 0)
     const matchedTerms = claimTerms.filter(term => evidenceTerms.has(term))
-    const minimumMatches = claimTerms.length <= 2 ? 1 : 2
-    const negationSupported = claimTerms.filter(term => negativeTerms.has(term)).every(term => evidenceTerms.has(term))
-    const supported = negationSupported && claimTerms.length > 0 && matchedTerms.length >= Math.min(minimumMatches, claimTerms.length) &&
-      (matchedTerms.length / claimTerms.length >= 0.6 || matchedTerms.length >= 6)
+    const supported = claimTermGroups.length > 0 && claimTermGroups.every(terms => {
+      const matches = terms.filter(term => evidenceTerms.has(term))
+      const minimumMatches = terms.length <= 2 ? 1 : 2
+      const negationSupported = terms.filter(term => negativeTerms.has(term)).every(term => evidenceTerms.has(term))
+      return negationSupported && matches.length >= Math.min(minimumMatches, terms.length) && matches.length / terms.length >= 0.6
+    })
     claims.push({
       claim,
       evidenceId,

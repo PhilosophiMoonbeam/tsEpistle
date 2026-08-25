@@ -132,7 +132,7 @@ Final drafts are buffered before publication and checked as follows:
 1. Every `[[cite:...]]` marker must resolve to a successful active-run page read.
 2. The immediately preceding clause is retained as the claim associated with that marker.
 3. Page-level claims are compared with the complete read content. Markdown section claims are compared only with the corresponding heading scope and its citation label.
-4. Significant normalized claim terms must overlap the evidence by at least 60 percent, or by at least six terms, with a one- or two-term minimum for short claims. Claim negation must also occur in the evidence.
+4. Each conjunction- or colon-delimited subclause must have at least 60 percent significant normalized term overlap with the evidence, with a one- or two-term minimum for short subclauses. Claim negation must also occur in the evidence.
 5. Verification language such as “I verified,” “I checked,” or “the page says” requires both a completed page read and an associated citation.
 6. A final answer may contain at most 20 citation markers.
 
