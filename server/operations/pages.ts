@@ -477,7 +477,7 @@ const search = async (input: OperationInput) => {
   const livePublicPagesByIdentity = new Map<string, PageRecord>()
   if (publicResponse.results.length > 0) {
     const livePublicPages = await wiki.models.pages.query()
-      .select('id', 'localeCode', 'path', 'title', 'description')
+      .select('pages.id', 'pages.localeCode', 'pages.path', 'pages.title', 'pages.description')
       .withGraphJoined('tags')
       .modifyGraph('tags', builder => { builder.select('tag') })
       .modify(builder => {

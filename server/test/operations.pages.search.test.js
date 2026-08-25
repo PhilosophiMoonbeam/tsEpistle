@@ -57,6 +57,7 @@ describe('page search visibility', () => {
       totalHits: 1
     })
     expect(whereBuilder.where).toHaveBeenCalledWith({ visibility: 'public' })
+    expect(pageQuery.select).toHaveBeenCalledWith('pages.id', 'pages.localeCode', 'pages.path', 'pages.title', 'pages.description')
     expect(global.WIKI.auth.checkAccess).toHaveBeenCalledTimes(1)
   })
 
