@@ -51,6 +51,7 @@ describe('related page graph traversal', () => {
       { sourceId: 4, targetId: 5 },
       { sourceId: 5, targetId: 6 }
     ]
+    const visiblePageQuery = pageQuery(pages)
     const edgeQuery = {
       join: vi.fn(function () { return this }),
       where: vi.fn(function () { return this }),
@@ -69,7 +70,7 @@ describe('related page graph traversal', () => {
         }),
         pages: {
           getPageFromDb: vi.fn(async id => pages.find(candidate => candidate.id === id)),
-          query: vi.fn(() => pageQuery(pages)),
+          query: vi.fn(() => visiblePageQuery),
           relatedQuery: vi.fn()
         },
         tags: {},
@@ -87,6 +88,7 @@ describe('related page graph traversal', () => {
       truncated: true,
       nextOffset: 2
     })
+    expect(visiblePageQuery.column).toHaveBeenCalledWith(expect.arrayContaining(['pages.updatedAt']))
     await expect(operations.listRelated({ pageId: 1, limit: 2, offset: 2, requester })).resolves.toMatchObject({
       pages: [{ id: 4, distance: 2, direction: 'bidirectional', viaPageId: 2 }],
       truncated: false,

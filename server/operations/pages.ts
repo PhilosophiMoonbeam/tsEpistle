@@ -368,7 +368,7 @@ const listRelated = async (input: OperationInput): Promise<RelatedPagesResult> =
   if (source.visibility !== 'public' || source.isPublished === false) return { pages: [], truncated: false, nextOffset: null }
 
   const visiblePages = await wiki.models.pages.query()
-    .column(['pages.id', 'pages.path', 'pages.localeCode', 'pages.title', 'pages.description', 'pages.visibility', 'pages.ownerId', 'pages.contentType', 'pages.sourceRevision'])
+    .column(['pages.id', 'pages.path', 'pages.localeCode', 'pages.title', 'pages.description', 'pages.visibility', 'pages.ownerId', 'pages.contentType', 'pages.sourceRevision', 'pages.updatedAt'])
     .withGraphJoined('tags')
     .modifyGraph('tags', builder => { builder.select('tag') })
     .modify(builder => { builder.where({ 'pages.visibility': 'public', 'pages.isPublished': true }) })
