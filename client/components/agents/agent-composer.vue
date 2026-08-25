@@ -178,13 +178,15 @@ const isSelected = (versionId: string): boolean => selectedSkillIds.value.includ
 const resizeInput = (): void => {
   const textarea = messageInput.value?.$el?.querySelector('textarea')
   if (!(textarea instanceof HTMLTextAreaElement)) return
-  textarea.style.height = 'auto'
+  textarea.style.height = '0px'
+  textarea.style.overflowY = 'hidden'
   const styles = window.getComputedStyle(textarea)
   const minHeight = Number.parseFloat(styles.minHeight) || 0
   const maxHeight = Number.parseFloat(styles.maxHeight) || Number.POSITIVE_INFINITY
-  const height = Math.min(Math.max(textarea.scrollHeight, minHeight), maxHeight)
+  const contentHeight = textarea.scrollHeight
+  const height = Math.min(Math.max(contentHeight, minHeight), maxHeight)
   textarea.style.height = `${height}px`
-  textarea.style.overflowY = textarea.scrollHeight > maxHeight ? 'auto' : 'hidden'
+  textarea.style.overflowY = contentHeight > maxHeight ? 'auto' : 'hidden'
 }
 const togglePreference = (versionId: string): void => {
   if (props.disabled) return
