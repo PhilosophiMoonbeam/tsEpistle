@@ -9,7 +9,7 @@
       v-model='navShown'
       :location="$vuetify.locale.isRtl ? 'right' : undefined"
       )
-      vue-scroll(:ops='scrollStyle')
+      vue-scroll.page-nav-scroll(:ops='scrollStyle')
         nav-sidebar(
           color='bg-primary'
           :items='sidebarDecoded'
@@ -1440,6 +1440,15 @@ export default defineComponent({
   bottom: 16px !important;
   z-index: 1005;
 
+}
+
+.page-nav-scroll {
+  background:
+    linear-gradient(
+      to bottom,
+      rgb(var(--v-theme-primary-darken-1)) 0 90px,
+      rgb(var(--v-theme-primary)) 90px
+    );
 }
 
 .page-return-top {
