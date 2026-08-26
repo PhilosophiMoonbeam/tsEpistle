@@ -611,6 +611,10 @@ export default defineComponent({
   &-inner {
     background: transparent !important;
 
+    .v-label {
+      opacity: .72;
+    }
+
     .v-toolbar__content {
       padding: 0;
 

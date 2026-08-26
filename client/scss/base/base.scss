@@ -25,6 +25,10 @@ body {
   outline: 3px solid rgba(var(--v-theme-primary), .22);
   outline-offset: 3px;
 }
+
+.v-field__input:focus-visible {
+  outline: none;
+}
 *, *:before, *:after {
   box-sizing: inherit;
 }

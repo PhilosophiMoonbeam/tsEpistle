@@ -75,10 +75,9 @@ export default {
 }
 
 .footer-attribution {
-  color: rgb(var(--v-theme-on-surface));
+  color: rgba(var(--v-theme-on-surface), .66);
   font-family: 'WikiAgentSans', 'Roboto', sans-serif;
   line-height: 1.7;
-  opacity: .6;
   text-align: center;
 
   a {

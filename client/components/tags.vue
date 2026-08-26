@@ -36,7 +36,7 @@
           v-icon mdi-close
       vue-scroll(:ops='scrollStyle')
         nav.tags-navigation(:aria-label='$t(`common:header.browseTags`)')
-          v-list(density='compact' nav)
+          v-list(density='compact' nav role='presentation')
             v-list-item.tags-home-link(href='/' color='primary')
               template(v-slot:prepend): v-icon mdi-home-outline
               v-list-item-title {{$t('common:header.home')}}
@@ -217,7 +217,7 @@ export default {
     return {
       tags: [] as PageTagRow[],
       selection: [] as string[],
-      tagDrawerShown: true,
+      tagDrawerShown: false,
       innerSearch: '',
       locale: 'any',
       locales: [] as TagLocale[],
