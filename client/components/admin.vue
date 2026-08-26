@@ -434,7 +434,8 @@ export default defineComponent({
 
   &__label {
     padding: 0 10px 7px;
-    color: rgb(var(--v-theme-on-surface-variant));
+    color: rgb(var(--v-theme-on-surface));
+    opacity: .62;
     font-size: .65rem;
     font-weight: 750;
     letter-spacing: .12em;
@@ -448,7 +449,7 @@ export default defineComponent({
     font-weight: 620;
 
     .v-list-item__prepend > .v-icon {
-      color: rgb(var(--v-theme-on-surface-variant));
+      color: rgb(var(--v-theme-on-surface));
       opacity: .86;
     }
   }
@@ -457,7 +458,8 @@ export default defineComponent({
     min-height: 42px;
     margin: 2px 0 2px 14px;
     padding-inline-start: 14px !important;
-    color: rgb(var(--v-theme-on-surface-variant));
+    color: rgb(var(--v-theme-on-surface));
+    opacity: .74;
 
     &::before {
       position: absolute;
@@ -487,7 +489,8 @@ export default defineComponent({
     justify-items: center;
     gap: 4px;
     padding: 36px 16px;
-    color: rgb(var(--v-theme-on-surface-variant));
+    color: rgb(var(--v-theme-on-surface));
+    opacity: .64;
     text-align: center;
   }
 
@@ -537,7 +540,7 @@ export default defineComponent({
       margin-inline: 18px;
 
       > .text-headline-medium {
-        color: rgb(var(--v-theme-on-background)) !important;
+        color: rgb(var(--v-theme-on-surface)) !important;
         font-size: clamp(1.65rem, 2vw, 2.1rem) !important;
         font-weight: 720;
         letter-spacing: -.035em !important;
@@ -546,7 +549,8 @@ export default defineComponent({
 
       > .text-body-large {
         margin-top: 5px;
-        color: rgb(var(--v-theme-on-surface-variant)) !important;
+        color: rgb(var(--v-theme-on-surface)) !important;
+        opacity: .68;
         font-size: .98rem !important;
         line-height: 1.45;
       }
@@ -607,7 +611,8 @@ export default defineComponent({
     border-radius: 0 0 16px 16px;
 
     thead th {
-      color: rgb(var(--v-theme-on-surface-variant));
+      color: rgb(var(--v-theme-on-surface));
+      opacity: .66;
       font-size: .7rem;
       font-weight: 750;
       letter-spacing: .06em;
@@ -772,7 +777,8 @@ export default defineComponent({
     &-subtitle {
       overflow: hidden;
       margin-top: 3px;
-      color: rgb(var(--v-theme-on-surface-variant));
+      color: rgb(var(--v-theme-on-surface));
+      opacity: .72;
       text-overflow: ellipsis;
       white-space: nowrap;
     }
@@ -780,7 +786,8 @@ export default defineComponent({
     &-meta {
       overflow: hidden;
       margin-top: 6px;
-      color: rgb(var(--v-theme-on-surface-variant));
+      color: rgb(var(--v-theme-on-surface));
+      opacity: .72;
       text-overflow: ellipsis;
       white-space: nowrap;
     }

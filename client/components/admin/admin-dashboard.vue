@@ -465,7 +465,8 @@ export default {
     p {
       max-width: 620px;
       margin: 0;
-      color: rgb(var(--v-theme-on-surface-variant));
+      color: rgb(var(--v-theme-on-surface));
+      opacity: .68;
       font-size: 1.08rem;
       line-height: 1.55;
     }
@@ -580,7 +581,8 @@ export default {
   }
 
   &__label {
-    color: rgb(var(--v-theme-on-surface-variant));
+    color: rgb(var(--v-theme-on-surface));
+    opacity: .62;
     font-size: .72rem;
     font-weight: 700;
     letter-spacing: .06em;
@@ -607,7 +609,8 @@ export default {
   }
 
   &__hint {
-    color: rgb(var(--v-theme-on-surface-variant));
+    color: rgb(var(--v-theme-on-surface));
+    opacity: .64;
     font-size: .77rem;
   }
 
@@ -615,7 +618,7 @@ export default {
     position: absolute !important;
     top: 16px;
     right: 16px;
-    color: rgb(var(--v-theme-on-surface-variant));
+    color: rgb(var(--v-theme-on-surface));
     opacity: .6;
   }
 }
@@ -648,7 +651,8 @@ export default {
 
     p {
       margin: 2px 0 0;
-      color: rgb(var(--v-theme-on-surface-variant));
+      color: rgb(var(--v-theme-on-surface));
+      opacity: .65;
       font-size: .78rem;
     }
   }
@@ -732,14 +736,16 @@ export default {
   }
 
   &__description {
-    color: rgb(var(--v-theme-on-surface-variant));
+    color: rgb(var(--v-theme-on-surface));
+    opacity: .68;
     font-size: .76rem;
     line-height: 1.35;
   }
 
   &__arrow {
     flex: 0 0 auto;
-    color: rgb(var(--v-theme-on-surface-variant));
+    color: rgb(var(--v-theme-on-surface));
+    opacity: .64;
     transition: color .16s ease, transform .16s ease;
   }
 }
@@ -768,7 +774,8 @@ export default {
   }
 
   &__product-version {
-    color: rgb(var(--v-theme-on-surface-variant));
+    color: rgb(var(--v-theme-on-surface));
+    opacity: .64;
     font-size: .78rem;
   }
 
@@ -781,7 +788,8 @@ export default {
     justify-content: space-between;
     gap: 16px;
     padding: 12px 0;
-    color: rgb(var(--v-theme-on-surface-variant));
+    color: rgb(var(--v-theme-on-surface));
+    opacity: .65;
     font-size: .8rem;
 
     + .dashboard-overview__row {
@@ -808,7 +816,7 @@ export default {
 
   h2 {
     margin: 2px 0 0;
-    color: rgb(var(--v-theme-on-background));
+    color: rgb(var(--v-theme-on-surface));
     font-size: 1.3rem;
     font-weight: 710;
     letter-spacing: -.025em;
@@ -890,7 +898,8 @@ export default {
 
     p {
       margin: 0;
-      color: rgb(var(--v-theme-on-surface-variant));
+      color: rgb(var(--v-theme-on-surface));
+      opacity: .68;
       font-size: .82rem;
     }
   }
