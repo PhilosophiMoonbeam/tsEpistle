@@ -8,7 +8,7 @@
         v-btn.mt-5(href='/login', size="x-large")
           v-icon(start) mdi-login
           span {{$t('unauthorized.login')}}
-        v-btn.mt-5(color="red-lighten-4", href='javascript:window.history.go(-1);', variant="outlined")
+        v-btn.mt-5(color="primary", @click='goBack', variant="outlined")
           v-icon(start) mdi-arrow-left
           span {{$t('unauthorized.goback')}}
 </template>
@@ -22,8 +22,10 @@ export default {
       default: 'view'
     }
   },
-  data() {
-    return { }
+  methods: {
+    goBack () {
+      window.history.back()
+    }
   }
 }
 </script>

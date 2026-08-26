@@ -1,9 +1,10 @@
 <template lang="pug">
-  v-app(v-scroll='upBtnScroll', :class='$vuetify.locale.isRtl ? `is-rtl` : `is-ltr`')
+  v-app.wiki-page(v-scroll='upBtnScroll', :class='$vuetify.locale.isRtl ? `is-rtl` : `is-ltr`')
     nav-header(v-if='!printView')
     v-navigation-drawer(
       v-if='navMode !== `NONE` && !printView'
-      class='bg-primary'
+      class='page-navigation'
+      color='surface'
       mobile-breakpoint='1280'
       :temporary='$vuetify.display.width < 1280'
       v-model='navShown'
@@ -11,7 +12,7 @@
       )
       vue-scroll.page-nav-scroll(:ops='scrollStyle', style='scrollbar-gutter: auto;')
         nav-sidebar(
-          color='bg-primary'
+          color=''
           :items='sidebarDecoded'
           :nav-mode='navMode'
           :expand-parent-by-default='navExpandParent'
@@ -31,9 +32,9 @@
         )
         v-icon mdi-menu
 
-    v-main(ref='content')
+    v-main.page-main(ref='content')
       template(v-if='path !== `home`')
-        v-toolbar(color='surface', flat, density="compact", v-if='$vuetify.display.smAndUp')
+        v-toolbar.page-breadcrumb-bar(color='surface', flat, density="compact", v-if='$vuetify.display.smAndUp')
           //- v-btn.pl-0(v-if='$vuetify.display.xsOnly', variant='flat', @click='toggleNavigation')
           //-   v-icon(color='grey-darken-2', start) menu
           //-   span Navigation
@@ -49,8 +50,8 @@
             .text-body-small.text-warning {{$t('common:page.unpublished')}}
             status-indicator.ml-3(negative, pulse)
         v-divider
-      v-container.pa-0.bg-background(fluid)
-        v-row.page-header-section.align-content-center(no-gutters, style='height: 90px;')
+      v-container.page-hero(fluid)
+        v-row.page-header-section.align-content-center(no-gutters)
           v-col.page-col-content.is-page-header(
             :offset-xl='tocPosition === `left` ? 2 : 0'
             :offset-lg='tocPosition === `left` ? 3 : 0'
@@ -61,9 +62,9 @@
             )
             .page-header-headings
               .d-flex.align-center
-                .text-headline-medium {{title}}
+                h1.page-title {{title}}
                 v-chip.ml-3(v-if="visibility === 'private'", size="small", color='warning', variant='tonal') Private
-              .text-body-small.text-medium-emphasis {{description}}
+              p.page-description {{description}}
             .page-edit-shortcuts(
               v-if='editShortcutsObj.editMenuBar'
               :class='tocPosition === `right` ? `is-right` : ``'
@@ -86,7 +87,7 @@
                 v-icon.mr-2(size="small") {{ editShortcutsObj.editMenuExternalIcon }}
                 span.text-none {{$t(`common:page.editExternal`, { name: editShortcutsObj.editMenuExternalName })}}
       v-divider
-      v-container.pl-5.pt-4(fluid)
+      v-container.page-body(fluid)
         v-row
           v-col.page-col-sd(
             v-if='tocPosition !== `off` && $vuetify.display.lgAndUp'
@@ -467,10 +468,13 @@
             site-banner(:banner='siteBanner')
             .contents(ref='container')
               slot(name='contents')
-            .comments-container#discussion(v-if='commentsEnabled && commentsPerms.read && !printView')
+            section.comments-container#discussion(v-if='commentsEnabled && commentsPerms.read && !printView' aria-labelledby='discussion-title')
               .comments-header
-                v-icon.mr-2 mdi-comment-text-outline
-                span {{$t('common:comments.title')}}
+                .comments-header-icon
+                  v-icon(size='20') mdi-comment-text-outline
+                div
+                  #discussion-title.comments-title {{$t('common:comments.title')}}
+                  .comments-subtitle Join the conversation around this page
               .comments-main
                 slot(name='comments')
     nav-footer
@@ -1427,79 +1431,219 @@ export default defineComponent({
 </script>
 
 <style lang="scss">
-
-.page-edit-fab {
-  position: fixed !important;
-  inset-block-end: calc(var(--v-layout-bottom, 0px) + 16px);
-  inset-inline-end: 16px;
-  z-index: 1005;
+.wiki-page {
+  font-family: 'WikiAgentSans', 'Roboto', sans-serif;
 }
 
-.page-nav-toggle {
-  position: fixed !important;
-  bottom: 16px !important;
-  z-index: 1005;
+.page-main {
+  background:
+    radial-gradient(circle at 88% 0%, rgba(var(--v-theme-primary), .07), transparent 30rem),
+    rgb(var(--v-theme-background));
+}
 
+.page-navigation {
+  border-inline-end: 1px solid rgba(var(--v-border-color), .11) !important;
+  box-shadow: 12px 0 34px rgba(15, 23, 42, .035) !important;
 }
 
 .page-nav-scroll {
   background:
-    linear-gradient(
-      to bottom,
-      rgb(var(--v-theme-primary-darken-1)) 0 90px,
-      rgb(var(--v-theme-primary)) 90px
-    );
+    linear-gradient(180deg, color-mix(in srgb, rgb(var(--v-theme-primary)) 6%, rgb(var(--v-theme-surface))) 0, rgb(var(--v-theme-surface)) 180px);
+}
+
+.page-edit-fab,
+.page-nav-toggle,
+.page-return-top {
+  position: fixed !important;
+  z-index: 1005;
+  box-shadow: 0 12px 30px rgba(15, 23, 42, .16) !important;
+}
+
+.page-edit-fab {
+  inset-block-end: calc(var(--v-layout-bottom, 0px) + 20px);
+  inset-inline-end: 22px;
+}
+
+.page-nav-toggle,
+.page-return-top {
+  bottom: 20px !important;
+}
+
+.page-nav-toggle {
+  inset-inline-start: 20px;
 }
 
 .page-return-top {
-  position: fixed !important;
-  bottom: 16px;
-  z-index: 1005;
+  inset-inline-start: 20px;
 }
 
 .page-return-top--docked {
   z-index: 1007;
-  border-radius: 8px 0 0 0 !important;
+  border-radius: 12px !important;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .page-return-top {
-    transition-duration: .01ms !important;
+.page-breadcrumb-bar {
+  min-height: 46px;
+  border-bottom: 1px solid rgba(var(--v-border-color), .09);
+  background: color-mix(in srgb, rgb(var(--v-theme-surface)) 88%, transparent) !important;
+
+  .v-toolbar__content {
+    width: min(100%, 1560px);
+    margin: 0 auto;
+    padding-inline: 30px;
   }
 }
 
 .breadcrumbs-nav {
+  color: rgb(var(--v-theme-on-surface));
+  opacity: .7;
+
   .v-btn {
     min-width: 0;
+    border-radius: 8px;
+    font-size: .78rem;
+
     &__content {
       text-transform: none;
     }
   }
+
   .v-breadcrumbs-divider:nth-child(2n) {
     padding: 0 6px;
   }
+
   .v-breadcrumbs-divider:nth-child(2) {
     padding: 0 6px 0 12px;
   }
 }
 
-.page-toc-card {
+.page-hero {
+  position: relative;
   overflow: hidden;
+  min-height: 146px;
+  border-bottom: 1px solid rgba(var(--v-border-color), .1);
+  background:
+    radial-gradient(circle at 82% 18%, rgba(var(--v-theme-primary), .13), transparent 25rem),
+    linear-gradient(145deg, color-mix(in srgb, rgb(var(--v-theme-primary)) 6%, rgb(var(--v-theme-surface))), rgb(var(--v-theme-surface)) 62%);
 
+  &::after {
+    position: absolute;
+    inset: auto -5rem -9rem auto;
+    width: 18rem;
+    height: 18rem;
+    border: 1px solid rgba(var(--v-theme-primary), .1);
+    border-radius: 50%;
+    content: '';
+  }
+}
+
+.page-header-section {
+  position: relative;
+  width: min(100%, 1560px);
+  min-height: 146px;
+  margin: 0 auto;
+
+  > .is-page-header {
+    position: relative;
+    display: flex;
+    align-items: center;
+    padding-block: 28px;
+  }
+
+  .page-header-headings {
+    min-width: 0;
+  }
+
+  .page-title {
+    margin: 0;
+    color: rgb(var(--v-theme-on-surface));
+    font-size: clamp(2rem, 3.2vw, 3.15rem);
+    font-weight: 760;
+    letter-spacing: -.05em;
+    line-height: 1.05;
+  }
+
+  .page-description {
+    max-width: 760px;
+    margin: 9px 0 0;
+    color: rgb(var(--v-theme-on-surface));
+    font-size: clamp(.93rem, 1.25vw, 1.06rem);
+    line-height: 1.55;
+    opacity: .64;
+  }
+
+  .page-edit-shortcuts {
+    position: absolute;
+    inset-inline-end: 18px;
+    bottom: -22px;
+    display: flex;
+    gap: 8px;
+    z-index: 2;
+
+    .v-btn {
+      border: 1px solid rgba(var(--v-border-color), .12) !important;
+      border-radius: 11px !important;
+      background: rgb(var(--v-theme-surface)) !important;
+      color: rgb(var(--v-theme-on-surface));
+      box-shadow: 0 8px 22px rgba(15, 23, 42, .08);
+
+      .v-icon {
+        color: rgb(var(--v-theme-primary));
+      }
+    }
+  }
+}
+
+.page-body {
+  width: min(100%, 1560px);
+  margin: 0 auto;
+  padding: 30px 32px 64px !important;
+}
+
+.page-col-sd {
+  position: sticky;
+  top: 88px;
+  align-self: flex-start;
+  max-height: calc(100dvh - 110px);
+  overflow-y: auto;
+  scrollbar-width: none;
+
+  &::-webkit-scrollbar {
+    display: none;
+  }
+
+  .v-card {
+    overflow: hidden;
+    border: 1px solid rgba(var(--v-border-color), .11);
+    border-radius: 16px;
+    background: color-mix(in srgb, rgb(var(--v-theme-surface)) 97%, rgb(var(--v-theme-background)));
+    box-shadow: 0 8px 26px rgba(15, 23, 42, .045);
+  }
+
+  .text-label-small {
+    font-weight: 740 !important;
+    letter-spacing: .11em !important;
+  }
+}
+
+.page-toc-card {
   .v-list {
-    padding-inline: 8px;
+    padding: 4px 8px 10px;
+    background: transparent;
   }
 }
 
 .page-toc-item {
+  min-height: 36px !important;
+  padding-inline: calc(7px + var(--toc-indent)) 8px !important;
   border-inline-start: 2px solid transparent;
-  min-height: 34px !important;
-  padding-inline: calc(6px + var(--toc-indent)) 8px !important;
-  transition: background-color 120ms ease, border-color 120ms ease;
+  border-radius: 0 9px 9px 0;
+  transition: background-color .14s ease, border-color .14s ease, color .14s ease;
 
   &:hover {
-    background: color-mix(in srgb, rgb(var(--v-theme-primary)) 9%, transparent);
     border-inline-start-color: color-mix(in srgb, rgb(var(--v-theme-primary)) 52%, transparent);
+    background: color-mix(in srgb, rgb(var(--v-theme-primary)) 8%, transparent);
+    color: rgb(var(--v-theme-primary));
   }
 
   .v-list-item__prepend {
@@ -1507,77 +1651,160 @@ export default defineComponent({
   }
 
   .v-list-item__prepend > .v-icon {
-    color: color-mix(in srgb, rgb(var(--v-theme-primary)) 66%, rgb(var(--v-theme-on-surface)));
     margin-inline-end: 7px;
-    opacity: .78;
+    color: rgb(var(--v-theme-primary));
+    opacity: .64;
   }
 }
 
 .page-toc-item-title {
-  line-height: 1.3;
   padding-inline: 0 !important;
+  font-size: .8rem;
+  line-height: 1.35;
 }
 
-.page-col-sd {
-  margin-top: -90px;
-  align-self: flex-start;
-  position: sticky;
-  top: 64px;
-  max-height: calc(100dvh - 64px);
-  overflow-y: auto;
-  -ms-overflow-style: none;
+.page-col-content:not(.is-page-header) {
+  min-width: 0;
+  padding-inline: 16px 0;
 }
 
-.page-col-sd::-webkit-scrollbar {
-  display: none;
+.page-col-content > .contents {
+  min-height: 180px;
+  padding: clamp(24px, 4vw, 52px);
+  border: 1px solid rgba(var(--v-border-color), .1);
+  border-radius: 20px;
+  background: rgb(var(--v-theme-surface));
+  box-shadow: 0 14px 42px rgba(15, 23, 42, .05);
 }
 
-.page-header-section {
-  position: relative;
+.page-shortcuts-card {
+  border: 1px solid rgba(var(--v-border-color), .1) !important;
 
-  > .is-page-header {
-    position: relative;
+  .v-toolbar {
+    min-height: 48px;
   }
 
-  .page-header-headings {
-    min-height: 52px;
-    display: flex;
-    justify-content: center;
-    flex-direction: column;
+  .v-btn {
+    border-radius: 9px !important;
+  }
+}
+
+.comments-container {
+  overflow: hidden;
+  margin-top: 26px;
+  border: 1px solid rgba(var(--v-border-color), .1);
+  border-radius: 20px;
+  background: rgb(var(--v-theme-surface));
+  box-shadow: 0 14px 42px rgba(15, 23, 42, .05);
+}
+
+.comments-header {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 20px 24px;
+  border-bottom: 1px solid rgba(var(--v-border-color), .09);
+  background: color-mix(in srgb, rgb(var(--v-theme-primary)) 5%, rgb(var(--v-theme-surface)));
+  color: rgb(var(--v-theme-on-surface));
+}
+
+.comments-header-icon {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  border-radius: 11px;
+  background: color-mix(in srgb, rgb(var(--v-theme-primary)) 12%, transparent);
+  color: rgb(var(--v-theme-primary));
+}
+
+.comments-title {
+  font-size: .98rem;
+  font-weight: 720;
+  letter-spacing: -.01em;
+}
+
+.comments-subtitle {
+  margin-top: 2px;
+  font-size: .76rem;
+  opacity: .58;
+}
+
+.comments-main {
+  padding: 22px 24px 26px;
+}
+
+@media (max-width: 1279px) {
+  .page-col-content:not(.is-page-header) {
+    padding-inline: 0;
   }
 
-  .page-edit-shortcuts {
-    position: absolute;
-    bottom: -33px;
-    right: 10px;
+  .page-header-section > .is-page-header {
+    padding-inline: 32px !important;
+  }
+}
 
-    .v-btn {
-      border-right: 1px solid rgba(var(--v-border-color), var(--v-border-opacity)) !important;
-      border-bottom: 1px solid rgba(var(--v-border-color), var(--v-border-opacity)) !important;
-      border-radius: 0;
-      color: rgb(var(--v-theme-on-surface));
-      background-color: rgb(var(--v-theme-surface)) !important;
+@media (max-width: 599px) {
+  .page-hero,
+  .page-header-section {
+    min-height: 126px;
+  }
 
-      @at-root .v-theme--dark & {
-        border-right-color: rgba(var(--v-border-color), var(--v-border-opacity)) !important;
-        border-bottom-color: rgba(var(--v-border-color), var(--v-border-opacity)) !important;
-      }
+  .page-header-section > .is-page-header {
+    padding: 24px 18px !important;
+  }
 
-      .v-icon {
-        color: rgb(var(--v-theme-primary));
-      }
+  .page-header-section {
+    .page-title {
+      font-size: 2rem;
+    }
 
-      &:first-child {
-        border-top-left-radius: 5px;
-        border-bottom-left-radius: 5px;
-      }
+    .page-description {
+      font-size: .9rem;
+    }
 
-      &:last-child {
-        border-top-right-radius: 5px;
-        border-bottom-right-radius: 5px;
-      }
+    .page-edit-shortcuts {
+      display: none;
     }
   }
+
+  .page-body {
+    padding: 14px 12px 44px !important;
+  }
+
+  .page-col-content > .contents {
+    padding: 24px 20px 30px;
+    border-radius: 17px;
+  }
+
+  .comments-container {
+    margin-top: 16px;
+    border-radius: 17px;
+  }
+
+  .comments-header,
+  .comments-main {
+    padding-inline: 18px;
+  }
+
+  .page-edit-fab {
+    inset-inline-end: 16px;
+    inset-block-end: calc(var(--v-layout-bottom, 0px) + 16px);
+  }
+
+  .page-nav-toggle,
+  .page-return-top {
+    inset-inline-start: 16px;
+    bottom: 16px !important;
+  }
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .page-return-top,
+  .page-edit-fab,
+  .page-nav-toggle,
+  .page-toc-item {
+    transition-duration: .01ms !important;
+  }
+}
 </style>

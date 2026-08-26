@@ -27,14 +27,15 @@
           aria-label='Close profile navigation'
         )
           v-icon mdi-close
-      v-list(density="compact", nav, role='navigation', aria-label='Profile sections')
-        v-list-item(to='/profile', color='primary')
-          template(v-slot:append): v-icon mdi-face-profile
-          v-list-item-title {{$t('profile:title')}}
-        v-list-item(to='/pages', color='primary')
-          template(v-slot:append): v-icon mdi-file-document-outline
-          v-list-item-title {{$t('profile:pages.title')}}
-    v-main(:class='$vuetify.theme.current.dark ? "bg-grey-darken-4" : "bg-grey-lighten-5"')
+      nav.profile-navigation(aria-label='Profile sections')
+        v-list(density="compact" nav)
+          v-list-item(to='/profile' color='primary')
+            template(v-slot:prepend): v-icon mdi-face-profile-outline
+            v-list-item-title {{$t('profile:title')}}
+          v-list-item(to='/pages' color='primary')
+            template(v-slot:prepend): v-icon mdi-file-document-outline
+            v-list-item-title {{$t('profile:pages.title')}}
+    v-main.profile-main
       transition(name='profile-router')
         router-view
 
@@ -71,36 +72,202 @@ export default defineComponent({
 </script>
 
 <style lang='scss'>
+.profile {
+  font-family: 'WikiAgentSans', 'Roboto', sans-serif;
+}
+
+.profile-sidebar {
+  border-inline-end: 1px solid rgba(var(--v-border-color), .11) !important;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, rgb(var(--v-theme-primary)) 6%, rgb(var(--v-theme-surface))) 0, rgb(var(--v-theme-surface)) 180px) !important;
+}
 
 .profile-sidebar-mobile-header {
   display: flex;
+  min-height: 64px;
   align-items: center;
-  min-height: 56px;
-  padding: 8px 12px 8px 24px;
-  border-bottom: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+  padding: 8px 12px 8px 22px;
+  border-bottom: 1px solid rgba(var(--v-border-color), .09);
+}
+
+.profile-navigation {
+  display: block;
+  padding: 18px 12px;
+
+  &::before {
+    display: block;
+    margin: 0 10px 12px;
+    color: rgb(var(--v-theme-primary));
+    content: 'Your workspace';
+    font-size: .66rem;
+    font-weight: 760;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+  }
+
+  .v-list {
+    background: transparent;
+  }
+
+  .v-list-item {
+    min-height: 46px;
+    margin-block: 3px;
+    border-radius: 11px;
+    color: rgb(var(--v-theme-on-surface));
+    opacity: .74;
+
+    &--active {
+      background: color-mix(in srgb, rgb(var(--v-theme-primary)) 11%, transparent);
+      color: rgb(var(--v-theme-primary));
+      font-weight: 670;
+      opacity: 1;
+    }
+  }
+}
+
+.profile-main {
+  background:
+    radial-gradient(circle at 88% 0%, rgba(var(--v-theme-primary), .07), transparent 30rem),
+    rgb(var(--v-theme-background));
+
+  > .v-container {
+    width: min(100%, 1480px);
+    margin: 0 auto;
+    padding: 30px 34px 56px;
+  }
+
+  .profile-header {
+    display: flex;
+    min-height: 88px;
+    align-items: center;
+    margin-bottom: 10px;
+    padding: 2px;
+
+    > img {
+      width: 64px !important;
+      height: 64px !important;
+      padding: 9px;
+      border: 1px solid color-mix(in srgb, rgb(var(--v-theme-primary)) 20%, transparent);
+      border-radius: 18px;
+      background: color-mix(in srgb, rgb(var(--v-theme-primary)) 10%, rgb(var(--v-theme-surface)));
+      box-shadow: 0 12px 30px rgba(var(--v-theme-primary), .1);
+    }
+
+    &-title {
+      min-width: 0;
+      margin-inline: 18px;
+
+      > .text-headline-medium {
+        color: rgb(var(--v-theme-on-surface)) !important;
+        font-size: clamp(1.8rem, 3vw, 2.45rem) !important;
+        font-weight: 750;
+        letter-spacing: -.045em !important;
+      }
+
+      > .text-body-large {
+        margin-top: 5px;
+        color: rgb(var(--v-theme-on-surface)) !important;
+        opacity: .62;
+      }
+    }
+  }
+
+  .v-card:not(.v-card--flat) {
+    overflow: hidden;
+    border: 1px solid rgba(var(--v-border-color), .11);
+    border-radius: 17px;
+    background: rgb(var(--v-theme-surface));
+    box-shadow: 0 10px 32px rgba(15, 23, 42, .05);
+  }
+
+  .v-card > .v-toolbar {
+    min-height: 56px;
+    border-bottom: 1px solid rgba(var(--v-border-color), .09);
+    background: color-mix(in srgb, rgb(var(--v-theme-primary)) 5%, rgb(var(--v-theme-surface))) !important;
+    color: rgb(var(--v-theme-on-surface)) !important;
+
+    .v-toolbar-title,
+    .v-icon {
+      color: rgb(var(--v-theme-on-surface)) !important;
+    }
+  }
+
+  .v-list {
+    padding-block: 6px;
+  }
+
+  .v-list-item {
+    min-height: 58px;
+  }
+
+  .v-field {
+    border-radius: 11px;
+  }
+
+  .v-btn:not(.v-btn--icon) {
+    border-radius: 10px;
+    font-weight: 650;
+    text-transform: none;
+  }
 }
 
 .profile-router {
-  &-enter-active, &-leave-active {
-    transition: opacity .25s ease;
-    opacity: 1;
-  }
   &-enter-active {
-    transition-delay: .25s;
+    transition: opacity .2s ease, transform .2s ease;
   }
-  &-enter-from, &-leave-to {
+
+  &-leave-active {
+    position: absolute;
+    transition: opacity .12s ease;
+  }
+
+  &-enter-from {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+
+  &-leave-to {
     opacity: 0;
   }
 }
 
-.profile-header {
-  display: flex;
-  justify-content: flex-start;
-  align-items: center;
+@media (max-width: 959px) {
+  .profile-main {
+    > .v-container {
+      padding: 20px 14px 42px;
+    }
 
-  &-title {
-    margin-left: 1rem;
+    .profile-header {
+      flex-wrap: wrap;
+      gap: 10px;
+      min-height: auto;
+
+      > img {
+        width: 52px !important;
+        height: 52px !important;
+        border-radius: 15px;
+      }
+
+      &-title {
+        flex: 1 1 calc(100% - 72px);
+        margin-inline: 4px;
+
+        > .text-headline-medium {
+          font-size: 1.65rem !important;
+        }
+      }
+
+      > .v-spacer {
+        display: none;
+      }
+    }
   }
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .profile-router-enter-active,
+  .profile-router-leave-active {
+    transition-duration: .01ms !important;
+  }
+}
 </style>

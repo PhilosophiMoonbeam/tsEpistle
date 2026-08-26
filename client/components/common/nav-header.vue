@@ -1,12 +1,12 @@
 <template lang='pug'>
-  v-app-bar.nav-header(color='black', flat, :extended='searchIsShown && searchMode !== `ask` && $vuetify.display.smAndDown')
+  v-app-bar.nav-header(color='surface', flat, height='72', :extended='searchIsShown && searchMode !== `ask` && $vuetify.display.smAndDown')
     template(v-slot:extension v-if='searchIsShown && searchMode !== `ask` && $vuetify.display.smAndDown')
-      v-toolbar(color='primary-darken-1', flat)
+      v-toolbar.nav-header-mobile-search(color='surface', flat)
         v-text-field(
           ref='searchFieldMobile'
           v-model='search'
           clearable
-          bg-color='primary-darken-1'
+          bg-color='surface'
           color='primary'
           :label='searchInputLabel'
           single-line
@@ -25,7 +25,7 @@
         )
     v-row(no-gutters)
       v-col(cols='5', md='4')
-        v-toolbar.nav-header-inner(color='black', flat, :class='$vuetify.locale.isRtl ? `pr-3` : `pl-3`')
+        v-toolbar.nav-header-inner(color='surface', flat, :class='$vuetify.locale.isRtl ? `pr-3` : `pl-3`')
           slot(name='mobileBrand', v-if='$slots.mobileBrand && $vuetify.display.smAndDown')
           button.nav-header-logo(
             v-if='!$slots.mobileBrand || $vuetify.display.mdAndUp'
@@ -34,10 +34,10 @@
             :aria-label='$t(`common:header.home`)'
             )
             img.org-logo(:src='logoUrl', :alt='title')
-          v-toolbar-title(v-if='!$slots.mobileBrand || $vuetify.display.mdAndUp', :class='{ "mx-3": $vuetify.display.mdAndUp, "mx-1": $vuetify.display.smAndDown }')
-            span.text-body-large {{title}}
+          v-toolbar-title.nav-header-title(v-if='!$slots.mobileBrand || $vuetify.display.mdAndUp', :class='{ "mx-3": $vuetify.display.mdAndUp, "mx-1": $vuetify.display.smAndDown }')
+            span {{title}}
       v-col(md='4', v-if='$vuetify.display.mdAndUp')
-        v-toolbar.nav-header-inner(color='black', flat)
+        v-toolbar.nav-header-inner(color='surface', flat)
           slot(name='mid')
             transition(name='navHeaderSearch', v-if='searchIsShown')
               v-text-field(
@@ -67,7 +67,7 @@
                   v-icon(color='grey') mdi-tag-multiple
               span {{$t('common:header.browseTags')}}
       v-col(cols='7', md='4')
-        v-toolbar.nav-header-inner.pr-4(color='black', flat)
+        v-toolbar.nav-header-inner.pr-4(color='surface', flat)
           v-spacer
           .navHeaderLoading.mr-3
             v-progress-circular(indeterminate, color='primary', :size='22', :width='2' v-show='isLoading', aria-label='Page loading')
@@ -534,49 +534,83 @@ export default defineComponent({
 </script>
 
 <style lang='scss'>
-
 .nav-header {
-  //z-index: 1000;
+  border-bottom: 1px solid rgba(var(--v-border-color), .11) !important;
+  background: color-mix(in srgb, rgb(var(--v-theme-surface)) 92%, transparent) !important;
+  box-shadow: 0 8px 30px rgba(15, 23, 42, .05) !important;
+  backdrop-filter: blur(18px) saturate(150%);
+  -webkit-backdrop-filter: blur(18px) saturate(150%);
+
+  .v-toolbar__content,
+  .v-toolbar__extension {
+    overflow: visible;
+  }
 
   .v-toolbar__extension {
-    padding: 0;
+    padding: 0 14px 12px;
+    background: rgb(var(--v-theme-surface));
 
     .v-toolbar__content {
       padding: 0;
     }
-    .v-text-field .v-field__prepend-inner {
-      padding: 0 14px 0 5px;
-      padding-right: 14px;
+  }
+
+  .nav-header-mobile-search {
+    width: 100%;
+
+    .v-field {
+      border: 1px solid rgba(var(--v-border-color), .14);
+      border-radius: 14px;
+      background: color-mix(in srgb, rgb(var(--v-theme-primary)) 5%, rgb(var(--v-theme-surface))) !important;
+      box-shadow: none;
     }
   }
 
   .nav-header-logo {
-    align-items: center;
-    background: transparent;
-    border: 0;
-    border-radius: 6px;
+    position: relative;
+    display: inline-grid;
+    flex: 0 0 42px;
+    width: 42px;
+    height: 42px;
+    padding: 8px;
+    place-items: center;
+    border: 1px solid color-mix(in srgb, rgb(var(--v-theme-primary)) 18%, transparent);
+    border-radius: 13px;
+    background: color-mix(in srgb, rgb(var(--v-theme-primary)) 8%, rgb(var(--v-theme-surface)));
+    box-shadow: 0 7px 20px rgba(var(--v-theme-primary), .1);
     cursor: pointer;
-    display: inline-flex;
-    flex: 0 0 34px;
-    height: 34px;
-    justify-content: center;
-    padding: 0;
-    width: 34px;
+    transition: transform .18s ease, border-color .18s ease, box-shadow .18s ease;
+
+    &:hover {
+      transform: translateY(-1px);
+      border-color: color-mix(in srgb, rgb(var(--v-theme-primary)) 34%, transparent);
+      box-shadow: 0 10px 24px rgba(var(--v-theme-primary), .15);
+    }
 
     &:focus-visible {
-      outline: 2px solid rgb(var(--v-theme-primary));
+      outline: 3px solid rgba(var(--v-theme-primary), .2);
       outline-offset: 3px;
     }
   }
 
   .org-logo {
     display: block;
-    max-height: 100%;
-    max-width: 100%;
+    width: 100%;
+    height: 100%;
     object-fit: contain;
   }
 
+  &-title {
+    color: rgb(var(--v-theme-on-surface));
+    font-family: 'WikiAgentSans', 'Roboto', sans-serif;
+    font-size: .98rem;
+    font-weight: 720;
+    letter-spacing: -.02em;
+  }
+
   &-inner {
+    background: transparent !important;
+
     .v-toolbar__content {
       padding: 0;
 
@@ -587,44 +621,71 @@ export default defineComponent({
         }
       }
     }
+
+    .v-btn {
+      border-radius: 11px !important;
+      color: rgb(var(--v-theme-on-surface));
+      opacity: .76;
+      transition: background-color .16s ease, color .16s ease, opacity .16s ease;
+
+      &:hover,
+      &:focus-visible {
+        background: color-mix(in srgb, rgb(var(--v-theme-primary)) 8%, transparent);
+        color: rgb(var(--v-theme-primary));
+        opacity: 1;
+      }
+
+      .v-icon {
+        color: currentColor !important;
+      }
+    }
+
+    .v-divider {
+      align-self: center;
+      max-height: 26px;
+      margin-inline: 3px;
+      opacity: .5;
+    }
+
+    .v-field {
+      border: 1px solid rgba(var(--v-border-color), .14);
+      border-radius: 999px;
+      background: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 3%, rgb(var(--v-theme-surface))) !important;
+      box-shadow: 0 5px 20px rgba(15, 23, 42, .045);
+      transition: border-color .18s ease, box-shadow .18s ease, background-color .18s ease;
+    }
+
+    .v-field--focused {
+      border-color: color-mix(in srgb, rgb(var(--v-theme-primary)) 48%, transparent);
+      background: rgb(var(--v-theme-surface)) !important;
+      box-shadow: 0 0 0 4px rgba(var(--v-theme-primary), .09);
+    }
   }
 
   &-search-adv {
     position: absolute;
     top: 7px;
     right: 12px;
-    border-radius: 4px !important;
+    border-radius: 8px !important;
 
     @at-root .v-locale--is-rtl & {
       right: initial;
       left: 12px;
     }
-
-    &::before {
-      border-radius: 4px !important;
-    }
-
-    &:hover, &:focus {
-      position: absolute !important;
-
-      &::before {
-        border-radius: 4px;
-      }
-    }
   }
 
   &-dev {
-    background-color: mc('red', '600');
     position: absolute;
-    top: 11px;
+    top: 13px;
     left: 255px;
-    padding: 5px 15px;
-    border-radius: 5px;
     display: flex;
-
-    .v-icon {
-      margin-right: 15px;
-    }
+    gap: 10px;
+    align-items: center;
+    padding: 5px 13px;
+    border: 1px solid rgba(var(--v-theme-error), .28);
+    border-radius: 999px;
+    background: color-mix(in srgb, rgb(var(--v-theme-error)) 12%, rgb(var(--v-theme-surface)));
+    color: rgb(var(--v-theme-error));
 
     .text-label-small:nth-child(2) {
       text-transform: none;
@@ -633,20 +694,44 @@ export default defineComponent({
 }
 
 .navHeaderSearch {
-  &-enter-active, &-leave-active {
-    transition: opacity .25s ease, transform .25s ease;
+  &-enter-active,
+  &-leave-active {
     opacity: 1;
+    transition: opacity .2s ease, transform .2s ease;
   }
+
   &-enter-active {
-    transition-delay: .25s;
+    transition-delay: .12s;
   }
-  &-enter-from, &-leave-to {
+
+  &-enter-from,
+  &-leave-to {
     opacity: 0;
-    transform: scale(.7, .7);
+    transform: scale(.96);
   }
 }
-.navHeaderLoading { // To avoid search bar jumping
+
+.navHeaderLoading {
   width: 22px;
 }
 
+@media (max-width: 959px) {
+  .nav-header {
+    .nav-header-title {
+      font-size: .9rem;
+    }
+
+    &-dev {
+      display: none;
+    }
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nav-header *,
+  .navHeaderSearch-enter-active,
+  .navHeaderSearch-leave-active {
+    transition-duration: .01ms !important;
+  }
+}
 </style>

@@ -1,8 +1,8 @@
 <template lang="pug">
-  div
-    .nav-sidebar-switcher.pa-3.d-flex.bg-primary-darken-1(v-if='navMode === `MIXED`')
+  nav.nav-sidebar(:aria-label='currentMode === `browse` ? $t(`common:sidebar.browse`) : $t(`common:sidebar.mainMenu`)')
+    .nav-sidebar-switcher.pa-3.d-flex(v-if='navMode === `MIXED`')
       v-btn(
-        variant="flat"
+        variant="tonal"
         color='primary'
         style='min-width:0;'
         @click='goHome'
@@ -11,8 +11,7 @@
         v-icon(size='20') mdi-home
       v-btn.ml-3(
         v-if='currentMode === `custom`'
-        variant="flat"
-        color='primary'
+        variant="tonal"
         style='flex: 1 1 100%;'
         @click='switchMode(`browse`)'
         )
@@ -20,7 +19,7 @@
         .text-body-medium.text-none {{$t('common:sidebar.browse')}}
       v-btn.ml-3(
         v-else-if='currentMode === `browse`'
-        variant="flat"
+        variant="tonal"
         color='primary'
         style='flex: 1 1 100%;'
         @click='switchMode(`custom`)'
@@ -29,7 +28,7 @@
         .text-body-medium.text-none {{$t('common:sidebar.mainMenu')}}
     v-divider
     //-> Custom Navigation
-    v-list.py-2(v-if='currentMode === `custom`', density="compact", :class='color', role='navigation', :aria-label='$t(`common:sidebar.mainMenu`)')
+    v-list.py-2(v-if='currentMode === `custom`', density="compact", :class='color', nav)
       template(v-for='(item, idx) of items', :key='`${item.k}-${item.id || item.t || item.l || idx}`')
         v-list-item(
           v-if='item.k === `link`'
@@ -45,7 +44,7 @@
         v-divider.my-2(v-else-if='item.k === `divider`')
         v-list-subheader.pl-4(v-else-if='item.k === `header`') {{ item.l }}
     //-> Browse
-    v-list.py-2(v-else-if='currentMode === `browse`', density="compact", :class='color', role='navigation', :aria-label='$t(`common:sidebar.browse`)')
+    v-list.py-2(v-else-if='currentMode === `browse`', density="compact", :class='color', nav)
       template(v-if='currentParent.id > 0')
         v-list-item(v-for='(item, idx) of parents', :key='`parent-` + item.id', @click='fetchBrowseItems(item)', style='min-height: 30px;')
           template(v-slot:prepend)
@@ -256,9 +255,77 @@ export default defineComponent({
 </script>
 
 <style lang="scss">
+.nav-sidebar {
+  display: block;
+  min-height: 100%;
+  padding-bottom: 18px;
+  color: rgb(var(--v-theme-on-surface));
+
+  .v-list {
+    padding-inline: 10px;
+    background: transparent;
+  }
+
+  .v-list-item {
+    min-height: 42px;
+    margin-block: 3px;
+    border-radius: 11px;
+    color: rgb(var(--v-theme-on-surface));
+    opacity: .78;
+    transition: background-color .15s ease, color .15s ease, opacity .15s ease, transform .15s ease;
+
+    &:hover {
+      transform: translateX(2px);
+      background: color-mix(in srgb, rgb(var(--v-theme-primary)) 7%, transparent);
+      color: rgb(var(--v-theme-primary));
+      opacity: 1;
+    }
+
+    &--active {
+      background: color-mix(in srgb, rgb(var(--v-theme-primary)) 11%, transparent);
+      color: rgb(var(--v-theme-primary));
+      font-weight: 670;
+      opacity: 1;
+    }
+
+    .v-list-item__prepend > .v-icon {
+      margin-inline-end: 13px;
+      color: currentColor;
+      opacity: .72;
+    }
+  }
+
+  .v-list-subheader {
+    color: rgb(var(--v-theme-on-surface));
+    font-size: .66rem;
+    font-weight: 760;
+    letter-spacing: .11em;
+    opacity: .52;
+    text-transform: uppercase;
+  }
+
+  .v-divider {
+    margin-inline: 10px;
+    opacity: .6;
+  }
+}
+
 .nav-sidebar-switcher {
+  min-height: 82px;
   align-items: center;
-  box-sizing: border-box;
-  min-height: 90px;
+  border-bottom: 1px solid rgba(var(--v-border-color), .09);
+  background: color-mix(in srgb, rgb(var(--v-theme-primary)) 5%, transparent);
+
+  .v-btn {
+    min-height: 42px;
+    border-radius: 11px;
+    font-weight: 650;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nav-sidebar .v-list-item {
+    transition-duration: .01ms !important;
+  }
 }
 </style>

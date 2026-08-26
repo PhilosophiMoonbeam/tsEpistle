@@ -342,11 +342,12 @@ export default defineComponent({
   align-items: center;
   gap: 8px;
   padding: 6px 12px;
-  border: 1px solid rgba(255, 255, 255, .14);
+  border: 1px solid color-mix(in srgb, rgb(var(--v-theme-primary)) 18%, transparent);
   border-radius: 999px;
-  color: rgba(255, 255, 255, .78);
+  background: color-mix(in srgb, rgb(var(--v-theme-primary)) 7%, transparent);
+  color: rgb(var(--v-theme-primary));
   font-size: .72rem;
-  font-weight: 650;
+  font-weight: 680;
   letter-spacing: .08em;
   text-transform: uppercase;
 }

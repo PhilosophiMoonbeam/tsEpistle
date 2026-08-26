@@ -1,5 +1,5 @@
 <template lang="pug">
-  v-footer.justify-center(:color='bgColor', app)
+  v-footer.nav-footer.justify-center(:color='bgColor', app)
     .text-body-small.footer-attribution
       template(v-if='footerOverride')
         span(v-html='footerOverrideRender + ` |&nbsp;`')
@@ -66,20 +66,37 @@ export default {
 </script>
 
 <style lang="scss">
-  .footer-attribution {
-    color: rgb(var(--v-theme-on-surface));
+.nav-footer {
+  min-height: 58px;
+  padding: 14px 24px;
+  border-top: 1px solid rgba(var(--v-border-color), .09);
+  background: color-mix(in srgb, rgb(var(--v-theme-surface)) 96%, rgb(var(--v-theme-background))) !important;
+  box-shadow: none;
+}
 
-    a {
-      color: rgb(var(--v-theme-primary));
-    }
-  }
+.footer-attribution {
+  color: rgb(var(--v-theme-on-surface));
+  font-family: 'WikiAgentSans', 'Roboto', sans-serif;
+  line-height: 1.7;
+  opacity: .6;
+  text-align: center;
 
-  .v-footer {
-    flex: 0 0 auto;
+  a {
+    color: rgb(var(--v-theme-primary));
+    font-weight: 620;
+    text-decoration: none;
+    text-underline-offset: .18em;
 
-    a {
+    &:hover,
+    &:focus-visible {
       text-decoration: underline;
-      text-underline-offset: 0.15em;
     }
   }
+}
+
+@media (max-width: 599px) {
+  .nav-footer {
+    padding-inline: 18px;
+  }
+}
 </style>

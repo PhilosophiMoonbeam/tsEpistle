@@ -409,27 +409,19 @@ export default defineComponent({
     radial-gradient(ellipse 52rem 28rem at 50% -10rem, rgba(82, 113, 255, .2), transparent),
     rgba(8, 10, 17, .92);
   box-sizing: border-box;
-  height: calc(100% - 64px);
-  inset: 64px 0 0;
+  height: calc(100dvh - var(--v-layout-top, 72px));
+  inset: var(--v-layout-top, 72px) 0 0;
   overflow-y: auto;
   position: fixed;
   text-align: center;
   width: 100%;
   z-index: 1006;
 
-  @media #{map-get($display-breakpoints, 'sm-and-down')} {
-    height: calc(100% - 112px);
-    inset-block-start: 112px;
-  }
 
   &--ask {
     box-sizing: border-box;
     overflow: hidden;
 
-    @media #{map-get($display-breakpoints, 'sm-and-down')} {
-      height: calc(100% - 56px);
-      inset-block-start: 56px;
-    }
   }
 
   &-container {

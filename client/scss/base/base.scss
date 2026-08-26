@@ -7,6 +7,24 @@ html {
   height: 100%;
   overflow-y: auto !important;
 }
+
+body {
+  margin: 0;
+  background: rgb(var(--v-theme-background));
+  font-family: 'WikiAgentSans', 'Roboto', sans-serif;
+  font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+::selection {
+  background: color-mix(in srgb, rgb(var(--v-theme-primary)) 24%, transparent);
+}
+
+:where(a, button, [role='button'], input, textarea, select):focus-visible {
+  outline: 3px solid rgba(var(--v-theme-primary), .22);
+  outline-offset: 3px;
+}
 *, *:before, *:after {
   box-sizing: inherit;
 }
@@ -27,7 +45,8 @@ html {
 
 .v-application__wrap {
   background-color: rgb(var(--v-theme-background));
-  color: rgb(var(--v-theme-on-background));
+  color: rgb(var(--v-theme-on-surface));
+  font-family: 'WikiAgentSans', 'Roboto', sans-serif;
   transition: background-color 180ms ease, color 180ms ease;
   transform-origin: 50% 50%;
 }

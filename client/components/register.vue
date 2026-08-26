@@ -15,65 +15,61 @@
             offset-xl='4'
             )
             transition(name='fadeUp')
-              v-card.elevation-5(v-show='isShown')
-                v-toolbar(color='indigo', flat, density="compact")
+              v-card.register-card(v-show='isShown' variant='flat')
+                v-toolbar.register-card-header(color='surface' flat)
                   v-spacer
                   .text-body-large {{ $t('auth:registerTitle') }}
                   v-spacer
                 v-card-text.text-center
-                  h1.text-headline-large.text-indigo.py-2 {{ siteTitle }}
-                  .text-body-medium {{ $t('auth:registerSubTitle') }}
+                  h1.register-site-title {{ siteTitle }}
+                  .register-subtitle {{ $t('auth:registerSubTitle') }}
                   v-text-field.mt-3(
-                    variant="solo"
-                    flat
-                    prepend-icon='mdi-email'
-                    :bg-color='$vuetify.theme.current.dark ? `grey-darken-3` : `grey-lighten-4`'
+                    variant="outlined"
+                    prepend-inner-icon='mdi-email-outline'
+                    bg-color='surface'
                     hide-details
                     ref='iptEmail'
                     v-model='email'
                     :placeholder='$t("auth:fields.email")'
-                    color='indigo'
+                    color='primary'
                     )
                   v-text-field.mt-2(
-                    variant="solo"
-                    flat
-                    prepend-icon='mdi-form-textbox-password'
-                    :bg-color='$vuetify.theme.current.dark ? `grey-darken-3` : `grey-lighten-4`'
+                    variant="outlined"
+                    prepend-inner-icon='mdi-lock-outline'
+                    bg-color='surface'
                     ref='iptPassword'
                     v-model='password'
                     :append-icon='hidePassword ? "mdi-eye-off" : "mdi-eye"'
                     @click:append='() => (hidePassword = !hidePassword)'
                     :type='hidePassword ? "password" : "text"'
                     :placeholder='$t("auth:fields.password")'
-                    color='indigo'
+                    color='primary'
                     loading
                     counter='255'
                     )
                     template(v-slot:loader)
                       password-strength(v-model='password')
                   v-text-field.mt-2(
-                    variant="solo"
-                    flat
-                    prepend-icon='mdi-form-textbox-password'
-                    :bg-color='$vuetify.theme.current.dark ? `grey-darken-3` : `grey-lighten-4`'
+                    variant="outlined"
+                    prepend-inner-icon='mdi-lock-check-outline'
+                    bg-color='surface'
                     hide-details
                     ref='iptVerifyPassword'
                     v-model='verifyPassword'
                     @click:append='() => (hidePassword = !hidePassword)'
                     type='password'
                     :placeholder='$t("auth:fields.verifyPassword")'
-                    color='indigo'
+                    color='primary'
                   )
                   v-text-field.mt-2(
-                    variant="solo"
-                    flat
-                    prepend-icon='mdi-account'
-                    :bg-color='$vuetify.theme.current.dark ? `grey-darken-3` : `grey-lighten-4`'
+                    variant="outlined"
+                    prepend-inner-icon='mdi-account-outline'
+                    bg-color='surface'
                     ref='iptName'
                     v-model='name'
                     :placeholder='$t("auth:fields.name")'
                     @keyup.enter='register'
-                    color='indigo'
+                    color='primary'
                     counter='255'
                     )
                 v-card-actions.pb-4
@@ -82,14 +78,14 @@
                     width='100%'
                     max-width='250px'
                     size="large"
-                    color='indigo'
+                    color='primary'
                     @click='register'
-                    rounded
+                    rounded='lg'
                     :loading='isLoading'
                     ) {{ $t('auth:actions.register') }}
                   v-spacer
                 v-divider
-                v-card-actions.py-3(:class='$vuetify.theme.current.dark ? `bg-grey-darken-4` : `bg-grey-lighten-4`')
+                v-card-actions.register-card-footer.py-3
                   v-spacer
                   i18next.text-body-small(path='auth:switchToLogin.text', tag='div')
                     a.text-body-small(href='/login', place='link') {{ $t('auth:switchToLogin.link') }}
@@ -259,46 +255,138 @@ export default {
 </script>
 
 <style lang="scss">
-  .register {
-    background-color: mc('indigo', '900');
-    background-image: url('../static/svg/motif-blocks.svg');
-    background-repeat: repeat;
-    background-size: 200px;
+.register {
+  position: relative;
+  min-height: 100vh;
+  min-height: 100dvh;
+  overflow: hidden auto;
+  background:
+    radial-gradient(circle at 18% 14%, rgba(var(--v-theme-primary), .3), transparent 28rem),
+    radial-gradient(circle at 84% 82%, rgba(99, 102, 241, .24), transparent 32rem),
+    linear-gradient(145deg, #0b1220, #172033 58%, #101827);
+  font-family: 'WikiAgentSans', 'Roboto', sans-serif;
+
+  &::before {
+    position: absolute;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(255, 255, 255, .025) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255, 255, 255, .025) 1px, transparent 1px);
+    background-size: 42px 42px;
+    mask-image: linear-gradient(to bottom, rgba(0, 0, 0, .8), transparent 78%);
+    content: '';
+  }
+
+  > .v-container {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    min-height: 100dvh;
+    align-items: center;
+    padding-block: 40px;
+  }
+
+  > .v-container > .v-row {
     width: 100%;
-    height: 100%;
-    animation: loginBgReveal 20s linear infinite;
+  }
 
-    @include keyframes(loginBgReveal) {
-      0% {
-        background-position-x: 0;
-      }
-      100% {
-        background-position-x: 800px;
-      }
-    }
+  .v-field {
+    border-radius: 13px;
+  }
+}
 
-    &::before {
-      content: '';
-      position: absolute;
-      background-image: url('../static/svg/motif-overlay.svg');
-      background-attachment: fixed;
-      background-size: cover;
-      opacity: .5;
-      top: 0;
-      left: 0;
-      width: 100vw;
-      height: 100vh;
-      height: 100dvh;
-    }
+.register-card {
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, .24) !important;
+  border-radius: 26px !important;
+  background: color-mix(in srgb, rgb(var(--v-theme-surface)) 94%, transparent) !important;
+  box-shadow: 0 30px 80px rgba(0, 0, 0, .3) !important;
+  backdrop-filter: blur(22px) saturate(145%);
+  -webkit-backdrop-filter: blur(22px) saturate(145%);
 
-    > .container {
-      height: 100%;
-      align-items: center;
-      display: flex;
-    }
+  &-header {
+    min-height: 64px;
+    border-bottom: 1px solid rgba(var(--v-border-color), .09);
+    background: color-mix(in srgb, rgb(var(--v-theme-primary)) 6%, rgb(var(--v-theme-surface))) !important;
+    color: rgb(var(--v-theme-on-surface));
 
-    .v-text-field.centered input {
-      text-align: center;
+    .text-body-large {
+      font-weight: 690;
+      letter-spacing: -.015em;
     }
   }
+
+  .v-card-text {
+    padding: 30px 34px 22px;
+  }
+
+  .v-card-actions {
+    padding-inline: 34px;
+
+    .v-btn {
+      min-height: 48px;
+      border-radius: 12px !important;
+      font-weight: 680;
+    }
+  }
+}
+
+.register-site-title {
+  margin: 0;
+  color: rgb(var(--v-theme-on-surface));
+  font-size: clamp(1.9rem, 4vw, 2.6rem);
+  font-weight: 760;
+  letter-spacing: -.055em;
+  line-height: 1.1;
+}
+
+.register-subtitle {
+  margin: 8px 0 22px;
+  color: rgb(var(--v-theme-on-surface));
+  line-height: 1.55;
+  opacity: .62;
+}
+
+.register-card-footer {
+  min-height: 58px;
+  background: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 3%, rgb(var(--v-theme-surface)));
+  color: rgb(var(--v-theme-on-surface));
+
+  a {
+    color: rgb(var(--v-theme-primary));
+    font-weight: 650;
+    text-decoration: none;
+  }
+}
+
+@media (max-width: 599px) {
+  .register {
+    background: rgb(var(--v-theme-background));
+
+    > .v-container {
+      padding: 0;
+    }
+
+    .v-row,
+    .v-col {
+      margin: 0;
+      padding: 0;
+    }
+  }
+
+  .register-card {
+    min-height: 100dvh;
+    border: 0 !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+
+    .v-card-text {
+      padding: 28px 20px 20px;
+    }
+
+    .v-card-actions {
+      padding-inline: 20px;
+    }
+  }
+}
 </style>

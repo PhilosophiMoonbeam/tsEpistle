@@ -2,17 +2,18 @@
   v-app
     .login(:style='`background-image: url(` + bgUrl + `);`')
       .login-sd
-        .d-flex.mb-5
+        .login-brand
           .login-logo
             v-avatar(rounded='0', size='34')
               img(:src='logoUrl', :alt='siteTitle')
           .login-title
-            .text-headline-small.text-grey-darken-4 {{ siteTitle }}
+            .login-eyebrow Secure workspace
+            h1 {{ siteTitle }}
         v-alert.mb-0(
           v-model='errorShown'
-          color="red-darken-2"
-          rounded='0'
-          density="compact"
+          color="error"
+          rounded='lg'
+          variant='tonal'
           icon='mdi-alert'
           )
           .text-body-medium {{errorMessage}}
@@ -44,11 +45,10 @@
             .text-body-large {{$t('auth:enterCredentials')}}
           form.login-form(@submit.prevent='login')
             v-text-field(
-              variant="solo"
-              flat
-              prepend-inner-icon='mdi-clipboard-account'
-              bg-color='white'
-              color="blue-darken-2"
+              variant="outlined"
+              prepend-inner-icon='mdi-email-outline'
+              bg-color='surface'
+              color="primary"
               hide-details
               ref='iptEmail'
               v-model='username'
@@ -57,11 +57,10 @@
               :autocomplete='isUsernameEmail ? `email` : `username`'
               )
             v-text-field.mt-2(
-              variant="solo"
-              flat
-              prepend-inner-icon='mdi-form-textbox-password'
-              bg-color='white'
-              color="blue-darken-2"
+              variant="outlined"
+              prepend-inner-icon='mdi-lock-outline'
+              bg-color='surface'
+              color="primary"
               hide-details
               ref='iptPassword'
               v-model='password'
@@ -74,7 +73,7 @@
             v-btn.mt-2.text-none(
               width='100%'
               size="large"
-              color="blue-darken-2"
+              color="primary"
               type='submit'
               :loading='isLoading'
               ) {{ $t('auth:actions.login') }}
@@ -82,7 +81,7 @@
               v-btn.text-none(
                 variant="text"
                 rounded
-                color="grey-darken-3"
+                color="primary"
                 @click.stop.prevent='forgotPassword'
                 href='#forgot'
                 ): .text-body-small {{ $t('auth:forgotPasswordLink') }}
@@ -102,11 +101,10 @@
           .login-info {{ $t('auth:forgotPasswordSubtitle') }}
           form.login-form(@submit.prevent='forgotPasswordSubmit')
             v-text-field(
-              variant="solo"
-              flat
-              prepend-inner-icon='mdi-clipboard-account'
-              bg-color='white'
-              color="blue-darken-2"
+              variant="outlined"
+              prepend-inner-icon='mdi-email-outline'
+              bg-color='surface'
+              color="primary"
               hide-details
               ref='iptForgotPwdEmail'
               v-model='username'
@@ -117,7 +115,7 @@
             v-btn.mt-2.text-none(
               width='100%'
               size="large"
-              color="blue-darken-2"
+              color="primary"
               type='submit'
               :loading='isLoading'
               ) {{ $t('auth:sendResetPassword') }}
@@ -125,7 +123,7 @@
               v-btn.text-none(
                 variant="text"
                 rounded
-                color="grey-darken-3"
+                color="primary"
                 @click.stop.prevent='screen = `login`'
                 href='#forgot'
                 ): .text-body-small {{ $t('auth:forgotPasswordCancel') }}
@@ -138,11 +136,10 @@
           form.login-form(@submit.prevent='changePassword')
             v-text-field.mt-2(
               type='password'
-              variant="solo"
-              flat
-              prepend-inner-icon='mdi-form-textbox-password'
-              bg-color='white'
-              color="blue-darken-2"
+              variant="outlined"
+              prepend-inner-icon='mdi-lock-outline'
+              bg-color='surface'
+              color="primary"
               hide-details
               ref='iptNewPassword'
               v-model='newPassword'
@@ -153,11 +150,10 @@
                 password-strength(v-model='newPassword')
             v-text-field.mt-2(
               type='password'
-              variant="solo"
-              flat
-              prepend-inner-icon='mdi-form-textbox-password'
-              bg-color='white'
-              color="blue-darken-2"
+              variant="outlined"
+              prepend-inner-icon='mdi-lock-check-outline'
+              bg-color='surface'
+              color="primary"
               hide-details
               v-model='newPasswordVerify'
               :placeholder='$t(`auth:changePwd.newPasswordVerifyPlaceholder`)'
@@ -166,7 +162,7 @@
             v-btn.mt-2.text-none(
               width='100%'
               size="large"
-              color="blue-darken-2"
+              color="primary"
               type='submit'
               :loading='isLoading'
               ) {{ $t('auth:changePwd.proceed') }}
@@ -183,7 +179,7 @@
             variant="solo"
             flat
             bg-color='white'
-            color="blue-darken-2"
+            color="primary"
             hide-details
             ref='iptTFA'
             v-model='securityCode'
@@ -194,7 +190,7 @@
           v-btn.mt-2.text-none(
             width='100%'
             size="large"
-            color="blue-darken-2"
+            color="primary"
             @click='verifySecurityCode(false)'
             :loading='isLoading'
             ) {{ $t('auth:tfa.verifyToken') }}
@@ -217,7 +213,7 @@
             variant="solo"
             flat
             bg-color='white'
-            color="blue-darken-2"
+            color="primary"
             hide-details
             ref='iptTFASetup'
             v-model='securityCode'
@@ -228,7 +224,7 @@
           v-btn.mt-2.text-none(
             width='100%'
             size="large"
-            color="blue-darken-2"
+            color="primary"
             @click='verifySecurityCode(true)'
             :loading='isLoading'
             ) {{ $t('auth:tfa.verifyToken') }}
@@ -557,129 +553,238 @@ export default {
 </script>
 
 <style lang="scss">
-  .login {
-    // background-image: url('/_assets/img/splash/1.jpg');
-    background-color: mc('grey', '900');
-    background-size: cover;
-    background-position: center center;
-    width: 100%;
-    height: 100%;
+.login {
+  position: relative;
+  display: flex;
+  min-height: 100vh;
+  min-height: 100dvh;
+  align-items: center;
+  overflow: hidden auto;
+  padding: 40px clamp(24px, 6vw, 88px);
+  background-color: #111827;
+  background-position: center;
+  background-size: cover;
+  font-family: 'WikiAgentSans', 'Roboto', sans-serif;
 
-    &-sd {
-      background-color: rgba(255,255,255,.8);
-      backdrop-filter: blur(10px);
-      -webkit-backdrop-filter: blur(10px);
-      border-left: 1px solid rgba(255,255,255,.85);
-      border-right: 1px solid rgba(255,255,255,.85);
-      width: 450px;
-      height: 100%;
-      margin-left: 5vw;
-      overflow-y: auto;
+  &::before {
+    position: absolute;
+    inset: 0;
+    background:
+      radial-gradient(circle at 72% 18%, rgba(var(--v-theme-primary), .26), transparent 32rem),
+      linear-gradient(110deg, rgba(3, 7, 18, .84), rgba(15, 23, 42, .5) 55%, rgba(3, 7, 18, .72));
+    content: '';
+  }
 
-      @at-root .no-backdropfilter & {
-        background-color: rgba(255,255,255,.95);
-      }
+  &::after {
+    position: absolute;
+    inset: auto 8vw 7vh auto;
+    width: min(30vw, 420px);
+    aspect-ratio: 1;
+    border: 1px solid rgba(255, 255, 255, .08);
+    border-radius: 50%;
+    box-shadow:
+      0 0 0 54px rgba(255, 255, 255, .025),
+      0 0 0 108px rgba(255, 255, 255, .018);
+    content: '';
+  }
 
-      @include until($tablet) {
-        margin-left: 0;
-        width: 100%;
-      }
-    }
+  &-sd {
+    position: relative;
+    z-index: 1;
+    width: min(100%, 480px);
+    max-height: calc(100dvh - 80px);
+    margin: 0;
+    padding: 30px;
+    overflow-y: auto;
+    border: 1px solid rgba(255, 255, 255, .28);
+    border-radius: 28px;
+    background: color-mix(in srgb, rgb(var(--v-theme-surface)) 91%, transparent);
+    box-shadow: 0 28px 80px rgba(0, 0, 0, .28);
+    backdrop-filter: blur(24px) saturate(145%);
+    -webkit-backdrop-filter: blur(24px) saturate(145%);
 
-    &-logo {
-      padding: 12px 0 0 12px;
-      width: 58px;
-      height: 58px;
-      background-color: #222;
-      margin-left: 12px;
-      border-bottom-left-radius: 7px;
-      border-bottom-right-radius: 7px;
-    }
-
-    &-title {
-      height: 58px;
-      padding-left: 12px;
-      display: flex;
-      align-items: center;
-      text-shadow: .5px .5px #FFF;
-    }
-
-    &-subtitle {
-      padding: 24px 12px 12px 12px;
-      color: #111;
-      font-weight: 500;
-      text-shadow: 1px 1px rgba(255,255,255,.5);
-      background-image: linear-gradient(to bottom, rgba(0,0,0,0), rgba(0,0,0,.15));
-      text-align: center;
-      border-bottom: 1px solid rgba(0,0,0,.3);
-    }
-
-    &-info {
-      border-top: 1px solid rgba(255,255,255,.85);
-      background-color: rgba(255,255,255,.15);
-      border-bottom: 1px solid rgba(0,0,0,.15);
-      padding: 12px;
-      font-size: 13px;
-      text-align: center;
-      color: mc('grey', '900');
-    }
-
-    &-list {
-      border-top: 1px solid rgba(255,255,255,.85);
-      padding: 12px;
-    }
-
-    &-form {
-      padding: 12px;
-      border-top: 1px solid rgba(255,255,255,.85);
-    }
-    @media (max-height: 480px) {
-      &-sd > .d-flex {
-        margin-bottom: 0 !important;
-      }
-
-      &-subtitle {
-        padding-top: 12px;
-      }
-
-      &-form {
-        padding-top: 8px;
-        padding-bottom: 8px;
-
-        .text-center {
-          margin-top: 8px !important;
-        }
-      }
-    }
-
-    &-main {
-      flex: 1 0 100vw;
-      height: 100vh;
-      height: 100dvh;
-    }
-
-    &-tfa {
-      background-color: #EEE;
-      border: 7px solid #FFF;
-
-      &-field input {
-        text-align: center;
-      }
-
-      &-secret {
-        display: block;
-        overflow-wrap: anywhere;
-        user-select: all;
-      }
-
-      &-qr {
-        background-color: #FFF;
-        padding: 5px;
-        border-radius: 5px;
-        width: 200px;
-        height: 200px;
-        margin: 0 auto;
-      }
+    @at-root .no-backdropfilter & {
+      background: rgb(var(--v-theme-surface));
     }
   }
+
+  &-brand {
+    display: flex;
+    gap: 14px;
+    align-items: center;
+    margin-bottom: 18px;
+  }
+
+  &-logo {
+    display: grid;
+    flex: 0 0 52px;
+    width: 52px;
+    height: 52px;
+    place-items: center;
+    border: 1px solid color-mix(in srgb, rgb(var(--v-theme-primary)) 22%, transparent);
+    border-radius: 16px;
+    background: color-mix(in srgb, rgb(var(--v-theme-primary)) 10%, rgb(var(--v-theme-surface)));
+    box-shadow: 0 9px 24px rgba(var(--v-theme-primary), .13);
+  }
+
+  &-title {
+    min-width: 0;
+
+    h1 {
+      overflow: hidden;
+      margin: 3px 0 0;
+      color: rgb(var(--v-theme-on-surface));
+      font-size: 1.28rem;
+      font-weight: 740;
+      letter-spacing: -.035em;
+      line-height: 1.15;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+  }
+
+  &-eyebrow {
+    color: rgb(var(--v-theme-primary));
+    font-size: .65rem;
+    font-weight: 760;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+  }
+
+  &-subtitle {
+    padding: 18px 2px 9px;
+    color: rgb(var(--v-theme-on-surface));
+    font-weight: 680;
+    text-align: start;
+
+    .text-body-large {
+      font-size: 1.05rem !important;
+      letter-spacing: -.015em;
+    }
+  }
+
+  &-info {
+    margin-block: 4px 10px;
+    padding: 13px 14px;
+    border: 1px solid rgba(var(--v-border-color), .1);
+    border-radius: 12px;
+    background: color-mix(in srgb, rgb(var(--v-theme-primary)) 5%, transparent);
+    color: rgb(var(--v-theme-on-surface));
+    font-size: .82rem;
+    line-height: 1.5;
+    opacity: .8;
+    text-align: start;
+  }
+
+  &-list,
+  &-form {
+    padding: 6px 0 0;
+  }
+
+  &-list {
+    .v-list {
+      padding: 7px;
+      border: 1px solid rgba(var(--v-border-color), .1);
+      border-radius: 14px !important;
+      background: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 3%, transparent);
+      box-shadow: none !important;
+    }
+
+    .v-list-item {
+      min-height: 46px;
+      margin-block: 2px;
+      border-radius: 10px;
+    }
+  }
+
+  &-form {
+    .v-field {
+      border-radius: 13px;
+      background: color-mix(in srgb, rgb(var(--v-theme-surface)) 92%, transparent) !important;
+    }
+
+    > .v-btn {
+      min-height: 48px;
+      border-radius: 12px;
+      font-weight: 680;
+      letter-spacing: .01em;
+    }
+  }
+
+  &-tfa {
+    border: 1px solid rgba(var(--v-border-color), .1);
+    border-radius: 20px;
+    background: rgb(var(--v-theme-surface));
+    color: rgb(var(--v-theme-on-surface)) !important;
+
+    > img {
+      width: 86px;
+      margin-bottom: 12px;
+    }
+
+    .v-field {
+      border-radius: 12px;
+    }
+
+    &-field input {
+      text-align: center;
+    }
+
+    &-secret {
+      display: block;
+      overflow-wrap: anywhere;
+      user-select: all;
+    }
+
+    &-qr {
+      width: 200px;
+      height: 200px;
+      margin: 0 auto;
+      padding: 5px;
+      border: 1px solid rgba(var(--v-border-color), .1);
+      border-radius: 12px;
+      background: #fff;
+    }
+  }
+}
+
+@media (max-width: 599px) {
+  .login {
+    align-items: stretch;
+    padding: 0;
+    background-image: none !important;
+
+    &::after {
+      display: none;
+    }
+
+    &-sd {
+      width: 100%;
+      max-height: none;
+      min-height: 100dvh;
+      padding: 28px 20px;
+      border: 0;
+      border-radius: 0;
+      background: rgb(var(--v-theme-surface));
+      box-shadow: none;
+    }
+  }
+}
+
+@media (max-height: 650px) and (min-width: 600px) {
+  .login {
+    align-items: flex-start;
+    padding-block: 24px;
+
+    &-sd {
+      max-height: calc(100dvh - 48px);
+    }
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .login * {
+    transition-duration: .01ms !important;
+  }
+}
 </style>
