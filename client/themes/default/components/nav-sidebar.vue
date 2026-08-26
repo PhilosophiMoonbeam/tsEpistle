@@ -1,6 +1,6 @@
 <template lang="pug">
   div
-    .pa-3.d-flex.bg-primary-darken-1(v-if='navMode === `MIXED`')
+    .nav-sidebar-switcher.pa-3.d-flex.bg-primary-darken-1(v-if='navMode === `MIXED`')
       v-btn(
         variant="flat"
         color='primary'
@@ -254,3 +254,11 @@ export default defineComponent({
   }
 })
 </script>
+
+<style lang="scss">
+.nav-sidebar-switcher {
+  align-items: center;
+  box-sizing: border-box;
+  min-height: 90px;
+}
+</style>

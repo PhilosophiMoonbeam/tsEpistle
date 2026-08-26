@@ -94,20 +94,20 @@
             lg='3'
             xl='2'
             )
-            v-card.page-toc-card.mb-5(v-if='tocDecoded.length')
-              .text-label-small.pa-5.pb-0.text-primary {{$t('common:page.toc')}}
-              v-list.pb-3(density="compact", nav)
-                template(v-for='tocItem in tocDecoded', :key='tocItem.anchor')
-                  v-list-item(@click='scrollToPageAnchor(tocItem.anchor)')
-                    template(v-slot:prepend)
-                      v-icon(color='grey', size="small") {{ $vuetify.locale.isRtl ? `mdi-chevron-left` : `mdi-chevron-right` }}
-                    v-list-item-title.px-3 {{tocItem.title}}
-                  //- v-divider(v-if='tocIdx < toc.length - 1 || tocItem.children.length')
-                  template(v-for='tocSubItem in tocItem.children', :key='tocSubItem.anchor')
-                    v-list-item(@click='scrollToPageAnchor(tocSubItem.anchor)')
-                      template(v-slot:prepend)
-                        v-icon.px-3(color="grey-lighten-1", size="small") {{ $vuetify.locale.isRtl ? `mdi-chevron-left` : `mdi-chevron-right` }}
-                      v-list-item-title.px-3.text-body-small(:class='$vuetify.theme.current.dark ? `text-grey-lighten-1` : `text-grey-darken-1`') {{tocSubItem.title}}
+            v-card.page-toc-card.mb-5(v-if='tocFlattened.length')
+              .text-label-small.pa-5.pb-2.text-primary {{$t('common:page.toc')}}
+              v-list.py-2(density="compact", nav)
+                v-list-item.page-toc-item(
+                  v-for='tocItem in tocFlattened'
+                  :key='tocItem.anchor'
+                  :style='`--toc-indent: ${Math.min(tocItem.depth, 5) * 14}px`'
+                  @click='scrollToPageAnchor(tocItem.anchor)'
+                  )
+                  template(v-slot:prepend)
+                    v-icon.page-toc-item-marker(size="x-small") {{ $vuetify.locale.isRtl ? `mdi-chevron-left` : `mdi-chevron-right` }}
+                  v-list-item-title.page-toc-item-title(
+                    :class='{ "font-weight-medium": tocItem.depth === 0 }'
+                    ) {{tocItem.title}}
                     //- v-divider(inset, v-if='tocIdx < toc.length - 1')
 
             v-card.page-tags-card.mb-5(v-if='tags.length > 0')
@@ -671,6 +671,11 @@ import {
 import { decodeBase64Json } from '../../../helpers/base64'
 import { hydrateContentExtensions, revealContentExtensionTarget } from '../../../helpers/content-extension-runtime'
 import { getErrorMessage, pushGraphError, showNotification } from '../../../helpers/root-ui-store'
+import {
+  flattenTableOfContents,
+  type FlattenedTableOfContentsNode,
+  type TableOfContentsNode
+} from '../../../helpers/table-of-contents'
 
 /* global siteLangs */
 
@@ -679,11 +684,6 @@ type Breadcrumb = {
   name: string
 }
 
-type TableOfContentsItem = {
-  anchor: string
-  title: string
-  children: TableOfContentsItem[]
-}
 
 type PageWatchNotification = {
   id: string
@@ -965,8 +965,11 @@ export default defineComponent({
     sidebarDecoded (): SidebarItem[] {
       return decodeBase64Json<SidebarItem[]>(this.sidebar)
     },
-    tocDecoded (): TableOfContentsItem[] {
-      return decodeBase64Json<TableOfContentsItem[]>(this.toc)
+    tocDecoded (): TableOfContentsNode[] {
+      return decodeBase64Json<TableOfContentsNode[]>(this.toc)
+    },
+    tocFlattened (): FlattenedTableOfContentsNode[] {
+      return flattenTableOfContents(this.tocDecoded)
     },
     tocPosition () {
       return wikiStore.site.tocPosition
@@ -1469,6 +1472,41 @@ export default defineComponent({
   .v-breadcrumbs-divider:nth-child(2) {
     padding: 0 6px 0 12px;
   }
+}
+
+.page-toc-card {
+  overflow: hidden;
+
+  .v-list {
+    padding-inline: 8px;
+  }
+}
+
+.page-toc-item {
+  border-inline-start: 2px solid transparent;
+  min-height: 34px !important;
+  padding-inline: calc(6px + var(--toc-indent)) 8px !important;
+  transition: background-color 120ms ease, border-color 120ms ease;
+
+  &:hover {
+    background: color-mix(in srgb, rgb(var(--v-theme-primary)) 9%, transparent);
+    border-inline-start-color: color-mix(in srgb, rgb(var(--v-theme-primary)) 52%, transparent);
+  }
+
+  .v-list-item__prepend {
+    align-self: center;
+  }
+
+  .v-list-item__prepend > .v-icon {
+    color: color-mix(in srgb, rgb(var(--v-theme-primary)) 66%, rgb(var(--v-theme-on-surface)));
+    margin-inline-end: 7px;
+    opacity: .78;
+  }
+}
+
+.page-toc-item-title {
+  line-height: 1.3;
+  padding-inline: 0 !important;
 }
 
 .page-col-sd {

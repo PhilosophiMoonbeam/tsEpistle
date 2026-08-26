@@ -80,6 +80,8 @@
           single-line
           density="compact"
           style='max-width: 250px;'
+          item-title='text'
+          item-value='value'
         )
         v-btn-toggle.ml-2(v-model='orderByDirection', rounded, mandatory)
           v-btn(variant="text", height='40'): v-icon(size='20') mdi-chevron-double-up
@@ -120,27 +122,27 @@
           template(v-slot:default='props')
             v-row.align-stretch
               v-col(
-                v-for='item of props.items'
-                :key='`page-` + item.id'
+                v-for='entry of props.items'
+                :key='`page-` + entry.raw.id'
                 cols='12'
                 lg='6'
                 )
                 v-card.radius-7(
-                  @click='goTo(item)'
+                  @click='goTo(entry.raw)'
                   style='height:100%;'
                   :class='$vuetify.theme.current.dark ? `bg-grey-darken-4` : ``'
                   )
                   v-card-text
                     .d-flex.flex-row.align-center
-                      .text-body-large: strong.text-primary {{item.title}}
+                      .text-body-large: strong.text-primary {{entry.raw.title}}
                       v-spacer
                       i18next.text-body-small(tag='div', path='tags:pageLastUpdated')
-                        span(place='date') {{ $helpers.formatMoment(item.updatedAt, 'from') }}
-                    .text-body-medium.text-grey {{item.description || '---'}}
+                        span(place='date') {{ $helpers.formatMoment(entry.raw.updatedAt, 'from') }}
+                    .text-body-medium.text-grey {{entry.raw.description || '---'}}
                     v-divider.my-2
                     .d-flex.flex-row.align-center
-                      v-chip(size="small", label, :color='$vuetify.theme.current.dark ? `grey-darken-3` : `grey-lighten-4`').text-label-small {{item.locale}}
-                      .text-body-small.ml-1 / {{item.path}}
+                      v-chip(size="small", label, :color='$vuetify.theme.current.dark ? `grey-darken-3` : `grey-lighten-4`').text-label-small {{entry.raw.locale}}
+                      .text-body-small.ml-1 / {{entry.raw.path}}
         .text-center.py-2.animated.fadeInDown(v-if='this.pageTotal > 1')
           v-pagination(v-model='pagination.page', :length='pageTotal')
 
@@ -153,9 +155,10 @@ import _ from 'lodash'
 
 import { fetchPages, fetchPageTags, type PageListRow, type PageTagRow } from '../helpers/pages-api'
 import { setLoading } from '../helpers/root-ui-store'
+import { pathFromTagSelection, tagSelectionFromPath } from '../helpers/tag-navigation'
 import { wikiStore } from '@/store/index.ts'
 
-/* global siteLangs */
+/* global siteConfig, siteLangs */
 
 type TagLocale = {
   name: string
@@ -197,7 +200,7 @@ export default {
           scrollingX: false,
           easing: 'easeOutQuad',
           speed: 1000,
-          verticalNativeBarPos: this.$vuetify.locale.isRtl ? `left` : `right`
+          verticalNativeBarPos: siteConfig.rtl ? `left` : `right`
         },
         rail: {
           gutterOfEnds: '2px'
@@ -242,13 +245,13 @@ export default {
       this.pagination.sortDesc = [newValue === 1]
     },
     $route () {
-      this.selection = _.compact(decodeURI(this.$route.path).split('/'))
+      this.selection = tagSelectionFromPath(this.$route.path)
       this.loadPages()
     }
   },
   created () {
     wikiStore.page.mode = 'tags'
-    this.selection = _.compact(decodeURI(this.$route.path).split('/'))
+    this.selection = tagSelectionFromPath(this.$route.path)
   },
   mounted () {
     this.locales = _.concat(
@@ -294,14 +297,14 @@ export default {
       if (this.locale !== `any`) {
         query.lang = this.locale
       }
-      if (this.orderBy !== `TITLE`) {
+      if (this.orderBy !== `title`) {
         query.sort = this.orderBy.toLowerCase()
       }
       if (this.orderByDirection !== 0) {
         query.dir = this.orderByDirection === 0 ? `asc` : `desc`
       }
       this.$router.push({
-        path: '/' + this.selection.join('/'),
+        path: pathFromTagSelection(this.selection),
         query
       })
     },

@@ -27,7 +27,12 @@
       v-col(cols='5', md='4')
         v-toolbar.nav-header-inner(color='black', flat, :class='$vuetify.locale.isRtl ? `pr-3` : `pl-3`')
           slot(name='mobileBrand', v-if='$slots.mobileBrand && $vuetify.display.smAndDown')
-          v-avatar(v-if='!$slots.mobileBrand || $vuetify.display.mdAndUp', rounded='0', size='34', @click='goHome')
+          button.nav-header-logo(
+            v-if='!$slots.mobileBrand || $vuetify.display.mdAndUp'
+            type='button'
+            @click='goHome'
+            :aria-label='$t(`common:header.home`)'
+            )
             img.org-logo(:src='logoUrl', :alt='title')
           v-toolbar-title(v-if='!$slots.mobileBrand || $vuetify.display.mdAndUp', :class='{ "mx-3": $vuetify.display.mdAndUp, "mx-1": $vuetify.display.smAndDown }')
             span.text-body-large {{title}}
@@ -538,10 +543,29 @@ export default defineComponent({
     }
   }
 
-  .org-logo {
+  .nav-header-logo {
+    align-items: center;
+    background: transparent;
+    border: 0;
+    border-radius: 6px;
     cursor: pointer;
-    width: 100%;
-    height: 100%;
+    display: inline-flex;
+    flex: 0 0 34px;
+    height: 34px;
+    justify-content: center;
+    padding: 0;
+    width: 34px;
+
+    &:focus-visible {
+      outline: 2px solid rgb(var(--v-theme-primary));
+      outline-offset: 3px;
+    }
+  }
+
+  .org-logo {
+    display: block;
+    max-height: 100%;
+    max-width: 100%;
     object-fit: contain;
   }
 

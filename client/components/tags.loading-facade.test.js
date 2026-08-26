@@ -20,4 +20,15 @@ describe('tags REST migration guard', () => {
     expect(source).toContain("setLoading(wikiStore, 'pages-refresh', false)")
     expect(source).toContain('this.isLoading = false')
   })
+
+  test('initializes the root tags page without depending on an injected component instance', () => {
+    expect(source).toContain('verticalNativeBarPos: siteConfig.rtl ? `left` : `right`')
+    expect(source).not.toMatch(/verticalNativeBarPos:\s*this\.\$vuetify/)
+  })
+
+  test('renders Vuetify data iterator rows from their raw page values', () => {
+    expect(source).toContain("v-for='entry of props.items'")
+    expect(source).toContain("{{entry.raw.title}}")
+    expect(source).toContain("@click='goTo(entry.raw)'")
+  })
 })
