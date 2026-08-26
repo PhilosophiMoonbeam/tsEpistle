@@ -158,7 +158,7 @@ describe('database migration preflight', () => {
     await expect(preflightMigrations(db, migrationSource(available))).rejects.toEqual(
       expect.objectContaining<Partial<MigrationPreflightError>>({
         code: 'MIGRATION_PREFLIGHT_FAILED',
-        message: expect.stringContaining('Confirm that no other Wiki.ts instance is migrating')
+        message: expect.stringContaining('Confirm that no other tsFranki instance is migrating')
       })
     )
   })

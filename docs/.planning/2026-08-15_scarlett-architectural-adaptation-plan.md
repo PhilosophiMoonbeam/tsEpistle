@@ -3,7 +3,7 @@
 **Status:** accepted fork-native decision record and implementation plan  
 **Date:** 2026-08-15  
 **Revised:** 2026-08-15T16:48:30Z — PostgreSQL-only target accepted after operator inventory confirmed zero non-PostgreSQL installations
-**Wiki.ts revision assessed:** `a7ecf37e4582834b522ee1de7f48066751bd1ada`
+**tsFranki revision assessed:** `a7ecf37e4582834b522ee1de7f48066751bd1ada`
 **Scarlett revision assessed:** `d0c5a8bfa90acee73a2f4c71033978bea1925468` (`feat: add unlock aspect ratio option to block-gallery`)  
 **Common ancestor:** `b5b4b0880ae26f4b137242267b6674b51af8688c`
 
@@ -13,9 +13,9 @@ This report supplements the authoritative [Scarlett design-synthesis roadmap](./
 
 ## Executive decision
 
-Scarlett contains valuable architectural direction, but its repository replacement is not the valuable part. Wiki.ts should adopt clearer package ownership, typed boundaries, safer migration detection, PostgreSQL as its sole database platform, bounded derived projections, and isolated extension runtimes where those changes prove a concrete benefit. It should not adopt Scarlett’s destructive migration reset, parallel ORM, global Tailwind design system, stale privileged index, canonical-source deletion, unfinished workflow persistence, or dependency downgrades.
+Scarlett contains valuable architectural direction, but its repository replacement is not the valuable part. tsFranki should adopt clearer package ownership, typed boundaries, safer migration detection, PostgreSQL as its sole database platform, bounded derived projections, and isolated extension runtimes where those changes prove a concrete benefit. It should not adopt Scarlett’s destructive migration reset, parallel ORM, global Tailwind design system, stale privileged index, canonical-source deletion, unfinished workflow persistence, or dependency downgrades.
 
-| Previously not inherited | Merit-first disposition | What Wiki.ts gains |
+| Previously not inherited | Merit-first disposition | What tsFranki gains |
 | --- | --- | --- |
 | wholesale `backend/` + `frontend/` repository replacement | **Adapt boundaries; do not copy layout** | explicit contracts and dependency ownership without pretending currently coupled code is independently deployable |
 | migration reset / fresh database | **Reject reset; accept a verified shadow-schema bridge when redesign is justified** | schema modernization without abandoning installed data or rollback |
@@ -36,7 +36,7 @@ At assessment time:
 
 - `origin/scarlett` is `249758e3`; upstream Scarlett is 73 commits beyond it at `d0c5a8bf`.
 - The upstream delta changes 521 files with 96,069 insertions and 27,147 deletions.
-- Wiki.ts `main...upstream/scarlett` is 694 commits on the Wiki.ts side and 343 on the Scarlett side. This divergence explains why copying is unsafe, but it is not used as a reason to reject an idea.
+- tsFranki `main...upstream/scarlett` is 694 commits on the tsFranki side and 343 on the Scarlett side. This divergence explains why copying is unsafe, but it is not used as a reason to reject an idea.
 - Scarlett’s pivotal architecture commits include:
   - `6f492f00`: split API schemas;
   - `ee7a15fb`: TypeScript backend migration;
@@ -46,10 +46,10 @@ At assessment time:
   - `14e1efae`: WIP page watching and rate limiting;
   - `957efebe`: WIP approvals/profile-auth flows.
 - Scarlett currently has independent `backend/package.json`, `frontend/package.json`, and `blocks/package.json` manifests. Its backend uses `drizzle-orm/node-postgres`, requires PostgreSQL 16, installs `ltree` and `pg_trgm`, and exposes one generated PostgreSQL initial migration at `backend/db/migrations/20260809235619_init/migration.sql`.
-- Wiki.ts is one released root package. Vite emits the setup and application browser entries consumed by Express; the Docker and release pipelines install, build, prune, inventory, attest, and package that single revision together.
-- Wiki.ts uses Vue 3, Vuetify 4, Pinia, Vue Router, CKEditor, Vite, Express, Knex, and Objection. Its current database initializer and CI still support PostgreSQL, MySQL, MariaDB, MSSQL, and SQLite.
-- Operator inventory on 2026-08-15 records zero non-PostgreSQL Wiki.ts installations. PostgreSQL is therefore the sole target for the future stable product; no cross-dialect customer-data converter is required.
-- Existing PostgreSQL / Wiki.js 2.x installations remain the mandatory upgrade source. Wiki.ts migration preflight already rejects unknown, partial, out-of-order, and locked ledgers before current migrations write.
+- tsFranki is one released root package. Vite emits the setup and application browser entries consumed by Express; the Docker and release pipelines install, build, prune, inventory, attest, and package that single revision together.
+- tsFranki uses Vue 3, Vuetify 4, Pinia, Vue Router, CKEditor, Vite, Express, Knex, and Objection. Its current database initializer and CI still support PostgreSQL, MySQL, MariaDB, MSSQL, and SQLite.
+- Operator inventory on 2026-08-15 records zero non-PostgreSQL tsFranki installations. PostgreSQL is therefore the sole target for the future stable product; no cross-dialect customer-data converter is required.
+- Existing PostgreSQL / Wiki.js 2.x installations remain the mandatory upgrade source. tsFranki migration preflight already rejects unknown, partial, out-of-order, and locked ledgers before current migrations write.
 - The content-extension host already provides strict versioned envelopes, disabled-by-default registry rows, sanitized server rendering, escaped-source fallback, editor insertion, dynamic browser hydration, and policy-filtered page-index queries.
 
 External implementation references used for the bounded technology decisions:
@@ -87,7 +87,7 @@ The current root package still contains real coupling:
 - `shared/` has no independent package export surface;
 - browser and server TypeScript coverage is improving but still excludes legacy JavaScript and test surfaces.
 
-Scarlett’s separate manifests make dependency ownership and local builds clearer. Those properties would improve Wiki.ts. Renaming `server/` to `backend/` and `client/` to `frontend/` would not.
+Scarlett’s separate manifests make dependency ownership and local builds clearer. Those properties would improve tsFranki. Renaming `server/` to `backend/` and `client/` to `frontend/` would not.
 
 ### Decision
 
@@ -138,7 +138,7 @@ Boundary refactors contain no database change. Until a release is promoted, roll
 
 ### What Scarlett improves
 
-Scarlett correctly refuses to mutate a Wiki.js 2 database with a migration history it does not understand. Its `99ccdc13` guard checks legacy tables before creating the new schema. Wiki.ts has already adapted the safety principle through `server/db/migration-preflight.ts` while retaining an upgrade path.
+Scarlett correctly refuses to mutate a Wiki.js 2 database with a migration history it does not understand. Its `99ccdc13` guard checks legacy tables before creating the new schema. tsFranki has already adapted the safety principle through `server/db/migration-preflight.ts` while retaining an upgrade path.
 
 Scarlett’s reset in `6db53d4f` collapses earlier Drizzle migrations into one PostgreSQL initial migration and instructs legacy operators to use a fresh database. That simplifies development history but transfers all cost and risk to operators. It does not improve the installed product.
 
@@ -191,11 +191,11 @@ Before cutover: discard the shadow target. After cutover but before new writes: 
 
 ### Potential value
 
-Scarlett demonstrates useful properties: schema definitions and query types share a source, PostgreSQL-specific indexes/types are explicit, and migration generation can expose schema drift. Wiki.ts would benefit from stronger repository typing and schema verification.
+Scarlett demonstrates useful properties: schema definitions and query types share a source, PostgreSQL-specific indexes/types are explicit, and migration generation can expose schema drift. tsFranki would benefit from stronger repository typing and schema verification.
 
 ### Current disadvantage
 
-Scarlett’s implementation is specifically `drizzle-orm/node-postgres`, PostgreSQL 16, `ltree`, `pg_trgm`, arrays, `jsonb`, generated columns, GIN/GiST indexes, and one Drizzle migration ledger. PostgreSQL-only removes Wiki.ts’s dialect-portability objection, but Wiki.ts still owns installed Knex migration histories, Objection models, and operation transaction boundaries. Adding Drizzle without a clean cutover would create two schema authorities and two transaction/query semantics.
+Scarlett’s implementation is specifically `drizzle-orm/node-postgres`, PostgreSQL 16, `ltree`, `pg_trgm`, arrays, `jsonb`, generated columns, GIN/GiST indexes, and one Drizzle migration ledger. PostgreSQL-only removes tsFranki’s dialect-portability objection, but tsFranki still owns installed Knex migration histories, Objection models, and operation transaction boundaries. Adding Drizzle without a clean cutover would create two schema authorities and two transaction/query semantics.
 
 ### Decision
 
@@ -260,7 +260,7 @@ Every experimental custom-element runtime is selected by its extension registrat
 
 ### Decision
 
-**PostgreSQL is the sole database target for the future stable Wiki.ts product.**
+**PostgreSQL is the sole database target for the future stable tsFranki product.**
 
 This is an affirmative fork decision, not incidental inheritance from Scarlett. The operator inventory records zero non-PostgreSQL installations, while maintaining five dialects consumes schema, migration, locking, CI, debugging, and release capacity. Concentrating that capacity on PostgreSQL should improve upgrade proof, multi-instance behavior, search, durable jobs, performance analysis, backup/restore guidance, and operational support.
 
@@ -292,7 +292,7 @@ No MySQL, MariaDB, MSSQL, or SQLite converter will be built without evidence of 
 ### Acceptance gates
 
 - fresh install succeeds on every declared PostgreSQL server version;
-- representative PostgreSQL Wiki.js 2.x and Wiki.ts sources upgrade without a migration-ledger reset;
+- representative PostgreSQL Wiki.js 2.x and tsFranki sources upgrade without a migration-ledger reset;
 - preflight rejects unknown/newer, locked, partial, missing-ledger, and out-of-order states with zero writes;
 - stable IDs, foreign keys, canonical content hashes, ownership, permissions, history, assets, navigation, editor metadata, extension source, workflow state, and audit records survive;
 - login, read, edit, history/restore, protected content, asset, search, administration, job recovery, and multi-instance journeys pass after upgrade;
@@ -355,7 +355,7 @@ Projection promotion requires:
 
 ### Decision
 
-**Do not transplant Scarlett’s WIP persistence or state machines. Continue comparing its UX and route decomposition.** This is no longer merely a precaution: Wiki.ts has completed stronger native contracts.
+**Do not transplant Scarlett’s WIP persistence or state machines. Continue comparing its UX and route decomposition.** This is no longer merely a precaution: tsFranki has completed stronger native contracts.
 
 Current native implementations include:
 

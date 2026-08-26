@@ -1,8 +1,8 @@
 apiVersion: v2
-name: wiki-ts-preview
+name: tsfranki
 version: '0.1.0-alpha.1'
 appVersion: '0.1.0-alpha.1'
-description: Wiki.ts Preview, an independent community fork of Wiki.js.
+description: tsFranki, an independent community fork of Wiki.js.
 keywords:
   - wiki
   - documentation
@@ -12,6 +12,6 @@ keywords:
   - editor
 type: application
 home: https://github.com/PhilosophiMoonbeam/wiki
-icon: https://cdn.js.wiki/images/wikijs-butterfly.svg
+icon: https://raw.githubusercontent.com/PhilosophiMoonbeam/wiki/main/client/static/svg/icon-tsfranki.svg
 sources:
   - https://github.com/PhilosophiMoonbeam/wiki

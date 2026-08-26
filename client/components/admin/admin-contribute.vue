@@ -82,9 +82,9 @@
             .text-body-medium.pl-3
               ul
                 i18next(path='admin:contribute.submitAnIdea', tag='li')
-                  a(href='https://requests.requarks.io/wiki', target='_blank') {{ $t('admin:contribute.submitAnIdeaLink') }}
+                  a(href='https://github.com/PhilosophiMoonbeam/wiki/issues', target='_blank') GitHub issues
                 i18next(path='admin:contribute.foundABug', tag='li')
-                  a(href='https://github.com/Requarks/wiki/issues', target='_blank') Github
+                  a(href='https://github.com/PhilosophiMoonbeam/wiki/issues', target='_blank') GitHub
                 i18next(path='admin:contribute.helpTranslate', tag='li')
                   a(href='https://wiki.requarks.io/slack', target='_blank') Slack
             v-divider.mt-3

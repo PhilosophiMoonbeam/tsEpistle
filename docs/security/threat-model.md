@@ -1,13 +1,13 @@
-# Wiki.ts security threat model
+# tsFranki security threat model
 
 ## Status and review contract
 
 | Field | Value |
 | --- | --- |
-| Product | Wiki.ts Preview |
+| Product | tsFranki |
 | Model version | 1 |
 | Last reviewed | 2026-08-15 |
-| Review owner | Wiki.ts maintainers |
+| Review owner | tsFranki maintainers |
 | External reviewer | Unassigned — blocks the first external release |
 | Covered source | `main` at or after `d2548d8a` |
 
@@ -55,7 +55,7 @@ This is a living release artifact. Update it whenever an authentication flow, ex
 | CONTENT-1 | Markdown/HTML/SVG/content-extension XSS or renderer escape | Allowlisted renderer contract, DOMPurify, forbidden active SVG/HTML elements and style attributes, upload SVG sanitization, CSP/security headers | `server/content-extensions/sanitize.ts`; `server/jobs/sanitize-svg.ts`; `server/middlewares/security.ts`; content-extension renderer and API tests | Custom administrator-authored HTML/theme injection is privileged code execution by design and must be limited to trusted administrators. |
 | CONTENT-2 | Malicious links or URL schemes | Explicit protocol allowlist and attribute sanitation | `server/content-extensions/sanitize.ts`; content-extension sanitizer/renderer tests | Other renderer modules remain part of external review scope. |
 | NET-1 | SSRF and DNS rebinding through webhooks | HTTPS-only, no URL credentials, private/reserved network blocklist, DNS resolution before enqueue/delivery, validated address pinned during TLS request | `server/core/webhooks.ts`; `server/test/core/webhooks.test.js` | Storage, search, authentication, embeds, import, and media adapters are separate operator-trusted integrations and require deployment-specific canaries. |
-| NET-2 | Webhook forgery, replay, or secret disclosure | Random secret, AES-256-GCM encrypted storage, HMAC-SHA256 over timestamp and exact body, delivery/event identifiers, bounded response capture and timeout | `server/core/webhooks.ts`; `server/test/core/webhooks.test.js`; webhook job tests | Receivers must enforce timestamp skew and delivery-ID deduplication; Wiki.ts cannot enforce receiver behavior. |
+| NET-2 | Webhook forgery, replay, or secret disclosure | Random secret, AES-256-GCM encrypted storage, HMAC-SHA256 over timestamp and exact body, delivery/event identifiers, bounded response capture and timeout | `server/core/webhooks.ts`; `server/test/core/webhooks.test.js`; webhook job tests | Receivers must enforce timestamp skew and delivery-ID deduplication; tsFranki cannot enforce receiver behavior. |
 | EXT-1 | Extension supply-chain or renderer isolation failure | Versioned shared envelope; disabled-by-default registry; administrator-only toggles; sanitized deterministic renderer output | `shared/content-extensions.ts`; `server/core/extensions.ts`; `server/content-extensions`; extension API, migration, and renderer tests | New extension kinds require sanitizer/CSP/export/print review before enablement. No arbitrary third-party runtime loading is supported. |
 | JOB-1 | Job payload tampering, duplicate side effects, lease theft, or unbounded retry | Typed handlers validate payload; transactional claim; owner-bound lease completion/failure; bounded attempts; terminal state; idempotent outbox delivery | `server/core/durable-jobs.ts`; `server/core/outbox.ts`; durable-job/outbox/job tests | Real process-kill lease recovery remains an operational release gate. |
 | PATH-1 | Archive, filename, upload, import, or export path traversal | Filename sanitation, canonical data roots, page path segment filtering, allowlisted archive package roots | `server/controllers/upload.ts`; `server/helpers/page.ts`; `server/core/asar.ts`; upload/import/export tests | External review must include every archive extractor and operator-supplied path. |

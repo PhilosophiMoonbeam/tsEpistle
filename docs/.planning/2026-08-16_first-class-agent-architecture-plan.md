@@ -2,7 +2,7 @@
 
 - **Status:** implemented product baseline; ordinary-Wiki inline architecture authoritative; release evidence must be regenerated for the final revision
 - **Date:** 2026-08-17
-- **Wiki.ts revision assessed:** `05ee166091c0858f5df231a7f82cec960e2befe16` (`docs: clarify MCP approval boundary`)
+- **tsFranki revision assessed:** `05ee166091c0858f5df231a7f82cec960e2befe16` (`docs: clarify MCP approval boundary`)
 - **Ax reference:** `@ax-llm/ax` `23.0.15`, source revision `3ff5ff4689f01afc1d8498a64f698bc5e5a3cf6a`
 - **MCP TypeScript SDK reference:** `@modelcontextprotocol/server`, `@modelcontextprotocol/node`, `@modelcontextprotocol/express`, and test-client `@modelcontextprotocol/client` `2.0.0`, source revision `03842cd9cae9a9b142c77d2fb65e829fc4e03eab`, MCP specification `2026-07-28`
 - **Harness references:** Codex source revision `c8ddb210d2429cacacf86593e157114b00634f13`; Oh My Pi source revision `37eee71978951fccf66b21f7e3e2b74596ac9d74`; Agent Skills specification retrieved 2026-08-17
@@ -18,7 +18,7 @@
 - **Provider protocol UX container replacement completed (2026-08-17):** promoted image `wiki-tailnet:0662c223` / `sha256:eecf919cdde47f0cf341098368faff98f04d0fe8903637af78e7592663a54332` from source revision `0662c2237473dbabdca15c91ae7d9e76734f32eb`. The replacement retained PostgreSQL 17.11, `wiki-postgres-content`, `wiki-pg-migration-net`, the read-only configuration and database-secret mounts, loopback publication `127.0.0.1:3013`, and restart policy `unless-stopped`; stopped container `wiki-tailnet-pre-0662c223-20260817T194153Z` is the immediate application rollback target. Pre-cutover backup `wiki-pre-protocol-0662c223.dump` has SHA-256 `4b08b830048b6058533df9be4fbf6c8faeade99ecb36baf0ee756a3069103a3e`. The unchanged Tailscale Serve route still maps `https://agents8c48g.tail41a24a.ts.net:10443/` to `http://127.0.0.1:3013`; loopback and tailnet `/healthz` returned `{"ok":true}` before and after an explicit restart, Docker remained `healthy` with zero restarts, persisted Wiki content and administration remained accessible, and tailnet browser verification exercised the grouped API protocol selector plus the disabled streaming/functions/agent-mode and enabled generation-only constraints for legacy text Completions.
 - **Protocol-derived capability UX container replacement completed (2026-08-17):** promoted image `wiki-tailnet:49dbcc2d` / `sha256:7fec364d9c3a8bd0ea126ccacc50ed645ba0b365041500db01238ef9b5d2e4f4` from source revision `49dbcc2de502938c1e20989e11df3ecbc1158527`. The replacement retained PostgreSQL 17.11, `wiki-postgres-content`, `wiki-pg-migration-net`, the read-only configuration and database-secret mounts, loopback publication `127.0.0.1:3013`, and restart policy `unless-stopped`; stopped container `wiki-tailnet-pre-49dbcc2d-20260817T201012Z` is the immediate application rollback target. Pre-cutover backup `wiki-pre-49dbcc2d.dump` has SHA-256 `5437a50e897c4893b266c30b06f92eaf30d232aee3ab58aa884633468e7d8058`. The unchanged Tailscale Serve route `https://agents8c48g.tail41a24a.ts.net:10443/` and loopback `/healthz` both returned `{"ok":true}`; the running container reported `healthy`, zero restarts, and the exact source revision. Authenticated browser verification on the deployed tailnet URL confirmed the grouped API-protocol selector, protocol-derived multiple-tool-call summary, conservative legacy generation-only defaults, progressive limits/quotas disclosure, and removal of raw capability/pricing revision and low-level capability controls.
 
-This plan defines agents as a Wiki.ts product capability, not as a chat widget attached to a privileged backend. The same policy-aware action kernel will serve the in-product Ax agent and authenticated external MCP clients. Wiki.ts remains authoritative for identity, page visibility, permissions, approvals, persistence, audit, quotas, and transport. Ax owns model orchestration only. The MCP SDK owns protocol conformance only. CopilotKit is a UX and interaction-state reference only and is not a dependency.
+This plan defines agents as a tsFranki product capability, not as a chat widget attached to a privileged backend. The same policy-aware action kernel will serve the in-product Ax agent and authenticated external MCP clients. tsFranki remains authoritative for identity, page visibility, permissions, approvals, persistence, audit, quotas, and transport. Ax owns model orchestration only. The MCP SDK owns protocol conformance only. CopilotKit is a UX and interaction-state reference only and is not a dependency.
 
 This document supplements the [Scarlett architectural adaptation plan](./2026-08-15_scarlett-architectural-adaptation-plan.md). Its one-policy, one-operation, PostgreSQL continuity, Vue/Vuetify, release-integrity, and rollback requirements remain mandatory.
 
@@ -26,7 +26,7 @@ This document supplements the [Scarlett architectural adaptation plan](./2026-08
 
 Build the capability, with these boundaries:
 
-1. **Use Ax for the model/tool loop.** Pin an exact Ax version and isolate it behind a Wiki.ts `AgentEngine` adapter. Use typed signatures, `agent()`, Standard Schema tools, final-answer streaming, citations, usage context, cancellation, safe `AxJSRuntime` settings, and observable lifecycle callbacks. Do not let Ax own users, permissions, sessions, approvals, retries, or database state.
+1. **Use Ax for the model/tool loop.** Pin an exact Ax version and isolate it behind a tsFranki `AgentEngine` adapter. Use typed signatures, `agent()`, Standard Schema tools, final-answer streaming, citations, usage context, cancellation, safe `AxJSRuntime` settings, and observable lifecycle callbacks. Do not let Ax own users, permissions, sessions, approvals, retries, or database state.
 2. **Create one action kernel.** Zod schemas, policy, risk, execution, idempotency, and result redaction are defined once. Ax tools and MCP tools are adapters over those definitions. Controllers never become a second action implementation.
 3. **Keep search deterministic by default.** Typing continues to run the current permission-filtered page search. An explicit Ask control starts a model run; no keystroke silently incurs model cost or provider egress.
 4. **Persist product state in PostgreSQL.** In-product sessions, messages, runs, events, exact skill versions, skill uses, and bounded artifacts are owned by a user; proposals, approvals, executions, and usage retain their exact user/API-key actors. SSE is a projection of the durable event log, not the source of truth.
@@ -36,7 +36,7 @@ Build the capability, with these boundaries:
 8. **Support standard, versioned skills without granting authority.** Approved `SKILL.md` snapshots are ordinary versioned Wiki content, progressively disclosed and pinned to sessions/runs. Skill text can guide the model but never grants tools or bypasses live permissions. External MCP clients can list/read the same exact snapshots.
 9. **Offer browsing as an isolated optional tool.** A separately deployable Chromium worker provides bounded navigate/observe/act/extract/screenshot actions with no arbitrary JavaScript, credentials, uploads, local-network access, or cross-run browser state. Browser output is untrusted evidence, not instructions.
 10. **Serve MCP over the official Streamable HTTP implementation.** Mount v2 `/mcp` on the configured Wiki origin behind API-key, Host/Origin/resource, limits, and the shared kernel. Reserve that exact path only while MCP is enabled and expose no bespoke nested-agent API.
-11. **Borrow coding-harness safety contracts, not their runtimes.** Codex contributes preflight/atomic patch semantics and durable response-item history; Oh My Pi contributes snapshot-tagged line anchors, all-or-nothing patching, progressive skill injection, and append-only custom session state. Wiki.ts implements those contracts over pages and PostgreSQL.
+11. **Borrow coding-harness safety contracts, not their runtimes.** Codex contributes preflight/atomic patch semantics and durable response-item history; Oh My Pi contributes snapshot-tagged line anchors, all-or-nothing patching, progressive skill injection, and append-only custom session state. tsFranki implements those contracts over pages and PostgreSQL.
 12. **Borrow CopilotKit’s useful interaction contracts, not its runtime.** Adopt explicit thread/run state, tool lifecycle cards, renderer registration, render-and-wait approvals, follow-up suggestions, and headless state separation in native Vue/Vuetify components.
 13. **Ship disabled and progress through read-only, skills, canary browser, write, then MCP gates.** A migration does not enable egress. Provider, inline Ask, skill loading, browsing, writes, and MCP each have independent kill switches.
 
@@ -53,7 +53,7 @@ Build the capability, with these boundaries:
 - Authorized users can approve or reject prepared creates, patch updates, moves, restores, and deletes according to risk policy.
 - Users can stop runs, reconnect to streams, revisit saved sessions, rename sessions, delete session content, and inspect tool/skill/approval history.
 - Administrators can enable providers, choose transport profiles and allowed models, approve/revoke skills, control browser egress and limits, grant permissions, enable writes, enable MCP, and observe aggregate health/cost.
-- External agents can use permission-scoped Wiki.ts actions and list/read approved skill snapshots through MCP with the existing API-key model. Their host owns its conversation transcript; Wiki.ts owns its skill-use, proposal, approval, execution, and audit records.
+- External agents can use permission-scoped tsFranki actions and list/read approved skill snapshots through MCP with the existing API-key model. Their host owns its conversation transcript; tsFranki owns its skill-use, proposal, approval, execution, and audit records.
 
 ### Explicitly out of scope for the initial release
 
@@ -63,12 +63,12 @@ Build the capability, with these boundaries:
 - Child-agent swarms or arbitrary recursive delegation.
 - Shell access, filesystem access, database-query tools, arbitrary browser JavaScript, authenticated web sessions, file upload/download, or user-installed model code.
 - Executing `scripts/` from skill bundles or treating `allowed-tools` frontmatter as authorization.
-- Letting the Wiki.ts agent connect to arbitrary remote MCP servers.
+- Letting the tsFranki agent connect to arbitrary remote MCP servers.
 - Shared/public chat sessions, chat-as-page canonical storage, or session collaboration.
 - Voice, arbitrary generative UI, or model-produced Vue components.
 - A vector database or a second page index before the existing search path is measured and shown insufficient.
 - Raw chain-of-thought, hidden reasoning, or generated runtime code in the user UI or normal logs.
-- An MCP “ask the Wiki.ts agent” tool. MCP exposes Wiki actions and approved skills; it does not nest another paid agent loop.
+- An MCP “ask the tsFranki agent” tool. MCP exposes Wiki actions and approved skills; it does not nest another paid agent loop.
 
 ## Audited baseline
 
@@ -145,10 +145,10 @@ Adopt the interoperable contract, not either harness's filesystem or trust model
 
 - A Wiki skill is an administrator-approved immutable snapshot whose canonical entry file is valid `SKILL.md`. The source may be a normal Markdown Wiki page; approval copies exact bytes plus allowed one-level referenced resources into a version record so later page edits do not mutate running or historical sessions.
 - Validate the Agent Skills name/description limits and frontmatter types. The virtual bundle name must match frontmatter `name`. Keep the entry file under the documented 500-line recommendation and enforce stricter byte/resource/count caps for provider context.
-- Metadata is the discovery layer. Full instructions load only after explicit session selection or an authorized `skills.read` of a run-pinned version. Referenced files load individually on demand. `scripts/` may be stored/exported but are never executed by Wiki.ts in the initial release.
+- Metadata is the discovery layer. Full instructions load only after explicit session selection or an authorized `skills.read` of a run-pinned version. Referenced files load individually on demand. `scripts/` may be stored/exported but are never executed by tsFranki in the initial release.
 - Skill content is admin-approved instruction context below the product system policy. It cannot create a tool, widen a schema, enable browsing/writes, or grant permission. `allowed-tools` is compatibility metadata that may only narrow the already authorized live catalog by intersection; it never adds a name.
 - The in-product session pins exact skill-version IDs. Every run reconstructs selected skills from PostgreSQL, records which versions were actually injected/read, and survives process restart without depending on Ax memory.
-- External MCP clients can list metadata and read exact raw files through tools and `wiki://skills/{name}/{version}/{+path}` resources. The reserved expansion permits nested bundled paths; the server decodes once and applies the same strict relative-path validator as tool reads. Their Codex/Oh My Pi/other host persists the returned tool/resource content in its own transcript; Wiki.ts deliberately does not import or impersonate that external conversation.
+- External MCP clients can list metadata and read exact raw files through tools and `wiki://skills/{name}/{version}/{+path}` resources. The reserved expansion permits nested bundled paths; the server decodes once and applies the same strict relative-path validator as tool reads. Their Codex/Oh My Pi/other host persists the returned tool/resource content in its own transcript; tsFranki deliberately does not import or impersonate that external conversation.
 
 ### MCP TypeScript SDK: adopt the official server surface
 
@@ -186,7 +186,7 @@ The assessed CopilotKit source demonstrates useful separations:
 - explicit user resolution callbacks for interrupts;
 - follow-up suggestions as structured data rather than text parsing.
 
-Wiki.ts will implement the same useful concepts in native Pinia/Vue:
+tsFranki will implement the same useful concepts in native Pinia/Vue:
 
 - `AgentThreadState`, `AgentRunState`, and `AgentEvent` are shared contracts.
 - A renderer registry maps known action names to native cards and has a safe generic renderer.
@@ -266,7 +266,7 @@ This is a design shape, not a second framework. Keep the implementation small: d
 ### Schema authority
 
 - Zod 4 object schemas are the single input/output authority.
-- Zod is not currently a direct Wiki.ts dependency. Add and exact-pin a Zod 4 release during Phase A; include it in lockfile, license, SBOM, and upgrade review.
+- Zod is not currently a direct tsFranki dependency. Add and exact-pin a Zod 4 release during Phase A; include it in lockfile, license, SBOM, and upgrade review.
 - The Ax adapter passes the same Standard Schema object to `fn().arg(schema)` and wraps the definition handler.
 - The MCP adapter passes the same schema to `registerTool`.
 - REST message endpoints do not expose a generic “execute any action” endpoint; only the coordinator invokes actions.
@@ -410,7 +410,7 @@ The patch engine combines the strongest applicable harness contracts:
 
 - from Codex: typed mutation intent, deterministic parsing, complete in-memory preflight, explicit result state, and all-or-nothing execution;
 - from Oh My Pi: exact snapshot/document tags, original numbered line anchors, disclosed-window enforcement, stale-anchor rejection, and no fuzzy recovery;
-- for Wiki.ts: one-page scope, no path syntax, bounded operation/line/byte growth, uniform line-ending restoration, result Markdown validation, and canonical result hashing.
+- for tsFranki: one-page scope, no path syntax, bounded operation/line/byte growth, uniform line-ending restoration, result Markdown validation, and canonical result hashing.
 
 Patch preparation re-reads/authorizes the page, verifies signature/hashes/source revision/disclosure, applies once to an immutable base, validates bytes, restores line endings, computes hashes, parses/renders Markdown, and creates the canonical diff. Create preparation performs the same source/parser/render/hash validation without a base. Both persist the complete authority envelope before asking; diff text is presentation only.
 
@@ -472,7 +472,7 @@ Unique `(sessionId, ordinal)`. Tool details are events/calls, not fake chat role
 
 `agentRunSkills` pins `(runId, skillVersionId, ordinal)` at admission. These rows are immutable even if the session selection changes later. Disabled skills fail new admission; revoked skills also fail new injection/read, while historical messages and use metadata continue to identify the exact version.
 
-`agentSkillUses` is append-only audit: UUID ID, skill-version ID, optional run/session IDs, exactly one requester user/API-key ID, transport request ID, optional hashed external client-session reference, resource path, purpose (`selected`, `injected`, `read`, `exported`), content hash, and timestamp. In-product history is reconstructed from run pins plus use records/events. MCP clients retain their own conversation history; Wiki.ts retains only this bounded use/audit record and any resulting proposals/executions.
+`agentSkillUses` is append-only audit: UUID ID, skill-version ID, optional run/session IDs, exactly one requester user/API-key ID, transport request ID, optional hashed external client-session reference, resource path, purpose (`selected`, `injected`, `read`, `exported`), content hash, and timestamp. In-product history is reconstructed from run pins plus use records/events. MCP clients retain their own conversation history; tsFranki retains only this bounded use/audit record and any resulting proposals/executions.
 
 ### Page-native `SKILL.md` authoring and runtime use
 
@@ -1165,7 +1165,7 @@ Operational metrics retain queue depth, admission latency, reconnect count, proj
 
 ### Agent hierarchy and ownership
 
-Implementation uses one lead integrator and bounded specialists. The hierarchy is organizational; no runtime “agent swarm” is added to Wiki.ts.
+Implementation uses one lead integrator and bounded specialists. The hierarchy is organizational; no runtime “agent swarm” is added to tsFranki.
 
 ```text
 Lead integrator / release owner
@@ -1459,7 +1459,7 @@ The feature is complete only when all are true:
 
 ## Source references
 
-- Wiki.ts baseline assessed at `05ee166091c0858f5df231a7f82cec960e2befe16`.
+- tsFranki baseline assessed at `05ee166091c0858f5df231a7f82cec960e2befe16`.
 - Ax repository snapshot: `/home/bbferko/repos/ax` at `3ff5ff4689f01afc1d8498a64f698bc5e5a3cf6a`; package `@ax-llm/ax` `23.0.15`. Public `AxAIService`/`AxAIServiceImpl`, OpenAI Responses, OpenAI Chat, Anthropic, agent runtime, functions, streaming, retries, and error handling were inspected.
 - [OpenAI Responses migration guide](https://developers.openai.com/api/docs/guides/migrate-to-responses), [Responses API reference](https://developers.openai.com/api/reference/resources/responses), and [Chat Completions API reference](https://developers.openai.com/api/reference/resources/chat) retrieved 2026-08-17.
 - [OpenResponses specification and reference](https://www.openresponses.org/specification) plus [official repository](https://github.com/openresponses/openresponses), retrieved 2026-08-17.

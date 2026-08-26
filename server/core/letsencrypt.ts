@@ -66,7 +66,7 @@ const letsencrypt: LetsEncryptService = {
       wiki.logger.info(`(LETSENCRYPT) Initializing Let's Encrypt client...`)
       const acme = ACME.create({
         maintainerEmail: wiki.config.maintainerEmail,
-        packageAgent: `wikijs/${wiki.version}`,
+        packageAgent: `tsfranki/${wiki.version}`,
         notify: (ev, msg) => {
           if (_.includes(['warning', 'error'], ev)) {
             wiki.logger.warn(`${ev}: ${String(msg)}`)

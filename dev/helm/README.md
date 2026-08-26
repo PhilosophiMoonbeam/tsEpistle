@@ -1,6 +1,6 @@
-# Wiki.ts Preview Helm chart
+# tsFranki Helm chart
 
-This chart deploys **Wiki.ts Preview 0.1.0-alpha.1**, an independent community fork derived from Wiki.js 2.5.314. It is not an official Wiki.js release.
+This chart deploys **tsFranki 0.1.0-alpha.1**, an independent community fork derived from Wiki.js 2.5.314. It is not an official Wiki.js release.
 
 - Source: <https://github.com/PhilosophiMoonbeam/wiki>
 - License: [AGPL-3.0](../../LICENSE)
@@ -25,7 +25,7 @@ helm package dev/helm
 kubectl create secret generic wiki-postgresql \
   --from-literal=postgresql-username=postgres \
   --from-literal=postgresql-password='replace-with-a-strong-password'
-helm install wiki ./wiki-ts-preview-0.1.0-alpha.1.tgz \
+helm install wiki ./tsfranki-0.1.0-alpha.1.tgz \
   --set postgresql.existingSecret=wiki-postgresql
 ```
 
@@ -62,18 +62,18 @@ Create the Secret before installing the release. `externalPostgresql.databaseURL
 
    ```console
    helm lint dev/helm
-   helm template wiki ./wiki-ts-preview-0.1.0-alpha.1.tgz -f values.yaml > rendered.yaml
+   helm template wiki ./tsfranki-0.1.0-alpha.1.tgz -f values.yaml > rendered.yaml
    ```
 
 5. Upgrade with an explicit chart and values file:
 
    ```console
-   helm upgrade wiki ./wiki-ts-preview-0.1.0-alpha.1.tgz -f values.yaml --atomic --wait --timeout 15m
+   helm upgrade wiki ./tsfranki-0.1.0-alpha.1.tgz -f values.yaml --atomic --wait --timeout 15m
    ```
 
 6. Confirm the Deployment is available, `/healthz` returns HTTP 200, login works, and a read/write page check succeeds.
 
-Wiki.ts runs database migrations during startup. Do not run mixed application versions against one database during an upgrade.
+tsFranki runs database migrations during startup. Do not run mixed application versions against one database during an upgrade.
 
 ## Backup verification
 
@@ -94,7 +94,7 @@ Use a dedicated restore-check database on a non-production server. Back up or sn
 
 `helm rollback` restores Kubernetes resources, not database or `/wiki/data` contents. If the new application has migrated the database, rolling back only the Deployment can start old code against a newer schema and is unsafe.
 
-1. Stop all Wiki.ts pods.
+1. Stop all tsFranki pods.
 2. Restore the pre-upgrade database backup or volume snapshot.
 3. Roll back the Helm release:
 
@@ -122,7 +122,7 @@ kubectl delete pvc CLAIM_NAME
 
 | Parameter | Default | Purpose |
 | --- | --- | --- |
-| `replicaCount` | `1` | Wiki.ts pod count |
+| `replicaCount` | `1` | tsFranki pod count |
 | `revisionHistoryLimit` | `2` | Deployment revisions retained |
 | `image.repository` | `ghcr.io/philosophimoonbeam/wiki` | Fork image repository |
 | `image.tag` | chart `appVersion` | Application image tag |

@@ -124,7 +124,7 @@ export const sendSignedWebhook = async (input: WebhookDeliveryRequest): Promise<
     headers: {
       'content-type': 'application/json',
       'content-length': Buffer.byteLength(body),
-      'user-agent': 'Wiki.ts-Webhook/1.0',
+      'user-agent': 'tsFranki-Webhook/1.0',
       'x-wiki-delivery': input.deliveryId,
       'x-wiki-event': input.eventType,
       'x-wiki-signature': signature,

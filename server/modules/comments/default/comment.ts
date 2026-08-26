@@ -173,7 +173,7 @@ class AkismetClient {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
-        'User-Agent': 'Wiki.js'
+        'User-Agent': 'tsFranki'
       },
       body: new URLSearchParams(fields)
     })

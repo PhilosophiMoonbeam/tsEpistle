@@ -14,6 +14,8 @@ interface AppConfig {
   flags: { sqllog: boolean }
   port: number | string
   setup?: boolean
+  title?: string
+  logoUrl?: string
 }
 
 interface AppData {
@@ -82,6 +84,26 @@ function isAppData(value: unknown): value is AppData {
     isRecord(value.defaults) &&
     isAppConfig(value.defaults.config)
 }
+const LEGACY_PRODUCT_TITLES = new Set(['Wiki.js', 'Wiki.ts Preview'])
+const LEGACY_PRODUCT_LOGOS = new Set([
+  'https://static.requarks.io/logo/wikijs-butterfly.svg',
+  '/_assets/svg/logo-wikijs.svg'
+])
+const DEFAULT_PRODUCT_LOGO = '/_assets/svg/icon-tsfranki.svg'
+
+export function normalizeLegacyProductDefaults(config: Record<string, unknown>, productName: string): string[] {
+  const changed: string[] = []
+  if (typeof config.title === 'string' && LEGACY_PRODUCT_TITLES.has(config.title)) {
+    config.title = productName
+    changed.push('title')
+  }
+  if (typeof config.logoUrl === 'string' && LEGACY_PRODUCT_LOGOS.has(config.logoUrl)) {
+    config.logoUrl = DEFAULT_PRODUCT_LOGO
+    changed.push('logoUrl')
+  }
+  return changed
+}
+
 
 const configService: ConfigService = {
   init() {
@@ -150,6 +172,8 @@ const configService: ConfigService = {
     const conf = await wiki.models.settings.getConfig()
     if (conf) {
       wiki.config = _.defaultsDeep(conf, wiki.config)
+      const migratedKeys = normalizeLegacyProductDefaults(wiki.config, wiki.product.name)
+      if (migratedKeys.length > 0) await this.saveToDb(migratedKeys, false)
     } else {
       wiki.logger.warn('DB Configuration is empty or incomplete. Switching to Setup mode...')
       wiki.config.setup = true

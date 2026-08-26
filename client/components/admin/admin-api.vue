@@ -42,7 +42,7 @@
                 v-chip(label, size="small", color='success').text-white Stable compatibility surface
               v-divider
               v-card-text
-                p Wiki.ts Preview supports API-key integrations through GraphQL and the versioned REST v1 API.
+                p tsFranki supports API-key integrations through GraphQL and the versioned REST v1 API.
                 .text-label-small GraphQL endpoint
                 code.api-contract-code {{ graphqlEndpoint }}
                 .text-label-small.mt-4 Authentication

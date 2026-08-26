@@ -1,6 +1,6 @@
 {
-  "name": "Wiki.js",
-  "short_name": "Wiki.js",
+  "name": "tsFranki",
+  "short_name": "tsFranki",
   "start_url": "/",
   "icons": [
       {
@@ -14,7 +14,7 @@
           "type": "image/png"
       }
   ],
-  "theme_color": "#1976d2",
-  "background_color": "#1976d2",
+  "theme_color": "#4f46e5",
+  "background_color": "#f5f7fb",
   "display": "standalone"
 }

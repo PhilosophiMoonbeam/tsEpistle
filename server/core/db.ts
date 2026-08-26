@@ -181,7 +181,7 @@ const database: DatabaseService = {
     }
 
     if (wiki.config.db.type !== 'postgres') {
-      throw new Error(`Unsupported database type ${wiki.config.db.type}. Wiki.ts requires PostgreSQL.`)
+      throw new Error(`Unsupported database type ${wiki.config.db.type}. tsFranki requires PostgreSQL.`)
     }
     if (dbUseSSL && isNetworkConnection(dbConfig)) {
       dbConfig.ssl = (sslOptions === true) ? { rejectUnauthorized: true } : sslOptions
@@ -196,7 +196,7 @@ const database: DatabaseService = {
       pool: {
         ...wiki.config.pool,
         afterCreate(conn: PoolConnection, done: (error?: Error) => void) {
-          let query = conn.query(`set application_name = 'Wiki.js'`)
+          let query = conn.query(`set application_name = 'tsFranki'`)
           if (wiki.config.db.schema && wiki.config.db.schema !== 'public') {
             query = query.then(() => conn.query(`set search_path TO ${wiki.config.db.schema}, public;`))
           }

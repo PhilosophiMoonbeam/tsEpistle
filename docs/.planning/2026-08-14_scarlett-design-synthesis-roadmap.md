@@ -1,4 +1,4 @@
-# Wiki.ts completion and Scarlett design-synthesis roadmap
+# tsFranki completion and Scarlett design-synthesis roadmap
 
 Status: authoritative product roadmap
 
@@ -6,22 +6,22 @@ Last assessed: 2026-08-15T21:39:55Z
 
 Assessed revisions:
 
-- Wiki.ts code baseline: `5a250b1fad845951872062e4f5ebcf7231922159`
+- tsFranki code baseline: `5a250b1fad845951872062e4f5ebcf7231922159`
 - fork checkpoint `origin/scarlett`: `249758e3f923a77e1b62d26a47e142c312642a5f`
 - upstream reference: `requarks/wiki:scarlett`
 - upstream commit: `d0c5a8bfa90acee73a2f4c71033978bea1925468`
 - upstream commit subject: `feat: add unlock aspect ratio option to block-gallery`
 - upstream commit authored and committed: `2026-08-14T23:36:09-04:00`
 - upstream fetch verification: `2026-08-15T21:36:46Z`; the remote still resolved to the recorded commit with zero commits of divergence
-- common ancestor of the Wiki.ts code baseline and upstream Scarlett: `b5b4b0880ae26f4b137242267b6674b51af8688c` from 2022-04-03
+- common ancestor of the tsFranki code baseline and upstream Scarlett: `b5b4b0880ae26f4b137242267b6674b51af8688c` from 2022-04-03
 
 This is a living plan. Update the revision ledger and candidate dispositions whenever upstream Scarlett moves. Never silently replace a disposition: record the new evidence and reason. The machine-readable source of candidate identity, workstream, disposition, state, and acceptance contract is [`scarlett-upstream-ledger.json`](./scarlett-upstream-ledger.json); `pnpm run scarlett:report` refreshes the comparison and `.github/workflows/scarlett-upstream.yml` alerts on upstream movement.
 
 ## Mission
 
-Complete Wiki.ts as the strongest continuity path from Wiki.js 2: modern, secure, typed, operationally predictable, and safe for existing installations. Harvest worthwhile ideas from upstream Scarlett, finish useful upstream WIP, and improve the designs where Wiki.ts has stronger constraints or better foundations.
+Complete tsFranki as the strongest continuity path from Wiki.js 2: modern, secure, typed, operationally predictable, and safe for existing installations. Harvest worthwhile ideas from upstream Scarlett, finish useful upstream WIP, and improve the designs where tsFranki has stronger constraints or better foundations.
 
-“Superior” is not measured by commit count or feature count. It means Wiki.ts provides:
+“Superior” is not measured by commit count or feature count. It means tsFranki provides:
 
 1. a supported, tested upgrade path for real Wiki.js 2 data;
 2. no known authorization bypasses or silent content-loss paths;
@@ -35,9 +35,9 @@ Complete Wiki.ts as the strongest continuity path from Wiki.js 2: modern, secure
 
 ## Executive decision
 
-Do not merge, rebase, or broadly cherry-pick Scarlett into Wiki.ts `main`.
+Do not merge, rebase, or broadly cherry-pick Scarlett into tsFranki `main`.
 
-The 73 commits between the fork checkpoint and assessed upstream Scarlett modify 521 files with 96,069 insertions and 27,147 deletions. Only seven of those paths exist on Wiki.ts `main`. A merge simulation reports conflicts throughout the server, client, database migrations, editors, build system, and deployment files.
+The 73 commits between the fork checkpoint and assessed upstream Scarlett modify 521 files with 96,069 insertions and 27,147 deletions. Only seven of those paths exist on tsFranki `main`. A merge simulation reports conflicts throughout the server, client, database migrations, editors, build system, and deployment files.
 
 Scarlett is a design mine and comparative implementation, not an integration branch.
 
@@ -45,7 +45,7 @@ Every harvest follows this sequence:
 
 ```text
 upstream behavior and rationale
-  -> Wiki.ts product contract
+  -> tsFranki product contract
   -> current implementation and compatibility audit
   -> fork-native design
   -> focused behavioral tests
@@ -54,7 +54,7 @@ upstream behavior and rationale
   -> documented upstream disposition
 ```
 
-A source commit may inspire a change, but it never overrides Wiki.ts invariants.
+A source commit may inspire a change, but it never overrides tsFranki invariants.
 
 ## Product invariants
 
@@ -68,7 +68,7 @@ These are release-blocking constraints, not preferences.
 - Destructive schema changes require a reversible migration or a documented backup/restore boundary tested in CI.
 - Private-page ownership, page history ownership, assets, navigation, permissions, and editor metadata must survive upgrades.
 
-Scarlett commits `6db53d4f` and `99ccdc13` deliberately reset migrations and reject Wiki.js 2 databases. Their protective detection idea is useful, but their product decision is incompatible with Wiki.ts.
+Scarlett commits `6db53d4f` and `99ccdc13` deliberately reset migrations and reject Wiki.js 2 databases. Their protective detection idea is useful, but their product decision is incompatible with tsFranki.
 
 ### Authorization
 
@@ -89,7 +89,7 @@ Scarlett commits `6db53d4f` and `99ccdc13` deliberately reset migrations and rej
 
 ### PostgreSQL platform
 
-- PostgreSQL is the sole database target for the future stable product; operator inventory records zero non-PostgreSQL Wiki.ts installations.
+- PostgreSQL is the sole database target for the future stable product; operator inventory records zero non-PostgreSQL tsFranki installations.
 - PostgreSQL / Wiki.js 2.x and current-fork databases are mandatory upgrade sources. Adapter removal never permits a migration reset or fresh-database requirement.
 - Choose the PostgreSQL server-version floor from security support, required capabilities, deployment availability, and tested upgrades; Scarlett’s PostgreSQL 16 floor is evidence, not inherited policy.
 - Core features may use PostgreSQL-native transactions, locks, JSONB, indexes, search, hierarchy, and notification primitives when they improve a measured contract.
@@ -111,7 +111,7 @@ No `WIP`, placeholder response, fake fallback, disabled save action, or unimplem
 
 ## Architecture synthesis
 
-Retain Wiki.ts foundations and incorporate Scarlett’s best separation ideas without changing frameworks merely for novelty.
+Retain tsFranki foundations and incorporate Scarlett’s best separation ideas without changing frameworks merely for novelty.
 
 ```text
 Vue 3 + Vuetify 4 + Pinia + CKEditor / source editors
@@ -163,7 +163,7 @@ This layer allows Scarlett ideas to be reimplemented once and exposed safely thr
 
 Extract page-rule evaluation and resource access into pure, typed functions with exhaustive tests. Keep global permission checks and page-scoped rule resolution distinct. Private-page ownership is an additional visibility constraint, not another group rule.
 
-Scarlett commits `db99e3d6` and `1105cf4b` supply useful policy clarity: deny-by-default page rules, deterministic specificity, explicit tag matching, and a single effective policy passed through page bootstrap. Wiki.ts must first characterize its installed semantics before choosing changes such as `TAGALL` or force-allow.
+Scarlett commits `db99e3d6` and `1105cf4b` supply useful policy clarity: deny-by-default page rules, deterministic specificity, explicit tag matching, and a single effective policy passed through page bootstrap. tsFranki must first characterize its installed semantics before choosing changes such as `TAGALL` or force-allow.
 
 Target design:
 
@@ -189,7 +189,7 @@ Keep Knex/Objection while the PostgreSQL-only product and installed PostgreSQL m
 
 Add a migration verifier that:
 
-- recognizes the source Wiki.js/Wiki.ts schema version;
+- recognizes the source Wiki.js/tsFranki schema version;
 - refuses unknown or newer schemas before writing;
 - checks backup prerequisites for destructive migrations;
 - records migration application and product build identity;
@@ -220,7 +220,7 @@ Initial worker candidates: webhook dispatch, page watching notifications, page r
 
 Keep CKEditor Visual Markdown, Visual HTML, and source editors. Use Scarlett’s MDC/block work as a catalog of capabilities, not as a serialization dependency.
 
-Define a Wiki.ts content-extension contract before adding PDF, YouTube, gallery, index, map, QR, tabs, or diagram blocks:
+Define a tsFranki content-extension contract before adding PDF, YouTube, gallery, index, map, QR, tabs, or diagram blocks:
 
 - stable extension key and schema version;
 - canonical Markdown or HTML representation;
@@ -239,15 +239,15 @@ Prefer standard Markdown/HTML when it round-trips cleanly. Use a fenced, version
 
 The disposition is against assessed upstream Scarlett. Re-evaluate when source behavior changes.
 
-| Scarlett source | Idea | Wiki.ts disposition | Dependency / reason |
+| Scarlett source | Idea | tsFranki disposition | Dependency / reason |
 | --- | --- | --- | --- |
 | `6f492f00` | split API schemas | Adapt early | Fits typed REST/OpenAPI program; do not copy Fastify registration |
 | `ee7a15fb` | backend TypeScript migration | Already directionally achieved | Continue strict typing incrementally; no directory/framework rewrite |
-| `937cecea` | custom Tailwind UI library | Reject architecture | Wiki.ts has Vue 3/Vuetify 4; use only UX observations; source is WIP |
+| `937cecea` | custom Tailwind UI library | Reject architecture | tsFranki has Vue 3/Vuetify 4; use only UX observations; source is WIP |
 | `064e378b`, `cffa39c1`, `4677a7c5`, `9de9b84b` | UI and dark-mode fixes | Compare behavior | Port only reproducible defects against Vuetify surfaces |
 | `c10e988c` | password-protected pages | Redesign and implement | Must compose with owner-private pages, assets, history, search, API, and sessions |
 | `9408accc` | link/code/table/emoji dialogs | Adapt selectively | CKEditor/source-editor-native dialogs; preserve canonical Markdown |
-| `3d13e50b`, `072e1dcc` | prebuilt/MDC blocks | Replace with Wiki.ts extension contract | Scarlett serialization is editor/renderer-specific |
+| `3d13e50b`, `072e1dcc` | prebuilt/MDC blocks | Replace with tsFranki extension contract | Scarlett serialization is editor/renderer-specific |
 | `957efebe`, `c36eab67` | profile auth, approvals, inbox | Finish natively | Upstream WIP; depends on policy, jobs/events, notification model |
 | `c9bd96a5`, `4ec69a75` | page-history overlay | Adapt | Reuse current history operations; include private ownership and mobile behavior |
 | `db99e3d6`, `1105cf4b` | permission hardening | Security workstream | Characterize current semantics first; centralize and test every resource projection |
@@ -271,9 +271,9 @@ The disposition is against assessed upstream Scarlett. Re-evaluate when source b
 | `2acd026c`, `634f4b05` | navigation parent controls | Adapt | Bounded Vue/API feature after navigation contract tests |
 | `5fa9bf3f` | page at folder path | Already appears correct | Current exact page-path collision differs from virtual folders; add regression proof |
 | `09e9166b` | utilities and JWK removal | Split | Adapt useful utilities; retain versioned JWK endpoints until external contract migration exists |
-| `0c62c97e` | page-content shadow classes | Do not port as feature | Styling token only if required by a Wiki.ts design system |
+| `0c62c97e` | page-content shadow classes | Do not port as feature | Styling token only if required by a tsFranki design system |
 | `0376d788`, `8b0a5e37`, `dd37744e` | Docker/CI fixes | Compare outputs, not patches | Runtimes/build contexts differ; keep reproducible multi-arch release gates |
-| dependency updates | package modernization | Compare package-by-package | Wiki.ts is already newer in several areas; never downgrade to match Scarlett |
+| dependency updates | package modernization | Compare package-by-package | tsFranki is already newer in several areas; never downgrade to match Scarlett |
 
 ## Ordered action program
 
@@ -294,7 +294,7 @@ Actions:
 Exit gate:
 
 - a new upstream commit can be triaged without rereading branch history;
-- every accepted candidate maps to one Wiki.ts workstream and owner-visible acceptance contract;
+- every accepted candidate maps to one tsFranki workstream and owner-visible acceptance contract;
 - rejected/deferred candidates retain their rationale.
 
 ### Wave 1 — security and correctness convergence
@@ -687,7 +687,7 @@ Exit gate: journeys pass at narrow phone, tablet, standard desktop, and wide des
 - performance budgets pass on representative datasets;
 - translations fall back safely with no raw keys in core journeys.
 
-#### Wiki.ts 1.0
+#### tsFranki 1.0
 
 1. Upgrade continuity is documented and verified.
 2. Stable API and deprecation policies are published.
@@ -759,7 +759,7 @@ Classify each new upstream commit:
 
 ### Adopt behavior now
 
-Use when the behavior fixes a demonstrated security, data-loss, standards, or operational problem and maps cleanly to Wiki.ts invariants. Reimplement with focused proof.
+Use when the behavior fixes a demonstrated security, data-loss, standards, or operational problem and maps cleanly to tsFranki invariants. Reimplement with focused proof.
 
 ### Adapt after a prerequisite
 
@@ -767,7 +767,7 @@ Use when the idea is valuable but depends on policy, jobs/events, extension seri
 
 ### Compare only
 
-Use for UI polish, dependency changes, and framework-specific optimizations. Reproduce the behavior/problem on Wiki.ts before changing code.
+Use for UI polish, dependency changes, and framework-specific optimizations. Reproduce the behavior/problem on tsFranki before changing code.
 
 ### Reject
 
@@ -775,7 +775,7 @@ Use when the change removes PostgreSQL upgrade continuity, supported integration
 
 ### Superseded
 
-Use when Wiki.ts already delivers the behavior through a stronger contract. Add or retain a regression test proving the claim.
+Use when tsFranki already delivers the behavior through a stronger contract. Add or retain a regression test proving the claim.
 
 ## Work-item template
 
@@ -785,7 +785,7 @@ Every implementation slice promoted from this roadmap should state:
 Source evidence:
   upstream commit(s), files, observed behavior, and limitations
 
-Wiki.ts contract:
+tsFranki contract:
   user-visible result, authorization, canonical data, errors, recovery
 
 Compatibility:
@@ -814,7 +814,7 @@ Keep slices independently reviewable. Never expose a selector, route, setting, o
 Start in this order:
 
 1. **Permission policy characterization and resource-access matrix** — highest security leverage and prerequisite for every protected workflow.
-2. **Rate-limit HTTP/proxy correctness** — bounded improvement derived from Scarlett with an existing Wiki.ts implementation.
+2. **Rate-limit HTTP/proxy correctness** — bounded improvement derived from Scarlett with an existing tsFranki implementation.
 3. **Page path and migration preflight regression suite** — protects continuity before new schema work.
 4. **REST/OpenAPI contract inventory** — stabilizes the external surface and exposes duplicated domain logic.
 5. **Scheduler/job connection-lifetime characterization** — evidence before durable worker changes.
@@ -823,7 +823,7 @@ Start in this order:
 8. **Page watching end to end** — first completed Scarlett WIP synthesis.
 9. **Approval state machine and inbox** — second completed WIP synthesis.
 10. **Password-protected page design and implementation** — after shared policy and limits.
-11. **Wiki.ts extension contract and QR proof extension** — foundation before media/block breadth.
+11. **tsFranki extension contract and QR proof extension** — foundation before media/block breadth.
 12. **Visual Markdown table/admonition improvements** — only with round-trip fixtures.
 13. **Page history overlay and navigation improvements** — bounded UX completion.
 14. **Live collaboration design proof** — only after policy, events, and canonical editor gates.
@@ -835,9 +835,9 @@ Do not start by migrating frameworks, copying Scarlett directories, or adding th
 
 When this roadmap changes, append an entry here.
 
-| Date | Assessed upstream | Wiki.ts base | Decision |
+| Date | Assessed upstream | tsFranki base | Decision |
 | --- | --- | --- | --- |
-| 2026-08-14 | `c182d2c9` | `f474de3b` | Established fork-native synthesis architecture, dispositions, dependency-ordered waves, and Wiki.ts 1.0 completion gates |
+| 2026-08-14 | `c182d2c9` | `f474de3b` | Established fork-native synthesis architecture, dispositions, dependency-ordered waves, and tsFranki 1.0 completion gates |
 | 2026-08-14T23:59:10Z | `c182d2c9` (`feat: block-gallery`) | `f474de3b` | Re-fetched `requarks/wiki:scarlett`; no commits existed beyond the recorded tip, so the gallery candidate and all latest upstream work were already included |
 | 2026-08-15 | `14e1efae` page-watching WIP | `f474de3b` plus Waves 1–2 | Completed Wave 3A natively with transactional page events, aggregated durable delivery, permission-aware cleanup, independent email/in-app channels, and responsive page controls |
 | 2026-08-15 | `957efebe` / `c36eab67` approval WIP | `e4c8d246` | Completed Wave 3B as a fork-native revision-bound approval state machine with immutable audit history, authorization, stale-revision protection, transactional publication, and responsive inbox/workflow UI |

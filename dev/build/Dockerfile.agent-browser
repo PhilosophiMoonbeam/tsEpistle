@@ -2,7 +2,7 @@
 FROM mcr.microsoft.com/playwright:v1.62.1-noble@sha256:dcc5531e97840b9b5e794f2814476b21571c5124a3fca2267d73041f56e7580e
 
 ARG WIKI_BUILD_REVISION=unknown
-LABEL org.opencontainers.image.title="Wiki.ts isolated agent browser worker" \
+LABEL org.opencontainers.image.title="tsFranki isolated agent browser worker" \
       org.opencontainers.image.revision="$WIKI_BUILD_REVISION" \
       org.opencontainers.image.source="https://github.com/PhilosophiMoonbeam/wiki"
 

@@ -205,7 +205,7 @@ export const createWikiMcpController = (dependencies: WikiMcpDependencies): expr
     const initial = await admissionFor(requestContext.authInfo)
     const offered = kernel.offer(initial.auth, initial.snapshot, randomUUID())
     const offeredNames = new Set(offered.map(action => action.definition.descriptor.name))
-    const server = new McpServer({ name: 'Wiki.ts', version: '1.0.0' }, {
+    const server = new McpServer({ name: 'tsFranki', version: '1.0.0' }, {
       requestState: { verify: verifyState },
       cacheHints: {
         'tools/list': { ttlMs: 0, cacheScope: 'private' },

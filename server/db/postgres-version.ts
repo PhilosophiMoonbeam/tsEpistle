@@ -42,7 +42,7 @@ export const assertSupportedPostgresVersion = async (knex: Knex): Promise<Postgr
   const version = parsePostgresVersion(row)
   if (version.major < MIN_POSTGRES_MAJOR || version.major > MAX_POSTGRES_MAJOR) {
     throw new UnsupportedPostgresVersionError(
-      `PostgreSQL ${version.version} is unsupported. Wiki.ts requires a current minor release of PostgreSQL ${MIN_POSTGRES_MAJOR} through ${MAX_POSTGRES_MAJOR}.`
+      `PostgreSQL ${version.version} is unsupported. tsFranki requires a current minor release of PostgreSQL ${MIN_POSTGRES_MAJOR} through ${MAX_POSTGRES_MAJOR}.`
     )
   }
   return version

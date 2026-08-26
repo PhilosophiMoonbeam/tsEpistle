@@ -302,7 +302,7 @@ export default function startSetup(): void {
 
       wiki.logger.info('Stopping Setup...')
       wiki.server.destroy(() => {
-        wiki.logger.info('Setup stopped. Starting Wiki.js...')
+        wiki.logger.info('Setup stopped. Starting tsFranki...')
         _.delay(() => wiki.kernel.bootMaster(), 1000)
       })
     } catch (error: unknown) {

@@ -46,8 +46,6 @@ import { parseAgentOperationalLimits } from './agents/config.ts'
 import { loadWikiAgentUser } from './agents/providers/wiki-actions.ts'
 import pageOperations from './operations/pages.ts'
 const { collectEntry } = viteAssets
-const LEGACY_DEFAULT_LOGO_URL = 'https://static.requarks.io/logo/wikijs-butterfly.svg'
-const BUNDLED_DEFAULT_LOGO_URL = '/_assets/svg/logo-wikijs.svg'
 
 
 interface MasterConfig extends Record<string, unknown> {
@@ -348,7 +346,7 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
       contentLicense: wiki.config.contentLicense,
       footerOverride: wiki.config.footerOverride,
       banner: siteBannerOrDefault(wiki.config.banner),
-      logoUrl: wiki.config.logoUrl === LEGACY_DEFAULT_LOGO_URL ? BUNDLED_DEFAULT_LOGO_URL : wiki.config.logoUrl,
+      logoUrl: wiki.config.logoUrl,
       availableEditors: normalizeAvailableEditors(wiki.config.editors?.available),
       product: wiki.product,
       agentsEnabled: wiki.config.agents.enabled,

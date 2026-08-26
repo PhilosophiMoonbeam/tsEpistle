@@ -45,7 +45,7 @@ const assertMigrationLockIsClear = async (knex: Knex): Promise<void> => {
   const lock = await knex<MigrationLockRecord>('migrations_lock').first('is_locked')
   if (lock && (lock.is_locked === true || Number(lock.is_locked) === 1)) {
     throw new MigrationPreflightError(
-      'Database migrations are locked. Confirm that no other Wiki.ts instance is migrating, then clear a stale lock before retrying.'
+      'Database migrations are locked. Confirm that no other tsFranki instance is migrating, then clear a stale lock before retrying.'
     )
   }
 }
@@ -108,7 +108,7 @@ export const preflightMigrations = async (
   const unknown = applied.filter(name => !available.includes(name))
   if (unknown.length > 0) {
     throw new MigrationPreflightError(
-      `Database was migrated by an unknown or newer build (${unknown.join(', ')}). Upgrade Wiki.ts instead of running this older migration set.`
+      `Database was migrated by an unknown or newer build (${unknown.join(', ')}). Upgrade tsFranki instead of running this older migration set.`
     )
   }
 

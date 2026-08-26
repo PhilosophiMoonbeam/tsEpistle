@@ -227,26 +227,26 @@ jobs:
         load: true
         provenance: false
         sbom: false
-        tags: wiki-ts-preview:test-${{ env.WIKI_BUILD_REVISION }}
+        tags: tsfranki:test-${{ env.WIKI_BUILD_REVISION }}
 
     - name: Export Test Image
-      run: docker save "wiki-ts-preview:test-$WIKI_BUILD_REVISION" | gzip -1 -n > wiki-ts-preview-test-image.tar.gz
+      run: docker save "tsfranki:test-$WIKI_BUILD_REVISION" | gzip -1 -n > tsfranki-test-image.tar.gz
 
     - name: Create Reproducible Linux Bundle
-      run: dev/build/create-linux-bundle.sh "wiki-ts-preview:test-$WIKI_BUILD_REVISION" wiki-ts-preview-linux.tar.gz
+      run: dev/build/create-linux-bundle.sh "tsfranki:test-$WIKI_BUILD_REVISION" tsfranki-linux.tar.gz
 
     - name: Upload Linux Build
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
       with:
         name: drop
-        path: wiki-ts-preview-linux.tar.gz
+        path: tsfranki-linux.tar.gz
         if-no-files-found: error
 
     - name: Upload Test Image
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
       with:
         name: test-image
-        path: wiki-ts-preview-test-image.tar.gz
+        path: tsfranki-test-image.tar.gz
         if-no-files-found: error
         retention-days: 1
         compression-level: 0
@@ -294,20 +294,20 @@ jobs:
         load: true
         provenance: false
         sbom: false
-        tags: wiki-ts-preview:reproducibility-${{ env.WIKI_BUILD_REVISION }}
+        tags: tsfranki:reproducibility-${{ env.WIKI_BUILD_REVISION }}
 
     - name: Compare Independent Linux Bundle
       shell: bash
       run: |
         dev/build/create-linux-bundle.sh \
-          "wiki-ts-preview:reproducibility-$WIKI_BUILD_REVISION" \
-          wiki-ts-preview-linux.tar.gz
-        if ! cmp --silent reference/wiki-ts-preview-linux.tar.gz wiki-ts-preview-linux.tar.gz; then
-          sha256sum reference/wiki-ts-preview-linux.tar.gz wiki-ts-preview-linux.tar.gz
+          "tsfranki:reproducibility-$WIKI_BUILD_REVISION" \
+          tsfranki-linux.tar.gz
+        if ! cmp --silent reference/tsfranki-linux.tar.gz tsfranki-linux.tar.gz; then
+          sha256sum reference/tsfranki-linux.tar.gz tsfranki-linux.tar.gz
           echo 'Independent Linux bundle does not reproduce the release candidate.' >&2
           exit 1
         fi
-        sha256sum wiki-ts-preview-linux.tar.gz
+        sha256sum tsfranki-linux.tar.gz
 
   e2e:
     name: Playwright (PostgreSQL ${{ matrix.pgversion }})
@@ -357,7 +357,7 @@ jobs:
         path: test-image
 
     - name: Load Test Image
-      run: gzip -dc test-image/wiki-ts-preview-test-image.tar.gz | docker load
+      run: gzip -dc test-image/tsfranki-test-image.tar.gz | docker load
 
     - name: Set Test Metadata
       shell: bash
@@ -366,7 +366,7 @@ jobs:
     - name: Run Playwright Tests
       env:
         POSTGRES_TEST_IMAGE: ${{ matrix.postgresImage }}
-        WIKI_TEST_IMAGE: wiki-ts-preview:test-${{ env.WIKI_BUILD_REVISION }}
+        WIKI_TEST_IMAGE: tsfranki:test-${{ env.WIKI_BUILD_REVISION }}
         PLAYWRIGHT_BASE_URL: http://127.0.0.1:3000
         RUNTIME_PERFORMANCE_FILE: runtime-performance-postgres-${{ matrix.pgversion }}.json
       run: |
@@ -433,7 +433,7 @@ jobs:
         path: test-image
 
     - name: Load Test Image
-      run: gzip -dc test-image/wiki-ts-preview-test-image.tar.gz | docker load
+      run: gzip -dc test-image/tsfranki-test-image.tar.gz | docker load
 
     - name: Set Test Metadata
       shell: bash
@@ -442,7 +442,7 @@ jobs:
     - name: Upgrade Supported Database
       env:
         POSTGRES_TEST_IMAGE: ${{ matrix.postgresImage }}
-        WIKI_TEST_IMAGE: wiki-ts-preview:test-${{ env.WIKI_BUILD_REVISION }}
+        WIKI_TEST_IMAGE: tsfranki:test-${{ env.WIKI_BUILD_REVISION }}
         MIGRATION_METRICS_FILE: migration-metrics-postgres-${{ matrix.pgversion }}.json
       run: dev/e2e/upgrade-smoke.sh
 
@@ -482,7 +482,7 @@ jobs:
         path: test-image
 
     - name: Load Test Image
-      run: gzip -dc test-image/wiki-ts-preview-test-image.tar.gz | docker load
+      run: gzip -dc test-image/tsfranki-test-image.tar.gz | docker load
 
     - name: Set Test Metadata
       shell: bash
@@ -491,7 +491,7 @@ jobs:
     - name: Exercise Instance Loss and Recovery
       env:
         POSTGRES_TEST_IMAGE: ${{ matrix.postgresImage }}
-        WIKI_TEST_IMAGE: wiki-ts-preview:test-${{ env.WIKI_BUILD_REVISION }}
+        WIKI_TEST_IMAGE: tsfranki:test-${{ env.WIKI_BUILD_REVISION }}
       run: dev/e2e/multi-instance-smoke.sh
 
   helm-lifecycle:
@@ -512,7 +512,7 @@ jobs:
         path: test-image
 
     - name: Load Test Image
-      run: gzip -dc test-image/wiki-ts-preview-test-image.tar.gz | docker load
+      run: gzip -dc test-image/tsfranki-test-image.tar.gz | docker load
 
     - name: Set Test Metadata
       shell: bash
@@ -538,12 +538,12 @@ jobs:
         docker pull postgres@sha256:a2c20749c564b4eb73a77bfda626f8a3cde1bbfae020fb97c616a00cdc1a2181
         docker tag postgres@sha256:a2c20749c564b4eb73a77bfda626f8a3cde1bbfae020fb97c616a00cdc1a2181 wiki-postgres-test:15
         kind load docker-image --name wiki-lifecycle \
-          "wiki-ts-preview:test-${WIKI_BUILD_REVISION}" \
+          "tsfranki:test-${WIKI_BUILD_REVISION}" \
           wiki-postgres-test:15
 
     - name: Exercise Helm Lifecycle
       env:
-        WIKI_TEST_IMAGE_REPOSITORY: wiki-ts-preview
+        WIKI_TEST_IMAGE_REPOSITORY: tsfranki
         WIKI_TEST_IMAGE_TAG: test-${{ env.WIKI_BUILD_REVISION }}
         POSTGRES_TEST_IMAGE_REPOSITORY: wiki-postgres-test
         POSTGRES_TEST_IMAGE_TAG: '15'
@@ -668,7 +668,7 @@ jobs:
     - name: Extract Build
       run: |
         mkdir -p build
-        tar -xzf "$GITHUB_WORKSPACE/drop/wiki-ts-preview-linux.tar.gz" -C "$GITHUB_WORKSPACE/build" --exclude=node_modules
+        tar -xzf "$GITHUB_WORKSPACE/drop/tsfranki-linux.tar.gz" -C "$GITHUB_WORKSPACE/build" --exclude=node_modules
 
     - name: Build and Push ARM64 Images
       uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
@@ -732,7 +732,7 @@ jobs:
       shell: pwsh
       run: |
         New-Item -ItemType Directory -Path win -Force
-        tar -xzf "$env:GITHUB_WORKSPACE\drop\wiki-ts-preview-linux.tar.gz" -C "$env:GITHUB_WORKSPACE\win"
+        tar -xzf "$env:GITHUB_WORKSPACE\drop\tsfranki-linux.tar.gz" -C "$env:GITHUB_WORKSPACE\win"
         Remove-Item -Path win\node_modules -Force -Recurse
         Copy-Item pnpm-lock.yaml, pnpm-workspace.yaml, .npmrc -Destination win -Force
         Copy-Item patches -Destination win\patches -Recurse -Force
@@ -753,13 +753,13 @@ jobs:
 
     - name: Create Bundle
       shell: pwsh
-      run: tar -czf "$env:GITHUB_WORKSPACE\wiki-ts-preview-windows.tar.gz" -C "$env:GITHUB_WORKSPACE\win" .
+      run: tar -czf "$env:GITHUB_WORKSPACE\tsfranki-windows.tar.gz" -C "$env:GITHUB_WORKSPACE\win" .
 
     - name: Upload Windows Build
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
       with:
         name: drop-win
-        path: wiki-ts-preview-windows.tar.gz
+        path: tsfranki-windows.tar.gz
         if-no-files-found: error
 
   beta:
@@ -878,7 +878,7 @@ jobs:
       with:
         image: ${{ env.IMAGE_REPOSITORY }}:${{ env.REL_VERSION_STRICT }}
         format: spdx-json
-        output-file: wiki-ts-preview.spdx.json
+        output-file: tsfranki.spdx.json
         upload-artifact: false
         upload-release-assets: false
 
@@ -901,24 +901,24 @@ jobs:
     - name: Stage Release Artifacts
       shell: bash
       run: |
-        cp drop/wiki-ts-preview-linux.tar.gz .
-        cp drop-win/wiki-ts-preview-windows.tar.gz .
-        cp "dist/wiki-ts-preview-$REL_VERSION_STRICT.tgz" .
+        cp drop/tsfranki-linux.tar.gz .
+        cp drop-win/tsfranki-windows.tar.gz .
+        cp "dist/tsfranki-$REL_VERSION_STRICT.tgz" .
         cp compliance/third-party-licenses.json .
 
     - name: Create Corresponding Source Archive
-      run: git archive --format=tar.gz --prefix="wiki-ts-preview-$REL_VERSION_STRICT/" --output=wiki-ts-preview-source.tar.gz "$WIKI_BUILD_REVISION"
+      run: git archive --format=tar.gz --prefix="tsfranki-$REL_VERSION_STRICT/" --output=tsfranki-source.tar.gz "$WIKI_BUILD_REVISION"
 
     - name: Generate Release Manifest and Checksums
       run: |
         node server/scripts/generate-release-manifest.ts \
           release-manifest.json \
           SHA256SUMS \
-          wiki-ts-preview-linux.tar.gz \
-          wiki-ts-preview-windows.tar.gz \
-          wiki-ts-preview-source.tar.gz \
-          "wiki-ts-preview-$REL_VERSION_STRICT.tgz" \
-          wiki-ts-preview.spdx.json \
+          tsfranki-linux.tar.gz \
+          tsfranki-windows.tar.gz \
+          tsfranki-source.tar.gz \
+          "tsfranki-$REL_VERSION_STRICT.tgz" \
+          tsfranki.spdx.json \
           wiki-agent-browser.spdx.json \
           third-party-licenses.json
         sha256sum --check SHA256SUMS
@@ -930,7 +930,7 @@ jobs:
         subject-checksums: SHA256SUMS
 
     - name: Stage Offline Provenance Bundle
-      run: cp "${{ steps.attest-release.outputs.bundle-path }}" wiki-ts-preview-release.intoto.jsonl
+      run: cp "${{ steps.attest-release.outputs.bundle-path }}" tsfranki-release.intoto.jsonl
 
     - name: Attest Release Image Provenance
       uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
@@ -944,7 +944,7 @@ jobs:
       with:
         subject-name: ${{ env.IMAGE_REPOSITORY }}
         subject-digest: ${{ env.IMAGE_DIGEST }}
-        sbom-path: wiki-ts-preview.spdx.json
+        sbom-path: tsfranki.spdx.json
         push-to-registry: true
 
     - name: Attest Agent Browser Image Provenance
@@ -979,7 +979,7 @@ jobs:
         name: ${{ github.ref_name }}
         body: ${{ steps.changelog.outputs.changes }}
         token: ${{ github.token }}
-        artifacts: 'wiki-ts-preview-linux.tar.gz,wiki-ts-preview-windows.tar.gz,wiki-ts-preview-source.tar.gz,wiki-ts-preview-*.tgz,wiki-ts-preview.spdx.json,wiki-agent-browser.spdx.json,third-party-licenses.json,release-manifest.json,SHA256SUMS,wiki-ts-preview-release.intoto.jsonl'
+        artifacts: 'tsfranki-linux.tar.gz,tsfranki-windows.tar.gz,tsfranki-source.tar.gz,tsfranki-*.tgz,tsfranki.spdx.json,wiki-agent-browser.spdx.json,third-party-licenses.json,release-manifest.json,SHA256SUMS,tsfranki-release.intoto.jsonl'
 
     - name: Notify Telegram Channel
       uses: appleboy/telegram-action@221e6b684967abe813051ee4a37dd61770a83ad3 # v1.0.1
@@ -989,11 +989,11 @@ jobs:
         format: markdown
         disable_web_page_preview: true
         message: |
-          Wiki.ts Preview *${{ github.ref_name }}* has been released!
+          tsFranki *${{ github.ref_name }}* has been released!
           See [release notes](https://github.com/PhilosophiMoonbeam/wiki/releases) for details.
 
     - name: Notify Discord Channel
       uses: sebastianpopp/discord-action@4f2d5417bc61a79593304a62e71cd32427c17790 # v2.0
       with:
         webhook: ${{ secrets.DISCORD_WEBHOOK }}
-        message: Wiki.ts Preview ${{ github.ref_name }} has been released! See https://github.com/PhilosophiMoonbeam/wiki/releases for details.
+        message: tsFranki ${{ github.ref_name }} has been released! See https://github.com/PhilosophiMoonbeam/wiki/releases for details.

@@ -2,7 +2,7 @@
   v-app
     .onboarding
       .onboarding-content
-        img.animated.fadeIn(src='/_assets/svg/logo-wikijs.svg', alt='Wiki.js')
+        img.animated.fadeIn(src='/_assets/svg/logo-tsfranki.svg', alt='tsFranki')
         .text-headline-medium.animated.fadeInUp {{ $t('welcome.title') }}
         .text-body-large.mt-3.animated.fadeInUp.wait-p1s {{ $t('welcome.subtitle') }}
         div

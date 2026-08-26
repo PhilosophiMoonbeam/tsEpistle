@@ -1,6 +1,6 @@
 <div align="center">
 
-# Wiki.ts Preview
+# tsFranki
 
 [![Release](https://img.shields.io/github/v/release/PhilosophiMoonbeam/wiki?include_prereleases&label=preview)](https://github.com/PhilosophiMoonbeam/wiki/releases)
 [![License](https://img.shields.io/badge/license-AGPLv3-blue.svg)](LICENSE)
@@ -10,7 +10,7 @@
 
 </div>
 
-Wiki.ts Preview is an experimental, long-lived community fork of [Wiki.js](https://github.com/Requarks/wiki). It is not an official Wiki.js release and is not produced or endorsed by Nicolas Giard or Requarks.
+tsFranki is an experimental, long-lived community fork of [Wiki.js](https://github.com/Requarks/wiki). It is not an official Wiki.js release and is not produced or endorsed by Nicolas Giard or Requarks.
 
 - **Preview version:** `0.1.0-alpha.1`
 - **Upstream base:** Wiki.js `2.5.314`
@@ -21,27 +21,27 @@ The running application exposes its exact Git revision and a **Source Code** lin
 
 ## Release status
 
-No supported Wiki.ts Preview release has been published yet. Do not treat `main`, a canary image, or a locally built image as a production release. The first external release is gated on the repository's full CI matrix, upgrade/restore canaries, and an independent security review.
+No supported tsFranki release has been published yet. Do not treat `main`, a canary image, or a locally built image as a production release. The first external release is gated on the repository's full CI matrix, upgrade/restore canaries, and an independent security review.
 
 When a release is published:
 
 1. use an immutable version tag or image digest, never `main` or `canary`;
 2. verify the release attestation, then verify the attached archives, Helm chart, SBOM, production dependency license inventory, and `release-manifest.json` against `SHA256SUMS`;
-3. back up both the Wiki.ts data directory and database before every upgrade;
+3. back up both the tsFranki data directory and database before every upgrade;
 4. test the upgrade against a restored copy of production data;
 5. roll back by restoring both the pre-upgrade database and data-directory snapshots—database migrations are not guaranteed to be reversible.
 
-Wiki.ts Preview supports PostgreSQL 15, 16, 17, and 18 and requires a current minor release within one of those major lines. Startup rejects older and newer major versions before running application migrations. Release CI performs fresh-install and retained Wiki.js 2.5.314 PostgreSQL upgrade checks on every supported major. Other database engines are unsupported; no cross-engine converter is shipped. Older Wiki.js or Wiki.ts database sources are unsupported unless a later release explicitly adds a retained upgrade fixture. Deployment-specific identity providers, object storage, search engines, mail, proxies, and multi-instance topologies still require an operator canary. Kubernetes users should start with the [fork Helm chart](dev/helm/README.md).
+tsFranki supports PostgreSQL 15, 16, 17, and 18 and requires a current minor release within one of those major lines. Startup rejects older and newer major versions before running application migrations. Release CI performs fresh-install and retained Wiki.js 2.5.314 PostgreSQL upgrade checks on every supported major. Other database engines are unsupported; no cross-engine converter is shipped. Older Wiki.js or tsFranki database sources are unsupported unless a later release explicitly adds a retained upgrade fixture. Deployment-specific identity providers, object storage, search engines, mail, proxies, and multi-instance topologies still require an operator canary. Kubernetes users should start with the [fork Helm chart](dev/helm/README.md).
 
 ### Verify release provenance
 
-Every published release includes `release-manifest.json`, `SHA256SUMS`, and `wiki-ts-preview-release.intoto.jsonl`. The manifest binds the exact source revision, immutable multi-platform image digest, and release artifact hashes. GitHub Actions signs the listed artifacts with keyless Sigstore attestations and pushes provenance plus the SPDX SBOM attestation for the image digest.
+Every published release includes `release-manifest.json`, `SHA256SUMS`, and `tsfranki-release.intoto.jsonl`. The manifest binds the exact source revision, immutable multi-platform image digest, and release artifact hashes. GitHub Actions signs the listed artifacts with keyless Sigstore attestations and pushes provenance plus the SPDX SBOM attestation for the image digest.
 
 ```console
-gh attestation verify wiki-ts-preview-linux.tar.gz \
+gh attestation verify tsfranki-linux.tar.gz \
   --repo PhilosophiMoonbeam/wiki \
   --signer-workflow PhilosophiMoonbeam/wiki/.github/workflows/build.yml \
-  --bundle wiki-ts-preview-release.intoto.jsonl
+  --bundle tsfranki-release.intoto.jsonl
 sha256sum --check SHA256SUMS
 gh attestation verify "oci://ghcr.io/philosophimoonbeam/wiki@IMAGE_DIGEST" \
   --repo PhilosophiMoonbeam/wiki \
@@ -69,7 +69,7 @@ Kubernetes installation, upgrade, backup, rollback, and restore procedures are i
 
 ### Backup and rollback contract
 
-Stop every Wiki.ts instance before restoring. Restore the database and `/wiki/data` from the same pre-upgrade point, then start the exact previous application image digest. Never run an older application against a database migrated by a newer release.
+Stop every tsFranki instance before restoring. Restore the database and `/wiki/data` from the same pre-upgrade point, then start the exact previous application image digest. Never run an older application against a database migrated by a newer release.
 
 PostgreSQL backups use `pg_dump --format=custom`; restore by recreating the database and running `pg_restore`. The `upgrade` CI matrix verifies the retained Wiki.js 2.5.314 fixture checksum, upgrades it on PostgreSQL 15 through 18, writes post-upgrade database and volume sentinels, restores both pre-upgrade snapshots, boots the old image, authenticates the original administrator, and rejects retained post-upgrade state. Treat that matrix as a compatibility canary, not as a substitute for testing a restored copy of production data.
 
@@ -83,7 +83,7 @@ GraphQL, `/_api`, browser payloads, database tables, and extension internals are
 
 ## Branch model
 
-- [`main`](https://github.com/PhilosophiMoonbeam/wiki/tree/main) is the authoritative Wiki.ts Preview product branch. Releases and deployments originate from it.
+- [`main`](https://github.com/PhilosophiMoonbeam/wiki/tree/main) is the authoritative tsFranki product branch. Releases and deployments originate from it.
 - [`upstream-main`](https://github.com/PhilosophiMoonbeam/wiki/tree/upstream-main) is a read-only mirror of `requarks/wiki:main`; fork-specific commits do not land there.
 - Upstream updates are merged into a short-lived integration branch, adapted and verified there, then submitted to `main`. Product history is not rebased onto upstream.
 
@@ -94,7 +94,7 @@ This fork was materially modified on 2026-08-13. The modification notice does no
 
 Wiki.js was created by Nicolas Giard and developed by Requarks and its contributors. Their copyright, contributor credits, trademarks, and historical notices are preserved. See the [upstream project](https://github.com/Requarks/wiki) for official Wiki.js releases and documentation.
 
-Wiki.ts Preview remains licensed under the [GNU Affero General Public License version 3](LICENSE). Anyone interacting with a deployed modified version over a network must be offered the complete Corresponding Source for that exact version. Release source archives and the revision-specific source link include the build scripts, patches, lockfile, Dockerfiles, and other tracked build inputs.
+tsFranki remains licensed under the [GNU Affero General Public License version 3](LICENSE). Anyone interacting with a deployed modified version over a network must be offered the complete Corresponding Source for that exact version. Release source archives and the revision-specific source link include the build scripts, patches, lockfile, Dockerfiles, and other tracked build inputs.
 
 ## Upstream project credits and funding
 

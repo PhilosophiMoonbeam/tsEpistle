@@ -93,7 +93,7 @@ const importUsers = async ({ mongoDbConnString: connectionValue, groupMode: grou
   }
   const mongoDbConnString = connectionValue
   const groupMode = groupModeValue
-  const client = await MongoClient.connect(mongoDbConnString, { appName: `Wiki.js ${wiki.version} Migration Tool` })
+  const client = await MongoClient.connect(mongoDbConnString, { appName: `tsFranki Wiki.js 1.x Migration Tool ${wiki.version}` })
   try {
     const cursor = client.db().collection<LegacyUser>('users').find({ email: { '$ne': 'guest' } })
     const timestamp = new Date().toISOString()

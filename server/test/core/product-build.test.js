@@ -44,7 +44,7 @@ describe('product build and publication metadata', () => {
     for (const label of ['created', 'description', 'licenses', 'revision', 'source', 'title', 'version']) {
       expect(dockerfiles).toContain(`org.opencontainers.image.${label}`)
     }
-    expect(dockerfiles).toContain('io.wikits.upstream-base')
+    expect(dockerfiles).toContain('io.tsfranki.upstream-base')
   })
 
   test('keeps deployment defaults on fork-owned artifacts without an upstream updater', () => {
@@ -65,7 +65,7 @@ describe('product build and publication metadata', () => {
   test('release artifacts include complete revision-specific Corresponding Source', () => {
     const workflow = read('.github/workflows/build.yml')
     expect(workflow).toContain('git archive --format=tar.gz')
-    expect(workflow).toContain('wiki-ts-preview-source.tar.gz')
+    expect(workflow).toContain('tsfranki-source.tar.gz')
     expect(workflow).toContain('$WIKI_SOURCE_REPOSITORY/tree/$WIKI_BUILD_REVISION')
     for (const path of ['package.json', 'pnpm-lock.yaml', 'patches', 'dev/build/Dockerfile', 'dev/build-arm/Dockerfile', 'server/scripts/generate-build-metadata.ts']) {
       expect(() => execFileSync('git', ['ls-files', '--error-unmatch', path], { cwd: rootPath })).not.toThrow()

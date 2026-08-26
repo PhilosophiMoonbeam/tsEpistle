@@ -196,7 +196,7 @@
       "disposition": "synthesize",
       "state": "completed",
       "workstream": "architecture-b/postgresql-continuity",
-      "contract": "Unknown databases are rejected before writes while recognized Wiki.js 2 and Wiki.ts PostgreSQL sources upgrade without ledger reset.",
+      "contract": "Unknown databases are rejected before writes while recognized Wiki.js 2 and tsFranki PostgreSQL sources upgrade without ledger reset.",
       "lastReviewed": "2026-08-15"
     },
     {
@@ -316,7 +316,7 @@
       "disposition": "adopt",
       "state": "completed",
       "workstream": "architecture-b/postgresql-only",
-      "contract": "Supported Wiki.js 2 and Wiki.ts PostgreSQL sources upgrade, restore, roll back, and operate across the declared server floor before unused adapters are removed cleanly.",
+      "contract": "Supported Wiki.js 2 and tsFranki PostgreSQL sources upgrade, restore, roll back, and operate across the declared server floor before unused adapters are removed cleanly.",
       "lastReviewed": "2026-08-15"
     },
     {

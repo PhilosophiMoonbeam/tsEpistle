@@ -10,9 +10,9 @@ const errorResponse = {
 export const openApiDocument = Object.freeze({
   openapi: '3.1.0',
   info: {
-    title: 'Wiki.ts REST API',
+    title: 'tsFranki REST API',
     version: '1.0.0',
-    description: 'Versioned external REST API for Wiki.ts. Bearer API keys use the permissions and page rules of their assigned group.',
+    description: 'Versioned external REST API for tsFranki. Bearer API keys use the permissions and page rules of their assigned group.',
     license: {
       name: 'GNU Affero General Public License v3.0',
       identifier: 'AGPL-3.0-only'
@@ -83,7 +83,7 @@ export const openApiDocument = Object.freeze({
       bearerAuth: {
         type: 'http',
         scheme: 'bearer',
-        bearerFormat: 'Wiki.ts API key'
+        bearerFormat: 'tsFranki API key'
       }
     },
     schemas: {

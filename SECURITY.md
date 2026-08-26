@@ -1,6 +1,6 @@
 # Security Policy
 
-Wiki.ts Preview is an independent community fork of Wiki.js. Security reports for this fork must be sent to the Wiki.ts Preview maintainers, not to Requarks or the upstream Wiki.js project.
+tsFranki is an independent community fork of Wiki.js. Security reports for this fork must be sent to the tsFranki maintainers, not to Requarks or the upstream Wiki.js project.
 
 ## Supported versions
 
@@ -25,7 +25,7 @@ Do not create a public issue, discussion, or pull request for a suspected vulner
 
 Submit a private report through [GitHub private vulnerability reporting](https://github.com/PhilosophiMoonbeam/wiki/security/advisories/new). Include:
 
-- the affected Wiki.ts Preview version and exact Git revision;
+- the affected tsFranki version and exact Git revision;
 - reproduction steps and the expected security boundary;
 - deployment details relevant to the report, including database engine and reverse proxy;
 - impact, logs, or a proof of concept with secrets and personal data removed;

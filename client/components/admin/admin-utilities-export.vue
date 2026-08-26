@@ -24,7 +24,7 @@
       v-text-field.mt-7(
         variant="outlined"
         label='Target Folder Path'
-        hint='Either an absolute path or relative to the Wiki.js installation folder, where exported content will be saved to. Note that the folder MUST be empty!'
+        hint='Use an absolute path or a path relative to the tsFranki installation folder. The target folder MUST be empty.'
         persistent-hint
         v-model='filePath'
       )

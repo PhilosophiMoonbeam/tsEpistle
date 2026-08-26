@@ -5,7 +5,7 @@
         v-card.setup-card
           header.setup-intro
             .setup-mark(aria-hidden='true')
-              v-icon(size='34') mdi-source-fork
+              img(src='/_assets/svg/icon-tsfranki.svg', alt='')
             .setup-intro-copy
               .setup-eyebrow First-run setup
               h1 {{ product.name }}
@@ -369,8 +369,16 @@ export default {
 .setup-mark {
   width: 64px;
   height: 64px;
+  border: 0;
   border-radius: 19px;
-  box-shadow: 0 12px 30px rgba(var(--v-theme-primary), .12);
+  background: transparent;
+  box-shadow: none;
+
+  img {
+    display: block;
+    width: 100%;
+    height: 100%;
+  }
 }
 
 .setup-intro-copy {

@@ -17,4 +17,4 @@ admin:
 
 The official localization keys will still be loaded first, but your local files will overwrite any existing keys (and add new ones).
 
-Note that you must restart Wiki.js to load any changes made to the files, which happens automatically on save when in dev mode.
+Note that you must restart tsFranki to load changes made to these files; development mode restarts automatically on save.

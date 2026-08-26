@@ -36,7 +36,7 @@ props:
   sniffOnStart:
     type: Boolean
     title: Sniff on start
-    hint: 'Should Wiki.js attempt to detect the rest of the cluster on first connect? (Default: off)'
+    hint: 'Should tsFranki attempt to detect the rest of the cluster on first connect? (Default: off)'
     default: false
     order: 6
   sniffInterval:

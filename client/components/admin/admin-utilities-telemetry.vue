@@ -5,7 +5,7 @@
     v-form
       v-card-text
         .text-label-large What is telemetry?
-        .text-body-medium.mt-3 Telemetry allows the developers of Wiki.js to improve the software by collecting basic anonymized data about its usage and the host info. #[br] This is entirely optional and #[strong absolutely no] private data (such as content or personal data) is collected.
+        .text-body-medium.mt-3 Telemetry sends basic anonymized instance and host information to the configured GraphQL endpoint. #[br] It is optional, disabled by default, and never includes wiki content or personal data.
         .text-body-medium.mt-3 For maximum privacy, a random client ID is generated during setup. This ID is used to group requests together while keeping complete anonymity. You can reset and generate a new one below at any time.
         v-divider.my-4
         .text-label-large What is collected?
@@ -14,8 +14,8 @@
           v-list-item
             template(v-slot:prepend)
               v-avatar: v-icon mdi-information-outline
-            v-list-item-title.text-body-medium Version of Wiki.js installed
-            v-list-item-subtitle.text-body-small: em e.g. v2.0.123
+            v-list-item-title.text-body-medium Installed tsFranki version
+            v-list-item-subtitle.text-body-small: em e.g. v0.1.0
           v-list-item
             template(v-slot:prepend)
               v-avatar: v-icon mdi-information-outline
@@ -34,7 +34,7 @@
         .text-body-medium Note that crash debug data is stored for a maximum of 30 days while analytics are stored for a maximum of 16 months, after which it is permanently deleted.
         v-divider.my-4
         .text-label-large What is it used for?
-        .text-body-medium.mt-3 Telemetry is used by developers to improve Wiki.js, mostly for the following reasons:
+        .text-body-medium.mt-3 Telemetry can help maintainers understand deployment health and prioritize compatibility work:
         v-list(density="compact")
           v-list-item
             template(v-slot:prepend)
@@ -48,7 +48,7 @@
             template(v-slot:prepend)
               v-avatar: v-icon mdi-chevron-right
             v-list-item-title: .text-body-medium  Optimize performance and testing scenarios based on most popular environments.
-        .text-body-medium Only authorized developers have access to the data. It is not shared to any 3rd party nor is it used for any other application than improving Wiki.js.
+        .text-body-medium Only enable telemetry when you trust the configured GraphQL endpoint and its data-retention policy.
         v-divider.my-4
         .text-label-large Settings
         .mt-3
@@ -56,7 +56,7 @@
             v-model='telemetry',
             label='Enable Telemetry',
             color='primary',
-            hint='Allow Wiki.js to transmit telemetry data.',
+            hint='Allow tsFranki to transmit telemetry data to the configured GraphQL endpoint.',
             persistent-hint
           )
         v-divider.my-4

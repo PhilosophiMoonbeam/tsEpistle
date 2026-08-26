@@ -199,7 +199,7 @@ const persistedConfig = ref<ThemeConfig>(createConfig())
 const loading = ref(false)
 const previewMode = ref<PaletteMode>(config.darkMode ? 'dark' : 'light')
 const colorsValid = computed(() => isThemeColors(config.colors))
-const themes = [{ text: 'Default', author: 'Wiki.ts Preview', value: 'default' }]
+const themes = [{ text: 'Default', author: 'tsFranki', value: 'default' }]
 const iconsets = [
   { text: 'Material Design Icons (default)', value: 'mdi' },
   { text: 'Font Awesome 5', value: 'fa' },

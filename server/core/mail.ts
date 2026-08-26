@@ -45,7 +45,7 @@ const mail = {
     }
     const template = await this.loadTemplate(opts.template)
     return transport.sendMail({
-      headers: { 'x-mailer': 'Wiki.js' },
+      headers: { 'x-mailer': 'tsFranki' },
       from: `"${wiki.config.mail.senderName}" <${wiki.config.mail.senderEmail}>`,
       to: opts.to,
       subject: `${opts.subject} - ${wiki.config.title}`,
@@ -54,7 +54,7 @@ const mail = {
       html: template({
         logo: (wiki.config.logoUrl.startsWith('http') ? '' : wiki.config.host) + wiki.config.logoUrl,
         siteTitle: wiki.config.title,
-        copyright: wiki.config.company.length > 0 ? wiki.config.company : 'Powered by Wiki.js',
+        copyright: wiki.config.company.length > 0 ? wiki.config.company : 'Powered by tsFranki',
         ...opts.data
       })
     })
