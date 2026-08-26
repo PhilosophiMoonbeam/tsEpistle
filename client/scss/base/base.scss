@@ -2,6 +2,15 @@
 @use "sass:math";
 @use "material";
 
+:root {
+  --wiki-shell-max: 110rem;
+  --wiki-content-max: 97.5rem;
+  --wiki-page-gutter: clamp(.875rem, 2.2vw, 2rem);
+  --wiki-panel-radius: 1.125rem;
+  --wiki-control-radius: .75rem;
+  --wiki-footer-height: 3.625rem;
+}
+
 html {
   box-sizing: border-box;
   height: 100%;
@@ -9,10 +18,12 @@ html {
 }
 
 body {
+  min-width: 320px;
   margin: 0;
   background: rgb(var(--v-theme-background));
   font-family: 'WikiAgentSans', 'Roboto', sans-serif;
   font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+  line-height: 1.5;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
@@ -28,6 +39,19 @@ body {
 
 .v-field__input:focus-visible {
   outline: none;
+}
+
+:where(h1, h2, h3) {
+  text-wrap: balance;
+}
+
+.v-btn:not(.v-btn--icon) {
+  letter-spacing: .01em;
+  text-transform: none;
+}
+
+.v-field {
+  border-radius: var(--wiki-control-radius);
 }
 *, *:before, *:after {
   box-sizing: inherit;
@@ -48,6 +72,7 @@ body {
 }
 
 .v-application__wrap {
+  min-width: 0;
   background-color: rgb(var(--v-theme-background));
   color: rgb(var(--v-theme-on-surface));
   font-family: 'WikiAgentSans', 'Roboto', sans-serif;

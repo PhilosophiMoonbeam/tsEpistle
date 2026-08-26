@@ -542,9 +542,9 @@ export default defineComponent({
     rgb(var(--v-theme-background));
 
   > .v-container {
-    width: min(100%, 1560px);
+    width: min(100%, var(--wiki-content-max));
     margin: 0 auto;
-    padding: 28px 32px 48px;
+    padding: 28px var(--wiki-page-gutter) 48px;
   }
 
   .admin-header {
@@ -712,7 +712,7 @@ export default defineComponent({
   font-family: 'Roboto Mono', monospace;
 }
 
-@include until($tablet) {
+@media (max-width: 959px) {
   .admin-context {
     display: none;
   }

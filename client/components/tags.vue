@@ -126,8 +126,8 @@
         section.tags-empty(v-if='selection.length < 1')
           .tags-empty-icon
             v-icon(size='42') mdi-tag-arrow-right-outline
-          h2 {{$t('tags:selectOneMoreTagsHint')}}
-          p Choose tags from the sidebar to discover related pages.
+          h2 {{$t('tags:selectOneMoreTags')}}
+          p Choose tags to discover related pages.
           v-btn(
             v-if='$vuetify.display.smAndDown'
             color='primary'
@@ -482,33 +482,33 @@ export default {
 }
 
 .tags-shell {
-  width: min(100%, 1500px);
+  width: min(100%, var(--wiki-content-max));
   margin: 0 auto;
-  padding: 34px 36px 64px !important;
+  padding: 30px var(--wiki-page-gutter) 56px !important;
 }
 
 .tags-hero {
   position: relative;
   display: flex;
   overflow: hidden;
-  min-height: 210px;
+  min-height: 196px;
   align-items: center;
   justify-content: space-between;
-  padding: clamp(30px, 5vw, 58px);
+  padding: clamp(28px, 4vw, 48px);
   border: 1px solid rgba(var(--v-border-color), .1);
-  border-radius: 24px;
+  border-radius: 22px;
   background:
     radial-gradient(circle at 82% 35%, rgba(var(--v-theme-primary), .17), transparent 20rem),
     linear-gradient(145deg, color-mix(in srgb, rgb(var(--v-theme-primary)) 9%, rgb(var(--v-theme-surface))), rgb(var(--v-theme-surface)) 65%);
   box-shadow: 0 16px 44px rgba(15, 23, 42, .06);
 
   h1 {
-    margin: 12px 0 8px;
+    margin: 10px 0 7px;
     color: rgb(var(--v-theme-on-surface));
-    font-size: clamp(2.2rem, 5vw, 4.2rem);
-    font-weight: 780;
-    letter-spacing: -.06em;
-    line-height: 1;
+    font-size: clamp(2.15rem, 4vw, 3.3rem);
+    font-weight: 770;
+    letter-spacing: -.055em;
+    line-height: 1.02;
   }
 
   p {
@@ -529,15 +529,15 @@ export default {
 
 .tags-hero-art {
   display: grid;
-  flex: 0 0 132px;
-  width: 132px;
-  height: 132px;
+  flex: 0 0 112px;
+  width: 112px;
+  height: 112px;
   place-items: center;
   border: 1px solid color-mix(in srgb, rgb(var(--v-theme-primary)) 20%, transparent);
-  border-radius: 38px;
+  border-radius: 32px;
   background: color-mix(in srgb, rgb(var(--v-theme-primary)) 10%, transparent);
   color: rgb(var(--v-theme-primary));
-  transform: rotate(6deg);
+  transform: rotate(5deg);
 }
 
 .tags-selection,
@@ -721,7 +721,7 @@ export default {
 
 @media (max-width: 959px) {
   .tags-shell {
-    padding: 24px 20px 52px !important;
+    padding: 22px 20px 48px !important;
   }
 
   .tags-controls {
@@ -735,12 +735,12 @@ export default {
   }
 
   .tags-hero {
-    min-height: 190px;
-    padding: 28px 24px;
-    border-radius: 20px;
+    min-height: 176px;
+    padding: 24px 22px;
+    border-radius: 18px;
 
     h1 {
-      font-size: 2.45rem;
+      font-size: 2.15rem;
     }
 
     p {

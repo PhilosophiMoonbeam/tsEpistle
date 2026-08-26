@@ -1,56 +1,53 @@
+.v-dialog > .v-overlay__content > .v-card {
+  overflow: hidden;
+  border: 1px solid rgba(var(--v-border-color), .13);
+  border-radius: var(--wiki-panel-radius);
+  background: rgb(var(--v-theme-surface));
+  box-shadow: 0 24px 72px rgba(8, 15, 30, .24);
+}
 
 .dialog-header {
-  background-color: rgb(var(--v-theme-primary));
-  background-image:
-    radial-gradient(ellipse at top, rgb(var(--v-theme-primary-lighten-1)), rgb(var(--v-theme-primary))),
-    radial-gradient(ellipse at bottom, rgb(var(--v-theme-primary-darken-1)), rgb(var(--v-theme-primary)));
-  height: 60px;
-  color: rgb(var(--v-theme-on-primary));
+  --dialog-accent: var(--v-theme-primary);
+
   display: flex;
+  min-height: 62px;
   align-items: center;
-  padding: 0 1rem;
-  font-size: 1.2rem;
+  padding: 0 20px;
+  border-bottom: 1px solid color-mix(in srgb, rgb(var(--dialog-accent)) 22%, transparent);
+  border-inline-start: 4px solid rgb(var(--dialog-accent));
+  background:
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, rgb(var(--dialog-accent)) 11%, rgb(var(--v-theme-surface))),
+      rgb(var(--v-theme-surface)) 72%
+    );
+  color: rgb(var(--v-theme-on-surface));
+  font-size: 1.05rem;
+  font-weight: 700;
+  letter-spacing: -.015em;
 
   .v-icon {
-    color: inherit !important;
+    color: rgb(var(--dialog-accent)) !important;
   }
 
   &.is-red {
-    background-color: rgb(var(--v-theme-error));
-    background-image:
-      radial-gradient(ellipse at top, rgb(var(--v-theme-error-lighten-1)), rgb(var(--v-theme-error))),
-      radial-gradient(ellipse at bottom, rgb(var(--v-theme-error-darken-1)), rgb(var(--v-theme-error)));
-    color: rgb(var(--v-theme-on-error));
+    --dialog-accent: var(--v-theme-error);
   }
 
   &.is-orange {
-    background-color: rgb(var(--v-theme-warning));
-    background-image:
-      radial-gradient(ellipse at top, rgb(var(--v-theme-warning-lighten-1)), rgb(var(--v-theme-warning))),
-      radial-gradient(ellipse at bottom, rgb(var(--v-theme-warning-darken-1)), rgb(var(--v-theme-warning)));
-    color: rgb(var(--v-theme-on-warning));
+    --dialog-accent: var(--v-theme-warning);
   }
 
   &.is-indigo {
-    background-color: rgb(var(--v-theme-accent));
-    background-image:
-      radial-gradient(ellipse at top, rgb(var(--v-theme-accent-lighten-1)), rgb(var(--v-theme-accent))),
-      radial-gradient(ellipse at bottom, rgb(var(--v-theme-accent-darken-1)), rgb(var(--v-theme-accent)));
-    color: rgb(var(--v-theme-on-accent));
+    --dialog-accent: var(--v-theme-accent);
   }
 
   &.is-dark {
-    background-color: rgb(var(--v-theme-surface));
-    background-image: none;
-    color: rgb(var(--v-theme-on-surface));
+    --dialog-accent: var(--v-theme-on-surface);
   }
 
   &.is-teal {
-    background-color: rgb(var(--v-theme-secondary));
-    background-image:
-      radial-gradient(ellipse at top, rgb(var(--v-theme-secondary-lighten-1)), rgb(var(--v-theme-secondary))),
-      radial-gradient(ellipse at bottom, rgb(var(--v-theme-secondary-darken-1)), rgb(var(--v-theme-secondary)));
-    color: rgb(var(--v-theme-on-secondary));
+    --dialog-accent: var(--v-theme-secondary);
   }
 }
 

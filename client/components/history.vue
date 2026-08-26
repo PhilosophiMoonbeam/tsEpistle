@@ -1,16 +1,19 @@
 <template lang='pug'>
   v-app().history
     nav-header
-    v-main
-      v-toolbar.history-toolbar(color='primary')
-        .text-body-large.history-toolbar-title Viewing history of #[strong /{{path}}]
+    v-main.history-main
+      v-toolbar.history-toolbar(color='surface', flat)
+        .history-toolbar-copy
+          .history-eyebrow Revision history
+          .history-toolbar-title Viewing history of #[strong /{{path}}]
+          .history-toolbar-meta(v-if='$vuetify.display.mdAndUp')
+            span {{total}} revisions
+            span Page {{pageId}}
         v-spacer
-        .text-body-small.text-blue-lighten-3.mr-4(v-if='$vuetify.display.mdAndUp') Trail Length: {{total}}
-        .text-body-small.text-blue-lighten-3.mr-4(v-if='$vuetify.display.mdAndUp') ID: {{pageId}}
-        v-btn(variant="flat", color="blue-darken-1", @click='goLive', aria-label='Return to live version')
+        v-btn(variant='flat', color='primary', size='small', @click='goLive', aria-label='Return to live version')
           v-icon(v-if='$vuetify.display.smAndDown') mdi-close
           span(v-else) Return to Live Version
-      v-container(fluid)
+      v-container.history-shell(fluid)
         v-row
           v-col(cols='12', md='4')
             v-chip.my-0.ml-6(
@@ -568,45 +571,78 @@ export default {
 </script>
 
 <style lang='scss'>
+.history-main {
+  background:
+    radial-gradient(circle at 88% 0%, rgba(var(--v-theme-primary), .07), transparent 30rem),
+    rgb(var(--v-theme-background));
+}
+
+.history-promptmenu {
+  border-top: 3px solid rgb(var(--v-theme-primary));
+}
+
+.history-toolbar {
+  min-height: 86px !important;
+  padding-inline: var(--wiki-page-gutter);
+  border-bottom: 1px solid rgba(var(--v-border-color), .11) !important;
+  background: color-mix(in srgb, rgb(var(--v-theme-surface)) 96%, rgb(var(--v-theme-background))) !important;
+}
+
+.history-toolbar-copy {
+  min-width: 0;
+  padding-block: 14px;
+}
+
+.history-eyebrow {
+  color: rgb(var(--v-theme-primary));
+  font-size: .66rem;
+  font-weight: 760;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+}
+
+.history-toolbar-title {
+  overflow: hidden;
+  margin-top: 3px;
+  color: rgb(var(--v-theme-on-surface));
+  font-size: 1rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.history-toolbar-meta,
+.history-revision-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  margin-top: 5px;
+  color: rgb(var(--v-theme-on-surface));
+  font-size: .72rem;
+  opacity: .62;
+}
+
+.history-shell {
+  width: min(100%, var(--wiki-content-max));
+  margin: 0 auto;
+  padding: 24px var(--wiki-page-gutter) 48px !important;
+}
 
 .history {
-  &-promptmenu {
-    border-top: 5px solid mc('blue', '700');
+  .v-timeline-item .v-card,
+  .history-shell > .v-row > .v-col:last-child > .v-card {
+    border: 1px solid rgba(var(--v-border-color), .11);
+    border-radius: 14px;
+    box-shadow: 0 8px 26px rgba(15, 23, 42, .045);
   }
 
-  &-toolbar-title {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  &-revision-meta {
-    display: flex;
-    flex-wrap: wrap;
-    gap: .25rem 1rem;
-    margin-top: .5rem;
-    font-size: .75rem;
-    opacity: .75;
-  }
-
-  @media #{map-get($display-breakpoints, 'sm-and-down')} {
-    &-toolbar {
-      padding-inline: .5rem;
-    }
-
-    &-diff {
-      overflow-x: auto;
-    }
-
-    .d2h-file-side-diff {
-      min-width: 32rem;
-    }
+  &-diff {
+    overflow-x: auto;
+    border: 1px solid rgba(var(--v-border-color), .1);
+    border-radius: 12px;
   }
 
   .d2h-file-wrapper {
-    border: 1px solid #EEE;
-    border-left: none;
+    border: 0;
   }
 
   .d2h-file-header {
@@ -614,4 +650,26 @@ export default {
   }
 }
 
+@media (max-width: 959px) {
+  .history-toolbar {
+    min-height: 76px !important;
+    padding-inline: 12px;
+  }
+
+  .history-toolbar-copy {
+    max-width: calc(100vw - 92px);
+  }
+
+  .history-shell {
+    padding: 14px 10px 36px !important;
+  }
+
+  .history-diff {
+    overflow-x: auto;
+  }
+
+  .history .d2h-file-side-diff {
+    min-width: 32rem;
+  }
+}
 </style>

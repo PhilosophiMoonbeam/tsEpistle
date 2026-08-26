@@ -7,7 +7,6 @@
           flat
           v-model='currentPageTitle'
           hide-details
-          bg-color='black'
           density="compact"
           aria-label='Page title'
         )
@@ -17,7 +16,6 @@
           flat
           v-model='currentPageTitle'
           hide-details
-          bg-color='black'
           density="compact"
         )
       template(v-slot:actions)
@@ -540,16 +538,35 @@ export default defineComponent({
 <style lang='scss'>
 
   .editor {
-    background-color: mc('grey', '900') !important;
     min-height: 100vh;
     min-height: 100dvh;
+    background: #11151b !important;
 
     .v-application__wrap {
-      background-color: mc('grey', '900');
+      min-width: 0;
+      background: #11151b;
     }
 
-    &-title-input input {
-      text-align: center;
+    &-title-input {
+      max-width: 42rem;
+
+      .v-field {
+        border: 1px solid rgba(255, 255, 255, .11);
+        border-radius: 10px;
+        background: rgba(255, 255, 255, .045) !important;
+        box-shadow: none;
+      }
+
+      .v-field--focused {
+        border-color: rgba(var(--v-theme-primary), .48);
+        box-shadow: 0 0 0 3px rgba(var(--v-theme-primary), .08);
+      }
+
+      input {
+        color: rgba(255, 255, 255, .9);
+        font-weight: 620;
+        text-align: center;
+      }
     }
 
     &-title-input-mobile {
@@ -557,12 +574,12 @@ export default defineComponent({
       min-width: 0;
 
       .v-field {
-        padding-inline: 4px;
+        padding-inline: 2px;
       }
 
       input {
         font-size: .875rem;
-        text-align: left;
+        text-align: start;
       }
     }
   }

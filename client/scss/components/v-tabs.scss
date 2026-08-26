@@ -1,10 +1,10 @@
 .grad-tabs > .v-tabs {
-  background-image: linear-gradient(to top, rgba(#000, .025), transparent);
-  border-bottom: 1px solid rgba(#000, .1);
-  border-radius: 4px 4px 0 0;
-
-  @at-root .v-theme--dark & {
-    background-image: linear-gradient(to bottom, rgba(#FFF, .05), transparent);
-    border-bottom-color: transparent;
-  }
+  border-bottom: 1px solid rgba(var(--v-border-color), .11);
+  border-radius: var(--wiki-control-radius) var(--wiki-control-radius) 0 0;
+  background:
+    linear-gradient(
+      to top,
+      color-mix(in srgb, rgb(var(--v-theme-on-surface)) 3%, transparent),
+      transparent
+    );
 }

@@ -125,6 +125,18 @@
   }
 }
 
+.newpage-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 12px;
+  margin-top: 26px;
+
+  .v-btn {
+    min-width: 168px;
+  }
+}
+
 .onboarding {
   &-content {
     min-height: 470px;
@@ -164,6 +176,15 @@
     .v-btn.mt-5 {
       width: min(100%, 320px);
       margin-top: 14px !important;
+    }
+  }
+
+  .newpage-actions {
+    width: min(100%, 320px);
+    flex-direction: column;
+
+    .v-btn {
+      width: 100%;
     }
   }
 

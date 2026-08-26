@@ -1,13 +1,13 @@
 <template lang='pug'>
   v-snackbar.nav-notify(
     :color='notification.style'
-    location='top center'
-    min-height="68"
+    location='bottom center'
+    min-height='60'
     v-model='notificationState'
     :timeout='6000'
     )
-    .text-left
-      v-icon.mr-3 mdi-{{ notification.icon }}
+    .nav-notify-content
+      v-icon(size='21') mdi-{{ notification.icon }}
       span {{ notification.message }}
 </template>
 
@@ -30,33 +30,56 @@ export default {
 
 <style lang='scss'>
 .nav-notify {
+  margin-bottom: calc(var(--wiki-footer-height) + 12px);
 
   .v-snackbar__wrapper {
-    border-top-left-radius: 0;
-    border-top-right-radius: 0;
     position: relative;
-    margin-top: 0;
+    overflow: hidden;
+    border: 1px solid rgba(255, 255, 255, .18);
+    border-radius: 14px;
+    box-shadow: 0 18px 48px rgba(3, 7, 18, .26);
 
     &::after {
-      content: '';
-      display: block;
-      width: 100%;
-      height: 2px;
-      background-color: rgba(255,255,255,.4);
       position: absolute;
       bottom: 0;
       left: 0;
+      display: block;
+      width: 100%;
+      height: 2px;
+      background-color: rgba(255, 255, 255, .46);
       animation: nav-notify-anim 6s linear;
+      content: '';
     }
   }
 }
 
+.nav-notify-content {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
 @keyframes nav-notify-anim {
-  0% {
+  from {
     width: 100%;
   }
-  100% {
-    width: 0%;
+
+  to {
+    width: 0;
+  }
+}
+
+@media (max-width: 599px) {
+  .nav-notify {
+    margin-inline: 12px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nav-notify .v-snackbar__wrapper::after {
+    animation: none;
   }
 }
 </style>

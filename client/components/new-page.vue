@@ -5,12 +5,13 @@
         img.animated.fadeIn(src='/_assets/svg/icon-file.svg', alt='')
         .text-headline-medium {{ $t('newpage.title') }}
         .text-body-large.mt-3 {{ $t('newpage.subtitle') }}
-        v-btn.mt-5(:href='`/e/` + locale + `/` + path', size="x-large")
-          v-icon(start) mdi-plus
-          span {{ $t('newpage.create') }}
-        v-btn.mt-5(color="primary", @click='goBack', variant="outlined")
-          v-icon(start) mdi-arrow-left
-          span {{ $t('newpage.goback') }}
+        .newpage-actions
+          v-btn(:href='`/e/` + locale + `/` + path', size='large', color='primary', variant='flat')
+            v-icon(start) mdi-plus
+            span {{ $t('newpage.create') }}
+          v-btn(color='primary', @click='goBack', variant='outlined', size='large')
+            v-icon(start) mdi-arrow-left
+            span {{ $t('newpage.goback') }}
 </template>
 
 <script lang='ts'>

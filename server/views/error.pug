@@ -2,11 +2,16 @@ extends master.pug
 
 block body
   #root.is-fullscreen
-    .app-error
-      a(href='/')
-        img(src='/_assets/svg/logo-wikijs.svg')
-      strong Oops, something went wrong...
-      span= message
-            
-      if error.stack
-        pre: code #{error.stack}
+    main.app-error
+      section.app-error-content(role='alert')
+        a.app-error-brand(href='/', aria-label='Return home')
+          img(src='/_assets/svg/logo-wikijs.svg', alt='')
+        .app-error-eyebrow Request interrupted
+        h1 Something went wrong
+        p.app-error-message= message
+        a.app-error-home(href='/') Return home
+
+        if error.stack
+          details.app-error-details
+            summary Technical details
+            pre: code #{error.stack}

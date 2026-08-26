@@ -1466,7 +1466,7 @@ export default defineComponent({
 
 .page-nav-toggle,
 .page-return-top {
-  bottom: 20px !important;
+  bottom: calc(var(--wiki-footer-height) + 16px) !important;
 }
 
 .page-nav-toggle {
@@ -1540,7 +1540,7 @@ export default defineComponent({
 
 .page-header-section {
   position: relative;
-  width: min(100%, 1760px);
+  width: min(100%, var(--wiki-shell-max));
   min-height: 124px;
   margin: 0 auto;
 
@@ -1596,7 +1596,7 @@ export default defineComponent({
 }
 
 .page-body {
-  width: min(100%, 1760px);
+  width: min(100%, var(--wiki-shell-max));
   margin: 0 auto;
   padding: 26px 20px 56px !important;
 }
@@ -1823,7 +1823,7 @@ export default defineComponent({
   .page-nav-toggle,
   .page-return-top {
     inset-inline-start: 16px;
-    bottom: 16px !important;
+    bottom: calc(var(--wiki-footer-height) + 12px) !important;
   }
 }
 

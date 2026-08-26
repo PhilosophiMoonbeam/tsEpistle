@@ -53,12 +53,20 @@ defineEmits<{
 <style scoped>
 .async-state {
   display: flex;
-  min-height: 5rem;
+  min-height: 7rem;
   align-items: center;
   justify-content: center;
-  gap: .75rem;
-  padding: 1rem;
-  text-align: left;
+  gap: .85rem;
+  padding: 1.25rem;
+  border: 1px dashed rgba(var(--v-border-color), .18);
+  border-radius: .875rem;
+  background: color-mix(in srgb, rgb(var(--v-theme-surface)) 84%, transparent);
+  text-align: start;
+}
+
+.async-state--error {
+  border-color: color-mix(in srgb, rgb(var(--v-theme-error)) 28%, transparent);
+  background: color-mix(in srgb, rgb(var(--v-theme-error)) 6%, rgb(var(--v-theme-surface)));
 }
 
 .async-state__icon {

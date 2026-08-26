@@ -131,17 +131,17 @@ export default defineComponent({
     rgb(var(--v-theme-background));
 
   > .v-container {
-    width: min(100%, 1480px);
+    width: min(100%, var(--wiki-content-max));
     margin: 0 auto;
-    padding: 30px 34px 56px;
+    padding: 28px var(--wiki-page-gutter) 48px;
   }
 
   .profile-header {
     display: flex;
-    min-height: 88px;
+    min-height: 80px;
     align-items: center;
-    margin-bottom: 10px;
-    padding: 2px;
+    margin-bottom: 14px;
+    padding: 4px 2px;
 
     > img {
       width: 64px !important;
@@ -159,25 +159,28 @@ export default defineComponent({
 
       > .text-headline-medium {
         color: rgb(var(--v-theme-on-surface)) !important;
-        font-size: clamp(1.8rem, 3vw, 2.45rem) !important;
-        font-weight: 750;
-        letter-spacing: -.045em !important;
+        font-size: clamp(1.65rem, 2vw, 2.1rem) !important;
+        font-weight: 720;
+        letter-spacing: -.035em !important;
+        line-height: 1.15;
       }
 
       > .text-body-large {
         margin-top: 5px;
         color: rgb(var(--v-theme-on-surface)) !important;
-        opacity: .62;
+        font-size: .98rem !important;
+        line-height: 1.45;
+        opacity: .68;
       }
     }
   }
 
   .v-card:not(.v-card--flat) {
     overflow: hidden;
-    border: 1px solid rgba(var(--v-border-color), .11);
-    border-radius: 17px;
-    background: rgb(var(--v-theme-surface));
-    box-shadow: 0 10px 32px rgba(15, 23, 42, .05);
+    border: 1px solid rgba(var(--v-border-color), .13);
+    border-radius: 16px;
+    background: color-mix(in srgb, rgb(var(--v-theme-surface)) 97%, rgb(var(--v-theme-background)));
+    box-shadow: 0 8px 28px rgba(20, 28, 50, .055);
   }
 
   .v-card > .v-toolbar {
@@ -253,7 +256,7 @@ export default defineComponent({
         margin-inline: 4px;
 
         > .text-headline-medium {
-          font-size: 1.65rem !important;
+          font-size: 1.5rem !important;
         }
       }
 

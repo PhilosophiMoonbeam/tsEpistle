@@ -67,8 +67,8 @@ export default {
 
 <style lang="scss">
 .nav-footer {
-  min-height: 58px;
-  padding: 14px 24px;
+  min-height: var(--wiki-footer-height);
+  padding: 12px var(--wiki-page-gutter);
   border-top: 1px solid rgba(var(--v-border-color), .09);
   background: color-mix(in srgb, rgb(var(--v-theme-surface)) 96%, rgb(var(--v-theme-background))) !important;
   box-shadow: none;
@@ -95,7 +95,12 @@ export default {
 
 @media (max-width: 599px) {
   .nav-footer {
-    padding-inline: 18px;
+    padding: 10px 18px;
+  }
+
+  .footer-attribution {
+    font-size: .7rem !important;
+    line-height: 1.55;
   }
 }
 </style>

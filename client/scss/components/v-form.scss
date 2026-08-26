@@ -6,8 +6,8 @@
   }
 
   .v-text-field .v-field--variant-outlined {
+    border-radius: var(--wiki-control-radius);
     background-color: rgb(var(--v-theme-surface)) !important;
-    border-radius: 7px;
 
     .v-field__outline {
       color: rgb(var(--v-border-color)) !important;
