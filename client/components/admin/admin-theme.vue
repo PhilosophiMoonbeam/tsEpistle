@@ -157,6 +157,7 @@ v-container.admin-theme(fluid)
                     :style='gutterPreviewStyle(option.value)'
                     aria-hidden='true'
                   )
+                    page-gutter-column(v-if='option.value === `columns`')
                   .gutter-style-option__paper
                     span
                     span
@@ -167,6 +168,7 @@ v-container.admin-theme(fluid)
                     :style='gutterPreviewStyle(option.value)'
                     aria-hidden='true'
                   )
+                    page-gutter-column(v-if='option.value === `columns`')
                 .gutter-style-option__label
                   span.text-label-large {{ option.title }}
                   v-icon(v-if='config.gutterStyle === option.value', color='primary', size='18') mdi-check-circle
@@ -239,6 +241,7 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useTheme } from 'vuetify'
 import { wikiStore } from '@/store/index.ts'
 import ThemeColorField from './theme-color-field.vue'
+import PageGutterColumn from '../common/page-gutter-column.vue'
 import { fetchThemeConfig, saveThemeConfig, type ThemeConfig } from '../../helpers/theming-api.ts'
 import { applyWikiThemeColors, resolveThemeName } from '../../helpers/theme.ts'
 import { loadingStart, loadingStop, pushGraphError, showNotification } from '../../helpers/root-ui-store.ts'

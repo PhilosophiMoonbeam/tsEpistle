@@ -472,11 +472,13 @@
                 :style='gutterOrnamentStyle'
                 aria-hidden='true'
               )
+                page-gutter-column(v-if='gutterStyle === `columns`')
               .wiki-gutter-art.page-gutter-ornament.page-gutter-ornament--end(
                 :class='`wiki-gutter-art--${gutterStyle}`'
                 :style='gutterOrnamentStyle'
                 aria-hidden='true'
               )
+                page-gutter-column(v-if='gutterStyle === `columns`')
               slot(name='contents')
             section.comments-container#discussion(v-if='commentsEnabled && commentsPerms.read && !printView' aria-labelledby='discussion-title')
               .comments-header
@@ -663,6 +665,7 @@
 import { defineComponent, type PropType } from 'vue'
 import { useGoTo } from 'vuetify'
 import AsyncState from '@/components/common/async-state.vue'
+import PageGutterColumn from '@/components/common/page-gutter-column.vue'
 import StatusIndicator from '@/components/common/status-indicator.vue'
 import SiteBanner from '@/components/common/site-banner.vue'
 import NavSidebar, { type SidebarItem } from './nav-sidebar.vue'
@@ -774,6 +777,7 @@ Prism.plugins.toolbar.registerButton('copy-to-clipboard', (env: PrismEnvironment
 export default defineComponent({
   components: {
     AsyncState,
+    PageGutterColumn,
     NavSidebar,
     StatusIndicator,
     SiteBanner,

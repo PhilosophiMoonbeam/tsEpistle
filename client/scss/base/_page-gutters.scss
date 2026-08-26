@@ -14,31 +14,7 @@
 }
 
 .wiki-gutter-art--columns {
-  background:
-    linear-gradient(90deg, transparent 18%, var(--wiki-gutter-ink-soft) 18% 20%, transparent 20% 36%, var(--wiki-gutter-ink-soft) 36% 38%, transparent 38% 62%, var(--wiki-gutter-ink-soft) 62% 64%, transparent 64% 80%, var(--wiki-gutter-ink-soft) 80% 82%, transparent 82%)
-    50% 50% / 52% 72% no-repeat,
-    linear-gradient(90deg, transparent, var(--wiki-gutter-ink) 16% 18%, transparent 18% 82%, var(--wiki-gutter-ink) 82% 84%, transparent)
-    50% 50% / 58% 72% no-repeat;
-
-  &::before,
-  &::after {
-    inset-inline: 10%;
-    height: 7%;
-    border-block: 1px solid var(--wiki-gutter-ink);
-    background:
-      linear-gradient(var(--wiki-gutter-ink-soft), var(--wiki-gutter-ink-soft)) 50% 30% / 72% 1px no-repeat,
-      linear-gradient(var(--wiki-gutter-ink-soft), var(--wiki-gutter-ink-soft)) 50% 70% / 88% 1px no-repeat;
-  }
-
-  &::before {
-    inset-block-start: 7%;
-    clip-path: polygon(16% 0, 84% 0, 84% 28%, 100% 28%, 100% 100%, 0 100%, 0 28%, 16% 28%);
-  }
-
-  &::after {
-    inset-block-end: 7%;
-    clip-path: polygon(0 0, 100% 0, 100% 72%, 84% 72%, 84% 100%, 16% 100%, 16% 72%, 0 72%);
-  }
+  background: none;
 }
 
 .wiki-gutter-art--orbits {
