@@ -1,4 +1,5 @@
 import { ThemeColorsSchema, type ThemeColors } from '../../shared/theme-colors.ts'
+import { PageGutterCustomCssSchema, PageGutterStyleSchema, type PageGutterStyle } from '../../shared/page-gutters.ts'
 
 type JsonHeaders = {
   get: (name: string) => string | null
@@ -26,6 +27,8 @@ export type ThemeConfig = {
   darkMode: boolean
   colors: ThemeColors
   tocPosition: string
+  gutterStyle: PageGutterStyle
+  gutterCustomCss: string
   injectCSS: string
   injectHead: string
   injectBody: string
@@ -78,6 +81,11 @@ function normalizeThemeConfigPayload (payload: unknown, fallbackMessage: string)
   if (!colors.success) {
     throw new Error(fallbackMessage)
   }
+  const gutterStyle = PageGutterStyleSchema.safeParse(themePayload.gutterStyle)
+  const gutterCustomCss = PageGutterCustomCssSchema.safeParse(themePayload.gutterCustomCss)
+  if (!gutterStyle.success || !gutterCustomCss.success) {
+    throw new Error(fallbackMessage)
+  }
 
   return {
     theme: themePayload.theme!,
@@ -85,6 +93,8 @@ function normalizeThemeConfigPayload (payload: unknown, fallbackMessage: string)
     darkMode: themePayload.darkMode,
     colors: colors.data,
     tocPosition: themePayload.tocPosition!,
+    gutterStyle: gutterStyle.data,
+    gutterCustomCss: gutterCustomCss.data,
     injectCSS: themePayload.injectCSS!,
     injectHead: themePayload.injectHead!,
     injectBody: themePayload.injectBody!

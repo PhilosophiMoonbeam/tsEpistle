@@ -467,6 +467,16 @@
               .text-body-small {{$t('common:page.unpublishedWarning')}}
             site-banner(:banner='siteBanner')
             .contents(ref='container')
+              .wiki-gutter-art.page-gutter-ornament.page-gutter-ornament--start(
+                :class='`wiki-gutter-art--${gutterStyle}`'
+                :style='gutterOrnamentStyle'
+                aria-hidden='true'
+              )
+              .wiki-gutter-art.page-gutter-ornament.page-gutter-ornament--end(
+                :class='`wiki-gutter-art--${gutterStyle}`'
+                :style='gutterOrnamentStyle'
+                aria-hidden='true'
+              )
               slot(name='contents')
             section.comments-container#discussion(v-if='commentsEnabled && commentsPerms.read && !printView' aria-labelledby='discussion-title')
               .comments-header
@@ -892,6 +902,8 @@ export default defineComponent({
       pageProtection: { protected: false, version: 0, updatedBy: null, updatedAt: null } as PageProtection,
       pageProtectionPassword: '',
       pageEditFab: false,
+      gutterStyle: siteConfig.gutterStyle,
+      gutterCustomCss: siteConfig.gutterCustomCss,
       scrollOpts: {
         duration: 1500,
         offset: 0,
@@ -921,6 +933,9 @@ export default defineComponent({
     }
   },
   computed: {
+    gutterOrnamentStyle (): string | undefined {
+      return this.gutterStyle === 'custom' ? this.gutterCustomCss : undefined
+    },
     isAuthenticated () {
       return wikiStore.user.authenticated
     },
@@ -1686,6 +1701,41 @@ export default defineComponent({
   box-shadow: 0 14px 42px rgba(15, 23, 42, .05);
 }
 
+.page-col-content > .contents {
+  container-name: reading-surface;
+  container-type: inline-size;
+
+  > div:not(.page-gutter-ornament) {
+    position: relative;
+    z-index: 1;
+  }
+}
+
+.page-gutter-ornament {
+  position: absolute;
+  inset-block-start: 2rem;
+  z-index: 0;
+  display: none;
+  width: clamp(4.5rem, calc((100% - 920px) / 2 - 1rem), 15rem);
+  height: min(32rem, calc(100% - 4rem));
+  opacity: .78;
+
+  &--start {
+    inset-inline-start: .35rem;
+  }
+
+  &--end {
+    inset-inline-end: .35rem;
+    transform: scaleX(-1);
+  }
+}
+
+@container reading-surface (min-width: 70rem) {
+  .page-gutter-ornament {
+    display: block;
+  }
+}
+
 .page-shortcuts-card {
   border: 1px solid rgba(var(--v-border-color), .1) !important;
 
@@ -1824,6 +1874,12 @@ export default defineComponent({
   .page-return-top {
     inset-inline-start: 16px;
     bottom: calc(var(--wiki-footer-height) + 12px) !important;
+  }
+}
+
+@media print {
+  .page-gutter-ornament {
+    display: none !important;
   }
 }
 

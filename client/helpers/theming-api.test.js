@@ -18,6 +18,8 @@ function validConfig (overrides = {}) {
     darkMode: false,
     colors: cloneThemeColors(DEFAULT_THEME_COLORS),
     tocPosition: 'left',
+    gutterStyle: 'columns',
+    gutterCustomCss: '',
     injectCSS: '.contents { color: red; }',
     injectHead: '<meta name="test" content="head">',
     injectBody: '<div>body</div>',
@@ -45,6 +47,8 @@ describe('theming api helper', () => {
       iconset: 'fa',
       darkMode: true,
       tocPosition: 'right',
+      gutterStyle: 'custom',
+      gutterCustomCss: 'background: linear-gradient(red, transparent); opacity: .4;',
       injectCSS: '',
       injectHead: '',
       injectBody: ''
@@ -56,6 +60,8 @@ describe('theming api helper', () => {
       darkMode: true,
       colors: cloneThemeColors(DEFAULT_THEME_COLORS),
       tocPosition: 'right',
+      gutterStyle: 'custom',
+      gutterCustomCss: 'background: linear-gradient(red, transparent); opacity: .4;',
       injectCSS: '',
       injectHead: '',
       injectBody: ''
@@ -86,6 +92,8 @@ describe('theming api helper', () => {
       validConfig({ colors: { light: {}, dark: {} } }),
       validConfig({ colors: { ...cloneThemeColors(DEFAULT_THEME_COLORS), dark: { ...DEFAULT_THEME_COLORS.dark, primary: 'blue' } } }),
       validConfig({ tocPosition: null }),
+      validConfig({ gutterStyle: 'marble' }),
+      validConfig({ gutterCustomCss: '.contents { display: none; }' }),
       validConfig({ injectCSS: null }),
       validConfig({ injectHead: false }),
       validConfig({ injectBody: {} })

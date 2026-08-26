@@ -30,6 +30,7 @@ import { isExternalRestPath, isInternalRestPath } from '../shared/api-access.ts'
 import { siteBannerOrDefault } from '../shared/site-banner.ts'
 import { normalizeAvailableEditors } from '../shared/page-editors.ts'
 import { normalizeThemeColors } from '../shared/theme-colors.ts'
+import { normalizePageGutterCustomCss, normalizePageGutterStyle } from '../shared/page-gutters.ts'
 
 import { AgentProviderRegistry, type AgentProfileTokenKeys } from './agents/providers/registry.ts'
 import { DatabaseAgentSecretRegistry, decodeAgentProviderSecretKeys, environmentSecretValue } from './agents/providers/secrets.ts'
@@ -75,7 +76,14 @@ interface MasterConfig extends Record<string, unknown> {
   sessionSecret: string
   ssl: { enabled: boolean | number | string }
   title: string
-  theming: { colors?: unknown; darkMode: boolean; theme: string; tocPosition?: string }
+  theming: {
+    colors?: unknown
+    darkMode: boolean
+    theme: string
+    tocPosition?: string
+    gutterStyle?: unknown
+    gutterCustomCss?: unknown
+  }
 }
 
 const requiredEnvironment = (name: string): string => {
@@ -340,6 +348,8 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
       darkMode: wiki.config.theming.darkMode,
       themeColors: normalizeThemeColors(wiki.config.theming.colors),
       tocPosition: wiki.config.theming.tocPosition || 'left',
+      gutterStyle: normalizePageGutterStyle(wiki.config.theming.gutterStyle),
+      gutterCustomCss: normalizePageGutterCustomCss(wiki.config.theming.gutterCustomCss),
       lang: wiki.config.lang.code,
       rtl: wiki.config.lang.rtl,
       company: wiki.config.company,

@@ -30,6 +30,8 @@ type ThemingMutation {
     darkMode: Boolean!
     colors: ThemingColorsInput
     tocPosition: String
+    gutterStyle: String
+    gutterCustomCss: String
     injectCSS: String
     injectHead: String
     injectBody: String
@@ -46,6 +48,8 @@ type ThemingConfig {
   darkMode: Boolean!
   colors: ThemingColors!
   tocPosition: String
+  gutterStyle: String!
+  gutterCustomCss: String!
   injectCSS: String
   injectHead: String
   injectBody: String

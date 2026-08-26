@@ -536,7 +536,10 @@ type PageSearchResult {
   description: String!
   id: String!
   locale: String!
+  matchedFields: [String!]!
   path: String!
+  score: Float!
+  tags: [String!]!
   title: String!
   visibility: PageVisibility!
 }
@@ -846,6 +849,8 @@ input ThemingColorsInput {
 type ThemingConfig {
   colors: ThemingColors!
   darkMode: Boolean!
+  gutterCustomCss: String!
+  gutterStyle: String!
   iconset: String!
   injectBody: String
   injectCSS: String
@@ -879,7 +884,7 @@ input ThemingModeColorsInput {
 }
 
 type ThemingMutation {
-  setConfig(colors: ThemingColorsInput, darkMode: Boolean!, iconset: String!, injectBody: String, injectCSS: String, injectHead: String, theme: String!, tocPosition: String): DefaultResponse
+  setConfig(colors: ThemingColorsInput, darkMode: Boolean!, gutterCustomCss: String, gutterStyle: String, iconset: String!, injectBody: String, injectCSS: String, injectHead: String, theme: String!, tocPosition: String): DefaultResponse
 }
 
 type ThemingQuery {

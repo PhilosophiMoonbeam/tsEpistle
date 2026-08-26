@@ -131,6 +131,8 @@ defaults:
           warning: '#FFA726'
           error: '#CF6679'
       tocPosition: 'left'
+      gutterStyle: 'columns'
+      gutterCustomCss: ''
     auth:
       autoLogin: false
       enforce2FA: false

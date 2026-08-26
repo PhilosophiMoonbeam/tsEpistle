@@ -23,3 +23,22 @@ props:
       - left
       - right
       - hidden
+  gutterStyle:
+    type: String
+    title: Reading Gutter Ornament
+    hint: Select the decorative treatment shown beside wide article text.
+    order: 3
+    default: columns
+    enum:
+      - columns
+      - orbits
+      - laurel
+      - aurora
+      - none
+      - custom
+  gutterCustomCss:
+    type: String
+    title: Custom Gutter CSS
+    hint: CSS declarations applied only to the two article gutter ornaments.
+    order: 4
+    default: ''
