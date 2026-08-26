@@ -55,58 +55,62 @@
             @keydown.esc='navSearch = ``'
           )
         vue-scroll.admin-sidebar__scroll(:ops='scrollStyle')
-          v-list.admin-nav(
-            v-model:opened='openedSections'
-            nav
-            role='navigation'
-            aria-label='Administration sections'
-          )
+          nav.admin-nav(aria-label='Administration sections')
             v-list-item.admin-nav__dashboard(
               to='/dashboard'
               color='primary'
               prepend-icon='mdi-view-dashboard-variant-outline'
               rounded='lg'
+              nav
             )
               v-list-item-title {{ $t('admin:dashboard.title') }}
               template(v-slot:append)
                 v-icon(size='18') mdi-arrow-right
             .admin-nav__label Settings
             template(v-if='filteredNavGroups.length')
-              v-list-group(
+              .admin-nav__group(
                 v-for='group in filteredNavGroups'
                 :key='group.key'
-                :value='group.key'
               )
-                template(v-slot:activator='{ props }')
-                  v-list-item.admin-nav__section(
-                    v-bind='props'
-                    :prepend-icon='group.icon'
-                    rounded='lg'
-                  )
-                    v-list-item-title {{ group.label }}
-                v-list-item.admin-nav__item(
-                  v-for='item in group.items'
-                  :key='item.key'
-                  :to='item.to'
-                  :href='item.href'
-                  color='primary'
-                  :prepend-icon='item.icon'
-                  rounded='lg'
+                button.admin-nav__section(
+                  type='button'
+                  @click='toggleSection(group.key)'
+                  :aria-expanded='isSectionOpen(group.key)'
+                  :aria-controls='`admin-section-${group.key}`'
                 )
-                  v-list-item-title {{ item.label }}
-                  template(v-slot:append v-if='item.count !== undefined')
-                    v-chip.admin-nav__count(size='x-small' variant='tonal' color='primary') {{ item.count }}
+                  v-icon.admin-nav__section-icon(size='21') {{ group.icon }}
+                  span {{ group.label }}
+                  v-icon.admin-nav__section-chevron(size='18') {{ isSectionOpen(group.key) ? 'mdi-chevron-up' : 'mdi-chevron-down' }}
+                v-expand-transition
+                  .admin-nav__items(
+                    v-show='isSectionOpen(group.key)'
+                    :id='`admin-section-${group.key}`'
+                  )
+                    v-list-item.admin-nav__item(
+                      v-for='item in group.items'
+                      :key='item.key'
+                      :to='item.to'
+                      :href='item.href'
+                      color='primary'
+                      :prepend-icon='item.icon'
+                      rounded='lg'
+                      nav
+                    )
+                      v-list-item-title {{ item.label }}
+                      template(v-slot:append v-if='item.count !== undefined')
+                        v-chip.admin-nav__count(size='x-small' variant='tonal' color='primary') {{ item.count }}
             .admin-nav__empty(v-else)
               v-icon(size='28') mdi-magnify-close
               .text-body-medium No settings found
               .text-body-small.text-medium-emphasis Try a different search
         .admin-sidebar__footer
-          v-list(nav)
+          nav(aria-label='Administration support')
             v-list-item(
               to='/contribute'
               color='primary'
               prepend-icon='mdi-heart-outline'
               rounded='lg'
+              nav
             )
               v-list-item-title {{ $t('admin:contribute.title') }}
               template(v-slot:append)
@@ -292,6 +296,14 @@ export default defineComponent({
     }
   },
   methods: {
+    isSectionOpen(key: string) {
+      return this.openedSections.includes(key)
+    },
+    toggleSection(key: string) {
+      this.openedSections = this.isSectionOpen(key)
+        ? this.openedSections.filter(section => section !== key)
+        : [...this.openedSections, key]
+    },
     syncOpenedSection() {
       const currentPath = this.$route.path
       const currentGroup = this.navGroups.find(group =>
@@ -443,33 +455,50 @@ export default defineComponent({
   }
 
   &__section {
+    display: flex;
+    width: 100%;
     min-height: 44px;
+    align-items: center;
+    gap: 14px;
     margin: 3px 0;
+    padding: 0 12px;
+    border: 0;
+    border-radius: 12px;
+    background: transparent;
     color: rgb(var(--v-theme-on-surface));
+    cursor: pointer;
+    font: inherit;
     font-weight: 620;
+    text-align: start;
+    transition: background-color .16s ease, color .16s ease;
 
-    .v-list-item__prepend > .v-icon {
-      color: rgb(var(--v-theme-on-surface));
-      opacity: .86;
+    &:hover {
+      background: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 5%, transparent);
     }
+  }
+
+  &__section-icon {
+    flex: 0 0 auto;
+    opacity: .82;
+  }
+
+  &__section-chevron {
+    margin-inline-start: auto;
+    opacity: .58;
+  }
+
+  &__items {
+    margin-inline-start: 23px;
+    padding-inline-start: 5px;
+    border-inline-start: 1px solid rgba(var(--v-border-color), .14);
   }
 
   &__item {
     min-height: 42px;
-    margin: 2px 0 2px 14px;
+    margin: 2px 0;
     padding-inline-start: 14px !important;
     color: rgb(var(--v-theme-on-surface));
     opacity: .74;
-
-    &::before {
-      position: absolute;
-      top: 0;
-      bottom: 0;
-      left: -6px;
-      width: 1px;
-      background: rgba(var(--v-border-color), .14);
-      content: '';
-    }
 
     .v-list-item__prepend > .v-icon {
       margin-inline-end: 14px;
@@ -495,6 +524,7 @@ export default defineComponent({
   }
 
   .v-list-item--active {
+    opacity: 1;
     background: color-mix(in srgb, rgb(var(--v-theme-primary)) 11%, transparent);
     color: rgb(var(--v-theme-primary));
 
