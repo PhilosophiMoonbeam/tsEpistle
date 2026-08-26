@@ -263,6 +263,10 @@ const sendPrompt = async (content: string, invokedSkillVersionIds: readonly stri
   if (!providerAvailable.value || !thread.value) return false
   return agents.send(prompt, invokedSkillVersionIds)
 }
+const focusConversation = async (): Promise<void> => {
+  await nextTick()
+  transcript.value?.focus({ preventScroll: true })
+}
 
 const reloadSkillCatalog = async (): Promise<void> => {
   try {
@@ -353,7 +357,7 @@ watch(
 )
 
 onMounted(() => { void ensureInitialized() })
-defineExpose({ sendPrompt })
+defineExpose({ sendPrompt, focusConversation })
 </script>
 
 <style scoped>

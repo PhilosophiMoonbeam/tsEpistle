@@ -19,7 +19,9 @@ describe('inline Ask mode contract', () => {
     expect(template).toMatch(/v-if=['"]canAsk && searchMode === `ask`['"]/)
     expect(template).not.toMatch(/action=['"]\/_?api\/agents\/launch['"]/)
     expect(template).not.toMatch(/target=['"]_blank['"]/)
-    expect(search).toMatch(/inlineAgent\?\.sendPrompt\(prompt\)/)
+    expect(search).toMatch(/if\s*\(!inlineAgent\)\s*return/)
+    expect(search).toMatch(/inlineAgent\.sendPrompt\(prompt\)/)
+    expect(search).toMatch(/inlineAgent\.focusConversation\(\)/)
   })
 
   test('reuses authenticated sessions without changing the Wiki page route', () => {
