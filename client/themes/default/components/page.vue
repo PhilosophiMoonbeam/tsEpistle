@@ -9,7 +9,7 @@
       v-model='navShown'
       :location="$vuetify.locale.isRtl ? 'right' : undefined"
       )
-      vue-scroll.page-nav-scroll(:ops='scrollStyle')
+      vue-scroll.page-nav-scroll(:ops='scrollStyle', style='scrollbar-gutter: auto;')
         nav-sidebar(
           color='bg-primary'
           :items='sidebarDecoded'
