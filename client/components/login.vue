@@ -64,12 +64,19 @@
               hide-details
               ref='iptPassword'
               v-model='password'
-              :append-icon='hidePassword ? "mdi-eye-off" : "mdi-eye"'
-              @click:append='() => (hidePassword = !hidePassword)'
               :type='hidePassword ? "password" : "text"'
               :placeholder='$t("auth:fields.password")'
               autocomplete='current-password'
             )
+              template(v-slot:append-inner)
+                v-btn(
+                  icon
+                  variant='text'
+                  size='small'
+                  :aria-label='hidePassword ? `Show password` : `Hide password`'
+                  @click='hidePassword = !hidePassword'
+                  )
+                  v-icon(:icon='hidePassword ? `mdi-eye-off` : `mdi-eye`')
             v-btn.mt-2.text-none(
               width='100%'
               size="large"

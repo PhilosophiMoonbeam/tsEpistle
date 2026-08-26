@@ -1681,10 +1681,28 @@ export default defineComponent({
   border: 1px solid rgba(var(--v-border-color), .1) !important;
 
   .v-toolbar {
+    height: auto !important;
     min-height: 48px;
   }
 
+  .v-toolbar__content {
+    display: flex;
+    height: auto !important;
+    min-height: 48px;
+    flex-wrap: wrap;
+    gap: 2px;
+    justify-content: center;
+    padding: 6px;
+  }
+
+  .v-spacer {
+    display: none;
+  }
+
   .v-btn {
+    width: 34px;
+    min-width: 34px;
+    height: 34px;
     border-radius: 9px !important;
   }
 }
@@ -1732,6 +1750,7 @@ export default defineComponent({
 
 .comments-main {
   padding: 22px 24px 26px;
+  background: rgb(var(--v-theme-surface)) !important;
 }
 
 @media (max-width: 1279px) {

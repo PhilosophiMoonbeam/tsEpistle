@@ -39,14 +39,21 @@
                     bg-color='surface'
                     ref='iptPassword'
                     v-model='password'
-                    :append-icon='hidePassword ? "mdi-eye-off" : "mdi-eye"'
-                    @click:append='() => (hidePassword = !hidePassword)'
                     :type='hidePassword ? "password" : "text"'
                     :placeholder='$t("auth:fields.password")'
                     color='primary'
                     loading
                     counter='255'
                     )
+                    template(v-slot:append-inner)
+                      v-btn(
+                        icon
+                        variant='text'
+                        size='small'
+                        :aria-label='hidePassword ? `Show password` : `Hide password`'
+                        @click='hidePassword = !hidePassword'
+                        )
+                        v-icon(:icon='hidePassword ? `mdi-eye-off` : `mdi-eye`')
                     template(v-slot:loader)
                       password-strength(v-model='password')
                   v-text-field.mt-2(
