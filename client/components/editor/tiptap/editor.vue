@@ -78,6 +78,17 @@
       v-btn(v-if='hasSourceSelection', color='amber-darken-3', title='Edit preserved source', aria-label='Edit preserved source', @click='openSourceDialog')
         v-icon(start) mdi-code-block-tags
         | Edit source
+      v-spacer
+      v-btn.editor-tiptap-preview-trigger(
+        v-if='format === `markdown`'
+        color='teal'
+        variant='tonal'
+        title='Preview rendered Markdown'
+        aria-label='Preview rendered Markdown'
+        @click='openMarkdownPreview'
+      )
+        v-icon(start) mdi-book-open-page-variant-outline
+        | Preview
     .editor-tiptap-markdown-tools(v-if='format === `markdown`')
       v-btn.editor-tiptap-extension-trigger(color='teal', rounded='0', @click='toggleExtensionDialog', aria-label='Insert content extension')
         v-icon(start) mdi-qrcode
@@ -131,6 +142,19 @@
           v-spacer
           v-btn(variant='text', @click='sourceDialog = false') Cancel
           v-btn(color='teal', @click='saveSourceNode') Apply
+    v-dialog(v-model='previewDialog', fullscreen, transition='dialog-bottom-transition')
+      v-card
+        v-toolbar(color='primary')
+          v-btn(icon, aria-label='Close rendered Markdown preview', @click='previewDialog = false')
+            v-icon mdi-close
+          v-toolbar-title Rendered Markdown
+          v-spacer
+          .text-body-small.mr-4 Same dialect as the Markdown editor
+        v-card-text.editor-tiptap-preview
+          .editor-tiptap-preview-document.editor-markdown-preview-content.contents(
+            ref='markdownPreview'
+            v-html='previewHTML'
+          )
 </template>
 
 <script lang='ts'>
@@ -163,6 +187,11 @@ import {
   type AdmonitionKind,
   type VisualMarkdownGlyph
 } from './visual-markdown-authoring.ts'
+import {
+  createWikiMarkdownRenderer,
+  enhanceWikiMarkdownPreview,
+  sanitizeWikiMarkdownHtml
+} from '../markdown/preview.ts'
 import { onEditorSaveConflict, onEditorContentOverwrite, offEditorSaveConflict, offEditorContentOverwrite } from '../../../helpers/editor-conflict-events'
 import { onEditorInsert, offEditorInsert, type EditorInsertPayload } from '../../../helpers/editor-insert-events'
 import { onEditorLinkToPage, offEditorLinkToPage } from '../../../helpers/editor-link-events'
@@ -200,6 +229,8 @@ const CODE_BLOCK_LANGUAGES = [
   { value: 'wiki-extension', label: 'Wiki content extension' }
 ] as const
 
+const markdownPreview = createWikiMarkdownRenderer()
+
 export default defineComponent({
   components: {
     EditorConflict,
@@ -228,6 +259,8 @@ export default defineComponent({
       admonitionTitle: '',
       admonitionBody: '',
       admonitionError: '',
+      previewDialog: false,
+      previewHTML: '',
       sourceDialog: false,
       sourceNodeName: null as SourceNodeName | null,
       sourceKind: '',
@@ -342,6 +375,16 @@ export default defineComponent({
           icon: 'warning'
         })
       }
+    },
+    openMarkdownPreview () {
+      if (!this.editor) return
+      const source = serializeVisualEditorData('markdown', this.editor as unknown as Editor)
+      this.previewHTML = sanitizeWikiMarkdownHtml(markdownPreview.render(source))
+      this.previewDialog = true
+      this.$nextTick(() => {
+        const preview = this.$refs.markdownPreview as HTMLElement | undefined
+        if (preview) enhanceWikiMarkdownPreview(preview, this.$vuetify.theme.current.dark)
+      })
     },
     toggleExtensionDialog () {
       this.activeModal = this.activeModal === 'editorModalBlocks' ? '' : 'editorModalBlocks'
@@ -735,6 +778,47 @@ $editor-height-mobile: calc(100dvh - 56px - 16px);
 
     .ProseMirror-selectednode {
       box-shadow: 0 0 0 3px rgba(mc('teal', '500'), .35);
+    }
+  }
+}
+
+.editor-tiptap-preview {
+  background:
+    radial-gradient(circle at top, rgba(mc('teal', '500'), .09), transparent 32rem),
+    mc('grey', '200');
+  min-height: calc(100dvh - 64px);
+  overflow: auto;
+  padding: clamp(1rem, 4vw, 4rem);
+
+  &-document {
+    background: #FFF;
+    border-radius: 8px;
+    box-shadow: 0 18px 60px rgba(0, 0, 0, .16);
+    margin: 0 auto;
+    max-width: 1100px;
+    min-height: calc(100dvh - 64px - clamp(2rem, 8vw, 8rem));
+    padding: clamp(1.5rem, 5vw, 5rem);
+  }
+
+  @at-root .v-theme--dark & {
+    background:
+      radial-gradient(circle at top, rgba(mc('teal', '400'), .1), transparent 32rem),
+      mc('grey', '900');
+
+    &-document {
+      background: #303030;
+      color: #FFF;
+    }
+  }
+
+  @include until($tablet) {
+    padding: 0;
+
+    &-document {
+      border-radius: 0;
+      box-shadow: none;
+      min-height: calc(100dvh - 56px);
+      padding: 1.25rem;
     }
   }
 }

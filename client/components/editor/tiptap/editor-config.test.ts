@@ -2,6 +2,10 @@ import { Editor, type JSONContent } from '@tiptap/core'
 import { afterEach, describe, expect, it } from 'vitest'
 import markdownRenderer from '../../../../server/modules/rendering/markdown-core/renderer.ts'
 import {
+  createWikiMarkdownRenderer,
+  sanitizeWikiMarkdownHtml
+} from '../markdown/preview.ts'
+import {
   createTiptapExtensions,
   getVisualEditorDefinition,
   serializeVisualEditorData,
@@ -151,6 +155,75 @@ $$
     const reopened = createEditor('markdown', output)
     expect(reopened.getMarkdown()).toBe(output)
     expect(await renderServerMarkdown(output)).toBe(await renderServerMarkdown(source))
+  })
+
+  it('renders the complete Markdown editor dialect after a visual round trip', () => {
+    const source = `# Dialect {#dialect .reference}
+
+"Smart quotes" -- autolink https://example.com, [reference][guide], and emoji :rocket:.
+First line
+second line with ==mark==, H~2~O, x^2^, <kbd>Ctrl</kbd>, and a	tab.[^note]
+
+- [x] Complete
+
+HTML
+: Hyper Text Markup Language
+
+*[HTML]: Hyper Text Markup Language
+
+[^note]: Footnote **body**.
+
+![Sized](/assets/image.png =120x80)
+
+Inline math $E=mc^2$.
+
+$$
+a^2 + b^2 = c^2
+$$
+
+<div class="raw-widget">Raw <strong>HTML</strong></div>
+
+| A | B |
+| --- | --- |
+| one \\ | continued |
+| ^^ | rowspan |
+
+## Tabs {.tabset}
+
+### First
+
+Tab content.
+
+[guide]: /guide "Guide"
+
+\`\`\`plantuml
+Alice -> Bob
+\`\`\`
+
+\`\`\`mermaid
+graph TD
+  A --> B
+\`\`\`
+`
+    const editor = createEditor('markdown', source)
+    const output = editor.getMarkdown()
+    const sourceRenderer = createWikiMarkdownRenderer()
+    const visualRenderer = createWikiMarkdownRenderer()
+
+    expect(visualRenderer.render(output)).toBe(sourceRenderer.render(source))
+    expect(visualRenderer.render(output)).toContain('/_assets/svg/twemoji/1f680.svg')
+    expect(visualRenderer.render(output)).toContain('class="katex"')
+    expect(visualRenderer.render(output)).toContain('class="footnotes')
+    expect(visualRenderer.render(output)).toContain('rowspan="2"')
+  })
+
+  it('sanitizes the renderer shared by both Markdown previews', () => {
+    const markdown = createWikiMarkdownRenderer()
+    const preview = sanitizeWikiMarkdownHtml(markdown.render('<img src=x onerror=alert(1)><script>alert(2)</script>'))
+
+    expect(preview).toContain('<img src="x">')
+    expect(preview).not.toContain('onerror')
+    expect(preview).not.toContain('<script')
   })
 
   it('applies visual marks and inserts canonical definition lists', () => {

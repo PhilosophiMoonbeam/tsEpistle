@@ -262,7 +262,6 @@ import { onEditorInsert, offEditorInsert, type EditorInsertPayload } from '../..
 import { onEditorSaveConflict, onEditorContentOverwrite, offEditorSaveConflict, offEditorContentOverwrite } from '../../helpers/editor-conflict-events'
 import markdownHelp from './markdown/help.vue'
 import { searchPages } from '../../helpers/pages-api'
-import DOMPurify from 'dompurify'
 import Velocity from 'velocity-animate'
 import { decodeBase64Text } from '../../helpers/base64'
 
@@ -278,35 +277,14 @@ import {
   type MarkdownCollaboration
 } from './collaboration'
 
-// Markdown-it
-import MarkdownIt from 'markdown-it'
-import mdAttrs from 'markdown-it-attrs'
-import { full as mdEmoji } from 'markdown-it-emoji'
-import mdTaskLists from 'markdown-it-task-lists'
-import mdExpandTabs from 'markdown-it-expand-tabs'
-import mdAbbr from 'markdown-it-abbr'
-import mdSup from 'markdown-it-sup'
-import mdSub from 'markdown-it-sub'
-import mdMark from 'markdown-it-mark'
-import mdDeflist from 'markdown-it-deflist'
-import mdMultiTable from 'markdown-it-multimd-table'
-import mdFootnote from 'markdown-it-footnote'
-import mdImsize from '../../../shared/markdown-it-image-size'
-import katex from 'katex'
-import underline from '../../libs/markdown-it-underline'
-import 'katex/dist/contrib/mhchem.mjs'
-import twemoji from 'twemoji'
-import plantuml from './markdown/plantuml'
 
-// Prism (Syntax Highlighting)
-import Prism from '../../libs/prism/setup'
-
-// Mermaid
-import mermaid from 'mermaid'
 
 // Helpers
-import katexHelper from './common/katex'
-import tabsetHelper from './markdown/tabset'
+import {
+  createWikiMarkdownRenderer,
+  enhanceWikiMarkdownPreview,
+  sanitizeWikiMarkdownHtml
+} from './markdown/preview.ts'
 
 type MarkdownMarkerKind = 'diagram'
 
@@ -339,7 +317,7 @@ type AddMarkerOptions = {
   action: EventListener
 }
 
-type MarkdownItRenderRule = NonNullable<InstanceType<typeof MarkdownIt>['renderer']['rules'][string]>
+type MarkdownItRenderRule = NonNullable<ReturnType<typeof createWikiMarkdownRenderer>['renderer']['rules'][string]>
 
 function requireEditor (editor: TextEditorHandle | null): TextEditorHandle {
   if (!editor) throw new Error('Markdown editor has not been initialized.')
@@ -354,49 +332,7 @@ function requireEditor (editor: TextEditorHandle | null): TextEditorHandle {
 const CtrlKey = /Mac/.test(navigator.platform) ? 'Cmd' : 'Ctrl'
 
 
-// Markdown Instance
-const md = new MarkdownIt({
-  html: true,
-  breaks: true,
-  linkify: true,
-  typographer: true,
-  highlight(str, lang) {
-    if (lang === 'diagram') {
-      return `<pre class="diagram">` + decodeBase64Text(str) + `</pre>`
-    } else if (['mermaid', 'plantuml'].includes(lang)) {
-      return `<pre class="codeblock-${lang}"><code>${_.escape(str)}</code></pre>`
-    } else {
-      return `<pre class="line-numbers"><code class="language-${lang}">${_.escape(str)}</code></pre>`
-    }
-  }
-})
-  .use(mdAttrs, {
-    allowedAttributes: ['id', 'class', 'target']
-  })
-  .use(underline)
-  .use(mdEmoji)
-  .use(mdTaskLists, { label: false, labelAfter: false })
-  .use(mdExpandTabs)
-  .use(mdAbbr)
-  .use(mdSup)
-  .use(mdSub)
-  .use(mdMultiTable, { multiline: true, rowspan: true, headerless: true })
-  .use(mdMark)
-  .use(mdDeflist)
-  .use(mdFootnote)
-  .use(mdImsize)
-
-// DOMPurify fix for draw.io
-DOMPurify.addHook('uponSanitizeElement', (node) => {
-  if (!(node instanceof Element)) { return }
-  const breaks = node.querySelectorAll('foreignObject br, foreignObject p')
-  breaks.forEach((breakElement: Element) => {
-    breakElement.parentNode?.replaceChild(
-      document.createElement('div'),
-      breakElement
-    )
-  })
-})
+const md = createWikiMarkdownRenderer()
 
 // ========================================
 // HELPER FUNCTIONS
@@ -418,61 +354,12 @@ md.renderer.rules.paragraph_open = injectLineNumbers
 md.renderer.rules.heading_open = injectLineNumbers
 md.renderer.rules.blockquote_open = injectLineNumbers
 
-// ========================================
-// PLANTUML
-// ========================================
-
-// Plugin defaults mirror the server renderer defaults.
-plantuml.init(md, {})
-
-// ========================================
-// KATEX
-// ========================================
-
-const macros: Record<string, string> = {}
-md.inline.ruler.after('escape', 'katex_inline', katexHelper.katexInline)
-md.renderer.rules.katex_inline = (tokens, idx) => {
-  try {
-    return katex.renderToString(tokens[idx].content, {
-      displayMode: false, macros
-    })
-  } catch (err) {
-    console.warn(err)
-    return tokens[idx].content
-  }
-}
-md.block.ruler.after('blockquote', 'katex_block', katexHelper.katexBlock, {
-  alt: [ 'paragraph', 'reference', 'blockquote', 'list' ]
-})
-md.renderer.rules.katex_block = (tokens, idx) => {
-  try {
-    return `<p>` + katex.renderToString(tokens[idx].content, {
-      displayMode: true, macros
-    }) + `</p>`
-  } catch (err) {
-    console.warn(err)
-    return tokens[idx].content
-  }
-}
-
-// ========================================
-// TWEMOJI
-// ========================================
 const collaborations = new WeakMap<object, MarkdownCollaboration>()
-
-md.renderer.rules.emoji = (token, idx) => {
-  return twemoji.parse(token[idx].content, {
-    callback (icon) {
-      return `/_assets/svg/twemoji/${icon}.svg`
-    }
-  })
-}
 
 // ========================================
 // Vue Component
 // ========================================
 
-let mermaidId = 0
 type MarkdownEditorHost = HTMLElement & { __wikiSourceEditor?: TextEditorHandle }
 
 export default defineComponent({
@@ -556,10 +443,10 @@ export default defineComponent({
     previewShown (newValue: boolean, oldValue: boolean) {
       if (newValue && !oldValue) {
         this.$nextTick(() => {
-          const preview = this.$refs.editorPreview as HTMLElement
-          void this.renderMermaidDiagrams()
-          Prism.highlightAllUnder(preview)
-          preview.querySelectorAll('pre.line-numbers').forEach(pre => pre.classList.add('prismjs'))
+          enhanceWikiMarkdownPreview(
+            this.$refs.editorPreview as HTMLElement,
+            this.$vuetify.theme.current.dark
+          )
         })
       }
     },
@@ -631,16 +518,10 @@ export default defineComponent({
       linesMap = []
       // wikiStore.editor.content = newContent
       this.processMarkers(0, cm.lineCount)
-      this.previewHTML = DOMPurify.sanitize(md.render(newContent), {
-        ADD_TAGS: ['foreignObject'],
-        HTML_INTEGRATION_POINTS: { foreignobject: true }
-      })
+      this.previewHTML = sanitizeWikiMarkdownHtml(md.render(newContent))
       this.$nextTick(() => {
         const preview = this.$refs.editorPreview as HTMLElement
-        tabsetHelper.format()
-        void this.renderMermaidDiagrams()
-        Prism.highlightAllUnder(preview)
-        preview.querySelectorAll('pre.line-numbers').forEach(pre => pre.classList.add('prismjs'))
+        enhanceWikiMarkdownPreview(preview, this.$vuetify.theme.current.dark)
         this.scrollSync(cm)
       })
     },
@@ -770,23 +651,6 @@ export default defineComponent({
     refresh() {
       this.$nextTick(() => requireEditor(this.cm).requestMeasure())
     },
-    async renderMermaidDiagrams (): Promise<void> {
-      const elements = document.querySelectorAll<HTMLElement>('.editor-markdown-preview pre.codeblock-mermaid > code')
-      for (const element of elements) {
-        const codeBlock = element.parentElement
-        if (!codeBlock) continue
-        const id = `mermaid-id-${++mermaidId}`
-        try {
-          const { svg, bindFunctions } = await mermaid.render(id, element.innerText)
-          const mermaidElement = document.createElement('div')
-          mermaidElement.innerHTML = svg
-          codeBlock.replaceWith(mermaidElement)
-          bindFunctions?.(mermaidElement)
-        } catch {
-          // Keep the source block visible when the diagram is invalid.
-        }
-      }
-    },
     insertLink () {
       this.insertLinkDialog = true
     },
@@ -848,12 +712,6 @@ export default defineComponent({
       wikiStore.editor.content = '# Header\nYour content here'
     }
 
-    // Initialize Mermaid API
-    mermaid.initialize({
-      startOnLoad: false,
-      securityLevel: 'strict',
-      theme: this.$vuetify.theme.current.dark ? `dark` : `default`
-    })
 
     this.debouncedProcessContent = _.debounce((newContent: string) => this.processContent(newContent), 600)
     this.debouncedScrollSync = _.debounce((editor: TextEditorHandle) => this.performScrollSync(editor), 500)
