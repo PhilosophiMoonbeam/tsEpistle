@@ -107,6 +107,7 @@ import { emitEditorSaveConflict, onEditorConflictReset, offEditorConflictReset }
 import { getErrorMessage } from '../helpers/root-ui-store'
 import { decodeBase64Json } from '../helpers/base64'
 import { getEditorComponentName } from '../helpers/editor-key.ts'
+import { normalizeAvailableEditors } from '../../shared/page-editors.ts'
 
 
 export default defineComponent({
@@ -312,9 +313,14 @@ export default defineComponent({
     this.initContentParsed = this.initContent ? Base64.decode(this.initContent) : ''
     wikiStore.editor.content = this.initContentParsed
     if (this.mode === 'create' && !this.initEditor) {
-      _.delay(() => {
-        this.dialogEditorSelector = true
-      }, 500)
+      const availableEditors = normalizeAvailableEditors(siteConfig.availableEditors)
+      if (availableEditors.length === 1) {
+        this.currentEditor = getEditorComponentName(availableEditors[0])
+      } else {
+        _.delay(() => {
+          this.dialogEditorSelector = true
+        }, 500)
+      }
     } else {
       this.currentEditor = getEditorComponentName(this.initEditor || 'markdown')
     }

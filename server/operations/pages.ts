@@ -2,6 +2,7 @@ import _ from 'lodash'
 import type { Knex } from 'knex'
 import { canDeletePage, canReadPage, canWritePage, managesSystem, pageRoute, principalId, scopePageQuery, type PageVisibility } from '../helpers/page-access.ts'
 import { listPageIndexCandidates, PAGE_INDEX_CANDIDATE_LIMIT } from '../repositories/page-index.ts'
+import { isPageEditorKey, normalizeAvailableEditors } from '../../shared/page-editors.ts'
 
 import errors from './errors.ts'
 
@@ -105,7 +106,7 @@ interface WikiPageOperations {
     PageMoveForbidden: new () => Error
   }
   auth: { checkAccess(user: Express.User | undefined, permissions: readonly string[], context: Record<string, unknown>): boolean }
-  config: { db: { type: string }, lang: { code: string }, search?: { maxHits?: number } }
+  config: { db: { type: string }, editors?: { available?: unknown }, lang: { code: string }, search?: { maxHits?: number } }
   data: { searchEngine?: { query(query: string, options: Record<string, unknown>): Promise<SearchResponse> } }
   models: {
     knex: Knex
@@ -786,6 +787,9 @@ const getConflictLatest = async (input: OperationInput) => {
 
 const create = (input: OperationInput): unknown => {
   const payload = recordValue(input.input, 'input')
+  if (isPageEditorKey(payload.editor) && !normalizeAvailableEditors(wiki.config.editors?.available).includes(payload.editor)) {
+    throw new ApplicationError('The selected editor is not available for new pages.', { code: 'EDITOR_NOT_AVAILABLE' })
+  }
   const visibility = payload.visibility === undefined ? 'public' : payload.visibility
   if (visibility !== 'public' && visibility !== 'private') {
     throw new ApplicationError('visibility must be public or private', { code: 'INVALID_INPUT' })

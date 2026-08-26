@@ -47,6 +47,9 @@ describe('controllers/api site endpoints', () => {
         },
         logoUrl: '/logo.svg',
         pageExtensions: ['md', 'markdown'],
+        editors: {
+          available: ['markdown', 'visual-markdown', 'ckeditor', 'asciidoc', 'code']
+        },
         seo: {
           description: 'Description',
           robots: ['index', 'follow'],
@@ -158,6 +161,7 @@ describe('controllers/api site endpoints', () => {
       },
       logoUrl: '/logo.svg',
       pageExtensions: 'md, markdown',
+      availableEditors: ['markdown', 'visual-markdown', 'ckeditor', 'asciidoc', 'code'],
       authAutoLogin: false,
       authEnforce2FA: true,
       authHideLocal: false,
@@ -194,6 +198,7 @@ describe('controllers/api site endpoints', () => {
         },
         logoUrl: ' /next.svg ',
         pageExtensions: ' MD, Wiki,  ',
+        availableEditors: ['code', 'markdown'],
         description: 'Next description',
         robots: ['noindex'],
         analyticsService: '',
@@ -219,6 +224,7 @@ describe('controllers/api site endpoints', () => {
     })
     expect(global.WIKI.config.logoUrl).toBe('/next.svg')
     expect(global.WIKI.config.pageExtensions).toEqual(['md', 'wiki'])
+    expect(global.WIKI.config.editors.available).toEqual(['markdown', 'code'])
     expect(global.WIKI.config.seo).toEqual({
       description: 'Next description',
       robots: ['noindex'],
@@ -243,7 +249,7 @@ describe('controllers/api site endpoints', () => {
     expect(global.WIKI.config.uploads.maxFileSize).toBe(2097152)
     expect(global.WIKI.config.uploads.maxFiles).toBe(20)
     expect(global.WIKI.config.uploads.forceDownload).toBe(true)
-    expect(global.WIKI.configSvc.saveToDb).toHaveBeenCalledWith(['host', 'title', 'company', 'contentLicense', 'footerOverride', 'banner', 'seo', 'logoUrl', 'pageExtensions', 'auth', 'editShortcuts', 'features', 'security', 'uploads'])
+    expect(global.WIKI.configSvc.saveToDb).toHaveBeenCalledWith(['host', 'title', 'company', 'contentLicense', 'footerOverride', 'banner', 'seo', 'logoUrl', 'pageExtensions', 'editors', 'auth', 'editShortcuts', 'features', 'security', 'uploads'])
     expect(global.WIKI.app.enable).toHaveBeenCalledWith('trust proxy')
     expect(global.WIKI.app.disable).not.toHaveBeenCalled()
     expect(res.status).not.toHaveBeenCalled()
@@ -313,6 +319,29 @@ describe('controllers/api site endpoints', () => {
     expect(global.WIKI.configSvc.saveToDb).not.toHaveBeenCalled()
     expect(res.status).toHaveBeenCalledWith(400)
     expect(res.json).toHaveBeenCalledWith({ error: 'An enabled site banner must have a title or content.' })
+  })
+
+  it.each([
+    [[], 'At least one editor must remain available.'],
+    [['markdown', 'unknown'], 'Available editors contains an unsupported editor.'],
+    [['markdown', 'markdown'], 'Available editors must not contain duplicates.']
+  ])('rejects invalid editor availability before mutating or saving configuration', async (availableEditors, message) => {
+    const handler = await loadPutConfigHandler()
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
+
+    await handler({
+      user: {},
+      body: {
+        title: 'Should not be applied',
+        availableEditors
+      }
+    }, res)
+
+    expect(global.WIKI.config.title).toBe('Wiki')
+    expect(global.WIKI.config.editors.available).toEqual(['markdown', 'visual-markdown', 'ckeditor', 'asciidoc', 'code'])
+    expect(global.WIKI.configSvc.saveToDb).not.toHaveBeenCalled()
+    expect(res.status).toHaveBeenCalledWith(400)
+    expect(res.json).toHaveBeenCalledWith({ error: message })
   })
 
   it('returns JSON errors from save failures', async () => {

@@ -1,11 +1,12 @@
 import _ from 'lodash'
 import { siteBannerOrDefault, validateSiteBanner } from '../../shared/site-banner.ts'
+import { normalizeAvailableEditors, validateAvailableEditors } from '../../shared/page-editors.ts'
 
 import errors from './errors.ts'
 
 const { ApplicationError } = errors
 
-const saveKeys = ['host', 'title', 'company', 'contentLicense', 'footerOverride', 'banner', 'seo', 'logoUrl', 'pageExtensions', 'auth', 'editShortcuts', 'features', 'security', 'uploads']
+const saveKeys = ['host', 'title', 'company', 'contentLicense', 'footerOverride', 'banner', 'seo', 'logoUrl', 'pageExtensions', 'editors', 'auth', 'editShortcuts', 'features', 'security', 'uploads']
 
 interface SiteConfig extends Record<string, unknown> {
   banner?: unknown
@@ -16,6 +17,7 @@ interface SiteConfig extends Record<string, unknown> {
   footerOverride: unknown
   logoUrl: string
   pageExtensions: string[]
+  editors?: { available?: unknown }
   seo: Record<string, unknown>
   editShortcuts: Record<string, unknown>
   features: Record<string, unknown>
@@ -36,6 +38,7 @@ const getConfig = () => ({
   banner: siteBannerOrDefault(config.banner),
   logoUrl: config.logoUrl,
   pageExtensions: config.pageExtensions.join(', '),
+  availableEditors: normalizeAvailableEditors(config.editors?.available),
   ...config.seo,
   ...config.editShortcuts,
   ...config.features,
@@ -58,6 +61,11 @@ const updateConfig = async (input: unknown): Promise<void> => {
     throw new ApplicationError('Site configuration payload must be an object.', { code: 'INVALID_SITE_CONFIGURATION' })
   }
   const args = input as Record<string, unknown>
+  const hasAvailableEditors = Object.prototype.hasOwnProperty.call(args, 'availableEditors')
+  const availableEditorsValidation = hasAvailableEditors ? validateAvailableEditors(args.availableEditors) : null
+  if (availableEditorsValidation && !availableEditorsValidation.ok) {
+    throw new ApplicationError(availableEditorsValidation.message, { code: 'INVALID_EDITOR_CONFIGURATION' })
+  }
   if (Object.prototype.hasOwnProperty.call(args, 'banner')) {
     const result = validateSiteBanner(args.banner)
     if (!result.ok) {
@@ -66,6 +74,12 @@ const updateConfig = async (input: unknown): Promise<void> => {
     config.banner = result.value
   } else {
     config.banner = siteBannerOrDefault(config.banner)
+  }
+  if (availableEditorsValidation?.ok) {
+    config.editors = {
+      ...(config.editors ?? {}),
+      available: availableEditorsValidation.value
+    }
   }
   if (Object.prototype.hasOwnProperty.call(args, 'host')) {
     config.host = _.trim(args.host as string).replace(/\/$/, '')

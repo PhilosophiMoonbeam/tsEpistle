@@ -31,6 +31,27 @@ describe('site api helper', () => {
     })
   })
 
+  it('accepts a valid editor availability selection', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({
+      availableEditors: ['markdown', 'code'],
+      banner: { isEnabled: false, title: '', content: '' }
+    }))
+
+    await expect(fetchSiteConfig(fetchImpl)).resolves.toEqual({
+      availableEditors: ['markdown', 'code'],
+      banner: { isEnabled: false, title: '', content: '' }
+    })
+  })
+
+  it('rejects malformed editor availability responses', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({
+      availableEditors: [],
+      banner: { isEnabled: false, title: '', content: '' }
+    }))
+
+    await expect(fetchSiteConfig(fetchImpl, 'Unexpected editor config')).rejects.toThrow('Unexpected editor config')
+  })
+
   it('rejects malformed successful site config responses', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([]))
 

@@ -6,6 +6,7 @@ import type { helpers } from './helpers/index.ts'
 import type { Router } from 'vue-router'
 import type { ProductMetadata } from '../shared/product.ts'
 import type { SiteBannerConfig } from '../shared/site-banner.ts'
+import type { PageEditorKey } from '../shared/page-editors.ts'
 import type { ThemeColors } from '../shared/theme-colors.ts'
 
 export type SiteConfig = {
@@ -22,6 +23,7 @@ export type SiteConfig = {
   banner: SiteBannerConfig
   logoUrl: string
   product: ProductMetadata
+  availableEditors: PageEditorKey[]
   agentsEnabled: boolean
   agentProviderEnabled: boolean
   agentSkillsEnabled: boolean

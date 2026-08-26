@@ -1,73 +1,58 @@
 <template lang='pug'>
-  v-dialog(v-model='isShown', persistent, max-width='700', no-click-animation)
-    v-btn(icon, fixed, location="bottom right", color="grey-darken-3", @click='goBack', style='width: 50px;'): v-icon mdi-undo-variant
-    v-card.radius-7(color="blue-darken-3")
-      v-card-text.text-center.py-4
-        .text-body-large.text-white {{$t('editor:select.title')}}
-        v-container(fluid)
-          v-row.justify-center
-            v-col(cols='4')
-              v-card.radius-7.animated.fadeInUp.wait-p1s(
-                hover
-                ripple
-                )
-                v-card-text.text-center(@click='selectEditor("markdown")')
-                  img(src='/_assets/svg/editor-icon-markdown.svg', alt='Markdown', style='width: 36px;')
-                  .text-body-medium.text-primary.mt-2 Markdown
-                  .text-body-small.text-grey Plain Text Formatting
-            v-col(cols='4')
-              v-card.radius-7.animated.fadeInUp.wait-p2s(
-                hover
-                ripple
-                )
-                v-card-text.text-center(@click='selectEditor("visual-markdown")')
-                  img(src='/_assets/svg/editor-icon-markdown.svg', alt='Visual Markdown', style='width: 36px;')
-                  .text-body-medium.mt-2.text-primary Visual Markdown
-                  .text-body-small.text-grey Rich-text, Markdown output
-            v-col(cols='4')
-              v-card.radius-7.animated.fadeInUp.wait-p2s(
-                hover
-                ripple
-                )
-                v-card-text.text-center(@click='selectEditor("ckeditor")')
-                  img(src='/_assets/svg/editor-icon-html.svg', alt='Visual Editor', style='width: 36px;')
-                  .text-body-medium.mt-2.text-primary Visual Editor
-                  .text-body-small.text-grey Rich-text, HTML output
-            v-col(cols='4')
-              v-card.radius-7.animated.fadeInUp.wait-p3s(
-                hover
-                ripple
-                )
-                v-card-text.text-center(@click='selectEditor("asciidoc")')
-                  img(src='/_assets/svg/editor-icon-asciidoc.svg', alt='AsciiDoc', style='width: 36px;')
-                  .text-body-medium.text-primary.mt-2 AsciiDoc
-                  .text-body-small.text-grey Plain Text Formatting
-            v-col(cols='4')
-              v-card.radius-7.animated.fadeInUp.wait-p4s(
-                hover
-                ripple
-                )
-                v-card-text.text-center(@click='selectEditor("code")')
-                  img(src='/_assets/svg/editor-icon-code.svg', alt='Code', style='width: 36px;')
-                  .text-body-medium.text-primary.mt-2 Code
-                  .text-body-small.text-grey Raw HTML
-            v-col(cols='4')
-              v-card.radius-7.animated.fadeInUp.wait-p5s(
-                hover
-                ripple
-                )
-                v-card-text.text-center(@click='fromTemplate')
-                  img(src='/_assets/svg/icon-cube.svg', alt='From Template', style='width: 42px; opacity: .5;')
-                  .text-body-medium.mt-1.text-teal From Template
-                  .text-body-small.text-grey Use an existing page...
+  v-dialog(v-model='isShown', persistent, max-width='760', no-click-animation)
+    v-card.editor-select.radius-7
+      v-toolbar(color='primary', density='comfortable')
+        v-icon.ml-4 mdi-pencil-ruler
+        v-toolbar-title {{ $t('editor:select.title') }}
+        v-btn(icon='mdi-close', variant='text', aria-label='Go back', @click='goBack')
+      v-card-text.pa-5
+        .text-body-medium.text-medium-emphasis.mb-4
+          | Choose how you want to author this page. Your administrator has made {{ availableEditors.length }} {{ availableEditors.length === 1 ? 'editor' : 'editors' }} available.
+        .editor-select__grid
+          v-card.editor-select__option(
+            v-for='(editor, index) in availableEditors'
+            :key='editor.key'
+            variant='outlined'
+            hover
+            role='button'
+            tabindex='0'
+            :style='{ "--editor-delay": `${index * 55}ms` }'
+            @click='selectEditor(editor.key)'
+            @keydown.enter.prevent='selectEditor(editor.key)'
+            @keydown.space.prevent='selectEditor(editor.key)'
+          )
+            v-card-text.text-center.pa-5
+              .editor-select__icon
+                img(:src='editor.image', :alt='`${editor.title} editor`')
+              .text-title-medium.text-primary.mt-3 {{ editor.title }}
+              .text-body-small.text-medium-emphasis.mt-1 {{ editor.chooserDescription }}
+              v-chip.mt-3(size='x-small', variant='tonal', color='primary') {{ editor.format }}
 
-    page-selector(mode='select', v-model='templateDialogIsShown', :open-handler='fromTemplateHandle', :path='path', :locale='locale', must-exist)</template>
+          v-card.editor-select__option.editor-select__option--template(
+            variant='outlined'
+            hover
+            role='button'
+            tabindex='0'
+            :style='{ "--editor-delay": `${availableEditors.length * 55}ms` }'
+            @click='fromTemplate'
+            @keydown.enter.prevent='fromTemplate'
+            @keydown.space.prevent='fromTemplate'
+          )
+            v-card-text.text-center.pa-5
+              .editor-select__icon.editor-select__icon--template
+                img(src='/_assets/svg/icon-cube.svg', alt='Page template')
+              .text-title-medium.text-teal.mt-3 From Template
+              .text-body-small.text-medium-emphasis.mt-1 Start with an existing page
+              v-chip.mt-3(size='x-small', variant='tonal', color='teal') Reuse
+
+    page-selector(mode='select', v-model='templateDialogIsShown', :open-handler='fromTemplateHandle', :path='path', :locale='locale', must-exist)
+</template>
 
 <script lang='ts'>
 import { wikiStore } from '@/store/index.ts'
 import { getEditorComponentName } from '../../helpers/editor-key.ts'
-
-type EditorName = 'markdown' | 'visual-markdown' | 'ckeditor' | 'asciidoc' | 'code'
+import { PAGE_EDITOR_DEFINITIONS } from '../../helpers/page-editors.ts'
+import { normalizeAvailableEditors, type PageEditorKey } from '../../../shared/page-editors.ts'
 
 export default {
   emits: ['update:modelValue'],
@@ -95,6 +80,10 @@ export default {
         wikiStore.editor.editor = value
       }
     },
+    availableEditors() {
+      const selected = new Set(normalizeAvailableEditors(siteConfig.availableEditors))
+      return PAGE_EDITOR_DEFINITIONS.filter(editor => selected.has(editor.key))
+    },
     locale() {
       return wikiStore.page.locale
     },
@@ -103,7 +92,7 @@ export default {
     }
   },
   methods: {
-    selectEditor (name: EditorName) {
+    selectEditor (name: PageEditorKey) {
       this.currentEditor = getEditorComponentName(name)
       this.isShown = false
     },
@@ -124,6 +113,80 @@ export default {
 }
 </script>
 
-<style lang='scss'>
+<style lang='scss' scoped>
+.editor-select {
+  overflow: hidden;
 
+  &__grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 14px;
+  }
+
+  &__option {
+    cursor: pointer;
+    border-color: rgba(var(--v-border-color), var(--v-border-opacity));
+    animation: editor-option-in 280ms both;
+    animation-delay: var(--editor-delay);
+    transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+
+    &:hover,
+    &:focus-visible {
+      border-color: rgba(var(--v-theme-primary), .6);
+      box-shadow: 0 8px 22px rgba(var(--v-theme-on-surface), .1);
+      transform: translateY(-2px);
+      outline: none;
+    }
+
+    &--template {
+      background: rgba(var(--v-theme-secondary), .04);
+    }
+  }
+
+  &__icon {
+    display: grid;
+    place-items: center;
+    width: 58px;
+    height: 58px;
+    margin: 0 auto;
+    border-radius: 16px;
+    background: rgba(var(--v-theme-primary), .1);
+
+    img {
+      width: 38px;
+      height: 38px;
+    }
+
+    &--template {
+      background: rgba(var(--v-theme-secondary), .1);
+
+      img {
+        opacity: .7;
+      }
+    }
+  }
+}
+
+@keyframes editor-option-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (max-width: 699px) {
+  .editor-select__grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 459px) {
+  .editor-select__grid {
+    grid-template-columns: 1fr;
+  }
+}
 </style>

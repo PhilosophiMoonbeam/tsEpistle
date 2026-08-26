@@ -28,6 +28,7 @@ import apiV1Controller from './controllers/api-v1/index.ts'
 import type { ProductMetadata } from '../shared/product.ts'
 import { isExternalRestPath, isInternalRestPath } from '../shared/api-access.ts'
 import { siteBannerOrDefault } from '../shared/site-banner.ts'
+import { normalizeAvailableEditors } from '../shared/page-editors.ts'
 import { normalizeThemeColors } from '../shared/theme-colors.ts'
 
 import { AgentProviderRegistry, type AgentProfileTokenKeys } from './agents/providers/registry.ts'
@@ -63,6 +64,7 @@ interface MasterConfig extends Record<string, unknown> {
     writes: { enabled: boolean; create: { enabled: boolean }; patch: { enabled: boolean }; move: { enabled: boolean }; restore: { enabled: boolean }; delete: { enabled: boolean } }
   }
   bodyParserLimit?: string
+  editors?: { available?: unknown }
   company: string
   contentLicense: string
   description: string
@@ -347,6 +349,7 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
       footerOverride: wiki.config.footerOverride,
       banner: siteBannerOrDefault(wiki.config.banner),
       logoUrl: wiki.config.logoUrl === LEGACY_DEFAULT_LOGO_URL ? BUNDLED_DEFAULT_LOGO_URL : wiki.config.logoUrl,
+      availableEditors: normalizeAvailableEditors(wiki.config.editors?.available),
       product: wiki.product,
       agentsEnabled: wiki.config.agents.enabled,
       agentProviderEnabled: wiki.config.agents.provider.enabled,

@@ -1,4 +1,5 @@
 import { type SiteBannerConfig, validateSiteBanner } from '../../shared/site-banner.ts'
+import { validateAvailableEditors, type PageEditorKey } from '../../shared/page-editors.ts'
 
 type JsonHeaders = {
   get: (name: string) => string | null
@@ -38,6 +39,7 @@ export type SiteConfig = Record<string, unknown> & {
   featurePersonalWikis?: boolean
   featureTinyPNG?: boolean
   pageExtensions?: string
+  availableEditors?: PageEditorKey[]
   editFab?: boolean
   editMenuBar?: boolean
   editMenuBtn?: boolean
@@ -152,6 +154,7 @@ function assertSiteConfig (payload: Record<string, unknown>, fallbackMessage: st
     booleanFields.some(field => field in payload && typeof payload[field] !== 'boolean') ||
     numberFields.some(field => field in payload && typeof payload[field] !== 'number') ||
     ('robots' in payload && (!Array.isArray(payload.robots) || payload.robots.some(robot => typeof robot !== 'string'))) ||
+    ('availableEditors' in payload && !validateAvailableEditors(payload.availableEditors).ok) ||
     !bannerValidation.ok) {
     throw new Error(fallbackMessage)
   }

@@ -91,6 +91,13 @@ defaults:
       - md
       - html
       - txt
+    editors:
+      available:
+        - markdown
+        - visual-markdown
+        - ckeditor
+        - asciidoc
+        - code
     mail:
       host: ''
       secure: true
