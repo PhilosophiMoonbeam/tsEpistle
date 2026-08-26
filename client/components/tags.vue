@@ -12,7 +12,8 @@
         )
           v-icon mdi-tag-multiple-outline
     v-navigation-drawer#tag-navigation.tags-sidebar(
-      v-model='tagDrawerShown'
+      :model-value='$vuetify.display.mdAndUp || tagDrawerShown'
+      @update:model-value='tagDrawerShown = $event'
       :location="$vuetify.locale.isRtl ? 'right' : undefined"
       :permanent='$vuetify.display.mdAndUp'
       :temporary='$vuetify.display.smAndDown'
