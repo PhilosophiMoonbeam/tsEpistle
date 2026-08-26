@@ -92,10 +92,13 @@
 
 .wiki-gutter-art--aurora {
   background:
-    radial-gradient(ellipse at 70% 18%, color-mix(in srgb, rgb(var(--v-theme-primary)) 18%, transparent), transparent 54%),
-    radial-gradient(ellipse at 24% 52%, color-mix(in srgb, rgb(var(--v-theme-secondary)) 14%, transparent), transparent 58%),
-    radial-gradient(ellipse at 72% 84%, color-mix(in srgb, rgb(var(--v-theme-accent)) 11%, transparent), transparent 56%);
-  filter: saturate(115%);
+    radial-gradient(ellipse 50% 50% at 50% 50%, color-mix(in srgb, rgb(var(--v-theme-primary)) 20%, transparent), transparent 100%)
+    80% 4% / 112% 58% no-repeat,
+    radial-gradient(ellipse 50% 50% at 50% 50%, color-mix(in srgb, rgb(var(--v-theme-secondary)) 16%, transparent), transparent 100%)
+    8% 48% / 96% 64% no-repeat,
+    radial-gradient(ellipse 50% 50% at 50% 50%, color-mix(in srgb, rgb(var(--v-theme-accent)) 13%, transparent), transparent 100%)
+    86% 100% / 108% 58% no-repeat;
+  mask-image: radial-gradient(ellipse 50% 50% at 50% 50%, #000 0 38%, rgb(0 0 0 / 82%) 56%, transparent 100%);
 }
 
 .wiki-gutter-art--none,
