@@ -21,6 +21,7 @@ import {
   insertVisualMarkdownAdmonition,
   insertVisualMarkdownDefinitionList,
   insertVisualMarkdownGlyph,
+  searchVisualMarkdownGlyphs,
   serializeVisualMarkdownAdmonition
 } from './visual-markdown-authoring.ts'
 
@@ -261,6 +262,16 @@ graph TD
 
     expect(editor.getMarkdown()).toContain(canonical.trim())
     expect(editor.getMarkdown()).toContain('🚀')
+  })
+
+  it('offers a broad glyph catalog with semantic and typo-tolerant search', () => {
+    expect(VISUAL_MARKDOWN_GLYPHS.length).toBeGreaterThanOrEqual(80)
+    expect(new Set(VISUAL_MARKDOWN_GLYPHS.map(glyph => glyph.value)).size).toBe(VISUAL_MARKDOWN_GLYPHS.length)
+    expect(searchVisualMarkdownGlyphs('celebrte')[0]?.label).toBe('Celebrate')
+    expect(searchVisualMarkdownGlyphs('deploy')[0]?.label).toBe('Rocket')
+    expect(searchVisualMarkdownGlyphs('secure')[0]?.label).toBe('Lock')
+    expect(searchVisualMarkdownGlyphs('shape', 'icon').every(glyph => glyph.category === 'icon')).toBe(true)
+    expect(searchVisualMarkdownGlyphs('zzqxy')).toEqual([])
   })
 
   it('preserves unknown HTML elements and comments as editable source nodes', () => {
