@@ -1520,7 +1520,8 @@ export default defineComponent({
 .page-hero {
   position: relative;
   overflow: hidden;
-  min-height: 146px;
+  min-height: 124px;
+  padding: 0 !important;
   border-bottom: 1px solid rgba(var(--v-border-color), .1);
   background:
     radial-gradient(circle at 82% 18%, rgba(var(--v-theme-primary), .13), transparent 25rem),
@@ -1539,15 +1540,15 @@ export default defineComponent({
 
 .page-header-section {
   position: relative;
-  width: min(100%, 1560px);
-  min-height: 146px;
+  width: min(100%, 1760px);
+  min-height: 124px;
   margin: 0 auto;
 
   > .is-page-header {
     position: relative;
     display: flex;
     align-items: center;
-    padding-block: 28px;
+    padding-block: 22px;
   }
 
   .page-header-headings {
@@ -1557,7 +1558,7 @@ export default defineComponent({
   .page-title {
     margin: 0;
     color: rgb(var(--v-theme-on-surface));
-    font-size: clamp(2rem, 3.2vw, 3.15rem);
+    font-size: clamp(1.8rem, 2.55vw, 2.7rem);
     font-weight: 760;
     letter-spacing: -.05em;
     line-height: 1.05;
@@ -1565,7 +1566,7 @@ export default defineComponent({
 
   .page-description {
     max-width: 760px;
-    margin: 9px 0 0;
+    margin: 6px 0 0;
     color: rgb(var(--v-theme-on-surface));
     font-size: clamp(.93rem, 1.25vw, 1.06rem);
     line-height: 1.55;
@@ -1595,9 +1596,9 @@ export default defineComponent({
 }
 
 .page-body {
-  width: min(100%, 1560px);
+  width: min(100%, 1760px);
   margin: 0 auto;
-  padding: 30px 32px 64px !important;
+  padding: 26px 20px 56px !important;
 }
 
 .page-col-sd {
@@ -1627,15 +1628,19 @@ export default defineComponent({
 }
 
 .page-toc-card {
+  > .text-label-small {
+    padding-inline: 14px !important;
+  }
+
   .v-list {
-    padding: 4px 8px 10px;
+    padding: 4px 4px 10px;
     background: transparent;
   }
 }
 
 .page-toc-item {
   min-height: 36px !important;
-  padding-inline: calc(7px + var(--toc-indent)) 8px !important;
+  padding-inline: calc(4px + var(--toc-indent)) 6px !important;
   border-inline-start: 2px solid transparent;
   border-radius: 0 9px 9px 0;
   transition: background-color .14s ease, border-color .14s ease, color .14s ease;
@@ -1651,9 +1656,13 @@ export default defineComponent({
   }
 
   .v-list-item__prepend > .v-icon {
-    margin-inline-end: 7px;
+    margin-inline-end: 5px;
     color: rgb(var(--v-theme-primary));
     opacity: .64;
+  }
+
+  .v-list-item__prepend > .v-list-item__spacer {
+    width: 4px;
   }
 }
 
@@ -1665,12 +1674,12 @@ export default defineComponent({
 
 .page-col-content:not(.is-page-header) {
   min-width: 0;
-  padding-inline: 16px 0;
+  padding-inline: 12px 0;
 }
 
 .page-col-content > .contents {
   min-height: 180px;
-  padding: clamp(24px, 4vw, 52px);
+  padding: clamp(24px, 3vw, 44px);
   border: 1px solid rgba(var(--v-border-color), .1);
   border-radius: 20px;
   background: rgb(var(--v-theme-surface));
@@ -1759,23 +1768,23 @@ export default defineComponent({
   }
 
   .page-header-section > .is-page-header {
-    padding-inline: 32px !important;
+    padding-inline: 20px !important;
   }
 }
 
 @media (max-width: 599px) {
   .page-hero,
   .page-header-section {
-    min-height: 126px;
+    min-height: 112px;
   }
 
   .page-header-section > .is-page-header {
-    padding: 24px 18px !important;
+    padding: 20px 16px !important;
   }
 
   .page-header-section {
     .page-title {
-      font-size: 2rem;
+      font-size: 1.75rem;
     }
 
     .page-description {
@@ -1788,11 +1797,11 @@ export default defineComponent({
   }
 
   .page-body {
-    padding: 14px 12px 44px !important;
+    padding: 12px 10px 40px !important;
   }
 
   .page-col-content > .contents {
-    padding: 24px 20px 30px;
+    padding: 22px 18px 28px;
     border-radius: 17px;
   }
 

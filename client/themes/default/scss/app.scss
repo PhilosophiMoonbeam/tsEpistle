@@ -87,7 +87,7 @@
 
   h1 {
     padding: 0;
-    color: color-mix(in srgb, rgb(var(--v-theme-primary)) 72%, rgb(var(--v-theme-on-background)));
+    color: rgb(var(--v-theme-primary));
     margin-top: 2rem;
     position: relative;
 
@@ -2106,7 +2106,9 @@
     }
   }
 
+
   h1 {
+    color: rgb(var(--v-theme-primary));
     margin: 0 0 1.25rem;
     font-size: clamp(1.75rem, 3vw, 2.35rem);
   }
