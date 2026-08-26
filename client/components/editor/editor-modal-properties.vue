@@ -22,6 +22,7 @@
         v-tab(:value='2', :disabled='!hasScriptPermission') {{$t('editor:props.scripts')}}
         //- v-tab(:value='3', disabled) {{$t('editor:props.social')}}
         v-tab(:value='3', :disabled='!hasStylePermission') {{$t('editor:props.styles')}}
+        v-tab(:value='4', :disabled='mode === `create`') {{$t('editor:props.translations')}}
       v-tabs-window(v-model='currentTab')
         v-tabs-window-item(:value='0', transition='fade-transition', reverse-transition='fade-transition')
           v-card-text.pt-5
@@ -235,13 +236,62 @@
           .editor-props-codeeditor-hint
             .text-body-small {{$t('editor:props.cssHint')}}
 
-    page-selector(:mode='pageSelectorMode', v-model='pageSelectorShown', :path='path', :locale='locale', :open-handler='setPath')</template>
+        v-tabs-window-item(:value='4', transition='fade-transition', reverse-transition='fade-transition')
+          v-card-text
+            .d-flex.align-center.mb-4
+              div
+                .text-label-small {{$t('editor:props.translations')}}
+                .text-body-small.text-grey {{$t('editor:props.translationsHint')}}
+              v-spacer
+              v-btn(
+                color='primary'
+                variant='tonal'
+                :loading='translationsLoading'
+                @click='translationSelectorShown = true'
+                )
+                v-icon(start) mdi-translate
+                span {{$t('editor:props.linkTranslation')}}
+            v-progress-linear(v-if='translationsLoading', indeterminate, color='primary')
+            v-list(v-else-if='relatedTranslations.length > 0', lines='two')
+              template(v-for='translation of relatedTranslations', :key='translation.id')
+                v-list-item
+                  template(v-slot:prepend)
+                    v-chip.mr-3(label, color='primary', size='small') {{translation.locale.toUpperCase()}}
+                  v-list-item-title {{translation.title}}
+                  v-list-item-subtitle /{{translation.locale}}/{{translation.path}}
+                  template(v-slot:append)
+                    v-btn(
+                      icon='mdi-link-off'
+                      variant='text'
+                      color='error'
+                      :aria-label='$t(`editor:props.unlinkTranslation`, { title: translation.title })'
+                      @click='unlinkTranslation(translation)'
+                      )
+                v-divider
+            v-alert(v-else, type='info', variant='tonal') {{$t('editor:props.noTranslations')}}
+
+    page-selector(:mode='pageSelectorMode', v-model='pageSelectorShown', :path='path', :locale='locale', :open-handler='setPath')
+    page-selector(
+      mode='select'
+      must-exist
+      allow-locale-change
+      v-model='translationSelectorShown'
+      :path='path'
+      :locale='locale'
+      :open-handler='linkTranslation'
+      )</template>
 
 <script lang='ts'>
 import { defineComponent } from 'vue'
 import _ from 'lodash'
 import { wikiStore } from '@/store/index.ts'
-import { searchPageTags } from '../../helpers/pages-api'
+import {
+  fetchPageLocaleRelations,
+  linkPageLocaleRelation,
+  searchPageTags,
+  unlinkPageLocaleRelation,
+  type PageLocaleRelation
+} from '../../helpers/pages-api'
 
 import { css } from '@codemirror/lang-css'
 import { javascript } from '@codemirror/lang-javascript'
@@ -280,6 +330,9 @@ export default defineComponent({
       publishStartDraft: null as DatePickerValue,
       publishEndDraft: null as DatePickerValue,
       pageSelectorShown: false,
+      translationSelectorShown: false,
+      translations: [] as PageLocaleRelation[],
+      translationsLoading: false,
       namespaces: siteLangs.length ? siteLangs.map(ns => ns.code) : [siteConfig.lang],
       newTagSuggestions: [] as string[],
       newTagSearch: '',
@@ -407,11 +460,15 @@ export default defineComponent({
     },
     pageSelectorMode () {
       return (this.mode === 'create') ? 'create' : 'move'
+    },
+    relatedTranslations (): PageLocaleRelation[] {
+      return this.translations.filter(translation => translation.id !== wikiStore.page.id)
     }
   },
   watch: {
     modelValue (newValue: boolean) {
       if (newValue) {
+        if (this.mode !== 'create') void this.loadTranslations()
         _.delay(() => {
           ;(this.$refs.iptTitle as { focus: () => void }).focus()
         }, 500)
@@ -459,6 +516,37 @@ export default defineComponent({
     this.cm?.destroy()
   },
   methods: {
+    async loadTranslations () {
+      this.translationsLoading = true
+      try {
+        this.translations = await fetchPageLocaleRelations(window.fetch.bind(window), wikiStore.page.id)
+      } catch (err) {
+        wikiStore.showError(err)
+      } finally {
+        this.translationsLoading = false
+      }
+    },
+    async linkTranslation ({ id }: { id: number }) {
+      this.translationsLoading = true
+      try {
+        this.translations = await linkPageLocaleRelation(window.fetch.bind(window), wikiStore.page.id, id)
+      } catch (err) {
+        wikiStore.showError(err)
+        return false
+      } finally {
+        this.translationsLoading = false
+      }
+    },
+    async unlinkTranslation (translation: PageLocaleRelation) {
+      this.translationsLoading = true
+      try {
+        this.translations = await unlinkPageLocaleRelation(window.fetch.bind(window), wikiStore.page.id, translation.id)
+      } catch (err) {
+        wikiStore.showError(err)
+      } finally {
+        this.translationsLoading = false
+      }
+    },
     applyPublishStartDate() {
       this.publishStartDate = formatDatePickerValue(this.publishStartDraft)
       this.isPublishStartShown = false

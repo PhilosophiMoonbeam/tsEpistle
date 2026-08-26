@@ -5,6 +5,7 @@ import _ from 'lodash'
 import { Type as JSBinType } from 'js-binary'
 import pageHelper from '../helpers/page.ts'
 import { canDeletePage, canWritePage, managesSystem, principalId, type PageVisibility } from '../helpers/page-access.ts'
+import { localeRelationMovePatch } from '../helpers/page-locale-relations.ts'
 import path from 'node:path'
 import fs from 'fs-extra'
 import * as yaml from 'js-yaml'
@@ -392,6 +393,7 @@ const enqueueCurrentPageProjections = async (
   })
 }
 
+
 const frontmatterRegex = {
   html: /^(<!-{2}(?:\n|\r)([\w\W]+?)(?:\n|\r)-{2}>)?(?:\n|\r)*([\w\W]*)*/,
   legacy: /^(<!-- TITLE: ?([\w\W]+?) ?-{2}>)?(?:\n|\r)?(<!-- SUBTITLE: ?([\w\W]+?) ?-{2}>)?(?:\n|\r)*([\w\W]*)*/i,
@@ -424,6 +426,7 @@ declare updatedAt: string
 declare sourceRevision: string | number
 declare editorKey: string
 declare localeCode: string
+declare localeGroupId: string | null
 declare authorId: number
 declare creatorId: number
 declare extra: PageExtra
@@ -446,6 +449,7 @@ static override get tableName() { return 'pages' } static override get jsonSchem
     isPublished: {type: 'boolean'},
     visibility: {type: 'string', enum: ['public', 'private']},
     ownerId: {type: ['integer', 'null']},
+    localeGroupId: {type: ['string', 'null']},
     publishEndDate: {type: 'string'},
     content: {type: 'string'},
     contentType: {type: 'string'},
@@ -879,6 +883,7 @@ static async updatePage(opts: UpdatePageOptions): Promise<Page> {
       versionDate: ogPage.updatedAt,
       transaction
     })
+    const localeRelationPatch = await localeRelationMovePatch(transaction, ogPage, destinationLocale)
     const pagePatch = wiki.models.pages.query(transaction).patch({
       authorId: opts.user.id,
       content,
@@ -892,6 +897,7 @@ static async updatePage(opts: UpdatePageOptions): Promise<Page> {
       publishStartDate: opts.publishStartDate === undefined ? ogPage.publishStartDate : (opts.publishStartDate || ''),
       title: destinationTitle,
       ...(willMove ? { path: destinationPath, localeCode: destinationLocale, hash: destinationHash } : {}),
+      ...localeRelationPatch,
       extra: {
         ...ogPage.extra,
         js: scriptJs,
@@ -1387,11 +1393,13 @@ static async movePage(opts: MovePageOptions): Promise<void> {
       versionDate: page.updatedAt,
       transaction
     })
+    const localeRelationPatch = await localeRelationMovePatch(transaction, page, opts.destinationLocale)
     const changedRows = await wiki.models.pages.query(transaction).patch({
       path: opts.destinationPath,
       localeCode: opts.destinationLocale,
       title: destinationTitle,
-      hash: destinationHash
+      hash: destinationHash,
+      ...localeRelationPatch
     }).where({ id: page.id, sourceRevision: page.sourceRevision })
     if (changedRows !== 1) throw pageUpdateConflict()
     await writePageOutboxEvent(transaction, 'page.moved', {

@@ -3,11 +3,11 @@
   "upstream": {
     "repository": "https://github.com/requarks/wiki.git",
     "branch": "scarlett",
-    "recordedTip": "5ff4f1dda7ae7bb5e06a8a57c9c357b12456b29f",
-    "recordedAt": "2026-08-22T19:45:18-04:00",
-    "lastFetchedAt": "2026-08-23T18:24:02Z"
+    "recordedTip": "f537f04ecceabc10d2cccd43be7d277c03182d61",
+    "recordedAt": "2026-08-25T00:49:59-04:00",
+    "lastFetchedAt": "2026-08-26T05:11:01.018Z"
   },
-  "forkCheckpoint": "e40feddbf9bebfe991a3052a89dd48f6008aebb3",
+  "forkCheckpoint": "e2f59efea159beea138a7be8aae12e1b84b1ec57",
   "candidates": [
     {
       "id": "typed-api-schemas",
@@ -378,6 +378,46 @@
       "workstream": "release-assurance/localization",
       "contract": "Crowdin upload automation is added only with an owned project, repository secret, authoritative locale source path, and a release workflow that cannot fail unrelated builds when translation infrastructure is unavailable.",
       "lastReviewed": "2026-08-23"
+    },
+    {
+      "id": "locale-platform-refresh",
+      "commits": ["fdd7945a"],
+      "category": "localization",
+      "disposition": "supersede",
+      "state": "completed",
+      "workstream": "release-assurance/localization",
+      "contract": "The existing locale installer, namespace configuration, locale-scoped routes and selectors, and bundled-English fallback remain authoritative; Scarlett's Fastify, Drizzle, alias, and force-prefix implementation is not transplanted.",
+      "lastReviewed": "2026-08-26"
+    },
+    {
+      "id": "page-locale-relations",
+      "commits": ["b16402ae"],
+      "category": "reader-experience",
+      "disposition": "split",
+      "state": "completed",
+      "workstream": "pages/locale-relations",
+      "contract": "Authorized editors manage UUID-backed translation sets with one page per locale, atomic set merges, safe unlinking, and relation-aware language switching; unrelated Scarlett scheduler, tag-cache, and editor-preview changes remain governed by the fork's existing implementations.",
+      "lastReviewed": "2026-08-26"
+    },
+    {
+      "id": "redirect-navigation-visibility",
+      "commits": ["7682e839"],
+      "category": "navigation",
+      "disposition": "supersede",
+      "state": "completed",
+      "workstream": "navigation/explicit-tree",
+      "contract": "Site navigation remains an explicit administrator-owned tree rather than an automatic page index, so redirect-specific browse flags and a toggle on the incomplete Scarlett redirect editor add no fork behavior.",
+      "lastReviewed": "2026-08-26"
+    },
+    {
+      "id": "scarlett-ui-corrections-2026-08-25",
+      "commits": ["f537f04e"],
+      "category": "ux",
+      "disposition": "compare",
+      "state": "completed",
+      "workstream": "experience-completion",
+      "contract": "Vuetify semantic theme colors, numeric system totals, database version metadata, and hidden unfinished social controls already satisfy the portable fixes; Scarlett-specific Tailwind, block-tab, and Monaco preview patches are not copied.",
+      "lastReviewed": "2026-08-26"
     }
   ]
 }

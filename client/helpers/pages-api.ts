@@ -58,6 +58,14 @@ export type PageLinkRow = {
   links: string[]
 }
 
+export type PageLocaleRelation = {
+  id: number
+  locale: string
+  path: string
+  title: string
+  visibility: 'public' | 'private'
+}
+
 export type PageListRow = {
   id: number
   locale: string
@@ -190,6 +198,27 @@ function normalizePageLinkRow (row: unknown, fallbackMessage: string): PageLinkR
     path: pageRow.path,
     title: pageRow.title,
     links: pageRow.links
+  }
+}
+
+function normalizePageLocaleRelation (row: unknown, fallbackMessage: string): PageLocaleRelation {
+  if (!isRecord(row) ||
+    typeof row.id !== 'number' ||
+    !Number.isSafeInteger(row.id) ||
+    row.id < 1 ||
+    typeof row.locale !== 'string' ||
+    row.locale.length < 1 ||
+    typeof row.path !== 'string' ||
+    typeof row.title !== 'string' ||
+    (row.visibility !== 'public' && row.visibility !== 'private')) {
+    throw new Error(fallbackMessage)
+  }
+  return {
+    id: row.id,
+    locale: row.locale,
+    path: row.path,
+    title: row.title,
+    visibility: row.visibility
   }
 }
 
@@ -517,6 +546,28 @@ export async function convertPage (fetchImpl: FetchImpl, id: number, editor: str
 
 export async function movePage (fetchImpl: FetchImpl, id: number, destinationLocale: string, destinationPath: string, expectedSourceRevision: string, fallbackMessage = 'Page move failed'): Promise<void> {
   await sendJson(fetchImpl, `/_api/pages/${encodeURIComponent(id)}/move`, 'POST', { destinationLocale, destinationPath, expectedSourceRevision }, fallbackMessage)
+}
+
+export async function fetchPageLocaleRelations (fetchImpl: FetchImpl, pageId: number, fallbackMessage = 'Page translations response is invalid'): Promise<PageLocaleRelation[]> {
+  const response = await fetchImpl(`/_api/pages/${encodeURIComponent(pageId)}/locale-relations`, {
+    credentials: 'same-origin',
+    headers: { Accept: 'application/json' }
+  })
+  const payload = await parseJsonResponse(response, fallbackMessage)
+  if (!Array.isArray(payload)) throw new Error(fallbackMessage)
+  return payload.map(row => normalizePageLocaleRelation(row, fallbackMessage))
+}
+
+export async function linkPageLocaleRelation (fetchImpl: FetchImpl, pageId: number, relatedPageId: number, fallbackMessage = 'Page translation link failed'): Promise<PageLocaleRelation[]> {
+  const payload = await sendJson(fetchImpl, `/_api/pages/${encodeURIComponent(pageId)}/locale-relations`, 'POST', { relatedPageId }, fallbackMessage)
+  if (!Array.isArray(payload)) throw new Error(fallbackMessage)
+  return payload.map(row => normalizePageLocaleRelation(row, fallbackMessage))
+}
+
+export async function unlinkPageLocaleRelation (fetchImpl: FetchImpl, pageId: number, relatedPageId: number, fallbackMessage = 'Page translation unlink failed'): Promise<PageLocaleRelation[]> {
+  const payload = await sendJson(fetchImpl, `/_api/pages/${encodeURIComponent(pageId)}/locale-relations/${encodeURIComponent(relatedPageId)}`, 'DELETE', {}, fallbackMessage)
+  if (!Array.isArray(payload)) throw new Error(fallbackMessage)
+  return payload.map(row => normalizePageLocaleRelation(row, fallbackMessage))
 }
 
 export async function checkPageConflict (fetchImpl: FetchImpl, id: number, checkoutDate: string, fallbackMessage = 'Page conflict check failed'): Promise<boolean> {

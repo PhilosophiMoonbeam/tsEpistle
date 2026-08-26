@@ -2,6 +2,11 @@ import express from 'express'
 import { type Request, type Response, getTransportRuntime, getWikiAuth } from '../_types.ts'
 import _ from 'lodash'
 import pageOperations from '../../operations/pages.ts'
+import {
+  linkPageLocaleRelation,
+  listPageLocaleRelations,
+  unlinkPageLocaleRelation
+} from '../../operations/page-locale-relations.ts'
 import { principalId, type PageVisibility } from '../../helpers/page-access.ts'
 import {
   getPageWatchState,
@@ -650,6 +655,42 @@ router.post('/:id/move', async (req, res) => {
     res.json({ message: 'Page has been moved.' })
   } catch (err) {
     sendOperationError(res, err, 'Page move failed')
+  }
+})
+
+router.get('/:id/locale-relations', async (req, res) => {
+  const pageId = parsePositiveIntegerParam(req, res)
+  if (pageId === null) return
+  try {
+    res.json(await listPageLocaleRelations({ ...requesterInput(req), pageId }))
+  } catch (err) {
+    sendOperationError(res, err, 'Page translations fetch failed')
+  }
+})
+
+router.post('/:id/locale-relations', async (req, res) => {
+  const pageId = parsePositiveIntegerParam(req, res)
+  if (pageId === null) return
+  const relatedPageId = requestBody(req).relatedPageId
+  if (typeof relatedPageId !== 'number' || !Number.isSafeInteger(relatedPageId) || relatedPageId < 1) {
+    return res.status(400).json({ error: 'relatedPageId must be a positive integer' })
+  }
+  try {
+    res.json(await linkPageLocaleRelation({ ...requesterInput(req), pageId, relatedPageId }))
+  } catch (err) {
+    sendOperationError(res, err, 'Page translation link failed')
+  }
+})
+
+router.delete('/:id/locale-relations/:relatedPageId', async (req, res) => {
+  const pageId = parsePositiveIntegerParam(req, res)
+  if (pageId === null) return
+  const relatedPageId = parsePositiveIntegerParam(req, res, 'relatedPageId')
+  if (relatedPageId === null) return
+  try {
+    res.json(await unlinkPageLocaleRelation({ ...requesterInput(req), pageId, relatedPageId }))
+  } catch (err) {
+    sendOperationError(res, err, 'Page translation unlink failed')
   }
 })
 

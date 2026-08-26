@@ -259,7 +259,7 @@ import {
   onPageSource
 } from '../../helpers/page-action-events'
 import { emitSearchEnter, emitSearchMove } from '../../helpers/search-navigation-events'
-import { movePage } from '../../helpers/pages-api'
+import { fetchPageLocaleRelations, movePage } from '../../helpers/pages-api'
 
 type PageLocation = { path: string, locale: string }
 type SiteLocale = { code: string, name: string }
@@ -504,13 +504,20 @@ export default defineComponent({
       this.deletePageModal = true
     },
     async changeLocale (locale: SiteLocale): Promise<void> {
-      await this.$i18n.changeLanguage(locale.code)
-      switch (this.mode) {
-        case 'view':
-        case 'history':
-          window.location.assign(`/${locale.code}/${this.path}`)
-          break
+      let destinationPath = this.path
+      let destinationVisibility = wikiStore.page.visibility
+      try {
+        const translations = await fetchPageLocaleRelations(window.fetch.bind(window), wikiStore.page.id)
+        const translation = translations.find(candidate => candidate.locale === locale.code)
+        if (translation) {
+          destinationPath = translation.path
+          destinationVisibility = translation.visibility
+        }
+      } catch (err) {
+        console.warn(err)
       }
+      const scope = destinationVisibility === 'private' ? '/_private' : ''
+      window.location.assign(`${scope}/${locale.code}/${destinationPath}`)
     },
     logout () {
       window.location.assign('/logout')

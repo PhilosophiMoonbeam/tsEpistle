@@ -70,7 +70,7 @@
             icon='mdi-alert'
             )
             .text-body-medium {{$t('common:pageSelector.folderEmptyWarning')}}
-      v-card-actions.pa-2(:class='$vuetify.theme.current.dark ? `bg-grey-darken-2` : `bg-grey-lighten-1`', v-if='!mustExist')
+      v-card-actions.pa-2(:class='$vuetify.theme.current.dark ? `bg-grey-darken-2` : `bg-grey-lighten-1`', v-if='!mustExist || allowLocaleChange')
         v-select(
           variant="solo"
           flat
@@ -88,6 +88,7 @@
           prefix='/'
           v-model='currentPath'
           flat
+          :readonly='mustExist'
           clearable
           style='border-radius: 0 4px 4px 0;'
         )
@@ -160,6 +161,10 @@ export default defineComponent({
       default: () => undefined
     },
     mustExist: {
+      type: Boolean,
+      default: false
+    },
+    allowLocaleChange: {
       type: Boolean,
       default: false
     }

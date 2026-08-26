@@ -1,4 +1,4 @@
-import { deletePage, deletePageTag, fetchPage, fetchPageHistory, fetchPageLinks, fetchPageList, fetchPageTags, fetchPageTree, fetchPageVersion, fetchRecentPages, restorePageVersion, updatePageTag } from './pages-api.ts'
+import { deletePage, deletePageTag, fetchPage, fetchPageHistory, fetchPageLinks, fetchPageList, fetchPageLocaleRelations, fetchPageTags, fetchPageTree, fetchPageVersion, fetchRecentPages, linkPageLocaleRelation, restorePageVersion, unlinkPageLocaleRelation, updatePageTag } from './pages-api.ts'
 
 function createJsonResponse (payload, ok = true) {
   return {
@@ -511,6 +511,50 @@ describe('pages api helper', () => {
     }]))
 
     await expect(fetchPageTree(fetchImpl, { locale: 'en' }, 'Bad page tree')).rejects.toThrow('Bad page tree')
+  })
+
+  test('validates page translation relations', async () => {
+    const relation = {
+      id: 7,
+      locale: 'fr',
+      path: 'guide/bonjour',
+      title: 'Bonjour',
+      visibility: 'public'
+    }
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([relation]))
+
+    await expect(fetchPageLocaleRelations(fetchImpl, 42)).resolves.toEqual([relation])
+    expect(fetchImpl).toHaveBeenCalledWith('/_api/pages/42/locale-relations', {
+      credentials: 'same-origin',
+      headers: { Accept: 'application/json' }
+    })
+  })
+
+  test('rejects malformed page translation relations', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([{ id: 7, locale: 'fr', path: 'guide/bonjour' }]))
+
+    await expect(fetchPageLocaleRelations(fetchImpl, 42, 'Bad translations')).rejects.toThrow('Bad translations')
+  })
+
+  test('links and unlinks translations through resource-scoped endpoints', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([]))
+
+    await expect(linkPageLocaleRelation(fetchImpl, 42, 7)).resolves.toEqual([])
+    await expect(unlinkPageLocaleRelation(fetchImpl, 42, 7)).resolves.toEqual([])
+    expect(fetchImpl.mock.calls).toEqual([
+      ['/_api/pages/42/locale-relations', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ relatedPageId: 7 })
+      }],
+      ['/_api/pages/42/locale-relations/7', {
+        method: 'DELETE',
+        credentials: 'same-origin',
+        headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+        body: JSON.stringify({})
+      }]
+    ])
   })
 
 })

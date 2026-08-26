@@ -952,7 +952,12 @@
       "pathCategorization": "Path & Categorization",
       "shortDescriptionHint": "Shown below the title",
       "tocHeadingLevelsHint": "The table of contents will show headings from and up to the selected levels.",
-      "displaySharingBarHint": "Show a toolbar with buttons to share and print this page"
+      "displaySharingBarHint": "Show a toolbar with buttons to share and print this page",
+      "translations": "Translations",
+      "translationsHint": "Link equivalent pages in other locales so language switching opens the correct translation.",
+      "linkTranslation": "Link translation",
+      "unlinkTranslation": "Unlink {{title}}",
+      "noTranslations": "No translated pages are linked yet."
     },
     "assets": {
       "title": "Assets",
