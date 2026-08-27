@@ -463,6 +463,7 @@ export default defineComponent({
     height: 100dvh;
     inset: 0;
     overflow: hidden;
+    z-index: 1009;
   }
 
   &-container {

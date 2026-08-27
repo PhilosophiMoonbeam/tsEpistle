@@ -19,6 +19,7 @@ describe('inline Ask mode contract', () => {
     expect(template).toMatch(/v-if=['"]isAgentOpen['"]/)
     expect(template).toMatch(/search-results-agent-nav/)
     expect(template).toMatch(/:aria-modal=['"]isAgentOpen \? `true` : undefined['"]/)
+    expect(search).toMatch(/&--ask\s*\{[\s\S]*z-index:\s*1009/)
     expect(template).not.toMatch(/action=['"]\/_?api\/agents\/launch['"]/)
     expect(template).not.toMatch(/target=['"]_blank['"]/)
     expect(search).toMatch(/if\s*\(!inlineAgent\)\s*return/)
