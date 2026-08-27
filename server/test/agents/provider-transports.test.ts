@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import createKnex, { type Knex } from 'knex'
 import type { LookupAddress } from 'node:dns'
+import type { AxChatRequest } from '@ax-llm/ax'
 import { AgentProviderFactory } from '../../agents/providers/factory.ts'
 import { createOpenResponsesFetch } from '../../agents/providers/openresponses.ts'
+import { createGeminiInteractionsService } from '../../agents/providers/gemini-interactions.ts'
 
 const publicResolver = async (): Promise<LookupAddress[]> => [{ address: '93.184.216.34', family: 4 }]
 const capabilities = { streaming: false, toolCalling: 'prompt', parallelToolCalls: false, structuredOutput: 'prompt-only', usage: 'terminal', cancellation: true, maxContextTokens: 100_000, maxOutputTokens: 4_000 }
@@ -82,70 +84,136 @@ describe('additional provider transports', () => {
     expect(JSON.stringify(requests[1]?.body)).toContain('toolu_1')
   })
 
-  it('streams Gemini native tools with header authentication and thought-signature continuation', async () => {
+  it('streams Gemini Interactions tools with stateless exact-step continuation', async () => {
     const id = '00000000-0000-4000-8000-000000000015'
     await insert({ id, transportKind: 'gemini-api', baseUrl: 'https://generativelanguage.googleapis.com/v1beta', authMode: 'google-api-key' })
-    await db('agentProviderProfileVersions').where({ id }).update({ capabilities: JSON.stringify({ ...capabilities, streaming: true, toolCalling: 'native', parallelToolCalls: true, structuredOutput: 'native-json-schema', usage: 'stream' }) })
+    await db('agentProviderProfileVersions').where({ id }).update({
+      model: 'gemini-3.7-flash',
+      capabilities: JSON.stringify({ ...capabilities, streaming: true, toolCalling: 'native', parallelToolCalls: true, structuredOutput: 'native-json-schema', usage: 'stream' })
+    })
     const requests: Array<{ url: string; headers: Headers; body: Record<string, unknown> }> = []
+    const firstSteps = [
+      { type: 'thought', signature: 'opaque-signature' },
+      { type: 'function_call', id: 'call_1', name: 'wiki_get_page', arguments: { id: 42 } },
+      { type: 'function_call', id: 'call_2', name: 'wiki_list_tags', arguments: {} }
+    ]
+    const finalSteps = [{ type: 'model_output', content: [{ type: 'text', text: 'gemini' }] }]
+    const stream = (interactionId: string, steps: readonly Record<string, unknown>[], usage: Record<string, number>): string => {
+      const frames: string[] = [
+        `event: interaction.created\ndata: ${JSON.stringify({ event_type: 'interaction.created', interaction: { id: interactionId, model: 'gemini-3.7-flash', status: 'in_progress' } })}`
+      ]
+      steps.forEach((step, index) => {
+        if (step.type === 'thought') {
+          frames.push(
+            `event: step.start\ndata: ${JSON.stringify({ event_type: 'step.start', index, step: { type: 'thought' } })}`,
+            `event: step.delta\ndata: ${JSON.stringify({ event_type: 'step.delta', index, delta: { type: 'thought_signature', signature: step.signature } })}`
+          )
+        } else if (step.type === 'function_call') {
+          frames.push(
+            `event: step.start\ndata: ${JSON.stringify({ event_type: 'step.start', index, step: { type: 'function_call', id: step.id, name: step.name } })}`,
+            `event: step.delta\ndata: ${JSON.stringify({ event_type: 'step.delta', index, delta: { type: 'arguments_delta', arguments: JSON.stringify(step.arguments) } })}`
+          )
+        } else {
+          frames.push(
+            `event: step.start\ndata: ${JSON.stringify({ event_type: 'step.start', index, step: { type: 'model_output' } })}`,
+            `event: step.delta\ndata: ${JSON.stringify({ event_type: 'step.delta', index, delta: { type: 'text', text: 'gemini' } })}`
+          )
+        }
+        frames.push(`event: step.stop\ndata: ${JSON.stringify({ event_type: 'step.stop', index })}`)
+      })
+      frames.push(
+        `event: interaction.completed\ndata: ${JSON.stringify({ event_type: 'interaction.completed', interaction: { id: interactionId, model: 'gemini-3.7-flash', status: 'completed', steps, usage } })}`,
+        'event: done\ndata: [DONE]'
+      )
+      return `${frames.join('\n\n')}\n\n`
+    }
     const responses = [
-      {
-        candidates: [{ index: 0, finishReason: 'STOP', content: { role: 'model', parts: [{ functionCall: { name: 'wiki_get_page', args: { id: 42 } }, thoughtSignature: 'opaque-signature' }] } }],
-        usageMetadata: { promptTokenCount: 3, candidatesTokenCount: 2, totalTokenCount: 5 }
-      },
-      {
-        candidates: [{ index: 0, finishReason: 'STOP', content: { role: 'model', parts: [{ text: 'gemini' }] } }],
-        usageMetadata: { promptTokenCount: 6, candidatesTokenCount: 1, totalTokenCount: 7 }
-      }
+      stream('interaction_1', firstSteps, { total_input_tokens: 3, total_output_tokens: 2, total_tokens: 5 }),
+      stream('interaction_2', finalSteps, { total_input_tokens: 6, total_output_tokens: 1, total_tokens: 7 })
     ]
     const fetchImplementation = async (input: URL | RequestInfo, init?: RequestInit): Promise<Response> => {
       requests.push({ url: String(input), headers: new Headers(init?.headers), body: JSON.parse(String(init?.body)) as Record<string, unknown> })
-      return new Response(`data: ${JSON.stringify(responses.shift())}\n\n`, { headers: { 'content-type': 'text/event-stream' } })
+      return new Response(responses.shift(), { headers: { 'content-type': 'text/event-stream' } })
     }
     const provider = await new AgentProviderFactory(db, { get: () => 'gemini-key' }, fetchImplementation as typeof fetch, publicResolver as never).create(id)
-    const definition = { name: 'wiki_get_page', description: 'Read a page', parameters: { type: 'object' as const, properties: { id: { type: 'number' as const, description: 'Page ID' } } } }
-    const firstStream = await provider.service.chat({ chatPrompt: [{ role: 'user', content: 'hello' }], functions: [definition], functionCall: 'auto' }, { stream: true })
-    if (!(firstStream instanceof ReadableStream)) throw new Error('Expected a streaming Gemini response')
-    const firstReader = firstStream.getReader()
-    const first = (await firstReader.read()).value
-    firstReader.releaseLock()
-    const [call] = first?.results[0]?.functionCalls ?? []
-    const rawThought = first?.results[0]?.thoughtBlocks?.[0]
-    expect(call).toMatchObject({ function: { name: 'wiki_get_page', params: { id: 42 } } })
-    expect(rawThought).toMatchObject({ encrypted: false, signature: 'opaque-signature' })
-    if (!call || !rawThought) throw new Error('Gemini did not return its native function call and thought signature')
-    const continuation = provider.preserveThoughtBlock('', rawThought)
-    expect(continuation).toEqual({ data: '', encrypted: true, signature: 'opaque-signature' })
-    if (!continuation) throw new Error('Gemini thought signature was not preserved')
-    const finalStream = await provider.service.chat({
+    const definitions: NonNullable<AxChatRequest['functions']> = [
+      { name: 'wiki_get_page', description: 'Read a page', parameters: { type: 'object', properties: { id: { type: 'number', description: 'Page ID' } } } },
+      { name: 'wiki_list_tags', description: 'List tags', parameters: { type: 'object', properties: {} } }
+    ]
+    const consume = async (value: Awaited<ReturnType<typeof provider.service.chat>>) => {
+      if (!(value instanceof ReadableStream)) throw new Error('Expected a streaming Gemini Interactions response')
+      const items = []
+      for await (const item of value) items.push(item)
+      return items
+    }
+    const first = await consume(await provider.service.chat({
+      chatPrompt: [{ role: 'system', content: 'Use Wiki actions.' }, { role: 'user', content: 'hello' }],
+      functions: definitions,
+      functionCall: 'auto',
+      responseFormat: { type: 'json_schema', schema: { type: 'object' } }
+    }, { stream: true }))
+    const calls = first.flatMap(item => item.results.flatMap(result => result.functionCalls ?? []))
+    const rawState = first.flatMap(item => item.results.flatMap(result => result.thoughtBlocks ?? [])).at(-1)
+    expect(calls).toMatchObject([
+      { id: 'call_1', function: { name: 'wiki_get_page', params: { id: 42 } } },
+      { id: 'call_2', function: { name: 'wiki_list_tags', params: {} } }
+    ])
+    expect(rawState).toMatchObject({ encrypted: true })
+    expect(rawState?.data).toContain('wiki.gemini.interactions.v1:')
+    if (!rawState) throw new Error('Gemini Interactions did not return its continuation state')
+    const continuation = provider.preserveThoughtBlock('', rawState)
+    if (!continuation) throw new Error('Gemini Interactions continuation state was not preserved')
+    const final = await consume(await provider.service.chat({
       chatPrompt: [
         { role: 'user', content: 'hello' },
-        { role: 'assistant', functionCalls: [call], thoughtBlocks: [continuation] },
-        { role: 'function', functionId: call.id, result: '{"id":42}' }
+        { role: 'assistant', functionCalls: calls, thoughtBlocks: [continuation] },
+        { role: 'function', functionId: 'call_1', result: '{"id":42}' },
+        { role: 'function', functionId: 'call_2', result: '[]' }
       ],
-      functions: [definition]
-    }, { stream: true })
-    if (!(finalStream instanceof ReadableStream)) throw new Error('Expected a streaming Gemini response')
-    const finalReader = finalStream.getReader()
-    const final = (await finalReader.read()).value
-    finalReader.releaseLock()
-    expect(final?.results[0]?.content).toBe('gemini')
-    expect(final?.modelUsage?.tokens).toMatchObject({ promptTokens: 6, completionTokens: 1, totalTokens: 7 })
+      functions: definitions
+    }, { stream: true }))
+    expect(final.flatMap(item => item.results).map(result => result.content ?? '').join('')).toBe('gemini')
+    expect(final.at(-1)?.modelUsage?.tokens).toMatchObject({ promptTokens: 6, completionTokens: 1, totalTokens: 7 })
     expect(requests.map(request => request.url)).toEqual([
-      'https://generativelanguage.googleapis.com/v1beta/models/model-test:streamGenerateContent?alt=sse',
-      'https://generativelanguage.googleapis.com/v1beta/models/model-test:streamGenerateContent?alt=sse'
+      'https://generativelanguage.googleapis.com/v1beta/interactions',
+      'https://generativelanguage.googleapis.com/v1beta/interactions'
     ])
     expect(requests.every(request => request.headers.get('x-goog-api-key') === 'gemini-key')).toBe(true)
     expect(requests.every(request => !request.url.includes('gemini-key'))).toBe(true)
     expect(requests[0]?.body).toMatchObject({
-      tools: [{ function_declarations: [{ name: 'wiki_get_page' }] }],
-      toolConfig: { function_calling_config: { mode: 'AUTO' } }
+      model: 'gemini-3.7-flash',
+      store: false,
+      stream: true,
+      system_instruction: 'Use Wiki actions.',
+      input: [{ type: 'user_input', content: [{ type: 'text', text: 'hello' }] }],
+      tools: [{ type: 'function', name: 'wiki_get_page' }, { type: 'function', name: 'wiki_list_tags' }],
+      tool_choice: 'auto',
+      response_format: { type: 'text', mime_type: 'application/json', schema: { type: 'object' } }
     })
-    expect(JSON.stringify(requests[1]?.body)).toContain('"thought_signature":"opaque-signature"')
     expect(requests[1]?.body).toMatchObject({
-      contents: expect.arrayContaining([
-        expect.objectContaining({ role: 'user', parts: [expect.objectContaining({ functionResponse: expect.objectContaining({ name: 'wiki_get_page' }) })] })
-      ])
+      store: false,
+      input: [
+        { type: 'user_input' },
+        { type: 'thought', signature: 'opaque-signature' },
+        { type: 'function_call', id: 'call_1', name: 'wiki_get_page', arguments: { id: 42 } },
+        { type: 'function_call', id: 'call_2', name: 'wiki_list_tags', arguments: {} },
+        { type: 'function_result', call_id: 'call_1', name: 'wiki_get_page' },
+        { type: 'function_result', call_id: 'call_2', name: 'wiki_list_tags' }
+      ]
     })
+  })
+
+  it('rejects a stored pre-3.x Gemini model before provider egress', async () => {
+    const id = '00000000-0000-4000-8000-000000000016'
+    await insert({ id, transportKind: 'gemini-api', baseUrl: 'https://generativelanguage.googleapis.com/v1beta', authMode: 'google-api-key' })
+    await db('agentProviderProfileVersions').where({ id }).update({ model: 'gemini-2.5-flash' })
+    let called = false
+    const fetchImplementation = async (): Promise<Response> => {
+      called = true
+      return Response.json({})
+    }
+    await expect(new AgentProviderFactory(db, { get: () => 'gemini-key' }, fetchImplementation as typeof fetch, publicResolver as never).create(id)).rejects.toMatchObject({ code: 'INVALID_PROVIDER_MODEL' })
+    expect(called).toBe(false)
   })
 
 
@@ -251,5 +319,69 @@ describe('OpenResponses protocol validation', () => {
     const invalidBody = 'event: response.output_text.delta\ndata: {"type":"response.output_text.done","sequence_number":0}\n\n'
     const invalidTransport = createOpenResponsesFetch(async () => new Response(invalidBody, { headers: { 'content-type': 'text/event-stream' } }))
     await expect((await invalidTransport('https://openresponses.example.test/v1/responses', request({ stream: true }))).text()).rejects.toMatchObject({ code: 'INVALID_OPENRESPONSES_PROTOCOL' })
+  })
+})
+
+describe('Gemini Interactions protocol validation', () => {
+  const service = (implementation: typeof fetch) => createGeminiInteractionsService({
+    apiKey: 'gemini-key',
+    baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+    model: 'gemini-3.7-flash',
+    fetch: implementation,
+    timeoutMs: 10_000
+  })
+
+  it('maps buffered text, usage, and encrypted continuation state', async () => {
+    let body: Record<string, unknown> = {}
+    const gemini = service((async (_input: URL | RequestInfo, init?: RequestInit) => {
+      body = JSON.parse(String(init?.body)) as Record<string, unknown>
+      return Response.json({
+        id: 'interaction_buffered',
+        model: 'gemini-3.7-flash',
+        status: 'completed',
+        steps: [
+          { type: 'thought', signature: 'buffered-signature' },
+          { type: 'model_output', content: [{ type: 'text', text: 'buffered' }] }
+        ],
+        usage: { total_input_tokens: 2, total_output_tokens: 1, total_tokens: 3 }
+      })
+    }) as typeof fetch)
+    const response = await gemini.chat({ chatPrompt: [{ role: 'user', content: 'hello' }] }, { stream: false })
+    if (response instanceof ReadableStream) throw new Error('Expected a buffered Gemini Interactions response')
+    expect(body).toMatchObject({ model: 'gemini-3.7-flash', store: false, stream: false, generation_config: { thinking_summaries: 'none' } })
+    expect(response).toMatchObject({
+      remoteId: 'interaction_buffered',
+      results: [{ content: 'buffered', thoughtBlocks: [{ encrypted: true }] }],
+      modelUsage: { tokens: { promptTokens: 2, completionTokens: 1, totalTokens: 3 } }
+    })
+  })
+
+  it('fails closed when a stream ends without the terminal marker', async () => {
+    const body = [
+      `event: interaction.created\ndata: ${JSON.stringify({ event_type: 'interaction.created', interaction: { id: 'interaction_incomplete', model: 'gemini-3.7-flash', status: 'in_progress' } })}`,
+      `event: interaction.completed\ndata: ${JSON.stringify({ event_type: 'interaction.completed', interaction: { id: 'interaction_incomplete', model: 'gemini-3.7-flash', status: 'completed', steps: [], usage: { total_input_tokens: 1, total_output_tokens: 0, total_tokens: 1 } } })}`
+    ].join('\n\n')
+    const gemini = service((async () => new Response(body, { headers: { 'content-type': 'text/event-stream' } })) as typeof fetch)
+    const response = await gemini.chat({ chatPrompt: [{ role: 'user', content: 'hello' }] }, { stream: true })
+    if (!(response instanceof ReadableStream)) throw new Error('Expected a streaming Gemini Interactions response')
+    await expect((async () => {
+      for await (const item of response) void item
+    })()).rejects.toMatchObject({ code: 'INVALID_PROVIDER_RESPONSE' })
+  })
+
+  it('rejects corrupted stored Interactions steps before egress', async () => {
+    let called = false
+    const gemini = service((async () => {
+      called = true
+      return Response.json({})
+    }) as typeof fetch)
+    await expect(gemini.chat({
+      chatPrompt: [
+        { role: 'user', content: 'hello' },
+        { role: 'assistant', content: 'answer', thoughtBlocks: [{ data: 'wiki.gemini.interactions.v1:not-json', encrypted: true }] },
+        { role: 'user', content: 'continue' }
+      ]
+    }, { stream: false })).rejects.toMatchObject({ code: 'AGENT_PROVIDER_STATE_CORRUPT' })
+    expect(called).toBe(false)
   })
 })

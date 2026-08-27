@@ -7,6 +7,7 @@ import { canonicalJson } from '../../helpers/canonical-json.ts'
 import type { AgentAdmissionResolver, AgentResolvedAdmission } from '../runtime.ts'
 import { AgentRepositoryError } from '../repository.ts'
 import type { AgentSecretRegistry } from './secrets.ts'
+import { isGeminiInteractionsModel } from './gemini-interactions.ts'
 
 const TransportKindSchema = z.enum(['openai-responses', 'openresponses', 'openai-chat', 'legacy-completions', 'anthropic-messages', 'gemini-api'])
 const AuthModeSchema = z.enum(['bearer', 'api-key-header', 'anthropic-api-key', 'google-api-key'])
@@ -216,13 +217,12 @@ const validateHeaders = (headers: Readonly<Record<string, string>>): void => {
 const EnvironmentSecretReference = /^env:[A-Z][A-Z0-9_]{0,127}$/
 const ManagedSecretReference = /^managed:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
-const GeminiModelName = /^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$/
 const validateSettings = (input: AgentProviderSettingsInput, allowManagedReference = false) => {
   const transportKind = TransportKindSchema.parse(input.transportKind)
   const model = normalizedString(input.model, 'Provider model', 255)
   const utilityModel = input.utilityModel === null ? null : normalizedString(input.utilityModel, 'Utility model', 255)
   const baseUrl = normalizeBaseUrl(input.baseUrl)
-  if (transportKind === 'gemini-api' && (!GeminiModelName.test(model) || (utilityModel !== null && !GeminiModelName.test(utilityModel)))) throw new AgentRepositoryError('INVALID_PROVIDER_MODEL', 'Gemini model names may contain only letters, numbers, dots, underscores, and hyphens', 400)
+  if (transportKind === 'gemini-api' && (!isGeminiInteractionsModel(model) || (utilityModel !== null && !isGeminiInteractionsModel(utilityModel)))) throw new AgentRepositoryError('INVALID_PROVIDER_MODEL', 'Gemini Interactions requires Gemini 3.x model IDs', 400)
   const authMode = AuthModeSchema.parse(input.authMode)
   const secretReference = input.secretReference === null ? null : normalizedString(input.secretReference, 'Secret reference', 255)
   const secretValue = input.secretValue
@@ -233,6 +233,7 @@ const validateSettings = (input: AgentProviderSettingsInput, allowManagedReferen
   if (transportKind === 'gemini-api' && authMode !== 'google-api-key') throw new AgentRepositoryError('INVALID_PROVIDER_AUTH', 'Gemini API requires Google API key authentication', 400)
   if (transportKind === 'legacy-completions' && (authMode === 'anthropic-api-key' || authMode === 'google-api-key')) throw new AgentRepositoryError('INVALID_PROVIDER_AUTH', 'Legacy completions require bearer or generic API key authentication', 400)
   const adapterConfig = AgentProviderAdapterConfigSchema.parse(input.adapterConfig)
+  if (transportKind === 'gemini-api' && adapterConfig.temperature !== undefined) throw new AgentRepositoryError('INVALID_PROVIDER_CONFIG', 'Gemini Interactions does not support temperature overrides', 400)
   validateHeaders(adapterConfig.additionalHeaders)
   const capabilities = AgentProviderCapabilitiesSchema.parse(input.capabilities)
   const policies = AgentProviderPoliciesSchema.parse(input.policies)

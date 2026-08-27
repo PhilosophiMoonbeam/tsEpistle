@@ -17,7 +17,7 @@ describe('agent provider protocol presentation', () => {
     expect(new Set(AGENT_PROVIDER_PROTOCOL_OPTIONS.map(option => option.title)).size).toBe(AGENT_PROVIDER_TRANSPORTS.length)
     expect(agentProviderProtocolOption('openai-chat').title).toBe('OpenAI-compatible Chat Completions')
     expect(agentProviderProtocolOption('legacy-completions').title).toBe('Legacy text Completions')
-    expect(agentProviderProtocolOption('gemini-api').title).toBe('Google Gemini API')
+    expect(agentProviderProtocolOption('gemini-api')).toMatchObject({ title: 'Google Gemini Interactions API', endpoint: '/interactions' })
   })
 
   it('distinguishes native from prompt-emulated tool calling', () => {
@@ -73,6 +73,7 @@ describe('agent provider protocol presentation', () => {
     expect(agentProviderProtocolExecutionModes('gemini-api')).toEqual(['agent'])
     expect(agentProviderProtocolExecutionModes('legacy-completions')).toEqual(['agent'])
     expect(agentProviderCapabilityRevision('openresponses')).toBe('wiki-protocol-capabilities-v2:openresponses')
+    expect(agentProviderCapabilityRevision('gemini-api')).toBe('wiki-protocol-capabilities-v3:gemini-api')
     expect(AGENT_PROVIDER_PRICING_REVISION).toBe('unpriced-v1')
   })
 

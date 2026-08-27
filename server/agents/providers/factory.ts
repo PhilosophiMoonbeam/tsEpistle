@@ -5,8 +5,6 @@ import { Agent, fetch as undiciFetch } from 'undici'
 import {
   AxAIAnthropic,
   AxAIAnthropicModel,
-  AxAIGoogleGemini,
-  AxAIGoogleGeminiModel,
   AxAIOpenAIEmbedModel,
   AxAIOpenAIBase,
   AxAIOpenAIResponsesBase,
@@ -29,13 +27,13 @@ import {
 } from './registry.ts'
 import { AgentRepositoryError } from '../repository.ts'
 import { createOpenResponsesFetch } from './openresponses.ts'
+import { createGeminiInteractionsService, isGeminiInteractionsModel, preserveGeminiInteractionState } from './gemini-interactions.ts'
 import type { AgentSecretRegistry } from './secrets.ts'
 
 const MAX_RETRY_AFTER_MS = 300_000
 const MAX_PROVIDER_ERROR_BYTES = 64 * 1_024
 const OPENAI_REASONING_STATE_PREFIX = 'wiki.openai.reasoning.v1:'
 const MAX_PROVIDER_STATE_ITEM_BYTES = 256 * 1_024
-const GOOGLE_GEMINI_API_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta'
 
 type ProviderThoughtBlock = NonNullable<AxChatResponseResult['thoughtBlocks']>[number]
 
@@ -47,11 +45,6 @@ const openAIReasoningState = (resultId: string, block: ProviderThoughtBlock): Pr
     data: `${OPENAI_REASONING_STATE_PREFIX}${JSON.stringify([resultId, block.data])}`,
     encrypted: true
   }
-}
-const geminiThoughtSignatureState = (block: ProviderThoughtBlock): ProviderThoughtBlock | null => {
-  if (typeof block.signature !== 'string' || block.signature.length === 0) return null
-  if (Buffer.byteLength(block.signature, 'utf8') > MAX_PROVIDER_STATE_ITEM_BYTES) throw new AgentRepositoryError('INVALID_PROVIDER_RESPONSE', 'Gemini returned an invalid thought signature', 502)
-  return { data: '', encrypted: true, signature: block.signature }
 }
 
 const restoreOpenAIReasoningItem = (item: unknown): unknown => {
@@ -199,19 +192,11 @@ const pinnedProviderDispatcher = (resolve: typeof lookup): Agent => {
   providerDispatchers.set(resolve, dispatcher)
   return dispatcher
 }
-type ProviderEndpoint =
-  | '/responses'
-  | '/chat/completions'
-  | '/messages'
-  | '/completions'
-  | { readonly kind: 'gemini'; readonly model: string }
+type ProviderEndpoint = '/responses' | '/chat/completions' | '/messages' | '/completions' | '/interactions'
 
 const providerEndpointAllowed = (base: URL, url: URL, endpoint: ProviderEndpoint): boolean => {
   const basePath = base.pathname.replace(/\/$/, '')
-  if (typeof endpoint === 'string') return url.pathname === `${basePath}${endpoint}` && url.search.length === 0
-  const modelPath = `${basePath}/models/${endpoint.model}`
-  return (url.pathname === `${modelPath}:generateContent` && url.search.length === 0) ||
-    (url.pathname === `${modelPath}:streamGenerateContent` && url.search === '?alt=sse')
+  return url.pathname === `${basePath}${endpoint}` && url.search.length === 0
 }
 
 export const createGuardedProviderFetch = (baseUrl: string, endpoint: ProviderEndpoint, additionalHeaders: Readonly<Record<string, string>>, implementation: typeof fetch = undiciFetch as unknown as typeof fetch, resolve: typeof lookup = lookup): typeof fetch => {
@@ -233,26 +218,6 @@ export const createGuardedProviderFetch = (baseUrl: string, endpoint: ProviderEn
   }
 }
 
-const createGeminiProviderFetch = (baseUrl: string, model: string, secret: string, guardedFetch: typeof fetch): typeof fetch => async (input, init) => {
-  const source = new URL(typeof input === 'string' || input instanceof URL ? input : input.url)
-  const modelPath = `/v1beta/models/${model}`
-  const streaming = source.pathname === `${modelPath}:streamGenerateContent`
-  const buffered = source.pathname === `${modelPath}:generateContent`
-  const queryKeys = [...source.searchParams.keys()]
-  const validQuery = source.searchParams.get('key') === secret &&
-    queryKeys.every(key => key === 'key' || (streaming && key === 'alt')) &&
-    queryKeys.length === (streaming ? 2 : 1) &&
-    (!streaming || source.searchParams.get('alt') === 'sse')
-  if (source.origin !== new URL(GOOGLE_GEMINI_API_BASE_URL).origin || (!streaming && !buffered) || !validQuery || source.hash || source.username || source.password) {
-    throw new AgentRepositoryError('PROVIDER_EGRESS_DENIED', 'Gemini request destination is not allowlisted', 502)
-  }
-  const target = new URL(baseUrl)
-  target.pathname = `${target.pathname.replace(/\/$/, '')}/models/${model}:${streaming ? 'streamGenerateContent' : 'generateContent'}`
-  target.search = streaming ? '?alt=sse' : ''
-  const headers = new Headers(init?.headers)
-  headers.set('x-goog-api-key', secret)
-  return await guardedFetch(target, { ...init, headers })
-}
 
 const axFeatures = (capabilities: AgentProviderCapabilities): AxAIFeatures => ({
   functions: capabilities.toolCalling === 'native',
@@ -316,6 +281,7 @@ export class AgentProviderFactory {
     const row = await query.first()
     if (!row || !row.secretReference) throw new AgentRepositoryError('PROFILE_VERSION_UNAVAILABLE', 'Provider profile version is unavailable', 409)
     const model = loadOptions.purpose === 'utility' ? row.utilityModel ?? row.model : row.model
+    if (row.transportKind === 'gemini-api' && !isGeminiInteractionsModel(model)) throw new AgentRepositoryError('INVALID_PROVIDER_MODEL', 'Gemini Interactions requires a Gemini 3.x model ID', 400)
     const secret = await this.#secrets.get(row.secretReference)
     if (!secret) throw new AgentRepositoryError('PROFILE_SECRET_UNAVAILABLE', 'Provider profile secret is unavailable', 503)
     let adapterConfig: ReturnType<typeof AgentProviderAdapterConfigSchema.parse>
@@ -333,7 +299,7 @@ export class AgentProviderFactory {
         : row.transportKind === 'legacy-completions'
           ? '/completions'
           : row.transportKind === 'gemini-api'
-            ? { kind: 'gemini', model }
+            ? '/interactions'
             : '/chat/completions'
     const guardedFetch = createGuardedProviderFetch(
       row.baseUrl,
@@ -344,9 +310,7 @@ export class AgentProviderFactory {
     )
     const transportFetch = row.transportKind === 'openresponses'
       ? createOpenResponsesFetch(guardedFetch)
-      : row.transportKind === 'gemini-api'
-        ? createGeminiProviderFetch(row.baseUrl, model, secret, guardedFetch)
-        : guardedFetch
+      : guardedFetch
     const options = {
       fetch: transportFetch,
       timeout: adapterConfig.timeoutMs,
@@ -412,13 +376,13 @@ export class AgentProviderFactory {
         options
       })
     } else if (row.transportKind === 'gemini-api') {
-      service = new AxAIGoogleGemini({
+      service = createGeminiInteractionsService({
         apiKey: secret,
-        config: {
-          model: model as AxAIGoogleGeminiModel,
-          ...(adapterConfig.temperature === undefined ? {} : { temperature: adapterConfig.temperature })
-        },
-        options
+        baseUrl: row.baseUrl,
+        model,
+        fetch: options.fetch,
+        timeoutMs: adapterConfig.timeoutMs,
+        ...(adapterConfig.reasoningEffort === undefined ? {} : { reasoningEffort: adapterConfig.reasoningEffort })
       })
     } else if (row.transportKind === 'legacy-completions') {
       service = createLegacyCompletionService({ ...row, model }, secret, adapterConfig, options.fetch)
@@ -435,7 +399,7 @@ export class AgentProviderFactory {
       preserveThoughtBlock: row.transportKind === 'openai-responses' || row.transportKind === 'openresponses'
         ? (resultId, block) => block.encrypted ? openAIReasoningState(resultId, block) : null
         : row.transportKind === 'gemini-api'
-          ? (_resultId, block) => geminiThoughtSignatureState(block)
+          ? (_resultId, block) => preserveGeminiInteractionState(block)
           : (_resultId, block) => block.encrypted ? { ...block } : null
     }
   }

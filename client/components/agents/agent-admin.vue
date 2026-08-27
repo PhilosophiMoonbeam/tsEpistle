@@ -229,7 +229,7 @@ const availableAuthModes = computed<AgentProviderAuthMode[]>(() => profileDraft.
 
 const selectedProtocol = computed(() => agentProviderProtocolOption(profileDraft.transportKind))
 const agentModelHint = computed(() => profileDraft.transportKind === 'gemini-api'
-  ? 'Gemini model ID, for example gemini-2.5-flash.'
+  ? 'Gemini 3.x model ID, for example gemini-3.7-flash.'
   : 'Primary model for conversational answers and Wiki actions.')
 const protocolBehaviorRows = computed(() => {
   const structuredOutput = {

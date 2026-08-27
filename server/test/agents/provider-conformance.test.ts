@@ -80,9 +80,10 @@ describe('provider conformance runner', () => {
     expect(report).toMatchObject({ status: 'passed', checks: expect.arrayContaining([{ name: 'native-tool-round-trip', passed: true }]) })
   })
 
-  it('replays opaque Gemini thought signatures during native conformance', async () => {
+  it('replays encrypted Gemini Interactions step state during native conformance', async () => {
     const setConformed = vi.fn(async () => {})
     let continuationObserved = false
+    const interactionState = 'wiki.gemini.interactions.v1:[{"signature":"opaque-signature","type":"thought"}]'
     const factory = {
       create: async () => ({
         ...service(async input => {
@@ -94,18 +95,18 @@ describe('provider conformance runner', () => {
               results: [{
                 index: 0,
                 functionCalls: [{ id: 'gemini-call-1', type: 'function', function: { name: 'wiki_conformance_echo', params: { token } } }],
-                thoughtBlocks: [{ data: 'private thought', encrypted: false, signature: 'opaque-signature' }]
+                thoughtBlocks: [{ data: interactionState, encrypted: true }]
               }],
               modelUsage: usage
             }
           }
           const assistant = input.chatPrompt.find(message => message.role === 'assistant')
-          continuationObserved = assistant?.thoughtBlocks?.some(block => block.data === '' && block.encrypted && block.signature === 'opaque-signature') === true
+          continuationObserved = assistant?.thoughtBlocks?.some(block => block.data === interactionState && block.encrypted && block.signature === undefined) === true
           return { results: [{ index: 0, content: 'ACKNOWLEDGED' }], modelUsage: usage }
         }, { toolCalling: 'native', parallelToolCalls: true, structuredOutput: 'native-json-schema', usage: 'stream' }),
         transportKind: 'gemini-api',
-        preserveThoughtBlock: (_resultId: string, block: { data: string; encrypted: boolean; signature?: string }) => block.signature
-          ? { data: '', encrypted: true as const, signature: block.signature }
+        preserveThoughtBlock: (_resultId: string, block: { data: string; encrypted: boolean; signature?: string }) => block.encrypted && block.data.startsWith('wiki.gemini.interactions.v1:')
+          ? { data: block.data, encrypted: true as const }
           : null
       })
     } as unknown as AgentProviderFactory

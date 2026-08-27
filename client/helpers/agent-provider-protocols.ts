@@ -72,11 +72,11 @@ export const AGENT_PROVIDER_PROTOCOL_OPTIONS = [
   },
   {
     value: 'gemini-api',
-    title: 'Google Gemini API',
+    title: 'Google Gemini Interactions API',
     group: 'Native provider APIs',
     startsGroup: false,
-    description: 'Native Gemini generateContent API with streaming, function calls, parallel actions, and opaque thought-signature continuation.',
-    endpoint: '/models/{model}:generateContent'
+    description: 'Native POST /v1beta/interactions API with stateless streaming, structured outputs, parallel function calls, and exact thought-step continuation.',
+    endpoint: '/interactions'
   }
 ] as const satisfies readonly AgentProviderProtocolOption[]
 
@@ -157,7 +157,7 @@ const executionModesByTransport: Readonly<Record<AgentProviderTransport, readonl
 
 export const agentProviderProtocolExecutionModes = (transport: AgentProviderTransport): readonly AgentProviderExecutionMode[] => executionModesByTransport[transport]
 
-export const agentProviderCapabilityRevision = (transport: AgentProviderTransport): string => `wiki-protocol-capabilities-v2:${transport}`
+export const agentProviderCapabilityRevision = (transport: AgentProviderTransport): string => `wiki-protocol-capabilities-v${transport === 'gemini-api' ? '3' : '2'}:${transport}`
 
 export const agentProviderProtocolOption = (transport: AgentProviderTransport): AgentProviderProtocolOption => {
   const option = optionByTransport.get(transport)

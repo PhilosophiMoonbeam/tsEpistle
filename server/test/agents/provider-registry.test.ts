@@ -67,25 +67,27 @@ describe('agent provider profile registry', () => {
     expect(await knex('agentProviderProfileVersions').where({ profileId: created.id }).select('id', 'model', 'utilityModel')).toEqual([{ id: settingsId, model: 'gpt-test-2', utilityModel: 'gpt-test-mini' }])
     await expect(registry.resolve({ ownerId: 7, sessionId: 'session-1', profileResolutionToken: token })).rejects.toMatchObject({ code: 'PROFILE_RESOLUTION_CHANGED', status: 409 })
   })
-  it('accepts Gemini profiles and rejects ambiguous credentials or model paths', async () => {
+  it('accepts Gemini 3.x Interactions profiles and rejects legacy models or ambiguous credentials', async () => {
     const geminiInput: AgentProviderSettingsInput = {
       ...profileInput,
       transportKind: 'gemini-api',
-      model: 'gemini-2.5-flash',
-      utilityModel: 'gemini-2.5-flash-lite',
+      model: 'gemini-3.7-flash',
+      utilityModel: 'gemini-3.5-flash-lite',
       baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
       authMode: 'google-api-key',
       capabilities: { ...profileInput.capabilities, parallelToolCalls: true, usage: 'stream' }
     }
     await expect(registry.create({ ...geminiInput, displayName: 'Gemini', exposureMode: 'all_agent_users', actorId: 1 })).resolves.toMatchObject({
       transportKind: 'gemini-api',
-      model: 'gemini-2.5-flash',
-      utilityModel: 'gemini-2.5-flash-lite',
+      model: 'gemini-3.7-flash',
+      utilityModel: 'gemini-3.5-flash-lite',
       authMode: 'google-api-key',
       destinationHost: 'generativelanguage.googleapis.com'
     })
     await expect(registry.create({ ...geminiInput, authMode: 'bearer', displayName: 'Gemini bearer', exposureMode: 'all_agent_users', actorId: 1 })).rejects.toMatchObject({ code: 'INVALID_PROVIDER_AUTH' })
-    await expect(registry.create({ ...geminiInput, model: 'models/gemini-2.5-flash', displayName: 'Gemini model path', exposureMode: 'all_agent_users', actorId: 1 })).rejects.toMatchObject({ code: 'INVALID_PROVIDER_MODEL' })
+    await expect(registry.create({ ...geminiInput, model: 'gemini-2.5-flash', displayName: 'Legacy Gemini model', exposureMode: 'all_agent_users', actorId: 1 })).rejects.toMatchObject({ code: 'INVALID_PROVIDER_MODEL' })
+    await expect(registry.create({ ...geminiInput, model: 'models/gemini-3.7-flash', displayName: 'Gemini model path', exposureMode: 'all_agent_users', actorId: 1 })).rejects.toMatchObject({ code: 'INVALID_PROVIDER_MODEL' })
+    await expect(registry.create({ ...geminiInput, adapterConfig: { ...geminiInput.adapterConfig, temperature: 0.5 }, displayName: 'Gemini temperature', exposureMode: 'all_agent_users', actorId: 1 })).rejects.toMatchObject({ code: 'INVALID_PROVIDER_CONFIG' })
     await expect(registry.create({ ...geminiInput, adapterConfig: { ...geminiInput.adapterConfig, additionalHeaders: { 'x-goog-api-key': 'override' } }, displayName: 'Gemini header override', exposureMode: 'all_agent_users', actorId: 1 })).rejects.toMatchObject({ code: 'INVALID_PROVIDER_HEADERS' })
   })
 

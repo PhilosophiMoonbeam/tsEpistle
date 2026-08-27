@@ -22,7 +22,7 @@ describe('guarded provider fetch', () => {
     expect(called).toBe(0)
   })
 
-  it('allows only the configured Gemini model generation paths', async () => {
+  it('allows only the exact Gemini Interactions endpoint', async () => {
     let called = 0
     const implementation = async (): Promise<Response> => {
       called++
@@ -30,17 +30,17 @@ describe('guarded provider fetch', () => {
     }
     const guarded = createGuardedProviderFetch(
       'https://generativelanguage.googleapis.com/v1beta',
-      { kind: 'gemini', model: 'gemini-2.5-flash' },
+      '/interactions',
       {},
       implementation as typeof fetch,
       publicResolver as never
     )
-    await expect(guarded('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent')).resolves.toBeInstanceOf(Response)
-    await expect(guarded('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse')).resolves.toBeInstanceOf(Response)
-    await expect(guarded('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent')).rejects.toMatchObject({ code: 'PROVIDER_EGRESS_DENIED' })
-    await expect(guarded('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=json')).rejects.toMatchObject({ code: 'PROVIDER_EGRESS_DENIED' })
-    await expect(guarded('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=secret')).rejects.toMatchObject({ code: 'PROVIDER_EGRESS_DENIED' })
-    expect(called).toBe(2)
+    await expect(guarded('https://generativelanguage.googleapis.com/v1beta/interactions')).resolves.toBeInstanceOf(Response)
+    await expect(guarded('https://generativelanguage.googleapis.com/v1beta/interactions?alt=sse')).rejects.toMatchObject({ code: 'PROVIDER_EGRESS_DENIED' })
+    await expect(guarded('https://generativelanguage.googleapis.com/v1beta/interactions/interaction_1')).rejects.toMatchObject({ code: 'PROVIDER_EGRESS_DENIED' })
+    await expect(guarded('https://generativelanguage.googleapis.com/v1beta/models/gemini-3.7-flash:generateContent')).rejects.toMatchObject({ code: 'PROVIDER_EGRESS_DENIED' })
+    await expect(guarded('https://other.example.test/v1beta/interactions')).rejects.toMatchObject({ code: 'PROVIDER_EGRESS_DENIED' })
+    expect(called).toBe(1)
   })
 
   it('blocks redirects and exposes only bounded retry metadata for provider failures', async () => {
