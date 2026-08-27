@@ -41,7 +41,8 @@ const page = {
     label: 'Start',
     href: '/en/docs/start'
   },
-  citationSections: []
+  citationSections: [],
+  knowledge: null
 }
 const completeKernel = (): ActionKernel => {
   const kernel = new ActionKernel()

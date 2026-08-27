@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { AGENT_FEATURE_FLAG_KEYS, type AgentActionName, type AgentFeatureFlags } from '../../../shared/agents/contracts.ts'
 import { ActionKernel, createActionAuthority, type ActionAdmissionSnapshot } from '../../agents/actions/kernel.ts'
 import { registerPageReadActions } from '../../agents/actions/page-reads.ts'
+import type { KnowledgeProjectionView } from '../../knowledge/projection.ts'
 
 const requestId = '00000000-0000-4000-8000-000000000001'
 const actionCallId = '00000000-0000-4000-8000-000000000002'
@@ -36,9 +37,35 @@ const page = (overrides: Record<string, unknown> = {}) => ({
   ...overrides
 })
 
+const knowledgeProjection = (overrides: Partial<KnowledgeProjectionView> = {}): KnowledgeProjectionView => ({
+  schemaVersion: 1,
+  sourceRevision: '8',
+  state: 'partial',
+  conceptType: 'Procedure',
+  summary: 'Operational deployment runbook.',
+  tags: ['runbook'],
+  entities: [{ name: 'Deployment', type: 'Process' }],
+  relationships: [],
+  openQuestions: [],
+  lifecycle: {
+    status: 'stable',
+    trustTier: 'unverified',
+    verification: 'unverified',
+    stale: false,
+    generatedAt: '2026-08-17T00:00:00.000Z',
+    verifiedAt: null,
+    staleAfter: null
+  },
+  missingFields: ['concept.relationships'],
+  provenance: { deterministicVersion: 'wiki-knowledge-v1', utility: null },
+  ...overrides
+})
+
 class PageNotFound extends Error {
   readonly code = 'PAGE_NOT_FOUND'
 }
+
+type KnowledgeDependency = NonNullable<Parameters<typeof registerPageReadActions>[1]['knowledge']>
 
 const setup = (overrides: Partial<{
   search: (input: Record<string, unknown>) => Promise<unknown>
@@ -52,7 +79,7 @@ const setup = (overrides: Partial<{
   getVersion: (input: Record<string, unknown>) => Promise<unknown>
   listLinks: (input: Record<string, unknown>) => Promise<unknown>
   listRelated: (input: Record<string, unknown>) => Promise<unknown>
-}> = {}) => {
+}> = {}, knowledge?: KnowledgeDependency) => {
   const operations = {
     search: vi.fn(async () => ({ results: [], suggestions: [], totalHits: 0, windowLimit: 150, windowTruncated: false })),
     searchTags: vi.fn(async () => []),
@@ -69,7 +96,7 @@ const setup = (overrides: Partial<{
   }
   const resolveRequester = vi.fn(async () => principal)
   const kernel = new ActionKernel()
-  registerPageReadActions(kernel, { operations, resolveRequester, snapshotSigningSecret: Buffer.alloc(32, 3) })
+  registerPageReadActions(kernel, { operations, resolveRequester, snapshotSigningSecret: Buffer.alloc(32, 3), ...(knowledge ? { knowledge } : {}) })
   const execute = (name: AgentActionName, input: unknown) => kernel.execute({
     authority: createActionAuthority(name, requestId, auth, admission),
     actionCallId,
@@ -103,8 +130,8 @@ describe('permission-safe page read actions', () => {
     })
     await expect(execute('pages.search', { query: 'notes', path: 'docs', limit: 3, offset: 0 })).resolves.toEqual({
       results: [
-        { id: 42, locale: 'en', path: 'docs/start', title: 'Start', description: '', contentType: 'markdown', sourceRevision: '8', citation: { evidenceId: 'page:42', label: 'Start', href: '/en/docs/start' }, tags: ['runbook'], score: 12.5, matchedFields: ['tag', 'graph'] },
-        { id: 43, locale: 'en', path: 'private/notes', title: 'Start', description: '', contentType: 'markdown', sourceRevision: '2', citation: { evidenceId: 'page:43', label: 'Start', href: '/_private/en/private/notes' }, tags: [], score: 0, matchedFields: [] }
+        { id: 42, locale: 'en', path: 'docs/start', title: 'Start', description: '', contentType: 'markdown', sourceRevision: '8', citation: { evidenceId: 'page:42', label: 'Start', href: '/en/docs/start' }, tags: ['runbook'], score: 12.5, matchedFields: ['tag', 'graph'], knowledge: null },
+        { id: 43, locale: 'en', path: 'private/notes', title: 'Start', description: '', contentType: 'markdown', sourceRevision: '2', citation: { evidenceId: 'page:43', label: 'Start', href: '/_private/en/private/notes' }, tags: [], score: 0, matchedFields: [], knowledge: null }
       ],
       suggestions: ['notes'],
       totalInWindow: 3,
@@ -113,6 +140,46 @@ describe('permission-safe page read actions', () => {
       nextOffset: null
     })
     expect(operations.search).toHaveBeenCalledWith(expect.objectContaining({ requester: principal, path: 'docs', limit: 3 }))
+  })
+
+  it('searches and filters the shared current knowledge projection', async () => {
+    const projection = knowledgeProjection()
+    const knowledge: KnowledgeDependency = {
+      getCurrent: vi.fn(async () => projection),
+      getRevision: vi.fn(async () => projection),
+      getCurrentMany: vi.fn(async () => new Map([[42, projection]])),
+      searchVisible: vi.fn(async () => [{
+        id: 42,
+        locale: 'en',
+        path: 'docs/start',
+        visibility: 'public',
+        score: 7,
+        matchedFields: ['knowledge'],
+        knowledge: projection
+      }])
+    }
+    const { execute } = setup({}, knowledge)
+
+    await expect(execute('pages.search', {
+      query: 'deployment',
+      knowledge: { state: 'partial', conceptType: 'Procedure' },
+      limit: 10,
+      offset: 0
+    })).resolves.toMatchObject({
+      results: [{
+        id: 42,
+        matchedFields: ['knowledge'],
+        knowledge: {
+          state: 'partial',
+          conceptType: 'Procedure',
+          summary: 'Operational deployment runbook.'
+        }
+      }]
+    })
+    expect(knowledge.searchVisible).toHaveBeenCalledWith(expect.objectContaining({
+      query: 'deployment',
+      filter: { state: 'partial', conceptType: 'Procedure' }
+    }))
   })
 
   it('searches and pages the visible tag taxonomy', async () => {
@@ -160,7 +227,8 @@ describe('permission-safe page read actions', () => {
         sourceRevision: '8',
         citation: { evidenceId: 'page:42', label: 'Start', href: '/en/docs/start' },
         tags: ['runbook'],
-        updatedAt: '2026-08-17T00:00:00.000Z'
+        updatedAt: '2026-08-17T00:00:00.000Z',
+        knowledge: null
       }],
       totalInWindow: 1,
       windowLimit: 5_000,
@@ -186,45 +254,6 @@ describe('permission-safe page read actions', () => {
     })
   })
 
-  it('exports visible Markdown pages as deterministic OKF concepts with trust metadata', async () => {
-    const { execute } = setup({
-      get: async () => page({
-        content: '# Start\n\nSee [Next](/en/docs/next).\n',
-        tags: [{ tag: 'runbook' }],
-        extra: {
-          okf: {
-            type: 'Reference',
-            status: 'stable',
-            generated: { by: 'process:import', at: '2026-08-16T00:00:00.000Z' },
-            verified: { by: 'human:7', at: '2026-08-17T00:00:00.000Z' },
-            producer_extension: { retained: true }
-          }
-        }
-      })
-    })
-
-    const result = await execute('pages.getOkf', { id: 42 }) as Record<string, unknown>
-    expect(result).toMatchObject({
-      id: 42,
-      locale: 'en',
-      path: 'docs/start',
-      sourceRevision: '8',
-      version: '0.2',
-      conceptId: 'en/docs/start',
-      filePath: 'en/docs/start.md',
-      sha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
-      metadata: expect.objectContaining({ producer_extension: { retained: true } }),
-      trust: {
-        trustTier: 'human-reviewed',
-        verification: 'current',
-        status: 'stable',
-        stale: false,
-        generatedAt: '2026-08-16T00:00:00.000Z',
-        verifiedAt: '2026-08-17T00:00:00.000Z'
-      }
-    })
-    expect(String(result.markdown)).toContain('[Next](/en/docs/next.md)')
-  })
 
   it('prefers the caller-owned private page for path identity and falls back only on not-found', async () => {
     const getByPath = vi.fn(async input => {
@@ -321,7 +350,7 @@ describe('permission-safe page read actions', () => {
       get: async input => input.id === 42 ? page() : page({ id: 43, localeCode: 'fr', path: 'fr/start' })
     })
     await expect(execute('pages.listRecent', { locale: 'en', limit: 2 })).resolves.toEqual({
-      pages: [{ id: 42, locale: 'en', path: 'docs/start', title: 'Start', description: '', contentType: 'markdown', sourceRevision: '8', citation: { evidenceId: 'page:42', label: 'Start', href: '/en/docs/start' } }]
+      pages: [{ id: 42, locale: 'en', path: 'docs/start', title: 'Start', description: '', contentType: 'markdown', sourceRevision: '8', citation: { evidenceId: 'page:42', label: 'Start', href: '/en/docs/start' }, knowledge: null }]
     })
     expect(operations.listRecent).toHaveBeenCalledWith(principal)
   })
@@ -388,7 +417,8 @@ describe('permission-safe page read actions', () => {
         tags: ['runbook'],
         distance: 2,
         direction: 'incoming',
-        viaPageId: 41
+        viaPageId: 41,
+        knowledge: null
       }],
       nextCursor: expect.any(String)
     })

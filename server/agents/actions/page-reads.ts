@@ -4,8 +4,9 @@ import { z } from 'zod'
 import type { RequestAuthContext } from '../../../shared/agents/contracts.ts'
 import { type ActionAuthority, ActionKernel, ActionKernelError } from './kernel.ts'
 import { issueWikiLineSnapshot } from '../patch/wiki-line-patch.ts'
-import { createOkfPageDocument } from '../../okf/format.ts'
-const SearchMatchFieldSchema = z.enum(['title', 'tag', 'path', 'description', 'content', 'graph'])
+import type { KnowledgeProjectionView } from '../../knowledge/projection.ts'
+import type { KnowledgeDiscoveryFilter, KnowledgeSearchCandidate } from '../../knowledge/lifecycle.ts'
+const SearchMatchFieldSchema = z.enum(['title', 'tag', 'path', 'description', 'content', 'graph', 'knowledge'])
 const PageRowSchema = z.looseObject({
   id: z.coerce.number().int().positive().optional(),
   pageId: z.coerce.number().int().positive().optional(),
@@ -96,10 +97,23 @@ export interface PageReadActionDependencies {
   readonly operations: PageOperations
   readonly resolveRequester: (authority: ActionAuthority) => Promise<Express.User>
   readonly snapshotSigningSecret: Uint8Array
+  readonly knowledge?: {
+    getCurrent(pageId: number): Promise<KnowledgeProjectionView | null>
+    getRevision(pageId: number, sourceRevision: string): Promise<KnowledgeProjectionView | null>
+    getCurrentMany(pageIds: readonly number[]): Promise<ReadonlyMap<number, KnowledgeProjectionView>>
+    searchVisible(input: {
+      readonly query: string
+      readonly requester: Express.User
+      readonly locale?: string
+      readonly path?: string
+      readonly limit: number
+      readonly filter?: KnowledgeDiscoveryFilter
+    }): Promise<readonly KnowledgeSearchCandidate[]>
+  }
 }
 
 type PageGetInput = { readonly id: number } | { readonly path: string; readonly locale: string }
-interface SearchInput { readonly query: string; readonly locale?: string; readonly path?: string; readonly limit: number; readonly offset: number }
+interface SearchInput { readonly query: string; readonly locale?: string; readonly path?: string; readonly limit: number; readonly offset: number; readonly knowledge?: KnowledgeDiscoveryFilter }
 interface SearchTagsInput { readonly query: string; readonly limit: number }
 interface ListTagsInput { readonly limit: number; readonly offset: number }
 interface DiscoverInput {
@@ -110,6 +124,7 @@ interface DiscoverInput {
   readonly order: 'path' | 'title' | 'updated'
   readonly limit: number
   readonly offset: number
+  readonly knowledge?: KnowledgeDiscoveryFilter
 }
 interface PatchReadInput {
   readonly pageId: number
@@ -278,6 +293,15 @@ const normalizedPageTags = (value: unknown): string[] => {
   return [...new Set(tags)].sort().slice(0, 50)
 }
 
+const matchesKnowledgeFilter = (view: KnowledgeProjectionView, filter?: KnowledgeDiscoveryFilter): boolean => {
+  if (!filter) return true
+  if (filter.state !== undefined && view.state !== filter.state) return false
+  if (filter.lifecycleStatus !== undefined && view.lifecycle.status !== filter.lifecycleStatus) return false
+  if (filter.trustTier !== undefined && view.lifecycle.trustTier !== filter.trustTier) return false
+  if (filter.stale !== undefined && view.lifecycle.stale !== filter.stale) return false
+  return filter.conceptType === undefined || view.conceptType?.toLocaleLowerCase() === filter.conceptType.toLocaleLowerCase()
+}
+
 export const registerPageReadActions = (kernel: ActionKernel, dependencies: PageReadActionDependencies): void => {
   const operations = dependencies.operations
 
@@ -293,34 +317,67 @@ export const registerPageReadActions = (kernel: ActionKernel, dependencies: Page
     })
     const response = SearchResponseSchema.safeParse(rawResponse)
     if (!response.success) throw operationFailure('Page search returned an invalid result')
-    const selected = response.data.results.slice(input.offset, input.offset + input.limit)
-    const hydrated = await Promise.all(selected.map(async result => {
+    const knowledgeCandidates = dependencies.knowledge
+      ? await dependencies.knowledge.searchVisible({
+          query: input.query,
+          requester,
+          ...(input.locale ? { locale: input.locale } : {}),
+          ...(input.path !== undefined ? { path: input.path } : {}),
+          limit: Math.min(100, input.offset + input.limit),
+          ...(input.knowledge ? { filter: input.knowledge } : {})
+        })
+      : []
+    const candidates = new Map(response.data.results.map(result => [`${result.locale}\u0000${result.path}\u0000${result.visibility ?? 'public'}`, { ...result, knowledge: null as KnowledgeProjectionView | null }]))
+    for (const candidate of knowledgeCandidates) {
+      const key = `${candidate.locale}\u0000${candidate.path}\u0000${candidate.visibility}`
+      const existing = candidates.get(key)
+      candidates.set(key, {
+        path: candidate.path,
+        locale: candidate.locale,
+        visibility: candidate.visibility,
+        tags: existing?.tags ?? candidate.knowledge.tags,
+        score: Math.max(existing?.score ?? 0, candidate.score),
+        matchedFields: [...new Set([...(existing?.matchedFields ?? []), ...candidate.matchedFields])],
+        knowledge: candidate.knowledge
+      })
+    }
+    const hydrated = (await Promise.all([...candidates.values()].map(async result => {
       try {
-        const page = await operations.getByPath({
+        const page = parsePage(await operations.getByPath({
           path: result.path,
           locale: result.locale,
           visibility: result.visibility ?? 'public',
           requester
-        })
+        }), false)
         return {
-          ...parsePage(page, false),
+          ...page,
           tags: result.tags,
           score: result.score,
-          matchedFields: result.matchedFields
+          matchedFields: result.matchedFields,
+          knowledge: result.knowledge
         }
       } catch (error: unknown) {
         if (pageNotFound(error)) return null
         throw error
       }
-    }))
+    }))).filter(result => result !== null)
+    const currentKnowledge = dependencies.knowledge
+      ? await dependencies.knowledge.getCurrentMany(hydrated.map(result => result.id))
+      : new Map<number, KnowledgeProjectionView>()
+    const filtered = hydrated.map(result => ({
+      ...result,
+      knowledge: result.knowledge ?? currentKnowledge.get(result.id) ?? null
+    })).filter(result => result.knowledge !== null ? matchesKnowledgeFilter(result.knowledge, input.knowledge) : input.knowledge === undefined)
+      .sort((left, right) => right.score - left.score || left.title.localeCompare(right.title) || left.path.localeCompare(right.path))
+    const selected = filtered.slice(input.offset, input.offset + input.limit)
     const consumedThrough = input.offset + selected.length
     return {
-      results: hydrated.filter(result => result !== null),
+      results: selected,
       suggestions: response.data.suggestions,
-      totalInWindow: response.data.totalHits,
-      windowLimit: response.data.windowLimit,
-      windowTruncated: response.data.windowTruncated,
-      nextOffset: consumedThrough < response.data.totalHits ? consumedThrough : null
+      totalInWindow: dependencies.knowledge ? filtered.length : response.data.totalHits,
+      windowLimit: dependencies.knowledge ? response.data.windowLimit + 100 : response.data.windowLimit,
+      windowTruncated: response.data.windowTruncated || knowledgeCandidates.length >= 100,
+      nextOffset: consumedThrough < filtered.length ? consumedThrough : null
     }
   })
 
@@ -352,9 +409,14 @@ export const registerPageReadActions = (kernel: ActionKernel, dependencies: Page
   kernel.register('pages.discover', async (rawInput, context) => {
     const input = rawInput as DiscoverInput
     const requester = await requesterFor(dependencies.resolveRequester, context.authority)
-    const response = DiscoveryResponseSchema.safeParse(await operations.discover({ ...input, requester }))
+    const { knowledge: knowledgeFilter, ...discoveryInput } = input
+    const response = DiscoveryResponseSchema.safeParse(await operations.discover({
+      ...discoveryInput,
+      ...(knowledgeFilter ? { offset: 0, limit: 100 } : {}),
+      requester
+    }))
     if (!response.success) throw operationFailure('Page discovery returned an invalid result')
-    const hydrated = await Promise.all(response.data.pages.map(async item => {
+    const hydrated = (await Promise.all(response.data.pages.map(async item => {
       try {
         return {
           ...parsePage(await operations.get({ id: item.id, requester }), false),
@@ -365,51 +427,28 @@ export const registerPageReadActions = (kernel: ActionKernel, dependencies: Page
         if (pageNotFound(error)) return null
         throw error
       }
-    }))
+    }))).filter(result => result !== null)
+    const currentKnowledge = dependencies.knowledge
+      ? await dependencies.knowledge.getCurrentMany(hydrated.map(result => result.id))
+      : new Map<number, KnowledgeProjectionView>()
+    const filtered = hydrated.map(result => ({ ...result, knowledge: currentKnowledge.get(result.id) ?? null }))
+      .filter(result => result.knowledge !== null ? matchesKnowledgeFilter(result.knowledge, knowledgeFilter) : knowledgeFilter === undefined)
+    const pages = knowledgeFilter ? filtered.slice(input.offset, input.offset + input.limit) : filtered
+    const totalInWindow = knowledgeFilter ? filtered.length : response.data.totalInWindow
     return {
-      pages: hydrated.filter(result => result !== null),
-      totalInWindow: response.data.totalInWindow,
+      pages,
+      totalInWindow,
       windowLimit: response.data.windowLimit,
-      nextOffset: response.data.nextOffset
+      nextOffset: knowledgeFilter
+        ? input.offset + pages.length < totalInWindow ? input.offset + pages.length : null
+        : response.data.nextOffset
     }
   })
 
   kernel.register('pages.get', async (rawInput, context) => {
     const requester = await requesterFor(dependencies.resolveRequester, context.authority)
-    return parsePage(await getPageBySelector(operations, requester, rawInput as PageGetInput), true)
-  })
-  kernel.register('pages.getOkf', async (rawInput, context) => {
-    const requester = await requesterFor(dependencies.resolveRequester, context.authority)
-    const result = PageRowSchema.safeParse(await getPageBySelector(operations, requester, rawInput as PageGetInput))
-    if (!result.success) throw operationFailure('Page operation returned an invalid OKF source')
-    const row = result.data
-    if (row.content === undefined || row.authorId === undefined) throw operationFailure('Page operation returned an incomplete OKF source')
-    const id = row.id ?? row.pageId
-    const locale = row.locale ?? row.localeCode
-    if (!id || !locale) throw operationFailure('Page operation omitted page identity')
-    if (row.contentType !== 'markdown') throw new ActionKernelError('UNSUPPORTED_CONTENT_TYPE', 'Only Markdown pages can be exported as OKF concepts', 409)
-    const metadata = row.extra && typeof row.extra === 'object' ? row.extra.okf : undefined
-    const okf = createOkfPageDocument({
-      locale,
-      path: row.path,
-      title: row.title,
-      description: row.description ?? '',
-      tags: (row.tags ?? []).map(tag => typeof tag === 'string' ? tag : tag.tag),
-      content: row.content,
-      updatedAt: row.updatedAt instanceof Date ? row.updatedAt.toISOString() : row.updatedAt,
-      authorId: row.authorId,
-      metadata
-    })
-    return {
-      id,
-      locale,
-      path: row.path,
-      title: row.title,
-      description: row.description ?? '',
-      contentType: row.contentType,
-      sourceRevision: String(row.sourceRevision),
-      ...okf
-    }
+    const page = parsePage(await getPageBySelector(operations, requester, rawInput as PageGetInput), true)
+    return { ...page, knowledge: await dependencies.knowledge?.getCurrent(page.id) ?? null }
   })
   kernel.register('pages.readForPatch', async (rawInput, context) => {
     const input = rawInput as PatchReadInput
@@ -434,7 +473,7 @@ export const registerPageReadActions = (kernel: ActionKernel, dependencies: Page
     const requester = await requesterFor(dependencies.resolveRequester, context.authority)
     const recent = z.array(RecentRowSchema).safeParse(await operations.listRecent(requester))
     if (!recent.success) throw operationFailure('Recent page operation returned an invalid result')
-    const hydrated = await Promise.all(recent.data.slice(0, input.limit).map(async item => {
+    const hydrated = (await Promise.all(recent.data.slice(0, input.limit).map(async item => {
       try {
         const page = parsePage(await operations.get({ id: item.id, requester }), false)
         return !input.locale || page.locale === input.locale ? page : null
@@ -442,8 +481,11 @@ export const registerPageReadActions = (kernel: ActionKernel, dependencies: Page
         if (pageNotFound(error)) return null
         throw error
       }
-    }))
-    return { pages: hydrated.filter(result => result !== null) }
+    }))).filter(result => result !== null)
+    const knowledge = dependencies.knowledge
+      ? await dependencies.knowledge.getCurrentMany(hydrated.map(page => page.id))
+      : new Map<number, KnowledgeProjectionView>()
+    return { pages: hydrated.map(page => ({ ...page, knowledge: knowledge.get(page.id) ?? null })) }
   })
 
   kernel.register('pages.listHistory', async (rawInput, context) => {
@@ -476,7 +518,8 @@ export const registerPageReadActions = (kernel: ActionKernel, dependencies: Page
       citation: { ...parsed.citation, href: versionedCitationHref(parsed.citation.href, input.versionId) },
       citationSections: citationSections.map(citation => ({ ...citation, href: versionedCitationHref(citation.href, input.versionId) })),
       versionId: input.versionId,
-      versionDate: versionDate.data.versionDate instanceof Date ? versionDate.data.versionDate.toISOString() : versionDate.data.versionDate
+      versionDate: versionDate.data.versionDate instanceof Date ? versionDate.data.versionDate.toISOString() : versionDate.data.versionDate,
+      knowledge: await dependencies.knowledge?.getRevision(parsed.id, parsed.sourceRevision) ?? null
     }
   })
 
@@ -515,14 +558,18 @@ export const registerPageReadActions = (kernel: ActionKernel, dependencies: Page
     }))
     if (!response.success) throw operationFailure('Related pages operation returned an invalid result')
     if (response.data.truncated !== (response.data.nextOffset !== null)) throw operationFailure('Related pages operation returned inconsistent continuation state')
+    const pages = response.data.pages.map(page => ({
+      ...parsePage(page, false),
+      tags: normalizedPageTags(page.tags),
+      distance: page.distance,
+      direction: page.direction,
+      viaPageId: page.viaPageId
+    }))
+    const knowledge = dependencies.knowledge
+      ? await dependencies.knowledge.getCurrentMany(pages.map(page => page.id))
+      : new Map<number, KnowledgeProjectionView>()
     return {
-      pages: response.data.pages.map(page => ({
-        ...parsePage(page, false),
-        tags: normalizedPageTags(page.tags),
-        distance: page.distance,
-        direction: page.direction,
-        viaPageId: page.viaPageId
-      })),
+      pages: pages.map(page => ({ ...page, knowledge: knowledge.get(page.id) ?? null })),
       nextCursor: response.data.nextOffset === null
         ? null
         : issueRelatedCursor({

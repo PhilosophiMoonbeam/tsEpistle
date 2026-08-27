@@ -46,6 +46,7 @@ import { createWikiMcpController } from './agents/mcp.ts'
 import { parseAgentOperationalLimits } from './agents/config.ts'
 import { loadWikiAgentUser } from './agents/providers/wiki-actions.ts'
 import pageOperations from './operations/pages.ts'
+import { PageKnowledgeLifecycle } from './knowledge/lifecycle.ts'
 const { collectEntry } = viteAssets
 
 
@@ -255,6 +256,7 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
   let providerRegistry: AgentProviderRegistry | undefined
   let agentRuntime: AgentProductRuntime | undefined
   let providerConformance: AgentProviderConformanceRunner | undefined
+  let utilityModel: AgentUtilityModel | undefined
   if (wiki.config.agents.provider.enabled) {
     const encodedKeys = environmentSecretValue('AGENT_PROFILE_RESOLUTION_KEYS')
     if (!encodedKeys) throw new Error('AGENT_PROFILE_RESOLUTION_KEYS or AGENT_PROFILE_RESOLUTION_KEYS_FILE is required when agent providers are enabled')
@@ -284,12 +286,13 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
       snapshotSigningSecret
     }, wiki.config.agents.browser.enabled ? browserWorkerClientFromEnvironment() : undefined)
     const providerFactory = new AgentProviderFactory(wiki.models.knex, secrets)
+    utilityModel = new AgentUtilityModel(providerFactory)
     providerConformance = new AgentProviderConformanceRunner(wiki.models.knex, providerFactory, providerRegistry)
     agentRuntime = new AgentProductRuntime(wiki.models.knex, providerRegistry, new AxAgentEngine(providerFactory, actionSessions), {
       workerId: `http-${process.pid}`,
       globalConcurrency: agentLimits.provider.globalConcurrency,
       perUserConcurrency: agentLimits.provider.perUserConcurrency,
-      utilityModel: new AgentUtilityModel(providerFactory)
+      utilityModel
     })
     wiki.agentRuntime = agentRuntime
     let workerActive = false
@@ -301,6 +304,12 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
     tick()
     setInterval(tick, agentLimits.provider.pollingMilliseconds).unref()
   }
+  const knowledgeLifecycle = new PageKnowledgeLifecycle(wiki.models.knex, `knowledge-${process.pid}`, utilityModel)
+  const knowledgeTick = (): void => {
+    void knowledgeLifecycle.runOnce().catch((error: unknown) => { wiki.logger.warn(error instanceof Error ? error.message : String(error)) })
+  }
+  knowledgeTick()
+  setInterval(knowledgeTick, 1_000).unref()
   const agentsController = createAgentsHostController({
     ...wiki,
     agentLimits,

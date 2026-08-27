@@ -11,15 +11,6 @@ import { appendAgentEvent } from '../repository.ts'
 import { applyWikiLinePatch, inspectWikiLineSnapshotToken } from '../patch/wiki-line-patch.ts'
 import { getMcpProposal, getOwnedProposal, persistProposal, type PersistedProposal, type ProposalStatus } from '../proposals/repository.ts'
 import { applyApprovedProposal } from '../proposals/execution.ts'
-import {
-  createOkfPageDocument,
-  exportOkfLinks,
-  importOkfLinks,
-  OkfDocumentError,
-  okfFilePath,
-  parseOkfDocument,
-  renderOkfDocument
-} from '../../okf/format.ts'
 
 const PageSchema = z.looseObject({
   id: z.coerce.number().int().positive(),
@@ -116,20 +107,6 @@ const parsePage = (value: unknown) => {
 
 const canonicalSourceHash = (source: string): string => sha256(canonicalJson({ source: source.replace(/\r\n?/g, '\n') }))
 const pageDiff = (path: string, before: string, after: string): string | null => before === after ? null : createTwoFilesPatch(`a/${path}`, `b/${path}`, before, after, undefined, undefined, { context: 3 })
-const okfForPage = (page: ReturnType<typeof parsePage>) => {
-  if (page.authorId === undefined || page.updatedAt === undefined) throw new ActionKernelError('INVALID_PAGE_RESULT', 'Page operation omitted OKF provenance fields', 500)
-  return createOkfPageDocument({
-    locale: page.locale,
-    path: page.path,
-    title: page.title,
-    description: page.description,
-    tags: page.tags,
-    content: page.content,
-    updatedAt: iso(page.updatedAt),
-    authorId: page.authorId,
-    metadata: page.extra?.okf
-  })
-}
 
 const requester = async (dependencies: PageProposalActionDependencies, authority: ActionAuthority): Promise<Express.User> => {
   const value = await dependencies.resolveRequester(authority)
@@ -292,122 +269,6 @@ const prepareCreate = async (dependencies: PageProposalActionDependencies, conte
   const operationInput = { path: parsed.path, locale: parsed.locale, title: parsed.title, description: parsed.description, content: parsed.content, editor: 'markdown', contentType: parsed.contentType, visibility: 'public', isPublished: parsed.isPublished, tags: parsed.tags }
   return { pageId: null, path: parsed.path, locale: parsed.locale, baseSourceRevision: null, sourceCanonicalSha256: null, resultIdentity, diff: pageDiff(`${parsed.locale}/${parsed.path}`, '', parsed.content), patchSha256: null, patchFormat: null, patchEngineVersion: null, patchMetadata: { kind: 'create', operationInput, pageId: null, path: parsed.path, locale: parsed.locale, resultIdentity }, summary: `Create ${parsed.locale}/${parsed.path}` }
 }
-const prepareOkfImport = async (dependencies: PageProposalActionDependencies, context: ActionHandlerContext, input: Record<string, unknown>): Promise<PreparedProposal> => {
-  const parsedInput = ACTION_CATALOG['pages.prepareImportOkf'].input.parse(input)
-  let parsedDocument: ReturnType<typeof parseOkfDocument>
-  try {
-    parsedDocument = parseOkfDocument(parsedInput.document, dependencies.now?.() ?? new Date())
-  } catch (error: unknown) {
-    if (error instanceof OkfDocumentError) throw new ActionKernelError(error.code, error.message, 400)
-    throw error
-  }
-  const importedContent = importOkfLinks(parsedDocument.body, parsedInput.locale, parsedInput.path)
-  if (importedContent.trim().length === 0) throw new ActionKernelError('EMPTY_OKF_BODY', 'OKF concepts imported into Wiki must have a non-empty Markdown body', 400)
-  const user = await requester(dependencies, context.authority)
-  try {
-    await dependencies.operations.getByPath({ path: parsedInput.path, locale: parsedInput.locale, visibility: 'private', requester: user })
-    throw new ActionKernelError('PAGE_ALREADY_EXISTS', 'A private page already exists at the requested OKF concept path', 409)
-  } catch (error: unknown) {
-    if (error instanceof ActionKernelError) throw error
-    if (!pageNotFound(error)) throw error
-  }
-  let existing: ReturnType<typeof parsePage> | null = null
-  try {
-    existing = parsePage(await dependencies.operations.getByPath({ path: parsedInput.path, locale: parsedInput.locale, visibility: 'public', requester: user }))
-  } catch (error: unknown) {
-    if (!pageNotFound(error)) throw error
-  }
-  if (existing === null && parsedInput.expectedSourceRevision !== null) throw new ActionKernelError('PAGE_NOT_FOUND', 'The expected OKF import target does not exist', 404)
-  if (existing !== null && parsedInput.expectedSourceRevision === null) throw new ActionKernelError('PAGE_ALREADY_EXISTS', 'The OKF import target already exists; provide its exact source revision to replace it', 409)
-  if (existing !== null && existing.sourceRevision !== parsedInput.expectedSourceRevision) throw new ActionKernelError('PAGE_REVISION_CONFLICT', 'Page source revision changed before OKF import preparation', 409)
-  if (existing !== null && existing.contentType !== 'markdown') throw new ActionKernelError('UNSUPPORTED_CONTENT_TYPE', 'Only Markdown pages can be replaced from OKF', 409)
-
-  const heading = /^#\s+(.+?)\s*$/mu.exec(importedContent)?.[1]?.trim()
-  const title = parsedDocument.metadata.title ?? existing?.title ?? heading ?? parsedInput.path.split('/').at(-1) ?? parsedInput.path
-  const description = parsedDocument.metadata.description ?? existing?.description ?? ''
-  const tags = parsedDocument.metadata.tags ?? existing?.tags ?? []
-  const generated = parsedDocument.metadata.generated ?? {
-    by: 'process:tsfranki-import',
-    at: (dependencies.now?.() ?? new Date()).toISOString()
-  }
-  const finalMetadata = {
-    ...parsedDocument.metadata,
-    title,
-    ...(description.length > 0 ? { description } : {}),
-    tags,
-    generated
-  }
-  const canonicalImportedDocument = renderOkfDocument(finalMetadata, exportOkfLinks(importedContent))
-  const importedSha256 = sha256(canonicalImportedDocument)
-  const filePath = okfFilePath(parsedInput.locale, parsedInput.path)
-  if (existing === null) {
-    const resultIdentity = { actionName: context.authority.actionName, path: parsedInput.path, locale: parsedInput.locale, contentSha256: canonicalSourceHash(importedContent), okfSha256: importedSha256 }
-    const operationInput = {
-      path: parsedInput.path,
-      locale: parsedInput.locale,
-      title,
-      description,
-      content: importedContent,
-      editor: 'markdown',
-      contentType: 'markdown',
-      visibility: 'public',
-      isPublished: parsedInput.isPublished,
-      tags,
-      okfMetadata: finalMetadata
-    }
-    return {
-      pageId: null,
-      path: parsedInput.path,
-      locale: parsedInput.locale,
-      baseSourceRevision: null,
-      sourceCanonicalSha256: null,
-      resultIdentity,
-      diff: pageDiff(filePath, '', canonicalImportedDocument),
-      patchSha256: null,
-      patchFormat: null,
-      patchEngineVersion: null,
-      patchMetadata: { kind: 'create', operationInput, pageId: null, path: parsedInput.path, locale: parsedInput.locale, resultIdentity },
-      summary: `Import OKF concept ${filePath}`
-    }
-  }
-
-  const currentDocument = okfForPage(existing).markdown
-  if (currentDocument === canonicalImportedDocument && Boolean(existing.isPublished) === parsedInput.isPublished) {
-    throw new ActionKernelError('OKF_IMPORT_NO_CHANGES', 'The OKF concept already matches the current page', 409)
-  }
-  const resultIdentity = {
-    actionName: context.authority.actionName,
-    pageId: existing.id,
-    sourceRevision: nextRevision(existing.sourceRevision),
-    contentSha256: canonicalSourceHash(importedContent),
-    okfSha256: importedSha256
-  }
-  const operationInput = {
-    id: existing.id,
-    title,
-    description,
-    content: importedContent,
-    contentType: 'markdown',
-    isPublished: parsedInput.isPublished,
-    tags,
-    okfMetadata: finalMetadata,
-    expectedSourceRevision: existing.sourceRevision
-  }
-  return {
-    pageId: existing.id,
-    path: existing.path,
-    locale: existing.locale,
-    baseSourceRevision: existing.sourceRevision,
-    sourceCanonicalSha256: canonicalSourceHash(existing.content),
-    resultIdentity,
-    diff: pageDiff(filePath, currentDocument, canonicalImportedDocument),
-    patchSha256: null,
-    patchFormat: null,
-    patchEngineVersion: null,
-    patchMetadata: { kind: 'patch', operationInput, pageId: existing.id, path: existing.path, locale: existing.locale, resultIdentity },
-    summary: `Import OKF changes into ${filePath}`
-  }
-}
 
 const prepareMove = async (dependencies: PageProposalActionDependencies, context: ActionHandlerContext, input: Record<string, unknown>): Promise<PreparedProposal> => {
   const parsed = ACTION_CATALOG['pages.prepareMove'].input.parse(input)
@@ -490,7 +351,6 @@ const reconcileAppliedProposal = async (
       contentSha256: canonicalSourceHash(page.content)
     }
   }
-  if (typeof Reflect.get(metadata.resultIdentity, 'okfSha256') === 'string') actual.okfSha256 = okfForPage(page).sha256
   return canonicalJson(actual) === canonicalJson(metadata.resultIdentity) ? metadata.resultIdentity : null
 }
 
@@ -554,14 +414,13 @@ const apply = async (dependencies: PageProposalActionDependencies, context: Acti
     const updated = metadata.pageId === null
       ? parsePage(await dependencies.operations.getByPath({ path: metadata.path, locale: metadata.locale, visibility: 'public', requester: approverUser }))
       : parsePage(await dependencies.operations.get({ id: metadata.pageId, requester: approverUser }))
-    page = { id: updated.id, path: updated.path, locale: updated.locale, title: updated.title, description: updated.description, contentType: updated.contentType, sourceRevision: updated.sourceRevision }
+    page = { id: updated.id, path: updated.path, locale: updated.locale, title: updated.title, description: updated.description, contentType: updated.contentType, sourceRevision: updated.sourceRevision, knowledge: null }
   }
   return { proposalId: proposal.id, status: 'applied' as const, resultHash: output.resultHash, page }
 }
 
 export const registerPageProposalActions = (kernel: ActionKernel, dependencies: PageProposalActionDependencies): void => {
   kernel.register('pages.prepareCreate', async (input, context) => prepareAndWait(dependencies, context, input, await prepareCreate(dependencies, context, input as Record<string, unknown>)))
-  kernel.register('pages.prepareImportOkf', async (input, context) => prepareAndWait(dependencies, context, input, await prepareOkfImport(dependencies, context, input as Record<string, unknown>)))
   kernel.register('pages.preparePatch', async (input, context) => prepareAndWait(dependencies, context, input, await preparePatch(dependencies, context, input as { patch: { snapshotToken: string } })))
   kernel.register('pages.prepareMove', async (input, context) => prepareAndWait(dependencies, context, input, await prepareMove(dependencies, context, input as Record<string, unknown>)))
   kernel.register('pages.prepareRestore', async (input, context) => prepareAndWait(dependencies, context, input, await prepareRestore(dependencies, context, input as Record<string, unknown>)))

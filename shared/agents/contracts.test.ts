@@ -13,7 +13,7 @@ describe('frozen agent contracts', () => {
     expect(new Set(AGENT_ACTION_NAMES).size).toBe(AGENT_ACTION_NAMES.length)
     expect(new Set(AGENT_EVENT_TYPES).size).toBe(AGENT_EVENT_TYPES.length)
     expect(new Set(AGENT_FEATURE_FLAG_KEYS).size).toBe(AGENT_FEATURE_FLAG_KEYS.length)
-    expect(AGENT_ACTION_NAMES).toEqual(expect.arrayContaining(['pages.getOkf', 'pages.prepareImportOkf']))
+    expect(AGENT_ACTION_NAMES).not.toEqual(expect.arrayContaining(['pages.getOkf', 'pages.prepareImportOkf']))
   })
 
   it('uses one unique stable tool name for every action', () => {
@@ -24,10 +24,11 @@ describe('frozen agent contracts', () => {
     expect(Object.keys(AGENT_ACTION_BY_TOOL_NAME)).toHaveLength(AGENT_ACTION_NAMES.length)
     expect(AGENT_TOOL_NAMES).toMatchObject({
       'pages.get': 'wiki_get_page',
-      'pages.getOkf': 'wiki_get_page_okf',
-      'pages.prepareImportOkf': 'wiki_prepare_okf_import',
+      'pages.discover': 'wiki_discover_pages',
+      'pages.prepareCreate': 'wiki_prepare_page_create',
       'memory.manage': 'wiki_manage_memory'
     })
+    expect(toolNames).not.toEqual(expect.arrayContaining(['wiki_get_page_okf', 'wiki_prepare_okf_import']))
   })
 
   it('freezes least-privileged admission permissions', () => {

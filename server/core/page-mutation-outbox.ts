@@ -3,7 +3,7 @@ import type { Knex } from 'knex'
 import { z } from 'zod'
 import { canonicalJson as encodeCanonicalJson, CanonicalJsonError } from '../helpers/canonical-json.ts'
 
-export const PAGE_PROJECTION_EFFECT_KINDS = ['render', 'links'] as const
+export const PAGE_PROJECTION_EFFECT_KINDS = ['render', 'links', 'knowledge'] as const
 export type PageProjectionEffectKind = typeof PAGE_PROJECTION_EFFECT_KINDS[number]
 export type PageProjectionDesiredState = 'present' | 'absent'
 
@@ -182,13 +182,17 @@ export const enqueuePageMutationEffects = async (
 
 export const claimPageMutationEffects = async (
   knex: Knex,
-  input: { readonly leaseOwner: string; readonly limit?: number; readonly leaseMs?: number; readonly now?: Date }
+  input: { readonly leaseOwner: string; readonly limit?: number; readonly leaseMs?: number; readonly now?: Date; readonly effects?: readonly PageProjectionEffectKind[] }
 ): Promise<readonly ClaimedPageProjectionEffect[]> => {
   if (!input.leaseOwner || input.leaseOwner.length > 255) throw new PageMutationOutboxError('INVALID_LEASE_OWNER', 'Projection lease owner is invalid')
   const limit = input.limit ?? 10
   const leaseMs = input.leaseMs ?? 60_000
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100 || !Number.isSafeInteger(leaseMs) || leaseMs < 1_000 || leaseMs > 10 * 60_000) {
     throw new PageMutationOutboxError('INVALID_LEASE', 'Projection lease bounds are invalid')
+  }
+  const effects = input.effects ?? PAGE_PROJECTION_EFFECT_KINDS
+  if (effects.length === 0 || new Set(effects).size !== effects.length || effects.some(effect => !PAGE_PROJECTION_EFFECT_KINDS.includes(effect))) {
+    throw new PageMutationOutboxError('INVALID_EFFECT_SET', 'Projection claim effects must be unique and supported')
   }
   const now = input.now ?? new Date()
   const nowIso = now.toISOString()
@@ -199,6 +203,7 @@ export const claimPageMutationEffects = async (
       .update({ status: 'pending', leaseOwner: null, leaseToken: null, leaseExpiresAt: null, updatedAt: nowIso })
     let claimQuery = transaction<PageMutationOutboxRow>('pageMutationOutbox')
       .whereIn('status', ['pending', 'retry'])
+      .whereIn('effectKind', effects)
       .where('availableAt', '<=', nowIso)
       .orderBy('availableAt', 'asc')
       .orderBy('createdAt', 'asc')

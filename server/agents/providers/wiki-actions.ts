@@ -15,6 +15,7 @@ import { BrowserActionService } from '../browser/actions.ts'
 import { SkillRuntime } from '../skills/runtime.ts'
 import { AgentMemoryRepository } from '../memory.ts'
 import type { BrowserWorkerClient } from '../browser/client.ts'
+import { PageKnowledgeRepository } from '../../knowledge/lifecycle.ts'
 
 interface GroupLike { id?: number; permissions?: unknown }
 interface UserLike extends Express.User {
@@ -89,7 +90,7 @@ export const createWikiActionSessionProvider = (knex: Knex, config: WikiActionSe
     if (authority.requester.kind !== 'user') throw new AgentRepositoryError('AUTHENTICATION_REQUIRED', 'Agent page actions require a user principal', 401)
     return loadUser(authority.requester.userId)
   }
-  registerPageReadActions(kernel, { operations: pageOperations, resolveRequester: requester, snapshotSigningSecret: config.snapshotSigningSecret })
+  registerPageReadActions(kernel, { operations: pageOperations, resolveRequester: requester, snapshotSigningSecret: config.snapshotSigningSecret, knowledge: new PageKnowledgeRepository(knex) })
   registerPageProposalActions(kernel, { knex, operations: pageOperations, resolveRequester: requester, resolveApprover: loadWikiAgentUser, snapshotSigningSecret: config.snapshotSigningSecret })
   registerSkillReadActions(kernel, new SkillRuntime(knex))
   registerMemoryAction(kernel, new AgentMemoryRepository(knex))

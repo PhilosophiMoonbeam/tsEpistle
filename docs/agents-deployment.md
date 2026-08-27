@@ -133,20 +133,26 @@ Required cryptographic environment:
 
 Each keyring uses `{ "currentKeyId": "name", "keys": { "name": "<base64>" } }`. Provider credential encryption keys must decode to exactly 32 bytes. Wiki encrypts each UI-supplied credential with AES-256-GCM, a fresh 96-bit nonce, and authenticated record identity, stores only ciphertext in `agentProviderSecrets`, and writes an opaque `managed:<uuid>` reference into internal provider storage. Retain every encryption key ID referenced by stored credentials when rotating `currentKeyId`; removing an in-use key fails closed. Existing operator-managed `env:NAME` references remain readable for compatibility, including `NAME_FILE`, but the admin UI creates managed encrypted credentials. The `_FILE` forms read a mounted keyring when the matching inline variable is absent.
 
-## Portable knowledge and OKF
+## Revisioned knowledge projections and OKF
 
-Wiki remains the authoritative database, hierarchy, permission model, and revision ledger. Every visible Markdown page can also be represented deterministically as an [Open Knowledge Format 0.2](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md) concept. This is an interchange boundary, not a second filesystem-backed knowledge store:
+Wiki pages remain the authoritative source, hierarchy, permission model, and revision ledger. `pageKnowledgeProjections` is an immutable, derived index keyed by `(pageId, sourceRevision)`; it is never a human-editable page store. Every committed page mutation—human, built-in Agent, or MCP—adds a `knowledge` effect to `pageMutationOutbox`. The lifecycle worker also backfills revisions without a projection.
 
-- `wiki_get_page_okf` returns the page source as a complete OKF document. Root-relative Wiki links become portable concept links, including the reserved `index` and `log` filenames.
-- `wiki://pages/{locale}/{path}` exposes the same document as an MCP `text/markdown` resource with concept identity, source revision, content hash, and derived trust metadata.
-- `wiki_prepare_okf_import` validates an OKF document and creates an immutable Wiki create or replace proposal. A replacement requires the exact current `expectedSourceRevision`; a create requires `null`.
-- `wiki_apply_page_proposal` remains the remote client's explicit, idempotent recovery path after human approval. Built-in Agent runs wait for the same approval and apply automatically.
+Projection is deterministic first. Exact source bytes and revision metadata produce a source hash, stable concept identity, Markdown section spans and hashes, internal and external links, source references, conservative entities and relationships, lifecycle/trust state, declared gaps, and field-level provenance. The projection never rewrites page source. Historical revisions remain addressable from the immutable page history even after the current page advances.
 
-OKF metadata is stored in `pages.extra.okf`. Import preserves producer extensions, `sources`, `verified`, status, and staleness policy. Ordinary human authoring keeps those fields and advances `generated` to the editing user and time. Page content, title, description, and tags remain normal Wiki fields; there is no bundle watcher, background mirror, or alternate write path.
+If the current public revision still has declared gaps and a conformed global Agent provider profile is enabled, the utility role receives the page plus only those gap names. Strict JSON validation and the merge policy prevent it from replacing authoritative or deterministic values. Private pages are never sent to the provider. A missing provider or provider failure leaves the deterministic projection usable as `partial`; a source revision or hash change during the call discards the utility output. Input/output hashes, model, exact profile-version ID, and generation time record accepted utility provenance. Staleness is computed at read time from `staleAfter`.
 
-Trust is evidence, not authority. A concept without `verified` is **unverified**; machine verification is **machine-confirmed**; any `human:*` verifier is **human-reviewed**. Verification is **outdated** when the latest dated verification predates `generated`. A concept is stale at or after `stale_after`. None of these fields grant read or write permission, bypass page visibility, or bypass approval.
+Ordinary read operations expose the matching projection:
 
-Imports are limited to 1 MiB with 64 KiB frontmatter and bounded nesting and node counts. YAML uses the JSON schema, rejects duplicate and prototype-sensitive keys, and preserves only JSON-compatible extension values. Import rejects empty Wiki bodies, private-page collisions, non-Markdown replacements, stale revisions, and no-op replacements.
+- `wiki_get_page`, `wiki_get_page_version`, `wiki_list_recent_pages`, and `wiki_get_related_pages` include `knowledge`;
+- `wiki_search_pages` searches authoritative page fields plus projection concepts, summaries, tags, entities, relationships, and open questions without treating projections as page evidence;
+- `wiki_search_pages` and `wiki_discover_pages` accept lifecycle filters for projection state, status, trust tier, staleness, and concept type;
+- a current page without a completed projection returns `knowledge: null`; the source page remains readable.
+
+Visibility remains authoritative. Projection search joins the exact current source revision, applies the same public/private ownership rules, and excludes password-protected pages from projection-only discovery. A projection's trust and lifecycle fields are retrieval signals, never permissions or factual evidence. Agents must cite the underlying page source or its stored citations.
+
+Open Knowledge Format 0.2 exists only at the interoperability boundary. `wiki://pages/{locale}/{path}` serializes an authorized public Markdown page as an MCP `text/markdown` resource with source revision, content hash, trust metadata, and a compact `x-wiki` projection manifest. There is no OKF agent tool, import proposal, bundle watcher, background mirror, or alternate write path. Use ordinary page proposals for all authoring.
+
+OKF frontmatter remains bounded to 64 KiB and a JSON-compatible tree with bounded depth and node count. YAML uses the JSON schema and rejects duplicate and prototype-sensitive keys. Stored producer extensions remain on the authoritative page when present; ordinary human authoring advances generation provenance.
 
 The MCP surface uses the official `@modelcontextprotocol/server` TypeScript SDK v2 and advertises MCP `2026-07-28` while retaining the repository's tested legacy negotiation path. Keep this direct SDK integration: it supplies the protocol level and control needed for resource-bound API keys, live action admission, immutable approval state, and dual-era compatibility. Do not replace it with a convenience framework that would downgrade the negotiated protocol or bypass the shared action kernel.
 
@@ -169,14 +175,12 @@ allowed-tools:
   - wiki_list_tags
   - wiki_discover_pages
   - wiki_get_page
-  - wiki_get_page_okf
   - wiki_read_page_for_patch
   - wiki_list_recent_pages
   - wiki_list_page_history
   - wiki_get_page_version
   - wiki_list_page_links
   - wiki_get_related_pages
-  - wiki_prepare_okf_import
   - wiki_prepare_page_create
   - wiki_prepare_page_patch
   - wiki_prepare_page_move
@@ -185,13 +189,15 @@ allowed-tools:
 ---
 # Wiki authoring
 
-Use this skill for any request to create, edit, move, restore, export, or import a Wiki page, or to draft Wiki-compatible page source.
+Use this skill for any request to discover, read, create, edit, move, or restore a Wiki page, or to draft Wiki-compatible page source.
 
 ## One knowledge path
 
 - The `wiki_*` names in this file are exact callable tool names in both built-in Agent runs and external MCP sessions.
-- Use native Wiki page operations for ordinary discovery, evidence, and authoring. They operate on the authoritative Wiki page, revision, permission, and proposal system.
-- OKF export and import are portable representations of that same page authority, not a second store or a parallel authoring workflow. Use them only at an interchange boundary.
+- Native Wiki page operations are the only discovery, evidence, and authoring interface. They operate on the authoritative Wiki page, revision, permission, and proposal system.
+- Read results may include a deterministic `knowledge` projection with lifecycle, trust, concept, and provenance fields. Use it to rank or filter sources, never as evidence in place of the underlying page.
+- `wiki_search_pages` and `wiki_discover_pages` can filter by knowledge state, lifecycle status, trust tier, staleness, and concept type. A `null` projection means generation is pending; the authoritative page is still readable.
+- OKF is an external MCP resource serialization, not a callable agent operation, store, import workflow, or authoring path.
 - Every mutation goes through immutable preparation, human approval, live reauthorization, and application. Never invent another write path.
 
 ## Before acting
@@ -231,13 +237,13 @@ Skill source pages are a deliberate exception: preserve their YAML frontmatter a
 4. Wait for the human decision. Approval triggers live reauthorization and automatic application of the exact immutable proposal.
 5. Do not say the page changed until the prepare action returns `status: "applied"`.
 
-## OKF interchange workflow
+## Knowledge discovery and interchange
 
-1. Use ordinary search and `wiki_get_page` for evidence. Use `wiki_get_page_okf` only when the user or downstream system needs a portable concept document with provenance and trust metadata.
-2. For import, inspect the target path first. Pass `expectedSourceRevision: null` only when it is absent; otherwise pass the exact public Markdown page revision.
-3. Preserve supported producer extensions and source or verification metadata. Do not convert trust labels into factual claims or permissions.
-4. Submit the complete document to `wiki_prepare_okf_import`, wait for approval, and do not claim success until it returns `status: "applied"`.
-5. Read the resulting page or export it again when the final Wiki source or round-trip metadata must be verified.
+1. Use `wiki_discover_pages` to browse candidate concepts and `wiki_search_pages` for a focused query. Apply knowledge lifecycle filters only when the request requires them.
+2. Read the authoritative source with `wiki_get_page` before making a factual claim or proposing an edit. Treat trust, verification, and staleness as retrieval signals rather than permission or proof.
+3. If `knowledge` is `null` or `partial`, continue with the page source. Do not fabricate missing projection fields or invoke an undeclared enrichment path.
+4. External MCP integrations that require OKF can read `wiki://pages/{locale}/{path}`. Agents do not export or import OKF through tools and must not invent an alternate write path.
+5. Use the ordinary create or patch proposal workflow for every requested authoring change.
 
 Move and restore follow the same prepare, human approval, and automatic application sequence. `wiki_apply_page_proposal` remains available for MCP clients and idempotent recovery; Agent chat does not rely on another model-selected tool call after approval.
 ```

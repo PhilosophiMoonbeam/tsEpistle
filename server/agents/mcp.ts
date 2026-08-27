@@ -25,6 +25,8 @@ import { getMcpProposal } from './proposals/repository.ts'
 import { canonicalMcpResource } from './origins.ts'
 import { SkillRuntime } from './skills/runtime.ts'
 import { validateSkillVirtualPath } from './skills/virtual-path.ts'
+import { PageKnowledgeRepository } from '../knowledge/lifecycle.ts'
+import { createOkfPageDocument } from '../okf/format.ts'
 
 const UUIDSchema = z.uuid()
 const IdentitySchema = z.strictObject({ apiKeyId: z.number().int().positive(), groupId: z.number().int().positive() })
@@ -160,7 +162,8 @@ export const createWikiMcpController = (dependencies: WikiMcpDependencies): expr
     if (authority.requester.kind !== 'apiKey') throw new ActionKernelError('AUTHENTICATION_REQUIRED', 'MCP page actions require an API key', 401)
     return dependencies.resolvePrincipal(authority.requester.apiKeyId, authority.requester.groupId)
   }
-  registerPageReadActions(kernel, { operations: dependencies.operations, resolveRequester, snapshotSigningSecret: dependencies.config.snapshotSigningSecret })
+  const knowledge = new PageKnowledgeRepository(dependencies.knex)
+  registerPageReadActions(kernel, { operations: dependencies.operations, resolveRequester, snapshotSigningSecret: dependencies.config.snapshotSigningSecret, knowledge })
   registerPageProposalActions(kernel, { knex: dependencies.knex, operations: dependencies.operations, resolveRequester, resolveApprover: dependencies.resolveUser, snapshotSigningSecret: dependencies.config.snapshotSigningSecret })
   registerSkillReadActions(kernel, skillRuntime)
 
@@ -281,43 +284,93 @@ export const createWikiMcpController = (dependencies: WikiMcpDependencies): expr
         }
       })
     }
-    if (offeredNames.has('pages.getOkf')) {
+    if (offeredNames.has('pages.get')) {
       server.registerResource('okf-pages', new ResourceTemplate('wiki://pages/{locale}/{+path}', {
         list: undefined
       }), {
         title: 'Wiki pages as OKF concepts',
-        description: 'Visible Markdown pages rendered as portable Open Knowledge Format v0.2 documents',
+        description: 'Visible Markdown pages serialized at the interoperability boundary as Open Knowledge Format v0.2 documents',
         mimeType: 'text/markdown'
       }, async (uri, variables, context) => {
         const locale = decodeTemplateValue(variables.locale)
         const path = decodeTemplateValue(variables.path)
-        const input = ACTION_CATALOG['pages.getOkf'].input.parse({ locale, path })
         const current = await admissionFor(context.http?.authInfo)
-        const requestId = randomUUID()
-        const authority = kernel.offer(current.auth, current.snapshot, requestId)
-          .find(action => action.definition.descriptor.name === 'pages.getOkf')?.authority
-        if (!authority) throw new ActionKernelError('ACTION_NOT_OFFERED', 'OKF page resources are not currently permitted', 403)
-        const rawOutput = await kernel.execute({
-          authority,
-          actionCallId: String(context.mcpReq.id).slice(0, 128) || randomUUID(),
-          input,
-          signal: context.mcpReq.signal,
-          refreshAdmission: async () => (await admissionFor(context.http?.authInfo)).snapshot
+        if (!kernel.offer(current.auth, current.snapshot, randomUUID()).some(action => action.definition.descriptor.name === 'pages.get')) {
+          throw new ActionKernelError('ACTION_NOT_OFFERED', 'Page resources are not currently permitted', 403)
+        }
+        const principal = current.auth.principal
+        const rawPage = await dependencies.operations.getByPath({ locale, path, visibility: 'public', requester: principal })
+        const parsed = z.looseObject({
+          id: z.coerce.number().int().positive(),
+          title: z.string(),
+          description: z.string().nullish(),
+          content: z.string(),
+          contentType: z.string(),
+          sourceRevision: z.union([z.string(), z.number()]),
+          updatedAt: z.union([z.string(), z.date()]),
+          authorId: z.coerce.number().int().positive(),
+          tags: z.array(z.union([z.string(), z.looseObject({ tag: z.string() })])).optional(),
+          extra: z.record(z.string(), z.unknown()).optional()
+        }).safeParse(rawPage)
+        if (!parsed.success) throw new ActionKernelError('INVALID_PAGE_RESULT', 'Page operation returned an invalid interoperability source', 500)
+        if (parsed.data.contentType !== 'markdown') throw new ActionKernelError('UNSUPPORTED_CONTENT_TYPE', 'Only Markdown pages can be serialized as OKF concepts', 409)
+        const projection = await knowledge.getCurrent(parsed.data.id)
+        const projectionManifest = projection === null ? null : {
+          schema_version: projection.schemaVersion,
+          state: projection.state,
+          concept_type: projection.conceptType,
+          summary: projection.summary,
+          lifecycle: {
+            status: projection.lifecycle.status,
+            trust_tier: projection.lifecycle.trustTier,
+            verification: projection.lifecycle.verification,
+            stale: projection.lifecycle.stale,
+            generated_at: projection.lifecycle.generatedAt,
+            verified_at: projection.lifecycle.verifiedAt,
+            stale_after: projection.lifecycle.staleAfter
+          },
+          missing_fields: projection.missingFields,
+          provenance: {
+            deterministic_version: projection.provenance.deterministicVersion,
+            utility: projection.provenance.utility
+          }
+        }
+        const storedMetadata = parsed.data.extra && typeof parsed.data.extra.okf === 'object' && parsed.data.extra.okf !== null
+          ? parsed.data.extra.okf as Record<string, unknown>
+          : {}
+        const okf = createOkfPageDocument({
+          locale,
+          path,
+          title: parsed.data.title,
+          description: parsed.data.description ?? '',
+          tags: (parsed.data.tags ?? []).map(tag => typeof tag === 'string' ? tag : tag.tag),
+          content: parsed.data.content,
+          updatedAt: parsed.data.updatedAt instanceof Date ? parsed.data.updatedAt.toISOString() : parsed.data.updatedAt,
+          authorId: parsed.data.authorId,
+          metadata: {
+            type: projection?.conceptType ?? 'Reference',
+            status: projection?.lifecycle.status ?? 'stable',
+            ...storedMetadata,
+            'x-wiki': {
+              source_revision: String(parsed.data.sourceRevision),
+              knowledge: projectionManifest
+            }
+          }
         })
-        const output = ACTION_CATALOG['pages.getOkf'].output.parse(rawOutput)
         return {
           contents: [{
             uri: uri.href,
             mimeType: 'text/markdown',
-            text: output.markdown,
+            text: okf.markdown,
             _meta: {
-              okfVersion: output.version,
-              conceptId: output.conceptId,
-              sourceRevision: output.sourceRevision,
-              contentHash: output.sha256,
-              trustTier: output.trust.trustTier,
-              verification: output.trust.verification,
-              stale: output.trust.stale
+              okfVersion: okf.version,
+              conceptId: okf.conceptId,
+              sourceRevision: String(parsed.data.sourceRevision),
+              contentHash: okf.sha256,
+              trustTier: okf.trust.trustTier,
+              verification: okf.trust.verification,
+              stale: okf.trust.stale,
+              projectionState: projection?.state ?? 'pending'
             }
           }]
         }

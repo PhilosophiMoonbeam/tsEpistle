@@ -59,7 +59,7 @@ const enqueue = (overrides: Partial<Parameters<typeof enqueuePageMutationEffects
 })
 
 describe('page mutation projection outbox', () => {
-  it('commits immutable render and link intent atomically with the source transaction', async () => {
+  it('commits immutable render, link, and knowledge intent atomically with the source transaction', async () => {
     await expect(knex.transaction(async transaction => {
       await enqueuePageMutationEffects(transaction, {
         pageId: 42,
@@ -74,8 +74,9 @@ describe('page mutation projection outbox', () => {
     expect(await knex('pageMutationOutbox')).toEqual([])
 
     const ids = await enqueue()
-    expect(ids).toHaveLength(2)
+    expect(ids).toHaveLength(3)
     expect(await knex('pageMutationOutbox').select('effectKind', 'desiredState', 'status').orderBy('effectKind')).toEqual([
+      { effectKind: 'knowledge', desiredState: 'present', status: 'pending' },
       { effectKind: 'links', desiredState: 'present', status: 'pending' },
       { effectKind: 'render', desiredState: 'present', status: 'pending' }
     ])
@@ -85,7 +86,7 @@ describe('page mutation projection outbox', () => {
     const first = await enqueue()
     const second = await enqueue()
     expect(second).toEqual(first)
-    expect(await knex('pageMutationOutbox')).toHaveLength(2)
+    expect(await knex('pageMutationOutbox')).toHaveLength(3)
     await expect(enqueue({ source: '# Changed\n' })).rejects.toMatchObject({ code: 'OUTBOX_IDEMPOTENCY_CONFLICT' })
   })
 
@@ -99,7 +100,7 @@ describe('page mutation projection outbox', () => {
   })
 
   it('claims in deterministic order with fenced leases and reclaims expiry', async () => {
-    await enqueue()
+    await enqueue({ effects: ['render', 'links'] })
     const now = new Date('2100-08-17T00:00:00.000Z')
     const first = await claimPageMutationEffects(knex, { leaseOwner: 'worker-a', limit: 1, leaseMs: 1_000, now })
     expect(first).toHaveLength(1)

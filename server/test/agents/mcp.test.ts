@@ -8,6 +8,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { createWikiMcpController } from '../../agents/mcp.ts'
 import { decideProposal } from '../../agents/proposals/execution.ts'
+import { up as createKnowledgeProjectionStore } from '../../db/migrations/2.5.152.ts'
+import { canonicalJson } from '../../helpers/canonical-json.ts'
+import { knowledgeSearchText, projectPageKnowledge } from '../../knowledge/projection.ts'
 
 const key = Buffer.alloc(32, 7)
 
@@ -130,6 +133,44 @@ describe('Wiki MCP transport', () => {
   beforeEach(async () => {
     db = createKnex({ client: 'better-sqlite3', connection: { filename: ':memory:' }, useNullAsDefault: true })
     await createProposalTables(db)
+    await db.schema.createTable('pages', table => {
+      table.integer('id').primary()
+      table.bigInteger('sourceRevision').notNullable()
+    })
+    await db('pages').insert({ id: 42, sourceRevision: '8' })
+    await createKnowledgeProjectionStore(db)
+    const projection = projectPageKnowledge({
+      pageId: 42,
+      sourceRevision: '8',
+      locale: 'en',
+      path: 'docs/start',
+      visibility: 'public',
+      contentType: 'markdown',
+      content: '# Start\n',
+      title: 'Start',
+      description: 'Projected knowledge summary',
+      tags: [],
+      updatedAt: '2026-08-25T00:00:00.000Z',
+      authorId: 7,
+      metadata: { type: 'Reference', status: 'stable' }
+    })
+    await db('pageKnowledgeProjections').insert({
+      pageId: 42,
+      sourceRevision: '8',
+      sourceSha256: projection.source.sha256,
+      schemaVersion: projection.version,
+      deterministicVersion: projection.provenance.deterministicVersion,
+      state: projection.completeness.state,
+      enrichmentState: 'unavailable',
+      conceptType: projection.concept.type,
+      summary: projection.concept.summary,
+      searchText: knowledgeSearchText(projection),
+      lifecycleStatus: projection.lifecycle.status,
+      trustTier: projection.lifecycle.trustTier,
+      verification: projection.lifecycle.verification,
+      staleAfter: null,
+      projection: canonicalJson(projection)
+    })
     movePage = vi.fn(async () => ({}))
     authorizeMutation = vi.fn(async () => {})
     listRelated = vi.fn(async input => Number(input.offset) === 0
@@ -242,8 +283,8 @@ describe('Wiki MCP transport', () => {
     expect(names).toContain('wiki_list_tags')
     expect(names).toContain('wiki_discover_pages')
     expect(names).toContain('wiki_get_related_pages')
-    expect(names).toContain('wiki_get_page_okf')
-    expect(names).toContain('wiki_prepare_okf_import')
+    expect(names).not.toContain('wiki_get_page_okf')
+    expect(names).not.toContain('wiki_prepare_okf_import')
     expect(names).toContain('wiki_read_skill')
     expect(names).toContain('wiki_prepare_page_patch')
     expect(names).toContain('wiki_apply_page_proposal')
@@ -281,6 +322,12 @@ describe('Wiki MCP transport', () => {
         mimeType: 'text/markdown'
       })])
     })
+    const pageResult = await client.callTool({ name: 'wiki_get_page', arguments: { path: 'docs/start', locale: 'en' } })
+    expect(pageResult.structuredContent).toMatchObject({
+      id: 42,
+      sourceRevision: '8',
+      knowledge: { state: 'partial', conceptType: 'Reference', summary: 'Projected knowledge summary' }
+    })
     const resource = await client.readResource({ uri: 'wiki://pages/en/docs/start' })
     expect(resource.contents).toHaveLength(1)
     expect(resource.contents[0]).toMatchObject({
@@ -294,9 +341,13 @@ describe('Wiki MCP transport', () => {
         contentHash: expect.stringMatching(/^[a-f0-9]{64}$/u),
         trustTier: 'unverified',
         verification: 'unverified',
-        stale: false
+        stale: false,
+        projectionState: 'partial'
       }
     })
+    expect(String(Reflect.get(resource.contents[0]!, 'text'))).toContain('x-wiki:')
+    expect(String(Reflect.get(resource.contents[0]!, 'text'))).toContain('state: partial')
+    expect(String(Reflect.get(resource.contents[0]!, 'text'))).toContain('summary: Projected knowledge summary')
   })
 
   it('continues related-page traversal across independent MCP requests', async () => {

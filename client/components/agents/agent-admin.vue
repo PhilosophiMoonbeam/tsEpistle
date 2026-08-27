@@ -112,7 +112,7 @@
               <v-icon icon="mdi-shield-check-outline" color="primary" />
               <h3>Trust is data</h3>
               <p>Generated and verified actors, sources, lifecycle, and stale-after dates let consumers qualify an answer instead of guessing.</p>
-              <div class="trust-scale" aria-label="Derived OKF trust tiers">
+              <div class="trust-scale" aria-label="Derived knowledge trust tiers">
                 <span>Unverified</span><span>Machine-confirmed</span><span>Human-reviewed</span>
               </div>
             </article>
@@ -126,18 +126,18 @@
           <v-sheet class="knowledge-workflow" rounded="lg" border>
             <div class="knowledge-workflow-heading">
               <div>
-                <p class="knowledge-eyebrow">Remote agent path</p>
-                <h3>Discover → read → propose → approve</h3>
+                <p class="knowledge-eyebrow">Shared agent lifecycle</p>
+                <h3>Project → discover → read → govern</h3>
               </div>
               <code>wiki://pages/{locale}/{path}</code>
             </div>
             <ol>
-              <li><span>1</span><div><strong>Discover context</strong><code>wiki_discover_pages</code></div></li>
-              <li><span>2</span><div><strong>Read a portable concept</strong><code>wiki_get_page_okf</code></div></li>
-              <li><span>3</span><div><strong>Prepare an exact import</strong><code>wiki_prepare_okf_import</code></div></li>
-              <li><span>4</span><div><strong>Human decision and commit</strong><code>wiki_apply_page_proposal</code></div></li>
+              <li><span>1</span><div><strong>Project every revision</strong><code>deterministic + utility gaps</code></div></li>
+              <li><span>2</span><div><strong>Discover lifecycle context</strong><code>wiki_discover_pages</code></div></li>
+              <li><span>3</span><div><strong>Read source and projection</strong><code>wiki_get_page</code></div></li>
+              <li><span>4</span><div><strong>Propose and approve changes</strong><code>wiki_apply_page_proposal</code></div></li>
             </ol>
-            <v-alert type="info" variant="tonal" density="compact">OKF imports never bypass Wiki authority. New concepts require a free path; replacements require the current source revision and an explicit human approval.</v-alert>
+            <v-alert type="info" variant="tonal" density="compact">Built-in and MCP agents use the same operations and enriched corpus. OKF remains a portable MCP resource representation, never a second knowledge store or write path.</v-alert>
           </v-sheet>
         </section>
       </v-window-item>

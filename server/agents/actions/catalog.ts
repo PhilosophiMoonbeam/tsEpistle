@@ -2,6 +2,7 @@ import { z } from 'zod'
 
 import { AGENT_TOOL_NAMES, type AgentActionDescriptor, type AgentActionName, type AgentFeatureFlagKey } from '../../../shared/agents/contracts.ts'
 import { WikiLinePatchV1Schema, WikiLineSnapshotV1Schema } from '../patch/wiki-line-patch.ts'
+import { KnowledgeProjectionViewSchema } from '../../knowledge/projection.ts'
 
 export interface ActionDefinition {
   readonly descriptor: AgentActionDescriptor
@@ -31,6 +32,13 @@ const MemoryResult = strict({
   characters: z.number().int().nonnegative().max(2_200),
   limit: z.number().int().positive().max(2_200)
 })
+const KnowledgeFilter = strict({
+  state: z.enum(['complete', 'partial']).optional(),
+  lifecycleStatus: z.enum(['draft', 'stable', 'deprecated']).optional(),
+  trustTier: z.enum(['unverified', 'machine-confirmed', 'human-reviewed']).optional(),
+  stale: z.boolean().optional(),
+  conceptType: z.string().min(1).max(128).optional()
+})
 const PageSelector = z.union([
   strict({ id: PositiveId }),
   strict({ path: Path, locale: Locale })
@@ -47,13 +55,14 @@ const BasePageSummary = strict({
   title: BoundedTitle,
   description: BoundedDescription,
   contentType: z.string().max(128),
-  sourceRevision: z.string().max(64)
+  sourceRevision: z.string().max(64),
+  knowledge: KnowledgeProjectionViewSchema.nullable()
 })
 const PageSummary = BasePageSummary.extend({ citation: PageCitation })
 const SearchPageSummary = PageSummary.extend({
   tags: z.array(z.string().min(1).max(255)).max(50),
   score: z.number().finite().nonnegative(),
-  matchedFields: z.array(z.enum(['title', 'tag', 'path', 'description', 'content', 'graph'])).max(6)
+  matchedFields: z.array(z.enum(['title', 'tag', 'path', 'description', 'content', 'graph', 'knowledge'])).max(7)
 })
 const DiscoveryPageSummary = PageSummary.extend({
   tags: z.array(z.string().min(1).max(255)).max(50),
@@ -70,23 +79,6 @@ const PageResult = PageSummary.extend({
   content: BoundedPageContent,
   updatedAt: z.string().max(32),
   citationSections: z.array(PageCitation).max(99)
-})
-const OkfTrust = strict({
-  trustTier: z.enum(['unverified', 'machine-confirmed', 'human-reviewed']),
-  verification: z.enum(['unverified', 'current', 'outdated']),
-  status: z.enum(['draft', 'stable', 'deprecated']),
-  stale: z.boolean(),
-  generatedAt: z.string().max(64).nullable(),
-  verifiedAt: z.string().max(64).nullable()
-})
-const OkfPageResult = BasePageSummary.extend({
-  version: z.literal('0.2'),
-  conceptId: z.string().min(1).max(1_024),
-  filePath: z.string().min(1).max(1_050),
-  markdown: z.string().max(1_048_576),
-  sha256: ContentHash,
-  metadata: z.record(z.string(), z.unknown()),
-  trust: OkfTrust
 })
 const ProposalResult = strict({
   proposalId: Uuid,
@@ -131,8 +123,8 @@ const proposalFlags = ['agents.enabled', 'agents.proposals.enabled', 'agents.wri
 
 export const ACTION_CATALOG = {
   'pages.search': {
-    descriptor: descriptor('pages.search', 'Search pages', `Rank visible pages using titles, tags, paths, descriptions, content, and the Wiki link graph. Natural-language queries are supported; the PostgreSQL backend also supports quoted phrases and -negation. Use path to restrict retrieval to one page or its descendants. Results include match evidence and spelling suggestions; read promising pages with ${AGENT_TOOL_NAMES['pages.get']} before answering.`, 'read', ['read:pages'], both, readAnnotations),
-    input: strict({ query: z.string().min(1).max(1000), locale: Locale.optional(), path: Path.optional(), limit: z.number().int().min(1).max(20).default(10), offset: z.number().int().min(0).max(500).default(0) }),
+    descriptor: descriptor('pages.search', 'Search pages', `Rank visible pages using authoritative source, deterministic knowledge projections, utility-enriched declared gaps, and the Wiki link graph. Natural-language queries are supported; use lifecycle filters to constrain trust and maintenance state. Results include match evidence and spelling suggestions; read promising pages with ${AGENT_TOOL_NAMES['pages.get']} before answering.`, 'read', ['read:pages'], both, readAnnotations),
+    input: strict({ query: z.string().min(1).max(1000), locale: Locale.optional(), path: Path.optional(), knowledge: KnowledgeFilter.optional(), limit: z.number().int().min(1).max(20).default(10), offset: z.number().int().min(0).max(500).default(0) }),
     output: strict({
       results: z.array(SearchPageSummary).max(20),
       suggestions: z.array(z.string().min(1).max(1_000)).max(20),
@@ -156,12 +148,13 @@ export const ACTION_CATALOG = {
     requiredFlags: baseFlags
   },
   'pages.discover': {
-    descriptor: descriptor('pages.discover', 'Discover pages', `Browse visible pages structurally by locale, descendant path depth, exact tags, and stable path, title, or update order. Narrow the path if the bounded discovery window is too broad, then read promising pages with ${AGENT_TOOL_NAMES['pages.get']}.`, 'read', ['read:pages'], both, readAnnotations),
+    descriptor: descriptor('pages.discover', 'Discover pages', `Browse visible pages structurally by locale, descendant path depth, exact tags, stable ordering, and projected lifecycle or trust state. Knowledge filters operate over a bounded 100-page candidate window. Narrow the path if the window is too broad, then read promising pages with ${AGENT_TOOL_NAMES['pages.get']}.`, 'read', ['read:pages'], both, readAnnotations),
     input: strict({
       locale: Locale,
       path: z.string().max(1_024).default(''),
       depth: z.number().int().min(0).max(5).default(1).describe('Additional nested levels below direct children; 0 returns direct children only.'),
       tags: z.array(z.string().min(1).max(255)).max(20).default([]),
+      knowledge: KnowledgeFilter.optional(),
       order: z.enum(['path', 'title', 'updated']).default('path'),
       limit: z.number().int().min(1).max(100).default(50),
       offset: z.number().int().min(0).max(5_000).default(0)
@@ -175,15 +168,9 @@ export const ACTION_CATALOG = {
     requiredFlags: baseFlags
   },
   'pages.get': {
-    descriptor: descriptor('pages.get', 'Get page', 'Read one visible Wiki page by ID or locale and path.', 'read', ['read:pages'], both, readAnnotations),
+    descriptor: descriptor('pages.get', 'Get page', 'Read one visible Wiki page by ID or locale and path, including the current deterministic and utility-enriched knowledge projection when ready.', 'read', ['read:pages'], both, readAnnotations),
     input: PageSelector,
     output: PageResult,
-    requiredFlags: baseFlags
-  },
-  'pages.getOkf': {
-    descriptor: descriptor('pages.getOkf', 'Export page as OKF', `Export one visible Markdown page as a deterministic Open Knowledge Format v0.2 concept. The document carries portable frontmatter, provenance, lifecycle and trust signals; canonical Wiki links become bundle-relative .md links. Use ${AGENT_TOOL_NAMES['pages.get']} for ordinary evidence-backed reading and this action for knowledge interchange.`, 'read', ['read:pages'], both, readAnnotations),
-    input: PageSelector,
-    output: OkfPageResult,
     requiredFlags: baseFlags
   },
   'pages.readForPatch': {
@@ -267,18 +254,6 @@ export const ACTION_CATALOG = {
   'browser.screenshot': {
     descriptor: descriptor('browser.screenshot', 'Capture browser screenshot', 'Capture a bounded PNG artifact from the isolated browser.', 'open-world-read', ['use:agent-browser'], agentOnly, browserAnnotations),
     input: strict({ ref: z.string().max(128).optional() }), output: strict({ artifactId: Uuid, mimeType: z.literal('image/png'), width: z.number().int().positive().max(16_384), height: z.number().int().positive().max(16_384) }), requiredFlags: browserFlags
-  },
-  'pages.prepareImportOkf': {
-    descriptor: descriptor('pages.prepareImportOkf', 'Prepare OKF import', 'Validate one Open Knowledge Format v0.2 concept and prepare an immutable public Wiki page create-or-replace proposal. Unknown producer frontmatter is preserved, portable concept links become canonical Wiki links, and approval shows the complete document change. Set expectedSourceRevision to null for creation or to the exact current revision for replacement. In Agent chat this waits for the human decision and applies the exact proposal automatically when approved.', 'proposal', ['write:pages'], both, proposalAnnotations),
-    input: strict({
-      path: Path,
-      locale: Locale,
-      document: z.string().min(1).max(1_048_576),
-      expectedSourceRevision: z.string().min(1).max(64).nullable().default(null),
-      isPublished: z.boolean().default(true)
-    }),
-    output: ProposalResult,
-    requiredFlags: [...proposalFlags, 'agents.writes.create.enabled', 'agents.writes.patch.enabled']
   },
   'pages.prepareCreate': {
     descriptor: descriptor('pages.prepareCreate', 'Prepare page creation', 'Validate and prepare an immutable Markdown page-create proposal without applying it before approval. First search and read potential duplicates or related pages; include canonical internal links and precise tags only for relationships supported by the new content. Author canonical GFM unless an approved skill requires supported extended syntax. In Agent chat this waits for the human decision and applies the exact proposal automatically when approved.', 'proposal', ['write:pages'], both, proposalAnnotations),
