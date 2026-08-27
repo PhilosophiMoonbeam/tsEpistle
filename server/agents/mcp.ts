@@ -281,6 +281,49 @@ export const createWikiMcpController = (dependencies: WikiMcpDependencies): expr
         }
       })
     }
+    if (offeredNames.has('pages.getOkf')) {
+      server.registerResource('okf-pages', new ResourceTemplate('wiki://pages/{locale}/{+path}', {
+        list: undefined
+      }), {
+        title: 'Wiki pages as OKF concepts',
+        description: 'Visible Markdown pages rendered as portable Open Knowledge Format v0.2 documents',
+        mimeType: 'text/markdown'
+      }, async (uri, variables, context) => {
+        const locale = decodeTemplateValue(variables.locale)
+        const path = decodeTemplateValue(variables.path)
+        const input = ACTION_CATALOG['pages.getOkf'].input.parse({ locale, path })
+        const current = await admissionFor(context.http?.authInfo)
+        const requestId = randomUUID()
+        const authority = kernel.offer(current.auth, current.snapshot, requestId)
+          .find(action => action.definition.descriptor.name === 'pages.getOkf')?.authority
+        if (!authority) throw new ActionKernelError('ACTION_NOT_OFFERED', 'OKF page resources are not currently permitted', 403)
+        const rawOutput = await kernel.execute({
+          authority,
+          actionCallId: String(context.mcpReq.id).slice(0, 128) || randomUUID(),
+          input,
+          signal: context.mcpReq.signal,
+          refreshAdmission: async () => (await admissionFor(context.http?.authInfo)).snapshot
+        })
+        const output = ACTION_CATALOG['pages.getOkf'].output.parse(rawOutput)
+        return {
+          contents: [{
+            uri: uri.href,
+            mimeType: 'text/markdown',
+            text: output.markdown,
+            _meta: {
+              okfVersion: output.version,
+              conceptId: output.conceptId,
+              sourceRevision: output.sourceRevision,
+              contentHash: output.sha256,
+              trustTier: output.trust.trustTier,
+              verification: output.trust.verification,
+              stale: output.trust.stale
+            }
+          }]
+        }
+      })
+    }
+
 
     if (offeredNames.has('skills.list')) {
       server.registerResource('approved-skills', new ResourceTemplate('wiki://skills/{name}/{version}/{+path}', {

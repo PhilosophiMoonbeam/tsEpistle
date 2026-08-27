@@ -226,6 +226,7 @@ interface ProposalRow {
 }
 
 const linkedPageActions = new Set<AgentActionName>([
+  'pages.prepareImportOkf',
   'pages.prepareCreate',
   'pages.preparePatch',
   'pages.prepareMove',

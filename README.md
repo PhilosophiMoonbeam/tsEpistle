@@ -81,6 +81,14 @@ Each upgrade job uploads `migration-metrics-postgres-<major>.json`. The retained
 
 GraphQL, `/_api`, browser payloads, database tables, and extension internals are implementation interfaces and have no cross-release compatibility guarantee. API keys inherit the permissions and page rules of their assigned group.
 
+## Agentic knowledge
+
+The built-in Wiki Agent and remote MCP clients share one permission-aware action kernel. Markdown pages can cross that boundary as deterministic [Open Knowledge Format 0.2](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md) concepts without replacing Wiki's database, hierarchy, revisions, or human approval workflow.
+
+Remote agents can discover pages, read `wiki://pages/{locale}/{path}` or call `wiki_get_page_okf`, prepare a revision-fenced import with `wiki_prepare_okf_import`, and apply an approved immutable proposal with `wiki_apply_page_proposal`. OKF provenance, verification, source, status, staleness, and producer-extension metadata survive round trips; ordinary Wiki edits advance generation provenance. Trust labels remain advisory and never grant authority.
+
+The MCP endpoint is built directly on the official Model Context Protocol TypeScript SDK v2, supports the current `2026-07-28` protocol, and retains tested legacy negotiation. Deployment, security, trust, and import details are in [Agent deployment and operations](docs/agents-deployment.md).
+
 ## Branch model
 
 - [`main`](https://github.com/PhilosophiMoonbeam/wiki/tree/main) is the authoritative tsFranki product branch. Releases and deployments originate from it.

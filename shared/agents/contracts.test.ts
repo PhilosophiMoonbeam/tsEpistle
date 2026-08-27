@@ -12,6 +12,7 @@ describe('frozen agent contracts', () => {
     expect(new Set(AGENT_ACTION_NAMES).size).toBe(AGENT_ACTION_NAMES.length)
     expect(new Set(AGENT_EVENT_TYPES).size).toBe(AGENT_EVENT_TYPES.length)
     expect(new Set(AGENT_FEATURE_FLAG_KEYS).size).toBe(AGENT_FEATURE_FLAG_KEYS.length)
+    expect(AGENT_ACTION_NAMES).toEqual(expect.arrayContaining(['pages.getOkf', 'pages.prepareImportOkf']))
   })
 
   it('uses unique stable MCP aliases only for MCP actions', () => {
@@ -19,6 +20,10 @@ describe('frozen agent contracts', () => {
     expect(new Set(aliases).size).toBe(aliases.length)
     expect(aliases.every(alias => alias.startsWith('wiki_'))).toBe(true)
     expect(Object.keys(MCP_ACTION_ALIASES).every(name => AGENT_ACTION_NAMES.includes(name as typeof AGENT_ACTION_NAMES[number]))).toBe(true)
+    expect(MCP_ACTION_ALIASES).toMatchObject({
+      'pages.getOkf': 'wiki_get_page_okf',
+      'pages.prepareImportOkf': 'wiki_prepare_okf_import'
+    })
   })
 
   it('freezes least-privileged admission permissions', () => {

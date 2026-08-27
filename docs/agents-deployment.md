@@ -133,6 +133,23 @@ Required cryptographic environment:
 
 Each keyring uses `{ "currentKeyId": "name", "keys": { "name": "<base64>" } }`. Provider credential encryption keys must decode to exactly 32 bytes. Wiki encrypts each UI-supplied credential with AES-256-GCM, a fresh 96-bit nonce, and authenticated record identity, stores only ciphertext in `agentProviderSecrets`, and writes an opaque `managed:<uuid>` reference into internal provider storage. Retain every encryption key ID referenced by stored credentials when rotating `currentKeyId`; removing an in-use key fails closed. Existing operator-managed `env:NAME` references remain readable for compatibility, including `NAME_FILE`, but the admin UI creates managed encrypted credentials. The `_FILE` forms read a mounted keyring when the matching inline variable is absent.
 
+## Portable knowledge and OKF
+
+Wiki remains the authoritative database, hierarchy, permission model, and revision ledger. Every visible Markdown page can also be represented deterministically as an [Open Knowledge Format 0.2](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md) concept. This is an interchange boundary, not a second filesystem-backed knowledge store:
+
+- `wiki_get_page_okf` returns the page source as a complete OKF document. Root-relative Wiki links become portable concept links, including the reserved `index` and `log` filenames.
+- `wiki://pages/{locale}/{path}` exposes the same document as an MCP `text/markdown` resource with concept identity, source revision, content hash, and derived trust metadata.
+- `wiki_prepare_okf_import` validates an OKF document and creates an immutable Wiki create or replace proposal. A replacement requires the exact current `expectedSourceRevision`; a create requires `null`.
+- `wiki_apply_page_proposal` remains the remote client's explicit, idempotent recovery path after human approval. Built-in Agent runs wait for the same approval and apply automatically.
+
+OKF metadata is stored in `pages.extra.okf`. Import preserves producer extensions, `sources`, `verified`, status, and staleness policy. Ordinary human authoring keeps those fields and advances `generated` to the editing user and time. Page content, title, description, and tags remain normal Wiki fields; there is no bundle watcher, background mirror, or alternate write path.
+
+Trust is evidence, not authority. A concept without `verified` is **unverified**; machine verification is **machine-confirmed**; any `human:*` verifier is **human-reviewed**. Verification is **outdated** when the latest dated verification predates `generated`. A concept is stale at or after `stale_after`. None of these fields grant read or write permission, bypass page visibility, or bypass approval.
+
+Imports are limited to 1 MiB with 64 KiB frontmatter and bounded nesting and node counts. YAML uses the JSON schema, rejects duplicate and prototype-sensitive keys, and preserves only JSON-compatible extension values. Import rejects empty Wiki bodies, private-page collisions, non-Markdown replacements, stale revisions, and no-op replacements.
+
+The MCP surface uses the official `@modelcontextprotocol/server` TypeScript SDK v2 and advertises MCP `2026-07-28` while retaining the repository's tested legacy negotiation path. Keep this direct SDK integration: it supplies the protocol level and control needed for resource-bound API keys, live action admission, immutable approval state, and dual-era compatibility. Do not replace it with a convenience framework that would downgrade the negotiated protocol or bypass the shared action kernel.
+
 ## Skills and Wiki authoring
 
 When skills and a tool-capable Agent profile are enabled, each run receives the names, descriptions, exact version IDs, and content hashes of the approved system skills visible to that user and the user's personal skills marked **Available to the agent automatically**. The model must inspect that catalog and load a matching `SKILL.md` with `skills.read` before it calls task actions. Users manage personal `SKILL.md` documents from the chat Skills menu, can remove them from automatic discovery without preventing explicit use, and can type `/` at the start of the composer to fuzzy-search and invoke any selectable system or personal skill for the next message. Skills pinned in Session configuration and skills explicitly invoked for one message are loaded in full. Catalog visibility and each resource read are recorded in `agentSkillUses`; no skill grants a tool or page permission.
@@ -149,11 +166,13 @@ metadata:
 allowed-tools:
   - pages.search
   - pages.get
+  - pages.getOkf
   - pages.readForPatch
   - pages.listRecent
   - pages.listHistory
   - pages.getVersion
   - pages.listLinks
+  - pages.prepareImportOkf
   - pages.prepareCreate
   - pages.preparePatch
   - pages.prepareMove
@@ -162,7 +181,7 @@ allowed-tools:
 ---
 # Wiki authoring
 
-Use this skill for any request to create, edit, move, or restore a Wiki page, or to draft Wiki-compatible page source.
+Use this skill for any request to create, edit, move, restore, export, or import a Wiki page, or to draft Wiki-compatible page source.
 
 ## Before acting
 
@@ -200,6 +219,14 @@ Skill source pages are a deliberate exception: preserve their YAML frontmatter a
 3. Submit the patch with `pages.preparePatch`. If the revision or an anchor changed, reread and rebuild; never guess a token or tag.
 4. Wait for the human decision. Approval triggers live reauthorization and automatic application of the exact immutable proposal.
 5. Do not say the page changed until the prepare action returns `status: "applied"`.
+
+## OKF interchange workflow
+
+1. Use ordinary search and `pages.get` for evidence. Use `pages.getOkf` only when the user or downstream system needs a portable concept document with provenance and trust metadata.
+2. For import, inspect the target path first. Pass `expectedSourceRevision: null` only when it is absent; otherwise pass the exact public Markdown page revision.
+3. Preserve supported producer extensions and source or verification metadata. Do not convert trust labels into factual claims or permissions.
+4. Submit the complete document to `pages.prepareImportOkf`, wait for approval, and do not claim success until it returns `status: "applied"`.
+5. Read the resulting page or export it again when the final Wiki source or round-trip metadata must be verified.
 
 Move and restore follow the same prepare, human approval, and automatic application sequence. `pages.applyProposal` remains available for MCP clients and idempotent recovery; Agent chat does not rely on another model-selected tool call after approval.
 ```

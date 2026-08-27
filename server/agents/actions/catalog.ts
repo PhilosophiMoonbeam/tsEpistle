@@ -71,6 +71,23 @@ const PageResult = PageSummary.extend({
   updatedAt: z.string().max(32),
   citationSections: z.array(PageCitation).max(99)
 })
+const OkfTrust = strict({
+  trustTier: z.enum(['unverified', 'machine-confirmed', 'human-reviewed']),
+  verification: z.enum(['unverified', 'current', 'outdated']),
+  status: z.enum(['draft', 'stable', 'deprecated']),
+  stale: z.boolean(),
+  generatedAt: z.string().max(64).nullable(),
+  verifiedAt: z.string().max(64).nullable()
+})
+const OkfPageResult = BasePageSummary.extend({
+  version: z.literal('0.2'),
+  conceptId: z.string().min(1).max(1_024),
+  filePath: z.string().min(1).max(1_050),
+  markdown: z.string().max(1_048_576),
+  sha256: ContentHash,
+  metadata: z.record(z.string(), z.unknown()),
+  trust: OkfTrust
+})
 const ProposalResult = strict({
   proposalId: Uuid,
   approvalId: Uuid,
@@ -163,6 +180,12 @@ export const ACTION_CATALOG = {
     output: PageResult,
     requiredFlags: baseFlags
   },
+  'pages.getOkf': {
+    descriptor: descriptor('pages.getOkf', 'Export page as OKF', 'Export one visible Markdown page as a deterministic Open Knowledge Format v0.2 concept. The document carries portable frontmatter, provenance, lifecycle and trust signals; canonical Wiki links become bundle-relative .md links. Use pages.get for ordinary evidence-backed reading and this action for knowledge interchange.', 'read', ['read:pages'], both, readAnnotations),
+    input: PageSelector,
+    output: OkfPageResult,
+    requiredFlags: baseFlags
+  },
   'pages.readForPatch': {
     descriptor: descriptor('pages.readForPatch', 'Read page for patch', 'Read a bounded hashline snapshot for an exact page source revision. On the initial read, set previousSnapshotToken to null; only reuse a non-null token returned by an earlier result for the same page.', 'read', ['read:pages'], both, readAnnotations),
     input: strict({
@@ -244,6 +267,18 @@ export const ACTION_CATALOG = {
   'browser.screenshot': {
     descriptor: descriptor('browser.screenshot', 'Capture browser screenshot', 'Capture a bounded PNG artifact from the isolated browser.', 'open-world-read', ['use:agent-browser'], agentOnly, browserAnnotations),
     input: strict({ ref: z.string().max(128).optional() }), output: strict({ artifactId: Uuid, mimeType: z.literal('image/png'), width: z.number().int().positive().max(16_384), height: z.number().int().positive().max(16_384) }), requiredFlags: browserFlags
+  },
+  'pages.prepareImportOkf': {
+    descriptor: descriptor('pages.prepareImportOkf', 'Prepare OKF import', 'Validate one Open Knowledge Format v0.2 concept and prepare an immutable public Wiki page create-or-replace proposal. Unknown producer frontmatter is preserved, portable concept links become canonical Wiki links, and approval shows the complete document change. Set expectedSourceRevision to null for creation or to the exact current revision for replacement. In Agent chat this waits for the human decision and applies the exact proposal automatically when approved.', 'proposal', ['write:pages'], both, proposalAnnotations),
+    input: strict({
+      path: Path,
+      locale: Locale,
+      document: z.string().min(1).max(1_048_576),
+      expectedSourceRevision: z.string().min(1).max(64).nullable().default(null),
+      isPublished: z.boolean().default(true)
+    }),
+    output: ProposalResult,
+    requiredFlags: [...proposalFlags, 'agents.writes.create.enabled', 'agents.writes.patch.enabled']
   },
   'pages.prepareCreate': {
     descriptor: descriptor('pages.prepareCreate', 'Prepare page creation', 'Validate and prepare an immutable Markdown page-create proposal without applying it before approval. First search and read potential duplicates or related pages; include canonical internal links and precise tags only for relationships supported by the new content. Author canonical GFM unless an approved skill requires supported extended syntax. In Agent chat this waits for the human decision and applies the exact proposal automatically when approved.', 'proposal', ['write:pages'], both, proposalAnnotations),

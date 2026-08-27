@@ -4,6 +4,7 @@ import { z } from 'zod'
 import type { RequestAuthContext } from '../../../shared/agents/contracts.ts'
 import { type ActionAuthority, ActionKernel, ActionKernelError } from './kernel.ts'
 import { issueWikiLineSnapshot } from '../patch/wiki-line-patch.ts'
+import { createOkfPageDocument } from '../../okf/format.ts'
 const SearchMatchFieldSchema = z.enum(['title', 'tag', 'path', 'description', 'content', 'graph'])
 const PageRowSchema = z.looseObject({
   id: z.coerce.number().int().positive().optional(),
@@ -15,10 +16,12 @@ const PageRowSchema = z.looseObject({
   description: z.string().nullish(),
   contentType: z.string(),
   sourceRevision: z.union([z.string(), z.number()]),
+  authorId: z.coerce.number().int().positive().optional(),
   content: z.string().optional(),
   updatedAt: z.union([z.string(), z.date()]),
   visibility: z.enum(['public', 'private']).optional(),
   tags: z.array(z.union([z.string(), z.looseObject({ tag: z.string() })])).optional(),
+  extra: z.record(z.string(), z.unknown()).optional(),
   toc: z.unknown().optional()
 })
 const SearchResponseSchema = z.looseObject({
@@ -374,6 +377,39 @@ export const registerPageReadActions = (kernel: ActionKernel, dependencies: Page
   kernel.register('pages.get', async (rawInput, context) => {
     const requester = await requesterFor(dependencies.resolveRequester, context.authority)
     return parsePage(await getPageBySelector(operations, requester, rawInput as PageGetInput), true)
+  })
+  kernel.register('pages.getOkf', async (rawInput, context) => {
+    const requester = await requesterFor(dependencies.resolveRequester, context.authority)
+    const result = PageRowSchema.safeParse(await getPageBySelector(operations, requester, rawInput as PageGetInput))
+    if (!result.success) throw operationFailure('Page operation returned an invalid OKF source')
+    const row = result.data
+    if (row.content === undefined || row.authorId === undefined) throw operationFailure('Page operation returned an incomplete OKF source')
+    const id = row.id ?? row.pageId
+    const locale = row.locale ?? row.localeCode
+    if (!id || !locale) throw operationFailure('Page operation omitted page identity')
+    if (row.contentType !== 'markdown') throw new ActionKernelError('UNSUPPORTED_CONTENT_TYPE', 'Only Markdown pages can be exported as OKF concepts', 409)
+    const metadata = row.extra && typeof row.extra === 'object' ? row.extra.okf : undefined
+    const okf = createOkfPageDocument({
+      locale,
+      path: row.path,
+      title: row.title,
+      description: row.description ?? '',
+      tags: (row.tags ?? []).map(tag => typeof tag === 'string' ? tag : tag.tag),
+      content: row.content,
+      updatedAt: row.updatedAt instanceof Date ? row.updatedAt.toISOString() : row.updatedAt,
+      authorId: row.authorId,
+      metadata
+    })
+    return {
+      id,
+      locale,
+      path: row.path,
+      title: row.title,
+      description: row.description ?? '',
+      contentType: row.contentType,
+      sourceRevision: String(row.sourceRevision),
+      ...okf
+    }
   })
   kernel.register('pages.readForPatch', async (rawInput, context) => {
     const input = rawInput as PatchReadInput

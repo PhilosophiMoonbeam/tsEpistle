@@ -30,13 +30,23 @@ declare module 'js-yaml' {
   export interface LoadOptions {
     readonly json?: boolean
     readonly schema?: Schema
+    readonly maxDepth?: number
+    readonly maxMergeSeqLength?: number
+  }
+  export interface DumpOptions {
+    readonly schema?: Schema
+    readonly noRefs?: boolean
+    readonly lineWidth?: number
+    readonly sortKeys?: boolean | ((left: unknown, right: unknown) => number)
   }
 
   export const JSON_SCHEMA: Schema
   export function load(input: string, options?: LoadOptions): unknown
+  export function dump(input: unknown, options?: DumpOptions): string
 
   interface JsYaml {
     load(input: string, options?: LoadOptions): unknown
+    dump(input: unknown, options?: DumpOptions): string
   }
 
   const yaml: JsYaml

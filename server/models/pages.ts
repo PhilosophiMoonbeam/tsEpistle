@@ -25,6 +25,7 @@ import type Comment from './comments.ts'
 import { writeOutboxEvent } from '../core/outbox.ts'
 import { enqueuePageMutationEffects, type PageProjectionPayload } from '../core/page-mutation-outbox.ts'
 import { redactProtectedPageForSearch, syncProtectedPageAssets } from '../operations/page-protection.ts'
+import { okfMetadataForHumanMutation, type OkfMetadata } from '../okf/format.ts'
 
 type UnknownRecord = Record<string, unknown>
 type PageErrorConstructor = new () => Error
@@ -42,6 +43,7 @@ interface PageAccessTarget {
 interface PageExtra extends UnknownRecord {
   css?: string
   js?: string
+  okf?: OkfMetadata
 }
 
 interface CachedPage {
@@ -101,6 +103,7 @@ interface CreatePageOptions {
   scriptCss?: string
   scriptJs?: string
   tags?: string[]
+  okfMetadata?: OkfMetadata
   skipStorage?: boolean
 }
 
@@ -123,6 +126,7 @@ interface UpdatePageOptions {
   publishStartDate?: string | null
   scriptCss?: string
   scriptJs?: string
+  okfMetadata?: OkfMetadata
   skipStorage?: boolean
 }
 interface ChangeVisibilityOptions {
@@ -704,6 +708,7 @@ static async createPage(opts: CreatePageOptions): Promise<Page> {
   })) {
     scriptJs = opts.scriptJs || ''
   }
+  const okfMetadata = opts.okfMetadata ?? okfMetadataForHumanMutation(undefined, opts.user.id)
 
   await wiki.models.knex.transaction(async transaction => {
     const inserted = await wiki.models.pages.query(transaction).insert({
@@ -730,7 +735,8 @@ static async createPage(opts: CreatePageOptions): Promise<Page> {
       toc: '[]',
       extra: {
         js: scriptJs,
-        css: scriptCss
+        css: scriptCss,
+        okf: okfMetadata
       }
     })
     if (opts.tags && opts.tags.length > 0) {
@@ -843,6 +849,10 @@ static async updatePage(opts: UpdatePageOptions): Promise<Page> {
   }) && opts.scriptJs !== undefined) {
     scriptJs = opts.scriptJs
   }
+  const knowledgeChanged = opts.content !== undefined || opts.title !== undefined || opts.description !== undefined || opts.tags !== undefined
+  const okfMetadata = opts.okfMetadata ?? (knowledgeChanged
+    ? okfMetadataForHumanMutation(ogPage.extra.okf, opts.user.id)
+    : ogPage.extra.okf)
 
   const destinationLocale = opts.locale ?? ogPage.localeCode
   let destinationPath = opts.path ?? ogPage.path
@@ -901,7 +911,8 @@ static async updatePage(opts: UpdatePageOptions): Promise<Page> {
       extra: {
         ...ogPage.extra,
         js: scriptJs,
-        css: scriptCss
+        css: scriptCss,
+        ...(okfMetadata === undefined ? {} : { okf: okfMetadata })
       }
     }).where('id', ogPage.id)
     if (opts.expectedUpdatedAt) pagePatch.where('updatedAt', ogPage.updatedAt)

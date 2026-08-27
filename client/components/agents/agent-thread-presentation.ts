@@ -120,6 +120,7 @@ export const agentActivityLabel = (tools: readonly AgentToolCallView[]): string 
 }
 
 const approvalTitles: Partial<Record<AgentActionName, string>> = {
+  'pages.prepareImportOkf': 'Wiki Agent wants to import a knowledge concept',
   'pages.prepareCreate': 'Wiki Agent wants to create a page',
   'pages.preparePatch': 'Wiki Agent wants to edit a page',
   'pages.prepareMove': 'Wiki Agent wants to move a page',

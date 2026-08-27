@@ -21,6 +21,7 @@ const admission: ActionAdmissionSnapshot = {
 
 const page = (overrides: Record<string, unknown> = {}) => ({
   id: 42,
+  authorId: 7,
   localeCode: 'en',
   path: 'docs/start',
   title: 'Start',
@@ -183,6 +184,46 @@ describe('permission-safe page read actions', () => {
         { evidenceId: 'page:42:section:2', label: 'Start › Installation', href: '/en/docs/start#installation' }
       ]
     })
+  })
+
+  it('exports visible Markdown pages as deterministic OKF concepts with trust metadata', async () => {
+    const { execute } = setup({
+      get: async () => page({
+        content: '# Start\n\nSee [Next](/en/docs/next).\n',
+        tags: [{ tag: 'runbook' }],
+        extra: {
+          okf: {
+            type: 'Reference',
+            status: 'stable',
+            generated: { by: 'process:import', at: '2026-08-16T00:00:00.000Z' },
+            verified: { by: 'human:7', at: '2026-08-17T00:00:00.000Z' },
+            producer_extension: { retained: true }
+          }
+        }
+      })
+    })
+
+    const result = await execute('pages.getOkf', { id: 42 }) as Record<string, unknown>
+    expect(result).toMatchObject({
+      id: 42,
+      locale: 'en',
+      path: 'docs/start',
+      sourceRevision: '8',
+      version: '0.2',
+      conceptId: 'en/docs/start',
+      filePath: 'en/docs/start.md',
+      sha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
+      metadata: expect.objectContaining({ producer_extension: { retained: true } }),
+      trust: {
+        trustTier: 'human-reviewed',
+        verification: 'current',
+        status: 'stable',
+        stale: false,
+        generatedAt: '2026-08-16T00:00:00.000Z',
+        verifiedAt: '2026-08-17T00:00:00.000Z'
+      }
+    })
+    expect(String(result.markdown)).toContain('[Next](/en/docs/next.md)')
   })
 
   it('prefers the caller-owned private page for path identity and falls back only on not-found', async () => {

@@ -14,7 +14,7 @@ describe('ordinary Wiki agent administration integration', () => {
 
   test('registers Agents in the ordinary administration router and sidebar', () => {
     expect(router).toMatch(/path:\s*['"]\/agents['"][^\n]*admin-agents\.vue/)
-    expect(navigation).toMatch(/v-list-item\(to=['"]\/agents['"][^\n]*v-if=['"]agentsEnabled['"]/)
+    expect(navigation).toMatch(/\{ key: 'agents'[^\n]*to: '\/agents'[^\n]*enabled: this\.agentsEnabled/)
     expect(navigation).toMatch(/admin:agents\.title/)
   })
 
@@ -47,7 +47,7 @@ describe('ordinary Wiki agent administration integration', () => {
     expect(agentAdmin).toMatch(/secretReference: null, \.\.\.\(profileDraft\.secretValue \? \{ secretValue: profileDraft\.secretValue \} : \{\}\)/)
     expect(agentAdmin).toMatch(/'Test and enable' : 'Test connection'[^]*:disabled="!profile\.secretConfigured"/)
     expect(agentAdmin).toMatch(/Enable" :disabled="!profile\.conformed \|\| !profile\.secretConfigured"/)
-    expect(agentAdmin).toMatch(/Saving automatically verifies the connection/)
+    expect(agentAdmin).toMatch(/Wiki verifies the provider connection automatically after every save/)
     expect(agentAdmin).toMatch(/Edit settings[^]*Updates this profile/)
     expect(agentAdmin).toMatch(/v-model="grantDraft\.groupIds"[^]*item-title="name"/)
     expect(agentAdmin).not.toMatch(/Group IDs|immutable profile|immutable version/)

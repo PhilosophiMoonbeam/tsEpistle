@@ -193,7 +193,15 @@ describe('private page mutation existence isolation', () => {
       publishEndDate: '2030-01-01T00:00:00.000Z',
       publishStartDate: '2026-01-01T00:00:00.000Z',
       title: 'Changed title',
-      extra: { css: '.original{}', js: 'original()' }
+      extra: expect.objectContaining({
+        css: '.original{}',
+        js: 'original()',
+        okf: expect.objectContaining({
+          type: 'Reference',
+          status: 'stable',
+          generated: expect.objectContaining({ by: 'human:7', at: expect.any(String) })
+        })
+      })
     }))
     expect(associateTags).not.toHaveBeenCalled()
   })

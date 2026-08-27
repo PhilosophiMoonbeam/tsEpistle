@@ -142,6 +142,7 @@ describe('Agent thread presentation', () => {
 
   it('uses conversational approval titles and durable receipt labels', () => {
     expect(agentApprovalTitle('pages.preparePatch')).toBe('Wiki Agent wants to edit a page')
+    expect(agentApprovalTitle('pages.prepareImportOkf')).toBe('Wiki Agent wants to import a knowledge concept')
     expect(agentApprovalTitle('pages.prepareDelete')).toBe('Wiki Agent wants to delete a page')
     expect(agentProposalReceiptLabel('applied')).toBe('Approved and applied')
     expect(agentProposalReceiptLabel('denied')).toBe('Change denied')

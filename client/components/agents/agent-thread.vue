@@ -103,7 +103,7 @@
                 <li v-for="tool in activityForRun(message.runId)" :key="tool.id">
                   <v-icon :icon="toolStateIcon(tool.state)" :color="toolStateColor(tool.state)" size="18" />
                   <span>
-                    <strong>{{ tool.summary || tool.title }}</strong>
+                    <strong>{{ tool.summary ? tool.summary : tool.title }}</strong>
                     <small>{{ tool.summary ? `${tool.title} · ` : '' }}{{ tool.actionName }} · {{ toolStateLabel(tool.state) }}</small>
                   </span>
                 </li>

@@ -160,8 +160,8 @@ describe('Wiki MCP transport', () => {
         searchTags: vi.fn(),
         listTags: vi.fn(),
         discover: vi.fn(),
-        get: vi.fn(async () => ({ id: 42, path: 'docs/start', locale: 'en', title: 'Start', description: '', content: '# Start\n', contentType: 'markdown', sourceRevision: '8' })),
-        getByPath: vi.fn(async () => ({ id: 42, path: 'docs/next', locale: 'en', title: 'Start', description: '', content: '# Start\n', contentType: 'markdown', sourceRevision: '9' })),
+        get: vi.fn(async () => ({ id: 42, authorId: 7, path: 'docs/start', locale: 'en', title: 'Start', description: '', content: '# Start\n', contentType: 'markdown', sourceRevision: '8', updatedAt: '2026-08-25T00:00:00.000Z', extra: {} })),
+        getByPath: vi.fn(async input => ({ id: 42, authorId: 7, path: String(input.path), locale: String(input.locale), title: 'Start', description: '', content: '# Start\n', contentType: 'markdown', sourceRevision: '8', updatedAt: '2026-08-25T00:00:00.000Z', extra: {} })),
         listRecent: vi.fn(),
         getHistory: vi.fn(),
         getVersion: vi.fn(),
@@ -242,6 +242,8 @@ describe('Wiki MCP transport', () => {
     expect(names).toContain('wiki_list_tags')
     expect(names).toContain('wiki_discover_pages')
     expect(names).toContain('wiki_get_related_pages')
+    expect(names).toContain('wiki_get_page_okf')
+    expect(names).toContain('wiki_prepare_okf_import')
     expect(names).toContain('wiki_read_skill')
     expect(names).toContain('wiki_prepare_page_patch')
     expect(names).toContain('wiki_apply_page_proposal')
@@ -260,6 +262,41 @@ describe('Wiki MCP transport', () => {
     const legacyNames = (await client.listTools()).tools.map(tool => tool.name)
     expect(legacyNames).toContain('wiki_prepare_page_patch')
     expect(legacyNames).not.toContain('wiki_apply_page_proposal')
+  })
+
+  it('publishes visible pages through the OKF resource template', async () => {
+    const port = (server.address() as AddressInfo).port
+    const transport = new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${port}/mcp`), {
+      authProvider: { token: async () => 'test-api-token' }
+    })
+    client = new Client({ name: 'wiki-mcp-okf-test', version: '1.0.0' }, {
+      capabilities: {},
+      versionNegotiation: { mode: 'auto' }
+    })
+    await client.connect(transport)
+
+    await expect(client.listResourceTemplates()).resolves.toMatchObject({
+      resourceTemplates: expect.arrayContaining([expect.objectContaining({
+        uriTemplate: 'wiki://pages/{locale}/{+path}',
+        mimeType: 'text/markdown'
+      })])
+    })
+    const resource = await client.readResource({ uri: 'wiki://pages/en/docs/start' })
+    expect(resource.contents).toHaveLength(1)
+    expect(resource.contents[0]).toMatchObject({
+      uri: 'wiki://pages/en/docs/start',
+      mimeType: 'text/markdown',
+      text: expect.stringContaining('type: Reference'),
+      _meta: {
+        okfVersion: '0.2',
+        conceptId: 'en/docs/start',
+        sourceRevision: '8',
+        contentHash: expect.stringMatching(/^[a-f0-9]{64}$/u),
+        trustTier: 'unverified',
+        verification: 'unverified',
+        stale: false
+      }
+    })
   })
 
   it('continues related-page traversal across independent MCP requests', async () => {
