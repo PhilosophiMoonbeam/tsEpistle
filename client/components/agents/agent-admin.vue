@@ -108,6 +108,14 @@
             </div>
             <v-text-field v-model="profileDraft.model" label="Agent model" :hint="agentModelHint" persistent-hint required/>
             <v-text-field v-model="profileDraft.utilityModel" label="Utility model (optional)" hint="Fast, economical model for conversation titles and future classification or routing. Leave blank to use the Agent model." persistent-hint/>
+            <v-sheet v-if="reasoningEffortOptions.length > 1" class="reasoning-settings pa-4 mb-4" rounded="lg" border>
+              <h3 class="text-title-medium">Reasoning effort</h3>
+              <p class="text-body-small text-medium-emphasis mb-3">{{ reasoningSupportHint }}</p>
+              <div class="form-grid">
+                <v-select v-model="profileDraft.agentReasoningEffort" :items="reasoningEffortOptions" label="Agent reasoning effort" hint="Controls reasoning depth for conversational answers and Wiki actions." persistent-hint/>
+                <v-select v-model="profileDraft.utilityReasoningEffort" :items="reasoningEffortOptions" label="Utility reasoning effort" hint="Controls reasoning depth independently for titles, enrichment, classification, and routing." persistent-hint/>
+              </div>
+            </v-sheet>
             <v-select v-model="profileDraft.toolCalling" :items="toolCallingOptions" item-title="title" item-value="value" label="Tool calling" :disabled="profileDraft.transportKind === 'legacy-completions'" hint="Native uses the API tool contract. Prompt-emulated supports models or APIs without native tools and is verified before enablement." persistent-hint @update:model-value="selectToolCalling"/>
             <v-text-field v-model="profileDraft.baseUrl" label="Base URL" hint="Public HTTPS API root; the selected endpoint path is appended" required/>
             <v-select v-if="availableAuthModes.length > 1" v-model="profileDraft.authMode" :items="availableAuthModes" label="Authentication mode"/>
@@ -174,7 +182,11 @@
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
-import type { AgentProviderTransport } from '../../../shared/agents/contracts.ts'
+import {
+  agentProviderReasoningEfforts,
+  type AgentProviderTransport,
+  type AgentReasoningEffort
+} from '../../../shared/agents/contracts.ts'
 import {
   AGENT_PROVIDER_PRICING_REVISION,
   AGENT_PROVIDER_PROTOCOL_OPTIONS,
@@ -192,10 +204,10 @@ import SkillAdmin from './skill-admin.vue'
 
 interface RuntimePolicy { enabled: boolean; providerEnabled: boolean; skillsEnabled: boolean; browserEnabled: boolean; proposalsEnabled: boolean; writes: { enabled: boolean; create: boolean; patch: boolean; move: boolean; restore: boolean; delete: boolean }; mcpEnabled: boolean; quotas: { globalConcurrency: number; perUserConcurrency: number; pollingMilliseconds: number; maximumSseConnectionsPerUser: number }; retention: { temporarySessionHours: number; mcpContentDays: number; auditDays: number; maintenanceBatchSize: number } }
 interface ConnectionCheck { status: 'passed' | 'failed'; errorCode: string | null; message: string | null; completedAt: string }
-interface Profile { id: string; displayName: string; status: 'enabled' | 'disabled'; isGlobalDefault: boolean; exposureMode: 'all_agent_users' | 'groups'; groupIds: number[]; conformed: boolean; connectionCheck: ConnectionCheck | null; transportKind: AgentProviderTransport; model: string; utilityModel: string | null; baseUrl: string; destinationHost: string; authMode: AgentProviderAuthMode; secretConfigured: boolean; adapterConfig: { timeoutMs: number; maxRetries: number; additionalHeaders: Record<string, string> }; capabilities: { streaming: boolean; toolCalling: AgentProviderToolCalling; parallelToolCalls: boolean; structuredOutput: AgentProviderStructuredOutput; usage: AgentProviderUsageMode; cancellation: boolean; maxContextTokens: number; maxOutputTokens: number }; policies: { allowedModes: string[]; dailyTokens: number; dailyCostMicros: number; reservationTokens: number; reservationCostMicros: number; reservationMilliseconds: number; promptVersion: number; maxAttempts: number } }
+interface Profile { id: string; displayName: string; status: 'enabled' | 'disabled'; isGlobalDefault: boolean; exposureMode: 'all_agent_users' | 'groups'; groupIds: number[]; conformed: boolean; connectionCheck: ConnectionCheck | null; transportKind: AgentProviderTransport; model: string; utilityModel: string | null; baseUrl: string; destinationHost: string; authMode: AgentProviderAuthMode; secretConfigured: boolean; adapterConfig: { timeoutMs: number; maxRetries: number; additionalHeaders: Record<string, string>; agentReasoningEffort?: AgentReasoningEffort; utilityReasoningEffort?: AgentReasoningEffort }; capabilities: { streaming: boolean; toolCalling: AgentProviderToolCalling; parallelToolCalls: boolean; structuredOutput: AgentProviderStructuredOutput; usage: AgentProviderUsageMode; cancellation: boolean; maxContextTokens: number; maxOutputTokens: number }; policies: { allowedModes: string[]; dailyTokens: number; dailyCostMicros: number; reservationTokens: number; reservationCostMicros: number; reservationMilliseconds: number; promptVersion: number; maxAttempts: number } }
 interface BrowserTarget { id: string; canonicalUrl: string; enabled: boolean; policySha256: string }
 interface GroupOption { id: number; name: string; isSystem: boolean }
-interface ProfileDraft { displayName: string; transportKind: AgentProviderTransport; model: string; utilityModel: string; baseUrl: string; authMode: AgentProviderAuthMode; secretValue: string; exposureMode: 'all_agent_users' | 'groups'; groupIds: number[]; maxContextTokens: number; maxOutputTokens: number; dailyTokens: number; dailyCostMicros: number; reservationTokens: number; reservationCostMicros: number; reservationMilliseconds: number; timeoutMs: number; maxRetries: number; maxAttempts: number; promptVersion: number; additionalHeaders: Record<string, string>; structuredOutput: AgentProviderStructuredOutput; usage: AgentProviderUsageMode; streaming: boolean; toolCalling: AgentProviderToolCalling; parallelToolCalls: boolean; cancellation: boolean }
+interface ProfileDraft { displayName: string; transportKind: AgentProviderTransport; model: string; utilityModel: string; agentReasoningEffort: AgentReasoningEffort | null; utilityReasoningEffort: AgentReasoningEffort | null; baseUrl: string; authMode: AgentProviderAuthMode; secretValue: string; exposureMode: 'all_agent_users' | 'groups'; groupIds: number[]; maxContextTokens: number; maxOutputTokens: number; dailyTokens: number; dailyCostMicros: number; reservationTokens: number; reservationCostMicros: number; reservationMilliseconds: number; timeoutMs: number; maxRetries: number; maxAttempts: number; promptVersion: number; additionalHeaders: Record<string, string>; structuredOutput: AgentProviderStructuredOutput; usage: AgentProviderUsageMode; streaming: boolean; toolCalling: AgentProviderToolCalling; parallelToolCalls: boolean; cancellation: boolean }
 
 const props = withDefaults(defineProps<{ csrfToken: string; embedded?: boolean }>(), { embedded: false })
 const { embedded } = props
@@ -223,7 +235,7 @@ const toolCallingOptions = [
   { title: 'Native API tools', value: 'native' as const },
   { title: 'Prompt-emulated tools', value: 'prompt' as const }
 ]
-const defaults = (): ProfileDraft => ({ displayName: '', transportKind: 'openai-responses', model: '', utilityModel: '', ...agentProviderProtocolDefaults('openai-responses'), secretValue: '', exposureMode: 'all_agent_users', groupIds: [], maxContextTokens: 128000, maxOutputTokens: 8192, dailyTokens: 1000000, dailyCostMicros: 10000000, reservationTokens: 32000, reservationCostMicros: 1000000, reservationMilliseconds: 300000, timeoutMs: 120000, maxRetries: 0, maxAttempts: 3, promptVersion: 1, additionalHeaders: {} })
+const defaults = (): ProfileDraft => ({ displayName: '', transportKind: 'openai-responses', model: '', utilityModel: '', agentReasoningEffort: null, utilityReasoningEffort: null, ...agentProviderProtocolDefaults('openai-responses'), secretValue: '', exposureMode: 'all_agent_users', groupIds: [], maxContextTokens: 128000, maxOutputTokens: 8192, dailyTokens: 1000000, dailyCostMicros: 10000000, reservationTokens: 32000, reservationCostMicros: 1000000, reservationMilliseconds: 300000, timeoutMs: 120000, maxRetries: 0, maxAttempts: 3, promptVersion: 1, additionalHeaders: {} })
 const profileDraft = reactive<ProfileDraft>(defaults())
 const availableAuthModes = computed<AgentProviderAuthMode[]>(() => profileDraft.transportKind === 'legacy-completions' ? ['bearer', 'api-key-header'] : [agentProviderProtocolDefaults(profileDraft.transportKind).authMode])
 
@@ -231,6 +243,27 @@ const selectedProtocol = computed(() => agentProviderProtocolOption(profileDraft
 const agentModelHint = computed(() => profileDraft.transportKind === 'gemini-api'
   ? 'Gemini 3.x model ID, for example gemini-3.7-flash.'
   : 'Primary model for conversational answers and Wiki actions.')
+const reasoningEffortTitles: Readonly<Record<AgentReasoningEffort, string>> = {
+  none: 'None',
+  minimal: 'Minimal',
+  low: 'Low',
+  medium: 'Medium',
+  high: 'High',
+  xhigh: 'Extra high',
+  max: 'Maximum'
+}
+const reasoningEffortOptions = computed(() => [
+  { title: 'Provider / model default', value: null },
+  ...agentProviderReasoningEfforts(profileDraft.transportKind).map(value => ({ title: reasoningEffortTitles[value], value }))
+])
+const reasoningSupportHint = computed(() => ({
+  'openai-responses': 'Sent as Responses API reasoning.effort. Available values vary by reasoning model.',
+  openresponses: 'Sent as OpenResponses reasoning.effort. The protocol defines reasoning for GPT-5 and o-series models.',
+  'openai-chat': 'Sent as Chat Completions reasoning_effort. Available values vary by reasoning model and compatible provider.',
+  'legacy-completions': '',
+  'anthropic-messages': 'Sent as Messages API output_config.effort. Supported Claude models default to high; xhigh and max availability varies by model.',
+  'gemini-api': 'Sent as Gemini Interactions generation_config.thinking_level for Gemini 3.x models.'
+})[profileDraft.transportKind])
 const protocolBehaviorRows = computed(() => {
   const structuredOutput = {
     'native-json-schema': 'Native JSON Schema',
@@ -251,6 +284,10 @@ const protocolBehaviorRows = computed(() => {
   return [
     { label: 'Available use', value: 'Wiki Agent with actions governed by the user’s Wiki group permissions' },
     { label: 'Model roles', value: profileDraft.utilityModel.trim() ? `Agent: ${profileDraft.model || 'not set'} · Utility: ${profileDraft.utilityModel}` : 'The Agent model also handles bounded utility work' },
+    ...(reasoningEffortOptions.value.length > 1 ? [{
+      label: 'Reasoning',
+      value: `Agent: ${profileDraft.agentReasoningEffort === null ? 'provider default' : reasoningEffortTitles[profileDraft.agentReasoningEffort]} · Utility: ${profileDraft.utilityReasoningEffort === null ? 'provider default' : reasoningEffortTitles[profileDraft.utilityReasoningEffort]}`
+    }] : []),
     { label: 'Tool calls', value: profileDraft.toolCalling === 'prompt' ? 'Prompt-emulated; one action per model turn' : profileDraft.parallelToolCalls ? 'Native API; multiple calls per model turn, executed in order' : 'Native API; one call per model turn' },
     { label: 'Response delivery', value: profileDraft.streaming ? `Streamed; ${profileDraft.cancellation ? 'cancellable' : 'not cancellable'}` : 'One buffered response' },
     { label: 'Structured output', value: structuredOutput },
@@ -261,7 +298,7 @@ const protocolBehaviorRows = computed(() => {
 const selectProtocol = (value: unknown) => {
   if (!isAgentProviderTransport(value)) return
   profileDraft.transportKind = value
-  Object.assign(profileDraft, agentProviderProtocolDefaults(value))
+  Object.assign(profileDraft, agentProviderProtocolDefaults(value), { agentReasoningEffort: null, utilityReasoningEffort: null })
 }
 const selectToolCalling = () => {
   profileDraft.parallelToolCalls = profileDraft.toolCalling === 'native' && agentProviderProtocolDefaults(profileDraft.transportKind).parallelToolCalls
@@ -278,8 +315,8 @@ const request = async <T>(path: string, init: RequestInit = {}): Promise<T> => {
 }
 const run = async (operation: () => Promise<void>) => { saving.value = true; error.value = ''; try { await operation() } catch (value) { error.value = value instanceof Error ? value.message : 'Agent administration request failed.' } finally { saving.value = false } }
 const load = async () => { loading.value = true; error.value = ''; try { const [runtimeResult, profileResult, browserResult, groupResult] = await Promise.all([request<{ runtime: RuntimePolicy }>('/_api/agents/admin/runtime'), request<{ profiles: Profile[] }>('/_api/agents/admin/profiles'), request<{ targets: BrowserTarget[] }>('/_api/agents/admin/browser-targets'), request<GroupOption[]>('/_api/groups')]); runtime.value = runtimeResult.runtime; profiles.value = profileResult.profiles; browserTargets.value = browserResult.targets; groups.value = groupResult } catch (value) { error.value = value instanceof Error ? value.message : 'Agent administration could not be loaded.' } finally { loading.value = false } }
-const openProfile = (profile?: Profile) => { profileError.value = ''; editingProfile.value = profile ?? null; Object.assign(profileDraft, defaults(), profile ? { ...agentProviderProtocolDefaults(profile.transportKind), displayName: profile.displayName, transportKind: profile.transportKind, model: profile.model, utilityModel: profile.utilityModel ?? '', baseUrl: profile.baseUrl, authMode: profile.authMode, maxContextTokens: profile.capabilities.maxContextTokens, maxOutputTokens: profile.capabilities.maxOutputTokens, structuredOutput: profile.capabilities.structuredOutput, usage: profile.capabilities.usage, streaming: profile.capabilities.streaming, toolCalling: profile.capabilities.toolCalling, parallelToolCalls: profile.capabilities.parallelToolCalls, cancellation: profile.capabilities.cancellation, dailyTokens: profile.policies.dailyTokens, dailyCostMicros: profile.policies.dailyCostMicros, reservationTokens: profile.policies.reservationTokens, reservationCostMicros: profile.policies.reservationCostMicros, reservationMilliseconds: profile.policies.reservationMilliseconds, timeoutMs: profile.adapterConfig.timeoutMs, maxRetries: profile.adapterConfig.maxRetries, maxAttempts: profile.policies.maxAttempts, promptVersion: profile.policies.promptVersion, additionalHeaders: profile.adapterConfig.additionalHeaders } : {}); profileDialog.value = true }
-const profilePayload = () => ({ transportKind: profileDraft.transportKind, model: profileDraft.model, utilityModel: profileDraft.utilityModel.trim() || null, baseUrl: profileDraft.baseUrl, authMode: profileDraft.authMode, secretReference: null, ...(profileDraft.secretValue ? { secretValue: profileDraft.secretValue } : {}), adapterConfig: { timeoutMs: profileDraft.timeoutMs, maxRetries: profileDraft.maxRetries, additionalHeaders: profileDraft.additionalHeaders }, capabilities: { streaming: profileDraft.streaming, toolCalling: profileDraft.toolCalling, parallelToolCalls: profileDraft.parallelToolCalls, structuredOutput: profileDraft.structuredOutput, usage: profileDraft.usage, cancellation: profileDraft.cancellation, maxContextTokens: profileDraft.maxContextTokens, maxOutputTokens: profileDraft.maxOutputTokens }, capabilityRevision: agentProviderCapabilityRevision(profileDraft.transportKind), policies: { allowedModes: ['agent'], dailyTokens: profileDraft.dailyTokens, dailyCostMicros: profileDraft.dailyCostMicros, reservationTokens: profileDraft.reservationTokens, reservationCostMicros: profileDraft.reservationCostMicros, reservationMilliseconds: profileDraft.reservationMilliseconds, promptVersion: profileDraft.promptVersion, maxAttempts: profileDraft.maxAttempts }, pricingRevision: AGENT_PROVIDER_PRICING_REVISION })
+const openProfile = (profile?: Profile) => { profileError.value = ''; editingProfile.value = profile ?? null; Object.assign(profileDraft, defaults(), profile ? { ...agentProviderProtocolDefaults(profile.transportKind), displayName: profile.displayName, transportKind: profile.transportKind, model: profile.model, utilityModel: profile.utilityModel ?? '', agentReasoningEffort: profile.adapterConfig.agentReasoningEffort ?? null, utilityReasoningEffort: profile.adapterConfig.utilityReasoningEffort ?? null, baseUrl: profile.baseUrl, authMode: profile.authMode, maxContextTokens: profile.capabilities.maxContextTokens, maxOutputTokens: profile.capabilities.maxOutputTokens, structuredOutput: profile.capabilities.structuredOutput, usage: profile.capabilities.usage, streaming: profile.capabilities.streaming, toolCalling: profile.capabilities.toolCalling, parallelToolCalls: profile.capabilities.parallelToolCalls, cancellation: profile.capabilities.cancellation, dailyTokens: profile.policies.dailyTokens, dailyCostMicros: profile.policies.dailyCostMicros, reservationTokens: profile.policies.reservationTokens, reservationCostMicros: profile.policies.reservationCostMicros, reservationMilliseconds: profile.policies.reservationMilliseconds, timeoutMs: profile.adapterConfig.timeoutMs, maxRetries: profile.adapterConfig.maxRetries, maxAttempts: profile.policies.maxAttempts, promptVersion: profile.policies.promptVersion, additionalHeaders: profile.adapterConfig.additionalHeaders } : {}); profileDialog.value = true }
+const profilePayload = () => ({ transportKind: profileDraft.transportKind, model: profileDraft.model, utilityModel: profileDraft.utilityModel.trim() || null, baseUrl: profileDraft.baseUrl, authMode: profileDraft.authMode, secretReference: null, ...(profileDraft.secretValue ? { secretValue: profileDraft.secretValue } : {}), adapterConfig: { timeoutMs: profileDraft.timeoutMs, maxRetries: profileDraft.maxRetries, additionalHeaders: profileDraft.additionalHeaders, ...(profileDraft.agentReasoningEffort === null ? {} : { agentReasoningEffort: profileDraft.agentReasoningEffort }), ...(profileDraft.utilityReasoningEffort === null ? {} : { utilityReasoningEffort: profileDraft.utilityReasoningEffort }) }, capabilities: { streaming: profileDraft.streaming, toolCalling: profileDraft.toolCalling, parallelToolCalls: profileDraft.parallelToolCalls, structuredOutput: profileDraft.structuredOutput, usage: profileDraft.usage, cancellation: profileDraft.cancellation, maxContextTokens: profileDraft.maxContextTokens, maxOutputTokens: profileDraft.maxOutputTokens }, capabilityRevision: agentProviderCapabilityRevision(profileDraft.transportKind), policies: { allowedModes: ['agent'], dailyTokens: profileDraft.dailyTokens, dailyCostMicros: profileDraft.dailyCostMicros, reservationTokens: profileDraft.reservationTokens, reservationCostMicros: profileDraft.reservationCostMicros, reservationMilliseconds: profileDraft.reservationMilliseconds, promptVersion: profileDraft.promptVersion, maxAttempts: profileDraft.maxAttempts }, pricingRevision: AGENT_PROVIDER_PRICING_REVISION })
 const saveProfile = async (): Promise<void> => {
   saving.value = true
   profileError.value = ''
@@ -322,10 +359,11 @@ onMounted(() => void load())
 .model-stack span { min-width: 3.2rem; color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity)); font-size: .75rem; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
 .protocol-field { grid-column: 1 / -1; }
 .protocol-summary { display: grid; gap: .65rem; margin: 0; }
+.reasoning-settings { grid-column: 1 / -1; }
 .protocol-summary > div { display: grid; gap: .25rem; grid-template-columns: minmax(9rem, .45fr) minmax(0, 1fr); }
 .protocol-summary dt { font-weight: 600; }
 .protocol-summary dd { margin: 0; color: rgb(var(--v-theme-on-surface-variant)); }
 code { overflow-wrap: anywhere; }
-@media (max-width: 700px) { .form-grid { grid-template-columns: 1fr; } .protocol-field { grid-column: auto; } }
+@media (max-width: 700px) { .form-grid { grid-template-columns: 1fr; row-gap: .75rem; } .protocol-field { grid-column: auto; } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; } }
 </style>

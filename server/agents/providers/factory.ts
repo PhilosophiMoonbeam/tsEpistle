@@ -20,6 +20,10 @@ import {
   type AxAIOpenAIResponsesRequest
 } from '@ax-llm/ax'
 import {
+  agentProviderReasoningEfforts,
+  type AgentReasoningEffort
+} from '../../../shared/agents/contracts.ts'
+import {
   AgentProviderAdapterConfigSchema,
   AgentProviderCapabilitiesSchema,
   type AgentProviderCapabilities,
@@ -98,11 +102,6 @@ interface ProviderVersionRow {
   pricingRevision: string
   conformed: boolean
 }
-type WikiOpenAIChatRequest = AxAIOpenAIChatRequest<string> & {
-  readonly parallel_tool_calls?: boolean
-}
-
-
 export interface AgentProviderService {
   readonly service: Pick<AxAIService, 'chat'>
   readonly capabilities: AgentProviderCapabilities
@@ -218,6 +217,37 @@ export const createGuardedProviderFetch = (baseUrl: string, endpoint: ProviderEn
   }
 }
 
+const createAnthropicEffortFetch = (implementation: typeof fetch, effort: AgentReasoningEffort | undefined): typeof fetch => {
+  if (effort === undefined) return implementation
+  return async (input, init): Promise<Response> => {
+    if (typeof init?.body !== 'string') throw new AgentRepositoryError('INVALID_PROVIDER_REQUEST', 'Anthropic request body is invalid', 500)
+    let body: Record<string, unknown>
+    try {
+      const value: unknown = JSON.parse(init.body)
+      if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new Error('invalid')
+      body = value as Record<string, unknown>
+    } catch {
+      throw new AgentRepositoryError('INVALID_PROVIDER_REQUEST', 'Anthropic request body is invalid', 500)
+    }
+    const existing = body.output_config
+    if (existing !== undefined && (typeof existing !== 'object' || existing === null || Array.isArray(existing))) {
+      throw new AgentRepositoryError('INVALID_PROVIDER_REQUEST', 'Anthropic output configuration is invalid', 500)
+    }
+    return implementation(input, {
+      ...init,
+      body: JSON.stringify({
+        ...body,
+        output_config: { ...(existing as Readonly<Record<string, unknown>> | undefined), effort }
+      })
+    })
+  }
+}
+
+const geminiThinkingLevel = (effort: AgentReasoningEffort): 'minimal' | 'low' | 'medium' | 'high' => {
+  if (effort === 'minimal' || effort === 'low' || effort === 'medium' || effort === 'high') return effort
+  throw new AgentRepositoryError('PROVIDER_PROFILE_CORRUPT', 'Stored Gemini reasoning effort is invalid', 500)
+}
+
 
 const axFeatures = (capabilities: AgentProviderCapabilities): AxAIFeatures => ({
   functions: capabilities.toolCalling === 'native',
@@ -292,6 +322,12 @@ export class AgentProviderFactory {
     } catch {
       throw new AgentRepositoryError('PROVIDER_PROFILE_CORRUPT', 'Stored provider profile data is invalid', 500)
     }
+    const reasoningEffort = loadOptions.purpose === 'utility'
+      ? adapterConfig.utilityReasoningEffort
+      : adapterConfig.agentReasoningEffort
+    if (reasoningEffort !== undefined && !agentProviderReasoningEfforts(row.transportKind).includes(reasoningEffort)) {
+      throw new AgentRepositoryError('PROVIDER_PROFILE_CORRUPT', 'Stored provider reasoning effort is invalid', 500)
+    }
     const endpoint: ProviderEndpoint = row.transportKind === 'openai-responses' || row.transportKind === 'openresponses'
       ? '/responses'
       : row.transportKind === 'anthropic-messages'
@@ -326,7 +362,7 @@ export class AgentProviderFactory {
         model,
         store: false,
         parallelToolCalls: capabilities.toolCalling === 'native' && capabilities.parallelToolCalls,
-        ...(adapterConfig.reasoningEffort === undefined ? {} : { reasoningEffort: adapterConfig.reasoningEffort })
+        ...(reasoningEffort === undefined ? {} : { reasoningEffort })
       }
       service = new AxAIOpenAIResponsesBase<string, AxAIOpenAIEmbedModel, string, AxAIOpenAIResponsesRequest<string>>({
         apiKey: secret,
@@ -355,16 +391,22 @@ export class AgentProviderFactory {
         model,
         ...(adapterConfig.temperature === undefined ? {} : { temperature: adapterConfig.temperature })
       }
-      service = new AxAIOpenAIBase<string, AxAIOpenAIEmbedModel, string, WikiOpenAIChatRequest>({
+      service = new AxAIOpenAIBase<string, AxAIOpenAIEmbedModel, string, AxAIOpenAIChatRequest<string>>({
         apiKey: secret,
         apiURL: row.baseUrl,
         config,
         options,
         modelInfo: [],
         supportFor: features,
-        chatReqUpdater: request => request.tools?.length
-          ? { ...request, parallel_tool_calls: capabilities.parallelToolCalls }
-          : request
+        chatReqUpdater: request => {
+          const updated = {
+            ...request,
+            ...(request.tools?.length ? { parallel_tool_calls: capabilities.parallelToolCalls } : {})
+          }
+          // Ax's request type trails the current API, whose reasoning_effort also accepts max.
+          if (reasoningEffort !== undefined) Reflect.set(updated, 'reasoning_effort', reasoningEffort)
+          return updated
+        }
       })
     } else if (row.transportKind === 'anthropic-messages') {
       service = new AxAIAnthropic({
@@ -373,7 +415,7 @@ export class AgentProviderFactory {
           model: model as AxAIAnthropicModel,
           ...(adapterConfig.temperature === undefined ? {} : { temperature: adapterConfig.temperature })
         },
-        options
+        options: { ...options, fetch: createAnthropicEffortFetch(options.fetch, reasoningEffort) }
       })
     } else if (row.transportKind === 'gemini-api') {
       service = createGeminiInteractionsService({
@@ -382,7 +424,7 @@ export class AgentProviderFactory {
         model,
         fetch: options.fetch,
         timeoutMs: adapterConfig.timeoutMs,
-        ...(adapterConfig.reasoningEffort === undefined ? {} : { reasoningEffort: adapterConfig.reasoningEffort })
+        ...(reasoningEffort === undefined ? {} : { thinkingLevel: geminiThinkingLevel(reasoningEffort) })
       })
     } else if (row.transportKind === 'legacy-completions') {
       service = createLegacyCompletionService({ ...row, model }, secret, adapterConfig, options.fetch)

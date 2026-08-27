@@ -2,7 +2,12 @@ import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto
 import { isIP } from 'node:net'
 import type { Knex } from 'knex'
 import { z } from 'zod'
-import type { AgentExecutionMode, AgentProviderProfileView as AgentProviderSelectionView } from '../../../shared/agents/contracts.ts'
+import {
+  AGENT_REASONING_EFFORTS,
+  agentProviderReasoningEfforts,
+  type AgentExecutionMode,
+  type AgentProviderProfileView as AgentProviderSelectionView
+} from '../../../shared/agents/contracts.ts'
 import { canonicalJson } from '../../helpers/canonical-json.ts'
 import type { AgentAdmissionResolver, AgentResolvedAdmission } from '../runtime.ts'
 import { AgentRepositoryError } from '../repository.ts'
@@ -28,7 +33,8 @@ export const AgentProviderAdapterConfigSchema = z.strictObject({
   maxRetries: z.literal(0),
   additionalHeaders: z.record(HeaderNameSchema, z.string().max(2_000)).refine(value => Object.keys(value).length <= 16, 'At most 16 additional headers are allowed').default({}),
   temperature: z.number().min(0).max(2).optional(),
-  reasoningEffort: z.enum(['none', 'minimal', 'low', 'medium', 'high', 'xhigh']).optional()
+  agentReasoningEffort: z.enum(AGENT_REASONING_EFFORTS).optional(),
+  utilityReasoningEffort: z.enum(AGENT_REASONING_EFFORTS).optional()
 })
 export const AgentProviderPoliciesSchema = z.strictObject({
   allowedModes: z.array(z.enum(['agent', 'generation-only'])).min(1).max(2),
@@ -233,6 +239,16 @@ const validateSettings = (input: AgentProviderSettingsInput, allowManagedReferen
   if (transportKind === 'gemini-api' && authMode !== 'google-api-key') throw new AgentRepositoryError('INVALID_PROVIDER_AUTH', 'Gemini API requires Google API key authentication', 400)
   if (transportKind === 'legacy-completions' && (authMode === 'anthropic-api-key' || authMode === 'google-api-key')) throw new AgentRepositoryError('INVALID_PROVIDER_AUTH', 'Legacy completions require bearer or generic API key authentication', 400)
   const adapterConfig = AgentProviderAdapterConfigSchema.parse(input.adapterConfig)
+  const supportedReasoningEfforts = agentProviderReasoningEfforts(transportKind)
+  for (const [field, label] of [
+    ['agentReasoningEffort', 'Agent reasoning effort'],
+    ['utilityReasoningEffort', 'Utility reasoning effort']
+  ] as const) {
+    const effort = adapterConfig[field]
+    if (effort !== undefined && !supportedReasoningEfforts.includes(effort)) {
+      throw new AgentRepositoryError('INVALID_PROVIDER_CONFIG', `${label} is not supported by the selected API protocol`, 400)
+    }
+  }
   if (transportKind === 'gemini-api' && adapterConfig.temperature !== undefined) throw new AgentRepositoryError('INVALID_PROVIDER_CONFIG', 'Gemini Interactions does not support temperature overrides', 400)
   validateHeaders(adapterConfig.additionalHeaders)
   const capabilities = AgentProviderCapabilitiesSchema.parse(input.capabilities)

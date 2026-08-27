@@ -85,7 +85,7 @@ describe('Ax provider factory', () => {
       baseUrl: 'https://provider.example.test/v1',
       authMode: 'bearer',
       secretReference: 'env:TEST_PROVIDER_KEY',
-      adapterConfig: JSON.stringify({ timeoutMs: 10_000, maxRetries: 0, temperature: 0.42, additionalHeaders: { 'x-tenant': 'wiki' } }),
+      adapterConfig: JSON.stringify({ timeoutMs: 10_000, maxRetries: 0, temperature: 0.42, agentReasoningEffort: 'high', utilityReasoningEffort: 'low', additionalHeaders: { 'x-tenant': 'wiki' } }),
       capabilities: JSON.stringify({ streaming: true, toolCalling: 'native', parallelToolCalls: true, structuredOutput: 'native-json-schema', usage: 'terminal', cancellation: true, maxContextTokens: 100_000, maxOutputTokens: 4_000 }),
       capabilityRevision: 'cap-1',
       pricingRevision: 'price-1',
@@ -109,14 +109,14 @@ describe('Ax provider factory', () => {
     expect(new Headers(request?.init?.headers).get('authorization')).toBe('Bearer test-key')
     expect(request?.init).toMatchObject({ redirect: 'manual', credentials: 'omit' })
     const payload = JSON.parse(String(request?.init?.body)) as Record<string, unknown>
-    expect(payload).toMatchObject({ model: 'gpt-test', store: false, previous_response_id: null, parallel_tool_calls: true, tools: [{ type: 'function', name: 'wiki_get_page', strict: false }] })
+    expect(payload).toMatchObject({ model: 'gpt-test', store: false, previous_response_id: null, parallel_tool_calls: true, reasoning: { effort: 'high' }, tools: [{ type: 'function', name: 'wiki_get_page', strict: false }] })
     expect(payload.include).toContain('reasoning.encrypted_content')
     expect(payload).not.toHaveProperty('temperature')
     expect(payload).not.toHaveProperty('top_p')
     const utilityProvider = await factory.create('00000000-0000-4000-8000-000000000001', { purpose: 'utility' })
     expect(utilityProvider.model).toBe('gpt-test-mini')
     await utilityProvider.service.chat({ chatPrompt: [{ role: 'user', content: 'title' }], model: utilityProvider.model }, { stream: false })
-    expect(JSON.parse(String(request?.init?.body))).toMatchObject({ model: 'gpt-test-mini', store: false })
+    expect(JSON.parse(String(request?.init?.body))).toMatchObject({ model: 'gpt-test-mini', store: false, reasoning: { effort: 'low' } })
     const continuation = provider.preserveThoughtBlock('rs_1', { data: 'encrypted-reasoning', encrypted: true })
     await provider.service.chat({
       chatPrompt: [

@@ -474,14 +474,7 @@ export interface GeminiInteractionsServiceOptions {
   readonly model: string
   readonly fetch: typeof fetch
   readonly timeoutMs: number
-  readonly reasoningEffort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
-}
-
-const thinkingLevel = (effort: GeminiInteractionsServiceOptions['reasoningEffort']): 'minimal' | 'low' | 'medium' | 'high' | undefined => {
-  if (effort === undefined) return undefined
-  if (effort === 'none' || effort === 'minimal') return 'minimal'
-  if (effort === 'xhigh') return 'high'
-  return effort
+  readonly thinkingLevel?: 'minimal' | 'low' | 'medium' | 'high'
 }
 
 export const createGeminiInteractionsService = (config: GeminiInteractionsServiceOptions): Pick<AxAIService, 'chat'> => ({
@@ -490,7 +483,7 @@ export const createGeminiInteractionsService = (config: GeminiInteractionsServic
     assertSupportedModelConfig(request.modelConfig)
     const { systemInstruction, input } = requestParts(request)
     const stream = options?.stream === true
-    const level = thinkingLevel(config.reasoningEffort)
+    const level = config.thinkingLevel
     const generationConfig = {
       ...(request.modelConfig?.maxTokens === undefined ? {} : { max_output_tokens: request.modelConfig.maxTokens }),
       ...(request.modelConfig?.stopSequences === undefined ? {} : { stop_sequences: request.modelConfig.stopSequences }),

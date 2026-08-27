@@ -192,6 +192,30 @@ export const AGENT_PROVIDER_TRANSPORTS = [
 
 export type AgentProviderTransport = typeof AGENT_PROVIDER_TRANSPORTS[number]
 
+export const AGENT_REASONING_EFFORTS = [
+  'none',
+  'minimal',
+  'low',
+  'medium',
+  'high',
+  'xhigh',
+  'max'
+] as const
+
+export type AgentReasoningEffort = typeof AGENT_REASONING_EFFORTS[number]
+
+const AGENT_REASONING_EFFORTS_BY_TRANSPORT = {
+  'openai-responses': AGENT_REASONING_EFFORTS,
+  openresponses: ['none', 'low', 'medium', 'high', 'xhigh'],
+  'openai-chat': AGENT_REASONING_EFFORTS,
+  'legacy-completions': [],
+  'anthropic-messages': ['low', 'medium', 'high', 'xhigh', 'max'],
+  'gemini-api': ['minimal', 'low', 'medium', 'high']
+} as const satisfies Readonly<Record<AgentProviderTransport, readonly AgentReasoningEffort[]>>
+
+export const agentProviderReasoningEfforts = (transport: AgentProviderTransport): readonly AgentReasoningEffort[] =>
+  AGENT_REASONING_EFFORTS_BY_TRANSPORT[transport]
+
 export interface AgentProviderProfileView {
   readonly id: string
   readonly name: string

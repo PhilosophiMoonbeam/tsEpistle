@@ -100,7 +100,7 @@ Provider inference is intentionally unavailable until an operator enables the pr
 
 ### Provider API protocols
 
-A provider profile describes one approved destination, encrypted credential, primary Agent model, optional utility model, explicit tool-calling mode, protocol-derived capability descriptor, and policy. The utility model shares the profile's destination, credential, API protocol, and transport policy; leaving it blank routes bounded utility work to the Agent model. Its API protocol selects the exact wire contract used at that destination; it is not inferred from the URL. The ordinary admin form derives the remaining low-level transport behavior.
+A provider profile describes one approved destination, encrypted credential, primary Agent model, optional utility model, separate reasoning controls for those two roles, explicit tool-calling mode, protocol-derived capability descriptor, and policy. The utility model shares the profile's destination, credential, API protocol, and transport policy; leaving it blank routes bounded utility work to the Agent model while preserving the independent utility reasoning setting. Its API protocol selects the exact wire contract used at that destination; it is not inferred from the URL. The ordinary admin form derives the remaining low-level transport behavior.
 
 | API protocol | Endpoint | Native action mapping |
 | --- | --- | --- |
@@ -110,6 +110,19 @@ A provider profile describes one approved destination, encrypted credential, pri
 | Legacy text Completions | `POST /v1/completions` | No native action fields; strict prompt-emulated action turns only |
 | Anthropic Messages API | `POST /v1/messages` | Anthropic tools, `tool_use` content blocks, and `tool_result` content blocks |
 | Google Gemini Interactions API | `POST /v1beta/interactions` | Stateless `user_input`, `model_output`, `thought`, `function_call`, and `function_result` steps |
+
+Reasoning effort is optional and model-dependent. The administrator selects the Agent and utility values independently; leaving either value at **Provider / model default** omits that role's wire field. Wiki exposes only the values defined by the selected protocol and runs both configured model roles through connection conformance before enabling the profile. A provider can still reject a level that its selected model does not implement.
+
+| API protocol | Request field | Exposed values |
+| --- | --- | --- |
+| OpenAI Responses API | `reasoning.effort` | `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max` |
+| OpenResponses-compatible API | `reasoning.effort` | `none`, `low`, `medium`, `high`, `xhigh` |
+| OpenAI-compatible Chat Completions | `reasoning_effort` | `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max` |
+| Anthropic Messages API | `output_config.effort` | `low`, `medium`, `high`, `xhigh`, `max` |
+| Google Gemini Interactions API | `generation_config.thinking_level` | `minimal`, `low`, `medium`, `high` |
+| Legacy text Completions | — | Not available |
+
+OpenAI documents that reasoning-model support varies by model. OpenResponses limits its reasoning contract to GPT-5 and o-series models. Anthropic effort applies to all response tokens, including tool calls and thinking when active, and supported models default to `high`; `xhigh` and `max` support varies by model. Gemini uses the Interactions API's `thinking_level` field directly—never `generateContent` thinking configuration. These controls adjust effort, not visible response length, and Wiki does not request, expose, or log private reasoning text.
 
 **Native API tools** is the default for Responses, OpenResponses, Chat Completions, Anthropic Messages, and Gemini. Wiki submits provider-native definitions and results, requests strict schemas where the protocol supports them, and enables parallel calls only when the profile declares them. Multiple calls from one native model turn are executed serially in model order so policy, approval, and audit ordering remain deterministic.
 

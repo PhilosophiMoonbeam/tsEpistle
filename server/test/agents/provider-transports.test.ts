@@ -35,7 +35,10 @@ describe('additional provider transports', () => {
   it('runs OpenResponses through the storage-off Responses protocol', async () => {
     const id = '00000000-0000-4000-8000-000000000011'
     await insert({ id, transportKind: 'openresponses', baseUrl: 'https://openresponses.example.test/v1', authMode: 'bearer' })
-    await db('agentProviderProfileVersions').where({ id }).update({ capabilities: JSON.stringify({ ...capabilities, toolCalling: 'native', parallelToolCalls: true }) })
+    await db('agentProviderProfileVersions').where({ id }).update({
+      adapterConfig: JSON.stringify({ timeoutMs: 10_000, maxRetries: 0, additionalHeaders: {}, agentReasoningEffort: 'xhigh' }),
+      capabilities: JSON.stringify({ ...capabilities, toolCalling: 'native', parallelToolCalls: true })
+    })
     let payload: Record<string, unknown> = {}
     const fetchImplementation = async (_input: URL | RequestInfo, init?: RequestInit): Promise<Response> => {
       payload = JSON.parse(String(init?.body)) as Record<string, unknown>
@@ -47,14 +50,17 @@ describe('additional provider transports', () => {
       functions: [{ name: 'wiki_get_page', description: 'Read a page', parameters: { type: 'object', properties: { id: { type: 'number', description: 'Page ID' } } } }]
     }, { stream: false })
     expect(response).not.toBeInstanceOf(ReadableStream)
-    expect(payload).toMatchObject({ store: false, previous_response_id: null, parallel_tool_calls: true, tools: [{ type: 'function', name: 'wiki_get_page', strict: false }] })
+    expect(payload).toMatchObject({ store: false, previous_response_id: null, parallel_tool_calls: true, reasoning: { effort: 'xhigh' }, tools: [{ type: 'function', name: 'wiki_get_page', strict: false }] })
     expect(payload.include).toContain('reasoning.encrypted_content')
   })
 
   it('maps Anthropic native tools, tool use, and tool results', async () => {
     const id = '00000000-0000-4000-8000-000000000012'
     await insert({ id, transportKind: 'anthropic-messages', baseUrl: 'https://api.anthropic.com/v1', authMode: 'anthropic-api-key' })
-    await db('agentProviderProfileVersions').where({ id }).update({ capabilities: JSON.stringify({ ...capabilities, toolCalling: 'native', parallelToolCalls: true }) })
+    await db('agentProviderProfileVersions').where({ id }).update({
+      adapterConfig: JSON.stringify({ timeoutMs: 10_000, maxRetries: 0, additionalHeaders: {}, agentReasoningEffort: 'high' }),
+      capabilities: JSON.stringify({ ...capabilities, toolCalling: 'native', parallelToolCalls: true })
+    })
     const requests: Array<{ url: string; headers: Headers; body: Record<string, unknown> }> = []
     const fetchImplementation = async (input: URL | RequestInfo, init?: RequestInit): Promise<Response> => {
       requests.push({ url: String(input), headers: new Headers(init?.headers), body: JSON.parse(String(init?.body)) as Record<string, unknown> })
@@ -79,7 +85,7 @@ describe('additional provider transports', () => {
     expect(requests[0]?.url).toBe('https://api.anthropic.com/v1/messages')
     expect(requests[0]?.headers.get('x-api-key')).toBe('anthropic-key')
     expect(requests[0]?.headers.get('anthropic-version')).toBeTruthy()
-    expect(requests[0]?.body).toMatchObject({ tools: [{ name: 'wiki_get_page', input_schema: { type: 'object' } }] })
+    expect(requests[0]?.body).toMatchObject({ output_config: { effort: 'high' }, tools: [{ name: 'wiki_get_page', input_schema: { type: 'object' } }] })
     expect(JSON.stringify(requests[1]?.body)).toContain('tool_result')
     expect(JSON.stringify(requests[1]?.body)).toContain('toolu_1')
   })
@@ -89,6 +95,7 @@ describe('additional provider transports', () => {
     await insert({ id, transportKind: 'gemini-api', baseUrl: 'https://generativelanguage.googleapis.com/v1beta', authMode: 'google-api-key' })
     await db('agentProviderProfileVersions').where({ id }).update({
       model: 'gemini-3.7-flash',
+      adapterConfig: JSON.stringify({ timeoutMs: 10_000, maxRetries: 0, additionalHeaders: {}, agentReasoningEffort: 'medium' }),
       capabilities: JSON.stringify({ ...capabilities, streaming: true, toolCalling: 'native', parallelToolCalls: true, structuredOutput: 'native-json-schema', usage: 'stream' })
     })
     const requests: Array<{ url: string; headers: Headers; body: Record<string, unknown> }> = []
@@ -188,7 +195,8 @@ describe('additional provider transports', () => {
       input: [{ type: 'user_input', content: [{ type: 'text', text: 'hello' }] }],
       tools: [{ type: 'function', name: 'wiki_get_page' }, { type: 'function', name: 'wiki_list_tags' }],
       tool_choice: 'auto',
-      response_format: { type: 'text', mime_type: 'application/json', schema: { type: 'object' } }
+      response_format: { type: 'text', mime_type: 'application/json', schema: { type: 'object' } },
+      generation_config: { thinking_level: 'medium', thinking_summaries: 'none' }
     })
     expect(requests[1]?.body).toMatchObject({
       store: false,
@@ -220,7 +228,10 @@ describe('additional provider transports', () => {
   it('maps Chat Completions native tools, calls, and results', async () => {
     const id = '00000000-0000-4000-8000-000000000014'
     await insert({ id, transportKind: 'openai-chat', baseUrl: 'https://chat.example.test/v1', authMode: 'bearer' })
-    await db('agentProviderProfileVersions').where({ id }).update({ capabilities: JSON.stringify({ ...capabilities, toolCalling: 'native', parallelToolCalls: true, structuredOutput: 'tool-result' }) })
+    await db('agentProviderProfileVersions').where({ id }).update({
+      adapterConfig: JSON.stringify({ timeoutMs: 10_000, maxRetries: 0, additionalHeaders: {}, agentReasoningEffort: 'max' }),
+      capabilities: JSON.stringify({ ...capabilities, toolCalling: 'native', parallelToolCalls: true, structuredOutput: 'tool-result' })
+    })
     const payloads: Record<string, unknown>[] = []
     const fetchImplementation = async (_input: URL | RequestInfo, init?: RequestInit): Promise<Response> => {
       payloads.push(JSON.parse(String(init?.body)) as Record<string, unknown>)
@@ -242,7 +253,7 @@ describe('additional provider transports', () => {
       ],
       functions: [definition]
     }, { stream: false })
-    expect(payloads[0]).toMatchObject({ parallel_tool_calls: true, tools: [{ type: 'function', function: { name: 'wiki_get_page' } }] })
+    expect(payloads[0]).toMatchObject({ parallel_tool_calls: true, reasoning_effort: 'max', tools: [{ type: 'function', function: { name: 'wiki_get_page' } }] })
     expect(payloads[1]).toMatchObject({ messages: expect.arrayContaining([{ role: 'tool', tool_call_id: 'call_1', content: '{"id":42}' }]) })
   })
 

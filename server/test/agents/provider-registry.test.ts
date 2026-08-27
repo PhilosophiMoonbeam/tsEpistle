@@ -91,6 +91,53 @@ describe('agent provider profile registry', () => {
     await expect(registry.create({ ...geminiInput, adapterConfig: { ...geminiInput.adapterConfig, additionalHeaders: { 'x-goog-api-key': 'override' } }, displayName: 'Gemini header override', exposureMode: 'all_agent_users', actorId: 1 })).rejects.toMatchObject({ code: 'INVALID_PROVIDER_HEADERS' })
   })
 
+  it('stores role-specific reasoning effort and rejects protocol-invalid levels', async () => {
+    const created = await registry.create({
+      ...profileInput,
+      adapterConfig: {
+        ...profileInput.adapterConfig,
+        agentReasoningEffort: 'max',
+        utilityReasoningEffort: 'minimal'
+      },
+      displayName: 'Reasoning',
+      exposureMode: 'all_agent_users',
+      actorId: 1
+    })
+    await expect(registry.getAdmin(created.id)).resolves.toMatchObject({
+      adapterConfig: { agentReasoningEffort: 'max', utilityReasoningEffort: 'minimal' }
+    })
+    await expect(registry.create({
+      ...profileInput,
+      transportKind: 'gemini-api',
+      model: 'gemini-3.7-flash',
+      utilityModel: null,
+      baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+      authMode: 'google-api-key',
+      adapterConfig: { ...profileInput.adapterConfig, agentReasoningEffort: 'max' },
+      displayName: 'Invalid Gemini reasoning',
+      exposureMode: 'all_agent_users',
+      actorId: 1
+    })).rejects.toMatchObject({ code: 'INVALID_PROVIDER_CONFIG' })
+    await expect(registry.create({
+      ...profileInput,
+      transportKind: 'anthropic-messages',
+      baseUrl: 'https://api.anthropic.com/v1',
+      authMode: 'anthropic-api-key',
+      adapterConfig: { ...profileInput.adapterConfig, utilityReasoningEffort: 'minimal' },
+      displayName: 'Invalid Anthropic reasoning',
+      exposureMode: 'all_agent_users',
+      actorId: 1
+    })).rejects.toMatchObject({ code: 'INVALID_PROVIDER_CONFIG' })
+    await expect(registry.create({
+      ...profileInput,
+      transportKind: 'openresponses',
+      adapterConfig: { ...profileInput.adapterConfig, agentReasoningEffort: 'minimal' },
+      displayName: 'Invalid OpenResponses reasoning',
+      exposureMode: 'all_agent_users',
+      actorId: 1
+    })).rejects.toMatchObject({ code: 'INVALID_PROVIDER_CONFIG' })
+  })
+
 
   it('automatically makes the first eligible all-user profile the global default', async () => {
     const primary = await registry.create({ ...profileInput, displayName: 'Primary', exposureMode: 'all_agent_users', actorId: 1 })

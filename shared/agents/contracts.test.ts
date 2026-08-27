@@ -5,7 +5,8 @@ import {
   AGENT_EVENT_TYPES,
   AGENT_FEATURE_FLAG_KEYS,
   AGENT_PERMISSION_KEYS,
-  AGENT_TOOL_NAMES
+  AGENT_TOOL_NAMES,
+  agentProviderReasoningEfforts
 } from './contracts.ts'
 
 describe('frozen agent contracts', () => {
@@ -33,5 +34,13 @@ describe('frozen agent contracts', () => {
 
   it('freezes least-privileged admission permissions', () => {
     expect(AGENT_PERMISSION_KEYS).toEqual(['use:agents', 'use:agent-browser', 'use:mcp'])
+  })
+
+  it('keeps protocol-specific reasoning effort values exact', () => {
+    expect(agentProviderReasoningEfforts('openai-responses')).toEqual(['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'])
+    expect(agentProviderReasoningEfforts('openresponses')).toEqual(['none', 'low', 'medium', 'high', 'xhigh'])
+    expect(agentProviderReasoningEfforts('anthropic-messages')).toEqual(['low', 'medium', 'high', 'xhigh', 'max'])
+    expect(agentProviderReasoningEfforts('gemini-api')).toEqual(['minimal', 'low', 'medium', 'high'])
+    expect(agentProviderReasoningEfforts('legacy-completions')).toEqual([])
   })
 })
