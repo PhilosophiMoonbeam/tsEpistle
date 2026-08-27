@@ -106,7 +106,7 @@
               </v-select>
               <p class="text-body-small text-medium-emphasis mt-n4 mb-4">{{ selectedProtocol.description }} Endpoint: <code>{{ selectedProtocol.endpoint }}</code>.</p>
             </div>
-            <v-text-field v-model="profileDraft.model" label="Agent model" hint="Primary model for conversational answers and Wiki actions." persistent-hint required/>
+            <v-text-field v-model="profileDraft.model" label="Agent model" :hint="agentModelHint" persistent-hint required/>
             <v-text-field v-model="profileDraft.utilityModel" label="Utility model (optional)" hint="Fast, economical model for conversation titles and future classification or routing. Leave blank to use the Agent model." persistent-hint/>
             <v-select v-model="profileDraft.toolCalling" :items="toolCallingOptions" item-title="title" item-value="value" label="Tool calling" :disabled="profileDraft.transportKind === 'legacy-completions'" hint="Native uses the API tool contract. Prompt-emulated supports models or APIs without native tools and is verified before enablement." persistent-hint @update:model-value="selectToolCalling"/>
             <v-text-field v-model="profileDraft.baseUrl" label="Base URL" hint="Public HTTPS API root; the selected endpoint path is appended" required/>
@@ -228,6 +228,9 @@ const profileDraft = reactive<ProfileDraft>(defaults())
 const availableAuthModes = computed<AgentProviderAuthMode[]>(() => profileDraft.transportKind === 'legacy-completions' ? ['bearer', 'api-key-header'] : [agentProviderProtocolDefaults(profileDraft.transportKind).authMode])
 
 const selectedProtocol = computed(() => agentProviderProtocolOption(profileDraft.transportKind))
+const agentModelHint = computed(() => profileDraft.transportKind === 'gemini-api'
+  ? 'Gemini model ID, for example gemini-2.5-flash.'
+  : 'Primary model for conversational answers and Wiki actions.')
 const protocolBehaviorRows = computed(() => {
   const structuredOutput = {
     'native-json-schema': 'Native JSON Schema',
@@ -242,7 +245,8 @@ const protocolBehaviorRows = computed(() => {
   const authentication = {
     bearer: 'Bearer token',
     'api-key-header': 'API-key header',
-    'anthropic-api-key': 'Anthropic API key'
+    'anthropic-api-key': 'Anthropic API key',
+    'google-api-key': 'Google API key'
   }[profileDraft.authMode]
   return [
     { label: 'Available use', value: 'Wiki Agent with actions governed by the user’s Wiki group permissions' },

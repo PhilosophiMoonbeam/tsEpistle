@@ -82,6 +82,72 @@ describe('additional provider transports', () => {
     expect(JSON.stringify(requests[1]?.body)).toContain('toolu_1')
   })
 
+  it('streams Gemini native tools with header authentication and thought-signature continuation', async () => {
+    const id = '00000000-0000-4000-8000-000000000015'
+    await insert({ id, transportKind: 'gemini-api', baseUrl: 'https://generativelanguage.googleapis.com/v1beta', authMode: 'google-api-key' })
+    await db('agentProviderProfileVersions').where({ id }).update({ capabilities: JSON.stringify({ ...capabilities, streaming: true, toolCalling: 'native', parallelToolCalls: true, structuredOutput: 'native-json-schema', usage: 'stream' }) })
+    const requests: Array<{ url: string; headers: Headers; body: Record<string, unknown> }> = []
+    const responses = [
+      {
+        candidates: [{ index: 0, finishReason: 'STOP', content: { role: 'model', parts: [{ functionCall: { name: 'wiki_get_page', args: { id: 42 } }, thoughtSignature: 'opaque-signature' }] } }],
+        usageMetadata: { promptTokenCount: 3, candidatesTokenCount: 2, totalTokenCount: 5 }
+      },
+      {
+        candidates: [{ index: 0, finishReason: 'STOP', content: { role: 'model', parts: [{ text: 'gemini' }] } }],
+        usageMetadata: { promptTokenCount: 6, candidatesTokenCount: 1, totalTokenCount: 7 }
+      }
+    ]
+    const fetchImplementation = async (input: URL | RequestInfo, init?: RequestInit): Promise<Response> => {
+      requests.push({ url: String(input), headers: new Headers(init?.headers), body: JSON.parse(String(init?.body)) as Record<string, unknown> })
+      return new Response(`data: ${JSON.stringify(responses.shift())}\n\n`, { headers: { 'content-type': 'text/event-stream' } })
+    }
+    const provider = await new AgentProviderFactory(db, { get: () => 'gemini-key' }, fetchImplementation as typeof fetch, publicResolver as never).create(id)
+    const definition = { name: 'wiki_get_page', description: 'Read a page', parameters: { type: 'object' as const, properties: { id: { type: 'number' as const, description: 'Page ID' } } } }
+    const firstStream = await provider.service.chat({ chatPrompt: [{ role: 'user', content: 'hello' }], functions: [definition], functionCall: 'auto' }, { stream: true })
+    if (!(firstStream instanceof ReadableStream)) throw new Error('Expected a streaming Gemini response')
+    const firstReader = firstStream.getReader()
+    const first = (await firstReader.read()).value
+    firstReader.releaseLock()
+    const [call] = first?.results[0]?.functionCalls ?? []
+    const rawThought = first?.results[0]?.thoughtBlocks?.[0]
+    expect(call).toMatchObject({ function: { name: 'wiki_get_page', params: { id: 42 } } })
+    expect(rawThought).toMatchObject({ encrypted: false, signature: 'opaque-signature' })
+    if (!call || !rawThought) throw new Error('Gemini did not return its native function call and thought signature')
+    const continuation = provider.preserveThoughtBlock('', rawThought)
+    expect(continuation).toEqual({ data: '', encrypted: true, signature: 'opaque-signature' })
+    if (!continuation) throw new Error('Gemini thought signature was not preserved')
+    const finalStream = await provider.service.chat({
+      chatPrompt: [
+        { role: 'user', content: 'hello' },
+        { role: 'assistant', functionCalls: [call], thoughtBlocks: [continuation] },
+        { role: 'function', functionId: call.id, result: '{"id":42}' }
+      ],
+      functions: [definition]
+    }, { stream: true })
+    if (!(finalStream instanceof ReadableStream)) throw new Error('Expected a streaming Gemini response')
+    const finalReader = finalStream.getReader()
+    const final = (await finalReader.read()).value
+    finalReader.releaseLock()
+    expect(final?.results[0]?.content).toBe('gemini')
+    expect(final?.modelUsage?.tokens).toMatchObject({ promptTokens: 6, completionTokens: 1, totalTokens: 7 })
+    expect(requests.map(request => request.url)).toEqual([
+      'https://generativelanguage.googleapis.com/v1beta/models/model-test:streamGenerateContent?alt=sse',
+      'https://generativelanguage.googleapis.com/v1beta/models/model-test:streamGenerateContent?alt=sse'
+    ])
+    expect(requests.every(request => request.headers.get('x-goog-api-key') === 'gemini-key')).toBe(true)
+    expect(requests.every(request => !request.url.includes('gemini-key'))).toBe(true)
+    expect(requests[0]?.body).toMatchObject({
+      tools: [{ function_declarations: [{ name: 'wiki_get_page' }] }],
+      toolConfig: { function_calling_config: { mode: 'AUTO' } }
+    })
+    expect(JSON.stringify(requests[1]?.body)).toContain('"thought_signature":"opaque-signature"')
+    expect(requests[1]?.body).toMatchObject({
+      contents: expect.arrayContaining([
+        expect.objectContaining({ role: 'user', parts: [expect.objectContaining({ functionResponse: expect.objectContaining({ name: 'wiki_get_page' }) })] })
+      ])
+    })
+  })
+
 
   it('maps Chat Completions native tools, calls, and results', async () => {
     const id = '00000000-0000-4000-8000-000000000014'

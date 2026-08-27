@@ -375,7 +375,11 @@ const appendCalls = (target: Map<string, ToolCall>, results: readonly AxChatResp
   }
 }
 
-const encryptedThoughtBlocks = (provider: AgentProviderService, result: AxChatResponseResult): NonNullable<AxChatResponseResult['thoughtBlocks']> => (result.thoughtBlocks ?? []).filter(block => block.encrypted).map(block => provider.preserveThoughtBlock?.(result.id ?? '', block) ?? ({ ...block }))
+const providerContinuationBlocks = (provider: AgentProviderService, result: AxChatResponseResult): NonNullable<AxChatResponseResult['thoughtBlocks']> => (result.thoughtBlocks ?? []).flatMap(block => {
+  const preserved = provider.preserveThoughtBlock?.(result.id ?? '', block)
+  if (preserved === undefined) return block.encrypted ? [{ ...block }] : []
+  return preserved === null ? [] : [preserved]
+})
 
 interface ProviderTools {
   readonly mode: 'native' | 'prompt'
@@ -431,10 +435,10 @@ export class AxAgentEngine implements AgentEngine {
       appendCalls(calls, response.results, tools?.actionNames)
       for (const result of response.results) {
         if (result.content) content += result.content
-        for (const block of encryptedThoughtBlocks(provider, result)) {
+        for (const block of providerContinuationBlocks(provider, result)) {
           const key = (provider.transportKind === 'openai-responses' || provider.transportKind === 'openresponses') && result.id !== undefined
             ? result.id
-            : `${result.id ?? 'thought'}:${thoughtBlocks.size}`
+            : block.signature ?? `${result.id ?? 'thought'}:${thoughtBlocks.size}`
           thoughtBlocks.set(key, block)
         }
       }

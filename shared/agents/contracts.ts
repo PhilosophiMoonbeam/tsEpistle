@@ -186,7 +186,8 @@ export const AGENT_PROVIDER_TRANSPORTS = [
   'openresponses',
   'openai-chat',
   'legacy-completions',
-  'anthropic-messages'
+  'anthropic-messages',
+  'gemini-api'
 ] as const
 
 export type AgentProviderTransport = typeof AGENT_PROVIDER_TRANSPORTS[number]

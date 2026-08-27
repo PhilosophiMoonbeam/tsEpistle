@@ -80,6 +80,43 @@ describe('provider conformance runner', () => {
     expect(report).toMatchObject({ status: 'passed', checks: expect.arrayContaining([{ name: 'native-tool-round-trip', passed: true }]) })
   })
 
+  it('replays opaque Gemini thought signatures during native conformance', async () => {
+    const setConformed = vi.fn(async () => {})
+    let continuationObserved = false
+    const factory = {
+      create: async () => ({
+        ...service(async input => {
+          if (!input.functions?.length) return { results: [{ index: 0, content: 'ok' }], modelUsage: usage }
+          if (typeof input.functionCall === 'object') {
+            const prompt = input.chatPrompt.find(message => message.role === 'user')?.content
+            const token = typeof prompt === 'string' ? /token ([0-9a-f-]+)/u.exec(prompt)?.[1] : undefined
+            return {
+              results: [{
+                index: 0,
+                functionCalls: [{ id: 'gemini-call-1', type: 'function', function: { name: 'wiki_conformance_echo', params: { token } } }],
+                thoughtBlocks: [{ data: 'private thought', encrypted: false, signature: 'opaque-signature' }]
+              }],
+              modelUsage: usage
+            }
+          }
+          const assistant = input.chatPrompt.find(message => message.role === 'assistant')
+          continuationObserved = assistant?.thoughtBlocks?.some(block => block.data === '' && block.encrypted && block.signature === 'opaque-signature') === true
+          return { results: [{ index: 0, content: 'ACKNOWLEDGED' }], modelUsage: usage }
+        }, { toolCalling: 'native', parallelToolCalls: true, structuredOutput: 'native-json-schema', usage: 'stream' }),
+        transportKind: 'gemini-api',
+        preserveThoughtBlock: (_resultId: string, block: { data: string; encrypted: boolean; signature?: string }) => block.signature
+          ? { data: '', encrypted: true as const, signature: block.signature }
+          : null
+      })
+    } as unknown as AgentProviderFactory
+
+    const report = await new AgentProviderConformanceRunner(db, factory, { setConformed } as never)
+      .run('00000000-0000-4000-8000-000000000001', 7)
+
+    expect(report).toMatchObject({ status: 'passed', checks: expect.arrayContaining([{ name: 'native-tool-round-trip', passed: true }]) })
+    expect(continuationObserved).toBe(true)
+  })
+
   it('reports when a native provider omits its final answer after the action result', async () => {
     const setConformed = vi.fn(async () => {})
     const factory = {

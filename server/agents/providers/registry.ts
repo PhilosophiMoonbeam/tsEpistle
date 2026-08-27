@@ -8,8 +8,8 @@ import type { AgentAdmissionResolver, AgentResolvedAdmission } from '../runtime.
 import { AgentRepositoryError } from '../repository.ts'
 import type { AgentSecretRegistry } from './secrets.ts'
 
-const TransportKindSchema = z.enum(['openai-responses', 'openresponses', 'openai-chat', 'legacy-completions', 'anthropic-messages'])
-const AuthModeSchema = z.enum(['bearer', 'api-key-header', 'anthropic-api-key'])
+const TransportKindSchema = z.enum(['openai-responses', 'openresponses', 'openai-chat', 'legacy-completions', 'anthropic-messages', 'gemini-api'])
+const AuthModeSchema = z.enum(['bearer', 'api-key-header', 'anthropic-api-key', 'google-api-key'])
 export const AgentProviderCapabilitiesSchema = z.strictObject({
   streaming: z.boolean(),
   toolCalling: z.enum(['native', 'prompt']),
@@ -21,7 +21,7 @@ export const AgentProviderCapabilitiesSchema = z.strictObject({
   maxOutputTokens: z.number().int().min(1).max(1_000_000)
 })
 const HeaderNameSchema = z.string().regex(/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/).max(128)
-const FORBIDDEN_HEADERS = new Set(['authorization', 'cookie', 'host', 'proxy-authorization', 'forwarded', 'via', 'traceparent', 'tracestate', 'connection', 'transfer-encoding', 'upgrade', 'x-forwarded-for', 'x-forwarded-host', 'x-forwarded-proto'])
+const FORBIDDEN_HEADERS = new Set(['authorization', 'cookie', 'host', 'proxy-authorization', 'forwarded', 'via', 'traceparent', 'tracestate', 'connection', 'transfer-encoding', 'upgrade', 'x-api-key', 'x-goog-api-key', 'x-forwarded-for', 'x-forwarded-host', 'x-forwarded-proto'])
 export const AgentProviderAdapterConfigSchema = z.strictObject({
   timeoutMs: z.number().int().min(1_000).max(300_000),
   maxRetries: z.literal(0),
@@ -216,11 +216,13 @@ const validateHeaders = (headers: Readonly<Record<string, string>>): void => {
 const EnvironmentSecretReference = /^env:[A-Z][A-Z0-9_]{0,127}$/
 const ManagedSecretReference = /^managed:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
+const GeminiModelName = /^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$/
 const validateSettings = (input: AgentProviderSettingsInput, allowManagedReference = false) => {
   const transportKind = TransportKindSchema.parse(input.transportKind)
   const model = normalizedString(input.model, 'Provider model', 255)
   const utilityModel = input.utilityModel === null ? null : normalizedString(input.utilityModel, 'Utility model', 255)
   const baseUrl = normalizeBaseUrl(input.baseUrl)
+  if (transportKind === 'gemini-api' && (!GeminiModelName.test(model) || (utilityModel !== null && !GeminiModelName.test(utilityModel)))) throw new AgentRepositoryError('INVALID_PROVIDER_MODEL', 'Gemini model names may contain only letters, numbers, dots, underscores, and hyphens', 400)
   const authMode = AuthModeSchema.parse(input.authMode)
   const secretReference = input.secretReference === null ? null : normalizedString(input.secretReference, 'Secret reference', 255)
   const secretValue = input.secretValue
@@ -228,7 +230,8 @@ const validateSettings = (input: AgentProviderSettingsInput, allowManagedReferen
   if (secretValue === undefined && (secretReference === null || (!EnvironmentSecretReference.test(secretReference) && !(allowManagedReference && ManagedSecretReference.test(secretReference))))) throw new AgentRepositoryError('INVALID_PROVIDER_SECRET', 'Secret reference must use env:NAME and must not contain the API key', 400)
   if ((transportKind === 'openai-responses' || transportKind === 'openresponses' || transportKind === 'openai-chat') && authMode !== 'bearer') throw new AgentRepositoryError('INVALID_PROVIDER_AUTH', 'Selected provider transport requires bearer authentication', 400)
   if (transportKind === 'anthropic-messages' && authMode !== 'anthropic-api-key') throw new AgentRepositoryError('INVALID_PROVIDER_AUTH', 'Anthropic Messages requires Anthropic API key authentication', 400)
-  if (transportKind === 'legacy-completions' && authMode === 'anthropic-api-key') throw new AgentRepositoryError('INVALID_PROVIDER_AUTH', 'Legacy completions do not support Anthropic authentication', 400)
+  if (transportKind === 'gemini-api' && authMode !== 'google-api-key') throw new AgentRepositoryError('INVALID_PROVIDER_AUTH', 'Gemini API requires Google API key authentication', 400)
+  if (transportKind === 'legacy-completions' && (authMode === 'anthropic-api-key' || authMode === 'google-api-key')) throw new AgentRepositoryError('INVALID_PROVIDER_AUTH', 'Legacy completions require bearer or generic API key authentication', 400)
   const adapterConfig = AgentProviderAdapterConfigSchema.parse(input.adapterConfig)
   validateHeaders(adapterConfig.additionalHeaders)
   const capabilities = AgentProviderCapabilitiesSchema.parse(input.capabilities)

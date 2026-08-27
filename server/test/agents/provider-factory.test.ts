@@ -22,6 +22,27 @@ describe('guarded provider fetch', () => {
     expect(called).toBe(0)
   })
 
+  it('allows only the configured Gemini model generation paths', async () => {
+    let called = 0
+    const implementation = async (): Promise<Response> => {
+      called++
+      return Response.json({ ok: true })
+    }
+    const guarded = createGuardedProviderFetch(
+      'https://generativelanguage.googleapis.com/v1beta',
+      { kind: 'gemini', model: 'gemini-2.5-flash' },
+      {},
+      implementation as typeof fetch,
+      publicResolver as never
+    )
+    await expect(guarded('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent')).resolves.toBeInstanceOf(Response)
+    await expect(guarded('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse')).resolves.toBeInstanceOf(Response)
+    await expect(guarded('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent')).rejects.toMatchObject({ code: 'PROVIDER_EGRESS_DENIED' })
+    await expect(guarded('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=json')).rejects.toMatchObject({ code: 'PROVIDER_EGRESS_DENIED' })
+    await expect(guarded('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=secret')).rejects.toMatchObject({ code: 'PROVIDER_EGRESS_DENIED' })
+    expect(called).toBe(2)
+  })
+
   it('blocks redirects and exposes only bounded retry metadata for provider failures', async () => {
     const redirect = createGuardedProviderFetch('https://provider.example.test/v1', '/responses', {}, (async () => new Response(null, { status: 302, headers: { location: 'https://evil.example/' } })) as typeof fetch, publicResolver as never)
     await expect(redirect('https://provider.example.test/v1/responses')).rejects.toMatchObject({ code: 'PROVIDER_REDIRECT_DENIED', status: 302 })
@@ -31,6 +52,8 @@ describe('guarded provider fetch', () => {
     expect(JSON.stringify(error)).not.toContain('secret provider detail')
     const invalid = createGuardedProviderFetch('https://provider.example.test/v1', '/responses', {}, (async () => Response.json({ error: { code: 'unsupported_value', param: 'temperature', message: 'Unsupported value' } }, { status: 400 })) as typeof fetch, publicResolver as never)
     await expect(invalid('https://provider.example.test/v1/responses')).rejects.toMatchObject({ code: 'unsupported_value', status: 400, parameter: 'temperature', message: 'Provider request failed' })
+    const googleFailure = createGuardedProviderFetch('https://provider.example.test/v1', '/responses', {}, (async () => Response.json({ error: { code: 429, status: 'RESOURCE_EXHAUSTED', message: 'secret provider detail' } }, { status: 429 })) as typeof fetch, publicResolver as never)
+    await expect(googleFailure('https://provider.example.test/v1/responses')).rejects.toMatchObject({ code: 'RESOURCE_EXHAUSTED', status: 429, message: 'Provider request failed' })
   })
 })
 

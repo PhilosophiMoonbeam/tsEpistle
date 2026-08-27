@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import type { Knex } from 'knex'
-import type { AxChatRequest, AxChatResponse } from '@ax-llm/ax'
+import type { AxChatRequest, AxChatResponse, AxChatResponseResult } from '@ax-llm/ax'
 import { canonicalJson } from '../../helpers/canonical-json.ts'
 import { AgentRepositoryError } from '../repository.ts'
 import { AgentProviderAttemptError, AgentProviderFactory, type AgentProviderService } from './factory.ts'
@@ -104,12 +104,14 @@ interface ConsumedCall {
 interface ConsumedResponse {
   readonly content: string
   readonly calls: readonly ConsumedCall[]
+  readonly thoughtBlocks: NonNullable<AxChatResponseResult['thoughtBlocks']>
 }
 
-const consume = async (response: AxChatResponse | ReadableStream<AxChatResponse>, usageMode: 'stream' | 'terminal' | 'estimated'): Promise<ConsumedResponse> => {
+const consume = async (response: AxChatResponse | ReadableStream<AxChatResponse>, usageMode: 'stream' | 'terminal' | 'estimated', provider: AgentProviderService): Promise<ConsumedResponse> => {
   let content = ''
   let usageObserved = false
   const calls = new Map<string, ConsumedCall>()
+  const thoughtBlocks = new Map<string, NonNullable<AxChatResponseResult['thoughtBlocks']>[number]>()
   const accept = (value: AxChatResponse): void => {
     for (const result of value.results) {
       if (result.content) content += result.content
@@ -124,6 +126,10 @@ const consume = async (response: AxChatResponse | ReadableStream<AxChatResponse>
         const params = typeof prior?.params === 'string' && typeof next === 'string' ? `${prior.params}${next}` : next
         if (Buffer.byteLength(typeof params === 'string' ? params : JSON.stringify(params), 'utf8') > MAX_SMOKE_OUTPUT) throw new AgentRepositoryError('CONFORMANCE_TOOL_INVALID', 'Provider conformance action arguments exceeded their limit', 502)
         calls.set(call.id, { id: call.id, name, params })
+      }
+      for (const [index, block] of (result.thoughtBlocks ?? []).entries()) {
+        const preserved = provider.preserveThoughtBlock(result.id ?? '', block)
+        if (preserved !== null) thoughtBlocks.set(preserved.signature ?? `${result.id ?? result.index}:${index}`, preserved)
       }
     }
     const tokens = value.modelUsage?.tokens
@@ -145,7 +151,7 @@ const consume = async (response: AxChatResponse | ReadableStream<AxChatResponse>
     } finally { reader.releaseLock() }
   } else accept(response)
   if (usageMode !== 'estimated' && !usageObserved) throw new AgentRepositoryError('CONFORMANCE_USAGE_MISSING', 'Provider conformance did not return its declared usage accounting', 502)
-  return { content, calls: [...calls.values()] }
+  return { content, calls: [...calls.values()], thoughtBlocks: [...thoughtBlocks.values()] }
 }
 
 const requireText = (response: ConsumedResponse, emptyMessage = 'Provider conformance returned no text'): string => {
@@ -183,7 +189,8 @@ const providerChat = async (provider: AgentProviderService, request: Readonly<Ax
     abortSignal: AbortSignal.timeout(30_000),
     functionCallMode: 'native'
   }),
-  provider.capabilities.usage
+  provider.capabilities.usage,
+  provider
 )
 
 const verifyToolCalling = async (provider: AgentProviderService): Promise<'native-tool-round-trip' | 'prompt-tool-round-trip'> => {
@@ -204,7 +211,8 @@ const verifyToolCalling = async (provider: AgentProviderService): Promise<'nativ
         {
           role: 'assistant',
           ...(first.content ? { content: first.content } : {}),
-          functionCalls: [{ id: call.id, type: 'function', function: { name: call.name, params: call.params } }]
+          functionCalls: [{ id: call.id, type: 'function', function: { name: call.name, params: call.params } }],
+          ...(first.thoughtBlocks.length === 0 ? {} : { thoughtBlocks: first.thoughtBlocks }),
         },
         { role: 'function', functionId: call.id, result: JSON.stringify({ token, matched: true }) }
       ],

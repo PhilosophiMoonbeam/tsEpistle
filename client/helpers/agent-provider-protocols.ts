@@ -1,6 +1,6 @@
 import { AGENT_PROVIDER_TRANSPORTS, type AgentProviderTransport } from '../../shared/agents/contracts.ts'
 
-export type AgentProviderAuthMode = 'bearer' | 'api-key-header' | 'anthropic-api-key'
+export type AgentProviderAuthMode = 'bearer' | 'api-key-header' | 'anthropic-api-key' | 'google-api-key'
 export type AgentProviderStructuredOutput = 'native-json-schema' | 'tool-result' | 'prompt-only'
 export type AgentProviderUsageMode = 'stream' | 'terminal' | 'estimated'
 export type AgentProviderToolCalling = 'native' | 'prompt'
@@ -69,6 +69,14 @@ export const AGENT_PROVIDER_PROTOCOL_OPTIONS = [
     startsGroup: true,
     description: 'Native Anthropic POST /v1/messages API with message content blocks and tools.',
     endpoint: '/messages'
+  },
+  {
+    value: 'gemini-api',
+    title: 'Google Gemini API',
+    group: 'Native provider APIs',
+    startsGroup: false,
+    description: 'Native Gemini generateContent API with streaming, function calls, parallel actions, and opaque thought-signature continuation.',
+    endpoint: '/models/{model}:generateContent'
   }
 ] as const satisfies readonly AgentProviderProtocolOption[]
 
@@ -126,6 +134,16 @@ const defaultsByTransport: Readonly<Record<AgentProviderTransport, AgentProvider
     toolCalling: 'native',
     parallelToolCalls: true,
     cancellation: true
+  },
+  'gemini-api': {
+    baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+    authMode: 'google-api-key',
+    structuredOutput: 'native-json-schema',
+    usage: 'stream',
+    streaming: true,
+    toolCalling: 'native',
+    parallelToolCalls: true,
+    cancellation: true
   }
 }
 const executionModesByTransport: Readonly<Record<AgentProviderTransport, readonly AgentProviderExecutionMode[]>> = {
@@ -133,7 +151,8 @@ const executionModesByTransport: Readonly<Record<AgentProviderTransport, readonl
   openresponses: ['agent'],
   'openai-chat': ['agent'],
   'legacy-completions': ['agent'],
-  'anthropic-messages': ['agent']
+  'anthropic-messages': ['agent'],
+  'gemini-api': ['agent']
 }
 
 export const agentProviderProtocolExecutionModes = (transport: AgentProviderTransport): readonly AgentProviderExecutionMode[] => executionModesByTransport[transport]
