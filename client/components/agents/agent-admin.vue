@@ -10,7 +10,7 @@
     </div>
     <v-alert v-if="error" class="mb-4" type="error" variant="tonal" closable @click:close="error = ''">{{ error }}</v-alert>
     <v-tabs v-model="tab" show-arrows aria-label="Agent administration sections">
-      <v-tab value="runtime">Runtime</v-tab><v-tab value="profiles">Providers</v-tab><v-tab value="skills">Skills</v-tab><v-tab value="knowledge">Knowledge</v-tab><v-tab value="browser">Browser</v-tab>
+      <v-tab value="runtime">Runtime</v-tab><v-tab value="profiles">Providers</v-tab><v-tab value="skills">Skills</v-tab><v-tab value="browser">Browser</v-tab>
     </v-tabs>
     <v-window v-model="tab" class="mt-4">
       <v-window-item value="runtime">
@@ -81,66 +81,6 @@
       </v-window-item>
 
       <v-window-item value="skills"><SkillAdmin :csrf-token="csrfToken" /></v-window-item>
-      <v-window-item value="knowledge">
-        <section class="knowledge-shell" aria-labelledby="knowledge-title">
-          <header class="knowledge-hero">
-            <div class="knowledge-hero-copy">
-              <p class="knowledge-eyebrow">Revisioned Wiki knowledge</p>
-              <h2 id="knowledge-title">Authoritative pages, agent-ready projections</h2>
-              <p>Human editors keep one canonical Wiki source. Every committed revision gains a deterministic knowledge projection; the utility model can fill only declared public-page gaps.</p>
-              <div class="knowledge-badges" aria-label="Knowledge lifecycle guarantees">
-                <v-chip size="small" variant="flat" color="primary">Deterministic v1</v-chip>
-                <v-chip size="small" variant="tonal">Revision-fenced</v-chip>
-                <v-chip size="small" variant="tonal">OKF boundary</v-chip>
-              </div>
-            </div>
-            <div class="knowledge-glyph" aria-hidden="true">
-              <span class="knowledge-node knowledge-node--one"></span>
-              <span class="knowledge-node knowledge-node--two"></span>
-              <span class="knowledge-node knowledge-node--three"></span>
-              <v-icon icon="mdi-file-tree-outline" size="56" />
-            </div>
-          </header>
-
-          <div class="knowledge-principles">
-            <article>
-              <v-icon icon="mdi-file-document-outline" color="primary" />
-              <h3>Source stays authoritative</h3>
-              <p>Projection never rewrites page content. Exact revision, source hash, sections, links, lifecycle, gaps, and provenance stay inspectable together.</p>
-            </article>
-            <article>
-              <v-icon icon="mdi-shield-check-outline" color="primary" />
-              <h3>Enrichment stays bounded</h3>
-              <p>The utility model sees current public pages only and may fill declared gaps only. Private pages stay local; failures leave deterministic partial results.</p>
-              <div class="trust-scale" aria-label="Knowledge projection guarantees">
-                <span>Deterministic</span><span>Gap-filled</span><span>Revision-fenced</span>
-              </div>
-            </article>
-            <article>
-              <v-icon icon="mdi-connection" color="primary" />
-              <h3>One governed interface</h3>
-              <p>Built-in and remote MCP agents share discovery, source reads, page permissions, immutable proposals, revision fences, and human approval.</p>
-            </article>
-          </div>
-
-          <v-sheet class="knowledge-workflow" rounded="lg" border>
-            <div class="knowledge-workflow-heading">
-              <div>
-                <p class="knowledge-eyebrow">Shared agent lifecycle</p>
-                <h3>Project → discover → read → govern</h3>
-              </div>
-              <code>pageKnowledgeProjections</code>
-            </div>
-            <ol>
-              <li><span>1</span><div><strong>Project every revision</strong><code>deterministic + utility gaps</code></div></li>
-              <li><span>2</span><div><strong>Discover lifecycle context</strong><code>wiki_discover_pages</code></div></li>
-              <li><span>3</span><div><strong>Read source and projection</strong><code>wiki_get_page</code></div></li>
-              <li><span>4</span><div><strong>Propose and approve changes</strong><code>wiki_apply_page_proposal</code></div></li>
-            </ol>
-            <v-alert type="info" variant="tonal" density="compact">Built-in and MCP agents use the same operations and enriched corpus. OKF remains a portable MCP resource representation, never a second knowledge store or write path.</v-alert>
-          </v-sheet>
-        </section>
-      </v-window-item>
 
 
       <v-window-item value="browser">
@@ -382,28 +322,6 @@ onMounted(() => void load())
 .protocol-summary dt { font-weight: 600; }
 .protocol-summary dd { margin: 0; color: rgb(var(--v-theme-on-surface-variant)); }
 code { overflow-wrap: anywhere; }
-.knowledge-shell { display: grid; gap: 1rem; }
-.knowledge-hero { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) 10rem; min-height: 15rem; overflow: hidden; padding: clamp(1.5rem, 4vw, 3rem); border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity)); border-radius: 1rem; background: linear-gradient(125deg, rgba(var(--v-theme-primary), .14), rgba(var(--v-theme-surface), .96) 48%, rgba(var(--v-theme-secondary), .11)); }
-.knowledge-hero::after { position: absolute; inset: 0; background-image: linear-gradient(rgba(var(--v-theme-primary), .045) 1px, transparent 1px), linear-gradient(90deg, rgba(var(--v-theme-primary), .045) 1px, transparent 1px); background-size: 2rem 2rem; content: ''; mask-image: linear-gradient(90deg, transparent, #000); pointer-events: none; }
-.knowledge-hero-copy { position: relative; z-index: 1; max-width: 50rem; }
-.knowledge-hero h2 { max-width: 42rem; margin: .2rem 0 .75rem; font-size: clamp(1.8rem, 4vw, 3.15rem); font-weight: 650; letter-spacing: -.045em; line-height: 1.03; }
-.knowledge-hero-copy > p:not(.knowledge-eyebrow) { max-width: 46rem; margin: 0; color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity)); font-size: 1.05rem; line-height: 1.65; }
-.knowledge-eyebrow { margin: 0; color: rgb(var(--v-theme-primary)); font-size: .72rem; font-weight: 750; letter-spacing: .14em; text-transform: uppercase; }
-.knowledge-badges { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: 1.35rem; }
-.knowledge-glyph { position: relative; z-index: 1; display: grid; width: 8.5rem; height: 8.5rem; place-items: center; align-self: center; justify-self: center; color: rgb(var(--v-theme-primary)); border: 1px solid rgba(var(--v-theme-primary), .28); border-radius: 50%; background: rgba(var(--v-theme-surface), .68); box-shadow: 0 1.2rem 3rem rgba(var(--v-theme-primary), .14), inset 0 0 0 1rem rgba(var(--v-theme-primary), .035); }
-.knowledge-node { position: absolute; width: .7rem; height: .7rem; border: 2px solid rgb(var(--v-theme-surface)); border-radius: 50%; background: rgb(var(--v-theme-primary)); box-shadow: 0 0 0 .25rem rgba(var(--v-theme-primary), .16); }
-.knowledge-node--one { top: .5rem; left: 1.5rem; }.knowledge-node--two { right: -.1rem; bottom: 2.2rem; }.knowledge-node--three { bottom: -.1rem; left: 2.6rem; }
-.knowledge-principles { display: grid; gap: 1rem; grid-template-columns: repeat(3, minmax(0, 1fr)); }
-.knowledge-principles article { min-height: 12rem; padding: 1.35rem; border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity)); border-radius: .85rem; background: rgb(var(--v-theme-surface)); }
-.knowledge-principles article > .v-icon { padding: 1.2rem; border-radius: .75rem; background: rgba(var(--v-theme-primary), .09); }
-.knowledge-principles h3 { margin: 1rem 0 .4rem; font-size: 1.05rem; }.knowledge-principles p { margin: 0; color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity)); line-height: 1.55; }
-.trust-scale { display: flex; flex-wrap: wrap; gap: .35rem; margin-top: 1rem; }.trust-scale span { padding: .2rem .45rem; border-radius: 999px; background: rgba(var(--v-theme-primary), .08); color: rgb(var(--v-theme-primary)); font-size: .68rem; font-weight: 650; }
-.knowledge-workflow { padding: clamp(1.25rem, 3vw, 2rem); }
-.knowledge-workflow-heading { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 1rem; }.knowledge-workflow-heading h3 { margin: .2rem 0 0; font-size: 1.35rem; }.knowledge-workflow-heading > code { padding: .55rem .7rem; border-radius: .45rem; background: rgba(var(--v-theme-primary), .07); color: rgb(var(--v-theme-primary)); }
-.knowledge-workflow ol { display: grid; margin: 1.5rem 0; padding: 0; grid-template-columns: repeat(4, minmax(0, 1fr)); list-style: none; }
-.knowledge-workflow li { position: relative; display: flex; min-width: 0; gap: .7rem; padding-right: 1rem; }.knowledge-workflow li:not(:last-child)::after { position: absolute; top: .9rem; right: .35rem; left: 2.5rem; height: 1px; background: rgba(var(--v-theme-primary), .25); content: ''; }
-.knowledge-workflow li span { z-index: 1; display: grid; width: 1.8rem; height: 1.8rem; flex: 0 0 auto; place-items: center; border-radius: 50%; background: rgb(var(--v-theme-primary)); color: rgb(var(--v-theme-surface)); font-size: .72rem; font-weight: 750; }.knowledge-workflow li div { z-index: 1; display: grid; min-width: 0; gap: .2rem; padding-top: .1rem; background: rgb(var(--v-theme-surface)); }.knowledge-workflow li strong { font-size: .8rem; }.knowledge-workflow li code { color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity)); font-size: .7rem; }
-@media (max-width: 900px) { .knowledge-principles { grid-template-columns: 1fr; }.knowledge-principles article { min-height: 0; }.knowledge-workflow ol { gap: 1rem; grid-template-columns: repeat(2, minmax(0, 1fr)); }.knowledge-workflow li::after { display: none; } }
-@media (max-width: 700px) { .form-grid { grid-template-columns: 1fr; } .protocol-field { grid-column: auto; }.knowledge-hero { grid-template-columns: 1fr; }.knowledge-glyph { display: none; }.knowledge-workflow ol { grid-template-columns: 1fr; } }
+@media (max-width: 700px) { .form-grid { grid-template-columns: 1fr; } .protocol-field { grid-column: auto; } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; } }
 </style>

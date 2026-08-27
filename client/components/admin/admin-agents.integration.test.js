@@ -23,6 +23,12 @@ describe('ordinary Wiki agent administration integration', () => {
     expect(page).toMatch(/const csrfToken = siteConfig\.agentCsrfToken/)
   })
 
+  test('keeps navigation limited to operational administration sections', () => {
+    expect(agentAdmin).toMatch(/value="runtime"[^]*value="profiles"[^]*value="skills"[^]*value="browser"/)
+    expect(agentAdmin).not.toMatch(/value="knowledge"/)
+    expect(agentAdmin).not.toMatch(/Authoritative pages, agent-ready projections/)
+  })
+
   test('derives Agent-only protocol behavior and group-scoped capability access', () => {
     expect(agentAdmin).toMatch(/Protocol-derived behavior/)
     expect(agentAdmin).toMatch(/label="Tool calling"/)
