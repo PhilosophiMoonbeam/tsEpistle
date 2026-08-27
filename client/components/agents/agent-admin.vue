@@ -85,13 +85,13 @@
         <section class="knowledge-shell" aria-labelledby="knowledge-title">
           <header class="knowledge-hero">
             <div class="knowledge-hero-copy">
-              <p class="knowledge-eyebrow">Open Knowledge Format · v0.2</p>
-              <h2 id="knowledge-title">Portable knowledge, native to the Wiki</h2>
-              <p>Every Markdown page can travel as a self-describing concept: readable by people, traversable by agents, and explicit about provenance, trust, freshness, and lifecycle.</p>
-              <div class="knowledge-badges" aria-label="Knowledge interchange standards">
-                <v-chip size="small" variant="flat" color="primary">OKF 0.2</v-chip>
-                <v-chip size="small" variant="tonal">MCP 2026-07-28</v-chip>
-                <v-chip size="small" variant="tonal">Official TypeScript SDK v2</v-chip>
+              <p class="knowledge-eyebrow">Revisioned Wiki knowledge</p>
+              <h2 id="knowledge-title">Authoritative pages, agent-ready projections</h2>
+              <p>Human editors keep one canonical Wiki source. Every committed revision gains a deterministic knowledge projection; the utility model can fill only declared public-page gaps.</p>
+              <div class="knowledge-badges" aria-label="Knowledge lifecycle guarantees">
+                <v-chip size="small" variant="flat" color="primary">Deterministic v1</v-chip>
+                <v-chip size="small" variant="tonal">Revision-fenced</v-chip>
+                <v-chip size="small" variant="tonal">OKF boundary</v-chip>
               </div>
             </div>
             <div class="knowledge-glyph" aria-hidden="true">
@@ -105,21 +105,21 @@
           <div class="knowledge-principles">
             <article>
               <v-icon icon="mdi-file-document-outline" color="primary" />
-              <h3>Concepts</h3>
-              <p>Wiki hierarchy becomes portable Markdown concepts. Titles, descriptions, tags, and canonical links remain useful outside tsFranki.</p>
+              <h3>Source stays authoritative</h3>
+              <p>Projection never rewrites page content. Exact revision, source hash, sections, links, lifecycle, gaps, and provenance stay inspectable together.</p>
             </article>
             <article>
               <v-icon icon="mdi-shield-check-outline" color="primary" />
-              <h3>Trust is data</h3>
-              <p>Generated and verified actors, sources, lifecycle, and stale-after dates let consumers qualify an answer instead of guessing.</p>
-              <div class="trust-scale" aria-label="Derived knowledge trust tiers">
-                <span>Unverified</span><span>Machine-confirmed</span><span>Human-reviewed</span>
+              <h3>Enrichment stays bounded</h3>
+              <p>The utility model sees current public pages only and may fill declared gaps only. Private pages stay local; failures leave deterministic partial results.</p>
+              <div class="trust-scale" aria-label="Knowledge projection guarantees">
+                <span>Deterministic</span><span>Gap-filled</span><span>Revision-fenced</span>
               </div>
             </article>
             <article>
               <v-icon icon="mdi-connection" color="primary" />
-              <h3>One governed surface</h3>
-              <p>The built-in Agent and remote MCP clients share page permissions, immutable proposals, revision fences, and human approval.</p>
+              <h3>One governed interface</h3>
+              <p>Built-in and remote MCP agents share discovery, source reads, page permissions, immutable proposals, revision fences, and human approval.</p>
             </article>
           </div>
 
@@ -129,7 +129,7 @@
                 <p class="knowledge-eyebrow">Shared agent lifecycle</p>
                 <h3>Project → discover → read → govern</h3>
               </div>
-              <code>wiki://pages/{locale}/{path}</code>
+              <code>pageKnowledgeProjections</code>
             </div>
             <ol>
               <li><span>1</span><div><strong>Project every revision</strong><code>deterministic + utility gaps</code></div></li>
