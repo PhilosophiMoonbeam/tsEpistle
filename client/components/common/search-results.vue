@@ -756,6 +756,10 @@ export default defineComponent({
   }
 
   @media #{map-get($display-breakpoints, 'sm-and-down')} {
+    &:not(.search-results--ask) {
+      height: auto;
+      top: calc(var(--v-layout-top, 72px) + 48px);
+    }
     &-container { padding-inline: .5rem; }
     &-container--ask { padding: 0; }
     &-agent-nav { min-height: 4.25rem; padding-inline: .5rem; }
