@@ -42,10 +42,10 @@ describe('additional provider transports', () => {
     const provider = await new AgentProviderFactory(db, { get: () => 'key' }, fetchImplementation as typeof fetch, publicResolver as never).create(id)
     const response = await provider.service.chat({
       chatPrompt: [{ role: 'user', content: 'hello' }],
-      functions: [{ name: 'pages_get', description: 'Read a page', parameters: { type: 'object', properties: { id: { type: 'number', description: 'Page ID' } } } }]
+      functions: [{ name: 'wiki_get_page', description: 'Read a page', parameters: { type: 'object', properties: { id: { type: 'number', description: 'Page ID' } } } }]
     }, { stream: false })
     expect(response).not.toBeInstanceOf(ReadableStream)
-    expect(payload).toMatchObject({ store: false, previous_response_id: null, parallel_tool_calls: true, tools: [{ type: 'function', name: 'pages_get', strict: false }] })
+    expect(payload).toMatchObject({ store: false, previous_response_id: null, parallel_tool_calls: true, tools: [{ type: 'function', name: 'wiki_get_page', strict: false }] })
     expect(payload.include).toContain('reasoning.encrypted_content')
   })
 
@@ -57,15 +57,15 @@ describe('additional provider transports', () => {
     const fetchImplementation = async (input: URL | RequestInfo, init?: RequestInit): Promise<Response> => {
       requests.push({ url: String(input), headers: new Headers(init?.headers), body: JSON.parse(String(init?.body)) as Record<string, unknown> })
       return requests.length === 1
-        ? Response.json({ id: 'msg_1', type: 'message', role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_1', name: 'pages_get', input: { id: 42 } }], model: 'model-test', stop_reason: 'tool_use', stop_sequence: null, usage: { input_tokens: 2, output_tokens: 1 } })
+        ? Response.json({ id: 'msg_1', type: 'message', role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_1', name: 'wiki_get_page', input: { id: 42 } }], model: 'model-test', stop_reason: 'tool_use', stop_sequence: null, usage: { input_tokens: 2, output_tokens: 1 } })
         : Response.json({ id: 'msg_2', type: 'message', role: 'assistant', content: [{ type: 'text', text: 'anthropic' }], model: 'model-test', stop_reason: 'end_turn', stop_sequence: null, usage: { input_tokens: 4, output_tokens: 1 } })
     }
     const provider = await new AgentProviderFactory(db, { get: () => 'anthropic-key' }, fetchImplementation as typeof fetch, publicResolver as never).create(id)
-    const definition = { name: 'pages_get', description: 'Read a page', parameters: { type: 'object' as const, properties: { id: { type: 'number' as const, description: 'Page ID' } } } }
+    const definition = { name: 'wiki_get_page', description: 'Read a page', parameters: { type: 'object' as const, properties: { id: { type: 'number' as const, description: 'Page ID' } } } }
     const first = await provider.service.chat({ chatPrompt: [{ role: 'user', content: 'hello' }], functions: [definition] }, { stream: false })
     if (first instanceof ReadableStream) throw new Error('Expected a buffered Anthropic response')
     const [call] = first.results[0]?.functionCalls ?? []
-    expect(call).toMatchObject({ id: 'toolu_1', function: { name: 'pages_get' } })
+    expect(call).toMatchObject({ id: 'toolu_1', function: { name: 'wiki_get_page' } })
     await provider.service.chat({
       chatPrompt: [
         { role: 'user', content: 'hello' },
@@ -77,7 +77,7 @@ describe('additional provider transports', () => {
     expect(requests[0]?.url).toBe('https://api.anthropic.com/v1/messages')
     expect(requests[0]?.headers.get('x-api-key')).toBe('anthropic-key')
     expect(requests[0]?.headers.get('anthropic-version')).toBeTruthy()
-    expect(requests[0]?.body).toMatchObject({ tools: [{ name: 'pages_get', input_schema: { type: 'object' } }] })
+    expect(requests[0]?.body).toMatchObject({ tools: [{ name: 'wiki_get_page', input_schema: { type: 'object' } }] })
     expect(JSON.stringify(requests[1]?.body)).toContain('tool_result')
     expect(JSON.stringify(requests[1]?.body)).toContain('toolu_1')
   })
@@ -91,15 +91,15 @@ describe('additional provider transports', () => {
     const fetchImplementation = async (_input: URL | RequestInfo, init?: RequestInit): Promise<Response> => {
       payloads.push(JSON.parse(String(init?.body)) as Record<string, unknown>)
       return payloads.length === 1
-        ? Response.json({ id: 'chatcmpl_1', object: 'chat.completion', created: 1, model: 'model-test', choices: [{ index: 0, message: { role: 'assistant', content: null, tool_calls: [{ id: 'call_1', type: 'function', function: { name: 'pages_get', arguments: '{"id":42}' } }] }, finish_reason: 'tool_calls' }], usage: { prompt_tokens: 2, completion_tokens: 1, total_tokens: 3 } })
+        ? Response.json({ id: 'chatcmpl_1', object: 'chat.completion', created: 1, model: 'model-test', choices: [{ index: 0, message: { role: 'assistant', content: null, tool_calls: [{ id: 'call_1', type: 'function', function: { name: 'wiki_get_page', arguments: '{"id":42}' } }] }, finish_reason: 'tool_calls' }], usage: { prompt_tokens: 2, completion_tokens: 1, total_tokens: 3 } })
         : Response.json({ id: 'chatcmpl_2', object: 'chat.completion', created: 2, model: 'model-test', choices: [{ index: 0, message: { role: 'assistant', content: 'chat' }, finish_reason: 'stop' }], usage: { prompt_tokens: 4, completion_tokens: 1, total_tokens: 5 } })
     }
     const provider = await new AgentProviderFactory(db, { get: () => 'chat-key' }, fetchImplementation as typeof fetch, publicResolver as never).create(id)
-    const definition = { name: 'pages_get', description: 'Read a page', parameters: { type: 'object' as const, properties: { id: { type: 'number' as const, description: 'Page ID' } } } }
+    const definition = { name: 'wiki_get_page', description: 'Read a page', parameters: { type: 'object' as const, properties: { id: { type: 'number' as const, description: 'Page ID' } } } }
     const first = await provider.service.chat({ chatPrompt: [{ role: 'user', content: 'hello' }], functions: [definition] }, { stream: false })
     if (first instanceof ReadableStream) throw new Error('Expected a buffered Chat Completions response')
     const [call] = first.results[0]?.functionCalls ?? []
-    expect(call).toMatchObject({ id: 'call_1', function: { name: 'pages_get', params: '{"id":42}' } })
+    expect(call).toMatchObject({ id: 'call_1', function: { name: 'wiki_get_page', params: '{"id":42}' } })
     await provider.service.chat({
       chatPrompt: [
         { role: 'user', content: 'hello' },
@@ -108,7 +108,7 @@ describe('additional provider transports', () => {
       ],
       functions: [definition]
     }, { stream: false })
-    expect(payloads[0]).toMatchObject({ parallel_tool_calls: true, tools: [{ type: 'function', function: { name: 'pages_get' } }] })
+    expect(payloads[0]).toMatchObject({ parallel_tool_calls: true, tools: [{ type: 'function', function: { name: 'wiki_get_page' } }] })
     expect(payloads[1]).toMatchObject({ messages: expect.arrayContaining([{ role: 'tool', tool_call_id: 'call_1', content: '{"id":42}' }]) })
   })
 

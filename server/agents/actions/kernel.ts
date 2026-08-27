@@ -3,7 +3,7 @@ import { z, ZodError } from 'zod'
 
 import {
   AGENT_FEATURE_FLAG_KEYS,
-  MCP_ACTION_ALIASES,
+  AGENT_TOOL_NAMES,
   type AgentActionName,
   type AgentFeatureFlags,
   type AgentTransport,
@@ -217,9 +217,8 @@ export const toAxAction = (definition: ActionDefinition): AxActionDescriptor => 
 })
 
 export const toMcpAction = (definition: ActionDefinition): McpActionDescriptor => {
-  const actionName = definition.descriptor.name
-  const alias = MCP_ACTION_ALIASES[actionName as keyof typeof MCP_ACTION_ALIASES]
-  if (!alias) throw new ActionKernelError('ACTION_NOT_EXPOSED', 'Action has no MCP alias', 404)
+  if (!definition.descriptor.exposure.mcp) throw new ActionKernelError('ACTION_NOT_EXPOSED', 'Action is not exposed through MCP', 500)
+  const alias = AGENT_TOOL_NAMES[definition.descriptor.name]
   return {
     name: alias,
     title: definition.descriptor.title,

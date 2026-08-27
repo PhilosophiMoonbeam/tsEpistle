@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import {
+  AGENT_ACTION_BY_TOOL_NAME,
   AGENT_ACTION_NAMES,
   AGENT_EVENT_TYPES,
   AGENT_FEATURE_FLAG_KEYS,
   AGENT_PERMISSION_KEYS,
-  MCP_ACTION_ALIASES
+  AGENT_TOOL_NAMES
 } from './contracts.ts'
 
 describe('frozen agent contracts', () => {
@@ -15,14 +16,17 @@ describe('frozen agent contracts', () => {
     expect(AGENT_ACTION_NAMES).toEqual(expect.arrayContaining(['pages.getOkf', 'pages.prepareImportOkf']))
   })
 
-  it('uses unique stable MCP aliases only for MCP actions', () => {
-    const aliases = Object.values(MCP_ACTION_ALIASES)
-    expect(new Set(aliases).size).toBe(aliases.length)
-    expect(aliases.every(alias => alias.startsWith('wiki_'))).toBe(true)
-    expect(Object.keys(MCP_ACTION_ALIASES).every(name => AGENT_ACTION_NAMES.includes(name as typeof AGENT_ACTION_NAMES[number]))).toBe(true)
-    expect(MCP_ACTION_ALIASES).toMatchObject({
+  it('uses one unique stable tool name for every action', () => {
+    const toolNames = Object.values(AGENT_TOOL_NAMES)
+    expect(new Set(toolNames).size).toBe(toolNames.length)
+    expect(toolNames.every(name => name.startsWith('wiki_'))).toBe(true)
+    expect(Object.keys(AGENT_TOOL_NAMES)).toEqual([...AGENT_ACTION_NAMES])
+    expect(Object.keys(AGENT_ACTION_BY_TOOL_NAME)).toHaveLength(AGENT_ACTION_NAMES.length)
+    expect(AGENT_TOOL_NAMES).toMatchObject({
+      'pages.get': 'wiki_get_page',
       'pages.getOkf': 'wiki_get_page_okf',
-      'pages.prepareImportOkf': 'wiki_prepare_okf_import'
+      'pages.prepareImportOkf': 'wiki_prepare_okf_import',
+      'memory.manage': 'wiki_manage_memory'
     })
   })
 

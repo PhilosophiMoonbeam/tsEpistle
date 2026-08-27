@@ -83,9 +83,9 @@ GraphQL, `/_api`, browser payloads, database tables, and extension internals are
 
 ## Agentic knowledge
 
-The built-in Wiki Agent and remote MCP clients share one permission-aware action kernel. Markdown pages can cross that boundary as deterministic [Open Knowledge Format 0.2](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md) concepts without replacing Wiki's database, hierarchy, revisions, or human approval workflow.
+The built-in Wiki Agent and remote MCP clients share one permission-aware action kernel and one public `wiki_*` tool vocabulary. Internal dotted action IDs exist only for authority, feature admission, and durable audit records. An approved `SKILL.md` can therefore give either kind of agent the same exact operations without transport-specific aliases.
 
-Remote agents can discover pages, read `wiki://pages/{locale}/{path}` or call `wiki_get_page_okf`, prepare a revision-fenced import with `wiki_prepare_okf_import`, and apply an approved immutable proposal with `wiki_apply_page_proposal`. OKF provenance, verification, source, status, staleness, and producer-extension metadata survive round trips; ordinary Wiki edits advance generation provenance. Trust labels remain advisory and never grant authority.
+Native page operations are the ordinary discovery, evidence, and authoring path. Markdown pages can also cross an interchange boundary as deterministic [Open Knowledge Format 0.2](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md) concepts: agents can read `wiki://pages/{locale}/{path}` or call `wiki_get_page_okf`, prepare a revision-fenced import with `wiki_prepare_okf_import`, and apply an approved immutable proposal with `wiki_apply_page_proposal`. OKF is another representation of the same authoritative Wiki page, not another store or write path. Provenance, verification, source, status, staleness, and producer-extension metadata survive round trips; ordinary Wiki edits advance generation provenance. Trust labels remain advisory and never grant authority.
 
 The MCP endpoint is built directly on the official Model Context Protocol TypeScript SDK v2, supports the current `2026-07-28` protocol, and retains tested legacy negotiation. Deployment, security, trust, and import details are in [Agent deployment and operations](docs/agents-deployment.md).
 

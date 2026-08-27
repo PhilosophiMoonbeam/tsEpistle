@@ -13,7 +13,7 @@ import {
   validateSkillVirtualPath
 } from '../../agents/skills/virtual-path.ts'
 
-const skill = (body = 'Use [the API](references/API.md).\n') => Buffer.from(`---\nname: release-notes\ndescription: Prepare release notes\nlicense: MIT\ncompatibility: tsFranki\nmetadata:\n  owner: docs\nallowed-tools:\n  - pages.search\n  - pages.get\nfuture-field: preserved\n---\n${body}`)
+const skill = (body = 'Use [the API](references/API.md).\n') => Buffer.from(`---\nname: release-notes\ndescription: Prepare release notes\nlicense: MIT\ncompatibility: tsFranki\nmetadata:\n  owner: docs\nallowed-tools:\n  - wiki_search_pages\n  - wiki_get_page\nfuture-field: preserved\n---\n${body}`)
 
 describe('page-native Agent Skill parsing', () => {
   it('parses exact UTF-8 bytes, preserves unknown metadata, and discovers relative resources', () => {
@@ -22,7 +22,7 @@ describe('page-native Agent Skill parsing', () => {
       name: 'release-notes',
       description: 'Prepare release notes',
       metadata: { owner: 'docs' },
-      allowedTools: ['pages.get', 'pages.search'],
+      allowedTools: ['wiki_get_page', 'wiki_search_pages'],
       unknown: { 'future-field': 'preserved' }
     })
     expect(parsed.references).toEqual(['references/API.md'])

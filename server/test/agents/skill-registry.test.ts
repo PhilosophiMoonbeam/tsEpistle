@@ -6,7 +6,7 @@ import { buildApprovedSkillBundle, type SkillResourceInput } from '../../agents/
 import { SkillRegistry, type SkillSourceResolver } from '../../agents/skills/registry.ts'
 import { resolvePageNativeSkillSource } from '../../agents/skills/wiki-source.ts'
 
-const entryBytes = (description: string) => Buffer.from(`---\nname: release-notes\ndescription: ${description}\nallowed-tools: pages.search\n---\nSummarize recent pages.\n`)
+const entryBytes = (description: string) => Buffer.from(`---\nname: release-notes\ndescription: ${description}\nallowed-tools: wiki_search_pages\n---\nSummarize recent pages.\n`)
 
 const createSchema = async (db: Knex): Promise<void> => {
   await db.schema.createTable('pages', table => {

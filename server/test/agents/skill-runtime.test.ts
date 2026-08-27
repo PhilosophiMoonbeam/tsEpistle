@@ -10,7 +10,7 @@ const skillId = '00000000-0000-4000-8000-000000000002'
 const versionId = '00000000-0000-4000-8000-000000000003'
 const runId = '00000000-0000-4000-8000-000000000004'
 const requestId = '00000000-0000-4000-8000-000000000005'
-const entry = Buffer.from('---\nname: release-notes\ndescription: Release notes\nallowed-tools:\n  - pages.get\n  - pages.prepareDelete\n---\nRead [guidance](references/GUIDE.md).\n')
+const entry = Buffer.from('---\nname: release-notes\ndescription: Release notes\nallowed-tools:\n  - wiki_get_page\n  - wiki_prepare_page_delete\n---\nRead [guidance](references/GUIDE.md).\n')
 const bundle = buildApprovedSkillBundle(entry, 'release-notes', [{
   path: 'references/GUIDE.md',
   bytes: Buffer.from('# Guidance\n'),
@@ -114,7 +114,7 @@ describe('skill preferences and run version history', () => {
         license: null,
         compatibility: null,
         metadata: {},
-        'allowed-tools': ['pages.get', 'pages.prepareDelete']
+        'allowed-tools': ['wiki_get_page', 'wiki_prepare_page_delete']
       }),
       resourceBundle: encodeSkillResourceBundle(bundle.resources)
     })

@@ -37,7 +37,7 @@ describe('Ax agent engine', () => {
   it('runs bounded provider tool turns and returns encrypted continuation only', async () => {
     const calls: Readonly<AxChatRequest<unknown>>[] = []
     const responses: AxChatResponse[] = [
-      { results: [{ index: 0, content: 'Let me check.', functionCalls: [{ id: 'call-1', type: 'function', function: { name: 'pages_get', params: '{"id":' } }, { id: 'call-1', type: 'function', function: { name: '', params: '42}' } }], thoughtBlocks: [{ data: 'encrypted-state', encrypted: true }, { data: 'hidden thought', encrypted: false }] }], modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 5, completionTokens: 2, totalTokens: 7 } } },
+      { results: [{ index: 0, content: 'Let me check.', functionCalls: [{ id: 'call-1', type: 'function', function: { name: 'wiki_get_page', params: '{"id":' } }, { id: 'call-1', type: 'function', function: { name: '', params: '42}' } }], thoughtBlocks: [{ data: 'encrypted-state', encrypted: true }, { data: 'hidden thought', encrypted: false }] }], modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 5, completionTokens: 2, totalTokens: 7 } } },
       { results: [{ index: 0, content: 'The install steps are documented.[[cite:page:42:section:1]]' }], modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 8, completionTokens: 4, totalTokens: 12 } } }
     ]
     const chat = vi.fn(async (input: Readonly<AxChatRequest<unknown>>) => {
@@ -63,12 +63,12 @@ describe('Ax agent engine', () => {
     const result = await engine.execute(request(new AbortController().signal), { text, event })
     expect(chat).toHaveBeenCalledTimes(2)
     expect(invoke).toHaveBeenCalledWith('pages.get', { id: 42 }, expect.objectContaining({ aborted: false }), 'call-1')
-    expect(calls[0]?.functions).toContainEqual(expect.objectContaining({ name: 'pages_get' }))
+    expect(calls[0]?.functions).toContainEqual(expect.objectContaining({ name: 'wiki_get_page' }))
     expect(calls[0]?.chatPrompt?.[0]).toEqual(expect.objectContaining({ role: 'system', content: expect.stringMatching(new RegExp(`^${WIKI_AGENT_SOUL.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')}\\n\\n`)) }))
     expect(calls[0]?.chatPrompt).toContainEqual(expect.objectContaining({ role: 'system', content: expect.stringContaining('"id":42,"locale":"en","path":"guide"') }))
     expect(calls[0]?.chatPrompt).toContainEqual(expect.objectContaining({ role: 'system', content: expect.stringContaining('"userProfile":["Prefers concise, evidence-first answers."]') }))
     expect(calls[0]?.chatPrompt).toContainEqual(expect.objectContaining({ role: 'system', content: expect.stringContaining('"rejectedEvidenceDrafts":1') }))
-    expect(calls[1]?.chatPrompt).toContainEqual(expect.objectContaining({ role: 'assistant', functionCalls: [expect.objectContaining({ function: expect.objectContaining({ name: 'pages_get' }) })] }))
+    expect(calls[1]?.chatPrompt).toContainEqual(expect.objectContaining({ role: 'assistant', functionCalls: [expect.objectContaining({ function: expect.objectContaining({ name: 'wiki_get_page' }) })] }))
     expect(calls[1]?.chatPrompt).toContainEqual(expect.objectContaining({ role: 'function', functionId: 'call-1', result: expect.stringContaining('"citationSections"') }))
     expect(calls[1]?.chatPrompt).toContainEqual(expect.objectContaining({ role: 'assistant', content: 'Let me check.' }))
     expect(text).toHaveBeenCalledWith('The install steps are documented.[[cite:page:42:section:1]]')
@@ -91,7 +91,7 @@ describe('Ax agent engine', () => {
   })
   it('accepts a citation placed after sentence punctuation and rejects an uncited page answer', async () => {
     const responses: AxChatResponse[] = [
-      { results: [{ index: 0, functionCalls: [{ id: 'get-1', type: 'function', function: { name: 'pages_get', params: '{"id":6}' } }] }] },
+      { results: [{ index: 0, functionCalls: [{ id: 'get-1', type: 'function', function: { name: 'wiki_get_page', params: '{"id":6}' } }] }] },
       { results: [{ index: 0, content: 'Amber Falcon.' }] },
       { results: [{ index: 0, content: 'Amber Falcon is a synthetic incident. [[cite:page:6:section:1]]' }] }
     ]
@@ -135,8 +135,8 @@ describe('Ax agent engine', () => {
 
   it('reuses identical page reads while preserving every model-requested action in diagnostics', async () => {
     const responses: AxChatResponse[] = [
-      { results: [{ index: 0, functionCalls: [{ id: 'get-1', type: 'function', function: { name: 'pages_get', params: '{"id":6}' } }] }] },
-      { results: [{ index: 0, functionCalls: [{ id: 'get-2', type: 'function', function: { name: 'pages_get', params: '{"id":6}' } }] }] },
+      { results: [{ index: 0, functionCalls: [{ id: 'get-1', type: 'function', function: { name: 'wiki_get_page', params: '{"id":6}' } }] }] },
+      { results: [{ index: 0, functionCalls: [{ id: 'get-2', type: 'function', function: { name: 'wiki_get_page', params: '{"id":6}' } }] }] },
       { results: [{ index: 0, content: 'Amber Falcon is a synthetic incident.[[cite:page:6:section:1]]' }] }
     ]
     const chat = vi.fn(async () => responses.shift()!)
@@ -182,9 +182,9 @@ describe('Ax agent engine', () => {
   it('rejects search-result citations until the page is read and records grouped claim provenance', async () => {
     const providerCalls: Readonly<AxChatRequest<unknown>>[] = []
     const responses: AxChatResponse[] = [
-      { results: [{ index: 0, functionCalls: [{ id: 'search-1', type: 'function', function: { name: 'pages_search', params: '{"query":"Amber Falcon","limit":10,"offset":0}' } }] }] },
+      { results: [{ index: 0, functionCalls: [{ id: 'search-1', type: 'function', function: { name: 'wiki_search_pages', params: '{"query":"Amber Falcon","limit":10,"offset":0}' } }] }] },
       { results: [{ index: 0, content: 'Amber Falcon is a synthetic incident drill.[[cite:page:6]]' }] },
-      { results: [{ index: 0, functionCalls: [{ id: 'get-1', type: 'function', function: { name: 'pages_get', params: '{"id":6}' } }] }] },
+      { results: [{ index: 0, functionCalls: [{ id: 'get-1', type: 'function', function: { name: 'wiki_get_page', params: '{"id":6}' } }] }] },
       { results: [{ index: 0, content: 'The Incident Runbook describes Amber Falcon as a synthetic incident drill[[cite:page:6:section:1]] and gives the response sequence: confirm the alert and freeze deployments.[[cite:page:6:section:2]]' }] }
     ]
     const chat = vi.fn(async (input: Readonly<AxChatRequest<unknown>>) => {
@@ -261,7 +261,7 @@ describe('Ax agent engine', () => {
 
   it('regenerates a cross-section attribution that does not support the associated claim', async () => {
     const responses: AxChatResponse[] = [
-      { results: [{ index: 0, functionCalls: [{ id: 'get-1', type: 'function', function: { name: 'pages_get', params: '{"id":6}' } }] }] },
+      { results: [{ index: 0, functionCalls: [{ id: 'get-1', type: 'function', function: { name: 'wiki_get_page', params: '{"id":6}' } }] }] },
       { results: [{ index: 0, content: 'Amber Falcon is a synthetic incident and its response sequence confirms alerts, freezes deployments, and drains the queue.[[cite:page:6:section:2]]' }] },
       { results: [{ index: 0, content: 'Amber Falcon is a synthetic incident drill.[[cite:page:6:section:1]]' }] }
     ]
@@ -354,11 +354,11 @@ describe('Ax agent engine', () => {
     await new AxAgentEngine(factory, actions).execute(request(new AbortController().signal), { text: async () => {}, event: async () => {} })
 
     expect(invoke).toHaveBeenCalledWith('skills.list', {}, expect.objectContaining({ aborted: false }), 'skill-catalog-bootstrap')
-    expect(calls[0]?.functions).toContainEqual(expect.objectContaining({ name: 'skills_read' }))
+    expect(calls[0]?.functions).toContainEqual(expect.objectContaining({ name: 'wiki_read_skill' }))
     const system = calls[0]?.chatPrompt.find(message => message.role === 'system')
     expect(system?.content).toContain('"name":"wiki-authoring"')
     expect(system?.content).toContain('load an applicable skill')
-    expect(system?.content).toContain('very next action must be pages.applyProposal')
+    expect(system?.content).toContain('very next action must be wiki_apply_page_proposal')
     expect(system?.content).toContain('[[cite:EVIDENCE_ID]]')
     expect(system?.content).toContain('candidate metadata, not read evidence')
     expect(system?.content).toContain('group them into one readable sentence or paragraph')
@@ -367,7 +367,7 @@ describe('Ax agent engine', () => {
   it('emulates one strict tool call for providers without native tools', async () => {
     const providerCalls: Readonly<AxChatRequest<unknown>>[] = []
     const responses: AxChatResponse[] = [
-      { results: [{ index: 0, content: '<wiki-tool-call>{"name":"pages_get","arguments":{"id":42}}</wiki-tool-call>' }] },
+      { results: [{ index: 0, content: '<wiki-tool-call>{"name":"wiki_get_page","arguments":{"id":42}}</wiki-tool-call>' }] },
       { results: [{ index: 0, content: 'The page is ready.' }] }
     ]
     const chat = vi.fn(async (input: Readonly<AxChatRequest<unknown>>) => {
@@ -390,9 +390,9 @@ describe('Ax agent engine', () => {
 
     expect(providerCalls[0]).not.toHaveProperty('functions')
     expect(providerCalls[0]?.chatPrompt[0]).toEqual(expect.objectContaining({ role: 'system', content: expect.stringContaining('strict text tool protocol') }))
-    expect(providerCalls[0]?.chatPrompt[0]).toEqual(expect.objectContaining({ content: expect.stringContaining('"name":"pages_get"') }))
+    expect(providerCalls[0]?.chatPrompt[0]).toEqual(expect.objectContaining({ content: expect.stringContaining('"name":"wiki_get_page"') }))
     expect(invoke).toHaveBeenCalledWith('pages.get', { id: 42 }, expect.objectContaining({ aborted: false }), expect.any(String))
-    expect(providerCalls[1]?.chatPrompt).toContainEqual({ role: 'assistant', content: '<wiki-tool-call>{"name":"pages_get","arguments":{"id":42}}</wiki-tool-call>' })
+    expect(providerCalls[1]?.chatPrompt).toContainEqual({ role: 'assistant', content: '<wiki-tool-call>{"name":"wiki_get_page","arguments":{"id":42}}</wiki-tool-call>' })
     expect(providerCalls[1]?.chatPrompt).toContainEqual(expect.objectContaining({ role: 'user', content: expect.stringContaining('<wiki-tool-result>') }))
     expect(providerCalls[1]?.chatPrompt.some(message => message.role === 'function')).toBe(false)
     expect(text).toHaveBeenCalledOnce()

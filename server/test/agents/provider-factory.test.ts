@@ -79,14 +79,14 @@ describe('Ax provider factory', () => {
     }
     const factory = new AgentProviderFactory(db, { get: reference => reference === 'env:TEST_PROVIDER_KEY' ? 'test-key' : null }, implementation as typeof fetch, publicResolver as never)
     const provider = await factory.create('00000000-0000-4000-8000-000000000001')
-    const result = await provider.service.chat({ chatPrompt: [{ role: 'user', content: 'hello' }], model: 'gpt-test', functions: [{ name: 'pages_get', description: 'Read a page', parameters: { type: 'object', properties: { id: { type: 'number', description: 'Page ID' } } } }] }, { stream: false })
+    const result = await provider.service.chat({ chatPrompt: [{ role: 'user', content: 'hello' }], model: 'gpt-test', functions: [{ name: 'wiki_get_page', description: 'Read a page', parameters: { type: 'object', properties: { id: { type: 'number', description: 'Page ID' } } } }] }, { stream: false })
     expect(result).not.toBeInstanceOf(ReadableStream)
     expect(request?.url.href).toBe('https://provider.example.test/v1/responses')
     expect(new Headers(request?.init?.headers).get('x-tenant')).toBe('wiki')
     expect(new Headers(request?.init?.headers).get('authorization')).toBe('Bearer test-key')
     expect(request?.init).toMatchObject({ redirect: 'manual', credentials: 'omit' })
     const payload = JSON.parse(String(request?.init?.body)) as Record<string, unknown>
-    expect(payload).toMatchObject({ model: 'gpt-test', store: false, previous_response_id: null, parallel_tool_calls: true, tools: [{ type: 'function', name: 'pages_get', strict: false }] })
+    expect(payload).toMatchObject({ model: 'gpt-test', store: false, previous_response_id: null, parallel_tool_calls: true, tools: [{ type: 'function', name: 'wiki_get_page', strict: false }] })
     expect(payload.include).toContain('reasoning.encrypted_content')
     expect(payload).not.toHaveProperty('temperature')
     expect(payload).not.toHaveProperty('top_p')

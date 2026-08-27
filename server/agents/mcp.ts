@@ -15,7 +15,7 @@ import {
 import { hostHeaderValidation, originValidation } from '@modelcontextprotocol/express'
 import { toNodeHandler } from '@modelcontextprotocol/node'
 
-import { MCP_ACTION_ALIASES, type AgentActionName, type AgentFeatureFlags } from '../../shared/agents/contracts.ts'
+import { AGENT_TOOL_NAMES, type AgentActionName, type AgentFeatureFlags } from '../../shared/agents/contracts.ts'
 import { ACTION_CATALOG, actionDefinition } from './actions/catalog.ts'
 import { ActionKernel, ActionKernelError, toMcpAction, type ActionAdmissionSnapshot, type ActionAuthority } from './actions/kernel.ts'
 import { registerPageReadActions, type PageReadActionDependencies } from './actions/page-reads.ts'
@@ -215,7 +215,7 @@ export const createWikiMcpController = (dependencies: WikiMcpDependencies): expr
       }
     })
 
-    for (const [actionNameValue] of Object.entries(MCP_ACTION_ALIASES)) {
+    for (const [actionNameValue] of Object.entries(AGENT_TOOL_NAMES)) {
       const actionName = actionNameValue as AgentActionName
       if (!offeredNames.has(actionName)) continue
       if (requestContext.era === 'legacy' && actionName === 'pages.applyProposal') continue

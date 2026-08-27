@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import type { Knex } from 'knex'
 import { z } from 'zod'
-
+import { AGENT_ACTION_BY_TOOL_NAME, type AgentToolName } from '../../../shared/agents/contracts.ts'
 import { decodeSkillResourceBundle } from './bundle.ts'
 import { intersectAllowedTools, SkillValidationError } from './parser.ts'
 import { validateSkillVirtualPath } from './virtual-path.ts'
@@ -539,7 +539,10 @@ export class SkillRuntime {
           versionId: row.versionId,
           contentHash: row.contentHash,
           instructions: row.skillMarkdown,
-          allowedTools: intersectAllowedTools(input.availableTools, frontmatter['allowed-tools'])
+          allowedTools: intersectAllowedTools(
+            input.availableTools,
+            frontmatter['allowed-tools'].map(toolName => AGENT_ACTION_BY_TOOL_NAME[toolName as AgentToolName] ?? toolName)
+          )
         }
       })
     })

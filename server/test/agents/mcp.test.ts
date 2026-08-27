@@ -247,7 +247,7 @@ describe('Wiki MCP transport', () => {
     expect(names).toContain('wiki_read_skill')
     expect(names).toContain('wiki_prepare_page_patch')
     expect(names).toContain('wiki_apply_page_proposal')
-    expect(names).not.toContain('browser_navigate')
+    expect(names).not.toContain('wiki_browser_navigate')
     expect(new Set(names).size).toBe(names.length)
 
     await client.close()

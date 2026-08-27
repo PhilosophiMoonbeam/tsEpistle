@@ -1,5 +1,5 @@
 import type { Knex } from 'knex'
-import type { AgentActionName } from '../../../shared/agents/contracts.ts'
+import { AGENT_ACTION_BY_TOOL_NAME, type AgentActionName, type AgentToolName } from '../../../shared/agents/contracts.ts'
 import pageOperations from '../../operations/pages.ts'
 import { ACTION_CATALOG } from '../actions/catalog.ts'
 import { ActionKernel, type ActionAdmissionSnapshot, type ActionAuthority } from '../actions/kernel.ts'
@@ -73,7 +73,12 @@ const allowedActionsFor = async (knex: Knex, runId: string): Promise<readonly Ag
     try { value = JSON.parse(row.frontmatter) } catch { throw new AgentRepositoryError('SKILL_VERSION_CORRUPT', 'Loaded skill metadata is invalid', 500) }
     const tools = typeof value === 'object' && value !== null ? Reflect.get(value, 'allowed-tools') : undefined
     if (!Array.isArray(tools) || tools.length === 0) return undefined
-    for (const tool of tools) if (typeof tool === 'string' && tool in ACTION_CATALOG) allowed.add(tool as AgentActionName)
+    for (const tool of tools) {
+      if (typeof tool !== 'string') continue
+      const actionName = AGENT_ACTION_BY_TOOL_NAME[tool as AgentToolName]
+      if (actionName) allowed.add(actionName)
+      else if (tool in ACTION_CATALOG) allowed.add(tool as AgentActionName)
+    }
   }
   return [...allowed].sort()
 }

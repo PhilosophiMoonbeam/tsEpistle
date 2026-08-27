@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-import type { AgentActionDescriptor, AgentActionName, AgentFeatureFlagKey } from '../../../shared/agents/contracts.ts'
+import { AGENT_TOOL_NAMES, type AgentActionDescriptor, type AgentActionName, type AgentFeatureFlagKey } from '../../../shared/agents/contracts.ts'
 import { WikiLinePatchV1Schema, WikiLineSnapshotV1Schema } from '../patch/wiki-line-patch.ts'
 
 export interface ActionDefinition {
@@ -131,7 +131,7 @@ const proposalFlags = ['agents.enabled', 'agents.proposals.enabled', 'agents.wri
 
 export const ACTION_CATALOG = {
   'pages.search': {
-    descriptor: descriptor('pages.search', 'Search pages', 'Rank visible pages using titles, tags, paths, descriptions, content, and the Wiki link graph. Natural-language queries are supported; the PostgreSQL backend also supports quoted phrases and -negation. Use path to restrict retrieval to one page or its descendants. Results include match evidence and spelling suggestions; read promising pages with pages.get before answering.', 'read', ['read:pages'], both, readAnnotations),
+    descriptor: descriptor('pages.search', 'Search pages', `Rank visible pages using titles, tags, paths, descriptions, content, and the Wiki link graph. Natural-language queries are supported; the PostgreSQL backend also supports quoted phrases and -negation. Use path to restrict retrieval to one page or its descendants. Results include match evidence and spelling suggestions; read promising pages with ${AGENT_TOOL_NAMES['pages.get']} before answering.`, 'read', ['read:pages'], both, readAnnotations),
     input: strict({ query: z.string().min(1).max(1000), locale: Locale.optional(), path: Path.optional(), limit: z.number().int().min(1).max(20).default(10), offset: z.number().int().min(0).max(500).default(0) }),
     output: strict({
       results: z.array(SearchPageSummary).max(20),
@@ -156,7 +156,7 @@ export const ACTION_CATALOG = {
     requiredFlags: baseFlags
   },
   'pages.discover': {
-    descriptor: descriptor('pages.discover', 'Discover pages', 'Browse visible pages structurally by locale, descendant path depth, exact tags, and stable path, title, or update order. Narrow the path if the bounded discovery window is too broad, then read promising pages with pages.get.', 'read', ['read:pages'], both, readAnnotations),
+    descriptor: descriptor('pages.discover', 'Discover pages', `Browse visible pages structurally by locale, descendant path depth, exact tags, and stable path, title, or update order. Narrow the path if the bounded discovery window is too broad, then read promising pages with ${AGENT_TOOL_NAMES['pages.get']}.`, 'read', ['read:pages'], both, readAnnotations),
     input: strict({
       locale: Locale,
       path: z.string().max(1_024).default(''),
@@ -181,7 +181,7 @@ export const ACTION_CATALOG = {
     requiredFlags: baseFlags
   },
   'pages.getOkf': {
-    descriptor: descriptor('pages.getOkf', 'Export page as OKF', 'Export one visible Markdown page as a deterministic Open Knowledge Format v0.2 concept. The document carries portable frontmatter, provenance, lifecycle and trust signals; canonical Wiki links become bundle-relative .md links. Use pages.get for ordinary evidence-backed reading and this action for knowledge interchange.', 'read', ['read:pages'], both, readAnnotations),
+    descriptor: descriptor('pages.getOkf', 'Export page as OKF', `Export one visible Markdown page as a deterministic Open Knowledge Format v0.2 concept. The document carries portable frontmatter, provenance, lifecycle and trust signals; canonical Wiki links become bundle-relative .md links. Use ${AGENT_TOOL_NAMES['pages.get']} for ordinary evidence-backed reading and this action for knowledge interchange.`, 'read', ['read:pages'], both, readAnnotations),
     input: PageSelector,
     output: OkfPageResult,
     requiredFlags: baseFlags
@@ -191,7 +191,7 @@ export const ACTION_CATALOG = {
     input: strict({
       pageId: PositiveId,
       ranges: z.array(strict({ startLine: PositiveId, endLine: PositiveId })).max(100).optional(),
-      previousSnapshotToken: z.string().min(1).max(16_384).nullable().optional().describe('Set null on the initial read. Only pass a non-null token returned by an earlier pages.readForPatch result for this same page; never invent a token.')
+      previousSnapshotToken: z.string().min(1).max(16_384).nullable().optional().describe(`Set null on the initial read. Only pass a non-null token returned by an earlier ${AGENT_TOOL_NAMES['pages.readForPatch']} result for this same page; never invent a token.`)
     }),
     output: WikiLineSnapshotV1Schema,
     requiredFlags: baseFlags
@@ -221,7 +221,7 @@ export const ACTION_CATALOG = {
     requiredFlags: baseFlags
   },
   'pages.related': {
-    descriptor: descriptor('pages.related', 'Get related pages', 'Traverse visible published pages connected by explicit internal Wiki links and backlinks. Start with cursor null, then pass each returned nextCursor unchanged until it is null. Read promising pages with pages.get before relying on their content.', 'read', ['read:pages'], both, readAnnotations),
+    descriptor: descriptor('pages.related', 'Get related pages', `Traverse visible published pages connected by explicit internal Wiki links and backlinks. Start with cursor null, then pass each returned nextCursor unchanged until it is null. Read promising pages with ${AGENT_TOOL_NAMES['pages.get']} before relying on their content.`, 'read', ['read:pages'], both, readAnnotations),
     input: strict({ pageId: PositiveId, limit: z.number().int().min(1).max(100).default(20), cursor: z.string().min(1).max(4_096).nullable().default(null), maxDepth: z.number().int().min(1).max(32).optional() }),
     output: strict({ pages: z.array(RelatedPageSummary).max(100), nextCursor: z.string().min(1).max(4_096).nullable() }),
     requiredFlags: baseFlags

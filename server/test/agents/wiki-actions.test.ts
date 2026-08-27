@@ -75,4 +75,59 @@ describe('Wiki action sessions', () => {
     ]))
     session?.close()
   })
+
+  it('maps shared SKILL.md tool names into canonical action admission', async () => {
+    const user = { id: 7, isActive: true, groups: [], getGlobalPermissions: async () => ['use:agents', 'read:pages', 'write:pages'] }
+    const modifyGraph = vi.fn(async () => user)
+    Reflect.set(globalThis, 'WIKI', {
+      models: {
+        users: {
+          query: () => ({ findById: () => ({ withGraphFetched: () => ({ modifyGraph }) }) })
+        }
+      }
+    })
+    const { createWikiActionSessionProvider } = await import('../../agents/providers/wiki-actions.ts')
+    const capabilities = {
+      streaming: true,
+      toolCalling: 'native',
+      parallelToolCalls: true,
+      structuredOutput: 'native-json-schema',
+      usage: 'stream',
+      cancellation: true,
+      maxContextTokens: 128_000,
+      maxOutputTokens: 8_192
+    }
+    const knex = ((table: string) => {
+      if (table === 'agentProviderProfileVersions') return { where: () => ({ first: async () => ({ capabilities: JSON.stringify(capabilities) }) }) }
+      if (table === 'agentRunSkills') {
+        return {
+          join: () => ({
+            where: () => ({
+              select: async () => [{
+                frontmatter: JSON.stringify({
+                  'allowed-tools': ['wiki_get_page', 'wiki_prepare_page_create', 'wiki_apply_page_proposal']
+                })
+              }]
+            })
+          })
+        }
+      }
+      if (table === 'agentRuns') return { where: () => ({ first: async () => ({ runtimeStateCiphertext: null }) }) }
+      throw new Error(`Unexpected table: ${table}`)
+    }) as unknown as Knex
+
+    const session = await createWikiActionSessionProvider(knex, config).open(request(new AbortController().signal))
+    const names = session?.functions.map(action => action.name) ?? []
+    expect(names).toEqual(expect.arrayContaining([
+      'skills.list',
+      'skills.read',
+      'memory.manage',
+      'pages.get',
+      'pages.prepareCreate',
+      'pages.applyProposal'
+    ]))
+    expect(names).not.toContain('pages.search')
+    expect(names).not.toContain('pages.preparePatch')
+    session?.close()
+  })
 })

@@ -206,7 +206,7 @@ describe('Ax and MCP action projections', () => {
     expect(mcp.inputSchema).toMatchObject({ anyOf: expect.any(Array) })
   })
 
-  it('does not manufacture an MCP alias for browser-only actions', () => {
-    expect(() => toMcpAction(actionDefinition('browser.navigate'))).toThrow('no MCP alias')
+  it('does not project browser-only actions into MCP', () => {
+    expect(() => toMcpAction(actionDefinition('browser.navigate'))).toThrow('not exposed through MCP')
   })
 })

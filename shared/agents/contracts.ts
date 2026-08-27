@@ -56,7 +56,7 @@ export const AGENT_ACTION_NAMES = [
 
 export type AgentActionName = typeof AGENT_ACTION_NAMES[number]
 
-export const MCP_ACTION_ALIASES = {
+export const AGENT_TOOL_NAMES = {
   'pages.search': 'wiki_search_pages',
   'pages.searchTags': 'wiki_search_tags',
   'pages.listTags': 'wiki_list_tags',
@@ -71,6 +71,12 @@ export const MCP_ACTION_ALIASES = {
   'pages.related': 'wiki_get_related_pages',
   'skills.list': 'wiki_list_skills',
   'skills.read': 'wiki_read_skill',
+  'memory.manage': 'wiki_manage_memory',
+  'browser.navigate': 'wiki_browser_navigate',
+  'browser.observe': 'wiki_browser_observe',
+  'browser.act': 'wiki_browser_act',
+  'browser.extract': 'wiki_browser_extract',
+  'browser.screenshot': 'wiki_browser_screenshot',
   'pages.prepareImportOkf': 'wiki_prepare_okf_import',
   'pages.prepareCreate': 'wiki_prepare_page_create',
   'pages.preparePatch': 'wiki_prepare_page_patch',
@@ -78,9 +84,12 @@ export const MCP_ACTION_ALIASES = {
   'pages.prepareRestore': 'wiki_prepare_page_restore',
   'pages.prepareDelete': 'wiki_prepare_page_delete',
   'pages.applyProposal': 'wiki_apply_page_proposal'
-} as const satisfies Partial<Record<AgentActionName, string>>
+} as const satisfies Record<AgentActionName, string>
 
-export type McpActionAlias = typeof MCP_ACTION_ALIASES[keyof typeof MCP_ACTION_ALIASES]
+export type AgentToolName = typeof AGENT_TOOL_NAMES[keyof typeof AGENT_TOOL_NAMES]
+export const AGENT_ACTION_BY_TOOL_NAME = Object.fromEntries(
+  Object.entries(AGENT_TOOL_NAMES).map(([actionName, toolName]) => [toolName, actionName])
+) as Readonly<Record<AgentToolName, AgentActionName>>
 export type AgentTransport = 'agent' | 'mcp'
 export type AgentActionRisk = 'read' | 'open-world-read' | 'proposal' | 'reversible-write' | 'destructive-write'
 export type AgentExecutionMode = 'agent' | 'generation-only'

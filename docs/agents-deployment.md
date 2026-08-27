@@ -152,9 +152,9 @@ The MCP surface uses the official `@modelcontextprotocol/server` TypeScript SDK 
 
 ## Skills and Wiki authoring
 
-When skills and a tool-capable Agent profile are enabled, each run receives the names, descriptions, exact version IDs, and content hashes of the approved system skills visible to that user and the user's personal skills marked **Available to the agent automatically**. The model must inspect that catalog and load a matching `SKILL.md` with `skills.read` before it calls task actions. Users manage personal `SKILL.md` documents from the chat Skills menu, can remove them from automatic discovery without preventing explicit use, and can type `/` at the start of the composer to fuzzy-search and invoke any selectable system or personal skill for the next message. Skills pinned in Session configuration and skills explicitly invoked for one message are loaded in full. Catalog visibility and each resource read are recorded in `agentSkillUses`; no skill grants a tool or page permission.
+When skills and a tool-capable Agent profile are enabled, each run receives the names, descriptions, exact version IDs, and content hashes of the approved system skills visible to that user and the user's personal skills marked **Available to the agent automatically**. The model must inspect that catalog and load a matching `SKILL.md` with `wiki_read_skill` before it calls task actions; do not load unrelated skills. Users manage personal `SKILL.md` documents from the chat Skills menu, can remove them from automatic discovery without preventing explicit use, and can type `/` at the start of the composer to fuzzy-search and invoke any selectable system or personal skill for the next message. Skills pinned in Session configuration and skills explicitly invoked for one message are loaded in full before generation starts. Skill bodies are untrusted instructions constrained by runtime permissions and the frontmatter allowlist.
 
-Install the following operational skill as the Markdown source page `system/agent-skills/wiki-authoring`, then register the page as `wiki-authoring`, approve its exact version, and expose it to the intended groups in `/admin/agents`. Edit skill source pages with the Markdown source editor because YAML frontmatter is part of the signed skill bytes. Reapprove after every source change.
+Install the following operational skill as the Markdown source page `system/agent-skills/wiki-authoring`, then register the page as `wiki-authoring`, approve its exact version, and expose it to the intended groups in `/admin/agents`. Edit skill source pages with the Markdown source editor because YAML frontmatter is part of the signed skill bytes. Reapprove after every source change. The `wiki_*` names are the single public tool vocabulary used by both built-in Agent providers and MCP clients; dotted action IDs remain internal authority and audit identifiers only.
 
 ```markdown
 ---
@@ -164,24 +164,35 @@ compatibility: tsFranki Visual Markdown and Markdown source editors
 metadata:
   owner: wiki-operations
 allowed-tools:
-  - pages.search
-  - pages.get
-  - pages.getOkf
-  - pages.readForPatch
-  - pages.listRecent
-  - pages.listHistory
-  - pages.getVersion
-  - pages.listLinks
-  - pages.prepareImportOkf
-  - pages.prepareCreate
-  - pages.preparePatch
-  - pages.prepareMove
-  - pages.prepareRestore
-  - pages.applyProposal
+  - wiki_search_pages
+  - wiki_search_tags
+  - wiki_list_tags
+  - wiki_discover_pages
+  - wiki_get_page
+  - wiki_get_page_okf
+  - wiki_read_page_for_patch
+  - wiki_list_recent_pages
+  - wiki_list_page_history
+  - wiki_get_page_version
+  - wiki_list_page_links
+  - wiki_get_related_pages
+  - wiki_prepare_okf_import
+  - wiki_prepare_page_create
+  - wiki_prepare_page_patch
+  - wiki_prepare_page_move
+  - wiki_prepare_page_restore
+  - wiki_apply_page_proposal
 ---
 # Wiki authoring
 
 Use this skill for any request to create, edit, move, restore, export, or import a Wiki page, or to draft Wiki-compatible page source.
+
+## One knowledge path
+
+- The `wiki_*` names in this file are exact callable tool names in both built-in Agent runs and external MCP sessions.
+- Use native Wiki page operations for ordinary discovery, evidence, and authoring. They operate on the authoritative Wiki page, revision, permission, and proposal system.
+- OKF export and import are portable representations of that same page authority, not a second store or a parallel authoring workflow. Use them only at an interchange boundary.
+- Every mutation goes through immutable preparation, human approval, live reauthorization, and application. Never invent another write path.
 
 ## Before acting
 
@@ -206,29 +217,29 @@ Skill source pages are a deliberate exception: preserve their YAML frontmatter a
 
 ## Create workflow
 
-1. Check both the requested path and likely collisions with `pages.search` or `pages.get`.
-2. Supply a concise title and description, canonical Markdown content, `contentType: "markdown"`, the resolved locale/path, publication state, and intentional tags to `pages.prepareCreate`.
+1. Check both the requested path and likely collisions with `wiki_search_pages` or `wiki_get_page`.
+2. Supply a concise title and description, canonical Markdown content, `contentType: "markdown"`, the resolved locale/path, publication state, and intentional tags to `wiki_prepare_page_create`.
 3. The prepare action waits for the human decision. A denial leaves the page unchanged.
 4. Approval triggers live reauthorization and automatic application of the exact immutable proposal. The prepare action returns `status: "applied"` only after the mutation commits.
-5. Use `pages.get` when the final source or metadata must be verified.
+5. Use `wiki_get_page` when the final source or metadata must be verified.
 
 ## Edit workflow
 
-1. Read the page, then call `pages.readForPatch` with `previousSnapshotToken: null` and only the ranges needed. Use a returned token only for later reads of the same page.
+1. Read the page, then call `wiki_read_page_for_patch` with `previousSnapshotToken: null` and only the ranges needed. Use a returned token only for later reads of the same page.
 2. Build `wiki-line-patch-v1` from the exact document tag, snapshot token, line numbers, and line tags. Keep undisclosed lines untouched. Preserve the snapshot's final-newline state unless the requested edit changes it.
-3. Submit the patch with `pages.preparePatch`. If the revision or an anchor changed, reread and rebuild; never guess a token or tag.
+3. Submit the patch with `wiki_prepare_page_patch`. If the revision or an anchor changed, reread and rebuild; never guess a token or tag.
 4. Wait for the human decision. Approval triggers live reauthorization and automatic application of the exact immutable proposal.
 5. Do not say the page changed until the prepare action returns `status: "applied"`.
 
 ## OKF interchange workflow
 
-1. Use ordinary search and `pages.get` for evidence. Use `pages.getOkf` only when the user or downstream system needs a portable concept document with provenance and trust metadata.
+1. Use ordinary search and `wiki_get_page` for evidence. Use `wiki_get_page_okf` only when the user or downstream system needs a portable concept document with provenance and trust metadata.
 2. For import, inspect the target path first. Pass `expectedSourceRevision: null` only when it is absent; otherwise pass the exact public Markdown page revision.
 3. Preserve supported producer extensions and source or verification metadata. Do not convert trust labels into factual claims or permissions.
-4. Submit the complete document to `pages.prepareImportOkf`, wait for approval, and do not claim success until it returns `status: "applied"`.
+4. Submit the complete document to `wiki_prepare_okf_import`, wait for approval, and do not claim success until it returns `status: "applied"`.
 5. Read the resulting page or export it again when the final Wiki source or round-trip metadata must be verified.
 
-Move and restore follow the same prepare, human approval, and automatic application sequence. `pages.applyProposal` remains available for MCP clients and idempotent recovery; Agent chat does not rely on another model-selected tool call after approval.
+Move and restore follow the same prepare, human approval, and automatic application sequence. `wiki_apply_page_proposal` remains available for MCP clients and idempotent recovery; Agent chat does not rely on another model-selected tool call after approval.
 ```
 
 This skill intentionally omits deletion. Keep destructive deletion in a separate, narrowly exposed skill and rollout.
@@ -294,7 +305,7 @@ Saved conversations are bounded history, not durable memory. A draft does not en
 After each of the first two successful exchanges, Wiki asks the profile's utility model for a concise conversation title. The second pass deliberately refines the title from the broader chronological transcript instead of freezing the opening prompt as the conversation's identity. Requests contain bounded user and assistant messages, have no tools, treat the transcript as untrusted data, allow a small reasoning/output budget, and use a 15-second ceiling. Malformed output or provider failure falls back to a bounded title derived from the first user message; a later successful second pass can replace that fallback. Utility titles then stabilize, while an explicitly edited title is never overwritten. Utility tokens are added to the corresponding run's usage accounting.
 For troubleshooting, every provider turn now records its bounded visible output, per-turn token usage, outcome, and requested action-call IDs; action events retain canonical inputs, results, cache reuse, and evidence-gate outcomes. Aggregate usage separates Agent-model and title-utility tokens. System administrators can download a conversation snapshot directly from `GET /_api/agents/admin/sessions/:sessionId/diagnostics.json`; the endpoint is intentionally absent from ordinary navigation, requires `manage:system`, accepts any conversation ID for support work, returns `private, no-store`, and omits encrypted provider continuation content. The export contains each user and assistant message, run/provider metadata, selected skill context, verified event timelines, derived duplicate-read and evidence-retry findings, and explicit limitations. Private model chain-of-thought is neither retained nor represented as an inferred rationale.
 
-Within a run, identical `pages.get` and `pages.getVersion` selectors reuse the first successful result unless a mutating action invalidates the read cache. The action timeline remains complete and labels reuse rather than hiding the model's redundant request. Successful page reads also require at least one valid final citation, and the evidence gate accepts markers placed either before or after sentence punctuation. Later turns receive a bounded prior-run activity summary, preventing the Agent from falsely claiming that no earlier actions occurred while still withholding private reasoning.
+Within a run, identical `wiki_get_page` and `wiki_get_page_version` selectors reuse the first successful result unless a mutating action invalidates the read cache. The action timeline remains complete and labels reuse rather than hiding the model's redundant request. Successful page reads also require at least one valid final citation, and the evidence gate accepts markers placed either before or after sentence punctuation. Later turns receive a bounded prior-run activity summary, preventing the Agent from falsely claiming that no earlier actions occurred while still withholding private reasoning.
 
 
 Wiki adopts the bounded, curated shape of Hermes Agent's default memory rather than treating every transcript as memory:
@@ -304,7 +315,7 @@ Wiki adopts the bounded, curated shape of Hermes Agent's default memory rather t
 | About you | Identity, preferences, communication style, and working habits | 1,375 characters |
 | Agent notes | Stable project, environment, convention, workflow, correction, and completed-work facts | 2,200 characters |
 
-Entries are rows in `agentMemories`, scoped by `ownerId`, exact-deduplicated by content hash, and deleted with the owning user. `memory.manage` gives the Agent add/replace/remove operations; the Memory dialog gives the user equivalent review, edit, remove, and clear controls. Writes reject invisible control characters, role/context fences, instruction-override language, embedded credentials, ambiguous substring matches, stale versions, and over-capacity results.
+Entries are rows in `agentMemories`, scoped by `ownerId`, exact-deduplicated by content hash, and deleted with the owning user. `wiki_manage_memory` gives the Agent add/replace/remove operations; the Memory dialog gives the user equivalent review, edit, remove, and clear controls. Writes reject invisible control characters, role/context fences, instruction-override language, embedded credentials, ambiguous substring matches, stale versions, and over-capacity results.
 
 Each new conversation captures one immutable JSON snapshot in `agentSessions.memorySnapshot`. Every run in that conversation receives the same snapshot, preserving a stable prompt prefix and preventing a mid-conversation memory write from silently changing prior context. Live writes are immediately durable and their tool result reports the current store, but prompt recall begins with the next conversation. The prompt labels recalled entries as user-specific data: useful preferences and facts, never authorization, tool input, or policy.
 
