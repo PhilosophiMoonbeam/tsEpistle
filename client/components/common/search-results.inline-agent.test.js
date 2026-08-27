@@ -14,9 +14,11 @@ describe('inline Ask mode contract', () => {
   const header = fs.readFileSync(headerPath, 'utf8')
   const template = search.match(/<template[^>]*>\s*([\s\S]*?)\s*<\/template>/)?.[1] ?? ''
 
-  test('renders Ask as an inline conversation instead of launching another application', () => {
+  test('renders Ask as an immersive conversation instead of launching another application', () => {
     expect(template).toMatch(/InlineAgentChat\s*\(/)
-    expect(template).toMatch(/v-if=['"]canAsk && searchMode === `ask`['"]/)
+    expect(template).toMatch(/v-if=['"]isAgentOpen['"]/)
+    expect(template).toMatch(/search-results-agent-nav/)
+    expect(template).toMatch(/:aria-modal=['"]isAgentOpen \? `true` : undefined['"]/)
     expect(template).not.toMatch(/action=['"]\/_?api\/agents\/launch['"]/)
     expect(template).not.toMatch(/target=['"]_blank['"]/)
     expect(search).toMatch(/if\s*\(!inlineAgent\)\s*return/)
@@ -50,10 +52,21 @@ describe('inline Ask mode contract', () => {
     expect(composer).not.toMatch(/pin(?:ned)? to this session/i)
   })
 
-  test('supports direct mode switching and submission from the Wiki search field', () => {
+  test('keeps the overlay mounted through the Search-to-Agent handoff', () => {
+    expect(header).not.toMatch(/@blur=['"]searchBlur['"]/)
+    expect(header).not.toMatch(/searchBlur\s*\(/)
+    expect(template).toMatch(/v-if=['"]isAgentOpen \|\| searchIsFocused \|\| normalizedSearch\.length > 1['"]/)
+    expect(search).toMatch(/openAsk\(\): void\s*\{[\s\S]*this\.searchIsFocused\s*=\s*true[\s\S]*this\.searchMode\s*=\s*['"]ask['"]/)
+    expect(search).toMatch(/closeSearch\(\): void\s*\{[\s\S]*this\.searchMode\s*=\s*['"]search['"]/)
+  })
+
+  test('focuses the full Agent composer for direct mode switching', () => {
     expect(header).toMatch(/event\.key\.toLowerCase\(\)\s*!==\s*['"]a['"]/)
-    expect(header).toMatch(/this\.searchMode\s*=\s*this\.searchMode\s*===\s*['"]ask['"]\s*\?\s*['"]search['"]\s*:\s*['"]ask['"]/)
+    expect(header).toMatch(/this\.searchIsFocused\s*=\s*true[\s\S]*this\.searchMode\s*=\s*['"]ask['"]/)
     expect(header).toMatch(/event\.ctrlKey\s*\|\|\s*event\.metaKey/)
+    expect(search).toMatch(/focusComposer\(\)/)
+    expect(inline).toMatch(/defineExpose\(\{\s*sendPrompt,\s*focusComposer,\s*focusConversation\s*\}\)/)
+    expect(composer).toMatch(/defineExpose\(\{\s*focusInput\s*\}\)/)
     expect(search).toMatch(/async submitAskPrompt\(\): Promise<void>/)
   })
 })

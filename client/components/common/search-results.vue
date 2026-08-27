@@ -1,22 +1,41 @@
 <template lang="pug">
   .search-results(
-    v-if='searchIsFocused || normalizedSearch.length > 1'
-    :class='canAsk && searchMode === `ask` ? `search-results--ask` : ``'
-    role='region'
-    aria-label='Wiki search and agent'
+    v-if='isAgentOpen || searchIsFocused || normalizedSearch.length > 1'
+    :class='{ "search-results--ask": isAgentOpen }'
+    :role='isAgentOpen ? `dialog` : `region`'
+    :aria-label='isAgentOpen ? `Wiki Agent workspace` : `Wiki search`'
+    :aria-modal='isAgentOpen ? `true` : undefined'
   )
-    .search-results-container(:class='canAsk && searchMode === `ask` ? `search-results-container--ask` : ``')
-      .search-results-controls
+    .search-results-container(:class='{ "search-results-container--ask": isAgentOpen }')
+      .search-results-agent-nav(v-if='isAgentOpen')
+        v-btn.search-results-agent-back(
+          prepend-icon='mdi-arrow-left'
+          variant='text'
+          color='white'
+          @click='returnToSearch'
+        ) Search
+        .search-results-agent-context
+          .search-results-agent-mark
+            v-icon(icon='mdi-auto-fix' size='17')
+          span Agent workspace
+        v-btn.search-results-agent-close(
+          icon='mdi-close'
+          variant='text'
+          color='white'
+          aria-label='Close Wiki Agent'
+          @click='closeSearch'
+        )
+      .search-results-controls(v-else)
         v-btn-toggle.search-results-mode(
           v-if='canAsk'
-          v-model='searchMode'
+          :model-value='searchMode'
           mandatory
           density='compact'
           color='primary'
           :aria-label='$t(`common:header.searchModeLabel`)'
         )
           v-btn(value='search' prepend-icon='mdi-magnify') {{$t('common:header.searchMode')}}
-          v-btn(value='ask' prepend-icon='mdi-auto-fix') {{$t('common:header.askMode')}}
+          v-btn(value='ask' prepend-icon='mdi-auto-fix' @click='openAsk') {{$t('common:header.askMode')}}
         .search-results-controls-title(v-else)
           v-icon(icon='mdi-magnify' size='19')
           span Search the Wiki
@@ -35,7 +54,7 @@
           @click='closeSearch'
         )
       InlineAgentChat(
-        v-if='canAsk && searchMode === `ask`'
+        v-if='isAgentOpen'
         ref='inlineAgent'
         :csrf-token='agentCsrfToken'
         :approval-id='approvalId'
@@ -185,6 +204,7 @@ const emptySearchResponse = (): PageSearchResult => ({
 })
 interface InlineAgentChatRef {
   sendPrompt(content: string): Promise<boolean>
+  focusComposer(): Promise<void>
   focusConversation(): Promise<void>
 }
 
@@ -244,6 +264,9 @@ export default defineComponent({
     canAsk(): boolean {
       return siteConfig.agentsEnabled && wikiStore.user.authenticated && wikiStore.user.permissions.some(permission => permission === 'use:agents' || permission === 'manage:system')
     },
+    isAgentOpen(): boolean {
+      return this.canAsk && this.searchMode === 'ask'
+    },
     agentCsrfToken(): string { return siteConfig.agentCsrfToken },
     agentProviderEnabled(): boolean { return siteConfig.agentProviderEnabled },
     agentSkillsEnabled(): boolean { return siteConfig.agentSkillsEnabled },
@@ -259,8 +282,12 @@ export default defineComponent({
     search(newValue: string | null) {
       this.queueSearch(newValue ?? '')
     },
-    searchMode() {
+    async searchMode(newMode: 'search' | 'ask') {
       this.queueSearch(this.search)
+      if (newMode !== 'ask' || !this.canAsk) return
+      this.searchIsFocused = true
+      await this.$nextTick()
+      await (this.$refs.inlineAgent as InlineAgentChatRef | undefined)?.focusComposer()
     },
     searchRestrictLocale() {
       this.queueSearch(this.search)
@@ -289,6 +316,15 @@ export default defineComponent({
     offSearchEnter(this.handleSearchEnter)
   },
   methods: {
+    openAsk(): void {
+      if (!this.canAsk) return
+      this.searchIsFocused = true
+      this.searchMode = 'ask'
+    },
+    returnToSearch(): void {
+      this.searchMode = 'search'
+      this.searchIsFocused = true
+    },
     queueSearch(query: string): void {
       this.cursor = 0
       this.searchRequestId += 1
@@ -353,6 +389,7 @@ export default defineComponent({
     },
     closeSearch(): void {
       this.search = ''
+      this.searchMode = 'search'
       this.searchIsFocused = false
       this.approvalId = ''
       const url = new URL(window.location.href)
@@ -419,9 +456,13 @@ export default defineComponent({
 
 
   &--ask {
-    box-sizing: border-box;
+    animation: agentWorkspaceReveal .28s cubic-bezier(.2, .8, .2, 1);
+    background:
+      radial-gradient(ellipse 68rem 34rem at 50% -16rem, rgba(82, 113, 255, .3), transparent),
+      linear-gradient(180deg, rgba(7, 9, 17, .98), rgba(8, 10, 17, .96));
+    height: 100dvh;
+    inset: 0;
     overflow: hidden;
-
   }
 
   &-container {
@@ -437,9 +478,49 @@ export default defineComponent({
       flex-direction: column;
       height: 100%;
       max-width: none;
-      padding-bottom: clamp(.75rem, 2vw, 1.5rem);
+      padding: 0 clamp(.75rem, 2vw, 1.5rem) clamp(.75rem, 2vw, 1.5rem);
     }
   }
+
+  &-agent-nav {
+    align-items: center;
+    color: #fff;
+    display: grid;
+    flex: 0 0 auto;
+    grid-template-columns: 1fr auto 1fr;
+    min-height: 4.75rem;
+    width: min(72rem, 100%);
+  }
+
+  &-agent-back {
+    justify-self: start;
+    letter-spacing: 0;
+    text-transform: none;
+  }
+
+  &-agent-context {
+    align-items: center;
+    display: flex;
+    font-size: .74rem;
+    font-weight: 700;
+    gap: .55rem;
+    letter-spacing: .08em;
+    opacity: .8;
+    text-transform: uppercase;
+  }
+
+  &-agent-mark {
+    align-items: center;
+    background: rgba(255, 255, 255, .08);
+    border: 1px solid rgba(255, 255, 255, .13);
+    border-radius: .65rem;
+    display: flex;
+    height: 2rem;
+    justify-content: center;
+    width: 2rem;
+  }
+
+  &-agent-close { justify-self: end; }
 
   &-controls {
     align-items: center;
@@ -663,7 +744,7 @@ export default defineComponent({
   &--ask .inline-agent {
     box-sizing: border-box;
     flex: 1 1 auto;
-    max-width: 64rem;
+    max-width: 72rem;
     min-height: 0;
     padding: 0;
   }
@@ -676,7 +757,7 @@ export default defineComponent({
   @media #{map-get($display-breakpoints, 'sm-and-down')} {
     &-container { padding-inline: .5rem; }
     &-container--ask { padding: 0; }
-    &--ask &-controls { padding-inline: .75rem; }
+    &-agent-nav { min-height: 4.25rem; padding-inline: .5rem; }
     &-scope { align-items: flex-start; flex-direction: column; gap: .75rem; }
     &-scope-actions { justify-content: flex-start; }
     &-content { padding: .75rem; }
@@ -691,6 +772,14 @@ export default defineComponent({
     &-item { padding-inline: .2rem; }
     &-item-chevron { display: none; }
     &-item-mark { height: 2.35rem; width: 2.35rem; }
+    &-agent-context span { display: none; }
+  }
+}
+
+@keyframes agentWorkspaceReveal {
+  from {
+    opacity: 0;
+    transform: scale(.992);
   }
 }
 

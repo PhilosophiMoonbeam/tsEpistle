@@ -18,7 +18,6 @@
           @keyup.enter='searchEnter($event)'
           @keyup.esc='searchClose'
           @focus='searchFocus'
-          @blur='searchBlur'
           @keyup.down='searchMove(`down`)'
           @keyup.up='searchMove(`up`)'
           autocomplete='off'
@@ -56,7 +55,6 @@
                 @keyup.enter='searchEnter($event)'
                 @keyup.esc='searchClose'
                 @focus='searchFocus'
-                @blur='searchBlur'
                 @keyup.down='searchMove(`down`)'
                 @keyup.up='searchMove(`up`)'
                 autocomplete='off'
@@ -407,13 +405,9 @@ export default defineComponent({
     searchFocus () {
       this.searchIsFocused = true
     },
-    searchBlur () {
-      _.delay(() => {
-        if (this.searchMode !== 'ask') this.searchIsFocused = false
-      }, 100)
-    },
     searchClose () {
       this.search = ''
+      this.searchMode = 'search'
       this.searchIsFocused = false
     },
     async focusSearchField(): Promise<void> {
@@ -432,8 +426,14 @@ export default defineComponent({
       if (!(event.ctrlKey || event.metaKey) || !event.shiftKey || event.key.toLowerCase() !== 'a') return
       if (!siteConfig.agentsEnabled || !this.isAuthenticated || !this.permissions.some(permission => permission === 'use:agents' || permission === 'manage:system')) return
       event.preventDefault()
-      this.searchMode = this.searchMode === 'ask' ? 'search' : 'ask'
-      void this.focusSearchField()
+      if (this.searchMode === 'ask') {
+        this.searchMode = 'search'
+        void this.focusSearchField()
+        return
+      }
+      this.searchIsShown = true
+      this.searchIsFocused = true
+      this.searchMode = 'ask'
     },
     searchEnter (event: KeyboardEvent) {
       if ((event.ctrlKey || event.metaKey) && siteConfig.agentsEnabled && this.isAuthenticated && this.permissions.some(permission => permission === 'use:agents' || permission === 'manage:system')) {

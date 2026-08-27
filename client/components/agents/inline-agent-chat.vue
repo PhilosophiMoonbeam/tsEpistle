@@ -148,6 +148,7 @@
 
       <footer class="inline-agent__composer">
         <AgentComposer
+          ref="composer"
           :sending="sending"
           :can-stop="Boolean(activeRun?.canCancel)"
           :disabled="!providerAvailable || loading || !thread || Boolean(activeRun)"
@@ -214,6 +215,7 @@ const props = defineProps<{
 const agents = useAgentsStore()
 const { connection, decidingApprovalId, error, loading, profiles, sending, sessions, skills, thread } = storeToRefs(agents)
 const transcript = ref<HTMLElement | null>(null)
+const composer = ref<{ focusInput: () => Promise<void> } | null>(null)
 const approvalJumpVisible = ref(false)
 const skillManagerOpen = ref(false)
 const resetHistoryOpen = ref(false)
@@ -254,6 +256,11 @@ const ensureInitialized = (): Promise<void> => {
     if (!agents.thread) initialization = null
   })
   return pending
+}
+const focusComposer = async (): Promise<void> => {
+  await ensureInitialized()
+  await nextTick()
+  await composer.value?.focusInput()
 }
 
 const sendPrompt = async (content: string, invokedSkillVersionIds: readonly string[] = []): Promise<boolean> => {
@@ -357,7 +364,7 @@ watch(
 )
 
 onMounted(() => { void ensureInitialized() })
-defineExpose({ sendPrompt, focusConversation })
+defineExpose({ sendPrompt, focusComposer, focusConversation })
 </script>
 
 <style scoped>

@@ -188,6 +188,10 @@ const resizeInput = (): void => {
   textarea.style.height = `${height}px`
   textarea.style.overflowY = contentHeight > maxHeight ? 'auto' : 'hidden'
 }
+const focusInput = async (): Promise<void> => {
+  await nextTick()
+  messageInput.value?.focus()
+}
 const togglePreference = (versionId: string): void => {
   if (props.disabled) return
   const skillIds = props.preferredSkills.map(skill => skill.skillId)
@@ -277,6 +281,7 @@ const submit = (): void => {
   selectedSkillIds.value = []
   emit('send', content, invokedSkillVersionIds)
 }
+defineExpose({ focusInput })
 onMounted(() => {
   resizeInput()
   window.addEventListener('resize', resizeInput)
