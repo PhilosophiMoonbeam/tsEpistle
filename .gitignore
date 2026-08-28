@@ -1,6 +1,7 @@
 # Logs
 logs
 *.log
+*.tmp
 /logs
 
 # Deployment builds
