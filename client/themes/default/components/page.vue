@@ -1717,12 +1717,14 @@ export default defineComponent({
 
 .page-gutter-ornament {
   position: absolute;
-  inset-block-start: 2rem;
+  inset-block-start: 50%;
   z-index: 0;
   display: none;
+  container-type: size;
   width: clamp(4.5rem, calc((100% - 920px) / 2 - 1rem), 15rem);
-  height: min(32rem, calc(100% - 4rem));
+  height: min(calc(100% - 4rem), max(28rem, 68%));
   opacity: .78;
+  transform: translateY(-50%);
 
   &--start {
     inset-inline-start: .35rem;
@@ -1730,7 +1732,7 @@ export default defineComponent({
 
   &--end {
     inset-inline-end: .35rem;
-    transform: scaleX(-1);
+    transform: translateY(-50%) scaleX(-1);
   }
 }
 
