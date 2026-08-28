@@ -19,6 +19,7 @@ export interface AxHarnessFunction {
 }
 
 export interface AxActionSession {
+  readonly authoritySha256: string | null
   readonly functions: readonly AxHarnessFunction[]
   invoke(name: string, input: unknown, signal: AbortSignal, actionCallId: string): Promise<unknown>
   snapshot(signal: AbortSignal): Promise<Readonly<Record<string, unknown>>>
@@ -97,6 +98,7 @@ export class AxSessionHarness {
       if (closed) throw new AgentRepositoryError('ACTION_SESSION_CLOSED', 'Action session is closed', 409)
     }
     return {
+      authoritySha256: null,
       functions: actions.map(action => ({
         name: action.definition.descriptor.name,
         title: action.definition.descriptor.title,

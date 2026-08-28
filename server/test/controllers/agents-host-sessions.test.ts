@@ -9,6 +9,7 @@ import createKnex, { type Knex } from 'knex'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import createAgentsHostController from '../../controllers/agents-host.ts'
 import { AgentProductRuntime, type AgentEngine } from '../../agents/runtime.ts'
+import { up as addAgentTaskLedger } from '../../db/migrations/2.5.156.ts'
 
 interface TestSessionState { agentCsrfToken?: string }
 
@@ -30,6 +31,7 @@ const createTables = async (db: Knex): Promise<void> => {
   await db.schema.createTable('agentRuns', table => {
     table.uuid('id').primary(); table.uuid('sessionId').notNullable(); table.uuid('userMessageId').notNullable(); table.uuid('assistantMessageId').notNullable(); table.integer('ownerId').notNullable(); table.uuid('clientRequestId').notNullable(); table.string('clientRequestSha256').notNullable(); table.string('profileResolutionSha256').notNullable(); table.string('status').notNullable(); table.integer('attempts').notNullable(); table.integer('maxAttempts').notNullable(); table.integer('eventSequence').notNullable(); table.dateTime('availableAt').notNullable(); table.string('leaseOwner').nullable(); table.uuid('leaseToken').nullable(); table.dateTime('leaseExpiresAt').nullable(); table.dateTime('cancelRequestedAt').nullable(); table.boolean('sideEffectsStarted').notNullable(); table.uuid('providerProfileVersionId').notNullable(); table.string('transportKind').notNullable(); table.string('model').notNullable(); table.string('executionMode').notNullable(); table.integer('profilePolicyVersion').notNullable(); table.integer('defaultGeneration').notNullable(); table.string('capabilityRevision').notNullable(); table.string('pricingRevision').notNullable(); table.integer('promptVersion').notNullable(); table.integer('inputTokens').notNullable(); table.integer('outputTokens').notNullable(); table.integer('estimatedCostMicros').nullable(); table.string('errorCode').nullable(); table.text('errorMessage').nullable(); table.dateTime('queuedAt').notNullable(); table.dateTime('startedAt').nullable(); table.dateTime('updatedAt').notNullable(); table.dateTime('completedAt').nullable()
   })
+  await addAgentTaskLedger(db)
   await db.schema.createTable('agentEvents', table => {
     table.uuid('id').primary(); table.uuid('runId').notNullable(); table.integer('sequence').notNullable(); table.string('type').notNullable(); table.integer('attempt').notNullable(); table.integer('schemaVersion').notNullable(); table.string('dataSha256').notNullable(); table.text('data').notNullable(); table.dateTime('createdAt').notNullable()
   })

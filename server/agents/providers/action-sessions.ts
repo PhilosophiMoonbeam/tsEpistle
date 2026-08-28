@@ -1,5 +1,7 @@
+import { createHash } from 'node:crypto'
 import type { Knex } from 'knex'
 import type { AgentFeatureFlags, RequestAuthContext } from '../../../shared/agents/contracts.ts'
+import { canonicalJson } from '../../helpers/canonical-json.ts'
 import { ActionKernel, type ActionAdmissionSnapshot } from '../actions/kernel.ts'
 import type { AgentEngineRequest } from '../runtime.ts'
 import { markAgentRunSideEffectsStarted } from '../coordinator.ts'
@@ -44,6 +46,7 @@ export class KernelActionSessionProvider implements AgentActionSessionProvider {
   }
 
   async open(request: AgentEngineRequest): Promise<AxActionSession | null> {
+    if (request.purpose === 'subagent' && request.actionAllowlist === undefined) throw new AgentRepositoryError('INVALID_SUBAGENT_AUTHORITY', 'Subagent action authority must be explicitly bounded', 500)
     const admission = await this.#dependencies.resolveAdmission(request)
     const offered = this.#dependencies.kernel.offer(authFor(request), admission, request.run.id)
     if (offered.length === 0) return null
@@ -60,10 +63,15 @@ export class KernelActionSessionProvider implements AgentActionSessionProvider {
         fenceSideEffect: () => markAgentRunSideEffectsStarted(this.#dependencies.knex, request.run)
       })
     })
-    return harness.open(offered, decodeSnapshot(row.runtimeStateCiphertext))
+    const session = await harness.open(offered, request.purpose === 'subagent' ? undefined : decodeSnapshot(row.runtimeStateCiphertext))
+    const authoritySha256 = createHash('sha256').update(canonicalJson(offered
+      .map(action => ({ actionName: action.definition.descriptor.name, authoritySha256: action.authority.authoritySha256 }))
+      .sort((left, right) => left.actionName.localeCompare(right.actionName)))).digest('hex')
+    return { ...session, authoritySha256 }
   }
 
   async saveSnapshot(request: AgentEngineRequest, snapshot: Readonly<Record<string, unknown>>): Promise<void> {
+    if (request.purpose === 'subagent') return
     const encoded = JSON.stringify(snapshot)
     if (Buffer.byteLength(encoded, 'utf8') > 256 * 1_024) throw new AgentRepositoryError('RUNTIME_SNAPSHOT_TOO_LARGE', 'Runtime snapshot exceeds its size limit', 500)
     const changed = await this.#dependencies.knex('agentRuns').where({ id: request.run.id, ownerId: request.run.ownerId, leaseOwner: request.run.leaseOwner, leaseToken: request.run.leaseToken }).whereIn('status', ['running', 'awaiting_approval']).whereNull('cancelRequestedAt').update({ runtimeStateCiphertext: Buffer.from(encoded), updatedAt: new Date() })
@@ -74,6 +82,7 @@ export class KernelActionSessionProvider implements AgentActionSessionProvider {
 export const agentFeatureFlags = (value: Partial<AgentFeatureFlags>): AgentFeatureFlags => ({
   'agents.enabled': value['agents.enabled'] ?? false,
   'agents.provider.enabled': value['agents.provider.enabled'] ?? false,
+  'agents.orchestration.enabled': value['agents.orchestration.enabled'] ?? false,
   'agents.skills.enabled': value['agents.skills.enabled'] ?? false,
   'agents.browser.enabled': value['agents.browser.enabled'] ?? false,
   'agents.proposals.enabled': value['agents.proposals.enabled'] ?? false,

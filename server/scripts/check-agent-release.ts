@@ -29,7 +29,7 @@ const agents = data.defaults?.config?.agents
 if (!agents) failures.push('server/app/data.yml does not define defaults.config.agents')
 else {
   const flagPaths = [
-    'enabled', 'provider.enabled', 'skills.enabled', 'browser.enabled', 'proposals.enabled', 'writes.enabled',
+    'enabled', 'provider.enabled', 'orchestration.enabled', 'skills.enabled', 'browser.enabled', 'proposals.enabled', 'writes.enabled',
     'writes.create.enabled', 'writes.patch.enabled', 'writes.move.enabled', 'writes.restore.enabled', 'writes.delete.enabled', 'mcp.enabled'
   ]
   for (const path of flagPaths) {

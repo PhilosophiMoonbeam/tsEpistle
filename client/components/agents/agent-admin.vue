@@ -22,6 +22,14 @@
             <div class="policy-grid">
               <v-card title="Capabilities" variant="outlined"><v-list density="compact"><v-list-item v-for="item in capabilityRows" :key="item.label" :title="item.label"><template #append><v-chip :color="item.enabled ? 'success' : 'default'" size="small">{{ item.enabled ? 'Enabled' : 'Disabled' }}</v-chip></template></v-list-item></v-list></v-card>
               <v-card title="Capacity" variant="outlined"><v-list density="compact"><v-list-item title="Global concurrent runs" :subtitle="String(runtime.quotas.globalConcurrency)"/><v-list-item title="Per-user concurrent runs" :subtitle="String(runtime.quotas.perUserConcurrency)"/><v-list-item title="SSE connections per user" :subtitle="String(runtime.quotas.maximumSseConnectionsPerUser)"/><v-list-item title="Coordinator reconciliation" :subtitle="`${runtime.quotas.pollingMilliseconds} ms`"/></v-list></v-card>
+              <v-card title="Specialist research" variant="outlined">
+                <v-list density="compact">
+                  <v-list-item title="Concurrent specialists" :subtitle="String(runtime.orchestration.maxConcurrentChildren)" />
+                  <v-list-item title="Tasks per response" :subtitle="String(runtime.orchestration.maxChildren)" />
+                  <v-list-item title="Deadline per specialist" :subtitle="`${runtime.orchestration.childTimeoutMilliseconds / 1000} seconds`" />
+                  <v-list-item title="Aggregate specialist tokens" :subtitle="String(runtime.orchestration.maxAggregateChildTokens)" />
+                </v-list>
+              </v-card>
               <v-card title="Retention" variant="outlined"><v-list density="compact"><v-list-item title="Temporary sessions" :subtitle="`${runtime.retention.temporarySessionHours} hours`"/><v-list-item title="MCP proposal content" :subtitle="`${runtime.retention.mcpContentDays} days`"/><v-list-item title="Audit ledger" :subtitle="`${runtime.retention.auditDays} days`"/><v-list-item title="Maintenance batch" :subtitle="String(runtime.retention.maintenanceBatchSize)"/></v-list></v-card>
               <v-card title="Metrics and health" variant="outlined"><v-card-text>Agent run, proposal, artifact, and usage gauges are exported through the existing metrics endpoint. Provider, browser-worker, and MCP failures do not affect <code>/healthz</code>.</v-card-text></v-card>
             </div>
@@ -202,7 +210,32 @@ import {
 } from '../../helpers/agent-provider-protocols.ts'
 import SkillAdmin from './skill-admin.vue'
 
-interface RuntimePolicy { enabled: boolean; providerEnabled: boolean; skillsEnabled: boolean; browserEnabled: boolean; proposalsEnabled: boolean; writes: { enabled: boolean; create: boolean; patch: boolean; move: boolean; restore: boolean; delete: boolean }; mcpEnabled: boolean; quotas: { globalConcurrency: number; perUserConcurrency: number; pollingMilliseconds: number; maximumSseConnectionsPerUser: number }; retention: { temporarySessionHours: number; mcpContentDays: number; auditDays: number; maintenanceBatchSize: number } }
+interface RuntimePolicy {
+  enabled: boolean
+  providerEnabled: boolean
+  orchestrationEnabled: boolean
+  skillsEnabled: boolean
+  browserEnabled: boolean
+  proposalsEnabled: boolean
+  writes: { enabled: boolean; create: boolean; patch: boolean; move: boolean; restore: boolean; delete: boolean }
+  mcpEnabled: boolean
+  quotas: { globalConcurrency: number; perUserConcurrency: number; pollingMilliseconds: number; maximumSseConnectionsPerUser: number }
+  orchestration: {
+    enabled: boolean
+    maxConcurrentChildren: number
+    maxChildren: number
+    plannerTurns: number
+    childTurns: number
+    childToolCalls: number
+    plannerTimeoutMilliseconds: number
+    childTimeoutMilliseconds: number
+    plannerMaxOutputTokens: number
+    childMaxOutputTokens: number
+    maxAggregateChildTokens: number
+    maxAggregateChildOutputCharacters: number
+  }
+  retention: { temporarySessionHours: number; mcpContentDays: number; auditDays: number; maintenanceBatchSize: number }
+}
 interface ConnectionCheck { status: 'passed' | 'failed'; errorCode: string | null; message: string | null; completedAt: string }
 interface Profile { id: string; displayName: string; status: 'enabled' | 'disabled'; isGlobalDefault: boolean; exposureMode: 'all_agent_users' | 'groups'; groupIds: number[]; conformed: boolean; connectionCheck: ConnectionCheck | null; transportKind: AgentProviderTransport; model: string; utilityModel: string | null; baseUrl: string; destinationHost: string; authMode: AgentProviderAuthMode; secretConfigured: boolean; adapterConfig: { timeoutMs: number; maxRetries: number; additionalHeaders: Record<string, string>; agentReasoningEffort?: AgentReasoningEffort; utilityReasoningEffort?: AgentReasoningEffort }; capabilities: { streaming: boolean; toolCalling: AgentProviderToolCalling; parallelToolCalls: boolean; structuredOutput: AgentProviderStructuredOutput; usage: AgentProviderUsageMode; cancellation: boolean; maxContextTokens: number; maxOutputTokens: number }; policies: { allowedModes: string[]; dailyTokens: number; dailyCostMicros: number; reservationTokens: number; reservationCostMicros: number; reservationMilliseconds: number; promptVersion: number; maxAttempts: number } }
 interface BrowserTarget { id: string; canonicalUrl: string; enabled: boolean; policySha256: string }
@@ -305,7 +338,19 @@ const selectToolCalling = () => {
 }
 
 const capabilityRows = computed(() => runtime.value ? [
-  { label: 'Inline agent', enabled: runtime.value.enabled }, { label: 'Provider inference', enabled: runtime.value.providerEnabled }, { label: 'Approved skills', enabled: runtime.value.skillsEnabled }, { label: 'Isolated browser', enabled: runtime.value.browserEnabled }, { label: 'Proposals', enabled: runtime.value.proposalsEnabled }, { label: 'All writes', enabled: runtime.value.writes.enabled }, { label: 'Create', enabled: runtime.value.writes.create }, { label: 'Patch', enabled: runtime.value.writes.patch }, { label: 'Move', enabled: runtime.value.writes.move }, { label: 'Restore', enabled: runtime.value.writes.restore }, { label: 'Delete', enabled: runtime.value.writes.delete }, { label: 'MCP', enabled: runtime.value.mcpEnabled }
+  { label: 'Inline agent', enabled: runtime.value.enabled },
+  { label: 'Provider inference', enabled: runtime.value.providerEnabled },
+  { label: 'Specialist research', enabled: runtime.value.orchestrationEnabled },
+  { label: 'Approved skills', enabled: runtime.value.skillsEnabled },
+  { label: 'Isolated browser', enabled: runtime.value.browserEnabled },
+  { label: 'Proposals', enabled: runtime.value.proposalsEnabled },
+  { label: 'All writes', enabled: runtime.value.writes.enabled },
+  { label: 'Create', enabled: runtime.value.writes.create },
+  { label: 'Patch', enabled: runtime.value.writes.patch },
+  { label: 'Move', enabled: runtime.value.writes.move },
+  { label: 'Restore', enabled: runtime.value.writes.restore },
+  { label: 'Delete', enabled: runtime.value.writes.delete },
+  { label: 'MCP', enabled: runtime.value.mcpEnabled }
 ] : [])
 
 const request = async <T>(path: string, init: RequestInit = {}): Promise<T> => {

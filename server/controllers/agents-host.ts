@@ -16,6 +16,7 @@ import { BrowserTargetRegistry } from '../agents/browser/registry.ts'
 import { getMcpProposalForApproval, type ProposalRecord } from '../agents/proposals/repository.ts'
 import { requestAgentHistoryReset, requestAgentSessionDeletion } from '../agents/maintenance.ts'
 import type { AgentOperationalLimits } from '../agents/config.ts'
+import { DEFAULT_AGENT_ORCHESTRATION_LIMITS } from '../agents/orchestration.ts'
 import { exportAgentSessionDiagnostics } from '../agents/diagnostics.ts'
 import { AgentMemoryRepository, encodeAgentMemorySnapshot } from '../agents/memory.ts'
 import {
@@ -51,6 +52,7 @@ interface AgentHostWiki {
     readonly agents: {
       readonly enabled: boolean
       readonly provider: { readonly enabled: boolean; readonly globalConcurrency?: number; readonly perUserConcurrency?: number; readonly pollingMilliseconds?: number }
+      readonly orchestration?: { readonly enabled: boolean }
       readonly retention: { readonly temporarySessionHours: number; readonly savedSessionDays?: number; readonly mcpContentDays?: number; readonly auditDays?: number; readonly maintenanceBatchSize?: number }
       readonly skills: { readonly enabled: boolean; readonly namespace: string }
       readonly browser?: { readonly enabled: boolean }
@@ -540,6 +542,7 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
       runtime: {
         enabled: config.enabled,
         providerEnabled: config.provider.enabled,
+        orchestrationEnabled: config.orchestration?.enabled ?? false,
         skillsEnabled: config.skills.enabled,
         browserEnabled: config.browser?.enabled ?? false,
         proposalsEnabled: config.proposals.enabled,
@@ -558,6 +561,7 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
           pollingMilliseconds: wiki.agentLimits?.provider.pollingMilliseconds ?? 1_000,
           maximumSseConnectionsPerUser: wiki.agentLimits?.sse.maximumConnectionsPerUser ?? 3
         },
+        orchestration: wiki.agentLimits?.orchestration ?? DEFAULT_AGENT_ORCHESTRATION_LIMITS,
         retention: {
           temporarySessionHours: wiki.agentLimits?.retention.temporarySessionHours ?? 24,
           savedSessionDays: wiki.agentLimits?.retention.savedSessionDays ?? 90,

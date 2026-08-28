@@ -35,6 +35,10 @@
             </span>
           </header>
           <div class="agent-message__surface">
+            <AgentTaskProgress
+              v-if="message.role === 'assistant' && tasksForRun(message.runId).length"
+              :tasks="tasksForRun(message.runId)"
+            />
             <AgentMarkdown
               :content="message.content || (message.status === 'streaming' ? '…' : '')"
               :citations="message.citations"
@@ -150,8 +154,9 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import type { AgentCitation, AgentMessageRole, AgentMessageStatus, AgentPageActionLink, AgentToolCallView, AgentToolState, AgentThreadState } from '../../../shared/agents/contracts.ts'
+import type { AgentCitation, AgentMessageRole, AgentMessageStatus, AgentPageActionLink, AgentTaskView, AgentToolCallView, AgentToolState, AgentThreadState } from '../../../shared/agents/contracts.ts'
 import AgentMarkdown from './agent-markdown.vue'
+import AgentTaskProgress from './agent-task-progress.vue'
 import AgentToolCard from './agent-tool-card.vue'
 import {
   agentActivityLabel,
@@ -168,6 +173,7 @@ const groupedTools = computed(() => groupAgentToolsByRun(props.thread.tools, pro
 const activityForRun = (runId: string | null): readonly AgentToolCallView[] => runId ? groupedTools.value.get(runId)?.activity ?? [] : []
 const proposalToolsForRun = (runId: string | null): readonly AgentProposalTool[] => runId ? groupedTools.value.get(runId)?.proposals ?? [] : []
 const pageLinksForRun = (runId: string | null): readonly AgentPageActionLink[] => agentAppliedPageLinks(proposalToolsForRun(runId))
+const tasksForRun = (runId: string | null): readonly AgentTaskView[] => runId ? props.thread.tasks.filter(task => task.runId === runId) : []
 const activityLabel = agentActivityLabel
 const citationGroups = groupAgentCitations
 const messageStatusLabels: Record<Exclude<AgentMessageStatus, 'complete'>, string> = {
@@ -187,7 +193,11 @@ const liveSummary = computed(() => {
   const run = props.thread.session.currentRun
   if (props.connection === 'reconnecting') return 'Connection interrupted. Reconnecting.'
   if (!run) return 'Agent is ready.'
-  if (run.status === 'running') return 'Agent response is in progress.'
+  if (run.status === 'running') {
+    const tasks = tasksForRun(run.id)
+    const finished = tasks.filter(task => task.status === 'blocked' || task.status === 'completed' || task.status === 'failed' || task.status === 'cancelled').length
+    return tasks.length === 0 ? 'Agent response is in progress.' : `Agent response is in progress. ${finished} of ${tasks.length} research tasks finished.`
+  }
   if (run.status === 'awaiting_approval') return 'An action is awaiting approval.'
   return `Agent run ${run.status.replace('_', ' ')}.`
 })

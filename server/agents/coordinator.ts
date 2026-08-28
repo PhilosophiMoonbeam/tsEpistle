@@ -5,7 +5,7 @@ import { canonicalJson } from '../helpers/canonical-json.ts'
 import { AgentRepositoryError } from './repository.ts'
 
 const ACTIVE_STATUSES: readonly AgentRunStatus[] = ['queued', 'running', 'awaiting_approval']
-const TERMINAL_STATUSES: readonly AgentRunStatus[] = ['succeeded', 'failed', 'cancelled', 'recovery_required']
+const TERMINAL_STATUSES: readonly AgentRunStatus[] = ['succeeded', 'partial', 'failed', 'cancelled', 'recovery_required']
 const sha256 = (value: string): string => createHash('sha256').update(value).digest('hex')
 const dateValue = (value: Date | string | null): number | null => value === null ? null : new Date(value).valueOf()
 const isPostgres = (knex: Knex | Knex.Transaction): boolean => knex.client.config.client === 'pg' || knex.client.config.client === 'postgresql'
@@ -408,7 +408,7 @@ const recordRunCancelled = async (
 
 export const transitionAgentRun = async (knex: Knex, input: TransitionAgentRunInput): Promise<AgentRunRecord> => knex.transaction(async transaction => {
   const allowed = input.from === 'running'
-    ? ['awaiting_approval', 'succeeded', 'failed', 'cancelled', 'queued', 'recovery_required']
+    ? ['awaiting_approval', 'succeeded', 'partial', 'failed', 'cancelled', 'queued', 'recovery_required']
     : ['running', 'cancelled', 'recovery_required']
   if (!allowed.includes(input.to)) throw new AgentRepositoryError('INVALID_RUN_TRANSITION', 'Agent run transition is invalid', 400)
   const now = input.now ?? new Date()
@@ -454,7 +454,7 @@ export const requestAgentRunCancellation = async (knex: Knex, ownerId: number, r
 })
 
 export interface AgentRunHandlerResult {
-  readonly status: 'succeeded' | 'failed' | 'awaiting_approval' | 'recovery_required'
+  readonly status: 'succeeded' | 'partial' | 'failed' | 'awaiting_approval' | 'recovery_required'
   readonly errorCode?: string
   readonly errorMessage?: string
 }

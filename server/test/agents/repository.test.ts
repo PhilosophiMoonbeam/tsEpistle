@@ -25,6 +25,8 @@ import {
   transitionAgentRun
 } from '../../agents/coordinator.ts'
 import { AgentProductRuntime, type AgentEngine } from '../../agents/runtime.ts'
+import { DEFAULT_AGENT_ORCHESTRATION_LIMITS } from '../../agents/orchestration.ts'
+import { up as addAgentTaskLedger } from '../../db/migrations/2.5.156.ts'
 
 const sessionId = '00000000-0000-4000-8000-000000000001'
 const runId = '00000000-0000-4000-8000-000000000002'
@@ -114,6 +116,7 @@ const createTables = async (knex: Knex): Promise<void> => {
     table.dateTime('updatedAt').notNullable()
     table.dateTime('completedAt').nullable()
   })
+  await addAgentTaskLedger(knex)
   await knex.schema.createTable('agentEvents', table => {
     table.uuid('id').primary()
     table.uuid('runId').notNullable()
@@ -674,6 +677,98 @@ describe('durable agent repositories', () => {
     await runtime.shutdown()
   })
 
+
+  it('executes a durable specialist plan and gates root completion on every task', async () => {
+    const now = new Date('2026-08-17T00:00:00.000Z')
+    await knex('agentMessages').where({ id: userMessageId }).update({ content: 'Compare the alpha and beta deployment guides.' })
+    await knex('agentRuns').where({ id: runId }).update({
+      status: 'queued',
+      attempts: 0,
+      leaseOwner: null,
+      leaseToken: null,
+      leaseExpiresAt: null,
+      availableAt: now,
+      completedAt: null
+    })
+    await reserveAgentRunQuota(knex, runId, 7, { tokens: 10_000, costMicros: 1_000 }, { dailyTokens: 20_000, dailyCostMicros: 2_000 }, new Date('2026-08-17T00:10:00.000Z'), now)
+    const engine: AgentEngine = {
+      async execute(request, sink) {
+        if (request.purpose === 'planner') {
+          await sink.text(JSON.stringify({ tasks: [
+            { kind: 'source_scout', title: 'Review alpha', question: 'What does alpha require?', sourceScope: ['alpha'], requiredEvidenceCount: 1 },
+            { kind: 'source_scout', title: 'Review beta', question: 'What does beta require?', sourceScope: ['beta'], requiredEvidenceCount: 1 }
+          ] }))
+          return { inputTokens: 3, outputTokens: 2, costMicros: 0 }
+        }
+        if (request.purpose === 'subagent') {
+          if (!request.task || !request.subagentRunId) throw new Error('missing child envelope')
+          const alpha = request.task.title.includes('alpha')
+          const pageId = alpha ? 1 : 2
+          const evidenceId = `page:${pageId}`
+          const revision = `rev-${pageId}`
+          const claim = alpha ? 'Alpha requires review.' : 'Beta requires audit.'
+          await sink.event('tool.started', { actionCallId: `read-${pageId}`, actionName: 'pages.get', title: 'Read page', risk: 'read', turn: 1, input: JSON.stringify({ id: pageId }) })
+          await sink.event('tool.completed', {
+            actionCallId: `read-${pageId}`,
+            actionName: 'pages.get',
+            result: JSON.stringify({
+              id: pageId,
+              sourceRevision: revision,
+              content: claim,
+              citation: { evidenceId, label: alpha ? 'Alpha' : 'Beta', href: alpha ? '/en/alpha' : '/en/beta' },
+              citationSections: []
+            })
+          })
+          await sink.event('model.turn', { turn: 1, outcome: 'answer_accepted', inputTokens: 5, outputTokens: 3, content: claim, contentTruncated: false, actionCallIds: [] })
+          await sink.text(JSON.stringify({
+            taskId: request.task.id,
+            outcome: 'completed',
+            claims: [{ text: `${claim} [[cite:${evidenceId}]]`, evidenceIds: [evidenceId], sourceRevisionIds: [revision], confidence: 'high' }],
+            conflicts: [],
+            unanswered: [],
+            recommendedFollowups: []
+          }))
+          return { inputTokens: 5, outputTokens: 3, costMicros: 0, authoritySha256: 'c'.repeat(64) }
+        }
+        expect(request.research).toMatchObject({ packets: [{ packet: { outcome: 'completed' } }, { packet: { outcome: 'completed' } }] })
+        expect(request.research?.evidenceSeeds).toHaveLength(2)
+        await sink.event('model.turn', { turn: 1, outcome: 'answer_accepted', inputTokens: 10, outputTokens: 5, content: 'Alpha and beta synthesis', contentTruncated: false, actionCallIds: [] })
+        await sink.text('Alpha requires review. [[cite:page:1]] Beta requires audit. [[cite:page:2]]')
+        return {
+          inputTokens: 10,
+          outputTokens: 5,
+          costMicros: 0,
+          citations: [
+            { evidenceId: 'page:1', kind: 'page', label: 'Alpha', href: '/en/alpha' },
+            { evidenceId: 'page:2', kind: 'page', label: 'Beta', href: '/en/beta' }
+          ]
+        }
+      }
+    }
+    const runtime = new AgentProductRuntime(knex, { async resolve() { throw new Error('not used') } }, engine, {
+      workerId: 'orchestration-test',
+      globalConcurrency: 1,
+      perUserConcurrency: 1,
+      orchestration: { ...DEFAULT_AGENT_ORCHESTRATION_LIMITS, enabled: true }
+    })
+
+    await expect(runtime.runOnce()).resolves.toBe(true)
+    await expect(knex('agentRuns').where({ id: runId }).first('status', 'inputTokens', 'outputTokens')).resolves.toEqual({ status: 'succeeded', inputTokens: 23, outputTokens: 13 })
+    expect((await knex('agentRunTasks').where({ runId }).orderBy('ordinal').select('status', 'outcome', 'evidenceCount', 'authoritySha256'))).toEqual([
+      { status: 'completed', outcome: 'completed', evidenceCount: 1, authoritySha256: 'c'.repeat(64) },
+      { status: 'completed', outcome: 'completed', evidenceCount: 1, authoritySha256: 'c'.repeat(64) }
+    ])
+    await expect(knex('agentEvents').where({ runId }).orderBy('sequence').pluck('type')).resolves.toEqual(expect.arrayContaining([
+      'task.planCreated',
+      'task.created',
+      'subagent.started',
+      'subagent.completed',
+      'run.completed'
+    ]))
+    const thread = await projectAgentThread(knex, 7, sessionId, { profileResolutionToken: () => 'token' })
+    expect(thread.tasks).toHaveLength(2)
+    await runtime.shutdown()
+  })
   it('claims, fences, heartbeats, cancels, and refuses replay after side effects', async () => {
     const now = new Date('2026-08-17T00:02:00.000Z')
     const claim = await claimAgentRun(knex, { workerId: 'worker-b', globalConcurrency: 4, perUserConcurrency: 1, now })

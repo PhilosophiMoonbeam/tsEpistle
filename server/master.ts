@@ -43,7 +43,7 @@ import { AgentUtilityModel } from './agents/providers/utility.ts'
 import { agentCsrfToken } from './agents/csrf.ts'
 import { BrowserWorkerClient } from './agents/browser/client.ts'
 import { createWikiMcpController } from './agents/mcp.ts'
-import { parseAgentOperationalLimits } from './agents/config.ts'
+import { parseAgentOperationalLimits, type AgentOperationalLimits } from './agents/config.ts'
 import { loadWikiAgentUser } from './agents/providers/wiki-actions.ts'
 import pageOperations from './operations/pages.ts'
 import { PageKnowledgeLifecycle } from './knowledge/lifecycle.ts'
@@ -57,6 +57,7 @@ interface MasterConfig extends Record<string, unknown> {
     enabled: boolean
     mcp: { enabled: boolean }
     provider: { enabled: boolean; globalConcurrency?: number; perUserConcurrency?: number; pollingMilliseconds?: number }
+    orchestration: AgentOperationalLimits['orchestration']
     retention: { temporarySessionHours: number; savedSessionDays: number; mcpContentDays: number; auditDays: number; maintenanceBatchSize: number }
     skills: { enabled: boolean; namespace: string }
     browser: { enabled: boolean }
@@ -274,6 +275,7 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
     const actionSessions = createWikiActionSessionProvider(wiki.models.knex, {
       enabled: wiki.config.agents.enabled,
       providerEnabled: wiki.config.agents.provider.enabled,
+      orchestrationEnabled: wiki.config.agents.orchestration.enabled,
       skillsEnabled: wiki.config.agents.skills.enabled,
       browserEnabled: wiki.config.agents.browser.enabled,
       proposalsEnabled: wiki.config.agents.proposals.enabled,
@@ -292,7 +294,8 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
       workerId: `http-${process.pid}`,
       globalConcurrency: agentLimits.provider.globalConcurrency,
       perUserConcurrency: agentLimits.provider.perUserConcurrency,
-      utilityModel
+      utilityModel,
+      orchestration: agentLimits.orchestration
     })
     wiki.agentRuntime = agentRuntime
     let workerActive = false

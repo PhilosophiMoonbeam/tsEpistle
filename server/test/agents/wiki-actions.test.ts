@@ -15,6 +15,7 @@ const request = (signal: AbortSignal): AgentEngineRequest => ({
 const config = {
   enabled: true,
   providerEnabled: true,
+  orchestrationEnabled: true,
   skillsEnabled: true,
   browserEnabled: false,
   proposalsEnabled: true,
@@ -44,6 +45,7 @@ describe('Wiki action sessions', () => {
         }
       }
     })
+    // Dynamic import is intentional: the page operations module captures the test WIKI global during module initialization.
     const { createWikiActionSessionProvider } = await import('../../agents/providers/wiki-actions.ts')
     const capabilities = {
       streaming: true,
@@ -86,6 +88,7 @@ describe('Wiki action sessions', () => {
         }
       }
     })
+    // Dynamic import is intentional: the page operations module captures the test WIKI global during module initialization.
     const { createWikiActionSessionProvider } = await import('../../agents/providers/wiki-actions.ts')
     const capabilities = {
       streaming: true,
@@ -129,5 +132,51 @@ describe('Wiki action sessions', () => {
     expect(names).not.toContain('pages.search')
     expect(names).not.toContain('pages.preparePatch')
     session?.close()
+  })
+
+  it('intersects specialist actions with the read-only profile and orchestration flag', async () => {
+    const user = { id: 7, isActive: true, groups: [], getGlobalPermissions: async () => ['use:agents', 'read:pages', 'write:pages'] }
+    Reflect.set(globalThis, 'WIKI', {
+      models: {
+        users: {
+          query: () => ({ findById: () => ({ withGraphFetched: () => ({ modifyGraph: async () => user }) }) })
+        }
+      }
+    })
+    const capabilities = {
+      streaming: true,
+      toolCalling: 'native',
+      parallelToolCalls: true,
+      structuredOutput: 'native-json-schema',
+      usage: 'stream',
+      cancellation: true,
+      maxContextTokens: 128_000,
+      maxOutputTokens: 8_192
+    }
+    const knex = ((table: string) => {
+      if (table === 'agentProviderProfileVersions') return { where: () => ({ first: async () => ({ capabilities: JSON.stringify(capabilities) }) }) }
+      if (table === 'agentRunSkills') return { join: () => ({ where: () => ({ select: async () => [] }) }) }
+      if (table === 'agentRuns') return { where: () => ({ first: async () => ({ runtimeStateCiphertext: null }) }) }
+      throw new Error(`Unexpected table: ${table}`)
+    }) as unknown as Knex
+    // Dynamic import is intentional: the page operations module captures the test WIKI global during module initialization.
+    const { createWikiActionSessionProvider } = await import('../../agents/providers/wiki-actions.ts')
+    const childRequest: AgentEngineRequest = {
+      ...request(new AbortController().signal),
+      purpose: 'subagent',
+      subagentRunId: '00000000-0000-4000-8000-000000000008',
+      actionAllowlist: ['pages.search', 'pages.get']
+    }
+
+    const session = await createWikiActionSessionProvider(knex, config).open(childRequest)
+    expect(session?.functions.map(action => action.name)).toEqual(['pages.search', 'pages.get'])
+    expect(session?.authoritySha256).toMatch(/^[a-f0-9]{64}$/u)
+    session?.close()
+
+    await expect(createWikiActionSessionProvider(knex, config).open({
+      ...childRequest,
+      actionAllowlist: ['pages.prepareCreate']
+    })).rejects.toMatchObject({ code: 'INVALID_SUBAGENT_AUTHORITY' })
+    await expect(createWikiActionSessionProvider(knex, { ...config, orchestrationEnabled: false }).open(childRequest)).resolves.toBeNull()
   })
 })

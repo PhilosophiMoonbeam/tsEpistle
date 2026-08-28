@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { createAgentMemory, createAgentThread, createPersonalAgentSkill, deleteAgentSession, getAgentMemories, listAgentProfiles, listPersonalAgentSkills, removePersonalAgentSkill, resetAgentHistory, submitAgentMessage, updateAgentSkillPreferences, updatePersonalAgentSkill } from './agents-api.ts'
+import { createAgentMemory, createAgentThread, createPersonalAgentSkill, deleteAgentSession, getAgentMemories, getAgentThread, listAgentProfiles, listPersonalAgentSkills, removePersonalAgentSkill, resetAgentHistory, submitAgentMessage, updateAgentSkillPreferences, updatePersonalAgentSkill } from './agents-api.ts'
 import { renderSafeMarkdown } from './safe-markdown.ts'
 
 describe('agents client boundary', () => {
@@ -142,6 +142,59 @@ describe('agents client boundary', () => {
     expect(fetcher).toHaveBeenCalledWith(expect.stringContaining('/messages'), expect.objectContaining({ body: JSON.stringify(input) }))
   })
 
+
+  it('accepts partial runs with typed task progress and no child packet exposure', async () => {
+    const now = '2026-08-17T00:00:00.000Z'
+    const sessionId = '00000000-0000-4000-8000-000000000041'
+    const runId = '00000000-0000-4000-8000-000000000042'
+    const task = {
+      id: '00000000-0000-4000-8000-000000000043',
+      runId,
+      kind: 'fact_check',
+      title: 'Verify deployment date',
+      question: 'Which date is supported?',
+      sourceScope: ['operations/deployments'],
+      requiredEvidenceCount: 2,
+      status: 'completed',
+      subagentRunId: '00000000-0000-4000-8000-000000000044',
+      attempt: 1,
+      outcome: 'partial',
+      evidenceCount: 1,
+      errorCode: null,
+      errorMessage: null,
+      createdAt: now,
+      startedAt: now,
+      completedAt: now
+    }
+    const thread = {
+      session: {
+        id: sessionId,
+        title: 'Deployment',
+        retention: 'saved',
+        folderId: null,
+        status: 'active',
+        executionMode: 'agent',
+        version: 1,
+        providerProfileId: null,
+        profileResolutionToken: 'token',
+        skills: [],
+        currentRun: { id: runId, sessionId, status: 'partial', attempt: 1, eventSequence: 8, canCancel: false, createdAt: now, startedAt: now, completedAt: now, errorCode: null, errorMessage: null },
+        createdAt: now,
+        updatedAt: now,
+        lastActivityAt: now,
+        expiresAt: null
+      },
+      messages: [],
+      tools: [],
+      tasks: [task],
+      proposals: [],
+      artifacts: [],
+      suggestions: []
+    }
+    const fetcher = vi.fn(async () => Response.json(thread)) as unknown as typeof fetch
+
+    await expect(getAgentThread(fetcher, 'csrf', sessionId)).resolves.toMatchObject({ tasks: [task] })
+  })
   it('renders Markdown with raw HTML and active URL schemes disabled', () => {
     const rendered = renderSafeMarkdown('[safe](https://wiki.example.test/page) <img src=x onerror=alert(1)> [bad](javascript:alert(1))')
     expect(rendered).toContain('https://wiki.example.test/page')

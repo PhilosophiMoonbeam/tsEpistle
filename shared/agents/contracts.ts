@@ -9,6 +9,7 @@ export type AgentPermissionKey = typeof AGENT_PERMISSION_KEYS[number]
 export const AGENT_FEATURE_FLAG_KEYS = [
   'agents.enabled',
   'agents.provider.enabled',
+  'agents.orchestration.enabled',
   'agents.skills.enabled',
   'agents.browser.enabled',
   'agents.proposals.enabled',
@@ -91,12 +92,40 @@ export type AgentActionRisk = 'read' | 'open-world-read' | 'proposal' | 'reversi
 export type AgentExecutionMode = 'agent' | 'generation-only'
 export type AgentSessionRetention = 'temporary' | 'saved'
 export type AgentSessionStatus = 'active' | 'deletion_pending'
-export type AgentRunStatus = 'queued' | 'running' | 'awaiting_approval' | 'succeeded' | 'failed' | 'cancelled' | 'recovery_required'
+export type AgentRunStatus = 'queued' | 'running' | 'awaiting_approval' | 'succeeded' | 'partial' | 'failed' | 'cancelled' | 'recovery_required'
 export type AgentMessageRole = 'user' | 'assistant'
 export type AgentMessageStatus = 'pending' | 'streaming' | 'complete' | 'failed' | 'cancelled'
 export type AgentProposalStatus = 'pending' | 'approved' | 'denied' | 'expired' | 'applying' | 'applied' | 'failed' | 'cancelled' | 'recovery_required'
 export type AgentApprovalStatus = 'pending' | 'approved' | 'denied' | 'expired' | 'cancelled'
 export type AgentToolState = 'preparing' | 'running' | 'awaitingApproval' | 'complete' | 'failed' | 'denied' | 'cancelled'
+export const AGENT_TASK_KINDS = ['source_scout', 'fact_check', 'conflict_check'] as const
+export type AgentTaskKind = typeof AGENT_TASK_KINDS[number]
+export type AgentTaskStatus = 'pending' | 'running' | 'blocked' | 'completed' | 'failed' | 'cancelled'
+export type AgentTaskOutcome = 'completed' | 'blocked' | 'partial' | 'failed'
+export type AgentEvidenceConfidence = 'high' | 'medium' | 'low'
+
+export interface AgentEvidenceClaim {
+  readonly text: string
+  readonly evidenceIds: readonly string[]
+  readonly sourceRevisionIds: readonly string[]
+  readonly confidence: AgentEvidenceConfidence
+  readonly caveat?: string
+}
+
+export interface AgentEvidenceConflict {
+  readonly claim: string
+  readonly evidenceIds: readonly string[]
+  readonly explanation: string
+}
+
+export interface AgentChildEvidencePacket {
+  readonly taskId: string
+  readonly outcome: AgentTaskOutcome
+  readonly claims: readonly AgentEvidenceClaim[]
+  readonly conflicts: readonly AgentEvidenceConflict[]
+  readonly unanswered: readonly string[]
+  readonly recommendedFollowups: readonly string[]
+}
 
 export interface AgentActionExposure {
   readonly agent: boolean
@@ -299,6 +328,26 @@ export interface AgentToolCallView {
   readonly completedAt: string | null
 }
 
+export interface AgentTaskView {
+  readonly id: string
+  readonly runId: string
+  readonly kind: AgentTaskKind
+  readonly title: string
+  readonly question: string
+  readonly sourceScope: readonly string[]
+  readonly requiredEvidenceCount: number
+  readonly status: AgentTaskStatus
+  readonly subagentRunId: string | null
+  readonly attempt: number
+  readonly outcome: AgentTaskOutcome | null
+  readonly evidenceCount: number
+  readonly errorCode: string | null
+  readonly errorMessage: string | null
+  readonly createdAt: string
+  readonly startedAt: string | null
+  readonly completedAt: string | null
+}
+
 export interface AgentProposalView {
   readonly id: string
   readonly sourceKind: AgentTransport
@@ -353,6 +402,17 @@ export const AGENT_EVENT_TYPES = [
   'model.turn',
   'evidence.provenance',
   'tool.started',
+  'task.planCreated',
+  'task.created',
+  'task.started',
+  'task.blocked',
+  'task.completed',
+  'task.failed',
+  'task.cancelled',
+  'subagent.started',
+  'subagent.suspended',
+  'subagent.completed',
+  'subagent.failed',
   'tool.progress',
   'tool.completed',
   'tool.failed',
@@ -368,6 +428,7 @@ export const AGENT_EVENT_TYPES = [
   'approval.resolved',
   'usage.updated',
   'run.completed',
+  'run.partial',
   'run.failed',
   'run.cancelled',
   'run.recovery_required',
@@ -392,6 +453,7 @@ export interface AgentThreadState {
   readonly session: AgentSessionView
   readonly messages: readonly AgentMessageView[]
   readonly tools: readonly AgentToolCallView[]
+  readonly tasks: readonly AgentTaskView[]
   readonly proposals: readonly AgentProposalView[]
   readonly artifacts: readonly AgentArtifactView[]
   readonly suggestions: readonly AgentFollowUpSuggestion[]

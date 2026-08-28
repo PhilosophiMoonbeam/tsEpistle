@@ -3,6 +3,7 @@ import {
   AGENT_ACTION_BY_TOOL_NAME,
   AGENT_ACTION_NAMES,
   AGENT_EVENT_TYPES,
+  AGENT_TASK_KINDS,
   AGENT_FEATURE_FLAG_KEYS,
   AGENT_PERMISSION_KEYS,
   AGENT_TOOL_NAMES,
@@ -15,6 +16,9 @@ describe('frozen agent contracts', () => {
     expect(new Set(AGENT_EVENT_TYPES).size).toBe(AGENT_EVENT_TYPES.length)
     expect(new Set(AGENT_FEATURE_FLAG_KEYS).size).toBe(AGENT_FEATURE_FLAG_KEYS.length)
     expect(AGENT_ACTION_NAMES).not.toEqual(expect.arrayContaining(['pages.getOkf', 'pages.prepareImportOkf']))
+    expect(AGENT_FEATURE_FLAG_KEYS).toContain('agents.orchestration.enabled')
+    expect(AGENT_EVENT_TYPES).toEqual(expect.arrayContaining(['task.planCreated', 'task.created', 'subagent.started', 'subagent.completed', 'run.partial']))
+    expect(AGENT_TASK_KINDS).toEqual(['source_scout', 'fact_check', 'conflict_check'])
   })
 
   it('uses one unique stable tool name for every action', () => {

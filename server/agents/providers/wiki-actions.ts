@@ -7,6 +7,7 @@ import { registerPageReadActions } from '../actions/page-reads.ts'
 import { registerMemoryAction } from '../actions/memory.ts'
 import { registerPageProposalActions } from '../actions/page-proposals.ts'
 import { registerSkillReadActions } from '../actions/skill-reads.ts'
+import { SUBAGENT_READ_ACTIONS } from '../orchestration.ts'
 import type { AgentEngineRequest } from '../runtime.ts'
 import { AgentRepositoryError } from '../repository.ts'
 import { agentFeatureFlags, KernelActionSessionProvider } from './action-sessions.ts'
@@ -16,6 +17,8 @@ import { SkillRuntime } from '../skills/runtime.ts'
 import { AgentMemoryRepository } from '../memory.ts'
 import type { BrowserWorkerClient } from '../browser/client.ts'
 import { PageKnowledgeRepository } from '../../knowledge/lifecycle.ts'
+
+const SUBAGENT_READ_ACTION_SET: ReadonlySet<AgentActionName> = new Set(SUBAGENT_READ_ACTIONS)
 
 interface GroupLike { id?: number; permissions?: unknown }
 interface UserLike extends Express.User {
@@ -35,6 +38,7 @@ interface WikiUserRuntime { models: { users: { query(): UserQuery } } }
 export interface WikiActionSessionConfig {
   readonly enabled: boolean
   readonly providerEnabled: boolean
+  readonly orchestrationEnabled: boolean
   readonly skillsEnabled: boolean
   readonly browserEnabled: boolean
   readonly proposalsEnabled: boolean
@@ -96,6 +100,9 @@ export const createWikiActionSessionProvider = (knex: Knex, config: WikiActionSe
   registerMemoryAction(kernel, new AgentMemoryRepository(knex))
   if (config.browserEnabled && browserClient) new BrowserActionService(knex, browserClient).register(kernel)
   const resolveAdmission = async (request: AgentEngineRequest): Promise<ActionAdmissionSnapshot> => {
+    if (request.purpose === 'subagent' && (request.actionAllowlist === undefined || request.actionAllowlist.some(action => !SUBAGENT_READ_ACTION_SET.has(action)))) {
+      throw new AgentRepositoryError('INVALID_SUBAGENT_AUTHORITY', 'Subagent action authority exceeds the read-only specialist profile', 500)
+    }
     const user = await loadUser(request.run.ownerId)
     const version = await knex('agentProviderProfileVersions').where({ id: request.run.providerProfileVersionId, conformed: true }).first('capabilities') as { capabilities: string } | undefined
     if (!version) throw new AgentRepositoryError('PROFILE_VERSION_UNAVAILABLE', 'Provider profile version is unavailable', 409)
@@ -104,7 +111,13 @@ export const createWikiActionSessionProvider = (knex: Knex, config: WikiActionSe
       const capabilities = AgentProviderCapabilitiesSchema.parse(JSON.parse(version.capabilities) as unknown)
       supportsTools = capabilities.toolCalling === 'native' || capabilities.toolCalling === 'prompt'
     } catch { throw new AgentRepositoryError('PROVIDER_PROFILE_CORRUPT', 'Stored provider capabilities are invalid', 500) }
-    const allowedActions = await allowedActionsFor(knex, request.run.id)
+    const skillAllowedActions = await allowedActionsFor(knex, request.run.id)
+    const requestedActions = request.purpose === 'subagent' && !config.orchestrationEnabled ? [] : request.actionAllowlist
+    const allowedActions = requestedActions === undefined
+      ? skillAllowedActions
+      : skillAllowedActions === undefined
+        ? [...requestedActions]
+        : requestedActions.filter(action => skillAllowedActions.includes(action))
     return {
       transport: 'agent',
       executionMode: request.run.executionMode === 'agent' ? 'agent' : 'generation-only',
@@ -114,6 +127,7 @@ export const createWikiActionSessionProvider = (knex: Knex, config: WikiActionSe
       featureFlags: agentFeatureFlags({
         'agents.enabled': config.enabled,
         'agents.provider.enabled': config.providerEnabled,
+        'agents.orchestration.enabled': config.orchestrationEnabled,
         'agents.skills.enabled': config.skillsEnabled,
         'agents.browser.enabled': config.browserEnabled,
         'agents.proposals.enabled': config.proposalsEnabled,

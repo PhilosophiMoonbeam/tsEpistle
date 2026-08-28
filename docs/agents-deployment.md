@@ -12,17 +12,18 @@ There is no agent-specific public origin, login, cookie, launch token, popup, if
 
 ## Database and compatibility
 
-Agents require PostgreSQL for multi-replica leases and notification. Apply migrations through `2.5.140` before enabling any flag:
+Agents require PostgreSQL for multi-replica leases and notification. Apply migrations through `2.5.156` before enabling any flag:
 
 - `2.5.139` adds the source-revision ledger and agent tables.
 - `2.5.140` removes the obsolete cross-origin launch-handoff table. Its down migration recreates only the empty compatibility shape.
+- `2.5.156` adds the durable depth-one research task ledger, child-attempt identity, authority/result hashes, lifecycle state, and evidence counts.
 
-All agent flags default to false. Back up PostgreSQL before upgrade or rollback.
+All agent flags, including specialist orchestration, default to false. Back up PostgreSQL before upgrade or rollback.
 
 Two rollback paths are supported:
 
-1. With no authoritative agent data to retain: disable all agent flags, drain coordinators and maintenance, apply `2.5.140` down, then apply the guarded `2.5.139` down and start the prior image.
-2. With agent data to retain: disable all flags and run the release-produced N-1 compatibility image. Keep the schema-compatible maintenance command active. Do not run an arbitrary older image.
+1. With no authoritative agent data to retain: disable all agent flags, drain coordinators and maintenance, apply `2.5.156` down, apply `2.5.140` down, then apply the guarded `2.5.139` down and start the prior image.
+2. With agent data to retain: disable all flags and run the release-produced N-1 compatibility image. Keep the schema-compatible maintenance command active. Do not run an arbitrary older image or drop `agentRunTasks`.
 
 Never run a destructive down migration while an application, MCP client, browser worker, or maintenance job can write agent state.
 
@@ -74,6 +75,19 @@ agents:
     globalConcurrency: 4
     perUserConcurrency: 1
     pollingMilliseconds: 1000
+  orchestration:
+    enabled: false
+    maxConcurrentChildren: 3
+    maxChildren: 6
+    plannerTurns: 2
+    childTurns: 4
+    childToolCalls: 8
+    plannerTimeoutMilliseconds: 30000
+    childTimeoutMilliseconds: 120000
+    plannerMaxOutputTokens: 1024
+    childMaxOutputTokens: 2048
+    maxAggregateChildTokens: 12000
+    maxAggregateChildOutputCharacters: 96000
   sse:
     maximumConnectionsPerUser: 3
   skills:
@@ -94,9 +108,21 @@ agents:
     enabled: false
 ```
 
-Startup rejects provider concurrency, polling, SSE, and retention values outside their bounded ranges. `perUserConcurrency` cannot exceed `globalConcurrency`. Flags are independent kill switches; write application requires `writes.enabled`, proposals, and the exact action flag.
+Startup rejects provider concurrency, polling, orchestration, SSE, and retention values outside their bounded ranges. `perUserConcurrency` cannot exceed `globalConcurrency`, and specialist concurrency cannot exceed the per-response task limit. Flags are independent kill switches; write application requires `writes.enabled`, proposals, and the exact action flag.
 
 Provider inference is intentionally unavailable until an operator enables the provider subsystem with its signing, profile-resolution, and provider-credential encryption keyrings, then an administrator adds a provider profile in `/admin/agents`. Wiki runs a connection check automatically after every save. A new profile is enabled when that check succeeds; a failed check leaves it disabled and displays the provider's bounded, sanitized error. Enabling the subsystem alone offers no usable model destination. The admin API encrypts credentials inside the profile transaction and never returns them.
+
+### Specialist research orchestration
+
+`agents.orchestration.enabled` enables host-owned decomposition only for sufficiently complex read-only research requests in Agent mode. A deterministic host gate decides whether planning is eligible; a bounded planner may then return either zero tasks or 2–`maxChildren` independent `source_scout`, `fact_check`, or `conflict_check` tasks. The host validates duplicate titles, questions, and overlapping source-scout scopes before it writes the plan.
+
+Every task and child attempt is durable in `agentRunTasks`. Children are depth one, run under the root lease and cancellation signal, and receive only the intersection of the root's admitted actions, selected-skill action restrictions, current user permissions and flags, and the fixed Wiki read profile. They cannot write, prepare or apply proposals, browse the open web, read or change memory, change skills, delegate, or persist a root action snapshot. The stored child authority hash covers the complete offered action set.
+
+`maxConcurrentChildren`, `maxChildren`, `childTurns`, `childToolCalls`, planner/child deadlines, per-call output tokens, aggregate child tokens, and aggregate child output characters are hard host bounds. Usage from the planner, every child attempt, retries after lease recovery, root synthesis, and title utility work is charged to the root run reservation. Root cancellation marks pending and running tasks cancelled; lease recovery returns abandoned running tasks to pending with a superseded-attempt event.
+
+Children return strict evidence packets, not user prose. Each claim names successful `wiki_get_page` or `wiki_get_page_version` evidence IDs and their exact source revisions; the host rejects wrong task ownership, unread evidence, missing citation markers, revision mismatch, malformed packets, and false completion. The root model alone synthesizes the answer. Existing lexical citation validation remains authoritative, every completed task must be covered by the final citations, and every validated conflict source must be cited. A run becomes `partial` rather than `succeeded` when any required task is blocked, partial, failed, cancelled, or disabled.
+
+The conversation projects task titles, kinds, scopes, status, evidence counts, and bounded public failure notes. Host-authored UI never renders child packets as answer text, hidden reasoning, provider continuation, or subagent identifiers; durable event/API identifiers remain correlation metadata only. The admin runtime page shows the effective flag and limits. AG-UI/A2UI adapters, nested delegation, and autonomous product goal mode remain intentionally absent.
 
 ### Provider API protocols
 
@@ -370,16 +396,18 @@ Schedule at least hourly with single-job concurrency. The command emits one boun
 
 ## Rollout
 
-1. Apply migrations with all flags false. Verify ordinary Wiki routes, backup, restore, and both rollback paths on PostgreSQL 16 and 17.
+1. Apply migrations through `2.5.156` with all flags false. Verify ordinary Wiki routes, backup, restore, and both rollback paths on PostgreSQL 16 and 17.
 2. Configure approved skills and provider profiles in `/admin/agents`; keep user access false.
 3. Save each provider profile and confirm its automatic connection check passes. Perform one controlled real read only after credentials and egress policy are ready.
-4. Enable `agents.enabled` and one read-only provider for an explicit canary group. Keep browser, proposals, writes, and MCP false.
+4. Enable `agents.enabled` and one read-only provider for an explicit canary group. Keep orchestration, browser, proposals, writes, and MCP false.
 5. Observe queue depth, concurrency, reconnects, token/cost reservations, retention, and provider errors.
-6. Enable browser only after the separate worker and no-bypass network proof.
-7. Enable proposals, then create and patch separately. Enable move, restore, and delete only after action-specific review.
-8. Enable MCP first behind private exact-path ingress for a dedicated `use:mcp` API-key group.
+6. Enable `agents.orchestration.enabled` for the same canary. Exercise a simple non-delegated request, a multi-source completed plan, one blocked source, cancellation during child work, reconnect during child work, and expired-lease recovery.
+7. Require durable task order and status after reconnect, root-only answers, exact source revisions, final citations covering every completed task and conflict, aggregate bounds across retries, and `partial` rather than success for incomplete required work. Alert on rising planner rejection, task failure/timeout, partial-run, cancellation-lag, aggregate-limit, citation-gate, and recovery counts.
+8. Enable browser only after the separate worker and no-bypass network proof.
+9. Enable proposals, then create and patch separately. Enable move, restore, and delete only after action-specific review.
+10. Enable MCP first behind private exact-path ingress for a dedicated `use:mcp` API-key group.
 
-Disable the smallest failing capability. Existing session history remains reconstructable from PostgreSQL.
+Disable the smallest failing capability. Disabling orchestration stops new plans and marks incomplete persisted tasks cancelled while preserving their task/event ledger; affected root runs finish `partial`. Existing session history remains reconstructable from PostgreSQL.
 
 ## Incident runbook
 
@@ -387,6 +415,7 @@ Disable the smallest failing capability. Existing session history remains recons
 - **Browser escape:** disable `agents.browser.enabled`, revoke worker certificates/signing keys, isolate the worker network, and retain gateway logs and artifact hashes.
 - **MCP key compromise:** revoke the API key, rotate request-state keys, preserve the compromised key only as offline evidence, and review proposals by requester API-key ID.
 - **Unsafe writes:** disable `writes.enabled`, preserve proposals/approvals/executions/outbox rows, reconcile the page projection, and restore only through normal page revision operations.
+- **Specialist orchestration fault:** disable `agents.orchestration.enabled`; preserve `agentRunTasks` and agent events, inspect root/child usage and public failure codes, and verify incomplete roots terminate `partial`. Do not replay an individual child outside its root lease.
 - **Lease or queue growth:** stop new admission, drain healthy workers, inspect expired leases and `recovery_required`, then run bounded maintenance. Never manually replay a run after an ambiguous side effect.
 - **SSE pressure:** reduce per-user connection bounds or disable agent admission; reconnect uses durable `Last-Event-ID`.
 - **Rollback:** disable flags, drain, back up, choose the empty-ledger or compatibility path above, and verify retention before restoring traffic.

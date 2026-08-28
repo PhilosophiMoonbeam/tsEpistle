@@ -71,6 +71,7 @@ const normalizedMcpUrl = (config: WikiMcpConfiguration): URL => canonicalMcpReso
 const featureFlags = (config: WikiMcpConfiguration): AgentFeatureFlags => ({
   'agents.enabled': config.agentsEnabled,
   'agents.provider.enabled': false,
+  'agents.orchestration.enabled': false,
   'agents.skills.enabled': config.skillsEnabled,
   'agents.browser.enabled': false,
   'agents.proposals.enabled': config.proposalsEnabled,

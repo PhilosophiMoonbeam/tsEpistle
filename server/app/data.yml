@@ -40,6 +40,19 @@ defaults:
         globalConcurrency: 4
         perUserConcurrency: 1
         pollingMilliseconds: 1000
+      orchestration:
+        enabled: false
+        maxConcurrentChildren: 3
+        maxChildren: 6
+        plannerTurns: 2
+        childTurns: 4
+        childToolCalls: 8
+        plannerTimeoutMilliseconds: 30000
+        childTimeoutMilliseconds: 120000
+        plannerMaxOutputTokens: 1024
+        childMaxOutputTokens: 2048
+        maxAggregateChildTokens: 12000
+        maxAggregateChildOutputCharacters: 96000
       sse:
         maximumConnectionsPerUser: 3
       skills:

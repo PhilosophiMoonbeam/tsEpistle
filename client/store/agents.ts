@@ -3,7 +3,7 @@ import { markRaw } from 'vue'
 import type { AgentConversationFolderView, AgentCurrentPageHint, AgentEventType, AgentProviderProfileView, AgentThreadState } from '../../shared/agents/contracts.ts'
 import { cancelAgentRun, createAgentConversationFolder, createAgentThread, decideAgentProposal, deleteAgentConversationFolder, deleteAgentSession, getAgentThread, listAgentConversationFolders, listAgentProfiles, listAgentSessions, listAgentSkills, moveAgentSessionToFolder, renameAgentConversationFolder, resetAgentHistory, submitAgentMessage, subscribeAgentRun, updateAgentProfile, updateAgentSkillPreferences, type AgentSessionSummary, type CreatedAgentThread, type VisibleAgentSkill } from '../helpers/agents-api.ts'
 
-const terminalEvents = new Set<AgentEventType>(['run.completed', 'run.failed', 'run.cancelled', 'run.recovery_required'])
+const terminalEvents = new Set<AgentEventType>(['run.completed', 'run.partial', 'run.failed', 'run.cancelled', 'run.recovery_required'])
 export interface AgentStoreInitializeOptions {
   readonly routeSync?: boolean
   readonly currentPage?: AgentCurrentPageHint | null
