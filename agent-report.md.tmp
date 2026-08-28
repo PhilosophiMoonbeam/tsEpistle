@@ -2,10 +2,10 @@
 
 ## Scope and method
 
-This report evaluates nine local repositories against the current Wiki Agent implementation:
+This report evaluates eight local repositories against the current Wiki Agent implementation:
 
 - Agents: `hermes-agent`, `opencode`, `codex`, `oh-my-pi`, `deepagents`, `prime-agent`.
-- Frameworks/protocols: `CopilotKit`, `a2ui`, `ag-ui`.
+- Frameworks/protocols: `CopilotKit`, `ag-ui`.
 
 The analysis is source-first. Every claim below is based on the checked-out repositories and the Wiki Agent source; documentation is treated as explanatory evidence, not as a substitute for implementation. The focus is deliberately narrow: task decomposition, subagents, skills, tools, goals, run loops, durable state, compaction, human approval, and user-visible agent state. Coding sandboxes, IDE integration, arbitrary computer control, voice, and unrelated product surfaces are excluded except where they establish a reusable safety boundary.
 
@@ -44,7 +44,7 @@ The immediate recommendation is implemented without introducing another coordina
 - `agents.orchestration.enabled` is disabled by default. `server/scripts/check-agent-release.ts` enforces that rollout invariant, and `docs/agents-deployment.md` specifies canary, recovery, rollback, and incident gates.
 - `server/db/migrations/2.5.157.ts` and `server/agents/goals.ts` provide durable opt-in goals with explicit continuation budgets, pause/resume/cancel controls, and host-gated completion.
 
-The existing coordinator, AX `chat()` boundary, action kernel, evidence gate, proposal/approval authority, skill/version model, and memory model remain canonical. Generative UI and external agent-interface interoperability are not current product requirements and remain outside the architecture.
+The existing coordinator, AX `chat()` boundary, action kernel, evidence gate, proposal/approval authority, skill/version model, and memory model remain canonical. External agent-interface interoperability is not a current product requirement and remains outside the architecture.
 
 ## Current Wiki Agent baseline
 
@@ -356,36 +356,7 @@ Use its UI semantics: render plan steps, subagent groups, pending approval, susp
 
 ---
 
-## 8. A2UI
-
-### Relevant implementation
-
-A2UI defines declarative, incrementally updatable agent-generated UI rather than executable code (`/home/bbferko/repos/a2ui/README.md`). A trusted client catalog maps abstract component names to local implementations. The flat adjacency-list format is intended to be LLM-friendly and progressively rendered.
-
-The v1.0 release-candidate protocol defines `createSurface`, `updateComponents`, `updateDataModel`, and `deleteSurface`, separating component structure from application data (`specification/v1_0/docs/a2ui_protocol.md`). Components and functions resolve through explicit catalog IDs; there is no implicit catalog fallback. Catalog schemas constrain component composition and function callers. Renderer functions are registered abstractions, not transmitted code, and runtime caller checks reject unknown or renderer-only functions. Actions, data binding, JSON Pointer scope, capability exchange, accessibility requirements, and request correlation are explicit.
-
-The repository states that v0.9.1 is the current production line and v1.0 is a release candidate (`README.md`). Renderer implementation coverage also varies by version and platform.
-
-### What A2UI does better
-
-- Declarative UI plus a trusted component catalog is substantially safer than model-generated HTML or JavaScript.
-- Separating stable structure from incremental data updates reduces payload and UI churn.
-- Catalog identity, composition validation, function caller boundaries, and accessibility requirements are protocol concerns rather than renderer folklore.
-
-### Risks and non-transferable parts
-
-- A2UI does not provide task decomposition, tool authorization, evidence validation, or an agent run loop.
-- The protocol is still evolving. Committing Wiki's core chat/approval UX to its current schemas would create migration cost without a demonstrated need.
-- Bidirectional renderer functions create a new execution boundary. They must not bypass the action kernel.
-- Agent-generated surfaces can still mislead users even when they cannot execute arbitrary code. Visual authority, labels, confirmation wording, and data disclosure require host policy.
-
-### Assessment
-
-Wiki already has host-authored components for answers, citations, plan progress, approvals, goals, proposals, and activity. The comparison did not establish a present requirement for agent-generated forms or dashboards, so this protocol is not part of the recommended architecture or roadmap.
-
----
-
-## 9. AG-UI
+## 8. AG-UI
 
 ### Relevant implementation
 
@@ -555,7 +526,7 @@ The user can pause/cancel. Idle continuation occurs only while active, within qu
 
 Implement task, subagent, interrupt, approval, and goal UI using existing application components. Keep security-critical wording and controls host-authored, route semantic actions through the action kernel, and preserve the current accessibility and permission boundaries.
 
-Generative UI and external agent-interface interoperability are not current product requirements. Re-evaluate only against a named client integration or a concrete dynamic-interface feature that existing layouts cannot satisfy. If reusable composition becomes necessary, prefer a Wiki-owned component registry with versioned schemas, server validation, deterministic rendering, accessibility checks, and persistence through the existing page-revision and proposal flow.
+External agent-interface interoperability is not a current product requirement. Re-evaluate only against a named client integration.
 
 ## Ordered implementation plan
 
@@ -608,7 +579,7 @@ Do not add these while implementing research subagents:
 - Generic prose or image compaction that loses evidence/source identity.
 - A second run coordinator, job queue, permission system, or approval path.
 - A framework migration to LangChain/LangGraph, CopilotKit, Codex, OpenCode, Hermes, Oh My Pi, or Prime Agent.
-- Generative UI or external agent-interface interoperability without a named client integration or concrete dynamic-interface feature.
+- External agent-interface interoperability without a named client integration.
 
 ## Decision register
 
@@ -714,15 +685,6 @@ Do not add these while implementing research subagents:
 - `/home/bbferko/repos/CopilotKit/packages/react-core/src/v2/hooks/use-agent.tsx`
 - `/home/bbferko/repos/CopilotKit/packages/react-core/src/v2/hooks/use-human-in-the-loop.tsx`
 - `/home/bbferko/repos/CopilotKit/packages/react-core/src/v2/hooks/use-interrupt.tsx`
-
-### A2UI
-
-- `/home/bbferko/repos/a2ui/README.md`
-- `/home/bbferko/repos/a2ui/specification/v1_0/docs/a2ui_protocol.md`
-- `/home/bbferko/repos/a2ui/specification/v1_0/json/agent_to_renderer.json`
-- `/home/bbferko/repos/a2ui/specification/v1_0/json/renderer_to_agent.json`
-- `/home/bbferko/repos/a2ui/specification/v1_0/json/catalog_definition.json`
-- `/home/bbferko/repos/a2ui/renderers/web_core/src`
 
 ### AG-UI
 
