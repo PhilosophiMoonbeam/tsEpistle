@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "source": {
     "lockfile": "pnpm-lock.yaml",
-    "sha256": "6775ffb9d328dc19092ceb3945624a808c64fa564cc71638d0e87bd55f7c3cf4",
+    "sha256": "3b64332cd561d2fa943d772ac871649c0cbfa6b12db9d1b9084c35c3896a9739",
     "scope": "production",
     "policy": {
       "file": "license-policy.json",
