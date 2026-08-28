@@ -72,6 +72,57 @@ describe('Agent chat refresh fallback', () => {
     expect(store.refreshTimer).toBeNull()
     expect(store.connection).toBe('closed')
   })
+
+  it('transfers the stream when a durable goal admits its next run', async () => {
+    vi.useFakeTimers()
+    setActivePinia(createPinia())
+    const store = useAgentsStore()
+    const thread = activeThread()
+    const firstRunId = thread.session.currentRun!.id
+    store.thread = {
+      ...thread,
+      goal: {
+        id: '00000000-0000-4000-8000-000000000010',
+        sessionId: thread.session.id,
+        objective: 'Finish the investigation.',
+        status: 'active',
+        version: 1,
+        currentRunId: firstRunId,
+        continuationCount: 0,
+        maxContinuations: 3,
+        consumedTokens: 0,
+        maxTokens: 48_000,
+        consumedToolCalls: 0,
+        maxToolCalls: 96,
+        startedAt: '2026-08-23T00:00:00.000Z',
+        deadlineAt: '2026-08-23T01:00:00.000Z',
+        completedAt: null,
+        errorCode: null,
+        errorMessage: null,
+        completion: null
+      }
+    }
+    const nextRun = {
+      ...thread.session.currentRun!,
+      id: '00000000-0000-4000-8000-000000000011',
+      eventSequence: 2
+    }
+    vi.spyOn(store, 'refreshThread').mockImplementation(async () => {
+      if (store.thread) store.thread = {
+        ...store.thread,
+        session: { ...store.thread.session, currentRun: nextRun },
+        goal: store.thread.goal ? { ...store.thread.goal, currentRunId: nextRun.id, continuationCount: 1, version: 2 } : null
+      }
+    })
+    const connect = vi.spyOn(store, 'connect').mockImplementation(() => {})
+    const reloadSessions = vi.spyOn(store, 'reloadSessions').mockResolvedValue()
+
+    store.scheduleRefresh(true, 1, firstRunId)
+    await vi.advanceTimersByTimeAsync(1)
+
+    expect(connect).toHaveBeenCalledWith(nextRun.id, nextRun.eventSequence)
+    expect(reloadSessions).toHaveBeenCalledTimes(1)
+  })
 })
 
 describe('Agent empty conversation lifecycle', () => {

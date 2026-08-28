@@ -57,7 +57,7 @@ const props = defineProps<{ goal: AgentGoalView; busy: boolean; runActive: boole
 defineEmits<{ pause: []; resume: []; cancel: [] }>()
 
 const statusPresentation = {
-  active: { label: 'In progress', icon: 'mdi-target-arrow', color: 'primary' },
+  active: { label: 'In progress', icon: 'mdi-bullseye-arrow', color: 'primary' },
   paused: { label: 'Paused', icon: 'mdi-pause-circle-outline', color: 'warning' },
   blocked: { label: 'Needs attention', icon: 'mdi-alert-circle-outline', color: 'warning' },
   budget_limited: { label: 'Limit reached', icon: 'mdi-speedometer-slow', color: 'warning' },

@@ -309,31 +309,39 @@ export const useAgentsStore = defineStore('agents', {
         event: (type, sequence) => {
           this.connection = 'connected'
           this.eventSequence = Math.max(this.eventSequence, sequence)
-          this.scheduleRefresh(terminalEvents.has(type))
+          this.scheduleRefresh(terminalEvents.has(type), 50, runId)
         },
         error: () => {
           if (this.connection !== 'closed') {
             this.connection = 'reconnecting'
-            this.scheduleRefresh(false, 250)
+            this.scheduleRefresh(false, 250, runId)
           }
         }
       }))
-      this.scheduleRefresh(false, 1_000)
+      this.scheduleRefresh(false, 1_000, runId)
     },
-    scheduleRefresh(terminal: boolean, delay = 50) {
+    scheduleRefresh(terminal: boolean, delay = 50, observedRunId?: string) {
       if (this.refreshTimer !== null) window.clearTimeout(this.refreshTimer)
       this.refreshTimer = window.setTimeout(() => {
         this.refreshTimer = null
         void this.refreshThread().then(() => {
-          if (terminal || !this.thread?.session.currentRun?.canCancel) return this.reloadSessions()
+          const currentRun = this.thread?.session.currentRun
+          if (observedRunId !== undefined && currentRun?.canCancel && currentRun.id !== observedRunId) this.connect(currentRun.id, currentRun.eventSequence)
+          if (terminal || !currentRun?.canCancel) return this.reloadSessions()
           return undefined
         }).catch(() => {
           if (this.connection !== 'closed') this.connection = 'reconnecting'
         }).finally(() => {
-          if (terminal || !this.thread?.session.currentRun?.canCancel) {
+          const currentRun = this.thread?.session.currentRun
+          const goalAdvancing = terminal && !currentRun?.canCancel && this.thread?.goal?.status === 'active'
+          if (goalAdvancing) {
+            this.scheduleRefresh(false, 250, observedRunId)
+          } else if (observedRunId !== undefined && currentRun?.canCancel && currentRun.id !== observedRunId) {
+            // connect() already transferred the stream and scheduled its refresh.
+          } else if (terminal || !currentRun?.canCancel) {
             this.closeStream()
           } else if (this.connection !== 'closed') {
-            this.scheduleRefresh(false, 1_000)
+            this.scheduleRefresh(false, 1_000, observedRunId)
           }
         })
       }, delay)
