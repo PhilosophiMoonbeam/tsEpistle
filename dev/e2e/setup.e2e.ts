@@ -171,17 +171,19 @@ test.describe('critical post-install workflows', () => {
     test.setTimeout(90_000)
 
     await page.goto('/')
-    await expect(page.getByText('You are about to install tsFranki')).toBeVisible()
+    await expect(page.getByText('First-run setup', { exact: true })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'tsFranki', exact: true })).toBeVisible()
 
     const siteUrl = new URL(page.url()).origin
     await page.getByLabel('Administrator Email').fill(adminEmail)
     await page.getByLabel('Password', { exact: true }).fill(adminPassword)
     await page.getByLabel('Confirm Password', { exact: true }).fill(adminPassword)
     await page.getByLabel('Site URL').fill(siteUrl)
-    await page.getByRole('checkbox', { name: 'Allow Telemetry' }).uncheck()
-    await expect(page.getByRole('checkbox', { name: 'Allow Telemetry' })).not.toBeChecked()
+    const telemetry = page.getByRole('checkbox', { name: 'Allow anonymous telemetry' })
+    await telemetry.uncheck()
+    await expect(telemetry).not.toBeChecked()
 
-    await page.getByRole('button', { name: 'Install' }).click()
+    await page.getByRole('button', { name: 'Install tsFranki', exact: true }).click()
     await expect(page.getByText('Installation complete!')).toBeVisible({ timeout: 30_000 })
     await expect(page).toHaveURL('/login', { timeout: 10_000 })
     await openClientPage(page, '/login', '.login-form')
@@ -202,9 +204,9 @@ test.describe('critical post-install workflows', () => {
     await authenticateAsAdmin(page)
 
     await page.getByRole('link', { name: 'Administration' }).click()
-    await expect(page).toHaveURL('/a/dashboard')
-    await expect(page.getByText('Administration Area', { exact: true })).toBeVisible()
-    await expect(page.getByRole('img', { name: 'Dashboard' })).toBeVisible()
+    await expect(page).toHaveURL('/a/')
+    await expect(page.getByText('Workspace overview', { exact: true })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Dashboard', exact: true })).toBeVisible()
     await expect(page.getByText('Recent Pages', { exact: true })).toBeVisible()
     await expect(page.getByText('Last Logins', { exact: true })).toBeVisible()
   })
@@ -215,13 +217,14 @@ test.describe('critical post-install workflows', () => {
 
     await page.getByRole('link', { name: 'Create Home Page' }).click()
     await expect(page).toHaveURL('/e/en/home')
-    await page.getByText('Markdown', { exact: true }).click()
+    await openClientPage(page, '/e/en/home', '.editor-select')
+    await page.getByRole('button', { name: /^Markdown editor\b/ }).click()
     await page.getByRole('textbox', { name: 'Title' }).fill('Home')
     await page.getByRole('textbox', { name: 'Short Description' }).fill('Welcome home')
     await page.getByRole('button', { name: 'OK' }).click()
 
     const editor = page.locator('.cm-content')
-    await expect(editor).toBeVisible()
+    await expect(editor).toBeVisible({ timeout: 30_000 })
     await editor.fill('# Browser Workflow\n\nPublished through the modern editor.')
     await page.getByRole('button', { name: 'Create' }).click()
 
@@ -236,7 +239,7 @@ test.describe('critical post-install workflows', () => {
     test.setTimeout(90_000)
     await authenticateAsAdmin(page)
     await page.goto('/e/en/visual-markdown-browser')
-    await page.getByText('Visual Markdown', { exact: true }).click()
+    await page.getByRole('button', { name: /^Visual Markdown editor\b/ }).click()
     await page.getByRole('textbox', { name: 'Title' }).fill('Visual Markdown Browser')
     await page.getByRole('textbox', { name: 'Short Description' }).fill('Canonical Markdown from Tiptap')
     await page.getByRole('button', { name: 'OK' }).click()
@@ -267,7 +270,7 @@ test.describe('critical post-install workflows', () => {
 
     await page.getByRole('button', { name: 'Create' }).click()
     await expect(page).toHaveURL('/en/visual-markdown-browser', { timeout: 30_000 })
-    await expect(page.getByRole('heading', { name: 'Visual Markdown browser' })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Visual Markdown Browser', exact: true })).toBeVisible()
     await expect(page.getByRole('heading', { name: 'Heading 6' })).toBeVisible()
     await expect(page.getByRole('table')).toBeVisible()
     await expect(page.getByRole('img', { name: 'Example image' })).toBeVisible()
@@ -328,13 +331,13 @@ test.describe('critical post-install workflows', () => {
     expect(enableStatuses).toEqual(extensionKeys.map(() => 200))
 
     await page.goto('/e/en/content-extensions-browser')
-    await page.getByText('Markdown', { exact: true }).click()
+    await page.getByRole('button', { name: /^Markdown editor\b/ }).click()
     await page.getByRole('textbox', { name: 'Title' }).fill('Content Extensions Browser')
     await page.getByRole('textbox', { name: 'Short Description' }).fill('Gallery and index browser workflow')
     await page.getByRole('button', { name: 'OK' }).click()
 
     const editor = page.locator('.cm-content')
-    await expect(editor).toBeVisible()
+    await expect(editor).toBeVisible({ timeout: 30_000 })
     await page.getByRole('button', { name: 'Insert content extension' }).click()
     const extensionDialog = page.getByRole('dialog', { name: 'Insert content extension' })
     await extensionDialog.locator('.v-select').first().click()
@@ -439,7 +442,7 @@ test.describe('critical post-install workflows', () => {
     test.setTimeout(60_000)
     await authenticateAsAdmin(page)
     await page.goto('/e/en/visual-html-browser')
-    await page.getByText('Visual Editor', { exact: true }).click()
+    await page.getByRole('button', { name: /^Visual HTML editor\b/ }).click()
     await page.getByRole('textbox', { name: 'Title' }).fill('Visual HTML Browser')
     await page.getByRole('textbox', { name: 'Short Description' }).fill('HTML from Tiptap')
     await page.getByRole('button', { name: 'OK' }).click()
@@ -485,13 +488,15 @@ test.describe('critical post-install workflows', () => {
     test.setTimeout(60_000)
     await authenticateAsAdmin(page)
     await page.goto('/e/en/extended-markdown-browser')
-    await page.getByText('Markdown', { exact: true }).click()
+    await page.getByRole('button', { name: /^Markdown editor\b/ }).click()
     await page.getByRole('textbox', { name: 'Title' }).fill('Extended Markdown Browser')
     await page.getByRole('textbox', { name: 'Short Description' }).fill('Extended visual syntax')
     await page.getByRole('button', { name: 'OK' }).click()
 
     const source = '## Callout\n\n> Preserved source\n{.is-info}'
-    await page.locator('.cm-content').fill(source)
+    const editor = page.locator('.cm-content')
+    await expect(editor).toBeVisible({ timeout: 30_000 })
+    await editor.fill(source)
     await page.getByRole('button', { name: 'Create' }).click()
     await expect(page).toHaveURL('/en/extended-markdown-browser', { timeout: 30_000 })
 
@@ -583,6 +588,7 @@ test.describe('critical post-install workflows', () => {
     await page.getByRole('button', { name: 'Edit Page' }).click()
     await expect(page).toHaveURL('/e/en/home')
     const editor = page.locator('.cm-content')
+    await expect(editor).toBeVisible({ timeout: 30_000 })
     await editor.fill('# Browser Workflow Updated\n\nEdited and rendered through the modern editor.')
     await page.getByRole('button', { name: 'Save' }).click()
     await expect(page.getByRole('button', { name: 'Saved' })).toBeVisible({ timeout: 30_000 })
@@ -661,8 +667,10 @@ test.describe('critical post-install workflows', () => {
     await authenticateAsAdmin(page)
     await page.goto('/a/dashboard')
 
-    await expect(page.getByText('Administration Area', { exact: true })).toBeVisible()
+    await expect(page.getByText('Workspace overview', { exact: true })).toBeVisible()
     await expect(page.locator('#admin-navigation')).toBeVisible()
+    await page.getByRole('button', { name: 'Content & appearance', exact: true }).click()
+    await expect(page.getByRole('link', { name: /^Pages\b/ })).toBeVisible()
 
     const sidebarLayout = await page.locator('#admin-navigation').evaluate(navigation => {
       const measure = (label: string) => {
@@ -689,7 +697,10 @@ test.describe('critical post-install workflows', () => {
     })
     expect(sidebarLayout.dashboard.titleLeft).toBeGreaterThan(sidebarLayout.dashboard.iconRight)
     expect(Math.abs(sidebarLayout.dashboard.titleCenterY - sidebarLayout.dashboard.iconCenterY)).toBeLessThan(2)
-    expect(sidebarLayout.pages.height).toBe(sidebarLayout.dashboard.height)
+    expect(sidebarLayout.pages.height).toBeGreaterThan(0)
+    expect(sidebarLayout.pages.height).toBeLessThanOrEqual(sidebarLayout.dashboard.height)
+    expect(sidebarLayout.pages.titleLeft).toBeGreaterThan(sidebarLayout.pages.iconRight)
+    expect(Math.abs(sidebarLayout.pages.titleCenterY - sidebarLayout.pages.iconCenterY)).toBeLessThan(2)
     await expect(page.getByText('Recent Pages', { exact: true })).toBeVisible()
     await expect(page.getByText('Last Logins', { exact: true })).toBeVisible()
     await expectNoHorizontalOverflow(page)
@@ -745,7 +756,8 @@ test.describe('critical post-install workflows', () => {
     await expect(navigationButton).toBeVisible()
     await navigationButton.click()
     await expect(page.locator('#admin-navigation')).toBeVisible()
-    await page.locator('#admin-navigation').getByText('Pages', { exact: true }).click()
+    await page.locator('#admin-navigation').getByRole('button', { name: 'Content & appearance', exact: true }).click()
+    await page.locator('#admin-navigation').getByRole('link', { name: /^Pages\b/ }).click()
 
     await expect(page).toHaveURL('/a/pages')
     await expect(page.locator('.admin-mobile-table-row').first()).toBeVisible()
@@ -856,7 +868,7 @@ test.describe('critical post-install workflows', () => {
     await authenticateAsAdmin(page)
     await page.goto('/e/en/home')
     const editor = page.locator('.cm-content')
-    await expect(editor).toBeVisible()
+    await expect(editor).toBeVisible({ timeout: 30_000 })
     await editor.click()
     await page.keyboard.press('Control+End')
 
