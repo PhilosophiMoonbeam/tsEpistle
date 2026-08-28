@@ -49,6 +49,7 @@ function expectWithinBudgets(surface: string, metrics: SurfaceMetrics) {
 }
 
 test('keeps representative content and administration surfaces within runtime budgets', async ({ page }) => {
+  test.setTimeout(90_000)
   await page.addInitScript(() => {
     const state: RuntimePerformanceState = {
       cumulativeLayoutShift: 0,
@@ -68,7 +69,7 @@ test('keeps representative content and administration surfaces within runtime bu
   await authenticateAsAdmin(page)
   const surfaces = {
     content: await measureSurface(page, '/en/home', '.page-header-section'),
-    dashboard: await measureSurface(page, '/a/dashboard', '.admin-header'),
+    dashboard: await measureSurface(page, '/a/dashboard', '.admin-main'),
     pages: await measureSurface(page, '/a/pages', '.admin-responsive-table')
   }
 

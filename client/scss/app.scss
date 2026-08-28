@@ -195,6 +195,35 @@
   }
 }
 
+@media (max-height: 500px) and (min-width: 600px) {
+  .notfound {
+    padding: 12px 22px;
+
+    &-content {
+      min-height: 0;
+      height: calc(100dvh - 24px);
+      padding: 16px 24px;
+    }
+
+    img {
+      height: 96px;
+      margin-bottom: 8px;
+    }
+
+    .text-headline-medium {
+      font-size: 2rem !important;
+    }
+
+    .text-body-large {
+      line-height: 1.3;
+    }
+
+    .v-btn.mt-5 {
+      margin-top: 8px !important;
+    }
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .onboarding *,
   .notfound *,

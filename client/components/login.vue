@@ -781,10 +781,43 @@ export default {
 @media (max-height: 650px) and (min-width: 600px) {
   .login {
     align-items: flex-start;
-    padding-block: 24px;
+    padding-block: 12px;
 
     &-sd {
-      max-height: calc(100dvh - 48px);
+      max-height: calc(100dvh - 24px);
+      padding: 16px 24px;
+    }
+
+    &-brand {
+      margin-bottom: 4px;
+    }
+
+    &-logo {
+      flex-basis: 40px;
+      width: 40px;
+      height: 40px;
+      border-radius: 12px;
+    }
+
+    &-subtitle {
+      padding: 6px 2px 4px;
+    }
+
+    &-form {
+      padding-top: 2px;
+
+      .v-field__input {
+        min-height: 44px;
+        padding-block: 8px;
+      }
+
+      > .v-btn {
+        min-height: 40px;
+      }
+
+      > .text-center {
+        margin-top: 6px !important;
+      }
     }
   }
 }

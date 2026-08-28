@@ -65,7 +65,7 @@
                   v-icon(color='grey') mdi-tag-multiple
               span {{$t('common:header.browseTags')}}
       v-col(cols='7', md='4')
-        v-toolbar.nav-header-inner.pr-4(color='surface', flat)
+        v-toolbar.nav-header-inner.nav-header-actions(color='surface', flat, :class='$vuetify.display.mdAndUp ? `pr-4` : `pr-0`')
           v-spacer
           .navHeaderLoading.mr-3
             v-progress-circular(indeterminate, color='primary', :size='22', :width='2' v-show='isLoading', aria-label='Page loading')
@@ -109,7 +109,7 @@
           //- PAGE ACTIONS
 
           template(v-if='hasAnyPagePermissions && path && mode !== `edit`')
-            v-menu(location="bottom left", transition='slide-y-transition')
+            v-menu(location="bottom left", transition='slide-y-transition', @update:model-value='pageActionsVisibilityChanged')
               template(v-slot:activator='{ props: menuProps }')
                 v-tooltip(location="bottom")
                   template(v-slot:activator='{ props: tooltipProps }')
@@ -123,37 +123,37 @@
                       )
                       v-icon(color='grey') mdi-file-document-edit-outline
                   span {{$t('common:header.pageActions')}}
-              v-list(nav, :class='$vuetify.theme.current.dark ? `bg-grey-darken-4` : ``')
+              v-list.page-actions-menu(nav, :class='$vuetify.theme.current.dark ? `bg-grey-darken-4` : ``')
                 .text-label-small.pa-4.text-grey {{$t('common:header.currentPage')}}
-                v-list-item.pl-4(@click='pageView', v-if='mode !== `view`')
+                v-list-item.pl-4(role='button', tabindex='0', @click='pageView', @keydown.enter='pageView', @keydown.space.prevent='pageView', v-if='mode !== `view`')
                   template(v-slot:prepend)
                     v-avatar(size='24', rounded='0'): v-icon(color='primary') mdi-file-document-outline
                   v-list-item-title.text-body-medium {{$t('common:header.view')}}
-                v-list-item.pl-4(@click='pageEdit', v-if='mode !== `edit` && hasWritePagesPermission')
+                v-list-item.pl-4(role='button', tabindex='0', @click='pageEdit', @keydown.enter='pageEdit', @keydown.space.prevent='pageEdit', v-if='mode !== `edit` && hasWritePagesPermission')
                   template(v-slot:prepend)
                     v-avatar(size='24', rounded='0'): v-icon(color='primary') mdi-file-document-edit-outline
                   v-list-item-title.text-body-medium {{$t('common:header.edit')}}
-                v-list-item.pl-4(@click='pageHistory', v-if='mode !== `history` && hasReadHistoryPermission')
+                v-list-item.pl-4(role='button', tabindex='0', @click='pageHistory', @keydown.enter='pageHistory', @keydown.space.prevent='pageHistory', v-if='mode !== `history` && hasReadHistoryPermission')
                   template(v-slot:prepend)
                     v-avatar(size='24', rounded='0'): v-icon(color='primary') mdi-history
                   v-list-item-title.text-body-medium {{$t('common:header.history')}}
-                v-list-item.pl-4(@click='pageSource', v-if='mode !== `source` && hasReadSourcePermission')
+                v-list-item.pl-4(role='button', tabindex='0', @click='pageSource', @keydown.enter='pageSource', @keydown.space.prevent='pageSource', v-if='mode !== `source` && hasReadSourcePermission')
                   template(v-slot:prepend)
                     v-avatar(size='24', rounded='0'): v-icon(color='primary') mdi-code-tags
                   v-list-item-title.text-body-medium {{$t('common:header.viewSource')}}
-                v-list-item.pl-4(@click='pageConvert', v-if='hasWritePagesPermission')
+                v-list-item.pl-4(role='button', tabindex='0', @click='pageConvert', @keydown.enter='pageConvert', @keydown.space.prevent='pageConvert', v-if='hasWritePagesPermission')
                   template(v-slot:prepend)
                     v-avatar(size='24', rounded='0'): v-icon(color='primary') mdi-lightning-bolt
                   v-list-item-title.text-body-medium {{$t('common:header.convert')}}
-                v-list-item.pl-4(@click='pageDuplicate', v-if='hasWritePagesPermission')
+                v-list-item.pl-4(role='button', tabindex='0', @click='pageDuplicate', @keydown.enter='pageDuplicate', @keydown.space.prevent='pageDuplicate', v-if='hasWritePagesPermission')
                   template(v-slot:prepend)
                     v-avatar(size='24', rounded='0'): v-icon(color='primary') mdi-content-duplicate
                   v-list-item-title.text-body-medium {{$t('common:header.duplicate')}}
-                v-list-item.pl-4(@click='pageMove', v-if='hasManagePagesPermission')
+                v-list-item.pl-4(role='button', tabindex='0', @click='pageMove', @keydown.enter='pageMove', @keydown.space.prevent='pageMove', v-if='hasManagePagesPermission')
                   template(v-slot:prepend)
                     v-avatar(size='24', rounded='0'): v-icon(color='primary') mdi-content-save-move-outline
                   v-list-item-title.text-body-medium {{$t('common:header.move')}}
-                v-list-item.pl-4(@click='pageDelete', v-if='hasDeletePagesPermission')
+                v-list-item.pl-4(role='button', tabindex='0', @click='pageDelete', @keydown.enter='pageDelete', @keydown.space.prevent='pageDelete', v-if='hasDeletePagesPermission')
                   template(v-slot:prepend)
                     v-avatar(size='24', rounded='0'): v-icon(color='error') mdi-trash-can-outline
                   v-list-item-title.text-body-medium {{$t('common:header.delete')}}
@@ -402,6 +402,13 @@ export default defineComponent({
     window.removeEventListener('keydown', this.handleSearchShortcut)
   },
   methods: {
+    async pageActionsVisibilityChanged(open: boolean): Promise<void> {
+      if (!open) return
+      await this.$nextTick()
+      window.requestAnimationFrame(() => {
+        document.querySelector<HTMLElement>('.page-actions-menu .v-list-item')?.focus()
+      })
+    },
     searchFocus () {
       this.searchIsFocused = true
     },
@@ -728,6 +735,13 @@ export default defineComponent({
     &-dev {
       display: none;
     }
+  }
+}
+
+@media (max-width: 599px) {
+  .nav-header-actions {
+    position: relative;
+    inset-inline-end: 6px;
   }
 }
 

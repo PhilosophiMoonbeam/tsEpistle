@@ -213,8 +213,8 @@ v-container.admin-theme(fluid)
                   auto-grow
                 )
                 i18next.text-body-small.pl-2.ml-1(path='admin:theme.cssOverrideWarning', tag='div')
-                  strong.text-error(place='caution') {{ $t('admin:theme.cssOverrideWarningCaution') }}
-                  code(place='cssClass') .contents
+                  strong(place='caution' :class='$vuetify.theme.current.dark ? `text-red-lighten-3` : `text-red-darken-3`') {{ $t('admin:theme.cssOverrideWarningCaution') }}
+                  code(place='cssClass' :style='{ color: $vuetify.theme.current.dark ? `#ef9a9a` : `#c62828` }') .contents
               v-col(cols='12', lg='6')
                 v-textarea.is-monospaced(
                   v-model='config.injectHead'

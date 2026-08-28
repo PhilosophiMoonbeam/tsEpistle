@@ -21,6 +21,7 @@ for attempt in {1..90}; do
 done
 docker exec db psql --tuples-only --no-align --username=wiki --dbname=wiki --command='SHOW server_version'
 docker run -d -p 3000:3000 --name wiki --network=wiki-e2e -v wiki-data:/wiki/data \
+  --mount "type=bind,source=$PWD/dev/e2e/config.yml,target=/wiki/config.yml,readonly" \
   -e DB_TYPE=postgres -e DB_HOST=db -e DB_PORT=5432 -e DB_NAME=wiki \
   -e DB_USER=wiki -e 'DB_PASS=Password123!' "$WIKI_TEST_IMAGE"
 

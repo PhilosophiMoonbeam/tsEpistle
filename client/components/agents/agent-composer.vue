@@ -50,6 +50,8 @@
       ref="messageInput"
       v-model="draft"
       aria-label="Message Wiki Agent"
+      role="combobox"
+      aria-autocomplete="list"
       placeholder="Ask a follow-up · Type / for skills"
       rows="1"
       variant="solo"

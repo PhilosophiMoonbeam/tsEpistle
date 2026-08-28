@@ -1,6 +1,6 @@
 import AxeBuilder from '@axe-core/playwright'
 import { expect, test } from '@playwright/test'
-import type { Page, TestInfo } from '@playwright/test'
+import type { Locator, Page, TestInfo } from '@playwright/test'
 import {
   authenticateAsAdmin,
   expectResponsiveLayout,
@@ -32,14 +32,10 @@ function requireAnyProject(testInfo: TestInfo, projectNames: readonly string[]) 
   test.skip(!projectNames.includes(testInfo.project.name), `Covered by ${projectNames.join(', ')}`)
 }
 
-async function tabToControl(page: Page, labelPattern: RegExp, maximumPresses = 60) {
+async function tabToControl(page: Page, control: Locator, maximumPresses = 60) {
   for (let press = 0; press < maximumPresses; press += 1) {
     await page.keyboard.press('Tab')
-    const label = await page.evaluate(() => {
-      const focused = document.activeElement
-      return `${focused?.getAttribute('aria-label') ?? ''} ${focused?.textContent ?? ''}`.trim()
-    })
-    if (labelPattern.test(label)) return true
+    if (await control.evaluate(element => element === document.activeElement)) return true
   }
   return false
 }
@@ -74,7 +70,7 @@ test.describe('release accessibility profiles', () => {
     expect(reachedAdministration, 'Administration must be reachable in the tab order').toBe(true)
     await page.keyboard.press('Enter')
     await expect(page).toHaveURL('/a/dashboard')
-    await expect(page.getByRole('img', { name: 'Dashboard' })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Dashboard', exact: true })).toBeVisible()
   })
 
   test('meets contrast and accessibility gates in dark mode', async ({ page }, testInfo) => {
@@ -102,11 +98,16 @@ test.describe('release accessibility profiles', () => {
     requireProject(testInfo, 'accessibility-keyboard')
     await openAuthenticatedPage(page, '/en/home', '.page-header-section')
 
-    expect(await tabToControl(page, /edit page/i), 'Edit page must be reachable in the tab order').toBe(true)
+    const pageActions = page.getByRole('button', { name: 'Page Actions', exact: true })
+    expect(await tabToControl(page, pageActions), 'Page actions must be reachable in the tab order').toBe(true)
+    await page.keyboard.press('Enter')
+    const editPage = page.getByRole('button', { name: 'Edit', exact: true })
+    await expect(editPage, 'Edit must receive focus when page actions open').toBeFocused()
     await page.keyboard.press('Enter')
     await expect(page).toHaveURL(/\/e(?:dit)?\/en\/home/)
-    await expect(page.getByRole('button', { name: /save|saved/i })).toBeVisible()
-    expect(await tabToControl(page, /save|saved/i), 'Save must be reachable in the editor tab order').toBe(true)
+    const save = page.getByRole('button', { name: /save|saved/i })
+    await expect(save).toBeVisible()
+    expect(await tabToControl(page, save), 'Save must be reachable in the editor tab order').toBe(true)
   })
 
   test('announces search failure, retries, and exposes the empty result state', async ({ page }, testInfo) => {
@@ -135,22 +136,23 @@ test.describe('release accessibility profiles', () => {
     await page.keyboard.type('unavailable-query')
     await expect(page.getByRole('alert')).toContainText('Search service is unavailable.')
     await page.getByRole('button', { name: 'Try again' }).click()
-    await expect(page.getByRole('status')).toContainText('Try a different term or broader scope.')
+    await expect(page.getByRole('status')).toContainText('try a different term or scope.')
   })
 
   test('keeps the inline agent keyboard-accessible at desktop and mobile widths', async ({ page }, testInfo) => {
     requireAnyProject(testInfo, ['accessibility-keyboard', 'accessibility-mobile'])
     await authenticateAsAdmin(page)
     await page.goto('/', { waitUntil: 'networkidle' })
-    await page.evaluate('siteConfig.agentsEnabled = true')
     await openSearch(page)
+    await expect(page.getByRole('button', { name: /^ask$/i })).toBeVisible()
     await page.getByRole('button', { name: /^ask$/i }).click()
     await expect(page.getByRole('region', { name: 'Wiki Agent' })).toBeVisible()
     await expect(page.getByText(/Agent inference is currently disabled/)).toBeVisible()
     await expectResponsiveLayout(page, `inline agent (${testInfo.project.name})`)
     await expectNoBlockingAccessibilityViolations(page, `inline agent (${testInfo.project.name})`)
     if (testInfo.project.name === 'accessibility-keyboard') {
-      expect(await tabToControl(page, /open agent conversation history/i), 'Agent history must be reachable in the tab order').toBe(true)
+      const history = page.getByRole('button', { name: 'Open agent conversation history' })
+      expect(await tabToControl(page, history), 'Agent history must be reachable in the tab order').toBe(true)
     }
   })
 

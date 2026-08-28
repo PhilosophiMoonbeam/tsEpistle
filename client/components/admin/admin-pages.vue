@@ -87,11 +87,11 @@
                 td(:colspan='responsiveHeaders.length')
                   .admin-mobile-record
                     .admin-mobile-record-title {{ props.item.title }}
-                    .text-body-small.text-grey {{ props.item.description }}
+                    .text-body-small(:class='$vuetify.theme.current.dark ? `text-grey-lighten-1` : `text-grey-darken-2`') {{ props.item.description }}
                     .admin-mobile-record-meta
                       v-chip.mr-2(label, size="x-small", :color='$vuetify.theme.current.dark ? `grey-darken-4` : `grey-lighten-4`') {{ props.item.locale }}
                       span /{{ props.item.path }}
-                    .text-body-small.text-grey.mt-2 Updated {{ $helpers.formatMoment(props.item.updatedAt, 'calendar') }}
+                    .text-body-small.mt-2(:class='$vuetify.theme.current.dark ? `text-grey-lighten-1` : `text-grey-darken-2`') Updated {{ $helpers.formatMoment(props.item.updatedAt, 'calendar') }}
             template(v-slot:no-data)
               async-state(
                 v-if='loading'

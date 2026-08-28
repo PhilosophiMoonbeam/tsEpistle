@@ -109,7 +109,9 @@ export async function expectResponsiveLayout(page: Page, surface: string) {
     const describe = (element: HTMLElement) => {
       const label = element.getAttribute('aria-label') || element.textContent?.trim().replace(/\s+/g, ' ').slice(0, 80)
       const classes = Array.from(element.classList).slice(0, 3).join('.')
-      return `${element.tagName.toLowerCase()}${element.id ? `#${element.id}` : ''}${classes ? `.${classes}` : ''}${label ? ` (${label})` : ''}`
+      const rect = element.getBoundingClientRect()
+      const position = `[${rect.left.toFixed(1)}, ${rect.right.toFixed(1)}]`
+      return `${element.tagName.toLowerCase()}${element.id ? `#${element.id}` : ''}${classes ? `.${classes}` : ''}${label ? ` (${label})` : ''} ${position}`
     }
 
     const offscreen = candidates.flatMap(element => {

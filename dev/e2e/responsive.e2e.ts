@@ -61,7 +61,10 @@ test.describe('responsive UI quality matrix', () => {
               description: 'A deterministic result with enough copy to exercise wrapping at narrow widths.',
               path: 'responsive-search-result',
               locale: 'en',
-              visibility: 'public'
+              visibility: 'public',
+              tags: ['responsive'],
+              score: 10,
+              matchedFields: ['title']
             },
             {
               id: 102,
@@ -69,7 +72,10 @@ test.describe('responsive UI quality matrix', () => {
               description: 'A second result verifies that multiple cards remain readable.',
               path: 'private-responsive-result',
               locale: 'en',
-              visibility: 'private'
+              visibility: 'private',
+              tags: ['private'],
+              score: 8,
+              matchedFields: ['title']
             }
           ],
           suggestions: ['responsive layout'],
@@ -79,11 +85,12 @@ test.describe('responsive UI quality matrix', () => {
     })
     await openAuthenticatedPage(page, '/', '.page-header-section')
     const search = await openSearch(page)
-    await search.fill('responsive')
+    await search.pressSequentially('responsive')
 
     const result = page.getByText('Responsive Search Result', { exact: true }).first()
     await expect(result).toBeVisible()
     await expect(page.getByText('Private Responsive Result', { exact: true }).first()).toBeVisible()
+    await result.scrollIntoViewIfNeeded()
     await expectLocatorWithinViewport(result, 'Search result title')
     await expectResponsiveLayout(page, 'Search results')
   })
@@ -119,14 +126,14 @@ test.describe('responsive UI quality matrix', () => {
 
   test('keeps Agent Chat readable and operable', async ({ page }) => {
     await openAuthenticatedPage(page, '/', '.page-header-section')
-    await page.evaluate('siteConfig.agentsEnabled = true')
     await openSearch(page)
+    await expect(page.getByRole('button', { name: /^ask$/i })).toBeVisible()
     await page.getByRole('button', { name: /^ask$/i }).click()
 
     const agent = page.getByRole('region', { name: 'Wiki Agent' })
     await expect(agent).toBeVisible()
     await expect(page.getByText(/Agent inference is currently disabled/)).toBeVisible()
-    await expect(agent.getByRole('textbox', { name: 'Message Wiki Agent' })).toBeVisible()
+    await expect(agent.getByRole('combobox', { name: 'Message Wiki Agent' })).toBeVisible()
     await expect(agent.getByRole('button', { name: 'Open agent conversation history' })).toBeVisible()
     await expect(agent.getByText('How this session uses the model')).toHaveCount(0)
     const profileCount = await page.evaluate(async () => (await fetch('/_api/agents/profiles')).json().then((value: { profiles?: unknown[] }) => value.profiles?.length ?? 0))
