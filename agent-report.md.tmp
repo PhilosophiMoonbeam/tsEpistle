@@ -2,10 +2,10 @@
 
 ## Scope and method
 
-This report evaluates eight local repositories against the current Wiki Agent implementation:
+This report evaluates seven local repositories against the current Wiki Agent implementation:
 
 - Agents: `hermes-agent`, `opencode`, `codex`, `oh-my-pi`, `deepagents`, `prime-agent`.
-- Frameworks/protocols: `CopilotKit`, `ag-ui`.
+- Framework: `CopilotKit`.
 
 The analysis is source-first. Every claim below is based on the checked-out repositories and the Wiki Agent source; documentation is treated as explanatory evidence, not as a substitute for implementation. The focus is deliberately narrow: task decomposition, subagents, skills, tools, goals, run loops, durable state, compaction, human approval, and user-visible agent state. Coding sandboxes, IDE integration, arbitrary computer control, voice, and unrelated product surfaces are excluded except where they establish a reusable safety boundary.
 
@@ -332,7 +332,7 @@ Extend the current evidence gate into an explicit host completion gate for long 
 
 ### Relevant implementation
 
-CopilotKit's runtime normalizes multiple backend implementations into AG-UI events (`/home/bbferko/repos/CopilotKit/packages/runtime/src/agent/index.ts`). Tests enforce a run envelope with `RUN_STARTED` first and `RUN_FINISHED` last and cover state snapshots, tool results, interrupts, and resume behavior.
+CopilotKit's runtime normalizes multiple backend implementations into typed lifecycle events (`/home/bbferko/repos/CopilotKit/packages/runtime/src/agent/index.ts`). Tests enforce a run envelope with `RUN_STARTED` first and `RUN_FINISHED` last and cover state snapshots, tool results, interrupts, and resume behavior.
 
 The React v2 agent hook subscribes to thread-scoped messages, state, and run status with optional throttling (`packages/react-core/src/v2/hooks/use-agent.tsx`). Human-in-the-loop and interrupt hooks expose exhaustive renderer statuses, a typed `respond`/resume path, abort cleanup, and support for both standard and legacy interrupt forms (`use-human-in-the-loop.tsx`, `use-interrupt.tsx`).
 
@@ -353,36 +353,6 @@ The React v2 agent hook subscribes to thread-scoped messages, state, and run sta
 Use its UI semantics: render plan steps, subagent groups, pending approval, suspended state, resume response, cancellation, and terminal result from typed events. Keep execution server-side and retain the existing immutable proposal path.
 
 **Verdict: useful UI reference; no runtime migration.**
-
----
-
-## 8. AG-UI
-
-### Relevant implementation
-
-AG-UI is an event-based agent/user protocol designed to run over SSE, WebSockets, webhooks, or other transports (`/home/bbferko/repos/ag-ui/README.md`). The TypeScript core defines discriminated event schemas for text, tools, reasoning, state snapshots/deltas, message snapshots, activities, runs, steps, and subagents (`sdks/typescript/packages/core/src/events.ts`).
-
-The latest subagent events carry `subagentRunId`, parent subagent/tool/message attribution, success/suspended outcomes, result payloads, and errors. A suspended child is explicitly different from a completed child and can retain its identity across resume. Interrupts carry IDs, reasons, response schemas, expiry, and optional subagent attribution; resume entries distinguish resolved from cancelled (`core/src/types.ts`). `RunAgentInput` correlates thread, run, optional parent, state, messages, tools, context, and resume entries.
-
-Capabilities are typed by category: transport, tools, output, state, multi-agent, execution, modalities, and human-in-the-loop (`core/src/capabilities.ts`). Token usage is intentionally numeric-only so message or identity content cannot ride inside accounting metadata (`core/src/events.ts`).
-
-### What AG-UI does better
-
-- Correlated IDs and discriminated outcomes make run, subagent, and interrupt state reconstructable without ordering guesses.
-- Snapshot-plus-delta events support both initial hydration and efficient live updates.
-- Subagent attribution allows the UI to place approval or suspension at the correct node in a run graph.
-- Capability negotiation gives clients an explicit feature contract.
-
-### Risks and non-transferable parts
-
-- Core state and forwarded properties are intentionally broad (`z.any()`), and the project favors loose interoperability. Such payloads cannot carry Wiki authorization or trusted policy state.
-- Frontend tools and exposed reasoning streams are not appropriate defaults. Wiki should show bounded activity summaries, never private chain-of-thought, secrets, or raw provider reasoning.
-- Replacing the existing durable SSE/event ledger would risk replay, lease, and idempotency behavior already tailored to Wiki.
-- AG-UI events describe interaction; they do not enforce source evidence, permissions, or proposal approval.
-
-### Assessment
-
-Wiki's durable event ledger and typed lifecycle projection already serve its single trusted client without introducing a second public event contract. The comparison did not establish a present interoperability requirement, so this protocol is not part of the recommended architecture or roadmap.
 
 ---
 
@@ -686,9 +656,3 @@ Do not add these while implementing research subagents:
 - `/home/bbferko/repos/CopilotKit/packages/react-core/src/v2/hooks/use-human-in-the-loop.tsx`
 - `/home/bbferko/repos/CopilotKit/packages/react-core/src/v2/hooks/use-interrupt.tsx`
 
-### AG-UI
-
-- `/home/bbferko/repos/ag-ui/README.md`
-- `/home/bbferko/repos/ag-ui/sdks/typescript/packages/core/src/events.ts`
-- `/home/bbferko/repos/ag-ui/sdks/typescript/packages/core/src/types.ts`
-- `/home/bbferko/repos/ag-ui/sdks/typescript/packages/core/src/capabilities.ts`
