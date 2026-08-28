@@ -72,7 +72,7 @@
     "@aws-sdk/client-cloudsearch": "3.1108.0",
     "@aws-sdk/client-cloudsearch-domain": "3.1108.0",
     "@aws-sdk/client-s3": "3.1108.0",
-    "@ax-llm/ax": "23.0.15",
+    "@ax-llm/ax": "24.0.12",
     "@azure/search-documents": "13.0.0",
     "@azure/storage-blob": "12.33.0",
     "@codemirror/autocomplete": "6.20.3",

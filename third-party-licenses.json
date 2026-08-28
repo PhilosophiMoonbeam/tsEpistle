@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "source": {
     "lockfile": "pnpm-lock.yaml",
-    "sha256": "809463682fc853ce671ef8500864238056364ef883a9fc2e4e4df4e353e092f0",
+    "sha256": "6775ffb9d328dc19092ceb3945624a808c64fa564cc71638d0e87bd55f7c3cf4",
     "scope": "production",
     "policy": {
       "file": "license-policy.json",
@@ -383,7 +383,7 @@
     {
       "name": "@ax-llm/ax",
       "versions": [
-        "23.0.15"
+        "24.0.12"
       ],
       "license": "Apache-2.0",
       "author": "Vikram",
