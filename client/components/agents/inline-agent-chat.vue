@@ -1,11 +1,6 @@
 <template>
   <section
     class="inline-agent"
-    :class="{
-      'inline-agent--history-open': historyOpen,
-      'inline-agent--memory-open': memoryOpen,
-      'inline-agent--both-open': historyOpen && memoryOpen
-    }"
     aria-label="Wiki Agent"
   >
     <button
@@ -240,6 +235,7 @@ const historyOpen = ref(false)
 const memoryOpen = ref(false)
 let initialization: Promise<void> | null = null
 let compactPanelMedia: MediaQueryList | null = null
+const compactPanelQuery = '(max-width: 1711.98px)'
 
 const currentPage = computed<AgentCurrentPageHint | null>(() => {
   if (props.pageId < 1 || !props.pageLocale || !props.pagePath || !props.pageUpdatedAt) return null
@@ -314,11 +310,11 @@ const newSession = async (): Promise<void> => {
 
 const toggleHistory = (): void => {
   historyOpen.value = !historyOpen.value
-  if (historyOpen.value && window.matchMedia('(max-width: 1199.98px)').matches) memoryOpen.value = false
+  if (historyOpen.value && window.matchMedia(compactPanelQuery).matches) memoryOpen.value = false
 }
 const toggleMemory = (): void => {
   memoryOpen.value = !memoryOpen.value
-  if (memoryOpen.value && window.matchMedia('(max-width: 1199.98px)').matches) historyOpen.value = false
+  if (memoryOpen.value && window.matchMedia(compactPanelQuery).matches) historyOpen.value = false
 }
 const reconcileCompactPanels = (event: MediaQueryListEvent): void => {
   if (event.matches && historyOpen.value && memoryOpen.value) memoryOpen.value = false
@@ -389,7 +385,7 @@ watch(
 )
 
 onMounted(() => {
-  compactPanelMedia = window.matchMedia('(max-width: 1199.98px)')
+  compactPanelMedia = window.matchMedia(compactPanelQuery)
   compactPanelMedia.addEventListener('change', reconcileCompactPanels)
   void ensureInitialized()
 })
@@ -410,17 +406,14 @@ defineExpose({ sendPrompt, focusComposer, focusConversation })
   text-align: start;
   width: 100%;
 }
-.inline-agent--history-open { grid-template-columns: minmax(15rem, 19rem) minmax(36rem, 68rem) minmax(0, 1fr); }
-.inline-agent--memory-open { grid-template-columns: minmax(0, 1fr) minmax(36rem, 68rem) minmax(17rem, 21rem); }
-.inline-agent--both-open { grid-template-columns: minmax(15rem, 19rem) minmax(36rem, 68rem) minmax(17rem, 21rem); }
 .inline-agent__side {
   height: min(82dvh, 54rem);
   max-height: calc(100dvh - 1rem);
   min-height: min(34rem, calc(100dvh - 1rem));
   min-width: 0;
 }
-.inline-agent__side--history { grid-column: 1; }
-.inline-agent__side--memory { grid-column: 3; }
+.inline-agent__side--history { grid-column: 1; justify-self: end; width: min(19rem, 100%); }
+.inline-agent__side--memory { grid-column: 3; justify-self: start; width: min(21rem, 100%); }
 .inline-agent__scrim { display: none; }
 .inline-agent:dir(rtl),
 .inline-agent:lang(ar) {
@@ -525,13 +518,7 @@ defineExpose({ sendPrompt, focusComposer, focusConversation })
   padding: 1rem clamp(1rem, 3vw, 2rem) 1.1rem;
 }
 .inline-agent__notice { align-items: center; display: flex; gap: .35rem; justify-content: center; text-align: center; }
-@media (max-width: 1199.98px) {
-  .inline-agent,
-  .inline-agent--history-open,
-  .inline-agent--memory-open,
-  .inline-agent--both-open {
-    grid-template-columns: minmax(0, 1fr) minmax(0, 68rem) minmax(0, 1fr);
-  }
+@media (max-width: 1711.98px) {
   .inline-agent__side {
     bottom: 0;
     height: auto;

@@ -747,7 +747,7 @@ export default defineComponent({
   &--ask .inline-agent {
     box-sizing: border-box;
     flex: 1 1 auto;
-    max-width: 72rem;
+    max-width: 112rem;
     min-height: 0;
     padding: 0;
   }

@@ -135,6 +135,46 @@ test.describe('responsive UI quality matrix', () => {
     await expect(page.getByText(/Agent inference is currently disabled/)).toBeVisible()
     await expect(agent.getByRole('combobox', { name: 'Message Wiki Agent' })).toBeVisible()
     await expect(agent.getByRole('button', { name: 'Open agent conversation history' })).toBeVisible()
+    const viewport = page.viewportSize()
+    if (viewport && viewport.width >= 1712) {
+      await page.locator('.search-results--ask').evaluate(async element => {
+        await Promise.all(element.getAnimations().map(animation => animation.finished))
+      })
+      const card = agent.locator('.inline-agent__card')
+      const initialCard = await card.boundingBox()
+      expect(initialCard).not.toBeNull()
+
+      const historyButton = agent.getByRole('button', { name: 'Open agent conversation history' })
+      await historyButton.click()
+      const historyPanel = agent.getByRole('complementary', { name: 'Chat history panel' })
+      await expect(historyPanel).toBeVisible()
+      const historyCard = await card.boundingBox()
+      const historyBounds = await historyPanel.boundingBox()
+      expect(historyCard).not.toBeNull()
+      expect(historyBounds).not.toBeNull()
+      if (initialCard && historyCard && historyBounds) {
+        expect(Math.abs(historyCard.width - initialCard.width)).toBeLessThanOrEqual(1)
+        expect(Math.abs(historyCard.x - initialCard.x)).toBeLessThanOrEqual(1)
+        expect(historyBounds.x + historyBounds.width).toBeLessThanOrEqual(historyCard.x)
+      }
+      await historyPanel.getByRole('button', { name: 'Close chat history' }).click()
+      await expect(historyPanel).toBeHidden()
+
+      await agent.getByRole('button', { name: 'Manage agent memory' }).click()
+      const memoryPanel = agent.getByRole('complementary', { name: 'Agent memory panel' })
+      await expect(memoryPanel).toBeVisible()
+      const memoryCard = await card.boundingBox()
+      const memoryBounds = await memoryPanel.boundingBox()
+      expect(memoryCard).not.toBeNull()
+      expect(memoryBounds).not.toBeNull()
+      if (initialCard && memoryCard && memoryBounds) {
+        expect(Math.abs(memoryCard.width - initialCard.width)).toBeLessThanOrEqual(1)
+        expect(Math.abs(memoryCard.x - initialCard.x)).toBeLessThanOrEqual(1)
+        expect(memoryBounds.x).toBeGreaterThanOrEqual(memoryCard.x + memoryCard.width)
+      }
+      await memoryPanel.getByRole('button', { name: 'Close agent memory' }).click()
+      await expect(memoryPanel).toBeHidden()
+    }
     await expect(agent.getByText('How this session uses the model')).toHaveCount(0)
     const profileCount = await page.evaluate(async () => (await fetch('/_api/agents/profiles')).json().then((value: { profiles?: unknown[] }) => value.profiles?.length ?? 0))
     const settingsButton = agent.getByRole('button', { name: 'Session configuration' })
