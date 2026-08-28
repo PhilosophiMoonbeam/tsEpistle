@@ -1,5 +1,23 @@
 <template>
-  <section class="inline-agent" aria-label="Wiki Agent">
+  <section
+    class="inline-agent"
+    :class="{
+      'inline-agent--history-open': historyOpen,
+      'inline-agent--memory-open': memoryOpen,
+      'inline-agent--both-open': historyOpen && memoryOpen
+    }"
+    aria-label="Wiki Agent"
+  >
+    <button
+      v-if="historyOpen || memoryOpen"
+      class="inline-agent__scrim"
+      type="button"
+      aria-label="Close Agent side panel"
+      @click="closePanels"
+    />
+    <aside v-if="historyOpen" id="agent-history-panel" class="inline-agent__side inline-agent__side--history" aria-label="Chat history panel">
+      <AgentHistoryPanel @close="historyOpen = false" @reset="resetHistoryOpen = true" />
+    </aside>
     <v-card class="inline-agent__card" elevation="0" rounded="xl">
       <v-toolbar class="inline-agent__toolbar" color="transparent" density="comfortable" tag="div">
         <v-avatar class="ms-4" color="primary" size="34" variant="tonal">
@@ -17,43 +35,24 @@
           size="small"
           variant="tonal"
         >{{ connectionLabel }}</v-chip>
-        <AgentMemoryManager :csrf-token="csrfToken" />
-        <v-menu location="bottom end">
-          <template #activator="{ props: menuProps }">
-            <v-btn
-              v-bind="menuProps"
-              icon="mdi-history"
-              variant="text"
-              aria-label="Open agent conversation history"
-            />
-          </template>
-          <v-list class="inline-agent__history" density="compact" aria-label="Agent conversation history">
-            <div class="inline-agent__history-header px-4 pt-3 pb-2">
-              <div>
-                <div class="text-label-large">Recent conversations</div>
-                <div class="text-body-small text-medium-emphasis">Automatically removed after 90 days</div>
-              </div>
-              <v-btn
-                color="error"
-                prepend-icon="mdi-delete-sweep-outline"
-                size="small"
-                variant="text"
-                :disabled="resetting || sessions.length === 0"
-                @click="resetHistoryOpen = true"
-              >Reset</v-btn>
-            </div>
-            <v-list-item
-              v-for="session in sessions"
-              :key="session.id"
-              :active="session.id === thread?.session.id"
-              :title="session.title || 'New conversation'"
-              :subtitle="formatSessionDate(session.updatedAt)"
-              prepend-icon="mdi-message-text-outline"
-              @click="openSession(session.id)"
-            />
-            <v-list-item v-if="!sessions.length" title="No saved conversations yet" disabled />
-          </v-list>
-        </v-menu>
+        <v-btn
+          icon="mdi-history"
+          :color="historyOpen ? 'primary' : undefined"
+          :variant="historyOpen ? 'tonal' : 'text'"
+          aria-label="Open agent conversation history"
+          :aria-expanded="historyOpen"
+          aria-controls="agent-history-panel"
+          @click="toggleHistory"
+        />
+        <v-btn
+          icon="mdi-brain"
+          :color="memoryOpen ? 'primary' : undefined"
+          :variant="memoryOpen ? 'tonal' : 'text'"
+          aria-label="Manage agent memory"
+          :aria-expanded="memoryOpen"
+          aria-controls="agent-memory-panel"
+          @click="toggleMemory"
+        />
         <v-btn
           class="me-2"
           icon="mdi-plus"
@@ -168,6 +167,9 @@
       </footer>
       </template>
     </v-card>
+    <aside v-if="memoryOpen" id="agent-memory-panel" class="inline-agent__side inline-agent__side--memory" aria-label="Agent memory panel">
+      <AgentMemoryManager v-model="memoryOpen" :csrf-token="csrfToken" />
+    </aside>
   </section>
   <AgentPersonalSkills v-if="skillsEnabled" v-model="skillManagerOpen" :csrf-token="csrfToken" @changed="reloadSkillCatalog" />
   <v-dialog v-model="resetHistoryOpen" max-width="30rem">
@@ -189,11 +191,12 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import type { AgentCurrentPageHint } from '../../../shared/agents/contracts.ts'
 import { useAgentsStore } from '../../store/agents.ts'
 import AgentComposer from './agent-composer.vue'
+import AgentHistoryPanel from './agent-history-panel.vue'
 import AgentMemoryManager from './agent-memory-manager.vue'
 import AgentPersonalSkills from './agent-personal-skills.vue'
 import AgentMcpApproval from './agent-mcp-approval.vue'
@@ -220,7 +223,10 @@ const approvalJumpVisible = ref(false)
 const skillManagerOpen = ref(false)
 const resetHistoryOpen = ref(false)
 const resetting = ref(false)
+const historyOpen = ref(false)
+const memoryOpen = ref(false)
 let initialization: Promise<void> | null = null
+let compactPanelMedia: MediaQueryList | null = null
 
 const currentPage = computed<AgentCurrentPageHint | null>(() => {
   if (props.pageId < 1 || !props.pageLocale || !props.pagePath || !props.pageUpdatedAt) return null
@@ -292,13 +298,22 @@ const newSession = async (): Promise<void> => {
   }
 }
 
-const openSession = async (sessionId: string): Promise<void> => {
-  if (sessionId === thread.value?.session.id) return
-  try {
-    await agents.openSession(sessionId)
-  } catch (value) {
-    agents.error = value instanceof Error ? value.message : 'The conversation could not be opened.'
-  }
+const toggleHistory = (): void => {
+  historyOpen.value = !historyOpen.value
+  if (historyOpen.value && window.matchMedia('(max-width: 1199.98px)').matches) memoryOpen.value = false
+}
+const toggleMemory = (): void => {
+  memoryOpen.value = !memoryOpen.value
+  if (memoryOpen.value && window.matchMedia('(max-width: 1199.98px)').matches) historyOpen.value = false
+}
+const reconcileCompactPanels = (event: MediaQueryListEvent): void => {
+  if (event.matches && historyOpen.value && memoryOpen.value) memoryOpen.value = false
+}
+
+
+const closePanels = (): void => {
+  historyOpen.value = false
+  memoryOpen.value = false
 }
 const resetHistory = async (): Promise<void> => {
   resetting.value = true
@@ -312,10 +327,6 @@ const resetHistory = async (): Promise<void> => {
   }
 }
 
-const formatSessionDate = (value: string): string => new Intl.DateTimeFormat(undefined, {
-  dateStyle: 'medium',
-  timeStyle: 'short'
-}).format(new Date(value))
 
 const updateApprovalJump = (): void => {
   const container = transcript.value
@@ -363,19 +374,40 @@ watch(
   }
 )
 
-onMounted(() => { void ensureInitialized() })
+onMounted(() => {
+  compactPanelMedia = window.matchMedia('(max-width: 1199.98px)')
+  compactPanelMedia.addEventListener('change', reconcileCompactPanels)
+  void ensureInitialized()
+})
+onBeforeUnmount(() => compactPanelMedia?.removeEventListener('change', reconcileCompactPanels))
 defineExpose({ sendPrompt, focusComposer, focusConversation })
 </script>
 
 <style scoped>
 .inline-agent {
   color: rgb(var(--v-theme-on-surface));
+  display: grid;
   font-family: 'WikiAgentSans', 'Tajawal', 'Roboto', system-ui, sans-serif;
+  gap: 1rem;
+  grid-template-columns: minmax(0, 1fr) minmax(36rem, 68rem) minmax(0, 1fr);
   margin: 0 auto;
-  max-width: 68rem;
+  max-width: 112rem;
+  position: relative;
   text-align: start;
   width: 100%;
 }
+.inline-agent--history-open { grid-template-columns: minmax(15rem, 19rem) minmax(36rem, 68rem) minmax(0, 1fr); }
+.inline-agent--memory-open { grid-template-columns: minmax(0, 1fr) minmax(36rem, 68rem) minmax(17rem, 21rem); }
+.inline-agent--both-open { grid-template-columns: minmax(15rem, 19rem) minmax(36rem, 68rem) minmax(17rem, 21rem); }
+.inline-agent__side {
+  height: min(82dvh, 54rem);
+  max-height: calc(100dvh - 1rem);
+  min-height: min(34rem, calc(100dvh - 1rem));
+  min-width: 0;
+}
+.inline-agent__side--history { grid-column: 1; }
+.inline-agent__side--memory { grid-column: 3; }
+.inline-agent__scrim { display: none; }
 .inline-agent:dir(rtl),
 .inline-agent:lang(ar) {
   font-family: 'Tajawal', 'WikiAgentSans', 'Roboto', system-ui, sans-serif;
@@ -391,6 +423,7 @@ defineExpose({ sendPrompt, focusComposer, focusConversation })
   font-family: inherit;
 }
 .inline-agent__card {
+  grid-column: 2;
   background: color-mix(in srgb, rgb(var(--v-theme-surface)) 98%, rgb(var(--v-theme-background)));
   border: 1px solid color-mix(in srgb, rgb(var(--v-theme-on-surface)) 16%, transparent);
   box-shadow: 0 1.25rem 4rem color-mix(in srgb, rgb(var(--v-theme-on-surface)) 16%, transparent);
@@ -410,8 +443,6 @@ defineExpose({ sendPrompt, focusComposer, focusConversation })
   padding-inline: .5rem;
 }
 .inline-agent__heading { min-width: 0; }
-.inline-agent__history { max-height: min(28rem, 70dvh); min-width: min(24rem, 90vw); overflow-y: auto; }
-.inline-agent__history-header { align-items: center; display: flex; gap: 1rem; justify-content: space-between; }
 .inline-agent__alert { flex: 0 0 auto; }
 .inline-agent__settings { flex: 0 0 auto; max-height: 100%; overflow-y: auto; overscroll-behavior: contain; }
 .inline-agent__settings:has(.v-expansion-panel-title[aria-expanded="true"]) { flex: 1 1 auto; min-height: clamp(9rem, 45dvh, 18rem); }
@@ -472,8 +503,7 @@ defineExpose({ sendPrompt, focusComposer, focusConversation })
 .inline-agent__welcome-eyebrow { color: rgb(var(--v-theme-primary)); font-size: .7rem; font-weight: 700; letter-spacing: .12em; margin: 1.1rem 0 .4rem; text-transform: uppercase; }
 .inline-agent__welcome h2 { font-size: clamp(1.55rem, 4vw, 2rem); font-weight: 650; letter-spacing: -.025em; line-height: 1.2; margin: 0; }
 .inline-agent__welcome-copy { color: rgb(var(--v-theme-on-surface)); line-height: 1.6; margin: .7rem auto 1.5rem; max-width: 34rem; opacity: .72; }
-.inline-agent__starters { display: grid; gap: .65rem; grid-template-columns: repeat(3, minmax(0, 1fr)); width: 100%; }
-.inline-agent__starter { height: auto; justify-content: flex-start; letter-spacing: 0; min-height: 2.9rem; padding: .65rem .9rem; text-transform: none; white-space: normal; }
+.inline-agent__starters { display: grid; gap: .65rem; grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr)); width: 100%; }
 .inline-agent__composer {
   background: color-mix(in srgb, rgb(var(--v-theme-surface)) 96%, rgb(var(--v-theme-primary)) 4%);
   border-top: 1px solid color-mix(in srgb, rgb(var(--v-theme-on-surface)) 11%, transparent);
@@ -481,7 +511,40 @@ defineExpose({ sendPrompt, focusComposer, focusConversation })
   padding: 1rem clamp(1rem, 3vw, 2rem) 1.1rem;
 }
 .inline-agent__notice { align-items: center; display: flex; gap: .35rem; justify-content: center; text-align: center; }
+@media (max-width: 1199.98px) {
+  .inline-agent,
+  .inline-agent--history-open,
+  .inline-agent--memory-open,
+  .inline-agent--both-open {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 68rem) minmax(0, 1fr);
+  }
+  .inline-agent__side {
+    bottom: 0;
+    height: auto;
+    max-height: none;
+    min-height: 0;
+    position: absolute;
+    top: 0;
+    width: min(22rem, calc(100% - 2.5rem));
+    z-index: 5;
+  }
+  .inline-agent__side--history { inset-inline-start: 0; }
+  .inline-agent__side--memory { inset-inline-end: 0; }
+  .inline-agent__scrim {
+    background: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 34%, transparent);
+    border: 0;
+    display: block;
+    inset: 0;
+    padding: 0;
+    position: absolute;
+    z-index: 4;
+  }
+}
+
 @media (max-width: 599.98px) {
+  .inline-agent { gap: 0; grid-template-columns: minmax(0, 1fr); height: 100dvh; }
+  .inline-agent__card { grid-column: 1; }
+  .inline-agent__side { width: min(22rem, calc(100% - 2.25rem)); }
   .inline-agent__card { border: 0; border-radius: 0 !important; box-shadow: none; height: 100dvh; max-height: none; min-height: 0; }
   .inline-agent__toolbar { padding-inline: .25rem; }
   .inline-agent__body { padding-inline: .75rem; }

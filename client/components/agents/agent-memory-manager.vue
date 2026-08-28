@@ -1,12 +1,4 @@
 <template>
-  <v-btn
-    icon="mdi-brain"
-    variant="text"
-    aria-label="Manage agent memory"
-    @click="open = true"
-  />
-
-  <v-dialog v-model="open" max-width="46rem" scrollable>
     <v-card class="agent-memory" rounded="xl">
       <div class="agent-memory__hero pa-5 pb-4">
         <div class="d-flex align-start ga-4">
@@ -15,7 +7,7 @@
           </v-avatar>
           <div class="flex-grow-1">
             <div class="d-flex align-center flex-wrap ga-2">
-              <h2 class="text-title-large font-weight-medium">Agent memory</h2>
+              <h2 class="text-title-medium font-weight-medium">Agent memory</h2>
               <v-chip color="primary" size="x-small" variant="tonal">New conversations</v-chip>
             </div>
             <p class="text-body-medium text-medium-emphasis mt-1 mb-0">
@@ -105,13 +97,18 @@
 
       <v-divider />
       <v-card-actions class="px-5 py-4">
-        <v-btn color="error" variant="text" prepend-icon="mdi-delete-sweep-outline" :disabled="memoryCount === 0" @click="clearing = true">Clear memory</v-btn>
+        <v-btn
+          color="error"
+          icon="mdi-delete-sweep-outline"
+          variant="text"
+          aria-label="Clear memory"
+          :disabled="memoryCount === 0"
+          @click="clearing = true"
+        />
         <v-spacer />
-        <v-btn variant="text" @click="open = false">Done</v-btn>
         <v-btn color="primary" prepend-icon="mdi-plus" variant="flat" @click="beginAdd">Add memory</v-btn>
       </v-card-actions>
     </v-card>
-  </v-dialog>
 
   <v-dialog :model-value="Boolean(removing)" max-width="28rem" @update:model-value="value => { if (!value) removing = null }">
     <v-card rounded="xl" title="Remove this memory?">
@@ -146,8 +143,8 @@ import { computed, ref, watch } from 'vue'
 import { clearAgentMemories, createAgentMemory, getAgentMemories, removeAgentMemory, updateAgentMemory, type AgentMemoryEntry, type AgentMemoryTarget, type AgentMemoryView } from '../../helpers/agents-api.ts'
 
 const props = defineProps<{ csrfToken: string }>()
+const open = defineModel<boolean>({ required: true })
 const emptyStore = (limit: number) => ({ entries: [] as AgentMemoryEntry[], characters: 0, limit })
-const open = ref(false)
 const loading = ref(false)
 const saving = ref(false)
 const error = ref('')
@@ -239,13 +236,21 @@ const clear = async (): Promise<void> => {
   }
 }
 
-watch(open, value => { if (value) void load() })
+watch(open, value => { if (value) void load() }, { immediate: true })
 </script>
 
 <style scoped>
-.agent-memory { overflow: hidden; }
-.agent-memory__hero { background: color-mix(in srgb, rgb(var(--v-theme-primary)) 6%, rgb(var(--v-theme-surface))); }
-.agent-memory__body { max-height: min(68vh, 44rem); }
+.agent-memory {
+  background: color-mix(in srgb, rgb(var(--v-theme-surface)) 97%, rgb(var(--v-theme-primary)) 3%);
+  border: 1px solid color-mix(in srgb, rgb(var(--v-theme-on-surface)) 14%, transparent);
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+.agent-memory__hero { background: color-mix(in srgb, rgb(var(--v-theme-primary)) 6%, rgb(var(--v-theme-surface))); flex: 0 0 auto; }
+.agent-memory__body { flex: 1 1 auto; max-height: none; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
 .agent-memory__editor { background: color-mix(in srgb, rgb(var(--v-theme-primary)) 4%, rgb(var(--v-theme-surface))); }
 .agent-memory__capacity { opacity: .72; }
 .agent-memory__entries { border: 1px solid color-mix(in srgb, rgb(var(--v-theme-on-surface)) 16%, transparent); border-radius: .75rem; overflow: hidden; }
@@ -255,7 +260,15 @@ watch(open, value => { if (value) void load() })
 .agent-memory__entry-actions { display: flex; flex: 0 0 auto; opacity: .62; }
 .agent-memory__entry:hover .agent-memory__entry-actions, .agent-memory__entry:focus-within .agent-memory__entry-actions { opacity: 1; }
 .agent-memory__empty { background: color-mix(in srgb, rgb(var(--v-theme-surface-variant)) 38%, transparent); border: 1px dashed color-mix(in srgb, rgb(var(--v-theme-on-surface)) 18%, transparent); }
+@media (max-width: 1199.98px) {
+  .agent-memory {
+    border-radius: 0 !important;
+    border-end-start-radius: 1rem !important;
+    border-start-start-radius: 1rem !important;
+  }
+}
 @media (max-width: 599.98px) {
+  .agent-memory { border-radius: 0 !important; border-width: 0; border-inline-start-width: 1px; }
   .agent-memory__body { padding: 1rem !important; }
   .agent-memory__entry-actions { opacity: 1; }
 }

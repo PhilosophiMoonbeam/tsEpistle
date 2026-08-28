@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { AGENT_ACTION_NAMES, AGENT_EVENT_TYPES, AGENT_PROVIDER_TRANSPORTS, type AgentEventType, type AgentProviderProfileView, type AgentThreadState, type CreateAgentSessionRequest, type SubmitAgentMessageRequest, type UpdateAgentSessionProfileRequest, type UpdateAgentSkillPreferencesRequest } from '../../shared/agents/contracts.ts'
+import { AGENT_ACTION_NAMES, AGENT_EVENT_TYPES, AGENT_PROVIDER_TRANSPORTS, type AgentConversationFolderView, type AgentEventType, type AgentProviderProfileView, type AgentThreadState, type CreateAgentSessionRequest, type SubmitAgentMessageRequest, type UpdateAgentSessionFolderRequest, type UpdateAgentSessionProfileRequest, type UpdateAgentSkillPreferencesRequest } from '../../shared/agents/contracts.ts'
 
 const Iso = z.iso.datetime()
 const Uuid = z.uuid()
@@ -8,7 +8,7 @@ const Run = z.object({ id: Uuid, sessionId: Uuid, status: RunStatus, attempt: z.
 const Citation = z.object({ evidenceId: z.string(), kind: z.enum(['page', 'search-result', 'skill', 'browser']), label: z.string(), href: z.string().nullable() })
 const Message = z.object({ id: Uuid, runId: Uuid.nullable(), ordinal: z.number().int().nonnegative(), role: z.enum(['user', 'assistant']), status: z.enum(['pending', 'streaming', 'complete', 'failed', 'cancelled']), content: z.string(), citations: z.array(Citation), createdAt: Iso, updatedAt: Iso })
 const Skill = z.object({ skillId: Uuid, versionId: Uuid, name: z.string(), description: z.string(), contentHash: z.string(), sourcePath: z.string(), versionCreatedAt: Iso, status: z.enum(['enabled', 'disabled', 'revoked']), drifted: z.boolean(), selected: z.boolean(), ordinal: z.number().int().nonnegative() })
-const Session = z.object({ id: Uuid, title: z.string(), retention: z.enum(['temporary', 'saved']), status: z.enum(['active', 'deletion_pending']), executionMode: z.literal('agent'), version: z.number().int().positive(), providerProfileId: Uuid.nullable(), profileResolutionToken: z.string(), skills: z.array(Skill), currentRun: Run.nullable(), createdAt: Iso, updatedAt: Iso, lastActivityAt: Iso, expiresAt: Iso.nullable() })
+const Session = z.object({ id: Uuid, title: z.string(), retention: z.enum(['temporary', 'saved']), folderId: Uuid.nullable(), status: z.enum(['active', 'deletion_pending']), executionMode: z.literal('agent'), version: z.number().int().positive(), providerProfileId: Uuid.nullable(), profileResolutionToken: z.string(), skills: z.array(Skill), currentRun: Run.nullable(), createdAt: Iso, updatedAt: Iso, lastActivityAt: Iso, expiresAt: Iso.nullable() })
 const Tool = z.object({ id: z.string(), runId: Uuid, actionName: z.enum(AGENT_ACTION_NAMES), title: z.string(), state: z.enum(['preparing', 'running', 'awaitingApproval', 'complete', 'failed', 'denied', 'cancelled']), risk: z.enum(['read', 'open-world-read', 'proposal', 'reversible-write', 'destructive-write']), summary: z.string().nullable(), proposalId: Uuid.nullable(), startedAt: Iso, completedAt: Iso.nullable() })
 const Approval = z.object({ id: Uuid, proposalId: Uuid, status: z.enum(['pending', 'approved', 'denied', 'expired', 'cancelled']), requestedAt: Iso, expiresAt: Iso, decidedAt: Iso.nullable(), decisionNote: z.string().nullable() })
 const PageReference = z.object({ id: z.number().int().positive(), locale: z.string(), path: z.string(), title: z.string(), contentType: z.string(), sourceRevision: z.string() })
@@ -19,7 +19,8 @@ const Suggestion = z.object({ id: z.string(), label: z.string(), prompt: z.strin
 const Thread = z.object({ session: Session, messages: z.array(Message), tools: z.array(Tool), proposals: z.array(Proposal), artifacts: z.array(Artifact), suggestions: z.array(Suggestion) })
 const LaunchPage = z.object({ pageId: z.number().int().positive().nullable(), locale: z.string().nullable(), path: z.string().nullable(), observedUpdatedAt: Iso.nullable() }).nullable()
 const CreatedThread = Thread.extend({ launchPage: LaunchPage.optional() })
-const SessionSummary = z.object({ id: Uuid, title: z.string(), retention: z.enum(['temporary', 'saved']), executionMode: z.literal('agent'), version: z.number().int().positive(), providerProfileId: Uuid.nullable(), createdAt: Iso, updatedAt: Iso, lastActivityAt: Iso, expiresAt: Iso.nullable(), deletedAt: Iso.nullable() })
+const SessionSummary = z.object({ id: Uuid, title: z.string(), retention: z.enum(['temporary', 'saved']), folderId: Uuid.nullable(), executionMode: z.literal('agent'), version: z.number().int().positive(), providerProfileId: Uuid.nullable(), createdAt: Iso, updatedAt: Iso, lastActivityAt: Iso, expiresAt: Iso.nullable(), deletedAt: Iso.nullable() })
+const ConversationFolder = z.object({ id: Uuid, name: z.string(), version: z.number().int().positive(), createdAt: Iso, updatedAt: Iso })
 const Profile = z.object({ id: Uuid, name: z.string(), transport: z.enum(AGENT_PROVIDER_TRANSPORTS), model: z.string(), utilityModel: z.string().nullable(), destinationHost: z.string(), capabilities: z.object({ streaming: z.boolean(), toolCalling: z.enum(['native', 'prompt']), parallelToolCalls: z.boolean(), structuredOutput: z.enum(['native-json-schema', 'tool-result', 'prompt-only']), usage: z.enum(['stream', 'terminal', 'estimated']), cancellation: z.literal(true), maxContextTokens: z.number(), maxOutputTokens: z.number() }), capabilityRevision: z.string(), policyVersion: z.number().int().positive(), isGlobalDefault: z.boolean() })
 const VisibleSkill = z.object({ id: Uuid, versionId: Uuid, name: z.string(), description: z.string(), contentHash: z.string(), sourceRevision: z.string(), exposureMode: z.enum(['all_agent_users', 'groups', 'owner']), isAgentDiscoverable: z.boolean() })
 const PersonalSkill = z.object({ id: Uuid, name: z.string(), description: z.string(), isAgentDiscoverable: z.boolean(), versionId: Uuid, contentHash: z.string(), skillMarkdown: z.string(), createdAt: Iso, updatedAt: Iso })
@@ -53,6 +54,7 @@ const McpProposal = z.object({
 })
 
 export type AgentSessionSummary = z.infer<typeof SessionSummary>
+export type { AgentConversationFolderView }
 export type VisibleAgentSkill = z.infer<typeof VisibleSkill>
 export type PersonalAgentSkill = z.infer<typeof PersonalSkill>
 export type AgentMemoryTarget = z.infer<typeof MemoryTarget>
@@ -96,12 +98,27 @@ const requestJson = async <T>(fetcher: typeof fetch, csrfToken: string, path: st
 
 export const listAgentSessions = async (fetcher: typeof fetch, csrfToken: string): Promise<AgentSessionSummary[]> =>
   (await requestJson(fetcher, csrfToken, '/_api/agents/sessions', z.object({ sessions: z.array(SessionSummary) }))).sessions
+export const listAgentConversationFolders = async (fetcher: typeof fetch, csrfToken: string): Promise<AgentConversationFolderView[]> =>
+  (await requestJson(fetcher, csrfToken, '/_api/agents/conversation-folders', z.object({ folders: z.array(ConversationFolder) }))).folders
+
+export const createAgentConversationFolder = async (fetcher: typeof fetch, csrfToken: string, name: string): Promise<AgentConversationFolderView> =>
+  (await requestJson(fetcher, csrfToken, '/_api/agents/conversation-folders', z.object({ folder: ConversationFolder }), { method: 'POST', body: JSON.stringify({ name }) })).folder
+
+export const renameAgentConversationFolder = async (fetcher: typeof fetch, csrfToken: string, folderId: string, expectedVersion: number, name: string): Promise<AgentConversationFolderView> =>
+  (await requestJson(fetcher, csrfToken, `/_api/agents/conversation-folders/${encodeURIComponent(folderId)}`, z.object({ folder: ConversationFolder }), { method: 'PATCH', body: JSON.stringify({ expectedVersion, name }) })).folder
+
+export const deleteAgentConversationFolder = async (fetcher: typeof fetch, csrfToken: string, folderId: string): Promise<number> =>
+  (await requestJson(fetcher, csrfToken, `/_api/agents/conversation-folders/${encodeURIComponent(folderId)}`, z.object({ deleted: z.literal(true), movedSessions: z.number().int().nonnegative() }), { method: 'DELETE' })).movedSessions
+
 
 export const createAgentThread = (fetcher: typeof fetch, csrfToken: string, input: CreateAgentSessionRequest): Promise<CreatedAgentThread> =>
   requestJson(fetcher, csrfToken, '/_api/agents/sessions', CreatedThread, { method: 'POST', body: JSON.stringify(input) }) as Promise<CreatedAgentThread>
 
 export const getAgentThread = (fetcher: typeof fetch, csrfToken: string, sessionId: string): Promise<AgentThreadState> =>
   requestJson(fetcher, csrfToken, `/_api/agents/sessions/${encodeURIComponent(sessionId)}`, Thread) as Promise<AgentThreadState>
+export const moveAgentSessionToFolder = (fetcher: typeof fetch, csrfToken: string, sessionId: string, input: UpdateAgentSessionFolderRequest): Promise<AgentThreadState> =>
+  requestJson(fetcher, csrfToken, `/_api/agents/sessions/${encodeURIComponent(sessionId)}/folder`, Thread, { method: 'PUT', body: JSON.stringify(input) }) as Promise<AgentThreadState>
+
 
 export const deleteAgentSession = async (fetcher: typeof fetch, csrfToken: string, sessionId: string): Promise<void> => {
   const response = await fetcher(`/_api/agents/sessions/${encodeURIComponent(sessionId)}`, { method: 'DELETE', credentials: 'same-origin', headers: { 'x-wiki-csrf': csrfToken } })

@@ -132,6 +132,7 @@ const expireApprovals = async (knex: Knex, now: Date, batchSize: number): Promis
 const tombstoneExpiredSessions = async (knex: Knex, now: Date, savedCutoff: Date, batchSize: number): Promise<number> => {
   const ids = await knex('agentSessions')
     .whereNull('deletedAt')
+    .whereNull('folderId')
     .where(expired => {
       expired
         .where(temporary => temporary.where({ retention: 'temporary' }).andWhere('expiresAt', '<=', now))

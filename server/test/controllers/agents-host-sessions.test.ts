@@ -15,8 +15,11 @@ interface TestSessionState { agentCsrfToken?: string }
 const createTables = async (db: Knex): Promise<void> => {
   await db.schema.createTable('users', table => table.integer('id').primary())
   await db('users').insert([{ id: 7 }, { id: 8 }])
+  await db.schema.createTable('agentConversationFolders', table => {
+    table.uuid('id').primary(); table.integer('ownerId').notNullable(); table.string('name').notNullable(); table.string('normalizedName').notNullable(); table.integer('version').notNullable(); table.dateTime('createdAt').notNullable(); table.dateTime('updatedAt').notNullable(); table.unique(['ownerId', 'normalizedName'])
+  })
   await db.schema.createTable('agentSessions', table => {
-    table.uuid('id').primary(); table.integer('ownerId').notNullable(); table.string('title').notNullable(); table.string('titleSource').notNullable().defaultTo('none'); table.string('retention').notNullable(); table.uuid('providerProfileId').nullable(); table.string('executionMode').notNullable(); table.integer('version').notNullable(); table.text('summary').nullable(); table.integer('summaryThroughOrdinal').nullable(); table.text('memorySnapshot').notNullable().defaultTo('{"agent":[],"user":[]}'); table.dateTime('createdAt').notNullable(); table.dateTime('updatedAt').notNullable(); table.dateTime('lastActivityAt').notNullable(); table.dateTime('expiresAt').nullable(); table.dateTime('deletedAt').nullable()
+    table.uuid('id').primary(); table.integer('ownerId').notNullable(); table.string('title').notNullable(); table.string('titleSource').notNullable().defaultTo('none'); table.string('retention').notNullable(); table.uuid('folderId').nullable(); table.uuid('providerProfileId').nullable(); table.string('executionMode').notNullable(); table.integer('version').notNullable(); table.text('summary').nullable(); table.integer('summaryThroughOrdinal').nullable(); table.text('memorySnapshot').notNullable().defaultTo('{"agent":[],"user":[]}'); table.dateTime('createdAt').notNullable(); table.dateTime('updatedAt').notNullable(); table.dateTime('lastActivityAt').notNullable(); table.dateTime('expiresAt').nullable(); table.dateTime('deletedAt').nullable()
   })
   await db.schema.createTable('agentMemories', table => {
     table.uuid('id').primary(); table.integer('ownerId').notNullable(); table.string('target').notNullable(); table.text('content').notNullable(); table.string('contentSha256').notNullable(); table.integer('version').notNullable(); table.dateTime('createdAt').notNullable(); table.dateTime('updatedAt').notNullable(); table.unique(['ownerId', 'target', 'contentSha256'])
@@ -327,6 +330,64 @@ describe('ordinary-origin agent session API', () => {
     expect((await fetch(`${baseUrl}/_api/agents/artifacts/${artifactId}/content`, { headers: { cookie } })).status).toBe(404)
     ownerId = 7
   })
+  it('keeps foldered conversations, resets retention on exit, and preserves individual deletion', async () => {
+    const headers = { cookie, 'content-type': 'application/json', origin: 'https://wiki.example.test', 'sec-fetch-site': 'same-origin', 'x-wiki-csrf': csrf }
+    const inactiveSince = new Date('2026-05-01T00:00:00.000Z')
+    const created = await (await fetch(`${baseUrl}/_api/agents/sessions`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ retention: 'saved', providerProfileId: null })
+    })).json() as { session: { id: string; version: number } }
+    const folderResponse = await fetch(`${baseUrl}/_api/agents/conversation-folders`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ name: '  Durable   work  ' })
+    })
+    expect(folderResponse.status).toBe(201)
+    const folder = (await folderResponse.json() as { folder: { id: string; name: string; version: number } }).folder
+    expect(folder).toMatchObject({ name: 'Durable work', version: 1 })
+
+    ownerId = 8
+    expect(await (await fetch(`${baseUrl}/_api/agents/conversation-folders`, { headers: { cookie } })).json()).toEqual({ folders: [] })
+    expect((await fetch(`${baseUrl}/_api/agents/conversation-folders/${folder.id}`, { method: 'DELETE', headers })).status).toBe(404)
+    ownerId = 7
+
+    const filed = await fetch(`${baseUrl}/_api/agents/sessions/${created.session.id}/folder`, {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify({ expectedSessionVersion: created.session.version, folderId: folder.id })
+    })
+    expect(filed.status).toBe(200)
+    expect(await filed.json()).toMatchObject({ session: { folderId: folder.id, retention: 'saved', version: 2 } })
+
+    await db('agentSessions').where({ id: created.session.id }).update({ lastActivityAt: inactiveSince, expiresAt: inactiveSince })
+    const unfiled = await fetch(`${baseUrl}/_api/agents/sessions/${created.session.id}/folder`, {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify({ expectedSessionVersion: 2, folderId: null })
+    })
+    expect(await unfiled.json()).toMatchObject({ session: { folderId: null, retention: 'saved', expiresAt: null, version: 3 } })
+    const resetActivity = await db('agentSessions').where({ id: created.session.id }).first('lastActivityAt')
+    expect(new Date(resetActivity.lastActivityAt).getTime()).toBeGreaterThan(inactiveSince.getTime())
+
+    await fetch(`${baseUrl}/_api/agents/sessions/${created.session.id}/folder`, {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify({ expectedSessionVersion: 3, folderId: folder.id })
+    })
+    expect((await fetch(`${baseUrl}/_api/agents/sessions/${created.session.id}`, { method: 'DELETE', headers })).status).toBe(204)
+    expect(await db('agentSessions').where({ id: created.session.id }).whereNotNull('deletedAt').first()).toBeDefined()
+
+    const renamed = await fetch(`${baseUrl}/_api/agents/conversation-folders/${folder.id}`, {
+      method: 'PATCH',
+      headers,
+      body: JSON.stringify({ expectedVersion: folder.version, name: 'Reference' })
+    })
+    expect(await renamed.json()).toMatchObject({ folder: { name: 'Reference', version: 2 } })
+    const removed = await fetch(`${baseUrl}/_api/agents/conversation-folders/${folder.id}`, { method: 'DELETE', headers })
+    expect(await removed.json()).toEqual({ deleted: true, movedSessions: 0 })
+  })
+
   it('keeps personal memory owner-scoped and independent from history reset', async () => {
     const headers = { cookie, 'content-type': 'application/json', origin: 'https://wiki.example.test', 'sec-fetch-site': 'same-origin', 'x-wiki-csrf': csrf }
     const createdMemory = await fetch(`${baseUrl}/_api/agents/memories`, {

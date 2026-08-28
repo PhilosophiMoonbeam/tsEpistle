@@ -246,10 +246,19 @@ export interface AgentSessionSkillView extends AgentSkillMetadataView {
   readonly ordinal: number
 }
 
+export interface AgentConversationFolderView {
+  readonly id: string
+  readonly name: string
+  readonly version: number
+  readonly createdAt: string
+  readonly updatedAt: string
+}
+
 export interface AgentSessionView {
   readonly id: string
   readonly title: string
   readonly retention: AgentSessionRetention
+  readonly folderId: string | null
   readonly status: AgentSessionStatus
   readonly executionMode: AgentExecutionMode
   readonly version: number
@@ -404,6 +413,11 @@ export interface UpdateAgentSessionRequest {
   readonly title?: string
   readonly retention?: AgentSessionRetention
 }
+export interface UpdateAgentSessionFolderRequest {
+  readonly expectedSessionVersion: number
+  readonly folderId: string | null
+}
+
 
 export interface UpdateAgentSkillPreferencesRequest {
   readonly skillIds: readonly string[]

@@ -391,6 +391,7 @@ export const projectAgentThread = async (knex: Knex, ownerId: number, sessionId:
     id: session.id,
     title: session.title,
     retention: session.retention,
+    folderId: session.folderId,
     status: session.deletedAt === null ? 'active' : 'deletion_pending',
     executionMode: session.executionMode,
     version: session.version,

@@ -8,7 +8,7 @@ const old = new Date('2026-05-01T00:00:00.000Z')
 const expired = new Date('2026-08-10T00:00:00.000Z')
 
 const createTables = async (knex: Knex): Promise<void> => {
-  await knex.schema.createTable('agentSessions', table => { table.string('id').primary(); table.integer('ownerId'); table.string('retention'); table.dateTime('expiresAt').nullable(); table.dateTime('deletedAt').nullable(); table.dateTime('updatedAt'); table.dateTime('lastActivityAt'); table.integer('version') })
+  await knex.schema.createTable('agentSessions', table => { table.string('id').primary(); table.integer('ownerId'); table.string('retention'); table.string('folderId').nullable(); table.dateTime('expiresAt').nullable(); table.dateTime('deletedAt').nullable(); table.dateTime('updatedAt'); table.dateTime('lastActivityAt'); table.integer('version') })
   await knex.schema.createTable('agentRuns', table => { table.string('id').primary(); table.string('sessionId'); table.integer('ownerId'); table.string('status'); table.boolean('sideEffectsStarted'); table.dateTime('cancelRequestedAt').nullable(); table.dateTime('leaseExpiresAt').nullable(); table.string('leaseOwner').nullable(); table.string('leaseToken').nullable(); table.dateTime('availableAt').nullable(); table.dateTime('updatedAt'); table.dateTime('completedAt').nullable(); table.string('errorCode').nullable(); table.string('errorMessage').nullable() })
   await knex.schema.createTable('agentProposals', table => { table.string('id').primary(); table.string('sourceKind'); table.string('sessionId').nullable(); table.string('status'); table.dateTime('expiresAt'); table.dateTime('createdAt'); table.dateTime('contentPurgedAt').nullable(); table.text('input').nullable(); table.text('patch').nullable(); table.text('diff').nullable(); table.text('applyResult').nullable() })
   await knex.schema.createTable('agentApprovals', table => { table.string('id').primary(); table.string('proposalId'); table.string('status'); table.dateTime('decidedAt').nullable(); table.text('decisionNote').nullable() })
@@ -101,15 +101,17 @@ describe('agent retention maintenance', () => {
 
   it('removes saved conversations after ninety inactive days and preserves recent history', async () => {
     await knex('agentSessions').insert([
-      { id: 'saved-stale', ownerId: 7, retention: 'saved', expiresAt: null, deletedAt: null, updatedAt: old, lastActivityAt: old, version: 1 },
-      { id: 'saved-recent', ownerId: 7, retention: 'saved', expiresAt: null, deletedAt: null, updatedAt: now, lastActivityAt: now, version: 1 },
-      { id: 'saved-other-user', ownerId: 8, retention: 'saved', expiresAt: null, deletedAt: null, updatedAt: now, lastActivityAt: now, version: 1 }
+      { id: 'saved-stale', ownerId: 7, retention: 'saved', folderId: null, expiresAt: null, deletedAt: null, updatedAt: old, lastActivityAt: old, version: 1 },
+      { id: 'saved-foldered', ownerId: 7, retention: 'saved', folderId: 'keep', expiresAt: null, deletedAt: null, updatedAt: old, lastActivityAt: old, version: 1 },
+      { id: 'saved-recent', ownerId: 7, retention: 'saved', folderId: null, expiresAt: null, deletedAt: null, updatedAt: now, lastActivityAt: now, version: 1 },
+      { id: 'saved-other-user', ownerId: 8, retention: 'saved', folderId: null, expiresAt: null, deletedAt: null, updatedAt: now, lastActivityAt: now, version: 1 }
     ])
 
     const result = await runAgentMaintenance(knex, { batchSize: 1, savedSessionDays: 90, mcpContentDays: 7, auditDays: 90, compactDeltaDays: 1 }, now)
 
     expect(result.tombstonedSessions).toBe(1)
     expect(await knex('agentSessions').where({ id: 'saved-stale' }).first()).toBeUndefined()
+    expect(await knex('agentSessions').where({ id: 'saved-foldered' }).first()).toBeDefined()
     expect(await knex('agentSessions').where({ id: 'saved-recent' }).first()).toBeDefined()
     expect(await knex('agentSessions').where({ id: 'saved-other-user' }).first()).toBeDefined()
   })

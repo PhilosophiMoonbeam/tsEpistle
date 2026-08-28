@@ -154,7 +154,7 @@ const analyzeTools = (events: readonly { readonly type: string, readonly data: R
 
 export const exportAgentSessionDiagnostics = async (knex: Knex, sessionId: string): Promise<Readonly<Record<string, unknown>>> => {
   const session = await knex('agentSessions').where({ id: sessionId }).first(
-    'id', 'ownerId', 'title', 'titleSource', 'retention', 'providerProfileId', 'executionMode', 'version', 'summary', 'summaryThroughOrdinal', 'memorySnapshot', 'createdAt', 'updatedAt', 'lastActivityAt', 'expiresAt', 'deletedAt'
+    'id', 'ownerId', 'title', 'titleSource', 'retention', 'folderId', 'providerProfileId', 'executionMode', 'version', 'summary', 'summaryThroughOrdinal', 'memorySnapshot', 'createdAt', 'updatedAt', 'lastActivityAt', 'expiresAt', 'deletedAt'
   ) as Record<string, unknown> | undefined
   if (!session) throw new AgentRepositoryError('AGENT_RESOURCE_NOT_FOUND', 'Agent resource was not found', 404)
 
@@ -258,6 +258,7 @@ export const exportAgentSessionDiagnostics = async (knex: Knex, sessionId: strin
       title: session.title,
       titleSource: session.titleSource,
       retention: session.retention,
+      folderId: session.folderId,
       providerProfileId: session.providerProfileId,
       executionMode: session.executionMode,
       version: Number(session.version),

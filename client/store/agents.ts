@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { markRaw } from 'vue'
-import type { AgentCurrentPageHint, AgentEventType, AgentProviderProfileView, AgentThreadState } from '../../shared/agents/contracts.ts'
-import { cancelAgentRun, createAgentThread, decideAgentProposal, deleteAgentSession, getAgentThread, listAgentProfiles, listAgentSessions, listAgentSkills, resetAgentHistory, submitAgentMessage, subscribeAgentRun, updateAgentProfile, updateAgentSkillPreferences, type AgentSessionSummary, type CreatedAgentThread, type VisibleAgentSkill } from '../helpers/agents-api.ts'
+import type { AgentConversationFolderView, AgentCurrentPageHint, AgentEventType, AgentProviderProfileView, AgentThreadState } from '../../shared/agents/contracts.ts'
+import { cancelAgentRun, createAgentConversationFolder, createAgentThread, decideAgentProposal, deleteAgentConversationFolder, deleteAgentSession, getAgentThread, listAgentConversationFolders, listAgentProfiles, listAgentSessions, listAgentSkills, moveAgentSessionToFolder, renameAgentConversationFolder, resetAgentHistory, submitAgentMessage, subscribeAgentRun, updateAgentProfile, updateAgentSkillPreferences, type AgentSessionSummary, type CreatedAgentThread, type VisibleAgentSkill } from '../helpers/agents-api.ts'
 
 const terminalEvents = new Set<AgentEventType>(['run.completed', 'run.failed', 'run.cancelled', 'run.recovery_required'])
 export interface AgentStoreInitializeOptions {
@@ -15,6 +15,7 @@ export const useAgentsStore = defineStore('agents', {
   state: () => ({
     csrfToken: '',
     sessions: [] as AgentSessionSummary[],
+    folders: [] as AgentConversationFolderView[],
     thread: null as AgentThreadState | null,
     skills: [] as VisibleAgentSkill[],
     profiles: [] as AgentProviderProfileView[],
@@ -39,14 +40,16 @@ export const useAgentsStore = defineStore('agents', {
       this.error = ''
       try {
         const pathMatch = this.routeSync ? /^\/sessions\/([0-9a-f-]{36})$/i.exec(window.location.pathname) : null
-        const [sessions, profiles, skills] = await Promise.all([
+        const [sessions, folders, profiles, skills] = await Promise.all([
           listAgentSessions(window.fetch.bind(window), csrfToken),
+          listAgentConversationFolders(window.fetch.bind(window), csrfToken),
           listAgentProfiles(window.fetch.bind(window), csrfToken),
           listAgentSkills(window.fetch.bind(window), csrfToken).catch(() => [])
         ])
         this.profiles = profiles
         this.skills = skills
         this.sessions = sessions
+        this.folders = folders
         if (pathMatch?.[1]) {
           await this.openSession(pathMatch[1])
         } else if (!this.routeSync && this.thread) {
@@ -100,6 +103,32 @@ export const useAgentsStore = defineStore('agents', {
     },
     async reloadSessions() {
       this.sessions = await listAgentSessions(window.fetch.bind(window), this.csrfToken)
+    },
+    async reloadFolders() {
+      this.folders = await listAgentConversationFolders(window.fetch.bind(window), this.csrfToken)
+    },
+    async createFolder(name: string) {
+      await createAgentConversationFolder(window.fetch.bind(window), this.csrfToken, name)
+      await this.reloadFolders()
+    },
+    async renameFolder(folderId: string, expectedVersion: number, name: string) {
+      await renameAgentConversationFolder(window.fetch.bind(window), this.csrfToken, folderId, expectedVersion, name)
+      await this.reloadFolders()
+    },
+    async deleteFolder(folderId: string) {
+      const refreshCurrent = this.thread?.session.folderId === folderId
+      await deleteAgentConversationFolder(window.fetch.bind(window), this.csrfToken, folderId)
+      await Promise.all([this.reloadFolders(), this.reloadSessions()])
+      if (refreshCurrent) await this.refreshThread()
+    },
+    async moveSessionToFolder(sessionId: string, folderId: string | null) {
+      const current = this.thread?.session.id === sessionId ? this.thread.session : null
+      const summary = this.sessions.find(session => session.id === sessionId)
+      const expectedSessionVersion = current?.version ?? summary?.version
+      if (!expectedSessionVersion) throw new Error('The conversation changed. Refresh history and try again.')
+      const projected = await moveAgentSessionToFolder(window.fetch.bind(window), this.csrfToken, sessionId, { expectedSessionVersion, folderId })
+      if (current) this.thread = projected
+      await this.reloadSessions()
     },
     async send(content: string, invokedSkillVersionIds: readonly string[] = []): Promise<boolean> {
       const thread = this.thread

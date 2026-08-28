@@ -23,7 +23,7 @@ const now = '2026-08-24T12:00:00.000Z'
 
 const createTables = async (db: Knex): Promise<void> => {
   await db.schema.createTable('agentSessions', table => {
-    table.uuid('id').primary(); table.integer('ownerId'); table.string('title'); table.string('titleSource'); table.string('retention'); table.uuid('providerProfileId').nullable(); table.string('executionMode'); table.integer('version'); table.text('summary').nullable(); table.integer('summaryThroughOrdinal').nullable(); table.text('memorySnapshot'); table.dateTime('createdAt'); table.dateTime('updatedAt'); table.dateTime('lastActivityAt'); table.dateTime('expiresAt').nullable(); table.dateTime('deletedAt').nullable()
+    table.uuid('id').primary(); table.integer('ownerId'); table.string('title'); table.string('titleSource'); table.string('retention'); table.uuid('folderId').nullable(); table.uuid('providerProfileId').nullable(); table.string('executionMode'); table.integer('version'); table.text('summary').nullable(); table.integer('summaryThroughOrdinal').nullable(); table.text('memorySnapshot'); table.dateTime('createdAt'); table.dateTime('updatedAt'); table.dateTime('lastActivityAt'); table.dateTime('expiresAt').nullable(); table.dateTime('deletedAt').nullable()
   })
   await db.schema.createTable('agentMessages', table => {
     table.uuid('id').primary(); table.uuid('sessionId'); table.uuid('runId').nullable(); table.integer('ordinal'); table.string('role'); table.string('status'); table.text('content'); table.text('citations').nullable(); table.string('providerStateSha256').nullable(); table.dateTime('createdAt'); table.dateTime('updatedAt')

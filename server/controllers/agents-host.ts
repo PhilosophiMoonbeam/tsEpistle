@@ -28,8 +28,14 @@ import type { AgentProductRuntime } from '../agents/runtime.ts'
 import { projectAgentRun, projectAgentThread } from '../agents/projection.ts'
 import {
   AgentRepositoryError,
+  type AgentConversationFolderRecord,
+  createAgentConversationFolder,
   createAgentSession,
+  deleteAgentConversationFolder,
+  listOwnedAgentConversationFolders,
   listOwnedAgentSessions,
+  moveAgentSessionToFolder,
+  renameAgentConversationFolder,
   updateAgentSession
 } from '../agents/repository.ts'
 import { streamOwnedAgentEvents } from '../agents/sse.ts'
@@ -112,6 +118,10 @@ const UpdateSessionSchema = z.strictObject({
   title: z.string().max(255).optional(),
   retention: z.enum(['temporary', 'saved']).optional()
 }).refine(value => value.title !== undefined || value.retention !== undefined)
+const ConversationFolderNameSchema = z.string().trim().min(1).max(64)
+const CreateConversationFolderSchema = z.strictObject({ name: ConversationFolderNameSchema })
+const RenameConversationFolderSchema = z.strictObject({ expectedVersion: z.number().int().positive(), name: ConversationFolderNameSchema })
+const MoveSessionFolderSchema = z.strictObject({ expectedSessionVersion: z.number().int().positive(), folderId: z.uuid().nullable() })
 const SubmitMessageSchema = z.strictObject({
   clientRequestId: z.uuid(),
   expectedSessionVersion: z.number().int().positive(),
@@ -191,6 +201,15 @@ const authorizeProposalTarget = async (req: Request, proposal: ProposalRecord): 
 }
 
 
+const projectConversationFolder = (folder: AgentConversationFolderRecord) => ({
+  id: folder.id,
+  name: folder.name,
+  version: folder.version,
+  createdAt: folder.createdAt,
+  updatedAt: folder.updatedAt
+})
+
+
 export default function createAgentsHostController(wiki: AgentHostWiki): express.Router {
   const router = express.Router()
   const skillRegistry = new SkillRegistry(wiki.models.knex, wiki.config.agents.skills.namespace)
@@ -223,6 +242,27 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
     if (!requestOriginMatches(req.get('origin'), expectedOrigin) || req.get('sec-fetch-site') !== 'same-origin' || !agentCsrfMatches(req, req.get('x-wiki-csrf'))) return res.sendStatus(403)
     return next()
   })
+
+  router.get(`${apiPrefix}/conversation-folders`, asyncRoute(async (req, res) => {
+    const folders = await listOwnedAgentConversationFolders(wiki.models.knex, requestSkillPrincipal(req).userId)
+    return res.json({ folders: folders.map(projectConversationFolder) })
+  }))
+  router.post(`${apiPrefix}/conversation-folders`, asyncRoute(async (req, res) => {
+    const input = CreateConversationFolderSchema.parse(req.body)
+    const folder = await createAgentConversationFolder(wiki.models.knex, requestSkillPrincipal(req).userId, input.name)
+    return res.status(201).json({ folder: projectConversationFolder(folder) })
+  }))
+  router.patch(`${apiPrefix}/conversation-folders/:folderId`, asyncRoute(async (req, res) => {
+    const folderId = UUIDSchema.parse(routeParameter(req, 'folderId'))
+    const input = RenameConversationFolderSchema.parse(req.body)
+    const folder = await renameAgentConversationFolder(wiki.models.knex, requestSkillPrincipal(req).userId, folderId, input.expectedVersion, input.name)
+    return res.json({ folder: projectConversationFolder(folder) })
+  }))
+  router.delete(`${apiPrefix}/conversation-folders/:folderId`, asyncRoute(async (req, res) => {
+    const folderId = UUIDSchema.parse(routeParameter(req, 'folderId'))
+    const movedSessions = await deleteAgentConversationFolder(wiki.models.knex, requestSkillPrincipal(req).userId, folderId)
+    return res.json({ deleted: true, movedSessions })
+  }))
 
   router.post(`${apiPrefix}/sessions`, asyncRoute(async (req, res) => {
     const input = CreateSessionSchema.parse(req.body)
@@ -378,6 +418,18 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
             retention: input.retention,
             expiresAt: input.retention === 'temporary' ? new Date(Date.now() + (wiki.agentLimits?.retention.temporarySessionHours ?? 24) * 3_600_000) : null
           })
+    })
+    return res.json(await projectSession(ownerId, sessionId))
+  }))
+  router.put(`${apiPrefix}/sessions/:sessionId/folder`, asyncRoute(async (req, res) => {
+    const sessionId = UUIDSchema.parse(routeParameter(req, 'sessionId'))
+    const input = MoveSessionFolderSchema.parse(req.body)
+    const ownerId = requestSkillPrincipal(req).userId
+    await moveAgentSessionToFolder(wiki.models.knex, {
+      ownerId,
+      sessionId,
+      expectedVersion: input.expectedSessionVersion,
+      folderId: input.folderId
     })
     return res.json(await projectSession(ownerId, sessionId))
   }))
