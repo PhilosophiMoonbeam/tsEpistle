@@ -30,6 +30,7 @@ export type SiteConfig = {
   agentsEnabled: boolean
   agentProviderEnabled: boolean
   agentSkillsEnabled: boolean
+  agentGoalsEnabled: boolean
   agentCsrfToken: string
   path?: string
   devMode?: boolean

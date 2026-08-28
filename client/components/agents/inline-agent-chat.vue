@@ -90,9 +90,19 @@
           class="inline-agent__settings"
           :session="thread.session"
           :profiles="profiles"
-          :disabled="Boolean(activeRun)"
+          :disabled="Boolean(activeRun) || Boolean(openGoal)"
           @profile="agents.setProfile"
         />
+        <AgentGoalStatus
+          v-if="thread?.goal"
+          :goal="thread.goal"
+          :busy="goalBusy"
+          :run-active="Boolean(activeRun)"
+          @pause="agents.pauseGoal"
+          @resume="agents.resumeGoal"
+          @cancel="agents.cancelGoal"
+        />
+
 
         <div
           ref="transcript"
@@ -150,8 +160,9 @@
           ref="composer"
           :sending="sending"
           :can-stop="Boolean(activeRun?.canCancel)"
-          :disabled="!providerAvailable || loading || !thread || Boolean(activeRun)"
+          :disabled="!providerAvailable || loading || !thread || Boolean(activeRun) || Boolean(openGoal)"
           :skills-enabled="skillsEnabled"
+          :goals-enabled="goalsEnabled"
           :skills="skills"
           :preferred-skills="thread?.session.skills ?? []"
           :invocation-limit="invocationLimit"
@@ -201,6 +212,7 @@ import AgentMemoryManager from './agent-memory-manager.vue'
 import AgentPersonalSkills from './agent-personal-skills.vue'
 import AgentMcpApproval from './agent-mcp-approval.vue'
 import AgentSessionSettings from './agent-session-settings.vue'
+import AgentGoalStatus from './agent-goal-status.vue'
 import AgentThread from './agent-thread.vue'
 import { isAgentApprovalOutsideViewport } from './agent-thread-presentation.ts'
 
@@ -209,6 +221,7 @@ const props = defineProps<{
   approvalId?: string
   providerEnabled: boolean
   skillsEnabled: boolean
+  goalsEnabled: boolean
   pageId: number
   pageLocale: string
   pagePath: string
@@ -216,7 +229,7 @@ const props = defineProps<{
 }>()
 
 const agents = useAgentsStore()
-const { connection, decidingApprovalId, error, loading, profiles, sending, sessions, skills, thread } = storeToRefs(agents)
+const { connection, decidingApprovalId, error, goalBusy, loading, profiles, sending, sessions, skills, thread } = storeToRefs(agents)
 const transcript = ref<HTMLElement | null>(null)
 const composer = ref<{ focusInput: () => Promise<void> } | null>(null)
 const approvalJumpVisible = ref(false)
@@ -233,7 +246,8 @@ const currentPage = computed<AgentCurrentPageHint | null>(() => {
   return { id: props.pageId, locale: props.pageLocale, path: props.pagePath, observedUpdatedAt: props.pageUpdatedAt }
 })
 const activeRun = computed(() => thread.value?.session.currentRun?.canCancel ? thread.value.session.currentRun : null)
-const hasConversation = computed(() => Boolean(thread.value && (thread.value.messages.length || thread.value.tools.length || thread.value.artifacts.length)))
+const openGoal = computed(() => thread.value?.goal && ['active', 'paused', 'blocked'].includes(thread.value.goal.status) ? thread.value.goal : null)
+const hasConversation = computed(() => Boolean(thread.value && (thread.value.messages.length || thread.value.tools.length || thread.value.artifacts.length || thread.value.goal)))
 const pendingApprovalId = computed(() => thread.value?.proposals.find(proposal => proposal.status === 'pending' && proposal.approval?.status === 'pending')?.id ?? null)
 const providerAvailable = computed(() => props.providerEnabled && profiles.value.length > 0)
 const preferredSkillIds = computed(() => thread.value?.session.skills.map(skill => skill.skillId) ?? [])
@@ -269,12 +283,12 @@ const focusComposer = async (): Promise<void> => {
   await composer.value?.focusInput()
 }
 
-const sendPrompt = async (content: string, invokedSkillVersionIds: readonly string[] = []): Promise<boolean> => {
+const sendPrompt = async (content: string, invokedSkillVersionIds: readonly string[] = [], mode: 'message' | 'goal' = 'message'): Promise<boolean> => {
   const prompt = content.trim()
   if (!prompt) return false
   await ensureInitialized()
-  if (!providerAvailable.value || !thread.value) return false
-  return agents.send(prompt, invokedSkillVersionIds)
+  if (!providerAvailable.value || !thread.value || (mode === 'goal' && !props.goalsEnabled)) return false
+  return agents.send(prompt, invokedSkillVersionIds, mode)
 }
 const focusConversation = async (): Promise<void> => {
   await nextTick()

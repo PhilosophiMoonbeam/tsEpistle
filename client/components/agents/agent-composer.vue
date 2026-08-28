@@ -52,7 +52,7 @@
       aria-label="Message Wiki Agent"
       role="combobox"
       aria-autocomplete="list"
-      placeholder="Ask a follow-up · Type / for skills"
+      :placeholder="goalMode ? 'Describe a bounded outcome for Wiki Agent' : 'Ask a follow-up · Type / for skills'"
       rows="1"
       variant="solo"
       flat
@@ -129,10 +129,20 @@
           </v-card-actions>
         </v-card>
       </v-menu>
+      <v-btn
+        v-if="goalsEnabled"
+        class="agent-composer__goal-button"
+        :color="goalMode ? 'primary' : undefined"
+        :variant="goalMode ? 'tonal' : 'text'"
+        prepend-icon="mdi-target"
+        :aria-pressed="goalMode"
+        :disabled="disabled"
+        @click="goalMode = !goalMode"
+      >Goal</v-btn>
       <span class="agent-composer__hint text-body-small text-medium-emphasis">Enter to send · Shift+Enter for a new line</span>
       <span class="agent-composer__action-spacer" aria-hidden="true" />
       <v-btn v-if="canStop" color="warning" variant="outlined" prepend-icon="mdi-stop" @click="$emit('stop')">Stop</v-btn>
-      <v-btn type="submit" color="primary" prepend-icon="mdi-send" :loading="sending" :disabled="disabled || !draft.trim()">Send</v-btn>
+      <v-btn type="submit" color="primary" :prepend-icon="goalMode ? 'mdi-target-arrow' : 'mdi-send'" :loading="sending" :disabled="disabled || !draft.trim()">{{ goalMode ? 'Start goal' : 'Send' }}</v-btn>
     </div>
   </v-form>
 </template>
@@ -148,12 +158,14 @@ const props = defineProps<{
   sending: boolean
   canStop: boolean
   skillsEnabled: boolean
+  goalsEnabled: boolean
   skills: readonly VisibleAgentSkill[]
   preferredSkills: readonly AgentSessionSkillView[]
   invocationLimit: number
 }>()
-const emit = defineEmits<{ send: [content: string, invokedSkillVersionIds: readonly string[]]; stop: []; manageSkills: []; updateSkillPreferences: [skillIds: string[]] }>()
+const emit = defineEmits<{ send: [content: string, invokedSkillVersionIds: readonly string[], mode: 'message' | 'goal']; stop: []; manageSkills: []; updateSkillPreferences: [skillIds: string[]] }>()
 const draft = ref('')
+const goalMode = ref(false)
 const skillMenuOpen = ref(false)
 const selectedSkillIds = ref<string[]>([])
 const messageInput = ref<{ focus: () => void; $el?: HTMLElement } | null>(null)
@@ -279,9 +291,11 @@ const submit = (): void => {
   if (props.disabled || skillCommandOpen.value || !draft.value.trim()) return
   const content = draft.value
   const invokedSkillVersionIds = [...selectedSkillIds.value]
+  const mode = goalMode.value ? 'goal' : 'message'
   draft.value = ''
   selectedSkillIds.value = []
-  emit('send', content, invokedSkillVersionIds)
+  goalMode.value = false
+  emit('send', content, invokedSkillVersionIds, mode)
 }
 defineExpose({ focusInput })
 onMounted(() => {

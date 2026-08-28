@@ -21,6 +21,7 @@ import {
 } from '../../shared/agents/contracts.ts'
 import { AgentRepositoryError, getOwnedAgentSession, listOwnedAgentEvents, listOwnedAgentMessages } from './repository.ts'
 import { listAgentTaskViews } from './tasks.ts'
+import { latestAgentGoalForSession, projectAgentGoal } from './goals.ts'
 
 const actionNames = new Set<string>(AGENT_ACTION_NAMES)
 const runStatusSchema = z.enum(['queued', 'running', 'awaiting_approval', 'succeeded', 'partial', 'failed', 'cancelled', 'recovery_required'])
@@ -144,6 +145,7 @@ export interface ProjectAgentRunInput {
   readonly sessionId: string
   readonly status: string
   readonly attempts: number
+  readonly goalId?: string | null
   readonly eventSequence: number
   readonly queuedAt: Date | string
   readonly startedAt: Date | string | null
@@ -335,7 +337,7 @@ export const projectAgentThread = async (knex: Knex, ownerId: number, sessionId:
   const session = await getOwnedAgentSession(knex, ownerId, sessionId)
   const now = options.now ?? new Date()
   const groupIds = await knex('userGroups').where({ userId: ownerId }).pluck('groupId') as number[]
-  const [messageRows, runRows, skillRows, proposalRows, approvalRows, artifactRows, taskViews] = await Promise.all([
+  const [messageRows, runRows, skillRows, proposalRows, approvalRows, artifactRows, taskViews, latestGoal] = await Promise.all([
     listOwnedAgentMessages(knex, ownerId, sessionId, 0, 500),
     knex<ProjectAgentRunInput>('agentRuns').where('sessionId', sessionId).andWhere('ownerId', ownerId).orderBy('queuedAt', 'desc'),
     knex<SkillRow>('agentUserSkillPreferences as preferences')
@@ -370,11 +372,15 @@ export const projectAgentThread = async (knex: Knex, ownerId: number, sessionId:
       .orderBy('agentProposals.createdAt'),
     knex<ApprovalRow>('agentApprovals').join('agentProposals', 'agentProposals.id', 'agentApprovals.proposalId').where('agentProposals.sessionId', sessionId).select('agentApprovals.*'),
     knex<ArtifactRow>('agentArtifacts').where('sessionId', sessionId).andWhere('ownerId', ownerId).select('id', 'kind', 'mimeType', 'byteLength', 'width', 'height', 'createdAt', 'expiresAt').orderBy('createdAt'),
-    listAgentTaskViews(knex, ownerId, sessionId)
+    listAgentTaskViews(knex, ownerId, sessionId),
+    latestAgentGoalForSession(knex, ownerId, sessionId)
   ])
 
   const runs = runRows.map(projectAgentRun)
   const currentRun = runs.find(run => run.canCancel) ?? null
+  const goal = latestGoal === null
+    ? null
+    : projectAgentGoal(latestGoal, runRows.find(run => run.goalId === latestGoal.id)?.id ?? null)
   const allEvents = (await Promise.all(runRows.map(run => listOwnedAgentEvents(knex, ownerId, run.id, 0, 1_000)))).flat()
   const reduced = reduceAgentEvents(allEvents)
   const approvals = new Map(approvalRows.map(row => [row.proposalId, approvalView(row)]))
@@ -411,6 +417,7 @@ export const projectAgentThread = async (knex: Knex, ownerId: number, sessionId:
     messages,
     tools: reduced.tools,
     tasks: taskViews,
+    goal,
     proposals: proposalRows.map(row => proposalView(row, approvals.get(row.id) ?? null)),
     artifacts: artifactRows.map(row => artifactView(row, now)),
     suggestions: reduced.suggestions

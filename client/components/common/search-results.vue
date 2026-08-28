@@ -60,6 +60,7 @@
         :approval-id='approvalId'
         :provider-enabled='agentProviderEnabled'
         :skills-enabled='agentSkillsEnabled'
+        :goals-enabled='agentGoalsEnabled'
         :page-id='currentPageId'
         :page-locale='currentPageLocale'
         :page-path='currentPagePath'
@@ -270,6 +271,7 @@ export default defineComponent({
     agentCsrfToken(): string { return siteConfig.agentCsrfToken },
     agentProviderEnabled(): boolean { return siteConfig.agentProviderEnabled },
     agentSkillsEnabled(): boolean { return siteConfig.agentSkillsEnabled },
+    agentGoalsEnabled(): boolean { return siteConfig.agentGoalsEnabled },
     currentPageId(): number { return wikiStore.page.id },
     currentPageLocale(): string { return wikiStore.page.locale },
     currentPagePath(): string { return wikiStore.page.path },

@@ -609,4 +609,11 @@ export class AgentProviderRegistry implements AgentAdmissionResolver {
       }
     })
   }
+
+  async resolveCurrent(input: { readonly ownerId: number; readonly sessionId: string }): Promise<AgentResolvedAdmission> {
+    return this.resolve({
+      ...input,
+      profileResolutionToken: await this.issueResolutionToken(input.ownerId, input.sessionId)
+    })
+  }
 }

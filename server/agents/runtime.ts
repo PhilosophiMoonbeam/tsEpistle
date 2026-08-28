@@ -5,13 +5,27 @@ import { canonicalJson } from '../helpers/canonical-json.ts'
 import {
   AgentRunCoordinator,
   admitAgentRun,
+  admitAgentRunInTransaction,
   reconcileAgentRunQuota,
+  getOwnedAgentRun,
   type AgentQuotaLimits,
   type AgentQuotaRequest,
   type AgentRunClaim,
   type AgentRunRecord
 } from './coordinator.ts'
 import { AgentRepositoryError } from './repository.ts'
+import {
+  DEFAULT_AGENT_GOAL_LIMITS,
+  assessAgentRunCompletion,
+  emitGoalEvent,
+  decodeCompletionAssessment,
+  encodedCompletionAssessment,
+  getOwnedAgentGoal,
+  insertAgentGoal,
+  updateGoalStatus,
+  type AgentGoalLimits,
+  type AgentGoalRecord
+} from './goals.ts'
 import { decodeAgentMemorySnapshot, type AgentMemorySnapshot } from './memory.ts'
 import { SkillRuntime } from './skills/runtime.ts'
 import type { AgentConversationTitleGenerator, AgentConversationTitleResult } from './providers/utility.ts'
@@ -123,6 +137,7 @@ export interface AgentResolvedAdmission {
 
 export interface AgentAdmissionResolver {
   resolve(input: { readonly ownerId: number; readonly sessionId: string; readonly profileResolutionToken: string }): Promise<AgentResolvedAdmission>
+  resolveCurrent?(input: { readonly ownerId: number, readonly sessionId: string }): Promise<AgentResolvedAdmission>
 }
 
 export interface AgentEngineMessage {
@@ -212,6 +227,32 @@ export interface SubmitAgentMessageInput {
   readonly invokedSkillVersionIds?: readonly string[]
   readonly currentPage?: Readonly<Record<string, unknown>>
 }
+export interface CreateAgentGoalInput {
+  readonly goalId: string
+  readonly ownerId: number
+  readonly sessionId: string
+  readonly profileResolutionToken: string
+  readonly clientRequestId: string
+  readonly expectedSessionVersion: number
+  readonly objective: string
+  readonly invokedSkillVersionIds?: readonly string[]
+  readonly currentPage?: Readonly<Record<string, unknown>>
+}
+
+export interface ResumeAgentGoalInput {
+  readonly goalId: string
+  readonly ownerId: number
+  readonly expectedVersion: number
+  readonly runId: string
+  readonly clientRequestId: string
+}
+
+export interface MutateAgentGoalInput {
+  readonly goalId: string
+  readonly ownerId: number
+  readonly expectedVersion: number
+}
+
 
 export interface AgentProductRuntimeOptions {
   readonly workerId: string
@@ -221,6 +262,7 @@ export interface AgentProductRuntimeOptions {
   readonly heartbeatMilliseconds?: number
   readonly utilityModel?: AgentConversationTitleGenerator
   readonly orchestration?: AgentOrchestrationLimits
+  readonly goals?: AgentGoalLimits
 }
 
 interface RuntimeMessageRow { role: 'user' | 'assistant'; content: string; providerStateCiphertext: Uint8Array | null }
@@ -423,6 +465,7 @@ export class AgentProductRuntime {
   readonly #skills: SkillRuntime
   readonly #utilityModel: AgentConversationTitleGenerator | undefined
   readonly #orchestration: AgentOrchestrationLimits
+  readonly #goals: AgentGoalLimits
 
   constructor (knex: Knex, resolver: AgentAdmissionResolver, engine: AgentEngine, options: AgentProductRuntimeOptions) {
     this.#knex = knex
@@ -432,14 +475,26 @@ export class AgentProductRuntime {
     this.#skills = new SkillRuntime(knex)
     this.#utilityModel = options.utilityModel
     this.#orchestration = options.orchestration ?? DEFAULT_AGENT_ORCHESTRATION_LIMITS
+    this.#goals = options.goals ?? DEFAULT_AGENT_GOAL_LIMITS
+  }
+
+  async #skillVersionIds(ownerId: number, invokedSkillVersionIds: readonly string[]): Promise<readonly string[]> {
+    const preferredSkillVersionIds = await this.#skills.resolvePreferredVersionIdsForUser(ownerId)
+    const skillVersionIds = await uniqueSkillVersionsBySkill(this.#knex, preferredSkillVersionIds, invokedSkillVersionIds)
+    if (skillVersionIds.length > 8) throw new AgentRepositoryError('TOO_MANY_SKILLS', 'A run can use at most 8 skills', 400)
+    return skillVersionIds
+  }
+
+  #assertResolvedAdmission(resolved: AgentResolvedAdmission): void {
+    if (!Number.isSafeInteger(resolved.reservationMilliseconds) || resolved.reservationMilliseconds < 1) {
+      throw new AgentRepositoryError('INVALID_PROFILE_RESOLUTION', 'Quota reservation duration is invalid', 500)
+    }
   }
 
   async submit (input: SubmitAgentMessageInput): Promise<{ readonly run: AgentRunRecord, readonly replayed: boolean }> {
     const resolved = await this.#resolver.resolve({ ownerId: input.ownerId, sessionId: input.sessionId, profileResolutionToken: input.profileResolutionToken })
-    if (!Number.isSafeInteger(resolved.reservationMilliseconds) || resolved.reservationMilliseconds < 1) throw new AgentRepositoryError('INVALID_PROFILE_RESOLUTION', 'Quota reservation duration is invalid', 500)
-    const preferredSkillVersionIds = await this.#skills.resolvePreferredVersionIdsForUser(input.ownerId)
-    const skillVersionIds = await uniqueSkillVersionsBySkill(this.#knex, preferredSkillVersionIds, input.invokedSkillVersionIds ?? [])
-    if (skillVersionIds.length > 8) throw new AgentRepositoryError('TOO_MANY_SKILLS', 'A run can use at most 8 skills', 400)
+    this.#assertResolvedAdmission(resolved)
+    const skillVersionIds = await this.#skillVersionIds(input.ownerId, input.invokedSkillVersionIds ?? [])
     return admitAgentRun(this.#knex, {
       ownerId: input.ownerId,
       sessionId: input.sessionId,
@@ -451,6 +506,42 @@ export class AgentProductRuntime {
       skillVersionIds,
       reservationExpiresAt: new Date(Date.now() + resolved.reservationMilliseconds)
     })
+  }
+
+  async createGoal(input: CreateAgentGoalInput): Promise<{ readonly goal: AgentGoalRecord, readonly run: AgentRunRecord, readonly replayed: boolean }> {
+    if (!this.#goals.enabled) throw new AgentRepositoryError('AGENT_GOALS_DISABLED', 'Durable goals are disabled', 404)
+    const resolved = await this.#resolver.resolve({ ownerId: input.ownerId, sessionId: input.sessionId, profileResolutionToken: input.profileResolutionToken })
+    this.#assertResolvedAdmission(resolved)
+    const skillVersionIds = await this.#skillVersionIds(input.ownerId, input.invokedSkillVersionIds ?? [])
+    const now = new Date()
+    const created = await this.#knex.transaction(async transaction => {
+      const goal = await insertAgentGoal(transaction, {
+        id: input.goalId,
+        sessionId: input.sessionId,
+        ownerId: input.ownerId,
+        objective: input.objective,
+        limits: this.#goals,
+        now
+      })
+      const admitted = await admitAgentRunInTransaction(transaction, {
+        ownerId: input.ownerId,
+        sessionId: input.sessionId,
+        clientRequestId: input.clientRequestId,
+        expectedSessionVersion: input.expectedSessionVersion,
+        content: goal.objective,
+        ...(input.currentPage === undefined ? {} : { currentPage: input.currentPage }),
+        ...resolved,
+        goalId: goal.id,
+        goalContinuation: 0,
+        userMessageVisible: true,
+        skillVersionIds,
+        reservationExpiresAt: new Date(now.valueOf() + resolved.reservationMilliseconds),
+        now
+      })
+      return { goal, ...admitted }
+    })
+    if (!created.replayed) await emitGoalEvent(this.#knex, { goal: created.goal, run: created.run, type: 'goal.created' })
+    return created
   }
 
   async #appendPresentationEvent(claim: AgentRunClaim, type: AgentEventType, data: AgentEventData, messagePatch?: Readonly<Record<string, unknown>>): Promise<void> {
@@ -881,7 +972,32 @@ export class AgentProductRuntime {
       await this.#knex('agentRuns').where({ id: claim.id, leaseOwner: claim.leaseOwner, leaseToken: claim.leaseToken }).update({ inputTokens, outputTokens, estimatedCostMicros: costMicros, updatedAt: new Date() })
       await reconcileAgentRunQuota(this.#knex, { runId: claim.id, ownerId: claim.ownerId, consumedTokens: inputTokens + outputTokens, consumedCostMicros: costMicros, status: 'consumed' })
       quotaReconciled = true
-      const partial = tasks.some(task => task.status !== 'completed' || task.outcome !== 'completed')
+      const pendingProposal = await this.#knex('agentProposals')
+        .where({ runId: claim.id })
+        .whereIn('status', ['pending', 'approved', 'applying'])
+        .count<{ count: number | string }[]>({ count: '*' })
+        .first()
+      const completion = assessAgentRunCompletion({
+        tasks,
+        pendingProposalCount: Number(pendingProposal?.count ?? 0),
+        evidenceGatePassed: true,
+        usageReconciled: quotaReconciled
+      })
+      const encodedCompletion = encodedCompletionAssessment(completion)
+      await this.#knex('agentRuns')
+        .where({ id: claim.id, leaseOwner: claim.leaseOwner, leaseToken: claim.leaseToken })
+        .update({
+          completionOutcome: completion.outcome,
+          completionAssessment: encodedCompletion.encoded,
+          completionAssessmentSha256: encodedCompletion.sha256,
+          updatedAt: new Date()
+        })
+      await this.#appendPresentationEvent(claim, 'run.completionAssessed', {
+        runId: claim.id,
+        outcome: completion.outcome,
+        issueCodes: completion.issues.map(issue => issue.code)
+      })
+      const partial = completion.outcome !== 'complete'
       await this.#appendPresentationEvent(claim, partial ? 'run.partial' : 'run.completed', { runId: claim.id, status: partial ? 'partial' : 'succeeded' })
       return { status: partial ? 'partial' : 'succeeded' }
     } catch (error) {
@@ -915,12 +1031,292 @@ export class AgentProductRuntime {
       return { status: 'failed', errorCode: 'AGENT_ENGINE_FAILED', errorMessage: 'Agent inference failed' }
     }
   }
-
-  runOnce (): Promise<boolean> {
-    return this.#coordinator.runOnce((claim, signal) => this.#execute(claim, signal))
+  async #goalUsage(goalId: string): Promise<{ readonly tokens: number, readonly toolCalls: number }> {
+    const runs = await this.#knex('agentRuns').where({ goalId }).select('id', 'inputTokens', 'outputTokens') as Array<{ id: string, inputTokens: number | string, outputTokens: number | string }>
+    const runIds = runs.map(run => run.id)
+    const toolCalls = runIds.length === 0
+      ? 0
+      : Number((await this.#knex('agentEvents').whereIn('runId', runIds).where({ type: 'tool.started' }).count<{ count: number | string }[]>({ count: '*' }).first())?.count ?? 0)
+    return {
+      tokens: runs.reduce((total, run) => total + Number(run.inputTokens) + Number(run.outputTokens), 0),
+      toolCalls
+    }
+  }
+  async #emitLatestGoalStatus(goal: AgentGoalRecord): Promise<void> {
+    const run = await this.#knex('agentRuns').where({ goalId: goal.id, ownerId: goal.ownerId }).orderBy('goalContinuation', 'desc').first('id', 'attempts') as { id: string, attempts: number } | undefined
+    if (run) await emitGoalEvent(this.#knex, { goal, run, type: 'goal.status' })
   }
 
-  cancel (ownerId: number, runId: string): Promise<AgentRunRecord> {
+
+  async #continueGoal(
+    goal: AgentGoalRecord,
+    input: { readonly expectedVersion?: number, readonly runId?: string, readonly clientRequestId?: string, readonly automatic: boolean }
+  ): Promise<{ readonly goal: AgentGoalRecord, readonly run: AgentRunRecord | null, readonly replayed: boolean }> {
+    if (!this.#goals.enabled) throw new AgentRepositoryError('AGENT_GOALS_DISABLED', 'Durable goals are disabled', 404)
+    if (input.runId) {
+      const existing = await this.#knex('agentRuns').where({ id: input.runId, ownerId: goal.ownerId, goalId: goal.id }).first('id', 'clientRequestId')
+      if (existing) {
+        if (existing.clientRequestId !== input.clientRequestId) throw new AgentRepositoryError('RUN_IDEMPOTENCY_MISMATCH', 'Run ID was reused with different input', 409)
+        return { goal: await getOwnedAgentGoal(this.#knex, goal.ownerId, goal.id), run: await getOwnedAgentRun(this.#knex, goal.ownerId, existing.id), replayed: true }
+      }
+    }
+    const fresh = await getOwnedAgentGoal(this.#knex, goal.ownerId, goal.id)
+    if (input.expectedVersion !== undefined && fresh.version !== input.expectedVersion) throw new AgentRepositoryError('GOAL_VERSION_CHANGED', 'Agent goal changed concurrently', 409)
+    const allowed = input.automatic ? fresh.status === 'active' : fresh.status === 'paused' || fresh.status === 'blocked'
+    if (!allowed) throw new AgentRepositoryError('INVALID_GOAL_TRANSITION', 'Agent goal cannot continue from its current state', 409)
+    const usage = await this.#goalUsage(fresh.id)
+    const limitReached = fresh.continuationCount >= fresh.maxContinuations ||
+      usage.tokens >= fresh.maxTokens ||
+      usage.toolCalls >= fresh.maxToolCalls ||
+      new Date(fresh.deadlineAt).valueOf() <= Date.now()
+    if (limitReached) {
+      const limited = await updateGoalStatus(this.#knex, {
+        ownerId: fresh.ownerId,
+        goalId: fresh.id,
+        expectedVersion: fresh.version,
+        from: [fresh.status],
+        to: 'budget_limited',
+        completion: fresh.completion ?? { outcome: 'partial', issues: [{ code: 'GOAL_BUDGET_LIMITED', message: 'The goal reached its host-owned continuation budget.', retryable: false }] },
+        consumedTokens: usage.tokens,
+        consumedToolCalls: usage.toolCalls,
+        errorCode: 'GOAL_BUDGET_LIMITED',
+        errorMessage: 'Goal continuation budget was exhausted'
+      })
+      await this.#emitLatestGoalStatus(limited)
+      return { goal: limited, run: null, replayed: false }
+    }
+    if (!this.#resolver.resolveCurrent) {
+      const blocked = await updateGoalStatus(this.#knex, {
+        ownerId: fresh.ownerId,
+        goalId: fresh.id,
+        expectedVersion: fresh.version,
+        from: [fresh.status],
+        to: 'blocked',
+        completion: fresh.completion,
+        consumedTokens: usage.tokens,
+        consumedToolCalls: usage.toolCalls,
+        errorCode: 'GOAL_RESOLUTION_UNAVAILABLE',
+        errorMessage: 'Current provider admission cannot be resolved for a continuation'
+      })
+      await this.#emitLatestGoalStatus(blocked)
+      return { goal: blocked, run: null, replayed: false }
+    }
+    const resolved = await this.#resolver.resolveCurrent({ ownerId: fresh.ownerId, sessionId: fresh.sessionId })
+    this.#assertResolvedAdmission(resolved)
+    const firstRun = await this.#knex('agentRuns')
+      .where({ goalId: fresh.id, goalContinuation: 0, ownerId: fresh.ownerId })
+      .first('providerProfileVersionId', 'transportKind', 'model', 'profilePolicyVersion', 'defaultGeneration', 'capabilityRevision', 'pricingRevision', 'promptVersion') as {
+        providerProfileVersionId: string
+        transportKind: string
+        model: string
+        profilePolicyVersion: number | string
+        defaultGeneration: number | string
+        capabilityRevision: string
+        pricingRevision: string
+        promptVersion: number
+      } | undefined
+    if (!firstRun) throw new AgentRepositoryError('AGENT_GOAL_CORRUPT', 'Agent goal has no initial run', 500)
+    const configurationMatches = firstRun.providerProfileVersionId === resolved.providerProfileVersionId &&
+      firstRun.transportKind === resolved.transportKind &&
+      firstRun.model === resolved.model &&
+      Number(firstRun.profilePolicyVersion) === resolved.profilePolicyVersion &&
+      Number(firstRun.defaultGeneration) === resolved.defaultGeneration &&
+      firstRun.capabilityRevision === resolved.capabilityRevision &&
+      firstRun.pricingRevision === resolved.pricingRevision &&
+      firstRun.promptVersion === resolved.promptVersion
+    if (!configurationMatches) {
+      const blocked = await updateGoalStatus(this.#knex, {
+        ownerId: fresh.ownerId,
+        goalId: fresh.id,
+        expectedVersion: fresh.version,
+        from: [fresh.status],
+        to: 'blocked',
+        completion: fresh.completion,
+        consumedTokens: usage.tokens,
+        consumedToolCalls: usage.toolCalls,
+        errorCode: 'GOAL_CONFIGURATION_CHANGED',
+        errorMessage: 'Provider configuration changed; start a new goal to use the new configuration'
+      })
+      await this.#emitLatestGoalStatus(blocked)
+      return { goal: blocked, run: null, replayed: false }
+    }
+    const [session, skillVersionIds] = await Promise.all([
+      this.#knex('agentSessions').where({ id: fresh.sessionId, ownerId: fresh.ownerId }).whereNull('deletedAt').first('version') as Promise<{ version: number } | undefined>,
+      this.#knex('agentRunSkills').join('agentRuns', 'agentRuns.id', 'agentRunSkills.runId').where({ 'agentRuns.goalId': fresh.id, 'agentRuns.goalContinuation': 0 }).orderBy('agentRunSkills.ordinal').pluck<string>('agentRunSkills.skillVersionId')
+    ])
+    if (!session) throw new AgentRepositoryError('AGENT_RESOURCE_NOT_FOUND', 'Agent session was not found', 404)
+    const continuation = fresh.continuationCount + 1
+    const runId = input.runId ?? randomUUID()
+    const clientRequestId = input.clientRequestId ?? randomUUID()
+    const previous = fresh.completion ?? { outcome: 'retry', issues: [{ code: 'PRIOR_RUN_FAILED', message: 'The prior run did not produce a completion assessment.', retryable: true }] }
+    const content = `Continue this explicit durable goal using only actionable remaining work. Do not repeat completed work. The host, not the model, decides completion.\\n${canonicalJson({ objective: fresh.objective, previousCompletion: previous })}`
+    const now = new Date()
+    const admitted = await this.#knex.transaction(async transaction => {
+      const locked = await getOwnedAgentGoal(transaction, fresh.ownerId, fresh.id, true)
+      if (locked.version !== fresh.version || locked.status !== fresh.status) throw new AgentRepositoryError('GOAL_VERSION_CHANGED', 'Agent goal changed concurrently', 409)
+      const activeRun = await transaction('agentRuns').where({ goalId: locked.id }).whereIn('status', ['queued', 'running', 'awaiting_approval']).first('id')
+      if (activeRun) throw new AgentRepositoryError('GOAL_RUN_ACTIVE', 'Agent goal already has an active run', 409)
+      const changed = await transaction('agentGoals').where({ id: locked.id, ownerId: locked.ownerId, version: locked.version, status: locked.status }).update({
+        status: 'active',
+        version: locked.version + 1,
+        continuationCount: continuation,
+        consumedTokens: usage.tokens,
+        consumedToolCalls: usage.toolCalls,
+        errorCode: null,
+        errorMessage: null,
+        updatedAt: now,
+        completedAt: null
+      })
+      if (changed !== 1) throw new AgentRepositoryError('GOAL_VERSION_CHANGED', 'Agent goal changed concurrently', 409)
+      const result = await admitAgentRunInTransaction(transaction, {
+        id: runId,
+        ownerId: locked.ownerId,
+        sessionId: locked.sessionId,
+        clientRequestId,
+        expectedSessionVersion: Number(session.version),
+        content,
+        ...resolved,
+        goalId: locked.id,
+        goalContinuation: continuation,
+        userMessageVisible: false,
+        skillVersionIds,
+        reservationExpiresAt: new Date(now.valueOf() + resolved.reservationMilliseconds),
+        now
+      })
+      return { ...result, goal: await getOwnedAgentGoal(transaction, locked.ownerId, locked.id) }
+    })
+    if (!admitted.replayed) {
+      await emitGoalEvent(this.#knex, { goal: admitted.goal, run: admitted.run, type: 'run.resumed' })
+      await emitGoalEvent(this.#knex, { goal: admitted.goal, run: admitted.run, type: 'goal.status' })
+    }
+    return admitted
+  }
+
+  async pauseGoal(input: MutateAgentGoalInput): Promise<AgentGoalRecord> {
+    const goal = await updateGoalStatus(this.#knex, {
+      ownerId: input.ownerId,
+      goalId: input.goalId,
+      expectedVersion: input.expectedVersion,
+      from: ['active', 'blocked'],
+      to: 'paused'
+    })
+    const run = await this.#knex('agentRuns').where({ goalId: goal.id, ownerId: goal.ownerId }).whereIn('status', ['queued', 'running', 'awaiting_approval']).orderBy('goalContinuation', 'desc').first('id', 'attempts') as { id: string, attempts: number } | undefined
+    if (run) {
+      await emitGoalEvent(this.#knex, { goal, run, type: 'run.interrupted' })
+      await emitGoalEvent(this.#knex, { goal, run, type: 'goal.status' })
+      await this.#coordinator.cancel(goal.ownerId, run.id)
+    }
+    return goal
+  }
+
+  async resumeGoal(input: ResumeAgentGoalInput): Promise<{ readonly goal: AgentGoalRecord, readonly run: AgentRunRecord | null, readonly replayed: boolean }> {
+    const goal = await getOwnedAgentGoal(this.#knex, input.ownerId, input.goalId)
+    return this.#continueGoal(goal, { expectedVersion: input.expectedVersion, runId: input.runId, clientRequestId: input.clientRequestId, automatic: false })
+  }
+
+  async cancelGoal(input: MutateAgentGoalInput): Promise<AgentGoalRecord> {
+    const goal = await updateGoalStatus(this.#knex, {
+      ownerId: input.ownerId,
+      goalId: input.goalId,
+      expectedVersion: input.expectedVersion,
+      from: ['active', 'paused', 'blocked'],
+      to: 'cancelled'
+    })
+    const run = await this.#knex('agentRuns').where({ goalId: goal.id, ownerId: goal.ownerId }).whereIn('status', ['queued', 'running', 'awaiting_approval']).orderBy('goalContinuation', 'desc').first('id', 'attempts') as { id: string, attempts: number } | undefined
+    if (run) {
+      await emitGoalEvent(this.#knex, { goal, run, type: 'goal.status' })
+      await this.#coordinator.cancel(goal.ownerId, run.id)
+    }
+    return goal
+  }
+
+  async #advanceGoal(): Promise<void> {
+    if (!this.#goals.enabled) return
+    const candidates = await this.#knex('agentGoals').where({ status: 'active' }).orderBy('updatedAt').limit(8).select('id', 'ownerId') as Array<{ id: string, ownerId: number }>
+    for (const candidate of candidates) {
+      const activeRun = await this.#knex('agentRuns').where({ goalId: candidate.id }).whereIn('status', ['queued', 'running', 'awaiting_approval']).first('id')
+      if (activeRun) continue
+      const goal = await getOwnedAgentGoal(this.#knex, candidate.ownerId, candidate.id)
+      const latest = await this.#knex('agentRuns').where({ goalId: goal.id, ownerId: goal.ownerId }).orderBy('goalContinuation', 'desc').first('id', 'attempts', 'status', 'completionOutcome', 'completionAssessment', 'completionAssessmentSha256') as {
+        id: string
+        attempts: number
+        status: string
+        completionOutcome: string | null
+        completionAssessment: string | null
+        completionAssessmentSha256: string | null
+      } | undefined
+      if (!latest) throw new AgentRepositoryError('AGENT_GOAL_CORRUPT', 'Agent goal has no run', 500)
+      const usage = await this.#goalUsage(goal.id)
+      const completion = decodeCompletionAssessment(latest.completionAssessment, latest.completionOutcome, latest.completionAssessmentSha256)
+      if (latest.status === 'succeeded' && completion?.outcome === 'complete') {
+        const completed = await updateGoalStatus(this.#knex, {
+          ownerId: goal.ownerId,
+          goalId: goal.id,
+          expectedVersion: goal.version,
+          from: ['active'],
+          to: 'completed',
+          completion,
+          consumedTokens: usage.tokens,
+          consumedToolCalls: usage.toolCalls
+        })
+        await emitGoalEvent(this.#knex, { goal: completed, run: latest, type: 'goal.status' })
+        return
+      }
+      if (latest.status === 'cancelled') {
+        const cancelled = await updateGoalStatus(this.#knex, {
+          ownerId: goal.ownerId,
+          goalId: goal.id,
+          expectedVersion: goal.version,
+          from: ['active'],
+          to: 'cancelled',
+          completion,
+          consumedTokens: usage.tokens,
+          consumedToolCalls: usage.toolCalls
+        })
+        await emitGoalEvent(this.#knex, { goal: cancelled, run: latest, type: 'goal.status' })
+        return
+      }
+      if (latest.status === 'recovery_required' || completion?.outcome === 'blocked') {
+        const blocked = await updateGoalStatus(this.#knex, {
+          ownerId: goal.ownerId,
+          goalId: goal.id,
+          expectedVersion: goal.version,
+          from: ['active'],
+          to: 'blocked',
+          completion,
+          consumedTokens: usage.tokens,
+          consumedToolCalls: usage.toolCalls,
+          errorCode: latest.status === 'recovery_required' ? 'GOAL_RECOVERY_REQUIRED' : 'GOAL_BLOCKED',
+          errorMessage: latest.status === 'recovery_required' ? 'A run requires operator recovery' : 'Goal completion is blocked'
+        })
+        await emitGoalEvent(this.#knex, { goal: blocked, run: latest, type: 'goal.status' })
+        return
+      }
+      await this.#continueGoal({ ...goal, completion }, { automatic: true })
+      return
+    }
+  }
+
+  async runOnce(): Promise<boolean> {
+    const ran = await this.#coordinator.runOnce((claim, signal) => this.#execute(claim, signal))
+    await this.#advanceGoal()
+    return ran
+  }
+
+  async cancel(ownerId: number, runId: string): Promise<AgentRunRecord> {
+    const run = await getOwnedAgentRun(this.#knex, ownerId, runId)
+    if (run.goalId) {
+      const goal = await getOwnedAgentGoal(this.#knex, ownerId, run.goalId)
+      if (goal.status === 'active' || goal.status === 'paused' || goal.status === 'blocked') {
+        await updateGoalStatus(this.#knex, {
+          ownerId,
+          goalId: goal.id,
+          expectedVersion: goal.version,
+          from: [goal.status],
+          to: 'cancelled'
+        })
+      }
+    }
     return this.#coordinator.cancel(ownerId, runId)
   }
 

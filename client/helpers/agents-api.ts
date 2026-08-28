@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { AGENT_ACTION_NAMES, AGENT_EVENT_TYPES, AGENT_PROVIDER_TRANSPORTS, AGENT_TASK_KINDS, type AgentConversationFolderView, type AgentEventType, type AgentProviderProfileView, type AgentThreadState, type CreateAgentSessionRequest, type SubmitAgentMessageRequest, type UpdateAgentSessionFolderRequest, type UpdateAgentSessionProfileRequest, type UpdateAgentSkillPreferencesRequest } from '../../shared/agents/contracts.ts'
+import { AGENT_ACTION_NAMES, AGENT_EVENT_TYPES, AGENT_GOAL_STATUSES, AGENT_PROVIDER_TRANSPORTS, AGENT_TASK_KINDS, type AgentConversationFolderView, type AgentEventType, type AgentProviderProfileView, type AgentThreadState, type CancelAgentGoalRequest, type CreateAgentGoalRequest, type CreateAgentSessionRequest, type PauseAgentGoalRequest, type ResumeAgentGoalRequest, type SubmitAgentMessageRequest, type UpdateAgentSessionFolderRequest, type UpdateAgentSessionProfileRequest, type UpdateAgentSkillPreferencesRequest } from '../../shared/agents/contracts.ts'
 
 const Iso = z.iso.datetime()
 const Uuid = z.uuid()
@@ -11,13 +11,35 @@ const Skill = z.object({ skillId: Uuid, versionId: Uuid, name: z.string(), descr
 const Session = z.object({ id: Uuid, title: z.string(), retention: z.enum(['temporary', 'saved']), folderId: Uuid.nullable(), status: z.enum(['active', 'deletion_pending']), executionMode: z.literal('agent'), version: z.number().int().positive(), providerProfileId: Uuid.nullable(), profileResolutionToken: z.string(), skills: z.array(Skill), currentRun: Run.nullable(), createdAt: Iso, updatedAt: Iso, lastActivityAt: Iso, expiresAt: Iso.nullable() })
 const Tool = z.object({ id: z.string(), runId: Uuid, actionName: z.enum(AGENT_ACTION_NAMES), title: z.string(), state: z.enum(['preparing', 'running', 'awaitingApproval', 'complete', 'failed', 'denied', 'cancelled']), risk: z.enum(['read', 'open-world-read', 'proposal', 'reversible-write', 'destructive-write']), summary: z.string().nullable(), proposalId: Uuid.nullable(), startedAt: Iso, completedAt: Iso.nullable() })
 const Task = z.object({ id: Uuid, runId: Uuid, kind: z.enum(AGENT_TASK_KINDS), title: z.string(), question: z.string(), sourceScope: z.array(z.string()), requiredEvidenceCount: z.number().int().positive(), status: z.enum(['pending', 'running', 'blocked', 'completed', 'failed', 'cancelled']), subagentRunId: Uuid.nullable(), attempt: z.number().int().nonnegative(), outcome: z.enum(['completed', 'blocked', 'partial', 'failed']).nullable(), evidenceCount: z.number().int().nonnegative(), errorCode: z.string().nullable(), errorMessage: z.string().nullable(), createdAt: Iso, startedAt: Iso.nullable(), completedAt: Iso.nullable() })
+const CompletionIssue = z.object({ code: z.string(), message: z.string(), retryable: z.boolean() })
+const Completion = z.object({ outcome: z.enum(['complete', 'retry', 'blocked', 'partial']), issues: z.array(CompletionIssue) })
+const Goal = z.object({
+  id: Uuid,
+  sessionId: Uuid,
+  objective: z.string(),
+  status: z.enum(AGENT_GOAL_STATUSES),
+  version: z.number().int().positive(),
+  currentRunId: Uuid.nullable(),
+  continuationCount: z.number().int().nonnegative(),
+  maxContinuations: z.number().int().nonnegative(),
+  consumedTokens: z.number().int().nonnegative(),
+  maxTokens: z.number().int().positive(),
+  consumedToolCalls: z.number().int().nonnegative(),
+  maxToolCalls: z.number().int().positive(),
+  startedAt: Iso,
+  deadlineAt: Iso,
+  completedAt: Iso.nullable(),
+  errorCode: z.string().nullable(),
+  errorMessage: z.string().nullable(),
+  completion: Completion.nullable()
+})
 const Approval = z.object({ id: Uuid, proposalId: Uuid, status: z.enum(['pending', 'approved', 'denied', 'expired', 'cancelled']), requestedAt: Iso, expiresAt: Iso, decidedAt: Iso.nullable(), decisionNote: z.string().nullable() })
 const PageReference = z.object({ id: z.number().int().positive(), locale: z.string(), path: z.string(), title: z.string(), contentType: z.string(), sourceRevision: z.string() })
 const ProposalBase = z.object({ id: Uuid, sourceKind: z.enum(['agent', 'mcp']), actionName: z.enum(AGENT_ACTION_NAMES), risk: z.enum(['read', 'open-world-read', 'proposal', 'reversible-write', 'destructive-write']), status: z.enum(['pending', 'approved', 'denied', 'expired', 'applying', 'applied', 'failed', 'cancelled']), summary: z.string(), target: PageReference.nullable(), baseSourceRevision: z.string().nullable(), authoritySha256: z.string(), inputHash: z.string(), patchSha256: z.string().nullable(), resultCanonicalSha256: z.string().nullable(), diffSha256: z.string().nullable(), diff: z.string().nullable(), expiresAt: Iso, approval: Approval.nullable() })
 const Proposal = ProposalBase.extend({ pageLink: z.object({ label: z.string(), href: z.string() }).nullable() })
 const Artifact = z.object({ id: Uuid, kind: z.literal('browser-screenshot'), mimeType: z.literal('image/png'), byteLength: z.number().int().nonnegative(), width: z.number().int().positive(), height: z.number().int().positive(), createdAt: Iso, expiresAt: Iso.nullable(), available: z.boolean() })
 const Suggestion = z.object({ id: z.string(), label: z.string(), prompt: z.string() })
-const Thread = z.object({ session: Session, messages: z.array(Message), tools: z.array(Tool), tasks: z.array(Task), proposals: z.array(Proposal), artifacts: z.array(Artifact), suggestions: z.array(Suggestion) })
+const Thread = z.object({ session: Session, messages: z.array(Message), tools: z.array(Tool), tasks: z.array(Task), goal: Goal.nullable(), proposals: z.array(Proposal), artifacts: z.array(Artifact), suggestions: z.array(Suggestion) })
 const LaunchPage = z.object({ pageId: z.number().int().positive().nullable(), locale: z.string().nullable(), path: z.string().nullable(), observedUpdatedAt: Iso.nullable() }).nullable()
 const CreatedThread = Thread.extend({ launchPage: LaunchPage.optional() })
 const SessionSummary = z.object({ id: Uuid, title: z.string(), retention: z.enum(['temporary', 'saved']), folderId: Uuid.nullable(), executionMode: z.literal('agent'), version: z.number().int().positive(), providerProfileId: Uuid.nullable(), createdAt: Iso, updatedAt: Iso, lastActivityAt: Iso, expiresAt: Iso.nullable(), deletedAt: Iso.nullable() })
@@ -150,6 +172,18 @@ export const submitAgentMessage = async (fetcher: typeof fetch, csrfToken: strin
 
 export const cancelAgentRun = async (fetcher: typeof fetch, csrfToken: string, runId: string) =>
   (await requestJson(fetcher, csrfToken, `/_api/agents/runs/${encodeURIComponent(runId)}/cancel`, z.object({ run: z.object({ id: Uuid, status: RunStatus }).passthrough() }), { method: 'POST' })).run
+export const createAgentGoal = async (fetcher: typeof fetch, csrfToken: string, sessionId: string, input: CreateAgentGoalRequest) =>
+  requestJson(fetcher, csrfToken, `/_api/agents/sessions/${encodeURIComponent(sessionId)}/goals`, z.object({ goal: Goal, run: Run, replayed: z.boolean() }), { method: 'POST', body: JSON.stringify(input) })
+
+export const pauseAgentGoal = async (fetcher: typeof fetch, csrfToken: string, goalId: string, input: PauseAgentGoalRequest) =>
+  (await requestJson(fetcher, csrfToken, `/_api/agents/goals/${encodeURIComponent(goalId)}/pause`, z.object({ goal: Goal }), { method: 'POST', body: JSON.stringify(input) })).goal
+
+export const resumeAgentGoal = async (fetcher: typeof fetch, csrfToken: string, goalId: string, input: ResumeAgentGoalRequest) =>
+  requestJson(fetcher, csrfToken, `/_api/agents/goals/${encodeURIComponent(goalId)}/resume`, z.object({ goal: Goal, run: Run.nullable(), replayed: z.boolean() }), { method: 'POST', body: JSON.stringify(input) })
+
+export const cancelAgentGoal = async (fetcher: typeof fetch, csrfToken: string, goalId: string, input: CancelAgentGoalRequest) =>
+  (await requestJson(fetcher, csrfToken, `/_api/agents/goals/${encodeURIComponent(goalId)}/cancel`, z.object({ goal: Goal }), { method: 'POST', body: JSON.stringify(input) })).goal
+
 
 export const decideAgentProposal = async (
   fetcher: typeof fetch,

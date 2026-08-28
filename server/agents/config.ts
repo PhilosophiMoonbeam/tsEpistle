@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { DEFAULT_AGENT_GOAL_LIMITS } from './goals.ts'
 import { DEFAULT_AGENT_ORCHESTRATION_LIMITS } from './orchestration.ts'
 
 const AgentOperationalLimitsSchema = z.object({
@@ -21,6 +22,13 @@ const AgentOperationalLimitsSchema = z.object({
     maxAggregateChildTokens: z.number().int().min(1_000).max(100_000).default(12_000),
     maxAggregateChildOutputCharacters: z.number().int().min(16_000).max(512_000).default(96_000)
   }).passthrough().default(DEFAULT_AGENT_ORCHESTRATION_LIMITS),
+  goals: z.object({
+    enabled: z.boolean().default(false),
+    maxContinuations: z.number().int().min(0).max(12).default(3),
+    maxTokens: z.number().int().min(1_000).max(1_000_000).default(48_000),
+    maxToolCalls: z.number().int().min(1).max(1_024).default(96),
+    maxDurationMilliseconds: z.number().int().min(60_000).max(7 * 24 * 60 * 60_000).default(60 * 60_000)
+  }).passthrough().default(DEFAULT_AGENT_GOAL_LIMITS),
   retention: z.object({
     temporarySessionHours: z.number().int().min(1).max(30 * 24).default(24),
     savedSessionDays: z.number().int().min(1).max(10 * 365).default(90),

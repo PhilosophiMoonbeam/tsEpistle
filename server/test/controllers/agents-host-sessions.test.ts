@@ -9,6 +9,7 @@ import createKnex, { type Knex } from 'knex'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import createAgentsHostController from '../../controllers/agents-host.ts'
 import { AgentProductRuntime, type AgentEngine } from '../../agents/runtime.ts'
+import { up as addAgentGoals } from '../../db/migrations/2.5.157.ts'
 import { up as addAgentTaskLedger } from '../../db/migrations/2.5.156.ts'
 
 interface TestSessionState { agentCsrfToken?: string }
@@ -32,6 +33,7 @@ const createTables = async (db: Knex): Promise<void> => {
     table.uuid('id').primary(); table.uuid('sessionId').notNullable(); table.uuid('userMessageId').notNullable(); table.uuid('assistantMessageId').notNullable(); table.integer('ownerId').notNullable(); table.uuid('clientRequestId').notNullable(); table.string('clientRequestSha256').notNullable(); table.string('profileResolutionSha256').notNullable(); table.string('status').notNullable(); table.integer('attempts').notNullable(); table.integer('maxAttempts').notNullable(); table.integer('eventSequence').notNullable(); table.dateTime('availableAt').notNullable(); table.string('leaseOwner').nullable(); table.uuid('leaseToken').nullable(); table.dateTime('leaseExpiresAt').nullable(); table.dateTime('cancelRequestedAt').nullable(); table.boolean('sideEffectsStarted').notNullable(); table.uuid('providerProfileVersionId').notNullable(); table.string('transportKind').notNullable(); table.string('model').notNullable(); table.string('executionMode').notNullable(); table.integer('profilePolicyVersion').notNullable(); table.integer('defaultGeneration').notNullable(); table.string('capabilityRevision').notNullable(); table.string('pricingRevision').notNullable(); table.integer('promptVersion').notNullable(); table.integer('inputTokens').notNullable(); table.integer('outputTokens').notNullable(); table.integer('estimatedCostMicros').nullable(); table.string('errorCode').nullable(); table.text('errorMessage').nullable(); table.dateTime('queuedAt').notNullable(); table.dateTime('startedAt').nullable(); table.dateTime('updatedAt').notNullable(); table.dateTime('completedAt').nullable()
   })
   await addAgentTaskLedger(db)
+  await addAgentGoals(db)
   await db.schema.createTable('agentEvents', table => {
     table.uuid('id').primary(); table.uuid('runId').notNullable(); table.integer('sequence').notNullable(); table.string('type').notNullable(); table.integer('attempt').notNullable(); table.integer('schemaVersion').notNullable(); table.string('dataSha256').notNullable(); table.text('data').notNullable(); table.dateTime('createdAt').notNullable()
   })
@@ -42,7 +44,7 @@ const createTables = async (db: Knex): Promise<void> => {
   await db.schema.createTable('userGroups', table => { table.integer('userId'); table.integer('groupId') })
   await db.schema.createTable('agentRunSkills', table => { table.uuid('runId'); table.uuid('skillVersionId'); table.integer('ordinal') })
   await db.schema.createTable('pages', table => { table.integer('id'); table.string('localeCode'); table.text('path'); table.string('title'); table.string('contentType') })
-  await db.schema.createTable('agentProposals', table => { table.uuid('id'); table.uuid('sessionId'); table.string('sourceKind'); table.string('actionName'); table.string('risk'); table.string('status'); table.string('summary'); table.integer('pageId'); table.integer('baseSourceRevision'); table.string('authoritySha256'); table.string('inputHash'); table.string('patchSha256'); table.string('resultCanonicalSha256'); table.string('diffSha256'); table.text('diff'); table.dateTime('contentPurgedAt'); table.dateTime('expiresAt'); table.dateTime('createdAt') })
+  await db.schema.createTable('agentProposals', table => { table.uuid('id'); table.uuid('sessionId'); table.uuid('runId').nullable(); table.string('sourceKind'); table.string('actionName'); table.string('risk'); table.string('status'); table.string('summary'); table.integer('pageId'); table.integer('baseSourceRevision'); table.string('authoritySha256'); table.string('inputHash'); table.string('patchSha256'); table.string('resultCanonicalSha256'); table.string('diffSha256'); table.text('diff'); table.dateTime('contentPurgedAt'); table.dateTime('expiresAt'); table.dateTime('createdAt') })
   await db.schema.alterTable('agentProposals', table => { table.text('operation') })
   await db.schema.createTable('agentApprovals', table => { table.uuid('id'); table.uuid('proposalId'); table.string('status'); table.dateTime('requestedAt'); table.dateTime('expiresAt'); table.dateTime('decidedAt'); table.text('decisionNote') })
   await db.schema.createTable('agentArtifacts', table => { table.uuid('id'); table.uuid('sessionId'); table.uuid('runId'); table.integer('ownerId'); table.string('kind'); table.string('mimeType'); table.integer('byteLength'); table.binary('payload'); table.string('sha256'); table.integer('width'); table.integer('height'); table.dateTime('createdAt'); table.dateTime('expiresAt') })
@@ -95,7 +97,12 @@ describe('ordinary-origin agent session API', () => {
           reservationMilliseconds: 60_000
         }
       }
-    }, fakeEngine, { workerId: 'test-worker', globalConcurrency: 1, perUserConcurrency: 1 })
+    }, fakeEngine, {
+      workerId: 'test-worker',
+      globalConcurrency: 1,
+      perUserConcurrency: 1,
+      goals: { enabled: true, maxContinuations: 3, maxTokens: 48_000, maxToolCalls: 96, maxDurationMilliseconds: 3_600_000 }
+    })
     const app = express()
     app.use(cookieParser())
     app.use(session({ secret: 'ordinary-host-test-secret', resave: false, saveUninitialized: true }))
@@ -108,7 +115,7 @@ describe('ordinary-origin agent session API', () => {
           next()
         }
       },
-      config: { host: 'https://wiki.example.test', sessionSecret: 'profile-resolution-secret', agents: { enabled: true, provider: { enabled: true }, retention: { temporarySessionHours: 24 }, skills: { enabled: true, namespace: 'system/agent-skills' }, proposals: { enabled: false }, writes: { enabled: false, create: { enabled: false }, patch: { enabled: false }, move: { enabled: false }, restore: { enabled: false }, delete: { enabled: false } } } },
+      config: { host: 'https://wiki.example.test', sessionSecret: 'profile-resolution-secret', agents: { enabled: true, provider: { enabled: true }, goals: { enabled: true, maxContinuations: 3, maxTokens: 48_000, maxToolCalls: 96, maxDurationMilliseconds: 3_600_000 }, retention: { temporarySessionHours: 24 }, skills: { enabled: true, namespace: 'system/agent-skills' }, proposals: { enabled: false }, writes: { enabled: false, create: { enabled: false }, patch: { enabled: false }, move: { enabled: false }, restore: { enabled: false }, delete: { enabled: false } } } },
       models: { knex: db },
       agentRuntime: runtime
     }))
@@ -236,6 +243,45 @@ describe('ordinary-origin agent session API', () => {
     expect(replay).toContain('event: suggestions.updated')
     expect(replay).toContain('"model":{"costMicros":8,"inputTokens":3,"outputTokens":5}')
     expect(replay).toContain('"utility":{"inputTokens":0,"outputTokens":0,"purpose":"conversation_title"}')
+  })
+  it('creates an explicit durable goal and completes it through the host gate', async () => {
+    const headers = { cookie, 'content-type': 'application/json', origin: 'https://wiki.example.test', 'sec-fetch-site': 'same-origin', 'x-wiki-csrf': csrf }
+    const created = await fetch(`${baseUrl}/_api/agents/sessions`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ retention: 'saved', providerProfileId: null })
+    })
+    const state = await created.json() as { session: { id: string, version: number, profileResolutionToken: string } }
+    const goalId = '00000000-0000-4000-8000-000000000074'
+    const admitted = await fetch(`${baseUrl}/_api/agents/sessions/${state.session.id}/goals`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        goalId,
+        clientRequestId: '00000000-0000-4000-8000-000000000075',
+        expectedSessionVersion: state.session.version,
+        profileResolutionToken: state.session.profileResolutionToken,
+        objective: 'Produce the deterministic answer.'
+      })
+    })
+    expect(admitted.status).toBe(202)
+    expect(await admitted.json()).toMatchObject({
+      goal: { id: goalId, status: 'active', continuationCount: 0, objective: 'Produce the deterministic answer.' },
+      run: { status: 'queued' },
+      replayed: false
+    })
+    await expect(runtime.runOnce()).resolves.toBe(true)
+
+    const projected = await fetch(`${baseUrl}/_api/agents/sessions/${state.session.id}`, { headers: { cookie } })
+    await expect(projected.json()).resolves.toMatchObject({
+      goal: { id: goalId, status: 'completed', completion: { outcome: 'complete', issues: [] } },
+      messages: [
+        { role: 'user', content: 'Produce the deterministic answer.' },
+        { role: 'assistant', content: 'Hello from the deterministic engine.' }
+      ]
+    })
+    expect(await db('agentRuns').where({ goalId }).first('goalContinuation', 'completionOutcome')).toEqual({ goalContinuation: 0, completionOutcome: 'complete' })
+    expect((await db('agentEvents').join('agentRuns', 'agentRuns.id', 'agentEvents.runId').where({ 'agentRuns.goalId': goalId }).pluck('agentEvents.type'))).toEqual(expect.arrayContaining(['goal.created', 'run.completionAssessed', 'goal.status']))
   })
   it('applies user skill preferences at the latest version across conversations', async () => {
     const headers = { cookie, 'content-type': 'application/json', origin: 'https://wiki.example.test', 'sec-fetch-site': 'same-origin', 'x-wiki-csrf': csrf }

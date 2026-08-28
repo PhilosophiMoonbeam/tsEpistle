@@ -18,6 +18,7 @@ import { requestAgentHistoryReset, requestAgentSessionDeletion } from '../agents
 import type { AgentOperationalLimits } from '../agents/config.ts'
 import { DEFAULT_AGENT_ORCHESTRATION_LIMITS } from '../agents/orchestration.ts'
 import { exportAgentSessionDiagnostics } from '../agents/diagnostics.ts'
+import { DEFAULT_AGENT_GOAL_LIMITS, projectAgentGoal, type AgentGoalRecord } from '../agents/goals.ts'
 import { AgentMemoryRepository, encodeAgentMemorySnapshot } from '../agents/memory.ts'
 import {
   CreateAgentProviderProfileSchema,
@@ -53,6 +54,7 @@ interface AgentHostWiki {
       readonly enabled: boolean
       readonly provider: { readonly enabled: boolean; readonly globalConcurrency?: number; readonly perUserConcurrency?: number; readonly pollingMilliseconds?: number }
       readonly orchestration?: { readonly enabled: boolean }
+      readonly goals?: { readonly enabled: boolean }
       readonly retention: { readonly temporarySessionHours: number; readonly savedSessionDays?: number; readonly mcpContentDays?: number; readonly auditDays?: number; readonly maintenanceBatchSize?: number }
       readonly skills: { readonly enabled: boolean; readonly namespace: string }
       readonly browser?: { readonly enabled: boolean }
@@ -71,7 +73,7 @@ interface AgentHostWiki {
   readonly models: {
     readonly knex: Knex
   }
-  readonly agentRuntime?: Pick<AgentProductRuntime, 'cancel' | 'submit'>
+  readonly agentRuntime?: Pick<AgentProductRuntime, 'cancel' | 'submit' | 'createGoal' | 'pauseGoal' | 'resumeGoal' | 'cancelGoal'>
   readonly providerRegistry?: Pick<AgentProviderRegistry, 'create' | 'getAdmin' | 'issueResolutionToken' | 'listAll' | 'listVisible' | 'remove' | 'setDefault' | 'setEnabled' | 'setGrants' | 'setSessionProfile' | 'update'>
   readonly providerConformance?: Pick<AgentProviderConformanceRunner, 'latest' | 'list' | 'run'>
   readonly agentLimits?: AgentOperationalLimits
@@ -137,6 +139,22 @@ const SubmitMessageSchema = z.strictObject({
     observedUpdatedAt: z.iso.datetime()
   }).optional()
 })
+const CreateGoalSchema = z.strictObject({
+  goalId: z.uuid(),
+  clientRequestId: z.uuid(),
+  expectedSessionVersion: z.number().int().positive(),
+  profileResolutionToken: z.string().min(1).max(4_096),
+  objective: z.string().min(1).max(32_000),
+  invokedSkillVersionIds: z.array(z.uuid()).max(8).optional(),
+  currentPage: z.strictObject({
+    id: z.number().int().positive(),
+    locale: z.string().min(1).max(16),
+    path: z.string().min(1).max(1_024),
+    observedUpdatedAt: z.iso.datetime()
+  }).optional()
+})
+const GoalMutationSchema = z.strictObject({ expectedVersion: z.number().int().positive() })
+const ResumeGoalSchema = GoalMutationSchema.extend({ runId: z.uuid(), clientRequestId: z.uuid() })
 const CreatePersonalSkillSchema = z.strictObject({
   name: PersonalSkillNameSchema,
   skillMarkdown: PersonalSkillMarkdownSchema,
@@ -230,6 +248,10 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
   const projectSession = async (ownerId: number, sessionId: string) => {
     const issued = wiki.providerRegistry ? await wiki.providerRegistry.issueResolutionToken(ownerId, sessionId) : null
     return projectAgentThread(wiki.models.knex, ownerId, sessionId, { profileResolutionToken: session => issued ?? fallbackProfileResolutionToken(session) })
+  }
+  const projectGoal = async (goal: AgentGoalRecord) => {
+    const latestRun = await wiki.models.knex('agentRuns').where({ goalId: goal.id, ownerId: goal.ownerId }).orderBy('goalContinuation', 'desc').first('id') as { id: string } | undefined
+    return projectAgentGoal(goal, latestRun?.id ?? null)
   }
 
   router.use(apiPrefix, wiki.auth.authenticate.bind(wiki.auth), (req, res, next) => {
@@ -329,6 +351,51 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
       ...(input.currentPage === undefined ? {} : { currentPage: input.currentPage })
     })
     return res.status(202).json({ run: projectAgentRun(admitted.run), replayed: admitted.replayed })
+  }))
+  router.post(`${apiPrefix}/sessions/:sessionId/goals`, asyncRoute(async (req, res) => {
+    if (!wiki.config.agents.provider.enabled || !wiki.config.agents.goals?.enabled || !wiki.agentRuntime) return res.sendStatus(404)
+    const sessionId = UUIDSchema.parse(routeParameter(req, 'sessionId'))
+    const input = CreateGoalSchema.parse(req.body)
+    const principal = requestSkillPrincipal(req)
+    if ((input.invokedSkillVersionIds?.length ?? 0) > 0 && !wiki.config.agents.skills.enabled) return res.sendStatus(404)
+    const invokedSkillVersionIds = await skillRuntime.assertVisibleVersions(input.invokedSkillVersionIds ?? [], principal)
+    const created = await wiki.agentRuntime.createGoal({
+      goalId: input.goalId,
+      clientRequestId: input.clientRequestId,
+      expectedSessionVersion: input.expectedSessionVersion,
+      profileResolutionToken: input.profileResolutionToken,
+      objective: input.objective,
+      ownerId: principal.userId,
+      sessionId,
+      invokedSkillVersionIds,
+      ...(input.currentPage === undefined ? {} : { currentPage: input.currentPage })
+    })
+    return res.status(202).json({ goal: await projectGoal(created.goal), run: projectAgentRun(created.run), replayed: created.replayed })
+  }))
+  router.post(`${apiPrefix}/goals/:goalId/pause`, asyncRoute(async (req, res) => {
+    if (!wiki.config.agents.goals?.enabled || !wiki.agentRuntime) return res.sendStatus(404)
+    const goalId = UUIDSchema.parse(routeParameter(req, 'goalId'))
+    const input = GoalMutationSchema.parse(req.body)
+    const goal = await wiki.agentRuntime.pauseGoal({ goalId, ownerId: requestSkillPrincipal(req).userId, expectedVersion: input.expectedVersion })
+    return res.json({ goal: await projectGoal(goal) })
+  }))
+  router.post(`${apiPrefix}/goals/:goalId/resume`, asyncRoute(async (req, res) => {
+    if (!wiki.config.agents.goals?.enabled || !wiki.agentRuntime) return res.sendStatus(404)
+    const goalId = UUIDSchema.parse(routeParameter(req, 'goalId'))
+    const input = ResumeGoalSchema.parse(req.body)
+    const resumed = await wiki.agentRuntime.resumeGoal({ goalId, ownerId: requestSkillPrincipal(req).userId, ...input })
+    return res.status(resumed.run ? 202 : 200).json({
+      goal: await projectGoal(resumed.goal),
+      run: resumed.run ? projectAgentRun(resumed.run) : null,
+      replayed: resumed.replayed
+    })
+  }))
+  router.post(`${apiPrefix}/goals/:goalId/cancel`, asyncRoute(async (req, res) => {
+    if (!wiki.config.agents.goals?.enabled || !wiki.agentRuntime) return res.sendStatus(404)
+    const goalId = UUIDSchema.parse(routeParameter(req, 'goalId'))
+    const input = GoalMutationSchema.parse(req.body)
+    const goal = await wiki.agentRuntime.cancelGoal({ goalId, ownerId: requestSkillPrincipal(req).userId, expectedVersion: input.expectedVersion })
+    return res.json({ goal: await projectGoal(goal) })
   }))
   router.get(`${apiPrefix}/mcp-proposals/:proposalId`, asyncRoute(async (req, res) => {
     const proposalId = UUIDSchema.parse(routeParameter(req, 'proposalId'))
@@ -543,6 +610,7 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
         enabled: config.enabled,
         providerEnabled: config.provider.enabled,
         orchestrationEnabled: config.orchestration?.enabled ?? false,
+        goalsEnabled: config.goals?.enabled ?? false,
         skillsEnabled: config.skills.enabled,
         browserEnabled: config.browser?.enabled ?? false,
         proposalsEnabled: config.proposals.enabled,
@@ -562,6 +630,7 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
           maximumSseConnectionsPerUser: wiki.agentLimits?.sse.maximumConnectionsPerUser ?? 3
         },
         orchestration: wiki.agentLimits?.orchestration ?? DEFAULT_AGENT_ORCHESTRATION_LIMITS,
+        goals: wiki.agentLimits?.goals ?? DEFAULT_AGENT_GOAL_LIMITS,
         retention: {
           temporarySessionHours: wiki.agentLimits?.retention.temporarySessionHours ?? 24,
           savedSessionDays: wiki.agentLimits?.retention.savedSessionDays ?? 90,

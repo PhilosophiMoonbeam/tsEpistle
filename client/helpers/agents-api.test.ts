@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { createAgentMemory, createAgentThread, createPersonalAgentSkill, deleteAgentSession, getAgentMemories, getAgentThread, listAgentProfiles, listPersonalAgentSkills, removePersonalAgentSkill, resetAgentHistory, submitAgentMessage, updateAgentSkillPreferences, updatePersonalAgentSkill } from './agents-api.ts'
+import { createAgentGoal, createAgentMemory, createAgentThread, createPersonalAgentSkill, deleteAgentSession, getAgentMemories, getAgentThread, listAgentProfiles, listPersonalAgentSkills, removePersonalAgentSkill, resetAgentHistory, submitAgentMessage, updateAgentSkillPreferences, updatePersonalAgentSkill } from './agents-api.ts'
 import { renderSafeMarkdown } from './safe-markdown.ts'
 
 describe('agents client boundary', () => {
@@ -142,6 +142,56 @@ describe('agents client boundary', () => {
     expect(fetcher).toHaveBeenCalledWith(expect.stringContaining('/messages'), expect.objectContaining({ body: JSON.stringify(input) }))
   })
 
+  it('creates a goal only through the dedicated typed endpoint', async () => {
+    const sessionId = '00000000-0000-4000-8000-000000000023'
+    const goalId = '00000000-0000-4000-8000-000000000025'
+    const now = '2026-08-17T00:00:00.000Z'
+    const goal = {
+      id: goalId,
+      sessionId,
+      objective: 'Finish the incident review.',
+      status: 'active',
+      version: 1,
+      currentRunId: '00000000-0000-4000-8000-000000000022',
+      continuationCount: 0,
+      maxContinuations: 3,
+      consumedTokens: 0,
+      maxTokens: 48_000,
+      consumedToolCalls: 0,
+      maxToolCalls: 96,
+      startedAt: now,
+      deadlineAt: '2026-08-17T01:00:00.000Z',
+      completedAt: null,
+      errorCode: null,
+      errorMessage: null,
+      completion: null
+    }
+    const run = {
+      id: goal.currentRunId,
+      sessionId,
+      status: 'queued',
+      attempt: 0,
+      eventSequence: 2,
+      canCancel: true,
+      createdAt: now,
+      startedAt: null,
+      completedAt: null,
+      errorCode: null,
+      errorMessage: null
+    }
+    const fetcher = vi.fn(async () => Response.json({ goal, run, replayed: false }, { status: 202 })) as unknown as typeof fetch
+    const input = {
+      goalId,
+      clientRequestId: '00000000-0000-4000-8000-000000000026',
+      expectedSessionVersion: 1,
+      profileResolutionToken: 'token',
+      objective: goal.objective
+    }
+
+    await expect(createAgentGoal(fetcher, 'csrf', sessionId, input)).resolves.toEqual({ goal, run, replayed: false })
+    expect(fetcher).toHaveBeenCalledWith(`/_api/agents/sessions/${sessionId}/goals`, expect.objectContaining({ method: 'POST', body: JSON.stringify(input) }))
+  })
+
 
   it('accepts partial runs with typed task progress and no child packet exposure', async () => {
     const now = '2026-08-17T00:00:00.000Z'
@@ -187,6 +237,7 @@ describe('agents client boundary', () => {
       messages: [],
       tools: [],
       tasks: [task],
+      goal: null,
       proposals: [],
       artifacts: [],
       suggestions: []

@@ -53,6 +53,12 @@ defaults:
         childMaxOutputTokens: 2048
         maxAggregateChildTokens: 12000
         maxAggregateChildOutputCharacters: 96000
+      goals:
+        enabled: false
+        maxContinuations: 3
+        maxTokens: 48000
+        maxToolCalls: 96
+        maxDurationMilliseconds: 3600000
       sse:
         maximumConnectionsPerUser: 3
       skills:

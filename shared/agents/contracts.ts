@@ -103,6 +103,21 @@ export type AgentTaskKind = typeof AGENT_TASK_KINDS[number]
 export type AgentTaskStatus = 'pending' | 'running' | 'blocked' | 'completed' | 'failed' | 'cancelled'
 export type AgentTaskOutcome = 'completed' | 'blocked' | 'partial' | 'failed'
 export type AgentEvidenceConfidence = 'high' | 'medium' | 'low'
+export const AGENT_GOAL_STATUSES = ['active', 'paused', 'blocked', 'budget_limited', 'completed', 'cancelled', 'failed'] as const
+export type AgentGoalStatus = typeof AGENT_GOAL_STATUSES[number]
+export type AgentCompletionOutcome = 'complete' | 'retry' | 'blocked' | 'partial'
+
+export interface AgentCompletionIssue {
+  readonly code: string
+  readonly message: string
+  readonly retryable: boolean
+}
+
+export interface AgentCompletionAssessment {
+  readonly outcome: AgentCompletionOutcome
+  readonly issues: readonly AgentCompletionIssue[]
+}
+
 
 export interface AgentEvidenceClaim {
   readonly text: string
@@ -347,6 +362,27 @@ export interface AgentTaskView {
   readonly startedAt: string | null
   readonly completedAt: string | null
 }
+export interface AgentGoalView {
+  readonly id: string
+  readonly sessionId: string
+  readonly objective: string
+  readonly status: AgentGoalStatus
+  readonly version: number
+  readonly currentRunId: string | null
+  readonly continuationCount: number
+  readonly maxContinuations: number
+  readonly consumedTokens: number
+  readonly maxTokens: number
+  readonly consumedToolCalls: number
+  readonly maxToolCalls: number
+  readonly startedAt: string
+  readonly deadlineAt: string
+  readonly completedAt: string | null
+  readonly errorCode: string | null
+  readonly errorMessage: string | null
+  readonly completion: AgentCompletionAssessment | null
+}
+
 
 export interface AgentProposalView {
   readonly id: string
@@ -396,6 +432,9 @@ export const AGENT_EVENT_TYPES = [
   'run.attemptStarted',
   'run.attemptSuperseded',
   'run.status',
+  'run.interrupted',
+  'run.resumed',
+  'run.completionAssessed',
   'message.started',
   'message.delta',
   'message.completed',
@@ -413,6 +452,8 @@ export const AGENT_EVENT_TYPES = [
   'subagent.suspended',
   'subagent.completed',
   'subagent.failed',
+  'goal.created',
+  'goal.status',
   'tool.progress',
   'tool.completed',
   'tool.failed',
@@ -454,6 +495,7 @@ export interface AgentThreadState {
   readonly messages: readonly AgentMessageView[]
   readonly tools: readonly AgentToolCallView[]
   readonly tasks: readonly AgentTaskView[]
+  readonly goal: AgentGoalView | null
   readonly proposals: readonly AgentProposalView[]
   readonly artifacts: readonly AgentArtifactView[]
   readonly suggestions: readonly AgentFollowUpSuggestion[]
@@ -498,6 +540,30 @@ export interface SubmitAgentMessageRequest {
   readonly invokedSkillVersionIds?: readonly string[]
   readonly currentPage?: AgentCurrentPageHint
 }
+export interface CreateAgentGoalRequest {
+  readonly goalId: string
+  readonly clientRequestId: string
+  readonly expectedSessionVersion: number
+  readonly profileResolutionToken: string
+  readonly objective: string
+  readonly invokedSkillVersionIds?: readonly string[]
+  readonly currentPage?: AgentCurrentPageHint
+}
+
+export interface PauseAgentGoalRequest {
+  readonly expectedVersion: number
+}
+
+export interface ResumeAgentGoalRequest {
+  readonly expectedVersion: number
+  readonly runId: string
+  readonly clientRequestId: string
+}
+
+export interface CancelAgentGoalRequest {
+  readonly expectedVersion: number
+}
+
 
 export interface DecideAgentApprovalRequest {
   readonly decision: 'approve' | 'deny'

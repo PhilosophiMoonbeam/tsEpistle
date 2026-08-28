@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { markRaw } from 'vue'
 import type { AgentConversationFolderView, AgentCurrentPageHint, AgentEventType, AgentProviderProfileView, AgentThreadState } from '../../shared/agents/contracts.ts'
-import { cancelAgentRun, createAgentConversationFolder, createAgentThread, decideAgentProposal, deleteAgentConversationFolder, deleteAgentSession, getAgentThread, listAgentConversationFolders, listAgentProfiles, listAgentSessions, listAgentSkills, moveAgentSessionToFolder, renameAgentConversationFolder, resetAgentHistory, submitAgentMessage, subscribeAgentRun, updateAgentProfile, updateAgentSkillPreferences, type AgentSessionSummary, type CreatedAgentThread, type VisibleAgentSkill } from '../helpers/agents-api.ts'
+import { cancelAgentGoal, cancelAgentRun, createAgentConversationFolder, createAgentGoal, createAgentThread, decideAgentProposal, deleteAgentConversationFolder, deleteAgentSession, getAgentThread, listAgentConversationFolders, listAgentProfiles, listAgentSessions, listAgentSkills, moveAgentSessionToFolder, pauseAgentGoal, renameAgentConversationFolder, resetAgentHistory, resumeAgentGoal, submitAgentMessage, subscribeAgentRun, updateAgentProfile, updateAgentSkillPreferences, type AgentSessionSummary, type CreatedAgentThread, type VisibleAgentSkill } from '../helpers/agents-api.ts'
 
 const terminalEvents = new Set<AgentEventType>(['run.completed', 'run.partial', 'run.failed', 'run.cancelled', 'run.recovery_required'])
 export interface AgentStoreInitializeOptions {
@@ -29,7 +29,8 @@ export const useAgentsStore = defineStore('agents', {
     eventSequence: 0,
     source: null as EventSource | null,
     refreshTimer: null as number | null,
-    decidingApprovalId: null as string | null
+    decidingApprovalId: null as string | null,
+    goalBusy: false
   }),
   actions: {
     async initialize(csrfToken: string, options: AgentStoreInitializeOptions = {}) {
@@ -130,22 +131,31 @@ export const useAgentsStore = defineStore('agents', {
       if (current) this.thread = projected
       await this.reloadSessions()
     },
-    async send(content: string, invokedSkillVersionIds: readonly string[] = []): Promise<boolean> {
+    async send(content: string, invokedSkillVersionIds: readonly string[] = [], mode: 'message' | 'goal' = 'message'): Promise<boolean> {
       const thread = this.thread
       const trimmed = content.trim()
       const currentPage = this.contextPage ?? this.launchPage
-      if (!thread || !trimmed || this.sending || thread.session.currentRun?.canCancel) return false
+      if (!thread || !trimmed || this.sending || thread.session.currentRun?.canCancel || (thread.goal && ['active', 'paused', 'blocked'].includes(thread.goal.status))) return false
       this.sending = true
       this.error = ''
       try {
-        const run = await submitAgentMessage(window.fetch.bind(window), this.csrfToken, thread.session.id, {
+        const request = {
           clientRequestId: crypto.randomUUID(),
           expectedSessionVersion: thread.session.version,
           profileResolutionToken: thread.session.profileResolutionToken,
-          content: trimmed,
           ...(invokedSkillVersionIds.length > 0 ? { invokedSkillVersionIds } : {}),
           ...(currentPage ? { currentPage } : {})
-        })
+        }
+        const run = mode === 'goal'
+          ? (await createAgentGoal(window.fetch.bind(window), this.csrfToken, thread.session.id, {
+              ...request,
+              goalId: crypto.randomUUID(),
+              objective: trimmed
+            })).run
+          : await submitAgentMessage(window.fetch.bind(window), this.csrfToken, thread.session.id, {
+              ...request,
+              content: trimmed
+            })
         await this.refreshThread()
         this.eventSequence = run.eventSequence
         this.connect(run.id, run.eventSequence)
@@ -158,6 +168,11 @@ export const useAgentsStore = defineStore('agents', {
       }
     },
     async stop() {
+      const goal = this.thread?.goal
+      if (goal?.status === 'active' || goal?.status === 'blocked') {
+        await this.pauseGoal()
+        return
+      }
       const run = this.thread?.session.currentRun
       if (!run?.canCancel) return
       try {
@@ -165,6 +180,56 @@ export const useAgentsStore = defineStore('agents', {
         await this.refreshThread()
       } catch (error) {
         this.error = error instanceof Error ? error.message : 'Run could not be stopped.'
+      }
+    },
+    async pauseGoal() {
+      const goal = this.thread?.goal
+      if (!goal || this.goalBusy || (goal.status !== 'active' && goal.status !== 'blocked')) return
+      this.goalBusy = true
+      this.error = ''
+      try {
+        await pauseAgentGoal(window.fetch.bind(window), this.csrfToken, goal.id, { expectedVersion: goal.version })
+        await this.refreshThread()
+      } catch (error) {
+        this.error = error instanceof Error ? error.message : 'Goal could not be paused.'
+      } finally {
+        this.goalBusy = false
+      }
+    },
+    async resumeGoal() {
+      const goal = this.thread?.goal
+      if (!goal || this.goalBusy || (goal.status !== 'paused' && goal.status !== 'blocked')) return
+      this.goalBusy = true
+      this.error = ''
+      try {
+        const resumed = await resumeAgentGoal(window.fetch.bind(window), this.csrfToken, goal.id, {
+          expectedVersion: goal.version,
+          runId: crypto.randomUUID(),
+          clientRequestId: crypto.randomUUID()
+        })
+        await this.refreshThread()
+        if (resumed.run) {
+          this.eventSequence = resumed.run.eventSequence
+          this.connect(resumed.run.id, resumed.run.eventSequence)
+        }
+      } catch (error) {
+        this.error = error instanceof Error ? error.message : 'Goal could not be resumed.'
+      } finally {
+        this.goalBusy = false
+      }
+    },
+    async cancelGoal() {
+      const goal = this.thread?.goal
+      if (!goal || this.goalBusy || !['active', 'paused', 'blocked'].includes(goal.status)) return
+      this.goalBusy = true
+      this.error = ''
+      try {
+        await cancelAgentGoal(window.fetch.bind(window), this.csrfToken, goal.id, { expectedVersion: goal.version })
+        await this.refreshThread()
+      } catch (error) {
+        this.error = error instanceof Error ? error.message : 'Goal could not be cancelled.'
+      } finally {
+        this.goalBusy = false
       }
     },
     async decideProposal(proposalId: string, approvalId: string, decision: 'approved' | 'denied', confirmationPath?: string) {
@@ -186,7 +251,7 @@ export const useAgentsStore = defineStore('agents', {
     },
     async setProfile(providerProfileId: string | null) {
       const thread = this.thread
-      if (!thread || thread.session.currentRun?.canCancel) return
+      if (!thread || thread.session.currentRun?.canCancel || (thread.goal && ['active', 'paused', 'blocked'].includes(thread.goal.status))) return
       try {
         this.thread = await updateAgentProfile(window.fetch.bind(window), this.csrfToken, thread.session.id, {
           expectedSessionVersion: thread.session.version,

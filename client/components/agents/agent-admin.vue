@@ -30,6 +30,14 @@
                   <v-list-item title="Aggregate specialist tokens" :subtitle="String(runtime.orchestration.maxAggregateChildTokens)" />
                 </v-list>
               </v-card>
+              <v-card title="Durable goals" variant="outlined">
+                <v-list density="compact">
+                  <v-list-item title="Continuations" :subtitle="String(runtime.goals.maxContinuations)" />
+                  <v-list-item title="Aggregate tokens" :subtitle="String(runtime.goals.maxTokens)" />
+                  <v-list-item title="Aggregate tool calls" :subtitle="String(runtime.goals.maxToolCalls)" />
+                  <v-list-item title="Maximum duration" :subtitle="`${runtime.goals.maxDurationMilliseconds / 60000} minutes`" />
+                </v-list>
+              </v-card>
               <v-card title="Retention" variant="outlined"><v-list density="compact"><v-list-item title="Temporary sessions" :subtitle="`${runtime.retention.temporarySessionHours} hours`"/><v-list-item title="MCP proposal content" :subtitle="`${runtime.retention.mcpContentDays} days`"/><v-list-item title="Audit ledger" :subtitle="`${runtime.retention.auditDays} days`"/><v-list-item title="Maintenance batch" :subtitle="String(runtime.retention.maintenanceBatchSize)"/></v-list></v-card>
               <v-card title="Metrics and health" variant="outlined"><v-card-text>Agent run, proposal, artifact, and usage gauges are exported through the existing metrics endpoint. Provider, browser-worker, and MCP failures do not affect <code>/healthz</code>.</v-card-text></v-card>
             </div>
@@ -214,6 +222,7 @@ interface RuntimePolicy {
   enabled: boolean
   providerEnabled: boolean
   orchestrationEnabled: boolean
+  goalsEnabled: boolean
   skillsEnabled: boolean
   browserEnabled: boolean
   proposalsEnabled: boolean
@@ -233,6 +242,13 @@ interface RuntimePolicy {
     childMaxOutputTokens: number
     maxAggregateChildTokens: number
     maxAggregateChildOutputCharacters: number
+  }
+  goals: {
+    enabled: boolean
+    maxContinuations: number
+    maxTokens: number
+    maxToolCalls: number
+    maxDurationMilliseconds: number
   }
   retention: { temporarySessionHours: number; mcpContentDays: number; auditDays: number; maintenanceBatchSize: number }
 }
@@ -341,6 +357,7 @@ const capabilityRows = computed(() => runtime.value ? [
   { label: 'Inline agent', enabled: runtime.value.enabled },
   { label: 'Provider inference', enabled: runtime.value.providerEnabled },
   { label: 'Specialist research', enabled: runtime.value.orchestrationEnabled },
+  { label: 'Durable goals', enabled: runtime.value.goalsEnabled },
   { label: 'Approved skills', enabled: runtime.value.skillsEnabled },
   { label: 'Isolated browser', enabled: runtime.value.browserEnabled },
   { label: 'Proposals', enabled: runtime.value.proposalsEnabled },

@@ -29,7 +29,7 @@ const agents = data.defaults?.config?.agents
 if (!agents) failures.push('server/app/data.yml does not define defaults.config.agents')
 else {
   const flagPaths = [
-    'enabled', 'provider.enabled', 'orchestration.enabled', 'skills.enabled', 'browser.enabled', 'proposals.enabled', 'writes.enabled',
+    'enabled', 'provider.enabled', 'orchestration.enabled', 'goals.enabled', 'skills.enabled', 'browser.enabled', 'proposals.enabled', 'writes.enabled',
     'writes.create.enabled', 'writes.patch.enabled', 'writes.move.enabled', 'writes.restore.enabled', 'writes.delete.enabled', 'mcp.enabled'
   ]
   for (const path of flagPaths) {
@@ -90,9 +90,12 @@ for (const evidence of [
 const requiredReleaseInputs = [
   'client/components/agents/inline-agent-chat.vue',
   'server/agents/config.ts',
+  'client/components/agents/agent-goal-status.vue',
+  'server/agents/goals.ts',
   'server/agents/providers/openresponses.ts',
   'server/db/migrations/2.5.139.ts',
   'server/db/migrations/2.5.140.ts',
+  'server/db/migrations/2.5.157.ts',
   'server/scripts/agent-maintenance.ts',
   'server/scripts/generate-release-manifest.ts',
   'docs/agents-deployment.md'
@@ -102,4 +105,4 @@ for (const file of requiredReleaseInputs) {
 }
 
 if (failures.length > 0) throw new Error(`Agent release gate failed:\n${failures.map(failure => `- ${failure}`).join('\n')}`)
-console.log('Agent release gate valid: dependencies frozen, defaults inert, PostgreSQL and multi-arch release evidence present')
+console.log('Agent release gate valid: dependencies frozen, defaults inert, durable goals guarded, PostgreSQL and multi-arch release evidence present')

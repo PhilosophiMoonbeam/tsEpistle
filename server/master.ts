@@ -58,6 +58,7 @@ interface MasterConfig extends Record<string, unknown> {
     mcp: { enabled: boolean }
     provider: { enabled: boolean; globalConcurrency?: number; perUserConcurrency?: number; pollingMilliseconds?: number }
     orchestration: AgentOperationalLimits['orchestration']
+    goals: AgentOperationalLimits['goals']
     retention: { temporarySessionHours: number; savedSessionDays: number; mcpContentDays: number; auditDays: number; maintenanceBatchSize: number }
     skills: { enabled: boolean; namespace: string }
     browser: { enabled: boolean }
@@ -295,7 +296,8 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
       globalConcurrency: agentLimits.provider.globalConcurrency,
       perUserConcurrency: agentLimits.provider.perUserConcurrency,
       utilityModel,
-      orchestration: agentLimits.orchestration
+      orchestration: agentLimits.orchestration,
+      goals: agentLimits.goals
     })
     wiki.agentRuntime = agentRuntime
     let workerActive = false
@@ -374,6 +376,7 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
       agentsEnabled: wiki.config.agents.enabled,
       agentProviderEnabled: wiki.config.agents.provider.enabled,
       agentSkillsEnabled: wiki.config.agents.skills.enabled,
+      agentGoalsEnabled: wiki.config.agents.goals.enabled,
       agentCsrfToken: wiki.config.agents.enabled ? agentCsrfToken(_req) : ''
     }
     res.locals.langs = await wiki.models.locales.getNavLocales({ cache: true })

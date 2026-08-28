@@ -158,13 +158,14 @@ export const exportAgentSessionDiagnostics = async (knex: Knex, sessionId: strin
   ) as Record<string, unknown> | undefined
   if (!session) throw new AgentRepositoryError('AGENT_RESOURCE_NOT_FOUND', 'Agent resource was not found', 404)
 
-  const [messages, runRows, eventRows, skillRows] = await Promise.all([
-    knex('agentMessages').where({ sessionId }).orderBy('ordinal').select('id', 'runId', 'ordinal', 'role', 'status', 'content', 'citations', 'providerStateSha256', 'createdAt', 'updatedAt') as Promise<Array<Record<string, unknown>>>,
+  const [messages, runRows, eventRows, skillRows, goals] = await Promise.all([
+    knex('agentMessages').where({ sessionId }).orderBy('ordinal').select('id', 'runId', 'ordinal', 'role', 'status', 'content', 'isVisible', 'citations', 'providerStateSha256', 'createdAt', 'updatedAt') as Promise<Array<Record<string, unknown>>>,
     knex('agentRuns').where({ sessionId }).orderBy('queuedAt').select(
-      'id', 'userMessageId', 'assistantMessageId', 'clientRequestId', 'status', 'attempts', 'maxAttempts', 'eventSequence', 'availableAt', 'cancelRequestedAt', 'sideEffectsStarted', 'providerProfileVersionId', 'transportKind', 'model', 'executionMode', 'profilePolicyVersion', 'defaultGeneration', 'capabilityRevision', 'pricingRevision', 'promptVersion', 'inputTokens', 'outputTokens', 'estimatedCostMicros', 'errorCode', 'errorMessage', 'queuedAt', 'startedAt', 'updatedAt', 'completedAt'
+      'id', 'userMessageId', 'assistantMessageId', 'clientRequestId', 'goalId', 'goalContinuation', 'status', 'attempts', 'maxAttempts', 'eventSequence', 'availableAt', 'cancelRequestedAt', 'sideEffectsStarted', 'providerProfileVersionId', 'transportKind', 'model', 'executionMode', 'profilePolicyVersion', 'defaultGeneration', 'capabilityRevision', 'pricingRevision', 'promptVersion', 'inputTokens', 'outputTokens', 'estimatedCostMicros', 'completionOutcome', 'completionAssessment', 'completionAssessmentSha256', 'errorCode', 'errorMessage', 'queuedAt', 'startedAt', 'updatedAt', 'completedAt'
     ) as Promise<Array<Record<string, unknown>>>,
     knex<DiagnosticEventRow>('agentEvents').join('agentRuns', 'agentRuns.id', 'agentEvents.runId').where('agentRuns.sessionId', sessionId).orderBy('agentRuns.queuedAt').orderBy('agentEvents.sequence').select('agentEvents.*'),
-    knex('agentRunSkills').join('agentSkillVersions', 'agentSkillVersions.id', 'agentRunSkills.skillVersionId').join('agentSkills', 'agentSkills.id', 'agentSkillVersions.skillId').join('agentRuns', 'agentRuns.id', 'agentRunSkills.runId').where('agentRuns.sessionId', sessionId).orderBy('agentRunSkills.ordinal').select('agentRunSkills.runId', 'agentRunSkills.ordinal', 'agentSkillVersions.id as versionId', 'agentSkillVersions.contentHash', 'agentSkillVersions.skillMarkdown', 'agentSkills.name') as Promise<Array<Record<string, unknown>>>
+    knex('agentRunSkills').join('agentSkillVersions', 'agentSkillVersions.id', 'agentRunSkills.skillVersionId').join('agentSkills', 'agentSkills.id', 'agentSkillVersions.skillId').join('agentRuns', 'agentRuns.id', 'agentRunSkills.runId').where('agentRuns.sessionId', sessionId).orderBy('agentRunSkills.ordinal').select('agentRunSkills.runId', 'agentRunSkills.ordinal', 'agentSkillVersions.id as versionId', 'agentSkillVersions.contentHash', 'agentSkillVersions.skillMarkdown', 'agentSkills.name') as Promise<Array<Record<string, unknown>>>,
+    knex('agentGoals').where({ sessionId }).orderBy('startedAt').select('id', 'objective', 'objectiveSha256', 'status', 'version', 'continuationCount', 'maxContinuations', 'consumedTokens', 'maxTokens', 'consumedToolCalls', 'maxToolCalls', 'completionOutcome', 'completionAssessment', 'completionAssessmentSha256', 'errorCode', 'errorMessage', 'startedAt', 'deadlineAt', 'updatedAt', 'completedAt') as Promise<Array<Record<string, unknown>>>
   ])
 
   const eventsByRun = new Map<string, Array<{ id: string, sequence: number, type: string, attempt: number, schemaVersion: number, dataSha256: string, data: Record<string, unknown>, createdAt: string }>>()
@@ -203,6 +204,8 @@ export const exportAgentSessionDiagnostics = async (knex: Knex, sessionId: strin
       userMessageId: row.userMessageId,
       assistantMessageId: row.assistantMessageId,
       clientRequestId: row.clientRequestId,
+      goalId: row.goalId,
+      goalContinuation: row.goalContinuation === null ? null : Number(row.goalContinuation),
       status: row.status,
       attempts: Number(row.attempts),
       maxAttempts: Number(row.maxAttempts),
@@ -225,6 +228,11 @@ export const exportAgentSessionDiagnostics = async (knex: Knex, sessionId: strin
         outputTokens: Number(row.outputTokens),
         totalTokens: Number(row.inputTokens) + Number(row.outputTokens),
         estimatedCostMicros: row.estimatedCostMicros === null ? null : Number(row.estimatedCostMicros)
+      },
+      completion: row.completionOutcome === null ? null : {
+        outcome: row.completionOutcome,
+        assessment: parseOptionalJson(row.completionAssessment),
+        sha256: row.completionAssessmentSha256
       },
       error: row.errorCode === null ? null : { code: row.errorCode, message: row.errorMessage },
       queuedAt: iso(row.queuedAt as Date | string),
@@ -278,10 +286,26 @@ export const exportAgentSessionDiagnostics = async (knex: Knex, sessionId: strin
       role: message.role,
       status: message.status,
       content: message.content,
+      visible: Boolean(message.isVisible),
       citations: parseOptionalJson(message.citations),
       providerContinuation: message.providerStateSha256 === null ? null : { sha256: message.providerStateSha256, contentExported: false },
       createdAt: iso(message.createdAt as Date | string),
       updatedAt: iso(message.updatedAt as Date | string)
+    })),
+    goals: goals.map(goal => ({
+      ...goal,
+      version: Number(goal.version),
+      continuationCount: Number(goal.continuationCount),
+      maxContinuations: Number(goal.maxContinuations),
+      consumedTokens: Number(goal.consumedTokens),
+      maxTokens: Number(goal.maxTokens),
+      consumedToolCalls: Number(goal.consumedToolCalls),
+      maxToolCalls: Number(goal.maxToolCalls),
+      completionAssessment: parseOptionalJson(goal.completionAssessment),
+      startedAt: iso(goal.startedAt as Date | string),
+      deadlineAt: iso(goal.deadlineAt as Date | string),
+      updatedAt: iso(goal.updatedAt as Date | string),
+      completedAt: nullableIso(goal.completedAt as Date | string | null)
     })),
     totals,
     runs

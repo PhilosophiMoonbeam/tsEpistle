@@ -63,11 +63,13 @@ describe('inline Ask mode contract', () => {
   })
 
 
-  test('passes the skills feature flag and exposes one-shot personal skill controls', () => {
+  test('passes agent feature flags and exposes explicit skill and goal controls', () => {
     expect(search).toMatch(/:skills-enabled=['"]agentSkillsEnabled['"]/)
+    expect(search).toMatch(/:goals-enabled=['"]agentGoalsEnabled['"]/)
     expect(inline).toMatch(/<AgentPersonalSkills/)
     expect(inline).toMatch(/:invocation-limit="invocationLimit"/)
-    expect(inline).toMatch(/agents\.send\(prompt, invokedSkillVersionIds\)/)
+    expect(inline).toMatch(/agents\.send\(prompt, invokedSkillVersionIds, mode\)/)
+    expect(composer).toMatch(/Start goal/)
   })
 
   test('keeps cross-conversation skill preferences in the composer and hides empty configuration', () => {

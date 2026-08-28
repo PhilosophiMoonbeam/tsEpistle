@@ -323,15 +323,20 @@ export interface AgentMessageRecord {
 interface MessageRow extends Omit<AgentMessageRecord, 'createdAt' | 'updatedAt'> {
   createdAt: Date | string
   updatedAt: Date | string
+  isVisible?: boolean
 }
 
-const messageRecord = (row: MessageRow): AgentMessageRecord => ({
-  ...row,
-  role: messageRoleSchema.parse(row.role),
-  status: messageStatusSchema.parse(row.status),
-  createdAt: iso(row.createdAt),
-  updatedAt: iso(row.updatedAt)
-})
+const messageRecord = (row: MessageRow): AgentMessageRecord => {
+  const message = { ...row }
+  delete message.isVisible
+  return {
+    ...message,
+    role: messageRoleSchema.parse(row.role),
+    status: messageStatusSchema.parse(row.status),
+    createdAt: iso(row.createdAt),
+    updatedAt: iso(row.updatedAt)
+  }
+}
 
 export interface AppendAgentMessageInput {
   readonly ownerId: number
@@ -370,7 +375,7 @@ export const appendAgentMessage = async (knex: Knex, input: AppendAgentMessageIn
 export const listOwnedAgentMessages = async (knex: Knex, ownerId: number, sessionId: string, afterOrdinal = 0, limit = 200): Promise<AgentMessageRecord[]> => {
   await getOwnedAgentSession(knex, ownerId, sessionId)
   const rows = await knex<MessageRow>('agentMessages').where({ sessionId }).andWhere('ordinal', '>', afterOrdinal).orderBy('ordinal').limit(Math.max(1, Math.min(500, Math.floor(limit))))
-  return rows.map(messageRecord)
+  return rows.filter(row => row.isVisible !== false).map(messageRecord)
 }
 
 interface EventRow {

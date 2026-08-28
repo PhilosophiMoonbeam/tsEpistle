@@ -22,6 +22,8 @@ export interface AgentRunRecord {
   readonly userMessageId: string
   readonly assistantMessageId: string
   readonly ownerId: number
+  readonly goalId: string | null
+  readonly goalContinuation: number | null
   readonly clientRequestId: string
   readonly clientRequestSha256: string
   readonly status: AgentRunStatus
@@ -70,6 +72,12 @@ const runRecord = (row: RunRow): AgentRunRecord => ({
   startedAt: row.startedAt === null ? null : new Date(row.startedAt).toISOString(),
   completedAt: row.completedAt === null ? null : new Date(row.completedAt).toISOString()
 })
+
+export const getOwnedAgentRun = async (knex: Knex | Knex.Transaction, ownerId: number, runId: string): Promise<AgentRunRecord> => {
+  const row = await knex<RunRow>('agentRuns').where({ id: runId, ownerId }).first()
+  if (!row) throw new AgentRepositoryError('AGENT_RESOURCE_NOT_FOUND', 'Agent run was not found', 404)
+  return runRecord(row)
+}
 
 export interface AgentQuotaLimits {
   readonly dailyTokens: number
@@ -163,6 +171,9 @@ export interface AdmitAgentRunInput {
   readonly userMessageId?: string
   readonly assistantMessageId?: string
   readonly queuedEventId?: string
+  readonly goalId?: string
+  readonly goalContinuation?: number
+  readonly userMessageVisible?: boolean
   readonly ownerId: number
   readonly sessionId: string
   readonly clientRequestId: string
@@ -192,6 +203,9 @@ const admissionEnvelope = (input: AdmitAgentRunInput): string => canonicalJson({
   clientRequestId: input.clientRequestId,
   expectedSessionVersion: input.expectedSessionVersion,
   profileResolutionSha256: input.profileResolutionSha256,
+  goalId: input.goalId ?? null,
+  goalContinuation: input.goalContinuation ?? null,
+  userMessageVisible: input.userMessageVisible ?? true,
   content: input.content,
   currentPage: input.currentPage ?? null,
   providerProfileVersionId: input.providerProfileVersionId,
@@ -218,83 +232,92 @@ const queuedEventData = (runId: string, currentPage?: Readonly<Record<string, un
   return { data, dataSha256: sha256(data) }
 }
 
-export const admitAgentRun = async (knex: Knex, input: AdmitAgentRunInput): Promise<{ readonly run: AgentRunRecord, readonly replayed: boolean }> => {
+export const admitAgentRunInTransaction = async (transaction: Knex.Transaction, input: AdmitAgentRunInput): Promise<{ readonly run: AgentRunRecord, readonly replayed: boolean }> => {
   if (!/^[a-f0-9]{64}$/.test(input.profileResolutionSha256)) throw new AgentRepositoryError('INVALID_PROFILE_RESOLUTION', 'Profile resolution hash is invalid', 400)
   if (input.content.length < 1 || input.content.length > 32_000) throw new AgentRepositoryError('INVALID_AGENT_MESSAGE', 'Agent message content is invalid', 400)
+  if ((input.goalId === undefined) !== (input.goalContinuation === undefined) || (input.goalContinuation !== undefined && (!Number.isSafeInteger(input.goalContinuation) || input.goalContinuation < 0))) {
+    throw new AgentRepositoryError('INVALID_AGENT_GOAL', 'Agent goal association is invalid', 400)
+  }
   const inputHash = sha256(admissionEnvelope(input))
   const now = input.now ?? new Date()
-  return knex.transaction(async transaction => {
-    await advisoryLock(transaction, input.ownerId)
-    const retry = await transaction<RunRow>('agentRuns').where({ sessionId: input.sessionId, clientRequestId: input.clientRequestId, ownerId: input.ownerId }).first()
-    if (retry) {
-      if (retry.clientRequestSha256 !== inputHash) throw new AgentRepositoryError('RUN_IDEMPOTENCY_MISMATCH', 'Client request ID was reused with different input', 409)
-      return { run: runRecord(retry), replayed: true }
-    }
-    const session = await transaction('agentSessions').where({ id: input.sessionId, ownerId: input.ownerId }).whereNull('deletedAt').forUpdate().first() as { version: number } | undefined
-    if (!session) throw new AgentRepositoryError('AGENT_RESOURCE_NOT_FOUND', 'Agent resource was not found', 404)
-    if (session.version !== input.expectedSessionVersion) throw new AgentRepositoryError('SESSION_VERSION_CHANGED', 'Agent session changed concurrently', 409)
-    const active = await transaction('agentRuns').where({ sessionId: input.sessionId }).whereIn('status', ACTIVE_STATUSES).first('id')
-    if (active) throw new AgentRepositoryError('SESSION_RUN_ACTIVE', 'Agent session already has an active run', 409)
+  await advisoryLock(transaction, input.ownerId)
+  const retry = await transaction<RunRow>('agentRuns').where({ sessionId: input.sessionId, clientRequestId: input.clientRequestId, ownerId: input.ownerId }).first()
+  if (retry) {
+    if (retry.clientRequestSha256 !== inputHash) throw new AgentRepositoryError('RUN_IDEMPOTENCY_MISMATCH', 'Client request ID was reused with different input', 409)
+    return { run: runRecord(retry), replayed: true }
+  }
+  const session = await transaction('agentSessions').where({ id: input.sessionId, ownerId: input.ownerId }).whereNull('deletedAt').forUpdate().first() as { version: number } | undefined
+  if (!session) throw new AgentRepositoryError('AGENT_RESOURCE_NOT_FOUND', 'Agent resource was not found', 404)
+  if (session.version !== input.expectedSessionVersion) throw new AgentRepositoryError('SESSION_VERSION_CHANGED', 'Agent session changed concurrently', 409)
+  const active = await transaction('agentRuns').where({ sessionId: input.sessionId }).whereIn('status', ACTIVE_STATUSES).first('id')
+  if (active) throw new AgentRepositoryError('SESSION_RUN_ACTIVE', 'Agent session already has an active run', 409)
 
-    const runId = input.id ?? randomUUID()
-    const userMessageId = input.userMessageId ?? randomUUID()
-    const assistantMessageId = input.assistantMessageId ?? randomUUID()
-    const ordinal = await nextMessageOrdinal(transaction, input.sessionId)
-    await transaction('agentMessages').insert([
-      { id: userMessageId, sessionId: input.sessionId, runId: null, ordinal, role: 'user', status: 'complete', content: input.content, citations: null, createdAt: now, updatedAt: now },
-      { id: assistantMessageId, sessionId: input.sessionId, runId: null, ordinal: ordinal + 1, role: 'assistant', status: 'pending', content: '', citations: null, createdAt: now, updatedAt: now }
-    ])
-    const row = {
-      id: runId,
-      sessionId: input.sessionId,
-      userMessageId,
-      assistantMessageId,
-      ownerId: input.ownerId,
-      clientRequestId: input.clientRequestId,
-      clientRequestSha256: inputHash,
-      profileResolutionSha256: input.profileResolutionSha256,
-      status: 'queued',
-      attempts: 0,
-      maxAttempts: input.maxAttempts ?? 3,
-      eventSequence: 1,
-      availableAt: now,
-      leaseOwner: null,
-      leaseToken: null,
-      leaseExpiresAt: null,
-      cancelRequestedAt: null,
-      sideEffectsStarted: false,
-      providerProfileVersionId: input.providerProfileVersionId,
-      transportKind: input.transportKind,
-      model: input.model,
-      executionMode: input.executionMode,
-      profilePolicyVersion: input.profilePolicyVersion,
-      defaultGeneration: input.defaultGeneration,
-      capabilityRevision: input.capabilityRevision,
-      pricingRevision: input.pricingRevision,
-      promptVersion: input.promptVersion,
-      inputTokens: 0,
-      outputTokens: 0,
-      estimatedCostMicros: null,
-      errorCode: null,
-      errorMessage: null,
-      queuedAt: now,
-      startedAt: null,
-      updatedAt: now,
-      completedAt: null
-    }
-    await transaction('agentRuns').insert(row)
-    await transaction('agentMessages').whereIn('id', [userMessageId, assistantMessageId]).update({ runId })
-    if (input.skillVersionIds.length > 0) await transaction('agentRunSkills').insert(input.skillVersionIds.map((skillVersionId, ordinal) => ({ runId, skillVersionId, ordinal })))
-    await reserveQuotaInTransaction(transaction, runId, input.ownerId, input.quota, input.quotaLimits, now, input.reservationExpiresAt)
-    const event = queuedEventData(runId, input.currentPage)
-    await transaction('agentEvents').insert({ id: input.queuedEventId ?? randomUUID(), runId, sequence: 1, type: 'run.queued', attempt: 0, schemaVersion: 1, dataSha256: event.dataSha256, data: event.data, createdAt: now })
-    if (transaction.client.config.client === 'pg' || transaction.client.config.client === 'postgresql') {
-      await transaction.raw("SELECT pg_notify('wiki_agent_events', ?)", [runId])
-    }
-    await transaction('agentSessions').where({ id: input.sessionId }).update({ lastActivityAt: now, updatedAt: now })
-    return { run: runRecord(row), replayed: false }
-  })
+  const runId = input.id ?? randomUUID()
+  const userMessageId = input.userMessageId ?? randomUUID()
+  const assistantMessageId = input.assistantMessageId ?? randomUUID()
+  const ordinal = await nextMessageOrdinal(transaction, input.sessionId)
+  await transaction('agentMessages').insert([
+    { id: userMessageId, sessionId: input.sessionId, runId: null, ordinal, role: 'user', status: 'complete', content: input.content, citations: null, isVisible: input.userMessageVisible ?? true, createdAt: now, updatedAt: now },
+    { id: assistantMessageId, sessionId: input.sessionId, runId: null, ordinal: ordinal + 1, role: 'assistant', status: 'pending', content: '', citations: null, isVisible: true, createdAt: now, updatedAt: now }
+  ])
+  const row = {
+    id: runId,
+    sessionId: input.sessionId,
+    userMessageId,
+    assistantMessageId,
+    ownerId: input.ownerId,
+    clientRequestId: input.clientRequestId,
+    clientRequestSha256: inputHash,
+    profileResolutionSha256: input.profileResolutionSha256,
+    goalId: input.goalId ?? null,
+    goalContinuation: input.goalContinuation ?? null,
+    status: 'queued',
+    attempts: 0,
+    maxAttempts: input.maxAttempts ?? 3,
+    eventSequence: 1,
+    availableAt: now,
+    leaseOwner: null,
+    leaseToken: null,
+    leaseExpiresAt: null,
+    cancelRequestedAt: null,
+    sideEffectsStarted: false,
+    providerProfileVersionId: input.providerProfileVersionId,
+    transportKind: input.transportKind,
+    model: input.model,
+    executionMode: input.executionMode,
+    profilePolicyVersion: input.profilePolicyVersion,
+    defaultGeneration: input.defaultGeneration,
+    capabilityRevision: input.capabilityRevision,
+    pricingRevision: input.pricingRevision,
+    promptVersion: input.promptVersion,
+    inputTokens: 0,
+    outputTokens: 0,
+    estimatedCostMicros: null,
+    completionOutcome: null,
+    completionAssessment: null,
+    completionAssessmentSha256: null,
+    errorCode: null,
+    errorMessage: null,
+    queuedAt: now,
+    startedAt: null,
+    updatedAt: now,
+    completedAt: null
+  }
+  await transaction('agentRuns').insert(row)
+  await transaction('agentMessages').whereIn('id', [userMessageId, assistantMessageId]).update({ runId })
+  if (input.skillVersionIds.length > 0) await transaction('agentRunSkills').insert(input.skillVersionIds.map((skillVersionId, ordinal) => ({ runId, skillVersionId, ordinal })))
+  await reserveQuotaInTransaction(transaction, runId, input.ownerId, input.quota, input.quotaLimits, now, input.reservationExpiresAt)
+  const event = queuedEventData(runId, input.currentPage)
+  await transaction('agentEvents').insert({ id: input.queuedEventId ?? randomUUID(), runId, sequence: 1, type: 'run.queued', attempt: 0, schemaVersion: 1, dataSha256: event.dataSha256, data: event.data, createdAt: now })
+  if (transaction.client.config.client === 'pg' || transaction.client.config.client === 'postgresql') {
+    await transaction.raw("SELECT pg_notify('wiki_agent_events', ?)", [runId])
+  }
+  await transaction('agentSessions').where({ id: input.sessionId }).update({ lastActivityAt: now, updatedAt: now })
+  return { run: runRecord(row), replayed: false }
 }
+
+export const admitAgentRun = async (knex: Knex, input: AdmitAgentRunInput): Promise<{ readonly run: AgentRunRecord, readonly replayed: boolean }> =>
+  knex.transaction(transaction => admitAgentRunInTransaction(transaction, input))
 
 export interface AgentRunClaim extends AgentRunRecord {
   readonly leaseOwner: string

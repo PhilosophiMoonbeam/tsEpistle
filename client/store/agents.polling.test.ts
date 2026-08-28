@@ -37,6 +37,7 @@ const activeThread = (): AgentThreadState => ({
   messages: [],
   tools: [],
   tasks: [],
+  goal: null,
   proposals: [],
   artifacts: [],
   suggestions: []
