@@ -651,6 +651,10 @@ onMounted(reload)
 
 code { overflow-wrap: anywhere; }
 
+:global(.skill-dialog .v-messages) {
+  opacity: 1 !important;
+}
+
 :global(.skill-dialog .v-field-label),
 :global(.skill-dialog .v-messages__message) {
   color: rgba(var(--v-theme-on-surface), .78) !important;

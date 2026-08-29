@@ -1584,6 +1584,11 @@ onMounted(() => void load())
 
 code { overflow-wrap: anywhere; }
 
+:global(.profile-editor .v-messages),
+:global(.compact-dialog .v-messages) {
+  opacity: 1 !important;
+}
+
 :global(.profile-editor .v-field-label),
 :global(.profile-editor .v-messages__message),
 :global(.compact-dialog .v-field-label),
