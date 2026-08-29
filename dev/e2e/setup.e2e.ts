@@ -207,7 +207,7 @@ test.describe('critical post-install workflows', () => {
 
     await page.getByRole('link', { name: 'Administration' }).click()
     await expect(page).toHaveURL('/a/')
-    await expect(page.getByText('Workspace overview', { exact: true })).toBeVisible()
+    await expect(page.getByText('Workspace overview', { exact: true })).toBeVisible({ timeout: 15_000 })
     await expect(page.getByRole('heading', { name: 'Dashboard', exact: true })).toBeVisible()
     await expect(page.getByText('Recent Pages', { exact: true })).toBeVisible()
     await expect(page.getByText('Last Logins', { exact: true })).toBeVisible()

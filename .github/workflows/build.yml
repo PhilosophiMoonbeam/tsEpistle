@@ -341,21 +341,9 @@ jobs:
         POSTGRES_TEST_IMAGE: ${{ matrix.postgresImage }}
         WIKI_TEST_IMAGE: tsfranki:test-${{ env.WIKI_BUILD_REVISION }}
         PLAYWRIGHT_BASE_URL: http://127.0.0.1:3000
+        POSTGRES_MAJOR: ${{ matrix.pgversion }}
         RUNTIME_PERFORMANCE_FILE: runtime-performance-postgres-${{ matrix.pgversion }}.json
-      run: |
-        chmod u+x dev/e2e/ci-setup.sh
-        dev/e2e/ci-setup.sh
-        bun --bun playwright test \
-          --project=chromium \
-          --project=accessibility-keyboard \
-          --project=accessibility-dark \
-          --project=accessibility-mobile \
-          --project=accessibility-tablet \
-          --project=accessibility-wide \
-          --project=performance-desktop
-        if [ "${{ matrix.pgversion }}" = "18" ]; then
-          bun run e2e:responsive --no-deps
-        fi
+      run: dev/e2e/ci-run.sh
 
     - name: Clean Playwright Services
       if: always()
