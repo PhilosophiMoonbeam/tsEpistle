@@ -241,7 +241,7 @@
           <v-spacer />
           <v-btn icon="mdi-close" variant="text" aria-label="Close provider editor" @click="profileDialog = false" />
         </div>
-        <v-progress-linear class="profile-editor__progress" color="primary" :model-value="profileProgress" />
+        <v-progress-linear class="profile-editor__progress" color="primary" :model-value="profileProgress" aria-label="Provider setup progress" />
         <div class="profile-editor__workspace">
           <nav class="profile-steps" aria-label="Provider setup sections">
             <button v-for="(step, index) in profileSteps" :key="step.value" type="button" :class="{ 'profile-step--active': profileStep === step.value }" :aria-current="profileStep === step.value ? 'step' : undefined" @click="profileStep = step.value">
@@ -339,14 +339,14 @@
             </section>
           </v-form>
         </div>
-        <footer class="profile-editor__footer">
+        <div class="profile-editor__footer">
           <div class="profile-editor__position"><strong>{{ currentProfileStep.title }}</strong><span>{{ profileStepIndex + 1 }} of {{ profileSteps.length }}</span></div>
           <v-spacer />
           <v-btn variant="text" @click="profileDialog = false">Cancel</v-btn>
           <v-btn v-if="profileStepIndex > 0" variant="outlined" prepend-icon="mdi-arrow-left" @click="previousProfileStep">Back</v-btn>
           <v-btn v-if="profileStepIndex < profileSteps.length - 1" variant="tonal" color="primary" append-icon="mdi-arrow-right" @click="nextProfileStep">Continue</v-btn>
           <v-btn color="primary" prepend-icon="mdi-check-decagram-outline" :loading="saving" form="provider-profile-form" type="submit">Save and verify</v-btn>
-        </footer>
+        </div>
       </v-card>
     </v-dialog>
 
@@ -1584,6 +1584,12 @@ onMounted(() => void load())
 
 code { overflow-wrap: anywhere; }
 
+:global(.profile-editor .v-field-label),
+:global(.profile-editor .v-messages__message),
+:global(.compact-dialog .v-field-label),
+:global(.compact-dialog .v-messages__message) {
+  color: rgba(var(--v-theme-on-surface), .78) !important;
+}
 @media (max-width: 1100px) {
   .agent-workspace { grid-template-columns: 14rem minmax(0, 1fr); }
   .agent-section { grid-template-columns: 2.35rem minmax(0, 1fr) auto; }

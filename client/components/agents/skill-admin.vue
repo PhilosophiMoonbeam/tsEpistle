@@ -651,6 +651,11 @@ onMounted(reload)
 
 code { overflow-wrap: anywhere; }
 
+:global(.skill-dialog .v-field-label),
+:global(.skill-dialog .v-messages__message) {
+  color: rgba(var(--v-theme-on-surface), .78) !important;
+}
+
 @media (max-width: 700px) {
   .skill-panel__header { align-items: flex-start; flex-direction: column; }
   .skill-panel__header > .v-btn { width: 100%; }
