@@ -1,4 +1,4 @@
-vi.mock('express', () => {
+vi.mockModule('express', import.meta.url, () => {
   const router = {
     get: vi.fn(),
     post: vi.fn(),
@@ -14,15 +14,9 @@ vi.mock('express', () => {
   return { default: expressMock, ...expressMock }
 })
 
-import * as express from 'express'
-import importV1Operations from '../../operations/import-v1.ts'
-import fs from 'fs-extra'
-import getos from 'getos'
-import * as os from 'node:os'
-import { filesize } from 'filesize'
 import { createProductMetadata } from '../../../shared/product.ts'
 
-vi.mock('../../operations/import-v1.ts', () => ({
+vi.mockModule('../../operations/import-v1.ts', import.meta.url, () => ({
   default: {
   importUsers: vi.fn().mockResolvedValue({
     usersCount: 4,
@@ -31,12 +25,12 @@ vi.mock('../../operations/import-v1.ts', () => ({
   })
   }
 }))
-vi.mock('getos', () => ({ default: vi.fn((cb) => cb(null, {
+vi.mockModule('getos', import.meta.url, () => ({ default: vi.fn((cb) => cb(null, {
   dist: 'Ubuntu',
   codename: 'noble',
   release: '24.04.1'
 })) }))
-vi.mock('node:os', () => {
+vi.mockModule('node:os', import.meta.url, () => {
   const osMock = {
     cpus: vi.fn(() => Array.from({ length: 8 }, () => ({ model: 'Mock CPU' }))),
     hostname: vi.fn(() => 'wiki-host'),
@@ -48,8 +42,8 @@ vi.mock('node:os', () => {
   }
   return { default: osMock, ...osMock }
 })
-vi.mock('filesize', () => ({ filesize: vi.fn(() => '16 GB') }))
-vi.mock('fs-extra', () => {
+vi.mockModule('filesize', import.meta.url, () => ({ filesize: vi.fn(() => '16 GB') }))
+vi.mockModule('fs-extra', import.meta.url, () => {
   const fsMock = {
     pathExists: vi.fn().mockResolvedValue(false),
     ensureDir: vi.fn().mockResolvedValue(true),
@@ -57,6 +51,13 @@ vi.mock('fs-extra', () => {
   }
   return { default: fsMock, ...fsMock }
 })
+const { default: express } = await import('express')
+const { default: importV1Operations } = await vi.importFresh('../../operations/import-v1.ts', import.meta.url)
+const { default: fs } = await import('fs-extra')
+const { default: getos } = await import('getos')
+const os = await import('node:os')
+const { filesize } = await import('filesize')
+
 const product = createProductMetadata({
   revision: '0123456789abcdef0123456789abcdef01234567',
   date: '2026-08-13T00:00:00.000Z'
@@ -252,7 +253,7 @@ describe('controllers/api system endpoints', () => {
   })
 
   const loadHandlers = async () => {
-    await import('../../controllers/api/system.ts')
+    await vi.importFresh('../../controllers/api/system.ts', import.meta.url)
     return {
       info: express.__router.get.mock.calls.find(([path]) => path === '/info')[1],
       summary: express.__router.get.mock.calls.find(([path]) => path === '/summary')[1],
@@ -1135,7 +1136,7 @@ describe('controllers/api system endpoints', () => {
       latestVersion: null,
       latestVersionReleaseDate: null,
       updateStatus: 'unavailable',
-      nodeVersion: process.version.substr(1),
+      bunVersion: process.versions.bun,
       operatingSystem: 'Linux - Ubuntu (noble) 24.04.1 x64',
       platform: 'linux',
       ramTotal: '16 GB',

@@ -1,4 +1,4 @@
-vi.mock('express', () => {
+vi.mockModule('express', import.meta.url, () => {
   const routers = []
 
   const expressMock = {
@@ -17,7 +17,7 @@ vi.mock('express', () => {
   return { default: expressMock, ...expressMock }
 })
 
-import * as express from 'express'
+const express = await import('express')
 
 describe('controllers/api storage endpoints', () => {
   let activeTargets
@@ -113,7 +113,7 @@ describe('controllers/api storage endpoints', () => {
   })
 
   const loadRouter = async () => {
-    await expect(import('../../controllers/api/storage.ts')).resolves.toBeDefined()
+    expect(await vi.importFresh('../../controllers/api/storage.ts', import.meta.url)).toBeDefined()
     return express.__routers[0]
   }
 

@@ -1,5 +1,5 @@
 
-vi.mock('express', () => {
+vi.mockModule('express', import.meta.url, () => {
   const routers = []
 
   const expressMock = {
@@ -21,7 +21,7 @@ vi.mock('express', () => {
   return { default: expressMock, ...expressMock }
 })
 
-import * as express from 'express'
+const express = await import('express')
 import { cloneThemeColors, DEFAULT_THEME_COLORS } from '../../../shared/theme-colors.ts'
 
 describe('controllers/api theming endpoints', () => {
@@ -58,13 +58,13 @@ describe('controllers/api theming endpoints', () => {
   })
 
   const loadConfigHandler = async () => {
-    await import('../../controllers/api/theming.ts')
+    await vi.importFresh('../../controllers/api/theming.ts', import.meta.url)
     const router = express.__routers[0]
     return router.get.mock.calls.find(([path]) => path === '/config')[1]
   }
 
   const loadSaveHandler = async () => {
-    await import('../../controllers/api/theming.ts')
+    await vi.importFresh('../../controllers/api/theming.ts', import.meta.url)
     const router = express.__routers[0]
     return router.post.mock.calls.find(([path]) => path === '/config')[1]
   }
@@ -81,44 +81,6 @@ describe('controllers/api theming endpoints', () => {
     expect(typeof handler).toBe('function')
   })
 
-  it('is mounted by the API index router', async () => {
-    const modulePaths = [
-      '../../controllers/api/analytics.ts',
-      '../../controllers/api/assets.ts',
-      '../../controllers/api/auth.ts',
-      '../../controllers/api/comments.ts',
-      '../../controllers/api/contribute.ts',
-      '../../controllers/api/content-extensions.ts',
-      '../../controllers/api/groups.ts',
-      '../../controllers/api/locales.ts',
-      '../../controllers/api/logging.ts',
-      '../../controllers/api/mail.ts',
-      '../../controllers/api/navigation.ts',
-      '../../controllers/api/pages.ts',
-      '../../controllers/api/rendering.ts',
-      '../../controllers/api/search.ts',
-      '../../controllers/api/site.ts',
-      '../../controllers/api/storage.ts',
-      '../../controllers/api/system.ts',
-      '../../controllers/api/theming.ts',
-      '../../controllers/api/users.ts',
-      '../../controllers/api/webhooks.ts'
-    ]
-    for (const modulePath of modulePaths) {
-      vi.doMock(modulePath, () => ({ default: {} }))
-    }
-
-    try {
-      await expect(import('../../controllers/api/index.ts')).resolves.toBeDefined()
-      const apiRouter = express.__routers[0]
-
-      expect(apiRouter.use).toHaveBeenCalledWith('/theming', expect.any(Object))
-    } finally {
-      for (const modulePath of modulePaths) {
-        vi.doUnmock(modulePath)
-      }
-    }
-  })
 
   it('returns 403 for unauthorized config requests without JSON', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(false)
@@ -432,5 +394,43 @@ describe('controllers/api theming endpoints', () => {
 
     expect(res.status).toHaveBeenCalledWith(500)
     expect(res.json).toHaveBeenCalledWith({ error: 'database unavailable' })
+  })
+  it('is mounted by the API index router', async () => {
+    const modulePaths = [
+      '../../controllers/api/analytics.ts',
+      '../../controllers/api/assets.ts',
+      '../../controllers/api/auth.ts',
+      '../../controllers/api/comments.ts',
+      '../../controllers/api/contribute.ts',
+      '../../controllers/api/content-extensions.ts',
+      '../../controllers/api/groups.ts',
+      '../../controllers/api/locales.ts',
+      '../../controllers/api/logging.ts',
+      '../../controllers/api/mail.ts',
+      '../../controllers/api/navigation.ts',
+      '../../controllers/api/pages.ts',
+      '../../controllers/api/rendering.ts',
+      '../../controllers/api/search.ts',
+      '../../controllers/api/site.ts',
+      '../../controllers/api/storage.ts',
+      '../../controllers/api/system.ts',
+      '../../controllers/api/theming.ts',
+      '../../controllers/api/users.ts',
+      '../../controllers/api/webhooks.ts'
+    ]
+    for (const modulePath of modulePaths) {
+      vi.mockModule(modulePath, import.meta.url, () => ({ default: {} }))
+    }
+
+    try {
+      expect(await vi.importFresh('../../controllers/api/index.ts', import.meta.url)).toBeDefined()
+      const apiRouter = express.__routers[0]
+
+      expect(apiRouter.use).toHaveBeenCalledWith('/theming', expect.any(Object))
+    } finally {
+      for (const modulePath of modulePaths) {
+        vi.unmockModule(modulePath, import.meta.url)
+      }
+    }
   })
 })

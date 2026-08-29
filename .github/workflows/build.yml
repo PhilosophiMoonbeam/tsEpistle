@@ -1,46 +1,42 @@
-name: Build + Publish
+name: Local CI + Publish
 
 on:
   push:
     branches:
-      - main
+      - '**'
     tags:
       - 'v*'
-  pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 env:
-  PNPM_VERSION: 11.12.0
+  BUN_VERSION: 1.3.14
   WIKI_UPGRADE_SOURCE_IMAGE: ghcr.io/requarks/wiki:2.5.314@sha256:68f0d1848261ae76492ba358e30a96a76fed5d97a3fff381656082bf90f70d7e
 
 jobs:
   quality:
     name: Quality
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, tsfranki-ci]
     permissions:
       contents: read
 
     steps:
     - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
-    - uses: pnpm/action-setup@a8198c4bff370c8506180b035930dea56dbd5288 # v5
-      with:
-        version: ${{ env.PNPM_VERSION }}
-
-    - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
-      with:
-        node-version-file: .nvmrc
-        cache: pnpm
+    - name: Verify Local Toolchain
+      run: |
+        test "$(bun --version)" = "$BUN_VERSION"
+        docker version
 
     - name: Install Dependencies
-      run: pnpm install --frozen-lockfile
+      run: bun install --frozen-lockfile
 
     - name: Validate Dependency and License Policy
       run: |
-        pnpm run dependencies:check
-        pnpm run licenses:check
+        bun run dependencies:check
+        bun run licenses:check
 
     - name: Upload License Inventory
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -51,35 +47,35 @@ jobs:
         retention-days: 30
 
     - name: Lint
-      run: pnpm run lint
+      run: bun run lint
 
     - name: Typecheck Shared Contracts
-      run: pnpm run typecheck:shared
+      run: bun run typecheck:shared
 
     - name: Typecheck Client
-      run: pnpm run typecheck:client
+      run: bun run typecheck:client
 
     - name: Typecheck Server
-      run: pnpm run typecheck:server
+      run: bun run typecheck:server
 
     - name: Validate Versioned OpenAPI Contract
-      run: pnpm run openapi:check
+      run: bun run openapi:check
     - name: Reject Production Placeholders
-      run: pnpm run placeholders:check
+      run: bun run placeholders:check
     - name: Validate Frozen Agent Release Inputs
-      run: pnpm run agents:release-check
+      run: bun run agents:release-check
 
 
-    - name: Run Vitest
-      run: pnpm run test
+    - name: Run Bun Tests
+      run: bun run test
 
     - name: Build Vite Assets
-      run: pnpm run build
+      run: bun run build
 
 
   agent-postgres:
     name: Agent Ledger (PostgreSQL ${{ matrix.pgversion }})
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, tsfranki-ci]
     timeout-minutes: 15
     needs: [quality]
     permissions:
@@ -108,14 +104,7 @@ jobs:
           --health-retries 20
     steps:
     - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-    - uses: pnpm/action-setup@a8198c4bff370c8506180b035930dea56dbd5288 # v5
-      with:
-        version: ${{ env.PNPM_VERSION }}
-    - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
-      with:
-        node-version-file: .nvmrc
-        cache: pnpm
-    - run: pnpm install --frozen-lockfile
+    - run: bun install --frozen-lockfile
     - name: Exercise Agent Migration and Rollback
       env:
         WIKI_TEST_POSTGRES_DATABASE: wiki_agents_test
@@ -123,11 +112,11 @@ jobs:
         WIKI_TEST_POSTGRES_PASSWORD: test
         WIKI_TEST_POSTGRES_PORT: 5432
         WIKI_TEST_POSTGRES_USER: wiki
-      run: pnpm exec vitest run server/test/db/agents-migration.postgres.integration.test.ts
+      run: bun test server/test/db/agents-migration.postgres.integration.test.ts
 
   agent-browser-image:
     name: Agent Browser Multi-arch Image
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, tsfranki-ci]
     timeout-minutes: 20
     needs: [quality]
     permissions:
@@ -149,7 +138,7 @@ jobs:
         test -s /tmp/wiki-agent-browser.oci.tar
   page-index-benchmark:
     name: Page Index Benchmark (PostgreSQL ${{ matrix.pgversion }})
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, tsfranki-ci]
     timeout-minutes: 15
     needs: [quality]
     permissions:
@@ -168,20 +157,13 @@ jobs:
           postgresImage: postgres:18-alpine@sha256:a1d02e4bd40c94d3bf2bdd3678c137388e76d9efcd23c285e9429d336a834b44
     steps:
     - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-    - uses: pnpm/action-setup@a8198c4bff370c8506180b035930dea56dbd5288 # v5
-      with:
-        version: ${{ env.PNPM_VERSION }}
-    - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
-      with:
-        node-version-file: .nvmrc
-        cache: pnpm
     - name: Install Dependencies
-      run: pnpm install --frozen-lockfile
+      run: bun install --frozen-lockfile
     - name: Measure Bounded Page Index
       env:
         POSTGRES_TEST_IMAGE: ${{ matrix.postgresImage }}
         PAGE_INDEX_BENCHMARK_FILE: page-index-benchmark-postgres-${{ matrix.pgversion }}.json
-      run: pnpm run benchmark:page-index
+      run: bun run benchmark:page-index
     - name: Upload Page Index Metrics
       if: always()
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -193,7 +175,7 @@ jobs:
 
   build:
     name: Build Test Image and Linux Bundle
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, tsfranki-ci]
     timeout-minutes: 45
     needs: [quality]
     permissions:
@@ -204,7 +186,7 @@ jobs:
 
     - name: Set Build Metadata
       shell: bash
-      run: node server/scripts/export-build-environment.ts >> "$GITHUB_ENV"
+      run: bun server/scripts/export-build-environment.ts >> "$GITHUB_ENV"
 
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
@@ -253,7 +235,7 @@ jobs:
 
   reproducibility:
     name: Rebuild Linux Bundle Reproducibly
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, tsfranki-ci]
     timeout-minutes: 45
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [build]
@@ -271,7 +253,7 @@ jobs:
 
     - name: Set Build Metadata
       shell: bash
-      run: node server/scripts/export-build-environment.ts >> "$GITHUB_ENV"
+      run: bun server/scripts/export-build-environment.ts >> "$GITHUB_ENV"
 
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
@@ -311,7 +293,7 @@ jobs:
 
   e2e:
     name: Playwright (PostgreSQL ${{ matrix.pgversion }})
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, tsfranki-ci]
     timeout-minutes: 45
     needs: [build]
     permissions:
@@ -333,21 +315,12 @@ jobs:
     steps:
     - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
-    - uses: pnpm/action-setup@a8198c4bff370c8506180b035930dea56dbd5288 # v5
-      with:
-        version: ${{ env.PNPM_VERSION }}
-
-    - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
-      with:
-        node-version-file: .nvmrc
-        cache: pnpm
-
     - name: Install Test Dependencies
       run: |
-        pnpm install --frozen-lockfile
-        pnpm exec playwright install --with-deps chromium
+        bun install --frozen-lockfile
+        bun --bun playwright install --with-deps chromium
         if [ "${{ matrix.pgversion }}" = "18" ]; then
-          pnpm exec playwright install --with-deps firefox webkit
+          bun --bun playwright install --with-deps firefox webkit
         fi
 
     - name: Download Test Image
@@ -361,7 +334,7 @@ jobs:
 
     - name: Set Test Metadata
       shell: bash
-      run: node server/scripts/export-build-environment.ts >> "$GITHUB_ENV"
+      run: bun server/scripts/export-build-environment.ts >> "$GITHUB_ENV"
 
     - name: Run Playwright Tests
       env:
@@ -372,7 +345,7 @@ jobs:
       run: |
         chmod u+x dev/e2e/ci-setup.sh
         dev/e2e/ci-setup.sh
-        pnpm exec playwright test \
+        bun --bun playwright test \
           --project=chromium \
           --project=accessibility-keyboard \
           --project=accessibility-dark \
@@ -381,7 +354,7 @@ jobs:
           --project=accessibility-wide \
           --project=performance-desktop
         if [ "${{ matrix.pgversion }}" = "18" ]; then
-          pnpm run e2e:responsive --no-deps
+          bun run e2e:responsive --no-deps
         fi
 
     - name: Upload Playwright Failure Artifacts
@@ -404,7 +377,7 @@ jobs:
 
   upgrade:
     name: Upgrade Wiki.js 2 (PostgreSQL ${{ matrix.pgversion }})
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, tsfranki-ci]
     timeout-minutes: 30
     needs: [build]
     permissions:
@@ -437,7 +410,7 @@ jobs:
 
     - name: Set Test Metadata
       shell: bash
-      run: node server/scripts/export-build-environment.ts >> "$GITHUB_ENV"
+      run: bun server/scripts/export-build-environment.ts >> "$GITHUB_ENV"
 
     - name: Upgrade Supported Database
       env:
@@ -457,7 +430,7 @@ jobs:
 
   multi-instance:
     name: Multi-instance Recovery (PostgreSQL ${{ matrix.pgversion }})
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, tsfranki-ci]
     timeout-minutes: 20
     needs: [build]
     permissions:
@@ -486,7 +459,7 @@ jobs:
 
     - name: Set Test Metadata
       shell: bash
-      run: node server/scripts/export-build-environment.ts >> "$GITHUB_ENV"
+      run: bun server/scripts/export-build-environment.ts >> "$GITHUB_ENV"
 
     - name: Exercise Instance Loss and Recovery
       env:
@@ -496,7 +469,7 @@ jobs:
 
   helm-lifecycle:
     name: Helm Install Upgrade Rollback
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, tsfranki-ci]
     timeout-minutes: 25
     needs: [build]
     permissions:
@@ -516,7 +489,7 @@ jobs:
 
     - name: Set Test Metadata
       shell: bash
-      run: node server/scripts/export-build-environment.ts >> "$GITHUB_ENV"
+      run: bun server/scripts/export-build-environment.ts >> "$GITHUB_ENV"
 
     - name: Install Pinned Kubernetes Tools
       shell: bash
@@ -556,8 +529,8 @@ jobs:
 
   publish-amd64:
     name: Publish AMD64 Images
-    runs-on: ubuntu-latest
-    if: github.event_name == 'push'
+    runs-on: [self-hosted, linux, x64, tsfranki-ci]
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
     needs: [e2e, upgrade, multi-instance, helm-lifecycle, page-index-benchmark, agent-postgres, agent-browser-image]
     permissions:
       contents: read
@@ -568,7 +541,7 @@ jobs:
 
     - name: Set Build Metadata
       shell: bash
-      run: node server/scripts/export-build-environment.ts >> "$GITHUB_ENV"
+      run: bun server/scripts/export-build-environment.ts >> "$GITHUB_ENV"
 
     - name: Validate Release Tag
       if: startsWith(github.ref, 'refs/tags/v')
@@ -628,9 +601,9 @@ jobs:
           ${{ env.IMAGE_REPOSITORY }}-agent-browser:canary-${{ env.REL_VERSION_STRICT }}
 
   arm:
-    name: ARM Build
-    runs-on: ubuntu-24.04-arm
-    if: github.event_name == 'push'
+    name: ARM64 Cross-build
+    runs-on: [self-hosted, linux, x64, tsfranki-ci]
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
     needs: [e2e, page-index-benchmark, agent-postgres, agent-browser-image]
     permissions:
       contents: read
@@ -638,10 +611,14 @@ jobs:
 
     steps:
     - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+    - uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4
+      with:
+        image: docker.io/tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
+        platforms: arm64
 
     - name: Set Build Metadata
       shell: bash
-      run: node server/scripts/export-build-environment.ts >> "$GITHUB_ENV"
+      run: bun server/scripts/export-build-environment.ts >> "$GITHUB_ENV"
 
     - name: Validate Release Tag
       if: startsWith(github.ref, 'refs/tags/v')
@@ -706,67 +683,11 @@ jobs:
         tags: |
           ${{ env.IMAGE_REPOSITORY }}-agent-browser:canary-arm64-${{ env.REL_VERSION_STRICT }}
 
-  windows:
-    name: Windows Build
-    runs-on: windows-latest
-    if: github.event_name == 'push'
-    needs: [e2e, page-index-benchmark]
-    permissions:
-      contents: read
-
-    steps:
-    - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-
-    - name: Setup Node.js Environment
-      uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
-      with:
-        node-version-file: .nvmrc
-
-    - name: Download Linux Build
-      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-      with:
-        name: drop
-        path: drop
-
-    - name: Extract Build
-      shell: pwsh
-      run: |
-        New-Item -ItemType Directory -Path win -Force
-        tar -xzf "$env:GITHUB_WORKSPACE\drop\tsfranki-linux.tar.gz" -C "$env:GITHUB_WORKSPACE\win"
-        Remove-Item -Path win\node_modules -Force -Recurse
-        Copy-Item pnpm-lock.yaml, pnpm-workspace.yaml, .npmrc -Destination win -Force
-        Copy-Item patches -Destination win\patches -Recurse -Force
-
-    - name: Install Production Dependencies
-      shell: pwsh
-      working-directory: win
-      run: |
-        corepack enable
-        pnpm install --prod --frozen-lockfile
-
-
-    - name: Remove Dependency Metadata
-      shell: pwsh
-      run: |
-        Remove-Item win\pnpm-lock.yaml, win\pnpm-workspace.yaml, win\.npmrc -Force
-        Remove-Item win\patches -Recurse -Force
-
-    - name: Create Bundle
-      shell: pwsh
-      run: tar -czf "$env:GITHUB_WORKSPACE\tsfranki-windows.tar.gz" -C "$env:GITHUB_WORKSPACE\win" .
-
-    - name: Upload Windows Build
-      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-      with:
-        name: drop-win
-        path: tsfranki-windows.tar.gz
-        if-no-files-found: error
-
   beta:
     name: Publish Preview Images
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, tsfranki-ci]
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [publish-amd64, arm, windows]
+    needs: [publish-amd64, arm]
     permissions:
       packages: write
 
@@ -774,7 +695,7 @@ jobs:
     - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
     - name: Set Build Metadata
-      run: node server/scripts/export-build-environment.ts >> "$GITHUB_ENV"
+      run: bun server/scripts/export-build-environment.ts >> "$GITHUB_ENV"
 
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
@@ -801,7 +722,7 @@ jobs:
 
   release:
     name: Publish Release Images
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, tsfranki-ci]
     if: startsWith(github.ref, 'refs/tags/v')
     environment: prod
     needs: [beta, reproducibility]
@@ -817,7 +738,7 @@ jobs:
 
     - name: Set Build Metadata
       shell: bash
-      run: node server/scripts/export-build-environment.ts >> "$GITHUB_ENV"
+      run: bun server/scripts/export-build-environment.ts >> "$GITHUB_ENV"
 
     - name: Validate Release Tag
       run: test "$GITHUB_REF_NAME" = "v$WIKI_PRODUCT_VERSION"
@@ -861,11 +782,6 @@ jobs:
         name: drop
         path: drop
 
-    - name: Download Windows Build
-      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-      with:
-        name: drop-win
-        path: drop-win
 
     - name: Download License Inventory
       uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
@@ -902,7 +818,6 @@ jobs:
       shell: bash
       run: |
         cp drop/tsfranki-linux.tar.gz .
-        cp drop-win/tsfranki-windows.tar.gz .
         cp "dist/tsfranki-$REL_VERSION_STRICT.tgz" .
         cp compliance/third-party-licenses.json .
 
@@ -911,11 +826,10 @@ jobs:
 
     - name: Generate Release Manifest and Checksums
       run: |
-        node server/scripts/generate-release-manifest.ts \
+        bun server/scripts/generate-release-manifest.ts \
           release-manifest.json \
           SHA256SUMS \
           tsfranki-linux.tar.gz \
-          tsfranki-windows.tar.gz \
           tsfranki-source.tar.gz \
           "tsfranki-$REL_VERSION_STRICT.tgz" \
           tsfranki.spdx.json \
@@ -979,7 +893,7 @@ jobs:
         name: ${{ github.ref_name }}
         body: ${{ steps.changelog.outputs.changes }}
         token: ${{ github.token }}
-        artifacts: 'tsfranki-linux.tar.gz,tsfranki-windows.tar.gz,tsfranki-source.tar.gz,tsfranki-*.tgz,tsfranki.spdx.json,wiki-agent-browser.spdx.json,third-party-licenses.json,release-manifest.json,SHA256SUMS,tsfranki-release.intoto.jsonl'
+        artifacts: 'tsfranki-linux.tar.gz,tsfranki-source.tar.gz,tsfranki-*.tgz,tsfranki.spdx.json,wiki-agent-browser.spdx.json,third-party-licenses.json,release-manifest.json,SHA256SUMS,tsfranki-release.intoto.jsonl'
 
     - name: Notify Telegram Channel
       uses: appleboy/telegram-action@221e6b684967abe813051ee4a37dd61770a83ad3 # v1.0.1

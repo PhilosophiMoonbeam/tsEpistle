@@ -25,7 +25,7 @@ describe('storage model actions', () => {
         }
       }
     }
-    Storage = (await import('../../models/storage.ts')).default
+    Storage = (await vi.importFresh('../../models/storage.ts', import.meta.url)).default
     global.WIKI.models.storage = Storage
   })
 
@@ -39,7 +39,7 @@ describe('storage model actions', () => {
     }
     Storage.targets = [target]
 
-    await expect(Storage.executeAction('git', 'sync')).resolves.toBeUndefined()
+    expect(await Storage.executeAction('git', 'sync')).toBeUndefined()
 
     expect(sync).toHaveBeenCalledTimes(1)
     expect(patch).toHaveBeenCalledWith({
@@ -95,7 +95,7 @@ describe('storage model actions', () => {
     }
     Storage.targets = [target]
 
-    await expect(Storage.executeAction('git', 'init')).rejects.toThrow('Invalid Handler for Storage Target')
+    await expect(Promise.resolve(Storage.executeAction('git', 'init'))).rejects.toThrow('Invalid Handler for Storage Target')
 
     expect(init).not.toHaveBeenCalled()
     expect(target.$query).not.toHaveBeenCalled()
@@ -112,7 +112,7 @@ describe('storage model actions', () => {
     }
     Storage.targets = [target]
 
-    await expect(Storage.executeAction('git', 'sync')).rejects.toBe(actionError)
+    await expect(Promise.resolve(Storage.executeAction('git', 'sync'))).rejects.toBe(actionError)
 
     expect(patch).toHaveBeenCalledWith({
       state: {
@@ -143,7 +143,7 @@ describe('storage model actions', () => {
     Storage.targets = [failedTarget, successfulTarget]
     const page = { path: 'guide', localeCode: 'en', contentType: 'markdown' }
 
-    await expect(Storage.pageEvent({ event: 'created', page })).resolves.toBeUndefined()
+    expect(await Storage.pageEvent({ event: 'created', page })).toBeUndefined()
 
     expect(successfulTarget.fn.created).toHaveBeenCalledWith(page)
     expect(failedPatch).toHaveBeenCalledWith({
@@ -182,7 +182,7 @@ describe('storage model actions', () => {
     Storage.targets = [failedTarget, successfulTarget]
     const asset = { path: 'images/logo.png', data: Buffer.from('image') }
 
-    await expect(Storage.assetEvent({ event: 'uploaded', asset })).resolves.toBeUndefined()
+    expect(await Storage.assetEvent({ event: 'uploaded', asset })).toBeUndefined()
 
     expect(successfulUpload).toHaveBeenCalledWith(asset)
     expect(failedPatch).toHaveBeenCalledWith({

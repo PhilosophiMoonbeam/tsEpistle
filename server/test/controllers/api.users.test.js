@@ -1,4 +1,4 @@
-vi.mock('express', () => {
+vi.mockModule('express', import.meta.url, () => {
   const router = {
     get: vi.fn(),
     post: vi.fn(),
@@ -16,7 +16,7 @@ vi.mock('express', () => {
   return { default: expressMock, ...expressMock }
 })
 
-import * as express from 'express'
+const express = await import('express')
 
 describe('controllers/api users endpoints', () => {
   beforeEach(() => {
@@ -132,7 +132,7 @@ describe('controllers/api users endpoints', () => {
   })
 
   const loadHandler = async () => {
-    await import('../../controllers/api/users.ts')
+    await vi.importFresh('../../controllers/api/users.ts', import.meta.url)
     return {
       create: express.__router.post.mock.calls.find(([path]) => path === '/')[1],
       list: express.__router.get.mock.calls.find(([path]) => path === '/')[1],

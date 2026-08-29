@@ -1,5 +1,4 @@
-/** @vitest-environment node */
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from '../bun-test.mts'
 import createKnex, { type Knex } from 'knex'
 import { AgentProviderRegistry, type AgentProviderSettingsInput } from '../../agents/providers/registry.ts'
 import { DatabaseAgentSecretRegistry } from '../../agents/providers/secrets.ts'
@@ -52,7 +51,7 @@ describe('agent provider profile registry', () => {
     expect(created).toMatchObject({ status: 'disabled', conformed: false, secretConfigured: true, destinationHost: 'api.example.test' })
     expect(created).not.toHaveProperty('secretReference')
     expect(created).not.toHaveProperty('currentVersionId')
-    await expect(registry.setEnabled(created.id, true, 1)).rejects.toMatchObject({ code: 'PROFILE_NOT_READY' })
+    await expect(Promise.resolve(registry.setEnabled(created.id, true, 1))).rejects.toMatchObject({ code: 'PROFILE_NOT_READY' })
     await registry.setConformed(created.id, settingsId, true, 1)
     await registry.setEnabled(created.id, true, 1)
     await registry.setDefault(created.id, 1)
@@ -65,7 +64,7 @@ describe('agent provider profile registry', () => {
     const updated = await registry.update(created.id, { ...profileInput, model: 'gpt-test-2', utilityModel: 'gpt-test-mini', capabilityRevision: 'fixture-v2', actorId: 1 })
     expect(updated).toMatchObject({ status: 'disabled', conformed: false, model: 'gpt-test-2', utilityModel: 'gpt-test-mini' })
     expect(await knex('agentProviderProfileVersions').where({ profileId: created.id }).select('id', 'model', 'utilityModel')).toEqual([{ id: settingsId, model: 'gpt-test-2', utilityModel: 'gpt-test-mini' }])
-    await expect(registry.resolve({ ownerId: 7, sessionId: 'session-1', profileResolutionToken: token })).rejects.toMatchObject({ code: 'PROFILE_RESOLUTION_CHANGED', status: 409 })
+    await expect(Promise.resolve(registry.resolve({ ownerId: 7, sessionId: 'session-1', profileResolutionToken: token }))).rejects.toMatchObject({ code: 'PROFILE_RESOLUTION_CHANGED', status: 409 })
   })
   it('accepts Gemini 3.x Interactions profiles and rejects legacy models or ambiguous credentials', async () => {
     const geminiInput: AgentProviderSettingsInput = {
@@ -77,18 +76,18 @@ describe('agent provider profile registry', () => {
       authMode: 'google-api-key',
       capabilities: { ...profileInput.capabilities, parallelToolCalls: true, usage: 'stream' }
     }
-    await expect(registry.create({ ...geminiInput, displayName: 'Gemini', exposureMode: 'all_agent_users', actorId: 1 })).resolves.toMatchObject({
+    expect(await registry.create({ ...geminiInput, displayName: 'Gemini', exposureMode: 'all_agent_users', actorId: 1 })).toMatchObject({
       transportKind: 'gemini-api',
       model: 'gemini-3.7-flash',
       utilityModel: 'gemini-3.5-flash-lite',
       authMode: 'google-api-key',
       destinationHost: 'generativelanguage.googleapis.com'
     })
-    await expect(registry.create({ ...geminiInput, authMode: 'bearer', displayName: 'Gemini bearer', exposureMode: 'all_agent_users', actorId: 1 })).rejects.toMatchObject({ code: 'INVALID_PROVIDER_AUTH' })
-    await expect(registry.create({ ...geminiInput, model: 'gemini-2.5-flash', displayName: 'Legacy Gemini model', exposureMode: 'all_agent_users', actorId: 1 })).rejects.toMatchObject({ code: 'INVALID_PROVIDER_MODEL' })
-    await expect(registry.create({ ...geminiInput, model: 'models/gemini-3.7-flash', displayName: 'Gemini model path', exposureMode: 'all_agent_users', actorId: 1 })).rejects.toMatchObject({ code: 'INVALID_PROVIDER_MODEL' })
-    await expect(registry.create({ ...geminiInput, adapterConfig: { ...geminiInput.adapterConfig, temperature: 0.5 }, displayName: 'Gemini temperature', exposureMode: 'all_agent_users', actorId: 1 })).rejects.toMatchObject({ code: 'INVALID_PROVIDER_CONFIG' })
-    await expect(registry.create({ ...geminiInput, adapterConfig: { ...geminiInput.adapterConfig, additionalHeaders: { 'x-goog-api-key': 'override' } }, displayName: 'Gemini header override', exposureMode: 'all_agent_users', actorId: 1 })).rejects.toMatchObject({ code: 'INVALID_PROVIDER_HEADERS' })
+    await expect(Promise.resolve(registry.create({ ...geminiInput, authMode: 'bearer', displayName: 'Gemini bearer', exposureMode: 'all_agent_users', actorId: 1 }))).rejects.toMatchObject({ code: 'INVALID_PROVIDER_AUTH' })
+    await expect(Promise.resolve(registry.create({ ...geminiInput, model: 'gemini-2.5-flash', displayName: 'Legacy Gemini model', exposureMode: 'all_agent_users', actorId: 1 }))).rejects.toMatchObject({ code: 'INVALID_PROVIDER_MODEL' })
+    await expect(Promise.resolve(registry.create({ ...geminiInput, model: 'models/gemini-3.7-flash', displayName: 'Gemini model path', exposureMode: 'all_agent_users', actorId: 1 }))).rejects.toMatchObject({ code: 'INVALID_PROVIDER_MODEL' })
+    await expect(Promise.resolve(registry.create({ ...geminiInput, adapterConfig: { ...geminiInput.adapterConfig, temperature: 0.5 }, displayName: 'Gemini temperature', exposureMode: 'all_agent_users', actorId: 1 }))).rejects.toMatchObject({ code: 'INVALID_PROVIDER_CONFIG' })
+    await expect(Promise.resolve(registry.create({ ...geminiInput, adapterConfig: { ...geminiInput.adapterConfig, additionalHeaders: { 'x-goog-api-key': 'override' } }, displayName: 'Gemini header override', exposureMode: 'all_agent_users', actorId: 1 }))).rejects.toMatchObject({ code: 'INVALID_PROVIDER_HEADERS' })
   })
 
   it('stores role-specific reasoning effort and rejects protocol-invalid levels', async () => {
@@ -103,10 +102,10 @@ describe('agent provider profile registry', () => {
       exposureMode: 'all_agent_users',
       actorId: 1
     })
-    await expect(registry.getAdmin(created.id)).resolves.toMatchObject({
+    expect(await registry.getAdmin(created.id)).toMatchObject({
       adapterConfig: { agentReasoningEffort: 'max', utilityReasoningEffort: 'minimal' }
     })
-    await expect(registry.create({
+    await expect(Promise.resolve(registry.create({
       ...profileInput,
       transportKind: 'gemini-api',
       model: 'gemini-3.7-flash',
@@ -117,8 +116,8 @@ describe('agent provider profile registry', () => {
       displayName: 'Invalid Gemini reasoning',
       exposureMode: 'all_agent_users',
       actorId: 1
-    })).rejects.toMatchObject({ code: 'INVALID_PROVIDER_CONFIG' })
-    await expect(registry.create({
+    }))).rejects.toMatchObject({ code: 'INVALID_PROVIDER_CONFIG' })
+    await expect(Promise.resolve(registry.create({
       ...profileInput,
       transportKind: 'anthropic-messages',
       baseUrl: 'https://api.anthropic.com/v1',
@@ -127,15 +126,15 @@ describe('agent provider profile registry', () => {
       displayName: 'Invalid Anthropic reasoning',
       exposureMode: 'all_agent_users',
       actorId: 1
-    })).rejects.toMatchObject({ code: 'INVALID_PROVIDER_CONFIG' })
-    await expect(registry.create({
+    }))).rejects.toMatchObject({ code: 'INVALID_PROVIDER_CONFIG' })
+    await expect(Promise.resolve(registry.create({
       ...profileInput,
       transportKind: 'openresponses',
       adapterConfig: { ...profileInput.adapterConfig, agentReasoningEffort: 'minimal' },
       displayName: 'Invalid OpenResponses reasoning',
       exposureMode: 'all_agent_users',
       actorId: 1
-    })).rejects.toMatchObject({ code: 'INVALID_PROVIDER_CONFIG' })
+    }))).rejects.toMatchObject({ code: 'INVALID_PROVIDER_CONFIG' })
   })
 
 
@@ -194,28 +193,28 @@ describe('agent provider profile registry', () => {
 
     await managedRegistry.remove(created.id, 2)
 
-    await expect(managedRegistry.get(created.id)).rejects.toMatchObject({ code: 'AGENT_RESOURCE_NOT_FOUND', status: 404 })
+    await expect(Promise.resolve(managedRegistry.get(created.id))).rejects.toMatchObject({ code: 'AGENT_RESOURCE_NOT_FOUND', status: 404 })
     expect(await managedRegistry.listAll()).toEqual([])
     expect(await vault.get(reference)).toBeNull()
     expect(await knex('agentProviderProfiles').where({ id: created.id }).first('status', 'isGlobalDefault', 'deletedAt')).toMatchObject({ status: 'disabled', isGlobalDefault: 0, deletedAt: expect.anything() })
-    await expect(managedRegistry.resolve({ ownerId: 7, sessionId: 'session-remove', profileResolutionToken: token })).rejects.toMatchObject({ code: 'PROFILE_RESOLUTION_CHANGED', status: 409 })
-    await expect(managedRegistry.remove(created.id, 2)).rejects.toMatchObject({ code: 'AGENT_RESOURCE_NOT_FOUND', status: 404 })
-    await expect(managedRegistry.create({ ...profileInput, displayName: 'Removable', exposureMode: 'all_agent_users', actorId: 1 })).resolves.toMatchObject({ displayName: 'Removable' })
+    await expect(Promise.resolve(managedRegistry.resolve({ ownerId: 7, sessionId: 'session-remove', profileResolutionToken: token }))).rejects.toMatchObject({ code: 'PROFILE_RESOLUTION_CHANGED', status: 409 })
+    await expect(Promise.resolve(managedRegistry.remove(created.id, 2))).rejects.toMatchObject({ code: 'AGENT_RESOURCE_NOT_FOUND', status: 404 })
+    expect(await managedRegistry.create({ ...profileInput, displayName: 'Removable', exposureMode: 'all_agent_users', actorId: 1 })).toMatchObject({ displayName: 'Removable' })
   })
 
   it('fails closed for private endpoints, forbidden headers, incompatible modes, and group visibility', async () => {
-    await expect(registry.create({ ...profileInput, baseUrl: 'https://127.0.0.1/v1', displayName: 'Private', exposureMode: 'all_agent_users', actorId: 1 })).rejects.toMatchObject({ code: 'INVALID_PROVIDER_URL' })
-    await expect(registry.create({ ...profileInput, adapterConfig: { timeoutMs: 30_000, maxRetries: 0, additionalHeaders: { Authorization: 'secret' } }, displayName: 'Headers', exposureMode: 'all_agent_users', actorId: 1 })).rejects.toMatchObject({ code: 'INVALID_PROVIDER_HEADERS' })
-    await expect(registry.create({ ...profileInput, secretReference: 'sk-literal-secret', displayName: 'Literal secret', exposureMode: 'all_agent_users', actorId: 1 })).rejects.toMatchObject({ code: 'INVALID_PROVIDER_SECRET', status: 400 })
-    await expect(registry.create({ ...profileInput, transportKind: 'legacy-completions', displayName: 'Legacy', exposureMode: 'all_agent_users', actorId: 1 })).rejects.toMatchObject({ code: 'INVALID_PROVIDER_CAPABILITIES' })
-    await expect(registry.create({
+    await expect(Promise.resolve(registry.create({ ...profileInput, baseUrl: 'https://127.0.0.1/v1', displayName: 'Private', exposureMode: 'all_agent_users', actorId: 1 }))).rejects.toMatchObject({ code: 'INVALID_PROVIDER_URL' })
+    await expect(Promise.resolve(registry.create({ ...profileInput, adapterConfig: { timeoutMs: 30_000, maxRetries: 0, additionalHeaders: { Authorization: 'secret' } }, displayName: 'Headers', exposureMode: 'all_agent_users', actorId: 1 }))).rejects.toMatchObject({ code: 'INVALID_PROVIDER_HEADERS' })
+    await expect(Promise.resolve(registry.create({ ...profileInput, secretReference: 'sk-literal-secret', displayName: 'Literal secret', exposureMode: 'all_agent_users', actorId: 1 }))).rejects.toMatchObject({ code: 'INVALID_PROVIDER_SECRET', status: 400 })
+    await expect(Promise.resolve(registry.create({ ...profileInput, transportKind: 'legacy-completions', displayName: 'Legacy', exposureMode: 'all_agent_users', actorId: 1 }))).rejects.toMatchObject({ code: 'INVALID_PROVIDER_CAPABILITIES' })
+    expect(await registry.create({
       ...profileInput,
       transportKind: 'legacy-completions',
       capabilities: { ...profileInput.capabilities, streaming: false, toolCalling: 'prompt', parallelToolCalls: false, structuredOutput: 'prompt-only' },
       displayName: 'Legacy prompt tools',
       exposureMode: 'all_agent_users',
       actorId: 1
-    })).resolves.toMatchObject({ transportKind: 'legacy-completions', capabilities: { toolCalling: 'prompt', parallelToolCalls: false } })
+    })).toMatchObject({ transportKind: 'legacy-completions', capabilities: { toolCalling: 'prompt', parallelToolCalls: false } })
 
     const grouped = await registry.create({ ...profileInput, displayName: 'Grouped', exposureMode: 'groups', groupIds: [4], actorId: 1 })
     await registry.setConformed(grouped.id, await currentSettingsId(knex, grouped.id), true, 1)
@@ -231,6 +230,6 @@ describe('agent provider profile registry', () => {
     expect(await registry.getAdmin(grouped.id)).toMatchObject({ exposureMode: 'groups', groupIds: [4] })
     await knex('agentSessions').where({ id: 'session-2' }).update({ providerProfileId: null, version: 3 })
     const token = await registry.issueResolutionToken(7, 'session-2')
-    await expect(registry.resolve({ ownerId: 7, sessionId: 'session-2', profileResolutionToken: token })).resolves.toMatchObject({ executionMode: 'agent' })
+    expect(await registry.resolve({ ownerId: 7, sessionId: 'session-2', profileResolutionToken: token })).toMatchObject({ executionMode: 'agent' })
   })
 })

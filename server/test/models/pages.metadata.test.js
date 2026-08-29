@@ -65,7 +65,7 @@ describe('models/pages.parseMetadata', () => {
         registerJob: vi.fn()
       }
     }
-    Page = (await import('../../models/pages.ts')).default
+    Page = (await vi.importFresh('../../models/pages.ts', import.meta.url)).default
   })
 
   afterEach(() => {

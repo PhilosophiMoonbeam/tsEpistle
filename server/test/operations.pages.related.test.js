@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from './bun-test.mts'
 
 const page = (id, title, path, tags = []) => ({
   id,
@@ -78,9 +78,9 @@ describe('related page graph traversal', () => {
       }
     }
 
-    const { default: operations } = await import('../operations/pages.ts')
+    const { default: operations } = await vi.importFresh('../operations/pages.ts', import.meta.url)
     const requester = { id: 7 }
-    await expect(operations.listRelated({ pageId: 1, limit: 2, offset: 0, requester })).resolves.toMatchObject({
+    expect(await operations.listRelated({ pageId: 1, limit: 2, offset: 0, requester })).toMatchObject({
       pages: [
         { id: 2, distance: 1, direction: 'outgoing', viaPageId: 1 },
         { id: 3, distance: 2, direction: 'incoming', viaPageId: 2 }
@@ -89,17 +89,17 @@ describe('related page graph traversal', () => {
       nextOffset: 2
     })
     expect(visiblePageQuery.column).toHaveBeenCalledWith(expect.arrayContaining(['pages.updatedAt']))
-    await expect(operations.listRelated({ pageId: 1, limit: 2, offset: 2, requester })).resolves.toMatchObject({
+    expect(await operations.listRelated({ pageId: 1, limit: 2, offset: 2, requester })).toMatchObject({
       pages: [{ id: 4, distance: 2, direction: 'bidirectional', viaPageId: 2 }],
       truncated: false,
       nextOffset: null
     })
-    await expect(operations.listRelated({ pageId: 1, limit: 20, offset: 0, maxDepth: 1, requester })).resolves.toMatchObject({
+    expect(await operations.listRelated({ pageId: 1, limit: 20, offset: 0, maxDepth: 1, requester })).toMatchObject({
       pages: [{ id: 2, distance: 1 }],
       truncated: false,
       nextOffset: null
     })
-    await expect(operations.listRelated({ pageId: 1, limit: 100, offset: 5_001, requester })).resolves.toMatchObject({
+    expect(await operations.listRelated({ pageId: 1, limit: 100, offset: 5_001, requester })).toMatchObject({
       pages: [],
       truncated: false,
       nextOffset: null

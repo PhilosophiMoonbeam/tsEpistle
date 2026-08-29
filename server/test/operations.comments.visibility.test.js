@@ -58,19 +58,18 @@ describe('comment page identity and private existence isolation', () => {
         }])
       })
     })
-    const operations = (await import('../operations/comments.ts')).default
+    const operations = (await vi.importFresh('../operations/comments.ts', import.meta.url)).default
 
-    await expect(operations.list({ requester: { id: 7, permissions: ['read:comments'] }, pageId: 17 }))
-      .resolves.toEqual([expect.objectContaining({ id: 31, authorName: 'Owner' })])
+    expect(await operations.list({ requester: { id: 7, permissions: ['read:comments'] }, pageId: 17 })).toEqual([expect.objectContaining({ id: 31, authorName: 'Owner' })])
     expect(query.findById).toHaveBeenCalledWith(17)
   })
 
   it('returns the same not-found error for an absent page and another owner private page', async () => {
-    const operations = (await import('../operations/comments.ts')).default
+    const operations = (await vi.importFresh('../operations/comments.ts', import.meta.url)).default
     const requester = { id: 8, permissions: ['read:comments'] }
 
     global.WIKI.models.pages.query.mockReturnValueOnce(pageQuery(undefined))
-    await expect(operations.list({ requester, pageId: 17 })).rejects.toBeInstanceOf(CommentNotFound)
+    await expect(Promise.resolve(operations.list({ requester, pageId: 17 }))).rejects.toBeInstanceOf(CommentNotFound)
 
     global.WIKI.models.pages.query.mockReturnValueOnce(pageQuery({
       id: 17,
@@ -80,6 +79,6 @@ describe('comment page identity and private existence isolation', () => {
       ownerId: 7,
       tags: []
     }))
-    await expect(operations.list({ requester, pageId: 17 })).rejects.toBeInstanceOf(CommentNotFound)
+    await expect(Promise.resolve(operations.list({ requester, pageId: 17 }))).rejects.toBeInstanceOf(CommentNotFound)
   })
 })

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it } from '../server/test/bun-test.mts'
 import * as contentExtensions from './content-extensions.ts'
 import {
   BUILTIN_CONTENT_EXTENSIONS,

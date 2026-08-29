@@ -1,4 +1,4 @@
-import { expect, it, vi } from 'vitest'
+import { expect, it, vi } from '../../../test/bun-test.mts'
 
   it('registers under the configured transport-specific key', async () => {
     Reflect.set(globalThis, 'WIKI', {})

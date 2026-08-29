@@ -25,7 +25,7 @@ describe('disk storage target', () => {
       },
       models: {}
     }
-    plugin = (await import('../../modules/storage/disk/storage.ts')).default
+    plugin = (await vi.importFresh('../../modules/storage/disk/storage.ts', import.meta.url)).default
     context = {
       config: {
         path: 'content',
@@ -46,9 +46,9 @@ describe('disk storage target', () => {
     await plugin.assetUploaded.call(context, { ...asset, data: Buffer.from('second') })
 
     const filePath = path.join(rootPath, 'content', 'images', 'logo.txt')
-    await expect(fs.readFile(filePath, 'utf8')).resolves.toBe('second')
-    await expect(plugin.getLocalLocation.call(context, asset)).resolves.toBe(filePath)
-    await expect(fs.readdir(path.dirname(filePath))).resolves.toEqual(['logo.txt'])
+    expect(await fs.readFile(filePath, 'utf8')).toBe('second')
+    expect(await plugin.getLocalLocation.call(context, asset)).toBe(filePath)
+    expect(await fs.readdir(path.dirname(filePath))).toEqual(['logo.txt'])
   })
 
   it.each([
@@ -56,18 +56,18 @@ describe('disk storage target', () => {
     'images/../../escape.txt',
     '/tmp/wiki-storage-escape.txt'
   ])('rejects asset paths outside the configured root: %s', async assetPath => {
-    await expect(plugin.assetUploaded.call(context, {
+    await expect(Promise.resolve(plugin.assetUploaded.call(context, {
       path: assetPath,
       data: Buffer.from('blocked')
-    })).rejects.toThrow(`Storage path escapes the configured root: ${assetPath}`)
+    }))).rejects.toThrow(`Storage path escapes the configured root: ${assetPath}`)
   })
 
   it('rejects page paths outside the configured root', async () => {
-    await expect(plugin.created.call(context, {
+    await expect(Promise.resolve(plugin.created.call(context, {
       localeCode: 'en',
       path: '../../escape',
       contentType: 'markdown',
       injectMetadata: () => 'blocked'
-    })).rejects.toThrow('Storage path escapes the configured root: ../../escape.md')
+    }))).rejects.toThrow('Storage path escapes the configured root: ../../escape.md')
   })
 })

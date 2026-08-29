@@ -12,15 +12,18 @@ on:
 jobs:
   build:
     name: Validate Chart
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, tsfranki-ci]
 
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
+      - name: Verify Local Bun
+        run: bun server/scripts/check-dependency-policy.ts
+
       - name: Verify Chart Version
         shell: bash
         run: |
-          package_version="$(node -p "require('./package.json').version")"
+          package_version="$(bun -e "console.log(require('./package.json').version)")"
           chart_version="$(helm show chart dev/helm | sed -n 's/^appVersion: *//p')"
           test "$package_version" = "$chart_version"
 

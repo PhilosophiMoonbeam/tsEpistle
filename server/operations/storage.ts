@@ -97,7 +97,7 @@ const validateConfig = (
   const configKeys = new Set<string>()
   for (const entry of target.config) {
     const key = entry && typeof entry === 'object' && !Array.isArray(entry) ? Reflect.get(entry, 'key') : null
-    if (typeof key !== 'string' || !Object.prototype.hasOwnProperty.call(properties, key) || configKeys.has(key)) {
+    if (typeof key !== 'string' || !Object.hasOwn(properties, key) || configKeys.has(key)) {
       throw new ApplicationError(`target ${target.key} config must contain unique, known entries.`, { code: 'INVALID_STORAGE_TARGETS' })
     }
     configKeys.add(key)

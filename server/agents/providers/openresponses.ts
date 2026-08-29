@@ -1,6 +1,7 @@
 import { z } from 'zod'
 
 import { AgentRepositoryError } from '../repository.ts'
+import type { AgentProviderFetch } from './factory.ts'
 
 const MAX_RESPONSE_BYTES = 4 * 1_024 * 1_024
 const MAX_EVENT_BYTES = 1 * 1_024 * 1_024
@@ -178,7 +179,7 @@ const validatedEventStream = (body: ReadableStream<Uint8Array>): ReadableStream<
   }))
 }
 
-export const createOpenResponsesFetch = (delegate: typeof fetch): typeof fetch => async (input, init) => {
+export const createOpenResponsesFetch = (delegate: AgentProviderFetch): AgentProviderFetch => Object.assign(async (input: Parameters<AgentProviderFetch>[0], init?: Parameters<AgentProviderFetch>[1]): Promise<Response> => {
   const request = parseRequest(init)
   const response = await delegate(input, init)
   const contentType = response.headers.get('content-type')?.split(';', 1)[0]?.trim().toLowerCase()
@@ -189,4 +190,4 @@ export const createOpenResponsesFetch = (delegate: typeof fetch): typeof fetch =
   if (contentType !== 'application/json') throw invalid('response has an invalid content type')
   await validateBufferedResponse(response)
   return response
-}
+}, { preconnect: delegate.preconnect })

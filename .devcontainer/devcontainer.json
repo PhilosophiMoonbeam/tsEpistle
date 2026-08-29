@@ -15,7 +15,7 @@
   },
   "extensions": [
 	"EditorConfig.editorconfig",
-	"dbaeumer.vscode-eslint",
+	"biomejs.biome",
 	"christian-kohler.path-intellisense",
 	"mrmlnc.vscode-puglint",
 	"octref.vetur",
@@ -29,5 +29,5 @@
 	"oderwat.indent-rainbow",
 	"christian-kohler.npm-intellisense"
 ],
-  "postCreateCommand": ["corepack", "pnpm", "install", "--frozen-lockfile"]
+  "postCreateCommand": ["bun", "install", "--frozen-lockfile"]
 }

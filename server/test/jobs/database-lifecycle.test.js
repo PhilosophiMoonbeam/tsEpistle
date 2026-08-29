@@ -1,7 +1,6 @@
-/** @vitest-environment node */
 
 const { databaseInit } = vi.hoisted(() => ({ databaseInit: vi.fn() }))
-vi.mock('../../core/db.ts', () => ({ default: { init: databaseInit } }))
+vi.mockModule('../../core/db.ts', import.meta.url, () => ({ default: { init: databaseInit } }))
 
 global.WIKI = {
   config: { db: { type: 'postgres' } },
@@ -42,7 +41,7 @@ describe('worker job database lifecycle', () => {
     const models = renderModels(null)
     databaseInit.mockResolvedValue(models)
 
-    await expect(renderPage(17)).rejects.toThrow('Invalid Page Id')
+    await expect(Promise.resolve(renderPage(17))).rejects.toThrow('Invalid Page Id')
 
     expect(models.knex.destroy).toHaveBeenCalledOnce()
   })
@@ -71,7 +70,7 @@ describe('worker job database lifecycle', () => {
     }
     databaseInit.mockResolvedValue(models)
 
-    await expect(rebuildTree()).rejects.toThrow('page query failed')
+    await expect(Promise.resolve(rebuildTree())).rejects.toThrow('page query failed')
 
     expect(models.knex.destroy).toHaveBeenCalledOnce()
   })

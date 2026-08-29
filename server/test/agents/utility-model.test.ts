@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi } from '../bun-test.mts'
 import type { AgentProviderFactory } from '../../agents/providers/factory.ts'
 import { AgentUtilityModel, conversationTitleFallback, normalizeConversationTitle } from '../../agents/providers/utility.ts'
 
@@ -33,7 +33,7 @@ describe('agent utility model', () => {
     const create = vi.fn(async () => ({ service: { chat }, model: 'model-mini' }))
     const utility = new AgentUtilityModel({ create } as unknown as AgentProviderFactory)
 
-    await expect(utility.generateConversationTitle(request)).resolves.toEqual({
+    expect(await utility.generateConversationTitle(request)).toEqual({
       title: 'Deployment Pipeline Failures',
       source: 'utility',
       inputTokens: 19,
@@ -54,7 +54,7 @@ describe('agent utility model', () => {
     const create = vi.fn(async () => { throw new Error('provider unavailable') })
     const utility = new AgentUtilityModel({ create } as unknown as AgentProviderFactory)
 
-    await expect(utility.generateConversationTitle(request)).resolves.toEqual({
+    expect(await utility.generateConversationTitle(request)).toEqual({
       title: 'Investigate intermittent failures in the deployment pipeline',
       source: 'fallback',
       inputTokens: 0,
@@ -105,11 +105,11 @@ describe('agent utility model', () => {
       create: vi.fn(async () => ({ service: { chat }, model: 'model-mini' }))
     } as unknown as AgentProviderFactory)
 
-    await expect(utility.enrichKnowledge({
+    await expect(Promise.resolve(utility.enrichKnowledge({
       profileVersionId: request.profileVersionId,
       page: { title: 'Deploy', description: '', locale: 'en', path: 'ops/deploy', contentType: 'markdown', content: '# Deploy\n' },
       missingFields: ['concept.type'],
       signal: request.signal
-    })).rejects.toThrow()
+    }))).rejects.toThrow()
   })
 })

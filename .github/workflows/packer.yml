@@ -11,7 +11,7 @@ on:
 jobs:
   build-do-image:
     name: Build DigitalOcean Image
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, tsfranki-ci]
     permissions:
       contents: read
 

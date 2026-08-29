@@ -1,4 +1,4 @@
-vi.mock('express', () => {
+vi.mockModule('express', import.meta.url, () => {
   const routers = []
   const express = {
     Router: () => {
@@ -19,7 +19,7 @@ vi.mock('express', () => {
   return { default: express, ...express }
 })
 
-import express from 'express'
+const { default: express } = await import('express')
 
 const API_MOUNTS = [
   ['assets', '/assets'],
@@ -47,16 +47,16 @@ const loadRouter = async () => {
   const subrouters = Object.fromEntries(API_MOUNTS.map(([name]) => [name, {}]))
 
   for (const [name] of API_MOUNTS) {
-    vi.doMock(`../../controllers/api/${name}.ts`, () => ({
+    vi.mockModule(`../../controllers/api/${name}.ts`, import.meta.url, () => ({
       default: subrouters[name]
     }))
   }
 
   try {
-    await expect(import('../../controllers/api/index.ts')).resolves.toBeDefined()
+    expect(await vi.importFresh('../../controllers/api/index.ts', import.meta.url)).toBeDefined()
   } finally {
     for (const [name] of API_MOUNTS) {
-      vi.doUnmock(`../../controllers/api/${name}.ts`)
+      vi.unmockModule(`../../controllers/api/${name}.ts`, import.meta.url)
     }
   }
 

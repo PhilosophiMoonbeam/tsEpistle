@@ -187,7 +187,6 @@ TODO              text
 
 # Linters
 .csslintrc        text
-.eslintrc         text
 .htmlhintrc       text
 .jscsrc           text
 .jshintrc         text

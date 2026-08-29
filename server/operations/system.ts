@@ -168,7 +168,7 @@ const getInfo = async () => ({
   dbType: 'PostgreSQL',
   dbVersion: await getDbVersion(),
   hostname: os.hostname(),
-  nodeVersion: process.version.slice(1),
+  bunVersion: process.versions.bun ?? 'unknown',
   operatingSystem: await getOperatingSystem(),
   platform: await getPlatform(),
   ramTotal: filesize(os.totalmem()),

@@ -51,7 +51,7 @@ func main() {
 	// Check system requirements
 
 	bold.Println("Verifying system requirements...")
-	CheckNodeJs()
+	CheckBun()
 	CheckRAM()
 	fmt.Println()
 

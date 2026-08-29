@@ -1,6 +1,6 @@
 import fs from 'node:fs'
 import knexModule, { type Knex } from 'knex'
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it } from '../bun-test.mts'
 
 import { down as downAgentLedger, up as upAgentLedger } from '../../db/migrations/2.5.139.ts'
 import { down as restoreLegacyHandoffTable, up as removeLegacyHandoffTable } from '../../db/migrations/2.5.140.ts'
@@ -93,19 +93,19 @@ suite('PostgreSQL first-class agent migration', () => {
 
   it('adds the authoritative tables, removes obsolete handoffs, and adds source revision columns', async () => {
     for (const table of ['agentSessions', 'agentRuns', 'agentEvents', 'agentRunTasks', 'agentSkills', 'agentUserSkillPreferences', 'agentMemories', 'agentProviderProfiles', 'agentProviderSecrets', 'agentProposals', 'agentApprovals', 'agentActionExecutions', 'pageMutationOutbox']) {
-      await expect(db.schema.hasTable(table)).resolves.toBe(true)
+      expect(await db.schema.hasTable(table)).toBe(true)
     }
-    await expect(db.schema.hasTable('agentLaunchHandoffs')).resolves.toBe(false)
-    await expect(db.schema.hasTable('agentSessionSkills')).resolves.toBe(false)
-    await expect(db.schema.hasColumn('pages', 'sourceRevision')).resolves.toBe(true)
-    await expect(db.schema.hasColumn('pageHistory', 'sourceRevision')).resolves.toBe(true)
-    await expect(db.schema.hasColumn('agentProviderProfiles', 'deletedAt')).resolves.toBe(true)
-    await expect(db.schema.hasColumn('agentSkills', 'ownerUserId')).resolves.toBe(true)
-    await expect(db.schema.hasColumn('agentSkills', 'deletedAt')).resolves.toBe(true)
-    await expect(db.schema.hasColumn('agentSkills', 'isAgentDiscoverable')).resolves.toBe(true)
-    await expect(db('agentSkills').columnInfo('isAgentDiscoverable')).resolves.toMatchObject({ nullable: false, defaultValue: 'true' })
-    await expect(db('agentSkills').columnInfo('rootPageId')).resolves.toMatchObject({ nullable: true })
-    await expect(db.schema.hasColumn('agentSessions', 'memorySnapshot')).resolves.toBe(true)
+    expect(await db.schema.hasTable('agentLaunchHandoffs')).toBe(false)
+    expect(await db.schema.hasTable('agentSessionSkills')).toBe(false)
+    expect(await db.schema.hasColumn('pages', 'sourceRevision')).toBe(true)
+    expect(await db.schema.hasColumn('pageHistory', 'sourceRevision')).toBe(true)
+    expect(await db.schema.hasColumn('agentProviderProfiles', 'deletedAt')).toBe(true)
+    expect(await db.schema.hasColumn('agentSkills', 'ownerUserId')).toBe(true)
+    expect(await db.schema.hasColumn('agentSkills', 'deletedAt')).toBe(true)
+    expect(await db.schema.hasColumn('agentSkills', 'isAgentDiscoverable')).toBe(true)
+    expect(await db('agentSkills').columnInfo('isAgentDiscoverable')).toMatchObject({ nullable: false, defaultValue: 'true' })
+    expect(await db('agentSkills').columnInfo('rootPageId')).toMatchObject({ nullable: true })
+    expect(await db.schema.hasColumn('agentSessions', 'memorySnapshot')).toBe(true)
   })
   it('projects group-visible preferences with PostgreSQL-safe aliases', async () => {
     const sessionId = '00000000-0000-4000-8000-000000000101'
@@ -177,11 +177,11 @@ suite('PostgreSQL first-class agent migration', () => {
       await transaction.raw('CREATE TEMP TABLE "agentRuns" (id uuid PRIMARY KEY, "sessionId" uuid NOT NULL, "ownerId" integer NOT NULL) ON COMMIT DROP')
       await transaction('agentRuns').insert({ id: runId, sessionId, ownerId: 7 })
       const runtime = new SkillRuntime(transaction)
-      await expect(runtime.listVisibleForRun({
+      expect(await runtime.listVisibleForRun({
         runId,
         principal: { userId: 7, groupIds: [] },
         transportRequestId
-      })).resolves.toEqual([])
+      })).toEqual([])
     })
   })
 
@@ -229,8 +229,8 @@ suite('PostgreSQL first-class agent migration', () => {
       updatedBy: 7
     })
     await db('agentProviderProfiles').where({ id: '00000000-0000-4000-8000-000000000001' }).update({ deletedAt: db.fn.now() })
-    await expect(downProviderProfileLifecycle(db)).rejects.toThrow('contains removed profiles')
-    await expect(downAgentLedger(db)).rejects.toThrow('agentProviderProfiles contains data')
+    await expect(Promise.resolve(downProviderProfileLifecycle(db))).rejects.toThrow('contains removed profiles')
+    await expect(Promise.resolve(downAgentLedger(db))).rejects.toThrow('agentProviderProfiles contains data')
     await db('agentProviderProfiles').where({ id: '00000000-0000-4000-8000-000000000001' }).update({ deletedAt: null })
     await downAgentTasks(db)
     await downAgentMemory(db)
@@ -243,7 +243,7 @@ suite('PostgreSQL first-class agent migration', () => {
     await restoreLegacyHandoffTable(db)
     await downProviderSecrets(db)
     await downAgentLedger(db)
-    await expect(db.schema.hasTable('agentSessions')).resolves.toBe(false)
-    await expect(db.schema.hasColumn('pages', 'sourceRevision')).resolves.toBe(false)
+    expect(await db.schema.hasTable('agentSessions')).toBe(false)
+    expect(await db.schema.hasColumn('pages', 'sourceRevision')).toBe(false)
   })
 })

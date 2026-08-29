@@ -14,7 +14,7 @@ describe('logging api helper', () => {
   test('requests logging loggers with same-origin JSON options', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([]))
 
-    await expect(fetchLoggingLoggers(fetchImpl)).resolves.toEqual([])
+    expect(await fetchLoggingLoggers(fetchImpl)).toEqual([])
 
     expect(fetchImpl).toHaveBeenCalledWith('/_api/logging/loggers', {
       credentials: 'same-origin',
@@ -51,7 +51,7 @@ describe('logging api helper', () => {
       }
     ]))
 
-    await expect(fetchLoggingLoggers(fetchImpl)).resolves.toEqual([
+    expect(await fetchLoggingLoggers(fetchImpl)).toEqual([
       {
         isEnabled: true,
         key: 'alpha',
@@ -100,7 +100,7 @@ describe('logging api helper', () => {
       }
     ]))
 
-    await expect(fetchLoggingLoggers(fetchImpl)).resolves.toEqual([
+    expect(await fetchLoggingLoggers(fetchImpl)).toEqual([
       {
         isEnabled: false,
         key: 'beta',
@@ -122,7 +122,7 @@ describe('logging api helper', () => {
   test('rejects malformed root payloads', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ loggers: [] }))
 
-    await expect(fetchLoggingLoggers(fetchImpl, 'Bad logging payload')).rejects.toThrow('Bad logging payload')
+    await expect(Promise.resolve(fetchLoggingLoggers(fetchImpl, 'Bad logging payload'))).rejects.toThrow('Bad logging payload')
   })
 
   test('rejects malformed logger rows', async () => {
@@ -139,7 +139,7 @@ describe('logging api helper', () => {
       }
     ]))
 
-    await expect(fetchLoggingLoggers(fetchImpl, 'Bad logging row')).rejects.toThrow('Bad logging row')
+    await expect(Promise.resolve(fetchLoggingLoggers(fetchImpl, 'Bad logging row'))).rejects.toThrow('Bad logging row')
   })
 
   test('rejects malformed config rows', async () => {
@@ -156,7 +156,7 @@ describe('logging api helper', () => {
       }
     ]))
 
-    await expect(fetchLoggingLoggers(fetchImpl, 'Bad logging config')).rejects.toThrow('Bad logging config')
+    await expect(Promise.resolve(fetchLoggingLoggers(fetchImpl, 'Bad logging config'))).rejects.toThrow('Bad logging config')
   })
 
   test('rejects malformed config JSON', async () => {
@@ -173,7 +173,7 @@ describe('logging api helper', () => {
       }
     ]))
 
-    await expect(fetchLoggingLoggers(fetchImpl, 'Bad logging JSON')).rejects.toThrow('Bad logging JSON')
+    await expect(Promise.resolve(fetchLoggingLoggers(fetchImpl, 'Bad logging JSON'))).rejects.toThrow('Bad logging JSON')
   })
 
   test('propagates API JSON errors', async () => {
@@ -185,7 +185,7 @@ describe('logging api helper', () => {
       json: async () => ({ message: 'manage:system is required' })
     })
 
-    await expect(fetchLoggingLoggers(fetchImpl, 'Bad logging load')).rejects.toThrow('manage:system is required')
+    await expect(Promise.resolve(fetchLoggingLoggers(fetchImpl, 'Bad logging load'))).rejects.toThrow('manage:system is required')
   })
 
   test('rejects non-JSON successful responses', async () => {
@@ -196,7 +196,7 @@ describe('logging api helper', () => {
       }
     })
 
-    await expect(fetchLoggingLoggers(fetchImpl, 'Bad logging content type')).rejects.toThrow('Bad logging content type')
+    await expect(Promise.resolve(fetchLoggingLoggers(fetchImpl, 'Bad logging content type'))).rejects.toThrow('Bad logging content type')
   })
 
   test('saves logging loggers with same-origin JSON POST options', async () => {
@@ -210,7 +210,7 @@ describe('logging api helper', () => {
       }
     ]
 
-    await expect(saveLoggingLoggers(fetchImpl, loggers)).resolves.toEqual({ message: 'Loggers updated successfully' })
+    expect(await saveLoggingLoggers(fetchImpl, loggers)).toEqual({ message: 'Loggers updated successfully' })
 
     expect(fetchImpl).toHaveBeenCalledWith('/_api/logging/loggers', {
       method: 'POST',
@@ -226,13 +226,13 @@ describe('logging api helper', () => {
   test('rejects malformed logging save success payloads', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ ok: true }))
 
-    await expect(saveLoggingLoggers(fetchImpl, [], 'Bad logging save')).rejects.toThrow('Bad logging save')
+    await expect(Promise.resolve(saveLoggingLoggers(fetchImpl, [], 'Bad logging save'))).rejects.toThrow('Bad logging save')
   })
 
   test('propagates logging save REST JSON errors', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ error: 'Invalid loggers payload' }, false))
 
-    await expect(saveLoggingLoggers(fetchImpl, [], 'Bad logging save')).rejects.toThrow('Invalid loggers payload')
+    await expect(Promise.resolve(saveLoggingLoggers(fetchImpl, [], 'Bad logging save'))).rejects.toThrow('Invalid loggers payload')
   })
 
   test('rejects non-JSON successful logging save responses', async () => {
@@ -243,6 +243,6 @@ describe('logging api helper', () => {
       }
     })
 
-    await expect(saveLoggingLoggers(fetchImpl, [], 'Bad logging save content type')).rejects.toThrow('Bad logging save content type')
+    await expect(Promise.resolve(saveLoggingLoggers(fetchImpl, [], 'Bad logging save content type'))).rejects.toThrow('Bad logging save content type')
   })
 })

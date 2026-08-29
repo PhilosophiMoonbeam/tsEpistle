@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from '../bun-test.mts'
 import createKnex, { type Knex } from 'knex'
 import type { LookupAddress } from 'node:dns'
 import type { AxChatRequest } from '@ax-llm/ax'
@@ -220,7 +220,7 @@ describe('additional provider transports', () => {
       called = true
       return Response.json({})
     }
-    await expect(new AgentProviderFactory(db, { get: () => 'gemini-key' }, fetchImplementation as typeof fetch, publicResolver as never).create(id)).rejects.toMatchObject({ code: 'INVALID_PROVIDER_MODEL' })
+    await expect(Promise.resolve(new AgentProviderFactory(db, { get: () => 'gemini-key' }, fetchImplementation as typeof fetch, publicResolver as never).create(id))).rejects.toMatchObject({ code: 'INVALID_PROVIDER_MODEL' })
     expect(called).toBe(false)
   })
 
@@ -273,7 +273,7 @@ describe('additional provider transports', () => {
     expect(payload).toMatchObject({ model: 'model-test', prompt: 'system: system\n\nuser: hello', stream: false })
     expect(headers.get('x-api-key')).toBe('legacy-key')
     if (!(response instanceof ReadableStream)) expect(response).toMatchObject({ results: [{ content: 'legacy' }], modelUsage: { tokens: { promptTokens: 4, completionTokens: 2, totalTokens: 6 } } })
-    await expect(provider.service.chat({ chatPrompt: [{ role: 'user', content: 'hello' }], functions: [{ name: 'pages.get', description: 'read' }] })).rejects.toMatchObject({ code: 'INVALID_LEGACY_PROMPT' })
+    await expect(Promise.resolve(provider.service.chat({ chatPrompt: [{ role: 'user', content: 'hello' }], functions: [{ name: 'pages.get', description: 'read' }] }))).rejects.toMatchObject({ code: 'INVALID_LEGACY_PROMPT' })
   })
 })
 
@@ -289,7 +289,7 @@ describe('OpenResponses protocol validation', () => {
       calls += 1
       return Response.json({})
     })
-    await expect(transport('https://openresponses.example.test/v1/responses', request({ unsupported: true }))).rejects.toMatchObject({ code: 'INVALID_OPENRESPONSES_PROTOCOL' })
+    await expect(Promise.resolve(transport('https://openresponses.example.test/v1/responses', request({ unsupported: true })))).rejects.toMatchObject({ code: 'INVALID_OPENRESPONSES_PROTOCOL' })
     expect(calls).toBe(0)
   })
 
@@ -302,7 +302,7 @@ describe('OpenResponses protocol validation', () => {
       model: 'model-test',
       output: [{ id: 'unknown_1', type: 'provider_private_item', status: 'completed' }]
     }))
-    await expect(transport('https://openresponses.example.test/v1/responses', request())).rejects.toMatchObject({ code: 'INVALID_OPENRESPONSES_PROTOCOL' })
+    await expect(Promise.resolve(transport('https://openresponses.example.test/v1/responses', request()))).rejects.toMatchObject({ code: 'INVALID_OPENRESPONSES_PROTOCOL' })
   })
 
   it('validates streaming event names, sequences, terminal response, and marker', async () => {
@@ -325,11 +325,11 @@ describe('OpenResponses protocol validation', () => {
       ''
     ].join('\n')
     const validTransport = createOpenResponsesFetch(async () => new Response(validBody, { headers: { 'content-type': 'text/event-stream' } }))
-    await expect((await validTransport('https://openresponses.example.test/v1/responses', request({ stream: true }))).text()).resolves.toContain('[DONE]')
+    expect(await (await validTransport('https://openresponses.example.test/v1/responses', request({ stream: true }))).text()).toContain('[DONE]')
 
     const invalidBody = 'event: response.output_text.delta\ndata: {"type":"response.output_text.done","sequence_number":0}\n\n'
     const invalidTransport = createOpenResponsesFetch(async () => new Response(invalidBody, { headers: { 'content-type': 'text/event-stream' } }))
-    await expect((await invalidTransport('https://openresponses.example.test/v1/responses', request({ stream: true }))).text()).rejects.toMatchObject({ code: 'INVALID_OPENRESPONSES_PROTOCOL' })
+    await expect(Promise.resolve((await invalidTransport('https://openresponses.example.test/v1/responses', request({ stream: true }))).text())).rejects.toMatchObject({ code: 'INVALID_OPENRESPONSES_PROTOCOL' })
   })
 })
 
@@ -375,9 +375,9 @@ describe('Gemini Interactions protocol validation', () => {
     const gemini = service((async () => new Response(body, { headers: { 'content-type': 'text/event-stream' } })) as typeof fetch)
     const response = await gemini.chat({ chatPrompt: [{ role: 'user', content: 'hello' }] }, { stream: true })
     if (!(response instanceof ReadableStream)) throw new Error('Expected a streaming Gemini Interactions response')
-    await expect((async () => {
+    await expect(Promise.resolve((async () => {
       for await (const item of response) void item
-    })()).rejects.toMatchObject({ code: 'INVALID_PROVIDER_RESPONSE' })
+    })())).rejects.toMatchObject({ code: 'INVALID_PROVIDER_RESPONSE' })
   })
 
   it('rejects corrupted stored Interactions steps before egress', async () => {
@@ -386,13 +386,13 @@ describe('Gemini Interactions protocol validation', () => {
       called = true
       return Response.json({})
     }) as typeof fetch)
-    await expect(gemini.chat({
+    await expect(Promise.resolve(gemini.chat({
       chatPrompt: [
         { role: 'user', content: 'hello' },
         { role: 'assistant', content: 'answer', thoughtBlocks: [{ data: 'wiki.gemini.interactions.v1:not-json', encrypted: true }] },
         { role: 'user', content: 'continue' }
       ]
-    }, { stream: false })).rejects.toMatchObject({ code: 'AGENT_PROVIDER_STATE_CORRUPT' })
+    }, { stream: false }))).rejects.toMatchObject({ code: 'AGENT_PROVIDER_STATE_CORRUPT' })
     expect(called).toBe(false)
   })
 })

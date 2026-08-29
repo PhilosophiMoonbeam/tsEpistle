@@ -1,15 +1,32 @@
-import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
+import semver from 'semver'
 
-interface PnpmLicensePackage {
-  name: string
-  versions: string[]
-  license: string
-  author?: string
-  homepage?: string
-  description?: string
+interface BunLockPackageMetadata {
+  dependencies?: Record<string, string>
+  optionalDependencies?: Record<string, string>
+  peerDependencies?: Record<string, string>
+  optionalPeers?: string[]
+}
+
+interface BunLockfile {
+  workspaces: Record<string, {
+    dependencies?: Record<string, string>
+    optionalDependencies?: Record<string, string>
+  }>
+  overrides?: Record<string, string>
+  packages: Record<string, [string, string, BunLockPackageMetadata?]>
+}
+
+interface InstalledPackageManifest {
+  name?: unknown
+  version?: unknown
+  licence?: unknown
+  license?: unknown
+  licenses?: unknown
+  author?: unknown
+  homepage?: unknown
 }
 
 interface InventoryPackage {
@@ -29,28 +46,143 @@ interface LicensePolicy {
   unknownExpressionPolicy: 'review-required'
 }
 
+interface ResolvedPackage {
+  name: string
+  version: string
+  metadata: BunLockPackageMetadata
+}
+
+interface PackageMetadata {
+  license: string
+  author?: string
+  homepage?: string
+}
+
 const rootPath = process.cwd()
 const checkOnly = process.argv.includes('--check')
 const outputArgument = process.argv.slice(2).find(argument => argument !== '--check')
 const outputPath = path.resolve(rootPath, outputArgument ?? 'third-party-licenses.json')
 const policyPath = path.join(rootPath, 'license-policy.json')
+const lockfilePath = path.join(rootPath, 'bun.lock')
 const policy = JSON.parse(fs.readFileSync(policyPath, 'utf8')) as LicensePolicy
-const pnpmCli = process.env.npm_execpath
+const lockfileBytes = fs.readFileSync(lockfilePath)
+const lockfile = Bun.JSONC.parse(lockfileBytes.toString('utf8')) as BunLockfile
 
-if (!pnpmCli) {
-  throw new Error('npm_execpath is unavailable; run this script through pnpm')
+const parsePackageDescriptor = (descriptor: string): { name: string, version: string } => {
+  const separator = descriptor.lastIndexOf('@')
+  if (separator <= 0 || separator === descriptor.length - 1) {
+    throw new Error(`Invalid Bun lockfile package descriptor: ${descriptor}`)
+  }
+  return { name: descriptor.slice(0, separator), version: descriptor.slice(separator + 1) }
 }
 
-const raw = execFileSync(process.execPath, [pnpmCli, 'licenses', 'list', '--prod', '--json'], {
-  cwd: rootPath,
-  encoding: 'utf8',
-  maxBuffer: 16 * 1024 * 1024
+const packagesByName = new Map<string, ResolvedPackage[]>()
+for (const [, [descriptor, , metadata = {}]] of Object.entries(lockfile.packages)) {
+  const { name, version } = parsePackageDescriptor(descriptor)
+  const packages = packagesByName.get(name) ?? []
+  packages.push({ name, version, metadata })
+  packagesByName.set(name, packages)
+}
+
+const matchesRange = (version: string, range: string): boolean => {
+  if (range.startsWith('npm:')) {
+    const aliasSeparator = range.lastIndexOf('@')
+    range = aliasSeparator > 3 ? range.slice(aliasSeparator + 1) : '*'
+  }
+  return semver.valid(version) !== null && (semver.validRange(range) === null || semver.satisfies(version, range, { includePrerelease: true }))
+}
+
+const rootWorkspace = lockfile.workspaces['']
+if (!rootWorkspace) throw new Error('bun.lock does not define the root workspace')
+
+const productionPackages = new Map<string, ResolvedPackage>()
+const pending = Object.entries({
+  ...rootWorkspace.dependencies,
+  ...rootWorkspace.optionalDependencies
 })
-const report = JSON.parse(raw) as Record<string, PnpmLicensePackage[]>
+
+while (pending.length > 0) {
+  const [dependencyName, range] = pending.pop() as [string, string]
+  const candidates = (packagesByName.get(dependencyName) ?? [])
+    .filter(candidate => matchesRange(candidate.version, range) || lockfile.overrides?.[dependencyName] === candidate.version)
+  if (candidates.length === 0) {
+    throw new Error(`bun.lock cannot resolve production dependency ${dependencyName}@${range}`)
+  }
+  for (const candidate of candidates) {
+    const identity = `${candidate.name}@${candidate.version}`
+    if (productionPackages.has(identity)) continue
+    productionPackages.set(identity, candidate)
+    const requiredPeers = Object.entries(candidate.metadata.peerDependencies ?? {})
+      .filter(([name]) => !candidate.metadata.optionalPeers?.includes(name))
+    pending.push(
+      ...Object.entries(candidate.metadata.dependencies ?? {}),
+      ...Object.entries(candidate.metadata.optionalDependencies ?? {}),
+      ...requiredPeers
+    )
+  }
+}
+const packageMetadata = new Map<string, PackageMetadata>()
+const normalizeLicense = (manifest: InstalledPackageManifest): string => {
+  const declaredLicense = manifest.license ?? manifest.licence
+  if (typeof declaredLicense === 'string' && declaredLicense.length > 0) return declaredLicense
+  if (Array.isArray(declaredLicense)) {
+    const expressions = declaredLicense.filter((entry): entry is string => typeof entry === 'string' && entry.length > 0)
+    if (expressions.length > 0) return `(${[...new Set(expressions)].join(' OR ')})`
+  }
+  if (declaredLicense && typeof declaredLicense === 'object' && 'type' in declaredLicense) {
+    const type = (declaredLicense as { type?: unknown }).type
+    if (typeof type === 'string' && type.length > 0) return type
+  }
+  if (Array.isArray(manifest.licenses)) {
+    const expressions = manifest.licenses
+      .map(entry => typeof entry === 'string' ? entry : entry && typeof entry === 'object' && 'type' in entry ? (entry as { type?: unknown }).type : undefined)
+      .filter((entry): entry is string => typeof entry === 'string' && entry.length > 0)
+    if (expressions.length > 0) return [...new Set(expressions)].sort().join(' OR ')
+  }
+  return 'Unknown'
+}
+
+const normalizeAuthor = (author: unknown): string | undefined => {
+  if (typeof author === 'string' && author.length > 0) return author
+  if (author && typeof author === 'object' && 'name' in author) {
+    const name = (author as { name?: unknown }).name
+    if (typeof name === 'string' && name.length > 0) return name
+  }
+  return undefined
+}
+
+const collectInstalledPackages = (nodeModulesPath: string): void => {
+  if (!fs.existsSync(nodeModulesPath)) return
+  for (const entry of fs.readdirSync(nodeModulesPath, { withFileTypes: true })) {
+    if (!entry.isDirectory() || entry.name.startsWith('.')) continue
+    const entryPath = path.join(nodeModulesPath, entry.name)
+    if (entry.name.startsWith('@')) {
+      collectInstalledPackages(entryPath)
+      continue
+    }
+    const manifestPath = path.join(entryPath, 'package.json')
+    if (!fs.existsSync(manifestPath)) continue
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8')) as InstalledPackageManifest
+    if (typeof manifest.name !== 'string' || typeof manifest.version !== 'string') continue
+    const author = normalizeAuthor(manifest.author)
+    const homepage = typeof manifest.homepage === 'string' && manifest.homepage.length > 0 ? manifest.homepage : undefined
+    packageMetadata.set(`${manifest.name}@${manifest.version}`, {
+      license: normalizeLicense(manifest),
+      ...(author ? { author } : {}),
+      ...(homepage ? { homepage } : {})
+    })
+    collectInstalledPackages(path.join(entryPath, 'node_modules'))
+  }
+}
+collectInstalledPackages(path.join(rootPath, 'node_modules'))
 
 // These published manifests omit a license field. Their repository license
 // files were reviewed explicitly; any new metadata gap fails the release gate.
 const licenseMetadataOverrides: Record<string, { license: string, source: string }> = {
+  'notp@2.0.3': {
+    license: 'MIT',
+    source: 'https://github.com/guyht/notp/blob/master/LICENSE'
+  },
   'pause@0.0.1': {
     license: 'MIT',
     source: 'https://github.com/stream-utils/pause/blob/master/LICENSE'
@@ -62,37 +194,55 @@ const licenseMetadataOverrides: Record<string, { license: string, source: string
   'thirty-two@1.0.2': {
     license: 'MIT',
     source: 'https://github.com/chrisumbel/thirty-two/blob/master/LICENSE.txt'
+  },
+  'uid2@0.0.3': {
+    license: 'MIT',
+    source: 'https://github.com/coreh/uid2/blob/master/LICENSE'
   }
 }
-const unknown = (report.Unknown ?? []).flatMap(pkg =>
-  pkg.versions.map(version => `${pkg.name}@${version}`)
-).filter(pkg => !licenseMetadataOverrides[pkg])
 
-if (unknown.length > 0) {
-  throw new Error(`Unreviewed dependency license metadata: ${unknown.sort().join(', ')}`)
+const groupedPackages = new Map<string, InventoryPackage>()
+const missingMetadata: string[] = []
+const unknownMetadata: string[] = []
+for (const identity of [...productionPackages.keys()].sort()) {
+  const metadata = packageMetadata.get(identity)
+  if (!metadata) {
+    missingMetadata.push(identity)
+    continue
+  }
+  const override = licenseMetadataOverrides[identity]
+  const license = override?.license ?? metadata.license
+  if (license === 'Unknown') unknownMetadata.push(identity)
+  const separator = identity.lastIndexOf('@')
+  const name = identity.slice(0, separator)
+  const version = identity.slice(separator + 1)
+  const groupIdentity = `${name}\0${license}`
+  const existing = groupedPackages.get(groupIdentity)
+  if (existing) {
+    existing.versions.push(version)
+    if (override?.source) {
+      existing.licenseMetadataSource = [...new Set([...(existing.licenseMetadataSource?.split(', ') ?? []), override.source])].sort().join(', ')
+    }
+  } else {
+    groupedPackages.set(groupIdentity, {
+      name,
+      versions: [version],
+      license,
+      ...(metadata.author ? { author: metadata.author } : {}),
+      ...(metadata.homepage ? { homepage: metadata.homepage } : {}),
+      ...(override?.source ? { licenseMetadataSource: override.source } : {})
+    })
+  }
+}
+if (missingMetadata.length > 0) {
+  throw new Error(`Production dependencies are missing from node_modules; run bun install --frozen-lockfile:\n${missingMetadata.join('\n')}`)
+}
+if (unknownMetadata.length > 0) {
+  throw new Error(`Unreviewed dependency license metadata: ${unknownMetadata.join(', ')}`)
 }
 
-const packages: InventoryPackage[] = Object.entries(report)
-  .flatMap(([reportedLicense, entries]) => entries.map(entry => {
-    const versions = [...entry.versions].sort()
-    const overrides = versions
-      .map(version => licenseMetadataOverrides[`${entry.name}@${version}`])
-      .filter((override): override is { license: string, source: string } => override !== undefined)
-    const overrideLicenses = [...new Set(overrides.map(override => override.license))]
-    if (reportedLicense === 'Unknown' && (overrides.length !== versions.length || overrideLicenses.length !== 1)) {
-      throw new Error(`Incomplete license metadata override for ${entry.name}@${versions.join(',')}`)
-    }
-    return {
-      name: entry.name,
-      versions,
-      license: overrideLicenses[0] ?? reportedLicense,
-      ...(entry.author ? { author: entry.author } : {}),
-      ...(entry.homepage ? { homepage: entry.homepage } : {}),
-      ...(overrides.length > 0
-        ? { licenseMetadataSource: [...new Set(overrides.map(override => override.source))].join(', ') }
-        : {})
-    }
-  }))
+const packages = [...groupedPackages.values()]
+  .map(pkg => ({ ...pkg, versions: [...new Set(pkg.versions)].sort() }))
   .sort((left, right) => left.name.localeCompare(right.name) || left.license.localeCompare(right.license))
 
 if (
@@ -130,17 +280,16 @@ if (violations.length > 0) {
   throw new Error(`Production dependency licenses violate policy:\n${violations.join('\n')}`)
 }
 
-const lockfile = fs.readFileSync(path.join(rootPath, 'pnpm-lock.yaml'))
 const inventory = {
   schemaVersion: 1,
   source: {
-    lockfile: 'pnpm-lock.yaml',
-    sha256: createHash('sha256').update(lockfile).digest('hex'),
+    lockfile: 'bun.lock',
+    sha256: createHash('sha256').update(lockfileBytes).digest('hex'),
     scope: 'production',
     policy: {
       file: path.relative(rootPath, policyPath),
       sha256: createHash('sha256').update(fs.readFileSync(policyPath)).digest('hex')
-    },
+    }
   },
   licenseMetadataOverrides: Object.fromEntries(Object.entries(licenseMetadataOverrides).sort(([left], [right]) => left.localeCompare(right))),
   packages
@@ -149,7 +298,7 @@ const inventory = {
 const serializedInventory = `${JSON.stringify(inventory, null, 2)}\n`
 if (checkOnly) {
   if (!fs.existsSync(outputPath) || fs.readFileSync(outputPath, 'utf8') !== serializedInventory) {
-    throw new Error(`${path.relative(rootPath, outputPath)} is stale; run pnpm run licenses:inventory and commit the result`)
+    throw new Error(`${path.relative(rootPath, outputPath)} is stale; run bun run licenses:inventory and commit the result`)
   }
   console.log(`Verified ${packages.length} tracked production dependency license records`)
 } else {

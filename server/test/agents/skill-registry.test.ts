@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from '../bun-test.mts'
 import createKnex, { type Knex } from 'knex'
 
 import { decodeSkillResourceBundle, encodeSkillResourceBundle } from '../../agents/skills/bundle.ts'
@@ -104,7 +104,7 @@ describe('immutable skill registry', () => {
     const skillId = await createSkill()
     expect(await db('agentSkills').where({ id: skillId }).first()).toMatchObject({ status: 'disabled', currentVersionId: null })
     expect(await db('agentSkillGrants').select('groupId').where({ skillId }).orderBy('groupId')).toEqual([{ groupId: 3 }, { groupId: 9 }])
-    await expect(registry.setEnabled(skillId, 1, true)).rejects.toThrow('no approved version')
+    await expect(Promise.resolve(registry.setEnabled(skillId, 1, true))).rejects.toThrow('no approved version')
   })
 
   it('rejects source drift between preview and approval', async () => {
@@ -112,13 +112,13 @@ describe('immutable skill registry', () => {
     const preview = await registry.preview(skillId, requester)
     sourceRevision = '2'
     sourceDescription = 'Changed revision'
-    await expect(registry.approve({
+    await expect(Promise.resolve(registry.approve({
       skillId,
       actorId: 1,
       requester,
       expectedContentHash: preview.contentHash,
       expectedSourceRevision: preview.sourceRevision
-    })).rejects.toThrow('changed after approval preview')
+    }))).rejects.toThrow('changed after approval preview')
     expect(await db('agentSkillVersions').count<{ count: number }[]>({ count: '*' }).first()).toMatchObject({ count: 0 })
   })
 
@@ -166,13 +166,13 @@ describe('immutable skill registry', () => {
       expectedSourceRevision: preview.sourceRevision
     })
     expect(await db('agentSkillVersions').where({ id: rejectedVersion }).first()).toMatchObject({ approvalStatus: 'rejected', approvedBy: 1 })
-    await expect(registry.approve({
+    await expect(Promise.resolve(registry.approve({
       skillId,
       actorId: 1,
       requester,
       expectedContentHash: preview.contentHash,
       expectedSourceRevision: preview.sourceRevision
-    })).rejects.toThrow('different terminal review')
+    }))).rejects.toThrow('different terminal review')
   })
 
   it('keeps owner-authored documents outside the system skill registry', async () => {
@@ -191,8 +191,8 @@ describe('immutable skill registry', () => {
       updatedBy: 7
     })
     expect(await registry.list()).toEqual([])
-    await expect(registry.preview(personalId, requester)).rejects.toThrow('does not exist')
-    await expect(registry.setEnabled(personalId, 1, false)).rejects.toThrow('does not exist')
+    await expect(Promise.resolve(registry.preview(personalId, requester))).rejects.toThrow('does not exist')
+    await expect(Promise.resolve(registry.setEnabled(personalId, 1, false))).rejects.toThrow('does not exist')
   })
 })
 
@@ -259,11 +259,11 @@ describe('page-native skill source authorization', () => {
   it('fails closed when the reviewing administrator cannot read the mapped page', async () => {
     const checkAccess = vi.fn().mockReturnValue(false)
     Reflect.set(globalThis, 'WIKI', { auth: { checkAccess } })
-    await expect(resolvePageNativeSkillSource(db, {
+    await expect(Promise.resolve(resolvePageNativeSkillSource(db, {
       rootPageId: 42,
       rootPath: 'system/agent-skills/release-notes',
       assetFolderId: null
-    }, { id: 7 } as Express.User)).rejects.toThrow('Skill source page is unavailable')
+    }, { id: 7 } as Express.User))).rejects.toThrow('Skill source page is unavailable')
     expect(checkAccess).toHaveBeenCalledWith(expect.objectContaining({ id: 7 }), ['read:pages'], expect.objectContaining({ path: 'system/agent-skills/release-notes', locale: 'en' }))
   })
 })

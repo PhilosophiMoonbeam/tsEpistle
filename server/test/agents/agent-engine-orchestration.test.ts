@@ -1,5 +1,5 @@
 import type { AxChatRequest, AxChatResponse } from '@ax-llm/ax'
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi } from '../bun-test.mts'
 
 import { AxAgentEngine, type AgentActionSessionProvider } from '../../agents/providers/engine.ts'
 import type { AgentProviderFactory, AgentProviderService } from '../../agents/providers/factory.ts'
@@ -79,12 +79,12 @@ describe('Ax orchestration stages', () => {
     const text = vi.fn(async () => {})
     const engine = new AxAgentEngine(factoryFor(chat), { open } as unknown as AgentActionSessionProvider)
 
-    await expect(engine.execute({
+    expect(await engine.execute({
       ...baseRequest(new AbortController().signal),
       purpose: 'planner',
       actionAllowlist: [],
       limits: { maxTurns: 2, maxToolCalls: 0, maxOutputTokens: 1_024 }
-    }, { text, event: async () => {} })).resolves.toMatchObject({ inputTokens: 4, outputTokens: 2 })
+    }, { text, event: async () => {} })).toMatchObject({ inputTokens: 4, outputTokens: 2 })
 
     expect(open).not.toHaveBeenCalled()
     expect(text).toHaveBeenCalledWith('{"tasks":[]}')
@@ -144,7 +144,7 @@ describe('Ax orchestration stages', () => {
     expect(invoke).toHaveBeenCalledWith('pages.get', { id: 1 }, expect.any(AbortSignal), expect.stringMatching(new RegExp(`^sa_${subagentRunId}_[a-f0-9]{24}$`, 'u')))
     expect(result.authoritySha256).toBe(authoritySha256)
     expect(text).toHaveBeenCalledWith(expect.stringContaining('"taskId"'))
-    const systemPrompt = (chat.mock.calls[0]?.[0] as AxChatRequest<unknown>).chatPrompt?.[0]
+    const systemPrompt = (chat.mock.calls[0]?.[0] as AxChatRequest<unknown> | undefined)?.chatPrompt?.[0]
     expect(systemPrompt).toEqual(expect.objectContaining({ content: expect.not.stringContaining('private preference') }))
   })
 

@@ -1,5 +1,5 @@
 import createKnex, { type Knex } from 'knex'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from '../bun-test.mts'
 
 import { parseContentExtensionEnvelope, serializeContentExtensionFence } from '../../../shared/content-extensions.ts'
 import markdownRenderer from '../../modules/rendering/markdown-core/renderer.ts'
@@ -193,18 +193,16 @@ describe('content extension Markdown rendering', () => {
       props: { value: '<unsafe>', size: 256, errorCorrection: 'M' }
     })
     await db('contentExtensions').where({ key: 'qr' }).update({ isEnabled: false })
-    await expect(renderMarkdown(valid)).resolves.toContain('&lt;unsafe&gt;')
+    expect(await renderMarkdown(valid)).toContain('&lt;unsafe&gt;')
 
     await db('contentExtensions').where({ key: 'qr' }).update({ isEnabled: true, version: 2 })
-    await expect(renderMarkdown(valid)).resolves.toContain('&lt;unsafe&gt;')
+    expect(await renderMarkdown(valid)).toContain('&lt;unsafe&gt;')
 
     const invalid = '```wiki-extension\n{"key":"qr","version":1,"props":{"value":"ok","unknown":true}}\n```\n'
-    await expect(renderMarkdown(invalid)).resolves.toContain('&quot;unknown&quot;')
+    expect(await renderMarkdown(invalid)).toContain('&quot;unknown&quot;')
   })
 
   it('leaves ordinary fenced code rendering unchanged', async () => {
-    await expect(renderMarkdown('```js\nif (a < b) return "x"\n```')).resolves.toBe(
-      '<pre><code class="language-js">if (a &lt; b) return &quot;x&quot;\n</code></pre>\n'
-    )
+    expect(await renderMarkdown('```js\nif (a < b) return "x"\n```')).toBe('<pre class="prismjs language-js"><code class="language-js">if (a &lt; b) return &quot;x&quot;\n</code></pre>\n')
   })
 })

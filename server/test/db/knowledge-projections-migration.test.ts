@@ -1,5 +1,5 @@
 import createKnex, { type Knex } from 'knex'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from '../bun-test.mts'
 import { down, up } from '../../db/migrations/2.5.152.ts'
 
 describe('page knowledge projection migration', () => {
@@ -32,8 +32,8 @@ describe('page knowledge projection migration', () => {
       projection: '{}'
     }
     await db('pageKnowledgeProjections').insert(row)
-    await expect(db('pageKnowledgeProjections').insert(row)).rejects.toThrow()
-    await expect(db('pageKnowledgeProjections').insert({ ...row, sourceRevision: '8' })).resolves.toBeDefined()
+    await expect(Promise.resolve(db('pageKnowledgeProjections').insert(row))).rejects.toThrow()
+    expect(await db('pageKnowledgeProjections').insert({ ...row, sourceRevision: '8' })).toBeDefined()
   })
 
   it('removes only the projection store on rollback', async () => {

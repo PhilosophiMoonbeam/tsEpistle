@@ -18,12 +18,12 @@ const operationMocks = vi.hoisted(() => ({
   }
 }))
 
-vi.mock('../../operations/users.ts', () => ({ default: operationMocks.users }))
-vi.mock('../../operations/groups.ts', () => ({ default: operationMocks.groups }))
-vi.mock('../../operations/pages.ts', () => ({ default: operationMocks.pages }))
-vi.mock('../../operations/comments.ts', () => ({ default: operationMocks.comments }))
+vi.mockModule('../../operations/users.ts', import.meta.url, () => ({ default: operationMocks.users }))
+vi.mockModule('../../operations/groups.ts', import.meta.url, () => ({ default: operationMocks.groups }))
+vi.mockModule('../../operations/pages.ts', import.meta.url, () => ({ default: operationMocks.pages }))
+vi.mockModule('../../operations/comments.ts', import.meta.url, () => ({ default: operationMocks.comments }))
 
-vi.mock('express', () => {
+vi.mockModule('express', import.meta.url, () => {
   const Router = () => {
     const routes = new Map()
     const router = {
@@ -156,7 +156,7 @@ describe('REST and GraphQL shared operation parity', () => {
         failedRestResponse,
         failedRestNext
       )
-      await expect(adapters.users.resolver.UserQuery.search(null, { query: 'alice' })).rejects.toBe(failure)
+      await expect(Promise.resolve(adapters.users.resolver.UserQuery.search(null, { query: 'alice' }))).rejects.toBe(failure)
 
       expectEquivalentOperationInputs(operationMocks.users.search, 'alice')
       expect(failedRestNext).toHaveBeenCalledWith(failure)
@@ -245,7 +245,7 @@ describe('REST and GraphQL shared operation parity', () => {
         failedRestResponse,
         failedRestNext
       )
-      await expect(adapters.groups.resolver.GroupQuery.single(null, { id: 9 })).rejects.toBe(failure)
+      await expect(Promise.resolve(adapters.groups.resolver.GroupQuery.single(null, { id: 9 }))).rejects.toBe(failure)
 
       expectEquivalentOperationInputs(operationMocks.groups.get, 9)
       expect(failedRestNext).toHaveBeenCalledWith(failure)
@@ -283,7 +283,7 @@ describe('REST and GraphQL shared operation parity', () => {
         failedRestResponse,
         vi.fn()
       )
-      await expect(adapters.groups.resolver.GroupMutation.create(null, { name: 'Editors' })).rejects.toBe(failure)
+      await expect(Promise.resolve(adapters.groups.resolver.GroupMutation.create(null, { name: 'Editors' }))).rejects.toBe(failure)
 
       expectEquivalentOperationInputs(operationMocks.groups.create, 'Editors')
       expect(failedRestResponse.status).toHaveBeenCalledWith(409)
@@ -375,7 +375,7 @@ describe('REST and GraphQL shared operation parity', () => {
         failedRestResponse,
         failedRestNext
       )
-      await expect(adapters.pages.resolver.PageQuery.list(
+      await expect(Promise.resolve(adapters.pages.resolver.PageQuery.list(
         null,
         {
           tags: ['docs', 'api'],
@@ -386,7 +386,7 @@ describe('REST and GraphQL shared operation parity', () => {
           orderByDirection: 'asc'
         },
         { req: { user: requester } }
-      )).rejects.toBe(failure)
+      ))).rejects.toBe(failure)
 
       expectEquivalentOperationInputs(operationMocks.pages.list, normalizedQuery)
       expect(failedRestNext).toHaveBeenCalledWith(failure)
@@ -476,11 +476,11 @@ describe('REST and GraphQL shared operation parity', () => {
         failedRestResponse,
         failedRestNext
       )
-      await expect(adapters.comments.resolver.CommentQuery.list(
+      await expect(Promise.resolve(adapters.comments.resolver.CommentQuery.list(
         null,
         { pageId: 17 },
         { req: { user: requester } }
-      )).rejects.toBe(failure)
+      ))).rejects.toBe(failure)
 
       expectEquivalentOperationInputs(operationMocks.comments.list, expectedInput)
       expect(failedRestNext).toHaveBeenCalledWith(failure)

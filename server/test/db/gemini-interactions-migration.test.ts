@@ -1,5 +1,5 @@
 import createKnex from 'knex'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from '../bun-test.mts'
 
 import { down, up } from '../../db/migrations/2.5.153.ts'
 

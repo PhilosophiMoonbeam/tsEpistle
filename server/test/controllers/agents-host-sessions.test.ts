@@ -1,4 +1,3 @@
-/** @vitest-environment node */
 import { createHash } from 'node:crypto'
 import type { AddressInfo } from 'node:net'
 import type { Server } from 'node:http'
@@ -6,7 +5,7 @@ import cookieParser from 'cookie-parser'
 import express from 'express'
 import session from 'express-session'
 import createKnex, { type Knex } from 'knex'
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it } from '../bun-test.mts'
 import createAgentsHostController from '../../controllers/agents-host.ts'
 import { AgentProductRuntime, type AgentEngine } from '../../agents/runtime.ts'
 import { up as addAgentGoals } from '../../db/migrations/2.5.157.ts'
@@ -169,7 +168,7 @@ describe('ordinary-origin agent session API', () => {
     expect(accepted.status).toBe(200)
     expect(accepted.headers.get('cache-control')).toBe('private, no-store')
     expect(accepted.headers.get('content-disposition')).toContain(`wiki-agent-conversation-${sessionId}.json`)
-    await expect(accepted.json()).resolves.toMatchObject({
+    expect(await accepted.json()).toMatchObject({
       schemaVersion: 1,
       session: { id: sessionId, ownerId: 8 },
       messages: [],
@@ -270,10 +269,10 @@ describe('ordinary-origin agent session API', () => {
       run: { status: 'queued' },
       replayed: false
     })
-    await expect(runtime.runOnce()).resolves.toBe(true)
+    expect(await runtime.runOnce()).toBe(true)
 
     const projected = await fetch(`${baseUrl}/_api/agents/sessions/${state.session.id}`, { headers: { cookie } })
-    await expect(projected.json()).resolves.toMatchObject({
+    expect(await projected.json()).toMatchObject({
       goal: { id: goalId, status: 'completed', completion: { outcome: 'complete', issues: [] } },
       messages: [
         { role: 'user', content: 'Produce the deterministic answer.' },

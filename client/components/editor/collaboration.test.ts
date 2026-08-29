@@ -1,6 +1,6 @@
 import { EditorState } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from '../../../server/test/bun-test.mts'
 import * as Y from 'yjs'
 
 import { createMarkdownCollaboration, type CollaborationStatus } from './collaboration.ts'
@@ -85,10 +85,6 @@ beforeEach(() => {
   vi.useFakeTimers()
   FakeWebSocket.instances.length = 0
   vi.stubGlobal('WebSocket', FakeWebSocket)
-  Object.defineProperty(window, 'location', {
-    configurable: true,
-    value: { protocol: 'https:', host: 'wiki.example.test' }
-  })
 })
 
 afterEach(() => {

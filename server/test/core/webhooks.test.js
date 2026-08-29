@@ -1,4 +1,3 @@
-/** @vitest-environment node */
 
 import { EventEmitter } from 'node:events'
 import { createHmac } from 'node:crypto'
@@ -7,8 +6,8 @@ const { lookupMock, requestMock } = vi.hoisted(() => ({
   lookupMock: vi.fn(),
   requestMock: vi.fn()
 }))
-vi.mock('node:dns/promises', () => ({ lookup: lookupMock }))
-vi.mock('node:https', () => ({ request: requestMock }))
+vi.mockModule('node:dns/promises', import.meta.url, () => ({ lookup: lookupMock }))
+vi.mockModule('node:https', import.meta.url, () => ({ request: requestMock }))
 
 const {
   decryptWebhookSecret,
@@ -31,10 +30,10 @@ describe('webhook transport security', () => {
   })
 
   it('rejects non-HTTPS and private-network destinations', async () => {
-    await expect(resolveWebhookUrl('http://example.com/hook')).rejects.toThrow('must use HTTPS')
+    await expect(Promise.resolve(resolveWebhookUrl('http://example.com/hook'))).rejects.toThrow('must use HTTPS')
     lookupMock.mockResolvedValue([{ address: '127.0.0.1', family: 4 }])
 
-    await expect(resolveWebhookUrl('https://localhost/hook')).rejects.toThrow('public network address')
+    await expect(Promise.resolve(resolveWebhookUrl('https://localhost/hook'))).rejects.toThrow('public network address')
   })
 
   it('pins validated DNS and signs the exact request body', async () => {

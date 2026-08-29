@@ -1,4 +1,3 @@
-/** @vitest-environment node */
 
 import fs from 'node:fs'
 import os from 'node:os'
@@ -111,7 +110,7 @@ const setupServer = async ({ maxFileSize = 1024 * 1024, maxFiles = 1 } = {}) => 
     next()
   })
 
-  const createUploadController = (await import('../../controllers/upload.ts')).default
+  const createUploadController = (await vi.importFresh('../../controllers/upload.ts', import.meta.url)).default
   app.use(createUploadController(global.WIKI))
   app.use((err, req, res, next) => {
     void next

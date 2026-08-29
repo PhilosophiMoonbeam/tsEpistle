@@ -1,10 +1,10 @@
-vi.mock('express', () => {
+vi.mockModule('express', import.meta.url, () => {
   const router = { get: vi.fn(), post: vi.fn(), all: vi.fn(), use: vi.fn() }
   const expressMock = { Router: () => router, __router: router }
   return { default: expressMock, ...expressMock }
 })
 
-import * as express from 'express'
+const express = await import('express')
 
 const privatePage = {
   id: 7,
@@ -91,7 +91,7 @@ describe('private page administration routes', () => {
   })
 
   const handlers = async () => {
-    const { default: createCommonController } = await import('../../controllers/common.ts')
+    const { default: createCommonController } = await vi.importFresh('../../controllers/common.ts', import.meta.url)
     createCommonController(global.WIKI)
     return {
       byId: express.__router.get.mock.calls.find(([path]) => Array.isArray(path) && path.includes('/i'))[1],

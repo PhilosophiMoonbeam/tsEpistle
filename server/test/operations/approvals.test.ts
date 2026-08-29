@@ -1,6 +1,5 @@
-/** @vitest-environment node */
 import createKnex, { type Knex } from 'knex'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from '../bun-test.mts'
 import { up as upOutbox } from '../../db/migrations/2.5.131.ts'
 import { up as upApprovals } from '../../db/migrations/2.5.133.ts'
 import { up as upProtection } from '../../db/migrations/2.5.134.ts'
@@ -93,7 +92,7 @@ afterEach(async () => {
 
 describe('page approval workflow', () => {
   it('binds a submission to an immutable revision and audit transition', async () => {
-    const operations = await import('../../operations/approvals.ts')
+    const operations = await vi.importFresh('../../operations/approvals.ts', import.meta.url)
     const submitted = await operations.submitPageApproval({ requester: user(7, ['write:pages']), pageId: 42, assigneeId: 8, comment: 'Ready' })
     expect(submitted).toMatchObject({ pageId: 42, submitterId: 7, assigneeId: 8, status: 'submitted', revisionId: revision })
     expect(await knex('pageApprovalTransitions').where({ requestId: submitted.id })).toEqual([
@@ -103,18 +102,18 @@ describe('page approval workflow', () => {
   })
 
   it('enforces assignment, reviewer eligibility, and required decision comments', async () => {
-    const operations = await import('../../operations/approvals.ts')
+    const operations = await vi.importFresh('../../operations/approvals.ts', import.meta.url)
     const submitted = await operations.submitPageApproval({ requester: user(7, ['read:pages', 'write:pages']), pageId: 42, assigneeId: 8 })
-    await expect(operations.transitionApproval({ requester: user(9, ['read:pages', 'manage:pages']), requestId: submitted.id, action: 'approve' })).rejects.toMatchObject({ status: 403 })
-    await expect(operations.transitionApproval({ requester: user(8, ['read:pages', 'manage:pages']), requestId: submitted.id, action: 'request-changes' })).rejects.toMatchObject({ status: 400, name: 'COMMENT_REQUIRED' })
-    await expect(operations.transitionApproval({ requester: user(7, ['read:pages', 'write:pages']), requestId: submitted.id, action: 'approve' })).rejects.toMatchObject({ status: 403 })
+    await expect(Promise.resolve(operations.transitionApproval({ requester: user(9, ['read:pages', 'manage:pages']), requestId: submitted.id, action: 'approve' }))).rejects.toMatchObject({ status: 403 })
+    await expect(Promise.resolve(operations.transitionApproval({ requester: user(8, ['read:pages', 'manage:pages']), requestId: submitted.id, action: 'request-changes' }))).rejects.toMatchObject({ status: 400, name: 'COMMENT_REQUIRED' })
+    await expect(Promise.resolve(operations.transitionApproval({ requester: user(7, ['read:pages', 'write:pages']), requestId: submitted.id, action: 'approve' }))).rejects.toMatchObject({ status: 403 })
   })
 
   it('refuses a stale revision, then resubmits, approves, and publishes atomically', async () => {
-    const operations = await import('../../operations/approvals.ts')
+    const operations = await vi.importFresh('../../operations/approvals.ts', import.meta.url)
     const submitted = await operations.submitPageApproval({ requester: user(7, ['read:pages', 'write:pages']), pageId: 42, assigneeId: 8 })
     page.updatedAt = new Date('2026-08-15T00:01:00.000Z')
-    await expect(operations.transitionApproval({ requester: user(8, ['read:pages', 'manage:pages']), requestId: submitted.id, action: 'approve' })).rejects.toMatchObject({ status: 409, name: 'APPROVAL_STALE' })
+    await expect(Promise.resolve(operations.transitionApproval({ requester: user(8, ['read:pages', 'manage:pages']), requestId: submitted.id, action: 'approve' }))).rejects.toMatchObject({ status: 409, name: 'APPROVAL_STALE' })
     await operations.transitionApproval({ requester: user(8, ['read:pages', 'manage:pages']), requestId: submitted.id, action: 'request-changes', comment: 'Refresh this revision' })
     const resubmitted = await operations.transitionApproval({ requester: user(7, ['read:pages', 'write:pages']), requestId: submitted.id, action: 'resubmit', comment: 'Updated' })
     expect(resubmitted).toMatchObject({ status: 'submitted', revisionId: revision })
@@ -130,15 +129,15 @@ describe('page approval workflow', () => {
   })
 
   it('scopes active inbox rows to participants and eligible reviewers', async () => {
-    const operations = await import('../../operations/approvals.ts')
+    const operations = await vi.importFresh('../../operations/approvals.ts', import.meta.url)
     await operations.submitPageApproval({ requester: user(7, ['read:pages', 'write:pages']), pageId: 42, assigneeId: 8 })
-    await expect(operations.listApprovalInbox(user(7, ['read:pages', 'write:pages']))).resolves.toMatchObject({ items: [expect.objectContaining({ canReview: false })] })
-    await expect(operations.listApprovalInbox(user(8, ['read:pages', 'manage:pages']))).resolves.toMatchObject({ items: [expect.objectContaining({ canReview: true })] })
-    await expect(operations.listApprovalInbox(user(9, ['read:pages', 'manage:pages']))).resolves.toEqual({ items: [] })
+    expect(await operations.listApprovalInbox(user(7, ['read:pages', 'write:pages']))).toMatchObject({ items: [expect.objectContaining({ canReview: false })] })
+    expect(await operations.listApprovalInbox(user(8, ['read:pages', 'manage:pages']))).toMatchObject({ items: [expect.objectContaining({ canReview: true })] })
+    expect(await operations.listApprovalInbox(user(9, ['read:pages', 'manage:pages']))).toEqual({ items: [] })
   })
 
   it('audits reassignment, administrator override, rejection, and cancellation', async () => {
-    const operations = await import('../../operations/approvals.ts')
+    const operations = await vi.importFresh('../../operations/approvals.ts', import.meta.url)
     const first = await operations.submitPageApproval({ requester: user(7, ['read:pages', 'write:pages']), pageId: 42, assigneeId: 8 })
     const reassigned = await operations.transitionApproval({
       requester: user(9, ['read:pages', 'manage:system']),

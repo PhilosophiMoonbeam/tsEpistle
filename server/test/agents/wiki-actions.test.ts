@@ -1,5 +1,5 @@
 import type { Knex } from 'knex'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from '../bun-test.mts'
 import type { AgentEngineRequest } from '../../agents/runtime.ts'
 
 const request = (signal: AbortSignal): AgentEngineRequest => ({
@@ -173,10 +173,10 @@ describe('Wiki action sessions', () => {
     expect(session?.authoritySha256).toMatch(/^[a-f0-9]{64}$/u)
     session?.close()
 
-    await expect(createWikiActionSessionProvider(knex, config).open({
+    await expect(Promise.resolve(createWikiActionSessionProvider(knex, config).open({
       ...childRequest,
       actionAllowlist: ['pages.prepareCreate']
-    })).rejects.toMatchObject({ code: 'INVALID_SUBAGENT_AUTHORITY' })
-    await expect(createWikiActionSessionProvider(knex, { ...config, orchestrationEnabled: false }).open(childRequest)).resolves.toBeNull()
+    }))).rejects.toMatchObject({ code: 'INVALID_SUBAGENT_AUTHORITY' })
+    expect(await createWikiActionSessionProvider(knex, { ...config, orchestrationEnabled: false }).open(childRequest)).toBeNull()
   })
 })

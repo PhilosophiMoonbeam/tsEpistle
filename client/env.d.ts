@@ -1,9 +1,12 @@
 /// <reference types="vite/client" />
+import 'vuetify'
+
 
 import type { i18n as I18next } from 'i18next'
 import type moment from 'moment-timezone'
 import type { helpers } from './helpers/index.ts'
-import type { Router } from 'vue-router'
+import type { RouteLocationNormalizedLoaded, Router } from 'vue-router'
+import type { Vuetify } from 'vue'
 import type { ProductMetadata } from '../shared/product.ts'
 import type { SiteBannerConfig } from '../shared/site-banner.ts'
 import type { PageEditorKey } from '../shared/page-editors.ts'
@@ -54,7 +57,9 @@ declare module '@vue/runtime-core' {
     $helpers: typeof helpers
     $i18n: I18next
     $moment: typeof moment
+    $route: RouteLocationNormalizedLoaded
     $router: Router
+    $vuetify: Vuetify
     $t: (key: string, options?: Record<string, unknown>) => string
   }
 }
@@ -64,7 +69,9 @@ declare module 'vue' {
     $helpers: typeof helpers
     $i18n: I18next
     $moment: typeof moment
+    $route: RouteLocationNormalizedLoaded
     $router: Router
+    $vuetify: Vuetify
     $t: (key: string, options?: Record<string, unknown>) => string
   }
 }

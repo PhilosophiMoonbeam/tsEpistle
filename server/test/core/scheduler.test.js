@@ -1,10 +1,9 @@
-/** @vitest-environment node */
 
 import { EventEmitter } from 'node:events'
 import { PassThrough } from 'node:stream'
 
 const { forkMock } = vi.hoisted(() => ({ forkMock: vi.fn() }))
-vi.mock('node:child_process', () => ({ fork: forkMock }))
+vi.mockModule('node:child_process', import.meta.url, () => ({ fork: forkMock }))
 
 const loadScheduler = async (jobs = {}) => {
   vi.resetModules()
@@ -14,7 +13,7 @@ const loadScheduler = async (jobs = {}) => {
     data: { jobs },
     logger: { warn: vi.fn() }
   }
-  return (await import('../../core/scheduler.ts')).default
+  return (await vi.importFresh('../../core/scheduler.ts', import.meta.url)).default
 }
 
 class WorkerProcess extends EventEmitter {

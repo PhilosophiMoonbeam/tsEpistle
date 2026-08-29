@@ -1,7 +1,7 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from '../bun-test.mts'
 
 const { sign } = vi.hoisted(() => ({ sign: vi.fn(() => 'signed-key') }))
-vi.mock('jsonwebtoken', () => ({ default: { sign } }))
+vi.mockModule('jsonwebtoken', import.meta.url, () => ({ default: { sign } }))
 
 describe('MCP API-key resource binding', () => {
   afterEach(() => {
@@ -25,9 +25,9 @@ describe('MCP API-key resource binding', () => {
       },
       models: { apiKeys: { query } }
     })
-    const ApiKey = (await import('../../models/apiKeys.ts')).default
+    const ApiKey = (await vi.importFresh('../../models/apiKeys.ts', import.meta.url)).default
 
-    await expect(ApiKey.createNewKey({ name: 'MCP', expiration: '1h', fullAccess: false, group: 3 })).resolves.toBe('signed-key')
+    expect(await ApiKey.createNewKey({ name: 'MCP', expiration: '1h', fullAccess: false, group: 3 })).toBe('signed-key')
 
     expect(sign).toHaveBeenCalledWith(expect.objectContaining({
       api: 17,

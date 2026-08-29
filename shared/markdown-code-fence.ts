@@ -27,13 +27,13 @@ const escapeHtml = (value: string): string => value
 
 const parseAttributes = (
   source: string,
-  unescape: (value: string) => string
+  decodeAttribute: (value: string) => string
 ): Record<string, string> => {
   const attributes: Record<string, string> = {}
   for (const match of source.matchAll(FENCE_ATTRIBUTE)) {
     const key = match[1]
     const value = match[2] ?? match[3] ?? match[4]
-    if (key !== undefined && value !== undefined) attributes[key.toLowerCase()] = unescape(value)
+    if (key !== undefined && value !== undefined) attributes[key.toLowerCase()] = decodeAttribute(value)
   }
   return attributes
 }
@@ -78,12 +78,12 @@ const logicalLineCount = (source: string): number => {
 
 export const parseMarkdownCodeFenceInfo = (
   info = '',
-  unescape: (value: string) => string = value => value
+  decodeInfo: (value: string) => string = value => value
 ): MarkdownCodeFenceMetadata => {
   const normalized = info.trim()
   const boundary = normalized.search(/\s/)
-  const language = unescape(boundary < 0 ? normalized : normalized.slice(0, boundary))
-  const attributes = parseAttributes(boundary < 0 ? '' : normalized.slice(boundary + 1), unescape)
+  const language = decodeInfo(boundary < 0 ? normalized : normalized.slice(0, boundary))
+  const attributes = parseAttributes(boundary < 0 ? '' : normalized.slice(boundary + 1), decodeInfo)
   const requestedStart = safeLineNumber(attributes.linesstart?.trim() ?? '')
   return {
     language,
@@ -98,9 +98,9 @@ export const renderMarkdownCodeFence = ({
   info = '',
   sourceLine,
   decodeDiagram = value => value,
-  unescape = value => value
+  unescape: decodeInfo = value => value
 }: MarkdownCodeFenceRenderOptions): string => {
-  const metadata = parseMarkdownCodeFenceInfo(info, unescape)
+  const metadata = parseMarkdownCodeFenceInfo(info, decodeInfo)
   const sourceMarker = Number.isSafeInteger(sourceLine) && (sourceLine ?? -1) >= 0
     ? ` data-source-line="${sourceLine}"`
     : ''

@@ -71,7 +71,7 @@ type SystemInfo {
   httpsPort: Int @auth(requires: ["manage:system"])
   latestVersion: String @auth(requires: ["manage:system"])
   latestVersionReleaseDate: Date @auth(requires: ["manage:system"])
-  nodeVersion: String @auth(requires: ["manage:system"])
+  bunVersion: String @auth(requires: ["manage:system"])
   operatingSystem: String @auth(requires: ["manage:system"])
   pagesTotal: Int @auth(requires: ["manage:system", "manage:navigation", "manage:pages", "delete:pages"])
   platform: String @auth(requires: ["manage:system"])

@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'vitest'
+import { describe, expect, test } from '../../server/test/bun-test.mts'
 import type { ThemeInstance } from 'vuetify'
 import { cloneThemeColors, DEFAULT_THEME_COLORS } from '../../shared/theme-colors.ts'
 import { applyWikiThemeColors, createWikiThemes, resolveThemeName, WIKI_THEME_VARIATIONS } from './theme.ts'

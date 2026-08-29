@@ -10,24 +10,27 @@ import (
 	"github.com/pbnjay/memory"
 )
 
-const nodejsSemverRange = ">=8.11.4 <11.0.0"
+const bunSemverRange = ">=1.3.14 <2.0.0"
 const ramMin = 768
 
-// CheckNodeJs checks if Node.js is installed and has minimal supported version
-func CheckNodeJs() bool {
-	cmd := exec.Command("node", "-v")
+// CheckBun checks if Bun is installed and has a supported version.
+func CheckBun() bool {
+	cmd := exec.Command("bun", "--version")
 	cmdOutput, err := cmd.CombinedOutput()
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	validRange := semver.MustParseRange(nodejsSemverRange)
-	nodeVersion, err := semver.ParseTolerant(string(cmdOutput[:]))
-	if !validRange(nodeVersion) {
-		panic(fmt.Errorf(color.RedString("Error: Installed Node.js version %s is not supported! %s\n"), nodeVersion, nodejsSemverRange))
+	validRange := semver.MustParseRange(bunSemverRange)
+	bunVersion, err := semver.ParseTolerant(string(cmdOutput))
+	if err != nil {
+		panic(fmt.Errorf(color.RedString("Error: Failed to parse Bun version: %s\n"), err))
+	}
+	if !validRange(bunVersion) {
+		panic(fmt.Errorf(color.RedString("Error: Installed Bun version %s is not supported! %s\n"), bunVersion, bunSemverRange))
 	}
 
-	fmt.Printf(color.GreenString("✔")+" Node.js %s: OK\n", nodeVersion.String())
+	fmt.Printf(color.GreenString("✔")+" Bun %s: OK\n", bunVersion.String())
 
 	return true
 }

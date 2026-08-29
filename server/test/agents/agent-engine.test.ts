@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi } from '../bun-test.mts'
 import type { AxChatRequest, AxChatResponse } from '@ax-llm/ax'
 import { AxAgentEngine, type AgentActionSessionProvider } from '../../agents/providers/engine.ts'
 import type { AgentProviderFactory } from '../../agents/providers/factory.ts'
@@ -10,7 +10,7 @@ const request = (signal: AbortSignal): AgentEngineRequest => ({
     id: '00000000-0000-4000-8000-000000000001', sessionId: '00000000-0000-4000-8000-000000000002', userMessageId: '00000000-0000-4000-8000-000000000003', assistantMessageId: '00000000-0000-4000-8000-000000000004', ownerId: 7, clientRequestId: '00000000-0000-4000-8000-000000000005', clientRequestSha256: 'a'.repeat(64), status: 'running', providerProfileVersionId: '00000000-0000-4000-8000-000000000006', transportKind: 'openai-responses', model: 'gpt-test', executionMode: 'agent', capabilityRevision: 'cap-1', pricingRevision: 'price-1', promptVersion: 1, attempts: 1, maxAttempts: 3, eventSequence: 0, leaseOwner: 'worker', leaseToken: '00000000-0000-4000-8000-000000000007', leaseExpiresAt: new Date(Date.now() + 60_000).toISOString(), cancelRequestedAt: null, sideEffectsStarted: false, errorCode: null, errorMessage: null, queuedAt: '2026-08-17T00:00:00.000Z', startedAt: '2026-08-17T00:00:00.000Z', completedAt: null
   },
   messages: [{ role: 'user', content: 'Read page 42' }],
-  memory: { user: ['Prefers concise, evidence-first answers.'], agent: ['Wiki project uses PostgreSQL and pnpm.'] },
+  memory: { user: ['Prefers concise, evidence-first answers.'], agent: ['Wiki project uses PostgreSQL and Bun.'] },
   currentPage: { id: 42, locale: 'en', path: 'guide', observedUpdatedAt: '2026-08-17T00:00:00.000Z' },
   skills: [{ id: '00000000-0000-4000-8000-000000000008', name: 'wiki-reader', skillMarkdown: '# Reader\nUse page tools.' }],
   priorActivity: [{
@@ -403,6 +403,6 @@ describe('Ax agent engine', () => {
     const factory = { create: async () => ({ service: { chat: async () => ({ results: [{ index: 0, functionCalls: [{ id: 'call-1', type: 'function', function: { name: 'pages.get', params: '{}' } }] }] }) }, capabilities: { streaming: false, toolCalling: 'native', parallelToolCalls: false, structuredOutput: 'tool-result', usage: 'terminal', cancellation: true, maxContextTokens: 10_000, maxOutputTokens: 1_000 }, transportKind: 'openai-chat', model: 'gpt-test', capabilityRevision: 'cap-1', pricingRevision: 'price-1' }) } as unknown as AgentProviderFactory
     const input = request(new AbortController().signal)
     const generationOnly = { ...input, run: { ...input.run, executionMode: 'generation-only' } }
-    await expect(new AxAgentEngine(factory).execute(generationOnly, { text: async () => {}, event: async () => {} })).rejects.toMatchObject({ code: 'UNEXPECTED_PROVIDER_TOOL_CALL' })
+    await expect(Promise.resolve(new AxAgentEngine(factory).execute(generationOnly, { text: async () => {}, event: async () => {} }))).rejects.toMatchObject({ code: 'UNEXPECTED_PROVIDER_TOOL_CALL' })
   })
 })

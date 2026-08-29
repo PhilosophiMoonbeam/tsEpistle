@@ -41,10 +41,10 @@ else {
 
 const browserDockerfile = await readFile('dev/build/Dockerfile.agent-browser', 'utf8')
 const browserRuntime = await readFile('server/agents/browser/runtime.ts', 'utf8')
-if (!browserDockerfile.includes('mcr.microsoft.com/playwright:v1.62.1-noble@sha256:dcc5531e97840b9b5e794f2814476b21571c5124a3fca2267d73041f56e7580e')) {
-  failures.push('browser worker base image must retain the reviewed Playwright 1.62.1 multi-arch digest')
+if (!browserDockerfile.includes('oven/bun:1.3.14@sha256:e10577f0db68676a7024391c6e5cb4b879ebd17188ab750cf10024a6d700e5c4')) {
+  failures.push('browser worker base image must retain the reviewed Bun 1.3.14 multi-arch digest')
 }
-if (!browserDockerfile.includes('USER pwuser')) failures.push('browser worker image must run as pwuser')
+if (!browserDockerfile.includes('USER bun')) failures.push('browser worker image must run as bun')
 if (!browserRuntime.includes('chromiumSandbox: true')) failures.push('browser worker must launch Chromium with its sandbox enabled')
 if (!browserDockerfile.includes('AGENT_BROWSER_MAX_CONTEXTS=8')) failures.push('browser worker image must retain a bounded context default')
 

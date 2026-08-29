@@ -14,7 +14,7 @@ describe('comments api helper', () => {
   test('requests comment providers with same-origin JSON options', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([]))
 
-    await expect(fetchCommentProviders(fetchImpl)).resolves.toEqual([])
+    expect(await fetchCommentProviders(fetchImpl)).toEqual([])
 
     expect(fetchImpl).toHaveBeenCalledWith('/_api/comments/providers', {
       credentials: 'same-origin',
@@ -34,7 +34,7 @@ describe('comments api helper', () => {
     }]
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse(comments))
 
-    await expect(fetchComments(fetchImpl, 17)).resolves.toEqual(comments)
+    expect(await fetchComments(fetchImpl, 17)).toEqual(comments)
     expect(fetchImpl).toHaveBeenCalledWith('/_api/comments?pageId=17', {
       credentials: 'same-origin',
       headers: { Accept: 'application/json' }
@@ -69,7 +69,7 @@ describe('comments api helper', () => {
       }
     ]))
 
-    await expect(fetchCommentProviders(fetchImpl)).resolves.toEqual([
+    expect(await fetchCommentProviders(fetchImpl)).toEqual([
       {
         isEnabled: true,
         key: 'default',
@@ -118,7 +118,7 @@ describe('comments api helper', () => {
       }
     ]))
 
-    await expect(fetchCommentProviders(fetchImpl)).resolves.toEqual([
+    expect(await fetchCommentProviders(fetchImpl)).toEqual([
       {
         isEnabled: false,
         key: 'external',
@@ -140,7 +140,7 @@ describe('comments api helper', () => {
   test('rejects malformed root payloads', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ providers: [] }))
 
-    await expect(fetchCommentProviders(fetchImpl, 'Bad comments payload')).rejects.toThrow('Bad comments payload')
+    await expect(Promise.resolve(fetchCommentProviders(fetchImpl, 'Bad comments payload'))).rejects.toThrow('Bad comments payload')
   })
 
   test('rejects malformed provider rows', async () => {
@@ -157,7 +157,7 @@ describe('comments api helper', () => {
       }
     ]))
 
-    await expect(fetchCommentProviders(fetchImpl, 'Bad comments row')).rejects.toThrow('Bad comments row')
+    await expect(Promise.resolve(fetchCommentProviders(fetchImpl, 'Bad comments row'))).rejects.toThrow('Bad comments row')
   })
 
   test('rejects malformed config rows', async () => {
@@ -174,7 +174,7 @@ describe('comments api helper', () => {
       }
     ]))
 
-    await expect(fetchCommentProviders(fetchImpl, 'Bad comments config')).rejects.toThrow('Bad comments config')
+    await expect(Promise.resolve(fetchCommentProviders(fetchImpl, 'Bad comments config'))).rejects.toThrow('Bad comments config')
   })
 
   test('rejects malformed config JSON', async () => {
@@ -191,7 +191,7 @@ describe('comments api helper', () => {
       }
     ]))
 
-    await expect(fetchCommentProviders(fetchImpl, 'Bad comments JSON')).rejects.toThrow('Bad comments JSON')
+    await expect(Promise.resolve(fetchCommentProviders(fetchImpl, 'Bad comments JSON'))).rejects.toThrow('Bad comments JSON')
   })
 
   test('propagates API JSON errors', async () => {
@@ -203,14 +203,14 @@ describe('comments api helper', () => {
       json: async () => ({ error: 'manage:system is required' })
     })
 
-    await expect(fetchCommentProviders(fetchImpl, 'Bad comments load')).rejects.toThrow('manage:system is required')
+    await expect(Promise.resolve(fetchCommentProviders(fetchImpl, 'Bad comments load'))).rejects.toThrow('manage:system is required')
   })
 
   test('saves comment providers with same-origin JSON POST options', async () => {
     const providers = [{ key: 'default', isEnabled: true, config: [] }]
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ message: 'Comment Providers updated successfully' }))
 
-    await expect(saveCommentProviders(fetchImpl, providers)).resolves.toEqual({ message: 'Comment Providers updated successfully' })
+    expect(await saveCommentProviders(fetchImpl, providers)).toEqual({ message: 'Comment Providers updated successfully' })
     expect(fetchImpl).toHaveBeenCalledWith('/_api/comments/providers', {
       method: 'POST',
       credentials: 'same-origin',
@@ -225,13 +225,13 @@ describe('comments api helper', () => {
   test('rejects malformed successful comment provider save responses', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ ok: true }))
 
-    await expect(saveCommentProviders(fetchImpl, [], 'Bad save payload')).rejects.toThrow('Bad save payload')
+    await expect(Promise.resolve(saveCommentProviders(fetchImpl, [], 'Bad save payload'))).rejects.toThrow('Bad save payload')
   })
 
   test('propagates API JSON errors for comment provider saves', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ error: 'Invalid comment providers payload' }, false))
 
-    await expect(saveCommentProviders(fetchImpl, [], 'Bad save')).rejects.toThrow('Invalid comment providers payload')
+    await expect(Promise.resolve(saveCommentProviders(fetchImpl, [], 'Bad save'))).rejects.toThrow('Invalid comment providers payload')
   })
 
   test('rejects non-JSON successful comment provider save responses', async () => {
@@ -242,7 +242,7 @@ describe('comments api helper', () => {
       }
     })
 
-    await expect(saveCommentProviders(fetchImpl, [], 'Bad save content type')).rejects.toThrow('Bad save content type')
+    await expect(Promise.resolve(saveCommentProviders(fetchImpl, [], 'Bad save content type'))).rejects.toThrow('Bad save content type')
   })
 
   test('rejects non-JSON successful responses', async () => {
@@ -253,6 +253,6 @@ describe('comments api helper', () => {
       }
     })
 
-    await expect(fetchCommentProviders(fetchImpl, 'Bad comments content type')).rejects.toThrow('Bad comments content type')
+    await expect(Promise.resolve(fetchCommentProviders(fetchImpl, 'Bad comments content type'))).rejects.toThrow('Bad comments content type')
   })
 })

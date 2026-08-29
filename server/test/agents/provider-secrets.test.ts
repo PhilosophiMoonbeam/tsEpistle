@@ -1,6 +1,5 @@
-/** @vitest-environment node */
 import createKnex, { type Knex } from 'knex'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from '../bun-test.mts'
 
 import { DatabaseAgentSecretRegistry, decodeAgentProviderSecretKeys } from '../../agents/providers/secrets.ts'
 
@@ -48,16 +47,16 @@ describe('encrypted provider secret vault', () => {
     const reference = await db.transaction(transaction => vault.store('provider-key', 7, transaction))
     const id = reference.slice('managed:'.length)
     await db('agentProviderSecrets').where({ id }).update({ authTag: Buffer.alloc(16, 1) })
-    await expect(vault.get(reference)).rejects.toMatchObject({ code: 'PROVIDER_SECRET_DECRYPTION_FAILED', status: 503 })
+    await expect(Promise.resolve(vault.get(reference))).rejects.toMatchObject({ code: 'PROVIDER_SECRET_DECRYPTION_FAILED', status: 503 })
 
     const missingKeyVault = new DatabaseAgentSecretRegistry(db, { currentKeyId: 'replacement', keys: { replacement: Buffer.alloc(32, 12) } })
-    await expect(missingKeyVault.get(reference)).rejects.toMatchObject({ code: 'PROVIDER_SECRET_KEY_UNAVAILABLE', status: 503 })
-    await expect(vault.get('managed:not-a-uuid')).resolves.toBeNull()
+    await expect(Promise.resolve(missingKeyVault.get(reference))).rejects.toMatchObject({ code: 'PROVIDER_SECRET_KEY_UNAVAILABLE', status: 503 })
+    expect(await vault.get('managed:not-a-uuid')).toBeNull()
 
-    await expect(db.transaction(async transaction => {
+    await expect(Promise.resolve(db.transaction(async transaction => {
       await vault.store('rolled-back-key', 7, transaction)
       throw new Error('rollback')
-    })).rejects.toThrow('rollback')
+    }))).rejects.toThrow('rollback')
     expect(await db('agentProviderSecrets').count<{ count: number }[]>({ count: '*' }).first()).toMatchObject({ count: 1 })
   })
 

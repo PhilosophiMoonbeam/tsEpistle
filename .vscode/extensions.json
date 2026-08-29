@@ -1,9 +1,10 @@
 {
   "recommendations": [
     "EditorConfig.editorconfig",
-    "dbaeumer.vscode-eslint",
+    "biomejs.biome",
+    "oven.bun-vscode",
     "christian-kohler.path-intellisense",
     "mrmlnc.vscode-puglint",
-    "octref.vetur"
+    "Vue.volar"
   ]
 }

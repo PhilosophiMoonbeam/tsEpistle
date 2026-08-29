@@ -121,7 +121,9 @@ export function enhanceWikiMarkdownPreview (root: HTMLElement, dark = false): vo
   tabsetHelper.format()
   void renderMermaidDiagrams(root)
   Prism.highlightAllUnder(root)
-  root.querySelectorAll('pre.line-numbers').forEach(pre => pre.classList.add('prismjs'))
+  root.querySelectorAll('pre.line-numbers').forEach(pre => {
+    pre.classList.add('prismjs')
+  })
 }
 
 async function renderMermaidDiagrams (root: HTMLElement): Promise<void> {

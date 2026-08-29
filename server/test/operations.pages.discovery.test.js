@@ -11,7 +11,7 @@ describe('structured page discovery', () => {
       { id: 4, localeCode: 'en', path: 'other/page', title: 'Other', description: '', visibility: 'public', ownerId: null, updatedAt: new Date('2026-08-23T00:00:00.000Z'), tags: [{ tag: 'runbook' }] }
     ]
     const listPageIndexCandidates = vi.fn(async () => candidates)
-    vi.doMock('../repositories/page-index.ts', () => ({ PAGE_INDEX_CANDIDATE_LIMIT: 5_001, listPageIndexCandidates }))
+    vi.mockModule('../repositories/page-index.ts', import.meta.url, () => ({ PAGE_INDEX_CANDIDATE_LIMIT: 5_001, listPageIndexCandidates }))
     const checkAccess = vi.fn().mockReturnValue(true)
     global.WIKI = {
       auth: { checkAccess },
@@ -21,15 +21,15 @@ describe('structured page discovery', () => {
       models: { knex: {}, pages: {}, tags: {}, pageHistory: {} }
     }
 
-    const { default: operations } = await import('../operations/pages.ts')
+    const { default: operations } = await vi.importFresh('../operations/pages.ts', import.meta.url)
     const requester = { id: 7 }
-    await expect(operations.discover({ requester, locale: 'en', path: 'docs', depth: 1, tags: ['RUNBOOK'], order: 'title', limit: 1, offset: 0 })).resolves.toEqual({
+    expect(await operations.discover({ requester, locale: 'en', path: 'docs', depth: 1, tags: ['RUNBOOK'], order: 'title', limit: 1, offset: 0 })).toEqual({
       pages: [{ id: 2, locale: 'en', path: 'docs/nested/alpha', title: 'Alpha', description: 'Nested', updatedAt: '2026-08-21T00:00:00.000Z', tags: ['runbook', 'release'] }],
       totalInWindow: 2,
       windowLimit: 5_000,
       nextOffset: 1
     })
-    await expect(operations.discover({ requester, locale: 'en', path: 'docs', depth: 1, tags: ['runbook'], order: 'title', limit: 1, offset: 1 })).resolves.toMatchObject({
+    expect(await operations.discover({ requester, locale: 'en', path: 'docs', depth: 1, tags: ['runbook'], order: 'title', limit: 1, offset: 1 })).toMatchObject({
       pages: [{ id: 1, path: 'docs/zulu' }],
       totalInWindow: 2,
       nextOffset: null

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi } from '../../../test/bun-test.mts'
 import type { Entry } from 'ldapts'
 import { LdapStrategy, type LdapClient, type LdapRequest } from './ldap-strategy.ts'
 
@@ -18,11 +18,14 @@ const deferred = <T>(): Deferred<T> => {
   return { promise, resolve, reject }
 }
 
-const createClient = (searchEntries: Entry[] = []): LdapClient => ({
-  bind: vi.fn().mockResolvedValue(undefined),
-  search: vi.fn().mockResolvedValue({ searchEntries, searchReferences: [] }),
-  unbind: vi.fn().mockResolvedValue(undefined)
-} as unknown as LdapClient)
+const createClient = (searchEntries: Entry[] = []) => {
+  const client = {
+    bind: vi.fn(async () => undefined),
+    search: vi.fn(async () => ({ searchEntries, searchReferences: [] })),
+    unbind: vi.fn(async () => undefined)
+  }
+  return client as typeof client & LdapClient
+}
 
 const createRequest = (email = 'alice', password = 'secret'): LdapRequest => ({
   body: { email, password },
@@ -86,8 +89,8 @@ describe('LDAP strategy', () => {
       attributes: ['name']
     }))
     expect(profile).toMatchObject({ _raw: { jpegPhoto: avatar }, _groups: [groupEntry] })
-    expect(adminClient.unbind).toHaveBeenCalledOnce()
-    expect(userClient.unbind).toHaveBeenCalledOnce()
+    expect(adminClient.unbind).toHaveBeenCalledTimes(1)
+    expect(userClient.unbind).toHaveBeenCalledTimes(1)
     expect(success).toHaveBeenCalledWith({ id: 'wiki-user' }, undefined)
   })
 
@@ -117,9 +120,9 @@ describe('LDAP strategy', () => {
     })
 
     strategy.authenticate(createRequest())
-    await expect(failed.promise).resolves.toEqual({ challenge: { message: 'User account locked' }, status: 401 })
-    expect(adminClient.unbind).toHaveBeenCalledOnce()
-    expect(userClient.unbind).toHaveBeenCalledOnce()
+    expect(await failed.promise).toEqual({ challenge: { message: 'User account locked' }, status: 401 })
+    expect(adminClient.unbind).toHaveBeenCalledTimes(1)
+    expect(userClient.unbind).toHaveBeenCalledTimes(1)
   })
 
   it('rejects missing form credentials before opening an LDAP connection', async () => {
@@ -143,7 +146,7 @@ describe('LDAP strategy', () => {
     })
 
     strategy.authenticate(createRequest('', ''))
-    await expect(failed.promise).resolves.toEqual({ challenge: { message: 'Missing credentials' }, status: 400 })
+    expect(await failed.promise).toEqual({ challenge: { message: 'Missing credentials' }, status: 400 })
     expect(clientFactory).not.toHaveBeenCalled()
   })
 })

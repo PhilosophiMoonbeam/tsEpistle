@@ -34,7 +34,7 @@ const infoPayload = {
   dbType: 'PostgreSQL',
   dbVersion: '15.4',
   hostname: 'wiki-host',
-  nodeVersion: '24.9.0',
+  bunVersion: '1.3.14',
   operatingSystem: 'Ubuntu 24.04 LTS',
   platform: 'linux',
   ramTotal: '16 GB',
@@ -47,7 +47,7 @@ describe('system api helper', () => {
   test('fetches and validates system summary metadata', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse(summaryPayload))
 
-    await expect(fetchSystemSummary(fetchImpl)).resolves.toEqual(summaryPayload)
+    expect(await fetchSystemSummary(fetchImpl)).toEqual(summaryPayload)
 
     expect(fetchImpl).toHaveBeenCalledWith('/_api/system/summary', {
       credentials: 'same-origin',
@@ -60,7 +60,7 @@ describe('system api helper', () => {
   test('fetches and validates rich system info payloads', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse(infoPayload))
 
-    await expect(fetchSystemInfo(fetchImpl)).resolves.toEqual(infoPayload)
+    expect(await fetchSystemInfo(fetchImpl)).toEqual(infoPayload)
 
     expect(fetchImpl).toHaveBeenCalledWith('/_api/system/info', {
       credentials: 'same-origin',
@@ -76,7 +76,7 @@ describe('system api helper', () => {
       cpuCores: '8'
     }))
 
-    await expect(fetchSystemInfo(fetchImpl, 'Bad system info')).rejects.toThrow('Bad system info')
+    await expect(Promise.resolve(fetchSystemInfo(fetchImpl, 'Bad system info'))).rejects.toThrow('Bad system info')
   })
 
   test('rejects a source URL that does not identify the reported revision', async () => {
@@ -88,7 +88,7 @@ describe('system api helper', () => {
       }
     }))
 
-    await expect(fetchSystemSummary(fetchImpl, 'Bad product metadata')).rejects.toThrow('Bad product metadata')
+    await expect(Promise.resolve(fetchSystemSummary(fetchImpl, 'Bad product metadata'))).rejects.toThrow('Bad product metadata')
   })
 
   test('fetches and validates system telemetry', async () => {
@@ -98,7 +98,7 @@ describe('system api helper', () => {
       privateValue: 'must not be returned by helper'
     }))
 
-    await expect(fetchSystemTelemetry(fetchImpl)).resolves.toEqual({
+    expect(await fetchSystemTelemetry(fetchImpl)).toEqual({
       telemetry: true,
       telemetryClientId: 'client-123'
     })
@@ -116,7 +116,7 @@ describe('system api helper', () => {
       telemetryClientId: null
     }))
 
-    await expect(fetchSystemTelemetry(fetchImpl)).resolves.toEqual({
+    expect(await fetchSystemTelemetry(fetchImpl)).toEqual({
       telemetry: false,
       telemetryClientId: null
     })
@@ -128,7 +128,7 @@ describe('system api helper', () => {
       telemetryClientId: 'client-123'
     }))
 
-    await expect(fetchSystemTelemetry(fetchImpl, 'Bad telemetry payload')).rejects.toThrow('Bad telemetry payload')
+    await expect(Promise.resolve(fetchSystemTelemetry(fetchImpl, 'Bad telemetry payload'))).rejects.toThrow('Bad telemetry payload')
   })
 
   test('surfaces API error messages for failed telemetry loads', async () => {
@@ -140,7 +140,7 @@ describe('system api helper', () => {
       json: async () => ({ error: 'manage:system is required' })
     })
 
-    await expect(fetchSystemTelemetry(fetchImpl, 'Bad telemetry load')).rejects.toThrow('manage:system is required')
+    await expect(Promise.resolve(fetchSystemTelemetry(fetchImpl, 'Bad telemetry load'))).rejects.toThrow('manage:system is required')
   })
 
   test('fetches and validates export status payloads', async () => {
@@ -151,7 +151,7 @@ describe('system api helper', () => {
       startedAt: '2026-04-25T12:00:00.000Z'
     }))
 
-    await expect(fetchSystemExportStatus(fetchImpl)).resolves.toEqual({
+    expect(await fetchSystemExportStatus(fetchImpl)).toEqual({
       status: 'running',
       progress: 42,
       message: 'Export is running',
@@ -176,7 +176,7 @@ describe('system api helper', () => {
       privateNote: 'must not be returned by helper'
     }))
 
-    await expect(fetchSystemExportStatus(fetchImpl)).resolves.toEqual({
+    expect(await fetchSystemExportStatus(fetchImpl)).toEqual({
       status: 'success',
       progress: 100,
       message: null,
@@ -190,7 +190,7 @@ describe('system api helper', () => {
   ])('rejects malformed export status roots: %s', async (label, payload) => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse(payload))
 
-    await expect(fetchSystemExportStatus(fetchImpl, 'Bad export status')).rejects.toThrow('Bad export status')
+    await expect(Promise.resolve(fetchSystemExportStatus(fetchImpl, 'Bad export status'))).rejects.toThrow('Bad export status')
   })
 
   test.each([
@@ -209,7 +209,7 @@ describe('system api helper', () => {
     payload[field] = value
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse(payload))
 
-    await expect(fetchSystemExportStatus(fetchImpl, 'Bad export status')).rejects.toThrow('Bad export status')
+    await expect(Promise.resolve(fetchSystemExportStatus(fetchImpl, 'Bad export status'))).rejects.toThrow('Bad export status')
   })
 
   test('surfaces API error messages for failed export status loads', async () => {
@@ -221,7 +221,7 @@ describe('system api helper', () => {
       json: async () => ({ error: 'manage:system is required' })
     })
 
-    await expect(fetchSystemExportStatus(fetchImpl, 'Bad export status load')).rejects.toThrow('manage:system is required')
+    await expect(Promise.resolve(fetchSystemExportStatus(fetchImpl, 'Bad export status load'))).rejects.toThrow('manage:system is required')
   })
 
   test('rejects non-JSON successful export status responses', async () => {
@@ -232,7 +232,7 @@ describe('system api helper', () => {
       }
     })
 
-    await expect(fetchSystemExportStatus(fetchImpl, 'Bad export status load')).rejects.toThrow('Bad export status load')
+    await expect(Promise.resolve(fetchSystemExportStatus(fetchImpl, 'Bad export status load'))).rejects.toThrow('Bad export status load')
   })
 
   test('fetches and validates system host', async () => {
@@ -241,7 +241,7 @@ describe('system api helper', () => {
       title: 'must not be returned by helper'
     }))
 
-    await expect(fetchSystemHost(fetchImpl)).resolves.toEqual({
+    expect(await fetchSystemHost(fetchImpl)).toEqual({
       host: 'https://docs.example.test'
     })
 
@@ -260,7 +260,7 @@ describe('system api helper', () => {
   ])('rejects malformed system host payloads: %s', async (label, payload) => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse(payload))
 
-    await expect(fetchSystemHost(fetchImpl, 'Bad host payload')).rejects.toThrow('Bad host payload')
+    await expect(Promise.resolve(fetchSystemHost(fetchImpl, 'Bad host payload'))).rejects.toThrow('Bad host payload')
   })
 
   test('surfaces API error messages for failed system host loads', async () => {
@@ -272,7 +272,7 @@ describe('system api helper', () => {
       json: async () => ({ error: 'manage:system is required' })
     })
 
-    await expect(fetchSystemHost(fetchImpl, 'Bad host load')).rejects.toThrow('manage:system is required')
+    await expect(Promise.resolve(fetchSystemHost(fetchImpl, 'Bad host load'))).rejects.toThrow('manage:system is required')
   })
 
   test('rejects non-JSON successful system host responses', async () => {
@@ -283,7 +283,7 @@ describe('system api helper', () => {
       }
     })
 
-    await expect(fetchSystemHost(fetchImpl, 'Bad host load')).rejects.toThrow('Bad host load')
+    await expect(Promise.resolve(fetchSystemHost(fetchImpl, 'Bad host load'))).rejects.toThrow('Bad host load')
   })
 
   test('fetches and validates SSL status payloads', async () => {
@@ -299,7 +299,7 @@ describe('system api helper', () => {
       privateValue: 'must not be returned by helper'
     }))
 
-    await expect(fetchSystemSsl(fetchImpl)).resolves.toEqual({
+    expect(await fetchSystemSsl(fetchImpl)).toEqual({
       httpPort: 3000,
       httpRedirection: true,
       httpsPort: 3443,
@@ -329,7 +329,7 @@ describe('system api helper', () => {
       sslSubscriberEmail: null
     }))
 
-    await expect(fetchSystemSsl(fetchImpl)).resolves.toEqual({
+    expect(await fetchSystemSsl(fetchImpl)).toEqual({
       httpPort: 0,
       httpRedirection: false,
       httpsPort: 0,
@@ -344,7 +344,7 @@ describe('system api helper', () => {
   test('rejects malformed SSL status payload roots', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([]))
 
-    await expect(fetchSystemSsl(fetchImpl, 'Bad SSL payload')).rejects.toThrow('Bad SSL payload')
+    await expect(Promise.resolve(fetchSystemSsl(fetchImpl, 'Bad SSL payload'))).rejects.toThrow('Bad SSL payload')
   })
 
   test.each([
@@ -370,7 +370,7 @@ describe('system api helper', () => {
     payload[field] = value
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse(payload))
 
-    await expect(fetchSystemSsl(fetchImpl, 'Bad SSL payload')).rejects.toThrow('Bad SSL payload')
+    await expect(Promise.resolve(fetchSystemSsl(fetchImpl, 'Bad SSL payload'))).rejects.toThrow('Bad SSL payload')
   })
 
   test('surfaces API error messages for failed SSL status loads', async () => {
@@ -382,7 +382,7 @@ describe('system api helper', () => {
       json: async () => ({ error: 'manage:system is required' })
     })
 
-    await expect(fetchSystemSsl(fetchImpl, 'Bad SSL load')).rejects.toThrow('manage:system is required')
+    await expect(Promise.resolve(fetchSystemSsl(fetchImpl, 'Bad SSL load'))).rejects.toThrow('manage:system is required')
   })
 
   test('rejects non-JSON successful SSL status responses', async () => {
@@ -393,7 +393,7 @@ describe('system api helper', () => {
       }
     })
 
-    await expect(fetchSystemSsl(fetchImpl, 'Bad SSL load')).rejects.toThrow('Bad SSL load')
+    await expect(Promise.resolve(fetchSystemSsl(fetchImpl, 'Bad SSL load'))).rejects.toThrow('Bad SSL load')
   })
 
   test('fetches and normalizes system flags', async () => {
@@ -402,7 +402,7 @@ describe('system api helper', () => {
       { key: 'sqllog', value: false }
     ]))
 
-    await expect(fetchSystemFlags(fetchImpl)).resolves.toEqual({
+    expect(await fetchSystemFlags(fetchImpl)).toEqual({
       ldapdebug: true,
       sqllog: false
     })
@@ -418,7 +418,7 @@ describe('system api helper', () => {
   test('rejects malformed system flags payloads', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([{ key: 'ldapdebug', value: 'yes' }]))
 
-    await expect(fetchSystemFlags(fetchImpl, 'Bad flags payload')).rejects.toThrow('Bad flags payload')
+    await expect(Promise.resolve(fetchSystemFlags(fetchImpl, 'Bad flags payload'))).rejects.toThrow('Bad flags payload')
   })
 
   test('fetches and validates system extensions', async () => {
@@ -433,7 +433,7 @@ describe('system api helper', () => {
       }
     ]))
 
-    await expect(fetchSystemExtensions(fetchImpl)).resolves.toEqual([
+    expect(await fetchSystemExtensions(fetchImpl)).toEqual([
       {
         key: 'alpha',
         title: 'Alpha Extension',
@@ -461,7 +461,7 @@ describe('system api helper', () => {
       }
     ]))
 
-    await expect(fetchSystemExtensions(fetchImpl, 'Bad extensions payload')).rejects.toThrow('Bad extensions payload')
+    await expect(Promise.resolve(fetchSystemExtensions(fetchImpl, 'Bad extensions payload'))).rejects.toThrow('Bad extensions payload')
   })
 
   test('surfaces API error messages for failed extension loads', async () => {
@@ -473,7 +473,7 @@ describe('system api helper', () => {
       json: async () => ({ message: 'manage:system is required' })
     })
 
-    await expect(fetchSystemExtensions(fetchImpl, 'Bad extension load')).rejects.toThrow('manage:system is required')
+    await expect(Promise.resolve(fetchSystemExtensions(fetchImpl, 'Bad extension load'))).rejects.toThrow('manage:system is required')
   })
 
   test('rejects non-JSON successful extension responses', async () => {
@@ -484,13 +484,13 @@ describe('system api helper', () => {
       }
     })
 
-    await expect(fetchSystemExtensions(fetchImpl, 'Bad extension load')).rejects.toThrow('Bad extension load')
+    await expect(Promise.resolve(fetchSystemExtensions(fetchImpl, 'Bad extension load'))).rejects.toThrow('Bad extension load')
   })
 
   test('flushes system cache through REST', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ message: 'Cache flushed successfully.' }))
 
-    await expect(flushSystemCache(fetchImpl)).resolves.toEqual({ message: 'Cache flushed successfully.' })
+    expect(await flushSystemCache(fetchImpl)).toEqual({ message: 'Cache flushed successfully.' })
     expect(fetchImpl).toHaveBeenCalledWith('/_api/system/cache/flush', {
       method: 'POST',
       credentials: 'same-origin',
@@ -503,19 +503,19 @@ describe('system api helper', () => {
   test('rejects malformed system cache flush responses', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ message: '' }))
 
-    await expect(flushSystemCache(fetchImpl)).rejects.toThrow('Cache flush failed')
+    await expect(Promise.resolve(flushSystemCache(fetchImpl))).rejects.toThrow('Cache flush failed')
   })
 
   test('surfaces API error messages for failed system cache flushes', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ error: 'cache denied' }, false))
 
-    await expect(flushSystemCache(fetchImpl)).rejects.toThrow('cache denied')
+    await expect(Promise.resolve(flushSystemCache(fetchImpl))).rejects.toThrow('cache denied')
   })
 
   test('flushes temporary uploads through REST', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ message: 'Temporary Uploads flushed successfully.' }))
 
-    await expect(flushSystemTemporaryUploads(fetchImpl)).resolves.toEqual({ message: 'Temporary Uploads flushed successfully.' })
+    expect(await flushSystemTemporaryUploads(fetchImpl)).toEqual({ message: 'Temporary Uploads flushed successfully.' })
     expect(fetchImpl).toHaveBeenCalledWith('/_api/system/cache/temp-uploads/flush', {
       method: 'POST',
       credentials: 'same-origin',
@@ -528,19 +528,19 @@ describe('system api helper', () => {
   test('rejects malformed temporary uploads flush responses', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ message: '' }))
 
-    await expect(flushSystemTemporaryUploads(fetchImpl)).rejects.toThrow('Temporary Uploads flush failed')
+    await expect(Promise.resolve(flushSystemTemporaryUploads(fetchImpl))).rejects.toThrow('Temporary Uploads flush failed')
   })
 
   test('surfaces API error messages for failed temporary uploads flushes', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ error: 'uploads denied' }, false))
 
-    await expect(flushSystemTemporaryUploads(fetchImpl)).rejects.toThrow('uploads denied')
+    await expect(Promise.resolve(flushSystemTemporaryUploads(fetchImpl))).rejects.toThrow('uploads denied')
   })
 
   test('rebuilds the page tree through REST', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ message: 'Page tree rebuilt successfully.' }))
 
-    await expect(rebuildPageTree(fetchImpl)).resolves.toEqual({ message: 'Page tree rebuilt successfully.' })
+    expect(await rebuildPageTree(fetchImpl)).toEqual({ message: 'Page tree rebuilt successfully.' })
     expect(fetchImpl).toHaveBeenCalledWith('/_api/system/content/rebuild-tree', {
       method: 'POST',
       credentials: 'same-origin',
@@ -553,13 +553,13 @@ describe('system api helper', () => {
   test('rejects malformed page tree rebuild responses', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ message: '' }))
 
-    await expect(rebuildPageTree(fetchImpl, 'Bad tree rebuild')).rejects.toThrow('Bad tree rebuild')
+    await expect(Promise.resolve(rebuildPageTree(fetchImpl, 'Bad tree rebuild'))).rejects.toThrow('Bad tree rebuild')
   })
 
   test('surfaces API error messages for page tree rebuild failures', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ error: 'tree backend failed' }, false))
 
-    await expect(rebuildPageTree(fetchImpl, 'Bad tree rebuild')).rejects.toThrow('tree backend failed')
+    await expect(Promise.resolve(rebuildPageTree(fetchImpl, 'Bad tree rebuild'))).rejects.toThrow('tree backend failed')
   })
 
   test('migrates pages to a locale through REST', async () => {
@@ -568,7 +568,7 @@ describe('system api helper', () => {
       count: 3
     }))
 
-    await expect(migratePagesToLocale(fetchImpl, 'en', 'fr')).resolves.toEqual({
+    expect(await migratePagesToLocale(fetchImpl, 'en', 'fr')).toEqual({
       message: 'Migrated content to target locale successfully.',
       count: 3
     })
@@ -594,19 +594,19 @@ describe('system api helper', () => {
   ])('rejects malformed locale migration response: %s', async (label, payload) => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse(payload))
 
-    await expect(migratePagesToLocale(fetchImpl, 'en', 'fr', 'Bad locale migration')).rejects.toThrow('Bad locale migration')
+    await expect(Promise.resolve(migratePagesToLocale(fetchImpl, 'en', 'fr', 'Bad locale migration'))).rejects.toThrow('Bad locale migration')
   })
 
   test('surfaces API error messages for locale migration failures', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ error: 'migration backend failed' }, false))
 
-    await expect(migratePagesToLocale(fetchImpl, 'en', 'fr', 'Bad locale migration')).rejects.toThrow('migration backend failed')
+    await expect(Promise.resolve(migratePagesToLocale(fetchImpl, 'en', 'fr', 'Bad locale migration'))).rejects.toThrow('migration backend failed')
   })
 
   test('renders pages through REST', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ message: 'Page rendered successfully.' }))
 
-    await expect(renderPage(fetchImpl, 12)).resolves.toEqual({ message: 'Page rendered successfully.' })
+    expect(await renderPage(fetchImpl, 12)).toEqual({ message: 'Page rendered successfully.' })
     expect(fetchImpl).toHaveBeenCalledWith('/_api/system/content/render-page', {
       method: 'POST',
       credentials: 'same-origin',
@@ -621,19 +621,19 @@ describe('system api helper', () => {
   test('rejects malformed page render success payloads', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ message: '' }))
 
-    await expect(renderPage(fetchImpl, 12, 'Bad page render')).rejects.toThrow('Bad page render')
+    await expect(Promise.resolve(renderPage(fetchImpl, 12, 'Bad page render'))).rejects.toThrow('Bad page render')
   })
 
   test('surfaces API error messages for page render failures', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ error: 'render denied' }, false))
 
-    await expect(renderPage(fetchImpl, 12, 'Bad page render')).rejects.toThrow('render denied')
+    await expect(Promise.resolve(renderPage(fetchImpl, 12, 'Bad page render'))).rejects.toThrow('render denied')
   })
 
   test('purges page history through REST', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ message: 'Page history purged successfully.' }))
 
-    await expect(purgePageHistory(fetchImpl, 'P1Y')).resolves.toEqual({ message: 'Page history purged successfully.' })
+    expect(await purgePageHistory(fetchImpl, 'P1Y')).toEqual({ message: 'Page history purged successfully.' })
     expect(fetchImpl).toHaveBeenCalledWith('/_api/system/content/purge-history', {
       method: 'POST',
       credentials: 'same-origin',
@@ -648,22 +648,22 @@ describe('system api helper', () => {
   test('rejects malformed page history purge success payloads', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ message: '' }))
 
-    await expect(purgePageHistory(fetchImpl, 'P1Y', 'Bad page history purge')).rejects.toThrow('Bad page history purge')
+    await expect(Promise.resolve(purgePageHistory(fetchImpl, 'P1Y', 'Bad page history purge'))).rejects.toThrow('Bad page history purge')
   })
 
   test('surfaces API error messages for page history purge failures', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ error: 'purge denied' }, false))
 
-    await expect(purgePageHistory(fetchImpl, 'P1Y', 'Bad page history purge')).rejects.toThrow('purge denied')
+    await expect(Promise.resolve(purgePageHistory(fetchImpl, 'P1Y', 'Bad page history purge'))).rejects.toThrow('purge denied')
   })
 
   test('submits system flags update as xhr JSON and returns parsed message', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ message: 'System flags applied successfully.' }))
 
-    await expect(updateSystemFlags(fetchImpl, {
+    expect(await updateSystemFlags(fetchImpl, {
       ldapdebug: true,
       sqllog: false
-    })).resolves.toEqual({ message: 'System flags applied successfully.' })
+    })).toEqual({ message: 'System flags applied successfully.' })
 
     expect(fetchImpl).toHaveBeenCalledWith('/_api/system/flags', {
       method: 'POST',
@@ -690,13 +690,13 @@ describe('system api helper', () => {
       json: async () => ({ error: 'manage:system is required' })
     })
 
-    await expect(updateSystemFlags(fetchImpl, { ldapdebug: true }, 'Bad update')).rejects.toThrow('manage:system is required')
+    await expect(Promise.resolve(updateSystemFlags(fetchImpl, { ldapdebug: true }, 'Bad update'))).rejects.toThrow('manage:system is required')
   })
 
   test('submits telemetry updates as REST JSON and returns parsed message', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ message: 'Telemetry updated successfully.' }))
 
-    await expect(updateSystemTelemetry(fetchImpl, true)).resolves.toEqual({ message: 'Telemetry updated successfully.' })
+    expect(await updateSystemTelemetry(fetchImpl, true)).toEqual({ message: 'Telemetry updated successfully.' })
 
     expect(fetchImpl).toHaveBeenCalledWith('/_api/system/telemetry', {
       method: 'PATCH',
@@ -712,19 +712,19 @@ describe('system api helper', () => {
   test('rejects malformed telemetry update success payloads', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ ok: true }))
 
-    await expect(updateSystemTelemetry(fetchImpl, false, 'Bad telemetry update')).rejects.toThrow('Bad telemetry update')
+    await expect(Promise.resolve(updateSystemTelemetry(fetchImpl, false, 'Bad telemetry update'))).rejects.toThrow('Bad telemetry update')
   })
 
   test('surfaces API error messages for failed telemetry updates', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ error: 'enabled must be a boolean' }, false))
 
-    await expect(updateSystemTelemetry(fetchImpl, 'yes', 'Bad telemetry update')).rejects.toThrow('enabled must be a boolean')
+    await expect(Promise.resolve(updateSystemTelemetry(fetchImpl, 'yes', 'Bad telemetry update'))).rejects.toThrow('enabled must be a boolean')
   })
 
   test('resets telemetry client IDs through the REST endpoint', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ message: 'Telemetry Client ID reset successfully.' }))
 
-    await expect(resetSystemTelemetryClientId(fetchImpl)).resolves.toEqual({ message: 'Telemetry Client ID reset successfully.' })
+    expect(await resetSystemTelemetryClientId(fetchImpl)).toEqual({ message: 'Telemetry Client ID reset successfully.' })
 
     expect(fetchImpl).toHaveBeenCalledWith('/_api/system/telemetry/reset-client-id', {
       method: 'POST',
@@ -738,13 +738,13 @@ describe('system api helper', () => {
   test('surfaces API error messages for failed telemetry client ID resets', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ error: 'reset failed' }, false))
 
-    await expect(resetSystemTelemetryClientId(fetchImpl, 'Bad reset')).rejects.toThrow('reset failed')
+    await expect(Promise.resolve(resetSystemTelemetryClientId(fetchImpl, 'Bad reset'))).rejects.toThrow('reset failed')
   })
 
   test('performs system upgrade with same-origin POST options', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ message: 'Upgrade has started.' }))
 
-    await expect(performSystemUpgrade(fetchImpl)).resolves.toEqual({ message: 'Upgrade has started.' })
+    expect(await performSystemUpgrade(fetchImpl)).toEqual({ message: 'Upgrade has started.' })
 
     expect(fetchImpl).toHaveBeenCalledWith('/_api/system/upgrade', {
       method: 'POST',
@@ -758,19 +758,19 @@ describe('system api helper', () => {
   test('rejects malformed system upgrade success payloads', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ ok: true }))
 
-    await expect(performSystemUpgrade(fetchImpl, 'Bad upgrade payload')).rejects.toThrow('Bad upgrade payload')
+    await expect(Promise.resolve(performSystemUpgrade(fetchImpl, 'Bad upgrade payload'))).rejects.toThrow('Bad upgrade payload')
   })
 
   test('propagates system upgrade REST JSON errors', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ error: 'companion missing' }, false))
 
-    await expect(performSystemUpgrade(fetchImpl, 'Bad upgrade')).rejects.toThrow('companion missing')
+    await expect(Promise.resolve(performSystemUpgrade(fetchImpl, 'Bad upgrade'))).rejects.toThrow('companion missing')
   })
 
   test('updates SSL redirection through REST', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ message: 'HTTP Redirection state set successfully.' }))
 
-    await expect(updateSystemSslRedirection(fetchImpl, true)).resolves.toEqual({ message: 'HTTP Redirection state set successfully.' })
+    expect(await updateSystemSslRedirection(fetchImpl, true)).toEqual({ message: 'HTTP Redirection state set successfully.' })
     expect(fetchImpl).toHaveBeenCalledWith('/_api/system/ssl/redirection', {
       method: 'PATCH',
       credentials: 'same-origin',
@@ -785,19 +785,19 @@ describe('system api helper', () => {
   test('rejects malformed SSL redirection update responses', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ message: '' }))
 
-    await expect(updateSystemSslRedirection(fetchImpl, false, 'Bad SSL redirection')).rejects.toThrow('Bad SSL redirection')
+    await expect(Promise.resolve(updateSystemSslRedirection(fetchImpl, false, 'Bad SSL redirection'))).rejects.toThrow('Bad SSL redirection')
   })
 
   test('surfaces API error messages for failed SSL redirection updates', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ error: 'enabled must be a boolean' }, false))
 
-    await expect(updateSystemSslRedirection(fetchImpl, 'yes', 'Bad SSL redirection')).rejects.toThrow('enabled must be a boolean')
+    await expect(Promise.resolve(updateSystemSslRedirection(fetchImpl, 'yes', 'Bad SSL redirection'))).rejects.toThrow('enabled must be a boolean')
   })
 
   test('renews SSL certificates through REST', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ message: 'SSL Certificate renewed successfully.' }))
 
-    await expect(renewSystemSslCertificate(fetchImpl)).resolves.toEqual({ message: 'SSL Certificate renewed successfully.' })
+    expect(await renewSystemSslCertificate(fetchImpl)).toEqual({ message: 'SSL Certificate renewed successfully.' })
     expect(fetchImpl).toHaveBeenCalledWith('/_api/system/ssl/renew', {
       method: 'POST',
       credentials: 'same-origin',
@@ -810,20 +810,20 @@ describe('system api helper', () => {
   test('rejects malformed SSL certificate renewal responses', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ ok: true }))
 
-    await expect(renewSystemSslCertificate(fetchImpl, 'Bad SSL renew')).rejects.toThrow('Bad SSL renew')
+    await expect(Promise.resolve(renewSystemSslCertificate(fetchImpl, 'Bad SSL renew'))).rejects.toThrow('Bad SSL renew')
   })
 
   test('surfaces API error messages for failed SSL certificate renewals', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ error: 'SSL is disabled' }, false))
 
-    await expect(renewSystemSslCertificate(fetchImpl, 'Bad SSL renew')).rejects.toThrow('SSL is disabled')
+    await expect(Promise.resolve(renewSystemSslCertificate(fetchImpl, 'Bad SSL renew'))).rejects.toThrow('SSL is disabled')
   })
 
   test('starts system export with same-origin JSON POST options', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ message: 'Export started successfully.' }))
     const entities = ['pages', 'assets']
 
-    await expect(startSystemExport(fetchImpl, entities, './data/export')).resolves.toEqual({ message: 'Export started successfully.' })
+    expect(await startSystemExport(fetchImpl, entities, './data/export')).toEqual({ message: 'Export started successfully.' })
     expect(fetchImpl).toHaveBeenCalledWith('/_api/system/export', {
       method: 'POST',
       credentials: 'same-origin',
@@ -838,12 +838,12 @@ describe('system api helper', () => {
   test('rejects malformed system export success payloads', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ ok: true }))
 
-    await expect(startSystemExport(fetchImpl, ['pages'], './data/export', 'Bad export start')).rejects.toThrow('Bad export start')
+    await expect(Promise.resolve(startSystemExport(fetchImpl, ['pages'], './data/export', 'Bad export start'))).rejects.toThrow('Bad export start')
   })
 
   test('propagates system export REST JSON errors', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ error: 'Target directory must be empty!' }, false))
 
-    await expect(startSystemExport(fetchImpl, ['pages'], './data/export', 'Bad export start')).rejects.toThrow('Target directory must be empty!')
+    await expect(Promise.resolve(startSystemExport(fetchImpl, ['pages'], './data/export', 'Bad export start'))).rejects.toThrow('Target directory must be empty!')
   })
 })

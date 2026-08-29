@@ -4,7 +4,7 @@ const authRateLimiter = vi.hoisted(() => ({
   reset: vi.fn().mockResolvedValue(undefined)
 }))
 
-vi.mock('../../helpers/auth-rate-limiter.ts', () => ({
+vi.mockModule('../../helpers/auth-rate-limiter.ts', import.meta.url, () => ({
   createAuthRateLimiter: vi.fn(options => {
     authRateLimiter.options.push(options)
     return authRateLimiter
@@ -14,7 +14,7 @@ vi.mock('../../helpers/auth-rate-limiter.ts', () => ({
   })
 }))
 
-vi.mock('express', () => {
+vi.mockModule('express', import.meta.url, () => {
   const router = {
     get: vi.fn(),
     post: vi.fn(),
@@ -28,7 +28,7 @@ vi.mock('express', () => {
   return { default: express, ...express }
 })
 
-import express from 'express'
+const { default: express } = await import('express')
 
 describe('controllers/api auth endpoints', () => {
   beforeEach(() => {
@@ -162,7 +162,7 @@ describe('controllers/api auth endpoints', () => {
   })
 
   const loadHandlers = async () => {
-    await import('../../controllers/api/auth.ts')
+    await vi.importFresh('../../controllers/api/auth.ts', import.meta.url)
     const withRuntime = handler => (req, ...args) => {
       req.app ??= { locals: {} }
       req.app.locals.runtime = global.WIKI

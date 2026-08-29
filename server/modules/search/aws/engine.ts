@@ -372,8 +372,8 @@ const plugin: SearchPlugin<AwsSearchConfig, AwsSearchContext> = {
   async rebuild() {
     wiki.logger.info(`(SEARCH/AWS) Rebuilding Index...`)
 
-    const MAX_DOCUMENT_BYTES = Math.pow(2, 20)
-    const MAX_INDEXING_BYTES = 5 * Math.pow(2, 20) - Buffer.from('[').byteLength - Buffer.from(']').byteLength
+    const MAX_DOCUMENT_BYTES = 2 ** 20
+    const MAX_INDEXING_BYTES = 5 * 2 ** 20 - Buffer.from('[').byteLength - Buffer.from(']').byteLength
     const MAX_INDEXING_COUNT = 1000
     const COMMA_BYTES = Buffer.from(',').byteLength
 

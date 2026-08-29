@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi } from '../bun-test.mts'
 
 import { AGENT_FEATURE_FLAG_KEYS, type AgentActionName, type AgentFeatureFlags } from '../../../shared/agents/contracts.ts'
 import { ActionKernel, createActionAuthority, type ActionAdmissionSnapshot } from '../../agents/actions/kernel.ts'
@@ -128,7 +128,7 @@ describe('permission-safe page read actions', () => {
           : page()
       }
     })
-    await expect(execute('pages.search', { query: 'notes', path: 'docs', limit: 3, offset: 0 })).resolves.toEqual({
+    expect(await execute('pages.search', { query: 'notes', path: 'docs', limit: 3, offset: 0 })).toEqual({
       results: [
         { id: 42, locale: 'en', path: 'docs/start', title: 'Start', description: '', contentType: 'markdown', sourceRevision: '8', citation: { evidenceId: 'page:42', label: 'Start', href: '/en/docs/start' }, tags: ['runbook'], score: 12.5, matchedFields: ['tag', 'graph'], knowledge: null },
         { id: 43, locale: 'en', path: 'private/notes', title: 'Start', description: '', contentType: 'markdown', sourceRevision: '2', citation: { evidenceId: 'page:43', label: 'Start', href: '/_private/en/private/notes' }, tags: [], score: 0, matchedFields: [], knowledge: null }
@@ -160,12 +160,12 @@ describe('permission-safe page read actions', () => {
     }
     const { execute } = setup({}, knowledge)
 
-    await expect(execute('pages.search', {
+    expect(await execute('pages.search', {
       query: 'deployment',
       knowledge: { state: 'partial', conceptType: 'Procedure' },
       limit: 10,
       offset: 0
-    })).resolves.toMatchObject({
+    })).toMatchObject({
       results: [{
         id: 42,
         matchedFields: ['knowledge'],
@@ -190,8 +190,8 @@ describe('permission-safe page read actions', () => {
         { tag: 'Release', title: null }
       ])
     })
-    await expect(execute('pages.searchTags', { query: 'run', limit: 1 })).resolves.toEqual({ tags: ['runbook'] })
-    await expect(execute('pages.listTags', { limit: 1, offset: 0 })).resolves.toEqual({
+    expect(await execute('pages.searchTags', { query: 'run', limit: 1 })).toEqual({ tags: ['runbook'] })
+    expect(await execute('pages.listTags', { limit: 1, offset: 0 })).toEqual({
       tags: [{ tag: 'Release', title: null }],
       nextOffset: 1
     })
@@ -216,7 +216,7 @@ describe('permission-safe page read actions', () => {
         nextOffset: null
       }))
     })
-    await expect(execute('pages.discover', { locale: 'en', path: 'docs', tags: ['runbook'], limit: 10, offset: 0 })).resolves.toEqual({
+    expect(await execute('pages.discover', { locale: 'en', path: 'docs', tags: ['runbook'], limit: 10, offset: 0 })).toEqual({
       pages: [{
         id: 42,
         locale: 'en',
@@ -245,7 +245,7 @@ describe('permission-safe page read actions', () => {
     }])
     const { execute } = setup({ get: async () => page({ toc }) })
 
-    await expect(execute('pages.get', { id: 42 })).resolves.toMatchObject({
+    expect(await execute('pages.get', { id: 42 })).toMatchObject({
       citation: { evidenceId: 'page:42', label: 'Start', href: '/en/docs/start' },
       citationSections: [
         { evidenceId: 'page:42:section:1', label: 'Start', href: '/en/docs/start#start' },
@@ -270,7 +270,7 @@ describe('permission-safe page read actions', () => {
     const denied = Object.assign(new Error('denied'), { code: 'PAGE_FORBIDDEN' })
     const getByPath = vi.fn(async () => { throw denied })
     const { execute } = setup({ getByPath })
-    await expect(execute('pages.get', { path: 'private/notes', locale: 'en' })).rejects.toBe(denied)
+    await expect(Promise.resolve(execute('pages.get', { path: 'private/notes', locale: 'en' }))).rejects.toBe(denied)
     expect(getByPath).toHaveBeenCalledTimes(1)
   })
 
@@ -301,19 +301,19 @@ describe('permission-safe page read actions', () => {
     })
     const apiAdmission = { ...admission, transport: 'mcp' as const, permissions: ['use:mcp', 'read:pages'], groupIds: [6] }
     const apiAuth = { kind: 'apiKey', apiKeyId: 11, groupId: 6, ownershipUserId: null, principal: apiPrincipal } as const
-    await expect(kernel.execute({
+    await expect(Promise.resolve(kernel.execute({
       authority: createActionAuthority('pages.get', requestId, apiAuth, apiAdmission),
       actionCallId,
       input: { id: 42 },
       signal: new AbortController().signal,
       refreshAdmission: async () => apiAdmission
-    })).rejects.toBe(denied)
+    }))).rejects.toBe(denied)
     expect(get).toHaveBeenCalledOnce()
   })
 
   it('accepts an explicit null continuation token for an initial patch snapshot', async () => {
     const { execute } = setup({ get: async () => page({ content: 'one\ntwo\n' }) })
-    await expect(execute('pages.readForPatch', { pageId: 42, previousSnapshotToken: null })).resolves.toMatchObject({
+    expect(await execute('pages.readForPatch', { pageId: 42, previousSnapshotToken: null })).toMatchObject({
       version: 'wiki-line-snapshot-v1',
       disclosed: [{ startLine: 1, endLine: 2 }]
     })
@@ -342,14 +342,14 @@ describe('permission-safe page read actions', () => {
 
   it('rejects patch snapshots for non-Markdown pages', async () => {
     const { execute } = setup({ get: async () => page({ contentType: 'html' }) })
-    await expect(execute('pages.readForPatch', { pageId: 42 })).rejects.toMatchObject({ code: 'UNSUPPORTED_CONTENT_TYPE' })
+    await expect(Promise.resolve(execute('pages.readForPatch', { pageId: 42 }))).rejects.toMatchObject({ code: 'UNSUPPORTED_CONTENT_TYPE' })
   })
   it('hydrates recent pages, applies locale and caller bounds, and preserves authorization requester', async () => {
     const { execute, operations } = setup({
       listRecent: vi.fn(async () => [{ id: 42 }, { id: 43 }]),
       get: async input => input.id === 42 ? page() : page({ id: 43, localeCode: 'fr', path: 'fr/start' })
     })
-    await expect(execute('pages.listRecent', { locale: 'en', limit: 2 })).resolves.toEqual({
+    expect(await execute('pages.listRecent', { locale: 'en', limit: 2 })).toEqual({
       pages: [{ id: 42, locale: 'en', path: 'docs/start', title: 'Start', description: '', contentType: 'markdown', sourceRevision: '8', citation: { evidenceId: 'page:42', label: 'Start', href: '/en/docs/start' }, knowledge: null }]
     })
     expect(operations.listRecent).toHaveBeenCalledWith(principal)
@@ -360,10 +360,10 @@ describe('permission-safe page read actions', () => {
       getHistory: async () => ({ trail: [{ versionId: 9, sourceRevision: '6', actionType: 'edit', versionDate: '2026-08-16T00:00:00.000Z', authorName: 'Editor' }], total: 1 }),
       getVersion: async () => page({ id: undefined, pageId: 42, sourceRevision: 6, versionDate: '2026-08-16T00:00:00.000Z' })
     })
-    await expect(execute('pages.listHistory', { pageId: 42, limit: 10 })).resolves.toEqual({
+    expect(await execute('pages.listHistory', { pageId: 42, limit: 10 })).toEqual({
       versions: [{ id: 9, sourceRevision: '6', action: 'edit', versionDate: '2026-08-16T00:00:00.000Z', authorName: 'Editor' }]
     })
-    await expect(execute('pages.getVersion', { pageId: 42, versionId: 9 })).resolves.toMatchObject({
+    expect(await execute('pages.getVersion', { pageId: 42, versionId: 9 })).toMatchObject({
       id: 42,
       versionId: 9,
       sourceRevision: '6',
@@ -376,7 +376,7 @@ describe('permission-safe page read actions', () => {
     const { execute } = setup({
       listLinks: async () => [{ id: 42, links: ['en/docs/next', 'https://example.test/reference'] }]
     })
-    await expect(execute('pages.listLinks', { pageId: 42, limit: 1 })).resolves.toEqual({
+    expect(await execute('pages.listLinks', { pageId: 42, limit: 1 })).toEqual({
       links: [{ label: 'en/docs/next', target: 'en/docs/next', kind: 'page' }],
       truncated: true
     })
@@ -422,11 +422,11 @@ describe('permission-safe page read actions', () => {
       }],
       nextCursor: expect.any(String)
     })
-    await expect(execute('pages.related', { pageId: 42, limit: 1, cursor: first.nextCursor })).resolves.toEqual({
+    expect(await execute('pages.related', { pageId: 42, limit: 1, cursor: first.nextCursor })).toEqual({
       pages: [],
       nextCursor: null
     })
-    await expect(execute('pages.related', { pageId: 42, limit: 1, cursor: `${first.nextCursor}x` })).rejects.toMatchObject({ code: 'INVALID_RELATED_CURSOR' })
+    await expect(Promise.resolve(execute('pages.related', { pageId: 42, limit: 1, cursor: `${first.nextCursor}x` }))).rejects.toMatchObject({ code: 'INVALID_RELATED_CURSOR' })
     expect(operations.listRelated).toHaveBeenNthCalledWith(1, expect.objectContaining({ pageId: 42, limit: 1, offset: 0, requester: principal }))
     expect(operations.listRelated).toHaveBeenNthCalledWith(2, expect.objectContaining({ pageId: 42, limit: 1, offset: 1, requester: principal }))
   })

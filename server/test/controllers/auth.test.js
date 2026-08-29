@@ -4,7 +4,7 @@ const limiter = vi.hoisted(() => ({
   reset: vi.fn().mockResolvedValue(undefined)
 }))
 
-vi.mock('../../helpers/auth-rate-limiter.ts', () => ({
+vi.mockModule('../../helpers/auth-rate-limiter.ts', import.meta.url, () => ({
   createAuthRateLimiter: vi.fn(options => {
     limiter.options.push(options)
     return limiter
@@ -14,11 +14,11 @@ vi.mock('../../helpers/auth-rate-limiter.ts', () => ({
   })
 }))
 
-vi.mock('../../helpers/common.ts', () => ({
+vi.mockModule('../../helpers/common.ts', import.meta.url, () => ({
   default: { getCookieOpts: vi.fn(() => ({ httpOnly: true })) }
 }))
 
-vi.mock('express', () => {
+vi.mockModule('express', import.meta.url, () => {
   const router = {
     all: vi.fn(),
     get: vi.fn(),
@@ -31,7 +31,7 @@ vi.mock('express', () => {
   return { default: express, ...express }
 })
 
-import express from 'express'
+const { default: express } = await import('express')
 
 describe('HTML auth controller rate limiting', () => {
   beforeEach(() => {
@@ -66,7 +66,7 @@ describe('HTML auth controller rate limiting', () => {
   })
 
   const loadController = async () => {
-    const { default: createAuthController } = await import('../../controllers/auth.ts')
+    const { default: createAuthController } = await vi.importFresh('../../controllers/auth.ts', import.meta.url)
     createAuthController(global.WIKI)
   }
 

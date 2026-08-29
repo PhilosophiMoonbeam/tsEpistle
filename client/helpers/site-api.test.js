@@ -37,7 +37,7 @@ describe('site api helper', () => {
       banner: { isEnabled: false, title: '', content: '' }
     }))
 
-    await expect(fetchSiteConfig(fetchImpl)).resolves.toEqual({
+    expect(await fetchSiteConfig(fetchImpl)).toEqual({
       availableEditors: ['markdown', 'code'],
       banner: { isEnabled: false, title: '', content: '' }
     })
@@ -49,13 +49,13 @@ describe('site api helper', () => {
       banner: { isEnabled: false, title: '', content: '' }
     }))
 
-    await expect(fetchSiteConfig(fetchImpl, 'Unexpected editor config')).rejects.toThrow('Unexpected editor config')
+    await expect(Promise.resolve(fetchSiteConfig(fetchImpl, 'Unexpected editor config'))).rejects.toThrow('Unexpected editor config')
   })
 
   it('rejects malformed successful site config responses', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([]))
 
-    await expect(fetchSiteConfig(fetchImpl, 'Unexpected site config response')).rejects.toThrow('Unexpected site config response')
+    await expect(Promise.resolve(fetchSiteConfig(fetchImpl, 'Unexpected site config response'))).rejects.toThrow('Unexpected site config response')
   })
 
   it('rejects malformed site banner responses', async () => {
@@ -64,13 +64,13 @@ describe('site api helper', () => {
       banner: { isEnabled: true, title: '', content: '' }
     }))
 
-    await expect(fetchSiteConfig(fetchImpl, 'Unexpected site banner')).rejects.toThrow('Unexpected site banner')
+    await expect(Promise.resolve(fetchSiteConfig(fetchImpl, 'Unexpected site banner'))).rejects.toThrow('Unexpected site banner')
   })
 
   it('surfaces JSON REST site config fetch errors', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ error: 'fetch failed' }, false))
 
-    await expect(fetchSiteConfig(fetchImpl)).rejects.toThrow('fetch failed')
+    await expect(Promise.resolve(fetchSiteConfig(fetchImpl))).rejects.toThrow('fetch failed')
   })
 
   it('saves site config with same-origin JSON PUT', async () => {
@@ -94,13 +94,13 @@ describe('site api helper', () => {
   it('rejects malformed successful site config save responses', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({}))
 
-    await expect(saveSiteConfig(fetchImpl, {}, 'Unexpected save response')).rejects.toThrow('Unexpected save response')
+    await expect(Promise.resolve(saveSiteConfig(fetchImpl, {}, 'Unexpected save response'))).rejects.toThrow('Unexpected save response')
   })
 
   it('surfaces JSON REST site config save errors', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ error: 'save failed' }, false))
 
-    await expect(saveSiteConfig(fetchImpl, {})).rejects.toThrow('save failed')
+    await expect(Promise.resolve(saveSiteConfig(fetchImpl, {}))).rejects.toThrow('save failed')
   })
 
   it('uses fallback message for non-JSON failures', async () => {
@@ -109,6 +109,6 @@ describe('site api helper', () => {
       headers: { get: () => 'text/plain' }
     })
 
-    await expect(fetchSiteConfig(fetchImpl, 'Site fallback')).rejects.toThrow('Site fallback')
+    await expect(Promise.resolve(fetchSiteConfig(fetchImpl, 'Site fallback'))).rejects.toThrow('Site fallback')
   })
 })

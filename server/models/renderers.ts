@@ -127,18 +127,26 @@ export default class Renderer extends Model {
       return core
     })
     const graph = new DepGraph({ circular: true })
-    rawCores.forEach(core => graph.addNode(core.key))
-    rawCores.forEach(core => rawCores.forEach(coreTarget => {
-      if (core.key !== coreTarget.key && core.output === coreTarget.input) graph.addDependency(core.key, coreTarget.key)
-    }))
+    rawCores.forEach(core => {
+      graph.addNode(core.key)
+    })
+    rawCores.forEach(core => {
+      rawCores.forEach(coreTarget => {
+        if (core.key !== coreTarget.key && core.output === coreTarget.input) graph.addDependency(core.key, coreTarget.key)
+      })
+    })
     let activeCoreKeys = rawCores.filter(core => core.input === contentType).map(core => core.key)
     for (const coreKey of [...activeCoreKeys]) activeCoreKeys = _.union(activeCoreKeys, graph.dependenciesOf(coreKey))
     const activeCores = rawCores.filter(core => activeCoreKeys.includes(core.key))
     const graphActive = new DepGraph({ circular: true })
-    activeCores.forEach(core => graphActive.addNode(core.key))
-    activeCores.forEach(core => activeCores.forEach(coreTarget => {
-      if (core.key !== coreTarget.key && core.output === coreTarget.input) graphActive.addDependency(core.key, coreTarget.key)
-    }))
+    activeCores.forEach(core => {
+      graphActive.addNode(core.key)
+    })
+    activeCores.forEach(core => {
+      activeCores.forEach(coreTarget => {
+        if (core.key !== coreTarget.key && core.output === coreTarget.input) graphActive.addDependency(core.key, coreTarget.key)
+      })
+    })
     const orderedCores: RendererDefinition[] = []
     for (const coreKey of graphActive.overallOrder().reverse()) {
       const core = rawCores.find(candidate => candidate.key === coreKey)

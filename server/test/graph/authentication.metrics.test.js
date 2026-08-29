@@ -50,7 +50,7 @@ describe('graph/resolvers/authentication metrics state', () => {
     global.WIKI = previousWiki
   })
   const loadResolver = async () => {
-    const { default: createResolver } = await import('../../graph/resolvers/authentication.ts')
+    const { default: createResolver } = await vi.importFresh('../../graph/resolvers/authentication.ts', import.meta.url)
     return createResolver(global.WIKI)
   }
 

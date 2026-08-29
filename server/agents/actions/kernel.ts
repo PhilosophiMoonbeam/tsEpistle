@@ -52,9 +52,7 @@ export interface ActionHandlerContext {
   readonly executeAction: (actionName: AgentActionName, input: unknown) => Promise<unknown>
 }
 
-export interface ActionHandler {
-  (input: unknown, context: ActionHandlerContext): Promise<unknown>
-}
+export type ActionHandler = (input: unknown, context: ActionHandlerContext) => Promise<unknown>
 
 export interface ActionExecutionRequest {
   readonly authority: ActionAuthority

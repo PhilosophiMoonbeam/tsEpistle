@@ -8,7 +8,7 @@ ARG WIKI_PRODUCT_VERSION
 ARG WIKI_SOURCE_REPOSITORY
 ARG WIKI_UPSTREAM_BASE
 
-FROM node:24-alpine@sha256:d32cdf619f63fe0471182d08996dd516c6275bb5fd31ae06e55a570bd9e1ad43 AS build
+FROM oven/bun:1.3.14-alpine@sha256:5acc90a93e91ff07bf72aa90a7c9f0fa189765aec90b47bdbf2152d2196383c0 AS build
 ARG WIKI_BUILD_DATE
 ARG WIKI_BUILD_REVISION
 ENV CI=true \
@@ -16,28 +16,28 @@ ENV CI=true \
     WIKI_BUILD_REVISION=$WIKI_BUILD_REVISION
 
 RUN apk add --no-cache g++ make cmake python3
-
 WORKDIR /wiki
 
-RUN corepack enable
-
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
+COPY package.json bun.lock ./
 COPY patches ./patches
-
-RUN --mount=type=cache,id=wiki-pnpm,target=/pnpm/store \
-    pnpm config set store-dir /pnpm/store && \
-    pnpm install --frozen-lockfile
+RUN --mount=type=cache,id=wiki-bun,target=/root/.bun/install/cache \
+    bun install --frozen-lockfile
 
 COPY client ./client
 COPY shared ./shared
 COPY server ./server
 COPY vite.config.mts ./
+RUN bun run build
 
-RUN pnpm build && \
-    pnpm prune --prod && \
-    rm -f node_modules/.modules.yaml node_modules/.pnpm-workspace-state-v1.json
+FROM oven/bun:1.3.14-alpine@sha256:5acc90a93e91ff07bf72aa90a7c9f0fa189765aec90b47bdbf2152d2196383c0 AS dependencies
+ENV NODE_ENV=production
+WORKDIR /wiki
+COPY package.json bun.lock ./
+COPY patches ./patches
+RUN --mount=type=cache,id=wiki-bun-production,target=/root/.bun/install/cache \
+    bun install --production --frozen-lockfile
 
-FROM node:24-alpine@sha256:d32cdf619f63fe0471182d08996dd516c6275bb5fd31ae06e55a570bd9e1ad43 AS runtime
+FROM oven/bun:1.3.14-alpine@sha256:5acc90a93e91ff07bf72aa90a7c9f0fa189765aec90b47bdbf2152d2196383c0 AS runtime
 
 ARG WIKI_BUILD_DATE
 ARG WIKI_BUILD_REVISION
@@ -58,28 +58,23 @@ ENV NODE_ENV=production
 
 RUN apk add --no-cache bash curl git openssh gnupg && \
     mkdir -p /wiki /logs /wiki/data/content /wiki/data/repo && \
-    chown -R node:node /wiki /logs
-
+    chown -R bun:bun /wiki /logs
 WORKDIR /wiki
 
-COPY --chown=node:node --from=build /wiki/assets ./assets
-COPY --chown=node:node --from=build /wiki/node_modules ./node_modules
-COPY --chown=node:node shared ./shared
-COPY --chown=node:node --from=build /wiki/server ./server
-COPY --chown=node:node dev/build/config.yml ./config.yml
-COPY --chown=node:node package.json ./
-COPY --chown=node:node LICENSE ./
-COPY --chown=node:node NOTICE ./
+COPY --chown=bun:bun --from=build /wiki/assets ./assets
+COPY --chown=bun:bun --from=dependencies /wiki/node_modules ./node_modules
+COPY --chown=bun:bun shared ./shared
+COPY --chown=bun:bun --from=build /wiki/server ./server
+COPY --chown=bun:bun dev/build/config.yml ./config.yml
+COPY --chown=bun:bun package.json ./
+COPY --chown=bun:bun LICENSE ./
+COPY --chown=bun:bun NOTICE ./
 
-USER node
-
+USER bun
 VOLUME ["/wiki/data/content"]
 VOLUME ["/wiki/data/repo"]
-
 EXPOSE 3000
 EXPOSE 3443
-
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
     CMD curl --fail --silent --show-error http://127.0.0.1:3000/healthz || exit 1
-
-CMD ["node", "server/index.ts"]
+CMD ["bun", "server/index.ts"]

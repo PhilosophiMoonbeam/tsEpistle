@@ -13,14 +13,14 @@ const uploadMocks = vi.hoisted(() => {
   return { router, arrayHandler, array, multer }
 })
 
-vi.mock('express', () => {
+vi.mockModule('express', import.meta.url, () => {
   const express = {
     Router: () => uploadMocks.router
   }
   return { default: express }
 })
 
-vi.mock('multer', () => ({
+vi.mockModule('multer', import.meta.url, () => ({
   default: uploadMocks.multer
 }))
 
@@ -53,7 +53,7 @@ const makeReq = overrides => ({
 })
 
 const loadHandlers = async () => {
-  const { default: createUploadController } = await import('../../controllers/upload.ts')
+  const { default: createUploadController } = await vi.importFresh('../../controllers/upload.ts', import.meta.url)
   createUploadController(global.WIKI)
   const postCall = uploadMocks.router.post.mock.calls.find(([routePath]) => routePath === '/u')
   const getCall = uploadMocks.router.get.mock.calls.find(([routePath]) => routePath === '/u')

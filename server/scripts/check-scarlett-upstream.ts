@@ -231,7 +231,7 @@ export function buildScarlettReport(ledger: ScarlettLedger, upstreamRef: string)
     : runGit(['diff', '--unified=0', '--no-ext-diff', ledger.upstream.recordedTip, currentTip])
   const testPaths = changedPaths.filter(changed => /(?:^|\/)(?:test|tests|spec|__tests__)(?:\/|\.)|\.(?:test|spec)\.[^.]+$/i.test(changed.path))
   const migrationPaths = changedPaths.filter(changed => /(?:^|\/)migrations?(?:\/|$)/i.test(changed.path))
-  const dependencyPaths = changedPaths.filter(changed => /(?:^|\/)(?:package\.json|pnpm-lock\.yaml|yarn\.lock|package-lock\.json)$/i.test(changed.path))
+  const dependencyPaths = changedPaths.filter(changed => /(?:^|\/)(?:package\.json|bun\.lock|pnpm-lock\.yaml|yarn\.lock|package-lock\.json)$/i.test(changed.path))
 
   return {
     schemaVersion: 1,

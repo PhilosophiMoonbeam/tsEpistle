@@ -1,5 +1,4 @@
-/** @vitest-environment node */
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from '../bun-test.mts'
 import createKnex, { type Knex } from 'knex'
 import {
   appendAgentEvent,
@@ -335,20 +334,20 @@ describe('durable agent repositories', () => {
   afterEach(async () => knex.destroy())
 
   it('isolates owners and enforces optimistic session versions', async () => {
-    await expect(getOwnedAgentSession(knex, 8, sessionId)).rejects.toMatchObject({ code: 'AGENT_RESOURCE_NOT_FOUND', status: 404 })
+    await expect(Promise.resolve(getOwnedAgentSession(knex, 8, sessionId))).rejects.toMatchObject({ code: 'AGENT_RESOURCE_NOT_FOUND', status: 404 })
     const updated = await updateAgentSession(knex, { ownerId: 7, sessionId, expectedVersion: 1, title: 'Renamed' })
     expect(updated).toMatchObject({ title: 'Renamed', version: 2 })
-    await expect(knex('agentSessions').where({ id: sessionId }).first('titleSource')).resolves.toEqual({ titleSource: 'manual' })
-    await expect(updateAgentSession(knex, { ownerId: 7, sessionId, expectedVersion: 1, title: 'Lost race' })).rejects.toMatchObject({ code: 'SESSION_VERSION_CHANGED', status: 409 })
+    expect(await knex('agentSessions').where({ id: sessionId }).first('titleSource')).toEqual({ titleSource: 'manual' })
+    await expect(Promise.resolve(updateAgentSession(knex, { ownerId: 7, sessionId, expectedVersion: 1, title: 'Lost race' }))).rejects.toMatchObject({ code: 'SESSION_VERSION_CHANGED', status: 409 })
   })
 
   it('lists only conversations that contain a completed user message', async () => {
     const emptySessionId = '00000000-0000-4000-8000-000000000098'
     await createAgentSession(knex, { id: emptySessionId, ownerId: 7, retention: 'saved', providerProfileId: null, executionMode: 'agent' })
-    await expect(listOwnedAgentSessions(knex, 7)).resolves.toMatchObject([{ id: sessionId }])
+    expect(await listOwnedAgentSessions(knex, 7)).toMatchObject([{ id: sessionId }])
 
     await appendAgentMessage(knex, { ownerId: 7, sessionId: emptySessionId, role: 'user', status: 'complete', content: 'Now this is a conversation.' })
-    await expect(listOwnedAgentSessions(knex, 7)).resolves.toEqual(expect.arrayContaining([expect.objectContaining({ id: emptySessionId }), expect.objectContaining({ id: sessionId })]))
+    expect(await listOwnedAgentSessions(knex, 7)).toEqual(expect.arrayContaining([expect.objectContaining({ id: emptySessionId }), expect.objectContaining({ id: sessionId })]))
   })
 
   it('persists bounded immutable memory snapshots at session creation', async () => {
@@ -362,15 +361,15 @@ describe('durable agent repositories', () => {
       executionMode: 'agent',
       memorySnapshot
     })
-    await expect(knex('agentSessions').where({ id: snapshotSessionId }).first('memorySnapshot')).resolves.toMatchObject({ memorySnapshot })
-    await expect(createAgentSession(knex, {
+    expect(await knex('agentSessions').where({ id: snapshotSessionId }).first('memorySnapshot')).toMatchObject({ memorySnapshot })
+    await expect(Promise.resolve(createAgentSession(knex, {
       id: '00000000-0000-4000-8000-000000000006',
       ownerId: 7,
       retention: 'saved',
       providerProfileId: null,
       executionMode: 'agent',
       memorySnapshot: 'x'.repeat(16_385)
-    })).rejects.toMatchObject({ code: 'INVALID_AGENT_MEMORY', status: 400 })
+    }))).rejects.toMatchObject({ code: 'INVALID_AGENT_MEMORY', status: 400 })
   })
 
   it('appends contiguous hash-verified events and makes exact IDs idempotent', async () => {
@@ -378,7 +377,7 @@ describe('durable agent repositories', () => {
     const first = await appendAgentEvent(knex, eventInput)
     const replay = await appendAgentEvent(knex, eventInput)
     expect(replay).toEqual(first)
-    await expect(appendAgentEvent(knex, { ...eventInput, data: { ...eventInput.data, title: 'Changed' } })).rejects.toMatchObject({ code: 'AGENT_EVENT_IDEMPOTENCY_MISMATCH', status: 409 })
+    await expect(Promise.resolve(appendAgentEvent(knex, { ...eventInput, data: { ...eventInput.data, title: 'Changed' } }))).rejects.toMatchObject({ code: 'AGENT_EVENT_IDEMPOTENCY_MISMATCH', status: 409 })
     await appendAgentEvent(knex, { id: '00000000-0000-4000-8000-000000000011', runId, ownerId: 7, type: 'tool.completed', attempt: 1, data: { actionCallId: 'call-1', summary: 'Done' } })
     await appendAgentEvent(knex, {
       id: '00000000-0000-4000-8000-000000000012',
@@ -405,17 +404,17 @@ describe('durable agent repositories', () => {
       }
     })
     await knex('agentEvents').where({ id: eventInput.id }).update({ data: '{}' })
-    await expect(listOwnedAgentEvents(knex, 7, runId)).rejects.toMatchObject({ code: 'AGENT_EVENT_CORRUPT', status: 500 })
+    await expect(Promise.resolve(listOwnedAgentEvents(knex, 7, runId))).rejects.toMatchObject({ code: 'AGENT_EVENT_CORRUPT', status: 500 })
   })
 
 
   it('integrity-checks owner-scoped artifact payloads', async () => {
     const payload = Buffer.from('89504e470d0a1a0a00', 'hex')
     const id = await storeAgentScreenshot(knex, { ownerId: 7, sessionId, runId, payload, width: 1, height: 1 })
-    await expect(getOwnedAgentArtifact(knex, 8, id)).rejects.toMatchObject({ code: 'AGENT_RESOURCE_NOT_FOUND' })
-    await expect(getOwnedAgentArtifact(knex, 7, id)).resolves.toMatchObject({ id, byteLength: payload.length, mimeType: 'image/png' })
+    await expect(Promise.resolve(getOwnedAgentArtifact(knex, 8, id))).rejects.toMatchObject({ code: 'AGENT_RESOURCE_NOT_FOUND' })
+    expect(await getOwnedAgentArtifact(knex, 7, id)).toMatchObject({ id, byteLength: payload.length, mimeType: 'image/png' })
     await knex('agentArtifacts').where({ id }).update({ payload: Buffer.from('89504e470d0a1a0aff', 'hex') })
-    await expect(getOwnedAgentArtifact(knex, 7, id)).rejects.toMatchObject({ code: 'AGENT_ARTIFACT_CORRUPT' })
+    await expect(Promise.resolve(getOwnedAgentArtifact(knex, 7, id))).rejects.toMatchObject({ code: 'AGENT_ARTIFACT_CORRUPT' })
   })
 
   it('projects the same terminal tool state from durable events', async () => {
@@ -478,10 +477,10 @@ describe('durable agent repositories', () => {
     const expiresAt = new Date('2026-08-17T00:05:00.000Z')
     await reserveAgentRunQuota(knex, runId, 7, { tokens: 100, costMicros: 200 }, { dailyTokens: 150, dailyCostMicros: 300 }, expiresAt, now)
     await reserveAgentRunQuota(knex, runId, 7, { tokens: 100, costMicros: 200 }, { dailyTokens: 150, dailyCostMicros: 300 }, expiresAt, now)
-    await expect(reserveAgentRunQuota(knex, '00000000-0000-4000-8000-000000000030', 7, { tokens: 51, costMicros: 1 }, { dailyTokens: 150, dailyCostMicros: 300 }, expiresAt, now)).rejects.toMatchObject({ code: 'AGENT_QUOTA_EXHAUSTED', status: 429 })
+    await expect(Promise.resolve(reserveAgentRunQuota(knex, '00000000-0000-4000-8000-000000000030', 7, { tokens: 51, costMicros: 1 }, { dailyTokens: 150, dailyCostMicros: 300 }, expiresAt, now))).rejects.toMatchObject({ code: 'AGENT_QUOTA_EXHAUSTED', status: 429 })
     await reconcileAgentRunQuota(knex, { runId, ownerId: 7, consumedTokens: 80, consumedCostMicros: 150, status: 'consumed', now })
     await reconcileAgentRunQuota(knex, { runId, ownerId: 7, consumedTokens: 80, consumedCostMicros: 150, status: 'consumed', now })
-    await expect(knex('agentQuotaDaily').where({ ownerId: 7 }).first()).resolves.toMatchObject({ reservedTokens: 0, consumedTokens: 80, reservedCostMicros: 0, consumedCostMicros: 150 })
+    expect(await knex('agentQuotaDaily').where({ ownerId: 7 }).first()).toMatchObject({ reservedTokens: 0, consumedTokens: 80, reservedCostMicros: 0, consumedCostMicros: 150 })
   })
 
   it('retains quota and durable approval state during worker shutdown', async () => {
@@ -517,10 +516,10 @@ describe('durable agent repositories', () => {
     const running = runtime.runOnce()
     await entered.promise
     await runtime.shutdown()
-    await expect(running).resolves.toBe(true)
-    await expect(knex('agentRuns').where({ id: runId }).first('status')).resolves.toEqual({ status: 'awaiting_approval' })
-    await expect(knex('agentQuotaReservations').where({ runId }).first('status')).resolves.toEqual({ status: 'reserved' })
-    await expect(knex('agentEvents').where({ runId }).orderBy('sequence').pluck('type')).resolves.toEqual(['run.attemptStarted', 'message.started'])
+    expect(await running).toBe(true)
+    expect(await knex('agentRuns').where({ id: runId }).first('status')).toEqual({ status: 'awaiting_approval' })
+    expect(await knex('agentQuotaReservations').where({ runId }).first('status')).toEqual({ status: 'reserved' })
+    expect(await knex('agentEvents').where({ runId }).orderBy('sequence').pluck('type')).toEqual(['run.attemptStarted', 'message.started'])
   })
 
   it('admits a run atomically and binds exact retries to a canonical input hash', async () => {
@@ -557,7 +556,7 @@ describe('durable agent repositories', () => {
     const replay = await admitAgentRun(knex, input)
     expect(created.replayed).toBe(false)
     expect(replay).toMatchObject({ replayed: true, run: { id: input.id, eventSequence: 1, status: 'queued' } })
-    await expect(admitAgentRun(knex, { ...input, content: 'Different' })).rejects.toMatchObject({ code: 'RUN_IDEMPOTENCY_MISMATCH', status: 409 })
+    await expect(Promise.resolve(admitAgentRun(knex, { ...input, content: 'Different' }))).rejects.toMatchObject({ code: 'RUN_IDEMPOTENCY_MISMATCH', status: 409 })
     expect(await knex('agentMessages').where({ sessionId: secondSessionId }).orderBy('ordinal').pluck('status')).toEqual(['complete', 'pending'])
     const queuedEvent = await knex('agentEvents').where({ runId: input.id }).first('type', 'data')
     expect(queuedEvent?.type).toBe('run.queued')
@@ -565,7 +564,7 @@ describe('durable agent repositories', () => {
 
     const failedSessionId = '00000000-0000-4000-8000-000000000038'
     await createAgentSession(knex, { id: failedSessionId, ownerId: 8, retention: 'temporary', providerProfileId: null, executionMode: 'agent' })
-    await expect(admitAgentRun(knex, {
+    await expect(Promise.resolve(admitAgentRun(knex, {
       ...input,
       id: '00000000-0000-4000-8000-000000000039',
       userMessageId: '00000000-0000-4000-8000-000000000041',
@@ -575,7 +574,7 @@ describe('durable agent repositories', () => {
       ownerId: 8,
       clientRequestId: '00000000-0000-4000-8000-000000000040',
       quotaLimits: { dailyTokens: 0, dailyCostMicros: 0 }
-    })).rejects.toMatchObject({ code: 'AGENT_QUOTA_EXHAUSTED' })
+    }))).rejects.toMatchObject({ code: 'AGENT_QUOTA_EXHAUSTED' })
     expect(await knex('agentRuns').where({ sessionId: failedSessionId }).count<{ count: number }[]>({ count: '*' }).first()).toMatchObject({ count: 0 })
     expect(await knex('agentMessages').where({ sessionId: failedSessionId }).count<{ count: number }[]>({ count: '*' }).first()).toMatchObject({ count: 0 })
   })
@@ -681,9 +680,9 @@ describe('durable agent repositories', () => {
       content: 'Investigate intermittent deployment pipeline failures.'
     })
 
-    await expect(runtime.runOnce()).resolves.toBe(true)
-    await expect(knex('agentSessions').where({ id: titledSessionId }).first('title', 'titleSource', 'version')).resolves.toMatchObject({ title: 'Deployment Pipeline Failures', titleSource: 'utility', version: 2 })
-    await expect(knex('agentRuns').where({ id: admitted.run.id }).first('status', 'inputTokens', 'outputTokens')).resolves.toMatchObject({ status: 'succeeded', inputTokens: 12, outputTokens: 8 })
+    expect(await runtime.runOnce()).toBe(true)
+    expect(await knex('agentSessions').where({ id: titledSessionId }).first('title', 'titleSource', 'version')).toMatchObject({ title: 'Deployment Pipeline Failures', titleSource: 'utility', version: 2 })
+    expect(await knex('agentRuns').where({ id: admitted.run.id }).first('status', 'inputTokens', 'outputTokens')).toMatchObject({ status: 'succeeded', inputTokens: 12, outputTokens: 8 })
     expect(generateConversationTitle.mock.calls[0]?.[0].messages).toEqual([
       { role: 'user', content: 'Investigate intermittent deployment pipeline failures.' },
       { role: 'assistant', content: 'I found a stale runner configuration.' }
@@ -697,9 +696,9 @@ describe('durable agent repositories', () => {
       expectedSessionVersion: 2,
       content: 'The failures happen during runner rollover.'
     })
-    await expect(runtime.runOnce()).resolves.toBe(true)
-    await expect(knex('agentSessions').where({ id: titledSessionId }).first('title', 'titleSource', 'version')).resolves.toMatchObject({ title: 'Runner Rollover Configuration Failures', titleSource: 'utility', version: 3 })
-    await expect(knex('agentRuns').where({ id: refined.run.id }).first('status', 'inputTokens', 'outputTokens')).resolves.toMatchObject({ status: 'succeeded', inputTokens: 14, outputTokens: 7 })
+    expect(await runtime.runOnce()).toBe(true)
+    expect(await knex('agentSessions').where({ id: titledSessionId }).first('title', 'titleSource', 'version')).toMatchObject({ title: 'Runner Rollover Configuration Failures', titleSource: 'utility', version: 3 })
+    expect(await knex('agentRuns').where({ id: refined.run.id }).first('status', 'inputTokens', 'outputTokens')).toMatchObject({ status: 'succeeded', inputTokens: 14, outputTokens: 7 })
     expect(generateConversationTitle.mock.calls[1]?.[0].messages).toEqual([
       { role: 'user', content: 'Investigate intermittent deployment pipeline failures.' },
       { role: 'assistant', content: 'I found a stale runner configuration.' },
@@ -784,13 +783,13 @@ describe('durable agent repositories', () => {
       orchestration: { ...DEFAULT_AGENT_ORCHESTRATION_LIMITS, enabled: true }
     })
 
-    await expect(runtime.runOnce()).resolves.toBe(true)
-    await expect(knex('agentRuns').where({ id: runId }).first('status', 'inputTokens', 'outputTokens')).resolves.toEqual({ status: 'succeeded', inputTokens: 23, outputTokens: 13 })
+    expect(await runtime.runOnce()).toBe(true)
+    expect(await knex('agentRuns').where({ id: runId }).first('status', 'inputTokens', 'outputTokens')).toEqual({ status: 'succeeded', inputTokens: 23, outputTokens: 13 })
     expect((await knex('agentRunTasks').where({ runId }).orderBy('ordinal').select('status', 'outcome', 'evidenceCount', 'authoritySha256'))).toEqual([
       { status: 'completed', outcome: 'completed', evidenceCount: 1, authoritySha256: 'c'.repeat(64) },
       { status: 'completed', outcome: 'completed', evidenceCount: 1, authoritySha256: 'c'.repeat(64) }
     ])
-    await expect(knex('agentEvents').where({ runId }).orderBy('sequence').pluck('type')).resolves.toEqual(expect.arrayContaining([
+    expect(await knex('agentEvents').where({ runId }).orderBy('sequence').pluck('type')).toEqual(expect.arrayContaining([
       'task.planCreated',
       'task.created',
       'subagent.started',
@@ -806,30 +805,30 @@ describe('durable agent repositories', () => {
     const claim = await claimAgentRun(knex, { workerId: 'worker-b', globalConcurrency: 4, perUserConcurrency: 1, now })
     expect(claim).toMatchObject({ id: runId, status: 'running', attempts: 2, leaseOwner: 'worker-b' })
     if (!claim) throw new Error('expected claim')
-    await expect(heartbeatAgentRun(knex, claim, 60_000, now)).resolves.toBe(true)
+    expect(await heartbeatAgentRun(knex, claim, 60_000, now)).toBe(true)
     await markAgentRunSideEffectsStarted(knex, claim, now)
     await knex('agentRuns').where({ id: runId }).update({ leaseExpiresAt: new Date('2026-08-17T00:01:00.000Z') })
-    await expect(claimAgentRun(knex, { workerId: 'worker-c', globalConcurrency: 4, perUserConcurrency: 1, now })).resolves.toBeNull()
-    await expect(knex('agentRuns').where({ id: runId }).first('status', 'errorCode')).resolves.toMatchObject({ status: 'recovery_required', errorCode: 'LEASE_LOST_AFTER_SIDE_EFFECT' })
-    await expect(transitionAgentRun(knex, { claim, from: 'running', to: 'succeeded', now })).rejects.toMatchObject({ code: 'RUN_LEASE_LOST' })
+    expect(await claimAgentRun(knex, { workerId: 'worker-c', globalConcurrency: 4, perUserConcurrency: 1, now })).toBeNull()
+    expect(await knex('agentRuns').where({ id: runId }).first('status', 'errorCode')).toMatchObject({ status: 'recovery_required', errorCode: 'LEASE_LOST_AFTER_SIDE_EFFECT' })
+    await expect(Promise.resolve(transitionAgentRun(knex, { claim, from: 'running', to: 'succeeded', now }))).rejects.toMatchObject({ code: 'RUN_LEASE_LOST' })
 
     await knex('agentRuns').where({ id: runId }).update({ status: 'queued', attempts: 0, sideEffectsStarted: false, leaseOwner: null, leaseToken: null, leaseExpiresAt: null, cancelRequestedAt: null, completedAt: null })
     const cancelled = await requestAgentRunCancellation(knex, 7, runId, now)
     expect(cancelled.status).toBe('cancelled')
-    await expect(requestAgentRunCancellation(knex, 8, runId, now)).rejects.toMatchObject({ code: 'AGENT_RESOURCE_NOT_FOUND' })
+    await expect(Promise.resolve(requestAgentRunCancellation(knex, 8, runId, now))).rejects.toMatchObject({ code: 'AGENT_RESOURCE_NOT_FOUND' })
   })
 
   it('runs one fenced coordinator attempt and stops claiming on shutdown', async () => {
     await knex('agentRuns').where({ id: runId }).update({ status: 'queued', attempts: 0, leaseOwner: null, leaseToken: null, leaseExpiresAt: null, availableAt: new Date('2026-08-17T00:00:00.000Z') })
     const coordinator = new AgentRunCoordinator(knex, { workerId: 'worker-loop', globalConcurrency: 4, perUserConcurrency: 1, leaseMilliseconds: 60_000, heartbeatMilliseconds: 5_000, now: new Date('2026-08-17T00:02:00.000Z') })
-    await expect(coordinator.runOnce(async (claim, signal) => {
+    expect(await coordinator.runOnce(async (claim, signal) => {
       expect(claim.leaseToken).toBeTruthy()
       expect(signal.aborted).toBe(false)
       return { status: 'succeeded' }
-    })).resolves.toBe(true)
-    await expect(knex('agentRuns').where({ id: runId }).first('status', 'leaseToken')).resolves.toMatchObject({ status: 'succeeded', leaseToken: null })
+    })).toBe(true)
+    expect(await knex('agentRuns').where({ id: runId }).first('status', 'leaseToken')).toMatchObject({ status: 'succeeded', leaseToken: null })
     await coordinator.shutdown()
-    await expect(coordinator.runOnce(async () => ({ status: 'succeeded' }))).resolves.toBe(false)
+    expect(await coordinator.runOnce(async () => ({ status: 'succeeded' }))).toBe(false)
   })
 
   it('aborts an active handler and commits cancellation as the terminal state', async () => {
@@ -853,11 +852,11 @@ describe('durable agent repositories', () => {
       return { status: 'failed', errorCode: 'AGENT_ENGINE_FAILED' }
     })
     await entered.promise
-    await expect(coordinator.cancel(7, runId)).resolves.toMatchObject({ cancelRequestedAt: expect.any(String) })
-    await expect(running).resolves.toBe(true)
-    await expect(knex('agentRuns').where({ id: runId }).first('status', 'errorCode', 'completedAt')).resolves.toMatchObject({ status: 'cancelled', errorCode: null, completedAt: expect.anything() })
-    await expect(knex('agentMessages').where({ runId, role: 'assistant' }).first('status')).resolves.toEqual({ status: 'cancelled' })
-    await expect(knex('agentEvents').where({ runId, type: 'run.cancelled' }).first('sequence', 'data')).resolves.toMatchObject({ sequence: expect.any(Number), data: expect.stringContaining('"status":"cancelled"') })
+    expect(await coordinator.cancel(7, runId)).toMatchObject({ cancelRequestedAt: expect.any(String) })
+    expect(await running).toBe(true)
+    expect(await knex('agentRuns').where({ id: runId }).first('status', 'errorCode', 'completedAt')).toMatchObject({ status: 'cancelled', errorCode: null, completedAt: expect.anything() })
+    expect(await knex('agentMessages').where({ runId, role: 'assistant' }).first('status')).toEqual({ status: 'cancelled' })
+    expect(await knex('agentEvents').where({ runId, type: 'run.cancelled' }).first('sequence', 'data')).toMatchObject({ sequence: expect.any(Number), data: expect.stringContaining('"status":"cancelled"') })
     await coordinator.shutdown()
   })
 
@@ -882,14 +881,14 @@ describe('durable agent repositories', () => {
       await knex('agentRuns').where({ id: claim.id, leaseToken: claim.leaseToken, status: 'awaiting_approval' }).update({ status: 'running' })
       return { status: 'succeeded' }
     })
-    await expect(knex('agentRuns').where({ id: runId }).first('status')).resolves.toEqual({ status: 'succeeded' })
+    expect(await knex('agentRuns').where({ id: runId }).first('status')).toEqual({ status: 'succeeded' })
 
     await knex('agentRuns').where({ id: runId }).update(reset)
     await coordinator.runOnce(async claim => {
       await knex('agentRuns').where({ id: claim.id, leaseToken: claim.leaseToken, status: 'running' }).update({ status: 'awaiting_approval' })
       return { status: 'failed', errorCode: 'PROVIDER_REPLAY_FAILED' }
     })
-    await expect(knex('agentRuns').where({ id: runId }).first('status', 'errorCode')).resolves.toEqual({ status: 'recovery_required', errorCode: 'PROVIDER_REPLAY_FAILED' })
+    expect(await knex('agentRuns').where({ id: runId }).first('status', 'errorCode')).toEqual({ status: 'recovery_required', errorCode: 'PROVIDER_REPLAY_FAILED' })
     await coordinator.shutdown()
   })
 
@@ -908,6 +907,6 @@ describe('durable agent repositories', () => {
     await entered.promise
     await coordinator.shutdown()
     expect(drained).toBe(true)
-    await expect(running).resolves.toBe(true)
+    expect(await running).toBe(true)
   })
 })

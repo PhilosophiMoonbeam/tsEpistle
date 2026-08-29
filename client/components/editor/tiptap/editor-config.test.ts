@@ -1,5 +1,5 @@
 import { Editor, type JSONContent } from '@tiptap/core'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from '../../../../server/test/bun-test.mts'
 import markdownRenderer from '../../../../server/modules/rendering/markdown-core/renderer.ts'
 import {
   createWikiMarkdownRenderer,

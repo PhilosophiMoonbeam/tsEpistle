@@ -1,7 +1,6 @@
-/** @vitest-environment node */
 
 import createKnex, { type Knex } from 'knex'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from '../bun-test.mts'
 
 import {
   claimPageMutationEffects,
@@ -60,7 +59,7 @@ const enqueue = (overrides: Partial<Parameters<typeof enqueuePageMutationEffects
 
 describe('page mutation projection outbox', () => {
   it('commits immutable render, link, and knowledge intent atomically with the source transaction', async () => {
-    await expect(knex.transaction(async transaction => {
+    await expect(Promise.resolve(knex.transaction(async transaction => {
       await enqueuePageMutationEffects(transaction, {
         pageId: 42,
         sourceRevision: '8',
@@ -70,7 +69,7 @@ describe('page mutation projection outbox', () => {
         location
       })
       throw new Error('source write failed')
-    })).rejects.toThrow('source write failed')
+    }))).rejects.toThrow('source write failed')
     expect(await knex('pageMutationOutbox')).toEqual([])
 
     const ids = await enqueue()
@@ -87,7 +86,7 @@ describe('page mutation projection outbox', () => {
     const second = await enqueue()
     expect(second).toEqual(first)
     expect(await knex('pageMutationOutbox')).toHaveLength(3)
-    await expect(enqueue({ source: '# Changed\n' })).rejects.toMatchObject({ code: 'OUTBOX_IDEMPOTENCY_CONFLICT' })
+    await expect(Promise.resolve(enqueue({ source: '# Changed\n' }))).rejects.toMatchObject({ code: 'OUTBOX_IDEMPOTENCY_CONFLICT' })
   })
 
   it('represents deletion without retaining deleted source', async () => {
@@ -114,7 +113,7 @@ describe('page mutation projection outbox', () => {
   it('verifies payload hashes before exposing claimed work', async () => {
     await enqueue({ effects: ['render'] })
     await knex('pageMutationOutbox').update({ payload: '{"tampered":true}' })
-    await expect(claimPageMutationEffects(knex, { leaseOwner: 'worker' })).rejects.toMatchObject({ code: 'OUTBOX_PAYLOAD_TAMPERED' })
+    await expect(Promise.resolve(claimPageMutationEffects(knex, { leaseOwner: 'worker' }))).rejects.toMatchObject({ code: 'OUTBOX_PAYLOAD_TAMPERED' })
     expect(await knex('pageMutationOutbox').first()).toMatchObject({ status: 'pending', attempts: 0 })
   })
 
@@ -140,7 +139,7 @@ describe('page mutation projection outbox', () => {
     await enqueue({ effects: ['render'] })
     const [missingClaim] = await claimPageMutationEffects(knex, { leaseOwner: 'worker-a' })
     if (!missingClaim) throw new Error('claim missing')
-    await expect(executePageMutationEffect(knex, missingClaim, new Map(), new AbortController().signal)).rejects.toMatchObject({ code: 'MISSING_PROJECTION_SINK' })
+    await expect(Promise.resolve(executePageMutationEffect(knex, missingClaim, new Map(), new AbortController().signal))).rejects.toMatchObject({ code: 'MISSING_PROJECTION_SINK' })
     expect(await knex('pageMutationOutbox').first()).toMatchObject({ status: 'failed' })
 
     await knex('pageMutationOutbox').delete()
@@ -148,7 +147,7 @@ describe('page mutation projection outbox', () => {
     const [badClaim] = await claimPageMutationEffects(knex, { leaseOwner: 'worker-b' })
     if (!badClaim) throw new Error('claim missing')
     const badSink = { kind: 'render' as const, reconcile: async () => ({ result: {}, postcondition: { satisfied: false, observedSourceRevision: null, detail: 'mismatch' } }) }
-    await expect(executePageMutationEffect(knex, badClaim, new Map([['render', badSink]]), new AbortController().signal)).rejects.toBeInstanceOf(PageMutationOutboxError)
+    await expect(Promise.resolve(executePageMutationEffect(knex, badClaim, new Map([['render', badSink]]), new AbortController().signal))).rejects.toBeInstanceOf(PageMutationOutboxError)
     expect(await knex('pageMutationOutbox').first()).toMatchObject({ status: 'failed' })
   })
 
@@ -159,11 +158,11 @@ describe('page mutation projection outbox', () => {
     const [claim] = await claimPageMutationEffects(knex, { leaseOwner: 'worker', now: new Date() })
     if (!claim) throw new Error('claim missing')
     const sink = { kind: 'links' as const, reconcile: async () => { throw new Error('temporary') } }
-    await expect(executePageMutationEffect(knex, claim, new Map([['links', sink]]), new AbortController().signal)).rejects.toThrow('temporary')
+    await expect(Promise.resolve(executePageMutationEffect(knex, claim, new Map([['links', sink]]), new AbortController().signal))).rejects.toThrow('temporary')
     expect(await knex('pageMutationOutbox').first()).toMatchObject({ status: 'retry', attempts: 1, leaseToken: null })
     await knex('pageMutationOutbox').update({ status: 'running', leaseToken: '00000000-0000-4000-8000-000000000099' })
     const goodSink = { kind: 'links' as const, reconcile: async () => ({ result: {}, postcondition: { satisfied: true, observedSourceRevision: '8', detail: 'ok' } }) }
-    await expect(executePageMutationEffect(knex, claim, new Map([['links', goodSink]]), new AbortController().signal)).rejects.toMatchObject({ code: 'PROJECTION_LEASE_LOST' })
+    await expect(Promise.resolve(executePageMutationEffect(knex, claim, new Map([['links', goodSink]]), new AbortController().signal))).rejects.toMatchObject({ code: 'PROJECTION_LEASE_LOST' })
     vi.useRealTimers()
   })
 })

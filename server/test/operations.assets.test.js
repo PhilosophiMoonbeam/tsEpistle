@@ -38,7 +38,7 @@ describe('asset operations', () => {
         storage: { assetEvent: vi.fn().mockResolvedValue(undefined) }
       }
     }
-    const { default: operations } = await import('../operations/assets.ts')
+    const { default: operations } = await vi.importFresh('../operations/assets.ts', import.meta.url)
     const checkAccess = vi.fn().mockReturnValue(true)
     global.WIKI.auth = { checkAccess }
     const requester = { id: 1, name: 'Administrator', email: 'admin@example.com' }
@@ -78,7 +78,7 @@ describe('asset operations', () => {
         storage: { assetEvent: vi.fn() }
       }
     }
-    const { default: operations } = await import('../operations/assets.ts')
+    const { default: operations } = await vi.importFresh('../operations/assets.ts', import.meta.url)
     const requester = { id: 1, name: 'Administrator', email: 'admin@example.com' }
 
     const result = await operations.list({ requester, folderId: 0, kind: 'ALL' })

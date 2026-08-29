@@ -1,7 +1,6 @@
-/** @vitest-environment node */
 
 import createKnex, { type Knex } from 'knex'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from '../bun-test.mts'
 import { DurableJobStore, runDurableJobBatch } from '../../core/durable-jobs.ts'
 import { up } from '../../db/migrations/2.5.130.ts'
 import { cleanupDurableJobs } from '../../jobs/durable-job-handlers.ts'

@@ -1,0 +1,87 @@
+diff --git a/node_modules/better-sqlite3/.bun-tag-cb592b2adceffe49 b/.bun-tag-cb592b2adceffe49
+new file mode 100644
+index 0000000000000000000000000000000000000000..e69de29bb2d1d6434b8b29ae775ad8c2e48c5391
+diff --git a/node_modules/better-sqlite3/lib/bun.js b/lib/bun.js
+new file mode 100644
+index 0000000000000000000000000000000000000000..7c3ee7a2ab090006705aa6e7262ab68f9fa6012b
+--- /dev/null
++++ b/lib/bun.js
+@@ -0,0 +1,63 @@
++'use strict';
++
++const { Database: BunDatabase } = require('bun:sqlite');
++
++class Database {
++	constructor(filename, options = {}) {
++		this.database = options.readonly
++			? new BunDatabase(filename, { readonly: true })
++			: new BunDatabase(filename);
++		this.database.exec('PRAGMA foreign_keys = ON');
++		this.safeIntegers = false;
++	}
++
++	prepare(sql) {
++		const statement = this.database.prepare(sql);
++		statement.safeIntegers(this.safeIntegers);
++		Object.defineProperty(statement, 'reader', {
++			configurable: true,
++			enumerable: true,
++			get: () => statement.columnNames.length > 0,
++		});
++		return statement;
++	}
++
++	exec(sql) {
++		return this.database.exec(sql);
++	}
++
++	close() {
++		return this.database.close();
++	}
++
++	defaultSafeIntegers(enabled = true) {
++		this.safeIntegers = Boolean(enabled);
++		return this;
++	}
++
++	loadExtension(...args) {
++		return this.database.loadExtension(...args);
++	}
++
++	serialize(...args) {
++		return this.database.serialize(...args);
++	}
++
++	transaction(...args) {
++		return this.database.transaction(...args);
++	}
++
++	get inTransaction() {
++		return this.database.inTransaction;
++	}
++
++	get name() {
++		return this.database.filename;
++	}
++
++	get open() {
++		return !this.database.closed;
++	}
++}
++
++module.exports = Database;
+diff --git a/lib/index.js b/lib/index.js
+index d7890fabcfe1ed49c3766d2a4cc69aac443378dc..c3a5b9d6e76ad266c5e1e681ae557b6e640761bc 100644
+--- a/lib/index.js
++++ b/lib/index.js
+@@ -1,3 +1,8 @@
+ 'use strict';
+-module.exports = require('./database')(require('./binding').getBinding, true);
+-module.exports.SqliteError = require('./sqlite-error');
++if (process.versions.bun) {
++  module.exports = require('./bun');
++  module.exports.SqliteError = require('bun:sqlite').SQLiteError;
++} else {
++  module.exports = require('./database')(require('./binding').getBinding, true);
++  module.exports.SqliteError = require('./sqlite-error');
++}

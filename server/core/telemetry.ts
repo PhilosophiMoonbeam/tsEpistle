@@ -165,7 +165,7 @@ const telemetry: TelemetryService = {
             architecture: arch,
             dbType: wiki.config.db.type.toUpperCase(),
             dbVersion,
-            nodeVersion: process.version.substring(1),
+            nodeVersion: process.versions.bun ?? 'unknown', // Upstream telemetry retains this legacy field name.
             cpuCores: os.cpus().length,
             ramMBytes: Math.round(os.totalmem() / 1024 / 1024),
             clientId: wiki.config.telemetry.clientId,

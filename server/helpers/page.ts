@@ -45,7 +45,7 @@ const wiki = WIKI as unknown as WikiContext
 
 const localeSegmentRegex = /^[A-Z]{2}(-[A-Z]{2})?$/i
 const localeFolderRegex = /^([a-z]{2}(?:-[a-z]{2})?\/)?(.*)/i
-// eslint-disable-next-line no-control-regex
+// biome-ignore lint/suspicious/noControlCharactersInRegex: these are the exact filesystem control ranges this guard rejects.
 const unsafeCharsRegex = /[\x00-\x1f\x80-\x9f\\"|<>:*?]/
 
 const contentToExt: Record<string, string> = {

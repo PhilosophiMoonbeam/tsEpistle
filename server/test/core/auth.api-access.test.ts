@@ -1,4 +1,3 @@
-/** @vitest-environment node */
 
 import type { Request, Response } from 'express'
 import { DateTime } from 'luxon'
@@ -15,7 +14,7 @@ const passportAuthenticate = vi.fn((_strategy: string, _options: unknown, callba
   () => callback(null, authenticatedPrincipal, null)
 )
 
-vi.mock('passport', () => ({
+vi.mockModule('passport', import.meta.url, () => ({
   default: {
     authenticate: passportAuthenticate,
     deserializeUser: vi.fn(),

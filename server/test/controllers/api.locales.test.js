@@ -1,4 +1,4 @@
-vi.mock('express', () => {
+vi.mockModule('express', import.meta.url, () => {
   const router = {
     get: vi.fn(),
     post: vi.fn(),
@@ -12,7 +12,7 @@ vi.mock('express', () => {
   return { default: express, ...express }
 })
 
-import express from 'express'
+const { default: express } = await import('express')
 
 describe('controllers/api locales endpoints', () => {
   beforeEach(() => {
@@ -75,7 +75,7 @@ describe('controllers/api locales endpoints', () => {
   })
 
   const loadHandlers = async () => {
-    await import('../../controllers/api/locales.ts')
+    await vi.importFresh('../../controllers/api/locales.ts', import.meta.url)
     return {
       list: express.__router.get.mock.calls.find(([path]) => path === '/')[1],
       config: express.__router.get.mock.calls.find(([path]) => path === '/config')[1],

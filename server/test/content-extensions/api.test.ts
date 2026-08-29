@@ -1,4 +1,4 @@
-vi.mock('express', () => {
+vi.mockModule('express', import.meta.url, () => {
   const routers: Array<Record<string, ReturnType<typeof vi.fn>>> = []
   const expressMock = {
     Router: () => {
@@ -15,13 +15,13 @@ const operations = vi.hoisted(() => ({
   listContentExtensions: vi.fn(),
   setContentExtensionEnabled: vi.fn()
 }))
-vi.mock('../../content-extensions/operations.ts', () => operations)
+vi.mockModule('../../content-extensions/operations.ts', import.meta.url, () => operations)
 
 const pages = vi.hoisted(() => ({ listIndex: vi.fn() }))
-vi.mock('../../operations/pages.ts', () => ({ default: pages }))
+vi.mockModule('../../operations/pages.ts', import.meta.url, () => ({ default: pages }))
 
-import * as express from 'express'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+const express = await import('express')
+import { beforeEach, describe, expect, it, vi } from '../bun-test.mts'
 
 type TestWiki = { auth: { checkAccess: ReturnType<typeof vi.fn> } }
 let wiki: TestWiki
@@ -34,7 +34,7 @@ const response = () => ({
 })
 
 const loadHandlers = async () => {
-  await import('../../controllers/api/content-extensions.ts')
+  await vi.importFresh('../../controllers/api/content-extensions.ts', import.meta.url)
   const router = (express as unknown as { __routers: Array<{ get: ReturnType<typeof vi.fn>; patch: ReturnType<typeof vi.fn> }> }).__routers[0]!
   return {
     list: router.get.mock.calls.find(([path]) => path === '/')?.[1],

@@ -44,7 +44,8 @@ describe('Vue template filter removal guard', () => {
         offenders.push(`${relPath}: global Vue.filter registration`)
       }
       lines.forEach((line, index) => {
-        if (/\{\{[^{}]*\|\s*[A-Za-z_$][A-Za-z0-9_$]*/.test(line)) {
+        const interpolations = line.match(/\{\{[^{}]*\}\}/g) || []
+        if (interpolations.some(interpolation => /(^|[^|])\|\s*[A-Za-z_$][A-Za-z0-9_$]*/.test(interpolation.replace(/\|\|/g, '')))) {
           offenders.push(`${relPath}:${index + 1}: mustache filter pipe`)
         }
         if (hasDirectiveFilterPipe(line)) {

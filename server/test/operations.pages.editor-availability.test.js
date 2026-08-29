@@ -21,7 +21,7 @@ describe('page creation editor availability', () => {
         pageHistory: {}
       }
     }
-    const { default: operations } = await import('../operations/pages.ts')
+    const { default: operations } = await vi.importFresh('../operations/pages.ts', import.meta.url)
     return { operations, createPage }
   }
 

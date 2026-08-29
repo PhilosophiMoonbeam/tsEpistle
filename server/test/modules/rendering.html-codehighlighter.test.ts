@@ -1,5 +1,5 @@
 import * as cheerio from 'cheerio'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it } from '../bun-test.mts'
 
 import renderer from '../../modules/rendering/html-codehighlighter/renderer.ts'
 

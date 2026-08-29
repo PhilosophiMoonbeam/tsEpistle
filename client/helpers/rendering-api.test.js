@@ -14,7 +14,7 @@ describe('rendering api helper', () => {
   test('requests rendering renderers with same-origin JSON options', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([]))
 
-    await expect(fetchRenderingRenderers(fetchImpl)).resolves.toEqual([])
+    expect(await fetchRenderingRenderers(fetchImpl)).toEqual([])
 
     expect(fetchImpl).toHaveBeenCalledWith('/_api/rendering/renderers', {
       credentials: 'same-origin',
@@ -64,7 +64,7 @@ describe('rendering api helper', () => {
       }
     ]))
 
-    await expect(fetchRenderingRenderers(fetchImpl)).resolves.toEqual([
+    expect(await fetchRenderingRenderers(fetchImpl)).toEqual([
       {
         isEnabled: true,
         key: 'markdownCore',
@@ -126,7 +126,7 @@ describe('rendering api helper', () => {
       }
     ]))
 
-    await expect(fetchRenderingRenderers(fetchImpl)).resolves.toEqual([
+    expect(await fetchRenderingRenderers(fetchImpl)).toEqual([
       {
         isEnabled: false,
         key: 'emojiRenderer',
@@ -149,7 +149,7 @@ describe('rendering api helper', () => {
   test('rejects malformed root payloads', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ renderers: [] }))
 
-    await expect(fetchRenderingRenderers(fetchImpl, 'Bad rendering payload')).rejects.toThrow('Bad rendering payload')
+    await expect(Promise.resolve(fetchRenderingRenderers(fetchImpl, 'Bad rendering payload'))).rejects.toThrow('Bad rendering payload')
   })
 
   test('rejects malformed renderer rows', async () => {
@@ -167,7 +167,7 @@ describe('rendering api helper', () => {
       }
     ]))
 
-    await expect(fetchRenderingRenderers(fetchImpl, 'Bad rendering row')).rejects.toThrow('Bad rendering row')
+    await expect(Promise.resolve(fetchRenderingRenderers(fetchImpl, 'Bad rendering row'))).rejects.toThrow('Bad rendering row')
   })
 
   test('rejects malformed dependsOn values', async () => {
@@ -185,7 +185,7 @@ describe('rendering api helper', () => {
       }
     ]))
 
-    await expect(fetchRenderingRenderers(fetchImpl, 'Bad rendering dependency')).rejects.toThrow('Bad rendering dependency')
+    await expect(Promise.resolve(fetchRenderingRenderers(fetchImpl, 'Bad rendering dependency'))).rejects.toThrow('Bad rendering dependency')
   })
 
   test('rejects malformed config rows', async () => {
@@ -203,7 +203,7 @@ describe('rendering api helper', () => {
       }
     ]))
 
-    await expect(fetchRenderingRenderers(fetchImpl, 'Bad rendering config')).rejects.toThrow('Bad rendering config')
+    await expect(Promise.resolve(fetchRenderingRenderers(fetchImpl, 'Bad rendering config'))).rejects.toThrow('Bad rendering config')
   })
 
   test('rejects malformed config JSON', async () => {
@@ -221,7 +221,7 @@ describe('rendering api helper', () => {
       }
     ]))
 
-    await expect(fetchRenderingRenderers(fetchImpl, 'Bad rendering JSON')).rejects.toThrow('Bad rendering JSON')
+    await expect(Promise.resolve(fetchRenderingRenderers(fetchImpl, 'Bad rendering JSON'))).rejects.toThrow('Bad rendering JSON')
   })
 
   test('propagates API JSON errors', async () => {
@@ -233,7 +233,7 @@ describe('rendering api helper', () => {
       json: async () => ({ message: 'manage:system is required' })
     })
 
-    await expect(fetchRenderingRenderers(fetchImpl, 'Bad rendering load')).rejects.toThrow('manage:system is required')
+    await expect(Promise.resolve(fetchRenderingRenderers(fetchImpl, 'Bad rendering load'))).rejects.toThrow('manage:system is required')
   })
 
   test('rejects non-JSON successful responses', async () => {
@@ -244,14 +244,14 @@ describe('rendering api helper', () => {
       }
     })
 
-    await expect(fetchRenderingRenderers(fetchImpl, 'Bad rendering content type')).rejects.toThrow('Bad rendering content type')
+    await expect(Promise.resolve(fetchRenderingRenderers(fetchImpl, 'Bad rendering content type'))).rejects.toThrow('Bad rendering content type')
   })
 
   test('saves rendering renderers with same-origin JSON POST options', async () => {
     const renderers = [{ key: 'markdownCore', isEnabled: true, config: [{ key: 'safeMode', value: JSON.stringify({ v: true }) }] }]
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ message: 'Renderers updated successfully' }))
 
-    await expect(saveRenderingRenderers(fetchImpl, renderers)).resolves.toEqual({ message: 'Renderers updated successfully' })
+    expect(await saveRenderingRenderers(fetchImpl, renderers)).toEqual({ message: 'Renderers updated successfully' })
 
     expect(fetchImpl).toHaveBeenCalledWith('/_api/rendering/renderers', {
       method: 'POST',
@@ -267,12 +267,12 @@ describe('rendering api helper', () => {
   test('rejects malformed rendering save success responses', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ ok: true }))
 
-    await expect(saveRenderingRenderers(fetchImpl, [], 'Bad rendering save')).rejects.toThrow('Bad rendering save')
+    await expect(Promise.resolve(saveRenderingRenderers(fetchImpl, [], 'Bad rendering save'))).rejects.toThrow('Bad rendering save')
   })
 
   test('surfaces JSON API error messages on rendering save failures', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ error: 'Invalid renderers payload' }, false))
 
-    await expect(saveRenderingRenderers(fetchImpl, [], 'Bad rendering save')).rejects.toThrow('Invalid renderers payload')
+    await expect(Promise.resolve(saveRenderingRenderers(fetchImpl, [], 'Bad rendering save'))).rejects.toThrow('Invalid renderers payload')
   })
 })

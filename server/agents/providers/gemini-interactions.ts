@@ -9,6 +9,7 @@ import { z } from 'zod'
 
 import { canonicalJson } from '../../helpers/canonical-json.ts'
 import { AgentRepositoryError } from '../repository.ts'
+import type { AgentProviderFetch } from './factory.ts'
 
 const MAX_RESPONSE_BYTES = 4 * 1_024 * 1_024
 const MAX_EVENT_BYTES = 1 * 1_024 * 1_024
@@ -472,7 +473,7 @@ export interface GeminiInteractionsServiceOptions {
   readonly apiKey: string
   readonly baseUrl: string
   readonly model: string
-  readonly fetch: typeof fetch
+  readonly fetch: AgentProviderFetch
   readonly timeoutMs: number
   readonly thinkingLevel?: 'minimal' | 'low' | 'medium' | 'high'
 }

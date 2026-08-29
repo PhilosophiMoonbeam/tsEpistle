@@ -26,7 +26,7 @@ describe('locales api helper', () => {
       }
     ]))
 
-    await expect(fetchLocales(fetchImpl)).resolves.toEqual([
+    expect(await fetchLocales(fetchImpl)).toEqual([
       {
         availability: 100,
         code: 'en',
@@ -60,7 +60,7 @@ describe('locales api helper', () => {
       }
     ]))
 
-    await expect(fetchLocales(fetchImpl, 'Bad locales payload')).rejects.toThrow('Bad locales payload')
+    await expect(Promise.resolve(fetchLocales(fetchImpl, 'Bad locales payload'))).rejects.toThrow('Bad locales payload')
   })
 
   test('fetches and validates locale config', async () => {
@@ -71,7 +71,7 @@ describe('locales api helper', () => {
       namespaces: ['en', 'fr']
     }))
 
-    await expect(fetchLocaleConfig(fetchImpl)).resolves.toEqual({
+    expect(await fetchLocaleConfig(fetchImpl)).toEqual({
       locale: 'en',
       autoUpdate: true,
       namespacing: false,
@@ -95,7 +95,7 @@ describe('locales api helper', () => {
       json: async () => ({ error: 'manage:system is required' })
     })
 
-    await expect(fetchLocaleConfig(fetchImpl, 'Bad locale config')).rejects.toThrow('manage:system is required')
+    await expect(Promise.resolve(fetchLocaleConfig(fetchImpl, 'Bad locale config'))).rejects.toThrow('manage:system is required')
   })
 
   test('saves locale config with same-origin JSON POST options', async () => {
@@ -107,7 +107,7 @@ describe('locales api helper', () => {
       namespaces: ['en', 'fr']
     }
 
-    await expect(saveLocaleConfig(fetchImpl, config)).resolves.toEqual({ message: 'Locale config updated' })
+    expect(await saveLocaleConfig(fetchImpl, config)).toEqual({ message: 'Locale config updated' })
 
     expect(fetchImpl).toHaveBeenCalledWith('/_api/locales/config', {
       method: 'POST',
@@ -123,13 +123,13 @@ describe('locales api helper', () => {
   test('rejects malformed locale save success payloads', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ ok: true }))
 
-    await expect(saveLocaleConfig(fetchImpl, {}, 'Bad locale save')).rejects.toThrow('Bad locale save')
+    await expect(Promise.resolve(saveLocaleConfig(fetchImpl, {}, 'Bad locale save'))).rejects.toThrow('Bad locale save')
   })
 
   test('propagates locale save REST JSON errors', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ error: 'Invalid locale config payload' }, false))
 
-    await expect(saveLocaleConfig(fetchImpl, {}, 'Bad locale save')).rejects.toThrow('Invalid locale config payload')
+    await expect(Promise.resolve(saveLocaleConfig(fetchImpl, {}, 'Bad locale save'))).rejects.toThrow('Invalid locale config payload')
   })
 
   test('rejects non-JSON successful locale save responses', async () => {
@@ -140,13 +140,13 @@ describe('locales api helper', () => {
       }
     })
 
-    await expect(saveLocaleConfig(fetchImpl, {}, 'Bad locale save content type')).rejects.toThrow('Bad locale save content type')
+    await expect(Promise.resolve(saveLocaleConfig(fetchImpl, {}, 'Bad locale save content type'))).rejects.toThrow('Bad locale save content type')
   })
 
   test('downloads locales with same-origin POST options', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ message: 'Locale downloaded successfully' }))
 
-    await expect(downloadLocale(fetchImpl, 'pt-BR')).resolves.toEqual({ message: 'Locale downloaded successfully' })
+    expect(await downloadLocale(fetchImpl, 'pt-BR')).toEqual({ message: 'Locale downloaded successfully' })
 
     expect(fetchImpl).toHaveBeenCalledWith('/_api/locales/pt-BR/download', {
       method: 'POST',
@@ -168,12 +168,12 @@ describe('locales api helper', () => {
   test('rejects malformed locale download success payloads', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ ok: true }))
 
-    await expect(downloadLocale(fetchImpl, 'fr', 'Bad locale download')).rejects.toThrow('Bad locale download')
+    await expect(Promise.resolve(downloadLocale(fetchImpl, 'fr', 'Bad locale download'))).rejects.toThrow('Bad locale download')
   })
 
   test('propagates locale download REST JSON errors', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ error: 'download failed' }, false))
 
-    await expect(downloadLocale(fetchImpl, 'fr', 'Bad locale download')).rejects.toThrow('download failed')
+    await expect(Promise.resolve(downloadLocale(fetchImpl, 'fr', 'Bad locale download'))).rejects.toThrow('download failed')
   })
 })

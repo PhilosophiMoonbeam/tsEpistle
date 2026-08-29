@@ -1,6 +1,5 @@
-/** @vitest-environment node */
 import createKnex, { type Knex } from 'knex'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from '../bun-test.mts'
 import { up as upProtection } from '../../db/migrations/2.5.134.ts'
 
 let knex: Knex
@@ -62,7 +61,7 @@ afterEach(async () => {
 
 describe('password-protected pages', () => {
   it('stores only a cost-12 hash, grants the setter session, and protects linked assets', async () => {
-    const protection = await import('../../operations/page-protection.ts')
+    const protection = await vi.importFresh('../../operations/page-protection.ts', import.meta.url)
     const state = await protection.setPageProtection({
       requester: user(7, ['write:pages']),
       pageId: 42,
@@ -73,59 +72,59 @@ describe('password-protected pages', () => {
     const row = await knex('pageAccessPasswords').where({ pageId: 42 }).first()
     expect(row.passwordHash).toMatch(/^\$2[ayb]\$12\$/)
     expect(row.passwordHash).not.toContain('correct horse battery staple')
-    await expect(protection.pageRequiresUnlock({ requester: user(7, ['read:pages']), pageId: 42, sessionId: 'manager-session' })).resolves.toBe(false)
-    await expect(protection.pageRequiresUnlock({ requester: user(8, ['read:pages']), pageId: 42, sessionId: 'reader-session' })).resolves.toBe(true)
-    await expect(protection.protectedAssetRequiresUnlock({ requester: user(8, ['read:pages']), assetPath: 'uploads/private-plan.png', sessionId: 'reader-session' })).resolves.toBe(true)
+    expect(await protection.pageRequiresUnlock({ requester: user(7, ['read:pages']), pageId: 42, sessionId: 'manager-session' })).toBe(false)
+    expect(await protection.pageRequiresUnlock({ requester: user(8, ['read:pages']), pageId: 42, sessionId: 'reader-session' })).toBe(true)
+    expect(await protection.protectedAssetRequiresUnlock({ requester: user(8, ['read:pages']), assetPath: 'uploads/private-plan.png', sessionId: 'reader-session' })).toBe(true)
     expect(await knex('pageProtectedAssets')).toEqual([{ pageId: 42, assetPath: 'uploads/private-plan.png' }])
     expect(searchUpdated).toHaveBeenCalledWith(expect.objectContaining({ safeContent: '' }))
   })
 
   it('uses session-scoped expiring grants and rejects wrong passwords without disclosure', async () => {
-    const protection = await import('../../operations/page-protection.ts')
+    const protection = await vi.importFresh('../../operations/page-protection.ts', import.meta.url)
     await protection.setPageProtection({ requester: user(7, ['write:pages']), pageId: 42, password: 'correct horse battery staple', sessionId: 'manager-session' })
-    await expect(protection.unlockPage({ requester: user(8, ['read:pages']), pageId: 42, password: 'incorrect password', sessionId: 'reader-session' })).rejects.toMatchObject({ status: 403, message: 'Access denied' })
+    await expect(Promise.resolve(protection.unlockPage({ requester: user(8, ['read:pages']), pageId: 42, password: 'incorrect password', sessionId: 'reader-session' }))).rejects.toMatchObject({ status: 403, message: 'Access denied' })
     await protection.unlockPage({ requester: user(8, ['read:pages']), pageId: 42, password: 'correct horse battery staple', sessionId: 'reader-session' })
-    await expect(protection.pageRequiresUnlock({ requester: user(8, ['read:pages']), pageId: 42, sessionId: 'reader-session' })).resolves.toBe(false)
-    await expect(protection.protectedAssetRequiresUnlock({ requester: user(8, ['read:pages']), assetPath: 'uploads/private-plan.png', sessionId: 'reader-session' })).resolves.toBe(false)
-    await expect(protection.protectedAssetRequiresUnlock({ requester: user(9, ['read:pages']), assetPath: 'uploads/private-plan.png', sessionId: 'reader-session' })).resolves.toBe(true)
-    await expect(protection.pageRequiresUnlock({ requester: user(9, ['read:pages']), pageId: 42, sessionId: 'reader-session' })).resolves.toBe(true)
+    expect(await protection.pageRequiresUnlock({ requester: user(8, ['read:pages']), pageId: 42, sessionId: 'reader-session' })).toBe(false)
+    expect(await protection.protectedAssetRequiresUnlock({ requester: user(8, ['read:pages']), assetPath: 'uploads/private-plan.png', sessionId: 'reader-session' })).toBe(false)
+    expect(await protection.protectedAssetRequiresUnlock({ requester: user(9, ['read:pages']), assetPath: 'uploads/private-plan.png', sessionId: 'reader-session' })).toBe(true)
+    expect(await protection.pageRequiresUnlock({ requester: user(9, ['read:pages']), pageId: 42, sessionId: 'reader-session' })).toBe(true)
     await knex('pageUnlockGrants').where({ sessionId: 'reader-session' }).update({ expiresAt: new Date('2026-08-14T00:00:00.000Z') })
-    await expect(protection.pageRequiresUnlock({ requester: user(8, ['read:pages']), pageId: 42, sessionId: 'reader-session', now: new Date('2026-08-15T00:00:00.000Z') })).resolves.toBe(true)
+    expect(await protection.pageRequiresUnlock({ requester: user(8, ['read:pages']), pageId: 42, sessionId: 'reader-session', now: new Date('2026-08-15T00:00:00.000Z') })).toBe(true)
   })
 
   it('rotates passwords, revokes old grants, and allows administrator recovery', async () => {
-    const protection = await import('../../operations/page-protection.ts')
+    const protection = await vi.importFresh('../../operations/page-protection.ts', import.meta.url)
     await protection.setPageProtection({ requester: user(7, ['write:pages']), pageId: 42, password: 'correct horse battery staple', sessionId: 'manager-session' })
     await protection.unlockPage({ requester: user(8, ['read:pages']), pageId: 42, password: 'correct horse battery staple', sessionId: 'reader-session' })
     const rotated = await protection.setPageProtection({ requester: user(7, ['write:pages']), pageId: 42, password: 'a completely different password', sessionId: 'manager-session' })
     expect(rotated.version).toBe(2)
-    await expect(protection.pageRequiresUnlock({ requester: user(8, ['read:pages']), pageId: 42, sessionId: 'reader-session' })).resolves.toBe(true)
-    await expect(protection.unlockPage({ requester: user(8, ['read:pages']), pageId: 42, password: 'correct horse battery staple', sessionId: 'reader-session' })).rejects.toMatchObject({ status: 403 })
-    await expect(protection.pageRequiresUnlock({ requester: user(9, ['manage:system']), pageId: 42, sessionId: '' })).resolves.toBe(false)
+    expect(await protection.pageRequiresUnlock({ requester: user(8, ['read:pages']), pageId: 42, sessionId: 'reader-session' })).toBe(true)
+    await expect(Promise.resolve(protection.unlockPage({ requester: user(8, ['read:pages']), pageId: 42, password: 'correct horse battery staple', sessionId: 'reader-session' }))).rejects.toMatchObject({ status: 403 })
+    expect(await protection.pageRequiresUnlock({ requester: user(9, ['manage:system']), pageId: 42, sessionId: '' })).toBe(false)
     expect(await knex('pageUnlockGrants').where({ pageId: 42 })).toEqual([
       expect.objectContaining({ sessionId: 'manager-session', passwordVersion: 2 })
     ])
   })
 
   it('composes with private ownership and restores full indexing when removed', async () => {
-    const protection = await import('../../operations/page-protection.ts')
+    const protection = await vi.importFresh('../../operations/page-protection.ts', import.meta.url)
     page.visibility = 'private'
     page.ownerId = 7
     await protection.setPageProtection({ requester: user(7, []), pageId: 42, password: 'private owner password', sessionId: 'owner-session' })
-    await expect(protection.pageRequiresUnlock({ requester: user(7, []), pageId: 42, sessionId: 'other-owner-session' })).resolves.toBe(true)
-    await expect(protection.unlockPage({
+    expect(await protection.pageRequiresUnlock({ requester: user(7, []), pageId: 42, sessionId: 'other-owner-session' })).toBe(true)
+    await expect(Promise.resolve(protection.unlockPage({
       requester: user(8, ['read:pages']),
       pageId: 42,
       password: 'private owner password',
       sessionId: 'outsider-session'
-    })).rejects.toMatchObject({ status: 403, message: 'Access denied' })
-    await expect(protection.assertPageUnlocked({
+    }))).rejects.toMatchObject({ status: 403, message: 'Access denied' })
+    await expect(Promise.resolve(protection.assertPageUnlocked({
       requester: user(8, ['read:pages']),
       pageId: 42,
       sessionId: 'outsider-session'
-    })).rejects.toMatchObject({ status: 404, name: 'PAGE_NOT_FOUND' })
+    }))).rejects.toMatchObject({ status: 404, name: 'PAGE_NOT_FOUND' })
     await protection.removePageProtection({ requester: user(7, []), pageId: 42 })
-    await expect(protection.isPageProtected(42)).resolves.toBe(false)
+    expect(await protection.isPageProtected(42)).toBe(false)
     expect(searchUpdated).toHaveBeenLastCalledWith(expect.objectContaining({ safeContent: '<img src="/uploads/private-plan.png">' }))
     expect(await knex('pageUnlockGrants')).toEqual([])
     expect(await knex('pageProtectedAssets')).toEqual([])

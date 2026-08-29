@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from '../../server/test/bun-test.mts'
 import { hydrateContentExtensions, revealContentExtensionTarget } from './content-extension-runtime.ts'
 import { encodeKrokiSource, encodePlantUmlSource } from './content-extension-runtimes/remote-diagram.ts'
 
@@ -160,9 +160,9 @@ describe('content extension browser runtime', () => {
   })
 
   it('encodes external diagrams deterministically and does not create a Kroki request before consent', async () => {
-    await expect(encodeKrokiSource('digraph{a->b}')).resolves.toMatch(/^[A-Za-z0-9_-]+$/)
+    expect(await encodeKrokiSource('digraph{a->b}')).toMatch(/^[A-Za-z0-9_-]+$/)
     const plantUml = await encodePlantUmlSource('@startuml\nA->B\n@enduml')
-    await expect(encodePlantUmlSource('@startuml\nA->B\n@enduml')).resolves.toBe(plantUml)
+    expect(await encodePlantUmlSource('@startuml\nA->B\n@enduml')).toBe(plantUml)
 
     const root = document.createElement('div')
     root.innerHTML = `
@@ -183,7 +183,7 @@ describe('content extension browser runtime', () => {
   })
 
   it('renders Mermaid locally without leaving active SVG elements', async () => {
-    vi.doMock('mermaid', () => ({
+    vi.mockModule('mermaid', import.meta.url, () => ({
       default: {
         initialize: vi.fn(),
         render: vi.fn().mockResolvedValue({

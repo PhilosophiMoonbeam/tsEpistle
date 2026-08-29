@@ -1,5 +1,4 @@
-/** @vitest-environment node */
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from '../bun-test.mts'
 import createKnex, { type Knex } from 'knex'
 import { requestAgentHistoryReset, runAgentMaintenance } from '../../agents/maintenance.ts'
 

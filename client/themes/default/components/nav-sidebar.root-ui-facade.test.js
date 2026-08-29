@@ -31,6 +31,7 @@ describe('default nav-sidebar REST browse migration guard', () => {
     expect(source).toContain("v-if='canEditCurrentParent'")
     expect(source).toContain(":href='editPath(currentParent)'")
     expect(script).toContain('this.currentParent.canEdit === true && this.currentParent.pageId !== wikiStore.page.id')
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: this assertion intentionally matches source text.
     expect(script).toContain("return `/e${item.visibility === 'private' ? '/_private' : ''}/${item.locale}/${item.path}`")
   })
 })

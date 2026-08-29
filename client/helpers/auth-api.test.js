@@ -52,7 +52,7 @@ describe('auth api helper', () => {
       }
     ]))
 
-    await expect(fetchAuthStrategies(fetchImpl)).resolves.toEqual([
+    expect(await fetchAuthStrategies(fetchImpl)).toEqual([
       {
         key: 'alpha',
         displayName: 'Alpha',
@@ -119,7 +119,7 @@ describe('auth api helper', () => {
       }
     ]))
 
-    await expect(fetchAdminAuthStrategies(fetchImpl)).resolves.toEqual([
+    expect(await fetchAdminAuthStrategies(fetchImpl)).toEqual([
       expect.objectContaining({
         key: 'github',
         title: 'GitHub',
@@ -150,13 +150,13 @@ describe('auth api helper', () => {
   test('rejects malformed admin authentication strategy payloads', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([{ key: 'github', isAvailable: true, props: [{ key: 'clientId', value: '{' }] }]))
 
-    await expect(fetchAdminAuthStrategies(fetchImpl, 'Bad strategies payload')).rejects.toThrow('Bad strategies payload')
+    await expect(Promise.resolve(fetchAdminAuthStrategies(fetchImpl, 'Bad strategies payload'))).rejects.toThrow('Bad strategies payload')
   })
 
   test('surfaces REST errors for admin authentication strategy definitions', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ error: 'manage:system is required' }, false))
 
-    await expect(fetchAdminAuthStrategies(fetchImpl, 'Bad strategies payload')).rejects.toThrow('manage:system is required')
+    await expect(Promise.resolve(fetchAdminAuthStrategies(fetchImpl, 'Bad strategies payload'))).rejects.toThrow('manage:system is required')
   })
 
   test('fetches and normalizes admin active authentication strategies', async () => {
@@ -188,7 +188,7 @@ describe('auth api helper', () => {
       }
     ]))
 
-    await expect(fetchAdminAuthActiveStrategies(fetchImpl)).resolves.toEqual([
+    expect(await fetchAdminAuthActiveStrategies(fetchImpl)).toEqual([
       expect.objectContaining({
         key: 'local',
         order: 1,
@@ -215,13 +215,13 @@ describe('auth api helper', () => {
   test('rejects malformed admin active authentication strategy payloads', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([{ key: 'github', strategy: { key: 'github' }, config: [{ key: 'clientId', value: '{' }], order: 1, isEnabled: true, displayName: 'GitHub', selfRegistration: false, domainWhitelist: [], autoEnrollGroups: [] }]))
 
-    await expect(fetchAdminAuthActiveStrategies(fetchImpl, 'Bad active payload')).rejects.toThrow('Bad active payload')
+    await expect(Promise.resolve(fetchAdminAuthActiveStrategies(fetchImpl, 'Bad active payload'))).rejects.toThrow('Bad active payload')
   })
 
   test('surfaces REST errors for admin active authentication strategies', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ error: 'manage:system is required' }, false))
 
-    await expect(fetchAdminAuthActiveStrategies(fetchImpl, 'Bad active payload')).rejects.toThrow('manage:system is required')
+    await expect(Promise.resolve(fetchAdminAuthActiveStrategies(fetchImpl, 'Bad active payload'))).rejects.toThrow('manage:system is required')
   })
 
   test('fetches and sorts admin auth providers by order', async () => {
@@ -230,7 +230,7 @@ describe('auth api helper', () => {
       { key: 'local', displayName: 'Local Login', order: 1, isEnabled: true }
     ]))
 
-    await expect(fetchAdminAuthProviders(fetchImpl)).resolves.toEqual([
+    expect(await fetchAdminAuthProviders(fetchImpl)).toEqual([
       { key: 'local', displayName: 'Local Login', order: 1, isEnabled: true },
       { key: 'github', displayName: 'GitHub Login', order: 2, isEnabled: false }
     ])
@@ -248,7 +248,7 @@ describe('auth api helper', () => {
       { key: 'local', displayName: 'Local Login', order: '1', isEnabled: true }
     ]))
 
-    await expect(fetchAdminAuthProviders(fetchImpl, 'Bad providers payload')).rejects.toThrow('Bad providers payload')
+    await expect(Promise.resolve(fetchAdminAuthProviders(fetchImpl, 'Bad providers payload'))).rejects.toThrow('Bad providers payload')
   })
 
   test('fetches admin API bootstrap with sanitized key rows', async () => {
@@ -270,7 +270,7 @@ describe('auth api helper', () => {
       ]
     }))
 
-    await expect(fetchAdminApiBootstrap(fetchImpl)).resolves.toEqual({
+    expect(await fetchAdminApiBootstrap(fetchImpl)).toEqual({
       enabled: true,
       keys: [
         {
@@ -296,7 +296,7 @@ describe('auth api helper', () => {
   test('rejects malformed admin API bootstrap root payloads', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ enabled: 'true', keys: [] }))
 
-    await expect(fetchAdminApiBootstrap(fetchImpl, 'Bad API bootstrap payload')).rejects.toThrow('Bad API bootstrap payload')
+    await expect(Promise.resolve(fetchAdminApiBootstrap(fetchImpl, 'Bad API bootstrap payload'))).rejects.toThrow('Bad API bootstrap payload')
   })
 
   test('rejects malformed admin API key rows', async () => {
@@ -315,7 +315,7 @@ describe('auth api helper', () => {
       ]
     }))
 
-    await expect(fetchAdminApiBootstrap(fetchImpl, 'Bad API key row')).rejects.toThrow('Bad API key row')
+    await expect(Promise.resolve(fetchAdminApiBootstrap(fetchImpl, 'Bad API key row'))).rejects.toThrow('Bad API key row')
   })
 
   test('rejects admin API key rows with unredacted keyShort values', async () => {
@@ -334,7 +334,7 @@ describe('auth api helper', () => {
       ]
     }))
 
-    await expect(fetchAdminApiBootstrap(fetchImpl, 'Bad API key row')).rejects.toThrow('Bad API key row')
+    await expect(Promise.resolve(fetchAdminApiBootstrap(fetchImpl, 'Bad API key row'))).rejects.toThrow('Bad API key row')
   })
 
   test('accepts intentionally redacted admin API key placeholders', async () => {
@@ -353,7 +353,7 @@ describe('auth api helper', () => {
       ]
     }))
 
-    await expect(fetchAdminApiBootstrap(fetchImpl)).resolves.toEqual({
+    expect(await fetchAdminApiBootstrap(fetchImpl)).toEqual({
       enabled: false,
       keys: [
         {
@@ -372,7 +372,7 @@ describe('auth api helper', () => {
   test('throws API JSON error messages for admin API bootstrap failures', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ error: 'manage:api required' }, false, 403))
 
-    await expect(fetchAdminApiBootstrap(fetchImpl, 'Generic API bootstrap error')).rejects.toThrow('manage:api required')
+    await expect(Promise.resolve(fetchAdminApiBootstrap(fetchImpl, 'Generic API bootstrap error'))).rejects.toThrow('manage:api required')
   })
 
   test('falls back to generic error when admin API bootstrap success is not JSON', async () => {
@@ -384,13 +384,13 @@ describe('auth api helper', () => {
       }
     })
 
-    await expect(fetchAdminApiBootstrap(fetchImpl, 'Generic API bootstrap error')).rejects.toThrow('Generic API bootstrap error')
+    await expect(Promise.resolve(fetchAdminApiBootstrap(fetchImpl, 'Generic API bootstrap error'))).rejects.toThrow('Generic API bootstrap error')
   })
 
   test('updates admin API state through REST', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ message: 'API State changed successfully' }))
 
-    await expect(setAdminApiState(fetchImpl, true)).resolves.toEqual({ message: 'API State changed successfully' })
+    expect(await setAdminApiState(fetchImpl, true)).toEqual({ message: 'API State changed successfully' })
     expect(fetchImpl).toHaveBeenCalledWith('/_api/auth/api/state', {
       method: 'POST',
       credentials: 'same-origin',
@@ -405,13 +405,13 @@ describe('auth api helper', () => {
   test('surfaces API state REST JSON errors', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ error: 'enabled must be a boolean' }, false))
 
-    await expect(setAdminApiState(fetchImpl, 'yes', 'Bad API state')).rejects.toThrow('enabled must be a boolean')
+    await expect(Promise.resolve(setAdminApiState(fetchImpl, 'yes', 'Bad API state'))).rejects.toThrow('enabled must be a boolean')
   })
 
   test('revokes admin API keys through REST', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ message: 'API Key revoked successfully' }))
 
-    await expect(revokeAdminApiKey(fetchImpl, 7)).resolves.toEqual({ message: 'API Key revoked successfully' })
+    expect(await revokeAdminApiKey(fetchImpl, 7)).toEqual({ message: 'API Key revoked successfully' })
     expect(fetchImpl).toHaveBeenCalledWith('/_api/auth/api/keys/7/revoke', {
       method: 'POST',
       credentials: 'same-origin',
@@ -426,7 +426,7 @@ describe('auth api helper', () => {
   test('surfaces API key revoke REST JSON errors', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ error: 'missing key' }, false))
 
-    await expect(revokeAdminApiKey(fetchImpl, 7, 'Bad revoke')).rejects.toThrow('missing key')
+    await expect(Promise.resolve(revokeAdminApiKey(fetchImpl, 7, 'Bad revoke'))).rejects.toThrow('missing key')
   })
 
   test('creates admin API keys through REST and returns the generated key', async () => {
@@ -435,12 +435,12 @@ describe('auth api helper', () => {
       message: 'API Key created successfully'
     }))
 
-    await expect(createAdminApiKey(fetchImpl, {
+    expect(await createAdminApiKey(fetchImpl, {
       name: 'Deploy',
       expiration: '1y',
       fullAccess: false,
       group: 7
-    })).resolves.toEqual({
+    })).toEqual({
       key: 'generated-api-key',
       message: 'API Key created successfully'
     })
@@ -463,33 +463,33 @@ describe('auth api helper', () => {
   test('rejects malformed admin API key creation success payloads', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ message: 'API Key created successfully' }))
 
-    await expect(createAdminApiKey(fetchImpl, {
+    await expect(Promise.resolve(createAdminApiKey(fetchImpl, {
       name: 'Deploy',
       expiration: '1y',
       fullAccess: true,
       group: null
-    }, 'Bad key creation')).rejects.toThrow('Bad key creation')
+    }, 'Bad key creation'))).rejects.toThrow('Bad key creation')
   })
 
   test('surfaces admin API key creation REST JSON errors', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ error: 'name must be a non-empty string' }, false))
 
-    await expect(createAdminApiKey(fetchImpl, {
+    await expect(Promise.resolve(createAdminApiKey(fetchImpl, {
       name: '',
       expiration: '1y',
       fullAccess: true,
       group: null
-    }, 'Bad key creation')).rejects.toThrow('name must be a non-empty string')
+    }, 'Bad key creation'))).rejects.toThrow('name must be a non-empty string')
   })
 
   test('submits auth request as JSON and returns parsed body', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ jwt: 'token', redirect: '/' }))
 
-    await expect(submitAuthRequest(fetchImpl, '/_api/auth/login', {
+    expect(await submitAuthRequest(fetchImpl, '/_api/auth/login', {
       strategy: 'local',
       username: 'alice@example.com',
       password: 'secret'
-    })).resolves.toEqual({ jwt: 'token', redirect: '/' })
+    })).toEqual({ jwt: 'token', redirect: '/' })
 
     expect(fetchImpl).toHaveBeenCalledWith('/_api/auth/login', {
       method: 'POST',
@@ -509,11 +509,11 @@ describe('auth api helper', () => {
   test('throws API JSON error messages for expected auth failures', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ error: 'Invalid credentials' }, false, 401))
 
-    await expect(submitAuthRequest(fetchImpl, '/_api/auth/login', {
+    await expect(Promise.resolve(submitAuthRequest(fetchImpl, '/_api/auth/login', {
       strategy: 'local',
       username: 'alice@example.com',
       password: 'wrong'
-    })).rejects.toThrow('Invalid credentials')
+    }))).rejects.toThrow('Invalid credentials')
   })
 
   test('falls back to generic error when non-ok response is not JSON', async () => {
@@ -525,25 +525,25 @@ describe('auth api helper', () => {
       }
     })
 
-    await expect(submitAuthRequest(fetchImpl, '/_api/auth/login', {
+    await expect(Promise.resolve(submitAuthRequest(fetchImpl, '/_api/auth/login', {
       strategy: 'local'
-    }, 'Generic auth error')).rejects.toThrow('Generic auth error')
+    }, 'Generic auth error'))).rejects.toThrow('Generic auth error')
   })
 
   test('rejects malformed successful auth payloads', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ redirect: '/' }))
 
-    await expect(submitAuthRequest(fetchImpl, '/_api/auth/login', {
+    await expect(Promise.resolve(submitAuthRequest(fetchImpl, '/_api/auth/login', {
       strategy: 'local'
-    }, 'Generic auth error')).rejects.toThrow('Generic auth error')
+    }, 'Generic auth error'))).rejects.toThrow('Generic auth error')
   })
 
   test('rejects TFA continuation responses without a continuation token', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ mustProvideTFA: true }))
 
-    await expect(submitAuthRequest(fetchImpl, '/_api/auth/login', {
+    await expect(Promise.resolve(submitAuthRequest(fetchImpl, '/_api/auth/login', {
       strategy: 'local'
-    }, 'Generic auth error')).rejects.toThrow('Generic auth error')
+    }, 'Generic auth error'))).rejects.toThrow('Generic auth error')
   })
 
   test('rejects setup-TFA responses without required setup data', async () => {
@@ -552,9 +552,9 @@ describe('auth api helper', () => {
       continuationToken: 'continuation-only'
     }))
 
-    await expect(submitAuthRequest(fetchImpl, '/_api/auth/login', {
+    await expect(Promise.resolve(submitAuthRequest(fetchImpl, '/_api/auth/login', {
       strategy: 'local'
-    }, 'Generic auth error')).rejects.toThrow('Generic auth error')
+    }, 'Generic auth error'))).rejects.toThrow('Generic auth error')
   })
 
   test('accepts setup-TFA responses with QR and manual setup data', async () => {
@@ -566,17 +566,17 @@ describe('auth api helper', () => {
     }
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse(payload))
 
-    await expect(submitAuthRequest(fetchImpl, '/_api/auth/login', {
+    expect(await submitAuthRequest(fetchImpl, '/_api/auth/login', {
       strategy: 'local'
-    }, 'Generic auth error')).resolves.toEqual(payload)
+    }, 'Generic auth error')).toEqual(payload)
   })
 
   test('submits status request as JSON and returns parsed body', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ message: 'Password reset request processed.' }))
 
-    await expect(submitStatusRequest(fetchImpl, '/_api/auth/forgot-password', {
+    expect(await submitStatusRequest(fetchImpl, '/_api/auth/forgot-password', {
       email: 'alice@example.com'
-    }, 'Generic status error')).resolves.toEqual({ message: 'Password reset request processed.' })
+    }, 'Generic status error')).toEqual({ message: 'Password reset request processed.' })
 
     expect(fetchImpl).toHaveBeenCalledWith('/_api/auth/forgot-password', {
       method: 'POST',
@@ -594,15 +594,15 @@ describe('auth api helper', () => {
   test('rejects malformed successful status payloads', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ success: true }))
 
-    await expect(submitStatusRequest(fetchImpl, '/_api/auth/forgot-password', {
+    await expect(Promise.resolve(submitStatusRequest(fetchImpl, '/_api/auth/forgot-password', {
       email: 'alice@example.com'
-    }, 'Generic status error')).rejects.toThrow('Generic status error')
+    }, 'Generic status error'))).rejects.toThrow('Generic status error')
   })
 
   test('regenerates auth certificates through REST', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ message: 'Certificates have been regenerated successfully.' }))
 
-    await expect(regenerateAuthCertificates(fetchImpl)).resolves.toEqual({ message: 'Certificates have been regenerated successfully.' })
+    expect(await regenerateAuthCertificates(fetchImpl)).toEqual({ message: 'Certificates have been regenerated successfully.' })
     expect(fetchImpl).toHaveBeenCalledWith('/_api/auth/certificates/regenerate', {
       method: 'POST',
       credentials: 'same-origin',
@@ -617,13 +617,13 @@ describe('auth api helper', () => {
   test('surfaces API errors for auth certificate regeneration', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ error: 'cert regen failed' }, false, 500))
 
-    await expect(regenerateAuthCertificates(fetchImpl)).rejects.toThrow('cert regen failed')
+    await expect(Promise.resolve(regenerateAuthCertificates(fetchImpl))).rejects.toThrow('cert regen failed')
   })
 
   test('resets the guest user through REST', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ message: 'Guest user has been reset successfully.' }))
 
-    await expect(resetGuestUser(fetchImpl)).resolves.toEqual({ message: 'Guest user has been reset successfully.' })
+    expect(await resetGuestUser(fetchImpl)).toEqual({ message: 'Guest user has been reset successfully.' })
     expect(fetchImpl).toHaveBeenCalledWith('/_api/auth/guest/reset', {
       method: 'POST',
       credentials: 'same-origin',
@@ -638,14 +638,14 @@ describe('auth api helper', () => {
   test('surfaces API errors for guest user reset', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ error: 'guest reset failed' }, false, 500))
 
-    await expect(resetGuestUser(fetchImpl)).rejects.toThrow('guest reset failed')
+    await expect(Promise.resolve(resetGuestUser(fetchImpl))).rejects.toThrow('guest reset failed')
   })
 
   test('updates admin authentication strategies with same-origin JSON POST options', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ message: 'Strategies updated successfully' }))
     const strategies = [{ key: 'local', strategyKey: 'local', config: [], displayName: 'Local', order: 0, isEnabled: true, selfRegistration: false, domainWhitelist: [], autoEnrollGroups: [] }]
 
-    await expect(updateAdminAuthStrategies(fetchImpl, strategies)).resolves.toEqual({ message: 'Strategies updated successfully' })
+    expect(await updateAdminAuthStrategies(fetchImpl, strategies)).toEqual({ message: 'Strategies updated successfully' })
     expect(fetchImpl).toHaveBeenCalledWith('/_api/auth/strategies', {
       method: 'POST',
       credentials: 'same-origin',
@@ -660,12 +660,12 @@ describe('auth api helper', () => {
   test('rejects malformed admin authentication strategy update payloads', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ ok: true }))
 
-    await expect(updateAdminAuthStrategies(fetchImpl, [], 'Bad strategy update')).rejects.toThrow('Bad strategy update')
+    await expect(Promise.resolve(updateAdminAuthStrategies(fetchImpl, [], 'Bad strategy update'))).rejects.toThrow('Bad strategy update')
   })
 
   test('propagates admin authentication strategy REST JSON errors', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ error: 'Cannot delete Local as 1 or more users are still using it.' }, false))
 
-    await expect(updateAdminAuthStrategies(fetchImpl, [], 'Bad strategy update')).rejects.toThrow('Cannot delete Local as 1 or more users are still using it.')
+    await expect(Promise.resolve(updateAdminAuthStrategies(fetchImpl, [], 'Bad strategy update'))).rejects.toThrow('Cannot delete Local as 1 or more users are still using it.')
   })
 })

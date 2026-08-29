@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it } from '../server/test/bun-test.mts'
 
 import { parseMarkdownCodeFenceInfo, renderMarkdownCodeFence } from './markdown-code-fence.ts'
 

@@ -15,7 +15,7 @@ beforeEach(async () => {
       reservedPaths: []
     }
   }
-  ;({ generateHash, injectPageMetadata } = (await import('../../helpers/page.ts')).default)
+  ;({ generateHash, injectPageMetadata } = (await vi.importFresh('../../helpers/page.ts', import.meta.url)).default)
 })
 
 afterEach(() => {

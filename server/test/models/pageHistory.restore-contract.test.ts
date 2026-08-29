@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from '../bun-test.mts'
 import createKnex, { type Knex } from 'knex'
 
 const wikiGlobal = globalThis as unknown as { WIKI?: Record<string, unknown> }
@@ -72,7 +72,7 @@ describe('page history restore metadata contract', () => {
       auth: { checkAccess: vi.fn().mockReturnValue(true) },
       models: { knex: db, pageHistory: undefined }
     }
-    PageHistory = (await import('../../models/pageHistory.ts')).default
+    PageHistory = (await vi.importFresh('../../models/pageHistory.ts', import.meta.url)).default
     PageHistory.knex(db)
     const Tag = (await import('../../models/tags.ts')).default
     Tag.knex(db)

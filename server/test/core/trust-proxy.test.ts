@@ -2,7 +2,7 @@ import { once } from 'node:events'
 import type { AddressInfo } from 'node:net'
 
 import express from 'express'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it } from '../bun-test.mts'
 
 interface IdentityResponse {
   ip: string

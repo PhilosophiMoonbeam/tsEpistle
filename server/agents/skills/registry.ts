@@ -61,9 +61,7 @@ export interface SkillRegistryListItem {
   readonly groupIds: readonly number[]
 }
 
-export interface SkillSourceResolver {
-  (db: Knex, mapping: SkillSourceMapping, requester: Express.User): Promise<ResolvedPageNativeSkillSource>
-}
+export type SkillSourceResolver = (db: Knex, mapping: SkillSourceMapping, requester: Express.User) => Promise<ResolvedPageNativeSkillSource>
 
 interface SkillRow {
   readonly id: string

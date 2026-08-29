@@ -85,7 +85,7 @@ describe('private page mutation existence isolation', () => {
       },
       scheduler: { registerJob: vi.fn() }
     }
-    Page = (await import('../../models/pages.ts')).default
+    Page = (await vi.importFresh('../../models/pages.ts', import.meta.url)).default
     global.WIKI.models.pages = Page
   })
 
@@ -116,25 +116,25 @@ describe('private page mutation existence isolation', () => {
   it('returns not found before update or editor-conversion details can leak', async () => {
     vi.spyOn(Page, 'query').mockReturnValue({ findById: vi.fn().mockResolvedValue(privatePage) })
 
-    await expect(Page.updatePage({ id: 17, user: requester, content: 'changed' })).rejects.toBeInstanceOf(PageNotFound)
-    await expect(Page.convertPage({ id: 17, user: requester, editor: 'markdown' })).rejects.toBeInstanceOf(PageNotFound)
+    await expect(Promise.resolve(Page.updatePage({ id: 17, user: requester, content: 'changed' }))).rejects.toBeInstanceOf(PageNotFound)
+    await expect(Promise.resolve(Page.convertPage({ id: 17, user: requester, editor: 'markdown' }))).rejects.toBeInstanceOf(PageNotFound)
   })
 
   it('returns not found before move path validation can leak a private id', async () => {
     vi.spyOn(Page, 'query').mockReturnValue({ findById: vi.fn().mockResolvedValue(privatePage) })
 
-    await expect(Page.movePage({
+    await expect(Promise.resolve(Page.movePage({
       id: 17,
       user: requester,
       destinationLocale: 'en',
       destinationPath: 'invalid path'
-    })).rejects.toBeInstanceOf(PageNotFound)
+    }))).rejects.toBeInstanceOf(PageNotFound)
   })
 
   it('returns not found for direct deletion by a non-owner', async () => {
     vi.spyOn(Page, 'getPageFromDb').mockResolvedValue(privatePage)
 
-    await expect(Page.deletePage({ id: 17, user: requester })).rejects.toBeInstanceOf(PageNotFound)
+    await expect(Promise.resolve(Page.deletePage({ id: 17, user: requester }))).rejects.toBeInstanceOf(PageNotFound)
   })
 
   it('preserves omitted optional fields and tags during a partial update', async () => {
@@ -179,12 +179,12 @@ describe('private page mutation existence isolation', () => {
       where: vi.fn().mockReturnValue({ update: vi.fn().mockResolvedValue(1) })
     })
 
-    await expect(Page.updatePage({
+    expect(await Page.updatePage({
       id: 17,
       user: owner,
       content: 'changed content',
       title: 'Changed title'
-    })).resolves.toMatchObject({ content: 'changed content', title: 'Changed title' })
+    })).toMatchObject({ content: 'changed content', title: 'Changed title' })
 
     expect(patch).toHaveBeenCalledWith(expect.objectContaining({
       content: 'changed content',
@@ -244,7 +244,7 @@ describe('private page mutation existence isolation', () => {
       renderPage: vi.fn().mockResolvedValue(undefined)
     }
 
-    await expect(Page.createPage({
+    expect(await Page.createPage({
       content: 'Page at the folder path',
       description: '',
       editor: 'markdown',
@@ -255,7 +255,7 @@ describe('private page mutation existence isolation', () => {
       title: 'Docs',
       user: owner,
       visibility: 'private'
-    })).resolves.toMatchObject({
+    })).toMatchObject({
       id: 18,
       path: 'docs',
       updatedAt: '2026-08-15T00:00:00.000Z'

@@ -1,7 +1,6 @@
-/** @vitest-environment node */
 
 import createKnex, { type Knex } from 'knex'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from '../bun-test.mts'
 import { publishOutboxEvents, writeOutboxEvent } from '../../core/outbox.ts'
 import { up as upDurableJobs } from '../../db/migrations/2.5.130.ts'
 import { up as upOutbox } from '../../db/migrations/2.5.131.ts'
@@ -42,7 +41,7 @@ afterEach(async () => {
 
 describe('transactional outbox', () => {
   it('rolls back an event with its surrounding domain transaction', async () => {
-    await expect(knex.transaction(async transaction => {
+    await expect(Promise.resolve(knex.transaction(async transaction => {
       await writeOutboxEvent(transaction, {
         type: 'page.created',
         version: 1,
@@ -51,7 +50,7 @@ describe('transactional outbox', () => {
         payload: { pageId: 7 }
       })
       throw new Error('domain write failed')
-    })).rejects.toThrow('domain write failed')
+    }))).rejects.toThrow('domain write failed')
 
     expect(await knex('outboxEvents')).toEqual([])
   })

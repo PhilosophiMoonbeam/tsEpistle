@@ -393,7 +393,7 @@ This first-class path deliberately omits automatic transcript extraction, embedd
 Run the normal application image with:
 
 ```sh
-node server/scripts/agent-maintenance.ts
+bun server/scripts/agent-maintenance.ts
 ```
 
 Set `AGENT_MAINTENANCE_DATABASE_URL`. Optional positive bounds are `AGENT_MAINTENANCE_BATCH_SIZE`, `AGENT_MAINTENANCE_SAVED_SESSION_DAYS`, `AGENT_MAINTENANCE_MCP_CONTENT_DAYS`, `AGENT_MAINTENANCE_AUDIT_DAYS`, `AGENT_MAINTENANCE_COMPACT_DELTA_DAYS`, and `AGENT_MAINTENANCE_MAX_BATCHES`.

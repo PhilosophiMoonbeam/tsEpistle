@@ -1,5 +1,4 @@
-/** @vitest-environment node */
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from '../bun-test.mts'
 import createKnex, { type Knex } from 'knex'
 
 import { AGENT_FEATURE_FLAG_KEYS, type AgentFeatureFlags } from '../../../shared/agents/contracts.ts'
@@ -179,8 +178,8 @@ describe('agent proposal repository', () => {
     expect(replay.replayed).toBe(true)
     expect(replay.proposal.id).toBe(first.proposal.id)
     expect(proposalResult(first)).toMatchObject({ proposalId: first.proposal.id, status: 'pending', diffHash: null })
-    await expect(knex('agentProposals')).resolves.toHaveLength(1)
-    await expect(knex('agentApprovals')).resolves.toHaveLength(1)
+    expect(await knex('agentProposals')).toHaveLength(1)
+    expect(await knex('agentApprovals')).toHaveLength(1)
   })
 
   it('rehydrates an immutable proposal when an awaiting run is reclaimed', async () => {
@@ -218,8 +217,8 @@ describe('agent proposal repository', () => {
     expect(recovered.proposal.id).toBe(first.proposal.id)
     expect(recovered.proposal.actionCallId).toBe('original-call')
     expect(recovered.proposal.status).toBe('approved')
-    await expect(knex('agentProposals')).resolves.toHaveLength(1)
-    await expect(knex('agentApprovals')).resolves.toHaveLength(1)
+    expect(await knex('agentProposals')).toHaveLength(1)
+    expect(await knex('agentApprovals')).toHaveLength(1)
   })
 
   it('rejects request ID reuse with different immutable arguments', async () => {
@@ -236,19 +235,18 @@ describe('agent proposal repository', () => {
     }
     await persistProposal(knex, { ...base, input: { pageId: 42, destinationPath: 'docs/a' } })
 
-    await expect(persistProposal(knex, { ...base, input: { pageId: 42, destinationPath: 'docs/b' } }))
-      .rejects.toMatchObject({ code: 'IDEMPOTENCY_MISMATCH', status: 409 })
+    await expect(Promise.resolve(persistProposal(knex, { ...base, input: { pageId: 42, destinationPath: 'docs/b' } }))).rejects.toMatchObject({ code: 'IDEMPOTENCY_MISMATCH', status: 409 })
   })
 
   it('fails closed when an agent proposal omits its durable run scope', async () => {
-    await expect(persistProposal(knex, {
+    await expect(Promise.resolve(persistProposal(knex, {
       authority: authority(),
       risk: 'proposal',
       actionCallId: 'call-1',
       input: { pageId: 42 },
       operation: { kind: 'move' },
       summary: 'Move page'
-    })).rejects.toMatchObject({ code: 'INVALID_PROPOSAL_SCOPE', status: 400 })
+    }))).rejects.toMatchObject({ code: 'INVALID_PROPOSAL_SCOPE', status: 400 })
   })
   it('persists an execution claim before mutation and applies once', async () => {
     const draft = {
@@ -294,9 +292,9 @@ describe('agent proposal repository', () => {
     expect(authorize).toHaveBeenCalledOnce()
     expect(request.reauthorize).toHaveBeenCalledOnce()
     expect(mutate).toHaveBeenCalledOnce()
-    await expect(knex('appliedPages')).resolves.toEqual([{ id: 42, path: 'docs/next' }])
-    await expect(knex('agentActionExecutions').select('status')).resolves.toEqual([{ status: 'committed' }])
-    await expect(knex('agentProposals').select('status')).resolves.toEqual([{ status: 'applied' }])
+    expect(await knex('appliedPages')).toEqual([{ id: 42, path: 'docs/next' }])
+    expect(await knex('agentActionExecutions').select('status')).toEqual([{ status: 'committed' }])
+    expect(await knex('agentProposals').select('status')).toEqual([{ status: 'applied' }])
   })
 
   it('reconciles a committed domain mutation when execution loses its response', async () => {
@@ -333,7 +331,7 @@ describe('agent proposal repository', () => {
       reconcile: async () => await knex('appliedPages').where({ id: 42, path: 'docs/next' }).first() ? expected : null
     })
     expect(result).toMatchObject({ status: 'applied', result: expected })
-    await expect(knex('agentActionExecutions').select('status', 'error')).resolves.toEqual([{ status: 'committed', error: null }])
+    expect(await knex('agentActionExecutions').select('status', 'error')).toEqual([{ status: 'committed', error: null }])
   })
 
   it('records a terminal failed claim when the domain transaction rolls back', async () => {
@@ -357,7 +355,7 @@ describe('agent proposal repository', () => {
       authorize: async () => {}
     })
 
-    await expect(applyApprovedProposal(knex, {
+    await expect(Promise.resolve(applyApprovedProposal(knex, {
       proposalId: persisted.proposal.id,
       approvalId: persisted.approval.id,
       authority: applyingAuthority(),
@@ -368,11 +366,11 @@ describe('agent proposal repository', () => {
         throw new Error('domain write failed')
       }),
       reconcile: async () => null
-    })).rejects.toThrow('domain write failed')
+    }))).rejects.toThrow('domain write failed')
 
-    await expect(knex('appliedPages')).resolves.toHaveLength(0)
-    await expect(knex('agentActionExecutions').select('status')).resolves.toEqual([{ status: 'failed' }])
-    await expect(knex('agentProposals').select('status')).resolves.toEqual([{ status: 'failed' }])
+    expect(await knex('appliedPages')).toHaveLength(0)
+    expect(await knex('agentActionExecutions').select('status')).toEqual([{ status: 'failed' }])
+    expect(await knex('agentProposals').select('status')).toEqual([{ status: 'failed' }])
   })
 
   it('commits expiry before returning an expired decision error', async () => {
@@ -390,15 +388,15 @@ describe('agent proposal repository', () => {
     await knex('agentProposals').where({ id: persisted.proposal.id }).update({ expiresAt: expiredAt })
     await knex('agentApprovals').where({ id: persisted.approval.id }).update({ expiresAt: expiredAt })
 
-    await expect(decideProposal(knex, {
+    await expect(Promise.resolve(decideProposal(knex, {
       proposalId: persisted.proposal.id,
       approvalId: persisted.approval.id,
       userId: 7,
       decision: 'approved',
       authorize: vi.fn()
-    })).rejects.toMatchObject({ code: 'PROPOSAL_EXPIRED', status: 409 })
-    await expect(knex('agentProposals').select('status')).resolves.toEqual([{ status: 'expired' }])
-    await expect(knex('agentApprovals').select('status')).resolves.toEqual([{ status: 'expired' }])
+    }))).rejects.toMatchObject({ code: 'PROPOSAL_EXPIRED', status: 409 })
+    expect(await knex('agentProposals').select('status')).toEqual([{ status: 'expired' }])
+    expect(await knex('agentApprovals').select('status')).toEqual([{ status: 'expired' }])
   })
 
   it('creates a page automatically after the user approves its proposal', async () => {
@@ -473,18 +471,18 @@ describe('agent proposal repository', () => {
     await vi.waitFor(async () => {
       approval = await knex('agentApprovals').first('id', 'proposalId')
       expect(approval).toBeTruthy()
-      await expect(knex('agentRuns').where({ id: runId }).first('status')).resolves.toEqual({ status: 'awaiting_approval' })
+      expect(await knex('agentRuns').where({ id: runId }).first('status')).toEqual({ status: 'awaiting_approval' })
     })
     if (!approval) throw new Error('approval missing')
     expect(operations.create).not.toHaveBeenCalled()
 
     await decideProposal(knex, { proposalId: approval.proposalId, approvalId: approval.id, userId: 7, decision: 'approved', authorize: async () => {} })
 
-    await expect(preparedPromise).resolves.toMatchObject({ proposalId: approval.proposalId, approvalId: approval.id, status: 'applied' })
+    expect(await preparedPromise).toMatchObject({ proposalId: approval.proposalId, approvalId: approval.id, status: 'applied' })
     expect(operations.create).toHaveBeenCalledOnce()
     expect(currentPage).toMatchObject({ path: 'docs/new-page', locale: 'en', sourceRevision: '1' })
-    await expect(knex('agentProposals').where({ id: approval.proposalId }).first('status')).resolves.toEqual({ status: 'applied' })
-    await expect(knex('agentActionExecutions').where({ proposalId: approval.proposalId }).first('status')).resolves.toEqual({ status: 'committed' })
+    expect(await knex('agentProposals').where({ id: approval.proposalId }).first('status')).toEqual({ status: 'applied' })
+    expect(await knex('agentActionExecutions').where({ proposalId: approval.proposalId }).first('status')).toEqual({ status: 'committed' })
   })
 
 
@@ -553,12 +551,12 @@ describe('agent proposal repository', () => {
     if (!approval) throw new Error('approval missing')
     expect(operations.move).not.toHaveBeenCalled()
     await decideProposal(knex, { proposalId: approval.proposalId, approvalId: approval.id, userId: 7, decision: 'approved', authorize: async () => {} })
-    await expect(preparedPromise).resolves.toMatchObject({ proposalId: approval.proposalId, approvalId: approval.id, status: 'applied' })
-    await expect(knex('agentRuns').where({ id: runId }).first('status')).resolves.toEqual({ status: 'running' })
+    expect(await preparedPromise).toMatchObject({ proposalId: approval.proposalId, approvalId: approval.id, status: 'applied' })
+    expect(await knex('agentRuns').where({ id: runId }).first('status')).toEqual({ status: 'running' })
     expect(operations.move).toHaveBeenCalledOnce()
-    await expect(knex('agentProposals').where({ id: approval.proposalId }).first('status')).resolves.toEqual({ status: 'applied' })
-    await expect(knex('agentActionExecutions').where({ proposalId: approval.proposalId }).first('status')).resolves.toEqual({ status: 'committed' })
-    await expect(knex('agentEvents').orderBy('sequence').pluck('type')).resolves.toEqual(['proposal.created', 'approval.requested', 'approval.resolved'])
+    expect(await knex('agentProposals').where({ id: approval.proposalId }).first('status')).toEqual({ status: 'applied' })
+    expect(await knex('agentActionExecutions').where({ proposalId: approval.proposalId }).first('status')).toEqual({ status: 'committed' })
+    expect(await knex('agentEvents').orderBy('sequence').pluck('type')).toEqual(['proposal.created', 'approval.requested', 'approval.resolved'])
   })
   it('reconciles a completed delete when missing pages use the application error name', async () => {
     const runId = '00000000-0000-4000-8000-000000000001'
@@ -638,10 +636,10 @@ describe('agent proposal repository', () => {
     })
     if (!approval) throw new Error('approval missing')
     await decideProposal(knex, { proposalId: approval.proposalId, approvalId: approval.id, userId: 7, decision: 'approved', authorize: async () => {} })
-    await expect(preparedPromise).resolves.toMatchObject({ proposalId: approval.proposalId, status: 'applied' })
-    await expect(knex('agentProposals').where({ id: approval.proposalId }).first('status')).resolves.toEqual({ status: 'applied' })
+    expect(await preparedPromise).toMatchObject({ proposalId: approval.proposalId, status: 'applied' })
+    expect(await knex('agentProposals').where({ id: approval.proposalId }).first('status')).toEqual({ status: 'applied' })
     expect(operations.remove).toHaveBeenCalledOnce()
-    await expect(knex('agentActionExecutions').select('status')).resolves.toEqual([{ status: 'committed' }])
+    expect(await knex('agentActionExecutions').select('status')).toEqual([{ status: 'committed' }])
   })
 
 })

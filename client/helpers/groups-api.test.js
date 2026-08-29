@@ -17,7 +17,7 @@ describe('groups api helper', () => {
       { id: 3, name: 'Editors', isSystem: false }
     ]))
 
-    await expect(fetchGroupOptions(fetchImpl)).resolves.toEqual([
+    expect(await fetchGroupOptions(fetchImpl)).toEqual([
       { id: 1, name: 'Administrators', isSystem: true },
       { id: 3, name: 'Editors', isSystem: false }
     ])
@@ -35,7 +35,7 @@ describe('groups api helper', () => {
       { id: '3', name: 'Editors', isSystem: false }
     ]))
 
-    await expect(fetchGroupOptions(fetchImpl, 'Bad groups payload')).rejects.toThrow('Bad groups payload')
+    await expect(Promise.resolve(fetchGroupOptions(fetchImpl, 'Bad groups payload'))).rejects.toThrow('Bad groups payload')
   })
 
   test('fetches and validates groups list', async () => {
@@ -50,7 +50,7 @@ describe('groups api helper', () => {
       }
     ]))
 
-    await expect(fetchGroupsList(fetchImpl)).resolves.toEqual([
+    expect(await fetchGroupsList(fetchImpl)).toEqual([
       {
         id: 1,
         name: 'Administrators',
@@ -81,7 +81,7 @@ describe('groups api helper', () => {
       }
     ]))
 
-    await expect(fetchGroupsList(fetchImpl, 'Bad groups list payload')).rejects.toThrow('Bad groups list payload')
+    await expect(Promise.resolve(fetchGroupsList(fetchImpl, 'Bad groups list payload'))).rejects.toThrow('Bad groups list payload')
   })
 
   test('fetches and validates group detail payloads', async () => {
@@ -108,7 +108,7 @@ describe('groups api helper', () => {
       updatedAt: '2026-01-02T00:00:00.000Z'
     }))
 
-    await expect(fetchGroupDetails(fetchImpl, 3)).resolves.toEqual({
+    expect(await fetchGroupDetails(fetchImpl, 3)).toEqual({
       id: 3,
       name: 'Editors',
       redirectOnLogin: '/en/home',
@@ -163,7 +163,7 @@ describe('groups api helper', () => {
       updatedAt: '2026-01-02T00:00:00.000Z'
     }))
 
-    await expect(fetchGroupDetails(fetchImpl, 3, 'Bad group detail payload')).rejects.toThrow('Bad group detail payload')
+    await expect(Promise.resolve(fetchGroupDetails(fetchImpl, 3, 'Bad group detail payload'))).rejects.toThrow('Bad group detail payload')
   })
 
   test('surfaces API error messages for group fetch failures', async () => {
@@ -175,7 +175,7 @@ describe('groups api helper', () => {
       json: async () => ({ error: 'manage:groups is required' })
     })
 
-    await expect(fetchGroupOptions(fetchImpl, 'Bad groups fetch')).rejects.toThrow('manage:groups is required')
+    await expect(Promise.resolve(fetchGroupOptions(fetchImpl, 'Bad groups fetch'))).rejects.toThrow('manage:groups is required')
   })
 
   test('creates groups through the REST endpoint', async () => {
@@ -185,7 +185,7 @@ describe('groups api helper', () => {
       group: { id: 3, name: 'Editors', isSystem: false }
     }))
 
-    await expect(createGroup(fetchImpl, 'Editors')).resolves.toEqual({
+    expect(await createGroup(fetchImpl, 'Editors')).toEqual({
       succeeded: true,
       message: 'Group created successfully.',
       group: { id: 3, name: 'Editors', isSystem: false }
@@ -208,7 +208,7 @@ describe('groups api helper', () => {
       message: 'Nope'
     }))
 
-    await expect(createGroup(fetchImpl, 'Editors', 'Bad group create payload')).rejects.toThrow('Bad group create payload')
+    await expect(Promise.resolve(createGroup(fetchImpl, 'Editors', 'Bad group create payload'))).rejects.toThrow('Bad group create payload')
   })
 
   test('surfaces API error messages for failed group creates', async () => {
@@ -216,7 +216,7 @@ describe('groups api helper', () => {
       error: 'write:groups, manage:groups, or manage:system is required'
     }, false))
 
-    await expect(createGroup(fetchImpl, 'Editors', 'Bad group create')).rejects.toThrow('write:groups, manage:groups, or manage:system is required')
+    await expect(Promise.resolve(createGroup(fetchImpl, 'Editors', 'Bad group create'))).rejects.toThrow('write:groups, manage:groups, or manage:system is required')
   })
 
   test('assigns group users through the REST endpoint', async () => {
@@ -225,7 +225,7 @@ describe('groups api helper', () => {
       message: 'User has been assigned to group.'
     }))
 
-    await expect(assignGroupUser(fetchImpl, 3, 10)).resolves.toEqual({
+    expect(await assignGroupUser(fetchImpl, 3, 10)).toEqual({
       succeeded: true,
       message: 'User has been assigned to group.'
     })
@@ -245,7 +245,7 @@ describe('groups api helper', () => {
       message: 'Nope'
     }))
 
-    await expect(assignGroupUser(fetchImpl, 3, 10, 'Bad assign payload')).rejects.toThrow('Bad assign payload')
+    await expect(Promise.resolve(assignGroupUser(fetchImpl, 3, 10, 'Bad assign payload'))).rejects.toThrow('Bad assign payload')
   })
 
   test('surfaces API error messages for failed group user assigns', async () => {
@@ -253,7 +253,7 @@ describe('groups api helper', () => {
       error: 'User is already assigned to group.'
     }, false))
 
-    await expect(assignGroupUser(fetchImpl, 3, 10, 'Bad assign')).rejects.toThrow('User is already assigned to group.')
+    await expect(Promise.resolve(assignGroupUser(fetchImpl, 3, 10, 'Bad assign'))).rejects.toThrow('User is already assigned to group.')
   })
 
   test('unassigns group users through the REST endpoint', async () => {
@@ -262,7 +262,7 @@ describe('groups api helper', () => {
       message: 'User has been unassigned from group.'
     }))
 
-    await expect(unassignGroupUser(fetchImpl, 3, 10)).resolves.toEqual({
+    expect(await unassignGroupUser(fetchImpl, 3, 10)).toEqual({
       succeeded: true,
       message: 'User has been unassigned from group.'
     })
@@ -282,7 +282,7 @@ describe('groups api helper', () => {
       message: 'Nope'
     }))
 
-    await expect(unassignGroupUser(fetchImpl, 3, 10, 'Bad unassign payload')).rejects.toThrow('Bad unassign payload')
+    await expect(Promise.resolve(unassignGroupUser(fetchImpl, 3, 10, 'Bad unassign payload'))).rejects.toThrow('Bad unassign payload')
   })
 
   test('surfaces API error messages for failed group user unassigns', async () => {
@@ -290,7 +290,7 @@ describe('groups api helper', () => {
       error: 'Cannot unassign Guest user'
     }, false))
 
-    await expect(unassignGroupUser(fetchImpl, 3, 2, 'Bad unassign')).rejects.toThrow('Cannot unassign Guest user')
+    await expect(Promise.resolve(unassignGroupUser(fetchImpl, 3, 2, 'Bad unassign'))).rejects.toThrow('Cannot unassign Guest user')
   })
 
   test('deletes groups through the REST endpoint', async () => {
@@ -299,7 +299,7 @@ describe('groups api helper', () => {
       message: 'Group has been deleted.'
     }))
 
-    await expect(deleteGroup(fetchImpl, 3)).resolves.toEqual({
+    expect(await deleteGroup(fetchImpl, 3)).toEqual({
       succeeded: true,
       message: 'Group has been deleted.'
     })
@@ -319,7 +319,7 @@ describe('groups api helper', () => {
       message: 'Nope'
     }))
 
-    await expect(deleteGroup(fetchImpl, 3, 'Bad delete payload')).rejects.toThrow('Bad delete payload')
+    await expect(Promise.resolve(deleteGroup(fetchImpl, 3, 'Bad delete payload'))).rejects.toThrow('Bad delete payload')
   })
 
   test('surfaces API error messages for failed group deletes', async () => {
@@ -327,7 +327,7 @@ describe('groups api helper', () => {
       error: 'Cannot delete this group.'
     }, false))
 
-    await expect(deleteGroup(fetchImpl, 1, 'Bad delete')).rejects.toThrow('Cannot delete this group.')
+    await expect(Promise.resolve(deleteGroup(fetchImpl, 1, 'Bad delete'))).rejects.toThrow('Cannot delete this group.')
   })
 
   test('updates groups through the REST endpoint', async () => {
@@ -342,7 +342,7 @@ describe('groups api helper', () => {
       message: 'Group has been updated.'
     }))
 
-    await expect(updateGroup(fetchImpl, 3, payload)).resolves.toEqual({
+    expect(await updateGroup(fetchImpl, 3, payload)).toEqual({
       succeeded: true,
       message: 'Group has been updated.'
     })
@@ -364,7 +364,7 @@ describe('groups api helper', () => {
       message: 'Nope'
     }))
 
-    await expect(updateGroup(fetchImpl, 3, {}, 'Bad update payload')).rejects.toThrow('Bad update payload')
+    await expect(Promise.resolve(updateGroup(fetchImpl, 3, {}, 'Bad update payload'))).rejects.toThrow('Bad update payload')
   })
 
   test('surfaces API error messages for failed group updates', async () => {
@@ -372,6 +372,6 @@ describe('groups api helper', () => {
       error: 'Some Page Rules contains unsafe or exponential time regex.'
     }, false))
 
-    await expect(updateGroup(fetchImpl, 3, {}, 'Bad update')).rejects.toThrow('Some Page Rules contains unsafe or exponential time regex.')
+    await expect(Promise.resolve(updateGroup(fetchImpl, 3, {}, 'Bad update'))).rejects.toThrow('Some Page Rules contains unsafe or exponential time regex.')
   })
 })

@@ -1,9 +1,9 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from '../bun-test.mts'
 const listPageIndexCandidates = vi.hoisted(() => vi.fn())
-vi.mock('../../repositories/page-index.ts', async importOriginal => {
-  const actual = await importOriginal<typeof import('../../repositories/page-index.ts')>()
-  return { ...actual, listPageIndexCandidates }
-})
+vi.mockModule('../../repositories/page-index.ts', import.meta.url, () => ({
+  PAGE_INDEX_CANDIDATE_LIMIT: 5_001,
+  listPageIndexCandidates
+}))
 
 
 const rows = [
@@ -80,7 +80,6 @@ const queryBuilder = () => {
 
 describe('page index operation', () => {
   beforeEach(() => {
-    vi.resetModules()
     listPageIndexCandidates.mockReset()
   })
 
@@ -161,14 +160,14 @@ describe('page index operation', () => {
     })
     const operations = (await import('../../operations/pages.ts')).default
 
-    await expect(operations.listIndex({
+    await expect(Promise.resolve(operations.listIndex({
       requester: { id: 7, permissions: ['read:pages'] },
       path: 'guide',
       locale: 'en',
       depth: 0,
       order: 'path',
       limit: 200
-    })).rejects.toMatchObject({ name: 'PAGE_INDEX_TOO_BROAD', status: 422 })
+    }))).rejects.toMatchObject({ name: 'PAGE_INDEX_TOO_BROAD', status: 422 })
   })
 
   it.each([
@@ -183,6 +182,6 @@ describe('page index operation', () => {
     })
     const operations = (await import('../../operations/pages.ts')).default
 
-    await expect(operations.listIndex({ requester: { id: 7 }, ...input })).rejects.toThrow(diagnostic)
+    await expect(Promise.resolve(operations.listIndex({ requester: { id: 7 }, ...input }))).rejects.toThrow(diagnostic)
   })
 })

@@ -1,6 +1,5 @@
-/** @vitest-environment node */
 import createKnex, { type Knex } from 'knex'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from '../bun-test.mts'
 
 import type { AgentRunClaim } from '../../agents/coordinator.ts'
 import { validateChildEvidencePacket, type AgentResearchTask } from '../../agents/orchestration.ts'
@@ -112,7 +111,7 @@ describe('durable agent task ledger', () => {
   it('persists an atomic plan and fenced child lifecycle with idempotent completion', async () => {
     const created = await createAgentRunTasks(knex, claim, tasks, plannerUsage)
     expect(created.map(task => task.status)).toEqual(['pending', 'pending'])
-    await expect(knex('agentEvents').orderBy('sequence').pluck('type')).resolves.toEqual([
+    expect(await knex('agentEvents').orderBy('sequence').pluck('type')).toEqual([
       'task.planCreated',
       'task.created',
       'task.created'
@@ -124,8 +123,8 @@ describe('durable agent task ledger', () => {
     expect(finished).toMatchObject({ status: 'completed', outcome: 'completed', evidenceCount: 1, authoritySha256: 'a'.repeat(64) })
 
     const sequenceAfterCompletion = (await knex('agentRuns').where({ id: runId }).first('eventSequence') as { eventSequence: number }).eventSequence
-    await expect(finishAgentRunTask(knex, claim, firstTaskId, firstSubagentId, completedPacket, 'a'.repeat(64))).resolves.toMatchObject({ status: 'completed' })
-    await expect(knex('agentRuns').where({ id: runId }).first('eventSequence')).resolves.toEqual({ eventSequence: sequenceAfterCompletion })
+    expect(await finishAgentRunTask(knex, claim, firstTaskId, firstSubagentId, completedPacket, 'a'.repeat(64))).toMatchObject({ status: 'completed' })
+    expect(await knex('agentRuns').where({ id: runId }).first('eventSequence')).toEqual({ eventSequence: sequenceAfterCompletion })
 
     await startAgentRunTask(knex, claim, secondTaskId, secondSubagentId)
     await failAgentRunTask(knex, claim, secondTaskId, secondSubagentId, 'SOURCE_UNAVAILABLE')
@@ -146,14 +145,14 @@ describe('durable agent task ledger', () => {
     await startAgentRunTask(knex, claim, firstTaskId, secondSubagentId)
     await cancelAgentRunTasks(knex, claim)
     expect((await listAgentRunTasks(knex, runId)).map(task => task.status)).toEqual(['cancelled', 'cancelled'])
-    await expect(knex('agentEvents').where({ type: 'task.cancelled' }).count<{ count: number | string }[]>({ count: '*' }).first()).resolves.toMatchObject({ count: 2 })
+    expect(await knex('agentEvents').where({ type: 'task.cancelled' }).count<{ count: number | string }[]>({ count: '*' }).first()).toMatchObject({ count: 2 })
   })
 
   it('refuses a destructive rollback while durable research tasks exist', async () => {
     await createAgentRunTasks(knex, claim, tasks, plannerUsage)
-    await expect(removeAgentTaskLedger(knex)).rejects.toThrow('agentRunTasks contains durable research state')
+    await expect(Promise.resolve(removeAgentTaskLedger(knex))).rejects.toThrow('agentRunTasks contains durable research state')
     await knex('agentRunTasks').delete()
     await removeAgentTaskLedger(knex)
-    await expect(knex.schema.hasTable('agentRunTasks')).resolves.toBe(false)
+    expect(await knex.schema.hasTable('agentRunTasks')).toBe(false)
   })
 })

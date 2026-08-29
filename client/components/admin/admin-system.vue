@@ -89,14 +89,14 @@
 
           v-col(lg='6' cols='12')
             v-card.pb-3.animated.fadeInUp.wait-p4s
-              v-list-subheader Node.js
+              v-list-subheader Bun
               v-list(density="compact")
                 v-list-item
                   template(v-slot:prepend)
                     v-avatar
                       v-avatar.bg-light-green(size='40')
-                        v-icon(color='white') mdi-nodejs
-                  v-list-item-title {{ info.nodeVersion }}
+                        v-icon(color='white') mdi-lightning-bolt
+                  v-list-item-title {{ info.bunVersion }}
 
               v-divider.mt-3
               v-list-subheader {{ info.dbType }}
@@ -135,7 +135,7 @@ const makeDefaultSystemInfo = (): SystemInfo => ({
   dbType: '',
   dbVersion: '',
   hostname: '',
-  nodeVersion: '',
+  bunVersion: '',
   operatingSystem: '',
   platform: '',
   ramTotal: '',

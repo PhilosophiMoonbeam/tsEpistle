@@ -33,7 +33,7 @@ describe('mail api helper', () => {
       privateField: 'do-not-return'
     }))
 
-    await expect(fetchMailConfig(fetchImpl)).resolves.toEqual(mailConfig)
+    expect(await fetchMailConfig(fetchImpl)).toEqual(mailConfig)
     expect(fetchImpl).toHaveBeenCalledWith('/_api/mail/config', {
       credentials: 'same-origin',
       headers: {
@@ -45,13 +45,13 @@ describe('mail api helper', () => {
   test('rejects invalid mail config responses', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ ...mailConfig, port: '587' }))
 
-    await expect(fetchMailConfig(fetchImpl, 'Bad config')).rejects.toThrow('Bad config')
+    await expect(Promise.resolve(fetchMailConfig(fetchImpl, 'Bad config'))).rejects.toThrow('Bad config')
   })
 
   test('saves mail config with same-origin JSON POST options', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ message: 'Mail configuration updated successfully.' }))
 
-    await expect(saveMailConfig(fetchImpl, mailConfig)).resolves.toEqual({ message: 'Mail configuration updated successfully.' })
+    expect(await saveMailConfig(fetchImpl, mailConfig)).toEqual({ message: 'Mail configuration updated successfully.' })
     expect(fetchImpl).toHaveBeenCalledWith('/_api/mail/config', {
       method: 'POST',
       credentials: 'same-origin',
@@ -66,13 +66,13 @@ describe('mail api helper', () => {
   test('surfaces JSON mail config REST error responses', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ error: 'Invalid mail config payload' }, false))
 
-    await expect(saveMailConfig(fetchImpl, mailConfig, 'Mail save failed')).rejects.toThrow('Invalid mail config payload')
+    await expect(Promise.resolve(saveMailConfig(fetchImpl, mailConfig, 'Mail save failed'))).rejects.toThrow('Invalid mail config payload')
   })
 
   test('sends mail test with same-origin JSON POST options', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ message: 'Test email sent successfully.' }))
 
-    await expect(sendMailTest(fetchImpl, 'admin@example.test')).resolves.toEqual({ message: 'Test email sent successfully.' })
+    expect(await sendMailTest(fetchImpl, 'admin@example.test')).toEqual({ message: 'Test email sent successfully.' })
 
     expect(fetchImpl).toHaveBeenCalledWith('/_api/mail/test', {
       method: 'POST',
@@ -88,13 +88,13 @@ describe('mail api helper', () => {
   test('rejects invalid success responses', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ ok: true }))
 
-    await expect(sendMailTest(fetchImpl, 'admin@example.test', 'Bad mail response')).rejects.toThrow('Bad mail response')
+    await expect(Promise.resolve(sendMailTest(fetchImpl, 'admin@example.test', 'Bad mail response'))).rejects.toThrow('Bad mail response')
   })
 
   test('surfaces JSON REST error responses', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ error: 'smtp unavailable' }, false))
 
-    await expect(sendMailTest(fetchImpl, 'admin@example.test', 'Mail test failed')).rejects.toThrow('smtp unavailable')
+    await expect(Promise.resolve(sendMailTest(fetchImpl, 'admin@example.test', 'Mail test failed'))).rejects.toThrow('smtp unavailable')
   })
 
   test('uses fallback message for non-JSON failures', async () => {
@@ -105,6 +105,6 @@ describe('mail api helper', () => {
       }
     })
 
-    await expect(sendMailTest(fetchImpl, 'admin@example.test', 'Mail test failed')).rejects.toThrow('Mail test failed')
+    await expect(Promise.resolve(sendMailTest(fetchImpl, 'admin@example.test', 'Mail test failed'))).rejects.toThrow('Mail test failed')
   })
 })

@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events'
-import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, afterEach, describe, expect, it, vi } from '../bun-test.mts'
 
 const originalWIKI = global.WIKI
 
@@ -90,7 +90,7 @@ describe('Visual Markdown page contracts', () => {
       },
       scheduler: { registerJob: vi.fn() }
     }
-    Page = (await import('../../models/pages.ts')).default
+    Page = (await vi.importFresh('../../models/pages.ts', import.meta.url)).default
   })
 
   afterEach(() => {
@@ -245,12 +245,12 @@ describe('Visual Markdown page contracts', () => {
       query: vi.fn().mockReturnValue({ findById: vi.fn().mockResolvedValue(basePage) })
     }
 
-    await expect(Page.updatePage({
+    await expect(Promise.resolve(Page.updatePage({
       id: basePage.id,
       user: requester,
       content: '# Restored',
       expectedUpdatedAt: '2026-08-14T00:00:01.000Z'
-    })).rejects.toMatchObject({ name: 'PageUpdateConflict', status: 409 })
+    }))).rejects.toMatchObject({ name: 'PageUpdateConflict', status: 409 })
 
     expect(global.WIKI.models.knex.transaction).not.toHaveBeenCalled()
     expect(global.WIKI.models.pageHistory.addVersion).not.toHaveBeenCalled()
@@ -268,13 +268,13 @@ describe('Visual Markdown page contracts', () => {
     global.WIKI.models.pages = { query }
     global.WIKI.models.tags = { associateTags: vi.fn() }
 
-    await expect(Page.updatePage({
+    await expect(Promise.resolve(Page.updatePage({
       id: basePage.id,
       user: requester,
       content: '# Restored',
       tags: ['release'],
       expectedUpdatedAt: basePage.updatedAt
-    })).rejects.toMatchObject({ name: 'PageUpdateConflict', status: 409 })
+    }))).rejects.toMatchObject({ name: 'PageUpdateConflict', status: 409 })
 
     expect(pagePatch.where).toHaveBeenNthCalledWith(1, 'id', basePage.id)
     expect(pagePatch.where).toHaveBeenNthCalledWith(2, 'updatedAt', basePage.updatedAt)

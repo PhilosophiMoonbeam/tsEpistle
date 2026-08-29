@@ -1,7 +1,7 @@
 import { lookup } from 'node:dns/promises'
 import { BlockList, isIP } from 'node:net'
 import type { Knex } from 'knex'
-import { Agent, fetch as undiciFetch } from 'undici'
+import { Agent, fetch as undiciFetch, type RequestInit as UndiciRequestInit } from 'undici'
 import {
   AxAIAnthropic,
   AxAIAnthropicModel,
@@ -40,6 +40,10 @@ const OPENAI_REASONING_STATE_PREFIX = 'wiki.openai.reasoning.v1:'
 const MAX_PROVIDER_STATE_ITEM_BYTES = 256 * 1_024
 
 type ProviderThoughtBlock = NonNullable<AxChatResponseResult['thoughtBlocks']>[number]
+export type AgentProviderFetch = typeof fetch
+const disabledProviderPreconnect: typeof fetch.preconnect = () => {
+  throw new AgentRepositoryError('PROVIDER_EGRESS_DENIED', 'Provider preconnect is disabled because it cannot enforce DNS pinning', 502)
+}
 
 const openAIReasoningState = (resultId: string, block: ProviderThoughtBlock): ProviderThoughtBlock => {
   if (!/^rs_[A-Za-z0-9_-]{1,256}$/.test(resultId) || typeof block.data !== 'string' || Buffer.byteLength(block.data, 'utf8') > MAX_PROVIDER_STATE_ITEM_BYTES) {
@@ -198,28 +202,28 @@ const providerEndpointAllowed = (base: URL, url: URL, endpoint: ProviderEndpoint
   return url.pathname === `${basePath}${endpoint}` && url.search.length === 0
 }
 
-export const createGuardedProviderFetch = (baseUrl: string, endpoint: ProviderEndpoint, additionalHeaders: Readonly<Record<string, string>>, implementation: typeof fetch = undiciFetch as unknown as typeof fetch, resolve: typeof lookup = lookup): typeof fetch => {
+export const createGuardedProviderFetch = (baseUrl: string, endpoint: ProviderEndpoint, additionalHeaders: Readonly<Record<string, string>>, implementation: AgentProviderFetch = undiciFetch as unknown as AgentProviderFetch, resolve: typeof lookup = lookup): AgentProviderFetch => {
   const base = new URL(baseUrl)
   const dispatcher = pinnedProviderDispatcher(resolve)
-  return async (input, init) => {
+  return Object.assign(async (input: Parameters<AgentProviderFetch>[0], init?: Parameters<AgentProviderFetch>[1]): Promise<Response> => {
     const url = new URL(typeof input === 'string' || input instanceof URL ? input : input.url)
     if (url.protocol !== 'https:' || url.origin !== base.origin || !providerEndpointAllowed(base, url, endpoint) || url.hash || url.username || url.password) throw new AgentRepositoryError('PROVIDER_EGRESS_DENIED', 'Provider request destination is not allowlisted', 502)
     assertPublicProviderAddresses(await resolve(url.hostname, { all: true, verbatim: true }))
     const headers = new Headers(init?.headers)
     for (const [name, value] of Object.entries(additionalHeaders)) headers.set(name, value)
-    const response = await implementation(url, { ...init, headers, redirect: 'manual', credentials: 'omit', dispatcher } as RequestInit)
+    const response = await (implementation as unknown as typeof undiciFetch)(url, { ...init, headers, redirect: 'manual', credentials: 'omit', dispatcher } as unknown as UndiciRequestInit) as unknown as Response
     if (response.status >= 300 && response.status < 400) throw new AgentProviderAttemptError('PROVIDER_REDIRECT_DENIED', response.status, null)
     if (!response.ok) {
       const failure = await providerFailure(response)
       throw new AgentProviderAttemptError(failure.code, response.status, retryAfter(response.headers.get('retry-after')), failure.parameter)
     }
     return response
-  }
+  }, { preconnect: disabledProviderPreconnect })
 }
 
-const createAnthropicEffortFetch = (implementation: typeof fetch, effort: AgentReasoningEffort | undefined): typeof fetch => {
+const createAnthropicEffortFetch = (implementation: AgentProviderFetch, effort: AgentReasoningEffort | undefined): AgentProviderFetch => {
   if (effort === undefined) return implementation
-  return async (input, init): Promise<Response> => {
+  return Object.assign(async (input: Parameters<AgentProviderFetch>[0], init?: Parameters<AgentProviderFetch>[1]): Promise<Response> => {
     if (typeof init?.body !== 'string') throw new AgentRepositoryError('INVALID_PROVIDER_REQUEST', 'Anthropic request body is invalid', 500)
     let body: Record<string, unknown>
     try {
@@ -240,7 +244,7 @@ const createAnthropicEffortFetch = (implementation: typeof fetch, effort: AgentR
         output_config: { ...(existing as Readonly<Record<string, unknown>> | undefined), effort }
       })
     })
-  }
+  }, { preconnect: implementation.preconnect })
 }
 
 const geminiThinkingLevel = (effort: AgentReasoningEffort): 'minimal' | 'low' | 'medium' | 'high' => {
@@ -265,7 +269,7 @@ const legacyPrompt = (request: Readonly<AxChatRequest<unknown>>): string => requ
   return `${message.role}: ${message.content}`
 }).join('\n\n')
 
-const createLegacyCompletionService = (row: ProviderVersionRow, secret: string, config: ReturnType<typeof AgentProviderAdapterConfigSchema.parse>, guardedFetch: typeof fetch): Pick<AxAIService, 'chat'> => ({
+const createLegacyCompletionService = (row: ProviderVersionRow, secret: string, config: ReturnType<typeof AgentProviderAdapterConfigSchema.parse>, guardedFetch: AgentProviderFetch): Pick<AxAIService, 'chat'> => ({
   chat: async (request: Readonly<AxChatRequest<unknown>>, options?: Readonly<AxAIServiceOptions>): Promise<AxChatResponse> => {
     if (request.functions?.length) throw new AgentRepositoryError('INVALID_LEGACY_PROMPT', 'Legacy completions do not support tools', 400)
     const headers = new Headers({ 'content-type': 'application/json' })
@@ -297,9 +301,9 @@ const createLegacyCompletionService = (row: ProviderVersionRow, secret: string, 
 export class AgentProviderFactory {
   readonly #knex: Knex
   readonly #secrets: Pick<AgentSecretRegistry, 'get'>
-  readonly #fetch: typeof fetch
+  readonly #fetch: AgentProviderFetch
   readonly #resolve: typeof lookup
-  constructor (knex: Knex, secrets: Pick<AgentSecretRegistry, 'get'>, fetchImplementation: typeof fetch = undiciFetch as unknown as typeof fetch, resolve: typeof lookup = lookup) {
+  constructor (knex: Knex, secrets: Pick<AgentSecretRegistry, 'get'>, fetchImplementation: AgentProviderFetch = undiciFetch as unknown as AgentProviderFetch, resolve: typeof lookup = lookup) {
     this.#knex = knex
     this.#secrets = secrets
     this.#fetch = fetchImplementation

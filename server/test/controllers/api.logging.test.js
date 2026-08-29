@@ -1,4 +1,4 @@
-vi.mock('express', () => {
+vi.mockModule('express', import.meta.url, () => {
   const routers = []
   const express = {
     Router: () => {
@@ -19,7 +19,7 @@ vi.mock('express', () => {
   return { default: express, ...express }
 })
 
-import express from 'express'
+const { default: express } = await import('express')
 
 const API_CONTROLLER_NAMES = [
   'analytics',
@@ -46,16 +46,16 @@ const loadApiIndexRouter = async () => {
   const subrouters = Object.fromEntries(API_CONTROLLER_NAMES.map(name => [name, {}]))
 
   for (const name of API_CONTROLLER_NAMES) {
-    vi.doMock(`../../controllers/api/${name}.ts`, () => ({
+    vi.mockModule(`../../controllers/api/${name}.ts`, import.meta.url, () => ({
       default: subrouters[name]
     }))
   }
 
   try {
-    await expect(import('../../controllers/api/index.ts')).resolves.toBeDefined()
+    expect(await vi.importFresh('../../controllers/api/index.ts', import.meta.url)).toBeDefined()
   } finally {
     for (const name of API_CONTROLLER_NAMES) {
-      vi.doUnmock(`../../controllers/api/${name}.ts`)
+      vi.unmockModule(`../../controllers/api/${name}.ts`, import.meta.url)
     }
   }
 
@@ -142,7 +142,7 @@ describe('controllers/api logging endpoints', () => {
   })
 
   const loadLoggersRouter = async () => {
-    await import('../../controllers/api/logging.ts')
+    await vi.importFresh('../../controllers/api/logging.ts', import.meta.url)
     return express.__routers[0]
   }
 
@@ -160,11 +160,6 @@ describe('controllers/api logging endpoints', () => {
 
   expect(typeof handler).toBe('function') })
 
-  it('is mounted by the API index router', async () => {
-    const { apiRouter, subrouters } = await loadApiIndexRouter()
-
-    expect(apiRouter.use).toHaveBeenCalledWith('/logging', subrouters.logging)
-  })
 
   it('returns 403 for unauthorized logger requests without querying loggers', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(false)
@@ -400,5 +395,10 @@ describe('controllers/api logging endpoints', () => {
 
     expect(next).toHaveBeenCalledWith(err)
     expect(res.json).not.toHaveBeenCalled()
+  })
+  it('is mounted by the API index router', async () => {
+    const { apiRouter, subrouters } = await loadApiIndexRouter()
+
+    expect(apiRouter.use).toHaveBeenCalledWith('/logging', subrouters.logging)
   })
 })

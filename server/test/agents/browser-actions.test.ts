@@ -1,5 +1,5 @@
 import createKnex, { type Knex } from 'knex'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from '../bun-test.mts'
 import type { ActionAuthority } from '../../agents/actions/kernel.ts'
 import { BrowserActionService } from '../../agents/browser/actions.ts'
 import type { BrowserWorkerAction, BrowserWorkerResult } from '../../agents/browser/runtime.ts'
@@ -37,8 +37,8 @@ describe('browser action service', () => {
       reauthorize: async () => {},
       fenceSideEffect: async () => { order.push('fence') }
     })
-    await expect(service.navigate({ url: 'https://example.com/docs' }, context('call-1'))).resolves.toEqual(observation)
-    await expect(service.observe({}, context('call-2'))).resolves.toEqual(observation)
+    expect(await service.navigate({ url: 'https://example.com/docs' }, context('call-1'))).toEqual(observation)
+    expect(await service.observe({}, context('call-2'))).toEqual(observation)
     expect(calls.map(call => call.sequence)).toEqual([1, 2])
     expect(calls[0]?.action).toMatchObject({ kind: 'navigate', attestedUrls: ['https://example.com/docs'] })
     expect(order).toEqual(['fence', 'dispatch', 'fence', 'dispatch'])

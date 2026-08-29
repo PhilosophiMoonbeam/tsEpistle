@@ -61,12 +61,12 @@ const updateConfig = async (input: unknown): Promise<void> => {
     throw new ApplicationError('Site configuration payload must be an object.', { code: 'INVALID_SITE_CONFIGURATION' })
   }
   const args = input as Record<string, unknown>
-  const hasAvailableEditors = Object.prototype.hasOwnProperty.call(args, 'availableEditors')
+  const hasAvailableEditors = Object.hasOwn(args, 'availableEditors')
   const availableEditorsValidation = hasAvailableEditors ? validateAvailableEditors(args.availableEditors) : null
   if (availableEditorsValidation && !availableEditorsValidation.ok) {
     throw new ApplicationError(availableEditorsValidation.message, { code: 'INVALID_EDITOR_CONFIGURATION' })
   }
-  if (Object.prototype.hasOwnProperty.call(args, 'banner')) {
+  if (Object.hasOwn(args, 'banner')) {
     const result = validateSiteBanner(args.banner)
     if (!result.ok) {
       throw new ApplicationError(result.message, { code: 'INVALID_SITE_BANNER' })
@@ -81,16 +81,16 @@ const updateConfig = async (input: unknown): Promise<void> => {
       available: availableEditorsValidation.value
     }
   }
-  if (Object.prototype.hasOwnProperty.call(args, 'host')) {
+  if (Object.hasOwn(args, 'host')) {
     config.host = _.trim(args.host as string).replace(/\/$/, '')
   }
   for (const field of ['title', 'company', 'logoUrl']) {
-    if (Object.prototype.hasOwnProperty.call(args, field)) config[field] = _.trim(args[field] as string)
+    if (Object.hasOwn(args, field)) config[field] = _.trim(args[field] as string)
   }
   for (const field of ['contentLicense', 'footerOverride']) {
-    if (Object.prototype.hasOwnProperty.call(args, field)) config[field] = args[field]
+    if (Object.hasOwn(args, field)) config[field] = args[field]
   }
-  if (Object.prototype.hasOwnProperty.call(args, 'pageExtensions')) {
+  if (Object.hasOwn(args, 'pageExtensions')) {
     config.pageExtensions = _.trim(args.pageExtensions as string).split(',').map((value: string) => value.trim().toLowerCase()).filter(Boolean)
   }
   config.seo = {

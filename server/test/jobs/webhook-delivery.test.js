@@ -1,4 +1,3 @@
-/** @vitest-environment node */
 
 import createKnex from 'knex'
 
@@ -21,7 +20,7 @@ const { decryptMock, resolveMock, sendMock, DeliveryError } = vi.hoisted(() => {
     DeliveryError
   }
 })
-vi.mock('../../core/webhooks.ts', () => ({
+vi.mockModule('../../core/webhooks.ts', import.meta.url, () => ({
   decryptWebhookSecret: decryptMock,
   resolveWebhookUrl: resolveMock,
   sendSignedWebhook: sendMock,
@@ -104,7 +103,7 @@ describe('webhook delivery durable handler', () => {
   it('records retryable HTTP failures without marking delivery complete', async () => {
     sendMock.mockRejectedValue(new DeliveryError('HTTP 503', 503, 'try later'))
 
-    await expect(handler(job, { knex })).rejects.toThrow('HTTP 503')
+    await expect(Promise.resolve(handler(job, { knex }))).rejects.toThrow('HTTP 503')
 
     expect(await knex('webhookDeliveries').where('id', 'delivery-1').first()).toMatchObject({
       statusCode: 503,

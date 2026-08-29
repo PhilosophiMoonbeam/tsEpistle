@@ -1,7 +1,6 @@
-/** @vitest-environment node */
 
 import createKnex, { type Knex } from 'knex'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from '../bun-test.mts'
 import type { DurableJob } from '../../core/durable-jobs.ts'
 import { createPageWatchNotificationHandler, type PageWatchWikiContext } from '../../jobs/page-watch-notification.ts'
 

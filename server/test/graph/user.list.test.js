@@ -126,7 +126,7 @@ describe('graph/resolvers/user list pagination', () => {
   })
 
   it('returns paginated user results with total count', async () => {
-    const { default: resolver } = await import('../../graph/resolvers/user.ts')
+    const { default: resolver } = await vi.importFresh('../../graph/resolvers/user.ts', import.meta.url)
 
     const result = await resolver.UserQuery.list(null, {
       page: 2,
@@ -141,7 +141,7 @@ describe('graph/resolvers/user list pagination', () => {
   })
 
   it('filters by search string and provider key', async () => {
-    const { default: resolver } = await import('../../graph/resolvers/user.ts')
+    const { default: resolver } = await vi.importFresh('../../graph/resolvers/user.ts', import.meta.url)
 
     const result = await resolver.UserQuery.list(null, {
       filter: 'alice@',

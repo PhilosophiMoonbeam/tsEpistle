@@ -14,7 +14,7 @@ describe('search api helper', () => {
   test('requests search engines with same-origin JSON options', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([]))
 
-    await expect(fetchSearchEngines(fetchImpl)).resolves.toEqual([])
+    expect(await fetchSearchEngines(fetchImpl)).toEqual([])
 
     expect(fetchImpl).toHaveBeenCalledWith('/_api/search/engines', {
       credentials: 'same-origin',
@@ -43,7 +43,7 @@ describe('search api helper', () => {
       }
     ]))
 
-    await expect(fetchSearchEngines(fetchImpl)).resolves.toEqual([
+    expect(await fetchSearchEngines(fetchImpl)).toEqual([
       {
         isEnabled: true,
         key: 'db',
@@ -116,7 +116,7 @@ describe('search api helper', () => {
       }
     ]))
 
-    await expect(fetchSearchEngines(fetchImpl)).resolves.toEqual([
+    expect(await fetchSearchEngines(fetchImpl)).toEqual([
       {
         isEnabled: false,
         key: 'external',
@@ -138,7 +138,7 @@ describe('search api helper', () => {
   test('rejects malformed root payloads', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ engines: [] }))
 
-    await expect(fetchSearchEngines(fetchImpl, 'Bad search payload')).rejects.toThrow('Bad search payload')
+    await expect(Promise.resolve(fetchSearchEngines(fetchImpl, 'Bad search payload'))).rejects.toThrow('Bad search payload')
   })
 
   test('rejects malformed engine rows', async () => {
@@ -155,7 +155,7 @@ describe('search api helper', () => {
       }
     ]))
 
-    await expect(fetchSearchEngines(fetchImpl, 'Bad search row')).rejects.toThrow('Bad search row')
+    await expect(Promise.resolve(fetchSearchEngines(fetchImpl, 'Bad search row'))).rejects.toThrow('Bad search row')
   })
 
   test('rejects malformed config rows', async () => {
@@ -172,7 +172,7 @@ describe('search api helper', () => {
       }
     ]))
 
-    await expect(fetchSearchEngines(fetchImpl, 'Bad search config')).rejects.toThrow('Bad search config')
+    await expect(Promise.resolve(fetchSearchEngines(fetchImpl, 'Bad search config'))).rejects.toThrow('Bad search config')
   })
 
   test('rejects malformed config JSON', async () => {
@@ -189,7 +189,7 @@ describe('search api helper', () => {
       }
     ]))
 
-    await expect(fetchSearchEngines(fetchImpl, 'Bad search JSON')).rejects.toThrow('Bad search JSON')
+    await expect(Promise.resolve(fetchSearchEngines(fetchImpl, 'Bad search JSON'))).rejects.toThrow('Bad search JSON')
   })
 
   test('propagates API JSON errors', async () => {
@@ -201,7 +201,7 @@ describe('search api helper', () => {
       json: async () => ({ message: 'manage:system is required' })
     })
 
-    await expect(fetchSearchEngines(fetchImpl, 'Bad search load')).rejects.toThrow('manage:system is required')
+    await expect(Promise.resolve(fetchSearchEngines(fetchImpl, 'Bad search load'))).rejects.toThrow('manage:system is required')
   })
 
   test('rejects non-JSON successful responses', async () => {
@@ -212,14 +212,14 @@ describe('search api helper', () => {
       }
     })
 
-    await expect(fetchSearchEngines(fetchImpl, 'Bad search content type')).rejects.toThrow('Bad search content type')
+    await expect(Promise.resolve(fetchSearchEngines(fetchImpl, 'Bad search content type'))).rejects.toThrow('Bad search content type')
   })
 
   test('saves search engines with same-origin JSON POST options', async () => {
     const engines = [{ key: 'db', isEnabled: true, config: [] }]
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ message: 'Search Engines updated successfully' }))
 
-    await expect(saveSearchEngines(fetchImpl, engines)).resolves.toEqual({ message: 'Search Engines updated successfully' })
+    expect(await saveSearchEngines(fetchImpl, engines)).toEqual({ message: 'Search Engines updated successfully' })
     expect(fetchImpl).toHaveBeenCalledWith('/_api/search/engines', {
       method: 'POST',
       credentials: 'same-origin',
@@ -234,13 +234,13 @@ describe('search api helper', () => {
   test('rejects malformed successful search engine save responses', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ ok: true }))
 
-    await expect(saveSearchEngines(fetchImpl, [], 'Bad save payload')).rejects.toThrow('Bad save payload')
+    await expect(Promise.resolve(saveSearchEngines(fetchImpl, [], 'Bad save payload'))).rejects.toThrow('Bad save payload')
   })
 
   test('propagates API JSON errors for search engine saves', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ error: 'Invalid search engines payload' }, false))
 
-    await expect(saveSearchEngines(fetchImpl, [], 'Bad save')).rejects.toThrow('Invalid search engines payload')
+    await expect(Promise.resolve(saveSearchEngines(fetchImpl, [], 'Bad save'))).rejects.toThrow('Invalid search engines payload')
   })
 
   test('rejects non-JSON successful search engine save responses', async () => {
@@ -251,13 +251,13 @@ describe('search api helper', () => {
       }
     })
 
-    await expect(saveSearchEngines(fetchImpl, [], 'Bad save content type')).rejects.toThrow('Bad save content type')
+    await expect(Promise.resolve(saveSearchEngines(fetchImpl, [], 'Bad save content type'))).rejects.toThrow('Bad save content type')
   })
 
   test('rebuilds search index with same-origin JSON options', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ message: 'Index rebuilt successfully' }))
 
-    await expect(rebuildSearchIndex(fetchImpl)).resolves.toEqual({ message: 'Index rebuilt successfully' })
+    expect(await rebuildSearchIndex(fetchImpl)).toEqual({ message: 'Index rebuilt successfully' })
     expect(fetchImpl).toHaveBeenCalledWith('/_api/search/rebuild-index', {
       method: 'POST',
       credentials: 'same-origin',
@@ -270,7 +270,7 @@ describe('search api helper', () => {
   test('propagates API JSON errors for search index rebuilds', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ error: 'Index rebuild failed' }, false))
 
-    await expect(rebuildSearchIndex(fetchImpl, 'Bad rebuild')).rejects.toThrow('Index rebuild failed')
+    await expect(Promise.resolve(rebuildSearchIndex(fetchImpl, 'Bad rebuild'))).rejects.toThrow('Index rebuild failed')
   })
 
   test('rejects non-JSON successful search index rebuild responses', async () => {
@@ -281,6 +281,6 @@ describe('search api helper', () => {
       }
     })
 
-    await expect(rebuildSearchIndex(fetchImpl, 'Bad rebuild content type')).rejects.toThrow('Bad rebuild content type')
+    await expect(Promise.resolve(rebuildSearchIndex(fetchImpl, 'Bad rebuild content type'))).rejects.toThrow('Bad rebuild content type')
   })
 })

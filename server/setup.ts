@@ -195,8 +195,9 @@ export default function startSetup(): void {
       _.set(wiki.config, 'title', wiki.product.name)
 
       wiki.kernel.initTelemetry()
-      if (!semver.satisfies(process.version, '>=10.12')) {
-        throw new Error('Node.js 10.12.x or later required!')
+      const bunVersion = process.versions.bun
+      if (!bunVersion || !semver.satisfies(bunVersion, '>=1.3.14 <2')) {
+        throw new Error('Bun 1.3.14 or later, but before Bun 2, is required!')
       }
 
       wiki.logger.info('Creating data directories...')

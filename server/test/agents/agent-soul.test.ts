@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it } from '../bun-test.mts'
 import { loadWikiAgentSoul, WIKI_AGENT_SOUL } from '../../agents/soul.ts'
 
 describe('Wiki Agent soul', () => {

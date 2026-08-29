@@ -1,10 +1,9 @@
-/** @vitest-environment node */
 
 import { once } from 'node:events'
 import http from 'node:http'
 import { generateKeyPairSync } from 'node:crypto'
 import createKnex, { type Knex } from 'knex'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from '../bun-test.mts'
 import { WebSocket } from 'ws'
 import * as Y from 'yjs'
 
@@ -113,7 +112,7 @@ beforeEach(async () => {
 afterEach(async () => {
   socket?.terminate()
   await collaboration.dispose(server)
-  if (server.listening) await new Promise<void>(resolve => server.close(() => resolve()))
+  if (server.listening) server.close()
   await knex.destroy()
   if (originalWiki === undefined) delete globalWithWiki.WIKI
   else globalWithWiki.WIKI = originalWiki
@@ -135,7 +134,7 @@ describe('collaboration service multi-instance transport', () => {
     socket = new WebSocket(`ws://127.0.0.1:${address.port}/collaboration`, [
       COLLABORATION_WEBSOCKET_PROTOCOL,
       session.token
-    ], { origin: `http://127.0.0.1:${address.port}` })
+    ], { headers: { Origin: `http://127.0.0.1:${address.port}` } })
     const initialSync = waitForMessage(socket, 'sync')
     await once(socket, 'open')
     await initialSync

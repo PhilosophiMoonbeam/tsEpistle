@@ -23,7 +23,7 @@ export type SystemInfo = SystemSummary & {
   dbType: string
   dbVersion: string
   hostname: string
-  nodeVersion: string
+  bunVersion: string
   operatingSystem: string
   platform: string
   ramTotal: string
@@ -155,7 +155,7 @@ function normalizeSystemInfoPayload (payload: unknown, fallbackMessage: string):
     'dbType',
     'dbVersion',
     'hostname',
-    'nodeVersion',
+    'bunVersion',
     'operatingSystem',
     'platform',
     'ramTotal',

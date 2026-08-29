@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import createKnex, { type Knex } from 'knex'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from '../bun-test.mts'
 
 import { exportAgentSessionDiagnostics } from '../../agents/diagnostics.ts'
 

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi } from '../bun-test.mts'
 
 import { AGENT_ACTION_NAMES, AGENT_FEATURE_FLAG_KEYS, type AgentFeatureFlags } from '../../../shared/agents/contracts.ts'
 import { ACTION_CATALOG, actionDefinition } from '../../agents/actions/catalog.ts'
@@ -113,11 +113,11 @@ describe('action authority and execution', () => {
     const controller = new AbortController()
     const refreshAdmission = vi.fn(async () => admission())
 
-    await expect(kernel.execute({ authority, actionCallId: 'call-1', input: { id: 42 }, signal: controller.signal, refreshAdmission })).resolves.toEqual(page)
+    expect(await kernel.execute({ authority, actionCallId: 'call-1', input: { id: 42 }, signal: controller.signal, refreshAdmission })).toEqual(page)
     expect(refreshAdmission).toHaveBeenCalledOnce()
     expect(handler).toHaveBeenCalledOnce()
 
-    await expect(kernel.execute({ authority, actionCallId: 'call-2', input: { id: 42, unexpected: true }, signal: controller.signal, refreshAdmission })).rejects.toMatchObject({ code: 'INVALID_ACTION_INPUT' })
+    await expect(Promise.resolve(kernel.execute({ authority, actionCallId: 'call-2', input: { id: 42, unexpected: true }, signal: controller.signal, refreshAdmission }))).rejects.toMatchObject({ code: 'INVALID_ACTION_INPUT' })
   })
 
   it('reauthorizes and persists the run side-effect fence before handler dispatch', async () => {
@@ -130,14 +130,14 @@ describe('action authority and execution', () => {
     })
     const authority = createActionAuthority('browser.navigate', requestId, auth, admission())
     const refreshAdmission = vi.fn(async () => admission())
-    await expect(kernel.execute({
+    expect(await kernel.execute({
       authority,
       actionCallId: 'browser-call',
       input: { url: 'https://example.com/' },
       signal: new AbortController().signal,
       refreshAdmission,
       fenceSideEffect: async () => { order.push('fence') }
-    })).resolves.toMatchObject({ url: 'https://example.com/' })
+    })).toMatchObject({ url: 'https://example.com/' })
     expect(order).toEqual(['fence', 'dispatch'])
     expect(refreshAdmission).toHaveBeenCalledTimes(2)
   })
@@ -147,13 +147,13 @@ describe('action authority and execution', () => {
     const handler = vi.fn(async () => page)
     kernel.register('pages.get', handler)
     const authority = createActionAuthority('pages.get', requestId, auth, admission())
-    await expect(kernel.execute({
+    await expect(Promise.resolve(kernel.execute({
       authority,
       actionCallId: 'call-1',
       input: { id: 42 },
       signal: new AbortController().signal,
       refreshAdmission: async () => admission({ permissions: ['use:agents'] })
-    })).rejects.toMatchObject({ code: 'ACTION_FORBIDDEN', status: 403 })
+    }))).rejects.toMatchObject({ code: 'ACTION_FORBIDDEN', status: 403 })
     expect(handler).not.toHaveBeenCalled()
   })
 
@@ -162,30 +162,30 @@ describe('action authority and execution', () => {
     kernel.register('pages.get', async () => ({ content: 'missing fields' }))
     expect(() => kernel.register('pages.get', async () => page)).toThrow('already registered')
     const authority = createActionAuthority('pages.get', requestId, auth, admission())
-    await expect(kernel.execute({
+    await expect(Promise.resolve(kernel.execute({
       authority,
       actionCallId: 'call-1',
       input: { id: 42 },
       signal: new AbortController().signal,
       refreshAdmission: async () => admission()
-    })).rejects.toMatchObject({ code: 'INVALID_ACTION_OUTPUT' })
+    }))).rejects.toMatchObject({ code: 'INVALID_ACTION_OUTPUT' })
 
     const aborted = new AbortController()
     aborted.abort()
-    await expect(kernel.execute({ authority, actionCallId: 'call-2', input: { id: 42 }, signal: aborted.signal, refreshAdmission: async () => admission() })).rejects.toMatchObject({ code: 'ACTION_CANCELLED' })
+    await expect(Promise.resolve(kernel.execute({ authority, actionCallId: 'call-2', input: { id: 42 }, signal: aborted.signal, refreshAdmission: async () => admission() }))).rejects.toMatchObject({ code: 'ACTION_CANCELLED' })
   })
 
   it('rejects oversized attacker-controlled action output', async () => {
     const kernel = new ActionKernel()
     kernel.register('pages.get', async () => ({ ...page, title: 'x'.repeat(256) }))
     const authority = createActionAuthority('pages.get', requestId, auth, admission())
-    await expect(kernel.execute({
+    await expect(Promise.resolve(kernel.execute({
       authority,
       actionCallId: 'call-1',
       input: { id: 42 },
       signal: new AbortController().signal,
       refreshAdmission: async () => admission()
-    })).rejects.toMatchObject({ code: 'INVALID_ACTION_OUTPUT' })
+    }))).rejects.toMatchObject({ code: 'INVALID_ACTION_OUTPUT' })
   })
 
   it('rejects guest authority creation', () => {

@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'vitest'
+import { describe, expect, test } from '../../server/test/bun-test.mts'
 import { flattenTableOfContents, type TableOfContentsNode } from './table-of-contents'
 
 describe('flattenTableOfContents', () => {

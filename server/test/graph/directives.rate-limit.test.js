@@ -30,8 +30,8 @@ describe('graph/directives/rate-limit directive contract', () => {
   })
 
   it('limits repeated field requests by client and schema coordinate', async () => {
-    await expect(execute(schema, '192.0.2.1')).resolves.toMatchObject({ data: { restricted: 'ok' } })
-    await expect(execute(schema, '192.0.2.1')).resolves.toMatchObject({ data: { restricted: 'ok' } })
+    expect(await execute(schema, '192.0.2.1')).toMatchObject({ data: { restricted: 'ok' } })
+    expect(await execute(schema, '192.0.2.1')).toMatchObject({ data: { restricted: 'ok' } })
 
     const blocked = await execute(schema, '192.0.2.1')
     expect(blocked.data).toEqual({ restricted: null })
@@ -43,6 +43,6 @@ describe('graph/directives/rate-limit directive contract', () => {
     await execute(schema, '192.0.2.10')
     await execute(schema, '192.0.2.10')
 
-    await expect(execute(schema, '192.0.2.11')).resolves.toMatchObject({ data: { restricted: 'ok' } })
+    expect(await execute(schema, '192.0.2.11')).toMatchObject({ data: { restricted: 'ok' } })
   })
 })

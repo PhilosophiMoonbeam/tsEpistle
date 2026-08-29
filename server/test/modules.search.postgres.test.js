@@ -45,7 +45,7 @@ describe('PostgreSQL hybrid search', () => {
   it('replaces the legacy unindexed schema and rebuilds all derived search data', async () => {
     const harness = knexHarness({ legacySchema: true })
     installWiki(harness.knex)
-    const plugin = (await import('../modules/search/postgres/engine.ts')).default
+    const plugin = (await vi.importFresh('../modules/search/postgres/engine.ts', import.meta.url)).default
     Object.assign(plugin, { config: { dictLanguage: 'english' } })
 
     await plugin.init()
@@ -70,10 +70,10 @@ describe('PostgreSQL hybrid search', () => {
     }))
     const harness = knexHarness({ queryRows: rows })
     installWiki(harness.knex)
-    const plugin = (await import('../modules/search/postgres/engine.ts')).default
+    const plugin = (await vi.importFresh('../modules/search/postgres/engine.ts', import.meta.url)).default
     Object.assign(plugin, { config: { dictLanguage: 'english' } })
 
-    await expect(plugin.query('Amber Falcon', { locale: 'en', path: 'runbooks' })).resolves.toEqual({
+    expect(await plugin.query('Amber Falcon', { locale: 'en', path: 'runbooks' })).toEqual({
       results: rows,
       suggestions: [],
       totalHits: 5
@@ -87,7 +87,7 @@ describe('PostgreSQL hybrid search', () => {
   it('atomically refreshes weighted tag and content terms for page mutations', async () => {
     const harness = knexHarness()
     installWiki(harness.knex)
-    const plugin = (await import('../modules/search/postgres/engine.ts')).default
+    const plugin = (await vi.importFresh('../modules/search/postgres/engine.ts', import.meta.url)).default
     Object.assign(plugin, { config: { dictLanguage: 'english' } })
 
     await plugin.updated({

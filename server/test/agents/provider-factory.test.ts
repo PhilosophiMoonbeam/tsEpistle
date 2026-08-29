@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from '../bun-test.mts'
 import createKnex, { type Knex } from 'knex'
 import type { LookupAddress } from 'node:dns'
 import { AgentProviderAttemptError, AgentProviderFactory, createGuardedProviderFetch } from '../../agents/providers/factory.ts'
@@ -15,10 +15,10 @@ describe('guarded provider fetch', () => {
       return Response.json({ ok: true })
     }
     const guarded = createGuardedProviderFetch('https://provider.example.test/v1', '/responses', {}, implementation as typeof fetch, publicResolver as never)
-    await expect(guarded('https://other.example.test/v1/responses')).rejects.toMatchObject({ code: 'PROVIDER_EGRESS_DENIED' })
-    await expect(guarded('https://provider.example.test/v1/chat/completions')).rejects.toMatchObject({ code: 'PROVIDER_EGRESS_DENIED' })
+    await expect(Promise.resolve(guarded('https://other.example.test/v1/responses'))).rejects.toMatchObject({ code: 'PROVIDER_EGRESS_DENIED' })
+    await expect(Promise.resolve(guarded('https://provider.example.test/v1/chat/completions'))).rejects.toMatchObject({ code: 'PROVIDER_EGRESS_DENIED' })
     const privateGuarded = createGuardedProviderFetch('https://provider.example.test/v1', '/responses', {}, implementation as typeof fetch, privateResolver as never)
-    await expect(privateGuarded('https://provider.example.test/v1/responses')).rejects.toMatchObject({ code: 'PROVIDER_EGRESS_DENIED' })
+    await expect(Promise.resolve(privateGuarded('https://provider.example.test/v1/responses'))).rejects.toMatchObject({ code: 'PROVIDER_EGRESS_DENIED' })
     expect(called).toBe(0)
   })
 
@@ -35,25 +35,25 @@ describe('guarded provider fetch', () => {
       implementation as typeof fetch,
       publicResolver as never
     )
-    await expect(guarded('https://generativelanguage.googleapis.com/v1beta/interactions')).resolves.toBeInstanceOf(Response)
-    await expect(guarded('https://generativelanguage.googleapis.com/v1beta/interactions?alt=sse')).rejects.toMatchObject({ code: 'PROVIDER_EGRESS_DENIED' })
-    await expect(guarded('https://generativelanguage.googleapis.com/v1beta/interactions/interaction_1')).rejects.toMatchObject({ code: 'PROVIDER_EGRESS_DENIED' })
-    await expect(guarded('https://generativelanguage.googleapis.com/v1beta/models/gemini-3.7-flash:generateContent')).rejects.toMatchObject({ code: 'PROVIDER_EGRESS_DENIED' })
-    await expect(guarded('https://other.example.test/v1beta/interactions')).rejects.toMatchObject({ code: 'PROVIDER_EGRESS_DENIED' })
+    expect(await guarded('https://generativelanguage.googleapis.com/v1beta/interactions')).toBeInstanceOf(Response)
+    await expect(Promise.resolve(guarded('https://generativelanguage.googleapis.com/v1beta/interactions?alt=sse'))).rejects.toMatchObject({ code: 'PROVIDER_EGRESS_DENIED' })
+    await expect(Promise.resolve(guarded('https://generativelanguage.googleapis.com/v1beta/interactions/interaction_1'))).rejects.toMatchObject({ code: 'PROVIDER_EGRESS_DENIED' })
+    await expect(Promise.resolve(guarded('https://generativelanguage.googleapis.com/v1beta/models/gemini-3.7-flash:generateContent'))).rejects.toMatchObject({ code: 'PROVIDER_EGRESS_DENIED' })
+    await expect(Promise.resolve(guarded('https://other.example.test/v1beta/interactions'))).rejects.toMatchObject({ code: 'PROVIDER_EGRESS_DENIED' })
     expect(called).toBe(1)
   })
 
   it('blocks redirects and exposes only bounded retry metadata for provider failures', async () => {
     const redirect = createGuardedProviderFetch('https://provider.example.test/v1', '/responses', {}, (async () => new Response(null, { status: 302, headers: { location: 'https://evil.example/' } })) as typeof fetch, publicResolver as never)
-    await expect(redirect('https://provider.example.test/v1/responses')).rejects.toMatchObject({ code: 'PROVIDER_REDIRECT_DENIED', status: 302 })
+    await expect(Promise.resolve(redirect('https://provider.example.test/v1/responses'))).rejects.toMatchObject({ code: 'PROVIDER_REDIRECT_DENIED', status: 302 })
     const failed = createGuardedProviderFetch('https://provider.example.test/v1', '/responses', {}, (async () => Response.json({ error: { code: 'rate_limit', message: 'secret provider detail' } }, { status: 429, headers: { 'retry-after': '2' } })) as typeof fetch, publicResolver as never)
     const error = await failed('https://provider.example.test/v1/responses').catch(error => error) as AgentProviderAttemptError
     expect(error).toMatchObject({ code: 'rate_limit', status: 429, retryAfterMilliseconds: 2_000, retryable: true, message: 'Provider request failed' })
     expect(JSON.stringify(error)).not.toContain('secret provider detail')
     const invalid = createGuardedProviderFetch('https://provider.example.test/v1', '/responses', {}, (async () => Response.json({ error: { code: 'unsupported_value', param: 'temperature', message: 'Unsupported value' } }, { status: 400 })) as typeof fetch, publicResolver as never)
-    await expect(invalid('https://provider.example.test/v1/responses')).rejects.toMatchObject({ code: 'unsupported_value', status: 400, parameter: 'temperature', message: 'Provider request failed' })
+    await expect(Promise.resolve(invalid('https://provider.example.test/v1/responses'))).rejects.toMatchObject({ code: 'unsupported_value', status: 400, parameter: 'temperature', message: 'Provider request failed' })
     const googleFailure = createGuardedProviderFetch('https://provider.example.test/v1', '/responses', {}, (async () => Response.json({ error: { code: 429, status: 'RESOURCE_EXHAUSTED', message: 'secret provider detail' } }, { status: 429 })) as typeof fetch, publicResolver as never)
-    await expect(googleFailure('https://provider.example.test/v1/responses')).rejects.toMatchObject({ code: 'RESOURCE_EXHAUSTED', status: 429, message: 'Provider request failed' })
+    await expect(Promise.resolve(googleFailure('https://provider.example.test/v1/responses'))).rejects.toMatchObject({ code: 'RESOURCE_EXHAUSTED', status: 429, message: 'Provider request failed' })
   })
 })
 
@@ -141,6 +141,6 @@ describe('Ax provider factory', () => {
       table.uuid('id').primary(); table.string('transportKind'); table.string('model'); table.string('baseUrl'); table.string('authMode'); table.string('secretReference'); table.text('adapterConfig'); table.text('capabilities'); table.string('capabilityRevision'); table.string('pricingRevision'); table.boolean('conformed')
     })
     const factory = new AgentProviderFactory(db, { get: () => null })
-    await expect(factory.create('00000000-0000-4000-8000-000000000099')).rejects.toBeInstanceOf(AgentRepositoryError)
+    await expect(Promise.resolve(factory.create('00000000-0000-4000-8000-000000000099'))).rejects.toBeInstanceOf(AgentRepositoryError)
   })
 })

@@ -11,15 +11,18 @@ permissions:
 jobs:
   compare:
     name: Compare recorded Scarlett revision
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, tsfranki-ci]
     timeout-minutes: 10
 
     steps:
     - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
+    - name: Verify Local Bun
+      run: bun server/scripts/check-dependency-policy.ts
+
     - name: Compare Scarlett Upstream
       run: >-
-        node server/scripts/check-scarlett-upstream.ts
+        bun server/scripts/check-scarlett-upstream.ts
         --fetch
         --check
         --output scarlett-intake-report.json

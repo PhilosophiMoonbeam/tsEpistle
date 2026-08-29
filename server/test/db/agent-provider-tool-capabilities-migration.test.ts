@@ -1,6 +1,5 @@
-/** @vitest-environment node */
 import createKnex, { type Knex } from 'knex'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from '../bun-test.mts'
 
 import { down, up } from '../../db/migrations/2.5.148.ts'
 

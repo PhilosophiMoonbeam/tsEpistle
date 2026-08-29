@@ -1,4 +1,4 @@
-vi.mock('express', () => {
+vi.mockModule('express', import.meta.url, () => {
   const router = {
     delete: vi.fn(),
     get: vi.fn(),
@@ -16,7 +16,7 @@ vi.mock('express', () => {
   return { default: expressMock, ...expressMock }
 })
 
-import * as express from 'express'
+const express = await import('express')
 
 describe('controllers/api pages endpoints', () => {
   beforeEach(() => {
@@ -136,7 +136,7 @@ describe('controllers/api pages endpoints', () => {
   })
 
   const loadHandler = async () => {
-    await import('../../controllers/api/pages.ts')
+    await vi.importFresh('../../controllers/api/pages.ts', import.meta.url)
     return {
       deletePage: express.__router.delete.mock.calls.find(([path]) => path === '/:id')[1],
       deleteTag: express.__router.delete.mock.calls.find(([path]) => path === '/tags/:id')[1],

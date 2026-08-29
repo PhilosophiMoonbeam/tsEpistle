@@ -1,4 +1,4 @@
-vi.mock('prom-client', () => {
+vi.mockModule('prom-client', import.meta.url, () => {
   const gauges = []
   const register = {
     contentType: 'text/plain',
@@ -71,7 +71,7 @@ describe('core/metrics', () => {
   })
 
   it('collects and renders wiki metrics when enabled', async () => {
-    const { default: metrics } = await import('../../core/metrics.ts')
+    const { default: metrics } = await vi.importFresh('../../core/metrics.ts', import.meta.url)
     const promClient = await import('prom-client')
     const res = {
       contentType: vi.fn(),
@@ -95,7 +95,7 @@ describe('core/metrics', () => {
 
   it('clears collectors when disabled', async () => {
     global.WIKI.config.metrics.isEnabled = false
-    const { default: metrics } = await import('../../core/metrics.ts')
+    const { default: metrics } = await vi.importFresh('../../core/metrics.ts', import.meta.url)
     const promClient = await import('prom-client')
 
     await metrics.init()

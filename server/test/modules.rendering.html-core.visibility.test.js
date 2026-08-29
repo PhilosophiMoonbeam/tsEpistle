@@ -41,7 +41,7 @@ describe('HTML renderer private-link isolation', () => {
         pageLinks: { query: vi.fn().mockReturnValue({ insert }) }
       }
     }
-    const plugin = (await import('../modules/rendering/html-core/renderer.ts')).default
+    const plugin = (await vi.importFresh('../modules/rendering/html-core/renderer.ts', import.meta.url)).default
     const html = await plugin.render.call({
       children: [],
       config: { absoluteLinks: false, openExternalLinkNewTab: false, relAttributeExternalLink: '' },

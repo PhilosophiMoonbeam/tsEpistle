@@ -1,11 +1,11 @@
 import path from 'node:path'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from './bun-test.mts'
 import englishLocale from '../locales/en.json'
 
 const originalWiki = Reflect.get(globalThis, 'WIKI')
 
 afterEach(() => {
-  vi.doUnmock('i18next')
+  vi.unmockModule('i18next', import.meta.url)
   vi.resetModules()
   if (originalWiki === undefined) Reflect.deleteProperty(globalThis, 'WIKI')
   else Reflect.set(globalThis, 'WIKI', originalWiki)
@@ -41,7 +41,7 @@ describe('bundled English locale fallback', () => {
     const engine = {
       addResourceBundle: vi.fn()
     }
-    vi.doMock('i18next', () => ({ default: engine }))
+    vi.mockModule('i18next', import.meta.url, () => ({ default: engine }))
     Reflect.set(globalThis, 'WIKI', {
       IS_DEBUG: false,
       SERVERPATH: path.join(process.cwd(), 'server'),
@@ -59,7 +59,7 @@ describe('bundled English locale fallback', () => {
       }
     })
 
-    const localization = (await import('../core/localization.ts')).default
+    const localization = (await vi.importFresh('../core/localization.ts', import.meta.url)).default
     await localization.refreshNamespaces()
 
     const adminBundles = engine.addResourceBundle.mock.calls

@@ -14,7 +14,7 @@ describe('analytics api helper', () => {
   test('requests analytics providers with same-origin JSON options', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([]))
 
-    await expect(fetchAnalyticsProviders(fetchImpl)).resolves.toEqual([])
+    expect(await fetchAnalyticsProviders(fetchImpl)).toEqual([])
 
     expect(fetchImpl).toHaveBeenCalledWith('/_api/analytics/providers', {
       credentials: 'same-origin',
@@ -47,7 +47,7 @@ describe('analytics api helper', () => {
       }
     ]))
 
-    await expect(fetchAnalyticsProviders(fetchImpl)).resolves.toEqual([
+    expect(await fetchAnalyticsProviders(fetchImpl)).toEqual([
       {
         isEnabled: true,
         key: 'google',
@@ -92,7 +92,7 @@ describe('analytics api helper', () => {
       }
     ]))
 
-    await expect(fetchAnalyticsProviders(fetchImpl)).resolves.toEqual([
+    expect(await fetchAnalyticsProviders(fetchImpl)).toEqual([
       {
         isEnabled: false,
         key: 'matomo',
@@ -114,7 +114,7 @@ describe('analytics api helper', () => {
   test('rejects malformed root payloads', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ providers: [] }))
 
-    await expect(fetchAnalyticsProviders(fetchImpl, 'Bad analytics payload')).rejects.toThrow('Bad analytics payload')
+    await expect(Promise.resolve(fetchAnalyticsProviders(fetchImpl, 'Bad analytics payload'))).rejects.toThrow('Bad analytics payload')
   })
 
   test('rejects malformed provider rows', async () => {
@@ -131,7 +131,7 @@ describe('analytics api helper', () => {
       }
     ]))
 
-    await expect(fetchAnalyticsProviders(fetchImpl, 'Bad analytics row')).rejects.toThrow('Bad analytics row')
+    await expect(Promise.resolve(fetchAnalyticsProviders(fetchImpl, 'Bad analytics row'))).rejects.toThrow('Bad analytics row')
   })
 
   test('rejects malformed config rows', async () => {
@@ -148,7 +148,7 @@ describe('analytics api helper', () => {
       }
     ]))
 
-    await expect(fetchAnalyticsProviders(fetchImpl, 'Bad analytics config')).rejects.toThrow('Bad analytics config')
+    await expect(Promise.resolve(fetchAnalyticsProviders(fetchImpl, 'Bad analytics config'))).rejects.toThrow('Bad analytics config')
   })
 
   test('rejects malformed config JSON', async () => {
@@ -165,7 +165,7 @@ describe('analytics api helper', () => {
       }
     ]))
 
-    await expect(fetchAnalyticsProviders(fetchImpl, 'Bad analytics JSON')).rejects.toThrow('Bad analytics JSON')
+    await expect(Promise.resolve(fetchAnalyticsProviders(fetchImpl, 'Bad analytics JSON'))).rejects.toThrow('Bad analytics JSON')
   })
 
   test('propagates API JSON errors', async () => {
@@ -177,14 +177,14 @@ describe('analytics api helper', () => {
       json: async () => ({ error: 'manage:system is required' })
     })
 
-    await expect(fetchAnalyticsProviders(fetchImpl, 'Bad analytics load')).rejects.toThrow('manage:system is required')
+    await expect(Promise.resolve(fetchAnalyticsProviders(fetchImpl, 'Bad analytics load'))).rejects.toThrow('manage:system is required')
   })
 
   test('saves analytics providers with same-origin JSON POST options', async () => {
     const providers = [{ key: 'google', isEnabled: true, config: [] }]
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ message: 'Providers updated successfully' }))
 
-    await expect(saveAnalyticsProviders(fetchImpl, providers)).resolves.toEqual({ message: 'Providers updated successfully' })
+    expect(await saveAnalyticsProviders(fetchImpl, providers)).toEqual({ message: 'Providers updated successfully' })
     expect(fetchImpl).toHaveBeenCalledWith('/_api/analytics/providers', {
       method: 'POST',
       credentials: 'same-origin',
@@ -199,13 +199,13 @@ describe('analytics api helper', () => {
   test('rejects malformed successful analytics provider save responses', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ ok: true }))
 
-    await expect(saveAnalyticsProviders(fetchImpl, [], 'Bad save payload')).rejects.toThrow('Bad save payload')
+    await expect(Promise.resolve(saveAnalyticsProviders(fetchImpl, [], 'Bad save payload'))).rejects.toThrow('Bad save payload')
   })
 
   test('propagates API JSON errors for analytics provider saves', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ error: 'Invalid analytics providers payload' }, false))
 
-    await expect(saveAnalyticsProviders(fetchImpl, [], 'Bad save')).rejects.toThrow('Invalid analytics providers payload')
+    await expect(Promise.resolve(saveAnalyticsProviders(fetchImpl, [], 'Bad save'))).rejects.toThrow('Invalid analytics providers payload')
   })
 
   test('rejects non-JSON successful analytics provider save responses', async () => {
@@ -216,7 +216,7 @@ describe('analytics api helper', () => {
       }
     })
 
-    await expect(saveAnalyticsProviders(fetchImpl, [], 'Bad save content type')).rejects.toThrow('Bad save content type')
+    await expect(Promise.resolve(saveAnalyticsProviders(fetchImpl, [], 'Bad save content type'))).rejects.toThrow('Bad save content type')
   })
 
   test('rejects non-JSON successful responses', async () => {
@@ -227,6 +227,6 @@ describe('analytics api helper', () => {
       }
     })
 
-    await expect(fetchAnalyticsProviders(fetchImpl, 'Bad analytics content type')).rejects.toThrow('Bad analytics content type')
+    await expect(Promise.resolve(fetchAnalyticsProviders(fetchImpl, 'Bad analytics content type'))).rejects.toThrow('Bad analytics content type')
   })
 })

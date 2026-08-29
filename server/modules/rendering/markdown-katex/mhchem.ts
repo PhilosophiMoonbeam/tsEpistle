@@ -567,7 +567,6 @@ function invokeParserAction(
         if (!t) {
           throw new Error("mhchem state has no transitions: " + state)
         }
-        iterateTransitions:
         for (let i=0; i<t.length; i++) {
           const transition = t[i]
           if (!transition) {
@@ -616,7 +615,7 @@ function invokeParserAction(
                 remainingInput = matches.remainder;
               }
               if (!task.toContinue) {
-                break iterateTransitions;
+                break;
               }
             } else {
               return output;

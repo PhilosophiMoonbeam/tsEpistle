@@ -67,7 +67,7 @@ describe('product build and publication metadata', () => {
     expect(workflow).toContain('git archive --format=tar.gz')
     expect(workflow).toContain('tsfranki-source.tar.gz')
     expect(workflow).toContain('$WIKI_SOURCE_REPOSITORY/tree/$WIKI_BUILD_REVISION')
-    for (const path of ['package.json', 'pnpm-lock.yaml', 'patches', 'dev/build/Dockerfile', 'dev/build-arm/Dockerfile', 'server/scripts/generate-build-metadata.ts']) {
+    for (const path of ['package.json', 'bun.lock', 'patches', 'dev/build/Dockerfile', 'dev/build-arm/Dockerfile', 'server/scripts/generate-build-metadata.ts']) {
       expect(() => execFileSync('git', ['ls-files', '--error-unmatch', path], { cwd: rootPath })).not.toThrow()
     }
   })

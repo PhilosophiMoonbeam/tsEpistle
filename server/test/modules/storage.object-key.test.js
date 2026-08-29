@@ -20,7 +20,7 @@ describe('cloud storage object keys', () => {
   })
 
   it('applies the prefix and each locale exactly once when an S3 page is renamed', async () => {
-    const S3CompatibleStorage = (await import('../../modules/storage/s3/common.ts')).default
+    const S3CompatibleStorage = (await vi.importFresh('../../modules/storage/s3/common.ts', import.meta.url)).default
     const storage = new S3CompatibleStorage('S3')
     storage.config = { accessKeyId: '', bucket: 'wiki-bucket', pathPrefix: '/archive/', secretAccessKey: '' }
     storage.bucketName = 'wiki-bucket'

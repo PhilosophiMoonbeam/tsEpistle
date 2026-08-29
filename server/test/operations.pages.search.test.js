@@ -48,7 +48,7 @@ describe('page search visibility', () => {
       }
     }
 
-    const { default: operations } = await import('../operations/pages.ts')
+    const { default: operations } = await vi.importFresh('../operations/pages.ts', import.meta.url)
     const result = await operations.search({ query: 'secret' })
 
     expect(result).toEqual({
@@ -95,8 +95,8 @@ describe('page search visibility', () => {
       }
     }
 
-    const { default: operations } = await import('../operations/pages.ts')
-    await expect(operations.search({ query: 'classified' })).resolves.toEqual({
+    const { default: operations } = await vi.importFresh('../operations/pages.ts', import.meta.url)
+    expect(await operations.search({ query: 'classified' })).toEqual({
       results: [],
       suggestions: [],
       totalHits: 0,
@@ -144,7 +144,7 @@ describe('page search visibility', () => {
       }
     }
 
-    const { default: operations } = await import('../operations/pages.ts')
+    const { default: operations } = await vi.importFresh('../operations/pages.ts', import.meta.url)
     const response = await operations.search({ query: 'amber' })
 
     expect(response.results.map(result => result.id)).toEqual([11, 10])
@@ -200,7 +200,7 @@ describe('page search visibility', () => {
       }
     }
 
-    const { default: operations } = await import('../operations/pages.ts')
+    const { default: operations } = await vi.importFresh('../operations/pages.ts', import.meta.url)
     const response = await operations.search({
       requester: { id: 7 },
       query: 'runbook',

@@ -1,5 +1,5 @@
 import createKnex, { type Knex } from 'knex'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from '../bun-test.mts'
 
 import { encodeSkillResourceBundle } from '../../agents/skills/bundle.ts'
 import { buildApprovedSkillBundle } from '../../agents/skills/parser.ts'
@@ -156,8 +156,8 @@ describe('skill preferences and run version history', () => {
       resourceBundle: encodeSkillResourceBundle([])
     })
 
-    await expect(runtime.assertVisibleVersions([personalVersionId], { userId: 7, groupIds: [] })).resolves.toEqual([personalVersionId])
-    await expect(runtime.assertVisibleVersions([personalVersionId], { userId: 8, groupIds: [] })).rejects.toThrow('unavailable')
+    expect(await runtime.assertVisibleVersions([personalVersionId], { userId: 7, groupIds: [] })).toEqual([personalVersionId])
+    await expect(Promise.resolve(runtime.assertVisibleVersions([personalVersionId], { userId: 8, groupIds: [] }))).rejects.toThrow('unavailable')
     expect(await runtime.listVisible({ userId: 7, groupIds: [] })).toMatchObject([{ id: personalSkillId, exposureMode: 'owner', isAgentDiscoverable: false }])
     expect(await runtime.listVisible({ userId: 8, groupIds: [] })).toEqual([])
     expect(await runtime.listVisibleForApiKey({
@@ -189,31 +189,31 @@ describe('skill preferences and run version history', () => {
       transportRequestId: requestId
     })
     expect(resource.bytes.toString('utf8')).toBe(entry.toString('utf8'))
-    await expect(runtime.readVisibleResourceForRun({
+    await expect(Promise.resolve(runtime.readVisibleResourceForRun({
       runId,
       skillName: 'release-notes',
       versionId,
       path: 'SKILL.md',
       principal: { userId: 7, groupIds: [3] },
       transportRequestId: requestId
-    })).rejects.toThrow('already loaded')
-    await expect(runtime.listVisibleForRun({
+    }))).rejects.toThrow('already loaded')
+    expect(await runtime.listVisibleForRun({
       runId,
       principal: { userId: 7, groupIds: [3] },
       transportRequestId: requestId
-    })).resolves.toEqual([])
+    })).toEqual([])
     expect(await db('agentSkillUses').select('runId', 'sessionId', 'requesterUserId', 'purpose', 'resourcePath')).toEqual([
       { runId, sessionId, requesterUserId: 7, purpose: 'listed', resourcePath: null },
       { runId, sessionId, requesterUserId: 7, purpose: 'read', resourcePath: 'SKILL.md' }
     ])
-    await expect(runtime.readVisibleResourceForRun({
+    await expect(Promise.resolve(runtime.readVisibleResourceForRun({
       runId,
       skillName: 'release-notes',
       versionId,
       path: 'SKILL.md',
       principal: { userId: 8, groupIds: [3] },
       transportRequestId: requestId
-    })).rejects.toThrow('run is unavailable')
+    }))).rejects.toThrow('run is unavailable')
   })
 
   it('omits loaded skill identities from discovery and blocks redundant instruction reads', async () => {
@@ -238,27 +238,27 @@ describe('skill preferences and run version history', () => {
     await db('agentRuns').insert({ id: runId, sessionId, ownerId: 7, status: 'running' })
     await db('agentRunSkills').insert({ runId, skillVersionId: priorVersionId, ordinal: 0 })
 
-    await expect(runtime.listVisibleForRun({
+    expect(await runtime.listVisibleForRun({
       runId,
       principal: { userId: 7, groupIds: [3] },
       transportRequestId: requestId
-    })).resolves.toEqual([])
-    await expect(runtime.readVisibleResourceForRun({
+    })).toEqual([])
+    await expect(Promise.resolve(runtime.readVisibleResourceForRun({
       runId,
       skillName: 'release-notes',
       versionId,
       path: 'SKILL.md',
       principal: { userId: 7, groupIds: [3] },
       transportRequestId: requestId
-    })).rejects.toThrow('already loaded')
-    await expect(runtime.readVisibleResourceForRun({
+    }))).rejects.toThrow('already loaded')
+    expect(await runtime.readVisibleResourceForRun({
       runId,
       skillName: 'release-notes',
       versionId,
       path: 'references/GUIDE.md',
       principal: { userId: 7, groupIds: [3] },
       transportRequestId: requestId
-    })).resolves.toMatchObject({ contentHash: expect.any(String) })
+    })).toMatchObject({ contentHash: expect.any(String) })
   })
 
   it('stores skill identities and resolves their latest approved versions', async () => {
@@ -275,7 +275,7 @@ describe('skill preferences and run version history', () => {
       contentHash: bundle.contentHash,
       ordinal: 0
     }])
-    await expect(runtime.resolvePreferredVersionIdsForUser(7)).resolves.toEqual([versionId])
+    expect(await runtime.resolvePreferredVersionIdsForUser(7)).toEqual([versionId])
 
     await db('agentSkillVersions').insert({
       id: nextVersionId,
@@ -296,7 +296,7 @@ describe('skill preferences and run version history', () => {
     })
     await db('agentSkills').where({ id: skillId }).update({ currentVersionId: nextVersionId })
 
-    await expect(runtime.resolvePreferredVersionIdsForUser(7)).resolves.toEqual([nextVersionId])
+    expect(await runtime.resolvePreferredVersionIdsForUser(7)).toEqual([nextVersionId])
     expect(await runtime.listUserSkillPreferences({ userId: 7, groupIds: [3] })).toMatchObject([{ id: skillId, versionId: nextVersionId }])
     expect(await db('agentUserSkillPreferences').select('ownerId', 'skillId', 'ordinal')).toEqual([{ ownerId: 7, skillId, ordinal: 0 }])
     expect(await db('agentSkillVersions').where({ skillId }).orderBy('sourceRevision').pluck('id')).toEqual([versionId, nextVersionId])
@@ -311,13 +311,13 @@ describe('skill preferences and run version history', () => {
     await db('agentSkills').where({ id: skillId }).update({ status: 'disabled' })
 
     expect(await runtime.listVisible({ userId: 7, groupIds: [3] })).toEqual([])
-    await expect(runtime.resolvePreferredVersionIdsForUser(7)).resolves.toEqual([])
+    expect(await runtime.resolvePreferredVersionIdsForUser(7)).toEqual([])
     expect(await db('agentUserSkillPreferences').select('ownerId', 'skillId')).toEqual([{ ownerId: 7, skillId }])
-    await expect(runtime.setUserSkillPreferences({
+    await expect(Promise.resolve(runtime.setUserSkillPreferences({
       skillIds: [skillId],
       principal: { userId: 7, groupIds: [3] },
       transportRequestId: requestId
-    })).rejects.toThrow('unavailable')
+    }))).rejects.toThrow('unavailable')
     await runtime.setUserSkillPreferences({ skillIds: [], principal: { userId: 7, groupIds: [3] }, transportRequestId: requestId })
     expect(await db('agentUserSkillPreferences')).toEqual([])
   })
@@ -357,11 +357,11 @@ describe('skill preferences and run version history', () => {
 
     await runtime.setUserSkillPreferences({ skillIds: [], principal: { userId: 7, groupIds: [3] }, transportRequestId: requestId })
     expect(await db('agentUserSkillPreferences')).toEqual([])
-    await expect(runtime.getRunPrompts({
+    expect(await runtime.getRunPrompts({
       runId,
       principal: { userId: 7, groupIds: [3] },
       transportRequestId: requestId,
       availableTools: ['pages.get']
-    })).resolves.toMatchObject([{ versionId }])
+    })).toMatchObject([{ versionId }])
   })
 })

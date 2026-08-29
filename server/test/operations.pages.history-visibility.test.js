@@ -54,7 +54,7 @@ describe('page history visibility boundaries', () => {
       ownerId: null
     }))
     global.WIKI.models.pageHistory.getHistory.mockResolvedValue({ trail: [], total: 0 })
-    const operations = (await import('../operations/pages.ts')).default
+    const operations = (await vi.importFresh('../operations/pages.ts', import.meta.url)).default
 
     await operations.getHistory({ requester, id: 17, offsetPage: 0, offsetSize: 25 })
     expect(global.WIKI.models.pageHistory.getHistory).toHaveBeenCalledWith({
@@ -67,10 +67,10 @@ describe('page history visibility boundaries', () => {
 
   it('returns not found for another owner private history just as for an absent page', async () => {
     const requester = { id: 8, permissions: ['read:history'] }
-    const operations = (await import('../operations/pages.ts')).default
+    const operations = (await vi.importFresh('../operations/pages.ts', import.meta.url)).default
 
     global.WIKI.models.pages.query.mockReturnValueOnce(pageQuery(undefined))
-    await expect(operations.getHistory({ requester, id: 17 })).rejects.toBeInstanceOf(PageNotFound)
+    await expect(Promise.resolve(operations.getHistory({ requester, id: 17 }))).rejects.toBeInstanceOf(PageNotFound)
 
     global.WIKI.models.pages.query.mockReturnValueOnce(pageQuery({
       id: 17,
@@ -79,7 +79,7 @@ describe('page history visibility boundaries', () => {
       visibility: 'private',
       ownerId: 7
     }))
-    await expect(operations.getHistory({ requester, id: 17 })).rejects.toBeInstanceOf(PageNotFound)
+    await expect(Promise.resolve(operations.getHistory({ requester, id: 17 }))).rejects.toBeInstanceOf(PageNotFound)
     expect(global.WIKI.models.pageHistory.getHistory).not.toHaveBeenCalled()
   })
 
@@ -94,9 +94,9 @@ describe('page history visibility boundaries', () => {
       sourceRevision: '8'
     }))
     global.WIKI.models.pageHistory.getVersion.mockResolvedValue(undefined)
-    const operations = (await import('../operations/pages.ts')).default
+    const operations = (await vi.importFresh('../operations/pages.ts', import.meta.url)).default
 
-    await expect(operations.restore({ requester, pageId: 17, versionId: 4, expectedSourceRevision: '8' })).rejects.toBeInstanceOf(PageNotFound)
+    await expect(Promise.resolve(operations.restore({ requester, pageId: 17, versionId: 4, expectedSourceRevision: '8' }))).rejects.toBeInstanceOf(PageNotFound)
     expect(global.WIKI.models.pageHistory.getVersion).toHaveBeenCalledWith({ pageId: 17, versionId: 4, requester })
     expect(global.WIKI.models.pages.updatePage).not.toHaveBeenCalled()
   })
@@ -111,14 +111,14 @@ describe('page history visibility boundaries', () => {
       ownerId: null,
       sourceRevision: '9'
     }))
-    const operations = (await import('../operations/pages.ts')).default
+    const operations = (await vi.importFresh('../operations/pages.ts', import.meta.url)).default
 
-    await expect(operations.restore({
+    await expect(Promise.resolve(operations.restore({
       requester,
       pageId: 17,
       versionId: 4,
       expectedSourceRevision: '8'
-    })).rejects.toMatchObject({ name: 'PAGE_RESTORE_CONFLICT', status: 409 })
+    }))).rejects.toMatchObject({ name: 'PAGE_RESTORE_CONFLICT', status: 409 })
     expect(global.WIKI.models.pageHistory.getVersion).not.toHaveBeenCalled()
     expect(global.WIKI.models.pages.updatePage).not.toHaveBeenCalled()
   })
@@ -147,7 +147,7 @@ describe('page history visibility boundaries', () => {
       versionDate: '2026-08-14T00:00:00.000Z',
       visibility: 'public'
     })
-    const operations = (await import('../operations/pages.ts')).default
+    const operations = (await vi.importFresh('../operations/pages.ts', import.meta.url)).default
 
     await operations.restore({ requester, pageId: 17, versionId: 4, expectedSourceRevision: sourceRevision })
 
@@ -178,13 +178,13 @@ describe('page history visibility boundaries', () => {
       ownerId: null,
       tags: [{ id: 1, tag: 'release' }]
     }))
-    const operations = (await import('../operations/pages.ts')).default
+    const operations = (await vi.importFresh('../operations/pages.ts', import.meta.url)).default
 
-    await expect(operations.authorizeMutation({
+    await expect(Promise.resolve(operations.authorizeMutation({
       kind: 'move',
       input: { id: 17, destinationPath: 'restricted/next', destinationLocale: 'en' },
       requester
-    })).rejects.toBeInstanceOf(PageMoveForbidden)
+    }))).rejects.toBeInstanceOf(PageMoveForbidden)
     expect(global.WIKI.auth.checkAccess).toHaveBeenCalledWith(requester, expect.arrayContaining(['write:pages']), expect.objectContaining({ path: 'restricted/next', locale: 'en' }))
   })
 })

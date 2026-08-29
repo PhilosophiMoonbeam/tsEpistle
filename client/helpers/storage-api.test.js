@@ -61,7 +61,7 @@ describe('storage api helper', () => {
       storageTarget({ supportedModes: undefined, syncIntervalDefault: undefined })
     ]))
 
-    await expect(fetchStorageTargets(fetchImpl)).resolves.toEqual([
+    expect(await fetchStorageTargets(fetchImpl)).toEqual([
       storageTarget({ supportedModes: [], syncIntervalDefault: null })
     ])
   })
@@ -69,19 +69,19 @@ describe('storage api helper', () => {
   it('rejects malformed successful targets responses', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ targets: [] }))
 
-    await expect(fetchStorageTargets(fetchImpl, 'Unexpected targets response')).rejects.toThrow('Unexpected targets response')
+    await expect(Promise.resolve(fetchStorageTargets(fetchImpl, 'Unexpected targets response'))).rejects.toThrow('Unexpected targets response')
   })
 
   it('rejects malformed entries in successful targets responses', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([storageTarget({ supportedModes: 'sync' })]))
 
-    await expect(fetchStorageTargets(fetchImpl, 'Unexpected targets response')).rejects.toThrow('Unexpected targets response')
+    await expect(Promise.resolve(fetchStorageTargets(fetchImpl, 'Unexpected targets response'))).rejects.toThrow('Unexpected targets response')
   })
 
   it('surfaces JSON REST target fetch errors', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ error: 'targets failed' }, false))
 
-    await expect(fetchStorageTargets(fetchImpl)).rejects.toThrow('targets failed')
+    await expect(Promise.resolve(fetchStorageTargets(fetchImpl))).rejects.toThrow('targets failed')
   })
 
   it('fetches storage status with same-origin JSON headers', async () => {
@@ -101,19 +101,19 @@ describe('storage api helper', () => {
   it('rejects malformed successful status responses', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ status: [] }))
 
-    await expect(fetchStorageStatus(fetchImpl, 'Unexpected status response')).rejects.toThrow('Unexpected status response')
+    await expect(Promise.resolve(fetchStorageStatus(fetchImpl, 'Unexpected status response'))).rejects.toThrow('Unexpected status response')
   })
 
   it('rejects malformed entries in successful status responses', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([storageStatus({ lastAttempt: 123 })]))
 
-    await expect(fetchStorageStatus(fetchImpl, 'Unexpected status response')).rejects.toThrow('Unexpected status response')
+    await expect(Promise.resolve(fetchStorageStatus(fetchImpl, 'Unexpected status response'))).rejects.toThrow('Unexpected status response')
   })
 
   it('surfaces JSON REST status errors', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ error: 'status failed' }, false))
 
-    await expect(fetchStorageStatus(fetchImpl)).rejects.toThrow('status failed')
+    await expect(Promise.resolve(fetchStorageStatus(fetchImpl))).rejects.toThrow('status failed')
   })
 
   it('saves storage targets with same-origin JSON PUT', async () => {
@@ -137,19 +137,19 @@ describe('storage api helper', () => {
   it('rejects malformed successful target save responses', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({}))
 
-    await expect(saveStorageTargets(fetchImpl, [], 'Unexpected save response')).rejects.toThrow('Unexpected save response')
+    await expect(Promise.resolve(saveStorageTargets(fetchImpl, [], 'Unexpected save response'))).rejects.toThrow('Unexpected save response')
   })
 
   it('surfaces JSON REST target save errors', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ error: 'save failed' }, false))
 
-    await expect(saveStorageTargets(fetchImpl, [])).rejects.toThrow('save failed')
+    await expect(Promise.resolve(saveStorageTargets(fetchImpl, []))).rejects.toThrow('save failed')
   })
 
   it('uses truthy non-string JSON error values to preserve legacy error precedence', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ error: 403 }, false))
 
-    await expect(saveStorageTargets(fetchImpl, [])).rejects.toThrow('403')
+    await expect(Promise.resolve(saveStorageTargets(fetchImpl, []))).rejects.toThrow('403')
   })
 
   it('executes a storage action with same-origin JSON POST', async () => {
@@ -172,19 +172,19 @@ describe('storage api helper', () => {
   it('accepts empty string action messages to preserve legacy message validation', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ message: '' }))
 
-    await expect(executeStorageAction(fetchImpl, 'git', 'sync')).resolves.toEqual({ message: '' })
+    expect(await executeStorageAction(fetchImpl, 'git', 'sync')).toEqual({ message: '' })
   })
 
   it('rejects malformed successful action responses', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({}))
 
-    await expect(executeStorageAction(fetchImpl, 'git', 'sync', 'Unexpected action response')).rejects.toThrow('Unexpected action response')
+    await expect(Promise.resolve(executeStorageAction(fetchImpl, 'git', 'sync', 'Unexpected action response'))).rejects.toThrow('Unexpected action response')
   })
 
   it('surfaces JSON REST action errors', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ error: 'Invalid Handler for Storage Target' }, false))
 
-    await expect(executeStorageAction(fetchImpl, 'git', 'missing')).rejects.toThrow('Invalid Handler for Storage Target')
+    await expect(Promise.resolve(executeStorageAction(fetchImpl, 'git', 'missing'))).rejects.toThrow('Invalid Handler for Storage Target')
   })
 
   it('uses fallback message for non-JSON action failures', async () => {
@@ -193,6 +193,6 @@ describe('storage api helper', () => {
       headers: { get: () => 'text/plain' }
     })
 
-    await expect(executeStorageAction(fetchImpl, 'git', 'sync', 'Action fallback')).rejects.toThrow('Action fallback')
+    await expect(Promise.resolve(executeStorageAction(fetchImpl, 'git', 'sync', 'Action fallback'))).rejects.toThrow('Action fallback')
   })
 })

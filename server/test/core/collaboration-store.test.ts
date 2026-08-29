@@ -1,7 +1,6 @@
-/** @vitest-environment node */
 
 import createKnex, { type Knex } from 'knex'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from '../bun-test.mts'
 import * as Y from 'yjs'
 
 import { CollaborationRoomStore } from '../../core/collaboration-store.ts'

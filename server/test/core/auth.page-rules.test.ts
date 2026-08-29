@@ -1,6 +1,5 @@
-/** @vitest-environment node */
 
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from '../bun-test.mts'
 
 import auth from '../../core/auth.ts'
 

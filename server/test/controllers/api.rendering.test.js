@@ -1,4 +1,4 @@
-vi.mock('express', () => {
+vi.mockModule('express', import.meta.url, () => {
   const routers = []
 
   const expressMock = {
@@ -20,7 +20,7 @@ vi.mock('express', () => {
   return { default: expressMock, ...expressMock }
 })
 
-import * as express from 'express'
+const express = await import('express')
 
 describe('controllers/api rendering endpoints', () => {
   beforeEach(() => {
@@ -95,13 +95,13 @@ describe('controllers/api rendering endpoints', () => {
   })
 
   const loadRenderersHandler = async () => {
-    await import('../../controllers/api/rendering.ts')
+    await vi.importFresh('../../controllers/api/rendering.ts', import.meta.url)
     const router = express.__routers[0]
     return router.get.mock.calls.find(([path]) => path === '/renderers')[1]
   }
 
   const loadSaveRenderersHandler = async () => {
-    await import('../../controllers/api/rendering.ts')
+    await vi.importFresh('../../controllers/api/rendering.ts', import.meta.url)
     const router = express.__routers[0]
     return router.post.mock.calls.find(([path]) => path === '/renderers')[1]
   }
@@ -125,44 +125,6 @@ describe('controllers/api rendering endpoints', () => {
     expect(typeof handler).toBe('function')
   })
 
-  it('is mounted by the API index router', async () => {
-    const modulePaths = [
-      '../../controllers/api/analytics.ts',
-      '../../controllers/api/assets.ts',
-      '../../controllers/api/auth.ts',
-      '../../controllers/api/comments.ts',
-      '../../controllers/api/content-extensions.ts',
-      '../../controllers/api/contribute.ts',
-      '../../controllers/api/groups.ts',
-      '../../controllers/api/locales.ts',
-      '../../controllers/api/logging.ts',
-      '../../controllers/api/mail.ts',
-      '../../controllers/api/navigation.ts',
-      '../../controllers/api/pages.ts',
-      '../../controllers/api/rendering.ts',
-      '../../controllers/api/search.ts',
-      '../../controllers/api/site.ts',
-      '../../controllers/api/storage.ts',
-      '../../controllers/api/system.ts',
-      '../../controllers/api/theming.ts',
-      '../../controllers/api/users.ts',
-      '../../controllers/api/webhooks.ts'
-    ]
-    for (const modulePath of modulePaths) {
-      vi.doMock(modulePath, () => ({ default: {} }))
-    }
-
-    try {
-      await expect(import('../../controllers/api/index.ts')).resolves.toBeDefined()
-      const apiRouter = express.__routers[0]
-
-      expect(apiRouter.use).toHaveBeenCalledWith('/rendering', expect.any(Object))
-    } finally {
-      for (const modulePath of modulePaths) {
-        vi.doUnmock(modulePath)
-      }
-    }
-  })
 
   it('returns 403 for unauthorized renderer requests without querying renderers', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(false)
@@ -375,5 +337,43 @@ describe('controllers/api rendering endpoints', () => {
 
     expect(next).toHaveBeenCalledWith(err)
     expect(res.json).not.toHaveBeenCalled()
+  })
+  it('is mounted by the API index router', async () => {
+    const modulePaths = [
+      '../../controllers/api/analytics.ts',
+      '../../controllers/api/assets.ts',
+      '../../controllers/api/auth.ts',
+      '../../controllers/api/comments.ts',
+      '../../controllers/api/content-extensions.ts',
+      '../../controllers/api/contribute.ts',
+      '../../controllers/api/groups.ts',
+      '../../controllers/api/locales.ts',
+      '../../controllers/api/logging.ts',
+      '../../controllers/api/mail.ts',
+      '../../controllers/api/navigation.ts',
+      '../../controllers/api/pages.ts',
+      '../../controllers/api/rendering.ts',
+      '../../controllers/api/search.ts',
+      '../../controllers/api/site.ts',
+      '../../controllers/api/storage.ts',
+      '../../controllers/api/system.ts',
+      '../../controllers/api/theming.ts',
+      '../../controllers/api/users.ts',
+      '../../controllers/api/webhooks.ts'
+    ]
+    for (const modulePath of modulePaths) {
+      vi.mockModule(modulePath, import.meta.url, () => ({ default: {} }))
+    }
+
+    try {
+      expect(await vi.importFresh('../../controllers/api/index.ts', import.meta.url)).toBeDefined()
+      const apiRouter = express.__routers[0]
+
+      expect(apiRouter.use).toHaveBeenCalledWith('/rendering', expect.any(Object))
+    } finally {
+      for (const modulePath of modulePaths) {
+        vi.unmockModule(modulePath, import.meta.url)
+      }
+    }
   })
 })

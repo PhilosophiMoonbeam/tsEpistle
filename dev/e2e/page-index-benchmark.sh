@@ -31,4 +31,4 @@ done
 
 WIKI_BENCHMARK_DATABASE_URL="postgresql://wiki:Password123!@127.0.0.1:${port}/wiki_page_index_benchmark" \
 PAGE_INDEX_BENCHMARK_FILE="$report" \
-node server/scripts/benchmark-page-index.ts
+bun server/scripts/benchmark-page-index.ts

@@ -1,5 +1,5 @@
 import createKnex, { type Knex } from 'knex'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from '../bun-test.mts'
 
 import {
   MigrationPreflightError,
@@ -60,7 +60,7 @@ describe('database migration preflight', () => {
   })
 
   it('recognizes an empty database as a fresh install', async () => {
-    await expect(preflightMigrations(db, migrationSource(available))).resolves.toEqual({
+    expect(await preflightMigrations(db, migrationSource(available))).toEqual({
       applied: [],
       available,
       state: 'fresh'
@@ -71,7 +71,7 @@ describe('database migration preflight', () => {
     await createApplicationTable(db)
     await createLedger(db, available.slice(0, 2))
 
-    await expect(preflightMigrations(db, migrationSource(available))).resolves.toEqual({
+    expect(await preflightMigrations(db, migrationSource(available))).toEqual({
       applied: available.slice(0, 2),
       available,
       state: 'ready'
@@ -82,9 +82,9 @@ describe('database migration preflight', () => {
     await createApplicationTable(db)
     await createLedger(db, legacy.slice(0, 2))
 
-    await expect(preflightMigrations(db, migrationSource(available), {
+    expect(await preflightMigrations(db, migrationSource(available), {
       legacyMigrationNames: legacy
-    })).resolves.toEqual({
+    })).toEqual({
       applied: legacy.slice(0, 2),
       available,
       state: 'legacy-beta'
@@ -96,24 +96,24 @@ describe('database migration preflight', () => {
     await createApplicationTable(db)
     await createLedger(db, [legacy[1]])
 
-    await expect(preflightMigrations(db, migrationSource(available), {
+    await expect(Promise.resolve(preflightMigrations(db, migrationSource(available), {
       legacyMigrationNames: legacy
-    })).rejects.toThrow('Legacy beta migration history is incomplete or out of order')
+    }))).rejects.toThrow('Legacy beta migration history is incomplete or out of order')
 
     await db('migrations').delete()
     await db('migrations').insert([
       { batch: 1, migration_time: new Date(), name: legacy[0] },
       { batch: 1, migration_time: new Date(), name: 'custom-beta-patch.js' }
     ])
-    await expect(preflightMigrations(db, migrationSource(available), {
+    await expect(Promise.resolve(preflightMigrations(db, migrationSource(available), {
       legacyMigrationNames: legacy
-    })).rejects.toThrow('Legacy beta migration history contains unsupported records')
+    }))).rejects.toThrow('Legacy beta migration history contains unsupported records')
   })
 
   it('refuses application tables without a migration ledger', async () => {
     await createApplicationTable(db)
 
-    await expect(preflightMigrations(db, migrationSource(available))).rejects.toMatchObject({
+    await expect(Promise.resolve(preflightMigrations(db, migrationSource(available)))).rejects.toMatchObject({
       code: 'MIGRATION_PREFLIGHT_FAILED',
       message: expect.stringContaining('has no migrations ledger')
     })
@@ -123,27 +123,21 @@ describe('database migration preflight', () => {
     await createApplicationTable(db)
     await createLedger(db, [])
 
-    await expect(preflightMigrations(db, migrationSource(available))).rejects.toThrow(
-      'migrations ledger is empty'
-    )
+    await expect(Promise.resolve(preflightMigrations(db, migrationSource(available)))).rejects.toThrow('migrations ledger is empty')
   })
 
   it('refuses unknown migrations from a newer or unrelated build', async () => {
     await createApplicationTable(db)
     await createLedger(db, ['2.0.0.js', '3.0.0.js'])
 
-    await expect(preflightMigrations(db, migrationSource(available))).rejects.toThrow(
-      'unknown or newer build (3.0.0.js)'
-    )
+    await expect(Promise.resolve(preflightMigrations(db, migrationSource(available)))).rejects.toThrow('unknown or newer build (3.0.0.js)')
   })
 
   it('refuses migration gaps and out-of-order history', async () => {
     await createApplicationTable(db)
     await createLedger(db, ['2.0.0.js', '2.5.129.js'])
 
-    await expect(preflightMigrations(db, migrationSource(available))).rejects.toThrow(
-      'incomplete or out of order at 2.5.129.js'
-    )
+    await expect(Promise.resolve(preflightMigrations(db, migrationSource(available)))).rejects.toThrow('incomplete or out of order at 2.5.129.js')
   })
 
   it('refuses a locked migration ledger with actionable recovery guidance', async () => {
@@ -155,19 +149,15 @@ describe('database migration preflight', () => {
     })
     await db('migrations_lock').insert({ is_locked: 1 })
 
-    await expect(preflightMigrations(db, migrationSource(available))).rejects.toEqual(
-      expect.objectContaining<Partial<MigrationPreflightError>>({
-        code: 'MIGRATION_PREFLIGHT_FAILED',
-        message: expect.stringContaining('Confirm that no other tsFranki instance is migrating')
-      })
-    )
+    await expect(Promise.resolve(preflightMigrations(db, migrationSource(available)))).rejects.toEqual(expect.objectContaining<Partial<MigrationPreflightError>>({
+      code: 'MIGRATION_PREFLIGHT_FAILED',
+      message: expect.stringContaining('Confirm that no other tsFranki instance is migrating')
+    }))
   })
 
   it('refuses migration records when the application schema is absent', async () => {
     await createLedger(db, ['2.0.0.js'])
 
-    await expect(preflightMigrations(db, migrationSource(available))).rejects.toThrow(
-      'none of the expected Wiki application tables'
-    )
+    await expect(Promise.resolve(preflightMigrations(db, migrationSource(available)))).rejects.toThrow('none of the expected Wiki application tables')
   })
 })

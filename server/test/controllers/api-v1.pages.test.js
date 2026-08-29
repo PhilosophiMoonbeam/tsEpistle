@@ -1,18 +1,18 @@
-vi.mock('express', () => {
+vi.mockModule('express', import.meta.url, () => {
   const router = { get: vi.fn(), use: vi.fn() }
   const expressMock = { Router: () => router, __router: router }
   return { default: expressMock, ...expressMock }
 })
 
-vi.mock('../../operations/pages.ts', () => ({
+vi.mockModule('../../operations/pages.ts', import.meta.url, () => ({
   default: {
     get: vi.fn(),
     list: vi.fn()
   }
 }))
 
-import * as express from 'express'
-import pageOperations from '../../operations/pages.ts'
+const express = await import('express')
+const { default: pageOperations } = await import('../../operations/pages.ts')
 import { openApiDocument } from '../../controllers/api-v1/openapi.ts'
 
 

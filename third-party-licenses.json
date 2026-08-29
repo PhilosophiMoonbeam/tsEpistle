@@ -1,15 +1,19 @@
 {
   "schemaVersion": 1,
   "source": {
-    "lockfile": "pnpm-lock.yaml",
-    "sha256": "3b64332cd561d2fa943d772ac871649c0cbfa6b12db9d1b9084c35c3896a9739",
+    "lockfile": "bun.lock",
+    "sha256": "c580bcddb45ddcfe640bfe25b568e77c418ad0ce04a266bde7762ce592481202",
     "scope": "production",
     "policy": {
       "file": "license-policy.json",
-      "sha256": "9b788b11297ebeb1a11106e513cc1e75fa557fe5fb9676334c91bcfbe98c89f5"
+      "sha256": "bd53f2d716c13d852d93ee26241678cb001c24fad4967d914c6559efd7482cf0"
     }
   },
   "licenseMetadataOverrides": {
+    "notp@2.0.3": {
+      "license": "MIT",
+      "source": "https://github.com/guyht/notp/blob/master/LICENSE"
+    },
     "pause@0.0.1": {
       "license": "MIT",
       "source": "https://github.com/stream-utils/pause/blob/master/LICENSE"
@@ -21,6 +25,10 @@
     "thirty-two@1.0.2": {
       "license": "MIT",
       "source": "https://github.com/chrisumbel/thirty-two/blob/master/LICENSE.txt"
+    },
+    "uid2@0.0.3": {
+      "license": "MIT",
+      "source": "https://github.com/coreh/uid2/blob/master/LICENSE"
     }
   },
   "packages": [
@@ -155,24 +163,21 @@
       "versions": [
         "0.18.1"
       ],
-      "license": "Apache-2.0",
-      "homepage": "https://github.com/nodejs/orchestrion-js#readme"
+      "license": "Apache-2.0"
     },
     {
       "name": "@apm-js-collab/code-transformer-bundler-plugins",
       "versions": [
         "0.7.4"
       ],
-      "license": "MIT",
-      "homepage": "https://github.com/apm-js-collab/code-transformer-bundler-plugins#readme"
+      "license": "MIT"
     },
     {
       "name": "@apm-js-collab/tracing-hooks",
       "versions": [
         "0.13.0"
       ],
-      "license": "Apache-2.0",
-      "homepage": "https://github.com/apm-js-collab/tracing-hooks#readme"
+      "license": "Apache-2.0"
     },
     {
       "name": "@asamuzakjp/css-color",
@@ -203,7 +208,7 @@
     {
       "name": "@aws-sdk/checksums",
       "versions": [
-        "3.1000.27"
+        "3.1000.29"
       ],
       "license": "Apache-2.0",
       "author": "AWS SDK for JavaScript Team",
@@ -239,7 +244,7 @@
     {
       "name": "@aws-sdk/core",
       "versions": [
-        "3.977.7"
+        "3.977.9"
       ],
       "license": "Apache-2.0",
       "author": "AWS SDK for JavaScript Team",
@@ -248,7 +253,7 @@
     {
       "name": "@aws-sdk/credential-provider-env",
       "versions": [
-        "3.972.68"
+        "3.972.70"
       ],
       "license": "Apache-2.0",
       "author": "AWS SDK for JavaScript Team",
@@ -257,7 +262,7 @@
     {
       "name": "@aws-sdk/credential-provider-http",
       "versions": [
-        "3.972.70"
+        "3.972.72"
       ],
       "license": "Apache-2.0",
       "author": "AWS SDK for JavaScript Team",
@@ -266,7 +271,7 @@
     {
       "name": "@aws-sdk/credential-provider-ini",
       "versions": [
-        "3.973.13"
+        "3.973.15"
       ],
       "license": "Apache-2.0",
       "author": "AWS SDK for JavaScript Team",
@@ -275,7 +280,7 @@
     {
       "name": "@aws-sdk/credential-provider-login",
       "versions": [
-        "3.972.75"
+        "3.972.77"
       ],
       "license": "Apache-2.0",
       "author": "AWS SDK for JavaScript Team",
@@ -284,7 +289,7 @@
     {
       "name": "@aws-sdk/credential-provider-node",
       "versions": [
-        "3.972.79"
+        "3.972.81"
       ],
       "license": "Apache-2.0",
       "author": "AWS SDK for JavaScript Team",
@@ -293,7 +298,7 @@
     {
       "name": "@aws-sdk/credential-provider-process",
       "versions": [
-        "3.972.68"
+        "3.972.70"
       ],
       "license": "Apache-2.0",
       "author": "AWS SDK for JavaScript Team",
@@ -302,7 +307,7 @@
     {
       "name": "@aws-sdk/credential-provider-sso",
       "versions": [
-        "3.973.12"
+        "3.973.14"
       ],
       "license": "Apache-2.0",
       "author": "AWS SDK for JavaScript Team",
@@ -311,7 +316,7 @@
     {
       "name": "@aws-sdk/credential-provider-web-identity",
       "versions": [
-        "3.972.74"
+        "3.972.76"
       ],
       "license": "Apache-2.0",
       "author": "AWS SDK for JavaScript Team",
@@ -320,7 +325,7 @@
     {
       "name": "@aws-sdk/middleware-sdk-s3",
       "versions": [
-        "3.972.73"
+        "3.972.75"
       ],
       "license": "Apache-2.0",
       "author": "AWS SDK for JavaScript Team",
@@ -329,7 +334,7 @@
     {
       "name": "@aws-sdk/nested-clients",
       "versions": [
-        "3.997.42"
+        "3.997.44"
       ],
       "license": "Apache-2.0",
       "author": "AWS SDK for JavaScript Team",
@@ -338,7 +343,7 @@
     {
       "name": "@aws-sdk/signature-v4-multi-region",
       "versions": [
-        "3.996.44"
+        "3.996.46"
       ],
       "license": "Apache-2.0",
       "author": "AWS SDK for JavaScript Team",
@@ -347,7 +352,7 @@
     {
       "name": "@aws-sdk/token-providers",
       "versions": [
-        "3.1108.0"
+        "3.1116.0"
       ],
       "license": "Apache-2.0",
       "author": "AWS SDK for JavaScript Team",
@@ -356,7 +361,7 @@
     {
       "name": "@aws-sdk/types",
       "versions": [
-        "3.974.3"
+        "3.974.5"
       ],
       "license": "Apache-2.0",
       "author": "AWS SDK for JavaScript Team",
@@ -365,7 +370,7 @@
     {
       "name": "@aws-sdk/xml-builder",
       "versions": [
-        "3.972.38"
+        "3.972.40"
       ],
       "license": "Apache-2.0",
       "author": "AWS SDK for JavaScript Team",
@@ -386,7 +391,7 @@
         "24.0.12"
       ],
       "license": "Apache-2.0",
-      "author": "Vikram",
+      "author": "Vikram <https://twitter.com/dosco>",
       "homepage": "https://github.com/ax-llm/ax#readme"
     },
     {
@@ -530,7 +535,7 @@
         "7.29.7"
       ],
       "license": "MIT",
-      "author": "The Babel Team",
+      "author": "The Babel Team (https://babel.dev/team)",
       "homepage": "https://babel.dev/docs/en/next/babel-helper-string-parser"
     },
     {
@@ -539,8 +544,7 @@
         "7.29.7"
       ],
       "license": "MIT",
-      "author": "The Babel Team",
-      "homepage": "https://github.com/babel/babel#readme"
+      "author": "The Babel Team (https://babel.dev/team)"
     },
     {
       "name": "@babel/parser",
@@ -548,7 +552,7 @@
         "7.29.8"
       ],
       "license": "MIT",
-      "author": "The Babel Team",
+      "author": "The Babel Team (https://babel.dev/team)",
       "homepage": "https://babel.dev/docs/en/next/babel-parser"
     },
     {
@@ -557,7 +561,7 @@
         "7.29.8"
       ],
       "license": "MIT",
-      "author": "The Babel Team",
+      "author": "The Babel Team (https://babel.dev/team)",
       "homepage": "https://babel.dev/docs/en/next/babel-types"
     },
     {
@@ -580,7 +584,7 @@
     {
       "name": "@codemirror/commands",
       "versions": [
-        "6.10.4"
+        "6.11.0"
       ],
       "license": "MIT",
       "author": "Marijn Haverbeke"
@@ -591,8 +595,7 @@
         "6.3.1"
       ],
       "license": "MIT",
-      "author": "Marijn Haverbeke",
-      "homepage": "https://github.com/codemirror/lang-css#readme"
+      "author": "Marijn Haverbeke"
     },
     {
       "name": "@codemirror/lang-html",
@@ -608,8 +611,7 @@
         "6.2.5"
       ],
       "license": "MIT",
-      "author": "Marijn Haverbeke",
-      "homepage": "https://github.com/codemirror/lang-javascript#readme"
+      "author": "Marijn Haverbeke"
     },
     {
       "name": "@codemirror/lang-markdown",
@@ -679,7 +681,7 @@
     {
       "name": "@csstools/color-helpers",
       "versions": [
-        "6.1.0"
+        "6.1.1"
       ],
       "license": "MIT-0",
       "homepage": "https://github.com/csstools/postcss-plugins/tree/main/packages/color-helpers#readme"
@@ -695,7 +697,7 @@
     {
       "name": "@csstools/css-color-parser",
       "versions": [
-        "4.1.10"
+        "4.2.1"
       ],
       "license": "MIT",
       "homepage": "https://github.com/csstools/postcss-plugins/tree/main/packages/css-color-parser#readme"
@@ -711,7 +713,7 @@
     {
       "name": "@csstools/css-syntax-patches-for-csstree",
       "versions": [
-        "1.1.7"
+        "1.1.9"
       ],
       "license": "MIT-0",
       "homepage": "https://github.com/csstools/postcss-plugins/tree/main/packages/css-syntax-patches-for-csstree#readme"
@@ -753,11 +755,10 @@
     {
       "name": "@envelop/core",
       "versions": [
-        "5.5.1"
+        "5.6.0"
       ],
       "license": "MIT",
-      "author": "Dotan Simha",
-      "homepage": "https://github.com/graphql-hive/envelop#readme"
+      "author": "Dotan Simha <dotansimha@gmail.com>"
     },
     {
       "name": "@envelop/instrumentation",
@@ -765,8 +766,7 @@
         "1.0.0"
       ],
       "license": "MIT",
-      "author": "Valentin Cocaud",
-      "homepage": "https://github.com/n1ru4l/envelop#readme"
+      "author": "Valentin Cocaud <v.cocaud@gmail.com>"
     },
     {
       "name": "@envelop/types",
@@ -774,8 +774,7 @@
         "5.2.1"
       ],
       "license": "MIT",
-      "author": "Dotan Simha",
-      "homepage": "https://github.com/n1ru4l/envelop#readme"
+      "author": "Dotan Simha <dotansimha@gmail.com>"
     },
     {
       "name": "@exlinc/keycloak-passport",
@@ -798,10 +797,10 @@
     {
       "name": "@fastify/busboy",
       "versions": [
-        "3.2.0"
+        "3.2.2"
       ],
       "license": "MIT",
-      "author": "Brian White",
+      "author": "Brian White <mscdex@mscdex.net>",
       "homepage": "https://github.com/fastify/busboy#readme"
     },
     {
@@ -810,8 +809,7 @@
         "1.5.7"
       ],
       "license": "MIT",
-      "author": "Saihajpreet Singh",
-      "homepage": "https://github.com/ardatan/graphql-tools#readme"
+      "author": "Saihajpreet Singh <saihajpreet.singh@gmail.com>"
     },
     {
       "name": "@graphql-tools/merge",
@@ -819,16 +817,14 @@
         "9.2.3"
       ],
       "license": "MIT",
-      "author": "Dotan Simha",
-      "homepage": "https://github.com/ardatan/graphql-tools#readme"
+      "author": "Dotan Simha <dotansimha@gmail.com>"
     },
     {
       "name": "@graphql-tools/schema",
       "versions": [
         "10.1.0"
       ],
-      "license": "MIT",
-      "homepage": "https://github.com/ardatan/graphql-tools#readme"
+      "license": "MIT"
     },
     {
       "name": "@graphql-tools/utils",
@@ -838,8 +834,7 @@
         "12.0.0"
       ],
       "license": "MIT",
-      "author": "Dotan Simha",
-      "homepage": "https://github.com/ardatan/graphql-tools#readme"
+      "author": "Dotan Simha <dotansimha@gmail.com>"
     },
     {
       "name": "@graphql-typed-document-node/core",
@@ -847,16 +842,14 @@
         "3.2.0"
       ],
       "license": "MIT",
-      "author": "Dotan Simha",
-      "homepage": "https://github.com/dotansimha/graphql-typed-document-node#readme"
+      "author": "Dotan Simha <dotansimha@gmail.com>"
     },
     {
       "name": "@graphql-yoga/logger",
       "versions": [
         "2.0.1"
       ],
-      "license": "MIT",
-      "homepage": "https://github.com/dotansimha/graphql-yoga#readme"
+      "license": "MIT"
     },
     {
       "name": "@graphql-yoga/subscription",
@@ -864,8 +857,7 @@
         "5.0.5"
       ],
       "license": "MIT",
-      "author": "Laurin Quast",
-      "homepage": "https://github.com/graphql-hive/graphql-yoga#readme"
+      "author": "Laurin Quast <laurinquast@googlemail.com>"
     },
     {
       "name": "@graphql-yoga/typed-event-target",
@@ -873,8 +865,7 @@
         "3.0.2"
       ],
       "license": "MIT",
-      "author": "Laurin Quast",
-      "homepage": "https://github.com/dotansimha/graphql-yoga#readme"
+      "author": "Laurin Quast <laurinquast@googlemail.com>"
     },
     {
       "name": "@heroku/socksv5",
@@ -882,8 +873,7 @@
         "0.0.9"
       ],
       "license": "MIT",
-      "author": "Brian White",
-      "homepage": "https://github.com/mscdex/socksv5#readme"
+      "author": "Brian White <mscdex@mscdex.net>"
     },
     {
       "name": "@hono/node-server",
@@ -891,7 +881,7 @@
         "1.19.17"
       ],
       "license": "MIT",
-      "author": "Yusuke Wada",
+      "author": "Yusuke Wada <yusuke@kamawada.com> (https://github.com/yusukebe)",
       "homepage": "https://github.com/honojs/node-server"
     },
     {
@@ -900,16 +890,15 @@
         "1.0.67"
       ],
       "license": "MIT",
-      "author": "Dom Christie",
-      "homepage": "https://github.com/laurent22/joplin-turndown-plugin-gfm#readme"
+      "author": "Dom Christie"
     },
     {
       "name": "@jridgewell/sourcemap-codec",
       "versions": [
-        "1.5.5"
+        "1.6.0"
       ],
       "license": "MIT",
-      "author": "Justin Ridgewell",
+      "author": "Justin Ridgewell <justin@ridgewell.name>",
       "homepage": "https://github.com/jridgewell/sourcemaps/tree/main/packages/sourcemap-codec"
     },
     {
@@ -918,8 +907,7 @@
         "1.1.1"
       ],
       "license": "MIT",
-      "author": "Steve King",
-      "homepage": "https://github.com/kwsites/file-exists#readme"
+      "author": "Steve King <steve@mydev.co>"
     },
     {
       "name": "@kwsites/promise-deferred",
@@ -927,8 +915,7 @@
         "1.1.1"
       ],
       "license": "MIT",
-      "author": "Steve King",
-      "homepage": "https://github.com/kwsites/promise-deferred#readme"
+      "author": "Steve King <steve@mydev.co>"
     },
     {
       "name": "@lezer/common",
@@ -936,8 +923,7 @@
         "1.5.2"
       ],
       "license": "MIT",
-      "author": "Marijn Haverbeke",
-      "homepage": "https://github.com/lezer-parser/common#readme"
+      "author": "Marijn Haverbeke <marijn@haverbeke.berlin>"
     },
     {
       "name": "@lezer/css",
@@ -945,7 +931,7 @@
         "1.3.6"
       ],
       "license": "MIT",
-      "author": "Marijn Haverbeke"
+      "author": "Marijn Haverbeke <marijn@haverbeke.berlin>"
     },
     {
       "name": "@lezer/highlight",
@@ -953,8 +939,7 @@
         "1.2.3"
       ],
       "license": "MIT",
-      "author": "Marijn Haverbeke",
-      "homepage": "https://github.com/lezer-parser/highlight#readme"
+      "author": "Marijn Haverbeke <marijn@haverbeke.berlin>"
     },
     {
       "name": "@lezer/html",
@@ -962,8 +947,7 @@
         "1.3.13"
       ],
       "license": "MIT",
-      "author": "Marijn Haverbeke",
-      "homepage": "https://github.com/lezer-parser/html#readme"
+      "author": "Marijn Haverbeke <marijn@haverbeke.berlin>"
     },
     {
       "name": "@lezer/javascript",
@@ -971,8 +955,7 @@
         "1.5.4"
       ],
       "license": "MIT",
-      "author": "Marijn Haverbeke",
-      "homepage": "https://github.com/lezer-parser/javascript#readme"
+      "author": "Marijn Haverbeke <marijn@haverbeke.berlin>"
     },
     {
       "name": "@lezer/lr",
@@ -980,7 +963,7 @@
         "1.4.10"
       ],
       "license": "MIT",
-      "author": "Marijn Haverbeke"
+      "author": "Marijn Haverbeke <marijn@haverbeke.berlin>"
     },
     {
       "name": "@lezer/markdown",
@@ -988,15 +971,15 @@
         "1.7.2"
       ],
       "license": "MIT",
-      "author": "Marijn Haverbeke"
+      "author": "Marijn Haverbeke <marijn@haverbeke.berlin>"
     },
     {
       "name": "@marijn/find-cluster-break",
       "versions": [
-        "1.0.3"
+        "1.0.4"
       ],
       "license": "MIT",
-      "author": "Marijn Haverbeke",
+      "author": "Marijn Haverbeke <marijn@haverbeke.berlin>",
       "homepage": "https://code.haverbeke.berlin/marijn/find-cluster-break"
     },
     {
@@ -1004,8 +987,7 @@
       "versions": [
         "4.1.3"
       ],
-      "license": "Apache-2.0",
-      "homepage": "https://github.com/mathjax/MathJax-fonts#readme"
+      "license": "Apache-2.0"
     },
     {
       "name": "@mixmark-io/domino",
@@ -1013,8 +995,7 @@
         "2.2.0"
       ],
       "license": "BSD-2-Clause",
-      "author": "Felix Gnass",
-      "homepage": "https://github.com/mixmark-io/domino#readme"
+      "author": "Felix Gnass <fgnass@gmail.com>"
     },
     {
       "name": "@modelcontextprotocol/core",
@@ -1022,7 +1003,7 @@
         "2.0.0"
       ],
       "license": "MIT",
-      "author": "Anthropic, PBC",
+      "author": "Anthropic, PBC (https://anthropic.com)",
       "homepage": "https://modelcontextprotocol.io"
     },
     {
@@ -1031,7 +1012,7 @@
         "2.0.0"
       ],
       "license": "MIT",
-      "author": "Anthropic, PBC",
+      "author": "Anthropic, PBC (https://anthropic.com)",
       "homepage": "https://modelcontextprotocol.io"
     },
     {
@@ -1040,7 +1021,7 @@
         "2.0.0"
       ],
       "license": "MIT",
-      "author": "Anthropic, PBC",
+      "author": "Anthropic, PBC (https://anthropic.com)",
       "homepage": "https://modelcontextprotocol.io"
     },
     {
@@ -1049,26 +1030,17 @@
         "2.0.0"
       ],
       "license": "MIT",
-      "author": "Anthropic, PBC",
+      "author": "Anthropic, PBC (https://anthropic.com)",
       "homepage": "https://modelcontextprotocol.io"
     },
     {
       "name": "@mongodb-js/saslprep",
       "versions": [
-        "1.4.13"
+        "1.5.0"
       ],
       "license": "MIT",
-      "author": "Dmitry Tsvettsikh",
+      "author": "Dmitry Tsvettsikh <me@reklatsmasters.com>",
       "homepage": "https://github.com/mongodb-js/devtools-shared/tree/main/packages/saslprep"
-    },
-    {
-      "name": "@noble/hashes",
-      "versions": [
-        "1.8.0"
-      ],
-      "license": "MIT",
-      "author": "Paul Miller",
-      "homepage": "https://paulmillr.com/noble/"
     },
     {
       "name": "@nodable/entities",
@@ -1076,8 +1048,7 @@
         "3.0.0"
       ],
       "license": "MIT",
-      "author": "Amit Gupta",
-      "homepage": "https://github.com/nodable/val-parsers#readme"
+      "author": "Amit Gupta (https://solothought.com)"
     },
     {
       "name": "@node-saml/node-saml",
@@ -1085,8 +1056,7 @@
         "5.1.0"
       ],
       "license": "MIT",
-      "author": "Henri Bergius",
-      "homepage": "https://github.com/node-saml/node-saml#readme"
+      "author": "Henri Bergius"
     },
     {
       "name": "@node-saml/passport-saml",
@@ -1094,8 +1064,7 @@
         "5.1.0"
       ],
       "license": "MIT",
-      "author": "Henri Bergius",
-      "homepage": "https://github.com/node-saml/passport-saml#readme"
+      "author": "Henri Bergius"
     },
     {
       "name": "@opentelemetry/api",
@@ -1183,8 +1152,7 @@
       "versions": [
         "3.1.0"
       ],
-      "license": "MIT",
-      "homepage": "https://github.com/repeaterjs/repeater#readme"
+      "license": "MIT"
     },
     {
       "name": "@root/acme",
@@ -1192,7 +1160,7 @@
         "3.1.0"
       ],
       "license": "MPL-2.0",
-      "author": "AJ ONeal",
+      "author": "AJ ONeal <coolaj86@gmail.com> (https://coolaj86.com/)",
       "homepage": "https://rootprojects.org/acme/"
     },
     {
@@ -1201,8 +1169,7 @@
         "1.0.2"
       ],
       "license": "MPL-2.0",
-      "author": "AJ ONeal",
-      "homepage": "https://github.com/therootcompany/asn1.js#readme"
+      "author": "AJ ONeal <aj@therootcompany.com> (https://therootcompany.com/)"
     },
     {
       "name": "@root/csr",
@@ -1210,7 +1177,7 @@
         "0.8.1"
       ],
       "license": "MPL-2.0",
-      "author": "AJ ONeal"
+      "author": "AJ ONeal <coolaj86@gmail.com> (https://coolaj86.com/)"
     },
     {
       "name": "@root/encoding",
@@ -1218,7 +1185,7 @@
         "1.0.1"
       ],
       "license": "MPL-2.0",
-      "author": "AJ ONeal"
+      "author": "AJ ONeal <coolaj86@gmail.com> (https://coolaj86.com/)"
     },
     {
       "name": "@root/keypairs",
@@ -1226,8 +1193,7 @@
         "0.10.3"
       ],
       "license": "MPL-2.0",
-      "author": "AJ ONeal",
-      "homepage": "https://github.com/therootcompany/keypairs.js#readme"
+      "author": "AJ ONeal <coolaj86@gmail.com> (https://coolaj86.com/)"
     },
     {
       "name": "@root/pem",
@@ -1235,7 +1201,7 @@
         "1.0.4"
       ],
       "license": "MPL-2.0",
-      "author": "AJ ONeal"
+      "author": "AJ ONeal <coolaj86@gmail.com> (https://coolaj86.com/)"
     },
     {
       "name": "@root/request",
@@ -1243,7 +1209,7 @@
         "1.9.2"
       ],
       "license": "(MIT OR Apache-2.0)",
-      "author": "AJ ONeal"
+      "author": "AJ ONeal <coolaj86@gmail.com> (https://coolaj86.com/)"
     },
     {
       "name": "@root/x509",
@@ -1251,7 +1217,7 @@
         "0.7.2"
       ],
       "license": "MPL-2.0",
-      "author": "AJ ONeal"
+      "author": "AJ ONeal <coolaj86@gmail.com> (https://coolaj86.com/)"
     },
     {
       "name": "@sentry/conventions",
@@ -1311,21 +1277,19 @@
       "versions": [
         "1.0.3"
       ],
-      "license": "MIT",
-      "homepage": "https://github.com/steveukx/git-js#readme"
+      "license": "MIT"
     },
     {
       "name": "@simple-git/argv-parser",
       "versions": [
         "1.1.1"
       ],
-      "license": "MIT",
-      "homepage": "https://github.com/steveukx/git-js#readme"
+      "license": "MIT"
     },
     {
       "name": "@smithy/core",
       "versions": [
-        "3.32.0"
+        "3.33.3"
       ],
       "license": "Apache-2.0",
       "author": "AWS Smithy Team",
@@ -1334,7 +1298,7 @@
     {
       "name": "@smithy/credential-provider-imds",
       "versions": [
-        "4.5.0"
+        "4.5.2"
       ],
       "license": "Apache-2.0",
       "author": "AWS SDK for JavaScript Team",
@@ -1343,7 +1307,7 @@
     {
       "name": "@smithy/fetch-http-handler",
       "versions": [
-        "5.7.0"
+        "5.7.2"
       ],
       "license": "Apache-2.0",
       "author": "AWS SDK for JavaScript Team",
@@ -1352,7 +1316,7 @@
     {
       "name": "@smithy/node-http-handler",
       "versions": [
-        "4.10.0"
+        "4.11.3"
       ],
       "license": "Apache-2.0",
       "author": "AWS SDK for JavaScript Team",
@@ -1361,7 +1325,7 @@
     {
       "name": "@smithy/signature-v4",
       "versions": [
-        "5.7.0"
+        "5.7.3"
       ],
       "license": "Apache-2.0",
       "author": "AWS SDK for JavaScript Team",
@@ -1370,7 +1334,7 @@
     {
       "name": "@smithy/types",
       "versions": [
-        "4.17.0"
+        "4.17.2"
       ],
       "license": "Apache-2.0",
       "author": "AWS Smithy Team",
@@ -1596,8 +1560,7 @@
         "0.0.6"
       ],
       "license": "MIT",
-      "author": "Arda TANRIKULU",
-      "homepage": "https://github.com/ardatan/whatwg-node#readme"
+      "author": "Arda TANRIKULU <ardatanrikulu@gmail.com>"
     },
     {
       "name": "@whatwg-node/events",
@@ -1605,8 +1568,7 @@
         "0.1.2"
       ],
       "license": "MIT",
-      "author": "Arda TANRIKULU",
-      "homepage": "https://github.com/ardatan/whatwg-node#readme"
+      "author": "Arda TANRIKULU <ardatanrikulu@gmail.com>"
     },
     {
       "name": "@whatwg-node/fetch",
@@ -1614,8 +1576,7 @@
         "0.10.13"
       ],
       "license": "MIT",
-      "author": "Arda TANRIKULU",
-      "homepage": "https://github.com/ardatan/whatwg-node#readme"
+      "author": "Arda TANRIKULU <ardatanrikulu@gmail.com>"
     },
     {
       "name": "@whatwg-node/node-fetch",
@@ -1623,8 +1584,7 @@
         "0.8.6"
       ],
       "license": "MIT",
-      "author": "Arda TANRIKULU",
-      "homepage": "https://github.com/ardatan/whatwg-node#readme"
+      "author": "Arda TANRIKULU <ardatanrikulu@gmail.com>"
     },
     {
       "name": "@whatwg-node/promise-helpers",
@@ -1632,8 +1592,7 @@
         "1.3.2"
       ],
       "license": "MIT",
-      "author": "Arda TANRIKULU",
-      "homepage": "https://github.com/ardatan/whatwg-node#readme"
+      "author": "Arda TANRIKULU <ardatanrikulu@gmail.com>"
     },
     {
       "name": "@whatwg-node/server",
@@ -1641,8 +1600,7 @@
         "0.11.0"
       ],
       "license": "MIT",
-      "author": "Arda TANRIKULU",
-      "homepage": "https://github.com/ardatan/whatwg-node#readme"
+      "author": "Arda TANRIKULU <ardatanrikulu@gmail.com>"
     },
     {
       "name": "@xmldom/is-dom-node",
@@ -1650,7 +1608,7 @@
         "1.0.1"
       ],
       "license": "MIT",
-      "author": "Chris Barth",
+      "author": "Chris Barth <chrisjbarth@hotmail.com>",
       "homepage": "https://github.com/xmldom/is-dom-node#readme"
     },
     {
@@ -1667,16 +1625,14 @@
         "1.1.1"
       ],
       "license": "ISC",
-      "author": "Isaac Z. Schlueter",
-      "homepage": "https://github.com/isaacs/abbrev-js#readme"
+      "author": "Isaac Z. Schlueter <i@izs.me>"
     },
     {
       "name": "accepts",
       "versions": [
         "2.0.0"
       ],
-      "license": "MIT",
-      "homepage": "https://github.com/jshttp/accepts#readme"
+      "license": "MIT"
     },
     {
       "name": "acme",
@@ -1684,7 +1640,7 @@
         "3.0.3"
       ],
       "license": "MPL-2.0",
-      "author": "AJ ONeal",
+      "author": "AJ ONeal <coolaj86@gmail.com> (https://coolaj86.com/)",
       "homepage": "https://rootprojects.org/acme/"
     },
     {
@@ -1702,8 +1658,7 @@
         "7.1.4"
       ],
       "license": "MIT",
-      "author": "Nathan Rajlich",
-      "homepage": "https://github.com/TooTallNate/proxy-agents#readme"
+      "author": "Nathan Rajlich <nathan@tootallnate.net> (http://n8.io/)"
     },
     {
       "name": "ajv",
@@ -1736,11 +1691,10 @@
       "name": "ansi-regex",
       "versions": [
         "5.0.1",
-        "6.2.2"
+        "6.3.0"
       ],
       "license": "MIT",
-      "author": "Sindre Sorhus",
-      "homepage": "https://github.com/chalk/ansi-regex#readme"
+      "author": "Sindre Sorhus"
     },
     {
       "name": "ansi-styles",
@@ -1749,8 +1703,7 @@
         "6.2.3"
       ],
       "license": "MIT",
-      "author": "Sindre Sorhus",
-      "homepage": "https://github.com/chalk/ansi-styles#readme"
+      "author": "Sindre Sorhus"
     },
     {
       "name": "any-promise",
@@ -1767,8 +1720,7 @@
         "1.0.1"
       ],
       "license": "MIT",
-      "author": "Amit Gupta",
-      "homepage": "https://github.com/NaturalIntelligence/anynum#readme"
+      "author": "Amit Gupta (https://solothought.work/)"
     },
     {
       "name": "append-field",
@@ -1776,25 +1728,28 @@
         "1.0.0"
       ],
       "license": "MIT",
-      "author": "Linus Unnebäck",
-      "homepage": "https://github.com/LinusU/node-append-field#readme"
+      "author": "Linus Unnebäck <linus@folkdatorn.se>"
     },
     {
       "name": "argparse",
       "versions": [
-        "2.0.1",
-        "3.0.0"
+        "3.0.1"
       ],
-      "license": "Python-2.0",
-      "homepage": "https://github.com/nodeca/argparse#readme"
+      "license": "PSF-2.0"
+    },
+    {
+      "name": "argparse",
+      "versions": [
+        "2.0.1"
+      ],
+      "license": "Python-2.0"
     },
     {
       "name": "asap",
       "versions": [
         "2.0.6"
       ],
-      "license": "MIT",
-      "homepage": "https://github.com/kriskowal/asap#readme"
+      "license": "MIT"
     },
     {
       "name": "asn1",
@@ -1802,8 +1757,7 @@
         "0.2.6"
       ],
       "license": "MIT",
-      "author": "Joyent",
-      "homepage": "https://github.com/joyent/node-asn1#readme"
+      "author": "Joyent (joyent.com)"
     },
     {
       "name": "asn1.js",
@@ -1820,8 +1774,7 @@
         "1.4.0"
       ],
       "license": "MIT",
-      "author": "Daniel Lytkin",
-      "homepage": "https://github.com/aikoven/assert-never#readme"
+      "author": "Daniel Lytkin <dan.lytkin@gmail.com>"
     },
     {
       "name": "astring",
@@ -1829,8 +1782,7 @@
         "1.9.0"
       ],
       "license": "MIT",
-      "author": "David Bonnet",
-      "homepage": "https://github.com/davidbonnet/astring#readme"
+      "author": "David Bonnet <david@bonnet.cc>"
     },
     {
       "name": "async",
@@ -1847,7 +1799,7 @@
         "0.4.0"
       ],
       "license": "MIT",
-      "author": "Alex Indigo",
+      "author": "Alex Indigo <iam@alexindigo.com>",
       "homepage": "https://github.com/alexindigo/asynckit#readme"
     },
     {
@@ -1856,13 +1808,12 @@
         "3.0.4"
       ],
       "license": "MIT",
-      "author": "Matthieu Bacconnier",
-      "homepage": "https://github.com/Neamar/autoload#readme"
+      "author": "Matthieu Bacconnier <matthieu.bacconnier@papiel.fr>"
     },
     {
       "name": "axios",
       "versions": [
-        "1.19.0"
+        "1.20.0"
       ],
       "license": "MIT",
       "author": "Matt Zabriskie",
@@ -1883,13 +1834,12 @@
         "3.0.0-canary-5"
       ],
       "license": "MIT",
-      "author": "Timothy Gu",
-      "homepage": "https://github.com/pugjs/babel-walk#readme"
+      "author": "Timothy Gu <timothygu99@gmail.com>"
     },
     {
       "name": "bare-events",
       "versions": [
-        "2.9.1"
+        "2.9.2"
       ],
       "license": "Apache-2.0",
       "author": "Holepunch",
@@ -1898,7 +1848,7 @@
     {
       "name": "bare-fs",
       "versions": [
-        "4.8.0"
+        "4.8.1"
       ],
       "license": "Apache-2.0",
       "author": "Holepunch",
@@ -1916,7 +1866,7 @@
     {
       "name": "bare-stream",
       "versions": [
-        "2.13.3"
+        "2.13.4"
       ],
       "license": "Apache-2.0",
       "author": "Holepunch",
@@ -1937,16 +1887,14 @@
         "3.0.1"
       ],
       "license": "MIT",
-      "author": "Brian J Brennan",
-      "homepage": "https://github.com/brianloveswords/base64url#readme"
+      "author": "Brian J Brennan"
     },
     {
       "name": "bcrypt-pbkdf",
       "versions": [
         "1.0.2"
       ],
-      "license": "BSD-3-Clause",
-      "homepage": "https://github.com/joyent/node-bcrypt-pbkdf#readme"
+      "license": "BSD-3-Clause"
     },
     {
       "name": "bcryptjs",
@@ -1954,8 +1902,7 @@
         "2.4.3"
       ],
       "license": "MIT",
-      "author": "Daniel Wirtz",
-      "homepage": "https://github.com/dcodeIO/bcrypt.js#readme"
+      "author": "Daniel Wirtz <dcode@dcode.io>"
     },
     {
       "name": "bcryptjs-then",
@@ -1963,17 +1910,7 @@
         "1.0.1"
       ],
       "license": "MIT",
-      "author": "Andy Nguyen",
-      "homepage": "https://github.com/kurigohan/bcryptjs-then#readme"
-    },
-    {
-      "name": "better-sqlite3",
-      "versions": [
-        "13.0.3"
-      ],
-      "license": "MIT",
-      "author": "Joshua Wise",
-      "homepage": "http://github.com/WiseLibs/better-sqlite3"
+      "author": "Andy Nguyen <andyn1291@gmail.com>"
     },
     {
       "name": "bidi-js",
@@ -1981,8 +1918,7 @@
         "1.0.3"
       ],
       "license": "MIT",
-      "author": "Jason Johnston",
-      "homepage": "https://github.com/lojjic/bidi-js#readme"
+      "author": "Jason Johnston"
     },
     {
       "name": "bintrees",
@@ -1990,8 +1926,7 @@
         "1.0.2"
       ],
       "license": "MIT",
-      "author": "Vadim Graboys",
-      "homepage": "https://github.com/vadimg/js_bintrees#readme"
+      "author": "Vadim Graboys <dimva13@gmail.com>"
     },
     {
       "name": "bn.js",
@@ -1999,7 +1934,7 @@
         "4.12.5"
       ],
       "license": "MIT",
-      "author": "Fedor Indutny",
+      "author": "Fedor Indutny <fedor@indutny.com>",
       "homepage": "https://github.com/indutny/bn.js"
     },
     {
@@ -2007,8 +1942,7 @@
       "versions": [
         "2.3.0"
       ],
-      "license": "MIT",
-      "homepage": "https://github.com/expressjs/body-parser#readme"
+      "license": "MIT"
     },
     {
       "name": "boolbase",
@@ -2016,7 +1950,7 @@
         "1.0.0"
       ],
       "license": "ISC",
-      "author": "Felix Boehm",
+      "author": "Felix Boehm <me@feedic.com>",
       "homepage": "https://github.com/fb55/boolbase"
     },
     {
@@ -2025,7 +1959,7 @@
         "2.14.1"
       ],
       "license": "MIT",
-      "author": "Dustin Diaz",
+      "author": "Dustin Diaz <dustin@dustindiaz.com> (http://dustindiaz.com)",
       "homepage": "https://github.com/bowser-js/bowser"
     },
     {
@@ -2034,8 +1968,7 @@
         "7.3.2"
       ],
       "license": "Apache-2.0",
-      "author": "The MongoDB NodeJS Team",
-      "homepage": "https://github.com/mongodb/js-bson#readme"
+      "author": "The MongoDB NodeJS Team"
     },
     {
       "name": "buffer-equal-constant-time",
@@ -2043,16 +1976,14 @@
         "1.0.1"
       ],
       "license": "BSD-3-Clause",
-      "author": "GoInstant Inc., a salesforce.com company",
-      "homepage": "https://github.com/goinstant/buffer-equal-constant-time#readme"
+      "author": "GoInstant Inc., a salesforce.com company"
     },
     {
       "name": "buffer-from",
       "versions": [
         "1.1.2"
       ],
-      "license": "MIT",
-      "homepage": "https://github.com/LinusU/buffer-from#readme"
+      "license": "MIT"
     },
     {
       "name": "buildcheck",
@@ -2060,8 +1991,7 @@
         "0.0.7"
       ],
       "license": "MIT",
-      "author": "Brian White",
-      "homepage": "https://github.com/mscdex/buildcheck#readme"
+      "author": "Brian White <mscdex@mscdex.net>"
     },
     {
       "name": "busboy",
@@ -2069,8 +1999,7 @@
         "1.6.0"
       ],
       "license": "MIT",
-      "author": "Brian White",
-      "homepage": "https://github.com/mscdex/busboy#readme"
+      "author": "Brian White <mscdex@mscdex.net>"
     },
     {
       "name": "bytes",
@@ -2078,8 +2007,7 @@
         "3.1.2"
       ],
       "license": "MIT",
-      "author": "TJ Holowaychuk",
-      "homepage": "https://github.com/visionmedia/bytes.js#readme"
+      "author": "TJ Holowaychuk <tj@vision-media.ca> (http://tjholowaychuk.com)"
     },
     {
       "name": "call-bind-apply-helpers",
@@ -2087,7 +2015,7 @@
         "1.0.2"
       ],
       "license": "MIT",
-      "author": "Jordan Harband",
+      "author": "Jordan Harband <ljharb@gmail.com>",
       "homepage": "https://github.com/ljharb/call-bind-apply-helpers#readme"
     },
     {
@@ -2096,7 +2024,7 @@
         "1.0.4"
       ],
       "license": "MIT",
-      "author": "Jordan Harband",
+      "author": "Jordan Harband <ljharb@gmail.com>",
       "homepage": "https://github.com/ljharb/call-bound#readme"
     },
     {
@@ -2105,16 +2033,14 @@
         "5.3.1"
       ],
       "license": "MIT",
-      "author": "Sindre Sorhus",
-      "homepage": "https://github.com/sindresorhus/camelcase#readme"
+      "author": "Sindre Sorhus"
     },
     {
       "name": "chalk",
       "versions": [
         "6.0.0"
       ],
-      "license": "MIT",
-      "homepage": "https://github.com/chalk/chalk#readme"
+      "license": "MIT"
     },
     {
       "name": "character-parser",
@@ -2122,8 +2048,7 @@
         "2.2.0"
       ],
       "license": "MIT",
-      "author": "ForbesLindesay",
-      "homepage": "https://github.com/ForbesLindesay/character-parser#readme"
+      "author": "ForbesLindesay"
     },
     {
       "name": "cheerio",
@@ -2131,7 +2056,7 @@
         "1.2.0"
       ],
       "license": "MIT",
-      "author": "Matt Mueller",
+      "author": "Matt Mueller <mattmuelle@gmail.com>",
       "homepage": "https://cheerio.js.org/"
     },
     {
@@ -2140,8 +2065,7 @@
         "2.1.0"
       ],
       "license": "BSD-2-Clause",
-      "author": "Felix Boehm",
-      "homepage": "https://github.com/cheeriojs/cheerio-select#readme"
+      "author": "Felix Boehm <me@feedic.com>"
     },
     {
       "name": "chokidar",
@@ -2149,7 +2073,7 @@
         "5.0.0"
       ],
       "license": "MIT",
-      "author": "Paul Miller",
+      "author": "Paul Miller (https://paulmillr.com)",
       "homepage": "https://github.com/paulmillr/chokidar"
     },
     {
@@ -2157,13 +2081,12 @@
       "versions": [
         "0.2.0"
       ],
-      "license": "MIT",
-      "homepage": "https://github.com/electron/node-chromium-pickle-js#readme"
+      "license": "MIT"
     },
     {
       "name": "cjs-module-lexer",
       "versions": [
-        "2.2.0"
+        "2.2.1"
       ],
       "license": "MIT",
       "author": "Guy Bedford",
@@ -2175,7 +2098,7 @@
         "5.3.3"
       ],
       "license": "MIT",
-      "author": "Jakub Pawlowicz",
+      "author": "Jakub Pawlowicz <contact@jakubpawlowicz.com>",
       "homepage": "https://github.com/clean-css/clean-css"
     },
     {
@@ -2185,8 +2108,7 @@
         "9.0.1"
       ],
       "license": "ISC",
-      "author": "Ben Coe",
-      "homepage": "https://github.com/yargs/cliui#readme"
+      "author": "Ben Coe <ben@npmjs.com>"
     },
     {
       "name": "clone",
@@ -2194,8 +2116,7 @@
         "2.1.2"
       ],
       "license": "MIT",
-      "author": "Paul Vorbach",
-      "homepage": "https://github.com/pvorb/node-clone#readme"
+      "author": "Paul Vorbach <paul@vorba.ch> (http://paul.vorba.ch/)"
     },
     {
       "name": "codemirror",
@@ -2203,16 +2124,14 @@
         "6.0.2"
       ],
       "license": "MIT",
-      "author": "Marijn Haverbeke",
-      "homepage": "https://github.com/codemirror/basic-setup#readme"
+      "author": "Marijn Haverbeke"
     },
     {
       "name": "color",
       "versions": [
         "5.0.3"
       ],
-      "license": "MIT",
-      "homepage": "https://github.com/Qix-/color#readme"
+      "license": "MIT"
     },
     {
       "name": "color-convert",
@@ -2221,8 +2140,7 @@
         "3.1.3"
       ],
       "license": "MIT",
-      "author": "Josh Junon",
-      "homepage": "https://github.com/Qix-/color-convert#readme"
+      "author": "Heather Arthur <fayearthur@gmail.com>"
     },
     {
       "name": "color-name",
@@ -2231,7 +2149,7 @@
         "2.1.1"
       ],
       "license": "MIT",
-      "author": "Dmitry Iv",
+      "author": "DY <dfcreative@gmail.com>",
       "homepage": "https://github.com/colorjs/color-name"
     },
     {
@@ -2240,8 +2158,7 @@
         "2.1.4"
       ],
       "license": "MIT",
-      "author": "Josh Junon",
-      "homepage": "https://github.com/Qix-/color-string#readme"
+      "author": "Josh Junon (https://github.com/qix-)"
     },
     {
       "name": "colorette",
@@ -2249,8 +2166,7 @@
         "2.0.19"
       ],
       "license": "MIT",
-      "author": "Jorge Bucaran",
-      "homepage": "https://github.com/jorgebucaran/colorette#readme"
+      "author": "Jorge Bucaran"
     },
     {
       "name": "combined-stream",
@@ -2258,7 +2174,7 @@
         "1.0.8"
       ],
       "license": "MIT",
-      "author": "Felix Geisendörfer",
+      "author": "Felix Geisendörfer <felix@debuggable.com> (http://debuggable.com/)",
       "homepage": "https://github.com/felixge/node-combined-stream"
     },
     {
@@ -2277,24 +2193,21 @@
         "8.3.0"
       ],
       "license": "MIT",
-      "author": "TJ Holowaychuk",
-      "homepage": "https://github.com/tj/commander.js#readme"
+      "author": "TJ Holowaychuk <tj@vision-media.ca>"
     },
     {
       "name": "compressible",
       "versions": [
         "2.0.18"
       ],
-      "license": "MIT",
-      "homepage": "https://github.com/jshttp/compressible#readme"
+      "license": "MIT"
     },
     {
       "name": "compression",
       "versions": [
         "1.8.1"
       ],
-      "license": "MIT",
-      "homepage": "https://github.com/expressjs/compression#readme"
+      "license": "MIT"
     },
     {
       "name": "concat-stream",
@@ -2302,8 +2215,7 @@
         "2.0.0"
       ],
       "license": "MIT",
-      "author": "Max Ogden",
-      "homepage": "https://github.com/maxogden/concat-stream#readme"
+      "author": "Max Ogden <max@maxogden.com>"
     },
     {
       "name": "connect-session-knex",
@@ -2319,8 +2231,7 @@
         "4.0.1"
       ],
       "license": "MIT",
-      "author": "ForbesLindesay",
-      "homepage": "https://github.com/ForbesLindesay/constantinople#readme"
+      "author": "ForbesLindesay"
     },
     {
       "name": "content-disposition",
@@ -2328,18 +2239,16 @@
         "1.1.0"
       ],
       "license": "MIT",
-      "author": "Douglas Christopher Wilson",
-      "homepage": "https://github.com/jshttp/content-disposition#readme"
+      "author": "Douglas Christopher Wilson <doug@somethingdoug.com>"
     },
     {
       "name": "content-type",
       "versions": [
         "1.0.5",
-        "2.0.0"
+        "2.1.0"
       ],
       "license": "MIT",
-      "author": "Douglas Christopher Wilson",
-      "homepage": "https://github.com/jshttp/content-type#readme"
+      "author": "Douglas Christopher Wilson <doug@somethingdoug.com>"
     },
     {
       "name": "cookie",
@@ -2348,8 +2257,7 @@
         "2.0.1"
       ],
       "license": "MIT",
-      "author": "Roman Shtylman",
-      "homepage": "https://github.com/jshttp/cookie#readme"
+      "author": "Roman Shtylman <shtylman@gmail.com>"
     },
     {
       "name": "cookie-parser",
@@ -2357,8 +2265,7 @@
         "1.4.7"
       ],
       "license": "MIT",
-      "author": "TJ Holowaychuk",
-      "homepage": "https://github.com/expressjs/cookie-parser#readme"
+      "author": "TJ Holowaychuk <tj@vision-media.ca> (http://tjholowaychuk.com)"
     },
     {
       "name": "cookie-signature",
@@ -2368,8 +2275,7 @@
         "1.2.2"
       ],
       "license": "MIT",
-      "author": "TJ Holowaychuk",
-      "homepage": "https://github.com/visionmedia/node-cookie-signature#readme"
+      "author": "TJ Holowaychuk <tj@learnboost.com>"
     },
     {
       "name": "cors",
@@ -2377,8 +2283,7 @@
         "2.8.6"
       ],
       "license": "MIT",
-      "author": "Troy Goode",
-      "homepage": "https://github.com/expressjs/cors#readme"
+      "author": "Troy Goode <troygoode@gmail.com> (https://github.com/troygoode/)"
     },
     {
       "name": "cpu-features",
@@ -2386,8 +2291,7 @@
         "0.0.10"
       ],
       "license": "MIT",
-      "author": "Brian White",
-      "homepage": "https://github.com/mscdex/cpu-features#readme"
+      "author": "Brian White <mscdex@mscdex.net>"
     },
     {
       "name": "crelt",
@@ -2395,7 +2299,7 @@
         "1.0.7"
       ],
       "license": "MIT",
-      "author": "Marijn Haverbeke",
+      "author": "Marijn Haverbeke <marijn@haverbeke.berlin>",
       "homepage": "https://code.haverbeke.berlin/marijn/crelt"
     },
     {
@@ -2404,8 +2308,7 @@
         "1.0.1"
       ],
       "license": "MIT",
-      "author": "Arda TANRIKULU",
-      "homepage": "https://github.com/ardatan/graphql-tools#readme"
+      "author": "Arda TANRIKULU <ardatanrikulu@gmail.com>"
     },
     {
       "name": "css-select",
@@ -2413,8 +2316,7 @@
         "5.2.2"
       ],
       "license": "BSD-2-Clause",
-      "author": "Felix Boehm",
-      "homepage": "https://github.com/fb55/css-select#readme"
+      "author": "Felix Boehm <me@feedic.com>"
     },
     {
       "name": "css-tree",
@@ -2422,8 +2324,7 @@
         "3.2.1"
       ],
       "license": "MIT",
-      "author": "Roman Dvornov",
-      "homepage": "https://github.com/csstree/csstree#readme"
+      "author": "Roman Dvornov <rdvornov@gmail.com> (https://github.com/lahmatiy)"
     },
     {
       "name": "css-what",
@@ -2431,8 +2332,7 @@
         "6.2.2"
       ],
       "license": "BSD-2-Clause",
-      "author": "Felix Böhm",
-      "homepage": "https://github.com/fb55/css-what#readme"
+      "author": "Felix Böhm <me@feedic.com> (http://feedic.com)"
     },
     {
       "name": "cuint",
@@ -2458,8 +2358,7 @@
         "7.0.0"
       ],
       "license": "MIT",
-      "author": "Domenic Denicola",
-      "homepage": "https://github.com/jsdom/data-urls#readme"
+      "author": "Domenic Denicola <d@domenic.me> (https://domenic.me/)"
     },
     {
       "name": "db-errors",
@@ -2478,8 +2377,7 @@
         "4.4.3"
       ],
       "license": "MIT",
-      "author": "Josh Junon",
-      "homepage": "https://github.com/debug-js/debug#readme"
+      "author": "TJ Holowaychuk <tj@vision-media.ca>"
     },
     {
       "name": "decamelize",
@@ -2487,8 +2385,7 @@
         "1.2.0"
       ],
       "license": "MIT",
-      "author": "Sindre Sorhus",
-      "homepage": "https://github.com/sindresorhus/decamelize#readme"
+      "author": "Sindre Sorhus"
     },
     {
       "name": "decimal.js",
@@ -2496,8 +2393,7 @@
         "10.6.0"
       ],
       "license": "MIT",
-      "author": "Michael Mclaughlin",
-      "homepage": "https://github.com/MikeMcl/decimal.js#readme"
+      "author": "Michael Mclaughlin"
     },
     {
       "name": "delayed-stream",
@@ -2505,7 +2401,7 @@
         "1.0.0"
       ],
       "license": "MIT",
-      "author": "Felix Geisendörfer",
+      "author": "Felix Geisendörfer <felix@debuggable.com> (http://debuggable.com/)",
       "homepage": "https://github.com/felixge/node-delayed-stream"
     },
     {
@@ -2514,8 +2410,7 @@
         "2.0.0"
       ],
       "license": "MIT",
-      "author": "Douglas Christopher Wilson",
-      "homepage": "https://github.com/dougwilson/nodejs-depd#readme"
+      "author": "Douglas Christopher Wilson <doug@somethingdoug.com>"
     },
     {
       "name": "dependency-graph",
@@ -2523,8 +2418,7 @@
         "1.0.0"
       ],
       "license": "MIT",
-      "author": "Jim Riecken",
-      "homepage": "https://github.com/jriecken/dependency-graph#readme"
+      "author": "Jim Riecken <jriecken@gmail.com>"
     },
     {
       "name": "diff",
@@ -2532,8 +2426,7 @@
         "8.0.4",
         "9.0.0"
       ],
-      "license": "BSD-3-Clause",
-      "homepage": "https://github.com/kpdecker/jsdiff#readme"
+      "license": "BSD-3-Clause"
     },
     {
       "name": "diff2html",
@@ -2567,8 +2460,7 @@
         "1.1.0"
       ],
       "license": "MIT",
-      "author": "ForbesLindesay",
-      "homepage": "https://github.com/pugjs/doctypes#readme"
+      "author": "ForbesLindesay"
     },
     {
       "name": "dom-serializer",
@@ -2576,8 +2468,7 @@
         "2.0.0"
       ],
       "license": "MIT",
-      "author": "Felix Boehm",
-      "homepage": "https://github.com/cheeriojs/dom-serializer#readme"
+      "author": "Felix Boehm <me@feedic.com>"
     },
     {
       "name": "domelementtype",
@@ -2586,8 +2477,7 @@
         "3.0.0"
       ],
       "license": "BSD-2-Clause",
-      "author": "Felix Boehm",
-      "homepage": "https://github.com/fb55/domelementtype#readme"
+      "author": "Felix Boehm <me@feedic.com>"
     },
     {
       "name": "domhandler",
@@ -2596,8 +2486,7 @@
         "6.0.1"
       ],
       "license": "BSD-2-Clause",
-      "author": "Felix Boehm",
-      "homepage": "https://github.com/fb55/domhandler#readme"
+      "author": "Felix Boehm <me@feedic.com>"
     },
     {
       "name": "dompurify",
@@ -2605,7 +2494,7 @@
         "3.4.13"
       ],
       "license": "(MPL-2.0 OR Apache-2.0)",
-      "author": "Dr.-Ing. Mario Heiderich, Cure53",
+      "author": "Dr.-Ing. Mario Heiderich, Cure53 <mario@cure53.de> (https://cure53.de/)",
       "homepage": "https://github.com/cure53/DOMPurify"
     },
     {
@@ -2614,8 +2503,7 @@
         "3.2.2"
       ],
       "license": "BSD-2-Clause",
-      "author": "Felix Boehm",
-      "homepage": "https://github.com/fb55/domutils#readme"
+      "author": "Felix Boehm <me@feedic.com>"
     },
     {
       "name": "dotize",
@@ -2623,7 +2511,7 @@
         "0.6.0"
       ],
       "license": "Apache-2.0",
-      "author": "Suleyman Vardar",
+      "author": "Suleyman Vardar <admin@vardars.com> (http://vardars.com)",
       "homepage": "https://github.com/vardars/dotize"
     },
     {
@@ -2632,7 +2520,7 @@
         "1.0.1"
       ],
       "license": "MIT",
-      "author": "Jordan Harband",
+      "author": "Jordan Harband <ljharb@gmail.com>",
       "homepage": "https://github.com/es-shims/dunder-proto#readme"
     },
     {
@@ -2650,8 +2538,7 @@
         "1.1.1"
       ],
       "license": "MIT",
-      "author": "Jonathan Ong",
-      "homepage": "https://github.com/jonathanong/ee-first#readme"
+      "author": "Jonathan Ong"
     },
     {
       "name": "emoji-regex",
@@ -2669,25 +2556,14 @@
         "2.0.0"
       ],
       "license": "MIT",
-      "author": "Arnout Kazemier",
-      "homepage": "https://github.com/3rd-Eden/enabled#readme"
+      "author": "Arnout Kazemier"
     },
     {
       "name": "encodeurl",
       "versions": [
         "2.0.0"
       ],
-      "license": "MIT",
-      "homepage": "https://github.com/pillarjs/encodeurl#readme"
-    },
-    {
-      "name": "encoding",
-      "versions": [
-        "0.1.13"
-      ],
-      "license": "MIT",
-      "author": "Andris Reinman",
-      "homepage": "https://github.com/andris9/encoding#readme"
+      "license": "MIT"
     },
     {
       "name": "encoding-sniffer",
@@ -2695,8 +2571,7 @@
         "1.0.2"
       ],
       "license": "MIT",
-      "author": "Felix Boehm",
-      "homepage": "https://github.com/fb55/encoding-sniffer#readme"
+      "author": "Felix Boehm <me@feedic.com>"
     },
     {
       "name": "end-of-stream",
@@ -2704,7 +2579,7 @@
         "1.4.5"
       ],
       "license": "MIT",
-      "author": "Mathias Buus",
+      "author": "Mathias Buus <mathiasbuus@gmail.com>",
       "homepage": "https://github.com/mafintosh/end-of-stream"
     },
     {
@@ -2716,8 +2591,7 @@
         "8.0.0"
       ],
       "license": "BSD-2-Clause",
-      "author": "Felix Boehm",
-      "homepage": "https://github.com/fb55/entities#readme"
+      "author": "Felix Boehm <me@feedic.com>"
     },
     {
       "name": "es-define-property",
@@ -2725,7 +2599,7 @@
         "1.0.1"
       ],
       "license": "MIT",
-      "author": "Jordan Harband",
+      "author": "Jordan Harband <ljharb@gmail.com>",
       "homepage": "https://github.com/ljharb/es-define-property#readme"
     },
     {
@@ -2734,13 +2608,13 @@
         "1.3.0"
       ],
       "license": "MIT",
-      "author": "Jordan Harband",
+      "author": "Jordan Harband <ljharb@gmail.com>",
       "homepage": "https://github.com/ljharb/es-errors#readme"
     },
     {
       "name": "es-module-lexer",
       "versions": [
-        "2.3.1"
+        "2.3.2"
       ],
       "license": "MIT",
       "author": "Guy Bedford",
@@ -2752,7 +2626,7 @@
         "1.1.2"
       ],
       "license": "MIT",
-      "author": "Jordan Harband",
+      "author": "Jordan Harband <ljharb@gmail.com>",
       "homepage": "https://github.com/ljharb/es-object-atoms#readme"
     },
     {
@@ -2761,7 +2635,7 @@
         "2.1.0"
       ],
       "license": "MIT",
-      "author": "Jordan Harband",
+      "author": "Jordan Harband <ljharb@gmail.com>",
       "homepage": "https://github.com/es-shims/es-set-tostringtag#readme"
     },
     {
@@ -2770,16 +2644,14 @@
         "3.2.0"
       ],
       "license": "MIT",
-      "author": "Luke Edwards",
-      "homepage": "https://github.com/lukeed/escalade#readme"
+      "author": "Luke Edwards"
     },
     {
       "name": "escape-html",
       "versions": [
         "1.0.3"
       ],
-      "license": "MIT",
-      "homepage": "https://github.com/component/escape-html#readme"
+      "license": "MIT"
     },
     {
       "name": "esm",
@@ -2787,8 +2659,7 @@
         "3.2.25"
       ],
       "license": "MIT",
-      "author": "John-David Dalton",
-      "homepage": "https://github.com/standard-things/esm#readme"
+      "author": "John-David Dalton <john.david.dalton@gmail.com>"
     },
     {
       "name": "esquery",
@@ -2796,7 +2667,7 @@
         "1.7.0"
       ],
       "license": "BSD-3-Clause",
-      "author": "Joel Feenstra",
+      "author": "Joel Feenstra <jrfeenst+esquery@gmail.com>",
       "homepage": "https://github.com/estools/esquery/"
     },
     {
@@ -2812,8 +2683,7 @@
       "versions": [
         "1.8.1"
       ],
-      "license": "MIT",
-      "homepage": "https://github.com/jshttp/etag#readme"
+      "license": "MIT"
     },
     {
       "name": "eventemitter2",
@@ -2821,8 +2691,7 @@
         "6.4.9"
       ],
       "license": "MIT",
-      "author": "hij1nx",
-      "homepage": "https://github.com/hij1nx/EventEmitter2#readme"
+      "author": "hij1nx <paolo@async.ly> http://twitter.com/hij1nx"
     },
     {
       "name": "events",
@@ -2830,8 +2699,7 @@
         "3.3.0"
       ],
       "license": "MIT",
-      "author": "Irakli Gozalishvili",
-      "homepage": "https://github.com/Gozala/events#readme"
+      "author": "Irakli Gozalishvili <rfobic@gmail.com> (http://jeditoolkit.com)"
     },
     {
       "name": "events-universal",
@@ -2848,7 +2716,7 @@
         "5.2.1"
       ],
       "license": "MIT",
-      "author": "TJ Holowaychuk",
+      "author": "TJ Holowaychuk <tj@vision-media.ca>",
       "homepage": "https://expressjs.com/"
     },
     {
@@ -2857,8 +2725,7 @@
         "1.19.0"
       ],
       "license": "MIT",
-      "author": "TJ Holowaychuk",
-      "homepage": "https://github.com/expressjs/session#readme"
+      "author": "TJ Holowaychuk <tj@vision-media.ca> (http://tjholowaychuk.com)"
     },
     {
       "name": "fast-deep-equal",
@@ -2875,26 +2742,25 @@
         "1.3.2"
       ],
       "license": "MIT",
-      "author": "Mathias Buus",
+      "author": "Mathias Buus (@mafintosh)",
       "homepage": "https://github.com/mafintosh/fast-fifo"
     },
     {
       "name": "fast-uri",
       "versions": [
-        "3.1.5"
+        "3.1.6"
       ],
       "license": "BSD-3-Clause",
-      "author": "Vincent Le Goff",
+      "author": "Vincent Le Goff <vince.legoff@gmail.com> (https://github.com/zekth)",
       "homepage": "https://github.com/fastify/fast-uri"
     },
     {
       "name": "fast-xml-builder",
       "versions": [
-        "1.3.0"
+        "1.3.1"
       ],
       "license": "MIT",
-      "author": "Amit Gupta",
-      "homepage": "https://github.com/NaturalIntelligence/fast-xml-builder#readme"
+      "author": "Amit Gupta (https://solothought.com)"
     },
     {
       "name": "fast-xml-parser",
@@ -2902,8 +2768,7 @@
         "5.10.1"
       ],
       "license": "MIT",
-      "author": "Amit Gupta",
-      "homepage": "https://github.com/NaturalIntelligence/fast-xml-parser#readme"
+      "author": "Amit Gupta (https://solothought.com)"
     },
     {
       "name": "fecha",
@@ -2920,7 +2785,7 @@
         "11.0.22"
       ],
       "license": "BSD-3-Clause",
-      "author": "Jason Mulligan",
+      "author": "Jason Mulligan <jason.mulligan@avoidwork.com>",
       "homepage": "https://filesizejs.com"
     },
     {
@@ -2929,8 +2794,7 @@
         "2.1.1"
       ],
       "license": "MIT",
-      "author": "Douglas Christopher Wilson",
-      "homepage": "https://github.com/pillarjs/finalhandler#readme"
+      "author": "Douglas Christopher Wilson <doug@somethingdoug.com>"
     },
     {
       "name": "find-up",
@@ -2938,8 +2802,7 @@
         "4.1.0"
       ],
       "license": "MIT",
-      "author": "Sindre Sorhus",
-      "homepage": "https://github.com/sindresorhus/find-up#readme"
+      "author": "Sindre Sorhus"
     },
     {
       "name": "fn.name",
@@ -2956,7 +2819,7 @@
         "1.16.0"
       ],
       "license": "MIT",
-      "author": "Ruben Verborgh",
+      "author": "Ruben Verborgh <ruben@verborgh.org> (https://ruben.verborgh.org/)",
       "homepage": "https://github.com/follow-redirects/follow-redirects"
     },
     {
@@ -2965,16 +2828,14 @@
         "4.0.6"
       ],
       "license": "MIT",
-      "author": "Felix Geisendörfer",
-      "homepage": "https://github.com/form-data/form-data#readme"
+      "author": "Felix Geisendörfer <felix@debuggable.com> (http://debuggable.com/)"
     },
     {
       "name": "forwarded",
       "versions": [
         "0.2.0"
       ],
-      "license": "MIT",
-      "homepage": "https://github.com/jshttp/forwarded#readme"
+      "license": "MIT"
     },
     {
       "name": "fresh",
@@ -2983,8 +2844,7 @@
         "2.0.0"
       ],
       "license": "MIT",
-      "author": "TJ Holowaychuk",
-      "homepage": "https://github.com/jshttp/fresh#readme"
+      "author": "TJ Holowaychuk <tj@vision-media.ca> (http://tjholowaychuk.com)"
     },
     {
       "name": "fs-extra",
@@ -2993,7 +2853,7 @@
         "8.1.0"
       ],
       "license": "MIT",
-      "author": "JP Richardson",
+      "author": "JP Richardson <jprichardson@gmail.com>",
       "homepage": "https://github.com/jprichardson/node-fs-extra"
     },
     {
@@ -3002,7 +2862,7 @@
         "1.1.2"
       ],
       "license": "MIT",
-      "author": "Raynos",
+      "author": "Raynos <raynos2@gmail.com>",
       "homepage": "https://github.com/Raynos/function-bind"
     },
     {
@@ -3020,8 +2880,7 @@
         "1.6.0"
       ],
       "license": "MIT",
-      "author": "Sindre Sorhus",
-      "homepage": "https://github.com/sindresorhus/get-east-asian-width#readme"
+      "author": "Sindre Sorhus"
     },
     {
       "name": "get-intrinsic",
@@ -3029,7 +2888,7 @@
         "1.3.0"
       ],
       "license": "MIT",
-      "author": "Jordan Harband",
+      "author": "Jordan Harband <ljharb@gmail.com>",
       "homepage": "https://github.com/ljharb/get-intrinsic#readme"
     },
     {
@@ -3047,7 +2906,7 @@
         "1.0.1"
       ],
       "license": "MIT",
-      "author": "Jordan Harband",
+      "author": "Jordan Harband <ljharb@gmail.com>",
       "homepage": "https://github.com/ljharb/get-proto#readme"
     },
     {
@@ -3056,8 +2915,7 @@
         "2.3.0"
       ],
       "license": "MIT",
-      "author": "Jorge Bucaran",
-      "homepage": "https://github.com/jorgebucaran/getopts#readme"
+      "author": "Jorge Bucaran"
     },
     {
       "name": "getos",
@@ -3074,7 +2932,7 @@
         "1.2.0"
       ],
       "license": "MIT",
-      "author": "Jordan Harband",
+      "author": "Jordan Harband <ljharb@gmail.com>",
       "homepage": "https://github.com/ljharb/gopd#readme"
     },
     {
@@ -3082,8 +2940,7 @@
       "versions": [
         "4.2.11"
       ],
-      "license": "ISC",
-      "homepage": "https://github.com/isaacs/node-graceful-fs#readme"
+      "license": "ISC"
     },
     {
       "name": "graphql",
@@ -3098,8 +2955,7 @@
       "versions": [
         "3.0.0"
       ],
-      "license": "MIT",
-      "homepage": "https://github.com/apollographql/graphql-subscriptions#readme"
+      "license": "MIT"
     },
     {
       "name": "graphql-ws",
@@ -3107,7 +2963,7 @@
         "6.2.1"
       ],
       "license": "MIT",
-      "author": "Denis Badurina",
+      "author": "Denis Badurina <badurinadenis@gmail.com>",
       "homepage": "https://the-guild.dev/graphql/ws"
     },
     {
@@ -3116,8 +2972,7 @@
         "5.21.2"
       ],
       "license": "MIT",
-      "author": "Saihajpreet Singh",
-      "homepage": "https://github.com/graphql-hive/graphql-yoga#readme"
+      "author": "Saihajpreet Singh <saihajpreet.singh@gmail.com> (https://saihaj.dev/)"
     },
     {
       "name": "has-symbols",
@@ -3143,7 +2998,7 @@
         "2.0.4"
       ],
       "license": "MIT",
-      "author": "Jordan Harband",
+      "author": "Jordan Harband <ljharb@gmail.com>",
       "homepage": "https://github.com/inspect-js/hasOwn#readme"
     },
     {
@@ -3162,16 +3017,16 @@
         "11.12.0"
       ],
       "license": "BSD-3-Clause",
-      "author": "Josh Goebel",
+      "author": "Josh Goebel <hello@joshgoebel.com>",
       "homepage": "https://highlightjs.org/"
     },
     {
       "name": "hono",
       "versions": [
-        "4.13.2"
+        "4.13.5"
       ],
       "license": "MIT",
-      "author": "Yusuke Wada",
+      "author": "Yusuke Wada <yusuke@kamawada.com> (https://github.com/yusukebe)",
       "homepage": "https://hono.dev"
     },
     {
@@ -3189,8 +3044,7 @@
         "6.0.0"
       ],
       "license": "MIT",
-      "author": "Domenic Denicola",
-      "homepage": "https://github.com/jsdom/html-encoding-sniffer#readme"
+      "author": "Domenic Denicola <d@domenic.me> (https://domenic.me/)"
     },
     {
       "name": "htmlparser2",
@@ -3198,8 +3052,7 @@
         "10.1.0"
       ],
       "license": "MIT",
-      "author": "Felix Boehm",
-      "homepage": "https://github.com/fb55/htmlparser2#readme"
+      "author": "Felix Boehm <me@feedic.com>"
     },
     {
       "name": "http-errors",
@@ -3207,8 +3060,7 @@
         "2.0.1"
       ],
       "license": "MIT",
-      "author": "Jonathan Ong",
-      "homepage": "https://github.com/jshttp/http-errors#readme"
+      "author": "Jonathan Ong <me@jongleberry.com> (http://jongleberry.com)"
     },
     {
       "name": "http-proxy-agent",
@@ -3216,8 +3068,7 @@
         "7.0.2"
       ],
       "license": "MIT",
-      "author": "Nathan Rajlich",
-      "homepage": "https://github.com/TooTallNate/proxy-agents#readme"
+      "author": "Nathan Rajlich <nathan@tootallnate.net> (http://n8.io/)"
     },
     {
       "name": "https-proxy-agent",
@@ -3226,8 +3077,7 @@
         "7.0.6"
       ],
       "license": "MIT",
-      "author": "Nathan Rajlich",
-      "homepage": "https://github.com/TooTallNate/proxy-agents#readme"
+      "author": "Nathan Rajlich <nathan@tootallnate.net> (http://n8.io/)"
     },
     {
       "name": "i18next",
@@ -3235,7 +3085,7 @@
         "26.3.6"
       ],
       "license": "MIT",
-      "author": "Jan Mühlemann",
+      "author": "Jan Mühlemann <jan.muehlemann@gmail.com> (https://github.com/jamuhl)",
       "homepage": "https://www.i18next.com"
     },
     {
@@ -3257,11 +3107,10 @@
     {
       "name": "iconv-lite",
       "versions": [
-        "0.6.3",
         "0.7.3"
       ],
       "license": "MIT",
-      "author": "Alexander Shtuchkin",
+      "author": "Alexander Shtuchkin <ashtuchkin@gmail.com>",
       "homepage": "https://github.com/pillarjs/iconv-lite"
     },
     {
@@ -3270,7 +3119,7 @@
         "3.3.3"
       ],
       "license": "Apache-2.0",
-      "author": "Bryan English",
+      "author": "Bryan English <bryan.english@datadoghq.com>",
       "homepage": "https://github.com/nodejs/import-in-the-middle#readme"
     },
     {
@@ -3278,8 +3127,7 @@
       "versions": [
         "2.0.4"
       ],
-      "license": "ISC",
-      "homepage": "https://github.com/isaacs/inherits#readme"
+      "license": "ISC"
     },
     {
       "name": "interpret",
@@ -3287,8 +3135,7 @@
         "2.2.0"
       ],
       "license": "MIT",
-      "author": "Gulp Team",
-      "homepage": "https://github.com/gulpjs/interpret#readme"
+      "author": "Gulp Team <team@gulpjs.com> (http://gulpjs.com/)"
     },
     {
       "name": "ip-address",
@@ -3296,8 +3143,7 @@
         "10.3.1"
       ],
       "license": "MIT",
-      "author": "Beau Gunderson",
-      "homepage": "https://github.com/beaugunderson/ip-address#readme"
+      "author": "Beau Gunderson <beau@beaugunderson.com> (https://beaugunderson.com/)"
     },
     {
       "name": "ipaddr.js",
@@ -3305,8 +3151,7 @@
         "1.9.1"
       ],
       "license": "MIT",
-      "author": "whitequark",
-      "homepage": "https://github.com/whitequark/ipaddr.js#readme"
+      "author": "whitequark <whitequark@whitequark.org>"
     },
     {
       "name": "is-core-module",
@@ -3314,7 +3159,7 @@
         "2.16.2"
       ],
       "license": "MIT",
-      "author": "Jordan Harband",
+      "author": "Jordan Harband <ljharb@gmail.com>",
       "homepage": "https://github.com/inspect-js/is-core-module"
     },
     {
@@ -3323,8 +3168,7 @@
         "4.0.0"
       ],
       "license": "MIT",
-      "author": "Timothy Gu",
-      "homepage": "https://github.com/pugjs/is-expression#readme"
+      "author": "Timothy Gu <timothygu99@gmail.com>"
     },
     {
       "name": "is-fullwidth-code-point",
@@ -3332,8 +3176,7 @@
         "3.0.0"
       ],
       "license": "MIT",
-      "author": "Sindre Sorhus",
-      "homepage": "https://github.com/sindresorhus/is-fullwidth-code-point#readme"
+      "author": "Sindre Sorhus"
     },
     {
       "name": "is-potential-custom-element-name",
@@ -3351,8 +3194,7 @@
         "4.0.0"
       ],
       "license": "MIT",
-      "author": "ForbesLindesay",
-      "homepage": "https://github.com/then/is-promise#readme"
+      "author": "ForbesLindesay"
     },
     {
       "name": "is-regex",
@@ -3360,7 +3202,7 @@
         "1.2.1"
       ],
       "license": "MIT",
-      "author": "Jordan Harband",
+      "author": "Jordan Harband <ljharb@gmail.com>",
       "homepage": "https://github.com/inspect-js/is-regex"
     },
     {
@@ -3369,17 +3211,15 @@
         "2.0.1"
       ],
       "license": "MIT",
-      "author": "Sindre Sorhus",
-      "homepage": "https://github.com/sindresorhus/is-stream#readme"
+      "author": "Sindre Sorhus"
     },
     {
       "name": "is-unsafe",
       "versions": [
-        "2.0.0"
+        "2.0.2"
       ],
       "license": "MIT",
-      "author": "Amit Gupta",
-      "homepage": "https://github.com/NaturalIntelligence/is-unsafe#readme"
+      "author": "Amit Gupta (https://solothought.com/)"
     },
     {
       "name": "isomorphic.js",
@@ -3387,16 +3227,16 @@
         "0.2.5"
       ],
       "license": "MIT",
-      "author": "Kevin Jahns",
+      "author": "Kevin Jahns <kevin.jahns@protonmail.com>",
       "homepage": "https://github.com/dmonad/isomorphic.js#readme"
     },
     {
       "name": "jose",
       "versions": [
-        "6.2.8"
+        "6.2.10"
       ],
       "license": "MIT",
-      "author": "Filip Skokan",
+      "author": "Filip Skokan <panva.ip@gmail.com>",
       "homepage": "https://github.com/panva/jose"
     },
     {
@@ -3405,8 +3245,7 @@
         "3.9.2"
       ],
       "license": "BSD-3-Clause",
-      "author": "Dan Kogai",
-      "homepage": "https://github.com/dankogai/js-base64#readme"
+      "author": "Dan Kogai"
     },
     {
       "name": "js-binary",
@@ -3414,8 +3253,7 @@
         "1.2.0"
       ],
       "license": "MIT",
-      "author": "Sitegui",
-      "homepage": "https://github.com/sitegui/js-binary#readme"
+      "author": "Sitegui <sitegui@sitegui.com.br>"
     },
     {
       "name": "js-stringify",
@@ -3423,8 +3261,7 @@
         "1.0.2"
       ],
       "license": "MIT",
-      "author": "ForbesLindesay",
-      "homepage": "https://github.com/jadejs/js-stringify#readme"
+      "author": "ForbesLindesay"
     },
     {
       "name": "js-yaml",
@@ -3432,16 +3269,14 @@
         "5.2.3"
       ],
       "license": "MIT",
-      "author": "Vladimir Zapparov",
-      "homepage": "https://github.com/nodeca/js-yaml#readme"
+      "author": "Vladimir Zapparov <dervus.grim@gmail.com>"
     },
     {
       "name": "jsdom",
       "versions": [
         "30.0.1"
       ],
-      "license": "MIT",
-      "homepage": "https://github.com/jsdom/jsdom#readme"
+      "license": "MIT"
     },
     {
       "name": "json-schema-traverse",
@@ -3460,8 +3295,7 @@
         "6.2.1"
       ],
       "license": "MIT",
-      "author": "JP Richardson",
-      "homepage": "https://github.com/jprichardson/node-jsonfile#readme"
+      "author": "JP Richardson <jprichardson@gmail.com>"
     },
     {
       "name": "jsonwebtoken",
@@ -3469,8 +3303,7 @@
         "9.0.3"
       ],
       "license": "MIT",
-      "author": "auth0",
-      "homepage": "https://github.com/auth0/node-jsonwebtoken#readme"
+      "author": "auth0"
     },
     {
       "name": "jstransformer",
@@ -3478,8 +3311,7 @@
         "1.0.0"
       ],
       "license": "MIT",
-      "author": "ForbesLindesay",
-      "homepage": "https://github.com/jstransformers/jstransformer#readme"
+      "author": "ForbesLindesay"
     },
     {
       "name": "jwa",
@@ -3487,8 +3319,7 @@
         "2.0.1"
       ],
       "license": "MIT",
-      "author": "Brian J. Brennan",
-      "homepage": "https://github.com/brianloveswords/node-jwa#readme"
+      "author": "Brian J. Brennan <brianloveswords@gmail.com>"
     },
     {
       "name": "jws",
@@ -3496,8 +3327,7 @@
         "4.0.1"
       ],
       "license": "MIT",
-      "author": "Brian J Brennan",
-      "homepage": "https://github.com/brianloveswords/node-jws#readme"
+      "author": "Brian J Brennan"
     },
     {
       "name": "katex",
@@ -3549,7 +3379,7 @@
         "0.2.117"
       ],
       "license": "MIT",
-      "author": "Kevin Jahns",
+      "author": "Kevin Jahns <kevin.jahns@protonmail.com>",
       "homepage": "https://github.com/dmonad/lib0#readme"
     },
     {
@@ -3557,8 +3387,7 @@
       "versions": [
         "6.1.0"
       ],
-      "license": "MIT",
-      "homepage": "https://github.com/markdown-it/linkify-it#readme"
+      "license": "MIT"
     },
     {
       "name": "locate-path",
@@ -3566,8 +3395,7 @@
         "5.0.0"
       ],
       "license": "MIT",
-      "author": "Sindre Sorhus",
-      "homepage": "https://github.com/sindresorhus/locate-path#readme"
+      "author": "Sindre Sorhus"
     },
     {
       "name": "lodash",
@@ -3575,7 +3403,7 @@
         "4.18.1"
       ],
       "license": "MIT",
-      "author": "John-David Dalton",
+      "author": "John-David Dalton <john.david.dalton@gmail.com>",
       "homepage": "https://lodash.com/"
     },
     {
@@ -3584,7 +3412,7 @@
         "4.3.0"
       ],
       "license": "MIT",
-      "author": "John-David Dalton",
+      "author": "John-David Dalton <john.david.dalton@gmail.com> (http://allyoucanleet.com/)",
       "homepage": "https://lodash.com/"
     },
     {
@@ -3593,7 +3421,7 @@
         "3.0.3"
       ],
       "license": "MIT",
-      "author": "John-David Dalton",
+      "author": "John-David Dalton <john.david.dalton@gmail.com> (http://allyoucanleet.com/)",
       "homepage": "https://lodash.com/"
     },
     {
@@ -3602,7 +3430,7 @@
         "4.0.4"
       ],
       "license": "MIT",
-      "author": "John-David Dalton",
+      "author": "John-David Dalton <john.david.dalton@gmail.com> (http://allyoucanleet.com/)",
       "homepage": "https://lodash.com/"
     },
     {
@@ -3611,7 +3439,7 @@
         "3.0.3"
       ],
       "license": "MIT",
-      "author": "John-David Dalton",
+      "author": "John-David Dalton <john.david.dalton@gmail.com> (http://allyoucanleet.com/)",
       "homepage": "https://lodash.com/"
     },
     {
@@ -3620,7 +3448,7 @@
         "4.0.6"
       ],
       "license": "MIT",
-      "author": "John-David Dalton",
+      "author": "John-David Dalton <john.david.dalton@gmail.com> (http://allyoucanleet.com/)",
       "homepage": "https://lodash.com/"
     },
     {
@@ -3629,7 +3457,7 @@
         "4.0.1"
       ],
       "license": "MIT",
-      "author": "John-David Dalton",
+      "author": "John-David Dalton <john.david.dalton@gmail.com> (http://allyoucanleet.com/)",
       "homepage": "https://lodash.com/"
     },
     {
@@ -3638,7 +3466,7 @@
         "4.1.1"
       ],
       "license": "MIT",
-      "author": "John-David Dalton",
+      "author": "John-David Dalton <john.david.dalton@gmail.com> (http://allyoucanleet.com/)",
       "homepage": "https://lodash.com/"
     },
     {
@@ -3647,7 +3475,7 @@
         "4.1.0"
       ],
       "license": "MIT",
-      "author": "John-David Dalton",
+      "author": "John-David Dalton <john.david.dalton@gmail.com> (http://allyoucanleet.com/)",
       "homepage": "https://lodash.com/"
     },
     {
@@ -3656,7 +3484,7 @@
         "2.7.0"
       ],
       "license": "MIT",
-      "author": "Charlie Robbins",
+      "author": "Charlie Robbins <charlie.robbins@gmail.com>",
       "homepage": "https://github.com/winstonjs/logform#readme"
     },
     {
@@ -3665,8 +3493,7 @@
         "11.5.2"
       ],
       "license": "BlueOak-1.0.0",
-      "author": "Isaac Z. Schlueter",
-      "homepage": "https://github.com/isaacs/node-lru-cache#readme"
+      "author": "Isaac Z. Schlueter <i@izs.me>"
     },
     {
       "name": "lru-cache",
@@ -3674,8 +3501,7 @@
         "10.4.3"
       ],
       "license": "ISC",
-      "author": "Isaac Z. Schlueter",
-      "homepage": "https://github.com/isaacs/node-lru-cache#readme"
+      "author": "Isaac Z. Schlueter <i@izs.me>"
     },
     {
       "name": "luxon",
@@ -3683,8 +3509,7 @@
         "3.7.2"
       ],
       "license": "MIT",
-      "author": "Isaac Cambron",
-      "homepage": "https://github.com/moment/luxon#readme"
+      "author": "Isaac Cambron"
     },
     {
       "name": "magic-string",
@@ -3692,24 +3517,21 @@
         "0.30.21"
       ],
       "license": "MIT",
-      "author": "Rich Harris",
-      "homepage": "https://github.com/Rich-Harris/magic-string#readme"
+      "author": "Rich Harris"
     },
     {
       "name": "markdown-it",
       "versions": [
         "15.0.0"
       ],
-      "license": "MIT",
-      "homepage": "https://github.com/markdown-it/markdown-it#readme"
+      "license": "MIT"
     },
     {
       "name": "markdown-it-abbr",
       "versions": [
         "2.0.0"
       ],
-      "license": "MIT",
-      "homepage": "https://github.com/markdown-it/markdown-it-abbr#readme"
+      "license": "MIT"
     },
     {
       "name": "markdown-it-attrs",
@@ -3725,16 +3547,14 @@
       "versions": [
         "4.0.0"
       ],
-      "license": "MIT",
-      "homepage": "https://github.com/markdown-it/markdown-it-deflist#readme"
+      "license": "MIT"
     },
     {
       "name": "markdown-it-emoji",
       "versions": [
         "3.1.0"
       ],
-      "license": "MIT",
-      "homepage": "https://github.com/markdown-it/markdown-it-emoji#readme"
+      "license": "MIT"
     },
     {
       "name": "markdown-it-expand-tabs",
@@ -3750,16 +3570,14 @@
       "versions": [
         "4.0.0"
       ],
-      "license": "MIT",
-      "homepage": "https://github.com/markdown-it/markdown-it-footnote#readme"
+      "license": "MIT"
     },
     {
       "name": "markdown-it-mark",
       "versions": [
         "4.0.0"
       ],
-      "license": "MIT",
-      "homepage": "https://github.com/markdown-it/markdown-it-mark#readme"
+      "license": "MIT"
     },
     {
       "name": "markdown-it-multimd-table",
@@ -3767,24 +3585,21 @@
         "4.2.3"
       ],
       "license": "MIT",
-      "author": "redbug312",
-      "homepage": "https://github.com/redbug312/markdown-it-multimd-table#readme"
+      "author": "redbug312"
     },
     {
       "name": "markdown-it-sub",
       "versions": [
         "2.0.0"
       ],
-      "license": "MIT",
-      "homepage": "https://github.com/markdown-it/markdown-it-sub#readme"
+      "license": "MIT"
     },
     {
       "name": "markdown-it-sup",
       "versions": [
         "2.0.0"
       ],
-      "license": "MIT",
-      "homepage": "https://github.com/markdown-it/markdown-it-sup#readme"
+      "license": "MIT"
     },
     {
       "name": "markdown-it-task-lists",
@@ -3801,7 +3616,7 @@
         "1.1.0"
       ],
       "license": "MIT",
-      "author": "Jordan Harband",
+      "author": "Jordan Harband <ljharb@gmail.com>",
       "homepage": "https://github.com/es-shims/math-intrinsics#readme"
     },
     {
@@ -3809,8 +3624,7 @@
       "versions": [
         "4.1.3"
       ],
-      "license": "Apache-2.0",
-      "homepage": "https://github.com/mathjax/MathJax#readme"
+      "license": "Apache-2.0"
     },
     {
       "name": "mdn-data",
@@ -3826,8 +3640,7 @@
       "versions": [
         "2.1.0"
       ],
-      "license": "MIT",
-      "homepage": "https://github.com/markdown-it/mdurl#readme"
+      "license": "MIT"
     },
     {
       "name": "media-typer",
@@ -3836,8 +3649,7 @@
         "1.1.1"
       ],
       "license": "MIT",
-      "author": "Douglas Christopher Wilson",
-      "homepage": "https://github.com/jshttp/media-typer#readme"
+      "author": "Douglas Christopher Wilson <doug@somethingdoug.com>"
     },
     {
       "name": "memory-pager",
@@ -3845,7 +3657,7 @@
         "1.5.0"
       ],
       "license": "MIT",
-      "author": "Mathias Buus",
+      "author": "Mathias Buus (@mafintosh)",
       "homepage": "https://github.com/mafintosh/memory-pager"
     },
     {
@@ -3853,8 +3665,7 @@
       "versions": [
         "2.0.0"
       ],
-      "license": "MIT",
-      "homepage": "https://github.com/sindresorhus/merge-descriptors#readme"
+      "license": "MIT"
     },
     {
       "name": "meriyah",
@@ -3871,8 +3682,7 @@
         "1.52.0",
         "1.54.0"
       ],
-      "license": "MIT",
-      "homepage": "https://github.com/jshttp/mime-db#readme"
+      "license": "MIT"
     },
     {
       "name": "mime-types",
@@ -3880,8 +3690,7 @@
         "2.1.35",
         "3.0.2"
       ],
-      "license": "MIT",
-      "homepage": "https://github.com/jshttp/mime-types#readme"
+      "license": "MIT"
     },
     {
       "name": "minimalistic-assert",
@@ -3897,7 +3706,7 @@
         "1.0.4"
       ],
       "license": "MIT",
-      "author": "Thomas Watson",
+      "author": "Thomas Watson <w@tson.dk> (https://wa.tson.dk/)",
       "homepage": "https://github.com/watson/module-details-from-path#readme"
     },
     {
@@ -3906,7 +3715,7 @@
         "2.30.1"
       ],
       "license": "MIT",
-      "author": "Iskren Ivov Chernev",
+      "author": "Iskren Ivov Chernev <iskren.chernev@gmail.com> (https://github.com/ichernev)",
       "homepage": "https://momentjs.com"
     },
     {
@@ -3915,7 +3724,7 @@
         "0.6.3"
       ],
       "license": "MIT",
-      "author": "Tim Wood",
+      "author": "Tim Wood <washwithcare@gmail.com> (http://timwoodcreates.com/)",
       "homepage": "http://momentjs.com/timezone/"
     },
     {
@@ -3942,24 +3751,21 @@
         "2.1.2",
         "2.1.3"
       ],
-      "license": "MIT",
-      "homepage": "https://github.com/vercel/ms#readme"
+      "license": "MIT"
     },
     {
       "name": "multer",
       "versions": [
         "2.2.0"
       ],
-      "license": "MIT",
-      "homepage": "https://github.com/expressjs/multer#readme"
+      "license": "MIT"
     },
     {
       "name": "nan",
       "versions": [
         "2.28.0"
       ],
-      "license": "MIT",
-      "homepage": "https://github.com/nodejs/nan#readme"
+      "license": "MIT"
     },
     {
       "name": "nanoid",
@@ -3967,17 +3773,15 @@
         "6.0.1"
       ],
       "license": "MIT",
-      "author": "Andrey Sitnik",
-      "homepage": "https://github.com/ai/nanoid#readme"
+      "author": "Andrey Sitnik <andrey@sitnik.es>"
     },
     {
       "name": "negotiator",
       "versions": [
         "0.6.4",
-        "1.0.0"
+        "1.1.0"
       ],
-      "license": "MIT",
-      "homepage": "https://github.com/jshttp/negotiator#readme"
+      "license": "MIT"
     },
     {
       "name": "node-2fa",
@@ -3988,20 +3792,12 @@
       "homepage": "https://github.com/jeremyscalpello/node-2fa#readme"
     },
     {
-      "name": "node-addon-api",
-      "versions": [
-        "8.9.1"
-      ],
-      "license": "MIT",
-      "homepage": "https://github.com/nodejs/node-addon-api"
-    },
-    {
       "name": "node-cache",
       "versions": [
         "5.1.2"
       ],
       "license": "MIT",
-      "author": "mpneuried",
+      "author": "mpneuried <mp@tcs.de>",
       "homepage": "https://github.com/node-cache/node-cache"
     },
     {
@@ -4028,8 +3824,7 @@
         "1.0.10"
       ],
       "license": "MIT",
-      "author": "Isaac Z. Schlueter",
-      "homepage": "https://github.com/isaacs/nopt#readme"
+      "author": "Isaac Z. Schlueter <i@izs.me> (http://blog.izs.me/)"
     },
     {
       "name": "notp",
@@ -4037,8 +3832,9 @@
         "2.0.3"
       ],
       "license": "MIT",
-      "author": "Guy Halford-Thompson",
-      "homepage": "https://github.com/guyht/notp"
+      "author": "Guy Halford-Thompson <guy@guy.ht> (http://guy.ht)",
+      "homepage": "https://github.com/guyht/notp",
+      "licenseMetadataSource": "https://github.com/guyht/notp/blob/master/LICENSE"
     },
     {
       "name": "nth-check",
@@ -4046,7 +3842,7 @@
         "2.1.1"
       ],
       "license": "BSD-2-Clause",
-      "author": "Felix Boehm",
+      "author": "Felix Boehm <me@feedic.com>",
       "homepage": "https://github.com/fb55/nth-check"
     },
     {
@@ -4056,8 +3852,7 @@
         "0.9.15"
       ],
       "license": "MIT",
-      "author": "Ciaran Jessup",
-      "homepage": "https://github.com/ciaranj/node-oauth#readme"
+      "author": "Ciaran Jessup <ciaranj@gmail.com>"
     },
     {
       "name": "oauth4webapi",
@@ -4065,7 +3860,7 @@
         "3.8.7"
       ],
       "license": "MIT",
-      "author": "Filip Skokan",
+      "author": "Filip Skokan <panva.ip@gmail.com>",
       "homepage": "https://github.com/panva/oauth4webapi"
     },
     {
@@ -4074,8 +3869,7 @@
         "4.1.1"
       ],
       "license": "MIT",
-      "author": "Sindre Sorhus",
-      "homepage": "https://github.com/sindresorhus/object-assign#readme"
+      "author": "Sindre Sorhus"
     },
     {
       "name": "object-inspect",
@@ -4092,16 +3886,14 @@
         "3.1.5"
       ],
       "license": "MIT",
-      "author": "Sami Koskimäki",
-      "homepage": "https://github.com/vincit/objection.js#readme"
+      "author": "Sami Koskimäki"
     },
     {
       "name": "on-finished",
       "versions": [
         "2.4.1"
       ],
-      "license": "MIT",
-      "homepage": "https://github.com/jshttp/on-finished#readme"
+      "license": "MIT"
     },
     {
       "name": "on-headers",
@@ -4109,8 +3901,7 @@
         "1.1.0"
       ],
       "license": "MIT",
-      "author": "Douglas Christopher Wilson",
-      "homepage": "https://github.com/jshttp/on-headers#readme"
+      "author": "Douglas Christopher Wilson <doug@somethingdoug.com>"
     },
     {
       "name": "once",
@@ -4118,8 +3909,7 @@
         "1.4.0"
       ],
       "license": "ISC",
-      "author": "Isaac Z. Schlueter",
-      "homepage": "https://github.com/isaacs/once#readme"
+      "author": "Isaac Z. Schlueter <i@izs.me> (http://blog.izs.me/)"
     },
     {
       "name": "one-time",
@@ -4127,8 +3917,7 @@
         "1.0.0"
       ],
       "license": "MIT",
-      "author": "Arnout Kazemier",
-      "homepage": "https://github.com/3rd-Eden/one-time#readme"
+      "author": "Arnout Kazemier"
     },
     {
       "name": "openid-client",
@@ -4136,7 +3925,7 @@
         "6.8.5"
       ],
       "license": "MIT",
-      "author": "Filip Skokan",
+      "author": "Filip Skokan <panva.ip@gmail.com>",
       "homepage": "https://github.com/panva/openid-client"
     },
     {
@@ -4145,8 +3934,7 @@
         "2.3.0"
       ],
       "license": "MIT",
-      "author": "Sindre Sorhus",
-      "homepage": "https://github.com/sindresorhus/p-limit#readme"
+      "author": "Sindre Sorhus"
     },
     {
       "name": "p-locate",
@@ -4154,8 +3942,7 @@
         "4.1.0"
       ],
       "license": "MIT",
-      "author": "Sindre Sorhus",
-      "homepage": "https://github.com/sindresorhus/p-locate#readme"
+      "author": "Sindre Sorhus"
     },
     {
       "name": "p-try",
@@ -4163,8 +3950,7 @@
         "2.2.0"
       ],
       "license": "MIT",
-      "author": "Sindre Sorhus",
-      "homepage": "https://github.com/sindresorhus/p-try#readme"
+      "author": "Sindre Sorhus"
     },
     {
       "name": "parse5",
@@ -4173,7 +3959,7 @@
         "8.0.1"
       ],
       "license": "MIT",
-      "author": "Ivan Nikulin",
+      "author": "Ivan Nikulin <ifaaan@gmail.com> (https://github.com/inikulin)",
       "homepage": "https://parse5.js.org"
     },
     {
@@ -4182,7 +3968,7 @@
         "7.1.0"
       ],
       "license": "MIT",
-      "author": "Ivan Nikulin",
+      "author": "Ivan Nikulin <ifaaan@gmail.com> (https://github.com/inikulin)",
       "homepage": "https://parse5.js.org"
     },
     {
@@ -4191,7 +3977,7 @@
         "7.1.2"
       ],
       "license": "MIT",
-      "author": "Ivan Nikulin",
+      "author": "Ivan Nikulin <ifaaan@gmail.com> (https://github.com/inikulin)",
       "homepage": "https://github.com/inikulin/parse5"
     },
     {
@@ -4199,8 +3985,7 @@
       "versions": [
         "1.3.3"
       ],
-      "license": "MIT",
-      "homepage": "https://github.com/pillarjs/parseurl#readme"
+      "license": "MIT"
     },
     {
       "name": "passport",
@@ -4216,8 +4001,7 @@
       "versions": [
         "1.4.5"
       ],
-      "license": "MIT",
-      "homepage": "https://github.com/auth0/passport-auth0#readme"
+      "license": "MIT"
     },
     {
       "name": "passport-dropbox-oauth2",
@@ -4225,8 +4009,7 @@
         "1.1.0"
       ],
       "license": "MIT",
-      "author": "Florian Heinemann",
-      "homepage": "https://github.com/florianheinemann/passport-dropbox-oauth2#readme"
+      "author": "Florian Heinemann"
     },
     {
       "name": "passport-facebook",
@@ -4234,8 +4017,7 @@
         "3.0.0"
       ],
       "license": "MIT",
-      "author": "Jared Hanson",
-      "homepage": "https://github.com/jaredhanson/passport-facebook#readme"
+      "author": "Jared Hanson"
     },
     {
       "name": "passport-github2",
@@ -4243,8 +4025,7 @@
         "0.1.12"
       ],
       "license": "MIT",
-      "author": "Jared Hanson",
-      "homepage": "https://github.com/cfsghost/passport-github#readme"
+      "author": "Jared Hanson"
     },
     {
       "name": "passport-gitlab2",
@@ -4252,8 +4033,7 @@
         "5.0.0"
       ],
       "license": "MIT",
-      "author": "Fabio Huser",
-      "homepage": "https://github.com/fh1ch/passport-gitlab2#readme"
+      "author": "Fabio Huser"
     },
     {
       "name": "passport-google-oauth20",
@@ -4261,8 +4041,7 @@
         "2.0.0"
       ],
       "license": "MIT",
-      "author": "Jared Hanson",
-      "homepage": "https://github.com/jaredhanson/passport-google-oauth2#readme"
+      "author": "Jared Hanson"
     },
     {
       "name": "passport-jwt",
@@ -4279,8 +4058,7 @@
         "1.0.0"
       ],
       "license": "MIT",
-      "author": "Jared Hanson",
-      "homepage": "https://github.com/jaredhanson/passport-local#readme"
+      "author": "Jared Hanson"
     },
     {
       "name": "passport-microsoft",
@@ -4288,8 +4066,7 @@
         "2.1.0"
       ],
       "license": "MIT",
-      "author": "Sean Fisher",
-      "homepage": "https://github.com/seanfisher/passport-microsoft#readme"
+      "author": "Sean Fisher"
     },
     {
       "name": "passport-oauth",
@@ -4297,8 +4074,7 @@
         "1.0.0"
       ],
       "license": "MIT",
-      "author": "Jared Hanson",
-      "homepage": "https://github.com/jaredhanson/passport-oauth#readme"
+      "author": "Jared Hanson"
     },
     {
       "name": "passport-oauth1",
@@ -4306,8 +4082,7 @@
         "1.3.0"
       ],
       "license": "MIT",
-      "author": "Jared Hanson",
-      "homepage": "https://github.com/jaredhanson/passport-oauth1#readme"
+      "author": "Jared Hanson"
     },
     {
       "name": "passport-oauth2",
@@ -4315,8 +4090,7 @@
         "1.8.0"
       ],
       "license": "MIT",
-      "author": "Jared Hanson",
-      "homepage": "https://github.com/jaredhanson/passport-oauth2#readme"
+      "author": "Jared Hanson"
     },
     {
       "name": "passport-okta-oauth",
@@ -4333,8 +4107,7 @@
         "0.1.2"
       ],
       "license": "MIT",
-      "author": "Jared Hanson",
-      "homepage": "https://github.com/jaredhanson/passport-openidconnect#readme"
+      "author": "Jared Hanson"
     },
     {
       "name": "passport-slack-oauth2",
@@ -4351,8 +4124,7 @@
         "1.0.0"
       ],
       "license": "MIT",
-      "author": "Jared Hanson",
-      "homepage": "https://github.com/jaredhanson/passport-strategy#readme"
+      "author": "Jared Hanson"
     },
     {
       "name": "passport-twitch-strategy",
@@ -4360,8 +4132,7 @@
         "2.2.0"
       ],
       "license": "MIT",
-      "author": "Tymchenko",
-      "homepage": "https://github.com/d-relay/passport-twitch-strategy#readme"
+      "author": "Tymchenko"
     },
     {
       "name": "path-exists",
@@ -4369,8 +4140,7 @@
         "4.0.0"
       ],
       "license": "MIT",
-      "author": "Sindre Sorhus",
-      "homepage": "https://github.com/sindresorhus/path-exists#readme"
+      "author": "Sindre Sorhus"
     },
     {
       "name": "path-expression-matcher",
@@ -4378,7 +4148,7 @@
         "1.6.2"
       ],
       "license": "MIT",
-      "author": "Amit Gupta",
+      "author": "Amit Gupta (https://solothought.com)",
       "homepage": "https://github.com/NaturalIntelligence/path-expression-matcher#readme"
     },
     {
@@ -4387,7 +4157,7 @@
         "1.0.7"
       ],
       "license": "MIT",
-      "author": "Javier Blanco",
+      "author": "Javier Blanco <http://jbgutierrez.info>",
       "homepage": "https://github.com/jbgutierrez/path-parse#readme"
     },
     {
@@ -4395,8 +4165,7 @@
       "versions": [
         "8.4.2"
       ],
-      "license": "MIT",
-      "homepage": "https://github.com/pillarjs/path-to-regexp#readme"
+      "license": "MIT"
     },
     {
       "name": "pause",
@@ -4404,7 +4173,7 @@
         "0.0.1"
       ],
       "license": "MIT",
-      "author": "TJ Holowaychuk",
+      "author": "TJ Holowaychuk <tj@vision-media.ca>",
       "licenseMetadataSource": "https://github.com/stream-utils/pause/blob/master/LICENSE"
     },
     {
@@ -4421,7 +4190,7 @@
         "8.23.0"
       ],
       "license": "MIT",
-      "author": "Brian Carlson",
+      "author": "Brian Carlson <brian.m.carlson@gmail.com>",
       "homepage": "https://github.com/brianc/node-postgres"
     },
     {
@@ -4429,8 +4198,7 @@
       "versions": [
         "1.4.0"
       ],
-      "license": "MIT",
-      "homepage": "https://github.com/brianc/node-postgres#readme"
+      "license": "MIT"
     },
     {
       "name": "pg-connection-string",
@@ -4439,7 +4207,7 @@
         "2.6.2"
       ],
       "license": "MIT",
-      "author": "Blaine Bublitz",
+      "author": "Blaine Bublitz <blaine@iceddev.com> (http://iceddev.com/)",
       "homepage": "https://github.com/brianc/node-postgres/tree/master/packages/pg-connection-string"
     },
     {
@@ -4448,8 +4216,7 @@
         "2.22.0"
       ],
       "license": "MIT",
-      "author": "Brian M. Carlson",
-      "homepage": "https://github.com/brianc/node-postgres#readme"
+      "author": "Brian M. Carlson"
     },
     {
       "name": "pg-format",
@@ -4465,8 +4232,7 @@
       "versions": [
         "1.0.1"
       ],
-      "license": "ISC",
-      "homepage": "https://github.com/charmander/pg-int8#readme"
+      "license": "ISC"
     },
     {
       "name": "pg-pool",
@@ -4482,8 +4248,7 @@
       "versions": [
         "1.16.0"
       ],
-      "license": "MIT",
-      "homepage": "https://github.com/brianc/node-postgres#readme"
+      "license": "MIT"
     },
     {
       "name": "pg-pubsub",
@@ -4500,8 +4265,7 @@
         "4.17.0"
       ],
       "license": "MIT",
-      "author": "Brian M. Carlson",
-      "homepage": "https://github.com/brianc/node-postgres#readme"
+      "author": "Brian M. Carlson"
     },
     {
       "name": "pg-tsquery",
@@ -4527,8 +4291,7 @@
         "1.0.5"
       ],
       "license": "MIT",
-      "author": "Hannes Hörl",
-      "homepage": "https://github.com/hoegaarden/pgpass#readme"
+      "author": "Hannes Hörl <hannes.hoerl+pgpass@snowreporter.com>"
     },
     {
       "name": "pkginfo",
@@ -4536,8 +4299,7 @@
         "0.2.3"
       ],
       "license": "MIT",
-      "author": "Charlie Robbins",
-      "homepage": "https://github.com/indexzero/node-pkginfo#readme",
+      "author": "Charlie Robbins <charlie.robbins@gmail.com>",
       "licenseMetadataSource": "https://github.com/indexzero/node-pkginfo/blob/master/LICENSE"
     },
     {
@@ -4564,7 +4326,7 @@
         "2.1.11"
       ],
       "license": "0BSD",
-      "author": "Pelle Wessman",
+      "author": "Pelle Wessman <pelle@kodfabrik.se> (http://kodfabrik.se/)",
       "homepage": "http://github.com/voxpelli/pony-cause"
     },
     {
@@ -4573,8 +4335,7 @@
         "2.0.0"
       ],
       "license": "MIT",
-      "author": "Ben Drucker",
-      "homepage": "https://github.com/bendrucker/postgres-array#readme"
+      "author": "Ben Drucker"
     },
     {
       "name": "postgres-bytea",
@@ -4582,8 +4343,7 @@
         "1.0.1"
       ],
       "license": "MIT",
-      "author": "Ben Drucker",
-      "homepage": "https://github.com/bendrucker/postgres-bytea#readme"
+      "author": "Ben Drucker"
     },
     {
       "name": "postgres-date",
@@ -4591,8 +4351,7 @@
         "1.0.7"
       ],
       "license": "MIT",
-      "author": "Ben Drucker",
-      "homepage": "https://github.com/bendrucker/postgres-date#readme"
+      "author": "Ben Drucker"
     },
     {
       "name": "postgres-interval",
@@ -4600,8 +4359,7 @@
         "1.2.0"
       ],
       "license": "MIT",
-      "author": "Ben Drucker",
-      "homepage": "https://github.com/bendrucker/postgres-interval#readme"
+      "author": "Ben Drucker"
     },
     {
       "name": "prom-client",
@@ -4618,8 +4376,7 @@
         "7.3.1"
       ],
       "license": "MIT",
-      "author": "ForbesLindesay",
-      "homepage": "https://github.com/then/promise#readme"
+      "author": "ForbesLindesay"
     },
     {
       "name": "promised-retry",
@@ -4636,8 +4393,7 @@
         "2.0.7"
       ],
       "license": "MIT",
-      "author": "Douglas Christopher Wilson",
-      "homepage": "https://github.com/jshttp/proxy-addr#readme"
+      "author": "Douglas Christopher Wilson <doug@somethingdoug.com>"
     },
     {
       "name": "proxy-from-env",
@@ -4645,7 +4401,7 @@
         "2.1.0"
       ],
       "license": "MIT",
-      "author": "Rob Wu",
+      "author": "Rob Wu <rob@robwu.nl> (https://robwu.nl/)",
       "homepage": "https://github.com/Rob--W/proxy-from-env#readme"
     },
     {
@@ -4654,7 +4410,7 @@
         "3.0.4"
       ],
       "license": "MIT",
-      "author": "TJ Holowaychuk",
+      "author": "TJ Holowaychuk <tj@vision-media.ca>",
       "homepage": "https://pugjs.org"
     },
     {
@@ -4663,8 +4419,7 @@
         "3.0.0"
       ],
       "license": "MIT",
-      "author": "Forbes Lindesay",
-      "homepage": "https://github.com/pugjs/pug/tree/master#readme"
+      "author": "Forbes Lindesay"
     },
     {
       "name": "pug-code-gen",
@@ -4672,8 +4427,7 @@
         "3.0.4"
       ],
       "license": "MIT",
-      "author": "Forbes Lindesay",
-      "homepage": "https://github.com/pugjs/pug/tree/master#readme"
+      "author": "Forbes Lindesay"
     },
     {
       "name": "pug-error",
@@ -4681,8 +4435,7 @@
         "2.1.0"
       ],
       "license": "MIT",
-      "author": "Forbes Lindesay",
-      "homepage": "https://github.com/pugjs/pug/tree/master#readme"
+      "author": "Forbes Lindesay"
     },
     {
       "name": "pug-filters",
@@ -4690,8 +4443,7 @@
         "4.0.0"
       ],
       "license": "MIT",
-      "author": "Forbes Lindesay",
-      "homepage": "https://github.com/pugjs/pug/tree/master#readme"
+      "author": "Forbes Lindesay"
     },
     {
       "name": "pug-lexer",
@@ -4699,8 +4451,7 @@
         "5.0.1"
       ],
       "license": "MIT",
-      "author": "ForbesLindesay",
-      "homepage": "https://github.com/pugjs/pug/tree/master#readme"
+      "author": "ForbesLindesay"
     },
     {
       "name": "pug-linker",
@@ -4708,8 +4459,7 @@
         "4.0.0"
       ],
       "license": "MIT",
-      "author": "Forbes Lindesay",
-      "homepage": "https://github.com/pugjs/pug/tree/master#readme"
+      "author": "Forbes Lindesay"
     },
     {
       "name": "pug-load",
@@ -4717,8 +4467,7 @@
         "3.0.0"
       ],
       "license": "MIT",
-      "author": "ForbesLindesay",
-      "homepage": "https://github.com/pugjs/pug/tree/master#readme"
+      "author": "ForbesLindesay"
     },
     {
       "name": "pug-parser",
@@ -4726,8 +4475,7 @@
         "6.0.0"
       ],
       "license": "MIT",
-      "author": "ForbesLindesay",
-      "homepage": "https://github.com/pugjs/pug/tree/master#readme"
+      "author": "ForbesLindesay"
     },
     {
       "name": "pug-runtime",
@@ -4735,8 +4483,7 @@
         "3.0.1"
       ],
       "license": "MIT",
-      "author": "ForbesLindesay",
-      "homepage": "https://github.com/pugjs/pug/tree/master#readme"
+      "author": "ForbesLindesay"
     },
     {
       "name": "pug-strip-comments",
@@ -4744,8 +4491,7 @@
         "2.0.0"
       ],
       "license": "MIT",
-      "author": "Timothy Gu",
-      "homepage": "https://github.com/pugjs/pug/tree/master#readme"
+      "author": "Timothy Gu <timothygu99@gmail.com>"
     },
     {
       "name": "pug-walk",
@@ -4753,8 +4499,7 @@
         "2.0.0"
       ],
       "license": "MIT",
-      "author": "ForbesLindesay",
-      "homepage": "https://github.com/pugjs/pug/tree/master#readme"
+      "author": "ForbesLindesay"
     },
     {
       "name": "pump",
@@ -4762,8 +4507,7 @@
         "3.0.4"
       ],
       "license": "MIT",
-      "author": "Mathias Buus Madsen",
-      "homepage": "https://github.com/mafintosh/pump#readme"
+      "author": "Mathias Buus Madsen <mathiasbuus@gmail.com>"
     },
     {
       "name": "punycode",
@@ -4798,7 +4542,7 @@
         "1.5.4"
       ],
       "license": "MIT",
-      "author": "Ryan Day",
+      "author": "Ryan Day <soldair@gmail.com>",
       "homepage": "http://github.com/soldair/node-qrcode"
     },
     {
@@ -4814,8 +4558,7 @@
       "versions": [
         "1.0.0"
       ],
-      "license": "MIT",
-      "homepage": "https://github.com/crypto-utils/random-bytes#readme"
+      "license": "MIT"
     },
     {
       "name": "range-parser",
@@ -4823,8 +4566,7 @@
         "1.3.0"
       ],
       "license": "MIT",
-      "author": "TJ Holowaychuk",
-      "homepage": "https://github.com/jshttp/range-parser#readme"
+      "author": "TJ Holowaychuk <tj@vision-media.ca> (http://tjholowaychuk.com)"
     },
     {
       "name": "rate-limiter-flexible",
@@ -4832,7 +4574,7 @@
         "11.2.0"
       ],
       "license": "ISC",
-      "author": "animir",
+      "author": "animir <animirr@gmail.com>",
       "homepage": "https://github.com/animir/node-rate-limiter-flexible#readme"
     },
     {
@@ -4841,16 +4583,14 @@
         "3.0.2"
       ],
       "license": "MIT",
-      "author": "Jonathan Ong",
-      "homepage": "https://github.com/stream-utils/raw-body#readme"
+      "author": "Jonathan Ong <me@jongleberry.com> (http://jongleberry.com)"
     },
     {
       "name": "readable-stream",
       "versions": [
         "3.6.2"
       ],
-      "license": "MIT",
-      "homepage": "https://github.com/nodejs/readable-stream#readme"
+      "license": "MIT"
     },
     {
       "name": "readdirp",
@@ -4858,7 +4598,7 @@
         "5.1.1"
       ],
       "license": "MIT",
-      "author": "Thorsten Lorenz",
+      "author": "Thorsten Lorenz <thlorenz@gmx.de> (thlorenz.com)",
       "homepage": "https://github.com/paulmillr/readdirp"
     },
     {
@@ -4867,8 +4607,7 @@
         "0.8.0"
       ],
       "license": "MIT",
-      "author": "Gulp Team",
-      "homepage": "https://github.com/gulpjs/rechoir#readme"
+      "author": "Gulp Team <team@gulpjs.com> (http://gulpjs.com/)"
     },
     {
       "name": "regexp-tree",
@@ -4885,7 +4624,7 @@
         "2.1.1"
       ],
       "license": "MIT",
-      "author": "Troy Goode",
+      "author": "Troy Goode <troygoode@gmail.com> (http://github.com/troygoode/)",
       "homepage": "https://github.com/troygoode/node-require-directory/"
     },
     {
@@ -4894,8 +4633,7 @@
         "2.0.2"
       ],
       "license": "MIT",
-      "author": "Vsevolod Strukchinsky",
-      "homepage": "https://github.com/floatdrop/require-from-string#readme"
+      "author": "Vsevolod Strukchinsky"
     },
     {
       "name": "require-in-the-middle",
@@ -4903,7 +4641,7 @@
         "8.0.1"
       ],
       "license": "MIT",
-      "author": "Thomas Watson Steen",
+      "author": "Thomas Watson Steen <w@tson.dk> (https://twitter.com/wa7son)",
       "homepage": "https://github.com/nodejs/require-in-the-middle#readme"
     },
     {
@@ -4912,7 +4650,7 @@
         "2.0.0"
       ],
       "license": "ISC",
-      "author": "Ben Coe",
+      "author": "Ben Coe <ben@npmjs.com>",
       "homepage": "https://github.com/yargs/require-main-filename#readme"
     },
     {
@@ -4921,8 +4659,7 @@
         "1.22.12"
       ],
       "license": "MIT",
-      "author": "James Halliday",
-      "homepage": "https://github.com/browserify/resolve#readme"
+      "author": "James Halliday"
     },
     {
       "name": "resolve-from",
@@ -4930,8 +4667,7 @@
         "5.0.0"
       ],
       "license": "MIT",
-      "author": "Sindre Sorhus",
-      "homepage": "https://github.com/sindresorhus/resolve-from#readme"
+      "author": "Sindre Sorhus"
     },
     {
       "name": "router",
@@ -4939,8 +4675,7 @@
         "2.2.0"
       ],
       "license": "MIT",
-      "author": "Douglas Christopher Wilson",
-      "homepage": "https://github.com/pillarjs/router#readme"
+      "author": "Douglas Christopher Wilson <doug@somethingdoug.com>"
     },
     {
       "name": "safe-buffer",
@@ -4957,7 +4692,7 @@
         "2.1.1"
       ],
       "license": "MIT",
-      "author": "James C.",
+      "author": "James C. (Jamie) Davis",
       "homepage": "https://github.com/davisjam/safe-regex"
     },
     {
@@ -4975,8 +4710,7 @@
         "2.1.2"
       ],
       "license": "MIT",
-      "author": "Nikita Skovoroda",
-      "homepage": "https://github.com/ChALkeR/safer-buffer#readme"
+      "author": "Nikita Skovoroda"
     },
     {
       "name": "sanitize-filename",
@@ -4984,8 +4718,7 @@
         "1.6.4"
       ],
       "license": "WTFPL OR ISC",
-      "author": "Parsha Pourkhomami",
-      "homepage": "https://github.com/parshap/node-sanitize-filename#readme"
+      "author": "Parsha Pourkhomami"
     },
     {
       "name": "sax",
@@ -4993,8 +4726,7 @@
         "1.6.1"
       ],
       "license": "BlueOak-1.0.0",
-      "author": "Isaac Z. Schlueter",
-      "homepage": "https://github.com/isaacs/sax-js#readme"
+      "author": "Isaac Z. Schlueter <i@izs.me> (http://blog.izs.me/)"
     },
     {
       "name": "saxes",
@@ -5002,8 +4734,7 @@
         "6.0.0"
       ],
       "license": "ISC",
-      "author": "Louis-Dominique Dubeau",
-      "homepage": "https://github.com/lddubeau/saxes#readme"
+      "author": "Louis-Dominique Dubeau <ldd@lddubeau.com>"
     },
     {
       "name": "secure-json-parse",
@@ -5011,7 +4742,7 @@
         "4.1.0"
       ],
       "license": "BSD-3-Clause",
-      "author": "Eran Hammer",
+      "author": "Eran Hammer <eran@sideway.com>",
       "homepage": "https://github.com/fastify/secure-json-parse#readme"
     },
     {
@@ -5026,12 +4757,10 @@
     {
       "name": "semver",
       "versions": [
-        "7.7.4",
         "7.8.5"
       ],
       "license": "ISC",
-      "author": "GitHub Inc.",
-      "homepage": "https://github.com/npm/node-semver#readme"
+      "author": "GitHub Inc."
     },
     {
       "name": "send",
@@ -5039,8 +4768,7 @@
         "1.2.1"
       ],
       "license": "MIT",
-      "author": "TJ Holowaychuk",
-      "homepage": "https://github.com/pillarjs/send#readme"
+      "author": "TJ Holowaychuk <tj@vision-media.ca>"
     },
     {
       "name": "serve-favicon",
@@ -5048,8 +4776,7 @@
         "2.5.1"
       ],
       "license": "MIT",
-      "author": "Douglas Christopher Wilson",
-      "homepage": "https://github.com/expressjs/serve-favicon#readme"
+      "author": "Douglas Christopher Wilson <doug@somethingdoug.com>"
     },
     {
       "name": "serve-static",
@@ -5057,8 +4784,7 @@
         "2.2.1"
       ],
       "license": "MIT",
-      "author": "Douglas Christopher Wilson",
-      "homepage": "https://github.com/expressjs/serve-static#readme"
+      "author": "Douglas Christopher Wilson <doug@somethingdoug.com>"
     },
     {
       "name": "set-blocking",
@@ -5066,7 +4792,7 @@
         "2.0.0"
       ],
       "license": "ISC",
-      "author": "Ben Coe",
+      "author": "Ben Coe <ben@npmjs.com>",
       "homepage": "https://github.com/yargs/set-blocking#readme"
     },
     {
@@ -5084,7 +4810,7 @@
         "1.1.1"
       ],
       "license": "MIT",
-      "author": "Jordan Harband",
+      "author": "Jordan Harband <ljharb@gmail.com>",
       "homepage": "https://github.com/ljharb/side-channel#readme"
     },
     {
@@ -5093,7 +4819,7 @@
         "1.0.1"
       ],
       "license": "MIT",
-      "author": "Jordan Harband",
+      "author": "Jordan Harband <ljharb@gmail.com>",
       "homepage": "https://github.com/ljharb/side-channel-list#readme"
     },
     {
@@ -5102,7 +4828,7 @@
         "1.0.1"
       ],
       "license": "MIT",
-      "author": "Jordan Harband",
+      "author": "Jordan Harband <ljharb@gmail.com>",
       "homepage": "https://github.com/ljharb/side-channel-map#readme"
     },
     {
@@ -5111,7 +4837,7 @@
         "1.0.2"
       ],
       "license": "MIT",
-      "author": "Jordan Harband",
+      "author": "Jordan Harband <ljharb@gmail.com>",
       "homepage": "https://github.com/ljharb/side-channel-weakmap#readme"
     },
     {
@@ -5120,26 +4846,7 @@
         "3.36.0"
       ],
       "license": "MIT",
-      "author": "Steve King",
-      "homepage": "https://github.com/steveukx/git-js#readme"
-    },
-    {
-      "name": "smart-buffer",
-      "versions": [
-        "4.2.0"
-      ],
-      "license": "MIT",
-      "author": "Josh Glazebrook",
-      "homepage": "https://github.com/JoshGlazebrook/smart-buffer/"
-    },
-    {
-      "name": "socks",
-      "versions": [
-        "2.8.9"
-      ],
-      "license": "MIT",
-      "author": "Josh Glazebrook",
-      "homepage": "https://github.com/JoshGlazebrook/socks/"
+      "author": "Steve King <steve@mydev.co>"
     },
     {
       "name": "source-map",
@@ -5147,7 +4854,7 @@
         "0.6.1"
       ],
       "license": "BSD-3-Clause",
-      "author": "Nick Fitzgerald",
+      "author": "Nick Fitzgerald <nfitzgerald@mozilla.com>",
       "homepage": "https://github.com/mozilla/source-map"
     },
     {
@@ -5156,7 +4863,7 @@
         "1.2.1"
       ],
       "license": "BSD-3-Clause",
-      "author": "Valentin 7rulnik Semirulnik",
+      "author": "Valentin 7rulnik Semirulnik <v7rulnik@gmail.com>",
       "homepage": "https://github.com/7rulnik/source-map-js"
     },
     {
@@ -5165,7 +4872,7 @@
         "3.0.3"
       ],
       "license": "MIT",
-      "author": "Mathias Buus",
+      "author": "Mathias Buus (@mafintosh)",
       "homepage": "https://github.com/mafintosh/sparse-bitfield"
     },
     {
@@ -5174,8 +4881,7 @@
         "4.2.0"
       ],
       "license": "ISC",
-      "author": "Matteo Collina",
-      "homepage": "https://github.com/mcollina/split2#readme"
+      "author": "Matteo Collina <hello@matteocollina.com>"
     },
     {
       "name": "ssh2",
@@ -5183,8 +4889,7 @@
         "1.17.0"
       ],
       "license": "MIT",
-      "author": "Brian White",
-      "homepage": "https://github.com/mscdex/ssh2#readme"
+      "author": "Brian White <mscdex@mscdex.net>"
     },
     {
       "name": "ssh2-promise",
@@ -5192,8 +4897,7 @@
         "1.0.3"
       ],
       "license": "MIT",
-      "author": "Sanket Bajoria",
-      "homepage": "https://github.com/sanketbajoria/ssh2-promise#readme"
+      "author": "Sanket Bajoria"
     },
     {
       "name": "stack-trace",
@@ -5201,7 +4905,7 @@
         "0.0.10"
       ],
       "license": "MIT",
-      "author": "Felix Geisendörfer",
+      "author": "Felix Geisendörfer <felix@debuggable.com> (http://debuggable.com/)",
       "homepage": "https://github.com/felixge/node-stack-trace"
     },
     {
@@ -5209,8 +4913,7 @@
       "versions": [
         "2.0.2"
       ],
-      "license": "MIT",
-      "homepage": "https://github.com/jshttp/statuses#readme"
+      "license": "MIT"
     },
     {
       "name": "streamsearch",
@@ -5218,16 +4921,15 @@
         "1.1.0"
       ],
       "license": "MIT",
-      "author": "Brian White",
-      "homepage": "https://github.com/mscdex/streamsearch#readme"
+      "author": "Brian White <mscdex@mscdex.net>"
     },
     {
       "name": "streamx",
       "versions": [
-        "2.28.0"
+        "2.28.1"
       ],
       "license": "MIT",
-      "author": "Mathias Buus",
+      "author": "Mathias Buus (@mafintosh)",
       "homepage": "https://github.com/mafintosh/streamx"
     },
     {
@@ -5236,7 +4938,7 @@
         "2.0.0"
       ],
       "license": "ISC",
-      "author": "Brian Terlson",
+      "author": "Brian Terlson <brian.terlson@microsoft.com>",
       "homepage": "https://github.com/bterlson/typed-event-emitter#readme"
     },
     {
@@ -5255,8 +4957,7 @@
         "8.2.2"
       ],
       "license": "MIT",
-      "author": "Sindre Sorhus",
-      "homepage": "https://github.com/sindresorhus/string-width#readme"
+      "author": "Sindre Sorhus"
     },
     {
       "name": "strip-ansi",
@@ -5265,8 +4966,7 @@
         "7.2.0"
       ],
       "license": "MIT",
-      "author": "Sindre Sorhus",
-      "homepage": "https://github.com/chalk/strip-ansi#readme"
+      "author": "Sindre Sorhus"
     },
     {
       "name": "striptags",
@@ -5274,17 +4974,16 @@
         "3.2.0"
       ],
       "license": "MIT",
-      "author": "Eric Norris",
+      "author": "Eric Norris (https://github.com/ericnorris)",
       "homepage": "https://github.com/ericnorris/striptags"
     },
     {
       "name": "strnum",
       "versions": [
-        "2.4.1"
+        "2.4.2"
       ],
       "license": "MIT",
-      "author": "Amit Gupta",
-      "homepage": "https://github.com/NaturalIntelligence/strnum#readme"
+      "author": "Amit Gupta (https://solothought.work/)"
     },
     {
       "name": "style-mod",
@@ -5292,8 +4991,7 @@
         "4.1.3"
       ],
       "license": "MIT",
-      "author": "Marijn Haverbeke",
-      "homepage": "https://github.com/marijnh/style-mod#readme"
+      "author": "Marijn Haverbeke <marijn@haverbeke.berlin>"
     },
     {
       "name": "supports-preserve-symlinks-flag",
@@ -5301,7 +4999,7 @@
         "1.0.0"
       ],
       "license": "MIT",
-      "author": "Jordan Harband",
+      "author": "Jordan Harband <ljharb@gmail.com>",
       "homepage": "https://github.com/inspect-js/node-supports-preserve-symlinks-flag#readme"
     },
     {
@@ -5310,7 +5008,7 @@
         "3.2.4"
       ],
       "license": "MIT",
-      "author": "Joris van der Wel",
+      "author": "Joris van der Wel <joris@jorisvanderwel.com>",
       "homepage": "https://github.com/jsdom/js-symbol-tree#symbol-tree"
     },
     {
@@ -5325,10 +5023,10 @@
     {
       "name": "tar-stream",
       "versions": [
-        "3.2.0"
+        "3.2.1"
       ],
       "license": "MIT",
-      "author": "Mathias Buus",
+      "author": "Mathias Buus <mathiasbuus@gmail.com>",
       "homepage": "https://github.com/mafintosh/tar-stream"
     },
     {
@@ -5337,16 +5035,15 @@
         "3.1.2"
       ],
       "license": "MIT",
-      "author": "Sami Koskimäki",
-      "homepage": "https://github.com/knex/tarn.js#readme"
+      "author": "Sami Koskimäki"
     },
     {
       "name": "tdigest",
       "versions": [
-        "0.1.2"
+        "0.1.3"
       ],
       "license": "MIT",
-      "author": "Will Welch",
+      "author": "Will Welch <welch@quietplease.com> (http://quietplease.com/)",
       "homepage": "https://github.com/welch/tdigest"
     },
     {
@@ -5355,7 +5052,7 @@
         "1.0.1"
       ],
       "license": "MIT",
-      "author": "Mathias Buus",
+      "author": "Mathias Buus (@mafintosh)",
       "homepage": "https://github.com/mafintosh/teex"
     },
     {
@@ -5382,8 +5079,7 @@
         "1.0.2"
       ],
       "license": "MIT",
-      "author": "Chris Umbel",
-      "homepage": "https://github.com/chrisumbel/thirty-two#readme",
+      "author": "Chris Umbel <chris@chrisumbel.com>",
       "licenseMetadataSource": "https://github.com/chrisumbel/thirty-two/blob/master/LICENSE.txt"
     },
     {
@@ -5392,13 +5088,12 @@
         "2.0.0"
       ],
       "license": "MIT",
-      "author": "Sindre Sorhus",
-      "homepage": "https://github.com/sindresorhus/tildify#readme"
+      "author": "Sindre Sorhus"
     },
     {
       "name": "tldts",
       "versions": [
-        "7.4.10"
+        "7.4.11"
       ],
       "license": "MIT",
       "author": "Rémi Berson",
@@ -5407,7 +5102,7 @@
     {
       "name": "tldts-core",
       "versions": [
-        "7.4.10"
+        "7.4.11"
       ],
       "license": "MIT",
       "author": "Rémi Berson",
@@ -5419,8 +5114,7 @@
         "1.0.1"
       ],
       "license": "MIT",
-      "author": "Douglas Christopher Wilson",
-      "homepage": "https://github.com/component/toidentifier#readme"
+      "author": "Douglas Christopher Wilson <doug@somethingdoug.com>"
     },
     {
       "name": "token-stream",
@@ -5428,8 +5122,7 @@
         "1.0.0"
       ],
       "license": "MIT",
-      "author": "ForbesLindesay",
-      "homepage": "https://github.com/pugjs/token-stream#readme"
+      "author": "ForbesLindesay"
     },
     {
       "name": "tough-cookie",
@@ -5448,8 +5141,8 @@
         "6.0.0"
       ],
       "license": "MIT",
-      "author": "Sebastian Mayr",
-      "homepage": "https://github.com/jsdom/tr46#readme"
+      "author": "Sebastian Mayr <npm@smayr.name>",
+      "homepage": "https://github.com/Sebmaster/tr46.js#readme"
     },
     {
       "name": "triple-beam",
@@ -5457,7 +5150,7 @@
         "1.4.1"
       ],
       "license": "MIT",
-      "author": "Charlie Robbins",
+      "author": "Charlie Robbins <charlie.robbins@gmail.com>",
       "homepage": "https://github.com/winstonjs/triple-beam#readme"
     },
     {
@@ -5466,7 +5159,7 @@
         "1.0.2"
       ],
       "license": "WTFPL",
-      "author": "Carl Xiong",
+      "author": "Carl Xiong <xiongc05@gmail.com>",
       "homepage": "https://github.com/parshap/truncate-utf8-bytes#readme"
     },
     {
@@ -5484,8 +5177,7 @@
         "7.2.4"
       ],
       "license": "MIT",
-      "author": "Dom Christie",
-      "homepage": "https://github.com/mixmark-io/turndown#readme"
+      "author": "Dom Christie"
     },
     {
       "name": "tweetnacl",
@@ -5518,8 +5210,7 @@
         "1.6.18",
         "2.1.0"
       ],
-      "license": "MIT",
-      "homepage": "https://github.com/jshttp/type-is#readme"
+      "license": "MIT"
     },
     {
       "name": "typedarray",
@@ -5531,29 +5222,18 @@
       "homepage": "https://github.com/substack/typedarray"
     },
     {
-      "name": "typescript",
-      "versions": [
-        "6.0.2"
-      ],
-      "license": "Apache-2.0",
-      "author": "Microsoft Corp.",
-      "homepage": "https://www.typescriptlang.org/"
-    },
-    {
       "name": "uc.micro",
       "versions": [
         "3.0.0"
       ],
-      "license": "MIT",
-      "homepage": "https://github.com/markdown-it/uc.micro#readme"
+      "license": "MIT"
     },
     {
       "name": "uid-safe",
       "versions": [
         "2.1.5"
       ],
-      "license": "MIT",
-      "homepage": "https://github.com/crypto-utils/uid-safe#readme"
+      "license": "MIT"
     },
     {
       "name": "uid2",
@@ -5562,7 +5242,7 @@
         "0.0.4"
       ],
       "license": "MIT",
-      "homepage": "https://github.com/coreh/uid2#readme"
+      "licenseMetadataSource": "https://github.com/coreh/uid2/blob/master/LICENSE"
     },
     {
       "name": "undici",
@@ -5588,7 +5268,7 @@
         "2.0.1"
       ],
       "license": "MIT",
-      "author": "Ryan Zimmerman",
+      "author": "Ryan Zimmerman <opensrc@ryanzim.com>",
       "homepage": "https://github.com/RyanZim/universalify#readme"
     },
     {
@@ -5597,8 +5277,7 @@
         "1.6.0"
       ],
       "license": "MIT or GPL-2.0",
-      "author": "Bjarke Walling",
-      "homepage": "https://github.com/walling/unorm#readme"
+      "author": "Bjarke Walling <bwp@bwp.dk>"
     },
     {
       "name": "unpipe",
@@ -5606,16 +5285,14 @@
         "1.0.0"
       ],
       "license": "MIT",
-      "author": "Douglas Christopher Wilson",
-      "homepage": "https://github.com/stream-utils/unpipe#readme"
+      "author": "Douglas Christopher Wilson <doug@somethingdoug.com>"
     },
     {
       "name": "urlpattern-polyfill",
       "versions": [
         "10.1.0"
       ],
-      "license": "MIT",
-      "homepage": "https://github.com/kenchris/urlpattern-polyfill#readme"
+      "license": "MIT"
     },
     {
       "name": "uslug",
@@ -5623,8 +5300,7 @@
         "1.0.4"
       ],
       "license": "MIT",
-      "author": "Jeremy Selier",
-      "homepage": "https://github.com/jeremys/uslug#readme"
+      "author": "Jeremy Selier <jerem.selier@gmail.com>"
     },
     {
       "name": "utf8-byte-length",
@@ -5632,7 +5308,7 @@
         "1.0.5"
       ],
       "license": "(WTFPL OR MIT)",
-      "author": "Carl Xiong",
+      "author": "Carl Xiong <xiongc05@gmail.com>",
       "homepage": "https://github.com/parshap/utf8-byte-length#readme"
     },
     {
@@ -5641,7 +5317,7 @@
         "1.0.2"
       ],
       "license": "MIT",
-      "author": "Nathan Rajlich",
+      "author": "Nathan Rajlich <nathan@tootallnate.net> (http://n8.io/)",
       "homepage": "https://github.com/TooTallNate/util-deprecate"
     },
     {
@@ -5650,8 +5326,7 @@
         "1.0.1"
       ],
       "license": "MIT",
-      "author": "Jared Hanson",
-      "homepage": "https://github.com/jaredhanson/utils-merge#readme"
+      "author": "Jared Hanson"
     },
     {
       "name": "validator",
@@ -5659,7 +5334,7 @@
         "13.15.35"
       ],
       "license": "MIT",
-      "author": "Chris O'Hara",
+      "author": "Chris O'Hara <cohara87@gmail.com>",
       "homepage": "https://github.com/validatorjs/validator.js"
     },
     {
@@ -5668,8 +5343,7 @@
         "1.1.2"
       ],
       "license": "MIT",
-      "author": "Douglas Christopher Wilson",
-      "homepage": "https://github.com/jshttp/vary#readme"
+      "author": "Douglas Christopher Wilson <doug@somethingdoug.com>"
     },
     {
       "name": "void-elements",
@@ -5686,7 +5360,7 @@
         "2.2.8"
       ],
       "license": "MIT",
-      "author": "Marijn Haverbeke",
+      "author": "Marijn Haverbeke <marijn@haverbeke.berlin>",
       "homepage": "https://github.com/marijnh/w3c-keyname#readme"
     },
     {
@@ -5694,8 +5368,7 @@
       "versions": [
         "5.0.0"
       ],
-      "license": "MIT",
-      "homepage": "https://github.com/jsdom/w3c-xmlserializer#readme"
+      "license": "MIT"
     },
     {
       "name": "webidl-conversions",
@@ -5705,8 +5378,7 @@
         "8.0.1"
       ],
       "license": "BSD-2-Clause",
-      "author": "Domenic Denicola",
-      "homepage": "https://github.com/jsdom/webidl-conversions#readme"
+      "author": "Domenic Denicola <d@domenic.me> (https://domenic.me/)"
     },
     {
       "name": "whatwg-mimetype",
@@ -5715,8 +5387,7 @@
         "5.0.0"
       ],
       "license": "MIT",
-      "author": "Domenic Denicola",
-      "homepage": "https://github.com/jsdom/whatwg-mimetype#readme"
+      "author": "Domenic Denicola <d@domenic.me> (https://domenic.me/)"
     },
     {
       "name": "whatwg-url",
@@ -5727,8 +5398,7 @@
         "5.0.0"
       ],
       "license": "MIT",
-      "author": "Sebastian Mayr",
-      "homepage": "https://github.com/jsdom/whatwg-url#readme"
+      "author": "Sebastian Mayr <github@smayr.name>"
     },
     {
       "name": "which-module",
@@ -5745,8 +5415,7 @@
         "3.19.0"
       ],
       "license": "MIT",
-      "author": "Charlie Robbins",
-      "homepage": "https://github.com/winstonjs/winston#readme"
+      "author": "Charlie Robbins <charlie.robbins@gmail.com>"
     },
     {
       "name": "winston-transport",
@@ -5754,7 +5423,7 @@
         "4.9.0"
       ],
       "license": "MIT",
-      "author": "Charlie Robbins",
+      "author": "Charlie Robbins <charlie.robbins@gmail.com>",
       "homepage": "https://github.com/winstonjs/winston-transport#readme"
     },
     {
@@ -5763,8 +5432,7 @@
         "7.0.2"
       ],
       "license": "MIT",
-      "author": "ForbesLindesay",
-      "homepage": "https://github.com/pugjs/with#readme"
+      "author": "ForbesLindesay"
     },
     {
       "name": "wrap-ansi",
@@ -5773,8 +5441,7 @@
         "9.0.2"
       ],
       "license": "MIT",
-      "author": "Sindre Sorhus",
-      "homepage": "https://github.com/chalk/wrap-ansi#readme"
+      "author": "Sindre Sorhus"
     },
     {
       "name": "wrappy",
@@ -5782,7 +5449,7 @@
         "1.0.2"
       ],
       "license": "ISC",
-      "author": "Isaac Z. Schlueter",
+      "author": "Isaac Z. Schlueter <i@izs.me> (http://blog.izs.me/)",
       "homepage": "https://github.com/npm/wrappy"
     },
     {
@@ -5791,7 +5458,7 @@
         "8.21.3"
       ],
       "license": "MIT",
-      "author": "Einar Otto Stangvik",
+      "author": "Einar Otto Stangvik <einaros@gmail.com> (http://2x.io)",
       "homepage": "https://github.com/websockets/ws"
     },
     {
@@ -5800,8 +5467,7 @@
         "6.1.2"
       ],
       "license": "MIT",
-      "author": "Yaron Naveh",
-      "homepage": "https://github.com/node-saml/xml-crypto#readme"
+      "author": "Yaron Naveh <yaronn01@gmail.com> (http://webservices20.blogspot.com/)"
     },
     {
       "name": "xml-encryption",
@@ -5809,8 +5475,7 @@
         "3.1.0"
       ],
       "license": "MIT",
-      "author": "Matias Woloski",
-      "homepage": "https://github.com/auth0/node-xml-encryption#readme"
+      "author": "Matias Woloski (Auth0)"
     },
     {
       "name": "xml-name-validator",
@@ -5818,8 +5483,7 @@
         "5.0.0"
       ],
       "license": "Apache-2.0",
-      "author": "Domenic Denicola",
-      "homepage": "https://github.com/jsdom/xml-name-validator#readme"
+      "author": "Domenic Denicola <d@domenic.me> (https://domenic.me/)"
     },
     {
       "name": "xml-naming",
@@ -5827,8 +5491,7 @@
         "0.3.0"
       ],
       "license": "MIT",
-      "author": "Amit Gupta",
-      "homepage": "https://github.com/NaturalIntelligence/xml-naming#readme"
+      "author": "Amit Gupta (https://solothought.com)"
     },
     {
       "name": "xml2js",
@@ -5836,7 +5499,7 @@
         "0.6.2"
       ],
       "license": "MIT",
-      "author": "Marek Kubica",
+      "author": "Marek Kubica <marek@xivilization.net> (https://xivilization.net)",
       "homepage": "https://github.com/Leonidas-from-XIV/node-xml2js"
     },
     {
@@ -5846,7 +5509,7 @@
         "15.1.1"
       ],
       "license": "MIT",
-      "author": "Ozgur Ozcitak",
+      "author": "Ozgur Ozcitak <oozcitak@gmail.com>",
       "homepage": "http://github.com/oozcitak/xmlbuilder-js"
     },
     {
@@ -5855,8 +5518,7 @@
         "2.2.0"
       ],
       "license": "MIT",
-      "author": "Louis-Dominique Dubeau",
-      "homepage": "https://github.com/lddubeau/xmlchars#readme"
+      "author": "Louis-Dominique Dubeau <ldd@lddubeau.com>"
     },
     {
       "name": "xpath",
@@ -5866,8 +5528,7 @@
         "0.0.34"
       ],
       "license": "MIT",
-      "author": "Cameron McCormack",
-      "homepage": "https://github.com/goto100/xpath#readme"
+      "author": "Cameron McCormack"
     },
     {
       "name": "xtend",
@@ -5875,7 +5536,7 @@
         "4.0.2"
       ],
       "license": "MIT",
-      "author": "Raynos",
+      "author": "Raynos <raynos2@gmail.com>",
       "homepage": "https://github.com/Raynos/xtend"
     },
     {
@@ -5884,7 +5545,7 @@
         "0.3.5"
       ],
       "license": "MIT",
-      "author": "Kevin Jahns",
+      "author": "Kevin Jahns <kevin.jahns@protonmail.com>",
       "homepage": "https://github.com/yjs/y-codemirror.next#readme"
     },
     {
@@ -5893,7 +5554,7 @@
         "1.0.7"
       ],
       "license": "MIT",
-      "author": "Kevin Jahns",
+      "author": "Kevin Jahns <kevin.jahns@protonmail.com>",
       "homepage": "https://github.com/yjs/y-protocols#readme"
     },
     {
@@ -5903,7 +5564,7 @@
         "5.0.8"
       ],
       "license": "ISC",
-      "author": "Ben Coe",
+      "author": "Ben Coe <ben@npmjs.com>",
       "homepage": "https://github.com/yargs/y18n"
     },
     {
@@ -5922,8 +5583,7 @@
         "22.0.0"
       ],
       "license": "ISC",
-      "author": "Ben Coe",
-      "homepage": "https://github.com/yargs/yargs-parser#readme"
+      "author": "Ben Coe <ben@npmjs.com>"
     },
     {
       "name": "yjs",
@@ -5940,7 +5600,7 @@
         "4.4.3"
       ],
       "license": "MIT",
-      "author": "Colin McDonnell",
+      "author": "Colin McDonnell <zod@colinhacks.com>",
       "homepage": "https://zod.dev"
     }
   ]

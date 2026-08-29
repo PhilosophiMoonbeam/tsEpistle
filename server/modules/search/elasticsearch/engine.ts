@@ -426,7 +426,7 @@ const plugin: ElasticsearchPlugin = {
     await deleteElasticsearchIndex(this.client, this.config.indexName)
     await this.createIndex()
 
-    const MAX_INDEXING_BYTES = 10 * Math.pow(2, 20) - Buffer.from('[').byteLength - Buffer.from(']').byteLength // 10 MB
+    const MAX_INDEXING_BYTES = 10 * 2 ** 20 - Buffer.from('[').byteLength - Buffer.from(']').byteLength // 10 MB
     const MAX_INDEXING_COUNT = 1000
     const COMMA_BYTES = Buffer.from(',').byteLength
 

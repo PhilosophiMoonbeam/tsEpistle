@@ -1,5 +1,5 @@
 import createKnex, { type Knex } from 'knex'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from './bun-test.mts'
 import type { AgentKnowledgeEnricher } from '../agents/providers/utility.ts'
 import { enqueuePageMutationEffects } from '../core/page-mutation-outbox.ts'
 import { up as createProjectionStore } from '../db/migrations/2.5.152.ts'
@@ -122,7 +122,7 @@ describe('page knowledge lifecycle', () => {
     expect(rows.map(row => String(row.sourceRevision))).toEqual(['1', '2'])
     expect(rows.every(row => /^[a-f0-9]{64}$/.test(String(row.sourceSha256)))).toBe(true)
     expect(await db('pages').where({ id: 42 }).first('content')).toEqual({ content: second.content })
-    await expect(new PageKnowledgeRepository(db).getCurrent(42)).resolves.toMatchObject({ sourceRevision: '2' })
+    expect(await new PageKnowledgeRepository(db).getCurrent(42)).toMatchObject({ sourceRevision: '2' })
   })
 
   it('uses the global utility model only for declared public gaps', async () => {

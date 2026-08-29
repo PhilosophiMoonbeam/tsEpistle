@@ -1,11 +1,11 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi } from '../../server/test/bun-test.mts'
 import { createAgentGoal, createAgentMemory, createAgentThread, createPersonalAgentSkill, deleteAgentSession, getAgentMemories, getAgentThread, listAgentProfiles, listPersonalAgentSkills, removePersonalAgentSkill, resetAgentHistory, submitAgentMessage, updateAgentSkillPreferences, updatePersonalAgentSkill } from './agents-api.ts'
 import { renderSafeMarkdown } from './safe-markdown.ts'
 
 describe('agents client boundary', () => {
   it('rejects malformed thread responses instead of rendering unvalidated provider data', async () => {
     const fetcher = vi.fn(async () => new Response(JSON.stringify({ session: { id: 'not-a-uuid' }, messages: '<script>' }), { status: 201, headers: { 'content-type': 'application/json' } })) as unknown as typeof fetch
-    await expect(createAgentThread(fetcher, 'csrf', { retention: 'saved', providerProfileId: null })).rejects.toThrow()
+    await expect(Promise.resolve(createAgentThread(fetcher, 'csrf', { retention: 'saved', providerProfileId: null }))).rejects.toThrow()
   })
 
   it('sends mutating requests with same-origin credentials and the session CSRF token', async () => {
@@ -28,19 +28,19 @@ describe('agents client boundary', () => {
     ]
     const fetcher = vi.fn(async () => responses.shift()!) as unknown as typeof fetch
 
-    await expect(getAgentMemories(fetcher, 'csrf')).resolves.toMatchObject({ user: { entries: [entry] } })
-    await expect(createAgentMemory(fetcher, 'csrf', { target: 'user', content: entry.content })).resolves.toMatchObject({ changed: true, target: 'user' })
+    expect(await getAgentMemories(fetcher, 'csrf')).toMatchObject({ user: { entries: [entry] } })
+    expect(await createAgentMemory(fetcher, 'csrf', { target: 'user', content: entry.content })).toMatchObject({ changed: true, target: 'user' })
     expect(fetcher).toHaveBeenNthCalledWith(2, '/_api/agents/memories', expect.objectContaining({ method: 'POST', body: JSON.stringify({ target: 'user', content: entry.content }) }))
   })
 
   it('turns an empty 403 response into an actionable chat error', async () => {
     const fetcher = vi.fn(async () => new Response(null, { status: 403 })) as unknown as typeof fetch
-    await expect(submitAgentMessage(fetcher, 'csrf', '00000000-0000-4000-8000-000000000001', {
+    await expect(Promise.resolve(submitAgentMessage(fetcher, 'csrf', '00000000-0000-4000-8000-000000000001', {
       clientRequestId: '00000000-0000-4000-8000-000000000002',
       expectedSessionVersion: 1,
       profileResolutionToken: 'token',
       content: 'Create a page'
-    })).rejects.toThrow('Refresh the page')
+    }))).rejects.toThrow('Refresh the page')
   })
 
   it('accepts the mutable provider selection contract without internal version fields', async () => {
@@ -57,7 +57,7 @@ describe('agents client boundary', () => {
       isGlobalDefault: true
     }
     const fetcher = vi.fn(async () => Response.json({ profiles: [profile] })) as unknown as typeof fetch
-    await expect(listAgentProfiles(fetcher, 'csrf')).resolves.toEqual([profile])
+    expect(await listAgentProfiles(fetcher, 'csrf')).toEqual([profile])
   })
 
   it('validates personal skill documents across create, list, update, and remove requests', async () => {
@@ -80,10 +80,10 @@ describe('agents client boundary', () => {
     ]
     const fetcher = vi.fn(async () => responses.shift() ?? Response.json({})) as unknown as typeof fetch
 
-    await expect(createPersonalAgentSkill(fetcher, 'csrf', { name: skill.name, skillMarkdown: skill.skillMarkdown, isAgentDiscoverable: false })).resolves.toEqual(skill)
-    await expect(listPersonalAgentSkills(fetcher, 'csrf')).resolves.toEqual([skill])
-    await expect(updatePersonalAgentSkill(fetcher, 'csrf', skill.id, { expectedVersionId: skill.versionId, skillMarkdown: skill.skillMarkdown, isAgentDiscoverable: true })).resolves.toMatchObject({ versionId: '00000000-0000-4000-8000-000000000013' })
-    await expect(removePersonalAgentSkill(fetcher, 'csrf', skill.id, skill.versionId)).resolves.toBeUndefined()
+    expect(await createPersonalAgentSkill(fetcher, 'csrf', { name: skill.name, skillMarkdown: skill.skillMarkdown, isAgentDiscoverable: false })).toEqual(skill)
+    expect(await listPersonalAgentSkills(fetcher, 'csrf')).toEqual([skill])
+    expect(await updatePersonalAgentSkill(fetcher, 'csrf', skill.id, { expectedVersionId: skill.versionId, skillMarkdown: skill.skillMarkdown, isAgentDiscoverable: true })).toMatchObject({ versionId: '00000000-0000-4000-8000-000000000013' })
+    expect(await removePersonalAgentSkill(fetcher, 'csrf', skill.id, skill.versionId)).toBeUndefined()
     expect(fetcher).toHaveBeenNthCalledWith(1, '/_api/agents/personal-skills', expect.objectContaining({
       body: JSON.stringify({ name: skill.name, skillMarkdown: skill.skillMarkdown, isAgentDiscoverable: false })
     }))
@@ -101,7 +101,7 @@ describe('agents client boundary', () => {
     const fetchMock = vi.fn(async () => Response.json({ skillIds: [skillId] }))
     const fetcher = fetchMock as unknown as typeof fetch
 
-    await expect(updateAgentSkillPreferences(fetcher, 'csrf', { skillIds: [skillId] })).resolves.toEqual([skillId])
+    expect(await updateAgentSkillPreferences(fetcher, 'csrf', { skillIds: [skillId] })).toEqual([skillId])
     expect(fetcher).toHaveBeenCalledWith('/_api/agents/skill-preferences', expect.objectContaining({
       method: 'PUT',
       credentials: 'same-origin',
@@ -188,7 +188,7 @@ describe('agents client boundary', () => {
       objective: goal.objective
     }
 
-    await expect(createAgentGoal(fetcher, 'csrf', sessionId, input)).resolves.toEqual({ goal, run, replayed: false })
+    expect(await createAgentGoal(fetcher, 'csrf', sessionId, input)).toEqual({ goal, run, replayed: false })
     expect(fetcher).toHaveBeenCalledWith(`/_api/agents/sessions/${sessionId}/goals`, expect.objectContaining({ method: 'POST', body: JSON.stringify(input) }))
   })
 
@@ -244,7 +244,7 @@ describe('agents client boundary', () => {
     }
     const fetcher = vi.fn(async () => Response.json(thread)) as unknown as typeof fetch
 
-    await expect(getAgentThread(fetcher, 'csrf', sessionId)).resolves.toMatchObject({ tasks: [task] })
+    expect(await getAgentThread(fetcher, 'csrf', sessionId)).toMatchObject({ tasks: [task] })
   })
   it('renders Markdown with raw HTML and active URL schemes disabled', () => {
     const rendered = renderSafeMarkdown('[safe](https://wiki.example.test/page) <img src=x onerror=alert(1)> [bad](javascript:alert(1))')

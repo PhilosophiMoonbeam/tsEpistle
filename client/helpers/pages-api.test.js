@@ -22,7 +22,7 @@ describe('pages api helper', () => {
       }
     ]))
 
-    await expect(fetchPageLinks(fetchImpl, 'en')).resolves.toEqual([
+    expect(await fetchPageLinks(fetchImpl, 'en')).toEqual([
       { id: 1, path: 'en/docs/home', title: 'Home', links: ['en/docs/target'] }
     ])
 
@@ -37,7 +37,7 @@ describe('pages api helper', () => {
   test('URL-encodes page links locale requests', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([]))
 
-    await expect(fetchPageLinks(fetchImpl, 'pt BR')).resolves.toEqual([])
+    expect(await fetchPageLinks(fetchImpl, 'pt BR')).toEqual([])
 
     expect(fetchImpl.mock.calls[0][0]).toBe('/_api/pages/links?locale=pt%20BR')
   })
@@ -45,13 +45,13 @@ describe('pages api helper', () => {
   test('rejects malformed page links payloads', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([{ id: 1, path: 'en/docs/home', title: 'Home', links: [7] }]))
 
-    await expect(fetchPageLinks(fetchImpl, 'en', 'Bad links payload')).rejects.toThrow('Bad links payload')
+    await expect(Promise.resolve(fetchPageLinks(fetchImpl, 'en', 'Bad links payload'))).rejects.toThrow('Bad links payload')
   })
 
   test('surfaces API error messages for failed page links requests', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ error: 'manage:system or read:pages is required' }, false))
 
-    await expect(fetchPageLinks(fetchImpl, 'en', 'Bad links payload')).rejects.toThrow('manage:system or read:pages is required')
+    await expect(Promise.resolve(fetchPageLinks(fetchImpl, 'en', 'Bad links payload'))).rejects.toThrow('manage:system or read:pages is required')
   })
 
   test('fetches and validates page detail payloads', async () => {
@@ -81,7 +81,7 @@ describe('pages api helper', () => {
       extra: 'ignored'
     }))
 
-    await expect(fetchPage(fetchImpl, 7)).resolves.toEqual({
+    expect(await fetchPage(fetchImpl, 7)).toEqual({
       id: 7,
       locale: 'en',
       path: 'docs/alpha',
@@ -117,13 +117,13 @@ describe('pages api helper', () => {
   test('rejects malformed page detail payloads', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ id: 7, locale: 'en', path: 'docs/alpha' }))
 
-    await expect(fetchPage(fetchImpl, 7, 'Bad page payload')).rejects.toThrow('Bad page payload')
+    await expect(Promise.resolve(fetchPage(fetchImpl, 7, 'Bad page payload'))).rejects.toThrow('Bad page payload')
   })
 
   test('surfaces API error messages for failed page detail requests', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ error: 'This page does not exist.' }, false))
 
-    await expect(fetchPage(fetchImpl, 7, 'Bad page payload')).rejects.toThrow('This page does not exist.')
+    await expect(Promise.resolve(fetchPage(fetchImpl, 7, 'Bad page payload'))).rejects.toThrow('This page does not exist.')
   })
 
   test('fetches and validates page list payloads', async () => {
@@ -145,7 +145,7 @@ describe('pages api helper', () => {
       }
     ]))
 
-    await expect(fetchPageList(fetchImpl)).resolves.toEqual([
+    expect(await fetchPageList(fetchImpl)).toEqual([
       {
         id: 10,
         locale: 'en',
@@ -175,19 +175,19 @@ describe('pages api helper', () => {
       { id: 10, locale: 'en', path: 'docs/alpha', title: 'Alpha', tags: ['alpha'] }
     ]))
 
-    await expect(fetchPageList(fetchImpl, 'Bad page list payload')).rejects.toThrow('Bad page list payload')
+    await expect(Promise.resolve(fetchPageList(fetchImpl, 'Bad page list payload'))).rejects.toThrow('Bad page list payload')
   })
 
   test('rejects non-array page list payloads', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ pages: [] }))
 
-    await expect(fetchPageList(fetchImpl, 'Bad page list payload')).rejects.toThrow('Bad page list payload')
+    await expect(Promise.resolve(fetchPageList(fetchImpl, 'Bad page list payload'))).rejects.toThrow('Bad page list payload')
   })
 
   test('surfaces API error messages for failed page list requests', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ error: 'manage:system or read:pages is required' }, false))
 
-    await expect(fetchPageList(fetchImpl, 'Bad page list payload')).rejects.toThrow('manage:system or read:pages is required')
+    await expect(Promise.resolve(fetchPageList(fetchImpl, 'Bad page list payload'))).rejects.toThrow('manage:system or read:pages is required')
   })
 
   test('fetches and validates admin page tags payloads', async () => {
@@ -209,7 +209,7 @@ describe('pages api helper', () => {
       }
     ]))
 
-    await expect(fetchPageTags(fetchImpl)).resolves.toEqual([
+    expect(await fetchPageTags(fetchImpl)).toEqual([
       { id: 1, tag: 'alpha', title: 'Alpha', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-02T00:00:00.000Z' },
       { id: 2, tag: 'zeta', title: null, createdAt: '2026-01-03T00:00:00.000Z', updatedAt: '2026-01-04T00:00:00.000Z' }
     ])
@@ -227,7 +227,7 @@ describe('pages api helper', () => {
       { id: 1, tag: '', title: 'Alpha', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-02T00:00:00.000Z' }
     ]))
 
-    await expect(fetchPageTags(fetchImpl)).resolves.toEqual([
+    expect(await fetchPageTags(fetchImpl)).toEqual([
       { id: 1, tag: '', title: 'Alpha', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-02T00:00:00.000Z' }
     ])
   })
@@ -237,19 +237,19 @@ describe('pages api helper', () => {
       { id: 1, tag: 12, title: 'Alpha', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-02T00:00:00.000Z' }
     ]))
 
-    await expect(fetchPageTags(fetchImpl, 'Bad page tags payload')).rejects.toThrow('Bad page tags payload')
+    await expect(Promise.resolve(fetchPageTags(fetchImpl, 'Bad page tags payload'))).rejects.toThrow('Bad page tags payload')
   })
 
   test('rejects non-array admin page tags payloads', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ tags: [] }))
 
-    await expect(fetchPageTags(fetchImpl, 'Bad page tags payload')).rejects.toThrow('Bad page tags payload')
+    await expect(Promise.resolve(fetchPageTags(fetchImpl, 'Bad page tags payload'))).rejects.toThrow('Bad page tags payload')
   })
 
   test('surfaces API error messages for failed page tags requests', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ error: 'manage:system or read:pages is required' }, false))
 
-    await expect(fetchPageTags(fetchImpl, 'Bad page tags payload')).rejects.toThrow('manage:system or read:pages is required')
+    await expect(Promise.resolve(fetchPageTags(fetchImpl, 'Bad page tags payload'))).rejects.toThrow('manage:system or read:pages is required')
   })
 
   test('fetches and validates dashboard recent-pages payloads', async () => {
@@ -272,7 +272,7 @@ describe('pages api helper', () => {
       }
     ]))
 
-    await expect(fetchRecentPages(fetchImpl)).resolves.toEqual([
+    expect(await fetchRecentPages(fetchImpl)).toEqual([
       { id: 10, locale: 'en', path: 'docs/alpha', title: 'Alpha', updatedAt: '2026-01-03T00:00:00.000Z', visibility: 'private' },
       { id: 11, locale: 'fr', path: 'docs/beta', title: 'Beta', updatedAt: '2026-01-02T00:00:00.000Z', visibility: 'public' }
     ])
@@ -297,7 +297,7 @@ describe('pages api helper', () => {
       }
     ]))
 
-    await expect(fetchRecentPages(fetchImpl)).resolves.toEqual([
+    expect(await fetchRecentPages(fetchImpl)).toEqual([
       { id: 12, locale: 'en', path: '', title: '', updatedAt: '2026-01-01T00:00:00.000Z', visibility: 'public' }
     ])
   })
@@ -307,13 +307,13 @@ describe('pages api helper', () => {
       { id: 10, locale: 'en', path: 'docs/alpha', title: 'Alpha', updatedAt: null }
     ]))
 
-    await expect(fetchRecentPages(fetchImpl, 'Bad recent pages payload')).rejects.toThrow('Bad recent pages payload')
+    await expect(Promise.resolve(fetchRecentPages(fetchImpl, 'Bad recent pages payload'))).rejects.toThrow('Bad recent pages payload')
   })
 
   test('rejects non-array dashboard recent-pages payloads', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ pages: [] }))
 
-    await expect(fetchRecentPages(fetchImpl, 'Bad recent pages payload')).rejects.toThrow('Bad recent pages payload')
+    await expect(Promise.resolve(fetchRecentPages(fetchImpl, 'Bad recent pages payload'))).rejects.toThrow('Bad recent pages payload')
   })
 
   test('surfaces API error messages for failed recent-pages requests', async () => {
@@ -325,13 +325,13 @@ describe('pages api helper', () => {
       json: async () => ({ error: 'manage:system or read:pages is required' })
     })
 
-    await expect(fetchRecentPages(fetchImpl, 'Bad recent pages payload')).rejects.toThrow('manage:system or read:pages is required')
+    await expect(Promise.resolve(fetchRecentPages(fetchImpl, 'Bad recent pages payload'))).rejects.toThrow('manage:system or read:pages is required')
   })
 
   test('deletes pages with a source-revision compare-and-swap', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ message: 'Page has been deleted.' }))
 
-    await expect(deletePage(fetchImpl, 7, '8')).resolves.toEqual({ message: 'Page has been deleted.' })
+    expect(await deletePage(fetchImpl, 7, '8')).toEqual({ message: 'Page has been deleted.' })
 
     expect(fetchImpl).toHaveBeenCalledWith('/_api/pages/7', {
       method: 'DELETE',
@@ -347,19 +347,19 @@ describe('pages api helper', () => {
   test('surfaces API error messages for failed page delete requests', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ error: 'This page does not exist.' }, false))
 
-    await expect(deletePage(fetchImpl, 7, '8')).rejects.toThrow('This page does not exist.')
+    await expect(Promise.resolve(deletePage(fetchImpl, 7, '8'))).rejects.toThrow('This page does not exist.')
   })
 
   test('rejects malformed successful page delete responses', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({}))
 
-    await expect(deletePage(fetchImpl, 7, '8', 'Bad page delete response')).rejects.toThrow('Bad page delete response')
+    await expect(Promise.resolve(deletePage(fetchImpl, 7, '8', 'Bad page delete response'))).rejects.toThrow('Bad page delete response')
   })
 
   test('updates page tags with same-origin JSON PATCH', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ message: 'Tag has been updated successfully.' }))
 
-    await expect(updatePageTag(fetchImpl, 7, '  News  ', '  Current News  ')).resolves.toEqual({ message: 'Tag has been updated successfully.' })
+    expect(await updatePageTag(fetchImpl, 7, '  News  ', '  Current News  ')).toEqual({ message: 'Tag has been updated successfully.' })
 
     expect(fetchImpl).toHaveBeenCalledWith('/_api/pages/tags/7', {
       method: 'PATCH',
@@ -375,19 +375,19 @@ describe('pages api helper', () => {
   test('surfaces API error messages for failed tag update requests', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ error: 'This tag does not exist.' }, false))
 
-    await expect(updatePageTag(fetchImpl, 7, 'News', 'News')).rejects.toThrow('This tag does not exist.')
+    await expect(Promise.resolve(updatePageTag(fetchImpl, 7, 'News', 'News'))).rejects.toThrow('This tag does not exist.')
   })
 
   test('rejects malformed successful tag update responses', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({}))
 
-    await expect(updatePageTag(fetchImpl, 7, 'News', 'News', 'Bad tag update response')).rejects.toThrow('Bad tag update response')
+    await expect(Promise.resolve(updatePageTag(fetchImpl, 7, 'News', 'News', 'Bad tag update response'))).rejects.toThrow('Bad tag update response')
   })
 
   test('deletes page tags with same-origin JSON DELETE', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ message: 'Tag has been deleted.' }))
 
-    await expect(deletePageTag(fetchImpl, 7)).resolves.toEqual({ message: 'Tag has been deleted.' })
+    expect(await deletePageTag(fetchImpl, 7)).toEqual({ message: 'Tag has been deleted.' })
 
     expect(fetchImpl).toHaveBeenCalledWith('/_api/pages/tags/7', {
       method: 'DELETE',
@@ -401,13 +401,13 @@ describe('pages api helper', () => {
   test('surfaces API error messages for failed tag delete requests', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ error: 'This tag does not exist.' }, false))
 
-    await expect(deletePageTag(fetchImpl, 7)).rejects.toThrow('This tag does not exist.')
+    await expect(Promise.resolve(deletePageTag(fetchImpl, 7))).rejects.toThrow('This tag does not exist.')
   })
 
   test('rejects malformed successful tag delete responses', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({}))
 
-    await expect(deletePageTag(fetchImpl, 7, 'Bad tag delete response')).rejects.toThrow('Bad tag delete response')
+    await expect(Promise.resolve(deletePageTag(fetchImpl, 7, 'Bad tag delete response'))).rejects.toThrow('Bad tag delete response')
   })
   test('validates complete immutable revision metadata', async () => {
     const version = {
@@ -425,7 +425,7 @@ describe('pages api helper', () => {
     }
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse(version))
 
-    await expect(fetchPageVersion(fetchImpl, 42, 9)).resolves.toEqual(version)
+    expect(await fetchPageVersion(fetchImpl, 42, 9)).toEqual(version)
     expect(fetchImpl).toHaveBeenCalledWith('/_api/pages/42/history/9', {
       credentials: 'same-origin',
       headers: { Accept: 'application/json' }
@@ -441,14 +441,14 @@ describe('pages api helper', () => {
       path: 'before'
     }))
 
-    await expect(fetchPageVersion(fetchImpl, 42, 9, 'Invalid revision')).rejects.toThrow('Invalid revision')
+    await expect(Promise.resolve(fetchPageVersion(fetchImpl, 42, 9, 'Invalid revision'))).rejects.toThrow('Invalid revision')
   })
 
   test('restores against the page source revision observed when history opened', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ message: 'Page version restored successfully.' }))
     const expectedSourceRevision = '8'
 
-    await expect(restorePageVersion(fetchImpl, 42, 9, expectedSourceRevision)).resolves.toBeUndefined()
+    expect(await restorePageVersion(fetchImpl, 42, 9, expectedSourceRevision)).toBeUndefined()
     expect(fetchImpl).toHaveBeenCalledWith('/_api/pages/42/history/9/restore', {
       method: 'POST',
       credentials: 'same-origin',
@@ -474,7 +474,7 @@ describe('pages api helper', () => {
       }]
     }))
 
-    await expect(fetchPageHistory(fetchImpl, 42, 0, 25)).resolves.toMatchObject({ total: 1 })
+    expect(await fetchPageHistory(fetchImpl, 42, 0, 25)).toMatchObject({ total: 1 })
     expect(fetchImpl.mock.calls[0][0]).toBe('/_api/pages/42/history?offsetPage=0&offsetSize=25')
   })
 
@@ -493,7 +493,7 @@ describe('pages api helper', () => {
     }
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([row]))
 
-    await expect(fetchPageTree(fetchImpl, { locale: 'en', parent: 0 })).resolves.toEqual([row])
+    expect(await fetchPageTree(fetchImpl, { locale: 'en', parent: 0 })).toEqual([row])
     expect(fetchImpl.mock.calls[0][0]).toBe('/_api/pages/tree?locale=en&mode=ALL&parent=0')
   })
 
@@ -510,7 +510,7 @@ describe('pages api helper', () => {
       ownerId: null
     }]))
 
-    await expect(fetchPageTree(fetchImpl, { locale: 'en' }, 'Bad page tree')).rejects.toThrow('Bad page tree')
+    await expect(Promise.resolve(fetchPageTree(fetchImpl, { locale: 'en' }, 'Bad page tree'))).rejects.toThrow('Bad page tree')
   })
 
   test('validates page translation relations', async () => {
@@ -523,7 +523,7 @@ describe('pages api helper', () => {
     }
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([relation]))
 
-    await expect(fetchPageLocaleRelations(fetchImpl, 42)).resolves.toEqual([relation])
+    expect(await fetchPageLocaleRelations(fetchImpl, 42)).toEqual([relation])
     expect(fetchImpl).toHaveBeenCalledWith('/_api/pages/42/locale-relations', {
       credentials: 'same-origin',
       headers: { Accept: 'application/json' }
@@ -533,14 +533,14 @@ describe('pages api helper', () => {
   test('rejects malformed page translation relations', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([{ id: 7, locale: 'fr', path: 'guide/bonjour' }]))
 
-    await expect(fetchPageLocaleRelations(fetchImpl, 42, 'Bad translations')).rejects.toThrow('Bad translations')
+    await expect(Promise.resolve(fetchPageLocaleRelations(fetchImpl, 42, 'Bad translations'))).rejects.toThrow('Bad translations')
   })
 
   test('links and unlinks translations through resource-scoped endpoints', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([]))
 
-    await expect(linkPageLocaleRelation(fetchImpl, 42, 7)).resolves.toEqual([])
-    await expect(unlinkPageLocaleRelation(fetchImpl, 42, 7)).resolves.toEqual([])
+    expect(await linkPageLocaleRelation(fetchImpl, 42, 7)).toEqual([])
+    expect(await unlinkPageLocaleRelation(fetchImpl, 42, 7)).toEqual([])
     expect(fetchImpl.mock.calls).toEqual([
       ['/_api/pages/42/locale-relations', {
         method: 'POST',

@@ -1,6 +1,5 @@
-/** @vitest-environment node */
 import createKnex, { type Knex } from 'knex'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from '../bun-test.mts'
 
 import { down, up } from '../../db/migrations/2.5.146.ts'
 
@@ -63,12 +62,12 @@ describe('agent skill preference migration', () => {
   it('migrates the latest conversation selection to a stable skill identity', async () => {
     await up(db)
 
-    await expect(db.schema.hasTable('agentSessionSkills')).resolves.toBe(false)
+    expect(await db.schema.hasTable('agentSessionSkills')).toBe(false)
     expect(await db('agentUserSkillPreferences').select('ownerId', 'skillId', 'ordinal')).toEqual([{ ownerId: userId, skillId, ordinal: 0 }])
     expect(await db('agentSkillVersions').orderBy('id').pluck('id')).toEqual([oldVersionId, currentVersionId])
 
     await down(db)
-    await expect(db.schema.hasTable('agentUserSkillPreferences')).resolves.toBe(false)
+    expect(await db.schema.hasTable('agentUserSkillPreferences')).toBe(false)
     expect(await db('agentSessionSkills').orderBy('sessionId').select('sessionId', 'skillVersionId', 'ordinal')).toEqual([
       { sessionId: oldSessionId, skillVersionId: currentVersionId, ordinal: 0 },
       { sessionId: latestSessionId, skillVersionId: currentVersionId, ordinal: 0 }

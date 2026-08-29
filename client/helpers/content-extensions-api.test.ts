@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi } from '../../server/test/bun-test.mts'
 import { fetchContentExtensions } from './content-extensions-api.ts'
 
 function jsonResponse (payload: unknown, ok = true) {
@@ -26,7 +26,7 @@ describe('content extensions API', () => {
   it('loads and validates extension availability', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(jsonResponse({ hostVersion: 1, extensions: [qrStatus] }))
 
-    await expect(fetchContentExtensions(fetchImpl)).resolves.toEqual({
+    expect(await fetchContentExtensions(fetchImpl)).toEqual({
       hostVersion: 1,
       extensions: [qrStatus]
     })
@@ -38,9 +38,9 @@ describe('content extensions API', () => {
 
   it('rejects malformed status and surfaces server diagnostics', async () => {
     const malformedFetch = vi.fn().mockResolvedValue(jsonResponse({ hostVersion: 1, extensions: [{ ...qrStatus, compatible: 'yes' }] }))
-    await expect(fetchContentExtensions(malformedFetch)).rejects.toThrow('Content extensions could not be loaded.')
+    await expect(Promise.resolve(fetchContentExtensions(malformedFetch))).rejects.toThrow('Content extensions could not be loaded.')
 
     const failedFetch = vi.fn().mockResolvedValue(jsonResponse({ error: 'Extensions unavailable.' }, false))
-    await expect(fetchContentExtensions(failedFetch)).rejects.toThrow('Extensions unavailable.')
+    await expect(Promise.resolve(fetchContentExtensions(failedFetch))).rejects.toThrow('Extensions unavailable.')
   })
 })

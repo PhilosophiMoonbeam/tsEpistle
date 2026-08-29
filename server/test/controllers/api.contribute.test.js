@@ -1,4 +1,4 @@
-vi.mock('express', () => {
+vi.mockModule('express', import.meta.url, () => {
   const routers = []
   const express = {
     Router: () => {
@@ -19,7 +19,7 @@ vi.mock('express', () => {
   return { default: express, ...express }
 })
 
-import express from 'express'
+const { default: express } = await import('express')
 
 const API_CONTROLLER_NAMES = [
   'analytics',
@@ -46,16 +46,16 @@ const loadApiIndexRouter = async () => {
   const subrouters = Object.fromEntries(API_CONTROLLER_NAMES.map(name => [name, {}]))
 
   for (const name of API_CONTROLLER_NAMES) {
-    vi.doMock(`../../controllers/api/${name}.ts`, () => ({
+    vi.mockModule(`../../controllers/api/${name}.ts`, import.meta.url, () => ({
       default: subrouters[name]
     }))
   }
 
   try {
-    await expect(import('../../controllers/api/index.ts')).resolves.toBeDefined()
+    expect(await vi.importFresh('../../controllers/api/index.ts', import.meta.url)).toBeDefined()
   } finally {
     for (const name of API_CONTROLLER_NAMES) {
-      vi.doUnmock(`../../controllers/api/${name}.ts`)
+      vi.unmockModule(`../../controllers/api/${name}.ts`, import.meta.url)
     }
   }
 
@@ -92,7 +92,7 @@ describe('controllers/api contribute endpoints', () => {
   })
 
   const loadContributorsHandler = async () => {
-    await import('../../controllers/api/contribute.ts')
+    await vi.importFresh('../../controllers/api/contribute.ts', import.meta.url)
     const router = express.__routers[0]
     return router.get.mock.calls.find(([path]) => path === '/contributors')[1]
   }
@@ -101,11 +101,6 @@ describe('controllers/api contribute endpoints', () => {
 
   expect(typeof handler).toBe('function') })
 
-  it('is mounted by the API index router', async () => {
-    const { apiRouter, subrouters } = await loadApiIndexRouter()
-
-    expect(apiRouter.use).toHaveBeenCalledWith('/contribute', subrouters.contribute)
-  })
 
   it('requests upstream sponsors backers using the expected GraphQL request shape', async () => {
     global.fetch.mockResolvedValue(successfulResponse({ data: { sponsors: { list: [] } } }))
@@ -231,5 +226,10 @@ describe('controllers/api contribute endpoints', () => {
       expect.objectContaining({ message: 'Contributor service returned 503 Service Unavailable' })
     )
     expect(res.json).toHaveBeenCalledWith([])
+  })
+  it('is mounted by the API index router', async () => {
+    const { apiRouter, subrouters } = await loadApiIndexRouter()
+
+    expect(apiRouter.use).toHaveBeenCalledWith('/contribute', subrouters.contribute)
   })
 })

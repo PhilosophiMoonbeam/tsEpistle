@@ -24,9 +24,9 @@ describe('database search public source isolation', () => {
       config: { db: { type: 'postgres' }, search: { maxHits: 20 } },
       models: { pages: { query: vi.fn().mockReturnValue(query) } }
     }
-    const plugin = (await import('../modules/search/db/engine.ts')).default
+    const plugin = (await vi.importFresh('../modules/search/db/engine.ts', import.meta.url)).default
 
-    await expect(plugin.query('secret', {})).resolves.toEqual({ results: [], suggestions: [], totalHits: 0 })
+    expect(await plugin.query('secret', {})).toEqual({ results: [], suggestions: [], totalHits: 0 })
     expect(where).toHaveBeenCalledWith('visibility', 'public')
     expect(query.limit).toHaveBeenCalledWith(20)
   })

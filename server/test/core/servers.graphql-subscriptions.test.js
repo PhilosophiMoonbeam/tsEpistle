@@ -7,11 +7,11 @@ describe('core/servers GraphQL transports', () => {
 
   afterEach(() => {
     global.WIKI = previousWiki
-    vi.doUnmock('graphql-yoga')
-    vi.doUnmock('graphql-ws/use/ws')
-    vi.doUnmock('ws')
-    vi.doUnmock('jsonwebtoken')
-    vi.doUnmock('../../graph/index.ts')
+    vi.unmockModule('graphql-yoga', import.meta.url)
+    vi.unmockModule('graphql-ws/use/ws', import.meta.url)
+    vi.unmockModule('ws', import.meta.url)
+    vi.unmockModule('jsonwebtoken', import.meta.url)
+    vi.unmockModule('../../graph/index.ts', import.meta.url)
     vi.restoreAllMocks()
   })
 
@@ -39,17 +39,17 @@ describe('core/servers GraphQL transports', () => {
     })
     const verify = vi.fn()
 
-    vi.doMock('graphql-yoga', () => ({ createYoga }))
-    vi.doMock('graphql-ws/use/ws', () => ({ useServer }))
-    vi.doMock('ws', () => ({
+    vi.mockModule('graphql-yoga', import.meta.url, () => ({ createYoga }))
+    vi.mockModule('graphql-ws/use/ws', import.meta.url, () => ({ useServer }))
+    vi.mockModule('ws', import.meta.url, () => ({
       default: { Server: WebSocketServer },
       WebSocketServer
     }))
-    vi.doMock('jsonwebtoken', () => ({
+    vi.mockModule('jsonwebtoken', import.meta.url, () => ({
       default: { verify }
     }))
     const createGraphQLArtifacts = vi.fn().mockResolvedValue({ schema: { kind: 'schema' } })
-    vi.doMock('../../graph/index.ts', () => ({ createGraphQLArtifacts }))
+    vi.mockModule('../../graph/index.ts', import.meta.url, () => ({ createGraphQLArtifacts }))
 
     global.WIKI = {
       IS_DEBUG: false,
@@ -66,7 +66,7 @@ describe('core/servers GraphQL transports', () => {
       }
     }
 
-    const { default: createServers } = await import('../../core/servers.ts')
+    const { default: createServers } = await vi.importFresh('../../core/servers.ts', import.meta.url)
     const servers = createServers(global.WIKI)
     const createHttpServer = () => ({ on: vi.fn(), off: vi.fn() })
     return { servers, createGraphQLArtifacts, createYoga, yoga, useServer, cleanup, WebSocketServer, wsServer, verify, createHttpServer }

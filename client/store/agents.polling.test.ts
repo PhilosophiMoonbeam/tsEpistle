@@ -1,5 +1,5 @@
 import { createPinia, setActivePinia } from 'pinia'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from '../../server/test/bun-test.mts'
 
 import type { AgentThreadState } from '../../shared/agents/contracts.ts'
 import { useAgentsStore } from './agents.ts'
@@ -55,10 +55,12 @@ describe('Agent chat refresh fallback', () => {
     const store = useAgentsStore()
     store.thread = activeThread()
     store.connection = 'connected'
-    const refresh = vi.spyOn(store, 'refreshThread').mockImplementation(async () => {
+    const refresh = vi.fn(async () => {
       if (refresh.mock.calls.length === 2 && store.thread) store.thread = { ...store.thread, session: { ...store.thread.session, currentRun: null } }
     })
-    const reloadSessions = vi.spyOn(store, 'reloadSessions').mockResolvedValue()
+    const reloadSessions = vi.fn(async () => undefined)
+    store.refreshThread = refresh
+    store.reloadSessions = reloadSessions
 
     store.scheduleRefresh(false, 1_000)
     await vi.advanceTimersByTimeAsync(1_000)
@@ -107,15 +109,17 @@ describe('Agent chat refresh fallback', () => {
       id: '00000000-0000-4000-8000-000000000011',
       eventSequence: 2
     }
-    vi.spyOn(store, 'refreshThread').mockImplementation(async () => {
+    store.refreshThread = vi.fn(async () => {
       if (store.thread) store.thread = {
         ...store.thread,
         session: { ...store.thread.session, currentRun: nextRun },
         goal: store.thread.goal ? { ...store.thread.goal, currentRunId: nextRun.id, continuationCount: 1, version: 2 } : null
       }
     })
-    const connect = vi.spyOn(store, 'connect').mockImplementation(() => {})
-    const reloadSessions = vi.spyOn(store, 'reloadSessions').mockResolvedValue()
+    const connect = vi.fn(() => {})
+    const reloadSessions = vi.fn(async () => undefined)
+    store.connect = connect
+    store.reloadSessions = reloadSessions
 
     store.scheduleRefresh(true, 1, firstRunId)
     await vi.advanceTimersByTimeAsync(1)
@@ -152,7 +156,7 @@ describe('Agent empty conversation lifecycle', () => {
       .mockResolvedValueOnce(new Response(JSON.stringify(replacement), { status: 201, ...json }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ sessions: [] }), { status: 200, ...json }))
 
-    await expect(store.newSession('saved')).resolves.toBeUndefined()
+    expect(await store.newSession('saved')).toBeUndefined()
 
     expect(fetcher.mock.calls.map(call => [call[0], (call[1] as RequestInit | undefined)?.method ?? 'GET'])).toEqual([
       ['/_api/agents/sessions/00000000-0000-4000-8000-000000000001', 'DELETE'],
@@ -191,7 +195,7 @@ describe('Agent history reset', () => {
     store.error = 'No default provider profile is configured for your groups.'
     const fetcher = vi.spyOn(window, 'fetch').mockResolvedValue(new Response(null, { status: 204 }))
 
-    await expect(store.resetHistory()).resolves.toBeUndefined()
+    expect(await store.resetHistory()).toBeUndefined()
 
     expect(fetcher).toHaveBeenCalledTimes(1)
     expect(fetcher).toHaveBeenCalledWith('/_api/agents/sessions', expect.objectContaining({ method: 'DELETE' }))

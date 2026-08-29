@@ -14,7 +14,7 @@ describe('contribute api helper', () => {
   test('requests contributors with same-origin JSON options', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([]))
 
-    await expect(fetchContributors(fetchImpl)).resolves.toEqual([])
+    expect(await fetchContributors(fetchImpl)).toEqual([])
 
     expect(fetchImpl).toHaveBeenCalledWith('/_api/contribute/contributors', {
       credentials: 'same-origin',
@@ -38,7 +38,7 @@ describe('contribute api helper', () => {
       }
     ]))
 
-    await expect(fetchContributors(fetchImpl)).resolves.toEqual([
+    expect(await fetchContributors(fetchImpl)).toEqual([
       {
         id: 'one',
         source: 'github',
@@ -64,7 +64,7 @@ describe('contribute api helper', () => {
       }
     ]))
 
-    await expect(fetchContributors(fetchImpl)).resolves.toEqual([
+    expect(await fetchContributors(fetchImpl)).toEqual([
       {
         id: 'two',
         source: 'patreon',
@@ -80,7 +80,7 @@ describe('contribute api helper', () => {
   test('rejects malformed root payloads', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ contributors: [] }))
 
-    await expect(fetchContributors(fetchImpl, 'Bad contributors payload')).rejects.toThrow('Bad contributors payload')
+    await expect(Promise.resolve(fetchContributors(fetchImpl, 'Bad contributors payload'))).rejects.toThrow('Bad contributors payload')
   })
 
   test('rejects malformed contributor rows with invalid required fields', async () => {
@@ -96,7 +96,7 @@ describe('contribute api helper', () => {
       }
     ]))
 
-    await expect(fetchContributors(fetchImpl, 'Bad contributors row')).rejects.toThrow('Bad contributors row')
+    await expect(Promise.resolve(fetchContributors(fetchImpl, 'Bad contributors row'))).rejects.toThrow('Bad contributors row')
   })
 
   test('rejects malformed contributor rows with invalid optional fields', async () => {
@@ -112,7 +112,7 @@ describe('contribute api helper', () => {
       }
     ]))
 
-    await expect(fetchContributors(fetchImpl, 'Bad contributors optional')).rejects.toThrow('Bad contributors optional')
+    await expect(Promise.resolve(fetchContributors(fetchImpl, 'Bad contributors optional'))).rejects.toThrow('Bad contributors optional')
   })
 
   test('propagates API JSON errors', async () => {
@@ -124,7 +124,7 @@ describe('contribute api helper', () => {
       json: async () => ({ message: 'contributors unavailable' })
     })
 
-    await expect(fetchContributors(fetchImpl, 'Bad contributors load')).rejects.toThrow('contributors unavailable')
+    await expect(Promise.resolve(fetchContributors(fetchImpl, 'Bad contributors load'))).rejects.toThrow('contributors unavailable')
   })
 
   test('rejects non-JSON successful responses', async () => {
@@ -135,6 +135,6 @@ describe('contribute api helper', () => {
       }
     })
 
-    await expect(fetchContributors(fetchImpl, 'Bad contributors content type')).rejects.toThrow('Bad contributors content type')
+    await expect(Promise.resolve(fetchContributors(fetchImpl, 'Bad contributors content type'))).rejects.toThrow('Bad contributors content type')
   })
 })

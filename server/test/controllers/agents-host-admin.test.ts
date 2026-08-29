@@ -1,11 +1,10 @@
-/** @vitest-environment node */
 import type { Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import cookieParser from 'cookie-parser'
 import express from 'express'
 import session from 'express-session'
 import createKnex, { type Knex } from 'knex'
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it } from '../bun-test.mts'
 
 import createAgentsHostController from '../../controllers/agents-host.ts'
 
@@ -160,7 +159,7 @@ describe('agents-host skill administration', () => {
       body: '{}'
     })
     expect(response.status).toBe(409)
-    await expect(response.json()).resolves.toEqual({
+    expect(await response.json()).toEqual({
       error: 'AGENT_PROVIDER_ADMIN_DISABLED',
       message: 'Provider administration is unavailable. Enable agents.provider.enabled, configure the provider runtime keys, and restart Wiki.'
     })

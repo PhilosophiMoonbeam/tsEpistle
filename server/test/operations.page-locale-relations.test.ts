@@ -1,5 +1,5 @@
 import createKnex, { type Knex } from 'knex'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from './bun-test.mts'
 import {
   linkPageLocaleRelation,
   listPageLocaleRelations,
@@ -53,7 +53,7 @@ describe('page locale relations', () => {
   it('links translations and returns a stable locale-ordered set', async () => {
     await db('pages').insert([row(1, 'en'), row(2, 'fr')])
 
-    await expect(linkPageLocaleRelation({ pageId: 1, relatedPageId: 2, requester: editor })).resolves.toEqual([
+    expect(await linkPageLocaleRelation({ pageId: 1, relatedPageId: 2, requester: editor })).toEqual([
       { id: 1, locale: 'en', path: 'guide/en-1', title: 'EN 1', visibility: 'public' },
       { id: 2, locale: 'fr', path: 'guide/fr-2', title: 'FR 2', visibility: 'public' }
     ])
@@ -71,8 +71,7 @@ describe('page locale relations', () => {
       row(4, 'fr', '00000000-0000-4000-8000-000000000002')
     ])
 
-    await expect(linkPageLocaleRelation({ pageId: 1, relatedPageId: 3, requester: editor }))
-      .rejects.toMatchObject({ status: 409 })
+    await expect(Promise.resolve(linkPageLocaleRelation({ pageId: 1, relatedPageId: 3, requester: editor }))).rejects.toMatchObject({ status: 409 })
 
     const groups = await db('pages').orderBy('id').pluck('localeGroupId')
     expect(groups).toEqual([
@@ -87,11 +86,11 @@ describe('page locale relations', () => {
     const groupId = '00000000-0000-4000-8000-000000000003'
     await db('pages').insert([row(1, 'en', groupId), row(2, 'fr', groupId)])
 
-    await expect(unlinkPageLocaleRelation({ pageId: 1, relatedPageId: 2, requester: editor })).resolves.toEqual([
+    expect(await unlinkPageLocaleRelation({ pageId: 1, relatedPageId: 2, requester: editor })).toEqual([
       { id: 1, locale: 'en', path: 'guide/en-1', title: 'EN 1', visibility: 'public' }
     ])
 
-    await expect(db('pages').orderBy('id').pluck('localeGroupId')).resolves.toEqual([null, null])
+    expect(await db('pages').orderBy('id').pluck('localeGroupId')).toEqual([null, null])
   })
 
   it('detaches only when a locale move would duplicate a translation', async () => {
@@ -100,15 +99,15 @@ describe('page locale relations', () => {
     const page = row(1, 'en', groupId)
 
     await db.transaction(async transaction => {
-      await expect(localeRelationMovePatch(transaction, page, 'de')).resolves.toEqual({})
-      await expect(localeRelationMovePatch(transaction, page, 'fr')).resolves.toEqual({ localeGroupId: null })
+      expect(await localeRelationMovePatch(transaction, page, 'de')).toEqual({})
+      expect(await localeRelationMovePatch(transaction, page, 'fr')).toEqual({ localeGroupId: null })
     })
   })
 
   it('does not disclose unreadable relation membership', async () => {
     await db('pages').insert([row(1, 'en'), row(2, 'fr')])
 
-    await expect(listPageLocaleRelations({ pageId: 1 })).rejects.toMatchObject({ status: 404 })
-    await expect(linkPageLocaleRelation({ pageId: 1, relatedPageId: 2 })).rejects.toMatchObject({ status: 404 })
+    await expect(Promise.resolve(listPageLocaleRelations({ pageId: 1 }))).rejects.toMatchObject({ status: 404 })
+    await expect(Promise.resolve(linkPageLocaleRelation({ pageId: 1, relatedPageId: 2 }))).rejects.toMatchObject({ status: 404 })
   })
 })

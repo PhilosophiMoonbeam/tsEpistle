@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from '../bun-test.mts'
 import createKnex, { type Knex } from 'knex'
 import { down, up } from '../../db/migrations/2.5.149.ts'
 
@@ -20,9 +20,9 @@ describe('agent provider utility model migration', () => {
     await up(db)
 
     expect(await db.schema.hasColumn('agentProviderProfileVersions', 'utilityModel')).toBe(true)
-    await expect(db('agentProviderProfileVersions').first('model', 'utilityModel')).resolves.toEqual({ model: 'agent-model', utilityModel: null })
+    expect(await db('agentProviderProfileVersions').first('model', 'utilityModel')).toEqual({ model: 'agent-model', utilityModel: null })
     await db('agentProviderProfileVersions').update({ utilityModel: 'utility-model' })
-    await expect(db('agentProviderProfileVersions').first('utilityModel')).resolves.toEqual({ utilityModel: 'utility-model' })
+    expect(await db('agentProviderProfileVersions').first('utilityModel')).toEqual({ utilityModel: 'utility-model' })
   })
 
   it('removes only the utility model column on rollback', async () => {
@@ -30,6 +30,6 @@ describe('agent provider utility model migration', () => {
     await down(db)
 
     expect(await db.schema.hasColumn('agentProviderProfileVersions', 'utilityModel')).toBe(false)
-    await expect(db('agentProviderProfileVersions').first('model')).resolves.toEqual({ model: 'agent-model' })
+    expect(await db('agentProviderProfileVersions').first('model')).toEqual({ model: 'agent-model' })
   })
 })

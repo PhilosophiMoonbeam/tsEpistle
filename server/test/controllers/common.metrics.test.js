@@ -1,4 +1,4 @@
-vi.mock('express', () => {
+vi.mockModule('express', import.meta.url, () => {
   const router = {
     get: vi.fn(),
     all: vi.fn(),
@@ -14,7 +14,7 @@ vi.mock('express', () => {
   return { default: expressMock, ...expressMock }
 })
 
-import * as express from 'express'
+const express = await import('express')
 
 describe('controllers/common metrics endpoint', () => {
   beforeEach(() => {
@@ -55,7 +55,7 @@ describe('controllers/common metrics endpoint', () => {
   })
 
   const loadMetricsHandler = async () => {
-    const { default: createCommonController } = await import('../../controllers/common.ts')
+    const { default: createCommonController } = await vi.importFresh('../../controllers/common.ts', import.meta.url)
     createCommonController(global.WIKI)
     const metricsCall = express.__router.get.mock.calls.find(([path]) => path === '/metrics')
     return metricsCall && metricsCall[1]

@@ -1,12 +1,12 @@
 import createKnex, { type Knex } from 'knex'
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it, vi } from '../bun-test.mts'
 
 import { serializeContentExtensionFence } from '../../../shared/content-extensions.ts'
 
 const failingRenderer = vi.hoisted(() => vi.fn().mockRejectedValue(new Error('renderer unavailable')))
-vi.mock('../../content-extensions/qr.ts', () => ({ renderQrContentExtension: failingRenderer }))
+vi.mockModule('../../content-extensions/qr.ts', import.meta.url, () => ({ renderQrContentExtension: failingRenderer }))
 
-import { prepareContentExtensionFences } from '../../content-extensions/renderer.ts'
+const { prepareContentExtensionFences } = await import('../../content-extensions/renderer.ts')
 const source = serializeContentExtensionFence({
   key: 'qr',
   version: 1,

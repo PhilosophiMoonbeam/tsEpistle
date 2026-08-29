@@ -1,7 +1,7 @@
 import os from 'node:os'
 import path from 'node:path'
 import fs from 'fs-extra'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from '../../../test/bun-test.mts'
 import { simpleGit, type SimpleGit } from 'simple-git'
 
 import {
@@ -70,8 +70,8 @@ describe('Git storage repository recovery', () => {
     await writer.push('origin', 'main')
 
     const logger = { warn: vi.fn() }
-    await expect(pullRemoteAuthoritative(local, 'main', logger)).resolves.toEqual(['page.md'])
-    await expect(fs.readFile(path.join(localDir, 'page.md'), 'utf8')).resolves.toBe('remote\n')
+    expect(await pullRemoteAuthoritative(local, 'main', logger)).toEqual(['page.md'])
+    expect(await fs.readFile(path.join(localDir, 'page.md'), 'utf8')).toBe('remote\n')
     expect((await local.status()).conflicted).toEqual([])
 
     await commitFile(local, localDir, 'after.md', 'still writable\n', 'prove recovery')
@@ -101,8 +101,8 @@ describe('Git storage repository recovery', () => {
     await reattachUnrelatedHistory(local, 'main', { warn: vi.fn() })
 
     expect(await sharesHistoryWith(local, 'origin/main')).toBe(true)
-    await expect(fs.readFile(path.join(localDir, 'shared.md'), 'utf8')).resolves.toBe('wiki version\n')
-    await expect(fs.readFile(path.join(localDir, 'remote-only.md'), 'utf8')).resolves.toBe('from remote\n')
-    await expect(fs.readFile(path.join(localDir, 'local-only.md'), 'utf8')).resolves.toBe('from wiki\n')
+    expect(await fs.readFile(path.join(localDir, 'shared.md'), 'utf8')).toBe('wiki version\n')
+    expect(await fs.readFile(path.join(localDir, 'remote-only.md'), 'utf8')).toBe('from remote\n')
+    expect(await fs.readFile(path.join(localDir, 'local-only.md'), 'utf8')).toBe('from wiki\n')
   })
 })

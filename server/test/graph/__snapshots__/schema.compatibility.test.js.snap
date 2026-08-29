@@ -1,6 +1,6 @@
-// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
 
-exports[`GraphQL external compatibility > builds the production schema with every public root operation > public schema SDL 1`] = `
+exports[`GraphQL external compatibility builds the production schema with every public root operation: public schema SDL 1`] = `
 "directive @auth(requires: [String]) on ARGUMENT_DEFINITION | FIELD_DEFINITION | QUERY
 
 """Controls the rate of traffic."""
@@ -789,6 +789,7 @@ type SystemImportUsersResponseFailed {
 }
 
 type SystemInfo {
+  bunVersion: String
   configFile: String
   cpuCores: Int
   currentVersion: String
@@ -802,7 +803,6 @@ type SystemInfo {
   httpsPort: Int
   latestVersion: String
   latestVersionReleaseDate: Date
-  nodeVersion: String
   operatingSystem: String
   pagesTotal: Int
   platform: String
@@ -1001,7 +1001,7 @@ type UserTokenResponse {
 }"
 `;
 
-exports[`GraphQL external compatibility > builds the production schema with every public root operation > root operation contract 1`] = `
+exports[`GraphQL external compatibility builds the production schema with every public root operation: root operation contract 1`] = `
 "type Query {
   analytics: AnalyticsQuery
   assets: AssetQuery

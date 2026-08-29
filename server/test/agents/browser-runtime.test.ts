@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it } from '../bun-test.mts'
 
 import { IsolatedBrowserWorker } from '../../agents/browser/runtime.ts'
 

@@ -6,7 +6,7 @@ node_modules
 
 # Local caches and test output are not image inputs.
 .cache
-.pnpm-store
+.bun
 coverage
 **/coverage
 playwright-report

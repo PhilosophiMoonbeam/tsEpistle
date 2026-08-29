@@ -1,5 +1,5 @@
 import createKnex from 'knex'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from '../bun-test.mts'
 
 import { down, up } from '../../db/migrations/2.5.155.ts'
 
@@ -34,7 +34,7 @@ describe('agent conversation folders migration', () => {
     })
     await db('agentSessions').where({ id: '00000000-0000-4000-8000-000000000001' }).update({ folderId: '00000000-0000-4000-8000-000000000002' })
     expect(await db('agentSessions').first('folderId')).toMatchObject({ folderId: '00000000-0000-4000-8000-000000000002' })
-    await expect(db('agentConversationFolders').insert({
+    await expect(Promise.resolve(db('agentConversationFolders').insert({
       id: '00000000-0000-4000-8000-000000000003',
       ownerId: 7,
       name: 'REFERENCE',
@@ -42,7 +42,7 @@ describe('agent conversation folders migration', () => {
       version: 1,
       createdAt: new Date('2026-08-27T00:00:00.000Z'),
       updatedAt: new Date('2026-08-27T00:00:00.000Z')
-    })).rejects.toThrow()
+    }))).rejects.toThrow()
 
     await down(db)
 

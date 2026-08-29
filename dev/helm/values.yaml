@@ -145,7 +145,7 @@ sideload:
   #   cpu: 100m
   #   memory: 128Mi
 
-## Append extra trusted certificates for node process from extra volume via NODE_EXTRA_CA_CERTS variable
+## Append extra trusted certificates for the Bun runtime via the NODE_EXTRA_CA_CERTS compatibility variable
 # nodeExtraCaCerts: "/path/to/certs.pem"
 
 ## Additional environment variables to set

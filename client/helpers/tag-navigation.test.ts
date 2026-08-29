@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'vitest'
+import { describe, expect, test } from '../../server/test/bun-test.mts'
 import { pathFromTagSelection, tagSelectionFromPath } from './tag-navigation'
 
 describe('tag navigation', () => {

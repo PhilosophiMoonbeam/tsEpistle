@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it } from '../../server/test/bun-test.mts'
 import { contentExtensionFenceBody } from './content-extension-insertion.ts'
 
 const body = '{"key":"qr","version":1,"props":{"value":"https://example.test","size":256,"errorCorrection":"M"}}'

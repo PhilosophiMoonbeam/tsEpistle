@@ -1,5 +1,5 @@
 import knexFactory, { type Knex } from 'knex'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from '../bun-test.mts'
 
 import { up as createRegistry } from '../../db/migrations/2.5.135.ts'
 import { down as removeRichExtensions, up as installRichExtensions } from '../../db/migrations/2.5.137.ts'

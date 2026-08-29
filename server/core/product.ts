@@ -44,6 +44,6 @@ export const loadProductMetadata = (rootPath: string): ProductMetadata => {
   try {
     return createProductMetadata(readGitIdentity(rootPath))
   } catch {
-    throw new Error('Build metadata is unavailable. Run pnpm build or provide WIKI_BUILD_REVISION and WIKI_BUILD_DATE.')
+    throw new Error('Build metadata is unavailable. Run bun run build or provide WIKI_BUILD_REVISION and WIKI_BUILD_DATE.')
   }
 }

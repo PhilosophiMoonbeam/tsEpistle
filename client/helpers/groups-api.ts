@@ -26,7 +26,7 @@ function isStringArray (value: unknown): value is string[] {
 }
 
 function isGroupPageRuleMatch (value: unknown): value is GroupPageRuleMatch {
-  return typeof value === 'string' && Object.prototype.hasOwnProperty.call(GROUP_PAGE_RULE_MATCHES, value)
+  return typeof value === 'string' && Object.hasOwn(GROUP_PAGE_RULE_MATCHES, value)
 }
 
 async function parseJsonResponse (response: JsonResponse, fallbackMessage: string): Promise<unknown> {

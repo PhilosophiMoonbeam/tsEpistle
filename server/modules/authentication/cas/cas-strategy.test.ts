@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from '../../../test/bun-test.mts'
 
 import { CasStrategy, type CasProfile, type CasRequest, type VerifyDone } from './cas-strategy.ts'
 
@@ -90,7 +90,7 @@ describe('CAS strategy', () => {
 
     strategy.authenticate(createRequest({ ticket: 'ST-expired' }))
 
-    await expect(error).resolves.toMatchObject({ message: 'CAS authentication failed (INVALID_TICKET).' })
+    expect(await error).toMatchObject({ message: 'CAS authentication failed (INVALID_TICKET).' })
     expect(verify).not.toHaveBeenCalled()
   })
 
@@ -104,7 +104,7 @@ describe('CAS strategy', () => {
 
     strategy.authenticate(createRequest({ ticket: 'ST-oversized' }))
 
-    await expect(error).resolves.toMatchObject({ message: 'CAS ticket validation response is too large.' })
+    expect(await error).toMatchObject({ message: 'CAS ticket validation response is too large.' })
     expect(verify).not.toHaveBeenCalled()
   })
 })

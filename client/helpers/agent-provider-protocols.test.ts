@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it } from '../../server/test/bun-test.mts'
 
 import { AGENT_PROVIDER_TRANSPORTS } from '../../shared/agents/contracts.ts'
 import {

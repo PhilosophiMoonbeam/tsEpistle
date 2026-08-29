@@ -49,11 +49,11 @@ gh attestation verify "oci://ghcr.io/philosophimoonbeam/wiki@IMAGE_DIGEST" \
   --bundle-from-oci
 ```
 
-Replace `IMAGE_DIGEST` with the digest in `release-manifest.json`. The tag release gate independently rebuilds the Linux bundle in a clean job and requires a byte-for-byte match before publication. Windows, source, Helm, SBOM, and license artifacts are integrity-bound and attested but are not currently claimed to be independently reproducible.
+Replace `IMAGE_DIGEST` with the digest in `release-manifest.json`. The tag release gate independently rebuilds the Linux bundle in a clean job and requires a byte-for-byte match before publication. Source, Helm, SBOM, and license artifacts are integrity-bound and attested but are not currently claimed to be independently reproducible.
 
 ## Install and operate
 
-The release page is the source for versioned Linux and Windows archives, the corresponding source archive, Helm chart, SPDX SBOM, dependency license inventory, and checksums.
+The release page is the source for the versioned Linux archive, corresponding source archive, Helm chart, SPDX SBOM, dependency license inventory, and checksums.
 
 For a local PostgreSQL deployment using Docker Compose:
 
@@ -90,6 +90,21 @@ Wiki source pages remain the only human-editable authority. Every committed page
 Markdown pages cross interchange boundaries as deterministic [Open Knowledge Format 0.2](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md) documents through the `wiki://pages/{locale}/{path}` MCP resource. OKF is a serialization of the same authoritative page and current projection, not an agent tool, store, import workflow, or alternate write path. Normal page proposals remain the only agent authoring path.
 
 The MCP endpoint is built directly on the official Model Context Protocol TypeScript SDK v2, supports the current `2026-07-28` protocol, and retains tested legacy negotiation. Deployment, security, projection, and interchange details are in [Agent deployment and operations](docs/agents-deployment.md).
+
+## Development and local CI
+
+The project uses [Bun](https://bun.com/) as its only JavaScript runtime and package manager. The exact version is pinned in `package.json`; direct dependency versions are exact and the committed `bun.lock` is immutable in CI.
+
+```console
+bun install --frozen-lockfile
+bun run ci
+```
+
+`bun run ci` is the local quality contract: dependency and license policy, Biome lint, all three TypeScript boundaries, OpenAPI and release-input checks, Bun's native test runner, and the production Vite build. `bun run format` applies the repository's Biome formatter. Biome owns JavaScript and TypeScript linting; Vue and Pug correctness remains covered by `vue-tsc`, Vite compilation, and browser tests.
+
+GitHub is the orchestration and reporting plane, not the compute plane. Every workflow targets one Linux x64 self-hosted runner carrying the custom `tsfranki-ci` label. The runner must provide the pinned Bun version, Git, Docker with Buildx/QEMU, and enough local capacity for the PostgreSQL, Playwright, upgrade, and Kubernetes jobs. GitHub receives the normal per-job checks, logs, artifacts, attestations, and release gates from that local runner.
+
+Because this repository is public, untrusted pull-request code is never executed automatically on the persistent self-hosted machine. The main workflow runs for trusted branch pushes and manual dispatches; branch commit checks appear on their pull requests. Windows and macOS CI and binary archives are intentionally unsupported. ARM64 containers are cross-built on the Linux x64 runner with QEMU.
 
 ## Branch model
 

@@ -14,7 +14,7 @@ describe('users api helper', () => {
   test('returns an empty array without fetching for short queries', async () => {
     const fetchImpl = vi.fn()
 
-    await expect(searchUsers(fetchImpl, ' a ')).resolves.toEqual([])
+    expect(await searchUsers(fetchImpl, ' a ')).toEqual([])
     expect(fetchImpl).not.toHaveBeenCalled()
   })
 
@@ -24,7 +24,7 @@ describe('users api helper', () => {
       { id: 77, name: 'Bob', email: 'bob@example.com', providerKey: 'ldap' }
     ]))
 
-    await expect(searchUsers(fetchImpl, ' alice ')).resolves.toEqual([
+    expect(await searchUsers(fetchImpl, ' alice ')).toEqual([
       { id: 42, name: 'Alice', email: 'alice@example.com', providerKey: 'local' },
       { id: 77, name: 'Bob', email: 'bob@example.com', providerKey: 'ldap' }
     ])
@@ -42,7 +42,7 @@ describe('users api helper', () => {
       { id: '42', name: 'Alice', email: 'alice@example.com', providerKey: 'local' }
     ]))
 
-    await expect(searchUsers(fetchImpl, 'alice', 'Bad user search payload')).rejects.toThrow('Bad user search payload')
+    await expect(Promise.resolve(searchUsers(fetchImpl, 'alice', 'Bad user search payload'))).rejects.toThrow('Bad user search payload')
   })
 
   test('fetches and validates dashboard last-logins payloads', async () => {
@@ -51,7 +51,7 @@ describe('users api helper', () => {
       { id: 77, name: 'Bob', lastLoginAt: '2026-01-02T00:00:00.000Z' }
     ]))
 
-    await expect(fetchLastLogins(fetchImpl)).resolves.toEqual([
+    expect(await fetchLastLogins(fetchImpl)).toEqual([
       { id: 42, name: 'Alice', lastLoginAt: '2026-01-03T00:00:00.000Z' },
       { id: 77, name: 'Bob', lastLoginAt: '2026-01-02T00:00:00.000Z' }
     ])
@@ -69,7 +69,7 @@ describe('users api helper', () => {
       { id: 42, name: 'Alice', lastLoginAt: null }
     ]))
 
-    await expect(fetchLastLogins(fetchImpl, 'Bad last logins payload')).rejects.toThrow('Bad last logins payload')
+    await expect(Promise.resolve(fetchLastLogins(fetchImpl, 'Bad last logins payload'))).rejects.toThrow('Bad last logins payload')
   })
 
   test('fetches and validates admin users list payloads', async () => {
@@ -101,14 +101,14 @@ describe('users api helper', () => {
       ]
     }))
 
-    await expect(fetchAdminUsersList(fetchImpl, {
+    expect(await fetchAdminUsersList(fetchImpl, {
       page: 3,
       pageSize: 15,
       filter: 'ali',
       providerKey: 'local',
       orderBy: 'lastLoginAt',
       orderByDirection: 'desc'
-    })).resolves.toEqual({
+    })).toEqual({
       total: 2,
       users: [
         {
@@ -158,7 +158,7 @@ describe('users api helper', () => {
       ]
     }))
 
-    await expect(fetchAdminUsersList(fetchImpl, {}, 'Bad users list payload')).rejects.toThrow('Bad users list payload')
+    await expect(Promise.resolve(fetchAdminUsersList(fetchImpl, {}, 'Bad users list payload'))).rejects.toThrow('Bad users list payload')
   })
 
   test('surfaces API error messages for failed admin users lists', async () => {
@@ -166,7 +166,7 @@ describe('users api helper', () => {
       error: 'manage:users or manage:system is required'
     }, false))
 
-    await expect(fetchAdminUsersList(fetchImpl, {}, 'Bad users list')).rejects.toThrow('manage:users or manage:system is required')
+    await expect(Promise.resolve(fetchAdminUsersList(fetchImpl, {}, 'Bad users list'))).rejects.toThrow('manage:users or manage:system is required')
   })
 
   test('creates admin users with the expected REST payload', async () => {
@@ -184,7 +184,7 @@ describe('users api helper', () => {
       sendWelcomeEmail: false
     }
 
-    await expect(createAdminUser(fetchImpl, payload)).resolves.toEqual({
+    expect(await createAdminUser(fetchImpl, payload)).toEqual({
       succeeded: true,
       message: 'User created successfully'
     })
@@ -205,7 +205,7 @@ describe('users api helper', () => {
       message: 'User created successfully'
     }))
 
-    await expect(createAdminUser(fetchImpl, {}, 'Bad user create payload')).rejects.toThrow('Bad user create payload')
+    await expect(Promise.resolve(createAdminUser(fetchImpl, {}, 'Bad user create payload'))).rejects.toThrow('Bad user create payload')
   })
 
   test('surfaces API error messages for failed admin user creates', async () => {
@@ -213,7 +213,7 @@ describe('users api helper', () => {
       error: 'You are not authorized to assign a user to a group with elevated permissions.'
     }, false))
 
-    await expect(createAdminUser(fetchImpl, {}, 'Bad user create')).rejects.toThrow('You are not authorized to assign a user to a group with elevated permissions.')
+    await expect(Promise.resolve(createAdminUser(fetchImpl, {}, 'Bad user create'))).rejects.toThrow('You are not authorized to assign a user to a group with elevated permissions.')
   })
 
   test('updates admin users with the expected REST payload', async () => {
@@ -231,7 +231,7 @@ describe('users api helper', () => {
       timezone: 'Europe/Tallinn'
     }
 
-    await expect(updateAdminUser(fetchImpl, '42', payload)).resolves.toEqual({
+    expect(await updateAdminUser(fetchImpl, '42', payload)).toEqual({
       succeeded: true,
       message: 'User created successfully'
     })
@@ -250,7 +250,7 @@ describe('users api helper', () => {
   test('rejects invalid admin user update ids before fetching', async () => {
     const fetchImpl = vi.fn()
 
-    await expect(updateAdminUser(fetchImpl, '42abc', {}, 'Bad user update')).rejects.toThrow('Bad user update')
+    await expect(Promise.resolve(updateAdminUser(fetchImpl, '42abc', {}, 'Bad user update'))).rejects.toThrow('Bad user update')
     expect(fetchImpl).not.toHaveBeenCalled()
   })
 
@@ -259,7 +259,7 @@ describe('users api helper', () => {
       succeeded: true
     }))
 
-    await expect(updateAdminUser(fetchImpl, 42, {}, 'Bad user update')).rejects.toThrow('Bad user update')
+    await expect(Promise.resolve(updateAdminUser(fetchImpl, 42, {}, 'Bad user update'))).rejects.toThrow('Bad user update')
   })
 
   test('surfaces API error messages for failed admin user updates', async () => {
@@ -267,7 +267,7 @@ describe('users api helper', () => {
       error: 'Password must be at least 6 characters!'
     }, false))
 
-    await expect(updateAdminUser(fetchImpl, 42, {}, 'Bad user update')).rejects.toThrow('Password must be at least 6 characters!')
+    await expect(Promise.resolve(updateAdminUser(fetchImpl, 42, {}, 'Bad user update'))).rejects.toThrow('Password must be at least 6 characters!')
   })
 
   test('deletes admin users with the expected REST payload', async () => {
@@ -276,7 +276,7 @@ describe('users api helper', () => {
       message: 'User deleted successfully'
     }))
 
-    await expect(deleteAdminUser(fetchImpl, '42', 7)).resolves.toEqual({
+    expect(await deleteAdminUser(fetchImpl, '42', 7)).toEqual({
       succeeded: true,
       message: 'User deleted successfully'
     })
@@ -295,8 +295,8 @@ describe('users api helper', () => {
   test('rejects invalid admin user delete ids before fetching', async () => {
     const fetchImpl = vi.fn()
 
-    await expect(deleteAdminUser(fetchImpl, '42abc', 7, 'Bad user delete')).rejects.toThrow('Bad user delete')
-    await expect(deleteAdminUser(fetchImpl, 42, '7abc', 'Bad user delete')).rejects.toThrow('Bad user delete')
+    await expect(Promise.resolve(deleteAdminUser(fetchImpl, '42abc', 7, 'Bad user delete'))).rejects.toThrow('Bad user delete')
+    await expect(Promise.resolve(deleteAdminUser(fetchImpl, 42, '7abc', 'Bad user delete'))).rejects.toThrow('Bad user delete')
     expect(fetchImpl).not.toHaveBeenCalled()
   })
 
@@ -305,7 +305,7 @@ describe('users api helper', () => {
       succeeded: true
     }))
 
-    await expect(deleteAdminUser(fetchImpl, 42, 7, 'Bad user delete')).rejects.toThrow('Bad user delete')
+    await expect(Promise.resolve(deleteAdminUser(fetchImpl, 42, 7, 'Bad user delete'))).rejects.toThrow('Bad user delete')
   })
 
   test('surfaces API error messages for failed admin user deletes', async () => {
@@ -313,7 +313,7 @@ describe('users api helper', () => {
       error: 'Cannot delete a protected system account.'
     }, false))
 
-    await expect(deleteAdminUser(fetchImpl, 1, 7, 'Bad user delete')).rejects.toThrow('Cannot delete a protected system account.')
+    await expect(Promise.resolve(deleteAdminUser(fetchImpl, 1, 7, 'Bad user delete'))).rejects.toThrow('Cannot delete a protected system account.')
   })
 
   test('patches admin user active state with the expected REST payload', async () => {
@@ -322,7 +322,7 @@ describe('users api helper', () => {
       message: 'User deactivated successfully'
     }))
 
-    await expect(setAdminUserActive(fetchImpl, '42', false)).resolves.toEqual({
+    expect(await setAdminUserActive(fetchImpl, '42', false)).toEqual({
       succeeded: true,
       message: 'User deactivated successfully'
     })
@@ -344,7 +344,7 @@ describe('users api helper', () => {
       message: 'User verified successfully'
     }))
 
-    await expect(verifyAdminUser(fetchImpl, 42)).resolves.toEqual({
+    expect(await verifyAdminUser(fetchImpl, 42)).toEqual({
       succeeded: true,
       message: 'User verified successfully'
     })
@@ -366,7 +366,7 @@ describe('users api helper', () => {
       message: 'User 2FA enabled successfully'
     }))
 
-    await expect(setAdminUserTfa(fetchImpl, 42, true)).resolves.toEqual({
+    expect(await setAdminUserTfa(fetchImpl, 42, true)).toEqual({
       succeeded: true,
       message: 'User 2FA enabled successfully'
     })
@@ -385,7 +385,7 @@ describe('users api helper', () => {
   test('rejects invalid admin user action ids before fetching', async () => {
     const fetchImpl = vi.fn()
 
-    await expect(setAdminUserActive(fetchImpl, '42abc', true, 'Bad user status')).rejects.toThrow('Bad user status')
+    await expect(Promise.resolve(setAdminUserActive(fetchImpl, '42abc', true, 'Bad user status'))).rejects.toThrow('Bad user status')
     expect(fetchImpl).not.toHaveBeenCalled()
   })
 
@@ -395,7 +395,7 @@ describe('users api helper', () => {
       message: 'User activated successfully'
     }))
 
-    await expect(setAdminUserActive(fetchImpl, 42, true, 'Bad user status')).rejects.toThrow('Bad user status')
+    await expect(Promise.resolve(setAdminUserActive(fetchImpl, 42, true, 'Bad user status'))).rejects.toThrow('Bad user status')
   })
 
   test('surfaces API error messages for failed admin user actions', async () => {
@@ -403,7 +403,7 @@ describe('users api helper', () => {
       error: 'Cannot deactivate system accounts.'
     }, false))
 
-    await expect(setAdminUserActive(fetchImpl, 1, false, 'Bad user status')).rejects.toThrow('Cannot deactivate system accounts.')
+    await expect(Promise.resolve(setAdminUserActive(fetchImpl, 1, false, 'Bad user status'))).rejects.toThrow('Cannot deactivate system accounts.')
   })
 
   test('fetches and validates user detail payloads', async () => {
@@ -431,7 +431,7 @@ describe('users api helper', () => {
       ]
     }))
 
-    await expect(fetchUserDetails(fetchImpl, '42')).resolves.toEqual({
+    expect(await fetchUserDetails(fetchImpl, '42')).toEqual({
       id: 42,
       name: 'Alice',
       email: 'alice@example.com',
@@ -466,7 +466,7 @@ describe('users api helper', () => {
   test('rejects invalid user detail ids before fetching', async () => {
     const fetchImpl = vi.fn()
 
-    await expect(fetchUserDetails(fetchImpl, '42abc', 'Bad user detail payload')).rejects.toThrow('Bad user detail payload')
+    await expect(Promise.resolve(fetchUserDetails(fetchImpl, '42abc', 'Bad user detail payload'))).rejects.toThrow('Bad user detail payload')
     expect(fetchImpl).not.toHaveBeenCalled()
   })
 
@@ -494,7 +494,7 @@ describe('users api helper', () => {
       ]
     }))
 
-    await expect(fetchUserDetails(fetchImpl, 42, 'Bad user detail payload')).rejects.toThrow('Bad user detail payload')
+    await expect(Promise.resolve(fetchUserDetails(fetchImpl, 42, 'Bad user detail payload'))).rejects.toThrow('Bad user detail payload')
   })
 
   test('surfaces API error messages for failed searches', async () => {
@@ -506,6 +506,6 @@ describe('users api helper', () => {
       json: async () => ({ error: 'a user search admin permission is required' })
     })
 
-    await expect(searchUsers(fetchImpl, 'alice', 'Bad user search')).rejects.toThrow('a user search admin permission is required')
+    await expect(Promise.resolve(searchUsers(fetchImpl, 'alice', 'Bad user search'))).rejects.toThrow('a user search admin permission is required')
   })
 })

@@ -1,5 +1,5 @@
 import createKnex, { type Knex } from 'knex'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from '../bun-test.mts'
 
 import { down, up } from '../../db/migrations/2.5.157.ts'
 
@@ -47,8 +47,8 @@ describe('agent durable goals migration', () => {
       updatedAt: now
     }
     await db('agentGoals').insert({ id: '00000000-0000-4000-8000-000000000002', status: 'active', ...goal })
-    await expect(db('agentGoals').insert({ id: '00000000-0000-4000-8000-000000000003', status: 'paused', ...goal })).rejects.toThrow()
-    await expect(down(db)).rejects.toThrow('refuse destructive rollback')
+    await expect(Promise.resolve(db('agentGoals').insert({ id: '00000000-0000-4000-8000-000000000003', status: 'paused', ...goal }))).rejects.toThrow()
+    await expect(Promise.resolve(down(db))).rejects.toThrow('refuse destructive rollback')
 
     await db('agentGoals').delete()
     await down(db)

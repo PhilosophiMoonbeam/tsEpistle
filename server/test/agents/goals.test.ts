@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it } from '../bun-test.mts'
 
 import { assessAgentRunCompletion, decodeCompletionAssessment, encodedCompletionAssessment } from '../../agents/goals.ts'
 import type { AgentTaskRecord } from '../../agents/tasks.ts'

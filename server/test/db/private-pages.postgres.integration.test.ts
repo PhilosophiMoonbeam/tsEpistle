@@ -1,6 +1,6 @@
 import knexModule, { type Knex } from 'knex'
 import fs from 'node:fs'
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it } from '../bun-test.mts'
 
 import { scopePageQuery } from '../../helpers/page-access.ts'
 
@@ -125,29 +125,23 @@ suite('PostgreSQL private-page schema migration', () => {
 
 
 
-    await expect(db('pages').insert({ id: 4, localeCode: 'en', path: 'same/path', visibility: 'public', ownerId: null }))
-      .rejects.toMatchObject({ code: '23505' })
-    await expect(db('pages').insert({ id: 5, localeCode: 'en', path: 'same/path', visibility: 'private', ownerId: 7 }))
-      .rejects.toMatchObject({ code: '23505' })
-    await expect(db('pages').insert({ id: 6, localeCode: 'en', path: 'bad-public', visibility: 'public', ownerId: 7 }))
-      .rejects.toMatchObject({ code: '23514' })
-    await expect(db('pages').insert({ id: 7, localeCode: 'en', path: 'bad-private', visibility: 'private', ownerId: null }))
-      .rejects.toMatchObject({ code: '23514' })
-    await expect(db('pages').insert({ id: 8, localeCode: 'en', path: 'orphan', visibility: 'private', ownerId: 999 }))
-      .rejects.toMatchObject({ code: '23503' })
+    await expect(Promise.resolve(db('pages').insert({ id: 4, localeCode: 'en', path: 'same/path', visibility: 'public', ownerId: null }))).rejects.toMatchObject({ code: '23505' })
+    await expect(Promise.resolve(db('pages').insert({ id: 5, localeCode: 'en', path: 'same/path', visibility: 'private', ownerId: 7 }))).rejects.toMatchObject({ code: '23505' })
+    await expect(Promise.resolve(db('pages').insert({ id: 6, localeCode: 'en', path: 'bad-public', visibility: 'public', ownerId: 7 }))).rejects.toMatchObject({ code: '23514' })
+    await expect(Promise.resolve(db('pages').insert({ id: 7, localeCode: 'en', path: 'bad-private', visibility: 'private', ownerId: null }))).rejects.toMatchObject({ code: '23514' })
+    await expect(Promise.resolve(db('pages').insert({ id: 8, localeCode: 'en', path: 'orphan', visibility: 'private', ownerId: 999 }))).rejects.toMatchObject({ code: '23503' })
 
-    await expect(db('pageHistory').insert({ id: 20, pageId: 1, visibility: 'public', ownerId: 7 }))
-      .rejects.toMatchObject({ code: '23514' })
-    await expect(db('pageTree').insert({
+    await expect(Promise.resolve(db('pageHistory').insert({ id: 20, pageId: 1, visibility: 'public', ownerId: 7 }))).rejects.toMatchObject({ code: '23514' })
+    await expect(Promise.resolve(db('pageTree').insert({
       id: 20,
       pageId: 1,
       localeCode: 'en',
       path: 'invalid-history-owner',
       visibility: 'private',
       ownerId: null
-    })).rejects.toMatchObject({ code: '23514' })
+    }))).rejects.toMatchObject({ code: '23514' })
 
-    await expect(db('users').where({ id: 7 }).delete()).rejects.toMatchObject({ code: '23503' })
+    await expect(Promise.resolve(db('users').where({ id: 7 }).delete())).rejects.toMatchObject({ code: '23503' })
     expect(await db('pages').where({ localeCode: 'en', path: 'same/path' }).count<{ count: string }[]>({ count: '*' }).first())
       .toEqual({ count: '3' })
   })
@@ -254,7 +248,7 @@ suite('PostgreSQL private-page schema migration', () => {
     const secondConnection = knexModule({ client: 'pg', connection })
     try {
       expect(await secondConnection('pages').where({ id: 4, visibility: 'private', ownerId: 7 }).first()).toBeTruthy()
-      await expect(secondConnection('users').where({ id: 7 }).delete()).rejects.toMatchObject({ code: '23503' })
+      await expect(Promise.resolve(secondConnection('users').where({ id: 7 }).delete())).rejects.toMatchObject({ code: '23503' })
     } finally {
       await secondConnection.destroy()
     }

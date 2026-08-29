@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi } from '../bun-test.mts'
 import { actionDefinition } from '../../agents/actions/catalog.ts'
 import type { OfferedAction } from '../../agents/actions/kernel.ts'
 import { AxSessionHarness } from '../../agents/providers/session-harness.ts'
@@ -25,14 +25,14 @@ describe('Ax session harness', () => {
     const harness = new AxSessionHarness({ execute, timeoutMilliseconds: 5_000 })
     const session = await harness.open([offered('pages.get')])
     try {
-      await expect(session.invoke('pages.get', { id: 42 }, new AbortController().signal, 'call-1')).resolves.toEqual({ received: { id: 42 } })
-      await expect(session.invoke('pages.search', { query: 'x' }, new AbortController().signal, 'call-2')).rejects.toMatchObject({ code: 'ACTION_NOT_OFFERED' })
+      expect(await session.invoke('pages.get', { id: 42 }, new AbortController().signal, 'call-1')).toEqual({ received: { id: 42 } })
+      await expect(Promise.resolve(session.invoke('pages.search', { query: 'x' }, new AbortController().signal, 'call-2'))).rejects.toMatchObject({ code: 'ACTION_NOT_OFFERED' })
       expect(session.functions).toEqual([expect.objectContaining({ name: 'pages.get', risk: 'read' })])
       expect(execute).toHaveBeenCalledTimes(1)
     } finally {
       session.close()
     }
-    await expect(session.invoke('pages.get', { id: 42 }, new AbortController().signal, 'call-3')).rejects.toMatchObject({ code: 'ACTION_SESSION_CLOSED' })
+    await expect(Promise.resolve(session.invoke('pages.get', { id: 42 }, new AbortController().signal, 'call-3'))).rejects.toMatchObject({ code: 'ACTION_SESSION_CLOSED' })
   })
 
   it('returns the authoritative host result after an approval-length pause', async () => {
@@ -50,7 +50,7 @@ describe('Ax session harness', () => {
       const invocation = session.invoke('pages.get', { id: 42 }, new AbortController().signal, 'call-paused')
       await entered.promise
       gate.resolve()
-      await expect(invocation).resolves.toBe(approved)
+      expect(await invocation).toBe(approved)
     } finally {
       session.close()
     }
@@ -63,7 +63,7 @@ describe('Ax session harness', () => {
     const harness = new AxSessionHarness({ execute, timeoutMilliseconds: 5_000 })
     const session = await harness.open([offered('pages.get')])
     try {
-      await expect(session.invoke('pages.get', { id: 42 }, new AbortController().signal, 'call-1')).rejects.toMatchObject({
+      await expect(Promise.resolve(session.invoke('pages.get', { id: 42 }, new AbortController().signal, 'call-1'))).rejects.toMatchObject({
         code: 'INVALID_SNAPSHOT_TOKEN',
         status: 409,
         message: 'Action failed'

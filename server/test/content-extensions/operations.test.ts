@@ -1,5 +1,5 @@
 import createKnex, { type Knex } from 'knex'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from '../bun-test.mts'
 import { runDurableJobBatch } from '../../core/durable-jobs.ts'
 import { up as createDurableJobs } from '../../db/migrations/2.5.130.ts'
 import { createContentExtensionRerenderHandler } from '../../jobs/content-extension-rerender.ts'
@@ -88,12 +88,12 @@ describe('content extension operations', () => {
     const status = await setContentExtensionEnabled('qr', false, 42)
 
     expect(status).toMatchObject({ key: 'qr', isEnabled: false, compatible: true, diagnostic: null })
-    await expect(db('contentExtensions').where({ key: 'qr' }).first('isEnabled', 'updatedBy')).resolves.toMatchObject({
+    expect(await db('contentExtensions').where({ key: 'qr' }).first('isEnabled', 'updatedBy')).toMatchObject({
       isEnabled: 0,
       updatedBy: 42
     })
-    await expect(db('pages').where({ id: 1 }).first('render')).resolves.toMatchObject({ render: '<svg>active QR</svg>' })
-    await expect(db('durableJobs').where({ type: 'rerender-content-extension' }).first()).resolves.toMatchObject({
+    expect(await db('pages').where({ id: 1 }).first('render')).toMatchObject({ render: '<svg>active QR</svg>' })
+    expect(await db('durableJobs').where({ type: 'rerender-content-extension' }).first()).toMatchObject({
       state: 'pending',
       attempts: 0,
       payload: JSON.stringify({ key: 'qr' })
@@ -105,7 +105,7 @@ describe('content extension operations', () => {
       handlers: { 'rerender-content-extension@1': createContentExtensionRerenderHandler(global.WIKI) }
     })
 
-    await expect(db('pages').where({ id: 1 }).first('content', 'render')).resolves.toMatchObject({
+    expect(await db('pages').where({ id: 1 }).first('content', 'render')).toMatchObject({
       content: sourceBefore?.content,
       render: '<pre>escaped source</pre>'
     })
@@ -113,7 +113,7 @@ describe('content extension operations', () => {
     expect(cachedHashes.has('plain-hash')).toBe(true)
     expect(events).toEqual(['cache:qr-hash', 'event:qr-hash', 'render:1'])
     expect(renderPage).toHaveBeenCalledTimes(1)
-    await expect(db('durableJobs').where({ type: 'rerender-content-extension' }).first('state', 'attempts')).resolves.toMatchObject({
+    expect(await db('durableJobs').where({ type: 'rerender-content-extension' }).first('state', 'attempts')).toMatchObject({
       state: 'succeeded',
       attempts: 1
     })
@@ -130,12 +130,12 @@ describe('content extension operations', () => {
       handlers,
       retryDelay: () => 0
     })
-    await expect(db('durableJobs').where({ type: 'rerender-content-extension' }).first('state', 'attempts', 'lastError')).resolves.toMatchObject({
+    expect(await db('durableJobs').where({ type: 'rerender-content-extension' }).first('state', 'attempts', 'lastError')).toMatchObject({
       state: 'pending',
       attempts: 1,
       lastError: expect.stringContaining('worker interrupted')
     })
-    await expect(db('pages').where({ id: 1 }).first('content', 'render')).resolves.toMatchObject({
+    expect(await db('pages').where({ id: 1 }).first('content', 'render')).toMatchObject({
       content: sourceBefore?.content,
       render: '<svg>active QR</svg>'
     })
@@ -145,11 +145,11 @@ describe('content extension operations', () => {
       handlers,
       retryDelay: () => 0
     })
-    await expect(db('durableJobs').where({ type: 'rerender-content-extension' }).first('state', 'attempts')).resolves.toMatchObject({
+    expect(await db('durableJobs').where({ type: 'rerender-content-extension' }).first('state', 'attempts')).toMatchObject({
       state: 'succeeded',
       attempts: 2
     })
-    await expect(db('pages').where({ id: 1 }).first('content', 'render')).resolves.toMatchObject({
+    expect(await db('pages').where({ id: 1 }).first('content', 'render')).toMatchObject({
       content: sourceBefore?.content,
       render: '<pre>escaped source</pre>'
     })

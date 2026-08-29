@@ -1,0 +1,13 @@
+diff --git a/lib/web/webidl/index.js b/lib/web/webidl/index.js
+index 05a6a4bce58028f288f2e2469da8e009d378f41d..933196ee63898a52e2f4695bed8b23c8edaa7909 100644
+--- a/lib/web/webidl/index.js
++++ b/lib/web/webidl/index.js
+@@ -2,7 +2,7 @@
+ 
+ const assert = require('node:assert')
+ const { types, inspect } = require('node:util')
+-const { markAsUncloneable } = require('node:worker_threads')
++const { markAsUncloneable = () => {} } = require('node:worker_threads')
+ 
+ const UNDEFINED = 1
+ const BOOLEAN = 2

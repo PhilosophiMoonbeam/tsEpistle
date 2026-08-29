@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from '../bun-test.mts'
 import createKnex, { type Knex } from 'knex'
 import type { AxChatRequest, AxChatResponse } from '@ax-llm/ax'
 import { AgentProviderAttemptError, type AgentProviderFactory } from '../../agents/providers/factory.ts'
@@ -43,7 +43,7 @@ describe('provider conformance runner', () => {
     expect(report).toMatchObject({ status: 'passed', errorCode: null, checks: [{ name: 'profile-load', passed: true }, { name: 'pre-dispatch-cancellation', passed: true }, { name: 'buffered-response', passed: true }, { name: 'bounded-text-output', passed: true }, { name: 'declared-usage', passed: true }, { name: 'utility-model-fallback', passed: true }, { name: 'prompt-tool-round-trip', passed: true }] })
     expect(factory.create).toHaveBeenCalledWith('00000000-0000-4000-8000-000000000002', { requireConformed: false })
     expect(setConformed).toHaveBeenCalledWith('00000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000002', true, 7)
-    await expect(runner.list('00000000-0000-4000-8000-000000000001')).resolves.toEqual([report])
+    expect(await runner.list('00000000-0000-4000-8000-000000000001')).toEqual([report])
   })
   it('verifies a separately configured utility model before enabling the profile', async () => {
     const setConformed = vi.fn(async () => {})

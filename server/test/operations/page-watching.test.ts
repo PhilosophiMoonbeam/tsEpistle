@@ -1,7 +1,6 @@
-/** @vitest-environment node */
 
 import createKnex, { type Knex } from 'knex'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from '../bun-test.mts'
 
 let knex: Knex
 let page: { id: number; visibility: 'public'; ownerId: null; path: string; localeCode: string }
@@ -54,19 +53,19 @@ const user = { id: 7, email: 'reader@example.test', permissions: ['read:pages'],
 
 describe('page watching operations', () => {
   it('subscribes idempotently, reports state, and unsubscribes', async () => {
-    const operations = await import('../../operations/page-watching.ts')
+    const operations = await vi.importFresh('../../operations/page-watching.ts', import.meta.url)
 
     await operations.watchPage({ requester: user, id: page.id })
     await operations.watchPage({ requester: user, id: page.id })
 
     expect(await knex('pageWatchers')).toHaveLength(1)
-    await expect(operations.getPageWatchState({ requester: user, id: page.id })).resolves.toEqual({
+    expect(await operations.getPageWatchState({ requester: user, id: page.id })).toEqual({
       watched: true,
       emailEnabled: true,
       inAppEnabled: true
     })
-    await expect(operations.unwatchPage({ requester: user, id: page.id })).resolves.toEqual({ watched: false })
-    await expect(operations.getPageWatchState({ requester: user, id: page.id })).resolves.toEqual({
+    expect(await operations.unwatchPage({ requester: user, id: page.id })).toEqual({ watched: false })
+    expect(await operations.getPageWatchState({ requester: user, id: page.id })).toEqual({
       watched: false,
       emailEnabled: false,
       inAppEnabled: false
@@ -74,7 +73,7 @@ describe('page watching operations', () => {
   })
 
   it('updates independent channels and owns notification read state', async () => {
-    const operations = await import('../../operations/page-watching.ts')
+    const operations = await vi.importFresh('../../operations/page-watching.ts', import.meta.url)
     await operations.watchPage({ requester: user, id: page.id, emailEnabled: false, inAppEnabled: true })
     await knex('pageWatchNotifications').insert({
       id: 'notification-1',
@@ -90,20 +89,20 @@ describe('page watching operations', () => {
       readAt: null
     })
 
-    await expect(operations.getPageWatchState({ requester: user, id: page.id })).resolves.toMatchObject({
+    expect(await operations.getPageWatchState({ requester: user, id: page.id })).toMatchObject({
       emailEnabled: false,
       inAppEnabled: true
     })
-    await expect(operations.listPageWatchNotifications(user)).resolves.toMatchObject({ unreadCount: 1 })
+    expect(await operations.listPageWatchNotifications(user)).toMatchObject({ unreadCount: 1 })
     await operations.markPageWatchNotificationRead(user, 'notification-1')
-    await expect(operations.listPageWatchNotifications(user)).resolves.toMatchObject({ unreadCount: 0 })
+    expect(await operations.listPageWatchNotifications(user)).toMatchObject({ unreadCount: 0 })
   })
 
   it('rejects anonymous and permission-revoked subscriptions', async () => {
-    const operations = await import('../../operations/page-watching.ts')
+    const operations = await vi.importFresh('../../operations/page-watching.ts', import.meta.url)
 
-    await expect(operations.watchPage({ requester: undefined, id: page.id })).rejects.toMatchObject({ status: 401 })
-    await expect(operations.watchPage({ requester: { ...user, permissions: [] } as Express.User, id: page.id })).rejects.toMatchObject({ status: 404 })
+    await expect(Promise.resolve(operations.watchPage({ requester: undefined, id: page.id }))).rejects.toMatchObject({ status: 401 })
+    await expect(Promise.resolve(operations.watchPage({ requester: { ...user, permissions: [] } as Express.User, id: page.id }))).rejects.toMatchObject({ status: 404 })
     expect(await knex('pageWatchers')).toEqual([])
   })
 })

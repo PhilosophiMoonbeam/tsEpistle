@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it } from '../../server/test/bun-test.mts'
 import { decodeBase64Json, decodeBase64Text } from './base64'
 
 describe('browser base64 decoding', () => {

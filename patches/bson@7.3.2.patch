@@ -1,0 +1,78 @@
+diff --git a/lib/bson.bundle.js b/lib/bson.bundle.js
+index a2b81106635cd009d5ed3c90d33bfb544ca542a9..7990b699dcd6e8767f1ffe5aca3e8f3c06ebeff8 100644
+--- a/lib/bson.bundle.js
++++ b/lib/bson.bundle.js
+@@ -2617,7 +2617,7 @@ class ObjectId extends BSONValue {
+     };
+     static {
+         this.resetState();
+-        const { startupSnapshot } = globalThis?.process?.getBuiltinModule?.('v8') ?? {};
++        const { startupSnapshot } = globalThis.Bun ? {} : globalThis?.process?.getBuiltinModule?.('v8') ?? {};
+         if (startupSnapshot?.isBuildingSnapshot?.()) {
+             startupSnapshot?.addDeserializeCallback?.(this.resetState);
+         }
+diff --git a/lib/bson.cjs b/lib/bson.cjs
+index 6743a3210ac3d2eec51ce4b9c763d551a35c2ec9..1a43b584350ffc13d28602bf9ff728375f09825d 100644
+--- a/lib/bson.cjs
++++ b/lib/bson.cjs
+@@ -2616,7 +2616,7 @@ class ObjectId extends BSONValue {
+     };
+     static {
+         this.resetState();
+-        const { startupSnapshot } = globalThis?.process?.getBuiltinModule?.('v8') ?? {};
++        const { startupSnapshot } = globalThis.Bun ? {} : globalThis?.process?.getBuiltinModule?.('v8') ?? {};
+         if (startupSnapshot?.isBuildingSnapshot?.()) {
+             startupSnapshot?.addDeserializeCallback?.(this.resetState);
+         }
+diff --git a/lib/bson.mjs b/lib/bson.mjs
+index 9555e4a71bedc22425f3f07b4ed724ef0c22bfd4..f7f5f41374f89a78ffcc55b3fb567526cbc43a06 100644
+--- a/lib/bson.mjs
++++ b/lib/bson.mjs
+@@ -2614,7 +2614,7 @@ class ObjectId extends BSONValue {
+     };
+     static {
+         this.resetState();
+-        const { startupSnapshot } = globalThis?.process?.getBuiltinModule?.('v8') ?? {};
++        const { startupSnapshot } = globalThis.Bun ? {} : globalThis?.process?.getBuiltinModule?.('v8') ?? {};
+         if (startupSnapshot?.isBuildingSnapshot?.()) {
+             startupSnapshot?.addDeserializeCallback?.(this.resetState);
+         }
+diff --git a/lib/bson.node.mjs b/lib/bson.node.mjs
+index a0f9695d9bbe62942114b01302990501debb26a1..9a0f9f4182324c0ae3efaeba54cc55b26c100638 100644
+--- a/lib/bson.node.mjs
++++ b/lib/bson.node.mjs
+@@ -2614,7 +2614,7 @@ class ObjectId extends BSONValue {
+     };
+     static {
+         this.resetState();
+-        const { startupSnapshot } = globalThis?.process?.getBuiltinModule?.('v8') ?? {};
++        const { startupSnapshot } = globalThis.Bun ? {} : globalThis?.process?.getBuiltinModule?.('v8') ?? {};
+         if (startupSnapshot?.isBuildingSnapshot?.()) {
+             startupSnapshot?.addDeserializeCallback?.(this.resetState);
+         }
+diff --git a/lib/bson.rn.cjs b/lib/bson.rn.cjs
+index 91c72452a937e6cd5c07c548c6729847f6d4712c..23efa22ea8bc2c9861c1cc303ef83e5a1b0bccdc 100644
+--- a/lib/bson.rn.cjs
++++ b/lib/bson.rn.cjs
+@@ -2624,7 +2624,7 @@ class ObjectId extends BSONValue {
+     };
+     static {
+         this.resetState();
+-        const { startupSnapshot } = globalThis?.process?.getBuiltinModule?.('v8') ?? {};
++        const { startupSnapshot } = globalThis.Bun ? {} : globalThis?.process?.getBuiltinModule?.('v8') ?? {};
+         if (startupSnapshot?.isBuildingSnapshot?.()) {
+             startupSnapshot?.addDeserializeCallback?.(this.resetState);
+         }
+diff --git a/src/objectid.ts b/src/objectid.ts
+index 2a3cd140841e24c523f33ad48f321a8029ca2c79..a91bf22d93a64ac68da8d2202df943d9df8f3f32 100644
+--- a/src/objectid.ts
++++ b/src/objectid.ts
+@@ -60,7 +60,7 @@ export class ObjectId extends BSONValue {
+     this.resetState();
+     // https://nodejs.org/api/v8.html#startup-snapshot-api
+     // @ts-expect-error Node.js types not present since this is an optional API
+-    const { startupSnapshot } = globalThis?.process?.getBuiltinModule?.('v8') ?? {};
++    const { startupSnapshot } = (globalThis as typeof globalThis & { Bun?: unknown }).Bun ? {} : globalThis?.process?.getBuiltinModule?.('v8') ?? {};
+     if (startupSnapshot?.isBuildingSnapshot?.()) {
+       startupSnapshot?.addDeserializeCallback?.(this.resetState);
+     }

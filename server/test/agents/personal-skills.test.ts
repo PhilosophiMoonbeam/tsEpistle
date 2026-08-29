@@ -1,5 +1,5 @@
 import createKnex, { type Knex } from 'knex'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from '../bun-test.mts'
 
 import { PersonalSkillRegistry } from '../../agents/skills/personal.ts'
 
@@ -76,7 +76,7 @@ describe('personal skill registry', () => {
     expect(updated.isAgentDiscoverable).toBe(false)
     expect(await db('agentSkillVersions').where({ skillId: created.id }).orderBy('sourceRevision').pluck('sourceRevision')).toEqual([1, 2])
 
-    await expect(registry.update({ ownerId: 7, skillId: created.id, expectedVersionId: created.versionId, skillMarkdown: updated.skillMarkdown, isAgentDiscoverable: true })).rejects.toThrow('changed')
+    await expect(Promise.resolve(registry.update({ ownerId: 7, skillId: created.id, expectedVersionId: created.versionId, skillMarkdown: updated.skillMarkdown, isAgentDiscoverable: true }))).rejects.toThrow('changed')
     await registry.remove({ ownerId: 7, skillId: created.id, expectedVersionId: updated.versionId })
     expect(await registry.list(7)).toEqual([])
     expect(await db('agentSkills').where({ id: created.id }).first('status', 'deletedAt')).toMatchObject({ status: 'disabled', deletedAt: expect.anything() })
@@ -89,13 +89,13 @@ describe('personal skill registry', () => {
 
     expect((await registry.list(7)).map(skill => skill.id)).toEqual([first.id])
     expect((await registry.list(8)).map(skill => skill.id)).toEqual([second.id])
-    await expect(registry.get(8, first.id)).rejects.toThrow('unavailable')
-    await expect(registry.create({ ownerId: 7, name: 'my-guide', skillMarkdown: skillDocument('my-guide', 'Duplicate'), isAgentDiscoverable: true })).rejects.toThrow('already exists')
+    await expect(Promise.resolve(registry.get(8, first.id))).rejects.toThrow('unavailable')
+    await expect(Promise.resolve(registry.create({ ownerId: 7, name: 'my-guide', skillMarkdown: skillDocument('my-guide', 'Duplicate'), isAgentDiscoverable: true }))).rejects.toThrow('already exists')
   })
 
   it('rejects mismatched names, remote resources, and likely secrets', async () => {
-    await expect(registry.create({ ownerId: 7, name: 'expected-name', skillMarkdown: skillDocument('wrong-name', 'Wrong'), isAgentDiscoverable: true })).rejects.toThrow('must match')
-    await expect(registry.create({ ownerId: 7, name: 'remote-guide', skillMarkdown: skillDocument('remote-guide', 'Remote', 'Read [this](https://example.com/guide).\n'), isAgentDiscoverable: true })).rejects.toThrow('mutable remote URLs')
-    await expect(registry.create({ ownerId: 7, name: 'secret-guide', skillMarkdown: skillDocument('secret-guide', 'Secret', 'Authorization: Bearer abcdefghijklmnopqrstuvwxyz1234567890.\n'), isAgentDiscoverable: true })).rejects.toThrow('secret')
+    await expect(Promise.resolve(registry.create({ ownerId: 7, name: 'expected-name', skillMarkdown: skillDocument('wrong-name', 'Wrong'), isAgentDiscoverable: true }))).rejects.toThrow('must match')
+    await expect(Promise.resolve(registry.create({ ownerId: 7, name: 'remote-guide', skillMarkdown: skillDocument('remote-guide', 'Remote', 'Read [this](https://example.com/guide).\n'), isAgentDiscoverable: true }))).rejects.toThrow('mutable remote URLs')
+    await expect(Promise.resolve(registry.create({ ownerId: 7, name: 'secret-guide', skillMarkdown: skillDocument('secret-guide', 'Secret', 'Authorization: Bearer abcdefghijklmnopqrstuvwxyz1234567890.\n'), isAgentDiscoverable: true }))).rejects.toThrow('secret')
   })
 })

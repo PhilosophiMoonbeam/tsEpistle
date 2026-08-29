@@ -1,4 +1,4 @@
-import { describe, expect, test, vi } from 'vitest'
+import { describe, expect, test, vi } from '../../server/test/bun-test.mts'
 
 import * as rootUiStore from './root-ui-store.ts'
 
