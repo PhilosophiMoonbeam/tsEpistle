@@ -55,7 +55,7 @@
     </div>
   </section>
 
-  <v-dialog v-model="createOpen" max-width="46rem" scrollable :fullscreen="$vuetify.display.xs">
+  <v-dialog v-model="createOpen" max-width="46rem" scrollable :fullscreen="smAndDown">
     <v-card class="skill-dialog">
       <header class="skill-dialog__header">
         <span><v-icon size="23">mdi-book-plus-outline</v-icon></span>
@@ -96,7 +96,7 @@
     </v-card>
   </v-dialog>
 
-  <v-dialog v-model="previewOpen" max-width="70rem" scrollable :fullscreen="$vuetify.display.xs">
+  <v-dialog v-model="previewOpen" max-width="70rem" scrollable :fullscreen="smAndDown">
     <v-card v-if="preview" class="skill-dialog skill-review">
       <header class="skill-dialog__header"><span><v-icon size="23">mdi-file-eye-outline</v-icon></span><div><div class="skill-panel__eyebrow">Immutable revision</div><h2>Review {{ preview.name }}</h2><p>Approve only the exact source revision shown below.</p></div><v-spacer /><v-btn icon="mdi-close" variant="text" aria-label="Close skill review" @click="previewOpen = false" /></header>
       <v-card-text class="skill-dialog__body">
@@ -121,8 +121,10 @@
 
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
+import { useDisplay } from 'vuetify'
 import { z } from 'zod'
 const props = withDefaults(defineProps<{ csrfToken: string; embedded?: boolean }>(), { embedded: false })
+const { smAndDown } = useDisplay()
 
 const SkillSchema = z.object({
   id: z.uuid(),
@@ -515,9 +517,7 @@ onMounted(reload)
   font-weight: 680;
   text-align: left;
 }
-
 .skill-card__review:hover { background: rgba(var(--v-theme-primary), .045); }
-
 .skill-card__review:focus-visible {
   outline: .15rem solid rgba(var(--v-theme-primary), .42);
   outline-offset: -.2rem;
@@ -546,6 +546,7 @@ onMounted(reload)
 .skill-dialog {
   overflow: hidden;
   border-radius: 1.15rem !important;
+  background: rgb(var(--v-theme-surface)) !important;
 }
 
 .skill-dialog__header {

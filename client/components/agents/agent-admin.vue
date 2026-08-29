@@ -229,7 +229,7 @@
       </v-window>
     </div>
 
-    <v-dialog v-model="profileDialog" max-width="76rem" scrollable :fullscreen="$vuetify.display.smAndDown">
+    <v-dialog v-model="profileDialog" max-width="76rem" scrollable :fullscreen="smAndDown">
       <v-card class="profile-editor">
         <header class="profile-editor__header">
           <span class="profile-editor__mark"><v-icon size="24">mdi-creation-outline</v-icon></span>
@@ -382,6 +382,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
+import { useDisplay } from 'vuetify'
 import {
   agentProviderReasoningEfforts,
   type AgentProviderTransport,
@@ -443,6 +444,7 @@ interface GroupOption { id: number; name: string; isSystem: boolean }
 interface ProfileDraft { displayName: string; transportKind: AgentProviderTransport; model: string; utilityModel: string; agentReasoningEffort: AgentReasoningEffort | null; utilityReasoningEffort: AgentReasoningEffort | null; baseUrl: string; authMode: AgentProviderAuthMode; secretValue: string; exposureMode: 'all_agent_users' | 'groups'; groupIds: number[]; maxContextTokens: number; maxOutputTokens: number; dailyTokens: number; dailyCostMicros: number; reservationTokens: number; reservationCostMicros: number; reservationMilliseconds: number; timeoutMs: number; maxRetries: number; maxAttempts: number; promptVersion: number; additionalHeaders: Record<string, string>; structuredOutput: AgentProviderStructuredOutput; usage: AgentProviderUsageMode; streaming: boolean; toolCalling: AgentProviderToolCalling; parallelToolCalls: boolean; cancellation: boolean }
 
 const props = withDefaults(defineProps<{ csrfToken: string; embedded?: boolean }>(), { embedded: false })
+const { smAndDown } = useDisplay()
 const { embedded } = props
 const tab = ref('runtime')
 type ProfileStep = 'identity' | 'models' | 'connection' | 'access' | 'limits'
@@ -1369,6 +1371,7 @@ onMounted(() => void load())
 .profile-editor {
   overflow: hidden;
   border-radius: 1.25rem !important;
+  background: rgb(var(--v-theme-surface)) !important;
 }
 
 .profile-editor__header {
