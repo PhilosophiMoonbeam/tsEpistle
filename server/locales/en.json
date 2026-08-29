@@ -249,6 +249,19 @@
       "newPasswordPlaceholder": "New Password",
       "newPasswordVerifyPlaceholder": "Verify New Password"
     },
+    "verifyEmail": {
+      "title": "Confirm your email address",
+      "instructions": "Finish activating your account by confirming that this email address is yours.",
+      "loading": "Confirming your email address...",
+      "proceed": "Confirm Email Address",
+      "success": "Your email address has been confirmed. You can now log in."
+    },
+    "resetPwd": {
+      "title": "Reset your password",
+      "instructions": "Choose a new password for your account.",
+      "proceed": "Set New Password",
+      "success": "Your password has been reset. You can now log in."
+    },
     "providers": {
       "ldap": "LDAP / Active Directory",
       "azure": "Azure Active Directory",

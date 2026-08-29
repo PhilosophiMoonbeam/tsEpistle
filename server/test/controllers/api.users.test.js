@@ -53,6 +53,7 @@ describe('controllers/api users endpoints', () => {
       models: {
         users: {
           createNewUser: vi.fn().mockResolvedValue(undefined),
+          sendWelcomeEmail: vi.fn().mockResolvedValue(undefined),
           updateUser: vi.fn().mockResolvedValue(undefined),
           deleteUser: vi.fn().mockResolvedValue(undefined),
           query: vi.fn().mockImplementation(() => ({
@@ -135,6 +136,7 @@ describe('controllers/api users endpoints', () => {
     await vi.importFresh('../../controllers/api/users.ts', import.meta.url)
     return {
       create: express.__router.post.mock.calls.find(([path]) => path === '/')[1],
+      welcomeEmail: express.__router.post.mock.calls.find(([path]) => path === '/:id/welcome-email')[1],
       list: express.__router.get.mock.calls.find(([path]) => path === '/')[1],
       search: express.__router.get.mock.calls.find(([path]) => path === '/search')[1],
       lastLogins: express.__router.get.mock.calls.find(([path]) => path === '/last-logins')[1],
@@ -152,6 +154,7 @@ describe('controllers/api users endpoints', () => {
     const handlers = await loadHandler()
 
     expect(typeof handlers.create).toBe('function')
+    expect(typeof handlers.welcomeEmail).toBe('function')
     expect(typeof handlers.list).toBe('function')
     expect(typeof handlers.search).toBe('function')
     expect(typeof handlers.lastLogins).toBe('function')
@@ -200,6 +203,46 @@ describe('controllers/api users endpoints', () => {
     })
   })
 
+
+  it('reports welcome-mail failure without reporting user creation failure', async () => {
+    global.WIKI.models.users.createNewUser.mockResolvedValueOnce({ welcomeEmailError: 'SMTP unavailable' })
+    const { create } = await loadHandler()
+    const req = {
+      user: { permissions: ['write:users'] },
+      body: {
+        providerKey: 'local',
+        email: 'alice@example.com',
+        passwordRaw: 'temporary-secret',
+        name: 'Alice',
+        groups: [],
+        sendWelcomeEmail: true
+      }
+    }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
+
+    await create(req, res, vi.fn())
+
+    expect(res.status).not.toHaveBeenCalled()
+    expect(res.json).toHaveBeenCalledWith({
+      succeeded: true,
+      message: 'User created successfully',
+      welcomeEmailError: 'SMTP unavailable'
+    })
+  })
+
+  it('resends a welcome email for an existing user', async () => {
+    const { welcomeEmail } = await loadHandler()
+    const req = { user: { permissions: ['manage:users'] }, params: { id: '42' } }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
+
+    await welcomeEmail(req, res)
+
+    expect(global.WIKI.models.users.sendWelcomeEmail).toHaveBeenCalledWith({ id: 42 })
+    expect(res.json).toHaveBeenCalledWith({
+      succeeded: true,
+      message: 'Welcome email sent successfully'
+    })
+  })
   it('returns 400 when admin user create groups is not an array', async () => {
     const { create } = await loadHandler()
     const req = { user: { permissions: ['manage:users'] }, body: { groups: '3' } }

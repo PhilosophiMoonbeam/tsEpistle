@@ -88,6 +88,7 @@ interface WikiUsers {
     users: {
       query(): UserQuery
       createNewUser(input: CreateUserInput): Promise<unknown>
+      sendWelcomeEmail(input: { id: number }): Promise<void>
       updateUser(input: UpdateUserInput): Promise<unknown>
       deleteUser(id: number, replaceId: number): Promise<unknown>
       refreshToken(user: number | UserRecord): Promise<{ token: string }>
@@ -237,10 +238,14 @@ const updateInput = (value: unknown): UpdateUserInput => {
   if (input.groups !== undefined && input.groups !== null) result.groups = groupsValue(input.groups)
   return result
 }
-const create = async ({ requester, input }: UserRequest): Promise<void> => {
+const create = async ({ requester, input }: UserRequest): Promise<{ welcomeEmailError?: string }> => {
   const normalized = createInput(input)
   if (!(await wiki.auth.checkAssignUserToGroupAccess(requester, normalized.groups))) throw new ApplicationError('You are not authorized to create a user with an assignment to an administrative group.', { code: 'USER_CREATE_GROUP_FORBIDDEN', status: 403 })
-  await wiki.models.users.createNewUser(normalized)
+  const result = await wiki.models.users.createNewUser(normalized)
+  if (isRecord(result) && typeof result.welcomeEmailError === 'string') {
+    return { welcomeEmailError: result.welcomeEmailError }
+  }
+  return {}
 }
 const update = async ({ requester, input }: UserRequest): Promise<void> => {
   const normalized = updateInput(input)
@@ -271,6 +276,7 @@ const setActive = async (value: unknown): Promise<void> => {
   if (!input.isActive) revoke(id)
 }
 const verify = (value: unknown): Promise<number> => wiki.models.users.query().patch({ isVerified: true }).findById(positiveInteger(value, 'id'))
+const sendWelcomeEmail = (value: unknown): Promise<void> => wiki.models.users.sendWelcomeEmail({ id: positiveInteger(value, 'id') })
 const setTfa = (value: unknown): Promise<number> => {
   const input = recordValue(value)
   const id = positiveInteger(input.id, 'id')
@@ -325,5 +331,5 @@ const countPages = async (user: UserRecord): Promise<number> => _.toSafeInteger(
 
 export default {
   changePassword, countPages, create, get, getAdminDetail, getProfile, lastLogins, list, listProfileGroups,
-  listUserGroups, remove, search, setActive, setTfa, update, updateProfile, verify
+  listUserGroups, remove, search, sendWelcomeEmail, setActive, setTfa, update, updateProfile, verify
 }

@@ -162,9 +162,17 @@
                       )
                   v-tooltip(location="top")
                     template(v-slot:activator='{ props }')
-                      v-btn(icon, color='grey', size="x-small", v-bind='props', disabled)
+                      v-btn(
+                        icon
+                        color='grey'
+                        size='x-small'
+                        v-bind='props'
+                        :loading='welcomeEmailLoading'
+                        aria-label='Send Welcome Email'
+                        @click='sendWelcomeEmail'
+                        )
                         v-icon mdi-email
-                    span Send Password Reset Email
+                    span Send Welcome Email
             template(v-if='user.providerIs2FACapable')
               v-divider
               v-list-item
@@ -373,6 +381,7 @@ import {
   deleteAdminUser,
   fetchUserDetails,
   setAdminUserActive,
+  sendAdminUserWelcomeEmail,
   setAdminUserTfa,
   updateAdminUser,
   verifyAdminUser,
@@ -446,6 +455,7 @@ export default {
       newGroup: 0,
       groups: [] as GroupOption[],
       newPassword: '',
+      welcomeEmailLoading: false,
       user: createEmptyUser(),
       timezones: [
         { text: '(GMT-11:00) Niue', value: 'Pacific/Niue' },
@@ -951,6 +961,28 @@ export default {
         })
       }
       wikiStore.stopLoading('admin-users-verify')
+    },
+    /**
+     * Send or resend the account invitation without changing the user.
+     */
+    async sendWelcomeEmail () {
+      this.welcomeEmailLoading = true
+      try {
+        await sendAdminUserWelcomeEmail(window.fetch.bind(window), this.user.id)
+        wikiStore.showNotification({
+          style: 'success',
+          message: 'Welcome email sent successfully.',
+          icon: 'email-check'
+        })
+      } catch (err) {
+        wikiStore.showNotification({
+          style: 'red',
+          message: getErrorMessage(err),
+          icon: 'email-alert'
+        })
+      } finally {
+        this.welcomeEmailLoading = false
+      }
     },
     /**
      * Toggle 2FA State

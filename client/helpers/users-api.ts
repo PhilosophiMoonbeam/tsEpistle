@@ -90,6 +90,7 @@ export type AdminUserDetail = {
 export type AdminUserMutationResult = {
   succeeded: boolean
   message: string
+  welcomeEmailError?: string
 }
 
 async function parseJsonResponse (response: JsonResponse, fallbackMessage: string): Promise<unknown> {
@@ -263,10 +264,14 @@ function normalizeSuccessResult (payload: unknown, fallbackMessage: string): Adm
   if (!isRecord(payload) || payload.succeeded !== true || typeof payload.message !== 'string') {
     throw new Error(fallbackMessage)
   }
+  if (payload.welcomeEmailError !== undefined && typeof payload.welcomeEmailError !== 'string') {
+    throw new Error(fallbackMessage)
+  }
 
   return {
     succeeded: true,
-    message: payload.message
+    message: payload.message,
+    ...(typeof payload.welcomeEmailError === 'string' ? { welcomeEmailError: payload.welcomeEmailError } : {})
   }
 }
 
@@ -343,6 +348,21 @@ export async function createAdminUser (fetchImpl: FetchImpl, payload: CreateAdmi
       'Content-Type': 'application/json'
     },
     body: JSON.stringify(payload)
+  })
+
+  return normalizeSuccessResult(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
+}
+
+export async function sendAdminUserWelcomeEmail (fetchImpl: FetchImpl, id: number | string, fallbackMessage = 'Welcome email response is invalid'): Promise<AdminUserMutationResult> {
+  const normalizedId = normalizePositiveIntegerId(id, fallbackMessage)
+  const response = await fetchImpl(`/_api/users/${normalizedId}/welcome-email`, {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({})
   })
 
   return normalizeSuccessResult(await parseJsonResponse(response, fallbackMessage), fallbackMessage)

@@ -156,6 +156,15 @@ interface ForgotPasswordOptions {
   email: string
 }
 
+interface ResetPasswordOptions {
+  token: string
+  newPassword: string
+}
+
+interface VerifyEmailOptions {
+  token: string
+}
+
 interface RegisterOptions {
   email: string
   password: string
@@ -183,6 +192,10 @@ interface CreateUserOptions {
   groups: number[]
   mustChangePassword?: boolean
   sendWelcomeEmail?: boolean
+}
+
+interface CreateUserResult {
+  welcomeEmailError?: string
 }
 
 interface UpdateUserOptions {
@@ -821,11 +834,66 @@ static async loginForgotPassword ({ email }: ForgotPasswordOptions, _context: Au
 }
 
 /**
+ * Confirm an email address without signing the user in.
+ *
+ * The link in the email only opens the confirmation screen. This method is called by the explicit
+ * POST from that screen, so mail scanners cannot activate accounts by following links.
+ */
+static async verifyEmail ({ token }: VerifyEmailOptions): Promise<void> {
+  const usr = await wiki.models.userKeys.validateToken({ kind: 'verify', token })
+  await wiki.models.users.query().patch({ isVerified: true }).findById(usr.id)
+}
+
+/**
+ * Set a password from a reset email without creating a login session.
+ *
+ * The reset token is consumed atomically by UserKey.validateToken. Validating the new password first
+ * leaves a valid link usable when the form itself was incomplete.
+ */
+static async resetPassword ({ token, newPassword }: ResetPasswordOptions): Promise<void> {
+  if (!newPassword || newPassword.length < 6) {
+    throw new wiki.Error.InputInvalid('Password must be at least 6 characters!')
+  }
+  const usr = await wiki.models.userKeys.validateToken({ kind: 'resetPwd', token })
+  if (!usr.isActive) {
+    throw new wiki.Error.AuthAccountBanned()
+  }
+  await wiki.models.users.query().patch({
+    password: newPassword,
+    mustChangePwd: false,
+    isVerified: true
+  }).findById(usr.id)
+}
+
+/**
+ * Send the standard invitation for an existing account.
+ */
+static async sendWelcomeEmail ({ id }: { id: number }): Promise<void> {
+  const usr = await wiki.models.users.query().findById(id)
+  if (!usr) {
+    throw new wiki.Error.UserNotFound()
+  }
+  await wiki.mail.send({
+    template: 'accountWelcome',
+    to: usr.email,
+    subject: `Welcome to the wiki ${wiki.config.title}`,
+    data: {
+      preheadertext: `You've been invited to the wiki ${wiki.config.title}`,
+      title: `You've been invited to the wiki ${wiki.config.title}`,
+      content: 'Click the button below to access the wiki.',
+      buttonLink: `${wiki.config.host}/login`,
+      buttonText: 'Login'
+    },
+    text: `You've been invited to the wiki ${wiki.config.title}: ${wiki.config.host}/login`
+  })
+}
+
+/**
  * Create a new user
  *
  * @param {Object} param0 User Fields
  */
-static async createNewUser ({ providerKey, email, passwordRaw, name, groups, mustChangePassword, sendWelcomeEmail }: CreateUserOptions): Promise<void> {
+static async createNewUser ({ providerKey, email, passwordRaw, name, groups, mustChangePassword, sendWelcomeEmail }: CreateUserOptions): Promise<CreateUserResult> {
   // Input sanitization
   email = _.toLower(email)
 
@@ -916,22 +984,16 @@ static async createNewUser ({ providerKey, email, passwordRaw, name, groups, mus
       await newUsr.$relatedQuery<Group>('groups').relate(groups)
     }
 
+    const result: CreateUserResult = {}
     if (sendWelcomeEmail) {
-      // Send welcome email
-      await wiki.mail.send({
-        template: 'accountWelcome',
-        to: email,
-        subject: `Welcome to the wiki ${wiki.config.title}`,
-        data: {
-          preheadertext: `You've been invited to the wiki ${wiki.config.title}`,
-          title: `You've been invited to the wiki ${wiki.config.title}`,
-          content: `Click the button below to access the wiki.`,
-          buttonLink: `${wiki.config.host}/login`,
-          buttonText: 'Login'
-        },
-        text: `You've been invited to the wiki ${wiki.config.title}: ${wiki.config.host}/login`
-      })
+      try {
+        await wiki.models.users.sendWelcomeEmail({ id: newUsr.id })
+      } catch (error) {
+        result.welcomeEmailError = error instanceof Error ? error.message : String(error)
+        wiki.logger.warn(`User ${newUsr.id} was created, but the welcome email failed: ${result.welcomeEmailError}`)
+      }
     }
+    return result
   } else {
     throw new wiki.Error.AuthAccountAlreadyExists()
   }
@@ -1117,20 +1179,27 @@ static async register ({ email, password, name, verify = false, bypassChecks = f
           userId: newUsr.id
         })
 
-        // Send verification email
-        await wiki.mail.send({
-          template: 'accountVerify',
-          to: email,
-          subject: 'Verify your account',
-          data: {
-            preheadertext: 'Verify your account in order to gain access to the wiki.',
-            title: 'Verify your account',
-            content: 'Click the button below in order to verify your account and gain access to the wiki.',
-            buttonLink: `${wiki.config.host}/verify/${verificationToken}`,
-            buttonText: 'Verify'
-          },
-          text: `You must open the following link in your browser to verify your account and gain access to the wiki: ${wiki.config.host}/verify/${verificationToken}`
-        })
+        try {
+          await wiki.mail.send({
+            template: 'accountVerify',
+            to: email,
+            subject: 'Verify your account',
+            data: {
+              preheadertext: 'Verify your account in order to gain access to the wiki.',
+              title: 'Verify your account',
+              content: 'Click the button below in order to verify your account and gain access to the wiki.',
+              buttonLink: `${wiki.config.host}/verify/${verificationToken}`,
+              buttonText: 'Verify'
+            },
+            text: `You must open the following link in your browser to verify your account and gain access to the wiki: ${wiki.config.host}/verify/${verificationToken}`
+          })
+        } catch (error) {
+          await wiki.models.knex.transaction(async trx => {
+            await wiki.models.userKeys.query(trx).delete().where('userId', newUsr.id)
+            await wiki.models.users.query(trx).deleteById(newUsr.id)
+          })
+          throw error
+        }
       }
       return true
     } else {

@@ -70,13 +70,12 @@
           v-model='mustChangePwd'
           hide-details
         )
-        //- v-checkbox(
-        //-   color='primary'
-        //-   label='Send a welcome email'
-        //-   hide-details
-        //-   v-model='sendWelcomeEmail'
-        //-   disabled
-        //- )
+        v-checkbox(
+          color='primary'
+          label='Send a welcome email'
+          hide-details
+          v-model='sendWelcomeEmail'
+        )
       div.v-card-chin.admin-dialog-actions
         v-spacer
         v-btn(variant="text", @click='isShown = false') Cancel
@@ -272,10 +271,21 @@ export default {
             message: 'New user created successfully.',
             icon: 'check'
           })
+          if (resp.welcomeEmailError) {
+            wikiStore.showNotification({
+              style: 'warning',
+              message: `The user was created, but the welcome email could not be sent: ${resp.welcomeEmailError}`,
+              icon: 'email-alert'
+            })
+          }
+
 
           this.email = ''
           this.password = ''
           this.name = ''
+          this.group = []
+          this.mustChangePwd = false
+          this.sendWelcomeEmail = false
 
           if (close) {
             this.isShown = false

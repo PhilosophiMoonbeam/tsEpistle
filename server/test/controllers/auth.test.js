@@ -49,7 +49,9 @@ describe('HTML auth controller rate limiting', () => {
         users: {
           login: vi.fn().mockResolvedValue({ jwt: 'login-jwt' })
         },
-        userKeys: {}
+        userKeys: {
+          validateToken: vi.fn().mockResolvedValue({ id: 7 })
+        }
       },
       config: {
         auth: {
@@ -102,5 +104,49 @@ describe('HTML auth controller rate limiting', () => {
       hideLocal: false
     })
     expect(res.render).not.toHaveBeenCalledWith('legacy/login', expect.anything())
+  })
+
+  it('renders email confirmation without consuming or applying the token', async () => {
+    await loadController()
+    const route = express.__router.get.mock.calls.find(([path]) => path === '/verify/:token')
+    const verify = route[route.length - 1]
+    const req = { params: { token: 'verify-token' } }
+    const res = { locals: {}, render: vi.fn() }
+
+    await verify(req, res, vi.fn())
+
+    expect(global.WIKI.models.userKeys.validateToken).toHaveBeenCalledWith({
+      kind: 'verify',
+      token: 'verify-token',
+      skipDelete: true
+    })
+    expect(res.render).toHaveBeenCalledWith('login', {
+      bgUrl: '/_assets/img/splash/1.jpg',
+      hideLocal: false,
+      verificationToken: 'verify-token'
+    })
+    expect(res.locals.pageMeta.title).toBe('Confirm Email Address')
+  })
+
+  it('renders password reset without consuming the token', async () => {
+    await loadController()
+    const route = express.__router.get.mock.calls.find(([path]) => path === '/login-reset/:token')
+    const reset = route[route.length - 1]
+    const req = { params: { token: 'reset-token' } }
+    const res = { locals: {}, render: vi.fn() }
+
+    await reset(req, res, vi.fn())
+
+    expect(global.WIKI.models.userKeys.validateToken).toHaveBeenCalledWith({
+      kind: 'resetPwd',
+      token: 'reset-token',
+      skipDelete: true
+    })
+    expect(res.render).toHaveBeenCalledWith('login', {
+      bgUrl: '/_assets/img/splash/1.jpg',
+      hideLocal: false,
+      resetPasswordToken: 'reset-token'
+    })
+    expect(res.locals.pageMeta.title).toBe('Reset Password')
   })
 })

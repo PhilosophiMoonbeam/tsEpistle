@@ -11,9 +11,6 @@ interface AuthenticationStrategy {
   strategyKey: string
 }
 
-interface AuthUser {
-  id: number
-}
 
 export interface AuthWiki {
   models: {
@@ -25,18 +22,14 @@ export interface AuthWiki {
     users: {
       login(input: Record<string, unknown>, context: { req: Request; res: Response }): Promise<{ jwt: string; redirect?: string }>
       logout(context: { req: Request; res: Response }): Promise<string>
-      query(): { patch(input: Record<string, unknown>): { where(column: string, value: unknown): Promise<unknown> } }
-      refreshToken(user: AuthUser): Promise<{ token: string }>
     }
     userKeys: {
-      validateToken(input: { kind: string; token: string }): Promise<AuthUser>
-      generateToken(input: { userId: number; kind: string }): Promise<string>
+      validateToken(input: { kind: string; token: string; skipDelete?: boolean }): Promise<unknown>
     }
   }
   config: {
     auth: {
       autoLogin: boolean
-      enforce2FA: boolean
       hideLocal: boolean
       loginBgUrl: string
     }
@@ -168,44 +161,44 @@ router.get('/register', async (req, res, next) => {
 })
 
 /**
- * Verify
+ * Email verification landing page.
+ *
+ * A GET only validates and presents the confirmation action. The token is consumed by the explicit
+ * POST from the login component, so automated mail-link scanners cannot activate the account.
  */
 router.get('/verify/:token', bruteforce.middleware, async (req, res, next) => {
   try {
+    _.set(res.locals, 'pageMeta.title', 'Confirm Email Address')
     const token = routeParam(req, 'token')
-    const usr = await wiki.models.userKeys.validateToken({ kind: 'verify', token })
-    await wiki.models.users.query().patch({ isVerified: true }).where('id', usr.id)
-    await bruteforce.reset(req)
-    if (wiki.config.auth.enforce2FA) {
-      res.redirect('/login')
-    } else {
-      const result = await wiki.models.users.refreshToken(usr)
-      res.cookie('jwt', result.token, commonHelper.getCookieOpts())
-      res.redirect('/')
-    }
+    await wiki.models.userKeys.validateToken({ kind: 'verify', token, skipDelete: true })
+    const bgUrl = !_.isEmpty(wiki.config.auth.loginBgUrl) ? wiki.config.auth.loginBgUrl : '/_assets/img/splash/1.jpg'
+    res.render('login', {
+      bgUrl,
+      hideLocal: wiki.config.auth.hideLocal,
+      verificationToken: token
+    })
   } catch (err) {
     next(err)
   }
 })
 
 /**
- * Reset Password
+ * Password reset landing page.
+ *
+ * GET validation is deliberately non-consuming. The token is consumed only after a valid password
+ * is submitted to the reset endpoint.
  */
 router.get('/login-reset/:token', bruteforce.middleware, async (req, res, next) => {
   try {
+    _.set(res.locals, 'pageMeta.title', 'Reset Password')
     const token = routeParam(req, 'token')
-    const usr = await wiki.models.userKeys.validateToken({ kind: 'resetPwd', token })
-    if (!usr) {
-      throw new Error('Invalid Token')
-    }
-    await bruteforce.reset(req)
-
-    const changePwdContinuationToken = await wiki.models.userKeys.generateToken({
-      userId: usr.id,
-      kind: 'changePwd'
-    })
+    await wiki.models.userKeys.validateToken({ kind: 'resetPwd', token, skipDelete: true })
     const bgUrl = !_.isEmpty(wiki.config.auth.loginBgUrl) ? wiki.config.auth.loginBgUrl : '/_assets/img/splash/1.jpg'
-    res.render('login', { bgUrl, hideLocal: wiki.config.auth.hideLocal, changePwdContinuationToken })
+    res.render('login', {
+      bgUrl,
+      hideLocal: wiki.config.auth.hideLocal,
+      resetPasswordToken: token
+    })
   } catch (err) {
     next(err)
   }

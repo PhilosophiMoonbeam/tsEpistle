@@ -127,13 +127,29 @@ router.post('/', async (req, res) => {
   }
 
   try {
-    await userOperations.create({ requester: req.user, input: payload })
+    const result = await userOperations.create({ requester: req.user, input: payload })
     return res.json({
       succeeded: true,
-      message: 'User created successfully'
+      message: 'User created successfully',
+      ...(result.welcomeEmailError ? { welcomeEmailError: result.welcomeEmailError } : {})
     })
   } catch (err) {
     return res.status(errorStatus(err, 400)).json({ error: errorMessage(err, 'User could not be created.') })
+  }
+})
+
+router.post('/:id/welcome-email', async (req, res) => {
+  if (!requireUserMutationAccess(req, res)) {
+    return
+  }
+  try {
+    await userOperations.sendWelcomeEmail(Number(req.params.id))
+    return res.json({
+      succeeded: true,
+      message: 'Welcome email sent successfully'
+    })
+  } catch (err) {
+    return res.status(errorStatus(err, 400)).json({ error: errorMessage(err, 'Welcome email could not be sent.') })
   }
 })
 

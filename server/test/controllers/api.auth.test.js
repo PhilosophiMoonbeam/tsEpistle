@@ -155,6 +155,8 @@ describe('controllers/api auth endpoints', () => {
           loginTFA: vi.fn(),
           loginChangePassword: vi.fn(),
           loginForgotPassword: vi.fn(),
+          resetPassword: vi.fn().mockResolvedValue(undefined),
+          verifyEmail: vi.fn().mockResolvedValue(undefined),
           register: vi.fn().mockResolvedValue(undefined)
         }
       }
@@ -187,6 +189,8 @@ describe('controllers/api auth endpoints', () => {
       resetGuestUser: postRouteHandler('/guest/reset'),
       register: postRouteHandler('/register'),
       forgotPassword: postRouteHandler('/forgot-password'),
+      verifyEmail: postRouteHandler('/verify-email'),
+      resetPassword: postRouteHandler('/reset-password'),
       login: postRouteHandler('/login'),
       loginTFA: postRouteHandler('/login/tfa'),
       loginChangePassword: postRouteHandler('/login/change-password')
@@ -209,6 +213,8 @@ describe('controllers/api auth endpoints', () => {
   expect(typeof handlers.register).toBe('function')
   expect(typeof handlers.forgotPassword).toBe('function')
   expect(typeof handlers.login).toBe('function')
+  expect(typeof handlers.verifyEmail).toBe('function')
+  expect(typeof handlers.resetPassword).toBe('function')
   expect(typeof handlers.loginTFA).toBe('function')
   expect(typeof handlers.loginChangePassword).toBe('function') })
 
@@ -1320,6 +1326,47 @@ describe('controllers/api auth endpoints', () => {
     expect(invalidTokenRes.json).toHaveBeenCalledWith({ error: 'Invalid validation token.' })
     expect(missingUserRes.status).toHaveBeenCalledWith(401)
     expect(missingUserRes.json).toHaveBeenCalledWith({ error: 'This user does not exist.' })
+  })
+
+  it('confirms email only through the explicit POST and resets brute-force state', async () => {
+    const { verifyEmail } = await loadHandlers()
+    const req = { body: { token: 'verify-token' } }
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
+
+    await verifyEmail(req, res, vi.fn())
+
+    expect(global.WIKI.models.users.verifyEmail).toHaveBeenCalledWith({ token: 'verify-token' })
+    expect(authRateLimiter.reset).toHaveBeenCalledWith(req)
+    expect(res.json).toHaveBeenCalledWith({ message: 'Email address verified successfully.' })
+  })
+
+  it('resets a password only when both the token and replacement are submitted', async () => {
+    const { resetPassword } = await loadHandlers()
+    const req = { body: { token: 'reset-token', newPassword: 'new-secret' } }
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
+
+    await resetPassword(req, res, vi.fn())
+
+    expect(global.WIKI.models.users.resetPassword).toHaveBeenCalledWith({
+      token: 'reset-token',
+      newPassword: 'new-secret'
+    })
+    expect(authRateLimiter.reset).toHaveBeenCalledWith(req)
+    expect(res.json).toHaveBeenCalledWith({ message: 'Password reset successfully.' })
+  })
+
+  it('rejects incomplete email-token actions before consuming a token', async () => {
+    const { verifyEmail, resetPassword } = await loadHandlers()
+    const verifyRes = { status: vi.fn().mockReturnThis(), json: vi.fn() }
+    const resetRes = { status: vi.fn().mockReturnThis(), json: vi.fn() }
+
+    await verifyEmail({ body: {} }, verifyRes, vi.fn())
+    await resetPassword({ body: { token: 'reset-token' } }, resetRes, vi.fn())
+
+    expect(global.WIKI.models.users.verifyEmail).not.toHaveBeenCalled()
+    expect(global.WIKI.models.users.resetPassword).not.toHaveBeenCalled()
+    expect(verifyRes.status).toHaveBeenCalledWith(400)
+    expect(resetRes.status).toHaveBeenCalledWith(400)
   })
 
   it('forwards unexpected failures to next', async () => {

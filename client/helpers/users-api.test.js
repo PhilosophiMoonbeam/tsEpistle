@@ -1,4 +1,4 @@
-import { searchUsers, fetchLastLogins, fetchAdminUsersList, createAdminUser, updateAdminUser, deleteAdminUser, setAdminUserActive, verifyAdminUser, setAdminUserTfa, fetchUserDetails } from './users-api.ts'
+import { searchUsers, fetchLastLogins, fetchAdminUsersList, createAdminUser, sendAdminUserWelcomeEmail, updateAdminUser, deleteAdminUser, setAdminUserActive, verifyAdminUser, setAdminUserTfa, fetchUserDetails } from './users-api.ts'
 
 function createJsonResponse (payload, ok = true) {
   return {
@@ -197,6 +197,41 @@ describe('users api helper', () => {
         'Content-Type': 'application/json'
       },
       body: JSON.stringify(payload)
+    })
+  })
+
+  test('preserves welcome-mail warnings on successful user creation', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({
+      succeeded: true,
+      message: 'User created successfully',
+      welcomeEmailError: 'SMTP unavailable'
+    }))
+
+    await expect(createAdminUser(fetchImpl, {})).resolves.toEqual({
+      succeeded: true,
+      message: 'User created successfully',
+      welcomeEmailError: 'SMTP unavailable'
+    })
+  })
+
+  test('sends a welcome email to an existing admin user', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({
+      succeeded: true,
+      message: 'Welcome email sent successfully'
+    }))
+
+    await expect(sendAdminUserWelcomeEmail(fetchImpl, '42')).resolves.toEqual({
+      succeeded: true,
+      message: 'Welcome email sent successfully'
+    })
+    expect(fetchImpl).toHaveBeenCalledWith('/_api/users/42/welcome-email', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({})
     })
   })
 

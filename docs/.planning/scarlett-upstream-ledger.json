@@ -3,11 +3,11 @@
   "upstream": {
     "repository": "https://github.com/requarks/wiki.git",
     "branch": "scarlett",
-    "recordedTip": "59ef5e779db70f9883258d06dd5611300e2173e0",
-    "recordedAt": "2026-08-28T22:15:07-04:00",
-    "lastFetchedAt": "2026-08-29T03:10:37+00:00"
+    "recordedTip": "6053cb982f254f2d52b2a043864a999c725240f7",
+    "recordedAt": "2026-08-29T04:12:49-04:00",
+    "lastFetchedAt": "2026-08-29T17:40:25+00:00"
   },
-  "forkCheckpoint": "f8e0fb9c7644a0ece02a8de111b8f530cb127973",
+  "forkCheckpoint": "6713df41c978b1c772159eae06f9c59c3e590d3f",
   "candidates": [
     {
       "id": "typed-api-schemas",
@@ -487,6 +487,46 @@
       "state": "closed",
       "workstream": "admin/operational-surfaces",
       "contract": "The fork retains its functional SSL status, redirection, and certificate-renewal administration. An MCP page is added only with a real server, key lifecycle, permissions, and observable state; Scarlett's permanently disabled placeholder is not shipped.",
+      "lastReviewed": "2026-08-29"
+    },
+    {
+      "id": "authentication-mail-completion-2026-08-29",
+      "commits": ["ccb2b702", "6053cb98"],
+      "category": "authentication-security",
+      "disposition": "split",
+      "state": "completed",
+      "workstream": "release-assurance/authentication",
+      "contract": "Verification and password-reset links are inert GET landing pages whose tokens are consumed atomically only by explicit POST actions; resets do not create sessions, successful resets prove the mailbox, registration mail failure leaves no orphan account, and administrator welcome-mail failure cannot misreport a successfully created user.",
+      "lastReviewed": "2026-08-29"
+    },
+    {
+      "id": "authentication-outcome-experience-2026-08-29",
+      "commits": ["6053cb98"],
+      "category": "ux",
+      "disposition": "adapt",
+      "state": "completed",
+      "workstream": "experience-completion/authentication",
+      "contract": "Authentication errors remain adjacent to the active form, completed email and reset flows retain a persistent outcome with a clear return to login, password confirmation is enforced before token consumption, and loading states continue through the fork's existing Vuetify loader.",
+      "lastReviewed": "2026-08-29"
+    },
+    {
+      "id": "sample-content-utility-2026-08-29",
+      "commits": ["ccb2b702"],
+      "category": "admin-utilities",
+      "disposition": "reject",
+      "state": "closed",
+      "workstream": "admin/content-lifecycle",
+      "contract": "Production administration does not ship a browser-driven sample generator or purge every page carrying a generic test tag; disposable content belongs in isolated fixtures with an ownership marker and one atomic lifecycle.",
+      "lastReviewed": "2026-08-29"
+    },
+    {
+      "id": "scarlett-auth-mail-stack-specifics-2026-08-29",
+      "commits": ["ccb2b702", "6053cb98"],
+      "category": "architecture",
+      "disposition": "supersede",
+      "state": "closed",
+      "workstream": "architecture-boundaries",
+      "contract": "The fork retains Express, Objection, its existing Nodemailer template pipeline, Vuetify, and locale namespaces; Scarlett Fastify schemas, Drizzle models, Tailwind components, duplicate mail renderer, and multisite strategy IDs are not transplanted.",
       "lastReviewed": "2026-08-29"
     }
   ]

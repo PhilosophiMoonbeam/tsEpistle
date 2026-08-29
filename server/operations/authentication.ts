@@ -38,6 +38,8 @@ interface UserModel {
   loginTFA(args: unknown, context: unknown): unknown
   loginChangePassword(args: unknown, context: unknown): unknown
   loginForgotPassword(args: unknown, context: unknown): unknown
+  resetPassword(args: unknown): unknown
+  verifyEmail(args: unknown): unknown
   register(args: Record<string, unknown>, context: unknown): unknown
 }
 interface AuthenticationModel { getStrategies(): Promise<Strategy[]>, query(): AuthQuery }
@@ -187,6 +189,8 @@ const forgotPassword = (args: unknown, context: unknown): unknown => getUserMode
 const regenerateCertificates = (): unknown => getAuth().regenerateCertificates()
 const resetGuestUser = (): unknown => getAuth().resetGuestUser()
 const register = (args: Record<string, unknown>, context: unknown): unknown => getUserModel().register({ ...args, verify: true }, context)
+const resetPassword = (args: unknown): unknown => getUserModel().resetPassword(args)
+const verifyEmail = (args: unknown): unknown => getUserModel().verifyEmail(args)
 const getMetricsState = (): boolean => getConfig().metrics.isEnabled
 const setMetricsState = async (enabled: unknown): Promise<void> => {
   const config = getConfig()
@@ -211,5 +215,6 @@ const setMetricsState = async (enabled: unknown): Promise<void> => {
 
 export default {
   forgotPassword, getMetricsState, listActive, listDefinitions, listProviderOptions, listPublic, login, loginForm,
-  loginChangePassword, loginTfa, regenerateCertificates, register, resetGuestUser, setMetricsState, updateStrategies
+  loginChangePassword, loginTfa, regenerateCertificates, register, resetGuestUser, resetPassword, setMetricsState,
+  updateStrategies, verifyEmail
 }

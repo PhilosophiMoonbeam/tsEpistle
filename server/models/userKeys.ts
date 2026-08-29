@@ -1,5 +1,6 @@
 import { Model } from 'objection'
 import type { QueryContext } from 'objection'
+import type { Knex } from 'knex'
 import { DateTime } from 'luxon'
 import { nanoid } from 'nanoid'
 import User from './users.ts'
@@ -24,9 +25,11 @@ export default class UserKey extends Model {
   declare validUntil: string
   declare user: User
 
-  static override get tableName () { return 'userKeys' }
+  static override get tableName() {
+    return 'userKeys'
+  }
 
-  static override get jsonSchema () {
+  static override get jsonSchema() {
     return {
       type: 'object',
       required: ['kind', 'token', 'validUntil'],
@@ -40,7 +43,7 @@ export default class UserKey extends Model {
     }
   }
 
-  static override get relationMappings () {
+  static override get relationMappings() {
     return {
       user: {
         relation: Model.BelongsToOneRelation,
@@ -50,12 +53,12 @@ export default class UserKey extends Model {
     }
   }
 
-  override async $beforeInsert (context: QueryContext): Promise<void> {
+  override async $beforeInsert(context: QueryContext): Promise<void> {
     await super.$beforeInsert(context)
     this.createdAt = DateTime.utc().toISO()
   }
 
-  static async generateToken ({ userId, kind }: GenerateTokenOptions, _context?: unknown): Promise<string> {
+  static async generateToken({ userId, kind }: GenerateTokenOptions, _context?: unknown): Promise<string> {
     void _context
     const token = nanoid()
     await wiki.models.userKeys.query().insert({
@@ -67,27 +70,39 @@ export default class UserKey extends Model {
     return token
   }
 
-  static async validateToken ({ kind, token, skipDelete }: ValidateTokenOptions, _context?: unknown): Promise<User> {
+  static async validateToken({ kind, token, skipDelete }: ValidateTokenOptions, _context?: unknown): Promise<User> {
     void _context
-    const result = await wiki.models.userKeys.query().findOne({ kind, token }).withGraphJoined('user')
-    if (!result) {
-      throw new wiki.Error.AuthValidationTokenInvalid()
+    if (skipDelete === true) {
+      const result = await wiki.models.userKeys.query().findOne({ kind, token }).withGraphJoined('user')
+      if (!result || DateTime.utc() > DateTime.fromISO(result.validUntil)) {
+        throw new wiki.Error.AuthValidationTokenInvalid()
+      }
+      return result.user
     }
-    if (skipDelete !== true) {
-      await wiki.models.userKeys.query().deleteById(result.id)
-    }
-    if (DateTime.utc() > DateTime.fromISO(result.validUntil)) {
-      throw new wiki.Error.AuthValidationTokenInvalid()
-    }
-    return result.user
+
+    return wiki.models.knex.transaction(async (trx: Knex.Transaction) => {
+      const result = await wiki.models.userKeys.query(trx).findOne({ kind, token }).forUpdate()
+      if (!result || DateTime.utc() > DateTime.fromISO(result.validUntil)) {
+        throw new wiki.Error.AuthValidationTokenInvalid()
+      }
+      const user = await wiki.models.users.query(trx).findById(result.userId)
+      if (!user) {
+        throw new wiki.Error.AuthValidationTokenInvalid()
+      }
+      const deleted = await wiki.models.userKeys.query(trx).deleteById(result.id)
+      if (deleted !== 1) {
+        throw new wiki.Error.AuthValidationTokenInvalid()
+      }
+      return user
+    })
   }
 
-  static async destroyToken ({ token }: { token: string }): Promise<number> {
+  static async destroyToken({ token }: { token: string }): Promise<number> {
     return wiki.models.userKeys.query().findOne({ token }).delete()
   }
 }
 
 const wiki = WIKI as unknown as {
   Error: { AuthValidationTokenInvalid: new () => Error }
-  models: { userKeys: typeof UserKey }
+  models: { knex: Knex; userKeys: typeof UserKey; users: typeof User }
 }

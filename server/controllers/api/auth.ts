@@ -223,6 +223,35 @@ router.post('/forgot-password', bruteforceMiddleware, async (req, res, next) => 
   }
 })
 
+router.post('/verify-email', bruteforceMiddleware, async (req, res, next) => {
+  const token = objectValue(req.body, 'token')
+  if (typeof token !== 'string' || token.length < 1) {
+    return res.status(400).json({ error: 'token is required' })
+  }
+  try {
+    await authenticationOperations.verifyEmail({ token })
+    await getBruteforce().reset(req)
+    return res.json({ message: 'Email address verified successfully.' })
+  } catch (err) {
+    if (!handleExpectedAuthError(err, res)) next(err)
+  }
+})
+
+router.post('/reset-password', bruteforceMiddleware, async (req, res, next) => {
+  const token = objectValue(req.body, 'token')
+  const newPassword = objectValue(req.body, 'newPassword')
+  if (typeof token !== 'string' || token.length < 1 || typeof newPassword !== 'string' || newPassword.length < 1) {
+    return res.status(400).json({ error: 'token and newPassword are required' })
+  }
+  try {
+    await authenticationOperations.resetPassword({ token, newPassword })
+    await getBruteforce().reset(req)
+    return res.json({ message: 'Password reset successfully.' })
+  } catch (err) {
+    if (!handleExpectedAuthError(err, res)) next(err)
+  }
+})
+
 router.post('/login', bruteforceMiddleware, async (req, res, next) => {
   const strategy = objectValue(req.body, 'strategy')
   const strategyKey = typeof strategy === 'string' ? strategy : ''

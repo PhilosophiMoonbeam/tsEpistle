@@ -135,6 +135,60 @@
                 href='#forgot'
                 ): .text-body-small {{ $t('auth:forgotPasswordCancel') }}
         //-------------------------------------------------
+        //- EMAIL VERIFICATION
+        //-------------------------------------------------
+        template(v-if='screen === `verifyEmail`')
+          .login-subtitle
+            .text-body-large {{ $t('auth:verifyEmail.title') }}
+          .login-info {{ $t('auth:verifyEmail.instructions') }}
+          v-btn.mt-3.text-none(
+            width='100%'
+            size='large'
+            color='primary'
+            :loading='isLoading'
+            @click='confirmEmail'
+            ) {{ $t('auth:verifyEmail.proceed') }}
+        //-------------------------------------------------
+        //- RESET PASSWORD FORM
+        //-------------------------------------------------
+        template(v-if='screen === `resetPwd`')
+          .login-subtitle
+            .text-body-large {{ $t('auth:resetPwd.title') }}
+          .login-info {{ $t('auth:resetPwd.instructions') }}
+          form.login-form(@submit.prevent='resetPassword')
+            v-text-field.mt-2(
+              type='password'
+              variant='outlined'
+              prepend-inner-icon='mdi-lock-outline'
+              bg-color='surface'
+              color='primary'
+              hide-details
+              ref='iptNewPassword'
+              v-model='newPassword'
+              :placeholder='$t(`auth:changePwd.newPasswordPlaceholder`)'
+              autocomplete='new-password'
+              )
+              template(v-slot:loader)
+                password-strength(v-model='newPassword')
+            v-text-field.mt-2(
+              type='password'
+              variant='outlined'
+              prepend-inner-icon='mdi-lock-check-outline'
+              bg-color='surface'
+              color='primary'
+              hide-details
+              v-model='newPasswordVerify'
+              :placeholder='$t(`auth:changePwd.newPasswordVerifyPlaceholder`)'
+              autocomplete='new-password'
+              )
+            v-btn.mt-2.text-none(
+              width='100%'
+              size='large'
+              color='primary'
+              type='submit'
+              :loading='isLoading'
+              ) {{ $t('auth:resetPwd.proceed') }}
+        //-------------------------------------------------
         //- CHANGE PASSWORD FORM
         //-------------------------------------------------
         template(v-if='screen === `changePwd`')
@@ -173,6 +227,20 @@
               type='submit'
               :loading='isLoading'
               ) {{ $t('auth:changePwd.proceed') }}
+        //-------------------------------------------------
+        //- COMPLETED AUTH FLOW
+        //-------------------------------------------------
+        template(v-if='screen === `success`')
+          .login-success.text-center(role='status')
+            v-icon.login-success-icon(color='success', icon='mdi-check-circle-outline')
+            .text-title-large.mt-3 {{ successMessage }}
+          v-btn.mt-5.text-none(
+            width='100%'
+            size='large'
+            color='primary'
+            variant='outlined'
+            @click='screen = `login`'
+            ) {{ $t('auth:switchToLogin.link') }}
 
     //-------------------------------------------------
     //- TFA FORM
@@ -264,6 +332,14 @@ export default {
     changePwdContinuationToken: {
       type: String,
       default: null
+    },
+    verificationToken: {
+      type: String,
+      default: null
+    },
+    resetPasswordToken: {
+      type: String,
+      default: null
     }
   },
   data () {
@@ -289,7 +365,8 @@ export default {
       tfaQRImage: '',
       tfaSecret: '',
       errorShown: false,
-      errorMessage: ''
+      errorMessage: '',
+      successMessage: ''
     }
   },
   computed: {
@@ -325,7 +402,7 @@ export default {
     },
     selectedStrategyKey (newValue: string) {
       this.selectedStrategy = _.find(this.strategies, ['key', newValue]) || { key: 'unselected', displayName: '', order: 0, selfRegistration: false, strategy: { useForm: false, usernameType: 'email', color: '', icon: '' } }
-      if (this.screen === 'changePwd') {
+      if (['changePwd', 'verifyEmail', 'resetPwd', 'success'].includes(this.screen)) {
         return
       }
       this.screen = 'login'
@@ -341,13 +418,30 @@ export default {
   },
   mounted () {
     this.isShown = true
-    if (this.changePwdContinuationToken) {
+    if (this.verificationToken) {
+      this.screen = 'verifyEmail'
+    } else if (this.resetPasswordToken) {
+      this.screen = 'resetPwd'
+    } else if (this.changePwdContinuationToken) {
       this.screen = 'changePwd'
       this.continuationToken = this.changePwdContinuationToken
     }
     this.loadStrategies()
   },
   methods: {
+    showError (error: unknown) {
+      this.errorMessage = typeof error === 'string' ? error : getErrorMessage(error)
+      this.errorShown = true
+    },
+    clearError () {
+      this.errorShown = false
+      this.errorMessage = ''
+    },
+    showSuccess (message: string) {
+      this.clearError()
+      this.successMessage = message
+      this.screen = 'success'
+    },
     async loadStrategies () {
       wikiStore.startLoading('login-strategies-refresh')
       try {
@@ -356,16 +450,12 @@ export default {
         if (this.filteredStrategies.length === 0) {
           this.errorMessage = this.$t('auth:genericError')
           this.errorShown = true
-        } else if (this.screen !== 'changePwd' && this.filteredStrategies.length === 1) {
+        } else if (this.screen === 'login' && this.filteredStrategies.length === 1) {
           this.selectedStrategyKey = this.filteredStrategies[0].key
         }
       } catch (err) {
         console.error(err)
-        wikiStore.showNotification({
-          style: 'red',
-          message: getErrorMessage(err),
-          icon: 'alert'
-        })
+        this.showError(err)
       } finally {
         wikiStore.stopLoading('login-strategies-refresh')
       }
@@ -374,7 +464,7 @@ export default {
      * LOGIN
      */
     async login () {
-      this.errorShown = false
+      this.clearError()
       if (this.username.length < 2) {
         this.errorMessage = this.$t('auth:invalidEmailUsername')
         this.errorShown = true
@@ -396,11 +486,7 @@ export default {
           this.handleLoginResponse(respObj)
         } catch (err) {
           console.error(err)
-          wikiStore.showNotification({
-            style: 'red',
-            message: getErrorMessage(err),
-            icon: 'alert'
-          })
+          this.showError(err)
           this.isLoading = false
         }
       }
@@ -445,10 +531,26 @@ export default {
         }
       }
     },
+    validatePasswordPair () {
+      if (this.newPassword.length < 6) {
+        this.showError(this.$t('auth:passwordTooShort'))
+        this.$nextTick(() => {
+          ;(this.$refs.iptNewPassword as { focus: () => void }).focus()
+        })
+        return false
+      }
+      if (this.newPassword !== this.newPasswordVerify) {
+        this.showError(this.$t('auth:passwordNotMatch'))
+        return false
+      }
+      return true
+    },
     /**
      * CHANGE PASSWORD
      */
     async changePassword () {
+      this.clearError()
+      if (!this.validatePasswordPair()) return
       this.loaderColor = 'grey-darken-4'
       this.loaderTitle = this.$t('auth:changePwd.loading')
       this.isLoading = true
@@ -460,11 +562,7 @@ export default {
         this.handleLoginResponse(respObj)
       } catch (err) {
         console.error(err)
-        wikiStore.showNotification({
-          style: 'red',
-          message: getErrorMessage(err),
-          icon: 'alert'
-        })
+        this.showError(err)
         this.isLoading = false
       }
     },
@@ -472,6 +570,7 @@ export default {
      * SWITCH TO FORGOT PASSWORD SCREEN
      */
     forgotPassword () {
+      this.clearError()
       this.screen = 'forgot'
       this.$nextTick(() => {
         ;(this.$refs.iptForgotPwdEmail as { focus: () => void }).focus()
@@ -481,6 +580,7 @@ export default {
      * FORGOT PASSWORD SUBMIT
      */
     async forgotPasswordSubmit () {
+      this.clearError()
       this.loaderColor = 'grey-darken-4'
       this.loaderTitle = this.$t('auth:forgotPasswordLoading')
       this.isLoading = true
@@ -488,19 +588,48 @@ export default {
         await submitStatusRequest(window.fetch.bind(window), '/_api/auth/forgot-password', {
           email: this.username
         }, this.$t('auth:genericError'))
-        wikiStore.showNotification({
-          style: 'success',
-          message: this.$t('auth:forgotPasswordSuccess'),
-          icon: 'email'
-        })
-        this.screen = 'login'
+        this.showSuccess(this.$t('auth:forgotPasswordSuccess'))
       } catch (err) {
         console.error(err)
-        wikiStore.showNotification({
-          style: 'red',
-          message: getErrorMessage(err),
-          icon: 'alert'
-        })
+        this.showError(err)
+      }
+      this.isLoading = false
+    },
+    async confirmEmail () {
+      this.clearError()
+      this.loaderColor = 'grey-darken-4'
+      this.loaderTitle = this.$t('auth:verifyEmail.loading')
+      this.isLoading = true
+      try {
+        await submitStatusRequest(window.fetch.bind(window), '/_api/auth/verify-email', {
+          token: this.verificationToken
+        }, this.$t('auth:genericError'))
+        window.history.replaceState({}, '', '/login')
+        this.showSuccess(this.$t('auth:verifyEmail.success'))
+      } catch (err) {
+        console.error(err)
+        this.showError(err)
+      }
+      this.isLoading = false
+    },
+    async resetPassword () {
+      this.clearError()
+      if (!this.validatePasswordPair()) return
+      this.loaderColor = 'grey-darken-4'
+      this.loaderTitle = this.$t('auth:changePwd.loading')
+      this.isLoading = true
+      try {
+        await submitStatusRequest(window.fetch.bind(window), '/_api/auth/reset-password', {
+          token: this.resetPasswordToken,
+          newPassword: this.newPassword
+        }, this.$t('auth:genericError'))
+        this.newPassword = ''
+        this.newPasswordVerify = ''
+        window.history.replaceState({}, '', '/login')
+        this.showSuccess(this.$t('auth:resetPwd.success'))
+      } catch (err) {
+        console.error(err)
+        this.showError(err)
       }
       this.isLoading = false
     },
@@ -681,6 +810,15 @@ export default {
     line-height: 1.5;
     opacity: .8;
     text-align: start;
+  }
+
+  &-success {
+    padding: 28px 8px 12px;
+    color: rgb(var(--v-theme-on-surface));
+
+    &-icon {
+      font-size: 4.5rem;
+    }
   }
 
   &-list,
