@@ -189,6 +189,10 @@ expected_data_sha=$(jq -r '.dataArtifact.sha256' "$FIXTURE_MANIFEST")
 printf '%s  %s\n' "$expected_database_sha" "$DATABASE_FIXTURE" | sha256sum --check --status
 printf '%s  %s\n' "$expected_data_sha" "$DATA_FIXTURE" | sha256sum --check --status
 
+docker rm --force wiki db >/dev/null 2>&1 || true
+docker volume rm wiki-data >/dev/null 2>&1 || true
+docker network rm wiki-e2e >/dev/null 2>&1 || true
+
 docker volume create wiki-data >/dev/null
 docker network create wiki-e2e >/dev/null
 docker run -d --name db --network=wiki-e2e \

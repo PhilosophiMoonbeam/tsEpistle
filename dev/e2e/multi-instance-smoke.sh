@@ -58,6 +58,8 @@ login() {
   printf '%s\n' "$jwt"
 }
 
+docker rm --force wiki-a wiki-b lock-holder db >/dev/null 2>&1 || true
+docker network rm wiki-multi-instance >/dev/null 2>&1 || true
 docker network create wiki-multi-instance >/dev/null
 docker run -d --name db --network=wiki-multi-instance \
   -e "POSTGRES_PASSWORD=$DB_PASSWORD" -e POSTGRES_USER=wiki -e POSTGRES_DB=wiki \
