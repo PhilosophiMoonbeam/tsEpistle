@@ -96,7 +96,7 @@ jobs:
           POSTGRES_PASSWORD: test
           POSTGRES_USER: wiki
         ports:
-          - 5432:5432
+          - 5432/tcp
         options: >-
           --health-cmd "pg_isready -U wiki -d wiki_agents_test"
           --health-interval 5s
@@ -110,7 +110,7 @@ jobs:
         WIKI_TEST_POSTGRES_DATABASE: wiki_agents_test
         WIKI_TEST_POSTGRES_HOST: 127.0.0.1
         WIKI_TEST_POSTGRES_PASSWORD: test
-        WIKI_TEST_POSTGRES_PORT: 5432
+        WIKI_TEST_POSTGRES_PORT: ${{ job.services.postgres.ports['5432'] }}
         WIKI_TEST_POSTGRES_USER: wiki
       run: bun test server/test/db/agents-migration.postgres.integration.test.ts
 
