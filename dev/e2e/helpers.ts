@@ -15,10 +15,12 @@ export async function authenticateAsAdmin(page: Page) {
   expect(response.ok()).toBe(true)
   const payload = await response.json() as { jwt?: string }
   if (!payload.jwt) throw new Error('Administrator login did not return a JWT')
+  const baseUrl = base.info().project.use.baseURL
+  if (typeof baseUrl !== 'string') throw new Error('Playwright base URL is unavailable.')
   await page.context().addCookies([{
     name: 'jwt',
     value: payload.jwt,
-    url: new URL(response.url()).origin
+    url: new URL(response.url(), baseUrl).origin
   }])
 }
 
