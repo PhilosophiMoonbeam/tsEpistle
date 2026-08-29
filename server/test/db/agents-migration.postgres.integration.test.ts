@@ -1,9 +1,9 @@
 import fs from 'node:fs'
 import knexModule, { type Knex } from 'knex'
-import { afterAll, beforeAll, describe, expect, it } from '../bun-test.mts'
-
+import { projectAgentThread } from '../../agents/projection.ts'
+import { SkillRuntime } from '../../agents/skills/runtime.ts'
 import { down as downAgentLedger, up as upAgentLedger } from '../../db/migrations/2.5.139.ts'
-import { down as restoreLegacyHandoffTable, up as removeLegacyHandoffTable } from '../../db/migrations/2.5.140.ts'
+import { up as removeLegacyHandoffTable, down as restoreLegacyHandoffTable } from '../../db/migrations/2.5.140.ts'
 import { down as downProviderSecrets, up as upProviderSecrets } from '../../db/migrations/2.5.141.ts'
 import { down as downProviderProfileLifecycle, up as upProviderProfileLifecycle } from '../../db/migrations/2.5.142.ts'
 import { down as downPersonalSkills, up as upPersonalSkills } from '../../db/migrations/2.5.143.ts'
@@ -11,8 +11,8 @@ import { down as downPersonalSkillDiscovery, up as upPersonalSkillDiscovery } fr
 import { down as downSkillPreferences, up as upSkillPreferences } from '../../db/migrations/2.5.146.ts'
 import { down as downAgentMemory, up as upAgentMemory } from '../../db/migrations/2.5.147.ts'
 import { down as downAgentTasks, up as upAgentTasks } from '../../db/migrations/2.5.156.ts'
-import { projectAgentThread } from '../../agents/projection.ts'
-import { SkillRuntime } from '../../agents/skills/runtime.ts'
+import { down as downAgentGoals, up as upAgentGoals } from '../../db/migrations/2.5.157.ts'
+import { afterAll, beforeAll, describe, expect, it } from '../bun-test.mts'
 
 const databaseName = process.env.WIKI_TEST_POSTGRES_DATABASE ?? ''
 const passwordFile = process.env.WIKI_TEST_POSTGRES_PASSWORD_FILE
@@ -81,6 +81,7 @@ suite('PostgreSQL first-class agent migration', () => {
     await upSkillPreferences(db)
     await upAgentMemory(db)
     await upAgentTasks(db)
+    await upAgentGoals(db)
   })
 
   afterAll(async () => {
@@ -92,7 +93,21 @@ suite('PostgreSQL first-class agent migration', () => {
   })
 
   it('adds the authoritative tables, removes obsolete handoffs, and adds source revision columns', async () => {
-    for (const table of ['agentSessions', 'agentRuns', 'agentEvents', 'agentRunTasks', 'agentSkills', 'agentUserSkillPreferences', 'agentMemories', 'agentProviderProfiles', 'agentProviderSecrets', 'agentProposals', 'agentApprovals', 'agentActionExecutions', 'pageMutationOutbox']) {
+    for (const table of [
+      'agentSessions',
+      'agentRuns',
+      'agentEvents',
+      'agentRunTasks',
+      'agentSkills',
+      'agentUserSkillPreferences',
+      'agentMemories',
+      'agentProviderProfiles',
+      'agentProviderSecrets',
+      'agentProposals',
+      'agentApprovals',
+      'agentActionExecutions',
+      'pageMutationOutbox'
+    ]) {
       expect(await db.schema.hasTable(table)).toBe(true)
     }
     expect(await db.schema.hasTable('agentLaunchHandoffs')).toBe(false)
@@ -113,30 +128,42 @@ suite('PostgreSQL first-class agent migration', () => {
     const versionId = '00000000-0000-4000-8000-000000000103'
     let pageId: number | undefined
     try {
-      const [page] = await db('pages').insert({
-        path: 'agent-projection',
-        hash: 'public:en:agent-projection',
-        title: 'Agent projection',
-        description: '',
-        visibility: 'public',
-        ownerId: null,
-        isPublished: true,
-        publishStartDate: '',
-        publishEndDate: '',
-        content: '# Agent projection\n',
-        render: '<h1>Agent projection</h1>',
-        toc: '[]',
-        contentType: 'markdown',
-        editorKey: 'markdown',
-        localeCode: 'en',
-        authorId: 7,
-        creatorId: 7,
-        extra: {},
-        updatedAt: db.fn.now()
-      }).returning('id')
+      const [page] = await db('pages')
+        .insert({
+          path: 'agent-projection',
+          hash: 'public:en:agent-projection',
+          title: 'Agent projection',
+          description: '',
+          visibility: 'public',
+          ownerId: null,
+          isPublished: true,
+          publishStartDate: '',
+          publishEndDate: '',
+          content: '# Agent projection\n',
+          render: '<h1>Agent projection</h1>',
+          toc: '[]',
+          contentType: 'markdown',
+          editorKey: 'markdown',
+          localeCode: 'en',
+          authorId: 7,
+          creatorId: 7,
+          extra: {},
+          updatedAt: db.fn.now()
+        })
+        .returning('id')
       pageId = page?.id
       await db('agentSessions').insert({ id: sessionId, ownerId: 7, title: 'Projection', retention: 'saved', executionMode: 'agent' })
-      await db('agentSkills').insert({ id: skillId, name: 'projection-skill', rootPageId: pageId, rootPath: 'agent-projection', status: 'enabled', exposureMode: 'groups', currentVersionId: null, createdBy: 7, updatedBy: 7 })
+      await db('agentSkills').insert({
+        id: skillId,
+        name: 'projection-skill',
+        rootPageId: pageId,
+        rootPath: 'agent-projection',
+        status: 'enabled',
+        exposureMode: 'groups',
+        currentVersionId: null,
+        createdBy: 7,
+        updatedBy: 7
+      })
       await db('agentSkillVersions').insert({
         id: versionId,
         skillId,
@@ -177,37 +204,40 @@ suite('PostgreSQL first-class agent migration', () => {
       await transaction.raw('CREATE TEMP TABLE "agentRuns" (id uuid PRIMARY KEY, "sessionId" uuid NOT NULL, "ownerId" integer NOT NULL) ON COMMIT DROP')
       await transaction('agentRuns').insert({ id: runId, sessionId, ownerId: 7 })
       const runtime = new SkillRuntime(transaction)
-      expect(await runtime.listVisibleForRun({
-        runId,
-        principal: { userId: 7, groupIds: [] },
-        transportRequestId
-      })).toEqual([])
+      expect(
+        await runtime.listVisibleForRun({
+          runId,
+          principal: { userId: 7, groupIds: [] },
+          transportRequestId
+        })
+      ).toEqual([])
     })
   })
 
-
   it('increments source revision only for authoritative page fields', async () => {
-    const inserted = await db('pages').insert({
-      path: 'docs/start',
-      hash: 'public:en:docs/start',
-      title: 'Start',
-      description: '',
-      visibility: 'public',
-      ownerId: null,
-      isPublished: true,
-      publishStartDate: '',
-      publishEndDate: '',
-      content: '# Start\n',
-      render: '<h1>Start</h1>',
-      toc: '[]',
-      contentType: 'markdown',
-      editorKey: 'markdown',
-      localeCode: 'en',
-      authorId: 7,
-      creatorId: 7,
-      extra: {},
-      updatedAt: db.fn.now()
-    }).returning(['id', 'sourceRevision'])
+    const inserted = await db('pages')
+      .insert({
+        path: 'docs/start',
+        hash: 'public:en:docs/start',
+        title: 'Start',
+        description: '',
+        visibility: 'public',
+        ownerId: null,
+        isPublished: true,
+        publishStartDate: '',
+        publishEndDate: '',
+        content: '# Start\n',
+        render: '<h1>Start</h1>',
+        toc: '[]',
+        contentType: 'markdown',
+        editorKey: 'markdown',
+        localeCode: 'en',
+        authorId: 7,
+        creatorId: 7,
+        extra: {},
+        updatedAt: db.fn.now()
+      })
+      .returning(['id', 'sourceRevision'])
     const pageId = inserted[0]?.id
     expect(String(inserted[0]?.sourceRevision)).toBe('1')
 
@@ -217,7 +247,9 @@ suite('PostgreSQL first-class agent migration', () => {
     await db('pages').where({ id: pageId }).update({ content: '# Changed\n', updatedAt: db.fn.now() })
     expect(String((await db('pages').where({ id: pageId }).first('sourceRevision'))?.sourceRevision)).toBe('2')
 
-    await db('pages').where({ id: pageId, sourceRevision: 2 }).update({ sourceRevision: db.raw('"sourceRevision" + 1') })
+    await db('pages')
+      .where({ id: pageId, sourceRevision: 2 })
+      .update({ sourceRevision: db.raw('"sourceRevision" + 1') })
     expect(String((await db('pages').where({ id: pageId }).first('sourceRevision'))?.sourceRevision)).toBe('3')
   })
 
@@ -232,6 +264,7 @@ suite('PostgreSQL first-class agent migration', () => {
     await expect(Promise.resolve(downProviderProfileLifecycle(db))).rejects.toThrow('contains removed profiles')
     await expect(Promise.resolve(downAgentLedger(db))).rejects.toThrow('agentProviderProfiles contains data')
     await db('agentProviderProfiles').where({ id: '00000000-0000-4000-8000-000000000001' }).update({ deletedAt: null })
+    await downAgentGoals(db)
     await downAgentTasks(db)
     await downAgentMemory(db)
     await downPersonalSkillDiscovery(db)
