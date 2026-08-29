@@ -1,5 +1,5 @@
 <template>
-  <main class="agent-control" aria-labelledby="admin-title">
+  <section class="agent-control" aria-labelledby="admin-title">
     <section class="agent-hero">
       <div class="agent-hero__copy">
         <div class="agent-eyebrow">
@@ -71,7 +71,7 @@
       <v-window v-model="tab" class="agent-content">
         <v-window-item value="runtime">
           <section class="agent-panel">
-            <header class="agent-panel__header">
+            <div class="agent-panel__header">
               <div class="agent-panel__heading">
                 <span class="agent-panel__icon"><v-icon size="22">mdi-tune-variant</v-icon></span>
                 <div>
@@ -81,7 +81,7 @@
                 </div>
               </div>
               <v-chip variant="tonal" :color="runtime?.enabled ? 'success' : 'warning'" size="small">{{ runtime?.enabled ? 'Active' : 'Paused' }}</v-chip>
-            </header>
+            </div>
             <v-progress-linear v-if="loading" indeterminate aria-label="Loading runtime policy" />
             <div v-else-if="runtime" class="agent-panel__body">
               <v-alert type="info" variant="tonal" density="compact" class="mb-5">Kill switches are deployment configuration. Changes require a controlled config rollout and process restart.</v-alert>
@@ -125,7 +125,7 @@
 
         <v-window-item value="profiles">
           <section class="agent-panel">
-            <header class="agent-panel__header">
+            <div class="agent-panel__header">
               <div class="agent-panel__heading">
                 <span class="agent-panel__icon agent-panel__icon--violet"><v-icon size="22">mdi-brain</v-icon></span>
                 <div>
@@ -135,7 +135,7 @@
                 </div>
               </div>
               <v-btn color="primary" prepend-icon="mdi-plus" :disabled="runtime?.providerEnabled !== true" @click="openProfile()">Add provider</v-btn>
-            </header>
+            </div>
             <div class="agent-panel__body">
               <v-alert v-if="runtime?.providerEnabled === false" type="info" variant="tonal" class="mb-4">Provider administration is unavailable while provider inference is disabled in deployment configuration. Enable <code>agents.provider.enabled</code>, configure the provider runtime keys, and restart Wiki before adding profiles.</v-alert>
               <v-alert v-if="profiles.some(profile => !profile.secretConfigured)" type="warning" variant="tonal" class="mb-4">A provider credential is unavailable. Edit the profile and enter its API key to verify and enable it.</v-alert>
@@ -197,7 +197,7 @@
 
         <v-window-item value="browser">
           <section class="agent-panel">
-            <header class="agent-panel__header">
+            <div class="agent-panel__header">
               <div class="agent-panel__heading">
                 <span class="agent-panel__icon agent-panel__icon--teal"><v-icon size="22">mdi-web-check</v-icon></span>
                 <div>
@@ -207,7 +207,7 @@
                 </div>
               </div>
               <v-btn color="primary" prepend-icon="mdi-plus" @click="browserDialog = true">Add target</v-btn>
-            </header>
+            </div>
             <div class="agent-panel__body">
               <v-alert type="info" variant="tonal" density="compact" class="mb-5">Redirects and every outgoing request are revalidated against these canonical targets by the browser worker.</v-alert>
               <div v-if="browserTargets.length" class="target-list">
@@ -231,7 +231,7 @@
 
     <v-dialog v-model="profileDialog" max-width="76rem" scrollable :fullscreen="smAndDown">
       <v-card class="profile-editor">
-        <header class="profile-editor__header">
+        <div class="profile-editor__header">
           <span class="profile-editor__mark"><v-icon size="24">mdi-creation-outline</v-icon></span>
           <div>
             <div class="agent-panel__eyebrow">{{ editingProfile ? 'Provider configuration' : 'New inference connection' }}</div>
@@ -240,7 +240,7 @@
           </div>
           <v-spacer />
           <v-btn icon="mdi-close" variant="text" aria-label="Close provider editor" @click="profileDialog = false" />
-        </header>
+        </div>
         <v-progress-linear class="profile-editor__progress" color="primary" :model-value="profileProgress" />
         <div class="profile-editor__workspace">
           <nav class="profile-steps" aria-label="Provider setup sections">
@@ -377,7 +377,7 @@
         <v-card-actions><v-spacer /><v-btn @click="browserDialog = false">Cancel</v-btn><v-btn color="primary" :loading="saving" @click="createBrowserTarget">Add target</v-btn></v-card-actions>
       </v-card>
     </v-dialog>
-  </main>
+  </section>
 </template>
 
 <script setup lang="ts">
@@ -1072,6 +1072,10 @@ onMounted(() => void load())
   border-color: rgba(var(--v-theme-success), .14);
   background: rgba(var(--v-theme-success), .045);
   color: rgb(var(--v-theme-on-surface));
+}
+.metrics-note code {
+  color: rgb(var(--v-theme-on-surface));
+  font-weight: 650;
 }
 
 .capability-item__state {

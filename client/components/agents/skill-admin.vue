@@ -1,6 +1,6 @@
 <template>
   <section class="skill-panel" :class="{ 'skill-panel--standalone': !embedded }">
-    <header class="skill-panel__header">
+    <div class="skill-panel__header">
       <div class="skill-panel__heading">
         <span class="skill-panel__icon"><v-icon size="22">mdi-book-open-variant-outline</v-icon></span>
         <div>
@@ -10,7 +10,7 @@
         </div>
       </div>
       <v-btn color="primary" prepend-icon="mdi-plus" @click="openCreate">Map skill</v-btn>
-    </header>
+    </div>
 
     <div class="skill-panel__body">
       <v-alert class="mb-4" type="info" variant="tonal" density="compact">Skills add group-scoped instructions and tool guidance; they never bypass page, write, browser, approval, or deployment permissions.</v-alert>
@@ -57,12 +57,12 @@
 
   <v-dialog v-model="createOpen" max-width="46rem" scrollable :fullscreen="smAndDown">
     <v-card class="skill-dialog">
-      <header class="skill-dialog__header">
+      <div class="skill-dialog__header">
         <span><v-icon size="23">mdi-book-plus-outline</v-icon></span>
         <div><div class="skill-panel__eyebrow">New knowledge mapping</div><h2>Map a page-native skill</h2><p>Point the Agent at one trusted page tree and define its audience.</p></div>
         <v-spacer />
         <v-btn icon="mdi-close" variant="text" aria-label="Close skill editor" @click="createOpen = false" />
-      </header>
+      </div>
       <v-card-text class="skill-dialog__body">
         <v-form id="skill-create-form" @submit.prevent="createSkill">
           <section class="skill-form-section">
@@ -90,7 +90,7 @@
 
   <v-dialog v-model="accessOpen" max-width="40rem" scrollable>
     <v-card class="skill-dialog">
-      <header class="skill-dialog__header"><span><v-icon size="23">mdi-account-multiple-outline</v-icon></span><div><h2>{{ policySkill ? `Access for ${policySkill.name}` : 'Skill access' }}</h2><p>Control who receives this approved expertise.</p></div></header>
+      <div class="skill-dialog__header"><span><v-icon size="23">mdi-account-multiple-outline</v-icon></span><div><h2>{{ policySkill ? `Access for ${policySkill.name}` : 'Skill access' }}</h2><p>Control who receives this approved expertise.</p></div></div>
       <v-card-text class="skill-dialog__body"><v-select v-model="policy.exposureMode" :items="exposureModes" label="Available to" /><v-autocomplete v-if="policy.exposureMode === 'groups'" v-model="policy.groupIds" :items="groups" item-title="name" item-value="id" label="Wiki groups" multiple chips closable-chips hint="Users receive this skill through any selected group." persistent-hint /></v-card-text>
       <v-card-actions class="skill-dialog__actions"><v-spacer /><v-btn @click="accessOpen = false">Cancel</v-btn><v-btn color="primary" :disabled="policy.exposureMode === 'groups' && policy.groupIds.length === 0" @click="saveAccess">Save access</v-btn></v-card-actions>
     </v-card>
@@ -98,7 +98,7 @@
 
   <v-dialog v-model="previewOpen" max-width="70rem" scrollable :fullscreen="smAndDown">
     <v-card v-if="preview" class="skill-dialog skill-review">
-      <header class="skill-dialog__header"><span><v-icon size="23">mdi-file-eye-outline</v-icon></span><div><div class="skill-panel__eyebrow">Immutable revision</div><h2>Review {{ preview.name }}</h2><p>Approve only the exact source revision shown below.</p></div><v-spacer /><v-btn icon="mdi-close" variant="text" aria-label="Close skill review" @click="previewOpen = false" /></header>
+      <div class="skill-dialog__header"><span><v-icon size="23">mdi-file-eye-outline</v-icon></span><div><div class="skill-panel__eyebrow">Immutable revision</div><h2>Review {{ preview.name }}</h2><p>Approve only the exact source revision shown below.</p></div><v-spacer /><v-btn icon="mdi-close" variant="text" aria-label="Close skill review" @click="previewOpen = false" /></div>
       <v-card-text class="skill-dialog__body">
         <v-alert v-if="preview.previousSkillMarkdown === null" class="mb-4" type="info" variant="tonal">This is the first approved revision.</v-alert>
         <dl class="review-metadata">
