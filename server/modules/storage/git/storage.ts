@@ -18,6 +18,12 @@ import os from 'node:os'
 import pageHelper from '../../../helpers/page.ts'
 import assetHelper from '../../../helpers/asset.ts'
 import commonDisk from '../disk/common.ts'
+import {
+  pullRemoteAuthoritative,
+  reattachUnrelatedHistory,
+  recoverInterruptedGitOperation,
+  sharesHistoryWith
+} from './repository.ts'
 
 interface GitStorageFile {
   file: { path: string, stats: { size: number } }
@@ -164,6 +170,8 @@ const plugin: GitStoragePlugin = {
       await this.git.init()
     }
 
+    await recoverInterruptedGitOperation(this.git, wiki.logger)
+
     // Disable quotePath, color output
     // Link https://git-scm.com/docs/git-config#Documentation/git-config.txt-corequotePath
     await this.git.raw(['config', '--local', 'core.quotepath', 'false'])
@@ -236,28 +244,51 @@ const plugin: GitStoragePlugin = {
    * SYNC
    */
   async sync() {
+    const recovered = await recoverInterruptedGitOperation(this.git, wiki.logger)
+    await this.git.raw(['remote', 'update', 'origin'])
+    await this.git.checkout(this.config.branch)
+
+    const remoteBranch = `origin/${this.config.branch}`
+    const branches = await this.git.branch(['-a'])
+    const hasRemoteBranch = branches.all.includes(`remotes/${remoteBranch}`)
     const currentCommitLog = (await this.git.log(['-n', '1', this.config.branch, '--'])).latest
+    let reattached = false
+    let conflicted: string[] = []
 
-    const rootUser = await wiki.models.users.getRootUser()
-
-    // Pull rebase
-    if (_.includes(['sync', 'pull'], this.mode)) {
+    if (
+      hasRemoteBranch &&
+      currentCommitLog &&
+      !(await sharesHistoryWith(this.git, remoteBranch))
+    ) {
+      await reattachUnrelatedHistory(this.git, this.config.branch, wiki.logger)
+      reattached = true
+      wiki.logger.warn(
+        `(STORAGE/GIT) Reattached local history to ${remoteBranch}; existing wiki content remains authoritative.`
+      )
+    } else if (hasRemoteBranch && _.includes(['sync', 'pull'], this.mode)) {
       wiki.logger.info(`(STORAGE/GIT) Performing pull rebase from origin on branch ${this.config.branch}...`)
-      await this.git.pull('origin', this.config.branch, ['--rebase'])
+      conflicted = await pullRemoteAuthoritative(this.git, this.config.branch, wiki.logger)
     }
 
-    // Push
     if (_.includes(['sync', 'push'], this.mode)) {
       wiki.logger.info(`(STORAGE/GIT) Performing push to origin on branch ${this.config.branch}...`)
       const pushOpts = ['--signed=if-asked']
-      if (this.mode === 'push') {
-        pushOpts.push('--force')
-      }
+      if (this.mode === 'push') pushOpts.push('--force')
       await this.git.push('origin', this.config.branch, pushOpts)
     }
 
-    // Process Changes
-    if (_.includes(['sync', 'pull'], this.mode)) {
+    if (recovered) {
+      wiki.logger.warn(`(STORAGE/GIT) Recovered an unfinished ${recovered} before synchronization.`)
+    }
+    if (conflicted.length > 0) {
+      wiki.logger.warn(
+        `(STORAGE/GIT) ${conflicted.length} conflicting path(s) used the remote version; prior page revisions remain in page history.`
+      )
+    }
+
+    // Reattachment repairs only the disposable working copy. Import Everything remains the explicit
+    // operation for content which exists remotely but not in the wiki database.
+    if (_.includes(['sync', 'pull'], this.mode) && hasRemoteBranch && !reattached) {
       const latestCommitLog = (await this.git.log(['-n', '1', this.config.branch, '--'])).latest
       if (!currentCommitLog || !latestCommitLog) {
         throw new Error(`Unable to determine commits for branch ${this.config.branch}`)
@@ -265,6 +296,7 @@ const plugin: GitStoragePlugin = {
 
       const diff = await this.git.diffSummary(['-M', currentCommitLog.hash, latestCommitLog.hash])
       if (diff.files.length > 0) {
+        const rootUser = await wiki.models.users.getRootUser()
         const filesToProcess: GitStorageFile[] = []
         const filePattern = /(.*?)(?:{(.*?))? => (?:(.*?)})?(.*)/
         for (const fileChange of diff.files) {

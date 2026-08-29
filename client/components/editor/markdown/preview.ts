@@ -1,6 +1,5 @@
 import DOMPurify from 'dompurify'
 import katex from 'katex'
-import _ from 'lodash'
 import MarkdownIt from 'markdown-it'
 import mdAbbr from 'markdown-it-abbr'
 import mdAttrs from 'markdown-it-attrs'
@@ -17,6 +16,7 @@ import mermaid from 'mermaid'
 import twemoji from 'twemoji'
 import 'katex/dist/contrib/mhchem.mjs'
 
+import { renderMarkdownCodeFence } from '../../../../shared/markdown-code-fence.ts'
 import mdImsize from '../../../../shared/markdown-it-image-size.ts'
 import { decodeBase64Text } from '../../../helpers/base64.ts'
 import underline from '../../../libs/markdown-it-underline/index.ts'
@@ -40,16 +40,7 @@ export function createWikiMarkdownRenderer (): InstanceType<typeof MarkdownIt> {
     html: true,
     breaks: true,
     linkify: true,
-    typographer: true,
-    highlight (source, language) {
-      if (language === 'diagram') {
-        return `<pre class="diagram">${decodeBase64Text(source)}</pre>`
-      }
-      if (['mermaid', 'plantuml'].includes(language)) {
-        return `<pre class="codeblock-${language}"><code>${_.escape(source)}</code></pre>`
-      }
-      return `<pre class="line-numbers"><code class="language-${language}">${_.escape(source)}</code></pre>`
-    }
+    typographer: true
   })
     .use(mdAttrs, {
       allowedAttributes: ['id', 'class', 'target']
@@ -68,6 +59,16 @@ export function createWikiMarkdownRenderer (): InstanceType<typeof MarkdownIt> {
     .use(mdImsize)
 
   plantuml.init(markdown, {})
+  markdown.renderer.rules.fence = (tokens, index) => {
+    const token = tokens[index]
+    if (!token) throw new TypeError('Markdown fence token is unavailable.')
+    return renderMarkdownCodeFence({
+      source: token.content,
+      info: token.info,
+      decodeDiagram: decodeBase64Text,
+      unescape: value => markdown.utils.unescapeAll(value)
+    })
+  }
 
   const macros: Record<string, string> = {}
   markdown.inline.ruler.after('escape', 'katex_inline', katexHelper.katexInline)

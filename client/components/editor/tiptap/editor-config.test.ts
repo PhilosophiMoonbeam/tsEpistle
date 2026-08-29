@@ -227,6 +227,20 @@ graph TD
     expect(preview).not.toContain('<script')
   })
 
+  it('keeps code fence presentation metadata in the shared preview renderer', () => {
+    const markdown = createWikiMarkdownRenderer()
+    const preview = sanitizeWikiMarkdownHtml(markdown.render(
+      '```ts title="src/main.ts" linesStart=30 linesHighlight="31,30"\nfirst\nsecond\n```'
+    ))
+
+    expect(preview).toContain('<figure class="codeblock-framed">')
+    expect(preview).not.toContain('data-source-line')
+    expect(preview).toContain('<figcaption class="codeblock-title">src/main.ts</figcaption>')
+    expect(preview).toContain('class="prismjs language-ts line-numbers"')
+    expect(preview).toContain('data-start="30"')
+    expect(preview).toContain('data-line="30-31"')
+  })
+
   it('applies visual marks and inserts canonical definition lists', () => {
     const editor = createEditor('markdown', 'Important H2O x2 Ctrl')
 

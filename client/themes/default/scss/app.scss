@@ -819,6 +819,63 @@
     }
   }
 
+  .prismjs.line-numbers {
+    position: relative;
+    padding-left: 3.8rem;
+
+    .line-numbers-rows {
+      border-right-color: rgba(255, 255, 255, .22);
+
+      > span::before {
+        color: rgba(255, 255, 255, .56);
+      }
+    }
+  }
+
+  .prismjs[data-line] {
+    // Prism's stock line-highlight rule assumes its own theme padding. Keep this page's code panel
+    // geometry authoritative while retaining the plugin's measured row placement.
+    padding-top: 1rem;
+    padding-right: 1rem;
+    padding-bottom: 1rem;
+
+    .line-highlight {
+      margin-top: 1rem;
+      border-left: 3px solid rgba(255, 193, 7, .82);
+      background: linear-gradient(90deg, rgba(255, 193, 7, .17), rgba(255, 193, 7, .06));
+    }
+  }
+
+  .codeblock-framed {
+    overflow: hidden;
+    margin: 1rem 0;
+    border: 1px solid rgba(255, 255, 255, .13);
+    border-radius: 7px;
+    background-color: mc('grey', '900');
+
+    @at-root .v-theme--dark & {
+      background-color: darken(mc('grey', '900'), 5%);
+    }
+
+    > .codeblock-title {
+      padding: .55rem 1rem;
+      border-bottom: 1px solid rgba(255, 255, 255, .16);
+      background-color: rgba(255, 255, 255, .07);
+      color: rgba(255, 255, 255, .86);
+      font-family: 'Roboto Mono', monospace;
+      font-size: .78rem;
+      font-weight: 600;
+      line-height: 1.5;
+      overflow-wrap: anywhere;
+    }
+
+    > .prismjs,
+    > .code-toolbar > .prismjs {
+      margin: 0;
+      border-radius: 0;
+    }
+  }
+
   .diagram {
     margin-top: 1rem;
     overflow: auto;
@@ -2048,6 +2105,17 @@
         text-shadow: none;
         white-space: pre-wrap !important;
         overflow-wrap: break-word !important;
+      }
+    }
+
+    .codeblock-framed {
+      border-color: #BDBDBD;
+      background-color: #FFF;
+
+      > .codeblock-title {
+        border-bottom-color: #BDBDBD;
+        background-color: #F5F5F5;
+        color: #000;
       }
     }
   }

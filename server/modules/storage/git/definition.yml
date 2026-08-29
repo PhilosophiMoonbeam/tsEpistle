@@ -111,4 +111,4 @@ actions:
     hint: Will import all content currently in the local Git repository, regardless of the latest commit state. Useful for importing content from the remote repository created before git was enabled.
   - handler: purge
     label: Purge Local Repository
-    hint: If you have unrelated merge histories, clearing the local repository can resolve this issue. This will not affect the remote repository or perform any commit.
+    hint: Clear the local working copy and clone it again from the remote. Replaced or unrelated working copies reattach automatically, so use this only when Git can no longer recover the repository. The remote is not modified.

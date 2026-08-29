@@ -57,7 +57,7 @@ LABEL org.opencontainers.image.created="${WIKI_BUILD_DATE}" \
 ENV NODE_ENV=production
 
 RUN apk add --no-cache bash curl git openssh gnupg && \
-    mkdir -p /wiki /logs /wiki/data/content && \
+    mkdir -p /wiki /logs /wiki/data/content /wiki/data/repo && \
     chown -R node:node /wiki /logs
 
 WORKDIR /wiki
@@ -74,6 +74,7 @@ COPY --chown=node:node NOTICE ./
 USER node
 
 VOLUME ["/wiki/data/content"]
+VOLUME ["/wiki/data/repo"]
 
 EXPOSE 3000
 EXPOSE 3443

@@ -9,6 +9,7 @@ import {
   prepareContentExtensionFences
 } from '../../../content-extensions/renderer.ts'
 import { installAdmonitionRule } from './admonitions.ts'
+import { renderMarkdownCodeFence } from '../../../../shared/markdown-code-fence.ts'
 
 interface MarkdownRendererConfig extends UnknownRecord {
   allowHTML: boolean
@@ -101,13 +102,7 @@ const plugin = {
       breaks: this.config.linebreaks,
       linkify: this.config.linkify,
       typographer: this.config.typographer,
-      quotes: quoteStyles[isQuoteStyle(this.config.quotes) ? this.config.quotes : 'English'],
-      highlight (str: string, lang: string): string {
-        if (lang === 'diagram') {
-          return `<pre class="diagram">` + Buffer.from(str, 'base64').toString() + `</pre>`
-        }
-        return `<pre><code class="language-${lang}">${_.escape(str)}</code></pre>`
-      }
+      quotes: quoteStyles[isQuoteStyle(this.config.quotes) ? this.config.quotes : 'English']
     })
 
     if (this.config.underline) {
@@ -128,6 +123,16 @@ const plugin = {
     }
 
     installAdmonitionRule(mkdown)
+    mkdown.renderer.rules.fence = (tokens, index) => {
+      const token = tokens[index]
+      if (!token) throw new TypeError('Markdown fence token is unavailable.')
+      return renderMarkdownCodeFence({
+        source: token.content,
+        info: token.info,
+        decodeDiagram: source => Buffer.from(source, 'base64').toString(),
+        unescape: value => mkdown.utils.unescapeAll(value)
+      })
+    }
 
     const contentExtensionFences = await prepareContentExtensionFences(mkdown.parse(this.input, {}))
     installContentExtensionFenceRule(mkdown, contentExtensionFences)

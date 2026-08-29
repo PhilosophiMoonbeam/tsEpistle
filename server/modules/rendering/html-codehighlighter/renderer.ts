@@ -13,7 +13,13 @@ const plugin = {
         hljs.highlightAuto($(element).text())
         $(element).addClass('language-')
       }
-      $(element).parent().addClass('prismjs line-numbers')
+      const pre = $(element).parent()
+      pre.addClass('prismjs')
+      const source = $(element).text()
+      const content = source.endsWith('\n') ? source.slice(0, -1) : source
+      if (content.includes('\n') || pre.attr('data-start') !== undefined) {
+        pre.addClass('line-numbers')
+      }
     })
   }
 }

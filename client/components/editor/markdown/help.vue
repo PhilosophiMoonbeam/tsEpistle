@@ -174,8 +174,21 @@
                   v-card.editor-markdown-help-result(flat)
                     v-card-text
                       .text-body-small Lorem #[code ipsum dolor sit] amet
+              .text-body-medium.mt-3 Abbreviations
+              v-row
+                v-col(cols='6')
+                  v-card.editor-markdown-help-source(flat)
+                    v-card-text
+                      div *[HTML]: HyperText Markup Language
+                      div.mt-2 HTML
+                v-icon mdi-chevron-right
+                v-col
+                  v-card.editor-markdown-help-result(flat)
+                    v-card-text
+                      .text-body-small: abbr(title='HyperText Markup Language') HTML
               .text-body-medium.mt-3 Code Blocks
               .text-body-small.text-grey-darken-1: em In the example below, #[strong js] defines the syntax highlighting language to use. It can be omitted.
+              .text-body-small.text-grey-darken-1.mt-1 Add #[code title="example.js"] for a caption, #[code linesStart="30"] to renumber, and #[code linesHighlight="31,33-35"] to mark lines.
               v-row
                 v-col(cols='6')
                   v-card.editor-markdown-help-source(flat)

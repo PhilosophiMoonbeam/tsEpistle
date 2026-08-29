@@ -364,6 +364,7 @@ export default defineComponent({
       emitEditorSaveConflict()
     },
     async save({ rethrow = false, overwrite = false }: { rethrow?: boolean, overwrite?: boolean } = {}) {
+      if (this.isSaving) return
       this.showProgressDialog()
       this.isSaving = true
 

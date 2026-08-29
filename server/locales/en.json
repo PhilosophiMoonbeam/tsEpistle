@@ -990,6 +990,8 @@
       "folderNameNamingRulesLink": "naming rules"
     },
     "markup": {
+      "abbreviationDefinition": "Definition",
+      "abbreviationTerm": "TERM",
       "bold": "Bold",
       "italic": "Italic",
       "heading": "Heading {{level}}",
@@ -997,6 +999,7 @@
       "definitionListTerm": "Term",
       "definitionListDefinition": "Definition",
       "insertDefinitionList": "Insert Definition List",
+      "insertAbbreviation": "Insert Abbreviation",
       "subscript": "Subscript",
       "blockquote": "Blockquote",
       "inlineCode": "Inline Code",

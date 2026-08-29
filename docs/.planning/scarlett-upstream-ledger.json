@@ -3,11 +3,11 @@
   "upstream": {
     "repository": "https://github.com/requarks/wiki.git",
     "branch": "scarlett",
-    "recordedTip": "f537f04ecceabc10d2cccd43be7d277c03182d61",
-    "recordedAt": "2026-08-25T00:49:59-04:00",
-    "lastFetchedAt": "2026-08-26T05:11:01.018Z"
+    "recordedTip": "59ef5e779db70f9883258d06dd5611300e2173e0",
+    "recordedAt": "2026-08-28T22:15:07-04:00",
+    "lastFetchedAt": "2026-08-29T03:10:37+00:00"
   },
-  "forkCheckpoint": "e2f59efea159beea138a7be8aae12e1b84b1ec57",
+  "forkCheckpoint": "f8e0fb9c7644a0ece02a8de111b8f530cb127973",
   "candidates": [
     {
       "id": "typed-api-schemas",
@@ -418,6 +418,76 @@
       "workstream": "experience-completion",
       "contract": "Vuetify semantic theme colors, numeric system totals, database version metadata, and hidden unfinished social controls already satisfy the portable fixes; Scarlett-specific Tailwind, block-tab, and Monaco preview patches are not copied.",
       "lastReviewed": "2026-08-26"
+    },
+    {
+      "id": "pasted-asset-workflow-2026-08-26",
+      "commits": ["1513e880"],
+      "category": "editor-assets",
+      "disposition": "split",
+      "state": "completed",
+      "workstream": "editor/asset-authoring",
+      "contract": "The fork retains its explicit site-wide asset folder tree rather than treating page paths as asset folders; Scarlett's pending pasted-upload destination is therefore not transplanted. Save commands are made single-flight, while the fork's synchronous editor-store writes already avoid Scarlett's delayed-save race.",
+      "lastReviewed": "2026-08-29"
+    },
+    {
+      "id": "scheduler-and-storage-activity-reconcile",
+      "commits": ["40ebd103"],
+      "category": "operations",
+      "disposition": "split",
+      "state": "completed",
+      "workstream": "storage/runtime-health",
+      "contract": "System jobs remain code-defined and are re-registered in memory on every boot; storage target activity timestamps are refreshed at a bounded cadence so an unchanged healthy or failing outcome still proves recent use without adding a database write to every operation.",
+      "lastReviewed": "2026-08-29"
+    },
+    {
+      "id": "code-fence-presentation-metadata",
+      "commits": ["f985f041"],
+      "category": "rendering",
+      "disposition": "adapt",
+      "state": "completed",
+      "workstream": "editor/markdown-authoring",
+      "contract": "Editor preview and persisted rendering share one safe fence parser; titles use semantic figure captions, renumbering and merged highlight ranges use Prism's native metadata, malformed ranges stay bounded, and actual source-line counts fix Scarlett's two-line off-by-one case.",
+      "lastReviewed": "2026-08-29"
+    },
+    {
+      "id": "navigation-and-search-corrections-2026-08-28",
+      "commits": ["8ff4a3e6"],
+      "category": "ux",
+      "disposition": "compare",
+      "state": "completed",
+      "workstream": "experience-completion",
+      "contract": "The fork's administrator-owned navigation tree, responsive browse/custom sidebar, Vuetify search surface, and locale namespaces remain authoritative; Scarlett's path-specific Quasar navigation modes, Tailwind token, and search-panel patch do not map to these surfaces.",
+      "lastReviewed": "2026-08-29"
+    },
+    {
+      "id": "markdown-abbreviation-authoring",
+      "commits": ["dbf72551"],
+      "category": "editor",
+      "disposition": "adapt",
+      "state": "completed",
+      "workstream": "editor/markdown-authoring",
+      "contract": "Desktop and compact Markdown toolbars insert a valid abbreviation definition, select the term for immediate replacement, preserve surrounding text on its own lines, and match the already-enabled preview and server abbreviation renderer.",
+      "lastReviewed": "2026-08-29"
+    },
+    {
+      "id": "git-working-copy-recovery",
+      "commits": ["d910bae0", "59ef5e77"],
+      "category": "storage-reliability",
+      "disposition": "adapt",
+      "state": "completed",
+      "workstream": "storage/git-continuity",
+      "contract": "Git storage aborts interrupted merges and rebases before use, resolves ordinary rebase conflicts toward the authoritative remote without wedging the index, reattaches unrelated replacement histories while keeping newer wiki files, and persists the default repository path in both production image variants.",
+      "lastReviewed": "2026-08-29"
+    },
+    {
+      "id": "ssl-removal-and-mcp-placeholder",
+      "commits": ["59ef5e77"],
+      "category": "admin",
+      "disposition": "reject",
+      "state": "closed",
+      "workstream": "admin/operational-surfaces",
+      "contract": "The fork retains its functional SSL status, redirection, and certificate-renewal administration. An MCP page is added only with a real server, key lifecycle, permissions, and observable state; Scarlett's permanently disabled placeholder is not shipped.",
+      "lastReviewed": "2026-08-29"
     }
   ]
 }

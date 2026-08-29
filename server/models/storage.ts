@@ -36,6 +36,16 @@ interface StatefulStorageTarget {
   }
 }
 
+const STORAGE_STATE_REFRESH_INTERVAL_MS = 60_000
+
+const isRecentStorageAttempt = (lastAttempt: string | null): boolean => {
+  if (!lastAttempt) return false
+  const recordedAt = Date.parse(lastAttempt)
+  if (!Number.isFinite(recordedAt)) return false
+  const age = Date.now() - recordedAt
+  return age >= 0 && age < STORAGE_STATE_REFRESH_INTERVAL_MS
+}
+
 interface StoragePagePath {
   path: string
   localeCode: string
@@ -253,7 +263,11 @@ async function recordTargetState (
   status: string,
   message = ''
 ): Promise<void> {
-  if (target.state?.status === status && target.state.message === message) return
+  if (
+    target.state?.status === status &&
+    target.state.message === message &&
+    isRecentStorageAttempt(target.state.lastAttempt)
+  ) return
   const state = {
     status,
     message,

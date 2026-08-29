@@ -158,6 +158,10 @@
                 template(v-slot:prepend)
                   v-icon.mr-3 mdi-format-list-group-plus
                 v-list-item-title {{$t('editor:markup.insertDefinitionList')}}
+              v-list-item(@click='insertAbbreviation')
+                template(v-slot:prepend)
+                  v-icon.mr-3 mdi-tooltip-plus-outline
+                v-list-item-title {{$t('editor:markup.insertAbbreviation')}}
               v-divider
               v-list-item(@click='toggleMarkup({ start: `~~` })')
                 template(v-slot:prepend)
@@ -207,6 +211,11 @@
             v-btn.mt-3.animated.fadeInLeft.wait-p4s(icon, rounded='0', v-bind='props', @click='insertDefinitionList').mx-0
               v-icon mdi-format-list-group-plus
           span {{$t('editor:markup.insertDefinitionList')}}
+        v-tooltip(location="right", color='teal')
+          template(v-slot:activator='{ props }')
+            v-btn.mt-3.animated.fadeInLeft.wait-p5s(icon, rounded='0', v-bind='props', @click='insertAbbreviation').mx-0
+              v-icon mdi-tooltip-plus-outline
+          span {{$t('editor:markup.insertAbbreviation')}}
         template(v-if='$vuetify.display.mdAndUp')
           v-spacer
           v-tooltip(location="right", color='teal')
@@ -338,21 +347,31 @@ const md = createWikiMarkdownRenderer()
 // HELPER FUNCTIONS
 // ========================================
 
-// Inject line numbers for preview scroll sync
+// Stamp source lines into preview roots for caret-to-preview scroll synchronization.
 let linesMap: number[] = []
-const injectLineNumbers: MarkdownItRenderRule = (tokens, idx, options, _env, renderer) => {
+const injectSourceLine: MarkdownItRenderRule = (tokens, idx, options, _env, renderer) => {
   const token = tokens[idx]
   if (token.map && token.level === 0) {
     const line = token.map[0]
     token.attrJoin('class', 'line')
-    token.attrSet('data-line', String(line))
+    token.attrSet('data-source-line', String(line))
     linesMap.push(line)
   }
   return renderer.renderToken(tokens, idx, options)
 }
-md.renderer.rules.paragraph_open = injectLineNumbers
-md.renderer.rules.heading_open = injectLineNumbers
-md.renderer.rules.blockquote_open = injectLineNumbers
+md.renderer.rules.paragraph_open = injectSourceLine
+md.renderer.rules.heading_open = injectSourceLine
+md.renderer.rules.blockquote_open = injectSourceLine
+
+const renderFence = md.renderer.rules.fence
+if (!renderFence) throw new TypeError('Markdown fence renderer is unavailable.')
+md.renderer.rules.fence = (tokens, idx, options, env, renderer) => {
+  const line = tokens[idx]?.map?.[0]
+  const html = renderFence(tokens, idx, options, env, renderer)
+  if (line === undefined) return html
+  linesMap.push(line)
+  return html.replace(/^<([a-z]+)/, `<$1 data-source-line="${line}"`)
+}
 
 const collaborations = new WeakMap<object, MarkdownCollaboration>()
 
@@ -616,6 +635,25 @@ export default defineComponent({
         { line: firstTermLine, ch: term.length }
       )
     },
+    insertAbbreviation() {
+      const editor = requireEditor(this.cm)
+      const position = editor.cursor()
+      const line = editor.getLine(position.line)
+      const beforeText = line.slice(0, position.ch)
+      const afterText = line.slice(position.ch)
+      const term = String(this.$t('editor:markup.abbreviationTerm'))
+      const definition = String(this.$t('editor:markup.abbreviationDefinition'))
+      const startsNewLine = beforeText.trim().length > 0
+      const insertion = `${startsNewLine ? '\n' : ''}*[${term}]: ${definition}${afterText.trim().length > 0 ? '\n' : ''}`
+      const from = startsNewLine ? position : { line: position.line, ch: 0 }
+      editor.replaceRange(insertion, from, position)
+      const termLine = position.line + (startsNewLine ? 1 : 0)
+      const termStart = startsNewLine ? 2 : from.ch + 2
+      editor.setSelection(
+        { line: termLine, ch: termStart },
+        { line: termLine, ch: termStart + term.length }
+      )
+    },
     /**
      * Update scroll sync
      */
@@ -634,7 +672,7 @@ export default defineComponent({
         }
       } else {
         const closestLine = _.findLast(linesMap, line => line <= currentLine)
-        const destination = preview.querySelector<HTMLElement>(`[data-line='${closestLine}']`)
+        const destination = preview.querySelector<HTMLElement>(`[data-source-line='${closestLine}']`)
         if (destination) {
           Velocity(preview, 'stop', true)
           Velocity(destination, 'scroll', { offset: '-100', duration: 1000, container: previewContainer })

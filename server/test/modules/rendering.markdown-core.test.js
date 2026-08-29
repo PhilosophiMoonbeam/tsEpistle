@@ -113,10 +113,20 @@ describe('markdown core renderer plugin behavior', () => {
     })).resolves.toBe('<p><strong>ok</strong></p>\n')
   })
 
-  it('pins code fence highlighting and diagram decoding', async () => {
+  it('pins code fence rendering and diagram decoding', async () => {
     await expect(renderMarkdown('```js\nif (a < b) return "x"\n```\n\n```diagram\nPGI+aGk8L2I+\n```')).resolves.toBe(
-      '<pre><code class="language-js">if (a &lt; b) return &quot;x&quot;\n</code></pre>\n' +
+      '<pre class="prismjs language-js"><code class="language-js">if (a &lt; b) return &quot;x&quot;\n</code></pre>\n' +
       '<pre class="diagram"><b>hi</b></pre>\n'
+    )
+  })
+
+  it('renders titled, renumbered and highlighted code fences with canonical metadata', async () => {
+    await expect(renderMarkdown(
+      '```ts title="src/main.ts" linesStart=30 linesHighlight="31, 30"\nconst first = 1\nconst second = 2\n```'
+    )).resolves.toBe(
+      '<figure class="codeblock-framed"><figcaption class="codeblock-title">src/main.ts</figcaption>' +
+      '<pre class="prismjs language-ts line-numbers" data-start="30" data-line="30-31">' +
+      '<code class="language-ts">const first = 1\nconst second = 2\n</code></pre></figure>\n'
     )
   })
 

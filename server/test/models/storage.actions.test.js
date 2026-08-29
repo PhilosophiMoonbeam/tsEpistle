@@ -51,6 +51,41 @@ describe('storage model actions', () => {
     })
   })
 
+  it('refreshes stale activity timestamps without writing every repeated success', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-08-29T03:00:00.000Z'))
+    try {
+      const sync = vi.fn().mockResolvedValue(undefined)
+      const patch = vi.fn().mockResolvedValue(1)
+      const target = {
+        key: 'git',
+        state: {
+          status: 'operational',
+          message: '',
+          lastAttempt: '2026-08-29T02:58:00.000Z'
+        },
+        fn: { sync },
+        $query: vi.fn(() => ({ patch }))
+      }
+      Storage.targets = [target]
+
+      await Storage.executeAction('git', 'sync')
+      await Storage.executeAction('git', 'sync')
+
+      expect(sync).toHaveBeenCalledTimes(2)
+      expect(patch).toHaveBeenCalledTimes(1)
+      expect(patch).toHaveBeenCalledWith({
+        state: {
+          status: 'operational',
+          message: '',
+          lastAttempt: '2026-08-29T03:00:00.000Z'
+        }
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('rejects undeclared handlers before invoking the runtime plugin', async () => {
     const init = vi.fn().mockResolvedValue(undefined)
     const target = {
