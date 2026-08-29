@@ -213,7 +213,7 @@
           span {{$t('editor:markup.insertDefinitionList')}}
         v-tooltip(location="right", color='teal')
           template(v-slot:activator='{ props }')
-            v-btn.mt-3.animated.fadeInLeft.wait-p5s(icon, rounded='0', v-bind='props', @click='insertAbbreviation').mx-0
+            v-btn.mt-3.animated.fadeInLeft.wait-p5s(icon, rounded='0', v-bind='props', :aria-label='$t(`editor:markup.insertAbbreviation`)', @click='insertAbbreviation').mx-0
               v-icon mdi-tooltip-plus-outline
           span {{$t('editor:markup.insertAbbreviation')}}
         template(v-if='$vuetify.display.mdAndUp')
