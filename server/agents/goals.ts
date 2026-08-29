@@ -220,16 +220,23 @@ export const assessAgentRunCompletion = (input: {
 }): AgentCompletionAssessment => {
   const issues: AgentCompletionIssue[] = []
   for (const task of input.tasks) {
-    if (task.status === 'pending' || task.status === 'running') issues.push(issue('REQUIRED_TASK_NOT_TERMINAL', `Research task “${task.title}” is not terminal.`, true))
-    else if (task.status !== 'completed' || task.outcome !== 'completed') issues.push(issue('REQUIRED_TASK_INCOMPLETE', `Research task “${task.title}” did not complete.`, true))
-    else if (task.evidenceCount < task.requiredEvidenceCount) issues.push(issue('REQUIRED_EVIDENCE_MISSING', `Research task “${task.title}” did not satisfy its evidence requirement.`, true))
+    if (task.status === 'pending' || task.status === 'running') {
+      issues.push(issue('REQUIRED_TASK_NOT_TERMINAL', `Research task “${task.title}” is not terminal.`, true))
+    } else if (task.status === 'blocked' || task.outcome === 'blocked') {
+      issues.push(issue('REQUIRED_TASK_BLOCKED', `Research task “${task.title}” is blocked and needs new external input or conditions.`, false))
+    } else if (task.status !== 'completed' || task.outcome !== 'completed') {
+      issues.push(issue('REQUIRED_TASK_INCOMPLETE', `Research task “${task.title}” did not complete.`, true))
+    } else if (task.evidenceCount < task.requiredEvidenceCount) {
+      issues.push(issue('REQUIRED_EVIDENCE_MISSING', `Research task “${task.title}” did not satisfy its evidence requirement.`, true))
+    }
   }
   if (!input.evidenceGatePassed) issues.push(issue('EVIDENCE_GATE_FAILED', 'The answer did not pass citation and evidence validation.', true))
   if (input.pendingProposalCount > 0) issues.push(issue('APPROVAL_PENDING', 'A required proposal is still awaiting resolution.', false))
   if (!input.usageReconciled) issues.push(issue('USAGE_NOT_RECONCILED', 'Aggregate usage has not been reconciled.', true))
+  const blocked = issues.some(entry => entry.code === 'APPROVAL_PENDING' || entry.code === 'REQUIRED_TASK_BLOCKED')
   const outcome = issues.length === 0
     ? 'complete'
-    : issues.some(entry => entry.code === 'APPROVAL_PENDING')
+    : blocked
       ? 'blocked'
       : issues.some(entry => entry.retryable)
         ? 'retry'

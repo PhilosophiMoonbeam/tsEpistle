@@ -105,6 +105,7 @@ interface MarkdownSection {
 
 const citationMarker = /\[\[cite:([^\]\s]{1,128})\]\]/g
 const verificationLanguage = /\b(?:(?:i|we)\s+(?:have\s+)?(?:verified|checked|confirmed|reviewed|read)(?:\s+(?:it|this|that|the\s+(?:page|source|documentation|runbook)))?|(?:the|this)\s+(?:wiki\s+)?page\s+(?:says|states|shows|confirms|documents|describes)|according\s+to\s+(?:the|this)\s+(?:wiki\s+)?page)\b/iu
+const conflictDisclosureLanguage = /\b(?:ambigu(?:ity|ous)|conflicts?|contradict(?:s|ed|ory|ion)?|differ(?:s|ed|ent|ence|ences|ing)?|disagree(?:s|d|ment|ments|ing)?|diverge(?:s|d|nce|nt)?|inconsisten(?:t|cy|cies)|uncertain(?:ty|ties)?|versus|whereas|however)\b/iu
 const insignificantTerms = new Set([
   'about', 'according', 'after', 'also', 'and', 'are', 'because', 'been', 'before', 'being', 'between', 'both', 'but', 'checked',
   'confirmed', 'could', 'describes', 'documented', 'does', 'from', 'have', 'into', 'its', 'more', 'page', 'read', 'reviewed', 'says',
@@ -135,7 +136,7 @@ const normalizedTerms = (value: string): readonly string[] => {
     .replace(citationMarker, ' ')
     .replace(/<[^>]*>/gu, ' ')
     .replace(/\[([^\]]*)\]\([^)]*\)/gu, '$1')
-    .toLocaleLowerCase()
+    .toLowerCase()
     .match(/[\p{L}\p{N}][\p{L}\p{N}'’-]*/gu) ?? []
   return [...new Set(terms
     .map(term => term.length > 4 && term.endsWith('s') ? term.slice(0, -1) : term)
@@ -245,8 +246,16 @@ interface DraftCoverage {
     readonly title: string
     readonly evidenceIds: readonly string[]
   }[]
-  readonly conflictGroups: readonly (readonly string[])[]
+  readonly conflictGroups: readonly {
+    readonly evidenceIds: readonly string[]
+  }[]
 }
+
+const hasConflictDisclosure = (content: string, evidenceIds: readonly string[]): boolean =>
+  content.split(/\n\s*\n/gu).some(passage =>
+    conflictDisclosureLanguage.test(passage) &&
+    evidenceIds.every(evidenceId => passage.includes(`[[cite:${evidenceId}]]`))
+  )
 
 const assessDraft = (content: string, registry: ReadonlyMap<string, CitationEvidence>, coverage?: DraftCoverage): DraftAssessment => {
   const issues: string[] = []
@@ -302,8 +311,12 @@ const assessDraft = (content: string, registry: ReadonlyMap<string, CitationEvid
       if (!group.evidenceIds.some(evidenceId => seenCitationIds.has(evidenceId))) issues.push(`The final answer does not cite validated evidence for research task ${group.title}.`)
     }
     for (const group of coverage.conflictGroups) {
-      const missing = group.filter(evidenceId => !seenCitationIds.has(evidenceId))
-      if (missing.length > 0) issues.push(`The final answer does not cite every source in a validated conflict: ${missing.join(', ')}.`)
+      const missing = group.evidenceIds.filter(evidenceId => !seenCitationIds.has(evidenceId))
+      if (missing.length > 0) {
+        issues.push(`The final answer does not cite every source in a validated conflict: ${missing.join(', ')}.`)
+      } else if (!hasConflictDisclosure(content, group.evidenceIds)) {
+        issues.push(`The final answer cites a validated conflict without explicitly disclosing the disagreement or uncertainty: ${group.evidenceIds.join(', ')}.`)
+      }
     }
   }
   return { valid: issues.length === 0, issues, claims, citationIds }
@@ -319,15 +332,38 @@ const assessSubagentDraft = (content: string, registry: ReadonlyMap<string, Cita
     return { valid: false, issues: ['The evidence packet is not valid JSON.'], claims: [], citationIds: [] }
   }
   const rawClaims = typeof value === 'object' && value !== null ? Reflect.get(value, 'claims') : undefined
+  const rawConflicts = typeof value === 'object' && value !== null ? Reflect.get(value, 'conflicts') : undefined
   const outcome = typeof value === 'object' && value !== null ? Reflect.get(value, 'outcome') : undefined
   if (!Array.isArray(rawClaims)) return { valid: false, issues: ['The evidence packet does not contain a claims array.'], claims: [], citationIds: [] }
+  if (!Array.isArray(rawConflicts)) return { valid: false, issues: ['The evidence packet does not contain a conflicts array.'], claims: [], citationIds: [] }
   const assessments = rawClaims.map(raw => typeof raw === 'object' && raw !== null && typeof Reflect.get(raw, 'text') === 'string'
     ? assessDraft(String(Reflect.get(raw, 'text')), registry)
     : { valid: false, issues: ['An evidence packet claim is invalid.'], claims: [], citationIds: [] } satisfies DraftAssessment)
-  const citationIds = [...new Set(assessments.flatMap(assessment => assessment.citationIds))]
   const issues = assessments.flatMap(assessment => assessment.issues)
   const claims = assessments.flatMap(assessment => assessment.claims)
-  if (registry.size > 0 && claims.length === 0 && outcome !== 'blocked' && outcome !== 'failed') issues.push('The evidence packet must contain at least one cited claim after reading sources.')
+  const conflictCitationIds: string[] = []
+  for (const conflict of rawConflicts) {
+    const rawEvidenceIds = typeof conflict === 'object' && conflict !== null ? Reflect.get(conflict, 'evidenceIds') : undefined
+    if (!Array.isArray(rawEvidenceIds) || rawEvidenceIds.some(evidenceId => typeof evidenceId !== 'string')) {
+      issues.push('An evidence packet conflict has invalid evidence IDs.')
+      continue
+    }
+    const evidenceIds = [...new Set(rawEvidenceIds as string[])]
+    if (evidenceIds.length < 2 || evidenceIds.length !== rawEvidenceIds.length) {
+      issues.push('An evidence packet conflict requires at least two distinct evidence sources.')
+      continue
+    }
+    const unread = evidenceIds.filter(evidenceId => !registry.has(evidenceId))
+    if (unread.length > 0) {
+      issues.push(`An evidence packet conflict references unread evidence: ${unread.join(', ')}.`)
+      continue
+    }
+    conflictCitationIds.push(...evidenceIds)
+  }
+  const citationIds = [...new Set([...assessments.flatMap(assessment => assessment.citationIds), ...conflictCitationIds])]
+  if (registry.size > 0 && claims.length === 0 && conflictCitationIds.length === 0 && outcome !== 'blocked' && outcome !== 'failed') {
+    issues.push('The evidence packet must contain at least one cited claim or validated conflict after reading sources.')
+  }
   if (citationIds.length > MAX_ANSWER_CITATIONS) issues.push(`Evidence packets may contain at most ${MAX_ANSWER_CITATIONS} distinct citation markers.`)
   return { valid: issues.length === 0, issues, claims, citationIds }
 }
@@ -570,7 +606,7 @@ export class AxAgentEngine implements AgentEngine {
       ? undefined
       : {
           taskGroups: request.research.packets.filter(entry => entry.packet.outcome === 'completed' && entry.evidenceIds.length > 0).map(entry => ({ title: entry.task.title, evidenceIds: entry.evidenceIds })),
-          conflictGroups: request.research.packets.flatMap(entry => entry.conflictEvidenceGroups)
+          conflictGroups: request.research.packets.flatMap(entry => entry.conflictEvidenceGroups.map(evidenceIds => ({ evidenceIds })))
         }
     try {
       for (let turn = 0; turn < maxTurns; turn++) {

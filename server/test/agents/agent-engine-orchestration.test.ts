@@ -190,4 +190,116 @@ describe('Ax orchestration stages', () => {
     ])
     expect(text).toHaveBeenCalledWith('Alpha requires review. [[cite:page:1]] Beta requires audit. [[cite:page:2]]')
   })
+
+  it('accepts conflict-only specialist packets after two owned page reads', async () => {
+    const taskId = '00000000-0000-4000-8000-000000000041'
+    const subagentRunId = '00000000-0000-4000-8000-000000000042'
+    const packet = JSON.stringify({
+      taskId,
+      outcome: 'completed',
+      claims: [],
+      conflicts: [{
+        claim: 'The alpha and beta runbooks prescribe different review requirements.',
+        evidenceIds: ['page:1', 'page:2'],
+        explanation: 'Alpha requires review while beta requires audit.'
+      }],
+      unanswered: [],
+      recommendedFollowups: []
+    })
+    const responses: AxChatResponse[] = [
+      {
+        results: [{
+          index: 0,
+          functionCalls: [
+            { id: 'alpha-call', type: 'function', function: { name: 'wiki_get_page', params: '{"id":1}' } },
+            { id: 'beta-call', type: 'function', function: { name: 'wiki_get_page', params: '{"id":2}' } }
+          ]
+        }]
+      },
+      { results: [{ index: 0, content: packet }] }
+    ]
+    const chat = vi.fn(async () => responses.shift()!)
+    const invoke = vi.fn(async (_action: string, input: unknown) => {
+      if (typeof input !== 'object' || input === null || !('id' in input) || typeof input.id !== 'number') throw new Error('Expected a numeric page id')
+      const id = input.id
+      return {
+        id,
+        sourceRevision: `rev-${id}`,
+        title: id === 1 ? 'Alpha' : 'Beta',
+        contentType: 'markdown',
+        content: id === 1 ? 'Alpha requires review.' : 'Beta requires audit.',
+        citation: { evidenceId: `page:${id}`, label: id === 1 ? 'Alpha' : 'Beta', href: `/en/${id === 1 ? 'alpha' : 'beta'}` },
+        citationSections: []
+      }
+    })
+    const actions: AgentActionSessionProvider = {
+      open: async () => ({
+        functions: [{ name: 'pages.get', title: 'Read page', description: 'Read one page', parameters: { type: 'object', properties: {} }, risk: 'read' }],
+        invoke,
+        snapshot: async () => ({}),
+        close: vi.fn(),
+        authoritySha256: 'c'.repeat(64)
+      })
+    }
+    const text = vi.fn(async () => {})
+
+    await new AxAgentEngine(factoryFor(chat), actions).execute({
+      ...baseRequest(new AbortController().signal),
+      purpose: 'subagent',
+      task: { id: taskId, kind: 'conflict_check', title: 'Compare runbooks', question: 'Where do the runbooks disagree?', sourceScope: ['alpha', 'beta'], requiredEvidenceCount: 2 },
+      subagentRunId,
+      actionAllowlist: ['pages.get'],
+      limits: { maxTurns: 4, maxToolCalls: 8, maxOutputTokens: 2_048 }
+    }, { text, event: async () => {} })
+
+    expect(invoke).toHaveBeenCalledTimes(2)
+    expect(text).toHaveBeenCalledWith(packet)
+  })
+
+  it('rejects root synthesis until validated conflicts are explicitly disclosed', async () => {
+    const responses: AxChatResponse[] = [
+      { results: [{ index: 0, content: 'Alpha requires review. [[cite:page:1]] Beta requires audit. [[cite:page:2]]' }] },
+      { results: [{ index: 0, content: 'Alpha requires review. [[cite:page:1]] However, beta requires audit. [[cite:page:2]]' }] }
+    ]
+    const chat = vi.fn(async () => responses.shift()!)
+    const event = vi.fn(async (...args: [string, unknown]) => { void args })
+    const taskId = '00000000-0000-4000-8000-000000000051'
+    const request: AgentEngineRequest = {
+      ...baseRequest(new AbortController().signal),
+      research: {
+        packets: [{
+          task: { id: taskId, kind: 'conflict_check', title: 'Compare runbooks', question: 'Where do the runbooks disagree?', sourceScope: ['alpha', 'beta'], requiredEvidenceCount: 2 },
+          packet: {
+            taskId,
+            outcome: 'completed',
+            claims: [],
+            conflicts: [{
+              claim: 'The runbooks prescribe different review requirements.',
+              evidenceIds: ['page:1', 'page:2'],
+              explanation: 'Alpha requires review while beta requires audit.'
+            }],
+            unanswered: [],
+            recommendedFollowups: []
+          },
+          evidenceIds: ['page:1', 'page:2'],
+          conflictEvidenceGroups: [['page:1', 'page:2']]
+        }],
+        incompleteTasks: [],
+        evidenceSeeds: [
+          { taskId, subagentRunId: '00000000-0000-4000-8000-000000000052', actionCallId: 'alpha-read', actionName: 'pages.get', output: { sourceRevision: 'rev-1', content: 'Alpha requires review.', citation: { evidenceId: 'page:1', label: 'Alpha', href: '/en/alpha' }, citationSections: [] } },
+          { taskId, subagentRunId: '00000000-0000-4000-8000-000000000053', actionCallId: 'beta-read', actionName: 'pages.get', output: { sourceRevision: 'rev-2', content: 'Beta requires audit.', citation: { evidenceId: 'page:2', label: 'Beta', href: '/en/beta' }, citationSections: [] } }
+        ]
+      }
+    }
+    const text = vi.fn(async () => {})
+
+    await new AxAgentEngine(factoryFor(chat)).execute(request, { text, event })
+
+    expect(chat).toHaveBeenCalledTimes(2)
+    expect(event.mock.calls.filter(([type]) => type === 'evidence.provenance').map(([, data]) => data)).toEqual([
+      expect.objectContaining({ accepted: false, issues: expect.arrayContaining([expect.stringContaining('explicitly disclosing')]) }),
+      expect.objectContaining({ accepted: true, finalCitationIds: ['page:1', 'page:2'] })
+    ])
+    expect(text).toHaveBeenCalledWith('Alpha requires review. [[cite:page:1]] However, beta requires audit. [[cite:page:2]]')
+  })
 })

@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto'
 import { z } from 'zod'
 
 import {
@@ -8,7 +7,6 @@ import {
   type AgentTaskKind,
   type AgentTaskOutcome
 } from '../../shared/agents/contracts.ts'
-import { canonicalJson } from '../helpers/canonical-json.ts'
 import { AgentRepositoryError } from './repository.ts'
 
 export const SUBAGENT_READ_ACTIONS = [
@@ -146,7 +144,7 @@ const parseJsonPayload = (content: string, maximumBytes: number, code: string): 
   }
 }
 
-const normalized = (value: string): string => value.normalize('NFKC').trim().replace(/\s+/gu, ' ').toLocaleLowerCase()
+const normalized = (value: string): string => value.normalize('NFKC').trim().replace(/\s+/gu, ' ').toLowerCase()
 
 export const shouldPlanAgentResearch = (content: string): boolean => {
   const value = content.normalize('NFKC').trim()
@@ -237,33 +235,49 @@ export const validateChildEvidencePacket = (
   if (packet.taskId !== task.id) throw new AgentRepositoryError('AGENT_CHILD_PACKET_INVALID', 'Subagent evidence packet belongs to a different task', 409)
   const evidenceIds = new Set<string>()
   for (const claim of packet.claims) {
+    const declaredEvidenceIds = new Set(claim.evidenceIds)
+    const citedEvidenceIds = new Set([...claim.text.matchAll(/\[\[cite:([^\]\s]{1,128})\]\]/gu)].flatMap(match => match[1] ? [match[1]] : []))
+    if (
+      declaredEvidenceIds.size !== claim.evidenceIds.length ||
+      citedEvidenceIds.size !== declaredEvidenceIds.size ||
+      [...declaredEvidenceIds].some(evidenceId => !citedEvidenceIds.has(evidenceId))
+    ) {
+      throw new AgentRepositoryError('AGENT_CHILD_EVIDENCE_INVALID', 'Subagent claim citation markers must exactly match its declared evidence', 409)
+    }
     const expectedRevisions = new Set<string>()
-    for (const evidenceId of claim.evidenceIds) {
+    for (const evidenceId of declaredEvidenceIds) {
       const revision = evidenceRevisions.get(evidenceId)
-      if (!revision || !claim.text.includes(`[[cite:${evidenceId}]]`)) throw new AgentRepositoryError('AGENT_CHILD_EVIDENCE_INVALID', 'Subagent claim references evidence it did not read', 409)
+      if (!revision) throw new AgentRepositoryError('AGENT_CHILD_EVIDENCE_INVALID', 'Subagent claim references evidence it did not read', 409)
       evidenceIds.add(evidenceId)
       expectedRevisions.add(revision)
     }
     const suppliedRevisions = new Set(claim.sourceRevisionIds)
-    if (suppliedRevisions.size !== expectedRevisions.size || [...expectedRevisions].some(revision => !suppliedRevisions.has(revision))) {
+    if (
+      suppliedRevisions.size !== claim.sourceRevisionIds.length ||
+      suppliedRevisions.size !== expectedRevisions.size ||
+      [...expectedRevisions].some(revision => !suppliedRevisions.has(revision))
+    ) {
       throw new AgentRepositoryError('AGENT_CHILD_EVIDENCE_INVALID', 'Subagent source revision identity does not match its evidence', 409)
     }
   }
   for (const conflict of packet.conflicts) {
-    for (const evidenceId of conflict.evidenceIds) {
+    const conflictEvidenceIds = new Set(conflict.evidenceIds)
+    if (conflictEvidenceIds.size !== conflict.evidenceIds.length || conflictEvidenceIds.size < 2) {
+      throw new AgentRepositoryError('AGENT_CHILD_EVIDENCE_INVALID', 'Subagent conflicts require at least two distinct evidence sources', 409)
+    }
+    for (const evidenceId of conflictEvidenceIds) {
       if (!evidenceRevisions.has(evidenceId)) throw new AgentRepositoryError('AGENT_CHILD_EVIDENCE_INVALID', 'Subagent conflict references evidence it did not read', 409)
       evidenceIds.add(evidenceId)
     }
   }
-  if (packet.outcome === 'completed' && (packet.claims.length === 0 || packet.unanswered.length > 0 || evidenceIds.size < task.requiredEvidenceCount)) {
+  const hasFinding = packet.claims.length > 0 || packet.conflicts.length > 0
+  if (packet.outcome === 'completed' && (!hasFinding || packet.unanswered.length > 0 || evidenceIds.size < task.requiredEvidenceCount)) {
     throw new AgentRepositoryError('AGENT_CHILD_INCOMPLETE', 'Subagent completion did not satisfy its evidence contract', 409)
   }
   return {
     packet,
     evidenceCount: evidenceIds.size,
     evidenceIds: [...evidenceIds].sort(),
-    conflictEvidenceGroups: packet.conflicts.map(conflict => [...new Set(conflict.evidenceIds)])
+    conflictEvidenceGroups: packet.conflicts.map(conflict => [...conflict.evidenceIds])
   }
 }
-
-export const packetSha256 = (packet: AgentChildEvidencePacket): string => createHash('sha256').update(canonicalJson(packet)).digest('hex')

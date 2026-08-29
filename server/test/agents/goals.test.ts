@@ -64,6 +64,29 @@ describe('agent durable goal completion assessment', () => {
     })
   })
 
+  it('blocks durable continuation when a required research task is suspended', () => {
+    const assessment = assessAgentRunCompletion({
+      tasks: [task({
+        status: 'blocked',
+        outcome: 'blocked',
+        evidenceCount: 0,
+        errorCode: 'SOURCE_UNAVAILABLE',
+        errorMessage: 'The required source is unavailable.'
+      })],
+      pendingProposalCount: 0,
+      evidenceGatePassed: true,
+      usageReconciled: true
+    })
+    expect(assessment).toEqual({
+      outcome: 'blocked',
+      issues: [{
+        code: 'REQUIRED_TASK_BLOCKED',
+        message: 'Research task “Inspect the runbook” is blocked and needs new external input or conditions.',
+        retryable: false
+      }]
+    })
+  })
+
   it('hash-binds the host assessment and rejects tampering', () => {
     const assessment = assessAgentRunCompletion({ tasks: [], pendingProposalCount: 0, evidenceGatePassed: true, usageReconciled: true })
     const encoded = encodedCompletionAssessment(assessment)

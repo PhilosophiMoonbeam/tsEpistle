@@ -94,7 +94,7 @@ describe('agent orchestration contracts', () => {
         sourceRevisionIds: ['rev-7'],
         confidence: 'high'
       }]
-    }), task, new Map([['page:42:section:1', 'rev-7']]))).toThrow('did not read')
+    }), task, new Map([['page:42:section:1', 'rev-7']]))).toThrow('exactly match')
     expect(() => validateChildEvidencePacket(packet({
       claims: [{
         text: 'The deployment occurred on August 17. [[cite:page:42:section:1]]',
@@ -103,6 +103,20 @@ describe('agent orchestration contracts', () => {
         confidence: 'high'
       }]
     }), task, new Map([['page:42:section:1', 'rev-7']]))).toThrow('revision identity')
+  })
+
+  it('rejects undeclared claim citations even when the child read them', () => {
+    expect(() => validateChildEvidencePacket(packet({
+      claims: [{
+        text: 'The deployment occurred on August 17. [[cite:page:42:section:1]] Another page agrees. [[cite:page:43]]',
+        evidenceIds: ['page:42:section:1'],
+        sourceRevisionIds: ['rev-7'],
+        confidence: 'high'
+      }]
+    }), task, new Map([
+      ['page:42:section:1', 'rev-7'],
+      ['page:43', 'rev-8']
+    ]))).toThrow('exactly match')
   })
 
   it('rejects false completion while preserving honest partial evidence', () => {
@@ -125,5 +139,35 @@ describe('agent orchestration contracts', () => {
       ['page:42:section:1', 'rev-7'],
       ['page:42', 'rev-7']
     ]))).toThrow('did not read')
+  })
+
+  it('accepts a completed conflict-only finding with distinct owned sources', () => {
+    const conflictTask: AgentResearchTask = {
+      ...task,
+      kind: 'conflict_check',
+      requiredEvidenceCount: 2
+    }
+    const conflict = {
+      claim: 'The deployment date differs between revisions.',
+      evidenceIds: ['page:42', 'page:43'],
+      explanation: 'The pages name different dates.'
+    }
+    const evidence = new Map([
+      ['page:42', 'rev-7'],
+      ['page:43', 'rev-8']
+    ])
+
+    expect(validateChildEvidencePacket(packet({
+      claims: [],
+      conflicts: [conflict]
+    }), conflictTask, evidence)).toMatchObject({
+      evidenceCount: 2,
+      evidenceIds: ['page:42', 'page:43'],
+      conflictEvidenceGroups: [['page:42', 'page:43']]
+    })
+    expect(() => validateChildEvidencePacket(packet({
+      claims: [],
+      conflicts: [{ ...conflict, evidenceIds: ['page:42', 'page:42'] }]
+    }), conflictTask, evidence)).toThrow('distinct evidence sources')
   })
 })
