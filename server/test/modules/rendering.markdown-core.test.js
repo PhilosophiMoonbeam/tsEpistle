@@ -125,7 +125,7 @@ describe('markdown core renderer plugin behavior', () => {
       '```ts title="src/main.ts" linesStart=30 linesHighlight="31, 30"\nconst first = 1\nconst second = 2\n```'
     )).resolves.toBe(
       '<figure class="codeblock-framed"><figcaption class="codeblock-title">src/main.ts</figcaption>' +
-      '<pre class="prismjs language-ts line-numbers" data-start="30" data-line="30-31">' +
+      '<pre class="prismjs language-ts line-numbers" data-start="30" data-line-offset="29" data-line="30-31">' +
       '<code class="language-ts">const first = 1\nconst second = 2\n</code></pre></figure>\n'
     )
   })

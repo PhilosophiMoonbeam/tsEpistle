@@ -24,7 +24,7 @@ describe('Markdown code fences', () => {
 
     expect(rendered).toBe(
       '<figure class="codeblock-framed" data-source-line="12"><figcaption class="codeblock-title">src/&lt;entry&gt;.ts</figcaption>' +
-      '<pre class="prismjs language-typescript line-numbers" data-start="30" data-line="30-31">' +
+      '<pre class="prismjs language-typescript line-numbers" data-start="30" data-line-offset="29" data-line="30-31">' +
       '<code class="language-typescript">const first = 1\nconst second = 2\n</code></pre></figure>\n'
     )
   })

@@ -116,7 +116,9 @@ export const renderMarkdownCodeFence = ({
   const numbered = logicalLineCount(source) > 1 || metadata.lineStart !== 1
   const classes = ['prismjs', `language-${escapeHtml(language)}`]
   if (numbered) classes.push('line-numbers')
-  const start = numbered && metadata.lineStart !== 1 ? ` data-start="${metadata.lineStart}"` : ''
+  const start = numbered && metadata.lineStart !== 1
+    ? ` data-start="${metadata.lineStart}" data-line-offset="${metadata.lineStart - 1}"`
+    : ''
   const highlights = metadata.lineHighlights ? ` data-line="${metadata.lineHighlights}"` : ''
   const pre = `<pre class="${classes.join(' ')}"${sourceMarker}${start}${highlights}><code class="language-${escapeHtml(language)}">${escapeHtml(source)}</code></pre>`
   if (!metadata.title) return `${pre}\n`

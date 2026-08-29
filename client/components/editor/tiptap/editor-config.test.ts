@@ -238,6 +238,7 @@ graph TD
     expect(preview).toContain('<figcaption class="codeblock-title">src/main.ts</figcaption>')
     expect(preview).toContain('class="prismjs language-ts line-numbers"')
     expect(preview).toContain('data-start="30"')
+    expect(preview).toContain('data-line-offset="29"')
     expect(preview).toContain('data-line="30-31"')
   })
 

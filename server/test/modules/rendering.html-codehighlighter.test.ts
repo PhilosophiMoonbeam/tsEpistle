@@ -23,13 +23,14 @@ describe('HTML code highlighter metadata', () => {
 
   it('preserves explicit line metadata and numbering requests', async () => {
     const $ = await enhance(
-      '<pre class="prismjs language-ts line-numbers" data-start="30" data-line="30">' +
+      '<pre class="prismjs language-ts line-numbers" data-start="30" data-line-offset="29" data-line="30">' +
       '<code class="language-ts">one</code></pre>'
     )
     const block = $('pre')
 
     expect(block.attr('class')).toBe('prismjs language-ts line-numbers')
     expect(block.attr('data-start')).toBe('30')
+    expect(block.attr('data-line-offset')).toBe('29')
     expect(block.attr('data-line')).toBe('30')
   })
 })
