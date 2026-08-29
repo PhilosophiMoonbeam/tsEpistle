@@ -104,6 +104,8 @@ bun run ci
 
 GitHub is the orchestration and reporting plane, not the compute plane. Every workflow targets one Linux x64 self-hosted runner carrying the custom `tsfranki-ci` label. The runner must provide the pinned Bun version, Git, Docker with Buildx/QEMU, and enough local capacity for the PostgreSQL, Playwright, upgrade, and Kubernetes jobs. GitHub receives the normal per-job checks, logs, artifacts, attestations, and release gates from that local runner.
 
+The full functional, accessibility, responsive, and performance browser suite runs once against PostgreSQL 18. Database migration and retained-upgrade jobs cover every supported PostgreSQL major independently; duplicating database-agnostic browser workflows across that matrix only increases local-runner contention and flake surface.
+
 Because this repository is public, untrusted pull-request code is never executed automatically on the persistent self-hosted machine. The main workflow runs for trusted branch pushes and manual dispatches; branch commit checks appear on their pull requests. Windows and macOS CI and binary archives are intentionally unsupported. ARM64 containers are cross-built on the Linux x64 runner with QEMU.
 
 ## Branch model

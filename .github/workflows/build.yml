@@ -292,25 +292,13 @@ jobs:
         sha256sum tsfranki-linux.tar.gz
 
   e2e:
-    name: Playwright (PostgreSQL ${{ matrix.pgversion }})
+    name: Playwright (PostgreSQL 18)
     runs-on: [self-hosted, linux, x64, tsfranki-ci]
     timeout-minutes: 45
     needs: [build]
     permissions:
       contents: read
 
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-        - pgversion: 15
-          postgresImage: postgres:15-alpine@sha256:4006528dcbdd9be8c1aaa50389caea4e93c46d6f54c3533bcd3253725e526e23
-        - pgversion: 16
-          postgresImage: postgres:16-alpine@sha256:44c4ee9810eff91f7eab4d822642e01115b1a9eccce4bcbdde7604752d68eac6
-        - pgversion: 17
-          postgresImage: postgres:17-alpine@sha256:d4bb0a8c1b7bb2e29f976d099e7bfb9a5d8858cffe9e46b35cd302cd1f1f8168
-        - pgversion: 18
-          postgresImage: postgres:18-alpine@sha256:a1d02e4bd40c94d3bf2bdd3678c137388e76d9efcd23c285e9429d336a834b44
 
     steps:
     - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -318,10 +306,7 @@ jobs:
     - name: Install Test Dependencies
       run: |
         bun install --frozen-lockfile
-        bun --bun playwright install chromium
-        if [ "${{ matrix.pgversion }}" = "18" ]; then
-          bun --bun playwright install firefox webkit
-        fi
+        bun --bun playwright install chromium firefox webkit
 
     - name: Download Test Image
       uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
@@ -338,11 +323,11 @@ jobs:
 
     - name: Run Playwright Tests
       env:
-        POSTGRES_TEST_IMAGE: ${{ matrix.postgresImage }}
+        POSTGRES_TEST_IMAGE: postgres:18-alpine@sha256:a1d02e4bd40c94d3bf2bdd3678c137388e76d9efcd23c285e9429d336a834b44
         WIKI_TEST_IMAGE: tsfranki:test-${{ env.WIKI_BUILD_REVISION }}
         PLAYWRIGHT_BASE_URL: http://127.0.0.1:3000
-        POSTGRES_MAJOR: ${{ matrix.pgversion }}
-        RUNTIME_PERFORMANCE_FILE: runtime-performance-postgres-${{ matrix.pgversion }}.json
+        POSTGRES_MAJOR: 18
+        RUNTIME_PERFORMANCE_FILE: runtime-performance-postgres-18.json
       run: dev/e2e/ci-run.sh
 
     - name: Clean Playwright Services
@@ -356,7 +341,7 @@ jobs:
       if: failure()
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
       with:
-        name: playwright-failures-postgres-${{ matrix.pgversion }}
+        name: playwright-failures-postgres-18
         path: test-results
         if-no-files-found: ignore
         retention-days: 14
@@ -365,8 +350,8 @@ jobs:
       if: always()
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
       with:
-        name: runtime-performance-postgres-${{ matrix.pgversion }}
-        path: runtime-performance-postgres-${{ matrix.pgversion }}.json
+        name: runtime-performance-postgres-18
+        path: runtime-performance-postgres-18.json
         if-no-files-found: error
         retention-days: 30
 
