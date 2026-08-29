@@ -20,6 +20,14 @@ jobs:
       - name: Verify Local Bun
         run: bun server/scripts/check-dependency-policy.ts
 
+      - name: Install Helm
+        shell: bash
+        run: |
+          curl --fail --silent --show-error --location --output "$RUNNER_TEMP/helm.tar.gz" https://get.helm.sh/helm-v4.0.4-linux-amd64.tar.gz
+          echo "29454bc351f4433e66c00f5d37841627cbbcc02e4c70a6d796529d355237671c  $RUNNER_TEMP/helm.tar.gz" | sha256sum --check
+          tar -xzf "$RUNNER_TEMP/helm.tar.gz" -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/linux-amd64" >> "$GITHUB_PATH"
+
       - name: Verify Chart Version
         shell: bash
         run: |
