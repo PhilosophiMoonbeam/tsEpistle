@@ -1589,6 +1589,7 @@ code { overflow-wrap: anywhere; }
 :global(.compact-dialog .v-field-label),
 :global(.compact-dialog .v-messages__message) {
   color: rgba(var(--v-theme-on-surface), .78) !important;
+  opacity: 1 !important;
 }
 @media (max-width: 1100px) {
   .agent-workspace { grid-template-columns: 14rem minmax(0, 1fr); }
