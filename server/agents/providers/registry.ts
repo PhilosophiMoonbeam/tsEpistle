@@ -436,6 +436,37 @@ export class AgentProviderRegistry implements AgentAdmissionResolver {
   async #revokeUnreferencedCredential(transaction: Knex.Transaction, reference: string | null): Promise<void> {
     if (reference && !(await this.#credentialIsReferenced(transaction, reference))) await this.#secrets.delete(reference, transaction)
   }
+  #profileUnavailable(): never {
+    throw new AgentRepositoryError('PROFILE_UNAVAILABLE', 'Selected provider profile is unavailable', 409)
+  }
+
+  async #availableProfileVersion(
+    database: Knex | Knex.Transaction,
+    ownerId: number,
+    profileId: string
+  ): Promise<{ readonly profile: ProfileRow; readonly version: VersionRow }> {
+    const profile = await database<ProfileRow>('agentProviderProfiles')
+      .where({ id: profileId, status: 'enabled', conformed: true })
+      .whereNull('deletedAt')
+      .first()
+    if (!profile?.currentVersionId) return this.#profileUnavailable()
+    const version = await database<VersionRow>('agentProviderProfileVersions')
+      .where({ id: profile.currentVersionId, profileId: profile.id, conformed: true })
+      .first()
+    if (!version?.secretReference) return this.#profileUnavailable()
+    const allowed =
+      profile.exposureMode === 'all_agent_users' ||
+      Boolean(
+        await database('agentProviderGrants')
+          .join('userGroups', 'userGroups.groupId', 'agentProviderGrants.groupId')
+          .where('agentProviderGrants.profileId', profile.id)
+          .andWhere('userGroups.userId', ownerId)
+          .first('agentProviderGrants.profileId')
+      )
+    if (!allowed || !(await this.#secrets.has(version.secretReference, database))) return this.#profileUnavailable()
+    return { profile, version }
+  }
+
   async #visibleAgentProfileIds(database: Knex | Knex.Transaction, ownerId: number, limit = 100): Promise<string[]> {
     const candidateIds = await database('agentProviderProfiles')
       .where({ status: 'enabled', conformed: true })
@@ -821,25 +852,8 @@ export class AgentProviderRegistry implements AgentAdmissionResolver {
         .first('id')
       if (active) throw new AgentRepositoryError('SESSION_RUN_ACTIVE', 'Agent session already has an active run', 409)
       const resolvedProfileId = input.profileId ?? (await this.#implicitProfileId(transaction, input.ownerId))
-      const profile = resolvedProfileId
-        ? await transaction<ProfileRow>('agentProviderProfiles')
-            .where({ id: resolvedProfileId, status: 'enabled', conformed: true })
-            .whereNull('deletedAt')
-            .first()
-        : undefined
-      if (!profile?.currentVersionId) throw new AgentRepositoryError('PROFILE_UNAVAILABLE', 'Selected provider profile is unavailable', 409)
-      const version = await transaction<VersionRow>('agentProviderProfileVersions').where({ id: profile.currentVersionId, conformed: true }).first()
-      const allowed =
-        profile.exposureMode === 'all_agent_users' ||
-        Boolean(
-          await transaction('agentProviderGrants')
-            .join('userGroups', 'userGroups.groupId', 'agentProviderGrants.groupId')
-            .where('agentProviderGrants.profileId', profile.id)
-            .andWhere('userGroups.userId', input.ownerId)
-            .first('agentProviderGrants.profileId')
-        )
-      if (!version?.secretReference || !allowed || !(await this.#secrets.has(version.secretReference, transaction)))
-        throw new AgentRepositoryError('PROFILE_UNAVAILABLE', 'Selected provider profile is unavailable', 409)
+      if (!resolvedProfileId) return this.#profileUnavailable()
+      const { version } = await this.#availableProfileVersion(transaction, input.ownerId, resolvedProfileId)
       const capabilities = parseJson(AgentProviderCapabilitiesSchema, version.capabilities, 'PROVIDER_PROFILE_CORRUPT')
       const policies = parseJson(AgentProviderPoliciesSchema, version.policies, 'PROVIDER_PROFILE_CORRUPT')
       if (!supportsAgentExecution(capabilities, policies))
@@ -849,6 +863,18 @@ export class AgentProviderRegistry implements AgentAdmissionResolver {
         .update({ providerProfileId: input.profileId, executionMode: 'agent', version: input.expectedSessionVersion + 1, updatedAt: new Date() })
     })
   }
+  async assertProfileAvailable(
+    ownerId: number,
+    profileId: string,
+    database: Knex | Knex.Transaction = this.#knex
+  ): Promise<void> {
+    const { version } = await this.#availableProfileVersion(database, ownerId, profileId)
+    const capabilities = parseJson(AgentProviderCapabilitiesSchema, version.capabilities, 'PROVIDER_PROFILE_CORRUPT')
+    const policies = parseJson(AgentProviderPoliciesSchema, version.policies, 'PROVIDER_PROFILE_CORRUPT')
+    if (!supportsAgentExecution(capabilities, policies))
+      throw new AgentRepositoryError('PROFILE_MODE_INCOMPATIBLE', 'Provider profile does not support Wiki Agent actions', 409)
+  }
+
 
   async listVisible(ownerId: number, limit = 100): Promise<AgentProviderSelectionView[]> {
     const profileIds = await this.#visibleAgentProfileIds(this.#knex, ownerId, limit)
@@ -878,22 +904,8 @@ export class AgentProviderRegistry implements AgentAdmissionResolver {
       if (!session) throw new AgentRepositoryError('AGENT_RESOURCE_NOT_FOUND', 'Agent session was not found', 404)
       const configuration = await this.#configuration(transaction)
       const resolvedProfileId = session.providerProfileId ?? (await this.#implicitProfileId(transaction, ownerId))
-      const profile = resolvedProfileId
-        ? await transaction<ProfileRow>('agentProviderProfiles')
-            .where({ id: resolvedProfileId, status: 'enabled', conformed: true })
-            .whereNull('deletedAt')
-            .first()
-        : undefined
-      if (!profile?.currentVersionId)
-        throw new AgentRepositoryError(
-          'PROFILE_UNAVAILABLE',
-          session.providerProfileId ? 'Selected provider profile is unavailable' : 'No default provider profile is configured for your groups.',
-          409
-        )
-      const version = await transaction<VersionRow>('agentProviderProfileVersions')
-        .where({ id: profile.currentVersionId, profileId: profile.id, conformed: true })
-        .first()
-      if (!version) throw new AgentRepositoryError('PROVIDER_PROFILE_CORRUPT', 'Current provider version is missing', 500)
+      if (!resolvedProfileId) return this.#profileUnavailable()
+      const { profile, version } = await this.#availableProfileVersion(transaction, ownerId, resolvedProfileId)
       const capabilities = parseJson(AgentProviderCapabilitiesSchema, version.capabilities, 'PROVIDER_PROFILE_CORRUPT')
       const policies = parseJson(AgentProviderPoliciesSchema, version.policies, 'PROVIDER_PROFILE_CORRUPT')
       if (!supportsAgentExecution(capabilities, policies))
@@ -966,8 +978,7 @@ export class AgentProviderRegistry implements AgentAdmissionResolver {
             .andWhere('userGroups.userId', input.ownerId)
             .first('agentProviderGrants.profileId')
         )
-      if (!allowed || !version.secretReference || !(await this.#secrets.has(version.secretReference, transaction)))
-        throw new AgentRepositoryError('PROFILE_UNAVAILABLE', 'Provider profile is not available to this user', 409)
+      if (!allowed || !version.secretReference || !(await this.#secrets.has(version.secretReference, transaction))) this.#profileUnavailable()
       const capabilities = parseJson(AgentProviderCapabilitiesSchema, version.capabilities, 'PROVIDER_PROFILE_CORRUPT')
       const policies = parseJson(AgentProviderPoliciesSchema, version.policies, 'PROVIDER_PROFILE_CORRUPT')
       if (!supportsAgentExecution(capabilities, policies))

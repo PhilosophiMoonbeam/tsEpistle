@@ -3,7 +3,7 @@
     class="agent-history"
     elevation="0"
     rounded="xl"
-    :aria-busy="loading || Boolean(openingSessionId)"
+    :aria-busy="loading || refreshingHistory || sessionsReloading || sessionsLoadingMore || openingSessionIds.size > 0 || movingSessionIds.size > 0"
   >
     <header class="agent-history__header">
       <div class="agent-history__mark" aria-hidden="true">
@@ -12,9 +12,9 @@
       <div class="agent-history__heading">
         <p class="agent-history__kicker">Conversation archive</p>
         <h2>Chat history</h2>
-        <p class="agent-history__intro">{{ sessions.length }} {{ sessions.length === 1 ? 'conversation' : 'conversations' }} in this workspace</p>
+        <p class="agent-history__intro">{{ displaySessions.length }} {{ displaySessions.length === 1 ? 'conversation' : 'conversations' }} in this workspace</p>
       </div>
-      <v-btn icon="mdi-close" size="small" variant="text" aria-label="Close chat history" @click="closeHistory" />
+      <v-btn ref="historyCloseButton" icon="mdi-close" size="small" variant="text" aria-label="Close chat history" @click="closeHistory" />
     </header>
 
     <div class="agent-history__actions">
@@ -50,8 +50,14 @@
     <v-alert v-if="localError" class="mx-3 mb-3" density="compact" type="error" variant="tonal" closable @click:close="localError = ''">
       {{ localError }}
     </v-alert>
+    <v-alert v-if="refreshError" class="mx-3 mb-3" density="compact" type="warning" variant="tonal">
+      <div class="agent-history__refresh-error">
+        <span>{{ refreshError }}</span>
+        <v-btn size="small" variant="text" :loading="refreshingHistory" :disabled="refreshingHistory" @click="refreshHistory">Retry refresh</v-btn>
+      </div>
+    </v-alert>
 
-    <div v-if="loading && sessions.length === 0" class="agent-history__loading" role="status" aria-live="polite">
+    <div v-if="loading && displaySessions.length === 0" class="agent-history__loading" role="status" aria-live="polite">
       <v-progress-circular color="primary" indeterminate size="22" width="2" />
       <span>Opening the conversation archive…</span>
     </div>
@@ -87,19 +93,21 @@
                   :aria-current="session.id === thread?.session.id ? 'page' : undefined"
                   :title="session.title || 'New conversation'"
                   :subtitle="session.id === thread?.session.id ? `${formatSessionDate(session.lastActivityAt)} · Current session` : formatSessionDate(session.lastActivityAt)"
+                  :disabled="sessionBusy(session.id)"
                   rounded="lg"
                   @click="openSession(session.id)"
                 >
                   <template #prepend>
-                    <v-progress-circular v-if="openingSessionId === session.id" color="primary" indeterminate size="18" width="2" aria-label="Opening conversation" />
+                    <v-progress-circular v-if="openingSessionIds.has(session.id)" color="primary" indeterminate size="18" width="2" aria-label="Opening conversation" />
                     <v-icon v-else :icon="session.id === thread?.session.id ? 'mdi-message-text' : 'mdi-message-text-outline'" size="18" />
                   </template>
                   <template #append>
                     <AgentHistorySessionActions
                       :session="session"
                       :folders="folders"
+                      :busy="sessionBusy(session.id)"
                       @move="folderId => moveSession(session, folderId)"
-                      @remove="dialogError = ''; deletingSession = session"
+                      @remove="restoreTarget => beginDeleteSession(session, restoreTarget)"
                     />
                   </template>
                 </v-list-item>
@@ -136,7 +144,7 @@
                   <v-list density="compact" :aria-label="`Folder actions for ${group.folder.name}`">
                     <v-list-item prepend-icon="mdi-pencil-outline" title="Rename folder" @click="beginRenameFolder(group.folder)" />
                     <v-divider />
-                    <v-list-item class="text-error" prepend-icon="mdi-folder-remove-outline" title="Remove folder" subtitle="Conversations return to Recent" @click="dialogError = ''; removingFolder = group.folder" />
+                    <v-list-item class="text-error" prepend-icon="mdi-folder-remove-outline" title="Remove folder" subtitle="Conversations return to Recent" @click="beginRemoveFolder(group.folder)" />
                   </v-list>
                 </v-menu>
               </div>
@@ -150,19 +158,21 @@
                     :aria-current="session.id === thread?.session.id ? 'page' : undefined"
                     :title="session.title || 'New conversation'"
                     :subtitle="session.id === thread?.session.id ? `${formatSessionDate(session.lastActivityAt)} · Current session` : formatSessionDate(session.lastActivityAt)"
+                    :disabled="sessionBusy(session.id)"
                     rounded="lg"
                     @click="openSession(session.id)"
                   >
                     <template #prepend>
-                      <v-progress-circular v-if="openingSessionId === session.id" color="primary" indeterminate size="18" width="2" aria-label="Opening conversation" />
+                      <v-progress-circular v-if="openingSessionIds.has(session.id)" color="primary" indeterminate size="18" width="2" aria-label="Opening conversation" />
                       <v-icon v-else :icon="session.id === thread?.session.id ? 'mdi-message-text' : 'mdi-message-text-outline'" size="18" />
                     </template>
                     <template #append>
                       <AgentHistorySessionActions
                         :session="session"
                         :folders="folders"
+                        :busy="sessionBusy(session.id)"
                         @move="folderId => moveSession(session, folderId)"
-                        @remove="dialogError = ''; deletingSession = session"
+                        @remove="restoreTarget => beginDeleteSession(session, restoreTarget)"
                       />
                     </template>
                   </v-list-item>
@@ -177,6 +187,32 @@
           </div>
         </section>
       </template>
+
+      <div
+        v-if="sessionsNextCursor || sessionsLoadingMore || sessionsLoadMoreError"
+        class="agent-history__pagination"
+        aria-live="polite"
+      >
+        <div v-if="sessionsLoadingMore" class="agent-history__pagination-status" role="status">
+          <v-progress-circular color="primary" indeterminate size="18" width="2" />
+          <span>Loading older conversations…</span>
+        </div>
+        <v-alert v-else-if="sessionsLoadMoreError" density="compact" role="alert" type="warning" variant="tonal">
+          <div class="agent-history__refresh-error">
+            <span>{{ sessionsLoadMoreError }}</span>
+            <v-btn aria-label="Retry loading older conversations" size="small" variant="text" @click="loadMoreSessions">Retry</v-btn>
+          </div>
+        </v-alert>
+        <v-btn
+          v-else
+          block
+          prepend-icon="mdi-chevron-down"
+          variant="tonal"
+          @click="loadMoreSessions"
+        >
+          Load more
+        </v-btn>
+      </div>
     </div>
   </v-card>
 
@@ -201,8 +237,8 @@
     </v-card>
   </v-dialog>
 
-  <v-dialog :model-value="Boolean(deletingSession)" max-width="29rem" aria-labelledby="agent-history-delete-title" @update:model-value="value => { if (!value) deletingSession = null }">
-    <v-card rounded="xl">
+  <v-dialog :model-value="Boolean(deletingSession)" max-width="29rem" aria-labelledby="agent-history-delete-title" :persistent="deleting" @update:model-value="value => { if (!value && !deleting) cancelDeleteSession() }">
+    <v-card ref="deleteDialogCard" rounded="xl">
       <v-card-title id="agent-history-delete-title" class="d-flex align-center ga-3 pt-5 px-5">
         <v-avatar color="error" size="38" variant="tonal"><v-icon icon="mdi-delete-outline" aria-hidden="true" /></v-avatar>
         Delete conversation?
@@ -213,14 +249,14 @@
       </v-card-text>
       <v-card-actions class="px-5 pb-4">
         <v-spacer />
-        <v-btn variant="text" :disabled="deleting" @click="deletingSession = null">Cancel</v-btn>
+        <v-btn variant="text" :disabled="deleting" @click="cancelDeleteSession">Cancel</v-btn>
         <v-btn color="error" variant="tonal" :loading="deleting" :disabled="deleting" @click="deleteSession">Delete permanently</v-btn>
       </v-card-actions>
     </v-card>
   </v-dialog>
 
-  <v-dialog :model-value="Boolean(removingFolder)" max-width="30rem" aria-labelledby="agent-history-remove-folder-title" @update:model-value="value => { if (!value) removingFolder = null }">
-    <v-card rounded="xl">
+  <v-dialog :model-value="Boolean(removingFolder)" max-width="30rem" aria-labelledby="agent-history-remove-folder-title" :persistent="deleting" @update:model-value="value => { if (!value && !deleting) cancelRemoveFolder() }">
+    <v-card ref="removeFolderDialogCard" rounded="xl">
       <v-card-title id="agent-history-remove-folder-title" class="d-flex align-center ga-3 pt-5 px-5">
         <v-avatar color="warning" size="38" variant="tonal"><v-icon icon="mdi-folder-remove-outline" aria-hidden="true" /></v-avatar>
         Remove folder?
@@ -232,7 +268,7 @@
       </v-card-text>
       <v-card-actions class="px-5 pb-4">
         <v-spacer />
-        <v-btn variant="text" :disabled="deleting" @click="removingFolder = null">Cancel</v-btn>
+        <v-btn variant="text" :disabled="deleting" @click="cancelRemoveFolder">Cancel</v-btn>
         <v-btn color="warning" variant="tonal" :loading="deleting" :disabled="deleting" @click="deleteFolder">Remove folder</v-btn>
       </v-card-actions>
     </v-card>
@@ -240,15 +276,16 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import type { AgentConversationFolderView } from '../../../shared/agents/contracts.ts'
 import type { AgentSessionSummary } from '../../helpers/agents-api.ts'
 import { useAgentsStore } from '../../store/agents.ts'
+import { createModalFocusScope, type ModalFocusScope } from '../common/modal-focus-scope'
 import AgentHistorySessionActions from './agent-history-session-actions.vue'
 const emit = defineEmits<{ close: []; reset: [] }>()
 const agents = useAgentsStore()
-const { folders, loading, sessions, thread } = storeToRefs(agents)
+const { folders, loading, sessions, sessionsLoadMoreError, sessionsLoadingMore, sessionsNextCursor, sessionsReloading, thread } = storeToRefs(agents)
 const openFolderIds = ref<string[]>([])
 const localError = ref('')
 const folderEditorOpen = ref(false)
@@ -260,15 +297,31 @@ const removingFolder = ref<AgentConversationFolderView | null>(null)
 const dialogError = ref('')
 const deleting = ref(false)
 const searchQuery = ref<string | null>('')
-const openingSessionId = ref<string | null>(null)
+const openingSessionIds = ref(new Set<string>())
+const movingSessionIds = ref(new Set<string>())
+const committedDeletedSessionIds = ref(new Set<string>())
+const projectedFolderIds = ref(new Map<string, string | null>())
+const refreshError = ref('')
+const refreshingHistory = ref(false)
+type ComponentRoot = { $el?: HTMLElement }
+const historyCloseButton = ref<ComponentRoot | HTMLElement | null>(null)
+const deleteDialogCard = ref<ComponentRoot | HTMLElement | null>(null)
+const removeFolderDialogCard = ref<ComponentRoot | HTMLElement | null>(null)
+const destructiveRestoreTarget = ref<HTMLElement | null>(null)
+let destructiveFocusScope: ModalFocusScope | null = null
 
 const normalizedSearch = computed(() => (searchQuery.value ?? '').trim().toLocaleLowerCase())
 const sessionMatchesSearch = (session: AgentSessionSummary): boolean =>
   !normalizedSearch.value || (session.title || 'New conversation').toLocaleLowerCase().includes(normalizedSearch.value)
+const displaySessions = computed<AgentSessionSummary[]>(() => sessions.value
+  .filter(session => !committedDeletedSessionIds.value.has(session.id))
+  .map(session => projectedFolderIds.value.has(session.id)
+    ? { ...session, folderId: projectedFolderIds.value.get(session.id) ?? null }
+    : session))
 const filteredRecentSessions = computed(() =>
-  sessions.value.filter(session => session.folderId === null && sessionMatchesSearch(session)))
+  displaySessions.value.filter(session => session.folderId === null && sessionMatchesSearch(session)))
 const sessionsForFolder = (folderId: string): AgentSessionSummary[] =>
-  sessions.value.filter(session => session.folderId === folderId)
+  displaySessions.value.filter(session => session.folderId === folderId)
 const visibleFolderGroups = computed(() => folders.value.flatMap(folder => {
   const folderSessions = sessionsForFolder(folder.id)
   const folderMatches = folder.name.toLocaleLowerCase().includes(normalizedSearch.value)
@@ -299,6 +352,48 @@ const recentSessionGroups = computed(() => {
   })
 })
 const message = (value: unknown, fallback: string): string => value instanceof Error ? value.message : fallback
+const updatePendingSet = (pending: typeof openingSessionIds, sessionId: string, add: boolean): void => {
+  const next = new Set(pending.value)
+  if (add) next.add(sessionId)
+  else next.delete(sessionId)
+  pending.value = next
+}
+const setProjectedFolder = (sessionId: string, folderId: string | null): void => {
+  projectedFolderIds.value = new Map(projectedFolderIds.value).set(sessionId, folderId)
+}
+const clearProjectedFolder = (sessionId: string): void => {
+  const next = new Map(projectedFolderIds.value)
+  next.delete(sessionId)
+  projectedFolderIds.value = next
+}
+const sessionBusy = (sessionId: string): boolean => openingSessionIds.value.has(sessionId) || movingSessionIds.value.has(sessionId)
+const showCommittedRefreshFailure = (): boolean => {
+  if (!agents.error) return false
+  refreshError.value = `Showing last-loaded conversation history. ${agents.error}`
+  return true
+}
+const refreshHistory = async (): Promise<void> => {
+  if (refreshingHistory.value) return
+  refreshingHistory.value = true
+  agents.error = ''
+  try {
+    await Promise.all([agents.reloadSessions(), agents.reloadFolders()])
+    committedDeletedSessionIds.value = new Set()
+    projectedFolderIds.value = new Map()
+    refreshError.value = ''
+  } catch (value) {
+    refreshError.value = `Showing last-loaded conversation history. ${message(value, 'Conversation history could not be refreshed.')}`
+  } finally {
+    refreshingHistory.value = false
+  }
+}
+const loadMoreSessions = async (): Promise<void> => {
+  await agents.loadMoreSessions()
+}
+const componentElement = (component: ComponentRoot | HTMLElement | null): HTMLElement | null => {
+  if (!component) return null
+  return component instanceof HTMLElement ? component : component.$el ?? null
+}
 
 const formatSessionDate = (value: string): string => {
   const date = new Date(value)
@@ -321,31 +416,59 @@ const openSession = async (sessionId: string): Promise<void> => {
     agents.cancelSessionTransition()
     return
   }
+  if (openingSessionIds.value.has(sessionId)) return
   localError.value = ''
-  openingSessionId.value = sessionId
+  updatePendingSet(openingSessionIds, sessionId, true)
   try {
     const opened = await agents.openSession(sessionId)
     if (opened && window.matchMedia('(max-width: 1199.98px)').matches) emit('close')
   } catch (value) {
     localError.value = message(value, 'The conversation could not be opened.')
   } finally {
-    if (openingSessionId.value === sessionId) openingSessionId.value = null
+    updatePendingSet(openingSessionIds, sessionId, false)
   }
 }
 
 const moveSession = async (session: AgentSessionSummary, folderId: string | null): Promise<void> => {
-  if (session.folderId === folderId) return
+  if (session.folderId === folderId || movingSessionIds.value.has(session.id)) return
   localError.value = ''
+  refreshError.value = ''
+  agents.error = ''
+  updatePendingSet(movingSessionIds, session.id, true)
   try {
     await agents.moveSessionToFolder(session.id, folderId)
+    setProjectedFolder(session.id, folderId)
+    if (!showCommittedRefreshFailure()) clearProjectedFolder(session.id)
     if (folderId && !openFolderIds.value.includes(folderId)) openFolderIds.value.push(folderId)
   } catch (value) {
     localError.value = message(value, 'The conversation could not be moved.')
+  } finally {
+    updatePendingSet(movingSessionIds, session.id, false)
   }
 }
 
 const beginCreateFolder = (): void => { dialogError.value = ''; editingFolder.value = null; folderName.value = ''; folderEditorOpen.value = true }
 const beginRenameFolder = (folder: AgentConversationFolderView): void => { dialogError.value = ''; editingFolder.value = folder; folderName.value = folder.name; folderEditorOpen.value = true }
+const beginDeleteSession = (session: AgentSessionSummary, restoreTarget: HTMLElement | null): void => {
+  dialogError.value = ''
+  destructiveRestoreTarget.value = restoreTarget
+  deletingSession.value = session
+}
+const beginRemoveFolder = (folder: AgentConversationFolderView): void => {
+  dialogError.value = ''
+  destructiveRestoreTarget.value = document.querySelector<HTMLElement>('.agent-history__folder-actions[aria-expanded="true"]')
+  removingFolder.value = folder
+}
+const cancelDeleteSession = (): void => {
+  if (deleting.value) return
+  deletingSession.value = null
+  dialogError.value = ''
+}
+const cancelRemoveFolder = (): void => {
+  if (deleting.value) return
+  removingFolder.value = null
+  dialogError.value = ''
+}
 const saveFolder = async (): Promise<void> => {
   const name = folderName.value.trim()
   if (!name || savingFolder.value || deleting.value) return
@@ -360,24 +483,67 @@ const saveFolder = async (): Promise<void> => {
 const deleteSession = async (): Promise<void> => {
   const session = deletingSession.value
   if (!session || deleting.value || savingFolder.value) return
-  deleting.value = true; dialogError.value = ''
-  try { await agents.removeSession(session.id); deletingSession.value = null }
-  catch (value) { dialogError.value = message(value, 'The conversation could not be deleted.') }
-  finally { deleting.value = false }
+  deleting.value = true; dialogError.value = ''; refreshError.value = ''; agents.error = ''
+  try {
+    const committed = await agents.removeSession(session.id)
+    if (!committed) return
+    committedDeletedSessionIds.value = new Set(committedDeletedSessionIds.value).add(session.id)
+    destructiveRestoreTarget.value = componentElement(historyCloseButton.value)
+    deletingSession.value = null
+    showCommittedRefreshFailure()
+  } catch (value) {
+    dialogError.value = message(value, 'The conversation could not be deleted.')
+  } finally {
+    deleting.value = false
+  }
 }
 const deleteFolder = async (): Promise<void> => {
   const folder = removingFolder.value
   if (!folder || deleting.value || savingFolder.value) return
-  deleting.value = true; dialogError.value = ''
-  try { await agents.deleteFolder(folder.id); openFolderIds.value = openFolderIds.value.filter(id => id !== folder.id); removingFolder.value = null }
-  catch (value) { dialogError.value = message(value, 'The folder could not be removed.') }
-  finally { deleting.value = false }
+  const affectedSessionIds = displaySessions.value.filter(session => session.folderId === folder.id).map(session => session.id)
+  deleting.value = true; dialogError.value = ''; refreshError.value = ''; agents.error = ''
+  try {
+    await agents.deleteFolder(folder.id)
+    for (const sessionId of affectedSessionIds) setProjectedFolder(sessionId, null)
+    openFolderIds.value = openFolderIds.value.filter(id => id !== folder.id)
+    destructiveRestoreTarget.value = componentElement(historyCloseButton.value)
+    removingFolder.value = null
+    if (!showCommittedRefreshFailure()) {
+      for (const sessionId of affectedSessionIds) clearProjectedFolder(sessionId)
+    }
+  } catch (value) {
+    dialogError.value = message(value, 'The folder could not be removed.')
+  } finally {
+    deleting.value = false
+  }
 }
 const expandActiveFolder = (): void => {
   const activeId = thread.value?.session.id
-  const activeSession = sessions.value.find(session => session.id === activeId)
+  const activeSession = displaySessions.value.find(session => session.id === activeId)
   if (activeSession?.folderId && !openFolderIds.value.includes(activeSession.folderId)) openFolderIds.value.push(activeSession.folderId)
 }
+watch([deletingSession, removingFolder], async ([session, folder]) => {
+  if (!session && !folder) {
+    await nextTick()
+    destructiveFocusScope?.deactivate({ restoreFocus: true })
+    destructiveFocusScope = null
+    destructiveRestoreTarget.value = null
+    return
+  }
+  await nextTick()
+  const root = componentElement(session ? deleteDialogCard.value : removeFolderDialogCard.value)
+  if (!root) return
+  destructiveFocusScope?.deactivate({ restoreFocus: false })
+  destructiveFocusScope = createModalFocusScope({
+    root,
+    restoreTarget: () => destructiveRestoreTarget.value,
+    onEscape: () => {
+      if (deleting.value) return
+      if (deletingSession.value) cancelDeleteSession()
+      else cancelRemoveFolder()
+    }
+  })
+})
 watch(() => thread.value?.session.id, expandActiveFolder, { immediate: true })
 watch(folders, expandActiveFolder, { immediate: true })
 watch(normalizedSearch, query => {
@@ -385,7 +551,10 @@ watch(normalizedSearch, query => {
   const visibleIds = visibleFolderGroups.value.map(group => group.folder.id)
   openFolderIds.value = [...new Set([...openFolderIds.value, ...visibleIds])]
 })
-onBeforeUnmount(() => agents.cancelSessionTransition())
+onBeforeUnmount(() => {
+  destructiveFocusScope?.deactivate({ restoreFocus: false })
+  agents.cancelSessionTransition()
+})
 
 
 </script>
@@ -428,7 +597,7 @@ onBeforeUnmount(() => agents.cancelSessionTransition())
   text-transform: uppercase;
 }
 .agent-history__heading h2 { font-size: 1rem; font-weight: 700; line-height: 1.2; margin: 0; }
-.agent-history__intro { color: rgba(var(--v-theme-on-surface), .62); font-size: .72rem; margin: var(--wiki-space-1) 0 0; }
+.agent-history__intro { color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 62%, transparent); font-size: .72rem; margin: var(--wiki-space-1) 0 0; }
 .agent-history__actions {
   display: flex;
   flex: 0 0 auto;
@@ -446,9 +615,15 @@ onBeforeUnmount(() => agents.cancelSessionTransition())
   white-space: nowrap;
   width: 1px;
 }
+.agent-history__refresh-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--wiki-space-2);
+}
 .agent-history__loading {
   align-items: center;
-  color: rgba(var(--v-theme-on-surface), .68);
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 68%, transparent);
   display: flex;
   flex: 1;
   flex-direction: column;
@@ -466,6 +641,18 @@ onBeforeUnmount(() => agents.cancelSessionTransition())
   padding: 0 var(--wiki-space-3) var(--wiki-space-4);
   scrollbar-gutter: stable;
 }
+.agent-history__pagination {
+  padding: var(--wiki-space-4) var(--wiki-space-1) 0;
+}
+.agent-history__pagination-status {
+  align-items: center;
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 68%, transparent);
+  display: flex;
+  font-size: .72rem;
+  gap: var(--wiki-space-2);
+  justify-content: center;
+  min-height: var(--wiki-control-height);
+}
 .agent-history__recent { border-bottom: 1px solid var(--wiki-surface-border); padding-bottom: var(--wiki-space-3); }
 .agent-history__folders { padding-top: var(--wiki-space-4); }
 .agent-history__section-heading {
@@ -477,7 +664,7 @@ onBeforeUnmount(() => agents.cancelSessionTransition())
 }
 .agent-history__section-heading--folders { padding-top: 0; }
 .agent-history__section-title { font-size: .78rem; font-weight: 750; letter-spacing: .035em; margin: 0; }
-.agent-history__section-copy { color: rgba(var(--v-theme-on-surface), .56); font-size: .67rem; margin-top: var(--wiki-space-1); }
+.agent-history__section-copy { color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 56%, transparent); font-size: .67rem; margin-top: var(--wiki-space-1); }
 .agent-history__count,
 .agent-history__retained {
   align-items: center;
@@ -494,7 +681,7 @@ onBeforeUnmount(() => agents.cancelSessionTransition())
 }
 .agent-history__time-group + .agent-history__time-group { margin-top: var(--wiki-space-2); }
 .agent-history__time-label {
-  color: rgba(var(--v-theme-on-surface), .5);
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 50%, transparent);
   font-size: .63rem;
   font-weight: 700;
   letter-spacing: .08em;
@@ -532,7 +719,7 @@ onBeforeUnmount(() => agents.cancelSessionTransition())
   align-items: center;
   border: 1px dashed var(--wiki-surface-border-strong);
   border-radius: var(--wiki-control-radius);
-  color: rgba(var(--v-theme-on-surface), .62);
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 62%, transparent);
   display: flex;
   font-size: .72rem;
   gap: var(--wiki-space-2);
@@ -556,7 +743,7 @@ onBeforeUnmount(() => agents.cancelSessionTransition())
 .agent-history__folder-name { flex: 1; font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .agent-history__folder-count {
   align-items: center;
-  background: rgba(var(--v-theme-on-surface), .08);
+  background: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 8%, transparent);
   border-radius: var(--wiki-radius-pill);
   display: inline-flex;
   font-size: .66rem;

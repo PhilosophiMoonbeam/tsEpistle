@@ -1,9 +1,11 @@
 import type {
   AgentActionName,
   AgentCitation,
+  AgentMessageView,
   AgentPageActionLink,
   AgentProposalStatus,
   AgentProposalView,
+  AgentTaskView,
   AgentToolCallView
 } from '../../../shared/agents/contracts.ts'
 
@@ -118,6 +120,124 @@ export const agentActivityLabel = (tools: readonly AgentToolCallView[]): string 
   }
   return `Activity · ${actionCount(tools.length)} · Complete`
 }
+export interface AgentRunPresentation extends AgentRunTools {
+  readonly tasks: readonly AgentTaskView[]
+  readonly pageLinks: readonly AgentPageActionLink[]
+  readonly activityLabel: string
+}
+
+export interface AgentMessagePresentation {
+  readonly citationGroups: readonly AgentCitationGroup[]
+  readonly retryPrompt: string
+}
+
+export interface AgentThreadPresentation {
+  readonly runs: ReadonlyMap<string, AgentRunPresentation>
+  readonly messages: ReadonlyMap<string, AgentMessagePresentation>
+}
+
+interface MutableRunPresentation {
+  activity: readonly AgentToolCallView[]
+  proposals: readonly AgentProposalTool[]
+  tasks: AgentTaskView[]
+}
+
+const emptyMutableRunPresentation = (): MutableRunPresentation => ({
+  activity: [],
+  proposals: [],
+  tasks: []
+})
+
+export const buildAgentThreadPresentation = (
+  messages: readonly AgentMessageView[],
+  tools: readonly AgentToolCallView[],
+  tasks: readonly AgentTaskView[],
+  proposals: readonly AgentProposalView[]
+): AgentThreadPresentation => {
+  const groupedTools = groupAgentToolsByRun(tools, proposals)
+  const mutableRuns = new Map<string, MutableRunPresentation>()
+  for (const [runId, entries] of groupedTools) {
+    mutableRuns.set(runId, { ...entries, tasks: [] })
+  }
+  for (const task of tasks) {
+    const run = mutableRuns.get(task.runId) ?? emptyMutableRunPresentation()
+    if (!mutableRuns.has(task.runId)) mutableRuns.set(task.runId, run)
+    run.tasks.push(task)
+  }
+
+  const messagePresentations = new Map<string, AgentMessagePresentation>()
+  let retryPrompt = ''
+  for (const message of messages) {
+    if (message.role === 'user' && message.content.trim()) retryPrompt = message.content
+    messagePresentations.set(message.id, {
+      citationGroups: groupAgentCitations(message.citations),
+      retryPrompt
+    })
+    if (message.runId && !mutableRuns.has(message.runId)) {
+      mutableRuns.set(message.runId, emptyMutableRunPresentation())
+    }
+  }
+
+  const runPresentations = new Map<string, AgentRunPresentation>()
+  for (const [runId, run] of mutableRuns) {
+    runPresentations.set(runId, {
+      ...run,
+      pageLinks: agentAppliedPageLinks(run.proposals),
+      activityLabel: agentActivityLabel(run.activity)
+    })
+  }
+  return { runs: runPresentations, messages: messagePresentations }
+}
+
+export type AgentLiveAnnouncementKind = 'preparing' | 'approval' | 'complete' | 'stopped' | 'failed'
+
+export interface AgentLiveAnnouncement {
+  readonly key: string
+  readonly kind: AgentLiveAnnouncementKind
+  readonly message: string
+  readonly tone: 'neutral' | 'error'
+}
+
+const liveAnnouncementCopy: Record<AgentLiveAnnouncementKind, string> = {
+  preparing: 'Preparing a response.',
+  approval: 'Review needed before the response can continue.',
+  complete: 'Response complete.',
+  stopped: 'Response stopped.',
+  failed: 'Response failed.'
+}
+
+export const agentLiveAnnouncement = (
+  messages: readonly AgentMessageView[],
+  tools: readonly AgentToolCallView[]
+): AgentLiveAnnouncement | null => {
+  let latestAssistant: AgentMessageView | undefined
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index]
+    if (message?.role === 'assistant') {
+      latestAssistant = message
+      break
+    }
+  }
+  if (!latestAssistant) return null
+
+  let kind: AgentLiveAnnouncementKind
+  if (latestAssistant.status === 'complete') kind = 'complete'
+  else if (latestAssistant.status === 'cancelled') kind = 'stopped'
+  else if (latestAssistant.status === 'failed') kind = 'failed'
+  else {
+    const runId = latestAssistant.runId
+    const awaitingApproval = runId !== null && tools.some(tool =>
+      tool.runId === runId && tool.state === 'awaitingApproval')
+    kind = awaitingApproval ? 'approval' : 'preparing'
+  }
+  return {
+    key: `${latestAssistant.id}:${kind}`,
+    kind,
+    message: liveAnnouncementCopy[kind],
+    tone: kind === 'failed' ? 'error' : 'neutral'
+  }
+}
+
 
 const approvalTitles: Partial<Record<AgentActionName, string>> = {
   'pages.prepareCreate': 'Wiki Agent wants to create a page',

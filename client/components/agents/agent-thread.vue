@@ -62,11 +62,11 @@
               v-if="message.content"
               :content="message.content"
               :citations="message.citations"
+              :streaming="message.status === 'streaming'"
             />
             <div
               v-else-if="message.status === 'pending' || message.status === 'streaming'"
               class="agent-message__waiting"
-              role="status"
             >
               <span class="agent-message__waiting-dots" aria-hidden="true">
                 <span />
@@ -81,7 +81,6 @@
             <aside
               v-if="message.status === 'failed' || message.status === 'cancelled'"
               class="agent-message__recovery"
-              role="alert"
             >
               <v-icon
                 :icon="message.status === 'failed' ? 'mdi-alert-circle-outline' : 'mdi-stop-circle-outline'"
@@ -110,7 +109,7 @@
                 <span class="agent-sources__count">{{ message.citations.length }}</span>
               </div>
               <ol class="agent-sources__groups">
-                <li v-for="group in citationGroups(message.citations)" :key="group.key" class="agent-sources__group">
+                <li v-for="group in citationGroups(message.id)" :key="group.key" class="agent-sources__group">
                   <component
                     :is="group.pageHref ? 'a' : 'div'"
                     class="agent-sources__page"
@@ -122,6 +121,7 @@
                     <v-icon v-else icon="mdi-file-document-outline" size="18" aria-hidden="true" />
                     <strong>{{ group.pageLabel }}</strong>
                     <v-icon v-if="group.pageHref" icon="mdi-open-in-new" size="15" aria-hidden="true" />
+                    <span v-if="group.pageHref" class="agent-sources__new-window"> (opens in a new tab)</span>
                   </component>
                   <ol v-if="group.sections.length" class="agent-sources__sections">
                     <li v-for="entry in group.sections" :key="entry.citation.evidenceId">
@@ -130,7 +130,7 @@
                         :href="entry.citation.href || undefined"
                         :target="entry.citation.href ? '_blank' : undefined"
                         :rel="entry.citation.href ? 'noopener noreferrer' : undefined"
-                        :aria-label="`Citation ${entry.number}: ${entry.citation.label}`"
+                        :aria-label="`Citation ${entry.number}: ${entry.citation.label}${entry.citation.href ? ' (opens in a new tab)' : ''}`"
                       >
                         <span class="agent-sources__number">{{ entry.number }}</span>
                         <span class="agent-sources__label">{{ entry.sectionLabel }}</span>
@@ -162,7 +162,7 @@
             >
               <summary>
                 <v-icon icon="mdi-format-list-checks" size="18" />
-                <span>{{ activityLabel(activityForRun(message.runId)) }}</span>
+                <span>{{ activityLabelForRun(message.runId) }}</span>
               </summary>
               <ul class="agent-activity__list">
                 <li v-for="tool in activityForRun(message.runId)" :key="tool.id">
@@ -221,16 +221,15 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
-import type { AgentCitation, AgentMessageRole, AgentMessageStatus, AgentPageActionLink, AgentTaskView, AgentToolCallView, AgentToolState, AgentThreadState } from '../../../shared/agents/contracts.ts'
+import { computed, ref, watch } from 'vue'
+import type { AgentMessageRole, AgentMessageStatus, AgentPageActionLink, AgentTaskView, AgentToolCallView, AgentToolState, AgentThreadState } from '../../../shared/agents/contracts.ts'
 import AgentMarkdown from './agent-markdown.vue'
 import AgentTaskProgress from './agent-task-progress.vue'
 import AgentToolCard from './agent-tool-card.vue'
 import {
-  agentActivityLabel,
-  agentAppliedPageLinks,
-  groupAgentToolsByRun,
-  groupAgentCitations,
+  agentLiveAnnouncement,
+  buildAgentThreadPresentation,
+  type AgentCitationGroup,
   type AgentProposalTool
 } from './agent-thread-presentation.ts'
 
@@ -251,24 +250,31 @@ const messageTemporalMetadata = computed(() => {
 })
 const messageTime = (createdAt: string): string => messageTemporalMetadata.value.get(createdAt)?.time ?? ''
 const messageTimestamp = (createdAt: string): string => messageTemporalMetadata.value.get(createdAt)?.timestamp ?? createdAt
-const retryPromptFor = (messageId: string): string => {
-  const messageIndex = props.thread.messages.findIndex(message => message.id === messageId)
-  const currentMessage = props.thread.messages[messageIndex]
-  if (currentMessage?.role === 'user' && currentMessage.content.trim()) return currentMessage.content
-  for (let index = messageIndex - 1; index >= 0; index--) {
-    const message = props.thread.messages[index]
-    if (message?.role === 'user' && message.content.trim()) return message.content
-  }
-  return ''
-}
-
-const groupedTools = computed(() => groupAgentToolsByRun(props.thread.tools, props.thread.proposals))
-const activityForRun = (runId: string | null): readonly AgentToolCallView[] => runId ? groupedTools.value.get(runId)?.activity ?? [] : []
-const proposalToolsForRun = (runId: string | null): readonly AgentProposalTool[] => runId ? groupedTools.value.get(runId)?.proposals ?? [] : []
-const pageLinksForRun = (runId: string | null): readonly AgentPageActionLink[] => agentAppliedPageLinks(proposalToolsForRun(runId))
-const tasksForRun = (runId: string | null): readonly AgentTaskView[] => runId ? props.thread.tasks.filter(task => task.runId === runId) : []
-const activityLabel = agentActivityLabel
-const citationGroups = groupAgentCitations
+const threadPresentation = computed(() => buildAgentThreadPresentation(
+  props.thread.messages,
+  props.thread.tools,
+  props.thread.tasks,
+  props.thread.proposals
+))
+const noActivity: readonly AgentToolCallView[] = []
+const noProposalTools: readonly AgentProposalTool[] = []
+const noPageLinks: readonly AgentPageActionLink[] = []
+const noTasks: readonly AgentTaskView[] = []
+const noCitationGroups: readonly AgentCitationGroup[] = []
+const activityForRun = (runId: string | null): readonly AgentToolCallView[] =>
+  runId ? threadPresentation.value.runs.get(runId)?.activity ?? noActivity : noActivity
+const proposalToolsForRun = (runId: string | null): readonly AgentProposalTool[] =>
+  runId ? threadPresentation.value.runs.get(runId)?.proposals ?? noProposalTools : noProposalTools
+const pageLinksForRun = (runId: string | null): readonly AgentPageActionLink[] =>
+  runId ? threadPresentation.value.runs.get(runId)?.pageLinks ?? noPageLinks : noPageLinks
+const tasksForRun = (runId: string | null): readonly AgentTaskView[] =>
+  runId ? threadPresentation.value.runs.get(runId)?.tasks ?? noTasks : noTasks
+const activityLabelForRun = (runId: string | null): string =>
+  runId ? threadPresentation.value.runs.get(runId)?.activityLabel ?? '' : ''
+const citationGroups = (messageId: string): readonly AgentCitationGroup[] =>
+  threadPresentation.value.messages.get(messageId)?.citationGroups ?? noCitationGroups
+const retryPromptFor = (messageId: string): string =>
+  threadPresentation.value.messages.get(messageId)?.retryPrompt ?? ''
 const messageStatusLabels: Record<Exclude<AgentMessageStatus, 'complete'>, string> = {
   pending: 'Preparing a response',
   streaming: 'Preparing a response',
@@ -298,20 +304,30 @@ const stateLabels: Record<AgentToolState, string> = { preparing: 'Preparing', ru
 const stateIcons: Record<AgentToolState, string> = { preparing: 'mdi-dots-horizontal', running: 'mdi-progress-clock', awaitingApproval: 'mdi-shield-alert-outline', complete: 'mdi-check-circle-outline', failed: 'mdi-alert-circle-outline', denied: 'mdi-cancel', cancelled: 'mdi-stop-circle-outline' }
 const toolStateLabel = (state: AgentToolState): string => stateLabels[state]
 const toolStateIcon = (state: AgentToolState): string => stateIcons[state]
-const toolStateColor = (state: AgentToolState): string => state === 'complete' ? 'success' : state === 'failed' || state === 'denied' ? 'error' : 'primary'
-const liveSummary = computed(() => {
-  const run = props.thread.session.currentRun
-  if (props.connection === 'reconnecting') return 'Connection interrupted. Reconnecting.'
-  if (!run) return 'Agent is ready.'
-  if (run.status === 'queued') return 'Preparing a response.'
-  if (run.status === 'running') return 'Preparing a response.'
-  if (run.status === 'awaiting_approval') return 'Review needed before the response can continue.'
-  if (run.status === 'succeeded') return 'Response complete.'
-  if (run.status === 'partial') return 'Response complete with some items needing attention.'
-  if (run.status === 'cancelled') return 'Response stopped.'
-  if (run.status === 'failed') return 'Response failed.'
-  return 'Response needs recovery.'
+const toolStateColor = (state: AgentToolState): string | undefined => {
+  if (state === 'complete') return 'success'
+  if (state === 'failed' || state === 'denied') return 'error'
+  if (state === 'cancelled') return undefined
+  return 'primary'
+}
+const currentLiveAnnouncement = computed(() => {
+  if (props.connection === 'reconnecting') {
+    return { key: 'connection:reconnecting', message: 'Connection interrupted. Reconnecting.' }
+  }
+  return agentLiveAnnouncement(props.thread.messages, props.thread.tools)
 })
+const liveSummary = ref('')
+watch(
+  [() => props.thread.session.id, currentLiveAnnouncement],
+  ([sessionId, announcement], [previousSessionId, previousAnnouncement]) => {
+    if (sessionId !== previousSessionId) {
+      liveSummary.value = ''
+      return
+    }
+    if (announcement?.key === previousAnnouncement?.key) return
+    liveSummary.value = announcement?.message ?? ''
+  }
+)
 </script>
 
 <style scoped>
@@ -821,6 +837,7 @@ const liveSummary = computed(() => {
   overflow-wrap: anywhere;
 }
 
+.agent-sources__new-window,
 .sr-status {
   border: 0;
   clip: rect(0, 0, 0, 0);

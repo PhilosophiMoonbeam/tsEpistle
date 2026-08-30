@@ -22,6 +22,22 @@ const messageStatusSchema = z.enum(['pending', 'streaming', 'complete', 'failed'
 
 const iso = (value: Date | string): string => value instanceof Date ? value.toISOString() : new Date(value).toISOString()
 const digest = (value: string | Buffer): string => createHash('sha256').update(value).digest('hex')
+const AgentSessionCursorSchema = z.tuple([z.iso.datetime(), z.string().min(1).max(128)])
+
+interface AgentSessionCursor {
+  readonly lastActivityAt: Date
+  readonly id: string
+}
+
+const decodeAgentSessionCursor = (value: string): AgentSessionCursor => {
+  try {
+    const [lastActivityAt, id] = AgentSessionCursorSchema.parse(JSON.parse(Buffer.from(value, 'base64url').toString('utf8')))
+    return { lastActivityAt: new Date(lastActivityAt), id }
+  } catch {
+    throw new AgentRepositoryError('INVALID_SESSION_CURSOR', 'Session history cursor is invalid', 400)
+  }
+}
+
 
 export class AgentRepositoryError extends Error {
   readonly code: string
@@ -93,6 +109,9 @@ const sessionRecord = (row: SessionRow): AgentSessionRecord => ({
   expiresAt: row.expiresAt === null || row.expiresAt === undefined ? null : iso(row.expiresAt),
   deletedAt: row.deletedAt === null || row.deletedAt === undefined ? null : iso(row.deletedAt)
 })
+export const encodeAgentSessionCursor = (session: Pick<AgentSessionRecord, 'lastActivityAt' | 'id'>): string =>
+  Buffer.from(JSON.stringify([session.lastActivityAt, session.id])).toString('base64url')
+
 
 export interface CreateAgentSessionInput {
   readonly ownerId: number
@@ -140,8 +159,9 @@ export const getOwnedAgentSession = async (knex: Knex | Knex.Transaction, ownerI
   return sessionRecord(row)
 }
 
-export const listOwnedAgentSessions = async (knex: Knex, ownerId: number, limit = 50, before?: Date): Promise<AgentSessionRecord[]> => {
-  const boundedLimit = Math.max(1, Math.min(100, Math.floor(limit)))
+export const listOwnedAgentSessions = async (knex: Knex, ownerId: number, limit = 50, cursor?: string): Promise<AgentSessionRecord[]> => {
+  const boundedLimit = Math.max(1, Math.min(101, Math.floor(limit)))
+  const keyset = cursor === undefined ? null : decodeAgentSessionCursor(cursor)
   const query = knex<SessionRow>('agentSessions')
     .where({ ownerId })
     .whereNull('deletedAt')
@@ -151,7 +171,13 @@ export const listOwnedAgentSessions = async (knex: Knex, ownerId: number, limit 
         .where('agentMessages.sessionId', knex.ref('agentSessions.id'))
         .where({ role: 'user', status: 'complete' })
     })
-  if (before) query.where('lastActivityAt', '<', before)
+  if (keyset) {
+    query.andWhere(boundary => {
+      boundary
+        .where('lastActivityAt', '<', keyset.lastActivityAt)
+        .orWhere(tied => tied.where('lastActivityAt', keyset.lastActivityAt).andWhere('id', '<', keyset.id))
+    })
+  }
   const rows = await query.orderBy('lastActivityAt', 'desc').orderBy('id', 'desc').limit(boundedLimit)
   return rows.map(sessionRecord)
 }
@@ -372,10 +398,23 @@ export const appendAgentMessage = async (knex: Knex, input: AppendAgentMessageIn
   return messageRecord(row)
 })
 
-export const listOwnedAgentMessages = async (knex: Knex, ownerId: number, sessionId: string, afterOrdinal = 0, limit = 200): Promise<AgentMessageRecord[]> => {
+export const listOwnedAgentMessages = async (
+  knex: Knex,
+  ownerId: number,
+  sessionId: string,
+  afterOrdinal = 0,
+  limit = 200,
+  order: 'asc' | 'desc' = 'asc'
+): Promise<AgentMessageRecord[]> => {
   await getOwnedAgentSession(knex, ownerId, sessionId)
-  const rows = await knex<MessageRow>('agentMessages').where({ sessionId }).andWhere('ordinal', '>', afterOrdinal).orderBy('ordinal').limit(Math.max(1, Math.min(500, Math.floor(limit))))
-  return rows.filter(row => row.isVisible !== false).map(messageRecord)
+  const rows = await knex<MessageRow>('agentMessages')
+    .where({ sessionId })
+    .andWhere('ordinal', '>', afterOrdinal)
+    .andWhere(visible => visible.where({ isVisible: true }).orWhereNull('isVisible'))
+    .orderBy('ordinal', order)
+    .limit(Math.max(1, Math.min(501, Math.floor(limit))))
+  const messages = rows.map(messageRecord)
+  return order === 'desc' ? messages.reverse() : messages
 }
 
 interface EventRow {

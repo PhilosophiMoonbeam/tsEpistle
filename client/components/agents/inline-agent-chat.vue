@@ -7,7 +7,9 @@
     <button
       v-if="historyOpen || memoryOpen"
       class="inline-agent__scrim"
+      ref="panelScrim"
       type="button"
+      tabindex="-1"
       aria-label="Close Agent side panel"
       @click="closePanels"
     />
@@ -17,12 +19,28 @@
       id="agent-history-panel"
       ref="historyPanel"
       class="inline-agent__side inline-agent__side--history"
-      role="dialog"
+      :role="compactPanels ? 'dialog' : undefined"
       aria-label="Chat history panel"
-      aria-modal="true"
-      tabindex="-1"
+      :aria-modal="compactPanels ? 'true' : undefined"
+      :tabindex="compactPanels ? -1 : undefined"
     >
-      <AgentHistoryPanel @close="closeHistory" @reset="resetHistoryOpen = true" />
+      <v-card v-if="historyLoadError" class="inline-agent__panel-load-error" elevation="0" rounded="xl" role="alert">
+        <header class="inline-agent__panel-load-error-header">
+          <div>
+            <p class="inline-agent__eyebrow">Conversation archive</p>
+            <h2>History unavailable</h2>
+          </div>
+          <v-btn icon="mdi-close" size="small" variant="text" aria-label="Close chat history" @click="closeHistory" />
+        </header>
+        <div class="inline-agent__panel-load-error-body">
+          <v-icon color="error" icon="mdi-archive-alert-outline" size="28" aria-hidden="true" />
+          <p>{{ historyLoadError }}</p>
+          <v-btn color="primary" prepend-icon="mdi-refresh" variant="tonal" :loading="historyLoading" @click="reloadHistory">
+            Retry archive
+          </v-btn>
+        </div>
+      </v-card>
+      <AgentHistoryPanel v-else @close="closeHistory" @reset="openResetHistory" />
     </aside>
 
     <v-card class="inline-agent__card" elevation="0">
@@ -54,7 +72,7 @@
           {{ connectionLabel }}
         </v-chip>
 
-        <div class="inline-agent__panel-actions" aria-label="Agent workspace panels">
+        <div class="inline-agent__panel-actions" role="group" aria-label="Agent workspace panels">
           <v-btn
             ref="historyTrigger"
             class="inline-agent__desktop-panel-btn"
@@ -131,7 +149,7 @@
             :session="thread.session"
             :profiles="profiles"
             :disabled="Boolean(activeRun) || Boolean(openGoal)"
-            @profile="agents.setProfile"
+            :apply-provider-profile="applyProviderProfile"
           />
           <AgentGoalStatus
             v-if="thread?.goal"
@@ -175,7 +193,7 @@
               <div class="inline-agent__welcome-rule" aria-hidden="true">
                 <span>Explore</span>
               </div>
-              <div class="inline-agent__starters" aria-label="Conversation starters">
+              <div class="inline-agent__starters" role="group" aria-label="Conversation starters">
                 <v-btn
                   v-for="starter in starters"
                   :key="starter.prompt"
@@ -232,7 +250,7 @@
             :invocation-limit="invocationLimit"
             @send="sendPrompt"
             @stop="agents.stop"
-            @manage-skills="skillManagerOpen = true"
+            @manage-skills="openSkillManager"
             @update-skill-preferences="agents.setSkillPreferences"
           />
           <div class="inline-agent__notice">
@@ -248,10 +266,10 @@
       id="agent-memory-panel"
       ref="memoryPanel"
       class="inline-agent__side inline-agent__side--memory"
-      role="dialog"
+      :role="compactPanels ? 'dialog' : undefined"
       aria-label="Agent memory panel"
-      aria-modal="true"
-      tabindex="-1"
+      :aria-modal="compactPanels ? 'true' : undefined"
+      :tabindex="compactPanels ? -1 : undefined"
     >
       <AgentMemoryManager v-model="memoryOpen" :csrf-token="csrfToken" />
     </aside>
@@ -263,15 +281,24 @@
     <v-card rounded="xl">
       <v-card-title class="d-flex align-center ga-3 pt-5 px-5">
         <v-avatar color="error" size="38" variant="tonal"><v-icon icon="mdi-delete-sweep-outline" aria-hidden="true" /></v-avatar>
-        <h2 id="reset-history-title" class="text-title-medium">Reset conversation history?</h2>
+        <h2 id="reset-history-title" class="text-title-medium">{{ resetCommitted ? 'Conversation history reset' : 'Reset conversation history?' }}</h2>
       </v-card-title>
       <v-card-text class="px-5">
-        Every Agent conversation will be permanently removed and a clean conversation will open. Your curated Agent memory stays intact.
+        <p v-if="resetCommitted">The archive was removed, but the clean conversation did not finish opening. Retry only the conversation load below.</p>
+        <p v-else>Every Agent conversation will be permanently removed and a clean conversation will open. Your curated Agent memory stays intact.</p>
+        <v-alert v-if="resetError" class="mt-4" density="compact" type="error" variant="tonal" role="alert">
+          {{ resetError }}
+        </v-alert>
       </v-card-text>
       <v-card-actions class="px-5 pb-4">
         <v-spacer />
-        <v-btn variant="text" @click="resetHistoryOpen = false">Cancel</v-btn>
-        <v-btn color="error" :loading="resetting" @click="resetHistory">Reset history</v-btn>
+        <v-btn variant="text" @click="closeResetHistory">{{ resetCommitted ? 'Close' : 'Cancel' }}</v-btn>
+        <v-btn v-if="resetCommitted" color="primary" prepend-icon="mdi-refresh" :loading="resetting" @click="recoverResetHistory">
+          Retry opening conversation
+        </v-btn>
+        <v-btn v-else color="error" :loading="resetting" @click="resetHistory">
+          {{ resetError ? 'Retry reset' : 'Reset history' }}
+        </v-btn>
       </v-card-actions>
     </v-card>
   </v-dialog>
@@ -306,11 +333,12 @@ const props = defineProps<{
 }>()
 
 const agents = useAgentsStore()
-const { connection, decidingApprovalId, error, goalBusy, loading, profiles, sending, skills, thread } = storeToRefs(agents)
+const { connection, decidingApprovalId, error, goalBusy, loading, profiles, sending, sessions, skills, thread } = storeToRefs(agents)
 const transcript = ref<HTMLElement | null>(null)
-const composer = ref<{ focusInput: () => Promise<void> } | null>(null)
+const composer = ref<{ focusInput: () => Promise<void>; focusSkillsTrigger: () => Promise<void> } | null>(null)
 const historyPanel = ref<HTMLElement | null>(null)
 const memoryPanel = ref<HTMLElement | null>(null)
+const panelScrim = ref<HTMLElement | null>(null)
 const historyTrigger = ref<{ $el?: HTMLElement } | HTMLElement | null>(null)
 const memoryTrigger = ref<{ $el?: HTMLElement } | HTMLElement | null>(null)
 const mobileActionsTrigger = ref<{ $el?: HTMLElement } | HTMLElement | null>(null)
@@ -318,12 +346,20 @@ const approvalJumpVisible = ref(false)
 const skillManagerOpen = ref(false)
 const resetHistoryOpen = ref(false)
 const resetting = ref(false)
+const resetError = ref('')
+const resetCommitted = ref(false)
 const historyOpen = ref(false)
+const historyLoadError = ref('')
+const historyLoading = ref(false)
 const memoryOpen = ref(false)
 const transcriptFollowing = ref(true)
+const compactPanels = ref(false)
 let transcriptObserver: MutationObserver | null = null
+let transcriptFrame: number | null = null
+let transcriptFrameShouldFollow = false
 let panelFocusScope: ModalFocusScope | null = null
 let panelFocusKind: 'history' | 'memory' | null = null
+let panelFocusOpener: HTMLElement | null = null
 let initialization: Promise<void> | null = null
 let compactPanelMedia: MediaQueryList | null = null
 const compactPanelQuery = '(max-width: 1711.98px)'
@@ -343,8 +379,8 @@ const providerAvailable = computed(() => props.providerEnabled && profiles.value
 const providerUnavailableMessage = computed(() => props.providerEnabled
   ? 'No enabled provider profile is available for your account. Ask an administrator to grant one in Administration → Agents.'
   : 'Agent inference is currently disabled. An administrator can configure it in Administration → Agents.')
-const canSubmit = computed(() => providerAvailable.value && !loading.value && Boolean(thread.value) && !activeRun.value && !openGoal.value)
-const submitUnavailableReason = computed(() => !providerAvailable.value ? providerUnavailableMessage.value : loading.value ? 'Opening conversation' : activeRun.value ? 'Wait for the current response to finish' : openGoal.value ? 'Finish or pause the current goal before sending a message' : '')
+const canSubmit = computed(() => providerAvailable.value && !loading.value && !sending.value && Boolean(thread.value) && !activeRun.value && !openGoal.value)
+const submitUnavailableReason = computed(() => !providerAvailable.value ? providerUnavailableMessage.value : loading.value ? 'Opening conversation' : sending.value ? 'Sending your message' : activeRun.value ? 'Wait for the current response to finish' : openGoal.value ? 'Finish or pause the current goal before sending a message' : '')
 const preferredSkillIds = computed(() => thread.value?.session.skills.map(skill => skill.skillId) ?? [])
 const invocationLimit = computed(() => Math.max(0, 8 - preferredSkillIds.value.length))
 const sessionTitle = computed(() => thread.value?.session.title || 'New conversation')
@@ -409,6 +445,28 @@ const reloadSkillCatalog = async (): Promise<void> => {
     agents.error = value instanceof Error ? value.message : 'The skill catalog could not be refreshed.'
   }
 }
+const applyProviderProfile = async (providerProfileId: string | null): Promise<
+  { readonly success: true } | { readonly success: false; readonly error: string }
+> => {
+  const sessionId = thread.value?.session.id
+  if (!sessionId) return { success: false, error: 'The conversation is no longer available. Open it again and retry.' }
+  const sessionChanged = (): boolean => thread.value?.session.id !== sessionId
+  try {
+    const updated = await agents.setProfile(providerProfileId)
+    if (sessionChanged()) return { success: true }
+    if (updated) return { success: true }
+    return {
+      success: false,
+      error: error.value || 'The provider profile could not be applied. Refresh the conversation and retry.'
+    }
+  } catch (value) {
+    if (sessionChanged()) return { success: true }
+    return {
+      success: false,
+      error: value instanceof Error ? value.message : 'The provider profile could not be applied. Try again.'
+    }
+  }
+}
 const newSession = async (): Promise<void> => {
   try { await ensureInitialized(); await agents.newSession('saved') } catch (value) {
     agents.error = value instanceof Error ? value.message : 'A new conversation could not be created.'
@@ -416,26 +474,108 @@ const newSession = async (): Promise<void> => {
 }
 const elementForRef = (value: { $el?: HTMLElement } | HTMLElement | null): HTMLElement | null =>
   value instanceof HTMLElement ? value : value?.$el ?? null
+const isVisibleTrigger = (element: HTMLElement | null): element is HTMLElement => {
+  if (!element || !element.isConnected || element.getClientRects().length === 0) return false
+  const style = window.getComputedStyle(element)
+  return style.display !== 'none' && style.visibility !== 'hidden'
+}
+const triggerForPanel = (kind: 'history' | 'memory'): HTMLElement | null => {
+  const direct = elementForRef(kind === 'history' ? historyTrigger.value : memoryTrigger.value)
+  const mobile = elementForRef(mobileActionsTrigger.value)
+  return [direct, mobile].find(isVisibleTrigger) ?? direct ?? mobile
+}
+const openSkillManager = (): void => { skillManagerOpen.value = true }
 const closeHistory = (): void => { historyOpen.value = false }
 const closeMemory = (): void => { memoryOpen.value = false }
+const capturePanelOpener = (kind: 'history' | 'memory'): void => {
+  panelFocusOpener = triggerForPanel(kind)
+}
+const reloadHistory = async (): Promise<void> => {
+  if (historyLoading.value) return
+  historyLoading.value = true
+  try {
+    const results = await Promise.allSettled([agents.reloadSessions(), agents.reloadFolders()])
+    const failed = results.find(result => result.status === 'rejected')
+    if (failed?.status === 'rejected') throw failed.reason
+    historyLoadError.value = ''
+  } catch (value) {
+    historyLoadError.value = value instanceof Error ? value.message : 'Conversation history could not be loaded.'
+  } finally {
+    historyLoading.value = false
+  }
+}
 const toggleHistory = (): void => {
-  historyOpen.value = !historyOpen.value
-  if (historyOpen.value && window.matchMedia(compactPanelQuery).matches) memoryOpen.value = false
+  const opening = !historyOpen.value
+  if (opening) capturePanelOpener('history')
+  historyOpen.value = opening
+  if (opening) {
+    if (compactPanels.value) memoryOpen.value = false
+    void reloadHistory()
+  }
 }
 const toggleMemory = (): void => {
-  memoryOpen.value = !memoryOpen.value
-  if (memoryOpen.value && window.matchMedia(compactPanelQuery).matches) historyOpen.value = false
+  const opening = !memoryOpen.value
+  if (opening) capturePanelOpener('memory')
+  memoryOpen.value = opening
+  if (opening && compactPanels.value) historyOpen.value = false
 }
 const reconcileCompactPanels = (event: MediaQueryListEvent): void => {
+  compactPanels.value = event.matches
   if (event.matches && historyOpen.value && memoryOpen.value) memoryOpen.value = false
-  if (!event.matches) panelFocusScope?.deactivate({ restoreFocus: false })
 }
 const closePanels = (): void => { historyOpen.value = false; memoryOpen.value = false }
+const openResetHistory = (): void => {
+  resetError.value = ''
+  resetCommitted.value = false
+  resetHistoryOpen.value = true
+}
+const closeResetHistory = (): void => {
+  if (resetting.value) return
+  resetHistoryOpen.value = false
+  resetError.value = ''
+  resetCommitted.value = false
+}
 const resetHistory = async (): Promise<void> => {
+  const originalSessionId = thread.value?.session.id ?? null
+  const originalSessionCount = sessions.value.length
   resetting.value = true
-  try { await agents.resetHistory(); resetHistoryOpen.value = false } catch (value) {
-    agents.error = value instanceof Error ? value.message : 'Conversation history could not be reset.'
-  } finally { resetting.value = false }
+  resetError.value = ''
+  resetCommitted.value = false
+  try {
+    await agents.resetHistory()
+    resetHistoryOpen.value = false
+  } catch (value) {
+    resetCommitted.value = originalSessionId !== null
+      ? thread.value?.session.id !== originalSessionId
+      : originalSessionCount > 0 && sessions.value.length === 0
+    const detail = value instanceof Error ? value.message : 'Conversation history could not be reset.'
+    resetError.value = resetCommitted.value
+      ? `History was reset, but a clean conversation could not be opened. ${detail}`
+      : detail
+  } finally {
+    resetting.value = false
+  }
+}
+const recoverResetHistory = async (): Promise<void> => {
+  if (resetting.value) return
+  resetting.value = true
+  try {
+    await agents.reloadSessions()
+    if (!thread.value && sessions.value[0]) {
+      const opened = await agents.openSession(sessions.value[0].id)
+      if (!opened) throw new Error('The clean conversation changed before it could be opened. Retry.')
+    } else if (!thread.value && profiles.value.length > 0) {
+      await agents.newSession('saved')
+    }
+    resetHistoryOpen.value = false
+    resetError.value = ''
+    resetCommitted.value = false
+  } catch (value) {
+    const detail = value instanceof Error ? value.message : 'A clean conversation could not be opened.'
+    resetError.value = `History was reset, but a clean conversation still could not be opened. ${detail}`
+  } finally {
+    resetting.value = false
+  }
 }
 const updateApprovalJump = (): void => {
   const container = transcript.value
@@ -455,50 +595,95 @@ const jumpToApproval = async (): Promise<void> => {
   approval.focus({ preventScroll: true })
   approvalJumpVisible.value = false
 }
+const transcriptIsNearBottom = (element: HTMLElement | null): boolean =>
+  Boolean(element && element.scrollHeight - element.scrollTop - element.clientHeight < 160)
 const handleTranscriptScroll = (): void => {
-  const element = transcript.value
-  if (!element) return
-  transcriptFollowing.value = element.scrollHeight - element.scrollTop - element.clientHeight < 160
+  transcriptFollowing.value = transcriptIsNearBottom(transcript.value)
   updateApprovalJump()
 }
-const reconcileTranscriptGrowth = async (): Promise<void> => {
-  const shouldFollow = transcriptFollowing.value || !transcript.value || transcript.value.scrollHeight - transcript.value.scrollTop - transcript.value.clientHeight < 160
+const reconcileTranscriptGrowth = async (shouldFollow: boolean): Promise<void> => {
   await nextTick()
-  if (shouldFollow && transcript.value) transcript.value.scrollTo({ top: transcript.value.scrollHeight, behavior: reducedMotion() ? 'auto' : 'smooth' })
-  transcriptFollowing.value = Boolean(transcript.value && transcript.value.scrollHeight - transcript.value.scrollTop - transcript.value.clientHeight < 160)
+  if (shouldFollow && transcript.value) {
+    transcript.value.scrollTo({ top: transcript.value.scrollHeight, behavior: 'auto' })
+    transcriptFollowing.value = true
+  } else {
+    transcriptFollowing.value = transcriptIsNearBottom(transcript.value)
+  }
   updateApprovalJump()
+}
+const scheduleTranscriptReconcile = (): void => {
+  transcriptFrameShouldFollow ||= transcriptFollowing.value || transcriptIsNearBottom(transcript.value)
+  if (transcriptFrame !== null) return
+  transcriptFrame = window.requestAnimationFrame(() => {
+    const shouldFollow = transcriptFrameShouldFollow
+    transcriptFrame = null
+    transcriptFrameShouldFollow = false
+    void reconcileTranscriptGrowth(shouldFollow)
+  })
 }
 
 watch(currentPage, page => agents.setCurrentPage(page), { immediate: true })
-watch([historyOpen, memoryOpen], async ([history, memory]) => {
+watch(skillManagerOpen, (open, wasOpen) => {
+  if (!open && wasOpen) void nextTick(() => composer.value?.focusSkillsTrigger())
+})
+watch([historyOpen, memoryOpen, compactPanels], async ([history, memory, compact]) => {
   const kind = history ? 'history' : memory ? 'memory' : null
-  if (!kind || !compactPanelMedia?.matches) {
-    if (!kind) { panelFocusScope?.deactivate({ restoreFocus: true }); panelFocusScope = null; panelFocusKind = null }
+  if (!kind || !compact) {
+    panelFocusScope?.deactivate({ restoreFocus: !kind })
+    panelFocusScope = null
+    panelFocusKind = null
+    if (!kind) panelFocusOpener = null
     return
   }
+  if (panelFocusScope && panelFocusKind === kind) return
   panelFocusScope?.deactivate({ restoreFocus: false })
+  panelFocusScope = null
+  panelFocusKind = null
   await nextTick()
+  const currentKind = historyOpen.value ? 'history' : memoryOpen.value ? 'memory' : null
+  if (!compactPanels.value || currentKind !== kind) return
   const root = kind === 'history' ? historyPanel.value : memoryPanel.value
   if (!root) return
-  const trigger = compactPanelMedia?.matches
-    ? elementForRef(mobileActionsTrigger.value)
-    : elementForRef(kind === 'history' ? historyTrigger.value : memoryTrigger.value)
-  panelFocusScope = createModalFocusScope({ root, restoreTarget: trigger, onEscape: closePanels })
+  panelFocusKind = kind
+  panelFocusScope = createModalFocusScope({
+    root,
+    restoreTarget: () => isVisibleTrigger(panelFocusOpener) ? panelFocusOpener : triggerForPanel(kind),
+    additionalRoots: () => panelScrim.value ? [panelScrim.value] : [],
+    onEscape: kind === 'history' ? closeHistory : closeMemory
+  })
+})
+watch(() => thread.value?.session.id, (sessionId, previousSessionId) => {
+  if (!historyOpen.value || !sessionId || !previousSessionId || sessionId === previousSessionId) return
+  panelFocusScope?.deactivate({ restoreFocus: false })
+  panelFocusScope = null
+  panelFocusKind = null
+  panelFocusOpener = null
+  if (compactPanels.value) historyOpen.value = false
+  void nextTick(async () => {
+    if (hasConversation.value) transcript.value?.focus({ preventScroll: true })
+    else await composer.value?.focusInput()
+  })
 })
 watch([thread, pendingApprovalId, connection], () => {
   void nextTick(() => { if (!hasConversation.value && transcript.value) transcript.value.scrollTop = 0; updateApprovalJump() })
 }, { flush: 'post' })
 onMounted(() => {
   compactPanelMedia = window.matchMedia(compactPanelQuery)
+  compactPanels.value = compactPanelMedia.matches
   compactPanelMedia.addEventListener('change', reconcileCompactPanels)
-  transcriptObserver = new MutationObserver(() => { void reconcileTranscriptGrowth() })
+  transcriptObserver = new MutationObserver(scheduleTranscriptReconcile)
   if (transcript.value) transcriptObserver.observe(transcript.value, { childList: true, subtree: true, characterData: true })
+  window.addEventListener('resize', scheduleTranscriptReconcile)
+  window.visualViewport?.addEventListener('resize', scheduleTranscriptReconcile)
   void ensureInitialized()
 })
 onBeforeUnmount(() => {
   transcriptObserver?.disconnect()
+  if (transcriptFrame !== null) window.cancelAnimationFrame(transcriptFrame)
   panelFocusScope?.deactivate({ restoreFocus: false })
   compactPanelMedia?.removeEventListener('change', reconcileCompactPanels)
+  window.removeEventListener('resize', scheduleTranscriptReconcile)
+  window.visualViewport?.removeEventListener('resize', scheduleTranscriptReconcile)
   agents.closeWorkspace()
 })
 defineExpose({ sendPrompt, focusComposer, focusConversation })
@@ -953,6 +1138,7 @@ defineExpose({ sendPrompt, focusComposer, focusConversation })
 }
 
 .inline-agent__side {
+  position: relative;
   min-width: 0;
   outline: none;
 }
@@ -960,6 +1146,51 @@ defineExpose({ sendPrompt, focusComposer, focusConversation })
 .inline-agent__side:focus-visible {
   border-radius: var(--wiki-panel-radius);
   box-shadow: var(--wiki-focus-ring);
+}
+
+.inline-agent__panel-load-error {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--wiki-surface-border);
+  background: var(--wiki-surface-raised);
+}
+
+.inline-agent__panel-load-error-header {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: var(--wiki-space-3);
+  justify-content: space-between;
+  padding: var(--wiki-space-4);
+  border-bottom: 1px solid var(--wiki-surface-border);
+}
+
+.inline-agent__panel-load-error-header h2 {
+  margin: var(--wiki-space-1) 0 0;
+  font-family: var(--wiki-font-heading);
+  font-size: 1rem;
+}
+
+.inline-agent__panel-load-error-body {
+  display: flex;
+  min-height: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--wiki-space-3);
+  padding: var(--wiki-space-6);
+  text-align: center;
+}
+
+.inline-agent__panel-load-error-body p {
+  margin: 0;
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 72%, transparent);
+  font-size: .8125rem;
+  line-height: 1.5;
 }
 
 .inline-agent__side--history {
@@ -990,10 +1221,14 @@ defineExpose({ sendPrompt, focusComposer, focusConversation })
     position: absolute;
     z-index: 5;
     inset-block: 0;
-    width: min(22rem, calc(100% - var(--wiki-space-10)));
+    width: 22rem;
+    max-width: calc(100% - var(--wiki-space-10));
     height: auto;
     max-height: none;
     min-height: 0;
+    grid-column: 1 / -1;
+    grid-row: 1;
+    box-sizing: border-box;
     filter: drop-shadow(var(--wiki-shadow-md));
   }
 
@@ -1150,8 +1385,7 @@ defineExpose({ sendPrompt, focusComposer, focusConversation })
     margin-inline: var(--wiki-space-1);
   }
 
-  .inline-agent__page-context span,
-  .inline-agent__notice span {
+  .inline-agent__page-context span {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -1182,8 +1416,7 @@ defineExpose({ sendPrompt, focusComposer, focusConversation })
     margin-bottom: var(--wiki-space-3);
   }
 
-  .inline-agent__page-context,
-  .inline-agent__notice {
+  .inline-agent__page-context {
     display: none;
   }
 }
@@ -1195,6 +1428,20 @@ defineExpose({ sendPrompt, focusComposer, focusConversation })
     max-height: none;
   }
 
+  .inline-agent__toolbar {
+    min-height: calc(var(--wiki-control-height) + var(--wiki-space-2));
+  }
+
+  .inline-agent__avatar,
+  .inline-agent__eyebrow,
+  .inline-agent__session-title {
+    display: none;
+  }
+
+  .inline-agent__progress {
+    inset-block-start: calc(var(--wiki-control-height) + var(--wiki-space-2) - var(--wiki-space-1));
+  }
+
   .inline-agent__body {
     padding-block-start: var(--wiki-space-1);
   }
@@ -1203,9 +1450,16 @@ defineExpose({ sendPrompt, focusComposer, focusConversation })
     padding-block: var(--wiki-space-1);
   }
 
-  .inline-agent__page-context,
-  .inline-agent__notice {
+  .inline-agent__page-context {
     display: none;
+  }
+
+  .inline-agent__notice {
+    justify-content: flex-start;
+    margin-top: var(--wiki-space-1);
+    font-size: .6875rem;
+    line-height: 1.25;
+    text-align: start;
   }
 
   .inline-agent__welcome {

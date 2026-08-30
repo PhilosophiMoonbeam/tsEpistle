@@ -440,7 +440,10 @@ describe('Ax orchestration stages', () => {
     )
 
     expect(invoke).toHaveBeenCalledTimes(2)
-    expect(text).toHaveBeenCalledWith(packet)
+    const deltas = text.mock.calls.map(([delta]) => delta)
+    expect(deltas.join('')).toBe(packet)
+    expect(deltas.length).toBeGreaterThan(1)
+    expect(deltas.length).toBeLessThanOrEqual(64)
   })
 
   it('rejects root synthesis until validated conflicts are explicitly disclosed', async () => {
@@ -523,6 +526,72 @@ describe('Ax orchestration stages', () => {
       expect.objectContaining({ accepted: true, finalCitationIds: ['page:1', 'page:2'] })
     ])
     expect(text).toHaveBeenCalledWith('Alpha requires review. [[cite:page:1]] However, beta requires audit. [[cite:page:2]]')
+  })
+  it('reconciles charged provider usage before rejecting a post-response capability violation', async () => {
+    const response = {
+      results: [
+        {
+          index: 0,
+          functionCalls: [
+            { id: 'first', type: 'function' as const, function: { name: 'wiki_get_page', params: '{"id":1}' } },
+            { id: 'second', type: 'function' as const, function: { name: 'wiki_get_page', params: '{"id":2}' } }
+          ]
+        }
+      ],
+      modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 7, completionTokens: 5, totalTokens: 12 } }
+    } satisfies AxChatResponse
+    const chat = vi.fn(async () => response)
+    const factory = {
+      create: async () => ({
+        service: { chat },
+        capabilities: {
+          streaming: false,
+          toolCalling: 'native',
+          parallelToolCalls: false,
+          structuredOutput: 'native-json-schema',
+          usage: 'terminal',
+          cancellation: true,
+          maxContextTokens: 100_000,
+          maxOutputTokens: 4_000
+        },
+        transportKind: 'openai-responses',
+        model: 'gpt-test',
+        capabilityRevision: 'cap-1',
+        pricingRevision: 'price-1',
+        pricing
+      })
+    } as unknown as AgentProviderFactory
+    const reservation = { id: 'reservation', tokens: 100_000, costMicros: 100_000 }
+    const reserve = vi.fn(async () => reservation)
+    const reconcile = vi.fn(async () => {})
+    const release = vi.fn(async () => {})
+    const consumeTool = vi.fn(async () => {})
+    const invoke = vi.fn(async () => ({}))
+    const actions: AgentActionSessionProvider = {
+      open: async () => ({
+        functions: [{ name: 'pages.get', title: 'Read page', description: 'Read one page', parameters: { type: 'object', properties: {} }, risk: 'read' }],
+        invoke,
+        snapshot: async () => ({}),
+        close: vi.fn(),
+        authoritySha256: null
+      })
+    }
+
+    await expect(
+      Promise.resolve(
+        new AxAgentEngine(factory, actions).execute(
+          {
+            ...baseRequest(new AbortController().signal),
+            dispatchBudget: { reserve, reconcile, release, consumeTool }
+          },
+          { text: async () => {}, event: async () => {} }
+        )
+      )
+    ).rejects.toMatchObject({ code: 'INVALID_PROVIDER_RESPONSE' })
+
+    expect(reconcile).toHaveBeenCalledWith(reservation, { inputTokens: 7, outputTokens: 5, costMicros: 17 })
+    expect(release).not.toHaveBeenCalled()
+    expect(invoke).not.toHaveBeenCalled()
   })
 })
 

@@ -1,10 +1,13 @@
 import { describe, expect, it } from '../../../server/test/bun-test.mts'
-import type { AgentCitation, AgentProposalView, AgentToolCallView } from '../../../shared/agents/contracts.ts'
+import type { AgentCitation, AgentMessageView, AgentProposalView, AgentTaskView, AgentToolCallView } from '../../../shared/agents/contracts.ts'
+import { formatAgentCitationMarkers } from './agent-citations.ts'
 import {
   agentActivityLabel,
   agentAppliedPageLinks,
   agentApprovalTitle,
+  agentLiveAnnouncement,
   agentProposalReceiptLabel,
+  buildAgentThreadPresentation,
   groupAgentCitations,
   groupAgentToolsByRun,
   isAgentApprovalOutsideViewport
@@ -49,6 +52,37 @@ const proposal = (input: Partial<AgentProposalView> & Pick<AgentProposalView, 'i
   },
   ...input
 })
+const message = (
+  input: Partial<AgentMessageView> & Pick<AgentMessageView, 'id' | 'role' | 'status'>
+): AgentMessageView => ({
+  runId: input.role === 'assistant' ? 'run' : null,
+  ordinal: 1,
+  content: '',
+  citations: [],
+  createdAt: '2026-08-23T20:00:00.000Z',
+  updatedAt: '2026-08-23T20:00:00.000Z',
+  ...input
+})
+
+const task = (input: Partial<AgentTaskView> & Pick<AgentTaskView, 'id' | 'runId'>): AgentTaskView => ({
+  kind: 'source_scout',
+  title: 'Scout sources',
+  question: 'Which sources support the answer?',
+  sourceScope: [],
+  requiredEvidenceCount: 1,
+  status: 'running',
+  subagentRunId: null,
+  attempt: 1,
+  outcome: null,
+  evidenceCount: 0,
+  errorCode: null,
+  errorMessage: null,
+  createdAt: '2026-08-23T20:00:00.000Z',
+  startedAt: '2026-08-23T20:00:00.000Z',
+  completedAt: null,
+  ...input
+})
+
 
 describe('Agent thread presentation', () => {
   it('groups routine activity and approval proposals with their originating run', () => {
@@ -126,6 +160,78 @@ describe('Agent thread presentation', () => {
       }
     ])
   })
+  it('hides only a trailing incomplete citation protocol while streaming', () => {
+    const citations: readonly AgentCitation[] = [{
+      evidenceId: 'page:6:section:1',
+      kind: 'page',
+      label: 'Incident Runbook',
+      href: '/en/runbook#incident-runbook'
+    }]
+
+    expect(formatAgentCitationMarkers('Literal [[ text. Claim [[cite:page:6:section', citations, true))
+      .toBe('Literal [[ text. Claim ')
+    expect(formatAgentCitationMarkers('Claim [[cite:', citations, true)).toBe('Claim ')
+    expect(formatAgentCitationMarkers('Claim [[cite:page:6:section:1]', citations, true)).toBe('Claim ')
+    expect(formatAgentCitationMarkers('Literal [[ text.', citations, true)).toBe('Literal [[ text.')
+    expect(formatAgentCitationMarkers('Claim [[cite:page:6:section', citations))
+      .toBe('Claim [[cite:page:6:section')
+    expect(formatAgentCitationMarkers('Claim [[cite:page:6:section:1]]', citations, true))
+      .toBe('Claim [1](/en/runbook#incident-runbook "Citation 1: Incident Runbook")')
+  })
+
+  it('precomputes run and message presentation for a thread snapshot', () => {
+    const citation: AgentCitation = {
+      evidenceId: 'page:6',
+      kind: 'page',
+      label: 'Incident Runbook',
+      href: '/en/runbook'
+    }
+    const runTask = task({ id: 'task-1', runId: 'run' })
+    const presentation = buildAgentThreadPresentation([
+      message({ id: 'user-1', role: 'user', status: 'complete', content: 'How should I respond?' }),
+      message({ id: 'assistant-1', role: 'assistant', status: 'failed', citations: [citation] })
+    ], [
+      tool({ id: 'read-1', runId: 'run' })
+    ], [runTask], [])
+
+    expect(presentation.runs.get('run')).toMatchObject({
+      activityLabel: 'Activity · 1 action · Complete',
+      tasks: [runTask]
+    })
+    expect(presentation.messages.get('assistant-1')).toMatchObject({
+      retryPrompt: 'How should I respond?',
+      citationGroups: [{ key: 'page:6' }]
+    })
+  })
+
+  it('presents meaningful live transitions from the latest assistant message', () => {
+    const preparing = message({ id: 'assistant-1', role: 'assistant', status: 'streaming' })
+    expect(agentLiveAnnouncement([preparing], [])).toEqual({
+      key: 'assistant-1:preparing',
+      kind: 'preparing',
+      message: 'Preparing a response.',
+      tone: 'neutral'
+    })
+    expect(agentLiveAnnouncement([{ ...preparing, content: 'Another streamed token' }], [])?.key)
+      .toBe('assistant-1:preparing')
+    expect(agentLiveAnnouncement([preparing], [
+      tool({ id: 'approval-1', runId: 'run', state: 'awaitingApproval' })
+    ])).toMatchObject({
+      key: 'assistant-1:approval',
+      message: 'Review needed before the response can continue.'
+    })
+    expect(agentLiveAnnouncement([
+      preparing,
+      message({ id: 'assistant-2', role: 'assistant', status: 'complete' })
+    ], [])).toMatchObject({ kind: 'complete', message: 'Response complete.' })
+    expect(agentLiveAnnouncement([
+      message({ id: 'assistant-2', role: 'assistant', status: 'cancelled' })
+    ], [])).toMatchObject({ kind: 'stopped', message: 'Response stopped.', tone: 'neutral' })
+    expect(agentLiveAnnouncement([
+      message({ id: 'assistant-2', role: 'assistant', status: 'failed' })
+    ], [])).toMatchObject({ kind: 'failed', message: 'Response failed.', tone: 'error' })
+  })
+
 
 
   it('keeps routine activity compact while surfacing current and failed states', () => {

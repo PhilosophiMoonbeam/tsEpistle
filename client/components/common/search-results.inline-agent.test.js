@@ -9,6 +9,7 @@ describe('inline Ask mode contract', () => {
   const memoryPath = path.join(process.cwd(), 'client/components/agents/agent-memory-manager.vue')
   const headerPath = path.join(process.cwd(), 'client/components/common/nav-header.vue')
   const composerPath = path.join(process.cwd(), 'client/components/agents/agent-composer.vue')
+  const focusScopePath = path.join(process.cwd(), 'client/components/common/modal-focus-scope.ts')
   const settingsPath = path.join(process.cwd(), 'client/components/agents/agent-session-settings.vue')
   const search = fs.readFileSync(searchPath, 'utf8')
   const inline = fs.readFileSync(inlinePath, 'utf8')
@@ -17,6 +18,7 @@ describe('inline Ask mode contract', () => {
   const memory = fs.readFileSync(memoryPath, 'utf8')
   const composer = fs.readFileSync(composerPath, 'utf8')
   const settings = fs.readFileSync(settingsPath, 'utf8')
+  const focusScope = fs.readFileSync(focusScopePath, 'utf8')
   const header = fs.readFileSync(headerPath, 'utf8')
   const template = search.match(/<template[^>]*>\s*([\s\S]*?)\s*<\/template>/)?.[1] ?? ''
 
@@ -107,7 +109,47 @@ describe('inline Ask mode contract', () => {
     expect(header).toMatch(/event\.ctrlKey\s*\|\|\s*event\.metaKey/)
     expect(search).toMatch(/focusComposer\(\)/)
     expect(inline).toMatch(/defineExpose\(\{\s*sendPrompt,\s*focusComposer,\s*focusConversation\s*\}\)/)
-    expect(composer).toMatch(/defineExpose\(\{\s*focusInput\s*\}\)/)
+    expect(composer).toMatch(/defineExpose\(\{\s*focusInput,\s*focusSkillsTrigger\s*\}\)/)
     expect(search).toMatch(/async submitAskPrompt\(\): Promise<void>/)
+  })
+
+  test('uses one LIFO focus stack across Search, Ask, and compact panels', () => {
+    expect(focusScope).toMatch(/scopeStacks\s*=\s*new WeakMap<Document,\s*ModalFocusScopeState\[\]>/)
+    expect(focusScope).toMatch(/isTopScope\(\)/)
+    expect(focusScope).toMatch(/while \(stack\.length > 0 && !stack\[stack\.length - 1\]!\.active\)/)
+    expect(focusScope).toMatch(/new MutationObserverConstructor\(\(\) => reconcileBackgrounds\(document\)\)/)
+    expect(focusScope).toMatch(/for \(let index = stack\.length - 1; index >= 0; index -= 1\) restoreBackground\(stack\[index\]!\.background\)[\s\S]*state\.background = hideBackground\(state\.root, state\.observedAdditionalRoots\)/)
+    expect(search).toMatch(/onEscape:\s*this\.returnToSearch/)
+    expect(search).toMatch(/additionalRoots:\s*\(\) => this\.findSearchControls\(\)/)
+    expect(inline).toMatch(/onEscape:\s*kind === 'history' \? closeHistory : closeMemory/)
+    expect(inline).toMatch(/:role="compactPanels \? 'dialog' : undefined"/)
+    expect(inline).toMatch(/triggerForPanel/)
+    expect(inline).toMatch(/if \(!kind \|\| !compact\)\s*\{[\s\S]*deactivate\(\{ restoreFocus: !kind \}\)/)
+  })
+
+  test('keeps direct prompts and fresh Search snapshots race-safe', () => {
+    expect(search).toMatch(/directPromptHandoffId/)
+    expect(search).toMatch(/if \(!prompt \|\| this\.directPromptHandoffPending\) return[\s\S]*this\.directPromptHandoffPending = true[\s\S]*const handoffId = \+\+this\.directPromptHandoffId/)
+    expect(search).toMatch(/if \(!success \|\| handoffId !== this\.directPromptHandoffId\) return/)
+    expect(search).toMatch(/finally\s*\{\s*this\.directPromptHandoffPending = false/)
+    expect(search).toMatch(/if \(this\.normalizedSearch === prompt\) this\.search = ''/)
+    expect(search).toMatch(/this\.responseKey === requestKey && !this\.searchError/)
+  })
+
+  test('keeps profile and history failures on the surface that issued them', () => {
+    expect(inline.match(/if \(sessionChanged\(\)\) return \{ success: true \}/g)).toHaveLength(2)
+    expect(inline).not.toMatch(/watch\(error,/)
+    expect(inline).toMatch(/const reloadHistory = async[\s\S]*historyLoadError\.value = ''[\s\S]*historyLoadError\.value = value instanceof Error/)
+  })
+
+  test('keeps compact transcript follow and composer controls stable', () => {
+    expect(inline).toMatch(/new MutationObserver\(scheduleTranscriptReconcile\)/)
+    expect(inline).toMatch(/window\.visualViewport\?\.addEventListener\('resize', scheduleTranscriptReconcile\)/)
+    expect(inline).toMatch(/grid-column:\s*1 \/ -1/)
+    expect(inline).toMatch(/width:\s*22rem/)
+    expect(composer).toMatch(/:aria-label="composerInputLabel"/)
+    expect(composer).toMatch(/role="group" aria-label="Conversation context controls"/)
+    expect(composer).toMatch(/:disabled="disabled \|\| sending \|\| !draft\.trim\(\)"/)
+    expect(composer).toMatch(/if \(props\.disabled \|\| props\.sending\) return/)
   })
 })

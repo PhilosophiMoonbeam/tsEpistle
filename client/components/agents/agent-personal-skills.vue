@@ -41,8 +41,8 @@
               density="comfortable"
             />
 
-            <v-alert v-if="error && !loaded" class="personal-inventory__error" type="error" variant="tonal" density="compact">
-              {{ error }}
+            <v-alert v-if="refreshError && !loaded" class="personal-inventory__error" type="error" variant="tonal" density="compact">
+              {{ refreshError }}
               <template #append><v-btn variant="text" size="small" @click="load()">Retry</v-btn></template>
             </v-alert>
 
@@ -51,6 +51,10 @@
             </div>
 
             <template v-else-if="loaded">
+              <v-alert v-if="refreshError" class="personal-inventory__error" type="warning" variant="tonal" density="compact">
+                {{ refreshError }}
+                <template #append><v-btn variant="text" size="small" :loading="loading" :disabled="loading" @click="requestRefresh">Retry</v-btn></template>
+              </v-alert>
               <div class="personal-inventory__summary" aria-live="polite">{{ filteredSkills.length }} of {{ skills.length }} shown</div>
               <v-list v-if="filteredSkills.length" class="personal-inventory__list" density="compact" nav aria-label="Personal skills">
                 <v-list-item
@@ -96,7 +100,7 @@
             </template>
           </aside>
 
-          <main v-if="loaded" class="personal-editor" aria-labelledby="personal-editor-title">
+          <main v-if="loaded" ref="editorRoot" class="personal-editor" tabindex="-1" aria-labelledby="personal-editor-title">
             <div class="personal-editor__header">
               <div>
                 <div class="personal-skills__eyebrow">{{ editingId ? 'Installed personal skill' : 'New personal skill' }}</div>
@@ -105,7 +109,7 @@
               </div>
               <div class="personal-editor__header-actions">
                 <v-chip v-if="isDirty" color="warning" size="small" variant="tonal" prepend-icon="mdi-circle-edit-outline">Unsaved</v-chip>
-                <v-btn v-if="editingId" color="error" variant="text" prepend-icon="mdi-delete-outline" :disabled="saving" @click="removing = selectedSkill">Remove skill</v-btn>
+                <v-btn v-if="editingId" color="error" variant="text" prepend-icon="mdi-delete-outline" :disabled="saving || loading" @click="beginRemove(selectedSkill, $event)">Remove skill</v-btn>
               </div>
             </div>
 
@@ -119,7 +123,7 @@
                   <div><h4 id="personal-skill-details-title">Details & enablement</h4><p>Name the skill and decide whether the Agent may discover it automatically.</p></div>
                 </div>
                 <div class="personal-editor-section__fields">
-                  <v-text-field v-model.trim="name" :rules="[nameRule]" label="Skill name" :disabled="Boolean(editingId) || saving" hint="Lowercase letters, numbers, and single hyphens; the name cannot be changed later." persistent-hint maxlength="64" autocomplete="off" />
+                  <v-text-field ref="nameInput" v-model.trim="name" :rules="[nameRule]" label="Skill name" :disabled="Boolean(editingId) || saving" hint="Lowercase letters, numbers, and single hyphens; the name cannot be changed later." persistent-hint maxlength="64" autocomplete="off" />
                   <div class="personal-discovery">
                     <v-switch v-model="isAgentDiscoverable" label="Load automatically when relevant" color="primary" inset hide-details :disabled="saving" />
                     <p>{{ isAgentDiscoverable ? 'The Agent may select this skill when its description matches your request.' : 'Available only when you invoke it with / or the Skills menu.' }}</p>
@@ -139,7 +143,7 @@
                   <div><h4 id="personal-skill-code-title">SKILL.md source</h4><p>YAML frontmatter declares provenance; the Markdown body contains the instructions.</p></div>
                   <v-chip size="x-small" variant="outlined">Plain text · 64 KiB</v-chip>
                 </div>
-                <v-textarea v-model="skillMarkdown" label="Exact personal skill source" hint="Frontmatter must include this exact name and a description. Remote resources, active content, and likely secrets are rejected." persistent-hint rows="18" max-rows="30" counter="65536" maxlength="65536" class="personal-editor__code" :disabled="saving" spellcheck="false" :rules="[markdownRule]" />
+                <v-textarea ref="markdownInput" v-model="skillMarkdown" label="Exact personal skill source" hint="Frontmatter must include this exact name and a description. Remote resources, active content, and likely secrets are rejected." persistent-hint rows="18" max-rows="30" counter="65536" maxlength="65536" class="personal-editor__code" :disabled="saving" spellcheck="false" :rules="[markdownRule]" />
               </section>
             </v-form>
           </main>
@@ -150,19 +154,20 @@
         <div class="personal-skills__trust-note"><v-icon icon="mdi-account-lock-outline" size="18" /><span>Personal skills affect only your account. Organization policy always takes precedence.</span></div>
         <v-spacer />
         <v-btn @click="requestClose">Close</v-btn>
-        <v-btn color="primary" type="submit" :loading="saving" :disabled="!loaded || !formValid" form="personal-skill-form">{{ editingId ? 'Save revision' : 'Create skill' }}</v-btn>
+        <v-btn color="primary" type="submit" :loading="saving" :disabled="!loaded || !formValid || loading" form="personal-skill-form">{{ editingId ? 'Save revision' : 'Create skill' }}</v-btn>
       </v-card-actions>
     </v-card>
   </v-dialog>
 
-  <v-dialog :model-value="removing !== null" max-width="32rem" @update:model-value="value => { if (!value) removing = null }">
-    <v-card class="personal-confirmation">
+  <v-dialog :model-value="removing !== null" max-width="32rem" :persistent="saving" @update:model-value="value => { if (!value && !saving) cancelRemove() }">
+    <v-card ref="removeDialogCard" class="personal-confirmation">
       <div class="personal-confirmation__header personal-confirmation__header--danger"><span><v-icon icon="mdi-delete-alert-outline" size="21" /></span><div><div class="personal-skills__eyebrow">Destructive action</div><h2>Remove personal skill?</h2></div></div>
       <v-card-text>
         <v-alert class="mb-4" type="warning" variant="tonal" icon="mdi-history">Existing run history remains intact.</v-alert>
+        <v-alert v-if="removeError" class="mb-4" type="error" variant="tonal">{{ removeError }}</v-alert>
         <p><strong>{{ removing?.name }}</strong> will be removed from your personal library and can no longer be loaded automatically or invoked.</p>
       </v-card-text>
-      <v-card-actions><v-spacer /><v-btn :disabled="saving" @click="removing = null">Cancel</v-btn><v-btn color="error" prepend-icon="mdi-delete-outline" :loading="saving" :disabled="saving" @click="remove">Remove skill</v-btn></v-card-actions>
+      <v-card-actions><v-spacer /><v-btn :disabled="saving" @click="cancelRemove">Cancel</v-btn><v-btn color="error" prepend-icon="mdi-delete-outline" :loading="saving" :disabled="saving" @click="remove">Remove skill</v-btn></v-card-actions>
     </v-card>
   </v-dialog>
 
@@ -175,7 +180,7 @@
   </v-dialog>
 </template>
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { useDisplay } from 'vuetify'
 import {
   createPersonalAgentSkill,
@@ -184,6 +189,7 @@ import {
   updatePersonalAgentSkill,
   type PersonalAgentSkill
 } from '../../helpers/agents-api.ts'
+import { createModalFocusScope, type ModalFocusScope } from '../common/modal-focus-scope'
 
 const props = defineProps<{ csrfToken: string }>()
 const emit = defineEmits<{ changed: [] }>()
@@ -203,6 +209,15 @@ const removing = ref<PersonalAgentSkill | null>(null)
 const discardOpen = ref(false)
 const pendingNavigation = ref<(() => void) | null>(null)
 const baseline = ref({ name: '', skillMarkdown: '', isAgentDiscoverable: true })
+const refreshError = ref('')
+const removeError = ref('')
+type ComponentRoot = { $el?: HTMLElement }
+const editorRoot = ref<HTMLElement | null>(null)
+const nameInput = ref<ComponentRoot | HTMLElement | null>(null)
+const markdownInput = ref<ComponentRoot | HTMLElement | null>(null)
+const removeDialogCard = ref<ComponentRoot | HTMLElement | null>(null)
+const destructiveRestoreTarget = ref<HTMLElement | null>(null)
+let destructiveFocusScope: ModalFocusScope | null = null
 const selectedSkill = computed(() => skills.value.find(skill => skill.id === editingId.value) ?? null)
 const filteredSkills = computed(() => {
   const query = search.value.trim().toLocaleLowerCase()
@@ -231,67 +246,127 @@ const applyEdit = (skill: PersonalAgentSkill): void => {
 const requestNavigation = (action: () => void): void => {
   if (isDirty.value) { pendingNavigation.value = action; discardOpen.value = true } else action()
 }
-const requestNew = (): void => requestNavigation(applyNew)
-const requestEdit = (skill: PersonalAgentSkill): void => requestNavigation(() => applyEdit(skill))
+const componentElement = (component: ComponentRoot | HTMLElement | null): HTMLElement | null => {
+  if (!component) return null
+  return component instanceof HTMLElement ? component : component.$el ?? null
+}
+const revealEditor = async (): Promise<void> => {
+  if (!smAndDown.value) return
+  await nextTick()
+  const editor = editorRoot.value
+  if (!editor) return
+  editor.scrollIntoView({ block: 'start' })
+  const field = componentElement(editingId.value ? markdownInput.value : nameInput.value)
+    ?.querySelector<HTMLElement>(editingId.value ? 'textarea' : 'input')
+  ;(field ?? editor).focus({ preventScroll: true })
+}
+const requestNew = (): void => requestNavigation(() => { applyNew(); void revealEditor() })
+const requestEdit = (skill: PersonalAgentSkill): void => requestNavigation(() => { applyEdit(skill); void revealEditor() })
 const requestClose = (): void => requestNavigation(() => { open.value = false })
+const requestRefresh = (): void => requestNavigation(() => { void load() })
 const confirmDiscard = (): void => {
   discardOpen.value = false
   const action = pendingNavigation.value
   pendingNavigation.value = null
   action?.()
 }
-const load = async (selectedId?: string): Promise<void> => {
-  if (loading.value) return
-  loading.value = true; error.value = ''
+const load = async (selectedId?: string, committedMessage?: string): Promise<boolean> => {
+  if (loading.value) return false
+  loading.value = true
+  refreshError.value = ''
   try {
-    skills.value = await listPersonalAgentSkills(fetcher, props.csrfToken); loaded.value = true
+    skills.value = await listPersonalAgentSkills(fetcher, props.csrfToken)
+    loaded.value = true
     const selected = skills.value.find(skill => skill.id === selectedId) ?? skills.value.find(skill => skill.id === editingId.value)
     if (selected) applyEdit(selected)
     else applyNew()
-  } catch (caught) { error.value = caught instanceof Error ? caught.message : 'Personal skills could not be loaded.' }
-  finally { loading.value = false }
+    return true
+  } catch (caught) {
+    const reason = caught instanceof Error ? caught.message : loaded.value ? 'Personal skills could not be refreshed.' : 'Personal skills could not be loaded.'
+    refreshError.value = loaded.value ? `${committedMessage ? `${committedMessage} ` : ''}Showing last-loaded personal skills. ${reason}` : reason
+    return false
+  } finally {
+    loading.value = false
+  }
 }
 const save = async (): Promise<void> => {
-  if (saving.value || !formValid.value) return
+  if (saving.value || loading.value || !formValid.value) return
   saving.value = true
   error.value = ''
+  let saved: PersonalAgentSkill
   try {
     const current = selectedSkill.value
-    const saved = current
+    saved = current
       ? await updatePersonalAgentSkill(fetcher, props.csrfToken, current.id, { expectedVersionId: current.versionId, skillMarkdown: skillMarkdown.value, isAgentDiscoverable: isAgentDiscoverable.value })
       : await createPersonalAgentSkill(fetcher, props.csrfToken, { name: name.value, skillMarkdown: skillMarkdown.value, isAgentDiscoverable: isAgentDiscoverable.value })
-    editingId.value = saved.id
-    await load(saved.id)
-    emit('changed')
   } catch (caught) {
     error.value = caught instanceof Error ? caught.message : 'Personal skill could not be saved.'
-  } finally {
     saving.value = false
+    return
   }
+  skills.value = [...skills.value.filter(skill => skill.id !== saved.id), saved]
+  applyEdit(saved)
+  emit('changed')
+  await load(saved.id, 'Skill was saved.')
+  saving.value = false
+}
+const beginRemove = (skill: PersonalAgentSkill | null, event: MouseEvent): void => {
+  if (!skill) return
+  removeError.value = ''
+  destructiveRestoreTarget.value = event.currentTarget instanceof HTMLElement ? event.currentTarget : null
+  removing.value = skill
+}
+const cancelRemove = (): void => {
+  if (saving.value) return
+  removing.value = null
+  removeError.value = ''
 }
 const remove = async (): Promise<void> => {
   const skill = removing.value
-  if (!skill || saving.value) return
+  if (!skill || saving.value || loading.value) return
   saving.value = true
-  error.value = ''
+  removeError.value = ''
   try {
     await removePersonalAgentSkill(fetcher, props.csrfToken, skill.id, skill.versionId)
-    removing.value = null
-    editingId.value = null
-    await load()
-    emit('changed')
   } catch (caught) {
-    removing.value = null
-    error.value = caught instanceof Error ? caught.message : 'Personal skill could not be removed.'
-  } finally {
+    removeError.value = caught instanceof Error ? caught.message : 'Personal skill could not be removed.'
     saving.value = false
+    return
   }
+  skills.value = skills.value.filter(candidate => candidate.id !== skill.id)
+  applyNew()
+  destructiveRestoreTarget.value = editorRoot.value
+  removing.value = null
+  emit('changed')
+  await load(undefined, 'Skill was removed.')
+  saving.value = false
 }
+watch(removing, async skill => {
+  if (!skill) {
+    await nextTick()
+    destructiveFocusScope?.deactivate({ restoreFocus: true })
+    destructiveFocusScope = null
+    destructiveRestoreTarget.value = null
+    return
+  }
+  await nextTick()
+  const root = componentElement(removeDialogCard.value)
+  if (!root) return
+  destructiveFocusScope?.deactivate({ restoreFocus: false })
+  destructiveFocusScope = createModalFocusScope({
+    root,
+    restoreTarget: () => destructiveRestoreTarget.value,
+    onEscape: () => {
+      if (!saving.value) cancelRemove()
+    }
+  })
+})
 watch(name, (next, previous) => {
   if (editingId.value || next === previous) return
   skillMarkdown.value = skillMarkdown.value.replace(/^name:\s*.*$/m, `name: ${next}`)
 })
 watch(open, value => { if (value) void load() })
+onBeforeUnmount(() => destructiveFocusScope?.deactivate({ restoreFocus: false }))
 </script>
 
 <style scoped>

@@ -1,17 +1,65 @@
 <template>
-  <div class="agent-markdown" v-html="rendered" @click="copyCode" />
+  <div ref="markdownRoot" class="agent-markdown" v-html="rendered" @click="copyCode" />
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount } from 'vue'
+import { nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import type { AgentCitation } from '../../../shared/agents/contracts.ts'
 import { renderSafeMarkdown } from '../../helpers/safe-markdown.ts'
 import { formatAgentCitationMarkers } from './agent-citations.ts'
 
-const props = withDefaults(defineProps<{ content: string, citations?: readonly AgentCitation[] }>(), {
-  citations: () => []
+const props = withDefaults(defineProps<{
+  content: string
+  citations?: readonly AgentCitation[]
+  streaming?: boolean
+}>(), {
+  citations: () => [],
+  streaming: false
 })
-const rendered = computed(() => renderSafeMarkdown(formatAgentCitationMarkers(props.content, props.citations))
+
+interface CopyReset {
+  readonly timer: number
+  readonly expiresAt: number
+}
+
+interface RenderedDomState {
+  readonly focusIndex: number
+  readonly scrollPositions: readonly { readonly left: number; readonly top: number }[]
+  readonly copyFeedback: readonly {
+    readonly index: number
+    readonly label: string
+    readonly ariaLabel: string
+    readonly state: 'success' | 'error'
+    readonly remaining: number
+  }[]
+}
+
+const markdownRoot = ref<HTMLElement | null>(null)
+const resetTimers = new Map<HTMLButtonElement, CopyReset>()
+const resetCopyLabel = (button: HTMLButtonElement): void => {
+  button.textContent = 'Copy'
+  button.setAttribute('aria-label', 'Copy code to clipboard')
+  button.removeAttribute('data-copy-state')
+}
+const scheduleCopyReset = (button: HTMLButtonElement, delay: number): void => {
+  const activeReset = resetTimers.get(button)
+  if (activeReset) window.clearTimeout(activeReset.timer)
+  const timer = window.setTimeout(() => {
+    resetTimers.delete(button)
+    if (button.isConnected) resetCopyLabel(button)
+  }, delay)
+  resetTimers.set(button, { timer, expiresAt: Date.now() + delay })
+}
+const showCopyResult = (button: HTMLButtonElement, label: string, state: 'success' | 'error'): void => {
+  button.textContent = label
+  button.setAttribute('aria-label', label)
+  button.dataset.copyState = state
+  scheduleCopyReset(button, 2_000)
+}
+
+const renderMarkdown = (): string => renderSafeMarkdown(
+  formatAgentCitationMarkers(props.content, props.citations, props.streaming)
+)
   .replace(
     /<pre(?=>|\s)/g,
     '<div class="agent-markdown__code-shell"><div class="agent-markdown__code-toolbar"><span>Code</span><button type="button" class="agent-markdown__copy" data-copy-code aria-label="Copy code to clipboard" aria-live="polite">Copy</button></div><pre tabindex="0" aria-label="Scrollable code block"'
@@ -25,42 +73,129 @@ const rendered = computed(() => renderSafeMarkdown(formatAgentCitationMarkers(pr
   .replace(
     /<a(?=[^>]*\btarget=["']_blank["'])([^>]*)>/g,
     '<a$1><span class="agent-markdown__new-window"> (opens in a new tab)</span>'
-  ))
+  )
 
-const resetTimers = new Map<HTMLButtonElement, number>()
-const resetCopyLabel = (button: HTMLButtonElement): void => {
-  button.textContent = 'Copy'
-  button.setAttribute('aria-label', 'Copy code to clipboard')
-  button.removeAttribute('data-copy-state')
+const focusableElements = (root: HTMLElement): readonly HTMLElement[] => [
+  ...root.querySelectorAll<HTMLElement>('a[href], button, pre[tabindex], [role="region"][tabindex]')
+]
+const scrollableElements = (root: HTMLElement): readonly HTMLElement[] => [
+  ...root.querySelectorAll<HTMLElement>('pre[tabindex], .agent-markdown__table-shell')
+]
+const captureRenderedDomState = (): RenderedDomState | null => {
+  const root = markdownRoot.value
+  if (!root || typeof document === 'undefined') return null
+  const focusables = focusableElements(root)
+  const activeElement = document.activeElement
+  const copyButtons = [...root.querySelectorAll<HTMLButtonElement>('[data-copy-code]')]
+  return {
+    focusIndex: activeElement instanceof HTMLElement && root.contains(activeElement)
+      ? focusables.indexOf(activeElement)
+      : -1,
+    scrollPositions: scrollableElements(root).map(element => ({
+      left: element.scrollLeft,
+      top: element.scrollTop
+    })),
+    copyFeedback: copyButtons.flatMap((button, index) => {
+      const state = button.dataset.copyState
+      const reset = resetTimers.get(button)
+      if ((state !== 'success' && state !== 'error') || !reset) return []
+      return [{
+        index,
+        label: button.textContent ?? '',
+        ariaLabel: button.getAttribute('aria-label') ?? '',
+        state,
+        remaining: Math.max(0, reset.expiresAt - Date.now())
+      }]
+    })
+  }
 }
-const showCopyResult = (button: HTMLButtonElement, label: string, state: 'success' | 'error'): void => {
-  const activeTimer = resetTimers.get(button)
-  if (activeTimer !== undefined) window.clearTimeout(activeTimer)
-  button.textContent = label
-  button.setAttribute('aria-label', label)
-  button.dataset.copyState = state
-  const timer = window.setTimeout(() => {
+const restoreRenderedDomState = (state: RenderedDomState | null): void => {
+  const root = markdownRoot.value
+  if (!root || !state) return
+  const scrollables = scrollableElements(root)
+  for (const [index, position] of state.scrollPositions.entries()) {
+    const element = scrollables[index]
+    if (!element) continue
+    element.scrollLeft = position.left
+    element.scrollTop = position.top
+  }
+
+  for (const [button, reset] of resetTimers) {
+    if (button.isConnected) continue
+    window.clearTimeout(reset.timer)
     resetTimers.delete(button)
-    if (button.isConnected) resetCopyLabel(button)
-  }, 2_000)
-  resetTimers.set(button, timer)
+  }
+  const copyButtons = [...root.querySelectorAll<HTMLButtonElement>('[data-copy-code]')]
+  for (const feedback of state.copyFeedback) {
+    const button = copyButtons[feedback.index]
+    if (!button) continue
+    button.textContent = feedback.label
+    button.setAttribute('aria-label', feedback.ariaLabel)
+    button.dataset.copyState = feedback.state
+    scheduleCopyReset(button, feedback.remaining)
+  }
+  if (state.focusIndex >= 0) focusableElements(root)[state.focusIndex]?.focus({ preventScroll: true })
 }
+
+const rendered = ref(renderMarkdown())
+let scheduledFrame: number | null = null
+let renderVersion = 0
+const commitRender = (): void => {
+  scheduledFrame = null
+  const nextRendered = renderMarkdown()
+  if (nextRendered === rendered.value) return
+  const domState = captureRenderedDomState()
+  const version = ++renderVersion
+  rendered.value = nextRendered
+  void nextTick(() => {
+    if (version === renderVersion) restoreRenderedDomState(domState)
+  })
+}
+const scheduleRender = (): void => {
+  if (scheduledFrame !== null) return
+  if (typeof window === 'undefined') {
+    commitRender()
+    return
+  }
+  scheduledFrame = window.requestAnimationFrame(commitRender)
+}
+watch(
+  () => [props.content, props.citations, props.streaming] as const,
+  () => {
+    if (props.streaming) {
+      scheduleRender()
+      return
+    }
+    if (scheduledFrame !== null) window.cancelAnimationFrame(scheduledFrame)
+    scheduledFrame = null
+    commitRender()
+  }
+)
+
 const copyCode = async (event: MouseEvent): Promise<void> => {
   const target = event.target
   if (!(target instanceof Element)) return
   const button = target.closest<HTMLButtonElement>('[data-copy-code]')
   if (!button) return
+  const copyIndex = [...(markdownRoot.value?.querySelectorAll<HTMLButtonElement>('[data-copy-code]') ?? [])].indexOf(button)
   const code = button.closest('.agent-markdown__code-shell')?.querySelector('pre')?.textContent
-  if (!code) return
+  if (code == null) return
   try {
     await navigator.clipboard.writeText(code)
-    showCopyResult(button, 'Copied', 'success')
+    const currentButton = button.isConnected
+      ? button
+      : [...(markdownRoot.value?.querySelectorAll<HTMLButtonElement>('[data-copy-code]') ?? [])][copyIndex]
+    if (currentButton) showCopyResult(currentButton, 'Copied', 'success')
   } catch {
-    showCopyResult(button, 'Copy unavailable', 'error')
+    const currentButton = button.isConnected
+      ? button
+      : [...(markdownRoot.value?.querySelectorAll<HTMLButtonElement>('[data-copy-code]') ?? [])][copyIndex]
+    if (currentButton) showCopyResult(currentButton, 'Copy unavailable', 'error')
   }
 }
 onBeforeUnmount(() => {
-  for (const timer of resetTimers.values()) window.clearTimeout(timer)
+  if (scheduledFrame !== null) window.cancelAnimationFrame(scheduledFrame)
+  for (const reset of resetTimers.values()) window.clearTimeout(reset.timer)
   resetTimers.clear()
 })
 </script>

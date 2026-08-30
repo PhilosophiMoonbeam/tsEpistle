@@ -187,6 +187,12 @@ const Artifact = z.object({
   available: z.boolean()
 })
 const Suggestion = z.object({ id: z.string(), label: z.string(), prompt: z.string() })
+const HistoryWindow = z.object({
+  messageLimit: z.number().int().positive(),
+  hasOlderMessages: z.boolean(),
+  runLimit: z.number().int().positive(),
+  hasOlderRuns: z.boolean()
+})
 const Thread = z.object({
   session: Session,
   messages: z.array(Message),
@@ -195,6 +201,7 @@ const Thread = z.object({
   goal: Goal.nullable(),
   proposals: z.array(Proposal),
   artifacts: z.array(Artifact),
+  historyWindow: HistoryWindow,
   suggestions: z.array(Suggestion)
 })
 const LaunchPage = z
@@ -305,6 +312,18 @@ export interface CreatedAgentThread extends AgentThreadState {
   readonly launchPage?: z.infer<typeof LaunchPage>
 }
 export type McpAgentProposal = z.infer<typeof McpProposal>
+export interface AgentSessionPage {
+  readonly sessions: AgentSessionSummary[]
+  readonly nextCursor: string | null
+}
+
+export interface ListAgentSessionsOptions {
+  readonly limit?: number
+  readonly cursor?: string
+  readonly signal?: AbortSignal
+}
+
+const MAX_ERROR_MESSAGE_LENGTH = 512
 
 const fallbackErrorMessage = (status: number): string => {
   if (status === 401) return 'Your Wiki session expired. Sign in again and retry.'
@@ -315,11 +334,26 @@ const fallbackErrorMessage = (status: number): string => {
   return `Agent request failed (${status})`
 }
 
+const retryableStatus = (status: number): boolean => status === 408 || status === 425 || status === 429 || status >= 500
+
+export class AgentApiError extends Error {
+  readonly status: number
+  readonly retryable: boolean
+
+  constructor(status: number, message: string) {
+    super(message.slice(0, MAX_ERROR_MESSAGE_LENGTH))
+    this.name = 'AgentApiError'
+    this.status = status
+    this.retryable = retryableStatus(status)
+  }
+}
+
 const errorMessage = async (response: Response): Promise<string> => {
   const fallback = fallbackErrorMessage(response.status)
   try {
     const parsed = z.object({ message: z.string().optional(), error: z.string().optional() }).parse(await response.json())
-    return (parsed.message ?? parsed.error ?? fallback).slice(0, 512)
+    const supplied = parsed.message?.trim() || parsed.error?.trim()
+    return (supplied || fallback).slice(0, MAX_ERROR_MESSAGE_LENGTH)
   } catch {
     return fallback
   }
@@ -336,14 +370,30 @@ const requestJson = async <T>(fetcher: typeof fetch, csrfToken: string, path: st
       ...init.headers
     }
   })
-  if (!response.ok) throw new Error(await errorMessage(response))
+  if (!response.ok) throw new AgentApiError(response.status, await errorMessage(response))
   return schema.parse(await response.json())
 }
 
-export const listAgentSessions = async (fetcher: typeof fetch, csrfToken: string): Promise<AgentSessionSummary[]> =>
-  (await requestJson(fetcher, csrfToken, '/_api/agents/sessions', z.object({ sessions: z.array(SessionSummary) }))).sessions
-export const listAgentConversationFolders = async (fetcher: typeof fetch, csrfToken: string): Promise<AgentConversationFolderView[]> =>
-  (await requestJson(fetcher, csrfToken, '/_api/agents/conversation-folders', z.object({ folders: z.array(ConversationFolder) }))).folders
+export const listAgentSessions = async (
+  fetcher: typeof fetch,
+  csrfToken: string,
+  options: ListAgentSessionsOptions = {}
+): Promise<AgentSessionPage> => {
+  const query = new URLSearchParams()
+  if (options.limit !== undefined) query.set('limit', String(z.number().int().min(1).max(100).parse(options.limit)))
+  if (options.cursor !== undefined) query.set('cursor', options.cursor)
+  const encodedQuery = query.toString()
+  const suffix = encodedQuery ? `?${encodedQuery}` : ''
+  return requestJson(
+    fetcher,
+    csrfToken,
+    `/_api/agents/sessions${suffix}`,
+    z.object({ sessions: z.array(SessionSummary), nextCursor: z.string().min(1).max(512).nullable() }),
+    { signal: options.signal }
+  )
+}
+export const listAgentConversationFolders = async (fetcher: typeof fetch, csrfToken: string, signal?: AbortSignal): Promise<AgentConversationFolderView[]> =>
+  (await requestJson(fetcher, csrfToken, '/_api/agents/conversation-folders', z.object({ folders: z.array(ConversationFolder) }), { signal })).folders
 
 export const createAgentConversationFolder = async (fetcher: typeof fetch, csrfToken: string, name: string): Promise<AgentConversationFolderView> =>
   (
@@ -381,8 +431,8 @@ export const deleteAgentConversationFolder = async (fetcher: typeof fetch, csrfT
 export const createAgentThread = (fetcher: typeof fetch, csrfToken: string, input: CreateAgentSessionRequest): Promise<CreatedAgentThread> =>
   requestJson(fetcher, csrfToken, '/_api/agents/sessions', CreatedThread, { method: 'POST', body: JSON.stringify(input) }) as Promise<CreatedAgentThread>
 
-export const getAgentThread = (fetcher: typeof fetch, csrfToken: string, sessionId: string): Promise<AgentThreadState> =>
-  requestJson(fetcher, csrfToken, `/_api/agents/sessions/${encodeURIComponent(sessionId)}`, Thread) as Promise<AgentThreadState>
+export const getAgentThread = (fetcher: typeof fetch, csrfToken: string, sessionId: string, signal?: AbortSignal): Promise<AgentThreadState> =>
+  requestJson(fetcher, csrfToken, `/_api/agents/sessions/${encodeURIComponent(sessionId)}`, Thread, { signal }) as Promise<AgentThreadState>
 export const moveAgentSessionToFolder = (
   fetcher: typeof fetch,
   csrfToken: string,
@@ -400,7 +450,7 @@ export const deleteAgentSession = async (fetcher: typeof fetch, csrfToken: strin
     credentials: 'same-origin',
     headers: { 'x-wiki-csrf': csrfToken }
   })
-  if (!response.ok) throw new Error(await errorMessage(response))
+  if (!response.ok) throw new AgentApiError(response.status, await errorMessage(response))
 }
 export const resetAgentHistory = async (fetcher: typeof fetch, csrfToken: string): Promise<void> => {
   const response = await sameOriginJsonFetch(fetcher, '/_api/agents/sessions', {
@@ -408,11 +458,11 @@ export const resetAgentHistory = async (fetcher: typeof fetch, csrfToken: string
     credentials: 'same-origin',
     headers: { 'x-wiki-csrf': csrfToken }
   })
-  if (!response.ok) throw new Error(await errorMessage(response))
+  if (!response.ok) throw new AgentApiError(response.status, await errorMessage(response))
 }
 
-export const getAgentMemories = (fetcher: typeof fetch, csrfToken: string): Promise<AgentMemoryView> =>
-  requestJson(fetcher, csrfToken, '/_api/agents/memories', MemoryView)
+export const getAgentMemories = (fetcher: typeof fetch, csrfToken: string, signal?: AbortSignal): Promise<AgentMemoryView> =>
+  requestJson(fetcher, csrfToken, '/_api/agents/memories', MemoryView, { signal })
 
 export const createAgentMemory = (fetcher: typeof fetch, csrfToken: string, input: { readonly target: AgentMemoryTarget; readonly content: string }) =>
   requestJson(fetcher, csrfToken, '/_api/agents/memories', MemoryMutation, { method: 'POST', body: JSON.stringify(input) })
@@ -505,11 +555,11 @@ export const decideAgentProposal = async (
     { method: 'POST', body: JSON.stringify(input) }
   )
 
-export const getMcpAgentProposal = async (fetcher: typeof fetch, csrfToken: string, proposalId: string): Promise<McpAgentProposal> =>
-  (await requestJson(fetcher, csrfToken, `/_api/agents/mcp-proposals/${encodeURIComponent(proposalId)}`, z.object({ proposal: McpProposal }))).proposal
+export const getMcpAgentProposal = async (fetcher: typeof fetch, csrfToken: string, proposalId: string, signal?: AbortSignal): Promise<McpAgentProposal> =>
+  (await requestJson(fetcher, csrfToken, `/_api/agents/mcp-proposals/${encodeURIComponent(proposalId)}`, z.object({ proposal: McpProposal }), { signal })).proposal
 
-export const listAgentProfiles = async (fetcher: typeof fetch, csrfToken: string): Promise<AgentProviderProfileView[]> =>
-  (await requestJson(fetcher, csrfToken, '/_api/agents/profiles', z.object({ profiles: z.array(Profile) }))).profiles as AgentProviderProfileView[]
+export const listAgentProfiles = async (fetcher: typeof fetch, csrfToken: string, signal?: AbortSignal): Promise<AgentProviderProfileView[]> =>
+  (await requestJson(fetcher, csrfToken, '/_api/agents/profiles', z.object({ profiles: z.array(Profile) }), { signal })).profiles as AgentProviderProfileView[]
 
 export const updateAgentProfile = (
   fetcher: typeof fetch,
@@ -522,11 +572,11 @@ export const updateAgentProfile = (
     body: JSON.stringify({ expectedSessionVersion: input.expectedSessionVersion, profileId: input.providerProfileId })
   }) as Promise<AgentThreadState>
 
-export const listAgentSkills = async (fetcher: typeof fetch, csrfToken: string): Promise<VisibleAgentSkill[]> =>
-  (await requestJson(fetcher, csrfToken, '/_api/agents/skills', z.object({ skills: z.array(VisibleSkill) }))).skills
+export const listAgentSkills = async (fetcher: typeof fetch, csrfToken: string, signal?: AbortSignal): Promise<VisibleAgentSkill[]> =>
+  (await requestJson(fetcher, csrfToken, '/_api/agents/skills', z.object({ skills: z.array(VisibleSkill) }), { signal })).skills
 
-export const listPersonalAgentSkills = async (fetcher: typeof fetch, csrfToken: string): Promise<PersonalAgentSkill[]> =>
-  (await requestJson(fetcher, csrfToken, '/_api/agents/personal-skills', z.object({ skills: z.array(PersonalSkill) }))).skills
+export const listPersonalAgentSkills = async (fetcher: typeof fetch, csrfToken: string, signal?: AbortSignal): Promise<PersonalAgentSkill[]> =>
+  (await requestJson(fetcher, csrfToken, '/_api/agents/personal-skills', z.object({ skills: z.array(PersonalSkill) }), { signal })).skills
 
 export const createPersonalAgentSkill = async (
   fetcher: typeof fetch,
@@ -575,8 +625,9 @@ export const subscribeAgentRun = (
   const source = new EventSource(`/_api/agents/runs/${encodeURIComponent(runId)}/events?after=${after}`)
   for (const type of AGENT_EVENT_TYPES) {
     source.addEventListener(type, event => {
-      const sequence = Number((event as MessageEvent).lastEventId)
-      handlers.event(type, Number.isSafeInteger(sequence) ? sequence : after)
+      const eventId = (event as MessageEvent).lastEventId
+      const sequence = /^[1-9]\d*$/.test(eventId) ? Number(eventId) : Number.NaN
+      handlers.event(type, Number.isSafeInteger(sequence) && sequence > after ? sequence : after)
     })
   }
   source.addEventListener('error', handlers.error)

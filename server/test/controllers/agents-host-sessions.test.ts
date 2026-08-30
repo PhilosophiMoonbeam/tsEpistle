@@ -8,6 +8,7 @@ import createKnex, { type Knex } from 'knex'
 import { afterAll, beforeAll, describe, expect, it } from '../bun-test.mts'
 import createAgentsHostController from '../../controllers/agents-host.ts'
 import { AgentProductRuntime, type AgentEngine } from '../../agents/runtime.ts'
+import { AgentRunCoordinator, admitAgentRun, requestAgentRunCancellation, terminalizeAgentRun, transitionAgentRun } from '../../agents/coordinator.ts'
 import { up as addAgentGoals } from '../../db/migrations/2.5.157.ts'
 import { up as addAgentTaskLedger } from '../../db/migrations/2.5.156.ts'
 
@@ -402,10 +403,11 @@ describe('ordinary-origin agent session API', () => {
     expect(state.session.profileResolutionToken).toMatch(/^[A-Za-z0-9_-]{43}$/)
     const own = await fetch(`${baseUrl}/_api/agents/sessions/${state.session.id}`, { headers: { cookie } })
     expect(own.status).toBe(200)
+    expect(await own.json()).toMatchObject({
+      historyWindow: { messageLimit: 200, hasOlderMessages: false, runLimit: 200, hasOlderRuns: false }
+    })
     const emptyHistory = await fetch(`${baseUrl}/_api/agents/sessions`, { headers: { cookie } })
-    expect(((await emptyHistory.json()) as { sessions: Array<{ id: string }> }).sessions).not.toEqual(
-      expect.arrayContaining([expect.objectContaining({ id: state.session.id })])
-    )
+    expect(await emptyHistory.json()).toEqual({ sessions: [], nextCursor: null })
     ownerId = 8
     const foreign = await fetch(`${baseUrl}/_api/agents/sessions/${state.session.id}`, { headers: { cookie } })
     expect(foreign.status).toBe(404)
@@ -534,7 +536,11 @@ describe('ordinary-origin agent session API', () => {
       headers,
       body: JSON.stringify({ retention: 'saved', providerProfileId: null })
     })
-    const state = (await created.json()) as { session: { id: string; version: number; profileResolutionToken: string } }
+    const state = (await created.json()) as {
+      session: { id: string; version: number; profileResolutionToken: string }
+      historyWindow: { messageLimit: number; hasOlderMessages: boolean; runLimit: number; hasOlderRuns: boolean }
+    }
+    expect(state.historyWindow).toEqual({ messageLimit: 200, hasOlderMessages: false, runLimit: 200, hasOlderRuns: false })
     const request = {
       clientRequestId: '00000000-0000-4000-8000-000000000071',
       expectedSessionVersion: state.session.version,
@@ -560,6 +566,20 @@ describe('ordinary-origin agent session API', () => {
       }
       replayed: boolean
     }
+    const projectedRunFields = [
+      'attempt',
+      'canCancel',
+      'completedAt',
+      'createdAt',
+      'errorCode',
+      'errorMessage',
+      'eventSequence',
+      'id',
+      'sessionId',
+      'startedAt',
+      'status'
+    ]
+    expect(Object.keys(admission.run).sort()).toEqual(projectedRunFields)
     expect(admission).toMatchObject({
       replayed: false,
       run: {
@@ -583,18 +603,33 @@ describe('ordinary-origin agent session API', () => {
     expect(engineCurrentPage).toEqual(request.currentPage)
     expect(engineMemory).toEqual({ user: [], agent: [] })
     const reconnected = await fetch(`${baseUrl}/_api/agents/sessions/${state.session.id}`, { headers: { cookie } })
-    const thread = (await reconnected.json()) as { messages: Array<{ role: string; status: string; content: string }> }
+    const thread = (await reconnected.json()) as {
+      messages: Array<{ role: string; status: string; content: string }>
+      historyWindow: { messageLimit: number; hasOlderMessages: boolean; runLimit: number; hasOlderRuns: boolean }
+    }
     expect(thread.messages.at(-1)).toMatchObject({ role: 'assistant', status: 'complete', content: 'Hello from the deterministic engine.' })
+    expect(thread.historyWindow).toEqual({ messageLimit: 200, hasOlderMessages: false, runLimit: 200, hasOlderRuns: false })
     const completed = await fetch(`${baseUrl}/_api/agents/runs/${admission.run.id}`, { headers: { cookie } })
-    expect(await completed.json()).toMatchObject({ run: { status: 'succeeded' } })
-    const populatedHistory = await fetch(`${baseUrl}/_api/agents/sessions`, { headers: { cookie } })
-    expect(((await populatedHistory.json()) as { sessions: Array<{ id: string }> }).sessions).toEqual(
-      expect.arrayContaining([expect.objectContaining({ id: state.session.id })])
-    )
+    const completedProjection = (await completed.json()) as { run: typeof admission.run }
+    expect(completedProjection.run).toMatchObject({ id: admission.run.id, sessionId: state.session.id, status: 'succeeded', canCancel: false })
+    expect(Object.keys(completedProjection.run).sort()).toEqual(projectedRunFields)
+    const populatedHistory = (await (
+      await fetch(`${baseUrl}/_api/agents/sessions`, { headers: { cookie } })
+    ).json()) as { sessions: Array<{ id: string }>; nextCursor: string | null }
+    expect(populatedHistory).toMatchObject({
+      sessions: expect.arrayContaining([expect.objectContaining({ id: state.session.id })]),
+      nextCursor: null
+    })
     const events = await fetch(`${baseUrl}/_api/agents/runs/${admission.run.id}/events`, { headers: { cookie, accept: 'text/event-stream' } })
     const replay = await events.text()
     expect(replay).toContain('event: message.delta')
     expect(replay).toContain('event: message.completed')
+    const messageCompletedIndex = replay.indexOf('event: message.completed')
+    const runCompletedIndex = replay.indexOf('event: run.completed')
+    expect(messageCompletedIndex).toBeGreaterThan(-1)
+    expect(runCompletedIndex).toBeGreaterThan(messageCompletedIndex)
+    expect(replay.match(/event: message\.completed/g)).toHaveLength(1)
+    expect(replay.match(/event: run\.completed/g)).toHaveLength(1)
     expect(replay).toContain('event: suggestions.updated')
     expect(replay).toContain('"model":{"costMicros":8,"inputTokens":3,"outputTokens":5}')
     expect(replay).toContain('"orchestration":{"costMicros":0,"inputTokens":0,"outputTokens":0,"taskCount":0}')
@@ -817,6 +852,353 @@ describe('ordinary-origin agent session API', () => {
     expect(await removed.json()).toEqual({ deleted: true, movedSessions: 0 })
   })
 
+  it('terminalizes cancellation atomically, preserves terminal state, and drains approval waiters', async () => {
+    const now = new Date()
+    const headers = { cookie, 'content-type': 'application/json', origin: 'https://wiki.example.test', 'sec-fetch-site': 'same-origin', 'x-wiki-csrf': csrf }
+    const sessionId = '00000000-0000-4000-8000-000000000201'
+    await db('agentSessions').insert({
+      id: sessionId,
+      ownerId: 7,
+      title: 'Terminal fence',
+      titleSource: 'none',
+      retention: 'saved',
+      folderId: null,
+      providerProfileId: null,
+      executionMode: 'agent',
+      version: 1,
+      summary: null,
+      summaryThroughOrdinal: null,
+      memorySnapshot: '{"agent":[],"user":[]}',
+      createdAt: now,
+      updatedAt: now,
+      lastActivityAt: now,
+      expiresAt: null,
+      deletedAt: null
+    })
+    const admit = (runId: string, requestId: string, userMessageId: string, assistantMessageId: string) =>
+      admitAgentRun(db, {
+        id: runId,
+        userMessageId,
+        assistantMessageId,
+        ownerId: 7,
+        sessionId,
+        clientRequestId: requestId,
+        expectedSessionVersion: 1,
+        profileResolutionSha256: 'd'.repeat(64),
+        content: 'Cancel this run.',
+        providerProfileVersionId: '00000000-0000-4000-8000-000000000205',
+        transportKind: 'test',
+        model: 'deterministic',
+        executionMode: 'agent',
+        profilePolicyVersion: 1,
+        defaultGeneration: 1,
+        capabilityRevision: 'test-v1',
+        pricingRevision: 'test-v1',
+        promptVersion: 1,
+        skillVersionIds: [],
+        quota: { tokens: 10, costMicros: 20 },
+        quotaLimits: { dailyTokens: 1_000, dailyCostMicros: 1_000 },
+        reservationExpiresAt: new Date(now.valueOf() + 60_000),
+        now
+      })
+
+    const queued = await admit(
+      '00000000-0000-4000-8000-000000000211',
+      '00000000-0000-4000-8000-000000000212',
+      '00000000-0000-4000-8000-000000000213',
+      '00000000-0000-4000-8000-000000000214'
+    )
+    const queuedCancellationResponse = await fetch(`${baseUrl}/_api/agents/runs/${queued.run.id}/cancel`, { method: 'POST', headers })
+    expect(queuedCancellationResponse.status).toBe(200)
+    await requestAgentRunCancellation(db, 7, queued.run.id)
+
+    const awaiting = await admit(
+      '00000000-0000-4000-8000-000000000221',
+      '00000000-0000-4000-8000-000000000222',
+      '00000000-0000-4000-8000-000000000223',
+      '00000000-0000-4000-8000-000000000224'
+    )
+    await db('agentRuns').where({ id: awaiting.run.id }).update({
+      status: 'awaiting_approval',
+      attempts: 1,
+      leaseOwner: 'lost-worker',
+      leaseToken: '00000000-0000-4000-8000-000000000225',
+      leaseExpiresAt: new Date(now.valueOf() + 3_600_000)
+    })
+    const awaitingCancellationResponse = await fetch(`${baseUrl}/_api/agents/runs/${awaiting.run.id}/cancel`, { method: 'POST', headers })
+    expect(awaitingCancellationResponse.status).toBe(200)
+    await requestAgentRunCancellation(db, 7, awaiting.run.id)
+
+    const expired = await admit(
+      '00000000-0000-4000-8000-000000000241',
+      '00000000-0000-4000-8000-000000000242',
+      '00000000-0000-4000-8000-000000000243',
+      '00000000-0000-4000-8000-000000000244'
+    )
+    await db('agentRuns').where({ id: expired.run.id }).update({
+      status: 'running',
+      attempts: 1,
+      leaseOwner: 'expired-worker',
+      leaseToken: '00000000-0000-4000-8000-000000000245',
+      leaseExpiresAt: new Date(now.valueOf() - 1)
+    })
+    const expiredCancellationResponse = await fetch(`${baseUrl}/_api/agents/runs/${expired.run.id}/cancel`, { method: 'POST', headers })
+    expect(expiredCancellationResponse.status).toBe(200)
+    await requestAgentRunCancellation(db, 7, expired.run.id)
+
+    const racing = await admit(
+      '00000000-0000-4000-8000-000000000231',
+      '00000000-0000-4000-8000-000000000232',
+      '00000000-0000-4000-8000-000000000233',
+      '00000000-0000-4000-8000-000000000234'
+    )
+    const leaseToken = '00000000-0000-4000-8000-000000000235'
+    await db('agentRuns').where({ id: racing.run.id }).update({
+      status: 'running',
+      attempts: 1,
+      leaseOwner: 'remote-worker',
+      leaseToken,
+      leaseExpiresAt: new Date(now.valueOf() + 3_600_000)
+    })
+    const pendingCancellationResponse = await fetch(`${baseUrl}/_api/agents/runs/${racing.run.id}/cancel`, { method: 'POST', headers })
+    expect(pendingCancellationResponse.status).toBe(202)
+    const pendingCancellation = (await pendingCancellationResponse.json()) as { run: Record<string, unknown> }
+    expect(pendingCancellation.run).toMatchObject({
+      id: racing.run.id,
+      sessionId,
+      status: 'running',
+      attempt: 1,
+      eventSequence: 1,
+      canCancel: true,
+      createdAt: expect.any(String),
+      startedAt: null,
+      completedAt: null,
+      errorCode: null,
+      errorMessage: null
+    })
+    expect(await db('agentRuns').where({ id: racing.run.id }).first('status', 'cancelRequestedAt', 'leaseOwner', 'leaseToken', 'completedAt')).toMatchObject({
+      status: 'running',
+      cancelRequestedAt: expect.anything(),
+      leaseOwner: 'remote-worker',
+      leaseToken,
+      completedAt: null
+    })
+    expect(Object.keys(pendingCancellation.run).sort()).toEqual([
+      'attempt',
+      'canCancel',
+      'completedAt',
+      'createdAt',
+      'errorCode',
+      'errorMessage',
+      'eventSequence',
+      'id',
+      'sessionId',
+      'startedAt',
+      'status'
+    ])
+    const racingTerminalization: Parameters<typeof terminalizeAgentRun>[1] = {
+      runId: racing.run.id,
+      ownerId: 7,
+      expected: { statuses: ['running'], leaseOwner: 'remote-worker', leaseToken },
+      status: 'succeeded',
+      assistant: { status: 'complete', content: 'Late provider completion' },
+      quota: { consumedTokens: 4, consumedCostMicros: 8, status: 'consumed' },
+      runPatch: { inputTokens: 3, outputTokens: 1, estimatedCostMicros: 8 },
+      now
+    }
+    await terminalizeAgentRun(db, racingTerminalization)
+    await terminalizeAgentRun(db, racingTerminalization)
+
+    const immutable = await admit(
+      '00000000-0000-4000-8000-000000000251',
+      '00000000-0000-4000-8000-000000000252',
+      '00000000-0000-4000-8000-000000000253',
+      '00000000-0000-4000-8000-000000000254'
+    )
+    const winningLeaseToken = '00000000-0000-4000-8000-000000000255'
+    await db('agentRuns').where({ id: immutable.run.id }).update({
+      status: 'running',
+      attempts: 1,
+      leaseOwner: 'winning-worker',
+      leaseToken: winningLeaseToken,
+      leaseExpiresAt: new Date(now.valueOf() + 3_600_000)
+    })
+    await terminalizeAgentRun(db, {
+      runId: immutable.run.id,
+      ownerId: 7,
+      expected: { statuses: ['running'], leaseOwner: 'winning-worker', leaseToken: winningLeaseToken },
+      status: 'succeeded',
+      assistant: { status: 'complete', content: 'Committed worker answer' },
+      quota: { consumedTokens: 4, consumedCostMicros: 8, status: 'consumed' },
+      runPatch: {
+        inputTokens: 3,
+        outputTokens: 1,
+        estimatedCostMicros: 8,
+        completionOutcome: 'complete',
+        completionAssessment: '{"winner":true}',
+        completionAssessmentSha256: 'e'.repeat(64)
+      },
+      now
+    })
+    const immutableRunQuery = db('agentRuns')
+      .where({ id: immutable.run.id })
+      .select(
+        'status',
+        'eventSequence',
+        'inputTokens',
+        'outputTokens',
+        'estimatedCostMicros',
+        'completionOutcome',
+        'completionAssessment',
+        'completionAssessmentSha256',
+        'errorCode',
+        'errorMessage',
+        'completedAt',
+        'updatedAt'
+      )
+    const immutableMessageQuery = db('agentMessages')
+      .where({ id: immutable.run.assistantMessageId })
+      .select('status', 'content', 'citations', 'providerStateCiphertext', 'providerStateSha256', 'updatedAt')
+    const immutableQuotaQuery = db('agentQuotaReservations')
+      .where({ runId: immutable.run.id })
+      .select('status', 'consumedTokens', 'consumedCostMicros', 'reconciledAt', 'heartbeatAt')
+    const immutableEventsQuery = db('agentEvents')
+      .where({ runId: immutable.run.id })
+      .orderBy('sequence')
+      .select('sequence', 'type', 'data', 'dataSha256', 'createdAt')
+    const committedState = await Promise.all([
+      immutableRunQuery.clone().first(),
+      immutableMessageQuery.clone().first(),
+      immutableQuotaQuery.clone().first(),
+      immutableEventsQuery.clone()
+    ])
+    await terminalizeAgentRun(db, {
+      runId: immutable.run.id,
+      ownerId: 7,
+      expected: {
+        statuses: ['running'],
+        eventSequence: 1,
+        leaseOwner: 'stale-worker',
+        leaseToken: '00000000-0000-4000-8000-000000000256'
+      },
+      status: 'succeeded',
+      assistant: {
+        status: 'complete',
+        content: 'Stale worker answer',
+        citations: '{"stale":true}',
+        providerStateCiphertext: Buffer.from('stale'),
+        providerStateSha256: 'f'.repeat(64)
+      },
+      eventData: { stale: true },
+      quota: { consumedTokens: 4, consumedCostMicros: 8, status: 'consumed' },
+      runPatch: {
+        inputTokens: 30,
+        outputTokens: 10,
+        estimatedCostMicros: 80,
+        completionOutcome: 'failed',
+        completionAssessment: '{"winner":false}',
+        completionAssessmentSha256: 'f'.repeat(64)
+      },
+      errorCode: 'STALE_WORKER',
+      errorMessage: 'A stale worker must not overwrite terminal state',
+      now: new Date(now.valueOf() + 1_000)
+    })
+    expect(
+      await Promise.all([
+        immutableRunQuery.clone().first(),
+        immutableMessageQuery.clone().first(),
+        immutableQuotaQuery.clone().first(),
+        immutableEventsQuery.clone()
+      ])
+    ).toEqual(committedState)
+
+    const terminalMessageIds: Record<string, string> = {
+      [queued.run.id]: queued.run.assistantMessageId,
+      [awaiting.run.id]: awaiting.run.assistantMessageId,
+      [expired.run.id]: expired.run.assistantMessageId,
+      [racing.run.id]: racing.run.assistantMessageId
+    }
+    for (const runId of [queued.run.id, awaiting.run.id, expired.run.id, racing.run.id]) {
+      expect(await db('agentRuns').where({ id: runId }).first('status', 'eventSequence', 'leaseToken', 'completedAt')).toMatchObject({
+        status: 'cancelled',
+        eventSequence: 3,
+        leaseToken: null,
+        completedAt: expect.anything()
+      })
+      expect(await db('agentMessages').where({ runId, role: 'assistant' }).first('status')).toEqual({ status: 'cancelled' })
+      const terminalEvents = await db('agentEvents')
+        .where({ runId })
+        .whereIn('type', ['message.completed', 'run.cancelled'])
+        .orderBy('sequence')
+        .select('sequence', 'type', 'data')
+      expect(terminalEvents.map(event => ({ sequence: event.sequence, type: event.type, data: JSON.parse(event.data) }))).toEqual([
+        {
+          sequence: 2,
+          type: 'message.completed',
+          data: { messageId: terminalMessageIds[runId], status: 'cancelled' }
+        },
+        { sequence: 3, type: 'run.cancelled', data: { runId, status: 'cancelled' } }
+      ])
+      expect(await db('agentQuotaReservations').where({ runId }).first('status')).toEqual({
+        status: runId === racing.run.id ? 'consumed' : 'released'
+      })
+    }
+    expect(await db('agentRuns').where({ id: racing.run.id }).first('inputTokens', 'outputTokens', 'estimatedCostMicros')).toEqual({
+      inputTokens: 3,
+      outputTokens: 1,
+      estimatedCostMicros: 8
+    })
+
+    const localWaiter = await admit(
+      '00000000-0000-4000-8000-000000000261',
+      '00000000-0000-4000-8000-000000000262',
+      '00000000-0000-4000-8000-000000000263',
+      '00000000-0000-4000-8000-000000000264'
+    )
+    const localCoordinator = new AgentRunCoordinator(db, {
+      workerId: 'local-approval-worker',
+      globalConcurrency: 1,
+      perUserConcurrency: 1,
+      leaseMilliseconds: 60_000,
+      heartbeatMilliseconds: 60_000,
+      now
+    })
+    const enteredApproval = Promise.withResolvers<AbortSignal>()
+    const localRunOnce = localCoordinator.runOnce(async (claim, signal) => {
+      await transitionAgentRun(db, { claim, from: 'running', to: 'awaiting_approval', now })
+      enteredApproval.resolve(signal)
+      await new Promise<never>((_resolve, reject) => {
+        if (signal.aborted) reject(signal.reason)
+        else signal.addEventListener('abort', () => reject(signal.reason), { once: true })
+      })
+    })
+    const approvalSignal = await enteredApproval.promise
+    try {
+      const cancelled = await localCoordinator.cancel(7, localWaiter.run.id)
+      expect(cancelled).toMatchObject({ id: localWaiter.run.id, status: 'cancelled', cancelRequestedAt: expect.anything() })
+      expect(approvalSignal.aborted).toBe(true)
+      expect(await localRunOnce).toBe(true)
+    } finally {
+      await localCoordinator.shutdown()
+    }
+    expect(await db('agentMessages').where({ id: localWaiter.run.assistantMessageId }).first('status')).toEqual({ status: 'cancelled' })
+    expect(
+      await db('agentEvents')
+        .where({ runId: localWaiter.run.id })
+        .whereIn('type', ['message.completed', 'run.cancelled'])
+        .orderBy('sequence')
+        .select('sequence', 'type')
+    ).toEqual([
+      { sequence: 2, type: 'message.completed' },
+      { sequence: 3, type: 'run.cancelled' }
+    ])
+    expect(await db('agentQuotaReservations').where({ runId: localWaiter.run.id }).first('status')).toEqual({ status: 'released' })
+    expect(await db('agentQuotaDaily').where({ ownerId: 7 }).first('reservedTokens', 'reservedCostMicros')).toMatchObject({
+      reservedTokens: 0,
+      reservedCostMicros: 0
+    })
+  })
+
   it('keeps personal memory owner-scoped and independent from history reset', async () => {
     const headers = { cookie, 'content-type': 'application/json', origin: 'https://wiki.example.test', 'sec-fetch-site': 'same-origin', 'x-wiki-csrf': csrf }
     const createdMemory = await fetch(`${baseUrl}/_api/agents/memories`, {
@@ -949,6 +1331,37 @@ describe('ordinary-origin agent API routing', () => {
     const accepted = await fetch(`${baseUrl}/_api/agents/sessions`, { method: 'POST', headers, body })
     expect(accepted.status).toBe(201)
     expect(ordinaryAuthCalls).toBe(2)
+  })
+
+  it('returns bounded JSON when provider-backed routes are disabled', async () => {
+    const headers = {
+      cookie,
+      'content-type': 'application/json',
+      origin: 'https://wiki.example.test',
+      'sec-fetch-site': 'same-origin',
+      'x-wiki-csrf': csrf
+    }
+    const created = await fetch(`${baseUrl}/_api/agents/sessions`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ retention: 'saved', providerProfileId: null })
+    })
+    const thread = (await created.json()) as { session: { id: string; version: number; profileResolutionToken: string } }
+    const disabled = await fetch(`${baseUrl}/_api/agents/sessions/${thread.session.id}/messages`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        clientRequestId: '00000000-0000-4000-8000-000000000301',
+        expectedSessionVersion: thread.session.version,
+        profileResolutionToken: thread.session.profileResolutionToken,
+        content: 'untrusted detail '.repeat(4_096)
+      })
+    })
+    const disabledBody = await disabled.text()
+    expect(disabled.status).toBe(404)
+    expect(disabled.headers.get('content-type')).toContain('application/json')
+    expect(disabledBody.length).toBeLessThanOrEqual(128)
+    expect(JSON.parse(disabledBody)).toEqual({ error: 'AGENT_ROUTE_DISABLED', message: 'Agent route is unavailable' })
   })
 
   it('exposes administration only to ordinary manage:system users', async () => {

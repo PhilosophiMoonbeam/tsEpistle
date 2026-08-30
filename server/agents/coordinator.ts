@@ -4,8 +4,11 @@ import {
   isTerminalAgentRunStatus,
   type AgentActionName,
   type AgentEventData,
+  type AgentEventType,
   type AgentExecutionMode,
-  type AgentRunStatus
+  type AgentMessageStatus,
+  type AgentRunStatus,
+  type AgentTerminalRunStatus
 } from '../../shared/agents/contracts.ts'
 import { canonicalJson } from '../helpers/canonical-json.ts'
 import { AgentRepositoryError } from './repository.ts'
@@ -133,10 +136,14 @@ const encodedRuntimeState = (state: RuntimeState): Buffer => {
   return Buffer.from(encoded)
 }
 
-const advisoryLock = async (transaction: Knex.Transaction, ownerId?: number): Promise<void> => {
+export const acquireAgentCoordinatorAdvisoryLocks = async (
+  transaction: Knex.Transaction,
+  ownerIds: readonly number[] = []
+): Promise<void> => {
   if (!isPostgres(transaction)) return
   await transaction.raw('SELECT pg_advisory_xact_lock(?)', [0x57494b49])
-  if (ownerId !== undefined) await transaction.raw('SELECT pg_advisory_xact_lock(?)', [ownerId])
+  const orderedOwnerIds = [...new Set(ownerIds)].sort((left, right) => left - right)
+  for (const ownerId of orderedOwnerIds) await transaction.raw('SELECT pg_advisory_xact_lock(?)', [ownerId])
 }
 
 export interface AgentRunRecord {
@@ -233,7 +240,7 @@ const reserveQuotaInTransaction = async (
   const costMicros = nonNegativeInteger(request.costMicros, 'Reserved cost')
   const tokenLimit = nonNegativeInteger(limits.dailyTokens, 'Daily token limit')
   const costLimit = nonNegativeInteger(limits.dailyCostMicros, 'Daily cost limit')
-  await advisoryLock(transaction, ownerId)
+  await acquireAgentCoordinatorAdvisoryLocks(transaction, [ownerId])
 
   const existingReservation = (await transaction('agentQuotaReservations').where({ runId }).first()) as
     | { ownerId: number; reservedTokens: number | string; reservedCostMicros: number | string }
@@ -309,7 +316,7 @@ export const ensureAgentRunQuota = async (
   const tokenLimit = nonNegativeInteger(limits.dailyTokens, 'Daily token limit')
   const costLimit = nonNegativeInteger(limits.dailyCostMicros, 'Daily cost limit')
   await knex.transaction(async transaction => {
-    await advisoryLock(transaction, ownerId)
+    await acquireAgentCoordinatorAdvisoryLocks(transaction, [ownerId])
     const reservation = (await transaction('agentQuotaReservations').where({ runId, ownerId }).forUpdate().first()) as
       | { day: string; reservedTokens: number | string; reservedCostMicros: number | string; status: string; expiresAt: Date | string }
       | undefined
@@ -358,59 +365,74 @@ export interface ReconcileAgentQuotaInput {
   readonly now?: Date
 }
 
-export const reconcileAgentRunQuota = async (knex: Knex, input: ReconcileAgentQuotaInput): Promise<void> => {
+interface ReconcileAgentQuotaOptions {
+  readonly allowMissing?: boolean
+  readonly acceptAnyReconciled?: boolean
+  readonly advisoryLocksHeld?: boolean
+}
+
+const reconcileAgentRunQuotaInTransaction = async (
+  transaction: Knex.Transaction,
+  input: ReconcileAgentQuotaInput,
+  options: ReconcileAgentQuotaOptions = {}
+): Promise<void> => {
   const consumedTokens = nonNegativeInteger(input.consumedTokens, 'Consumed tokens')
   const consumedCost = nonNegativeInteger(input.consumedCostMicros, 'Consumed cost')
   const now = input.now ?? new Date()
-  await knex.transaction(async transaction => {
-    await advisoryLock(transaction, input.ownerId)
-    const reservation = (await transaction('agentQuotaReservations').where({ runId: input.runId, ownerId: input.ownerId }).forUpdate().first()) as
-      | {
-          day: string
-          reservedTokens: number | string
-          reservedCostMicros: number | string
-          consumedTokens: number | string
-          consumedCostMicros: number | string
-          status: string
-        }
-      | undefined
-    if (!reservation) throw new AgentRepositoryError('QUOTA_RESERVATION_NOT_FOUND', 'Agent quota reservation was not found', 404)
-    if (reservation.status !== 'reserved') {
-      if (
-        reservation.status === input.status &&
-        Number(reservation.consumedTokens) === consumedTokens &&
-        Number(reservation.consumedCostMicros) === consumedCost
-      )
-        return
-      throw new AgentRepositoryError('QUOTA_RESERVATION_RECONCILED', 'Agent quota reservation was already reconciled differently', 409)
-    }
-    if (input.status === 'released' && (consumedTokens !== 0 || consumedCost !== 0))
-      throw new AgentRepositoryError('INVALID_AGENT_QUOTA', 'Released quota cannot record consumption', 400)
-    const daily = (await transaction('agentQuotaDaily').where({ ownerId: input.ownerId, day: reservation.day }).forUpdate().first()) as
-      | { reservedTokens: number | string; consumedTokens: number | string; reservedCostMicros: number | string; consumedCostMicros: number | string }
-      | undefined
-    if (!daily) throw new AgentRepositoryError('AGENT_QUOTA_CORRUPT', 'Agent daily quota row is missing', 500)
-    const reservedTokens = Number(reservation.reservedTokens)
-    const reservedCost = Number(reservation.reservedCostMicros)
-    if (consumedTokens > reservedTokens || consumedCost > reservedCost) {
-      throw new AgentRepositoryError('QUOTA_RESERVATION_EXCEEDED', 'Agent usage exceeds its held quota reservation', 409)
-    }
-    if (Number(daily.reservedTokens) < reservedTokens || Number(daily.reservedCostMicros) < reservedCost)
-      throw new AgentRepositoryError('AGENT_QUOTA_CORRUPT', 'Agent daily quota counters are inconsistent', 500)
-    await transaction('agentQuotaDaily')
-      .where({ ownerId: input.ownerId, day: reservation.day })
-      .update({
-        reservedTokens: Number(daily.reservedTokens) - reservedTokens,
-        consumedTokens: Number(daily.consumedTokens) + consumedTokens,
-        reservedCostMicros: Number(daily.reservedCostMicros) - reservedCost,
-        consumedCostMicros: Number(daily.consumedCostMicros) + consumedCost,
-        updatedAt: now
-      })
-    await transaction('agentQuotaReservations')
-      .where({ runId: input.runId, status: 'reserved' })
-      .update({ status: input.status, consumedTokens, consumedCostMicros: consumedCost, reconciledAt: now, heartbeatAt: now })
-  })
+  if (options.advisoryLocksHeld !== true) await acquireAgentCoordinatorAdvisoryLocks(transaction, [input.ownerId])
+  const reservation = (await transaction('agentQuotaReservations').where({ runId: input.runId, ownerId: input.ownerId }).forUpdate().first()) as
+    | {
+        day: string
+        reservedTokens: number | string
+        reservedCostMicros: number | string
+        consumedTokens: number | string
+        consumedCostMicros: number | string
+        status: string
+      }
+    | undefined
+  if (!reservation) {
+    if (options.allowMissing === true) return
+    throw new AgentRepositoryError('QUOTA_RESERVATION_NOT_FOUND', 'Agent quota reservation was not found', 404)
+  }
+  if (reservation.status !== 'reserved') {
+    if (options.acceptAnyReconciled === true) return
+    if (
+      reservation.status === input.status &&
+      Number(reservation.consumedTokens) === consumedTokens &&
+      Number(reservation.consumedCostMicros) === consumedCost
+    )
+      return
+    throw new AgentRepositoryError('QUOTA_RESERVATION_RECONCILED', 'Agent quota reservation was already reconciled differently', 409)
+  }
+  if (input.status === 'released' && (consumedTokens !== 0 || consumedCost !== 0))
+    throw new AgentRepositoryError('INVALID_AGENT_QUOTA', 'Released quota cannot record consumption', 400)
+  const daily = (await transaction('agentQuotaDaily').where({ ownerId: input.ownerId, day: reservation.day }).forUpdate().first()) as
+    | { reservedTokens: number | string; consumedTokens: number | string; reservedCostMicros: number | string; consumedCostMicros: number | string }
+    | undefined
+  if (!daily) throw new AgentRepositoryError('AGENT_QUOTA_CORRUPT', 'Agent daily quota row is missing', 500)
+  const reservedTokens = Number(reservation.reservedTokens)
+  const reservedCost = Number(reservation.reservedCostMicros)
+  if (consumedTokens > reservedTokens || consumedCost > reservedCost)
+    throw new AgentRepositoryError('QUOTA_RESERVATION_EXCEEDED', 'Agent usage exceeds its held quota reservation', 409)
+  if (Number(daily.reservedTokens) < reservedTokens || Number(daily.reservedCostMicros) < reservedCost)
+    throw new AgentRepositoryError('AGENT_QUOTA_CORRUPT', 'Agent daily quota counters are inconsistent', 500)
+  await transaction('agentQuotaDaily')
+    .where({ ownerId: input.ownerId, day: reservation.day })
+    .update({
+      reservedTokens: Number(daily.reservedTokens) - reservedTokens,
+      consumedTokens: Number(daily.consumedTokens) + consumedTokens,
+      reservedCostMicros: Number(daily.reservedCostMicros) - reservedCost,
+      consumedCostMicros: Number(daily.consumedCostMicros) + consumedCost,
+      updatedAt: now
+    })
+  const changed = await transaction('agentQuotaReservations')
+    .where({ runId: input.runId, ownerId: input.ownerId, status: 'reserved' })
+    .update({ status: input.status, consumedTokens, consumedCostMicros: consumedCost, reconciledAt: now, heartbeatAt: now })
+  if (changed !== 1) throw new AgentRepositoryError('QUOTA_RESERVATION_RECONCILED', 'Agent quota reservation changed concurrently', 409)
 }
+
+export const reconcileAgentRunQuota = async (knex: Knex, input: ReconcileAgentQuotaInput): Promise<void> =>
+  knex.transaction(transaction => reconcileAgentRunQuotaInTransaction(transaction, input))
 
 export interface AdmitAgentRunInput {
   readonly id?: string
@@ -495,7 +517,7 @@ export const admitAgentRunInTransaction = async (
   }
   const inputHash = sha256(admissionEnvelope(input))
   const now = input.now ?? new Date()
-  await advisoryLock(transaction, input.ownerId)
+  await acquireAgentCoordinatorAdvisoryLocks(transaction, [input.ownerId])
   const retry = await transaction<RunRow>('agentRuns')
     .where({ sessionId: input.sessionId, clientRequestId: input.clientRequestId, ownerId: input.ownerId })
     .first()
@@ -619,6 +641,194 @@ export interface AgentRunClaim extends AgentRunRecord {
   readonly leaseToken: string
   readonly leaseExpiresAt: string
 }
+
+export interface TerminalizeAgentRunExpected {
+  readonly statuses: readonly ('queued' | 'running' | 'awaiting_approval')[]
+  readonly eventSequence?: number
+  readonly leaseOwner?: string | null
+  readonly leaseToken?: string | null
+}
+
+export interface TerminalizeAgentAssistantInput {
+  readonly status: AgentMessageStatus
+  readonly content?: string
+  readonly citations?: string | null
+  readonly providerStateCiphertext?: Uint8Array | null
+  readonly providerStateSha256?: string | null
+}
+
+export interface TerminalizeAgentRunPatch {
+  readonly inputTokens?: number
+  readonly outputTokens?: number
+  readonly estimatedCostMicros?: number | null
+  readonly completionOutcome?: string | null
+  readonly completionAssessment?: string | null
+  readonly completionAssessmentSha256?: string | null
+}
+
+export interface TerminalizeAgentRunInput {
+  readonly runId: string
+  readonly ownerId?: number
+  readonly expected?: TerminalizeAgentRunExpected
+  readonly status: AgentTerminalRunStatus
+  readonly assistant?: TerminalizeAgentAssistantInput
+  readonly eventData?: AgentEventData
+  readonly quota?: Omit<ReconcileAgentQuotaInput, 'runId' | 'ownerId' | 'now'>
+  readonly runPatch?: TerminalizeAgentRunPatch
+  readonly errorCode?: string | null
+  readonly errorMessage?: string | null
+  readonly cancelRequestedAt?: Date
+  readonly now?: Date
+}
+
+const terminalEventType = (status: AgentTerminalRunStatus): AgentEventType => {
+  switch (status) {
+    case 'succeeded':
+      return 'run.completed'
+    case 'partial':
+      return 'run.partial'
+    case 'failed':
+      return 'run.failed'
+    case 'cancelled':
+      return 'run.cancelled'
+    case 'recovery_required':
+      return 'run.recovery_required'
+  }
+}
+
+const terminalMessageStatus = (status: AgentTerminalRunStatus, current: AgentMessageStatus): AgentMessageStatus => {
+  if (status === 'cancelled') return 'cancelled'
+  if (status === 'failed' || status === 'recovery_required') return 'failed'
+  if (status === 'partial' && current !== 'complete') return 'failed'
+  return 'complete'
+}
+
+const assertTerminalMessageStatus = (runStatus: AgentTerminalRunStatus, messageStatus: AgentMessageStatus): void => {
+  const valid =
+    (runStatus === 'succeeded' && messageStatus === 'complete') ||
+    (runStatus === 'partial' && (messageStatus === 'complete' || messageStatus === 'failed')) ||
+    ((runStatus === 'failed' || runStatus === 'recovery_required') && messageStatus === 'failed') ||
+    (runStatus === 'cancelled' && messageStatus === 'cancelled')
+  if (!valid) throw new AgentRepositoryError('INVALID_TERMINAL_MESSAGE_STATUS', 'Assistant message status is inconsistent with the terminal run', 400)
+}
+
+export const terminalizeAgentRunInTransaction = async (
+  transaction: Knex.Transaction,
+  input: TerminalizeAgentRunInput
+): Promise<AgentRunRecord> => {
+  const now = input.now ?? new Date()
+  const ownerId =
+    input.ownerId ??
+    ((await transaction<Pick<RunRow, 'ownerId'>>('agentRuns').where('id', input.runId).first('ownerId')) as Pick<RunRow, 'ownerId'> | undefined)?.ownerId
+  if (ownerId === undefined) throw new AgentRepositoryError('AGENT_RESOURCE_NOT_FOUND', 'Agent run was not found', 404)
+  await acquireAgentCoordinatorAdvisoryLocks(transaction, [ownerId])
+  const query = transaction<RunRow>('agentRuns').where({ id: input.runId })
+  if (input.ownerId !== undefined) query.andWhere({ ownerId: input.ownerId })
+  const row = await query.forUpdate().first()
+  if (!row) throw new AgentRepositoryError('AGENT_RESOURCE_NOT_FOUND', 'Agent run was not found', 404)
+  const currentStatus = runStatus(row.status)
+  if (isTerminalAgentRunStatus(currentStatus)) return runRecord(row)
+  const expected = input.expected
+  if (!expected || !expected.statuses.includes(currentStatus as 'queued' | 'running' | 'awaiting_approval'))
+    throw new AgentRepositoryError('RUN_TERMINAL_FENCE_CHANGED', 'Agent run status changed before terminalization', 409)
+  if (expected.eventSequence !== undefined && Number(row.eventSequence) !== expected.eventSequence)
+    throw new AgentRepositoryError('RUN_EVENT_FENCE_CHANGED', 'Agent run event fence changed concurrently', 409)
+  if ('leaseOwner' in expected && row.leaseOwner !== expected.leaseOwner)
+    throw new AgentRepositoryError('RUN_LEASE_LOST', 'Agent run lease was lost', 409)
+  if ('leaseToken' in expected && row.leaseToken !== expected.leaseToken)
+    throw new AgentRepositoryError('RUN_LEASE_LOST', 'Agent run lease was lost', 409)
+
+  const status: AgentTerminalRunStatus = row.cancelRequestedAt === null ? input.status : 'cancelled'
+  const requestedStatusWon = status === input.status
+  const message = (await transaction('agentMessages').where({ id: row.assistantMessageId, runId: row.id }).forUpdate().first('status')) as
+    | { status: AgentMessageStatus }
+    | undefined
+  if (!message) throw new AgentRepositoryError('AGENT_RUN_CORRUPT', 'Agent run assistant message is missing', 500)
+  const assistant = requestedStatusWon ? input.assistant : undefined
+  const assistantStatus = assistant?.status ?? terminalMessageStatus(status, message.status)
+  assertTerminalMessageStatus(status, assistantStatus)
+  const messagePatch: Record<string, unknown> = { status: assistantStatus, updatedAt: now }
+  if (assistant?.content !== undefined) messagePatch.content = assistant.content
+  if (assistant?.citations !== undefined) messagePatch.citations = assistant.citations
+  if (assistant?.providerStateCiphertext !== undefined) messagePatch.providerStateCiphertext = assistant.providerStateCiphertext
+  if (assistant?.providerStateSha256 !== undefined) messagePatch.providerStateSha256 = assistant.providerStateSha256
+  const messageChanged = await transaction('agentMessages').where({ id: row.assistantMessageId, runId: row.id }).update(messagePatch)
+  if (messageChanged !== 1) throw new AgentRepositoryError('AGENT_RUN_CORRUPT', 'Agent run assistant message changed during terminalization', 500)
+
+  const eventType = terminalEventType(status)
+  const terminalEvents = [
+    {
+      type: 'message.completed' as const,
+      data: canonicalJson({ messageId: row.assistantMessageId, status: assistantStatus })
+    },
+    {
+      type: eventType,
+      data: canonicalJson({ ...((requestedStatusWon ? input.eventData : undefined) ?? {}), runId: row.id, status })
+    }
+  ]
+  const eventSequence = Number(row.eventSequence) + terminalEvents.length
+  await transaction('agentEvents').insert(
+    terminalEvents.map((event, index) => ({
+      id: randomUUID(),
+      runId: row.id,
+      sequence: Number(row.eventSequence) + index + 1,
+      type: event.type,
+      attempt: row.attempts,
+      schemaVersion: 1,
+      dataSha256: sha256(event.data),
+      data: event.data,
+      createdAt: now
+    }))
+  )
+
+  const runPatch: Record<string, unknown> = {
+    status,
+    eventSequence,
+    runtimeStateCiphertext: null,
+    completedAt: row.completedAt ?? now,
+    updatedAt: now,
+    leaseOwner: null,
+    leaseToken: null,
+    leaseExpiresAt: null
+  }
+  if (status === 'cancelled') runPatch.cancelRequestedAt = row.cancelRequestedAt ?? input.cancelRequestedAt ?? now
+  if (input.runPatch?.inputTokens !== undefined) runPatch.inputTokens = nonNegativeInteger(input.runPatch.inputTokens, 'Run input tokens')
+  if (input.runPatch?.outputTokens !== undefined) runPatch.outputTokens = nonNegativeInteger(input.runPatch.outputTokens, 'Run output tokens')
+  if (input.runPatch?.estimatedCostMicros !== undefined)
+    runPatch.estimatedCostMicros =
+      input.runPatch.estimatedCostMicros === null ? null : nonNegativeInteger(input.runPatch.estimatedCostMicros, 'Run estimated cost')
+  if (requestedStatusWon) {
+    runPatch.errorCode = input.errorCode ?? null
+    runPatch.errorMessage = input.errorMessage ?? null
+    if (input.runPatch?.completionOutcome !== undefined) runPatch.completionOutcome = input.runPatch.completionOutcome
+    if (input.runPatch?.completionAssessment !== undefined) runPatch.completionAssessment = input.runPatch.completionAssessment
+    if (input.runPatch?.completionAssessmentSha256 !== undefined)
+      runPatch.completionAssessmentSha256 = input.runPatch.completionAssessmentSha256
+  }
+  const changed = await transaction('agentRuns')
+    .where({ id: row.id, status: row.status, eventSequence: row.eventSequence })
+    .update(runPatch)
+  if (changed !== 1) throw new AgentRepositoryError('RUN_TERMINAL_FENCE_CHANGED', 'Agent run changed during terminalization', 409)
+
+  const quota = input.quota
+  await reconcileAgentRunQuotaInTransaction(
+    transaction,
+    {
+      runId: row.id,
+      ownerId: row.ownerId,
+      consumedTokens: quota?.consumedTokens ?? 0,
+      consumedCostMicros: quota?.consumedCostMicros ?? 0,
+      status: quota?.status ?? 'released',
+      now
+    },
+    { allowMissing: quota === undefined, acceptAnyReconciled: quota === undefined, advisoryLocksHeld: true }
+  )
+  if (isPostgres(transaction)) await transaction.raw("SELECT pg_notify('wiki_agent_events', ?)", [row.id])
+  return runRecord({ ...row, ...runPatch, status, eventSequence } as RunRow)
+}
+
+export const terminalizeAgentRun = async (knex: Knex, input: TerminalizeAgentRunInput): Promise<AgentRunRecord> =>
+  knex.transaction(transaction => terminalizeAgentRunInTransaction(transaction, input))
 
 interface PersistAgentApprovalContinuationInput {
   readonly runId: string
@@ -823,24 +1033,39 @@ export interface ClaimAgentRunOptions {
   readonly now?: Date
 }
 
-const activeLeaseCount = async (transaction: Knex.Transaction, now: Date, ownerId?: number): Promise<number> => {
-  const query = transaction('agentRuns').where({ status: 'running' }).where('leaseExpiresAt', '>', now)
-  if (ownerId !== undefined) query.andWhere({ ownerId })
-  const row = await query.count<{ count: number | string }[]>({ count: '*' }).first()
-  return Number(row?.count ?? 0)
+interface ActiveLeaseCounts {
+  readonly global: number
+  readonly byOwner: Map<number, number>
+}
+
+const activeLeaseCounts = async (transaction: Knex.Transaction, now: Date, globalConcurrency: number): Promise<ActiveLeaseCounts> => {
+  const rows = await transaction('agentRuns')
+    .where({ status: 'running' })
+    .where('leaseExpiresAt', '>', now)
+    .groupBy('ownerId')
+    .orderBy('ownerId')
+    .limit(globalConcurrency)
+    .select('ownerId')
+    .count<{ ownerId: number; count: number | string }[]>({ count: '*' })
+  const byOwner = new Map<number, number>()
+  let global = 0
+  for (const row of rows) {
+    const count = Number(row.count)
+    byOwner.set(row.ownerId, count)
+    global += count
+  }
+  return { global, byOwner }
 }
 
 const recoveryLostSideEffect = async (transaction: Knex.Transaction, row: RunRow, now: Date): Promise<void> => {
-  await transaction('agentRuns').where({ id: row.id, status: row.status, leaseToken: row.leaseToken }).update({
+  await terminalizeAgentRunInTransaction(transaction, {
+    runId: row.id,
+    ownerId: row.ownerId,
+    expected: { statuses: [row.status as 'running' | 'awaiting_approval'], eventSequence: row.eventSequence, leaseToken: row.leaseToken },
     status: 'recovery_required',
-    runtimeStateCiphertext: null,
-    leaseOwner: null,
-    leaseToken: null,
-    leaseExpiresAt: null,
-    completedAt: now,
-    updatedAt: now,
     errorCode: 'LEASE_LOST_AFTER_SIDE_EFFECT',
-    errorMessage: 'Run lease expired after a side effect may have started'
+    errorMessage: 'Run lease expired after a side effect may have started',
+    now
   })
 }
 const hasReclaimableActionContinuation = async (transaction: Knex.Transaction, candidate: RunRow): Promise<boolean> => {
@@ -862,8 +1087,9 @@ export const claimAgentRun = async (knex: Knex, options: ClaimAgentRunOptions): 
   const leaseMilliseconds = options.leaseMilliseconds ?? 60_000
   const now = options.now ?? new Date()
   return knex.transaction(async transaction => {
-    await advisoryLock(transaction)
-    if ((await activeLeaseCount(transaction, now)) >= globalConcurrency) return null
+    await acquireAgentCoordinatorAdvisoryLocks(transaction)
+    const active = await activeLeaseCounts(transaction, now, globalConcurrency)
+    if (active.global >= globalConcurrency) return null
     const candidates = await transaction<RunRow>('agentRuns')
       .where(query =>
         query
@@ -880,15 +1106,20 @@ export const claimAgentRun = async (knex: Knex, options: ClaimAgentRunOptions): 
         continue
       }
       const reclaimingContinuation = await hasReclaimableActionContinuation(transaction, candidate)
-      if (candidate.status !== 'awaiting_approval' && (await activeLeaseCount(transaction, now, candidate.ownerId)) >= perUserConcurrency) continue
+      if (candidate.status !== 'awaiting_approval' && (active.byOwner.get(candidate.ownerId) ?? 0) >= perUserConcurrency) continue
       if (candidate.attempts >= candidate.maxAttempts && candidate.status !== 'awaiting_approval' && !reclaimingContinuation) {
-        await transaction('agentRuns').where({ id: candidate.id, status: candidate.status }).update({
+        await terminalizeAgentRunInTransaction(transaction, {
+          runId: candidate.id,
+          ownerId: candidate.ownerId,
+          expected: {
+            statuses: [candidate.status as 'queued' | 'running'],
+            eventSequence: candidate.eventSequence,
+            leaseToken: candidate.leaseToken
+          },
           status: 'failed',
-          runtimeStateCiphertext: null,
-          completedAt: now,
-          updatedAt: now,
           errorCode: 'MAX_ATTEMPTS_EXCEEDED',
-          errorMessage: 'Agent run exhausted its durable attempts'
+          errorMessage: 'Agent run exhausted its durable attempts',
+          now
         })
         continue
       }
@@ -911,6 +1142,7 @@ export const claimAgentRun = async (knex: Knex, options: ClaimAgentRunOptions): 
           updatedAt: now
         })
       if (changed !== 1) continue
+      active.byOwner.set(candidate.ownerId, (active.byOwner.get(candidate.ownerId) ?? 0) + 1)
       return runRecord({ ...candidate, status: nextStatus, attempts, leaseOwner: options.workerId, leaseToken, leaseExpiresAt }) as AgentRunClaim
     }
     return null
@@ -938,35 +1170,6 @@ export interface TransitionAgentRunInput {
   readonly now?: Date
 }
 
-const recordRunCancelled = async (
-  transaction: Knex.Transaction,
-  run: Pick<RunRow, 'id' | 'assistantMessageId' | 'attempts' | 'eventSequence'>,
-  now: Date
-): Promise<number> => {
-  const sequence = Number(run.eventSequence) + 1
-  const data = canonicalJson({ runId: run.id, status: 'cancelled' })
-  await transaction('agentEvents').insert({
-    id: randomUUID(),
-    runId: run.id,
-    sequence,
-    type: 'run.cancelled',
-    attempt: run.attempts,
-    schemaVersion: 1,
-    dataSha256: sha256(data),
-    data,
-    createdAt: now
-  })
-  await transaction('agentMessages')
-    .where({ id: run.assistantMessageId, runId: run.id })
-    .whereIn('status', ['pending', 'streaming'])
-    .update({ status: 'cancelled', updatedAt: now })
-  const changed = await transaction('agentRuns')
-    .where({ id: run.id, status: 'cancelled', eventSequence: run.eventSequence })
-    .update({ eventSequence: sequence, updatedAt: now })
-  if (changed !== 1) throw new AgentRepositoryError('RUN_EVENT_FENCE_CHANGED', 'Agent run event fence changed concurrently', 409)
-  if (isPostgres(transaction)) await transaction.raw("SELECT pg_notify('wiki_agent_events', ?)", [run.id])
-  return sequence
-}
 
 export const transitionAgentRun = async (knex: Knex, input: TransitionAgentRunInput): Promise<AgentRunRecord> =>
   knex.transaction(async transaction => {
@@ -976,30 +1179,35 @@ export const transitionAgentRun = async (knex: Knex, input: TransitionAgentRunIn
         : ['running', 'cancelled', 'recovery_required']
     if (!allowed.includes(input.to)) throw new AgentRepositoryError('INVALID_RUN_TRANSITION', 'Agent run transition is invalid', 400)
     const now = input.now ?? new Date()
-    const terminal = isTerminalAgentRunStatus(input.to)
+    if (isTerminalAgentRunStatus(input.to))
+      return terminalizeAgentRunInTransaction(transaction, {
+        runId: input.claim.id,
+        ownerId: input.claim.ownerId,
+        expected: {
+          statuses: [input.from],
+          leaseOwner: input.claim.leaseOwner,
+          leaseToken: input.claim.leaseToken
+        },
+        status: input.to,
+        errorCode: input.errorCode ?? null,
+        errorMessage: input.errorMessage ?? null,
+        now
+      })
     const patch: Record<string, unknown> = {
       status: input.to,
       updatedAt: now,
       errorCode: input.errorCode ?? null,
       errorMessage: input.errorMessage ?? null,
-      completedAt: terminal ? now : null
+      completedAt: null
     }
-    if (terminal) patch.runtimeStateCiphertext = null
     if (input.to === 'queued') patch.availableAt = input.availableAt ?? now
-    if (input.to !== 'running' && input.to !== 'awaiting_approval') {
-      patch.leaseOwner = null
-      patch.leaseToken = null
-      patch.leaseExpiresAt = null
-    }
     const changed = await transaction('agentRuns')
       .where({ id: input.claim.id, status: input.from, leaseOwner: input.claim.leaseOwner, leaseToken: input.claim.leaseToken })
       .update(patch)
     if (changed !== 1) throw new AgentRepositoryError('RUN_LEASE_LOST', 'Agent run lease was lost', 409)
     const row = await transaction<RunRow>('agentRuns').where({ id: input.claim.id }).first()
     if (!row) throw new AgentRepositoryError('AGENT_RUN_CORRUPT', 'Agent run disappeared after transition', 500)
-    if (input.to !== 'cancelled') return runRecord(row)
-    const eventSequence = await recordRunCancelled(transaction, row, now)
-    return runRecord({ ...row, eventSequence })
+    return runRecord(row)
   })
 
 export const markAgentRunSideEffectsStarted = async (knex: Knex, claim: AgentRunClaim, now = new Date()): Promise<void> => {
@@ -1012,17 +1220,33 @@ export const markAgentRunSideEffectsStarted = async (knex: Knex, claim: AgentRun
 
 export const requestAgentRunCancellation = async (knex: Knex, ownerId: number, runId: string, now = new Date()): Promise<AgentRunRecord> =>
   knex.transaction(async transaction => {
+    await acquireAgentCoordinatorAdvisoryLocks(transaction, [ownerId])
     const row = await transaction<RunRow>('agentRuns').where({ id: runId, ownerId }).forUpdate().first()
     if (!row) throw new AgentRepositoryError('AGENT_RESOURCE_NOT_FOUND', 'Agent resource was not found', 404)
     if (isTerminalAgentRunStatus(runStatus(row.status))) return runRecord(row)
-    if (row.status === 'queued') {
-      await transaction('agentRuns')
-        .where({ id: runId, status: 'queued' })
-        .update({ status: 'cancelled', cancelRequestedAt: now, completedAt: now, updatedAt: now })
-      const eventSequence = await recordRunCancelled(transaction, row, now)
-      return runRecord({ ...row, status: 'cancelled', cancelRequestedAt: now, completedAt: now, eventSequence })
-    }
-    await transaction('agentRuns').where({ id: runId }).whereIn('status', ['running', 'awaiting_approval']).update({ cancelRequestedAt: now, updatedAt: now })
+    const liveLease =
+      row.status === 'running' &&
+      row.leaseToken !== null &&
+      row.leaseExpiresAt !== null &&
+      new Date(row.leaseExpiresAt).valueOf() > now.valueOf()
+    if (!liveLease)
+      return terminalizeAgentRunInTransaction(transaction, {
+        runId,
+        ownerId,
+        expected: {
+          statuses: [row.status as 'queued' | 'running' | 'awaiting_approval'],
+          eventSequence: row.eventSequence,
+          leaseToken: row.leaseToken
+        },
+        status: 'cancelled',
+        cancelRequestedAt: now,
+        now
+      })
+    const changed = await transaction('agentRuns')
+      .where({ id: runId, status: 'running', eventSequence: row.eventSequence, leaseToken: row.leaseToken })
+      .whereNull('cancelRequestedAt')
+      .update({ cancelRequestedAt: now, updatedAt: now })
+    if (changed !== 1) throw new AgentRepositoryError('RUN_TERMINAL_FENCE_CHANGED', 'Agent run changed while cancellation was requested', 409)
     return runRecord({ ...row, cancelRequestedAt: now })
   })
 
@@ -1077,7 +1301,7 @@ export class AgentRunCoordinator {
       markDrained = resolve
     })
     this.#drains.set(claim.id, drained)
-    const heartbeatEvery = this.#options.heartbeatMilliseconds ?? 10_000
+    const heartbeatEvery = this.#options.heartbeatMilliseconds ?? 1_000
     const heartbeat = async (): Promise<void> => {
       if (controller.signal.aborted) return
       try {
@@ -1135,7 +1359,7 @@ export class AgentRunCoordinator {
 
   async cancel(ownerId: number, runId: string): Promise<AgentRunRecord> {
     const run = await requestAgentRunCancellation(this.#knex, ownerId, runId)
-    if (run.cancelRequestedAt !== null && !isTerminalAgentRunStatus(run.status)) {
+    if (run.cancelRequestedAt !== null) {
       this.#controllers.get(runId)?.abort(new AgentRepositoryError('RUN_CANCELLED', 'Agent run was cancelled', 409))
     }
     return run

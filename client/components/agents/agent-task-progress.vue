@@ -2,7 +2,7 @@
   <details
     class="agent-tasks"
     :class="`agent-tasks--${planState}`"
-    :open="tasks.length > 0 && !allTerminal"
+    :open="tasks.length > 0 && !cleanCompletion"
   >
     <summary class="agent-tasks__header">
       <span class="agent-tasks__mark" aria-hidden="true">
@@ -147,6 +147,7 @@ const runningCount = computed(() => props.tasks.filter(task => task.status === '
 const queuedCount = computed(() => props.tasks.filter(task => task.status === 'pending').length)
 const attentionCount = computed(() => props.tasks.filter(task => ['blocked', 'failed', 'cancelled'].includes(task.status) || statusFor(task) === 'partial').length)
 const allTerminal = computed(() => props.tasks.length > 0 && terminalCount.value === props.tasks.length)
+const cleanCompletion = computed(() => allTerminal.value && attentionCount.value === 0)
 const successfulPercent = computed(() => props.tasks.length === 0 ? 0 : (successfulCount.value / props.tasks.length) * 100)
 const attentionPercent = computed(() => props.tasks.length === 0 ? 0 : (attentionCount.value / props.tasks.length) * 100)
 const planState = computed<PlanState>(() => {

@@ -3,7 +3,7 @@ import express, { type NextFunction, type Request, type Response } from 'express
 import type { Knex } from 'knex'
 import { z, ZodError } from 'zod'
 
-import type { DecideAgentApprovalRequest } from '../../shared/agents/contracts.ts'
+import { isTerminalAgentRunStatus, type DecideAgentApprovalRequest } from '../../shared/agents/contracts.ts'
 
 import { SkillValidationError } from '../agents/skills/parser.ts'
 import { agentCsrfMatches } from '../agents/csrf.ts'
@@ -31,6 +31,7 @@ import {
   type AgentConversationFolderRecord,
   createAgentConversationFolder,
   createAgentSession,
+  encodeAgentSessionCursor,
   deleteAgentConversationFolder,
   listOwnedAgentConversationFolders,
   listOwnedAgentSessions,
@@ -86,6 +87,7 @@ interface AgentHostWiki {
     AgentProviderRegistry,
     | 'create'
     | 'getAdmin'
+    | 'assertProfileAvailable'
     | 'issueResolutionToken'
     | 'listAll'
     | 'listVisible'
@@ -125,10 +127,32 @@ const requestUser = (req: Request): Express.User => {
 }
 
 const asyncRoute =
-  (handler: (req: Request, res: Response) => Promise<unknown>) =>
+  (handler: (req: Request, res: Response, signal: AbortSignal) => Promise<unknown>) =>
   (req: Request, res: Response, next: NextFunction): void => {
-    handler(req, res).catch(next)
+    const controller = new AbortController()
+    const abort = (): void => controller.abort()
+    if (req.aborted || res.destroyed) abort()
+    else {
+      req.once('aborted', abort)
+      res.once('close', abort)
+    }
+    handler(req, res, controller.signal)
+      .catch(next)
+      .finally(() => {
+        req.off('aborted', abort)
+        res.off('close', abort)
+      })
   }
+
+const disabledRoute = (res: Response): Response =>
+  res.status(404).json({ error: 'AGENT_ROUTE_DISABLED', message: 'Agent route is unavailable' })
+
+const invalidRequestDetails = (error: ZodError): readonly { readonly code: string; readonly path: readonly PropertyKey[]; readonly message: string }[] =>
+  error.issues.slice(0, 16).map(issue => ({
+    code: issue.code,
+    path: issue.path.slice(0, 8),
+    message: issue.message.slice(0, 256)
+  }))
 
 const providerAdminUnavailable = (): AgentRepositoryError =>
   new AgentRepositoryError(
@@ -140,6 +164,10 @@ const providerAdminUnavailable = (): AgentRepositoryError =>
 const CreateSessionSchema = z.strictObject({
   retention: z.enum(['temporary', 'saved']),
   providerProfileId: z.uuid().nullable()
+})
+const ListSessionsQuerySchema = z.strictObject({
+  cursor: z.string().min(1).max(2_048).optional(),
+  limit: z.coerce.number().int().min(1).max(100).optional()
 })
 const UpdateSessionSchema = z
   .strictObject({
@@ -297,9 +325,14 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
     createHmac('sha256', wiki.config.sessionSecret)
       .update(JSON.stringify([session.id, session.version, session.providerProfileId, session.executionMode]))
       .digest('base64url')
-  const projectSession = async (ownerId: number, sessionId: string) => {
+  const projectSession = async (ownerId: number, sessionId: string, signal?: AbortSignal) => {
+    signal?.throwIfAborted()
     const issued = wiki.providerRegistry ? await wiki.providerRegistry.issueResolutionToken(ownerId, sessionId) : null
-    return projectAgentThread(wiki.models.knex, ownerId, sessionId, { profileResolutionToken: session => issued ?? fallbackProfileResolutionToken(session) })
+    signal?.throwIfAborted()
+    return projectAgentThread(wiki.models.knex, ownerId, sessionId, {
+      profileResolutionToken: session => issued ?? fallbackProfileResolutionToken(session),
+      ...(signal === undefined ? {} : { signal })
+    })
   }
   const projectGoal = async (goal: AgentGoalRecord) => {
     const latestRun = (await wiki.models.knex('agentRuns').where({ goalId: goal.id, ownerId: goal.ownerId }).orderBy('goalContinuation', 'desc').first('id')) as
@@ -361,28 +394,37 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
 
   router.post(
     `${apiPrefix}/sessions`,
-    asyncRoute(async (req, res) => {
+    asyncRoute(async (req, res, signal) => {
       const input = CreateSessionSchema.parse(req.body)
       const ownerId = requestSkillPrincipal(req).userId
-      const session = await createAgentSession(wiki.models.knex, {
-        ownerId,
-        retention: input.retention,
-        providerProfileId: input.providerProfileId,
-        executionMode: 'agent',
-        memorySnapshot: encodeAgentMemorySnapshot(await memoryRepository.snapshot(ownerId)),
-        expiresAt: input.retention === 'temporary' ? new Date(Date.now() + (wiki.agentLimits?.retention.temporarySessionHours ?? 24) * 3_600_000) : null
+      const memorySnapshot = encodeAgentMemorySnapshot(await memoryRepository.snapshot(ownerId))
+      const session = await wiki.models.knex.transaction(async transaction => {
+        if (input.providerProfileId !== null) {
+          if (!wiki.providerRegistry) throw new AgentRepositoryError('PROFILE_UNAVAILABLE', 'Selected provider profile is unavailable', 409)
+          await wiki.providerRegistry.assertProfileAvailable(ownerId, input.providerProfileId, transaction)
+        }
+        return createAgentSession(transaction, {
+          ownerId,
+          retention: input.retention,
+          providerProfileId: input.providerProfileId,
+          executionMode: 'agent',
+          memorySnapshot,
+          expiresAt: input.retention === 'temporary' ? new Date(Date.now() + (wiki.agentLimits?.retention.temporarySessionHours ?? 24) * 3_600_000) : null
+        })
       })
-      return res.status(201).json({ ...(await projectSession(ownerId, session.id)), launchPage: null })
+      return res.status(201).json({ ...(await projectSession(ownerId, session.id, signal)), launchPage: null })
     })
   )
   router.get(
     `${apiPrefix}/sessions`,
     asyncRoute(async (req, res) => {
       const ownerId = requestSkillPrincipal(req).userId
-      const before = typeof req.query.before === 'string' ? z.iso.datetime().parse(req.query.before) : undefined
-      const limit = typeof req.query.limit === 'string' ? z.coerce.number().int().min(1).max(100).parse(req.query.limit) : 50
-      const sessions = await listOwnedAgentSessions(wiki.models.knex, ownerId, limit, before ? new Date(before) : undefined)
-      return res.json({ sessions })
+      const query = ListSessionsQuerySchema.parse(req.query)
+      const limit = query.limit ?? 50
+      const window = await listOwnedAgentSessions(wiki.models.knex, ownerId, limit + 1, query.cursor)
+      const sessions = window.slice(0, limit)
+      const nextCursor = window.length > limit ? encodeAgentSessionCursor(sessions[sessions.length - 1]!) : null
+      return res.json({ sessions, nextCursor })
     })
   )
   router.delete(
@@ -431,11 +473,11 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
   router.post(
     `${apiPrefix}/sessions/:sessionId/messages`,
     asyncRoute(async (req, res) => {
-      if (!wiki.config.agents.provider.enabled || !wiki.agentRuntime) return res.sendStatus(404)
+      if (!wiki.config.agents.provider.enabled || !wiki.agentRuntime) return disabledRoute(res)
       const sessionId = UUIDSchema.parse(routeParameter(req, 'sessionId'))
       const input = SubmitMessageSchema.parse(req.body)
       const principal = requestSkillPrincipal(req)
-      if ((input.invokedSkillVersionIds?.length ?? 0) > 0 && !wiki.config.agents.skills.enabled) return res.sendStatus(404)
+      if ((input.invokedSkillVersionIds?.length ?? 0) > 0 && !wiki.config.agents.skills.enabled) return disabledRoute(res)
       const invokedSkillVersionIds = await skillRuntime.assertVisibleVersions(input.invokedSkillVersionIds ?? [], principal)
       const admitted = await wiki.agentRuntime.submit({
         ownerId: principal.userId,
@@ -453,11 +495,11 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
   router.post(
     `${apiPrefix}/sessions/:sessionId/goals`,
     asyncRoute(async (req, res) => {
-      if (!wiki.config.agents.provider.enabled || !wiki.config.agents.goals?.enabled || !wiki.agentRuntime) return res.sendStatus(404)
+      if (!wiki.config.agents.provider.enabled || !wiki.config.agents.goals?.enabled || !wiki.agentRuntime) return disabledRoute(res)
       const sessionId = UUIDSchema.parse(routeParameter(req, 'sessionId'))
       const input = CreateGoalSchema.parse(req.body)
       const principal = requestSkillPrincipal(req)
-      if ((input.invokedSkillVersionIds?.length ?? 0) > 0 && !wiki.config.agents.skills.enabled) return res.sendStatus(404)
+      if ((input.invokedSkillVersionIds?.length ?? 0) > 0 && !wiki.config.agents.skills.enabled) return disabledRoute(res)
       const invokedSkillVersionIds = await skillRuntime.assertVisibleVersions(input.invokedSkillVersionIds ?? [], principal)
       const created = await wiki.agentRuntime.createGoal({
         goalId: input.goalId,
@@ -476,7 +518,7 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
   router.post(
     `${apiPrefix}/goals/:goalId/pause`,
     asyncRoute(async (req, res) => {
-      if (!wiki.config.agents.goals?.enabled || !wiki.agentRuntime) return res.sendStatus(404)
+      if (!wiki.config.agents.goals?.enabled || !wiki.agentRuntime) return disabledRoute(res)
       const goalId = UUIDSchema.parse(routeParameter(req, 'goalId'))
       const input = GoalMutationSchema.parse(req.body)
       const goal = await wiki.agentRuntime.pauseGoal({ goalId, ownerId: requestSkillPrincipal(req).userId, expectedVersion: input.expectedVersion })
@@ -486,7 +528,7 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
   router.post(
     `${apiPrefix}/goals/:goalId/resume`,
     asyncRoute(async (req, res) => {
-      if (!wiki.config.agents.goals?.enabled || !wiki.agentRuntime) return res.sendStatus(404)
+      if (!wiki.config.agents.goals?.enabled || !wiki.agentRuntime) return disabledRoute(res)
       const goalId = UUIDSchema.parse(routeParameter(req, 'goalId'))
       const input = ResumeGoalSchema.parse(req.body)
       const resumed = await wiki.agentRuntime.resumeGoal({ goalId, ownerId: requestSkillPrincipal(req).userId, ...input })
@@ -500,7 +542,7 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
   router.post(
     `${apiPrefix}/goals/:goalId/cancel`,
     asyncRoute(async (req, res) => {
-      if (!wiki.config.agents.goals?.enabled || !wiki.agentRuntime) return res.sendStatus(404)
+      if (!wiki.config.agents.goals?.enabled || !wiki.agentRuntime) return disabledRoute(res)
       const goalId = UUIDSchema.parse(routeParameter(req, 'goalId'))
       const input = GoalMutationSchema.parse(req.body)
       const goal = await wiki.agentRuntime.cancelGoal({ goalId, ownerId: requestSkillPrincipal(req).userId, expectedVersion: input.expectedVersion })
@@ -586,25 +628,25 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
   )
   router.put(
     `${apiPrefix}/sessions/:sessionId/profile`,
-    asyncRoute(async (req, res) => {
-      if (!wiki.config.agents.provider.enabled || !wiki.providerRegistry) return res.sendStatus(404)
+    asyncRoute(async (req, res, signal) => {
+      if (!wiki.config.agents.provider.enabled || !wiki.providerRegistry) return disabledRoute(res)
       const sessionId = UUIDSchema.parse(routeParameter(req, 'sessionId'))
       const input = z.strictObject({ expectedSessionVersion: z.number().int().positive(), profileId: z.uuid().nullable() }).parse(req.body)
       const ownerId = requestSkillPrincipal(req).userId
       await wiki.providerRegistry.setSessionProfile({ ownerId, sessionId, ...input })
-      return res.json(await projectSession(ownerId, sessionId))
+      return res.json(await projectSession(ownerId, sessionId, signal))
     })
   )
   router.get(
     `${apiPrefix}/sessions/:sessionId`,
-    asyncRoute(async (req, res) => {
+    asyncRoute(async (req, res, signal) => {
       const sessionId = UUIDSchema.parse(routeParameter(req, 'sessionId'))
-      return res.json(await projectSession(requestSkillPrincipal(req).userId, sessionId))
+      return res.json(await projectSession(requestSkillPrincipal(req).userId, sessionId, signal))
     })
   )
   router.patch(
     `${apiPrefix}/sessions/:sessionId`,
-    asyncRoute(async (req, res) => {
+    asyncRoute(async (req, res, signal) => {
       const sessionId = UUIDSchema.parse(routeParameter(req, 'sessionId'))
       const input = UpdateSessionSchema.parse(req.body)
       const ownerId = requestSkillPrincipal(req).userId
@@ -620,12 +662,12 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
               expiresAt: input.retention === 'temporary' ? new Date(Date.now() + (wiki.agentLimits?.retention.temporarySessionHours ?? 24) * 3_600_000) : null
             })
       })
-      return res.json(await projectSession(ownerId, sessionId))
+      return res.json(await projectSession(ownerId, sessionId, signal))
     })
   )
   router.put(
     `${apiPrefix}/sessions/:sessionId/folder`,
-    asyncRoute(async (req, res) => {
+    asyncRoute(async (req, res, signal) => {
       const sessionId = UUIDSchema.parse(routeParameter(req, 'sessionId'))
       const input = MoveSessionFolderSchema.parse(req.body)
       const ownerId = requestSkillPrincipal(req).userId
@@ -635,7 +677,7 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
         expectedVersion: input.expectedSessionVersion,
         folderId: input.folderId
       })
-      return res.json(await projectSession(ownerId, sessionId))
+      return res.json(await projectSession(ownerId, sessionId, signal))
     })
   )
   router.delete(
@@ -656,7 +698,7 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
         .where({ id: runId, ownerId })
         .first('id', 'sessionId', 'status', 'attempts', 'eventSequence', 'queuedAt', 'startedAt', 'completedAt', 'errorCode', 'errorMessage')
       if (!run) throw new AgentRepositoryError('AGENT_RESOURCE_NOT_FOUND', 'Agent resource was not found', 404)
-      return res.json({ run })
+      return res.json({ run: projectAgentRun(run) })
     })
   )
   router.get(
@@ -701,12 +743,12 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
       const runId = UUIDSchema.parse(routeParameter(req, 'runId'))
       const ownerId = requestSkillPrincipal(req).userId
       const run = wiki.agentRuntime ? await wiki.agentRuntime.cancel(ownerId, runId) : await requestAgentRunCancellation(wiki.models.knex, ownerId, runId)
-      return res.json({ run })
+      return res.status(isTerminalAgentRunStatus(run.status) ? 200 : 202).json({ run: projectAgentRun(run) })
     })
   )
 
   router.use(['/_api/agents/skills', '/_api/agents/skill-preferences', '/_api/agents/personal-skills'], (req, res, next) => {
-    if (!wiki.config.agents.skills.enabled) return res.sendStatus(404)
+    if (!wiki.config.agents.skills.enabled) return disabledRoute(res)
     if (!hasAgentPermission(req.user)) return res.sendStatus(403)
     return next()
   })
@@ -775,7 +817,7 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
   router.use(
     ['/_api/agents/skills', '/_api/agents/skill-preferences', '/_api/agents/personal-skills'],
     (error: unknown, _req: Request, res: Response, next: NextFunction) => {
-      if (error instanceof ZodError) return res.status(400).json({ error: 'INVALID_REQUEST', details: error.issues })
+      if (error instanceof ZodError) return res.status(400).json({ error: 'INVALID_REQUEST', details: invalidRequestDetails(error) })
       if (error instanceof SkillValidationError) return res.status(409).json({ error: error.code, message: error.message })
       return next(error)
     }
@@ -1046,13 +1088,13 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
     })
   )
   router.use('/_api/agents/admin/skills', (error: unknown, _req: Request, res: Response, next: NextFunction) => {
-    if (error instanceof ZodError) return res.status(400).json({ error: 'INVALID_REQUEST', details: error.issues })
+    if (error instanceof ZodError) return res.status(400).json({ error: 'INVALID_REQUEST', details: invalidRequestDetails(error) })
     if (error instanceof SkillValidationError) return res.status(409).json({ error: error.code, message: error.message })
     return next(error)
   })
   router.use(apiPrefix, (error: unknown, _req: Request, res: Response, next: NextFunction) => {
     if (res.headersSent) return next(error)
-    if (error instanceof ZodError) return res.status(400).json({ error: 'INVALID_REQUEST', details: error.issues })
+    if (error instanceof ZodError) return res.status(400).json({ error: 'INVALID_REQUEST', details: invalidRequestDetails(error) })
     if (error instanceof SkillValidationError) return res.status(409).json({ error: error.code, message: error.message })
     if (error instanceof AgentRepositoryError)
       return res.status(error.status).json({ error: error.code, message: error.status >= 500 ? 'Agent request failed' : error.message })

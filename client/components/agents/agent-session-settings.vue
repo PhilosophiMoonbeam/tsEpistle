@@ -90,6 +90,10 @@
                 <v-progress-circular indeterminate :size="16" :width="2" aria-hidden="true" />
                 Applying provider profile to this conversation…
               </p>
+              <p v-else-if="profileError" class="agent-session-settings__status agent-session-settings__status--error" role="alert">
+                <v-icon icon="mdi-alert-circle-outline" size="17" aria-hidden="true" />
+                {{ profileError }}
+              </p>
               <p v-else-if="profileChanged" class="agent-session-settings__status agent-session-settings__status--pending" role="status" aria-live="polite">
                 Your selection is staged. Apply it before starting the next run.
               </p>
@@ -98,7 +102,7 @@
               </p>
               <v-btn v-if="profileChanged" variant="text" :disabled="disabled || applying" @click="resetProfileSelection">Revert</v-btn>
               <v-btn color="primary" variant="flat" :loading="applying" :disabled="disabled || applying || !profileChanged" @click="applyProfile">
-                Apply to session
+                {{ profileError ? 'Retry apply' : 'Apply to session' }}
               </v-btn>
             </div>
           </section>
@@ -112,15 +116,27 @@
 import { computed, ref, watch } from 'vue'
 import type { AgentProviderProfileView, AgentSessionView } from '../../../shared/agents/contracts.ts'
 
-const props = defineProps<{ session: AgentSessionView; profiles: AgentProviderProfileView[]; disabled: boolean }>()
-const emit = defineEmits<{ profile: [profileId: string | null] }>()
+type ProviderProfileApplyResult =
+  | { readonly success: true }
+  | { readonly success: false; readonly error: string }
+
+const props = defineProps<{
+  session: AgentSessionView
+  profiles: AgentProviderProfileView[]
+  disabled: boolean
+  applyProviderProfile: (profileId: string | null) => Promise<ProviderProfileApplyResult>
+}>()
 const profileId = ref<string | null>(props.session.providerProfileId)
 const applying = ref(false)
+const profileError = ref('')
 const dateFormatter = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' })
 
-watch(() => props.session, session => {
-  profileId.value = session.providerProfileId
-  applying.value = false
+watch(() => props.session.providerProfileId, providerProfileId => {
+  profileId.value = providerProfileId
+  profileError.value = ''
+})
+watch(profileId, () => {
+  if (!applying.value) profileError.value = ''
 })
 
 const defaultProfile = computed(() => props.profiles.find(profile => profile.isGlobalDefault) ?? props.profiles[0])
@@ -166,11 +182,20 @@ const retentionSummary = computed(() => {
 const resetProfileSelection = (): void => {
   if (applying.value) return
   profileId.value = props.session.providerProfileId
+  profileError.value = ''
 }
-const applyProfile = (): void => {
+const applyProfile = async (): Promise<void> => {
   if (props.disabled || applying.value || !profileChanged.value) return
   applying.value = true
-  emit('profile', profileId.value)
+  profileError.value = ''
+  try {
+    const result = await props.applyProviderProfile(profileId.value)
+    if (!result.success) profileError.value = result.error
+  } catch (value) {
+    profileError.value = value instanceof Error ? value.message : 'The provider profile could not be applied. Try again.'
+  } finally {
+    applying.value = false
+  }
 }
 </script>
 <style scoped>
@@ -420,6 +445,11 @@ const applyProfile = (): void => {
 
 .agent-session-settings__status--pending {
   color: rgb(var(--v-theme-warning));
+  font-weight: 650;
+}
+
+.agent-session-settings__status--error {
+  color: rgb(var(--v-theme-error));
   font-weight: 650;
 }
 

@@ -38,7 +38,7 @@
           :aria-label='$t(`common:header.searchModeLabel`)'
         )
           v-btn(value='search' prepend-icon='mdi-magnify') {{$t('common:header.searchMode')}}
-          v-btn(value='ask' prepend-icon='mdi-auto-fix' @click='openAsk') {{$t('common:header.askMode')}}
+          v-btn(value='ask' prepend-icon='mdi-auto-fix' data-modal-focus-key='search-ask-mode' @click='openAsk') {{$t('common:header.askMode')}}
         .search-results-controls-title(v-else)
           v-icon(icon='mdi-magnify' size='19')
           span Search the Wiki
@@ -144,6 +144,7 @@
                 variant='tonal'
                 prepend-icon='mdi-auto-fix'
                 @click='askCurrentQuery'
+                data-modal-focus-key='search-ask-query'
               ) Ask Wiki
             .search-results-none(v-if='normalizedSearch.length >= 2 && results.length < 1')
               async-state(
@@ -255,9 +256,12 @@ export default defineComponent({
       searchError: '',
       searchRequestId: 0,
       response: emptySearchResponse(),
-      responseQuery: '',
+      responseKey: '',
       modalFocusScope: null as ModalFocusScope | null,
-      searchFocusScopeCleanup: null as (() => void) | null
+      searchModalFocusScope: null as ModalFocusScope | null,
+      pendingAskRestoreTarget: null as HTMLElement | null,
+      directPromptHandoffId: 0,
+      directPromptHandoffPending: false
     }
   },
   computed: {
@@ -309,8 +313,15 @@ export default defineComponent({
     currentPageLocale(): string { return wikiStore.page.locale },
     currentPagePath(): string { return wikiStore.page.path },
     currentPageUpdatedAt(): string { return wikiStore.page.updatedAt },
+    searchRequestKey(): string {
+      return JSON.stringify([
+        this.normalizedSearch,
+        this.searchRestrictLocale ? wikiStore.page.locale : '',
+        this.searchRestrictPath ? wikiStore.page.path : ''
+      ])
+    },
     hasFreshResponse(): boolean {
-      return this.responseQuery === this.normalizedSearch && this.normalizedSearch.length >= 2
+      return this.responseKey === this.searchRequestKey && this.normalizedSearch.length >= 2
     },
     activeDescendant(): string | undefined {
       if (!this.hasFreshResponse || this.cursor < 0) return undefined
@@ -328,17 +339,17 @@ export default defineComponent({
     search(newValue: string | null) {
       this.queueSearch(newValue ?? '')
     },
-    searchMode() {
-      this.queueSearch(this.search)
+    searchMode(mode: 'search' | 'ask') {
+      if (mode === 'search' && !this.hasFreshResponse) this.queueSearch(this.search)
     },
     isAgentOpen(open: boolean) {
       if (open) void this.activateAgentModal()
-      else this.deactivateAgentModal(this.searchIsFocused)
+      else if (this.searchIsFocused) void this.reactivateSearchModal()
+      else this.deactivateAgentModal(false)
     },
     searchIsFocused(open: boolean) {
-      if (this.isAgentOpen) return
       if (open) void this.activateAgentModal()
-      else this.deactivateAgentModal(false)
+      else this.deactivateModalLayers(true)
     },
     searchRestrictLocale() {
       this.queueSearch(this.search)
@@ -371,84 +382,80 @@ export default defineComponent({
   },
   beforeUnmount() {
     this.searchRequestId += 1
+    this.directPromptHandoffId += 1
     if (this.searchTimer !== null) window.clearTimeout(this.searchTimer)
     offSearchMove(this.handleSearchMove)
     offSearchEnter(this.handleSearchEnter)
-    this.deactivateAgentModal(false)
+    this.deactivateModalLayers(false)
   },
   methods: {
     async activateAgentModal(): Promise<void> {
-      const restoreTarget = this.findSearchControl()
+      const opener = this.pendingAskRestoreTarget ?? this.activeModalOpener() ?? this.findSearchControl()
       await this.$nextTick()
-      if (this.isAgentOpen) {
-        const root = this.$el
-        if (!(root instanceof HTMLElement)) return
-        this.searchFocusScopeCleanup?.()
-        this.modalFocusScope?.deactivate({ restoreFocus: false })
-        const focusScope = createModalFocusScope({
-          root,
-          restoreTarget,
-          onEscape: this.closeSearch
-        })
-        this.modalFocusScope = focusScope
-        await (this.$refs.inlineAgent as InlineAgentChatRef | undefined)?.focusComposer()
-        if (this.modalFocusScope === focusScope && !focusScope.containsFocus()) focusScope.focusFirst()
-      } else {
-        this.activateSearchModal(restoreTarget)
-      }
-    },
-    activateSearchModal(restoreTarget: HTMLElement | null): void {
+      if (!this.searchIsFocused && !this.isAgentOpen) return
+      this.activateSearchModal(this.findSearchControl() ?? opener)
+      if (!this.isAgentOpen || this.modalFocusScope) return
       const root = this.$el
       if (!(root instanceof HTMLElement)) return
-      this.searchFocusScopeCleanup?.()
-      const isAllowed = (target: EventTarget | null): target is Node =>
-        target instanceof Node && (root.contains(target) || target === restoreTarget)
-      const focusables = (): HTMLElement[] => [
-        ...(restoreTarget && !restoreTarget.hasAttribute('disabled') ? [restoreTarget] : []),
-        ...Array.from(root.querySelectorAll<HTMLElement>('a[href], button:not([disabled]), [tabindex]:not([tabindex="-1"])'))
-      ]
-      const handleFocus = (event: FocusEvent): void => {
-        if (!isAllowed(event.target)) (restoreTarget ?? focusables()[0] ?? root).focus()
-      }
-      const handleKeydown = (event: KeyboardEvent): void => {
-        if (!isAllowed(event.target)) return
-        if (event.key === 'Escape') {
-          event.preventDefault()
-          this.closeSearch()
-        } else if (event.key === 'Tab') {
-          const items = focusables()
-          if (!items.length) return
-          const index = items.indexOf(document.activeElement as HTMLElement)
-          const next = event.shiftKey ? (index <= 0 ? items.length - 1 : index - 1) : (index === items.length - 1 ? 0 : index + 1)
-          event.preventDefault()
-          items[next]?.focus()
-        }
-      }
-      document.addEventListener('focusin', handleFocus)
-      document.addEventListener('keydown', handleKeydown)
-      this.searchFocusScopeCleanup = () => {
-        document.removeEventListener('focusin', handleFocus)
-        document.removeEventListener('keydown', handleKeydown)
-      }
+      const focusScope = createModalFocusScope({
+        root,
+        restoreTarget: this.restoreTargetFor(opener),
+        onEscape: this.returnToSearch
+      })
+      this.pendingAskRestoreTarget = null
+      this.modalFocusScope = focusScope
+      await (this.$refs.inlineAgent as InlineAgentChatRef | undefined)?.focusComposer()
+      if (this.modalFocusScope === focusScope && !focusScope.containsFocus()) focusScope.focusFirst()
+    },
+    activateSearchModal(restoreTarget: HTMLElement | null): void {
+      if (this.searchModalFocusScope) return
+      const root = this.$el
+      if (!(root instanceof HTMLElement)) return
+      this.searchModalFocusScope = createModalFocusScope({
+        root,
+        restoreTarget: this.restoreTargetFor(restoreTarget),
+        additionalRoots: () => this.findSearchControls(),
+        onEscape: this.closeSearch
+      })
+    },
+    async reactivateSearchModal(): Promise<void> {
+      await this.$nextTick()
+      if (this.isAgentOpen || !this.searchIsFocused) return
+      this.deactivateAgentModal(true)
+      this.activateSearchModal(this.findSearchControl())
+      if (this.searchModalFocusScope && !this.searchModalFocusScope.containsFocus()) this.searchModalFocusScope.focusFirst()
     },
     deactivateAgentModal(restoreFocus = true): void {
-      this.searchFocusScopeCleanup?.()
-      this.searchFocusScopeCleanup = null
       this.modalFocusScope?.deactivate({ restoreFocus })
       this.modalFocusScope = null
-      if (restoreFocus) {
-        void this.$nextTick(() => {
-          const searchControl = this.findSearchControl()
-          if (searchControl && document.activeElement !== searchControl) searchControl.focus()
-          this.syncSearchInputA11y()
-        })
-      } else {
-        this.syncSearchInputA11y()
+      this.syncSearchInputA11y()
+    },
+    deactivateModalLayers(restoreFocus = true): void {
+      this.deactivateAgentModal(false)
+      this.searchModalFocusScope?.deactivate({ restoreFocus })
+      this.searchModalFocusScope = null
+      this.syncSearchInputA11y()
+    },
+    activeModalOpener(): HTMLElement | null {
+      return document.activeElement instanceof HTMLElement ? document.activeElement : null
+    },
+    restoreTargetFor(target: HTMLElement | null): () => HTMLElement | null {
+      const key = target?.dataset.modalFocusKey
+      return () => {
+        if (target?.isConnected) return target
+        if (key) {
+          const replacement = document.querySelector<HTMLElement>(`[data-modal-focus-key="${key}"]`)
+          if (replacement) return replacement
+        }
+        return this.findSearchControl()
       }
     },
+    findSearchControls(): HTMLElement[] {
+      return Array.from(document.querySelectorAll<HTMLElement>('.nav-header-search-control input'))
+        .filter(control => !control.hasAttribute('disabled'))
+    },
     findSearchControl(): HTMLElement | null {
-      const controls = Array.from(document.querySelectorAll<HTMLElement>('.nav-header-search-control input'))
-      return controls.find(control => control.getClientRects().length > 0 && !control.hasAttribute('disabled')) ?? null
+      return this.findSearchControls().find(control => control.getClientRects().length > 0) ?? null
     },
     syncSearchInputA11y(): void {
       const input = this.findSearchControl()
@@ -464,10 +471,14 @@ export default defineComponent({
     },
     openAsk(): void {
       if (!this.canAsk) return
+      this.directPromptHandoffId += 1
+      this.pendingAskRestoreTarget = this.activeModalOpener()
       this.searchIsFocused = true
       this.searchMode = 'ask'
     },
     returnToSearch(): void {
+      this.pendingAskRestoreTarget = null
+      this.directPromptHandoffId += 1
       this.searchMode = 'search'
       this.searchIsFocused = true
     },
@@ -476,18 +487,31 @@ export default defineComponent({
       this.searchRequestId += 1
       const requestId = this.searchRequestId
       const normalizedQuery = query.trim()
-      this.searchError = ''
-      this.responseQuery = ''
-      this.response = emptySearchResponse()
-      this.pagination = 1
       if (this.searchTimer !== null) window.clearTimeout(this.searchTimer)
       this.searchTimer = null
-      if (this.searchMode !== 'search' || normalizedQuery.length < 2) {
+      if (this.searchMode !== 'search') {
         this.searchIsLoading = false
         return
       }
+      if (normalizedQuery.length < 2) {
+        this.searchError = ''
+        this.responseKey = ''
+        this.response = emptySearchResponse()
+        this.pagination = 1
+        this.searchIsLoading = false
+        return
+      }
+      const requestKey = this.searchRequestKey
+      if (this.responseKey === requestKey && !this.searchError) {
+        this.searchIsLoading = false
+        return
+      }
+      this.searchError = ''
+      this.responseKey = ''
+      this.response = emptySearchResponse()
+      this.pagination = 1
       this.searchIsLoading = true
-      this.searchTimer = window.setTimeout(() => this.runSearch(normalizedQuery, requestId), 300)
+      this.searchTimer = window.setTimeout(() => this.runSearch(normalizedQuery, requestKey, requestId), 300)
     },
     handleSearchMove(dir: string): void {
       if (this.searchMode === 'ask' || this.searchIsLoading || !this.hasFreshResponse) return
@@ -520,36 +544,40 @@ export default defineComponent({
       await this.sendAskPrompt(this.normalizedSearch)
     },
     async askCurrentQuery(): Promise<void> {
-      if (!this.canAsk || this.normalizedSearch.length < 2) return
+      if (!this.canAsk || this.normalizedSearch.length < 2 || this.directPromptHandoffPending) return
       const prompt = this.normalizedSearch
+      this.pendingAskRestoreTarget = this.activeModalOpener()
       this.searchMode = 'ask'
       await this.sendAskPrompt(prompt)
     },
     async sendAskPrompt(prompt: string): Promise<void> {
-      if (!prompt) return
-      await this.$nextTick()
-      const inlineAgent = this.$refs.inlineAgent as InlineAgentChatRef | undefined
-      if (!inlineAgent) return
-      if (await inlineAgent.sendPrompt(prompt)) {
-        this.search = ''
+      if (!prompt || this.directPromptHandoffPending) return
+      this.directPromptHandoffPending = true
+      const handoffId = ++this.directPromptHandoffId
+      try {
         await this.$nextTick()
-        await inlineAgent.focusConversation()
+        const inlineAgent = this.$refs.inlineAgent as InlineAgentChatRef | undefined
+        if (!inlineAgent) return
+        const success = await inlineAgent.sendPrompt(prompt)
+        if (!success || handoffId !== this.directPromptHandoffId) return
+        if (this.normalizedSearch === prompt) this.search = ''
+        await this.$nextTick()
+        if (handoffId === this.directPromptHandoffId && this.isAgentOpen) await inlineAgent.focusConversation()
+      } finally {
+        this.directPromptHandoffPending = false
       }
     },
     closeSearch(): void {
-      this.deactivateAgentModal(false)
+      this.directPromptHandoffId += 1
+      this.pendingAskRestoreTarget = null
+      this.deactivateModalLayers(true)
       this.searchIsFocused = false
       this.searchMode = 'search'
       this.search = ''
       this.approvalId = ''
-      this.findSearchControl()?.blur()
       const url = new URL(window.location.href)
       url.searchParams.delete('agentApproval')
       window.history.replaceState(window.history.state, '', url)
-      void this.$nextTick(() => {
-        this.findSearchControl()?.blur()
-        this.searchIsFocused = false
-      })
     },
     clearSearchScope(): void {
       this.searchRestrictLocale = false
@@ -570,14 +598,14 @@ export default defineComponent({
       if (query.length < 2) return
       this.searchRequestId += 1
       this.searchError = ''
-      this.responseQuery = ''
+      this.responseKey = ''
       this.response = emptySearchResponse()
       this.cursor = -1
       this.pagination = 1
       this.searchIsLoading = true
-      void this.runSearch(query, this.searchRequestId)
+      void this.runSearch(query, this.searchRequestKey, this.searchRequestId)
     },
-    async runSearch(query: string, requestId: number): Promise<void> {
+    async runSearch(query: string, requestKey: string, requestId: number): Promise<void> {
       try {
         const response = await searchPages(window.fetch.bind(window), query, {
           locale: this.searchRestrictLocale ? wikiStore.page.locale : undefined,
@@ -585,11 +613,12 @@ export default defineComponent({
         })
         if (requestId !== this.searchRequestId) return
         this.response = response
-        this.responseQuery = query
+        this.responseKey = requestKey
         this.pagination = 1
       } catch (err) {
         if (requestId !== this.searchRequestId) return
         this.searchError = getErrorMessage(err)
+        this.responseKey = ''
         this.response = emptySearchResponse()
       } finally {
         if (requestId === this.searchRequestId) this.searchIsLoading = false

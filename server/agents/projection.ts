@@ -370,6 +370,76 @@ const artifactView = (row: ArtifactRow, now: Date): AgentArtifactView => {
   }
 }
 
+const THREAD_MESSAGE_LIMIT = 200
+const THREAD_RUN_LIMIT = 200
+const THREAD_EVENT_PAGE_LIMIT = 1_000
+const THREAD_LATEST_ATTEMPT_EVENT_LIMIT = 4_096
+const THREAD_EVENT_QUERY_CONCURRENCY = 4
+
+export interface AgentThreadHistoryWindow {
+  readonly messageLimit: number
+  readonly hasOlderMessages: boolean
+  readonly runLimit: number
+  readonly hasOlderRuns: boolean
+}
+
+export interface ProjectedAgentThread extends AgentThreadState {
+  readonly historyWindow: AgentThreadHistoryWindow
+}
+
+const mapWithConcurrency = async <Input, Output>(
+  values: readonly Input[],
+  concurrency: number,
+  mapper: (value: Input) => Promise<Output>
+): Promise<Output[]> => {
+  const output = new Array<Output>(values.length)
+  let next = 0
+  const worker = async (): Promise<void> => {
+    while (next < values.length) {
+      const index = next
+      next += 1
+      output[index] = await mapper(values[index]!)
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(concurrency, values.length) }, worker))
+  return output
+}
+
+const listLatestAttemptProjectionEvents = async (
+  knex: Knex,
+  ownerId: number,
+  run: ProjectAgentRunInput
+): Promise<AgentEvent[]> => {
+  const snapshotLastSequence = Number(run.eventSequence)
+  if (snapshotLastSequence === 0) return []
+  const first = await knex('agentEvents')
+    .where({ runId: run.id, attempt: run.attempts })
+    .andWhere('sequence', '<=', snapshotLastSequence)
+    .orderBy('sequence')
+    .first<{ sequence: number }>('sequence')
+  if (!first) return []
+  const firstSequence = Number(first.sequence)
+  if (!Number.isSafeInteger(firstSequence) || firstSequence < 1 || firstSequence > snapshotLastSequence)
+    throw new AgentRepositoryError('AGENT_EVENT_CORRUPT', 'Agent event attempt boundary is invalid', 500)
+  const eventCount = snapshotLastSequence - firstSequence + 1
+  // This is above the legal maximum from 32 children × 16 tools × two tool
+  // boundaries, all child/root turns, task transitions, and presentation events.
+  if (eventCount > THREAD_LATEST_ATTEMPT_EVENT_LIMIT)
+    throw new AgentRepositoryError('AGENT_EVENT_PROJECTION_OVERFLOW', 'Agent run has too many events to project safely', 500)
+
+  const events: AgentEvent[] = []
+  let cursor = firstSequence - 1
+  while (cursor < snapshotLastSequence) {
+    const pageLimit = Math.min(THREAD_EVENT_PAGE_LIMIT, snapshotLastSequence - cursor)
+    const page = await listOwnedAgentEvents(knex, ownerId, run.id, cursor, pageLimit)
+    if (page.length !== pageLimit)
+      throw new AgentRepositoryError('AGENT_EVENT_SEQUENCE_GAP', 'Agent event sequence is not contiguous', 500)
+    events.push(...page)
+    cursor = page.at(-1)!.sequence
+  }
+  return events
+}
+
 export interface ProjectAgentThreadOptions {
   readonly profileResolutionToken: (session: {
     readonly id: string
@@ -378,15 +448,21 @@ export interface ProjectAgentThreadOptions {
     readonly executionMode: string
   }) => string
   readonly now?: Date
+  readonly signal?: AbortSignal
 }
 
-export const projectAgentThread = async (knex: Knex, ownerId: number, sessionId: string, options: ProjectAgentThreadOptions): Promise<AgentThreadState> => {
+export const projectAgentThread = async (
+  knex: Knex,
+  ownerId: number,
+  sessionId: string,
+  options: ProjectAgentThreadOptions
+): Promise<ProjectedAgentThread> => {
+  options.signal?.throwIfAborted()
   const session = await getOwnedAgentSession(knex, ownerId, sessionId)
   const now = options.now ?? new Date()
   const groupIds = (await knex('userGroups').where({ userId: ownerId }).pluck('groupId')) as number[]
-  const [messageRows, runRows, skillRows, proposalRows, approvalRows, artifactRows, taskViews, latestGoal] = await Promise.all([
-    listOwnedAgentMessages(knex, ownerId, sessionId, 0, 500),
-    knex<ProjectAgentRunInput>('agentRuns').where('sessionId', sessionId).andWhere('ownerId', ownerId).orderBy('queuedAt', 'desc').orderBy('id', 'desc'),
+  const [messageWindow, skillRows, taskViews, latestGoal] = await Promise.all([
+    listOwnedAgentMessages(knex, ownerId, sessionId, 0, THREAD_MESSAGE_LIMIT + 1, 'desc'),
     knex<SkillRow>('agentUserSkillPreferences as preferences')
       .join('agentSkills as skills', 'skills.id', 'preferences.skillId')
       .join('agentSkillVersions as versions', 'versions.id', 'skills.currentVersionId')
@@ -419,51 +495,103 @@ export const projectAgentThread = async (knex: Knex, ownerId: number, sessionId:
         ordinal: 'preferences.ordinal'
       })
       .orderBy('preferences.ordinal'),
-    knex<ProposalRow>('agentProposals')
-      .leftJoin('pages', 'pages.id', 'agentProposals.pageId')
-      .where('agentProposals.sessionId', sessionId)
-      .select({
-        id: 'agentProposals.id',
-        sourceKind: 'agentProposals.sourceKind',
-        actionName: 'agentProposals.actionName',
-        risk: 'agentProposals.risk',
-        status: 'agentProposals.status',
-        summary: 'agentProposals.summary',
-        pageId: 'agentProposals.pageId',
-        pageLocale: 'pages.localeCode',
-        pagePath: 'pages.path',
-        pageTitle: 'pages.title',
-        pageContentType: 'pages.contentType',
-        baseSourceRevision: 'agentProposals.baseSourceRevision',
-        authoritySha256: 'agentProposals.authoritySha256',
-        inputHash: 'agentProposals.inputHash',
-        patchSha256: 'agentProposals.patchSha256',
-        resultCanonicalSha256: 'agentProposals.resultCanonicalSha256',
-        diffSha256: 'agentProposals.diffSha256',
-        diff: 'agentProposals.diff',
-        contentPurgedAt: 'agentProposals.contentPurgedAt',
-        expiresAt: 'agentProposals.expiresAt'
-      })
-      .select({ operation: 'agentProposals.operation' })
-      .orderBy('agentProposals.createdAt'),
-    knex<ApprovalRow>('agentApprovals')
-      .join('agentProposals', 'agentProposals.id', 'agentApprovals.proposalId')
-      .where('agentProposals.sessionId', sessionId)
-      .select('agentApprovals.*'),
-    knex<ArtifactRow>('agentArtifacts')
-      .where('sessionId', sessionId)
-      .andWhere('ownerId', ownerId)
-      .select('id', 'kind', 'mimeType', 'byteLength', 'width', 'height', 'createdAt', 'expiresAt')
-      .orderBy('createdAt'),
     listAgentTaskViews(knex, ownerId, sessionId),
     latestAgentGoalForSession(knex, ownerId, sessionId)
   ])
+  options.signal?.throwIfAborted()
+
+  const hasOlderMessages = messageWindow.length > THREAD_MESSAGE_LIMIT
+  const messageRows = hasOlderMessages ? messageWindow.slice(1) : messageWindow
+  const [activeRunIds, latestGoalRun] = await Promise.all([
+    knex('agentRuns')
+      .where({ sessionId, ownerId })
+      .whereIn('status', ['queued', 'running', 'awaiting_approval'])
+      .orderBy('queuedAt', 'desc')
+      .limit(THREAD_RUN_LIMIT)
+      .pluck<string>('id'),
+    latestGoal === null
+      ? Promise.resolve(undefined)
+      : knex('agentRuns')
+          .where({ sessionId, ownerId, goalId: latestGoal.id })
+          .orderBy('goalContinuation', 'desc')
+          .first<{ id: string }>('id')
+  ])
+  const prioritizedRunIds = new Set<string>(activeRunIds)
+  if (latestGoalRun) prioritizedRunIds.add(latestGoalRun.id)
+  for (let index = messageRows.length - 1; index >= 0 && prioritizedRunIds.size < THREAD_RUN_LIMIT; index -= 1) {
+    const runId = messageRows[index]?.runId
+    if (runId) prioritizedRunIds.add(runId)
+  }
+  const selectedRunIds = [...prioritizedRunIds].slice(0, THREAD_RUN_LIMIT)
+  const runQuery = knex<ProjectAgentRunInput>('agentRuns')
+    .where('sessionId', sessionId)
+    .andWhere('ownerId', ownerId)
+    .orderBy('queuedAt', 'desc')
+    .orderBy('id', 'desc')
+  if (selectedRunIds.length === 0) runQuery.whereRaw('1 = 0')
+  else runQuery.whereIn('id', selectedRunIds)
+  const olderRunQuery = knex('agentRuns').where({ sessionId, ownerId })
+  if (selectedRunIds.length > 0) olderRunQuery.whereNotIn('id', selectedRunIds)
+  const [runRows, omittedRun] = await Promise.all([runQuery, olderRunQuery.first('id')])
+  options.signal?.throwIfAborted()
+
+  const proposalQuery = knex<ProposalRow>('agentProposals')
+    .leftJoin('pages', 'pages.id', 'agentProposals.pageId')
+    .where('agentProposals.sessionId', sessionId)
+    .select({
+      id: 'agentProposals.id',
+      sourceKind: 'agentProposals.sourceKind',
+      actionName: 'agentProposals.actionName',
+      risk: 'agentProposals.risk',
+      status: 'agentProposals.status',
+      summary: 'agentProposals.summary',
+      pageId: 'agentProposals.pageId',
+      pageLocale: 'pages.localeCode',
+      pagePath: 'pages.path',
+      pageTitle: 'pages.title',
+      pageContentType: 'pages.contentType',
+      baseSourceRevision: 'agentProposals.baseSourceRevision',
+      authoritySha256: 'agentProposals.authoritySha256',
+      inputHash: 'agentProposals.inputHash',
+      patchSha256: 'agentProposals.patchSha256',
+      resultCanonicalSha256: 'agentProposals.resultCanonicalSha256',
+      diffSha256: 'agentProposals.diffSha256',
+      diff: 'agentProposals.diff',
+      contentPurgedAt: 'agentProposals.contentPurgedAt',
+      expiresAt: 'agentProposals.expiresAt'
+    })
+    .select({ operation: 'agentProposals.operation' })
+    .orderBy('agentProposals.createdAt')
+  const artifactQuery = knex<ArtifactRow>('agentArtifacts')
+    .where('sessionId', sessionId)
+    .andWhere('ownerId', ownerId)
+    .select('id', 'kind', 'mimeType', 'byteLength', 'width', 'height', 'createdAt', 'expiresAt')
+    .orderBy('createdAt')
+  if (selectedRunIds.length === 0) {
+    proposalQuery.whereRaw('1 = 0')
+    artifactQuery.whereRaw('1 = 0')
+  } else {
+    proposalQuery.whereIn('agentProposals.runId', selectedRunIds)
+    artifactQuery.whereIn('runId', selectedRunIds)
+  }
+  const [proposalRows, artifactRows, eventPages] = await Promise.all([
+    proposalQuery,
+    artifactQuery,
+    mapWithConcurrency(runRows, THREAD_EVENT_QUERY_CONCURRENCY, run => listLatestAttemptProjectionEvents(knex, ownerId, run))
+  ])
+  const approvalRows =
+    proposalRows.length === 0
+      ? []
+      : await knex<ApprovalRow>('agentApprovals').whereIn(
+          'proposalId',
+          proposalRows.map(proposal => proposal.id)
+        )
+  options.signal?.throwIfAborted()
 
   const runs = runRows.map(projectAgentRun)
   const currentRun = runs.find(run => run.canCancel) ?? null
-  const goal = latestGoal === null ? null : projectAgentGoal(latestGoal, runRows.find(run => run.goalId === latestGoal.id)?.id ?? null)
-  const allEvents = (await Promise.all(runRows.map(run => listOwnedAgentEvents(knex, ownerId, run.id, 0, 1_000)))).flat()
-  const reduced = reduceAgentEvents(allEvents, runRows[0]?.id ?? null)
+  const goal = latestGoal === null ? null : projectAgentGoal(latestGoal, latestGoalRun?.id ?? null)
+  const reduced = reduceAgentEvents(eventPages.flat(), runRows[0]?.id ?? null)
   const approvals = new Map(approvalRows.map(row => [row.proposalId, approvalView(row)]))
   const messages: AgentMessageView[] = messageRows.map(message => ({
     id: message.id,
@@ -501,6 +629,12 @@ export const projectAgentThread = async (knex: Knex, ownerId: number, sessionId:
     goal,
     proposals: proposalRows.map(row => proposalView(row, approvals.get(row.id) ?? null)),
     artifacts: artifactRows.map(row => artifactView(row, now)),
-    suggestions: reduced.suggestions
+    suggestions: reduced.suggestions,
+    historyWindow: {
+      messageLimit: THREAD_MESSAGE_LIMIT,
+      hasOlderMessages,
+      runLimit: THREAD_RUN_LIMIT,
+      hasOlderRuns: omittedRun !== undefined
+    }
   }
 }

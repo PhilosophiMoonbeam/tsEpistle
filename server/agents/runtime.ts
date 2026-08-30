@@ -7,7 +7,7 @@ import {
   admitAgentRun,
   admitAgentRunInTransaction,
   ensureAgentRunQuota,
-  reconcileAgentRunQuota,
+  terminalizeAgentRun,
   readAgentApprovalContinuation,
   getOwnedAgentRun,
   type AgentQuotaLimits,
@@ -568,7 +568,7 @@ const priorRunActivity = (rows: readonly RuntimePriorEventRow[]): readonly Agent
       }
     }
   }
-  return [...runs.entries()].slice(0, 8).map(([runId, run]) => {
+  return [...runs.entries()].slice(-8).map(([runId, run]) => {
     const firstReadByTarget = new Map<string, string>()
     for (const tool of run.tools) {
       if (tool.duplicateOfActionCallId !== null || (tool.actionName !== 'pages.get' && tool.actionName !== 'pages.getVersion')) continue
@@ -1255,7 +1255,7 @@ export class AgentProductRuntime {
           .andWhere('runs.id', '!=', claim.id)
           .whereIn('events.type', ['model.turn', 'evidence.provenance', 'tool.started', 'tool.completed', 'tool.failed'])
           .orderBy('runs.queuedAt', 'desc')
-          .orderBy('events.sequence')
+          .orderBy('events.sequence', 'desc')
           .limit(256)
           .select({
             runId: 'runs.id',
@@ -1270,7 +1270,7 @@ export class AgentProductRuntime {
       if (!sessionRow) throw new AgentRepositoryError('AGENT_RESOURCE_NOT_FOUND', 'Agent session was not found', 404)
       const currentPage = currentPageHint(contextRow?.data)
       const memory = decodeAgentMemorySnapshot(sessionRow.memorySnapshot)
-      const priorActivity = priorRunActivity(priorEventRows)
+      const priorActivity = priorRunActivity([...priorEventRows].reverse())
       const messages: AgentEngineMessage[] = messageRows.map(message => {
         const state = providerState(message.providerStateCiphertext)
         return state === undefined ? { role: message.role, content: message.content } : { role: message.role, content: message.content, providerState: state }
@@ -1401,25 +1401,14 @@ export class AgentProductRuntime {
         continuation === null
           ? await this.#generateConversationTitle(claim, sessionRow, messages, content, executionSignal, dispatchBudget)
           : { title: '', source: 'fallback' as const, inputTokens: 0, outputTokens: 0, costMicros: 0 }
-      const inputTokens = nonNegativeUsage(modelUsage.inputTokens + titleUsage.inputTokens + orchestrationUsage.inputTokens, 'Input tokens')
-      const outputTokens = nonNegativeUsage(modelUsage.outputTokens + titleUsage.outputTokens + orchestrationUsage.outputTokens, 'Output tokens')
-      const costMicros = nonNegativeUsage(modelUsage.costMicros + titleUsage.costMicros + orchestrationUsage.costMicros, 'Cost')
+      const reconciledProviderUsage = dispatchBudget.consumed
+      const inputTokens = nonNegativeUsage(reconciledProviderUsage.inputTokens, 'Input tokens')
+      const outputTokens = nonNegativeUsage(reconciledProviderUsage.outputTokens, 'Output tokens')
+      const costMicros = nonNegativeUsage(reconciledProviderUsage.costMicros, 'Cost')
       const citations = result.citations === undefined ? null : canonicalJson(result.citations)
       const providerStateJson = result.providerState === undefined ? null : canonicalJson(result.providerState)
       if (providerStateJson !== null && Buffer.byteLength(providerStateJson, 'utf8') > 256 * 1_024)
         throw new AgentRepositoryError('AGENT_PROVIDER_STATE_TOO_LARGE', 'Provider continuation exceeds its size limit', 500)
-      await this.#appendPresentationEvent(
-        claim,
-        'message.completed',
-        { messageId: claim.assistantMessageId },
-        {
-          status: 'complete',
-          content,
-          citations,
-          providerStateCiphertext: providerStateJson === null ? null : Buffer.from(providerStateJson),
-          providerStateSha256: providerStateJson === null ? null : sha256(providerStateJson)
-        }
-      )
       if (result.suggestions !== undefined) await this.#appendPresentationEvent(claim, 'suggestions.updated', { suggestions: result.suggestions })
       await this.#appendPresentationEvent(claim, 'usage.updated', {
         inputTokens,
@@ -1434,17 +1423,6 @@ export class AgentProductRuntime {
           purpose: 'conversation_title'
         }
       })
-      await this.#knex('agentRuns')
-        .where({ id: claim.id, leaseOwner: claim.leaseOwner, leaseToken: claim.leaseToken })
-        .update({ inputTokens, outputTokens, estimatedCostMicros: costMicros, updatedAt: new Date() })
-      await reconcileAgentRunQuota(this.#knex, {
-        runId: claim.id,
-        ownerId: claim.ownerId,
-        consumedTokens: inputTokens + outputTokens,
-        consumedCostMicros: costMicros,
-        status: 'consumed'
-      })
-      quotaReconciled = true
       const pendingProposal = await this.#knex('agentProposals')
         .where({ runId: claim.id })
         .whereIn('status', ['pending', 'approved', 'applying'])
@@ -1454,22 +1432,43 @@ export class AgentProductRuntime {
         tasks,
         pendingProposalCount: Number(pendingProposal?.count ?? 0),
         evidenceGatePassed: true,
-        usageReconciled: quotaReconciled
+        usageReconciled: true
       })
       const encodedCompletion = encodedCompletionAssessment(completion)
-      await this.#knex('agentRuns').where({ id: claim.id, leaseOwner: claim.leaseOwner, leaseToken: claim.leaseToken }).update({
-        completionOutcome: completion.outcome,
-        completionAssessment: encodedCompletion.encoded,
-        completionAssessmentSha256: encodedCompletion.sha256,
-        updatedAt: new Date()
-      })
       await this.#appendPresentationEvent(claim, 'run.completionAssessed', {
         runId: claim.id,
         outcome: completion.outcome,
         issueCodes: completion.issues.map(issue => issue.code)
       })
       const partial = completion.outcome !== 'complete'
-      await this.#appendPresentationEvent(claim, partial ? 'run.partial' : 'run.completed', { runId: claim.id, status: partial ? 'partial' : 'succeeded' })
+      await terminalizeAgentRun(this.#knex, {
+        runId: claim.id,
+        ownerId: claim.ownerId,
+        expected: { statuses: ['running', 'awaiting_approval'], leaseOwner: claim.leaseOwner, leaseToken: claim.leaseToken },
+        status: partial ? 'partial' : 'succeeded',
+        assistant: {
+          status: 'complete',
+          content,
+          citations,
+          providerStateCiphertext: providerStateJson === null ? null : Buffer.from(providerStateJson),
+          providerStateSha256: providerStateJson === null ? null : sha256(providerStateJson)
+        },
+        eventData: {},
+        quota: {
+          consumedTokens: inputTokens + outputTokens,
+          consumedCostMicros: costMicros,
+          status: 'consumed'
+        },
+        runPatch: {
+          inputTokens,
+          outputTokens,
+          estimatedCostMicros: costMicros,
+          completionOutcome: completion.outcome,
+          completionAssessment: encodedCompletion.encoded,
+          completionAssessmentSha256: encodedCompletion.sha256
+        }
+      })
+      quotaReconciled = true
       return { status: partial ? 'partial' : 'succeeded' }
     } catch (error) {
       const reportedCode =
@@ -1487,46 +1486,53 @@ export class AgentProductRuntime {
           /* coordinator cancellation remains authoritative */
         }
       }
-      let ownsRunningRun = false
+      let ownsActiveRun = false
       try {
         const owned = (await this.#knex('agentRuns')
           .where({ id: claim.id, ownerId: claim.ownerId, leaseOwner: claim.leaseOwner, leaseToken: claim.leaseToken })
           .first('status')) as { status: string } | undefined
-        ownsRunningRun = owned?.status === 'running'
-        if (ownsRunningRun && !quotaReconciled) {
-          const telemetry = await this.#orchestrationTelemetry(claim)
-          const consumedInputTokens = telemetry.usage.inputTokens + telemetry.modelUsage.inputTokens
-          const consumedOutputTokens = telemetry.usage.outputTokens + telemetry.modelUsage.outputTokens
-          const consumedTokens = consumedInputTokens + consumedOutputTokens
-          const consumedCostMicros = telemetry.usage.costMicros + telemetry.modelUsage.costMicros
-          await reconcileAgentRunQuota(this.#knex, {
+        ownsActiveRun = owned?.status === 'running' || owned?.status === 'awaiting_approval'
+        if (ownsActiveRun && !quotaReconciled) {
+          let providerUsage = dispatchBudget?.consumed
+          if (providerUsage === undefined) {
+            const telemetry = await this.#orchestrationTelemetry(claim)
+            providerUsage = {
+              inputTokens: telemetry.usage.inputTokens + telemetry.modelUsage.inputTokens,
+              outputTokens: telemetry.usage.outputTokens + telemetry.modelUsage.outputTokens,
+              costMicros: telemetry.usage.costMicros + telemetry.modelUsage.costMicros
+            }
+          }
+          const consumedTokens = providerUsage.inputTokens + providerUsage.outputTokens
+          await terminalizeAgentRun(this.#knex, {
             runId: claim.id,
             ownerId: claim.ownerId,
-            consumedTokens,
-            consumedCostMicros,
-            status: consumedTokens > 0 || consumedCostMicros > 0 ? 'consumed' : 'released'
+            expected: { statuses: ['running', 'awaiting_approval'], leaseOwner: claim.leaseOwner, leaseToken: claim.leaseToken },
+            status: recoveryRequired ? 'partial' : 'failed',
+            assistant: { status: 'failed' },
+            eventData: { errorCode },
+            quota: {
+              consumedTokens,
+              consumedCostMicros: providerUsage.costMicros,
+              status: consumedTokens > 0 || providerUsage.costMicros > 0 ? 'consumed' : 'released'
+            },
+            runPatch: {
+              inputTokens: providerUsage.inputTokens,
+              outputTokens: providerUsage.outputTokens,
+              estimatedCostMicros: providerUsage.costMicros
+            },
+            errorCode,
+            errorMessage: recoveryRequired
+              ? 'The approved action completed, but its assistant response requires recovery'
+              : errorCode === 'AGENT_BUDGET_LIMITED'
+                ? 'Agent goal budget was exhausted'
+                : 'Agent inference failed'
           })
-          await this.#knex('agentRuns')
-            .where({ id: claim.id, ownerId: claim.ownerId, leaseOwner: claim.leaseOwner, leaseToken: claim.leaseToken })
-            .update({ inputTokens: consumedInputTokens, outputTokens: consumedOutputTokens, estimatedCostMicros: consumedCostMicros, updatedAt: new Date() })
           quotaReconciled = true
         }
       } catch {
         /* the retention reconciler owns missing/lost reservations */
       }
       if (signal.aborted) throw error
-      if (ownsRunningRun) {
-        try {
-          await this.#appendPresentationEvent(claim, recoveryRequired ? 'run.partial' : 'run.failed', {
-            runId: claim.id,
-            status: recoveryRequired ? 'partial' : 'failed',
-            errorCode
-          })
-        } catch {
-          /* the coordinator owns terminal recovery when the lease is already gone */
-        }
-        await this.#knex('agentMessages').where({ id: claim.assistantMessageId, runId: claim.id }).update({ status: 'failed', updatedAt: new Date() })
-      }
       if (recoveryRequired)
         return {
           status: 'partial',

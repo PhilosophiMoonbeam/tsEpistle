@@ -160,10 +160,13 @@ export const streamOwnedAgentEvents = async (
     }
   } finally {
     res.off('close', onClose)
-    await closeNotifications()
-    const remaining = (connections.get(ownerId) ?? 1) - 1
-    if (remaining <= 0) connections.delete(ownerId)
-    else connections.set(ownerId, remaining)
-    res.end()
+    try {
+      await closeNotifications()
+    } finally {
+      const remaining = (connections.get(ownerId) ?? 1) - 1
+      if (remaining <= 0) connections.delete(ownerId)
+      else connections.set(ownerId, remaining)
+      res.end()
+    }
   }
 }

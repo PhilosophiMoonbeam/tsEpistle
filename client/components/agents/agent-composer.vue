@@ -65,7 +65,7 @@
         ref="messageInput"
         v-model="draft"
         class="agent-composer__input"
-        aria-label="Message Wiki Agent"
+        :aria-label="composerInputLabel"
         aria-describedby="agent-composer-status agent-composer-keyboard-hint"
         role="combobox"
         aria-autocomplete="list"
@@ -75,7 +75,7 @@
         variant="solo"
         flat
         hide-details
-        :disabled="disabled"
+        :disabled="disabled || sending"
         :aria-expanded="skillCommandOpen"
         :aria-controls="skillCommandOpen ? 'agent-skill-command-results' : undefined"
         :aria-activedescendant="activeCommandSkill ? `agent-skill-command-${activeCommandSkill.versionId}` : undefined"
@@ -83,7 +83,7 @@
       />
     </div>
 
-    <div v-if="selectedSkills.length > 0" class="agent-composer__attachments" aria-label="Skills attached as context for the next message">
+    <div v-if="selectedSkills.length > 0" class="agent-composer__attachments" role="group" aria-label="Skills attached as context for the next message">
       <span class="agent-composer__attachments-label">
         <v-icon icon="mdi-paperclip" size="15" aria-hidden="true" />
         Attached context
@@ -96,7 +96,7 @@
           size="small"
           color="primary"
           variant="tonal"
-          :disabled="disabled"
+          :disabled="disabled || sending"
           @click:close="toggleSkill(skill.versionId)"
         >
           {{ skill.name }}
@@ -105,33 +105,42 @@
     </div>
 
     <div class="agent-composer__actions">
-      <div class="agent-composer__context-controls" aria-label="Conversation context controls">
+      <div class="agent-composer__context-controls" role="group" aria-label="Conversation context controls">
         <span v-if="skillsEnabled || goalsEnabled" class="agent-composer__context-label">Context</span>
         <v-menu v-if="skillsEnabled" v-model="skillMenuOpen" :close-on-content-click="false">
           <template #activator="{ props: activatorProps }">
             <v-btn
+              id="agent-composer-skills-trigger"
+              ref="skillsTrigger"
               v-bind="activatorProps"
               class="agent-composer__skill-button"
               variant="text"
               prepend-icon="mdi-puzzle-outline"
-              :disabled="disabled"
+              :disabled="disabled || sending"
               :text="selectedSkills.length > 0 ? `Skills (${selectedSkills.length})` : 'Skills'"
+              aria-label="Choose skills for the next message"
+              aria-haspopup="dialog"
+              aria-controls="agent-composer-skills-menu"
+              :aria-expanded="skillMenuOpen"
             />
           </template>
-          <v-card class="agent-composer__skill-menu" min-width="300" max-width="420">
-            <v-card-title class="text-body-large">Skills</v-card-title>
+          <v-card id="agent-composer-skills-menu" class="agent-composer__skill-menu" min-width="300" max-width="420" role="dialog" aria-labelledby="agent-composer-skills-title">
+            <v-card-title id="agent-composer-skills-title" class="text-body-large">Skills</v-card-title>
             <v-card-subtitle>Select for the next message or always load in conversations.</v-card-subtitle>
-            <v-list v-if="skillMenuItems.length > 0" density="compact" max-height="320" class="overflow-y-auto">
+            <v-list v-if="skillMenuItems.length > 0" role="listbox" aria-label="Available skills" aria-multiselectable="true" density="compact" max-height="320" class="overflow-y-auto">
               <v-list-item
                 v-for="skill in skillMenuItems"
                 :key="skill.versionId"
-                :disabled="disabled"
+                role="option"
+                :active="isSelected(skill.versionId) || isPreferred(skill.versionId)"
+                :aria-selected="isSelected(skill.versionId) || isPreferred(skill.versionId)"
+                :disabled="disabled || sending"
                 @click="toggleSkill(skill.versionId)"
               >
                 <template #prepend>
                   <v-checkbox-btn
-                    :model-value="isSelected(skill.versionId)"
-                    :disabled="isPreferred(skill.versionId) || (!isSelected(skill.versionId) && selectedSkillIds.length >= invocationLimit)"
+                    :model-value="isSelected(skill.versionId) || isPreferred(skill.versionId)"
+                    :disabled="disabled || sending || isPreferred(skill.versionId) || (!isSelected(skill.versionId) && selectedSkillIds.length >= invocationLimit)"
                     tabindex="-1"
                   />
                 </template>
@@ -144,7 +153,7 @@
                       :icon="isPreferred(skill.versionId) ? 'mdi-autorenew' : 'mdi-autorenew-off'"
                       :variant="isPreferred(skill.versionId) ? 'tonal' : 'text'"
                       size="small"
-                      :disabled="disabled || (!isPreferred(skill.versionId) && invocationLimit === 0)"
+                      :disabled="disabled || sending || (!isPreferred(skill.versionId) && invocationLimit === 0)"
                       :aria-label="isPreferred(skill.versionId) ? `Stop always loading ${skill.name}` : `Always load ${skill.name} in conversations`"
                       @click.stop="togglePreference(skill.versionId)"
                     />
@@ -156,7 +165,7 @@
             <v-card-text v-if="invocationLimit === 0" class="pt-0 text-body-small text-medium-emphasis">You have the maximum 8 automatically loaded skills. Remove one to make room.</v-card-text>
             <v-divider />
             <v-card-actions>
-              <v-btn prepend-icon="mdi-file-document-edit-outline" variant="text" @click="manageSkills">Manage my skills</v-btn>
+              <v-btn prepend-icon="mdi-file-document-edit-outline" variant="text" :disabled="sending" @click="manageSkills">Manage my skills</v-btn>
             </v-card-actions>
           </v-card>
         </v-menu>
@@ -167,7 +176,7 @@
           :variant="goalMode ? 'tonal' : 'text'"
           prepend-icon="mdi-target"
           :aria-pressed="goalMode"
-          :disabled="disabled"
+          :disabled="disabled || sending"
           @click="goalMode = !goalMode"
         >Goal</v-btn>
       </div>
@@ -184,7 +193,7 @@
         <span>{{ composerStatus }}</span>
       </div>
 
-      <div class="agent-composer__primary-actions">
+      <div class="agent-composer__primary-actions" role="group" aria-label="Message actions">
         <v-btn
           v-if="canStop"
           class="agent-composer__stop"
@@ -199,7 +208,7 @@
           color="primary"
           :prepend-icon="sendFailed ? 'mdi-refresh' : goalMode ? 'mdi-target-arrow' : 'mdi-send'"
           :loading="sending"
-          :disabled="disabled || !draft.trim()"
+          :disabled="disabled || sending || !draft.trim()"
         >{{ submitLabel }}</v-btn>
       </div>
     </div>
@@ -233,6 +242,7 @@ const goalMode = ref(false)
 const skillMenuOpen = ref(false)
 const selectedSkillIds = ref<string[]>([])
 const messageInput = ref<{ focus: () => void; $el?: HTMLElement } | null>(null)
+const skillsTrigger = ref<{ focus?: () => void; $el?: HTMLElement } | HTMLElement | null>(null)
 const commandDismissed = ref(false)
 const activeCommandIndex = ref(0)
 const sendFailed = ref(false)
@@ -253,6 +263,7 @@ const isPreferred = (versionId: string): boolean => {
   const skillId = skillIdForVersion(versionId)
   return skillId !== undefined && preferredSkillIds.value.has(skillId)
 }
+const composerInputLabel = computed(() => goalMode.value ? 'Define an outcome for Wiki Agent' : 'Message Wiki Agent')
 const composerStatus = computed(() => {
   if (props.sending) return 'Sending request'
   if (props.canStop) return 'Agent responding'
@@ -282,7 +293,7 @@ const focusInput = async (): Promise<void> => {
   messageInput.value?.focus()
 }
 const togglePreference = (versionId: string): void => {
-  if (props.disabled) return
+  if (props.disabled || props.sending) return
   const skillIds = props.preferredSkills.map(skill => skill.skillId)
   const skillId = skillIdForVersion(versionId)
   if (!skillId) return
@@ -295,14 +306,14 @@ const togglePreference = (versionId: string): void => {
   emit('updateSkillPreferences', skillIds)
 }
 const skillCommandQuery = computed<string | null>(() => {
-  if (!props.skillsEnabled || props.disabled || commandDismissed.value) return null
+  if (!props.skillsEnabled || props.disabled || props.sending || commandDismissed.value) return null
   return /^\/([^\s/]*)$/.exec(draft.value)?.[1] ?? null
 })
 const skillCommandOpen = computed(() => skillCommandQuery.value !== null)
 const skillCommandResults = computed(() => filterSkillsForCommand(props.skills, skillCommandQuery.value ?? ''))
 const activeCommandSkill = computed(() => skillCommandResults.value[activeCommandIndex.value] ?? null)
 const isCommandSkillDisabled = (versionId: string): boolean =>
-  props.disabled || isPreferred(versionId) || (!isSelected(versionId) && selectedSkillIds.value.length >= props.invocationLimit)
+  props.disabled || props.sending || isPreferred(versionId) || (!isSelected(versionId) && selectedSkillIds.value.length >= props.invocationLimit)
 const invokeCommandSkill = (skill: VisibleAgentSkill): void => {
   if (isCommandSkillDisabled(skill.versionId)) return
   if (!isSelected(skill.versionId)) toggleSkill(skill.versionId)
@@ -336,12 +347,13 @@ const handleKeydown = (event: KeyboardEvent): void => {
   }
 }
 const toggleSkill = (versionId: string): void => {
+  if (props.disabled || props.sending) return
   const index = selectedSkillIds.value.indexOf(versionId)
   if (index >= 0) {
     selectedSkillIds.value.splice(index, 1)
     return
   }
-  if (props.disabled || isPreferred(versionId) || selectedSkillIds.value.length >= props.invocationLimit) return
+  if (isPreferred(versionId) || selectedSkillIds.value.length >= props.invocationLimit) return
   selectedSkillIds.value.push(versionId)
 }
 watch(
@@ -360,8 +372,16 @@ watch(skillCommandQuery, () => {
   activeCommandIndex.value = 0
 })
 const manageSkills = (): void => {
+  if (props.disabled || props.sending) return
   skillMenuOpen.value = false
   emit('manageSkills')
+}
+const focusSkillsTrigger = async (): Promise<void> => {
+  await nextTick()
+  const trigger = skillsTrigger.value
+  if (trigger instanceof HTMLElement) trigger.focus()
+  else if (trigger?.$el instanceof HTMLElement) trigger.$el.focus()
+  else trigger?.focus?.()
 }
 const submit = (): void => {
   if (props.disabled || props.sending || skillCommandOpen.value || !draft.value.trim()) return
@@ -383,7 +403,7 @@ const submit = (): void => {
     }
   })
 }
-defineExpose({ focusInput })
+defineExpose({ focusInput, focusSkillsTrigger })
 onMounted(() => {
   resizeInput()
   window.addEventListener('resize', resizeInput)

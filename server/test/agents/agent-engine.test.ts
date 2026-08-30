@@ -11,6 +11,8 @@ import { invokingAgentRunLease, type AgentApprovalContinuationCheckpoint, type A
 import { canonicalJson } from '../../helpers/canonical-json.ts'
 import type { AgentEngineRequest } from '../../agents/runtime.ts'
 import { WIKI_AGENT_SOUL } from '../../agents/soul.ts'
+import { reduceAgentEvents } from '../../agents/projection.ts'
+import type { AgentEvent } from '../../../shared/agents/contracts.ts'
 
 const pricing = { revision: 'price-1', inputMicrosPerMillionTokens: 1_000_000, outputMicrosPerMillionTokens: 2_000_000 } as const
 
@@ -988,6 +990,185 @@ describe('Ax agent engine', () => {
 
     await expect(execution).rejects.toMatchObject({ code: 'PROVIDER_REQUEST_FAILED' })
     expect(chat).toHaveBeenCalledOnce()
+  })
+  it('keeps only a contiguous newest conversation suffix within provider capacity and rejects an irreducibly oversized latest turn', async () => {
+    const chat = vi.fn(
+      async (_input: Readonly<AxChatRequest<unknown>>) =>
+        ({
+          results: [{ index: 0, content: 'Bounded answer.' }],
+          modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 7, completionTokens: 2, totalTokens: 9 } }
+        }) satisfies AxChatResponse
+    )
+    const factory = {
+      create: async () => ({
+        service: { chat },
+        capabilities: {
+          streaming: false,
+          toolCalling: 'native',
+          parallelToolCalls: false,
+          structuredOutput: 'tool-result',
+          usage: 'terminal',
+          cancellation: true,
+          maxContextTokens: 24_000,
+          maxOutputTokens: 1_000
+        },
+        transportKind: 'openai-chat',
+        model: 'gpt-test',
+        capabilityRevision: 'cap-1',
+        pricingRevision: 'price-1',
+        pricing
+      })
+    } as unknown as AgentProviderFactory
+    const input = request(new AbortController().signal)
+    const messages = [
+      { role: 'user' as const, content: 'older context that would fit' },
+      { role: 'assistant' as const, content: 'older answer' },
+      { role: 'user' as const, content: `omitted recent context:${'x'.repeat(16_000)}` },
+      { role: 'assistant' as const, content: 'omitted recent answer' },
+      { role: 'user' as const, content: 'latest user turn' }
+    ]
+    const boundedRequest: AgentEngineRequest = {
+      ...input,
+      run: { ...input.run, executionMode: 'generation-only' },
+      messages,
+      limits: { maxTurns: 1, maxToolCalls: 0, maxOutputTokens: 1_000 },
+      priorActivity: [
+        { runId: 'older', status: 'succeeded', userMessageOrdinal: 1, assistantMessageOrdinal: 2, modelTurns: 1, rejectedEvidenceDrafts: 0, tools: [] },
+        { runId: 'newer', status: 'succeeded', userMessageOrdinal: 3, assistantMessageOrdinal: 4, modelTurns: 1, rejectedEvidenceDrafts: 0, tools: [] }
+      ]
+    }
+
+    await new AxAgentEngine(factory).execute(boundedRequest, { text: async () => {}, event: async () => {} })
+
+    const providerRequest = chat.mock.calls[0]?.[0] as AxChatRequest<unknown>
+    expect(Buffer.byteLength(JSON.stringify(providerRequest), 'utf8')).toBeLessThanOrEqual(23_000)
+    expect(providerRequest.chatPrompt).toContainEqual(expect.objectContaining({ role: 'user', content: 'latest user turn' }))
+    expect(providerRequest.chatPrompt).not.toContainEqual(expect.objectContaining({ role: 'user', content: 'older context that would fit' }))
+    expect(providerRequest.chatPrompt).not.toContainEqual(expect.objectContaining({ role: 'user', content: expect.stringContaining('omitted recent context:') }))
+    const systemContent = String(providerRequest.chatPrompt?.[0]?.content)
+    expect(systemContent.indexOf('"runId":"older"')).toBeLessThan(systemContent.indexOf('"runId":"newer"'))
+
+    chat.mockClear()
+    await expect(
+      Promise.resolve(
+        new AxAgentEngine(factory).execute(
+          { ...boundedRequest, messages: [{ role: 'user', content: 'x'.repeat(24_000) }] },
+          { text: async () => {}, event: async () => {} }
+        )
+      )
+    ).rejects.toMatchObject({
+      code: 'AGENT_CONTEXT_TOO_LARGE',
+      status: 413,
+      message: 'Agent conversation exceeds the selected provider context limit'
+    })
+    expect(chat).not.toHaveBeenCalled()
+  })
+
+  it('presents only the validated streamed draft in bounded deltas whose concatenation is final content', async () => {
+    const rejected = 'Unsupported claim. [[cite:missing]]'
+    const accepted = 'Validated answer. '.repeat(1_000)
+    const streamed = (content: string, inputTokens: number, outputTokens: number): ReadableStream<AxChatResponse> =>
+      new ReadableStream<AxChatResponse>({
+        start(controller) {
+          for (let index = 0; index < content.length; index++) {
+            controller.enqueue({
+              results: [{ index: 0, content: content[index] }],
+              ...(index + 1 === content.length
+                ? {
+                    modelUsage: {
+                      ai: 'test',
+                      model: 'gpt-test',
+                      tokens: { promptTokens: inputTokens, completionTokens: outputTokens, totalTokens: inputTokens + outputTokens }
+                    }
+                  }
+                : {})
+            })
+          }
+          controller.close()
+        }
+      })
+    const responses = [streamed(rejected, 5, 2), streamed(accepted, 8, 4)]
+    const chat = vi.fn(async () => responses.shift()!)
+    const factory = {
+      create: async () => ({
+        service: { chat },
+        capabilities: {
+          streaming: true,
+          toolCalling: 'native',
+          parallelToolCalls: false,
+          structuredOutput: 'tool-result',
+          usage: 'stream',
+          cancellation: true,
+          maxContextTokens: 100_000,
+          maxOutputTokens: 4_000
+        },
+        transportKind: 'openai-chat',
+        model: 'gpt-test',
+        capabilityRevision: 'cap-1',
+        pricingRevision: 'price-1',
+        pricing
+      })
+    } as unknown as AgentProviderFactory
+    const text = vi.fn(async (_delta: string) => {})
+    const event = vi.fn(async (...args: [string, unknown]) => {
+      void args
+    })
+    const input = request(new AbortController().signal)
+
+    const result = await new AxAgentEngine(factory).execute(
+      { ...input, run: { ...input.run, executionMode: 'generation-only' } },
+      { text, event }
+    )
+
+    const deltas = text.mock.calls.map(([delta]) => delta)
+    expect(deltas.join('')).toBe(accepted)
+    expect(deltas.join('')).not.toContain(rejected)
+    expect(deltas.length).toBeGreaterThan(1)
+    expect(deltas.length).toBeLessThanOrEqual(64)
+    expect(deltas.every(delta => delta.length <= 16_000)).toBe(true)
+    expect(event.mock.calls.filter(([type]) => type === 'model.turn').map(([, data]) => data)).toEqual([
+      expect.objectContaining({ outcome: 'answer_rejected', content: rejected }),
+      expect.objectContaining({ outcome: 'answer_accepted', content: accepted.slice(0, 32_000) })
+    ])
+    expect(result).toMatchObject({ inputTokens: 13, outputTokens: 6 })
+  })
+})
+
+describe('Agent event projection', () => {
+  it('keeps completed tools and terminal suggestions after more than 1,000 legal events', () => {
+    const runId = '00000000-0000-4000-8000-000000000099'
+    let sequence = 0
+    const event = (type: AgentEvent['type'], data: AgentEvent['data']): AgentEvent => ({
+      id: `event-${sequence + 1}`,
+      runId,
+      sequence: ++sequence,
+      type,
+      attempt: 1,
+      schemaVersion: 1,
+      data,
+      createdAt: '2026-08-17T00:00:00.000Z'
+    })
+    const events: AgentEvent[] = [event('model.turn', { turn: 1 })]
+    for (let index = 0; index < 512; index += 1) {
+      const actionCallId = `child-tool-${index}`
+      events.push(
+        event('tool.started', { actionCallId, actionName: 'pages.get', risk: 'read', title: `Read page ${index}` }),
+        event('tool.completed', { actionCallId, result: '{}', summary: `Read page ${index}` })
+      )
+    }
+    events.push(
+      event('run.completed', { runId }),
+      event('suggestions.updated', { suggestions: [{ id: 'next', label: 'Next step', prompt: 'Continue' }] })
+    )
+
+    const reduced = reduceAgentEvents(events, runId)
+
+    expect(events[999]?.type).toBe('tool.started')
+    expect(events[1_000]?.type).toBe('tool.completed')
+    expect(events.length).toBeGreaterThan(1_000)
+    expect(reduced.tools).toHaveLength(512)
+    expect(reduced.tools.every(tool => tool.state === 'complete' && tool.completedAt !== null)).toBe(true)
+    expect(reduced.suggestions).toEqual([{ id: 'next', label: 'Next step', prompt: 'Continue' }])
   })
 })
 

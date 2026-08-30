@@ -3,12 +3,15 @@
     <v-menu location="bottom end">
       <template #activator="{ props: menuProps }">
         <v-btn
+          ref="trigger"
           v-bind="menuProps"
           class="agent-history-session-actions__trigger"
           icon="mdi-dots-horizontal"
           size="small"
           variant="text"
           :aria-label="`Conversation actions for ${session.title || 'New conversation'}`"
+          :disabled="busy"
+          :loading="busy"
         />
       </template>
       <v-list
@@ -25,6 +28,7 @@
           prepend-icon="mdi-history"
           title="Recent"
           subtitle="Returns to the 90-day history window"
+          :disabled="busy"
           @click="emit('move', null)"
         />
         <v-list-item
@@ -32,6 +36,7 @@
           :key="folder.id"
           prepend-icon="mdi-folder-outline"
           :title="folder.name"
+          :disabled="busy"
           @click="emit('move', folder.id)"
         />
         <v-divider v-if="canMove" class="agent-history-session-actions__divider" />
@@ -43,7 +48,8 @@
           prepend-icon="mdi-delete-outline"
           title="Delete conversation"
           subtitle="Permanently removes its messages"
-          @click="emit('remove')"
+          :disabled="busy"
+          @click="requestRemove"
         />
       </v-list>
     </v-menu>
@@ -51,25 +57,34 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import type { AgentConversationFolderView } from '../../../shared/agents/contracts.ts'
 import type { AgentSessionSummary } from '../../helpers/agents-api.ts'
 
 const props = defineProps<{
   session: AgentSessionSummary
   folders: readonly AgentConversationFolderView[]
+  busy?: boolean
 }>()
 const emit = defineEmits<{
   move: [folderId: string | null]
-  remove: []
+  remove: [restoreTarget: HTMLElement | null]
 }>()
+type ComponentRoot = { $el?: HTMLElement }
+const trigger = ref<ComponentRoot | HTMLElement | null>(null)
+const triggerElement = (): HTMLElement | null => {
+  const value = trigger.value
+  if (!value) return null
+  return value instanceof HTMLElement ? value : value.$el ?? null
+}
+const requestRemove = (): void => emit('remove', triggerElement())
 const availableFolders = computed(() => props.folders.filter(folder => folder.id !== props.session.folderId))
 const canMove = computed(() => props.session.folderId !== null || availableFolders.value.length > 0)
 </script>
 <style scoped>
 .agent-history-session-actions { align-items: center; display: flex; }
 .agent-history-session-actions__trigger {
-  color: rgba(var(--v-theme-on-surface), .62);
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 62%, transparent);
   min-height: var(--wiki-control-height);
   min-width: var(--wiki-control-height);
 }
@@ -82,7 +97,7 @@ const canMove = computed(() => props.session.folderId !== null || availableFolde
   padding-block: var(--wiki-space-1);
 }
 .agent-history-session-actions__heading {
-  color: rgba(var(--v-theme-on-surface), .58);
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 58%, transparent);
   font-size: var(--wiki-label-size);
   font-weight: var(--wiki-label-weight);
   letter-spacing: .07em;

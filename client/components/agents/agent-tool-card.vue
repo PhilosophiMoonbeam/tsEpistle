@@ -2,26 +2,26 @@
   <article
     v-if="approvalPending"
     :id="`agent-approval-${proposal.id}`"
-    class="agent-operation agent-operation--pending"
-    :class="{ 'agent-operation--destructive': proposal.risk === 'destructive-write' }"
+    class="agent-operation"
+    :class="[`agent-operation--${statusKey}`, { 'agent-operation--destructive': proposal.risk === 'destructive-write' }]"
     tabindex="-1"
     :aria-labelledby="`agent-approval-title-${proposal.id}`"
-    :aria-describedby="`agent-approval-risk-${proposal.id}`"
+    :aria-describedby="locallyExpired ? `agent-approval-risk-${proposal.id} agent-approval-expired-${proposal.id}` : `agent-approval-risk-${proposal.id}`"
   >
     <header class="agent-operation__header">
       <span class="agent-operation__state-mark" aria-hidden="true">
-        <v-icon icon="mdi-shield-key-outline" size="20" />
+        <v-icon :icon="locallyExpired ? 'mdi-timer-alert-outline' : 'mdi-shield-key-outline'" size="20" />
       </span>
       <div class="agent-operation__heading">
-        <span class="agent-operation__eyebrow">Operation requires a decision</span>
-        <h3 :id="`agent-approval-title-${proposal.id}`" class="text-title-medium">{{ approvalTitle }}</h3>
+        <span class="agent-operation__eyebrow">{{ locallyExpired ? 'Approval window closed' : 'Operation requires a decision' }}</span>
+        <h3 :id="`agent-approval-title-${proposal.id}`" class="text-title-medium">{{ locallyExpired ? 'Approval expired' : approvalTitle }}</h3>
       </div>
       <v-chip
         color="warning"
         size="small"
         variant="tonal"
-        prepend-icon="mdi-pause-circle-outline"
-      >Awaiting approval</v-chip>
+        :prepend-icon="locallyExpired ? 'mdi-timer-alert-outline' : 'mdi-pause-circle-outline'"
+      >{{ locallyExpired ? 'Approval expired' : 'Awaiting approval' }}</v-chip>
     </header>
 
     <p class="agent-operation__summary text-body-medium">{{ proposal.summary }}</p>
@@ -48,7 +48,7 @@
       <dt>Requested</dt>
       <dd>
         <time :datetime="proposal.approval?.requestedAt">{{ formatTimestamp(proposal.approval?.requestedAt) }}</time>
-        <span class="operation-facts__secondary"> · waiting {{ approvalDuration }}</span>
+        <span class="operation-facts__secondary"> · {{ locallyExpired ? 'waited' : 'waiting' }} {{ approvalDuration }}</span>
       </dd>
       <dt>Deadline</dt>
       <dd>
@@ -63,7 +63,7 @@
           <v-icon icon="mdi-code-json" size="18" aria-hidden="true" />
           Input and verification
         </span>
-        <small>Auditable request record</small>
+        <small>Bounded review record</small>
       </summary>
       <dl class="operation-facts operation-facts--technical">
         <dt>Tool call</dt><dd><code>{{ tool.id }}</code></dd>
@@ -89,14 +89,14 @@
         <small>{{ diffLines.length }} diff {{ diffLines.length === 1 ? 'line' : 'lines' }}</small>
       </summary>
       <div class="proposal-diff">
-        <pre tabindex="0" :aria-label="`Exact proposed output for ${proposal.target?.path || actionLabel}`"><template v-for="(line, index) in visibleDiff" :key="index"><ins v-if="line.kind === 'insert'">{{ line.text }}</ins><del v-else-if="line.kind === 'delete'">{{ line.text }}</del><span v-else>{{ line.text }}</span>{{ '\n' }}</template></pre>
+        <pre tabindex="0" :aria-label="`Proposed output record for ${proposal.target?.path || actionLabel}`"><template v-for="(line, index) in visibleDiff" :key="index"><ins v-if="line.kind === 'insert'">{{ line.text }}</ins><del v-else-if="line.kind === 'delete'">{{ line.text }}</del><span v-else>{{ line.text }}</span>{{ '\n' }}</template></pre>
         <v-btn v-if="diffLines.length > collapsedLineCount" size="small" variant="text" @click="expanded = !expanded">
           {{ expanded ? 'Show less' : `Show all ${diffLines.length} lines` }}
         </v-btn>
       </div>
     </details>
 
-    <div v-if="proposal.risk === 'destructive-write'" class="agent-operation__confirmation">
+    <div v-if="!locallyExpired && proposal.risk === 'destructive-write'" class="agent-operation__confirmation">
       <p><strong>Deletion confirmation</strong> · This cannot be undone from the Agent conversation.</p>
       <v-text-field
         v-model="confirmationPath"
@@ -110,15 +110,15 @@
       />
     </div>
 
-    <div v-if="decisionMessage && !decisionInFlight" class="agent-operation__decision-error" role="alert">
+    <div v-if="decisionMessage && !decisionInFlight && !locallyExpired" class="agent-operation__decision-error" role="alert">
       <v-icon icon="mdi-alert-circle-outline" size="18" aria-hidden="true" />
       <span>{{ decisionMessage }}</span>
     </div>
 
-    <div v-if="!expired" class="agent-operation__decision">
+    <div v-if="!locallyExpired" class="agent-operation__decision">
       <div class="agent-operation__decision-copy">
         <strong>Choose deliberately</strong>
-        <small>Deny leaves Wiki unchanged. Approve authorizes only the exact operation shown above.</small>
+        <small>Deny leaves Wiki unchanged. {{ reviewDescription }}</small>
       </div>
       <div class="agent-operation__actions">
         <v-btn
@@ -133,18 +133,18 @@
           ref="approveButton"
           :color="proposal.risk === 'destructive-write' ? 'error' : 'primary'"
           :prepend-icon="proposal.risk === 'destructive-write' ? 'mdi-delete-alert-outline' : 'mdi-check-decagram-outline'"
-          :disabled="!canDecide || (proposal.risk === 'destructive-write' && confirmationPath !== proposal.target?.path)"
+          :disabled="!canDecide || !reviewAdequate || (proposal.risk === 'destructive-write' && confirmationPath !== proposal.target?.path)"
           :loading="decisionInFlight === 'approved'"
           @click="decide('approved')"
         >{{ approveLabel }}</v-btn>
       </div>
     </div>
-    <p v-else class="agent-operation__expired" role="status">
+    <p v-else :id="`agent-approval-expired-${proposal.id}`" class="agent-operation__expired" role="status">
       <v-icon icon="mdi-timer-alert-outline" size="18" aria-hidden="true" />
       Approval expired. Refresh the proposal before deciding.
     </p>
     <p
-      v-if="decisionInFlight"
+      v-if="decisionInFlight && !locallyExpired"
       :id="`agent-approval-status-${proposal.id}`"
       class="sr-only"
       role="status"
@@ -244,10 +244,16 @@ const receiptSummary = ref<HTMLElement | null>(null)
 const approveButton = ref<{ $el?: HTMLElement } | HTMLElement | null>(null)
 const denyButton = ref<{ $el?: HTMLElement } | HTMLElement | null>(null)
 let expiryTimer: number | null = null
+let expiryDeadlineTimer: number | null = null
 
-type OperationStatus = 'pending' | 'running' | 'success' | 'failed' | 'denied' | 'expired'
+type OperationStatus = 'pending' | 'running' | 'success' | 'failed' | 'denied' | 'cancelled' | 'expired'
 
 const approvalPending = computed(() => props.proposal.status === 'pending' && props.proposal.approval?.status === 'pending')
+const hasExpired = (): boolean => new Date(props.proposal.expiresAt).valueOf() <= Date.now()
+const locallyExpired = computed(() => {
+  void expiryTick.value
+  return approvalPending.value && hasExpired()
+})
 const approvalTitle = computed(() => agentApprovalTitle(props.proposal.actionName))
 const actionLabel = computed(() => approvalTitle.value.replace(/^Wiki Agent wants to /, '').replace(/^Wiki Agent needs your approval$/, 'review this action'))
 const approveLabel = computed(() => {
@@ -265,18 +271,22 @@ const riskDescription = computed(() => props.proposal.risk === 'destructive-writ
 const receiptLabel = computed(() => {
   if (props.proposal.approval?.status === 'denied') return 'Change denied'
   if (props.proposal.approval?.status === 'expired') return 'Approval expired'
-  if (props.proposal.approval?.status === 'cancelled') return 'Change cancelled'
+  if (props.proposal.approval?.status === 'cancelled' || props.proposal.status === 'cancelled' || props.tool.state === 'cancelled') return 'Change cancelled'
   return agentProposalReceiptLabel(props.proposal.status)
 })
 const statusKey = computed<OperationStatus>(() => {
-  if (props.proposal.approval?.status === 'denied' || props.proposal.approval?.status === 'cancelled') return 'denied'
+  if (props.proposal.approval?.status === 'denied') return 'denied'
+  if (props.proposal.approval?.status === 'cancelled') return 'cancelled'
   if (props.proposal.approval?.status === 'expired') return 'expired'
-  if (props.proposal.status === 'denied' || props.proposal.status === 'cancelled') return 'denied'
+  if (locallyExpired.value) return 'expired'
+  if (props.proposal.status === 'denied') return 'denied'
+  if (props.proposal.status === 'cancelled') return 'cancelled'
   if (props.proposal.status === 'expired') return 'expired'
   if (props.proposal.status === 'failed' || props.proposal.status === 'recovery_required') return 'failed'
   if (props.proposal.status === 'applied') return 'success'
   if (props.proposal.status === 'approved' || props.proposal.status === 'applying') return 'running'
-  if (props.tool.state === 'denied' || props.tool.state === 'cancelled') return 'denied'
+  if (props.tool.state === 'denied') return 'denied'
+  if (props.tool.state === 'cancelled') return 'cancelled'
   if (props.tool.state === 'failed') return 'failed'
   if (props.tool.state === 'complete') return 'success'
   if (props.tool.state === 'running') return 'running'
@@ -288,6 +298,7 @@ const statusIcon = computed(() => ({
   success: 'mdi-check-circle-outline',
   failed: 'mdi-alert-octagon-outline',
   denied: 'mdi-cancel',
+  cancelled: 'mdi-stop-circle-outline',
   expired: 'mdi-timer-alert-outline'
 })[statusKey.value])
 const toolStateLabels: Readonly<Record<AgentToolState, string>> = {
@@ -302,24 +313,21 @@ const toolStateLabels: Readonly<Record<AgentToolState, string>> = {
 const toolStateLabel = computed(() => toolStateLabels[props.tool.state])
 const receiptNote = computed(() => {
   if (statusKey.value === 'success') return 'The approved operation completed. The verification record remains available below.'
-  if (statusKey.value === 'running') return 'Approval was recorded and the exact operation is now being applied.'
+  if (statusKey.value === 'running') return 'Approval was recorded and the reviewed operation is now being applied.'
   if (statusKey.value === 'failed') return props.proposal.status === 'recovery_required'
     ? 'The operation could not finish cleanly and requires recovery by an administrator.'
     : 'The approved operation failed. No automatic retry was performed.'
-  if (statusKey.value === 'denied') return 'The operation stopped without authorizing this proposal.'
+  if (statusKey.value === 'denied') return 'The proposal was denied; no authority was granted.'
+  if (statusKey.value === 'cancelled') return 'The operation was cancelled and no further work will run for this proposal.'
   if (statusKey.value === 'expired') return 'No decision was recorded before the approval window closed.'
   return 'This operation is waiting for a decision.'
 })
-const expired = computed(() => {
-  void expiryTick.value
-  return new Date(props.proposal.expiresAt).valueOf() <= Date.now()
-})
 const expiryLabel = computed(() => {
-  if (expired.value) return 'expired'
+  if (locallyExpired.value) return 'expired'
   const minutes = Math.ceil((new Date(props.proposal.expiresAt).valueOf() - Date.now()) / 60_000)
   return minutes === 1 ? 'expires in 1 minute' : `expires in ${minutes} minutes`
 })
-const canDecide = computed(() => approvalPending.value && !expired.value && !props.busy && !decisionInFlight.value)
+const canDecide = computed(() => approvalPending.value && !locallyExpired.value && !props.busy && !decisionInFlight.value)
 const diffLines = computed(() => props.proposal.diff ? props.proposal.diff.split('\n').map(text => ({
   text,
   kind: text.startsWith('+') && !text.startsWith('+++')
@@ -328,6 +336,10 @@ const diffLines = computed(() => props.proposal.diff ? props.proposal.diff.split
       ? 'delete' as const
       : 'context' as const
 })) : [])
+const reviewAdequate = computed(() => Boolean(props.proposal.target?.path.trim() || props.proposal.diff?.trim()))
+const reviewDescription = computed(() => reviewAdequate.value
+  ? 'Approve authorizes only the effect represented by the available target or proposed diff. The visible command, target, diff, and hashes are this bounded review record.'
+  : 'Approval is unavailable because neither a target nor proposed diff represents the effect.')
 const visibleDiff = computed(() => expanded.value ? diffLines.value : diffLines.value.slice(0, collapsedLineCount))
 const dateFormatter = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' })
 const formatTimestamp = (value: string | null | undefined): string => value ? dateFormatter.format(new Date(value)) : 'Not recorded'
@@ -345,7 +357,8 @@ const formatDuration = (start: string | null | undefined, end: string | null | u
 }
 const approvalDuration = computed(() => {
   void expiryTick.value
-  return formatDuration(props.proposal.approval?.requestedAt, props.proposal.approval?.decidedAt)
+  const end = props.proposal.approval?.decidedAt ?? (locallyExpired.value ? props.proposal.expiresAt : null)
+  return formatDuration(props.proposal.approval?.requestedAt, end)
 })
 const toolDuration = computed(() => {
   void expiryTick.value
@@ -355,11 +368,21 @@ const receiptTimestamp = computed(() => props.tool.completedAt ?? props.proposal
 const elementForRef = (value: { $el?: HTMLElement } | HTMLElement | null): HTMLElement | null => value instanceof HTMLElement ? value : value?.$el ?? null
 const stopExpiryTimer = (): void => {
   if (expiryTimer !== null) window.clearInterval(expiryTimer)
+  if (expiryDeadlineTimer !== null) window.clearTimeout(expiryDeadlineTimer)
   expiryTimer = null
+  expiryDeadlineTimer = null
 }
 const startExpiryTimer = (): void => {
   stopExpiryTimer()
-  if (approvalPending.value || statusKey.value === 'running') expiryTimer = window.setInterval(() => { expiryTick.value++ }, 30_000)
+  if ((approvalPending.value && !locallyExpired.value) || statusKey.value === 'running') expiryTimer = window.setInterval(() => { expiryTick.value++ }, 30_000)
+  if (approvalPending.value && !hasExpired()) {
+    const remaining = Math.min(new Date(props.proposal.expiresAt).valueOf() - Date.now(), 2_147_483_647)
+    expiryDeadlineTimer = window.setTimeout(() => {
+      expiryDeadlineTimer = null
+      expiryTick.value++
+      if (!hasExpired()) startExpiryTimer()
+    }, remaining)
+  }
 }
 watch(() => props.proposal.id, () => {
   confirmationPath.value = ''
@@ -375,6 +398,7 @@ watch(approvalPending, (pending, wasPending) => {
   }
 }, { immediate: true })
 watch(statusKey, startExpiryTimer)
+watch(() => props.proposal.expiresAt, startExpiryTimer)
 watch(() => props.busy, busy => {
   if (busy) return
   if (decisionInFlight.value && approvalPending.value) {
@@ -388,7 +412,14 @@ onMounted(startExpiryTimer)
 onBeforeUnmount(stopExpiryTimer)
 const decide = (decision: 'approved' | 'denied'): void => {
   const approval = props.proposal.approval
-  if (!approval || !canDecide.value) return
+  if (!approval) return
+  if (hasExpired()) {
+    expiryTick.value++
+    return
+  }
+  if (!canDecide.value) return
+  if (decision === 'approved' && !reviewAdequate.value) return
+  if (decision === 'approved' && props.proposal.risk === 'destructive-write' && confirmationPath.value !== props.proposal.target?.path) return
   decisionInFlight.value = decision
   decisionMessage.value = decision === 'approved' ? 'Submitting approval.' : 'Submitting denial.'
   emit('decision', props.proposal.id, approval.id, decision, props.proposal.risk === 'destructive-write' ? confirmationPath.value : undefined)
@@ -415,6 +446,10 @@ const decide = (decision: 'approved' | 'denied'): void => {
 
 .agent-operation--destructive {
   --operation-accent: rgb(var(--v-theme-error));
+}
+
+.agent-operation--expired {
+  --operation-accent: rgb(var(--v-theme-warning));
 }
 
 .agent-operation:focus-visible,
@@ -699,6 +734,10 @@ const decide = (decision: 'approved' | 'denied'): void => {
   --operation-accent: rgb(var(--v-theme-error));
 }
 
+.agent-operation-receipt--cancelled {
+  --operation-accent: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 58%, transparent);
+}
+
 .agent-operation-receipt--expired {
   --operation-accent: rgb(var(--v-theme-warning));
 }
@@ -783,7 +822,7 @@ const decide = (decision: 'approved' | 'denied'): void => {
   }
 
   .agent-operation__actions {
-    flex-direction: column-reverse;
+    flex-direction: column;
   }
 
   .agent-operation__actions :deep(.v-btn) {

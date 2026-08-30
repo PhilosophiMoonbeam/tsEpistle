@@ -7,7 +7,7 @@
       <div>
         <p class="approval-masthead__eyebrow">MCP authorization checkpoint</p>
         <h1 id="approval-title">Review external Wiki operation</h1>
-        <p>An MCP client requested a write. Verify the command, exact input, and proposed output before deciding.</p>
+        <p>Verify the visible command, target, proposed diff, and hashes that make up this bounded review record before deciding.</p>
       </div>
       <v-chip
         v-if="proposal"
@@ -32,7 +32,7 @@
       </span>
       <span>
         <strong>Retrieving the authorization record</strong>
-        <small>Decision controls remain unavailable until the exact proposal is loaded.</small>
+        <small>Decision controls remain unavailable until the validated proposal record is loaded.</small>
       </span>
     </div>
 
@@ -115,6 +115,9 @@
             <template v-if="proposal.path">
               <dt>Target path</dt><dd><code>{{ proposal.path }}</code></dd>
             </template>
+            <template v-else-if="proposal.pageId">
+              <dt>Target page ID</dt><dd><code>{{ proposal.pageId }}</code></dd>
+            </template>
             <dt>Requested</dt>
             <dd><time :datetime="proposal.approval.requestedAt">{{ formatTimestamp(proposal.approval.requestedAt) }}</time></dd>
             <dt>Expires</dt>
@@ -134,7 +137,7 @@
                 <v-icon icon="mdi-fingerprint" size="18" aria-hidden="true" />
                 Input and verification
               </span>
-              <small>Cryptographic request record</small>
+              <small>Bounded review record</small>
             </summary>
             <dl class="proposal-facts proposal-facts--technical">
               <dt>Proposal ID</dt><dd><code>{{ proposal.id }}</code></dd>
@@ -149,8 +152,8 @@
           <div class="operation-section__heading">
             <span class="operation-section__number" aria-hidden="true">02</span>
             <div>
-              <h3 id="proposal-output-title">Exact proposed output</h3>
-              <p>The contained diff below is the output this approval authorizes.</p>
+              <h3 id="proposal-output-title">Proposed output record</h3>
+              <p>The diff below is the proposed-output portion of this bounded review record.</p>
             </div>
           </div>
           <div v-if="proposal.diff" class="proposal-output">
@@ -159,7 +162,7 @@
               <span class="proposal-output__deletion">Removed</span>
               <span>{{ diffLines.length }} {{ diffLines.length === 1 ? 'line' : 'lines' }}</span>
             </div>
-            <pre class="proposal-diff" tabindex="0" aria-label="Exact proposed output"><template v-for="(line, index) in visibleDiff" :key="index"><ins v-if="line.kind === 'insert'">{{ line.text }}</ins><del v-else-if="line.kind === 'delete'">{{ line.text }}</del><span v-else>{{ line.text }}</span>{{ '\n' }}</template></pre>
+            <pre class="proposal-diff" tabindex="0" aria-label="Proposed output diff"><template v-for="(line, index) in visibleDiff" :key="index"><ins v-if="line.kind === 'insert'">{{ line.text }}</ins><del v-else-if="line.kind === 'delete'">{{ line.text }}</del><span v-else>{{ line.text }}</span>{{ '\n' }}</template></pre>
             <v-btn
               v-if="diffLines.length > collapsedLineCount"
               class="proposal-output__expand"
@@ -172,13 +175,13 @@
             <v-icon icon="mdi-file-hidden" size="20" aria-hidden="true" />
             <span>
               <strong>No textual diff supplied</strong>
-              <small>Use the command, summary, and target record above to verify this operation.</small>
+              <small>Review the visible command and target above. Approval is unavailable if neither a target nor diff represents the effect.</small>
             </span>
           </div>
         </section>
 
         <section
-          v-if="proposal.approval.status === 'pending'"
+          v-if="proposal.approval.status === 'pending' && !locallyExpired"
           class="operation-section decision-zone"
           aria-labelledby="decision-title"
         >
@@ -186,7 +189,7 @@
             <span class="operation-section__number" aria-hidden="true">03</span>
             <div>
               <h3 id="decision-title">Authorization decision</h3>
-              <p>Deny stops this proposal. Approve authorizes only the exact command and output shown above.</p>
+              <p>Deny stops this proposal. {{ decisionReviewCopy }}</p>
             </div>
           </div>
 
@@ -235,7 +238,7 @@
                 :color="proposal.risk === 'destructive-write' ? 'error' : 'primary'"
                 :prepend-icon="proposal.risk === 'destructive-write' ? 'mdi-delete-alert-outline' : 'mdi-check-decagram-outline'"
                 :loading="pendingDecision === 'approved'"
-                :disabled="Boolean(pendingDecision) || (proposal.risk === 'destructive-write' && confirmationPath !== proposal.confirmationPath)"
+                :disabled="Boolean(pendingDecision) || !reviewAdequate || (proposal.risk === 'destructive-write' && confirmationPath !== proposal.confirmationPath)"
                 @click="decide('approved')"
               >{{ approveLabel }}</v-btn>
               <small>Authorizes this proposal once.</small>
@@ -286,8 +289,9 @@ const clockTick = ref(0)
 const settledReceipt = ref<{ $el: HTMLElement } | null>(null)
 const errorAlert = ref<{ $el: HTMLElement } | null>(null)
 let clockTimer: number | null = null
+let expiryDeadlineTimer: number | null = null
 
-type ApprovalSurfaceStatus = 'pending' | 'running' | 'success' | 'failed' | 'denied' | 'expired' | 'idle'
+type ApprovalSurfaceStatus = 'pending' | 'running' | 'success' | 'failed' | 'denied' | 'cancelled' | 'expired' | 'idle'
 
 const actionLabels: Partial<Record<McpAgentProposal['actionName'], string>> = {
   'pages.prepareCreate': 'Create Wiki page',
@@ -308,11 +312,21 @@ const proposalStatusLabels: Record<McpAgentProposal['status'], string> = {
   recovery_required: 'Recovery required'
 }
 const actionLabel = computed(() => proposal.value ? actionLabels[proposal.value.actionName] ?? 'Review Wiki operation' : 'Review Wiki operation')
-const approveLabel = computed(() => proposal.value?.risk === 'destructive-write' ? 'Approve page deletion' : 'Approve exact proposal')
+const approveLabel = computed(() => proposal.value?.risk === 'destructive-write' ? 'Approve page deletion' : 'Approve reviewed proposal')
+const hasExpired = (expiresAt: string): boolean => new Date(expiresAt).valueOf() <= Date.now()
+const locallyExpired = computed(() => {
+  void clockTick.value
+  const current = proposal.value
+  return Boolean(current
+    && current.approval.status === 'pending'
+    && current.status === 'pending'
+    && hasExpired(current.expiresAt))
+})
 const statusKey = computed<ApprovalSurfaceStatus>(() => {
   if (!proposal.value) return 'idle'
-  if (proposal.value.approval.status === 'denied' || proposal.value.approval.status === 'cancelled' || proposal.value.status === 'denied' || proposal.value.status === 'cancelled') return 'denied'
-  if (proposal.value.approval.status === 'expired' || proposal.value.status === 'expired') return 'expired'
+  if (proposal.value.approval.status === 'denied' || proposal.value.status === 'denied') return 'denied'
+  if (proposal.value.approval.status === 'cancelled' || proposal.value.status === 'cancelled') return 'cancelled'
+  if (proposal.value.approval.status === 'expired' || proposal.value.status === 'expired' || locallyExpired.value) return 'expired'
   if (proposal.value.status === 'failed' || proposal.value.status === 'recovery_required') return 'failed'
   if (proposal.value.status === 'applied') return 'success'
   if (proposal.value.status === 'approved' || proposal.value.status === 'applying' || proposal.value.approval.status === 'approved') return 'running'
@@ -322,7 +336,7 @@ const statusLabel = computed(() => {
   if (!proposal.value) return 'Loading request'
   if (proposal.value.approval.status === 'denied') return 'Denied'
   if (proposal.value.approval.status === 'cancelled') return 'Cancelled'
-  if (proposal.value.approval.status === 'expired') return 'Expired'
+  if (proposal.value.approval.status === 'expired' || locallyExpired.value) return 'Expired'
   if (proposal.value.approval.status === 'approved' && proposal.value.status === 'pending') return 'Approved'
   return proposalStatusLabels[proposal.value.status]
 })
@@ -333,6 +347,7 @@ const statusIcon = computed(() => ({
   success: 'mdi-check-circle-outline',
   failed: 'mdi-alert-octagon-outline',
   denied: 'mdi-cancel',
+  cancelled: 'mdi-stop-circle-outline',
   expired: 'mdi-timer-alert-outline'
 })[statusKey.value])
 const statusColor = computed(() => ({
@@ -342,6 +357,7 @@ const statusColor = computed(() => ({
   success: 'success',
   failed: 'error',
   denied: 'error',
+  cancelled: undefined,
   expired: 'warning'
 })[statusKey.value])
 const decisionStageLabel = computed(() => statusKey.value === 'pending' ? 'Awaiting you' : statusLabel.value)
@@ -353,16 +369,17 @@ const decisionAlertType = computed<'success' | 'error' | 'warning' | 'info'>(() 
 })
 const settledCopy = computed(() => {
   if (!proposal.value) return ''
-  if (statusKey.value === 'success') return 'The exact approved proposal was applied. Return to the MCP client to continue.'
+  if (statusKey.value === 'success') return 'The approved proposal was applied. Return to the MCP client to continue.'
   if (statusKey.value === 'running') return 'Approval is saved. Return to the MCP client while the authorized operation continues.'
-  if (statusKey.value === 'denied') return 'This proposal was denied or cancelled. No authority remains for the MCP client to apply it.'
+  if (statusKey.value === 'denied') return 'This proposal was denied. No authority remains for the MCP client to apply it.'
+  if (statusKey.value === 'cancelled') return 'This proposal was cancelled. No further operation will run under this authorization record.'
   if (statusKey.value === 'expired') return 'The approval window closed without active authority. Request a new proposal from the MCP client.'
   return 'The authorized operation failed. Return to the MCP client for failure details; no automatic retry was approved.'
 })
 const riskLabel = computed(() => proposal.value?.risk === 'destructive-write' ? 'High-risk destructive operation' : 'Scoped write authorization')
 const riskDescription = computed(() => proposal.value?.risk === 'destructive-write'
   ? 'This approval permanently authorizes deletion of the named page. The change cannot be undone from this screen.'
-  : 'This checkpoint grants one-time authority for the exact proposal. It does not grant the MCP client ongoing write access.')
+  : 'This checkpoint grants one-time authority for this reviewed proposal. It does not grant the MCP client ongoing write access.')
 const diffLines = computed(() => (proposal.value?.diff ?? '').split('\n').map(text => ({
   text,
   kind: text.startsWith('+') && !text.startsWith('+++')
@@ -372,6 +389,10 @@ const diffLines = computed(() => (proposal.value?.diff ?? '').split('\n').map(te
       : 'context'
 } as const)))
 const visibleDiff = computed(() => expanded.value ? diffLines.value : diffLines.value.slice(0, collapsedLineCount))
+const reviewAdequate = computed(() => Boolean(proposal.value && (proposal.value.path?.trim() || proposal.value.pageId || proposal.value.diff?.trim())))
+const decisionReviewCopy = computed(() => reviewAdequate.value
+  ? 'Approve authorizes only the effect represented by the available target or proposed diff. The visible command, target, diff, and hashes are this bounded review record.'
+  : 'Approval is unavailable because neither a target nor proposed diff represents the effect.')
 const dateFormatter = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' })
 const formatTimestamp = (value: string): string => dateFormatter.format(new Date(value))
 const formatDuration = (start: string, end: string | null): string => {
@@ -389,6 +410,25 @@ const formatDuration = (start: string, end: string | null): string => {
 const decisionDuration = computed(() => proposal.value
   ? `${proposal.value.approval.decidedAt ? 'Decided after' : 'Open for'} ${formatDuration(proposal.value.approval.requestedAt, proposal.value.approval.decidedAt)}`
   : '')
+const clearExpiryDeadline = (): void => {
+  if (expiryDeadlineTimer !== null) window.clearTimeout(expiryDeadlineTimer)
+  expiryDeadlineTimer = null
+}
+const syncExpiryDeadline = (): void => {
+  clearExpiryDeadline()
+  const current = proposal.value
+  if (!current || current.approval.status !== 'pending' || current.status !== 'pending') return
+  if (hasExpired(current.expiresAt)) {
+    clockTick.value++
+    return
+  }
+  const remaining = Math.min(new Date(current.expiresAt).valueOf() - Date.now(), 2_147_483_647)
+  expiryDeadlineTimer = window.setTimeout(() => {
+    expiryDeadlineTimer = null
+    clockTick.value++
+    if (!hasExpired(current.expiresAt)) syncExpiryDeadline()
+  }, remaining)
+}
 
 const focusError = async (): Promise<void> => {
   await nextTick()
@@ -405,6 +445,7 @@ const load = async (): Promise<void> => {
   }
   try {
     proposal.value = await getMcpAgentProposal(window.fetch.bind(window), props.csrfToken, props.proposalId)
+    syncExpiryDeadline()
   } catch (value) {
     error.value = value instanceof Error ? value.message : 'Proposal could not be loaded.'
     await focusError()
@@ -414,14 +455,22 @@ const load = async (): Promise<void> => {
 }
 
 const decide = async (decision: 'approved' | 'denied'): Promise<void> => {
-  if (!proposal.value || pendingDecision.value) return
+  const current = proposal.value
+  if (!current || pendingDecision.value || current.approval.status !== 'pending' || current.status !== 'pending') return
+  if (hasExpired(current.expiresAt)) {
+    clockTick.value++
+    clearExpiryDeadline()
+    return
+  }
+  if (decision === 'approved' && !reviewAdequate.value) return
+  if (decision === 'approved' && current.risk === 'destructive-write' && confirmationPath.value !== current.confirmationPath) return
   pendingDecision.value = decision
   error.value = ''
   try {
-    await decideAgentProposal(window.fetch.bind(window), props.csrfToken, proposal.value.id, proposal.value.approval.id, {
+    await decideAgentProposal(window.fetch.bind(window), props.csrfToken, current.id, current.approval.id, {
       decision,
       ...(decisionNote.value.trim() ? { decisionNote: decisionNote.value.trim() } : {}),
-      ...(decision === 'approved' && proposal.value.confirmationPath ? { confirmationPath: confirmationPath.value } : {})
+      ...(decision === 'approved' && current.confirmationPath ? { confirmationPath: confirmationPath.value } : {})
     })
     await load()
     if (proposal.value?.approval.status !== 'pending') {
@@ -442,6 +491,7 @@ onMounted(() => {
 })
 onBeforeUnmount(() => {
   if (clockTimer !== null) window.clearInterval(clockTimer)
+  clearExpiryDeadline()
 })
 </script>
 
@@ -472,6 +522,10 @@ onBeforeUnmount(() => {
 .approval-surface--failed,
 .approval-surface--denied {
   --approval-accent: rgb(var(--v-theme-error));
+}
+
+.approval-surface--cancelled {
+  --approval-accent: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 58%, transparent);
 }
 
 .approval-surface--expired {
@@ -591,6 +645,10 @@ onBeforeUnmount(() => {
 .operation-review--failed,
 .operation-review--denied {
   --approval-accent: rgb(var(--v-theme-error));
+}
+
+.operation-review--cancelled {
+  --approval-accent: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 58%, transparent);
 }
 
 .operation-review--expired {

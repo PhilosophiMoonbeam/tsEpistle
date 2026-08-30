@@ -3,7 +3,7 @@ import type { Knex } from 'knex'
 import { AGENT_TERMINAL_RUN_STATUSES } from '../../shared/agents/contracts.ts'
 import { canonicalJson } from '../helpers/canonical-json.ts'
 import { AgentRepositoryError } from './repository.ts'
-import { reconcileAgentRunQuota } from './coordinator.ts'
+import { acquireAgentCoordinatorAdvisoryLocks, reconcileAgentRunQuota, terminalizeAgentRunInTransaction } from './coordinator.ts'
 
 const TERMINAL_PROPOSAL_STATUSES = ['denied', 'expired', 'applied', 'failed', 'cancelled'] as const
 const sha256 = (value: string): string => createHash('sha256').update(value).digest('hex')
@@ -53,14 +53,23 @@ export interface AgentMaintenanceResult {
 
 const tombstoneOwnedSessions = async (transaction: Knex.Transaction, ownerId: number, sessionIds: readonly string[], now: Date): Promise<number> => {
   if (sessionIds.length === 0) return 0
-  await transaction('agentRuns')
-    .where({ ownerId, status: 'queued' })
-    .whereIn('sessionId', sessionIds)
-    .update({ status: 'cancelled', cancelRequestedAt: now, completedAt: now, updatedAt: now, leaseOwner: null, leaseToken: null, leaseExpiresAt: null })
-  await transaction('agentRuns')
+  const immediatelyCancelled = (await transaction('agentRuns')
     .where({ ownerId })
     .whereIn('sessionId', sessionIds)
-    .whereIn('status', ['running', 'awaiting_approval'])
+    .whereIn('status', ['queued', 'awaiting_approval'])
+    .forUpdate()) as Array<{ id: string; status: 'queued' | 'awaiting_approval'; eventSequence: number; leaseToken: string | null }>
+  for (const run of immediatelyCancelled)
+    await terminalizeAgentRunInTransaction(transaction, {
+      runId: run.id,
+      ownerId,
+      expected: { statuses: [run.status], eventSequence: run.eventSequence, leaseToken: run.leaseToken },
+      status: 'cancelled',
+      cancelRequestedAt: now,
+      now
+    })
+  await transaction('agentRuns')
+    .where({ ownerId, status: 'running' })
+    .whereIn('sessionId', sessionIds)
     .update({ cancelRequestedAt: now, updatedAt: now })
   const proposalIds = await transaction('agentProposals').whereIn('sessionId', sessionIds).whereIn('status', ['pending', 'approved']).pluck<string>('id')
   if (proposalIds.length > 0) {
@@ -77,6 +86,7 @@ const tombstoneOwnedSessions = async (transaction: Knex.Transaction, ownerId: nu
 
 export const requestAgentSessionDeletion = async (knex: Knex, ownerId: number, sessionId: string, now = new Date()): Promise<void> => {
   await knex.transaction(async transaction => {
+    await acquireAgentCoordinatorAdvisoryLocks(transaction, [ownerId])
     const session = (await transaction('agentSessions').where({ id: sessionId, ownerId }).forUpdate().first('id', 'deletedAt')) as
       | { id: string; deletedAt: Date | string | null }
       | undefined
@@ -89,48 +99,83 @@ export const requestAgentSessionDeletion = async (knex: Knex, ownerId: number, s
 
 export const requestAgentHistoryReset = async (knex: Knex, ownerId: number, now = new Date()): Promise<number> =>
   knex.transaction(async transaction => {
+    await acquireAgentCoordinatorAdvisoryLocks(transaction, [ownerId])
     const sessionIds = await transaction('agentSessions').where({ ownerId }).whereNull('deletedAt').orderBy('id').forUpdate().pluck<string>('id')
     return tombstoneOwnedSessions(transaction, ownerId, sessionIds, now)
   })
 
 const recoverRuns = async (knex: Knex, now: Date, batchSize: number): Promise<{ cancelled: number; recovered: number; requeued: number }> =>
   knex.transaction(async transaction => {
-    const rows = (await transaction('agentRuns')
+    const candidateQuery = transaction('agentRuns')
       .where(query =>
         query
-          .whereNotNull('cancelRequestedAt')
-          .whereIn('status', ['queued', 'running', 'awaiting_approval'])
-          .orWhere(subquery => subquery.whereIn('status', ['running', 'awaiting_approval']).andWhere('leaseExpiresAt', '<=', now))
+          .where(cancelled =>
+            cancelled
+              .whereNotNull('cancelRequestedAt')
+              .whereIn('status', ['queued', 'running', 'awaiting_approval'])
+              .andWhere(noLiveLease =>
+                noLiveLease
+                  .where({ status: 'queued' })
+                  .orWhereNull('leaseExpiresAt')
+                  .orWhere('leaseExpiresAt', '<=', now)
+              )
+          )
+          .orWhere(expired => expired.whereIn('status', ['running', 'awaiting_approval']).andWhere('leaseExpiresAt', '<=', now))
       )
       .orderBy('updatedAt')
       .limit(batchSize)
-      .forUpdate()) as Array<{ id: string; status: string; sideEffectsStarted: boolean; cancelRequestedAt: Date | string | null }>
+    const candidates = await candidateQuery.clone().select<{ id: string; ownerId: number }[]>('id', 'ownerId')
+    if (candidates.length === 0) return { cancelled: 0, recovered: 0, requeued: 0 }
+    await acquireAgentCoordinatorAdvisoryLocks(
+      transaction,
+      candidates.map(candidate => candidate.ownerId)
+    )
+    const rows = (await candidateQuery
+      .clone()
+      .whereIn(
+        'id',
+        candidates.map(candidate => candidate.id)
+      )
+      .forUpdate()) as Array<{
+      id: string
+      ownerId: number
+      status: 'queued' | 'running' | 'awaiting_approval'
+      eventSequence: number
+      leaseToken: string | null
+      sideEffectsStarted: boolean
+      cancelRequestedAt: Date | string | null
+    }>
     let cancelled = 0
     let recovered = 0
     let requeued = 0
     for (const row of rows) {
       if (row.cancelRequestedAt !== null) {
-        cancelled += await transaction('agentRuns')
-          .where({ id: row.id, status: row.status })
-          .update({ status: 'cancelled', completedAt: now, updatedAt: now, leaseOwner: null, leaseToken: null, leaseExpiresAt: null })
-      } else if (row.status === 'running' && row.sideEffectsStarted) {
-        recovered += await transaction('agentRuns').where({ id: row.id, status: 'running' }).update({
-          status: 'recovery_required',
-          completedAt: now,
-          updatedAt: now,
-          leaseOwner: null,
-          leaseToken: null,
-          leaseExpiresAt: null,
-          errorCode: 'LEASE_LOST_AFTER_SIDE_EFFECT',
-          errorMessage: 'Run lease expired after a side effect may have started'
+        await terminalizeAgentRunInTransaction(transaction, {
+          runId: row.id,
+          ownerId: row.ownerId,
+          expected: { statuses: [row.status], eventSequence: row.eventSequence, leaseToken: row.leaseToken },
+          status: 'cancelled',
+          now
         })
+        cancelled += 1
+      } else if (row.sideEffectsStarted) {
+        await terminalizeAgentRunInTransaction(transaction, {
+          runId: row.id,
+          ownerId: row.ownerId,
+          expected: { statuses: [row.status], eventSequence: row.eventSequence, leaseToken: row.leaseToken },
+          status: 'recovery_required',
+          errorCode: 'LEASE_LOST_AFTER_SIDE_EFFECT',
+          errorMessage: 'Run lease expired after a side effect may have started',
+          now
+        })
+        recovered += 1
       } else if (row.status === 'running') {
         requeued += await transaction('agentRuns')
-          .where({ id: row.id, status: 'running' })
+          .where({ id: row.id, status: 'running', eventSequence: row.eventSequence, leaseToken: row.leaseToken })
           .update({ status: 'queued', availableAt: now, updatedAt: now, leaseOwner: null, leaseToken: null, leaseExpiresAt: null })
       } else {
         await transaction('agentRuns')
-          .where({ id: row.id, status: 'awaiting_approval' })
+          .where({ id: row.id, status: 'awaiting_approval', eventSequence: row.eventSequence, leaseToken: row.leaseToken })
           .update({ leaseOwner: null, leaseToken: null, leaseExpiresAt: now, updatedAt: now })
       }
     }

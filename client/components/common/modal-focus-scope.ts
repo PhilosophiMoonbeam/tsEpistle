@@ -15,6 +15,8 @@ interface BackgroundState {
   ariaHidden: string | null
 }
 
+type RestoreTarget = HTMLElement | null | (() => HTMLElement | null)
+
 export interface ModalFocusScope {
   containsFocus(): boolean
   deactivate(options?: { restoreFocus?: boolean }): void
@@ -23,9 +25,22 @@ export interface ModalFocusScope {
 
 interface ModalFocusScopeOptions {
   root: HTMLElement
-  restoreTarget: HTMLElement | null
+  restoreTarget: RestoreTarget
+  additionalRoots?: () => readonly HTMLElement[]
   onEscape: () => void
 }
+
+interface ModalFocusScopeState {
+  active: boolean
+  root: HTMLElement
+  additionalRoots: () => readonly HTMLElement[]
+  observedAdditionalRoots: readonly HTMLElement[]
+  background: readonly BackgroundState[]
+  restoreFocus: boolean
+  restoreTarget: RestoreTarget
+}
+
+const scopeStacks = new WeakMap<Document, ModalFocusScopeState[]>()
 
 const isVisible = (element: HTMLElement): boolean => {
   const view = element.ownerDocument.defaultView
@@ -34,32 +49,54 @@ const isVisible = (element: HTMLElement): boolean => {
   return style.display !== 'none' && style.visibility !== 'hidden' && element.getClientRects().length > 0
 }
 
-const getFocusableElements = (root: HTMLElement): HTMLElement[] =>
-  Array.from(root.querySelectorAll<HTMLElement>(focusableSelector)).filter(element => !element.closest('[inert], [aria-hidden="true"]') && isVisible(element))
+const getFocusableElements = (root: HTMLElement): HTMLElement[] => [
+  ...(root.matches(focusableSelector) && !root.closest('[inert], [aria-hidden="true"]') && isVisible(root) ? [root] : []),
+  ...Array.from(root.querySelectorAll<HTMLElement>(focusableSelector)).filter(element => !element.closest('[inert], [aria-hidden="true"]') && isVisible(element))
+]
 
 const getActiveOverlays = (root: HTMLElement): HTMLElement[] =>
   Array.from(root.ownerDocument.querySelectorAll<HTMLElement>('.v-overlay-container .v-overlay--active')).filter(overlay => !root.contains(overlay))
 
-const isWithinModal = (root: HTMLElement, target: Node | null): boolean =>
-  Boolean(target) && (root.contains(target) || getActiveOverlays(root).some(overlay => overlay.contains(target)))
+const containsTarget = (roots: readonly HTMLElement[], target: Node | null): boolean =>
+  Boolean(target) && roots.some(candidate => candidate === target || candidate.contains(target))
 
-const getModalFocusableElements = (root: HTMLElement): HTMLElement[] => [
+const isWithinModal = (root: HTMLElement, additionalRoots: readonly HTMLElement[], target: Node | null): boolean =>
+  containsTarget([root, ...additionalRoots], target) || getActiveOverlays(root).some(overlay => overlay.contains(target))
+
+const getModalFocusableElements = (root: HTMLElement, additionalRoots: readonly HTMLElement[]): HTMLElement[] => [
+  ...additionalRoots.flatMap(getFocusableElements),
   ...getFocusableElements(root),
   ...getActiveOverlays(root).flatMap(getFocusableElements)
 ]
 
-const hideBackground = (root: HTMLElement): BackgroundState[] => {
+const hideBackground = (root: HTMLElement, additionalRoots: readonly HTMLElement[]): BackgroundState[] => {
   const states: BackgroundState[] = []
   const HTMLElementConstructor = root.ownerDocument.defaultView?.HTMLElement
-  let current: HTMLElement = root
+  const protectedElements = new Set<HTMLElement>()
+  const hiddenElements = new Set<HTMLElement>()
 
-  while (current !== root.ownerDocument.body) {
+  for (const protectedRoot of [root, ...additionalRoots]) {
+    let current: HTMLElement | null = protectedRoot
+    while (current) {
+      protectedElements.add(current)
+      if (current === root.ownerDocument.body) break
+      current = current.parentElement
+    }
+  }
+
+  for (const current of protectedElements) {
     const parent = current.parentElement
-    if (!parent) break
+    if (!parent) continue
     for (const sibling of parent.children) {
-      if (sibling === current || !HTMLElementConstructor || !(sibling instanceof HTMLElementConstructor)) continue
+      if (
+        protectedElements.has(sibling as HTMLElement)
+        || hiddenElements.has(sibling as HTMLElement)
+        || !HTMLElementConstructor
+        || !(sibling instanceof HTMLElementConstructor)
+      ) continue
       const element = sibling as HTMLElement
       if (element.classList.contains('v-overlay-container')) continue
+      hiddenElements.add(element)
       states.push({
         element,
         inert: element.inert === true,
@@ -69,7 +106,6 @@ const hideBackground = (root: HTMLElement): BackgroundState[] => {
       element.inert = true
       element.setAttribute('aria-hidden', 'true')
     }
-    current = parent
   }
 
   return states
@@ -84,27 +120,83 @@ const restoreBackground = (states: readonly BackgroundState[]): void => {
     else element.setAttribute('aria-hidden', ariaHidden)
   }
 }
+const sameElements = (left: readonly HTMLElement[], right: readonly HTMLElement[]): boolean =>
+  left.length === right.length && left.every((element, index) => element === right[index])
 
-export const createModalFocusScope = ({ root, restoreTarget, onEscape }: ModalFocusScopeOptions): ModalFocusScope => {
-  const document = root.ownerDocument
-  if (!root.contains(document.activeElement)) (getFocusableElements(root)[0] ?? root).focus()
-  const background = hideBackground(root)
-  let active = true
+const reconcileBackgrounds = (document: Document): void => {
+  const stack = scopeStacks.get(document)
+  if (!stack?.length) return
+  const nextAdditionalRoots = stack.map(state => state.additionalRoots())
+  if (stack.every((state, index) => sameElements(state.observedAdditionalRoots, nextAdditionalRoots[index]!))) return
 
-  const focusFirst = (): void => {
-    getFocusableElements(root)[0]?.focus()
+  for (let index = stack.length - 1; index >= 0; index -= 1) restoreBackground(stack[index]!.background)
+  for (const [index, state] of stack.entries()) {
+    state.observedAdditionalRoots = nextAdditionalRoots[index]!
+    state.background = hideBackground(state.root, state.observedAdditionalRoots)
+  }
+}
+const restoreTargetElement = (target: RestoreTarget): HTMLElement | null =>
+  typeof target === 'function' ? target() : target
+
+const finishInactiveScopes = (document: Document): void => {
+  const stack = scopeStacks.get(document)
+  if (!stack) return
+
+  while (stack.length > 0 && !stack[stack.length - 1]!.active) {
+    const state = stack.pop()!
+    restoreBackground(state.background)
+    if (!state.restoreFocus) continue
+    const target = restoreTargetElement(state.restoreTarget)
+    if (target?.isConnected && !target.closest('[inert], [aria-hidden="true"]')) target.focus()
   }
 
-  const containsFocus = (): boolean => isWithinModal(root, document.activeElement)
+  if (stack.length === 0) scopeStacks.delete(document)
+}
+
+export const createModalFocusScope = ({ root, restoreTarget, additionalRoots, onEscape }: ModalFocusScopeOptions): ModalFocusScope => {
+  const document = root.ownerDocument
+  const currentAdditionalRoots = (): readonly HTMLElement[] => additionalRoots?.().filter(element => element.isConnected) ?? []
+  const stack = scopeStacks.get(document) ?? []
+  if (!scopeStacks.has(document)) scopeStacks.set(document, stack)
+  const observedAdditionalRoots = currentAdditionalRoots()
+  const state: ModalFocusScopeState = {
+    active: true,
+    root,
+    additionalRoots: currentAdditionalRoots,
+    observedAdditionalRoots,
+    background: hideBackground(root, observedAdditionalRoots),
+    restoreFocus: true,
+    restoreTarget
+  }
+  stack.push(state)
+  const MutationObserverConstructor = document.defaultView?.MutationObserver
+  const backgroundObserver = MutationObserverConstructor
+    ? new MutationObserverConstructor(() => reconcileBackgrounds(document))
+    : null
+  if (document.body) backgroundObserver?.observe(document.body, { childList: true, subtree: true })
+
+  const modalAdditionalRoots = (): readonly HTMLElement[] => {
+    reconcileBackgrounds(document)
+    return state.observedAdditionalRoots
+  }
+
+  const isTopScope = (): boolean => state.active && stack[stack.length - 1] === state
+  const focusFirst = (): void => {
+    if (!isTopScope()) return
+    ;(getModalFocusableElements(root, modalAdditionalRoots())[0] ?? root).focus()
+  }
+
+  const containsFocus = (): boolean => isTopScope() && isWithinModal(root, modalAdditionalRoots(), document.activeElement)
 
   const handleFocus = (event: FocusEvent): void => {
-    if (!active || isWithinModal(root, event.target as Node | null)) return
+    if (!isTopScope() || isWithinModal(root, modalAdditionalRoots(), event.target as Node | null)) return
     focusFirst()
   }
 
   const handleKeydown = (event: KeyboardEvent): void => {
-    if (!active || event.defaultPrevented) return
-    if (event.key === 'Escape' && root.contains(event.target as Node)) {
+    if (!isTopScope() || event.defaultPrevented) return
+    if (getActiveOverlays(root).some(overlay => overlay.contains(event.target as Node))) return
+    if (event.key === 'Escape' && containsTarget([root, ...modalAdditionalRoots()], event.target as Node)) {
       event.preventDefault()
       event.stopPropagation()
       onEscape()
@@ -112,7 +204,7 @@ export const createModalFocusScope = ({ root, restoreTarget, onEscape }: ModalFo
     }
     if (event.key !== 'Tab') return
 
-    const focusable = getModalFocusableElements(root)
+    const focusable = getModalFocusableElements(root, modalAdditionalRoots())
     if (focusable.length === 0) {
       event.preventDefault()
       root.focus()
@@ -122,7 +214,7 @@ export const createModalFocusScope = ({ root, restoreTarget, onEscape }: ModalFo
     const first = focusable[0]!
     const last = focusable[focusable.length - 1]!
     const focused = document.activeElement
-    if (!isWithinModal(root, focused)) {
+    if (!isWithinModal(root, modalAdditionalRoots(), focused)) {
       event.preventDefault()
       ;(event.shiftKey ? last : first).focus()
     } else if (event.shiftKey && focused === first) {
@@ -136,17 +228,19 @@ export const createModalFocusScope = ({ root, restoreTarget, onEscape }: ModalFo
 
   document.addEventListener('focusin', handleFocus)
   document.addEventListener('keydown', handleKeydown)
+  if (!isWithinModal(root, modalAdditionalRoots(), document.activeElement)) focusFirst()
 
   return {
     containsFocus,
     focusFirst,
     deactivate({ restoreFocus = true } = {}) {
-      if (!active) return
-      active = false
+      if (!state.active) return
+      state.active = false
+      state.restoreFocus = restoreFocus
+      backgroundObserver?.disconnect()
       document.removeEventListener('focusin', handleFocus)
       document.removeEventListener('keydown', handleKeydown)
-      restoreBackground(background)
-      if (restoreFocus && restoreTarget?.isConnected) restoreTarget.focus()
+      finishInactiveScopes(document)
     }
   }
 }

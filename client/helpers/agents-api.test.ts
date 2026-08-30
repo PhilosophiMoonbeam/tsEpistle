@@ -1,6 +1,8 @@
-import { describe, expect, it, vi } from '../../server/test/bun-test.mts'
+import { afterEach, describe, expect, it, vi } from '../../server/test/bun-test.mts'
 import type { DecideAgentApprovalRequest } from '../../shared/agents/contracts.ts'
 import {
+  AgentApiError,
+  cancelAgentRun,
   createAgentGoal,
   createAgentMemory,
   createAgentThread,
@@ -10,14 +12,20 @@ import {
   getAgentMemories,
   getAgentThread,
   listAgentProfiles,
+  listAgentSessions,
   listPersonalAgentSkills,
   removePersonalAgentSkill,
   resetAgentHistory,
+  subscribeAgentRun,
   submitAgentMessage,
   updateAgentSkillPreferences,
   updatePersonalAgentSkill
 } from './agents-api.ts'
 import { renderSafeMarkdown } from './safe-markdown.ts'
+
+afterEach(() => {
+  vi.unstubAllGlobals()
+})
 
 describe('agents client boundary', () => {
   it('rejects malformed thread responses instead of rendering unvalidated provider data', async () => {
@@ -82,6 +90,83 @@ describe('agents client boundary', () => {
         })
       )
     ).rejects.toThrow('Refresh the page')
+  })
+
+  it('trims empty error strings and exposes bounded status and retryability metadata', async () => {
+    const forbidden = vi.fn(async () => Response.json({ message: '   ' }, { status: 403 })) as unknown as typeof fetch
+    const unavailable = vi.fn(async () => Response.json({ error: 'x'.repeat(1_000) }, { status: 503 })) as unknown as typeof fetch
+
+    const forbiddenError = await getAgentThread(forbidden, 'csrf', '00000000-0000-4000-8000-000000000001').catch(error => error)
+    const unavailableError = await getAgentThread(unavailable, 'csrf', '00000000-0000-4000-8000-000000000001').catch(error => error)
+
+    expect(forbiddenError).toBeInstanceOf(AgentApiError)
+    expect(forbiddenError).toMatchObject({ status: 403, retryable: false })
+    expect((forbiddenError as Error).message).toContain('Refresh the page')
+    expect(unavailableError).toMatchObject({ status: 503, retryable: true })
+    expect((unavailableError as Error).message).toHaveLength(512)
+  })
+
+  it('forwards read cancellation and URL-encodes opaque session pagination metadata', async () => {
+    const controller = new AbortController()
+    const fetcher = vi.fn(async () => Response.json({ sessions: [], nextCursor: 'opaque-keyset-cursor' })) as unknown as typeof fetch
+
+    await expect(listAgentSessions(fetcher, 'csrf', { limit: 25, cursor: 'previous/cursor?part=1', signal: controller.signal })).resolves.toEqual({
+      sessions: [],
+      nextCursor: 'opaque-keyset-cursor'
+    })
+    expect(fetcher).toHaveBeenCalledWith(
+      '/_api/agents/sessions?limit=25&cursor=previous%2Fcursor%3Fpart%3D1',
+      expect.objectContaining({ signal: controller.signal })
+    )
+  })
+
+  it('accepts the canonical projected run from a pending cancellation response', async () => {
+    const run = {
+      id: '00000000-0000-4000-8000-000000000001',
+      sessionId: '00000000-0000-4000-8000-000000000002',
+      status: 'running',
+      attempt: 1,
+      eventSequence: 4,
+      canCancel: true,
+      createdAt: '2026-08-30T00:00:00.000Z',
+      startedAt: '2026-08-30T00:00:01.000Z',
+      completedAt: null,
+      errorCode: null,
+      errorMessage: null
+    }
+    const fetcher = vi.fn(async () => Response.json({ run }, { status: 202 })) as unknown as typeof fetch
+
+    await expect(cancelAgentRun(fetcher, 'csrf', run.id)).resolves.toEqual(run)
+    expect(fetcher).toHaveBeenCalledWith(
+      `/_api/agents/runs/${run.id}/cancel`,
+      expect.objectContaining({ method: 'POST', credentials: 'same-origin', headers: expect.objectContaining({ 'x-wiki-csrf': 'csrf' }) })
+    )
+  })
+
+  it('accepts only canonical nonregressing SSE event IDs and forwards EventSource EOF errors', () => {
+    const listeners = new Map<string, (event: MessageEvent) => void>()
+    class FakeEventSource {
+      readonly close = vi.fn()
+      constructor(readonly url: string) {}
+      addEventListener(type: string, listener: EventListener) {
+        listeners.set(type, listener as (event: MessageEvent) => void)
+      }
+    }
+    vi.stubGlobal('EventSource', FakeEventSource)
+    const event = vi.fn()
+    const error = vi.fn()
+
+    const source = subscribeAgentRun('00000000-0000-4000-8000-000000000001', 7, { event, error })
+    listeners.get('run.started')?.({ lastEventId: '8' } as MessageEvent)
+    listeners.get('run.started')?.({ lastEventId: ' 9 ' } as MessageEvent)
+    listeners.get('run.started')?.({ lastEventId: '08' } as MessageEvent)
+    listeners.get('run.started')?.({ lastEventId: '6' } as MessageEvent)
+    listeners.get('run.started')?.({ lastEventId: '1e2' } as MessageEvent)
+    listeners.get('error')?.(new MessageEvent('error'))
+
+    expect(event.mock.calls.map(call => call[1])).toEqual([8, 7, 7, 7, 7])
+    expect(error).toHaveBeenCalledTimes(1)
+    expect(source).toBeInstanceOf(FakeEventSource)
   })
 
   it('accepts the mutable provider selection contract without internal version fields', async () => {
@@ -345,11 +430,15 @@ describe('agents client boundary', () => {
       goal: null,
       proposals: [proposal],
       artifacts: [],
+      historyWindow: { messageLimit: 100, hasOlderMessages: false, runLimit: 25, hasOlderRuns: false },
       suggestions: []
     }
     const fetcher = vi.fn(async () => Response.json(thread)) as unknown as typeof fetch
-
-    expect(await getAgentThread(fetcher, 'csrf', sessionId)).toMatchObject({ tasks: [task], proposals: [proposal] })
+    expect(await getAgentThread(fetcher, 'csrf', sessionId)).toMatchObject({
+      tasks: [task],
+      proposals: [proposal],
+      historyWindow: { messageLimit: 100, hasOlderMessages: false, runLimit: 25, hasOlderRuns: false }
+    })
   })
   it('sends approved destructive and denied decisions with the exact shared request fields', async () => {
     const proposalId = '00000000-0000-4000-8000-000000000041'

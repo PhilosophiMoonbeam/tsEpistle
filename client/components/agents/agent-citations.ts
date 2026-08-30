@@ -1,6 +1,7 @@
 import type { AgentCitation } from '../../../shared/agents/contracts.ts'
 
 const citationMarker = /\[\[cite:([^\]\s]{1,128})\]\]/g
+const trailingIncompleteCitationMarker = /\[\[cite:[^\]\s]{0,128}\]?$/
 
 const markdownHref = (href: string): string | null => {
   try {
@@ -16,10 +17,15 @@ const markdownTitle = (value: string): string => value
   .replaceAll(/\s+/g, ' ')
   .trim()
 
-export const formatAgentCitationMarkers = (content: string, citations: readonly AgentCitation[]): string => {
+export const formatAgentCitationMarkers = (
+  content: string,
+  citations: readonly AgentCitation[],
+  streaming = false
+): string => {
   const citationNumbers = new Map(citations.map((citation, index) => [citation.evidenceId, index + 1]))
   const citationsById = new Map(citations.map(citation => [citation.evidenceId, citation]))
-  return content.replace(citationMarker, (_marker, evidenceId: string) => {
+  const visibleContent = streaming ? content.replace(trailingIncompleteCitationMarker, '') : content
+  return visibleContent.replace(citationMarker, (_marker, evidenceId: string) => {
     const citation = citationsById.get(evidenceId)
     const number = citationNumbers.get(evidenceId)
     if (!citation || number === undefined) return ''

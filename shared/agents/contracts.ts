@@ -483,6 +483,12 @@ export interface AgentThreadState {
   readonly proposals: readonly AgentProposalView[]
   readonly artifacts: readonly AgentArtifactView[]
   readonly suggestions: readonly AgentFollowUpSuggestion[]
+  readonly historyWindow: {
+    readonly messageLimit: number
+    readonly hasOlderMessages: boolean
+    readonly runLimit: number
+    readonly hasOlderRuns: boolean
+  }
 }
 
 export interface AgentRunState {
