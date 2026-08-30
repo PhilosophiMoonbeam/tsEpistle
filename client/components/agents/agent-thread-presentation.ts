@@ -35,13 +35,16 @@ export interface AgentCitationGroup {
 const citationLabelParts = (label: string): readonly string[] => label.split(' › ').filter(Boolean)
 
 export const groupAgentCitations = (citations: readonly AgentCitation[]): readonly AgentCitationGroup[] => {
-  const groups = new Map<string, {
-    key: string
-    pageLabel: string
-    pageHref: string | null
-    pageCitation: AgentCitationEntry | null
-    sections: AgentCitationEntry[]
-  }>()
+  const groups = new Map<
+    string,
+    {
+      key: string
+      pageLabel: string
+      pageHref: string | null
+      pageCitation: AgentCitationEntry | null
+      sections: AgentCitationEntry[]
+    }
+  >()
   for (const [index, citation] of citations.entries()) {
     const pageEvidenceId = citation.kind === 'page' ? citation.evidenceId.match(/^(page:[^:]+)/u)?.[1] : undefined
     const key = pageEvidenceId ?? citation.evidenceId
@@ -68,18 +71,14 @@ export const groupAgentCitations = (citations: readonly AgentCitation[]): readon
   return [...groups.values()]
 }
 
-
-const emptyRunTools = (): { activity: AgentToolCallView[], proposals: AgentProposalTool[] } => ({
+const emptyRunTools = (): { activity: AgentToolCallView[]; proposals: AgentProposalTool[] } => ({
   activity: [],
   proposals: []
 })
 
-export const groupAgentToolsByRun = (
-  tools: readonly AgentToolCallView[],
-  proposals: readonly AgentProposalView[]
-): ReadonlyMap<string, AgentRunTools> => {
+export const groupAgentToolsByRun = (tools: readonly AgentToolCallView[], proposals: readonly AgentProposalView[]): ReadonlyMap<string, AgentRunTools> => {
   const proposalsById = new Map(proposals.map(proposal => [proposal.id, proposal]))
-  const runs = new Map<string, { activity: AgentToolCallView[], proposals: AgentProposalTool[] }>()
+  const runs = new Map<string, { activity: AgentToolCallView[]; proposals: AgentProposalTool[] }>()
   for (const tool of tools) {
     const run = runs.get(tool.runId) ?? emptyRunTools()
     if (!runs.has(tool.runId)) runs.set(tool.runId, run)
@@ -126,14 +125,25 @@ export interface AgentRunPresentation extends AgentRunTools {
   readonly activityLabel: string
 }
 
+export interface AgentMessageRecovery {
+  readonly title: string
+  readonly description: string
+}
+
 export interface AgentMessagePresentation {
+  readonly message: AgentMessageView
+  readonly run: AgentRunPresentation | null
   readonly citationGroups: readonly AgentCitationGroup[]
   readonly retryPrompt: string
+  readonly statusLabel: string
+  readonly ariaLabel: string
+  readonly recovery: AgentMessageRecovery | null
 }
 
 export interface AgentThreadPresentation {
   readonly runs: ReadonlyMap<string, AgentRunPresentation>
   readonly messages: ReadonlyMap<string, AgentMessagePresentation>
+  readonly orderedMessages: readonly AgentMessagePresentation[]
 }
 
 interface MutableRunPresentation {
@@ -147,6 +157,31 @@ const emptyMutableRunPresentation = (): MutableRunPresentation => ({
   proposals: [],
   tasks: []
 })
+const messageStatusLabel = (message: AgentMessageView): string => {
+  if (message.status === 'complete') return ''
+  if (message.role === 'user') {
+    if (message.status === 'failed') return 'Send failed'
+    if (message.status === 'cancelled') return 'Send stopped'
+    return 'Sending'
+  }
+  if (message.status === 'failed') return 'Response failed'
+  if (message.status === 'cancelled') return 'Response stopped'
+  return 'Preparing a response'
+}
+
+const messageRecovery = (message: AgentMessageView): AgentMessageRecovery | null => {
+  if (message.status !== 'failed' && message.status !== 'cancelled') return null
+  if (message.role === 'user') {
+    return {
+      title: message.status === 'failed' ? 'Message was not sent' : 'Message sending stopped',
+      description: 'You can retry this message or revise it in the composer.'
+    }
+  }
+  return {
+    title: message.status === 'failed' ? 'Response could not be completed' : 'Response stopped',
+    description: message.status === 'failed' ? 'You can retry the same request or revise it in the composer.' : 'You can continue by retrying the request.'
+  }
+}
 
 export const buildAgentThreadPresentation = (
   messages: readonly AgentMessageView[],
@@ -165,11 +200,16 @@ export const buildAgentThreadPresentation = (
     run.tasks.push(task)
   }
 
-  const messagePresentations = new Map<string, AgentMessagePresentation>()
+  const messageDetails: {
+    message: AgentMessageView
+    citationGroups: readonly AgentCitationGroup[]
+    retryPrompt: string
+  }[] = []
   let retryPrompt = ''
   for (const message of messages) {
     if (message.role === 'user' && message.content.trim()) retryPrompt = message.content
-    messagePresentations.set(message.id, {
+    messageDetails.push({
+      message,
       citationGroups: groupAgentCitations(message.citations),
       retryPrompt
     })
@@ -186,7 +226,18 @@ export const buildAgentThreadPresentation = (
       activityLabel: agentActivityLabel(run.activity)
     })
   }
-  return { runs: runPresentations, messages: messagePresentations }
+  const orderedMessages = messageDetails.map<AgentMessagePresentation>(entry => {
+    const statusLabel = messageStatusLabel(entry.message)
+    return {
+      ...entry,
+      run: entry.message.runId ? (runPresentations.get(entry.message.runId) ?? null) : null,
+      statusLabel,
+      ariaLabel: `${entry.message.role === 'assistant' ? 'Wiki Agent' : 'Your'} message · ${statusLabel || 'Complete'}`,
+      recovery: messageRecovery(entry.message)
+    }
+  })
+  const messagePresentations = new Map(orderedMessages.map(entry => [entry.message.id, entry]))
+  return { runs: runPresentations, messages: messagePresentations, orderedMessages }
 }
 
 export type AgentLiveAnnouncementKind = 'preparing' | 'approval' | 'complete' | 'stopped' | 'failed'
@@ -206,10 +257,7 @@ const liveAnnouncementCopy: Record<AgentLiveAnnouncementKind, string> = {
   failed: 'Response failed.'
 }
 
-export const agentLiveAnnouncement = (
-  messages: readonly AgentMessageView[],
-  tools: readonly AgentToolCallView[]
-): AgentLiveAnnouncement | null => {
+export const agentLiveAnnouncement = (messages: readonly AgentMessageView[], tools: readonly AgentToolCallView[]): AgentLiveAnnouncement | null => {
   let latestAssistant: AgentMessageView | undefined
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index]
@@ -226,8 +274,7 @@ export const agentLiveAnnouncement = (
   else if (latestAssistant.status === 'failed') kind = 'failed'
   else {
     const runId = latestAssistant.runId
-    const awaitingApproval = runId !== null && tools.some(tool =>
-      tool.runId === runId && tool.state === 'awaitingApproval')
+    const awaitingApproval = runId !== null && tools.some(tool => tool.runId === runId && tool.state === 'awaitingApproval')
     kind = awaitingApproval ? 'approval' : 'preparing'
   }
   return {
@@ -237,7 +284,6 @@ export const agentLiveAnnouncement = (
     tone: kind === 'failed' ? 'error' : 'neutral'
   }
 }
-
 
 const approvalTitles: Partial<Record<AgentActionName, string>> = {
   'pages.prepareCreate': 'Wiki Agent wants to create a page',
@@ -268,7 +314,5 @@ export interface AgentVerticalBounds {
   readonly bottom: number
 }
 
-export const isAgentApprovalOutsideViewport = (
-  viewport: AgentVerticalBounds,
-  approval: AgentVerticalBounds
-): boolean => approval.bottom <= viewport.top || approval.top >= viewport.bottom
+export const isAgentApprovalOutsideViewport = (viewport: AgentVerticalBounds, approval: AgentVerticalBounds): boolean =>
+  approval.bottom <= viewport.top || approval.top >= viewport.bottom

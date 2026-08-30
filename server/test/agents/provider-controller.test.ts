@@ -59,6 +59,11 @@ const profile = {
     maxAttempts: 3
   }
 }
+const secondProfile = {
+  ...profile,
+  id: '00000000-0000-4000-8000-000000000005',
+  displayName: 'Second provider'
+}
 
 const report = {
   id: '00000000-0000-4000-8000-000000000004',
@@ -77,6 +82,9 @@ describe('agents-host provider version fencing', () => {
   let baseUrl: string
   let cookie: string
   let enableArguments: readonly unknown[] | undefined
+  let latestProfileId: string | undefined
+  let listLatestCalls = 0
+  let listLatestProfileIds: readonly string[] | undefined
 
   beforeAll(async () => {
     db = createKnex({ client: 'better-sqlite3', connection: { filename: ':memory:' }, useNullAsDefault: true })
@@ -119,12 +127,22 @@ describe('agents-host provider version fencing', () => {
         models: { knex: db },
         providerRegistry: {
           getAdmin: async () => profile,
+          listAll: async () => [secondProfile, profile],
           setEnabled: async (...args: readonly unknown[]) => {
             enableArguments = args
             if (args[3] !== editedVersionId) throw new AgentRepositoryError('PROFILE_VERSION_CHANGED', 'Provider profile version changed', 409)
           }
         },
         providerConformance: {
+          latest: async (requestedProfileId: string) => {
+            latestProfileId = requestedProfileId
+            return { ...report, profileVersionId: editedVersionId }
+          },
+          listLatest: async (profileIds: readonly string[]) => {
+            listLatestCalls += 1
+            listLatestProfileIds = profileIds
+            return [null, report]
+          },
           run: async () => report
         }
       } as never)
@@ -144,6 +162,38 @@ describe('agents-host provider version fencing', () => {
   afterAll(async () => {
     await new Promise<void>((resolve, reject) => server.close(error => (error ? reject(error) : resolve())))
     await db.destroy()
+  })
+
+  it('projects ordered profile connection checks through one batch lookup', async () => {
+    const response = await fetch(`${baseUrl}/_api/agents/admin/profiles`, { headers: { cookie } })
+
+    expect(response.status).toBe(200)
+    const payload = (await response.json()) as { profiles: Array<{ id: string; connectionCheck: typeof report | null }> }
+    expect(listLatestCalls).toBe(1)
+    expect(listLatestProfileIds).toEqual([secondProfile.id, profile.id])
+    expect(latestProfileId).toBeUndefined()
+    expect(payload.profiles.map(item => ({ id: item.id, reportId: item.connectionCheck?.id ?? null }))).toEqual([
+      { id: secondProfile.id, reportId: null },
+      { id: profile.id, reportId: report.id }
+    ])
+  })
+
+  it('keeps single-profile latest lookup semantics when enabling a profile', async () => {
+    const response = await fetch(`${baseUrl}/_api/agents/admin/profiles/${profileId}/enabled`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        cookie,
+        origin: 'https://wiki.example.test',
+        'sec-fetch-site': 'same-origin',
+        'x-wiki-csrf': csrf
+      },
+      body: JSON.stringify({ enabled: true })
+    })
+
+    expect(response.status).toBe(204)
+    expect(latestProfileId).toBe(profileId)
+    expect(enableArguments).toEqual([profileId, true, 7, editedVersionId])
   })
 
   it('cannot enable edited version B from overlapping conformance of version A', async () => {

@@ -80,14 +80,16 @@ export class AgentChildBudgetReservations {
     this.#consumedTokens = consumed.tokens
   }
 
-  reserve(): AgentChildBudgetReservation | null {
+  reserve(concurrentSlots = 1): AgentChildBudgetReservation | null {
+    if (!Number.isSafeInteger(concurrentSlots) || concurrentSlots < 1)
+      throw new AgentRepositoryError('AGENT_CHILD_BUDGET_INVALID', 'Subagent concurrency reservation is invalid', 500)
     const remainingTokens = this.#limits.maxAggregateChildTokens - this.#consumedTokens - this.#reservedTokens
     const remainingOutputCharacters = this.#limits.maxAggregateChildOutputCharacters - this.#consumedOutputCharacters - this.#reservedOutputCharacters
-    if (remainingTokens < this.#limits.childMaxOutputTokens || remainingOutputCharacters < 1) return null
+    if (remainingTokens < 1 || remainingOutputCharacters < 1) return null
     const reservation = {
       id: this.#nextId++,
-      outputCharacters: Math.min(MAX_AGENT_CHILD_OUTPUT_CHARACTERS, remainingOutputCharacters),
-      outputTokens: this.#limits.childMaxOutputTokens
+      outputCharacters: Math.min(MAX_AGENT_CHILD_OUTPUT_CHARACTERS, Math.max(1, Math.floor(remainingOutputCharacters / concurrentSlots))),
+      outputTokens: Math.min(this.#limits.childMaxOutputTokens, Math.max(1, Math.floor(remainingTokens / concurrentSlots)))
     }
     this.#active.add(reservation.id)
     this.#reservedOutputCharacters += reservation.outputCharacters

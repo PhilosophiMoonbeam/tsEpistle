@@ -324,6 +324,7 @@ export interface ListAgentSessionsOptions {
 }
 
 const MAX_ERROR_MESSAGE_LENGTH = 512
+const MAX_CURSOR_LENGTH = 512
 
 const fallbackErrorMessage = (status: number): string => {
   if (status === 401) return 'Your Wiki session expired. Sign in again and retry.'
@@ -335,6 +336,20 @@ const fallbackErrorMessage = (status: number): string => {
 }
 
 const retryableStatus = (status: number): boolean => status === 408 || status === 425 || status === 429 || status >= 500
+
+const invalidRequest = (message: string): AgentApiError => new AgentApiError(400, message)
+const assertUuid = (value: string, label: string): void => {
+  if (!Uuid.safeParse(value).success) throw invalidRequest(`${label} is invalid.`)
+}
+const assertFolderName = (value: string): string => {
+  if (typeof value !== 'string') throw invalidRequest('Conversation folder name is invalid.')
+  const name = value.normalize('NFKC').trim().replace(/\s+/g, ' ')
+  if (!name || name.length > 64) throw invalidRequest('Conversation folder names must contain between 1 and 64 characters.')
+  return name
+}
+const assertPositiveVersion = (value: number): void => {
+  if (!Number.isSafeInteger(value) || value < 1) throw invalidRequest('The expected conversation version is invalid.')
+}
 
 export class AgentApiError extends Error {
   readonly status: number
@@ -371,37 +386,49 @@ const requestJson = async <T>(fetcher: typeof fetch, csrfToken: string, path: st
     }
   })
   if (!response.ok) throw new AgentApiError(response.status, await errorMessage(response))
-  return schema.parse(await response.json())
+  try {
+    return schema.parse(await response.json())
+  } catch (value) {
+    if (value instanceof DOMException && value.name === 'AbortError') throw value
+    throw new AgentApiError(502, 'Agent returned an invalid response. Try again.')
+  }
 }
 
-export const listAgentSessions = async (
-  fetcher: typeof fetch,
-  csrfToken: string,
-  options: ListAgentSessionsOptions = {}
-): Promise<AgentSessionPage> => {
+export const listAgentSessions = async (fetcher: typeof fetch, csrfToken: string, options: ListAgentSessionsOptions = {}): Promise<AgentSessionPage> => {
   const query = new URLSearchParams()
-  if (options.limit !== undefined) query.set('limit', String(z.number().int().min(1).max(100).parse(options.limit)))
-  if (options.cursor !== undefined) query.set('cursor', options.cursor)
+  if (options.limit !== undefined) {
+    if (!Number.isSafeInteger(options.limit) || options.limit < 1 || options.limit > 100)
+      throw invalidRequest('Session history limit must be between 1 and 100.')
+    query.set('limit', String(options.limit))
+  }
+  if (options.cursor !== undefined) {
+    if (typeof options.cursor !== 'string' || options.cursor.length < 1 || options.cursor.length > MAX_CURSOR_LENGTH)
+      throw invalidRequest('Session history cursor is invalid.')
+    query.set('cursor', options.cursor)
+  }
   const encodedQuery = query.toString()
   const suffix = encodedQuery ? `?${encodedQuery}` : ''
   return requestJson(
     fetcher,
     csrfToken,
     `/_api/agents/sessions${suffix}`,
-    z.object({ sessions: z.array(SessionSummary), nextCursor: z.string().min(1).max(512).nullable() }),
+    z.object({ sessions: z.array(SessionSummary), nextCursor: z.string().min(1).max(MAX_CURSOR_LENGTH).nullable() }),
     { signal: options.signal }
   )
 }
+
 export const listAgentConversationFolders = async (fetcher: typeof fetch, csrfToken: string, signal?: AbortSignal): Promise<AgentConversationFolderView[]> =>
   (await requestJson(fetcher, csrfToken, '/_api/agents/conversation-folders', z.object({ folders: z.array(ConversationFolder) }), { signal })).folders
 
-export const createAgentConversationFolder = async (fetcher: typeof fetch, csrfToken: string, name: string): Promise<AgentConversationFolderView> =>
-  (
+export const createAgentConversationFolder = async (fetcher: typeof fetch, csrfToken: string, name: string): Promise<AgentConversationFolderView> => {
+  const normalizedName = assertFolderName(name)
+  return (
     await requestJson(fetcher, csrfToken, '/_api/agents/conversation-folders', z.object({ folder: ConversationFolder }), {
       method: 'POST',
-      body: JSON.stringify({ name })
+      body: JSON.stringify({ name: normalizedName })
     })
   ).folder
+}
 
 export const renameAgentConversationFolder = async (
   fetcher: typeof fetch,
@@ -409,16 +436,21 @@ export const renameAgentConversationFolder = async (
   folderId: string,
   expectedVersion: number,
   name: string
-): Promise<AgentConversationFolderView> =>
-  (
+): Promise<AgentConversationFolderView> => {
+  assertUuid(folderId, 'Folder ID')
+  assertPositiveVersion(expectedVersion)
+  const normalizedName = assertFolderName(name)
+  return (
     await requestJson(fetcher, csrfToken, `/_api/agents/conversation-folders/${encodeURIComponent(folderId)}`, z.object({ folder: ConversationFolder }), {
       method: 'PATCH',
-      body: JSON.stringify({ expectedVersion, name })
+      body: JSON.stringify({ expectedVersion, name: normalizedName })
     })
   ).folder
+}
 
-export const deleteAgentConversationFolder = async (fetcher: typeof fetch, csrfToken: string, folderId: string): Promise<number> =>
-  (
+export const deleteAgentConversationFolder = async (fetcher: typeof fetch, csrfToken: string, folderId: string): Promise<number> => {
+  assertUuid(folderId, 'Folder ID')
+  return (
     await requestJson(
       fetcher,
       csrfToken,
@@ -427,24 +459,34 @@ export const deleteAgentConversationFolder = async (fetcher: typeof fetch, csrfT
       { method: 'DELETE' }
     )
   ).movedSessions
+}
 
-export const createAgentThread = (fetcher: typeof fetch, csrfToken: string, input: CreateAgentSessionRequest): Promise<CreatedAgentThread> =>
-  requestJson(fetcher, csrfToken, '/_api/agents/sessions', CreatedThread, { method: 'POST', body: JSON.stringify(input) }) as Promise<CreatedAgentThread>
+export const createAgentThread = (fetcher: typeof fetch, csrfToken: string, input: CreateAgentSessionRequest): Promise<CreatedAgentThread> => {
+  if (input.providerProfileId !== null) assertUuid(input.providerProfileId, 'Provider profile ID')
+  return requestJson(fetcher, csrfToken, '/_api/agents/sessions', CreatedThread, { method: 'POST', body: JSON.stringify(input) }) as Promise<CreatedAgentThread>
+}
 
-export const getAgentThread = (fetcher: typeof fetch, csrfToken: string, sessionId: string, signal?: AbortSignal): Promise<AgentThreadState> =>
-  requestJson(fetcher, csrfToken, `/_api/agents/sessions/${encodeURIComponent(sessionId)}`, Thread, { signal }) as Promise<AgentThreadState>
+export const getAgentThread = (fetcher: typeof fetch, csrfToken: string, sessionId: string, signal?: AbortSignal): Promise<AgentThreadState> => {
+  assertUuid(sessionId, 'Session ID')
+  return requestJson(fetcher, csrfToken, `/_api/agents/sessions/${encodeURIComponent(sessionId)}`, Thread, { signal }) as Promise<AgentThreadState>
+}
 export const moveAgentSessionToFolder = (
   fetcher: typeof fetch,
   csrfToken: string,
   sessionId: string,
   input: UpdateAgentSessionFolderRequest
-): Promise<AgentThreadState> =>
-  requestJson(fetcher, csrfToken, `/_api/agents/sessions/${encodeURIComponent(sessionId)}/folder`, Thread, {
+): Promise<AgentThreadState> => {
+  assertUuid(sessionId, 'Session ID')
+  assertPositiveVersion(input.expectedSessionVersion)
+  if (input.folderId !== null) assertUuid(input.folderId, 'Folder ID')
+  return requestJson(fetcher, csrfToken, `/_api/agents/sessions/${encodeURIComponent(sessionId)}/folder`, Thread, {
     method: 'PUT',
     body: JSON.stringify(input)
   }) as Promise<AgentThreadState>
+}
 
 export const deleteAgentSession = async (fetcher: typeof fetch, csrfToken: string, sessionId: string): Promise<void> => {
+  assertUuid(sessionId, 'Session ID')
   const response = await sameOriginJsonFetch(fetcher, `/_api/agents/sessions/${encodeURIComponent(sessionId)}`, {
     method: 'DELETE',
     credentials: 'same-origin',
@@ -556,7 +598,8 @@ export const decideAgentProposal = async (
   )
 
 export const getMcpAgentProposal = async (fetcher: typeof fetch, csrfToken: string, proposalId: string, signal?: AbortSignal): Promise<McpAgentProposal> =>
-  (await requestJson(fetcher, csrfToken, `/_api/agents/mcp-proposals/${encodeURIComponent(proposalId)}`, z.object({ proposal: McpProposal }), { signal })).proposal
+  (await requestJson(fetcher, csrfToken, `/_api/agents/mcp-proposals/${encodeURIComponent(proposalId)}`, z.object({ proposal: McpProposal }), { signal }))
+    .proposal
 
 export const listAgentProfiles = async (fetcher: typeof fetch, csrfToken: string, signal?: AbortSignal): Promise<AgentProviderProfileView[]> =>
   (await requestJson(fetcher, csrfToken, '/_api/agents/profiles', z.object({ profiles: z.array(Profile) }), { signal })).profiles as AgentProviderProfileView[]
@@ -566,11 +609,15 @@ export const updateAgentProfile = (
   csrfToken: string,
   sessionId: string,
   input: UpdateAgentSessionProfileRequest
-): Promise<AgentThreadState> =>
-  requestJson(fetcher, csrfToken, `/_api/agents/sessions/${encodeURIComponent(sessionId)}/profile`, Thread, {
+): Promise<AgentThreadState> => {
+  assertUuid(sessionId, 'Session ID')
+  assertPositiveVersion(input.expectedSessionVersion)
+  if (input.providerProfileId !== null) assertUuid(input.providerProfileId, 'Provider profile ID')
+  return requestJson(fetcher, csrfToken, `/_api/agents/sessions/${encodeURIComponent(sessionId)}/profile`, Thread, {
     method: 'PUT',
     body: JSON.stringify({ expectedSessionVersion: input.expectedSessionVersion, profileId: input.providerProfileId })
   }) as Promise<AgentThreadState>
+}
 
 export const listAgentSkills = async (fetcher: typeof fetch, csrfToken: string, signal?: AbortSignal): Promise<VisibleAgentSkill[]> =>
   (await requestJson(fetcher, csrfToken, '/_api/agents/skills', z.object({ skills: z.array(VisibleSkill) }), { signal })).skills

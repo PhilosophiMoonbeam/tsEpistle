@@ -8,6 +8,7 @@ import { parsePromptToolCall, promptToolInstructions, promptToolResultMessage } 
 import type { AgentProviderRegistry } from './registry.ts'
 
 const MAX_SMOKE_OUTPUT = 16_000
+const MAX_LATEST_PROFILE_COUNT = 100
 const PROBE_TOOL = {
   name: 'wiki_conformance_echo',
   description: 'Echo the supplied conformance token. Use only when explicitly requested by the provider connection check.',
@@ -74,7 +75,13 @@ const nestedError = (error: unknown): unknown => {
 
 const errorCode = (error: unknown): string => {
   const value = nestedError(error)
-  if (typeof value === 'object' && value !== null && typeof Reflect.get(value, 'code') === 'string' && /^[A-Z0-9_.-]{1,128}$/i.test(String(Reflect.get(value, 'code')))) return String(Reflect.get(value, 'code'))
+  if (
+    typeof value === 'object' &&
+    value !== null &&
+    typeof Reflect.get(value, 'code') === 'string' &&
+    /^[A-Z0-9_.-]{1,128}$/i.test(String(Reflect.get(value, 'code')))
+  )
+    return String(Reflect.get(value, 'code'))
   return 'PROVIDER_CONNECTION_FAILED'
 }
 
@@ -107,7 +114,11 @@ interface ConsumedResponse {
   readonly thoughtBlocks: NonNullable<AxChatResponseResult['thoughtBlocks']>
 }
 
-const consume = async (response: AxChatResponse | ReadableStream<AxChatResponse>, usageMode: 'stream' | 'terminal' | 'estimated', provider: AgentProviderService): Promise<ConsumedResponse> => {
+const consume = async (
+  response: AxChatResponse | ReadableStream<AxChatResponse>,
+  usageMode: 'stream' | 'terminal' | 'estimated',
+  provider: AgentProviderService
+): Promise<ConsumedResponse> => {
   let content = ''
   let usageObserved = false
   const calls = new Map<string, ConsumedCall>()
@@ -115,16 +126,20 @@ const consume = async (response: AxChatResponse | ReadableStream<AxChatResponse>
   const accept = (value: AxChatResponse): void => {
     for (const result of value.results) {
       if (result.content) content += result.content
-      if (Buffer.byteLength(content, 'utf8') > MAX_SMOKE_OUTPUT) throw new AgentRepositoryError('CONFORMANCE_OUTPUT_TOO_LARGE', 'Provider conformance output exceeded its limit', 502)
+      if (Buffer.byteLength(content, 'utf8') > MAX_SMOKE_OUTPUT)
+        throw new AgentRepositoryError('CONFORMANCE_OUTPUT_TOO_LARGE', 'Provider conformance output exceeded its limit', 502)
       for (const call of result.functionCalls ?? []) {
-        if (typeof call.id !== 'string' || call.id.length < 1 || call.id.length > 256) throw new AgentRepositoryError('CONFORMANCE_TOOL_INVALID', 'Provider returned an invalid action call ID', 502)
+        if (typeof call.id !== 'string' || call.id.length < 1 || call.id.length > 256)
+          throw new AgentRepositoryError('CONFORMANCE_TOOL_INVALID', 'Provider returned an invalid action call ID', 502)
         const prior = calls.get(call.id)
         const name = call.function.name || prior?.name
         if (!name) throw new AgentRepositoryError('CONFORMANCE_TOOL_INVALID', 'Provider omitted the conformance action name', 502)
-        if (prior && call.function.name && prior.name !== call.function.name) throw new AgentRepositoryError('CONFORMANCE_TOOL_INVALID', 'Provider changed the conformance action name while streaming', 502)
+        if (prior && call.function.name && prior.name !== call.function.name)
+          throw new AgentRepositoryError('CONFORMANCE_TOOL_INVALID', 'Provider changed the conformance action name while streaming', 502)
         const next = call.function.params ?? ''
         const params = typeof prior?.params === 'string' && typeof next === 'string' ? `${prior.params}${next}` : next
-        if (Buffer.byteLength(typeof params === 'string' ? params : JSON.stringify(params), 'utf8') > MAX_SMOKE_OUTPUT) throw new AgentRepositoryError('CONFORMANCE_TOOL_INVALID', 'Provider conformance action arguments exceeded their limit', 502)
+        if (Buffer.byteLength(typeof params === 'string' ? params : JSON.stringify(params), 'utf8') > MAX_SMOKE_OUTPUT)
+          throw new AgentRepositoryError('CONFORMANCE_TOOL_INVALID', 'Provider conformance action arguments exceeded their limit', 502)
         calls.set(call.id, { id: call.id, name, params })
       }
       for (const [index, block] of (result.thoughtBlocks ?? []).entries()) {
@@ -134,7 +149,10 @@ const consume = async (response: AxChatResponse | ReadableStream<AxChatResponse>
     }
     const tokens = value.modelUsage?.tokens
     if (tokens) {
-      if (![tokens.promptTokens, tokens.completionTokens, tokens.totalTokens].every(token => Number.isSafeInteger(token) && token >= 0) || tokens.totalTokens < tokens.promptTokens + tokens.completionTokens) {
+      if (
+        ![tokens.promptTokens, tokens.completionTokens, tokens.totalTokens].every(token => Number.isSafeInteger(token) && token >= 0) ||
+        tokens.totalTokens < tokens.promptTokens + tokens.completionTokens
+      ) {
         throw new AgentRepositoryError('CONFORMANCE_USAGE_INVALID', 'Provider conformance returned invalid usage accounting', 502)
       }
       usageObserved = true
@@ -148,9 +166,12 @@ const consume = async (response: AxChatResponse | ReadableStream<AxChatResponse>
         if (item.done) break
         accept(item.value)
       }
-    } finally { reader.releaseLock() }
+    } finally {
+      reader.releaseLock()
+    }
   } else accept(response)
-  if (usageMode !== 'estimated' && !usageObserved) throw new AgentRepositoryError('CONFORMANCE_USAGE_MISSING', 'Provider conformance did not return its declared usage accounting', 502)
+  if (usageMode !== 'estimated' && !usageObserved)
+    throw new AgentRepositoryError('CONFORMANCE_USAGE_MISSING', 'Provider conformance did not return its declared usage accounting', 502)
   return { content, calls: [...calls.values()], thoughtBlocks: [...thoughtBlocks.values()] }
 }
 
@@ -163,14 +184,20 @@ const requireText = (response: ConsumedResponse, emptyMessage = 'Provider confor
 const parseParams = (params: string | object): Readonly<Record<string, unknown>> => {
   let value: unknown = params
   if (typeof value === 'string') {
-    try { value = JSON.parse(value) } catch { throw new AgentRepositoryError('CONFORMANCE_TOOL_INVALID', 'Provider returned invalid conformance action JSON', 502) }
+    try {
+      value = JSON.parse(value)
+    } catch {
+      throw new AgentRepositoryError('CONFORMANCE_TOOL_INVALID', 'Provider returned invalid conformance action JSON', 502)
+    }
   }
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new AgentRepositoryError('CONFORMANCE_TOOL_INVALID', 'Provider returned invalid conformance action arguments', 502)
+  if (typeof value !== 'object' || value === null || Array.isArray(value))
+    throw new AgentRepositoryError('CONFORMANCE_TOOL_INVALID', 'Provider returned invalid conformance action arguments', 502)
   return value as Readonly<Record<string, unknown>>
 }
 
 const verifyCancellation = async (provider: Awaited<ReturnType<AgentProviderFactory['create']>>): Promise<void> => {
-  if (!provider.capabilities.cancellation) throw new AgentRepositoryError('CONFORMANCE_CANCELLATION_UNDECLARED', 'Provider profile must declare cancellation support', 502)
+  if (!provider.capabilities.cancellation)
+    throw new AgentRepositoryError('CONFORMANCE_CANCELLATION_UNDECLARED', 'Provider profile must declare cancellation support', 502)
   const controller = new AbortController()
   controller.abort(new Error('provider conformance cancellation probe'))
   try {
@@ -183,15 +210,16 @@ const verifyCancellation = async (provider: Awaited<ReturnType<AgentProviderFact
   }
   throw new AgentRepositoryError('CONFORMANCE_CANCELLATION_IGNORED', 'Provider accepted a request whose signal was already aborted', 502)
 }
-const providerChat = async (provider: AgentProviderService, request: Readonly<AxChatRequest>): Promise<ConsumedResponse> => consume(
-  await provider.service.chat(request, {
-    stream: provider.capabilities.streaming,
-    abortSignal: AbortSignal.timeout(30_000),
-    functionCallMode: 'native'
-  }),
-  provider.capabilities.usage,
-  provider
-)
+const providerChat = async (provider: AgentProviderService, request: Readonly<AxChatRequest>): Promise<ConsumedResponse> =>
+  consume(
+    await provider.service.chat(request, {
+      stream: provider.capabilities.streaming,
+      abortSignal: AbortSignal.timeout(30_000),
+      functionCallMode: 'native'
+    }),
+    provider.capabilities.usage,
+    provider
+  )
 
 const verifyToolCalling = async (provider: AgentProviderService): Promise<'native-tool-round-trip' | 'prompt-tool-round-trip'> => {
   const token = randomUUID()
@@ -204,7 +232,8 @@ const verifyToolCalling = async (provider: AgentProviderService): Promise<'nativ
       functionCall: { type: 'function', function: { name: PROBE_TOOL.name } }
     })
     const [call] = first.calls
-    if (!call || first.calls.length !== 1 || call.name !== PROBE_TOOL.name || parseParams(call.params).token !== token) throw new AgentRepositoryError('CONFORMANCE_TOOL_INVALID', 'Provider did not return the required native conformance action', 502)
+    if (!call || first.calls.length !== 1 || call.name !== PROBE_TOOL.name || parseParams(call.params).token !== token)
+      throw new AgentRepositoryError('CONFORMANCE_TOOL_INVALID', 'Provider did not return the required native conformance action', 502)
     const final = await providerChat(provider, {
       chatPrompt: [
         { role: 'user', content: userMessage },
@@ -212,7 +241,7 @@ const verifyToolCalling = async (provider: AgentProviderService): Promise<'nativ
           role: 'assistant',
           ...(first.content ? { content: first.content } : {}),
           functionCalls: [{ id: call.id, type: 'function', function: { name: call.name, params: call.params } }],
-          ...(first.thoughtBlocks.length === 0 ? {} : { thoughtBlocks: first.thoughtBlocks }),
+          ...(first.thoughtBlocks.length === 0 ? {} : { thoughtBlocks: first.thoughtBlocks })
         },
         { role: 'function', functionId: call.id, result: JSON.stringify({ token, matched: true }) }
       ],
@@ -234,7 +263,8 @@ const verifyToolCalling = async (provider: AgentProviderService): Promise<'nativ
   })
   if (first.calls.length > 0) throw new AgentRepositoryError('CONFORMANCE_TOOL_INVALID', 'Prompt tool provider emitted a native action call', 502)
   const call = parsePromptToolCall(first.content, new Set([PROBE_TOOL.name]))
-  if (!call || call.name !== PROBE_TOOL.name || call.params.token !== token) throw new AgentRepositoryError('CONFORMANCE_TOOL_INVALID', 'Provider did not follow the prompt action protocol', 502)
+  if (!call || call.name !== PROBE_TOOL.name || call.params.token !== token)
+    throw new AgentRepositoryError('CONFORMANCE_TOOL_INVALID', 'Provider did not follow the prompt action protocol', 502)
   const final = await providerChat(provider, {
     chatPrompt: [
       { role: 'system', content: instructions },
@@ -245,7 +275,8 @@ const verifyToolCalling = async (provider: AgentProviderService): Promise<'nativ
     model: provider.model
   })
   requireText(final, 'Provider returned no final text after the prompt conformance action result')
-  if (parsePromptToolCall(final.content, new Set([PROBE_TOOL.name])) !== null) throw new AgentRepositoryError('CONFORMANCE_TOOL_INVALID', 'Provider repeated the prompt conformance action', 502)
+  if (parsePromptToolCall(final.content, new Set([PROBE_TOOL.name])) !== null)
+    throw new AgentRepositoryError('CONFORMANCE_TOOL_INVALID', 'Provider repeated the prompt conformance action', 502)
   return 'prompt-tool-round-trip'
 }
 
@@ -254,14 +285,16 @@ export class AgentProviderConformanceRunner {
   readonly #factory: AgentProviderFactory
   readonly #registry: Pick<AgentProviderRegistry, 'setConformed'>
 
-  constructor (knex: Knex, factory: AgentProviderFactory, registry: Pick<AgentProviderRegistry, 'setConformed'>) {
+  constructor(knex: Knex, factory: AgentProviderFactory, registry: Pick<AgentProviderRegistry, 'setConformed'>) {
     this.#knex = knex
     this.#factory = factory
     this.#registry = registry
   }
 
   async run(profileId: string, actorId: number): Promise<AgentProviderConformanceReport> {
-    const current = await this.#knex('agentProviderProfiles').where({ id: profileId }).whereNull('deletedAt').first('currentVersionId') as { currentVersionId: string | null } | undefined
+    const current = (await this.#knex('agentProviderProfiles').where({ id: profileId }).whereNull('deletedAt').first('currentVersionId')) as
+      | { currentVersionId: string | null }
+      | undefined
     if (!current?.currentVersionId) throw new AgentRepositoryError('AGENT_RESOURCE_NOT_FOUND', 'Provider profile was not found', 404)
     const profileVersionId = current.currentVersionId
     const id = randomUUID()
@@ -282,7 +315,10 @@ export class AgentProviderConformanceRunner {
       if (utilityProvider.model === provider.model) {
         checks.push({ name: 'utility-model-fallback', passed: true })
       } else {
-        requireText(await providerChat(utilityProvider, { chatPrompt: [{ role: 'user', content: 'Reply with exactly READY.' }], model: utilityProvider.model }), 'Utility model conformance returned no text')
+        requireText(
+          await providerChat(utilityProvider, { chatPrompt: [{ role: 'user', content: 'Reply with exactly READY.' }], model: utilityProvider.model }),
+          'Utility model conformance returned no text'
+        )
         checks.push({ name: 'utility-model-text-output', passed: true })
       }
       checks.push({ name: await verifyToolCalling(provider), passed: true })
@@ -292,7 +328,16 @@ export class AgentProviderConformanceRunner {
       checks.push({ name: 'provider-smoke', passed: false, detail: failureDetail(error) })
     }
     const completedAt = new Date()
-    await this.#knex('agentProviderConformanceReports').insert({ id, profileVersionId, status, checks: canonicalJson(checks), errorCode: failureCode, actorId, startedAt, completedAt })
+    await this.#knex('agentProviderConformanceReports').insert({
+      id,
+      profileVersionId,
+      status,
+      checks: canonicalJson(checks),
+      errorCode: failureCode,
+      actorId,
+      startedAt,
+      completedAt
+    })
     await this.#registry.setConformed(profileId, profileVersionId, status === 'passed', actorId)
     const row = await this.#knex<ReportRow>('agentProviderConformanceReports').where({ id }).first()
     if (!row) throw new AgentRepositoryError('CONFORMANCE_REPORT_MISSING', 'Provider conformance report was not persisted', 500)
@@ -300,10 +345,49 @@ export class AgentProviderConformanceRunner {
   }
 
   async list(profileId: string, limit = 20): Promise<readonly AgentProviderConformanceReport[]> {
-    const profile = await this.#knex('agentProviderProfiles').where({ id: profileId }).whereNull('deletedAt').first('currentVersionId') as { currentVersionId: string | null } | undefined
+    const profile = (await this.#knex('agentProviderProfiles').where({ id: profileId }).whereNull('deletedAt').first('currentVersionId')) as
+      | { currentVersionId: string | null }
+      | undefined
     if (!profile?.currentVersionId) throw new AgentRepositoryError('AGENT_RESOURCE_NOT_FOUND', 'Provider profile was not found', 404)
-    const rows = await this.#knex<ReportRow>('agentProviderConformanceReports').where({ profileVersionId: profile.currentVersionId }).orderBy('completedAt', 'desc').limit(Math.max(1, Math.min(100, limit)))
+    const rows = await this.#knex<ReportRow>('agentProviderConformanceReports')
+      .where({ profileVersionId: profile.currentVersionId })
+      .orderBy('completedAt', 'desc')
+      .limit(Math.max(1, Math.min(100, limit)))
     return rows.map(reportView)
+  }
+
+  async listLatest(profileIds: readonly string[]): Promise<readonly (AgentProviderConformanceReport | null)[]> {
+    if (profileIds.length > MAX_LATEST_PROFILE_COUNT)
+      throw new AgentRepositoryError(
+        'CONFORMANCE_PROFILE_PROJECTION_OVERFLOW',
+        `At most ${MAX_LATEST_PROFILE_COUNT} provider profiles can be projected at once`,
+        500
+      )
+    if (profileIds.length === 0) return []
+
+    const uniqueProfileIds = [...new Set(profileIds)]
+    const profiles = (await this.#knex('agentProviderProfiles')
+      .whereIn('id', uniqueProfileIds)
+      .whereNull('deletedAt')
+      .whereNotNull('currentVersionId')
+      .select('id', 'currentVersionId')) as Array<{ id: string; currentVersionId: string }>
+    const versionByProfileId = new Map(profiles.map(profile => [profile.id, profile.currentVersionId]))
+    const currentVersionIds = [...new Set(profiles.map(profile => profile.currentVersionId))]
+    if (currentVersionIds.length === 0) return profileIds.map(() => null)
+
+    const rankedReports = this.#knex<ReportRow>('agentProviderConformanceReports')
+      .whereIn('profileVersionId', currentVersionIds)
+      .select('*')
+      .rowNumber('reportRank', function rankLatestReport() {
+        this.partitionBy('profileVersionId').orderBy('completedAt', 'desc').orderBy('id', 'desc')
+      })
+    const rows = (await this.#knex.from(rankedReports.as('rankedReports')).where({ reportRank: 1 }).select('*')) as Array<ReportRow & { reportRank: number }>
+    const reportByVersionId = new Map(rows.map(row => [row.profileVersionId, reportView(row)]))
+
+    return profileIds.map(profileId => {
+      const currentVersionId = versionByProfileId.get(profileId)
+      return currentVersionId ? (reportByVersionId.get(currentVersionId) ?? null) : null
+    })
   }
 
   async latest(profileId: string): Promise<AgentProviderConformanceReport | null> {

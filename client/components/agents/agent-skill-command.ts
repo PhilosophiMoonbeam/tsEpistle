@@ -25,18 +25,28 @@ const fieldScore = (target: string, query: string, fuzzy = true): number | null 
   return fuzzyScore === null ? null : 200 + fuzzyScore
 }
 
+const compareNames = (left: string, right: string): number => {
+  const leftName = left.toLowerCase()
+  const rightName = right.toLowerCase()
+  if (leftName < rightName) return -1
+  if (leftName > rightName) return 1
+  if (left < right) return -1
+  if (left > right) return 1
+  return 0
+}
+
 export const filterSkillsForCommand = <T extends SkillCommandCandidate>(skills: readonly T[], queryValue: string): T[] => {
-  const query = queryValue.trim().toLocaleLowerCase()
+  const query = queryValue.trim().toLowerCase()
   if (!query) return [...skills]
 
   return skills
-    .map(skill => {
-      const nameScore = fieldScore(skill.name.toLocaleLowerCase(), query)
-      const descriptionScore = fieldScore(skill.description.toLocaleLowerCase(), query, false)
+    .map((skill, index) => {
+      const nameScore = fieldScore(skill.name.toLowerCase(), query)
+      const descriptionScore = fieldScore(skill.description.toLowerCase(), query, false)
       const score = nameScore ?? (descriptionScore === null ? null : 1_000 + descriptionScore)
-      return { skill, score }
+      return { skill, index, score }
     })
-    .filter((entry): entry is { skill: T; score: number } => entry.score !== null)
-    .sort((left, right) => left.score - right.score || left.skill.name.localeCompare(right.skill.name))
+    .filter((entry): entry is { skill: T; index: number; score: number } => entry.score !== null)
+    .sort((left, right) => left.score - right.score || compareNames(left.skill.name, right.skill.name) || left.index - right.index)
     .map(entry => entry.skill)
 }

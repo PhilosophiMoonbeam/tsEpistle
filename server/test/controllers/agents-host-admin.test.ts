@@ -75,30 +75,39 @@ describe('agents-host skill administration', () => {
       state.agentCsrfToken = csrf
       res.sendStatus(204)
     })
-    app.use(createAgentsHostController({
-      auth: {
-        authenticate(req, _res, next) {
-          req.authContext = { kind: 'user', userId: 7, ownershipUserId: 7, principal: { id: 7 } }
-          req.user = { id: 7, permissions: admin ? ['manage:system'] : [] } as Express.User
-          next()
+    app.use(
+      createAgentsHostController({
+        auth: {
+          authenticate(req, _res, next) {
+            req.authContext = { kind: 'user', userId: 7, ownershipUserId: 7, principal: { id: 7 } }
+            req.user = { id: 7, permissions: admin ? ['manage:system'] : [] } as Express.User
+            next()
+          }
+        },
+        config: {
+          host: 'https://wiki.example.test',
+          sessionSecret: 'agent-host-admin-token-secret',
+          agents: {
+            enabled: true,
+            provider: { enabled: false },
+            retention: { temporarySessionHours: 24 },
+            skills: { enabled: true, namespace: 'system/agent-skills' },
+            proposals: { enabled: false },
+            writes: {
+              enabled: false,
+              create: { enabled: false },
+              patch: { enabled: false },
+              move: { enabled: false },
+              restore: { enabled: false },
+              delete: { enabled: false }
+            }
+          }
+        },
+        models: {
+          knex: db
         }
-      },
-      config: {
-        host: 'https://wiki.example.test',
-        sessionSecret: 'agent-host-admin-token-secret',
-        agents: {
-          enabled: true,
-          provider: { enabled: false },
-          retention: { temporarySessionHours: 24 },
-          skills: { enabled: true, namespace: 'system/agent-skills' },
-          proposals: { enabled: false },
-          writes: { enabled: false, create: { enabled: false }, patch: { enabled: false }, move: { enabled: false }, restore: { enabled: false }, delete: { enabled: false } }
-        }
-      },
-      models: {
-        knex: db
-      }
-    }))
+      })
+    )
     server = app.listen(0, '127.0.0.1')
     await new Promise<void>(resolve => server.once('listening', resolve))
     const address = server.address() as AddressInfo
@@ -108,7 +117,7 @@ describe('agents-host skill administration', () => {
   })
 
   afterAll(async () => {
-    await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()))
+    await new Promise<void>((resolve, reject) => server.close(error => (error ? reject(error) : resolve())))
     await db.destroy()
   })
 
@@ -152,6 +161,13 @@ describe('agents-host skill administration', () => {
     expect(await db('agentSkills').select('createdBy').first()).toEqual({ createdBy: 7 })
   })
 
+  it('returns an empty provider profile listing when provider administration is unavailable', async () => {
+    const response = await fetch(`${baseUrl}/_api/agents/admin/profiles`, { headers: { cookie } })
+
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual({ profiles: [] })
+  })
+
   it('explains unavailable provider administration instead of returning an opaque 404', async () => {
     const response = await fetch(`${baseUrl}/_api/agents/admin/profiles`, {
       method: 'POST',
@@ -168,7 +184,7 @@ describe('agents-host skill administration', () => {
   it('returns the ordinary administration registry view', async () => {
     const response = await fetch(`${baseUrl}/_api/agents/admin/skills`, { headers: { cookie } })
     expect(response.status).toBe(200)
-    const payload = await response.json() as { skills: Array<{ name: string }> }
+    const payload = (await response.json()) as { skills: Array<{ name: string }> }
     expect(payload.skills.map(skill => skill.name)).toEqual(['release-notes'])
   })
 })

@@ -8,14 +8,14 @@
         <p>Ask a question to search and read Wiki pages you are allowed to access.</p>
       </div>
     </div>
-    <template v-for="message in thread.messages" :key="message.id">
+    <template v-for="entry in threadPresentation.orderedMessages" :key="entry.message.id">
       <article
         class="agent-message"
-        :class="[`agent-message--${message.role}`, `agent-message--${message.status}`]"
-        :aria-busy="message.status === 'pending' || message.status === 'streaming'"
-        :aria-label="`${message.role === 'assistant' ? 'Wiki Agent' : 'Your'} ${message.status} turn`"
+        :class="[`agent-message--${entry.message.role}`, `agent-message--${entry.message.status}`]"
+        :aria-busy="entry.message.status === 'pending' || entry.message.status === 'streaming'"
+        :aria-label="entry.ariaLabel"
       >
-        <div v-if="message.role === 'assistant'" class="agent-message__identity" aria-hidden="true">
+        <div v-if="entry.message.role === 'assistant'" class="agent-message__identity" aria-hidden="true">
           <v-avatar color="primary" size="28" variant="tonal">
             <v-icon icon="mdi-auto-fix" size="16" />
           </v-avatar>
@@ -24,48 +24,48 @@
           <span class="agent-message__role">You</span>
           <time
             class="agent-message__time"
-            :datetime="message.createdAt"
-            :title="messageTimestamp(message.createdAt)"
-          >{{ messageTime(message.createdAt) }}</time>
+            :datetime="entry.message.createdAt"
+            :title="messageTimestamp(entry.message.createdAt)"
+          >{{ messageTime(entry.message.createdAt) }}</time>
           <span
-            v-if="messageStatusLabel(message.role, message.status)"
+            v-if="entry.statusLabel"
             class="agent-message__status"
-            :class="`agent-message__status--${message.status}`"
+            :class="`agent-message__status--${entry.message.status}`"
           >
             <span class="agent-message__status-dot" aria-hidden="true" />
-            {{ messageStatusLabel(message.role, message.status) }}
+            {{ entry.statusLabel }}
           </span>
         </header>
         <div class="agent-message__content">
-          <header v-if="message.role === 'assistant'" class="agent-message__meta text-body-small">
+          <header v-if="entry.message.role === 'assistant'" class="agent-message__meta text-body-small">
             <span class="agent-message__role">Wiki Agent</span>
             <time
               class="agent-message__time"
-              :datetime="message.createdAt"
-              :title="messageTimestamp(message.createdAt)"
-            >{{ messageTime(message.createdAt) }}</time>
+              :datetime="entry.message.createdAt"
+              :title="messageTimestamp(entry.message.createdAt)"
+            >{{ messageTime(entry.message.createdAt) }}</time>
             <span
-              v-if="messageStatusLabel(message.role, message.status)"
+              v-if="entry.statusLabel"
               class="agent-message__status"
-              :class="`agent-message__status--${message.status}`"
+              :class="`agent-message__status--${entry.message.status}`"
             >
               <span class="agent-message__status-dot" aria-hidden="true" />
-              {{ messageStatusLabel(message.role, message.status) }}
+              {{ entry.statusLabel }}
             </span>
           </header>
           <div class="agent-message__surface">
             <AgentTaskProgress
-              v-if="message.role === 'assistant' && tasksForRun(message.runId).length"
-              :tasks="tasksForRun(message.runId)"
+              v-if="entry.message.role === 'assistant' && entry.run?.tasks.length"
+              :tasks="entry.run?.tasks ?? []"
             />
             <AgentMarkdown
-              v-if="message.content"
-              :content="message.content"
-              :citations="message.citations"
-              :streaming="message.status === 'streaming'"
+              v-if="entry.message.content"
+              :content="entry.message.content"
+              :citations="entry.message.citations"
+              :streaming="entry.message.status === 'streaming'"
             />
             <div
-              v-else-if="message.status === 'pending' || message.status === 'streaming'"
+              v-else-if="entry.message.status === 'pending' || entry.message.status === 'streaming'"
               class="agent-message__waiting"
             >
               <span class="agent-message__waiting-dots" aria-hidden="true">
@@ -73,43 +73,43 @@
                 <span />
                 <span />
               </span>
-              <span>{{ message.role === 'user' ? 'Sending message' : 'Composing response' }}</span>
+              <span>{{ entry.message.role === 'user' ? 'Sending message' : 'Composing response' }}</span>
             </div>
-            <p v-else-if="message.status === 'complete'" class="agent-message__terminal-copy">
+            <p v-else-if="entry.message.status === 'complete'" class="agent-message__terminal-copy">
               No response content was returned.
             </p>
             <aside
-              v-if="message.status === 'failed' || message.status === 'cancelled'"
+              v-if="entry.recovery"
               class="agent-message__recovery"
             >
               <v-icon
-                :icon="message.status === 'failed' ? 'mdi-alert-circle-outline' : 'mdi-stop-circle-outline'"
+                :icon="entry.message.status === 'failed' ? 'mdi-alert-circle-outline' : 'mdi-stop-circle-outline'"
                 size="20"
                 aria-hidden="true"
               />
               <div>
-                <strong>{{ recoveryTitle(message.role, message.status) }}</strong>
-                <span>{{ recoveryDescription(message.role, message.status) }}</span>
+                <strong>{{ entry.recovery.title }}</strong>
+                <span>{{ entry.recovery.description }}</span>
               </div>
               <v-btn
-                v-if="retryPromptFor(message.id)"
+                v-if="entry.retryPrompt"
                 size="small"
                 variant="text"
                 :disabled="canSubmit === false"
                 prepend-icon="mdi-reload"
-                @click="$emit('suggest', retryPromptFor(message.id))"
+                @click="$emit('suggest', entry.retryPrompt)"
               >
                 Try again
               </v-btn>
             </aside>
-            <aside v-if="message.citations.length" class="agent-sources mt-3" aria-label="Sources">
+            <aside v-if="entry.message.citations.length" class="agent-sources mt-3" aria-label="Sources">
               <div class="agent-sources__heading">
                 <v-icon icon="mdi-book-open-page-variant-outline" size="18" />
                 <strong>Sources</strong>
-                <span class="agent-sources__count">{{ message.citations.length }}</span>
+                <span class="agent-sources__count">{{ entry.message.citations.length }}</span>
               </div>
               <ol class="agent-sources__groups">
-                <li v-for="group in citationGroups(message.id)" :key="group.key" class="agent-sources__group">
+                <li v-for="group in entry.citationGroups" :key="group.key" class="agent-sources__group">
                   <component
                     :is="group.pageHref ? 'a' : 'div'"
                     class="agent-sources__page"
@@ -124,17 +124,17 @@
                     <span v-if="group.pageHref" class="agent-sources__new-window"> (opens in a new tab)</span>
                   </component>
                   <ol v-if="group.sections.length" class="agent-sources__sections">
-                    <li v-for="entry in group.sections" :key="entry.citation.evidenceId">
+                    <li v-for="citationEntry in group.sections" :key="citationEntry.citation.evidenceId">
                       <component
-                        :is="entry.citation.href ? 'a' : 'span'"
-                        :href="entry.citation.href || undefined"
-                        :target="entry.citation.href ? '_blank' : undefined"
-                        :rel="entry.citation.href ? 'noopener noreferrer' : undefined"
-                        :aria-label="`Citation ${entry.number}: ${entry.citation.label}${entry.citation.href ? ' (opens in a new tab)' : ''}`"
+                        :is="citationEntry.citation.href ? 'a' : 'span'"
+                        :href="citationEntry.citation.href || undefined"
+                        :target="citationEntry.citation.href ? '_blank' : undefined"
+                        :rel="citationEntry.citation.href ? 'noopener noreferrer' : undefined"
+                        :aria-label="`Citation ${citationEntry.number}: ${citationEntry.citation.label}${citationEntry.citation.href ? ' (opens in a new tab)' : ''}`"
                       >
-                        <span class="agent-sources__number">{{ entry.number }}</span>
-                        <span class="agent-sources__label">{{ entry.sectionLabel }}</span>
-                        <v-icon v-if="entry.citation.href" icon="mdi-open-in-new" size="14" aria-hidden="true" />
+                        <span class="agent-sources__number">{{ citationEntry.number }}</span>
+                        <span class="agent-sources__label">{{ citationEntry.sectionLabel }}</span>
+                        <v-icon v-if="citationEntry.citation.href" icon="mdi-open-in-new" size="14" aria-hidden="true" />
                       </component>
                     </li>
                   </ol>
@@ -142,12 +142,12 @@
               </ol>
             </aside>
             <nav
-              v-if="message.role === 'assistant' && pageLinksForRun(message.runId).length"
+              v-if="entry.message.role === 'assistant' && entry.run?.pageLinks.length"
               class="agent-page-links mt-3"
               aria-label="Changed pages"
             >
               <a
-                v-for="link in pageLinksForRun(message.runId)"
+                v-for="link in entry.run?.pageLinks"
                 :key="link.href"
                 :href="link.href"
                 :title="`Open ${link.label}`"
@@ -157,15 +157,15 @@
               </a>
             </nav>
             <details
-              v-if="message.role === 'assistant' && activityForRun(message.runId).length"
+              v-if="entry.message.role === 'assistant' && entry.run?.activity.length"
               class="agent-activity mt-3"
             >
               <summary>
                 <v-icon icon="mdi-format-list-checks" size="18" />
-                <span>{{ activityLabelForRun(message.runId) }}</span>
+                <span>{{ entry.run?.activityLabel }}</span>
               </summary>
               <ul class="agent-activity__list">
-                <li v-for="tool in activityForRun(message.runId)" :key="tool.id">
+                <li v-for="tool in entry.run?.activity" :key="tool.id">
                   <v-icon :icon="toolStateIcon(tool.state)" :color="toolStateColor(tool.state)" size="18" />
                   <span>
                     <strong>{{ tool.summary ? tool.summary : tool.title }}</strong>
@@ -178,11 +178,11 @@
         </div>
       </article>
       <AgentToolCard
-        v-for="entry in proposalToolsForRun(message.role === 'assistant' ? message.runId : null)"
-        :key="entry.tool.id"
-        :tool="entry.tool"
-        :proposal="entry.proposal"
-        :busy="Boolean(decidingApprovalId && entry.proposal.approval?.id === decidingApprovalId)"
+        v-for="proposalEntry in entry.message.role === 'assistant' ? entry.run?.proposals ?? [] : []"
+        :key="proposalEntry.tool.id"
+        :tool="proposalEntry.tool"
+        :proposal="proposalEntry.proposal"
+        :busy="Boolean(decidingApprovalId && proposalEntry.proposal.approval?.id === decidingApprovalId)"
         @decision="(...args) => $emit('decision', ...args)"
       />
     </template>
@@ -222,15 +222,13 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import type { AgentMessageRole, AgentMessageStatus, AgentPageActionLink, AgentTaskView, AgentToolCallView, AgentToolState, AgentThreadState } from '../../../shared/agents/contracts.ts'
+import type { AgentToolState, AgentThreadState } from '../../../shared/agents/contracts.ts'
 import AgentMarkdown from './agent-markdown.vue'
 import AgentTaskProgress from './agent-task-progress.vue'
 import AgentToolCard from './agent-tool-card.vue'
 import {
   agentLiveAnnouncement,
-  buildAgentThreadPresentation,
-  type AgentCitationGroup,
-  type AgentProposalTool
+  buildAgentThreadPresentation
 } from './agent-thread-presentation.ts'
 
 const props = defineProps<{ thread: AgentThreadState; connection: string; decidingApprovalId?: string | null; canSubmit?: boolean }>()
@@ -256,50 +254,6 @@ const threadPresentation = computed(() => buildAgentThreadPresentation(
   props.thread.tasks,
   props.thread.proposals
 ))
-const noActivity: readonly AgentToolCallView[] = []
-const noProposalTools: readonly AgentProposalTool[] = []
-const noPageLinks: readonly AgentPageActionLink[] = []
-const noTasks: readonly AgentTaskView[] = []
-const noCitationGroups: readonly AgentCitationGroup[] = []
-const activityForRun = (runId: string | null): readonly AgentToolCallView[] =>
-  runId ? threadPresentation.value.runs.get(runId)?.activity ?? noActivity : noActivity
-const proposalToolsForRun = (runId: string | null): readonly AgentProposalTool[] =>
-  runId ? threadPresentation.value.runs.get(runId)?.proposals ?? noProposalTools : noProposalTools
-const pageLinksForRun = (runId: string | null): readonly AgentPageActionLink[] =>
-  runId ? threadPresentation.value.runs.get(runId)?.pageLinks ?? noPageLinks : noPageLinks
-const tasksForRun = (runId: string | null): readonly AgentTaskView[] =>
-  runId ? threadPresentation.value.runs.get(runId)?.tasks ?? noTasks : noTasks
-const activityLabelForRun = (runId: string | null): string =>
-  runId ? threadPresentation.value.runs.get(runId)?.activityLabel ?? '' : ''
-const citationGroups = (messageId: string): readonly AgentCitationGroup[] =>
-  threadPresentation.value.messages.get(messageId)?.citationGroups ?? noCitationGroups
-const retryPromptFor = (messageId: string): string =>
-  threadPresentation.value.messages.get(messageId)?.retryPrompt ?? ''
-const messageStatusLabels: Record<Exclude<AgentMessageStatus, 'complete'>, string> = {
-  pending: 'Preparing a response',
-  streaming: 'Preparing a response',
-  failed: 'Response failed',
-  cancelled: 'Response stopped'
-}
-const messageStatusLabel = (role: AgentMessageRole, status: AgentMessageStatus): string => {
-  if (status === 'complete') return ''
-  if (role === 'user') {
-    if (status === 'failed') return 'Send failed'
-    if (status === 'cancelled') return 'Send stopped'
-    return 'Sending'
-  }
-  return messageStatusLabels[status]
-}
-const recoveryTitle = (role: AgentMessageRole, status: AgentMessageStatus): string => {
-  if (role === 'user') return status === 'failed' ? 'Message was not sent' : 'Message sending stopped'
-  return status === 'failed' ? 'Response could not be completed' : 'Response stopped'
-}
-const recoveryDescription = (role: AgentMessageRole, status: AgentMessageStatus): string => {
-  if (role === 'user') return 'You can retry this message or revise it in the composer.'
-  return status === 'failed'
-    ? 'You can retry the same request or revise it in the composer.'
-    : 'You can continue by retrying the request.'
-}
 const stateLabels: Record<AgentToolState, string> = { preparing: 'Preparing', running: 'Running', awaitingApproval: 'Awaiting approval', complete: 'Complete', failed: 'Failed', denied: 'Denied', cancelled: 'Cancelled' }
 const stateIcons: Record<AgentToolState, string> = { preparing: 'mdi-dots-horizontal', running: 'mdi-progress-clock', awaitingApproval: 'mdi-shield-alert-outline', complete: 'mdi-check-circle-outline', failed: 'mdi-alert-circle-outline', denied: 'mdi-cancel', cancelled: 'mdi-stop-circle-outline' }
 const toolStateLabel = (state: AgentToolState): string => stateLabels[state]
@@ -476,7 +430,7 @@ watch(
 }
 
 .agent-message--assistant .agent-message__surface {
-  background: var(--wiki-surface-raised);
+  background: rgb(var(--v-theme-surface));
   border: 1px solid var(--wiki-surface-border);
   border-inline-start: var(--wiki-space-1) solid color-mix(in srgb, var(--wiki-accent-warm) 62%, var(--wiki-surface-border));
   border-radius: var(--wiki-control-radius);
@@ -513,7 +467,7 @@ watch(
 }
 
 .agent-message--user .agent-message__surface {
-  background: color-mix(in srgb, var(--wiki-surface-sunken) 76%, var(--wiki-accent-warm) 6%);
+  background: color-mix(in srgb, var(--wiki-surface-sunken) 94%, var(--wiki-accent-warm) 6%);
   border: 1px solid color-mix(in srgb, var(--wiki-accent-warm) 24%, var(--wiki-surface-border));
   border-radius: var(--wiki-control-radius);
   border-end-start-radius: var(--wiki-radius-xs);
@@ -935,11 +889,28 @@ watch(
   }
 
   .agent-message--user {
-    gap: var(--wiki-space-2);
+    display: grid;
+    gap: var(--wiki-space-1);
+    justify-items: end;
   }
 
   .agent-message--user .agent-message__content {
-    max-width: calc(100% - var(--wiki-space-12) - var(--wiki-space-6));
+    max-width: calc(100% - var(--wiki-space-8));
+    order: 2;
+  }
+
+  .agent-message__identity--user {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--wiki-space-2);
+    order: 1;
+    padding-block-start: 0;
+  }
+
+  .agent-message__identity--user .agent-message__time::before {
+    content: '·';
+    margin-inline-end: var(--wiki-space-2);
   }
 
   .agent-message--user .agent-message__surface {

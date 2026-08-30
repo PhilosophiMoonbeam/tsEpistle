@@ -149,8 +149,8 @@
               <h4 class="text-title-small">{{ section.emptyTitle }}</h4>
               <p>{{ section.empty }}</p>
             </div>
-            <v-btn color="primary" variant="tonal" prepend-icon="mdi-plus" :disabled="Boolean(actionBusy) || stale || loading || !canAddTo(section.target)" @click="beginAdd(section.target)">
-              Add first record
+            <v-btn color="primary" variant="tonal" prepend-icon="mdi-plus" :aria-label="`Add ${section.target === 'user' ? 'personal detail' : 'Agent note'} to ${section.title}`" :disabled="Boolean(actionBusy) || stale || loading || !canAddTo(section.target)" @click="beginAdd(section.target)">
+              {{ section.target === 'user' ? 'Add first personal detail' : 'Add first Agent note' }}
             </v-btn>
           </div>
         </section>
@@ -244,6 +244,8 @@ const removeDialogCard = ref<ComponentRoot | HTMLElement | null>(null)
 const clearDialogCard = ref<ComponentRoot | HTMLElement | null>(null)
 const destructiveRestoreTarget = ref<HTMLElement | null>(null)
 let destructiveFocusScope: ModalFocusScope | null = null
+let loadController: AbortController | null = null
+let loadGeneration = 0
 
 const targetLimit = computed(() => memories.value[draftTarget.value].limit)
 const memoryCount = computed(() => memories.value.user.entries.length + memories.value.agent.entries.length)
@@ -307,15 +309,21 @@ const sections = computed(() => [
 ])
 const message = (value: unknown, fallback: string): string => value instanceof Error ? value.message : fallback
 const load = async (committedMessage?: string): Promise<boolean> => {
-  if (loading.value) return false
+  loadController?.abort()
+  const controller = new AbortController()
+  loadController = controller
+  const generation = ++loadGeneration
   loading.value = true
   error.value = ''
   try {
-    memories.value = await getAgentMemories(window.fetch.bind(window), props.csrfToken)
+    const nextMemories = await getAgentMemories(window.fetch.bind(window), props.csrfToken, controller.signal)
+    if (generation !== loadGeneration) return false
+    memories.value = nextMemories
     stale.value = false
     loaded.value = true
     return true
   } catch (value) {
+    if (generation !== loadGeneration || controller.signal.aborted) return false
     stale.value = loaded.value
     const reason = message(value, loaded.value ? 'Agent memory could not be refreshed.' : 'Agent memory could not be loaded.')
     error.value = loaded.value
@@ -323,7 +331,10 @@ const load = async (committedMessage?: string): Promise<boolean> => {
       : reason
     return false
   } finally {
-    loading.value = false
+    if (generation === loadGeneration) {
+      loading.value = false
+      if (loadController === controller) loadController = null
+    }
   }
 }
 const cancelEdit = (): void => {
@@ -403,6 +414,7 @@ const remove = async (): Promise<void> => {
     saving.value = false; actionBusy.value = ''
     return
   }
+  if (editing.value?.id === entry.id) cancelEdit()
   destructiveRestoreTarget.value = componentElement(memoryCloseButton.value)
   removing.value = null
   await load('Memory was removed')
@@ -451,8 +463,11 @@ watch([removing, clearing], async ([entry, clearOpen]) => {
     }
   })
 })
-watch(open, value => { if (value) void load() }, { immediate: true })
-onBeforeUnmount(() => destructiveFocusScope?.deactivate({ restoreFocus: false }))
+watch(open, value => { if (value) void load() })
+onBeforeUnmount(() => {
+  loadController?.abort()
+  destructiveFocusScope?.deactivate({ restoreFocus: false })
+})
 </script>
 
 <style scoped>
@@ -778,6 +793,9 @@ onBeforeUnmount(() => destructiveFocusScope?.deactivate({ restoreFocus: false })
 
 .agent-memory__entry {
   display: grid;
+  min-width: 0;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 7rem;
   grid-template-columns: auto minmax(0, 1fr) auto;
   gap: var(--wiki-space-3);
   align-items: start;

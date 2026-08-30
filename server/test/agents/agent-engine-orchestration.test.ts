@@ -269,6 +269,44 @@ describe('Ax orchestration stages', () => {
     expect(invoke).toHaveBeenCalledTimes(1)
   })
 
+  it('does not dispatch actions from the final available model turn', async () => {
+    const chat = vi.fn(
+      async () =>
+        ({
+          results: [
+            {
+              index: 0,
+              functionCalls: [{ id: 'too-late', type: 'function', function: { name: 'wiki_get_page', params: '{"id":1}' } }]
+            }
+          ],
+          modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 1, completionTokens: 1, totalTokens: 2 } }
+        }) satisfies AxChatResponse
+    )
+    const invoke = vi.fn(async () => ({ id: 1, title: 'Alpha', content: 'Alpha' }))
+    const actions: AgentActionSessionProvider = {
+      open: async () => ({
+        functions: [{ name: 'pages.get', title: 'Read page', description: 'Read one page', parameters: { type: 'object', properties: {} }, risk: 'read' }],
+        invoke,
+        snapshot: async () => ({}),
+        close: vi.fn(),
+        authoritySha256: null
+      })
+    }
+
+    await expect(
+      Promise.resolve(
+        new AxAgentEngine(factoryFor(chat), actions).execute(
+          {
+            ...baseRequest(new AbortController().signal),
+            limits: { maxTokens: 100, maxTurns: 1, maxToolCalls: 1, maxOutputTokens: 10 }
+          },
+          { text: async () => {}, event: async () => {} }
+        )
+      )
+    ).rejects.toMatchObject({ code: 'AGENT_TURN_LIMIT' })
+    expect(invoke).not.toHaveBeenCalled()
+  })
+
   it('rejects root synthesis until every completed task has cited coverage', async () => {
     const responses: AxChatResponse[] = [
       { results: [{ index: 0, content: 'Alpha requires review. [[cite:page:1]]' }] },
@@ -593,6 +631,35 @@ describe('Ax orchestration stages', () => {
     expect(release).not.toHaveBeenCalled()
     expect(invoke).not.toHaveBeenCalled()
   })
+
+  it('releases an active dispatch reservation when usage reconciliation fails', async () => {
+    const response = {
+      results: [{ index: 0, content: 'Bounded answer.' }],
+      modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 7, completionTokens: 5, totalTokens: 12 } }
+    } satisfies AxChatResponse
+    const reservation = { id: 1, tokens: 100_000, costMicros: 100_000 }
+    const reserve = vi.fn(async () => reservation)
+    const reconcile = vi.fn(async () => {
+      throw new Error('accounting unavailable')
+    })
+    const release = vi.fn(async () => {})
+    const consumeTool = vi.fn(async () => {})
+
+    await expect(
+      Promise.resolve(
+        new AxAgentEngine(factoryFor(vi.fn(async () => response))).execute(
+          {
+            ...baseRequest(new AbortController().signal),
+            dispatchBudget: { reserve, reconcile, release, consumeTool }
+          },
+          { text: async () => {}, event: async () => {} }
+        )
+      )
+    ).rejects.toMatchObject({ code: 'PROVIDER_REQUEST_FAILED' })
+
+    expect(reconcile).toHaveBeenCalledWith(reservation, { inputTokens: 7, outputTokens: 5, costMicros: 17 })
+    expect(release).toHaveBeenCalledWith(reservation)
+  })
 })
 
 describe('child aggregate budget reservations', () => {
@@ -642,6 +709,51 @@ describe('child aggregate budget reservations', () => {
 
     expect(recovered.consumed).toEqual({ tokens: 10, outputCharacters: 80_000 })
     expect(recovered.reserve()).toBeNull()
+  })
+
+  it('shares aggregate output headroom across the concurrent child batch', () => {
+    const limits = {
+      enabled: true,
+      maxConcurrentChildren: 3,
+      maxChildren: 3,
+      plannerTurns: 1,
+      childTurns: 2,
+      childToolCalls: 2,
+      plannerTimeoutMilliseconds: 1_000,
+      childTimeoutMilliseconds: 1_000,
+      plannerMaxOutputTokens: 2,
+      childMaxOutputTokens: 4,
+      maxAggregateChildTokens: 12,
+      maxAggregateChildOutputCharacters: 96_000
+    } as const satisfies AgentOrchestrationLimits
+    const reservations = new AgentChildBudgetReservations(limits, { tokens: 0, outputCharacters: 0 })
+
+    expect(reservations.reserve(3)).toEqual(expect.objectContaining({ outputTokens: 4, outputCharacters: 32_000 }))
+    expect(reservations.reserve(2)).toEqual(expect.objectContaining({ outputTokens: 4, outputCharacters: 32_000 }))
+    expect(reservations.reserve(1)).toEqual(expect.objectContaining({ outputTokens: 4, outputCharacters: 32_000 }))
+  })
+
+  it('uses aggregate token headroom smaller than the per-child ceiling', () => {
+    const limits = {
+      enabled: true,
+      maxConcurrentChildren: 3,
+      maxChildren: 3,
+      plannerTurns: 1,
+      childTurns: 2,
+      childToolCalls: 2,
+      plannerTimeoutMilliseconds: 1_000,
+      childTimeoutMilliseconds: 1_000,
+      plannerMaxOutputTokens: 2,
+      childMaxOutputTokens: 4,
+      maxAggregateChildTokens: 10,
+      maxAggregateChildOutputCharacters: 200_000
+    } as const satisfies AgentOrchestrationLimits
+    const reservations = new AgentChildBudgetReservations(limits, { tokens: 0, outputCharacters: 0 })
+
+    expect(reservations.reserve()).toEqual(expect.objectContaining({ outputTokens: 4 }))
+    expect(reservations.reserve()).toEqual(expect.objectContaining({ outputTokens: 4 }))
+    expect(reservations.reserve()).toEqual(expect.objectContaining({ outputTokens: 2 }))
+    expect(reservations.reserve()).toBeNull()
   })
 
   it('rejects measured child usage above the held reservation without changing aggregate counters', () => {

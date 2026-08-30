@@ -228,7 +228,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import type { AgentProposalView, AgentToolCallView, AgentToolState } from '../../../shared/agents/contracts.ts'
 import { agentApprovalTitle, agentProposalReceiptLabel } from './agent-thread-presentation.ts'
 
@@ -345,6 +345,7 @@ const dateFormatter = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', 
 const formatTimestamp = (value: string | null | undefined): string => value ? dateFormatter.format(new Date(value)) : 'Not recorded'
 const formatDuration = (start: string | null | undefined, end: string | null | undefined): string => {
   if (!start) return 'Not recorded'
+  if (!end) void expiryTick.value
   const milliseconds = Math.max(0, (end ? new Date(end).valueOf() : Date.now()) - new Date(start).valueOf())
   const seconds = Math.floor(milliseconds / 1000)
   if (seconds < 1) return 'under 1 second'
@@ -356,14 +357,10 @@ const formatDuration = (start: string | null | undefined, end: string | null | u
   return `${hours} ${hours === 1 ? 'hour' : 'hours'}${remainingMinutes ? ` ${remainingMinutes} min` : ''}`
 }
 const approvalDuration = computed(() => {
-  void expiryTick.value
   const end = props.proposal.approval?.decidedAt ?? (locallyExpired.value ? props.proposal.expiresAt : null)
   return formatDuration(props.proposal.approval?.requestedAt, end)
 })
-const toolDuration = computed(() => {
-  void expiryTick.value
-  return formatDuration(props.tool.startedAt, props.tool.completedAt)
-})
+const toolDuration = computed(() => formatDuration(props.tool.startedAt, props.tool.completedAt))
 const receiptTimestamp = computed(() => props.tool.completedAt ?? props.proposal.approval?.decidedAt ?? props.tool.startedAt)
 const elementForRef = (value: { $el?: HTMLElement } | HTMLElement | null): HTMLElement | null => value instanceof HTMLElement ? value : value?.$el ?? null
 const stopExpiryTimer = (): void => {
@@ -373,14 +370,15 @@ const stopExpiryTimer = (): void => {
   expiryDeadlineTimer = null
 }
 const startExpiryTimer = (): void => {
+  if (typeof window === 'undefined') return
   stopExpiryTimer()
-  if ((approvalPending.value && !locallyExpired.value) || statusKey.value === 'running') expiryTimer = window.setInterval(() => { expiryTick.value++ }, 30_000)
+  if ((approvalPending.value && !locallyExpired.value) || (statusKey.value === 'running' && !props.tool.completedAt)) expiryTimer = window.setInterval(() => { expiryTick.value++ }, 30_000)
   if (approvalPending.value && !hasExpired()) {
     const remaining = Math.min(new Date(props.proposal.expiresAt).valueOf() - Date.now(), 2_147_483_647)
     expiryDeadlineTimer = window.setTimeout(() => {
       expiryDeadlineTimer = null
       expiryTick.value++
-      if (!hasExpired()) startExpiryTimer()
+      startExpiryTimer()
     }, remaining)
   }
 }
@@ -399,6 +397,7 @@ watch(approvalPending, (pending, wasPending) => {
 }, { immediate: true })
 watch(statusKey, startExpiryTimer)
 watch(() => props.proposal.expiresAt, startExpiryTimer)
+watch(() => props.tool.completedAt, startExpiryTimer)
 watch(() => props.busy, busy => {
   if (busy) return
   if (decisionInFlight.value && approvalPending.value) {
@@ -408,7 +407,6 @@ watch(() => props.busy, busy => {
   }
   decisionInFlight.value = null
 })
-onMounted(startExpiryTimer)
 onBeforeUnmount(stopExpiryTimer)
 const decide = (decision: 'approved' | 'denied'): void => {
   const approval = props.proposal.approval
@@ -453,11 +451,15 @@ const decide = (decision: 'approved' | 'denied'): void => {
 }
 
 .agent-operation:focus-visible,
-.agent-operation-receipt summary:focus-visible,
-.operation-disclosure summary:focus-visible,
-.proposal-diff pre:focus-visible {
+.agent-operation-receipt summary:focus-visible {
   outline: none;
   box-shadow: var(--wiki-focus-ring);
+}
+
+.operation-disclosure summary:focus-visible,
+.proposal-diff pre:focus-visible {
+  outline: 2px solid var(--wiki-focus-color);
+  outline-offset: calc(-1 * var(--wiki-focus-offset));
 }
 
 .agent-operation__header {
@@ -535,6 +537,11 @@ const decide = (decision: 'approved' | 'denied'): void => {
 .agent-operation__decision-copy small {
   color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 70%, transparent);
   line-height: 1.45;
+}
+
+.agent-operation__decision-error span {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .operation-facts {
@@ -624,6 +631,11 @@ const decide = (decision: 'approved' | 'denied'): void => {
   text-align: end;
 }
 
+.operation-disclosure summary small {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .operation-disclosure summary::after,
 .agent-operation-receipt > summary::after {
   content: '›';
@@ -685,6 +697,10 @@ const decide = (decision: 'approved' | 'denied'): void => {
 
 .agent-operation__confirmation p {
   margin: 0 0 var(--wiki-space-2);
+}
+
+.agent-operation__confirmation :deep(.v-messages__message) {
+  overflow-wrap: anywhere;
 }
 
 .agent-operation__decision-error {
@@ -871,6 +887,7 @@ const decide = (decision: 'approved' | 'denied'): void => {
   .operation-disclosure summary:focus-visible,
   .proposal-diff pre:focus-visible {
     outline: var(--wiki-space-1) solid Highlight;
+    outline-offset: calc(-1 * var(--wiki-focus-offset));
   }
 }
 </style>

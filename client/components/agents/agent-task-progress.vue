@@ -141,11 +141,29 @@ const tick = ref(0)
 let durationTimer: number | null = null
 const statusFor = (task: AgentTaskView): DisplayTaskStatus => task.status === 'completed' && task.outcome === 'partial' ? 'partial' : task.status
 const terminalStatuses: ReadonlySet<AgentTaskView['status']> = new Set(['blocked', 'completed', 'failed', 'cancelled'])
-const terminalCount = computed(() => props.tasks.filter(task => terminalStatuses.has(task.status)).length)
-const successfulCount = computed(() => props.tasks.filter(task => statusFor(task) === 'completed').length)
-const runningCount = computed(() => props.tasks.filter(task => task.status === 'running').length)
-const queuedCount = computed(() => props.tasks.filter(task => task.status === 'pending').length)
-const attentionCount = computed(() => props.tasks.filter(task => ['blocked', 'failed', 'cancelled'].includes(task.status) || statusFor(task) === 'partial').length)
+const planCounts = computed(() => {
+  let terminal = 0
+  let successful = 0
+  let running = 0
+  let queued = 0
+  let attention = 0
+
+  for (const task of props.tasks) {
+    const status = statusFor(task)
+    if (terminalStatuses.has(task.status)) terminal++
+    if (status === 'completed') successful++
+    if (status === 'running') running++
+    if (status === 'pending') queued++
+    if (status === 'blocked' || status === 'failed' || status === 'cancelled' || status === 'partial') attention++
+  }
+
+  return { terminal, successful, running, queued, attention }
+})
+const terminalCount = computed(() => planCounts.value.terminal)
+const successfulCount = computed(() => planCounts.value.successful)
+const runningCount = computed(() => planCounts.value.running)
+const queuedCount = computed(() => planCounts.value.queued)
+const attentionCount = computed(() => planCounts.value.attention)
 const allTerminal = computed(() => props.tasks.length > 0 && terminalCount.value === props.tasks.length)
 const cleanCompletion = computed(() => allTerminal.value && attentionCount.value === 0)
 const successfulPercent = computed(() => props.tasks.length === 0 ? 0 : (successfulCount.value / props.tasks.length) * 100)
@@ -314,8 +332,8 @@ onBeforeUnmount(stopDurationTimer)
 
 .agent-tasks__header:focus-visible,
 .agent-task-record summary:focus-visible {
-  outline: none;
-  box-shadow: var(--wiki-focus-ring);
+  outline: 2px solid var(--wiki-focus-color);
+  outline-offset: calc(-1 * var(--wiki-focus-offset));
 }
 
 .agent-tasks__mark,
@@ -492,6 +510,11 @@ onBeforeUnmount(stopDurationTimer)
   color: color-mix(in srgb, var(--task-accent) 82%, rgb(var(--v-theme-on-surface)));
   font-size: .75rem;
   line-height: 1.45;
+}
+
+.agent-tasks__note span {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .agent-task-record {
@@ -673,6 +696,7 @@ onBeforeUnmount(stopDurationTimer)
   .agent-tasks__header:focus-visible,
   .agent-task-record summary:focus-visible {
     outline: var(--wiki-space-1) solid Highlight;
+    outline-offset: calc(-1 * var(--wiki-focus-offset));
   }
 }
 </style>

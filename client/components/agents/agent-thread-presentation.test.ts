@@ -52,9 +52,7 @@ const proposal = (input: Partial<AgentProposalView> & Pick<AgentProposalView, 'i
   },
   ...input
 })
-const message = (
-  input: Partial<AgentMessageView> & Pick<AgentMessageView, 'id' | 'role' | 'status'>
-): AgentMessageView => ({
+const message = (input: Partial<AgentMessageView> & Pick<AgentMessageView, 'id' | 'role' | 'status'>): AgentMessageView => ({
   runId: input.role === 'assistant' ? 'run' : null,
   ordinal: 1,
   content: '',
@@ -83,15 +81,26 @@ const task = (input: Partial<AgentTaskView> & Pick<AgentTaskView, 'id' | 'runId'
   ...input
 })
 
-
 describe('Agent thread presentation', () => {
   it('groups routine activity and approval proposals with their originating run', () => {
     const patch = proposal({ id: 'proposal-1' })
-    const runs = groupAgentToolsByRun([
-      tool({ id: 'read-1', runId: 'run-1' }),
-      tool({ id: 'patch-1', runId: 'run-1', actionName: 'pages.preparePatch', title: 'Prepare page patch', state: 'awaitingApproval', risk: 'proposal', proposalId: patch.id, completedAt: null }),
-      tool({ id: 'search-2', runId: 'run-2', actionName: 'pages.search', title: 'Search pages', state: 'running', completedAt: null })
-    ], [patch])
+    const runs = groupAgentToolsByRun(
+      [
+        tool({ id: 'read-1', runId: 'run-1' }),
+        tool({
+          id: 'patch-1',
+          runId: 'run-1',
+          actionName: 'pages.preparePatch',
+          title: 'Prepare page patch',
+          state: 'awaitingApproval',
+          risk: 'proposal',
+          proposalId: patch.id,
+          completedAt: null
+        }),
+        tool({ id: 'search-2', runId: 'run-2', actionName: 'pages.search', title: 'Search pages', state: 'running', completedAt: null })
+      ],
+      [patch]
+    )
 
     expect(runs.get('run-1')?.activity.map(entry => entry.id)).toEqual(['read-1'])
     expect(runs.get('run-1')?.proposals.map(entry => entry.proposal.id)).toEqual(['proposal-1'])
@@ -121,12 +130,16 @@ describe('Agent thread presentation', () => {
       actionName: 'pages.prepareRestore',
       pageLink: { label: '/archived', href: '/en/archived' }
     })
-    const entries = groupAgentToolsByRun([
-      tool({ id: 'create', runId: 'run', proposalId: created.id }),
-      tool({ id: 'edit', runId: 'run', proposalId: edited.id }),
-      tool({ id: 'move', runId: 'run', proposalId: moved.id }),
-      tool({ id: 'restore', runId: 'run', proposalId: pending.id })
-    ], [created, edited, moved, pending]).get('run')?.proposals ?? []
+    const entries =
+      groupAgentToolsByRun(
+        [
+          tool({ id: 'create', runId: 'run', proposalId: created.id }),
+          tool({ id: 'edit', runId: 'run', proposalId: edited.id }),
+          tool({ id: 'move', runId: 'run', proposalId: moved.id }),
+          tool({ id: 'restore', runId: 'run', proposalId: pending.id })
+        ],
+        [created, edited, moved, pending]
+      ).get('run')?.proposals ?? []
 
     expect(agentAppliedPageLinks(entries)).toEqual([
       { label: '/release-notes', href: '/en/release-notes' },
@@ -161,22 +174,23 @@ describe('Agent thread presentation', () => {
     ])
   })
   it('hides only a trailing incomplete citation protocol while streaming', () => {
-    const citations: readonly AgentCitation[] = [{
-      evidenceId: 'page:6:section:1',
-      kind: 'page',
-      label: 'Incident Runbook',
-      href: '/en/runbook#incident-runbook'
-    }]
+    const citations: readonly AgentCitation[] = [
+      {
+        evidenceId: 'page:6:section:1',
+        kind: 'page',
+        label: 'Incident Runbook',
+        href: '/en/runbook#incident-runbook'
+      }
+    ]
 
-    expect(formatAgentCitationMarkers('Literal [[ text. Claim [[cite:page:6:section', citations, true))
-      .toBe('Literal [[ text. Claim ')
+    expect(formatAgentCitationMarkers('Literal [[ text. Claim [[cite:page:6:section', citations, true)).toBe('Literal [[ text. Claim ')
     expect(formatAgentCitationMarkers('Claim [[cite:', citations, true)).toBe('Claim ')
     expect(formatAgentCitationMarkers('Claim [[cite:page:6:section:1]', citations, true)).toBe('Claim ')
     expect(formatAgentCitationMarkers('Literal [[ text.', citations, true)).toBe('Literal [[ text.')
-    expect(formatAgentCitationMarkers('Claim [[cite:page:6:section', citations))
-      .toBe('Claim [[cite:page:6:section')
-    expect(formatAgentCitationMarkers('Claim [[cite:page:6:section:1]]', citations, true))
-      .toBe('Claim [1](/en/runbook#incident-runbook "Citation 1: Incident Runbook")')
+    expect(formatAgentCitationMarkers('Claim [[cite:page:6:section', citations)).toBe('Claim [[cite:page:6:section')
+    expect(formatAgentCitationMarkers('Claim [[cite:page:6:section:1]]', citations, true)).toBe(
+      'Claim [1](/en/runbook#incident-runbook "Citation 1: Incident Runbook")'
+    )
   })
 
   it('precomputes run and message presentation for a thread snapshot', () => {
@@ -187,12 +201,15 @@ describe('Agent thread presentation', () => {
       href: '/en/runbook'
     }
     const runTask = task({ id: 'task-1', runId: 'run' })
-    const presentation = buildAgentThreadPresentation([
-      message({ id: 'user-1', role: 'user', status: 'complete', content: 'How should I respond?' }),
-      message({ id: 'assistant-1', role: 'assistant', status: 'failed', citations: [citation] })
-    ], [
-      tool({ id: 'read-1', runId: 'run' })
-    ], [runTask], [])
+    const presentation = buildAgentThreadPresentation(
+      [
+        message({ id: 'user-1', role: 'user', status: 'complete', content: 'How should I respond?' }),
+        message({ id: 'assistant-1', role: 'assistant', status: 'failed', citations: [citation] })
+      ],
+      [tool({ id: 'read-1', runId: 'run' })],
+      [runTask],
+      []
+    )
 
     expect(presentation.runs.get('run')).toMatchObject({
       activityLabel: 'Activity · 1 action · Complete',
@@ -201,6 +218,25 @@ describe('Agent thread presentation', () => {
     expect(presentation.messages.get('assistant-1')).toMatchObject({
       retryPrompt: 'How should I respond?',
       citationGroups: [{ key: 'page:6' }]
+    })
+    expect(presentation.orderedMessages.map(entry => entry.message.id)).toEqual(['user-1', 'assistant-1'])
+    expect(presentation.orderedMessages[0]).toMatchObject({
+      statusLabel: '',
+      ariaLabel: 'Your message · Complete',
+      recovery: null
+    })
+    expect(presentation.orderedMessages[1]).toMatchObject({
+      statusLabel: 'Response failed',
+      ariaLabel: 'Wiki Agent message · Response failed',
+      retryPrompt: 'How should I respond?',
+      recovery: {
+        title: 'Response could not be completed',
+        description: 'You can retry the same request or revise it in the composer.'
+      },
+      run: {
+        activityLabel: 'Activity · 1 action · Complete',
+        tasks: [runTask]
+      }
     })
   })
 
@@ -212,37 +248,37 @@ describe('Agent thread presentation', () => {
       message: 'Preparing a response.',
       tone: 'neutral'
     })
-    expect(agentLiveAnnouncement([{ ...preparing, content: 'Another streamed token' }], [])?.key)
-      .toBe('assistant-1:preparing')
-    expect(agentLiveAnnouncement([preparing], [
-      tool({ id: 'approval-1', runId: 'run', state: 'awaitingApproval' })
-    ])).toMatchObject({
+    expect(agentLiveAnnouncement([{ ...preparing, content: 'Another streamed token' }], [])?.key).toBe('assistant-1:preparing')
+    expect(agentLiveAnnouncement([preparing], [tool({ id: 'approval-1', runId: 'run', state: 'awaitingApproval' })])).toMatchObject({
       key: 'assistant-1:approval',
       message: 'Review needed before the response can continue.'
     })
-    expect(agentLiveAnnouncement([
-      preparing,
-      message({ id: 'assistant-2', role: 'assistant', status: 'complete' })
-    ], [])).toMatchObject({ kind: 'complete', message: 'Response complete.' })
-    expect(agentLiveAnnouncement([
-      message({ id: 'assistant-2', role: 'assistant', status: 'cancelled' })
-    ], [])).toMatchObject({ kind: 'stopped', message: 'Response stopped.', tone: 'neutral' })
-    expect(agentLiveAnnouncement([
-      message({ id: 'assistant-2', role: 'assistant', status: 'failed' })
-    ], [])).toMatchObject({ kind: 'failed', message: 'Response failed.', tone: 'error' })
+    expect(agentLiveAnnouncement([preparing, message({ id: 'assistant-2', role: 'assistant', status: 'complete' })], [])).toMatchObject({
+      kind: 'complete',
+      message: 'Response complete.'
+    })
+    expect(agentLiveAnnouncement([message({ id: 'assistant-2', role: 'assistant', status: 'cancelled' })], [])).toMatchObject({
+      kind: 'stopped',
+      message: 'Response stopped.',
+      tone: 'neutral'
+    })
+    expect(agentLiveAnnouncement([message({ id: 'assistant-2', role: 'assistant', status: 'failed' })], [])).toMatchObject({
+      kind: 'failed',
+      message: 'Response failed.',
+      tone: 'error'
+    })
   })
 
-
-
   it('keeps routine activity compact while surfacing current and failed states', () => {
-    expect(agentActivityLabel([
-      tool({ id: 'read', runId: 'run', title: 'Read page' }),
-      tool({ id: 'search', runId: 'run', title: 'Search pages', state: 'running', completedAt: null })
-    ])).toBe('Search pages · 2 actions')
-    expect(agentActivityLabel([
-      tool({ id: 'read', runId: 'run' }),
-      tool({ id: 'search', runId: 'run', state: 'failed' })
-    ])).toBe('Activity · 2 actions · 1 failed')
+    expect(
+      agentActivityLabel([
+        tool({ id: 'read', runId: 'run', title: 'Read page' }),
+        tool({ id: 'search', runId: 'run', title: 'Search pages', state: 'running', completedAt: null })
+      ])
+    ).toBe('Search pages · 2 actions')
+    expect(agentActivityLabel([tool({ id: 'read', runId: 'run' }), tool({ id: 'search', runId: 'run', state: 'failed' })])).toBe(
+      'Activity · 2 actions · 1 failed'
+    )
     expect(agentActivityLabel([tool({ id: 'read', runId: 'run' })])).toBe('Activity · 1 action · Complete')
   })
 

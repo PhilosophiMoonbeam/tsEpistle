@@ -1,9 +1,9 @@
 import { createHash } from 'node:crypto'
 import { EventEmitter } from 'node:events'
-import type { Request, Response } from 'express'
+import type { Response } from 'express'
 import createKnex, { type Knex } from 'knex'
 import { afterEach, beforeEach, describe, expect, it, vi } from '../bun-test.mts'
-import { streamOwnedAgentEvents } from '../../agents/sse.ts'
+import { streamOwnedAgentEvents, type AgentSseRequest } from '../../agents/sse.ts'
 
 const sha256 = (value: string): string => createHash('sha256').update(value).digest('hex')
 
@@ -48,7 +48,7 @@ describe('agent event SSE lifecycle', () => {
       createdAt: new Date('2026-08-17T12:00:00.000Z')
     })
 
-    const request = { get: () => undefined, query: {} } as unknown as Request
+    const request = { get: () => undefined, query: {} } satisfies AgentSseRequest
     const response = Object.assign(new EventEmitter(), {
       status: vi.fn(),
       set: vi.fn(),
@@ -68,6 +68,81 @@ describe('agent event SSE lifecycle', () => {
 
     expect(response.write).toHaveBeenCalledOnce()
     expect(response.write).toHaveBeenCalledWith(expect.stringContaining('event: run.partial'))
+    expect(response.end).toHaveBeenCalledOnce()
+    expect(connections.has(7)).toBe(false)
+  })
+
+  it('removes attached lifecycle listeners and releases accounting once when request and response both close', async () => {
+    await knex('agentRuns').insert({ id: 'run-aborted', ownerId: 7, status: 'running', eventSequence: 0 })
+
+    const request = Object.assign(new EventEmitter(), {
+      aborted: false,
+      get: () => undefined,
+      query: {}
+    })
+    const headersFlushed = Promise.withResolvers<void>()
+    const response = Object.assign(new EventEmitter(), {
+      status: vi.fn(),
+      set: vi.fn(),
+      flushHeaders: vi.fn(() => headersFlushed.resolve()),
+      write: vi.fn(() => true),
+      end: vi.fn()
+    })
+    response.status.mockReturnValue(response)
+    response.set.mockReturnValue(response)
+    const connections = new Map<number, number>([[7, 1]])
+
+    const streaming = streamOwnedAgentEvents(knex, request, response as unknown as Response, 7, 'run-aborted', connections, {
+      maximumConnectionsPerUser: 2,
+      reconciliationMilliseconds: 60_000,
+      keepaliveMilliseconds: 60_000
+    })
+    await headersFlushed.promise
+
+    expect(connections.get(7)).toBe(2)
+    expect(request.listenerCount('aborted')).toBe(1)
+    expect(response.listenerCount('close')).toBe(1)
+
+    request.emit('aborted')
+    response.emit('close')
+    await streaming
+
+    expect(request.listenerCount('aborted')).toBe(0)
+    expect(response.listenerCount('close')).toBe(0)
+    expect(response.end).toHaveBeenCalledOnce()
+    expect(connections.get(7)).toBe(1)
+  })
+
+  it('retains AbortSignal cleanup for a request without lifecycle hooks', async () => {
+    await knex('agentRuns').insert({ id: 'run-signalled', ownerId: 7, status: 'running', eventSequence: 0 })
+
+    const request = { get: () => undefined, query: {} } satisfies AgentSseRequest
+    const headersFlushed = Promise.withResolvers<void>()
+    const response = Object.assign(new EventEmitter(), {
+      status: vi.fn(),
+      set: vi.fn(),
+      flushHeaders: vi.fn(() => headersFlushed.resolve()),
+      write: vi.fn(() => true),
+      end: vi.fn()
+    })
+    response.status.mockReturnValue(response)
+    response.set.mockReturnValue(response)
+    const controller = new AbortController()
+    const connections = new Map<number, number>()
+
+    const streaming = streamOwnedAgentEvents(knex, request, response as unknown as Response, 7, 'run-signalled', connections, {
+      maximumConnectionsPerUser: 1,
+      reconciliationMilliseconds: 60_000,
+      keepaliveMilliseconds: 60_000,
+      signal: controller.signal
+    })
+    await headersFlushed.promise
+    expect(connections.get(7)).toBe(1)
+
+    controller.abort()
+    await streaming
+
+    expect(response.listenerCount('close')).toBe(0)
     expect(response.end).toHaveBeenCalledOnce()
     expect(connections.has(7)).toBe(false)
   })

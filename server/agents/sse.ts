@@ -4,6 +4,20 @@ import { isTerminalAgentRunStatus, type AgentRunStatus } from '../../shared/agen
 import { canonicalJson } from '../helpers/canonical-json.ts'
 import { AgentRepositoryError, listOwnedAgentEvents } from './repository.ts'
 
+export interface AgentSseRequest {
+  readonly aborted?: boolean
+  readonly query: Request['query']
+  get(name: string): string | undefined
+}
+
+interface RequestLifecycleEvents {
+  once(event: 'aborted', listener: () => void): unknown
+  off(event: 'aborted', listener: () => void): unknown
+}
+
+const hasRequestLifecycleEvents = (value: AgentSseRequest): value is AgentSseRequest & RequestLifecycleEvents =>
+  typeof Reflect.get(value, 'once') === 'function' && typeof Reflect.get(value, 'off') === 'function'
+
 interface Notification {
   readonly channel?: string
   readonly payload?: string
@@ -24,9 +38,11 @@ const isNotificationConnection = (value: unknown): value is NotificationConnecti
   )
 }
 
-const parseCursor = (req: Request): number => {
-  const raw = req.get('last-event-id') ?? (typeof req.query.after === 'string' ? req.query.after : '0')
-  if (!/^\d{1,10}$/.test(raw)) throw new AgentRepositoryError('INVALID_EVENT_CURSOR', 'Event cursor is invalid', 400)
+const parseCursor = (req: AgentSseRequest): number => {
+  const header = req.get('last-event-id')
+  const query = req.query.after
+  const raw = header ?? (query === undefined ? '0' : typeof query === 'string' ? query : null)
+  if (raw === null || !/^\d{1,10}$/.test(raw)) throw new AgentRepositoryError('INVALID_EVENT_CURSOR', 'Event cursor is invalid', 400)
   const cursor = Number(raw)
   if (!Number.isSafeInteger(cursor) || cursor < 0) throw new AgentRepositoryError('INVALID_EVENT_CURSOR', 'Event cursor is invalid', 400)
   return cursor
@@ -81,17 +97,19 @@ export interface AgentSseLimits {
   readonly maximumConnectionsPerUser: number
   readonly reconciliationMilliseconds?: number
   readonly keepaliveMilliseconds?: number
+  readonly signal?: AbortSignal
 }
 
 export const streamOwnedAgentEvents = async (
   knex: Knex,
-  req: Request,
+  req: AgentSseRequest,
   res: Response,
   ownerId: number,
   runId: string,
   connections: Map<number, number>,
   limits: AgentSseLimits
 ): Promise<void> => {
+  if (limits.signal?.aborted || req.aborted || res.destroyed) return
   const run = (await knex('agentRuns').where({ id: runId, ownerId }).first('id', 'status', 'eventSequence')) as
     | { id: string; status: string; eventSequence: number }
     | undefined
@@ -111,10 +129,25 @@ export const streamOwnedAgentEvents = async (
     closed = true
     wake()
   }
-  res.once('close', onClose)
+  const requestLifecycle = hasRequestLifecycleEvents(req) ? req : null
+  let requestAbortAttached = false
+  let responseCloseAttached = false
+  let signalAbortAttached = false
   let closeNotifications: () => Promise<void> = async () => {}
   try {
+    if (requestLifecycle) {
+      requestLifecycle.once('aborted', onClose)
+      requestAbortAttached = true
+    }
+    res.once('close', onClose)
+    responseCloseAttached = true
+    if (limits.signal) {
+      limits.signal.addEventListener('abort', onClose, { once: true })
+      signalAbortAttached = true
+    }
+    if (limits.signal?.aborted || req.aborted || res.destroyed) onClose()
     closeNotifications = await openNotificationListener(knex, runId, wake)
+    if (closed || limits.signal?.aborted || req.aborted || res.destroyed) return
     res.status(200)
     res.set({
       'Cache-Control': 'no-store',
@@ -159,14 +192,16 @@ export const streamOwnedAgentEvents = async (
       wakeCurrent = null
     }
   } finally {
-    res.off('close', onClose)
+    if (requestAbortAttached) requestLifecycle?.off('aborted', onClose)
+    if (responseCloseAttached) res.off('close', onClose)
+    if (signalAbortAttached) limits.signal?.removeEventListener('abort', onClose)
     try {
       await closeNotifications()
     } finally {
       const remaining = (connections.get(ownerId) ?? 1) - 1
       if (remaining <= 0) connections.delete(ownerId)
       else connections.set(ownerId, remaining)
-      res.end()
+      if (!res.destroyed && !res.writableEnded) res.end()
     }
   }
 }

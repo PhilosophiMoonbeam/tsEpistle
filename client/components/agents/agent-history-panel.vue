@@ -18,7 +18,7 @@
     </header>
 
     <div class="agent-history__actions">
-      <v-btn class="agent-history__new-folder" color="primary" prepend-icon="mdi-folder-plus-outline" variant="tonal" @click="beginCreateFolder">
+      <v-btn class="agent-history__new-folder" color="primary" prepend-icon="mdi-folder-plus-outline" variant="tonal" :disabled="loading || refreshingHistory || savingFolder || deleting" @click="beginCreateFolder">
         New folder
       </v-btn>
       <v-btn
@@ -26,7 +26,7 @@
         icon="mdi-delete-sweep-outline"
         variant="text"
         aria-label="Reset all conversation history"
-        :disabled="sessions.length === 0 || loading"
+        :disabled="sessions.length === 0 || loading || refreshingHistory || savingFolder || deleting"
         @click="emit('reset')"
       >
         <v-tooltip activator="parent" location="bottom">Reset all history</v-tooltip>
@@ -139,12 +139,12 @@
                 </v-expansion-panel-title>
                 <v-menu location="bottom end">
                   <template #activator="{ props: menuProps }">
-                    <v-btn v-bind="menuProps" class="agent-history__folder-actions" icon="mdi-dots-horizontal" size="x-small" variant="text" :aria-label="`Actions for ${group.folder.name}`" />
+                    <v-btn v-bind="menuProps" class="agent-history__folder-actions" icon="mdi-dots-horizontal" size="x-small" variant="text" :aria-label="`Actions for ${group.folder.name}`" :disabled="loading || refreshingHistory || savingFolder || deleting" />
                   </template>
                   <v-list density="compact" :aria-label="`Folder actions for ${group.folder.name}`">
-                    <v-list-item prepend-icon="mdi-pencil-outline" title="Rename folder" @click="beginRenameFolder(group.folder)" />
+                    <v-list-item prepend-icon="mdi-pencil-outline" title="Rename folder" :disabled="loading || refreshingHistory || savingFolder || deleting" @click="beginRenameFolder(group.folder)" />
                     <v-divider />
-                    <v-list-item class="text-error" prepend-icon="mdi-folder-remove-outline" title="Remove folder" subtitle="Conversations return to Recent" @click="beginRemoveFolder(group.folder)" />
+                    <v-list-item class="text-error" prepend-icon="mdi-folder-remove-outline" title="Remove folder" subtitle="Conversations return to Recent" :disabled="loading || refreshingHistory || savingFolder || deleting" @click="beginRemoveFolder(group.folder)" />
                   </v-list>
                 </v-menu>
               </div>
@@ -216,7 +216,7 @@
     </div>
   </v-card>
 
-  <v-dialog v-model="folderEditorOpen" max-width="28rem" aria-labelledby="agent-history-folder-editor-title">
+  <v-dialog v-model="folderEditorOpen" max-width="28rem" aria-labelledby="agent-history-folder-editor-title" :persistent="savingFolder">
     <v-card rounded="xl">
       <v-card-title id="agent-history-folder-editor-title" class="d-flex align-center ga-3 pt-5 px-5">
         <v-avatar color="primary" size="38" variant="tonal"><v-icon icon="mdi-folder-outline" aria-hidden="true" /></v-avatar>
@@ -230,7 +230,7 @@
       <v-card-actions class="px-5 pb-4">
         <v-spacer />
         <v-btn variant="text" :disabled="savingFolder" @click="folderEditorOpen = false">Cancel</v-btn>
-        <v-btn color="primary" variant="tonal" :disabled="!folderName.trim() || savingFolder" :loading="savingFolder" @click="saveFolder">
+        <v-btn color="primary" variant="tonal" :disabled="loading || !folderName.trim() || savingFolder" :loading="savingFolder" @click="saveFolder">
           {{ editingFolder ? 'Save name' : 'Create folder' }}
         </v-btn>
       </v-card-actions>
@@ -269,7 +269,7 @@
       <v-card-actions class="px-5 pb-4">
         <v-spacer />
         <v-btn variant="text" :disabled="deleting" @click="cancelRemoveFolder">Cancel</v-btn>
-        <v-btn color="warning" variant="tonal" :loading="deleting" :disabled="deleting" @click="deleteFolder">Remove folder</v-btn>
+        <v-btn color="warning" variant="tonal" :loading="deleting" :disabled="loading || deleting" @click="deleteFolder">Remove folder</v-btn>
       </v-card-actions>
     </v-card>
   </v-dialog>
@@ -307,6 +307,7 @@ type ComponentRoot = { $el?: HTMLElement }
 const historyCloseButton = ref<ComponentRoot | HTMLElement | null>(null)
 const deleteDialogCard = ref<ComponentRoot | HTMLElement | null>(null)
 const removeFolderDialogCard = ref<ComponentRoot | HTMLElement | null>(null)
+const folderEditorRestoreTarget = ref<HTMLElement | null>(null)
 const destructiveRestoreTarget = ref<HTMLElement | null>(null)
 let destructiveFocusScope: ModalFocusScope | null = null
 
@@ -351,7 +352,10 @@ const recentSessionGroups = computed(() => {
     return groupedSessions.length ? [{ label, sessions: groupedSessions }] : []
   })
 })
-const message = (value: unknown, fallback: string): string => value instanceof Error ? value.message : fallback
+const message = (value: unknown, fallback: string): string => {
+  const text = value instanceof Error ? value.message.trim() : ''
+  return (text || fallback).slice(0, 512)
+}
 const updatePendingSet = (pending: typeof openingSessionIds, sessionId: string, add: boolean): void => {
   const next = new Set(pending.value)
   if (add) next.add(sessionId)
@@ -366,20 +370,22 @@ const clearProjectedFolder = (sessionId: string): void => {
   next.delete(sessionId)
   projectedFolderIds.value = next
 }
-const sessionBusy = (sessionId: string): boolean => openingSessionIds.value.has(sessionId) || movingSessionIds.value.has(sessionId)
+const sessionBusy = (sessionId: string): boolean =>
+  refreshingHistory.value || openingSessionIds.value.has(sessionId) || movingSessionIds.value.has(sessionId)
 const showCommittedRefreshFailure = (): boolean => {
   if (!agents.error) return false
   refreshError.value = `Showing last-loaded conversation history. ${agents.error}`
   return true
 }
 const refreshHistory = async (): Promise<void> => {
-  if (refreshingHistory.value) return
+  if (refreshingHistory.value || savingFolder.value || deleting.value || deletingSession.value || removingFolder.value) return
   refreshingHistory.value = true
   agents.error = ''
   try {
     await Promise.all([agents.reloadSessions(), agents.reloadFolders()])
     committedDeletedSessionIds.value = new Set()
     projectedFolderIds.value = new Map()
+    localError.value = ''
     refreshError.value = ''
   } catch (value) {
     refreshError.value = `Showing last-loaded conversation history. ${message(value, 'Conversation history could not be refreshed.')}`
@@ -410,8 +416,8 @@ const closeHistory = (): void => {
   emit('close')
 }
 
-
 const openSession = async (sessionId: string): Promise<void> => {
+  if (refreshingHistory.value) return
   if (sessionId === thread.value?.session.id) {
     agents.cancelSessionTransition()
     return
@@ -430,7 +436,7 @@ const openSession = async (sessionId: string): Promise<void> => {
 }
 
 const moveSession = async (session: AgentSessionSummary, folderId: string | null): Promise<void> => {
-  if (session.folderId === folderId || movingSessionIds.value.has(session.id)) return
+  if (refreshingHistory.value || session.folderId === folderId || movingSessionIds.value.has(session.id)) return
   localError.value = ''
   refreshError.value = ''
   agents.error = ''
@@ -446,15 +452,31 @@ const moveSession = async (session: AgentSessionSummary, folderId: string | null
     updatePendingSet(movingSessionIds, session.id, false)
   }
 }
-
-const beginCreateFolder = (): void => { dialogError.value = ''; editingFolder.value = null; folderName.value = ''; folderEditorOpen.value = true }
-const beginRenameFolder = (folder: AgentConversationFolderView): void => { dialogError.value = ''; editingFolder.value = folder; folderName.value = folder.name; folderEditorOpen.value = true }
+const beginCreateFolder = (): void => {
+  if (loading.value) return
+  dialogError.value = ''
+  editingFolder.value = null
+  folderName.value = ''
+  folderEditorRestoreTarget.value = document.activeElement instanceof HTMLElement ? document.activeElement : null
+  folderEditorOpen.value = true
+}
+const beginRenameFolder = (folder: AgentConversationFolderView): void => {
+  if (loading.value) return
+  dialogError.value = ''
+  editingFolder.value = folder
+  folderName.value = folder.name
+  folderEditorRestoreTarget.value =
+    document.querySelector<HTMLElement>('.agent-history__folder-actions[aria-expanded="true"]') ??
+    (document.activeElement instanceof HTMLElement ? document.activeElement : null)
+  folderEditorOpen.value = true
+}
 const beginDeleteSession = (session: AgentSessionSummary, restoreTarget: HTMLElement | null): void => {
   dialogError.value = ''
   destructiveRestoreTarget.value = restoreTarget
   deletingSession.value = session
 }
 const beginRemoveFolder = (folder: AgentConversationFolderView): void => {
+  if (loading.value) return
   dialogError.value = ''
   destructiveRestoreTarget.value = document.querySelector<HTMLElement>('.agent-history__folder-actions[aria-expanded="true"]')
   removingFolder.value = folder
@@ -471,7 +493,7 @@ const cancelRemoveFolder = (): void => {
 }
 const saveFolder = async (): Promise<void> => {
   const name = folderName.value.trim()
-  if (!name || savingFolder.value || deleting.value) return
+  if (!name || loading.value || savingFolder.value || deleting.value) return
   savingFolder.value = true; dialogError.value = ''
   try {
     if (editingFolder.value) await agents.renameFolder(editingFolder.value.id, editingFolder.value.version, name)
@@ -480,6 +502,13 @@ const saveFolder = async (): Promise<void> => {
   } catch (value) { dialogError.value = message(value, 'The folder could not be saved.') }
   finally { savingFolder.value = false }
 }
+watch(folderEditorOpen, async open => {
+  if (open) return
+  await nextTick()
+  const target = folderEditorRestoreTarget.value
+  folderEditorRestoreTarget.value = null
+  if (target?.isConnected && !target.closest('[inert], [aria-hidden="true"]')) target.focus()
+})
 const deleteSession = async (): Promise<void> => {
   const session = deletingSession.value
   if (!session || deleting.value || savingFolder.value) return
@@ -499,7 +528,7 @@ const deleteSession = async (): Promise<void> => {
 }
 const deleteFolder = async (): Promise<void> => {
   const folder = removingFolder.value
-  if (!folder || deleting.value || savingFolder.value) return
+  if (!folder || loading.value || deleting.value || savingFolder.value) return
   const affectedSessionIds = displaySessions.value.filter(session => session.folderId === folder.id).map(session => session.id)
   deleting.value = true; dialogError.value = ''; refreshError.value = ''; agents.error = ''
   try {

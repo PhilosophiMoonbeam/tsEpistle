@@ -98,7 +98,7 @@ interface AgentHostWiki {
     | 'setSessionProfile'
     | 'update'
   >
-  readonly providerConformance?: Pick<AgentProviderConformanceRunner, 'latest' | 'list' | 'run'>
+  readonly providerConformance?: Pick<AgentProviderConformanceRunner, 'latest' | 'list' | 'listLatest' | 'run'>
   readonly agentLimits?: AgentOperationalLimits
 }
 
@@ -144,8 +144,7 @@ const asyncRoute =
       })
   }
 
-const disabledRoute = (res: Response): Response =>
-  res.status(404).json({ error: 'AGENT_ROUTE_DISABLED', message: 'Agent route is unavailable' })
+const disabledRoute = (res: Response): Response => res.status(404).json({ error: 'AGENT_ROUTE_DISABLED', message: 'Agent route is unavailable' })
 
 const invalidRequestDetails = (error: ZodError): readonly { readonly code: string; readonly path: readonly PropertyKey[]; readonly message: string }[] =>
   error.issues.slice(0, 16).map(issue => ({
@@ -342,7 +341,7 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
   }
 
   router.use(apiPrefix, wiki.auth.authenticate.bind(wiki.auth), (req, res, next) => {
-    if (!req.authContext || req.authContext.kind !== 'user') return res.sendStatus(401)
+    if (!req.authContext || req.authContext.kind !== 'user' || !req.user || req.user.id !== req.authContext.userId) return res.sendStatus(401)
     if (!hasAgentPermission(req.user)) return res.sendStatus(403)
     return next()
   })
@@ -730,10 +729,11 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
   )
   router.get(
     `${apiPrefix}/runs/:runId/events`,
-    asyncRoute(async (req, res) => {
+    asyncRoute(async (req, res, signal) => {
       const runId = UUIDSchema.parse(routeParameter(req, 'runId'))
       await streamOwnedAgentEvents(wiki.models.knex, req, res, requestSkillPrincipal(req).userId, runId, sseConnections, {
-        maximumConnectionsPerUser: wiki.agentLimits?.sse.maximumConnectionsPerUser ?? 3
+        maximumConnectionsPerUser: wiki.agentLimits?.sse.maximumConnectionsPerUser ?? 3,
+        signal
       })
     })
   )
@@ -981,13 +981,14 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
     asyncRoute(async (_req, res) => {
       if (!wiki.providerRegistry) return res.json({ profiles: [] })
       const profiles = await wiki.providerRegistry.listAll()
+      const connectionChecks = wiki.providerConformance
+        ? await wiki.providerConformance.listLatest(profiles.map(profile => profile.id))
+        : profiles.map(() => null)
       return res.json({
-        profiles: await Promise.all(
-          profiles.map(async profile => ({
-            ...profile,
-            connectionCheck: wiki.providerConformance ? await wiki.providerConformance.latest(profile.id) : null
-          }))
-        )
+        profiles: profiles.map((profile, index) => ({
+          ...profile,
+          connectionCheck: connectionChecks[index] ?? null
+        }))
       })
     })
   )

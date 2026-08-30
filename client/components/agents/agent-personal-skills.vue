@@ -172,7 +172,7 @@
   </v-dialog>
 
   <v-dialog v-model="discardOpen" max-width="28rem">
-    <v-card class="personal-confirmation">
+    <v-card ref="discardDialogCard" class="personal-confirmation">
       <div class="personal-confirmation__header"><span><v-icon icon="mdi-file-alert-outline" size="21" /></span><div><div class="personal-skills__eyebrow">Unsaved draft</div><h2>Discard changes?</h2></div></div>
       <v-card-text>Your current personal skill revision has changes that have not been saved.</v-card-text>
       <v-card-actions><v-spacer /><v-btn @click="discardOpen = false">Continue editing</v-btn><v-btn color="error" variant="tonal" @click="confirmDiscard">Discard changes</v-btn></v-card-actions>
@@ -216,14 +216,25 @@ const editorRoot = ref<HTMLElement | null>(null)
 const nameInput = ref<ComponentRoot | HTMLElement | null>(null)
 const markdownInput = ref<ComponentRoot | HTMLElement | null>(null)
 const removeDialogCard = ref<ComponentRoot | HTMLElement | null>(null)
+const discardDialogCard = ref<ComponentRoot | HTMLElement | null>(null)
 const destructiveRestoreTarget = ref<HTMLElement | null>(null)
 let destructiveFocusScope: ModalFocusScope | null = null
+let discardFocusScope: ModalFocusScope | null = null
+let loadController: AbortController | null = null
+let loadGeneration = 0
 const selectedSkill = computed(() => skills.value.find(skill => skill.id === editingId.value) ?? null)
+const compareNames = (left: string, right: string): number => {
+  const leftName = left.toLowerCase()
+  const rightName = right.toLowerCase()
+  if (leftName < rightName) return -1
+  if (leftName > rightName) return 1
+  return left < right ? -1 : left > right ? 1 : 0
+}
 const filteredSkills = computed(() => {
-  const query = search.value.trim().toLocaleLowerCase()
+  const query = search.value.trim().toLowerCase()
   return skills.value
-    .filter(skill => !query || skill.name.toLocaleLowerCase().includes(query) || skill.description.toLocaleLowerCase().includes(query))
-    .sort((left, right) => left.name.localeCompare(right.name))
+    .filter(skill => !query || skill.name.toLowerCase().includes(query) || skill.description.toLowerCase().includes(query))
+    .sort((left, right) => compareNames(left.name, right.name))
 })
 const isDirty = computed(() => name.value !== baseline.value.name || skillMarkdown.value !== baseline.value.skillMarkdown || isAgentDiscoverable.value !== baseline.value.isAgentDiscoverable)
 const nameRule = (value: string) => /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(value.trim()) || 'Use lowercase letters, numbers, and single hyphens.'
@@ -271,22 +282,31 @@ const confirmDiscard = (): void => {
   action?.()
 }
 const load = async (selectedId?: string, committedMessage?: string): Promise<boolean> => {
-  if (loading.value) return false
+  loadController?.abort()
+  const controller = new AbortController()
+  loadController = controller
+  const generation = ++loadGeneration
   loading.value = true
   refreshError.value = ''
   try {
-    skills.value = await listPersonalAgentSkills(fetcher, props.csrfToken)
+    const nextSkills = await listPersonalAgentSkills(fetcher, props.csrfToken, controller.signal)
+    if (generation !== loadGeneration) return false
+    skills.value = nextSkills
     loaded.value = true
     const selected = skills.value.find(skill => skill.id === selectedId) ?? skills.value.find(skill => skill.id === editingId.value)
     if (selected) applyEdit(selected)
-    else applyNew()
+    else if (!editingId.value) applyNew()
     return true
   } catch (caught) {
+    if (generation !== loadGeneration || controller.signal.aborted) return false
     const reason = caught instanceof Error ? caught.message : loaded.value ? 'Personal skills could not be refreshed.' : 'Personal skills could not be loaded.'
     refreshError.value = loaded.value ? `${committedMessage ? `${committedMessage} ` : ''}Showing last-loaded personal skills. ${reason}` : reason
     return false
   } finally {
-    loading.value = false
+    if (generation === loadGeneration) {
+      loading.value = false
+      if (loadController === controller) loadController = null
+    }
   }
 }
 const save = async (): Promise<void> => {
@@ -361,12 +381,33 @@ watch(removing, async skill => {
     }
   })
 })
+watch(discardOpen, async isOpen => {
+  if (!isOpen) {
+    await nextTick()
+    discardFocusScope?.deactivate({ restoreFocus: true })
+    discardFocusScope = null
+    return
+  }
+  await nextTick()
+  const root = componentElement(discardDialogCard.value)
+  if (!root) return
+  discardFocusScope?.deactivate({ restoreFocus: false })
+  discardFocusScope = createModalFocusScope({
+    root,
+    restoreTarget: () => editorRoot.value,
+    onEscape: () => { discardOpen.value = false }
+  })
+})
 watch(name, (next, previous) => {
   if (editingId.value || next === previous) return
   skillMarkdown.value = skillMarkdown.value.replace(/^name:\s*.*$/m, `name: ${next}`)
 })
 watch(open, value => { if (value) void load() })
-onBeforeUnmount(() => destructiveFocusScope?.deactivate({ restoreFocus: false }))
+onBeforeUnmount(() => {
+  loadController?.abort()
+  destructiveFocusScope?.deactivate({ restoreFocus: false })
+  discardFocusScope?.deactivate({ restoreFocus: false })
+})
 </script>
 
 <style scoped>
@@ -497,6 +538,11 @@ onBeforeUnmount(() => destructiveFocusScope?.deactivate({ restoreFocus: false })
   font-family: var(--wiki-font-heading);
   font-size: .95rem;
   font-weight: 720;
+}
+
+.personal-skill-item {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 4.5rem;
 }
 
 .personal-inventory__search {

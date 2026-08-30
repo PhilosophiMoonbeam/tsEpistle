@@ -1,5 +1,5 @@
 <template>
-  <section class="approval-surface" :class="`approval-surface--${statusKey}`" aria-labelledby="approval-title" :aria-busy="loading">
+  <section class="approval-surface" :class="`approval-surface--${statusKey}`" aria-labelledby="approval-title" :aria-busy="loading || Boolean(pendingDecision)">
     <header class="approval-masthead">
       <span class="approval-masthead__mark" aria-hidden="true">
         <v-icon icon="mdi-lan-connect" size="24" />
@@ -157,7 +157,7 @@
             </div>
           </div>
           <div v-if="proposal.diff" class="proposal-output">
-            <div class="proposal-output__legend" aria-hidden="true">
+            <div class="proposal-output__legend">
               <span class="proposal-output__addition">Added</span>
               <span class="proposal-output__deletion">Removed</span>
               <span>{{ diffLines.length }} {{ diffLines.length === 1 ? 'line' : 'lines' }}</span>
@@ -277,7 +277,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { decideAgentProposal, getMcpAgentProposal, type McpAgentProposal } from '../../helpers/agents-api.ts'
 
 const props = defineProps<{ csrfToken: string; proposalId: string }>()
-const collapsedLineCount = 300
+const collapsedLineCount = 80
 const loading = ref(true)
 const pendingDecision = ref<'approved' | 'denied' | null>(null)
 const error = ref('')
@@ -396,7 +396,7 @@ const decisionReviewCopy = computed(() => reviewAdequate.value
 const dateFormatter = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' })
 const formatTimestamp = (value: string): string => dateFormatter.format(new Date(value))
 const formatDuration = (start: string, end: string | null): string => {
-  void clockTick.value
+  if (!end) void clockTick.value
   const milliseconds = Math.max(0, (end ? new Date(end).valueOf() : Date.now()) - new Date(start).valueOf())
   const seconds = Math.floor(milliseconds / 1000)
   if (seconds < 1) return 'under 1 second'
@@ -407,9 +407,27 @@ const formatDuration = (start: string, end: string | null): string => {
   const remainingMinutes = minutes % 60
   return `${hours} ${hours === 1 ? 'hour' : 'hours'}${remainingMinutes ? ` ${remainingMinutes} min` : ''}`
 }
-const decisionDuration = computed(() => proposal.value
-  ? `${proposal.value.approval.decidedAt ? 'Decided after' : 'Open for'} ${formatDuration(proposal.value.approval.requestedAt, proposal.value.approval.decidedAt)}`
-  : '')
+const decisionDuration = computed(() => {
+  const current = proposal.value
+  if (!current) return ''
+  if (current.approval.decidedAt) {
+    return `Decided after ${formatDuration(current.approval.requestedAt, current.approval.decidedAt)}`
+  }
+  if (statusKey.value === 'expired') {
+    return `Expired after ${formatDuration(current.approval.requestedAt, current.expiresAt)}`
+  }
+  return `Open for ${formatDuration(current.approval.requestedAt, null)}`
+})
+const stopClockTimer = (): void => {
+  if (clockTimer !== null) window.clearInterval(clockTimer)
+  clockTimer = null
+}
+const syncClockTimer = (): void => {
+  stopClockTimer()
+  const current = proposal.value
+  if (!current || current.approval.decidedAt || (statusKey.value !== 'pending' && statusKey.value !== 'running')) return
+  clockTimer = window.setInterval(() => { clockTick.value++ }, 30_000)
+}
 const clearExpiryDeadline = (): void => {
   if (expiryDeadlineTimer !== null) window.clearTimeout(expiryDeadlineTimer)
   expiryDeadlineTimer = null
@@ -420,12 +438,14 @@ const syncExpiryDeadline = (): void => {
   if (!current || current.approval.status !== 'pending' || current.status !== 'pending') return
   if (hasExpired(current.expiresAt)) {
     clockTick.value++
+    syncClockTimer()
     return
   }
   const remaining = Math.min(new Date(current.expiresAt).valueOf() - Date.now(), 2_147_483_647)
   expiryDeadlineTimer = window.setTimeout(() => {
     expiryDeadlineTimer = null
     clockTick.value++
+    syncClockTimer()
     if (!hasExpired(current.expiresAt)) syncExpiryDeadline()
   }, remaining)
 }
@@ -446,6 +466,7 @@ const load = async (): Promise<void> => {
   try {
     proposal.value = await getMcpAgentProposal(window.fetch.bind(window), props.csrfToken, props.proposalId)
     syncExpiryDeadline()
+    syncClockTimer()
   } catch (value) {
     error.value = value instanceof Error ? value.message : 'Proposal could not be loaded.'
     await focusError()
@@ -460,6 +481,7 @@ const decide = async (decision: 'approved' | 'denied'): Promise<void> => {
   if (hasExpired(current.expiresAt)) {
     clockTick.value++
     clearExpiryDeadline()
+    syncClockTimer()
     return
   }
   if (decision === 'approved' && !reviewAdequate.value) return
@@ -486,11 +508,10 @@ const decide = async (decision: 'approved' | 'denied'): Promise<void> => {
 }
 
 onMounted(() => {
-  clockTimer = window.setInterval(() => { clockTick.value++ }, 30_000)
   void load()
 })
 onBeforeUnmount(() => {
-  if (clockTimer !== null) window.clearInterval(clockTimer)
+  stopClockTimer()
   clearExpiryDeadline()
 })
 </script>
@@ -540,6 +561,10 @@ onBeforeUnmount(() => {
   margin-bottom: var(--wiki-space-5);
 }
 
+.approval-masthead > div {
+  min-width: 0;
+}
+
 .approval-masthead__mark,
 .operation-review__state-mark,
 .approval-loading__mark {
@@ -570,6 +595,7 @@ onBeforeUnmount(() => {
 
 .approval-masthead h1 {
   margin: 0;
+  overflow-wrap: anywhere;
   font-family: var(--wiki-font-heading);
   font-size: clamp(1.35rem, 3vw, 2rem);
   line-height: var(--wiki-leading-heading);
@@ -623,6 +649,11 @@ onBeforeUnmount(() => {
   justify-content: space-between;
 }
 
+.approval-error__content > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .operation-review {
   --approval-accent: rgb(var(--v-theme-warning));
   overflow: hidden;
@@ -667,6 +698,10 @@ onBeforeUnmount(() => {
     rgb(var(--v-theme-surface));
 }
 
+.operation-review__header > div {
+  min-width: 0;
+}
+
 .operation-review__state-mark {
   width: var(--wiki-control-height);
   height: var(--wiki-control-height);
@@ -679,9 +714,11 @@ onBeforeUnmount(() => {
 }
 
 .operation-review__header code {
+  display: block;
   color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 64%, transparent);
   font-family: var(--wiki-font-mono);
   font-size: var(--wiki-label-size);
+  overflow-wrap: anywhere;
 }
 
 .operation-review__elapsed {
@@ -895,8 +932,8 @@ onBeforeUnmount(() => {
 
 .proposal-verification summary:focus-visible,
 .proposal-diff:focus-visible {
-  outline: none;
-  box-shadow: var(--wiki-focus-ring);
+  outline: 2px solid var(--wiki-focus-color);
+  outline-offset: calc(-1 * var(--wiki-focus-offset));
 }
 
 .proposal-facts--technical {
@@ -987,6 +1024,8 @@ onBeforeUnmount(() => {
 
 .proposal-output__empty > span {
   display: grid;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .decision-zone {
@@ -1014,6 +1053,14 @@ onBeforeUnmount(() => {
   margin: var(--wiki-space-1) 0 var(--wiki-space-3);
   color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 72%, transparent);
   line-height: 1.5;
+}
+
+.decision-zone__confirmation > div {
+  min-width: 0;
+}
+
+.decision-zone__confirmation :deep(.v-messages__message) {
+  overflow-wrap: anywhere;
 }
 
 .approval-actions {
@@ -1137,6 +1184,7 @@ onBeforeUnmount(() => {
   .proposal-verification summary:focus-visible,
   .proposal-diff:focus-visible {
     outline: var(--wiki-space-1) solid Highlight;
+    outline-offset: calc(-1 * var(--wiki-focus-offset));
   }
 }
 </style>

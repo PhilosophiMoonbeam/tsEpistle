@@ -1,7 +1,7 @@
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, describe, expect, it, vi } from '../../server/test/bun-test.mts'
 
-import type { AgentThreadState } from '../../shared/agents/contracts.ts'
+import type { AgentConversationFolderView, AgentThreadState } from '../../shared/agents/contracts.ts'
 import { useAgentsStore } from './agents.ts'
 
 const activeThread = (): AgentThreadState => ({
@@ -71,12 +71,22 @@ const summaryForThread = (thread: AgentThreadState) => ({
   deletedAt: null
 })
 
+const folderForTest = (id: string, name: string, version = 1): AgentConversationFolderView => ({
+  id,
+  name,
+  version,
+  createdAt: '2026-08-23T00:00:00.000Z',
+  updatedAt: '2026-08-23T00:00:00.000Z'
+})
+
 const deferred = <T>() => {
   let resolve!: (value: T) => void
-  const promise = new Promise<T>(complete => {
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((complete, fail) => {
     resolve = complete
+    reject = fail
   })
-  return { promise, resolve }
+  return { promise, resolve, reject }
 }
 
 class FakeEventSource {
@@ -337,6 +347,40 @@ describe('Agent store initialization', () => {
     store.closeWorkspace()
   })
 
+  it('rejects folder mutations until the initial authoritative folders have loaded', async () => {
+    setActivePinia(createPinia())
+    const store = useAgentsStore()
+    const existing = folderForTest('00000000-0000-4000-8000-000000000062', 'Existing')
+    const baseline = deferred<Response>()
+    const fetcher = vi.spyOn(window, 'fetch').mockImplementation((input, init) => {
+      const path = String(input)
+      const method = init?.method ?? 'GET'
+      if (path === '/_api/agents/sessions' && method === 'GET') return Promise.resolve(Response.json({ sessions: [], nextCursor: null }))
+      if (path === '/_api/agents/conversation-folders' && method === 'GET') return baseline.promise
+      if (path === '/_api/agents/profiles' && method === 'GET') return Promise.resolve(Response.json({ profiles: [] }))
+      if (path === '/_api/agents/skills' && method === 'GET') return Promise.resolve(Response.json({ skills: [] }))
+      return Promise.reject(new Error(`Unexpected request: ${method} ${path}`))
+    })
+    store.newSession = vi.fn(async () => {})
+
+    const initializing = store.initialize('csrf-token', { routeSync: false })
+    const creating = store.createFolder('New')
+    const creatingRejection = expect(creating).rejects.toThrow('Conversation folders are still loading')
+    const renaming = store.renameFolder(existing.id, existing.version, 'Renamed')
+    const renamingRejection = expect(renaming).rejects.toThrow('Conversation folders are still loading')
+    const deleting = store.deleteFolder(existing.id)
+    const deletingRejection = expect(deleting).rejects.toThrow('Conversation folders are still loading')
+
+    await Promise.all([creatingRejection, renamingRejection, deletingRejection])
+    expect(fetcher.mock.calls.filter(call => (call[1]?.method ?? 'GET') !== 'GET')).toHaveLength(0)
+
+    baseline.resolve(Response.json({ folders: [existing] }))
+    await initializing
+
+    expect(store.folders).toEqual([existing])
+    store.closeWorkspace()
+  })
+
   it('retains the opaque next cursor from the authoritative session page', async () => {
     setActivePinia(createPinia())
     const store = useAgentsStore()
@@ -361,7 +405,8 @@ describe('Agent store initialization', () => {
     store.sessionsNextCursor = 'opaque-page-2'
     const secondPage = deferred<Response>()
     const thirdPage = deferred<Response>()
-    const fetcher = vi.spyOn(window, 'fetch')
+    const fetcher = vi
+      .spyOn(window, 'fetch')
       .mockImplementationOnce(() => secondPage.promise)
       .mockImplementationOnce(() => thirdPage.promise)
 
@@ -439,6 +484,133 @@ describe('Agent store initialization', () => {
     expect(store.sessionsNextCursor).toBe('fresh-cursor')
     expect(store.sessionsLoadingMore).toBe(false)
     expect(store.sessionsLoadMoreError).toBe('')
+  })
+})
+
+describe('Agent folder refresh ordering', () => {
+  let closeWorkspace: (() => void) | null = null
+  const createStore = () => {
+    setActivePinia(createPinia())
+    const store = useAgentsStore()
+    store.csrfToken = 'csrf-token'
+    closeWorkspace = () => store.closeWorkspace()
+    return store
+  }
+
+  afterEach(() => {
+    closeWorkspace?.()
+    closeWorkspace = null
+    vi.restoreAllMocks()
+  })
+
+  it('applies only the latest folder refresh when responses resolve out of order', async () => {
+    const store = createStore()
+    const stale = folderForTest('00000000-0000-4000-8000-000000000090', 'Stale')
+    const fresh = folderForTest('00000000-0000-4000-8000-000000000091', 'Fresh')
+    const first = deferred<Response>()
+    const second = deferred<Response>()
+    const signals: AbortSignal[] = []
+    vi.spyOn(window, 'fetch').mockImplementation((_input, init) => {
+      signals.push(init?.signal as AbortSignal)
+      return signals.length === 1 ? first.promise : second.promise
+    })
+
+    const staleRefresh = store.reloadFolders()
+    const freshRefresh = store.reloadFolders()
+    expect(signals[0]?.aborted).toBe(true)
+    second.resolve(Response.json({ folders: [fresh] }))
+    await freshRefresh
+    first.resolve(Response.json({ folders: [stale] }))
+    await staleRefresh
+
+    expect(store.folders).toEqual([fresh])
+  })
+
+  it('ignores a stale folder failure after a newer refresh succeeds', async () => {
+    const store = createStore()
+    const fresh = folderForTest('00000000-0000-4000-8000-000000000092', 'Fresh')
+    const first = deferred<Response>()
+    const second = deferred<Response>()
+    vi.spyOn(window, 'fetch')
+      .mockImplementationOnce(() => first.promise)
+      .mockImplementationOnce(() => second.promise)
+
+    const staleRefresh = store.reloadFolders()
+    const freshRefresh = store.reloadFolders()
+    second.resolve(Response.json({ folders: [fresh] }))
+    await freshRefresh
+    first.reject(new TypeError('Stale folder request failed'))
+
+    await expect(staleRefresh).resolves.toBeUndefined()
+    expect(store.folders).toEqual([fresh])
+  })
+
+  it('fences deferred folder reads before applying create, rename, and delete results', async () => {
+    const store = createStore()
+    const created = folderForTest('00000000-0000-4000-8000-000000000093', 'Created')
+    const renamed = { ...created, name: 'Renamed', version: 2, updatedAt: '2026-08-23T00:01:00.000Z' }
+    const staleReads = [deferred<Response>(), deferred<Response>(), deferred<Response>()]
+    const pendingCreate = deferred<Response>()
+    const signals: AbortSignal[] = []
+    let folderReadIndex = 0
+    vi.spyOn(window, 'fetch').mockImplementation((input, init) => {
+      const path = String(input)
+      const method = init?.method ?? 'GET'
+      if (path === '/_api/agents/conversation-folders' && method === 'GET') {
+        signals.push(init?.signal as AbortSignal)
+        return staleReads[folderReadIndex++]!.promise
+      }
+      if (path === '/_api/agents/conversation-folders' && method === 'POST') return pendingCreate.promise
+      if (path === `/_api/agents/conversation-folders/${created.id}` && method === 'PATCH') return Promise.resolve(Response.json({ folder: renamed }))
+      if (path === `/_api/agents/conversation-folders/${created.id}` && method === 'DELETE')
+        return Promise.resolve(Response.json({ deleted: true, movedSessions: 0 }))
+      if (path === '/_api/agents/sessions' && method === 'GET') return Promise.resolve(Response.json({ sessions: [], nextCursor: null }))
+      return Promise.reject(new Error(`Unexpected request: ${method} ${path}`))
+    })
+
+    const creating = store.createFolder(created.name)
+    const duringCreate = store.reloadFolders()
+    pendingCreate.resolve(Response.json({ folder: created }, { status: 201 }))
+    await creating
+    expect(signals[0]?.aborted).toBe(true)
+    staleReads[0]!.resolve(Response.json({ folders: [] }))
+    await duringCreate
+    expect(store.folders).toEqual([created])
+
+    const beforeRename = store.reloadFolders()
+    await store.renameFolder(created.id, created.version, renamed.name)
+    expect(signals[1]?.aborted).toBe(true)
+    staleReads[1]!.resolve(Response.json({ folders: [created] }))
+    await beforeRename
+    expect(store.folders).toEqual([renamed])
+
+    const beforeDelete = store.reloadFolders()
+    await store.deleteFolder(created.id)
+    expect(signals[2]?.aborted).toBe(true)
+    staleReads[2]!.resolve(Response.json({ folders: [renamed] }))
+    await beforeDelete
+    expect(store.folders).toEqual([])
+  })
+
+  it('aborts and fences a pending folder refresh when the workspace closes', async () => {
+    const store = createStore()
+    const current = folderForTest('00000000-0000-4000-8000-000000000094', 'Current')
+    const late = folderForTest('00000000-0000-4000-8000-000000000095', 'Late')
+    const pending = deferred<Response>()
+    let signal: AbortSignal | undefined
+    store.folders = [current]
+    vi.spyOn(window, 'fetch').mockImplementation((_input, init) => {
+      signal = init?.signal
+      return pending.promise
+    })
+
+    const refresh = store.reloadFolders()
+    store.closeWorkspace()
+    expect(signal?.aborted).toBe(true)
+    pending.resolve(Response.json({ folders: [late] }))
+    await refresh
+
+    expect(store.folders).toEqual([current])
   })
 })
 

@@ -43,6 +43,7 @@
                 ref='searchField',
                 v-if='searchIsShown && $vuetify.display.mdAndUp',
                 v-model='search',
+                clearable,
                 color='primary',
                 :label='searchInputLabel',
                 single-line,
@@ -66,8 +67,8 @@
       v-col.nav-header-actions-col(cols='7', md='4')
         v-toolbar.nav-header-inner.nav-header-actions(color='surface', flat)
           v-spacer
-          .navHeaderLoading.mr-3
-            v-progress-circular(indeterminate, color='primary', :size='22', :width='2' v-show='isLoading', aria-label='Page loading')
+          .navHeaderLoading(v-show='isLoading')
+            v-progress-circular(indeterminate, color='primary', :size='22', :width='2', aria-label='Page loading')
 
           //- (mobile) SEARCH TOGGLE
 
@@ -471,6 +472,7 @@ export default defineComponent({
       else this.searchClose()
     },
     handleSearchShortcut(event: KeyboardEvent): void {
+      if (event.defaultPrevented || event.repeat || event.isComposing) return
       if (!(event.ctrlKey || event.metaKey) || !event.shiftKey || event.key.toLowerCase() !== 'a') return
       if (!siteConfig.agentsEnabled || !this.isAuthenticated || !this.permissions.some(permission => permission === 'use:agents' || permission === 'manage:system')) return
       event.preventDefault()
@@ -485,6 +487,7 @@ export default defineComponent({
     },
     searchEnter (event: KeyboardEvent) {
       if ((event.ctrlKey || event.metaKey) && siteConfig.agentsEnabled && this.isAuthenticated && this.permissions.some(permission => permission === 'use:agents' || permission === 'manage:system')) {
+        event.preventDefault()
         this.searchMode = 'ask'
       }
       emitSearchEnter()

@@ -277,6 +277,7 @@ describe('ordinary-origin agent session API', () => {
   let baseUrl: string
   let cookie: string
   let ownerId = 7
+  let authContextOwnerId: number | null = null
   let administrator = false
   const csrf = 'csrf-token'
   let runtime: AgentProductRuntime
@@ -338,7 +339,13 @@ describe('ordinary-origin agent session API', () => {
       createAgentsHostController({
         auth: {
           authenticate(req, _res, next) {
-            req.authContext = { kind: 'user', userId: ownerId, ownershipUserId: ownerId, principal: { id: ownerId } }
+            const authenticatedOwnerId = authContextOwnerId ?? ownerId
+            req.authContext = {
+              kind: 'user',
+              userId: authenticatedOwnerId,
+              ownershipUserId: authenticatedOwnerId,
+              principal: { id: authenticatedOwnerId }
+            }
             req.user = { id: ownerId, groups: [], permissions: administrator ? ['manage:system'] : ['use:agents'] } as Express.User
             next()
           }
@@ -411,8 +418,131 @@ describe('ordinary-origin agent session API', () => {
     ownerId = 8
     const foreign = await fetch(`${baseUrl}/_api/agents/sessions/${state.session.id}`, { headers: { cookie } })
     expect(foreign.status).toBe(404)
+    const other = await fetch(`${baseUrl}/_api/agents/sessions`, {
+      method: 'POST',
+      headers: { cookie, 'content-type': 'application/json', origin: 'https://wiki.example.test', 'sec-fetch-site': 'same-origin', 'x-wiki-csrf': csrf },
+      body
+    })
+    expect(other.status).toBe(201)
+    const otherState = (await other.json()) as { session: { id: string } }
+    ownerId = 7
+    authContextOwnerId = 8
+    const inconsistentIdentity = await fetch(`${baseUrl}/_api/agents/sessions/${otherState.session.id}`, { headers: { cookie } })
+    authContextOwnerId = null
+    expect(inconsistentIdentity.status).toBe(401)
     ownerId = 7
   })
+
+  it('projects tasks only for selected runs and fails closed when the bounded task window overflows', async () => {
+    const now = '2026-08-30T00:00:00.000Z'
+    const sessionId = '30000000-0000-4000-8000-000000000001'
+    const selectedRunId = '30000000-0000-4000-8000-000000000002'
+    const omittedRunId = '30000000-0000-4000-8000-000000000003'
+    const selectedTaskId = '30000000-0000-4000-8000-000000000004'
+    const omittedTaskId = '30000000-0000-4000-8000-000000000005'
+    const userMessageId = '30000000-0000-4000-8000-000000000006'
+    await db('agentSessions').insert({
+      id: sessionId,
+      ownerId: 7,
+      title: 'Bounded projection',
+      retention: 'saved',
+      providerProfileId: null,
+      executionMode: 'agent',
+      version: 1,
+      summary: null,
+      summaryThroughOrdinal: null,
+      createdAt: now,
+      updatedAt: now,
+      lastActivityAt: now,
+      expiresAt: null,
+      deletedAt: null
+    })
+    const runRow = (id: string, userMessageId: string, assistantMessageId: string, queuedAt: string) => ({
+      id,
+      sessionId,
+      userMessageId,
+      assistantMessageId,
+      ownerId: 7,
+      clientRequestId: id,
+      clientRequestSha256: 'a'.repeat(64),
+      profileResolutionSha256: 'b'.repeat(64),
+      status: 'succeeded',
+      attempts: 1,
+      maxAttempts: 3,
+      eventSequence: 0,
+      availableAt: queuedAt,
+      leaseOwner: null,
+      leaseToken: null,
+      leaseExpiresAt: null,
+      cancelRequestedAt: null,
+      sideEffectsStarted: false,
+      providerProfileVersionId: '30000000-0000-4000-8000-000000000007',
+      transportKind: 'openai-responses',
+      model: 'test',
+      executionMode: 'agent',
+      profilePolicyVersion: 1,
+      defaultGeneration: 1,
+      capabilityRevision: 'v1',
+      pricingRevision: 'v1',
+      promptVersion: 1,
+      inputTokens: 0,
+      outputTokens: 0,
+      estimatedCostMicros: null,
+      errorCode: null,
+      errorMessage: null,
+      queuedAt,
+      startedAt: queuedAt,
+      updatedAt: queuedAt,
+      completedAt: queuedAt
+    })
+    await db('agentRuns').insert([
+      runRow(selectedRunId, userMessageId, '30000000-0000-4000-8000-000000000008', '2026-08-30T00:00:01.000Z'),
+      runRow(omittedRunId, '30000000-0000-4000-8000-000000000009', '30000000-0000-4000-8000-000000000010', now)
+    ])
+    await db('agentMessages').insert({
+      id: userMessageId,
+      sessionId,
+      runId: selectedRunId,
+      ordinal: 1,
+      role: 'user',
+      status: 'complete',
+      content: 'Show the selected task.',
+      citations: null,
+      createdAt: now,
+      updatedAt: now
+    })
+    const taskRow = (id: string, runId: string, ordinal: number, title: string) => ({
+      id,
+      runId,
+      ordinal,
+      kind: 'source_scout',
+      title,
+      question: `${title}?`,
+      sourceScope: '["alpha"]',
+      requiredEvidenceCount: 1
+    })
+    await db('agentRunTasks').insert([taskRow(selectedTaskId, selectedRunId, 0, 'Selected task'), taskRow(omittedTaskId, omittedRunId, 0, 'Omitted task')])
+
+    const projected = await fetch(`${baseUrl}/_api/agents/sessions/${sessionId}`, { headers: { cookie } })
+    expect(projected.status).toBe(200)
+    expect(await projected.json()).toMatchObject({
+      tasks: [{ id: selectedTaskId, runId: selectedRunId, title: 'Selected task' }],
+      historyWindow: { hasOlderRuns: true }
+    })
+
+    const taskProjectionLimit = 200 * 32
+    await db.batchInsert(
+      'agentRunTasks',
+      Array.from({ length: taskProjectionLimit }, (_, index) =>
+        taskRow(`30000001-0000-4000-8000-${index.toString(16).padStart(12, '0')}`, selectedRunId, index + 1, `Overflow task ${index + 1}`)
+      ),
+      100
+    )
+    const overflow = await fetch(`${baseUrl}/_api/agents/sessions/${sessionId}`, { headers: { cookie } })
+    expect(overflow.status).toBe(500)
+    expect(await overflow.json()).toEqual({ error: 'AGENT_TASK_PROJECTION_OVERFLOW', message: 'Agent request failed' })
+  })
+
   it('keeps conversation diagnostics hidden from non-admins and exports any session for system admins', async () => {
     const sessionId = '00000000-0000-4000-8000-000000000059'
     const now = '2026-08-17T00:00:00.000Z'
@@ -484,7 +614,7 @@ describe('ordinary-origin agent session API', () => {
       status: 'succeeded',
       attempts: 1,
       maxAttempts: 3,
-      eventSequence: 1,
+      eventSequence: 4,
       availableAt: now,
       leaseOwner: null,
       leaseToken: null,
@@ -510,24 +640,121 @@ describe('ordinary-origin agent session API', () => {
       updatedAt: now,
       completedAt: now
     })
-    const data = JSON.stringify({ runId, status: 'succeeded' })
-    await db('agentEvents').insert({
-      id: '00000000-0000-4000-8000-000000000067',
-      runId,
-      sequence: 1,
-      type: 'run.completed',
-      attempt: 1,
-      schemaVersion: 1,
-      dataSha256: createHash('sha256').update(data).digest('hex'),
-      data,
-      createdAt: now
+    await db('agentMessages').insert([
+      {
+        id: '00000000-0000-4000-8000-000000000063',
+        sessionId,
+        runId,
+        ordinal: 1,
+        role: 'user',
+        status: 'complete',
+        content: 'Project the canonical attempt.',
+        citations: null,
+        createdAt: now,
+        updatedAt: now
+      },
+      {
+        id: '00000000-0000-4000-8000-000000000064',
+        sessionId,
+        runId,
+        ordinal: 2,
+        role: 'assistant',
+        status: 'complete',
+        content: 'Projected.',
+        citations: null,
+        createdAt: now,
+        updatedAt: now
+      }
+    ])
+    const durableEvents = [
+      {
+        id: '00000000-0000-4000-8000-000000000067',
+        sequence: 1,
+        type: 'tool.started',
+        attempt: 1,
+        data: { actionCallId: 'call-current', actionName: 'pages.get', title: 'Current read', risk: 'read' }
+      },
+      {
+        id: '00000000-0000-4000-8000-000000000068',
+        sequence: 2,
+        type: 'tool.completed',
+        attempt: 1,
+        data: { actionCallId: 'call-current', summary: 'Current result' }
+      },
+      {
+        id: '00000000-0000-4000-8000-000000000069',
+        sequence: 3,
+        type: 'tool.started',
+        attempt: 2,
+        data: { actionCallId: 'call-stale', actionName: 'pages.search', title: 'Stale retry', risk: 'read' }
+      },
+      {
+        id: '00000000-0000-4000-8000-000000000070',
+        sequence: 4,
+        type: 'run.completed',
+        attempt: 1,
+        data: { runId, status: 'succeeded' }
+      }
+    ].map(event => {
+      const data = JSON.stringify(event.data)
+      return {
+        id: event.id,
+        runId,
+        sequence: event.sequence,
+        type: event.type,
+        attempt: event.attempt,
+        schemaVersion: 1,
+        dataSha256: createHash('sha256').update(data).digest('hex'),
+        data,
+        createdAt: now
+      }
     })
+    await db('agentEvents').insert(durableEvents)
+
     const response = await fetch(`${baseUrl}/_api/agents/runs/${runId}/events`, { headers: { cookie, accept: 'text/event-stream' } })
     expect(response.status).toBe(200)
     expect(response.headers.get('x-accel-buffering')).toBe('no')
     const text = await response.text()
-    expect(text).toContain('id: 1\nevent: run.completed\n')
+    expect(text).toContain('id: 4\nevent: run.completed\n')
     expect(text).toContain('"status":"succeeded"')
+    expect(text.match(/event: run\.completed/g)).toHaveLength(1)
+
+    const reconnected = await fetch(`${baseUrl}/_api/agents/runs/${runId}/events`, {
+      headers: { cookie, accept: 'text/event-stream', 'last-event-id': '3' }
+    })
+    const replay = await reconnected.text()
+    expect(replay).toContain('id: 4\nevent: run.completed\n')
+    expect(replay).not.toContain('id: 3\n')
+    expect((await fetch(`${baseUrl}/_api/agents/runs/${runId}/events?after=4&after=0`, { headers: { cookie } })).status).toBe(400)
+    expect((await fetch(`${baseUrl}/_api/agents/runs/${runId}/events?after=5`, { headers: { cookie } })).status).toBe(400)
+
+    ownerId = 8
+    const foreign = await fetch(`${baseUrl}/_api/agents/runs/${runId}/events`, { headers: { cookie } })
+    ownerId = 7
+    expect(foreign.status).toBe(404)
+
+    const projected = (await (await fetch(`${baseUrl}/_api/agents/sessions/${sessionId}`, { headers: { cookie } })).json()) as {
+      tools: Array<{ id: string; state: string; summary: string | null }>
+    }
+    expect(projected.tools).toEqual([expect.objectContaining({ id: 'call-current', state: 'complete', summary: 'Current result' })])
+
+    await db('agentEvents').where({ id: '00000000-0000-4000-8000-000000000070' }).update({ schemaVersion: 2 })
+    const corruptEnvelope = await fetch(`${baseUrl}/_api/agents/sessions/${sessionId}`, { headers: { cookie } })
+    expect(corruptEnvelope.status).toBe(500)
+    await db('agentEvents').where({ id: '00000000-0000-4000-8000-000000000070' }).update({ schemaVersion: 1 })
+
+    await db('agentRuns').where({ id: runId }).update({ status: 'running', completedAt: null })
+    for (let connection = 0; connection < 4; connection += 1) {
+      const controller = new AbortController()
+      const active = await fetch(`${baseUrl}/_api/agents/runs/${runId}/events?after=4`, {
+        headers: { cookie, accept: 'text/event-stream' },
+        signal: controller.signal
+      })
+      expect(active.status).toBe(200)
+      await active.body?.cancel()
+      controller.abort()
+    }
+    await db('agentRuns').where({ id: runId }).update({ status: 'succeeded', completedAt: now })
   })
   it('submits, executes, reconnects, and replays a deterministic engine run through REST and SSE', async () => {
     const headers = { cookie, 'content-type': 'application/json', origin: 'https://wiki.example.test', 'sec-fetch-site': 'same-origin', 'x-wiki-csrf': csrf }
@@ -613,9 +840,10 @@ describe('ordinary-origin agent session API', () => {
     const completedProjection = (await completed.json()) as { run: typeof admission.run }
     expect(completedProjection.run).toMatchObject({ id: admission.run.id, sessionId: state.session.id, status: 'succeeded', canCancel: false })
     expect(Object.keys(completedProjection.run).sort()).toEqual(projectedRunFields)
-    const populatedHistory = (await (
-      await fetch(`${baseUrl}/_api/agents/sessions`, { headers: { cookie } })
-    ).json()) as { sessions: Array<{ id: string }>; nextCursor: string | null }
+    const populatedHistory = (await (await fetch(`${baseUrl}/_api/agents/sessions`, { headers: { cookie } })).json()) as {
+      sessions: Array<{ id: string }>
+      nextCursor: string | null
+    }
     expect(populatedHistory).toMatchObject({
       sessions: expect.arrayContaining([expect.objectContaining({ id: state.session.id })]),
       nextCursor: null
@@ -918,13 +1146,15 @@ describe('ordinary-origin agent session API', () => {
       '00000000-0000-4000-8000-000000000223',
       '00000000-0000-4000-8000-000000000224'
     )
-    await db('agentRuns').where({ id: awaiting.run.id }).update({
-      status: 'awaiting_approval',
-      attempts: 1,
-      leaseOwner: 'lost-worker',
-      leaseToken: '00000000-0000-4000-8000-000000000225',
-      leaseExpiresAt: new Date(now.valueOf() + 3_600_000)
-    })
+    await db('agentRuns')
+      .where({ id: awaiting.run.id })
+      .update({
+        status: 'awaiting_approval',
+        attempts: 1,
+        leaseOwner: 'lost-worker',
+        leaseToken: '00000000-0000-4000-8000-000000000225',
+        leaseExpiresAt: new Date(now.valueOf() + 3_600_000)
+      })
     const awaitingCancellationResponse = await fetch(`${baseUrl}/_api/agents/runs/${awaiting.run.id}/cancel`, { method: 'POST', headers })
     expect(awaitingCancellationResponse.status).toBe(200)
     await requestAgentRunCancellation(db, 7, awaiting.run.id)
@@ -935,13 +1165,15 @@ describe('ordinary-origin agent session API', () => {
       '00000000-0000-4000-8000-000000000243',
       '00000000-0000-4000-8000-000000000244'
     )
-    await db('agentRuns').where({ id: expired.run.id }).update({
-      status: 'running',
-      attempts: 1,
-      leaseOwner: 'expired-worker',
-      leaseToken: '00000000-0000-4000-8000-000000000245',
-      leaseExpiresAt: new Date(now.valueOf() - 1)
-    })
+    await db('agentRuns')
+      .where({ id: expired.run.id })
+      .update({
+        status: 'running',
+        attempts: 1,
+        leaseOwner: 'expired-worker',
+        leaseToken: '00000000-0000-4000-8000-000000000245',
+        leaseExpiresAt: new Date(now.valueOf() - 1)
+      })
     const expiredCancellationResponse = await fetch(`${baseUrl}/_api/agents/runs/${expired.run.id}/cancel`, { method: 'POST', headers })
     expect(expiredCancellationResponse.status).toBe(200)
     await requestAgentRunCancellation(db, 7, expired.run.id)
@@ -953,13 +1185,15 @@ describe('ordinary-origin agent session API', () => {
       '00000000-0000-4000-8000-000000000234'
     )
     const leaseToken = '00000000-0000-4000-8000-000000000235'
-    await db('agentRuns').where({ id: racing.run.id }).update({
-      status: 'running',
-      attempts: 1,
-      leaseOwner: 'remote-worker',
-      leaseToken,
-      leaseExpiresAt: new Date(now.valueOf() + 3_600_000)
-    })
+    await db('agentRuns')
+      .where({ id: racing.run.id })
+      .update({
+        status: 'running',
+        attempts: 1,
+        leaseOwner: 'remote-worker',
+        leaseToken,
+        leaseExpiresAt: new Date(now.valueOf() + 3_600_000)
+      })
     const pendingCancellationResponse = await fetch(`${baseUrl}/_api/agents/runs/${racing.run.id}/cancel`, { method: 'POST', headers })
     expect(pendingCancellationResponse.status).toBe(202)
     const pendingCancellation = (await pendingCancellationResponse.json()) as { run: Record<string, unknown> }
@@ -1016,13 +1250,15 @@ describe('ordinary-origin agent session API', () => {
       '00000000-0000-4000-8000-000000000254'
     )
     const winningLeaseToken = '00000000-0000-4000-8000-000000000255'
-    await db('agentRuns').where({ id: immutable.run.id }).update({
-      status: 'running',
-      attempts: 1,
-      leaseOwner: 'winning-worker',
-      leaseToken: winningLeaseToken,
-      leaseExpiresAt: new Date(now.valueOf() + 3_600_000)
-    })
+    await db('agentRuns')
+      .where({ id: immutable.run.id })
+      .update({
+        status: 'running',
+        attempts: 1,
+        leaseOwner: 'winning-worker',
+        leaseToken: winningLeaseToken,
+        leaseExpiresAt: new Date(now.valueOf() + 3_600_000)
+      })
     await terminalizeAgentRun(db, {
       runId: immutable.run.id,
       ownerId: 7,

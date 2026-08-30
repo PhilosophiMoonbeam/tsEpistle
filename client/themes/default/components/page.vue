@@ -1478,6 +1478,10 @@ export default defineComponent({
     toggleNavigation () {
       this.navShown = !this.navShown
     },
+    upBtnScroll () {
+      const scrollOffset = window.pageYOffset || document.documentElement.scrollTop
+      this.upBtnShown = scrollOffset > window.innerHeight * 0.33
+    },
     returnToTop () {
       this.goTo(0, this.scrollOpts)
       this.$nextTick(() => {

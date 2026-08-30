@@ -5,6 +5,7 @@
     role='dialog'
     aria-modal='true'
     :aria-labelledby='isAgentOpen ? `wiki-agent-title` : `wiki-search-title`'
+    :aria-busy='!isAgentOpen && searchIsLoading'
     tabindex='-1'
   )
     .search-results-container(:class='{ "search-results-container--ask": isAgentOpen }')
@@ -14,7 +15,6 @@
         v-btn.search-results-agent-back(
           prepend-icon='mdi-arrow-left'
           variant='text'
-          color='white'
           @click='returnToSearch'
         ) Search
         .search-results-agent-context
@@ -24,7 +24,6 @@
         v-btn.search-results-agent-close(
           icon='mdi-close'
           variant='text'
-          color='white'
           aria-label='Close Wiki Agent'
           @click='closeSearch'
         )
@@ -43,8 +42,6 @@
           v-icon(icon='mdi-magnify' size='19')
           span Search the Wiki
         v-chip.search-results-shortcut(
-          v-if='canAsk'
-          color='white'
           variant='text'
           size='small'
           prepend-icon='mdi-keyboard-outline'
@@ -52,7 +49,6 @@
         v-btn.search-results-close(
           icon='mdi-close'
           variant='text'
-          color='white'
           :aria-label='$t(`common:header.searchClose`)'
           @click='closeSearch'
         )
@@ -137,7 +133,6 @@
                 .search-results-count(v-if='results.length')
                   span {{$t('common:header.searchResultsCount', { total: response.totalHits })}}
                   span.search-results-window(v-if='response.results.length < response.totalHits')  · Showing the top {{ response.results.length }}
-                .search-results-count(v-else) No direct matches for “{{ normalizedSearch }}”
               v-btn.search-results-ask(
                 v-if='canAsk'
                 color='primary'
@@ -195,8 +190,11 @@
                 v-model='pagination'
                 :length='paginationLength'
                 density='comfortable'
+                :total-visible='$vuetify.display.xs ? 3 : 7'
                 rounded
               )
+            .search-results-suggestion-block(v-if='suggestions.length')
+              .search-results-eyebrow Suggested searches
               v-list.search-results-suggestions(
                 id='wiki-search-suggestions'
                 role='listbox'
@@ -328,8 +326,11 @@ export default defineComponent({
       if (this.cursor < this.results.length) return `wiki-search-result-${this.results[this.cursor]?.id}`
       return `wiki-search-suggestion-${this.cursor - this.results.length}`
     },
-    searchListId(): string {
-      return this.results.length > 0 ? 'wiki-search-results' : 'wiki-search-suggestions'
+    searchListIds(): string {
+      return [
+        this.results.length > 0 ? 'wiki-search-results' : '',
+        this.suggestions.length > 0 ? 'wiki-search-suggestions' : ''
+      ].filter(Boolean).join(' ')
     },
     paginationLength(): number {
       return this.response.results.length > 0 ? Math.ceil(this.response.results.length / this.perPage) : 0
@@ -337,19 +338,35 @@ export default defineComponent({
   },
   watch: {
     search(newValue: string | null) {
-      this.queueSearch(newValue ?? '')
+      const query = newValue ?? ''
+      if (this.searchMode === 'search' && query.trim().length >= 2) this.searchIsFocused = true
+      this.queueSearch(query)
     },
     searchMode(mode: 'search' | 'ask') {
-      if (mode === 'search' && !this.hasFreshResponse) this.queueSearch(this.search)
+      if (mode === 'search') {
+        if (!this.hasFreshResponse) this.queueSearch(this.search)
+        return
+      }
+      this.searchRequestId += 1
+      if (this.searchTimer !== null) window.clearTimeout(this.searchTimer)
+      this.searchTimer = null
+      this.searchIsLoading = false
     },
     isAgentOpen(open: boolean) {
-      if (open) void this.activateAgentModal()
-      else if (this.searchIsFocused) void this.reactivateSearchModal()
+      if (open) {
+        void this.activateAgentModal()
+        return
+      }
+      if (this.directPromptHandoffPending) this.directPromptHandoffId += 1
+      if (this.searchIsFocused) void this.reactivateSearchModal()
       else this.deactivateAgentModal(false)
     },
     searchIsFocused(open: boolean) {
       if (open) void this.activateAgentModal()
       else this.deactivateModalLayers(true)
+    },
+    canAsk(allowed: boolean) {
+      if (!allowed && this.searchMode === 'ask') this.searchMode = 'search'
     },
     searchRestrictLocale() {
       this.queueSearch(this.search)
@@ -369,11 +386,16 @@ export default defineComponent({
     }
   },
   mounted() {
+    if (!this.canAsk && this.searchMode === 'ask') this.searchMode = 'search'
     const approvalId = new URL(window.location.href).searchParams.get('agentApproval')
     if (approvalId && /^[0-9a-f-]{36}$/i.test(approvalId) && this.canAsk) {
       this.approvalId = approvalId
       this.searchMode = 'ask'
       this.searchIsFocused = true
+    }
+    if (this.searchMode === 'search' && this.normalizedSearch.length >= 2) {
+      this.searchIsFocused = true
+      this.queueSearch(this.search)
     }
     onSearchMove(this.handleSearchMove)
     onSearchEnter(this.handleSearchEnter)
@@ -384,6 +406,8 @@ export default defineComponent({
     this.searchRequestId += 1
     this.directPromptHandoffId += 1
     if (this.searchTimer !== null) window.clearTimeout(this.searchTimer)
+    this.searchTimer = null
+    this.searchIsLoading = false
     offSearchMove(this.handleSearchMove)
     offSearchEnter(this.handleSearchEnter)
     this.deactivateModalLayers(false)
@@ -393,7 +417,7 @@ export default defineComponent({
       const opener = this.pendingAskRestoreTarget ?? this.activeModalOpener() ?? this.findSearchControl()
       await this.$nextTick()
       if (!this.searchIsFocused && !this.isAgentOpen) return
-      this.activateSearchModal(this.findSearchControl() ?? opener)
+      this.activateSearchModal(opener ?? this.findSearchControl())
       if (!this.isAgentOpen || this.modalFocusScope) return
       const root = this.$el
       if (!(root instanceof HTMLElement)) return
@@ -414,7 +438,7 @@ export default defineComponent({
       this.searchModalFocusScope = createModalFocusScope({
         root,
         restoreTarget: this.restoreTargetFor(restoreTarget),
-        additionalRoots: () => this.findSearchControls(),
+        additionalRoots: () => this.syncSearchInputA11y(),
         onEscape: this.closeSearch
       })
     },
@@ -437,37 +461,44 @@ export default defineComponent({
       this.syncSearchInputA11y()
     },
     activeModalOpener(): HTMLElement | null {
-      return document.activeElement instanceof HTMLElement ? document.activeElement : null
+      const active = document.activeElement
+      return active instanceof HTMLElement && active !== document.body && active.tabIndex >= 0 ? active : null
     },
     restoreTargetFor(target: HTMLElement | null): () => HTMLElement | null {
       const key = target?.dataset.modalFocusKey
       return () => {
-        if (target?.isConnected) return target
+        if (target?.isConnected && target.tabIndex >= 0 && !target.matches(':disabled')) return target
         if (key) {
           const replacement = document.querySelector<HTMLElement>(`[data-modal-focus-key="${key}"]`)
-          if (replacement) return replacement
+          if (replacement && replacement.tabIndex >= 0 && !replacement.matches(':disabled')) return replacement
         }
         return this.findSearchControl()
       }
     },
     findSearchControls(): HTMLElement[] {
       return Array.from(document.querySelectorAll<HTMLElement>('.nav-header-search-control input'))
-        .filter(control => !control.hasAttribute('disabled'))
+        .filter(control => !control.matches(':disabled'))
     },
     findSearchControl(): HTMLElement | null {
       return this.findSearchControls().find(control => control.getClientRects().length > 0) ?? null
     },
-    syncSearchInputA11y(): void {
-      const input = this.findSearchControl()
-      if (!input) return
-      const active = this.isAgentOpen ? undefined : this.activeDescendant
-      input.setAttribute('role', 'combobox')
-      input.setAttribute('aria-controls', this.searchListId)
-      input.setAttribute('aria-expanded', String(!this.isAgentOpen && this.searchIsFocused && this.normalizedSearch.length >= 2))
-      input.setAttribute('aria-autocomplete', 'list')
-      input.setAttribute('aria-describedby', 'wiki-search-instructions')
-      if (active) input.setAttribute('aria-activedescendant', active)
-      else input.removeAttribute('aria-activedescendant')
+    syncSearchInputA11y(): HTMLElement[] {
+      const controls = this.findSearchControls()
+      const searchVisible = !this.isAgentOpen && (this.searchIsFocused || this.normalizedSearch.length >= 2)
+      const active = searchVisible ? this.activeDescendant : undefined
+      for (const input of controls) {
+        input.setAttribute('role', 'combobox')
+        input.setAttribute('aria-expanded', String(searchVisible && this.normalizedSearch.length >= 2))
+        input.setAttribute('aria-autocomplete', 'list')
+        input.setAttribute('aria-busy', String(searchVisible && this.searchIsLoading))
+        if (searchVisible) input.setAttribute('aria-describedby', 'wiki-search-instructions')
+        else input.removeAttribute('aria-describedby')
+        if (searchVisible && this.searchListIds) input.setAttribute('aria-controls', this.searchListIds)
+        else input.removeAttribute('aria-controls')
+        if (active) input.setAttribute('aria-activedescendant', active)
+        else input.removeAttribute('aria-activedescendant')
+      }
+      return controls
     },
     openAsk(): void {
       if (!this.canAsk) return
@@ -584,7 +615,9 @@ export default defineComponent({
       this.searchRestrictPath = false
     },
     setSearchTerm(term: string | undefined): void {
-      if (term !== undefined) this.search = term
+      if (term === undefined) return
+      this.search = term
+      void this.$nextTick(() => this.findSearchControl()?.focus({ preventScroll: true }))
     },
     pageHref(item: PageSearchRow): string {
       const visibilityScope = item.visibility === 'private' ? '/_private' : ''
@@ -641,13 +674,15 @@ export default defineComponent({
   border: 0;
 }
 .search-results {
-  animation: searchResultsReveal .2s ease-out;
+  --search-overlay-ink: rgb(var(--v-theme-on-background));
+  animation: searchResultsReveal var(--wiki-motion-normal) var(--wiki-motion-ease-out);
   background:
-    radial-gradient(ellipse 52rem 28rem at 50% -10rem, rgba(82, 113, 255, .2), transparent),
-    rgba(8, 10, 17, .92);
+    radial-gradient(ellipse 52rem 28rem at 50% -10rem, color-mix(in srgb, var(--wiki-ambient-accent) 20%, transparent), transparent),
+    color-mix(in srgb, rgb(var(--v-theme-background)) 92%, transparent);
   box-sizing: border-box;
   height: calc(100dvh - var(--v-layout-top, 72px));
   inset: var(--v-layout-top, 72px) 0 0;
+  overflow-x: hidden;
   overflow-y: auto;
   position: fixed;
   text-align: center;
@@ -656,13 +691,18 @@ export default defineComponent({
 
 
   &--ask {
-    animation: agentWorkspaceReveal .28s cubic-bezier(.2, .8, .2, 1);
+    animation: none;
     background:
-      radial-gradient(ellipse 68rem 34rem at 50% -16rem, rgba(82, 113, 255, .3), transparent),
-      linear-gradient(180deg, rgba(7, 9, 17, .98), rgba(8, 10, 17, .96));
+      radial-gradient(ellipse 68rem 34rem at 50% -16rem, color-mix(in srgb, var(--wiki-ambient-accent) 30%, transparent), transparent),
+      linear-gradient(
+        180deg,
+        color-mix(in srgb, var(--wiki-ambient-accent) 5%, rgb(var(--v-theme-background))),
+        rgb(var(--v-theme-background))
+      );
     height: 100dvh;
     inset: 0;
     overflow: hidden;
+    isolation: isolate;
     z-index: 1009;
   }
 
@@ -670,26 +710,27 @@ export default defineComponent({
     box-sizing: border-box;
     margin: 0 auto;
     max-width: 68rem;
-    padding: 0 clamp(.75rem, 2vw, 1.5rem) clamp(1rem, 3vw, 2rem);
+    padding: 0 clamp(var(--wiki-space-3), 2vw, var(--wiki-space-6)) clamp(var(--wiki-space-4), 3vw, var(--wiki-space-8));
     width: 100%;
 
     &--ask {
+      animation: agentWorkspaceReveal var(--wiki-motion-slow) var(--wiki-motion-ease-out);
       align-items: center;
       display: flex;
       flex-direction: column;
       height: 100%;
       max-width: none;
-      padding: 0 clamp(.75rem, 2vw, 1.5rem) clamp(.75rem, 2vw, 1.5rem);
+      padding: max(0px, env(safe-area-inset-top)) clamp(var(--wiki-space-3), 2vw, var(--wiki-space-6)) max(var(--wiki-space-3), env(safe-area-inset-bottom));
     }
   }
 
   &-agent-nav {
     align-items: center;
-    color: #fff;
+    color: var(--search-overlay-ink);
     display: grid;
     flex: 0 0 auto;
     grid-template-columns: 1fr auto 1fr;
-    min-height: 4.75rem;
+    min-height: calc(var(--wiki-control-height) + var(--wiki-space-8));
     width: min(72rem, 100%);
   }
 
@@ -702,37 +743,37 @@ export default defineComponent({
   &-agent-context {
     align-items: center;
     display: flex;
-    font-size: .74rem;
-    font-weight: 700;
-    gap: .55rem;
+    gap: var(--wiki-space-2);
+    color: color-mix(in srgb, currentColor 80%, transparent);
+    font-size: var(--wiki-label-size);
+    font-weight: var(--wiki-label-weight);
     letter-spacing: .08em;
-    opacity: .8;
     text-transform: uppercase;
   }
 
   &-agent-mark {
     align-items: center;
-    background: rgba(255, 255, 255, .08);
-    border: 1px solid rgba(255, 255, 255, .13);
-    border-radius: .65rem;
     display: flex;
-    height: 2rem;
+    width: var(--wiki-space-8);
+    height: var(--wiki-space-8);
     justify-content: center;
-    width: 2rem;
+    border: 1px solid color-mix(in srgb, currentColor 14%, transparent);
+    border-radius: var(--wiki-control-radius);
+    background: color-mix(in srgb, currentColor 8%, transparent);
   }
 
   &-agent-close { justify-self: end; }
 
   &-controls {
-    align-items: center;
-    color: #fff;
-    display: flex;
-    flex: 0 0 auto;
-    justify-content: center;
-    min-height: 4rem;
-    padding: .4rem 0;
     position: relative;
+    display: flex;
     width: min(64rem, 100%);
+    min-height: calc(var(--wiki-control-height) + var(--wiki-space-5));
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    padding: var(--wiki-space-1) calc(var(--wiki-control-height) + var(--wiki-space-2));
+    color: var(--search-overlay-ink);
   }
 
   &-controls-title {
@@ -744,29 +785,34 @@ export default defineComponent({
     letter-spacing: .04em;
   }
 
-  &-mode { margin: 0; }
+  &-mode {
+    max-width: 100%;
+    margin: 0;
+  }
 
   &-close {
     position: absolute !important;
-    right: clamp(.25rem, 1.5vw, 1rem);
+    inset-inline-end: var(--wiki-space-1);
   }
+
   &-keyboard-hint {
+    position: absolute;
+    inset-inline-end: calc(var(--wiki-control-height) + var(--wiki-space-3));
     display: inline-flex;
     align-items: center;
-    gap: .32rem;
-    margin-inline: .75rem;
+    gap: var(--wiki-space-1);
     color: color-mix(in srgb, currentColor 76%, transparent);
 
     kbd {
-      min-width: 1.7rem;
-      padding: .14rem .38rem;
+      min-width: calc(var(--wiki-space-6) + var(--wiki-space-1));
+      padding: var(--wiki-space-1) var(--wiki-space-2);
       border: 1px solid color-mix(in srgb, currentColor 24%, transparent);
-      border-radius: .38rem;
+      border-radius: var(--wiki-radius-xs);
       background: color-mix(in srgb, currentColor 8%, transparent);
-      box-shadow: inset 0 -1px 0 color-mix(in srgb, currentColor 18%, transparent);
+      box-shadow: var(--wiki-shadow-inset);
       font-family: var(--wiki-font-mono);
-      font-size: .65rem;
-      font-weight: 700;
+      font-size: var(--wiki-label-size);
+      font-weight: var(--wiki-label-weight);
       line-height: 1.25;
       text-align: center;
     }
@@ -777,8 +823,8 @@ export default defineComponent({
   }
 
   &-shortcut {
-    left: clamp(.25rem, 1.5vw, 1rem);
     position: absolute !important;
+    inset-inline-start: var(--wiki-space-1);
 
     @media #{map-get($display-breakpoints, 'md-and-down')} {
       display: none !important;
@@ -786,26 +832,26 @@ export default defineComponent({
   }
 
   &-search {
-    background: color-mix(in srgb, rgb(var(--v-theme-surface)) 98%, rgb(var(--v-theme-background)));
-    border: 1px solid color-mix(in srgb, rgb(var(--v-theme-on-surface)) 16%, transparent);
-    border-radius: 1.5rem;
-    box-shadow: 0 1.25rem 4rem rgba(0, 0, 0, .28);
-    color: rgb(var(--v-theme-on-surface));
     margin-inline: auto;
     overflow: hidden;
+    border: 1px solid var(--wiki-surface-border-strong);
+    border-radius: var(--wiki-hero-radius);
+    background: var(--wiki-surface-raised);
+    color: rgb(var(--v-theme-on-surface));
+    box-shadow: var(--wiki-shadow-lg), var(--wiki-shadow-inset);
     text-align: start;
   }
 
   &-scope {
-    align-items: center;
-    background:
-      radial-gradient(circle at 100% 0, color-mix(in srgb, rgb(var(--v-theme-primary)) 14%, transparent), transparent 42%),
-      color-mix(in srgb, rgb(var(--v-theme-surface-variant)) 35%, rgb(var(--v-theme-surface)));
-    border-bottom: 1px solid color-mix(in srgb, rgb(var(--v-theme-on-surface)) 11%, transparent);
     display: flex;
-    gap: 1.25rem;
+    align-items: center;
     justify-content: space-between;
-    padding: 1rem 1.2rem;
+    gap: var(--wiki-space-5);
+    padding: var(--wiki-space-4) var(--wiki-space-5);
+    border-bottom: 1px solid var(--wiki-surface-border);
+    background:
+      radial-gradient(circle at 100% 0, color-mix(in srgb, var(--wiki-ambient-accent) 14%, transparent), transparent 42%),
+      var(--wiki-surface-sunken);
   }
 
   &-scope-copy { min-width: 12rem; }
@@ -828,24 +874,34 @@ export default defineComponent({
     text-transform: uppercase;
   }
 
-  &-content { padding: 1rem; }
-
-  &-summary {
-    align-items: center;
-    display: flex;
-    gap: 1rem;
-    justify-content: space-between;
-    min-height: 3.25rem;
-    padding: 0 .25rem .8rem;
+  &-content {
+    min-width: 0;
+    padding: var(--wiki-space-4);
   }
 
-  &-count { font-size: .95rem; font-weight: 600; margin-top: .2rem; }
+  &-summary {
+    display: flex;
+    min-width: 0;
+    min-height: calc(var(--wiki-control-height) + var(--wiki-space-2));
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--wiki-space-4);
+    padding: 0 var(--wiki-space-1) var(--wiki-space-3);
+  }
+
+  &-summary > div { min-width: 0; }
+  &-count {
+    margin-top: var(--wiki-space-1);
+    overflow-wrap: anywhere;
+    font-size: .95rem;
+    font-weight: 600;
+  }
   &-window {
     color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 58%, transparent);
     font-size: .78rem;
     font-weight: 450;
   }
-  &-ask { flex: 0 0 auto; letter-spacing: 0; text-transform: none; }
+  &-ask { min-height: var(--wiki-control-height); flex: 0 0 auto; letter-spacing: 0; text-transform: none; }
 
   &-help,
   &-loader,
@@ -855,7 +911,7 @@ export default defineComponent({
     flex-direction: column;
     justify-content: center;
     min-height: 19rem;
-    padding: 2.5rem 1rem;
+    padding: var(--wiki-space-10) var(--wiki-space-4);
     text-align: center;
   }
 
@@ -886,22 +942,28 @@ export default defineComponent({
 
   &-items,
   &-suggestions {
-    background: transparent;
-    border: 1px solid color-mix(in srgb, rgb(var(--v-theme-on-surface)) 12%, transparent);
-    border-radius: 1rem;
     overflow: hidden;
     padding: 0;
+    border: 1px solid var(--wiki-surface-border);
+    border-radius: var(--wiki-panel-radius);
+    background: transparent;
     text-align: start;
   }
 
   &-item {
+    min-width: 0;
     min-height: 5.65rem;
-    padding-block: .55rem;
-    transition: background-color .14s ease;
+    padding-block: var(--wiki-space-2);
+    transition: background-color var(--wiki-motion-fast) var(--wiki-motion-ease);
 
     &:hover,
+    &:focus-visible,
     &.highlighted {
-      background: color-mix(in srgb, rgb(var(--v-theme-primary)) 10%, rgb(var(--v-theme-surface)));
+      background: color-mix(in srgb, var(--wiki-accent-warm) 10%, var(--wiki-surface-raised));
+    }
+
+    &:focus-visible {
+      box-shadow: inset var(--wiki-focus-ring);
     }
   }
 
@@ -918,8 +980,17 @@ export default defineComponent({
     width: 2.65rem;
   }
 
-  &-item .v-list-item-title { font-size: .98rem; font-weight: 650; }
-  &-item .v-list-item-subtitle { line-height: 1.4; margin-top: .14rem; white-space: normal; }
+  &-item .v-list-item-title {
+    overflow-wrap: anywhere;
+    font-size: .98rem;
+    font-weight: 650;
+  }
+  &-item .v-list-item-subtitle {
+    margin-top: var(--wiki-space-1);
+    overflow-wrap: anywhere;
+    line-height: 1.4;
+    white-space: normal;
+  }
 
   &-path {
     align-items: center;
@@ -938,11 +1009,21 @@ export default defineComponent({
   }
 
   &-tags {
-    align-items: center;
     display: flex;
+    min-width: 0;
+    align-items: center;
     flex-wrap: wrap;
-    gap: .3rem;
-    margin-top: .4rem;
+    gap: var(--wiki-space-1);
+    margin-top: var(--wiki-space-2);
+  }
+
+  &-tags .v-chip {
+    max-width: 100%;
+  }
+
+  &-tags .v-chip__content {
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   &-item-meta {
@@ -956,12 +1037,12 @@ export default defineComponent({
   &-pagination { margin: .85rem 0 .2rem; }
 
   &-suggestion-block {
-    border-top: 1px solid color-mix(in srgb, rgb(var(--v-theme-on-surface)) 10%, transparent);
-    margin-top: 1rem;
-    padding: 1rem .25rem .1rem;
+    margin-top: var(--wiki-space-4);
+    padding: var(--wiki-space-4) var(--wiki-space-1) var(--wiki-space-1);
+    border-top: 1px solid var(--wiki-surface-border);
   }
 
-  &-suggestions { margin-top: .55rem; }
+  &-suggestions { margin-top: var(--wiki-space-2); }
 
   &-suggestions .highlighted {
     background: color-mix(in srgb, rgb(var(--v-theme-primary)) 12%, rgb(var(--v-theme-surface)));
@@ -985,23 +1066,25 @@ export default defineComponent({
       height: auto;
       top: calc(var(--v-layout-top, 72px) + 48px);
     }
-    &-container { padding-inline: .5rem; }
-    &-container--ask { padding: 0; }
-    &-agent-nav { min-height: 4.25rem; padding-inline: .5rem; }
-    &-scope { align-items: flex-start; flex-direction: column; gap: .75rem; }
+    &-container { padding-inline: var(--wiki-space-2); }
+    &-container--ask { padding: max(0px, env(safe-area-inset-top)) 0 max(0px, env(safe-area-inset-bottom)); }
+    &-agent-nav { min-height: calc(var(--wiki-control-height) + var(--wiki-space-6)); padding-inline: var(--wiki-space-2); }
+    &-scope { align-items: flex-start; flex-direction: column; gap: var(--wiki-space-3); }
     &-scope-actions { justify-content: flex-start; }
-    &-content { padding: .75rem; }
+    &-content { padding: var(--wiki-space-3); }
   }
 
   @media (max-width: 599.98px) {
-    &-search { border-radius: 1.15rem; }
+    &-search { border-radius: var(--wiki-panel-radius); }
     &-scope-copy { min-width: 0; }
-    &-scope-actions .v-btn { padding-inline: .65rem; }
-    &-summary { align-items: flex-start; }
+    &-scope-actions .v-btn { max-width: 100%; padding-inline: var(--wiki-space-3); }
+    &-summary { align-items: flex-start; flex-wrap: wrap; }
+    &-mode .v-btn { min-width: 0; padding-inline: var(--wiki-space-2); }
+    &-mode .v-btn__content { overflow: hidden; text-overflow: ellipsis; }
     &-ask .v-btn__content { font-size: .78rem; }
-    &-item { padding-inline: .2rem; }
+    &-item { padding-inline: var(--wiki-space-1); }
     &-item-chevron { display: none; }
-    &-item-mark { height: 2.35rem; width: 2.35rem; }
+    &-item-mark { height: var(--wiki-control-height); width: var(--wiki-control-height); }
     &-agent-context span { display: none; }
   }
 }
@@ -1030,6 +1113,7 @@ export default defineComponent({
 
 @media (prefers-reduced-motion: reduce) {
   .search-results,
+  .search-results-container--ask,
   .search-results-item { animation: none; transition: none; }
 }
 </style>

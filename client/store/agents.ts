@@ -84,6 +84,8 @@ export const useAgentsStore = defineStore('agents', {
     sessionTransitionController: null as AbortController | null,
     sessionListVersion: 0,
     workspaceVersion: 0,
+    folderReloadGeneration: 0,
+    folderReloadController: null as AbortController | null,
     workspaceDisposed: false
   }),
   actions: {
@@ -91,6 +93,8 @@ export const useAgentsStore = defineStore('agents', {
       this.cancelSessionTransition()
       this.closeStream()
       this.invalidateRefresh()
+      this.invalidateFolderReload()
+      const folderReloadGeneration = this.folderReloadGeneration
       const workspaceVersion = this.workspaceVersion + 1
       const sessionListVersion = this.sessionListVersion + 1
       this.workspaceVersion = workspaceVersion
@@ -122,7 +126,7 @@ export const useAgentsStore = defineStore('agents', {
           this.sessions = sessionPage.sessions
           this.sessionsNextCursor = sessionPage.nextCursor
         }
-        this.folders = folders
+        if (this.folderReloadGeneration === folderReloadGeneration) this.folders = folders
         if (pathMatch?.[1]) {
           await this.openSession(pathMatch[1])
         } else if (!this.routeSync && this.thread) {
@@ -181,6 +185,7 @@ export const useAgentsStore = defineStore('agents', {
       this.decidingApprovalId = null
       this.cancelSessionTransition()
       this.invalidateRefresh()
+      this.invalidateFolderReload()
       this.sessionsLoadMoreController?.abort()
       this.sessionsLoadMoreController = null
       this.sessionsReloading = false
@@ -269,11 +274,7 @@ export const useAgentsStore = defineStore('agents', {
       this.refreshController = controller
       try {
         const refreshed = await getAgentThread(fetchFromWindow, this.csrfToken, sessionId, controller.signal)
-        if (
-          !this.isSessionContextCurrent(workspaceVersion, sessionId) ||
-          this.refreshSessionId !== sessionId ||
-          this.refreshGeneration !== generation
-        )
+        if (!this.isSessionContextCurrent(workspaceVersion, sessionId) || this.refreshSessionId !== sessionId || this.refreshGeneration !== generation)
           return false
         this.thread = refreshed
         return true
@@ -329,11 +330,7 @@ export const useAgentsStore = defineStore('agents', {
         return true
       } catch (error) {
         if (error instanceof DOMException && error.name === 'AbortError') return false
-        if (
-          this.isWorkspaceCurrent(workspaceVersion) &&
-          this.sessionListVersion === version &&
-          this.sessionsLoadMoreController === controller
-        )
+        if (this.isWorkspaceCurrent(workspaceVersion) && this.sessionListVersion === version && this.sessionsLoadMoreController === controller)
           this.sessionsLoadMoreError = error instanceof Error ? error.message : 'Older conversations could not be loaded.'
         return false
       } finally {
@@ -343,29 +340,60 @@ export const useAgentsStore = defineStore('agents', {
         }
       }
     },
+    invalidateFolderReload() {
+      this.folderReloadGeneration += 1
+      this.folderReloadController?.abort()
+      this.folderReloadController = null
+    },
     async reloadFolders() {
       const workspaceVersion = this.workspaceVersion
-      const folders = await listAgentConversationFolders(fetchFromWindow, this.csrfToken)
-      if (this.isWorkspaceCurrent(workspaceVersion)) this.folders = folders
+      const generation = this.folderReloadGeneration + 1
+      this.folderReloadGeneration = generation
+      this.folderReloadController?.abort()
+      const controller = markRaw(new AbortController())
+      this.folderReloadController = controller
+      try {
+        const folders = await listAgentConversationFolders(fetchFromWindow, this.csrfToken, controller.signal)
+        if (this.isWorkspaceCurrent(workspaceVersion) && this.folderReloadGeneration === generation && this.folderReloadController === controller)
+          this.folders = folders
+      } catch (error) {
+        if (!this.isWorkspaceCurrent(workspaceVersion) || this.folderReloadGeneration !== generation || this.folderReloadController !== controller) return
+        throw error
+      } finally {
+        if (this.folderReloadController === controller) this.folderReloadController = null
+      }
     },
     async createFolder(name: string) {
+      if (this.loading) throw new Error('Conversation folders are still loading. Please wait and try again.')
       const workspaceVersion = this.workspaceVersion
+      this.invalidateFolderReload()
       const created = await createAgentConversationFolder(fetchFromWindow, this.csrfToken, name)
-      if (this.isWorkspaceCurrent(workspaceVersion)) this.folders = [...this.folders, created]
+      if (this.isWorkspaceCurrent(workspaceVersion)) {
+        this.invalidateFolderReload()
+        this.folders = [...this.folders, created]
+      }
       return created
     },
     async renameFolder(folderId: string, expectedVersion: number, name: string) {
+      if (this.loading) throw new Error('Conversation folders are still loading. Please wait and try again.')
       const workspaceVersion = this.workspaceVersion
+      this.invalidateFolderReload()
       const renamed = await renameAgentConversationFolder(fetchFromWindow, this.csrfToken, folderId, expectedVersion, name)
-      if (this.isWorkspaceCurrent(workspaceVersion)) this.folders = this.folders.map(folder => (folder.id === folderId ? renamed : folder))
+      if (this.isWorkspaceCurrent(workspaceVersion)) {
+        this.invalidateFolderReload()
+        this.folders = this.folders.map(folder => (folder.id === folderId ? renamed : folder))
+      }
       return renamed
     },
     async deleteFolder(folderId: string) {
+      if (this.loading) throw new Error('Conversation folders are still loading. Please wait and try again.')
       const workspaceVersion = this.workspaceVersion
+      this.invalidateFolderReload()
       const sessionId = this.thread?.session.id
       const refreshCurrent = this.thread?.session.folderId === folderId
       await deleteAgentConversationFolder(fetchFromWindow, this.csrfToken, folderId)
       if (!this.isWorkspaceCurrent(workspaceVersion)) return
+      this.invalidateFolderReload()
       this.folders = this.folders.filter(folder => folder.id !== folderId)
       const refreshes = [this.reloadSessions()]
       if (refreshCurrent && sessionId && this.isSessionContextCurrent(workspaceVersion, sessionId)) refreshes.push(this.refreshThread().then(() => undefined))
@@ -440,8 +468,7 @@ export const useAgentsStore = defineStore('agents', {
           })
         }
       } catch (error) {
-        if (this.isSessionContextCurrent(workspaceVersion, sessionId))
-          this.error = error instanceof Error ? error.message : 'Message could not be sent.'
+        if (this.isSessionContextCurrent(workspaceVersion, sessionId)) this.error = error instanceof Error ? error.message : 'Message could not be sent.'
         if (this.isWorkspaceCurrent(workspaceVersion)) this.sending = false
         return false
       }
@@ -464,8 +491,7 @@ export const useAgentsStore = defineStore('agents', {
       try {
         await cancelAgentRun(fetchFromWindow, this.csrfToken, run.id)
       } catch (error) {
-        if (this.isSessionContextCurrent(workspaceVersion, sessionId))
-          this.error = error instanceof Error ? error.message : 'Run could not be stopped.'
+        if (this.isSessionContextCurrent(workspaceVersion, sessionId)) this.error = error instanceof Error ? error.message : 'Run could not be stopped.'
         if (this.stoppingRunId === run.id) this.stoppingRunId = null
         return
       }
@@ -483,8 +509,7 @@ export const useAgentsStore = defineStore('agents', {
       try {
         await pauseAgentGoal(fetchFromWindow, this.csrfToken, goal.id, { expectedVersion: goal.version })
       } catch (error) {
-        if (this.isSessionContextCurrent(workspaceVersion, sessionId))
-          this.error = error instanceof Error ? error.message : 'Goal could not be paused.'
+        if (this.isSessionContextCurrent(workspaceVersion, sessionId)) this.error = error instanceof Error ? error.message : 'Goal could not be paused.'
         if (this.isWorkspaceCurrent(workspaceVersion)) this.goalBusy = false
         return
       }
@@ -506,8 +531,7 @@ export const useAgentsStore = defineStore('agents', {
           clientRequestId: crypto.randomUUID()
         })
       } catch (error) {
-        if (this.isSessionContextCurrent(workspaceVersion, sessionId))
-          this.error = error instanceof Error ? error.message : 'Goal could not be resumed.'
+        if (this.isSessionContextCurrent(workspaceVersion, sessionId)) this.error = error instanceof Error ? error.message : 'Goal could not be resumed.'
         if (this.isWorkspaceCurrent(workspaceVersion)) this.goalBusy = false
         return
       }
@@ -525,8 +549,7 @@ export const useAgentsStore = defineStore('agents', {
       try {
         await cancelAgentGoal(fetchFromWindow, this.csrfToken, goal.id, { expectedVersion: goal.version })
       } catch (error) {
-        if (this.isSessionContextCurrent(workspaceVersion, sessionId))
-          this.error = error instanceof Error ? error.message : 'Goal could not be cancelled.'
+        if (this.isSessionContextCurrent(workspaceVersion, sessionId)) this.error = error instanceof Error ? error.message : 'Goal could not be cancelled.'
         if (this.isWorkspaceCurrent(workspaceVersion)) this.goalBusy = false
         return
       }
@@ -545,8 +568,7 @@ export const useAgentsStore = defineStore('agents', {
           ...(confirmationPath === undefined ? {} : { confirmationPath })
         })
       } catch (error) {
-        if (this.isSessionContextCurrent(workspaceVersion, sessionId))
-          this.error = error instanceof Error ? error.message : 'Proposal decision failed.'
+        if (this.isSessionContextCurrent(workspaceVersion, sessionId)) this.error = error instanceof Error ? error.message : 'Proposal decision failed.'
         if (this.decidingApprovalId === approvalId) this.decidingApprovalId = null
         return
       }
@@ -667,9 +689,7 @@ export const useAgentsStore = defineStore('agents', {
     },
     isConnectionCurrent(generation: number, workspaceVersion: number, sessionId: string, runId: string) {
       return (
-        this.connectionGeneration === generation &&
-        this.isSessionContextCurrent(workspaceVersion, sessionId) &&
-        this.thread?.session.currentRun?.id === runId
+        this.connectionGeneration === generation && this.isSessionContextCurrent(workspaceVersion, sessionId) && this.thread?.session.currentRun?.id === runId
       )
     },
     connect(runId: string, _after: number) {
@@ -742,21 +762,12 @@ export const useAgentsStore = defineStore('agents', {
       if (!sessionId) return
       this.refreshTimer = window.setTimeout(() => {
         this.refreshTimer = null
-        if (
-          !this.isSessionContextCurrent(workspaceVersion, sessionId) ||
-          (observedRunId !== undefined && this.connectionGeneration !== connectionGeneration)
-        )
+        if (!this.isSessionContextCurrent(workspaceVersion, sessionId) || (observedRunId !== undefined && this.connectionGeneration !== connectionGeneration))
           return
         void this.runScheduledRefresh(terminal, observedRunId, connectionGeneration, workspaceVersion, sessionId)
       }, delay)
     },
-    async runScheduledRefresh(
-      terminal: boolean,
-      observedRunId: string | undefined,
-      generation: number,
-      workspaceVersion: number,
-      sessionId: string
-    ) {
+    async runScheduledRefresh(terminal: boolean, observedRunId: string | undefined, generation: number, workspaceVersion: number, sessionId: string) {
       try {
         const refreshed = await this.refreshThread()
         if (!refreshed || !this.isSessionContextCurrent(workspaceVersion, sessionId)) return
@@ -788,11 +799,7 @@ export const useAgentsStore = defineStore('agents', {
         this.reconnectAttempt = 0
         this.armInactivityWatchdog(currentRun.id, generation)
       } catch (error) {
-        if (
-          !this.isSessionContextCurrent(workspaceVersion, sessionId) ||
-          (observedRunId !== undefined && this.connectionGeneration !== generation)
-        )
-          return
+        if (!this.isSessionContextCurrent(workspaceVersion, sessionId) || (observedRunId !== undefined && this.connectionGeneration !== generation)) return
         if (error instanceof DOMException && error.name === 'AbortError') return
         const retryable = error instanceof AgentApiError ? error.retryable : error instanceof TypeError
         if (!retryable) {

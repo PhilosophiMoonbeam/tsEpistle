@@ -150,8 +150,8 @@
           <section class="skill-form-section">
             <div class="skill-form-section__heading"><span><v-icon size="19">mdi-file-tree-outline</v-icon></span><div><h3>Knowledge source</h3><p>The root page and optional asset folder bundled into the skill.</p></div></div>
             <div class="skill-form-grid">
-              <v-text-field v-model.number="create.rootPageId" label="Root page ID" type="number" min="1" required />
-              <v-text-field v-model="create.assetFolderId" label="Asset folder ID (optional)" type="number" min="1" />
+              <v-text-field v-model.number="create.rootPageId" label="Root page ID" type="number" min="1" :rules="[() => createRootPageValid || 'Enter a positive whole number.']" required />
+              <v-text-field v-model="create.assetFolderId" label="Asset folder ID (optional)" type="number" min="1" :rules="[() => createAssetFolderValid || 'Enter a positive whole number or leave this blank.']" />
               <v-text-field v-model="create.rootPath" class="skill-form-grid__wide" label="Root page path" placeholder="handbook/research" hint="The path must identify the selected root page tree." persistent-hint required />
             </div>
           </section>
@@ -187,7 +187,11 @@
           <div><dt>Bundle size</dt><dd>{{ preview.totalBytes }} bytes</dd></div>
         </dl>
         <div v-if="preview.previousSkillMarkdown !== null" class="source-heading"><div><span>Change review</span><h3>Candidate compared with approved revision</h3></div><v-chip size="x-small" variant="tonal" color="primary">Line differences</v-chip></div>
+        <v-alert v-if="preview.previousSkillMarkdown !== null && reviewLinesTruncated" class="skill-boundary review-diff-notice" type="info" variant="tonal" density="compact">
+          Showing the first {{ MAX_REVIEW_LINES }} lines of {{ reviewLineCount }}. Read the complete candidate and approved sources below before deciding.
+        </v-alert>
         <div v-if="preview.previousSkillMarkdown !== null" class="review-diff" role="table" aria-label="Skill revision changes">
+          <div class="review-diff__header" role="row"><span role="columnheader">Candidate revision</span><span role="columnheader">Previously approved</span></div>
           <div v-for="(line, index) in reviewLines" :key="`${index}-${line.candidate}-${line.previous}`" class="review-diff__row" :class="`review-diff__row--${line.kind}`" role="row">
             <code role="cell">{{ line.candidate }}</code><code role="cell">{{ line.previous }}</code>
           </div>
@@ -205,7 +209,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useDisplay } from 'vuetify'
 import { z } from 'zod'
 import { sameOriginJsonFetch } from '../../helpers/json-transport.ts'
@@ -252,6 +256,8 @@ const loading = ref(false)
 const loaded = ref(false)
 const actionBusyId = ref('')
 const error = ref('')
+let reloadController: AbortController | null = null
+let reloadGeneration = 0
 const createError = ref('')
 const accessError = ref('')
 const previewError = ref('')
@@ -271,10 +277,16 @@ const create = reactive({
   exposureMode: 'all_agent_users' as 'all_agent_users' | 'groups',
   groupIds: [] as number[]
 })
+const MAX_REVIEW_LINES = 500
+const reviewSourceLines = computed(() => ({
+  candidate: preview.value?.skillMarkdown.split('\n') ?? [],
+  previous: preview.value?.previousSkillMarkdown?.split('\n') ?? []
+}))
+const reviewLineCount = computed(() => Math.max(reviewSourceLines.value.candidate.length, reviewSourceLines.value.previous.length))
+const reviewLinesTruncated = computed(() => reviewLineCount.value > MAX_REVIEW_LINES)
 const reviewLines = computed(() => {
-  const candidate = preview.value?.skillMarkdown.split('\n') ?? []
-  const previous = preview.value?.previousSkillMarkdown?.split('\n') ?? []
-  const length = Math.max(candidate.length, previous.length)
+  const { candidate, previous } = reviewSourceLines.value
+  const length = Math.min(Math.max(candidate.length, previous.length), MAX_REVIEW_LINES)
   return Array.from({ length }, (_, index) => {
     const candidateLine = candidate[index] ?? ''
     const previousLine = previous[index] ?? ''
@@ -292,11 +304,14 @@ const stateFilters = [
   { title: 'Needs review', value: 'review' }
 ]
 const createNameValid = computed(() => /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(create.name.trim()))
-const createValid = computed(() => createNameValid.value && create.rootPageId > 0 && Boolean(create.rootPath.trim()) && (create.exposureMode !== 'groups' || create.groupIds.length > 0))
+const createRootPageValid = computed(() => Number.isInteger(create.rootPageId) && create.rootPageId > 0)
+const createAssetFolderValid = computed(() => create.assetFolderId === '' || (Number.isInteger(Number(create.assetFolderId)) && Number(create.assetFolderId) > 0))
+const createValid = computed(() => createNameValid.value && createRootPageValid.value && createAssetFolderValid.value && Boolean(create.rootPath.trim()) && (create.exposureMode !== 'groups' || create.groupIds.length > 0))
 
-const request = async (url: string, init: RequestInit = {}): Promise<unknown> => {
+const request = async (url: string, init: RequestInit = {}, signal?: AbortSignal): Promise<unknown> => {
   const response = await sameOriginJsonFetch(window.fetch.bind(window), url, {
     ...init,
+    ...(signal ? { signal } : {}),
     credentials: 'same-origin',
     headers: {
       accept: 'application/json',
@@ -313,17 +328,30 @@ const request = async (url: string, init: RequestInit = {}): Promise<unknown> =>
 }
 
 const reload = async (): Promise<void> => {
-  if (loading.value) return
+  reloadController?.abort()
+  const controller = new AbortController()
+  reloadController = controller
+  const generation = ++reloadGeneration
   loading.value = true
   error.value = ''
   try {
-    const [result, groupResult] = await Promise.all([request('/_api/agents/admin/skills'), request('/_api/groups')])
+    const [result, groupResult] = await Promise.all([
+      request('/_api/agents/admin/skills', {}, controller.signal),
+      request('/_api/groups', {}, controller.signal)
+    ])
+    if (generation !== reloadGeneration) return
     skills.value = z.object({ skills: z.array(SkillSchema) }).parse(result).skills
     groups.value = z.array(GroupSchema).parse(groupResult)
     loaded.value = true
   } catch (requestError: unknown) {
+    if (generation !== reloadGeneration || controller.signal.aborted) return
     error.value = requestError instanceof Error ? requestError.message : 'Unable to load skills'
-  } finally { loading.value = false }
+  } finally {
+    if (generation === reloadGeneration) {
+      loading.value = false
+      if (reloadController === controller) reloadController = null
+    }
+  }
 }
 const openCreate = (): void => {
   createError.value = ''
@@ -339,10 +367,18 @@ const createSkill = async (): Promise<void> => {
   } catch (requestError: unknown) { createError.value = requestError instanceof Error ? requestError.message : 'Unable to map skill' }
   finally { actionBusyId.value = '' }
 }
-const groupNames = (groupIds: readonly number[]): string => groupIds.map(id => groups.value.find(group => group.id === id)?.name ?? `Group ${id}`).join(', ')
+const groupsById = computed(() => new Map(groups.value.map(group => [group.id, group.name])))
+const groupNames = (groupIds: readonly number[]): string => groupIds.map(id => groupsById.value.get(id) ?? `Group ${id}`).join(', ')
 const enabledSkillCount = computed(() => skills.value.filter(skill => skill.status === 'enabled').length)
+const compareNames = (left: string, right: string): number => {
+  const leftName = left.toLowerCase()
+  const rightName = right.toLowerCase()
+  if (leftName < rightName) return -1
+  if (leftName > rightName) return 1
+  return left < right ? -1 : left > right ? 1 : 0
+}
 const filteredSkills = computed(() => {
-  const query = search.value.trim().toLocaleLowerCase()
+  const query = search.value.trim().toLowerCase()
   return skills.value
     .filter(skill => {
       if (stateFilter.value === 'enabled' && skill.status !== 'enabled') return false
@@ -351,9 +387,9 @@ const filteredSkills = computed(() => {
       if (!query) return true
       const audience = skill.exposureMode === 'all_agent_users' ? 'all agent users everyone' : groupNames(skill.groupIds)
       return [skill.name, skill.rootPath, skill.approvedSourceRevision ?? '', skill.liveSourceRevision, audience]
-        .some(value => value.toLocaleLowerCase().includes(query))
+        .some(value => value.toLowerCase().includes(query))
     })
-    .sort((left, right) => left.name.localeCompare(right.name))
+    .sort((left, right) => compareNames(left.name, right.name))
 })
 const clearFilters = (): void => {
   search.value = ''
@@ -398,6 +434,7 @@ const setEnabled = async (skillId: string, enabled: boolean): Promise<void> => {
 }
 
 onMounted(reload)
+onBeforeUnmount(() => reloadController?.abort())
 </script>
 
 <style scoped>
@@ -543,27 +580,21 @@ onMounted(reload)
   margin-top: var(--wiki-space-4);
 }
 
-.skill-loading > * {
-  border: 1px solid var(--wiki-surface-border);
-  border-radius: var(--wiki-panel-radius);
-  background: var(--wiki-surface-raised);
-}
-
 .skill-inventory {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 28rem), 1fr));
   gap: var(--wiki-space-3);
 }
-
 .skill-record {
   display: flex;
   min-width: 0;
   overflow: hidden;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 22rem;
   flex-direction: column;
   border: 1px solid var(--wiki-surface-border);
   border-radius: var(--wiki-panel-radius);
   background: var(--wiki-surface-raised);
-  box-shadow: var(--wiki-shadow-xs), var(--wiki-shadow-inset);
   transition:
     border-color var(--wiki-motion-normal) var(--wiki-motion-ease),
     box-shadow var(--wiki-motion-normal) var(--wiki-motion-ease),
@@ -890,6 +921,29 @@ onMounted(reload)
   background: var(--wiki-surface-sunken);
 }
 
+.review-diff-notice {
+  margin-bottom: var(--wiki-space-2);
+}
+
+.review-diff__header {
+  display: grid;
+  min-width: 42rem;
+  grid-template-columns: 1fr 1fr;
+  border-bottom: 1px solid var(--wiki-surface-border-strong);
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 68%, transparent);
+  font-size: var(--wiki-label-size);
+  font-weight: var(--wiki-label-weight);
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+
+.review-diff__header span {
+  padding: var(--wiki-space-2) var(--wiki-space-3);
+}
+
+.review-diff__header span + span {
+  border-inline-start: 1px solid var(--wiki-surface-border);
+}
 .review-diff__row {
   display: grid;
   min-width: 42rem;
@@ -909,14 +963,12 @@ onMounted(reload)
   border-inline-start: 1px solid var(--wiki-surface-border);
 }
 
-.review-diff__row--added code:first-child,
-.review-diff__row--removed code:last-child {
-  background: color-mix(in srgb, rgb(var(--v-theme-error)) 10%, transparent);
+.review-diff__row--added code:first-child {
+  background: color-mix(in srgb, rgb(var(--v-theme-success)) 10%, transparent);
 }
 
-.review-diff__row--added code:last-child,
-.review-diff__row--removed code:first-child {
-  background: color-mix(in srgb, rgb(var(--v-theme-success)) 10%, transparent);
+.review-diff__row--removed code:last-child {
+  background: color-mix(in srgb, rgb(var(--v-theme-error)) 10%, transparent);
 }
 
 .review-diff__row--changed code {

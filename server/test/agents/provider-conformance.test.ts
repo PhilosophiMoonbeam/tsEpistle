@@ -89,6 +89,90 @@ describe('provider conformance runner', () => {
     expect(setConformed).toHaveBeenCalledWith('00000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000002', true, 7)
     expect(await runner.list('00000000-0000-4000-8000-000000000001')).toEqual([report])
   })
+  it('returns no latest reports for an empty profile list and enforces the admin list bound', async () => {
+    const runner = new AgentProviderConformanceRunner(db, {} as AgentProviderFactory, { setConformed: vi.fn() } as never)
+    const queries: string[] = []
+    db.on('query', query => queries.push(query.sql))
+
+    expect(await runner.listLatest([])).toEqual([])
+    await expect(runner.listLatest(Array.from({ length: 101 }, (_, index) => `profile-${index}`))).rejects.toMatchObject({
+      code: 'CONFORMANCE_PROFILE_PROJECTION_OVERFLOW',
+      status: 500
+    })
+    expect(queries).toEqual([])
+  })
+
+  it('projects null latest reports for profiles and profile IDs without current reports', async () => {
+    const runner = new AgentProviderConformanceRunner(db, {} as AgentProviderFactory, { setConformed: vi.fn() } as never)
+
+    expect(await runner.listLatest(['00000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000099'])).toEqual([null, null])
+  })
+
+  it('loads the newest current-version report for multiple profiles in one report query and preserves input order', async () => {
+    const secondProfileId = '00000000-0000-4000-8000-000000000010'
+    const secondVersionId = '00000000-0000-4000-8000-000000000011'
+    await db('agentProviderProfiles').insert({ id: secondProfileId, currentVersionId: secondVersionId })
+    await db('agentProviderConformanceReports').insert([
+      {
+        id: '00000000-0000-4000-8000-000000000020',
+        profileVersionId: '00000000-0000-4000-8000-000000000002',
+        status: 'failed',
+        checks: JSON.stringify([{ name: 'old', passed: false }]),
+        errorCode: 'OLD_FAILURE',
+        actorId: 7,
+        startedAt: '2026-08-30T00:00:00.000Z',
+        completedAt: '2026-08-30T00:00:01.000Z'
+      },
+      {
+        id: '00000000-0000-4000-8000-000000000021',
+        profileVersionId: '00000000-0000-4000-8000-000000000002',
+        status: 'passed',
+        checks: JSON.stringify([]),
+        errorCode: null,
+        actorId: 7,
+        startedAt: '2026-08-30T00:00:01.000Z',
+        completedAt: '2026-08-30T00:00:02.000Z'
+      },
+      {
+        id: '00000000-0000-4000-8000-000000000022',
+        profileVersionId: '00000000-0000-4000-8000-000000000099',
+        status: 'passed',
+        checks: JSON.stringify([]),
+        errorCode: null,
+        actorId: 7,
+        startedAt: '2026-08-30T00:00:08.000Z',
+        completedAt: '2026-08-30T00:00:09.000Z'
+      },
+      {
+        id: '00000000-0000-4000-8000-000000000023',
+        profileVersionId: secondVersionId,
+        status: 'failed',
+        checks: JSON.stringify([{ name: 'second', passed: false, detail: 'Second profile failed' }]),
+        errorCode: 'SECOND_FAILURE',
+        actorId: 7,
+        startedAt: '2026-08-30T00:00:02.000Z',
+        completedAt: '2026-08-30T00:00:03.000Z'
+      }
+    ])
+    const reportQueries: string[] = []
+    db.on('query', query => {
+      if (query.sql.includes('agentProviderConformanceReports')) reportQueries.push(query.sql)
+    })
+
+    const reports = await new AgentProviderConformanceRunner(db, {} as AgentProviderFactory, { setConformed: vi.fn() } as never).listLatest([
+      secondProfileId,
+      '00000000-0000-4000-8000-000000000001'
+    ])
+
+    expect(reportQueries).toHaveLength(1)
+    expect(reports.map(latest => latest?.id ?? null)).toEqual(['00000000-0000-4000-8000-000000000023', '00000000-0000-4000-8000-000000000021'])
+    expect(reports[0]).toMatchObject({
+      profileVersionId: secondVersionId,
+      status: 'failed',
+      errorCode: 'SECOND_FAILURE',
+      message: 'Second profile failed'
+    })
+  })
   it('cannot apply completion for version A after an overlapping edit advances to version B', async () => {
     const versionB = '00000000-0000-4000-8000-000000000003'
     let edited = false

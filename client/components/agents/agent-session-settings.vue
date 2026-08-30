@@ -131,10 +131,13 @@ const applying = ref(false)
 const profileError = ref('')
 const dateFormatter = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' })
 
-watch(() => props.session.providerProfileId, providerProfileId => {
-  profileId.value = providerProfileId
-  profileError.value = ''
-})
+watch(
+  () => [props.session.id, props.session.providerProfileId] as const,
+  ([, providerProfileId]) => {
+    profileId.value = providerProfileId
+    profileError.value = ''
+  }
+)
 watch(profileId, () => {
   if (!applying.value) profileError.value = ''
 })
@@ -190,9 +193,13 @@ const applyProfile = async (): Promise<void> => {
   profileError.value = ''
   try {
     const result = await props.applyProviderProfile(profileId.value)
-    if (!result.success) profileError.value = result.error
+    if (!result.success) {
+      const error = typeof result.error === 'string' ? result.error.trim() : ''
+      profileError.value = error || 'The provider profile could not be applied. Try again.'
+    }
   } catch (value) {
-    profileError.value = value instanceof Error ? value.message : 'The provider profile could not be applied. Try again.'
+    const error = value instanceof Error && typeof value.message === 'string' ? value.message.trim() : ''
+    profileError.value = error || 'The provider profile could not be applied. Try again.'
   } finally {
     applying.value = false
   }

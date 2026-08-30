@@ -130,6 +130,40 @@ describe('Agent history session selection', () => {
     expect(panel.emit).toHaveBeenCalledWith('close')
   })
 
+  it('only closes after the latest selection is committed', async () => {
+    let resolveFirst!: (value: boolean) => void
+    let resolveSecond!: (value: boolean) => void
+    const agents: PanelAgents = {
+      openSession: vi
+        .fn()
+        .mockImplementationOnce(
+          () =>
+            new Promise<boolean>(resolve => {
+              resolveFirst = resolve
+            })
+        )
+        .mockImplementationOnce(
+          () =>
+            new Promise<boolean>(resolve => {
+              resolveSecond = resolve
+            })
+        ),
+      cancelSessionTransition: vi.fn()
+    }
+    const panel = loadPanel(agents)
+
+    const first = panel.openSession('00000000-0000-4000-8000-000000000002')
+    const second = panel.openSession('00000000-0000-4000-8000-000000000003')
+    resolveFirst(false)
+    await first
+    expect(panel.emit).not.toHaveBeenCalled()
+    resolveSecond(true)
+    await second
+
+    expect(panel.emit).toHaveBeenCalledTimes(1)
+    expect(panel.emit).toHaveBeenCalledWith('close')
+  })
+
   it('also cancels a pending transition when its parent removes the workspace', () => {
     const agents: PanelAgents = {
       openSession: vi.fn().mockResolvedValue(false),

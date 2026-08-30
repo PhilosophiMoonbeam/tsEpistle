@@ -2,8 +2,8 @@
   <section
     class="agent-goal"
     :class="`agent-goal--${goal.status}`"
-    aria-labelledby="agent-goal-title"
-    aria-describedby="agent-goal-summary"
+    :aria-labelledby="goalTitleId"
+    :aria-describedby="goalSummaryId"
     :aria-busy="busy"
   >
     <div class="agent-goal__rail" aria-hidden="true">
@@ -17,7 +17,7 @@
       <header class="agent-goal__header">
         <div class="agent-goal__heading">
           <p class="agent-goal__eyebrow">Durable goal</p>
-          <h2 id="agent-goal-title" class="agent-goal__title">{{ goal.objective }}</h2>
+          <h2 :id="goalTitleId" class="agent-goal__title">{{ goal.objective }}</h2>
         </div>
         <v-chip :color="statusColor" :prepend-icon="statusIcon" size="small" variant="tonal">{{ statusLabel }}</v-chip>
       </header>
@@ -40,6 +40,7 @@
           aria-valuemin="0"
           aria-valuemax="100"
           :aria-valuetext="budgetAriaLabel"
+          aria-label="Peak goal resource use"
         >
           <span :style="{ width: `${budgetPercent}%` }" />
         </div>
@@ -58,12 +59,17 @@
         </div>
       </dl>
 
-      <p id="agent-goal-summary" class="agent-goal__summary" aria-live="polite">{{ progressLabel }}</p>
+      <p :id="goalSummaryId" class="agent-goal__summary" aria-live="polite">{{ progressLabel }}</p>
 
-      <aside v-if="blockerMessages.length" class="agent-goal__blockers" :class="{ 'agent-goal__blockers--error': goal.status === 'failed' }" aria-labelledby="agent-goal-blockers-title">
+      <aside
+        v-if="blockerMessages.length"
+        class="agent-goal__blockers"
+        :class="{ 'agent-goal__blockers--error': goal.status === 'failed' }"
+        :aria-labelledby="goalBlockersTitleId"
+      >
         <div class="agent-goal__blockers-heading">
           <v-icon :icon="goal.status === 'failed' ? 'mdi-alert-octagon-outline' : 'mdi-alert-circle-outline'" size="19" />
-          <h3 id="agent-goal-blockers-title">{{ goal.status === 'failed' ? 'Why this goal stopped' : 'Needs attention' }}</h3>
+          <h3 :id="goalBlockersTitleId">{{ goal.status === 'failed' ? 'Why this goal stopped' : 'Needs attention' }}</h3>
         </div>
         <ul>
           <li v-for="(issue, index) in blockerMessages" :key="`${issue.code}-${index}`">
@@ -110,11 +116,11 @@
         >Cancel goal</v-btn>
       </div>
 
-      <v-dialog v-model="cancelDialogOpen" max-width="30rem" persistent aria-labelledby="cancel-goal-title">
+      <v-dialog v-model="cancelDialogOpen" max-width="30rem" :aria-labelledby="cancelGoalTitleId">
         <v-card rounded="xl">
           <v-card-title class="agent-goal__dialog-title">
             <v-avatar color="error" size="38" variant="tonal"><v-icon icon="mdi-stop-circle-outline" /></v-avatar>
-            <span id="cancel-goal-title">Cancel durable goal?</span>
+            <span :id="cancelGoalTitleId">Cancel durable goal?</span>
           </v-card-title>
           <v-card-text>
             This will stop <strong>{{ goal.objective }}</strong> and prevent every future continuation. Completed work remains in this conversation, but the goal cannot be resumed.
@@ -138,6 +144,10 @@ const props = defineProps<{ goal: AgentGoalView; busy: boolean; runActive: boole
 const emit = defineEmits<{ pause: []; resume: []; cancel: [] }>()
 const pendingAction = ref<'pause' | 'resume' | 'cancel' | null>(null)
 const cancelDialogOpen = ref(false)
+const goalTitleId = computed(() => `agent-goal-${props.goal.id}-title`)
+const goalSummaryId = computed(() => `agent-goal-${props.goal.id}-summary`)
+const goalBlockersTitleId = computed(() => `agent-goal-${props.goal.id}-blockers-title`)
+const cancelGoalTitleId = computed(() => `agent-goal-${props.goal.id}-cancel-title`)
 watch(() => props.busy, busy => { if (!busy) pendingAction.value = null })
 watch(() => props.goal.status, status => {
   if (!['active', 'paused', 'blocked'].includes(status)) cancelDialogOpen.value = false
@@ -216,18 +226,25 @@ const blockerMessages = computed(() => {
   }
   return issues
 })
+const currentYear = new Date().getFullYear()
+const timelineFormatter = new Intl.DateTimeFormat(undefined, {
+  month: 'short',
+  day: 'numeric',
+  hour: 'numeric',
+  minute: '2-digit'
+})
+const datedTimelineFormatter = new Intl.DateTimeFormat(undefined, {
+  year: 'numeric',
+  month: 'short',
+  day: 'numeric',
+  hour: 'numeric',
+  minute: '2-digit'
+})
 const timelineAt = computed(() => props.goal.completedAt ?? props.goal.deadlineAt)
 const timelinePrefix = computed(() => props.goal.completedAt ? 'Finished' : 'Due')
 const timelineLabel = computed(() => {
   const date = new Date(timelineAt.value)
-  const options: Intl.DateTimeFormatOptions = {
-    month: 'short',
-    day: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit'
-  }
-  if (date.getFullYear() !== new Date().getFullYear()) options.year = 'numeric'
-  return new Intl.DateTimeFormat(undefined, options).format(date)
+  return (date.getFullYear() === currentYear ? timelineFormatter : datedTimelineFormatter).format(date)
 })
 const pendingActionLabel = computed(() => {
   if (pendingAction.value === 'pause') return 'Pausing goal…'
@@ -375,7 +392,7 @@ const progressLabel = computed(() => {
 }
 .agent-goal__budget:first-child { border-inline-start: 0; padding-inline-start: 0; }
 .agent-goal__budget dt {
-  color: rgba(var(--v-theme-on-surface), .56);
+  color: rgba(var(--v-theme-on-surface), .68);
   font-size: .65rem;
   font-weight: 650;
 }
@@ -388,11 +405,9 @@ const progressLabel = computed(() => {
 }
 .agent-goal__budget dd span { font-size: .78rem; font-variant-numeric: tabular-nums; font-weight: 700; }
 .agent-goal__budget dd small {
-  color: rgba(var(--v-theme-on-surface), .5);
+  color: rgba(var(--v-theme-on-surface), .68);
   font-size: .62rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 .agent-goal__budget-track {
   background: rgba(var(--v-theme-on-surface), .08);
@@ -423,9 +438,9 @@ const progressLabel = computed(() => {
 .agent-goal__blockers-heading { align-items: center; color: var(--goal-accent); display: flex; gap: var(--wiki-space-2); }
 .agent-goal__blockers-heading h3 { font-size: .76rem; font-weight: 750; margin: 0; }
 .agent-goal__blockers ul { margin: var(--wiki-space-2) 0 0; padding-inline-start: var(--wiki-space-5); }
-.agent-goal__blockers li { font-size: .74rem; line-height: 1.45; padding-inline-start: var(--wiki-space-1); }
+.agent-goal__blockers li { font-size: .74rem; line-height: 1.45; overflow-wrap: anywhere; padding-inline-start: var(--wiki-space-1); }
 .agent-goal__blockers li + li { margin-top: var(--wiki-space-2); }
-.agent-goal__issue-state { color: rgba(var(--v-theme-on-surface), .56); display: block; font-size: .65rem; margin-top: var(--wiki-space-1); }
+.agent-goal__issue-state { color: rgba(var(--v-theme-on-surface), .68); display: block; font-size: .65rem; margin-top: var(--wiki-space-1); }
 .agent-goal__pending {
   align-items: center;
   color: rgb(var(--v-theme-primary));
@@ -435,8 +450,9 @@ const progressLabel = computed(() => {
   margin: var(--wiki-space-3) 0 0;
 }
 .agent-goal__actions { display: flex; flex-wrap: wrap; gap: var(--wiki-space-2); margin-top: var(--wiki-space-3); }
-.agent-goal__dialog-title { align-items: center; display: flex; gap: var(--wiki-space-3); padding: var(--wiki-space-5) var(--wiki-space-5) var(--wiki-space-3); }
-.agent-goal__dialog-actions { padding: 0 var(--wiki-space-5) var(--wiki-space-4); }
+.agent-goal__dialog-title { align-items: center; display: flex; gap: var(--wiki-space-3); overflow-wrap: anywhere; padding: var(--wiki-space-5) var(--wiki-space-5) var(--wiki-space-3); }
+.agent-goal__dialog-actions { flex-wrap: wrap; padding: 0 var(--wiki-space-5) var(--wiki-space-4); }
+.agent-goal__dialog-actions :deep(.v-spacer) { min-width: 0; }
 @media (max-width: 600px) {
   .agent-goal {
     border-radius: var(--wiki-control-radius);
@@ -451,6 +467,13 @@ const progressLabel = computed(() => {
   .agent-goal__budget:first-child { border-inline-start: 0; padding-inline-start: 0; }
   .agent-goal__budget + .agent-goal__budget { border-top: 1px solid var(--wiki-surface-border); padding-top: var(--wiki-space-2); }
   .agent-goal__actions :deep(.v-btn) { min-height: var(--wiki-control-height); }
+  .agent-goal__dialog-actions {
+    align-items: stretch;
+    flex-direction: column;
+    padding-inline: var(--wiki-space-3);
+  }
+  .agent-goal__dialog-actions :deep(.v-spacer) { display: none; }
+  .agent-goal__dialog-actions :deep(.v-btn) { min-height: var(--wiki-control-height); width: 100%; }
 }
 @media (prefers-reduced-motion: reduce) {
   .agent-goal__meter > span { transition: none; }

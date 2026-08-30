@@ -120,6 +120,27 @@ describe('agents client boundary', () => {
     )
   })
 
+  it('turns a malformed successful history response into a bounded gateway error', async () => {
+    const fetcher = vi.fn(async () => Response.json({ sessions: [{ id: 'invalid' }], nextCursor: null })) as unknown as typeof fetch
+
+    const error = await listAgentSessions(fetcher, 'csrf').catch(reason => reason)
+
+    expect(error).toBeInstanceOf(AgentApiError)
+    expect(error).toMatchObject({ status: 502, retryable: true })
+    expect((error as Error).message.length).toBeLessThanOrEqual(512)
+  })
+
+  it('rejects invalid history cursors before fetching', async () => {
+    const fetcher = vi.fn(async () => Response.json({ sessions: [], nextCursor: null })) as unknown as typeof fetch
+
+    for (const cursor of ['', 'x'.repeat(513)]) {
+      const error = await listAgentSessions(fetcher, 'csrf', { cursor }).catch(reason => reason)
+      expect(error).toBeInstanceOf(AgentApiError)
+      expect(error).toMatchObject({ status: 400, retryable: false })
+    }
+    expect(fetcher).not.toHaveBeenCalled()
+  })
+
   it('accepts the canonical projected run from a pending cancellation response', async () => {
     const run = {
       id: '00000000-0000-4000-8000-000000000001',

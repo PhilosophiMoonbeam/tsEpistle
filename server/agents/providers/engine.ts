@@ -591,12 +591,7 @@ interface ProviderTools {
 
 type ChatPromptMessage = AxChatRequest['chatPrompt'][number]
 
-const providerRequestFor = (
-  provider: AgentProviderService,
-  tools: ProviderTools | null,
-  chatPrompt: AxChatRequest['chatPrompt'],
-  maxOutputTokens: number
-) => ({
+const providerRequestFor = (provider: AgentProviderService, tools: ProviderTools | null, chatPrompt: AxChatRequest['chatPrompt'], maxOutputTokens: number) => ({
   chatPrompt,
   model: provider.model,
   modelConfig: { maxTokens: maxOutputTokens },
@@ -640,10 +635,7 @@ const boundedChatPrompt = (
   for (let groupIndex = groups.length - 1; groupIndex >= 0; groupIndex--) {
     const group = groups[groupIndex]!
     if (group.some(index => included.has(index))) continue
-    const groupBytes = group.reduce(
-      (total, index) => total + Buffer.byteLength(JSON.stringify(conversation[index]), 'utf8') + 1,
-      0
-    )
+    const groupBytes = group.reduce((total, index) => total + Buffer.byteLength(JSON.stringify(conversation[index]), 'utf8') + 1, 0)
     if (groupBytes > remainingBytes) break
     for (const index of group) included.add(index)
     remainingBytes -= groupBytes
@@ -835,8 +827,14 @@ export class AxAgentEngine implements AgentEngine {
       }
       const costMicros = agentProviderCostMicros(provider.pricing, inputTokens, outputTokens)
       if (dispatchReservation && dispatchBudget) {
-        reservationReconciled = true
-        await dispatchBudget.reconcile(dispatchReservation, { inputTokens, outputTokens, costMicros })
+        try {
+          await dispatchBudget.reconcile(dispatchReservation, { inputTokens, outputTokens, costMicros })
+          reservationReconciled = true
+        } catch (error) {
+          await dispatchBudget.release(dispatchReservation)
+          reservationReconciled = true
+          throw error
+        }
       }
       if (tools && !provider.capabilities.parallelToolCalls && calls.size > 1)
         throw new AgentRepositoryError('INVALID_PROVIDER_RESPONSE', 'Provider emitted parallel action calls contrary to its capability profile', 502)
@@ -845,7 +843,12 @@ export class AxAgentEngine implements AgentEngine {
       if (dispatchReservation && dispatchBudget && !reservationReconciled) {
         if (receivedResponse) {
           const costMicros = agentProviderCostMicros(provider.pricing, inputTokens, outputTokens)
-          await dispatchBudget.reconcile(dispatchReservation, { inputTokens, outputTokens, costMicros })
+          try {
+            await dispatchBudget.reconcile(dispatchReservation, { inputTokens, outputTokens, costMicros })
+          } catch (reconcileError) {
+            await dispatchBudget.release(dispatchReservation)
+            throw reconcileError
+          }
         } else {
           await dispatchBudget.release(dispatchReservation)
         }
@@ -1029,6 +1032,7 @@ export class AxAgentEngine implements AgentEngine {
         if (!actionSession)
           throw new AgentRepositoryError('UNEXPECTED_PROVIDER_TOOL_CALL', 'Provider requested an action when no action session was available', 502)
         await sink.event('model.turn', modelTurnData(turn + 1, result, 'tool_calls'))
+        if (turn + 1 >= maxTurns) throw new AgentRepositoryError('AGENT_TURN_LIMIT', 'Agent turn limit was exceeded', 409)
         let toolBudgetExhausted = false
         if (tools?.mode === 'native') {
           activePrompt.push({

@@ -327,13 +327,18 @@ onBeforeUnmount(() => {
 }
 
 .agent-markdown :deep(a:focus-visible),
-.agent-markdown :deep(pre:focus-visible),
-.agent-markdown :deep(.agent-markdown__table-shell:focus-visible),
-.agent-markdown :deep(.agent-markdown__copy:focus-visible) {
+.agent-markdown :deep(.agent-markdown__table-shell:focus-visible) {
   border-radius: var(--wiki-radius-xs);
   box-shadow: var(--wiki-focus-ring);
   outline: 2px solid var(--wiki-focus-color);
   outline-offset: var(--wiki-focus-offset);
+}
+
+.agent-markdown :deep(pre:focus-visible),
+.agent-markdown :deep(.agent-markdown__copy:focus-visible) {
+  border-radius: var(--wiki-radius-xs);
+  outline: 2px solid var(--wiki-focus-color);
+  outline-offset: calc(-1 * var(--wiki-focus-offset));
 }
 
 .agent-markdown :deep(a[target='_blank']:not([title^='Citation ']))::after {
@@ -538,6 +543,13 @@ onBeforeUnmount(() => {
   .agent-markdown :deep(th),
   .agent-markdown :deep(td) {
     min-width: calc(var(--wiki-space-12) * 2.5);
+  }
+}
+
+@media (pointer: coarse) {
+  .agent-markdown :deep(.agent-markdown__code-toolbar),
+  .agent-markdown :deep(.agent-markdown__copy) {
+    min-height: var(--wiki-control-height);
   }
 }
 

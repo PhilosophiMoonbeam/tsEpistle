@@ -428,11 +428,17 @@ const sendPrompt = async (
 ): Promise<boolean> => {
   const prompt = content.trim()
   if (!prompt) { completion?.(false); return false }
-  await ensureInitialized()
-  if (!canSubmit.value || (mode === 'goal' && !props.goalsEnabled)) { completion?.(false); return false }
-  const success = await agents.send(prompt, invokedSkillVersionIds, mode)
-  completion?.(success)
-  return success
+  try {
+    await ensureInitialized()
+    if (!canSubmit.value || (mode === 'goal' && !props.goalsEnabled)) { completion?.(false); return false }
+    const success = await agents.send(prompt, invokedSkillVersionIds, mode)
+    completion?.(success)
+    return success
+  } catch (value) {
+    agents.error = value instanceof Error ? value.message : 'The message could not be sent.'
+    completion?.(false)
+    return false
+  }
 }
 const focusConversation = async (): Promise<void> => {
   await nextTick()
@@ -619,7 +625,9 @@ const jumpToApproval = async (): Promise<void> => {
 const transcriptIsNearBottom = (element: HTMLElement | null): boolean =>
   Boolean(element && element.scrollHeight - element.scrollTop - element.clientHeight < 160)
 const handleTranscriptScroll = (): void => {
-  transcriptFollowing.value = transcriptIsNearBottom(transcript.value)
+  const following = transcriptIsNearBottom(transcript.value)
+  transcriptFollowing.value = following
+  if (!following) transcriptFrameShouldFollow = false
   updateApprovalJump()
 }
 const reconcileTranscriptGrowth = async (shouldFollow: boolean): Promise<void> => {
@@ -683,14 +691,25 @@ watch([historyOpen, memoryOpen], ([history, memory]) => {
   triggerForPanel(restoreKind)?.focus({ preventScroll: true })
 }, { flush: 'post' })
 watch(() => thread.value?.session.id, (sessionId, previousSessionId) => {
-  if (!historyOpen.value || !sessionId || !previousSessionId || sessionId === previousSessionId) return
-  panelFocusScope?.deactivate({ restoreFocus: false })
-  panelFocusScope = null
-  panelFocusKind = null
-  if (compactPanels.value) historyOpen.value = false
+  if (!sessionId || !previousSessionId || sessionId === previousSessionId) return
+  const restoreWorkspaceFocus = !resetHistoryOpen.value
+  if (historyOpen.value) {
+    panelFocusScope?.deactivate({ restoreFocus: false })
+    panelFocusScope = null
+    panelFocusKind = null
+    if (compactPanels.value) historyOpen.value = false
+  }
+  transcriptFollowing.value = true
   void nextTick(async () => {
-    if (hasConversation.value) transcript.value?.focus({ preventScroll: true })
-    else await composer.value?.focusInput()
+    const container = transcript.value
+    if (hasConversation.value) {
+      if (container) container.scrollTo({ top: container.scrollHeight, behavior: 'auto' })
+      if (restoreWorkspaceFocus) container?.focus({ preventScroll: true })
+    } else {
+      if (container) container.scrollTop = 0
+      if (restoreWorkspaceFocus) await composer.value?.focusInput()
+    }
+    updateApprovalJump()
   })
 })
 watch([thread, pendingApprovalId, connection], () => {
@@ -729,6 +748,8 @@ defineExpose({ sendPrompt, focusComposer, focusConversation })
   gap: var(--wiki-space-4);
   color: rgb(var(--v-theme-on-surface));
   font-family: var(--wiki-font-body);
+  background: rgb(var(--v-theme-background));
+  isolation: isolate;
   text-align: start;
 }
 
@@ -764,7 +785,7 @@ defineExpose({ sendPrompt, focusComposer, focusConversation })
   overflow: hidden;
   border: 1px solid var(--wiki-surface-border-strong);
   border-radius: var(--wiki-hero-radius) !important;
-  background: var(--wiki-surface-raised);
+  background: rgb(var(--v-theme-surface));
   box-shadow: var(--wiki-shadow-lg), var(--wiki-shadow-inset);
   text-align: start;
 }
@@ -904,7 +925,7 @@ defineExpose({ sendPrompt, focusComposer, focusConversation })
       transparent calc(var(--wiki-space-12) - 1px),
       color-mix(in srgb, var(--wiki-surface-border) 34%, transparent) var(--wiki-space-12)
     ),
-    var(--wiki-surface-sunken);
+    rgb(var(--v-theme-background));
 }
 
 .inline-agent__alert {
@@ -1383,6 +1404,16 @@ defineExpose({ sendPrompt, focusComposer, focusConversation })
 
   .inline-agent__transcript {
     padding-inline: 0;
+  }
+
+  .inline-agent__notice {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
   }
 
   .inline-agent__welcome {

@@ -823,9 +823,11 @@ export class AgentProductRuntime {
         signal,
         dispatchBudget
       })
-    } catch {
+    } catch (error) {
+      if (signal.aborted) throw signal.reason ?? error
       return empty
     }
+    if (signal.aborted) throw signal.reason
     if (generated.title.length > 0) {
       try {
         await this.#knex('agentSessions')
@@ -1114,10 +1116,11 @@ export class AgentProductRuntime {
     let cursor = 0
     while (cursor < pending.length) {
       const batch: Array<{ readonly task: AgentTaskRecord; readonly reservation: AgentChildBudgetReservation }> = []
-      while (batch.length < concurrency) {
+      const batchCapacity = Math.min(concurrency, pending.length - cursor)
+      while (batch.length < batchCapacity) {
         const task = pending[cursor]
         if (!task) break
-        const reservation = reservations.reserve()
+        const reservation = reservations.reserve(batchCapacity - batch.length)
         if (reservation === null) break
         batch.push({ task, reservation })
         cursor += 1
@@ -1324,7 +1327,6 @@ export class AgentProductRuntime {
       orchestrationUsage.inputTokens = orchestrationTelemetry.usage.inputTokens
       orchestrationUsage.outputTokens = orchestrationTelemetry.usage.outputTokens
       orchestrationUsage.costMicros = orchestrationTelemetry.usage.costMicros
-      const modelTurnsBeforeExecution = orchestrationTelemetry.modelTurns
       const research = tasks.length === 0 ? undefined : await this.#researchContext(claim, tasks)
       const goalUsage = goal === null ? null : await this.#goalUsage(goal.id)
       const currentRunEventTokens =
@@ -1380,31 +1382,24 @@ export class AgentProductRuntime {
                 new AgentRepositoryError('AGENT_ACTION_CONTINUATION_UNSUPPORTED', 'Inference engine cannot resume durable action continuations', 500)
               ))
       if (executionSignal.aborted) throw executionSignal.reason
-      orchestrationTelemetry = await this.#orchestrationTelemetry(claim)
-      orchestrationUsage.inputTokens = orchestrationTelemetry.usage.inputTokens
-      orchestrationUsage.outputTokens = orchestrationTelemetry.usage.outputTokens
-      orchestrationUsage.costMicros = orchestrationTelemetry.usage.costMicros
       const resultModelUsage = {
         inputTokens: nonNegativeUsage(result.inputTokens, 'Model input tokens'),
         outputTokens: nonNegativeUsage(result.outputTokens, 'Model output tokens'),
         costMicros: nonNegativeUsage(result.costMicros, 'Model cost')
       }
-      const modelUsage =
-        orchestrationTelemetry.modelTurns > modelTurnsBeforeExecution
-          ? { ...orchestrationTelemetry.modelUsage }
-          : {
-              inputTokens: orchestrationTelemetry.modelUsage.inputTokens + resultModelUsage.inputTokens,
-              outputTokens: orchestrationTelemetry.modelUsage.outputTokens + resultModelUsage.outputTokens,
-              costMicros: orchestrationTelemetry.modelUsage.costMicros + resultModelUsage.costMicros
-            }
+      const modelUsage = {
+        inputTokens: orchestrationTelemetry.modelUsage.inputTokens + resultModelUsage.inputTokens,
+        outputTokens: orchestrationTelemetry.modelUsage.outputTokens + resultModelUsage.outputTokens,
+        costMicros: orchestrationTelemetry.modelUsage.costMicros + resultModelUsage.costMicros
+      }
       const titleUsage =
         continuation === null
           ? await this.#generateConversationTitle(claim, sessionRow, messages, content, executionSignal, dispatchBudget)
           : { title: '', source: 'fallback' as const, inputTokens: 0, outputTokens: 0, costMicros: 0 }
-      const reconciledProviderUsage = dispatchBudget.consumed
-      const inputTokens = nonNegativeUsage(reconciledProviderUsage.inputTokens, 'Input tokens')
-      const outputTokens = nonNegativeUsage(reconciledProviderUsage.outputTokens, 'Output tokens')
-      const costMicros = nonNegativeUsage(reconciledProviderUsage.costMicros, 'Cost')
+      if (executionSignal.aborted) throw executionSignal.reason
+      const inputTokens = nonNegativeUsage(orchestrationUsage.inputTokens + modelUsage.inputTokens + titleUsage.inputTokens, 'Input tokens')
+      const outputTokens = nonNegativeUsage(orchestrationUsage.outputTokens + modelUsage.outputTokens + titleUsage.outputTokens, 'Output tokens')
+      const costMicros = nonNegativeUsage(orchestrationUsage.costMicros + modelUsage.costMicros + titleUsage.costMicros, 'Cost')
       const citations = result.citations === undefined ? null : canonicalJson(result.citations)
       const providerStateJson = result.providerState === undefined ? null : canonicalJson(result.providerState)
       if (providerStateJson !== null && Buffer.byteLength(providerStateJson, 'utf8') > 256 * 1_024)
@@ -1479,6 +1474,18 @@ export class AgentProductRuntime {
         : reportedCode === 'AGENT_BUDGET_LIMITED' || reportedCode === 'AGENT_CHILD_BUDGET_EXCEEDED' || (goalDeadlineAt !== null && goalDeadlineAt <= Date.now())
           ? 'AGENT_BUDGET_LIMITED'
           : 'AGENT_ENGINE_FAILED'
+      let ownsActiveRun = false
+      let ownedStatus: string | undefined
+      try {
+        const owned = (await this.#knex('agentRuns')
+          .where({ id: claim.id, ownerId: claim.ownerId, leaseOwner: claim.leaseOwner, leaseToken: claim.leaseToken })
+          .first('status')) as { status: string } | undefined
+        ownedStatus = owned?.status
+        ownsActiveRun = ownedStatus === 'running' || ownedStatus === 'awaiting_approval'
+      } catch {
+        /* the retention reconciler owns unavailable reservations */
+      }
+      if (signal.aborted && ownedStatus === 'awaiting_approval') throw error
       if (signal.aborted || errorCode === 'AGENT_BUDGET_LIMITED') {
         try {
           await cancelAgentRunTasks(this.#knex, claim)
@@ -1486,22 +1493,23 @@ export class AgentProductRuntime {
           /* coordinator cancellation remains authoritative */
         }
       }
-      let ownsActiveRun = false
       try {
-        const owned = (await this.#knex('agentRuns')
-          .where({ id: claim.id, ownerId: claim.ownerId, leaseOwner: claim.leaseOwner, leaseToken: claim.leaseToken })
-          .first('status')) as { status: string } | undefined
-        ownsActiveRun = owned?.status === 'running' || owned?.status === 'awaiting_approval'
         if (ownsActiveRun && !quotaReconciled) {
-          let providerUsage = dispatchBudget?.consumed
-          if (providerUsage === undefined) {
-            const telemetry = await this.#orchestrationTelemetry(claim)
-            providerUsage = {
-              inputTokens: telemetry.usage.inputTokens + telemetry.modelUsage.inputTokens,
-              outputTokens: telemetry.usage.outputTokens + telemetry.modelUsage.outputTokens,
-              costMicros: telemetry.usage.costMicros + telemetry.modelUsage.costMicros
-            }
+          const telemetry = await this.#orchestrationTelemetry(claim)
+          const persistedUsage = {
+            inputTokens: telemetry.usage.inputTokens + telemetry.modelUsage.inputTokens,
+            outputTokens: telemetry.usage.outputTokens + telemetry.modelUsage.outputTokens,
+            costMicros: telemetry.usage.costMicros + telemetry.modelUsage.costMicros
           }
+          const dispatchedUsage = dispatchBudget?.consumed
+          const providerUsage =
+            dispatchedUsage === undefined
+              ? persistedUsage
+              : {
+                  inputTokens: Math.max(persistedUsage.inputTokens, dispatchedUsage.inputTokens),
+                  outputTokens: Math.max(persistedUsage.outputTokens, dispatchedUsage.outputTokens),
+                  costMicros: Math.max(persistedUsage.costMicros, dispatchedUsage.costMicros)
+                }
           const consumedTokens = providerUsage.inputTokens + providerUsage.outputTokens
           await terminalizeAgentRun(this.#knex, {
             runId: claim.id,

@@ -19,9 +19,9 @@
           @click='adminDrawerShown = !adminDrawerShown'
           :aria-expanded='adminDrawerShown'
           aria-controls='admin-navigation'
-          aria-label='Administration navigation'
+          :aria-label='adminDrawerShown ? `Close administration navigation` : `Open administration navigation`'
         )
-          v-icon mdi-menu
+          v-icon {{ adminDrawerShown ? 'mdi-close' : 'mdi-menu' }}
     v-navigation-drawer#admin-navigation.pb-0.admin-sidebar(
       v-model='adminDrawerShown'
       :location="$vuetify.locale.isRtl ? 'right' : undefined"
@@ -318,11 +318,13 @@ export default defineComponent({
     currentRouteLabel(): string {
       if (this.$route.path === '/dashboard') return this.$t('admin:dashboard.title')
       if (this.$route.path === '/contribute') return this.$t('admin:contribute.title')
+      if (this.$route.path === '/agents') return this.$t('admin:agents.title')
       return this.currentRouteItem?.label || 'Administration'
     },
     currentRouteIcon(): string {
       if (this.$route.path === '/dashboard') return 'mdi-view-dashboard-variant-outline'
       if (this.$route.path === '/contribute') return 'mdi-heart-outline'
+      if (this.$route.path === '/agents') return 'mdi-robot-outline'
       return this.currentRouteItem?.icon || 'mdi-shield-crown-outline'
     }
   },
@@ -337,7 +339,10 @@ export default defineComponent({
       this.$nextTick(() => {
         const main = ((this.$refs.adminMain as { $el?: HTMLElement })?.$el || this.$refs.adminMain) as HTMLElement | undefined
         const heading = main?.querySelector('h1') as HTMLElement | null
-        heading?.focus?.()
+        if (heading) {
+          heading.setAttribute('tabindex', '-1')
+          heading.focus()
+        }
       })
       if (this.$vuetify.display.smAndDown) {
         this.adminDrawerShown = false
