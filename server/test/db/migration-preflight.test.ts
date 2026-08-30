@@ -2,6 +2,7 @@ import createKnex, { type Knex } from 'knex'
 import { afterEach, beforeEach, describe, expect, it } from '../bun-test.mts'
 
 import { MigrationPreflightError, preflightMigrations } from '../../db/migration-preflight.ts'
+import { MIGRATION_LINEAGE_V1 } from '../../db/migration-contract.ts'
 
 type MigrationSpec = { name: string }
 
@@ -41,9 +42,38 @@ const createApplicationTable = async (db: Knex, tableName = 'pages'): Promise<vo
   })
 }
 
+const createLegacyForkSchemaSignature = async (db: Knex): Promise<void> => {
+  for (const tableName of ['pages', 'pageHistory', 'pageTree']) {
+    await db.schema.createTable(tableName, table => {
+      table.increments('id').primary()
+      table.string('visibility', 16).notNullable()
+      table.integer('ownerId').nullable()
+    })
+  }
+}
+
+const createLineageMarker = async (db: Knex, version = MIGRATION_LINEAGE_V1.version): Promise<void> => {
+  await db.schema.createTable(MIGRATION_LINEAGE_V1.tableName, table => {
+    table.string('product', 32).primary()
+    table.integer('lineageVersion').notNullable()
+    table.string('upstreamMigrationCutoff', 64).notNullable()
+    table.string('legacyForkMigrationStart', 64).notNullable()
+    table.string('legacyForkMigrationEnd', 64).notNullable()
+    table.string('namespacedMigrationStart', 128).notNullable()
+  })
+  await db(MIGRATION_LINEAGE_V1.tableName).insert({
+    product: MIGRATION_LINEAGE_V1.product,
+    lineageVersion: version,
+    upstreamMigrationCutoff: MIGRATION_LINEAGE_V1.upstreamCutoff,
+    legacyForkMigrationStart: MIGRATION_LINEAGE_V1.legacyForkStart,
+    legacyForkMigrationEnd: MIGRATION_LINEAGE_V1.legacyForkEnd,
+    namespacedMigrationStart: MIGRATION_LINEAGE_V1.namespacedStart
+  })
+}
+
 describe('database migration preflight', () => {
   let db: Knex
-  const available = ['2.0.0.js', '2.5.128.js', '2.5.129.js']
+  const available = ['2.0.0.js', '2.5.128.js', '2.5.129.js', MIGRATION_LINEAGE_V1.namespacedStart]
 
   beforeEach(() => {
     db = createKnex({
@@ -168,6 +198,68 @@ describe('database migration preflight', () => {
     await createLedger(db, ['2.0.0.js', '2.5.129.js'])
 
     await expect(Promise.resolve(preflightMigrations(db, migrationSource(available)))).rejects.toThrow('incomplete or out of order at 2.5.129.js')
+  })
+
+  it('accepts an existing legacy tsFranki ledger only when its schema carries the fork signature', async () => {
+    await createLegacyForkSchemaSignature(db)
+    await createLedger(db, available.slice(0, 3))
+
+    expect(await preflightMigrations(db, migrationSource(available))).toEqual({
+      applied: available.slice(0, 3),
+      available,
+      state: 'ready'
+    })
+  })
+
+  it('refuses a same-name upstream migration that lacks the legacy tsFranki schema signature', async () => {
+    await createApplicationTable(db)
+    await createLedger(db, available.slice(0, 3))
+
+    await expect(Promise.resolve(preflightMigrations(db, migrationSource(available)))).rejects.toThrow('Database migration lineage is ambiguous')
+  })
+
+  it('accepts namespaced history only with the exact durable lineage marker', async () => {
+    await createApplicationTable(db)
+    await createLineageMarker(db)
+    await createLedger(db, available)
+
+    expect(await preflightMigrations(db, migrationSource(available))).toEqual({
+      applied: available,
+      available,
+      state: 'ready'
+    })
+  })
+
+  it('refuses missing, premature, or mismatched lineage markers', async () => {
+    await createApplicationTable(db)
+    await createLedger(db, available)
+    await expect(Promise.resolve(preflightMigrations(db, migrationSource(available)))).rejects.toThrow(
+      'namespaced tsFranki migrations exist without the schemaLineage marker'
+    )
+
+    await db('migrations').delete()
+    await db('migrations').insert(
+      available.slice(0, 2).map((name, index) => ({
+        batch: 1,
+        migration_time: new Date(Date.UTC(2026, 1, index + 1)),
+        name
+      }))
+    )
+    await createLineageMarker(db)
+    await expect(Promise.resolve(preflightMigrations(db, migrationSource(available)))).rejects.toThrow(
+      'schemaLineage marker exists before tsfranki-000001-schema-lineage.js'
+    )
+
+    await db('migrations').delete()
+    await db('migrations').insert(
+      available.map((name, index) => ({
+        batch: 1,
+        migration_time: new Date(Date.UTC(2026, 2, index + 1)),
+        name
+      }))
+    )
+    await db(MIGRATION_LINEAGE_V1.tableName).update({ lineageVersion: 99 })
+    await expect(Promise.resolve(preflightMigrations(db, migrationSource(available)))).rejects.toThrow('schemaLineage marker is missing or does not match')
   })
 
   it('refuses a locked migration ledger with actionable recovery guidance', async () => {

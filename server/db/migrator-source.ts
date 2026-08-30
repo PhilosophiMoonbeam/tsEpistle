@@ -3,7 +3,7 @@ import path from 'node:path'
 
 import fs from 'fs-extra'
 import type { Knex } from 'knex'
-import semver from 'semver'
+import { migrationLedgerName, orderMigrationFiles } from './migration-contract.ts'
 
 interface WikiDatabaseContext {
   SERVERPATH: string
@@ -11,7 +11,6 @@ interface WikiDatabaseContext {
 
 interface MigrationSpec {
   file: string
-  directory: string
 }
 
 export const KNOWN_APPLICATION_TABLES: Readonly<Record<string, true>> = {
@@ -88,7 +87,8 @@ export const KNOWN_APPLICATION_TABLES: Readonly<Record<string, true>> = {
   pageKnowledgeProjections: true,
   agentConversationFolders: true,
   agentRunTasks: true,
-  agentGoals: true
+  agentGoals: true,
+  schemaLineage: true
 }
 
 function isMigration(value: unknown): value is Knex.Migration {
@@ -105,23 +105,16 @@ const requireMigration = createRequire(import.meta.url)
 const migrationSource: Knex.MigrationSource<MigrationSpec> = {
   async getMigrations() {
     const directory = baseMigrationPath()
-    const migrationFiles = await fs.readdir(directory)
-    return migrationFiles
-      .filter(file => file.endsWith('.ts'))
-      .map(file => file.slice(0, -3))
-      .sort(semver.compare)
-      .map(file => ({
-        file,
-        directory
-      }))
+    const migrationFiles = (await fs.readdir(directory)).filter(file => file.endsWith('.ts'))
+    return orderMigrationFiles(migrationFiles).map(file => ({ file }))
   },
 
   getMigrationName(migration) {
-    return migration.file.endsWith('.js') ? migration.file : `${migration.file}.js`
+    return migrationLedgerName(migration.file)
   },
 
   async getMigration(migration) {
-    const filename = migration.file.replace(/\.js$/, '') + '.ts'
+    const filename = `${migration.file}.ts`
     const loaded: unknown = requireMigration(path.join(baseMigrationPath(), filename))
     if (!isMigration(loaded)) {
       throw new TypeError(`Invalid migration module: ${filename}`)

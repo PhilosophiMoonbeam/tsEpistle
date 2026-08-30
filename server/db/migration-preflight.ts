@@ -1,6 +1,7 @@
 import type { Knex } from 'knex'
 
 import { KNOWN_APPLICATION_TABLES } from './migrator-source.ts'
+import { isLegacyForkMigrationName, isTsfrankiMigrationName, MIGRATION_LINEAGE_V1 } from './migration-contract.ts'
 
 interface MigrationRecord {
   id: number
@@ -9,6 +10,15 @@ interface MigrationRecord {
 
 interface MigrationLockRecord {
   is_locked: boolean | number
+}
+
+interface SchemaLineageRecord {
+  product: string
+  lineageVersion: number
+  upstreamMigrationCutoff: string
+  legacyForkMigrationStart: string
+  legacyForkMigrationEnd: string
+  namespacedMigrationStart: string
 }
 
 export interface MigrationPreflightResult {
@@ -38,6 +48,73 @@ const existingApplicationTables = async (knex: Knex): Promise<string[]> => {
 const availableMigrationNames = async (migrationSource: Knex.MigrationSource<unknown>): Promise<string[]> => {
   const migrations = await migrationSource.getMigrations([])
   return migrations.map(migration => migrationSource.getMigrationName(migration))
+}
+
+const lineageFailure = (detail: string): MigrationPreflightError =>
+  new MigrationPreflightError(`Database migration lineage is ambiguous: ${detail} Refusing to infer or rewrite its schema history.`)
+
+const assertLegacyForkSchemaSignature = async (knex: Knex): Promise<void> => {
+  const expectedColumns = [
+    ['pages', 'visibility'],
+    ['pages', 'ownerId'],
+    ['pageHistory', 'visibility'],
+    ['pageHistory', 'ownerId'],
+    ['pageTree', 'visibility'],
+    ['pageTree', 'ownerId']
+  ] as const
+  const removedColumns = [
+    ['pages', 'isPrivate'],
+    ['pages', 'privateNS'],
+    ['pageHistory', 'isPrivate'],
+    ['pageHistory', 'privateNS'],
+    ['pageTree', 'isPrivate'],
+    ['pageTree', 'privateNS']
+  ] as const
+  const [expectedResults, removedResults] = await Promise.all([
+    Promise.all(expectedColumns.map(async ([table, column]) => ({ column, exists: await knex.schema.hasColumn(table, column), table }))),
+    Promise.all(removedColumns.map(async ([table, column]) => ({ column, exists: await knex.schema.hasColumn(table, column), table })))
+  ])
+  const missing = expectedResults.filter(result => !result.exists).map(result => `${result.table}.${result.column}`)
+  const retained = removedResults.filter(result => result.exists).map(result => `${result.table}.${result.column}`)
+  if (missing.length > 0 || retained.length > 0) {
+    const details = [
+      missing.length > 0 ? `missing tsFranki columns ${missing.join(', ')}` : '',
+      retained.length > 0 ? `retains pre-tsFranki columns ${retained.join(', ')}` : ''
+    ].filter(Boolean)
+    throw lineageFailure(
+      `the ledger contains ${MIGRATION_LINEAGE_V1.legacyForkStart} or a later legacy fork migration but the schema ${details.join(' and ')}.`
+    )
+  }
+}
+
+const assertSchemaLineageMarker = async (knex: Knex): Promise<void> => {
+  const marker = await knex<SchemaLineageRecord>(MIGRATION_LINEAGE_V1.tableName).where('product', MIGRATION_LINEAGE_V1.product).first()
+  if (
+    !marker ||
+    Number(marker.lineageVersion) !== MIGRATION_LINEAGE_V1.version ||
+    marker.upstreamMigrationCutoff !== MIGRATION_LINEAGE_V1.upstreamCutoff ||
+    marker.legacyForkMigrationStart !== MIGRATION_LINEAGE_V1.legacyForkStart ||
+    marker.legacyForkMigrationEnd !== MIGRATION_LINEAGE_V1.legacyForkEnd ||
+    marker.namespacedMigrationStart !== MIGRATION_LINEAGE_V1.namespacedStart
+  ) {
+    throw lineageFailure(`the ${MIGRATION_LINEAGE_V1.tableName} marker is missing or does not match this tsFranki migration line.`)
+  }
+}
+
+const assertTsfrankiLineage = async (knex: Knex, applied: readonly string[]): Promise<void> => {
+  const hasLegacyForkHistory = applied.some(isLegacyForkMigrationName)
+  const hasNamespacedHistory = applied.some(isTsfrankiMigrationName)
+  const hasMarker = await knex.schema.hasTable(MIGRATION_LINEAGE_V1.tableName)
+
+  if (hasNamespacedHistory) {
+    if (!hasMarker) throw lineageFailure(`namespaced tsFranki migrations exist without the ${MIGRATION_LINEAGE_V1.tableName} marker.`)
+    await assertSchemaLineageMarker(knex)
+    return
+  }
+  if (hasMarker) {
+    throw lineageFailure(`the ${MIGRATION_LINEAGE_V1.tableName} marker exists before ${MIGRATION_LINEAGE_V1.namespacedStart} appears in the ledger.`)
+  }
+  if (hasLegacyForkHistory) await assertLegacyForkSchemaSignature(knex)
 }
 
 const assertMigrationLockIsClear = async (knex: Knex): Promise<void> => {
@@ -123,6 +200,7 @@ export const preflightMigrations = async (
   if (applicationTableNames.length === 0) {
     throw new MigrationPreflightError('Database has applied migration records but none of the expected Wiki application tables. Refusing a partial schema.')
   }
+  await assertTsfrankiLineage(knex, applied)
 
   return { applied, available, state: 'ready' }
 }
