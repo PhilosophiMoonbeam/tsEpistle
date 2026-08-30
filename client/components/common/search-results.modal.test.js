@@ -10,8 +10,12 @@ describe('Ask modal accessibility contract', () => {
     expect(search).toMatch(/aria-modal=['"]true['"]/)
     expect(search).toMatch(/:aria-labelledby=['"]isAgentOpen \? `wiki-agent-title` : `wiki-search-title`['"]/)
     expect(search).toMatch(
-      /searchIsFocused\(open:\s*boolean\)\s*\{[\s\S]*if\s*\(this\.isAgentOpen\)\s*return[\s\S]*if\s*\(open\)\s*void this\.activateAgentModal\(\)[\s\S]*else this\.deactivateAgentModal\(\)/
+      /isAgentOpen\(open:\s*boolean\)\s*\{[\s\S]*if\s*\(open\)\s*void this\.activateAgentModal\(\)[\s\S]*else this\.deactivateAgentModal\(this\.searchIsFocused\)/
     )
+    expect(search).toMatch(
+      /searchIsFocused\(open:\s*boolean\)\s*\{[\s\S]*if\s*\(this\.isAgentOpen\)\s*return[\s\S]*if\s*\(open\)\s*void this\.activateAgentModal\(\)[\s\S]*else this\.deactivateAgentModal\(false\)/
+    )
+    expect(search).toMatch(/closeSearch\(\):\s*void\s*\{[\s\S]*this\.deactivateAgentModal\(false\)[\s\S]*this\.searchIsFocused\s*=\s*false[\s\S]*this\.findSearchControl\(\)\?\.blur\(\)/)
     expect(search).toMatch(/createModalFocusScope\(\{[\s\S]*root,[\s\S]*restoreTarget,[\s\S]*onEscape:\s*this\.closeSearch/)
     expect(search).toMatch(/this\.activateSearchModal\(restoreTarget\)/)
     expect(search).toMatch(/await \(this\.\$refs\.inlineAgent[\s\S]*\?\.focusComposer\(\)/)

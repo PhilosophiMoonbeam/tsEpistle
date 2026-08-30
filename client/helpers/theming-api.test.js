@@ -1,5 +1,6 @@
 import { fetchThemeConfig, saveThemeConfig } from './theming-api.ts'
 import { cloneThemeColors, DEFAULT_THEME_COLORS } from '../../shared/theme-colors.ts'
+import { createDefaultThemePalette } from '../../shared/theme-palettes.ts'
 
 function createJsonResponse (payload, ok = true) {
   return {
@@ -12,11 +13,14 @@ function createJsonResponse (payload, ok = true) {
 }
 
 function validConfig (overrides = {}) {
+  const colors = cloneThemeColors(DEFAULT_THEME_COLORS)
   return {
     theme: 'default',
     iconset: 'mdi',
     darkMode: false,
-    colors: cloneThemeColors(DEFAULT_THEME_COLORS),
+    colors,
+    palettes: [createDefaultThemePalette(colors)],
+    activePaletteId: 'luminous-archive',
     tocPosition: 'left',
     gutterStyle: 'columns',
     gutterCustomCss: '',
@@ -54,18 +58,17 @@ describe('theming api helper', () => {
       injectBody: ''
     })))
 
-    expect(await fetchThemeConfig(fetchImpl)).toEqual({
+    expect(await fetchThemeConfig(fetchImpl)).toEqual(validConfig({
       theme: 'custom',
       iconset: 'fa',
       darkMode: true,
-      colors: cloneThemeColors(DEFAULT_THEME_COLORS),
       tocPosition: 'right',
       gutterStyle: 'custom',
       gutterCustomCss: 'background: linear-gradient(red, transparent); opacity: .4;',
       injectCSS: '',
       injectHead: '',
       injectBody: ''
-    })
+    }))
   })
 
   test('strips extra fields', async () => {
@@ -75,6 +78,18 @@ describe('theming api helper', () => {
     })))
 
     expect(await fetchThemeConfig(fetchImpl)).toEqual(validConfig())
+  })
+
+  test('migrates legacy color-only payloads into a manageable default theme', async () => {
+    const legacy = validConfig()
+    delete legacy.palettes
+    delete legacy.activePaletteId
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse(legacy))
+
+    const result = await fetchThemeConfig(fetchImpl)
+
+    expect(result.activePaletteId).toBe('luminous-archive')
+    expect(result.palettes).toEqual([createDefaultThemePalette(result.colors)])
   })
 
   test('rejects malformed root payloads', async () => {

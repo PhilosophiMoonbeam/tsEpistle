@@ -56,7 +56,14 @@
           :aria-label='$t(`common:header.searchClose`)'
           @click='closeSearch'
         )
-        span.search-results-keyboard-hint(v-if='!isAgentOpen && normalizedSearch.length >= 2') ↑↓ Navigate · Enter Open · Esc Close
+        .search-results-keyboard-hint(
+          v-if='!isAgentOpen && normalizedSearch.length >= 2'
+          aria-hidden='true'
+          title='Keyboard shortcuts: navigate, open, close'
+        )
+          kbd ↑↓
+          kbd ↵
+          kbd Esc
       InlineAgentChat(
         v-if='isAgentOpen'
         ref='inlineAgent'
@@ -71,7 +78,7 @@
         :page-updated-at='currentPageUpdatedAt'
       )
       .search-results-search(v-else)
-        .search-results-instructions#wiki-search-instructions Use Arrow Up and Down to move through results, Enter to open a result, and Escape to close search.
+        .search-results-instructions.sr-only#wiki-search-instructions Use Arrow Up and Down to move through results, Enter to open a result, and Escape to close search.
         .search-results-scope
           .search-results-scope-copy
             .search-results-eyebrow Search scope
@@ -326,12 +333,12 @@ export default defineComponent({
     },
     isAgentOpen(open: boolean) {
       if (open) void this.activateAgentModal()
-      else this.deactivateAgentModal()
+      else this.deactivateAgentModal(this.searchIsFocused)
     },
     searchIsFocused(open: boolean) {
       if (this.isAgentOpen) return
       if (open) void this.activateAgentModal()
-      else this.deactivateAgentModal()
+      else this.deactivateAgentModal(false)
     },
     searchRestrictLocale() {
       this.queueSearch(this.search)
@@ -530,13 +537,19 @@ export default defineComponent({
       }
     },
     closeSearch(): void {
-      this.search = ''
-      this.searchMode = 'search'
+      this.deactivateAgentModal(false)
       this.searchIsFocused = false
+      this.searchMode = 'search'
+      this.search = ''
       this.approvalId = ''
+      this.findSearchControl()?.blur()
       const url = new URL(window.location.href)
       url.searchParams.delete('agentApproval')
       window.history.replaceState(window.history.state, '', url)
+      void this.$nextTick(() => {
+        this.findSearchControl()?.blur()
+        this.searchIsFocused = false
+      })
     },
     clearSearchScope(): void {
       this.searchRestrictLocale = false
@@ -709,17 +722,36 @@ export default defineComponent({
     right: clamp(.25rem, 1.5vw, 1rem);
   }
   &-keyboard-hint {
-    color: color-mix(in srgb, currentColor 72%, transparent);
-    font-size: .7rem;
+    display: inline-flex;
+    align-items: center;
+    gap: .32rem;
     margin-inline: .75rem;
-    white-space: nowrap;
+    color: color-mix(in srgb, currentColor 76%, transparent);
+
+    kbd {
+      min-width: 1.7rem;
+      padding: .14rem .38rem;
+      border: 1px solid color-mix(in srgb, currentColor 24%, transparent);
+      border-radius: .38rem;
+      background: color-mix(in srgb, currentColor 8%, transparent);
+      box-shadow: inset 0 -1px 0 color-mix(in srgb, currentColor 18%, transparent);
+      font-family: var(--wiki-font-mono);
+      font-size: .65rem;
+      font-weight: 700;
+      line-height: 1.25;
+      text-align: center;
+    }
+
+    @media #{map-get($display-breakpoints, 'md-and-down')} {
+      display: none;
+    }
   }
 
   &-shortcut {
     left: clamp(.25rem, 1.5vw, 1rem);
     position: absolute !important;
 
-    @media #{map-get($display-breakpoints, 'sm-and-down')} {
+    @media #{map-get($display-breakpoints, 'md-and-down')} {
       display: none !important;
     }
   }

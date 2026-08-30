@@ -6,13 +6,13 @@
           img.animated.fadeInUp(src='/_assets/svg/icon-triangle-arrow.svg', alt='Navigation', style='width: 80px;')
           .admin-header-title
             .text-headline-medium.text-primary.animated.fadeInLeft {{$t('admin:navigation.title')}}
-            .text-body-large.text-grey.animated.fadeInLeft.wait-p4s {{$t('admin:navigation.subtitle')}}
+            .text-body-large.text-medium-emphasis.animated.fadeInLeft.wait-p4s {{$t('admin:navigation.subtitle')}}
           v-spacer
           v-chip(v-if='dirty', color='warning', variant='tonal', size='small') Unsaved changes
           .d-flex.flex-wrap.align-center.ga-2
-            v-btn(icon, variant="outlined", color='grey', href='https://docs.requarks.io/navigation', target='_blank', :aria-label='$t(`admin:navigation.title`)', title='Open navigation documentation')
+            v-btn(icon, variant="outlined", href='https://docs.requarks.io/navigation', target='_blank', :aria-label='$t(`admin:navigation.title`)', title='Open navigation documentation')
               v-icon mdi-help-circle
-            v-btn(icon, variant="outlined", color='grey', @click='refresh', :aria-label='$t(`common:actions.refresh`)', title='Refresh navigation settings', :loading='initialLoading')
+            v-btn(icon, variant="outlined", @click='refresh', :aria-label='$t(`common:actions.refresh`)', title='Refresh navigation settings', :loading='initialLoading')
               v-icon mdi-refresh
             v-btn(
               type='button'
@@ -29,7 +29,7 @@
           v-row(density="compact")
             v-col(cols='12', md='3')
               v-card.animated.fadeInUp
-                v-toolbar(color='teal', density="compact", flat, height='56')
+                v-toolbar(color='primary', density="compact", flat, height='56')
                   v-toolbar-title.text-body-large {{$t('admin:navigation.mode')}}
                 v-list(nav, lines="two", role='radiogroup', :aria-label='$t(`admin:navigation.mode`)')
                   v-list-item(value='TREE', role='radio', :aria-checked='config.mode === `TREE`', :active='config.mode === `TREE`', @click='config.mode = `TREE`')
@@ -40,8 +40,7 @@
                     v-list-item-subtitle {{$t('admin:navigation.modeSiteTree.description')}}
                     template(v-slot:append)
                       v-avatar
-                        v-icon(v-if='$vuetify.theme.current.dark', :color='config.mode === `TREE` ? `teal-lighten-3` : `grey-darken-2`') mdi-check-circle
-                        v-icon(v-else, :color='config.mode === `TREE` ? `teal` : `grey-lighten-3`') mdi-check-circle
+                        v-icon(:color='config.mode === `TREE` ? `primary` : undefined') mdi-check-circle
                   v-list-item(value='STATIC', role='radio', :aria-checked='config.mode === `STATIC`', :active='config.mode === `STATIC`', @click='config.mode = `STATIC`')
                     template(v-slot:prepend)
                       v-avatar
@@ -50,8 +49,7 @@
                     v-list-item-subtitle {{$t('admin:navigation.modeStatic.description')}}
                     template(v-slot:append)
                       v-avatar
-                        v-icon(v-if='$vuetify.theme.current.dark', :color='config.mode === `STATIC` ? `teal-lighten-3` : `grey-darken-2`') mdi-check-circle
-                        v-icon(v-else, :color='config.mode === `STATIC` ? `teal` : `grey-lighten-3`') mdi-check-circle
+                        v-icon(:color='config.mode === `STATIC` ? `primary` : undefined') mdi-check-circle
                   v-list-item(value='MIXED', role='radio', :aria-checked='config.mode === `MIXED`', :active='config.mode === `MIXED`', @click='config.mode = `MIXED`')
                     template(v-slot:prepend)
                       v-avatar
@@ -60,8 +58,7 @@
                     v-list-item-subtitle {{$t('admin:navigation.modeCustom.description')}}
                     template(v-slot:append)
                       v-avatar
-                        v-icon(v-if='$vuetify.theme.current.dark', :color='config.mode === `MIXED` ? `teal-lighten-3` : `grey-darken-2`') mdi-check-circle
-                        v-icon(v-else, :color='config.mode === `MIXED` ? `teal` : `grey-lighten-3`') mdi-check-circle
+                        v-icon(:color='config.mode === `MIXED` ? `primary` : undefined') mdi-check-circle
                   v-list-item(value='NONE', role='radio', :aria-checked='config.mode === `NONE`', :active='config.mode === `NONE`', @click='config.mode = `NONE`')
                     template(v-slot:prepend)
                       v-avatar
@@ -70,30 +67,29 @@
                     v-list-item-subtitle {{$t('admin:navigation.modeNone.description')}}
                     template(v-slot:append)
                       v-avatar
-                        v-icon(v-if='$vuetify.theme.current.dark', :color='config.mode === `NONE` ? `teal-lighten-3` : `grey-darken-2`') mdi-check-circle
-                        v-icon(v-else, :color='config.mode === `NONE` ? `teal` : `grey-lighten-3`') mdi-check-circle
+                        v-icon(:color='config.mode === `NONE` ? `primary` : undefined') mdi-check-circle
                 v-card-text.pt-0
                   v-switch(
                     v-model='config.expandParent'
-                    color='teal'
+                    color='primary'
                     inset
                     hide-details
                     label='Open the current page parent by default'
                   )
-                  .text-body-small.text-grey.mt-2 When enabled, Browse opens at the current page location. Disable it to start at the site root.
+                  .text-body-small.text-medium-emphasis.mt-2 When enabled, Browse opens at the current page location. Disable it to start at the site root.
             v-col(cols='12', md='9', v-if='config.mode === `MIXED` || config.mode === `STATIC`')
               v-card.animated.fadeInUp.wait-p2s
                 v-row.align-stretch(no-gutters)
                   v-col(cols='12', lg='5', xl='4')
-                    v-card(flat, style='height: 100%; border-radius: 4px 0 0 4px;', :class='$vuetify.theme.current.dark ? `bg-grey-darken-4` : `bg-grey-lighten-3`')
-                      .bg-teal-lighten-1.pa-2.d-flex(style='margin-bottom: 1px; height:56px;')
+                    v-card.navigation-builder(flat)
+                      .navigation-builder__locale.pa-2.d-flex
                         v-select(
                           :disabled='locales.length < 2'
                           label='Locale'
                           hide-details
                           variant="solo"
                           flat
-                          bg-color='teal-darken-2'
+                          bg-color='surface'
                           density="compact"
                           v-model='currentLang'
                           :items='locales'
@@ -102,14 +98,14 @@
                         )
                         v-tooltip(location="top")
                           template(v-slot:activator='{ props }')
-                            v-btn.ml-2(icon, rounded='0', color='white', v-bind='props', @click='copyFromLocaleDialogIsShown = true')
+                            v-btn.ml-2(icon, variant='text', v-bind='props', @click='copyFromLocaleDialogIsShown = true')
                               v-icon mdi-arrange-send-backward
                           span {{$t('admin:navigation.copyFromLocale')}}
-                      v-list.py-2(density="compact", nav, class="bg-blue-darken-2", style='border-radius: 0;')
+                      v-list.navigation-tree.py-2(density="compact", nav)
                         v-list-item(v-if='currentTree.length < 1')
                           template(v-slot:prepend)
-                            v-avatar(size='24'): v-icon(color="blue-lighten-3") mdi-alert
-                          em.text-body-small.text-blue-lighten-4 {{$t('admin:navigation.emptyList')}}
+                            v-avatar(size='24'): v-icon(color="secondary") mdi-alert
+                          em.text-body-small.text-medium-emphasis {{$t('admin:navigation.emptyList')}}
                         draggable(v-model='currentTree', handle='.nav-drag-handle')
                           template(v-for='(navItem, idx) in currentTree')
                             v-list-item(
@@ -118,7 +114,7 @@
                               role='option'
                               :aria-selected='navItem === current'
                               tabindex='0'
-                              :class='(navItem === current) ? "bg-blue" : ""'
+                              :class='{ "is-selected": navItem === current }'
                               @click='selectItem(navItem)'
                               @keydown.arrow-up.prevent='moveItem(idx, -1)'
                               @keydown.arrow-down.prevent='moveItem(idx, 1)'
@@ -136,7 +132,7 @@
                               role='option'
                               :aria-selected='navItem === current'
                               tabindex='0'
-                              :class='(navItem === current) ? "bg-blue" : ""'
+                              :class='{ "is-selected": navItem === current }'
                               @click='selectItem(navItem)'
                               @keydown.enter.prevent='selectItem(navItem)'
                               @keydown.space.prevent='selectItem(navItem)'
@@ -152,7 +148,7 @@
                               role='option'
                               :aria-selected='navItem === current'
                               tabindex='0'
-                              :class='(navItem === current) ? "bg-blue" : ""'
+                              :class='{ "is-selected": navItem === current }'
                               @click='selectItem(navItem)'
                               @keydown.enter.prevent='selectItem(navItem)'
                               @keydown.space.prevent='selectItem(navItem)'
@@ -183,7 +179,7 @@
                   v-col(cols='12', lg='7', xl='8')
                     v-card(flat, style='border-radius: 0 4px 4px 0;')
                       template(v-if='current.kind === "link"')
-                        v-toolbar(height='56', color="teal-lighten-1", flat)
+                        v-toolbar(height='56', color="surface-variant", flat)
                           .text-body-large {{$t('admin:navigation.edit', { kind: $t('admin:navigation.link') })}}
                           v-spacer
                           v-btn.px-5(color='error', variant="text", :disabled='saving', @click='deleteItem(current)')
@@ -248,7 +244,7 @@
                         v-divider
 
                       template(v-else-if='current.kind === "header"')
-                        v-toolbar(height='56', color="teal-lighten-1", flat)
+                        v-toolbar(height='56', color="surface-variant", flat)
                           .text-body-large {{$t('admin:navigation.edit', { kind: $t('admin:navigation.header') })}}
                           v-spacer
                           v-btn.px-5(color='error', variant="text", :disabled='saving', @click='deleteItem(current)')
@@ -264,7 +260,7 @@
                         v-divider
 
                       div(v-else-if='current.kind === "divider"')
-                        v-toolbar(height='56', color="teal-lighten-1", flat)
+                        v-toolbar(height='56', color="surface-variant", flat)
                           .text-body-large {{$t('admin:navigation.edit', { kind: $t('admin:navigation.divider') })}}
                           v-spacer
                           v-btn.px-5(color='error', variant="text", :disabled='saving', @click='deleteItem(current)')
@@ -293,9 +289,9 @@
                           multiple
                         )
                       template(v-else)
-                        v-toolbar(height='56', color="teal-lighten-1", flat)
-                        v-card-text.text-grey(v-if='currentTree.length > 0') {{$t('admin:navigation.noSelectionText')}}
-                        v-card-text.text-grey(v-else) {{$t('admin:navigation.noItemsText')}}
+                        v-toolbar(height='56', color="surface-variant", flat)
+                        v-card-text.text-medium-emphasis(v-if='currentTree.length > 0') {{$t('admin:navigation.noSelectionText')}}
+                        v-card-text.text-medium-emphasis(v-else) {{$t('admin:navigation.noItemsText')}}
 
         .d-flex.flex-wrap.justify-end.ga-2.mt-5.sticky-action-row
           v-btn(
@@ -310,7 +306,7 @@
             span {{$t('common:actions.apply')}}
     v-dialog(v-model='copyFromLocaleDialogIsShown', max-width='650', persistent)
       v-card
-        .dialog-header.is-short.is-teal
+        .dialog-header.is-short.is-primary
           v-icon.mr-3(color='white') mdi-arrange-send-backward
           span {{$t('admin:navigation.copyFromLocale')}}
         v-card-text.pt-5
@@ -573,11 +569,53 @@ export default {
 
 <style lang='scss' scoped>
 
+.navigation-builder {
+  height: 100%;
+  overflow: hidden;
+  border: 1px solid var(--wiki-surface-border);
+  border-radius: var(--wiki-radius-sm) 0 0 var(--wiki-radius-sm) !important;
+  background: var(--wiki-surface-soft);
+}
+
+.navigation-builder__locale {
+  height: 56px;
+  gap: var(--wiki-space-2);
+  align-items: center;
+  border-bottom: 1px solid var(--wiki-surface-border);
+  background:
+    radial-gradient(circle at 0 0, color-mix(in srgb, rgb(var(--v-theme-primary)) 14%, transparent), transparent 62%),
+    rgb(var(--v-theme-surface-variant));
+}
+
+.navigation-tree {
+  min-height: 14rem;
+  border-radius: 0 !important;
+  background: color-mix(in srgb, rgb(var(--v-theme-surface)) 94%, rgb(var(--v-theme-primary)) 6%) !important;
+  color: rgb(var(--v-theme-on-surface));
+}
+
+.navigation-tree :deep(.v-list-item),
+.clickable {
+  margin: 2px var(--wiki-space-2);
+  border: 1px solid transparent;
+  border-radius: var(--wiki-radius-xs);
+  transition:
+    background-color var(--wiki-motion-fast) var(--wiki-motion-ease),
+    border-color var(--wiki-motion-fast) var(--wiki-motion-ease);
+}
+
+.navigation-tree :deep(.is-selected),
+.clickable.is-selected {
+  border-color: color-mix(in srgb, rgb(var(--v-theme-primary)) 32%, transparent);
+  background: color-mix(in srgb, rgb(var(--v-theme-primary)) 16%, transparent) !important;
+  color: rgb(var(--v-theme-on-surface)) !important;
+}
+
 .clickable {
   cursor: pointer;
 
   &:hover {
-    background-color: rgba(mc('blue', '500'), .25);
+    background-color: color-mix(in srgb, rgb(var(--v-theme-primary)) 10%, transparent);
   }
 }
 

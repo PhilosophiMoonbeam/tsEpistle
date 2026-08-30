@@ -25,9 +25,9 @@ describe('frontend theme helpers', () => {
         colors: {
           primary: '#F9A134',
           'on-primary': '#000000',
-          'surface-bright': '#FFFFFF',
-          'surface-light': '#F7F7F7',
-          'surface-variant': '#FFFFFF',
+          'surface-bright': '#F8F9FA',
+          'surface-light': '#F1F2F3',
+          'surface-variant': '#F8F8F8',
           'on-surface-variant': '#000000',
           focus: '#000000'
         }
@@ -41,9 +41,9 @@ describe('frontend theme helpers', () => {
           'on-primary': '#000000',
           'on-secondary': '#000000',
           'on-info': '#000000',
-          'surface-bright': '#3C3C3C',
-          'surface-light': '#2E2E2E',
-          'surface-variant': '#1A1A1A',
+          'surface-bright': '#3E4144',
+          'surface-light': '#313437',
+          'surface-variant': '#1E2123',
           'on-surface-variant': '#FFFFFF',
           focus: '#FFFFFF'
         }
@@ -80,7 +80,7 @@ describe('frontend theme helpers', () => {
     expect(theme.themes.value.light.colors.primary).toBe('#F9A134')
     expect(theme.themes.value.light.colors['on-primary']).toBe('#000000')
     expect(theme.themes.value.dark.colors.background).toBe(DEFAULT_THEME_COLORS.dark.background)
-    expect(theme.themes.value.light.colors['surface-bright']).toBe('#FFFFFF')
+    expect(theme.themes.value.light.colors['surface-bright']).toBe('#F8F9FA')
     expect(theme.themes.value.light.colors.outline).toBe('#DDDDDD')
     expect(theme.themes.value.dark.colors['on-primary']).toBe('#000000')
     expect(theme.themes.value.dark.colors.outline).toBe('#333333')

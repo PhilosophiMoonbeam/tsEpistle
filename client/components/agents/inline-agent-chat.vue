@@ -79,7 +79,7 @@
           />
           <v-menu class="inline-agent__mobile-actions" location="bottom end">
             <template #activator="{ props: menuProps }">
-              <v-btn ref="mobileActionsTrigger" v-bind="menuProps" icon="mdi-dots-vertical" aria-label="More Agent actions" />
+              <v-btn ref="mobileActionsTrigger" v-bind="menuProps" class="inline-agent__mobile-panel-menu" prepend-icon="mdi-view-dashboard-outline" variant="text" size="small" aria-label="Open Agent panels: conversation history and memory">Panels</v-btn>
             </template>
             <v-list density="compact">
               <v-list-item title="Conversation history" prepend-icon="mdi-history" @click="toggleHistory" />
@@ -1085,6 +1085,13 @@ defineExpose({ sendPrompt, focusComposer, focusConversation })
 
   .inline-agent__mobile-actions {
     display: block;
+  }
+
+  .inline-agent__mobile-panel-menu {
+    min-width: auto !important;
+    padding-inline: var(--wiki-space-2) !important;
+    letter-spacing: 0;
+    text-transform: none;
   }
 
   .inline-agent__panel-actions {

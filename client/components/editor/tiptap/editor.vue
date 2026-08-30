@@ -164,7 +164,10 @@
           .editor-tiptap-glyph-footer
             span {{filteredGlyphs.length}} of {{glyphs.length}}
             span Fuzzy search
-    editor-content.contents(:editor='editor')
+    .editor-tiptap-page-status(aria-hidden='true')
+      v-icon(size='16') mdi-eye-outline
+      span Live page appearance
+    editor-content.editor-tiptap-page-canvas.contents(:editor='editor')
     v-system-bar.editor-status-bar.editor-tiptap-sysbar(status)
       .text-body-small.editor-tiptap-sysbar-locale {{locale.toUpperCase()}}
       .text-body-small.editor-tiptap-sysbar-path.px-3(:title='`/${path}`') /{{path}}
@@ -751,63 +754,93 @@ export default defineComponent({
     }
   }
 
+  &-page-status {
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    align-self: center;
+    gap: var(--wiki-space-2);
+    margin-block-start: var(--wiki-space-3);
+    padding: var(--wiki-space-1) var(--wiki-space-3);
+    border: 1px solid var(--wiki-surface-border);
+    border-radius: 999px;
+    background: var(--wiki-surface-soft);
+    color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 64%, transparent);
+    font-size: .7rem;
+    font-weight: var(--wiki-label-weight);
+    letter-spacing: .06em;
+    text-transform: uppercase;
+  }
+
   > .contents {
-    background: var(--editor-surface);
-    border: 1px solid var(--editor-border);
-    border-radius: 16px;
-    box-shadow:
-      0 20px 55px rgba(0, 0, 0, .1),
-      0 2px 8px rgba(0, 0, 0, .05);
-    color: var(--editor-on-surface);
+    position: relative;
+    isolation: isolate;
     flex: 1 1 auto;
-    margin: 18px auto 24px;
+    width: min(1000px, calc(100% - var(--wiki-space-8)));
     min-height: 0;
+    margin: var(--wiki-space-2) auto var(--wiki-space-5);
+    padding: clamp(var(--wiki-space-6), 3vw, var(--wiki-space-12));
     overflow-x: hidden;
     overflow-y: auto;
-    padding: clamp(1.5rem, 4vw, 3.5rem);
-    transition: border-color 160ms ease, box-shadow 160ms ease;
-    width: min(920px, calc(100vw - 256px - 10vw));
+    border: 1px solid var(--wiki-surface-border);
+    border-radius: var(--wiki-hero-radius);
+    background: rgb(var(--v-theme-surface));
+    color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 88%, transparent);
+    box-shadow:
+      var(--wiki-shadow-inset),
+      var(--wiki-shadow-sm);
+    font-family: var(--wiki-font-body);
+    font-size: clamp(.9875rem, .95rem + .14vw, 1.0625rem);
+    line-height: 1.78;
+    transition:
+      border-color var(--wiki-motion-fast) var(--wiki-motion-ease),
+      box-shadow var(--wiki-motion-normal) var(--wiki-motion-ease);
 
     &:focus-within {
-      border-color: rgba(var(--v-theme-primary), .45);
+      border-color: color-mix(in srgb, rgb(var(--v-theme-primary)) 46%, var(--wiki-surface-border));
       box-shadow:
-        0 22px 60px rgba(0, 0, 0, .12),
-        0 0 0 3px rgba(var(--v-theme-primary), .08);
+        var(--wiki-shadow-inset),
+        var(--wiki-shadow-md),
+        0 0 0 3px color-mix(in srgb, rgb(var(--v-theme-primary)) 9%, transparent);
     }
 
     @include until($widescreen) {
+      width: calc(100% - 2rem);
       margin-inline: 1rem;
-      width: calc(100vw - 2rem);
     }
 
     @include until($tablet) {
-      border-left: 0;
-      border-radius: 0;
-      border-right: 0;
-      margin: 0 0 24px;
-      padding: 1.25rem;
       width: 100%;
+      margin: 0 0 var(--wiki-space-5);
+      padding: var(--wiki-space-5);
+      border-inline: 0;
+      border-radius: 0;
     }
   }
 
   .tiptap {
-    caret-color: var(--editor-primary);
-    font-size: 1rem;
-    line-height: 1.72;
+    max-width: 76ch;
     min-height: 100%;
+    margin-inline: auto;
+    color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 88%, transparent);
+    caret-color: var(--wiki-accent-warm);
+    font-family: var(--wiki-font-body);
+    font-size: inherit;
+    line-height: inherit;
     outline: none;
     overflow-wrap: anywhere;
+    text-wrap: pretty;
 
     > :first-child {
-      margin-top: 0;
+      margin-block-start: 0;
     }
 
     > :last-child {
-      margin-bottom: 0;
+      margin-block-end: 0;
     }
 
     ::selection {
-      background: rgba(var(--v-theme-primary), .24);
+      background: color-mix(in srgb, var(--wiki-accent-spectral) 26%, transparent);
     }
 
     h1,
@@ -816,56 +849,101 @@ export default defineComponent({
     h4,
     h5,
     h6 {
-      color: var(--editor-on-surface);
+      color: rgb(var(--v-theme-on-surface));
+      font-family: var(--wiki-font-heading);
       font-weight: 720;
       letter-spacing: -.025em;
-      line-height: 1.22;
-      margin: 1.5em 0 .55em;
+      line-height: var(--wiki-leading-heading);
+      text-wrap: balance;
     }
 
     h1 {
-      font-size: clamp(2rem, 4vw, 2.55rem);
+      margin: 0 0 var(--wiki-space-6);
+      color: color-mix(in srgb, var(--wiki-accent-warm) 82%, rgb(var(--v-theme-on-surface)));
+      font-size: clamp(1.75rem, 1.5rem + 1vw, 2.375rem);
       letter-spacing: -.04em;
     }
 
     h2 {
-      border-bottom: 1px solid var(--editor-border);
-      font-size: clamp(1.55rem, 3vw, 1.9rem);
-      padding-bottom: .25em;
+      margin: var(--wiki-space-12) 0 var(--wiki-space-4);
+      padding-block-end: var(--wiki-space-2);
+      border-bottom: 1px solid var(--wiki-surface-border);
+      font-size: clamp(1.4rem, 1.2rem + .7vw, 1.8125rem);
     }
 
     h3 {
-      font-size: 1.4rem;
+      margin: var(--wiki-space-10) 0 var(--wiki-space-3);
+      font-size: clamp(1.1875rem, 1.08rem + .35vw, 1.375rem);
+    }
+
+    h4,
+    h5,
+    h6 {
+      margin: var(--wiki-space-8) 0 var(--wiki-space-2);
+      font-size: 1.0625rem;
+      letter-spacing: -.012em;
     }
 
     p {
-      margin: .8em 0;
+      margin: 0 0 var(--wiki-space-5);
+      color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 86%, transparent);
     }
 
     a {
-      color: var(--editor-primary);
-      text-decoration-color: rgba(var(--v-theme-primary), .45);
+      color: color-mix(in srgb, var(--wiki-accent-warm) 82%, rgb(var(--v-theme-on-surface)));
+      font-weight: 580;
+      text-decoration-color: color-mix(in srgb, currentColor 38%, transparent);
       text-decoration-thickness: .08em;
       text-underline-offset: .18em;
 
-      &:hover {
+      &:hover,
+      &:focus-visible {
+        color: var(--wiki-accent-warm);
         text-decoration-color: currentColor;
       }
     }
 
     blockquote {
-      background: rgba(var(--v-theme-primary), .055);
-      border-left: 4px solid rgba(var(--v-theme-primary), .58);
-      border-radius: 0 10px 10px 0;
-      color: rgba(var(--v-theme-on-surface), .76);
-      margin: 1.25em 0;
-      padding: .75em 1.1em;
+      --page-callout-tone: var(--wiki-accent-warm);
+
+      margin: var(--wiki-space-6) 0;
+      padding: var(--wiki-space-4) var(--wiki-space-5);
+      border: 1px solid color-mix(in srgb, var(--page-callout-tone) 24%, var(--wiki-surface-border));
+      border-inline-start: .25rem solid var(--page-callout-tone);
+      border-radius: var(--wiki-panel-radius);
+      background: color-mix(in srgb, var(--page-callout-tone) 7%, rgb(var(--v-theme-surface)));
+      color: rgb(var(--v-theme-on-surface));
+      box-shadow: var(--wiki-shadow-inset);
+    }
+
+    ul:not([data-type='taskList']),
+    ol {
+      width: 100%;
+      margin: var(--wiki-space-3) 0 var(--wiki-space-5);
+      padding-inline-start: var(--wiki-space-6);
+
+      > li {
+        margin: var(--wiki-space-1) 0;
+        padding-inline-start: var(--wiki-space-1);
+
+        &::marker {
+          color: color-mix(in srgb, var(--wiki-accent-warm) 72%, var(--wiki-accent-spectral));
+          font-weight: 650;
+        }
+      }
     }
 
     hr {
+      height: 1px;
+      margin: var(--wiki-space-10) 0;
       border: 0;
-      border-top: 1px solid var(--editor-border);
-      margin: 2em 0;
+      background: linear-gradient(
+        to right,
+        transparent,
+        var(--wiki-surface-border-strong) 18%,
+        var(--wiki-surface-border-strong) 82%,
+        transparent
+      );
     }
 
     img {
@@ -897,19 +975,23 @@ export default defineComponent({
     }
 
     table {
+      width: 100%;
+      margin: var(--wiki-space-6) 0;
+      border: 1px solid var(--wiki-surface-border);
       border-collapse: separate;
       border-spacing: 0;
-      margin: 1.25em 0;
+      border-radius: var(--wiki-panel-radius);
+      background: rgb(var(--v-theme-surface));
+      box-shadow: var(--wiki-shadow-xs);
       table-layout: fixed;
-      width: 100%;
 
       td,
       th {
-        border-bottom: 1px solid var(--editor-border);
-        border-right: 1px solid var(--editor-border);
-        min-width: 1em;
-        padding: .65em .75em;
         position: relative;
+        min-width: 1em;
+        padding: var(--wiki-space-3) var(--wiki-space-4);
+        border-inline-end: 1px solid var(--wiki-surface-border);
+        border-block-end: 1px solid var(--wiki-surface-border);
         vertical-align: top;
 
         &:first-child {
@@ -943,8 +1025,12 @@ export default defineComponent({
       }
 
       th {
-        background: rgba(var(--v-theme-on-surface), .055);
-        font-weight: 700;
+        background: color-mix(in srgb, var(--wiki-accent-spectral) 7%, var(--wiki-surface-raised));
+        color: rgb(var(--v-theme-on-surface));
+        font-size: var(--wiki-label-size);
+        font-weight: var(--wiki-label-weight);
+        letter-spacing: .055em;
+        text-transform: uppercase;
       }
 
       .selectedCell::after {
@@ -980,33 +1066,40 @@ export default defineComponent({
     }
 
     pre {
-      background: #17212b;
-      border: 1px solid rgba(255, 255, 255, .08);
-      border-radius: 11px;
-      box-shadow: inset 0 1px 0 rgba(255, 255, 255, .05);
-      color: #f4f7fb;
-      line-height: 1.6;
       overflow-x: auto;
-      padding: 1em 1.15em;
+      margin: var(--wiki-space-6) 0;
+      padding: var(--wiki-space-4);
+      border: 1px solid var(--wiki-surface-border);
+      border-radius: var(--wiki-panel-radius);
+      background: var(--wiki-surface-sunken);
+      color: rgb(var(--v-theme-on-surface));
+      box-shadow: var(--wiki-shadow-sm);
+      font-family: var(--wiki-font-mono);
+      line-height: 1.65;
+      scrollbar-gutter: stable;
     }
 
     code:not(pre code) {
-      background: rgba(var(--v-theme-on-surface), .08);
-      border: 1px solid rgba(var(--v-theme-on-surface), .09);
-      border-radius: 5px;
+      padding: .16em .42em;
+      border: 1px solid var(--wiki-surface-border);
+      border-radius: var(--wiki-radius-xs);
+      background: color-mix(in srgb, var(--wiki-accent-spectral) 6%, var(--wiki-surface-sunken));
+      color: color-mix(in srgb, var(--wiki-accent-warm) 74%, rgb(var(--v-theme-on-surface)));
+      font-family: var(--wiki-font-mono);
       font-size: .88em;
-      padding: .12em .34em;
     }
 
     kbd {
-      background: rgba(var(--v-theme-on-surface), .08);
-      border: 1px solid rgba(var(--v-theme-on-surface), .18);
-      border-bottom-width: 2px;
-      border-radius: 5px;
-      box-shadow: 0 1px 0 rgba(0, 0, 0, .12);
-      font-family: monospace;
-      font-size: .85em;
-      padding: .1em .38em;
+      padding: .16em .42em;
+      border: 1px solid var(--wiki-surface-border);
+      border-bottom-color: var(--wiki-surface-border-strong);
+      border-radius: var(--wiki-radius-xs);
+      background: color-mix(in srgb, var(--wiki-accent-spectral) 6%, var(--wiki-surface-sunken));
+      color: color-mix(in srgb, var(--wiki-accent-warm) 74%, rgb(var(--v-theme-on-surface)));
+      box-shadow: 0 .125rem 0 var(--wiki-surface-border);
+      font-family: var(--wiki-font-mono);
+      font-size: .88em;
+      font-weight: 650;
     }
 
     mark {
@@ -1018,9 +1111,9 @@ export default defineComponent({
 
     wiki-source-block,
     wiki-source-inline {
-      background: rgba(mc('amber', '500'), .12);
-      border: 1px solid rgba(mc('amber', '700'), .7);
-      border-radius: 6px;
+      border: 1px solid color-mix(in srgb, var(--wiki-accent-warm) 36%, var(--wiki-surface-border));
+      border-radius: var(--wiki-radius-xs);
+      background: color-mix(in srgb, var(--wiki-accent-warm) 8%, var(--wiki-surface-sunken));
       color: inherit;
       cursor: pointer;
     }
@@ -1033,9 +1126,9 @@ export default defineComponent({
       white-space: pre-wrap;
 
       .wiki-source-label {
-        background: mc('amber', '800');
-        border-radius: 4px;
-        color: #FFF;
+        background: color-mix(in srgb, var(--wiki-accent-warm) 82%, rgb(var(--v-theme-surface)));
+        border-radius: var(--wiki-radius-xs);
+        color: rgb(var(--v-theme-on-primary));
         display: inline-block;
         font-size: .7em;
         font-weight: 700;
@@ -1051,7 +1144,7 @@ export default defineComponent({
 
     wiki-source-inline {
       display: inline;
-      font-family: monospace;
+      font-family: var(--wiki-font-mono);
       padding: .1em .3em;
       white-space: pre-wrap;
     }

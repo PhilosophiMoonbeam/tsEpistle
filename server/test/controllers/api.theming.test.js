@@ -23,6 +23,7 @@ vi.mockModule('express', import.meta.url, () => {
 
 const express = await import('express')
 import { cloneThemeColors, DEFAULT_THEME_COLORS } from '../../../shared/theme-colors.ts'
+import { createDefaultThemePalette } from '../../../shared/theme-palettes.ts'
 
 describe('controllers/api theming endpoints', () => {
   beforeEach(() => {
@@ -220,6 +221,8 @@ describe('controllers/api theming endpoints', () => {
       iconset: 'mdi',
       darkMode: false,
       colors: cloneThemeColors(DEFAULT_THEME_COLORS),
+      palettes: [createDefaultThemePalette(DEFAULT_THEME_COLORS)],
+      activePaletteId: 'luminous-archive',
       tocPosition: 'right',
       gutterStyle: 'laurel',
       gutterCustomCss: 'opacity: .4;',
@@ -228,6 +231,7 @@ describe('controllers/api theming endpoints', () => {
       injectBody: '<div>body</div>'
     })
     expect(Object.keys(res.json.mock.calls[0][0]).sort()).toEqual([
+      'activePaletteId',
       'colors',
       'darkMode',
       'gutterCustomCss',
@@ -236,6 +240,7 @@ describe('controllers/api theming endpoints', () => {
       'injectBody',
       'injectCSS',
       'injectHead',
+      'palettes',
       'theme',
       'tocPosition'
     ])
@@ -348,6 +353,43 @@ describe('controllers/api theming endpoints', () => {
     expect(global.WIKI.config.theming.injectCSS).toBe('.contents{color:red}')
     expect(global.WIKI.configSvc.saveToDb).toHaveBeenCalledWith(['theming'])
     expect(res.json).toHaveBeenCalledWith({ message: 'Theme config updated' })
+  })
+
+  it('persists multiple editable color themes and applies the selected theme colors', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValue(true)
+    const handler = await loadSaveHandler()
+    const customColors = cloneThemeColors(DEFAULT_THEME_COLORS)
+    customColors.light.primary = '#123456'
+    customColors.dark.primary = '#ABCDEF'
+    const palettes = [
+      createDefaultThemePalette(DEFAULT_THEME_COLORS),
+      { id: 'custom-theme-2', name: 'Boardroom dusk', colors: customColors }
+    ]
+    const req = {
+      user: { permissions: ['manage:theme'] },
+      body: {
+        theme: 'default',
+        iconset: 'mdi',
+        darkMode: true,
+        colors: cloneThemeColors(DEFAULT_THEME_COLORS),
+        palettes,
+        activePaletteId: 'custom-theme-2',
+        tocPosition: 'right',
+        gutterStyle: 'columns',
+        gutterCustomCss: '',
+        injectCSS: '',
+        injectHead: '',
+        injectBody: ''
+      }
+    }
+    const res = { sendStatus: vi.fn(), json: vi.fn(), status: vi.fn().mockReturnThis() }
+
+    await handler(req, res, vi.fn())
+
+    expect(global.WIKI.config.theming.activePaletteId).toBe('custom-theme-2')
+    expect(global.WIKI.config.theming.palettes).toEqual(palettes)
+    expect(global.WIKI.config.theming.colors).toEqual(customColors)
+    expect(global.WIKI.configSvc.saveToDb).toHaveBeenCalledWith(['theming'])
   })
 
   it('defaults missing optional injection fields to empty strings on save', async () => {

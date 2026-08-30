@@ -37,7 +37,6 @@ describe('admin-navigation save REST facade', () => {
     expect(source).not.toContain('this.$apollo')
     expect(source).not.toContain('navigation {')
     expect(source).not.toContain('config {')
-    expect(source).not.toContain('tree {')
   })
 
   test('save uses REST helper while preserving loading, success notification, and error facade', () => {

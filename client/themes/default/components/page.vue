@@ -1754,7 +1754,7 @@ export default defineComponent({
     padding:
       var(--wiki-space-6)
       var(--wiki-page-gutter)
-      var(--wiki-space-8) !important;
+      calc(var(--wiki-space-8) + var(--wiki-control-height)) !important;
   }
 
   .page-header-headings {
@@ -1801,7 +1801,7 @@ export default defineComponent({
   .page-edit-shortcuts {
     position: absolute;
     inset-inline-end: var(--wiki-page-gutter);
-    inset-block-end: calc(var(--wiki-space-5) * -1);
+    inset-block-end: var(--wiki-space-4);
     z-index: 2;
     display: flex;
     gap: var(--wiki-space-2);

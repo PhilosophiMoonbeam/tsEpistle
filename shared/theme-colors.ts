@@ -40,26 +40,26 @@ export type ThemeColors = z.infer<typeof ThemeColorsSchema>
 
 export const DEFAULT_THEME_COLORS: ThemeColors = {
   light: {
-    background: '#FFFFFF',
-    surface: '#FFFFFF',
-    primary: '#1867C0',
-    secondary: '#48A9A6',
-    accent: '#82B1FF',
-    info: '#2196F3',
-    success: '#4CAF50',
-    warning: '#FB8C00',
-    error: '#B00020'
+    background: '#F7F7F5',
+    surface: '#F8F9FA',
+    primary: '#F9A134',
+    secondary: '#484C51',
+    accent: '#818385',
+    info: '#2F6F9F',
+    success: '#347A55',
+    warning: '#A85B00',
+    error: '#B33A45'
   },
   dark: {
-    background: '#121212',
-    surface: '#212121',
-    primary: '#2196F3',
-    secondary: '#54B6B2',
-    accent: '#448AFF',
-    info: '#64B5F6',
-    success: '#66BB6A',
-    warning: '#FFA726',
-    error: '#CF6679'
+    background: '#181A1C',
+    surface: '#24272A',
+    primary: '#F9A134',
+    secondary: '#A6A8AA',
+    accent: '#B8BABC',
+    info: '#73ADD3',
+    success: '#72B38D',
+    warning: '#E4A24B',
+    error: '#D97A83'
   }
 }
 

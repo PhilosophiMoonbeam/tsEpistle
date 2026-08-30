@@ -1,6 +1,11 @@
 import { sameOriginJsonFetch } from './json-transport.ts'
-import { ThemeColorsSchema, type ThemeColors } from '../../shared/theme-colors.ts'
+import { cloneThemeColors, ThemeColorsSchema, type ThemeColors } from '../../shared/theme-colors.ts'
 import { PageGutterCustomCssSchema, PageGutterStyleSchema, type PageGutterStyle } from '../../shared/page-gutters.ts'
+import {
+  normalizeThemePalettes,
+  resolveThemePaletteId,
+  type ThemePalette
+} from '../../shared/theme-palettes.ts'
 
 type JsonHeaders = {
   get: (name: string) => string | null
@@ -30,6 +35,8 @@ export type ThemeConfig = {
   iconset: string
   darkMode: boolean
   colors: ThemeColors
+  palettes: ThemePalette[]
+  activePaletteId: string
   tocPosition: string
   gutterStyle: PageGutterStyle
   gutterCustomCss: string
@@ -86,14 +93,14 @@ function normalizeThemeConfigPayload(payload: unknown, fallbackMessage: string):
   }
 
   const themePayload = payload as Partial<ThemeConfig>
-  const requiredStringFields: Array<keyof Omit<ThemeConfig, 'colors' | 'darkMode'>> = [
+  const requiredStringFields = [
     'theme',
     'iconset',
     'tocPosition',
     'injectCSS',
     'injectHead',
     'injectBody'
-  ]
+  ] as const
   if (requiredStringFields.some(field => typeof themePayload[field] !== 'string')) {
     throw new Error(fallbackMessage)
   }
@@ -109,12 +116,17 @@ function normalizeThemeConfigPayload(payload: unknown, fallbackMessage: string):
   if (!gutterStyle.success || !gutterCustomCss.success) {
     throw new Error(fallbackMessage)
   }
+  const palettes = normalizeThemePalettes(themePayload.palettes, colors.data)
+  const activePaletteId = resolveThemePaletteId(themePayload.activePaletteId, palettes)
+  const activePalette = palettes.find(palette => palette.id === activePaletteId) ?? palettes[0]
 
   return {
     theme: themePayload.theme!,
     iconset: themePayload.iconset!,
     darkMode: themePayload.darkMode,
-    colors: colors.data,
+    colors: cloneThemeColors(activePalette?.colors ?? colors.data),
+    palettes,
+    activePaletteId,
     tocPosition: themePayload.tocPosition!,
     gutterStyle: gutterStyle.data,
     gutterCustomCss: gutterCustomCss.data,
