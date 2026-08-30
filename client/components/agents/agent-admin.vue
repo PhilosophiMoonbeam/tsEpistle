@@ -378,7 +378,7 @@
 
             <section v-else class="profile-form-section">
               <div class="profile-form-section__intro"><span><v-icon size="21">mdi-gauge</v-icon></span><div><h3>Advanced limits and quotas</h3><p>Bound context, output, retries, time, and reservations for this profile.</p></div></div>
-              <v-alert type="info" variant="tonal" density="compact" class="mb-5">These safe defaults suit most deployments. Cost values are reservation ceilings; provider billing is not calculated in this release, so profiles use <code>unpriced-v1</code>.</v-alert>
+              <v-alert type="info" variant="tonal" density="compact" class="mb-5">These safe defaults suit most deployments. Cost values are reservation ceilings enforced against this profile revision's immutable token pricing schedule.</v-alert>
               <div class="limit-group">
                 <h4>Model boundaries</h4>
                 <div class="form-grid"><v-text-field v-model.number="profileDraft.maxContextTokens" type="number" min="1" label="Maximum context tokens" /><v-text-field v-model.number="profileDraft.maxOutputTokens" type="number" min="1" label="Maximum output tokens" /></div>

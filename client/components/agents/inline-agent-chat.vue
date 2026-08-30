@@ -1,5 +1,6 @@
 <template>
   <section
+    ref="inlineAgentRoot"
     class="inline-agent"
     aria-labelledby="inline-agent-title"
     :aria-busy="loading"
@@ -74,7 +75,6 @@
 
         <div class="inline-agent__panel-actions" role="group" aria-label="Agent workspace panels">
           <v-btn
-            ref="historyTrigger"
             class="inline-agent__desktop-panel-btn"
             icon="mdi-history"
             :color="historyOpen ? 'primary' : undefined"
@@ -85,7 +85,6 @@
             @click="toggleHistory"
           />
           <v-btn
-            ref="memoryTrigger"
             class="inline-agent__desktop-panel-btn"
             icon="mdi-brain"
             :color="memoryOpen ? 'primary' : undefined"
@@ -97,7 +96,7 @@
           />
           <v-menu location="bottom end">
             <template #activator="{ props: menuProps }">
-              <v-btn ref="mobileActionsTrigger" v-bind="menuProps" class="inline-agent__mobile-panel-menu" prepend-icon="mdi-view-dashboard-outline" variant="text" size="small" aria-label="Open Agent panels: conversation history and memory">Panels</v-btn>
+              <v-btn v-bind="menuProps" class="inline-agent__mobile-panel-menu" prepend-icon="mdi-view-dashboard-outline" variant="text" size="small" aria-label="Open Agent panels: conversation history and memory">Panels</v-btn>
             </template>
             <v-list density="compact">
               <v-list-item title="Conversation history" prepend-icon="mdi-history" @click="toggleHistory" />
@@ -271,7 +270,7 @@
       :aria-modal="compactPanels ? 'true' : undefined"
       :tabindex="compactPanels ? -1 : undefined"
     >
-      <AgentMemoryManager v-model="memoryOpen" :csrf-token="csrfToken" />
+      <AgentMemoryManager :model-value="memoryOpen" :csrf-token="csrfToken" @update:model-value="updateMemoryOpen" />
     </aside>
   </section>
 
@@ -334,14 +333,12 @@ const props = defineProps<{
 
 const agents = useAgentsStore()
 const { connection, decidingApprovalId, error, goalBusy, loading, profiles, sending, sessions, skills, thread } = storeToRefs(agents)
+const inlineAgentRoot = ref<HTMLElement | null>(null)
 const transcript = ref<HTMLElement | null>(null)
 const composer = ref<{ focusInput: () => Promise<void>; focusSkillsTrigger: () => Promise<void> } | null>(null)
 const historyPanel = ref<HTMLElement | null>(null)
 const memoryPanel = ref<HTMLElement | null>(null)
 const panelScrim = ref<HTMLElement | null>(null)
-const historyTrigger = ref<{ $el?: HTMLElement } | HTMLElement | null>(null)
-const memoryTrigger = ref<{ $el?: HTMLElement } | HTMLElement | null>(null)
-const mobileActionsTrigger = ref<{ $el?: HTMLElement } | HTMLElement | null>(null)
 const approvalJumpVisible = ref(false)
 const skillManagerOpen = ref(false)
 const resetHistoryOpen = ref(false)
@@ -359,9 +356,11 @@ let transcriptFrame: number | null = null
 let transcriptFrameShouldFollow = false
 let panelFocusScope: ModalFocusScope | null = null
 let panelFocusKind: 'history' | 'memory' | null = null
+let pendingPanelFocusKind: 'history' | 'memory' | null = null
 let initialization: Promise<void> | null = null
 let compactPanelMedia: MediaQueryList | null = null
 const compactPanelQuery = '(max-width: 1711.98px)'
+const mobilePanelQuery = '(max-width: 639.98px)'
 
 const currentPage = computed<AgentCurrentPageHint | null>(() => {
   if (props.pageId < 1 || !props.pageLocale || !props.pagePath || !props.pageUpdatedAt) return null
@@ -471,21 +470,38 @@ const newSession = async (): Promise<void> => {
     agents.error = value instanceof Error ? value.message : 'A new conversation could not be created.'
   }
 }
-const elementForRef = (value: { $el?: HTMLElement } | HTMLElement | null): HTMLElement | null =>
-  value instanceof HTMLElement ? value : value?.$el ?? null
 const isVisibleTrigger = (element: HTMLElement | null): element is HTMLElement => {
   if (!element || !element.isConnected || element.getClientRects().length === 0) return false
   const style = window.getComputedStyle(element)
   return style.display !== 'none' && style.visibility !== 'hidden'
 }
 const triggerForPanel = (kind: 'history' | 'memory'): HTMLElement | null => {
-  const direct = elementForRef(kind === 'history' ? historyTrigger.value : memoryTrigger.value)
-  const mobile = elementForRef(mobileActionsTrigger.value)
-  return [direct, mobile].find(isVisibleTrigger) ?? direct ?? mobile
+  const root = inlineAgentRoot.value
+  if (!root) return null
+  const directLabel = kind === 'history' ? 'Open agent conversation history' : 'Manage agent memory'
+  const direct = root.querySelector<HTMLElement>(`[aria-label="${directLabel}"]`)
+  const mobile = root.querySelector<HTMLElement>('[aria-label="Open Agent panels: conversation history and memory"]')
+  const useMobileTrigger = window.matchMedia(mobilePanelQuery).matches
+  return (useMobileTrigger ? [mobile, direct] : [direct, mobile]).find(isVisibleTrigger) ?? null
 }
 const openSkillManager = (): void => { skillManagerOpen.value = true }
-const closeHistory = (): void => { historyOpen.value = false }
-const closeMemory = (): void => { memoryOpen.value = false }
+const preparePanelTriggerRestore = (kind: 'history' | 'memory'): void => {
+  pendingPanelFocusKind = kind
+}
+const closeHistory = (): void => {
+  const closingKind = compactPanels.value && historyOpen.value ? 'history' : null
+  if (closingKind) preparePanelTriggerRestore(closingKind)
+  historyOpen.value = false
+}
+const closeMemory = (): void => {
+  const closingKind = compactPanels.value && memoryOpen.value ? 'memory' : null
+  if (closingKind) preparePanelTriggerRestore(closingKind)
+  memoryOpen.value = false
+}
+const updateMemoryOpen = (open: boolean): void => {
+  if (open) memoryOpen.value = true
+  else closeMemory()
+}
 const reloadHistory = async (): Promise<void> => {
   if (historyLoading.value) return
   historyLoading.value = true
@@ -501,23 +517,34 @@ const reloadHistory = async (): Promise<void> => {
   }
 }
 const toggleHistory = (): void => {
-  const opening = !historyOpen.value
-  historyOpen.value = opening
-  if (opening) {
-    if (compactPanels.value) memoryOpen.value = false
-    void reloadHistory()
+  if (historyOpen.value) {
+    closeHistory()
+    return
   }
+  historyOpen.value = true
+  if (compactPanels.value) memoryOpen.value = false
+  void reloadHistory()
 }
 const toggleMemory = (): void => {
-  const opening = !memoryOpen.value
-  memoryOpen.value = opening
-  if (opening && compactPanels.value) historyOpen.value = false
+  if (memoryOpen.value) {
+    closeMemory()
+    return
+  }
+  memoryOpen.value = true
+  if (compactPanels.value) historyOpen.value = false
 }
 const reconcileCompactPanels = (event: MediaQueryListEvent): void => {
   compactPanels.value = event.matches
   if (event.matches && historyOpen.value && memoryOpen.value) memoryOpen.value = false
 }
-const closePanels = (): void => { historyOpen.value = false; memoryOpen.value = false }
+const closePanels = (): void => {
+  const closingKind = compactPanels.value
+    ? historyOpen.value ? 'history' : memoryOpen.value ? 'memory' : null
+    : null
+  if (closingKind) preparePanelTriggerRestore(closingKind)
+  historyOpen.value = false
+  memoryOpen.value = false
+}
 const openResetHistory = (): void => {
   resetError.value = ''
   resetCommitted.value = false
@@ -620,19 +647,12 @@ watch(currentPage, page => agents.setCurrentPage(page), { immediate: true })
 watch(skillManagerOpen, (open, wasOpen) => {
   if (!open && wasOpen) void nextTick(() => composer.value?.focusSkillsTrigger())
 })
-watch([historyOpen, memoryOpen, compactPanels], async ([history, memory, compact], [wasHistory, wasMemory, wasCompact]) => {
+watch([historyOpen, memoryOpen, compactPanels], async ([history, memory, compact]) => {
   const kind = history ? 'history' : memory ? 'memory' : null
   if (!kind || !compact) {
-    const previousKind = wasHistory ? 'history' : wasMemory ? 'memory' : null
-    const restoreKind = !kind && wasCompact ? previousKind : null
     panelFocusScope?.deactivate({ restoreFocus: false })
     panelFocusScope = null
     panelFocusKind = null
-    if (!restoreKind) return
-    await nextTick()
-    if (historyOpen.value || memoryOpen.value) return
-    const trigger = triggerForPanel(restoreKind)
-    if (isVisibleTrigger(trigger)) trigger.focus({ preventScroll: true })
     return
   }
   if (panelFocusScope && panelFocusKind === kind) return
@@ -652,6 +672,16 @@ watch([historyOpen, memoryOpen, compactPanels], async ([history, memory, compact
     onEscape: kind === 'history' ? closeHistory : closeMemory
   })
 })
+watch([historyOpen, memoryOpen], ([history, memory]) => {
+  if (history || memory) {
+    pendingPanelFocusKind = null
+    return
+  }
+  const restoreKind = pendingPanelFocusKind
+  pendingPanelFocusKind = null
+  if (!restoreKind) return
+  triggerForPanel(restoreKind)?.focus({ preventScroll: true })
+}, { flush: 'post' })
 watch(() => thread.value?.session.id, (sessionId, previousSessionId) => {
   if (!historyOpen.value || !sessionId || !previousSessionId || sessionId === previousSessionId) return
   panelFocusScope?.deactivate({ restoreFocus: false })
