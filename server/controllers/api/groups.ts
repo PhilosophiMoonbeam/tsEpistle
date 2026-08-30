@@ -6,7 +6,6 @@ import { isValidPageRuleRegex } from '../../helpers/page-access.ts'
 
 const router = express.Router()
 
-
 const requireAccess = (req: Request, res: Response, permissions: string[], message: string): boolean => {
   if (!getWikiAuth().checkAccess(req.user, permissions)) {
     res.status(403).json({ error: message })
@@ -15,26 +14,24 @@ const requireAccess = (req: Request, res: Response, permissions: string[], messa
   return true
 }
 
-const requireGroupsPickerAccess = (req: Request, res: Response): boolean => requireAccess(
-  req,
-  res,
-  ['write:groups', 'manage:groups', 'manage:system', 'write:users', 'manage:users', 'manage:navigation', 'manage:api'],
-  'an admin groups picker permission is required'
-)
+const requireGroupsPickerAccess = (req: Request, res: Response): boolean =>
+  requireAccess(
+    req,
+    res,
+    ['write:groups', 'manage:groups', 'manage:system', 'write:users', 'manage:users', 'manage:navigation', 'manage:api'],
+    'an admin groups picker permission is required'
+  )
 
-const requireGroupsListAccess = (req: Request, res: Response): boolean => requireAccess(
-  req,
-  res,
-  ['write:groups', 'manage:groups', 'manage:system'],
-  'write:groups, manage:groups, or manage:system is required'
-)
+const requireGroupsListAccess = (req: Request, res: Response): boolean =>
+  requireAccess(req, res, ['write:groups', 'manage:groups', 'manage:system'], 'write:groups, manage:groups, or manage:system is required')
 
-const requireGroupUserAssignmentAccess = (req: Request, res: Response): boolean => requireAccess(
-  req,
-  res,
-  ['manage:users', 'write:groups', 'manage:groups', 'manage:system'],
-  'manage:users, write:groups, manage:groups, or manage:system is required'
-)
+const requireGroupUserAssignmentAccess = (req: Request, res: Response): boolean =>
+  requireAccess(
+    req,
+    res,
+    ['manage:users', 'write:groups', 'manage:groups', 'manage:system'],
+    'manage:users, write:groups, manage:groups, or manage:system is required'
+  )
 
 const normalizePositiveIntegerParam = (value: string, label: string, res: Response): number | null => {
   if (!/^[1-9]\d*$/.test(value)) {
@@ -161,11 +158,13 @@ router.get('/', async (req, res, next) => {
   try {
     const result: unknown = await groupOperations.listPickerOptions()
     const groups: unknown[] = Array.isArray(result) ? result : []
-    res.json(groups.map((group: unknown) => ({
-      id: objectValue(group, 'id'),
-      name: objectValue(group, 'name'),
-      isSystem: Boolean(objectValue(group, 'isSystem'))
-    })))
+    res.json(
+      groups.map((group: unknown) => ({
+        id: objectValue(group, 'id'),
+        name: objectValue(group, 'name'),
+        isSystem: Boolean(objectValue(group, 'isSystem'))
+      }))
+    )
   } catch (err) {
     next(err)
   }
@@ -176,14 +175,16 @@ router.get('/list', async (req, res, next) => {
   try {
     const result: unknown = await groupOperations.list()
     const groups: unknown[] = Array.isArray(result) ? result : []
-    res.json(groups.map((group: unknown) => ({
-      id: objectValue(group, 'id'),
-      name: objectValue(group, 'name'),
-      isSystem: Boolean(objectValue(group, 'isSystem')),
-      userCount: Number.parseInt(String(objectValue(group, 'userCount')), 10) || 0,
-      createdAt: objectValue(group, 'createdAt'),
-      updatedAt: objectValue(group, 'updatedAt')
-    })))
+    res.json(
+      groups.map((group: unknown) => ({
+        id: objectValue(group, 'id'),
+        name: objectValue(group, 'name'),
+        isSystem: Boolean(objectValue(group, 'isSystem')),
+        userCount: Number.parseInt(String(objectValue(group, 'userCount')), 10) || 0,
+        createdAt: objectValue(group, 'createdAt'),
+        updatedAt: objectValue(group, 'updatedAt')
+      }))
+    )
   } catch (err) {
     next(err)
   }
@@ -198,7 +199,7 @@ router.post('/:groupId/users/:userId', async (req, res, next) => {
 
   try {
     await groupOperations.assignUser({
-      ...(req.user === undefined ? {} : { requester: req.user }),
+      requester: req.user,
       groupId,
       userId
     })
@@ -216,7 +217,7 @@ router.delete('/:groupId/users/:userId', async (req, res, next) => {
   if (userId === null) return
 
   try {
-    await groupOperations.unassignUser({ groupId, userId })
+    await groupOperations.unassignUser({ requester: req.user, groupId, userId })
     res.json({ succeeded: true, message: 'User has been unassigned from group.' })
   } catch (err) {
     handleOperationError(err, res, next)
@@ -229,7 +230,7 @@ router.delete('/:id', async (req, res, next) => {
   if (id === null) return
 
   try {
-    await groupOperations.remove(id)
+    await groupOperations.remove({ requester: req.user, id })
     res.json({ succeeded: true, message: 'Group has been deleted.' })
   } catch (err) {
     handleOperationError(err, res, next)
@@ -245,7 +246,7 @@ router.patch('/:id', async (req, res, next) => {
 
   try {
     await groupOperations.update({
-      ...(req.user === undefined ? {} : { requester: req.user }),
+      requester: req.user,
       id,
       ...payload
     })
@@ -273,9 +274,7 @@ router.get('/:id', async (req, res, next) => {
       name: objectValue(group, 'name'),
       redirectOnLogin: objectValue(group, 'redirectOnLogin'),
       isSystem: Boolean(objectValue(group, 'isSystem')),
-      permissions: Array.isArray(permissionsValue)
-        ? permissionsValue.filter((permission: unknown) => typeof permission === 'string')
-        : [],
+      permissions: Array.isArray(permissionsValue) ? permissionsValue.filter((permission: unknown) => typeof permission === 'string') : [],
       pageRules: pageRules.map((rule: unknown) => {
         const rolesValue = objectValue(rule, 'roles')
         const localesValue = objectValue(rule, 'locales')

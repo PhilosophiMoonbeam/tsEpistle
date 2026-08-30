@@ -40,7 +40,11 @@ describe('controllers/api pages endpoints', () => {
         issueSession: vi.fn()
       },
       models: {
-        knex: vi.fn(),
+        knex: vi.fn().mockImplementation(() => ({
+          where: vi.fn().mockReturnValue({
+            first: vi.fn().mockResolvedValue(undefined)
+          })
+        })),
         tags: {
           query: vi.fn().mockReturnValue({
             deleteById: vi.fn().mockResolvedValue(1),
@@ -54,6 +58,7 @@ describe('controllers/api pages endpoints', () => {
         },
         pages: {
           deletePage: vi.fn().mockResolvedValue(undefined),
+          updatePage: vi.fn().mockResolvedValue({ id: 7 }),
           getPageFromDb: vi.fn().mockResolvedValue({
             id: 7,
             path: 'docs/alpha',
@@ -140,6 +145,7 @@ describe('controllers/api pages endpoints', () => {
     return {
       deletePage: express.__router.delete.mock.calls.find(([path]) => path === '/:id')[1],
       deleteTag: express.__router.delete.mock.calls.find(([path]) => path === '/tags/:id')[1],
+      updatePage: express.__router.put.mock.calls.find(([path]) => path === '/:id')[1],
       getPage: express.__router.get.mock.calls.find(([path]) => path === '/:id')[1],
       links: express.__router.get.mock.calls.find(([path]) => path === '/links')[1],
       listPages: express.__router.get.mock.calls.find(([path]) => path === '/')[1],
@@ -148,6 +154,7 @@ describe('controllers/api pages endpoints', () => {
       updateTag: express.__router.patch.mock.calls.find(([path]) => path === '/tags/:id')[1],
       visibility: express.__router.patch.mock.calls.find(([path]) => path === '/:id/visibility')[1],
       restore: express.__router.post.mock.calls.find(([path]) => path === '/:id/history/:versionId/restore')[1],
+      submitApproval: express.__router.post.mock.calls.find(([path]) => path === '/:id/approval')[1],
       collaborationSession: express.__router.post.mock.calls.find(([path]) => path === '/:id/collaboration/session')[1],
       tree: express.__router.get.mock.calls.find(([path]) => path === '/tree')[1]
     }
@@ -241,6 +248,74 @@ describe('controllers/api pages endpoints', () => {
 
     expect(res.status).toHaveBeenCalledWith(400)
     expect(res.json).toHaveBeenCalledWith({ error: 'expectedSourceRevision must be a non-empty string' })
+  })
+
+  it('requires an observed source revision before submitting a page approval', async () => {
+    const { submitApproval } = await loadHandler()
+    const req = {
+      body: { assigneeId: 3 },
+      params: { id: '7' },
+      user: { id: 1, permissions: ['write:pages'] }
+    }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
+
+    await submitApproval(req, res, vi.fn())
+
+    expect(res.status).toHaveBeenCalledWith(400)
+    expect(res.json).toHaveBeenCalledWith({ error: 'expectedSourceRevision must be a non-empty string' })
+  })
+
+  it('rejects locked GraphQL updates and permits REST and GraphQL updates with a current-session grant', async () => {
+    global.WIKI.auth.checkAccess.mockImplementation((user, permissions) =>
+      permissions.some(permission => user?.permissions?.includes(permission))
+    )
+    let grantActive = false
+    const deleteExpired = vi.fn().mockResolvedValue(0)
+    global.WIKI.models.knex.mockImplementation(table => {
+      if (table === 'pageAccessPasswords') {
+        return {
+          where: vi.fn().mockReturnValue({
+            first: vi.fn().mockResolvedValue({ pageId: 7, version: 2 })
+          })
+        }
+      }
+      if (table === 'pageUnlockGrants') {
+        return {
+          where: vi.fn().mockImplementation((column, operator) => {
+            if (column === 'expiresAt' && operator === '<=') return { delete: deleteExpired }
+            return {
+              where: vi.fn().mockReturnValue({
+                first: vi.fn().mockImplementation(async () => grantActive ? { id: 'grant-1' } : undefined)
+              })
+            }
+          })
+        }
+      }
+      throw new Error(`Unexpected table ${table}`)
+    })
+    const requester = { id: 5, permissions: ['read:pages', 'write:pages'] }
+    const args = { id: 7, expectedSourceRevision: '8', title: 'Updated' }
+    const context = { req: { user: requester, sessionID: 'current-session' } }
+    const { updatePage } = await loadHandler()
+    const { default: pageResolvers } = await vi.importFresh('../../graph/resolvers/page.ts', import.meta.url)
+
+    const lockedGraphResult = await pageResolvers.PageMutation.update(null, args, context)
+
+    expect(lockedGraphResult.responseResult).toEqual(expect.objectContaining({ succeeded: false, message: 'Access denied' }))
+    expect(global.WIKI.models.pages.updatePage).not.toHaveBeenCalled()
+
+    grantActive = true
+    const grantedResponse = { json: vi.fn(), status: vi.fn().mockReturnThis() }
+    await updatePage(
+      { body: args, params: { id: '7' }, sessionID: 'current-session', user: requester },
+      grantedResponse,
+      vi.fn()
+    )
+    const grantedGraphResult = await pageResolvers.PageMutation.update(null, args, context)
+
+    expect(grantedResponse.json).toHaveBeenCalledWith({ page: { id: 7 } })
+    expect(grantedGraphResult.responseResult).toEqual(expect.objectContaining({ succeeded: true }))
+    expect(global.WIKI.models.pages.updatePage).toHaveBeenCalledTimes(2)
   })
   it('requires and forwards the observed timestamp for collaboration sessions', async () => {
     const expectedUpdatedAt = '2026-08-15T00:00:00.000Z'
@@ -432,7 +507,6 @@ describe('controllers/api pages endpoints', () => {
         path: 'docs/alpha',
         title: 'Alpha',
         description: 'Alpha description',
-        isPublished: true,
         visibility: 'public',
         ownerId: null,
         contentType: 'markdown',
@@ -789,14 +863,13 @@ describe('controllers/api pages endpoints', () => {
       .mockReturnValueOnce(true)
       .mockReturnValueOnce(true)
     const { getPage } = await loadHandler()
-    const req = { user: { permissions: ['manage:pages'] }, params: { id: '7' } }
-    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
+    const req = { user: { id: 3, permissions: ['write:pages'] }, sessionID: 'session-write', params: { id: '7' } }
+    const res = { json: vi.fn(), set: vi.fn(), status: vi.fn().mockReturnThis(), vary: vi.fn() }
 
     await getPage(req, res)
 
-    expect(global.WIKI.auth.checkAccess).toHaveBeenNthCalledWith(1, { permissions: ['manage:pages'] }, ['read:pages', 'manage:system'])
     expect(global.WIKI.models.pages.getPageFromDb).toHaveBeenCalledWith(7)
-    expect(global.WIKI.auth.checkAccess).toHaveBeenNthCalledWith(2, { permissions: ['manage:pages'] }, ['read:pages'], { path: 'docs/alpha', locale: 'en', tags: undefined })
+    expect(global.WIKI.auth.checkAccess).toHaveBeenNthCalledWith(1, { id: 3, permissions: ['write:pages'] }, ['read:pages'], { path: 'docs/alpha', locale: 'en', tags: undefined })
     expect(res.json).toHaveBeenCalledWith({
       id: 7,
       path: 'docs/alpha',
@@ -820,6 +893,29 @@ describe('controllers/api pages endpoints', () => {
       creatorId: 1,
       creatorName: 'Creator',
       creatorEmail: 'creator@example.com'
+    })
+  })
+
+  it('omits the same field-restricted page metadata hidden by GraphQL', async () => {
+    const { getPage } = await loadHandler()
+    const req = { user: { id: 4, permissions: ['read:pages'] }, sessionID: 'session-read', params: { id: '7' } }
+    const res = { json: vi.fn(), set: vi.fn(), status: vi.fn().mockReturnThis(), vary: vi.fn() }
+
+    await getPage(req, res)
+
+    expect(res.json).toHaveBeenCalledWith({
+      id: 7,
+      path: 'docs/alpha',
+      hash: 'abc123',
+      title: 'Alpha',
+      description: 'Alpha description',
+      visibility: 'public',
+      ownerId: null,
+      contentType: 'markdown',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-02T00:00:00.000Z',
+      sourceRevision: '8',
+      locale: 'en'
     })
   })
 
@@ -989,16 +1085,18 @@ describe('controllers/api pages endpoints', () => {
     expect(res.json).toHaveBeenCalledWith({ error: 'You are not authorized to delete this page.' })
   })
 
-  it('returns JSON errors for unexpected page delete failures', async () => {
-    global.WIKI.models.pages.deletePage.mockRejectedValueOnce(new Error('page db down'))
+  it('forwards unexpected page delete failures to the central error policy', async () => {
+    const failure = new Error('page db down')
+    global.WIKI.models.pages.deletePage.mockRejectedValueOnce(failure)
     const { deletePage } = await loadHandler()
     const req = { user: { permissions: ['delete:pages'] }, params: { id: '7' }, body: { expectedSourceRevision: '8' } }
     const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
+    const next = vi.fn()
 
-    await deletePage(req, res)
+    await deletePage(req, res, next)
 
-    expect(res.status).toHaveBeenCalledWith(500)
-    expect(res.json).toHaveBeenCalledWith({ error: 'page db down' })
+    expect(next).toHaveBeenCalledWith(failure)
+    expect(res.json).not.toHaveBeenCalled()
   })
 
   it('registers the tag update route', async () => {
@@ -1095,20 +1193,22 @@ describe('controllers/api pages endpoints', () => {
     expect(res.json).toHaveBeenCalledWith({ error: 'This tag does not exist.' })
   })
 
-  it('returns JSON errors for unexpected tag update failures', async () => {
+  it('forwards unexpected tag update failures to the central error policy', async () => {
+    const failure = new Error('tag db down')
     global.WIKI.models.tags.query.mockReturnValueOnce({
       findById: vi.fn().mockReturnValue({
-        patch: vi.fn().mockRejectedValue(new Error('tag db down'))
+        patch: vi.fn().mockRejectedValue(failure)
       })
     })
     const { updateTag } = await loadHandler()
     const req = { user: { permissions: ['manage:system'] }, params: { id: '7' }, body: { tag: 'News', title: 'News' } }
     const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
+    const next = vi.fn()
 
-    await updateTag(req, res)
+    await updateTag(req, res, next)
 
-    expect(res.status).toHaveBeenCalledWith(500)
-    expect(res.json).toHaveBeenCalledWith({ error: 'tag db down' })
+    expect(next).toHaveBeenCalledWith(failure)
+    expect(res.json).not.toHaveBeenCalled()
   })
 
   it('registers the tag delete route', async () => {
@@ -1179,21 +1279,23 @@ describe('controllers/api pages endpoints', () => {
     expect(res.json).toHaveBeenCalledWith({ error: 'This tag does not exist.' })
   })
 
-  it('returns JSON errors for unexpected tag delete failures', async () => {
+  it('forwards unexpected tag delete failures to the central error policy', async () => {
+    const failure = new Error('unrelate failed')
     global.WIKI.models.tags.query.mockReturnValueOnce({
       findById: vi.fn().mockReturnValue({
         $relatedQuery: vi.fn().mockReturnValue({
-          unrelate: vi.fn().mockRejectedValue(new Error('unrelate failed'))
+          unrelate: vi.fn().mockRejectedValue(failure)
         })
       })
     })
     const { deleteTag } = await loadHandler()
     const req = { user: { permissions: ['manage:system'] }, params: { id: '7' } }
     const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
+    const next = vi.fn()
 
-    await deleteTag(req, res)
+    await deleteTag(req, res, next)
 
-    expect(res.status).toHaveBeenCalledWith(500)
-    expect(res.json).toHaveBeenCalledWith({ error: 'unrelate failed' })
+    expect(next).toHaveBeenCalledWith(failure)
+    expect(res.json).not.toHaveBeenCalled()
   })
 })

@@ -1,9 +1,6 @@
 import type { NextFunction, Request, RequestHandler, Response } from 'express'
 import type { Knex } from 'knex'
-import type {
-  RateLimiterRes as RateLimiterResult,
-  RateLimiterStoreAbstract as RateLimiterStore
-} from 'rate-limiter-flexible'
+import type { RateLimiterRes as RateLimiterResult, RateLimiterStoreAbstract as RateLimiterStore } from 'rate-limiter-flexible'
 import { createRequire } from 'node:module'
 
 const require = createRequire(import.meta.url)
@@ -27,10 +24,11 @@ interface KnexRateLimiterOptions {
 interface AuthRateLimiterOptions {
   knex: Knex
   keyPrefix: string
-  onLimit: (req: Request, res: Response, retryAfterMs: number) => void
+  onLimit?: (req: Request, res: Response, retryAfterMs: number) => void
 }
 
 export interface AuthRateLimiter {
+  admit(req: Request): Promise<number | null>
   middleware: RequestHandler
   reset(req: Request): Promise<void>
 }
@@ -99,10 +97,7 @@ class KnexRateLimiter extends RateLimiterStoreAbstract {
     const newExpire = msDuration > 0 ? now + msDuration : null
 
     return this.knex.transaction(async transaction => {
-      const current = await transaction<RateLimitRow>(this.tableName)
-        .where('key', key)
-        .forUpdate()
-        .first()
+      const current = await transaction<RateLimitRow>(this.tableName).where('key', key).forUpdate().first()
 
       if (current === undefined) {
         const inserted: RateLimitRow = { key, points, expire: newExpire }
@@ -114,9 +109,7 @@ class KnexRateLimiter extends RateLimiterStoreAbstract {
       const startsNewDuration = forceExpire || (currentExpire !== null && currentExpire <= now)
       const nextPoints = startsNewDuration ? points : Number(current.points) + points
       const nextExpire = startsNewDuration ? newExpire : currentExpire
-      await transaction<RateLimitRow>(this.tableName)
-        .where('key', key)
-        .update({ points: nextPoints, expire: nextExpire })
+      await transaction<RateLimitRow>(this.tableName).where('key', key).update({ points: nextPoints, expire: nextExpire })
 
       return { key, points: nextPoints, expire: nextExpire }
     })
@@ -133,7 +126,7 @@ class KnexRateLimiter extends RateLimiterStoreAbstract {
 
   async _delete(key: string): Promise<boolean> {
     await this.ready
-    return await this.knex<RateLimitRow>(this.tableName).where('key', key).del() > 0
+    return (await this.knex<RateLimitRow>(this.tableName).where('key', key).del()) > 0
   }
 }
 
@@ -160,37 +153,39 @@ export const createAuthRateLimiter = (options: AuthRateLimiterOptions): AuthRate
     duration: WAIT_SECONDS.at(-1) ?? 60 * 60
   })
 
+  const admit = async (req: Request): Promise<number | null> => {
+    const key = requestKey(req)
+    const activeBlock = await blocks.get(key)
+    if (activeBlock !== null && activeBlock.msBeforeNext > 0) return activeBlock.msBeforeNext
+
+    const result = await attempts.consume(key)
+    if (result.consumedPoints <= FREE_ATTEMPTS) return null
+
+    const progression = result.consumedPoints - FREE_ATTEMPTS - 1
+    if (progression % 2 === 1) return null
+
+    const waitIndex = Math.min(Math.floor(progression / 2), WAIT_SECONDS.length - 1)
+    const waitSeconds = WAIT_SECONDS[waitIndex] ?? WAIT_SECONDS[WAIT_SECONDS.length - 1]
+    const block = await blocks.consume(key, 1, { customDuration: waitSeconds })
+    return block.msBeforeNext
+  }
+
   const middleware = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
-      const key = requestKey(req)
-      const activeBlock = await blocks.get(key)
-      if (activeBlock !== null && activeBlock.msBeforeNext > 0) {
-        options.onLimit(req, res, activeBlock.msBeforeNext)
-        return
-      }
-
-      const result = await attempts.consume(key)
-      if (result.consumedPoints <= FREE_ATTEMPTS) {
+      const retryAfterMs = await admit(req)
+      if (retryAfterMs === null) {
         next()
         return
       }
-
-      const progression = result.consumedPoints - FREE_ATTEMPTS - 1
-      if (progression % 2 === 1) {
-        next()
-        return
-      }
-
-      const waitIndex = Math.min(Math.floor(progression / 2), WAIT_SECONDS.length - 1)
-      const waitSeconds = WAIT_SECONDS[waitIndex] ?? WAIT_SECONDS[WAIT_SECONDS.length - 1]
-      const block = await blocks.consume(key, 1, { customDuration: waitSeconds })
-      options.onLimit(req, res, block.msBeforeNext)
+      if (options.onLimit === undefined) throw new TypeError('Auth rate limiter middleware requires an onLimit handler')
+      options.onLimit(req, res, retryAfterMs)
     } catch (error) {
       next(error)
     }
   }
 
   return {
+    admit,
     middleware,
     async reset(req: Request): Promise<void> {
       const key = requestKey(req)

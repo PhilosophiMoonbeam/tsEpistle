@@ -2,25 +2,10 @@ import express from 'express'
 import { type Request, type Response, getTransportRuntime, getWikiAuth } from '../_types.ts'
 import _ from 'lodash'
 import pageOperations from '../../operations/pages.ts'
-import {
-  linkPageLocaleRelation,
-  listPageLocaleRelations,
-  unlinkPageLocaleRelation
-} from '../../operations/page-locale-relations.ts'
+import { linkPageLocaleRelation, listPageLocaleRelations, unlinkPageLocaleRelation } from '../../operations/page-locale-relations.ts'
 import { principalId, type PageVisibility } from '../../helpers/page-access.ts'
-import {
-  getPageWatchState,
-  listPageWatchNotifications,
-  markPageWatchNotificationRead,
-  unwatchPage,
-  watchPage
-} from '../../operations/page-watching.ts'
-import {
-  getPageApproval,
-  listApprovalInbox,
-  submitPageApproval,
-  transitionApproval
-} from '../../operations/approvals.ts'
+import { getPageWatchState, listPageWatchNotifications, markPageWatchNotificationRead, unwatchPage, watchPage } from '../../operations/page-watching.ts'
+import { getPageApproval, listApprovalInbox, submitPageApproval, transitionApproval } from '../../operations/approvals.ts'
 import {
   assertPageUnlocked,
   getPageProtection,
@@ -36,7 +21,7 @@ const router = express.Router()
 
 interface PagesApiRuntime {
   collaboration: {
-    issueSession(input: { pageId: number, expectedUpdatedAt: string, requester: Express.User | undefined }): Promise<unknown>
+    issueSession(input: { pageId: number; expectedUpdatedAt: string; requester: Express.User | undefined }): Promise<unknown>
   }
   models: { knex: Knex }
 }
@@ -57,7 +42,6 @@ const getPageUnlockLimiter = (): AuthRateLimiter => {
 const pageUnlockMiddleware: express.RequestHandler = (req, res, next) => {
   getPageUnlockLimiter().middleware(req, res, next)
 }
-
 
 type TreeMode = 'ALL' | 'FOLDERS' | 'PAGES'
 
@@ -85,8 +69,7 @@ interface PageOperationListItem extends Record<string, unknown> {
   tags: string[]
 }
 
-const isDateValue = (value: unknown): value is string | Date =>
-  typeof value === 'string' || value instanceof Date
+const isDateValue = (value: unknown): value is string | Date => typeof value === 'string' || value instanceof Date
 
 const isPageListItem = (page: PageOperationListItem): page is PageOperationListItem & PageListItem =>
   typeof page.id === 'number' &&
@@ -103,9 +86,6 @@ const isPageListItem = (page: PageOperationListItem): page is PageOperationListI
   Array.isArray(page.tags) &&
   page.tags.every(tag => typeof tag === 'string')
 
-
-
-
 const errorMessage = (err: unknown, fallback: string): string => {
   const message = err instanceof Error ? err.message : String(err)
   return message || fallback
@@ -121,11 +101,10 @@ const errorStatus = (err: unknown, fallback: number): number => {
 
 const requestBody = (req: Request): Record<string, unknown> => {
   const body: unknown = req.body
-  return typeof body === 'object' && body !== null && !Array.isArray(body) ? body as Record<string, unknown> : {}
+  return typeof body === 'object' && body !== null && !Array.isArray(body) ? (body as Record<string, unknown>) : {}
 }
 
-const optionalStringQuery = (value: unknown): string | undefined =>
-  typeof value === 'string' && value.length > 0 ? value : undefined
+const optionalStringQuery = (value: unknown): string | undefined => (typeof value === 'string' && value.length > 0 ? value : undefined)
 const requiredSourceRevision = (req: Request, res: Response): string | null => {
   const value = requestBody(req).expectedSourceRevision
   if (typeof value !== 'string' || value.length < 1 || value.length > 64) {
@@ -135,12 +114,31 @@ const requiredSourceRevision = (req: Request, res: Response): string | null => {
   return value
 }
 
-const parseTreeMode = (value: unknown): TreeMode | null =>
-  value === 'ALL' || value === 'FOLDERS' || value === 'PAGES' ? value : null
+const parseTreeMode = (value: unknown): TreeMode | null => (value === 'ALL' || value === 'FOLDERS' || value === 'PAGES' ? value : null)
 
-const requesterInput = (req: Request): { requester?: Express.User } =>
-  req.user === undefined ? {} : { requester: req.user }
-
+const requesterInput = (req: Request): { requester?: Express.User } => (req.user === undefined ? {} : { requester: req.user })
+const pageOperationContext = (req: Request): { requester?: Express.User; sessionId: string } => ({
+  ...requesterInput(req),
+  sessionId: req.sessionID
+})
+const hasRestrictedPageFieldAccess = (req: Request): boolean =>
+  Array.isArray(req.user?.permissions) && req.user.permissions.some(permission => permission === 'write:pages' || permission === 'manage:system')
+const pageResponse = (req: Request, page: unknown): unknown => {
+  if (hasRestrictedPageFieldAccess(req) || typeof page !== 'object' || page === null) return page
+  return _.omit(page, [
+    'isPublished',
+    'publishStartDate',
+    'publishEndDate',
+    'editor',
+    'editorKey',
+    'authorId',
+    'authorName',
+    'authorEmail',
+    'creatorId',
+    'creatorName',
+    'creatorEmail'
+  ])
+}
 
 const requireSystemAccess = (req: Request, res: Response): boolean => {
   if (!getWikiAuth().checkAccess(req.user, ['manage:system'])) {
@@ -225,7 +223,10 @@ const parseTagsQuery = (value: unknown): string[] => {
     return value.flatMap(tag => parseTagsQuery(tag))
   }
   if (_.isString(value)) {
-    return value.split(',').map(tag => _.trim(tag).toLowerCase()).filter(tag => tag.length > 0)
+    return value
+      .split(',')
+      .map(tag => _.trim(tag).toLowerCase())
+      .filter(tag => tag.length > 0)
   }
   return []
 }
@@ -237,9 +238,13 @@ const parsePositiveIntegerParam = (req: Request, res: Response, name = 'id'): nu
   }
   return id
 }
-
-const sendOperationError = (res: Response, value: unknown, fallback: string): void => {
-  res.status(errorStatus(value, 500)).json({ error: errorMessage(value, fallback) })
+const sendOperationError = (res: Response, next: express.NextFunction, value: unknown, fallback: string): void => {
+  const status = errorStatus(value, 0)
+  if (status >= 400 && status < 500) {
+    res.status(status).json({ error: errorMessage(value, fallback) })
+    return
+  }
+  next(value)
 }
 
 router.get('/', async (req, res, next) => {
@@ -267,25 +272,27 @@ router.get('/', async (req, res, next) => {
       ...(orderByDirection === undefined ? {} : { orderByDirection })
     })
 
-    return res.json(pages.map(page => {
-      if (!isPageListItem(page)) {
-        throw new TypeError('Page list query returned an invalid selected row')
-      }
-      return {
-        id: page.id,
-        path: page.path,
-        locale: page.locale,
-        title: page.title ?? null,
-        description: page.description ?? null,
-        isPublished: Boolean(page.isPublished),
-        visibility: page.visibility,
-        ownerId: page.ownerId,
-        contentType: page.contentType,
-        createdAt: page.createdAt,
-        updatedAt: page.updatedAt,
-        tags: page.tags
-      }
-    }))
+    return res.json(
+      pages.map(page => {
+        if (!isPageListItem(page)) {
+          throw new TypeError('Page list query returned an invalid selected row')
+        }
+        return {
+          id: page.id,
+          path: page.path,
+          locale: page.locale,
+          title: page.title ?? null,
+          description: page.description ?? null,
+          ...(hasRestrictedPageFieldAccess(req) ? { isPublished: Boolean(page.isPublished) } : {}),
+          visibility: page.visibility,
+          ownerId: page.ownerId,
+          contentType: page.contentType,
+          createdAt: page.createdAt,
+          updatedAt: page.updatedAt,
+          tags: page.tags
+        }
+      })
+    )
   } catch (err) {
     return next(err)
   }
@@ -299,13 +306,15 @@ router.get('/tags', async (req, res, next) => {
   try {
     const tags = await pageOperations.listTags(req.user)
 
-    return res.json(tags.map(tag => ({
-      id: tag.id,
-      tag: tag.tag,
-      title: tag.title,
-      createdAt: tag.createdAt,
-      updatedAt: tag.updatedAt
-    })))
+    return res.json(
+      tags.map(tag => ({
+        id: tag.id,
+        tag: tag.tag,
+        title: tag.title,
+        createdAt: tag.createdAt,
+        updatedAt: tag.updatedAt
+      }))
+    )
   } catch (err) {
     return next(err)
   }
@@ -358,12 +367,14 @@ router.get('/search', async (req, res, next) => {
   try {
     const locale = optionalStringQuery(_.get(req, 'query.locale'))
     const path = optionalStringQuery(_.get(req, 'query.path'))
-    res.json(await pageOperations.search({
-      ...requesterInput(req),
-      query,
-      ...(locale === undefined ? {} : { locale }),
-      ...(path === undefined ? {} : { path })
-    }))
+    res.json(
+      await pageOperations.search({
+        ...requesterInput(req),
+        query,
+        ...(locale === undefined ? {} : { locale }),
+        ...(path === undefined ? {} : { path })
+      })
+    )
   } catch (err) {
     next(err)
   }
@@ -380,42 +391,44 @@ router.get('/tree', async (req, res, next) => {
   if (parent !== undefined && (!Number.isSafeInteger(parent) || parent < 0)) return res.status(400).json({ error: 'parent must be a non-negative integer' })
   try {
     const path = optionalStringQuery(_.get(req, 'query.path'))
-    res.json(await pageOperations.getTree({
-      ...requesterInput(req),
-      locale,
-      mode,
-      includeAncestors: _.get(req, 'query.includeAncestors') === 'true',
-      ...(path === undefined ? {} : { path }),
-      ...(parent === undefined ? {} : { parent })
-    }))
+    res.json(
+      await pageOperations.getTree({
+        ...requesterInput(req),
+        locale,
+        mode,
+        includeAncestors: _.get(req, 'query.includeAncestors') === 'true',
+        ...(path === undefined ? {} : { path }),
+        ...(parent === undefined ? {} : { parent })
+      })
+    )
   } catch (err) {
     next(err)
   }
 })
 
-router.post('/', async (req, res) => {
+router.post('/', async (req, res, next) => {
   try {
-    const page = await pageOperations.create({ ...requesterInput(req), input: requestBody(req) })
-    res.status(201).json({ page })
+    const page = await pageOperations.create({ ...pageOperationContext(req), input: requestBody(req) })
+    res.status(201).json({ page: pageResponse(req, page) })
   } catch (err) {
-    sendOperationError(res, err, 'Page creation failed')
+    sendOperationError(res, next, err, 'Page creation failed')
   }
 })
 
-router.put('/:id', async (req, res) => {
+router.put('/:id', async (req, res, next) => {
   const id = parsePositiveIntegerParam(req, res)
   if (id === null) return
   const expectedSourceRevision = requiredSourceRevision(req, res)
   if (expectedSourceRevision === null) return
   try {
-    const page = await pageOperations.update({ ...requesterInput(req), input: { ...requestBody(req), id, expectedSourceRevision } })
-    res.json({ page })
+    const page = await pageOperations.update({ ...pageOperationContext(req), input: { ...requestBody(req), id, expectedSourceRevision } })
+    res.json({ page: pageResponse(req, page) })
   } catch (err) {
-    sendOperationError(res, err, 'Page update failed')
+    sendOperationError(res, next, err, 'Page update failed')
   }
 })
 
-router.patch('/:id/visibility', async (req, res) => {
+router.patch('/:id/visibility', async (req, res, next) => {
   const id = parsePositiveIntegerParam(req, res)
   if (id === null) return
   const expectedSourceRevision = requiredSourceRevision(req, res)
@@ -426,19 +439,19 @@ router.patch('/:id/visibility', async (req, res) => {
   }
   try {
     const page = await pageOperations.changeVisibility({
-      ...requesterInput(req),
+      ...pageOperationContext(req),
       id,
       visibility,
       confirmPublication: _.get(req, 'body.confirmPublication') === true,
       expectedSourceRevision
     })
-    return res.json({ page })
+    return res.json({ page: pageResponse(req, page) })
   } catch (err) {
-    sendOperationError(res, err, 'Page visibility update failed')
+    return sendOperationError(res, next, err, 'Page visibility update failed')
   }
 })
 
-router.patch('/:id/owner', async (req, res) => {
+router.patch('/:id/owner', async (req, res, next) => {
   const id = parsePositiveIntegerParam(req, res)
   if (id === null) return
   const expectedSourceRevision = requiredSourceRevision(req, res)
@@ -449,49 +462,49 @@ router.patch('/:id/owner', async (req, res) => {
   }
   try {
     const page = await pageOperations.transferOwnership({
-      ...requesterInput(req),
+      ...pageOperationContext(req),
       id,
       ownerId,
       expectedSourceRevision
     })
-    return res.json({ page })
+    return res.json({ page: pageResponse(req, page) })
   } catch (err) {
-    sendOperationError(res, err, 'Page ownership transfer failed')
+    return sendOperationError(res, next, err, 'Page ownership transfer failed')
   }
 })
 
-router.get('/:id/protection', async (req, res) => {
+router.get('/:id/protection', async (req, res, next) => {
   const id = parsePositiveIntegerParam(req, res)
   if (id === null) return
   try {
     res.set('Cache-Control', 'private, no-store')
     res.json(await getPageProtection(req.user, id))
   } catch (err) {
-    sendOperationError(res, err, 'Page protection fetch failed')
+    next(err)
   }
 })
 
-router.put('/:id/protection', async (req, res) => {
+router.put('/:id/protection', async (req, res, next) => {
   const id = parsePositiveIntegerParam(req, res)
   if (id === null) return
   const password = _.get(req, 'body.password')
-  if (typeof password !== 'string') return res.status(400).json({ error: 'password is required' })
+  if (typeof password !== 'string') return res.status(400).json({ error: 'password must be a string' })
   try {
     res.set('Cache-Control', 'private, no-store')
     res.json(await setPageProtection({ requester: req.user, pageId: id, password, sessionId: req.sessionID }))
   } catch (err) {
-    sendOperationError(res, err, 'Page protection update failed')
+    next(err)
   }
 })
 
-router.delete('/:id/protection', async (req, res) => {
+router.delete('/:id/protection', async (req, res, next) => {
   const id = parsePositiveIntegerParam(req, res)
   if (id === null) return
   try {
     res.set('Cache-Control', 'private, no-store')
     res.json(await removePageProtection({ requester: req.user, pageId: id }))
   } catch (err) {
-    sendOperationError(res, err, 'Page protection removal failed')
+    next(err)
   }
 })
 
@@ -510,134 +523,139 @@ router.post('/:id/unlock', pageUnlockMiddleware, async (req, res) => {
   }
 })
 
-router.get('/approvals/inbox', async (req, res) => {
+router.get('/approvals/inbox', async (req, res, next) => {
   try {
     res.json(await listApprovalInbox(req.user))
   } catch (err) {
-    sendOperationError(res, err, 'Approval inbox fetch failed')
+    next(err)
   }
 })
 
-router.post('/approvals/:requestId/transition', async (req, res) => {
+router.post('/approvals/:requestId/transition', async (req, res, next) => {
   const action = _.get(req, 'body.action')
   if (!['approve', 'request-changes', 'reject', 'cancel', 'resubmit', 'publish', 'reassign'].includes(action)) {
     return res.status(400).json({ error: 'A valid approval action is required' })
   }
   try {
-    res.json(await transitionApproval({
-      requester: req.user,
-      requestId: String(req.params.requestId || ''),
-      action,
-      comment: typeof _.get(req, 'body.comment') === 'string' ? _.get(req, 'body.comment') : undefined,
-      assigneeId: _.get(req, 'body.assigneeId')
-    }))
+    res.json(
+      await transitionApproval({
+        requester: req.user,
+        requestId: String(req.params.requestId || ''),
+        action: action as 'approve' | 'request-changes' | 'reject' | 'cancel' | 'resubmit' | 'publish' | 'reassign',
+        comment: typeof _.get(req, 'body.comment') === 'string' ? _.get(req, 'body.comment') : undefined,
+        assigneeId: typeof _.get(req, 'body.assigneeId') === 'number' ? _.get(req, 'body.assigneeId') : undefined
+      })
+    )
   } catch (err) {
-    sendOperationError(res, err, 'Approval transition failed')
+    next(err)
   }
 })
 
-router.get('/:id/approval', async (req, res) => {
+router.get('/:id/approval', async (req, res, next) => {
   const id = parsePositiveIntegerParam(req, res)
   if (id === null) return
   try {
     res.json({ approval: await getPageApproval(req.user, id) })
   } catch (err) {
-    sendOperationError(res, err, 'Page approval fetch failed')
+    next(err)
   }
 })
 
-router.post('/:id/approval', async (req, res) => {
+router.post('/:id/approval', async (req, res, next) => {
   const id = parsePositiveIntegerParam(req, res)
   if (id === null) return
+  const expectedSourceRevision = requiredSourceRevision(req, res)
+  if (expectedSourceRevision === null) return
   try {
-    res.status(201).json(await submitPageApproval({
-      requester: req.user,
-      pageId: id,
-      assigneeId: _.get(req, 'body.assigneeId'),
-      comment: typeof _.get(req, 'body.comment') === 'string' ? _.get(req, 'body.comment') : undefined
-    }))
+    res.json(
+      await submitPageApproval({
+        requester: req.user,
+        pageId: id,
+        expectedSourceRevision,
+        assigneeId: _.get(req, 'body.assigneeId'),
+        comment: _.get(req, 'body.comment')
+      })
+    )
   } catch (err) {
-    sendOperationError(res, err, 'Page approval submission failed')
+    next(err)
   }
 })
 
-router.get('/watches/notifications', async (req, res) => {
+router.get('/watches/notifications', async (req, res, next) => {
   try {
     res.json(await listPageWatchNotifications(req.user))
   } catch (err) {
-    sendOperationError(res, err, 'Page notifications fetch failed')
+    next(err)
   }
 })
 
-router.patch('/watches/notifications/:notificationId/read', async (req, res) => {
+router.patch('/watches/notifications/:notificationId/read', async (req, res, next) => {
   try {
     await markPageWatchNotificationRead(req.user, String(req.params.notificationId || ''))
     res.sendStatus(204)
   } catch (err) {
-    sendOperationError(res, err, 'Page notification update failed')
+    next(err)
   }
 })
 
-router.get('/:id/watch', async (req, res) => {
+router.get('/:id/watch', async (req, res, next) => {
   const id = parsePositiveIntegerParam(req, res)
   if (id === null) return
   try {
     res.json(await getPageWatchState({ ...requesterInput(req), id }))
   } catch (err) {
-    sendOperationError(res, err, 'Page watch state fetch failed')
+    next(err)
   }
 })
 
-router.put('/:id/watch', async (req, res) => {
+router.put('/:id/watch', async (req, res, next) => {
   const id = parsePositiveIntegerParam(req, res)
   if (id === null) return
   const emailEnabled = _.get(req, 'body.emailEnabled')
-  const inAppEnabled = _.get(req, 'body.inAppEnabled')
-  if ((emailEnabled !== undefined && typeof emailEnabled !== 'boolean') ||
-    (inAppEnabled !== undefined && typeof inAppEnabled !== 'boolean')) {
-    return res.status(400).json({ error: 'emailEnabled and inAppEnabled must be booleans' })
+  if (emailEnabled !== undefined && typeof emailEnabled !== 'boolean') {
+    return res.status(400).json({ error: 'emailEnabled must be a boolean' })
   }
   try {
-    res.json(await watchPage({
-      ...requesterInput(req),
-      id,
-      ...(emailEnabled === undefined ? {} : { emailEnabled }),
-      ...(inAppEnabled === undefined ? {} : { inAppEnabled })
-    }))
+    res.json(
+      await watchPage({
+        ...requesterInput(req),
+        id,
+        emailEnabled: emailEnabled === true
+      })
+    )
   } catch (err) {
-    sendOperationError(res, err, 'Page watch failed')
+    next(err)
   }
 })
 
-router.delete('/:id/watch', async (req, res) => {
+router.delete('/:id/watch', async (req, res, next) => {
   const id = parsePositiveIntegerParam(req, res)
   if (id === null) return
   try {
     res.json(await unwatchPage({ ...requesterInput(req), id }))
   } catch (err) {
-    sendOperationError(res, err, 'Page unwatch failed')
+    next(err)
   }
 })
 
-router.post('/:id/convert', async (req, res) => {
+router.post('/:id/convert', async (req, res, next) => {
   const id = parsePositiveIntegerParam(req, res)
   if (id === null) return
   const expectedSourceRevision = requiredSourceRevision(req, res)
   if (expectedSourceRevision === null) return
-  if (!await requireUnlockedPage(req, res, id)) return
   try {
     const editor = _.get(req, 'body.editor')
     await pageOperations.convert({
-      ...requesterInput(req),
+      ...pageOperationContext(req),
       input: { id, expectedSourceRevision, ...(typeof editor === 'string' ? { editor } : {}) }
     })
     res.json({ message: 'Page has been converted.' })
   } catch (err) {
-    sendOperationError(res, err, 'Page conversion failed')
+    sendOperationError(res, next, err, 'Page conversion failed')
   }
 })
 
-router.post('/:id/move', async (req, res) => {
+router.post('/:id/move', async (req, res, next) => {
   const id = parsePositiveIntegerParam(req, res)
   if (id === null) return
   const expectedSourceRevision = requiredSourceRevision(req, res)
@@ -649,26 +667,26 @@ router.post('/:id/move', async (req, res) => {
       return res.status(400).json({ error: 'destinationLocale and destinationPath must be strings' })
     }
     await pageOperations.move({
-      ...requesterInput(req),
+      ...pageOperationContext(req),
       input: { id, destinationLocale, destinationPath, expectedSourceRevision }
     })
     res.json({ message: 'Page has been moved.' })
   } catch (err) {
-    sendOperationError(res, err, 'Page move failed')
+    sendOperationError(res, next, err, 'Page move failed')
   }
 })
 
-router.get('/:id/locale-relations', async (req, res) => {
+router.get('/:id/locale-relations', async (req, res, next) => {
   const pageId = parsePositiveIntegerParam(req, res)
   if (pageId === null) return
   try {
     res.json(await listPageLocaleRelations({ ...requesterInput(req), pageId }))
   } catch (err) {
-    sendOperationError(res, err, 'Page translations fetch failed')
+    next(err)
   }
 })
 
-router.post('/:id/locale-relations', async (req, res) => {
+router.post('/:id/locale-relations', async (req, res, next) => {
   const pageId = parsePositiveIntegerParam(req, res)
   if (pageId === null) return
   const relatedPageId = requestBody(req).relatedPageId
@@ -678,11 +696,11 @@ router.post('/:id/locale-relations', async (req, res) => {
   try {
     res.json(await linkPageLocaleRelation({ ...requesterInput(req), pageId, relatedPageId }))
   } catch (err) {
-    sendOperationError(res, err, 'Page translation link failed')
+    next(err)
   }
 })
 
-router.delete('/:id/locale-relations/:relatedPageId', async (req, res) => {
+router.delete('/:id/locale-relations/:relatedPageId', async (req, res, next) => {
   const pageId = parsePositiveIntegerParam(req, res)
   if (pageId === null) return
   const relatedPageId = parsePositiveIntegerParam(req, res, 'relatedPageId')
@@ -690,11 +708,11 @@ router.delete('/:id/locale-relations/:relatedPageId', async (req, res) => {
   try {
     res.json(await unlinkPageLocaleRelation({ ...requesterInput(req), pageId, relatedPageId }))
   } catch (err) {
-    sendOperationError(res, err, 'Page translation unlink failed')
+    next(err)
   }
 })
 
-router.post('/:id/conflicts/check', async (req, res) => {
+router.post('/:id/conflicts/check', async (req, res, next) => {
   const id = parsePositiveIntegerParam(req, res)
   if (id === null) return
   const checkoutDateValue = _.get(req, 'body.checkoutDate')
@@ -706,24 +724,23 @@ router.post('/:id/conflicts/check', async (req, res) => {
   try {
     res.json({ conflict: await pageOperations.checkConflict({ ...requesterInput(req), id, checkoutDate }) })
   } catch (err) {
-    sendOperationError(res, err, 'Page conflict check failed')
+    next(err)
   }
 })
 
-router.get('/:id/conflict-latest', async (req, res) => {
+router.get('/:id/conflict-latest', async (req, res, next) => {
   const id = parsePositiveIntegerParam(req, res)
   if (id === null) return
-  if (!await requireUnlockedPage(req, res, id)) return
   try {
-    res.json(await pageOperations.getConflictLatest({ ...requesterInput(req), id }))
+    res.json(await pageOperations.getConflictLatest({ ...pageOperationContext(req), id }))
   } catch (err) {
-    sendOperationError(res, err, 'Latest page version fetch failed')
+    sendOperationError(res, next, err, 'Latest page version fetch failed')
   }
 })
-router.post('/:id/collaboration/session', async (req, res) => {
+router.post('/:id/collaboration/session', async (req, res, next) => {
   const pageId = parsePositiveIntegerParam(req, res)
   if (pageId === null) return
-  if (!await requireUnlockedPage(req, res, pageId)) return
+  if (!(await requireUnlockedPage(req, res, pageId))) return
   const expectedUpdatedAt = requestBody(req).expectedUpdatedAt
   if (typeof expectedUpdatedAt !== 'string' || Number.isNaN(Date.parse(expectedUpdatedAt))) {
     return res.status(400).json({ error: 'expectedUpdatedAt must be a valid date' })
@@ -732,53 +749,49 @@ router.post('/:id/collaboration/session', async (req, res) => {
     const collaboration = getTransportRuntime<PagesApiRuntime>().collaboration
     res.json(await collaboration.issueSession({ pageId, expectedUpdatedAt, requester: req.user }))
   } catch (err) {
-    sendOperationError(res, err, 'Collaboration session creation failed')
+    next(err)
   }
 })
 
-
-router.get('/:id/history', async (req, res) => {
+router.get('/:id/history', async (req, res, next) => {
   const id = parsePositiveIntegerParam(req, res)
   if (id === null) return
-  if (!await requireUnlockedPage(req, res, id)) return
   const offsetPage = Number(_.get(req, 'query.offsetPage', 0))
   const offsetSize = Number(_.get(req, 'query.offsetSize', 100))
   if (!Number.isSafeInteger(offsetPage) || offsetPage < 0 || !Number.isSafeInteger(offsetSize) || offsetSize < 1) {
     return res.status(400).json({ error: 'history offsets are invalid' })
   }
   try {
-    res.json(await pageOperations.getHistory({ ...requesterInput(req), id, offsetPage, offsetSize }))
+    res.json(await pageOperations.getHistory({ ...pageOperationContext(req), id, offsetPage, offsetSize }))
   } catch (err) {
-    sendOperationError(res, err, 'Page history fetch failed')
+    sendOperationError(res, next, err, 'Page history fetch failed')
   }
 })
 
-router.get('/:id/history/:versionId', async (req, res) => {
+router.get('/:id/history/:versionId', async (req, res, next) => {
   const pageId = parsePositiveIntegerParam(req, res)
   if (pageId === null) return
-  if (!await requireUnlockedPage(req, res, pageId)) return
   const versionId = parsePositiveIntegerParam(req, res, 'versionId')
   if (versionId === null) return
   try {
-    res.json(await pageOperations.getVersion({ ...requesterInput(req), pageId, versionId }))
+    res.json(await pageOperations.getVersion({ ...pageOperationContext(req), pageId, versionId }))
   } catch (err) {
-    sendOperationError(res, err, 'Page version fetch failed')
+    sendOperationError(res, next, err, 'Page version fetch failed')
   }
 })
 
-router.post('/:id/history/:versionId/restore', async (req, res) => {
+router.post('/:id/history/:versionId/restore', async (req, res, next) => {
   const pageId = parsePositiveIntegerParam(req, res)
   if (pageId === null) return
-  if (!await requireUnlockedPage(req, res, pageId)) return
   const versionId = parsePositiveIntegerParam(req, res, 'versionId')
   if (versionId === null) return
   const expectedSourceRevision = requiredSourceRevision(req, res)
   if (expectedSourceRevision === null) return
   try {
-    await pageOperations.restore({ ...requesterInput(req), pageId, versionId, expectedSourceRevision })
+    await pageOperations.restore({ ...pageOperationContext(req), pageId, versionId, expectedSourceRevision })
     res.json({ message: 'Page version restored successfully.' })
   } catch (err) {
-    sendOperationError(res, err, 'Page restore failed')
+    sendOperationError(res, next, err, 'Page restore failed')
   }
 })
 
@@ -798,9 +811,13 @@ router.get('/:id', async (req, res, next) => {
   }
 
   try {
-    const page = await pageOperations.get({ ...requesterInput(req), id })
+    if (await isPageProtected(id)) {
+      res.set('Cache-Control', 'private, no-store')
+      res.vary('Cookie')
+    }
+    const page = await pageOperations.get({ ...pageOperationContext(req), id })
     const pageResult: Record<string, unknown> = page
-
+    const canReadRestrictedFields = hasRestrictedPageFieldAccess(req)
     return res.json({
       id: pageResult.id,
       path: pageResult.path,
@@ -809,29 +826,32 @@ router.get('/:id', async (req, res, next) => {
       description: pageResult.description,
       visibility: pageResult.visibility,
       ownerId: pageResult.ownerId ?? null,
-      isPublished: Boolean(pageResult.isPublished),
-      publishStartDate: pageResult.publishStartDate || null,
-      publishEndDate: pageResult.publishEndDate || null,
       contentType: pageResult.contentType,
       createdAt: pageResult.createdAt,
       updatedAt: pageResult.updatedAt,
       sourceRevision: String(pageResult.sourceRevision),
-      editor: pageResult.editor,
       locale: pageResult.locale,
-      authorId: pageResult.authorId,
-      authorName: pageResult.authorName,
-      authorEmail: pageResult.authorEmail,
-      creatorId: pageResult.creatorId,
-      creatorName: pageResult.creatorName,
-      creatorEmail: pageResult.creatorEmail
+      ...(canReadRestrictedFields
+        ? {
+            isPublished: Boolean(pageResult.isPublished),
+            publishStartDate: pageResult.publishStartDate || null,
+            publishEndDate: pageResult.publishEndDate || null,
+            editor: pageResult.editor,
+            authorId: pageResult.authorId,
+            authorName: pageResult.authorName,
+            authorEmail: pageResult.authorEmail,
+            creatorId: pageResult.creatorId,
+            creatorName: pageResult.creatorName,
+            creatorEmail: pageResult.creatorEmail
+          }
+        : {})
     })
   } catch (err) {
-    if (errorStatus(err, 0) > 0) return res.status(errorStatus(err, 500)).json({ error: errorMessage(err, 'Page fetch failed') })
-    return next(err)
+    sendOperationError(res, next, err, 'Page fetch failed')
   }
 })
 
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', async (req, res, next) => {
   if (!requirePageDeleteAccess(req, res)) {
     return
   }
@@ -849,7 +869,7 @@ router.delete('/:id', async (req, res) => {
   if (expectedSourceRevision === null) return
 
   try {
-    await pageOperations.remove({ ...requesterInput(req), id, expectedSourceRevision })
+    await pageOperations.remove({ ...pageOperationContext(req), id, expectedSourceRevision })
     res.json({ message: 'Page has been deleted.' })
   } catch (err) {
     if (err instanceof Error && err.name === 'PageNotFound') {
@@ -858,11 +878,11 @@ router.delete('/:id', async (req, res) => {
     if (err instanceof Error && err.name === 'PageDeleteForbidden') {
       return res.status(403).json({ error: errorMessage(err, 'You are not authorized to delete this page.') })
     }
-    res.status(500).json({ error: errorMessage(err, 'Page delete failed') })
+    return sendOperationError(res, next, err, 'Page delete failed')
   }
 })
 
-router.patch('/tags/:id', async (req, res) => {
+router.patch('/tags/:id', async (req, res, next) => {
   if (!requireSystemAccess(req, res)) {
     return
   }
@@ -890,11 +910,11 @@ router.patch('/tags/:id', async (req, res) => {
     await pageOperations.updateTag({ id, tag, title })
     res.json({ message: 'Tag has been updated successfully.' })
   } catch (err) {
-    res.status(errorStatus(err, 500)).json({ error: errorMessage(err, 'Tag update failed') })
+    sendOperationError(res, next, err, 'Tag update failed')
   }
 })
 
-router.delete('/tags/:id', async (req, res) => {
+router.delete('/tags/:id', async (req, res, next) => {
   if (!requireSystemAccess(req, res)) {
     return
   }
@@ -913,7 +933,7 @@ router.delete('/tags/:id', async (req, res) => {
     await pageOperations.removeTag(id)
     res.json({ message: 'Tag has been deleted.' })
   } catch (err) {
-    res.status(errorStatus(err, 500)).json({ error: errorMessage(err, 'Tag delete failed') })
+    sendOperationError(res, next, err, 'Tag delete failed')
   }
 })
 

@@ -34,7 +34,9 @@ const response = () => {
     cookie: vi.fn(),
     redirect: vi.fn(),
     render: vi.fn(),
-    status: vi.fn()
+    set: vi.fn(),
+    status: vi.fn(),
+    vary: vi.fn()
   }
   res.status.mockReturnValue(res)
   return res
@@ -72,7 +74,11 @@ describe('private page administration routes', () => {
       },
       metrics: { render: vi.fn() },
       models: {
-        knex: { client: { pool: { numFree: () => 1, numUsed: () => 0 } } },
+        knex: Object.assign(vi.fn().mockImplementation(() => ({
+          where: vi.fn().mockReturnValue({
+            first: vi.fn().mockResolvedValue(undefined)
+          })
+        })), { client: { pool: { numFree: () => 1, numUsed: () => 0 } } }),
         pages: {
           getPageFromDb: vi.fn().mockResolvedValue(privatePage),
           getPage: vi.fn(),
@@ -95,7 +101,8 @@ describe('private page administration routes', () => {
     createCommonController(global.WIKI)
     return {
       byId: express.__router.get.mock.calls.find(([path]) => Array.isArray(path) && path.includes('/i'))[1],
-      admin: express.__router.get.mock.calls.find(([path]) => path === '/_admin/private/:id')[1]
+      admin: express.__router.get.mock.calls.find(([path]) => path === '/_admin/private/:id')[1],
+      editor: express.__router.get.mock.calls.find(([path]) => Array.isArray(path) && path.includes('/e'))[1]
     }
   }
 
@@ -134,5 +141,97 @@ describe('private page administration routes', () => {
       page: privatePage,
       effectivePermissions: expect.objectContaining({ pages: { read: true, write: true, manage: true } })
     }))
+  })
+
+  it('copies protected templates only with a current requester session grant', async () => {
+    let grantActive = false
+    const templatePage = {
+      ...privatePage,
+      visibility: 'public',
+      ownerId: null,
+      path: 'templates/brief',
+      title: 'Brief',
+      content: '# Protected template'
+    }
+    global.WIKI.auth.getEffectivePermissions.mockReturnValue({
+      pages: { read: true, write: true, manage: false },
+      history: { read: true },
+      source: { read: true }
+    })
+    global.WIKI.models.pages.getPageFromDb.mockImplementation(async input => typeof input === 'number' ? templatePage : null)
+    global.WIKI.models.knex.mockImplementation(table => {
+      if (table === 'pageAccessPasswords') {
+        return {
+          where: vi.fn().mockReturnValue({
+            first: vi.fn().mockResolvedValue({ pageId: 7, version: 3 })
+          })
+        }
+      }
+      if (table === 'pageUnlockGrants') {
+        return {
+          where: vi.fn().mockImplementation((column, operator) => {
+            if (column === 'expiresAt' && operator === '<=') return { delete: vi.fn().mockResolvedValue(0) }
+            return {
+              where: vi.fn().mockReturnValue({
+                first: vi.fn().mockImplementation(async () => grantActive ? { id: 'grant-1' } : undefined)
+              })
+            }
+          })
+        }
+      }
+      throw new Error(`Unexpected table ${table}`)
+    })
+    const { editor } = await handlers()
+    const req = {
+      i18n: { changeLanguage: vi.fn(), dir: vi.fn().mockReturnValue('ltr') },
+      originalUrl: '/e/en/new-page?from=7',
+      path: '/e/en/new-page',
+      query: { from: '7' },
+      sessionID: 'current-session',
+      user: { id: 42, permissions: ['read:pages', 'write:pages'] }
+    }
+
+    const lockedResponse = response()
+    await editor(req, lockedResponse, vi.fn())
+
+    expect(lockedResponse.status).toHaveBeenCalledWith(401)
+    expect(lockedResponse.render).toHaveBeenCalledWith('page-unlock', expect.objectContaining({
+      pageId: 7,
+      pageTitle: 'Protected page'
+    }))
+
+    grantActive = true
+    const grantedResponse = response()
+    await editor(req, grantedResponse, vi.fn())
+
+    expect(grantedResponse.render).toHaveBeenCalledWith('editor', expect.objectContaining({
+      page: expect.objectContaining({
+        content: Buffer.from('# Protected template').toString('base64'),
+        title: 'Brief'
+      })
+    }))
+  })
+
+  it('fails closed before loading a template source when requester context is missing', async () => {
+    global.WIKI.auth.getEffectivePermissions.mockReturnValue({
+      pages: { read: true, write: true, manage: false },
+      history: { read: true },
+      source: { read: true }
+    })
+    global.WIKI.models.pages.getPageFromDb.mockResolvedValue(null)
+    const { editor } = await handlers()
+    const res = response()
+
+    await editor({
+      i18n: { changeLanguage: vi.fn(), dir: vi.fn().mockReturnValue('ltr') },
+      originalUrl: '/e/en/new-page?from=7',
+      path: '/e/en/new-page',
+      query: { from: '7' },
+      sessionID: 'anonymous-session'
+    }, res, vi.fn())
+
+    expect(res.status).toHaveBeenCalledWith(403)
+    expect(res.render).toHaveBeenCalledWith('unauthorized', { action: 'template' })
+    expect(global.WIKI.models.pages.getPageFromDb).not.toHaveBeenCalledWith(7)
   })
 })

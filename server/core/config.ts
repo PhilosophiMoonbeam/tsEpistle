@@ -74,21 +74,18 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isAppConfig(value: unknown): value is AppConfig {
   if (!isRecord(value) || !isRecord(value.db) || !isRecord(value.flags)) return false
-  return (typeof value.db.pass === 'string' || typeof value.db.pass === 'number') &&
+  return (
+    (typeof value.db.pass === 'string' || typeof value.db.pass === 'number') &&
     typeof value.flags.sqllog === 'boolean' &&
     (typeof value.port === 'string' || typeof value.port === 'number')
+  )
 }
 
 function isAppData(value: unknown): value is AppData {
-  return isRecord(value) &&
-    isRecord(value.defaults) &&
-    isAppConfig(value.defaults.config)
+  return isRecord(value) && isRecord(value.defaults) && isAppConfig(value.defaults.config)
 }
 const LEGACY_PRODUCT_TITLES = new Set(['Wiki.js', 'Wiki.ts Preview'])
-const LEGACY_PRODUCT_LOGOS = new Set([
-  'https://static.requarks.io/logo/wikijs-butterfly.svg',
-  '/_assets/svg/logo-wikijs.svg'
-])
+const LEGACY_PRODUCT_LOGOS = new Set(['https://static.requarks.io/logo/wikijs-butterfly.svg', '/_assets/svg/logo-wikijs.svg'])
 const DEFAULT_PRODUCT_LOGO = '/_assets/svg/icon-tsfranki.svg'
 
 export function normalizeLegacyProductDefaults(config: Record<string, unknown>, productName: string): string[] {
@@ -103,7 +100,6 @@ export function normalizeLegacyProductDefaults(config: Record<string, unknown>, 
   }
   return changed
 }
-
 
 const configService: ConfigService = {
   init() {
@@ -125,9 +121,7 @@ const configService: ConfigService = {
     let appconfig: AppConfig
     let appdata: AppData
     try {
-      const loadedConfig = yaml.load(
-        cfgHelper.parseConfigValue(fs.readFileSync(confPaths.config, 'utf8'))
-      )
+      const loadedConfig = yaml.load(cfgHelper.parseConfigValue(fs.readFileSync(confPaths.config, 'utf8')))
       const loadedData = yaml.load(fs.readFileSync(confPaths.data, 'utf8'))
       if (!isRecord(loadedConfig)) throw new Error('Configuration file must contain a mapping')
       if (!isAppData(loadedData)) throw new Error('Application data contains invalid configuration defaults')
@@ -171,8 +165,10 @@ const configService: ConfigService = {
     const wiki = getWiki()
     const conf = await wiki.models.settings.getConfig()
     if (conf) {
-      wiki.config = _.defaultsDeep(conf, wiki.config)
-      const migratedKeys = normalizeLegacyProductDefaults(wiki.config, wiki.product.name)
+      const canonicalConfig = wiki.config
+      const reloadedConfig = _.defaultsDeep({}, conf, canonicalConfig) as AppConfig
+      Object.assign(canonicalConfig, reloadedConfig)
+      const migratedKeys = normalizeLegacyProductDefaults(canonicalConfig, wiki.product.name)
       if (migratedKeys.length > 0) await this.saveToDb(migratedKeys, false)
     } else {
       wiki.logger.warn('DB Configuration is empty or incomplete. Switching to Setup mode...')

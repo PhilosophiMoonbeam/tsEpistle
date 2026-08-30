@@ -1,4 +1,5 @@
 const authRateLimiter = vi.hoisted(() => ({
+  admit: vi.fn().mockResolvedValue(null),
   middleware: vi.fn((req, res, next) => next()),
   options: [],
   reset: vi.fn().mockResolvedValue(undefined)
@@ -29,6 +30,14 @@ vi.mockModule('express', import.meta.url, () => {
 })
 
 const { default: express } = await import('express')
+class BruteTooManyAttempts extends Error {
+  constructor () {
+    super('Too many attempts! Try again later.')
+    this.name = 'BruteTooManyAttempts'
+    this.code = 1008
+  }
+}
+
 
 describe('controllers/api auth endpoints', () => {
   beforeEach(() => {
@@ -36,9 +45,11 @@ describe('controllers/api auth endpoints', () => {
     express.__router.get.mockClear()
     express.__router.post.mockClear()
     authRateLimiter.reset.mockClear()
+    authRateLimiter.admit.mockReset().mockResolvedValue(null)
     authRateLimiter.options.length = 0
 
     global.WIKI = {
+      Error: { BruteTooManyAttempts },
       config: {
         api: {
           isEnabled: true
@@ -70,6 +81,7 @@ describe('controllers/api auth endpoints', () => {
         resetGuestUser: vi.fn().mockResolvedValue(true),
         reloadApiKeys: vi.fn().mockResolvedValue(true),
         activateStrategies: vi.fn().mockResolvedValue(true),
+        revokeUserTokens: vi.fn(),
         strategies: {
           local: {
             key: 'local',
@@ -97,6 +109,7 @@ describe('controllers/api auth endpoints', () => {
         }
       },
       models: {
+        knex: {},
         authentication: {
           query: vi.fn(() => ({
             patch: vi.fn(() => ({ where: vi.fn().mockResolvedValue(1) })),
@@ -155,7 +168,7 @@ describe('controllers/api auth endpoints', () => {
           loginTFA: vi.fn(),
           loginChangePassword: vi.fn(),
           loginForgotPassword: vi.fn(),
-          resetPassword: vi.fn().mockResolvedValue(undefined),
+          resetPassword: vi.fn().mockResolvedValue(10),
           verifyEmail: vi.fn().mockResolvedValue(undefined),
           register: vi.fn().mockResolvedValue(undefined)
         }
@@ -218,30 +231,6 @@ describe('controllers/api auth endpoints', () => {
   expect(typeof handlers.loginTFA).toBe('function')
   expect(typeof handlers.loginChangePassword).toBe('function') })
 
-  it('rate limits account registration before processing the request body', async () => {
-    await loadHandlers()
-    const registration = express.__router.post.mock.calls.find(([path]) => path === '/register')
-    const req = { app: { locals: { runtime: global.WIKI } } }
-    const res = {}
-    const next = vi.fn()
-
-    registration[1](req, res, next)
-
-    expect(authRateLimiter.middleware).toHaveBeenCalledWith(req, res, next)
-  })
-
-  it('configures the REST limiter with a 429 JSON response and Retry-After', async () => {
-    await loadHandlers()
-    const res = { json: vi.fn(), set: vi.fn(), status: vi.fn().mockReturnThis() }
-    const registration = express.__router.post.mock.calls.find(([path]) => path === '/register')
-    registration[1]({ app: { locals: { runtime: global.WIKI } } }, {}, vi.fn())
-
-    authRateLimiter.options[0].onLimit({}, res, 5 * 60 * 1000)
-
-    expect(res.set).toHaveBeenCalledWith('Retry-After', '300')
-    expect(res.status).toHaveBeenCalledWith(429)
-    expect(res.json).toHaveBeenCalledWith({ error: 'Too many failed attempts. Try again later.' })
-  })
 
   it('returns admin authentication strategy definitions with GraphQL-compatible props', async () => {
     const { adminStrategies } = await loadHandlers()
@@ -1008,9 +997,36 @@ describe('controllers/api auth endpoints', () => {
     expect(global.WIKI.models.users.register).toHaveBeenCalledWith({
       ...req.body,
       verify: true
-    }, { req, res })
+    }, { req })
+    expect(authRateLimiter.admit).toHaveBeenCalledWith(req)
+    expect(authRateLimiter.options).toEqual([
+      expect.objectContaining({ knex: global.WIKI.models.knex, keyPrefix: 'auth-api' })
+    ])
     expect(res.status).toHaveBeenCalledWith(201)
     expect(res.json).toHaveBeenCalledWith({ message: 'Registration success' })
+  })
+
+  it('returns the existing 429 registration response when operation-owned admission blocks', async () => {
+    authRateLimiter.admit.mockResolvedValueOnce(5 * 60 * 1000)
+    const { register } = await loadHandlers()
+    const req = {
+      body: {
+        email: 'blocked@example.com',
+        password: 'correct horse battery staple',
+        name: 'Blocked User'
+      },
+      ip: '192.0.2.90',
+      socket: { remoteAddress: '192.0.2.90' }
+    }
+    const res = { json: vi.fn(), set: vi.fn(), status: vi.fn().mockReturnThis() }
+
+    await register(req, res, vi.fn())
+
+    expect(authRateLimiter.admit).toHaveBeenCalledWith(req)
+    expect(global.WIKI.models.users.register).not.toHaveBeenCalled()
+    expect(res.set).toHaveBeenCalledWith('Retry-After', '300')
+    expect(res.status).toHaveBeenCalledWith(429)
+    expect(res.json).toHaveBeenCalledWith({ error: 'Too many failed attempts. Try again later.' })
   })
 
   it('returns a generic success payload for forgot-password requests', async () => {
@@ -1236,7 +1252,8 @@ describe('controllers/api auth endpoints', () => {
 
   it('returns the change-password continuation payload and resets brute-force state', async () => {
     global.WIKI.models.users.loginChangePassword.mockResolvedValueOnce({
-      jwt: 'jwt-token'
+      jwt: 'jwt-token',
+      userId: 10
     })
     const { loginChangePassword } = await loadHandlers()
     const req = {
@@ -1252,6 +1269,8 @@ describe('controllers/api auth endpoints', () => {
       continuationToken: 'pwd-token',
       newPassword: 'new-secret'
     }, { req, res })
+    expect(global.WIKI.auth.revokeUserTokens).toHaveBeenCalledWith({ id: 10, kind: 'u' })
+    expect(global.WIKI.events.outbound.emit).toHaveBeenCalledWith('addAuthRevoke', { id: 10, kind: 'u' })
     expect(authRateLimiter.reset).toHaveBeenCalledWith(req)
     expect(res.json).toHaveBeenCalledWith({
       jwt: 'jwt-token',
@@ -1351,6 +1370,8 @@ describe('controllers/api auth endpoints', () => {
       token: 'reset-token',
       newPassword: 'new-secret'
     })
+    expect(global.WIKI.auth.revokeUserTokens).toHaveBeenCalledWith({ id: 10, kind: 'u' })
+    expect(global.WIKI.events.outbound.emit).toHaveBeenCalledWith('addAuthRevoke', { id: 10, kind: 'u' })
     expect(authRateLimiter.reset).toHaveBeenCalledWith(req)
     expect(res.json).toHaveBeenCalledWith({ message: 'Password reset successfully.' })
   })

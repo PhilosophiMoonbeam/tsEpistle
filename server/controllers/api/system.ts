@@ -6,7 +6,6 @@ import importV1Operations from '../../operations/import-v1.ts'
 
 const router = express.Router()
 
-
 const requireSystemAccess = (req: Request, res: Response): boolean => {
   if (!getWikiAuth().checkAccess(req.user, ['manage:system'])) {
     res.sendStatus(403)
@@ -16,7 +15,18 @@ const requireSystemAccess = (req: Request, res: Response): boolean => {
 }
 
 const requireSystemSummaryAccess = (req: Request, res: Response): boolean => {
-  if (!getWikiAuth().checkAccess(req.user, ['manage:system', 'manage:navigation', 'manage:groups', 'write:groups', 'manage:users', 'write:users', 'manage:theme', 'manage:api'])) {
+  if (
+    !getWikiAuth().checkAccess(req.user, [
+      'manage:system',
+      'manage:navigation',
+      'manage:groups',
+      'write:groups',
+      'manage:users',
+      'write:users',
+      'manage:theme',
+      'manage:api'
+    ])
+  ) {
     res.sendStatus(403)
     return false
   }
@@ -137,7 +147,7 @@ router.post('/content/rebuild-tree', async (req, res) => {
 router.post('/content/migrate-locale', async (req, res) => {
   if (!requireSystemAccess(req, res)) return
   try {
-    const count = await systemOperations.migratePagesToLocale(req.body || {})
+    const count = await systemOperations.migratePagesToLocale({ ...(req.body || {}), requester: req.user })
     res.json({ message: 'Migrated content to target locale successfully.', count })
   } catch (err) {
     sendError(res, err, 'Locale migration failed')
@@ -221,10 +231,12 @@ router.post('/flags', async (req, res, next) => {
 router.post('/import-v1/users', async (req, res) => {
   if (!requireSystemAccess(req, res)) return
   try {
-    res.json(await importV1Operations.importUsers({
-      mongoDbConnString: req.body && req.body.mongoDbConnString,
-      groupMode: req.body && req.body.groupMode
-    }))
+    res.json(
+      await importV1Operations.importUsers({
+        mongoDbConnString: req.body && req.body.mongoDbConnString,
+        groupMode: req.body && req.body.groupMode
+      })
+    )
   } catch (err) {
     sendError(res, err, 'Wiki.js 1.x user import failed')
   }

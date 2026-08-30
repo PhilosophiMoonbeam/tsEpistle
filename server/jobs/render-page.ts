@@ -3,17 +3,23 @@ import database from '../core/db.ts'
 import { buildTocFromHtml } from './render-page-toc.ts'
 
 interface PageRecord {
+  id: number
+  sourceRevision: string | number
   content: string
   contentType: string
   [key: string]: unknown
 }
-interface PipelineCore { key: string, config: unknown, children: unknown }
-interface PageQuery extends PromiseLike<unknown> {
+interface PipelineCore {
+  key: string
+  config: unknown
+  children: unknown
+}
+interface PageQuery extends PromiseLike<number> {
   patch(data: Record<string, unknown>): PageQuery
   where(column: string, value: unknown): PageQuery
 }
 interface Models {
-  renderers: { fetchDefinitions(): Promise<void>, getRenderingPipeline(contentType: string): Promise<PipelineCore[]> }
+  renderers: { fetchDefinitions(): Promise<void>; getRenderingPipeline(contentType: string): Promise<PipelineCore[]> }
   pages: {
     getPageFromDb(pageId: number): Promise<PageRecord | null>
     query(): PageQuery
@@ -23,21 +29,21 @@ interface Models {
 }
 interface WikiContext {
   models: Models
-  configSvc: { loadFromDb(): Promise<void>, applyFlags(): Promise<void> }
-  logger: { info(message: string): void, warn(message: string): void, error(message: string): void }
+  configSvc: { loadFromDb(): Promise<void>; applyFlags(): Promise<void> }
+  logger: { info(message: string): void; warn(message: string): void; error(message: string): void }
 }
 interface Renderer {
-  render(this: { config: unknown, children: unknown, page: PageRecord, input: string }): Promise<string> | string
+  render(this: { config: unknown; children: unknown; page: PageRecord; input: string }): Promise<string> | string
 }
 const wiki = WIKI as unknown as WikiContext
 
-export default async function renderPage (pageId: number | string): Promise<void> {
+export default async function renderPage(pageId: number | string): Promise<void> {
   const normalizedPageId = Number(pageId)
   if (!Number.isSafeInteger(normalizedPageId) || normalizedPageId < 1) throw new TypeError('Page ID must be a positive integer')
   wiki.logger.info(`Rendering page ID ${normalizedPageId}...`)
   let models: Models | undefined
   try {
-    models = await database.init() as unknown as Models
+    models = (await database.init()) as unknown as Models
     wiki.models = models
     await wiki.configSvc.loadFromDb()
     await wiki.configSvc.applyFlags()
@@ -53,7 +59,7 @@ export default async function renderPage (pageId: number | string): Promise<void
     const pipeline = await wiki.models.renderers.getRenderingPipeline(page.contentType)
     let output = page.content
     for (const core of pipeline) {
-      const rendererModule = await import(`../modules/rendering/${_.kebabCase(core.key)}/renderer.ts`) as unknown as { default: Renderer }
+      const rendererModule = (await import(`../modules/rendering/${_.kebabCase(core.key)}/renderer.ts`)) as unknown as { default: Renderer }
       output = await rendererModule.default.render.call({
         config: core.config,
         children: core.children,
@@ -62,12 +68,25 @@ export default async function renderPage (pageId: number | string): Promise<void
       })
     }
     const toc = buildTocFromHtml(output)
-    await wiki.models.pages.query().patch({ render: output, toc: JSON.stringify(toc) }).where('id', normalizedPageId)
-    await wiki.models.pages.savePageToCache({ ...page, render: output, toc: JSON.stringify(toc) })
+    const updatedRows = await wiki.models.pages
+      .query()
+      .patch({ render: output, toc: JSON.stringify(toc) })
+      .where('id', normalizedPageId)
+      .where('sourceRevision', page.sourceRevision)
+    if (updatedRows !== 1) {
+      wiki.logger.info(`Skipped rendering page ID ${normalizedPageId} because its source revision changed. [ SKIPPED ]`)
+      return
+    }
+    const renderedPage = await wiki.models.pages.getPageFromDb(normalizedPageId)
+    if (!renderedPage || String(renderedPage.sourceRevision) !== String(page.sourceRevision)) {
+      wiki.logger.info(`Skipped caching page ID ${normalizedPageId} because its source revision changed. [ SKIPPED ]`)
+      return
+    }
+    await wiki.models.pages.savePageToCache(renderedPage)
     wiki.logger.info(`Rendering page ID ${normalizedPageId}: [ COMPLETED ]`)
   } catch (error) {
     wiki.logger.error(`Rendering page ID ${normalizedPageId}: [ FAILED ]`)
-    wiki.logger.error(error instanceof Error ? error.stack ?? error.message : String(error))
+    wiki.logger.error(error instanceof Error ? (error.stack ?? error.message) : String(error))
     throw error
   } finally {
     await models?.knex.destroy()

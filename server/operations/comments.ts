@@ -66,12 +66,20 @@ const getWiki = () =>
   WIKI as unknown as {
     models: CommentModels
     data: { commentProviders: Array<Record<string, unknown> & { key: string }>; commentProvider: { getCommentById(id: number): Promise<Comment | undefined> } }
-    auth: { checkAccess(requester: Requester, permissions: string[], context: Record<string, unknown>): boolean }
+    auth: { checkAccess(requester: Requester, permissions: string[], context?: Record<string, unknown>): boolean }
     Error: CommentErrors
     logger: { warn(message: string): void }
   }
 const COMMENT_CREATE_WINDOW_MILLISECONDS = 15_000
 const commentCreateKey = (requester: Requester, ip: string): string => `comment-create:${principalId(requester) ?? 'guest'}:${ip || 'unknown'}`
+const commentReadDto = (comment: Comment, includeAuditFields: boolean): Record<string, unknown> => {
+  const { email, ip, ...dto } = comment
+  return {
+    ...dto,
+    authorName: comment.name,
+    ...(includeAuditFields ? { authorEmail: email, authorIP: ip } : {})
+  }
+}
 
 const consumeCommentCreate = async (requester: Requester, ip: string): Promise<number | null> => {
   const now = Date.now()
@@ -155,12 +163,8 @@ const list = async ({ requester, pageId }: { requester: Requester; pageId: numbe
   ) {
     throw new errors.CommentViewForbidden()
   }
-  return (await models.comments.query().where('pageId', page.id).orderBy('createdAt')).map(comment => ({
-    ...comment,
-    authorName: comment.name,
-    authorEmail: comment.email,
-    authorIP: comment.ip
-  }))
+  const includeAuditFields = auth.checkAccess(requester, ['manage:system'])
+  return (await models.comments.query().where('pageId', page.id).orderBy('createdAt')).map(comment => commentReadDto(comment, includeAuditFields))
 }
 
 const get = async ({ requester, id }: { requester: Requester; id: number }) => {
@@ -188,7 +192,7 @@ const get = async ({ requester, id }: { requester: Requester; id: number }) => {
   ) {
     throw new errors.CommentViewForbidden()
   }
-  return { ...comment, authorName: comment.name, authorEmail: comment.email, authorIP: comment.ip }
+  return commentReadDto(comment, auth.checkAccess(requester, ['manage:system']))
 }
 
 const create = async ({ requester, ip, input }: { requester: Requester; ip: string; input: Record<string, unknown> }): Promise<unknown> => {

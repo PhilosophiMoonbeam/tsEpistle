@@ -84,13 +84,18 @@ interface WikiOperations {
 }
 
 interface GroupAssignmentInput {
-  requester?: Express.User
+  requester: Express.User | undefined
   groupId?: unknown
   userId?: unknown
 }
 
+interface GroupRemovalInput {
+  requester: Express.User | undefined
+  id?: unknown
+}
+
 interface GroupUpdateInput {
-  requester?: Express.User
+  requester: Express.User | undefined
   id?: unknown
   name?: unknown
   redirectOnLogin?: unknown
@@ -149,6 +154,81 @@ const hasSystemPermissions = (permissions: readonly unknown[]): boolean => {
   return permissions.some(permission => permissionResourceType(permission) === 'system' || String(permission) === 'write:scripts')
 }
 
+interface TargetAuthorityError {
+  code: string
+  message: string
+}
+
+interface TargetAuthorityErrors {
+  administrative: TargetAuthorityError
+  system: TargetAuthorityError
+}
+
+const targetAuthorityErrors = {
+  assign: {
+    administrative: {
+      code: 'GROUP_ASSIGN_FORBIDDEN',
+      message: 'You are not authorized to assign a user to this administrative group.'
+    },
+    system: {
+      code: 'GROUP_ASSIGN_SYSTEM_FORBIDDEN',
+      message: 'You are not authorized to assign a user to a group with the manage:system permission.'
+    }
+  },
+  delete: {
+    administrative: {
+      code: 'GROUP_DELETE_FORBIDDEN',
+      message: 'You are not authorized to delete this administrative group.'
+    },
+    system: {
+      code: 'GROUP_DELETE_SYSTEM_FORBIDDEN',
+      message: 'You are not authorized to delete a group with the manage:system permission.'
+    }
+  },
+  unassign: {
+    administrative: {
+      code: 'GROUP_UNASSIGN_FORBIDDEN',
+      message: 'You are not authorized to unassign a user from this administrative group.'
+    },
+    system: {
+      code: 'GROUP_UNASSIGN_SYSTEM_FORBIDDEN',
+      message: 'You are not authorized to unassign a user from a group with the manage:system permission.'
+    }
+  },
+  update: {
+    administrative: {
+      code: 'GROUP_UPDATE_FORBIDDEN',
+      message: 'You are not authorized to manage this group or assign these administrative permissions.'
+    },
+    system: {
+      code: 'GROUP_UPDATE_SYSTEM_FORBIDDEN',
+      message: 'You are not authorized to manage this group or assign the manage:system permissions.'
+    }
+  }
+} satisfies Record<'assign' | 'delete' | 'unassign' | 'update', TargetAuthorityErrors>
+
+type AssertRequesterIdentity = (requester: Express.User | undefined) => asserts requester is Express.User
+const assertRequesterIdentity: AssertRequesterIdentity = requester => {
+  if (!requester) {
+    throw new ApplicationError('Requester identity is required.', { code: 'GROUP_REQUESTER_REQUIRED', status: 403 })
+  }
+}
+
+const assertTargetAuthority = (
+  requester: Express.User,
+  hasAdministrativeAuthority: boolean,
+  hasSystemAuthority: boolean,
+  lowerTierPermissions: readonly string[],
+  errors: TargetAuthorityErrors
+): void => {
+  if (wiki.auth.checkExclusiveAccess(requester, lowerTierPermissions, ['manage:groups', 'manage:system']) && hasAdministrativeAuthority) {
+    throw new ApplicationError(errors.administrative.message, { code: errors.administrative.code, status: 403 })
+  }
+  if (wiki.auth.checkExclusiveAccess(requester, ['manage:groups'], ['manage:system']) && hasSystemAuthority) {
+    throw new ApplicationError(errors.system.message, { code: errors.system.code, status: 403 })
+  }
+}
+
 const revoke = (id: number, kind: 'g' | 'u'): void => {
   wiki.auth.revokeUserTokens({ id, kind })
   wiki.events.outbound.emit('addAuthRevoke', { id, kind })
@@ -192,6 +272,7 @@ const create = async (value: unknown): Promise<GroupRecord> => {
 const assignUser = async ({ requester, groupId: groupIdValue, userId: userIdValue }: GroupAssignmentInput): Promise<void> => {
   const groupId = requirePositiveInteger(groupIdValue, 'groupId')
   const userId = requirePositiveInteger(userIdValue, 'userId')
+  assertRequesterIdentity(requester)
   if (userId === 2) {
     throw new ApplicationError('Cannot assign the Guest user to a group.', { code: 'GROUP_ASSIGN_GUEST' })
   }
@@ -202,18 +283,13 @@ const assignUser = async ({ requester, groupId: groupIdValue, userId: userIdValu
   }
 
   const permissions = Array.isArray(group.permissions) ? group.permissions : []
-  if (
-    wiki.auth.checkExclusiveAccess(requester, ['manage:users', 'write:groups'], ['manage:groups', 'manage:system']) &&
-    hasAdministrativePermissions(permissions)
-  ) {
-    throw new ApplicationError('You are not authorized to assign a user to this administrative group.', { code: 'GROUP_ASSIGN_FORBIDDEN', status: 403 })
-  }
-  if (wiki.auth.checkExclusiveAccess(requester, ['manage:groups'], ['manage:system']) && hasSystemPermissions(permissions)) {
-    throw new ApplicationError('You are not authorized to assign a user to a group with the manage:system permission.', {
-      code: 'GROUP_ASSIGN_SYSTEM_FORBIDDEN',
-      status: 403
-    })
-  }
+  assertTargetAuthority(
+    requester,
+    hasAdministrativePermissions(permissions),
+    hasSystemPermissions(permissions),
+    ['manage:users', 'write:groups'],
+    targetAuthorityErrors.assign
+  )
 
   const user = await wiki.models.users.query().findById(userId)
   if (!user) {
@@ -229,9 +305,10 @@ const assignUser = async ({ requester, groupId: groupIdValue, userId: userIdValu
   revoke(user.id, 'u')
 }
 
-const unassignUser = async ({ groupId: groupIdValue, userId: userIdValue }: GroupAssignmentInput): Promise<void> => {
+const unassignUser = async ({ requester, groupId: groupIdValue, userId: userIdValue }: GroupAssignmentInput): Promise<void> => {
   const groupId = requirePositiveInteger(groupIdValue, 'groupId')
   const userId = requirePositiveInteger(userIdValue, 'userId')
+  assertRequesterIdentity(requester)
   if (userId === 2) {
     throw new ApplicationError('Cannot unassign Guest user', { code: 'GROUP_UNASSIGN_GUEST' })
   }
@@ -243,6 +320,15 @@ const unassignUser = async ({ groupId: groupIdValue, userId: userIdValue }: Grou
   if (!group) {
     throw new ApplicationError('Invalid Group ID', { code: 'GROUP_NOT_FOUND', status: 404 })
   }
+  const permissions = Array.isArray(group.permissions) ? group.permissions : []
+  assertTargetAuthority(
+    requester,
+    hasAdministrativePermissions(permissions),
+    hasSystemPermissions(permissions),
+    ['manage:users', 'write:groups'],
+    targetAuthorityErrors.unassign
+  )
+
   const user = await wiki.models.users.query().findById(userId)
   if (!user) {
     throw new ApplicationError('Invalid User ID', { code: 'USER_NOT_FOUND', status: 404 })
@@ -252,8 +338,9 @@ const unassignUser = async ({ groupId: groupIdValue, userId: userIdValue }: Grou
   revoke(user.id, 'u')
 }
 
-const remove = async (value: unknown): Promise<void> => {
-  const id = requirePositiveInteger(value, 'id')
+const remove = async ({ requester, id: idValue }: GroupRemovalInput): Promise<void> => {
+  const id = requirePositiveInteger(idValue, 'id')
+  assertRequesterIdentity(requester)
   if (id === 1 || id === 2) {
     throw new ApplicationError('Cannot delete this group.', { code: 'GROUP_DELETE_PROTECTED' })
   }
@@ -261,6 +348,8 @@ const remove = async (value: unknown): Promise<void> => {
   if (group?.isSystem) {
     throw new ApplicationError('Cannot delete this group.', { code: 'GROUP_DELETE_PROTECTED' })
   }
+  const permissions = Array.isArray(group?.permissions) ? group.permissions : []
+  assertTargetAuthority(requester, hasAdministrativePermissions(permissions), hasSystemPermissions(permissions), ['write:groups'], targetAuthorityErrors.delete)
   await wiki.models.groups.query().deleteById(id)
   revoke(id, 'g')
   await reload()
@@ -274,6 +363,7 @@ const update = async (input: GroupUpdateInput): Promise<void> => {
   const permissions = requirePermissions(input.permissions)
   const pageRules = requirePageRules(input.pageRules)
   const requester = input.requester
+  assertRequesterIdentity(requester)
   if (
     pageRules.some(rule => {
       const isSafe: unknown = safeRegex(rule.path)
@@ -308,24 +398,13 @@ const update = async (input: GroupUpdateInput): Promise<void> => {
       status: 403
     })
   }
-  if (
-    wiki.auth.checkExclusiveAccess(requester, ['write:groups'], ['manage:groups', 'manage:system']) &&
-    (hasAdministrativePermissions(currentPermissions) || hasAdministrativePermissions(permissions))
-  ) {
-    throw new ApplicationError('You are not authorized to manage this group or assign these administrative permissions.', {
-      code: 'GROUP_UPDATE_FORBIDDEN',
-      status: 403
-    })
-  }
-  if (
-    wiki.auth.checkExclusiveAccess(requester, ['manage:groups'], ['manage:system']) &&
-    (hasSystemPermissions(currentPermissions) || hasSystemPermissions(permissions))
-  ) {
-    throw new ApplicationError('You are not authorized to manage this group or assign the manage:system permissions.', {
-      code: 'GROUP_UPDATE_SYSTEM_FORBIDDEN',
-      status: 403
-    })
-  }
+  assertTargetAuthority(
+    requester,
+    hasAdministrativePermissions(currentPermissions) || hasAdministrativePermissions(permissions),
+    hasSystemPermissions(currentPermissions) || hasSystemPermissions(permissions),
+    ['write:groups'],
+    targetAuthorityErrors.update
+  )
 
   const updatedRows = await wiki.models.groups
     .query()

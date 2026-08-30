@@ -24,11 +24,17 @@ interface PageQuery extends CountQuery {
   findById(id: number): Promise<unknown>
 }
 
+interface PageMigrationActor extends Express.User {
+  id: number
+  name: string
+  email: string
+}
+
 interface PageModel {
   query(): PageQuery
   flushCache(): Promise<unknown>
   rebuildTree(): unknown
-  migrateToLocale(locales: { sourceLocale: string, targetLocale: string }): unknown
+  migrateToLocale(locales: { sourceLocale: string; targetLocale: string; user: PageMigrationActor }): Promise<number>
   renderPage(page: unknown): Promise<unknown>
 }
 
@@ -77,7 +83,7 @@ interface WikiSystemState {
     message?: string
     startedAt?: unknown
   }
-  export(options: { entities: string[], path: string }): unknown
+  export(options: { entities: string[]; path: string }): unknown
 }
 
 interface WikiExtension {
@@ -129,7 +135,6 @@ const wiki = WIKI as WikiServices
 
 const getosAsync = promisify(getos)
 
-
 const getSummary = async () => {
   const [groups, pages, users, tags] = await Promise.all([
     wiki.models.groups.query().count('* as total').first(),
@@ -158,10 +163,10 @@ const getOperatingSystem = async () => {
   return `${os.type()} - ${info.dist} (${info.codename || os.platform()}) ${info.release || os.release()} ${os.arch()}`
 }
 
-const getPlatform = async () => await fs.pathExists('/.dockerenv') ? 'docker' : os.platform()
+const getPlatform = async () => ((await fs.pathExists('/.dockerenv')) ? 'docker' : os.platform())
 
 const getInfo = async () => ({
-  ...await getSummary(),
+  ...(await getSummary()),
   configFile: path.join(process.cwd(), 'config.yml'),
   cpuCores: os.cpus().length,
   dbHost: wiki.config.db.host,
@@ -187,13 +192,10 @@ interface SystemFlag {
   value: boolean
 }
 
-const isSystemFlag = (row: unknown): row is SystemFlag => Boolean(
-  row &&
-  typeof row === 'object' &&
-  !Array.isArray(row) &&
-  typeof Reflect.get(row, 'key') === 'string' &&
-  typeof Reflect.get(row, 'value') === 'boolean'
-)
+const isSystemFlag = (row: unknown): row is SystemFlag =>
+  Boolean(
+    row && typeof row === 'object' && !Array.isArray(row) && typeof Reflect.get(row, 'key') === 'string' && typeof Reflect.get(row, 'value') === 'boolean'
+  )
 
 function validateFlags(flags: unknown): asserts flags is SystemFlag[] {
   if (!Array.isArray(flags)) {
@@ -208,7 +210,8 @@ const updateFlags = async (flags: unknown): Promise<void> => {
   validateFlags(flags)
   const allowedKeys = Object.keys(wiki.config.flags)
   if (flags.some(row => !allowedKeys.includes(row.key))) throw new ApplicationError('flags entries must use known flag keys', { code: 'INVALID_SYSTEM_FLAGS' })
-  if (_.uniq(flags.map(row => row.key)).length !== flags.length) throw new ApplicationError('flags entries must not contain duplicate keys', { code: 'INVALID_SYSTEM_FLAGS' })
+  if (_.uniq(flags.map(row => row.key)).length !== flags.length)
+    throw new ApplicationError('flags entries must not contain duplicate keys', { code: 'INVALID_SYSTEM_FLAGS' })
   if (flags.length !== allowedKeys.length || allowedKeys.some(key => !flags.find(row => row.key === key))) {
     throw new ApplicationError('flags payload must include the full known flag set', { code: 'INVALID_SYSTEM_FLAGS' })
   }
@@ -268,12 +271,24 @@ const flushPageCache = async () => {
 const flushTemporaryUploads = () => wiki.models.assets.flushTempUploads()
 const rebuildPageTree = () => wiki.models.pages.rebuildTree()
 
-const migratePagesToLocale = (input: unknown): unknown => {
+const migratePagesToLocale = (input: unknown): Promise<number> => {
   const sourceLocale = input && typeof input === 'object' && !Array.isArray(input) ? Reflect.get(input, 'sourceLocale') : undefined
   const targetLocale = input && typeof input === 'object' && !Array.isArray(input) ? Reflect.get(input, 'targetLocale') : undefined
-  if (typeof sourceLocale !== 'string' || sourceLocale.length < 1) throw new ApplicationError('sourceLocale must be a non-empty string', { code: 'INVALID_SOURCE_LOCALE' })
-  if (typeof targetLocale !== 'string' || targetLocale.length < 1) throw new ApplicationError('targetLocale must be a non-empty string', { code: 'INVALID_TARGET_LOCALE' })
-  return wiki.models.pages.migrateToLocale({ sourceLocale, targetLocale })
+  const requester = input && typeof input === 'object' && !Array.isArray(input) ? Reflect.get(input, 'requester') : undefined
+  if (typeof sourceLocale !== 'string' || sourceLocale.length < 1)
+    throw new ApplicationError('sourceLocale must be a non-empty string', { code: 'INVALID_SOURCE_LOCALE' })
+  if (typeof targetLocale !== 'string' || targetLocale.length < 1)
+    throw new ApplicationError('targetLocale must be a non-empty string', { code: 'INVALID_TARGET_LOCALE' })
+  if (
+    !requester ||
+    typeof requester !== 'object' ||
+    typeof Reflect.get(requester, 'id') !== 'number' ||
+    typeof Reflect.get(requester, 'name') !== 'string' ||
+    typeof Reflect.get(requester, 'email') !== 'string'
+  ) {
+    throw new ApplicationError('Authentication is required', { code: 'AUTH_REQUIRED', status: 401 })
+  }
+  return wiki.models.pages.migrateToLocale({ sourceLocale, targetLocale, user: requester as PageMigrationActor })
 }
 
 const renderPage = async (id: unknown): Promise<void> => {
@@ -284,7 +299,8 @@ const renderPage = async (id: unknown): Promise<void> => {
 }
 
 const purgePageHistory = (olderThan: unknown): unknown => {
-  if (typeof olderThan !== 'string' || olderThan.length < 1) throw new ApplicationError('olderThan must be a non-empty string', { code: 'INVALID_HISTORY_DATE' })
+  if (typeof olderThan !== 'string' || olderThan.length < 1)
+    throw new ApplicationError('olderThan must be a non-empty string', { code: 'INVALID_HISTORY_DATE' })
   return wiki.models.pageHistory.purge(olderThan)
 }
 

@@ -68,6 +68,14 @@ const handleExpectedAuthError = (err: unknown, res: Response): boolean => {
   res.status(status).json({ error: message })
   return true
 }
+const handleRegistrationLimitError = (err: unknown, res: Response): boolean => {
+  const retryAfterMilliseconds = objectValue(err, 'retryAfterMilliseconds')
+  if (errorStatus(err) !== 429 || typeof retryAfterMilliseconds !== 'number') return false
+  setAuthRateLimitHeaders(res, retryAfterMilliseconds)
+  const message = err instanceof Error ? err.message : String(err)
+  res.status(429).json({ error: message })
+  return true
+}
 
 const requireAdminApiAccess = (req: Request, res: Response): boolean => {
   if (getWikiAuth().checkAccess(req.user, ['manage:system', 'manage:api'])) return true
@@ -198,16 +206,19 @@ router.post('/guest/reset', async (req, res) => {
   }
 })
 
-router.post('/register', bruteforceMiddleware, async (req, res, next) => {
+router.post('/register', async (req, res, next) => {
   try {
-    await authenticationOperations.register({
-      email: objectValue(req.body, 'email'),
-      password: objectValue(req.body, 'password'),
-      name: objectValue(req.body, 'name')
-    }, { req, res })
+    await authenticationOperations.register(
+      {
+        email: objectValue(req.body, 'email'),
+        password: objectValue(req.body, 'password'),
+        name: objectValue(req.body, 'name')
+      },
+      { req }
+    )
     res.status(201).json({ message: 'Registration success' })
   } catch (err) {
-    next(err)
+    if (!handleRegistrationLimitError(err, res)) next(err)
   }
 })
 
@@ -256,11 +267,14 @@ router.post('/login', bruteforceMiddleware, async (req, res, next) => {
   const strategy = objectValue(req.body, 'strategy')
   const strategyKey = typeof strategy === 'string' ? strategy : ''
   try {
-    const result = await authenticationOperations.loginForm({
-      strategyKey,
-      username: objectValue(req.body, 'username'),
-      password: objectValue(req.body, 'password')
-    }, { req, res })
+    const result = await authenticationOperations.loginForm(
+      {
+        strategyKey,
+        username: objectValue(req.body, 'username'),
+        password: objectValue(req.body, 'password')
+      },
+      { req, res }
+    )
     await getBruteforce().reset(req)
     res.json(toAuthResponse(result))
   } catch (err) {
@@ -272,13 +286,17 @@ router.post('/login/tfa', bruteforceMiddleware, async (req, res, next) => {
   const securityCode = objectValue(req.body, 'securityCode')
   const continuationToken = objectValue(req.body, 'continuationToken')
   if (!securityCode || !continuationToken) return res.status(400).json({ error: 'securityCode and continuationToken are required' })
-  if (typeof securityCode !== 'string' || typeof continuationToken !== 'string') return res.status(400).json({ error: 'securityCode and continuationToken must be strings' })
+  if (typeof securityCode !== 'string' || typeof continuationToken !== 'string')
+    return res.status(400).json({ error: 'securityCode and continuationToken must be strings' })
   try {
-    const result = await authenticationOperations.loginTfa({
-      securityCode,
-      continuationToken,
-      setup: objectValue(req.body, 'setup') === true
-    }, { req, res })
+    const result = await authenticationOperations.loginTfa(
+      {
+        securityCode,
+        continuationToken,
+        setup: objectValue(req.body, 'setup') === true
+      },
+      { req, res }
+    )
     await getBruteforce().reset(req)
     res.json(toAuthResponse(result))
   } catch (err) {
@@ -290,7 +308,8 @@ router.post('/login/change-password', bruteforceMiddleware, async (req, res, nex
   const continuationToken = objectValue(req.body, 'continuationToken')
   const newPassword = objectValue(req.body, 'newPassword')
   if (!continuationToken || !newPassword) return res.status(400).json({ error: 'continuationToken and newPassword are required' })
-  if (typeof continuationToken !== 'string' || typeof newPassword !== 'string') return res.status(400).json({ error: 'continuationToken and newPassword must be strings' })
+  if (typeof continuationToken !== 'string' || typeof newPassword !== 'string')
+    return res.status(400).json({ error: 'continuationToken and newPassword must be strings' })
   try {
     const result = await authenticationOperations.loginChangePassword({ continuationToken, newPassword }, { req, res })
     await getBruteforce().reset(req)

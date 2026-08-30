@@ -6,7 +6,9 @@ import {
   claimPageMutationEffects,
   enqueuePageMutationEffects,
   executePageMutationEffect,
+  PageMutationOutboxError,
   rearmFailedKnowledgeEffect,
+  type ClaimedPageProjectionEffect,
   type PageProjectionPayload,
   type PageProjectionSink
 } from '../core/page-mutation-outbox.ts'
@@ -23,6 +25,8 @@ import {
 } from './projection.ts'
 
 const RETRY_FAILED_AFTER_MILLISECONDS = 24 * 60 * 60 * 1_000
+const KNOWLEDGE_EFFECT_LEASE_MILLISECONDS = 120_000
+const KNOWLEDGE_EFFECT_HEARTBEAT_MILLISECONDS = KNOWLEDGE_EFFECT_LEASE_MILLISECONDS / 2
 
 interface SourceRow {
   readonly id?: number
@@ -164,10 +168,12 @@ class KnowledgeProjectionSink implements PageProjectionSink {
   readonly kind = 'knowledge' as const
   readonly #knex: Knex
   readonly #enricher: AgentKnowledgeEnricher | undefined
+  readonly #claim: Pick<ClaimedPageProjectionEffect, 'id' | 'leaseToken'>
 
-  constructor(knex: Knex, enricher?: AgentKnowledgeEnricher) {
+  constructor(knex: Knex, enricher: AgentKnowledgeEnricher | undefined, claim: Pick<ClaimedPageProjectionEffect, 'id' | 'leaseToken'>) {
     this.#knex = knex
     this.#enricher = enricher
+    this.#claim = claim
   }
 
   async reconcile(payload: PageProjectionPayload, signal: AbortSignal) {
@@ -257,13 +263,20 @@ class KnowledgeProjectionSink implements PageProjectionSink {
 
     const now = new Date().toISOString()
     const columns = projectionColumns(projection, enrichmentState, error, now)
-    await this.#knex('pageKnowledgeProjections')
-      .insert({ ...columns, createdAt: now })
-      .onConflict(['pageId', 'sourceRevision'])
-      .merge(columns)
-    const stored = (await this.#knex<StoredProjectionRow>('pageKnowledgeProjections')
-      .where({ pageId: payload.pageId, sourceRevision })
-      .first('sourceRevision', 'sourceSha256')) as (StoredProjectionRow & { sourceSha256: string }) | undefined
+    const stored = await this.#knex.transaction(async transaction => {
+      const lease = await transaction('pageMutationOutbox')
+        .where({ id: this.#claim.id, status: 'running', leaseToken: this.#claim.leaseToken })
+        .forUpdate()
+        .first('id')
+      if (!lease) throw new PageMutationOutboxError('PROJECTION_LEASE_LOST', 'Page projection effect lease was lost')
+      await transaction('pageKnowledgeProjections')
+        .insert({ ...columns, createdAt: now })
+        .onConflict(['pageId', 'sourceRevision'])
+        .merge(columns)
+      return (await transaction<StoredProjectionRow>('pageKnowledgeProjections')
+        .where({ pageId: payload.pageId, sourceRevision })
+        .first('sourceRevision', 'sourceSha256')) as (StoredProjectionRow & { sourceSha256: string }) | undefined
+    })
     const satisfied = stored?.sourceSha256 === projection.source.sha256 && sha256(source.content) === payload.sourceSha256
     return {
       result: { state: projection.completeness.state, enrichmentState, missingFields: projection.completeness.missingFields },
@@ -536,14 +549,51 @@ const requeueRetryable = async (knex: Knex, profileVersionId: string | null, now
 
 export class PageKnowledgeLifecycle {
   readonly #knex: Knex
-  readonly #sink: KnowledgeProjectionSink
+  readonly #enricher: AgentKnowledgeEnricher | undefined
   readonly #workerId: string
   #running = false
 
   constructor(knex: Knex, workerId: string, enricher?: AgentKnowledgeEnricher) {
     this.#knex = knex
     this.#workerId = workerId
-    this.#sink = new KnowledgeProjectionSink(knex, enricher)
+    this.#enricher = enricher
+  }
+
+  async #executeClaim(claim: ClaimedPageProjectionEffect, signal: AbortSignal): Promise<void> {
+    const controller = new AbortController()
+    const abort = (): void => controller.abort(signal.reason)
+    if (signal.aborted) abort()
+    else signal.addEventListener('abort', abort, { once: true })
+
+    let renewal = Promise.resolve()
+    const heartbeat = async (): Promise<void> => {
+      if (controller.signal.aborted) return
+      try {
+        const now = new Date()
+        const updated = await this.#knex('pageMutationOutbox')
+          .where({ id: claim.id, status: 'running', leaseToken: claim.leaseToken })
+          .update({
+            leaseExpiresAt: new Date(now.valueOf() + KNOWLEDGE_EFFECT_LEASE_MILLISECONDS).toISOString(),
+            updatedAt: now.toISOString()
+          })
+        if (updated !== 1) controller.abort(new PageMutationOutboxError('PROJECTION_LEASE_LOST', 'Page projection effect lease was lost'))
+      } catch (error: unknown) {
+        controller.abort(error)
+      }
+    }
+    const heartbeatTimer = setInterval(() => {
+      renewal = renewal.then(heartbeat)
+    }, KNOWLEDGE_EFFECT_HEARTBEAT_MILLISECONDS)
+    heartbeatTimer.unref()
+
+    try {
+      const sink = new KnowledgeProjectionSink(this.#knex, this.#enricher, claim)
+      await executePageMutationEffect(this.#knex, claim, new Map([['knowledge', sink]]), controller.signal)
+    } finally {
+      clearInterval(heartbeatTimer)
+      signal.removeEventListener('abort', abort)
+      await renewal
+    }
   }
 
   async runOnce(signal = new AbortController().signal): Promise<{ backfilled: number; requeued: number; processed: number }> {
@@ -554,9 +604,13 @@ export class PageKnowledgeLifecycle {
       const profileVersionId = await currentProfileVersionId(this.#knex).catch(() => null)
       const backfilled = await enqueueMissing(this.#knex, 25)
       const requeued = (await recoverTerminalFailures(this.#knex, now)) + (await requeueRetryable(this.#knex, profileVersionId, now))
-      const claims = await claimPageMutationEffects(this.#knex, { leaseOwner: this.#workerId, limit: 10, leaseMs: 120_000, effects: ['knowledge'] })
-      const sinks = new Map([['knowledge', this.#sink] as const])
-      await Promise.allSettled(claims.map(claim => executePageMutationEffect(this.#knex, claim, sinks, signal)))
+      const claims = await claimPageMutationEffects(this.#knex, {
+        leaseOwner: this.#workerId,
+        limit: 10,
+        leaseMs: KNOWLEDGE_EFFECT_LEASE_MILLISECONDS,
+        effects: ['knowledge']
+      })
+      await Promise.allSettled(claims.map(claim => this.#executeClaim(claim, signal)))
       return { backfilled, requeued, processed: claims.length }
     } finally {
       this.#running = false

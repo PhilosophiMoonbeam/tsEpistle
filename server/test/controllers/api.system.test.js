@@ -657,12 +657,12 @@ describe('controllers/api system endpoints', () => {
   it('migrates pages to a locale for authorized requests', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
     const { migratePagesToLocale } = await loadHandlers()
-    const req = { user: { permissions: ['manage:system'] }, body: { sourceLocale: 'en', targetLocale: 'fr' } }
+    const req = { user: { id: 7, name: 'Administrator', email: 'admin@example.com', permissions: ['manage:system'] }, body: { sourceLocale: 'en', targetLocale: 'fr' } }
     const res = { json: vi.fn(), sendStatus: vi.fn() }
 
     await migratePagesToLocale(req, res)
 
-    expect(global.WIKI.models.pages.migrateToLocale).toHaveBeenCalledWith({ sourceLocale: 'en', targetLocale: 'fr' })
+    expect(global.WIKI.models.pages.migrateToLocale).toHaveBeenCalledWith({ sourceLocale: 'en', targetLocale: 'fr', user: req.user })
     expect(res.json).toHaveBeenCalledWith({
       message: 'Migrated content to target locale successfully.',
       count: 2
@@ -691,7 +691,7 @@ describe('controllers/api system endpoints', () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
     global.WIKI.models.pages.migrateToLocale.mockRejectedValueOnce(new Error('migration failed'))
     const { migratePagesToLocale } = await loadHandlers()
-    const req = { user: { permissions: ['manage:system'] }, body: { sourceLocale: 'en', targetLocale: 'fr' } }
+    const req = { user: { id: 7, name: 'Administrator', email: 'admin@example.com', permissions: ['manage:system'] }, body: { sourceLocale: 'en', targetLocale: 'fr' } }
     const res = { json: vi.fn(), sendStatus: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await migratePagesToLocale(req, res)

@@ -534,25 +534,26 @@ export default class User extends Model {
         }
       }
 
-      // Create account
-      user = await wiki.models.users.query().insertAndFetch({
-        providerKey: providerKey,
-        providerId: _.toString(profile.id),
-        email: primaryEmail,
-        name: displayName,
-        pictureUrl: pictureUrl,
-        localeCode: wiki.config.lang.code,
-        defaultEditor: 'markdown',
-        tfaIsActive: false,
-        isSystem: false,
-        isActive: true,
-        isVerified: true
-      })
+      user = await wiki.models.knex.transaction(async trx => {
+        const newUser = await wiki.models.users.query(trx).insertAndFetch({
+          providerKey: providerKey,
+          providerId: _.toString(profile.id),
+          email: primaryEmail,
+          name: displayName,
+          pictureUrl: pictureUrl,
+          localeCode: wiki.config.lang.code,
+          defaultEditor: 'markdown',
+          tfaIsActive: false,
+          isSystem: false,
+          isActive: true,
+          isVerified: true
+        })
 
-      // Assign to group(s)
-      if (provider.autoEnrollGroups.length > 0) {
-        await user.$relatedQuery<Group>('groups').relate(provider.autoEnrollGroups)
-      }
+        if (provider.autoEnrollGroups.length > 0) {
+          await newUser.$relatedQuery<Group>('groups', trx).relate(provider.autoEnrollGroups)
+        }
+        return newUser
+      })
 
       if (pictureData) {
         await wiki.models.users.updateUserAvatarData(user.id, pictureData)
@@ -802,40 +803,43 @@ export default class User extends Model {
   /**
    * Change Password from a Mandatory Password Change after Login
    */
-  static async loginChangePassword({ continuationToken, newPassword }: ChangePasswordOptions, context: AuthenticationContext): Promise<{ jwt: string }> {
+  static async loginChangePassword(
+    { continuationToken, newPassword }: ChangePasswordOptions,
+    context: AuthenticationContext
+  ): Promise<{ jwt: string; userId: number }> {
     if (!newPassword || newPassword.length < 6) {
       throw new wiki.Error.InputInvalid('Password must be at least 6 characters!')
     }
-    const usr = await wiki.models.userKeys.validateToken({
-      kind: 'changePwd',
-      token: continuationToken
-    })
-
-    if (usr) {
-      if (!usr.isActive) {
+    const usr = await wiki.models.knex.transaction(async trx => {
+      const tokenUser = await wiki.models.userKeys.validateToken(
+        {
+          kind: 'changePwd',
+          token: continuationToken
+        },
+        trx
+      )
+      if (!tokenUser.isActive) {
         throw new wiki.Error.AuthAccountBanned()
       }
-
       await wiki.models.users
-        .query()
+        .query(trx)
         .patch({
           password: newPassword,
           mustChangePwd: false
         })
-        .findById(usr.id)
+        .findById(tokenUser.id)
+      return tokenUser
+    })
 
-      return new Promise<{ jwt: string }>((resolve, reject) => {
-        context.req.logIn(usr, { session: false }, async err => {
-          if (err) {
-            return reject(err)
-          }
-          const jwtToken = await wiki.models.users.refreshToken(usr)
-          resolve({ jwt: jwtToken.token })
-        })
+    return new Promise<{ jwt: string; userId: number }>((resolve, reject) => {
+      context.req.logIn(usr, { session: false }, async err => {
+        if (err) {
+          return reject(err)
+        }
+        const jwtToken = await wiki.models.users.refreshToken(usr)
+        resolve({ jwt: jwtToken.token, userId: usr.id })
       })
-    } else {
-      throw new wiki.Error.UserNotFound()
-    }
+    })
   }
 
   /**
@@ -884,32 +888,37 @@ export default class User extends Model {
    * POST from that screen, so mail scanners cannot activate accounts by following links.
    */
   static async verifyEmail({ token }: VerifyEmailOptions): Promise<void> {
-    const usr = await wiki.models.userKeys.validateToken({ kind: 'verify', token })
-    await wiki.models.users.query().patch({ isVerified: true }).findById(usr.id)
+    await wiki.models.knex.transaction(async trx => {
+      const usr = await wiki.models.userKeys.validateToken({ kind: 'verify', token }, trx)
+      await wiki.models.users.query(trx).patch({ isVerified: true }).findById(usr.id)
+    })
   }
 
   /**
    * Set a password from a reset email without creating a login session.
    *
-   * The reset token is consumed atomically by UserKey.validateToken. Validating the new password first
-   * leaves a valid link usable when the form itself was incomplete.
+   * The token consumption and password mutation share one transaction, so a failed mutation leaves
+   * the valid link usable.
    */
-  static async resetPassword({ token, newPassword }: ResetPasswordOptions): Promise<void> {
+  static async resetPassword({ token, newPassword }: ResetPasswordOptions): Promise<number> {
     if (!newPassword || newPassword.length < 6) {
       throw new wiki.Error.InputInvalid('Password must be at least 6 characters!')
     }
-    const usr = await wiki.models.userKeys.validateToken({ kind: 'resetPwd', token })
-    if (!usr.isActive) {
-      throw new wiki.Error.AuthAccountBanned()
-    }
-    await wiki.models.users
-      .query()
-      .patch({
-        password: newPassword,
-        mustChangePwd: false,
-        isVerified: true
-      })
-      .findById(usr.id)
+    return wiki.models.knex.transaction(async trx => {
+      const usr = await wiki.models.userKeys.validateToken({ kind: 'resetPwd', token }, trx)
+      if (!usr.isActive) {
+        throw new wiki.Error.AuthAccountBanned()
+      }
+      await wiki.models.users
+        .query(trx)
+        .patch({
+          password: newPassword,
+          mustChangePwd: false,
+          isVerified: true
+        })
+        .findById(usr.id)
+      return usr.id
+    })
   }
 
   /**
@@ -1020,11 +1029,13 @@ export default class User extends Model {
       throw new wiki.Error.InputInvalid(validationError)
     }
 
-    // Check if email already exists
-    const usr = await wiki.models.users.query().findOne({ email, providerKey })
-    if (!usr) {
-      // Create the account
-      const newUsrData = {
+    const newUsr = await wiki.models.knex.transaction(async trx => {
+      const usr = await wiki.models.users.query(trx).findOne({ email, providerKey })
+      if (usr) {
+        throw new wiki.Error.AuthAccountAlreadyExists()
+      }
+
+      const createdUser = await wiki.models.users.query(trx).insert({
         providerKey,
         email,
         name,
@@ -1036,28 +1047,23 @@ export default class User extends Model {
         isVerified: true,
         mustChangePwd: providerKey === 'local' && mustChangePassword === true,
         ...(providerKey === 'local' && passwordRaw !== undefined ? { password: passwordRaw } : {})
-      }
-
-      const newUsr = await wiki.models.users.query().insert(newUsrData)
-
-      // Assign to group(s)
+      })
       if (groups.length > 0) {
-        await newUsr.$relatedQuery<Group>('groups').relate(groups)
+        await createdUser.$relatedQuery<Group>('groups', trx).relate(groups)
       }
+      return createdUser
+    })
 
-      const result: CreateUserResult = {}
-      if (sendWelcomeEmail) {
-        try {
-          await wiki.models.users.sendWelcomeEmail({ id: newUsr.id })
-        } catch (error) {
-          result.welcomeEmailError = error instanceof Error ? error.message : String(error)
-          wiki.logger.warn(`User ${newUsr.id} was created, but the welcome email failed: ${result.welcomeEmailError}`)
-        }
+    const result: CreateUserResult = {}
+    if (sendWelcomeEmail) {
+      try {
+        await wiki.models.users.sendWelcomeEmail({ id: newUsr.id })
+      } catch (error) {
+        result.welcomeEmailError = error instanceof Error ? error.message : String(error)
+        wiki.logger.warn(`User ${newUsr.id} was created, but the welcome email failed: ${result.welcomeEmailError}`)
       }
-      return result
-    } else {
-      throw new wiki.Error.AuthAccountAlreadyExists()
     }
+    return result
   }
 
   /**
@@ -1065,13 +1071,18 @@ export default class User extends Model {
    *
    * @param {Object} param0 User ID and fields to update
    */
-  static async updateUser({ id, email, name, newPassword, groups, location, jobTitle, timezone, dateFormat, appearance }: UpdateUserOptions): Promise<void> {
-    const usr = await wiki.models.users.query().findById(id)
-    if (usr) {
+  static async updateUser({ id, email, name, newPassword, groups, location, jobTitle, timezone, dateFormat, appearance }: UpdateUserOptions): Promise<boolean> {
+    return wiki.models.knex.transaction(async trx => {
+      const usr = await wiki.models.users.query(trx).findById(id).forUpdate()
+      if (!usr) {
+        throw new wiki.Error.UserNotFound()
+      }
+
       const usrData: UserPatch = {}
+      let authorizationChanged = false
       if (typeof email === 'string' && !_.isEmpty(email) && email !== usr.email) {
         const dupUsr = await wiki.models.users
-          .query()
+          .query(trx)
           .select('id')
           .where({
             email,
@@ -1091,20 +1102,20 @@ export default class User extends Model {
           throw new wiki.Error.InputInvalid('Password must be at least 6 characters!')
         }
         usrData.password = newPassword
+        authorizationChanged = true
       }
       if (_.isArray(groups)) {
-        const usrGroupsRaw = await usr.$relatedQuery<Group>('groups')
+        const usrGroupsRaw = await usr.$relatedQuery<Group>('groups', trx)
         const usrGroups = _.map(usrGroupsRaw, 'id')
-        // Relate added groups
         const addUsrGroups = _.difference(groups, usrGroups)
         for (const grp of addUsrGroups) {
-          await usr.$relatedQuery<Group>('groups').relate(grp)
+          await usr.$relatedQuery<Group>('groups', trx).relate(grp)
         }
-        // Unrelate removed groups
         const remUsrGroups = _.difference(usrGroups, groups)
         for (const grp of remUsrGroups) {
-          await usr.$relatedQuery<Group>('groups').unrelate().where('groupId', grp)
+          await usr.$relatedQuery<Group>('groups', trx).unrelate().where('groupId', grp)
         }
+        authorizationChanged ||= addUsrGroups.length > 0 || remUsrGroups.length > 0
       }
       if (typeof location === 'string' && !_.isEmpty(location) && location !== usr.location) {
         usrData.location = _.trim(location)
@@ -1121,10 +1132,9 @@ export default class User extends Model {
       if (appearance !== undefined && appearance !== usr.appearance) {
         usrData.appearance = appearance
       }
-      await wiki.models.users.query().patch(usrData).findById(id)
-    } else {
-      throw new wiki.Error.UserNotFound()
-    }
+      await wiki.models.users.query(trx).patch(usrData).findById(id)
+      return authorizationChanged
+    })
   }
 
   /**
@@ -1220,11 +1230,13 @@ export default class User extends Model {
           throw new wiki.Error.AuthRegistrationDomainUnauthorized()
         }
       }
-      // Check if email already exists
-      const usr = await wiki.models.users.query().findOne({ email, providerKey: 'local' })
-      if (!usr) {
-        // Create the account
-        const newUsr = await wiki.models.users.query().insert({
+      const registration = await wiki.models.knex.transaction(async trx => {
+        const usr = await wiki.models.users.query(trx).findOne({ email, providerKey: 'local' })
+        if (usr) {
+          throw new wiki.Error.AuthAccountAlreadyExists()
+        }
+
+        const newUsr = await wiki.models.users.query(trx).insert({
           provider: 'local',
           email,
           name,
@@ -1236,46 +1248,38 @@ export default class User extends Model {
           isActive: true,
           isVerified: false
         })
-
-        // Assign to group(s)
         const autoEnrollGroups = Array.isArray(localStrg.autoEnrollGroups) ? [] : (localStrg.autoEnrollGroups.v ?? [])
         if (autoEnrollGroups.length > 0) {
-          await newUsr.$relatedQuery<Group>('groups').relate(autoEnrollGroups)
+          await newUsr.$relatedQuery<Group>('groups', trx).relate(autoEnrollGroups)
         }
+        const verificationToken = verify ? await wiki.models.userKeys.generateToken({ kind: 'verify', userId: newUsr.id }, trx) : undefined
+        return { newUsr, verificationToken }
+      })
 
-        if (verify) {
-          // Create verification token
-          const verificationToken = await wiki.models.userKeys.generateToken({
-            kind: 'verify',
-            userId: newUsr.id
+      if (verify && registration.verificationToken) {
+        try {
+          await wiki.mail.send({
+            template: 'accountVerify',
+            to: email,
+            subject: 'Verify your account',
+            data: {
+              preheadertext: 'Verify your account in order to gain access to the wiki.',
+              title: 'Verify your account',
+              content: 'Click the button below in order to verify your account and gain access to the wiki.',
+              buttonLink: `${wiki.config.host}/verify/${registration.verificationToken}`,
+              buttonText: 'Verify'
+            },
+            text: `You must open the following link in your browser to verify your account and gain access to the wiki: ${wiki.config.host}/verify/${registration.verificationToken}`
           })
-
-          try {
-            await wiki.mail.send({
-              template: 'accountVerify',
-              to: email,
-              subject: 'Verify your account',
-              data: {
-                preheadertext: 'Verify your account in order to gain access to the wiki.',
-                title: 'Verify your account',
-                content: 'Click the button below in order to verify your account and gain access to the wiki.',
-                buttonLink: `${wiki.config.host}/verify/${verificationToken}`,
-                buttonText: 'Verify'
-              },
-              text: `You must open the following link in your browser to verify your account and gain access to the wiki: ${wiki.config.host}/verify/${verificationToken}`
-            })
-          } catch (error) {
-            await wiki.models.knex.transaction(async trx => {
-              await wiki.models.userKeys.query(trx).delete().where('userId', newUsr.id)
-              await wiki.models.users.query(trx).deleteById(newUsr.id)
-            })
-            throw error
-          }
+        } catch (error) {
+          await wiki.models.knex.transaction(async trx => {
+            await wiki.models.userKeys.query(trx).delete().where('userId', registration.newUsr.id)
+            await wiki.models.users.query(trx).deleteById(registration.newUsr.id)
+          })
+          throw error
         }
-        return true
-      } else {
-        throw new wiki.Error.AuthAccountAlreadyExists()
       }
+      return true
     } else {
       throw new wiki.Error.AuthRegistrationDisabled()
     }

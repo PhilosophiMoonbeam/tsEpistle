@@ -403,6 +403,114 @@ const enqueueCurrentPageProjections = async (
   })
 }
 
+interface PageHistoryIdentityRow {
+  readonly id: number
+  readonly path: string
+  readonly visibility: PageVisibility
+  readonly ownerId: number | null
+}
+
+interface PageTreeSourceRow {
+  readonly id: number
+  readonly path: string
+  readonly localeCode: string
+  readonly title: string
+  readonly visibility: PageVisibility
+  readonly ownerId: number | null
+}
+
+interface PageTreeInsertRow {
+  id: number
+  localeCode: string
+  path: string
+  depth: number
+  title: string
+  isFolder: boolean
+  visibility: PageVisibility
+  ownerId: number | null
+  parent: number | null
+  pageId: number | null
+  ancestors: string
+}
+
+interface MigratedPageIdentity {
+  readonly previous: Page
+  readonly destinationHash: string
+}
+
+const PAGE_TREE_REBUILD_LOCK_ID = 0x574b5452
+
+const rewriteLinkedPageRenders = async (
+  transaction: Knex.Transaction,
+  locale: string,
+  pagePath: string,
+  from: string,
+  to: string
+): Promise<readonly string[]> => {
+  const linkedPages = await transaction<Pick<Page, 'id' | 'hash'>>('pages')
+    .select('id', 'hash')
+    .whereIn('id', builder => {
+      builder.select('pageId').from('pageLinks').where({ localeCode: locale, path: pagePath })
+    })
+    .forUpdate()
+  if (linkedPages.length > 0) {
+    await transaction('pages')
+      .whereIn(
+        'id',
+        linkedPages.map(page => page.id)
+      )
+      .update({ render: transaction.raw('REPLACE(??, ?, ?)', ['render', from, to]) })
+  }
+  return linkedPages.map(page => page.hash)
+}
+
+const replacePageTree = async (transaction: Knex.Transaction): Promise<void> => {
+  const pages = await transaction<PageTreeSourceRow>('pages')
+    .select('id', 'path', 'localeCode', 'title', 'visibility', 'ownerId')
+    .orderBy(['visibility', 'ownerId', 'localeCode', 'path'])
+  const tree: PageTreeInsertRow[] = []
+  const treeByIdentity = new Map<string, PageTreeInsertRow>()
+  let nextId = 0
+
+  for (const page of pages) {
+    const pagePaths = page.path.split('/')
+    let currentPath = ''
+    let parentId: number | null = null
+    const ancestors: number[] = []
+    for (const [index, part] of pagePaths.entries()) {
+      const depth = index + 1
+      const isFolder = depth < pagePaths.length
+      currentPath = currentPath ? `${currentPath}/${part}` : part
+      const identity = JSON.stringify([page.visibility, page.ownerId, page.localeCode, currentPath])
+      let treeRow = treeByIdentity.get(identity)
+      if (!treeRow) {
+        treeRow = {
+          id: ++nextId,
+          localeCode: page.localeCode,
+          path: currentPath,
+          depth,
+          title: isFolder ? part : page.title,
+          isFolder,
+          visibility: page.visibility,
+          ownerId: page.ownerId,
+          parent: parentId,
+          pageId: isFolder ? null : page.id,
+          ancestors: JSON.stringify(ancestors)
+        }
+        tree.push(treeRow)
+        treeByIdentity.set(identity, treeRow)
+      } else if (isFolder && !treeRow.isFolder) {
+        treeRow.isFolder = true
+      }
+      parentId = treeRow.id
+      ancestors.push(treeRow.id)
+    }
+  }
+
+  await transaction('pageTree').truncate()
+  for (const rows of _.chunk(tree, 100)) await transaction('pageTree').insert(rows)
+}
+
 const frontmatterRegex = {
   html: /^(<!-{2}(?:\n|\r)([\w\W]+?)(?:\n|\r)-{2}>)?(?:\n|\r)*([\w\W]*)*/,
   legacy: /^(<!-- TITLE: ?([\w\W]+?) ?-{2}>)?(?:\n|\r)?(<!-- SUBTITLE: ?([\w\W]+?) ?-{2}>)?(?:\n|\r)*([\w\W]*)*/i,
@@ -1127,7 +1235,8 @@ export default class Page extends Model {
         'page.visibility-changed',
         {
           ...page,
-          visibility: opts.visibility
+          visibility: opts.visibility,
+          ownerId
         },
         opts.user
       )
@@ -1198,7 +1307,7 @@ export default class Page extends Model {
         .where({ id: page.id, sourceRevision: page.sourceRevision })
       if (changedRows !== 1) throw pageUpdateConflict()
       await wiki.models.knex('pageHistory').transacting(transaction).where({ pageId: page.id, visibility: 'private' }).update({ ownerId: opts.ownerId })
-      await writePageOutboxEvent(transaction, 'page.ownership-transferred', page, opts.user)
+      await writePageOutboxEvent(transaction, 'page.ownership-transferred', { ...page, ownerId: opts.ownerId }, opts.user)
       await enqueueCurrentPageProjections(transaction, page.id, 'ownership', projectionLocation(page))
     })
     await wiki.models.pages.deletePageFromCache(page.hash)
@@ -1858,18 +1967,136 @@ export default class Page extends Model {
     return fs.emptyDir(path.resolve(wiki.ROOTPATH, wiki.config.dataPath, 'cache'))
   }
 
-  static async migrateToLocale({ sourceLocale, targetLocale }: { sourceLocale: string; targetLocale: string }): Promise<number> {
-    return wiki.models.pages
-      .query()
-      .patch({
-        localeCode: targetLocale
-      })
-      .where({
-        localeCode: sourceLocale
-      })
-      .whereNotExists(builder => {
-        builder.select('id').from('pages AS pagesm').where('pagesm.localeCode', targetLocale).andWhereRaw('pagesm.path = pages.path')
-      })
+  static async acquireLocaleMigrationLocks(transaction: Knex.Transaction): Promise<void> {
+    await transaction.raw('SELECT pg_advisory_xact_lock(?)', [PAGE_TREE_REBUILD_LOCK_ID])
+    await transaction.raw('LOCK TABLE "pages" IN SHARE ROW EXCLUSIVE MODE')
+  }
+
+  static async migrateToLocale({ sourceLocale, targetLocale, user }: { sourceLocale: string; targetLocale: string; user: PageUser }): Promise<number> {
+    const migration = await wiki.models.knex.transaction(async transaction => {
+      await wiki.models.pages.acquireLocaleMigrationLocks(transaction)
+      const pages = await wiki.models.pages
+        .query(transaction)
+        .where({ localeCode: sourceLocale })
+        .whereNotExists(builder => {
+          builder.select('id').from('pages AS pagesm').where('pagesm.localeCode', targetLocale).andWhereRaw('pagesm.path = pages.path')
+        })
+        .forUpdate()
+        .withGraphFetched('tags')
+      if (pages.length === 0) return { pages: [] as MigratedPageIdentity[], cacheHashes: [] as string[] }
+
+      const migratedPages: MigratedPageIdentity[] = []
+      const cacheHashes = new Set<string>()
+      for (const page of pages) {
+        const destinationHash = pageHelper.generateHash({
+          path: page.path,
+          locale: targetLocale,
+          visibility: page.visibility,
+          ownerId: page.ownerId
+        })
+        await wiki.models.pageHistory.addVersion({
+          ...page,
+          action: 'moved',
+          versionDate: page.updatedAt,
+          transaction
+        })
+        const localeRelationPatch = await localeRelationMovePatch(transaction, page, targetLocale)
+        const changedRows = await wiki.models.pages
+          .query(transaction)
+          .patch({
+            localeCode: targetLocale,
+            hash: destinationHash,
+            ...localeRelationPatch
+          })
+          .where({ id: page.id, sourceRevision: page.sourceRevision })
+        if (changedRows !== 1) throw pageUpdateConflict()
+
+        const historyRows = await transaction<PageHistoryIdentityRow>('pageHistory')
+          .select('id', 'path', 'visibility', 'ownerId')
+          .where('pageId', page.id)
+          .forUpdate()
+        for (const history of historyRows) {
+          await transaction('pageHistory')
+            .where({ id: history.id })
+            .update({
+              localeCode: targetLocale,
+              hash: pageHelper.generateHash({
+                path: history.path,
+                locale: targetLocale,
+                visibility: history.visibility,
+                ownerId: history.ownerId
+              })
+            })
+        }
+
+        const sourceHref = `/${sourceLocale}/${page.path}`
+        const destinationHref = `/${targetLocale}/${page.path}`
+        for (const hash of await rewriteLinkedPageRenders(
+          transaction,
+          sourceLocale,
+          page.path,
+          `<a href="${sourceHref}" class="is-internal-link is-valid-page">`,
+          `<a href="${destinationHref}" class="is-internal-link is-valid-page">`
+        ))
+          cacheHashes.add(hash)
+        await transaction('pageLinks').where({ localeCode: sourceLocale, path: page.path }).update({ localeCode: targetLocale })
+        for (const hash of await rewriteLinkedPageRenders(
+          transaction,
+          targetLocale,
+          page.path,
+          `<a href="${destinationHref}" class="is-internal-link is-invalid-page">`,
+          `<a href="${destinationHref}" class="is-internal-link is-valid-page">`
+        ))
+          cacheHashes.add(hash)
+
+        await writePageOutboxEvent(transaction, 'page.moved', { ...page, localeCode: targetLocale }, user)
+        await enqueueCurrentPageProjections(transaction, page.id, 'move', projectionLocation(page))
+        cacheHashes.add(page.hash)
+        cacheHashes.add(destinationHash)
+        migratedPages.push({ previous: page, destinationHash })
+      }
+      await replacePageTree(transaction)
+      return { pages: migratedPages, cacheHashes: [...cacheHashes] }
+    })
+
+    for (const hash of migration.cacheHashes) {
+      await wiki.models.pages.deletePageFromCache(hash)
+      wiki.events.outbound.emit('deletePageFromCache', hash)
+    }
+    for (const { previous, destinationHash } of migration.pages) {
+      const updated = await wiki.models.pages.getPageFromDb(previous.id)
+      if (!updated) throw new wiki.Error.PageNotFound()
+      if (updated.visibility === 'public') {
+        const prepared = await wiki.models.pages.prepareSearchDocument(updated)
+        const renamedPage: PageRenameDetails = {
+          ...prepared,
+          hash: previous.hash,
+          path: previous.path,
+          localeCode: previous.localeCode,
+          destinationPath: updated.path,
+          destinationLocaleCode: updated.localeCode,
+          destinationHash
+        }
+        if (isPublishedPublicPage(updated)) await wiki.data.searchEngine.renamed(renamedPage)
+        await wiki.models.storage.pageEvent({
+          event: 'renamed',
+          page: {
+            ...prepared,
+            hash: previous.hash,
+            path: previous.path,
+            localeCode: previous.localeCode,
+            destinationPath: updated.path,
+            destinationLocaleCode: updated.localeCode,
+            destinationHash,
+            moveAuthorId: user.id,
+            moveAuthorName: user.name,
+            moveAuthorEmail: user.email
+          }
+        })
+      }
+      await notifyCollaboration(updated.id, true)
+    }
+    return migration.pages.length
   }
 
   static cleanHTML(rawHTML = ''): string {

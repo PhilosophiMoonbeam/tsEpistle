@@ -14,7 +14,6 @@ import semver from 'semver'
 import viteAssets from './helpers/vite-assets.ts'
 import system from './core/system.ts'
 
-import { BUILTIN_CONTENT_EXTENSIONS } from '../shared/content-extensions.ts'
 import type { ProductMetadata } from '../shared/product.ts'
 import { cloneThemeColors, DEFAULT_THEME_COLORS } from '../shared/theme-colors.ts'
 import { DEFAULT_PAGE_GUTTER_STYLE } from '../shared/page-gutters.ts'
@@ -65,7 +64,9 @@ interface SetupModels {
   editors: { refreshEditorsFromDisk(): Promise<void>; query(): ModelQuery<Record<string, unknown>> }
   groups: { query(): ModelQuery<GroupRecord> }
   knex: {
-    (table: string): {
+    (
+      table: string
+    ): {
       insert(values: Record<string, unknown>[]): Promise<unknown>
       truncate(): Promise<unknown>
     }
@@ -89,7 +90,7 @@ interface SetupWiki extends Record<string, unknown> {
   ROOTPATH: string
   SERVERPATH: string
   config: SetupConfig
-  configSvc: { saveToDb(keys: string[], propagate?: boolean): Promise<unknown> }
+  configSvc: { saveToDb(keys: string[], propagate?: boolean): Promise<boolean> }
   data: unknown
   logger: { error(value: unknown): void; info(message: string): void }
   product: ProductMetadata
@@ -97,6 +98,7 @@ interface SetupWiki extends Record<string, unknown> {
   server: DestroyableServer
   system: unknown
   telemetry: { sendError(error: unknown): void; sendInstanceEvent(event: string): Promise<void> }
+  shutdownSignal: AbortSignal
 }
 
 interface HttpError extends Error {
@@ -110,7 +112,7 @@ function errorMessage(error: unknown): string {
 }
 
 function bodyRecord(value: unknown): Record<string, unknown> {
-  return typeof value === 'object' && value !== null ? value as Record<string, unknown> : {}
+  return typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : {}
 }
 
 function requiredString(body: Record<string, unknown>, key: string): string {
@@ -174,8 +176,19 @@ export default function startSetup(): Promise<void> {
       _.set(wiki.config, 'lang', { code: 'en', autoUpdate: true, namespacing: false, namespaces: [] })
       _.set(wiki.config, 'logo', { hasLogo: false, logoIsSquare: false })
       _.set(wiki.config, 'mail', {
-        senderName: '', senderEmail: '', host: '', port: 465, name: '', secure: true, verifySSL: true,
-        user: '', pass: '', useDKIM: false, dkimDomainName: '', dkimKeySelector: '', dkimPrivateKey: ''
+        senderName: '',
+        senderEmail: '',
+        host: '',
+        port: 465,
+        name: '',
+        secure: true,
+        verifySSL: true,
+        user: '',
+        pass: '',
+        useDKIM: false,
+        dkimDomainName: '',
+        dkimKeySelector: '',
+        dkimPrivateKey: ''
       })
       _.set(wiki.config, 'seo', { description: '', robots: ['index', 'follow'], analyticsService: '', analyticsId: '' })
       _.set(wiki.config, 'sessionSecret', (await randomBytesAsync(32)).toString('hex'))
@@ -216,22 +229,31 @@ export default function startSetup(): Promise<void> {
         private: certs.privateKey
       })
 
-      wiki.logger.info('Persisting config to DB...')
-      await wiki.configSvc.saveToDb([
-        'auth', 'certs', 'company', 'features', 'graphEndpoint', 'host', 'lang', 'logo', 'mail', 'seo',
-        'sessionSecret', 'telemetry', 'theming', 'uploads', 'title'
-      ], false)
+      const configSaved = await wiki.configSvc.saveToDb(
+        [
+          'auth',
+          'certs',
+          'company',
+          'features',
+          'graphEndpoint',
+          'host',
+          'lang',
+          'logo',
+          'mail',
+          'seo',
+          'sessionSecret',
+          'telemetry',
+          'theming',
+          'uploads',
+          'title'
+        ],
+        false
+      )
+      if (!configSaved) throw new Error('Failed to persist setup configuration')
 
       await wiki.models.locales.query().where('code', '!=', 'x').del()
       await wiki.models.navigation.query().truncate()
       await wiki.models.knex.raw('TRUNCATE groups, users CASCADE')
-      await wiki.models.knex('contentExtensions').insert(BUILTIN_CONTENT_EXTENSIONS.map(definition => ({
-        key: definition.key,
-        isEnabled: false,
-        version: definition.version,
-        updatedAt: new Date(),
-        updatedBy: null
-      })))
 
       wiki.logger.info('Installing default locale...')
       const defaultLocaleStrings: unknown = await fs.readJson(path.join(wiki.SERVERPATH, 'locales', 'en.json'))
@@ -245,10 +267,14 @@ export default function startSetup(): Promise<void> {
 
       wiki.logger.info('Creating default groups...')
       const adminGroup = await wiki.models.groups.query().insert({
-        name: 'Administrators', permissions: ['manage:system'], pageRules: [], isSystem: true
+        name: 'Administrators',
+        permissions: ['manage:system'],
+        pageRules: [],
+        isSystem: true
       })
       const guestGroup = await wiki.models.groups.query().insert({
-        name: 'Guests', permissions: ['read:pages', 'read:assets', 'read:comments'],
+        name: 'Guests',
+        permissions: ['read:pages', 'read:assets', 'read:comments'],
         pageRules: [{ id: 'guest', roles: ['read:pages', 'read:assets', 'read:comments'], match: 'START', deny: false, path: '', locales: [] }],
         isSystem: true
       })
@@ -257,8 +283,15 @@ export default function startSetup(): Promise<void> {
       }
 
       await wiki.models.authentication.query().insert({
-        key: 'local', config: {}, selfRegistration: false, isEnabled: true, domainWhitelist: { v: [] },
-        autoEnrollGroups: { v: [] }, order: 0, strategyKey: 'local', displayName: 'Local'
+        key: 'local',
+        config: {},
+        selfRegistration: false,
+        isEnabled: true,
+        domainWhitelist: { v: [] },
+        autoEnrollGroups: { v: [] },
+        order: 0,
+        strategyKey: 'local',
+        displayName: 'Local'
       })
 
       await wiki.models.editors.refreshEditorsFromDisk()
@@ -271,15 +304,30 @@ export default function startSetup(): Promise<void> {
 
       wiki.logger.info('Creating root administrator...')
       const adminUser = await wiki.models.users.query().insert({
-        email: adminEmail.toLowerCase(), provider: 'local', password: adminPassword, name: 'Administrator', locale: 'en',
-        defaultEditor: 'markdown', tfaIsActive: false, isActive: true, isVerified: true
+        email: adminEmail.toLowerCase(),
+        provider: 'local',
+        password: adminPassword,
+        name: 'Administrator',
+        locale: 'en',
+        defaultEditor: 'markdown',
+        tfaIsActive: false,
+        isActive: true,
+        isVerified: true
       })
       await adminUser.$relatedQuery('groups').relate(adminGroup.id)
 
       wiki.logger.info('Creating guest account...')
       const guestUser = await wiki.models.users.query().insert({
-        provider: 'local', email: 'guest@example.com', name: 'Guest', password: '', locale: 'en', defaultEditor: 'markdown',
-        tfaIsActive: false, isSystem: true, isActive: true, isVerified: true
+        provider: 'local',
+        email: 'guest@example.com',
+        name: 'Guest',
+        password: '',
+        locale: 'en',
+        defaultEditor: 'markdown',
+        tfaIsActive: false,
+        isSystem: true,
+        isActive: true,
+        isVerified: true
       })
       await guestUser.$relatedQuery('groups').relate(guestGroup.id)
       if (adminUser.id !== 1 || guestUser.id !== 2) {
@@ -289,13 +337,23 @@ export default function startSetup(): Promise<void> {
       wiki.logger.info('Creating default site navigation')
       await wiki.models.navigation.query().insert({
         key: 'site',
-        config: [{
-          locale: 'en',
-          items: [{
-            id: randomUUID(), icon: 'mdi-home', kind: 'link', label: 'Home', target: '/', targetType: 'home',
-            visibilityMode: 'all', visibilityGroups: null
-          }]
-        }]
+        config: [
+          {
+            locale: 'en',
+            items: [
+              {
+                id: randomUUID(),
+                icon: 'mdi-home',
+                kind: 'link',
+                label: 'Home',
+                target: '/',
+                targetType: 'home',
+                visibilityMode: 'all',
+                visibilityGroups: null
+              }
+            ]
+          }
+        ]
       })
 
       if (wiki.config.telemetry.isEnabled) await wiki.telemetry.sendInstanceEvent('INSTALL')
@@ -314,6 +372,7 @@ export default function startSetup(): Promise<void> {
     wiki.logger.info('Setup is complete!')
     res.once('finish', () => {
       wiki.logger.info('Stopping Setup...')
+      wiki.shutdownSignal.removeEventListener('abort', abortSetup)
       wiki.server.destroy(() => {
         wiki.logger.info('Setup stopped. Starting tsFranki...')
         completion.resolve()
@@ -358,6 +417,15 @@ export default function startSetup(): Promise<void> {
     openConnections.clear()
   }
 
+  const abortSetup = (): void => {
+    server.destroy(() => {
+      wiki.shutdownSignal.removeEventListener('abort', abortSetup)
+      completion.reject(wiki.shutdownSignal.reason ?? new DOMException('Shutdown requested', 'AbortError'))
+    })
+  }
+  wiki.shutdownSignal.addEventListener('abort', abortSetup, { once: true })
+  if (wiki.shutdownSignal.aborted) abortSetup()
+
   server.on('error', (error: NodeJS.ErrnoException) => {
     if (error.syscall === 'listen') {
       switch (error.code) {
@@ -373,6 +441,7 @@ export default function startSetup(): Promise<void> {
     } else {
       wiki.logger.error(error)
     }
+    wiki.shutdownSignal.removeEventListener('abort', abortSetup)
     completion.reject(error)
   })
 

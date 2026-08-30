@@ -42,6 +42,22 @@ const makeMultipartBody = parts => {
   }
 }
 
+const makeMalformedMultipartBody = parts => {
+  const boundary = `----wiki-test-${Date.now()}-${Math.random().toString(16).slice(2)}`
+  const buffers = []
+
+  parts.forEach(part => {
+    buffers.push(Buffer.from(`--${boundary}${CRLF}`))
+    buffers.push(makePart(part))
+  })
+  buffers.push(Buffer.from(`--${boundary}${CRLF}Content-Disposition: form-data; name="unfinished"`))
+
+  return {
+    boundary,
+    body: Buffer.concat(buffers)
+  }
+}
+
 const request = ({ port, body, boundary }) => new Promise((resolve, reject) => {
   const req = http.request({
     hostname: '127.0.0.1',
@@ -74,7 +90,7 @@ const request = ({ port, body, boundary }) => new Promise((resolve, reject) => {
   req.end(body)
 })
 
-const setupServer = async ({ maxFileSize = 1024 * 1024, maxFiles = 1 } = {}) => {
+const setupServer = async ({ maxFileSize = 1024 * 1024, maxFiles = 1, authorized = true } = {}) => {
   vi.resetModules()
 
   tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'wiki-upload-integration-'))
@@ -88,7 +104,7 @@ const setupServer = async ({ maxFileSize = 1024 * 1024, maxFiles = 1 } = {}) => 
       }
     },
     auth: {
-      checkAccess: vi.fn().mockReturnValue(true)
+      checkAccess: vi.fn().mockReturnValue(authorized)
     },
     models: {
       assetFolders: {
@@ -137,6 +153,8 @@ const postMultipart = async parts => {
   return request({ port, ...makeMultipartBody(parts) })
 }
 
+const uploadDirectoryFiles = () => fs.readdirSync(path.join(tempRoot, 'data', 'uploads'))
+
 afterEach(async () => {
   if (server) {
     await new Promise((resolve, reject) => server.close(err => err ? reject(err) : resolve()))
@@ -154,6 +172,25 @@ afterEach(async () => {
 })
 
 describe('controllers/upload real multipart integration', () => {
+  it('rejects guests before multer writes a file', async () => {
+    const { wiki } = await setupServer({ authorized: false })
+    expect(uploadDirectoryFiles()).toEqual([])
+
+    const res = await postMultipart([
+      { value: JSON.stringify({ folderId: 0 }) },
+      { filename: 'guest.png', value: Buffer.from('guest upload'), type: 'image/png' }
+    ])
+
+    expect(res.status).toBe(403)
+    expect(res.json).toEqual({
+      succeeded: false,
+      message: 'You are not authorized to upload files.'
+    })
+    expect(wiki.auth.checkAccess).toHaveBeenCalledTimes(1)
+    expect(wiki.models.assets.upload).not.toHaveBeenCalled()
+    expect(uploadDirectoryFiles()).toEqual([])
+  })
+
   it('successfully uploads a single multipart file', async () => {
     const { wiki, tempRoot } = await setupServer()
     wiki.models.assets.upload.mockImplementationOnce(async payload => {
@@ -223,6 +260,28 @@ describe('controllers/upload real multipart integration', () => {
     expect(wiki.models.assets.upload).not.toHaveBeenCalled()
   })
 
+  it('removes a persisted file when its metadata is invalid', async () => {
+    const { wiki } = await setupServer()
+    expect(uploadDirectoryFiles()).toEqual([])
+
+    const res = await postMultipart([
+      { value: '{invalid-json' },
+      {
+        filename: 'image.png',
+        value: Buffer.from('hello upload'),
+        type: 'image/png'
+      }
+    ])
+
+    expect(res.status).toBe(400)
+    expect(res.json).toEqual({
+      succeeded: false,
+      message: 'Missing upload folder metadata.'
+    })
+    expect(wiki.models.assets.upload).not.toHaveBeenCalled()
+    expect(uploadDirectoryFiles()).toEqual([])
+  })
+
   it('rejects multiple files at the controller level when maxFiles allows them', async () => {
     const { wiki } = await setupServer({ maxFiles: 3 })
 
@@ -238,6 +297,67 @@ describe('controllers/upload real multipart integration', () => {
       message: 'You cannot upload multiple files within the same request.'
     })
     expect(wiki.models.assets.upload).not.toHaveBeenCalled()
+    expect(uploadDirectoryFiles()).toEqual([])
+  })
+
+  it('removes a persisted file when folder lookup fails', async () => {
+    const { wiki } = await setupServer()
+    wiki.models.assetFolders.getHierarchy.mockRejectedValueOnce(new Error('db unavailable'))
+
+    const res = await postMultipart([
+      { value: JSON.stringify({ folderId: 42 }) },
+      { filename: 'folder.png', value: Buffer.from('folder upload'), type: 'image/png' }
+    ])
+
+    expect(res.status).toBe(400)
+    expect(wiki.models.assets.upload).not.toHaveBeenCalled()
+    expect(uploadDirectoryFiles()).toEqual([])
+  })
+
+  it('removes a persisted file when path authorization fails', async () => {
+    const { wiki } = await setupServer()
+    wiki.auth.checkAccess.mockReturnValueOnce(true).mockReturnValueOnce(false)
+
+    const res = await postMultipart([
+      { value: JSON.stringify({ folderId: 0 }) },
+      { filename: 'forbidden.png', value: Buffer.from('forbidden upload'), type: 'image/png' }
+    ])
+
+    expect(res.status).toBe(403)
+    expect(res.json).toEqual({
+      succeeded: false,
+      message: 'You are not authorized to upload files to this folder.'
+    })
+    expect(wiki.models.assets.upload).not.toHaveBeenCalled()
+    expect(uploadDirectoryFiles()).toEqual([])
+  })
+
+  it('removes a persisted file when the asset commit fails', async () => {
+    const { wiki } = await setupServer()
+    wiki.models.assets.upload.mockRejectedValueOnce(new Error('asset commit failed'))
+
+    const res = await postMultipart([
+      { value: JSON.stringify({ folderId: 0 }) },
+      { filename: 'failed.png', value: Buffer.from('failed upload'), type: 'image/png' }
+    ])
+
+    expect(res.status).toBe(599)
+    expect(wiki.models.assets.upload).toHaveBeenCalledTimes(1)
+    expect(uploadDirectoryFiles()).toEqual([])
+  })
+
+  it('removes persisted files when multipart parsing fails', async () => {
+    const { port, wiki } = await setupServer()
+    const malformed = makeMalformedMultipartBody([
+      { value: JSON.stringify({ folderId: 0 }) },
+      { filename: 'malformed.png', value: Buffer.from('malformed upload'), type: 'image/png' }
+    ])
+
+    const res = await request({ port, ...malformed })
+
+    expect(res.status).toBe(599)
+    expect(wiki.models.assets.upload).not.toHaveBeenCalled()
+    expect(uploadDirectoryFiles()).toEqual([])
   })
 
   it('surfaces multer file-size limit errors through the test error middleware', async () => {
@@ -255,6 +375,7 @@ describe('controllers/upload real multipart integration', () => {
       field: 'mediaUpload'
     }))
     expect(wiki.models.assets.upload).not.toHaveBeenCalled()
+    expect(uploadDirectoryFiles()).toEqual([])
   })
 
   it('characterizes non-ASCII filename sanitization under multer 1.4.4', async () => {

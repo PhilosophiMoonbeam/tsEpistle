@@ -1,7 +1,7 @@
 import createKnex, { type Knex } from 'knex'
 import { afterEach, beforeEach, describe, expect, it, vi } from './bun-test.mts'
 import type { AgentKnowledgeEnricher } from '../agents/providers/utility.ts'
-import { enqueuePageMutationEffects } from '../core/page-mutation-outbox.ts'
+import { claimPageMutationEffects, enqueuePageMutationEffects } from '../core/page-mutation-outbox.ts'
 import { up as createProjectionStore } from '../db/migrations/2.5.152.ts'
 import { PageKnowledgeLifecycle, PageKnowledgeRepository } from '../knowledge/lifecycle.ts'
 
@@ -39,9 +39,18 @@ const createSchema = async (): Promise<void> => {
     table.integer('authorId').notNullable()
     table.text('extra').notNullable()
   })
-  await db.schema.createTable('tags', table => { table.increments('id').primary(); table.string('tag').notNullable() })
-  await db.schema.createTable('pageTags', table => { table.integer('pageId').notNullable(); table.integer('tagId').notNullable() })
-  await db.schema.createTable('pageHistoryTags', table => { table.integer('pageId').notNullable(); table.integer('tagId').notNullable() })
+  await db.schema.createTable('tags', table => {
+    table.increments('id').primary()
+    table.string('tag').notNullable()
+  })
+  await db.schema.createTable('pageTags', table => {
+    table.integer('pageId').notNullable()
+    table.integer('tagId').notNullable()
+  })
+  await db.schema.createTable('pageHistoryTags', table => {
+    table.integer('pageId').notNullable()
+    table.integer('tagId').notNullable()
+  })
   await db.schema.createTable('pageMutationOutbox', table => {
     table.uuid('id').primary()
     table.integer('pageId').notNullable()
@@ -64,10 +73,20 @@ const createSchema = async (): Promise<void> => {
     table.unique(['pageId', 'sourceRevision', 'effectKind'])
   })
   await db.schema.createTable('agentProviderProfiles', table => {
-    table.uuid('id').primary(); table.string('status').notNullable(); table.boolean('isGlobalDefault').notNullable(); table.boolean('conformed').notNullable(); table.uuid('currentVersionId').nullable(); table.dateTime('deletedAt').nullable()
+    table.uuid('id').primary()
+    table.string('status').notNullable()
+    table.boolean('isGlobalDefault').notNullable()
+    table.boolean('conformed').notNullable()
+    table.uuid('currentVersionId').nullable()
+    table.dateTime('deletedAt').nullable()
   })
-  await db.schema.createTable('agentProviderProfileVersions', table => { table.uuid('id').primary(); table.boolean('conformed').notNullable() })
-  await db.schema.createTable('pageAccessPasswords', table => { table.integer('pageId').notNullable() })
+  await db.schema.createTable('agentProviderProfileVersions', table => {
+    table.uuid('id').primary()
+    table.boolean('conformed').notNullable()
+  })
+  await db.schema.createTable('pageAccessPasswords', table => {
+    table.integer('pageId').notNullable()
+  })
   await createProjectionStore(db)
 }
 
@@ -88,14 +107,44 @@ const page = (overrides: Record<string, unknown> = {}) => ({
   ...overrides
 })
 
-const enqueueKnowledge = async (sourceRevision: string, content: string, action: 'create' | 'update') => enqueuePageMutationEffects(db, {
-  pageId: 42,
-  sourceRevision,
-  desiredState: 'present',
-  action,
-  source: content,
-  location: { locale: 'en', path: 'ops/runbook', visibility: 'public', ownerId: null },
-  effects: ['knowledge']
+const enqueueKnowledge = async (sourceRevision: string, content: string, action: 'create' | 'update') =>
+  enqueuePageMutationEffects(db, {
+    pageId: 42,
+    sourceRevision,
+    desiredState: 'present',
+    action,
+    source: content,
+    location: { locale: 'en', path: 'ops/runbook', visibility: 'public', ownerId: null },
+    effects: ['knowledge']
+  })
+
+const enableUtilityEnrichment = async (): Promise<void> => {
+  const profileVersionId = '00000000-0000-4000-8000-000000000001'
+  await db('agentProviderProfileVersions').insert({ id: profileVersionId, conformed: true })
+  await db('agentProviderProfiles').insert({
+    id: '00000000-0000-4000-8000-000000000002',
+    status: 'enabled',
+    isGlobalDefault: true,
+    conformed: true,
+    currentVersionId: profileVersionId,
+    deletedAt: null
+  })
+}
+
+const utilityResult = (tag: string) => ({
+  value: {
+    type: null,
+    summary: null,
+    tags: [tag],
+    entities: [],
+    relationships: [],
+    openQuestions: []
+  },
+  model: 'utility-small',
+  inputSha256: 'a'.repeat(64),
+  outputSha256: 'b'.repeat(64),
+  inputTokens: 1,
+  outputTokens: 1
 })
 
 beforeEach(async () => {
@@ -128,7 +177,14 @@ describe('page knowledge lifecycle', () => {
   it('uses the global utility model only for declared public gaps', async () => {
     const profileVersionId = '00000000-0000-4000-8000-000000000001'
     await db('agentProviderProfileVersions').insert({ id: profileVersionId, conformed: true })
-    await db('agentProviderProfiles').insert({ id: '00000000-0000-4000-8000-000000000002', status: 'enabled', isGlobalDefault: true, conformed: true, currentVersionId: profileVersionId, deletedAt: null })
+    await db('agentProviderProfiles').insert({
+      id: '00000000-0000-4000-8000-000000000002',
+      status: 'enabled',
+      isGlobalDefault: true,
+      conformed: true,
+      currentVersionId: profileVersionId,
+      deletedAt: null
+    })
     const current = page()
     await db('pages').insert(current)
     await enqueueKnowledge('1', String(current.content), 'create')
@@ -170,7 +226,14 @@ describe('page knowledge lifecycle', () => {
   it('discards utility output when the exact source revision changes in flight', async () => {
     const profileVersionId = '00000000-0000-4000-8000-000000000001'
     await db('agentProviderProfileVersions').insert({ id: profileVersionId, conformed: true })
-    await db('agentProviderProfiles').insert({ id: '00000000-0000-4000-8000-000000000002', status: 'enabled', isGlobalDefault: true, conformed: true, currentVersionId: profileVersionId, deletedAt: null })
+    await db('agentProviderProfiles').insert({
+      id: '00000000-0000-4000-8000-000000000002',
+      status: 'enabled',
+      isGlobalDefault: true,
+      conformed: true,
+      currentVersionId: profileVersionId,
+      deletedAt: null
+    })
     const current = page()
     await db('pages').insert(current)
     await enqueueKnowledge('1', String(current.content), 'create')
@@ -194,20 +257,202 @@ describe('page knowledge lifecycle', () => {
       enrichmentState: 'superseded',
       utilityModel: null
     })
-    expect(await db('pageMutationOutbox').where({ effectKind: 'knowledge' }).first('status', 'result')).toMatchObject({ status: 'succeeded', result: expect.stringContaining('superseded') })
+    expect(await db('pageMutationOutbox').where({ effectKind: 'knowledge' }).first('status', 'result')).toMatchObject({
+      status: 'succeeded',
+      result: expect.stringContaining('superseded')
+    })
   })
 
+  it('renews a healthy lease throughout long utility enrichment and releases its heartbeat', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-08-18T12:00:00.000Z'))
+    const entered = Promise.withResolvers<void>()
+    const release = Promise.withResolvers<void>()
+    let enrichmentSignal: AbortSignal | undefined
+    let running: Promise<unknown> | undefined
+
+    try {
+      await enableUtilityEnrichment()
+      const current = page()
+      await db('pages').insert(current)
+      await enqueueKnowledge('1', String(current.content), 'create')
+      running = new PageKnowledgeLifecycle(db, 'healthy-worker', {
+        enrichKnowledge: vi.fn(async request => {
+          enrichmentSignal = request.signal
+          entered.resolve()
+          await release.promise
+          return utilityResult('healthy-worker')
+        })
+      }).runOnce()
+      await entered.promise
+      const original = await db('pageMutationOutbox').first('leaseToken', 'leaseExpiresAt')
+
+      await vi.advanceTimersByTimeAsync(60_000)
+
+      const renewed = await db('pageMutationOutbox').first('leaseToken', 'leaseExpiresAt')
+      expect(renewed.leaseToken).toBe(original.leaseToken)
+      expect(new Date(String(renewed.leaseExpiresAt)).valueOf()).toBeGreaterThan(new Date(String(original.leaseExpiresAt)).valueOf())
+      expect(enrichmentSignal?.aborted).toBe(false)
+      expect(
+        await claimPageMutationEffects(db, {
+          leaseOwner: 'contending-worker',
+          limit: 1,
+          leaseMs: 120_000,
+          now: new Date('2026-08-18T12:02:00.001Z'),
+          effects: ['knowledge']
+        })
+      ).toEqual([])
+
+      release.resolve()
+      await running
+      expect(await db('pageMutationOutbox').first('status', 'leaseToken')).toMatchObject({ status: 'succeeded', leaseToken: null })
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      release.resolve()
+      await running?.catch(() => undefined)
+      vi.useRealTimers()
+    }
+  })
+
+  it('fences a stale projection write immediately after another worker reclaims the lease', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-08-18T12:00:00.000Z'))
+    const firstEntered = Promise.withResolvers<void>()
+    const firstRelease = Promise.withResolvers<void>()
+    const replacementEntered = Promise.withResolvers<void>()
+    const replacementRelease = Promise.withResolvers<void>()
+    let firstRunning: Promise<unknown> | undefined
+    let replacementRunning: Promise<unknown> | undefined
+
+    try {
+      await enableUtilityEnrichment()
+      const current = page()
+      await db('pages').insert(current)
+      await enqueueKnowledge('1', String(current.content), 'create')
+      firstRunning = new PageKnowledgeLifecycle(db, 'stale-worker', {
+        enrichKnowledge: vi.fn(async () => {
+          firstEntered.resolve()
+          await firstRelease.promise
+          return utilityResult('stale-worker')
+        })
+      }).runOnce()
+      await firstEntered.promise
+
+      vi.setSystemTime(new Date('2026-08-18T12:02:00.001Z'))
+      replacementRunning = new PageKnowledgeLifecycle(db, 'replacement-worker', {
+        enrichKnowledge: vi.fn(async () => {
+          replacementEntered.resolve()
+          await replacementRelease.promise
+          return utilityResult('replacement-worker')
+        })
+      }).runOnce()
+      await replacementEntered.promise
+      const replacementClaim = await db('pageMutationOutbox').first('leaseOwner', 'leaseToken', 'status')
+      expect(replacementClaim).toMatchObject({ leaseOwner: 'replacement-worker', status: 'running' })
+
+      firstRelease.resolve()
+      await firstRunning
+
+      expect(await db('pageKnowledgeProjections').first()).toBeUndefined()
+      expect(await db('pageMutationOutbox').first('leaseOwner', 'leaseToken', 'status')).toEqual(replacementClaim)
+
+      replacementRelease.resolve()
+      await replacementRunning
+      const stored = await db('pageKnowledgeProjections').first('projection')
+      expect(JSON.parse(String(stored.projection))).toMatchObject({ concept: { tags: ['replacement-worker'] } })
+      expect(await db('pageMutationOutbox').first('status', 'leaseToken')).toMatchObject({ status: 'succeeded', leaseToken: null })
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      firstRelease.resolve()
+      replacementRelease.resolve()
+      await Promise.all([firstRunning?.catch(() => undefined), replacementRunning?.catch(() => undefined)])
+      vi.useRealTimers()
+    }
+  })
+
+  it('aborts in-flight enrichment when its lease heartbeat discovers a replacement', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-08-18T12:00:00.000Z'))
+    const firstEntered = Promise.withResolvers<void>()
+    const stopFirst = Promise.withResolvers<void>()
+    const replacementEntered = Promise.withResolvers<void>()
+    const replacementRelease = Promise.withResolvers<void>()
+    let firstSignal: AbortSignal | undefined
+    let firstRunning: Promise<unknown> | undefined
+    let replacementRunning: Promise<unknown> | undefined
+
+    try {
+      await enableUtilityEnrichment()
+      const current = page()
+      await db('pages').insert(current)
+      await enqueueKnowledge('1', String(current.content), 'create')
+      firstRunning = new PageKnowledgeLifecycle(db, 'aborted-worker', {
+        enrichKnowledge: vi.fn(async request => {
+          firstSignal = request.signal
+          firstEntered.resolve()
+          const aborted = Promise.withResolvers<void>()
+          const onAbort = (): void => aborted.resolve()
+          if (request.signal.aborted) aborted.resolve()
+          else request.signal.addEventListener('abort', onAbort, { once: true })
+          try {
+            await Promise.race([aborted.promise, stopFirst.promise])
+          } finally {
+            request.signal.removeEventListener('abort', onAbort)
+          }
+          request.signal.throwIfAborted()
+          return utilityResult('aborted-worker')
+        })
+      }).runOnce()
+      await firstEntered.promise
+
+      vi.setSystemTime(new Date('2026-08-18T12:02:00.001Z'))
+      replacementRunning = new PageKnowledgeLifecycle(db, 'replacement-worker', {
+        enrichKnowledge: vi.fn(async () => {
+          replacementEntered.resolve()
+          await replacementRelease.promise
+          return utilityResult('replacement-worker')
+        })
+      }).runOnce()
+      await replacementEntered.promise
+
+      await vi.advanceTimersByTimeAsync(60_000)
+      await firstRunning
+
+      expect(firstSignal?.aborted).toBe(true)
+      expect(await db('pageKnowledgeProjections').first()).toBeUndefined()
+      expect(await db('pageMutationOutbox').first('leaseOwner', 'status')).toMatchObject({ leaseOwner: 'replacement-worker', status: 'running' })
+
+      replacementRelease.resolve()
+      await replacementRunning
+      expect(await db('pageMutationOutbox').first('status', 'leaseToken')).toMatchObject({ status: 'succeeded', leaseToken: null })
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      stopFirst.resolve()
+      replacementRelease.resolve()
+      await Promise.all([firstRunning?.catch(() => undefined), replacementRunning?.catch(() => undefined)])
+      vi.useRealTimers()
+    }
+  })
 
   it('retains a partial deterministic projection when utility enrichment fails', async () => {
     const profileVersionId = '00000000-0000-4000-8000-000000000001'
     await db('agentProviderProfileVersions').insert({ id: profileVersionId, conformed: true })
-    await db('agentProviderProfiles').insert({ id: '00000000-0000-4000-8000-000000000002', status: 'enabled', isGlobalDefault: true, conformed: true, currentVersionId: profileVersionId, deletedAt: null })
+    await db('agentProviderProfiles').insert({
+      id: '00000000-0000-4000-8000-000000000002',
+      status: 'enabled',
+      isGlobalDefault: true,
+      conformed: true,
+      currentVersionId: profileVersionId,
+      deletedAt: null
+    })
     const current = page()
     await db('pages').insert(current)
     await enqueueKnowledge('1', String(current.content), 'create')
 
     await new PageKnowledgeLifecycle(db, 'failure-worker', {
-      enrichKnowledge: vi.fn(async () => { throw new Error('invalid utility output') })
+      enrichKnowledge: vi.fn(async () => {
+        throw new Error('invalid utility output')
+      })
     }).runOnce()
 
     expect(await db('pageKnowledgeProjections').first('state', 'enrichmentState', 'lastError')).toMatchObject({

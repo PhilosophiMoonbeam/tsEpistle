@@ -4,6 +4,7 @@ import type { SearchResult as ProviderSearchResult } from '../modules/types.ts'
 import { canDeletePage, canReadPage, canWritePage, managesSystem, pageRoute, principalId, scopePageQuery, type PageVisibility } from '../helpers/page-access.ts'
 import { listPageIndexCandidates, PAGE_INDEX_CANDIDATE_LIMIT } from '../repositories/page-index.ts'
 import { isPageEditorKey, normalizeAvailableEditors } from '../../shared/page-editors.ts'
+import { assertPageUnlocked } from './page-protection.ts'
 
 import errors from './errors.ts'
 
@@ -30,6 +31,15 @@ interface PageRecord extends Record<string, unknown> {
   visibility: PageVisibility
   ownerId: number | null
   tags: TagRecord[]
+}
+interface PageSourceRecord extends PageRecord {
+  content: string
+}
+interface PageDetail extends PageRecord {
+  editor: string
+  locale: string
+  scriptCss: unknown
+  scriptJs: unknown
 }
 interface PageTreeRecord extends Record<string, unknown> {
   parent?: number | null
@@ -136,7 +146,7 @@ interface WikiPageOperations {
     pages: {
       query(): PageQuery
       relatedQuery(relation: 'tags'): RelatedTagQuery
-      getPageFromDb(input: number | { path: string; locale: string; visibility: PageVisibility; ownerId: number | null }): Promise<PageRecord | undefined>
+      getPageFromDb(input: number | { path: string; locale: string; visibility: PageVisibility; ownerId: number | null }): Promise<PageSourceRecord | undefined>
       deletePage(input: { id: number; expectedSourceRevision?: string; user?: Express.User }): unknown
       createPage(input: Record<string, unknown> & { user?: Express.User }): unknown
       updatePage(input: Record<string, unknown> & { user?: Express.User }): unknown
@@ -169,7 +179,14 @@ interface WikiPageOperations {
 }
 interface OperationInput extends Record<string, unknown> {
   requester?: Express.User
+  sessionId?: string
 }
+const assertUnlocked = (input: OperationInput, pageId: number): Promise<void> =>
+  assertPageUnlocked({
+    requester: input.requester,
+    pageId,
+    sessionId: typeof input.sessionId === 'string' ? input.sessionId : ''
+  })
 const wiki = WIKI as unknown as WikiPageOperations
 const positiveInteger = (value: unknown, label: string): number => {
   if (!Number.isSafeInteger(value) || (value as number) < 1) throw new ApplicationError(`${label} must be a positive integer`, { code: 'INVALID_INPUT' })
@@ -439,18 +456,41 @@ const searchTags = async (input: OperationInput) => {
     .slice(0, limit)
 }
 
-const get = async (input: OperationInput) => {
+const authorizedPageSource = async (input: OperationInput): Promise<PageSourceRecord> => {
   const requester = input.requester
   const page = await wiki.models.pages.getPageFromDb(positiveInteger(input.id, 'id'))
   if (!page || !canReadPage(requester, page)) {
     throw new ApplicationError('This page does not exist.', { code: 'PAGE_NOT_FOUND', status: 404 })
   }
+  await assertUnlocked(input, page.id)
+  return page
+}
+
+const get = async (input: OperationInput): Promise<PageDetail> => {
+  const page = await authorizedPageSource(input)
   return {
     ...page,
     locale: page.localeCode,
     editor: page.editorKey,
     scriptJs: _.get(page, 'extra.js'),
     scriptCss: _.get(page, 'extra.css')
+  }
+}
+
+const getSource = async (
+  input: OperationInput
+): Promise<{
+  content: string
+  description: string | null
+  editor: string
+  title: string
+}> => {
+  const page = await authorizedPageSource(input)
+  return {
+    content: page.content,
+    description: typeof page.description === 'string' ? page.description : null,
+    editor: page.editorKey,
+    title: page.title
   }
 }
 
@@ -503,7 +543,11 @@ const listRelated = async (input: OperationInput): Promise<RelatedPagesResult> =
     throw new ApplicationError('offset and limit exceed the safe traversal range', { code: 'INVALID_INPUT', status: 400 })
   if (maxDepth !== undefined && maxDepth > 32) throw new ApplicationError('maxDepth must not exceed 32', { code: 'INVALID_INPUT', status: 400 })
 
-  const source = await get({ id: pageId, ...(requester === undefined ? {} : { requester }) })
+  const source = await get({
+    id: pageId,
+    ...(requester === undefined ? {} : { requester }),
+    ...(typeof input.sessionId === 'string' ? { sessionId: input.sessionId } : {})
+  })
   if (source.visibility !== 'public' || source.isPublished === false) return { pages: [], truncated: false, nextOffset: null }
 
   const visiblePages = await wiki.models.pages
@@ -602,10 +646,11 @@ const listRelated = async (input: OperationInput): Promise<RelatedPagesResult> =
   }
 }
 
-const remove = (input: OperationInput): unknown => {
+const remove = async (input: OperationInput): Promise<unknown> => {
   const id = positiveInteger(input.id, 'id')
   const expected = expectedSourceRevision(input.expectedSourceRevision)
   const payload = expected === undefined ? { id } : { id, expectedSourceRevision: expected }
+  await assertUnlocked(input, id)
   return input.requester === undefined ? wiki.models.pages.deletePage(payload) : wiki.models.pages.deletePage({ ...payload, user: input.requester })
 }
 
@@ -638,6 +683,7 @@ const getHistory = async (input: OperationInput) => {
   const offsetSize = input.offsetSize === undefined ? 100 : positiveInteger(input.offsetSize, 'offsetSize')
   const page = await wiki.models.pages.query().select('path', 'localeCode', 'visibility', 'ownerId').findById(id)
   if (!page || (page.visibility === 'private' && !canReadPage(requester, page))) throw new wiki.Error.PageNotFound()
+  await assertUnlocked(input, id)
   if (
     page.visibility === 'public' &&
     !wiki.auth.checkAccess(requester, ['read:history'], {
@@ -656,6 +702,7 @@ const getVersion = async (input: OperationInput) => {
   const versionId = positiveInteger(input.versionId, 'versionId')
   const page = await wiki.models.pages.query().select('path', 'localeCode', 'visibility', 'ownerId').findById(pageId)
   if (!page || (page.visibility === 'private' && !canReadPage(requester, page))) throw new wiki.Error.PageNotFound()
+  await assertUnlocked(input, pageId)
   if (
     page.visibility === 'public' &&
     !wiki.auth.checkAccess(requester, ['read:history'], {
@@ -845,6 +892,7 @@ const getByPath = async (input: OperationInput) => {
   const ownerId = visibility === 'private' ? principalId(requester) : null
   const page = await wiki.models.pages.getPageFromDb({ path, locale, visibility, ownerId })
   if (!page || !canReadPage(requester, page)) throw new wiki.Error.PageNotFound()
+  await assertUnlocked(input, page.id)
   return { ...page, locale: page.localeCode, editor: page.editorKey, scriptJs: page.extra.js, scriptCss: page.extra.css }
 }
 
@@ -907,6 +955,7 @@ const getConflictLatest = async (input: OperationInput) => {
   const page = await wiki.models.pages.getPageFromDb(positiveInteger(input.id, 'id'))
   if (!page || (page.visibility === 'private' && !canWritePage(requester, page))) throw new wiki.Error.PageNotFound()
   if (!canWritePage(requester, page)) throw new wiki.Error.PageViewForbidden()
+  await assertUnlocked(input, page.id)
   return { ...page, tags: page.tags.map(tag => tag.tag), locale: page.localeCode }
 }
 
@@ -929,12 +978,21 @@ const create = (input: OperationInput): unknown => {
     )
   )
 }
-const update = (input: OperationInput): unknown =>
-  wiki.models.pages.updatePage(withRequester(_.omit(recordValue(input.input, 'input'), ['visibility', 'ownerId', 'isPrivate', 'privateNS']), input.requester))
-const convert = (input: OperationInput): unknown =>
-  wiki.models.pages.convertPage(withRequester(_.omit(recordValue(input.input, 'input'), ['visibility', 'ownerId', 'isPrivate', 'privateNS']), input.requester))
-const move = (input: OperationInput): unknown =>
-  wiki.models.pages.movePage(withRequester(_.omit(recordValue(input.input, 'input'), ['visibility', 'ownerId', 'isPrivate', 'privateNS']), input.requester))
+const update = async (input: OperationInput): Promise<unknown> => {
+  const payload = _.omit(recordValue(input.input, 'input'), ['visibility', 'ownerId', 'isPrivate', 'privateNS'])
+  await assertUnlocked(input, positiveInteger(payload.id, 'id'))
+  return wiki.models.pages.updatePage(withRequester(payload, input.requester))
+}
+const convert = async (input: OperationInput): Promise<unknown> => {
+  const payload = _.omit(recordValue(input.input, 'input'), ['visibility', 'ownerId', 'isPrivate', 'privateNS'])
+  await assertUnlocked(input, positiveInteger(payload.id, 'id'))
+  return wiki.models.pages.convertPage(withRequester(payload, input.requester))
+}
+const move = async (input: OperationInput): Promise<unknown> => {
+  const payload = _.omit(recordValue(input.input, 'input'), ['visibility', 'ownerId', 'isPrivate', 'privateNS'])
+  await assertUnlocked(input, positiveInteger(payload.id, 'id'))
+  return wiki.models.pages.movePage(withRequester(payload, input.requester))
+}
 const authorizeMutation = async (input: OperationInput): Promise<void> => {
   const requester = input.requester
   const kind = stringValue(input.kind, 'kind')
@@ -958,6 +1016,7 @@ const authorizeMutation = async (input: OperationInput): Promise<void> => {
     if (kind === 'restore') throw new wiki.Error.PageRestoreForbidden()
     throw new wiki.Error.PageUpdateForbidden()
   }
+  await assertUnlocked(input, page.id)
   if (kind === 'move') {
     const destinationPath = stringValue(operationInput.destinationPath, 'destinationPath')
     const destinationLocale = stringValue(operationInput.destinationLocale, 'destinationLocale')
@@ -973,7 +1032,7 @@ const authorizeMutation = async (input: OperationInput): Promise<void> => {
   }
 }
 
-const changeVisibility = (input: OperationInput): unknown => {
+const changeVisibility = async (input: OperationInput): Promise<unknown> => {
   const id = positiveInteger(input.id, 'id')
   if (input.visibility !== 'public' && input.visibility !== 'private') {
     throw new ApplicationError('visibility must be public or private', { code: 'INVALID_INPUT' })
@@ -989,10 +1048,11 @@ const changeVisibility = (input: OperationInput): unknown => {
     confirmPublication: input.confirmPublication === true,
     ...(expected === undefined ? {} : { expectedSourceRevision: expected })
   }
+  await assertUnlocked(input, id)
   return wiki.models.pages.changeVisibility(input.requester === undefined ? payload : { ...payload, user: input.requester })
 }
 
-const transferOwnership = (input: OperationInput): unknown => {
+const transferOwnership = async (input: OperationInput): Promise<unknown> => {
   if (!managesSystem(input.requester)) {
     throw new ApplicationError('This page does not exist.', { code: 'PAGE_NOT_FOUND', status: 404 })
   }
@@ -1002,6 +1062,7 @@ const transferOwnership = (input: OperationInput): unknown => {
     ownerId: positiveInteger(input.ownerId, 'ownerId'),
     ...(expected === undefined ? {} : { expectedSourceRevision: expected })
   }
+  await assertUnlocked(input, payload.id)
   return wiki.models.pages.transferOwnership(input.requester === undefined ? payload : { ...payload, user: input.requester })
 }
 
@@ -1014,6 +1075,7 @@ const restore = async (input: OperationInput): Promise<void> => {
   const page = await wiki.models.pages.query().select('path', 'localeCode', 'sourceRevision', 'visibility', 'ownerId').findById(pageId)
   if (!page || (page.visibility === 'private' && !canWritePage(requester, page))) throw new wiki.Error.PageNotFound()
   if (!canWritePage(requester, page)) throw new wiki.Error.PageRestoreForbidden()
+  await assertUnlocked(input, pageId)
   if (String(page.sourceRevision) !== expected) {
     throw new ApplicationError('The page changed after history was opened. Reload history before restoring.', { code: 'PAGE_RESTORE_CONFLICT', status: 409 })
   }
@@ -1051,6 +1113,7 @@ export default {
   getConflictLatest,
   getHistory,
   getPageTags,
+  getSource,
   getTree,
   getVersion,
   list,

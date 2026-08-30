@@ -185,8 +185,8 @@ type CommentMutation {
 }
 
 type CommentPost {
-  authorEmail: String!
-  authorIP: String!
+  authorEmail: String
+  authorIP: String
   authorId: Int!
   authorName: String!
   content: String!

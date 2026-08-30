@@ -142,12 +142,13 @@ describe('controllers/upload endpoints', () => {
       defParamCharset: 'utf8'
     })
     expect(uploadMocks.array).toHaveBeenCalledWith('mediaUpload')
-    expect(uploadMocks.arrayHandler).toHaveBeenCalledWith(req, res, next)
+    expect(uploadMocks.arrayHandler).toHaveBeenCalledWith(req, res, expect.any(Function))
+    expect(next).toHaveBeenCalledOnce()
   })
 
-  it('rejects users without upload permissions before processing files', async () => {
+  it('rejects users without upload permissions before invoking multer', async () => {
     global.WIKI.auth.checkAccess.mockReturnValueOnce(false)
-    const { uploadHandler } = await loadHandlers()
+    const { uploadMiddleware } = await loadHandlers()
     const req = makeReq({
       user: {
         id: 7,
@@ -155,16 +156,19 @@ describe('controllers/upload endpoints', () => {
       }
     })
     const res = makeRes()
+    const next = vi.fn()
 
-    await uploadHandler(req, res, vi.fn())
+    await uploadMiddleware(req, res, next)
 
     expect(res.status).toHaveBeenCalledWith(403)
     expect(res.json).toHaveBeenCalledWith({
       succeeded: false,
       message: 'You are not authorized to upload files.'
     })
-    expect(global.WIKI.models.assetFolders.getHierarchy).not.toHaveBeenCalled()
     expect(global.WIKI.auth.checkAccess).toHaveBeenCalledWith(req.user, ['write:assets', 'manage:system'])
+    expect(uploadMocks.arrayHandler).not.toHaveBeenCalled()
+    expect(next).not.toHaveBeenCalled()
+    expect(global.WIKI.models.assetFolders.getHierarchy).not.toHaveBeenCalled()
     expect(global.WIKI.models.assets.upload).not.toHaveBeenCalled()
   })
 
@@ -216,7 +220,7 @@ describe('controllers/upload endpoints', () => {
       message: 'Missing upload folder metadata.'
     })
     expect(global.WIKI.models.assetFolders.getHierarchy).not.toHaveBeenCalled()
-    expect(global.WIKI.auth.checkAccess).toHaveBeenCalledTimes(1)
+    expect(global.WIKI.auth.checkAccess).not.toHaveBeenCalled()
     expect(global.WIKI.models.assets.upload).not.toHaveBeenCalled()
   })
 
@@ -294,12 +298,12 @@ describe('controllers/upload endpoints', () => {
       succeeded: false,
       message: 'Failed to fetch folder hierarchy.'
     })
-    expect(global.WIKI.auth.checkAccess).toHaveBeenCalledTimes(1)
+    expect(global.WIKI.auth.checkAccess).not.toHaveBeenCalled()
     expect(global.WIKI.models.assets.upload).not.toHaveBeenCalled()
   })
 
   it('rejects uploads when path-level asset access fails', async () => {
-    global.WIKI.auth.checkAccess.mockReturnValueOnce(true).mockReturnValueOnce(false)
+    global.WIKI.auth.checkAccess.mockReturnValueOnce(false)
 
     const { uploadHandler } = await loadHandlers()
     const req = makeReq()

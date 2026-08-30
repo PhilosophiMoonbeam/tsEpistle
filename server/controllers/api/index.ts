@@ -56,10 +56,12 @@ router.use((req, res) => {
 const errorHandler: ErrorRequestHandler = (err: unknown, _req, res, _next) => {
   void _req
   void _next
-  const status = errorStatus(err) ?? 500
-  if (status >= 500) getTransportRuntime<ApiRuntime>().logger.error(err)
+  const classifiedStatus = errorStatus(err)
+  const status = classifiedStatus !== undefined && classifiedStatus >= 400 && classifiedStatus < 600 ? classifiedStatus : 500
+  const isPublicError = status < 500
+  if (!isPublicError) getTransportRuntime<ApiRuntime>().logger.error(err)
   const errorMessage = err instanceof Error ? err.message : String(err)
-  const message = status >= 500 ? 'Internal Server Error' : (errorMessage || 'Request Failed')
+  const message = isPublicError ? errorMessage || 'Request Failed' : 'Internal Server Error'
   res.status(status).json({ error: message })
 }
 

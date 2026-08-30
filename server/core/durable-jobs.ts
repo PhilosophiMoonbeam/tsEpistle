@@ -58,6 +58,7 @@ export type DurableJobHandler = (job: DurableJob, context: { knex: Knex; signal:
 const tableName = 'durableJobs'
 const defaultLeaseMs = 30_000
 const defaultRetryDelay = (attempt: number): number => Math.min(300_000, 1_000 * 2 ** Math.max(0, attempt - 1))
+const exhaustedLeaseError = 'Durable job lease expired after its final allowed attempt'
 const validJobType = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
 
 const asDate = (value: Date | string | number): Date => {
@@ -147,6 +148,19 @@ export class DurableJobStore {
     }
     const now = input.now ?? new Date()
     const leaseExpiresAt = new Date(now.getTime() + leaseMs)
+    await this.knex<DurableJobRow>(tableName)
+      .where('state', 'running')
+      .where('leaseExpiresAt', '<=', now)
+      .whereRaw('?? >= ??', ['attempts', 'maxAttempts'])
+      .update({
+        state: 'failed',
+        leaseOwner: null,
+        leaseToken: null,
+        leaseExpiresAt: null,
+        lastError: exhaustedLeaseError,
+        completedAt: now,
+        updatedAt: now
+      })
     const candidates = (await applyEligiblePredicate(this.knex<DurableJobRow>(tableName).select('id'), now)
       .orderBy('nextRunAt', 'asc')
       .orderBy('id', 'asc')

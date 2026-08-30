@@ -1,5 +1,22 @@
 import _ from 'lodash'
-import { asRecord, asRecordArray, requestGraph } from './_graph.ts'
+import { z } from 'zod'
+
+import { requestGraph } from './_graph.ts'
+
+const LocaleStringsResponseSchema = z.object({
+  data: z.object({
+    localization: z.object({
+      strings: z.array(
+        z.object({
+          key: z.string(),
+          value: z.string()
+        })
+      )
+    })
+  })
+})
+
+const CachedLocalesSchema = z.array(z.record(z.string(), z.unknown()))
 
 interface LocaleQuery extends PromiseLike<unknown> {
   where(column: string, value: unknown): LocaleQuery
@@ -10,7 +27,7 @@ interface LocaleQuery extends PromiseLike<unknown> {
 
 interface WikiContext {
   config: { graphEndpoint: string }
-  logger: { info(message: string): void, error(message: string): void }
+  logger: { info(message: string): void; error(message: string): void }
   cache: { get(key: string): Promise<unknown> }
   models: { locales: { query(): LocaleQuery } }
   lang: { refreshNamespaces(): Promise<void> }
@@ -18,13 +35,14 @@ interface WikiContext {
 
 const wiki = WIKI as unknown as WikiContext
 
-export default async function fetchGraphLocale (localeCode: string): Promise<void> {
+export default async function fetchGraphLocale(localeCode: string): Promise<void> {
   wiki.logger.info(`Fetching locale ${localeCode} from Graph endpoint...`)
 
   try {
-    const response = asRecord(await requestGraph(
-      wiki.config.graphEndpoint,
-      `query ($code: String!) {
+    const response = LocaleStringsResponseSchema.parse(
+      await requestGraph(
+        wiki.config.graphEndpoint,
+        `query ($code: String!) {
         localization {
           strings(code: $code) {
             key
@@ -32,28 +50,21 @@ export default async function fetchGraphLocale (localeCode: string): Promise<voi
           }
         }
       }`,
-      { code: localeCode }
-    ))
-    const data = asRecord(response.data)
-    const localization = asRecord(data.localization)
-    const strings = asRecordArray(localization.strings)
+        { code: localeCode }
+      )
+    )
     const localeStrings: Record<string, unknown> = {}
 
-    for (const row of strings) {
-      const key = typeof row.key === 'string' ? row.key : ''
-      if (!key || key.includes('::')) {
+    for (const row of response.data.localization.strings) {
+      if (!row.key || row.key.includes('::')) {
         continue
       }
-      const value = typeof row.value === 'string' && row.value.length > 0 ? row.value : key
-      _.set(localeStrings, key.replace(':', '.'), value)
+      const value = row.value.length > 0 ? row.value : row.key
+      _.set(localeStrings, row.key.replace(':', '.'), value)
     }
 
-    const cachedLocales = await wiki.cache.get('locales')
-    if (!Array.isArray(cachedLocales)) {
-      throw new Error('Failed to fetch cached locales list! Restart server to resolve this issue.')
-    }
-
-    const currentLocale = asRecordArray(cachedLocales).find(locale => locale.code === localeCode) ?? {}
+    const cachedLocales = CachedLocalesSchema.parse(await wiki.cache.get('locales'))
+    const currentLocale = cachedLocales.find(locale => locale.code === localeCode) ?? {}
     const existingLocale = await wiki.models.locales.query().where('code', localeCode).first()
     if (existingLocale) {
       await wiki.models.locales.query().patch({ strings: localeStrings }).where('code', localeCode)
@@ -73,5 +84,6 @@ export default async function fetchGraphLocale (localeCode: string): Promise<voi
   } catch (error) {
     wiki.logger.error(`Fetching locale ${localeCode} from Graph endpoint: [ FAILED ]`)
     wiki.logger.error(error instanceof Error ? error.message : String(error))
+    throw error
   }
 }

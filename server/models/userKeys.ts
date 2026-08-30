@@ -58,10 +58,9 @@ export default class UserKey extends Model {
     this.createdAt = DateTime.utc().toISO()
   }
 
-  static async generateToken({ userId, kind }: GenerateTokenOptions, _context?: unknown): Promise<string> {
-    void _context
+  static async generateToken({ userId, kind }: GenerateTokenOptions, transaction?: Knex.Transaction): Promise<string> {
     const token = nanoid()
-    await wiki.models.userKeys.query().insert({
+    await wiki.models.userKeys.query(transaction).insert({
       kind,
       token,
       validUntil: DateTime.utc().plus({ days: 1 }).toISO(),
@@ -70,17 +69,16 @@ export default class UserKey extends Model {
     return token
   }
 
-  static async validateToken({ kind, token, skipDelete }: ValidateTokenOptions, _context?: unknown): Promise<User> {
-    void _context
+  static async validateToken({ kind, token, skipDelete }: ValidateTokenOptions, transaction?: Knex.Transaction): Promise<User> {
     if (skipDelete === true) {
-      const result = await wiki.models.userKeys.query().findOne({ kind, token }).withGraphJoined('user')
+      const result = await wiki.models.userKeys.query(transaction).findOne({ kind, token }).withGraphJoined('user')
       if (!result || DateTime.utc() > DateTime.fromISO(result.validUntil)) {
         throw new wiki.Error.AuthValidationTokenInvalid()
       }
       return result.user
     }
 
-    return wiki.models.knex.transaction(async (trx: Knex.Transaction) => {
+    const validate = async (trx: Knex.Transaction): Promise<User> => {
       const result = await wiki.models.userKeys.query(trx).findOne({ kind, token }).forUpdate()
       if (!result || DateTime.utc() > DateTime.fromISO(result.validUntil)) {
         throw new wiki.Error.AuthValidationTokenInvalid()
@@ -94,7 +92,9 @@ export default class UserKey extends Model {
         throw new wiki.Error.AuthValidationTokenInvalid()
       }
       return user
-    })
+    }
+
+    return transaction ? validate(transaction) : wiki.models.knex.transaction(validate)
   }
 
   static async destroyToken({ token }: { token: string }): Promise<number> {

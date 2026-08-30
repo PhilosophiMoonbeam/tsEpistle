@@ -21,7 +21,13 @@ vi.mockModule('express', import.meta.url, () => {
 
 const { default: express } = await import('express')
 
-class BruteTooManyAttempts extends Error {}
+class BruteTooManyAttempts extends Error {
+  constructor () {
+    super('Too many attempts! Try again later.')
+  }
+}
+class CommentNotFound extends Error {}
+class CommentViewForbidden extends Error {}
 
 const rateLimitKnex = () => {
   const rows = new Map()
@@ -86,10 +92,26 @@ describe('controllers/api comments endpoints', () => {
 
     global.WIKI = {
       auth: {
-        checkAccess: vi.fn()
+        checkAccess: vi.fn((requester, permissions) =>
+          permissions.some(permission => requester?.permissions?.includes(permission))
+        )
       },
-      Error: { BruteTooManyAttempts },
+      Error: { BruteTooManyAttempts, CommentNotFound, CommentViewForbidden },
       data: {
+        commentProvider: {
+          getCommentById: vi.fn().mockResolvedValue({
+            id: 31,
+            pageId: 17,
+            content: 'Useful guide',
+            render: '<p>Useful guide</p>',
+            authorId: 12,
+            name: 'Commenter',
+            email: 'commenter@example.test',
+            ip: '192.0.2.31',
+            createdAt: '2026-08-30T00:00:00.000Z',
+            updatedAt: '2026-08-30T00:00:00.000Z'
+          })
+        },
         commentProviders: [
           {
             key: 'default',
@@ -126,6 +148,24 @@ describe('controllers/api comments endpoints', () => {
       },
       models: {
         knex: rateLimitKnex(),
+        pages: {
+          query: vi.fn(() => {
+            const query = {
+              select: vi.fn().mockReturnThis(),
+              findById: vi.fn().mockReturnThis(),
+              withGraphJoined: vi.fn().mockReturnThis(),
+              modifyGraph: vi.fn().mockResolvedValue({
+                id: 17,
+                localeCode: 'en',
+                path: 'guide',
+                tags: [],
+                visibility: 'public',
+                ownerId: null
+              })
+            }
+            return query
+          })
+        },
         commentProviders: {
           query: vi.fn(),
           initProvider: vi.fn().mockResolvedValue(true),
@@ -152,11 +192,28 @@ describe('controllers/api comments endpoints', () => {
           ])
         },
         comments: {
+          query: vi.fn(() => ({
+            where: vi.fn(() => ({
+              orderBy: vi.fn().mockResolvedValue([{
+                id: 31,
+                pageId: 17,
+                content: 'Useful guide',
+                render: '<p>Useful guide</p>',
+                authorId: 12,
+                name: 'Commenter',
+                email: 'commenter@example.test',
+                ip: '192.0.2.31',
+                createdAt: '2026-08-30T00:00:00.000Z',
+                updatedAt: '2026-08-30T00:00:00.000Z'
+              }])
+            }))
+          })),
           postNewComment: vi.fn().mockResolvedValue(73),
           updateComment: vi.fn().mockResolvedValue('<p>Updated</p>'),
           deleteComment: vi.fn().mockResolvedValue(true)
         }
-      }
+      },
+      logger: { warn: vi.fn() }
     }
 
     global.WIKI.models.commentProviders.query.mockImplementation(() => {
@@ -374,33 +431,37 @@ describe('controllers/api comments endpoints', () => {
     expect(global.WIKI.models.commentProviders.initProvider).not.toHaveBeenCalled()
   })
 
-  it('returns JSON 500 for unexpected provider save failures', async () => {
+  it('forwards unexpected provider save failures to the shared error policy', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
+    const err = new Error('comment save failed')
     const query = {
       patch: vi.fn().mockReturnThis(),
-      where: vi.fn().mockRejectedValue(new Error('comment save failed'))
+      where: vi.fn().mockRejectedValue(err)
     }
     global.WIKI.models.commentProviders.query.mockReturnValue(query)
     const { saveProviders } = await loadHandlers()
     const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
+    const next = vi.fn()
 
-    await saveProviders(createSavePayload(), res)
+    await saveProviders(createSavePayload(), res, next)
 
-    expect(res.status).toHaveBeenCalledWith(500)
-    expect(res.json).toHaveBeenCalledWith({ error: 'comment save failed' })
+    expect(next).toHaveBeenCalledWith(err)
+    expect(res.json).not.toHaveBeenCalled()
     expect(global.WIKI.models.commentProviders.initProvider).not.toHaveBeenCalled()
   })
 
-  it('returns JSON 500 for comment provider initialization failures', async () => {
+  it('forwards unexpected comment provider initialization failures to the shared error policy', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
-    global.WIKI.models.commentProviders.initProvider.mockRejectedValueOnce(new Error('init failed'))
+    const err = new Error('init failed')
+    global.WIKI.models.commentProviders.initProvider.mockRejectedValueOnce(err)
     const { saveProviders } = await loadHandlers()
     const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
+    const next = vi.fn()
 
-    await saveProviders(createSavePayload(), res)
+    await saveProviders(createSavePayload(), res, next)
 
-    expect(res.status).toHaveBeenCalledWith(500)
-    expect(res.json).toHaveBeenCalledWith({ error: 'init failed' })
+    expect(next).toHaveBeenCalledWith(err)
+    expect(res.json).not.toHaveBeenCalled()
   })
 
   it('forwards unexpected failures to next', async () => {
@@ -412,10 +473,72 @@ describe('controllers/api comments endpoints', () => {
     const next = vi.fn()
 
     await handler({ user: {} }, res, next)
-
     expect(next).toHaveBeenCalledWith(err)
     expect(res.json).not.toHaveBeenCalled()
   })
+
+
+  it('omits email and IP audit fields from REST and GraphQL reads for ordinary readers', async () => {
+    const handlers = await loadHandlers()
+    const { default: resolver } = await vi.importFresh('../../graph/resolvers/comment.ts', import.meta.url)
+    const requester = { id: 12, permissions: ['read:pages', 'read:comments'] }
+    const listRes = { status: vi.fn().mockReturnThis(), json: vi.fn() }
+    const getRes = { status: vi.fn().mockReturnThis(), json: vi.fn() }
+    const next = vi.fn()
+
+    await handlers.list({ user: requester, query: { pageId: '17' } }, listRes, next)
+    await handlers.get({ user: requester, params: { id: '31' } }, getRes, next)
+    const graphList = await resolver.CommentQuery.list(null, { pageId: 17 }, { req: { user: requester } })
+    const graphSingle = await resolver.CommentQuery.single(null, { id: 31 }, { req: { user: requester } })
+
+    const readDtos = [
+      listRes.json.mock.calls[0][0][0],
+      getRes.json.mock.calls[0][0],
+      graphList[0],
+      graphSingle
+    ]
+    for (const dto of readDtos) {
+      expect(dto).toMatchObject({ id: 31, authorName: 'Commenter' })
+      expect(dto).not.toHaveProperty('email')
+      expect(dto).not.toHaveProperty('ip')
+      expect(dto).not.toHaveProperty('authorEmail')
+      expect(dto).not.toHaveProperty('authorIP')
+    }
+    expect(next).not.toHaveBeenCalled()
+  })
+
+  it('returns email and IP audit fields through REST and GraphQL only to system managers', async () => {
+    const handlers = await loadHandlers()
+    const { default: resolver } = await vi.importFresh('../../graph/resolvers/comment.ts', import.meta.url)
+    const requester = { id: 1, permissions: ['read:pages', 'read:comments', 'manage:system'] }
+    const listRes = { status: vi.fn().mockReturnThis(), json: vi.fn() }
+    const getRes = { status: vi.fn().mockReturnThis(), json: vi.fn() }
+    const next = vi.fn()
+
+    await handlers.list({ user: requester, query: { pageId: '17' } }, listRes, next)
+    await handlers.get({ user: requester, params: { id: '31' } }, getRes, next)
+    const graphList = await resolver.CommentQuery.list(null, { pageId: 17 }, { req: { user: requester } })
+    const graphSingle = await resolver.CommentQuery.single(null, { id: 31 }, { req: { user: requester } })
+
+    const readDtos = [
+      listRes.json.mock.calls[0][0][0],
+      getRes.json.mock.calls[0][0],
+      graphList[0],
+      graphSingle
+    ]
+    for (const dto of readDtos) {
+      expect(dto).toMatchObject({
+        id: 31,
+        authorName: 'Commenter',
+        authorEmail: 'commenter@example.test',
+        authorIP: '192.0.2.31'
+      })
+      expect(dto).not.toHaveProperty('email')
+      expect(dto).not.toHaveProperty('ip')
+    }
+    expect(next).not.toHaveBeenCalled()
+  })
+
 
   it('creates, updates, and deletes comments through shared operations', async () => {
     const handlers = await loadHandlers()
@@ -461,6 +584,24 @@ describe('controllers/api comments endpoints', () => {
     expect(deleteRes.json).toHaveBeenCalledWith({ message: 'Comment deleted successfully' })
   })
 
+  it('delegates unexpected comment mutation failures without serializing internal messages', async () => {
+    const err = new Error('comment database credentials rejected')
+    global.WIKI.models.comments.postNewComment.mockRejectedValueOnce(err)
+    const { create } = await loadHandlers()
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
+    const next = vi.fn()
+
+    await create({
+      user: { id: 12 },
+      ip: '127.0.0.1',
+      body: { pageId: 9, content: 'New comment' }
+    }, res, next)
+
+    expect(next).toHaveBeenCalledWith(err)
+    expect(res.status).not.toHaveBeenCalled()
+    expect(res.json).not.toHaveBeenCalled()
+  })
+
   it('throttles repeated creates through the shared durable operation contract', async () => {
     const { create } = await loadHandlers()
     const req = {
@@ -482,6 +623,7 @@ describe('controllers/api comments endpoints', () => {
       ['comment-create:12:127.0.0.1', expect.any(Number), expect.any(Number), expect.any(Number)]
     )
     expect(repeatedRes.status).toHaveBeenCalledWith(429)
+    expect(repeatedRes.json).toHaveBeenCalledWith({ error: 'Too many attempts! Try again later.' })
   })
 
   it('rejects malformed comment ids before calling shared operations', async () => {

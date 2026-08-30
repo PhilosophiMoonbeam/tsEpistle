@@ -138,4 +138,34 @@ describe('bootstrap lifecycle', () => {
     expect(kernel.shutdown).not.toHaveBeenCalled()
     expect(process.exitCode).toBe(1)
   })
+  it('aborts a pending bootstrap before awaiting teardown', async () => {
+    const initialSigtermListeners = process.listenerCount('SIGTERM')
+    let setupSignal: AbortSignal | undefined
+    const kernel = {
+      init: vi.fn(async () => {
+        const wiki: unknown = globalThis.WIKI
+        if (typeof wiki !== 'object' || wiki === null || !('shutdownSignal' in wiki) || !(wiki.shutdownSignal instanceof AbortSignal)) {
+          throw new Error('Bootstrap did not expose a shutdown signal')
+        }
+        setupSignal = wiki.shutdownSignal
+        await new Promise<void>((_resolve, reject) => {
+          setupSignal?.addEventListener('abort', () => reject(setupSignal?.reason), { once: true })
+        })
+      }),
+      shutdown: vi.fn().mockResolvedValue(undefined)
+    }
+    const { main } = await setupModule(kernel)
+
+    const bootstrap = main()
+    await vi.waitFor(() => expect(kernel.init).toHaveBeenCalledTimes(1))
+    const sigterm = process.listeners('SIGTERM').at(-1)
+    if (!sigterm) throw new Error('SIGTERM lifecycle handler was not registered')
+    sigterm()
+
+    await bootstrap
+    expect(setupSignal?.aborted).toBe(true)
+    expect(kernel.shutdown).toHaveBeenCalledTimes(1)
+    expect(process.listenerCount('SIGTERM')).toBe(initialSigtermListeners)
+    expect(process.exitCode).toBe(0)
+  })
 })

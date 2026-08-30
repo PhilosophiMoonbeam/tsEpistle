@@ -4,7 +4,10 @@ import errors from './errors.ts'
 
 const { ApplicationError } = errors
 
-interface GroupRecord extends Record<string, unknown> { id: number, name: string }
+interface GroupRecord extends Record<string, unknown> {
+  id: number
+  name: string
+}
 interface UserRecord extends Record<string, unknown> {
   id: number
   email: string
@@ -38,14 +41,23 @@ export interface ListUser {
   createdAt: unknown
   lastLoginAt: unknown
 }
-interface GroupQuery extends PromiseLike<GroupRecord[]> { select(...columns: string[]): GroupQuery }
+interface GroupQuery extends PromiseLike<GroupRecord[]> {
+  select(...columns: string[]): GroupQuery
+}
 interface FilterBuilder {
   where(column: string, operatorOrValue: unknown, value?: unknown): FilterBuilder
   orWhere(column: string, operatorOrValue: unknown, value?: unknown): FilterBuilder
 }
-interface CountRow { total: string | number }
-interface CountQuery { where(column: string, value: unknown): CountQuery, first(): Promise<CountRow> }
-interface PatchQuery { findById(id: number): Promise<number> }
+interface CountRow {
+  total: string | number
+}
+interface CountQuery {
+  where(column: string, value: unknown): CountQuery
+  first(): Promise<CountRow>
+}
+interface PatchQuery {
+  findById(id: number): Promise<number>
+}
 interface UserQuery extends PromiseLike<UserRecord[]> {
   where(callback: (builder: FilterBuilder) => void): UserQuery
   where(column: string, operatorOrValue: unknown, value?: unknown): UserQuery
@@ -73,23 +85,26 @@ interface UpdateUserInput extends Record<string, unknown> {
   id: number
   groups?: number[]
 }
-interface UserRequest { requester: Express.User | undefined, input: unknown }
+interface UserRequest {
+  requester: Express.User | undefined
+  input: unknown
+}
 type WikiErrorName = 'AuthRequired' | 'AuthAccountBanned' | 'AuthAccountNotVerified' | 'AuthProviderInvalid' | 'AuthPasswordInvalid' | 'InputInvalid'
 interface WikiUsers {
   Error: Record<WikiErrorName, new () => Error>
   auth: {
     strategies: Record<string, unknown>
     checkAssignUserToGroupAccess(requester: Express.User | undefined, groups: number[] | undefined): Promise<boolean>
-    revokeUserTokens(input: { id: number, kind: 'u' }): void
+    revokeUserTokens(input: { id: number; kind: 'u' }): void
   }
   data: { authentication: unknown }
-  events: { outbound: { emit(event: 'addAuthRevoke', input: { id: number, kind: 'u' }): void } }
+  events: { outbound: { emit(event: 'addAuthRevoke', input: { id: number; kind: 'u' }): void } }
   models: {
     users: {
       query(): UserQuery
       createNewUser(input: CreateUserInput): Promise<unknown>
       sendWelcomeEmail(input: { id: number }): Promise<void>
-      updateUser(input: UpdateUserInput): Promise<unknown>
+      updateUser(input: UpdateUserInput): Promise<boolean>
       deleteUser(id: number, replaceId: number): Promise<unknown>
       refreshToken(user: number | UserRecord): Promise<{ token: string }>
     }
@@ -105,8 +120,15 @@ interface ListOptions {
   orderBy: string
   orderByDirection: 'asc' | 'desc'
 }
-interface AuthDefinition extends Record<string, unknown> { key: string, useForm?: boolean }
-interface AuthStrategy extends Record<string, unknown> { strategyKey: string, displayName: string, strategy?: AuthDefinition }
+interface AuthDefinition extends Record<string, unknown> {
+  key: string
+  useForm?: boolean
+}
+interface AuthStrategy extends Record<string, unknown> {
+  strategyKey: string
+  displayName: string
+  strategy?: AuthDefinition
+}
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value)
 const isAuthStrategy = (value: unknown): value is AuthStrategy =>
@@ -121,7 +143,8 @@ const recordValue = (value: unknown): Record<string, unknown> => {
   return value
 }
 const positiveInteger = (value: unknown, label: string): number => {
-  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 1) throw new ApplicationError(`${label} must be a positive integer`, { code: 'INVALID_INPUT' })
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 1)
+    throw new ApplicationError(`${label} must be a positive integer`, { code: 'INVALID_INPUT' })
   return value
 }
 const stringValue = (value: unknown, label: string): string => {
@@ -129,7 +152,8 @@ const stringValue = (value: unknown, label: string): string => {
   return value
 }
 const groupsValue = (value: unknown): number[] => {
-  if (!Array.isArray(value) || !value.every(id => typeof id === 'number' && Number.isSafeInteger(id) && id > 0)) throw new ApplicationError('groups must contain positive integers', { code: 'INVALID_INPUT' })
+  if (!Array.isArray(value) || !value.every(id => typeof id === 'number' && Number.isSafeInteger(id) && id > 0))
+    throw new ApplicationError('groups must contain positive integers', { code: 'INVALID_INPUT' })
   return value
 }
 const optionalString = (input: Record<string, unknown>, key: string): string | undefined => {
@@ -140,9 +164,12 @@ const strategyFor = (key: string): AuthStrategy | undefined => {
   const value = wiki.auth.strategies[key]
   return isAuthStrategy(value) ? value : undefined
 }
-const definitionFor = (key: string): AuthDefinition | undefined => Array.isArray(wiki.data.authentication)
-  ? wiki.data.authentication.find((value: unknown): value is AuthDefinition => isRecord(value) && value.key === key && (value.useForm === undefined || typeof value.useForm === 'boolean'))
-  : undefined
+const definitionFor = (key: string): AuthDefinition | undefined =>
+  Array.isArray(wiki.data.authentication)
+    ? wiki.data.authentication.find(
+        (value: unknown): value is AuthDefinition => isRecord(value) && value.key === key && (value.useForm === undefined || typeof value.useForm === 'boolean')
+      )
+    : undefined
 
 const listOrderFields: readonly string[] = ['id', 'name', 'email', 'providerKey', 'createdAt', 'lastLoginAt']
 const normalizeListOptions = (value: unknown): ListOptions => {
@@ -161,16 +188,21 @@ const normalizeListOptions = (value: unknown): ListOptions => {
   }
 }
 const applyListFilters = (query: UserQuery, options: ListOptions): UserQuery => {
-  if (options.filter) query.where(builder => { builder.where('email', 'like', `%${options.filter}%`).orWhere('name', 'like', `%${options.filter}%`) })
+  if (options.filter)
+    query.where(builder => {
+      builder.where('email', 'like', `%${options.filter}%`).orWhere('name', 'like', `%${options.filter}%`)
+    })
   if (options.providerKey !== 'all') query.andWhere('providerKey', options.providerKey)
   return query
 }
-const list = async (args: unknown): Promise<{ users: ListUser[], total: number }> => {
+const list = async (args: unknown): Promise<{ users: ListUser[]; total: number }> => {
   const options = normalizeListOptions(args)
   const totalResult = await applyListFilters(wiki.models.users.query(), options).count('* as total').first()
   const users = await applyListFilters(wiki.models.users.query(), options)
     .select('id', 'email', 'name', 'providerKey', 'isSystem', 'isActive', 'createdAt', 'lastLoginAt')
-    .orderBy(options.orderBy, options.orderByDirection).offset(options.offset).limit(options.pageSize)
+    .orderBy(options.orderBy, options.orderByDirection)
+    .offset(options.offset)
+    .limit(options.pageSize)
   return {
     users: users.map(user => ({
       ...user,
@@ -182,9 +214,15 @@ const list = async (args: unknown): Promise<{ users: ListUser[], total: number }
 }
 const search = (value: unknown): UserQuery => {
   const query = stringValue(value, 'query')
-  return wiki.models.users.query().where('email', 'like', `%${query}%`).orWhere('name', 'like', `%${query}%`).limit(10).select('id', 'name', 'email', 'providerKey')
+  return wiki.models.users
+    .query()
+    .where('email', 'like', `%${query}%`)
+    .orWhere('name', 'like', `%${query}%`)
+    .limit(10)
+    .select('id', 'name', 'email', 'providerKey')
 }
-const lastLogins = (): UserQuery => wiki.models.users.query().select('id', 'name', 'lastLoginAt').whereNotNull('lastLoginAt').orderBy('lastLoginAt', 'desc').limit(10)
+const lastLogins = (): UserQuery =>
+  wiki.models.users.query().select('id', 'name', 'lastLoginAt').whereNotNull('lastLoginAt').orderBy('lastLoginAt', 'desc').limit(10)
 const get = async (value: unknown): Promise<UserRecord> => {
   const user = await wiki.models.users.query().findById(positiveInteger(value, 'id'))
   if (!user) throw new ApplicationError('User not found', { code: 'USER_NOT_FOUND', status: 404 })
@@ -205,25 +243,41 @@ const getAdminDetail = async (value: unknown) => {
   const definition = provider ? definitionFor(provider.strategyKey) : undefined
   const groups = await user.$relatedQuery('groups').select('groups.id', 'groups.name')
   return {
-    id: user.id, name: user.name, email: user.email, providerKey: user.providerKey,
-    providerName: provider?.displayName ?? 'Unknown', providerId: user.providerId ?? null,
-    providerIs2FACapable: definition?.useForm ?? false, location: user.location || '', jobTitle: user.jobTitle || '',
-    timezone: user.timezone || '', isSystem: Boolean(user.isSystem), isActive: Boolean(user.isActive),
-    isVerified: Boolean(user.isVerified), createdAt: user.createdAt, updatedAt: user.updatedAt,
-    lastLoginAt: user.lastLoginAt || null, tfaIsActive: Boolean(user.tfaIsActive), groups: groups.map(group => _.pick(group, ['id', 'name']))
+    id: user.id,
+    name: user.name,
+    email: user.email,
+    providerKey: user.providerKey,
+    providerName: provider?.displayName ?? 'Unknown',
+    providerId: user.providerId ?? null,
+    providerIs2FACapable: definition?.useForm ?? false,
+    location: user.location || '',
+    jobTitle: user.jobTitle || '',
+    timezone: user.timezone || '',
+    isSystem: Boolean(user.isSystem),
+    isActive: Boolean(user.isActive),
+    isVerified: Boolean(user.isVerified),
+    createdAt: user.createdAt,
+    updatedAt: user.updatedAt,
+    lastLoginAt: user.lastLoginAt || null,
+    tfaIsActive: Boolean(user.tfaIsActive),
+    groups: groups.map(group => _.pick(group, ['id', 'name']))
   }
 }
 const createInput = (value: unknown): CreateUserInput => {
   const input = recordValue(value)
   const result: CreateUserInput = {
-    providerKey: stringValue(input.providerKey, 'providerKey'), email: stringValue(input.email, 'email'),
-    name: stringValue(input.name, 'name'), groups: groupsValue(input.groups)
+    providerKey: stringValue(input.providerKey, 'providerKey'),
+    email: stringValue(input.email, 'email'),
+    name: stringValue(input.name, 'name'),
+    groups: groupsValue(input.groups)
   }
   const passwordRaw = optionalString(input, 'passwordRaw')
   if (passwordRaw !== undefined) result.passwordRaw = passwordRaw
-  if (input.mustChangePassword !== undefined && typeof input.mustChangePassword !== 'boolean') throw new ApplicationError('mustChangePassword must be a boolean', { code: 'INVALID_INPUT' })
+  if (input.mustChangePassword !== undefined && typeof input.mustChangePassword !== 'boolean')
+    throw new ApplicationError('mustChangePassword must be a boolean', { code: 'INVALID_INPUT' })
   if (typeof input.mustChangePassword === 'boolean') result.mustChangePassword = input.mustChangePassword
-  if (input.sendWelcomeEmail !== undefined && typeof input.sendWelcomeEmail !== 'boolean') throw new ApplicationError('sendWelcomeEmail must be a boolean', { code: 'INVALID_INPUT' })
+  if (input.sendWelcomeEmail !== undefined && typeof input.sendWelcomeEmail !== 'boolean')
+    throw new ApplicationError('sendWelcomeEmail must be a boolean', { code: 'INVALID_INPUT' })
   if (typeof input.sendWelcomeEmail === 'boolean') result.sendWelcomeEmail = input.sendWelcomeEmail
   return result
 }
@@ -240,7 +294,11 @@ const updateInput = (value: unknown): UpdateUserInput => {
 }
 const create = async ({ requester, input }: UserRequest): Promise<{ welcomeEmailError?: string }> => {
   const normalized = createInput(input)
-  if (!(await wiki.auth.checkAssignUserToGroupAccess(requester, normalized.groups))) throw new ApplicationError('You are not authorized to create a user with an assignment to an administrative group.', { code: 'USER_CREATE_GROUP_FORBIDDEN', status: 403 })
+  if (!(await wiki.auth.checkAssignUserToGroupAccess(requester, normalized.groups)))
+    throw new ApplicationError('You are not authorized to create a user with an assignment to an administrative group.', {
+      code: 'USER_CREATE_GROUP_FORBIDDEN',
+      status: 403
+    })
   const result = await wiki.models.users.createNewUser(normalized)
   if (isRecord(result) && typeof result.welcomeEmailError === 'string') {
     return { welcomeEmailError: result.welcomeEmailError }
@@ -249,8 +307,12 @@ const create = async ({ requester, input }: UserRequest): Promise<{ welcomeEmail
 }
 const update = async ({ requester, input }: UserRequest): Promise<void> => {
   const normalized = updateInput(input)
-  if (!(await wiki.auth.checkAssignUserToGroupAccess(requester, normalized.groups))) throw new ApplicationError('You are not authorized to modify / assign a user from / to an administrative group.', { code: 'USER_UPDATE_GROUP_FORBIDDEN', status: 403 })
-  await wiki.models.users.updateUser(normalized)
+  if (!(await wiki.auth.checkAssignUserToGroupAccess(requester, normalized.groups)))
+    throw new ApplicationError('You are not authorized to modify / assign a user from / to an administrative group.', {
+      code: 'USER_UPDATE_GROUP_FORBIDDEN',
+      status: 403
+    })
+  if (await wiki.models.users.updateUser(normalized)) revoke(normalized.id)
 }
 const revoke = (id: number): void => {
   wiki.auth.revokeUserTokens({ id, kind: 'u' })
@@ -261,8 +323,11 @@ const remove = async (value: unknown): Promise<void> => {
   const id = positiveInteger(input.id, 'id')
   const replaceId = positiveInteger(input.replaceId, 'replaceId')
   if (id <= 2) throw new ApplicationError('Cannot delete a protected system account.', { code: 'USER_DELETE_PROTECTED', status: 400 })
-  try { await wiki.models.users.deleteUser(id, replaceId) } catch (err: unknown) {
-    if (err instanceof Error && _.includes(_.toLower(err.message), 'foreign')) throw new ApplicationError('Cannot delete user because of content relational constraints.', { code: 'USER_DELETE_FOREIGN_CONSTRAINT', status: 400 })
+  try {
+    await wiki.models.users.deleteUser(id, replaceId)
+  } catch (err: unknown) {
+    if (err instanceof Error && _.includes(_.toLower(err.message), 'foreign'))
+      throw new ApplicationError('Cannot delete user because of content relational constraints.', { code: 'USER_DELETE_FOREIGN_CONSTRAINT', status: 400 })
     throw err
   }
   revoke(id)
@@ -311,7 +376,15 @@ const updateProfile = async ({ requester, input: value }: UserRequest): Promise<
   const appearance = stringValue(input.appearance, 'appearance')
   if (!['', 'DD/MM/YYYY', 'DD.MM.YYYY', 'MM/DD/YYYY', 'YYYY-MM-DD', 'YYYY/MM/DD'].includes(dateFormat)) throw new wiki.Error.InputInvalid()
   if (!['', 'light', 'dark', 'system'].includes(appearance)) throw new wiki.Error.InputInvalid()
-  await wiki.models.users.updateUser({ id: user.id, name: _.trim(name), jobTitle: _.trim(jobTitle), location: _.trim(location), timezone, dateFormat, appearance })
+  await wiki.models.users.updateUser({
+    id: user.id,
+    name: _.trim(name),
+    jobTitle: _.trim(jobTitle),
+    location: _.trim(location),
+    timezone,
+    dateFormat,
+    appearance
+  })
   return (await wiki.models.users.refreshToken(user.id)).token
 }
 const changePassword = async (value: unknown): Promise<string> => {
@@ -321,15 +394,36 @@ const changePassword = async (value: unknown): Promise<string> => {
   if (user.providerKey !== 'local') throw new wiki.Error.AuthProviderInvalid()
   const current = stringValue(input.current, 'current')
   const newPassword = stringValue(input.newPassword, 'newPassword')
-  try { await user.verifyPassword(current) } catch { throw new wiki.Error.AuthPasswordInvalid() }
-  await wiki.models.users.updateUser({ id: user.id, newPassword })
+  try {
+    await user.verifyPassword(current)
+  } catch {
+    throw new wiki.Error.AuthPasswordInvalid()
+  }
+  if (await wiki.models.users.updateUser({ id: user.id, newPassword })) revoke(user.id)
   return (await wiki.models.users.refreshToken(user)).token
 }
 const listUserGroups = (user: UserRecord): GroupQuery => user.$relatedQuery('groups')
 const listProfileGroups = async (user: UserRecord): Promise<string[]> => (await user.$relatedQuery('groups')).map(group => group.name)
-const countPages = async (user: UserRecord): Promise<number> => _.toSafeInteger((await wiki.models.pages.query().count('* as total').where('creatorId', user.id).first()).total)
+const countPages = async (user: UserRecord): Promise<number> =>
+  _.toSafeInteger((await wiki.models.pages.query().count('* as total').where('creatorId', user.id).first()).total)
 
 export default {
-  changePassword, countPages, create, get, getAdminDetail, getProfile, lastLogins, list, listProfileGroups,
-  listUserGroups, remove, search, sendWelcomeEmail, setActive, setTfa, update, updateProfile, verify
+  changePassword,
+  countPages,
+  create,
+  get,
+  getAdminDetail,
+  getProfile,
+  lastLogins,
+  list,
+  listProfileGroups,
+  listUserGroups,
+  remove,
+  search,
+  sendWelcomeEmail,
+  setActive,
+  setTfa,
+  update,
+  updateProfile,
+  verify
 }

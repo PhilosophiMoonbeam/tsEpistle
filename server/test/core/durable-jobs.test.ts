@@ -264,13 +264,7 @@ describe('portable durable jobs', () => {
       release.resolve()
       await batch
 
-      expect(effects).toEqual([
-        'cache:first-page',
-        'emit:first-page',
-        'fetch:1',
-        'deleted:1',
-        'render:1'
-      ])
+      expect(effects).toEqual(['cache:first-page', 'emit:first-page', 'fetch:1', 'deleted:1', 'render:1'])
       expect(await store.get(job.id)).toMatchObject({
         state: 'running',
         leaseOwner: 'instance-b',
@@ -309,6 +303,36 @@ describe('portable durable jobs', () => {
       id: first[0].id,
       leaseOwner: 'instance-b',
       attempts: 2
+    })
+  })
+
+  it('terminally fails an expired lease after the final allowed attempt', async () => {
+    const job = await store.enqueue({
+      type: 'cleanup-durable-jobs',
+      version: 1,
+      payload: {},
+      maxAttempts: 1,
+      nextRunAt: new Date('2026-08-14T11:00:00.000Z')
+    })
+    const claimed = await store.claim({
+      workerId: 'instance-a',
+      leaseMs: 1_000,
+      now: new Date('2026-08-14T12:00:00.000Z')
+    })
+    const recoveredAt = new Date('2026-08-14T12:00:02.000Z')
+
+    expect(claimed).toHaveLength(1)
+    expect(await store.claim({ workerId: 'instance-b', leaseMs: 1_000, now: recoveredAt })).toEqual([])
+    expect(await store.complete(claimed[0], new Date('2026-08-14T12:00:03.000Z'))).toBe(false)
+    expect(await store.get(job.id)).toMatchObject({
+      state: 'failed',
+      attempts: 1,
+      leaseOwner: null,
+      leaseToken: null,
+      leaseExpiresAt: null,
+      lastError: 'Durable job lease expired after its final allowed attempt',
+      completedAt: recoveredAt,
+      updatedAt: recoveredAt
     })
   })
 

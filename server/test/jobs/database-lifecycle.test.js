@@ -60,8 +60,14 @@ describe('worker job database lifecycle', () => {
   it('releases rebuild-tree connections after a query failure', async () => {
     const failure = new Error('page query failed')
     const orderBy = vi.fn().mockRejectedValue(failure)
+    const raw = vi.fn().mockResolvedValue(undefined)
+    let transactionContext
+    const transaction = vi.fn(async callback => {
+      transactionContext = { raw, table: vi.fn() }
+      return callback(transactionContext)
+    })
     const models = {
-      knex: { destroy: vi.fn().mockResolvedValue(undefined), table: vi.fn() },
+      knex: { destroy: vi.fn().mockResolvedValue(undefined), transaction },
       pages: {
         query: vi.fn().mockReturnValue({
           select: vi.fn().mockReturnValue({ orderBy })
@@ -73,5 +79,7 @@ describe('worker job database lifecycle', () => {
     await expect(Promise.resolve(rebuildTree())).rejects.toThrow('page query failed')
 
     expect(models.knex.destroy).toHaveBeenCalledOnce()
+    expect(raw).toHaveBeenCalledWith('SELECT pg_advisory_xact_lock(?)', [0x574b5452])
+    expect(models.pages.query).toHaveBeenCalledWith(transactionContext)
   })
 })

@@ -80,8 +80,8 @@ type CommentPost {
   render: String!
   authorId: Int!
   authorName: String!
-  authorEmail: String! @auth(requires: ["manage:system"])
-  authorIP: String! @auth(requires: ["manage:system"])
+  authorEmail: String
+  authorIP: String
   createdAt: Date!
   updatedAt: Date!
 }

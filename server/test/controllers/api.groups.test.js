@@ -143,6 +143,31 @@ describe('controllers/api groups endpoints', () => {
   expect(typeof handlers.updateGroup).toBe('function')
   expect(typeof handlers.detail).toBe('function') })
 
+  it('passes requester identity through GraphQL unassign and delete mutations', async () => {
+    const { default: resolver } = await vi.importFresh('../../graph/resolvers/group.ts', import.meta.url)
+    const requester = { id: 7, permissions: ['manage:groups'] }
+    const context = { req: { user: requester } }
+
+    await resolver.GroupMutation.unassignUser(null, { groupId: 3, userId: 10 }, context)
+    await resolver.GroupMutation.delete(null, { id: 3 }, context)
+
+    expect(global.WIKI.auth.checkExclusiveAccess).toHaveBeenNthCalledWith(
+      1,
+      requester,
+      ['manage:users', 'write:groups'],
+      ['manage:groups', 'manage:system']
+    )
+    expect(global.WIKI.auth.checkExclusiveAccess).toHaveBeenNthCalledWith(
+      3,
+      requester,
+      ['write:groups'],
+      ['manage:groups', 'manage:system']
+    )
+    expect(global.WIKI.models.groups.query.mock.results[2].value.deleteById).toHaveBeenCalledWith(3)
+    expect(global.WIKI.auth.revokeUserTokens).toHaveBeenCalledWith({ id: 10, kind: 'u' })
+    expect(global.WIKI.auth.revokeUserTokens).toHaveBeenCalledWith({ id: 3, kind: 'g' })
+  })
+
   it('creates groups with default permissions for group admins', async () => {
     const { create } = await loadHandler()
     const req = { user: { permissions: ['write:groups'] }, body: { name: ' Editors ' } }
@@ -487,6 +512,19 @@ describe('controllers/api groups endpoints', () => {
     await unassignUser(req, res, vi.fn())
 
     expect(global.WIKI.auth.checkAccess).toHaveBeenCalledWith({ permissions: ['manage:users'] }, ['manage:users', 'write:groups', 'manage:groups', 'manage:system'])
+
+    expect(global.WIKI.auth.checkExclusiveAccess).toHaveBeenNthCalledWith(
+      1,
+      { permissions: ['manage:users'] },
+      ['manage:users', 'write:groups'],
+      ['manage:groups', 'manage:system']
+    )
+    expect(global.WIKI.auth.checkExclusiveAccess).toHaveBeenNthCalledWith(
+      2,
+      { permissions: ['manage:users'] },
+      ['manage:groups'],
+      ['manage:system']
+    )
     const group = await global.WIKI.models.groups.query.mock.results[0].value.findById.mock.results[0].value
     expect(global.WIKI.models.groups.query.mock.results[0].value.findById).toHaveBeenCalledWith(3)
     expect(global.WIKI.models.users.query.mock.results[0].value.findById).toHaveBeenCalledWith(10)
@@ -500,6 +538,35 @@ describe('controllers/api groups endpoints', () => {
       message: 'User has been unassigned from group.'
     })
   })
+
+  it('prevents delegated user managers from unassigning higher-administrator memberships', async () => {
+    const relatedQuery = vi.fn()
+    global.WIKI.models.groups.query.mockReturnValueOnce({
+      findById: vi.fn().mockResolvedValue({
+        id: 3,
+        permissions: ['manage:users'],
+        $relatedQuery: relatedQuery
+      })
+    })
+    global.WIKI.auth.checkExclusiveAccess.mockReturnValueOnce(true)
+    const { unassignUser } = await loadHandler()
+    const requester = { permissions: ['manage:users'] }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
+
+    await unassignUser({ user: requester, params: { groupId: '3', userId: '10' } }, res, vi.fn())
+
+    expect(global.WIKI.auth.checkExclusiveAccess).toHaveBeenCalledWith(
+      requester,
+      ['manage:users', 'write:groups'],
+      ['manage:groups', 'manage:system']
+    )
+    expect(res.status).toHaveBeenCalledWith(403)
+    expect(res.json).toHaveBeenCalledWith({
+      error: 'You are not authorized to unassign a user from this administrative group.'
+    })
+    expect(relatedQuery).not.toHaveBeenCalled()
+  })
+
 
   it('returns 403 for group user unassign requests without assignment access', async () => {
     global.WIKI.auth.checkAccess.mockReturnValueOnce(false)
@@ -579,9 +646,22 @@ describe('controllers/api groups endpoints', () => {
     const req = { user: { permissions: ['manage:groups'] }, params: { id: '3' } }
     const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
+
     await deleteGroup(req, res, vi.fn())
 
     expect(global.WIKI.auth.checkAccess).toHaveBeenCalledWith({ permissions: ['manage:groups'] }, ['write:groups', 'manage:groups', 'manage:system'])
+    expect(global.WIKI.auth.checkExclusiveAccess).toHaveBeenNthCalledWith(
+      1,
+      { permissions: ['manage:groups'] },
+      ['write:groups'],
+      ['manage:groups', 'manage:system']
+    )
+    expect(global.WIKI.auth.checkExclusiveAccess).toHaveBeenNthCalledWith(
+      2,
+      { permissions: ['manage:groups'] },
+      ['manage:groups'],
+      ['manage:system']
+    )
     expect(global.WIKI.models.groups.query.mock.results[0].value.deleteById).toHaveBeenCalledWith(3)
     expect(global.WIKI.auth.revokeUserTokens).toHaveBeenCalledWith({ id: 3, kind: 'g' })
     expect(global.WIKI.events.outbound.emit).toHaveBeenCalledWith('addAuthRevoke', { id: 3, kind: 'g' })
@@ -592,6 +672,37 @@ describe('controllers/api groups endpoints', () => {
       message: 'Group has been deleted.'
     })
   })
+
+  it('prevents group writers from deleting more privileged custom groups', async () => {
+    const deleteById = vi.fn()
+    global.WIKI.models.groups.query
+      .mockReturnValueOnce({
+        findById: vi.fn().mockResolvedValue({
+          id: 3,
+          isSystem: false,
+          permissions: ['manage:users']
+        })
+      })
+      .mockReturnValueOnce({ deleteById })
+    global.WIKI.auth.checkExclusiveAccess.mockReturnValueOnce(true)
+    const { deleteGroup } = await loadHandler()
+    const requester = { permissions: ['write:groups'] }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
+
+    await deleteGroup({ user: requester, params: { id: '3' } }, res, vi.fn())
+
+    expect(global.WIKI.auth.checkExclusiveAccess).toHaveBeenCalledWith(
+      requester,
+      ['write:groups'],
+      ['manage:groups', 'manage:system']
+    )
+    expect(res.status).toHaveBeenCalledWith(403)
+    expect(res.json).toHaveBeenCalledWith({
+      error: 'You are not authorized to delete this administrative group.'
+    })
+    expect(deleteById).not.toHaveBeenCalled()
+  })
+
 
   it('returns 403 for group delete requests without group admin access', async () => {
     global.WIKI.auth.checkAccess.mockReturnValueOnce(false)

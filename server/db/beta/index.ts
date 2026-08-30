@@ -6,8 +6,6 @@ import type { Knex } from 'knex'
 import _ from 'lodash'
 import semver from 'semver'
 
-
-
 interface WikiDatabaseContext {
   SERVERPATH: string
 }
@@ -21,13 +19,12 @@ interface MigrationSpec {
   directory: string
 }
 
-function isMigration (value: unknown): value is Knex.Migration {
+function isMigration(value: unknown): value is Knex.Migration {
   if (typeof value !== 'object' || value === null) {
     return false
   }
   const candidate = value as Record<string, unknown>
-  return typeof candidate.up === 'function' &&
-    (candidate.down === undefined || typeof candidate.down === 'function')
+  return typeof candidate.up === 'function' && (candidate.down === undefined || typeof candidate.down === 'function')
 }
 
 const wiki = WIKI as unknown as WikiDatabaseContext
@@ -35,7 +32,7 @@ function createLegacyMigrationSource(): Knex.MigrationSource<MigrationSpec> {
   const baseMigrationPath = path.join(wiki.SERVERPATH, 'db/beta/migrations')
   const requireMigration = createRequire(import.meta.url)
   return {
-    async getMigrations () {
+    async getMigrations() {
       const migrationFiles = await fs.readdir(baseMigrationPath)
       return migrationFiles
         .filter(file => file.endsWith('.ts'))
@@ -45,10 +42,10 @@ function createLegacyMigrationSource(): Knex.MigrationSource<MigrationSpec> {
           directory: baseMigrationPath
         }))
     },
-    getMigrationName (migration) {
+    getMigrationName(migration) {
       return migration.file.replace(/\.ts$/, '.js')
     },
-    async getMigration (migration) {
+    async getMigration(migration) {
       const loaded: unknown = requireMigration(path.join(baseMigrationPath, migration.file))
       if (!isMigration(loaded)) {
         throw new TypeError(`Invalid beta migration module: ${migration.file}`)
@@ -64,69 +61,70 @@ export async function getLegacyMigrationNames(): Promise<string[]> {
   return migrations.map(migration => migrationSource.getMigrationName(migration))
 }
 
-export async function migrate (knex: Knex): Promise<void> {
+export async function migrate(knex: Knex): Promise<void> {
   const migrationsTableExists = await knex.schema.hasTable('migrations')
   if (!migrationsTableExists) {
     return
   }
 
-
   const migrations = await knex<MigrationRecord>('migrations')
   if (_.some(migrations, migration => migration.name.indexOf('2.0.0-beta') >= 0)) {
-    const localeColnInfo = await knex('pages').columnInfo('localeCode')
-    if (localeColnInfo.maxLength === 2) {
-      const locales = await knex('locales')
-      await knex.schema
-        .table('users', table => {
-          table.dropForeign(['localeCode'])
-        })
-        .table('pages', table => {
-          table.dropForeign(['localeCode'])
-        })
-        .table('pageHistory', table => {
-          table.dropForeign(['localeCode'])
-        })
-        .table('pageTree', table => {
-          table.dropForeign(['localeCode'])
-        })
-        .dropTable('locales')
-        .createTable('locales', table => {
-          table.string('code', 5).notNullable().primary()
-          table.json('strings')
-          table.boolean('isRTL').notNullable().defaultTo(false)
-          table.string('name').notNullable()
-          table.string('nativeName').notNullable()
-          table.integer('availability').notNullable().defaultTo(0)
-          table.string('createdAt').notNullable()
-          table.string('updatedAt').notNullable()
-        })
-      await knex('locales').insert(locales)
-      await knex.schema
-        .table('users', table => {
-          table.string('localeCode', 5).notNullable().defaultTo('en').alter()
-        })
-        .table('pages', table => {
-          table.string('localeCode', 5).alter()
-        })
-        .table('pageHistory', table => {
-          table.string('localeCode', 5).alter()
-        })
-        .table('pageTree', table => {
-          table.string('localeCode', 5).alter()
-        })
-        .table('users', table => {
-          table.foreign('localeCode').references('code').inTable('locales')
-        })
-        .table('pages', table => {
-          table.foreign('localeCode').references('code').inTable('locales')
-        })
-        .table('pageHistory', table => {
-          table.foreign('localeCode').references('code').inTable('locales')
-        })
-        .table('pageTree', table => {
-          table.foreign('localeCode').references('code').inTable('locales')
-        })
-    }
+    await knex.transaction(async trx => {
+      const localeColnInfo = await trx('pages').columnInfo('localeCode')
+      if (localeColnInfo.maxLength === 2) {
+        const locales = await trx('locales')
+        await trx.schema
+          .table('users', table => {
+            table.dropForeign(['localeCode'])
+          })
+          .table('pages', table => {
+            table.dropForeign(['localeCode'])
+          })
+          .table('pageHistory', table => {
+            table.dropForeign(['localeCode'])
+          })
+          .table('pageTree', table => {
+            table.dropForeign(['localeCode'])
+          })
+          .dropTable('locales')
+          .createTable('locales', table => {
+            table.string('code', 5).notNullable().primary()
+            table.json('strings')
+            table.boolean('isRTL').notNullable().defaultTo(false)
+            table.string('name').notNullable()
+            table.string('nativeName').notNullable()
+            table.integer('availability').notNullable().defaultTo(0)
+            table.string('createdAt').notNullable()
+            table.string('updatedAt').notNullable()
+          })
+        await trx('locales').insert(locales)
+        await trx.schema
+          .table('users', table => {
+            table.string('localeCode', 5).notNullable().defaultTo('en').alter()
+          })
+          .table('pages', table => {
+            table.string('localeCode', 5).alter()
+          })
+          .table('pageHistory', table => {
+            table.string('localeCode', 5).alter()
+          })
+          .table('pageTree', table => {
+            table.string('localeCode', 5).alter()
+          })
+          .table('users', table => {
+            table.foreign('localeCode').references('code').inTable('locales')
+          })
+          .table('pages', table => {
+            table.foreign('localeCode').references('code').inTable('locales')
+          })
+          .table('pageHistory', table => {
+            table.foreign('localeCode').references('code').inTable('locales')
+          })
+          .table('pageTree', table => {
+            table.foreign('localeCode').references('code').inTable('locales')
+          })
+      }
+    })
 
     const migrationSource = createLegacyMigrationSource()
 
@@ -135,11 +133,13 @@ export async function migrate (knex: Knex): Promise<void> {
       migrationSource
     })
 
-    await knex('migrations').truncate()
-    await knex('migrations').insert({
-      name: '2.0.0.js',
-      batch: 1,
-      migration_time: knex.fn.now()
+    await knex.transaction(async trx => {
+      await trx('migrations').truncate()
+      await trx('migrations').insert({
+        name: '2.0.0.js',
+        batch: 1,
+        migration_time: trx.fn.now()
+      })
     })
   }
 }

@@ -1,6 +1,8 @@
 import _ from 'lodash'
 import database from '../core/db.ts'
 
+const TREE_REBUILD_LOCK_ID = 0x574b5452
+
 interface PageRow {
   id: number
   path: string
@@ -31,6 +33,7 @@ interface TableQuery {
   insert(rows: PageTreeRow[]): Promise<unknown>
 }
 interface Transaction {
+  raw(sql: string, bindings: unknown[]): Promise<unknown>
   table(name: string): TableQuery
 }
 interface KnexClient extends Transaction {
@@ -38,7 +41,7 @@ interface KnexClient extends Transaction {
   destroy(): Promise<void>
 }
 interface Models {
-  pages: { query(): PagesQuery }
+  pages: { query(transaction?: Transaction): PagesQuery }
   knex: KnexClient
 }
 interface WikiContext {
@@ -54,55 +57,59 @@ export default async function rebuildTree(_pageId?: number): Promise<void> {
   wiki.logger.info('Rebuilding page tree...')
   let models: Models | undefined
   try {
-    models = (await database.init()) as unknown as Models
-    wiki.models = models
+    const initializedModels = (await database.init()) as unknown as Models
+    models = initializedModels
+    wiki.models = initializedModels
     await wiki.configSvc.loadFromDb()
     await wiki.configSvc.applyFlags()
-    const pages = await wiki.models.pages
-      .query()
-      .select('id', 'path', 'localeCode', 'title', 'visibility', 'ownerId')
-      .orderBy(['visibility', 'ownerId', 'localeCode', 'path'])
-    const tree: PageTreeRow[] = []
-    let nextId = 0
+    await initializedModels.knex.transaction(async trx => {
+      // Deliberately hold one PostgreSQL-owned rebuild generation from the source
+      // read through replacement so a stale builder can never commit after a newer one.
+      await trx.raw('SELECT pg_advisory_xact_lock(?)', [TREE_REBUILD_LOCK_ID])
+      const pages = await initializedModels.pages
+        .query(trx)
+        .select('id', 'path', 'localeCode', 'title', 'visibility', 'ownerId')
+        .orderBy(['visibility', 'ownerId', 'localeCode', 'path'])
+      const tree: PageTreeRow[] = []
+      let nextId = 0
 
-    for (const page of pages) {
-      const pagePaths = page.path.split('/')
-      let currentPath = ''
-      let depth = 0
-      let parentId: number | null = null
-      const ancestors: number[] = []
-      for (const part of pagePaths) {
-        depth++
-        const isFolder = depth < pagePaths.length
-        currentPath = currentPath ? `${currentPath}/${part}` : part
-        const found = tree.find(
-          row => row.visibility === page.visibility && row.ownerId === page.ownerId && row.localeCode === page.localeCode && row.path === currentPath
-        )
-        if (!found) {
-          nextId++
-          tree.push({
-            id: nextId,
-            localeCode: page.localeCode,
-            path: currentPath,
-            depth,
-            title: isFolder ? part : page.title,
-            isFolder,
-            visibility: page.visibility,
-            ownerId: page.ownerId,
-            parent: parentId,
-            pageId: isFolder ? null : page.id,
-            ancestors: JSON.stringify(ancestors)
-          })
-          parentId = nextId
-        } else {
-          if (isFolder && !found.isFolder) found.isFolder = true
-          parentId = found.id
+      for (const page of pages) {
+        const pagePaths = page.path.split('/')
+        let currentPath = ''
+        let depth = 0
+        let parentId: number | null = null
+        const ancestors: number[] = []
+        for (const part of pagePaths) {
+          depth++
+          const isFolder = depth < pagePaths.length
+          currentPath = currentPath ? `${currentPath}/${part}` : part
+          const found = tree.find(
+            row => row.visibility === page.visibility && row.ownerId === page.ownerId && row.localeCode === page.localeCode && row.path === currentPath
+          )
+          if (!found) {
+            nextId++
+            tree.push({
+              id: nextId,
+              localeCode: page.localeCode,
+              path: currentPath,
+              depth,
+              title: isFolder ? part : page.title,
+              isFolder,
+              visibility: page.visibility,
+              ownerId: page.ownerId,
+              parent: parentId,
+              pageId: isFolder ? null : page.id,
+              ancestors: JSON.stringify(ancestors)
+            })
+            parentId = nextId
+          } else {
+            if (isFolder && !found.isFolder) found.isFolder = true
+            parentId = found.id
+          }
+          ancestors.push(parentId)
         }
-        ancestors.push(parentId)
       }
-    }
 
-    await wiki.models.knex.transaction(async trx => {
       await trx.table('pageTree').truncate()
       if (tree.length > 0) {
         for (const chunk of _.chunk(tree, 100)) await trx.table('pageTree').insert(chunk)

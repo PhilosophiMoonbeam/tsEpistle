@@ -31,11 +31,13 @@ interface WikiBootstrap extends Record<string, unknown> {
   kernel?: BootstrapKernel
   logger?: BootstrapLogger
   telemetry?: { sendError(error: unknown): void }
+  shutdownSignal: AbortSignal
   startedAt: DateTime
 }
 
 async function run(): Promise<void> {
   const configuredInstanceId = process.env.INSTANCE_ID?.trim()
+  const shutdownController = new AbortController()
 
   const wiki: WikiBootstrap = {
     IS_DEBUG: process.env.NODE_ENV === 'development',
@@ -43,6 +45,7 @@ async function run(): Promise<void> {
     ROOTPATH: process.cwd(),
     INSTANCE_ID: configuredInstanceId || nanoid(10),
     SERVERPATH: path.join(process.cwd(), 'server'),
+    shutdownSignal: shutdownController.signal,
     startedAt: DateTime.utc()
   }
 
@@ -69,6 +72,7 @@ async function run(): Promise<void> {
   const shutdown = (exitCode = 0): Promise<void> => {
     if (exitCode !== 0) requestedExitCode = exitCode
     if (!shutdownPromise) {
+      shutdownController.abort(new DOMException('Shutdown requested', 'AbortError'))
       shutdownPromise = (async () => {
         try {
           await bootstrapPromise.catch(() => undefined)
@@ -117,13 +121,7 @@ async function run(): Promise<void> {
     }
 
     // Deferred because legacy core modules read the global wiki context during module evaluation.
-    const [
-      { default: wikiErrors },
-      { default: configService }
-    ] = await Promise.all([
-      import('./helpers/error.ts'),
-      import('./core/config.ts')
-    ])
+    const [{ default: wikiErrors }, { default: configService }] = await Promise.all([import('./helpers/error.ts'), import('./core/config.ts')])
 
     wiki.Error = wikiErrors
     wiki.configSvc = configService
@@ -140,11 +138,19 @@ async function run(): Promise<void> {
   try {
     await bootstrapPromise
   } catch (error) {
-    logError(error)
-    try {
-      await shutdown(1)
-    } catch (shutdownError) {
-      logError(shutdownError)
+    if (!shutdownController.signal.aborted) {
+      logError(error)
+      try {
+        await shutdown(1)
+      } catch (shutdownError) {
+        logError(shutdownError)
+      }
+    } else {
+      try {
+        await shutdown()
+      } catch (shutdownError) {
+        logError(shutdownError)
+      }
     }
   }
 }

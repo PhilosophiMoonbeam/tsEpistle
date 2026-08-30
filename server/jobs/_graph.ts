@@ -1,13 +1,25 @@
+import { z } from 'zod'
+
+const GraphResponseSchema = z
+  .object({
+    errors: z
+      .array(
+        z
+          .object({
+            message: z.string().optional()
+          })
+          .passthrough()
+      )
+      .optional()
+  })
+  .passthrough()
+
 interface GraphRequest {
   query: string
   variables?: Record<string, string>
 }
 
-export async function requestGraph (
-  endpoint: string,
-  query: string,
-  variables?: Record<string, string>
-): Promise<unknown> {
+export async function requestGraph(endpoint: string, query: string, variables?: Record<string, string>): Promise<Record<string, unknown>> {
   const request: GraphRequest = variables === undefined ? { query } : { query, variables }
   const response = await fetch(endpoint, {
     method: 'POST',
@@ -17,24 +29,18 @@ export async function requestGraph (
     },
     body: JSON.stringify(request)
   })
-  const raw = await response.text()
 
-  try {
-    return JSON.parse(raw) as unknown
-  } catch (error) {
-    if (response.status >= 300) {
-      throw new Error(`Network request failed with status ${response.status} - "${response.statusText}"`, { cause: error })
-    }
-    throw error
+  if (!response.ok) {
+    throw new Error(`Network request failed with status ${response.status} - "${response.statusText}"`)
   }
-}
 
-export function asRecord (value: unknown): Record<string, unknown> {
-  return typeof value === 'object' && value !== null ? value as Record<string, unknown> : {}
-}
+  const payload = GraphResponseSchema.parse(JSON.parse(await response.text()) as unknown)
+  if (payload.errors !== undefined && payload.errors.length > 0) {
+    const message = payload.errors[0]?.message
+    throw new Error(typeof message === 'string' && message.length > 0 ? `Graph request failed: ${message}` : 'Graph request failed.')
+  }
 
-export function asRecordArray (value: unknown): Array<Record<string, unknown>> {
-  return Array.isArray(value) ? value.filter((item): item is Record<string, unknown> => typeof item === 'object' && item !== null) : []
+  return payload
 }
 
 export default requestGraph

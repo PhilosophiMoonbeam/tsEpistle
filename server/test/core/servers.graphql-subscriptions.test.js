@@ -25,6 +25,7 @@ describe('core/servers GraphQL transports', () => {
       getEnveloped: vi.fn()
     })
     const createYoga = vi.fn().mockReturnValue(yoga)
+    const maskError = vi.fn((_error, message) => new Error(message))
     const wsServer = {
       close: vi.fn(callback => callback()),
       emit: vi.fn(),
@@ -41,7 +42,7 @@ describe('core/servers GraphQL transports', () => {
     })
     const verify = vi.fn()
 
-    vi.mockModule('graphql-yoga', import.meta.url, () => ({ createYoga }))
+    vi.mockModule('graphql-yoga', import.meta.url, () => ({ createYoga, maskError }))
     vi.mockModule('graphql-ws/use/ws', import.meta.url, () => ({ useServer }))
     vi.mockModule('ws', import.meta.url, () => ({
       default: { Server: WebSocketServer },
@@ -84,7 +85,7 @@ describe('core/servers GraphQL transports', () => {
     const { default: createServers } = await vi.importFresh('../../core/servers.ts', import.meta.url)
     const servers = createServers(global.WIKI)
     const createHttpServer = () => ({ on: vi.fn(), off: vi.fn() })
-    return { servers, collaboration, createGraphQLArtifacts, createYoga, yoga, useServer, cleanup, WebSocketServer, wsServer, verify, createHttpServer }
+    return { servers, collaboration, createGraphQLArtifacts, createYoga, maskError, yoga, useServer, cleanup, WebSocketServer, wsServer, verify, createHttpServer }
   }
 
   it('resolves HTTP startup only after the listener is ready', async () => {
@@ -132,7 +133,11 @@ describe('core/servers GraphQL transports', () => {
     expect(createYoga).toHaveBeenCalledWith(expect.objectContaining({
       schema: { kind: 'schema' },
       graphqlEndpoint: '/graphql',
-      maskedErrors: false,
+      logging: global.WIKI.logger,
+      maskedErrors: {
+        isDev: false,
+        maskError: expect.any(Function)
+      },
       graphiql: false
     }))
     expect(global.WIKI.app.use).toHaveBeenCalledWith('/graphql', expect.any(Function))
@@ -140,6 +145,23 @@ describe('core/servers GraphQL transports', () => {
     const response = { kind: 'response' }
     global.WIKI.app.use.mock.calls[0][1](request, response, vi.fn())
     expect(yoga).toHaveBeenCalledWith(request, response)
+  })
+
+  it('masks unexpected GraphQL causes while retaining classified conflicts', async () => {
+    const { servers, createYoga, maskError } = await setupModule()
+    await servers.startGraphQL()
+    const options = createYoga.mock.calls[0][0]
+    const unexpected = new Error('database password is secret')
+    const wrappedUnexpected = Object.assign(new Error(unexpected.message), { originalError: unexpected })
+    const masked = options.maskedErrors.maskError(wrappedUnexpected, 'Unexpected error.')
+    expect(maskError).toHaveBeenCalledWith(wrappedUnexpected, 'Unexpected error.')
+    expect(masked.message).toBe('Unexpected error.')
+
+    maskError.mockClear()
+    const conflict = Object.assign(new Error('The page changed.'), { status: 409 })
+    const wrappedConflict = Object.assign(new Error(conflict.message), { originalError: conflict })
+    expect(options.maskedErrors.maskError(wrappedConflict, 'Unexpected error.')).toBe(wrappedConflict)
+    expect(maskError).not.toHaveBeenCalled()
   })
 
   it('attaches graphql-ws to the maintained subscription endpoint', async () => {

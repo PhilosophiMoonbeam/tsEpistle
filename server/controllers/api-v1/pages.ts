@@ -23,11 +23,9 @@ const nonNegativeInteger = (value: unknown): number | null => {
   return Number.isSafeInteger(parsed) ? parsed : null
 }
 
-const requesterInput = (req: Request): { requester?: Express.User } =>
-  req.user === undefined ? {} : { requester: req.user }
+const requesterInput = (req: Request): { requester?: Express.User } => (req.user === undefined ? {} : { requester: req.user })
 
-const canRequestPages = (req: Request): boolean =>
-  principalId(req.user) !== null || getWikiAuth().checkAccess(req.user, ['read:pages', 'manage:system'])
+const canRequestPages = (req: Request): boolean => principalId(req.user) !== null || getWikiAuth().checkAccess(req.user, ['read:pages', 'manage:system'])
 
 router.get('/', async (req, res, next) => {
   if (!canRequestPages(req)) return res.status(403).json({ error: 'read:pages or manage:system is required' })
@@ -39,12 +37,14 @@ router.get('/', async (req, res, next) => {
   }
   if (parsedOffset === null) return res.status(400).json({ error: 'offset must be a non-negative integer' })
 
-  const locale = typeof req.query.locale === 'string' && req.query.locale.length > 0
-    ? req.query.locale
-    : undefined
-  const tags = typeof req.query.tags === 'string'
-    ? req.query.tags.split(',').map(tag => tag.trim().toLowerCase()).filter(Boolean)
-    : []
+  const locale = typeof req.query.locale === 'string' && req.query.locale.length > 0 ? req.query.locale : undefined
+  const tags =
+    typeof req.query.tags === 'string'
+      ? req.query.tags
+          .split(',')
+          .map(tag => tag.trim().toLowerCase())
+          .filter(Boolean)
+      : []
 
   try {
     const rows = await pageOperations.list({
@@ -91,7 +91,7 @@ router.get('/:id', async (req, res, next) => {
   if (id === null) return res.status(400).json({ error: 'id must be a positive integer' })
 
   try {
-    const page = await pageOperations.get({ ...requesterInput(req), id })
+    const page = await pageOperations.get({ ...requesterInput(req), sessionId: req.sessionID, id })
     const row = page as unknown as Record<string, unknown>
     return res.json({
       authorId: objectValue(row, 'authorId') ?? null,

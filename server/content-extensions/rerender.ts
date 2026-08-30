@@ -1,4 +1,5 @@
 import type { Knex } from 'knex'
+import { parseMarkdownCodeFences } from '../../shared/markdown-code-fence.ts'
 
 interface ExtensionPage {
   id: number
@@ -32,14 +33,13 @@ export interface ContentExtensionRerenderContext {
 
 const rerenderBatchSize = 250
 
-const isPublishedPublicPage = (page: SearchableExtensionPage): boolean =>
-  page.visibility === 'public' && (page.isPublished === true || page.isPublished === 1)
+const isPublishedPublicPage = (page: SearchableExtensionPage): boolean => page.visibility === 'public' && (page.isPublished === true || page.isPublished === 1)
 
 const pageContainsExtension = (content: string, key: string): boolean => {
-  const fences = /^```wiki-extension[ \t]*\r?\n([^\r\n]*)\r?\n```[ \t]*$/gm
-  for (const match of content.matchAll(fences)) {
+  for (const fence of parseMarkdownCodeFences(content)) {
+    if (fence.info.trim() !== 'wiki-extension') continue
     try {
-      const parsed: unknown = JSON.parse(match[1] ?? '')
+      const parsed: unknown = JSON.parse(fence.content)
       if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed) && Reflect.get(parsed, 'key') === key) {
         return true
       }
@@ -63,7 +63,7 @@ export const rerenderPagesForContentExtension = async (
     const candidates = await knex<ExtensionPage>('pages')
       .select('id', 'hash', 'content')
       .where('id', '>', afterId)
-      .where('content', 'like', '%```wiki-extension%')
+      .where('content', 'like', '%wiki-extension%')
       .orderBy('id', 'asc')
       .limit(rerenderBatchSize)
     signal.throwIfAborted()

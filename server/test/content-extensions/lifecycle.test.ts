@@ -1,11 +1,7 @@
 import createKnex, { type Knex } from 'knex'
 import { afterEach, beforeEach, describe, expect, it } from '../bun-test.mts'
 
-import {
-  parseContentExtensionEnvelope,
-  parseContentExtensionFence,
-  serializeContentExtensionFence
-} from '../../../shared/content-extensions.ts'
+import { parseContentExtensionEnvelope, parseContentExtensionFence, serializeContentExtensionFence } from '../../../shared/content-extensions.ts'
 import { up as createRegistry } from '../../db/migrations/2.5.135.ts'
 import { up as installRichExtensions } from '../../db/migrations/2.5.137.ts'
 import { up as installVisibleExtensions } from '../../db/migrations/2.5.138.ts'
@@ -24,7 +20,16 @@ const fixtures: unknown[] = [
   { key: 'qr', version: 1, props: { value: 'https://example.test' } },
   { key: 'gallery', version: 1, props: { images: [{ src: '/uploads/a.jpg', alt: 'A' }] } },
   { key: 'index', version: 1, props: { path: 'guide', locale: 'en' } },
-  { key: 'tabs', version: 1, props: { tabs: [{ label: 'A', content: 'Alpha' }, { label: 'B', content: 'Beta' }] } },
+  {
+    key: 'tabs',
+    version: 1,
+    props: {
+      tabs: [
+        { label: 'A', content: 'Alpha' },
+        { label: 'B', content: 'Beta' }
+      ]
+    }
+  },
   { key: 'spoiler', version: 1, props: { content: 'Secret' } },
   { key: 'infobox', version: 1, props: { title: 'City', facts: [{ label: 'Metro', value: true }] } },
   { key: 'pdf', version: 1, props: { src: '/uploads/guide.pdf' } },
@@ -43,7 +48,9 @@ describe('content extension byte lifecycle', () => {
 
   beforeEach(async () => {
     db = createKnex({ client: 'better-sqlite3', connection: { filename: ':memory:' }, useNullAsDefault: true })
-    await db.schema.createTable('users', table => { table.integer('id').primary() })
+    await db.schema.createTable('users', table => {
+      table.integer('id').primary()
+    })
     await createRegistry(db)
     await installRichExtensions(db)
     await installVisibleExtensions(db)
@@ -57,7 +64,9 @@ describe('content extension byte lifecycle', () => {
     global.WIKI = { models: { knex: db } }
   })
 
-  afterEach(async () => { await db.destroy() })
+  afterEach(async () => {
+    await db.destroy()
+  })
 
   it.each(fixtures)('preserves $key bytes across migration, parse, render, edit, save, and reload', async input => {
     const envelope = parseContentExtensionEnvelope(input)
@@ -147,6 +156,84 @@ describe('content extension byte lifecycle', () => {
     expect(indexedTerms.has('extension-visible-term')).toBe(false)
   })
 
+  it('rerenders every renderer-compatible extension fence and rejects lookalikes', async () => {
+    const envelope = JSON.stringify({ key: 'spoiler', version: 1, props: { content: 'Secret' } })
+    const pages = [
+      {
+        id: 300,
+        extensionKey: 'spoiler',
+        hash: 'indented-extension',
+        content: `   \`\`\` wiki-extension \n${envelope}\n   \`\`\``
+      },
+      {
+        id: 301,
+        extensionKey: 'spoiler',
+        hash: 'long-extension-fence',
+        content: `\`\`\`\`wiki-extension\n${envelope}\n\`\`\`\``
+      },
+      {
+        id: 302,
+        extensionKey: 'spoiler',
+        hash: 'tilde-extension-fence',
+        content: `~~~wiki-extension\n${envelope}\n~~~`
+      },
+      {
+        id: 303,
+        extensionKey: 'spoiler',
+        hash: 'ordinary-code',
+        content: `\`\`\`json\n${envelope}\n\`\`\``
+      },
+      {
+        id: 304,
+        extensionKey: 'spoiler',
+        hash: 'invalid-extension-key',
+        content: '```wiki-extension\n{"key":"spoiler!","version":1,"props":{}}\n```'
+      },
+      {
+        id: 305,
+        extensionKey: 'spoiler',
+        hash: 'indented-code-block',
+        content: `    \`\`\`wiki-extension\n${envelope}\n    \`\`\``
+      },
+      {
+        id: 306,
+        extensionKey: 'spoiler',
+        hash: 'unclosed-extension-fence',
+        content: `\`\`\`wiki-extension\n${envelope}\n`
+      }
+    ]
+    await db('pages').insert(pages)
+
+    const rendered: number[] = []
+    const wiki: ContentExtensionRerenderContext = {
+      data: {
+        searchEngine: {
+          async deleted() {},
+          async updated() {}
+        }
+      },
+      events: { outbound: { emit() {} } },
+      models: {
+        pages: {
+          async deletePageFromCache() {},
+          async getPageFromDb(pageId) {
+            const page = pages.find(candidate => candidate.id === pageId)
+            return page ? { ...page, visibility: 'private', isPublished: false, safeContent: '' } : undefined
+          },
+          async prepareSearchDocument(page) {
+            return page
+          },
+          async renderPage(page) {
+            rendered.push(page.id)
+          }
+        }
+      }
+    }
+
+    expect(await rerenderPagesForContentExtension(db, wiki, 'spoiler', new AbortController().signal)).toBe(4)
+    expect(rendered).toEqual([300, 301, 302, 306])
+  })
+
   it('stops a multi-page rerender at the next side effect when its lease signal aborts', async () => {
     const authored = serializeContentExtensionFence({ key: 'spoiler', version: 1, props: { content: 'Secret' } })
     await db('pages').insert([
@@ -204,12 +291,6 @@ describe('content extension byte lifecycle', () => {
     }
 
     await expect(rerenderPagesForContentExtension(db, wiki, 'spoiler', controller.signal)).rejects.toBe(reason)
-    expect(effects).toEqual([
-      'cache:first-page',
-      'emit:first-page',
-      'fetch:200',
-      'deleted:200',
-      'render:200'
-    ])
+    expect(effects).toEqual(['cache:first-page', 'emit:first-page', 'fetch:200', 'deleted:200', 'render:200'])
   })
 })
