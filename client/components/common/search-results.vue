@@ -729,8 +729,8 @@ export default defineComponent({
     width: 2.65rem;
   }
 
-  &-item :deep(.v-list-item-title) { font-size: .98rem; font-weight: 650; }
-  &-item :deep(.v-list-item-subtitle) { line-height: 1.4; margin-top: .14rem; white-space: normal; }
+  &-item .v-list-item-title { font-size: .98rem; font-weight: 650; }
+  &-item .v-list-item-subtitle { line-height: 1.4; margin-top: .14rem; white-space: normal; }
 
   &-path {
     align-items: center;
@@ -807,9 +807,9 @@ export default defineComponent({
   @media (max-width: 599.98px) {
     &-search { border-radius: 1.15rem; }
     &-scope-copy { min-width: 0; }
-    &-scope-actions :deep(.v-btn) { padding-inline: .65rem; }
+    &-scope-actions .v-btn { padding-inline: .65rem; }
     &-summary { align-items: flex-start; }
-    &-ask :deep(.v-btn__content) { font-size: .78rem; }
+    &-ask .v-btn__content { font-size: .78rem; }
     &-item { padding-inline: .2rem; }
     &-item-chevron { display: none; }
     &-item-mark { height: 2.35rem; width: 2.35rem; }
