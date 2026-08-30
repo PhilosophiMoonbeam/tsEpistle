@@ -1,14 +1,14 @@
 <template lang='pug'>
   v-app.setup
-    v-main.setup-main
+    v-main.setup-main(aria-labelledby='setup-title')
       v-container.setup-shell(fluid)
-        v-card.setup-card
+        v-card.setup-card(:aria-busy='loading')
           header.setup-intro
             .setup-mark(aria-hidden='true')
               img(src='/_assets/svg/icon-tsfranki.svg', alt='')
             .setup-intro-copy
               .setup-eyebrow First-run setup
-              h1 {{ product.name }}
+              h1#setup-title {{ product.name }}
               p Independent community fork derived from {{ product.upstreamBase }}
 
           v-alert.setup-alert(
@@ -32,7 +32,7 @@
             .text-body-small.mt-1
               a(:href='product.sourceUrl', target='_blank', rel='noopener noreferrer') View source at revision {{ product.revision.slice(0, 12) }}
 
-          form#setup-form.setup-form(@submit.prevent='install')
+          form#setup-form.setup-form(@submit.prevent='install', :aria-busy='loading')
             section.setup-section
               .setup-section-heading
                 .setup-section-icon
@@ -63,6 +63,7 @@
                     v-model='conf.adminPassword'
                     label='Password'
                     :type="pwdMode ? 'password' : 'text'"
+                    autocomplete='new-password'
                     hint='At least 8 characters long.'
                     persistent-hint
                     required
@@ -70,7 +71,7 @@
                     prepend-inner-icon='mdi-lock-outline'
                   )
                     template(v-slot:append-inner)
-                      v-btn(icon variant='text' size='small' :aria-label="pwdMode ? 'Show password' : 'Hide password'" @click='pwdMode = !pwdMode')
+                      v-btn(icon type='button' variant='text' size='small' :aria-label="pwdMode ? 'Show password' : 'Hide password'" @click='pwdMode = !pwdMode')
                         v-icon(:icon="pwdMode ? 'mdi-eye-off' : 'mdi-eye'")
                 v-col(cols='12', sm='6')
                   v-text-field(
@@ -80,6 +81,7 @@
                     v-model='conf.adminPasswordConfirm'
                     label='Confirm Password'
                     :type="pwdConfirmMode ? 'password' : 'text'"
+                    autocomplete='new-password'
                     hint='Enter the same password again.'
                     persistent-hint
                     required
@@ -87,7 +89,7 @@
                     prepend-inner-icon='mdi-lock-check-outline'
                   )
                     template(v-slot:append-inner)
-                      v-btn(icon variant='text' size='small' :aria-label="pwdConfirmMode ? 'Show password' : 'Hide password'" @click='pwdConfirmMode = !pwdConfirmMode')
+                      v-btn(icon type='button' variant='text' size='small' :aria-label="pwdConfirmMode ? 'Show password' : 'Hide password'" @click='pwdConfirmMode = !pwdConfirmMode')
                         v-icon(:icon="pwdConfirmMode ? 'mdi-eye-off' : 'mdi-eye'")
 
             section.setup-section
@@ -144,15 +146,16 @@
               span Install {{ product.name }}
 
     v-dialog(v-model='loading', width='420', persistent, aria-labelledby='setup-progress-title')
-      v-card.setup-progress(color='primary')
+      v-card.setup-progress(variant='flat')
+        v-progress-linear(indeterminate color='primary' aria-hidden='true')
         v-card-text.text-center
           .setup-progress-spinner(v-if='!success')
             breeding-rhombus-spinner(
               :animation-duration='2000'
               :size='56'
-              color='#FFF'
+              color='rgb(var(--v-theme-primary))'
             )
-          v-icon.setup-progress-success(v-else icon='mdi-check-circle-outline' size='56' color='white' aria-hidden='true')
+          v-icon.setup-progress-success(v-else icon='mdi-check-circle-outline' size='56' color='success' aria-hidden='true')
           template(v-if='!success')
             .setup-progress-title#setup-progress-title(role='status' aria-live='polite') Finalizing your installation...
             .setup-progress-copy Just a moment
@@ -343,7 +346,7 @@ export default {
 
 <style lang='scss'>
 .setup {
-  font-family: 'WikiAgentSans', 'Roboto', sans-serif;
+  font-family: var(--wiki-font-body);
 }
 
 .setup-main {
@@ -352,50 +355,65 @@ export default {
   min-height: 100dvh;
   overflow: hidden auto;
   background:
-    radial-gradient(circle at 14% 8%, rgba(var(--v-theme-primary), .28), transparent 29rem),
-    radial-gradient(circle at 90% 88%, rgba(99, 102, 241, .18), transparent 32rem),
-    linear-gradient(145deg, #0b1220, #172033 58%, #101827);
+    radial-gradient(
+      circle at 14% 10%,
+      color-mix(in srgb, var(--wiki-accent-warm) 18%, transparent),
+      transparent 32rem
+    ),
+    radial-gradient(
+      circle at 88% 86%,
+      color-mix(in srgb, var(--wiki-accent-spectral) 14%, transparent),
+      transparent 36rem
+    ),
+    linear-gradient(
+      145deg,
+      var(--wiki-surface-sunken),
+      rgb(var(--v-theme-background))
+    );
+  isolation: isolate;
 
   &::before {
     position: absolute;
+    z-index: -1;
     inset: 0;
     background-image:
-      linear-gradient(rgba(255, 255, 255, .025) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(255, 255, 255, .025) 1px, transparent 1px);
-    background-size: 44px 44px;
+      linear-gradient(var(--wiki-surface-border) 1px, transparent 1px),
+      linear-gradient(90deg, var(--wiki-surface-border) 1px, transparent 1px);
+    background-size: var(--wiki-grid-size) var(--wiki-grid-size);
     content: '';
-    mask-image: linear-gradient(to bottom, #000, transparent 92%);
+    mask-image: linear-gradient(to bottom, rgb(var(--v-theme-on-surface)), transparent 88%);
+    opacity: .48;
     pointer-events: none;
   }
 }
 
 .setup-shell {
-  position: relative;
-  z-index: 1;
   display: grid;
-  width: min(100%, 980px);
+  width: min(100%, 61.25rem);
   min-height: 100dvh;
   margin: 0 auto;
-  padding: clamp(24px, 5vh, 56px) var(--wiki-page-gutter) !important;
+  padding: clamp(var(--wiki-space-6), 5vh, var(--wiki-space-12)) var(--wiki-page-gutter) !important;
   place-items: center;
 }
 
 .setup-card {
   width: 100%;
   overflow: hidden;
-  border: 1px solid rgba(255, 255, 255, .16);
-  border-radius: 24px !important;
-  background: color-mix(in srgb, rgb(var(--v-theme-surface)) 96%, transparent) !important;
-  box-shadow: 0 30px 90px rgba(3, 7, 18, .34) !important;
-  backdrop-filter: blur(20px) saturate(135%);
-  -webkit-backdrop-filter: blur(20px) saturate(135%);
+  border: 1px solid var(--wiki-surface-border-strong);
+  border-radius: var(--wiki-hero-radius) !important;
+  background: color-mix(
+    in srgb,
+    rgb(var(--v-theme-surface)) 97%,
+    rgb(var(--v-theme-background))
+  ) !important;
+  box-shadow: var(--wiki-shadow-lg), var(--wiki-shadow-inset) !important;
 }
 
 .setup-intro {
   display: flex;
+  gap: var(--wiki-space-5);
   align-items: center;
-  gap: 18px;
-  padding: 28px 30px 22px;
+  padding: var(--wiki-space-8) var(--wiki-space-8) var(--wiki-space-6);
 }
 
 .setup-mark,
@@ -403,18 +421,17 @@ export default {
   display: grid;
   flex: 0 0 auto;
   place-items: center;
-  border: 1px solid color-mix(in srgb, rgb(var(--v-theme-primary)) 22%, transparent);
-  background: color-mix(in srgb, rgb(var(--v-theme-primary)) 10%, transparent);
-  color: rgb(var(--v-theme-primary));
+  border: 1px solid color-mix(in srgb, var(--wiki-accent-warm) 24%, transparent);
+  background: color-mix(in srgb, var(--wiki-accent-warm) 10%, var(--wiki-surface-raised));
+  color: var(--wiki-accent-warm);
 }
 
 .setup-mark {
-  width: 64px;
-  height: 64px;
-  border: 0;
-  border-radius: 19px;
-  background: transparent;
-  box-shadow: none;
+  width: 4rem;
+  height: 4rem;
+  overflow: hidden;
+  border-radius: var(--wiki-panel-radius);
+  box-shadow: var(--wiki-shadow-sm);
 
   img {
     display: block;
@@ -427,60 +444,69 @@ export default {
   min-width: 0;
 
   h1 {
-    margin: 3px 0 4px;
+    margin: var(--wiki-space-1) 0;
     color: rgb(var(--v-theme-on-surface));
-    font-size: clamp(1.8rem, 4vw, 2.3rem);
-    font-weight: 760;
+    font-size: clamp(1.75rem, 4vw, 2.25rem);
+    font-weight: 740;
     letter-spacing: -.045em;
-    line-height: 1.08;
+    line-height: var(--wiki-leading-heading);
   }
 
   p {
     margin: 0;
-    color: rgb(var(--v-theme-on-surface));
-    font-size: .9rem;
-    opacity: .66;
+    color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 68%, transparent);
+    font-size: .875rem;
   }
 }
 
 .setup-eyebrow {
-  color: rgb(var(--v-theme-primary));
-  font-size: .67rem;
-  font-weight: 760;
-  letter-spacing: .12em;
+  color: var(--wiki-accent-warm);
+  font-size: var(--wiki-label-size);
+  font-weight: var(--wiki-label-weight);
+  letter-spacing: .1em;
+  line-height: 1rem;
   text-transform: uppercase;
 }
 
 .setup-alert {
-  margin: 0 30px 14px;
-  border-radius: 13px;
+  margin: 0 var(--wiki-space-8) var(--wiki-space-4);
+  border: 1px solid var(--wiki-surface-border);
+  border-radius: var(--wiki-control-radius);
+
+  &[class*='text-error'],
+  &.v-alert--variant-tonal {
+    box-shadow: none;
+  }
+
+  a {
+    color: currentColor;
+    font-weight: 650;
+    text-underline-offset: var(--wiki-space-1);
+  }
 }
 
 .setup-form {
-  border-top: 1px solid rgba(var(--v-border-color), .1);
+  border-top: 1px solid var(--wiki-surface-border);
 }
 
 .setup-section {
-  padding: 24px 30px;
+  padding: var(--wiki-space-6) var(--wiki-space-8);
 
   & + & {
-    border-top: 1px solid rgba(var(--v-border-color), .1);
+    border-top: 1px solid var(--wiki-surface-border);
   }
 
-  .v-row {
-    margin-bottom: -12px;
-  }
 
-  .v-field {
-    border-radius: var(--wiki-control-radius);
+  .v-input + .v-input {
+    margin-top: var(--wiki-space-2);
   }
 }
 
 .setup-section-heading {
   display: flex;
+  gap: var(--wiki-space-3);
   align-items: center;
-  gap: 12px;
-  margin-bottom: 18px;
+  margin-bottom: var(--wiki-space-5);
 
   h2 {
     margin: 0;
@@ -491,84 +517,105 @@ export default {
   }
 
   p {
-    margin: 2px 0 0;
-    color: rgb(var(--v-theme-on-surface));
-    font-size: .8rem;
-    opacity: .62;
+    margin: var(--wiki-space-1) 0 0;
+    color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 64%, transparent);
+    font-size: .8125rem;
   }
 }
 
 .setup-section-icon {
-  width: 40px;
-  height: 40px;
-  border-radius: 12px;
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: var(--wiki-control-radius);
 }
 
 .setup-telemetry {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  column-gap: var(--wiki-space-6);
+
+  .setup-section-heading {
+    grid-column: 1 / -1;
+  }
+
   .v-switch {
-    max-width: 420px;
+    max-width: 26.25rem;
   }
 }
 
 .setup-learn {
   display: inline-block;
-  margin-top: 8px;
-  color: rgb(var(--v-theme-primary));
-  font-size: .78rem;
-  font-weight: 620;
-  text-decoration: none;
+  margin-bottom: var(--wiki-space-2);
+  color: var(--wiki-accent-warm);
+  font-size: .8125rem;
+  font-weight: 650;
+  text-decoration-thickness: .0625rem;
+  text-underline-offset: var(--wiki-space-1);
 
   &:hover,
   &:focus-visible {
-    text-decoration: underline;
-    text-underline-offset: .2em;
+    text-decoration-thickness: .125rem;
   }
 }
 
 .setup-actions {
-  padding: 18px 30px 24px;
-  border-top: 1px solid rgba(var(--v-border-color), .1);
-  background: color-mix(in srgb, rgb(var(--v-theme-primary)) 4%, rgb(var(--v-theme-surface)));
+  padding: var(--wiki-space-5) var(--wiki-space-8) var(--wiki-space-6);
+  border-top: 1px solid var(--wiki-surface-border);
+  background: var(--wiki-surface-sunken);
 
   .v-btn {
-    min-height: 50px;
-    border-radius: 12px;
+    min-height: var(--wiki-control-height);
+    border-radius: var(--wiki-control-radius);
     font-weight: 700;
   }
 }
 
 .setup-progress {
-  border-radius: 18px !important;
+  overflow: hidden;
+  border: 1px solid var(--wiki-surface-border-strong);
+  border-radius: var(--wiki-panel-radius) !important;
+  background: var(--wiki-surface-raised) !important;
+  box-shadow: var(--wiki-shadow-lg) !important;
 
   .v-card-text {
-    padding: 30px 24px 28px !important;
+    padding: var(--wiki-space-8) var(--wiki-space-6) !important;
   }
 }
 
 .setup-progress-spinner {
   display: inline-block;
-  width: 56px;
-  height: 56px;
-  margin-bottom: 12px;
+  width: 3.5rem;
+  height: 3.5rem;
+  margin-bottom: var(--wiki-space-3);
 }
+
 .setup-progress-success {
   display: block;
-  margin: 0 auto 12px;
+  margin: 0 auto var(--wiki-space-3);
 }
 
 .setup-progress-title {
-  color: #fff;
-  font-size: 1.05rem;
+  color: rgb(var(--v-theme-on-surface));
+  font-size: 1.0625rem;
   font-weight: 700;
 }
 
 .setup-progress-copy {
-  margin-top: 3px;
-  color: rgba(255, 255, 255, .72);
-  font-size: .82rem;
+  margin-top: var(--wiki-space-1);
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 66%, transparent);
+  font-size: .8125rem;
 }
 
 @media (max-width: 599px) {
+  .setup-main {
+    background: color-mix(
+      in srgb,
+      rgb(var(--v-theme-surface)) 96%,
+      rgb(var(--v-theme-background))
+    );
+  }
+
   .setup-shell {
     align-items: start;
     padding: 0 !important;
@@ -582,53 +629,88 @@ export default {
   }
 
   .setup-intro {
-    gap: 14px;
-    padding: 22px 20px 18px;
+    gap: var(--wiki-space-3);
+    padding: var(--wiki-space-6) var(--wiki-space-5) var(--wiki-space-5);
   }
 
   .setup-mark {
-    width: 54px;
-    height: 54px;
-    border-radius: 16px;
+    width: 3.25rem;
+    height: 3.25rem;
   }
 
   .setup-intro-copy {
     h1 {
-      font-size: 1.65rem;
+      font-size: 1.625rem;
     }
 
     p {
-      font-size: .8rem;
+      font-size: .8125rem;
     }
   }
 
   .setup-alert {
-    margin: 0 16px 12px;
+    margin: 0 var(--wiki-space-4) var(--wiki-space-3);
   }
 
   .setup-section {
-    padding: 20px;
+    padding: var(--wiki-space-5);
   }
 
   .setup-section-heading {
     align-items: flex-start;
+    margin-bottom: var(--wiki-space-4);
+  }
+
+  .setup-telemetry {
+    display: block;
+  }
+
+  .setup-learn {
+    margin-top: var(--wiki-space-2);
+    margin-bottom: 0;
   }
 
   .setup-actions {
-    padding: 16px 20px 20px;
+    padding: var(--wiki-space-4) var(--wiki-space-5) var(--wiki-space-5);
   }
 }
 
 @media (max-height: 700px) and (min-width: 600px) {
   .setup-shell {
     align-items: start;
-    padding-block: 20px !important;
+    padding-block: var(--wiki-space-5) !important;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .setup * {
+  .setup *,
+  .setup *::before,
+  .setup *::after {
     transition-duration: .01ms !important;
+    animation-duration: .01ms !important;
+  }
+}
+
+@media print {
+  .setup-main {
+    background: transparent !important;
+
+    &::before {
+      display: none;
+    }
+  }
+
+  .setup-shell {
+    padding: 0 !important;
+  }
+
+  .setup-card {
+    border: 0;
+    box-shadow: none !important;
+  }
+
+  .setup-actions {
+    display: none;
   }
 }
 </style>

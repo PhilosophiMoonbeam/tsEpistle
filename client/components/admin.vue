@@ -5,12 +5,14 @@
         v-spacer
         .admin-context
           v-icon(size='16') mdi-shield-crown-outline
-          span Administration
+          span.admin-context__root Administration
+          v-icon.admin-context__separator(size='14') mdi-chevron-right
+          strong.admin-context__current {{ currentRouteLabel }}
         v-spacer
       template(v-slot:actions)
         .admin-context.admin-context--mobile
-          v-icon(size='16') mdi-shield-crown-outline
-          span Admin
+          v-icon(size='16') {{ currentRouteIcon }}
+          strong.admin-context__current {{ currentRouteLabel }}
         v-btn.admin-nav-toggle(
           v-if='$vuetify.display.smAndDown'
           icon
@@ -68,7 +70,7 @@
             )
               v-list-item-title {{ $t('admin:dashboard.title') }}
               template(v-slot:append)
-                v-icon(size='18') mdi-arrow-right
+                v-icon(size='18') {{ $vuetify.locale.isRtl ? 'mdi-arrow-left' : 'mdi-arrow-right' }}
             .admin-nav__label Settings
             template(v-if='filteredNavGroups.length')
               .admin-nav__group(
@@ -117,9 +119,19 @@
             )
               v-list-item-title {{ $t('admin:contribute.title') }}
               template(v-slot:append)
-                v-icon(size='16') mdi-arrow-top-right
+                v-icon(size='16') {{ $vuetify.locale.isRtl ? 'mdi-arrow-left' : 'mdi-arrow-right' }}
 
     v-main.admin-main(ref='adminMain' tabindex='-1')
+      .admin-route-bar
+        nav.admin-route-bar__crumbs(aria-label='Breadcrumb')
+          router-link.admin-route-bar__home(to='/dashboard') Administration
+          v-icon(size='14') {{ $vuetify.locale.isRtl ? 'mdi-chevron-left' : 'mdi-chevron-right' }}
+          span.admin-route-bar__group(v-if='currentRouteGroup') {{ currentRouteGroup.label }}
+          v-icon(v-if='currentRouteGroup' size='14') {{ $vuetify.locale.isRtl ? 'mdi-chevron-left' : 'mdi-chevron-right' }}
+          strong(aria-current='page') {{ currentRouteLabel }}
+        .admin-route-bar__section(v-if='currentRouteGroup')
+          v-icon(size='16') {{ currentRouteGroup.icon }}
+          span {{ currentRouteGroup.label }}
       transition(name='admin-router')
         router-view
 
@@ -290,6 +302,28 @@ export default defineComponent({
             : group.items.filter(item => item.label.toLocaleLowerCase().includes(query))
         }))
         .filter(group => group.items.length > 0)
+    },
+    currentRouteGroup(): AdminNavGroup | undefined {
+      const currentPath = this.$route.path
+      return this.navGroups.find(group =>
+        group.items.some(item => item.to && (currentPath === item.to || currentPath.startsWith(`${item.to}/`)))
+      )
+    },
+    currentRouteItem(): AdminNavItem | undefined {
+      const currentPath = this.$route.path
+      return this.currentRouteGroup?.items.find(item =>
+        item.to && (currentPath === item.to || currentPath.startsWith(`${item.to}/`))
+      )
+    },
+    currentRouteLabel(): string {
+      if (this.$route.path === '/dashboard') return this.$t('admin:dashboard.title')
+      if (this.$route.path === '/contribute') return this.$t('admin:contribute.title')
+      return this.currentRouteItem?.label || 'Administration'
+    },
+    currentRouteIcon(): string {
+      if (this.$route.path === '/dashboard') return 'mdi-view-dashboard-variant-outline'
+      if (this.$route.path === '/contribute') return 'mdi-heart-outline'
+      return this.currentRouteItem?.icon || 'mdi-shield-crown-outline'
     }
   },
   created() {
@@ -358,58 +392,77 @@ export default defineComponent({
 .admin-context--mobile {
   display: none;
 }
+
 .admin-context {
+  display: inline-flex;
+  max-width: min(34rem, 50vw);
   align-items: center;
-  gap: 8px;
-  padding: 6px 12px;
-  border: 1px solid color-mix(in srgb, rgb(var(--v-theme-primary)) 18%, transparent);
-  border-radius: 999px;
-  background: color-mix(in srgb, rgb(var(--v-theme-primary)) 7%, transparent);
-  color: rgb(var(--v-theme-primary));
-  font-size: .72rem;
-  font-weight: 680;
-  letter-spacing: .08em;
+  gap: var(--wiki-space-2);
+  padding: var(--wiki-space-1) var(--wiki-space-3);
+  border: 1px solid color-mix(in srgb, var(--wiki-ambient-accent) 24%, transparent);
+  border-radius: var(--wiki-radius-pill);
+  background: color-mix(in srgb, var(--wiki-ambient-accent) 8%, transparent);
+  color: rgb(var(--v-theme-on-surface));
+  font-size: var(--wiki-label-size);
+  font-weight: var(--wiki-label-weight);
+  letter-spacing: .055em;
   text-transform: uppercase;
+
+  &__root {
+    color: var(--wiki-accent-warm);
+  }
+
+  &__separator {
+    flex: 0 0 auto;
+    opacity: .38;
+  }
+
+  &__current {
+    overflow: hidden;
+    min-width: 0;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
 }
 
 .admin-sidebar {
-  border-inline-end: 1px solid rgba(var(--v-border-color), .12);
+  border-inline-end: 1px solid var(--wiki-surface-border);
   background:
-    linear-gradient(180deg, color-mix(in srgb, rgb(var(--v-theme-primary)) 5%, rgb(var(--v-theme-surface))) 0, rgb(var(--v-theme-surface)) 190px);
+    linear-gradient(180deg, color-mix(in srgb, var(--wiki-ambient-accent) 6%, var(--wiki-surface-raised)) 0, rgb(var(--v-theme-surface)) 12rem);
 
   &__inner {
     display: flex;
-    flex-direction: column;
     height: 100%;
     min-height: 0;
+    flex-direction: column;
   }
 
   &__brand {
     display: flex;
     align-items: center;
-    gap: 12px;
-    padding: 22px 18px 14px;
+    gap: var(--wiki-space-3);
+    padding: var(--wiki-space-5) var(--wiki-space-4) var(--wiki-space-3);
   }
 
   &__brand-icon {
     display: grid;
+    width: var(--wiki-control-height);
+    height: var(--wiki-control-height);
     flex: 0 0 auto;
-    width: 44px;
-    height: 44px;
     place-items: center;
-    border: 1px solid color-mix(in srgb, rgb(var(--v-theme-primary)) 22%, transparent);
-    border-radius: 14px;
-    background: color-mix(in srgb, rgb(var(--v-theme-primary)) 11%, rgb(var(--v-theme-surface)));
-    color: rgb(var(--v-theme-primary));
-    box-shadow: 0 8px 24px rgba(var(--v-theme-primary), .1);
+    border: 1px solid color-mix(in srgb, var(--wiki-ambient-accent) 28%, transparent);
+    border-radius: var(--wiki-control-radius);
+    background: color-mix(in srgb, var(--wiki-ambient-accent) 11%, var(--wiki-surface-raised));
+    color: var(--wiki-accent-warm);
+    box-shadow: var(--wiki-shadow-sm), var(--wiki-shadow-inset);
   }
 
   &__eyebrow {
-    margin-bottom: 2px;
-    color: rgb(var(--v-theme-primary));
-    font-size: .67rem;
-    font-weight: 750;
-    letter-spacing: .12em;
+    margin-bottom: var(--wiki-space-1);
+    color: var(--wiki-accent-warm);
+    font-size: var(--wiki-label-size);
+    font-weight: var(--wiki-label-weight);
+    letter-spacing: .1em;
     text-transform: uppercase;
   }
 
@@ -421,31 +474,30 @@ export default defineComponent({
   }
 
   &__search {
-    padding: 6px 14px 12px;
+    padding: var(--wiki-space-2) var(--wiki-space-3) var(--wiki-space-3);
 
     .v-field {
-      border: 1px solid rgba(var(--v-border-color), .12);
-      border-radius: 12px;
-      background: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 4%, transparent) !important;
-      box-shadow: none;
+      border: 1px solid var(--wiki-surface-border);
+      border-radius: var(--wiki-control-radius);
+      background: var(--wiki-surface-sunken) !important;
+      box-shadow: var(--wiki-shadow-inset);
     }
 
     .v-field--focused {
-      border-color: color-mix(in srgb, rgb(var(--v-theme-primary)) 55%, transparent);
+      border-color: color-mix(in srgb, var(--wiki-focus-color) 56%, transparent);
       background: rgb(var(--v-theme-surface)) !important;
-      box-shadow: 0 0 0 3px rgba(var(--v-theme-primary), .1);
     }
   }
 
   &__scroll {
-    flex: 1 1 auto;
     min-height: 0;
+    flex: 1 1 auto;
   }
 
   &__footer {
-    padding: 8px 12px 12px;
-    border-top: 1px solid rgba(var(--v-border-color), .1);
-    background: rgb(var(--v-theme-surface));
+    padding: var(--wiki-space-2) var(--wiki-space-3) var(--wiki-space-3);
+    border-top: 1px solid var(--wiki-surface-border);
+    background: var(--wiki-surface-raised);
 
     .v-list {
       padding: 0;
@@ -455,81 +507,83 @@ export default defineComponent({
 }
 
 .admin-nav {
-  padding: 2px 12px 16px;
+  padding: var(--wiki-space-1) var(--wiki-space-3) var(--wiki-space-4);
   background: transparent;
 
   &__dashboard {
-    min-height: 46px;
-    margin-bottom: 16px;
-    background: color-mix(in srgb, rgb(var(--v-theme-primary)) 8%, transparent);
-    font-weight: 650;
+    min-height: var(--wiki-control-height);
+    margin-bottom: var(--wiki-space-4);
+    border: 1px solid color-mix(in srgb, var(--wiki-ambient-accent) 18%, transparent);
+    background: color-mix(in srgb, var(--wiki-ambient-accent) 8%, transparent);
+    font-weight: 680;
   }
 
   &__label {
-    padding: 0 10px 7px;
-    color: rgb(var(--v-theme-on-surface));
-    opacity: .62;
-    font-size: .65rem;
-    font-weight: 750;
-    letter-spacing: .12em;
+    padding: 0 var(--wiki-space-2) var(--wiki-space-2);
+    color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 62%, transparent);
+    font-size: var(--wiki-label-size);
+    font-weight: var(--wiki-label-weight);
+    letter-spacing: .1em;
     text-transform: uppercase;
   }
 
   &__section {
     display: flex;
     width: 100%;
-    min-height: 44px;
+    min-height: var(--wiki-control-height);
     align-items: center;
-    gap: 14px;
-    margin: 3px 0;
-    padding: 0 12px;
+    gap: var(--wiki-space-3);
+    margin: var(--wiki-space-1) 0;
+    padding: 0 var(--wiki-space-3);
     border: 0;
-    border-radius: 12px;
+    border-radius: var(--wiki-control-radius);
     background: transparent;
     color: rgb(var(--v-theme-on-surface));
     cursor: pointer;
     font: inherit;
-    font-weight: 620;
+    font-weight: 650;
     text-align: start;
-    transition: background-color .16s ease, color .16s ease;
+    transition:
+      background-color var(--wiki-motion-fast) var(--wiki-motion-ease),
+      color var(--wiki-motion-fast) var(--wiki-motion-ease);
 
     &:hover {
-      background: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 5%, transparent);
+      background: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 6%, transparent);
     }
   }
 
   &__section-icon {
     flex: 0 0 auto;
-    opacity: .82;
+    color: color-mix(in srgb, var(--wiki-ambient-accent) 68%, rgb(var(--v-theme-on-surface)));
   }
 
   &__section-chevron {
     margin-inline-start: auto;
-    opacity: .58;
+    opacity: .52;
   }
 
   &__items {
-    margin-inline-start: 23px;
-    padding-inline-start: 5px;
-    border-inline-start: 1px solid rgba(var(--v-border-color), .14);
+    margin-inline-start: var(--wiki-space-6);
+    padding-inline-start: var(--wiki-space-1);
+    border-inline-start: 1px solid var(--wiki-surface-border);
   }
 
   &__item {
-    min-height: 42px;
-    margin: 2px 0;
-    padding-inline-start: 14px !important;
+    min-height: var(--wiki-control-height);
+    margin: var(--wiki-space-1) 0;
+    padding-inline-start: var(--wiki-space-3) !important;
     color: rgb(var(--v-theme-on-surface));
-    opacity: .74;
+    opacity: .72;
 
     .v-list-item__prepend > .v-icon {
-      margin-inline-end: 14px;
-      font-size: 19px;
+      margin-inline-end: var(--wiki-space-3);
+      font-size: 1.1875rem;
       opacity: .72;
     }
   }
 
   &__count {
-    min-width: 24px;
+    min-width: var(--wiki-space-6);
     justify-content: center;
     font-weight: 700;
   }
@@ -537,182 +591,244 @@ export default defineComponent({
   &__empty {
     display: grid;
     justify-items: center;
-    gap: 4px;
-    padding: 36px 16px;
-    color: rgb(var(--v-theme-on-surface));
-    opacity: .64;
+    gap: var(--wiki-space-1);
+    padding: var(--wiki-space-10) var(--wiki-space-4);
+    color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 64%, transparent);
     text-align: center;
   }
 
   .v-list-item--active {
     opacity: 1;
-    background: color-mix(in srgb, rgb(var(--v-theme-primary)) 11%, transparent);
-    color: rgb(var(--v-theme-primary));
+    background: color-mix(in srgb, var(--wiki-ambient-accent) 12%, transparent);
+    color: var(--wiki-accent-warm);
+    box-shadow: inset .1875rem 0 0 var(--wiki-ambient-accent);
 
     .v-icon {
-      color: rgb(var(--v-theme-primary));
+      color: var(--wiki-accent-warm);
       opacity: 1;
     }
   }
 }
 
 .admin-main {
+  min-width: 0;
   background:
-    radial-gradient(circle at 85% -10%, rgba(var(--v-theme-primary), .08), transparent 34rem),
-    rgb(var(--v-theme-background));
+    radial-gradient(circle at 88% -8%, color-mix(in srgb, var(--wiki-ambient-accent) 10%, transparent), transparent 34rem),
+    var(--wiki-surface-sunken);
+
+  > .admin-route-bar {
+    display: flex;
+    width: min(100%, var(--wiki-content-max));
+    min-height: var(--wiki-control-height);
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--wiki-space-4);
+    margin: 0 auto;
+    padding: var(--wiki-space-3) var(--wiki-page-gutter);
+    border-bottom: 1px solid var(--wiki-surface-border);
+  }
 
   > .v-container {
     width: min(100%, var(--wiki-content-max));
     margin: 0 auto;
-    padding: 28px var(--wiki-page-gutter) 48px;
+    padding: var(--wiki-space-6) var(--wiki-page-gutter) var(--wiki-space-12);
   }
 
-  .admin-header {
-    display: flex;
-    align-items: center;
-    min-height: 80px;
-    margin-bottom: 14px;
-    padding: 4px 2px;
+  > .v-container:not(.admin-agents) {
+    .admin-header {
+      display: flex;
+      min-height: 5rem;
+      align-items: center;
+      margin-bottom: var(--wiki-space-3);
+      padding: var(--wiki-space-1);
 
-    > img {
-      width: 64px !important;
-      height: 64px !important;
-      padding: 9px;
-      border: 1px solid color-mix(in srgb, rgb(var(--v-theme-primary)) 20%, transparent);
-      border-radius: 18px;
-      background:
-        linear-gradient(145deg, color-mix(in srgb, rgb(var(--v-theme-primary)) 13%, rgb(var(--v-theme-surface))), rgb(var(--v-theme-surface)));
-      object-fit: contain;
-      box-shadow: 0 12px 30px rgba(var(--v-theme-primary), .1);
-    }
-
-    &-title {
-      min-width: 0;
-      margin-inline: 18px;
-
-      > .text-headline-medium {
-        color: rgb(var(--v-theme-on-surface)) !important;
-        font-size: clamp(1.65rem, 2vw, 2.1rem) !important;
-        font-weight: 720;
-        letter-spacing: -.035em !important;
-        line-height: 1.15;
+      > img {
+        width: 4rem !important;
+        height: 4rem !important;
+        padding: var(--wiki-space-2);
+        border: 1px solid color-mix(in srgb, var(--wiki-ambient-accent) 24%, transparent);
+        border-radius: var(--wiki-panel-radius);
+        background: color-mix(in srgb, var(--wiki-ambient-accent) 10%, var(--wiki-surface-raised));
+        object-fit: contain;
+        box-shadow: var(--wiki-shadow-sm), var(--wiki-shadow-inset);
       }
 
-      > .text-body-large {
-        margin-top: 5px;
-        color: rgb(var(--v-theme-on-surface)) !important;
-        opacity: .68;
-        font-size: .98rem !important;
-        line-height: 1.45;
+      &-title {
+        min-width: 0;
+        margin-inline: var(--wiki-space-5);
+
+        > .text-headline-medium {
+          color: rgb(var(--v-theme-on-surface)) !important;
+          font-size: clamp(1.65rem, 2vw, 2.1rem) !important;
+          font-weight: 720;
+          letter-spacing: -.035em !important;
+          line-height: var(--wiki-leading-heading);
+        }
+
+        > .text-body-large {
+          margin-top: var(--wiki-space-1);
+          color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 68%, transparent) !important;
+          font-size: .98rem !important;
+          line-height: 1.45;
+        }
       }
     }
-  }
 
-  .v-card:not(.v-card--flat) {
-    border: 1px solid rgba(var(--v-border-color), .13);
-    border-radius: 16px;
-    background: color-mix(in srgb, rgb(var(--v-theme-surface)) 97%, rgb(var(--v-theme-background)));
-    box-shadow: 0 8px 28px rgba(20, 28, 50, .055);
-  }
+    .v-card:not(.v-card--flat) {
+      border: 1px solid var(--wiki-surface-border);
+      border-radius: var(--wiki-panel-radius);
+      background: var(--wiki-surface-raised);
+      box-shadow: var(--wiki-shadow-sm), var(--wiki-shadow-inset);
+    }
 
-  .v-card > .v-toolbar:not(.bg-error):not(.bg-warning) {
-    border-bottom: 1px solid rgba(var(--v-border-color), .1);
-    background: color-mix(in srgb, rgb(var(--v-theme-primary)) 5%, rgb(var(--v-theme-surface))) !important;
-    color: rgb(var(--v-theme-on-surface)) !important;
-
-    .v-toolbar-title,
-    .text-body-large,
-    .v-icon {
+    .v-card > .v-toolbar:not(.bg-error):not(.bg-warning) {
+      border-bottom: 1px solid var(--wiki-surface-border);
+      background: color-mix(in srgb, var(--wiki-ambient-accent) 5%, var(--wiki-surface-raised)) !important;
       color: rgb(var(--v-theme-on-surface)) !important;
-    }
-  }
 
-  .v-card-title {
-    min-height: 58px;
-    padding: 16px 20px;
-    font-size: 1rem;
-    font-weight: 680;
-    letter-spacing: -.01em;
-  }
-
-  .v-card-text {
-    padding: 20px;
-  }
-
-  .v-field {
-    border-radius: 11px;
-  }
-
-  .v-btn:not(.v-btn--icon) {
-    border-radius: 10px;
-    font-weight: 650;
-    letter-spacing: .01em;
-    text-transform: none;
-  }
-
-  .v-alert {
-    border-radius: 13px;
-  }
-
-  .v-tabs {
-    border-radius: 13px 13px 0 0;
-  }
-
-  .v-data-table {
-    border-radius: 0 0 16px 16px;
-
-    thead th {
-      color: rgb(var(--v-theme-on-surface));
-      opacity: .66;
-      font-size: .7rem;
-      font-weight: 750;
-      letter-spacing: .06em;
-      text-transform: uppercase;
-    }
-
-    tbody tr {
-      transition: background-color .16s ease;
-
-      &:hover {
-
-
-        background: color-mix(in srgb, rgb(var(--v-theme-primary)) 4%, transparent);
+      .v-toolbar-title,
+      .text-body-large,
+      .v-icon {
+        color: rgb(var(--v-theme-on-surface)) !important;
       }
     }
+
+    .v-card-title {
+      min-height: 3.625rem;
+      padding: var(--wiki-space-4) var(--wiki-space-5);
+      font-size: 1rem;
+      font-weight: 680;
+      letter-spacing: -.01em;
+    }
+
+    .v-card-text {
+      padding: var(--wiki-space-5);
+    }
+
+    .v-field,
+    .v-btn:not(.v-btn--icon) {
+      border-radius: var(--wiki-control-radius);
+    }
+
+    .v-btn:not(.v-btn--icon) {
+      font-weight: 650;
+      letter-spacing: .01em;
+      text-transform: none;
+    }
+
+    .v-alert {
+      border-radius: var(--wiki-control-radius);
+    }
+
+    .v-tabs {
+      border-radius: var(--wiki-control-radius) var(--wiki-control-radius) 0 0;
+    }
+
+    .v-data-table {
+      border-radius: 0 0 var(--wiki-panel-radius) var(--wiki-panel-radius);
+
+      thead th {
+        color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 66%, transparent);
+        font-size: var(--wiki-label-size);
+        font-weight: var(--wiki-label-weight);
+        letter-spacing: .055em;
+        text-transform: uppercase;
+      }
+
+      tbody tr {
+        transition: background-color var(--wiki-motion-fast) var(--wiki-motion-ease);
+
+        &:hover {
+          background: color-mix(in srgb, var(--wiki-ambient-accent) 5%, transparent);
+        }
+      }
+    }
+
+    .v-card-info {
+      border: 0;
+      border-bottom: 1px solid var(--wiki-surface-border);
+      background: color-mix(in srgb, rgb(var(--v-theme-info)) 8%, var(--wiki-surface-raised));
+      color: rgb(var(--v-theme-on-surface));
+    }
+
+    .wiki-form .v-input + .v-input {
+      margin-top: var(--wiki-space-1);
+    }
+  }
+}
+
+.admin-route-bar {
+  &__crumbs {
+    display: flex;
+    overflow: hidden;
+    min-width: 0;
+    align-items: center;
+    gap: var(--wiki-space-2);
+    color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 58%, transparent);
+    font-size: .78rem;
+
+    > * {
+      flex: 0 0 auto;
+    }
+
+    strong {
+      overflow: hidden;
+      min-width: 0;
+      color: rgb(var(--v-theme-on-surface));
+      font-weight: 680;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
   }
 
-  .v-card-info {
-    border: 0;
-    border-bottom: 1px solid rgba(var(--v-border-color), .1);
-    background: color-mix(in srgb, rgb(var(--v-theme-info)) 8%, rgb(var(--v-theme-surface)));
-    color: rgb(var(--v-theme-on-surface));
+  &__home {
+    color: inherit;
+    text-decoration: none;
+
+    &:hover {
+      color: var(--wiki-accent-warm);
+    }
   }
 
-  .wiki-form .v-input + .v-input {
-    margin-top: 4px;
+  &__section {
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: var(--wiki-space-2);
+    padding: var(--wiki-space-1) var(--wiki-space-3);
+    border: 1px solid var(--wiki-surface-border);
+    border-radius: var(--wiki-radius-pill);
+    background: var(--wiki-surface-raised);
+    color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 68%, transparent);
+    font-size: var(--wiki-label-size);
+    font-weight: var(--wiki-label-weight);
+    letter-spacing: .055em;
+    text-transform: uppercase;
+    box-shadow: var(--wiki-shadow-xs);
   }
 }
 
 .admin-filter-bar {
-  gap: 8px;
-  border-radius: var(--wiki-control-radius, 11px);
-  background: color-mix(in srgb, rgb(var(--v-theme-primary)) 4%, rgb(var(--v-theme-surface)));
+  gap: var(--wiki-space-2);
+  border-radius: var(--wiki-control-radius);
+  background: color-mix(in srgb, var(--wiki-ambient-accent) 5%, var(--wiki-surface-raised));
 
   .v-input {
-    flex: 1 1 220px;
-    max-width: 400px;
+    max-width: 25rem;
+    flex: 1 1 13.75rem;
   }
 }
 
 .admin-record-link,
 .admin-mobile-record-title {
-  color: rgb(var(--v-theme-primary));
+  color: var(--wiki-accent-warm);
   font-weight: 650;
   text-decoration: none;
 
   &:hover,
   &:focus-visible {
     text-decoration: underline;
+    text-underline-offset: .18em;
   }
 }
 
@@ -728,17 +844,19 @@ export default defineComponent({
 
 .admin-router {
   &-enter-active {
-    transition: opacity .22s ease, transform .22s ease;
+    transition:
+      opacity var(--wiki-motion-normal) var(--wiki-motion-ease),
+      transform var(--wiki-motion-normal) var(--wiki-motion-ease-out);
   }
 
   &-leave-active {
     position: absolute;
-    transition: opacity .14s ease;
+    transition: opacity var(--wiki-motion-fast) var(--wiki-motion-ease);
   }
 
   &-enter-from {
     opacity: 0;
-    transform: translateY(6px);
+    transform: translateY(var(--wiki-space-2));
   }
 
   &-leave-to {
@@ -748,30 +866,30 @@ export default defineComponent({
 
 .admin-providerlogo {
   display: flex;
-  width: 220px;
-  height: 48px;
-  float: right;
+  width: 13.75rem;
+  height: 3rem;
+  float: inline-end;
   justify-content: flex-end;
-  margin-inline-start: 16px;
+  margin-inline-start: var(--wiki-space-4);
 
   img {
     max-width: 100%;
-    max-height: 48px;
+    max-height: 3rem;
   }
 }
 
 .v-application.admin code {
   box-shadow: none;
-  color: mc('pink', '500');
-  font-family: 'Roboto Mono', monospace;
+  color: var(--wiki-accent-spectral);
+  font-family: var(--wiki-font-mono);
 }
 
 @media (max-width: 959px) {
   .admin-context--mobile {
     display: inline-flex;
-    margin-inline-start: 4px;
-    padding: 5px 9px;
-    font-size: .65rem;
+    max-width: min(12rem, 48vw);
+    margin-inline-start: var(--wiki-space-1);
+    padding: var(--wiki-space-1) var(--wiki-space-2);
   }
 
   .admin-context:not(.admin-context--mobile) {
@@ -779,59 +897,72 @@ export default defineComponent({
   }
 
   .admin-sidebar {
-    max-width: calc(100vw - 32px);
+    max-width: calc(100vw - var(--wiki-space-8));
   }
 
   .admin-main {
-    min-width: 0;
+    > .admin-route-bar {
+      padding: var(--wiki-space-2) var(--wiki-page-gutter);
+    }
 
     > .v-container {
-      padding: 18px 14px 36px;
+      padding: var(--wiki-space-4) var(--wiki-page-gutter) var(--wiki-space-10);
     }
 
-    .admin-header {
-      flex-wrap: wrap;
-      gap: 10px;
-      min-height: auto;
-      margin-bottom: 8px;
+    > .v-container:not(.admin-agents) {
+      .admin-header {
+        min-height: auto;
+        flex-wrap: wrap;
+        gap: var(--wiki-space-2);
+        margin-bottom: var(--wiki-space-2);
 
-      > img {
-        width: 50px !important;
-        height: 50px !important;
-        padding: 7px;
-        border-radius: 14px;
-      }
-
-      &-title {
-        flex: 1 1 calc(100% - 72px);
-        margin-inline: 4px;
-
-        > .text-headline-medium {
-          font-size: 1.5rem !important;
+        > img {
+          width: 3.125rem !important;
+          height: 3.125rem !important;
+          padding: var(--wiki-space-2);
+          border-radius: var(--wiki-control-radius);
         }
 
-        > .text-body-large {
-          font-size: .88rem !important;
+        &-title {
+          flex: 1 1 calc(100% - 4.5rem);
+          margin-inline: var(--wiki-space-1);
+
+          > .text-headline-medium {
+            font-size: 1.5rem !important;
+          }
+
+          > .text-body-large {
+            font-size: .88rem !important;
+          }
+        }
+
+        > .v-spacer {
+          display: none;
+        }
+
+        > .v-btn,
+        > .v-dialog {
+          margin-top: var(--wiki-space-1);
         }
       }
 
-      > .v-spacer {
-        display: none;
-      }
-
-      > .v-btn,
-      > .v-dialog {
-        margin-top: 2px;
+      .v-card-text {
+        padding: var(--wiki-space-4);
       }
     }
-    .v-card-text {
-      padding: 16px;
+  }
+
+  .admin-route-bar {
+    &__group,
+    &__group + .v-icon,
+    &__section {
+      display: none;
     }
   }
 
   .admin-filter-bar {
     flex-wrap: wrap;
-    gap: 8px;
+    gap: var(--wiki-space-2);
 
     > .v-spacer {
       display: none;
@@ -853,8 +984,8 @@ export default defineComponent({
   }
 
   .admin-mobile-record {
-    padding: 14px 16px;
-    border-bottom: 1px solid rgba(var(--v-border-color), .12);
+    padding: var(--wiki-space-3) var(--wiki-space-4);
+    border-bottom: 1px solid var(--wiki-surface-border);
 
     &-title {
       overflow: hidden;
@@ -866,18 +997,16 @@ export default defineComponent({
 
     &-subtitle {
       overflow: hidden;
-      margin-top: 3px;
-      color: rgb(var(--v-theme-on-surface));
-      opacity: .72;
+      margin-top: var(--wiki-space-1);
+      color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 72%, transparent);
       text-overflow: ellipsis;
       white-space: nowrap;
     }
 
     &-meta {
       overflow: hidden;
-      margin-top: 6px;
-      color: rgb(var(--v-theme-on-surface));
-      opacity: .72;
+      margin-top: var(--wiki-space-2);
+      color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 72%, transparent);
       text-overflow: ellipsis;
       white-space: nowrap;
     }
@@ -887,15 +1016,25 @@ export default defineComponent({
     position: sticky;
     bottom: 0;
     z-index: 2;
+    min-height: 4rem;
     flex-wrap: wrap;
-    min-height: 64px;
   }
 
   .v-dialog > .v-overlay__content {
-    width: calc(100vw - 24px);
-    max-width: calc(100vw - 24px) !important;
-    max-height: calc(100dvh - 24px);
-    margin: 12px;
+    width: calc(100vw - var(--wiki-space-6));
+    max-width: calc(100vw - var(--wiki-space-6)) !important;
+    max-height: calc(100dvh - var(--wiki-space-6));
+    margin: var(--wiki-space-3);
+  }
+}
+
+@media print {
+  .admin-route-bar {
+    display: none !important;
+  }
+
+  .admin-main {
+    background: transparent !important;
   }
 }
 

@@ -20,70 +20,49 @@
           :aria-label='$t(`editor:props.title`)'
         )
       template(v-slot:actions)
-        v-btn.mr-3.animated.fadeIn(
-          color='amber'
-          variant="outlined"
+        v-btn.editor-conflict-action.mr-3.animated.fadeIn(
+          color='warning'
+          variant="tonal"
           size="small"
           v-if='isConflict'
           @click='openConflict'
           :icon='$vuetify.display.smAndDown'
           aria-label='Resolve editing conflict'
         )
-          .text-label-small.text-amber.mr-3(v-if='$vuetify.display.mdAndUp') Conflict
+          .text-label-small.mr-3(v-if='$vuetify.display.mdAndUp') Conflict
           status-indicator(intermediary, pulse)
-        v-btn.animated.fadeInDown(
-          variant="text"
-          color='green'
+        v-btn.editor-save-action.animated.fadeInDown(
+          :variant='mode === `create` || isDirty ? `flat` : `text`'
+          color='primary'
           @click.exact='save'
           @click.ctrl.exact='saveAndClose'
           :class='{ "is-icon": $vuetify.display.mdAndDown }'
           :aria-label='mode === `create` ? $t(`common:actions.create`) : (isDirty ? $t(`common:actions.save`) : $t(`editor:save.saved`))'
           )
           v-icon(:start='$vuetify.display.lgAndUp') mdi-check
-          span.text-grey(v-if='$vuetify.display.lgAndUp && mode !== `create` && !isDirty') {{ $t('editor:save.saved') }}
+          span.text-medium-emphasis(v-if='$vuetify.display.lgAndUp && mode !== `create` && !isDirty') {{ $t('editor:save.saved') }}
           span(v-else-if='$vuetify.display.lgAndUp') {{ mode === 'create' ? $t('common:actions.create') : $t('common:actions.save') }}
-        v-btn.animated.fadeInDown.wait-p1s(
+        v-btn.editor-page-action.animated.fadeInDown.wait-p1s(
           v-if='$vuetify.display.mdAndUp'
-          variant="text"
-          color='blue'
+          variant="tonal"
+          color='primary'
           @click='openPropsModal'
           :class='{ "is-icon": $vuetify.display.mdAndDown, "mx-0": !welcomeMode, "ml-0": welcomeMode }'
           :aria-label='$t(`common:actions.page`)'
           )
           v-icon(:start='$vuetify.display.lgAndUp') mdi-tag-text-outline
           span(v-if='$vuetify.display.lgAndUp') {{ $t('common:actions.page') }}
-        v-btn.animated.fadeInDown.wait-p2s(
+        v-btn.editor-close-action.animated.fadeInDown.wait-p2s(
           v-if='!welcomeMode && $vuetify.display.mdAndUp'
           variant="text"
-          color='red'
+          color='error'
           :class='{ "is-icon": $vuetify.display.mdAndDown }'
           :aria-label='$t(`common:actions.close`)'
           @click='exit'
           )
           v-icon(:start='$vuetify.display.lgAndUp') mdi-close
           span(v-if='$vuetify.display.lgAndUp') {{ $t('common:actions.close') }}
-        v-menu(v-if='$vuetify.display.smAndDown', location="bottom left", min-width='240')
-          template(v-slot:activator='{ props }')
-            v-btn.editor-actions-menu(
-              icon
-              v-bind='props'
-              aria-label='Editor actions'
-            )
-              v-icon(color='grey') mdi-dots-vertical
-          v-list(nav)
-            v-list-item(@click='openPropsModal')
-              template(v-slot:prepend)
-                v-icon.mr-3(color='blue') mdi-tag-text-outline
-              v-list-item-title Page settings
-            v-list-item(@click='saveAndClose')
-              template(v-slot:prepend)
-                v-icon.mr-3(color='green') mdi-content-save-move
-              v-list-item-title Save and close
-            v-list-item(v-if='!welcomeMode', @click='exit')
-              template(v-slot:prepend)
-                v-icon.mr-3(color='red') mdi-close
-              v-list-item-title Close editor
-        v-divider.ml-3(v-if='$vuetify.display.mdAndUp', vertical)
+        v-divider.editor-actions-divider.ml-3(v-if='$vuetify.display.mdAndUp', vertical)
     v-main
       component(:is='currentEditor', :save='save')
       editor-modal-properties(v-model='dialogProps')
@@ -91,6 +70,43 @@
       editor-modal-unsaved(v-model='dialogUnsaved', @discard='exitGo')
       component(:is='activeModal')
 
+    v-bottom-navigation.editor-mobile-actions(
+      v-if='$vuetify.display.smAndDown'
+      grow
+      :elevation='0'
+    )
+      v-btn(
+        color='primary'
+        @click.exact='save'
+        :aria-label='mode === `create` ? $t(`common:actions.create`) : (isDirty ? $t(`common:actions.save`) : $t(`editor:save.saved`))'
+      )
+        v-icon mdi-check
+        span {{ mode === 'create' ? $t('common:actions.create') : (isDirty ? $t('common:actions.save') : $t('editor:save.saved')) }}
+      v-btn(color='primary', @click='openPropsModal', :aria-label='$t(`common:actions.page`)')
+        v-icon mdi-tag-text-outline
+        span {{ $t('common:actions.page') }}
+      v-menu(location='top end', min-width='240')
+        template(v-slot:activator='{ props }')
+          v-btn(
+            v-bind='props'
+            :color='isConflict ? `warning` : undefined'
+            aria-label='More editor actions'
+          )
+            v-icon {{ isConflict ? 'mdi-alert-outline' : 'mdi-dots-horizontal' }}
+            span More
+        v-list.editor-mobile-menu(nav)
+          v-list-item(v-if='isConflict', @click='openConflict')
+            template(v-slot:prepend)
+              v-icon(color='warning') mdi-alert-outline
+            v-list-item-title Conflict
+          v-list-item(@click='saveAndClose')
+            template(v-slot:prepend)
+              v-icon(color='primary') mdi-content-save-move-outline
+            v-list-item-title Save and close
+          v-list-item(v-if='!welcomeMode', @click='exit')
+            template(v-slot:prepend)
+              v-icon(color='error') mdi-close
+            v-list-item-title {{ $t('common:actions.close') }}
     loader(v-model='dialogProgress', :title='$t(`editor:save.processing`)', :subtitle='$t(`editor:save.pleaseWait`)')
     notify</template>
 
@@ -538,59 +554,151 @@ export default defineComponent({
 </script>
 
 <style lang='scss'>
+.editor {
+  min-height: 100vh;
+  min-height: 100dvh;
+  background: rgb(var(--v-theme-background)) !important;
 
-  .editor {
-    min-height: 100vh;
-    min-height: 100dvh;
-    background: rgb(var(--v-theme-background)) !important;
+  .v-application__wrap {
+    min-width: 0;
+    background:
+      radial-gradient(circle at 50% 0, color-mix(in srgb, var(--wiki-accent-spectral) 7%, transparent), transparent 34rem),
+      rgb(var(--v-theme-background));
+  }
 
-    .v-application__wrap {
+  .nav-header {
+    border-bottom: 1px solid var(--wiki-surface-border) !important;
+    background: var(--wiki-surface-raised) !important;
+    box-shadow: var(--wiki-shadow-xs) !important;
+  }
+
+  .nav-header-slot-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--wiki-space-1);
+  }
+
+  .v-main {
+    display: flex;
+    min-width: 0;
+    min-height: 0;
+    flex: 1 1 auto;
+
+    > :first-child {
       min-width: 0;
-      background: rgb(var(--v-theme-background));
-    }
-
-    .v-main {
-      display: flex;
       flex: 1 1 auto;
-      min-height: 0;
-    }
-
-    &-title-input {
-      max-width: 42rem;
-
-      .v-field {
-        border: 1px solid rgba(var(--v-theme-on-surface), .14);
-        border-radius: 10px;
-        background: rgba(var(--v-theme-on-surface), .045) !important;
-        box-shadow: none;
-      }
-
-      .v-field--focused {
-        border-color: rgba(var(--v-theme-primary), .48);
-        box-shadow: 0 0 0 3px rgba(var(--v-theme-primary), .08);
-      }
-
-      input {
-        color: rgba(var(--v-theme-on-surface), .9);
-        font-weight: 620;
-        text-align: center;
-      }
-    }
-
-    &-title-input-mobile {
-      width: 100%;
-      min-width: 0;
-
-      .v-field {
-        padding-inline: 2px;
-      }
-
-      input {
-        font-size: .875rem;
-        text-align: start;
-      }
     }
   }
+
+  &-title-input {
+    width: min(100%, 42rem);
+
+    .v-field {
+      border: 1px solid var(--wiki-surface-border);
+      border-radius: var(--wiki-control-radius);
+      background: var(--wiki-surface-sunken) !important;
+      box-shadow: var(--wiki-shadow-inset);
+      transition:
+        border-color var(--wiki-motion-fast) var(--wiki-motion-ease),
+        background-color var(--wiki-motion-fast) var(--wiki-motion-ease),
+        box-shadow var(--wiki-motion-fast) var(--wiki-motion-ease);
+    }
+
+    .v-field:hover {
+      border-color: var(--wiki-surface-border-strong);
+      background: var(--wiki-surface-raised) !important;
+    }
+
+    .v-field--focused {
+      border-color: color-mix(in srgb, var(--wiki-focus-color) 58%, transparent);
+      background: var(--wiki-surface-raised) !important;
+      box-shadow: var(--wiki-focus-ring), var(--wiki-shadow-inset);
+    }
+
+    input {
+      color: rgb(var(--v-theme-on-surface));
+      font-weight: 650;
+      letter-spacing: -.01em;
+      text-align: center;
+    }
+  }
+
+  &-title-input-mobile {
+    width: 100%;
+    min-width: 0;
+
+    .v-field {
+      padding-inline: var(--wiki-space-1);
+    }
+
+    input {
+      font-size: .875rem;
+      text-align: start;
+    }
+  }
+}
+
+.editor-save-action,
+.editor-page-action,
+.editor-close-action,
+.editor-conflict-action {
+  min-height: var(--wiki-control-height);
+  border-radius: var(--wiki-control-radius);
+  font-weight: 650;
+  text-transform: none;
+}
+
+.editor-actions-divider {
+  border-color: var(--wiki-surface-border) !important;
+}
+
+.editor-mobile-actions {
+  padding-bottom: env(safe-area-inset-bottom);
+  border-top: 1px solid var(--wiki-surface-border) !important;
+  background: var(--wiki-surface-raised) !important;
+  box-shadow: 0 calc(var(--wiki-space-2) * -1) var(--wiki-space-8) var(--wiki-shadow-color) !important;
+
+  .v-btn {
+    min-width: 0;
+    border-radius: 0;
+    color: rgb(var(--v-theme-on-surface));
+
+    &:first-child {
+      color: var(--wiki-accent-warm);
+    }
+  }
+
+  .v-btn__content {
+    gap: var(--wiki-space-1);
+    font-size: var(--wiki-label-size);
+    font-weight: var(--wiki-label-weight);
+  }
+}
+
+.editor-mobile-menu {
+  border: 1px solid var(--wiki-surface-border);
+  border-radius: var(--wiki-control-radius);
+  background: var(--wiki-surface-raised);
+  box-shadow: var(--wiki-shadow-md);
+}
+
+.atom-spinner.is-inline {
+  display: inline-block;
+}
+
+@media (forced-colors: active) {
+  .editor .nav-header,
+  .editor-mobile-actions,
+  .editor-mobile-menu {
+    border-color: CanvasText !important;
+  }
+}
+
+@media print {
+  .editor-mobile-actions {
+    display: none !important;
+  }
+}
 
 @media (prefers-reduced-motion: reduce) {
   .editor,
@@ -599,9 +707,4 @@ export default defineComponent({
     transition: none !important;
   }
 }
-
-  .atom-spinner.is-inline {
-    display: inline-block;
-  }
-
 </style>

@@ -1,16 +1,18 @@
 <template lang='pug'>
   v-app().profile
     nav-header
-      template(v-slot:actions)
-        v-btn.profile-nav-toggle(
-          v-if='$vuetify.display.smAndDown'
-          icon
-          @click='profileDrawerShown = !profileDrawerShown'
-          :aria-expanded='profileDrawerShown'
-          aria-controls='profile-navigation'
-          aria-label='Profile navigation'
-        )
-          v-icon mdi-menu
+      template(v-slot:mobileBrand)
+        .profile-mobile-brand
+          v-btn.profile-nav-toggle(
+            icon
+            size='small'
+            @click='profileDrawerShown = !profileDrawerShown'
+            :aria-expanded='profileDrawerShown'
+            aria-controls='profile-navigation'
+            aria-label='Profile navigation'
+          )
+            v-icon mdi-menu
+          span {{ $t('profile:title') }}
     v-navigation-drawer#profile-navigation.pb-0.profile-sidebar(
       v-model='profileDrawerShown'
       :location="$vuetify.locale.isRtl ? 'right' : undefined"
@@ -18,22 +20,29 @@
       :temporary='$vuetify.display.smAndDown'
       :width='$vuetify.display.smAndDown ? 320 : 256'
     )
-      .profile-sidebar-mobile-header(v-if='$vuetify.display.smAndDown')
-        .text-label-large {{ $t('profile:workspace', { defaultValue: 'Profile' }) }}
+      .profile-sidebar-header
+        .profile-sidebar-mark(aria-hidden='true')
+          v-icon(size='24') mdi-account-circle-outline
+        .profile-sidebar-copy
+          .profile-sidebar-eyebrow {{ $t('profile:workspace', { defaultValue: 'Your workspace' }) }}
+          .profile-sidebar-title {{ $t('profile:title') }}
         v-spacer
         v-btn(
+          v-if='$vuetify.display.smAndDown'
           icon
+          variant='text'
+          size='small'
           @click='profileDrawerShown = false'
           aria-label='Close profile navigation'
         )
           v-icon mdi-close
       nav.profile-navigation(aria-label='Profile sections')
-        v-list(density="compact" nav)
+        v-list.profile-navigation-list(density="compact" nav)
           v-list-subheader.profile-navigation-label {{ $t('profile:workspace', { defaultValue: 'Your workspace' }) }}
-          v-list-item(to='/profile' color='primary')
+          v-list-item.profile-navigation-item(to='/profile' color='primary')
             template(v-slot:prepend): v-icon mdi-face-profile-outline
             v-list-item-title {{$t('profile:title')}}
-          v-list-item(to='/pages' color='primary')
+          v-list-item.profile-navigation-item(to='/pages' color='primary')
             template(v-slot:prepend): v-icon mdi-file-document-outline
             v-list-item-title {{$t('profile:pages.title')}}
     v-main.profile-main
@@ -74,119 +83,213 @@ export default defineComponent({
 
 <style lang='scss'>
 .profile {
-  font-family: 'WikiAgentSans', 'Roboto', sans-serif;
+  font-family: var(--wiki-font-body);
+
+  .nav-header {
+    border-bottom: 1px solid var(--wiki-surface-border) !important;
+    background: var(--wiki-surface-raised) !important;
+    box-shadow: var(--wiki-shadow-xs) !important;
+  }
+}
+
+.profile-nav-toggle {
+  color: var(--wiki-accent-warm);
+}
+
+.profile-mobile-brand {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--wiki-space-2);
+  color: rgb(var(--v-theme-on-surface));
+
+  > span {
+    overflow: hidden;
+    font-size: .875rem;
+    font-weight: 680;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
 }
 
 .profile-sidebar {
-  border-inline-end: 1px solid rgba(var(--v-border-color), .11) !important;
+  border-inline-end: 1px solid var(--wiki-surface-border) !important;
   background:
-    linear-gradient(180deg, color-mix(in srgb, rgb(var(--v-theme-primary)) 6%, rgb(var(--v-theme-surface))) 0, rgb(var(--v-theme-surface)) 180px) !important;
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--wiki-accent-spectral) 7%, var(--wiki-surface-raised)),
+      var(--wiki-surface-raised) 18rem
+    ) !important;
+  box-shadow: var(--wiki-shadow-sm);
 }
 
-.profile-sidebar-mobile-header {
+.profile-sidebar-header {
   display: flex;
-  min-height: 64px;
+  min-height: calc(var(--wiki-control-height) + var(--wiki-space-8));
   align-items: center;
-  padding: 8px 12px 8px 22px;
-  border-bottom: 1px solid rgba(var(--v-border-color), .09);
+  gap: var(--wiki-space-3);
+  padding: var(--wiki-space-4);
+  border-bottom: 1px solid var(--wiki-surface-border);
+}
+
+.profile-sidebar-mark {
+  display: grid;
+  width: var(--wiki-control-height);
+  height: var(--wiki-control-height);
+  flex: 0 0 var(--wiki-control-height);
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--wiki-ambient-accent) 24%, transparent);
+  border-radius: var(--wiki-control-radius);
+  background: color-mix(in srgb, var(--wiki-ambient-accent) 10%, var(--wiki-surface-raised));
+  color: var(--wiki-accent-warm);
+  box-shadow: var(--wiki-shadow-inset);
+}
+
+.profile-sidebar-copy {
+  min-width: 0;
+}
+
+.profile-sidebar-eyebrow {
+  overflow: hidden;
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 62%, transparent);
+  font-size: var(--wiki-label-size);
+  font-weight: var(--wiki-label-weight);
+  letter-spacing: .08em;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.profile-sidebar-title {
+  overflow: hidden;
+  margin-top: var(--wiki-space-1);
+  color: rgb(var(--v-theme-on-surface));
+  font-size: 1rem;
+  font-weight: 720;
+  letter-spacing: -.02em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .profile-navigation {
   display: block;
-  padding: 18px 12px;
+  padding: var(--wiki-space-4) var(--wiki-space-3);
 
-  .profile-navigation-label {
-    margin: 0 10px 12px;
+  .profile-navigation-list {
     padding: 0;
-    color: rgb(var(--v-theme-primary));
-    font-size: .66rem;
-    font-weight: 760;
-    letter-spacing: .12em;
-    text-transform: uppercase;
-  }
-
-  .v-list {
     background: transparent;
   }
 
-  .v-list-item {
-    min-height: 46px;
-    margin-block: 3px;
-    border-radius: 11px;
-    color: rgb(var(--v-theme-on-surface));
-    opacity: .74;
+  .profile-navigation-label {
+    min-height: auto;
+    margin: 0 var(--wiki-space-2) var(--wiki-space-2);
+    padding: var(--wiki-space-2) 0;
+    color: var(--wiki-accent-warm);
+    font-size: var(--wiki-label-size);
+    font-weight: var(--wiki-label-weight);
+    letter-spacing: .1em;
+    text-transform: uppercase;
+  }
 
-    &--active {
-      background: color-mix(in srgb, rgb(var(--v-theme-primary)) 11%, transparent);
-      color: rgb(var(--v-theme-primary));
-      font-weight: 670;
-      opacity: 1;
+  .profile-navigation-item {
+    min-height: var(--wiki-control-height);
+    margin-block: var(--wiki-space-1);
+    border: 1px solid transparent;
+    border-radius: var(--wiki-control-radius);
+    color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 74%, transparent);
+    transition:
+      border-color var(--wiki-motion-fast) var(--wiki-motion-ease),
+      background-color var(--wiki-motion-fast) var(--wiki-motion-ease),
+      color var(--wiki-motion-fast) var(--wiki-motion-ease);
+
+    &:hover {
+      border-color: var(--wiki-surface-border);
+      background: color-mix(in srgb, var(--wiki-ambient-accent) 5%, transparent);
+      color: rgb(var(--v-theme-on-surface));
+    }
+
+    &.v-list-item--active {
+      border-color: color-mix(in srgb, var(--wiki-accent-warm) 18%, transparent);
+      background: color-mix(in srgb, var(--wiki-accent-warm) 10%, transparent);
+      color: var(--wiki-accent-warm);
+      font-weight: 680;
+    }
+
+    .v-icon {
+      opacity: .82;
     }
   }
 }
 
 .profile-main {
+  min-width: 0;
   background:
-    radial-gradient(circle at 88% 0%, rgba(var(--v-theme-primary), .07), transparent 30rem),
+    radial-gradient(circle at 88% 0, color-mix(in srgb, var(--wiki-ambient-accent) 8%, transparent), transparent 34rem),
     rgb(var(--v-theme-background));
 
   > .v-container {
     width: min(100%, var(--wiki-content-max));
     margin: 0 auto;
-    padding: 28px var(--wiki-page-gutter) 48px;
+    padding: var(--wiki-space-8) var(--wiki-page-gutter) var(--wiki-space-12);
   }
 
   .profile-header {
     display: flex;
-    min-height: 80px;
+    min-height: calc(var(--wiki-control-height) + var(--wiki-space-8));
     align-items: center;
-    margin-bottom: 14px;
-    padding: 4px 2px;
+    margin-bottom: var(--wiki-space-4);
+    padding: var(--wiki-space-1);
 
     > img {
-      width: 64px !important;
-      height: 64px !important;
-      padding: 9px;
-      border: 1px solid color-mix(in srgb, rgb(var(--v-theme-primary)) 20%, transparent);
-      border-radius: 18px;
-      background: color-mix(in srgb, rgb(var(--v-theme-primary)) 10%, rgb(var(--v-theme-surface)));
-      box-shadow: 0 12px 30px rgba(var(--v-theme-primary), .1);
+      width: calc(var(--wiki-control-height) + var(--wiki-space-5)) !important;
+      height: calc(var(--wiki-control-height) + var(--wiki-space-5)) !important;
+      padding: var(--wiki-space-2);
+      border: 1px solid color-mix(in srgb, var(--wiki-ambient-accent) 22%, transparent);
+      border-radius: var(--wiki-panel-radius);
+      background:
+        linear-gradient(145deg, color-mix(in srgb, var(--wiki-accent-spectral) 9%, var(--wiki-surface-raised)), var(--wiki-surface-raised));
+      box-shadow: var(--wiki-shadow-sm), var(--wiki-shadow-inset);
+      object-fit: contain;
     }
 
     &-title {
       min-width: 0;
-      margin-inline: 18px;
+      margin-inline: var(--wiki-space-5);
 
       > .text-headline-medium {
         color: rgb(var(--v-theme-on-surface)) !important;
         font-size: clamp(1.65rem, 2vw, 2.1rem) !important;
-        font-weight: 720;
+        font-weight: 740;
         letter-spacing: -.035em !important;
-        line-height: 1.15;
+        line-height: var(--wiki-leading-heading);
       }
 
       > .text-body-large {
-        margin-top: 5px;
-        color: rgb(var(--v-theme-on-surface)) !important;
+        margin-top: var(--wiki-space-1);
+        color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 68%, transparent) !important;
         font-size: .98rem !important;
         line-height: 1.45;
-        opacity: .68;
       }
+    }
+
+    > .v-btn {
+      min-height: var(--wiki-control-height);
+      box-shadow: var(--wiki-shadow-xs);
     }
   }
 
   .v-card:not(.v-card--flat) {
     overflow: hidden;
-    border: 1px solid rgba(var(--v-border-color), .13);
-    border-radius: 16px;
-    background: color-mix(in srgb, rgb(var(--v-theme-surface)) 97%, rgb(var(--v-theme-background)));
-    box-shadow: 0 8px 28px rgba(20, 28, 50, .055);
+    border: 1px solid var(--wiki-surface-border);
+    border-radius: var(--wiki-panel-radius);
+    background: var(--wiki-surface-raised);
+    box-shadow: var(--wiki-shadow-sm);
   }
 
   .v-card > .v-toolbar {
-    min-height: 56px;
-    border-bottom: 1px solid rgba(var(--v-border-color), .09);
-    background: color-mix(in srgb, rgb(var(--v-theme-primary)) 5%, rgb(var(--v-theme-surface))) !important;
+    min-height: calc(var(--wiki-control-height) + var(--wiki-space-3));
+    border-bottom: 1px solid var(--wiki-surface-border);
+    background: color-mix(in srgb, var(--wiki-ambient-accent) 5%, var(--wiki-surface-raised)) !important;
     color: rgb(var(--v-theme-on-surface)) !important;
 
     .v-toolbar-title,
@@ -196,37 +299,68 @@ export default defineComponent({
   }
 
   .v-list {
-    padding-block: 6px;
+    padding-block: var(--wiki-space-2);
   }
 
   .v-list-item {
-    min-height: 58px;
+    min-height: calc(var(--wiki-control-height) + var(--wiki-space-3));
+  }
+
+  .v-list-item-subtitle {
+    color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 62%, transparent);
+    opacity: 1;
   }
 
   .v-field {
-    border-radius: 11px;
+    border-radius: var(--wiki-control-radius);
   }
 
   .v-btn:not(.v-btn--icon) {
-    border-radius: 10px;
+    border-radius: var(--wiki-control-radius);
     font-weight: 650;
     text-transform: none;
+  }
+
+  .v-data-table {
+    background: transparent;
+
+    thead th {
+      color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 66%, transparent);
+      font-size: var(--wiki-label-size);
+      font-weight: var(--wiki-label-weight);
+      letter-spacing: .06em;
+      text-transform: uppercase;
+    }
+
+    tbody tr {
+      transition: background-color var(--wiki-motion-fast) var(--wiki-motion-ease);
+
+      &:hover {
+        background: color-mix(in srgb, var(--wiki-ambient-accent) 5%, transparent);
+      }
+    }
+  }
+
+  .async-state {
+    margin: var(--wiki-space-2);
   }
 }
 
 .profile-router {
   &-enter-active {
-    transition: opacity .2s ease, transform .2s ease;
+    transition:
+      opacity var(--wiki-motion-normal) var(--wiki-motion-ease),
+      transform var(--wiki-motion-normal) var(--wiki-motion-ease-out);
   }
 
   &-leave-active {
     position: absolute;
-    transition: opacity .12s ease;
+    transition: opacity var(--wiki-motion-fast) var(--wiki-motion-ease);
   }
 
   &-enter-from {
     opacity: 0;
-    transform: translateY(5px);
+    transform: translateY(var(--wiki-space-1));
   }
 
   &-leave-to {
@@ -235,25 +369,30 @@ export default defineComponent({
 }
 
 @media (max-width: 959px) {
+  .profile-sidebar {
+    border-inline-end: 0 !important;
+    box-shadow: var(--wiki-shadow-lg);
+  }
+
   .profile-main {
     > .v-container {
-      padding: 20px 14px 42px;
+      padding: var(--wiki-space-5) var(--wiki-page-gutter) var(--wiki-space-10);
     }
 
     .profile-header {
-      flex-wrap: wrap;
-      gap: 10px;
       min-height: auto;
+      flex-wrap: wrap;
+      gap: var(--wiki-space-3);
 
       > img {
-        width: 52px !important;
-        height: 52px !important;
-        border-radius: 15px;
+        width: calc(var(--wiki-control-height) + var(--wiki-space-2)) !important;
+        height: calc(var(--wiki-control-height) + var(--wiki-space-2)) !important;
+        border-radius: var(--wiki-control-radius);
       }
 
       &-title {
-        flex: 1 1 calc(100% - 72px);
-        margin-inline: 4px;
+        flex: 1 1 calc(100% - 4.5rem);
+        margin-inline: var(--wiki-space-1);
 
         > .text-headline-medium {
           font-size: 1.5rem !important;
@@ -264,6 +403,40 @@ export default defineComponent({
         display: none;
       }
     }
+  }
+}
+
+@media (max-width: 599px) {
+  .profile-sidebar-header {
+    padding: var(--wiki-space-3);
+  }
+
+  .profile-main {
+    > .v-container {
+      padding: var(--wiki-space-4) var(--wiki-space-3) var(--wiki-space-10);
+    }
+
+    .profile-header {
+      > .v-btn:not(.v-btn--icon) {
+        width: 100%;
+      }
+    }
+
+    .v-card:not(.v-card--flat) {
+      border-radius: var(--wiki-control-radius);
+    }
+
+    .v-list-item {
+      min-height: calc(var(--wiki-control-height) + var(--wiki-space-2));
+    }
+  }
+}
+
+@media (forced-colors: active) {
+  .profile-sidebar,
+  .profile-sidebar-mark,
+  .profile-main .v-card:not(.v-card--flat) {
+    border-color: CanvasText !important;
   }
 }
 

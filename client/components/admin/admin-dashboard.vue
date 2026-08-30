@@ -1,27 +1,36 @@
 <template lang='pug'>
   v-container.admin-dashboard(fluid)
-    .admin-header
-      img(src='/_assets/svg/icon-features-list.svg' alt='' style='width: 80px;')
+    .admin-header.admin-dashboard__header
+      img(src='/_assets/svg/icon-features-list.svg' alt='')
       .admin-header-title
+        .admin-dashboard__eyebrow Control room
         h1.text-headline-medium.text-primary(tabindex='-1') {{ $t('admin:dashboard.title') }}
         .text-body-large.text-medium-emphasis {{ $t('admin:dashboard.subtitle') }}
       v-spacer
-      v-chip(size='small' variant='tonal' color='primary' prepend-icon='mdi-source-fork') {{ info.product.name }} {{ info.product.version }}
+      .admin-dashboard__build
+        span Deployed build
+        v-chip(size='small' variant='tonal' color='primary' prepend-icon='mdi-source-fork') {{ info.product.name }} {{ info.product.version }}
 
-    v-row.admin-dashboard__stats
+    .dashboard-section-heading.dashboard-section-heading--compact(v-if='dashboardStats.length')
+      div
+        .dashboard-section-heading__eyebrow Workspace inventory
+        h2 Key signals
+      .dashboard-section-heading__rule
+    v-row.admin-dashboard__stats(v-if='dashboardStats.length')
       v-col(v-for='stat in dashboardStats' :key='stat.key' cols='12' sm='6' xl='3' class='d-flex')
         v-card.admin-stat(:class='`admin-stat--${stat.tone}`' :to='stat.to' :aria-label='stat.ariaLabel' flat)
           .admin-stat__icon
             v-icon(size='23') {{ stat.icon }}
-          .admin-stat__body
-            .admin-stat__label {{ stat.label }}
-            animated-number.admin-stat__value(v-if='stat.value !== undefined' :value='stat.value' :duration='1200' :formatValue='round' easing='easeOutQuint')
-            .admin-stat__value.admin-stat__value--text(v-else) {{ stat.textValue }}
-            .admin-stat__hint {{ stat.hint }}
+          dl.admin-stat__body
+            dt.admin-stat__label {{ stat.label }}
+            dd.admin-stat__value
+              animated-number(v-if='stat.value !== undefined' :value='stat.value' :duration='1200' :formatValue='round' easing='easeOutQuint')
+              span.admin-stat__value--text(v-else) {{ stat.textValue }}
+            dd.admin-stat__hint {{ stat.hint }}
           v-icon.admin-stat__arrow(size='18') mdi-arrow-up-right
 
     v-row.admin-dashboard__workspace
-      v-col(cols='12' lg='8')
+      v-col(v-if='quickActions.length' cols='12' lg='8')
         v-card.dashboard-panel.fill-height
           .dashboard-panel__header
             .dashboard-panel__heading
@@ -39,7 +48,7 @@
                   .dashboard-action__title {{ action.title }}
                   .dashboard-action__description {{ action.description }}
                 v-icon.dashboard-action__arrow(size='18') {{ $vuetify.locale.isRtl ? 'mdi-chevron-left' : 'mdi-chevron-right' }}
-      v-col(cols='12' lg='4')
+      v-col(cols='12' :lg='quickActions.length ? 4 : 12')
         v-card.dashboard-panel.dashboard-overview.fill-height
           .dashboard-panel__header
             .dashboard-panel__heading
@@ -67,14 +76,14 @@
                 strong {{ info.product.upstreamBase }}
             v-btn.dashboard-overview__button(v-if='hasPermission(`manage:system`)' to='/system' variant='tonal' color='primary' block prepend-icon='mdi-monitor-dashboard' :append-icon='$vuetify.locale.isRtl ? `mdi-arrow-left` : `mdi-arrow-right`') Open system details
 
-    .dashboard-section-heading
+    .dashboard-section-heading(v-if='canViewRecentPages || canViewLastLogins')
       div
         .dashboard-section-heading__eyebrow Activity
         h2 What changed recently
       .dashboard-section-heading__rule
 
-    v-row
-      v-col(cols='12' xl='6' v-if='canViewRecentPages')
+    v-row(v-if='canViewRecentPages || canViewLastLogins')
+      v-col(cols='12' :xl='canViewLastLogins ? 6 : 12' v-if='canViewRecentPages')
         v-card.dashboard-panel.dashboard-activity.fill-height
           .dashboard-panel__header
             .dashboard-panel__heading
@@ -107,7 +116,7 @@
                   v-chip(size='small' color='primary' variant='tonal') {{ props.item.locale }}
                   span.ms-2.text-medium-emphasis /{{ props.item.path }}
                 td.text-end.text-body-small(width='200') {{ $helpers.formatMoment(props.item.updatedAt, 'calendar') }}
-      v-col(cols='12' xl='6' v-if='canViewLastLogins')
+      v-col(cols='12' :xl='canViewRecentPages ? 6 : 12' v-if='canViewLastLogins')
         v-card.dashboard-panel.dashboard-activity.fill-height
           .dashboard-panel__header
             .dashboard-panel__heading
@@ -255,34 +264,76 @@ export default {
 </script>
 <style lang='scss'>
 .admin-dashboard {
+  &__header {
+    margin-bottom: var(--wiki-space-2) !important;
+  }
+
+  &__eyebrow {
+    margin-bottom: var(--wiki-space-1);
+    color: var(--wiki-accent-warm);
+    font-size: var(--wiki-label-size);
+    font-weight: var(--wiki-label-weight);
+    letter-spacing: .1em;
+    text-transform: uppercase;
+  }
+
+  &__build {
+    display: grid;
+    justify-items: end;
+    gap: var(--wiki-space-1);
+
+    > span {
+      color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 58%, transparent);
+      font-size: var(--wiki-label-size);
+      font-weight: var(--wiki-label-weight);
+      letter-spacing: .055em;
+      text-transform: uppercase;
+    }
+  }
+
   &__stats {
-    margin-bottom: 6px;
+    margin-bottom: var(--wiki-space-1);
   }
 
   &__workspace {
-    margin-top: 2px;
+    margin-top: var(--wiki-space-1);
   }
 }
 
 .admin-stat {
+  --stat-color: var(--wiki-accent-warm);
   position: relative;
   display: flex;
+  overflow: hidden;
   width: 100%;
-  min-height: 134px;
+  min-height: 8.5rem;
   align-items: flex-start;
-  gap: 15px;
-  padding: 20px;
-  border: 1px solid rgba(var(--v-border-color), .12) !important;
-  border-radius: var(--wiki-panel-radius, 16px) !important;
-  background: rgb(var(--v-theme-surface)) !important;
+  gap: var(--wiki-space-4);
+  padding: var(--wiki-space-5);
+  border: 1px solid var(--wiki-surface-border) !important;
+  border-radius: var(--wiki-panel-radius) !important;
+  background: var(--wiki-surface-raised) !important;
   color: rgb(var(--v-theme-on-surface)) !important;
-  box-shadow: 0 8px 26px rgba(20, 28, 50, .045);
-  transition: border-color .18s ease, box-shadow .18s ease, transform .18s ease;
+  box-shadow: var(--wiki-shadow-sm), var(--wiki-shadow-inset);
+  transition:
+    border-color var(--wiki-motion-normal) var(--wiki-motion-ease),
+    box-shadow var(--wiki-motion-normal) var(--wiki-motion-ease),
+    transform var(--wiki-motion-normal) var(--wiki-motion-ease-out);
+
+  &::before {
+    position: absolute;
+    inset-block: 0;
+    inset-inline-start: 0;
+    width: .1875rem;
+    background: var(--stat-color);
+    content: '';
+    opacity: .78;
+  }
 
   &:hover {
-    border-color: color-mix(in srgb, var(--stat-color) 34%, transparent) !important;
-    box-shadow: 0 14px 34px rgba(20, 28, 50, .09);
-    transform: translateY(-2px);
+    border-color: color-mix(in srgb, var(--stat-color) 36%, transparent) !important;
+    box-shadow: var(--wiki-shadow-md), var(--wiki-shadow-inset);
+    transform: translateY(-.125rem);
   }
 
   &--primary { --stat-color: rgb(var(--v-theme-primary)); }
@@ -292,113 +343,122 @@ export default {
 
   &__icon {
     display: grid;
+    width: var(--wiki-control-height);
+    height: var(--wiki-control-height);
     flex: 0 0 auto;
-    width: 46px;
-    height: 46px;
     place-items: center;
-    border-radius: var(--wiki-control-radius, 11px);
+    border-radius: var(--wiki-control-radius);
     background: color-mix(in srgb, var(--stat-color) 12%, transparent);
     color: var(--stat-color);
+    box-shadow: var(--wiki-shadow-inset);
   }
 
   &__body {
     min-width: 0;
+    margin: 0;
   }
 
   &__label {
-    color: rgb(var(--v-theme-on-surface));
-    opacity: .62;
-    font-size: .72rem;
-    font-weight: 700;
-    letter-spacing: .06em;
+    color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 62%, transparent);
+    font-size: var(--wiki-label-size);
+    font-weight: var(--wiki-label-weight);
+    letter-spacing: .055em;
     text-transform: uppercase;
   }
 
   &__value {
     display: block;
-    margin: 2px 0 1px;
+    min-width: 0;
+    margin: var(--wiki-space-1) 0 0;
     color: rgb(var(--v-theme-on-surface));
     font-size: 2rem;
-    font-weight: 740;
+    font-weight: 760;
     letter-spacing: -.045em;
-    line-height: 1.1;
+    line-height: 1.08;
 
     &--text {
+      display: block;
       overflow: hidden;
-      max-width: 170px;
+      max-width: 11rem;
       font-size: 1.25rem;
-      line-height: 1.65;
+      line-height: 1.72;
       text-overflow: ellipsis;
       white-space: nowrap;
     }
   }
 
   &__hint {
-    color: rgb(var(--v-theme-on-surface));
-    opacity: .64;
+    margin: var(--wiki-space-1) 0 0;
+    color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 64%, transparent);
     font-size: .77rem;
   }
 
   &__arrow {
     position: absolute !important;
-    inset-block-start: 16px;
-    inset-inline-end: 16px;
-    color: rgb(var(--v-theme-on-surface));
-    opacity: .6;
+    inset-block-start: var(--wiki-space-4);
+    inset-inline-end: var(--wiki-space-4);
+    color: var(--stat-color);
+    opacity: .58;
   }
 }
 
 .dashboard-panel {
   overflow: hidden;
+  border: 1px solid var(--wiki-surface-border) !important;
+  border-radius: var(--wiki-panel-radius) !important;
+  background: var(--wiki-surface-raised) !important;
+  color: rgb(var(--v-theme-on-surface)) !important;
+  box-shadow: var(--wiki-shadow-sm), var(--wiki-shadow-inset) !important;
 
   &__header {
     display: flex;
-    min-height: 78px;
+    min-height: 4.875rem;
     align-items: center;
     justify-content: space-between;
-    gap: 18px;
-    padding: 18px 20px;
-    border-bottom: 1px solid rgba(var(--v-border-color), .1);
+    gap: var(--wiki-space-4);
+    padding: var(--wiki-space-4) var(--wiki-space-5);
+    border-bottom: 1px solid var(--wiki-surface-border);
+    background: color-mix(in srgb, var(--wiki-ambient-accent) 4%, transparent);
   }
 
   &__heading {
     display: flex;
+    min-width: 0;
     align-items: center;
-    gap: 13px;
+    gap: var(--wiki-space-3);
 
     h2 {
       margin: 0;
       color: rgb(var(--v-theme-on-surface));
       font-size: 1rem;
-      font-weight: 700;
+      font-weight: 720;
       letter-spacing: -.015em;
     }
 
     p {
-      margin: 2px 0 0;
-      color: rgb(var(--v-theme-on-surface));
-      opacity: .65;
+      margin: var(--wiki-space-1) 0 0;
+      color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 65%, transparent);
       font-size: .78rem;
     }
   }
 
   &__icon {
     display: grid;
+    width: 2.625rem;
+    height: 2.625rem;
     flex: 0 0 auto;
-    width: 42px;
-    height: 42px;
     place-items: center;
-    border-radius: var(--wiki-control-radius, 11px);
-    background: rgba(var(--v-theme-primary), .1);
+    border-radius: var(--wiki-control-radius);
+    background: color-mix(in srgb, rgb(var(--v-theme-primary)) 11%, transparent);
     color: rgb(var(--v-theme-primary));
 
     &--success {
-      background: rgba(var(--v-theme-success), .11);
+      background: color-mix(in srgb, rgb(var(--v-theme-success)) 11%, transparent);
       color: rgb(var(--v-theme-success));
     }
 
     &--violet {
-      background: rgba(var(--v-theme-secondary), .11);
+      background: color-mix(in srgb, rgb(var(--v-theme-secondary)) 11%, transparent);
       color: rgb(var(--v-theme-secondary));
     }
   }
@@ -407,45 +467,49 @@ export default {
 .dashboard-actions {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
+  gap: var(--wiki-space-2);
 }
 
 .dashboard-action {
   display: flex;
-  min-height: 88px;
+  min-height: 5.5rem;
   align-items: center;
-  gap: 13px;
-  padding: 14px;
+  gap: var(--wiki-space-3);
+  padding: var(--wiki-space-3);
   border: 1px solid transparent !important;
-  border-radius: var(--wiki-control-radius, 11px) !important;
-  background: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 3%, transparent) !important;
+  border-radius: var(--wiki-control-radius) !important;
+  background: var(--wiki-surface-sunken) !important;
   color: rgb(var(--v-theme-on-surface)) !important;
-  transition: border-color .16s ease, background-color .16s ease, transform .16s ease;
+  box-shadow: var(--wiki-shadow-inset);
+  transition:
+    border-color var(--wiki-motion-fast) var(--wiki-motion-ease),
+    background-color var(--wiki-motion-fast) var(--wiki-motion-ease),
+    transform var(--wiki-motion-fast) var(--wiki-motion-ease-out);
 
   &:hover {
-    border-color: rgba(var(--v-theme-primary), .2) !important;
-    background: rgba(var(--v-theme-primary), .055) !important;
-    transform: translateY(-1px);
+    border-color: color-mix(in srgb, var(--wiki-ambient-accent) 24%, transparent) !important;
+    background: color-mix(in srgb, var(--wiki-ambient-accent) 7%, var(--wiki-surface-sunken)) !important;
+    transform: translateY(-.0625rem);
 
     .dashboard-action__arrow {
-      color: rgb(var(--v-theme-primary));
-      transform: translateX(2px);
+      color: var(--wiki-accent-warm);
+      transform: translateX(var(--wiki-space-1));
     }
   }
 
   @at-root .v-locale--is-rtl & {
     &:hover .dashboard-action__arrow {
-      transform: translateX(-2px);
+      transform: translateX(calc(var(--wiki-space-1) * -1));
     }
   }
 
   &__icon {
     display: grid;
+    width: var(--wiki-control-height);
+    height: var(--wiki-control-height);
     flex: 0 0 auto;
-    width: 44px;
-    height: 44px;
     place-items: center;
-    border-radius: var(--wiki-control-radius, 11px);
+    border-radius: var(--wiki-control-radius);
 
     &--primary { background: color-mix(in srgb, rgb(var(--v-theme-primary)) 11%, transparent); color: rgb(var(--v-theme-primary)); }
     &--secondary { background: color-mix(in srgb, rgb(var(--v-theme-secondary)) 11%, transparent); color: rgb(var(--v-theme-secondary)); }
@@ -460,23 +524,23 @@ export default {
   }
 
   &__title {
-    margin-bottom: 3px;
+    margin-bottom: var(--wiki-space-1);
     font-size: .9rem;
     font-weight: 680;
   }
 
   &__description {
-    color: rgb(var(--v-theme-on-surface));
-    opacity: .68;
+    color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 68%, transparent);
     font-size: .76rem;
-    line-height: 1.35;
+    line-height: 1.4;
   }
 
   &__arrow {
     flex: 0 0 auto;
-    color: rgb(var(--v-theme-on-surface));
-    opacity: .64;
-    transition: color .16s ease, transform .16s ease;
+    color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 64%, transparent);
+    transition:
+      color var(--wiki-motion-fast) var(--wiki-motion-ease),
+      transform var(--wiki-motion-fast) var(--wiki-motion-ease-out);
   }
 }
 
@@ -484,103 +548,108 @@ export default {
   &__product {
     display: flex;
     align-items: center;
-    gap: 13px;
-    padding: 2px 0 18px;
+    gap: var(--wiki-space-3);
+    padding: var(--wiki-space-1) 0 var(--wiki-space-4);
   }
 
   &__product-icon {
     display: grid;
-    width: 50px;
-    height: 50px;
+    width: 3.125rem;
+    height: 3.125rem;
+    flex: 0 0 auto;
     place-items: center;
-    border-radius: var(--wiki-control-radius, 11px);
-    background: linear-gradient(145deg, rgba(var(--v-theme-primary), .16), rgba(var(--v-theme-secondary), .08));
-    color: rgb(var(--v-theme-primary));
+    border-radius: var(--wiki-control-radius);
+    background: color-mix(in srgb, var(--wiki-ambient-accent) 13%, transparent);
+    color: var(--wiki-accent-warm);
+    box-shadow: var(--wiki-shadow-inset);
   }
 
   &__product-name {
     font-size: .95rem;
-    font-weight: 700;
+    font-weight: 720;
   }
 
   &__product-version {
-    color: rgb(var(--v-theme-on-surface));
-    opacity: .64;
+    color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 64%, transparent);
     font-size: .78rem;
   }
 
   &__list {
-    border-block: 1px solid rgba(var(--v-border-color), .1);
+    border-block: 1px solid var(--wiki-surface-border);
   }
 
   &__row {
     display: flex;
     justify-content: space-between;
-    gap: 16px;
-    padding: 12px 0;
-    color: rgb(var(--v-theme-on-surface));
-    opacity: .65;
+    gap: var(--wiki-space-4);
+    padding: var(--wiki-space-3) 0;
+    color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 65%, transparent);
     font-size: .8rem;
 
     + .dashboard-overview__row {
-      border-top: 1px solid rgba(var(--v-border-color), .08);
+      border-top: 1px solid var(--wiki-surface-border);
     }
 
     strong {
+      overflow-wrap: anywhere;
       color: rgb(var(--v-theme-on-surface));
-      font-weight: 650;
+      font-weight: 680;
       text-align: end;
     }
   }
 
   &__button {
-    margin-top: 18px;
+    margin-top: var(--wiki-space-4);
   }
 }
 
 .dashboard-section-heading {
   display: flex;
   align-items: flex-end;
-  gap: 20px;
-  margin: 30px 2px 4px;
+  gap: var(--wiki-space-5);
+  margin: var(--wiki-space-8) var(--wiki-space-1) var(--wiki-space-1);
+
+  &--compact {
+    margin-top: var(--wiki-space-3);
+  }
 
   h2 {
-    margin: 2px 0 0;
+    margin: var(--wiki-space-1) 0 0;
     color: rgb(var(--v-theme-on-surface));
     font-size: 1.3rem;
-    font-weight: 710;
+    font-weight: 720;
     letter-spacing: -.025em;
   }
 
   &__eyebrow {
-    color: rgb(var(--v-theme-primary));
-    font-size: .67rem;
-    font-weight: 760;
-    letter-spacing: .12em;
+    color: var(--wiki-accent-warm);
+    font-size: var(--wiki-label-size);
+    font-weight: var(--wiki-label-weight);
+    letter-spacing: .1em;
     text-transform: uppercase;
   }
 
   &__rule {
     height: 1px;
-    margin-bottom: 6px;
-    flex: 1;
-    background: linear-gradient(90deg, rgba(var(--v-border-color), .2), transparent);
+    margin-bottom: var(--wiki-space-2);
+    flex: 1 1 auto;
+    background: linear-gradient(90deg, var(--wiki-surface-border-strong), transparent);
   }
 }
 
 .dashboard-activity {
-  min-height: 330px;
+  min-height: 20.625rem;
 
   .v-table {
     background: transparent;
   }
 
   .v-table__wrapper {
-    padding: 4px 12px 12px;
+    padding: var(--wiki-space-1) var(--wiki-space-3) var(--wiki-space-3);
   }
 
   td {
-    border-color: rgba(var(--v-border-color), .08) !important;
+    border-color: var(--wiki-surface-border) !important;
   }
 }
 
@@ -589,30 +658,36 @@ export default {
   min-height: 15rem;
 }
 
+.dashboard-mobile-list {
+  background: transparent;
+}
+
 .dashboard-contribute {
   display: flex;
   align-items: center;
-  gap: 20px;
-  margin-top: 26px;
-  padding: 22px 24px;
-  border: 1px solid rgba(var(--v-theme-primary), .14) !important;
-  border-radius: var(--wiki-panel-radius, 16px) !important;
+  gap: var(--wiki-space-5);
+  margin-top: var(--wiki-space-6);
+  padding: var(--wiki-space-5) var(--wiki-space-6);
+  border: 1px solid color-mix(in srgb, var(--wiki-ambient-accent) 20%, transparent) !important;
+  border-radius: var(--wiki-panel-radius) !important;
   background:
-    linear-gradient(110deg, rgba(var(--v-theme-primary), .09), rgba(var(--v-theme-secondary), .045), transparent) !important;
+    linear-gradient(110deg, color-mix(in srgb, var(--wiki-ambient-accent) 9%, var(--wiki-surface-raised)), var(--wiki-surface-raised)) !important;
   color: rgb(var(--v-theme-on-surface)) !important;
+  box-shadow: var(--wiki-shadow-sm), var(--wiki-shadow-inset);
 
   &__art {
     display: grid;
+    width: 4rem;
+    height: 4rem;
     flex: 0 0 auto;
-    width: 64px;
-    height: 64px;
     place-items: center;
-    border-radius: var(--wiki-control-radius, 11px);
+    border-radius: var(--wiki-control-radius);
     background: rgb(var(--v-theme-surface));
+    box-shadow: var(--wiki-shadow-xs);
 
     img {
-      width: 46px;
-      height: 46px;
+      width: 2.875rem;
+      height: 2.875rem;
     }
   }
 
@@ -621,29 +696,41 @@ export default {
     flex: 1 1 auto;
 
     h2 {
-      margin: 2px 0;
+      margin: var(--wiki-space-1) 0;
       font-size: 1rem;
-      font-weight: 700;
+      font-weight: 720;
     }
 
     p {
       margin: 0;
-      color: rgb(var(--v-theme-on-surface));
-      opacity: .68;
+      color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 68%, transparent);
       font-size: .82rem;
     }
   }
 
   &__eyebrow {
-    color: rgb(var(--v-theme-primary));
-    font-size: .65rem;
-    font-weight: 750;
+    color: var(--wiki-accent-warm);
+    font-size: var(--wiki-label-size);
+    font-weight: var(--wiki-label-weight);
     letter-spacing: .1em;
     text-transform: uppercase;
   }
 }
 
 @include until($tablet) {
+  .admin-dashboard {
+    &__build {
+      width: 100%;
+      align-items: center;
+      grid-template-columns: auto minmax(0, 1fr);
+      justify-items: start;
+
+      .v-chip {
+        max-width: 100%;
+      }
+    }
+  }
+
   .dashboard-actions {
     grid-template-columns: 1fr;
   }
@@ -656,12 +743,50 @@ export default {
     flex-wrap: wrap;
 
     &__copy {
-      flex: 1 1 calc(100% - 90px);
+      flex: 1 1 calc(100% - 5.5rem);
     }
 
     > .v-btn {
       width: 100%;
     }
+  }
+}
+
+@media (max-width: 599px) {
+  .admin-stat {
+    min-height: 7.5rem;
+  }
+
+  .dashboard-panel {
+    &__header {
+      flex-wrap: wrap;
+      padding: var(--wiki-space-4);
+
+      > .v-btn {
+        margin-inline-start: calc(var(--wiki-control-height) + var(--wiki-space-3));
+      }
+    }
+  }
+
+  .dashboard-overview__row {
+    align-items: flex-start;
+  }
+
+  .dashboard-section-heading {
+    margin-top: var(--wiki-space-6);
+  }
+
+  .dashboard-contribute {
+    padding: var(--wiki-space-4);
+  }
+}
+
+@media print {
+  .admin-stat,
+  .dashboard-panel,
+  .dashboard-contribute {
+    break-inside: avoid;
+    box-shadow: none !important;
   }
 }
 

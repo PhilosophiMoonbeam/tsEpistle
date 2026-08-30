@@ -1,6 +1,6 @@
 <template lang="pug">
   v-app
-    main.register
+    main.register(aria-labelledby='register-site-title')
       v-container
         v-row
           v-col(
@@ -16,15 +16,16 @@
             )
             transition(name='fadeUp')
               v-card.register-card(v-show='isShown' variant='flat')
-                v-toolbar.register-card-header(color='surface' flat)
-                  v-spacer
-                  .text-body-large {{ $t('auth:registerTitle') }}
-                  v-spacer
-                form.register-form(@submit.prevent='register')
-                  v-card-text.text-center
-                    h1.register-site-title {{ siteTitle }}
-                    h2.register-task-title {{ $t('auth:registerTitle') }}
-                    .register-subtitle {{ $t('auth:registerSubTitle') }}
+                form.register-form(@submit.prevent='register', :aria-busy='isLoading')
+                  v-card-text
+                    .register-brand
+                      .register-logo
+                        v-avatar(rounded='0', size='34')
+                          img(:src='logoUrl', alt='')
+                      .register-brand-copy
+                        .register-eyebrow {{ $t('auth:registerTitle') }}
+                        h1#register-site-title.register-site-title {{ siteTitle }}
+                    p.register-subtitle {{ $t('auth:registerSubTitle') }}
                     v-alert.mb-3(
                       v-model='errorShown'
                       type='error'
@@ -63,7 +64,7 @@
                       required
                     )
                       template(v-slot:append-inner)
-                        v-btn(icon variant='text' size='small' :aria-label='hidePassword ? `Show password` : `Hide password`' @click='hidePassword = !hidePassword')
+                        v-btn(icon type='button' variant='text' size='small' :aria-label='hidePassword ? `Show password` : `Hide password`' @click='hidePassword = !hidePassword')
                           v-icon(:icon='hidePassword ? `mdi-eye-off` : `mdi-eye`')
                       template(v-slot:loader)
                         password-strength(v-model='password')
@@ -82,7 +83,7 @@
                       required
                     )
                       template(v-slot:append-inner)
-                        v-btn(icon variant='text' size='small' :aria-label='hideVerifyPassword ? `Show password` : `Hide password`' @click='hideVerifyPassword = !hideVerifyPassword')
+                        v-btn(icon type='button' variant='text' size='small' :aria-label='hideVerifyPassword ? `Show password` : `Hide password`' @click='hideVerifyPassword = !hideVerifyPassword')
                           v-icon(:icon='hideVerifyPassword ? `mdi-eye-off` : `mdi-eye`')
                     v-text-field.mt-2(
                       variant="outlined"
@@ -98,27 +99,21 @@
                       counter='255'
                       required
                     )
-                  v-card-actions.pb-4
-                    v-spacer
+                  v-card-actions.register-actions
                     v-btn(
                       width='100%'
-                      max-width='250px'
                       size="large"
                       color='primary'
                       type='submit'
-                      rounded='lg'
                       :loading='isLoading'
                     ) {{ $t('auth:actions.register') }}
-                    v-spacer
                 v-divider
                 v-card-actions.register-card-footer.py-3
-                  v-spacer
                   i18next.text-body-small(path='auth:switchToLogin.text', tag='div')
                     a.text-body-small(href='/login', place='link') {{ $t('auth:switchToLogin.link') }}
-                  v-spacer
     loader(v-model='isLoading', :mode='loaderMode', :icon='loaderIcon', :color='loaderColor', :title='loaderTitle', :subtitle='loaderSubtitle')
-    nav-footer(color='grey-darken-4', dark-color='grey-darken-4')
-    notify(style='padding-top: 64px;')
+    nav-footer
+    notify.register-notify
 </template>
 
 <script lang='ts'>
@@ -168,6 +163,9 @@ export default {
   computed: {
     siteTitle () {
       return siteConfig.title
+    },
+    logoUrl () {
+      return siteConfig.logoUrl
     }
   },
   mounted () {
@@ -283,112 +281,165 @@ export default {
   min-height: 100dvh;
   overflow: hidden auto;
   background:
-    radial-gradient(circle at 18% 14%, rgba(var(--v-theme-primary), .3), transparent 28rem),
-    radial-gradient(circle at 84% 82%, rgba(99, 102, 241, .24), transparent 32rem),
-    linear-gradient(145deg, #0b1220, #172033 58%, #101827);
-  font-family: 'WikiAgentSans', 'Roboto', sans-serif;
+    radial-gradient(
+      circle at 16% 12%,
+      color-mix(in srgb, var(--wiki-accent-warm) 18%, transparent),
+      transparent 30rem
+    ),
+    radial-gradient(
+      circle at 86% 84%,
+      color-mix(in srgb, var(--wiki-accent-spectral) 14%, transparent),
+      transparent 34rem
+    ),
+    linear-gradient(
+      145deg,
+      var(--wiki-surface-sunken),
+      rgb(var(--v-theme-background))
+    );
+  color: rgb(var(--v-theme-on-background));
+  font-family: var(--wiki-font-body);
+  isolation: isolate;
 
   &::before {
     position: absolute;
+    z-index: -1;
     inset: 0;
     background-image:
-      linear-gradient(rgba(255, 255, 255, .025) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(255, 255, 255, .025) 1px, transparent 1px);
-    background-size: 42px 42px;
-    mask-image: linear-gradient(to bottom, rgba(0, 0, 0, .8), transparent 78%);
+      linear-gradient(var(--wiki-surface-border) 1px, transparent 1px),
+      linear-gradient(90deg, var(--wiki-surface-border) 1px, transparent 1px);
+    background-size: var(--wiki-grid-size) var(--wiki-grid-size);
     content: '';
+    mask-image: linear-gradient(to bottom, rgb(var(--v-theme-on-surface)), transparent 82%);
+    opacity: .48;
+    pointer-events: none;
   }
 
   > .v-container {
-    position: relative;
-    z-index: 1;
     display: flex;
     min-height: 100dvh;
     align-items: center;
-    padding-block: 40px;
+    padding-block: var(--wiki-space-10);
   }
 
   > .v-container > .v-row {
     width: 100%;
   }
-
-  .v-field {
-    border-radius: 13px;
-  }
 }
 
 .register-card {
   overflow: hidden;
-  border: 1px solid rgba(255, 255, 255, .24) !important;
-  border-radius: 26px !important;
-  background: color-mix(in srgb, rgb(var(--v-theme-surface)) 94%, transparent) !important;
-  box-shadow: 0 30px 80px rgba(0, 0, 0, .3) !important;
-  backdrop-filter: blur(22px) saturate(145%);
-  -webkit-backdrop-filter: blur(22px) saturate(145%);
-
-  &-header {
-    min-height: 64px;
-    border-bottom: 1px solid rgba(var(--v-border-color), .09);
-    background: color-mix(in srgb, rgb(var(--v-theme-primary)) 6%, rgb(var(--v-theme-surface))) !important;
-    color: rgb(var(--v-theme-on-surface));
-
-    .text-body-large {
-      font-weight: 690;
-      letter-spacing: -.015em;
-    }
-  }
+  border: 1px solid var(--wiki-surface-border-strong) !important;
+  border-radius: var(--wiki-hero-radius) !important;
+  background: color-mix(
+    in srgb,
+    rgb(var(--v-theme-surface)) 97%,
+    rgb(var(--v-theme-background))
+  ) !important;
+  box-shadow: var(--wiki-shadow-lg), var(--wiki-shadow-inset) !important;
 
   .v-card-text {
-    padding: 30px 34px 22px;
+    padding: var(--wiki-space-8) var(--wiki-space-8) var(--wiki-space-4);
   }
+}
 
-  .v-card-actions {
-    padding-inline: 34px;
+.register-brand {
+  display: flex;
+  gap: var(--wiki-space-4);
+  align-items: center;
+}
 
-    .v-btn {
-      min-height: 48px;
-      border-radius: 12px !important;
-      font-weight: 680;
-    }
-  }
+.register-logo {
+  display: grid;
+  flex: 0 0 3.25rem;
+  width: 3.25rem;
+  height: 3.25rem;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--wiki-accent-warm) 24%, transparent);
+  border-radius: var(--wiki-panel-radius);
+  background: color-mix(in srgb, var(--wiki-accent-warm) 10%, var(--wiki-surface-raised));
+  box-shadow: var(--wiki-shadow-sm);
+}
+
+.register-brand-copy {
+  min-width: 0;
+}
+
+.register-eyebrow {
+  color: var(--wiki-accent-warm);
+  font-size: var(--wiki-label-size);
+  font-weight: var(--wiki-label-weight);
+  letter-spacing: .1em;
+  line-height: 1rem;
+  text-transform: uppercase;
 }
 
 .register-site-title {
-  margin: 0;
+  margin: var(--wiki-space-1) 0 0;
+  overflow-wrap: anywhere;
   color: rgb(var(--v-theme-on-surface));
-  font-size: clamp(1.9rem, 4vw, 2.6rem);
-  font-weight: 760;
-  letter-spacing: -.055em;
-  line-height: 1.1;
+  font-size: clamp(1.5rem, 4vw, 2rem);
+  font-weight: 740;
+  letter-spacing: -.045em;
+  line-height: var(--wiki-leading-heading);
 }
-.register-task-title {
-  margin: 8px 0 0;
-  color: rgb(var(--v-theme-on-surface));
-  font-size: 1.05rem;
-  font-weight: 690;
-}
+
 .register-subtitle {
-  margin: 8px 0 22px;
-  color: rgb(var(--v-theme-on-surface));
+  margin: var(--wiki-space-4) 0 var(--wiki-space-5);
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 70%, transparent);
   line-height: 1.55;
-  opacity: .62;
+}
+
+.register-form {
+  .v-alert {
+    border: 1px solid color-mix(in srgb, rgb(var(--v-theme-error)) 28%, transparent);
+  }
+
+  .v-input + .v-input {
+    margin-top: var(--wiki-space-2) !important;
+  }
+}
+
+.register-actions {
+  padding: 0 var(--wiki-space-8) var(--wiki-space-6);
+
+  .v-btn {
+    min-height: var(--wiki-control-height);
+    border-radius: var(--wiki-control-radius);
+    font-weight: 680;
+  }
 }
 
 .register-card-footer {
-  min-height: 58px;
-  background: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 3%, rgb(var(--v-theme-surface)));
-  color: rgb(var(--v-theme-on-surface));
+  min-height: var(--wiki-footer-height);
+  justify-content: center;
+  padding: var(--wiki-space-3) var(--wiki-space-8) !important;
+  background: var(--wiki-surface-sunken);
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 72%, transparent);
+  text-align: center;
 
   a {
-    color: rgb(var(--v-theme-primary));
+    color: var(--wiki-accent-warm);
     font-weight: 650;
-    text-decoration: none;
+    text-decoration-thickness: .0625rem;
+    text-underline-offset: var(--wiki-space-1);
+
+    &:hover {
+      text-decoration-thickness: .125rem;
+    }
   }
+}
+
+.register-notify {
+  padding-top: var(--wiki-footer-height);
 }
 
 @media (max-width: 599px) {
   .register {
-    background: rgb(var(--v-theme-background));
+    background: color-mix(
+      in srgb,
+      rgb(var(--v-theme-surface)) 96%,
+      rgb(var(--v-theme-background))
+    );
 
     > .v-container {
       padding: 0;
@@ -408,12 +459,59 @@ export default {
     box-shadow: none !important;
 
     .v-card-text {
-      padding: 28px 20px 20px;
+      padding: var(--wiki-space-6) var(--wiki-space-5) var(--wiki-space-4);
     }
+  }
 
-    .v-card-actions {
-      padding-inline: 20px;
+  .register-actions {
+    padding: 0 var(--wiki-space-5) var(--wiki-space-5);
+  }
+
+  .register-card-footer {
+    padding-inline: var(--wiki-space-5) !important;
+  }
+}
+
+@media (max-height: 700px) and (min-width: 600px) {
+  .register {
+    > .v-container {
+      align-items: flex-start;
+      padding-block: var(--wiki-space-3);
     }
+  }
+
+  .register-card {
+    .v-card-text {
+      padding-block: var(--wiki-space-4) var(--wiki-space-2);
+    }
+  }
+
+  .register-subtitle {
+    margin-block: var(--wiki-space-2) var(--wiki-space-3);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .register *,
+  .register *::before,
+  .register *::after {
+    transition-duration: .01ms !important;
+    animation-duration: .01ms !important;
+  }
+}
+
+@media print {
+  .register {
+    background: transparent !important;
+
+    &::before {
+      display: none;
+    }
+  }
+
+  .register-card {
+    border: 0 !important;
+    box-shadow: none !important;
   }
 }
 </style>

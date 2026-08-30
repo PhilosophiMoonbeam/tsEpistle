@@ -1,5 +1,5 @@
 <template lang="pug">
-  .tabset.elevation-2
+  .tabset
     ul.tabset-tabs(ref='tabs', role='tablist')
       slot(name='tabs')
     .tabset-content(ref='content')
@@ -110,105 +110,172 @@ export default defineComponent({
 
 <style lang="scss">
 .tabset {
-  border-radius: 5px;
-  margin-top: 10px;
-
-  @at-root .v-theme--dark & {
-    background-color: #292929;
-  }
+  overflow: hidden;
+  margin-block: var(--wiki-space-6);
+  border: 1px solid var(--wiki-surface-border);
+  border-radius: var(--wiki-panel-radius);
+  background: rgb(var(--v-theme-surface));
+  box-shadow:
+    var(--wiki-shadow-inset),
+    var(--wiki-shadow-xs);
 
   > .tabset-tabs {
-    padding-left: 0;
-    margin: 0;
     display: flex;
+    overflow-x: auto;
     align-items: stretch;
-    background: linear-gradient(to bottom, #FFF, #FAFAFA);
-    box-shadow: inset 0 -1px 0 0 #DDD;
-    border-radius: 5px 5px 0 0;
-    overflow: auto;
-
-    @at-root .v-theme--dark & {
-      background: linear-gradient(to bottom, #424242, #333);
-      box-shadow: inset 0 -1px 0 0 #555;
-    }
+    margin: 0;
+    padding: 0;
+    border-block-end: 1px solid var(--wiki-surface-border);
+    background: var(--wiki-surface-sunken);
+    list-style: none;
+    overscroll-behavior-inline: contain;
+    scrollbar-color: color-mix(in srgb, var(--wiki-accent-warm) 42%, transparent) transparent;
+    scrollbar-width: thin;
 
     > li {
-      display: block;
-      padding: 16px;
-      margin-top: 0;
+      position: relative;
+      display: flex;
+      min-height: var(--wiki-control-height);
+      flex: 0 0 auto;
+      align-items: center;
+      margin: 0;
+      padding: var(--wiki-space-3) var(--wiki-space-4);
+      border-inline-end: 1px solid var(--wiki-surface-border);
+      color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 68%, transparent);
+      font-size: .875rem;
+      font-weight: 650;
+      line-height: 1.35;
+      white-space: nowrap;
       cursor: pointer;
-      transition: color 1s ease;
-      border-right: 1px solid #FFF;
-      font-size: 14px;
-      font-weight: 500;
-      margin-bottom: 1px;
       user-select: none;
+      transition:
+        background-color var(--wiki-motion-fast) var(--wiki-motion-ease),
+        color var(--wiki-motion-fast) var(--wiki-motion-ease);
 
-      @at-root .v-theme--dark & {
-        border-right-color: #555;
-      }
-
-      &.is-active {
-        background-color: #FFF;
-        margin-bottom: 0;
-        padding-bottom: 17px;
-        padding-top: 13px;
-        color: mc('blue', '700');
-        border-top: 3px solid mc('blue', '700');
-
-        @at-root .v-theme--dark & {
-          background-color: #292929;
-          color: mc('blue', '300');
-        }
+      &::after {
+        position: absolute;
+        inset: auto var(--wiki-space-3) 0;
+        height: .1875rem;
+        border-radius: var(--wiki-radius-pill) var(--wiki-radius-pill) 0 0;
+        background: var(--wiki-ambient-accent);
+        content: '';
+        opacity: 0;
+        transform: scaleX(.45);
+        transform-origin: center;
+        transition:
+          opacity var(--wiki-motion-fast) var(--wiki-motion-ease),
+          transform var(--wiki-motion-normal) var(--wiki-motion-ease-out);
       }
 
       &:last-child {
-        border-right: none;
-
-        &.is-active {
-          border-right: 1px solid #EEE;
-
-          @at-root .v-theme--dark & {
-            border-right-color: #555;
-          }
-        }
+        border-inline-end: 0;
       }
 
       &:hover {
-        background-color: rgba(#CCC, .1);
+        background: color-mix(in srgb, var(--wiki-accent-warm) 7%, transparent);
+        color: rgb(var(--v-theme-on-surface));
+      }
 
-        @at-root .v-theme--dark & {
-          background-color: rgba(#222, .25);
-        }
+      &.is-active {
+        background: rgb(var(--v-theme-surface));
+        color: var(--wiki-accent-warm);
 
-        &.is-active {
-          background-color: #FFF;
-
-          @at-root .v-theme--dark & {
-            background-color: #292929;
-          }
+        &::after {
+          opacity: 1;
+          transform: scaleX(1);
         }
       }
 
-      & + li {
-        border-left: 1px solid #EEE;
-
-        @at-root .v-theme--dark & {
-          border-left-color: #222;
-        }
+      &:focus-visible {
+        z-index: 1;
       }
     }
   }
 
   > .tabset-content {
+    min-width: 0;
+    background: rgb(var(--v-theme-surface));
+
     .tabset-panel {
-      padding: 2px 16px 16px;
       display: none;
+      min-width: 0;
+      padding: var(--wiki-space-6);
 
       &.is-active {
         display: block;
       }
+
+      > :first-child {
+        margin-block-start: 0;
+      }
+
+      > :last-child {
+        margin-block-end: 0;
+      }
     }
+  }
+}
+
+@media (max-width: 599px) {
+  .tabset {
+    margin-block: var(--wiki-space-5);
+    border-radius: var(--wiki-control-radius);
+
+    > .tabset-tabs > li {
+      padding-inline: var(--wiki-space-3);
+      font-size: .8125rem;
+    }
+
+    > .tabset-content .tabset-panel {
+      padding: var(--wiki-space-4);
+    }
+  }
+}
+
+@media print {
+  .tabset {
+    border-color: currentColor;
+    background: transparent;
+    box-shadow: none;
+
+    > .tabset-tabs {
+      display: none;
+    }
+
+    > .tabset-content {
+      background: transparent;
+
+      .tabset-panel {
+        padding: 0;
+      }
+    }
+  }
+}
+
+@media (forced-colors: active) {
+  .tabset {
+    border-color: CanvasText;
+    box-shadow: none;
+
+    > .tabset-tabs {
+      border-color: CanvasText;
+    }
+
+    > .tabset-tabs > li {
+      border-color: CanvasText;
+
+      &.is-active {
+        outline: .125rem solid Highlight;
+        outline-offset: -.125rem;
+      }
+    }
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tabset > .tabset-tabs > li,
+  .tabset > .tabset-tabs > li::after {
+    transition-duration: .001ms !important;
   }
 }
 </style>

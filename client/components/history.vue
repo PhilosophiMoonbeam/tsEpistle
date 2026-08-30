@@ -10,18 +10,19 @@
             span {{total}} revisions
             span Page {{pageId}}
         v-spacer
-        v-btn(variant='flat', color='primary', size='small', @click='goLive', aria-label='Return to live version')
+        v-btn.history-live-action(variant='flat', color='primary', size='small', @click='goLive', aria-label='Return to live version')
           v-icon(v-if='$vuetify.display.smAndDown') mdi-close
           span(v-else) Return to Live Version
       v-container.history-shell(fluid)
         v-row
-          v-col(cols='12', md='4')
-            v-chip.my-0.ml-6(
+          v-col.history-trail-column(cols='12', md='4')
+            v-chip.history-live-chip.my-0(
               label
               size="small"
-              :color='$vuetify.theme.current.dark ? `grey-darken-2` : `grey-lighten-2`'
-              :class='$vuetify.theme.current.dark ? `text-grey-lighten-2` : `text-grey-darken-2`'
+              color='primary'
+              variant='tonal'
               )
+              v-icon(start, size='small') mdi-access-point
               span Live
             async-state(
               v-if='trailLoading && trail.length === 0'
@@ -37,7 +38,7 @@
               retry-label='Try again'
               @retry='loadHistory'
             )
-            v-timeline(
+            v-timeline.history-timeline(
               v-else
               density="compact"
               )
@@ -48,7 +49,7 @@
                 :dot-color='trailColor(ph.actionType)'
                 :icon='trailIcon(ph.actionType)'
                 )
-                v-card.radius-7(
+                v-card.history-revision-card.radius-7(
                   flat
                   :class='trailBgColor(ph.actionType)'
                 )
@@ -97,11 +98,11 @@
                       v-list(density="compact" nav).history-promptmenu
                         v-list-item(@click.stop='setDiffSource(ph.versionId)', :disabled='(ph.versionId >= diffTarget && diffTarget !== 0) || ph.versionId === 0')
                           template(v-slot:prepend)
-                            v-avatar(size='24'): v-avatar A
+                            v-avatar(size='24'): strong A
                           v-list-item-title Set as Differencing Source
                         v-list-item(@click.stop='setDiffTarget(ph.versionId)', :disabled='ph.versionId <= diffSource && ph.versionId !== 0')
                           template(v-slot:prepend)
-                            v-avatar(size='24'): v-avatar B
+                            v-avatar(size='24'): strong B
                           v-list-item-title Set as Differencing Target
                         v-list-item(@click.stop='viewSource(ph.versionId)')
                           template(v-slot:prepend)
@@ -126,6 +127,7 @@
                       variant="flat"
                       rounded='0'
                       :aria-label='`Set revision ${ph.versionId} as differencing source`'
+                      :aria-pressed='diffSource === ph.versionId'
                       :class='diffSource === ph.versionId ? `history-diff-active` : `history-diff-inactive`'
                       :disabled='(ph.versionId >= diffTarget && diffTarget !== 0) || ph.versionId === 0'
                     ): strong A
@@ -137,28 +139,31 @@
                       rounded='0'
                       :aria-label='`Set revision ${ph.versionId || `live`} as differencing target`'
                       :class='diffTarget === ph.versionId ? `history-diff-active` : `history-diff-inactive`'
+                      :aria-pressed='diffTarget === ph.versionId'
                       :disabled='ph.versionId <= diffSource && ph.versionId !== 0'
                     ): strong B
 
-            v-btn.ma-0.radius-7(
+            v-btn.history-load-more.ma-0.radius-7(
               v-if='total > trail.length'
               block
               color='primary'
+              variant='tonal'
               @click='loadMore'
               :loading='loadingMore'
               :disabled='loadingMore'
               )
-              .text-body-small.text-white Load More...
+              .text-body-small Load More...
 
-            v-chip.ma-0(
-              v-else
+            v-chip.history-end-chip.ma-0(
+              v-else-if='trailLoaded'
               label
               size="small"
-              :color='$vuetify.theme.current.dark ? `grey-darken-2` : `grey-lighten-2`'
-              :class='$vuetify.theme.current.dark ? `text-grey-lighten-2` : `text-grey-darken-2`'
-              ) End of history trail
+              variant='outlined'
+              )
+              v-icon(start, size='small') mdi-archive-check-outline
+              span End of history trail
 
-          v-col(cols='12', md='8')
+          v-col.history-comparison-column(cols='12', md='8')
             async-state(
               v-if='trailLoading && !trailLoaded'
               state='loading'
@@ -173,22 +178,22 @@
               retry-label='Try again'
               @retry='loadHistory'
             )
-            v-card.radius-7(v-else-if='trailLoaded' :class='$vuetify.display.mdAndUp ? `mt-8` : ``')
+            v-card.history-comparison-card.radius-7(v-else-if='trailLoaded' :class='$vuetify.display.mdAndUp ? `mt-8` : ``')
               v-card-text
-                v-card.radius-7(flat, :class='$vuetify.theme.current.dark ? `bg-grey-darken-2` : `bg-grey-lighten-4`')
-                  v-row.align-center(no-gutters)
+                v-card.history-comparison-frame.radius-7(flat)
+                  v-row.history-comparison-summary.align-center(no-gutters)
                     v-col
                       v-card-text
-                        h2.history-comparison-heading(ref='comparisonHeading' tabindex='-1') {{target.title}}
-                        .text-body-small {{target.description}}
+                        h2#history-comparison-heading.history-comparison-heading(ref='comparisonHeading' tabindex='-1') {{target.title}}
+                        .text-body-small.history-comparison-description {{target.description}}
                         .history-revision-meta
                           span {{ target.versionId === 0 ? 'Live version' : `Revision ${target.versionId}` }}
                           span {{ target.editor || 'unknown editor' }} / {{ target.contentType || 'unknown format' }}
                           span {{ target.visibility }}{{ target.isPublished === false ? ' / unpublished' : '' }}
                           span(v-if='target.tags.length > 0') Tags: {{ target.tags.join(', ') }}
-                    v-col.text-right.py-3(cols='auto')
-                      v-btn.mr-3(
-                        :color='$vuetify.theme.current.dark ? `white` : `grey-darken-3`'
+                    v-col.history-comparison-controls.text-right.py-3(cols='auto')
+                      v-btn.history-view-toggle.mr-3(
+                        color='primary'
                         size="small"
                         variant="outlined"
                         @click='toggleViewMode'
@@ -197,19 +202,19 @@
                       )
                         v-icon(start) mdi-eye
                         span.text-label-small View: {{viewMode === 'line-by-line' ? 'Line by line' : 'Side by side'}}
-                v-card.mt-3.history-diff(flat)
+                v-card.mt-3.history-diff(flat, aria-labelledby='history-comparison-heading')
                   div(v-html='diffHTML')
 
     v-dialog(v-model='isRestoreConfirmDialogShown', max-width='650', persistent)
-      v-card
-        .dialog-header.is-orange {{$t('history:restore.confirmTitle')}}
+      v-card.history-restore-dialog
+        .dialog-header.history-restore-header {{$t('history:restore.confirmTitle')}}
         v-card-text.pa-4
           i18next(tag='span', path='history:restore.confirmText')
             strong(place='date') {{ $helpers.formatMoment(restoreTarget.versionDate, 'LLL') }}
         v-card-actions
           v-spacer
           v-btn(variant="text", @click='isRestoreConfirmDialogShown = false', :disabled='restoreLoading') {{$t('common:actions.cancel')}}
-          v-btn(color="orange-darken-2", @click='restoreConfirm', :loading='restoreLoading') {{$t('history:restore.confirmButton')}}
+          v-btn(color="warning", variant='flat', @click='restoreConfirm', :loading='restoreLoading') {{$t('history:restore.confirmButton')}}
 
     page-selector(mode='create', v-model='branchOffOpts.modal', :open-handler='branchOffHandle', :path='branchOffOpts.path', :locale='branchOffOpts.locale')
 
@@ -627,126 +632,152 @@ export default {
 <style lang='scss'>
 .history-main {
   background:
-    radial-gradient(circle at 88% 0%, rgba(var(--v-theme-primary), .07), transparent 30rem),
+    radial-gradient(circle at 88% 0, color-mix(in srgb, var(--wiki-ambient-accent) 8%, transparent), transparent 34rem),
     rgb(var(--v-theme-background));
 }
 
-.history-promptmenu {
-  border-top: 3px solid rgb(var(--v-theme-primary));
-}
-.history-trail-move {
-  background: color-mix(in srgb, rgb(var(--v-theme-info)) 16%, rgb(var(--v-theme-surface))) !important;
-}
-
-.history-trail-initial {
-  background: color-mix(in srgb, rgb(var(--v-theme-success)) 16%, rgb(var(--v-theme-surface))) !important;
-}
-
-.history-trail-live {
-  background: color-mix(in srgb, rgb(var(--v-theme-warning)) 16%, rgb(var(--v-theme-surface))) !important;
-}
-
-.history-trail-default {
-  background: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 8%, rgb(var(--v-theme-surface))) !important;
-}
-
-.history-diff-active {
-  background: rgb(var(--v-theme-primary)) !important;
-  color: rgb(var(--v-theme-on-primary)) !important;
-}
-
-.history-diff-inactive {
-  background: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 10%, rgb(var(--v-theme-surface))) !important;
-  color: rgb(var(--v-theme-on-surface)) !important;
-}
-
 .history-toolbar {
-  min-height: 86px !important;
+  min-height: calc(var(--wiki-control-height) + var(--wiki-space-10)) !important;
   padding-inline: var(--wiki-page-gutter);
-  border-bottom: 1px solid rgba(var(--v-border-color), .11) !important;
-  background: color-mix(in srgb, rgb(var(--v-theme-surface)) 96%, rgb(var(--v-theme-background))) !important;
+  border-bottom: 1px solid var(--wiki-surface-border) !important;
+  background: var(--wiki-surface-raised) !important;
+  box-shadow: var(--wiki-shadow-xs);
 }
 
 .history-toolbar-copy {
   min-width: 0;
-  padding-block: 14px;
+  padding-block: var(--wiki-space-3);
 }
 
 .history-eyebrow {
-  color: rgb(var(--v-theme-primary));
-  font-size: .66rem;
-  font-weight: 760;
+  color: var(--wiki-accent-warm);
+  font-size: var(--wiki-label-size);
+  font-weight: var(--wiki-label-weight);
   letter-spacing: .12em;
   text-transform: uppercase;
 }
 
 .history-toolbar-title {
   overflow: hidden;
-  margin: 3px 0 0;
+  margin: var(--wiki-space-1) 0 0;
   color: rgb(var(--v-theme-on-surface));
   font-size: 1rem;
-  font-weight: 500;
+  font-weight: 520;
   text-overflow: ellipsis;
   white-space: nowrap;
+
+  strong {
+    font-family: var(--wiki-font-mono);
+    font-weight: 680;
+  }
 }
 
 .history-toolbar-meta,
 .history-revision-meta {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px 16px;
-  margin-top: 5px;
-  color: rgb(var(--v-theme-on-surface));
-  font-size: .72rem;
-  opacity: .62;
+  gap: var(--wiki-space-1) var(--wiki-space-4);
+  margin-top: var(--wiki-space-1);
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 66%, transparent);
+  font-size: .75rem;
+}
+
+.history-live-action,
+.history-view-toggle,
+.history-load-more {
+  border-radius: var(--wiki-control-radius);
+  font-weight: 650;
+  text-transform: none;
 }
 
 .history-shell {
   width: min(100%, var(--wiki-content-max));
   margin: 0 auto;
-  padding: 24px var(--wiki-page-gutter) 48px !important;
+  padding: var(--wiki-space-6) var(--wiki-page-gutter) var(--wiki-space-12) !important;
 }
 
-.history {
-  .v-timeline-item .v-card,
-  .history-shell > .v-row > .v-col:last-child > .v-card {
-    border: 1px solid rgba(var(--v-border-color), .11);
-    border-radius: var(--wiki-panel-radius);
-    box-shadow: 0 8px 26px rgba(15, 23, 42, .045);
+.history-trail-column,
+.history-comparison-column {
+  min-width: 0;
+}
+
+.history-live-chip {
+  position: relative;
+  z-index: 1;
+  margin-inline-start: var(--wiki-space-6);
+  border: 1px solid color-mix(in srgb, var(--wiki-accent-warm) 24%, transparent);
+  font-weight: 650;
+}
+
+.history-timeline {
+  .v-timeline-divider__dot {
+    border: 1px solid var(--wiki-surface-border);
+    box-shadow: var(--wiki-shadow-xs);
   }
 
-  &-diff {
-    overflow-x: auto;
-    border: 1px solid rgba(var(--v-border-color), .1);
-    border-radius: var(--wiki-control-radius);
-  }
-
-  .d2h-file-wrapper {
-    border: 0;
-  }
-
-  .d2h-file-header {
-    display: none;
+  .v-timeline-item__body {
+    min-width: 0;
   }
 }
+
+.history-revision-card {
+  overflow: hidden;
+  border: 1px solid var(--wiki-surface-border);
+  border-radius: var(--wiki-panel-radius) !important;
+  box-shadow: var(--wiki-shadow-xs);
+  transition:
+    border-color var(--wiki-motion-fast) var(--wiki-motion-ease),
+    box-shadow var(--wiki-motion-fast) var(--wiki-motion-ease),
+    transform var(--wiki-motion-fast) var(--wiki-motion-ease-out);
+
+  &:hover,
+  &:focus-within {
+    border-color: var(--wiki-surface-border-strong);
+    box-shadow: var(--wiki-shadow-sm);
+    transform: translateY(calc(var(--wiki-space-1) * -.25));
+  }
+}
+
+.history-trail-move {
+  background: color-mix(in srgb, rgb(var(--v-theme-info)) 10%, var(--wiki-surface-raised)) !important;
+}
+
+.history-trail-initial {
+  background: color-mix(in srgb, rgb(var(--v-theme-success)) 10%, var(--wiki-surface-raised)) !important;
+}
+
+.history-trail-live {
+  background: color-mix(in srgb, rgb(var(--v-theme-warning)) 10%, var(--wiki-surface-raised)) !important;
+}
+
+.history-trail-default {
+  background: var(--wiki-surface-raised) !important;
+}
+
 .history-revision-summary {
   min-width: 0;
-  padding: 10px 12px 8px;
+  padding: var(--wiki-space-3);
   cursor: pointer;
 
   &:focus-visible {
-    outline: 2px solid rgb(var(--v-theme-primary));
-    outline-offset: -2px;
+    outline: .125rem solid var(--wiki-focus-color);
+    outline-offset: calc(var(--wiki-focus-offset) * -1);
+    box-shadow: inset var(--wiki-focus-ring);
   }
 }
 
 .history-revision-copy {
   display: flex;
   min-width: 0;
-  align-items: center;
   flex-wrap: wrap;
-  gap: 4px;
+  align-items: center;
+  gap: var(--wiki-space-1);
+
+  .v-divider {
+    border-color: var(--wiki-surface-border);
+  }
 }
+
 .history-revision-description {
   min-width: 0;
   overflow: hidden;
@@ -756,58 +787,210 @@ export default {
 
 .history-revision-actions {
   display: flex;
-  min-height: 40px;
+  min-height: var(--wiki-control-height);
   align-items: center;
   justify-content: flex-end;
-  gap: 4px;
-  padding: 4px 8px 6px;
-  border-top: 1px solid rgba(var(--v-border-color), .08);
+  gap: var(--wiki-space-1);
+  padding: var(--wiki-space-1) var(--wiki-space-2);
+  border-top: 1px solid var(--wiki-surface-border);
+  background: color-mix(in srgb, var(--wiki-surface-sunken) 70%, transparent);
 
   .v-btn {
-    flex: 0 0 44px;
-    min-width: 44px;
-    min-height: 44px;
+    min-width: var(--wiki-control-height);
+    min-height: var(--wiki-control-height);
+    flex: 0 0 var(--wiki-control-height);
+    border-radius: var(--wiki-radius-xs) !important;
   }
+}
+
+.history-diff-active {
+  background: var(--wiki-accent-warm) !important;
+  color: rgb(var(--v-theme-on-primary)) !important;
+}
+
+.history-diff-inactive {
+  background: var(--wiki-surface-raised) !important;
+  color: rgb(var(--v-theme-on-surface)) !important;
+}
+
+.history-promptmenu,
+.history-restore-dialog {
+  overflow: hidden;
+  border: 1px solid var(--wiki-surface-border);
+  border-radius: var(--wiki-panel-radius);
+  background: var(--wiki-surface-raised);
+  box-shadow: var(--wiki-shadow-md);
+}
+
+.history-promptmenu {
+  border-block-start: var(--wiki-space-1) solid var(--wiki-accent-warm);
+}
+
+.history-load-more {
+  margin-top: var(--wiki-space-2) !important;
+}
+
+.history-end-chip {
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 68%, transparent);
+}
+
+.history-restore-header {
+  border-bottom: 1px solid color-mix(in srgb, rgb(var(--v-theme-warning)) 22%, transparent);
+  background: color-mix(in srgb, rgb(var(--v-theme-warning)) 12%, var(--wiki-surface-raised));
+  color: rgb(var(--v-theme-on-surface));
+}
+
+.history-comparison-card {
+  overflow: hidden;
+  border: 1px solid var(--wiki-surface-border);
+  border-radius: var(--wiki-panel-radius) !important;
+  background: var(--wiki-surface-raised);
+  box-shadow: var(--wiki-shadow-md);
+
+  > .v-card-text {
+    padding: var(--wiki-space-4);
+  }
+}
+
+.history-comparison-frame {
+  overflow: hidden;
+  border: 1px solid var(--wiki-surface-border);
+  border-radius: var(--wiki-control-radius) !important;
+  background: var(--wiki-surface-sunken);
+  box-shadow: var(--wiki-shadow-inset);
 }
 
 .history-comparison-heading {
   margin: 0;
   color: rgb(var(--v-theme-on-surface));
   font-size: 1.15rem;
-  font-weight: 700;
+  font-weight: 720;
+}
+
+.history-comparison-description {
+  margin-top: var(--wiki-space-1);
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 68%, transparent);
+}
+
+.history-diff {
+  overflow-x: auto;
+  border: 1px solid var(--wiki-surface-border);
+  border-radius: var(--wiki-control-radius) !important;
+  background: var(--wiki-surface-raised);
+
+  .d2h-file-wrapper {
+    border: 0;
+  }
+
+  .d2h-file-header {
+    display: none;
+  }
+
+  .d2h-wrapper {
+    color: rgb(var(--v-theme-on-surface));
+    font-family: var(--wiki-font-mono);
+  }
+
+  .d2h-code-line,
+  .d2h-code-side-line,
+  .d2h-code-linenumber,
+  .d2h-code-side-linenumber {
+    border-color: var(--wiki-surface-border);
+    background: var(--wiki-surface-raised);
+    color: rgb(var(--v-theme-on-surface));
+  }
+
+  .d2h-info {
+    background: color-mix(in srgb, rgb(var(--v-theme-info)) 10%, var(--wiki-surface-raised));
+    color: rgb(var(--v-theme-on-surface));
+  }
+
+  .d2h-del {
+    background: color-mix(in srgb, rgb(var(--v-theme-error)) 12%, var(--wiki-surface-raised));
+  }
+
+  .d2h-ins {
+    background: color-mix(in srgb, rgb(var(--v-theme-success)) 12%, var(--wiki-surface-raised));
+  }
 }
 
 @media (max-width: 959px) {
   .history-toolbar {
-    min-height: 76px !important;
-    padding-inline: 12px;
+    min-height: calc(var(--wiki-control-height) + var(--wiki-space-8)) !important;
+    padding-inline: var(--wiki-space-3);
   }
 
   .history-toolbar-copy {
-    max-width: calc(100vw - 92px);
+    max-width: calc(100vw - 5.75rem);
+  }
+
+  .history-live-action {
+    min-width: var(--wiki-control-height);
+    min-height: var(--wiki-control-height);
   }
 
   .history-shell {
-    padding: 14px 10px 36px !important;
+    padding: var(--wiki-space-4) var(--wiki-space-3) var(--wiki-space-10) !important;
   }
 
-  .history-diff {
-    overflow-x: auto;
+  .history-comparison-card {
+    margin-top: var(--wiki-space-2);
   }
 
   .history .d2h-file-side-diff {
     min-width: 32rem;
   }
 }
+
 @media (max-width: 599px) {
+  .history-toolbar-title {
+    font-size: .875rem;
+  }
+
+  .history-shell {
+    padding-inline: var(--wiki-space-2) !important;
+  }
+
   .history-revision-description {
     flex: 1 1 10rem;
     overflow-wrap: anywhere;
     white-space: normal;
   }
 
-  .history-revision-actions {
-    padding-inline: 6px;
+  .history-comparison-card > .v-card-text {
+    padding: var(--wiki-space-2);
+  }
+
+  .history-comparison-summary {
+    align-items: stretch !important;
+    flex-direction: column;
+  }
+
+  .history-comparison-controls {
+    width: 100%;
+    padding: 0 var(--wiki-space-4) var(--wiki-space-4) !important;
+
+    .history-view-toggle {
+      width: 100%;
+      margin: 0 !important;
+    }
+  }
+}
+
+@media (forced-colors: active) {
+  .history-revision-card,
+  .history-comparison-card,
+  .history-comparison-frame,
+  .history-diff,
+  .history-promptmenu,
+  .history-restore-dialog {
+    border-color: CanvasText;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .history-revision-card {
+    transform: none !important;
   }
 }
 </style>

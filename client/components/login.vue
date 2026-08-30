@@ -1,14 +1,14 @@
 <template lang="pug">
   v-app
     .login(:style='`background-image: url(` + bgUrl + `);`')
-      main.login-sd
+      main.login-sd(:aria-busy='isLoading', aria-labelledby='login-site-title')
         .login-brand
           .login-logo
             v-avatar(rounded='0', size='34')
-              img(:src='logoUrl', :alt='siteTitle')
+              img(:src='logoUrl', alt='')
           .login-title
             .login-eyebrow {{ $t('auth:loginRequired') }}
-            h1 {{ siteTitle }}
+            h1#login-site-title {{ siteTitle }}
         v-alert.mb-0(
           v-model='errorShown'
           color="error"
@@ -20,15 +20,17 @@
           .text-body-medium {{errorMessage}}
         template(v-if='screen === `login` && filteredStrategies.length > 1')
           .login-subtitle
-            h2(tabindex='-1', ref='loginHeading').text-body-large {{$t('auth:selectAuthProvider')}}
+            h2#login-provider-title(tabindex='-1', ref='loginHeading').text-body-large {{$t('auth:selectAuthProvider')}}
           .login-list
-            v-list.elevation-1.radius-7(nav)
+            v-list.elevation-1.radius-7(nav aria-labelledby='login-provider-title')
               v-list-item(
                 v-for='stg of filteredStrategies'
                 :key='stg.key'
                 :value='stg.key'
+                role='button'
                 :color='stg.strategy.color'
                 :active='selectedStrategyKey === stg.key'
+                :aria-pressed='selectedStrategyKey === stg.key'
                 @click='selectedStrategyKey = stg.key'
                 )
                 template(v-slot:prepend)
@@ -38,7 +40,7 @@
         template(v-if='screen === `login` && selectedStrategy.strategy.useForm')
           .login-subtitle
             h2(tabindex='-1', ref='loginHeading').text-body-large {{$t('auth:enterCredentials')}}
-          form.login-form(@submit.prevent='login')
+          form.login-form(@submit.prevent='login', :aria-busy='isLoading')
             v-text-field(
               variant="outlined"
               prepend-inner-icon='mdi-email-outline'
@@ -70,6 +72,7 @@
               template(v-slot:append-inner)
                 v-btn(
                   icon
+                  type='button'
                   variant='text'
                   size='small'
                   :aria-label='hidePassword ? `Show password` : `Hide password`'
@@ -102,7 +105,7 @@
           .login-subtitle
             h2(tabindex='-1', ref='loginHeading').text-body-large {{$t('auth:forgotPasswordTitle')}}
           .login-info {{ $t('auth:forgotPasswordSubtitle') }}
-          form.login-form(@submit.prevent='forgotPasswordSubmit')
+          form.login-form(@submit.prevent='forgotPasswordSubmit', :aria-busy='isLoading')
             v-text-field(
               variant="outlined"
               prepend-inner-icon='mdi-email-outline'
@@ -147,7 +150,7 @@
           .login-subtitle
             h2(tabindex='-1', ref='loginHeading').text-body-large {{ $t('auth:resetPwd.title') }}
           .login-info {{ $t('auth:resetPwd.instructions') }}
-          form.login-form(@submit.prevent='resetPassword')
+          form.login-form(@submit.prevent='resetPassword', :aria-busy='isLoading')
             v-text-field.mt-2(
               variant='outlined'
               prepend-inner-icon='mdi-lock-outline'
@@ -163,7 +166,7 @@
               required
               )
               template(v-slot:append-inner)
-                v-btn(icon variant='text' size='small' :aria-label='hideNewPassword ? `Show password` : `Hide password`' @click='hideNewPassword = !hideNewPassword')
+                v-btn(icon type='button' variant='text' size='small' :aria-label='hideNewPassword ? `Show password` : `Hide password`' @click='hideNewPassword = !hideNewPassword')
                   v-icon(:icon='hideNewPassword ? `mdi-eye-off` : `mdi-eye`')
               template(v-slot:loader)
                 password-strength(v-model='newPassword')
@@ -182,7 +185,7 @@
               required
               )
               template(v-slot:append-inner)
-                v-btn(icon variant='text' size='small' :aria-label='hideNewPasswordVerify ? `Show password` : `Hide password`' @click='hideNewPasswordVerify = !hideNewPasswordVerify')
+                v-btn(icon type='button' variant='text' size='small' :aria-label='hideNewPasswordVerify ? `Show password` : `Hide password`' @click='hideNewPasswordVerify = !hideNewPasswordVerify')
                   v-icon(:icon='hideNewPasswordVerify ? `mdi-eye-off` : `mdi-eye`')
             v-btn.mt-2.text-none(
               width='100%'
@@ -194,7 +197,7 @@
         template(v-if='screen === `changePwd`')
           .login-subtitle
             h2(tabindex='-1', ref='loginHeading').text-body-large {{ $t('auth:changePwd.subtitle') }}
-          form.login-form(@submit.prevent='changePassword')
+          form.login-form(@submit.prevent='changePassword', :aria-busy='isLoading')
             v-text-field.mt-2(
               variant='outlined'
               prepend-inner-icon='mdi-lock-outline'
@@ -210,7 +213,7 @@
               required
               )
               template(v-slot:append-inner)
-                v-btn(icon variant='text' size='small' :aria-label='hideNewPassword ? `Show password` : `Hide password`' @click='hideNewPassword = !hideNewPassword')
+                v-btn(icon type='button' variant='text' size='small' :aria-label='hideNewPassword ? `Show password` : `Hide password`' @click='hideNewPassword = !hideNewPassword')
                   v-icon(:icon='hideNewPassword ? `mdi-eye-off` : `mdi-eye`')
               template(v-slot:loader)
                 password-strength(v-model='newPassword')
@@ -229,7 +232,7 @@
               required
               )
               template(v-slot:append-inner)
-                v-btn(icon variant='text' size='small' :aria-label='hideNewPasswordVerify ? `Show password` : `Hide password`' @click='hideNewPasswordVerify = !hideNewPasswordVerify')
+                v-btn(icon type='button' variant='text' size='small' :aria-label='hideNewPasswordVerify ? `Show password` : `Hide password`' @click='hideNewPasswordVerify = !hideNewPasswordVerify')
                   v-icon(:icon='hideNewPasswordVerify ? `mdi-eye-off` : `mdi-eye`')
             v-btn.mt-2.text-none(
               width='100%'
@@ -250,20 +253,23 @@
             @click='screen = `login`'
             ) {{ $t('auth:switchToLogin.link') }}
     v-dialog(v-model='isTFAShown', max-width='500', persistent, aria-labelledby='login-tfa-title')
-      v-card
-        .login-tfa.text-center.pa-5.text-grey-darken-3
+      v-card.login-dialog-card(variant='flat', :aria-busy='isLoading')
+        .login-tfa.text-center.pa-5
           h2#login-tfa-title.text-label-large {{$t('auth:tfaFormTitle')}}
           img(src='_assets/svg/icon-pin-pad.svg', alt='')
           v-text-field.login-tfa-field.mt-2(
             variant="solo"
             flat
-            bg-color='white'
+            bg-color='surface'
             color="primary"
             ref='iptTFA'
             v-model='securityCode'
             :label='$t("auth:tfa.placeholder")'
             :placeholder='$t("auth:tfa.placeholder")'
             autocomplete='one-time-code'
+            inputmode='numeric'
+            maxlength='6'
+            required
             @keyup.enter='verifySecurityCode(false)'
           )
           v-btn.mt-2.text-none(
@@ -274,12 +280,12 @@
             :loading='isLoading'
             ) {{ $t('auth:tfa.verifyToken') }}
     v-dialog(v-model='isTFASetupShown', max-width='600', persistent, aria-labelledby='login-tfa-setup-title')
-      v-card
-        .login-tfa.text-center.pa-5.text-grey-darken-3
+      v-card.login-dialog-card(variant='flat', :aria-busy='isLoading')
+        .login-tfa.text-center.pa-5
           h2#login-tfa-setup-title.text-body-large.text-primary {{$t('auth:tfaSetupTitle')}}
           v-divider.my-5
           .text-label-large {{$t('auth:tfaSetupInstrFirst')}}
-          .text-body-small (#[a(href='https://authy.com/', target='_blank', noopener) Authy], #[a(href='https://support.google.com/accounts/answer/1066447', target='_blank', noopener) Google Authenticator], #[a(href='https://www.microsoft.com/en-us/account/authenticator', target='_blank', noopener) Microsoft Authenticator], etc.)
+          .text-body-small (#[a(href='https://authy.com/', target='_blank', rel='noopener noreferrer') Authy], #[a(href='https://support.google.com/accounts/answer/1066447', target='_blank', rel='noopener noreferrer') Google Authenticator], #[a(href='https://www.microsoft.com/en-us/account/authenticator', target='_blank', rel='noopener noreferrer') Microsoft Authenticator], etc.)
           .login-tfa-qr.mt-5(v-if='isTFASetupShown', v-html='tfaQRImage', aria-hidden='true')
           .text-body-small.mt-3 Manual setup key
           code.login-tfa-secret {{tfaSecret}}
@@ -287,13 +293,16 @@
           v-text-field.login-tfa-field.mt-2(
             variant="solo"
             flat
-            bg-color='white'
+            bg-color='surface'
             color="primary"
             ref='iptTFASetup'
             v-model='securityCode'
             :label='$t("auth:tfa.placeholder")'
             :placeholder='$t("auth:tfa.placeholder")'
             autocomplete='one-time-code'
+            inputmode='numeric'
+            maxlength='6'
+            required
             @keyup.enter='verifySecurityCode(true)'
           )
           v-btn.mt-2.text-none(
@@ -304,7 +313,7 @@
             :loading='isLoading'
             ) {{ $t('auth:tfa.verifyToken') }}
     loader(v-model='isLoading', :color='loaderColor', :title='loaderTitle', :subtitle='$t(`auth:pleaseWait`)')
-    notify(style='padding-top: 64px;')
+    notify.login-notify
 </template>
 
 
@@ -723,189 +732,250 @@ export default {
   min-height: 100dvh;
   align-items: center;
   overflow: hidden auto;
-  padding: 40px clamp(24px, 6vw, 88px);
-  background-color: #111827;
+  padding: var(--wiki-space-10) clamp(var(--wiki-space-6), 6vw, var(--wiki-space-12));
+  background-color: rgb(var(--v-theme-background));
   background-position: center;
   background-size: cover;
-  font-family: 'WikiAgentSans', 'Roboto', sans-serif;
+  color: rgb(var(--v-theme-on-background));
+  font-family: var(--wiki-font-body);
+  isolation: isolate;
 
   &::before {
     position: absolute;
+    z-index: -2;
     inset: 0;
     background:
-      radial-gradient(circle at 72% 18%, rgba(var(--v-theme-primary), .26), transparent 32rem),
-      linear-gradient(110deg, rgba(3, 7, 18, .84), rgba(15, 23, 42, .5) 55%, rgba(3, 7, 18, .72));
+      radial-gradient(
+        circle at 78% 16%,
+        color-mix(in srgb, var(--wiki-accent-spectral) 24%, transparent),
+        transparent 34rem
+      ),
+      linear-gradient(
+        108deg,
+        color-mix(in srgb, rgb(var(--v-theme-background)) 94%, transparent),
+        color-mix(in srgb, rgb(var(--v-theme-background)) 76%, transparent) 62%,
+        color-mix(in srgb, rgb(var(--v-theme-background)) 90%, transparent)
+      );
     content: '';
+    pointer-events: none;
   }
 
   &::after {
     position: absolute;
-    inset: auto 8vw 7vh auto;
-    width: min(30vw, 420px);
-    aspect-ratio: 1;
-    border: 1px solid rgba(255, 255, 255, .08);
-    border-radius: 50%;
-    box-shadow:
-      0 0 0 54px rgba(255, 255, 255, .025),
-      0 0 0 108px rgba(255, 255, 255, .018);
+    z-index: -1;
+    inset: var(--wiki-space-8);
+    border: 1px solid color-mix(in srgb, var(--wiki-accent-spectral) 14%, transparent);
+    border-radius: var(--wiki-hero-radius);
+    background-image:
+      linear-gradient(var(--wiki-surface-border) 1px, transparent 1px),
+      linear-gradient(90deg, var(--wiki-surface-border) 1px, transparent 1px);
+    background-size: var(--wiki-grid-size) var(--wiki-grid-size);
     content: '';
+    mask-image: linear-gradient(90deg, transparent 38%, rgb(var(--v-theme-on-surface)));
+    opacity: .42;
+    pointer-events: none;
   }
 
   &-sd {
     position: relative;
-    z-index: 1;
-    width: min(100%, 480px);
-    max-height: calc(100dvh - 80px);
+    width: min(100%, 30rem);
+    max-height: calc(100dvh - var(--wiki-space-12));
     margin: 0;
-    padding: 30px;
+    padding: var(--wiki-space-8);
     overflow-y: auto;
-    border: 1px solid rgba(255, 255, 255, .28);
-    border-radius: 28px;
-    background: color-mix(in srgb, rgb(var(--v-theme-surface)) 91%, transparent);
-    box-shadow: 0 28px 80px rgba(0, 0, 0, .28);
-    backdrop-filter: blur(24px) saturate(145%);
-    -webkit-backdrop-filter: blur(24px) saturate(145%);
-
-    @at-root .no-backdropfilter & {
-      background: rgb(var(--v-theme-surface));
-    }
+    border: 1px solid var(--wiki-surface-border-strong);
+    border-radius: var(--wiki-hero-radius);
+    background: color-mix(
+      in srgb,
+      rgb(var(--v-theme-surface)) 96%,
+      rgb(var(--v-theme-background))
+    );
+    box-shadow: var(--wiki-shadow-lg), var(--wiki-shadow-inset);
   }
+
   &-brand {
     display: flex;
-    gap: 14px;
+    gap: var(--wiki-space-4);
     align-items: center;
-    margin-bottom: 18px;
+    margin-bottom: var(--wiki-space-5);
   }
+
   &-logo {
     display: grid;
-    flex: 0 0 52px;
-    width: 52px;
-    height: 52px;
+    flex: 0 0 3.25rem;
+    width: 3.25rem;
+    height: 3.25rem;
     place-items: center;
-    border: 1px solid color-mix(in srgb, rgb(var(--v-theme-primary)) 22%, transparent);
-    border-radius: 16px;
-    background: color-mix(in srgb, rgb(var(--v-theme-primary)) 10%, rgb(var(--v-theme-surface)));
-    box-shadow: 0 9px 24px rgba(var(--v-theme-primary), .13);
+    border: 1px solid color-mix(in srgb, var(--wiki-accent-warm) 24%, transparent);
+    border-radius: var(--wiki-panel-radius);
+    background: color-mix(in srgb, var(--wiki-accent-warm) 10%, var(--wiki-surface-raised));
+    box-shadow: var(--wiki-shadow-sm);
   }
 
   &-title {
     min-width: 0;
 
     h1 {
+      margin: var(--wiki-space-1) 0 0;
       overflow-wrap: anywhere;
-      margin: 3px 0 0;
       color: rgb(var(--v-theme-on-surface));
-      font-size: 1.28rem;
-      font-weight: 740;
+      font-size: 1.25rem;
+      font-weight: 720;
       letter-spacing: -.035em;
-      line-height: 1.15;
+      line-height: var(--wiki-leading-heading);
     }
   }
 
+  &-eyebrow {
+    color: var(--wiki-accent-warm);
+    font-size: var(--wiki-label-size);
+    font-weight: var(--wiki-label-weight);
+    letter-spacing: .1em;
+    line-height: 1rem;
+    text-transform: uppercase;
+  }
+
+  & > &-sd > .v-alert {
+    margin-bottom: var(--wiki-space-4) !important;
+    border: 1px solid color-mix(in srgb, rgb(var(--v-theme-error)) 28%, transparent);
+  }
+
   &-subtitle {
-    padding: 18px 2px 9px;
+    padding: var(--wiki-space-4) var(--wiki-space-1) var(--wiki-space-2);
     color: rgb(var(--v-theme-on-surface));
-    font-weight: 680;
     text-align: start;
 
     .text-body-large {
-      font-size: 1.05rem !important;
+      margin: 0;
+      font-size: 1rem !important;
+      font-weight: 680;
       letter-spacing: -.015em;
     }
   }
 
   &-info {
-    margin-block: 4px 10px;
-    padding: 13px 14px;
-    border: 1px solid rgba(var(--v-border-color), .1);
-    border-radius: 12px;
-    background: color-mix(in srgb, rgb(var(--v-theme-primary)) 5%, transparent);
-    color: rgb(var(--v-theme-on-surface));
-    font-size: .82rem;
-    line-height: 1.5;
-    opacity: .8;
+    margin-block: var(--wiki-space-1) var(--wiki-space-3);
+    padding: var(--wiki-space-3) var(--wiki-space-4);
+    border: 1px solid var(--wiki-surface-border);
+    border-inline-start: var(--wiki-space-1) solid var(--wiki-accent-spectral);
+    border-radius: var(--wiki-control-radius);
+    background: color-mix(in srgb, var(--wiki-accent-spectral) 7%, var(--wiki-surface-raised));
+    color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 78%, transparent);
+    font-size: .8125rem;
+    line-height: 1.55;
     text-align: start;
   }
 
   &-success {
-    padding: 28px 8px 12px;
+    padding: var(--wiki-space-8) var(--wiki-space-2) var(--wiki-space-3);
     color: rgb(var(--v-theme-on-surface));
 
     &-icon {
-      font-size: 4.5rem;
+      font-size: 4rem;
+      filter: drop-shadow(0 var(--wiki-space-1) var(--wiki-space-3) color-mix(in srgb, rgb(var(--v-theme-success)) 18%, transparent));
     }
   }
 
   &-list,
   &-form {
-    padding: 6px 0 0;
+    padding-top: var(--wiki-space-1);
   }
 
   &-list {
     .v-list {
-      padding: 7px;
-      border: 1px solid rgba(var(--v-border-color), .1);
-      border-radius: 14px !important;
-      background: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 3%, transparent);
+      padding: var(--wiki-space-2);
+      border: 1px solid var(--wiki-surface-border);
+      border-radius: var(--wiki-panel-radius) !important;
+      background: var(--wiki-surface-sunken);
       box-shadow: none !important;
     }
 
     .v-list-item {
-      min-height: 46px;
-      margin-block: 2px;
-      border-radius: 10px;
+      min-height: var(--wiki-control-height);
+      margin-block: var(--wiki-space-1);
+      border-radius: var(--wiki-control-radius);
+      transition:
+        background-color var(--wiki-motion-fast) var(--wiki-motion-ease),
+        color var(--wiki-motion-fast) var(--wiki-motion-ease);
+
+      &--active {
+        background: color-mix(in srgb, var(--wiki-accent-warm) 12%, transparent);
+        font-weight: 650;
+      }
     }
   }
 
   &-form {
-    .v-field {
-      border-radius: 13px;
-      background: color-mix(in srgb, rgb(var(--v-theme-surface)) 92%, transparent) !important;
+    .v-input + .v-input {
+      margin-top: var(--wiki-space-2) !important;
     }
 
     > .v-btn {
-      min-height: 48px;
-      border-radius: 12px;
+      min-height: var(--wiki-control-height);
+      border-radius: var(--wiki-control-radius);
       font-weight: 680;
       letter-spacing: .01em;
     }
-  }
 
-  &-tfa {
-    border: 1px solid rgba(var(--v-border-color), .1);
-    border-radius: 20px;
-    background: rgb(var(--v-theme-surface));
-    color: rgb(var(--v-theme-on-surface)) !important;
+    > .text-center {
+      display: flex;
+      flex-wrap: wrap;
+      gap: var(--wiki-space-1);
+      justify-content: center;
 
-    > img {
-      width: 86px;
-      margin-bottom: 12px;
-    }
-
-    .v-field {
-      border-radius: 12px;
-    }
-
-    &-field input {
-      text-align: center;
-    }
-
-    &-secret {
-      display: block;
-      overflow-wrap: anywhere;
-      user-select: all;
-    }
-
-    &-qr {
-      width: 200px;
-      height: 200px;
-      margin: 0 auto;
-      padding: 5px;
-      border: 1px solid rgba(var(--v-border-color), .1);
-      border-radius: 12px;
-      background: #fff;
+      .v-btn {
+        min-height: var(--wiki-control-height);
+      }
     }
   }
+}
+
+.login-dialog-card {
+  max-height: calc(100dvh - var(--wiki-space-8));
+  overflow-y: auto;
+  border: 1px solid var(--wiki-surface-border-strong);
+  border-radius: var(--wiki-panel-radius) !important;
+  background: var(--wiki-surface-raised) !important;
+  box-shadow: var(--wiki-shadow-lg) !important;
+}
+
+.login-tfa {
+  background: var(--wiki-surface-raised);
+  color: rgb(var(--v-theme-on-surface)) !important;
+
+  > img {
+    width: 5.5rem;
+    margin-bottom: var(--wiki-space-3);
+  }
+
+  &-field input {
+    text-align: center;
+  }
+
+  &-secret {
+    display: block;
+    margin-top: var(--wiki-space-1);
+    padding: var(--wiki-space-2);
+    overflow-wrap: anywhere;
+    border: 1px solid var(--wiki-surface-border);
+    border-radius: var(--wiki-radius-xs);
+    background: var(--wiki-surface-sunken);
+    user-select: all;
+  }
+
+  &-qr {
+    width: 12.5rem;
+    height: 12.5rem;
+    margin: 0 auto;
+    padding: var(--wiki-space-2);
+    border: 1px solid var(--wiki-surface-border);
+    border-radius: var(--wiki-control-radius);
+    background: rgb(var(--v-theme-on-primary));
+  }
+}
+
+.login-notify {
+  padding-top: var(--wiki-footer-height);
 }
 
 @media (max-width: 599px) {
@@ -915,18 +985,29 @@ export default {
     background-image: none !important;
 
     &::after {
-      display: none;
+      inset: 0;
+      border: 0;
+      border-radius: 0;
+      opacity: .2;
     }
 
     &-sd {
       width: 100%;
       max-height: none;
       min-height: 100dvh;
-      padding: 28px 20px;
+      padding: var(--wiki-space-6) var(--wiki-space-5);
       border: 0;
       border-radius: 0;
-      background: rgb(var(--v-theme-surface));
+      background: color-mix(
+        in srgb,
+        rgb(var(--v-theme-surface)) 96%,
+        rgb(var(--v-theme-background))
+      );
       box-shadow: none;
+    }
+
+    &-brand {
+      margin-bottom: var(--wiki-space-4);
     }
   }
 }
@@ -934,50 +1015,67 @@ export default {
 @media (max-height: 650px) and (min-width: 600px) {
   .login {
     align-items: flex-start;
-    padding-block: 12px;
+    padding-block: var(--wiki-space-3);
 
     &-sd {
-      max-height: calc(100dvh - 24px);
-      padding: 16px 24px;
+      max-height: calc(100dvh - var(--wiki-space-6));
+      padding: var(--wiki-space-4) var(--wiki-space-6);
     }
 
     &-brand {
-      margin-bottom: 4px;
+      margin-bottom: var(--wiki-space-1);
     }
 
     &-logo {
-      flex-basis: 40px;
-      width: 40px;
-      height: 40px;
-      border-radius: 12px;
+      flex-basis: 2.5rem;
+      width: 2.5rem;
+      height: 2.5rem;
+      border-radius: var(--wiki-control-radius);
     }
 
     &-subtitle {
-      padding: 6px 2px 4px;
+      padding-block: var(--wiki-space-2) var(--wiki-space-1);
     }
 
     &-form {
-      padding-top: 2px;
+      padding-top: 0;
 
       .v-field__input {
-        min-height: 44px;
-        padding-block: 8px;
-      }
-
-      > .v-btn {
-        min-height: 40px;
+        min-height: var(--wiki-control-height);
+        padding-block: var(--wiki-space-2);
       }
 
       > .text-center {
-        margin-top: 6px !important;
+        margin-top: var(--wiki-space-1) !important;
       }
     }
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .login * {
+  .login *,
+  .login *::before,
+  .login *::after {
     transition-duration: .01ms !important;
+    animation-duration: .01ms !important;
+  }
+}
+
+@media print {
+  .login {
+    padding: 0;
+    background: transparent !important;
+
+    &::before,
+    &::after {
+      display: none;
+    }
+
+    &-sd {
+      max-height: none;
+      border: 0;
+      box-shadow: none;
+    }
   }
 }
 </style>

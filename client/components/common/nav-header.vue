@@ -22,9 +22,9 @@
           @keyup.up='searchMove(`up`)'
           autocomplete='off'
         )
-    v-row(no-gutters)
-      v-col(cols='5', md='4')
-        v-toolbar.nav-header-inner(color='surface', flat, :class='$vuetify.locale.isRtl ? `pr-3` : `pl-3`')
+    v-row.nav-header-layout(no-gutters)
+      v-col.nav-header-brand-col(cols='5', md='4')
+        v-toolbar.nav-header-inner.nav-header-brand(color='surface', flat)
           slot(name='mobileBrand', v-if='$slots.mobileBrand && $vuetify.display.smAndDown')
           button.nav-header-logo(
             v-if='!$slots.mobileBrand || $vuetify.display.mdAndUp'
@@ -33,22 +33,21 @@
             :aria-label='$t(`common:header.home`)'
             )
             img.org-logo(:src='logoUrl', :alt='title')
-          v-toolbar-title.nav-header-title(v-if='!$slots.mobileBrand || $vuetify.display.mdAndUp', :class='{ "mx-3": $vuetify.display.mdAndUp, "mx-1": $vuetify.display.smAndDown }')
+          v-toolbar-title.nav-header-title(v-if='!$slots.mobileBrand || $vuetify.display.mdAndUp')
             span {{title}}
-      v-col(md='4', v-if='$vuetify.display.mdAndUp')
-        v-toolbar.nav-header-inner(color='surface', flat)
+      v-col.nav-header-search-col(md='4', v-if='$vuetify.display.mdAndUp')
+        v-toolbar.nav-header-inner.nav-header-command(color='surface', flat)
           slot(name='mid')
             transition(name='navHeaderSearch', v-if='searchIsShown')
               v-text-field.nav-header-search-control(
                 ref='searchField',
                 v-if='searchIsShown && $vuetify.display.mdAndUp',
                 v-model='search',
-                color='white',
+                color='primary',
                 :label='searchInputLabel',
                 single-line,
                 variant="solo"
                 flat
-                rounded
                 hide-details,
                 :prepend-inner-icon='searchInputIcon',
                 :loading='searchIsLoading',
@@ -61,11 +60,11 @@
               )
             v-tooltip(location="bottom")
               template(v-slot:activator='{ props }')
-                v-btn.ml-2.mr-0(icon, v-bind='props', href='/t', :aria-label='$t(`common:header.browseTags`)')
-                  v-icon(color='grey') mdi-tag-multiple
+                v-btn.nav-header-browse(icon, v-bind='props', href='/t', :aria-label='$t(`common:header.browseTags`)')
+                  v-icon mdi-tag-multiple
               span {{$t('common:header.browseTags')}}
-      v-col(cols='7', md='4')
-        v-toolbar.nav-header-inner.nav-header-actions(color='surface', flat, :class='$vuetify.display.mdAndUp ? `pr-4` : `pr-0`')
+      v-col.nav-header-actions-col(cols='7', md='4')
+        v-toolbar.nav-header-inner.nav-header-actions(color='surface', flat)
           v-spacer
           .navHeaderLoading.mr-3
             v-progress-circular(indeterminate, color='primary', :size='22', :width='2' v-show='isLoading', aria-label='Page loading')
@@ -81,7 +80,7 @@
             aria-controls='nav-header-mobile-search'
             :aria-label='searchIsShown ? `Close search` : `Open search`'
           )
-            v-icon(color='grey') {{ searchIsShown ? 'mdi-close' : 'mdi-magnify' }}
+            v-icon {{ searchIsShown ? 'mdi-close' : 'mdi-magnify' }}
           .nav-header-slot-actions(v-if='$vuetify.display.mdAndUp')
             slot(name='actions')
           //- LANGUAGES
@@ -99,9 +98,9 @@
                       height='64'
                       :aria-label='$t(`common:header.language`)'
                       )
-                      v-icon(color='grey') mdi-web
+                      v-icon mdi-web
                   span {{$t('common:header.language')}}
-              v-list(nav)
+              v-list.nav-header-menu(nav)
                 template(v-for='lc of locales', :key='lc.code')
                   v-list-item(@click='changeLocale(lc)')
                     template(v-slot:append): v-chip(:color='lc.code === locale ? `primary` : `grey`', size="small", label) {{lc.code.toUpperCase()}}
@@ -123,9 +122,9 @@
                       height='64'
                       :aria-label='$t(`common:header.pageActions`)'
                       )
-                      v-icon(color='grey') mdi-file-document-edit-outline
+                      v-icon mdi-file-document-edit-outline
                   span {{$t('common:header.pageActions')}}
-              v-list.page-actions-menu(nav, :class='$vuetify.theme.current.dark ? `bg-grey-darken-4` : ``')
+              v-list.nav-header-menu.page-actions-menu(nav)
                 .text-label-small.pa-4.text-grey {{$t('common:header.currentPage')}}
                 v-list-item.pl-4(role='button', tabindex='0', @click='pageView', @keydown.enter='pageView', @keydown.space.prevent='pageView', v-if='mode !== `view`')
                   template(v-slot:prepend)
@@ -167,7 +166,7 @@
             v-tooltip(location="bottom")
               template(v-slot:activator='{ props }')
                 v-btn(icon, rounded='0', height='64', v-bind='props', @click='pageNew', :aria-label='$t(`common:header.newPage`)')
-                  v-icon(color='grey') mdi-text-box-plus-outline
+                  v-icon mdi-text-box-plus-outline
               span {{$t('common:header.newPage')}}
             v-divider(vertical)
 
@@ -177,10 +176,10 @@
             v-tooltip(location="bottom", v-if='mode !== `admin`')
               template(v-slot:activator='{ props }')
                 v-btn(icon, rounded='0', height='64', v-bind='props', href='/a', :aria-label='$t(`common:header.admin`)')
-                  v-icon(color='grey') mdi-cog
+                  v-icon mdi-cog
               span {{$t('common:header.admin')}}
             v-btn(v-else, variant="text", rounded='0', height='64', href='/', :aria-label='$t(`common:actions.exit`)')
-              v-icon(start, color='grey') mdi-exit-to-app
+              v-icon(start) mdi-exit-to-app
           v-menu(v-if='$vuetify.display.smAndDown', location='bottom end', min-width='240')
             template(v-slot:activator='{ props }')
               v-btn(
@@ -189,36 +188,36 @@
                 :size='dense ? `small` : `default`'
                 aria-label='More page actions'
               )
-                v-icon(color='grey') mdi-dots-vertical
-            v-list(nav)
+                v-icon mdi-dots-vertical
+            v-list.nav-header-menu(nav)
               v-list-subheader Page actions
-              v-list-item(v-if='mode !== `view`', @click='pageView')
+              v-list-item(v-if='mode !== `view`', prepend-icon='mdi-file-document-outline', @click='pageView')
                 v-list-item-title {{$t('common:header.view')}}
-              v-list-item(v-if='hasWritePagesPermission && mode !== `edit`', @click='pageEdit')
+              v-list-item(v-if='hasWritePagesPermission && mode !== `edit`', prepend-icon='mdi-file-document-edit-outline', @click='pageEdit')
                 v-list-item-title {{$t('common:header.edit')}}
-              v-list-item(v-if='hasReadHistoryPermission && mode !== `history`', @click='pageHistory')
+              v-list-item(v-if='hasReadHistoryPermission && mode !== `history`', prepend-icon='mdi-history', @click='pageHistory')
                 v-list-item-title {{$t('common:header.history')}}
-              v-list-item(v-if='hasReadSourcePermission && mode !== `source`', @click='pageSource')
+              v-list-item(v-if='hasReadSourcePermission && mode !== `source`', prepend-icon='mdi-code-tags', @click='pageSource')
                 v-list-item-title {{$t('common:header.viewSource')}}
-              v-list-item(v-if='hasWritePagesPermission', @click='pageConvert')
+              v-list-item(v-if='hasWritePagesPermission', prepend-icon='mdi-lightning-bolt', @click='pageConvert')
                 v-list-item-title {{$t('common:header.convert')}}
-              v-list-item(v-if='hasWritePagesPermission', @click='pageDuplicate')
+              v-list-item(v-if='hasWritePagesPermission', prepend-icon='mdi-content-duplicate', @click='pageDuplicate')
                 v-list-item-title {{$t('common:header.duplicate')}}
-              v-list-item(v-if='hasManagePagesPermission', @click='pageMove')
+              v-list-item(v-if='hasManagePagesPermission', prepend-icon='mdi-content-save-move-outline', @click='pageMove')
                 v-list-item-title {{$t('common:header.move')}}
-              v-list-item(v-if='hasDeletePagesPermission', @click='pageDelete')
+              v-list-item.nav-header-menu-danger(v-if='hasDeletePagesPermission', prepend-icon='mdi-trash-can-outline', @click='pageDelete')
                 v-list-item-title {{$t('common:header.delete')}}
               v-divider(v-if='hasNewPagePermission || (isAuthenticated && isAdmin)')
-              v-list-item(v-if='hasNewPagePermission && path && mode !== `edit`', @click='pageNew')
+              v-list-item(v-if='hasNewPagePermission && path && mode !== `edit`', prepend-icon='mdi-text-box-plus-outline', @click='pageNew')
                 v-list-item-title {{$t('common:header.newPage')}}
-              v-list-item(v-if='isAuthenticated && isAdmin && mode !== `admin`', href='/a')
+              v-list-item(v-if='isAuthenticated && isAdmin && mode !== `admin`', prepend-icon='mdi-cog', href='/a')
                 v-list-item-title {{$t('common:header.admin')}}
-              v-list-item(v-if='isAuthenticated && isAdmin && mode === `admin`', href='/')
+              v-list-item(v-if='isAuthenticated && isAdmin && mode === `admin`', prepend-icon='mdi-exit-to-app', href='/')
                 v-list-item-title {{$t('common:actions.exit')}}
               template(v-if='mode === `view` && locales.length > 0')
                 v-divider
                 v-list-subheader {{$t('common:header.language')}}
-                v-list-item(v-for='lc of locales', :key='`mobile-locale-${lc.code}`', @click='changeLocale(lc)')
+                v-list-item(v-for='lc of locales', :key='`mobile-locale-${lc.code}`', prepend-icon='mdi-web', @click='changeLocale(lc)')
                   v-list-item-title {{lc.name}}
           v-divider(vertical)
 
@@ -236,11 +235,11 @@
                     height='64'
                     :aria-label='$t(`common:header.account`)'
                     )
-                    v-icon(v-if='picture.kind === `initials`', color='grey') mdi-account-circle
+                    v-icon(v-if='picture.kind === `initials`') mdi-account-circle
                     v-avatar(v-else-if='picture.kind === `image`', :size='34')
                       v-img(:src='picture.url')
                 span {{$t('common:header.account')}}
-            v-list(nav)
+            v-list.nav-header-menu(nav)
               v-list-item.py-3(:class='$vuetify.theme.current.dark ? `bg-grey-darken-4` : `bg-grey-lighten-5`')
                 template(v-slot:prepend)
                   v-avatar
@@ -259,8 +258,8 @@
 
           v-tooltip(v-else, location="left")
             template(v-slot:activator='{ props }')
-              v-btn(icon, v-bind='props', color="grey-darken-3", href='/login', :aria-label='$t(`common:header.login`)')
-                v-icon(color='grey') mdi-account-circle
+              v-btn(icon, v-bind='props', href='/login', :aria-label='$t(`common:header.login`)')
+                v-icon mdi-account-circle
             span {{$t('common:header.login')}}
 
     page-selector(mode='create', v-model='newPageModal', :open-handler='pageNewCreate', :locale='locale')
@@ -572,61 +571,116 @@ export default defineComponent({
 
 <style lang='scss'>
 .nav-header {
-  border-bottom: 1px solid rgba(var(--v-border-color), .11) !important;
-  background: color-mix(in srgb, rgb(var(--v-theme-surface)) 92%, transparent) !important;
-  box-shadow: 0 8px 30px rgba(15, 23, 42, .05) !important;
-  backdrop-filter: blur(18px) saturate(150%);
-  -webkit-backdrop-filter: blur(18px) saturate(150%);
+  --nav-header-accent-direction: 90deg;
+  isolation: isolate;
+  border-bottom: 1px solid var(--wiki-surface-border) !important;
+  background:
+    linear-gradient(
+      var(--nav-header-accent-direction),
+      color-mix(in srgb, var(--wiki-accent-warm) 5%, var(--wiki-surface-raised)),
+      var(--wiki-surface-raised) 34%,
+      var(--wiki-surface-raised) 70%,
+      color-mix(in srgb, var(--wiki-accent-spectral) 4%, var(--wiki-surface-raised))
+    ) !important;
+  color: rgb(var(--v-theme-on-surface));
+  box-shadow: var(--wiki-shadow-sm) !important;
 
-  .v-toolbar__content,
-  .v-toolbar__extension {
+  &::after {
+    position: absolute;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 2;
+    height: 1px;
+    background: linear-gradient(
+      var(--nav-header-accent-direction),
+      transparent,
+      color-mix(in srgb, var(--wiki-ambient-accent) 48%, transparent) 24%,
+      color-mix(in srgb, var(--wiki-accent-spectral) 34%, transparent) 76%,
+      transparent
+    );
+    pointer-events: none;
+    content: '';
+  }
+
+  > .v-toolbar__content {
     overflow: hidden;
   }
 
   .v-toolbar__extension {
-    padding: 0 14px 12px;
-    background: rgb(var(--v-theme-surface));
+    overflow: hidden;
+    padding: 0 var(--wiki-space-4) var(--wiki-space-3);
+    background: var(--wiki-surface-raised);
 
     .v-toolbar__content {
+      height: auto !important;
+      min-height: var(--wiki-control-height);
       padding: 0;
     }
   }
 
-  .nav-header-mobile-search {
-    width: 100%;
+  .nav-header-layout {
+    width: min(100%, var(--wiki-shell-max));
+    height: 100%;
+    margin-inline: auto;
+  }
 
-    .v-field {
-      border: 1px solid rgba(var(--v-border-color), .14);
-      border-radius: 14px;
-      background: color-mix(in srgb, rgb(var(--v-theme-primary)) 5%, rgb(var(--v-theme-surface))) !important;
-      box-shadow: none;
+  .nav-header-brand-col,
+  .nav-header-search-col,
+  .nav-header-actions-col {
+    min-width: 0;
+  }
+
+  .nav-header-inner {
+    width: 100%;
+    height: 100%;
+    background: transparent !important;
+
+    > .v-toolbar__content {
+      gap: var(--wiki-space-1);
+      padding: 0;
+    }
+  }
+
+  .nav-header-brand {
+    padding-inline: var(--wiki-space-4) var(--wiki-space-3);
+
+    > .v-toolbar__content {
+      gap: var(--wiki-space-3);
     }
   }
 
   .nav-header-logo {
     position: relative;
     display: inline-grid;
-    flex: 0 0 42px;
-    width: 42px;
-    height: 42px;
-    padding: 8px;
+    flex: 0 0 calc(var(--wiki-control-height) - var(--wiki-space-1));
+    width: calc(var(--wiki-control-height) - var(--wiki-space-1));
+    height: calc(var(--wiki-control-height) - var(--wiki-space-1));
+    padding: var(--wiki-space-2);
     place-items: center;
-    border: 1px solid color-mix(in srgb, rgb(var(--v-theme-primary)) 18%, transparent);
-    border-radius: 13px;
-    background: color-mix(in srgb, rgb(var(--v-theme-primary)) 8%, rgb(var(--v-theme-surface)));
-    box-shadow: 0 7px 20px rgba(var(--v-theme-primary), .1);
+    border: 1px solid color-mix(in srgb, var(--wiki-accent-warm) 24%, var(--wiki-surface-border));
+    border-radius: var(--wiki-control-radius);
+    background:
+      linear-gradient(
+        145deg,
+        color-mix(in srgb, var(--wiki-accent-warm) 11%, var(--wiki-surface-raised)),
+        color-mix(in srgb, var(--wiki-accent-spectral) 7%, var(--wiki-surface-raised))
+      );
+    box-shadow: var(--wiki-shadow-xs), var(--wiki-shadow-inset);
     cursor: pointer;
-    transition: transform .18s ease, border-color .18s ease, box-shadow .18s ease;
+    transition:
+      transform var(--wiki-motion-normal) var(--wiki-motion-ease-out),
+      border-color var(--wiki-motion-normal) var(--wiki-motion-ease),
+      box-shadow var(--wiki-motion-normal) var(--wiki-motion-ease);
 
     &:hover {
       transform: translateY(-1px);
-      border-color: color-mix(in srgb, rgb(var(--v-theme-primary)) 34%, transparent);
-      box-shadow: 0 10px 24px rgba(var(--v-theme-primary), .15);
+      border-color: color-mix(in srgb, var(--wiki-ambient-accent) 48%, var(--wiki-surface-border));
+      box-shadow: var(--wiki-shadow-sm), var(--wiki-shadow-inset);
     }
 
-    &:focus-visible {
-      outline: 3px solid rgba(var(--v-theme-primary), .2);
-      outline-offset: 3px;
+    &:active {
+      transform: translateY(0);
     }
   }
 
@@ -637,101 +691,267 @@ export default defineComponent({
     object-fit: contain;
   }
 
-  &-title {
+  .nav-header-title {
+    min-width: 0;
+    margin: 0;
     color: rgb(var(--v-theme-on-surface));
-    font-family: 'WikiAgentSans', 'Roboto', sans-serif;
-    font-size: .98rem;
+    font-family: var(--wiki-font-heading);
+    font-size: 1rem;
     font-weight: 720;
-    letter-spacing: -.02em;
+    letter-spacing: -.018em;
+    line-height: var(--wiki-leading-heading);
+
+    span {
+      display: block;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
   }
 
-  &-inner {
-    background: transparent !important;
-
-    .v-label {
-      opacity: .72;
+  .nav-header-command {
+    > .v-toolbar__content {
+      justify-content: center;
+      gap: var(--wiki-space-2);
     }
+  }
 
-    .v-toolbar__content {
-      padding: 0;
-
-      @include until($tablet) {
-        .v-btn--icon {
-          width: 44px;
-          min-width: 44px;
-          height: 44px;
-        }
-      }
-    }
-
-    .v-btn {
-      border-radius: 11px !important;
-      color: rgb(var(--v-theme-on-surface));
-      opacity: .76;
-      transition: background-color .16s ease, color .16s ease, opacity .16s ease;
-
-      &:hover,
-      &:focus-visible {
-        background: color-mix(in srgb, rgb(var(--v-theme-primary)) 8%, transparent);
-        color: rgb(var(--v-theme-primary));
-        opacity: 1;
-      }
-
-      .v-icon {
-        color: currentColor !important;
-      }
-    }
-
-    .v-divider {
-      align-self: center;
-      max-height: 26px;
-      margin-inline: 3px;
-      opacity: .5;
-    }
+  .nav-header-search-control {
+    min-width: 0;
+    max-width: 34rem;
 
     .v-field {
-      border: 1px solid rgba(var(--v-border-color), .14);
-      border-radius: 999px;
-      background: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 3%, rgb(var(--v-theme-surface))) !important;
-      box-shadow: 0 5px 20px rgba(15, 23, 42, .045);
-      transition: border-color .18s ease, box-shadow .18s ease, background-color .18s ease;
+      min-height: var(--wiki-control-height);
+      overflow: hidden;
+      border: 1px solid var(--wiki-surface-border-strong);
+      border-radius: var(--wiki-control-radius);
+      background: var(--wiki-surface-sunken) !important;
+      box-shadow: var(--wiki-shadow-inset);
+      transition:
+        border-color var(--wiki-motion-normal) var(--wiki-motion-ease),
+        background-color var(--wiki-motion-normal) var(--wiki-motion-ease),
+        box-shadow var(--wiki-motion-normal) var(--wiki-motion-ease);
+    }
+
+    .v-field__input {
+      min-height: var(--wiki-control-height);
+      padding-block: 0;
+      font-size: .875rem;
+      font-weight: 560;
+      letter-spacing: .005em;
+    }
+
+    .v-field__prepend-inner {
+      color: var(--wiki-ambient-accent);
+      opacity: 1;
+    }
+
+    .v-label {
+      color: rgb(var(--v-theme-on-surface));
+      font-size: .8125rem;
+      opacity: .62;
     }
 
     .v-field--focused {
-      border-color: color-mix(in srgb, rgb(var(--v-theme-primary)) 48%, transparent);
-      background: rgb(var(--v-theme-surface)) !important;
-      box-shadow: 0 0 0 4px rgba(var(--v-theme-primary), .09);
+      border-color: color-mix(in srgb, var(--wiki-ambient-accent) 62%, transparent);
+      background: var(--wiki-surface-raised) !important;
+      box-shadow: var(--wiki-focus-ring), var(--wiki-shadow-inset);
+
+      .v-field__prepend-inner {
+        color: var(--wiki-accent-warm);
+      }
+    }
+
+    .v-progress-linear {
+      color: var(--wiki-accent-spectral) !important;
     }
   }
 
-  &-search-adv {
-    position: absolute;
-    top: 7px;
-    right: 12px;
-    border-radius: 8px !important;
+  .nav-header-mobile-search {
+    width: 100%;
+    background: transparent !important;
 
-    @at-root .v-locale--is-rtl & {
-      right: initial;
-      left: 12px;
+    .nav-header-search-control {
+      max-width: none;
     }
   }
 
-  &-dev {
-    position: absolute;
-    top: 13px;
-    left: 255px;
+  .nav-header-actions {
+    padding-inline: var(--wiki-space-3) var(--wiki-space-4);
+
+    > .v-toolbar__content {
+      gap: var(--wiki-space-1);
+    }
+  }
+
+  .nav-header-slot-actions {
     display: flex;
-    gap: 10px;
+    min-width: 0;
     align-items: center;
-    padding: 5px 13px;
-    border: 1px solid rgba(var(--v-theme-error), .28);
-    border-radius: 999px;
-    background: color-mix(in srgb, rgb(var(--v-theme-error)) 12%, rgb(var(--v-theme-surface)));
+    gap: var(--wiki-space-1);
+  }
+
+  .nav-header-inner .v-btn {
+    min-width: var(--wiki-control-height);
+    height: var(--wiki-control-height) !important;
+    border: 1px solid transparent;
+    border-radius: var(--wiki-control-radius) !important;
+    color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 76%, transparent);
+    opacity: 1;
+    transition:
+      border-color var(--wiki-motion-fast) var(--wiki-motion-ease),
+      background-color var(--wiki-motion-fast) var(--wiki-motion-ease),
+      color var(--wiki-motion-fast) var(--wiki-motion-ease),
+      transform var(--wiki-motion-fast) var(--wiki-motion-ease-out);
+
+    .v-icon {
+      color: currentColor !important;
+    }
+
+    &:hover {
+      border-color: color-mix(in srgb, var(--wiki-ambient-accent) 20%, transparent);
+      background: color-mix(in srgb, var(--wiki-ambient-accent) 9%, transparent);
+      color: var(--wiki-accent-warm);
+      transform: translateY(-1px);
+    }
+
+    &:focus-visible {
+      border-color: color-mix(in srgb, var(--wiki-focus-color) 48%, transparent);
+      background: color-mix(in srgb, var(--wiki-focus-color) 8%, transparent);
+      color: var(--wiki-accent-warm);
+    }
+
+    &:active {
+      transform: translateY(0);
+    }
+
+    &[aria-expanded='true'] {
+      border-color: color-mix(in srgb, var(--wiki-accent-spectral) 34%, transparent);
+      background: color-mix(in srgb, var(--wiki-accent-spectral) 10%, transparent);
+      color: var(--wiki-accent-spectral);
+    }
+
+    &.v-btn--disabled {
+      border-color: transparent;
+      background: transparent;
+      color: rgb(var(--v-theme-on-surface));
+      opacity: .38;
+      transform: none;
+    }
+  }
+
+  .nav-header-browse {
+    flex: 0 0 auto;
+    margin-inline-start: var(--wiki-space-1);
+  }
+
+  .nav-header-inner .v-divider {
+    align-self: center;
+    height: var(--wiki-space-6);
+    max-height: var(--wiki-space-6);
+    margin-inline: var(--wiki-space-1);
+    border-color: var(--wiki-surface-border);
+    opacity: 1;
+  }
+
+  .nav-header-dev {
+    position: absolute;
+    top: 50%;
+    inset-inline-start: calc(25% - var(--wiki-space-10));
+    z-index: 3;
+    display: flex;
+    max-width: 13rem;
+    align-items: center;
+    gap: var(--wiki-space-2);
+    padding: var(--wiki-space-1) var(--wiki-space-3);
+    transform: translateY(-50%);
+    border: 1px solid color-mix(in srgb, rgb(var(--v-theme-error)) 30%, transparent);
+    border-radius: var(--wiki-radius-pill);
+    background: color-mix(in srgb, rgb(var(--v-theme-error)) 9%, var(--wiki-surface-raised));
+    color: rgb(var(--v-theme-error));
+    box-shadow: var(--wiki-shadow-xs);
+
+    .text-label-small {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+
+      &:nth-child(2) {
+        text-transform: none;
+      }
+    }
+  }
+}
+
+.nav-header-menu {
+  min-width: 14rem;
+  padding: var(--wiki-space-2) !important;
+  border: 1px solid var(--wiki-surface-border);
+  border-radius: var(--wiki-panel-radius) !important;
+  background: var(--wiki-surface-raised) !important;
+  color: rgb(var(--v-theme-on-surface));
+  box-shadow: var(--wiki-shadow-md) !important;
+
+  .v-list-subheader,
+  > .text-label-small {
+    min-height: var(--wiki-space-8);
+    padding-inline: var(--wiki-space-3) !important;
+    color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 56%, transparent) !important;
+    font-size: var(--wiki-label-size);
+    font-weight: var(--wiki-label-weight);
+    letter-spacing: .075em;
+    text-transform: uppercase;
+  }
+
+  .v-list-item {
+    min-height: var(--wiki-control-height);
+    margin-block: var(--wiki-space-1);
+    border: 1px solid transparent;
+    border-radius: var(--wiki-control-radius);
+    transition:
+      border-color var(--wiki-motion-fast) var(--wiki-motion-ease),
+      background-color var(--wiki-motion-fast) var(--wiki-motion-ease),
+      color var(--wiki-motion-fast) var(--wiki-motion-ease);
+
+    &:hover,
+    &:focus-visible {
+      border-color: color-mix(in srgb, var(--wiki-ambient-accent) 18%, transparent);
+      background: color-mix(in srgb, var(--wiki-ambient-accent) 8%, transparent);
+      color: var(--wiki-accent-warm);
+    }
+
+    &.v-list-item--active {
+      border-color: color-mix(in srgb, var(--wiki-accent-spectral) 28%, transparent);
+      background: color-mix(in srgb, var(--wiki-accent-spectral) 10%, transparent);
+      color: var(--wiki-accent-spectral);
+    }
+
+    &.v-list-item--disabled {
+      opacity: .4;
+    }
+  }
+
+  .nav-header-menu-danger {
     color: rgb(var(--v-theme-error));
 
-    .text-label-small:nth-child(2) {
-      text-transform: none;
+    &:hover,
+    &:focus-visible {
+      border-color: color-mix(in srgb, rgb(var(--v-theme-error)) 24%, transparent);
+      background: color-mix(in srgb, rgb(var(--v-theme-error)) 8%, transparent);
+      color: rgb(var(--v-theme-error));
     }
+  }
+
+  .v-list-item.bg-grey-darken-4,
+  .v-list-item.bg-grey-lighten-5 {
+    border-color: var(--wiki-surface-border);
+    background: var(--wiki-surface-sunken) !important;
+  }
+
+  .v-divider {
+    margin-block: var(--wiki-space-2);
+    border-color: var(--wiki-surface-border);
+    opacity: 1;
   }
 }
 
@@ -739,55 +959,179 @@ export default defineComponent({
   &-enter-active,
   &-leave-active {
     opacity: 1;
-    transition: opacity .2s ease, transform .2s ease;
+    transition:
+      opacity var(--wiki-motion-normal) var(--wiki-motion-ease),
+      transform var(--wiki-motion-normal) var(--wiki-motion-ease-out);
   }
 
   &-enter-active {
-    transition-delay: .12s;
+    transition-delay: var(--wiki-motion-fast);
   }
 
   &-enter-from,
   &-leave-to {
     opacity: 0;
-    transform: scale(.96);
+    transform: translateY(calc(var(--wiki-space-1) * -1)) scale(.98);
   }
 }
+
 .nav-header--dense {
-  .nav-header-inner .v-toolbar__content {
-    min-height: 52px;
+  .nav-header-logo {
+    flex-basis: calc(var(--wiki-control-height) - var(--wiki-space-2));
+    width: calc(var(--wiki-control-height) - var(--wiki-space-2));
+    height: calc(var(--wiki-control-height) - var(--wiki-space-2));
   }
 
   .nav-header-inner .v-btn {
-    height: 52px !important;
+    min-width: calc(var(--wiki-control-height) - var(--wiki-space-1));
+    height: calc(var(--wiki-control-height) - var(--wiki-space-1)) !important;
   }
 }
 
 .navHeaderLoading {
-  width: 22px;
+  flex: 0 0 var(--wiki-space-6);
+  width: var(--wiki-space-6);
+}
+
+.v-locale--is-rtl .nav-header {
+  --nav-header-accent-direction: 270deg;
+}
+
+.v-theme--dark .nav-header {
+  border-bottom-color: var(--wiki-surface-border-strong) !important;
+  background:
+    linear-gradient(
+      var(--nav-header-accent-direction),
+      color-mix(in srgb, var(--wiki-accent-warm) 7%, var(--wiki-surface-raised)),
+      var(--wiki-surface-raised) 36%,
+      var(--wiki-surface-raised) 68%,
+      color-mix(in srgb, var(--wiki-accent-spectral) 6%, var(--wiki-surface-raised))
+    ) !important;
+  box-shadow: 0 var(--wiki-space-2) var(--wiki-space-8) color-mix(in srgb, rgb(var(--v-theme-background)) 54%, transparent) !important;
+}
+
+@media (max-width: 1279px) {
+  .nav-header .nav-header-dev {
+    display: none;
+  }
+}
+
+@media (min-width: 960px) and (max-width: 1279px) {
+  .nav-header {
+    .nav-header-brand {
+      padding-inline: var(--wiki-space-3) var(--wiki-space-2);
+    }
+
+    .nav-header-actions {
+      padding-inline: var(--wiki-space-2);
+    }
+
+    .nav-header-actions .v-btn {
+      min-width: calc(var(--wiki-control-height) - var(--wiki-space-2));
+      height: calc(var(--wiki-control-height) - var(--wiki-space-2)) !important;
+      padding-inline: var(--wiki-space-2);
+    }
+
+    .nav-header-actions .v-divider {
+      margin-inline: 0;
+    }
+
+    .nav-header-search-control .v-field__input {
+      font-size: .8125rem;
+    }
+  }
 }
 
 @media (max-width: 959px) {
   .nav-header {
-    .nav-header-title {
-      font-size: .9rem;
+    .nav-header-brand {
+      padding-inline: var(--wiki-space-3) var(--wiki-space-2);
     }
 
-    &-dev {
-      display: none;
+    .nav-header-actions {
+      min-width: 0;
+      padding-inline: var(--wiki-space-2) var(--wiki-space-3);
+    }
+
+    .nav-header-title {
+      font-size: .9375rem;
+    }
+
+    .nav-header-inner .v-btn {
+      min-width: var(--wiki-control-height);
+      padding-inline: var(--wiki-space-2);
     }
   }
 }
+
 @media (max-width: 599px) {
-  .nav-header-actions {
-    flex: 1 1 auto;
-    min-width: 0;
+  .nav-header {
+    .v-toolbar__extension {
+      padding-inline: var(--wiki-space-3);
+      padding-bottom: var(--wiki-space-2);
+    }
+
+    .nav-header-brand {
+      padding-inline: var(--wiki-space-3) var(--wiki-space-1);
+
+      > .v-toolbar__content {
+        gap: var(--wiki-space-2);
+      }
+    }
+
+    .nav-header-actions {
+      flex: 1 1 auto;
+      min-width: 0;
+      padding-inline: var(--wiki-space-1) var(--wiki-space-2);
+    }
+
+    .nav-header-title {
+      font-size: .875rem;
+    }
+
+    .nav-header-logo {
+      flex-basis: calc(var(--wiki-control-height) - var(--wiki-space-2));
+      width: calc(var(--wiki-control-height) - var(--wiki-space-2));
+      height: calc(var(--wiki-control-height) - var(--wiki-space-2));
+      padding: var(--wiki-space-1);
+    }
+
+    .nav-header-inner .v-btn {
+      min-width: calc(var(--wiki-control-height) - var(--wiki-space-1));
+      height: calc(var(--wiki-control-height) - var(--wiki-space-1)) !important;
+    }
+
+    .navHeaderLoading {
+      margin-inline-end: var(--wiki-space-1) !important;
+    }
+  }
+
+  .nav-header-menu {
+    width: min(calc(100vw - (var(--wiki-space-4) * 2)), 20rem);
+    max-height: min(70dvh, 34rem);
+    overflow-y: auto;
+  }
+}
+
+@media (forced-colors: active) {
+  .nav-header,
+  .nav-header .nav-header-logo,
+  .nav-header .nav-header-search-control .v-field,
+  .nav-header-menu,
+  .nav-header-menu .v-list-item {
+    border-color: CanvasText !important;
+  }
+
+  .nav-header::after {
+    display: none;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .nav-header *,
   .navHeaderSearch-enter-active,
-  .navHeaderSearch-leave-active {
+  .navHeaderSearch-leave-active,
+  .nav-header-menu .v-list-item {
     transition-duration: .01ms !important;
   }
 }

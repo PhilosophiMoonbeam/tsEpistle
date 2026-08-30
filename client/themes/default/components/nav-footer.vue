@@ -1,14 +1,17 @@
 <template lang="pug">
-  v-footer.nav-footer.justify-center(:color='bgColor', app)
-    .text-body-small.footer-attribution
-      template(v-if='footerOverride')
-        span(v-html='footerOverrideRender + ` |&nbsp;`')
-      template(v-else-if='company && company.length > 0 && contentLicense !== ``')
-        span(v-if='contentLicense === `alr`') {{ $t('common:footer.copyright', { company: company, year: currentYear, interpolation: { escapeValue: false } }) }} |&nbsp;
-        span(v-else) {{ $t('common:footer.license', { company: company, license: $t('common:license.' + contentLicense), interpolation: { escapeValue: false } }) }} |&nbsp;
-      span {{ product.name }} {{ product.version }} |&nbsp;
-      a(:href='product.sourceUrl', target='_blank', rel='noopener noreferrer') Source Code
-      span &nbsp;| Derived from #[a(href='https://github.com/Requarks/wiki', target='_blank', rel='nofollow noopener noreferrer') Wiki.js]
+  v-footer.nav-footer(:color='bgColor', app)
+    .footer-attribution
+      .footer-attribution__legal(v-if='footerOverride')
+        span(v-html='footerOverrideRender')
+      .footer-attribution__legal(v-else-if='company && company.length > 0 && contentLicense !== ``')
+        span(v-if='contentLicense === `alr`') {{ $t('common:footer.copyright', { company: company, year: currentYear, interpolation: { escapeValue: false } }) }}
+        span(v-else) {{ $t('common:footer.license', { company: company, license: $t('common:license.' + contentLicense), interpolation: { escapeValue: false } }) }}
+      .footer-attribution__meta
+        span.footer-attribution__product {{ product.name }} {{ product.version }}
+        span.footer-attribution__separator(aria-hidden='true')
+        a(:href='product.sourceUrl', target='_blank', rel='noopener noreferrer') Source Code
+        span.footer-attribution__separator(aria-hidden='true')
+        span Derived from #[a(href='https://github.com/Requarks/wiki', target='_blank', rel='nofollow noopener noreferrer') Wiki.js]
 </template>
 
 <script lang='ts'>
@@ -67,41 +70,168 @@ export default {
 
 <style lang="scss">
 .nav-footer {
+  --nav-footer-accent-direction: 90deg;
   height: auto;
   min-height: var(--wiki-footer-height);
-  padding: 12px var(--wiki-page-gutter);
-  border-top: 1px solid rgba(var(--v-border-color), .09);
-  background: color-mix(in srgb, rgb(var(--v-theme-surface)) 96%, rgb(var(--v-theme-background))) !important;
-  box-shadow: none;
+  padding: var(--wiki-space-3) var(--wiki-page-gutter) calc(var(--wiki-space-3) + env(safe-area-inset-bottom));
+  border-top: 1px solid var(--wiki-surface-border);
+  background:
+    linear-gradient(
+      var(--nav-footer-accent-direction),
+      color-mix(in srgb, var(--wiki-accent-warm) 4%, var(--wiki-surface-raised)),
+      var(--wiki-surface-raised) 38%,
+      var(--wiki-surface-raised) 68%,
+      color-mix(in srgb, var(--wiki-accent-spectral) 4%, var(--wiki-surface-raised))
+    ) !important;
+  box-shadow: 0 calc(var(--wiki-space-1) * -1) var(--wiki-space-8) color-mix(in srgb, var(--wiki-shadow-color) 42%, transparent);
+
+  &::before {
+    position: absolute;
+    top: 0;
+    right: 0;
+    left: 0;
+    height: 1px;
+    background: linear-gradient(
+      var(--nav-footer-accent-direction),
+      transparent,
+      color-mix(in srgb, var(--wiki-accent-warm) 28%, transparent) 28%,
+      color-mix(in srgb, var(--wiki-accent-spectral) 28%, transparent) 72%,
+      transparent
+    );
+    pointer-events: none;
+    content: '';
+  }
 }
 
 .footer-attribution {
-  color: rgba(var(--v-theme-on-surface), .66);
-  font-family: 'WikiAgentSans', 'Roboto', sans-serif;
-  line-height: 1.7;
+  display: flex;
+  width: min(100%, var(--wiki-shell-max));
+  min-width: 0;
+  align-items: center;
+  justify-content: center;
+  gap: var(--wiki-space-3);
+  margin-inline: auto;
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 64%, transparent);
+  font-family: var(--wiki-font-body);
+  font-size: .75rem;
+  line-height: 1.5;
   text-align: center;
 
-  a {
-    color: rgb(var(--v-theme-primary));
-    font-weight: 620;
-    text-decoration: none;
-    text-underline-offset: .18em;
+  &__legal {
+    min-width: 0;
+    padding-inline-end: var(--wiki-space-3);
+    border-inline-end: 1px solid var(--wiki-surface-border);
+    color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 58%, transparent);
+    overflow-wrap: anywhere;
+  }
 
-    &:hover,
+  &__meta {
+    display: inline-flex;
+    min-width: 0;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: var(--wiki-space-2);
+  }
+
+  &__product {
+    color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 78%, transparent);
+    font-family: var(--wiki-font-mono);
+    font-size: var(--wiki-label-size);
+    font-weight: var(--wiki-label-weight);
+    letter-spacing: .025em;
+  }
+
+  &__separator {
+    display: inline-block;
+    width: 1px;
+    height: .875rem;
+    background: var(--wiki-surface-border-strong);
+  }
+
+  a {
+    border-radius: var(--wiki-radius-xs);
+    color: var(--wiki-accent-warm);
+    font-weight: 650;
+    text-decoration: underline;
+    text-decoration-color: color-mix(in srgb, var(--wiki-accent-warm) 34%, transparent);
+    text-decoration-thickness: .0625rem;
+    text-underline-offset: .2em;
+    transition:
+      color var(--wiki-motion-fast) var(--wiki-motion-ease),
+      text-decoration-color var(--wiki-motion-fast) var(--wiki-motion-ease);
+
+    &:hover {
+      color: var(--wiki-accent-spectral);
+      text-decoration-color: currentColor;
+    }
+
     &:focus-visible {
-      text-decoration: underline;
+      color: var(--wiki-accent-spectral);
+      text-decoration-color: currentColor;
+    }
+  }
+}
+
+.v-locale--is-rtl .nav-footer {
+  --nav-footer-accent-direction: 270deg;
+}
+
+.v-theme--dark .nav-footer {
+  border-top-color: var(--wiki-surface-border-strong);
+  box-shadow: 0 calc(var(--wiki-space-1) * -1) var(--wiki-space-8) color-mix(in srgb, rgb(var(--v-theme-background)) 48%, transparent);
+}
+
+@media (max-width: 959px) {
+  .footer-attribution {
+    flex-direction: column;
+    gap: var(--wiki-space-1);
+
+    &__legal {
+      padding-inline-end: 0;
+      border-inline-end: 0;
     }
   }
 }
 
 @media (max-width: 599px) {
   .nav-footer {
-    padding: 10px 18px;
+    padding: var(--wiki-space-2) var(--wiki-space-4) calc(var(--wiki-space-2) + env(safe-area-inset-bottom));
   }
 
   .footer-attribution {
-    font-size: .7rem !important;
-    line-height: 1.55;
+    font-size: var(--wiki-label-size);
+    line-height: 1.45;
+
+    &__meta {
+      column-gap: var(--wiki-space-2);
+      row-gap: var(--wiki-space-1);
+    }
+
+    &__separator {
+      height: var(--wiki-space-3);
+    }
   }
 }
+
+@media (prefers-reduced-motion: reduce) {
+  .footer-attribution a {
+    transition-duration: .01ms !important;
+  }
+}
+
+@media (forced-colors: active) {
+  .nav-footer {
+    border-top-color: CanvasText;
+  }
+
+  .nav-footer::before {
+    display: none;
+  }
+
+  .footer-attribution__separator {
+    background: CanvasText;
+  }
+}
+
 </style>
