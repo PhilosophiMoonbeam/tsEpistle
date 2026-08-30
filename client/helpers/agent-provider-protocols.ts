@@ -6,7 +6,7 @@ export type AgentProviderUsageMode = 'stream' | 'terminal' | 'estimated'
 export type AgentProviderToolCalling = 'native' | 'prompt'
 export type AgentProviderExecutionMode = 'agent'
 
-export const AGENT_PROVIDER_PRICING_REVISION = 'unpriced-v1'
+export const AGENT_PROVIDER_PRICING_REVISION = 'price-v1|1000000|2000000'
 
 
 export interface AgentProviderProtocolOption {

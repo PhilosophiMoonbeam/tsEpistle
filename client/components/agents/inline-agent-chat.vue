@@ -359,7 +359,6 @@ let transcriptFrame: number | null = null
 let transcriptFrameShouldFollow = false
 let panelFocusScope: ModalFocusScope | null = null
 let panelFocusKind: 'history' | 'memory' | null = null
-let panelFocusOpener: HTMLElement | null = null
 let initialization: Promise<void> | null = null
 let compactPanelMedia: MediaQueryList | null = null
 const compactPanelQuery = '(max-width: 1711.98px)'
@@ -487,9 +486,6 @@ const triggerForPanel = (kind: 'history' | 'memory'): HTMLElement | null => {
 const openSkillManager = (): void => { skillManagerOpen.value = true }
 const closeHistory = (): void => { historyOpen.value = false }
 const closeMemory = (): void => { memoryOpen.value = false }
-const capturePanelOpener = (kind: 'history' | 'memory'): void => {
-  panelFocusOpener = triggerForPanel(kind)
-}
 const reloadHistory = async (): Promise<void> => {
   if (historyLoading.value) return
   historyLoading.value = true
@@ -506,7 +502,6 @@ const reloadHistory = async (): Promise<void> => {
 }
 const toggleHistory = (): void => {
   const opening = !historyOpen.value
-  if (opening) capturePanelOpener('history')
   historyOpen.value = opening
   if (opening) {
     if (compactPanels.value) memoryOpen.value = false
@@ -515,7 +510,6 @@ const toggleHistory = (): void => {
 }
 const toggleMemory = (): void => {
   const opening = !memoryOpen.value
-  if (opening) capturePanelOpener('memory')
   memoryOpen.value = opening
   if (opening && compactPanels.value) historyOpen.value = false
 }
@@ -626,13 +620,19 @@ watch(currentPage, page => agents.setCurrentPage(page), { immediate: true })
 watch(skillManagerOpen, (open, wasOpen) => {
   if (!open && wasOpen) void nextTick(() => composer.value?.focusSkillsTrigger())
 })
-watch([historyOpen, memoryOpen, compactPanels], async ([history, memory, compact]) => {
+watch([historyOpen, memoryOpen, compactPanels], async ([history, memory, compact], [wasHistory, wasMemory, wasCompact]) => {
   const kind = history ? 'history' : memory ? 'memory' : null
   if (!kind || !compact) {
-    panelFocusScope?.deactivate({ restoreFocus: !kind })
+    const previousKind = wasHistory ? 'history' : wasMemory ? 'memory' : null
+    const restoreKind = !kind && wasCompact ? previousKind : null
+    panelFocusScope?.deactivate({ restoreFocus: false })
     panelFocusScope = null
     panelFocusKind = null
-    if (!kind) panelFocusOpener = null
+    if (!restoreKind) return
+    await nextTick()
+    if (historyOpen.value || memoryOpen.value) return
+    const trigger = triggerForPanel(restoreKind)
+    if (isVisibleTrigger(trigger)) trigger.focus({ preventScroll: true })
     return
   }
   if (panelFocusScope && panelFocusKind === kind) return
@@ -647,7 +647,7 @@ watch([historyOpen, memoryOpen, compactPanels], async ([history, memory, compact
   panelFocusKind = kind
   panelFocusScope = createModalFocusScope({
     root,
-    restoreTarget: () => isVisibleTrigger(panelFocusOpener) ? panelFocusOpener : triggerForPanel(kind),
+    restoreTarget: () => triggerForPanel(kind),
     additionalRoots: () => panelScrim.value ? [panelScrim.value] : [],
     onEscape: kind === 'history' ? closeHistory : closeMemory
   })
@@ -657,7 +657,6 @@ watch(() => thread.value?.session.id, (sessionId, previousSessionId) => {
   panelFocusScope?.deactivate({ restoreFocus: false })
   panelFocusScope = null
   panelFocusKind = null
-  panelFocusOpener = null
   if (compactPanels.value) historyOpen.value = false
   void nextTick(async () => {
     if (hasConversation.value) transcript.value?.focus({ preventScroll: true })

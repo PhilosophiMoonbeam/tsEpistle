@@ -124,7 +124,10 @@ describe('inline Ask mode contract', () => {
     expect(inline).toMatch(/onEscape:\s*kind === 'history' \? closeHistory : closeMemory/)
     expect(inline).toMatch(/:role="compactPanels \? 'dialog' : undefined"/)
     expect(inline).toMatch(/triggerForPanel/)
-    expect(inline).toMatch(/if \(!kind \|\| !compact\)\s*\{[\s\S]*deactivate\(\{ restoreFocus: !kind \}\)/)
+    expect(inline).toMatch(/watch\(\[historyOpen, memoryOpen, compactPanels\], async \(\[history, memory, compact\], \[wasHistory, wasMemory, wasCompact\]\)/)
+    expect(inline).toMatch(/const restoreKind = !kind && wasCompact \? previousKind : null[\s\S]*panelFocusScope\?\.deactivate\(\{ restoreFocus: false \}\)[\s\S]*await nextTick\(\)[\s\S]*const trigger = triggerForPanel\(restoreKind\)[\s\S]*trigger\.focus\(\{ preventScroll: true \}\)/)
+    expect(inline).toMatch(/restoreTarget:\s*\(\) => triggerForPanel\(kind\)/)
+    expect(inline).not.toMatch(/panelFocusOpener/)
   })
 
   test('keeps direct prompts and fresh Search snapshots race-safe', () => {

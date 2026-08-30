@@ -1,4 +1,5 @@
 import { describe, expect, it } from '../../server/test/bun-test.mts'
+import { AgentProviderPricingRevisionSchema } from '../../server/agents/providers/registry.ts'
 
 import { AGENT_PROVIDER_TRANSPORTS } from '../../shared/agents/contracts.ts'
 import {
@@ -74,7 +75,11 @@ describe('agent provider protocol presentation', () => {
     expect(agentProviderProtocolExecutionModes('legacy-completions')).toEqual(['agent'])
     expect(agentProviderCapabilityRevision('openresponses')).toBe('wiki-protocol-capabilities-v2:openresponses')
     expect(agentProviderCapabilityRevision('gemini-api')).toBe('wiki-protocol-capabilities-v3:gemini-api')
-    expect(AGENT_PROVIDER_PRICING_REVISION).toBe('unpriced-v1')
+  })
+
+  it('publishes an immutable positive-rate pricing revision', () => {
+    expect(AGENT_PROVIDER_PRICING_REVISION).toBe('price-v1|1000000|2000000')
+    expect(AgentProviderPricingRevisionSchema.safeParse(AGENT_PROVIDER_PRICING_REVISION).success).toBe(true)
   })
 
   it('rejects unknown transport values before form state changes', () => {
