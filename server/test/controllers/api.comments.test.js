@@ -21,6 +21,23 @@ vi.mockModule('express', import.meta.url, () => {
 
 const { default: express } = await import('express')
 
+class BruteTooManyAttempts extends Error {}
+
+const rateLimitKnex = () => {
+  const rows = new Map()
+  return {
+    raw: vi.fn(async (_query, [key, expire, now]) => {
+      const current = rows.get(key)
+      const startsNewWindow = current === undefined || current.expire === null || current.expire <= now
+      const row = startsNewWindow
+        ? { points: 1, expire }
+        : { points: current.points + 1, expire: current.expire }
+      rows.set(key, row)
+      return { rows: [row] }
+    })
+  }
+}
+
 const API_CONTROLLER_NAMES = [
   'analytics',
   'assets',
@@ -71,6 +88,7 @@ describe('controllers/api comments endpoints', () => {
       auth: {
         checkAccess: vi.fn()
       },
+      Error: { BruteTooManyAttempts },
       data: {
         commentProviders: [
           {
@@ -107,6 +125,7 @@ describe('controllers/api comments endpoints', () => {
         ]
       },
       models: {
+        knex: rateLimitKnex(),
         commentProviders: {
           query: vi.fn(),
           initProvider: vi.fn().mockResolvedValue(true),
@@ -440,6 +459,29 @@ describe('controllers/api comments endpoints', () => {
     await handlers.remove(deleteReq, deleteRes)
     expect(global.WIKI.models.comments.deleteComment).toHaveBeenCalledWith({ id: 73, user, ip: deleteReq.ip })
     expect(deleteRes.json).toHaveBeenCalledWith({ message: 'Comment deleted successfully' })
+  })
+
+  it('throttles repeated creates through the shared durable operation contract', async () => {
+    const { create } = await loadHandlers()
+    const req = {
+      user: { id: 12 },
+      ip: '127.0.0.1',
+      body: { pageId: 9, content: 'New comment' }
+    }
+    const firstRes = { status: vi.fn().mockReturnThis(), json: vi.fn() }
+    const repeatedRes = { status: vi.fn().mockReturnThis(), json: vi.fn() }
+
+    await create(req, firstRes)
+    await create(req, repeatedRes)
+
+    expect(firstRes.status).toHaveBeenCalledWith(201)
+    expect(global.WIKI.models.comments.postNewComment).toHaveBeenCalledTimes(1)
+    expect(global.WIKI.models.knex.raw).toHaveBeenCalledTimes(2)
+    expect(global.WIKI.models.knex.raw).toHaveBeenLastCalledWith(
+      expect.any(String),
+      ['comment-create:12:127.0.0.1', expect.any(Number), expect.any(Number), expect.any(Number)]
+    )
+    expect(repeatedRes.status).toHaveBeenCalledWith(429)
   })
 
   it('rejects malformed comment ids before calling shared operations', async () => {

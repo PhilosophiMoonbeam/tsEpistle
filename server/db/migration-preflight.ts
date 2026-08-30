@@ -1,5 +1,7 @@
 import type { Knex } from 'knex'
 
+import { KNOWN_APPLICATION_TABLES } from './migrator-source.ts'
+
 interface MigrationRecord {
   id: number
   name: string
@@ -23,25 +25,23 @@ export class MigrationPreflightError extends Error {
   readonly code = 'MIGRATION_PREFLIGHT_FAILED'
 }
 
-const applicationTables = ['pages', 'users', 'groups'] as const
-
 const existingApplicationTables = async (knex: Knex): Promise<string[]> => {
-  const exists = await Promise.all(applicationTables.map(async table => ({
-    exists: await knex.schema.hasTable(table),
-    table
-  })))
+  const exists = await Promise.all(
+    Object.keys(KNOWN_APPLICATION_TABLES).map(async table => ({
+      exists: await knex.schema.hasTable(table),
+      table
+    }))
+  )
   return exists.filter(result => result.exists).map(result => result.table)
 }
 
-const availableMigrationNames = async (
-  migrationSource: Knex.MigrationSource<unknown>
-): Promise<string[]> => {
+const availableMigrationNames = async (migrationSource: Knex.MigrationSource<unknown>): Promise<string[]> => {
   const migrations = await migrationSource.getMigrations([])
   return migrations.map(migration => migrationSource.getMigrationName(migration))
 }
 
 const assertMigrationLockIsClear = async (knex: Knex): Promise<void> => {
-  if (!await knex.schema.hasTable('migrations_lock')) return
+  if (!(await knex.schema.hasTable('migrations_lock'))) return
   const lock = await knex<MigrationLockRecord>('migrations_lock').first('is_locked')
   if (lock && (lock.is_locked === true || Number(lock.is_locked) === 1)) {
     throw new MigrationPreflightError(
@@ -121,9 +121,7 @@ export const preflightMigrations = async (
   }
 
   if (applicationTableNames.length === 0) {
-    throw new MigrationPreflightError(
-      'Database has applied migration records but none of the expected Wiki application tables. Refusing a partial schema.'
-    )
+    throw new MigrationPreflightError('Database has applied migration records but none of the expected Wiki application tables. Refusing a partial schema.')
   }
 
   return { applied, available, state: 'ready' }

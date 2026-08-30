@@ -297,7 +297,7 @@ const plugin: ElasticsearchPlugin = {
    * @param {String} q Query
    * @param {Object} opts Additional options
    */
-  async query(q, _opts): Promise<SearchResult | void> {
+  async query(q, _opts): Promise<SearchResult> {
     void _opts
     try {
       const response = await searchElasticsearch(this.client, this.config.indexName, q)
@@ -320,6 +320,7 @@ const plugin: ElasticsearchPlugin = {
       }
     } catch (err: unknown) {
       wiki.logger.warn('Search Engine Error: ', getNestedValue(err, ['meta', 'body', 'error']) ?? err)
+      throw err
     }
   },
 

@@ -105,7 +105,8 @@ const loadUser = async (wiki: PageWatchWikiContext, userId: number): Promise<Rec
   return user
 }
 
-export const createPageWatchNotificationHandler = (wiki: PageWatchWikiContext): DurableJobHandler => async (job, { knex }) => {
+export const createPageWatchNotificationHandler = (wiki: PageWatchWikiContext): DurableJobHandler => async (job, { knex, signal }) => {
+  signal.throwIfAborted()
   const payload = parseJobPayload(job.payload)
   const delivery = await knex('pageWatchDeliveries').where({ id: payload.deliveryId, eventId: payload.eventId, userId: payload.userId }).first()
   if (!delivery || delivery.deliveredAt) return
@@ -116,14 +117,18 @@ export const createPageWatchNotificationHandler = (wiki: PageWatchWikiContext): 
   const isActive = user && Reflect.get(user, 'isActive') !== false
   const email = user && Reflect.get(user, 'email')
   if (!isActive || typeof email !== 'string' || email.length === 0) {
+    signal.throwIfAborted()
     await knex('pageWatchers').where({ pageId: eventPayload.pageId, userId: payload.userId }).delete()
+    signal.throwIfAborted()
     await knex('pageWatchDeliveries').where({ id: payload.deliveryId }).update({ deliveredAt: new Date(), lastError: 'Recipient is unavailable' })
     return
   }
   const page = await wiki.models.pages.getPageFromDb(eventPayload.pageId)
   const accessTarget = page ?? eventPayload
   if (!canReadPage(user, accessTarget as never)) {
+    signal.throwIfAborted()
     await knex('pageWatchers').where({ pageId: eventPayload.pageId, userId: payload.userId }).delete()
+    signal.throwIfAborted()
     await knex('pageWatchDeliveries').where({ id: payload.deliveryId }).update({ deliveredAt: new Date(), lastError: 'Page access was revoked' })
     return
   }
@@ -143,6 +148,7 @@ export const createPageWatchNotificationHandler = (wiki: PageWatchWikiContext): 
   const url = `${wiki.config.host.replace(/\/$/, '')}${route}`
   const text = `${eventPayload.actorName} ${action} “${notificationTitle}”.\n\n${url}`
   try {
+    signal.throwIfAborted()
     if (payload.inAppEnabled) {
       try {
         await knex('pageWatchNotifications').insert({
@@ -160,11 +166,14 @@ export const createPageWatchNotificationHandler = (wiki: PageWatchWikiContext): 
           readAt: null
         })
       } catch (error) {
+        signal.throwIfAborted()
         const existing = await knex('pageWatchNotifications').where({ eventId: payload.eventId, userId: payload.userId }).first()
+        signal.throwIfAborted()
         if (!existing) throw error
       }
     }
     if (payload.emailEnabled) {
+      signal.throwIfAborted()
       await wiki.mail.send({
         template: 'page-watch',
         to: email,
@@ -174,8 +183,10 @@ export const createPageWatchNotificationHandler = (wiki: PageWatchWikiContext): 
         data: { action, actorName: eventPayload.actorName, pageTitle: notificationTitle, url }
       })
     }
+    signal.throwIfAborted()
     await knex('pageWatchDeliveries').where({ id: payload.deliveryId }).update({ deliveredAt: new Date(), lastError: null })
   } catch (error) {
+    signal.throwIfAborted()
     await knex('pageWatchDeliveries').where({ id: payload.deliveryId }).update({ lastError: error instanceof Error ? error.message : String(error) })
     throw error
   }

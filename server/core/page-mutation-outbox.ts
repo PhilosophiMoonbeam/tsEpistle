@@ -4,7 +4,7 @@ import { z } from 'zod'
 import { canonicalJson as encodeCanonicalJson, CanonicalJsonError } from '../helpers/canonical-json.ts'
 
 export const PAGE_PROJECTION_EFFECT_KINDS = ['render', 'links', 'knowledge'] as const
-export type PageProjectionEffectKind = typeof PAGE_PROJECTION_EFFECT_KINDS[number]
+export type PageProjectionEffectKind = (typeof PAGE_PROJECTION_EFFECT_KINDS)[number]
 export type PageProjectionDesiredState = 'present' | 'absent'
 
 const Sha256Schema = z.string().regex(/^[a-f0-9]{64}$/)
@@ -96,8 +96,11 @@ const revisionString = (value: string | number | bigint): string => {
   return revision
 }
 
-const parseRowPayload = (row: Pick<PageMutationOutboxRow, 'payload' | 'payloadSha256' | 'effectKind' | 'desiredState' | 'pageId' | 'sourceRevision'>): PageProjectionPayload => {
-  if (sha256(row.payload) !== row.payloadSha256) throw new PageMutationOutboxError('OUTBOX_PAYLOAD_TAMPERED', 'Page mutation outbox payload hash does not match')
+const parseRowPayload = (
+  row: Pick<PageMutationOutboxRow, 'payload' | 'payloadSha256' | 'effectKind' | 'desiredState' | 'pageId' | 'sourceRevision'>
+): PageProjectionPayload => {
+  if (sha256(row.payload) !== row.payloadSha256)
+    throw new PageMutationOutboxError('OUTBOX_PAYLOAD_TAMPERED', 'Page mutation outbox payload hash does not match')
   let decoded: unknown
   try {
     decoded = JSON.parse(row.payload)
@@ -105,7 +108,13 @@ const parseRowPayload = (row: Pick<PageMutationOutboxRow, 'payload' | 'payloadSh
     throw new PageMutationOutboxError('INVALID_OUTBOX_PAYLOAD', 'Page mutation outbox payload is invalid JSON')
   }
   const payload = PageProjectionPayloadSchema.safeParse(decoded)
-  if (!payload.success || payload.data.effectKind !== row.effectKind || payload.data.desiredState !== row.desiredState || payload.data.pageId !== Number(row.pageId) || payload.data.sourceRevision !== revisionString(row.sourceRevision)) {
+  if (
+    !payload.success ||
+    payload.data.effectKind !== row.effectKind ||
+    payload.data.desiredState !== row.desiredState ||
+    payload.data.pageId !== Number(row.pageId) ||
+    payload.data.sourceRevision !== revisionString(row.sourceRevision)
+  ) {
     throw new PageMutationOutboxError('INVALID_OUTBOX_PAYLOAD', 'Page mutation outbox envelope does not match its indexed fields')
   }
   return payload.data
@@ -180,9 +189,58 @@ export const enqueuePageMutationEffects = async (
   return ids
 }
 
+export const rearmFailedKnowledgeEffect = async (
+  knex: Knex | Knex.Transaction,
+  input: {
+    readonly id: string
+    readonly pageId: number
+    readonly sourceRevision: string | number | bigint
+    readonly source: string | Uint8Array
+    readonly location: z.infer<typeof PageLocationSchema>
+    readonly failedBefore: Date
+    readonly now?: Date
+  }
+): Promise<boolean> => {
+  if (!Number.isSafeInteger(input.pageId) || input.pageId < 1) throw new PageMutationOutboxError('INVALID_PAGE_ID', 'Page mutation page ID is invalid')
+  const sourceRevision = revisionString(input.sourceRevision)
+  const location = PageLocationSchema.parse(input.location)
+  const existing = await knex<PageMutationOutboxRow>('pageMutationOutbox')
+    .where({ id: input.id, pageId: input.pageId, sourceRevision, effectKind: 'knowledge' })
+    .first()
+  if (!existing) return false
+  const payload = parseRowPayload(existing)
+  if (payload.desiredState !== 'present' || payload.sourceSha256 !== sha256(input.source) || canonicalJson(payload.location) !== canonicalJson(location)) {
+    throw new PageMutationOutboxError('OUTBOX_IDEMPOTENCY_CONFLICT', 'Existing page projection effect has different immutable content')
+  }
+  const now = input.now ?? new Date()
+  const updated = await knex<PageMutationOutboxRow>('pageMutationOutbox')
+    .where({ id: existing.id, status: 'failed' })
+    .where('attempts', '>=', 5)
+    .whereNull('leaseToken')
+    .where('updatedAt', '<=', input.failedBefore.toISOString())
+    .update({
+      status: 'pending',
+      attempts: 0,
+      availableAt: now.toISOString(),
+      result: null,
+      postcondition: null,
+      leaseOwner: null,
+      leaseToken: null,
+      leaseExpiresAt: null,
+      updatedAt: now.toISOString()
+    })
+  return updated === 1
+}
+
 export const claimPageMutationEffects = async (
   knex: Knex,
-  input: { readonly leaseOwner: string; readonly limit?: number; readonly leaseMs?: number; readonly now?: Date; readonly effects?: readonly PageProjectionEffectKind[] }
+  input: {
+    readonly leaseOwner: string
+    readonly limit?: number
+    readonly leaseMs?: number
+    readonly now?: Date
+    readonly effects?: readonly PageProjectionEffectKind[]
+  }
 ): Promise<readonly ClaimedPageProjectionEffect[]> => {
   if (!input.leaseOwner || input.leaseOwner.length > 255) throw new PageMutationOutboxError('INVALID_LEASE_OWNER', 'Projection lease owner is invalid')
   const limit = input.limit ?? 10
@@ -233,11 +291,7 @@ export const claimPageMutationEffects = async (
   })
 }
 
-const finishClaim = async (
-  knex: Knex,
-  claim: Pick<ClaimedPageProjectionEffect, 'id' | 'leaseToken'>,
-  update: Record<string, unknown>
-): Promise<void> => {
+const finishClaim = async (knex: Knex, claim: Pick<ClaimedPageProjectionEffect, 'id' | 'leaseToken'>, update: Record<string, unknown>): Promise<void> => {
   const updated = await knex<PageMutationOutboxRow>('pageMutationOutbox')
     .where({ id: claim.id, status: 'running', leaseToken: claim.leaseToken })
     .update({ ...update, leaseOwner: null, leaseToken: null, leaseExpiresAt: null, updatedAt: new Date().toISOString() })
@@ -273,7 +327,9 @@ export const executePageMutationEffect = async (
     await finishClaim(knex, claim, {
       status: 'failed',
       result: JSON.stringify(result.success ? result.data.result : { error: 'Sink returned an invalid result' }),
-      postcondition: JSON.stringify(result.success ? result.data.postcondition : { satisfied: false, observedSourceRevision: null, detail: 'invalid sink result' })
+      postcondition: JSON.stringify(
+        result.success ? result.data.postcondition : { satisfied: false, observedSourceRevision: null, detail: 'invalid sink result' }
+      )
     })
     throw new PageMutationOutboxError('PROJECTION_POSTCONDITION_FAILED', 'Projection sink did not prove its postcondition')
   }

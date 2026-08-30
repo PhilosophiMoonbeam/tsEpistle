@@ -1,20 +1,15 @@
-
 import express from 'express'
 import type { Request, Response } from 'express'
-import { createAuthRateLimiter, setAuthRateLimitHeaders } from '../helpers/auth-rate-limiter.ts'
 import _ from 'lodash'
 import commonHelper from '../helpers/common.ts'
-import type { Knex } from 'knex'
 
 interface AuthenticationStrategy {
   key: string
   strategyKey: string
 }
 
-
 export interface AuthWiki {
   models: {
-    knex: Knex
     authentication: {
       getStrategy(key: string): Promise<{ selfRegistration: boolean }>
       query(): { orderBy(column: string): { first(): Promise<AuthenticationStrategy> } }
@@ -42,7 +37,6 @@ export interface AuthWiki {
   Error: { AuthRegistrationDisabled: new () => Error }
 }
 
-
 const routeParam = (req: Request, name: string): string => {
   const value = req.params[name]
   if (typeof value !== 'string') {
@@ -51,168 +45,164 @@ const routeParam = (req: Request, name: string): string => {
   return value
 }
 
-
-
 export default function createAuthController(wiki: AuthWiki): express.Router {
-const router = express.Router()
+  const router = express.Router()
 
-const bruteforce = createAuthRateLimiter({
-  knex: wiki.models.knex,
-  keyPrefix: 'auth-html',
-  onLimit: (_req, res, retryAfterMs) => {
-    setAuthRateLimitHeaders(res, retryAfterMs)
-    res.status(429).send('Too many failed attempts. Try again later.')
-  }
-})
+  /**
+   * Login form
+   */
+  router.get('/login', async (req, res) => {
+    _.set(res.locals, 'pageMeta.title', 'Login')
 
-/**
- * Login form
- */
-router.get('/login', async (req, res) => {
-  _.set(res.locals, 'pageMeta.title', 'Login')
-
-  // -> Bypass Login
-  if (wiki.config.auth.autoLogin && !req.query.all) {
-    const stg = await wiki.models.authentication.query().orderBy('order').first()
-    const stgInfo = _.find(wiki.data.authentication, ['key', stg.strategyKey])
-    if (stgInfo && !stgInfo.useForm) {
-      return res.redirect(`/login/${stg.key}`)
-    }
-  }
-
-  // -> Show Login
-  const bgUrl = !_.isEmpty(wiki.config.auth.loginBgUrl) ? wiki.config.auth.loginBgUrl : '/_assets/img/splash/1.jpg'
-  res.render('login', { bgUrl, hideLocal: wiki.config.auth.hideLocal })
-})
-
-/**
- * Social Strategies Login
- */
-router.get('/login/:strategy', async (req, res, next) => {
-  try {
-    await wiki.models.users.login({
-      strategy: req.params.strategy
-    }, { req, res })
-  } catch (err) {
-    next(err)
-  }
-})
-
-/**
- * Social Strategies Callback
- */
-router.all('/login/:strategy/callback', async (req, res, next) => {
-  if (req.method !== 'GET' && req.method !== 'POST') { return next() }
-
-  try {
-    const authResult = await wiki.models.users.login({
-      strategy: req.params.strategy
-    }, { req, res })
-    res.cookie('jwt', authResult.jwt, commonHelper.getCookieOpts())
-
-    const loginRedirectValue: unknown = req.cookies['loginRedirect']
-    const loginRedirect = typeof loginRedirectValue === 'string' ? loginRedirectValue : undefined
-    const isValidRedirect = loginRedirect !== undefined && loginRedirect.startsWith('/') && !loginRedirect.startsWith('//') && !loginRedirect.includes('://')
-    if (loginRedirect === '/' && authResult.redirect) {
-      res.clearCookie('loginRedirect')
-      res.redirect(authResult.redirect)
-    } else if (isValidRedirect) {
-      res.clearCookie('loginRedirect')
-      res.redirect(loginRedirect)
-    } else {
-      if (loginRedirect) {
-        res.clearCookie('loginRedirect')
-      }
-      if (authResult.redirect) {
-        res.redirect(authResult.redirect)
-      } else {
-        res.redirect('/')
+    // -> Bypass Login
+    if (wiki.config.auth.autoLogin && !req.query.all) {
+      const stg = await wiki.models.authentication.query().orderBy('order').first()
+      const stgInfo = _.find(wiki.data.authentication, ['key', stg.strategyKey])
+      if (stgInfo && !stgInfo.useForm) {
+        return res.redirect(`/login/${stg.key}`)
       }
     }
-  } catch (err) {
-    next(err)
-  }
-})
 
-
-/**
- * Logout
- */
-router.get('/logout', async (req, res, next) => {
-  const redirURL = await wiki.models.users.logout({ req, res })
-  req.logout(err => {
-    if (err) return next(err)
-    res.clearCookie('jwt')
-    res.redirect(redirURL)
+    // -> Show Login
+    const bgUrl = !_.isEmpty(wiki.config.auth.loginBgUrl) ? wiki.config.auth.loginBgUrl : '/_assets/img/splash/1.jpg'
+    res.render('login', { bgUrl, hideLocal: wiki.config.auth.hideLocal })
   })
-})
 
-/**
- * Register form
- */
-router.get('/register', async (req, res, next) => {
-  _.set(res.locals, 'pageMeta.title', 'Register')
-  const localStrg = await wiki.models.authentication.getStrategy('local')
-  if (localStrg.selfRegistration) {
-    res.render('register')
-  } else {
-    next(new wiki.Error.AuthRegistrationDisabled())
-  }
-})
+  /**
+   * Social Strategies Login
+   */
+  router.get('/login/:strategy', async (req, res, next) => {
+    try {
+      await wiki.models.users.login(
+        {
+          strategy: req.params.strategy
+        },
+        { req, res }
+      )
+    } catch (err) {
+      next(err)
+    }
+  })
 
-/**
- * Email verification landing page.
- *
- * A GET only validates and presents the confirmation action. The token is consumed by the explicit
- * POST from the login component, so automated mail-link scanners cannot activate the account.
- */
-router.get('/verify/:token', bruteforce.middleware, async (req, res, next) => {
-  try {
-    _.set(res.locals, 'pageMeta.title', 'Confirm Email Address')
-    const token = routeParam(req, 'token')
-    await wiki.models.userKeys.validateToken({ kind: 'verify', token, skipDelete: true })
-    const bgUrl = !_.isEmpty(wiki.config.auth.loginBgUrl) ? wiki.config.auth.loginBgUrl : '/_assets/img/splash/1.jpg'
-    res.render('login', {
-      bgUrl,
-      hideLocal: wiki.config.auth.hideLocal,
-      verificationToken: token
+  /**
+   * Social Strategies Callback
+   */
+  router.all('/login/:strategy/callback', async (req, res, next) => {
+    if (req.method !== 'GET' && req.method !== 'POST') {
+      return next()
+    }
+
+    try {
+      const authResult = await wiki.models.users.login(
+        {
+          strategy: req.params.strategy
+        },
+        { req, res }
+      )
+      res.cookie('jwt', authResult.jwt, commonHelper.getCookieOpts())
+
+      const loginRedirectValue: unknown = req.cookies['loginRedirect']
+      const loginRedirect = typeof loginRedirectValue === 'string' ? loginRedirectValue : undefined
+      const isValidRedirect = loginRedirect !== undefined && loginRedirect.startsWith('/') && !loginRedirect.startsWith('//') && !loginRedirect.includes('://')
+      if (loginRedirect === '/' && authResult.redirect) {
+        res.clearCookie('loginRedirect')
+        res.redirect(authResult.redirect)
+      } else if (isValidRedirect) {
+        res.clearCookie('loginRedirect')
+        res.redirect(loginRedirect)
+      } else {
+        if (loginRedirect) {
+          res.clearCookie('loginRedirect')
+        }
+        if (authResult.redirect) {
+          res.redirect(authResult.redirect)
+        } else {
+          res.redirect('/')
+        }
+      }
+    } catch (err) {
+      next(err)
+    }
+  })
+
+  /**
+   * Logout
+   */
+  router.get('/logout', async (req, res, next) => {
+    const redirURL = await wiki.models.users.logout({ req, res })
+    req.logout(err => {
+      if (err) return next(err)
+      res.clearCookie('jwt')
+      res.redirect(redirURL)
     })
-  } catch (err) {
-    next(err)
-  }
-})
+  })
 
-/**
- * Password reset landing page.
- *
- * GET validation is deliberately non-consuming. The token is consumed only after a valid password
- * is submitted to the reset endpoint.
- */
-router.get('/login-reset/:token', bruteforce.middleware, async (req, res, next) => {
-  try {
-    _.set(res.locals, 'pageMeta.title', 'Reset Password')
-    const token = routeParam(req, 'token')
-    await wiki.models.userKeys.validateToken({ kind: 'resetPwd', token, skipDelete: true })
-    const bgUrl = !_.isEmpty(wiki.config.auth.loginBgUrl) ? wiki.config.auth.loginBgUrl : '/_assets/img/splash/1.jpg'
-    res.render('login', {
-      bgUrl,
-      hideLocal: wiki.config.auth.hideLocal,
-      resetPasswordToken: token
-    })
-  } catch (err) {
-    next(err)
-  }
-})
+  /**
+   * Register form
+   */
+  router.get('/register', async (req, res, next) => {
+    _.set(res.locals, 'pageMeta.title', 'Register')
+    const localStrg = await wiki.models.authentication.getStrategy('local')
+    if (localStrg.selfRegistration) {
+      res.render('register')
+    } else {
+      next(new wiki.Error.AuthRegistrationDisabled())
+    }
+  })
 
-/**
- * JWT Public Endpoints
- */
-router.get('/.well-known/jwk.json', function (req, res) {
-  res.json(wiki.config.certs.jwk)
-})
-router.get('/.well-known/jwk.pem', function (req, res) {
-  res.send(wiki.config.certs.public)
-})
+  /**
+   * Email verification landing page.
+   *
+   * A GET only validates and presents the confirmation action. The token is consumed by the explicit
+   * POST from the login component, so automated mail-link scanners cannot activate the account.
+   */
+  router.get('/verify/:token', async (req, res, next) => {
+    try {
+      _.set(res.locals, 'pageMeta.title', 'Confirm Email Address')
+      const token = routeParam(req, 'token')
+      await wiki.models.userKeys.validateToken({ kind: 'verify', token, skipDelete: true })
+      const bgUrl = !_.isEmpty(wiki.config.auth.loginBgUrl) ? wiki.config.auth.loginBgUrl : '/_assets/img/splash/1.jpg'
+      res.render('login', {
+        bgUrl,
+        hideLocal: wiki.config.auth.hideLocal,
+        verificationToken: token
+      })
+    } catch (err) {
+      next(err)
+    }
+  })
 
-return router
+  /**
+   * Password reset landing page.
+   *
+   * GET validation is deliberately non-consuming. The token is consumed only after a valid password
+   * is submitted to the reset endpoint.
+   */
+  router.get('/login-reset/:token', async (req, res, next) => {
+    try {
+      _.set(res.locals, 'pageMeta.title', 'Reset Password')
+      const token = routeParam(req, 'token')
+      await wiki.models.userKeys.validateToken({ kind: 'resetPwd', token, skipDelete: true })
+      const bgUrl = !_.isEmpty(wiki.config.auth.loginBgUrl) ? wiki.config.auth.loginBgUrl : '/_assets/img/splash/1.jpg'
+      res.render('login', {
+        bgUrl,
+        hideLocal: wiki.config.auth.hideLocal,
+        resetPasswordToken: token
+      })
+    } catch (err) {
+      next(err)
+    }
+  })
+
+  /**
+   * JWT Public Endpoints
+   */
+  router.get('/.well-known/jwk.json', function (req, res) {
+    res.json(wiki.config.certs.jwk)
+  })
+  router.get('/.well-known/jwk.pem', function (req, res) {
+    res.send(wiki.config.certs.public)
+  })
+
+  return router
 }

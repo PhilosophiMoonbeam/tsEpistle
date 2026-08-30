@@ -125,8 +125,8 @@ describe('page watch notification handler', () => {
   it('sends one stable-message-id email and records completion idempotently', async () => {
     const handler = createPageWatchNotificationHandler(wiki())
 
-    await handler(job, { knex })
-    await handler(job, { knex })
+    await handler(job, { knex, signal: new AbortController().signal })
+    await handler(job, { knex, signal: new AbortController().signal })
 
     expect(send).toHaveBeenCalledOnce()
     expect(send).toHaveBeenCalledWith(expect.objectContaining({
@@ -146,7 +146,7 @@ describe('page watch notification handler', () => {
       payload: { ...job.payload, emailEnabled: false, inAppEnabled: true }
     }
 
-    await createPageWatchNotificationHandler(wiki())(inAppOnlyJob, { knex })
+    await createPageWatchNotificationHandler(wiki())(inAppOnlyJob, { knex, signal: new AbortController().signal })
 
     expect(send).not.toHaveBeenCalled()
     expect(await knex('pageWatchNotifications')).toHaveLength(1)
@@ -160,11 +160,28 @@ describe('page watch notification handler', () => {
       findById: () => ({ withGraphJoined: () => ({ modifyGraph: async () => deniedUser }) })
     })
 
-    await createPageWatchNotificationHandler(deniedWiki)(job, { knex })
+    await createPageWatchNotificationHandler(deniedWiki)(job, { knex, signal: new AbortController().signal })
 
     expect(send).not.toHaveBeenCalled()
     expect(await knex('pageWatchers')).toEqual([])
     expect(await knex('pageWatchNotifications')).toEqual([])
     expect(await knex('pageWatchDeliveries').first()).toMatchObject({ deliveredAt: expect.anything(), lastError: 'Page access was revoked' })
+  })
+
+  it('does not dispatch or commit when already aborted', async () => {
+    const controller = new AbortController()
+    controller.abort()
+
+    await expect(
+      createPageWatchNotificationHandler(wiki())(job, { knex, signal: controller.signal })
+    ).rejects.toMatchObject({ name: 'AbortError' })
+
+    expect(send).not.toHaveBeenCalled()
+    expect(await knex('pageWatchers')).toEqual([{ pageId: 42, userId: 7 }])
+    expect(await knex('pageWatchNotifications')).toEqual([])
+    expect(await knex('pageWatchDeliveries').first()).toMatchObject({
+      deliveredAt: null,
+      lastError: null
+    })
   })
 })

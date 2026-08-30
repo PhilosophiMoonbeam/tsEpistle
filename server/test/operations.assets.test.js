@@ -13,13 +13,17 @@ describe('asset operations', () => {
       deleteAssetCache: vi.fn().mockResolvedValue(undefined),
       getAssetPath: vi.fn().mockResolvedValue('probe.svg')
     }
-    const query = {
-      findById: vi.fn().mockResolvedValue(asset),
+    const readQuery = {
+      findById: vi.fn().mockResolvedValue(asset)
+    }
+    const deleteQuery = {
       deleteById: vi.fn().mockResolvedValue(1)
     }
-    const del = vi.fn().mockResolvedValue(1)
-    const where = vi.fn().mockReturnValue({ del })
-    const knex = vi.fn().mockReturnValue({ where })
+    const transaction = {}
+    const assetsQuery = vi.fn(transactionArg => (transactionArg === transaction ? deleteQuery : readQuery))
+    const knex = vi.fn()
+    knex.transaction = vi.fn(async callback => callback(transaction))
+    const assetEvent = vi.fn().mockResolvedValue(undefined)
     global.WIKI = {
       Error: {
         AssetDeleteForbidden: Error,
@@ -32,10 +36,10 @@ describe('asset operations', () => {
         AssetRenameTargetForbidden: Error
       },
       models: {
-        assets: { query: vi.fn().mockReturnValue(query), flushTempUploads: vi.fn() },
+        assets: { query: assetsQuery, flushTempUploads: vi.fn() },
         assetFolders: { query: vi.fn(), getHierarchy: vi.fn() },
         knex,
-        storage: { assetEvent: vi.fn().mockResolvedValue(undefined) }
+        storage: { assetEvent }
       }
     }
     const { default: operations } = await vi.importFresh('../operations/assets.ts', import.meta.url)
@@ -46,8 +50,14 @@ describe('asset operations', () => {
     await operations.remove({ requester, id: 1 })
 
     expect(checkAccess).toHaveBeenCalledWith(requester, ['manage:system', 'manage:assets'], { path: 'probe.svg' })
-    expect(del).toHaveBeenCalledOnce()
-    expect(query.deleteById).toHaveBeenCalledWith(1)
+    expect(knex.transaction).toHaveBeenCalledOnce()
+    expect(assetsQuery).toHaveBeenNthCalledWith(1)
+    expect(assetsQuery).toHaveBeenNthCalledWith(2, transaction)
+    expect(deleteQuery.deleteById).toHaveBeenCalledWith(1)
+    expect(asset.deleteAssetCache).toHaveBeenCalledOnce()
+    expect(assetEvent).toHaveBeenCalledOnce()
+    expect(deleteQuery.deleteById.mock.invocationCallOrder[0]).toBeLessThan(asset.deleteAssetCache.mock.invocationCallOrder[0])
+    expect(asset.deleteAssetCache.mock.invocationCallOrder[0]).toBeLessThan(assetEvent.mock.invocationCallOrder[0])
   })
 
   it('lists root assets with a null folder predicate', async () => {

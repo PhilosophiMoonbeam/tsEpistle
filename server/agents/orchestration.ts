@@ -52,6 +52,65 @@ export const DEFAULT_AGENT_ORCHESTRATION_LIMITS = {
   maxAggregateChildOutputCharacters: 96_000
 } as const satisfies AgentOrchestrationLimits
 
+export const MAX_AGENT_CHILD_OUTPUT_CHARACTERS = 64 * 1_024
+
+export interface AgentChildBudgetUsage {
+  readonly outputCharacters: number
+  readonly tokens: number
+}
+
+export interface AgentChildBudgetReservation {
+  readonly id: number
+  readonly outputCharacters: number
+  readonly outputTokens: number
+}
+
+export class AgentChildBudgetReservations {
+  readonly #limits: AgentOrchestrationLimits
+  readonly #active = new Set<number>()
+  #consumedOutputCharacters: number
+  #consumedTokens: number
+  #nextId = 1
+  #reservedOutputCharacters = 0
+  #reservedTokens = 0
+
+  constructor (limits: AgentOrchestrationLimits, consumed: AgentChildBudgetUsage) {
+    this.#limits = limits
+    this.#consumedOutputCharacters = consumed.outputCharacters
+    this.#consumedTokens = consumed.tokens
+  }
+
+  reserve (): AgentChildBudgetReservation | null {
+    const remainingTokens = this.#limits.maxAggregateChildTokens - this.#consumedTokens - this.#reservedTokens
+    const remainingOutputCharacters = this.#limits.maxAggregateChildOutputCharacters - this.#consumedOutputCharacters - this.#reservedOutputCharacters
+    if (remainingTokens < this.#limits.childMaxOutputTokens || remainingOutputCharacters < 1) return null
+    const reservation = {
+      id: this.#nextId++,
+      outputCharacters: Math.min(MAX_AGENT_CHILD_OUTPUT_CHARACTERS, remainingOutputCharacters),
+      outputTokens: this.#limits.childMaxOutputTokens
+    }
+    this.#active.add(reservation.id)
+    this.#reservedOutputCharacters += reservation.outputCharacters
+    this.#reservedTokens += reservation.outputTokens
+    return reservation
+  }
+
+  release (reservation: AgentChildBudgetReservation, consumed: AgentChildBudgetUsage): void {
+    if (!this.#active.delete(reservation.id)) throw new AgentRepositoryError('AGENT_CHILD_BUDGET_INVALID', 'Subagent budget reservation is not active', 500)
+    this.#reservedOutputCharacters -= reservation.outputCharacters
+    this.#reservedTokens -= reservation.outputTokens
+    this.#consumedOutputCharacters += consumed.outputCharacters
+    this.#consumedTokens += consumed.tokens
+  }
+
+  get consumed (): AgentChildBudgetUsage {
+    return {
+      outputCharacters: this.#consumedOutputCharacters,
+      tokens: this.#consumedTokens
+    }
+  }
+}
+
 export interface AgentPlannedTask {
   readonly kind: AgentTaskKind
   readonly title: string

@@ -3,6 +3,27 @@ describe('page search visibility', () => {
     vi.resetModules()
   })
 
+  it('propagates the original provider query failure', async () => {
+    const failure = new Error('provider query failed')
+    const query = vi.fn().mockRejectedValue(failure)
+    const knex = vi.fn()
+    global.WIKI = {
+      auth: { checkAccess: vi.fn().mockReturnValue(true) },
+      config: { db: { type: 'postgres' }, lang: { code: 'en' } },
+      data: { searchEngine: { query } },
+      models: {
+        knex,
+        pages: { query: vi.fn() }
+      }
+    }
+
+    const { default: operations } = await vi.importFresh('../operations/pages.ts', import.meta.url)
+
+    await expect(operations.search({ query: 'runbook' })).rejects.toBe(failure)
+    expect(query).toHaveBeenCalledWith('runbook', { query: 'runbook' })
+    expect(knex).not.toHaveBeenCalled()
+  })
+
   it('drops stale private search documents and their suggestions', async () => {
     const whereBuilder = {
       where: vi.fn(),
@@ -33,7 +54,8 @@ describe('page search visibility', () => {
           query: vi.fn().mockResolvedValue({
             results: [
               { id: 2, locale: 'en', path: 'private-page', title: 'Private Secret' },
-              { id: 99, locale: 'en', path: 'public-page', title: 'Stale Indexed Title', description: 'Stale indexed description' }
+              { id: 99, locale: 'en', path: 'public-page', title: 'Stale Indexed Title', description: 'Stale indexed description' },
+              { id: 4, locale: 'en', path: 'unpublished-unique-path', title: 'Unpublished Unique Title', tags: ['unpublished-unique-tag'] }
             ],
             suggestions: ['private-secret'],
             totalHits: 2
@@ -58,7 +80,7 @@ describe('page search visibility', () => {
       windowLimit: 100,
       windowTruncated: false
     })
-    expect(whereBuilder.where).toHaveBeenCalledWith({ visibility: 'public' })
+    expect(whereBuilder.where).toHaveBeenCalledWith({ visibility: 'public', isPublished: true })
     expect(pageQuery.select).toHaveBeenCalledWith('pages.id', 'pages.localeCode', 'pages.path', 'pages.title', 'pages.description')
     expect(global.WIKI.auth.checkAccess).toHaveBeenCalledTimes(1)
   })
@@ -191,7 +213,7 @@ describe('page search visibility', () => {
       query: vi.fn().mockResolvedValue({ results: [], suggestions: [], totalHits: 0 })
     }
     global.WIKI = {
-      auth: { checkAccess: vi.fn().mockReturnValue(true) },
+      auth: { checkAccess: vi.fn((_requester, permissions) => !permissions.includes('manage:system')) },
       config: { db: { type: 'postgres' }, lang: { code: 'en' }, search: { maxHits: 100 } },
       data: { searchEngine },
       models: {
@@ -216,6 +238,112 @@ describe('page search visibility', () => {
     })
     expect(whereBuilder.andWhere).toHaveBeenCalledWith('localeCode', 'en')
     expect(nested.orWhere).toHaveBeenCalledWith('tags.tag', 'ILIKE', '%runbook%')
+    expect(whereBuilder.andWhere).toHaveBeenCalledWith('ownerId', 7)
     expect(searchEngine.query).toHaveBeenCalledWith('runbook', expect.objectContaining({ locale: 'en', path: 'private' }))
+  })
+
+  it('keeps unpublished private pages searchable for system managers', async () => {
+    const whereBuilder = {
+      where: vi.fn().mockReturnThis(),
+      andWhere: vi.fn().mockReturnThis()
+    }
+    const privateQuery = {
+      column: vi.fn().mockReturnThis(),
+      withGraphJoined: vi.fn().mockReturnThis(),
+      modifyGraph: vi.fn().mockReturnThis(),
+      modify: vi.fn(callback => {
+        callback(whereBuilder)
+        return privateQuery
+      }),
+      limit: vi.fn(async () => [{
+        id: 22,
+        locale: 'en',
+        localeCode: 'en',
+        path: 'managed-private',
+        title: 'Managed Private Draft',
+        description: '',
+        isPublished: false,
+        visibility: 'private',
+        ownerId: 7,
+        tags: []
+      }])
+    }
+    global.WIKI = {
+      auth: { checkAccess: vi.fn((_requester, permissions) => permissions.includes('manage:system')) },
+      config: { db: { type: 'postgres' }, lang: { code: 'en' }, search: { maxHits: 100 } },
+      data: { searchEngine: { query: vi.fn().mockResolvedValue({ results: [], suggestions: [], totalHits: 0 }) } },
+      models: {
+        knex: vi.fn().mockResolvedValue([]),
+        pages: { query: vi.fn().mockReturnValue(privateQuery) }
+      }
+    }
+
+    const { default: operations } = await vi.importFresh('../operations/pages.ts', import.meta.url)
+    const response = await operations.search({ requester: { id: 2 }, query: 'draft' })
+
+    expect(response.results).toEqual([
+      expect.objectContaining({ id: 22, visibility: 'private', title: 'Managed Private Draft' })
+    ])
+    expect(whereBuilder.where).toHaveBeenCalledWith({ visibility: 'private' })
+    expect(whereBuilder.andWhere).not.toHaveBeenCalledWith('ownerId', expect.anything())
+    expect(whereBuilder.andWhere).not.toHaveBeenCalledWith('isPublished', expect.anything())
+  })
+
+  it('upserts a public page only while it is published', async () => {
+    const deletedTables = []
+    const transactionClient = vi.fn(table => ({
+      where: vi.fn(({ pageId }) => ({
+        delete: vi.fn(async () => {
+          deletedTables.push([table, pageId])
+        })
+      }))
+    }))
+    transactionClient.raw = vi.fn().mockResolvedValue({ rows: [] })
+    const knex = vi.fn()
+    knex.transaction = vi.fn(callback => callback(transactionClient))
+    global.WIKI = {
+      config: { db: { type: 'postgres' }, search: { maxHits: 100 } },
+      Error: { SearchActivationFailed: Error },
+      logger: { info: vi.fn(), warn: vi.fn() },
+      models: { knex }
+    }
+
+    const { default: engine } = await vi.importFresh('../modules/search/postgres/engine.ts', import.meta.url)
+    engine.config = { dictLanguage: 'english' }
+    const page = {
+      id: 41,
+      visibility: 'public',
+      isPublished: false,
+      path: 'unpublished-unique-path',
+      localeCode: 'en',
+      title: 'Unpublished Unique Title',
+      description: 'unpublished-unique-description',
+      safeContent: 'unpublished-unique-body',
+      tags: [{ tag: 'unpublished-unique-tag' }]
+    }
+
+    await engine.created(page)
+    expect(transactionClient.raw).not.toHaveBeenCalled()
+    expect(deletedTables).toEqual([['pagesWords', 41], ['pagesVector', 41]])
+
+    deletedTables.length = 0
+    page.isPublished = true
+    await engine.updated(page)
+    const upsert = transactionClient.raw.mock.calls.find(([statement]) => statement.includes('INSERT INTO "pagesVector"'))
+    expect(upsert?.[1]).toEqual(expect.arrayContaining([
+      41,
+      'unpublished-unique-path',
+      'Unpublished Unique Title',
+      'unpublished-unique-description',
+      ['unpublished-unique-tag'],
+      'unpublished-unique-body'
+    ]))
+
+    deletedTables.length = 0
+    transactionClient.raw.mockClear()
+    page.isPublished = false
+    await engine.updated(page)
+    expect(transactionClient.raw).not.toHaveBeenCalled()
+    expect(deletedTables).toEqual([['pagesWords', 41], ['pagesVector', 41]])
   })
 })

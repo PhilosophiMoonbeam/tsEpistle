@@ -50,9 +50,11 @@ export default class Asset extends Model {
   declare createdAt: string
   declare updatedAt: string
 
-  static override get tableName () { return 'assets' }
+  static override get tableName() {
+    return 'assets'
+  }
 
-  static override get jsonSchema () {
+  static override get jsonSchema() {
     return {
       type: 'object',
       properties: {
@@ -70,7 +72,7 @@ export default class Asset extends Model {
     }
   }
 
-  static override get relationMappings () {
+  static override get relationMappings() {
     return {
       author: {
         relation: Model.BelongsToOneRelation,
@@ -85,31 +87,29 @@ export default class Asset extends Model {
     }
   }
 
-  override async $beforeUpdate (opt: ModelOptions, context: QueryContext): Promise<void> {
+  override async $beforeUpdate(opt: ModelOptions, context: QueryContext): Promise<void> {
     await super.$beforeUpdate(opt, context)
     this.updatedAt = moment.utc().toISOString()
   }
 
-  override async $beforeInsert (context: QueryContext): Promise<void> {
+  override async $beforeInsert(context: QueryContext): Promise<void> {
     await super.$beforeInsert(context)
     this.createdAt = moment.utc().toISOString()
     this.updatedAt = moment.utc().toISOString()
   }
 
-  async getAssetPath (): Promise<string> {
+  async getAssetPath(): Promise<string> {
     const hierarchy = this.folderId ? await wiki.models.assetFolders.getHierarchy(this.folderId) : []
     return this.folderId ? `${hierarchy.map(folder => folder.slug).join('/')}/${this.filename}` : this.filename
   }
 
-  async deleteAssetCache (): Promise<void> {
+  async deleteAssetCache(): Promise<void> {
     await fs.remove(path.resolve(wiki.ROOTPATH, wiki.config.dataPath, `cache/${this.hash}.dat`))
   }
 
-  static async upload (opts: UploadOptions): Promise<void> {
+  static async upload(opts: UploadOptions): Promise<void> {
     const fileInfo = path.parse(opts.originalname)
     const fileHash = assetHelper.generateHash(opts.assetPath)
-    const assetQuery = wiki.models.assets.query().where({ hash: fileHash })
-    let asset = await (opts.folderId === null ? assetQuery.whereNull('folderId') : assetQuery.where('folderId', opts.folderId)).first()
     const assetRow: Partial<Asset> = {
       filename: opts.originalname,
       hash: fileHash,
@@ -125,46 +125,38 @@ export default class Asset extends Model {
       await svgSanitizeJob.finished
     }
 
-    try {
-      const fileBuffer = await fs.readFile(opts.path)
-      if (asset) {
-        if (opts.mode === 'upload') {
-          assetRow.authorId = opts.user.id
+    const fileBuffer = await fs.readFile(opts.path)
+    const insertedRow = { ...assetRow, authorId: opts.user.id }
+    const updatedRow = { ...(opts.mode === 'upload' ? insertedRow : assetRow), updatedAt: moment.utc().toISOString() }
+    const asset = await wiki.models.knex.transaction(async transaction => {
+      const persistedAsset = await wiki.models.assets.query(transaction).insert(insertedRow).onConflict('hash').merge(updatedRow).returning('*')
+      await transaction('assetData').insert({ id: persistedAsset.id, data: fileBuffer }).onConflict('id').merge({ data: fileBuffer })
+      return persistedAsset
+    })
+
+    const cachePath = path.resolve(wiki.ROOTPATH, wiki.config.dataPath, `cache/${fileHash}.dat`)
+    if (opts.mode === 'upload') {
+      await fs.move(opts.path, cachePath, { overwrite: true })
+    } else {
+      await fs.copy(opts.path, cachePath, { overwrite: true })
+    }
+
+    if (!opts.skipStorage) {
+      await wiki.models.storage.assetEvent({
+        event: 'uploaded',
+        asset: {
+          ...asset,
+          path: await asset.getAssetPath(),
+          data: fileBuffer,
+          authorId: opts.user.id,
+          authorName: opts.user.name,
+          authorEmail: opts.user.email
         }
-        await wiki.models.assets.query().patch(assetRow).findById(asset.id)
-        await wiki.models.knex('assetData').where({ id: asset.id }).update({ data: fileBuffer })
-      } else {
-        assetRow.authorId = opts.user.id
-        asset = await wiki.models.assets.query().insert(assetRow)
-        await wiki.models.knex('assetData').insert({ id: asset.id, data: fileBuffer })
-      }
-
-      const cachePath = path.resolve(wiki.ROOTPATH, wiki.config.dataPath, `cache/${fileHash}.dat`)
-      if (opts.mode === 'upload') {
-        await fs.move(opts.path, cachePath, { overwrite: true })
-      } else {
-        await fs.copy(opts.path, cachePath, { overwrite: true })
-      }
-
-      if (!opts.skipStorage) {
-        await wiki.models.storage.assetEvent({
-          event: 'uploaded',
-          asset: {
-            ...asset,
-            path: await asset.getAssetPath(),
-            data: fileBuffer,
-            authorId: opts.user.id,
-            authorName: opts.user.name,
-            authorEmail: opts.user.email
-          }
-        })
-      }
-    } catch (err) {
-      wiki.logger.warn(err)
+      })
     }
   }
 
-  static async getAsset (assetPath: string, res: Response): Promise<void> {
+  static async getAsset(assetPath: string, res: Response): Promise<void> {
     try {
       const fileInfo = assetHelper.getPathInfo(assetPath)
       const fileHash = assetHelper.generateHash(assetPath)
@@ -182,7 +174,7 @@ export default class Asset extends Model {
     }
   }
 
-  static async getAssetFromCache (assetPath: string, cachePath: string, res: Response): Promise<boolean> {
+  static async getAssetFromCache(assetPath: string, cachePath: string, res: Response): Promise<boolean> {
     try {
       await fs.access(cachePath, fs.constants.R_OK)
     } catch {
@@ -198,15 +190,15 @@ export default class Asset extends Model {
     return true
   }
 
-  static async getAssetFromStorage (assetPath: string, res: Response): Promise<boolean> {
+  static async getAssetFromStorage(assetPath: string, res: Response): Promise<boolean> {
     const localLocations = await wiki.models.storage.getLocalLocations({ asset: { path: assetPath } })
     for (const location of _.filter(localLocations, location => Boolean(location.path))) {
-      if (location.path && await wiki.models.assets.getAssetFromCache(assetPath, location.path, res)) return true
+      if (location.path && (await wiki.models.assets.getAssetFromCache(assetPath, location.path, res))) return true
     }
     return false
   }
 
-  static async getAssetFromDb (fileHash: string, cachePath: string, res: Response): Promise<void> {
+  static async getAssetFromDb(fileHash: string, cachePath: string, res: Response): Promise<void> {
     const asset = await wiki.models.assets.query().where('hash', fileHash).first()
     if (!asset) {
       res.sendStatus(404)
@@ -222,22 +214,22 @@ export default class Asset extends Model {
     await fs.outputFile(cachePath, assetData.data)
   }
 
-  static async flushTempUploads (): Promise<void> {
+  static async flushTempUploads(): Promise<void> {
     await fs.emptyDir(path.resolve(wiki.ROOTPATH, wiki.config.dataPath, 'uploads'))
   }
 }
 
 const wiki = WIKI as unknown as {
   ROOTPATH: string
-  config: { dataPath: string, uploads: { scanSVG: boolean, forceDownload: boolean } }
-  logger: { warn: (error: unknown) => void, error: (error: unknown) => void }
-  scheduler: { registerJob: (definition: { name: string, immediate: boolean, worker: boolean }, path: string) => Promise<{ finished: Promise<unknown> }> }
+  config: { dataPath: string; uploads: { scanSVG: boolean; forceDownload: boolean } }
+  logger: { warn: (error: unknown) => void; error: (error: unknown) => void }
+  scheduler: { registerJob: (definition: { name: string; immediate: boolean; worker: boolean }, path: string) => Promise<{ finished: Promise<unknown> }> }
   models: {
     assets: typeof Asset
     assetFolders: typeof AssetFolder
     knex: Knex
     storage: {
-      assetEvent: (event: { event: string, asset: Record<string, unknown> }) => Promise<void>
+      assetEvent: (event: { event: string; asset: Record<string, unknown> }) => Promise<void>
       getLocalLocations: (event: { asset: { path: string } }) => Promise<StorageLocation[]>
     }
   }

@@ -1,9 +1,11 @@
-
 import createKnex, { type Knex } from 'knex'
 import { afterEach, beforeEach, describe, expect, it, vi } from '../bun-test.mts'
 import { DurableJobStore, runDurableJobBatch } from '../../core/durable-jobs.ts'
-import { up } from '../../db/migrations/2.5.130.ts'
+import { up as createDurableJobs } from '../../db/migrations/2.5.130.ts'
+import { up as addDurableJobLeaseToken } from '../../db/migrations/2.5.158.ts'
 import { cleanupDurableJobs } from '../../jobs/durable-job-handlers.ts'
+import { createContentExtensionRerenderHandler } from '../../jobs/content-extension-rerender.ts'
+import type { ContentExtensionRerenderContext } from '../../content-extensions/rerender.ts'
 
 let knex: Knex
 let store: DurableJobStore
@@ -15,7 +17,8 @@ beforeEach(async () => {
     pool: { min: 1, max: 1 },
     useNullAsDefault: true
   })
-  await up(knex)
+  await createDurableJobs(knex)
+  await addDurableJobLeaseToken(knex)
   store = new DurableJobStore(knex)
 })
 
@@ -27,11 +30,26 @@ describe('portable durable jobs', () => {
   it('creates the versioned payload, lease, retry, and observability columns', async () => {
     const columns = await knex('durableJobs').columnInfo()
 
-    expect(Object.keys(columns)).toEqual(expect.arrayContaining([
-      'id', 'type', 'version', 'payload', 'state', 'attempts', 'maxAttempts',
-      'nextRunAt', 'leaseOwner', 'leaseExpiresAt', 'lastError',
-      'deduplicationKey', 'createdAt', 'updatedAt', 'completedAt'
-    ]))
+    expect(Object.keys(columns)).toEqual(
+      expect.arrayContaining([
+        'id',
+        'type',
+        'version',
+        'payload',
+        'state',
+        'attempts',
+        'maxAttempts',
+        'nextRunAt',
+        'leaseOwner',
+        'leaseToken',
+        'leaseExpiresAt',
+        'lastError',
+        'deduplicationKey',
+        'createdAt',
+        'updatedAt',
+        'completedAt'
+      ])
+    )
   })
 
   it('allows only one instance to claim a ready job', async () => {
@@ -43,13 +61,227 @@ describe('portable durable jobs', () => {
     })
     const now = new Date('2026-08-14T12:00:00.000Z')
 
-    const claims = await Promise.all([
-      store.claim({ workerId: 'instance-a', now }),
-      store.claim({ workerId: 'instance-b', now })
-    ])
+    const claims = await Promise.all([store.claim({ workerId: 'instance-a', now }), store.claim({ workerId: 'instance-b', now })])
 
     expect(claims.flat()).toHaveLength(1)
     expect(claims.flat()[0].attempts).toBe(1)
+  })
+
+  it('renews the lease while a handler remains blocked', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-08-14T12:00:00.000Z'))
+    const entered = Promise.withResolvers<void>()
+    const release = Promise.withResolvers<void>()
+    let batch: Promise<unknown> | undefined
+
+    try {
+      const job = await store.enqueue({
+        type: 'blocked-handler',
+        version: 1,
+        payload: {}
+      })
+      batch = runDurableJobBatch(knex, {
+        workerId: 'instance-a',
+        leaseMs: 1_000,
+        handlers: {
+          'blocked-handler@1': async () => {
+            entered.resolve()
+            await release.promise
+          }
+        }
+      })
+      await entered.promise
+
+      await vi.advanceTimersByTimeAsync(500)
+      await vi.advanceTimersByTimeAsync(501)
+
+      expect(
+        await store.claim({
+          workerId: 'instance-b',
+          leaseMs: 1_000,
+          now: new Date()
+        })
+      ).toEqual([])
+
+      release.resolve()
+      await batch
+      expect(await store.get(job.id)).toMatchObject({ state: 'succeeded', attempts: 1 })
+    } finally {
+      release.resolve()
+      await batch?.catch(() => undefined)
+      vi.useRealTimers()
+    }
+  })
+
+  it('aborts an in-flight handler when its lease is replaced', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-08-14T12:00:00.000Z'))
+    const entered = Promise.withResolvers<void>()
+    const stopWaiting = Promise.withResolvers<void>()
+    const sideEffects: string[] = []
+    let batch: Promise<unknown> | undefined
+
+    try {
+      const job = await store.enqueue({
+        type: 'lease-sensitive-handler',
+        version: 1,
+        payload: {}
+      })
+      batch = runDurableJobBatch(knex, {
+        workerId: 'instance-a',
+        leaseMs: 1_000,
+        handlers: {
+          'lease-sensitive-handler@1': async (_job, { signal }) => {
+            sideEffects.push('first')
+            entered.resolve()
+            const aborted = Promise.withResolvers<void>()
+            const onAbort = (): void => aborted.resolve()
+            if (signal.aborted) aborted.resolve()
+            else signal.addEventListener('abort', onAbort, { once: true })
+            try {
+              await Promise.race([aborted.promise, stopWaiting.promise])
+            } finally {
+              signal.removeEventListener('abort', onAbort)
+            }
+            signal.throwIfAborted()
+            sideEffects.push('second')
+          }
+        }
+      })
+      await entered.promise
+
+      const [replacement] = await store.claim({
+        workerId: 'instance-b',
+        leaseMs: 1_000,
+        now: new Date('2026-08-14T12:00:02.000Z')
+      })
+      expect(replacement).toMatchObject({ id: job.id, leaseOwner: 'instance-b', attempts: 2 })
+
+      await vi.advanceTimersByTimeAsync(500)
+      await batch
+
+      expect(sideEffects).toEqual(['first'])
+      expect(await store.get(job.id)).toMatchObject({
+        state: 'running',
+        leaseOwner: 'instance-b',
+        leaseToken: replacement.leaseToken
+      })
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      stopWaiting.resolve()
+      await batch?.catch(() => undefined)
+      vi.useRealTimers()
+    }
+  })
+
+  it('stops content-extension rerender effects after its lease is replaced', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-08-14T12:00:00.000Z'))
+    const entered = Promise.withResolvers<void>()
+    const release = Promise.withResolvers<void>()
+    const effects: string[] = []
+    let batch: Promise<unknown> | undefined
+
+    try {
+      await knex.schema.createTable('pages', table => {
+        table.integer('id').primary()
+        table.string('hash').notNullable()
+        table.text('content').notNullable()
+      })
+      const content = '```wiki-extension\n{"key":"spoiler","version":1,"props":{"content":"Secret"}}\n```'
+      await knex('pages').insert([
+        { id: 1, hash: 'first-page', content },
+        { id: 2, hash: 'second-page', content }
+      ])
+      const job = await store.enqueue({
+        type: 'rerender-content-extension',
+        version: 1,
+        payload: { key: 'spoiler' }
+      })
+      const wiki: ContentExtensionRerenderContext = {
+        data: {
+          searchEngine: {
+            async deleted(page) {
+              effects.push(`deleted:${page.id}`)
+            },
+            async updated(page) {
+              effects.push(`updated:${page.id}`)
+            }
+          }
+        },
+        events: {
+          outbound: {
+            emit(_event, hash) {
+              effects.push(`emit:${String(hash)}`)
+            }
+          }
+        },
+        models: {
+          pages: {
+            async deletePageFromCache(hash) {
+              effects.push(`cache:${hash}`)
+            },
+            async getPageFromDb(pageId) {
+              effects.push(`fetch:${pageId}`)
+              return {
+                id: pageId,
+                hash: pageId === 1 ? 'first-page' : 'second-page',
+                content,
+                visibility: 'public',
+                isPublished: true,
+                safeContent: ''
+              }
+            },
+            async prepareSearchDocument(page) {
+              effects.push(`prepare:${page.id}`)
+              return page
+            },
+            async renderPage(page) {
+              effects.push(`render:${page.id}`)
+              entered.resolve()
+              await release.promise
+            }
+          }
+        }
+      }
+      batch = runDurableJobBatch(knex, {
+        workerId: 'instance-a',
+        leaseMs: 1_000,
+        handlers: {
+          'rerender-content-extension@1': createContentExtensionRerenderHandler(wiki)
+        }
+      })
+      await entered.promise
+
+      const [replacement] = await store.claim({
+        workerId: 'instance-b',
+        leaseMs: 1_000,
+        now: new Date('2026-08-14T12:00:02.000Z')
+      })
+      expect(replacement).toMatchObject({ id: job.id, leaseOwner: 'instance-b', attempts: 2 })
+
+      await vi.advanceTimersByTimeAsync(500)
+      release.resolve()
+      await batch
+
+      expect(effects).toEqual([
+        'cache:first-page',
+        'emit:first-page',
+        'fetch:1',
+        'deleted:1',
+        'render:1'
+      ])
+      expect(await store.get(job.id)).toMatchObject({
+        state: 'running',
+        leaseOwner: 'instance-b',
+        leaseToken: replacement.leaseToken
+      })
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      release.resolve()
+      await batch?.catch(() => undefined)
+      vi.useRealTimers()
+    }
   })
 
   it('recovers an expired lease after a worker disappears', async () => {
@@ -77,6 +309,36 @@ describe('portable durable jobs', () => {
       id: first[0].id,
       leaseOwner: 'instance-b',
       attempts: 2
+    })
+  })
+
+  it('rejects stale lease operations after a replacement claim', async () => {
+    await store.enqueue({
+      type: 'cleanup-durable-jobs',
+      version: 1,
+      payload: {},
+      nextRunAt: new Date('2026-08-14T11:00:00.000Z')
+    })
+    const [first] = await store.claim({
+      workerId: 'instance-a',
+      leaseMs: 1_000,
+      now: new Date('2026-08-14T12:00:00.000Z')
+    })
+    const [replacement] = await store.claim({
+      workerId: 'instance-a',
+      leaseMs: 1_000,
+      now: new Date('2026-08-14T12:00:02.000Z')
+    })
+
+    expect(first.leaseToken).not.toBe(replacement.leaseToken)
+    expect(await store.extendLease(first, 1_000, new Date('2026-08-14T12:00:02.100Z'))).toBe(false)
+    expect(await store.complete(first, new Date('2026-08-14T12:00:02.100Z'))).toBe(false)
+    expect(await store.fail(first, new Error('stale failure'), () => 0, new Date('2026-08-14T12:00:02.100Z'))).toBe(false)
+    expect(await store.get(first.id)).toMatchObject({
+      state: 'running',
+      attempts: 2,
+      leaseToken: replacement.leaseToken,
+      lastError: null
     })
   })
 
@@ -131,9 +393,10 @@ describe('portable durable jobs', () => {
     const [claimed] = await store.claim({ workerId: 'instance-a' })
     const pool = knex.client.pool
     const usedBefore = pool.numUsed()
+    const signal = new AbortController().signal
 
-    await cleanupDurableJobs(claimed ?? proofJob, { knex })
-    await cleanupDurableJobs(claimed ?? proofJob, { knex })
+    await cleanupDurableJobs(claimed ?? proofJob, { knex, signal })
+    await cleanupDurableJobs(claimed ?? proofJob, { knex, signal })
 
     expect(await knex('durableJobs').where('type', 'old-job')).toEqual([])
     expect(pool.numUsed()).toBe(usedBefore)

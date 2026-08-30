@@ -623,16 +623,24 @@ describe('controllers/api groups endpoints', () => {
 
   it('forwards unexpected group delete failures to next', async () => {
     const next = vi.fn()
-    global.WIKI.models.groups.query.mockReturnValueOnce({
-      deleteById: vi.fn().mockRejectedValue(new Error('delete db down'))
+    const findById = vi.fn().mockResolvedValue({
+      id: 3,
+      name: 'Editors',
+      isSystem: false,
+      permissions: ['read:pages']
     })
+    const failure = new Error('delete db down')
+    const deleteById = vi.fn().mockRejectedValue(failure)
+    global.WIKI.models.groups.query.mockReturnValueOnce({ findById }).mockReturnValueOnce({ deleteById })
     const { deleteGroup } = await loadHandler()
     const req = { user: { permissions: ['manage:groups'] }, params: { id: '3' } }
     const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await deleteGroup(req, res, next)
 
-    expect(next).toHaveBeenCalledWith(expect.any(Error))
+    expect(findById).toHaveBeenCalledWith(3)
+    expect(deleteById).toHaveBeenCalledWith(3)
+    expect(next).toHaveBeenCalledWith(failure)
     expect(next.mock.calls[0][0].message).toBe('delete db down')
   })
 
@@ -775,16 +783,27 @@ describe('controllers/api groups endpoints', () => {
 
   it('forwards unexpected group update failures to next', async () => {
     const next = vi.fn()
-    global.WIKI.models.groups.query.mockReturnValueOnce({
-      patch: vi.fn().mockReturnValue({
-        where: vi.fn().mockRejectedValue(new Error('update db down'))
-      })
+    const findById = vi.fn().mockResolvedValue({
+      id: 3,
+      name: 'Editors',
+      isSystem: false,
+      permissions: []
     })
+    global.WIKI.models.groups.query
+      .mockReturnValueOnce({
+        findById
+      })
+      .mockReturnValueOnce({
+        patch: vi.fn().mockReturnValue({
+          where: vi.fn().mockRejectedValue(new Error('update db down'))
+        })
+      })
     const { updateGroup } = await loadHandler()
     const req = { user: { permissions: ['manage:groups'] }, params: { id: '3' }, body: { name: 'Editors', permissions: [], pageRules: [] } }
     const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await updateGroup(req, res, next)
+    expect(findById).toHaveBeenCalledWith(3)
 
     expect(next).toHaveBeenCalledWith(expect.any(Error))
     expect(next.mock.calls[0][0].message).toBe('update db down')

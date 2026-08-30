@@ -11,15 +11,17 @@ import { createPageWatchNotificationHandler, type PageWatchWikiContext } from '.
 
 const cleanupRetentionMs = 30 * 24 * 60 * 60 * 1_000
 
-export const cleanupDurableJobs: DurableJobHandler = async (_job, { knex }) => {
+export const cleanupDurableJobs: DurableJobHandler = async (_job, { knex, signal }) => {
   const before = new Date(Date.now() - cleanupRetentionMs)
+  signal.throwIfAborted()
   await knex('durableJobs')
     .whereIn('state', ['succeeded', 'failed', 'cancelled'])
     .where('completedAt', '<', before)
     .delete()
 }
 
-export const createWebhookDeliveryHandler = (sessionSecret: string): DurableJobHandler => async (job, { knex }) => {
+export const createWebhookDeliveryHandler = (sessionSecret: string): DurableJobHandler => async (job, { knex, signal }) => {
+  signal.throwIfAborted()
   const deliveryId = job.payload.deliveryId
   const eventId = job.payload.eventId
   const webhookId = job.payload.webhookId
@@ -32,6 +34,7 @@ export const createWebhookDeliveryHandler = (sessionSecret: string): DurableJobH
   const webhook = await knex('webhooks').where('id', webhookId).first()
   if (!webhook) return
   if (!webhook.isEnabled) {
+    signal.throwIfAborted()
     const now = new Date()
     await knex('webhookDeliveries').where('id', deliveryId).update({
       statusCode: 204,
@@ -48,6 +51,8 @@ export const createWebhookDeliveryHandler = (sessionSecret: string): DurableJobH
   }
 
   try {
+    const target = await resolveWebhookUrl(String(webhook.url))
+    signal.throwIfAborted()
     const result = await sendSignedWebhook({
       deliveryId,
       eventId,
@@ -56,14 +61,17 @@ export const createWebhookDeliveryHandler = (sessionSecret: string): DurableJobH
       eventCreatedAt: new Date(event.createdAt),
       payload: payload as Record<string, unknown>,
       secret: decryptWebhookSecret(String(webhook.secretCiphertext), sessionSecret),
-      target: await resolveWebhookUrl(String(webhook.url))
+      target,
+      signal
     })
+    signal.throwIfAborted()
     await knex('webhookDeliveries').where('id', deliveryId).update({
       statusCode: result.statusCode,
       responseSnippet: result.responseSnippet,
       deliveredAt: new Date()
     })
   } catch (error) {
+    signal.throwIfAborted()
     await knex('webhookDeliveries').where('id', deliveryId).update({
       statusCode: error instanceof WebhookDeliveryError ? error.statusCode : null,
       responseSnippet: error instanceof WebhookDeliveryError ? error.responseSnippet : String(error)

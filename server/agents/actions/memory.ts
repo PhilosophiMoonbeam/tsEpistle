@@ -13,6 +13,7 @@ interface MemoryActionInput {
 export const registerMemoryAction = (kernel: ActionKernel, memory: AgentMemoryRepository): void => {
   kernel.register('memory.manage', async (rawInput, context) => {
     if (context.authority.requester.kind !== 'user') throw new AgentRepositoryError('AUTHENTICATION_REQUIRED', 'Personal memory requires a user principal', 401)
+    await context.fenceSideEffect()
     return memory.manage(context.authority.requester.userId, rawInput as MemoryActionInput)
   })
 }

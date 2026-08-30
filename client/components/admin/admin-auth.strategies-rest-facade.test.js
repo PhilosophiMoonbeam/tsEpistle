@@ -8,13 +8,43 @@ const sourcePath = path.join(__dirname, 'admin-auth.vue')
 const source = fs.readFileSync(sourcePath, 'utf8')
 const script = source.match(/<script(?:\s+lang=["']ts["'])?>\s*([\s\S]*?)\s*<\/script>/)[1]
 
-const extractMethod = (name) => {
-  const marker = `    async ${name}()`
-  const start = script.indexOf(marker)
+const extractMethod = name => {
+  const start = script.search(new RegExp(`    async ${name}\\s*\\(`))
   expect(start).toBeGreaterThan(-1)
-  const rest = script.slice(start)
-  const match = rest.slice(1).match(/\n {4}(?:async )?[a-zA-Z0-9_]+\s*\(/)
-  return match ? rest.slice(0, match.index + 1) : rest
+
+  const parametersStart = script.indexOf('(', start)
+  let parametersDepth = 0
+  let bodyStart = -1
+  for (let index = parametersStart; index < script.length; index++) {
+    if (script[index] === '(') {
+      parametersDepth++
+    } else if (script[index] === ')') {
+      parametersDepth--
+      if (parametersDepth === 0) {
+        bodyStart = script.indexOf('{', index + 1)
+        break
+      }
+    }
+  }
+
+  let bodyDepth = 0
+  for (let index = bodyStart; index < script.length; index++) {
+    if (script[index] === '{') {
+      bodyDepth++
+    } else if (script[index] === '}') {
+      bodyDepth--
+      if (bodyDepth === 0) {
+        return script.slice(start, index + 1)
+      }
+    }
+  }
+
+  throw new Error(`Could not extract ${name}`)
+}
+
+const compileMethod = (name, dependencies) => {
+  const method = extractMethod(name).replace(': { notifyError?: boolean }', '')
+  return Function(...Object.keys(dependencies), `return ({ ${method} }).${name}`)(...Object.values(dependencies))
 }
 
 describe('admin-auth strategies REST facade', () => {
@@ -52,6 +82,65 @@ describe('admin-auth strategies REST facade', () => {
     expect(refresh).toContain('await this.loadHost()')
     expect(refresh).toContain('wikiStore.showNotification({')
     expect(refresh).toContain("message: this.$t('admin:auth.refreshSuccess')")
+  })
+
+  test.each([
+    ['strategies', 'admin-auth-strategies-refresh'],
+    ['active strategies', 'admin-auth-activestrategies-refresh'],
+    ['host', 'admin-auth-host-refresh']
+  ])('refresh settles after one owned %s error and balances loading', async (failingResource, failingLoadingKey) => {
+    const resourceOrder = ['strategies', 'active strategies', 'host']
+    const loadingKeys = ['admin-auth-strategies-refresh', 'admin-auth-activestrategies-refresh', 'admin-auth-host-refresh']
+    const calls = []
+    const loadingStarts = []
+    const loadingStops = []
+    const notifications = []
+    const failure = new Error(`${failingResource} failed`)
+    const fetchResource = (resource, result) => async () => {
+      calls.push(resource)
+      if (resource === failingResource) {
+        throw failure
+      }
+      return result
+    }
+    const wikiStore = {
+      startLoading: key => loadingStarts.push(key),
+      stopLoading: key => loadingStops.push(key),
+      showNotification: notification => notifications.push(notification)
+    }
+    const dependencies = {
+      wikiStore,
+      fetchAdminAuthStrategies: fetchResource('strategies', []),
+      fetchAdminAuthActiveStrategies: fetchResource('active strategies', []),
+      fetchSystemHost: fetchResource('host', { host: 'https://example.test' }),
+      window: { fetch() {} },
+      getErrorMessage: err => err.message
+    }
+    const context = {
+      strategies: [],
+      activeStrategies: [],
+      host: '',
+      loadStrategies: compileMethod('loadStrategies', dependencies),
+      loadActiveStrategies: compileMethod('loadActiveStrategies', dependencies),
+      loadHost: compileMethod('loadHost', dependencies),
+      $t: key => key
+    }
+    const refreshMethod = compileMethod('refresh', dependencies)
+
+    await expect(refreshMethod.call(context)).resolves.toBeUndefined()
+
+    const failureIndex = resourceOrder.indexOf(failingResource)
+    expect(calls).toEqual(resourceOrder.slice(0, failureIndex + 1))
+    expect(loadingStarts).toEqual(loadingKeys.slice(0, failureIndex + 1))
+    expect(loadingStops).toEqual(loadingStarts)
+    expect(loadingStarts).toContain(failingLoadingKey)
+    expect(notifications).toEqual([
+      {
+        style: 'red',
+        message: failure.message,
+        icon: 'alert'
+      }
+    ])
   })
 
   test('created hook starts REST strategy loads', () => {

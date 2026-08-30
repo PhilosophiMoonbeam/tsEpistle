@@ -6,6 +6,7 @@ import { ActionKernel, createActionAuthority } from '../../agents/actions/kernel
 import { registerPageProposalActions } from '../../agents/actions/page-proposals.ts'
 import { applyApprovedProposal, decideProposal } from '../../agents/proposals/execution.ts'
 import { persistProposal, proposalResult } from '../../agents/proposals/repository.ts'
+import { withInvokingAgentRunLease } from '../../agents/coordinator.ts'
 
 const flags = Object.fromEntries(AGENT_FEATURE_FLAG_KEYS.map(flag => [flag, true])) as AgentFeatureFlags
 
@@ -134,9 +135,12 @@ describe('agent proposal repository', () => {
       table.uuid('id').primary()
       table.uuid('sessionId').notNullable()
       table.integer('ownerId').notNullable()
+      table.string('leaseOwner').nullable()
       table.string('status').notNullable()
       table.integer('attempts').notNullable()
       table.uuid('leaseToken').notNullable()
+      table.uuid('goalId').nullable()
+      table.binary('runtimeStateCiphertext').nullable()
       table.integer('eventSequence').notNullable().defaultTo(0)
       table.dateTime('cancelRequestedAt').nullable()
       table.dateTime('updatedAt').notNullable()
@@ -402,8 +406,9 @@ describe('agent proposal repository', () => {
   it('creates a page automatically after the user approves its proposal', async () => {
     const runId = '00000000-0000-4000-8000-000000000001'
     const sessionId = '00000000-0000-4000-8000-000000000020'
+    const leaseOwner = 'proposal-test-worker'
     const leaseToken = '00000000-0000-4000-8000-000000000030'
-    await knex('agentRuns').insert({ id: runId, sessionId, ownerId: 7, status: 'running', attempts: 1, leaseToken, eventSequence: 0, updatedAt: new Date() })
+    await knex('agentRuns').insert({ id: runId, sessionId, ownerId: 7, status: 'running', attempts: 1, leaseOwner, leaseToken, eventSequence: 0, updatedAt: new Date() })
     let currentPage: Record<string, unknown> | null = null
     const missingPage = (): Error => Object.assign(new Error('missing'), { name: 'PageNotFoundError' })
     const operations = {
@@ -451,22 +456,27 @@ describe('agent proposal repository', () => {
       { kind: 'user', userId: 7, ownershipUserId: 7, principal: null },
       admissionSnapshot
     )
-    const preparedPromise = kernel.execute({
-      authority: prepareAuthority,
-      actionCallId: 'create-call',
-      input: {
-        path: 'docs/new-page',
-        locale: 'en',
-        title: 'New page',
-        description: 'Created by the agent',
-        content: '# New page\n',
-        contentType: 'markdown',
-        isPublished: true,
-        tags: []
-      },
-      signal: new AbortController().signal,
-      refreshAdmission: async () => admissionSnapshot
-    })
+    const signal = new AbortController().signal
+    const preparedPromise = withInvokingAgentRunLease(
+      signal,
+      { id: runId, ownerId: 7, attempts: 1, leaseOwner, leaseToken },
+      () => kernel.execute({
+        authority: prepareAuthority,
+        actionCallId: 'create-call',
+        input: {
+          path: 'docs/new-page',
+          locale: 'en',
+          title: 'New page',
+          description: 'Created by the agent',
+          content: '# New page\n',
+          contentType: 'markdown',
+          isPublished: true,
+          tags: []
+        },
+        signal,
+        refreshAdmission: async () => admissionSnapshot
+      })
+    )
     let approval: { id: string; proposalId: string } | undefined
     await vi.waitFor(async () => {
       approval = await knex('agentApprovals').first('id', 'proposalId')
@@ -489,8 +499,9 @@ describe('agent proposal repository', () => {
   it('pauses a prepared move for approval and applies only the approved immutable operation', async () => {
     const runId = '00000000-0000-4000-8000-000000000001'
     const sessionId = '00000000-0000-4000-8000-000000000020'
+    const leaseOwner = 'proposal-test-worker'
     const leaseToken = '00000000-0000-4000-8000-000000000030'
-    await knex('agentRuns').insert({ id: runId, sessionId, ownerId: 7, status: 'running', attempts: 1, leaseToken, eventSequence: 0, updatedAt: new Date() })
+    await knex('agentRuns').insert({ id: runId, sessionId, ownerId: 7, status: 'running', attempts: 1, leaseOwner, leaseToken, eventSequence: 0, updatedAt: new Date() })
     let currentPage = {
       id: 42,
       path: 'docs/start',
@@ -534,13 +545,18 @@ describe('agent proposal repository', () => {
       groupIds: [3],
       featureFlags: flags
     }
-    const preparedPromise = kernel.execute({
-      authority: prepareAuthority,
-      actionCallId: 'move-call',
-      input: { pageId: 42, sourceRevision: '8', destinationPath: 'docs/next', destinationLocale: 'en' },
-      signal: new AbortController().signal,
-      refreshAdmission: async () => admissionSnapshot
-    })
+    const signal = new AbortController().signal
+    const preparedPromise = withInvokingAgentRunLease(
+      signal,
+      { id: runId, ownerId: 7, attempts: 1, leaseOwner, leaseToken },
+      () => kernel.execute({
+        authority: prepareAuthority,
+        actionCallId: 'move-call',
+        input: { pageId: 42, sourceRevision: '8', destinationPath: 'docs/next', destinationLocale: 'en' },
+        signal,
+        refreshAdmission: async () => admissionSnapshot
+      })
+    )
     let approval: { id: string; proposalId: string } | undefined
     await vi.waitFor(async () => {
       approval = await knex('agentApprovals').first('id', 'proposalId')
@@ -561,8 +577,9 @@ describe('agent proposal repository', () => {
   it('reconciles a completed delete when missing pages use the application error name', async () => {
     const runId = '00000000-0000-4000-8000-000000000001'
     const sessionId = '00000000-0000-4000-8000-000000000020'
+    const leaseOwner = 'proposal-test-worker'
     const leaseToken = '00000000-0000-4000-8000-000000000030'
-    await knex('agentRuns').insert({ id: runId, sessionId, ownerId: 7, status: 'running', attempts: 1, leaseToken, eventSequence: 0, updatedAt: new Date() })
+    await knex('agentRuns').insert({ id: runId, sessionId, ownerId: 7, status: 'running', attempts: 1, leaseOwner, leaseToken, eventSequence: 0, updatedAt: new Date() })
     let currentPage: Record<string, unknown> | null = {
       id: 42,
       path: 'docs/disposable',
@@ -622,13 +639,18 @@ describe('agent proposal repository', () => {
       { kind: 'user', userId: 7, ownershipUserId: 7, principal: null },
       admissionSnapshot
     )
-    const preparedPromise = kernel.execute({
-      authority: prepareAuthority,
-      actionCallId: 'delete-call',
-      input: { pageId: 42, sourceRevision: '8', confirmationPath: 'docs/disposable' },
-      signal: new AbortController().signal,
-      refreshAdmission: async () => admissionSnapshot
-    })
+    const signal = new AbortController().signal
+    const preparedPromise = withInvokingAgentRunLease(
+      signal,
+      { id: runId, ownerId: 7, attempts: 1, leaseOwner, leaseToken },
+      () => kernel.execute({
+        authority: prepareAuthority,
+        actionCallId: 'delete-call',
+        input: { pageId: 42, sourceRevision: '8', confirmationPath: 'docs/disposable' },
+        signal,
+        refreshAdmission: async () => admissionSnapshot
+      })
+    )
     let approval: { id: string; proposalId: string } | undefined
     await vi.waitFor(async () => {
       approval = await knex('agentApprovals').first('id', 'proposalId')

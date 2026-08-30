@@ -15,7 +15,10 @@ export interface PageIndexCandidate {
 }
 
 type PageIndexRow = Omit<PageIndexCandidate, 'tags'>
-interface PageTagRow { pageId: number, tag: string }
+interface PageTagRow {
+  pageId: number
+  tag: string
+}
 
 export const listPageIndexCandidates = async (
   knex: Knex,
@@ -34,6 +37,11 @@ export const listPageIndexCandidates = async (
   const query = knex<PageIndexRow>('pages')
     .select('id', 'path', 'localeCode', 'title', 'description', 'visibility', 'ownerId', 'updatedAt')
     .where('localeCode', input.locale)
+    .where(visibility => {
+      visibility.where('pages.visibility', 'private').orWhere(publicPages => {
+        publicPages.where('pages.visibility', 'public').where('pages.isPublished', true)
+      })
+    })
   if (input.path.length > 0) {
     query.whereRaw('starts_with(??, ?)', ['pages.path', `${input.path}/`])
   }
@@ -46,7 +54,10 @@ export const listPageIndexCandidates = async (
   const tagRows = await knex<PageTagRow>('pageTags')
     .select('pageTags.pageId', 'tags.tag')
     .innerJoin('tags', 'tags.id', 'pageTags.tagId')
-    .whereIn('pageTags.pageId', pages.map(page => page.id))
+    .whereIn(
+      'pageTags.pageId',
+      pages.map(page => page.id)
+    )
     .orderBy('pageTags.pageId', 'asc')
     .orderBy('tags.tag', 'asc')
   const tagsByPage = new Map<number, Array<{ tag: string }>>()

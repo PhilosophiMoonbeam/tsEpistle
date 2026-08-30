@@ -1,3 +1,5 @@
+import http from 'node:http'
+
 describe('core/servers GraphQL transports', () => {
   let previousWiki
 
@@ -51,12 +53,25 @@ describe('core/servers GraphQL transports', () => {
     const createGraphQLArtifacts = vi.fn().mockResolvedValue({ schema: { kind: 'schema' } })
     vi.mockModule('../../graph/index.ts', import.meta.url, () => ({ createGraphQLArtifacts }))
 
+    const app = Object.assign(vi.fn((_request, response) => response.end()), {
+      use: vi.fn()
+    })
+    const collaboration = {
+      install: vi.fn(),
+      dispose: vi.fn().mockResolvedValue(undefined)
+    }
+    const logger = {
+      error: vi.fn(),
+      info: vi.fn()
+    }
     global.WIKI = {
       IS_DEBUG: false,
-      app: {
-        use: vi.fn()
-      },
+      app,
+      collaboration,
+      logger,
       config: {
+        bindIP: '127.0.0.1',
+        port: 0,
         certs: {
           public: 'PUBLIC-KEY'
         },
@@ -69,8 +84,45 @@ describe('core/servers GraphQL transports', () => {
     const { default: createServers } = await vi.importFresh('../../core/servers.ts', import.meta.url)
     const servers = createServers(global.WIKI)
     const createHttpServer = () => ({ on: vi.fn(), off: vi.fn() })
-    return { servers, createGraphQLArtifacts, createYoga, yoga, useServer, cleanup, WebSocketServer, wsServer, verify, createHttpServer }
+    return { servers, collaboration, createGraphQLArtifacts, createYoga, yoga, useServer, cleanup, WebSocketServer, wsServer, verify, createHttpServer }
   }
+
+  it('resolves HTTP startup only after the listener is ready', async () => {
+    const { servers } = await setupModule()
+    await servers.startGraphQL()
+    await servers.startHTTP()
+    try {
+      expect(servers.servers.http.listening).toBe(true)
+    } finally {
+      await servers.stopServers()
+    }
+  })
+
+  it('rejects a listen failure and releases acquired transports once', async () => {
+    const occupied = http.createServer()
+    await new Promise((resolve, reject) => {
+      occupied.once('error', reject)
+      occupied.listen(0, '127.0.0.1', resolve)
+    })
+    const address = occupied.address()
+    if (!address || typeof address === 'string') throw new Error('Expected a TCP listener')
+
+    const { servers, collaboration, cleanup } = await setupModule()
+    global.WIKI.config.port = address.port
+    await servers.startGraphQL()
+    try {
+      await expect(servers.startHTTP()).rejects.toMatchObject({ code: 'EADDRINUSE' })
+      await servers.stopServers()
+      expect(cleanup.dispose).toHaveBeenCalledTimes(1)
+      expect(collaboration.dispose).toHaveBeenCalledTimes(1)
+      expect(servers.servers.http).toBeNull()
+    } finally {
+      if (servers.servers.http) await servers.stopServers()
+      await new Promise((resolve, reject) => {
+        occupied.close(error => error ? reject(error) : resolve())
+      })
+    }
+  })
 
   it('mounts Yoga on the existing GraphQL endpoint', async () => {
     const { servers, createYoga, yoga } = await setupModule()

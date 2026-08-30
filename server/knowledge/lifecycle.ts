@@ -6,6 +6,7 @@ import {
   claimPageMutationEffects,
   enqueuePageMutationEffects,
   executePageMutationEffect,
+  rearmFailedKnowledgeEffect,
   type PageProjectionPayload,
   type PageProjectionSink
 } from '../core/page-mutation-outbox.ts'
@@ -43,6 +44,7 @@ interface SourceRow {
 interface StoredProjectionRow {
   readonly pageId: number
   readonly sourceRevision: string | number
+  readonly sourceSha256: string
   readonly state: string
   readonly enrichmentState: string
   readonly utilityProfileVersionId: string | null
@@ -73,16 +75,16 @@ const parsedExtra = (value: unknown): Record<string, unknown> => {
   if (typeof value === 'string') {
     try {
       const decoded: unknown = JSON.parse(value)
-      return typeof decoded === 'object' && decoded !== null && !Array.isArray(decoded) ? decoded as Record<string, unknown> : {}
+      return typeof decoded === 'object' && decoded !== null && !Array.isArray(decoded) ? (decoded as Record<string, unknown>) : {}
     } catch {
       return {}
     }
   }
-  return typeof value === 'object' && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : {}
+  return typeof value === 'object' && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : {}
 }
 const revision = (value: string | number): string => String(value)
 const currentProfileVersionId = async (knex: Knex): Promise<string | null> => {
-  const row = await knex('agentProviderProfiles')
+  const row = (await knex('agentProviderProfiles')
     .join('agentProviderProfileVersions', 'agentProviderProfileVersions.id', 'agentProviderProfiles.currentVersionId')
     .where({
       'agentProviderProfiles.status': 'enabled',
@@ -91,14 +93,19 @@ const currentProfileVersionId = async (knex: Knex): Promise<string | null> => {
       'agentProviderProfileVersions.conformed': true
     })
     .whereNull('agentProviderProfiles.deletedAt')
-    .first('agentProviderProfileVersions.id') as { id: string } | undefined
+    .first('agentProviderProfileVersions.id')) as { id: string } | undefined
   return row?.id ?? null
 }
 
 const loadTags = async (knex: Knex, pageId: number, historyId?: number): Promise<string[]> => {
-  const rows = historyId === undefined
-    ? await knex('pageTags').join('tags', 'tags.id', 'pageTags.tagId').where('pageTags.pageId', pageId).orderBy('tags.tag').pluck<string>('tags.tag')
-    : await knex('pageHistoryTags').join('tags', 'tags.id', 'pageHistoryTags.tagId').where('pageHistoryTags.pageId', historyId).orderBy('tags.tag').pluck<string>('tags.tag')
+  const rows =
+    historyId === undefined
+      ? await knex('pageTags').join('tags', 'tags.id', 'pageTags.tagId').where('pageTags.pageId', pageId).orderBy('tags.tag').pluck<string>('tags.tag')
+      : await knex('pageHistoryTags')
+          .join('tags', 'tags.id', 'pageHistoryTags.tagId')
+          .where('pageHistoryTags.pageId', historyId)
+          .orderBy('tags.tag')
+          .pluck<string>('tags.tag')
   return rows
 }
 
@@ -128,12 +135,7 @@ const loadSource = async (knex: Knex, pageId: number, sourceRevision: string): P
   }
 }
 
-const projectionColumns = (
-  projection: KnowledgeProjection,
-  enrichmentState: string,
-  error: string | null,
-  now: string
-): Record<string, unknown> => ({
+const projectionColumns = (projection: KnowledgeProjection, enrichmentState: string, error: string | null, now: string): Record<string, unknown> => ({
   pageId: projection.source.pageId,
   sourceRevision: projection.source.sourceRevision,
   sourceSha256: projection.source.sha256,
@@ -170,7 +172,7 @@ class KnowledgeProjectionSink implements PageProjectionSink {
 
   async reconcile(payload: PageProjectionPayload, signal: AbortSignal) {
     if (payload.desiredState === 'absent') {
-      const current = await this.#knex('pages').where({ id: payload.pageId }).first('sourceRevision') as { sourceRevision: string | number } | undefined
+      const current = (await this.#knex('pages').where({ id: payload.pageId }).first('sourceRevision')) as { sourceRevision: string | number } | undefined
       return {
         result: { removed: current === undefined },
         postcondition: {
@@ -184,7 +186,7 @@ class KnowledgeProjectionSink implements PageProjectionSink {
     const sourceRevision = payload.sourceRevision
     const source = await loadSource(this.#knex, payload.pageId, sourceRevision)
     if (!source || payload.sourceSha256 === null || sha256(source.content) !== payload.sourceSha256) {
-      const current = await this.#knex('pages').where({ id: payload.pageId }).first('sourceRevision') as { sourceRevision: string | number } | undefined
+      const current = (await this.#knex('pages').where({ id: payload.pageId }).first('sourceRevision')) as { sourceRevision: string | number } | undefined
       return {
         result: { superseded: true },
         postcondition: {
@@ -198,11 +200,14 @@ class KnowledgeProjectionSink implements PageProjectionSink {
     let projection = projectPageKnowledge(source)
     let enrichmentState = projection.completeness.state === 'complete' ? 'not-needed' : 'unavailable'
     let error: string | null = null
-    const currentBeforeEnrichment = await this.#knex('pages').where({ id: payload.pageId }).first('sourceRevision') as { sourceRevision: string | number } | undefined
+    const currentBeforeEnrichment = (await this.#knex('pages').where({ id: payload.pageId }).first('sourceRevision')) as
+      | { sourceRevision: string | number }
+      | undefined
     const isCurrentRevision = currentBeforeEnrichment !== undefined && revision(currentBeforeEnrichment.sourceRevision) === sourceRevision
-    const profileVersionId = this.#enricher && isCurrentRevision && source.visibility === 'public' && projection.completeness.missingFields.length > 0
-      ? await currentProfileVersionId(this.#knex)
-      : null
+    const profileVersionId =
+      this.#enricher && isCurrentRevision && source.visibility === 'public' && projection.completeness.missingFields.length > 0
+        ? await currentProfileVersionId(this.#knex)
+        : null
     if (!isCurrentRevision && projection.completeness.missingFields.length > 0) enrichmentState = 'superseded'
     else if (source.visibility === 'private' && projection.completeness.missingFields.length > 0) enrichmentState = 'withheld-private'
     if (this.#enricher && profileVersionId !== null && projection.completeness.missingFields.length > 0) {
@@ -221,7 +226,9 @@ class KnowledgeProjectionSink implements PageProjectionSink {
           signal
         })
         if (signal.aborted) throw signal.reason
-        const currentAfterEnrichment = await this.#knex('pages').where({ id: payload.pageId }).first('sourceRevision') as { sourceRevision: string | number } | undefined
+        const currentAfterEnrichment = (await this.#knex('pages').where({ id: payload.pageId }).first('sourceRevision')) as
+          | { sourceRevision: string | number }
+          | undefined
         const reloaded = await loadSource(this.#knex, payload.pageId, sourceRevision)
         if (
           currentAfterEnrichment === undefined ||
@@ -254,16 +261,18 @@ class KnowledgeProjectionSink implements PageProjectionSink {
       .insert({ ...columns, createdAt: now })
       .onConflict(['pageId', 'sourceRevision'])
       .merge(columns)
-    const stored = await this.#knex<StoredProjectionRow>('pageKnowledgeProjections')
+    const stored = (await this.#knex<StoredProjectionRow>('pageKnowledgeProjections')
       .where({ pageId: payload.pageId, sourceRevision })
-      .first('sourceRevision', 'sourceSha256') as (StoredProjectionRow & { sourceSha256: string }) | undefined
+      .first('sourceRevision', 'sourceSha256')) as (StoredProjectionRow & { sourceSha256: string }) | undefined
     const satisfied = stored?.sourceSha256 === projection.source.sha256 && sha256(source.content) === payload.sourceSha256
     return {
       result: { state: projection.completeness.state, enrichmentState, missingFields: projection.completeness.missingFields },
       postcondition: {
         satisfied,
         observedSourceRevision: stored ? revision(stored.sourceRevision) : null,
-        detail: satisfied ? 'Knowledge projection matches the exact source revision and authoritative snapshot hash' : 'Knowledge projection postcondition failed'
+        detail: satisfied
+          ? 'Knowledge projection matches the exact source revision and authoritative snapshot hash'
+          : 'Knowledge projection postcondition failed'
       }
     }
   }
@@ -281,6 +290,21 @@ export const matchesKnowledgeFilter = (view: KnowledgeProjectionView, filter?: K
 const parseProjection = (row: Pick<StoredProjectionRow, 'projection'>): KnowledgeProjection => {
   const decoded: unknown = typeof row.projection === 'string' ? JSON.parse(row.projection) : row.projection
   return KnowledgeProjectionSchema.parse(decoded)
+}
+
+const isValidProjection = (
+  row: Pick<StoredProjectionRow, 'sourceSha256' | 'projection'> | undefined,
+  pageId: number,
+  sourceRevision: string,
+  sourceSha256: string
+): boolean => {
+  if (!row || row.sourceSha256 !== sourceSha256) return false
+  try {
+    const projection = parseProjection(row)
+    return projection.source.pageId === pageId && projection.source.sourceRevision === sourceRevision && projection.source.sha256 === sourceSha256
+  } catch {
+    return false
+  }
 }
 
 export class PageKnowledgeRepository {
@@ -327,7 +351,7 @@ export class PageKnowledgeRepository {
     const query = input.query.trim().toLocaleLowerCase()
     if (!query) return []
     const operator = String(this.#knex.client.config.client).includes('pg') ? 'ILIKE' : 'LIKE'
-    const rows = await this.#knex('pageKnowledgeProjections as projections')
+    const rows = (await this.#knex('pageKnowledgeProjections as projections')
       .join('pages', function () {
         this.on('pages.id', '=', 'projections.pageId').andOn('pages.sourceRevision', '=', 'projections.sourceRevision')
       })
@@ -335,25 +359,62 @@ export class PageKnowledgeRepository {
         scopePageQuery(builder, input.requester, { table: 'pages' })
         builder.andWhere('projections.searchText', operator, `%${query}%`)
         if (input.locale !== undefined) builder.andWhere('pages.localeCode', input.locale)
-        if (input.path !== undefined) builder.andWhere(pathScope => {
-          pathScope.where('pages.path', input.path).orWhere('pages.path', 'LIKE', `${input.path}/%`)
-        })
+        if (input.path !== undefined)
+          builder.andWhere(pathScope => {
+            pathScope.where('pages.path', input.path).orWhere('pages.path', 'LIKE', `${input.path}/%`)
+          })
       })
       .select('pages.id', 'pages.localeCode', 'pages.path', 'pages.visibility', 'pages.ownerId', 'projections.projection')
-      .limit(Math.max(1, Math.min(100, input.limit))) as Array<{ id: number; localeCode: string; path: string; visibility: 'public' | 'private'; ownerId: number | null; projection: string }>
-    const protectedRows = rows.length === 0 ? [] : await this.#knex('pageAccessPasswords').whereIn('pageId', rows.map(row => row.id)).select('pageId') as Array<{ pageId: number }>
+      .limit(Math.max(1, Math.min(100, input.limit)))) as Array<{
+      id: number
+      localeCode: string
+      path: string
+      visibility: 'public' | 'private'
+      ownerId: number | null
+      projection: string
+    }>
+    const protectedRows =
+      rows.length === 0
+        ? []
+        : ((await this.#knex('pageAccessPasswords')
+            .whereIn(
+              'pageId',
+              rows.map(row => row.id)
+            )
+            .select('pageId')) as Array<{ pageId: number }>)
     const protectedIds = new Set(protectedRows.map(row => Number(row.pageId)))
-    const tagRows = rows.length === 0 ? [] : await this.#knex('pageTags').join('tags', 'tags.id', 'pageTags.tagId').whereIn('pageTags.pageId', rows.map(row => row.id)).select('pageTags.pageId', 'tags.tag') as Array<{ pageId: number; tag: string }>
+    const tagRows =
+      rows.length === 0
+        ? []
+        : ((await this.#knex('pageTags')
+            .join('tags', 'tags.id', 'pageTags.tagId')
+            .whereIn(
+              'pageTags.pageId',
+              rows.map(row => row.id)
+            )
+            .select('pageTags.pageId', 'tags.tag')) as Array<{ pageId: number; tag: string }>)
     const tagsByPage = new Map<number, string[]>()
     for (const tag of tagRows) tagsByPage.set(tag.pageId, [...(tagsByPage.get(tag.pageId) ?? []), tag.tag])
-    return rows.flatMap(row => {
-      if (protectedIds.has(row.id) || !canReadPage(input.requester, { ...row, tags: tagsByPage.get(row.id) ?? [] })) return []
-      const projection = KnowledgeProjectionSchema.parse(JSON.parse(row.projection) as unknown)
-      const knowledge = knowledgeProjectionView(projection)
-      if (!matchesKnowledgeFilter(knowledge, input.filter)) return []
-      const exact = knowledge.conceptType?.toLocaleLowerCase() === query || knowledge.tags.some((tag: string) => tag.toLocaleLowerCase() === query)
-      return [{ id: row.id, locale: row.localeCode, path: row.path, visibility: row.visibility, score: exact ? 7 : 2, matchedFields: ['knowledge'] as const, knowledge }]
-    }).sort((left, right) => right.score - left.score || left.path.localeCompare(right.path))
+    return rows
+      .flatMap(row => {
+        if (protectedIds.has(row.id) || !canReadPage(input.requester, { ...row, tags: tagsByPage.get(row.id) ?? [] })) return []
+        const projection = KnowledgeProjectionSchema.parse(JSON.parse(row.projection) as unknown)
+        const knowledge = knowledgeProjectionView(projection)
+        if (!matchesKnowledgeFilter(knowledge, input.filter)) return []
+        const exact = knowledge.conceptType?.toLocaleLowerCase() === query || knowledge.tags.some((tag: string) => tag.toLocaleLowerCase() === query)
+        return [
+          {
+            id: row.id,
+            locale: row.localeCode,
+            path: row.path,
+            visibility: row.visibility,
+            score: exact ? 7 : 2,
+            matchedFields: ['knowledge'] as const,
+            knowledge
+          }
+        ]
+      })
+      .sort((left, right) => right.score - left.score || left.path.localeCompare(right.path))
   }
 }
 
@@ -382,10 +443,65 @@ const enqueueMissing = async (knex: Knex, limit: number): Promise<number> => {
   return rows.length
 }
 
+const recoverTerminalFailures = async (knex: Knex, now: Date): Promise<number> => {
+  const failedBefore = new Date(now.valueOf() - RETRY_FAILED_AFTER_MILLISECONDS)
+  const rows = (await knex('pageMutationOutbox as effects')
+    .join('pages', function () {
+      this.on('pages.id', '=', 'effects.pageId').andOn('pages.sourceRevision', '=', 'effects.sourceRevision')
+    })
+    .where({
+      'effects.effectKind': 'knowledge',
+      'effects.desiredState': 'present',
+      'effects.status': 'failed'
+    })
+    .where('effects.attempts', '>=', 5)
+    .where('effects.updatedAt', '<=', failedBefore.toISOString())
+    .orderBy('effects.updatedAt')
+    .orderBy('effects.id')
+    .select('effects.id', 'effects.pageId', 'effects.sourceRevision')
+    .limit(25)) as Array<{ id: string; pageId: number; sourceRevision: string | number }>
+  let rearmed = 0
+  for (const row of rows) {
+    rearmed += await knex.transaction(async transaction => {
+      const source = await transaction<SourceRow>('pages')
+        .where({ id: row.pageId, sourceRevision: row.sourceRevision })
+        .forUpdate()
+        .first('id', 'sourceRevision', 'content', 'localeCode', 'path', 'visibility', 'ownerId')
+      if (!source) return 0
+      const sourceRevision = revision(source.sourceRevision)
+      const projection = await transaction<StoredProjectionRow>('pageKnowledgeProjections')
+        .where({ pageId: row.pageId, sourceRevision })
+        .first('sourceSha256', 'projection')
+      if (projection) {
+        const authoritativeSource = await loadSource(transaction, Number(row.pageId), sourceRevision)
+        if (!authoritativeSource) return 0
+        const sourceSha256 = projectPageKnowledge(authoritativeSource).source.sha256
+        if (isValidProjection(projection, Number(row.pageId), sourceRevision, sourceSha256)) return 0
+      }
+      const rearmed = await rearmFailedKnowledgeEffect(transaction, {
+        id: row.id,
+        pageId: Number(row.pageId),
+        sourceRevision,
+        source: source.content,
+        location: {
+          locale: source.localeCode,
+          path: source.path,
+          visibility: source.visibility,
+          ownerId: source.ownerId
+        },
+        failedBefore,
+        now
+      })
+      return rearmed ? 1 : 0
+    })
+  }
+  return rearmed
+}
+
 const requeueRetryable = async (knex: Knex, profileVersionId: string | null, now: Date): Promise<number> => {
   if (profileVersionId === null) return 0
   const retryBefore = new Date(now.valueOf() - RETRY_FAILED_AFTER_MILLISECONDS).toISOString()
-  const rows = await knex<StoredProjectionRow>('pageKnowledgeProjections as projections')
+  const rows = (await knex<StoredProjectionRow>('pageKnowledgeProjections as projections')
     .join('pages', function () {
       this.on('pages.id', '=', 'projections.pageId').andOn('pages.sourceRevision', '=', 'projections.sourceRevision')
     })
@@ -395,20 +511,27 @@ const requeueRetryable = async (knex: Knex, profileVersionId: string | null, now
     .where('effects.effectKind', 'knowledge')
     .where('effects.status', 'succeeded')
     .where('pages.visibility', 'public')
-    .where(builder => builder
-      .where('projections.enrichmentState', 'unavailable')
-      .orWhere(retry => retry.where('projections.enrichmentState', 'failed').andWhere('projections.updatedAt', '<=', retryBefore)))
+    .where(builder =>
+      builder
+        .where('projections.enrichmentState', 'unavailable')
+        .orWhere(retry => retry.where('projections.enrichmentState', 'failed').andWhere('projections.updatedAt', '<=', retryBefore))
+    )
     .select('effects.id')
-    .limit(25) as Array<{ id: string }>
+    .limit(25)) as Array<{ id: string }>
   if (rows.length === 0) return 0
-  return knex('pageMutationOutbox').whereIn('id', rows.map(row => row.id)).update({
-    status: 'pending',
-    attempts: 0,
-    availableAt: now.toISOString(),
-    result: null,
-    postcondition: null,
-    updatedAt: now.toISOString()
-  })
+  return knex('pageMutationOutbox')
+    .whereIn(
+      'id',
+      rows.map(row => row.id)
+    )
+    .update({
+      status: 'pending',
+      attempts: 0,
+      availableAt: now.toISOString(),
+      result: null,
+      postcondition: null,
+      updatedAt: now.toISOString()
+    })
 }
 
 export class PageKnowledgeLifecycle {
@@ -427,9 +550,10 @@ export class PageKnowledgeLifecycle {
     if (this.#running) return { backfilled: 0, requeued: 0, processed: 0 }
     this.#running = true
     try {
+      const now = new Date()
       const profileVersionId = await currentProfileVersionId(this.#knex).catch(() => null)
       const backfilled = await enqueueMissing(this.#knex, 25)
-      const requeued = await requeueRetryable(this.#knex, profileVersionId, new Date())
+      const requeued = (await recoverTerminalFailures(this.#knex, now)) + (await requeueRetryable(this.#knex, profileVersionId, now))
       const claims = await claimPageMutationEffects(this.#knex, { leaseOwner: this.#workerId, limit: 10, leaseMs: 120_000, effects: ['knowledge'] })
       const sinks = new Map([['knowledge', this.#sink] as const])
       await Promise.allSettled(claims.map(claim => executePageMutationEffect(this.#knex, claim, sinks, signal)))
@@ -439,4 +563,3 @@ export class PageKnowledgeLifecycle {
     }
   }
 }
-

@@ -22,11 +22,16 @@ const version = requireEnv('WIKI_PRODUCT_VERSION')
 const releaseTag = requireEnv('GITHUB_REF_NAME')
 const imageRepository = requireEnv('IMAGE_REPOSITORY')
 const imageDigest = requireEnv('IMAGE_DIGEST')
+const agentBrowserImageRepository = requireEnv('AGENT_BROWSER_IMAGE_REPOSITORY')
+const agentBrowserImageDigest = requireEnv('AGENT_BROWSER_IMAGE_DIGEST')
 
 if (!/^[0-9a-f]{40}$/.test(revision)) throw new Error('WIKI_BUILD_REVISION must be a full lowercase Git SHA')
 if (new Date(buildDate).toISOString() !== buildDate) throw new Error('WIKI_BUILD_DATE must be an ISO 8601 UTC timestamp')
 if (releaseTag !== `v${version}`) throw new Error(`Release tag ${releaseTag} does not match product version ${version}`)
 if (!/^sha256:[0-9a-f]{64}$/.test(imageDigest)) throw new Error('IMAGE_DIGEST must be a sha256 OCI digest')
+if (!/^sha256:[0-9a-f]{64}$/.test(agentBrowserImageDigest)) {
+  throw new Error('AGENT_BROWSER_IMAGE_DIGEST must be a sha256 OCI digest')
+}
 
 const sha256 = (filePath: string): string => createHash('sha256').update(fs.readFileSync(filePath)).digest('hex')
 const describeArtifact = (filePath: string) => {
@@ -62,6 +67,10 @@ const manifest = {
   containerImage: {
     reference: `${imageRepository}@${imageDigest}`,
     digest: imageDigest
+  },
+  agentBrowserImage: {
+    reference: `${agentBrowserImageRepository}@${agentBrowserImageDigest}`,
+    digest: agentBrowserImageDigest
   },
   artifacts
 }

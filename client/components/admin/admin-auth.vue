@@ -331,9 +331,13 @@ export default {
       }
     },
     async refresh() {
-      await this.loadStrategies()
-      await this.loadActiveStrategies()
-      await this.loadHost()
+      try {
+        await this.loadStrategies()
+        await this.loadActiveStrategies()
+        await this.loadHost()
+      } catch {
+        return
+      }
       wikiStore.showNotification({
         message: this.$t('admin:auth.refreshSuccess'),
         style: 'success',

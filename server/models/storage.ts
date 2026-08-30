@@ -94,15 +94,15 @@ interface RenamedStorageAsset {
 }
 
 type StoragePageEvent =
-  | { event: 'created', page: WrittenStoragePage }
-  | { event: 'updated', page: WrittenStoragePage }
-  | { event: 'deleted', page: DeletedStoragePage }
-  | { event: 'renamed', page: RenamedStoragePage }
+  | { event: 'created'; page: WrittenStoragePage }
+  | { event: 'updated'; page: WrittenStoragePage }
+  | { event: 'deleted'; page: DeletedStoragePage }
+  | { event: 'renamed'; page: RenamedStoragePage }
 
 type StorageAssetEvent =
-  | { event: 'uploaded', asset: UploadedStorageAsset }
-  | { event: 'deleted', asset: DeletedStorageAsset }
-  | { event: 'renamed', asset: RenamedStorageAsset }
+  | { event: 'uploaded'; asset: UploadedStorageAsset }
+  | { event: 'deleted'; asset: DeletedStorageAsset }
+  | { event: 'renamed'; asset: RenamedStorageAsset }
 
 interface StoragePlugin extends Record<string, unknown> {
   init(): Promise<unknown>
@@ -163,51 +163,34 @@ interface StorageWikiRuntime {
   scheduler?: StorageScheduler
 }
 
-const pluginMethods = [
-  'init',
-  'created',
-  'updated',
-  'deleted',
-  'renamed',
-  'assetUploaded',
-  'assetDeleted',
-  'assetRenamed',
-  'getLocalLocation'
-] as const
+const pluginMethods = ['init', 'created', 'updated', 'deleted', 'renamed', 'assetUploaded', 'assetDeleted', 'assetRenamed', 'getLocalLocation'] as const
 
-function isStoragePlugin (value: unknown): value is StoragePlugin {
+function isStoragePlugin(value: unknown): value is StoragePlugin {
   return isRecord(value) && pluginMethods.every(method => typeof value[method] === 'function')
 }
 
-function readStoragePlugin (value: unknown, source: string): StoragePlugin {
+function readStoragePlugin(value: unknown, source: string): StoragePlugin {
   if (!isRecord(value) || !isStoragePlugin(value.default)) {
     throw new Error(`Invalid storage module: ${source}`)
   }
   return value.default
 }
 
-function isStorageWikiRuntime (value: unknown): value is StorageWikiRuntime {
+function isStorageWikiRuntime(value: unknown): value is StorageWikiRuntime {
   if (!isRecord(value) || typeof value.SERVERPATH !== 'string') return false
-  if (
-    !isRecord(value.data) ||
-    !isRecord(value.logger) ||
-    !isRecord(value.models)
-  ) return false
-  if (
-    typeof value.logger.error !== 'function' ||
-    typeof value.logger.info !== 'function' ||
-    typeof value.logger.warn !== 'function'
-  ) return false
+  if (!isRecord(value.data) || !isRecord(value.logger) || !isRecord(value.models)) return false
+  if (typeof value.logger.error !== 'function' || typeof value.logger.info !== 'function' || typeof value.logger.warn !== 'function') return false
   if (
     typeof value.models.storage !== 'function' ||
     typeof value.models.knex !== 'function' ||
     !isRecord(value.models.Objection) ||
     !hasMethod(value.models.Objection.transaction, 'start')
-  ) return false
+  )
+    return false
   return true
 }
 
-function getWiki (): StorageWikiRuntime {
+function getWiki(): StorageWikiRuntime {
   const value: unknown = WIKI
   if (!isStorageWikiRuntime(value)) {
     throw new Error('WIKI storage services are not initialized')
@@ -215,7 +198,7 @@ function getWiki (): StorageWikiRuntime {
   return value
 }
 
-function readStorageDefinition (value: unknown, source: string): StorageDefinition {
+function readStorageDefinition(value: unknown, source: string): StorageDefinition {
   const definition = readModuleDefinition(value, source)
   const result: StorageDefinition = {
     ...definition,
@@ -234,7 +217,7 @@ function readStorageDefinition (value: unknown, source: string): StorageDefiniti
   return result
 }
 
-function createDefaultConfig (props: StorageDefinition['props']): ModuleConfig {
+function createDefaultConfig(props: StorageDefinition['props']): ModuleConfig {
   const config: ModuleConfig = {}
   for (const [key, value] of Object.entries(props)) {
     _.set(config, key, value.default)
@@ -242,10 +225,7 @@ function createDefaultConfig (props: StorageDefinition['props']): ModuleConfig {
   return config
 }
 
-function addMissingConfigDefaults (
-  config: ModuleConfig,
-  props: StorageDefinition['props']
-): ModuleConfig {
+function addMissingConfigDefaults(config: ModuleConfig, props: StorageDefinition['props']): ModuleConfig {
   for (const [key, value] of Object.entries(props)) {
     if (!_.has(config, key)) {
       _.set(config, key, value.default)
@@ -254,20 +234,12 @@ function addMissingConfigDefaults (
   return config
 }
 
-function isStorageAction (value: unknown): value is () => unknown {
+function isStorageAction(value: unknown): value is () => unknown {
   return typeof value === 'function'
 }
 
-async function recordTargetState (
-  target: StatefulStorageTarget,
-  status: string,
-  message = ''
-): Promise<void> {
-  if (
-    target.state?.status === status &&
-    target.state.message === message &&
-    isRecentStorageAttempt(target.state.lastAttempt)
-  ) return
+async function recordTargetState(target: StatefulStorageTarget, status: string, message = ''): Promise<void> {
+  if (target.state?.status === status && target.state.message === message && isRecentStorageAttempt(target.state.lastAttempt)) return
   const state = {
     status,
     message,
@@ -291,16 +263,17 @@ export default class Storage extends Model {
   declare fn: RuntimeStoragePlugin
 
   declare static targets: Storage[]
+  static activeTargets: Storage[] = []
 
-  static override get tableName () {
+  static override get tableName() {
     return 'storage'
   }
 
-  static override get idColumn () {
+  static override get idColumn() {
     return 'key'
   }
 
-  static override get jsonSchema () {
+  static override get jsonSchema() {
     return {
       type: 'object',
       required: ['key', 'isEnabled'],
@@ -312,15 +285,15 @@ export default class Storage extends Model {
     }
   }
 
-  static override get jsonAttributes () {
+  static override get jsonAttributes() {
     return ['config', 'state']
   }
 
-  static async getTargets (): Promise<Storage[]> {
+  static async getTargets(): Promise<Storage[]> {
     return getWiki().models.storage.query()
   }
 
-  static async refreshTargetsFromDisk (): Promise<void> {
+  static async refreshTargetsFromDisk(): Promise<void> {
     const wiki = getWiki()
     let trx: Knex.Transaction | undefined
     try {
@@ -337,10 +310,7 @@ export default class Storage extends Model {
       wiki.data.storage = diskTargets
 
       // -> Insert new targets
-      const newTargets: Array<Pick<
-        Storage,
-        'key' | 'isEnabled' | 'mode' | 'syncInterval' | 'config' | 'state'
-      >> = []
+      const newTargets: Array<Pick<Storage, 'key' | 'isEnabled' | 'mode' | 'syncInterval' | 'config' | 'state'>> = []
       for (const target of diskTargets) {
         const dbTarget = dbTargets.find(candidate => candidate.key === target.key)
         if (!dbTarget) {
@@ -358,9 +328,12 @@ export default class Storage extends Model {
           })
         } else {
           const targetConfig = isRecord(dbTarget.config) ? dbTarget.config : {}
-          await wiki.models.storage.query().patch({
-            config: addMissingConfigDefaults(targetConfig, target.props)
-          }).where('key', target.key)
+          await wiki.models.storage
+            .query()
+            .patch({
+              config: addMissingConfigDefaults(targetConfig, target.props)
+            })
+            .where('key', target.key)
         }
       }
       if (newTargets.length > 0) {
@@ -393,8 +366,9 @@ export default class Storage extends Model {
   /**
    * Initialize active storage targets
    */
-  static async initTargets (): Promise<void> {
+  static async initTargets(): Promise<void> {
     const wiki = getWiki()
+    this.activeTargets = []
     this.targets = await wiki.models.storage.query().where('isEnabled', true).orderBy('key')
     try {
       const scheduler = wiki.scheduler
@@ -409,46 +383,55 @@ export default class Storage extends Model {
 
       // -> Initialize targets
       for (const target of this.targets) {
-        const targetDef = wiki.data.storage?.find(candidate => candidate.key === target.key)
-        if (!targetDef) {
-          throw new Error(`Missing storage definition: ${target.key}`)
-        }
-        // Target key is selected from the enabled runtime module registry.
-        const source = `../modules/storage/${target.key}/storage.ts`
-        target.fn = Object.assign(readStoragePlugin(await import(source), source), {
-          config: target.config,
-          mode: target.mode
-        })
         try {
+          const targetDef = wiki.data.storage?.find(candidate => candidate.key === target.key)
+          if (!targetDef) {
+            throw new Error(`Missing storage definition: ${target.key}`)
+          }
+          // Target key is selected from the enabled runtime module registry.
+          const source = `../modules/storage/${target.key}/storage.ts`
+          target.fn = Object.assign(readStoragePlugin(await import(source), source), {
+            config: target.config,
+            mode: target.mode
+          })
           await target.fn.init()
+          this.activeTargets.push(target)
 
           // -> Save succeeded init state
           await recordTargetState(target, 'operational')
 
           // -> Set recurring sync job
           if (targetDef.schedule && target.syncInterval !== 'P0D') {
-            scheduler.registerJob({
-              name: 'sync-storage',
-              immediate: false,
-              schedule: target.syncInterval,
-              repeat: true
-            }, target.key)
+            scheduler.registerJob(
+              {
+                name: 'sync-storage',
+                immediate: false,
+                schedule: target.syncInterval,
+                repeat: true
+              },
+              target.key
+            )
           }
 
           // -> Set internal recurring sync job
           if (targetDef.internalSchedule && targetDef.internalSchedule !== 'P0D') {
-            scheduler.registerJob({
-              name: 'sync-storage',
-              immediate: false,
-              ...(target.internalSchedule === undefined
-                ? {}
-                : { schedule: target.internalSchedule }),
-              repeat: true
-            }, target.key)
+            scheduler.registerJob(
+              {
+                name: 'sync-storage',
+                immediate: false,
+                ...(target.internalSchedule === undefined ? {} : { schedule: target.internalSchedule }),
+                repeat: true
+              },
+              target.key
+            )
           }
         } catch (err) {
           // -> Save initialization error
-          await recordTargetState(target, 'error', errorMessage(err))
+          try {
+            await recordTargetState(target, 'error', errorMessage(err))
+          } catch (statusError) {
+            wiki.logger.warn(statusError)
+          }
         }
       }
     } catch (err) {
@@ -457,9 +440,9 @@ export default class Storage extends Model {
     }
   }
 
-  static async pageEvent (payload: StoragePageEvent): Promise<void> {
+  static async pageEvent(payload: StoragePageEvent): Promise<void> {
     const wiki = getWiki()
-    for (const target of this.targets) {
+    for (const target of this.activeTargets) {
       try {
         switch (payload.event) {
           case 'created':
@@ -487,9 +470,9 @@ export default class Storage extends Model {
     }
   }
 
-  static async assetEvent (payload: StorageAssetEvent): Promise<void> {
+  static async assetEvent(payload: StorageAssetEvent): Promise<void> {
     const wiki = getWiki()
-    for (const target of this.targets) {
+    for (const target of this.activeTargets) {
       try {
         switch (payload.event) {
           case 'uploaded':
@@ -514,12 +497,10 @@ export default class Storage extends Model {
     }
   }
 
-  static async getLocalLocations (
-    { asset }: { asset: { path: string } }
-  ): Promise<Array<{ path: string | void, key: string }>> {
+  static async getLocalLocations({ asset }: { asset: { path: string } }): Promise<Array<{ path: string | void; key: string }>> {
     const wiki = getWiki()
-    const locations: Array<{ path: string | void, key: string }> = []
-    const promises = this.targets.map(async target => {
+    const locations: Array<{ path: string | void; key: string }> = []
+    const promises = this.activeTargets.map(async target => {
       try {
         const localPath = await target.fn.getLocalLocation(asset)
         locations.push({
@@ -534,7 +515,7 @@ export default class Storage extends Model {
     return locations
   }
 
-  static async executeAction (targetKey: string, handler: string): Promise<void> {
+  static async executeAction(targetKey: string, handler: string): Promise<void> {
     const wiki = getWiki()
     const target = this.targets.find(candidate => candidate.key === targetKey)
     if (!target) {

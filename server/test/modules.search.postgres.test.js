@@ -4,7 +4,13 @@ const knexHarness = (options = {}) => {
   const truncate = vi.fn().mockResolvedValue(undefined)
   const deleteRows = vi.fn().mockResolvedValue(1)
   const where = vi.fn().mockReturnValue({ delete: deleteRows })
-  const table = vi.fn().mockReturnValue({ truncate, where })
+  const pageForShare = vi.fn().mockResolvedValue((options.rebuildPages ?? []).map(page => ({ id: page.id })))
+  const pageAndWhere = vi.fn().mockReturnValue({ forShare: pageForShare })
+  const pageWhere = vi.fn().mockReturnValue({ andWhere: pageAndWhere })
+  const pageSelect = vi.fn().mockReturnValue({ where: pageWhere })
+  const table = vi.fn().mockImplementation(tableName =>
+    tableName === 'pages' ? { select: pageSelect } : { truncate, where }
+  )
   const transactionRaw = vi.fn().mockResolvedValue({ rows: [] })
   const transaction = Object.assign(table, { raw: transactionRaw })
   const raw = vi.fn().mockImplementation(async sql => {
@@ -17,21 +23,21 @@ const knexHarness = (options = {}) => {
     hasColumn: vi.fn().mockImplementation(async (_table, column) => options.legacySchema !== true || column !== 'pageId'),
     dropTableIfExists
   }
-  const knex = Object.assign(vi.fn(), {
+  const knex = Object.assign(vi.fn().mockImplementation(table), {
     raw,
     schema,
     transaction: vi.fn(async callback => callback(transaction))
   })
-  return { knex, raw, transactionRaw, truncate, dropTableIfExists }
+  return { knex, raw, transactionRaw, truncate, dropTableIfExists, pageWhere, pageAndWhere }
 }
 
-const installWiki = knex => {
+const installWiki = (knex, pages = {}) => {
   global.WIKI = {
     config: { db: { type: 'postgres' }, search: { maxHits: 100 } },
     data: {},
     Error: { SearchActivationFailed: class SearchActivationFailed extends Error {} },
     logger: { info: vi.fn(), warn: vi.fn() },
-    models: { knex }
+    models: { knex, pages }
   }
 }
 
@@ -54,7 +60,7 @@ describe('PostgreSQL hybrid search', () => {
     expect(harness.dropTableIfExists).toHaveBeenCalledWith('pagesVector')
     expect(harness.raw.mock.calls.some(([sql]) => String(sql).includes('pages_vector_tokens_idx') && String(sql).includes('USING GIN'))).toBe(true)
     expect(harness.truncate).toHaveBeenCalledTimes(2)
-    expect(harness.transactionRaw.mock.calls.some(([sql]) => String(sql).includes('pageAccessPasswords') && String(sql).includes('setweight(to_tsvector'))).toBe(true)
+    expect(harness.transactionRaw).not.toHaveBeenCalled()
   })
 
   it('returns bounded ranked evidence while keeping the user query in SQL bindings', async () => {
@@ -96,6 +102,8 @@ describe('PostgreSQL hybrid search', () => {
       localeCode: 'en',
       title: 'Falcon Runbook',
       description: 'Incident response',
+      visibility: 'public',
+      isPublished: true,
       safeContent: 'Amber Falcon recovery steps',
       tags: [{ tag: 'incident', title: 'Incident response' }]
     })
@@ -103,5 +111,45 @@ describe('PostgreSQL hybrid search', () => {
     const vectorWrite = harness.transactionRaw.mock.calls.find(([sql]) => String(sql).includes('ON CONFLICT ("pageId")'))
     expect(vectorWrite?.[1]).toEqual(expect.arrayContaining([42, 'runbooks/falcon', ['incident'], 'Amber Falcon recovery steps', 'english']))
     expect(harness.transactionRaw.mock.calls.some(([sql]) => String(sql).includes('tsvector_to_array') && String(sql).includes('pagesWords'))).toBe(true)
+  })
+
+  it('uses the same canonical rendered document for incremental saves and full rebuilds', async () => {
+    const page = {
+      id: 42,
+      path: 'runbooks/falcon',
+      localeCode: 'en',
+      title: 'Falcon Runbook',
+      description: 'Incident response',
+      safeContent: 'rendered-only unique-extension-term',
+      tags: [{ tag: 'incident', title: 'Incident response' }],
+      visibility: 'public',
+      isPublished: true
+    }
+    const harness = knexHarness({ rebuildPages: [page] })
+    const pages = {
+      getPageFromDb: vi.fn().mockResolvedValue({ ...page, safeContent: 'raw source must not be indexed' }),
+      prepareSearchDocument: vi.fn().mockImplementation(async candidate => ({
+        ...candidate,
+        safeContent: 'rendered-only unique-extension-term'
+      }))
+    }
+    installWiki(harness.knex, pages)
+    const plugin = (await vi.importFresh('../modules/search/postgres/engine.ts', import.meta.url)).default
+    Object.assign(plugin, { config: { dictLanguage: 'english' } })
+
+    await plugin.updated(page)
+    await plugin.rebuild()
+    expect(harness.pageWhere).toHaveBeenCalledWith('isPublished', true)
+    expect(harness.pageAndWhere).toHaveBeenCalledWith('visibility', 'public')
+
+    expect(pages.prepareSearchDocument).toHaveBeenCalledTimes(1)
+    const documents = harness.transactionRaw.mock.calls
+      .filter(([sql]) => String(sql).includes('ON CONFLICT ("pageId")'))
+      .map(([, bindings]) => bindings[7])
+    expect(documents).toEqual([
+      'rendered-only unique-extension-term',
+      'rendered-only unique-extension-term'
+    ])
+    expect(documents).not.toContain('raw source must not be indexed')
   })
 })

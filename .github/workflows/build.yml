@@ -1,6 +1,7 @@
 name: Local CI + Publish
 
 on:
+  pull_request:
   push:
     branches:
       - '**'
@@ -12,12 +13,37 @@ permissions:
   contents: read
 
 env:
-  BUN_VERSION: 1.3.14
+  BUN_VERSION: 1.4.0
   WIKI_UPGRADE_SOURCE_IMAGE: ghcr.io/requarks/wiki:2.5.314@sha256:68f0d1848261ae76492ba358e30a96a76fed5d97a3fff381656082bf90f70d7e
 
 jobs:
+  pr-quality:
+    name: PR Quality (Unprivileged)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+    - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+    - uses: oven-sh/setup-bun@735343b667d3e6f658f44d0eca948eb6282f2b76 # v2
+      with:
+        bun-version: ${{ env.BUN_VERSION }}
+    - name: Install Dependencies
+      run: bun install --frozen-lockfile
+    - name: Typecheck
+      run: |
+        bun run typecheck:shared
+        bun run typecheck:client
+        bun run typecheck:server
+    - name: Run Unit Tests
+      run: bun run test
+    - name: Build Vite Assets
+      run: bun run build
+
   quality:
     name: Quality
+    if: github.event_name != 'pull_request'
     runs-on: [self-hosted, linux, x64, tsfranki-ci]
     permissions:
       contents: read
@@ -114,6 +140,42 @@ jobs:
         WIKI_TEST_POSTGRES_USER: wiki
       run: bun test server/test/db/agents-migration.postgres.integration.test.ts
 
+  private-pages-postgres:
+    name: Private Pages Migration (PostgreSQL 18)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    services:
+      postgres:
+        image: postgres:18-alpine@sha256:a1d02e4bd40c94d3bf2bdd3678c137388e76d9efcd23c285e9429d336a834b44
+        env:
+          POSTGRES_DB: wiki_private_pages_test
+          POSTGRES_PASSWORD: test
+          POSTGRES_USER: wiki
+        ports:
+          - 5432/tcp
+        options: >-
+          --health-cmd "pg_isready -U wiki -d wiki_private_pages_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+    - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+    - uses: oven-sh/setup-bun@735343b667d3e6f658f44d0eca948eb6282f2b76 # v2
+      with:
+        bun-version: ${{ env.BUN_VERSION }}
+    - run: bun install --frozen-lockfile
+    - name: Exercise Private Pages Migration
+      env:
+        WIKI_TEST_POSTGRES_DATABASE: wiki_private_pages_test
+        WIKI_TEST_POSTGRES_HOST: 127.0.0.1
+        WIKI_TEST_POSTGRES_PASSWORD: test
+        WIKI_TEST_POSTGRES_PORT: ${{ job.services.postgres.ports['5432'] }}
+        WIKI_TEST_POSTGRES_USER: wiki
+        WIKI_TEST_POSTGRES_REQUIRED: '1'
+      run: bun test server/test/db/private-pages.postgres.integration.test.ts
+
   agent-browser-image:
     name: Agent Browser Multi-arch Image
     runs-on: [self-hosted, linux, x64, tsfranki-ci]
@@ -180,6 +242,7 @@ jobs:
     needs: [quality]
     permissions:
       contents: read
+      packages: write
 
     steps:
     - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -191,7 +254,16 @@ jobs:
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
 
+    - name: Login to GitHub Container Registry
+      if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+      uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+      with:
+        registry: ghcr.io
+        username: ${{ github.repository_owner }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
     - name: Build Test Image
+      id: build-candidate
       uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
       env:
         DOCKER_BUILD_SUMMARY: false
@@ -206,13 +278,36 @@ jobs:
           WIKI_PRODUCT_VERSION=${{ env.WIKI_PRODUCT_VERSION }}
           WIKI_SOURCE_REPOSITORY=${{ env.WIKI_SOURCE_REPOSITORY }}
           WIKI_UPSTREAM_BASE=${{ env.WIKI_UPSTREAM_BASE }}
-        load: true
+        platforms: linux/amd64
+        load: ${{ !(github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))) }}
         provenance: false
+        push: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) }}
         sbom: false
-        tags: tsfranki:test-${{ env.WIKI_BUILD_REVISION }}
+        tags: ${{ env.IMAGE_REPOSITORY }}:candidate-${{ github.run_id }}-${{ github.run_attempt }}
+    - name: Pull Exact Registry Candidate
+      if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+      run: |
+        docker pull "$IMAGE_REPOSITORY@${{ steps.build-candidate.outputs.digest }}"
+        docker tag "$IMAGE_REPOSITORY@${{ steps.build-candidate.outputs.digest }}" "tsfranki:test-$WIKI_BUILD_REVISION"
+    - name: Tag Local Candidate
+      if: github.event_name != 'push' || (github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/v'))
+      run: docker tag "$IMAGE_REPOSITORY:candidate-${{ github.run_id }}-${{ github.run_attempt }}" "tsfranki:test-$WIKI_BUILD_REVISION"
 
-    - name: Export Test Image
-      run: docker save "tsfranki:test-$WIKI_BUILD_REVISION" | gzip -1 -n > tsfranki-test-image.tar.gz
+    - name: Export Tested AMD64 Candidate
+      shell: bash
+      env:
+        PUBLISH_CANDIDATE: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) }}
+        TESTED_AMD64_DIGEST: ${{ steps.build-candidate.outputs.digest }}
+      run: |
+        candidate="tsfranki:test-$WIKI_BUILD_REVISION"
+        if [ "$PUBLISH_CANDIDATE" = 'true' ]; then
+          [[ "$TESTED_AMD64_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          printf '%s\n' "$TESTED_AMD64_DIGEST" > tested-amd64-digest.txt
+        fi
+        test "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$candidate")" = 'linux/amd64'
+        test "$(docker image inspect --format '{{index .Config.Labels "io.tsfranki.image.architecture"}}' "$candidate")" = 'amd64'
+        docker image inspect --format '{{.Id}}' "$candidate" > tested-amd64-image-id.txt
+        docker save "$candidate" | gzip -1 -n > tsfranki-test-image.tar.gz
 
     - name: Create Reproducible Linux Bundle
       run: dev/build/create-linux-bundle.sh "tsfranki:test-$WIKI_BUILD_REVISION" tsfranki-linux.tar.gz
@@ -228,7 +323,10 @@ jobs:
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
       with:
         name: test-image
-        path: tsfranki-test-image.tar.gz
+        path: |
+          tsfranki-test-image.tar.gz
+          tested-amd64-image-id.txt
+          tested-amd64-digest.txt
         if-no-files-found: error
         retention-days: 1
         compression-level: 0
@@ -515,7 +613,7 @@ jobs:
     name: Publish AMD64 Images
     runs-on: [self-hosted, linux, x64, tsfranki-ci]
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
-    needs: [e2e, upgrade, multi-instance, helm-lifecycle, page-index-benchmark, agent-postgres, agent-browser-image]
+    needs: [build, e2e, upgrade, multi-instance, helm-lifecycle, page-index-benchmark, agent-postgres, private-pages-postgres, agent-browser-image]
     permissions:
       contents: read
       packages: write
@@ -546,30 +644,34 @@ jobs:
         username: ${{ github.repository_owner }}
         password: ${{ secrets.GITHUB_TOKEN }}
 
-    - name: Build and Push AMD64 Images
-      uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
-      env:
-        DOCKER_BUILD_SUMMARY: false
+    - name: Download Tested AMD64 Candidate
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
       with:
-        context: .
-        file: dev/build/Dockerfile
-        build-args: |
-          WIKI_BUILD_DATE=${{ env.WIKI_BUILD_DATE }}
-          WIKI_BUILD_REVISION=${{ env.WIKI_BUILD_REVISION }}
-          WIKI_PRODUCT_DESCRIPTION=${{ env.WIKI_PRODUCT_DESCRIPTION }}
-          WIKI_PRODUCT_NAME=${{ env.WIKI_PRODUCT_NAME }}
-          WIKI_PRODUCT_VERSION=${{ env.WIKI_PRODUCT_VERSION }}
-          WIKI_SOURCE_REPOSITORY=${{ env.WIKI_SOURCE_REPOSITORY }}
-          WIKI_UPSTREAM_BASE=${{ env.WIKI_UPSTREAM_BASE }}
-        platforms: linux/amd64
-        provenance: mode=max
-        sbom: true
-        push: true
-        tags: |
-          ${{ env.IMAGE_REPOSITORY }}:canary
-          ${{ env.IMAGE_REPOSITORY }}:canary-${{ env.REL_VERSION_STRICT }}
+        name: test-image
+        path: test-image
+
+    - name: Promote Tested AMD64 Candidate
+      shell: bash
+      run: |
+        gzip -dc test-image/tsfranki-test-image.tar.gz | docker load
+        candidate="tsfranki:test-$WIKI_BUILD_REVISION"
+        expected_image_id="$(cat test-image/tested-amd64-image-id.txt)"
+        expected_amd64_digest="$(cat test-image/tested-amd64-digest.txt)"
+        [[ "$expected_amd64_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+        test "$(docker image inspect --format '{{.Id}}' "$candidate")" = "$expected_image_id"
+        test "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$candidate")" = 'linux/amd64'
+        docker buildx imagetools inspect "$IMAGE_REPOSITORY@$expected_amd64_digest" --raw > tested-amd64-manifest.json
+        test "$(jq --exit-status --raw-output '.config.digest' tested-amd64-manifest.json)" = "$expected_image_id"
+
+        docker buildx imagetools create \
+          --prefer-index=false \
+          --tag "$IMAGE_REPOSITORY:canary" \
+          --tag "$IMAGE_REPOSITORY:canary-$REL_VERSION_STRICT" \
+          "$IMAGE_REPOSITORY@$expected_amd64_digest"
+        printf '%s@%s\n' "$IMAGE_REPOSITORY" "$expected_amd64_digest" > image-amd64-descriptor.txt
 
     - name: Build and Push AMD64 Agent Browser Image
+      id: build-agent-browser-amd64
       uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
       env:
         DOCKER_BUILD_SUMMARY: false
@@ -583,6 +685,34 @@ jobs:
         tags: |
           ${{ env.IMAGE_REPOSITORY }}-agent-browser:canary
           ${{ env.IMAGE_REPOSITORY }}-agent-browser:canary-${{ env.REL_VERSION_STRICT }}
+
+    - name: Capture AMD64 Agent Browser Descriptor
+      shell: bash
+      env:
+        AGENT_BROWSER_AMD64_DIGEST: ${{ steps.build-agent-browser-amd64.outputs.digest }}
+      run: |
+        [[ "$AGENT_BROWSER_AMD64_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+        repository="$IMAGE_REPOSITORY-agent-browser"
+        descriptor="$repository@$AGENT_BROWSER_AMD64_DIGEST"
+        docker buildx imagetools inspect "$descriptor" --raw > agent-browser-amd64-manifest.json
+        jq --exit-status '
+          ([.manifests[] | select(.platform.os == "linux" and .platform.architecture == "amd64")] | length) == 1
+          and all(.manifests[];
+            (.platform.os == "linux" and .platform.architecture == "amd64")
+            or (.platform.os == "unknown" and .platform.architecture == "unknown")
+          )
+        ' agent-browser-amd64-manifest.json
+        printf '%s\n' "$descriptor" > agent-browser-amd64-descriptor.txt
+
+    - name: Upload AMD64 Image Descriptors
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      with:
+        name: amd64-image-descriptors
+        path: |
+          image-amd64-descriptor.txt
+          agent-browser-amd64-descriptor.txt
+        if-no-files-found: error
+        retention-days: 30
 
   arm:
     name: ARM64 Cross-build
@@ -632,6 +762,7 @@ jobs:
         tar -xzf "$GITHUB_WORKSPACE/drop/tsfranki-linux.tar.gz" -C "$GITHUB_WORKSPACE/build" --exclude=node_modules
 
     - name: Build and Push ARM64 Images
+      id: build-app-arm64
       uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
       env:
         DOCKER_BUILD_SUMMARY: false
@@ -654,6 +785,7 @@ jobs:
           ${{ env.IMAGE_REPOSITORY }}:canary-arm64-${{ env.REL_VERSION_STRICT }}
 
     - name: Build and Push ARM64 Agent Browser Image
+      id: build-agent-browser-arm64
       uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
       env:
         DOCKER_BUILD_SUMMARY: false
@@ -666,6 +798,44 @@ jobs:
         push: true
         tags: |
           ${{ env.IMAGE_REPOSITORY }}-agent-browser:canary-arm64-${{ env.REL_VERSION_STRICT }}
+
+    - name: Capture ARM64 Image Descriptors
+      shell: bash
+      env:
+        APP_ARM64_DIGEST: ${{ steps.build-app-arm64.outputs.digest }}
+        AGENT_BROWSER_ARM64_DIGEST: ${{ steps.build-agent-browser-arm64.outputs.digest }}
+      run: |
+        validate_arm64_descriptor() {
+          local descriptor="$1"
+          local manifest_file="$2"
+          docker buildx imagetools inspect "$descriptor" --raw > "$manifest_file"
+          jq --exit-status '
+            ([.manifests[] | select(.platform.os == "linux" and .platform.architecture == "arm64")] | length) == 1
+            and all(.manifests[];
+              (.platform.os == "linux" and .platform.architecture == "arm64")
+              or (.platform.os == "unknown" and .platform.architecture == "unknown")
+            )
+          ' "$manifest_file"
+        }
+
+        [[ "$APP_ARM64_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+        [[ "$AGENT_BROWSER_ARM64_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+        app_descriptor="$IMAGE_REPOSITORY@$APP_ARM64_DIGEST"
+        agent_browser_descriptor="$IMAGE_REPOSITORY-agent-browser@$AGENT_BROWSER_ARM64_DIGEST"
+        validate_arm64_descriptor "$app_descriptor" app-arm64-manifest.json
+        validate_arm64_descriptor "$agent_browser_descriptor" agent-browser-arm64-manifest.json
+        printf '%s\n' "$app_descriptor" > image-arm64-descriptor.txt
+        printf '%s\n' "$agent_browser_descriptor" > agent-browser-arm64-descriptor.txt
+
+    - name: Upload ARM64 Image Descriptors
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      with:
+        name: arm64-image-descriptors
+        path: |
+          image-arm64-descriptor.txt
+          agent-browser-arm64-descriptor.txt
+        if-no-files-found: error
+        retention-days: 30
 
   beta:
     name: Publish Preview Images
@@ -692,17 +862,56 @@ jobs:
         username: ${{ github.repository_owner }}
         password: ${{ secrets.GITHUB_TOKEN }}
 
-    - name: Create and Push Preview Manifest
+    - name: Download AMD64 Image Descriptors
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+      with:
+        name: amd64-image-descriptors
+        path: image-descriptors
+
+    - name: Download ARM64 Image Descriptors
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+      with:
+        name: arm64-image-descriptors
+        path: image-descriptors
+
+    - name: Verify Descriptors and Push Preview Manifests
       shell: bash
       run: |
+        read_descriptor() {
+          local descriptor_file="$1"
+          local repository="$2"
+          local descriptor
+          local digest
+          descriptor="$(cat "$descriptor_file")"
+          digest="${descriptor#"$repository"@}"
+          test "$descriptor" = "$repository@$digest"
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          docker buildx imagetools inspect "$descriptor" --raw > /dev/null
+          printf '%s\n' "$descriptor"
+        }
+
+        image_amd64="$(read_descriptor image-descriptors/image-amd64-descriptor.txt "$IMAGE_REPOSITORY")"
+        image_arm64="$(read_descriptor image-descriptors/image-arm64-descriptor.txt "$IMAGE_REPOSITORY")"
+        agent_browser_repository="$IMAGE_REPOSITORY-agent-browser"
+        agent_browser_amd64="$(read_descriptor image-descriptors/agent-browser-amd64-descriptor.txt "$agent_browser_repository")"
+        agent_browser_arm64="$(read_descriptor image-descriptors/agent-browser-arm64-descriptor.txt "$agent_browser_repository")"
+
         docker buildx imagetools create \
           --tag "$IMAGE_REPOSITORY:preview-$REL_VERSION_STRICT" \
-          "$IMAGE_REPOSITORY:canary-$REL_VERSION_STRICT" \
-          "$IMAGE_REPOSITORY:canary-arm64-$REL_VERSION_STRICT"
+          "$image_amd64" \
+          "$image_arm64"
         docker buildx imagetools create \
-          --tag "$IMAGE_REPOSITORY-agent-browser:preview-$REL_VERSION_STRICT" \
-          "$IMAGE_REPOSITORY-agent-browser:canary-$REL_VERSION_STRICT" \
-          "$IMAGE_REPOSITORY-agent-browser:canary-arm64-$REL_VERSION_STRICT"
+          --tag "$agent_browser_repository:preview-$REL_VERSION_STRICT" \
+          "$agent_browser_amd64" \
+          "$agent_browser_arm64"
+
+    - name: Upload Release Image Descriptors
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      with:
+        name: release-image-descriptors
+        path: image-descriptors
+        if-no-files-found: error
+        retention-days: 30
 
   release:
     name: Publish Release Images
@@ -738,26 +947,55 @@ jobs:
         username: ${{ github.repository_owner }}
         password: ${{ secrets.GITHUB_TOKEN }}
 
-    - name: Create and Push Release Manifest
+    - name: Download Approved Release Image Descriptors
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+      with:
+        name: release-image-descriptors
+        path: image-descriptors
+
+    - name: Verify Descriptors and Push Release Manifests
       shell: bash
       run: |
+        read_descriptor() {
+          local descriptor_file="$1"
+          local repository="$2"
+          local descriptor
+          local digest
+          descriptor="$(cat "$descriptor_file")"
+          digest="${descriptor#"$repository"@}"
+          test "$descriptor" = "$repository@$digest"
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          docker buildx imagetools inspect "$descriptor" --raw > /dev/null
+          printf '%s\n' "$descriptor"
+        }
+
+        image_amd64="$(read_descriptor image-descriptors/image-amd64-descriptor.txt "$IMAGE_REPOSITORY")"
+        image_arm64="$(read_descriptor image-descriptors/image-arm64-descriptor.txt "$IMAGE_REPOSITORY")"
+        agent_browser_image_repository="$IMAGE_REPOSITORY-agent-browser"
+        agent_browser_amd64="$(read_descriptor image-descriptors/agent-browser-amd64-descriptor.txt "$agent_browser_image_repository")"
+        agent_browser_arm64="$(read_descriptor image-descriptors/agent-browser-arm64-descriptor.txt "$agent_browser_image_repository")"
+
         docker buildx imagetools create \
           --metadata-file release-image-metadata.json \
           --tag "$IMAGE_REPOSITORY:$REL_VERSION_STRICT" \
           --tag "$IMAGE_REPOSITORY:preview" \
-          "$IMAGE_REPOSITORY:canary-$REL_VERSION_STRICT" \
-          "$IMAGE_REPOSITORY:canary-arm64-$REL_VERSION_STRICT"
+          "$image_amd64" \
+          "$image_arm64"
         image_digest="$(jq --exit-status --raw-output '."containerimage.descriptor".digest' release-image-metadata.json)"
         [[ "$image_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+        docker buildx imagetools inspect "$IMAGE_REPOSITORY@$image_digest" --raw > /dev/null
         echo "IMAGE_DIGEST=$image_digest" >> "$GITHUB_ENV"
+
         docker buildx imagetools create \
           --metadata-file agent-browser-image-metadata.json \
-          --tag "$IMAGE_REPOSITORY-agent-browser:$REL_VERSION_STRICT" \
-          --tag "$IMAGE_REPOSITORY-agent-browser:preview" \
-          "$IMAGE_REPOSITORY-agent-browser:canary-$REL_VERSION_STRICT" \
-          "$IMAGE_REPOSITORY-agent-browser:canary-arm64-$REL_VERSION_STRICT"
+          --tag "$agent_browser_image_repository:$REL_VERSION_STRICT" \
+          --tag "$agent_browser_image_repository:preview" \
+          "$agent_browser_amd64" \
+          "$agent_browser_arm64"
         agent_browser_image_digest="$(jq --exit-status --raw-output '."containerimage.descriptor".digest' agent-browser-image-metadata.json)"
         [[ "$agent_browser_image_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+        docker buildx imagetools inspect "$agent_browser_image_repository@$agent_browser_image_digest" --raw > /dev/null
+        echo "AGENT_BROWSER_IMAGE_REPOSITORY=$agent_browser_image_repository" >> "$GITHUB_ENV"
         echo "AGENT_BROWSER_IMAGE_DIGEST=$agent_browser_image_digest" >> "$GITHUB_ENV"
 
     - name: Download Linux Build
@@ -776,7 +1014,7 @@ jobs:
     - name: Generate Release Image SBOM
       uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
       with:
-        image: ${{ env.IMAGE_REPOSITORY }}:${{ env.REL_VERSION_STRICT }}
+        image: ${{ env.IMAGE_REPOSITORY }}@${{ env.IMAGE_DIGEST }}
         format: spdx-json
         output-file: tsfranki.spdx.json
         upload-artifact: false
@@ -785,7 +1023,7 @@ jobs:
     - name: Generate Agent Browser Image SBOM
       uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
       with:
-        image: ${{ env.IMAGE_REPOSITORY }}-agent-browser:${{ env.REL_VERSION_STRICT }}
+        image: ${{ env.AGENT_BROWSER_IMAGE_REPOSITORY }}@${{ env.AGENT_BROWSER_IMAGE_DIGEST }}
         format: spdx-json
         output-file: wiki-agent-browser.spdx.json
         upload-artifact: false

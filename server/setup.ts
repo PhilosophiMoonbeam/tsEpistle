@@ -91,7 +91,6 @@ interface SetupWiki extends Record<string, unknown> {
   config: SetupConfig
   configSvc: { saveToDb(keys: string[], propagate?: boolean): Promise<unknown> }
   data: unknown
-  kernel: { bootMaster(): void; initTelemetry(): void }
   logger: { error(value: unknown): void; info(message: string): void }
   product: ProductMetadata
   models: SetupModels
@@ -120,12 +119,13 @@ function requiredString(body: Record<string, unknown>, key: string): string {
   return value
 }
 
-export default function startSetup(): void {
+export default function startSetup(): Promise<void> {
   wiki.config.site = {
     path: '',
     title: wiki.product.name
   }
   wiki.system = system
+  const completion = Promise.withResolvers<void>()
 
   const app = express()
   app.use(compression())
@@ -194,10 +194,9 @@ export default function startSetup(): void {
       })
       _.set(wiki.config, 'title', wiki.product.name)
 
-      wiki.kernel.initTelemetry()
       const bunVersion = process.versions.bun
-      if (!bunVersion || !semver.satisfies(bunVersion, '>=1.3.14 <2')) {
-        throw new Error('Bun 1.3.14 or later, but before Bun 2, is required!')
+      if (!bunVersion || !semver.satisfies(bunVersion, '>=1.4.0 <2')) {
+        throw new Error('Bun 1.4.0 or later, but before Bun 2, is required!')
       }
 
       wiki.logger.info('Creating data directories...')
@@ -299,17 +298,8 @@ export default function startSetup(): void {
         }]
       })
 
-      wiki.logger.info('Setup is complete!')
-      res.json({ ok: true, redirectPath: '/', redirectPort: wiki.config.port }).end()
-
       if (wiki.config.telemetry.isEnabled) await wiki.telemetry.sendInstanceEvent('INSTALL')
       wiki.config.setup = false
-
-      wiki.logger.info('Stopping Setup...')
-      wiki.server.destroy(() => {
-        wiki.logger.info('Setup stopped. Starting tsFranki...')
-        _.delay(() => wiki.kernel.bootMaster(), 1000)
-      })
     } catch (error: unknown) {
       try {
         await wiki.models.knex('settings').truncate()
@@ -318,7 +308,18 @@ export default function startSetup(): void {
       }
       wiki.telemetry.sendError(error)
       res.json({ ok: false, error: errorMessage(error) })
+      return
     }
+
+    wiki.logger.info('Setup is complete!')
+    res.once('finish', () => {
+      wiki.logger.info('Stopping Setup...')
+      wiki.server.destroy(() => {
+        wiki.logger.info('Setup stopped. Starting tsFranki...')
+        completion.resolve()
+      })
+    })
+    res.json({ ok: true, redirectPath: '/', redirectPort: wiki.config.port })
   })
 
   app.use((_req, _res, next) => {
@@ -358,19 +359,21 @@ export default function startSetup(): void {
   }
 
   server.on('error', (error: NodeJS.ErrnoException) => {
-    if (error.syscall !== 'listen') throw error
-    switch (error.code) {
-      case 'EACCES':
-        wiki.logger.error(`Listening on port ${wiki.config.port} requires elevated privileges!`)
-        process.exit(1)
-        return
-      case 'EADDRINUSE':
-        wiki.logger.error(`Port ${wiki.config.port} is already in use!`)
-        process.exit(1)
-        return
-      default:
-        throw error
+    if (error.syscall === 'listen') {
+      switch (error.code) {
+        case 'EACCES':
+          wiki.logger.error(`Listening on port ${wiki.config.port} requires elevated privileges!`)
+          break
+        case 'EADDRINUSE':
+          wiki.logger.error(`Port ${wiki.config.port} is already in use!`)
+          break
+        default:
+          wiki.logger.error(error)
+      }
+    } else {
+      wiki.logger.error(error)
     }
+    completion.reject(error)
   })
 
   server.on('listening', () => {
@@ -381,4 +384,5 @@ export default function startSetup(): void {
     wiki.logger.info('')
     wiki.logger.info('🔺🔺🔺🔺🔺🔺🔺🔺🔺🔺🔺🔺🔺🔺🔺🔺🔺🔺🔺🔺🔺🔺🔺🔺🔺🔺🔺🔺🔺')
   })
+  return completion.promise
 }

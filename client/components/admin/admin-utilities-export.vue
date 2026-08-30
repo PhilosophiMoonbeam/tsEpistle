@@ -109,6 +109,27 @@ type ExportEntityChoice = {
   hint: string
 }
 
+type ExportState = {
+  entities: ExportEntity[]
+  filePath: string
+  isLoading: boolean
+  isSuccess: boolean
+  isFailed: boolean
+  errorMessage: string
+  progress: number
+  isDisposed: boolean
+  requestGeneration: number
+  startTimeoutHandle: number | null
+  pollAnimationFrameHandle: number | null
+  pollTimeoutHandle: number | null
+}
+
+type ExportVm = ExportState & {
+  clearScheduledWork: () => void
+  checkProgress: (generation?: number) => Promise<void>
+  startExport: () => Promise<void>
+}
+
 function getErrorMessage (err: unknown): string {
   return err instanceof Error ? err.message : String(err)
 }
@@ -117,7 +138,7 @@ export default defineComponent({
   components: {
     SelfBuildingSquareSpinner
   },
-  data() {
+  data(): ExportState {
     return {
       entities: [] as ExportEntity[],
       filePath: './data/export',
@@ -125,7 +146,12 @@ export default defineComponent({
       isSuccess: false,
       isFailed: false,
       errorMessage: '',
-      progress: 0
+      progress: 0,
+      isDisposed: false,
+      requestGeneration: 0,
+      startTimeoutHandle: null as number | null,
+      pollAnimationFrameHandle: null as number | null,
+      pollTimeoutHandle: null as number | null
     }
   },
   computed: {
@@ -174,19 +200,55 @@ export default defineComponent({
       ]
     }
   },
+  beforeUnmount() {
+    this.isDisposed = true
+    this.requestGeneration += 1
+    this.clearScheduledWork()
+  },
   methods: {
-    async checkProgress () {
+    clearScheduledWork () {
+      if (this.startTimeoutHandle !== null) {
+        window.clearTimeout(this.startTimeoutHandle)
+        this.startTimeoutHandle = null
+      }
+      if (this.pollAnimationFrameHandle !== null) {
+        window.cancelAnimationFrame(this.pollAnimationFrameHandle)
+        this.pollAnimationFrameHandle = null
+      }
+      if (this.pollTimeoutHandle !== null) {
+        window.clearTimeout(this.pollTimeoutHandle)
+        this.pollTimeoutHandle = null
+      }
+    },
+    async checkProgress (this: ExportVm, generation = this.requestGeneration) {
+      if (this.isDisposed || generation !== this.requestGeneration) {
+        return
+      }
+
       try {
         const respStatusObj = await fetchSystemExportStatus(window.fetch.bind(window), 'Export status response is invalid')
+        if (this.isDisposed || generation !== this.requestGeneration) {
+          return
+        }
+
         switch (respStatusObj.status) {
           case 'error': {
             throw new Error(respStatusObj.message || 'An unexpected error occured.')
           }
           case 'running': {
             this.progress = respStatusObj.progress || 0
-            window.requestAnimationFrame(() => {
-              setTimeout(() => {
-                this.checkProgress()
+            this.pollAnimationFrameHandle = window.requestAnimationFrame(() => {
+              if (this.isDisposed || generation !== this.requestGeneration) {
+                return
+              }
+              this.pollAnimationFrameHandle = null
+
+              this.pollTimeoutHandle = window.setTimeout(() => {
+                if (this.isDisposed || generation !== this.requestGeneration) {
+                  return
+                }
+                this.pollTimeoutHandle = null
+                void this.checkProgress(generation)
               }, 5000)
             })
             break
@@ -201,25 +263,46 @@ export default defineComponent({
           }
         }
       } catch (err) {
+        if (this.isDisposed || generation !== this.requestGeneration) {
+          return
+        }
         this.errorMessage = getErrorMessage(err)
         this.isLoading = false
         this.isFailed = true
       }
     },
     async startExport () {
+      if (this.isDisposed) {
+        return
+      }
+
+      this.clearScheduledWork()
+      this.requestGeneration += 1
+      const generation = this.requestGeneration
       this.isFailed = false
       this.isSuccess = false
       this.isLoading = true
       this.progress = 0
 
-      setTimeout(async () => {
+      this.startTimeoutHandle = window.setTimeout(async () => {
+        if (this.isDisposed || generation !== this.requestGeneration) {
+          return
+        }
+        this.startTimeoutHandle = null
+
         try {
           // -> Initiate export
           await startSystemExport(window.fetch.bind(window), this.entities, this.filePath, 'Export failed')
+          if (this.isDisposed || generation !== this.requestGeneration) {
+            return
+          }
 
           // -> Check for progress
-          this.checkProgress()
+          void this.checkProgress(generation)
         } catch (err) {
+          if (this.isDisposed || generation !== this.requestGeneration) {
+            return
+          }
           this.errorMessage = getErrorMessage(err)
           this.isFailed = true
           wikiStore.showError(err)

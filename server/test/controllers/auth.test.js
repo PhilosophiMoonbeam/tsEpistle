@@ -1,17 +1,13 @@
-const limiter = vi.hoisted(() => ({
-  middleware: vi.fn((req, res, next) => next()),
-  options: [],
-  reset: vi.fn().mockResolvedValue(undefined)
+const rateLimiter = vi.hoisted(() => ({
+  create: vi.fn(() => ({
+    middleware: vi.fn((req, res, next) => next()),
+    reset: vi.fn().mockResolvedValue(undefined)
+  }))
 }))
 
 vi.mockModule('../../helpers/auth-rate-limiter.ts', import.meta.url, () => ({
-  createAuthRateLimiter: vi.fn(options => {
-    limiter.options.push(options)
-    return limiter
-  }),
-  setAuthRateLimitHeaders: vi.fn((res, retryAfterMs) => {
-    res.set('Retry-After', String(Math.max(1, Math.ceil(retryAfterMs / 1000))))
-  })
+  createAuthRateLimiter: rateLimiter.create,
+  setAuthRateLimitHeaders: vi.fn()
 }))
 
 vi.mockModule('../../helpers/common.ts', import.meta.url, () => ({
@@ -33,18 +29,16 @@ vi.mockModule('express', import.meta.url, () => {
 
 const { default: express } = await import('express')
 
-describe('HTML auth controller rate limiting', () => {
+describe('HTML auth controller', () => {
   beforeEach(() => {
     vi.resetModules()
     express.__router.all.mockClear()
     express.__router.get.mockClear()
     express.__router.post.mockClear()
-    limiter.options.length = 0
-    limiter.reset.mockClear()
+    rateLimiter.create.mockClear()
 
     global.WIKI = {
       models: {
-        knex: {},
         authentication: {},
         users: {
           login: vi.fn().mockResolvedValue({ jwt: 'login-jwt' })
@@ -72,15 +66,44 @@ describe('HTML auth controller rate limiting', () => {
     createAuthController(global.WIKI)
   }
 
-  it('configures the HTML limiter with a 429 response and Retry-After', async () => {
+  it('does not spend rate-limit attempts on invalid token landing GETs', async () => {
     await loadController()
-    const res = { send: vi.fn(), set: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    limiter.options[0].onLimit({}, res, 5 * 60 * 1000)
+    for (const [path, kind, templateKey] of [
+      ['/verify/:token', 'verify', 'verificationToken'],
+      ['/login-reset/:token', 'resetPwd', 'resetPasswordToken']
+    ]) {
+      const route = express.__router.get.mock.calls.find(([registeredPath]) => registeredPath === path)
+      expect(route).toHaveLength(2)
+      const landing = route[1]
+      const invalidToken = new Error('invalid token')
+      const invalidNext = vi.fn()
+      global.WIKI.models.userKeys.validateToken.mockRejectedValueOnce(invalidToken)
 
-    expect(res.set).toHaveBeenCalledWith('Retry-After', '300')
-    expect(res.status).toHaveBeenCalledWith(429)
-    expect(res.send).toHaveBeenCalledWith('Too many failed attempts. Try again later.')
+      await landing({ params: { token: 'invalid-token' } }, { locals: {}, render: vi.fn() }, invalidNext)
+      expect(global.WIKI.models.userKeys.validateToken).toHaveBeenLastCalledWith({
+        kind,
+        token: 'invalid-token',
+        skipDelete: true
+      })
+
+      expect(invalidNext).toHaveBeenCalledWith(invalidToken)
+
+      const validResponse = { locals: {}, render: vi.fn() }
+      global.WIKI.models.userKeys.validateToken.mockResolvedValueOnce({ id: 7 })
+      await landing({ params: { token: 'valid-token' } }, validResponse, vi.fn())
+      expect(global.WIKI.models.userKeys.validateToken).toHaveBeenLastCalledWith({
+        kind,
+        token: 'valid-token',
+        skipDelete: true
+      })
+
+      expect(validResponse.render).toHaveBeenCalledWith('login', expect.objectContaining({
+        [templateKey]: 'valid-token'
+      }))
+    }
+
+    expect(rateLimiter.create).not.toHaveBeenCalled()
   })
 
   it('uses the modern login shell for legacy query strings and user agents', async () => {
@@ -109,6 +132,7 @@ describe('HTML auth controller rate limiting', () => {
   it('renders email confirmation without consuming or applying the token', async () => {
     await loadController()
     const route = express.__router.get.mock.calls.find(([path]) => path === '/verify/:token')
+    expect(route).toHaveLength(2)
     const verify = route[route.length - 1]
     const req = { params: { token: 'verify-token' } }
     const res = { locals: {}, render: vi.fn() }
@@ -131,6 +155,7 @@ describe('HTML auth controller rate limiting', () => {
   it('renders password reset without consuming the token', async () => {
     await loadController()
     const route = express.__router.get.mock.calls.find(([path]) => path === '/login-reset/:token')
+    expect(route).toHaveLength(2)
     const reset = route[route.length - 1]
     const req = { params: { token: 'reset-token' } }
     const res = { locals: {}, render: vi.fn() }

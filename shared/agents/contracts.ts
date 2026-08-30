@@ -1,10 +1,6 @@
-export const AGENT_PERMISSION_KEYS = [
-  'use:agents',
-  'use:agent-browser',
-  'use:mcp'
-] as const
+export const AGENT_PERMISSION_KEYS = ['use:agents', 'use:agent-browser', 'use:mcp'] as const
 
-export type AgentPermissionKey = typeof AGENT_PERMISSION_KEYS[number]
+export type AgentPermissionKey = (typeof AGENT_PERMISSION_KEYS)[number]
 
 export const AGENT_FEATURE_FLAG_KEYS = [
   'agents.enabled',
@@ -22,7 +18,7 @@ export const AGENT_FEATURE_FLAG_KEYS = [
   'agents.mcp.enabled'
 ] as const
 
-export type AgentFeatureFlagKey = typeof AGENT_FEATURE_FLAG_KEYS[number]
+export type AgentFeatureFlagKey = (typeof AGENT_FEATURE_FLAG_KEYS)[number]
 export type AgentFeatureFlags = Readonly<Record<AgentFeatureFlagKey, boolean>>
 
 export const AGENT_ACTION_NAMES = [
@@ -53,7 +49,7 @@ export const AGENT_ACTION_NAMES = [
   'pages.applyProposal'
 ] as const
 
-export type AgentActionName = typeof AGENT_ACTION_NAMES[number]
+export type AgentActionName = (typeof AGENT_ACTION_NAMES)[number]
 
 export const AGENT_TOOL_NAMES = {
   'pages.search': 'wiki_search_pages',
@@ -83,7 +79,7 @@ export const AGENT_TOOL_NAMES = {
   'pages.applyProposal': 'wiki_apply_page_proposal'
 } as const satisfies Record<AgentActionName, string>
 
-export type AgentToolName = typeof AGENT_TOOL_NAMES[keyof typeof AGENT_TOOL_NAMES]
+export type AgentToolName = (typeof AGENT_TOOL_NAMES)[keyof typeof AGENT_TOOL_NAMES]
 export const AGENT_ACTION_BY_TOOL_NAME = Object.fromEntries(
   Object.entries(AGENT_TOOL_NAMES).map(([actionName, toolName]) => [toolName, actionName])
 ) as Readonly<Record<AgentToolName, AgentActionName>>
@@ -95,16 +91,17 @@ export type AgentSessionStatus = 'active' | 'deletion_pending'
 export type AgentRunStatus = 'queued' | 'running' | 'awaiting_approval' | 'succeeded' | 'partial' | 'failed' | 'cancelled' | 'recovery_required'
 export type AgentMessageRole = 'user' | 'assistant'
 export type AgentMessageStatus = 'pending' | 'streaming' | 'complete' | 'failed' | 'cancelled'
-export type AgentProposalStatus = 'pending' | 'approved' | 'denied' | 'expired' | 'applying' | 'applied' | 'failed' | 'cancelled' | 'recovery_required'
+export const AGENT_PROPOSAL_STATUSES = ['pending', 'approved', 'denied', 'expired', 'applying', 'applied', 'failed', 'cancelled', 'recovery_required'] as const
+export type AgentProposalStatus = (typeof AGENT_PROPOSAL_STATUSES)[number]
 export type AgentApprovalStatus = 'pending' | 'approved' | 'denied' | 'expired' | 'cancelled'
 export type AgentToolState = 'preparing' | 'running' | 'awaitingApproval' | 'complete' | 'failed' | 'denied' | 'cancelled'
 export const AGENT_TASK_KINDS = ['source_scout', 'fact_check', 'conflict_check'] as const
-export type AgentTaskKind = typeof AGENT_TASK_KINDS[number]
+export type AgentTaskKind = (typeof AGENT_TASK_KINDS)[number]
 export type AgentTaskStatus = 'pending' | 'running' | 'blocked' | 'completed' | 'failed' | 'cancelled'
 export type AgentTaskOutcome = 'completed' | 'blocked' | 'partial' | 'failed'
 export type AgentEvidenceConfidence = 'high' | 'medium' | 'low'
 export const AGENT_GOAL_STATUSES = ['active', 'paused', 'blocked', 'budget_limited', 'completed', 'cancelled', 'failed'] as const
-export type AgentGoalStatus = typeof AGENT_GOAL_STATUSES[number]
+export type AgentGoalStatus = (typeof AGENT_GOAL_STATUSES)[number]
 export type AgentCompletionOutcome = 'complete' | 'retry' | 'blocked' | 'partial'
 
 export interface AgentCompletionIssue {
@@ -117,7 +114,6 @@ export interface AgentCompletionAssessment {
   readonly outcome: AgentCompletionOutcome
   readonly issues: readonly AgentCompletionIssue[]
 }
-
 
 export interface AgentEvidenceClaim {
   readonly text: string
@@ -225,28 +221,13 @@ export interface AgentProviderCapabilities {
   readonly maxOutputTokens: number
 }
 
-export const AGENT_PROVIDER_TRANSPORTS = [
-  'openai-responses',
-  'openresponses',
-  'openai-chat',
-  'legacy-completions',
-  'anthropic-messages',
-  'gemini-api'
-] as const
+export const AGENT_PROVIDER_TRANSPORTS = ['openai-responses', 'openresponses', 'openai-chat', 'legacy-completions', 'anthropic-messages', 'gemini-api'] as const
 
-export type AgentProviderTransport = typeof AGENT_PROVIDER_TRANSPORTS[number]
+export type AgentProviderTransport = (typeof AGENT_PROVIDER_TRANSPORTS)[number]
 
-export const AGENT_REASONING_EFFORTS = [
-  'none',
-  'minimal',
-  'low',
-  'medium',
-  'high',
-  'xhigh',
-  'max'
-] as const
+export const AGENT_REASONING_EFFORTS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const
 
-export type AgentReasoningEffort = typeof AGENT_REASONING_EFFORTS[number]
+export type AgentReasoningEffort = (typeof AGENT_REASONING_EFFORTS)[number]
 
 const AGENT_REASONING_EFFORTS_BY_TRANSPORT = {
   'openai-responses': AGENT_REASONING_EFFORTS,
@@ -383,7 +364,6 @@ export interface AgentGoalView {
   readonly completion: AgentCompletionAssessment | null
 }
 
-
 export interface AgentProposalView {
   readonly id: string
   readonly sourceKind: AgentTransport
@@ -476,7 +456,7 @@ export const AGENT_EVENT_TYPES = [
   'suggestions.updated'
 ] as const
 
-export type AgentEventType = typeof AGENT_EVENT_TYPES[number]
+export type AgentEventType = (typeof AGENT_EVENT_TYPES)[number]
 export type AgentEventData = Readonly<Record<string, string | number | boolean | null | readonly unknown[] | Readonly<Record<string, unknown>>>>
 
 export interface AgentEvent {
@@ -522,7 +502,6 @@ export interface UpdateAgentSessionFolderRequest {
   readonly folderId: string | null
 }
 
-
 export interface UpdateAgentSkillPreferencesRequest {
   readonly skillIds: readonly string[]
 }
@@ -563,7 +542,6 @@ export interface ResumeAgentGoalRequest {
 export interface CancelAgentGoalRequest {
   readonly expectedVersion: number
 }
-
 
 export interface DecideAgentApprovalRequest {
   readonly decision: 'approve' | 'deny'

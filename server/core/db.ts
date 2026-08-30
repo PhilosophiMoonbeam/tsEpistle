@@ -47,7 +47,11 @@ type KnexInstance = Knex<DatabaseRow, unknown[]>
 interface PoolConnection {
   query(statement: string): Promise<unknown>
 }
-interface NotificationPayload { event: string; source: string; value: unknown }
+interface NotificationPayload {
+  event: string
+  source: string
+  value: unknown
+}
 
 export interface InitializedDatabase {
   [key: string]: unknown
@@ -81,8 +85,11 @@ interface WikiContext {
   auth: { subscribeToEvents(): void }
   config: { db: DbConfig; ha: boolean | string | number; pool: Record<string, unknown> }
   configSvc: { subscribeToEvents(): void }
-  events: { inbound: { emit(event: string, value: unknown): void; removeAllListeners(): void }; outbound: { offAny(listener: (event: string, value: unknown) => void): void; onAny(listener: (event: string, value: unknown) => void): void } }
-  logger: { debug(message: unknown): void; error(message: string): void; info(message: string): void; warn(message: string): void }
+  events: {
+    inbound: { emit(event: string, value: unknown): void; removeAllListeners(): void }
+    outbound: { offAny(listener: (event: string, value: unknown) => void): void; onAny(listener: (event: string, value: unknown) => void): void }
+  }
+  logger: { debug(message: unknown): void; error(message: unknown): void; info(message: string): void; warn(message: string): void }
   models: { listener: PGPubSub | null; pages: { subscribeToEvents(): void } }
 }
 
@@ -140,19 +147,20 @@ const database: DatabaseService = {
    */
   async init(): Promise<InitializedDatabase> {
     const dbClient = 'pg'
-    const dbConfig: DatabaseConnectionConfig = (!_.isEmpty(process.env.DATABASE_URL) && process.env.DATABASE_URL)
-      ? process.env.DATABASE_URL
-      : {
-          host: wiki.config.db.host.toString(),
-          user: wiki.config.db.user.toString(),
-          password: wiki.config.db.pass.toString(),
-          database: wiki.config.db.db.toString(),
-          port: wiki.config.db.port
-        }
+    const dbConfig: DatabaseConnectionConfig =
+      !_.isEmpty(process.env.DATABASE_URL) && process.env.DATABASE_URL
+        ? process.env.DATABASE_URL
+        : {
+            host: wiki.config.db.host.toString(),
+            user: wiki.config.db.user.toString(),
+            password: wiki.config.db.pass.toString(),
+            database: wiki.config.db.db.toString(),
+            port: wiki.config.db.port
+          }
 
     // Handle SSL Options
 
-    let dbUseSSL = (wiki.config.db.ssl === true || wiki.config.db.ssl === 'true' || wiki.config.db.ssl === 1 || wiki.config.db.ssl === '1')
+    let dbUseSSL = wiki.config.db.ssl === true || wiki.config.db.ssl === 'true' || wiki.config.db.ssl === 1 || wiki.config.db.ssl === '1'
     let sslOptions: true | SslOptions
     if (dbUseSSL && isNetworkConnection(dbConfig) && _.get(wiki.config.db, 'sslOptions.auto', null) === false) {
       sslOptions = wiki.config.db.sslOptions
@@ -184,7 +192,7 @@ const database: DatabaseService = {
       throw new Error(`Unsupported database type ${wiki.config.db.type}. tsFranki requires PostgreSQL.`)
     }
     if (dbUseSSL && isNetworkConnection(dbConfig)) {
-      dbConfig.ssl = (sslOptions === true) ? { rejectUnauthorized: true } : sslOptions
+      dbConfig.ssl = sslOptions === true ? { rejectUnauthorized: true } : sslOptions
     }
 
     // Initialize Knex
@@ -219,7 +227,7 @@ const database: DatabaseService = {
     let conAttempts = 0
     const initTasks = {
       // -> Attempt initial connection
-      async connect () {
+      async connect() {
         try {
           wiki.logger.info('Connecting to database...')
           await knex.raw('SELECT 1 + 1;')
@@ -235,44 +243,44 @@ const database: DatabaseService = {
           }
         }
       },
-      async verifyPostgresVersion () {
+      async verifyPostgresVersion() {
         if (wiki.config.db.type !== 'postgres') return
         const version = await assertSupportedPostgresVersion(knex)
         wiki.logger.info(`PostgreSQL ${version.version} is within the supported ${version.major} server line [ OK ]`)
       },
       // -> Migrate DB Schemas
-      async syncSchemas () {
+      async syncSchemas() {
         return knex.migrate.latest({
           tableName: 'migrations',
           migrationSource
         })
       },
       // -> Migrate DB Schemas from beta
-      async migrateFromBeta () {
+      async migrateFromBeta() {
         return migrateFromBeta.migrate(knex)
       },
       // -> Refuse unsafe schemas before the legacy beta migrator can write
-      async preflightLegacyMigrations () {
+      async preflightLegacyMigrations() {
         return preflightMigrations(knex, migrationSource, {
           legacyMigrationNames: await migrateFromBeta.getLegacyMigrationNames()
         })
       },
       // -> Recheck the normalized ledger before current Knex migrations write
-      async preflightCurrentMigrations () {
+      async preflightCurrentMigrations() {
         return preflightMigrations(knex, migrationSource)
       }
     }
 
-    const initTasksQueue = (wiki.IS_MASTER) ? [
-      initTasks.connect,
-      initTasks.verifyPostgresVersion,
-      initTasks.preflightLegacyMigrations,
-      initTasks.migrateFromBeta,
-      initTasks.preflightCurrentMigrations,
-      initTasks.syncSchemas
-    ] : [
-      async () => {}
-    ]
+    const initTasksQueue = wiki.IS_MASTER
+      ? [
+          initTasks.connect,
+          initTasks.verifyPostgresVersion,
+          initTasks.preflightLegacyMigrations,
+          initTasks.migrateFromBeta,
+          initTasks.preflightCurrentMigrations,
+          initTasks.syncSchemas
+        ]
+      : [async () => {}]
 
     // Perform init tasks
 
@@ -287,23 +295,33 @@ const database: DatabaseService = {
   /**
    * Subscribe to database LISTEN / NOTIFY for multi-instances events
    */
-  async subscribeToNotifications () {
-    const useHA = (wiki.config.ha === true || (typeof wiki.config.ha === 'string' && wiki.config.ha.toLowerCase() === 'true') || wiki.config.ha === 1 || wiki.config.ha === '1')
+  async subscribeToNotifications() {
+    const useHA =
+      wiki.config.ha === true ||
+      (typeof wiki.config.ha === 'string' && wiki.config.ha.toLowerCase() === 'true') ||
+      wiki.config.ha === 1 ||
+      wiki.config.ha === '1'
     if (!useHA) return
-
 
     const knex = this.knex
     if (!knex) throw new Error('Database must be initialized before subscribing to notifications')
     const listener = new PGPubSub(knex.client.connectionSettings, {
-      log (ev: unknown) { wiki.logger.debug(ev) }
-    })
-    this.listener = listener
-    void listener.addChannel('wiki', (payload: unknown) => {
-      if (isNotificationPayload(payload) && payload.source !== wiki.INSTANCE_ID) {
-        wiki.logger.info(`Received event ${payload.event} from instance ${payload.source}: [ OK ]`)
-        wiki.events.inbound.emit(payload.event, payload.value)
+      log(ev: unknown) {
+        wiki.logger.debug(ev)
       }
     })
+    try {
+      await listener.addChannel('wiki', (payload: unknown) => {
+        if (isNotificationPayload(payload) && payload.source !== wiki.INSTANCE_ID) {
+          wiki.logger.info(`Received event ${payload.event} from instance ${payload.source}: [ OK ]`)
+          wiki.events.inbound.emit(payload.event, payload.value)
+        }
+      })
+    } catch (error) {
+      await listener.close()
+      throw error
+    }
+    this.listener = listener
     wiki.events.outbound.onAny(this.notifyViaDB)
 
     // -> Listen to inbound events
@@ -317,7 +335,7 @@ const database: DatabaseService = {
   /**
    * Unsubscribe from database LISTEN / NOTIFY
    */
-  async unsubscribeToNotifications () {
+  async unsubscribeToNotifications() {
     const listener = this.listener
     if (listener) {
       wiki.events.outbound.offAny(this.notifyViaDB)
@@ -332,13 +350,24 @@ const database: DatabaseService = {
    * @param {string} event Event fired
    * @param {object} value Payload of the event
    */
-  notifyViaDB (event: string, value: unknown) {
+  notifyViaDB(event: string, value: unknown) {
     const listener = wiki.models.listener
-    if (listener) void listener.publish('wiki', {
-      source: wiki.INSTANCE_ID,
-      event,
-      value
-    })
+    if (listener) {
+      void listener
+        .publish('wiki', {
+          source: wiki.INSTANCE_ID,
+          event,
+          value
+        })
+        .catch((error: unknown) => {
+          wiki.logger.error({
+            message: 'Failed to publish High-Availability notification',
+            channel: 'wiki',
+            event,
+            error: connectionErrorMessage(error)
+          })
+        })
+    }
   }
 }
 

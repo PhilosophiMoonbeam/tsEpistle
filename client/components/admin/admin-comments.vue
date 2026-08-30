@@ -138,7 +138,11 @@ export default {
       }
     },
     async refresh() {
-      await this.loadProviders()
+      try {
+        await this.loadProviders()
+      } catch {
+        return
+      }
       showNotification(wikiStore, {
         message: this.$t('admin:comments.listRefreshSuccess'),
         style: 'success',

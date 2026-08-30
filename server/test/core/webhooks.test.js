@@ -66,6 +66,7 @@ describe('webhook transport security', () => {
         address: '203.0.114.10',
         family: 4
       },
+      signal: new AbortController().signal,
       timestamp
     })
 
@@ -85,5 +86,28 @@ describe('webhook transport security', () => {
       })
     })
     expect(lookupResult).toEqual({ address: '203.0.114.10', family: 4 })
+  })
+
+  it('does not dispatch an already-aborted delivery', async () => {
+    const controller = new AbortController()
+    controller.abort(new DOMException('Webhook lease lost', 'AbortError'))
+
+    await expect(sendSignedWebhook({
+      deliveryId: 'delivery-1',
+      eventId: 'event-1',
+      eventType: 'page.created',
+      eventVersion: 1,
+      eventCreatedAt: new Date('2026-08-14T11:59:00.000Z'),
+      payload: { pageId: 7 },
+      secret: 'delivery-secret',
+      target: {
+        url: new URL('https://hooks.example.test/wiki'),
+        address: '203.0.114.10',
+        family: 4
+      },
+      signal: controller.signal
+    })).rejects.toBe(controller.signal.reason)
+
+    expect(requestMock).not.toHaveBeenCalled()
   })
 })

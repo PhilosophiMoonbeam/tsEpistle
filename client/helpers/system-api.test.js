@@ -34,7 +34,7 @@ const infoPayload = {
   dbType: 'PostgreSQL',
   dbVersion: '15.4',
   hostname: 'wiki-host',
-  bunVersion: '1.3.14',
+  bunVersion: '1.4.0',
   operatingSystem: 'Ubuntu 24.04 LTS',
   platform: 'linux',
   ramTotal: '16 GB',

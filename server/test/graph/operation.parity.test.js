@@ -10,7 +10,8 @@ const operationMocks = vi.hoisted(() => ({
   },
   pages: {
     list: vi.fn(),
-    create: vi.fn()
+    create: vi.fn(),
+    remove: vi.fn()
   },
   comments: {
     list: vi.fn(),
@@ -22,6 +23,16 @@ vi.mockModule('../../operations/users.ts', import.meta.url, () => ({ default: op
 vi.mockModule('../../operations/groups.ts', import.meta.url, () => ({ default: operationMocks.groups }))
 vi.mockModule('../../operations/pages.ts', import.meta.url, () => ({ default: operationMocks.pages }))
 vi.mockModule('../../operations/comments.ts', import.meta.url, () => ({ default: operationMocks.comments }))
+vi.mockModule('../../operations/page-protection.ts', import.meta.url, () => ({
+  assertPageUnlocked: vi.fn().mockResolvedValue(undefined),
+  getPageProtection: vi.fn().mockResolvedValue(undefined),
+  isPageProtected: vi.fn().mockResolvedValue(false),
+  redactProtectedPageForSearch: vi.fn(async page => page),
+  removePageProtection: vi.fn().mockResolvedValue(undefined),
+  setPageProtection: vi.fn().mockResolvedValue(undefined),
+  syncProtectedPageAssets: vi.fn().mockResolvedValue(undefined),
+  unlockPage: vi.fn().mockResolvedValue(undefined)
+}))
 
 vi.mockModule('express', import.meta.url, () => {
   const Router = () => {
@@ -436,6 +447,53 @@ describe('REST and GraphQL shared operation parity', () => {
       expect(failedRestResponse.json).toHaveBeenCalledWith({ error: 'invalid page' })
       expect(failedGraphResult).toEqual({
         responseResult: { succeeded: false, errorCode: 92, slug: 'ValidationError', message: 'invalid page' }
+      })
+    })
+
+    it('passes the required deletion revision identically and preserves stale conflict semantics', async () => {
+      const requester = { id: 1, permissions: ['delete:pages'] }
+      const expectedSourceRevision = '17'
+      const expectedInput = { requester, id: 12, expectedSourceRevision }
+      const restResponse = makeResponse()
+      operationMocks.pages.remove.mockResolvedValue(undefined)
+
+      await adapters.pages.router.handler('delete', '/:id')(
+        { user: requester, params: { id: '12' }, body: { expectedSourceRevision } },
+        restResponse
+      )
+      const graphResult = await adapters.pages.resolver.PageMutation.delete(
+        null,
+        { id: 12, expectedSourceRevision },
+        { req: { user: requester, sessionID: 'session-1' } }
+      )
+
+      expectEquivalentOperationInputs(operationMocks.pages.remove, expectedInput)
+      expect(restResponse.json).toHaveBeenCalledWith({ message: 'Page has been deleted.' })
+      expect(graphResult).toEqual({ responseResult: graphSuccess('Page has been deleted.') })
+
+      operationMocks.pages.remove.mockClear()
+      const conflict = operationError('The page changed before deletion.', {
+        status: 409,
+        code: 409,
+        name: 'PageUpdateConflict'
+      })
+      operationMocks.pages.remove.mockRejectedValue(conflict)
+
+      const staleGraphResult = await adapters.pages.resolver.PageMutation.delete(
+        null,
+        { id: 12, expectedSourceRevision },
+        { req: { user: requester, sessionID: 'session-1' } }
+      )
+
+      expect(operationMocks.pages.remove).toHaveBeenCalledOnce()
+      expect(operationMocks.pages.remove).toHaveBeenCalledWith(expectedInput)
+      expect(staleGraphResult).toEqual({
+        responseResult: {
+          succeeded: false,
+          errorCode: 409,
+          slug: 'PageUpdateConflict',
+          message: 'The page changed before deletion.'
+        }
       })
     })
   })

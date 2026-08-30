@@ -8,18 +8,30 @@ import { up as migratePrivatePages } from '../../db/migrations/2.5.129.ts'
 
 const databaseName = process.env.WIKI_TEST_POSTGRES_DATABASE ?? ''
 const passwordFile = process.env.WIKI_TEST_POSTGRES_PASSWORD_FILE
-const connection = passwordFile
+const password = passwordFile
+  ? fs.readFileSync(passwordFile, 'utf8').trim()
+  : process.env.WIKI_TEST_POSTGRES_PASSWORD
+const connection = databaseName.endsWith('_private_pages_test') && password
   ? {
       host: process.env.WIKI_TEST_POSTGRES_HOST ?? 'wiki-postgres',
       port: Number(process.env.WIKI_TEST_POSTGRES_PORT ?? 5432),
       user: process.env.WIKI_TEST_POSTGRES_USER ?? 'wiki',
-      password: fs.readFileSync(passwordFile, 'utf8').trim(),
+      password,
       database: databaseName
     }
   : null
-const enabled = Boolean(connection && databaseName.endsWith('_private_pages_test'))
+const directlyInvoked = process.env.npm_lifecycle_event !== 'test' && process.argv.some(argument =>
+  argument.replaceAll('\\', '/').endsWith('private-pages.postgres.integration.test.ts')
+)
+const databaseContractRequired = directlyInvoked || process.env.WIKI_TEST_POSTGRES_REQUIRED === '1'
 
-const suite = enabled ? describe : describe.skip
+if (databaseContractRequired && !connection) {
+  throw new Error(
+    'Explicit private-pages PostgreSQL execution requires WIKI_TEST_POSTGRES_DATABASE ending in _private_pages_test and a PostgreSQL password.'
+  )
+}
+
+const suite = connection ? describe : describe.skip
 
 suite('PostgreSQL private-page schema migration', () => {
   let db: Knex

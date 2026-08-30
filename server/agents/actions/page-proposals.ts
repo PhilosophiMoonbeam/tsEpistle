@@ -7,6 +7,7 @@ import { z } from 'zod'
 import { canonicalJson } from '../../helpers/canonical-json.ts'
 import { ACTION_CATALOG } from './catalog.ts'
 import { type ActionAuthority, type ActionHandlerContext, ActionKernel, ActionKernelError } from './kernel.ts'
+import { clearAgentApprovalContinuation, invokingAgentRunLease, persistAgentApprovalContinuation, readAgentApprovalContinuation } from '../coordinator.ts'
 import { appendAgentEvent } from '../repository.ts'
 import { applyWikiLinePatch, inspectWikiLineSnapshotToken } from '../patch/wiki-line-patch.ts'
 import { getMcpProposal, getOwnedProposal, persistProposal, type PersistedProposal, type ProposalStatus } from '../proposals/repository.ts'
@@ -45,8 +46,16 @@ const MetadataSchema = z.strictObject({
   locale: z.string(),
   resultIdentity: z.record(z.string(), z.unknown())
 })
-const RunRowSchema = z.object({ attempts: z.coerce.number().int().positive(), leaseToken: z.string().min(1), status: z.string(), goalId: z.uuid().nullable().optional() })
+const RunRowSchema = z.object({
+  ownerId: z.coerce.number().int().positive(),
+  attempts: z.coerce.number().int().positive(),
+  leaseOwner: z.string().min(1),
+  leaseToken: z.string().min(1),
+  status: z.string(),
+  goalId: z.uuid().nullable().optional()
+})
 const ApprovalRowSchema = z.object({ id: z.uuid(), status: z.enum(['pending', 'approved', 'denied', 'expired', 'cancelled']), expiresAt: z.union([z.string(), z.date()]) })
+type InvokingAgentRun = z.infer<typeof RunRowSchema>
 
 interface PageOperations {
   get(input: Record<string, unknown>): Promise<unknown>
@@ -127,12 +136,11 @@ const proposalResult = (persisted: PersistedProposal, status: ProposalStatus) =>
   expiresAt: iso(persisted.proposal.expiresAt)
 })
 
-const appendRunEvent = async (dependencies: PageProposalActionDependencies, authority: ActionAuthority, eventId: string, type: 'proposal.created' | 'approval.requested' | 'approval.resolved', data: Record<string, string>): Promise<void> => {
-  const run = RunRowSchema.parse(await dependencies.knex('agentRuns').where({ id: authority.requestId }).first('attempts', 'leaseToken', 'status'))
+const appendRunEvent = async (dependencies: PageProposalActionDependencies, authority: ActionAuthority, run: InvokingAgentRun, eventId: string, type: 'proposal.created' | 'approval.requested' | 'approval.resolved', data: Record<string, string>): Promise<void> => {
   await appendAgentEvent(dependencies.knex, {
     id: eventId,
     runId: authority.requestId,
-    ownerId: authority.requester.kind === 'user' ? authority.requester.userId : 0,
+    ownerId: run.ownerId,
     attempt: run.attempts,
     leaseToken: run.leaseToken,
     type,
@@ -140,14 +148,20 @@ const appendRunEvent = async (dependencies: PageProposalActionDependencies, auth
   })
 }
 
-const waitForApproval = async (dependencies: PageProposalActionDependencies, context: ActionHandlerContext, persisted: PersistedProposal): Promise<ProposalStatus> => {
+const waitForApproval = async (dependencies: PageProposalActionDependencies, context: ActionHandlerContext, actionInput: unknown, persisted: PersistedProposal, run: InvokingAgentRun): Promise<ProposalStatus> => {
   const { proposal, approval: initialApproval } = persisted
-  const run = RunRowSchema.parse(await dependencies.knex('agentRuns').where({ id: context.authority.requestId }).first())
   let awaiting = run.status === 'awaiting_approval'
   const resume = async (status: ProposalStatus): Promise<ProposalStatus> => {
     if (!awaiting) return status
     const resumed = await dependencies.knex('agentRuns')
-      .where({ id: context.authority.requestId, leaseToken: run.leaseToken, status: 'awaiting_approval' })
+      .where({
+        id: context.authority.requestId,
+        ownerId: run.ownerId,
+        attempts: run.attempts,
+        leaseOwner: run.leaseOwner,
+        leaseToken: run.leaseToken,
+        status: 'awaiting_approval'
+      })
       .whereNull('cancelRequestedAt')
       .update({ status: 'running', updatedAt: dependencies.knex.fn.now() })
     if (resumed !== 1) throw new ActionKernelError('RUN_LEASE_LOST', 'Run lease was lost while resolving approval', 409)
@@ -158,7 +172,7 @@ const waitForApproval = async (dependencies: PageProposalActionDependencies, con
         updatedAt: dependencies.knex.fn.now()
       })
     }
-    await appendRunEvent(dependencies, context.authority, randomUUID(), 'approval.resolved', {
+    await appendRunEvent(dependencies, context.authority, run, randomUUID(), 'approval.resolved', {
       actionCallId: context.actionCallId,
       proposalId: proposal.id,
       approvalId: initialApproval.id,
@@ -169,11 +183,20 @@ const waitForApproval = async (dependencies: PageProposalActionDependencies, con
 
   if (proposal.status !== 'pending') return resume(proposal.status)
   if (run.status === 'running') {
-    const changed = await dependencies.knex('agentRuns')
-      .where({ id: context.authority.requestId, leaseToken: run.leaseToken, status: 'running' })
-      .whereNull('cancelRequestedAt')
-      .update({ status: 'awaiting_approval', updatedAt: dependencies.knex.fn.now() })
-    if (changed !== 1) throw new ActionKernelError('RUN_LEASE_LOST', 'Run lease was lost before approval', 409)
+    await persistAgentApprovalContinuation(dependencies.knex, {
+      runId: context.authority.requestId,
+      ownerId: run.ownerId,
+      attempt: run.attempts,
+      leaseToken: run.leaseToken,
+      actionCallId: context.actionCallId,
+      actionName: context.authority.actionName,
+      actionInput,
+      proposalId: proposal.id,
+      approvalId: initialApproval.id,
+      proposalInputHash: proposal.inputHash,
+      authorityVersion: context.authority.version,
+      authoritySha256: context.authority.authoritySha256
+    })
     if (run.goalId) {
       await dependencies.knex('agentGoals').where({ id: run.goalId, status: 'active' }).update({
         status: 'blocked',
@@ -182,8 +205,8 @@ const waitForApproval = async (dependencies: PageProposalActionDependencies, con
       })
     }
     awaiting = true
-    await appendRunEvent(dependencies, context.authority, proposal.id, 'proposal.created', { actionCallId: context.actionCallId, proposalId: proposal.id })
-    await appendRunEvent(dependencies, context.authority, initialApproval.id, 'approval.requested', { actionCallId: context.actionCallId, proposalId: proposal.id, approvalId: initialApproval.id })
+    await appendRunEvent(dependencies, context.authority, run, proposal.id, 'proposal.created', { actionCallId: context.actionCallId, proposalId: proposal.id })
+    await appendRunEvent(dependencies, context.authority, run, initialApproval.id, 'approval.requested', { actionCallId: context.actionCallId, proposalId: proposal.id, approvalId: initialApproval.id })
   } else if (run.status !== 'awaiting_approval') {
     throw new ActionKernelError('RUN_LEASE_LOST', 'Run is not awaiting proposal approval', 409)
   }
@@ -204,7 +227,82 @@ const waitForApproval = async (dependencies: PageProposalActionDependencies, con
   }
 }
 
-const prepareAndWait = async (dependencies: PageProposalActionDependencies, context: ActionHandlerContext, input: unknown, prepared: PreparedProposal) => {
+const captureInvokingAgentRun = async (dependencies: PageProposalActionDependencies, context: ActionHandlerContext): Promise<InvokingAgentRun | null> => {
+  if (context.authority.transport !== 'agent') return null
+  if (context.authority.requester.kind !== 'user') throw new ActionKernelError('RUN_LEASE_LOST', 'Agent action requester does not own a resumable run', 409)
+  const claim = invokingAgentRunLease(context.signal)
+  if (claim === null || claim.id !== context.authority.requestId || claim.ownerId !== context.authority.requester.userId) {
+    throw new ActionKernelError('RUN_LEASE_LOST', 'Agent action is not bound to its invoking run lease', 409)
+  }
+  const row = await dependencies.knex('agentRuns')
+    .where({
+      id: claim.id,
+      ownerId: claim.ownerId,
+      attempts: claim.attempts,
+      leaseOwner: claim.leaseOwner,
+      leaseToken: claim.leaseToken
+    })
+    .whereIn('status', ['running', 'awaiting_approval'])
+    .whereNull('cancelRequestedAt')
+    .first('ownerId', 'attempts', 'leaseOwner', 'leaseToken', 'status', 'goalId')
+  if (!row) throw new ActionKernelError('RUN_LEASE_LOST', 'Run lease was lost before capturing the action continuation identity', 409)
+  return RunRowSchema.parse(row)
+}
+
+const finishProposal = async (dependencies: PageProposalActionDependencies, context: ActionHandlerContext, input: unknown, proposal: PersistedProposal, run: InvokingAgentRun | null) => {
+  if (context.authority.transport !== 'agent') return proposalResult(proposal, proposal.proposal.status)
+  if (run === null) throw new ActionKernelError('RUN_LEASE_LOST', 'Agent action is missing its captured run lease identity', 409)
+  const status = await waitForApproval(dependencies, context, input, proposal, run)
+  try {
+    if (status === 'approved') {
+      await context.executeAction('pages.applyProposal', {
+        proposalId: proposal.proposal.id,
+        approvalId: proposal.approval.id
+      })
+      return proposalResult(proposal, 'applied')
+    }
+    return proposalResult(proposal, status)
+  } finally {
+    await clearAgentApprovalContinuation(dependencies.knex, {
+      runId: context.authority.requestId,
+      ownerId: run.ownerId,
+      attempt: run.attempts,
+      leaseOwner: run.leaseOwner,
+      leaseToken: run.leaseToken
+    })
+  }
+}
+
+const continuedProposal = async (dependencies: PageProposalActionDependencies, context: ActionHandlerContext, input: unknown, run: InvokingAgentRun | null): Promise<PersistedProposal | null> => {
+  if (context.authority.transport !== 'agent' || context.authority.requester.kind !== 'user') return null
+  if (run === null) throw new ActionKernelError('RUN_LEASE_LOST', 'Agent action is missing its captured run lease identity', 409)
+  const checkpoint = await readAgentApprovalContinuation(dependencies.knex, {
+    id: context.authority.requestId,
+    ownerId: run.ownerId,
+    attempts: run.attempts,
+    leaseOwner: run.leaseOwner,
+    leaseToken: run.leaseToken
+  })
+  if (checkpoint === null) return null
+  if (
+    checkpoint.actionCallId !== context.actionCallId ||
+    checkpoint.actionName !== context.authority.actionName ||
+    checkpoint.authorityVersion !== context.authority.version ||
+    checkpoint.authoritySha256 !== context.authority.authoritySha256 ||
+    canonicalJson(checkpoint.actionInput) !== canonicalJson(input)
+  ) throw new ActionKernelError('AGENT_ACTION_CONTINUATION_MISMATCH', 'Continued action no longer matches its durable authority checkpoint', 409)
+  const proposal = await getOwnedProposal(dependencies.knex, context.authority.requester.userId, checkpoint.proposalId)
+  if (proposal.approval.id !== checkpoint.approvalId || proposal.proposal.inputHash !== checkpoint.proposalInputHash) {
+    throw new ActionKernelError('AGENT_ACTION_CONTINUATION_MISMATCH', 'Continued action no longer matches its durable proposal checkpoint', 409)
+  }
+  return proposal
+}
+
+const prepareAndWait = async (dependencies: PageProposalActionDependencies, context: ActionHandlerContext, input: unknown, prepare: () => Promise<PreparedProposal>) => {
+  const run = await captureInvokingAgentRun(dependencies, context)
+  const continued = await continuedProposal(dependencies, context, input, run)
+  if (continued !== null) return finishProposal(dependencies, context, input, continued, run)
+  const prepared = await prepare()
   const scope = context.authority.transport === 'agent'
     ? z.object({ sessionId: z.uuid() }).parse(await dependencies.knex('agentRuns').where({ id: context.authority.requestId }).first('sessionId'))
     : null
@@ -226,15 +324,7 @@ const prepareAndWait = async (dependencies: PageProposalActionDependencies, cont
     ...(prepared.diff === null ? {} : { diff: prepared.diff, diffSha256: sha256(prepared.diff), diffRendererVersion: 1 }),
     ttlMs: dependencies.approvalTtlMilliseconds ?? 15 * 60_000
   })
-  const status = context.authority.transport === 'agent' ? await waitForApproval(dependencies, context, proposal) : proposal.proposal.status
-  if (context.authority.transport === 'agent' && status === 'approved') {
-    await context.executeAction('pages.applyProposal', {
-      proposalId: proposal.proposal.id,
-      approvalId: proposal.approval.id
-    })
-    return proposalResult(proposal, 'applied')
-  }
-  return proposalResult(proposal, status)
+  return finishProposal(dependencies, context, input, proposal, run)
 }
 
 const preparePatch = async (dependencies: PageProposalActionDependencies, context: ActionHandlerContext, input: { patch: { snapshotToken: string } }): Promise<PreparedProposal> => {
@@ -434,10 +524,10 @@ const apply = async (dependencies: PageProposalActionDependencies, context: Acti
 }
 
 export const registerPageProposalActions = (kernel: ActionKernel, dependencies: PageProposalActionDependencies): void => {
-  kernel.register('pages.prepareCreate', async (input, context) => prepareAndWait(dependencies, context, input, await prepareCreate(dependencies, context, input as Record<string, unknown>)))
-  kernel.register('pages.preparePatch', async (input, context) => prepareAndWait(dependencies, context, input, await preparePatch(dependencies, context, input as { patch: { snapshotToken: string } })))
-  kernel.register('pages.prepareMove', async (input, context) => prepareAndWait(dependencies, context, input, await prepareMove(dependencies, context, input as Record<string, unknown>)))
-  kernel.register('pages.prepareRestore', async (input, context) => prepareAndWait(dependencies, context, input, await prepareRestore(dependencies, context, input as Record<string, unknown>)))
-  kernel.register('pages.prepareDelete', async (input, context) => prepareAndWait(dependencies, context, input, await prepareDelete(dependencies, context, input as Record<string, unknown>)))
+  kernel.register('pages.prepareCreate', (input, context) => prepareAndWait(dependencies, context, input, () => prepareCreate(dependencies, context, input as Record<string, unknown>)))
+  kernel.register('pages.preparePatch', (input, context) => prepareAndWait(dependencies, context, input, () => preparePatch(dependencies, context, input as { patch: { snapshotToken: string } })))
+  kernel.register('pages.prepareMove', (input, context) => prepareAndWait(dependencies, context, input, () => prepareMove(dependencies, context, input as Record<string, unknown>)))
+  kernel.register('pages.prepareRestore', (input, context) => prepareAndWait(dependencies, context, input, () => prepareRestore(dependencies, context, input as Record<string, unknown>)))
+  kernel.register('pages.prepareDelete', (input, context) => prepareAndWait(dependencies, context, input, () => prepareDelete(dependencies, context, input as Record<string, unknown>)))
   kernel.register('pages.applyProposal', async (input, context) => apply(dependencies, context, input as { proposalId: string, approvalId: string }))
 }

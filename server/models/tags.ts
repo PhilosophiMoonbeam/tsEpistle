@@ -8,93 +8,94 @@ import Page from './pages.ts'
 /**
  * Tags model
  */
-export default class Tag extends Model { declare id: number
-declare tag: string
-declare title: string
-declare createdAt: string
-declare updatedAt: string
-static override get tableName() { return 'tags' } static override get jsonSchema() { return {
-  type: 'object',
-  required: ['tag'],
-
-  properties: {
-    id: {type: 'integer'},
-    tag: {type: 'string'},
-    title: {type: 'string'},
-
-    createdAt: {type: 'string'},
-    updatedAt: {type: 'string'}
+export default class Tag extends Model {
+  declare id: number
+  declare tag: string
+  declare title: string
+  declare createdAt: string
+  declare updatedAt: string
+  static override get tableName() {
+    return 'tags'
   }
-} } static override get relationMappings() { return {
-  pages: {
-    relation: Model.ManyToManyRelation,
-    modelClass: Page,
-    join: {
-      from: 'tags.id',
-      through: {
-        from: 'pageTags.tagId',
-        to: 'pageTags.pageId'
-      },
-      to: 'pages.id'
-    }
-  }
-} } override $beforeUpdate() { this.updatedAt = new Date().toISOString() } override $beforeInsert() { this.createdAt = new Date().toISOString()
-this.updatedAt = new Date().toISOString() } static async associateTags ({ tags, page, transaction }: { tags: string[], page: Page, transaction?: Knex.Transaction }) {
-  let existingTags = await wiki.models.tags.query(transaction).column('id', 'tag')
+  static override get jsonSchema() {
+    return {
+      type: 'object',
+      required: ['tag'],
 
-  // Format tags
+      properties: {
+        id: { type: 'integer' },
+        tag: { type: 'string' },
+        title: { type: 'string' },
 
-  tags = _.uniq(tags.map(t => _.trim(t).toLowerCase()))
-
-  // Create missing tags
-
-  const newTags = _.filter(tags, t => !_.some(existingTags, ['tag', t])).map(t => ({
-    tag: t,
-    title: t
-  }))
-  if (newTags.length > 0) {
-    if (wiki.config.db.type === 'postgres') {
-      const createdTags = await wiki.models.tags.query(transaction).insert(newTags)
-      existingTags = _.concat(existingTags, createdTags)
-    } else {
-      for (const newTag of newTags) {
-        const createdTag = await wiki.models.tags.query(transaction).insert(newTag)
-        existingTags.push(createdTag)
+        createdAt: { type: 'string' },
+        updatedAt: { type: 'string' }
       }
     }
   }
+  static override get relationMappings() {
+    return {
+      pages: {
+        relation: Model.ManyToManyRelation,
+        modelClass: Page,
+        join: {
+          from: 'tags.id',
+          through: {
+            from: 'pageTags.tagId',
+            to: 'pageTags.pageId'
+          },
+          to: 'pages.id'
+        }
+      }
+    }
+  }
+  override $beforeUpdate() {
+    this.updatedAt = new Date().toISOString()
+  }
+  override $beforeInsert() {
+    this.createdAt = new Date().toISOString()
+    this.updatedAt = new Date().toISOString()
+  }
+  static async associateTags({ tags, page, transaction }: { tags: string[]; page: Page; transaction?: Knex.Transaction }) {
+    // Format tags
 
-  // Fetch current page tags
+    tags = _.uniq(tags.map(t => _.trim(t).toLowerCase()))
+    const existingTags = await wiki.models.tags.query(transaction).column('id', 'tag').whereIn('tag', tags)
 
-  const targetTags = _.filter(existingTags, t => _.includes(tags, t.tag))
-  const currentTags = await page.$relatedQuery('tags', transaction)
+    // Create missing tags
 
-  // Tags to relate
+    const newTags = _.filter(tags, t => !_.some(existingTags, ['tag', t])).map(t => ({
+      tag: t,
+      title: t
+    }))
+    if (newTags.length > 0) {
+      await wiki.models.tags.query(transaction).insert(newTags).onConflict('tag').ignore()
+    }
 
-  const tagsToRelate = _.differenceBy(targetTags, currentTags, 'id')
-  if (tagsToRelate.length > 0) {
-    if (wiki.config.db.type === 'postgres') {
+    // Fetch current page tags
+
+    const targetTags = await wiki.models.tags.query(transaction).column('id', 'tag').whereIn('tag', tags)
+    const currentTags = await page.$relatedQuery('tags', transaction)
+
+    // Tags to relate
+
+    const tagsToRelate = _.differenceBy(targetTags, currentTags, 'id')
+    if (tagsToRelate.length > 0) {
       await page.$relatedQuery('tags', transaction).relate(tagsToRelate)
-    } else {
-      for (const tag of tagsToRelate) {
-        await page.$relatedQuery('tags', transaction).relate(tag)
-      }
     }
+
+    // Tags to unrelate
+
+    const tagsToUnrelate = _.differenceBy(currentTags, targetTags, 'id')
+    const changed = tagsToRelate.length > 0 || tagsToUnrelate.length > 0
+    if (tagsToUnrelate.length > 0) {
+      await page.$relatedQuery('tags', transaction).unrelate().whereIn('tags.id', _.map(tagsToUnrelate, 'id'))
+    }
+
+    page.tags = targetTags
+    return changed
   }
-
-  // Tags to unrelate
-
-  const tagsToUnrelate = _.differenceBy(currentTags, targetTags, 'id')
-  const changed = tagsToRelate.length > 0 || tagsToUnrelate.length > 0
-  if (tagsToUnrelate.length > 0) {
-    await page.$relatedQuery('tags', transaction).unrelate().whereIn('tags.id', _.map(tagsToUnrelate, 'id'))
-  }
-
-  page.tags = targetTags
-  return changed
-} }
+}
 
 const wiki = WIKI as unknown as {
-  config: { db: { type: string } }
   models: { tags: typeof Tag }
 }

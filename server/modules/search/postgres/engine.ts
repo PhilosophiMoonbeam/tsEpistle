@@ -1,12 +1,4 @@
-import {
-  wiki,
-  type SearchConfig,
-  type SearchContext,
-  type SearchPlugin,
-  type SearchResult,
-  type UnknownRecord,
-  type WikiPage
-} from '../../types.ts'
+import { wiki, type SearchConfig, type SearchContext, type SearchPlugin, type SearchResult, type UnknownRecord, type WikiPage } from '../../types.ts'
 import type { Knex } from 'knex'
 
 const VECTOR_TABLE = 'pagesVector'
@@ -45,11 +37,23 @@ interface PageTag {
   title?: unknown
 }
 
-const isKnexClient = (value: typeof wiki.models.knex): value is typeof value & Knex => (
-  typeof value === 'function' &&
-  'transaction' in value &&
-  typeof value.transaction === 'function'
-)
+interface PageIdRow {
+  id: number
+}
+
+interface CanonicalPageModel {
+  getPageFromDb(pageId: number): Promise<WikiPage | undefined>
+  prepareSearchDocument(page: WikiPage): Promise<WikiPage>
+}
+
+const isPublishedPublicPage = (page: WikiPage): boolean => {
+  const visibility = Reflect.get(page, 'visibility')
+  const isPublished = Reflect.get(page, 'isPublished')
+  return visibility === 'public' && (isPublished === true || isPublished === 1)
+}
+
+const isKnexClient = (value: typeof wiki.models.knex): value is typeof value & Knex =>
+  typeof value === 'function' && 'transaction' in value && typeof value.transaction === 'function'
 
 const getKnexClient = (): Knex => {
   const client = wiki.models.knex
@@ -58,7 +62,7 @@ const getKnexClient = (): Knex => {
 }
 
 const hasColumns = async (knex: Knex, table: string, columns: readonly string[]): Promise<boolean> => {
-  if (!await knex.schema.hasTable(table)) return false
+  if (!(await knex.schema.hasTable(table))) return false
   const present = await Promise.all(columns.map(column => knex.schema.hasColumn(table, column)))
   return present.every(Boolean)
 }
@@ -103,63 +107,27 @@ const createSearchSchema = async (knex: Knex): Promise<boolean> => {
 }
 
 const rebuildSearchIndex = async (knex: Knex, dictionary: string): Promise<void> => {
+  const pageModel = wiki.models.pages as typeof wiki.models.pages & CanonicalPageModel
   await knex.transaction(async transaction => {
+    const pageIds = await transaction<PageIdRow>('pages')
+      .select('id')
+      .where('isPublished', true)
+      .andWhere('visibility', 'public')
+      .forShare()
+    const documents: WikiPage[] = []
+    for (const { id } of pageIds) {
+      const page = await pageModel.getPageFromDb(id)
+      if (!page || !isPublishedPublicPage(page)) continue
+      documents.push(await pageModel.prepareSearchDocument(page))
+    }
+
     await transaction(WORDS_TABLE).truncate()
     await transaction(VECTOR_TABLE).truncate()
-    await transaction.raw(`
-      WITH tag_data AS (
-        SELECT
-          pt."pageId",
-          array_agg(DISTINCT t.tag ORDER BY t.tag) FILTER (WHERE t.tag IS NOT NULL) AS tags,
-          string_agg(DISTINCT concat_ws(' ', t.tag, nullif(t.title, '')), ' ') AS tag_text
-        FROM "pageTags" pt
-        JOIN tags t ON t.id = pt."tagId"
-        GROUP BY pt."pageId"
-      ), documents AS (
-        SELECT
-          p.id AS page_id,
-          p.path,
-          p."localeCode" AS locale,
-          p.title,
-          coalesce(p.description, '') AS description,
-          coalesce(td.tags, '{}'::text[]) AS tags,
-          concat_ws(' ', p.title, replace(p.path, '/', ' '), coalesce(p.description, ''), coalesce(td.tag_text, '')) AS facets,
-          CASE
-            WHEN EXISTS (SELECT 1 FROM "pageAccessPasswords" password WHERE password."pageId" = p.id) THEN ''
-            ELSE coalesce(p.content, '')
-          END AS searchable_content,
-          coalesce(td.tag_text, '') AS tag_text
-        FROM pages p
-        LEFT JOIN tag_data td ON td."pageId" = p.id
-        WHERE p."isPublished" = true AND p.visibility = 'public'
-      )
-      INSERT INTO "pagesVector" ("pageId", path, locale, title, description, tags, facets, tokens)
-      SELECT
-        page_id,
-        path,
-        locale,
-        title,
-        description,
-        tags,
-        facets,
-        setweight(to_tsvector(?::regconfig, title), 'A') ||
-        setweight(to_tsvector(?::regconfig, tag_text), 'A') ||
-        setweight(to_tsvector(?::regconfig, replace(path, '/', ' ')), 'B') ||
-        setweight(to_tsvector(?::regconfig, description), 'B') ||
-        setweight(to_tsvector(?::regconfig, searchable_content), 'C')
-      FROM documents
-    `, [dictionary, dictionary, dictionary, dictionary, dictionary])
-    await transaction.raw(`
-      INSERT INTO "pagesWords" ("pageId", word)
-      SELECT vector."pageId", words.word
-      FROM "pagesVector" vector
-      CROSS JOIN LATERAL unnest(tsvector_to_array(to_tsvector('simple', vector.facets))) words(word)
-      ON CONFLICT DO NOTHING
-    `)
+    for (const page of documents) await indexPage(transaction, dictionary, page)
   })
 }
 
-const pageTags = (page: WikiPage): { tags: string[], tagText: string } => {
+const pageTags = (page: WikiPage): { tags: string[]; tagText: string } => {
   const tags = new Set<string>()
   const terms = new Set<string>()
   for (const value of page.tags) {
@@ -174,47 +142,55 @@ const pageTags = (page: WikiPage): { tags: string[], tagText: string } => {
   return { tags: [...tags].sort(), tagText: [...terms].join(' ') }
 }
 
-const upsertPage = async (knex: Knex, dictionary: string, page: WikiPage): Promise<void> => {
-  const tagValues = pageTags(page)
+const removePage = async (knex: Knex, pageId: number): Promise<void> => {
   await knex.transaction(async transaction => {
-    await transaction.raw(`
-      WITH document AS (
-        SELECT
-          ?::integer AS page_id,
-          ?::text AS path,
-          ?::text AS locale,
-          ?::text AS title,
-          ?::text AS description,
-          ?::text[] AS tags,
-          ?::text AS tag_text,
-          ?::text AS searchable_content
-      ), indexed AS (
-        SELECT
-          page_id,
-          path,
-          locale,
-          title,
-          description,
-          tags,
-          concat_ws(' ', title, replace(path, '/', ' '), description, tag_text) AS facets,
-          setweight(to_tsvector(?::regconfig, title), 'A') ||
-          setweight(to_tsvector(?::regconfig, tag_text), 'A') ||
-          setweight(to_tsvector(?::regconfig, replace(path, '/', ' ')), 'B') ||
-          setweight(to_tsvector(?::regconfig, description), 'B') ||
-          setweight(to_tsvector(?::regconfig, searchable_content), 'C') AS tokens
-        FROM document
-      )
-      INSERT INTO "pagesVector" ("pageId", path, locale, title, description, tags, facets, tokens)
-      SELECT page_id, path, locale, title, description, tags, facets, tokens FROM indexed
-      ON CONFLICT ("pageId") DO UPDATE SET
-        path = EXCLUDED.path,
-        locale = EXCLUDED.locale,
-        title = EXCLUDED.title,
-        description = EXCLUDED.description,
-        tags = EXCLUDED.tags,
-        facets = EXCLUDED.facets,
-        tokens = EXCLUDED.tokens
-    `, [
+    await transaction(WORDS_TABLE).where({ pageId }).delete()
+    await transaction(VECTOR_TABLE).where({ pageId }).delete()
+  })
+}
+
+const indexPage = async (transaction: Knex.Transaction, dictionary: string, page: WikiPage): Promise<void> => {
+  const tagValues = pageTags(page)
+  await transaction.raw(
+    `
+    WITH document AS (
+      SELECT
+        ?::integer AS page_id,
+        ?::text AS path,
+        ?::text AS locale,
+        ?::text AS title,
+        ?::text AS description,
+        ?::text[] AS tags,
+        ?::text AS tag_text,
+        ?::text AS searchable_content
+    ), indexed AS (
+      SELECT
+        page_id,
+        path,
+        locale,
+        title,
+        description,
+        tags,
+        concat_ws(' ', title, replace(path, '/', ' '), description, tag_text) AS facets,
+        setweight(to_tsvector(?::regconfig, title), 'A') ||
+        setweight(to_tsvector(?::regconfig, tag_text), 'A') ||
+        setweight(to_tsvector(?::regconfig, replace(path, '/', ' ')), 'B') ||
+        setweight(to_tsvector(?::regconfig, description), 'B') ||
+        setweight(to_tsvector(?::regconfig, searchable_content), 'C') AS tokens
+      FROM document
+    )
+    INSERT INTO "pagesVector" ("pageId", path, locale, title, description, tags, facets, tokens)
+    SELECT page_id, path, locale, title, description, tags, facets, tokens FROM indexed
+    ON CONFLICT ("pageId") DO UPDATE SET
+      path = EXCLUDED.path,
+      locale = EXCLUDED.locale,
+      title = EXCLUDED.title,
+      description = EXCLUDED.description,
+      tags = EXCLUDED.tags,
+      facets = EXCLUDED.facets,
+      tokens = EXCLUDED.tokens
+  `,
+    [
       page.id,
       page.path,
       page.localeCode,
@@ -228,22 +204,37 @@ const upsertPage = async (knex: Knex, dictionary: string, page: WikiPage): Promi
       dictionary,
       dictionary,
       dictionary
-    ])
-    await transaction(WORDS_TABLE).where({ pageId: page.id }).delete()
-    await transaction.raw(`
-      INSERT INTO "pagesWords" ("pageId", word)
-      SELECT vector."pageId", words.word
-      FROM "pagesVector" vector
-      CROSS JOIN LATERAL unnest(tsvector_to_array(to_tsvector('simple', vector.facets))) words(word)
-      WHERE vector."pageId" = ?
-      ON CONFLICT DO NOTHING
-    `, [page.id])
-  })
+    ]
+  )
+  await transaction(WORDS_TABLE).where({ pageId: page.id }).delete()
+  await transaction.raw(
+    `
+    INSERT INTO "pagesWords" ("pageId", word)
+    SELECT vector."pageId", words.word
+    FROM "pagesVector" vector
+    CROSS JOIN LATERAL unnest(tsvector_to_array(to_tsvector('simple', vector.facets))) words(word)
+    WHERE vector."pageId" = ?
+    ON CONFLICT DO NOTHING
+  `,
+    [page.id]
+  )
+}
+
+const upsertPage = async (knex: Knex, dictionary: string, page: WikiPage): Promise<void> => {
+  if (!isPublishedPublicPage(page)) {
+    await removePage(knex, page.id)
+    return
+  }
+  await knex.transaction(transaction => indexPage(transaction, dictionary, page))
 }
 
 const escapedLikeTerm = (value: string): string => `%${value.replaceAll('\\', '\\\\').replaceAll('%', '\\%').replaceAll('_', '\\_')}%`
 
-const suggestionTerm = (query: string): string => query.split(/\s+/u).at(-1)?.replace(/[^\p{L}\p{N}_-]+/gu, '') ?? ''
+const suggestionTerm = (query: string): string =>
+  query
+    .split(/\s+/u)
+    .at(-1)
+    ?.replace(/[^\p{L}\p{N}_-]+/gu, '') ?? ''
 
 const replaceSuggestionTerm = (query: string, replacement: string): string => {
   const lastWhitespace = query.search(/\s+\S*$/u)
@@ -254,14 +245,13 @@ const queryPages = async (
   knex: Knex,
   dictionary: string,
   query: string,
-  options: { locale?: string, path?: string },
+  options: { locale?: string; path?: string },
   maxHits: number
 ): Promise<PostgresSearchRow[]> => {
   const path = options.path ?? null
-  const pathPrefix = path === null
-    ? null
-    : `${path.replaceAll('\\', '\\\\').replaceAll('%', '\\%').replaceAll('_', '\\_')}/%`
-  const results = await knex.raw<PostgresRawResult<PostgresSearchRow>>(`
+  const pathPrefix = path === null ? null : `${path.replaceAll('\\', '\\\\').replaceAll('%', '\\%').replaceAll('_', '\\_')}/%`
+  const results = await knex.raw<PostgresRawResult<PostgresSearchRow>>(
+    `
     WITH RECURSIVE query_input AS (
       SELECT
         ?::regconfig AS dictionary,
@@ -402,32 +392,26 @@ const queryPages = async (
       ], NULL)::text[] AS "matchedFields"
     FROM ranked
     ORDER BY score DESC, ranked.preliminary_score DESC, lower(ranked.title), ranked."pageId"
-  `, [
-    dictionary,
-    dictionary,
-    query,
-    query,
-    escapedLikeTerm(query),
-    options.locale ?? null,
-    path,
-    pathPrefix,
-    maxHits,
-    maxHits
-  ])
+  `,
+    [dictionary, dictionary, query, query, escapedLikeTerm(query), options.locale ?? null, path, pathPrefix, maxHits, maxHits]
+  )
   return results.rows
 }
 
 const suggestionsFor = async (knex: Knex, query: string): Promise<string[]> => {
   const term = suggestionTerm(query)
   if (term.length < 2) return []
-  const results = await knex.raw<PostgresRawResult<PostgresSuggestionRow>>(`
+  const results = await knex.raw<PostgresRawResult<PostgresSuggestionRow>>(
+    `
     SELECT word
     FROM "pagesWords"
     WHERE word % ?
     GROUP BY word
     ORDER BY similarity(word, ?) DESC, count(*) DESC, word
     LIMIT 5
-  `, [term, term])
+  `,
+    [term, term]
+  )
   return results.rows
     .map(result => replaceSuggestionTerm(query, result.word))
     .filter(suggestion => suggestion.toLocaleLowerCase() !== query.toLocaleLowerCase())
@@ -480,11 +464,7 @@ const plugin: SearchPlugin<PostgresSearchConfig, PostgresSearchContext> = {
   },
 
   async deleted(page) {
-    const knex = getKnexClient()
-    await knex.transaction(async transaction => {
-      await transaction(WORDS_TABLE).where({ pageId: page.id }).delete()
-      await transaction(VECTOR_TABLE).where({ pageId: page.id }).delete()
-    })
+    await removePage(getKnexClient(), page.id)
   },
 
   async renamed(page) {

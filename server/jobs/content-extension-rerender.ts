@@ -12,7 +12,9 @@ const parseContentExtensionKey = (payload: Record<string, unknown>): ContentExte
 
 export const createContentExtensionRerenderHandler = (
   wiki: ContentExtensionRerenderContext
-): DurableJobHandler => async (job, { knex }) => {
+): DurableJobHandler => async (job, context) => {
+  context.signal.throwIfAborted()
   const key = parseContentExtensionKey(job.payload)
-  await rerenderPagesForContentExtension(knex, wiki, key)
+  await rerenderPagesForContentExtension(context.knex, wiki, key, context.signal)
+  context.signal.throwIfAborted()
 }

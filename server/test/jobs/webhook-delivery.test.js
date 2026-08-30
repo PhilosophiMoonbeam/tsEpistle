@@ -28,6 +28,7 @@ vi.mockModule('../../core/webhooks.ts', import.meta.url, () => ({
 }))
 
 const { up: upDurableJobs } = await import('../../db/migrations/2.5.130.ts')
+const { up: addDurableJobLeaseToken } = await import('../../db/migrations/2.5.158.ts')
 const { up: upOutbox } = await import('../../db/migrations/2.5.131.ts')
 const { DurableJobStore } = await import('../../core/durable-jobs.ts')
 const { createWebhookDeliveryHandler } = await import('../../jobs/durable-job-handlers.ts')
@@ -52,6 +53,7 @@ beforeEach(async () => {
     useNullAsDefault: true
   })
   await upDurableJobs(knex)
+  await addDurableJobLeaseToken(knex)
   await upOutbox(knex)
   const now = new Date('2026-08-14T12:00:00.000Z')
   await knex('webhooks').insert({
@@ -82,8 +84,8 @@ afterEach(async () => {
 
 describe('webhook delivery durable handler', () => {
   it('records a signed delivery once', async () => {
-    await handler(job, { knex })
-    await handler(job, { knex })
+    await handler(job, { knex, signal: new AbortController().signal })
+    await handler(job, { knex, signal: new AbortController().signal })
 
     expect(sendMock).toHaveBeenCalledOnce()
     expect(sendMock).toHaveBeenCalledWith(expect.objectContaining({
@@ -103,11 +105,27 @@ describe('webhook delivery durable handler', () => {
   it('records retryable HTTP failures without marking delivery complete', async () => {
     sendMock.mockRejectedValue(new DeliveryError('HTTP 503', 503, 'try later'))
 
-    await expect(Promise.resolve(handler(job, { knex }))).rejects.toThrow('HTTP 503')
+    await expect(Promise.resolve(handler(job, { knex, signal: new AbortController().signal }))).rejects.toThrow('HTTP 503')
 
     expect(await knex('webhookDeliveries').where('id', 'delivery-1').first()).toMatchObject({
       statusCode: 503,
       responseSnippet: 'try later',
+      deliveredAt: null
+    })
+  })
+
+  it('does not dispatch or commit when already aborted', async () => {
+    const controller = new AbortController()
+    controller.abort()
+
+    await expect(
+      handler(job, { knex, signal: controller.signal })
+    ).rejects.toMatchObject({ name: 'AbortError' })
+
+    expect(sendMock).not.toHaveBeenCalled()
+    expect(await knex('webhookDeliveries').where('id', 'delivery-1').first()).toMatchObject({
+      statusCode: null,
+      responseSnippet: null,
       deliveredAt: null
     })
   })

@@ -86,6 +86,7 @@ type AdminPagesVisualizeState = {
   width: number
   radius: number
   pages: PageLinkRow[]
+  pageLoadRequestId: number
   locales: LocaleOption[]
   currentLocale: string
 }
@@ -99,6 +100,7 @@ export default defineComponent({
       width: 800,
       radius: 400,
       pages: [],
+      pageLoadRequestId: 0,
       locales: siteLangs,
       currentLocale: siteConfig.lang
     }
@@ -116,17 +118,30 @@ export default defineComponent({
   },
   methods: {
     async loadPages (): Promise<void> {
+      const requestId = ++this.pageLoadRequestId
+      const locale = this.currentLocale
+
       wikiStore.startLoading('admin-pages-refresh')
       try {
-        this.pages = await fetchPageLinks(
+        const pages = await fetchPageLinks(
           window.fetch.bind(window),
-          this.currentLocale,
+          locale,
           'Page links response is invalid'
         )
+        if (requestId !== this.pageLoadRequestId || locale !== this.currentLocale) {
+          return
+        }
+        this.pages = pages
       } catch (err) {
+        if (requestId !== this.pageLoadRequestId || locale !== this.currentLocale) {
+          return
+        }
         wikiStore.showError(err)
+      } finally {
+        if (requestId === this.pageLoadRequestId && locale === this.currentLocale) {
+          wikiStore.stopLoading('admin-pages-refresh')
+        }
       }
-      wikiStore.stopLoading('admin-pages-refresh')
     },
     goToPage (event: MouseEvent, node: d3.HierarchyNode<PageGraphNode>): void {
       const id = node.data.id

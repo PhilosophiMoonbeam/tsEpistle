@@ -1,7 +1,14 @@
 import _ from 'lodash'
 import database from '../core/db.ts'
 
-interface PageRow { id: number, path: string, localeCode: string, title: string, visibility: 'public' | 'private', ownerId: number | null }
+interface PageRow {
+  id: number
+  path: string
+  localeCode: string
+  title: string
+  visibility: 'public' | 'private'
+  ownerId: number | null
+}
 interface PageTreeRow {
   id: number
   localeCode: string
@@ -23,28 +30,38 @@ interface TableQuery {
   truncate(): Promise<void>
   insert(rows: PageTreeRow[]): Promise<unknown>
 }
+interface Transaction {
+  table(name: string): TableQuery
+}
+interface KnexClient extends Transaction {
+  transaction<T>(callback: (trx: Transaction) => Promise<T>): Promise<T>
+  destroy(): Promise<void>
+}
 interface Models {
   pages: { query(): PagesQuery }
-  knex: { table(name: string): TableQuery, destroy(): Promise<void> }
+  knex: KnexClient
 }
 interface WikiContext {
   models: Models
   config: { db: { type: string } }
-  configSvc: { loadFromDb(): Promise<void>, applyFlags(): Promise<void> }
-  logger: { info(message: string): void, error(message: string): void }
+  configSvc: { loadFromDb(): Promise<void>; applyFlags(): Promise<void> }
+  logger: { info(message: string): void; error(message: string): void }
 }
 const wiki = WIKI as unknown as WikiContext
 
-export default async function rebuildTree (_pageId?: number): Promise<void> {
+export default async function rebuildTree(_pageId?: number): Promise<void> {
   void _pageId
   wiki.logger.info('Rebuilding page tree...')
   let models: Models | undefined
   try {
-    models = await database.init() as unknown as Models
+    models = (await database.init()) as unknown as Models
     wiki.models = models
     await wiki.configSvc.loadFromDb()
     await wiki.configSvc.applyFlags()
-    const pages = await wiki.models.pages.query().select('id', 'path', 'localeCode', 'title', 'visibility', 'ownerId').orderBy(['visibility', 'ownerId', 'localeCode', 'path'])
+    const pages = await wiki.models.pages
+      .query()
+      .select('id', 'path', 'localeCode', 'title', 'visibility', 'ownerId')
+      .orderBy(['visibility', 'ownerId', 'localeCode', 'path'])
     const tree: PageTreeRow[] = []
     let nextId = 0
 
@@ -58,11 +75,8 @@ export default async function rebuildTree (_pageId?: number): Promise<void> {
         depth++
         const isFolder = depth < pagePaths.length
         currentPath = currentPath ? `${currentPath}/${part}` : part
-        const found = tree.find(row =>
-          row.visibility === page.visibility &&
-          row.ownerId === page.ownerId &&
-          row.localeCode === page.localeCode &&
-          row.path === currentPath
+        const found = tree.find(
+          row => row.visibility === page.visibility && row.ownerId === page.ownerId && row.localeCode === page.localeCode && row.path === currentPath
         )
         if (!found) {
           nextId++
@@ -88,14 +102,16 @@ export default async function rebuildTree (_pageId?: number): Promise<void> {
       }
     }
 
-    await wiki.models.knex.table('pageTree').truncate()
-    if (tree.length > 0) {
-      for (const chunk of _.chunk(tree, 100)) await wiki.models.knex.table('pageTree').insert(chunk)
-    }
+    await wiki.models.knex.transaction(async trx => {
+      await trx.table('pageTree').truncate()
+      if (tree.length > 0) {
+        for (const chunk of _.chunk(tree, 100)) await trx.table('pageTree').insert(chunk)
+      }
+    })
     wiki.logger.info('Rebuilding page tree: [ COMPLETED ]')
   } catch (error) {
     wiki.logger.error('Rebuilding page tree: [ FAILED ]')
-    wiki.logger.error(error instanceof Error ? error.stack ?? error.message : String(error))
+    wiki.logger.error(error instanceof Error ? (error.stack ?? error.message) : String(error))
     throw error
   } finally {
     await models?.knex.destroy()

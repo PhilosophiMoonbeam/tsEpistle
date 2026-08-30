@@ -90,7 +90,7 @@ Internal Wiki links are durable graph edges. Rendering a created or patched page
 - Rename events upsert the complete destination identity and current metadata; no stale title or path remains.
 - Delete events remove the vector and suggestion terms in one transaction.
 - Activation detects the legacy search schema, replaces the derived tables, creates the required indexes, and performs one rebuild.
-- Rebuild truncates and repopulates both derived tables in one transaction. It uses set-based SQL rather than one insert per page.
+- Rebuild selects only published public page identities, loads and prepares each canonical rendered document, then truncates and repopulates both derived tables in one transaction.
 
 Protected pages never contribute content tokens during either incremental indexing or rebuild. Their visible title, path, description, and tags remain searchable. Private pages stay outside the shared index and are searched only inside the requester's owner scope. Private retrieval applies the requested locale and path scope and matches title, description, content, path, and tags before merging results into the same deterministic ordering.
 
@@ -109,7 +109,7 @@ The shared PostgreSQL index contributes at most the configured search maximum, 1
 
 `pages.searchTags` returns at most 20 normalized matching tag values. `pages.listTags` returns at most 100 stable tag records per call with `nextOffset`.
 
-`pages.discover` returns authorized summaries without requiring a keyword. It supports one locale, descendants beneath a path, up to five additional nested levels below direct children (`depth: 0` returns direct children), up to 20 exact normalized tags that must all match, and stable path, title, or update order. Each response contains at most 100 pages. Discovery considers at most 5,000 candidates and rejects broader scopes with `PAGE_INDEX_TOO_BROAD`; the caller must choose a narrower path. Its `totalInWindow`, `windowLimit`, and `nextOffset` describe that bounded set.
+`pages.discover` returns authorized summaries without requiring a keyword. Its candidate traversal includes published public pages plus private pages admitted by the requester's owner or system-manager scope; unpublished public pages are never candidates. It supports one locale, descendants beneath a path, up to five additional nested levels below direct children (`depth: 0` returns direct children), up to 20 exact normalized tags that must all match, and stable path, title, or update order. Each response contains at most 100 pages. Discovery considers at most 5,000 candidates and rejects broader scopes with `PAGE_INDEX_TOO_BROAD`; the caller must choose a narrower path.
 
 `pages.related` returns bounded hydrated graph neighbors with:
 

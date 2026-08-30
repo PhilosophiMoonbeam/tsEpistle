@@ -49,7 +49,6 @@ import pageOperations from './operations/pages.ts'
 import { PageKnowledgeLifecycle } from './knowledge/lifecycle.ts'
 const { collectEntry } = viteAssets
 
-
 interface MasterConfig extends Record<string, unknown> {
   banner?: unknown
   auth: Record<string, unknown>
@@ -63,7 +62,14 @@ interface MasterConfig extends Record<string, unknown> {
     skills: { enabled: boolean; namespace: string }
     browser: { enabled: boolean }
     proposals: { enabled: boolean }
-    writes: { enabled: boolean; create: { enabled: boolean }; patch: { enabled: boolean }; move: { enabled: boolean }; restore: { enabled: boolean }; delete: { enabled: boolean } }
+    writes: {
+      enabled: boolean
+      create: { enabled: boolean }
+      patch: { enabled: boolean }
+      move: { enabled: boolean }
+      restore: { enabled: boolean }
+      delete: { enabled: boolean }
+    }
   }
   bodyParserLimit?: string
   editors?: { available?: unknown }
@@ -124,6 +130,7 @@ interface MasterWiki extends Record<string, unknown> {
   SERVERPATH: string
   app: Express
   asar: { serve(asset: string, ...args: Parameters<RequestHandler>): void }
+  backgroundWorkers?: MasterBackgroundWorkers
   auth: WikiAuth
   config: MasterConfig
   lang: { attachMiddleware(app: Express): void }
@@ -141,7 +148,10 @@ interface MasterWiki extends Record<string, unknown> {
   system: unknown
 }
 export type HttpTransportRuntime = MasterWiki & AuthWiki & UploadWiki & CommonWiki & SslWiki & ApiRuntime
-
+export interface MasterBackgroundWorkers {
+  start(): void
+  shutdown(): Promise<void>
+}
 
 interface HttpError extends Error {
   code?: string
@@ -167,7 +177,10 @@ const decodeMcpRequestStateKeys = (encoded: string | undefined): readonly Uint8A
 const snapshotSigningSecret = (required: boolean): Uint8Array => {
   const encoded = environmentSecretValue('AGENT_SNAPSHOT_SIGNING_SECRET')
   const secret = encoded ? Buffer.from(encoded, 'base64') : Buffer.alloc(0)
-  if (required && secret.byteLength < 32) throw new Error('AGENT_SNAPSHOT_SIGNING_SECRET or AGENT_SNAPSHOT_SIGNING_SECRET_FILE must provide at least 32 base64-encoded bytes when agents or MCP actions are enabled')
+  if (required && secret.byteLength < 32)
+    throw new Error(
+      'AGENT_SNAPSHOT_SIGNING_SECRET or AGENT_SNAPSHOT_SIGNING_SECRET_FILE must provide at least 32 base64-encoded bytes when agents or MCP actions are enabled'
+    )
   return secret
 }
 
@@ -189,7 +202,7 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
   app.use(cors({ origin: false }))
   app.options('/{*corsPreflightPath}', cors({ origin: false }))
   if (wiki.config.security.securityTrustProxy) {
-    app.enable('trust proxy')
+    app.set('trust proxy', 1)
   }
 
   app.use(favicon(path.join(wiki.ROOTPATH, 'assets', 'favicon.ico')))
@@ -200,21 +213,26 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
       res.sendStatus(404)
     }
   })
-  app.use('/_assets', express.static(path.join(wiki.ROOTPATH, 'assets'), {
-    index: false,
-    maxAge: '7d'
-  }))
+  app.use(
+    '/_assets',
+    express.static(path.join(wiki.ROOTPATH, 'assets'), {
+      index: false,
+      maxAge: '7d'
+    })
+  )
   app.use('/', createSslController(wiki))
 
   app.use(cookieParser())
-  app.use(session({
-    secret: wiki.config.sessionSecret,
-    resave: false,
-    saveUninitialized: false,
-    store: new ConnectSessionKnexStore({
-      knex: wiki.models.knex
+  app.use(
+    session({
+      secret: wiki.config.sessionSecret,
+      resave: false,
+      saveUninitialized: false,
+      store: new ConnectSessionKnexStore({
+        knex: wiki.models.knex
+      })
     })
-  }))
+  )
   app.use(wiki.auth.passport.initialize())
   const actionSnapshotSigningSecret = snapshotSigningSecret(wiki.config.agents.provider.enabled || wiki.config.agents.mcp.enabled)
   const mcpController = wiki.config.agents.mcp.enabled
@@ -273,21 +291,25 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
     const secrets = new DatabaseAgentSecretRegistry(wiki.models.knex, decodeAgentProviderSecretKeys(encodedSecretKeys))
     const snapshotSigningSecret = actionSnapshotSigningSecret
     providerRegistry = new AgentProviderRegistry(wiki.models.knex, secrets, keys)
-    const actionSessions = createWikiActionSessionProvider(wiki.models.knex, {
-      enabled: wiki.config.agents.enabled,
-      providerEnabled: wiki.config.agents.provider.enabled,
-      orchestrationEnabled: wiki.config.agents.orchestration.enabled,
-      skillsEnabled: wiki.config.agents.skills.enabled,
-      browserEnabled: wiki.config.agents.browser.enabled,
-      proposalsEnabled: wiki.config.agents.proposals.enabled,
-      writesEnabled: wiki.config.agents.writes.enabled,
-      writeCreateEnabled: wiki.config.agents.writes.create.enabled,
-      writePatchEnabled: wiki.config.agents.writes.patch.enabled,
-      writeMoveEnabled: wiki.config.agents.writes.move.enabled,
-      writeRestoreEnabled: wiki.config.agents.writes.restore.enabled,
-      writeDeleteEnabled: wiki.config.agents.writes.delete.enabled,
-      snapshotSigningSecret
-    }, wiki.config.agents.browser.enabled ? browserWorkerClientFromEnvironment() : undefined)
+    const actionSessions = createWikiActionSessionProvider(
+      wiki.models.knex,
+      {
+        enabled: wiki.config.agents.enabled,
+        providerEnabled: wiki.config.agents.provider.enabled,
+        orchestrationEnabled: wiki.config.agents.orchestration.enabled,
+        skillsEnabled: wiki.config.agents.skills.enabled,
+        browserEnabled: wiki.config.agents.browser.enabled,
+        proposalsEnabled: wiki.config.agents.proposals.enabled,
+        writesEnabled: wiki.config.agents.writes.enabled,
+        writeCreateEnabled: wiki.config.agents.writes.create.enabled,
+        writePatchEnabled: wiki.config.agents.writes.patch.enabled,
+        writeMoveEnabled: wiki.config.agents.writes.move.enabled,
+        writeRestoreEnabled: wiki.config.agents.writes.restore.enabled,
+        writeDeleteEnabled: wiki.config.agents.writes.delete.enabled,
+        snapshotSigningSecret
+      },
+      wiki.config.agents.browser.enabled ? browserWorkerClientFromEnvironment() : undefined
+    )
     const providerFactory = new AgentProviderFactory(wiki.models.knex, secrets)
     utilityModel = new AgentUtilityModel(providerFactory)
     providerConformance = new AgentProviderConformanceRunner(wiki.models.knex, providerFactory, providerRegistry)
@@ -300,21 +322,64 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
       goals: agentLimits.goals
     })
     wiki.agentRuntime = agentRuntime
-    let workerActive = false
-    const tick = (): void => {
-      if (workerActive) return
-      workerActive = true
-      void agentRuntime!.runOnce().catch(() => undefined).finally(() => { workerActive = false })
-    }
-    tick()
-    setInterval(tick, agentLimits.provider.pollingMilliseconds).unref()
   }
   const knowledgeLifecycle = new PageKnowledgeLifecycle(wiki.models.knex, `knowledge-${process.pid}`, utilityModel)
-  const knowledgeTick = (): void => {
-    void knowledgeLifecycle.runOnce().catch((error: unknown) => { wiki.logger.warn(error instanceof Error ? error.message : String(error)) })
+  let agentTimer: NodeJS.Timeout | undefined
+  let knowledgeTimer: NodeJS.Timeout | undefined
+  let agentRun: Promise<unknown> | undefined
+  let knowledgeRun: Promise<unknown> | undefined
+  let workersStarted = false
+  let workersStopped = false
+  let workersShutdown: Promise<void> | undefined
+  const agentTick = (): void => {
+    if (workersStopped || agentRun || !agentRuntime) return
+    agentRun = agentRuntime.runOnce()
+      .catch(() => undefined)
+      .finally(() => {
+        agentRun = undefined
+      })
   }
-  knowledgeTick()
-  setInterval(knowledgeTick, 1_000).unref()
+  const knowledgeTick = (): void => {
+    if (workersStopped || knowledgeRun) return
+    knowledgeRun = knowledgeLifecycle.runOnce()
+      .catch((error: unknown) => {
+        wiki.logger.warn(error instanceof Error ? error.message : String(error))
+      })
+      .finally(() => {
+        knowledgeRun = undefined
+      })
+  }
+  wiki.backgroundWorkers = {
+    start(): void {
+      if (workersStarted || workersStopped) return
+      workersStarted = true
+      if (agentRuntime) {
+        agentTick()
+        agentTimer = setInterval(agentTick, agentLimits.provider.pollingMilliseconds)
+        agentTimer.unref()
+      }
+      knowledgeTick()
+      knowledgeTimer = setInterval(knowledgeTick, 1_000)
+      knowledgeTimer.unref()
+    },
+    shutdown(): Promise<void> {
+      workersShutdown ??= (async () => {
+        workersStopped = true
+        clearInterval(agentTimer)
+        clearInterval(knowledgeTimer)
+        const runtime = agentRuntime
+        const pending = [
+          runtime ? Promise.resolve().then(() => runtime.shutdown()) : undefined,
+          agentRun,
+          knowledgeRun
+        ].filter((promise): promise is Promise<unknown> => promise !== undefined)
+        const results = await Promise.allSettled(pending)
+        const failure = results.find((result): result is PromiseRejectedResult => result.status === 'rejected')
+        if (failure) throw failure.reason
+      })()
+      return workersShutdown
+    }
+  }
   const agentsController = createAgentsHostController({
     ...wiki,
     agentLimits,
@@ -332,7 +397,6 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
   app.use('/api/v1', jsonBodyParser, apiV1Controller)
 
   app.use(seoMiddleware)
-
 
   app.use(express.urlencoded({ extended: false, limit: '1mb' }))
 
@@ -398,10 +462,12 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
     if (req.path === '/graphql') {
       res.status(error.status || 500).json({
         data: {},
-        errors: [{
-          message: error.message,
-          path: []
-        }]
+        errors: [
+          {
+            message: error.message,
+            path: []
+          }
+        ]
       })
       return
     }

@@ -1,10 +1,7 @@
 import createKnex, { type Knex } from 'knex'
 import { afterEach, beforeEach, describe, expect, it } from '../bun-test.mts'
 
-import {
-  MigrationPreflightError,
-  preflightMigrations
-} from '../../db/migration-preflight.ts'
+import { MigrationPreflightError, preflightMigrations } from '../../db/migration-preflight.ts'
 
 type MigrationSpec = { name: string }
 
@@ -28,16 +25,18 @@ const createLedger = async (db: Knex, names: string[]): Promise<void> => {
     table.timestamp('migration_time').notNullable()
   })
   if (names.length > 0) {
-    await db('migrations').insert(names.map((name, index) => ({
-      batch: 1,
-      migration_time: new Date(Date.UTC(2026, 0, index + 1)),
-      name
-    })))
+    await db('migrations').insert(
+      names.map((name, index) => ({
+        batch: 1,
+        migration_time: new Date(Date.UTC(2026, 0, index + 1)),
+        name
+      }))
+    )
   }
 }
 
-const createApplicationTable = async (db: Knex): Promise<void> => {
-  await db.schema.createTable('pages', table => {
+const createApplicationTable = async (db: Knex, tableName = 'pages'): Promise<void> => {
+  await db.schema.createTable(tableName, table => {
     table.increments('id').primary()
   })
 }
@@ -82,9 +81,11 @@ describe('database migration preflight', () => {
     await createApplicationTable(db)
     await createLedger(db, legacy.slice(0, 2))
 
-    expect(await preflightMigrations(db, migrationSource(available), {
-      legacyMigrationNames: legacy
-    })).toEqual({
+    expect(
+      await preflightMigrations(db, migrationSource(available), {
+        legacyMigrationNames: legacy
+      })
+    ).toEqual({
       applied: legacy.slice(0, 2),
       available,
       state: 'legacy-beta'
@@ -96,26 +97,55 @@ describe('database migration preflight', () => {
     await createApplicationTable(db)
     await createLedger(db, [legacy[1]])
 
-    await expect(Promise.resolve(preflightMigrations(db, migrationSource(available), {
-      legacyMigrationNames: legacy
-    }))).rejects.toThrow('Legacy beta migration history is incomplete or out of order')
+    await expect(
+      Promise.resolve(
+        preflightMigrations(db, migrationSource(available), {
+          legacyMigrationNames: legacy
+        })
+      )
+    ).rejects.toThrow('Legacy beta migration history is incomplete or out of order')
 
     await db('migrations').delete()
     await db('migrations').insert([
       { batch: 1, migration_time: new Date(), name: legacy[0] },
       { batch: 1, migration_time: new Date(), name: 'custom-beta-patch.js' }
     ])
-    await expect(Promise.resolve(preflightMigrations(db, migrationSource(available), {
-      legacyMigrationNames: legacy
-    }))).rejects.toThrow('Legacy beta migration history contains unsupported records')
+    await expect(
+      Promise.resolve(
+        preflightMigrations(db, migrationSource(available), {
+          legacyMigrationNames: legacy
+        })
+      )
+    ).rejects.toThrow('Legacy beta migration history contains unsupported records')
   })
 
-  it('refuses application tables without a migration ledger', async () => {
-    await createApplicationTable(db)
+  it('refuses an early application table without a migration ledger', async () => {
+    await createApplicationTable(db, 'assets')
 
     await expect(Promise.resolve(preflightMigrations(db, migrationSource(available)))).rejects.toMatchObject({
       code: 'MIGRATION_PREFLIGHT_FAILED',
       message: expect.stringContaining('has no migrations ledger')
+    })
+  })
+
+  it('refuses a recent durable application table without a migration ledger', async () => {
+    await createApplicationTable(db, 'durableJobs')
+
+    await expect(Promise.resolve(preflightMigrations(db, migrationSource(available)))).rejects.toMatchObject({
+      code: 'MIGRATION_PREFLIGHT_FAILED',
+      message: expect.stringContaining('has no migrations ledger')
+    })
+  })
+
+  it('recognizes a database containing only an unrelated extension table as fresh', async () => {
+    await db.schema.createTable('spatial_ref_sys', table => {
+      table.integer('srid').primary()
+    })
+
+    expect(await preflightMigrations(db, migrationSource(available))).toEqual({
+      applied: [],
+      available,
+      state: 'fresh'
     })
   })
 
@@ -149,10 +179,12 @@ describe('database migration preflight', () => {
     })
     await db('migrations_lock').insert({ is_locked: 1 })
 
-    await expect(Promise.resolve(preflightMigrations(db, migrationSource(available)))).rejects.toEqual(expect.objectContaining<Partial<MigrationPreflightError>>({
-      code: 'MIGRATION_PREFLIGHT_FAILED',
-      message: expect.stringContaining('Confirm that no other tsFranki instance is migrating')
-    }))
+    await expect(Promise.resolve(preflightMigrations(db, migrationSource(available)))).rejects.toEqual(
+      expect.objectContaining<Partial<MigrationPreflightError>>({
+        code: 'MIGRATION_PREFLIGHT_FAILED',
+        message: expect.stringContaining('Confirm that no other tsFranki instance is migrating')
+      })
+    )
   })
 
   it('refuses migration records when the application schema is absent', async () => {

@@ -182,6 +182,7 @@ defaults:
       securityHSTS: false
       securityHSTSDuration: 300
       securityCSP: false
+      # Must be a valid single HTTP header value.
       securityCSPDirectives: ''
     server:
       sslRedir: false

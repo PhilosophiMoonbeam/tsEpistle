@@ -91,7 +91,7 @@ const plugin: SearchPlugin<SearchConfig, AlgoliaSearchContext> = {
    * @param {String} q Query
    * @param {Object} opts Additional options
    */
-  async query(q: string, _opts: SearchOptions): Promise<SearchResult | void> {
+  async query(q: string, _opts: SearchOptions): Promise<SearchResult> {
     void _opts
     try {
       const results = await this.client.searchSingleIndex<AlgoliaHit>({
@@ -115,6 +115,7 @@ const plugin: SearchPlugin<SearchConfig, AlgoliaSearchContext> = {
     } catch (err: unknown) {
       wiki.logger.warn('Search Engine Error:')
       wiki.logger.warn(err instanceof Error ? err.message : String(err))
+      throw err
     }
   },
   /**

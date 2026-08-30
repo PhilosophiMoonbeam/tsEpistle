@@ -4,7 +4,7 @@ import fs from 'fs-extra'
 import path from 'node:path'
 import zlib from 'node:zlib'
 import { pipeline } from 'node:stream/promises'
-import { Readable, Transform, type TransformCallback } from 'node:stream'
+import { Readable } from 'node:stream'
 import { MongoClient, type MongoCursor } from 'mongodb'
 
 type QueryRow = Record<string, unknown>
@@ -86,7 +86,12 @@ interface WikiModels {
   knex: {
     select(...columns: string[]): {
       from(table: string): {
-        join(table: string, left: string, operator: string, right: string): {
+        join(
+          table: string,
+          left: string,
+          operator: string,
+          right: string
+        ): {
           stream(): Readable
         }
       }
@@ -121,6 +126,20 @@ async function collectCursor<TDocument extends object>(cursor: MongoCursor<TDocu
   return documents
 }
 
+async function* serializeJsonBatches(batchSize: number, fetchBatch: (offset: number) => Promise<QueryRow[]>, onBatch: () => void): AsyncGenerator<string> {
+  let isFirst = true
+  for (let offset = 0; ; offset += batchSize) {
+    const rows = await fetchBatch(offset)
+    if (rows.length === 0) break
+    for (const row of rows) {
+      yield `${isFirst ? '[\n' : ',\n'}${JSON.stringify(row, null, 2)}`
+      isFirst = false
+    }
+    onBatch()
+  }
+  yield '\n]'
+}
+
 const system = {
   updates: {
     status: 'unavailable',
@@ -139,7 +158,7 @@ const system = {
    *
    * @param {Object} opts Options object
    */
-  async upgradeFromMongo (opts: UpgradeOptions): Promise<boolean> {
+  async upgradeFromMongo(opts: UpgradeOptions): Promise<boolean> {
     wiki.logger.info('Upgrading from MongoDB...')
 
     const parsedMongoConStr = cfgHelper.parseConfigValue(opts.mongoCnStr)
@@ -155,20 +174,26 @@ const system = {
       }
 
       // Import all users
-      const userData = await collectCursor(users.find({
-        email: {
-          $not: 'guest'
-        }
-      }))
-      await wiki.models.User.bulkCreate(userData.map((usr): ImportedUser => ({
-        email: usr.email,
-        name: usr.name || 'Imported User',
-        password: usr.password || '',
-        provider: usr.provider || 'local',
-        providerId: usr.providerId || '',
-        role: 'user',
-        ...(usr.createdAt === undefined ? {} : { createdAt: usr.createdAt })
-      })))
+      const userData = await collectCursor(
+        users.find({
+          email: {
+            $not: 'guest'
+          }
+        })
+      )
+      await wiki.models.User.bulkCreate(
+        userData.map(
+          (usr): ImportedUser => ({
+            email: usr.email,
+            name: usr.name || 'Imported User',
+            password: usr.password || '',
+            provider: usr.provider || 'local',
+            providerId: usr.providerId || '',
+            role: 'user',
+            ...(usr.createdAt === undefined ? {} : { createdAt: usr.createdAt })
+          })
+        )
+      )
 
       return true
     } finally {
@@ -178,7 +203,7 @@ const system = {
   /**
    * Export Wiki to Disk
    */
-  async export (opts: ExportOptions): Promise<void> {
+  async export(opts: ExportOptions): Promise<void> {
     this.exportStatus.status = 'running'
     this.exportStatus.progress = 0
     this.exportStatus.message = ''
@@ -209,16 +234,14 @@ const system = {
 
             await pipeline(
               wiki.models.knex.select('filename', 'folderId', 'data').from('assets').join('assetData', 'assets.id', '=', 'assetData.id').stream(),
-              new Transform({
-                objectMode: true,
-                transform: async (asset: AssetChunk, _encoding: BufferEncoding, callback: TransformCallback) => {
-                  const filename = (asset.folderId && asset.folderId > 0) ? `${_.get(assetFolders, asset.folderId)}/${asset.filename}` : asset.filename
+              async (assets: AsyncIterable<AssetChunk>) => {
+                for await (const asset of assets) {
+                  const filename = asset.folderId && asset.folderId > 0 ? `${_.get(assetFolders, asset.folderId)}/${asset.filename}` : asset.filename
                   wiki.logger.info(`Exporting asset ${filename}...`)
                   await fs.outputFile(path.join(opts.path, 'assets', filename), asset.data)
                   this.exportStatus.progress += assetsProgressMultiplier * 100
-                  callback()
                 }
-              })
+              }
             )
             wiki.logger.info('Export: assets saved to disk successfully.')
             break
@@ -238,53 +261,28 @@ const system = {
             const commentsProgressMultiplier = progressMultiplier / Math.ceil(commentsCount / 50)
             wiki.logger.info(`Found ${commentsCount} comments to export. Streaming to file...`)
 
-            const rs = new Readable({
-              objectMode: true,
-              read() {}
-            })
-
-            const fetchCommentsBatch = async (offset: number) => {
-              const comments = await wiki.models.comments.query().offset(offset).limit(50).withGraphJoined({
-                author: true,
-                page: true
-              }).modifyGraph('author', builder => {
-                builder.select('users.id', 'users.name', 'users.email', 'users.providerKey')
-              }).modifyGraph('page', builder => {
-                builder.select('pages.id', 'pages.path', 'pages.localeCode', 'pages.title')
-              })
-              if (comments.length > 0) {
-                for (const cmt of comments) {
-                  rs.push(cmt)
-                }
-                fetchCommentsBatch(offset + 50)
-              } else {
-                rs.push(null)
+            const comments = serializeJsonBatches(
+              50,
+              async offset =>
+                await wiki.models.comments
+                  .query()
+                  .offset(offset)
+                  .limit(50)
+                  .withGraphJoined({
+                    author: true,
+                    page: true
+                  })
+                  .modifyGraph('author', builder => {
+                    builder.select('users.id', 'users.name', 'users.email', 'users.providerKey')
+                  })
+                  .modifyGraph('page', builder => {
+                    builder.select('pages.id', 'pages.path', 'pages.localeCode', 'pages.title')
+                  }),
+              () => {
+                this.exportStatus.progress += commentsProgressMultiplier * 100
               }
-              this.exportStatus.progress += commentsProgressMultiplier * 100
-            }
-            fetchCommentsBatch(0)
-
-            let marker = 0
-            await pipeline(
-              rs,
-              new Transform({
-                objectMode: true,
-                transform (chunk: unknown, _encoding: BufferEncoding, callback: TransformCallback) {
-                  marker++
-                  let outputStr = marker === 1 ? '[\n' : ''
-                  outputStr += JSON.stringify(chunk, null, 2)
-                  if (marker < commentsCount) {
-                    outputStr += ',\n'
-                  }
-                  callback(null, outputStr)
-                },
-                flush (callback: TransformCallback) {
-                  callback(null, '\n]')
-                }
-              }),
-              zlib.createGzip(),
-              fs.createWriteStream(outputPath)
             )
+            await pipeline(Readable.from(comments), zlib.createGzip(), fs.createWriteStream(outputPath))
             wiki.logger.info('Export: comments.json.gz created successfully.')
             break
           }
@@ -315,56 +313,32 @@ const system = {
             const pagesProgressMultiplier = progressMultiplier / Math.ceil(pagesCount / 10)
             wiki.logger.info(`Found ${pagesCount} pages history to export. Streaming to file...`)
 
-            const rs = new Readable({
-              objectMode: true,
-              read() {}
-            })
-
-            const fetchPagesBatch = async (offset: number) => {
-              const pages = await wiki.models.pageHistory.query().offset(offset).limit(10).withGraphJoined({
-                author: true,
-                page: true,
-                tags: true
-              }).modifyGraph('author', builder => {
-                builder.select('users.id', 'users.name', 'users.email', 'users.providerKey')
-              }).modifyGraph('page', builder => {
-                builder.select('pages.id', 'pages.title', 'pages.path', 'pages.localeCode')
-              }).modifyGraph('tags', builder => {
-                builder.select('tags.tag', 'tags.title')
-              })
-              if (pages.length > 0) {
-                for (const page of pages) {
-                  rs.push(page)
-                }
-                fetchPagesBatch(offset + 10)
-              } else {
-                rs.push(null)
+            const pages = serializeJsonBatches(
+              10,
+              async offset =>
+                await wiki.models.pageHistory
+                  .query()
+                  .offset(offset)
+                  .limit(10)
+                  .withGraphJoined({
+                    author: true,
+                    page: true,
+                    tags: true
+                  })
+                  .modifyGraph('author', builder => {
+                    builder.select('users.id', 'users.name', 'users.email', 'users.providerKey')
+                  })
+                  .modifyGraph('page', builder => {
+                    builder.select('pages.id', 'pages.title', 'pages.path', 'pages.localeCode')
+                  })
+                  .modifyGraph('tags', builder => {
+                    builder.select('tags.tag', 'tags.title')
+                  }),
+              () => {
+                this.exportStatus.progress += pagesProgressMultiplier * 100
               }
-              this.exportStatus.progress += pagesProgressMultiplier * 100
-            }
-            fetchPagesBatch(0)
-
-            let marker = 0
-            await pipeline(
-              rs,
-              new Transform({
-                objectMode: true,
-                transform (chunk: unknown, _encoding: BufferEncoding, callback: TransformCallback) {
-                  marker++
-                  let outputStr = marker === 1 ? '[\n' : ''
-                  outputStr += JSON.stringify(chunk, null, 2)
-                  if (marker < pagesCount) {
-                    outputStr += ',\n'
-                  }
-                  callback(null, outputStr)
-                },
-                flush (callback: TransformCallback) {
-                  callback(null, '\n]')
-                }
-              }),
-              zlib.createGzip(),
-              fs.createWriteStream(outputPath)
             )
+            await pipeline(Readable.from(pages), zlib.createGzip(), fs.createWriteStream(outputPath))
             wiki.logger.info('Export: pages-history.json.gz created successfully.')
             break
           }
@@ -399,56 +373,32 @@ const system = {
             const pagesProgressMultiplier = progressMultiplier / Math.ceil(pagesCount / 10)
             wiki.logger.info(`Found ${pagesCount} pages to export. Streaming to file...`)
 
-            const rs = new Readable({
-              objectMode: true,
-              read() {}
-            })
-
-            const fetchPagesBatch = async (offset: number) => {
-              const pages = await wiki.models.pages.query().offset(offset).limit(10).withGraphJoined({
-                author: true,
-                creator: true,
-                tags: true
-              }).modifyGraph('author', builder => {
-                builder.select('users.id', 'users.name', 'users.email', 'users.providerKey')
-              }).modifyGraph('creator', builder => {
-                builder.select('users.id', 'users.name', 'users.email', 'users.providerKey')
-              }).modifyGraph('tags', builder => {
-                builder.select('tags.tag', 'tags.title')
-              })
-              if (pages.length > 0) {
-                for (const page of pages) {
-                  rs.push(page)
-                }
-                fetchPagesBatch(offset + 10)
-              } else {
-                rs.push(null)
+            const pages = serializeJsonBatches(
+              10,
+              async offset =>
+                await wiki.models.pages
+                  .query()
+                  .offset(offset)
+                  .limit(10)
+                  .withGraphJoined({
+                    author: true,
+                    creator: true,
+                    tags: true
+                  })
+                  .modifyGraph('author', builder => {
+                    builder.select('users.id', 'users.name', 'users.email', 'users.providerKey')
+                  })
+                  .modifyGraph('creator', builder => {
+                    builder.select('users.id', 'users.name', 'users.email', 'users.providerKey')
+                  })
+                  .modifyGraph('tags', builder => {
+                    builder.select('tags.tag', 'tags.title')
+                  }),
+              () => {
+                this.exportStatus.progress += pagesProgressMultiplier * 100
               }
-              this.exportStatus.progress += pagesProgressMultiplier * 100
-            }
-            fetchPagesBatch(0)
-
-            let marker = 0
-            await pipeline(
-              rs,
-              new Transform({
-                objectMode: true,
-                transform (chunk: unknown, _encoding: BufferEncoding, callback: TransformCallback) {
-                  marker++
-                  let outputStr = marker === 1 ? '[\n' : ''
-                  outputStr += JSON.stringify(chunk, null, 2)
-                  if (marker < pagesCount) {
-                    outputStr += ',\n'
-                  }
-                  callback(null, outputStr)
-                },
-                flush (callback: TransformCallback) {
-                  callback(null, '\n]')
-                }
-              }),
-              zlib.createGzip(),
-              fs.createWriteStream(outputPath)
             )
+            await pipeline(Readable.from(pages), zlib.createGzip(), fs.createWriteStream(outputPath))
             wiki.logger.info('Export: pages.json.gz created successfully.')
             break
           }
@@ -494,53 +444,28 @@ const system = {
             const usersProgressMultiplier = progressMultiplier / Math.ceil(usersCount / 50)
             wiki.logger.info(`Found ${usersCount} users to export. Streaming to file...`)
 
-            const rs = new Readable({
-              objectMode: true,
-              read() {}
-            })
-
-            const fetchUsersBatch = async (offset: number) => {
-              const users = await wiki.models.users.query().offset(offset).limit(50).withGraphJoined({
-                groups: true,
-                provider: true
-              }).modifyGraph('groups', builder => {
-                builder.select('groups.id', 'groups.name')
-              }).modifyGraph('provider', builder => {
-                builder.select('authentication.key', 'authentication.strategyKey', 'authentication.displayName')
-              })
-              if (users.length > 0) {
-                for (const usr of users) {
-                  rs.push(usr)
-                }
-                fetchUsersBatch(offset + 50)
-              } else {
-                rs.push(null)
+            const users = serializeJsonBatches(
+              50,
+              async offset =>
+                await wiki.models.users
+                  .query()
+                  .offset(offset)
+                  .limit(50)
+                  .withGraphJoined({
+                    groups: true,
+                    provider: true
+                  })
+                  .modifyGraph('groups', builder => {
+                    builder.select('groups.id', 'groups.name')
+                  })
+                  .modifyGraph('provider', builder => {
+                    builder.select('authentication.key', 'authentication.strategyKey', 'authentication.displayName')
+                  }),
+              () => {
+                this.exportStatus.progress += usersProgressMultiplier * 100
               }
-              this.exportStatus.progress += usersProgressMultiplier * 100
-            }
-            fetchUsersBatch(0)
-
-            let marker = 0
-            await pipeline(
-              rs,
-              new Transform({
-                objectMode: true,
-                transform (chunk: unknown, _encoding: BufferEncoding, callback: TransformCallback) {
-                  marker++
-                  let outputStr = marker === 1 ? '[\n' : ''
-                  outputStr += JSON.stringify(chunk, null, 2)
-                  if (marker < usersCount) {
-                    outputStr += ',\n'
-                  }
-                  callback(null, outputStr)
-                },
-                flush (callback: TransformCallback) {
-                  callback(null, '\n]')
-                }
-              }),
-              zlib.createGzip(),
-              fs.createWriteStream(outputPath)
             )
+            await pipeline(Readable.from(users), zlib.createGzip(), fs.createWriteStream(outputPath))
 
             wiki.logger.info('Export: users.json.gz created successfully.')
             break

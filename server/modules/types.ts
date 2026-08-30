@@ -374,7 +374,7 @@ export interface SearchPlugin<
   activate(this: Context): Promise<void>
   deactivate(this: Context): Promise<void>
   init(this: Context): Promise<void>
-  query(this: Context, query: string, options: SearchOptions): Promise<SearchResult | void>
+  query(this: Context, query: string, options: SearchOptions): Promise<SearchResult>
   created(this: Context, page: WikiPage): Promise<void>
   updated(this: Context, page: WikiPage): Promise<void>
   deleted(this: Context, page: WikiPage): Promise<void>

@@ -3,6 +3,7 @@ import createKnex, { type Knex } from 'knex'
 import { afterEach, beforeEach, describe, expect, it } from '../bun-test.mts'
 import { publishOutboxEvents, writeOutboxEvent } from '../../core/outbox.ts'
 import { up as upDurableJobs } from '../../db/migrations/2.5.130.ts'
+import { up as addDurableJobLeaseToken } from '../../db/migrations/2.5.158.ts'
 import { up as upOutbox } from '../../db/migrations/2.5.131.ts'
 import { up as upPageWatching } from '../../db/migrations/2.5.132.ts'
 
@@ -16,6 +17,7 @@ beforeEach(async () => {
     useNullAsDefault: true
   })
   await upDurableJobs(knex)
+  await addDurableJobLeaseToken(knex)
   await knex.schema.createTable('users', table => {
     table.integer('id').primary()
   })
@@ -55,7 +57,7 @@ describe('transactional outbox', () => {
     expect(await knex('outboxEvents')).toEqual([])
   })
 
-  it('publishes committed events to one idempotent durable delivery', async () => {
+  it('lets only one concurrent publisher own an outbox row', async () => {
     const eventId = await knex.transaction(transaction => writeOutboxEvent(transaction, {
       type: 'page.created',
       version: 1,
@@ -64,10 +66,11 @@ describe('transactional outbox', () => {
       payload: { pageId: 7, visibility: 'public' }
     }))
 
-    await Promise.all([
+    const published = await Promise.all([
       publishOutboxEvents(knex),
       publishOutboxEvents(knex)
     ])
+    expect(published.reduce((total, count) => total + count, 0)).toBe(1)
     await publishOutboxEvents(knex)
 
     expect(await knex('durableJobs')).toHaveLength(1)
@@ -76,6 +79,24 @@ describe('transactional outbox', () => {
     expect(await knex('outboxEvents').where('id', eventId).first()).toMatchObject({
       publishedAt: expect.anything()
     })
+  })
+
+  it('rolls back fanout, jobs, deliveries, and publication together', async () => {
+    await knex('pageWatchers').insert({ pageId: 7, userId: 8, createdAt: new Date() })
+    const eventId = await writeOutboxEvent(knex, {
+      type: 'page.created',
+      version: 1,
+      aggregateType: 'page',
+      aggregateId: 7,
+      payload: { pageId: 7 }
+    })
+
+    await expect(publishOutboxEvents(knex)).rejects.toThrow(`Page event ${eventId} notification fields are invalid`)
+
+    expect(await knex('durableJobs')).toEqual([])
+    expect(await knex('webhookDeliveries')).toEqual([])
+    expect(await knex('pageWatchDeliveries')).toEqual([])
+    expect(await knex('outboxEvents').where('id', eventId).first()).toMatchObject({ publishedAt: null })
   })
 
   it('fans page events out to watchers, excludes the actor, and removes subscriptions after deletion', async () => {
@@ -110,7 +131,7 @@ describe('transactional outbox', () => {
     expect(await knex('pageWatchers').where('pageId', 42)).toEqual([])
   })
 
-  it('groups rapid edits while retaining the final event for email and in-app delivery', async () => {
+  it('keeps the newest aggregate event when an older event publishes last', async () => {
     const now = new Date('2026-08-14T12:00:30.000Z')
     await knex('pageWatchers').insert({ pageId: 42, userId: 8, createdAt: now })
     const firstEventId = await writeOutboxEvent(knex, {
@@ -129,6 +150,9 @@ describe('transactional outbox', () => {
       payload: { pageId: 42, actorId: 7, actorName: 'Editor', title: 'Final edit', path: 'docs/page', localeCode: 'en', visibility: 'public' },
       createdAt: new Date(now.valueOf() - 1_000)
     })
+    await knex('outboxEvents').where('id', firstEventId).update({ publishedAt: now })
+    await publishOutboxEvents(knex, { now })
+    await knex('outboxEvents').where('id', firstEventId).update({ publishedAt: null })
     await publishOutboxEvents(knex, { now })
 
     const jobs = await knex('durableJobs').where('type', 'notify-page-watcher')

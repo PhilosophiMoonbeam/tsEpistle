@@ -1,5 +1,5 @@
 
-import { beforeEach, describe, expect, it } from '../bun-test.mts'
+import { afterEach, beforeEach, describe, expect, it } from '../bun-test.mts'
 
 import auth from '../../core/auth.ts'
 
@@ -115,5 +115,51 @@ describe('page-rule authorization contract', () => {
 
     auth.groups = { '1': group(1, [rule({ match: 'REGEX', path: '[invalid' })]) }
     expect(auth.checkAccess(user(), ['read:pages'], page)).toBe(false)
+  })
+})
+
+describe('group assignment authorization contract', () => {
+  const originalWiki = Reflect.get(globalThis, 'WIKI')
+  let assignmentGroups: Array<{ id: number; permissions: string[] }>
+
+  beforeEach(() => {
+    assignmentGroups = []
+    Reflect.set(globalThis, 'WIKI', {
+      config: {},
+      configSvc: {},
+      events: {},
+      lang: {},
+      logger: {},
+      models: {
+        groups: {
+          query: () => ({
+            whereIn: async (_column: string, ids: readonly number[]) => assignmentGroups.filter(candidate => ids.includes(candidate.id))
+          })
+        }
+      },
+      startedAt: {}
+    })
+  })
+
+  afterEach(() => {
+    if (originalWiki === undefined) Reflect.deleteProperty(globalThis, 'WIKI')
+    else Reflect.set(globalThis, 'WIKI', originalWiki)
+  })
+
+  it.each(['write:users', 'manage:users', 'write:groups', 'manage:groups'])(
+    'prevents delegated %s authority from assigning a write:scripts group',
+    async permission => {
+      assignmentGroups = [{ id: 7, permissions: ['read:pages', 'write:scripts'] }]
+
+      await expect(auth.checkAssignUserToGroupAccess(user([], [permission]), [7])).resolves.toBe(false)
+    }
+  )
+
+  it('allows only system authority to assign script groups while preserving ordinary assignments', async () => {
+    assignmentGroups = [{ id: 7, permissions: ['write:scripts'] }]
+    await expect(auth.checkAssignUserToGroupAccess(user([], ['manage:system']), [7])).resolves.toBe(true)
+
+    assignmentGroups = [{ id: 8, permissions: ['read:pages', 'write:pages'] }]
+    await expect(auth.checkAssignUserToGroupAccess(user([], ['manage:users']), [8])).resolves.toBe(true)
   })
 })

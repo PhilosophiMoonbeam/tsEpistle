@@ -106,23 +106,47 @@ function isListenError(error: unknown): error is NodeJS.ErrnoException {
   return error instanceof Error && 'syscall' in error && 'code' in error
 }
 
-function handleListenError(error: unknown, port: number, logger: ServerWiki['logger']): void {
-  if (!isListenError(error) || error.syscall !== 'listen') {
-    throw error
-  }
-
+function logListenError(error: unknown, port: number, logger: ServerWiki['logger']): void {
+  if (!isListenError(error) || error.syscall !== 'listen') return
   switch (error.code) {
     case 'EACCES':
       logger.error(`Listening on port ${port} requires elevated privileges!`)
-      process.exit(1)
-      return
+      break
     case 'EADDRINUSE':
       logger.error(`Port ${port} is already in use!`)
-      process.exit(1)
-      return
-    default:
-      throw error
+      break
   }
+}
+
+function listen(server: NodeServer, port: number, bindIP: string, logger: ServerWiki['logger']): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    const onError = (error: Error): void => {
+      server.off('listening', onListening)
+      logListenError(error, port, logger)
+      reject(error)
+    }
+    const onListening = (): void => {
+      server.off('error', onError)
+      resolve()
+    }
+    server.once('error', onError)
+    server.once('listening', onListening)
+    try {
+      server.listen(port, bindIP)
+    } catch (error) {
+      server.off('error', onError)
+      server.off('listening', onListening)
+      logListenError(error, port, logger)
+      reject(error)
+    }
+  })
+}
+
+async function closeServer(server: NodeServer): Promise<void> {
+  if (!server.listening) return
+  await new Promise<void>((resolve, reject) => {
+    server.close(error => error ? reject(error) : resolve())
+  })
 }
 
 function isAuthClaims(value: string | JwtPayload): value is AuthClaims {
@@ -145,12 +169,6 @@ const serversCore: ServersCore = {
     this.servers.http = server
     this.installGraphQLSubscriptions(server)
     wiki.collaboration.install(server)
-
-    server.listen(wiki.config.port, wiki.config.bindIP)
-    server.on('error', error => handleListenError(error, wiki.config.port, wiki.logger))
-    server.on('listening', () => {
-      wiki.logger.info('HTTP Server: [ RUNNING ]')
-    })
     server.on('connection', connection => {
       const key = `http:${connection.remoteAddress}:${connection.remotePort}`
       this.connections.set(key, connection)
@@ -158,6 +176,9 @@ const serversCore: ServersCore = {
         this.connections.delete(key)
       })
     })
+
+    await listen(server, wiki.config.port, wiki.config.bindIP, wiki.logger)
+    wiki.logger.info('HTTP Server: [ RUNNING ]')
   },
 
   async startHTTPS(): Promise<void> {
@@ -184,19 +205,13 @@ const serversCore: ServersCore = {
     } catch (error: unknown) {
       wiki.logger.error('Failed to setup HTTPS server parameters:')
       wiki.logger.error(errorMessage(error))
-      process.exit(1)
+      throw error
     }
 
     const server = https.createServer(tlsOptions, wiki.app)
     this.servers.https = server
     this.installGraphQLSubscriptions(server)
     wiki.collaboration.install(server)
-
-    server.listen(wiki.config.ssl.port, wiki.config.bindIP)
-    server.on('error', error => handleListenError(error, wiki.config.ssl.port, wiki.logger))
-    server.on('listening', () => {
-      wiki.logger.info('HTTPS Server: [ RUNNING ]')
-    })
     server.on('connection', connection => {
       const key = `https:${connection.remoteAddress}:${connection.remotePort}`
       this.connections.set(key, connection)
@@ -204,6 +219,9 @@ const serversCore: ServersCore = {
         this.connections.delete(key)
       })
     })
+
+    await listen(server, wiki.config.ssl.port, wiki.config.bindIP, wiki.logger)
+    wiki.logger.info('HTTPS Server: [ RUNNING ]')
   },
 
   async startGraphQL(): Promise<void> {
@@ -345,22 +363,31 @@ const serversCore: ServersCore = {
   },
 
   async stopServers(): Promise<void> {
-    await this.disposeGraphQLSubscriptions()
-    await wiki.collaboration.dispose()
+    let firstError: unknown
+    const teardown = async (action: () => Promise<unknown>): Promise<void> => {
+      try {
+        await action()
+      } catch (error) {
+        firstError ??= error
+        wiki.logger.error(error)
+      }
+    }
+
+    await teardown(() => this.disposeGraphQLSubscriptions())
+    await teardown(() => wiki.collaboration.dispose())
     this.closeConnections()
     if (this.servers.http) {
-      await new Promise<void>((resolve, reject) => {
-        this.servers.http?.close(error => error ? reject(error) : resolve())
-      })
+      const server = this.servers.http
+      await teardown(() => closeServer(server))
       this.servers.http = null
     }
     if (this.servers.https) {
-      await new Promise<void>((resolve, reject) => {
-        this.servers.https?.close(error => error ? reject(error) : resolve())
-      })
+      const server = this.servers.https
+      await teardown(() => closeServer(server))
       this.servers.https = null
     }
     this.servers.graph = null
+    if (firstError) throw firstError
   },
 
   async restartServer(server = 'https'): Promise<void> {
@@ -370,9 +397,7 @@ const serversCore: ServersCore = {
         if (this.servers.http) {
           await this.disposeGraphQLSubscriptions(this.servers.http)
           await wiki.collaboration.dispose(this.servers.http)
-          await new Promise<void>((resolve, reject) => {
-            this.servers.http?.close(error => error ? reject(error) : resolve())
-          })
+          await closeServer(this.servers.http)
           this.servers.http = null
         }
         await this.startHTTP()
@@ -381,9 +406,7 @@ const serversCore: ServersCore = {
         if (this.servers.https) {
           await this.disposeGraphQLSubscriptions(this.servers.https)
           await wiki.collaboration.dispose(this.servers.https)
-          await new Promise<void>((resolve, reject) => {
-            this.servers.https?.close(error => error ? reject(error) : resolve())
-          })
+          await closeServer(this.servers.https)
           this.servers.https = null
         }
         await this.startHTTPS()

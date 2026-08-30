@@ -1,18 +1,10 @@
-
 import type { Request, Response } from 'express'
 import { DateTime } from 'luxon'
 
-
 let authenticatedPrincipal: Express.User | false | null = null
-type PassportCallback = (
-  error: unknown,
-  user: Express.User | false | null | undefined,
-  info: unknown
-) => unknown
+type PassportCallback = (error: unknown, user: Express.User | false | null | undefined, info: unknown) => unknown
 
-const passportAuthenticate = vi.fn((_strategy: string, _options: unknown, callback: PassportCallback) =>
-  () => callback(null, authenticatedPrincipal, null)
-)
+const passportAuthenticate = vi.fn((_strategy: string, _options: unknown, callback: PassportCallback) => () => callback(null, authenticatedPrincipal, null))
 
 vi.mockModule('passport', import.meta.url, () => ({
   default: {
@@ -26,11 +18,13 @@ vi.mockModule('passport', import.meta.url, () => ({
 
 const { default: auth } = await import('../../core/auth.ts')
 
-const createRequest = (requestPath: string) => ({
-  path: requestPath,
-  get: vi.fn(),
-  logIn: vi.fn((_user, _options, callback) => callback())
-}) as unknown as Request
+const createRequest = (requestPath: string, mountedRoutePath?: string) =>
+  ({
+    path: requestPath,
+    get: vi.fn(),
+    logIn: vi.fn((_user, _options, callback) => callback()),
+    ...(mountedRoutePath === undefined ? {} : { route: { path: mountedRoutePath } })
+  }) as unknown as Request
 
 const response = {
   cookie: vi.fn(),
@@ -94,8 +88,13 @@ describe('API-key authentication boundary', () => {
     }
   })
 
-  test('maps an active API key to its group permissions for GraphQL', async () => {
-    const req = createRequest('/graphql')
+  test.each([
+    ['GraphQL', '/graphql'],
+    ['REST v1 root', '/api/v1'],
+    ['REST v1 resource', '/api/v1/pages'],
+    ['REST v1 OpenAPI document', '/api/v1/openapi.json']
+  ])('constructs the same active API-key principal for the declared %s transport', async (_transport, requestPath) => {
+    const req = createRequest(requestPath)
 
     const next = await authenticate(req)
 
@@ -114,28 +113,41 @@ describe('API-key authentication boundary', () => {
     })
   })
 
-
-  test('maps an active API key to its group permissions for REST v1', async () => {
-    const req = createRequest('/api/v1/pages')
+  test('preserves API-key authentication on the exact separately mounted MCP route', async () => {
+    const req = createRequest('/mcp', '/mcp')
 
     const next = await authenticate(req)
 
     expect(next).toHaveBeenCalledWith()
-    expect(req.user).toMatchObject({
-      permissions: ['read:pages'],
-      groups: [3]
+    expect(req.authContext).toMatchObject({
+      kind: 'apiKey',
+      apiKeyId: 7,
+      groupId: 3
     })
   })
-  test('rejects API keys from application-internal REST routes', async () => {
-    const req = createRequest('/_api/system/info')
+
+  test.each([
+    ['application-internal REST', '/_api/system/info'],
+    ['upload', '/u'],
+    ['HTML authentication', '/login'],
+    ['HTML page', '/docs/getting-started'],
+    ['arbitrary browser', '/admin'],
+    ['REST prefix lookalike', '/api/v10/pages'],
+    ['MCP outside its dedicated mount', '/mcp']
+  ])('rejects the same API key from the %s sink before assigning principal state', async (_sink, requestPath) => {
+    const req = createRequest(requestPath)
 
     const next = await authenticate(req)
 
-    expect(next).toHaveBeenCalledWith(expect.objectContaining({
-      code: 'API_KEY_REST_FORBIDDEN',
-      status: 403
-    }))
+    expect(next).toHaveBeenCalledWith(
+      expect.objectContaining({
+        code: 'API_KEY_TRANSPORT_FORBIDDEN',
+        status: 403
+      })
+    )
     expect(req.user).toBeUndefined()
+    expect(req.authContext).toBeUndefined()
+    expect(req.apiKeyAuth).toBeUndefined()
   })
 
   test('preserves internal REST access for signed-in user sessions', async () => {
@@ -160,10 +172,12 @@ describe('API-key authentication boundary', () => {
 
     const next = await authenticate(createRequest('/graphql'))
 
-    expect(next).toHaveBeenCalledWith(expect.objectContaining({
-      code: 'API_ACCESS_DISABLED',
-      status: 403
-    }))
+    expect(next).toHaveBeenCalledWith(
+      expect.objectContaining({
+        code: 'API_ACCESS_DISABLED',
+        status: 403
+      })
+    )
   })
 
   test('invalidates a revoked key immediately after the valid-key cache changes', async () => {
@@ -172,9 +186,11 @@ describe('API-key authentication boundary', () => {
     auth.validApiKeys = []
     const next = await authenticate(createRequest('/graphql'))
 
-    expect(next).toHaveBeenCalledWith(expect.objectContaining({
-      code: 'API_KEY_INVALID',
-      status: 401
-    }))
+    expect(next).toHaveBeenCalledWith(
+      expect.objectContaining({
+        code: 'API_KEY_INVALID',
+        status: 401
+      })
+    )
   })
 })

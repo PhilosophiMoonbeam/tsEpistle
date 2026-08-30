@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto'
 
 import type { AxChatRequest, AxChatResponse, AxChatResponseResult, AxFunctionJSONSchema } from '@ax-llm/ax'
 import { AGENT_TOOL_NAMES, type AgentActionName, type AgentEventData } from '../../../shared/agents/contracts.ts'
+import { withInvokingAgentRunLease, type AgentApprovalContinuationCheckpoint } from '../coordinator.ts'
 import type { AgentEngine, AgentEngineRequest, AgentEngineResult, AgentEngineSink } from '../runtime.ts'
 import { canonicalJson } from '../../helpers/canonical-json.ts'
 import { AgentRepositoryError } from '../repository.ts'
@@ -511,6 +512,49 @@ export class AxAgentEngine implements AgentEngine {
     this.#actions = actions
   }
 
+  async resumeAction(request: AgentEngineRequest, checkpoint: AgentApprovalContinuationCheckpoint, sink: AgentEngineSink): Promise<AgentEngineResult> {
+    if (
+      request.purpose !== 'root' ||
+      request.run.id !== checkpoint.runId ||
+      request.run.ownerId !== checkpoint.ownerId ||
+      request.run.attempts !== checkpoint.attempt ||
+      (request.run.status !== 'running' && request.run.status !== 'awaiting_approval')
+    ) throw new AgentRepositoryError('AGENT_ACTION_CONTINUATION_MISMATCH', 'Action continuation does not match the resumed engine request', 409)
+    if (request.signal.aborted) throw request.signal.reason
+    if (!this.#actions) throw new AgentRepositoryError('AGENT_ACTION_CONTINUATION_UNSUPPORTED', 'Action continuation requires an action session', 500)
+    let actionSession: AxActionSession | null = null
+    try {
+      actionSession = await this.#actions.open(request)
+      if (actionSession === null || !actionSession.functions.some(action => action.name === checkpoint.actionName)) {
+        throw new AgentRepositoryError('ACTION_NOT_OFFERED', 'Continued action is no longer authorized', 403)
+      }
+      if (actionSession.authoritySha256 !== checkpoint.authoritySha256) {
+        throw new AgentRepositoryError('AGENT_ACTION_CONTINUATION_MISMATCH', 'Continued action authority no longer matches its approval checkpoint', 409)
+      }
+      const output = await withInvokingAgentRunLease(request.signal, request.run, () =>
+        actionSession!.invoke(checkpoint.actionName, checkpoint.actionInput, request.signal, checkpoint.actionCallId))
+      if (request.signal.aborted) throw request.signal.reason
+      const encoded = JSON.stringify(output)
+      await sink.event('tool.completed', {
+        actionCallId: checkpoint.actionCallId,
+        actionName: checkpoint.actionName,
+        result: encoded,
+        cacheHit: false,
+        reusedActionCallId: null
+      })
+      return {
+        inputTokens: 0,
+        outputTokens: 0,
+        costMicros: 0,
+        ...(actionSession.authoritySha256 === null ? {} : { authoritySha256: actionSession.authoritySha256 })
+      }
+    } catch (error) {
+      throw publicError(error)
+    } finally {
+      actionSession?.close()
+    }
+  }
+
   async #turn(provider: AgentProviderService, chatPrompt: AxChatRequest['chatPrompt'], tools: ProviderTools | null, request: AgentEngineRequest): Promise<TurnResult> {
     let content = ''
     let inputTokens = 0
@@ -580,7 +624,8 @@ export class AxAgentEngine implements AgentEngine {
       provider = await this.#factory.create(request.run.providerProfileVersionId)
       if (request.purpose !== 'planner' && request.run.executionMode === 'agent' && this.#actions) actionSession = await this.#actions.open(request)
       if (request.purpose !== 'subagent' && actionSession?.functions.some(action => action.name === 'skills.list')) {
-        skillCatalog = await actionSession.invoke('skills.list', {}, request.signal, 'skill-catalog-bootstrap')
+        skillCatalog = await withInvokingAgentRunLease(request.signal, request.run, () =>
+          actionSession!.invoke('skills.list', {}, request.signal, 'skill-catalog-bootstrap'))
       }
     } catch (error) {
       actionSession?.close()
@@ -681,7 +726,8 @@ export class AxAgentEngine implements AgentEngine {
             input: inputJson
           })
           try {
-            const output = cached?.output ?? await actionSession.invoke(call.name, input, request.signal, actionCallId)
+            const output = cached?.output ?? await withInvokingAgentRunLease(request.signal, request.run, () =>
+              actionSession!.invoke(call.name, input, request.signal, actionCallId))
             if (pageReadKey !== null && cached === undefined) pageReadCache.set(pageReadKey, { actionCallId, output })
             collectPageEvidence(call.name, actionCallId, output, citationRegistry, retrievals)
             const encoded = JSON.stringify(output)

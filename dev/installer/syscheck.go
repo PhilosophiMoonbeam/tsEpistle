@@ -10,7 +10,7 @@ import (
 	"github.com/pbnjay/memory"
 )
 
-const bunSemverRange = ">=1.3.14 <2.0.0"
+const bunSemverRange = ">=1.4.0 <2.0.0"
 const ramMin = 768
 
 // CheckBun checks if Bun is installed and has a supported version.

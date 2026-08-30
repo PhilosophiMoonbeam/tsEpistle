@@ -83,3 +83,5 @@ declare module 'markdown-it-imsize' {
   const plugin: MarkdownItPlugin
   export default plugin
 }
+
+declare module 'prismjs/plugins/*'

@@ -2,6 +2,7 @@ import type { Knex } from 'knex'
 import { z } from 'zod'
 import {
   AGENT_ACTION_NAMES,
+  AGENT_PROPOSAL_STATUSES,
   type AgentActionName,
   type AgentActionRisk,
   type AgentApprovalView,
@@ -25,13 +26,14 @@ import { latestAgentGoalForSession, projectAgentGoal } from './goals.ts'
 
 const actionNames = new Set<string>(AGENT_ACTION_NAMES)
 const runStatusSchema = z.enum(['queued', 'running', 'awaiting_approval', 'succeeded', 'partial', 'failed', 'cancelled', 'recovery_required'])
-const proposalStatusSchema = z.enum(['pending', 'approved', 'denied', 'expired', 'applying', 'applied', 'failed', 'cancelled'])
+const proposalStatusSchema = z.enum(AGENT_PROPOSAL_STATUSES)
 const approvalStatusSchema = z.enum(['pending', 'approved', 'denied', 'expired', 'cancelled'])
 const riskSchema = z.enum(['read', 'open-world-read', 'proposal', 'reversible-write', 'destructive-write'])
 
-const iso = (value: Date | string): string => value instanceof Date ? value.toISOString() : new Date(value).toISOString()
-const nullableIso = (value: Date | string | null): string | null => value === null ? null : iso(value)
-const stringValue = (value: unknown, maximum = 4_000): string | null => typeof value === 'string' && value.length > 0 && value.length <= maximum ? value : null
+const iso = (value: Date | string): string => (value instanceof Date ? value.toISOString() : new Date(value).toISOString())
+const nullableIso = (value: Date | string | null): string | null => (value === null ? null : iso(value))
+const stringValue = (value: unknown, maximum = 4_000): string | null =>
+  typeof value === 'string' && value.length > 0 && value.length <= maximum ? value : null
 
 const parseJson = (value: string | null, code: string): unknown => {
   if (value === null) return null
@@ -45,12 +47,17 @@ const parseJson = (value: string | null, code: string): unknown => {
 const citations = (value: string | null): readonly AgentCitation[] => {
   const parsed = parseJson(value, 'AGENT_MESSAGE_CORRUPT')
   if (parsed === null) return []
-  const result = z.array(z.strictObject({
-    evidenceId: z.string().min(1).max(128),
-    kind: z.enum(['page', 'search-result', 'skill', 'browser']),
-    label: z.string().min(1).max(512),
-    href: z.string().max(2_048).nullable()
-  })).max(100).safeParse(parsed)
+  const result = z
+    .array(
+      z.strictObject({
+        evidenceId: z.string().min(1).max(128),
+        kind: z.enum(['page', 'search-result', 'skill', 'browser']),
+        label: z.string().min(1).max(512),
+        href: z.string().max(2_048).nullable()
+      })
+    )
+    .max(100)
+    .safeParse(parsed)
   if (!result.success) throw new AgentRepositoryError('AGENT_MESSAGE_CORRUPT', 'Agent message citations are invalid', 500)
   return result.data
 }
@@ -92,17 +99,30 @@ export interface ReducedAgentEvents {
   readonly suggestions: readonly AgentFollowUpSuggestion[]
 }
 
-export const reduceAgentEvents = (events: readonly AgentEvent[]): ReducedAgentEvents => {
-  const tools = new Map<string, ToolAccumulator>()
+export const reduceAgentEvents = (events: readonly AgentEvent[], latestRunId: string | null): ReducedAgentEvents => {
+  const visibleAttempts = new Map<string, number>()
+  for (const event of events) {
+    visibleAttempts.set(event.runId, Math.max(visibleAttempts.get(event.runId) ?? 0, event.attempt))
+  }
+
+  const tools: ToolAccumulator[] = []
+  const toolsByRun = new Map<string, Map<string, ToolAccumulator>>()
   let suggestions: readonly AgentFollowUpSuggestion[] = []
-  const visibleAttempt = events.reduce((maximum, event) => Math.max(maximum, event.attempt), 0)
+  let latestSuggestionSequence = -1
 
   for (const event of events) {
-    if (event.attempt !== visibleAttempt) continue
+    if (event.attempt !== visibleAttempts.get(event.runId)) continue
     if (event.type === 'suggestions.updated') {
-      const parsed = z.array(z.strictObject({ id: z.string().min(1).max(128), label: z.string().min(1).max(255), prompt: z.string().min(1).max(4_000) })).max(10).safeParse(event.data.suggestions)
+      if (event.runId !== latestRunId) continue
+      const parsed = z
+        .array(z.strictObject({ id: z.string().min(1).max(128), label: z.string().min(1).max(255), prompt: z.string().min(1).max(4_000) }))
+        .max(10)
+        .safeParse(event.data.suggestions)
       if (!parsed.success) throw new AgentRepositoryError('AGENT_EVENT_CORRUPT', 'Agent suggestions event is invalid', 500)
-      suggestions = parsed.data
+      if (event.sequence > latestSuggestionSequence) {
+        suggestions = parsed.data
+        latestSuggestionSequence = event.sequence
+      }
       continue
     }
 
@@ -112,13 +132,32 @@ export const reduceAgentEvents = (events: readonly AgentEvent[]): ReducedAgentEv
       const actionName = stringValue(event.data.actionName, 128)
       const risk = riskSchema.safeParse(event.data.risk)
       const title = stringValue(event.data.title, 255)
-      if (actionName === null || !actionNames.has(actionName) || !risk.success || title === null) throw new AgentRepositoryError('AGENT_EVENT_CORRUPT', 'Agent tool start event is invalid', 500)
-      if (tools.has(actionCallId)) throw new AgentRepositoryError('AGENT_EVENT_CORRUPT', 'Agent tool call was started twice', 500)
-      tools.set(actionCallId, { id: actionCallId, runId: event.runId, actionName: actionName as AgentActionName, title, state: 'running', risk: risk.data, summary: null, proposalId: null, startedAt: event.createdAt, completedAt: null })
+      if (actionName === null || !actionNames.has(actionName) || !risk.success || title === null)
+        throw new AgentRepositoryError('AGENT_EVENT_CORRUPT', 'Agent tool start event is invalid', 500)
+      let runTools = toolsByRun.get(event.runId)
+      if (!runTools) {
+        runTools = new Map<string, ToolAccumulator>()
+        toolsByRun.set(event.runId, runTools)
+      }
+      if (runTools.has(actionCallId)) throw new AgentRepositoryError('AGENT_EVENT_CORRUPT', 'Agent tool call was started twice', 500)
+      const tool = {
+        id: actionCallId,
+        runId: event.runId,
+        actionName: actionName as AgentActionName,
+        title,
+        state: 'running',
+        risk: risk.data,
+        summary: null,
+        proposalId: null,
+        startedAt: event.createdAt,
+        completedAt: null
+      } satisfies ToolAccumulator
+      runTools.set(actionCallId, tool)
+      tools.push(tool)
       continue
     }
 
-    const tool = tools.get(actionCallId)
+    const tool = toolsByRun.get(event.runId)?.get(actionCallId)
     if (!tool) throw new AgentRepositoryError('AGENT_EVENT_CORRUPT', 'Agent tool event has no start boundary', 500)
     if (event.type === 'tool.progress') {
       const summary = stringValue(event.data.summary)
@@ -137,7 +176,7 @@ export const reduceAgentEvents = (events: readonly AgentEvent[]): ReducedAgentEv
     }
   }
 
-  return { tools: [...tools.values()].map(tool => ({ ...tool })), suggestions }
+  return { tools: tools.map(tool => ({ ...tool })), suggestions }
 }
 
 export interface ProjectAgentRunInput {
@@ -187,7 +226,10 @@ interface SkillRow {
 const skillView = (row: SkillRow): AgentSessionSkillView => {
   const status = row.status === 'enabled' || row.status === 'disabled' || row.status === 'revoked' ? row.status : null
   if (status === null) throw new AgentRepositoryError('AGENT_SKILL_CORRUPT', 'Agent skill status is invalid', 500)
-  const parsedFrontmatter = z.strictObject({ description: z.string().min(1).max(2_000) }).passthrough().safeParse(parseJson(row.frontmatter, 'AGENT_SKILL_CORRUPT'))
+  const parsedFrontmatter = z
+    .strictObject({ description: z.string().min(1).max(2_000) })
+    .passthrough()
+    .safeParse(parseJson(row.frontmatter, 'AGENT_SKILL_CORRUPT'))
   if (!parsedFrontmatter.success) throw new AgentRepositoryError('AGENT_SKILL_CORRUPT', 'Agent skill frontmatter is invalid', 500)
   return {
     skillId: row.skillId,
@@ -228,12 +270,7 @@ interface ProposalRow {
   expiresAt: Date | string
 }
 
-const linkedPageActions = new Set<AgentActionName>([
-  'pages.prepareCreate',
-  'pages.preparePatch',
-  'pages.prepareMove',
-  'pages.prepareRestore'
-])
+const linkedPageActions = new Set<AgentActionName>(['pages.prepareCreate', 'pages.preparePatch', 'pages.prepareMove', 'pages.prepareRestore'])
 
 const proposalPageLink = (row: ProposalRow, status: AgentProposalView['status']): AgentPageActionLink | null => {
   if (status !== 'applied' || !linkedPageActions.has(row.actionName as AgentActionName)) return null
@@ -244,23 +281,27 @@ const proposalPageLink = (row: ProposalRow, status: AgentProposalView['status'])
   if (!locale || !path) throw new AgentRepositoryError('AGENT_PROPOSAL_CORRUPT', 'Applied proposal target is invalid', 500)
   return {
     label: `/${path}`,
-    href: `/${encodeURIComponent(locale)}/${path.split('/').map(segment => encodeURIComponent(segment)).join('/')}`
+    href: `/${encodeURIComponent(locale)}/${path
+      .split('/')
+      .map(segment => encodeURIComponent(segment))
+      .join('/')}`
   }
 }
 
 const proposalView = (row: ProposalRow, approval: AgentApprovalView | null): AgentProposalView => {
   if (!actionNames.has(row.actionName)) throw new AgentRepositoryError('AGENT_PROPOSAL_CORRUPT', 'Agent proposal action is invalid', 500)
   const status = proposalStatusSchema.parse(row.status)
-  const target = row.pageId === null
-    ? null
-    : {
-        id: row.pageId,
-        locale: row.pageLocale ?? '',
-        path: row.pagePath ?? '',
-        title: row.pageTitle ?? '',
-        contentType: row.pageContentType ?? '',
-        sourceRevision: String(row.baseSourceRevision ?? '')
-      }
+  const target =
+    row.pageId === null
+      ? null
+      : {
+          id: row.pageId,
+          locale: row.pageLocale ?? '',
+          path: row.pagePath ?? '',
+          title: row.pageTitle ?? '',
+          contentType: row.pageContentType ?? '',
+          sourceRevision: String(row.baseSourceRevision ?? '')
+        }
   return {
     id: row.id,
     sourceKind: row.sourceKind,
@@ -314,7 +355,8 @@ interface ArtifactRow {
 }
 
 const artifactView = (row: ArtifactRow, now: Date): AgentArtifactView => {
-  if (row.kind !== 'browser-screenshot' || row.mimeType !== 'image/png') throw new AgentRepositoryError('AGENT_ARTIFACT_CORRUPT', 'Agent artifact type is invalid', 500)
+  if (row.kind !== 'browser-screenshot' || row.mimeType !== 'image/png')
+    throw new AgentRepositoryError('AGENT_ARTIFACT_CORRUPT', 'Agent artifact type is invalid', 500)
   return {
     id: row.id,
     kind: 'browser-screenshot',
@@ -329,17 +371,22 @@ const artifactView = (row: ArtifactRow, now: Date): AgentArtifactView => {
 }
 
 export interface ProjectAgentThreadOptions {
-  readonly profileResolutionToken: (session: { readonly id: string, readonly version: number, readonly providerProfileId: string | null, readonly executionMode: string }) => string
+  readonly profileResolutionToken: (session: {
+    readonly id: string
+    readonly version: number
+    readonly providerProfileId: string | null
+    readonly executionMode: string
+  }) => string
   readonly now?: Date
 }
 
 export const projectAgentThread = async (knex: Knex, ownerId: number, sessionId: string, options: ProjectAgentThreadOptions): Promise<AgentThreadState> => {
   const session = await getOwnedAgentSession(knex, ownerId, sessionId)
   const now = options.now ?? new Date()
-  const groupIds = await knex('userGroups').where({ userId: ownerId }).pluck('groupId') as number[]
+  const groupIds = (await knex('userGroups').where({ userId: ownerId }).pluck('groupId')) as number[]
   const [messageRows, runRows, skillRows, proposalRows, approvalRows, artifactRows, taskViews, latestGoal] = await Promise.all([
     listOwnedAgentMessages(knex, ownerId, sessionId, 0, 500),
-    knex<ProjectAgentRunInput>('agentRuns').where('sessionId', sessionId).andWhere('ownerId', ownerId).orderBy('queuedAt', 'desc'),
+    knex<ProjectAgentRunInput>('agentRuns').where('sessionId', sessionId).andWhere('ownerId', ownerId).orderBy('queuedAt', 'desc').orderBy('id', 'desc'),
     knex<SkillRow>('agentUserSkillPreferences as preferences')
       .join('agentSkills as skills', 'skills.id', 'preferences.skillId')
       .join('agentSkillVersions as versions', 'versions.id', 'skills.currentVersionId')
@@ -352,37 +399,71 @@ export const projectAgentThread = async (knex: Knex, ownerId: number, sessionId:
           system.whereNull('skills.ownerUserId').andWhere(exposure => {
             exposure.where('skills.exposureMode', 'all_agent_users')
             if (groupIds.length > 0) {
-              exposure.orWhereExists(function groupGrant () {
-                this.select(knex.raw('1'))
-                  .from('agentSkillGrants as grants')
-                  .whereRaw('grants."skillId" = skills.id')
-                  .whereIn('grants.groupId', groupIds)
+              exposure.orWhereExists(function groupGrant() {
+                this.select(knex.raw('1')).from('agentSkillGrants as grants').whereRaw('grants."skillId" = skills.id').whereIn('grants.groupId', groupIds)
               })
             }
           })
         })
       })
-      .select({ skillId: 'skills.id', versionId: 'versions.id', name: 'skills.name', frontmatter: 'versions.frontmatter', contentHash: 'versions.contentHash', sourcePath: 'skills.rootPath', versionCreatedAt: 'versions.createdAt', status: 'skills.status', currentVersionId: 'skills.currentVersionId', ordinal: 'preferences.ordinal' })
+      .select({
+        skillId: 'skills.id',
+        versionId: 'versions.id',
+        name: 'skills.name',
+        frontmatter: 'versions.frontmatter',
+        contentHash: 'versions.contentHash',
+        sourcePath: 'skills.rootPath',
+        versionCreatedAt: 'versions.createdAt',
+        status: 'skills.status',
+        currentVersionId: 'skills.currentVersionId',
+        ordinal: 'preferences.ordinal'
+      })
       .orderBy('preferences.ordinal'),
     knex<ProposalRow>('agentProposals')
       .leftJoin('pages', 'pages.id', 'agentProposals.pageId')
       .where('agentProposals.sessionId', sessionId)
-      .select({ id: 'agentProposals.id', sourceKind: 'agentProposals.sourceKind', actionName: 'agentProposals.actionName', risk: 'agentProposals.risk', status: 'agentProposals.status', summary: 'agentProposals.summary', pageId: 'agentProposals.pageId', pageLocale: 'pages.localeCode', pagePath: 'pages.path', pageTitle: 'pages.title', pageContentType: 'pages.contentType', baseSourceRevision: 'agentProposals.baseSourceRevision', authoritySha256: 'agentProposals.authoritySha256', inputHash: 'agentProposals.inputHash', patchSha256: 'agentProposals.patchSha256', resultCanonicalSha256: 'agentProposals.resultCanonicalSha256', diffSha256: 'agentProposals.diffSha256', diff: 'agentProposals.diff', contentPurgedAt: 'agentProposals.contentPurgedAt', expiresAt: 'agentProposals.expiresAt' })
+      .select({
+        id: 'agentProposals.id',
+        sourceKind: 'agentProposals.sourceKind',
+        actionName: 'agentProposals.actionName',
+        risk: 'agentProposals.risk',
+        status: 'agentProposals.status',
+        summary: 'agentProposals.summary',
+        pageId: 'agentProposals.pageId',
+        pageLocale: 'pages.localeCode',
+        pagePath: 'pages.path',
+        pageTitle: 'pages.title',
+        pageContentType: 'pages.contentType',
+        baseSourceRevision: 'agentProposals.baseSourceRevision',
+        authoritySha256: 'agentProposals.authoritySha256',
+        inputHash: 'agentProposals.inputHash',
+        patchSha256: 'agentProposals.patchSha256',
+        resultCanonicalSha256: 'agentProposals.resultCanonicalSha256',
+        diffSha256: 'agentProposals.diffSha256',
+        diff: 'agentProposals.diff',
+        contentPurgedAt: 'agentProposals.contentPurgedAt',
+        expiresAt: 'agentProposals.expiresAt'
+      })
       .select({ operation: 'agentProposals.operation' })
       .orderBy('agentProposals.createdAt'),
-    knex<ApprovalRow>('agentApprovals').join('agentProposals', 'agentProposals.id', 'agentApprovals.proposalId').where('agentProposals.sessionId', sessionId).select('agentApprovals.*'),
-    knex<ArtifactRow>('agentArtifacts').where('sessionId', sessionId).andWhere('ownerId', ownerId).select('id', 'kind', 'mimeType', 'byteLength', 'width', 'height', 'createdAt', 'expiresAt').orderBy('createdAt'),
+    knex<ApprovalRow>('agentApprovals')
+      .join('agentProposals', 'agentProposals.id', 'agentApprovals.proposalId')
+      .where('agentProposals.sessionId', sessionId)
+      .select('agentApprovals.*'),
+    knex<ArtifactRow>('agentArtifacts')
+      .where('sessionId', sessionId)
+      .andWhere('ownerId', ownerId)
+      .select('id', 'kind', 'mimeType', 'byteLength', 'width', 'height', 'createdAt', 'expiresAt')
+      .orderBy('createdAt'),
     listAgentTaskViews(knex, ownerId, sessionId),
     latestAgentGoalForSession(knex, ownerId, sessionId)
   ])
 
   const runs = runRows.map(projectAgentRun)
   const currentRun = runs.find(run => run.canCancel) ?? null
-  const goal = latestGoal === null
-    ? null
-    : projectAgentGoal(latestGoal, runRows.find(run => run.goalId === latestGoal.id)?.id ?? null)
+  const goal = latestGoal === null ? null : projectAgentGoal(latestGoal, runRows.find(run => run.goalId === latestGoal.id)?.id ?? null)
   const allEvents = (await Promise.all(runRows.map(run => listOwnedAgentEvents(knex, ownerId, run.id, 0, 1_000)))).flat()
-  const reduced = reduceAgentEvents(allEvents)
+  const reduced = reduceAgentEvents(allEvents, runRows[0]?.id ?? null)
   const approvals = new Map(approvalRows.map(row => [row.proposalId, approvalView(row)]))
   const messages: AgentMessageView[] = messageRows.map(message => ({
     id: message.id,

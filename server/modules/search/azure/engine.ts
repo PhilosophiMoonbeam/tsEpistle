@@ -9,6 +9,7 @@ import {
   type SearchConfig,
   type SearchContext,
   type SearchPlugin,
+  type SearchResult,
   type UnknownRecord
 } from '../../types.ts'
 
@@ -119,7 +120,7 @@ const plugin: SearchPlugin<SearchConfig, AzureSearchContext> = {
     wiki.logger.info('(SEARCH/AZURE) Initialization completed.')
   },
 
-  async query(q) {
+  async query(q): Promise<SearchResult> {
     try {
       const response = await this.client.search(q, {
         includeTotalCount: true,
@@ -150,6 +151,7 @@ const plugin: SearchPlugin<SearchConfig, AzureSearchContext> = {
     } catch (err: unknown) {
       wiki.logger.warn('Search Engine Error:')
       wiki.logger.warn(err instanceof Error ? err.message : String(err))
+      throw err
     }
   },
 

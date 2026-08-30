@@ -10,6 +10,7 @@ import { up as createRegistry } from '../../db/migrations/2.5.135.ts'
 import { up as installRichExtensions } from '../../db/migrations/2.5.137.ts'
 import { up as installVisibleExtensions } from '../../db/migrations/2.5.138.ts'
 import markdownRenderer from '../../modules/rendering/markdown-core/renderer.ts'
+import { rerenderPagesForContentExtension, type ContentExtensionRerenderContext } from '../../content-extensions/rerender.ts'
 
 const baseConfig = {
   allowHTML: false,
@@ -50,6 +51,7 @@ describe('content extension byte lifecycle', () => {
     await db.schema.createTable('pages', table => {
       table.integer('id').primary()
       table.string('extensionKey').notNullable()
+      table.string('hash')
       table.text('content').notNullable()
     })
     global.WIKI = { models: { knex: db } }
@@ -77,5 +79,137 @@ describe('content extension byte lifecycle', () => {
     expect(fallback).toContain('&quot;key&quot;')
     expect(fallback).not.toContain(`content-extension--${envelope.key}`)
     expect(await db('pages').where({ extensionKey: envelope.key }).first('content')).toEqual({ content: authored })
+  })
+
+  it('refreshes extension-visible search terms on disable and enable without a page edit or rebuild', async () => {
+    const authored = serializeContentExtensionFence({ key: 'spoiler', version: 1, props: { content: 'Visible term' } })
+    await db('pages').insert({ id: 100, extensionKey: 'spoiler', hash: 'extension-page', content: authored })
+
+    let renderedWithExtension = false
+    const indexedTerms = new Set<string>()
+    const page = {
+      id: 100,
+      hash: 'extension-page',
+      content: authored,
+      visibility: 'public',
+      isPublished: true,
+      safeContent: ''
+    }
+    const wiki: ContentExtensionRerenderContext = {
+      data: {
+        searchEngine: {
+          async deleted() {
+            indexedTerms.clear()
+          },
+          async updated(searchPage) {
+            for (const term of searchPage.safeContent.split(/\s+/u)) indexedTerms.add(term)
+          }
+        }
+      },
+      events: { outbound: { emit() {} } },
+      models: {
+        pages: {
+          async deletePageFromCache() {},
+          async getPageFromDb() {
+            return { ...page }
+          },
+          async prepareSearchDocument(searchPage) {
+            return {
+              ...searchPage,
+              safeContent: renderedWithExtension ? 'extension-visible-term' : 'escaped-source'
+            }
+          },
+          async renderPage() {
+            const extension = await db('contentExtensions').where({ key: 'spoiler' }).first('isEnabled')
+            renderedWithExtension = extension?.isEnabled === 1
+          }
+        }
+      }
+    }
+    const signal = new AbortController().signal
+
+    expect(await rerenderPagesForContentExtension(db, wiki, 'spoiler', signal)).toBe(1)
+    expect(indexedTerms.has('extension-visible-term')).toBe(true)
+
+    await db('contentExtensions').where({ key: 'spoiler' }).update({ isEnabled: false })
+    expect(await rerenderPagesForContentExtension(db, wiki, 'spoiler', signal)).toBe(1)
+    expect(indexedTerms.has('extension-visible-term')).toBe(false)
+
+    await db('contentExtensions').where({ key: 'spoiler' }).update({ isEnabled: true })
+    expect(await rerenderPagesForContentExtension(db, wiki, 'spoiler', signal)).toBe(1)
+    expect(indexedTerms.has('extension-visible-term')).toBe(true)
+    expect(await db('pages').where({ id: page.id }).first('content')).toEqual({ content: authored })
+
+    wiki.models.pages.renderPage = async () => {
+      throw new Error('render failed')
+    }
+    await expect(rerenderPagesForContentExtension(db, wiki, 'spoiler', signal)).rejects.toThrow('render failed')
+    expect(indexedTerms.has('extension-visible-term')).toBe(false)
+  })
+
+  it('stops a multi-page rerender at the next side effect when its lease signal aborts', async () => {
+    const authored = serializeContentExtensionFence({ key: 'spoiler', version: 1, props: { content: 'Secret' } })
+    await db('pages').insert([
+      { id: 200, extensionKey: 'spoiler', hash: 'first-page', content: authored },
+      { id: 201, extensionKey: 'spoiler', hash: 'second-page', content: authored }
+    ])
+
+    const controller = new AbortController()
+    const reason = new Error('rerender lease replaced')
+    const effects: string[] = []
+    const wiki: ContentExtensionRerenderContext = {
+      data: {
+        searchEngine: {
+          async deleted(page) {
+            effects.push(`deleted:${page.id}`)
+          },
+          async updated(page) {
+            effects.push(`updated:${page.id}`)
+          }
+        }
+      },
+      events: {
+        outbound: {
+          emit(_event, hash) {
+            effects.push(`emit:${String(hash)}`)
+          }
+        }
+      },
+      models: {
+        pages: {
+          async deletePageFromCache(hash) {
+            effects.push(`cache:${hash}`)
+          },
+          async getPageFromDb(pageId) {
+            effects.push(`fetch:${pageId}`)
+            return {
+              id: pageId,
+              hash: pageId === 200 ? 'first-page' : 'second-page',
+              content: authored,
+              visibility: 'public',
+              isPublished: true,
+              safeContent: ''
+            }
+          },
+          async prepareSearchDocument(page) {
+            effects.push(`prepare:${page.id}`)
+            return page
+          },
+          async renderPage(page) {
+            effects.push(`render:${page.id}`)
+            if (page.id === 200) controller.abort(reason)
+          }
+        }
+      }
+    }
+
+    await expect(rerenderPagesForContentExtension(db, wiki, 'spoiler', controller.signal)).rejects.toBe(reason)
+    expect(effects).toEqual([
+      'cache:first-page',
+      'emit:first-page',
+      'fetch:200',
+      'deleted:200',
+      'render:200'
+    ])
   })
 })

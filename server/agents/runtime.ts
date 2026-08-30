@@ -7,9 +7,11 @@ import {
   admitAgentRun,
   admitAgentRunInTransaction,
   reconcileAgentRunQuota,
+  readAgentApprovalContinuation,
   getOwnedAgentRun,
   type AgentQuotaLimits,
   type AgentQuotaRequest,
+  type AgentApprovalContinuationCheckpoint,
   type AgentRunClaim,
   type AgentRunRecord
 } from './coordinator.ts'
@@ -30,6 +32,7 @@ import { decodeAgentMemorySnapshot, type AgentMemorySnapshot } from './memory.ts
 import { SkillRuntime } from './skills/runtime.ts'
 import type { AgentConversationTitleGenerator, AgentConversationTitleResult } from './providers/utility.ts'
 import {
+  AgentChildBudgetReservations,
   SUBAGENT_READ_ACTIONS,
   DEFAULT_AGENT_ORCHESTRATION_LIMITS,
   parseAgentTaskPlan,
@@ -37,6 +40,8 @@ import {
   shouldPlanAgentResearch,
   subagentPrompt,
   validateChildEvidencePacket,
+  type AgentChildBudgetReservation,
+  type AgentChildBudgetUsage,
   type AgentEvidenceSeed,
   type AgentOrchestrationLimits,
   type AgentResearchSynthesisContext,
@@ -61,10 +66,6 @@ interface AgentUsageTotals {
   costMicros: number
 }
 
-interface AgentResearchBudget {
-  outputCharacters: number
-  tokens: number
-}
 
 interface PersistedResearchEvidence {
   readonly seed: AgentEvidenceSeed
@@ -215,6 +216,7 @@ export interface AgentEngineResult {
 
 export interface AgentEngine {
   execute(request: AgentEngineRequest, sink: AgentEngineSink): Promise<AgentEngineResult>
+  resumeAction?(request: AgentEngineRequest, checkpoint: AgentApprovalContinuationCheckpoint, sink: AgentEngineSink): Promise<AgentEngineResult>
 }
 
 export interface SubmitAgentMessageInput {
@@ -652,7 +654,7 @@ export class AgentProductRuntime {
     }
   }
 
-  async #orchestrationTelemetry(claim: AgentRunClaim): Promise<{ readonly usage: AgentUsageTotals, readonly modelUsage: AgentUsageTotals, readonly budget: AgentResearchBudget }> {
+  async #orchestrationTelemetry(claim: AgentRunClaim): Promise<{ readonly usage: AgentUsageTotals, readonly modelUsage: AgentUsageTotals, readonly budget: AgentChildBudgetUsage }> {
     const rows = await this.#knex('agentEvents')
       .where({ runId: claim.id })
       .whereIn('type', ['task.planCreated', 'model.turn'])
@@ -660,7 +662,8 @@ export class AgentProductRuntime {
       .select('type', 'data', 'dataSha256') as Array<{ type: 'task.planCreated' | 'model.turn', data: string, dataSha256: string }>
     const usage: AgentUsageTotals = { inputTokens: 0, outputTokens: 0, costMicros: 0 }
     const modelUsage: AgentUsageTotals = { inputTokens: 0, outputTokens: 0, costMicros: 0 }
-    const budget: AgentResearchBudget = { outputCharacters: 0, tokens: 0 }
+    let consumedOutputCharacters = 0
+    let consumedTokens = 0
     for (const row of rows) {
       if (sha256(row.data) !== row.dataSha256) throw new AgentRepositoryError('AGENT_EVENT_CORRUPT', 'Stored orchestration event hash is invalid', 500)
       let data: unknown
@@ -685,13 +688,17 @@ export class AgentProductRuntime {
       }
       usage.inputTokens += inputTokens
       usage.outputTokens += outputTokens
-      budget.tokens += inputTokens + outputTokens
+      consumedTokens += inputTokens + outputTokens
       const turnContent = Reflect.get(data, 'content')
       if (typeof turnContent !== 'string') throw new AgentRepositoryError('AGENT_EVENT_CORRUPT', 'Stored subagent output telemetry is invalid', 500)
-      budget.outputCharacters += Reflect.get(data, 'contentTruncated') === true
-        ? this.#orchestration.maxAggregateChildOutputCharacters + 1
+      const accountedOutputCharacters = Reflect.get(data, 'budgetOutputCharacters')
+      consumedOutputCharacters += Reflect.get(data, 'contentTruncated') === true
+        ? accountedOutputCharacters === undefined
+          ? this.#orchestration.maxAggregateChildOutputCharacters + 1
+          : nonNegativeUsage(Number(accountedOutputCharacters), 'Subagent output characters')
         : turnContent.length
     }
+    const budget: AgentChildBudgetUsage = { outputCharacters: consumedOutputCharacters, tokens: consumedTokens }
     return { usage, modelUsage, budget }
   }
 
@@ -701,28 +708,32 @@ export class AgentProductRuntime {
     memory: AgentMemorySnapshot,
     skills: readonly RuntimeSkillRow[],
     currentPage: AgentCurrentPageHint | undefined,
-    budget: AgentResearchBudget,
+    reservations: AgentChildBudgetReservations,
+    reservation: AgentChildBudgetReservation,
     signal: AbortSignal
   ): Promise<AgentUsageTotals> {
     const subagentRunId = randomUUID()
-    const activeTask = await startAgentRunTask(this.#knex, claim, task.id, subagentRunId)
     const childSignal = AbortSignal.any([signal, AbortSignal.timeout(this.#orchestration.childTimeoutMilliseconds)])
+    let activeTask: AgentTaskRecord | undefined
     let content = ''
     let usage: AgentUsageTotals = { inputTokens: 0, outputTokens: 0, costMicros: 0 }
+    const consumed = { outputCharacters: 0, tokens: 0 }
     const evidenceRevisions = new Map<string, string>()
     try {
+      const startedTask = await startAgentRunTask(this.#knex, claim, task.id, subagentRunId)
+      activeTask = startedTask
       const result = await this.#engine.execute({
         run: claim,
         purpose: 'subagent',
-        task: researchTask(activeTask),
+        task: researchTask(startedTask),
         subagentRunId,
         actionAllowlist: SUBAGENT_READ_ACTIONS,
         limits: {
           maxTurns: this.#orchestration.childTurns,
           maxToolCalls: this.#orchestration.childToolCalls,
-          maxOutputTokens: this.#orchestration.childMaxOutputTokens
+          maxOutputTokens: reservation.outputTokens
         },
-        messages: [{ role: 'user', content: subagentPrompt(activeTask) }],
+        messages: [{ role: 'user', content: subagentPrompt(startedTask) }],
         memory,
         skills,
         priorActivity: [],
@@ -731,14 +742,35 @@ export class AgentProductRuntime {
       }, {
         text: async delta => {
           if (childSignal.aborted) throw childSignal.reason
-          if (typeof delta !== 'string' || delta.length === 0 || content.length + delta.length > 64 * 1_024) throw new AgentRepositoryError('AGENT_CHILD_PACKET_INVALID', 'Subagent output is invalid', 409)
+          if (typeof delta !== 'string' || delta.length === 0 || content.length + delta.length > reservation.outputCharacters) throw new AgentRepositoryError('AGENT_CHILD_BUDGET_EXCEEDED', 'Subagent output exceeded its reserved allowance', 409)
           content += delta
         },
         event: async (type, data) => {
           if (childSignal.aborted) throw childSignal.reason
           const contextualData = { ...data, rootRunId: claim.id, taskId: task.id, subagentRunId }
+          if (type === 'model.turn') {
+            consumed.tokens += nonNegativeUsage(Number(Reflect.get(data, 'inputTokens')), 'Subagent input tokens') +
+              nonNegativeUsage(Number(Reflect.get(data, 'outputTokens')), 'Subagent output tokens')
+            const turnContent = Reflect.get(data, 'content')
+            if (typeof turnContent !== 'string') throw new AgentRepositoryError('AGENT_CHILD_BUDGET_INVALID', 'Subagent output telemetry is invalid', 500)
+            const turnOutputCharacters = Reflect.get(data, 'contentTruncated') === true
+              ? reservation.outputCharacters + 1
+              : turnContent.length
+            const remainingOutputCharacters = reservation.outputCharacters - consumed.outputCharacters
+            if (turnOutputCharacters > remainingOutputCharacters) {
+              consumed.outputCharacters = reservation.outputCharacters
+              await this.#appendPresentationEvent(claim, type, {
+                ...contextualData,
+                content: turnContent.slice(0, Math.max(0, remainingOutputCharacters)),
+                contentTruncated: true,
+                budgetOutputCharacters: Math.max(0, remainingOutputCharacters)
+              })
+              throw new AgentRepositoryError('AGENT_CHILD_BUDGET_EXCEEDED', 'Subagent output exceeded its reserved allowance', 409)
+            }
+            consumed.outputCharacters += turnOutputCharacters
+          }
           if (type === 'tool.completed') {
-            const evidence = persistedResearchEvidence(contextualData, activeTask)
+            const evidence = persistedResearchEvidence(contextualData, startedTask)
             if (evidence !== null) {
               for (const [evidenceId, revision] of evidence.revisions) evidenceRevisions.set(evidenceId, revision)
             }
@@ -751,16 +783,15 @@ export class AgentProductRuntime {
         outputTokens: nonNegativeUsage(result.outputTokens, 'Subagent output tokens'),
         costMicros: nonNegativeUsage(result.costMicros, 'Subagent cost')
       }
-      budget.outputCharacters += content.length
-      budget.tokens += usage.inputTokens + usage.outputTokens
-      if (budget.outputCharacters > this.#orchestration.maxAggregateChildOutputCharacters || budget.tokens > this.#orchestration.maxAggregateChildTokens) {
-        throw new AgentRepositoryError('AGENT_CHILD_BUDGET_EXCEEDED', 'Aggregate subagent budget was exceeded', 409)
-      }
-      const validated = validateChildEvidencePacket(content, researchTask(activeTask), evidenceRevisions)
-      await finishAgentRunTask(this.#knex, claim, activeTask.id, subagentRunId, validated, result.authoritySha256 ?? null)
+      consumed.tokens = Math.max(consumed.tokens, usage.inputTokens + usage.outputTokens)
+      consumed.outputCharacters = Math.max(consumed.outputCharacters, content.length)
+      if (consumed.outputCharacters > reservation.outputCharacters) throw new AgentRepositoryError('AGENT_CHILD_BUDGET_EXCEEDED', 'Subagent output exceeded its reserved allowance', 409)
+      const validated = validateChildEvidencePacket(content, researchTask(startedTask), evidenceRevisions)
+      await finishAgentRunTask(this.#knex, claim, startedTask.id, subagentRunId, validated, result.authoritySha256 ?? null)
       return usage
     } catch (error) {
       if (signal.aborted) throw error
+      if (activeTask === undefined) throw error
       const errorCode = childSignal.aborted
         ? 'SUBAGENT_TIMEOUT'
         : typeof error === 'object' && error !== null && typeof Reflect.get(error, 'code') === 'string'
@@ -772,6 +803,8 @@ export class AgentProductRuntime {
         if (typeof taskError === 'object' && taskError !== null && Reflect.get(taskError, 'code') !== 'AGENT_TASK_STATE_CHANGED') throw taskError
       }
       return usage
+    } finally {
+      reservations.release(reservation, consumed)
     }
   }
 
@@ -781,31 +814,44 @@ export class AgentProductRuntime {
     memory: AgentMemorySnapshot,
     skills: readonly RuntimeSkillRow[],
     currentPage: AgentCurrentPageHint | undefined,
-    budget: AgentResearchBudget,
+    budget: AgentChildBudgetUsage,
     signal: AbortSignal
   ): Promise<AgentUsageTotals> {
     const pending = tasks.filter(task => task.status === 'pending')
     const totals: AgentUsageTotals = { inputTokens: 0, outputTokens: 0, costMicros: 0 }
     if (pending.length === 0) return totals
+    const reservations = new AgentChildBudgetReservations(this.#orchestration, budget)
+    const concurrency = Math.min(this.#orchestration.maxConcurrentChildren, pending.length)
     let cursor = 0
-    const worker = async (): Promise<void> => {
-      while (cursor < pending.length) {
-        const task = pending[cursor++]
-        if (!task) return
-        if (budget.outputCharacters > this.#orchestration.maxAggregateChildOutputCharacters || budget.tokens > this.#orchestration.maxAggregateChildTokens) {
+    while (cursor < pending.length) {
+      const batch: Array<{ readonly task: AgentTaskRecord, readonly reservation: AgentChildBudgetReservation }> = []
+      while (batch.length < concurrency) {
+        const task = pending[cursor]
+        if (!task) break
+        const reservation = reservations.reserve()
+        if (reservation === null) break
+        batch.push({ task, reservation })
+        cursor += 1
+      }
+      if (batch.length === 0) {
+        for (; cursor < pending.length; cursor += 1) {
+          const task = pending[cursor]
+          if (!task) continue
           const subagentRunId = randomUUID()
           await startAgentRunTask(this.#knex, claim, task.id, subagentRunId)
           await failAgentRunTask(this.#knex, claim, task.id, subagentRunId, 'AGENT_CHILD_BUDGET_EXCEEDED')
-          continue
         }
-        const usage = await this.#executeResearchTask(claim, task, memory, skills, currentPage, budget, signal)
-        totals.inputTokens += usage.inputTokens
-        totals.outputTokens += usage.outputTokens
-        totals.costMicros += usage.costMicros
+        break
+      }
+      const usages = await Promise.all(batch.map(({ task, reservation }) =>
+        this.#executeResearchTask(claim, task, memory, skills, currentPage, reservations, reservation, signal)
+      ))
+      for (const taskUsage of usages) {
+        totals.inputTokens += taskUsage.inputTokens
+        totals.outputTokens += taskUsage.outputTokens
+        totals.costMicros += taskUsage.costMicros
       }
     }
-    const concurrency = Math.min(this.#orchestration.maxConcurrentChildren, pending.length)
-    await Promise.all(Array.from({ length: concurrency }, worker))
     return totals
   }
 
@@ -897,21 +943,29 @@ export class AgentProductRuntime {
           ? { role: message.role, content: message.content }
           : { role: message.role, content: message.content, providerState: state }
       })
-      await this.#appendPresentationEvent(claim, 'run.attemptStarted', { runId: claim.id, attempt: claim.attempts })
-      if (claim.attempts > 1) await this.#appendPresentationEvent(claim, 'run.attemptSuperseded', { runId: claim.id, supersededThroughAttempt: claim.attempts - 1 })
-      await this.#appendPresentationEvent(claim, 'message.started', { messageId: claim.assistantMessageId }, { status: 'streaming', content: '', citations: null })
-      await recoverAgentRunTasks(this.#knex, claim)
-      let tasks = await listAgentRunTasks(this.#knex, claim.id)
-      if ((!this.#orchestration.enabled || claim.executionMode !== 'agent') && tasks.some(task => task.status === 'pending' || task.status === 'running')) {
-        await cancelAgentRunTasks(this.#knex, claim, 'ORCHESTRATION_DISABLED', 'Subagent orchestration is disabled')
-        tasks = await listAgentRunTasks(this.#knex, claim.id)
+      const continuation = await readAgentApprovalContinuation(this.#knex, claim)
+      if (claim.status === 'awaiting_approval' && continuation === null) {
+        throw new AgentRepositoryError('AGENT_ACTION_CONTINUATION_MISSING', 'Awaiting approval run has no durable action continuation', 500)
       }
-      const latestUserMessage = [...messages].reverse().find(message => message.role === 'user')?.content ?? ''
-      if (this.#orchestration.enabled && claim.executionMode === 'agent' && tasks.length === 0 && shouldPlanAgentResearch(latestUserMessage)) {
-        tasks = (await this.#planResearch(claim, latestUserMessage, signal)).tasks
+      if (continuation === null) {
+        await this.#appendPresentationEvent(claim, 'run.attemptStarted', { runId: claim.id, attempt: claim.attempts })
+        if (claim.attempts > 1) await this.#appendPresentationEvent(claim, 'run.attemptSuperseded', { runId: claim.id, supersededThroughAttempt: claim.attempts - 1 })
+        await this.#appendPresentationEvent(claim, 'message.started', { messageId: claim.assistantMessageId }, { status: 'streaming', content: '', citations: null })
+        await recoverAgentRunTasks(this.#knex, claim)
+      }
+      let tasks = await listAgentRunTasks(this.#knex, claim.id)
+      if (continuation === null) {
+        if ((!this.#orchestration.enabled || claim.executionMode !== 'agent') && tasks.some(task => task.status === 'pending' || task.status === 'running')) {
+          await cancelAgentRunTasks(this.#knex, claim, 'ORCHESTRATION_DISABLED', 'Subagent orchestration is disabled')
+          tasks = await listAgentRunTasks(this.#knex, claim.id)
+        }
+        const latestUserMessage = [...messages].reverse().find(message => message.role === 'user')?.content ?? ''
+        if (this.#orchestration.enabled && claim.executionMode === 'agent' && tasks.length === 0 && shouldPlanAgentResearch(latestUserMessage)) {
+          tasks = (await this.#planResearch(claim, latestUserMessage, signal)).tasks
+        }
       }
       let orchestrationTelemetry = await this.#orchestrationTelemetry(claim)
-      if (this.#orchestration.enabled && claim.executionMode === 'agent' && tasks.some(task => task.status === 'pending')) {
+      if (continuation === null && this.#orchestration.enabled && claim.executionMode === 'agent' && tasks.some(task => task.status === 'pending')) {
         await this.#executeResearchTasks(claim, tasks, memory, skills, currentPage, orchestrationTelemetry.budget, signal)
         tasks = await listAgentRunTasks(this.#knex, claim.id)
         orchestrationTelemetry = await this.#orchestrationTelemetry(claim)
@@ -920,7 +974,7 @@ export class AgentProductRuntime {
       orchestrationUsage.outputTokens = orchestrationTelemetry.usage.outputTokens
       orchestrationUsage.costMicros = orchestrationTelemetry.usage.costMicros
       const research = tasks.length === 0 ? undefined : await this.#researchContext(claim, tasks)
-      const result = await this.#engine.execute({
+      const engineRequest: AgentEngineRequest = {
         run: claim,
         purpose: 'root',
         messages,
@@ -930,7 +984,8 @@ export class AgentProductRuntime {
         signal,
         ...(research === undefined ? {} : { research }),
         ...(currentPage === undefined ? {} : { currentPage })
-      }, {
+      }
+      const sink: AgentEngineSink = {
         text: async delta => {
           if (signal.aborted) throw signal.reason
           if (typeof delta !== 'string' || delta.length === 0 || delta.length > 16_000 || content.length + delta.length > 128_000) throw new AgentRepositoryError('INVALID_ENGINE_DELTA', 'Inference engine emitted an invalid text delta', 500)
@@ -941,7 +996,10 @@ export class AgentProductRuntime {
           if (signal.aborted) throw signal.reason
           await this.#appendPresentationEvent(claim, type, data)
         }
-      })
+      }
+      const result = continuation === null
+        ? await this.#engine.execute(engineRequest, sink)
+        : await (this.#engine.resumeAction?.(engineRequest, continuation, sink) ?? Promise.reject(new AgentRepositoryError('AGENT_ACTION_CONTINUATION_UNSUPPORTED', 'Inference engine cannot resume durable action continuations', 500)))
       if (signal.aborted) throw signal.reason
       orchestrationTelemetry = await this.#orchestrationTelemetry(claim)
       orchestrationUsage.inputTokens = orchestrationTelemetry.usage.inputTokens
@@ -952,7 +1010,9 @@ export class AgentProductRuntime {
         outputTokens: Math.max(orchestrationTelemetry.modelUsage.outputTokens, nonNegativeUsage(result.outputTokens, 'Model output tokens')),
         costMicros: nonNegativeUsage(result.costMicros, 'Model cost')
       }
-      const titleUsage = await this.#generateConversationTitle(claim, sessionRow, messages, content, signal)
+      const titleUsage = continuation === null
+        ? await this.#generateConversationTitle(claim, sessionRow, messages, content, signal)
+        : { title: '', source: 'fallback' as const, inputTokens: 0, outputTokens: 0 }
       const inputTokens = nonNegativeUsage(modelUsage.inputTokens + titleUsage.inputTokens + orchestrationUsage.inputTokens, 'Input tokens')
       const outputTokens = nonNegativeUsage(modelUsage.outputTokens + titleUsage.outputTokens + orchestrationUsage.outputTokens, 'Output tokens')
       const costMicros = nonNegativeUsage(modelUsage.costMicros + orchestrationUsage.costMicros, 'Cost')

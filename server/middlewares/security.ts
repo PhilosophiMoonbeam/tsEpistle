@@ -1,3 +1,4 @@
+import { validateHeaderValue } from 'node:http'
 import type { NextFunction, Request, Response } from 'express'
 
 interface SecurityWikiContext {
@@ -8,13 +9,15 @@ interface SecurityWikiContext {
       securityHSTS: boolean
       securityHSTSDuration: number
       securityOpenRedirect: boolean
+      securityCSP: boolean
+      securityCSPDirectives: string
     }
   }
 }
 
 const wiki = WIKI as unknown as SecurityWikiContext
 
-export default function securityMiddleware (req: Request, res: Response, next: NextFunction): void {
+export default function securityMiddleware(req: Request, res: Response, next: NextFunction): void {
   // -> Disable X-Powered-By
   req.app.disable('x-powered-by')
 
@@ -40,6 +43,20 @@ export default function securityMiddleware (req: Request, res: Response, next: N
   // -> Enforce HSTS
   if (wiki.config.security.securityHSTS) {
     res.set('Strict-Transport-Security', `max-age=${wiki.config.security.securityHSTSDuration}; includeSubDomains`)
+  }
+
+  // -> Enforce Content Security Policy
+  if (wiki.config.security.securityCSP) {
+    const directives = wiki.config.security.securityCSPDirectives
+    let validDirectives = true
+    try {
+      validateHeaderValue('Content-Security-Policy', directives)
+    } catch {
+      validDirectives = false
+    }
+    if (validDirectives) {
+      res.set('Content-Security-Policy', directives)
+    }
   }
 
   // -> Prevent Open Redirect from user provided URL

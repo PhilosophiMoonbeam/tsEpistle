@@ -72,12 +72,12 @@ interface WikiOperations {
   auth: {
     checkExclusiveAccess(requester: Express.User | undefined, permissions: readonly string[], overrides: readonly string[]): boolean
     reloadGroups(): Promise<unknown>
-    revokeUserTokens(input: { id: number, kind: 'g' | 'u' }): void
+    revokeUserTokens(input: { id: number; kind: 'g' | 'u' }): void
   }
-  data: { groups: { defaultPermissions: unknown, defaultPageRules: unknown } }
+  data: { groups: { defaultPermissions: unknown; defaultPageRules: unknown } }
   events: { outbound: { emit(event: string, payload?: Record<string, unknown>): void } }
   models: {
-    groups: { query(): GroupQuery, relatedQuery(relation: 'users'): GroupAggregateQuery }
+    groups: { query(): GroupQuery; relatedQuery(relation: 'users'): GroupAggregateQuery }
     users: { query(): UserQuery }
     knex(table: string): KnexQuery
   }
@@ -123,11 +123,17 @@ const requirePermissions = (value: unknown): string[] => {
 }
 
 const requirePageRules = (value: unknown): PageRule[] => {
-  if (!Array.isArray(value) || value.some(rule => (
-    !rule || typeof rule !== 'object' || Array.isArray(rule) ||
-    typeof Reflect.get(rule, 'match') !== 'string' ||
-    typeof Reflect.get(rule, 'path') !== 'string'
-  ))) {
+  if (
+    !Array.isArray(value) ||
+    value.some(
+      rule =>
+        !rule ||
+        typeof rule !== 'object' ||
+        Array.isArray(rule) ||
+        typeof Reflect.get(rule, 'match') !== 'string' ||
+        typeof Reflect.get(rule, 'path') !== 'string'
+    )
+  ) {
     throw new ApplicationError('pageRules must be an array of valid page rules', { code: 'INVALID_INPUT' })
   }
   return value as PageRule[]
@@ -136,11 +142,11 @@ const requirePageRules = (value: unknown): PageRule[] => {
 const permissionResourceType = (permission: unknown): string => String(permission).split(':').pop() ?? ''
 
 const hasAdministrativePermissions = (permissions: readonly unknown[]): boolean => {
-  return permissions.some(permission => administrativeResourceTypes.includes(permissionResourceType(permission)))
+  return permissions.some(permission => administrativeResourceTypes.includes(permissionResourceType(permission)) || String(permission) === 'write:scripts')
 }
 
 const hasSystemPermissions = (permissions: readonly unknown[]): boolean => {
-  return permissions.some(permission => permissionResourceType(permission) === 'system')
+  return permissions.some(permission => permissionResourceType(permission) === 'system' || String(permission) === 'write:scripts')
 }
 
 const revoke = (id: number, kind: 'g' | 'u'): void => {
@@ -153,14 +159,17 @@ const reload = async (): Promise<void> => {
   wiki.events.outbound.emit('reloadGroups')
 }
 
-const list = (): GroupQuery => wiki.models.groups.query().select(
-  'groups.id',
-  'groups.name',
-  'groups.isSystem',
-  'groups.createdAt',
-  'groups.updatedAt',
-  wiki.models.groups.relatedQuery('users').count().as('userCount')
-)
+const list = (): GroupQuery =>
+  wiki.models.groups
+    .query()
+    .select(
+      'groups.id',
+      'groups.name',
+      'groups.isSystem',
+      'groups.createdAt',
+      'groups.updatedAt',
+      wiki.models.groups.relatedQuery('users').count().as('userCount')
+    )
 
 const listPickerOptions = (): GroupQuery => wiki.models.groups.query().select('id', 'name', 'isSystem')
 
@@ -199,11 +208,11 @@ const assignUser = async ({ requester, groupId: groupIdValue, userId: userIdValu
   ) {
     throw new ApplicationError('You are not authorized to assign a user to this administrative group.', { code: 'GROUP_ASSIGN_FORBIDDEN', status: 403 })
   }
-  if (
-    wiki.auth.checkExclusiveAccess(requester, ['manage:groups'], ['manage:system']) &&
-    hasSystemPermissions(permissions)
-  ) {
-    throw new ApplicationError('You are not authorized to assign a user to a group with the manage:system permission.', { code: 'GROUP_ASSIGN_SYSTEM_FORBIDDEN', status: 403 })
+  if (wiki.auth.checkExclusiveAccess(requester, ['manage:groups'], ['manage:system']) && hasSystemPermissions(permissions)) {
+    throw new ApplicationError('You are not authorized to assign a user to a group with the manage:system permission.', {
+      code: 'GROUP_ASSIGN_SYSTEM_FORBIDDEN',
+      status: 403
+    })
   }
 
   const user = await wiki.models.users.query().findById(userId)
@@ -248,6 +257,10 @@ const remove = async (value: unknown): Promise<void> => {
   if (id === 1 || id === 2) {
     throw new ApplicationError('Cannot delete this group.', { code: 'GROUP_DELETE_PROTECTED' })
   }
+  const group = await get(id)
+  if (group?.isSystem) {
+    throw new ApplicationError('Cannot delete this group.', { code: 'GROUP_DELETE_PROTECTED' })
+  }
   await wiki.models.groups.query().deleteById(id)
   revoke(id, 'g')
   await reload()
@@ -256,38 +269,76 @@ const remove = async (value: unknown): Promise<void> => {
 const update = async (input: GroupUpdateInput): Promise<void> => {
   const id = requirePositiveInteger(input.id, 'id')
   const name = requireNonEmptyString(input.name, 'name')
-  const redirectOnLogin = input.redirectOnLogin === undefined || input.redirectOnLogin === null
-    ? '/'
-    : requireNonEmptyString(input.redirectOnLogin, 'redirectOnLogin')
+  const redirectOnLogin =
+    input.redirectOnLogin === undefined || input.redirectOnLogin === null ? '/' : requireNonEmptyString(input.redirectOnLogin, 'redirectOnLogin')
   const permissions = requirePermissions(input.permissions)
   const pageRules = requirePageRules(input.pageRules)
   const requester = input.requester
-  if (pageRules.some(rule => {
-    const isSafe: unknown = safeRegex(rule.path)
-    return isSafe !== true
-  })) {
+  if (
+    pageRules.some(rule => {
+      const isSafe: unknown = safeRegex(rule.path)
+      return isSafe !== true
+    })
+  ) {
     throw new ApplicationError('Some Page Rules contains unsafe or exponential time regex.', { code: 'GROUP_PAGE_RULE_UNSAFE' })
   }
 
+  const group = await get(id)
+  if (!group) {
+    throw new ApplicationError('Invalid Group ID', { code: 'GROUP_NOT_FOUND', status: 404 })
+  }
+  const currentPermissions = Array.isArray(group.permissions) ? group.permissions : []
+  const isProtectedGroup = group.isSystem || id === 1 || id === 2
+  const identityChanged = group.name !== name
+  const authorityChanged = currentPermissions.length !== permissions.length || currentPermissions.some((permission, index) => permission !== permissions[index])
+
+  if ((id === 1 || id === 2) && identityChanged) {
+    throw new ApplicationError('Cannot rename this group.', { code: 'GROUP_UPDATE_PROTECTED' })
+  }
+  if (id === 1 && authorityChanged) {
+    throw new ApplicationError('Cannot change the Administrators group permissions.', { code: 'GROUP_UPDATE_PROTECTED' })
+  }
+  if (
+    isProtectedGroup &&
+    (identityChanged || authorityChanged) &&
+    wiki.auth.checkExclusiveAccess(requester, ['write:groups', 'manage:groups'], ['manage:system'])
+  ) {
+    throw new ApplicationError('You are not authorized to change this system group identity or authority.', {
+      code: 'GROUP_UPDATE_SYSTEM_FORBIDDEN',
+      status: 403
+    })
+  }
   if (
     wiki.auth.checkExclusiveAccess(requester, ['write:groups'], ['manage:groups', 'manage:system']) &&
-    hasAdministrativePermissions(permissions)
+    (hasAdministrativePermissions(currentPermissions) || hasAdministrativePermissions(permissions))
   ) {
-    throw new ApplicationError('You are not authorized to manage this group or assign these administrative permissions.', { code: 'GROUP_UPDATE_FORBIDDEN', status: 403 })
+    throw new ApplicationError('You are not authorized to manage this group or assign these administrative permissions.', {
+      code: 'GROUP_UPDATE_FORBIDDEN',
+      status: 403
+    })
   }
   if (
     wiki.auth.checkExclusiveAccess(requester, ['manage:groups'], ['manage:system']) &&
-    hasSystemPermissions(permissions)
+    (hasSystemPermissions(currentPermissions) || hasSystemPermissions(permissions))
   ) {
-    throw new ApplicationError('You are not authorized to manage this group or assign the manage:system permissions.', { code: 'GROUP_UPDATE_SYSTEM_FORBIDDEN', status: 403 })
+    throw new ApplicationError('You are not authorized to manage this group or assign the manage:system permissions.', {
+      code: 'GROUP_UPDATE_SYSTEM_FORBIDDEN',
+      status: 403
+    })
   }
 
-  await wiki.models.groups.query().patch({
-    name,
-    redirectOnLogin: redirectOnLogin || '/',
-    permissions,
-    pageRules
-  }).where('id', id)
+  const updatedRows = await wiki.models.groups
+    .query()
+    .patch({
+      name,
+      redirectOnLogin: redirectOnLogin || '/',
+      permissions,
+      pageRules
+    })
+    .where('id', id)
+  if (updatedRows !== 1) {
+    throw new ApplicationError('Invalid Group ID', { code: 'GROUP_NOT_FOUND', status: 404 })
+  }
 
   revoke(id, 'g')
   await reload()

@@ -13,6 +13,7 @@ interface DurableJobRow {
   maxAttempts: number
   nextRunAt: Date | string | number
   leaseOwner: string | null
+  leaseToken: string | null
   leaseExpiresAt: Date | string | number | null
   lastError: string | null
   deduplicationKey: string | null
@@ -21,7 +22,8 @@ interface DurableJobRow {
   completedAt: Date | string | number | null
 }
 
-export interface DurableJob<Payload = Record<string, unknown>> extends Omit<DurableJobRow, 'payload' | 'nextRunAt' | 'leaseExpiresAt' | 'createdAt' | 'updatedAt' | 'completedAt'> {
+export interface DurableJob<Payload = Record<string, unknown>>
+  extends Omit<DurableJobRow, 'payload' | 'nextRunAt' | 'leaseExpiresAt' | 'createdAt' | 'updatedAt' | 'completedAt'> {
   payload: Payload
   nextRunAt: Date
   leaseExpiresAt: Date | null
@@ -51,11 +53,11 @@ export interface RunDurableJobsOptions extends ClaimDurableJobs {
   retryDelay?: (attempt: number) => number
 }
 
-export type DurableJobHandler = (job: DurableJob, context: { knex: Knex }) => Promise<void>
+export type DurableJobHandler = (job: DurableJob, context: { knex: Knex; signal: AbortSignal }) => Promise<void>
 
 const tableName = 'durableJobs'
 const defaultLeaseMs = 30_000
-const defaultRetryDelay = (attempt: number): number => Math.min(300_000, 1_000 * (2 ** Math.max(0, attempt - 1)))
+const defaultRetryDelay = (attempt: number): number => Math.min(300_000, 1_000 * 2 ** Math.max(0, attempt - 1))
 const validJobType = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
 
 const asDate = (value: Date | string | number): Date => {
@@ -91,9 +93,9 @@ const applyEligiblePredicate = (query: Knex.QueryBuilder, now: Date): Knex.Query
     })
 
 export class DurableJobStore {
-  private readonly knex: Knex
+  private readonly knex: Knex | Knex.Transaction
 
-  constructor(knex: Knex) {
+  constructor(knex: Knex | Knex.Transaction) {
     this.knex = knex
   }
 
@@ -116,6 +118,7 @@ export class DurableJobStore {
       nextRunAt: input.nextRunAt ?? now,
       leaseOwner: null,
       leaseExpiresAt: null,
+      leaseToken: null,
       lastError: null,
       deduplicationKey: input.deduplicationKey ?? null,
       createdAt: now,
@@ -123,17 +126,15 @@ export class DurableJobStore {
       completedAt: null
     }
 
-    try {
+    if (!input.deduplicationKey) {
       await this.knex<DurableJobRow>(tableName).insert(row)
       return deserializeJob(row)
-    } catch (error) {
-      if (!input.deduplicationKey) throw error
-      const existing = await this.knex<DurableJobRow>(tableName)
-        .where('deduplicationKey', input.deduplicationKey)
-        .first()
-      if (!existing) throw error
-      return deserializeJob(existing)
     }
+
+    await this.knex<DurableJobRow>(tableName).insert(row).onConflict('deduplicationKey').ignore()
+    const stored = await this.knex<DurableJobRow>(tableName).where('deduplicationKey', input.deduplicationKey).first()
+    if (!stored) throw new Error(`Durable job ${row.id} was not inserted or deduplicated`)
+    return deserializeJob(stored)
   }
 
   async claim(input: ClaimDurableJobs): Promise<DurableJob[]> {
@@ -146,44 +147,46 @@ export class DurableJobStore {
     }
     const now = input.now ?? new Date()
     const leaseExpiresAt = new Date(now.getTime() + leaseMs)
-    const candidates = await applyEligiblePredicate(
-      this.knex<DurableJobRow>(tableName).select('id'),
-      now
-    ).orderBy('nextRunAt', 'asc').orderBy('id', 'asc').limit(limit * 3) as Array<Pick<DurableJobRow, 'id'>>
+    const candidates = (await applyEligiblePredicate(this.knex<DurableJobRow>(tableName).select('id'), now)
+      .orderBy('nextRunAt', 'asc')
+      .orderBy('id', 'asc')
+      .limit(limit * 3)) as Array<Pick<DurableJobRow, 'id'>>
 
     const claimed: DurableJob[] = []
     for (const candidate of candidates) {
       if (claimed.length >= limit) break
-      const updated = await applyEligiblePredicate(
-        this.knex<DurableJobRow>(tableName).where('id', candidate.id),
-        now
-      ).update({
+      const leaseToken = randomUUID()
+      const updated = await applyEligiblePredicate(this.knex<DurableJobRow>(tableName).where('id', candidate.id), now).update({
         state: 'running',
         leaseOwner: input.workerId,
+        leaseToken,
         leaseExpiresAt,
         attempts: this.knex.raw('?? + 1', ['attempts']),
         updatedAt: now
       })
       if (updated !== 1) continue
-      const row = await this.knex<DurableJobRow>(tableName).where({ id: candidate.id, leaseOwner: input.workerId }).first()
+      const row = await this.knex<DurableJobRow>(tableName).where({ id: candidate.id, leaseOwner: input.workerId, leaseToken }).first()
       if (row) claimed.push(deserializeJob(row))
     }
     return claimed
   }
 
   async extendLease(job: DurableJob, leaseMs = defaultLeaseMs, now = new Date()): Promise<boolean> {
+    if (!job.leaseToken) return false
     const updated = await this.knex<DurableJobRow>(tableName)
-      .where({ id: job.id, leaseOwner: job.leaseOwner, state: 'running' })
+      .where({ id: job.id, leaseOwner: job.leaseOwner, leaseToken: job.leaseToken, state: 'running' })
       .update({ leaseExpiresAt: new Date(now.getTime() + leaseMs), updatedAt: now })
     return updated === 1
   }
 
   async complete(job: DurableJob, now = new Date()): Promise<boolean> {
+    if (!job.leaseToken) return false
     const updated = await this.knex<DurableJobRow>(tableName)
-      .where({ id: job.id, leaseOwner: job.leaseOwner, state: 'running' })
+      .where({ id: job.id, leaseOwner: job.leaseOwner, leaseToken: job.leaseToken, state: 'running' })
       .update({
         state: 'succeeded',
         leaseOwner: null,
+        leaseToken: null,
         leaseExpiresAt: null,
         lastError: null,
         completedAt: now,
@@ -193,13 +196,15 @@ export class DurableJobStore {
   }
 
   async fail(job: DurableJob, error: unknown, retryDelay = defaultRetryDelay, now = new Date()): Promise<boolean> {
+    if (!job.leaseToken) return false
     const terminal = job.attempts >= job.maxAttempts
-    const message = (error instanceof Error ? error.stack ?? error.message : String(error)).slice(0, 8_000)
+    const message = (error instanceof Error ? (error.stack ?? error.message) : String(error)).slice(0, 8_000)
     const updated = await this.knex<DurableJobRow>(tableName)
-      .where({ id: job.id, leaseOwner: job.leaseOwner, state: 'running' })
+      .where({ id: job.id, leaseOwner: job.leaseOwner, leaseToken: job.leaseToken, state: 'running' })
       .update({
         state: terminal ? 'failed' : 'pending',
         leaseOwner: null,
+        leaseToken: null,
         leaseExpiresAt: null,
         lastError: message,
         nextRunAt: terminal ? job.nextRunAt : new Date(now.getTime() + retryDelay(job.attempts)),
@@ -210,30 +215,27 @@ export class DurableJobStore {
   }
 
   async cancel(id: string, now = new Date()): Promise<boolean> {
-    const updated = await this.knex<DurableJobRow>(tableName)
-      .where('id', id)
-      .whereIn('state', ['pending', 'running'])
-      .update({
-        state: 'cancelled',
-        leaseOwner: null,
-        leaseExpiresAt: null,
-        completedAt: now,
-        updatedAt: now
-      })
+    const updated = await this.knex<DurableJobRow>(tableName).where('id', id).whereIn('state', ['pending', 'running']).update({
+      state: 'cancelled',
+      leaseOwner: null,
+      leaseToken: null,
+      leaseExpiresAt: null,
+      completedAt: now,
+      updatedAt: now
+    })
     return updated === 1
   }
 
   async retry(id: string, now = new Date()): Promise<boolean> {
-    const updated = await this.knex<DurableJobRow>(tableName)
-      .where({ id, state: 'failed' })
-      .update({
-        state: 'pending',
-        attempts: 0,
-        nextRunAt: now,
-        lastError: null,
-        completedAt: null,
-        updatedAt: now
-      })
+    const updated = await this.knex<DurableJobRow>(tableName).where({ id, state: 'failed' }).update({
+      state: 'pending',
+      attempts: 0,
+      nextRunAt: now,
+      leaseToken: null,
+      lastError: null,
+      completedAt: null,
+      updatedAt: now
+    })
     return updated === 1
   }
 
@@ -246,18 +248,53 @@ export class DurableJobStore {
 export const runDurableJobBatch = async (knex: Knex, options: RunDurableJobsOptions): Promise<DurableJob[]> => {
   const store = new DurableJobStore(knex)
   const claimed = await store.claim(options)
-  await Promise.all(claimed.map(async job => {
-    const handler = options.handlers[`${job.type}@${job.version}`]
-    if (!handler) {
-      await store.fail(job, new Error(`No handler registered for durable job ${job.type}@${job.version}`), options.retryDelay)
-      return
-    }
-    try {
-      await handler(job, { knex })
-      await store.complete(job)
-    } catch (error) {
-      await store.fail(job, error, options.retryDelay)
-    }
-  }))
+  const leaseMs = options.leaseMs ?? defaultLeaseMs
+  const heartbeatMs = Math.max(1, Math.floor(leaseMs / 2))
+  await Promise.all(
+    claimed.map(async job => {
+      const handler = options.handlers[`${job.type}@${job.version}`]
+      if (!handler) {
+        await store.fail(job, new Error(`No handler registered for durable job ${job.type}@${job.version}`), options.retryDelay)
+        return
+      }
+
+      const abortController = new AbortController()
+      let authoritative = true
+      let renewal = Promise.resolve()
+      const heartbeat = setInterval(() => {
+        renewal = renewal.then(async () => {
+          if (!authoritative) return
+          try {
+            authoritative = await store.extendLease(job, leaseMs)
+          } catch {
+            authoritative = false
+          }
+          if (!authoritative) {
+            clearInterval(heartbeat)
+            abortController.abort(new Error(`Durable job ${job.id} lease was lost`))
+          }
+        })
+      }, heartbeatMs)
+
+      let handlerFailed = false
+      let handlerError: unknown
+      try {
+        await handler(job, { knex, signal: abortController.signal })
+      } catch (error) {
+        handlerFailed = true
+        handlerError = error
+      } finally {
+        clearInterval(heartbeat)
+        await renewal
+      }
+
+      if (!authoritative) return
+      if (handlerFailed) {
+        await store.fail(job, handlerError, options.retryDelay)
+      } else {
+        await store.complete(job)
+      }
+    })
+  )
   return claimed
 }

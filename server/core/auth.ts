@@ -11,9 +11,8 @@ import type { NextFunction, Request, Response } from 'express'
 import commonHelper from '../helpers/common.ts'
 import securityHelper from '../helpers/security.ts'
 import cache from './cache.ts'
-import { apiAccessContract, isInternalRestPath } from '../../shared/api-access.ts'
+import { apiAccessContract, isApiKeyTransportPath } from '../../shared/api-access.ts'
 import { pageRuleRegexMatches } from '../helpers/page-access.ts'
-
 
 type UnknownRecord = Record<string, unknown>
 type PageRuleMatch = 'START' | 'END' | 'REGEX' | 'TAG' | 'EXACT'
@@ -74,7 +73,6 @@ interface ApiPrincipal extends Express.User {
   mcpResource?: string
   mcpResourceVersion?: number
 }
-
 
 interface AuthenticationError extends Error {
   code: string
@@ -153,14 +151,14 @@ interface WikiModels {
   users: {
     getGuestUser(): Promise<StoredUser>
     query(): UsersQuery
-    refreshToken(id: number): Promise<{ token: string, user: StoredUser }>
+    refreshToken(id: number): Promise<{ token: string; user: StoredUser }>
   }
 }
 
 interface WikiConfig extends UnknownRecord {
   api: { isEnabled: boolean }
-  auth: { audience: string, tokenExpiration: string, tokenRenewal: string }
-  certs: { jwk?: JsonWebKey, private: string | Buffer, public: string | Buffer }
+  auth: { audience: string; tokenExpiration: string; tokenRenewal: string }
+  certs: { jwk?: JsonWebKey; private: string | Buffer; public: string | Buffer }
   features: { featurePageComments: boolean }
   host: string
   sessionSecret: string
@@ -174,7 +172,7 @@ interface WikiContext extends UnknownRecord {
     outbound: { emit(event: string): void }
   }
   lang: { t(key: string): string }
-  logger: { error(value: unknown): void, info(value: unknown): void, warn(value: unknown): void }
+  logger: { error(value: unknown): void; info(value: unknown): void; warn(value: unknown): void }
   models: WikiModels
   startedAt: DateTime
 }
@@ -197,9 +195,9 @@ interface RevokeRequest {
 }
 
 interface EffectivePermissions {
-  comments: { manage: boolean, read: boolean, write: boolean }
+  comments: { manage: boolean; read: boolean; write: boolean }
   history: { read: boolean }
-  pages: { delete: boolean, manage: boolean, read: boolean, script: boolean, style: boolean, write: boolean }
+  pages: { delete: boolean; manage: boolean; read: boolean; script: boolean; style: boolean; write: boolean }
   source: { read: boolean }
   system: { manage: boolean }
 }
@@ -230,25 +228,35 @@ interface AuthService {
 const isRecord = (value: unknown): value is UnknownRecord => typeof value === 'object' && value !== null
 const isWikiContext = (value: unknown): value is WikiContext => {
   if (!isRecord(value)) return false
-  return isRecord(value.config) && isRecord(value.configSvc) && isRecord(value.events) && isRecord(value.lang) &&
-    isRecord(value.logger) && isRecord(value.models) && isRecord(value.startedAt)
+  return (
+    isRecord(value.config) &&
+    isRecord(value.configSvc) &&
+    isRecord(value.events) &&
+    isRecord(value.lang) &&
+    isRecord(value.logger) &&
+    isRecord(value.models) &&
+    isRecord(value.startedAt)
+  )
 }
 const getWiki = (): WikiContext => {
   const value: unknown = WIKI
   if (!isWikiContext(value)) throw new Error('WIKI authentication services are not initialized')
   return value
 }
-const asError = (value: unknown): Error => value instanceof Error ? value : new Error(String(value))
+const asError = (value: unknown): Error => (value instanceof Error ? value : new Error(String(value)))
 const isStrategyModule = (value: unknown): value is StrategyModule => {
   if (!isRecord(value) || !isRecord(value.default)) return false
   return typeof value.default.init === 'function'
 }
-const isJwtUser = (value: unknown): value is JwtUser => isRecord(value) &&
-  typeof value.id === 'number' && typeof value.iat === 'number' &&
-  Array.isArray(value.groups) && value.groups.every(group => typeof group === 'number')
-const isApiPrincipal = (value: unknown): value is ApiPrincipal => isRecord(value) &&
-  typeof value.api === 'number' && typeof value.grp === 'number'
-const isAccessUser = (value: unknown): value is AccessUser => isRecord(value) &&
+const isJwtUser = (value: unknown): value is JwtUser =>
+  isRecord(value) &&
+  typeof value.id === 'number' &&
+  typeof value.iat === 'number' &&
+  Array.isArray(value.groups) &&
+  value.groups.every(group => typeof group === 'number')
+const isApiPrincipal = (value: unknown): value is ApiPrincipal => isRecord(value) && typeof value.api === 'number' && typeof value.grp === 'number'
+const isAccessUser = (value: unknown): value is AccessUser =>
+  isRecord(value) &&
   (value.permissions === undefined || (Array.isArray(value.permissions) && value.permissions.every(permission => typeof permission === 'string'))) &&
   (value.getGlobalPermissions === undefined || typeof value.getGlobalPermissions === 'function')
 const isExpressUser = (value: unknown): value is Express.User => isRecord(value)
@@ -280,7 +288,7 @@ const getDecodedUserId = (token: string): number | null => {
 }
 const randomBytesPromise = (size: number): Promise<Buffer> => {
   const { promise, resolve, reject } = Promise.withResolvers<Buffer>()
-  randomBytes(size, (error, buffer) => error ? reject(error) : resolve(buffer))
+  randomBytes(size, (error, buffer) => (error ? reject(error) : resolve(buffer)))
   return promise
 }
 const extractBearerToken = (req: Request): string | null => {
@@ -289,10 +297,11 @@ const extractBearerToken = (req: Request): string | null => {
   const match = /^Bearer ([^\\s]+)$/.exec(authorization)
   return match?.[1] ?? null
 }
-const isRevokeRequest = (value: unknown): value is RevokeRequest => isRecord(value) &&
-  typeof value.id === 'number' && (value.kind === undefined || typeof value.kind === 'string')
-const createAuthenticationError = (message: string, status: number, code: string): AuthenticationError =>
-  Object.assign(new Error(message), { code, status })
+const isDedicatedMcpRequest = (req: Request): boolean =>
+  req.path === apiAccessContract.mcpPath && isRecord(req.route) && req.route.path === apiAccessContract.mcpPath
+const isRevokeRequest = (value: unknown): value is RevokeRequest =>
+  isRecord(value) && typeof value.id === 'number' && (value.kind === undefined || typeof value.kind === 'string')
+const createAuthenticationError = (message: string, status: number, code: string): AuthenticationError => Object.assign(new Error(message), { code, status })
 
 const auth: AuthService = {
   strategies: {},
@@ -307,9 +316,13 @@ const auth: AuthService = {
     passport.deserializeUser<unknown>(async (id, done) => {
       try {
         const wiki = getWiki()
-        const user = await wiki.models.users.query().findById(id).withGraphFetched('groups').modifyGraph('groups', builder => {
-          builder.select('groups.id', 'permissions')
-        })
+        const user = await wiki.models.users
+          .query()
+          .findById(id)
+          .withGraphFetched('groups')
+          .modifyGraph('groups', builder => {
+            builder.select('groups.id', 'permissions')
+          })
         done(user ? null : new Error(wiki.lang.t('auth:errors:usernotfound')), user ?? null)
       } catch (error: unknown) {
         done(asError(error), null)
@@ -328,13 +341,19 @@ const auth: AuthService = {
         if (strategyName !== 'session') passport.unuse(strategyName)
       }
 
-      passport.use('jwt', new passportJwt.Strategy({
-        jwtFromRequest: securityHelper.extractJWT,
-        secretOrKey: wiki.config.certs.public,
-        audience: wiki.config.auth.audience,
-        issuer: 'urn:wiki.js',
-        algorithms: ['RS256']
-      }, (jwtPayload: unknown, done) => done(null, jwtPayload)))
+      passport.use(
+        'jwt',
+        new passportJwt.Strategy(
+          {
+            jwtFromRequest: securityHelper.extractJWT,
+            secretOrKey: wiki.config.certs.public,
+            audience: wiki.config.auth.audience,
+            issuer: 'urn:wiki.js',
+            algorithms: ['RS256']
+          },
+          (jwtPayload: unknown, done) => done(null, jwtPayload)
+        )
+      )
 
       const enabledStrategies = await wiki.models.authentication.getStrategies()
       for (const strategyRecord of enabledStrategies) {
@@ -357,7 +376,6 @@ const auth: AuthService = {
           strategy.config = config
           this.strategies[strategyRecord.key] = { ...strategy, ...strategyRecord, config }
           wiki.logger.info(`Authentication Strategy ${strategyRecord.displayName}: [ OK ]`)
-
         } catch (error: unknown) {
           wiki.logger.error(`Authentication Strategy ${strategyRecord.displayName} (${strategyRecord.key}): [ FAILED ]`)
           wiki.logger.error(error)
@@ -417,7 +435,7 @@ const auth: AuthService = {
 
       if (!user) {
         if (this.guest.cacheExpiration <= DateTime.utc()) {
-          this.guest = { ...await wiki.models.users.getGuestUser(), cacheExpiration: DateTime.utc().plus({ minutes: 1 }) }
+          this.guest = { ...(await wiki.models.users.getGuestUser()), cacheExpiration: DateTime.utc().plus({ minutes: 1 }) }
         }
         if (!isAccessUser(this.guest)) return next(new Error('Guest user is unavailable'))
         this.guest.ownershipUserId = null
@@ -427,26 +445,20 @@ const auth: AuthService = {
       }
 
       if (isApiPrincipal(user)) {
-        if (isInternalRestPath(req.path)) {
-          return next(createAuthenticationError(
-            `API keys are supported only for GraphQL requests at ${apiAccessContract.graphqlPath}. Internal REST routes require a user session.`,
-            403,
-            'API_KEY_REST_FORBIDDEN'
-          ))
+        if (!isApiKeyTransportPath(req.path) && !isDedicatedMcpRequest(req)) {
+          return next(
+            createAuthenticationError(
+              'API keys are supported only for the GraphQL, REST v1, and dedicated MCP transports. Browser and internal routes require a user session.',
+              403,
+              'API_KEY_TRANSPORT_FORBIDDEN'
+            )
+          )
         }
         if (!wiki.config.api.isEnabled) {
-          return next(createAuthenticationError(
-            'API access is disabled. Enable it in Administration → API Access.',
-            403,
-            'API_ACCESS_DISABLED'
-          ))
+          return next(createAuthenticationError('API access is disabled. Enable it in Administration → API Access.', 403, 'API_ACCESS_DISABLED'))
         }
         if (!this.validApiKeys.includes(user.api)) {
-          return next(createAuthenticationError(
-            'API key is invalid or was revoked.',
-            401,
-            'API_KEY_INVALID'
-          ))
+          return next(createAuthenticationError('API key is invalid or was revoked.', 401, 'API_KEY_INVALID'))
         }
         const permissions = this.groups[String(user.grp)]?.permissions ?? []
         const groups = [user.grp]
@@ -485,10 +497,9 @@ const auth: AuthService = {
       if (!isExpressUser(user) || typeof user.id !== 'number' || !Number.isSafeInteger(user.id) || user.id <= 0 || user.id === 2) return next()
       user.ownershipUserId = user.id
       req.authContext = { kind: 'user', userId: user.id, ownershipUserId: user.id, principal: user }
-      req.logIn(user, { session: false }, loginError => loginError ? next(loginError) : next())
+      req.logIn(user, { session: false }, loginError => (loginError ? next(loginError) : next()))
     })(req, res, next)
   },
-
 
   checkAccess(user, permissions = [], page = false) {
     if (!user) return false
@@ -507,7 +518,8 @@ const auth: AuthService = {
         if (!rule.roles.some(role => permissions.includes(role))) continue
         switch (rule.match) {
           case 'START':
-            if (`/${page.path}`.startsWith(`/${rule.path}`)) checkState = this._applyPageRuleSpecificity({ rule, checkState, higherPriority: ['END', 'REGEX', 'EXACT', 'TAG'] })
+            if (`/${page.path}`.startsWith(`/${rule.path}`))
+              checkState = this._applyPageRuleSpecificity({ rule, checkState, higherPriority: ['END', 'REGEX', 'EXACT', 'TAG'] })
             break
           case 'END':
             if (page.path.endsWith(rule.path)) checkState = this._applyPageRuleSpecificity({ rule, checkState, higherPriority: ['REGEX', 'EXACT', 'TAG'] })
@@ -531,8 +543,7 @@ const auth: AuthService = {
 
   checkExclusiveAccess(user, includePermissions = [], excludePermissions = []) {
     const permissions = getPermissions(user)
-    return includePermissions.some(permission => permissions.includes(permission)) &&
-      !excludePermissions.some(permission => permissions.includes(permission))
+    return includePermissions.some(permission => permissions.includes(permission)) && !excludePermissions.some(permission => permissions.includes(permission))
   },
 
   async checkAssignUserToGroupAccess(requester, groupIds = []) {
@@ -543,7 +554,7 @@ const auth: AuthService = {
 
     const groups = await getWiki().models.groups.query().whereIn('id', groupIds)
     return groups.every(group => {
-      if (group.permissions.includes('manage:system')) return false
+      if (group.permissions.some(permission => permission === 'write:scripts' || permission.split(':').at(-1) === 'system')) return false
       const hasAdministrativePermission = group.permissions.some(permission => {
         const permissionType = permission.split(':').at(-1)
         return permissionType !== undefined && ['users', 'groups', 'navigation', 'theme', 'api'].includes(permissionType)
@@ -622,10 +633,18 @@ const auth: AuthService = {
 
   subscribeToEvents() {
     const inbound = getWiki().events.inbound
-    inbound.on('reloadGroups', () => { void this.reloadGroups() })
-    inbound.on('reloadApiKeys', () => { void this.reloadApiKeys() })
-    inbound.on('reloadAuthStrategies', () => { void this.activateStrategies() })
-    inbound.on('addAuthRevoke', value => { if (isRevokeRequest(value)) this.revokeUserTokens(value) })
+    inbound.on('reloadGroups', () => {
+      void this.reloadGroups()
+    })
+    inbound.on('reloadApiKeys', () => {
+      void this.reloadApiKeys()
+    })
+    inbound.on('reloadAuthStrategies', () => {
+      void this.activateStrategies()
+    })
+    inbound.on('addAuthRevoke', value => {
+      if (isRevokeRequest(value)) this.revokeUserTokens(value)
+    })
   },
 
   getEffectivePermissions(req, page) {
@@ -652,7 +671,11 @@ const auth: AuthService = {
   },
 
   revokeUserTokens({ id, kind = 'u' }) {
-    this.revocationList.set(`${kind}${String(id)}`, Math.round(DateTime.utc().minus({ seconds: 5 }).toSeconds()), Math.ceil(ms(getWiki().config.auth.tokenExpiration) / 1000))
+    this.revocationList.set(
+      `${kind}${String(id)}`,
+      Math.round(DateTime.utc().minus({ seconds: 5 }).toSeconds()),
+      Math.ceil(ms(getWiki().config.auth.tokenExpiration) / 1000)
+    )
   }
 }
 

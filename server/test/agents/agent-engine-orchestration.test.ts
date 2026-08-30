@@ -4,6 +4,11 @@ import { describe, expect, it, vi } from '../bun-test.mts'
 import { AxAgentEngine, type AgentActionSessionProvider } from '../../agents/providers/engine.ts'
 import type { AgentProviderFactory, AgentProviderService } from '../../agents/providers/factory.ts'
 import type { AgentEngineRequest } from '../../agents/runtime.ts'
+import {
+  AgentChildBudgetReservations,
+  MAX_AGENT_CHILD_OUTPUT_CHARACTERS,
+  type AgentOrchestrationLimits
+} from '../../agents/orchestration.ts'
 
 const run = {
   id: '00000000-0000-4000-8000-000000000001',
@@ -301,5 +306,51 @@ describe('Ax orchestration stages', () => {
       expect.objectContaining({ accepted: true, finalCitationIds: ['page:1', 'page:2'] })
     ])
     expect(text).toHaveBeenCalledWith('Alpha requires review. [[cite:page:1]] However, beta requires audit. [[cite:page:2]]')
+  })
+})
+
+describe('child aggregate budget reservations', () => {
+  it('admits concurrent children atomically and reconstructs retry headroom from measured usage', () => {
+    const limits = {
+      enabled: true,
+      maxConcurrentChildren: 3,
+      maxChildren: 3,
+      plannerTurns: 1,
+      childTurns: 2,
+      childToolCalls: 2,
+      plannerTimeoutMilliseconds: 1_000,
+      childTimeoutMilliseconds: 1_000,
+      plannerMaxOutputTokens: 2,
+      childMaxOutputTokens: 4,
+      maxAggregateChildTokens: 10,
+      maxAggregateChildOutputCharacters: 80_000
+    } as const satisfies AgentOrchestrationLimits
+    const reservations = new AgentChildBudgetReservations(limits, { tokens: 0, outputCharacters: 0 })
+
+    const first = reservations.reserve()
+    const second = reservations.reserve()
+    const third = reservations.reserve()
+
+    expect(first).toEqual(expect.objectContaining({
+      outputTokens: 4,
+      outputCharacters: MAX_AGENT_CHILD_OUTPUT_CHARACTERS
+    }))
+    expect(second).toEqual(expect.objectContaining({
+      outputTokens: 4,
+      outputCharacters: 80_000 - MAX_AGENT_CHILD_OUTPUT_CHARACTERS
+    }))
+    expect(third).toBeNull()
+
+    reservations.release(first!, { tokens: 3, outputCharacters: 20_000 })
+    reservations.release(second!, { tokens: 3, outputCharacters: 20_000 })
+    expect(reservations.consumed).toEqual({ tokens: 6, outputCharacters: 40_000 })
+
+    const recovered = new AgentChildBudgetReservations(limits, reservations.consumed)
+    const retry = recovered.reserve()
+    expect(retry).toEqual(expect.objectContaining({ outputTokens: 4, outputCharacters: 40_000 }))
+    recovered.release(retry!, { tokens: 4, outputCharacters: 40_000 })
+
+    expect(recovered.consumed).toEqual({ tokens: 10, outputCharacters: 80_000 })
+    expect(recovered.reserve()).toBeNull()
   })
 })

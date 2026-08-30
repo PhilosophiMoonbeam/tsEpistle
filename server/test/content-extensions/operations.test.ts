@@ -2,6 +2,7 @@ import createKnex, { type Knex } from 'knex'
 import { afterEach, beforeEach, describe, expect, it, vi } from '../bun-test.mts'
 import { runDurableJobBatch } from '../../core/durable-jobs.ts'
 import { up as createDurableJobs } from '../../db/migrations/2.5.130.ts'
+import { up as addDurableJobLeaseToken } from '../../db/migrations/2.5.158.ts'
 import { createContentExtensionRerenderHandler } from '../../jobs/content-extension-rerender.ts'
 
 import {
@@ -29,6 +30,7 @@ describe('content extension operations', () => {
       useNullAsDefault: true
     })
     await createDurableJobs(db)
+    await addDurableJobLeaseToken(db)
     await db.schema.createTable('contentExtensions', table => {
       table.string('key').primary()
       table.boolean('isEnabled').notNullable()
@@ -41,6 +43,8 @@ describe('content extension operations', () => {
       table.string('hash').notNullable()
       table.text('content').notNullable()
       table.text('render').notNullable()
+      table.string('visibility').notNullable()
+      table.boolean('isPublished').notNullable()
     })
     await db('contentExtensions').insert([
       'qr', 'gallery', 'index', 'tabs', 'spoiler', 'infobox', 'pdf', 'media', 'youtube', 'diagram', 'kroki', 'plantuml', 'map'
@@ -52,8 +56,8 @@ describe('content extension operations', () => {
       updatedBy: null
     })))
     await db('pages').insert([
-      { id: 1, hash: 'qr-hash', content: qrFence, render: '<svg>active QR</svg>' },
-      { id: 2, hash: 'plain-hash', content: '```js\nconst wikiExtension = true\n```', render: '<pre>plain</pre>' }
+      { id: 1, hash: 'qr-hash', content: qrFence, render: '<svg>active QR</svg>', visibility: 'public', isPublished: true },
+      { id: 2, hash: 'plain-hash', content: '```js\nconst wikiExtension = true\n```', render: '<pre>plain</pre>', visibility: 'public', isPublished: true }
     ])
 
     cacheDelete.mockImplementation(async (hash: string) => {
@@ -68,11 +72,22 @@ describe('content extension operations', () => {
       })
     })
     global.WIKI = {
+      data: {
+        searchEngine: {
+          deleted: async () => undefined,
+          updated: async () => undefined
+        }
+      },
       events: { outbound: { emit: (_event: string, hash: string) => events.push(`event:${hash}`) } },
       models: {
         knex: db,
         pages: {
           deletePageFromCache: cacheDelete,
+          getPageFromDb: async (pageId: number) => {
+            const page = await db('pages').where({ id: pageId }).first()
+            return page ? { ...page, safeContent: page.render } : undefined
+          },
+          prepareSearchDocument: async page => ({ ...page, safeContent: page.render }),
           renderPage
         }
       }

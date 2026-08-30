@@ -70,4 +70,90 @@ describe('disk storage target', () => {
       injectMetadata: () => 'blocked'
     }))).rejects.toThrow('Storage path escapes the configured root: ../../escape.md')
   })
+
+  it('quarantines failed initialization while dispatching only to healthy targets', async () => {
+    const failedPatch = vi.fn().mockResolvedValue(1)
+    const healthyPatch = vi.fn().mockResolvedValue(1)
+    const failedTarget = {
+      key: 'git',
+      config: {},
+      mode: 'push',
+      syncInterval: 'P0D',
+      state: { status: 'pending', message: '', lastAttempt: null },
+      $query: vi.fn(() => ({ patch: failedPatch }))
+    }
+    const healthyTarget = {
+      key: 'disk',
+      config: {
+        path: 'content',
+        createDailyBackups: false
+      },
+      mode: 'push',
+      syncInterval: 'P0D',
+      state: { status: 'pending', message: '', lastAttempt: null },
+      $query: vi.fn(() => ({ patch: healthyPatch }))
+    }
+    const orderBy = vi.fn().mockResolvedValue([failedTarget, healthyTarget])
+    const where = vi.fn(() => ({ orderBy }))
+    global.WIKI.SERVERPATH = '/tmp/wiki-server'
+    global.WIKI.config.dataPath = 'data'
+    global.WIKI.data = {
+      storage: [
+        { key: 'git', props: {}, isAvailable: true, schedule: false },
+        { key: 'disk', props: {}, isAvailable: true, schedule: false }
+      ]
+    }
+    global.WIKI.models = {
+      storage: class {},
+      knex: vi.fn(),
+      Objection: {
+        transaction: {
+          start: vi.fn()
+        }
+      }
+    }
+    global.WIKI.scheduler = {
+      jobs: [],
+      registerJob: vi.fn()
+    }
+    const Storage = (await vi.importFresh('../../models/storage.ts', import.meta.url)).default
+    global.WIKI.models.storage = Storage
+    vi.spyOn(Storage, 'query').mockReturnValue({ where })
+    const failedImplementation = (await import('../../modules/storage/git/storage.ts')).default
+    const failedCreated = vi.spyOn(failedImplementation, 'created')
+    const failedAssetUploaded = vi.spyOn(failedImplementation, 'assetUploaded')
+    const failedGetLocalLocation = vi.spyOn(failedImplementation, 'getLocalLocation')
+
+    await Storage.initTargets()
+
+    const page = {
+      path: 'guide',
+      localeCode: 'en',
+      contentType: 'markdown',
+      injectMetadata: () => 'healthy page'
+    }
+    const asset = { path: 'images/logo.txt', data: Buffer.from('healthy asset') }
+
+    await Storage.pageEvent({ event: 'created', page })
+    await Storage.assetEvent({ event: 'uploaded', asset })
+    const locations = await Storage.getLocalLocations({ asset })
+
+    expect(Storage.targets).toEqual([failedTarget, healthyTarget])
+    expect(Storage.activeTargets).toEqual([healthyTarget])
+    expect(failedTarget.state).toEqual({
+      status: 'error',
+      message: expect.any(String),
+      lastAttempt: expect.any(String)
+    })
+    expect(failedPatch).toHaveBeenCalledTimes(1)
+    expect(failedCreated).not.toHaveBeenCalled()
+    expect(failedAssetUploaded).not.toHaveBeenCalled()
+    expect(failedGetLocalLocation).not.toHaveBeenCalled()
+    expect(await fs.readFile(path.join(rootPath, 'content', 'guide.md'), 'utf8')).toBe('healthy page')
+    expect(await fs.readFile(path.join(rootPath, 'content', 'images', 'logo.txt'), 'utf8')).toBe('healthy asset')
+    expect(locations).toEqual([{
+      path: path.join(rootPath, 'content', 'images', 'logo.txt'),
+      key: 'disk'
+    }])
+  })
 })

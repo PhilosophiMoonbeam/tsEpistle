@@ -140,7 +140,7 @@ describe('storage model actions', () => {
       fn: { created: vi.fn().mockResolvedValue(undefined) },
       $query: vi.fn(() => ({ patch: successfulPatch }))
     }
-    Storage.targets = [failedTarget, successfulTarget]
+    Storage.activeTargets = [failedTarget, successfulTarget]
     const page = { path: 'guide', localeCode: 'en', contentType: 'markdown' }
 
     expect(await Storage.pageEvent({ event: 'created', page })).toBeUndefined()
@@ -179,7 +179,7 @@ describe('storage model actions', () => {
       fn: { assetUploaded: successfulUpload },
       $query: vi.fn()
     }
-    Storage.targets = [failedTarget, successfulTarget]
+    Storage.activeTargets = [failedTarget, successfulTarget]
     const asset = { path: 'images/logo.png', data: Buffer.from('image') }
 
     expect(await Storage.assetEvent({ event: 'uploaded', asset })).toBeUndefined()

@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto'
 import type { Knex } from 'knex'
-import type { AgentEventData, AgentExecutionMode, AgentRunStatus } from '../../shared/agents/contracts.ts'
+import type { AgentActionName, AgentEventData, AgentExecutionMode, AgentRunStatus } from '../../shared/agents/contracts.ts'
 import { canonicalJson } from '../helpers/canonical-json.ts'
 import { AgentRepositoryError } from './repository.ts'
 
@@ -9,6 +9,108 @@ const TERMINAL_STATUSES: readonly AgentRunStatus[] = ['succeeded', 'partial', 'f
 const sha256 = (value: string): string => createHash('sha256').update(value).digest('hex')
 const dateValue = (value: Date | string | null): number | null => value === null ? null : new Date(value).valueOf()
 const isPostgres = (knex: Knex | Knex.Transaction): boolean => knex.client.config.client === 'pg' || knex.client.config.client === 'postgresql'
+
+const ACTION_CONTINUATION_KEY = '__wikiApprovalContinuation'
+const MAX_ACTION_CONTINUATION_BYTES = 96 * 1_024
+const MAX_RUNTIME_STATE_BYTES = 256 * 1_024
+const SHA256 = /^[a-f0-9]{64}$/
+
+export interface AgentApprovalContinuationCheckpoint {
+  readonly version: 1
+  readonly runId: string
+  readonly ownerId: number
+  readonly attempt: number
+  readonly actionCallId: string
+  readonly actionName: AgentActionName
+  readonly actionInput: unknown
+  readonly actionInputSha256: string
+  readonly proposalId: string
+  readonly approvalId: string
+  readonly proposalInputHash: string
+  readonly authorityVersion: 1
+  readonly authoritySha256: string
+  readonly checkpointSha256: string
+}
+
+type RuntimeState = Record<string, unknown>
+type CheckpointBody = Omit<AgentApprovalContinuationCheckpoint, 'checkpointSha256'>
+
+const runtimeState = (value: Uint8Array | null): RuntimeState => {
+  if (value === null) return {}
+  if (value.byteLength > MAX_RUNTIME_STATE_BYTES) throw new AgentRepositoryError('AGENT_ACTION_CONTINUATION_CORRUPT', 'Stored runtime state is too large', 500)
+  try {
+    const parsed: unknown = JSON.parse(Buffer.from(value).toString('utf8'))
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) throw new Error('invalid runtime state')
+    return parsed as RuntimeState
+  } catch {
+    throw new AgentRepositoryError('AGENT_ACTION_CONTINUATION_CORRUPT', 'Stored runtime state is invalid', 500)
+  }
+}
+
+const checkpointHash = (body: CheckpointBody): string => sha256(canonicalJson(body))
+
+const decodeActionContinuation = (state: RuntimeState): AgentApprovalContinuationCheckpoint | null => {
+  const value = state[ACTION_CONTINUATION_KEY]
+  if (value === undefined) return null
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new AgentRepositoryError('AGENT_ACTION_CONTINUATION_CORRUPT', 'Stored action continuation is invalid', 500)
+  }
+  const checkpoint = value as unknown as AgentApprovalContinuationCheckpoint
+  const {
+    version,
+    runId,
+    ownerId,
+    attempt,
+    actionCallId,
+    actionName,
+    actionInput,
+    actionInputSha256,
+    proposalId,
+    approvalId,
+    proposalInputHash,
+    authorityVersion,
+    authoritySha256,
+    checkpointSha256
+  } = checkpoint
+  const body: CheckpointBody = { version, runId, ownerId, attempt, actionCallId, actionName, actionInput, actionInputSha256, proposalId, approvalId, proposalInputHash, authorityVersion, authoritySha256 }
+  let hashesValid = false
+  let encodedBytes = Number.POSITIVE_INFINITY
+  try {
+    encodedBytes = Buffer.byteLength(canonicalJson(value), 'utf8')
+    hashesValid = sha256(canonicalJson(actionInput)) === actionInputSha256 && checkpointHash(body) === checkpointSha256
+  } catch {
+    hashesValid = false
+  }
+  if (
+    encodedBytes > MAX_ACTION_CONTINUATION_BYTES ||
+    Object.keys(value).length !== 14 ||
+    version !== 1 ||
+    typeof runId !== 'string' ||
+    !Number.isSafeInteger(ownerId) ||
+    ownerId < 1 ||
+    !Number.isSafeInteger(attempt) ||
+    attempt < 1 ||
+    typeof actionCallId !== 'string' ||
+    actionCallId.length < 1 ||
+    actionCallId.length > 128 ||
+    typeof actionName !== 'string' ||
+    typeof proposalId !== 'string' ||
+    typeof approvalId !== 'string' ||
+    !SHA256.test(actionInputSha256) ||
+    !SHA256.test(proposalInputHash) ||
+    authorityVersion !== 1 ||
+    !SHA256.test(authoritySha256) ||
+    !SHA256.test(checkpointSha256) ||
+    !hashesValid
+  ) throw new AgentRepositoryError('AGENT_ACTION_CONTINUATION_CORRUPT', 'Stored action continuation failed validation', 500)
+  return checkpoint
+}
+
+const encodedRuntimeState = (state: RuntimeState): Buffer => {
+  const encoded = canonicalJson(state)
+  if (Buffer.byteLength(encoded, 'utf8') > MAX_RUNTIME_STATE_BYTES) throw new AgentRepositoryError('AGENT_ACTION_CONTINUATION_TOO_LARGE', 'Runtime state with action continuation exceeds its size limit', 500)
+  return Buffer.from(encoded)
+}
 
 const advisoryLock = async (transaction: Knex.Transaction, ownerId?: number): Promise<void> => {
   if (!isPostgres(transaction)) return
@@ -56,6 +158,7 @@ interface RunRow extends Omit<AgentRunRecord, 'status' | 'leaseExpiresAt' | 'can
   queuedAt: Date | string
   startedAt: Date | string | null
   completedAt: Date | string | null
+  runtimeStateCiphertext?: Uint8Array | null
 }
 
 const runStatus = (value: string): AgentRunStatus => {
@@ -325,6 +428,178 @@ export interface AgentRunClaim extends AgentRunRecord {
   readonly leaseExpiresAt: string
 }
 
+interface PersistAgentApprovalContinuationInput {
+  readonly runId: string
+  readonly ownerId: number
+  readonly attempt: number
+  readonly leaseToken: string
+  readonly actionCallId: string
+  readonly actionName: AgentActionName
+  readonly actionInput: unknown
+  readonly proposalId: string
+  readonly approvalId: string
+  readonly proposalInputHash: string
+  readonly authorityVersion: 1
+  readonly authoritySha256: string
+}
+
+const assertContinuationLedger = async (knex: Knex | Knex.Transaction, checkpoint: AgentApprovalContinuationCheckpoint): Promise<void> => {
+  const [proposal, approval] = await Promise.all([
+    knex('agentProposals').where({ id: checkpoint.proposalId }).first('sourceKind', 'runId', 'requesterRequestId', 'requesterUserId', 'actionCallId', 'actionName', 'input', 'inputHash', 'authorityVersion', 'authoritySha256') as Promise<{
+      sourceKind: string
+      runId: string | null
+      requesterRequestId: string
+      requesterUserId: number | null
+      actionCallId: string
+      actionName: string
+      input: string | null
+      inputHash: string
+      authorityVersion: number
+      authoritySha256: string
+    } | undefined>,
+    knex('agentApprovals').where({ id: checkpoint.approvalId, proposalId: checkpoint.proposalId }).first('runId', 'requesterUserId', 'inputHash', 'authorityVersion', 'authoritySha256') as Promise<{
+      runId: string | null
+      requesterUserId: number | null
+      inputHash: string
+      authorityVersion: number
+      authoritySha256: string
+    } | undefined>
+  ])
+  if (
+    !proposal ||
+    !approval ||
+    proposal.sourceKind !== 'agent' ||
+    proposal.runId !== checkpoint.runId ||
+    proposal.requesterRequestId !== checkpoint.runId ||
+    approval.runId !== checkpoint.runId ||
+    proposal.requesterUserId !== checkpoint.ownerId ||
+    approval.requesterUserId !== checkpoint.ownerId ||
+    proposal.actionCallId !== checkpoint.actionCallId ||
+    proposal.actionName !== checkpoint.actionName ||
+    proposal.input !== canonicalJson(checkpoint.actionInput) ||
+    proposal.inputHash !== checkpoint.proposalInputHash ||
+    approval.inputHash !== checkpoint.proposalInputHash ||
+    Number(proposal.authorityVersion) !== checkpoint.authorityVersion ||
+    Number(approval.authorityVersion) !== checkpoint.authorityVersion ||
+    proposal.authoritySha256 !== checkpoint.authoritySha256 ||
+    approval.authoritySha256 !== checkpoint.authoritySha256
+  ) throw new AgentRepositoryError('AGENT_ACTION_CONTINUATION_MISMATCH', 'Action continuation does not match its proposal authority ledger', 409)
+}
+
+export const persistAgentApprovalContinuation = async (knex: Knex, input: PersistAgentApprovalContinuationInput): Promise<void> => {
+  const actionInputSha256 = sha256(canonicalJson(input.actionInput))
+  const body: CheckpointBody = {
+    version: 1,
+    runId: input.runId,
+    ownerId: input.ownerId,
+    attempt: input.attempt,
+    actionCallId: input.actionCallId,
+    actionName: input.actionName,
+    actionInput: input.actionInput,
+    actionInputSha256,
+    proposalId: input.proposalId,
+    approvalId: input.approvalId,
+    proposalInputHash: input.proposalInputHash,
+    authorityVersion: input.authorityVersion,
+    authoritySha256: input.authoritySha256
+  }
+  const checkpoint: AgentApprovalContinuationCheckpoint = { ...body, checkpointSha256: checkpointHash(body) }
+  if (Buffer.byteLength(canonicalJson(checkpoint), 'utf8') > MAX_ACTION_CONTINUATION_BYTES) {
+    throw new AgentRepositoryError('AGENT_ACTION_CONTINUATION_TOO_LARGE', 'Action continuation exceeds its size limit', 500)
+  }
+  await knex.transaction(async transaction => {
+    const run = await transaction('agentRuns')
+      .where({ id: input.runId, ownerId: input.ownerId, attempts: input.attempt, leaseToken: input.leaseToken, status: 'running' })
+      .whereNull('cancelRequestedAt')
+      .forUpdate()
+      .first('runtimeStateCiphertext') as { runtimeStateCiphertext: Uint8Array | null } | undefined
+    if (!run) throw new AgentRepositoryError('RUN_LEASE_LOST', 'Agent run lease was lost before approval suspension', 409)
+    await assertContinuationLedger(transaction, checkpoint)
+    const state = runtimeState(run.runtimeStateCiphertext)
+    const prior = decodeActionContinuation(state)
+    if (prior !== null && prior.checkpointSha256 !== checkpoint.checkpointSha256) {
+      throw new AgentRepositoryError('AGENT_ACTION_CONTINUATION_EXISTS', 'Agent run already has a different action continuation', 409)
+    }
+    state[ACTION_CONTINUATION_KEY] = checkpoint
+    const changed = await transaction('agentRuns')
+      .where({ id: input.runId, ownerId: input.ownerId, attempts: input.attempt, leaseToken: input.leaseToken, status: 'running' })
+      .whereNull('cancelRequestedAt')
+      .update({ runtimeStateCiphertext: encodedRuntimeState(state), status: 'awaiting_approval', updatedAt: transaction.fn.now() })
+    if (changed !== 1) throw new AgentRepositoryError('RUN_LEASE_LOST', 'Agent run lease was lost before approval suspension', 409)
+  })
+}
+
+export interface AgentRunLeaseIdentity {
+  readonly id: string
+  readonly ownerId: number
+  readonly attempts: number
+  readonly leaseOwner: string
+  readonly leaseToken: string
+}
+const invokingAgentRunLeases = new WeakMap<AbortSignal, AgentRunLeaseIdentity>()
+
+export const withInvokingAgentRunLease = async <T>(signal: AbortSignal, claim: AgentRunLeaseIdentity, invoke: () => Promise<T>): Promise<T> => {
+  if (invokingAgentRunLeases.has(signal)) throw new AgentRepositoryError('AGENT_ACTION_SESSION_INVALID', 'Agent action signal is already bound to a run lease', 500)
+  const identity: AgentRunLeaseIdentity = Object.freeze({
+    id: claim.id,
+    ownerId: claim.ownerId,
+    attempts: claim.attempts,
+    leaseOwner: claim.leaseOwner,
+    leaseToken: claim.leaseToken
+  })
+  invokingAgentRunLeases.set(signal, identity)
+  try {
+    return await invoke()
+  } finally {
+    invokingAgentRunLeases.delete(signal)
+  }
+}
+
+export const invokingAgentRunLease = (signal: AbortSignal): AgentRunLeaseIdentity | null => invokingAgentRunLeases.get(signal) ?? null
+
+export const readAgentApprovalContinuation = async (knex: Knex, claim: AgentRunLeaseIdentity): Promise<AgentApprovalContinuationCheckpoint | null> => {
+  const row = await knex('agentRuns')
+    .where({ id: claim.id, ownerId: claim.ownerId, attempts: claim.attempts, leaseOwner: claim.leaseOwner, leaseToken: claim.leaseToken })
+    .whereIn('status', ['running', 'awaiting_approval'])
+    .whereNull('cancelRequestedAt')
+    .first('runtimeStateCiphertext') as { runtimeStateCiphertext: Uint8Array | null } | undefined
+  if (!row) throw new AgentRepositoryError('RUN_LEASE_LOST', 'Agent run lease was lost while loading its action continuation', 409)
+  const checkpoint = decodeActionContinuation(runtimeState(row.runtimeStateCiphertext))
+  if (checkpoint === null) return null
+  if (checkpoint.runId !== claim.id || checkpoint.ownerId !== claim.ownerId || checkpoint.attempt !== claim.attempts) {
+    throw new AgentRepositoryError('AGENT_ACTION_CONTINUATION_MISMATCH', 'Action continuation does not belong to the claimed run attempt', 409)
+  }
+  await assertContinuationLedger(knex, checkpoint)
+  return checkpoint
+}
+
+export interface ClearAgentApprovalContinuationInput {
+  readonly runId: string
+  readonly ownerId: number
+  readonly attempt: number
+  readonly leaseOwner: string
+  readonly leaseToken: string
+}
+
+export const clearAgentApprovalContinuation = async (knex: Knex, input: ClearAgentApprovalContinuationInput): Promise<void> => {
+  await knex.transaction(async transaction => {
+    const run = await transaction('agentRuns')
+      .where({ id: input.runId, ownerId: input.ownerId, attempts: input.attempt, leaseOwner: input.leaseOwner, leaseToken: input.leaseToken })
+      .whereIn('status', ['running', 'awaiting_approval'])
+      .forUpdate()
+      .first('runtimeStateCiphertext') as { runtimeStateCiphertext: Uint8Array | null } | undefined
+    if (!run) throw new AgentRepositoryError('RUN_LEASE_LOST', 'Agent run lease was lost while clearing its action continuation', 409)
+    const state = runtimeState(run.runtimeStateCiphertext)
+    if (decodeActionContinuation(state) === null) return
+    delete state[ACTION_CONTINUATION_KEY]
+    const changed = await transaction('agentRuns')
+      .where({ id: input.runId, ownerId: input.ownerId, attempts: input.attempt, leaseOwner: input.leaseOwner, leaseToken: input.leaseToken })
+      .whereIn('status', ['running', 'awaiting_approval'])
+      .update({ runtimeStateCiphertext: Object.keys(state).length === 0 ? null : encodedRuntimeState(state), updatedAt: transaction.fn.now() })
+    if (changed !== 1) throw new AgentRepositoryError('RUN_LEASE_LOST', 'Agent run lease was lost while clearing its action continuation', 409)
+  })
+}
+
 export interface ClaimAgentRunOptions {
   readonly workerId: string
   readonly globalConcurrency: number
@@ -341,7 +616,18 @@ const activeLeaseCount = async (transaction: Knex.Transaction, now: Date, ownerI
 }
 
 const recoveryLostSideEffect = async (transaction: Knex.Transaction, row: RunRow, now: Date): Promise<void> => {
-  await transaction('agentRuns').where({ id: row.id, status: row.status, leaseToken: row.leaseToken }).update({ status: 'recovery_required', leaseOwner: null, leaseToken: null, leaseExpiresAt: null, completedAt: now, updatedAt: now, errorCode: 'LEASE_LOST_AFTER_SIDE_EFFECT', errorMessage: 'Run lease expired after a side effect may have started' })
+  await transaction('agentRuns').where({ id: row.id, status: row.status, leaseToken: row.leaseToken }).update({ status: 'recovery_required', runtimeStateCiphertext: null, leaseOwner: null, leaseToken: null, leaseExpiresAt: null, completedAt: now, updatedAt: now, errorCode: 'LEASE_LOST_AFTER_SIDE_EFFECT', errorMessage: 'Run lease expired after a side effect may have started' })
+}
+const hasReclaimableActionContinuation = async (transaction: Knex.Transaction, candidate: RunRow): Promise<boolean> => {
+  if (candidate.status !== 'running' || candidate.sideEffectsStarted) return false
+  if (candidate.runtimeStateCiphertext === undefined) throw new AgentRepositoryError('AGENT_RUN_CORRUPT', 'Agent run omitted its runtime continuation state', 500)
+  const checkpoint = decodeActionContinuation(runtimeState(candidate.runtimeStateCiphertext))
+  if (checkpoint === null) return false
+  if (checkpoint.runId !== candidate.id || checkpoint.ownerId !== candidate.ownerId || checkpoint.attempt !== candidate.attempts) {
+    throw new AgentRepositoryError('AGENT_ACTION_CONTINUATION_MISMATCH', 'Action continuation does not belong to the reclaimable run attempt', 409)
+  }
+  await assertContinuationLedger(transaction, checkpoint)
+  return true
 }
 
 export const claimAgentRun = async (knex: Knex, options: ClaimAgentRunOptions): Promise<AgentRunClaim | null> => {
@@ -363,15 +649,16 @@ export const claimAgentRun = async (knex: Knex, options: ClaimAgentRunOptions): 
         await recoveryLostSideEffect(transaction, candidate, now)
         continue
       }
+      const reclaimingContinuation = await hasReclaimableActionContinuation(transaction, candidate)
       if (candidate.status !== 'awaiting_approval' && await activeLeaseCount(transaction, now, candidate.ownerId) >= perUserConcurrency) continue
-      if (candidate.attempts >= candidate.maxAttempts && candidate.status !== 'awaiting_approval') {
-        await transaction('agentRuns').where({ id: candidate.id, status: candidate.status }).update({ status: 'failed', completedAt: now, updatedAt: now, errorCode: 'MAX_ATTEMPTS_EXCEEDED', errorMessage: 'Agent run exhausted its durable attempts' })
+      if (candidate.attempts >= candidate.maxAttempts && candidate.status !== 'awaiting_approval' && !reclaimingContinuation) {
+        await transaction('agentRuns').where({ id: candidate.id, status: candidate.status }).update({ status: 'failed', runtimeStateCiphertext: null, completedAt: now, updatedAt: now, errorCode: 'MAX_ATTEMPTS_EXCEEDED', errorMessage: 'Agent run exhausted its durable attempts' })
         continue
       }
       const leaseToken = randomUUID()
       const leaseExpiresAt = new Date(now.valueOf() + leaseMilliseconds)
       const nextStatus = candidate.status === 'awaiting_approval' ? 'awaiting_approval' : 'running'
-      const attempts = candidate.status === 'awaiting_approval' ? candidate.attempts : candidate.attempts + 1
+      const attempts = candidate.status === 'awaiting_approval' || reclaimingContinuation ? candidate.attempts : candidate.attempts + 1
       const changed = await transaction('agentRuns').where({ id: candidate.id, status: candidate.status, eventSequence: candidate.eventSequence }).modify(query => {
         if (candidate.status !== 'queued') query.andWhere('leaseToken', candidate.leaseToken)
       }).update({ status: nextStatus, attempts, leaseOwner: options.workerId, leaseToken, leaseExpiresAt, startedAt: candidate.status === 'queued' ? now : candidate.startedAt, updatedAt: now })
@@ -443,6 +730,7 @@ export const transitionAgentRun = async (knex: Knex, input: TransitionAgentRunIn
     errorMessage: input.errorMessage ?? null,
     completedAt: terminal ? now : null
   }
+  if (terminal) patch.runtimeStateCiphertext = null
   if (input.to === 'queued') patch.availableAt = input.availableAt ?? now
   if (input.to !== 'running' && input.to !== 'awaiting_approval') {
     patch.leaseOwner = null

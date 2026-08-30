@@ -33,6 +33,7 @@ export interface WebhookDeliveryRequest {
   target: ResolvedWebhookUrl
   timestamp?: Date
   timeoutMs?: number
+  signal?: AbortSignal
 }
 
 export interface WebhookDeliveryResult {
@@ -104,6 +105,7 @@ export const webhookSignature = (secret: string, timestamp: string, body: string
   `sha256=${createHmac('sha256', secret).update(`${timestamp}.${body}`).digest('hex')}`
 
 export const sendSignedWebhook = async (input: WebhookDeliveryRequest): Promise<WebhookDeliveryResult> => {
+  input.signal?.throwIfAborted()
   const timestamp = (input.timestamp ?? new Date()).toISOString()
   const body = JSON.stringify({
     id: input.eventId,
@@ -117,37 +119,57 @@ export const sendSignedWebhook = async (input: WebhookDeliveryRequest): Promise<
   const pinnedLookup: LookupFunction = (_hostname, _options, callback) => {
     callback(null, input.target.address, input.target.family)
   }
-  const req = request(input.target.url, {
-    method: 'POST',
-    lookup: pinnedLookup,
-    signal: AbortSignal.timeout(input.timeoutMs ?? 10_000),
-    headers: {
-      'content-type': 'application/json',
-      'content-length': Buffer.byteLength(body),
-      'user-agent': 'tsFranki-Webhook/1.0',
-      'x-wiki-delivery': input.deliveryId,
-      'x-wiki-event': input.eventType,
-      'x-wiki-signature': signature,
-      'x-wiki-timestamp': timestamp
-    }
-  }, response => {
-    const chunks: Buffer[] = []
-    let size = 0
-    response.on('data', (chunk: Buffer) => {
-      if (size >= 4_096) return
-      const remaining = 4_096 - size
-      const bounded = chunk.subarray(0, remaining)
-      chunks.push(bounded)
-      size += bounded.length
+  const abortController = new AbortController()
+  const abortFromLease = (): void => abortController.abort(input.signal?.reason)
+  let listeningForLeaseAbort = false
+  if (input.signal?.aborted) {
+    abortFromLease()
+  } else if (input.signal) {
+    input.signal.addEventListener('abort', abortFromLease, { once: true })
+    listeningForLeaseAbort = true
+  }
+  const timeout = setTimeout(
+    () => abortController.abort(new DOMException('Webhook delivery timed out', 'TimeoutError')),
+    input.timeoutMs ?? 10_000
+  )
+  timeout.unref()
+
+  try {
+    const req = request(input.target.url, {
+      method: 'POST',
+      lookup: pinnedLookup,
+      signal: abortController.signal,
+      headers: {
+        'content-type': 'application/json',
+        'content-length': Buffer.byteLength(body),
+        'user-agent': 'tsFranki-Webhook/1.0',
+        'x-wiki-delivery': input.deliveryId,
+        'x-wiki-event': input.eventType,
+        'x-wiki-signature': signature,
+        'x-wiki-timestamp': timestamp
+      }
+    }, response => {
+      const chunks: Buffer[] = []
+      let size = 0
+      response.on('data', (chunk: Buffer) => {
+        if (size >= 4_096) return
+        const remaining = 4_096 - size
+        const bounded = chunk.subarray(0, remaining)
+        chunks.push(bounded)
+        size += bounded.length
+      })
+      response.on('end', () => {
+        const responseSnippet = Buffer.concat(chunks).toString('utf8')
+        const statusCode = response.statusCode ?? 0
+        if (statusCode >= 200 && statusCode < 300) resolve({ statusCode, responseSnippet })
+        else reject(new WebhookDeliveryError(`Webhook returned HTTP ${statusCode}`, statusCode, responseSnippet))
+      })
     })
-    response.on('end', () => {
-      const responseSnippet = Buffer.concat(chunks).toString('utf8')
-      const statusCode = response.statusCode ?? 0
-      if (statusCode >= 200 && statusCode < 300) resolve({ statusCode, responseSnippet })
-      else reject(new WebhookDeliveryError(`Webhook returned HTTP ${statusCode}`, statusCode, responseSnippet))
-    })
-  })
-  req.once('error', error => reject(new WebhookDeliveryError(error.message, null)))
-  req.end(body)
-  return promise
+    req.once('error', error => reject(new WebhookDeliveryError(error.message, null)))
+    req.end(body)
+    return await promise
+  } finally {
+    clearTimeout(timeout)
+    if (listeningForLeaseAbort) input.signal?.removeEventListener('abort', abortFromLease)
+  }
 }

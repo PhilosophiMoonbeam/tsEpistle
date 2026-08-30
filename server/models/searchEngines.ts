@@ -17,7 +17,7 @@ interface SearchEnginePlugin {
   activate(): Promise<void>
   deactivate(): Promise<void>
   init(): Promise<void>
-  query(query: string, options: SearchOptions): Promise<SearchResult | void>
+  query(query: string, options: SearchOptions): Promise<SearchResult>
   created(page: WikiPage): Promise<void>
   updated(page: WikiPage): Promise<void>
   deleted(page: WikiPage): Promise<void>
@@ -234,11 +234,11 @@ export default class SearchEngine extends Model {
     // Provider is selected from the runtime registry, so a static import cannot identify the module.
     const source = `../modules/search/${searchEngine.key}/engine.ts`
     const plugin = readSearchEnginePlugin(await import(source), source)
-    const engine: RuntimeSearchEngine = Object.assign(plugin, {
+    const engine: RuntimeSearchEngine = {
+      ...plugin,
       key: searchEngine.key,
       config: searchEngine.config
-    })
-    wiki.data.searchEngine = engine
+    }
     if (activate) {
       try {
         await engine.activate()
@@ -257,6 +257,8 @@ export default class SearchEngine extends Model {
       await engine.init()
     } catch (err) {
       wiki.logger.warn(err)
+      throw err
     }
+    wiki.data.searchEngine = engine
   }
 }

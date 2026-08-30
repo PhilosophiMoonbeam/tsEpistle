@@ -8,7 +8,7 @@ ARG WIKI_PRODUCT_VERSION
 ARG WIKI_SOURCE_REPOSITORY
 ARG WIKI_UPSTREAM_BASE
 
-FROM oven/bun:1.3.14-alpine@sha256:5acc90a93e91ff07bf72aa90a7c9f0fa189765aec90b47bdbf2152d2196383c0 AS dependencies
+FROM oven/bun:1.4.0-alpine@sha256:07235578f79ef8c6f97d94aee7938e76f5cdba5f21ae5dbfdd3d3d38058437eb AS dependencies
 ENV CI=true \
     NODE_ENV=production
 RUN apk add --no-cache g++ make cmake python3
@@ -20,7 +20,7 @@ COPY patches ./patches
 RUN --mount=type=cache,id=wiki-bun-arm64,target=/root/.bun/install/cache \
     bun install --production --frozen-lockfile
 
-FROM oven/bun:1.3.14-alpine@sha256:5acc90a93e91ff07bf72aa90a7c9f0fa189765aec90b47bdbf2152d2196383c0 AS runtime
+FROM oven/bun:1.4.0-alpine@sha256:07235578f79ef8c6f97d94aee7938e76f5cdba5f21ae5dbfdd3d3d38058437eb AS runtime
 
 ARG WIKI_BUILD_DATE
 ARG WIKI_BUILD_REVISION

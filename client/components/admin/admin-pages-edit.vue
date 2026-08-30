@@ -174,31 +174,60 @@ export default {
   data() {
     return {
       deletePageDialog: false,
+      deleteLoadGeneration: null as number | null,
       page: null as PageDetails | null,
+      resolvedPageRouteId: null as number | null,
+      loadGeneration: 0,
       loading: false
     }
   },
   methods: {
     async loadPage () {
+      const requestGeneration = ++this.loadGeneration
+      if (
+        this.deleteLoadGeneration !== null &&
+        this.deleteLoadGeneration !== requestGeneration
+      ) {
+        wikiStore.stopLoading('page-delete')
+        this.deleteLoadGeneration = null
+      }
+      const routePageId = _.toSafeInteger(this.$route.params.id)
+      this.deletePageDialog = false
+      this.page = null
+      this.resolvedPageRouteId = null
       this.loading = true
       wikiStore.startLoading('admin-pages-refresh')
       try {
-        this.page = await fetchPage(
+        const page = await fetchPage(
           window.fetch.bind(window),
-          _.toSafeInteger(this.$route.params.id),
+          routePageId,
           this.$t('common:error.unexpected')
         )
+        if (requestGeneration !== this.loadGeneration) {
+          return
+        }
+        this.resolvedPageRouteId = routePageId
+        this.page = page
       } catch (err) {
+        if (requestGeneration !== this.loadGeneration) {
+          return
+        }
         wikiStore.showError(err)
+      } finally {
+        if (requestGeneration === this.loadGeneration) {
+          wikiStore.stopLoading('admin-pages-refresh')
+          this.loading = false
+        }
       }
-      wikiStore.stopLoading('admin-pages-refresh')
-      this.loading = false
     },
     async deletePage() {
+      const routePageId = _.toSafeInteger(this.$route.params.id)
+      const requestGeneration = this.loadGeneration
       const page = this.page
-      if (!page) {
+      if (!page || this.resolvedPageRouteId !== routePageId) {
         return
       }
+      this.deleteLoadGeneration = requestGeneration
 
       this.loading = true
       wikiStore.startLoading('page-delete')
@@ -209,6 +238,13 @@ export default {
           page.sourceRevision,
           this.$t('common:error.unexpected')
         )
+        if (
+          requestGeneration !== this.loadGeneration ||
+          routePageId !== _.toSafeInteger(this.$route.params.id)
+        ) {
+          return
+        }
+        this.deletePageDialog = false
         wikiStore.showNotification({
           style: 'green',
           message: `Page deleted successfully.`,
@@ -216,9 +252,28 @@ export default {
         })
         this.$router.replace('/pages')
       } catch (err) {
+        if (
+          requestGeneration !== this.loadGeneration ||
+          routePageId !== _.toSafeInteger(this.$route.params.id)
+        ) {
+          return
+        }
         wikiStore.showError(err)
+      } finally {
+        if (
+          requestGeneration === this.loadGeneration &&
+          routePageId === _.toSafeInteger(this.$route.params.id)
+        ) {
+          wikiStore.stopLoading('page-delete')
+          this.loading = false
+          this.deleteLoadGeneration = null
+        }
       }
-      wikiStore.stopLoading('page-delete')
+    }
+  },
+  watch: {
+    '$route.params.id' () {
+      return this.loadPage()
     }
   },
   mounted () {

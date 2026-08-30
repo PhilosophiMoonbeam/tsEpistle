@@ -6,7 +6,7 @@ import database from './db.ts'
 import collaboration, { type CollaborationService } from './collaboration.ts'
 import type { InitializedDatabase } from './db.ts'
 import type { ServerWiki } from './servers.ts'
-import type { HttpTransportRuntime } from '../master.ts'
+import type { HttpTransportRuntime, MasterBackgroundWorkers } from '../master.ts'
 import extensions from './extensions.ts'
 import metrics from './metrics.ts'
 import scheduler from './scheduler.ts'
@@ -33,14 +33,14 @@ interface WikiContext {
   auth: { activateStrategies(): Promise<void> }
   collaboration?: CollaborationService
   cache?: unknown
-  agentRuntime?: { shutdown(): Promise<void> }
+  backgroundWorkers?: MasterBackgroundWorkers
   config: { setup?: boolean }
   configSvc: { applyFlags(): Promise<void>; loadFromDb(): Promise<void> }
   events?: { inbound: EventEmitter2Instance; outbound: EventEmitter2Instance }
   extensions: typeof extensions
   logger: Logger
   metrics?: unknown
-  models: InitializedModels
+  models?: InitializedModels
   scheduler?: { start(): void; stop(): Promise<unknown> }
   servers?: { stopServers(): Promise<void> }
   sideloader?: unknown
@@ -48,7 +48,7 @@ interface WikiContext {
   product: ProductMetadata
   version: string
 }
-interface KernelService { init(): Promise<void>; preBootMaster(): Promise<void>; bootMaster(): Promise<void>; postBootMaster(): Promise<void>; initTelemetry(): Promise<void>; shutdown(devMode?: boolean): Promise<void> }
+interface KernelService { init(): Promise<void>; preBootMaster(): Promise<void>; bootMaster(): Promise<void>; postBootMaster(): Promise<void>; shutdown(devMode?: boolean): Promise<void> }
 
 function hasMethod(value: unknown, method: string): boolean {
   if ((typeof value !== 'object' && typeof value !== 'function') || value === null) return false
@@ -70,8 +70,9 @@ function hasKernelModels(value: InitializedDatabase): value is InitializedModels
 }
 
 const wiki = WIKI as unknown as WikiContext
+let notificationsSubscribed = false
 const kernel: KernelService = {
-  async init() {
+  async init(): Promise<void> {
     wiki.logger.info('=======================================')
     wiki.logger.info(`= ${_.padEnd(`${wiki.product.name} ${wiki.product.version} `, 35, '=')}`)
     wiki.logger.info(`= Upstream: ${wiki.product.upstreamBase}`)
@@ -83,19 +84,18 @@ const kernel: KernelService = {
     if (!hasKernelModels(initializedModels)) throw new Error('Database model registry is incomplete')
     wiki.models = initializedModels
     try {
-      await wiki.models.onReady
+      await initializedModels.onReady
       await wiki.configSvc.loadFromDb()
       await wiki.configSvc.applyFlags()
     } catch (error) {
       wiki.logger.error('Database Initialization Error: ' + (error instanceof Error ? error.message : String(error)))
       if (wiki.IS_DEBUG) wiki.logger.error(error)
-      process.exit(1)
+      throw error
     }
-    void this.bootMaster()
+    await this.bootMaster()
   },
-  async preBootMaster() {
+  async preBootMaster(): Promise<void> {
     try {
-      await this.initTelemetry()
       wiki.sideloader = await sideloader.init()
       wiki.cache = cache.init()
       wiki.metrics = await metrics.init()
@@ -108,57 +108,82 @@ const kernel: KernelService = {
       wiki.servers = (await import('./servers.ts')).default(WIKI as unknown as ServerWiki)
     } catch (error) {
       wiki.logger.error(error)
-      process.exit(1)
+      throw error
     }
   },
-  async bootMaster() {
+  async bootMaster(): Promise<void> {
     try {
-      // Deferred until database initialization because controller modules read wiki.models during evaluation.
+      telemetry.init()
       if (wiki.config.setup) {
         wiki.logger.info('Starting setup wizard...')
         const { default: setup } = await import('../setup.ts')
-        setup()
-      } else {
-        await this.preBootMaster()
-        const { default: master } = await import('../master.ts')
-        await master(WIKI as unknown as HttpTransportRuntime)
-        await this.postBootMaster()
+        await setup()
       }
+      await this.preBootMaster()
+      const { default: master } = await import('../master.ts')
+      await master(WIKI as unknown as HttpTransportRuntime)
+      await this.postBootMaster()
     } catch (error) {
       wiki.logger.error(error)
-      process.exit(1)
+      throw error
     }
   },
-  async postBootMaster() {
-    await wiki.models.analytics.refreshProvidersFromDisk()
-    await wiki.models.authentication.refreshStrategiesFromDisk()
-    await wiki.models.commentProviders.refreshProvidersFromDisk()
-    await wiki.models.editors.refreshEditorsFromDisk()
-    await wiki.models.loggers.refreshLoggersFromDisk()
-    await wiki.models.renderers.refreshRenderersFromDisk()
-    await wiki.models.searchEngines.refreshSearchEnginesFromDisk()
-    await wiki.models.storage.refreshTargetsFromDisk()
+  async postBootMaster(): Promise<void> {
+    const models = wiki.models
+    if (!models) throw new Error('Database models must be initialized before booting the master process')
+    await models.analytics.refreshProvidersFromDisk()
+    await models.authentication.refreshStrategiesFromDisk()
+    await models.commentProviders.refreshProvidersFromDisk()
+    await models.editors.refreshEditorsFromDisk()
+    await models.loggers.refreshLoggersFromDisk()
+    await models.renderers.refreshRenderersFromDisk()
+    await models.searchEngines.refreshSearchEnginesFromDisk()
+    await models.storage.refreshTargetsFromDisk()
     await wiki.extensions.init()
     await wiki.auth.activateStrategies()
-    await wiki.models.commentProviders.initProvider()
-    await wiki.models.searchEngines.initEngine()
-    await wiki.models.storage.initTargets()
+    await models.commentProviders.initProvider()
+    await models.searchEngines.initEngine()
+    await models.storage.initTargets()
     wiki.scheduler?.start()
-    await wiki.models.subscribeToNotifications()
+    await models.subscribeToNotifications()
+    notificationsSubscribed = true
+    wiki.backgroundWorkers?.start()
   },
-  async initTelemetry() {
-    telemetry.init()
-    process.on('unhandledRejection', (error: unknown) => { wiki.logger.warn(error); wiki.telemetry.sendError(error) })
-    process.on('uncaughtException', (error: Error) => { wiki.logger.warn(error); wiki.telemetry.sendError(error) })
-  },
-  async shutdown(devMode = false) {
-    if (wiki.agentRuntime) await wiki.agentRuntime.shutdown()
-    if (wiki.servers) await wiki.servers.stopServers()
-    if (wiki.scheduler) await wiki.scheduler.stop()
-    await wiki.models.unsubscribeToNotifications()
-    if (wiki.models.knex) await wiki.models.knex.destroy()
-    if (wiki.asar) await wiki.asar.unload()
-    if (!devMode) process.exit(0)
+  async shutdown(_devMode = false): Promise<void> {
+    const models = wiki.models
+    const backgroundWorkers = wiki.backgroundWorkers
+    const servers = wiki.servers
+    const collaborationService = wiki.collaboration
+    const activeScheduler = wiki.scheduler
+    const knex = models?.knex ?? database.knex
+    const archive = wiki.asar
+    const teardowns: Array<() => Promise<unknown>> = []
+    if (backgroundWorkers) teardowns.push(() => backgroundWorkers.shutdown())
+    if (servers) {
+      teardowns.push(() => servers.stopServers())
+    } else if (collaborationService) {
+      teardowns.push(() => collaborationService.dispose())
+    }
+    if (activeScheduler) teardowns.push(() => activeScheduler.stop())
+    if (notificationsSubscribed && models) {
+      teardowns.push(async () => {
+        await models.unsubscribeToNotifications()
+        notificationsSubscribed = false
+      })
+    }
+    if (knex) teardowns.push(() => knex.destroy())
+    if (archive) teardowns.push(() => archive.unload())
+
+    let firstError: unknown
+    for (const teardown of teardowns) {
+      try {
+        await teardown()
+      } catch (error) {
+        firstError ??= error
+        wiki.logger.error(error)
+      }
+    }
+    if (firstError) throw firstError
   }
 }
 

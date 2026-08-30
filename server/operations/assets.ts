@@ -1,9 +1,14 @@
 import _ from 'lodash'
 import sanitize from 'sanitize-filename'
+import type { Knex } from 'knex'
 
 import assetHelper from '../helpers/asset.ts'
 
-interface Requester extends Record<string, unknown> { id: number, name: string, email: string }
+interface Requester extends Record<string, unknown> {
+  id: number
+  name: string
+  email: string
+}
 interface Asset extends Record<string, unknown> {
   id: number
   filename: string
@@ -13,7 +18,9 @@ interface Asset extends Record<string, unknown> {
   deleteAssetCache(): Promise<unknown>
   getAssetPath(): Promise<string>
 }
-interface Folder extends Record<string, unknown> { slug: string }
+interface Folder extends Record<string, unknown> {
+  slug: string
+}
 interface Query<Row> extends PromiseLike<Row[]> {
   where(condition: Record<string, unknown> | string, value?: unknown): Query<Row>
   whereNull(column: string): Query<Row>
@@ -24,10 +31,10 @@ interface Query<Row> extends PromiseLike<Row[]> {
   deleteById(id: number): Promise<unknown>
 }
 interface Models {
-  assets: { query(): Query<Asset>, flushTempUploads(): unknown }
-  assetFolders: { query(): Query<Folder>, getHierarchy(id: number): Promise<Folder[]> }
+  assets: { query(transaction?: Knex.Transaction): Query<Asset>; flushTempUploads(): unknown }
+  assetFolders: { query(): Query<Folder>; getHierarchy(id: number): Promise<Folder[]> }
   storage: { assetEvent(event: Record<string, unknown>): Promise<unknown> }
-  knex(table: string): { where(column: string, value: unknown): { del(): Promise<unknown> } }
+  knex: Knex
 }
 interface WikiErrors {
   AssetFolderExists: new () => Error
@@ -45,7 +52,7 @@ const getAuth = (): { checkAccess(requester: Requester, permissions: string[], c
   WIKI.auth as { checkAccess(requester: Requester, permissions: string[], context: Record<string, unknown>): boolean }
 const errors = WIKI.Error as unknown as WikiErrors
 
-const list = async ({ requester, folderId, kind }: { requester: Requester, folderId: number, kind: string }) => {
+const list = async ({ requester, folderId, kind }: { requester: Requester; folderId: number; kind: string }) => {
   const query = models.assets.query()
   if (folderId === 0) query.whereNull('folderId')
   else query.where('folderId', folderId)
@@ -53,24 +60,30 @@ const list = async ({ requester, folderId, kind }: { requester: Requester, folde
   const hierarchy = await models.assetFolders.getHierarchy(folderId)
   const folderPath = hierarchy.map(folder => folder.slug).join('/')
   const assets = await query
-  return assets.filter(asset => getAuth().checkAccess(requester, ['manage:system', 'read:assets'], {
-    path: folderPath ? `${folderPath}/${asset.filename}` : asset.filename
-  })).map(asset => ({ ...asset, kind: asset.kind.toUpperCase() }))
+  return assets
+    .filter(asset =>
+      getAuth().checkAccess(requester, ['manage:system', 'read:assets'], {
+        path: folderPath ? `${folderPath}/${asset.filename}` : asset.filename
+      })
+    )
+    .map(asset => ({ ...asset, kind: asset.kind.toUpperCase() }))
 }
 
-const listFolders = async ({ requester, parentFolderId }: { requester: Requester, parentFolderId: number }) => {
+const listFolders = async ({ requester, parentFolderId }: { requester: Requester; parentFolderId: number }) => {
   const query = models.assetFolders.query()
   if (parentFolderId === 0) query.whereNull('parentId')
   else query.where('parentId', parentFolderId)
   const folders = await query
   const hierarchy = await models.assetFolders.getHierarchy(parentFolderId)
   const parentPath = hierarchy.map(folder => folder.slug).join('/')
-  return folders.filter(folder => getAuth().checkAccess(requester, ['manage:system', 'read:assets'], {
-    path: parentPath ? `${parentPath}/${folder.slug}` : folder.slug
-  }))
+  return folders.filter(folder =>
+    getAuth().checkAccess(requester, ['manage:system', 'read:assets'], {
+      path: parentPath ? `${parentPath}/${folder.slug}` : folder.slug
+    })
+  )
 }
 
-const createFolder = async ({ slug, parentFolderId }: { slug: string, parentFolderId: number }): Promise<void> => {
+const createFolder = async ({ slug, parentFolderId }: { slug: string; parentFolderId: number }): Promise<void> => {
   const folderSlug = sanitize(slug).toLowerCase()
   const parentId = parentFolderId === 0 ? null : parentFolderId
   const query = models.assetFolders.query().where({ slug: folderSlug })
@@ -79,7 +92,7 @@ const createFolder = async ({ slug, parentFolderId }: { slug: string, parentFold
   await models.assetFolders.query().insert({ slug: folderSlug, name: folderSlug, parentId })
 }
 
-const rename = async ({ requester, id, filename: requestedFilename }: { requester: Requester, id: number, filename: string }): Promise<void> => {
+const rename = async ({ requester, id, filename: requestedFilename }: { requester: Requester; id: number; filename: string }): Promise<void> => {
   const filename = sanitize(requestedFilename).toLowerCase()
   const asset = await models.assets.query().findById(id)
   if (!asset) throw new errors.AssetInvalid()
@@ -94,21 +107,32 @@ const rename = async ({ requester, id, filename: requestedFilename }: { requeste
   if (!getAuth().checkAccess(requester, ['manage:system', 'manage:assets'], { path: sourcePath })) throw new errors.AssetRenameForbidden()
   const targetPath = asset.folderId ? `${folderPath}/${filename}` : filename
   if (!getAuth().checkAccess(requester, ['manage:system', 'write:assets'], { path: targetPath })) throw new errors.AssetRenameTargetForbidden()
-  await models.assets.query().patch({ filename, hash: assetHelper.generateHash(targetPath) }).findById(id)
+  await models.assets
+    .query()
+    .patch({ filename, hash: assetHelper.generateHash(targetPath) })
+    .findById(id)
   await asset.deleteAssetCache()
   await models.storage.assetEvent({
     event: 'renamed',
-    asset: { ...asset, path: sourcePath, destinationPath: targetPath, moveAuthorId: requester.id, moveAuthorName: requester.name, moveAuthorEmail: requester.email }
+    asset: {
+      ...asset,
+      path: sourcePath,
+      destinationPath: targetPath,
+      moveAuthorId: requester.id,
+      moveAuthorName: requester.name,
+      moveAuthorEmail: requester.email
+    }
   })
 }
 
-const remove = async ({ requester, id }: { requester: Requester, id: number }): Promise<void> => {
+const remove = async ({ requester, id }: { requester: Requester; id: number }): Promise<void> => {
   const asset = await models.assets.query().findById(id)
   if (!asset) throw new errors.AssetInvalid()
   const assetPath = await asset.getAssetPath()
   if (!getAuth().checkAccess(requester, ['manage:system', 'manage:assets'], { path: assetPath })) throw new errors.AssetDeleteForbidden()
-  await models.knex('assetData').where('id', id).del()
-  await models.assets.query().deleteById(id)
+  await models.knex.transaction(async transaction => {
+    await models.assets.query(transaction).deleteById(id)
+  })
   await asset.deleteAssetCache()
   await models.storage.assetEvent({
     event: 'deleted',

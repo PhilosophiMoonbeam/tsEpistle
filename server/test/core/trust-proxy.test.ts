@@ -11,7 +11,7 @@ interface IdentityResponse {
 
 const resolveIdentity = async (trustProxy: boolean, forwardedFor: string): Promise<IdentityResponse> => {
   const app = express()
-  app.set('trust proxy', trustProxy)
+  app.set('trust proxy', trustProxy ? 1 : false)
   app.get('/identity', (req, res) => {
     res.json({ ip: req.ip, ips: req.ips })
   })
@@ -24,7 +24,7 @@ const resolveIdentity = async (trustProxy: boolean, forwardedFor: string): Promi
       headers: { 'x-forwarded-for': forwardedFor }
     })
     expect(response.status).toBe(200)
-    return await response.json() as IdentityResponse
+    return (await response.json()) as IdentityResponse
   } finally {
     await new Promise<void>((resolve, reject) => {
       server.close(error => {
@@ -50,10 +50,11 @@ describe('trusted proxy client identity', () => {
     expect(identity.ips).toEqual(['198.51.100.20'])
   })
 
-  it('resolves the left-most client through multiple trusted proxies', async () => {
-    const identity = await resolveIdentity(true, '198.51.100.30, 10.0.0.20, 10.0.0.10')
+  it('ignores prepended forwarding values beyond the one trusted proxy', async () => {
+    const first = await resolveIdentity(true, '198.51.100.30, 10.0.0.10')
+    const second = await resolveIdentity(true, '203.0.113.40, 10.0.0.10')
 
-    expect(identity.ip).toBe('198.51.100.30')
-    expect(identity.ips).toEqual(['198.51.100.30', '10.0.0.20', '10.0.0.10'])
+    expect(first).toEqual({ ip: '10.0.0.10', ips: ['10.0.0.10'] })
+    expect(second).toEqual(first)
   })
 })

@@ -16,7 +16,7 @@ export const openApiDocument = Object.freeze({
     license: {
       name: 'GNU Affero General Public License v3.0',
       identifier: 'AGPL-3.0-only'
-    },
+    }
   },
   servers: [{ url: '/api/v1' }],
   security: [{ bearerAuth: [] }],
@@ -51,7 +51,8 @@ export const openApiDocument = Object.freeze({
           },
           '400': errorResponse,
           '401': errorResponse,
-          '403': errorResponse
+          '403': errorResponse,
+          '500': errorResponse
         },
         summary: 'List readable pages',
         tags: ['Pages']
@@ -60,9 +61,7 @@ export const openApiDocument = Object.freeze({
     '/pages/{id}': {
       get: {
         operationId: 'getPage',
-        parameters: [
-          { in: 'path', name: 'id', required: true, schema: { minimum: 1, type: 'integer' } }
-        ],
+        parameters: [{ in: 'path', name: 'id', required: true, schema: { minimum: 1, type: 'integer' } }],
         responses: {
           '200': {
             description: 'Readable page metadata',
@@ -71,7 +70,8 @@ export const openApiDocument = Object.freeze({
           '400': errorResponse,
           '401': errorResponse,
           '403': errorResponse,
-          '404': errorResponse
+          '404': errorResponse,
+          '500': errorResponse
         },
         summary: 'Get readable page metadata',
         tags: ['Pages']
