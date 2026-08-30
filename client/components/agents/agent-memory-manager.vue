@@ -1,117 +1,215 @@
 <template>
-    <v-card class="agent-memory" rounded="xl">
-      <div class="agent-memory__hero pa-5 pb-4">
-        <div class="d-flex align-start ga-4">
-          <v-avatar color="primary" size="46" variant="tonal">
-            <v-icon icon="mdi-brain" size="25" />
-          </v-avatar>
-          <div class="flex-grow-1">
-            <div class="d-flex align-center flex-wrap ga-2">
-              <h2 class="text-title-medium font-weight-medium">Agent memory</h2>
-              <v-chip color="primary" size="x-small" variant="tonal">New conversations</v-chip>
-            </div>
-            <p class="text-body-medium text-medium-emphasis mt-1 mb-0">
-              A small, curated set of details the Agent carries between conversations.
-            </p>
-          </div>
-          <v-btn icon="mdi-close" variant="text" aria-label="Close agent memory" @click="open = false" />
+  <v-card class="agent-memory" elevation="0" rounded="xl" :aria-busy="loading">
+    <header class="agent-memory__hero">
+      <div class="agent-memory__mark" aria-hidden="true">
+        <v-icon icon="mdi-archive-outline" size="24" />
+      </div>
+      <div class="agent-memory__heading">
+        <p class="agent-memory__eyebrow">Personal archive</p>
+        <div class="agent-memory__title-row">
+          <h2 class="text-title-large">Agent memory</h2>
+          <v-chip color="primary" size="x-small" variant="tonal">New conversations</v-chip>
+        </div>
+        <p class="agent-memory__intro">Review the durable details Wiki carries forward on your account.</p>
+      </div>
+      <v-btn class="agent-memory__close" icon="mdi-close" variant="text" aria-label="Close agent memory" @click="open = false" />
+    </header>
+
+    <v-divider />
+    <v-progress-linear v-if="loading" indeterminate color="primary" aria-label="Loading agent memory" />
+
+    <v-card-text class="agent-memory__body">
+      <v-alert v-if="error" class="agent-memory__error" type="error" variant="tonal" closable role="alert" @click:close="error = ''">
+        <div class="agent-memory__error-content">
+          <span>{{ error }}</span>
+          <v-btn v-if="!loading" variant="text" size="small" @click="load">Retry</v-btn>
+        </div>
+      </v-alert>
+
+      <div v-if="loading && !loaded" class="agent-memory__state" role="status" aria-live="polite">
+        <v-progress-circular color="primary" indeterminate :size="32" :width="3" aria-hidden="true" />
+        <div>
+          <h3 class="text-title-medium">Opening your memory archive</h3>
+          <p>Loading saved profile details and Agent notes.</p>
         </div>
       </div>
 
-      <v-divider />
-      <v-card-text class="agent-memory__body pa-5">
-        <v-progress-linear v-if="loading" class="mb-4" indeterminate color="primary" aria-label="Loading agent memory" />
-        <v-alert v-if="error" class="mb-4" type="error" variant="tonal" closable @click:close="error = ''">
-          {{ error }} <v-btn variant="text" size="small" @click="load">Retry</v-btn>
-        </v-alert>
-        <div v-if="loaded && loading" class="text-body-small text-medium-emphasis mb-3">Refreshing memory…</div>
+      <template v-else-if="loaded">
+        <p v-if="loading" class="agent-memory__refresh" role="status" aria-live="polite">
+          <v-icon icon="mdi-sync" size="16" aria-hidden="true" />
+          Refreshing the archive…
+        </p>
 
-        <template v-if="loaded">
-          <v-expand-transition>
-            <v-sheet v-if="editing" class="agent-memory__editor pa-4 mb-5" border rounded="lg">
-              <div class="d-flex align-center mb-3">
-                <div class="text-title-medium font-weight-medium">{{ editing.id ? 'Edit memory' : 'Add memory' }}</div>
-                <v-spacer />
-                <v-btn icon="mdi-close" size="small" variant="text" aria-label="Cancel memory edit" @click="cancelEdit" />
+        <section class="agent-memory__scope" aria-labelledby="agent-memory-scope-title">
+          <div>
+            <p class="agent-memory__eyebrow">Scope &amp; retention</p>
+            <h3 id="agent-memory-scope-title" class="text-title-medium">A deliberate snapshot, not hidden learning</h3>
+            <p>Memory is copied into a conversation when it begins. Changes here affect future conversations only; existing transcripts keep their original snapshot.</p>
+          </div>
+          <div class="agent-memory__scope-count" aria-label="Current memory count">
+            <strong>{{ memoryCount }}</strong>
+            <span>{{ memoryCount === 1 ? 'saved record' : 'saved records' }}</span>
+          </div>
+        </section>
+
+        <v-expand-transition>
+          <section v-if="editing" class="agent-memory__editor" aria-labelledby="agent-memory-editor-title">
+            <header class="agent-memory__editor-header">
+              <div>
+                <p class="agent-memory__eyebrow">{{ editing.id ? 'Revise record' : 'New record' }}</p>
+                <h3 id="agent-memory-editor-title" class="text-title-medium">{{ editing.id ? 'Edit memory' : 'Add to memory' }}</h3>
               </div>
-              <v-btn-toggle v-model="draftTarget" class="mb-4" color="primary" divided mandatory variant="outlined">
+              <v-btn icon="mdi-close" size="small" variant="text" aria-label="Cancel memory edit" @click="cancelEdit" />
+            </header>
+
+            <fieldset class="agent-memory__target">
+              <legend>File this record under</legend>
+              <v-btn-toggle v-model="draftTarget" color="primary" divided mandatory variant="outlined">
                 <v-btn value="user" prepend-icon="mdi-account-outline">About you</v-btn>
                 <v-btn value="agent" prepend-icon="mdi-notebook-outline">Agent notes</v-btn>
               </v-btn-toggle>
-              <v-textarea v-model="draftContent" :counter="targetLimit" :maxlength="targetLimit" :label="draftTarget === 'user' ? 'Preference or personal detail' : 'Project, environment, or workflow fact'" rows="3" auto-grow autofocus variant="outlined" @keydown.meta.enter="save" @keydown.ctrl.enter="save" />
-              <div class="d-flex justify-end ga-2">
-                <v-btn variant="text" @click="cancelEdit">Cancel</v-btn>
-                <v-btn color="primary" :disabled="!draftContent.trim() || saving" :loading="saving" @click="save">Save memory</v-btn>
-              </div>
-            </v-sheet>
-          </v-expand-transition>
+            </fieldset>
 
-          <section v-for="section in sections" :key="section.target" class="agent-memory__section mb-4" :aria-labelledby="`agent-memory-${section.target}`">
-            <div class="d-flex align-center ga-3 mb-2">
-              <v-avatar :color="section.color" size="34" variant="tonal"><v-icon :icon="section.icon" size="19" /></v-avatar>
-              <div class="flex-grow-1">
-                <h3 :id="`agent-memory-${section.target}`" class="text-title-medium font-weight-medium">{{ section.title }}</h3>
-                <div class="text-body-small text-medium-emphasis">{{ section.description }}</div>
-              </div>
-              <span class="text-body-small text-medium-emphasis">{{ section.store.characters.toLocaleString() }} / {{ section.store.limit.toLocaleString() }}</span>
+            <v-textarea
+              v-model="draftContent"
+              :counter="targetLimit"
+              :maxlength="targetLimit"
+              :label="draftTarget === 'user' ? 'Preference or personal detail' : 'Project, environment, or workflow fact'"
+              :hint="draftCapacityLabel"
+              persistent-hint
+              rows="3"
+              auto-grow
+              autofocus
+              variant="outlined"
+              @keydown.esc="cancelEdit"
+              @keydown.meta.enter="save"
+              @keydown.ctrl.enter="save"
+            />
+            <p v-if="draftOverLimit" class="agent-memory__draft-limit" role="alert">{{ draftCapacityLabel }}</p>
+            <div class="agent-memory__editor-actions">
+              <span class="agent-memory__shortcut">Esc to cancel · <kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>Enter</kbd> to save</span>
+              <v-btn variant="text" :disabled="saving" @click="cancelEdit">Cancel</v-btn>
+              <v-btn color="primary" :disabled="!draftContent.trim() || draftOverLimit || saving" :loading="saving" @click="save">
+                {{ editing.id ? 'Save revision' : 'Save memory' }}
+              </v-btn>
             </div>
-            <v-progress-linear class="agent-memory__capacity mb-3" :color="section.store.characters / section.store.limit > .8 ? 'warning' : section.color" :model-value="section.store.characters / section.store.limit * 100" height="3" rounded />
-            <div v-if="section.store.entries.length" class="agent-memory__entries">
-              <div v-for="entry in section.store.entries" :key="entry.id" class="agent-memory__entry pa-3">
-                <p class="text-body-medium mb-0">{{ entry.content }}</p>
-                <div class="agent-memory__entry-actions">
-                  <v-btn icon="mdi-pencil-outline" size="x-small" variant="text" :aria-label="`Edit memory: ${entry.content}`" :disabled="Boolean(actionBusy)" @click="beginEdit(entry)" />
-                  <v-btn icon="mdi-delete-outline" size="x-small" variant="text" color="error" :aria-label="`Remove memory: ${entry.content}`" :disabled="Boolean(actionBusy)" @click="dialogError = ''; removing = entry" />
-                </div>
-              </div>
-            </div>
-            <v-sheet v-else class="agent-memory__empty pa-4 text-body-medium text-medium-emphasis" rounded="lg">{{ section.empty }}</v-sheet>
           </section>
-          <v-alert class="mt-5" color="info" icon="mdi-shield-lock-outline" variant="tonal">Memory is private to your Wiki account and bounded by design. Never store passwords, API keys, or short-lived details.</v-alert>
-        </template>
+        </v-expand-transition>
 
-      </v-card-text>
+        <section
+          v-for="section in sections"
+          :key="section.target"
+          class="agent-memory__section"
+          :aria-labelledby="`agent-memory-${section.target}`"
+        >
+          <header class="agent-memory__section-header">
+            <div class="agent-memory__section-mark" :class="`agent-memory__section-mark--${section.target}`" aria-hidden="true">
+              <v-icon :icon="section.icon" size="20" />
+            </div>
+            <div class="agent-memory__section-heading">
+              <div class="agent-memory__section-title-row">
+                <h3 :id="`agent-memory-${section.target}`" class="text-title-medium">{{ section.title }}</h3>
+                <v-chip :color="capacityColor(section.store)" size="x-small" variant="tonal">{{ capacityState(section.store) }}</v-chip>
+              </div>
+              <p>{{ section.description }}</p>
+            </div>
+          </header>
 
-      <v-divider />
-      <v-card-actions class="px-5 py-4">
-        <v-btn
-          color="error"
-          icon="mdi-delete-sweep-outline"
-          variant="text"
-          aria-label="Clear memory"
-          :disabled="memoryCount === 0 || Boolean(actionBusy)"
-          @click="clearError = ''; clearing = true"
-        />
-        <v-spacer />
-        <v-btn color="primary" prepend-icon="mdi-plus" variant="flat" :disabled="Boolean(actionBusy)" @click="beginAdd">Add memory</v-btn>
-      </v-card-actions>
-    </v-card>
+          <div class="agent-memory__capacity-copy">
+            <span>{{ section.store.characters.toLocaleString() }} / {{ section.store.limit.toLocaleString() }} characters</span>
+            <strong>{{ remainingLabel(section.store) }}</strong>
+          </div>
+          <v-progress-linear
+            class="agent-memory__capacity"
+            :color="capacityColor(section.store)"
+            :model-value="capacityPercent(section.store)"
+            rounded
+            :aria-label="`${section.title} memory capacity: ${section.store.characters.toLocaleString()} of ${section.store.limit.toLocaleString()} characters used`"
+          />
+          <v-alert v-if="!canAddTo(section.target)" class="agent-memory__limit-alert" color="warning" icon="mdi-archive-lock-outline" variant="tonal" density="compact">
+            This section has no room for another record. Consolidate or remove an item before adding more.
+          </v-alert>
 
-  <v-dialog :model-value="Boolean(removing)" max-width="28rem" @update:model-value="value => { if (!value) removing = null }">
-    <v-card rounded="xl" title="Remove this memory?">
+          <div v-if="section.store.entries.length" class="agent-memory__entries">
+            <article v-for="(entry, index) in section.store.entries" :key="entry.id" class="agent-memory__entry">
+              <div class="agent-memory__entry-index" aria-hidden="true">{{ String(index + 1).padStart(2, '0') }}</div>
+              <div class="agent-memory__entry-content">
+                <div class="agent-memory__entry-meta">{{ memoryDateLabel(entry) }}</div>
+                <p>{{ entry.content }}</p>
+              </div>
+              <div class="agent-memory__entry-actions" :aria-label="`Actions for memory ${index + 1}`">
+                <v-btn prepend-icon="mdi-pencil-outline" size="small" variant="text" :aria-label="`Edit memory: ${entry.content}`" :disabled="Boolean(actionBusy)" @click="beginEdit(entry)">Edit</v-btn>
+                <v-btn prepend-icon="mdi-delete-outline" size="small" variant="text" color="error" :aria-label="`Remove memory: ${entry.content}`" :disabled="Boolean(actionBusy)" @click="dialogError = ''; removing = entry">Remove</v-btn>
+              </div>
+            </article>
+          </div>
+          <div v-else class="agent-memory__empty">
+            <v-icon :icon="section.icon" size="24" aria-hidden="true" />
+            <div>
+              <h4 class="text-title-small">{{ section.emptyTitle }}</h4>
+              <p>{{ section.empty }}</p>
+            </div>
+            <v-btn color="primary" variant="tonal" prepend-icon="mdi-plus" :disabled="Boolean(actionBusy) || !canAddTo(section.target)" @click="beginAdd(section.target)">
+              Add first record
+            </v-btn>
+          </div>
+        </section>
+
+        <aside class="agent-memory__safety" aria-label="Memory safety">
+          <v-icon icon="mdi-shield-lock-outline" size="21" aria-hidden="true" />
+          <div>
+            <strong>Private to your Wiki account</strong>
+            <p>Memory is bounded and reviewed by you. Do not store passwords, API keys, access tokens, or short-lived details.</p>
+          </div>
+        </aside>
+      </template>
+    </v-card-text>
+
+    <v-divider />
+    <v-card-actions class="agent-memory__footer">
+      <v-btn color="error" prepend-icon="mdi-delete-sweep-outline" variant="text" :disabled="memoryCount === 0 || Boolean(actionBusy)" @click="clearError = ''; clearing = true">
+        Clear archive
+      </v-btn>
+      <v-spacer />
+      <v-btn color="primary" prepend-icon="mdi-plus" variant="flat" :disabled="!canAddMemory || Boolean(actionBusy)" :title="!canAddMemory ? 'Memory is at capacity' : undefined" @click="beginAdd()">
+        Add memory
+      </v-btn>
+    </v-card-actions>
+  </v-card>
+
+  <v-dialog :model-value="Boolean(removing)" max-width="30rem" @update:model-value="value => { if (!value) removing = null }">
+    <v-card class="agent-memory__dialog" rounded="xl">
+      <v-card-title class="agent-memory__dialog-title">
+        <v-avatar color="error" size="38" variant="tonal"><v-icon icon="mdi-archive-remove-outline" aria-hidden="true" /></v-avatar>
+        <span>Remove this memory?</span>
+      </v-card-title>
       <v-card-text>
-        <v-alert v-if="dialogError" class="mb-3" type="error" variant="tonal" density="compact">{{ dialogError }}</v-alert>
-        <p class="mb-3">It will no longer appear in new conversations.</p>
-        <v-sheet v-if="removing" class="pa-3 text-body-medium" color="surface-variant" rounded="lg">{{ removing.content }}</v-sheet>
+        <v-alert v-if="dialogError" class="agent-memory__dialog-error" type="error" variant="tonal" density="compact">{{ dialogError }}</v-alert>
+        <p>This record will be omitted from conversations started after removal. Existing conversation snapshots are unchanged.</p>
+        <blockquote v-if="removing" class="agent-memory__dialog-record">{{ removing.content }}</blockquote>
       </v-card-text>
       <v-card-actions>
         <v-spacer />
-        <v-btn variant="text" :disabled="Boolean(actionBusy)" @click="removing = null">Cancel</v-btn>
-        <v-btn color="error" :loading="actionBusy === 'remove'" :disabled="Boolean(actionBusy)" @click="remove">Remove</v-btn>
+        <v-btn variant="text" :disabled="Boolean(actionBusy)" @click="removing = null">Keep record</v-btn>
+        <v-btn color="error" :loading="actionBusy === 'remove'" :disabled="Boolean(actionBusy)" @click="remove">Remove memory</v-btn>
       </v-card-actions>
     </v-card>
   </v-dialog>
 
-  <v-dialog v-model="clearing" max-width="28rem">
-    <v-card rounded="xl" title="Clear all Agent memory?">
+  <v-dialog v-model="clearing" max-width="30rem">
+    <v-card class="agent-memory__dialog" rounded="xl">
+      <v-card-title class="agent-memory__dialog-title">
+        <v-avatar color="error" size="38" variant="tonal"><v-icon icon="mdi-delete-sweep-outline" aria-hidden="true" /></v-avatar>
+        <span>Clear the memory archive?</span>
+      </v-card-title>
       <v-card-text>
-        <v-alert v-if="clearError" class="mb-3" type="error" variant="tonal" density="compact">{{ clearError }}</v-alert>
-        This removes every saved preference and Agent note. Conversation history is not affected.
+        <v-alert v-if="clearError" class="agent-memory__dialog-error" type="error" variant="tonal" density="compact">{{ clearError }}</v-alert>
+        Every saved preference and Agent note will be removed from future conversations. Conversation history and existing memory snapshots are not affected.
       </v-card-text>
       <v-card-actions>
         <v-spacer />
-        <v-btn variant="text" :disabled="Boolean(actionBusy)" @click="clearing = false">Cancel</v-btn>
-        <v-btn color="error" :loading="actionBusy === 'clear'" :disabled="Boolean(actionBusy)" @click="clear">Clear memory</v-btn>
+        <v-btn variant="text" :disabled="Boolean(actionBusy)" @click="clearing = false">Keep archive</v-btn>
+        <v-btn color="error" :loading="actionBusy === 'clear'" :disabled="Boolean(actionBusy)" @click="clear">Clear archive</v-btn>
       </v-card-actions>
     </v-card>
   </v-dialog>
@@ -137,12 +235,67 @@ const removing = ref<AgentMemoryEntry | null>(null)
 const clearing = ref(false)
 const draftTarget = ref<AgentMemoryTarget>('user')
 const draftContent = ref('')
+type MemoryStore = AgentMemoryView[AgentMemoryTarget]
+
 const targetLimit = computed(() => memories.value[draftTarget.value].limit)
 const memoryCount = computed(() => memories.value.user.entries.length + memories.value.agent.entries.length)
+const projectedStoreCharacters = computed(() => {
+  const currentId = editing.value?.id
+  const contents = memories.value[draftTarget.value].entries
+    .filter(entry => entry.id !== currentId)
+    .map(entry => entry.content)
+  const content = draftContent.value.trim()
+  if (content) contents.push(content)
+  return contents.length === 0 ? 0 : contents.join('\n§\n').length
+})
+const draftOverLimit = computed(() => projectedStoreCharacters.value > targetLimit.value)
+const draftCapacityLabel = computed(() => {
+  const difference = targetLimit.value - projectedStoreCharacters.value
+  if (difference < 0) return `This section would exceed its limit by ${Math.abs(difference).toLocaleString()} characters.`
+  return `${difference.toLocaleString()} characters will remain in this section after saving.`
+})
+
+const remainingCharacters = (store: MemoryStore): number => Math.max(0, store.limit - store.characters)
+const capacityPercent = (store: MemoryStore): number => store.limit > 0 ? Math.min(100, store.characters / store.limit * 100) : 0
+const capacityState = (store: MemoryStore): string => {
+  const percent = capacityPercent(store)
+  if (percent >= 100) return 'Full'
+  if (percent >= 80) return 'Near limit'
+  return store.entries.length ? 'Curated' : 'Empty'
+}
+const capacityColor = (store: MemoryStore): string => capacityPercent(store) >= 80 ? 'warning' : 'primary'
+const remainingLabel = (store: MemoryStore): string => `${remainingCharacters(store).toLocaleString()} remaining`
+const canAddTo = (target: AgentMemoryTarget): boolean => {
+  const store = memories.value[target]
+  const requiredCharacters = store.entries.length ? 4 : 1
+  return remainingCharacters(store) >= requiredCharacters
+}
+const canAddMemory = computed(() => loaded.value && (canAddTo('user') || canAddTo('agent')))
+const memoryDateFormatter = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+const memoryDateLabel = (entry: AgentMemoryEntry): string => {
+  const revised = entry.updatedAt !== entry.createdAt
+  return `${revised ? 'Revised' : 'Added'} ${memoryDateFormatter.format(new Date(revised ? entry.updatedAt : entry.createdAt))}`
+}
 
 const sections = computed(() => [
-  { target: 'user' as const, title: 'About you', description: 'Preferences, role, communication style, and working habits.', empty: 'No profile memories yet. The Agent can learn durable preferences as you work together.', icon: 'mdi-account-outline', color: 'primary', store: memories.value.user },
-  { target: 'agent' as const, title: 'Agent notes', description: 'Stable project, environment, convention, and workflow facts.', empty: 'No Agent notes yet. Useful project context can be carried into future conversations.', icon: 'mdi-notebook-outline', color: 'secondary', store: memories.value.agent }
+  {
+    target: 'user' as const,
+    title: 'About you',
+    description: 'Preferences, role, communication style, and durable working habits.',
+    emptyTitle: 'No profile records',
+    empty: 'Add a lasting preference that should shape how Wiki works with you.',
+    icon: 'mdi-account-outline',
+    store: memories.value.user
+  },
+  {
+    target: 'agent' as const,
+    title: 'Agent notes',
+    description: 'Stable project, environment, convention, and workflow facts.',
+    emptyTitle: 'No Agent notes',
+    empty: 'Add project context worth carrying into future conversations.',
+    icon: 'mdi-notebook-outline',
+    store: memories.value.agent
+  }
 ])
 const message = (value: unknown, fallback: string): string => value instanceof Error ? value.message : fallback
 const load = async (): Promise<void> => {
@@ -158,9 +311,9 @@ const cancelEdit = (): void => {
   draftTarget.value = 'user'
   draftContent.value = ''
 }
-const beginAdd = (): void => {
+const beginAdd = (target?: AgentMemoryTarget): void => {
   editing.value = { id: '', version: 0 }
-  draftTarget.value = 'user'
+  draftTarget.value = target ?? (canAddTo('user') ? 'user' : 'agent')
   draftContent.value = ''
 }
 const beginEdit = (entry: AgentMemoryEntry): void => {
@@ -171,7 +324,7 @@ const beginEdit = (entry: AgentMemoryEntry): void => {
 const save = async (): Promise<void> => {
   const current = editing.value
   const content = draftContent.value.trim()
-  if (!current || !content || saving.value || actionBusy.value) return
+  if (!current || !content || draftOverLimit.value || saving.value || actionBusy.value) return
   saving.value = true; actionBusy.value = 'save'; error.value = ''
   try {
     if (current.id) await updateAgentMemory(window.fetch.bind(window), props.csrfToken, current.id, { expectedVersion: current.version, target: draftTarget.value, content })
@@ -201,38 +354,535 @@ watch(open, value => { if (value) void load() }, { immediate: true })
 
 <style scoped>
 .agent-memory {
-  background: color-mix(in srgb, rgb(var(--v-theme-surface)) 97%, rgb(var(--v-theme-primary)) 3%);
-  border: 1px solid color-mix(in srgb, rgb(var(--v-theme-on-surface)) 14%, transparent);
   display: flex;
-  flex-direction: column;
   height: 100%;
   min-height: 0;
   overflow: hidden;
+  flex-direction: column;
+  border: 1px solid var(--wiki-surface-border-strong);
+  background: var(--wiki-surface-raised);
+  box-shadow: var(--wiki-shadow-md), var(--wiki-shadow-inset);
+  color: rgb(var(--v-theme-on-surface));
 }
-.agent-memory__hero { background: color-mix(in srgb, rgb(var(--v-theme-primary)) 6%, rgb(var(--v-theme-surface))); flex: 0 0 auto; }
-.agent-memory__body { flex: 1 1 auto; max-height: none; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
-.agent-memory__editor { background: color-mix(in srgb, rgb(var(--v-theme-primary)) 4%, rgb(var(--v-theme-surface))); }
-.agent-memory__capacity { opacity: .72; }
-.agent-memory__entries { border: 1px solid color-mix(in srgb, rgb(var(--v-theme-on-surface)) 16%, transparent); border-radius: .75rem; overflow: hidden; }
-.agent-memory__entry { align-items: flex-start; display: flex; gap: .75rem; justify-content: space-between; }
-.agent-memory__entry + .agent-memory__entry { border-top: 1px solid color-mix(in srgb, rgb(var(--v-theme-on-surface)) 12%, transparent); }
-.agent-memory__entry p { overflow-wrap: anywhere; white-space: pre-wrap; }
-.agent-memory__entry-actions { display: flex; flex: 0 0 auto; opacity: .62; }
-.agent-memory__entry:hover .agent-memory__entry-actions, .agent-memory__entry:focus-within .agent-memory__entry-actions { opacity: 1; }
-.agent-memory__empty { background: color-mix(in srgb, rgb(var(--v-theme-surface-variant)) 38%, transparent); border: 1px dashed color-mix(in srgb, rgb(var(--v-theme-on-surface)) 18%, transparent); }
+
+.agent-memory__hero {
+  display: grid;
+  flex: 0 0 auto;
+  grid-template-columns: var(--wiki-control-height) minmax(0, 1fr) var(--wiki-control-height);
+  gap: var(--wiki-space-3);
+  align-items: start;
+  padding: var(--wiki-space-5);
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--wiki-accent-warm) 9%, transparent), transparent 58%),
+    var(--wiki-surface-raised);
+}
+
+.agent-memory__mark,
+.agent-memory__section-mark {
+  display: grid;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--wiki-accent-warm) 28%, var(--wiki-surface-border));
+  border-radius: var(--wiki-control-radius);
+  background: color-mix(in srgb, var(--wiki-accent-warm) 11%, var(--wiki-surface-raised));
+  color: var(--wiki-accent-warm);
+  box-shadow: var(--wiki-shadow-xs), var(--wiki-shadow-inset);
+}
+
+.agent-memory__mark {
+  width: var(--wiki-control-height);
+  height: var(--wiki-control-height);
+}
+
+.agent-memory__heading {
+  min-width: 0;
+}
+
+.agent-memory__eyebrow {
+  margin: 0 0 var(--wiki-space-1);
+  color: var(--wiki-accent-warm);
+  font-size: var(--wiki-label-size);
+  font-weight: var(--wiki-label-weight);
+  letter-spacing: .1em;
+  text-transform: uppercase;
+}
+
+.agent-memory__title-row,
+.agent-memory__section-title-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--wiki-space-2);
+  align-items: center;
+}
+
+.agent-memory__title-row h2,
+.agent-memory__section-title-row h3,
+.agent-memory__editor-header h3,
+.agent-memory__scope h3,
+.agent-memory__empty h4 {
+  margin: 0;
+  color: rgb(var(--v-theme-on-surface));
+  font-family: var(--wiki-font-heading);
+  line-height: var(--wiki-leading-heading);
+}
+
+.agent-memory__intro {
+  margin: var(--wiki-space-1) 0 0;
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 68%, transparent);
+  font-size: .8125rem;
+  line-height: 1.5;
+}
+
+.agent-memory__close {
+  align-self: start;
+}
+
+.agent-memory__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: var(--wiki-space-5) !important;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.agent-memory__error,
+.agent-memory__scope,
+.agent-memory__editor,
+.agent-memory__section,
+.agent-memory__safety {
+  margin-bottom: var(--wiki-space-5);
+}
+
+.agent-memory__error-content,
+.agent-memory__refresh,
+.agent-memory__editor-header,
+.agent-memory__editor-actions,
+.agent-memory__capacity-copy,
+.agent-memory__safety {
+  display: flex;
+  align-items: center;
+}
+
+.agent-memory__error-content {
+  flex-wrap: wrap;
+  gap: var(--wiki-space-2);
+  justify-content: space-between;
+}
+
+.agent-memory__state {
+  display: flex;
+  min-height: calc(var(--wiki-space-12) * 4);
+  gap: var(--wiki-space-4);
+  align-items: center;
+  justify-content: center;
+  padding: var(--wiki-space-6);
+  border: 1px dashed var(--wiki-surface-border-strong);
+  border-radius: var(--wiki-panel-radius);
+  background: var(--wiki-surface-sunken);
+}
+
+.agent-memory__state h3,
+.agent-memory__state p,
+.agent-memory__refresh,
+.agent-memory__scope p,
+.agent-memory__section-heading p,
+.agent-memory__empty p,
+.agent-memory__safety p,
+.agent-memory__dialog p {
+  margin: 0;
+}
+
+.agent-memory__state p,
+.agent-memory__scope p,
+.agent-memory__section-heading p,
+.agent-memory__empty p,
+.agent-memory__safety p {
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 66%, transparent);
+  font-size: .8125rem;
+  line-height: 1.5;
+}
+
+.agent-memory__refresh {
+  gap: var(--wiki-space-2);
+  margin-bottom: var(--wiki-space-3);
+  color: var(--wiki-accent-warm);
+  font-size: .75rem;
+}
+
+.agent-memory__scope {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--wiki-space-4);
+  align-items: center;
+  padding: var(--wiki-space-4);
+  border: 1px solid color-mix(in srgb, var(--wiki-ambient-accent) 22%, var(--wiki-surface-border));
+  border-radius: var(--wiki-panel-radius);
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--wiki-ambient-accent) 7%, transparent), transparent 64%),
+    var(--wiki-surface-sunken);
+  box-shadow: var(--wiki-shadow-inset);
+}
+
+.agent-memory__scope p:last-child {
+  margin-top: var(--wiki-space-2);
+}
+
+.agent-memory__scope-count {
+  display: grid;
+  min-width: calc(var(--wiki-space-12) * 2);
+  justify-items: end;
+}
+
+.agent-memory__scope-count strong {
+  color: var(--wiki-accent-warm);
+  font-family: var(--wiki-font-mono);
+  font-size: 1.375rem;
+  line-height: var(--wiki-leading-heading);
+}
+
+.agent-memory__scope-count span,
+.agent-memory__entry-meta,
+.agent-memory__shortcut,
+.agent-memory__capacity-copy {
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 58%, transparent);
+  font-size: var(--wiki-label-size);
+  font-weight: var(--wiki-label-weight);
+  letter-spacing: .045em;
+}
+
+.agent-memory__editor {
+  padding: var(--wiki-space-4);
+  border: 1px solid color-mix(in srgb, var(--wiki-accent-warm) 32%, var(--wiki-surface-border));
+  border-radius: var(--wiki-panel-radius);
+  background: color-mix(in srgb, var(--wiki-accent-warm) 5%, var(--wiki-surface-raised));
+  box-shadow: var(--wiki-shadow-sm), var(--wiki-shadow-inset);
+}
+
+.agent-memory__editor-header {
+  gap: var(--wiki-space-3);
+  justify-content: space-between;
+  margin-bottom: var(--wiki-space-4);
+}
+
+.agent-memory__target {
+  min-width: 0;
+  margin: 0 0 var(--wiki-space-4);
+  padding: 0;
+  border: 0;
+}
+
+.agent-memory__target legend {
+  margin-bottom: var(--wiki-space-2);
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 68%, transparent);
+  font-size: .75rem;
+  font-weight: 650;
+}
+
+.agent-memory__target .v-btn-toggle {
+  width: 100%;
+}
+
+.agent-memory__target .v-btn {
+  min-height: var(--wiki-control-height);
+  flex: 1 1 50%;
+  border-radius: var(--wiki-control-radius);
+  text-transform: none;
+}
+
+.agent-memory__editor :deep(.v-field) {
+  border-radius: var(--wiki-control-radius);
+  background: var(--wiki-surface-sunken);
+}
+
+.agent-memory__draft-limit {
+  margin: var(--wiki-space-2) 0 0;
+  color: rgb(var(--v-theme-error));
+  font-size: .75rem;
+  font-weight: 650;
+}
+
+.agent-memory__editor-actions {
+  flex-wrap: wrap;
+  gap: var(--wiki-space-2);
+  justify-content: flex-end;
+  margin-top: var(--wiki-space-4);
+}
+
+.agent-memory__shortcut {
+  margin-inline-end: auto;
+}
+
+.agent-memory__shortcut kbd {
+  font-family: var(--wiki-font-mono);
+}
+
+.agent-memory__section {
+  padding-bottom: var(--wiki-space-5);
+  border-bottom: 1px solid var(--wiki-surface-border);
+}
+
+.agent-memory__section-header {
+  display: grid;
+  grid-template-columns: var(--wiki-control-height) minmax(0, 1fr);
+  gap: var(--wiki-space-3);
+  align-items: center;
+  margin-bottom: var(--wiki-space-3);
+}
+
+.agent-memory__section-mark {
+  width: var(--wiki-control-height);
+  height: var(--wiki-control-height);
+}
+
+.agent-memory__section-mark--agent {
+  border-color: color-mix(in srgb, var(--wiki-accent-spectral) 28%, var(--wiki-surface-border));
+  background: color-mix(in srgb, var(--wiki-accent-spectral) 10%, var(--wiki-surface-raised));
+  color: var(--wiki-accent-spectral);
+}
+
+.agent-memory__section-heading {
+  min-width: 0;
+}
+
+.agent-memory__section-heading p {
+  margin-top: var(--wiki-space-1);
+}
+
+.agent-memory__capacity-copy {
+  gap: var(--wiki-space-2);
+  justify-content: space-between;
+  margin-bottom: var(--wiki-space-2);
+}
+
+.agent-memory__capacity-copy strong {
+  color: rgb(var(--v-theme-on-surface));
+}
+
+.agent-memory__capacity {
+  margin-bottom: var(--wiki-space-3);
+}
+
+.agent-memory__limit-alert {
+  margin-bottom: var(--wiki-space-3);
+}
+
+.agent-memory__entries {
+  overflow: hidden;
+  border: 1px solid var(--wiki-surface-border);
+  border-radius: var(--wiki-panel-radius);
+  background: var(--wiki-surface-raised);
+  box-shadow: var(--wiki-shadow-xs), var(--wiki-shadow-inset);
+}
+
+.agent-memory__entry {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: var(--wiki-space-3);
+  align-items: start;
+  padding: var(--wiki-space-4);
+}
+
+.agent-memory__entry + .agent-memory__entry {
+  border-top: 1px solid var(--wiki-surface-border);
+}
+
+.agent-memory__entry-index {
+  min-width: var(--wiki-space-6);
+  padding-top: var(--wiki-space-1);
+  color: var(--wiki-accent-warm);
+  font-family: var(--wiki-font-mono);
+  font-size: var(--wiki-label-size);
+  font-weight: 700;
+}
+
+.agent-memory__entry-content {
+  min-width: 0;
+}
+
+.agent-memory__entry-content p {
+  margin: var(--wiki-space-1) 0 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.agent-memory__entry-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: var(--wiki-space-1);
+  opacity: .7;
+  transition: opacity var(--wiki-motion-fast) var(--wiki-motion-ease);
+}
+
+.agent-memory__entry:hover .agent-memory__entry-actions,
+.agent-memory__entry:focus-within .agent-memory__entry-actions {
+  opacity: 1;
+}
+
+.agent-memory__entry-actions .v-btn,
+.agent-memory__footer .v-btn,
+.agent-memory__editor-actions .v-btn {
+  min-height: var(--wiki-control-height);
+  border-radius: var(--wiki-control-radius);
+  font-weight: 650;
+  text-transform: none;
+}
+
+.agent-memory__empty {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: var(--wiki-space-3);
+  align-items: center;
+  padding: var(--wiki-space-4);
+  border: 1px dashed var(--wiki-surface-border-strong);
+  border-radius: var(--wiki-panel-radius);
+  background: var(--wiki-surface-sunken);
+}
+
+.agent-memory__empty > .v-icon {
+  color: var(--wiki-accent-warm);
+}
+
+.agent-memory__empty p {
+  margin-top: var(--wiki-space-1);
+}
+
+.agent-memory__safety {
+  gap: var(--wiki-space-3);
+  align-items: flex-start;
+  padding: var(--wiki-space-4);
+  border-inline-start: var(--wiki-space-1) solid rgb(var(--v-theme-info));
+  border-radius: var(--wiki-control-radius);
+  background: color-mix(in srgb, rgb(var(--v-theme-info)) 8%, var(--wiki-surface-sunken));
+}
+
+.agent-memory__safety > .v-icon {
+  flex: 0 0 auto;
+  color: rgb(var(--v-theme-info));
+}
+
+.agent-memory__footer {
+  flex: 0 0 auto;
+  gap: var(--wiki-space-2);
+  padding: var(--wiki-space-4) var(--wiki-space-5);
+  background: var(--wiki-surface-raised);
+}
+
+.agent-memory__dialog {
+  border: 1px solid var(--wiki-surface-border-strong);
+  background: var(--wiki-surface-raised);
+  box-shadow: var(--wiki-shadow-lg), var(--wiki-shadow-inset);
+}
+
+.agent-memory__dialog-title {
+  display: flex;
+  gap: var(--wiki-space-3);
+  align-items: center;
+  padding: var(--wiki-space-5) var(--wiki-space-5) var(--wiki-space-3);
+}
+
+.agent-memory__dialog-error {
+  margin-bottom: var(--wiki-space-3);
+}
+
+.agent-memory__dialog-record {
+  margin: var(--wiki-space-4) 0 0;
+  padding: var(--wiki-space-3);
+  border: 1px solid var(--wiki-surface-border);
+  border-inline-start: var(--wiki-space-1) solid var(--wiki-accent-warm);
+  border-radius: var(--wiki-control-radius);
+  background: var(--wiki-surface-sunken);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
 @media (max-width: 1199.98px) {
   .agent-memory {
     border-radius: 0 !important;
-    border-end-start-radius: 1rem !important;
-    border-start-start-radius: 1rem !important;
+    border-end-start-radius: var(--wiki-panel-radius) !important;
+    border-start-start-radius: var(--wiki-panel-radius) !important;
   }
 }
+
 @media (max-width: 599.98px) {
-  .agent-memory { border-radius: 0 !important; border-width: 0; border-inline-start-width: 1px; }
-  .agent-memory__body { padding: 1rem !important; }
-  .agent-memory__entry-actions { opacity: 1; }
+  .agent-memory {
+    border-width: 0;
+    border-inline-start-width: 1px;
+    border-radius: 0 !important;
+  }
+
+  .agent-memory__hero,
+  .agent-memory__body,
+  .agent-memory__footer {
+    padding-inline: var(--wiki-space-4) !important;
+  }
+
+  .agent-memory__hero {
+    grid-template-columns: var(--wiki-control-height) minmax(0, 1fr) var(--wiki-control-height);
+  }
+
+  .agent-memory__scope {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .agent-memory__scope-count {
+    display: flex;
+    gap: var(--wiki-space-2);
+    align-items: baseline;
+    justify-items: start;
+  }
+
+  .agent-memory__entry,
+  .agent-memory__empty {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .agent-memory__entry-actions,
+  .agent-memory__empty .v-btn {
+    grid-column: 1 / -1;
+    width: 100%;
+    opacity: 1;
+  }
+
+  .agent-memory__entry-actions .v-btn,
+  .agent-memory__empty .v-btn {
+    flex: 1 1 50%;
+  }
+
+  .agent-memory__shortcut {
+    width: 100%;
+  }
+
+  .agent-memory__footer {
+    flex-wrap: wrap;
+  }
+
+  .agent-memory__footer .v-spacer {
+    display: none;
+  }
+
+  .agent-memory__footer .v-btn {
+    flex: 1 1 calc(50% - var(--wiki-space-1));
+  }
 }
+
 @media (forced-colors: active) {
-  .agent-memory__entries, .agent-memory__empty { border: 1px solid CanvasText; }
+  .agent-memory,
+  .agent-memory__scope,
+  .agent-memory__editor,
+  .agent-memory__entries,
+  .agent-memory__empty,
+  .agent-memory__safety,
+  .agent-memory__dialog-record {
+    border: 1px solid CanvasText;
+  }
+
+  .agent-memory__safety {
+    border-inline-start-width: var(--wiki-space-1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-memory__entry-actions {
+    transition: none;
+  }
 }
 </style>

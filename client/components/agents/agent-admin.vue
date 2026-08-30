@@ -1,58 +1,90 @@
 <template>
   <section class="agent-control" aria-labelledby="admin-title">
-    <section class="agent-hero">
+    <header class="agent-hero">
       <div class="agent-hero__copy">
         <div class="agent-eyebrow">
           <span class="agent-eyebrow__signal" aria-hidden="true" />
-          Agent control center
+          Operations ledger · AI–01
         </div>
         <h1 id="admin-title">{{ embedded ? 'Agents' : 'Agent administration' }}</h1>
-        <p>Shape how AI operates across this workspace—from model access and specialist knowledge to browser boundaries and runtime safeguards.</p>
-        <div class="agent-hero__status">
-          <v-chip size="small" variant="tonal" :color="runtime?.enabled ? 'success' : 'warning'" :prepend-icon="runtime?.enabled ? 'mdi-check-circle-outline' : 'mdi-pause-circle-outline'">
-            {{ runtime?.enabled ? 'Agent runtime active' : 'Agent runtime paused' }}
+        <p>Define the operational envelope for every AI interaction: approved inference, curated expertise, network boundaries, and the safeguards that keep work accountable.</p>
+        <div class="agent-hero__status" aria-label="Control center status" role="status" aria-live="polite">
+          <v-chip
+            size="small"
+            variant="tonal"
+            :color="!dataLoaded ? error ? 'error' : undefined : runtime?.enabled ? 'success' : 'warning'"
+            :prepend-icon="!dataLoaded ? error ? 'mdi-alert-circle-outline' : 'mdi-progress-clock' : runtime?.enabled ? 'mdi-check-circle-outline' : 'mdi-pause-circle-outline'"
+          >
+            {{ !dataLoaded ? error ? 'Deployment state unavailable' : 'Reading deployment state' : runtime?.enabled ? 'Agent runtime active' : 'Agent runtime paused' }}
           </v-chip>
           <v-chip size="small" variant="outlined" prepend-icon="mdi-shield-check-outline">Policy governed</v-chip>
+          <span class="agent-hero__live"><span aria-hidden="true" />Deployment view</span>
         </div>
       </div>
+      <aside class="agent-docket" aria-label="Current administration summary">
+        <div class="agent-docket__head">
+          <span>Control docket</span>
+          <strong>{{ dataLoaded ? 'Current' : error ? 'Unavailable' : 'Pending' }}</strong>
+        </div>
+        <dl>
+          <div>
+            <dt>Runtime</dt>
+            <dd>{{ dataLoaded ? runtime?.enabled ? 'Active' : 'Paused' : error ? 'Unavailable' : 'Loading' }}</dd>
+          </div>
+          <div>
+            <dt>Inference routes</dt>
+            <dd>{{ dataLoaded ? `${enabledProviderCount}/${profiles.length} enabled` : '—' }}</dd>
+          </div>
+          <div>
+            <dt>Network targets</dt>
+            <dd>{{ dataLoaded ? `${enabledBrowserCount} allowed` : '—' }}</dd>
+          </div>
+        </dl>
+        <div class="agent-docket__foot"><v-icon size="16">mdi-text-box-check-outline</v-icon><span>Administrative actions are retained in the audit ledger.</span></div>
+      </aside>
       <div class="agent-hero__actions">
-        <v-btn variant="tonal" color="primary" prepend-icon="mdi-refresh" :loading="loading" @click="load">Refresh status</v-btn>
+        <v-btn variant="tonal" color="primary" prepend-icon="mdi-refresh" :loading="loading" :disabled="loading" @click="load">Refresh status</v-btn>
       </div>
-      <div class="agent-hero__art" aria-hidden="true">
-        <span class="agent-hero__orbit agent-hero__orbit--outer" />
-        <span class="agent-hero__orbit agent-hero__orbit--inner" />
-        <span class="agent-hero__node agent-hero__node--one" />
-        <span class="agent-hero__node agent-hero__node--two" />
-        <span class="agent-hero__node agent-hero__node--three" />
-        <v-icon size="42">mdi-creation-outline</v-icon>
-      </div>
-    </section>
+    </header>
 
-    <v-alert v-if="error" class="mb-5" type="error" variant="tonal" closable @click:close="error = ''">
-      {{ error }}
+    <v-alert v-if="error" class="agent-global-error" type="error" variant="tonal" closable role="alert" @click:close="error = ''">
+      <strong>Control center could not complete the request.</strong>
+      <span>{{ error }}</span>
       <template #append><v-btn variant="text" size="small" @click="load">Retry</v-btn></template>
     </v-alert>
 
     <section v-if="dataLoaded" class="agent-snapshot" aria-label="Agent platform status">
       <article class="agent-snapshot__item">
+        <span class="agent-snapshot__index" aria-hidden="true">01</span>
         <span class="agent-snapshot__icon"><v-icon size="21">mdi-server-network-outline</v-icon></span>
         <span><small>Runtime policy</small><strong>{{ enabledCapabilityCount }} of {{ capabilityRows.length }} capabilities</strong></span>
       </article>
       <article class="agent-snapshot__item">
+        <span class="agent-snapshot__index" aria-hidden="true">02</span>
         <span class="agent-snapshot__icon"><v-icon size="21">mdi-brain</v-icon></span>
         <span><small>Provider profiles</small><strong>{{ enabledProviderCount }} enabled · {{ profiles.length }} total</strong></span>
       </article>
       <article class="agent-snapshot__item">
+        <span class="agent-snapshot__index" aria-hidden="true">03</span>
         <span class="agent-snapshot__icon"><v-icon size="21">mdi-web-check</v-icon></span>
         <span><small>Browser boundary</small><strong>{{ enabledBrowserCount }} approved target{{ enabledBrowserCount === 1 ? '' : 's' }}</strong></span>
       </article>
+      <article class="agent-snapshot__item">
+        <span class="agent-snapshot__index" aria-hidden="true">04</span>
+        <span class="agent-snapshot__icon"><v-icon size="21">mdi-archive-clock-outline</v-icon></span>
+        <span><small>Audit retention</small><strong>{{ runtime?.retention.auditDays }} days</strong></span>
+      </article>
+    </section>
+    <section v-else-if="loading" class="agent-snapshot agent-snapshot--loading" aria-label="Loading agent platform status" aria-busy="true">
+      <v-skeleton-loader v-for="index in 4" :key="index" type="list-item-avatar-two-line" />
     </section>
 
     <div class="agent-workspace">
       <nav class="agent-sections" aria-label="Agent administration sections" role="tablist">
-        <div class="agent-sections__label">Configure</div>
+        <div class="agent-sections__label"><span>Control index</span><small>4 sections</small></div>
         <button
-          v-for="section in sectionItems"
+          v-for="(section, index) in sectionItems"
+          :id="`agent-tab-${section.value}`"
           :key="section.value"
           type="button"
           role="tab"
@@ -61,20 +93,25 @@
           :aria-selected="tab === section.value"
           :aria-controls="`agent-panel-${section.value}`"
           @click="tab = section.value"
+          @keydown.left.prevent="selectRelativeSection(index, -1, $event)"
+          @keydown.right.prevent="selectRelativeSection(index, 1, $event)"
+          @keydown.home.prevent="selectSection(0, $event)"
+          @keydown.end.prevent="selectSection(sectionItems.length - 1, $event)"
         >
-          <span class="agent-section__icon"><v-icon size="21">{{ section.icon }}</v-icon></span>
+          <span class="agent-section__ordinal" aria-hidden="true">0{{ index + 1 }}</span>
+          <span class="agent-section__icon"><v-icon size="20">{{ section.icon }}</v-icon></span>
           <span class="agent-section__copy"><strong>{{ section.title }}</strong><small>{{ section.description }}</small></span>
           <v-chip v-if="section.badge" class="agent-section__badge" size="x-small" variant="tonal">{{ section.badge }}</v-chip>
           <v-icon class="agent-section__arrow" size="18">mdi-chevron-right</v-icon>
         </button>
         <div class="agent-sections__note">
-          <v-icon size="18">mdi-lock-outline</v-icon>
-          <span>Every change is policy-scoped and recorded in the audit ledger.</span>
+          <v-icon size="18">mdi-shield-lock-outline</v-icon>
+          <span><strong>Governed control plane</strong>Changes respect deployment kill switches, user permissions, and retained audit evidence.</span>
         </div>
       </nav>
 
       <v-window v-model="tab" class="agent-content">
-        <v-window-item value="runtime">
+        <v-window-item id="agent-panel-runtime" value="runtime" role="tabpanel" aria-labelledby="agent-tab-runtime">
           <section class="agent-panel">
             <div class="agent-panel__header">
               <div class="agent-panel__heading">
@@ -85,7 +122,10 @@
                   <p>The effective safeguards currently governing every Agent run.</p>
                 </div>
               </div>
-              <v-chip variant="tonal" :color="runtime?.enabled ? 'success' : 'warning'" size="small">{{ runtime?.enabled ? 'Active' : 'Paused' }}</v-chip>
+              <div class="agent-panel__state">
+                <span>Deployment controlled</span>
+                <v-chip variant="tonal" :color="loading ? undefined : runtime?.enabled ? 'success' : 'warning'" size="small">{{ loading ? 'Loading' : runtime?.enabled ? 'Active' : 'Paused' }}</v-chip>
+              </div>
             </div>
             <v-progress-linear v-if="loading" indeterminate aria-label="Loading runtime policy" />
             <div v-else-if="runtime" class="agent-panel__body">
@@ -99,6 +139,7 @@
                   <div v-for="item in capabilityRows" :key="item.label" class="capability-item" :class="{ 'capability-item--enabled': item.enabled }">
                     <span class="capability-item__state"><v-icon size="15">{{ item.enabled ? 'mdi-check' : 'mdi-minus' }}</v-icon></span>
                     <span>{{ item.label }}</span>
+                    <small>{{ item.enabled ? 'Available' : 'Blocked' }}</small>
                   </div>
                 </div>
               </section>
@@ -128,7 +169,7 @@
           </section>
         </v-window-item>
 
-        <v-window-item value="profiles" id="agent-panel-profiles" role="tabpanel">
+        <v-window-item id="agent-panel-profiles" value="profiles" role="tabpanel" aria-labelledby="agent-tab-profiles">
           <section class="agent-panel">
             <div class="agent-panel__header">
               <div class="agent-panel__heading">
@@ -143,6 +184,11 @@
             </div>
             <div class="agent-panel__body">
               <v-progress-linear v-if="loading" indeterminate class="mb-4" aria-label="Loading provider profiles" />
+              <aside class="provider-policy-strip" aria-label="Provider governance">
+                <span><v-icon size="17">mdi-connection</v-icon><strong>Verify</strong>Live capability check on every save</span>
+                <span><v-icon size="17">mdi-key-outline</v-icon><strong>Protect</strong>Credentials remain server-managed</span>
+                <span><v-icon size="17">mdi-account-lock-outline</v-icon><strong>Scope</strong>Access follows explicit grants</span>
+              </aside>
               <v-alert v-if="runtime?.providerEnabled === false" type="info" variant="tonal" class="mb-4">Provider administration is unavailable while provider inference is disabled in deployment configuration. Enable <code>agents.provider.enabled</code>, configure the provider runtime keys, and restart Wiki before adding profiles.</v-alert>
               <v-alert v-if="profiles.some(profile => !profile.secretConfigured)" type="warning" variant="tonal" class="mb-4">A provider credential is unavailable. Edit the profile and enter its API key to verify and enable it.</v-alert>
               <v-alert v-if="profiles.some(profile => profile.status === 'enabled' && profile.conformed && profile.exposureMode === 'all_agent_users') && !profiles.some(profile => profile.isGlobalDefault)" type="warning" variant="tonal" class="mb-4">No global default provider is set. Open an enabled provider's actions menu and choose <strong>Set global default</strong> before starting a conversation.</v-alert>
@@ -197,11 +243,11 @@
           </section>
         </v-window-item>
 
-        <v-window-item value="skills">
+        <v-window-item id="agent-panel-skills" value="skills" role="tabpanel" aria-labelledby="agent-tab-skills">
           <SkillAdmin :csrf-token="csrfToken" embedded />
         </v-window-item>
 
-        <v-window-item value="browser" id="agent-panel-browser" role="tabpanel">
+        <v-window-item id="agent-panel-browser" value="browser" role="tabpanel" aria-labelledby="agent-tab-browser">
           <section class="agent-panel">
             <div class="agent-panel__header">
               <div class="agent-panel__heading">
@@ -216,6 +262,11 @@
             </div>
             <div class="agent-panel__body">
               <v-progress-linear v-if="loading" indeterminate class="mb-4" aria-label="Loading browser targets" />
+              <v-alert v-if="runtime?.browserEnabled === false" type="info" variant="tonal" density="compact" class="mb-4">The isolated browser is paused by deployment policy. Targets remain editable here and take effect only after the runtime boundary is enabled.</v-alert>
+              <aside class="browser-boundary-note">
+                <v-icon size="19">mdi-shield-key-outline</v-icon>
+                <span><strong>Exact destinations only.</strong> Each HTTPS URL is canonicalized, hashed into policy evidence, and can be paused without removing the record.</span>
+              </aside>
               <div v-if="browserTargets.length" class="target-list">
                 <article v-for="target in browserTargets" :key="target.id" class="target-row">
                   <span class="target-row__icon"><v-icon size="20">mdi-lock-outline</v-icon></span>
@@ -234,17 +285,20 @@
       </v-window>
     </div>
 
-    <v-dialog v-model="profileDialog" max-width="76rem" scrollable :fullscreen="smAndDown">
-      <v-card class="profile-editor">
+    <v-dialog v-model="profileDialog" max-width="76rem" scrollable :fullscreen="smAndDown" :persistent="saving">
+      <v-card class="profile-editor" :aria-busy="saving">
         <div class="profile-editor__header">
           <span class="profile-editor__mark"><v-icon size="24">mdi-creation-outline</v-icon></span>
-          <div>
+          <div class="profile-editor__title">
             <div class="agent-panel__eyebrow">{{ editingProfile ? 'Provider configuration' : 'New inference connection' }}</div>
             <h2>{{ editingProfile ? `Edit ${editingProfile.displayName}` : 'Add provider profile' }}</h2>
             <p>{{ editingProfile ? 'Update the connection, models, or operating limits. Saving runs a fresh verification.' : 'A guided setup for a secure, verified Agent provider.' }}</p>
           </div>
           <v-spacer />
-          <v-btn icon="mdi-close" variant="text" aria-label="Close provider editor" @click="profileDialog = false" />
+          <v-chip v-if="saving" class="profile-editor__change" size="small" color="primary" variant="tonal" prepend-icon="mdi-connection">{{ smAndDown ? 'Saving' : 'Saving and verifying' }}</v-chip>
+          <v-chip v-else-if="profileDirty" class="profile-editor__change" size="small" color="warning" variant="tonal" prepend-icon="mdi-circle-edit-outline">{{ smAndDown ? 'Unsaved' : 'Unsaved changes' }}</v-chip>
+          <v-chip v-else class="profile-editor__change" size="small" variant="outlined" prepend-icon="mdi-check-circle-outline">{{ smAndDown ? 'Saved' : 'No pending changes' }}</v-chip>
+          <v-btn icon="mdi-close" variant="text" aria-label="Close provider editor" :disabled="saving" @click="profileDialog = false" />
         </div>
         <v-progress-linear class="profile-editor__progress" color="primary" :model-value="profileProgress" aria-label="Provider setup progress" />
         <div class="profile-editor__workspace">
@@ -256,7 +310,7 @@
             </button>
           </nav>
           <v-form id="provider-profile-form" class="profile-editor__form" @submit.prevent="saveProfile">
-            <v-alert v-if="profileError" type="error" variant="tonal" density="compact" class="mb-5" closable @click:close="profileError = ''">{{ profileError }}</v-alert>
+            <v-alert v-if="profileError" type="error" variant="tonal" density="compact" class="mb-5" closable role="alert" @click:close="profileError = ''">{{ profileError }}</v-alert>
 
             <section v-if="profileStep === 'identity'" class="profile-form-section">
               <div class="profile-form-section__intro"><span><v-icon size="21">mdi-card-account-details-outline</v-icon></span><div><h3>Name the connection</h3><p>Choose the API contract first; Wiki derives the safe behavior from it.</p></div></div>
@@ -345,39 +399,52 @@
           </v-form>
         </div>
         <div class="profile-editor__footer">
-          <div class="profile-editor__position"><strong>{{ currentProfileStep.title }}</strong><span>{{ profileStepIndex + 1 }} of {{ profileSteps.length }}</span></div>
+          <div class="profile-editor__position">
+            <strong>{{ currentProfileStep.title }}</strong>
+            <span>{{ profileStepIndex + 1 }} of {{ profileSteps.length }} · {{ profileDirty ? 'Changes not yet saved' : 'Draft matches saved state' }}</span>
+          </div>
+          <div class="profile-editor__save-state" role="status" aria-live="polite">
+            <v-icon size="17">{{ saving ? 'mdi-progress-clock' : profileDirty ? 'mdi-circle-edit-outline' : 'mdi-shield-check-outline' }}</v-icon>
+            <span>{{ saving ? 'Verifying provider capabilities…' : profileDirty ? 'Ready to review and save' : 'Configuration unchanged' }}</span>
+          </div>
           <v-spacer />
-          <v-btn variant="text" @click="profileDialog = false">Cancel</v-btn>
-          <v-btn v-if="profileStepIndex > 0" variant="outlined" prepend-icon="mdi-arrow-left" @click="previousProfileStep">Back</v-btn>
-          <v-btn v-if="profileStepIndex < profileSteps.length - 1" variant="tonal" color="primary" append-icon="mdi-arrow-right" :disabled="!profileStepValid" @click="nextProfileStep">Continue</v-btn>
-          <v-btn v-else color="primary" prepend-icon="mdi-check-decagram-outline" :loading="saving" form="provider-profile-form" type="submit">Save and verify</v-btn>
+          <v-btn variant="text" :disabled="saving" @click="profileDialog = false">Cancel</v-btn>
+          <v-btn variant="text" :disabled="saving || !profileDirty" prepend-icon="mdi-restore" @click="resetProfileDraft">Reset</v-btn>
+          <v-btn v-if="profileStepIndex > 0" variant="outlined" prepend-icon="mdi-arrow-left" :disabled="saving" @click="previousProfileStep">Back</v-btn>
+          <v-btn v-if="profileStepIndex < profileSteps.length - 1" variant="tonal" color="primary" append-icon="mdi-arrow-right" :disabled="saving || !profileStepValid" @click="nextProfileStep">Continue</v-btn>
+          <v-btn v-else color="primary" prepend-icon="mdi-check-decagram-outline" :loading="saving" :disabled="saving || !profileStepValid" form="provider-profile-form" type="submit">Save and verify</v-btn>
         </div>
       </v-card>
     </v-dialog>
 
-    <v-dialog :model-value="removingProfile !== null" max-width="34rem" @update:model-value="value => { if (!value) removingProfile = null }">
-      <v-card class="compact-dialog">
-        <div class="compact-dialog__header compact-dialog__header--danger"><span><v-icon size="23">mdi-delete-outline</v-icon></span><div><h2>Remove provider profile?</h2><p>This cannot be undone.</p></div></div>
-        <v-card-text><v-alert v-if="removeError" class="mb-3" type="error" variant="tonal" density="compact">{{ removeError }}</v-alert><p><strong>{{ removingProfile?.displayName }}</strong> will no longer be available to sessions or new runs.</p><p class="mb-0">The configuration is removed from use and its server-managed API keys are permanently deleted. Audit records are retained.</p></v-card-text>
-        <v-card-actions><v-spacer /><v-btn @click="removingProfile = null">Cancel</v-btn><v-btn color="error" :loading="actionBusyKey === 'remove'" :disabled="Boolean(actionBusyKey)" @click="removeProfile">Remove provider</v-btn></v-card-actions>
+    <v-dialog :model-value="removingProfile !== null" max-width="34rem" :persistent="actionBusyKey === 'remove'" @update:model-value="value => { if (!value) removingProfile = null }">
+      <v-card class="compact-dialog" :aria-busy="actionBusyKey === 'remove'">
+        <div class="compact-dialog__header compact-dialog__header--danger"><span><v-icon size="23">mdi-delete-outline</v-icon></span><div><div class="agent-panel__eyebrow">Destructive operation</div><h2>Remove provider profile?</h2><p>This cannot be undone.</p></div></div>
+        <v-card-text><v-alert v-if="removeError" class="mb-3" type="error" variant="tonal" density="compact" role="alert">{{ removeError }}</v-alert><p><strong>{{ removingProfile?.displayName }}</strong> will no longer be available to sessions or new runs.</p><p class="mb-0">The configuration is removed from use and its server-managed API keys are permanently deleted. Audit records are retained.</p></v-card-text>
+        <v-card-actions><v-spacer /><v-btn :disabled="Boolean(actionBusyKey)" @click="removingProfile = null">Cancel</v-btn><v-btn color="error" prepend-icon="mdi-delete-forever-outline" :loading="actionBusyKey === 'remove'" :disabled="Boolean(actionBusyKey)" @click="removeProfile">Remove provider</v-btn></v-card-actions>
       </v-card>
     </v-dialog>
 
     <v-dialog v-model="grantsDialog" max-width="40rem" scrollable>
       <v-card class="compact-dialog">
         <div class="compact-dialog__header"><span><v-icon size="23">mdi-account-multiple-outline</v-icon></span><div><h2>{{ grantProfile ? `Access for ${grantProfile.displayName}` : 'Provider access' }}</h2><p>Control who can discover and use this profile.</p></div></div>
-        <v-card-text><v-alert v-if="grantsError" class="mb-3" type="error" variant="tonal" density="compact">{{ grantsError }}</v-alert><v-select v-model="grantDraft.exposureMode" :items="exposureModes" label="Available to" /><v-autocomplete v-if="grantDraft.exposureMode === 'groups'" v-model="grantDraft.groupIds" :items="groups" item-title="name" item-value="id" label="Wiki groups" multiple chips closable-chips hint="Users receive this provider through any selected group." persistent-hint /><v-alert class="mt-4" type="info" variant="tonal" density="compact">The global default is available to everyone. Group-assigned profiles augment that default and appear as a session choice only when a user has more than one available profile.</v-alert></v-card-text>
-        <v-card-actions><v-spacer /><v-btn @click="grantsDialog = false">Cancel</v-btn><v-btn color="primary" :loading="actionBusyKey === 'grants'" :disabled="Boolean(actionBusyKey) || (grantDraft.exposureMode === 'groups' && grantDraft.groupIds.length === 0)" @click="saveGrants">Save access</v-btn></v-card-actions>
+        <v-card-text><v-alert v-if="grantsError" class="mb-3" type="error" variant="tonal" density="compact" role="alert">{{ grantsError }}</v-alert><v-select v-model="grantDraft.exposureMode" :items="exposureModes" label="Available to" /><v-autocomplete v-if="grantDraft.exposureMode === 'groups'" v-model="grantDraft.groupIds" :items="groups" item-title="name" item-value="id" label="Wiki groups" multiple chips closable-chips hint="Users receive this provider through any selected group." persistent-hint /><v-alert class="mt-4" type="info" variant="tonal" density="compact">The global default is available to everyone. Group-assigned profiles augment that default and appear as a session choice only when a user has more than one available profile.</v-alert></v-card-text>
+        <v-card-actions><span class="compact-dialog__audit"><v-icon size="16">mdi-text-box-check-outline</v-icon>Access changes are audited</span><v-spacer /><v-btn :disabled="actionBusyKey === 'grants'" @click="grantsDialog = false">Cancel</v-btn><v-btn color="primary" :loading="actionBusyKey === 'grants'" :disabled="Boolean(actionBusyKey) || (grantDraft.exposureMode === 'groups' && grantDraft.groupIds.length === 0)" @click="saveGrants">Save access</v-btn></v-card-actions>
       </v-card>
     </v-dialog>
 
-    <v-dialog v-model="browserDialog" max-width="40rem">
-      <v-card class="compact-dialog">
-        <div class="compact-dialog__header compact-dialog__header--teal"><span><v-icon size="23">mdi-web-plus</v-icon></span><div><h2>Add browser target</h2><p>Approve one exact canonical HTTPS destination.</p></div></div>
+    <v-dialog v-model="browserDialog" max-width="40rem" :persistent="actionBusyKey === 'browser-create'">
+      <v-card class="compact-dialog" :aria-busy="actionBusyKey === 'browser-create'">
+        <div class="compact-dialog__header compact-dialog__header--teal"><span><v-icon size="23">mdi-web-plus</v-icon></span><div><div class="agent-panel__eyebrow">Network policy entry</div><h2>Add browser target</h2><p>Approve one exact canonical HTTPS destination.</p></div></div>
         <v-form id="browser-target-form" @submit.prevent="createBrowserTarget">
-          <v-card-text><v-alert v-if="browserError" class="mb-3" type="error" variant="tonal" density="compact">{{ browserError }}</v-alert><v-text-field v-model="browserUrl" :rules="[browserUrlRule]" label="Exact HTTPS URL" placeholder="https://example.com/path" autofocus prepend-inner-icon="mdi-lock-outline" required /><v-checkbox v-model="browserEnabled" label="Enable immediately" /></v-card-text>
+          <v-card-text>
+            <v-alert v-if="browserError" class="mb-3" type="error" variant="tonal" density="compact" role="alert">{{ browserError }}</v-alert>
+            <v-alert class="mb-4" type="warning" variant="tonal" density="compact">Approval is exact: paths and origins are not broadened automatically. Confirm the destination is trusted before enabling it.</v-alert>
+            <v-text-field v-model="browserUrl" :rules="[browserUrlRule]" label="Exact HTTPS URL" placeholder="https://example.com/path" autofocus prepend-inner-icon="mdi-lock-outline" required />
+            <v-checkbox v-model="browserEnabled" label="Enable immediately" hint="Leave off to stage the target in a paused state." persistent-hint />
+          </v-card-text>
         </v-form>
-        <v-card-actions><v-spacer /><v-btn @click="browserDialog = false">Cancel</v-btn><v-btn color="primary" type="submit" form="browser-target-form" :loading="actionBusyKey === 'browser-create'" :disabled="Boolean(actionBusyKey) || !isBrowserUrlValid">Add target</v-btn></v-card-actions>
+        <v-card-actions><span class="compact-dialog__audit"><v-icon size="16">mdi-fingerprint</v-icon>A policy hash will be recorded</span><v-spacer /><v-btn :disabled="actionBusyKey === 'browser-create'" @click="browserDialog = false">Cancel</v-btn><v-btn color="primary" type="submit" form="browser-target-form" :loading="actionBusyKey === 'browser-create'" :disabled="Boolean(actionBusyKey) || !isBrowserUrlValid">Add target</v-btn></v-card-actions>
       </v-card>
     </v-dialog>
   </section>
@@ -483,6 +550,9 @@ const toolCallingOptions = [
 ]
 const defaults = (): ProfileDraft => ({ displayName: '', transportKind: 'openai-responses', model: '', utilityModel: '', agentReasoningEffort: null, utilityReasoningEffort: null, ...agentProviderProtocolDefaults('openai-responses'), secretValue: '', exposureMode: 'all_agent_users', groupIds: [], maxContextTokens: 128000, maxOutputTokens: 8192, dailyTokens: 1000000, dailyCostMicros: 10000000, reservationTokens: 32000, reservationCostMicros: 1000000, reservationMilliseconds: 300000, timeoutMs: 120000, maxRetries: 0, maxAttempts: 3, promptVersion: 1, additionalHeaders: {} })
 const profileDraft = reactive<ProfileDraft>(defaults())
+const profileDraftFingerprint = (): string => JSON.stringify(profileDraft)
+const profileBaseline = ref(profileDraftFingerprint())
+const profileDirty = computed(() => profileDialog.value && profileDraftFingerprint() !== profileBaseline.value)
 const availableAuthModes = computed<AgentProviderAuthMode[]>(() => profileDraft.transportKind === 'legacy-completions' ? ['bearer', 'api-key-header'] : [agentProviderProtocolDefaults(profileDraft.transportKind).authMode])
 
 const selectedProtocol = computed(() => agentProviderProtocolOption(profileDraft.transportKind))
@@ -570,11 +640,24 @@ const enabledCapabilityCount = computed(() => capabilityRows.value.filter(item =
 const enabledProviderCount = computed(() => profiles.value.filter(profile => profile.status === 'enabled').length)
 const enabledBrowserCount = computed(() => browserTargets.value.filter(target => target.enabled).length)
 const sectionItems = computed(() => [
-  { value: 'runtime', title: 'Runtime', description: 'Policy and safeguards', icon: 'mdi-tune-variant', badge: runtime.value?.enabled ? 'Active' : 'Paused' },
+  { value: 'runtime', title: 'Runtime', description: 'Policy and safeguards', icon: 'mdi-tune-variant', badge: dataLoaded.value ? runtime.value?.enabled ? 'Active' : 'Paused' : loading.value ? 'Loading' : '' },
   { value: 'profiles', title: 'Providers', description: 'Models and access', icon: 'mdi-brain', badge: profiles.value.length ? String(profiles.value.length) : '' },
   { value: 'skills', title: 'Skills', description: 'Approved expertise', icon: 'mdi-book-open-variant-outline', badge: '' },
   { value: 'browser', title: 'Browser access', description: 'Network boundaries', icon: 'mdi-web-check', badge: browserTargets.value.length ? String(browserTargets.value.length) : '' }
 ])
+const selectSection = (requestedIndex: number, event: KeyboardEvent): void => {
+  const sections = sectionItems.value
+  if (!sections.length) return
+  const index = (requestedIndex + sections.length) % sections.length
+  tab.value = sections[index].value
+  const navigation = (event.currentTarget as HTMLElement | null)?.closest('.agent-sections')
+  queueMicrotask(() => navigation?.querySelectorAll<HTMLButtonElement>('.agent-section')[index]?.focus())
+}
+const selectRelativeSection = (currentIndex: number, direction: -1 | 1, event: KeyboardEvent): void => {
+  const target = event.currentTarget as HTMLElement | null
+  const rtlMultiplier = target && getComputedStyle(target).direction === 'rtl' ? -1 : 1
+  selectSection(currentIndex + direction * rtlMultiplier, event)
+}
 const profileSteps = computed<Array<{ value: ProfileStep; title: string; description: string }>>(() => [
   { value: 'identity', title: 'Setup', description: 'Name and protocol' },
   { value: 'models', title: 'Models', description: 'Roles and reasoning' },
@@ -602,6 +685,13 @@ const nextProfileStep = () => {
   if (!profileStepValid.value) { profileError.value = 'Complete the required fields in this step before continuing.'; return }
   const next = profileSteps.value[profileStepIndex.value + 1]
   if (next) { maxProfileStepIndex.value = Math.max(maxProfileStepIndex.value, profileStepIndex.value + 1); profileStep.value = next.value }
+}
+const resetProfileDraft = (): void => {
+  if (saving.value || !profileBaseline.value) return
+  Object.assign(profileDraft, JSON.parse(profileBaseline.value) as ProfileDraft)
+  profileStep.value = 'identity'
+  maxProfileStepIndex.value = 0
+  profileError.value = ''
 }
 
 const request = async <T>(path: string, init: RequestInit = {}): Promise<T> => {
@@ -659,6 +749,7 @@ const openProfile = (profile?: Profile) => {
     promptVersion: profile.policies.promptVersion,
     additionalHeaders: profile.adapterConfig.additionalHeaders
   } : {})
+  profileBaseline.value = profileDraftFingerprint()
   profileDialog.value = true
 }
 const profilePayload = () => ({ transportKind: profileDraft.transportKind, model: profileDraft.model, utilityModel: profileDraft.utilityModel.trim() || null, baseUrl: profileDraft.baseUrl, authMode: profileDraft.authMode, secretReference: null, ...(profileDraft.secretValue ? { secretValue: profileDraft.secretValue } : {}), adapterConfig: { timeoutMs: profileDraft.timeoutMs, maxRetries: profileDraft.maxRetries, additionalHeaders: profileDraft.additionalHeaders, ...(profileDraft.agentReasoningEffort === null ? {} : { agentReasoningEffort: profileDraft.agentReasoningEffort }), ...(profileDraft.utilityReasoningEffort === null ? {} : { utilityReasoningEffort: profileDraft.utilityReasoningEffort }) }, capabilities: { streaming: profileDraft.streaming, toolCalling: profileDraft.toolCalling, parallelToolCalls: profileDraft.parallelToolCalls, structuredOutput: profileDraft.structuredOutput, usage: profileDraft.usage, cancellation: profileDraft.cancellation, maxContextTokens: profileDraft.maxContextTokens, maxOutputTokens: profileDraft.maxOutputTokens }, capabilityRevision: agentProviderCapabilityRevision(profileDraft.transportKind), policies: { allowedModes: ['agent'], dailyTokens: profileDraft.dailyTokens, dailyCostMicros: profileDraft.dailyCostMicros, reservationTokens: profileDraft.reservationTokens, reservationCostMicros: profileDraft.reservationCostMicros, reservationMilliseconds: profileDraft.reservationMilliseconds, promptVersion: profileDraft.promptVersion, maxAttempts: profileDraft.maxAttempts }, pricingRevision: AGENT_PROVIDER_PRICING_REVISION })
@@ -708,52 +799,70 @@ onMounted(() => void load())
 <style scoped>
 .agent-control {
   color: rgb(var(--v-theme-on-surface));
+  font-family: var(--wiki-font-body);
 }
 
 .agent-hero {
   position: relative;
-  display: flex;
-  min-height: 15rem;
+  display: grid;
   overflow: hidden;
-  align-items: flex-end;
-  gap: 2rem;
-  margin-bottom: 1rem;
-  padding: clamp(2rem, 4.5vw, 3.4rem);
-  border: 1px solid color-mix(in srgb, rgb(var(--v-theme-primary)) 18%, transparent);
-  border-radius: 1.5rem;
+  min-height: calc(var(--wiki-space-12) * 5);
+  grid-template-columns: minmax(0, 1fr) minmax(17rem, 21rem);
+  gap: var(--wiki-space-5) var(--wiki-space-8);
+  margin-block-end: var(--wiki-space-4);
+  padding: clamp(var(--wiki-space-6), 4vw, var(--wiki-space-10));
+  border: 1px solid var(--wiki-surface-border-strong);
+  border-radius: var(--wiki-hero-radius);
   background:
-    radial-gradient(circle at 84% 16%, rgba(var(--v-theme-primary), .18), transparent 18rem),
-    linear-gradient(135deg, color-mix(in srgb, rgb(var(--v-theme-primary)) 11%, rgb(var(--v-theme-surface))), rgb(var(--v-theme-surface)) 62%);
-  box-shadow: 0 1.2rem 3.5rem rgba(20, 28, 50, .075);
+    linear-gradient(90deg, color-mix(in srgb, var(--wiki-accent-warm) 72%, transparent) 0 var(--wiki-space-1), transparent var(--wiki-space-1)),
+    linear-gradient(var(--wiki-surface-border) 1px, transparent 1px),
+    linear-gradient(90deg, var(--wiki-surface-border) 1px, transparent 1px),
+    linear-gradient(145deg, color-mix(in srgb, var(--wiki-ambient-accent) 7%, var(--wiki-surface-raised)), var(--wiki-surface-raised) 64%);
+  background-size: auto, var(--wiki-grid-size) var(--wiki-grid-size), var(--wiki-grid-size) var(--wiki-grid-size), auto;
+  box-shadow: var(--wiki-shadow-md), var(--wiki-shadow-inset);
+  isolation: isolate;
+}
+
+.agent-hero::after {
+  position: absolute;
+  z-index: -1;
+  inset-block: 0;
+  inset-inline-end: 0;
+  width: min(42%, 30rem);
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--wiki-accent-spectral) 7%, transparent));
+  content: '';
+  mask-image: linear-gradient(to bottom, transparent, rgb(var(--v-theme-on-surface)) 18%, rgb(var(--v-theme-on-surface)) 82%, transparent);
+  pointer-events: none;
 }
 
 .agent-hero__copy {
-  position: relative;
-  z-index: 2;
+  align-self: end;
   max-width: 48rem;
 }
 
 .agent-hero h1 {
-  margin: .75rem 0 .65rem;
-  font-size: clamp(2.25rem, 4.2vw, 4rem);
+  margin: var(--wiki-space-3) 0 var(--wiki-space-3);
+  color: rgb(var(--v-theme-on-surface));
+  font-family: var(--wiki-font-heading);
+  font-size: clamp(2.2rem, 4.2vw, 3.75rem);
   font-weight: 760;
-  letter-spacing: -.055em;
-  line-height: 1;
+  letter-spacing: -.052em;
+  line-height: var(--wiki-leading-heading);
 }
 
 .agent-hero p {
-  max-width: 43rem;
+  max-width: 46rem;
   margin: 0;
-  color: rgba(var(--v-theme-on-surface), .68);
-  font-size: 1.03rem;
-  line-height: 1.6;
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 72%, transparent);
+  font-size: 1rem;
+  line-height: var(--wiki-leading-body);
 }
 
 .agent-eyebrow,
 .agent-panel__eyebrow {
-  color: rgb(var(--v-theme-primary));
-  font-size: .68rem;
-  font-weight: 780;
+  color: var(--wiki-accent-warm);
+  font-size: var(--wiki-label-size);
+  font-weight: var(--wiki-label-weight);
   letter-spacing: .13em;
   text-transform: uppercase;
 }
@@ -761,92 +870,161 @@ onMounted(() => void load())
 .agent-eyebrow {
   display: flex;
   align-items: center;
-  gap: .65rem;
+  gap: var(--wiki-space-2);
 }
 
 .agent-eyebrow__signal {
-  width: .5rem;
-  height: .5rem;
-  border-radius: 50%;
-  background: rgb(var(--v-theme-primary));
-  box-shadow: 0 0 0 .35rem rgba(var(--v-theme-primary), .1);
+  width: var(--wiki-space-2);
+  height: var(--wiki-space-2);
+  border-radius: var(--wiki-radius-pill);
+  background: var(--wiki-accent-warm);
+  box-shadow: 0 0 0 var(--wiki-space-1) color-mix(in srgb, var(--wiki-accent-warm) 14%, transparent);
 }
 
 .agent-hero__status {
   display: flex;
   flex-wrap: wrap;
-  gap: .5rem;
-  margin-top: 1.35rem;
+  align-items: center;
+  gap: var(--wiki-space-2);
+  margin-block-start: var(--wiki-space-5);
+}
+
+.agent-hero__live {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--wiki-space-2);
+  margin-inline-start: var(--wiki-space-1);
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 64%, transparent);
+  font-size: var(--wiki-label-size);
+  font-weight: var(--wiki-label-weight);
+  letter-spacing: .04em;
+}
+
+.agent-hero__live > span {
+  width: var(--wiki-space-2);
+  height: var(--wiki-space-2);
+  border-radius: var(--wiki-radius-pill);
+  background: rgb(var(--v-theme-success));
+  box-shadow: 0 0 0 var(--wiki-space-1) color-mix(in srgb, rgb(var(--v-theme-success)) 12%, transparent);
 }
 
 .agent-hero__actions {
-  position: relative;
-  z-index: 2;
-  margin-left: auto;
+  align-self: start;
 }
 
-.agent-hero__art {
-  position: absolute;
-  top: 1.2rem;
-  right: 4.5rem;
+.agent-docket {
+  align-self: stretch;
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  padding: var(--wiki-space-4);
+  border: 1px solid var(--wiki-surface-border-strong);
+  border-radius: var(--wiki-panel-radius);
+  background: color-mix(in srgb, var(--wiki-surface-raised) 88%, transparent);
+  box-shadow: var(--wiki-shadow-sm), var(--wiki-shadow-inset);
+}
+
+.agent-docket__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--wiki-space-3);
+  padding-block-end: var(--wiki-space-3);
+  border-block-end: 1px solid var(--wiki-surface-border-strong);
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 64%, transparent);
+  font-size: var(--wiki-label-size);
+  font-weight: var(--wiki-label-weight);
+  letter-spacing: .1em;
+  text-transform: uppercase;
+}
+
+.agent-docket__head strong {
+  color: var(--wiki-accent-warm);
+  font: inherit;
+}
+
+.agent-docket dl {
   display: grid;
-  width: 11rem;
-  height: 11rem;
-  place-items: center;
-  color: rgb(var(--v-theme-primary));
+  margin: 0;
 }
 
-.agent-hero__orbit {
-  position: absolute;
-  border: 1px solid rgba(var(--v-theme-primary), .18);
-  border-radius: 50%;
+.agent-docket dl > div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--wiki-space-4);
+  padding-block: var(--wiki-space-3);
+  border-block-end: 1px solid var(--wiki-surface-border);
 }
 
-.agent-hero__orbit--outer {
-  width: 10.5rem;
-  height: 10.5rem;
-  border-style: dashed;
+.agent-docket dt {
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 62%, transparent);
+  font-size: .75rem;
 }
 
-.agent-hero__orbit--inner {
-  width: 6.8rem;
-  height: 6.8rem;
-  background: rgba(var(--v-theme-surface), .5);
-  box-shadow: 0 1.4rem 3rem rgba(var(--v-theme-primary), .11);
-  backdrop-filter: blur(.75rem);
+.agent-docket dd {
+  margin: 0;
+  font-family: var(--wiki-font-mono);
+  font-size: .75rem;
+  font-weight: 680;
+  text-align: end;
 }
 
-.agent-hero__node {
-  position: absolute;
-  width: .75rem;
-  height: .75rem;
-  border: .2rem solid rgb(var(--v-theme-surface));
-  border-radius: 50%;
-  background: rgb(var(--v-theme-primary));
-  box-shadow: 0 .25rem .8rem rgba(var(--v-theme-primary), .28);
+.agent-docket__foot {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--wiki-space-2);
+  padding-block-start: var(--wiki-space-3);
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 64%, transparent);
+  font-size: var(--wiki-label-size);
+  line-height: 1.5;
 }
 
-.agent-hero__node--one { top: .65rem; }
-.agent-hero__node--two { right: .65rem; bottom: 2.5rem; }
-.agent-hero__node--three { bottom: 1.6rem; left: 1.2rem; }
+.agent-docket__foot .v-icon {
+  flex: 0 0 auto;
+  color: var(--wiki-accent-warm);
+}
+
+.agent-global-error {
+  margin-block-end: var(--wiki-space-4);
+  border: 1px solid color-mix(in srgb, rgb(var(--v-theme-error)) 28%, transparent);
+  border-radius: var(--wiki-control-radius);
+}
+
+.agent-global-error :deep(.v-alert__content) {
+  display: grid;
+  gap: var(--wiki-space-1);
+}
 
 .agent-snapshot {
   display: grid;
-  gap: .75rem;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  margin-bottom: 1rem;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--wiki-space-3);
+  margin-block-end: var(--wiki-space-4);
 }
 
 .agent-snapshot__item {
-  display: flex;
+  position: relative;
+  display: grid;
   min-width: 0;
+  min-height: calc(var(--wiki-control-height) + var(--wiki-space-8));
   align-items: center;
-  gap: .8rem;
-  padding: .9rem 1rem;
-  border: 1px solid rgba(var(--v-border-color), .12);
-  border-radius: 1rem;
-  background: rgb(var(--v-theme-surface));
-  box-shadow: 0 .4rem 1.5rem rgba(20, 28, 50, .035);
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--wiki-space-3);
+  padding: var(--wiki-space-3) var(--wiki-space-4);
+  overflow: hidden;
+  border: 1px solid var(--wiki-surface-border);
+  border-radius: var(--wiki-panel-radius);
+  background: var(--wiki-surface-raised);
+  box-shadow: var(--wiki-shadow-xs), var(--wiki-shadow-inset);
+}
+
+.agent-snapshot__index {
+  position: absolute;
+  inset-block-start: var(--wiki-space-2);
+  inset-inline-end: var(--wiki-space-3);
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 24%, transparent);
+  font-family: var(--wiki-font-mono);
+  font-size: var(--wiki-label-size);
 }
 
 .agent-snapshot__icon,
@@ -862,17 +1040,17 @@ onMounted(() => void load())
   display: grid;
   flex: 0 0 auto;
   place-items: center;
-  border-radius: .8rem;
-  background: rgba(var(--v-theme-primary), .1);
-  color: rgb(var(--v-theme-primary));
+  border: 1px solid color-mix(in srgb, var(--wiki-accent-warm) 18%, transparent);
+  border-radius: var(--wiki-control-radius);
+  background: color-mix(in srgb, var(--wiki-accent-warm) 9%, var(--wiki-surface-raised));
+  color: var(--wiki-accent-warm);
+  box-shadow: var(--wiki-shadow-inset);
 }
 
 .agent-snapshot__icon {
-  width: 2.6rem;
-  height: 2.6rem;
+  width: var(--wiki-control-height);
+  height: var(--wiki-control-height);
 }
-
-.agent-snapshot__icon--blue, .agent-snapshot__icon--violet, .agent-snapshot__icon--teal { background: rgba(var(--v-theme-primary), .1); color: rgb(var(--v-theme-primary)); }
 
 .agent-snapshot__item > span:last-child {
   display: grid;
@@ -883,98 +1061,144 @@ onMounted(() => void load())
 .provider-card__models span,
 .provider-card__meta small,
 .selection-preview small {
-  color: rgba(var(--v-theme-on-surface), .58);
-  font-size: .67rem;
-  font-weight: 700;
-  letter-spacing: .065em;
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 58%, transparent);
+  font-size: var(--wiki-label-size);
+  font-weight: var(--wiki-label-weight);
+  letter-spacing: .06em;
   text-transform: uppercase;
 }
 
 .agent-snapshot__item strong {
   overflow: hidden;
-  font-size: .85rem;
-  font-weight: 670;
+  color: rgb(var(--v-theme-on-surface));
+  font-size: .82rem;
+  font-weight: 680;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.agent-snapshot--loading > :deep(.v-skeleton-loader) {
+  min-height: calc(var(--wiki-control-height) + var(--wiki-space-8));
+  border: 1px solid var(--wiki-surface-border);
+  border-radius: var(--wiki-panel-radius);
+  background: var(--wiki-surface-raised);
+  box-shadow: var(--wiki-shadow-xs);
 }
 
 .agent-workspace {
   display: grid;
   align-items: start;
-  gap: 1rem;
-  grid-template-columns: 17rem minmax(0, 1fr);
+  grid-template-columns: 18rem minmax(0, 1fr);
+  gap: var(--wiki-space-4);
 }
 
 .agent-sections {
   position: sticky;
-  top: 1rem;
+  inset-block-start: var(--wiki-space-4);
   display: grid;
-  gap: .3rem;
-  padding: .75rem;
-  border: 1px solid rgba(var(--v-border-color), .12);
-  border-radius: 1.1rem;
-  background: rgb(var(--v-theme-surface));
-  box-shadow: 0 .7rem 2rem rgba(20, 28, 50, .04);
+  gap: var(--wiki-space-1);
+  padding: var(--wiki-space-3);
+  border: 1px solid var(--wiki-surface-border);
+  border-radius: var(--wiki-panel-radius);
+  background: var(--wiki-surface-raised);
+  box-shadow: var(--wiki-shadow-sm), var(--wiki-shadow-inset);
 }
 
 .agent-sections__label {
-  padding: .35rem .55rem .55rem;
-  color: rgba(var(--v-theme-on-surface), .52);
-  font-size: .64rem;
-  font-weight: 760;
-  letter-spacing: .12em;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--wiki-space-2);
+  padding: var(--wiki-space-1) var(--wiki-space-2) var(--wiki-space-2);
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 56%, transparent);
+  font-size: var(--wiki-label-size);
+  font-weight: var(--wiki-label-weight);
+  letter-spacing: .1em;
   text-transform: uppercase;
 }
 
+.agent-sections__label small {
+  font: inherit;
+  letter-spacing: .04em;
+}
+
 .agent-section {
+  position: relative;
   display: grid;
   width: 100%;
-  min-height: 4.3rem;
+  min-height: calc(var(--wiki-control-height) + var(--wiki-space-4));
   align-items: center;
-  gap: .7rem;
-  grid-template-columns: 2.35rem minmax(0, 1fr) auto auto;
-  padding: .65rem;
+  grid-template-columns: auto var(--wiki-control-height) minmax(0, 1fr) auto auto;
+  gap: var(--wiki-space-2);
+  padding: var(--wiki-space-2);
+  overflow: hidden;
   border: 1px solid transparent;
-  border-radius: .85rem;
+  border-radius: var(--wiki-control-radius);
   background: transparent;
   color: rgb(var(--v-theme-on-surface));
   cursor: pointer;
-  text-align: left;
-  transition: border-color .16s ease, background-color .16s ease, transform .16s ease;
+  text-align: start;
+  transition:
+    border-color var(--wiki-motion-normal) var(--wiki-motion-ease),
+    background-color var(--wiki-motion-normal) var(--wiki-motion-ease),
+    box-shadow var(--wiki-motion-normal) var(--wiki-motion-ease);
+}
+
+.agent-section::before {
+  position: absolute;
+  inset-block: var(--wiki-space-2);
+  inset-inline-start: 0;
+  width: .1875rem;
+  border-radius: var(--wiki-radius-pill);
+  background: var(--wiki-accent-warm);
+  content: '';
+  opacity: 0;
+  transition: opacity var(--wiki-motion-fast) var(--wiki-motion-ease);
 }
 
 .agent-section:hover {
-  background: rgba(var(--v-theme-primary), .045);
-  transform: translateX(.1rem);
+  border-color: var(--wiki-surface-border);
+  background: color-mix(in srgb, var(--wiki-ambient-accent) 5%, transparent);
 }
 
 .agent-section:focus-visible,
 .provider-card__edit:focus-visible,
 .profile-steps button:focus-visible,
 .access-choice__item:focus-within {
-  outline: .15rem solid rgba(var(--v-theme-primary), .42);
-  outline-offset: .12rem;
+  outline: none;
+  box-shadow: var(--wiki-focus-ring);
 }
 
 .agent-section--active {
-  border-color: rgba(var(--v-theme-primary), .17);
-  background: rgba(var(--v-theme-primary), .085);
-  color: rgb(var(--v-theme-primary));
+  border-color: color-mix(in srgb, var(--wiki-accent-warm) 24%, var(--wiki-surface-border));
+  background: color-mix(in srgb, var(--wiki-accent-warm) 8%, transparent);
+}
+
+.agent-section--active::before {
+  opacity: 1;
+}
+
+.agent-section__ordinal {
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 36%, transparent);
+  font-family: var(--wiki-font-mono);
+  font-size: var(--wiki-label-size);
 }
 
 .agent-section__icon {
   display: grid;
-  width: 2.35rem;
-  height: 2.35rem;
+  width: var(--wiki-control-height);
+  height: var(--wiki-control-height);
   place-items: center;
-  border-radius: .7rem;
-  background: rgba(var(--v-theme-on-surface), .05);
-  color: rgba(var(--v-theme-on-surface), .7);
+  border: 1px solid var(--wiki-surface-border);
+  border-radius: var(--wiki-control-radius);
+  background: var(--wiki-surface-sunken);
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 68%, transparent);
 }
 
 .agent-section--active .agent-section__icon {
-  background: rgba(var(--v-theme-primary), .13);
-  color: rgb(var(--v-theme-primary));
+  border-color: color-mix(in srgb, var(--wiki-accent-warm) 22%, transparent);
+  background: color-mix(in srgb, var(--wiki-accent-warm) 11%, var(--wiki-surface-raised));
+  color: var(--wiki-accent-warm);
 }
 
 .agent-section__copy {
@@ -982,89 +1206,149 @@ onMounted(() => void load())
   min-width: 0;
 }
 
-.agent-section__copy strong { font-size: .83rem; font-weight: 680; }
-.agent-section__copy small { color: rgba(var(--v-theme-on-surface), .58); font-size: .7rem; }
-.agent-section__badge { justify-self: end; }
-.agent-section__arrow { opacity: .38; }
-.agent-section--active .agent-section__arrow { opacity: .85; }
+.agent-section__copy strong {
+  font-size: .82rem;
+  font-weight: 700;
+}
+
+.agent-section__copy small {
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 58%, transparent);
+  font-size: .7rem;
+}
+
+.agent-section__badge {
+  justify-self: end;
+}
+
+.agent-section__arrow {
+  opacity: .42;
+}
+
+.agent-section--active .agent-section__arrow {
+  color: var(--wiki-accent-warm);
+  opacity: 1;
+}
+
+:dir(rtl) .agent-section__arrow {
+  transform: rotate(180deg);
+}
 
 .agent-sections__note {
   display: flex;
   align-items: flex-start;
-  gap: .55rem;
-  margin-top: .35rem;
-  padding: .8rem .65rem .45rem;
-  border-top: 1px solid rgba(var(--v-border-color), .1);
-  color: rgba(var(--v-theme-on-surface), .58);
-  font-size: .69rem;
-  line-height: 1.45;
+  gap: var(--wiki-space-2);
+  margin-block-start: var(--wiki-space-2);
+  padding: var(--wiki-space-3) var(--wiki-space-2) var(--wiki-space-1);
+  border-block-start: 1px solid var(--wiki-surface-border);
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 62%, transparent);
+  font-size: var(--wiki-label-size);
+  line-height: 1.5;
 }
 
-.agent-content { min-width: 0; }
+.agent-sections__note .v-icon {
+  flex: 0 0 auto;
+  color: var(--wiki-accent-warm);
+}
+
+.agent-sections__note span {
+  display: grid;
+  gap: var(--wiki-space-1);
+}
+
+.agent-sections__note strong {
+  color: rgb(var(--v-theme-on-surface));
+}
+
+.agent-content {
+  min-width: 0;
+}
 
 .agent-panel {
   overflow: hidden;
-  border: 1px solid rgba(var(--v-border-color), .12);
-  border-radius: 1.1rem;
-  background: rgb(var(--v-theme-surface));
-  box-shadow: 0 .7rem 2rem rgba(20, 28, 50, .04);
+  border: 1px solid var(--wiki-surface-border);
+  border-radius: var(--wiki-panel-radius);
+  background: var(--wiki-surface-raised);
+  box-shadow: var(--wiki-shadow-sm), var(--wiki-shadow-inset);
 }
 
 .agent-panel__header {
   display: flex;
-  min-height: 6.25rem;
+  min-height: calc(var(--wiki-control-height) + var(--wiki-space-10));
   align-items: center;
   justify-content: space-between;
-  gap: 1.5rem;
-  padding: 1.35rem 1.5rem;
-  border-bottom: 1px solid rgba(var(--v-border-color), .1);
+  gap: var(--wiki-space-5);
+  padding: var(--wiki-space-4) var(--wiki-space-5);
+  border-block-end: 1px solid var(--wiki-surface-border);
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--wiki-ambient-accent) 5%, transparent), transparent 48%),
+    var(--wiki-surface-raised);
 }
 
 .agent-panel__heading {
   display: flex;
   min-width: 0;
   align-items: center;
-  gap: .9rem;
+  gap: var(--wiki-space-3);
 }
 
 .agent-panel__icon {
-  width: 2.85rem;
-  height: 2.85rem;
+  width: calc(var(--wiki-control-height) + var(--wiki-space-1));
+  height: calc(var(--wiki-control-height) + var(--wiki-space-1));
 }
 
-.agent-panel__icon--violet, .agent-panel__icon--teal { background: rgba(var(--v-theme-primary), .1); color: rgb(var(--v-theme-primary)); }
-
 .agent-panel__header h2 {
-  margin: .12rem 0 .15rem;
-  font-size: 1.2rem;
-  font-weight: 720;
+  margin: var(--wiki-space-1) 0 0;
+  color: rgb(var(--v-theme-on-surface));
+  font-family: var(--wiki-font-heading);
+  font-size: 1.18rem;
+  font-weight: 730;
   letter-spacing: -.025em;
 }
 
 .agent-panel__header p,
 .profile-editor__header p {
-  margin: 0;
-  color: rgba(var(--v-theme-on-surface), .62);
+  margin: var(--wiki-space-1) 0 0;
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 64%, transparent);
   font-size: .78rem;
 }
 
-.agent-panel__body { padding: 1.5rem; }
+.agent-panel__state {
+  display: grid;
+  flex: 0 0 auto;
+  justify-items: end;
+  gap: var(--wiki-space-1);
+}
 
-.runtime-section + .runtime-section { margin-top: 1.75rem; }
+.agent-panel__state > span {
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 54%, transparent);
+  font-size: var(--wiki-label-size);
+  font-weight: var(--wiki-label-weight);
+  letter-spacing: .055em;
+  text-transform: uppercase;
+}
+
+.agent-panel__body {
+  padding: var(--wiki-space-5);
+}
+
+.runtime-section + .runtime-section {
+  margin-block-start: var(--wiki-space-8);
+}
 
 .section-heading {
   display: flex;
   align-items: flex-end;
   justify-content: space-between;
-  gap: 1rem;
-  margin-bottom: .9rem;
+  gap: var(--wiki-space-4);
+  margin-block-end: var(--wiki-space-3);
 }
 
 .section-heading h3,
 .profile-form-section__intro h3 {
-  margin: 0 0 .15rem;
+  margin: 0;
+  color: rgb(var(--v-theme-on-surface));
   font-size: 1rem;
-  font-weight: 700;
+  font-weight: 720;
   letter-spacing: -.015em;
 }
 
@@ -1072,90 +1356,107 @@ onMounted(() => void load())
 .profile-form-section__intro p,
 .subsection-card__heading p,
 .protocol-behavior__heading p {
-  margin: 0;
-  color: rgba(var(--v-theme-on-surface), .6);
+  margin: var(--wiki-space-1) 0 0;
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 62%, transparent);
   font-size: .75rem;
   line-height: 1.5;
 }
 
 .section-heading > span {
-  color: rgb(var(--v-theme-primary));
+  color: var(--wiki-accent-warm);
   font-size: .72rem;
   font-weight: 700;
 }
 
 .capability-map {
   display: grid;
-  gap: .5rem;
-  grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+  gap: var(--wiki-space-2);
 }
 
 .capability-item {
-  display: flex;
-  min-height: 2.7rem;
+  display: grid;
+  min-height: var(--wiki-control-height);
   align-items: center;
-  gap: .55rem;
-  padding: .55rem .65rem;
-  border: 1px solid rgba(var(--v-border-color), .1);
-  border-radius: .75rem;
-  background: rgba(var(--v-theme-on-surface), .018);
-  color: rgba(var(--v-theme-on-surface), .57);
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--wiki-space-2);
+  padding: var(--wiki-space-2) var(--wiki-space-3);
+  border: 1px solid var(--wiki-surface-border);
+  border-radius: var(--wiki-control-radius);
+  background: var(--wiki-surface-sunken);
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 64%, transparent);
   font-size: .75rem;
-  font-weight: 620;
+  font-weight: 650;
+}
+
+.capability-item small {
+  grid-column: 2;
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 48%, transparent);
+  font-size: var(--wiki-label-size);
+  font-weight: var(--wiki-label-weight);
+  letter-spacing: .05em;
+  text-transform: uppercase;
 }
 
 .capability-item--enabled {
-  border-color: rgba(var(--v-theme-success), .14);
-  background: rgba(var(--v-theme-success), .045);
+  border-color: color-mix(in srgb, rgb(var(--v-theme-success)) 24%, var(--wiki-surface-border));
+  background: color-mix(in srgb, rgb(var(--v-theme-success)) 6%, var(--wiki-surface-raised));
   color: rgb(var(--v-theme-on-surface));
-}
-.metrics-note code {
-  color: rgb(var(--v-theme-on-surface));
-  font-weight: 650;
 }
 
 .capability-item__state {
   display: grid;
-  width: 1.35rem;
-  height: 1.35rem;
+  width: calc(var(--wiki-space-5) + var(--wiki-space-1));
+  height: calc(var(--wiki-space-5) + var(--wiki-space-1));
+  grid-row: 1 / span 2;
   place-items: center;
-  border-radius: 50%;
-  background: rgba(var(--v-theme-on-surface), .08);
+  border-radius: var(--wiki-radius-pill);
+  background: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 8%, transparent);
 }
 
 .capability-item--enabled .capability-item__state {
-  background: rgba(var(--v-theme-success), .14);
+  background: color-mix(in srgb, rgb(var(--v-theme-success)) 14%, transparent);
   color: rgb(var(--v-theme-success));
 }
 
 .policy-grid {
   display: grid;
-  gap: .75rem;
   grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--wiki-space-3);
 }
 
 .policy-card {
-  padding: 1rem;
-  border: 1px solid rgba(var(--v-border-color), .1);
-  border-radius: .9rem;
-  background: rgba(var(--v-theme-on-surface), .018);
+  position: relative;
+  padding: var(--wiki-space-4);
+  border: 1px solid var(--wiki-surface-border);
+  border-radius: var(--wiki-control-radius);
+  background: var(--wiki-surface-sunken);
+}
+
+.policy-card::after {
+  position: absolute;
+  inset-block: var(--wiki-space-4);
+  inset-inline-start: 0;
+  width: .125rem;
+  background: color-mix(in srgb, var(--wiki-accent-warm) 62%, transparent);
+  content: '';
 }
 
 .policy-card__title {
   display: flex;
   align-items: center;
-  gap: .6rem;
-  margin-bottom: .75rem;
+  gap: var(--wiki-space-2);
+  margin-block-end: var(--wiki-space-3);
 }
 
 .policy-card__title span {
   display: grid;
-  width: 2rem;
-  height: 2rem;
+  width: calc(var(--wiki-control-height) - var(--wiki-space-2));
+  height: calc(var(--wiki-control-height) - var(--wiki-space-2));
   place-items: center;
-  border-radius: .6rem;
-  background: rgba(var(--v-theme-primary), .1);
-  color: rgb(var(--v-theme-primary));
+  border-radius: var(--wiki-control-radius);
+  background: color-mix(in srgb, var(--wiki-accent-warm) 10%, transparent);
+  color: var(--wiki-accent-warm);
 }
 
 .policy-card h4,
@@ -1164,54 +1465,124 @@ onMounted(() => void load())
 .limit-group h4 {
   margin: 0;
   font-size: .82rem;
-  font-weight: 700;
+  font-weight: 710;
 }
 
-.policy-card dl { display: grid; gap: .42rem; margin: 0; }
+.policy-card dl {
+  display: grid;
+  gap: var(--wiki-space-2);
+  margin: 0;
+}
 
 .policy-card dl > div {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: 1rem;
-  padding-bottom: .38rem;
-  border-bottom: 1px solid rgba(var(--v-border-color), .075);
+  gap: var(--wiki-space-4);
+  padding-block-end: var(--wiki-space-2);
+  border-block-end: 1px solid var(--wiki-surface-border);
   font-size: .72rem;
 }
 
-.policy-card dl > div:last-child { padding-bottom: 0; border: 0; }
-.policy-card dt { color: rgba(var(--v-theme-on-surface), .58); }
-.policy-card dd { margin: 0; font-weight: 650; text-align: right; }
+.policy-card dl > div:last-child {
+  padding-block-end: 0;
+  border: 0;
+}
 
-.metrics-note {
+.policy-card dt {
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 58%, transparent);
+}
+
+.policy-card dd {
+  margin: 0;
+  font-family: var(--wiki-font-mono);
+  font-weight: 680;
+  text-align: end;
+}
+
+.metrics-note,
+.browser-boundary-note {
   display: flex;
   align-items: flex-start;
-  gap: .8rem;
-  margin-top: 1.25rem;
-  padding: 1rem;
-  border: 1px solid rgba(var(--v-theme-primary), .12);
-  border-radius: .85rem;
-  background: rgba(var(--v-theme-primary), .04);
+  gap: var(--wiki-space-3);
+  margin-block-start: var(--wiki-space-5);
+  padding: var(--wiki-space-4);
+  border: 1px solid color-mix(in srgb, var(--wiki-accent-warm) 18%, var(--wiki-surface-border));
+  border-radius: var(--wiki-control-radius);
+  background: color-mix(in srgb, var(--wiki-accent-warm) 4%, var(--wiki-surface-raised));
 }
 
 .metrics-note > span {
   display: grid;
-  width: 2.15rem;
-  height: 2.15rem;
+  width: calc(var(--wiki-control-height) - var(--wiki-space-2));
+  height: calc(var(--wiki-control-height) - var(--wiki-space-2));
   flex: 0 0 auto;
   place-items: center;
-  border-radius: .65rem;
-  background: rgba(var(--v-theme-primary), .11);
-  color: rgb(var(--v-theme-primary));
+  border-radius: var(--wiki-control-radius);
+  background: color-mix(in srgb, var(--wiki-accent-warm) 11%, transparent);
+  color: var(--wiki-accent-warm);
 }
 
-.metrics-note strong { display: block; margin-bottom: .15rem; font-size: .8rem; }
-.metrics-note p { margin: 0; color: rgba(var(--v-theme-on-surface), .62); font-size: .72rem; line-height: 1.5; }
+.metrics-note strong {
+  display: block;
+  margin-block-end: var(--wiki-space-1);
+  font-size: .8rem;
+}
+
+.metrics-note p {
+  margin: 0;
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 64%, transparent);
+  font-size: .72rem;
+  line-height: 1.5;
+}
+
+.metrics-note code,
+code {
+  color: rgb(var(--v-theme-on-surface));
+  font-family: var(--wiki-font-mono);
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+
+.provider-policy-strip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-block-end: var(--wiki-space-4);
+  overflow: hidden;
+  border: 1px solid var(--wiki-surface-border);
+  border-radius: var(--wiki-control-radius);
+  background: var(--wiki-surface-sunken);
+}
+
+.provider-policy-strip > span {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--wiki-space-1) var(--wiki-space-2);
+  padding: var(--wiki-space-3);
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 58%, transparent);
+  font-size: var(--wiki-label-size);
+  line-height: 1.4;
+}
+
+.provider-policy-strip > span + span {
+  border-inline-start: 1px solid var(--wiki-surface-border);
+}
+
+.provider-policy-strip .v-icon {
+  grid-row: 1 / span 2;
+  color: var(--wiki-accent-warm);
+}
+
+.provider-policy-strip strong {
+  color: rgb(var(--v-theme-on-surface));
+  font-size: .72rem;
+}
 
 .provider-grid {
   display: grid;
-  gap: .85rem;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 20rem), 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 21rem), 1fr));
+  gap: var(--wiki-space-3);
 }
 
 .provider-card {
@@ -1220,95 +1591,116 @@ onMounted(() => void load())
   min-width: 0;
   overflow: hidden;
   flex-direction: column;
-  padding: 1.05rem;
-  border: 1px solid rgba(var(--v-border-color), .12);
-  border-radius: 1rem;
+  padding: var(--wiki-space-4);
+  border: 1px solid var(--wiki-surface-border);
+  border-radius: var(--wiki-panel-radius);
   background:
-    radial-gradient(circle at 100% 0, rgba(var(--v-theme-primary), .055), transparent 11rem),
-    rgba(var(--v-theme-on-surface), .014);
-  transition: border-color .18s ease, box-shadow .18s ease, transform .18s ease;
+    linear-gradient(135deg, color-mix(in srgb, var(--wiki-ambient-accent) 4%, transparent), transparent 48%),
+    var(--wiki-surface-raised);
+  box-shadow: var(--wiki-shadow-xs), var(--wiki-shadow-inset);
+  transition:
+    border-color var(--wiki-motion-normal) var(--wiki-motion-ease),
+    box-shadow var(--wiki-motion-normal) var(--wiki-motion-ease),
+    transform var(--wiki-motion-normal) var(--wiki-motion-ease-out);
 }
 
-.provider-card:hover {
-  border-color: rgba(var(--v-theme-primary), .2);
-  box-shadow: 0 .8rem 2rem rgba(20, 28, 50, .065);
-  transform: translateY(-.1rem);
+.provider-card:hover,
+.provider-card:focus-within {
+  border-color: color-mix(in srgb, var(--wiki-accent-warm) 28%, var(--wiki-surface-border));
+  box-shadow: var(--wiki-shadow-sm), var(--wiki-shadow-inset);
+  transform: translateY(calc(var(--wiki-space-1) * -.5));
 }
 
 .provider-card__top {
   display: flex;
   align-items: flex-start;
-  gap: .7rem;
+  gap: var(--wiki-space-3);
 }
 
 .provider-card__mark {
-  width: 2.65rem;
-  height: 2.65rem;
-  border-radius: .8rem;
-  background: linear-gradient(145deg, rgba(var(--v-theme-primary), .17), rgba(var(--v-theme-primary), .11));
+  width: var(--wiki-control-height);
+  height: var(--wiki-control-height);
 }
-.provider-card__identity { min-width: 0; flex: 1 1 auto; }
+
+.provider-card__identity {
+  min-width: 0;
+  flex: 1 1 auto;
+}
 
 .provider-card__name {
   display: flex;
   min-width: 0;
   align-items: center;
-  gap: .45rem;
+  gap: var(--wiki-space-2);
 }
 
 .provider-card__name h3 {
   overflow: hidden;
-  margin: .1rem 0 .15rem;
-  font-size: .95rem;
-  font-weight: 720;
+  margin: var(--wiki-space-1) 0 0;
+  font-size: .96rem;
+  font-weight: 730;
   letter-spacing: -.015em;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .provider-card__identity > p {
-  margin: 0;
-  color: rgba(var(--v-theme-on-surface), .58);
+  margin: var(--wiki-space-1) 0 0;
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 58%, transparent);
   font-size: .7rem;
 }
 
 .provider-card__status {
   display: flex;
   flex-wrap: wrap;
-  gap: .4rem;
-  margin: .9rem 0;
+  gap: var(--wiki-space-2);
+  margin-block: var(--wiki-space-4);
 }
 
 .connection-state {
   display: inline-flex;
   align-items: center;
-  gap: .3rem;
-  padding: .28rem .48rem;
-  border-radius: 999px;
-  background: rgba(var(--v-theme-on-surface), .06);
-  color: rgba(var(--v-theme-on-surface), .63);
-  font-size: .64rem;
+  gap: var(--wiki-space-1);
+  padding: var(--wiki-space-1) var(--wiki-space-2);
+  border-radius: var(--wiki-radius-pill);
+  background: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 6%, transparent);
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 66%, transparent);
+  font-size: .65rem;
   font-weight: 680;
 }
 
-.connection-state--success { background: rgba(var(--v-theme-success), .09); color: rgb(var(--v-theme-success)); }
-.connection-state--error { background: rgba(var(--v-theme-error), .09); color: rgb(var(--v-theme-error)); }
-.connection-state__dot { width: .38rem; height: .38rem; border-radius: 50%; background: currentColor; }
+.connection-state--success {
+  background: color-mix(in srgb, rgb(var(--v-theme-success)) 10%, transparent);
+  color: rgb(var(--v-theme-success));
+}
+
+.connection-state--error {
+  background: color-mix(in srgb, rgb(var(--v-theme-error)) 10%, transparent);
+  color: rgb(var(--v-theme-error));
+}
+
+.connection-state__dot {
+  width: var(--wiki-space-2);
+  height: var(--wiki-space-2);
+  border-radius: var(--wiki-radius-pill);
+  background: currentColor;
+}
 
 .provider-card__models {
   display: grid;
-  gap: .5rem;
-  padding: .8rem;
-  border: 1px solid rgba(var(--v-border-color), .085);
-  border-radius: .75rem;
-  background: rgba(var(--v-theme-surface), .65);
+  gap: var(--wiki-space-2);
+  padding: var(--wiki-space-3);
+  border: 1px solid var(--wiki-surface-border);
+  border-radius: var(--wiki-control-radius);
+  background: var(--wiki-surface-sunken);
 }
 
 .provider-card__models > div {
   display: grid;
+  min-width: 0;
   align-items: center;
-  gap: .55rem;
-  grid-template-columns: 5.2rem minmax(0, 1fr) auto;
+  grid-template-columns: 5.5rem minmax(0, 1fr) auto;
+  gap: var(--wiki-space-2);
 }
 
 .provider-card__models code {
@@ -1319,186 +1711,340 @@ onMounted(() => void load())
 }
 
 .provider-card__models small {
-  padding: .16rem .35rem;
-  border-radius: 999px;
-  background: rgba(var(--v-theme-primary), .08);
-  color: rgb(var(--v-theme-primary));
-  font-size: .57rem;
+  padding: var(--wiki-space-1) var(--wiki-space-2);
+  border-radius: var(--wiki-radius-pill);
+  background: color-mix(in srgb, var(--wiki-accent-warm) 9%, transparent);
+  color: var(--wiki-accent-warm);
+  font-size: .58rem;
   font-weight: 700;
   text-transform: uppercase;
 }
 
-.provider-card__error { margin: .65rem 0 0; color: rgb(var(--v-theme-error)); font-size: .69rem; line-height: 1.45; }
+.provider-card__error {
+  margin: var(--wiki-space-3) 0 0;
+  color: rgb(var(--v-theme-error));
+  font-size: .7rem;
+  line-height: 1.45;
+}
 
 .provider-card__meta {
   display: grid;
-  gap: .55rem;
-  margin-top: .9rem;
   grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--wiki-space-3);
+  margin-block-start: var(--wiki-space-4);
 }
 
 .provider-card__meta > div {
   display: flex;
   min-width: 0;
   align-items: center;
-  gap: .5rem;
-  color: rgba(var(--v-theme-on-surface), .58);
+  gap: var(--wiki-space-2);
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 58%, transparent);
 }
 
-.provider-card__meta > div > span { display: grid; min-width: 0; }
-.provider-card__meta strong { overflow: hidden; font-size: .69rem; font-weight: 630; text-overflow: ellipsis; white-space: nowrap; }
+.provider-card__meta > div > span {
+  display: grid;
+  min-width: 0;
+}
+
+.provider-card__meta strong {
+  overflow: hidden;
+  color: rgb(var(--v-theme-on-surface));
+  font-size: .7rem;
+  font-weight: 640;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 .provider-card__edit {
   display: flex;
-  width: calc(100% + 2.1rem);
+  width: calc(100% + var(--wiki-space-8));
+  min-height: var(--wiki-control-height);
   align-items: center;
   justify-content: space-between;
-  margin: .95rem -1.05rem -1.05rem;
-  padding: .7rem 1.05rem;
+  margin: var(--wiki-space-4) calc(var(--wiki-space-4) * -1) calc(var(--wiki-space-4) * -1);
+  padding: var(--wiki-space-2) var(--wiki-space-4);
   border: 0;
-  border-top: 1px solid rgba(var(--v-border-color), .085);
+  border-block-start: 1px solid var(--wiki-surface-border);
   background: transparent;
-  color: rgb(var(--v-theme-primary));
+  color: var(--wiki-accent-warm);
   cursor: pointer;
-  font-size: .7rem;
-  font-weight: 680;
-  text-align: left;
+  font-size: .72rem;
+  font-weight: 690;
+  text-align: start;
 }
 
-.provider-card__edit:hover { background: rgba(var(--v-theme-primary), .045); }
+.provider-card__edit:hover {
+  background: color-mix(in srgb, var(--wiki-accent-warm) 5%, transparent);
+}
 
 .agent-empty {
   display: grid;
-  min-height: 22rem;
+  min-height: calc(var(--wiki-space-12) * 7);
   place-items: center;
   align-content: center;
-  padding: 3rem 1.5rem;
+  padding: var(--wiki-space-12) var(--wiki-space-6);
+  border: 1px dashed var(--wiki-surface-border-strong);
+  border-radius: var(--wiki-panel-radius);
+  background: var(--wiki-surface-sunken);
   text-align: center;
 }
 
 .agent-empty__icon {
-  width: 4.5rem;
-  height: 4.5rem;
-  margin-bottom: 1rem;
-  border-radius: 1.35rem;
-  background: linear-gradient(145deg, rgba(var(--v-theme-primary), .15), rgba(var(--v-theme-primary), .1));
+  width: calc(var(--wiki-space-12) + var(--wiki-space-6));
+  height: calc(var(--wiki-space-12) + var(--wiki-space-6));
+  margin-block-end: var(--wiki-space-4);
+  border-radius: var(--wiki-panel-radius);
 }
-.agent-empty__icon--teal { background: rgba(var(--v-theme-primary), .1); color: rgb(var(--v-theme-primary)); }
-.target-list { display: grid; gap: .65rem; }
+
+.agent-empty h3 {
+  margin: 0;
+}
+
+.agent-empty p {
+  max-width: 34rem;
+  margin: var(--wiki-space-2) auto var(--wiki-space-4);
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 64%, transparent);
+}
+
+.browser-boundary-note {
+  margin-block: 0 var(--wiki-space-4);
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 66%, transparent);
+  font-size: .75rem;
+  line-height: 1.5;
+}
+
+.browser-boundary-note .v-icon {
+  flex: 0 0 auto;
+  color: var(--wiki-accent-warm);
+}
+
+.browser-boundary-note strong {
+  color: rgb(var(--v-theme-on-surface));
+}
+
+.target-list {
+  display: grid;
+  gap: var(--wiki-space-2);
+}
 
 .target-row {
   display: flex;
   min-width: 0;
+  min-height: calc(var(--wiki-control-height) + var(--wiki-space-5));
   align-items: center;
-  gap: .8rem;
-  padding: .8rem;
-  border: 1px solid rgba(var(--v-border-color), .1);
-  border-radius: .85rem;
-  background: rgba(var(--v-theme-on-surface), .018);
+  gap: var(--wiki-space-3);
+  padding: var(--wiki-space-3);
+  border: 1px solid var(--wiki-surface-border);
+  border-radius: var(--wiki-control-radius);
+  background: var(--wiki-surface-sunken);
 }
 
-.target-row__icon { width: 2.5rem; height: 2.5rem; background: rgba(var(--v-theme-primary), .1); color: rgb(var(--v-theme-primary)); }
-.target-row__copy { display: grid; min-width: 0; flex: 1 1 auto; }
-.target-row__copy small { color: rgba(var(--v-theme-on-surface), .55); font-family: monospace; font-size: .66rem; }
-.target-row__state { display: flex; align-items: center; gap: .55rem; color: rgba(var(--v-theme-on-surface), .62); font-size: .7rem; font-weight: 650; }
+.target-row__icon {
+  width: var(--wiki-control-height);
+  height: var(--wiki-control-height);
+}
+
+.target-row__copy {
+  display: grid;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.target-row__copy strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.target-row__copy small {
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 54%, transparent);
+  font-family: var(--wiki-font-mono);
+  font-size: .66rem;
+}
+
+.target-row__state {
+  display: flex;
+  align-items: center;
+  gap: var(--wiki-space-2);
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 64%, transparent);
+  font-size: .72rem;
+  font-weight: 680;
+}
 
 .profile-editor {
   overflow: hidden;
-  border-radius: 1.25rem !important;
-  background: rgb(var(--v-theme-surface)) !important;
+  border: 1px solid var(--wiki-surface-border-strong);
+  border-radius: var(--wiki-hero-radius) !important;
+  background: var(--wiki-surface-raised) !important;
+  box-shadow: var(--wiki-shadow-lg), var(--wiki-shadow-inset) !important;
 }
 
 .profile-editor__header {
   display: flex;
-  min-height: 6.5rem;
+  min-height: calc(var(--wiki-control-height) + var(--wiki-space-10));
   align-items: center;
-  gap: .9rem;
-  padding: 1.15rem 1.35rem;
-  border-bottom: 1px solid rgba(var(--v-border-color), .1);
+  gap: var(--wiki-space-3);
+  padding: var(--wiki-space-4) var(--wiki-space-5);
+  border-block-end: 1px solid var(--wiki-surface-border);
   background:
-    radial-gradient(circle at 88% 0, rgba(var(--v-theme-primary), .09), transparent 15rem),
-    rgb(var(--v-theme-surface));
+    linear-gradient(90deg, color-mix(in srgb, var(--wiki-ambient-accent) 6%, transparent), transparent 55%),
+    var(--wiki-surface-raised);
 }
 
-.profile-editor__mark { width: 3rem; height: 3rem; background: linear-gradient(145deg, rgba(var(--v-theme-primary), .16), rgba(var(--v-theme-primary), .1)); }
+.profile-editor__mark {
+  width: calc(var(--wiki-control-height) + var(--wiki-space-1));
+  height: calc(var(--wiki-control-height) + var(--wiki-space-1));
+}
+
+.profile-editor__title {
+  min-width: 0;
+}
+
+.profile-editor__title h2 {
+  overflow: hidden;
+  margin: var(--wiki-space-1) 0 0;
+  font-size: 1.15rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.profile-editor__change {
+  flex: 0 0 auto;
+}
+
 .profile-editor__workspace {
   display: grid;
-  min-height: min(38rem, calc(100vh - 14rem));
+  min-height: min(38rem, calc(100dvh - 14rem));
   overflow: hidden;
-  grid-template-columns: 15.5rem minmax(0, 1fr);
+  grid-template-columns: 16rem minmax(0, 1fr);
 }
 
 .profile-steps {
   display: grid;
   align-content: start;
-  gap: .3rem;
-  padding: 1rem .75rem;
-  border-right: 1px solid rgba(var(--v-border-color), .1);
-  background: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 2.4%, rgb(var(--v-theme-surface)));
+  gap: var(--wiki-space-1);
+  padding: var(--wiki-space-4) var(--wiki-space-3);
+  border-inline-end: 1px solid var(--wiki-surface-border);
+  background: var(--wiki-surface-sunken);
 }
 
 .profile-steps button {
   display: grid;
-  min-height: 3.9rem;
+  min-height: calc(var(--wiki-control-height) + var(--wiki-space-4));
   align-items: center;
-  gap: .65rem;
-  grid-template-columns: 1.7rem minmax(0, 1fr) auto;
-  padding: .55rem .6rem;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: var(--wiki-space-2);
+  padding: var(--wiki-space-2);
   border: 1px solid transparent;
-  border-radius: .75rem;
+  border-radius: var(--wiki-control-radius);
   background: transparent;
   color: rgb(var(--v-theme-on-surface));
   cursor: pointer;
-  text-align: left;
+  text-align: start;
+  transition:
+    border-color var(--wiki-motion-fast) var(--wiki-motion-ease),
+    background-color var(--wiki-motion-fast) var(--wiki-motion-ease);
 }
 
-.profile-steps button:hover { background: rgba(var(--v-theme-primary), .045); }
-.profile-steps button.profile-step--active { border-color: rgba(var(--v-theme-primary), .16); background: rgba(var(--v-theme-primary), .085); color: rgb(var(--v-theme-primary)); }
+.profile-steps button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--wiki-accent-warm) 5%, transparent);
+}
+
+.profile-steps button:disabled {
+  cursor: not-allowed;
+  opacity: .46;
+}
+
+.profile-steps button.profile-step--active {
+  border-color: color-mix(in srgb, var(--wiki-accent-warm) 24%, var(--wiki-surface-border));
+  background: color-mix(in srgb, var(--wiki-accent-warm) 8%, transparent);
+  color: var(--wiki-accent-warm);
+}
 
 .profile-step__index {
   display: grid;
-  width: 1.7rem;
-  height: 1.7rem;
+  width: calc(var(--wiki-space-6) + var(--wiki-space-1));
+  height: calc(var(--wiki-space-6) + var(--wiki-space-1));
   place-items: center;
-  border-radius: 50%;
-  background: rgba(var(--v-theme-on-surface), .07);
-  color: rgba(var(--v-theme-on-surface), .62);
+  border: 1px solid var(--wiki-surface-border);
+  border-radius: var(--wiki-radius-pill);
+  background: var(--wiki-surface-raised);
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 62%, transparent);
+  font-family: var(--wiki-font-mono);
   font-size: .65rem;
   font-weight: 750;
 }
 
-.profile-step--active .profile-step__index { background: rgb(var(--v-theme-primary)); color: rgb(var(--v-theme-on-primary)); }
-.profile-steps button > span:nth-child(2) { display: grid; min-width: 0; }
-.profile-steps strong { font-size: .76rem; font-weight: 690; }
-.profile-steps small { color: rgba(var(--v-theme-on-surface), .55); font-size: .65rem; }
-.profile-steps button > .v-icon { opacity: .38; }
-.profile-step--active > .v-icon { opacity: .9 !important; }
+.profile-step--active .profile-step__index {
+  border-color: var(--wiki-accent-warm);
+  background: var(--wiki-accent-warm);
+  color: rgb(var(--v-theme-on-primary));
+}
+
+.profile-steps button > span:nth-child(2) {
+  display: grid;
+  min-width: 0;
+}
+
+.profile-steps strong {
+  font-size: .76rem;
+  font-weight: 700;
+}
+
+.profile-steps small {
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 55%, transparent);
+  font-size: .65rem;
+}
+
+.profile-steps button > .v-icon {
+  opacity: .4;
+}
+
+.profile-step--active > .v-icon {
+  opacity: 1 !important;
+}
 
 .profile-editor__form {
   min-width: 0;
   overflow: auto;
-  padding: clamp(1.25rem, 3vw, 2rem);
+  padding: clamp(var(--wiki-space-5), 3vw, var(--wiki-space-8));
 }
 
-.profile-form-section { max-width: 52rem; margin: 0 auto; }
+.profile-form-section {
+  max-width: 52rem;
+  margin: 0 auto;
+}
 
 .profile-form-section__intro {
   display: flex;
   align-items: flex-start;
-  gap: .8rem;
-  margin-bottom: 1.5rem;
+  gap: var(--wiki-space-3);
+  margin-block-end: var(--wiki-space-6);
 }
 
-.profile-form-section__intro > span { width: 2.55rem; height: 2.55rem; }
-.form-grid { display: grid; gap: .25rem 1rem; grid-template-columns: repeat(2, minmax(0, 1fr)); }
-.protocol-field, .secret-field { grid-column: 1 / -1; }
+.profile-form-section__intro > span {
+  width: var(--wiki-control-height);
+  height: var(--wiki-control-height);
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--wiki-space-1) var(--wiki-space-4);
+}
+
+.protocol-field,
+.secret-field {
+  grid-column: 1 / -1;
+}
 
 .field-note {
   display: flex;
   align-items: flex-start;
-  gap: .4rem;
-  margin: -1rem .1rem 1rem;
-  color: rgba(var(--v-theme-on-surface), .58);
+  gap: var(--wiki-space-2);
+  margin: calc(var(--wiki-space-4) * -1) var(--wiki-space-1) var(--wiki-space-4);
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 60%, transparent);
   font-size: .7rem;
   line-height: 1.45;
 }
@@ -1506,27 +2052,41 @@ onMounted(() => void load())
 .selection-preview {
   display: flex;
   align-items: center;
-  gap: .75rem;
-  margin-top: .45rem;
-  padding: .9rem;
-  border: 1px solid rgba(var(--v-theme-primary), .12);
-  border-radius: .85rem;
-  background: rgba(var(--v-theme-primary), .035);
+  gap: var(--wiki-space-3);
+  margin-block-start: var(--wiki-space-2);
+  padding: var(--wiki-space-3);
+  border: 1px solid color-mix(in srgb, var(--wiki-accent-warm) 18%, var(--wiki-surface-border));
+  border-radius: var(--wiki-control-radius);
+  background: color-mix(in srgb, var(--wiki-accent-warm) 4%, var(--wiki-surface-raised));
 }
 
-.selection-preview__icon { width: 2.6rem; height: 2.6rem; }
-.selection-preview > div { display: grid; }
-.selection-preview strong { font-size: .83rem; }
-.selection-preview p { margin: .05rem 0 0; color: rgba(var(--v-theme-on-surface), .58); font-size: .68rem; }
+.selection-preview__icon {
+  width: var(--wiki-control-height);
+  height: var(--wiki-control-height);
+}
+
+.selection-preview > div {
+  display: grid;
+}
+
+.selection-preview strong {
+  font-size: .83rem;
+}
+
+.selection-preview p {
+  margin: var(--wiki-space-1) 0 0;
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 58%, transparent);
+  font-size: .68rem;
+}
 
 .subsection-card,
 .protocol-behavior,
 .limit-group {
-  margin-top: .8rem;
-  padding: 1rem;
-  border: 1px solid rgba(var(--v-border-color), .1);
-  border-radius: .85rem;
-  background: rgba(var(--v-theme-on-surface), .018);
+  margin-block-start: var(--wiki-space-3);
+  padding: var(--wiki-space-4);
+  border: 1px solid var(--wiki-surface-border);
+  border-radius: var(--wiki-control-radius);
+  background: var(--wiki-surface-sunken);
 }
 
 .subsection-card__heading,
@@ -1534,147 +2094,390 @@ onMounted(() => void load())
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 1rem;
-  margin-bottom: .9rem;
+  gap: var(--wiki-space-4);
+  margin-block-end: var(--wiki-space-4);
 }
 
-.subsection-card__heading > .v-icon { width: 2.1rem; height: 2.1rem; }
-.protocol-behavior { margin-top: .5rem; border-color: rgba(var(--v-theme-primary), .12); background: rgba(var(--v-theme-primary), .025); }
-.protocol-behavior__heading { justify-content: flex-start; }
-.protocol-behavior__heading > span { display: grid; width: 2.1rem; height: 2.1rem; flex: 0 0 auto; place-items: center; border-radius: .65rem; background: rgba(var(--v-theme-primary), .1); color: rgb(var(--v-theme-primary)); }
+.subsection-card__heading > .v-icon {
+  width: calc(var(--wiki-control-height) - var(--wiki-space-2));
+  height: calc(var(--wiki-control-height) - var(--wiki-space-2));
+}
 
-.protocol-summary { display: grid; gap: .45rem; margin: 0; }
-.protocol-summary > div { display: grid; gap: .65rem; grid-template-columns: minmax(7.5rem, .38fr) minmax(0, 1fr); padding-top: .45rem; border-top: 1px solid rgba(var(--v-border-color), .08); }
-.protocol-summary dt { color: rgba(var(--v-theme-on-surface), .58); font-size: .69rem; font-weight: 650; }
-.protocol-summary dd { margin: 0; font-size: .71rem; line-height: 1.45; }
+.protocol-behavior {
+  margin-block-start: var(--wiki-space-2);
+  border-color: color-mix(in srgb, var(--wiki-accent-warm) 18%, var(--wiki-surface-border));
+  background: color-mix(in srgb, var(--wiki-accent-warm) 3%, var(--wiki-surface-raised));
+}
 
-.access-choice { display: grid; gap: .65rem; }
+.protocol-behavior__heading {
+  justify-content: flex-start;
+}
+
+.protocol-behavior__heading > span {
+  display: grid;
+  width: calc(var(--wiki-control-height) - var(--wiki-space-2));
+  height: calc(var(--wiki-control-height) - var(--wiki-space-2));
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: var(--wiki-control-radius);
+  background: color-mix(in srgb, var(--wiki-accent-warm) 10%, transparent);
+  color: var(--wiki-accent-warm);
+}
+
+.protocol-summary {
+  display: grid;
+  gap: var(--wiki-space-2);
+  margin: 0;
+}
+
+.protocol-summary > div {
+  display: grid;
+  grid-template-columns: minmax(8rem, .38fr) minmax(0, 1fr);
+  gap: var(--wiki-space-3);
+  padding-block-start: var(--wiki-space-2);
+  border-block-start: 1px solid var(--wiki-surface-border);
+}
+
+.protocol-summary dt {
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 58%, transparent);
+  font-size: .7rem;
+  font-weight: 650;
+}
+
+.protocol-summary dd {
+  margin: 0;
+  font-size: .72rem;
+  line-height: 1.45;
+}
+
+.access-choice {
+  display: grid;
+  gap: var(--wiki-space-3);
+}
 
 .access-choice__item {
+  position: relative;
   display: grid;
-  min-height: 5.2rem;
+  min-height: calc(var(--wiki-control-height) + var(--wiki-space-10));
   align-items: center;
-  gap: .8rem;
-  grid-template-columns: 2.8rem minmax(0, 1fr) auto;
-  padding: .85rem;
-  border: 1px solid rgba(var(--v-border-color), .12);
-  border-radius: .9rem;
-  background: rgba(var(--v-theme-on-surface), .014);
+  grid-template-columns: var(--wiki-control-height) minmax(0, 1fr) auto;
+  gap: var(--wiki-space-3);
+  padding: var(--wiki-space-3);
+  border: 1px solid var(--wiki-surface-border);
+  border-radius: var(--wiki-control-radius);
+  background: var(--wiki-surface-sunken);
   cursor: pointer;
+  transition:
+    border-color var(--wiki-motion-fast) var(--wiki-motion-ease),
+    background-color var(--wiki-motion-fast) var(--wiki-motion-ease);
 }
 
-.access-choice__item input { position: absolute; width: 1px; height: 1px; opacity: 0; }
-.access-choice__item--active { border-color: rgba(var(--v-theme-primary), .28); background: rgba(var(--v-theme-primary), .055); }
-.access-choice__icon { display: grid; width: 2.8rem; height: 2.8rem; place-items: center; border-radius: .8rem; background: rgba(var(--v-theme-primary), .09); color: rgb(var(--v-theme-primary)); }
-.access-choice__item > span:nth-of-type(2) { display: grid; }
-.access-choice__item strong { font-size: .82rem; }
-.access-choice__item small { color: rgba(var(--v-theme-on-surface), .58); font-size: .7rem; line-height: 1.45; }
-.access-choice__check { color: rgb(var(--v-theme-primary)); }
+.access-choice__item input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
 
-.limit-group h4 { margin-bottom: .75rem; color: rgba(var(--v-theme-on-surface), .72); }
+.access-choice__item--active {
+  border-color: color-mix(in srgb, var(--wiki-accent-warm) 32%, var(--wiki-surface-border));
+  background: color-mix(in srgb, var(--wiki-accent-warm) 6%, var(--wiki-surface-raised));
+}
+
+.access-choice__icon {
+  display: grid;
+  width: var(--wiki-control-height);
+  height: var(--wiki-control-height);
+  place-items: center;
+  border-radius: var(--wiki-control-radius);
+  background: color-mix(in srgb, var(--wiki-accent-warm) 9%, transparent);
+  color: var(--wiki-accent-warm);
+}
+
+.access-choice__item > span:nth-of-type(2) {
+  display: grid;
+}
+
+.access-choice__item strong {
+  font-size: .82rem;
+}
+
+.access-choice__item small {
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 60%, transparent);
+  font-size: .7rem;
+  line-height: 1.45;
+}
+
+.access-choice__check {
+  color: var(--wiki-accent-warm);
+}
+
+.limit-group h4 {
+  margin-block-end: var(--wiki-space-3);
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 74%, transparent);
+}
 
 .profile-editor__footer {
   display: flex;
-  min-height: 4.6rem;
+  min-height: calc(var(--wiki-control-height) + var(--wiki-space-4));
   align-items: center;
-  gap: .55rem;
-  padding: .7rem 1rem;
-  border-top: 1px solid rgba(var(--v-border-color), .1);
-  background: rgb(var(--v-theme-surface));
+  gap: var(--wiki-space-2);
+  padding: var(--wiki-space-3) var(--wiki-space-4);
+  border-block-start: 1px solid var(--wiki-surface-border);
+  background: var(--wiki-surface-raised);
+  box-shadow: 0 calc(var(--wiki-space-1) * -1) var(--wiki-space-6) color-mix(in srgb, var(--wiki-shadow-color) 32%, transparent);
 }
 
-.profile-editor__position { display: grid; }
-.profile-editor__position strong { font-size: .74rem; }
-.profile-editor__position span { color: rgba(var(--v-theme-on-surface), .55); font-size: .65rem; }
+.profile-editor__position,
+.profile-editor__save-state {
+  display: grid;
+}
+
+.profile-editor__position strong {
+  font-size: .74rem;
+}
+
+.profile-editor__position span {
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 56%, transparent);
+  font-size: .65rem;
+}
+
+.profile-editor__save-state {
+  align-items: center;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--wiki-space-2);
+  margin-inline-start: var(--wiki-space-3);
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 62%, transparent);
+  font-size: var(--wiki-label-size);
+}
+
+.profile-editor__save-state .v-icon {
+  color: var(--wiki-accent-warm);
+}
 
 .compact-dialog {
   overflow: hidden;
-  border-radius: 1.1rem !important;
+  border: 1px solid var(--wiki-surface-border-strong);
+  border-radius: var(--wiki-panel-radius) !important;
+  background: var(--wiki-surface-raised) !important;
+  box-shadow: var(--wiki-shadow-lg), var(--wiki-shadow-inset) !important;
 }
 
 .compact-dialog__header {
   display: flex;
   align-items: center;
-  gap: .75rem;
-  padding: 1.15rem 1.25rem;
-  border-bottom: 1px solid rgba(var(--v-border-color), .1);
-  background: rgba(var(--v-theme-primary), .035);
+  gap: var(--wiki-space-3);
+  padding: var(--wiki-space-4) var(--wiki-space-5);
+  border-block-end: 1px solid var(--wiki-surface-border);
+  background: color-mix(in srgb, var(--wiki-accent-warm) 4%, var(--wiki-surface-raised));
 }
 
-.compact-dialog__header > span { width: 2.7rem; height: 2.7rem; }
-.compact-dialog__header--danger { background: rgba(var(--v-theme-error), .035); }
-.compact-dialog__header--danger > span { background: rgba(var(--v-theme-error), .1); color: rgb(var(--v-theme-error)); }
-.compact-dialog__header--teal { background: rgba(var(--v-theme-primary), .035); }
-.compact-dialog__header--teal > span { background: rgba(var(--v-theme-primary), .1); color: rgb(var(--v-theme-primary)); }
-code { overflow-wrap: anywhere; }
+.compact-dialog__header > span {
+  width: var(--wiki-control-height);
+  height: var(--wiki-control-height);
+}
+
+.compact-dialog__header h2 {
+  margin: var(--wiki-space-1) 0 0;
+  font-size: 1.08rem;
+}
+
+.compact-dialog__header p {
+  margin: var(--wiki-space-1) 0 0;
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 62%, transparent);
+  font-size: .75rem;
+}
+
+.compact-dialog__header--danger {
+  background: color-mix(in srgb, rgb(var(--v-theme-error)) 5%, var(--wiki-surface-raised));
+}
+
+.compact-dialog__header--danger > span {
+  border-color: color-mix(in srgb, rgb(var(--v-theme-error)) 20%, transparent);
+  background: color-mix(in srgb, rgb(var(--v-theme-error)) 10%, var(--wiki-surface-raised));
+  color: rgb(var(--v-theme-error));
+}
+
+.compact-dialog__audit {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--wiki-space-2);
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 58%, transparent);
+  font-size: var(--wiki-label-size);
+}
+
+.compact-dialog__audit .v-icon {
+  color: var(--wiki-accent-warm);
+}
 
 :global(.profile-editor .v-messages),
 :global(.compact-dialog .v-messages) {
   opacity: 1 !important;
 }
 
+:global(.profile-editor .v-field),
+:global(.compact-dialog .v-field) {
+  border-radius: var(--wiki-control-radius);
+  background: var(--wiki-surface-sunken);
+}
+
+:global(.profile-editor .v-field--focused),
+:global(.compact-dialog .v-field--focused) {
+  background: var(--wiki-surface-raised);
+  box-shadow: var(--wiki-focus-ring);
+}
+
 :global(.profile-editor .v-field-label),
 :global(.profile-editor .v-messages__message),
 :global(.compact-dialog .v-field-label),
 :global(.compact-dialog .v-messages__message) {
-  color: rgba(var(--v-theme-on-surface), .78) !important;
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 78%, transparent) !important;
   opacity: 1 !important;
 }
-@media (max-width: 1100px) {
-  .agent-workspace { grid-template-columns: 14rem minmax(0, 1fr); }
-  .agent-section { grid-template-columns: 2.35rem minmax(0, 1fr) auto; }
-  .agent-section__badge { display: none; }
-  .agent-hero__art { right: 2rem; opacity: .75; }
+
+@media (max-width: 1180px) {
+  .agent-snapshot {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .agent-workspace {
+    grid-template-columns: 15rem minmax(0, 1fr);
+  }
+
+  .agent-section {
+    grid-template-columns: auto var(--wiki-control-height) minmax(0, 1fr) auto;
+  }
+
+  .agent-section__badge {
+    display: none;
+  }
 }
 
-@media (max-width: 860px) {
-  .agent-hero { min-height: 13rem; align-items: flex-start; }
-  .agent-hero__copy { max-width: calc(100% - 6rem); }
-  .agent-hero__actions { align-self: flex-end; }
-  .agent-hero__art { top: .6rem; right: .5rem; transform: scale(.72); transform-origin: top right; }
-  .agent-snapshot { grid-template-columns: 1fr; }
-  .agent-workspace { grid-template-columns: minmax(0, 1fr); }
+@media (max-width: 960px) {
+  .agent-hero {
+    grid-template-columns: minmax(0, 1fr) minmax(15rem, 18rem);
+  }
+
+  .agent-workspace {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .agent-sections {
     position: static;
     display: flex;
     overflow-x: auto;
-    padding: .5rem;
+    padding: var(--wiki-space-2);
     scrollbar-width: thin;
   }
+
   .agent-sections__label,
-  .agent-sections__note { display: none; }
-  .agent-section {
-    min-width: 10.75rem;
-    grid-template-columns: 2.35rem minmax(0, 1fr);
+  .agent-sections__note {
+    display: none;
   }
+
+  .agent-section {
+    min-width: 11.5rem;
+    grid-template-columns: auto var(--wiki-control-height) minmax(0, 1fr);
+  }
+
   .agent-section__arrow,
-  .agent-section__badge { display: none; }
-  .profile-editor__workspace { grid-template-columns: 12.5rem minmax(0, 1fr); }
+  .agent-section__badge {
+    display: none;
+  }
+
+  .profile-editor__workspace {
+    grid-template-columns: 13rem minmax(0, 1fr);
+  }
+
+  .profile-editor__save-state {
+    display: none;
+  }
 }
 
-@media (max-width: 700px) {
+@media (max-width: 760px) {
   .agent-hero {
     min-height: auto;
-    flex-direction: column;
-    align-items: stretch;
-    padding: 1.5rem;
-    border-radius: 1.2rem;
+    grid-template-columns: minmax(0, 1fr);
+    padding: var(--wiki-space-6);
   }
-  .agent-hero__copy { max-width: none; }
-  .agent-hero h1 { font-size: 2.5rem; }
-  .agent-hero__art { display: none; }
-  .agent-hero__actions { align-self: flex-start; margin: 0; }
-  .agent-panel__header { align-items: flex-start; flex-direction: column; }
-  .agent-panel__header > .v-btn { width: 100%; }
+
+  .agent-hero::after {
+    width: 100%;
+  }
+
+  .agent-hero h1 {
+    font-size: 2.45rem;
+  }
+
+  .agent-docket {
+    grid-column: 1;
+    grid-row: auto;
+  }
+
+  .agent-hero__actions {
+    order: 3;
+  }
+
+  .agent-hero__actions .v-btn {
+    width: 100%;
+  }
+
+  .agent-snapshot {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .agent-panel__header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .agent-panel__header > .v-btn {
+    width: 100%;
+  }
+
+  .agent-panel__state {
+    width: 100%;
+    align-items: center;
+    justify-content: space-between;
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
   .policy-grid,
   .form-grid,
-  .provider-card__meta { grid-template-columns: 1fr; }
+  .provider-card__meta,
+  .provider-policy-strip {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .provider-policy-strip > span + span {
+    border-block-start: 1px solid var(--wiki-surface-border);
+    border-inline-start: 0;
+  }
+
   .protocol-field,
-  .secret-field { grid-column: auto; }
-  .profile-editor { border-radius: 0 !important; }
-  .profile-editor__header { min-height: 5.5rem; padding: .9rem 1rem; }
-  .profile-editor__mark { width: 2.5rem; height: 2.5rem; }
-  .profile-editor__header p { display: none; }
+  .secret-field {
+    grid-column: auto;
+  }
+
+  .profile-editor {
+    border: 0;
+    border-radius: 0 !important;
+  }
+
+  .profile-editor__header {
+    min-height: calc(var(--wiki-control-height) + var(--wiki-space-6));
+    padding: var(--wiki-space-3) var(--wiki-space-4);
+  }
+
+  .profile-editor__mark {
+    width: var(--wiki-control-height);
+    height: var(--wiki-control-height);
+  }
+
+  .profile-editor__header p {
+    display: none;
+  }
+
   .profile-editor__workspace {
     display: flex;
     min-height: 0;
@@ -1682,37 +2485,155 @@ code { overflow-wrap: anywhere; }
     flex: 1 1 auto;
     flex-direction: column;
   }
+
   .profile-steps {
     display: flex;
     overflow-x: auto;
     flex: 0 0 auto;
-    padding: .5rem;
-    border-right: 0;
-    border-bottom: 1px solid rgba(var(--v-border-color), .1);
+    padding: var(--wiki-space-2);
+    border-block-end: 1px solid var(--wiki-surface-border);
+    border-inline-end: 0;
   }
+
   .profile-steps button {
-    min-width: 7.5rem;
-    min-height: 3.2rem;
-    grid-template-columns: 1.7rem minmax(0, 1fr);
+    min-width: 8rem;
+    min-height: var(--wiki-control-height);
+    grid-template-columns: auto minmax(0, 1fr);
   }
+
   .profile-steps button > .v-icon,
-  .profile-steps small { display: none; }
-  .profile-editor__form { flex: 1 1 auto; padding: 1.15rem; }
-  .profile-editor__position { display: none; }
+  .profile-steps small {
+    display: none;
+  }
+
+  .profile-editor__form {
+    flex: 1 1 auto;
+    padding: var(--wiki-space-5);
+  }
+
+  .profile-editor__position {
+    display: none;
+  }
+
   .profile-editor__footer {
     overflow-x: auto;
     justify-content: flex-end;
-    padding: .6rem;
+    padding: var(--wiki-space-2);
   }
+
   .profile-editor__footer > .v-spacer,
-  .profile-editor__footer > .v-btn:first-of-type { display: none; }
-  .protocol-summary > div { grid-template-columns: 1fr; gap: .15rem; }
-  .target-row { align-items: flex-start; flex-wrap: wrap; }
-  .target-row__state { width: 100%; justify-content: flex-end; }
+  .profile-editor__footer > .v-btn:first-of-type {
+    display: none;
+  }
+
+  .protocol-summary > div {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--wiki-space-1);
+  }
+
+  .target-row {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .target-row__state {
+    width: 100%;
+    justify-content: flex-end;
+  }
+
+  .compact-dialog__audit {
+    display: none;
+  }
+}
+
+@media (max-width: 480px) {
+  .agent-hero {
+    padding: var(--wiki-space-5);
+  }
+
+  .agent-hero h1 {
+    font-size: 2.1rem;
+  }
+
+  .agent-hero__live {
+    width: 100%;
+    margin: var(--wiki-space-1) 0 0;
+  }
+
+  .agent-panel__body,
+  .agent-panel__header {
+    padding-inline: var(--wiki-space-4);
+  }
+
+  .provider-card__models > div {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .provider-card__models span {
+    grid-column: 1 / -1;
+  }
+
+  .profile-editor__mark,
+  .profile-editor__title .agent-panel__eyebrow {
+    display: none;
+  }
+
+  .profile-editor__footer .v-btn {
+    min-width: max-content;
+  }
+
+  .access-choice__item {
+    grid-template-columns: var(--wiki-control-height) minmax(0, 1fr);
+  }
+
+  .access-choice__check {
+    position: absolute;
+    inset-block-start: var(--wiki-space-3);
+    inset-inline-end: var(--wiki-space-3);
+  }
+}
+
+@media (forced-colors: active) {
+  .agent-hero,
+  .agent-docket,
+  .agent-snapshot__item,
+  .agent-sections,
+  .agent-panel,
+  .provider-card,
+  .target-row,
+  .profile-editor,
+  .compact-dialog {
+    border: 1px solid CanvasText;
+    background: Canvas;
+    box-shadow: none;
+  }
+
+  .agent-section--active,
+  .profile-steps button.profile-step--active,
+  .access-choice__item--active {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
+  }
+
+  .agent-section:focus-visible,
+  .provider-card__edit:focus-visible,
+  .profile-steps button:focus-visible,
+  .access-choice__item:focus-within {
+    outline: 2px solid Highlight;
+    outline-offset: 2px;
+  }
+
+  .agent-eyebrow__signal,
+  .agent-hero__live > span,
+  .connection-state__dot {
+    background: Highlight;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after {
+  *,
+  *::before,
+  *::after {
     scroll-behavior: auto !important;
     transition-duration: .01ms !important;
     animation-duration: .01ms !important;

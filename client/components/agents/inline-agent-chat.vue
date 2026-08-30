@@ -11,194 +11,254 @@
       aria-label="Close Agent side panel"
       @click="closePanels"
     />
-    <aside v-if="historyOpen" id="agent-history-panel" ref="historyPanel" class="inline-agent__side inline-agent__side--history" aria-label="Chat history panel" aria-modal="true">
+
+    <aside
+      v-if="historyOpen"
+      id="agent-history-panel"
+      ref="historyPanel"
+      class="inline-agent__side inline-agent__side--history"
+      role="dialog"
+      aria-label="Chat history panel"
+      aria-modal="true"
+      tabindex="-1"
+    >
       <AgentHistoryPanel @close="closeHistory" @reset="resetHistoryOpen = true" />
     </aside>
-    <v-card class="inline-agent__card" elevation="0" rounded="xl">
-      <v-toolbar class="inline-agent__toolbar" color="transparent" density="comfortable" tag="div">
-        <v-avatar class="inline-agent__avatar ms-4" color="primary" size="34" variant="tonal">
-          <v-icon icon="mdi-auto-fix" size="19" aria-hidden="true" />
-        </v-avatar>
-        <div class="inline-agent__heading ms-3">
-          <h2 id="inline-agent-title" class="text-title-medium font-weight-medium">Wiki Agent</h2>
-          <div class="inline-agent__session-title text-body-small text-medium-emphasis text-truncate">{{ sessionTitle }}</div>
+
+    <v-card class="inline-agent__card" elevation="0">
+      <v-toolbar class="inline-agent__toolbar" color="transparent" density="comfortable" tag="header">
+        <div class="inline-agent__identity">
+          <v-avatar class="inline-agent__avatar" color="primary" size="38" variant="tonal">
+            <v-icon icon="mdi-auto-fix" size="20" aria-hidden="true" />
+          </v-avatar>
+          <div class="inline-agent__heading">
+            <p class="inline-agent__eyebrow">Knowledge workspace</p>
+            <h2 id="inline-agent-title">Wiki Agent</h2>
+            <p class="inline-agent__session-title">{{ sessionTitle }}</p>
+          </div>
         </div>
+
         <v-spacer />
+
         <v-chip
-          v-if="activeRun || connection === 'reconnecting'"
-          class="inline-agent__connection me-2"
+          class="inline-agent__connection"
+          :class="{ 'inline-agent__connection--active': loading || sending || Boolean(activeRun) || connection === 'reconnecting' }"
           :color="connectionColor"
           size="small"
           variant="tonal"
           role="status"
           aria-live="polite"
           aria-atomic="true"
-        >{{ connectionLabel }}</v-chip>
-        <v-btn
-          ref="historyTrigger"
-          class="inline-agent__desktop-panel-btn"
-          icon="mdi-history"
-          :color="historyOpen ? 'primary' : undefined"
-          :variant="historyOpen ? 'tonal' : 'text'"
-          aria-label="Open agent conversation history"
-          :aria-expanded="historyOpen"
-          aria-controls="agent-history-panel"
-          @click="toggleHistory"
-        />
-        <v-btn
-          ref="memoryTrigger"
-          class="inline-agent__desktop-panel-btn"
-          icon="mdi-brain"
-          :color="memoryOpen ? 'primary' : undefined"
-          :variant="memoryOpen ? 'tonal' : 'text'"
-          aria-label="Manage agent memory"
-          :aria-expanded="memoryOpen"
-          aria-controls="agent-memory-panel"
-          @click="toggleMemory"
-        />
-        <v-menu class="inline-agent__mobile-actions" location="bottom end">
-          <template #activator="{ props: menuProps }">
-            <v-btn ref="mobileActionsTrigger" v-bind="menuProps" icon="mdi-dots-vertical" aria-label="More Agent actions" />
-          </template>
-          <v-list density="compact">
-            <v-list-item title="Conversation history" prepend-icon="mdi-history" @click="toggleHistory" />
-            <v-list-item title="Agent memory" prepend-icon="mdi-brain" @click="toggleMemory" />
-          </v-list>
-        </v-menu>
-        <v-btn
-          class="me-2"
-          icon="mdi-plus"
-          variant="text"
-          aria-label="Start a new agent conversation"
-          :disabled="loading || sending"
-          @click="newSession"
-        />
+        >
+          <span class="inline-agent__connection-dot" aria-hidden="true" />
+          {{ connectionLabel }}
+        </v-chip>
+
+        <div class="inline-agent__panel-actions" aria-label="Agent workspace panels">
+          <v-btn
+            ref="historyTrigger"
+            class="inline-agent__desktop-panel-btn"
+            icon="mdi-history"
+            :color="historyOpen ? 'primary' : undefined"
+            :variant="historyOpen ? 'tonal' : 'text'"
+            aria-label="Open agent conversation history"
+            :aria-expanded="historyOpen"
+            aria-controls="agent-history-panel"
+            @click="toggleHistory"
+          />
+          <v-btn
+            ref="memoryTrigger"
+            class="inline-agent__desktop-panel-btn"
+            icon="mdi-brain"
+            :color="memoryOpen ? 'primary' : undefined"
+            :variant="memoryOpen ? 'tonal' : 'text'"
+            aria-label="Manage agent memory"
+            :aria-expanded="memoryOpen"
+            aria-controls="agent-memory-panel"
+            @click="toggleMemory"
+          />
+          <v-menu class="inline-agent__mobile-actions" location="bottom end">
+            <template #activator="{ props: menuProps }">
+              <v-btn ref="mobileActionsTrigger" v-bind="menuProps" icon="mdi-dots-vertical" aria-label="More Agent actions" />
+            </template>
+            <v-list density="compact">
+              <v-list-item title="Conversation history" prepend-icon="mdi-history" @click="toggleHistory" />
+              <v-list-item title="Agent memory" prepend-icon="mdi-brain" @click="toggleMemory" />
+            </v-list>
+          </v-menu>
+          <v-btn
+            class="inline-agent__new-session"
+            prepend-icon="mdi-plus"
+            variant="tonal"
+            aria-label="Start a new agent conversation"
+            :disabled="loading || sending"
+            @click="newSession"
+          >New</v-btn>
+        </div>
       </v-toolbar>
 
-      <v-progress-linear v-if="loading" indeterminate color="primary" aria-label="Opening conversation" />
+      <v-progress-linear
+        v-if="loading"
+        class="inline-agent__progress"
+        indeterminate
+        color="primary"
+        aria-label="Opening conversation"
+      />
 
       <AgentMcpApproval v-if="approvalId" :csrf-token="csrfToken" :proposal-id="approvalId" />
       <template v-else>
-      <div class="inline-agent__body">
-        <v-alert
-          class="inline-agent__alert mb-4"
-          v-if="!loading && !providerAvailable"
-          variant="tonal"
-          icon="mdi-connection"
-        >
-          {{ providerUnavailableMessage }}
-        </v-alert>
-        <v-alert
-          v-if="error"
-          class="mb-4"
-          type="error"
-          variant="tonal"
-          closable
-          @click:close="agents.error = ''"
-        >{{ error }}</v-alert>
+        <div class="inline-agent__body">
+          <v-alert
+            v-if="!loading && !providerAvailable"
+            class="inline-agent__alert"
+            variant="tonal"
+            icon="mdi-connection"
+          >
+            {{ providerUnavailableMessage }}
+          </v-alert>
+          <v-alert
+            v-if="error"
+            class="inline-agent__alert"
+            type="error"
+            variant="tonal"
+            closable
+            @click:close="agents.error = ''"
+          >{{ error }}</v-alert>
 
-        <AgentSessionSettings
-          v-if="thread && profiles.length > 1"
-          class="inline-agent__settings"
-          :session="thread.session"
-          :profiles="profiles"
-          :disabled="Boolean(activeRun) || Boolean(openGoal)"
-          @profile="agents.setProfile"
-        />
-        <AgentGoalStatus
-          v-if="thread?.goal"
-          :goal="thread.goal"
-          :busy="goalBusy"
-          :run-active="Boolean(activeRun)"
-          @pause="agents.pauseGoal"
-          @resume="agents.resumeGoal"
-          @cancel="agents.cancelGoal"
-        />
-
-
-        <div
-          ref="transcript"
-          class="inline-agent__transcript"
-          :class="{ 'inline-agent__transcript--approval-jump': approvalJumpVisible }"
-          tabindex="-1"
-          @scroll.passive="handleTranscriptScroll"
-        >
-          <p v-if="loading && !thread" class="inline-agent__loading text-body-medium text-medium-emphasis" role="status">Opening conversation</p>
-          <section v-if="thread && !hasConversation" class="inline-agent__welcome" aria-labelledby="inline-agent-welcome-title">
-            <div class="inline-agent__welcome-mark" aria-hidden="true">
-              <v-icon icon="mdi-auto-fix" size="28" />
-            </div>
-            <p class="inline-agent__welcome-eyebrow">Curious · grounded · concise</p>
-            <h2 id="inline-agent-welcome-title">Hi, I’m Wiki.</h2>
-            <p class="inline-agent__welcome-copy">
-              I can trace answers through your knowledge base, connect what matters, and help turn an idea into a careful change.
-            </p>
-            <div class="inline-agent__starters" aria-label="Conversation starters">
-              <v-btn
-                v-for="starter in starters"
-                :key="starter.prompt"
-                class="inline-agent__starter"
-                color="primary"
-                variant="tonal"
-                rounded="xl"
-                :disabled="!canSubmit"
-                :title="!canSubmit ? submitUnavailableReason : undefined"
-                @click="sendPrompt(starter.prompt)"
-              >
-                <v-icon start :icon="starter.icon" />
-                {{ starter.label }}
-              </v-btn>
-            </div>
-          </section>
-          <AgentThread
-            v-else-if="thread"
-            :thread="thread"
-            :connection="connection"
-            :deciding-approval-id="decidingApprovalId"
-            :can-submit="canSubmit"
-            @suggest="sendPrompt"
-            @decision="agents.decideProposal"
+          <AgentSessionSettings
+            v-if="thread && profiles.length > 1"
+            class="inline-agent__settings"
+            :session="thread.session"
+            :profiles="profiles"
+            :disabled="Boolean(activeRun) || Boolean(openGoal)"
+            @profile="agents.setProfile"
           />
-        </div>
-        <v-btn
-          v-if="approvalJumpVisible"
-          class="inline-agent__approval-jump"
-          color="warning"
-          variant="elevated"
-          prepend-icon="mdi-shield-alert-outline"
-          append-icon="mdi-arrow-down"
-          @click="jumpToApproval"
-        >Approval required</v-btn>
-      </div>
+          <AgentGoalStatus
+            v-if="thread?.goal"
+            :goal="thread.goal"
+            :busy="goalBusy"
+            :run-active="Boolean(activeRun)"
+            @pause="agents.pauseGoal"
+            @resume="agents.resumeGoal"
+            @cancel="agents.cancelGoal"
+          />
 
-      <footer class="inline-agent__composer">
-        <AgentComposer
-          ref="composer"
-          :sending="sending"
-          :can-stop="Boolean(activeRun?.canCancel)"
-          :disabled="!canSubmit"
-          :skills-enabled="skillsEnabled"
-          :goals-enabled="goalsEnabled"
-          :skills="skills"
-          :preferred-skills="thread?.session.skills ?? []"
-          :invocation-limit="invocationLimit"
-          @send="sendPrompt"
-          @stop="agents.stop"
-          @manage-skills="skillManagerOpen = true"
-          @update-skill-preferences="agents.setSkillPreferences"
-        />
-        <div class="inline-agent__notice text-body-small text-medium-emphasis mt-2">
-          <v-icon icon="mdi-shield-check-outline" size="15" />
-          Answers respect your Wiki permissions. Verify cited sources before relying on model output.
+          <div
+            ref="transcript"
+            class="inline-agent__transcript"
+            :class="{ 'inline-agent__transcript--approval-jump': approvalJumpVisible }"
+            tabindex="-1"
+            aria-label="Conversation transcript"
+            @scroll.passive="handleTranscriptScroll"
+          >
+            <div v-if="loading && !thread" class="inline-agent__loading" role="status">
+              <span class="inline-agent__loading-mark" aria-hidden="true" />
+              <span>
+                <strong>Opening conversation</strong>
+                <small>Recovering your latest working context</small>
+              </span>
+            </div>
+
+            <section v-if="thread && !hasConversation" class="inline-agent__welcome" aria-labelledby="inline-agent-welcome-title">
+              <div class="inline-agent__welcome-intro">
+                <div class="inline-agent__welcome-mark" aria-hidden="true">
+                  <v-icon icon="mdi-auto-fix" size="25" />
+                </div>
+                <div>
+                  <p class="inline-agent__welcome-index">Archive desk · Ready</p>
+                  <h2 id="inline-agent-welcome-title">Begin with what you need to understand.</h2>
+                </div>
+              </div>
+              <p class="inline-agent__welcome-copy">
+                Wiki Agent traces answers through the knowledge you can access, keeps sources visible, and turns careful intent into auditable work.
+              </p>
+              <div class="inline-agent__welcome-rule" aria-hidden="true">
+                <span>Explore</span>
+              </div>
+              <div class="inline-agent__starters" aria-label="Conversation starters">
+                <v-btn
+                  v-for="starter in starters"
+                  :key="starter.prompt"
+                  class="inline-agent__starter"
+                  color="primary"
+                  variant="tonal"
+                  :disabled="!canSubmit"
+                  :title="!canSubmit ? submitUnavailableReason : undefined"
+                  @click="sendPrompt(starter.prompt)"
+                >
+                  <v-icon start :icon="starter.icon" />
+                  {{ starter.label }}
+                  <v-icon class="inline-agent__starter-arrow" end icon="mdi-arrow-right" size="16" />
+                </v-btn>
+              </div>
+            </section>
+
+            <AgentThread
+              v-else-if="thread"
+              :thread="thread"
+              :connection="connection"
+              :deciding-approval-id="decidingApprovalId"
+              :can-submit="canSubmit"
+              @suggest="sendPrompt"
+              @decision="agents.decideProposal"
+            />
+          </div>
+
+          <v-btn
+            v-if="approvalJumpVisible"
+            class="inline-agent__approval-jump"
+            color="warning"
+            variant="elevated"
+            prepend-icon="mdi-shield-alert-outline"
+            append-icon="mdi-arrow-down"
+            @click="jumpToApproval"
+          >Approval required</v-btn>
         </div>
-      </footer>
+
+        <footer class="inline-agent__composer">
+          <div v-if="currentPage" class="inline-agent__page-context">
+            <v-icon icon="mdi-file-link-outline" size="16" aria-hidden="true" />
+            <span><strong>Page context available</strong> · Wiki Agent can consult the page you are viewing</span>
+          </div>
+          <AgentComposer
+            ref="composer"
+            :sending="sending"
+            :can-stop="Boolean(activeRun?.canCancel)"
+            :disabled="!canSubmit"
+            :skills-enabled="skillsEnabled"
+            :goals-enabled="goalsEnabled"
+            :skills="skills"
+            :preferred-skills="thread?.session.skills ?? []"
+            :invocation-limit="invocationLimit"
+            @send="sendPrompt"
+            @stop="agents.stop"
+            @manage-skills="skillManagerOpen = true"
+            @update-skill-preferences="agents.setSkillPreferences"
+          />
+          <div class="inline-agent__notice">
+            <v-icon icon="mdi-shield-check-outline" size="15" aria-hidden="true" />
+            <span>Permissions are enforced. Verify cited sources before relying on model output.</span>
+          </div>
+        </footer>
       </template>
     </v-card>
-    <aside v-if="memoryOpen" id="agent-memory-panel" ref="memoryPanel" class="inline-agent__side inline-agent__side--memory" aria-label="Agent memory panel" aria-modal="true">
+
+    <aside
+      v-if="memoryOpen"
+      id="agent-memory-panel"
+      ref="memoryPanel"
+      class="inline-agent__side inline-agent__side--memory"
+      role="dialog"
+      aria-label="Agent memory panel"
+      aria-modal="true"
+      tabindex="-1"
+    >
       <AgentMemoryManager v-model="memoryOpen" :csrf-token="csrfToken" />
     </aside>
   </section>
+
   <AgentPersonalSkills v-if="skillsEnabled" v-model="skillManagerOpen" :csrf-token="csrfToken" @changed="reloadSkillCatalog" />
+
   <v-dialog v-model="resetHistoryOpen" max-width="30rem" aria-labelledby="reset-history-title">
     <v-card rounded="xl">
       <v-card-title class="d-flex align-center ga-3 pt-5 px-5">
@@ -288,8 +348,26 @@ const submitUnavailableReason = computed(() => !providerAvailable.value ? provid
 const preferredSkillIds = computed(() => thread.value?.session.skills.map(skill => skill.skillId) ?? [])
 const invocationLimit = computed(() => Math.max(0, 8 - preferredSkillIds.value.length))
 const sessionTitle = computed(() => thread.value?.session.title || 'New conversation')
-const connectionLabel = computed(() => connection.value === 'reconnecting' ? 'Reconnecting' : activeRun.value?.status === 'awaiting_approval' ? 'Review needed' : 'Working')
-const connectionColor = computed(() => connection.value === 'reconnecting' ? 'warning' : activeRun.value?.status === 'awaiting_approval' ? 'warning' : 'primary')
+const connectionLabel = computed(() => loading.value
+  ? 'Opening'
+  : connection.value === 'reconnecting'
+    ? 'Reconnecting'
+    : !providerAvailable.value
+      ? 'Unavailable'
+      : activeRun.value?.status === 'awaiting_approval'
+        ? 'Review needed'
+        : sending.value
+          ? 'Sending'
+          : activeRun.value
+            ? 'Working'
+            : 'Ready')
+const connectionColor = computed(() => !providerAvailable.value && !loading.value
+  ? 'error'
+  : connection.value === 'reconnecting' || activeRun.value?.status === 'awaiting_approval'
+    ? 'warning'
+    : loading.value || sending.value || activeRun.value
+      ? 'primary'
+      : 'success')
 const starters = computed(() => [
   ...(currentPage.value ? [{ label: 'Summarize this page', prompt: 'Summarize the current Wiki page and cite the key sections.', icon: 'mdi-text-box-search-outline' }] : []),
   { label: 'Find related pages', prompt: 'Find Wiki pages related to the current topic and explain how they connect.', icon: 'mdi-file-link-outline' },
@@ -428,33 +506,23 @@ defineExpose({ sendPrompt, focusComposer, focusConversation })
 
 <style scoped>
 .inline-agent {
-  --agent-border: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 16%, transparent);
-  --agent-divider: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 11%, transparent);
-  --agent-focus: rgb(var(--v-theme-primary));
-  color: rgb(var(--v-theme-on-surface));
-  display: grid;
-  font-family: 'WikiAgentSans', 'Tajawal', 'Roboto', system-ui, sans-serif;
-  gap: 1rem;
-  grid-template-columns: minmax(0, 1fr) minmax(36rem, 68rem) minmax(0, 1fr);
-  margin: 0 auto;
-  max-width: 112rem;
   position: relative;
-  text-align: start;
+  display: grid;
   width: 100%;
+  max-width: var(--wiki-shell-max);
+  margin: 0 auto;
+  grid-template-columns: minmax(0, 1fr) minmax(36rem, 68rem) minmax(0, 1fr);
+  gap: var(--wiki-space-4);
+  color: rgb(var(--v-theme-on-surface));
+  font-family: var(--wiki-font-body);
+  text-align: start;
 }
-.inline-agent__side {
-  height: min(82dvh, 54rem);
-  max-height: calc(100dvh - 1rem);
-  min-height: min(34rem, calc(100dvh - 1rem));
-  min-width: 0;
-}
-.inline-agent__side--history { grid-column: 1; justify-self: end; width: min(19rem, 100%); }
-.inline-agent__side--memory { grid-column: 3; justify-self: start; width: min(21rem, 100%); }
-.inline-agent__scrim { display: none; }
+
 .inline-agent:dir(rtl),
 .inline-agent:lang(ar) {
-  font-family: 'Tajawal', 'WikiAgentSans', 'Roboto', system-ui, sans-serif;
+  font-family: 'Tajawal', var(--wiki-font-body);
 }
+
 .inline-agent :deep(.v-alert),
 .inline-agent :deep(.v-btn),
 .inline-agent :deep(.v-card),
@@ -465,154 +533,710 @@ defineExpose({ sendPrompt, focusComposer, focusConversation })
 .inline-agent :deep(.v-toolbar) {
   font-family: inherit;
 }
-.inline-agent__card {
-  grid-column: 2;
-  background: color-mix(in srgb, rgb(var(--v-theme-surface)) 98%, rgb(var(--v-theme-background)));
-  border: 1px solid var(--agent-border);
-  box-shadow: 0 1.25rem 4rem color-mix(in srgb, rgb(var(--v-theme-on-surface)) 16%, transparent);
-  display: flex;
-  flex-direction: column;
+
+.inline-agent__card,
+.inline-agent__side {
   height: min(82dvh, 54rem);
-  max-height: calc(100dvh - 1rem);
-  min-height: min(34rem, calc(100dvh - 1rem));
+  max-height: calc(100dvh - var(--wiki-space-4));
+  min-height: min(34rem, calc(100dvh - var(--wiki-space-4)));
+}
+
+.inline-agent__card {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  grid-column: 2;
+  flex-direction: column;
   overflow: hidden;
+  border: 1px solid var(--wiki-surface-border-strong);
+  border-radius: var(--wiki-hero-radius) !important;
+  background: var(--wiki-surface-raised);
+  box-shadow: var(--wiki-shadow-lg), var(--wiki-shadow-inset);
   text-align: start;
 }
+
 .inline-agent__toolbar {
-  background: color-mix(in srgb, rgb(var(--v-theme-surface)) 92%, rgb(var(--v-theme-primary)) 8%);
-  border-bottom: 1px solid color-mix(in srgb, rgb(var(--v-theme-on-surface)) 11%, transparent);
+  min-height: calc(var(--wiki-control-height) + var(--wiki-space-6));
   flex: 0 0 auto;
-  min-height: 4.25rem;
-  padding-inline: .5rem;
+  padding-inline: var(--wiki-space-4);
+  border-bottom: 1px solid var(--wiki-surface-border);
+  background:
+    linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--wiki-accent-warm) 7%, var(--wiki-surface-raised)),
+      var(--wiki-surface-raised) 42%,
+      color-mix(in srgb, var(--wiki-accent-spectral) 4%, var(--wiki-surface-raised))
+    ) !important;
+  box-shadow: var(--wiki-shadow-xs);
 }
-.inline-agent__heading { min-width: 0; }
-.inline-agent__heading h2 { margin: 0; }
-.inline-agent__mobile-actions { display: none; }
-.inline-agent__alert { flex: 0 0 auto; }
-.inline-agent__settings { flex: 0 0 auto; max-height: 100%; overflow-y: auto; overscroll-behavior: contain; }
-.inline-agent__settings:has(.v-expansion-panel-title[aria-expanded="true"]) { flex: 1 1 auto; min-height: clamp(9rem, 45dvh, 18rem); }
-.inline-agent__body {
+
+.inline-agent__toolbar::after {
+  position: absolute;
+  inset-block-end: -1px;
+  inset-inline-start: var(--wiki-space-6);
+  width: calc(var(--wiki-space-12) * 2);
+  height: 1px;
+  background: var(--wiki-ambient-accent);
+  content: '';
+}
+
+.inline-agent__identity {
   display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--wiki-space-3);
+}
+
+.inline-agent__avatar {
+  flex: 0 0 auto;
+  border: 1px solid color-mix(in srgb, var(--wiki-accent-warm) 24%, var(--wiki-surface-border));
+  background: color-mix(in srgb, var(--wiki-accent-warm) 10%, var(--wiki-surface-raised)) !important;
+  box-shadow: var(--wiki-shadow-xs), var(--wiki-shadow-inset);
+}
+
+.inline-agent__heading {
+  min-width: 0;
+}
+
+.inline-agent__eyebrow,
+.inline-agent__session-title {
+  overflow: hidden;
+  margin: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inline-agent__eyebrow {
+  color: var(--wiki-accent-warm);
+  font-size: var(--wiki-label-size);
+  font-weight: var(--wiki-label-weight);
+  letter-spacing: .1em;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+
+.inline-agent__heading h2 {
+  margin: var(--wiki-space-1) 0 0;
+  color: rgb(var(--v-theme-on-surface));
+  font-family: var(--wiki-font-heading);
+  font-size: 1rem;
+  font-weight: 720;
+  letter-spacing: -.015em;
+  line-height: 1.2;
+}
+
+.inline-agent__session-title {
+  max-width: 28rem;
+  margin-top: var(--wiki-space-1);
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 58%, transparent);
+  font-size: var(--wiki-label-size);
+  line-height: 1.2;
+}
+
+.inline-agent__connection {
+  flex: 0 0 auto;
+  margin-inline: var(--wiki-space-2);
+  font-size: var(--wiki-label-size);
+  font-weight: var(--wiki-label-weight);
+}
+
+.inline-agent__connection-dot {
+  width: var(--wiki-space-2);
+  height: var(--wiki-space-2);
+  margin-inline-end: var(--wiki-space-2);
+  border-radius: var(--wiki-radius-pill);
+  background: currentColor;
+  box-shadow: 0 0 0 var(--wiki-space-1) color-mix(in srgb, currentColor 14%, transparent);
+}
+.inline-agent__connection--active .inline-agent__connection-dot {
+  animation: agentPulse 1.8s var(--wiki-motion-ease) infinite;
+}
+
+.inline-agent__panel-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--wiki-space-1);
+}
+
+.inline-agent__mobile-actions {
+  display: none;
+}
+
+.inline-agent__new-session {
+  margin-inline-start: var(--wiki-space-1);
+}
+
+.inline-agent__progress {
+  position: absolute;
+  z-index: 3;
+  inset-block-start: calc(var(--wiki-control-height) + var(--wiki-space-6) - var(--wiki-space-1));
+  inset-inline: 0;
+  pointer-events: none;
+}
+
+.inline-agent__body {
+  position: relative;
+  display: flex;
+  min-height: 0;
   flex: 1 1 auto;
   flex-direction: column;
-  min-height: 0;
   overflow: hidden;
-  padding: 1.1rem clamp(1rem, 3vw, 2rem) 0;
-  position: relative;
+  padding: var(--wiki-space-4) clamp(var(--wiki-space-4), 3vw, var(--wiki-space-8)) 0;
+  background:
+    repeating-linear-gradient(
+      to bottom,
+      transparent 0,
+      transparent calc(var(--wiki-space-12) - 1px),
+      color-mix(in srgb, var(--wiki-surface-border) 34%, transparent) var(--wiki-space-12)
+    ),
+    var(--wiki-surface-sunken);
 }
-.inline-agent__transcript {
-  flex: 1 1 auto;
-  min-height: 0;
+
+.inline-agent__alert {
+  flex: 0 0 auto;
+  margin-bottom: var(--wiki-space-3);
+  border: 1px solid var(--wiki-surface-border);
+  border-radius: var(--wiki-control-radius);
+}
+
+.inline-agent__settings {
+  max-height: 100%;
+  flex: 0 0 auto;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: .5rem .25rem 1.5rem;
+}
+
+.inline-agent__settings:has(.v-expansion-panel-title[aria-expanded='true']) {
+  min-height: clamp(9rem, 45dvh, 18rem);
+  flex: 1 1 auto;
+}
+
+.inline-agent__transcript {
+  min-height: 0;
+  flex: 1 1 auto;
+  padding: var(--wiki-space-3) var(--wiki-space-1) var(--wiki-space-6);
+  overflow-y: auto;
+  outline: none;
+  overscroll-behavior: contain;
   scroll-behavior: smooth;
-  scroll-padding-block: 1rem;
+  scroll-padding-block: var(--wiki-space-4);
 }
-.inline-agent__loading { margin: 1rem auto; }
+
+.inline-agent__transcript:focus-visible {
+  border-radius: var(--wiki-control-radius);
+  box-shadow: inset var(--wiki-focus-ring);
+}
+
 .inline-agent__transcript :deep(.agent-thread) {
-  margin-inline: auto;
+  width: 100%;
   max-width: 56rem;
-  width: 100%;
+  margin-inline: auto;
 }
-.inline-agent__transcript:has(> .inline-agent__welcome) { display: flex; }
-.inline-agent__transcript--approval-jump { padding-bottom: 4.5rem; }
-.inline-agent__approval-jump { bottom: 1rem; position: absolute; right: 1.75rem; z-index: 2; }
-.inline-agent__welcome {
-  align-items: center;
-  background:
-    radial-gradient(circle at 92% 8%, color-mix(in srgb, rgb(var(--v-theme-primary)) 19%, transparent), transparent 38%),
-    color-mix(in srgb, rgb(var(--v-theme-surface-variant)) 34%, rgb(var(--v-theme-surface)));
-  border: 1px solid color-mix(in srgb, rgb(var(--v-theme-primary)) 24%, rgb(var(--v-theme-on-surface)) 12%);
-  border-radius: 1.5rem;
-  box-shadow: 0 1rem 3rem color-mix(in srgb, rgb(var(--v-theme-on-surface)) 8%, transparent);
+
+.inline-agent__transcript:has(> .inline-agent__welcome) {
   display: flex;
-  flex-direction: column;
-  margin: auto;
-  max-width: 48rem;
-  overflow: hidden;
-  padding: clamp(1.75rem, 5vw, 3.25rem);
-  text-align: center;
-  width: 100%;
 }
-.inline-agent__welcome-mark {
+
+.inline-agent__transcript--approval-jump {
+  padding-bottom: calc(var(--wiki-space-12) * 1.5);
+}
+
+.inline-agent__loading {
+  display: flex;
   align-items: center;
-  background: color-mix(in srgb, rgb(var(--v-theme-primary)) 16%, rgb(var(--v-theme-surface)));
-  border: 1px solid color-mix(in srgb, rgb(var(--v-theme-primary)) 30%, transparent);
-  border-radius: 1.1rem;
+  gap: var(--wiki-space-3);
+  margin: var(--wiki-space-6) auto;
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 68%, transparent);
+}
+
+.inline-agent__loading-mark {
+  width: var(--wiki-space-3);
+  height: var(--wiki-space-3);
+  border: 1px solid var(--wiki-accent-warm);
+  border-radius: var(--wiki-radius-pill);
+  background: var(--wiki-accent-warm);
+  animation: agentPulse 1.8s var(--wiki-motion-ease) infinite;
+}
+
+.inline-agent__loading span:last-child {
+  display: grid;
+}
+
+.inline-agent__loading strong {
   color: rgb(var(--v-theme-on-surface));
+  font-size: .875rem;
+}
+
+.inline-agent__loading small {
+  font-size: var(--wiki-label-size);
+}
+
+.inline-agent__approval-jump {
+  position: absolute;
+  z-index: 2;
+  inset-block-end: var(--wiki-space-4);
+  inset-inline-end: var(--wiki-space-8);
+  box-shadow: var(--wiki-shadow-md);
+}
+
+.inline-agent__welcome {
+  position: relative;
+  width: min(100%, 48rem);
+  margin: auto;
+  padding: clamp(var(--wiki-space-6), 5vw, var(--wiki-space-10));
+  overflow: hidden;
+  border: 1px solid var(--wiki-surface-border-strong);
+  border-radius: var(--wiki-panel-radius);
+  background:
+    linear-gradient(
+      145deg,
+      color-mix(in srgb, var(--wiki-accent-warm) 7%, var(--wiki-surface-raised)),
+      var(--wiki-surface-raised) 48%,
+      color-mix(in srgb, var(--wiki-accent-spectral) 5%, var(--wiki-surface-raised))
+    );
+  box-shadow: var(--wiki-shadow-md), var(--wiki-shadow-inset);
+  text-align: start;
+}
+
+.inline-agent__welcome::before {
+  position: absolute;
+  inset-block: var(--wiki-space-6);
+  inset-inline-start: 0;
+  width: var(--wiki-space-1);
+  border-radius: 0 var(--wiki-radius-pill) var(--wiki-radius-pill) 0;
+  background: var(--wiki-ambient-accent);
+  content: '';
+}
+
+.inline-agent__welcome::after {
+  position: absolute;
+  inset-block-start: var(--wiki-space-4);
+  inset-inline-end: var(--wiki-space-4);
+  width: var(--wiki-space-10);
+  height: var(--wiki-space-10);
+  border-block-start: 1px solid color-mix(in srgb, var(--wiki-accent-spectral) 30%, transparent);
+  border-inline-end: 1px solid color-mix(in srgb, var(--wiki-accent-spectral) 30%, transparent);
+  content: '';
+}
+
+.inline-agent__welcome-intro {
   display: flex;
-  height: 3.4rem;
-  justify-content: center;
-  width: 3.4rem;
+  align-items: center;
+  gap: var(--wiki-space-4);
 }
-.inline-agent__welcome-eyebrow { color: rgb(var(--v-theme-primary)); font-size: .7rem; font-weight: 700; letter-spacing: .12em; margin: 1.1rem 0 .4rem; text-transform: uppercase; }
-.inline-agent__welcome h2 { font-size: clamp(1.55rem, 4vw, 2rem); font-weight: 650; letter-spacing: -.025em; line-height: 1.2; margin: 0; }
-.inline-agent__welcome-copy { color: rgb(var(--v-theme-on-surface)); line-height: 1.6; margin: .7rem auto 1.5rem; max-width: 34rem; opacity: .72; }
-.inline-agent__starters { display: grid; gap: .65rem; grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr)); width: 100%; }
-.inline-agent__composer {
-  background: color-mix(in srgb, rgb(var(--v-theme-surface)) 96%, rgb(var(--v-theme-primary)) 4%);
-  border-top: 1px solid var(--agent-divider);
+
+.inline-agent__welcome-mark {
+  display: grid;
+  width: calc(var(--wiki-space-12) + var(--wiki-space-2));
+  height: calc(var(--wiki-space-12) + var(--wiki-space-2));
   flex: 0 0 auto;
-  padding: 1rem clamp(1rem, 3vw, 2rem) calc(1.1rem + env(safe-area-inset-bottom));
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--wiki-accent-warm) 30%, var(--wiki-surface-border));
+  border-radius: var(--wiki-control-radius);
+  background: color-mix(in srgb, var(--wiki-accent-warm) 10%, var(--wiki-surface-raised));
+  color: var(--wiki-accent-warm);
+  box-shadow: var(--wiki-shadow-xs), var(--wiki-shadow-inset);
 }
-.inline-agent__notice { align-items: center; display: flex; gap: .35rem; justify-content: center; text-align: center; }
-@media (max-width: 1711.98px) {
-  .inline-agent__side {
-    bottom: 0;
-    height: auto;
-    max-height: none;
-    min-height: 0;
-    position: absolute;
-    top: 0;
-    width: min(22rem, calc(100% - 2.5rem));
-    z-index: 5;
-  }
-  .inline-agent__side--history { inset-inline-start: 0; }
-  .inline-agent__side--memory { inset-inline-end: 0; }
-  .inline-agent__scrim {
-    background: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 34%, transparent);
-    border: 0;
-    display: block;
-    inset: 0;
-    padding: 0;
-    position: absolute;
-    z-index: 4;
+
+.inline-agent__welcome-index {
+  margin: 0 0 var(--wiki-space-1);
+  color: var(--wiki-accent-warm);
+  font-size: var(--wiki-label-size);
+  font-weight: var(--wiki-label-weight);
+  letter-spacing: .11em;
+  text-transform: uppercase;
+}
+
+.inline-agent__welcome h2 {
+  max-width: 36rem;
+  margin: 0;
+  color: rgb(var(--v-theme-on-surface));
+  font-family: var(--wiki-font-heading);
+  font-size: clamp(1.5rem, 4vw, 2.125rem);
+  font-weight: 680;
+  letter-spacing: -.035em;
+  line-height: var(--wiki-leading-heading);
+}
+
+.inline-agent__welcome-copy {
+  max-width: 39rem;
+  margin: var(--wiki-space-5) 0 var(--wiki-space-6);
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 72%, transparent);
+  line-height: var(--wiki-leading-body);
+}
+
+.inline-agent__welcome-rule {
+  display: flex;
+  align-items: center;
+  gap: var(--wiki-space-3);
+  margin-bottom: var(--wiki-space-3);
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 54%, transparent);
+  font-size: var(--wiki-label-size);
+  font-weight: var(--wiki-label-weight);
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.inline-agent__welcome-rule::after {
+  height: 1px;
+  flex: 1;
+  background: var(--wiki-surface-border);
+  content: '';
+}
+
+.inline-agent__starters {
+  display: grid;
+  width: 100%;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--wiki-space-2);
+}
+
+.inline-agent__starter {
+  min-height: calc(var(--wiki-control-height) + var(--wiki-space-2));
+  justify-content: flex-start;
+  padding-inline: var(--wiki-space-3);
+  border: 1px solid color-mix(in srgb, var(--wiki-accent-warm) 18%, var(--wiki-surface-border));
+  border-radius: var(--wiki-control-radius);
+  text-align: start;
+}
+
+.inline-agent__starter-arrow {
+  margin-inline-start: auto !important;
+  opacity: .58;
+}
+
+.inline-agent__composer {
+  position: relative;
+  z-index: 1;
+  flex: 0 0 auto;
+  padding: var(--wiki-space-3) clamp(var(--wiki-space-4), 3vw, var(--wiki-space-8)) max(var(--wiki-space-3), env(safe-area-inset-bottom));
+  border-top: 1px solid var(--wiki-surface-border);
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--wiki-accent-warm) 3%, var(--wiki-surface-raised)),
+      var(--wiki-surface-raised)
+    );
+  box-shadow: 0 calc(var(--wiki-space-2) * -1) var(--wiki-space-8) color-mix(in srgb, var(--wiki-shadow-color) 42%, transparent);
+}
+
+.inline-agent__page-context {
+  display: flex;
+  align-items: center;
+  gap: var(--wiki-space-2);
+  margin: 0 var(--wiki-space-2) var(--wiki-space-2);
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 60%, transparent);
+  font-size: var(--wiki-label-size);
+  line-height: 1.4;
+}
+
+.inline-agent__page-context .v-icon {
+  color: var(--wiki-accent-warm);
+}
+
+.inline-agent__page-context strong {
+  color: rgb(var(--v-theme-on-surface));
+  font-weight: var(--wiki-label-weight);
+}
+
+.inline-agent__notice {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--wiki-space-1);
+  margin-top: var(--wiki-space-2);
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 52%, transparent);
+  font-size: var(--wiki-label-size);
+  line-height: 1.4;
+  text-align: center;
+}
+
+.inline-agent__side {
+  min-width: 0;
+  outline: none;
+}
+
+.inline-agent__side:focus-visible {
+  border-radius: var(--wiki-panel-radius);
+  box-shadow: var(--wiki-focus-ring);
+}
+
+.inline-agent__side--history {
+  width: min(19rem, 100%);
+  grid-column: 1;
+  justify-self: end;
+}
+
+.inline-agent__side--memory {
+  width: min(21rem, 100%);
+  grid-column: 3;
+  justify-self: start;
+}
+
+.inline-agent__scrim {
+  display: none;
+}
+
+@keyframes agentPulse {
+  50% {
+    opacity: .42;
+    transform: scale(.82);
   }
 }
 
-@media (max-width: 599.98px) {
-  .inline-agent { gap: 0; grid-template-columns: minmax(0, 1fr); height: 100dvh; }
-  .inline-agent__card { grid-column: 1; }
-  .inline-agent__side { width: min(22rem, calc(100% - 2.25rem)); }
-  .inline-agent__card { border: 0; border-radius: 0 !important; box-shadow: none; height: 100dvh; max-height: none; min-height: 0; }
-  .inline-agent__toolbar { padding-inline: .25rem; }
+@media (max-width: 1711.98px) {
+  .inline-agent__side {
+    position: absolute;
+    z-index: 5;
+    inset-block: 0;
+    width: min(22rem, calc(100% - var(--wiki-space-10)));
+    height: auto;
+    max-height: none;
+    min-height: 0;
+    filter: drop-shadow(var(--wiki-shadow-md));
+  }
+
+  .inline-agent__side--history {
+    inset-inline-start: 0;
+  }
+
+  .inline-agent__side--memory {
+    inset-inline-end: 0;
+  }
+
+  .inline-agent__scrim {
+    position: absolute;
+    z-index: 4;
+    display: block;
+    inset: 0;
+    padding: 0;
+    border: 0;
+    background: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 40%, transparent);
+  }
+}
+
+@media (max-width: 900px) {
+  .inline-agent__starters {
+    grid-template-columns: 1fr;
+  }
+
+  .inline-agent__welcome {
+    max-width: 40rem;
+  }
+}
+
+@media (max-width: 639.98px) {
+  .inline-agent {
+    height: 100dvh;
+    min-height: 100svh;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+  }
+
+  .inline-agent__card {
+    height: 100dvh;
+    min-height: 100svh;
+    max-height: none;
+    grid-column: 1;
+    border: 0;
+    border-radius: 0 !important;
+    box-shadow: none;
+  }
+
+  .inline-agent__side {
+    position: fixed;
+    width: min(22rem, calc(100% - var(--wiki-space-8)));
+  }
+  .inline-agent__scrim {
+    position: fixed;
+  }
+
+  .inline-agent__toolbar {
+    min-height: calc(var(--wiki-control-height) + var(--wiki-space-4));
+    padding-block-start: env(safe-area-inset-top);
+    padding-inline: var(--wiki-space-2);
+  }
+  .inline-agent__progress {
+    inset-block-start: calc(var(--wiki-control-height) + var(--wiki-space-4) + env(safe-area-inset-top) - var(--wiki-space-1));
+  }
+
   .inline-agent__avatar,
-  .inline-agent__session-title { display: none; }
-  .inline-agent__heading { margin-inline-start: .4rem !important; }
-  .inline-agent__connection { max-width: 7rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .inline-agent__desktop-panel-btn { display: none; }
-  .inline-agent__mobile-actions { display: block; }
-  .inline-agent__toolbar :deep(.v-btn) { min-height: 2.75rem; min-width: 2.75rem; }
-  .inline-agent__body { padding-inline: .75rem; }
-  .inline-agent__transcript { padding-inline: 0; }
-  .inline-agent__welcome { border-radius: 1.25rem; padding: 1.4rem 1rem; }
-  .inline-agent__starters { grid-template-columns: 1fr; }
-  .inline-agent__composer { padding-inline: .75rem; }
-  .inline-agent__approval-jump { bottom: .75rem; left: 1.5rem; right: 1.5rem; }
-  .inline-agent__notice { display: flex; font-size: .72rem; line-height: 1.35; }
+  .inline-agent__eyebrow,
+  .inline-agent__session-title {
+    display: none;
+  }
+
+  .inline-agent__heading h2 {
+    margin: 0;
+  }
+
+  .inline-agent__connection {
+    max-width: 7rem;
+    margin-inline: var(--wiki-space-1);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .inline-agent__desktop-panel-btn {
+    display: none;
+  }
+
+  .inline-agent__mobile-actions {
+    display: block;
+  }
+
+  .inline-agent__panel-actions {
+    gap: 0;
+  }
+
+  .inline-agent__new-session {
+    min-width: var(--wiki-control-height);
+    padding-inline: var(--wiki-space-2);
+  }
+
+  .inline-agent__new-session :deep(.v-btn__content) {
+    font-size: 0;
+  }
+
+  .inline-agent__new-session :deep(.v-btn__prepend) {
+    margin: 0;
+  }
+
+  .inline-agent__toolbar :deep(.v-btn) {
+    min-width: var(--wiki-control-height);
+    min-height: var(--wiki-control-height);
+  }
+
+  .inline-agent__body {
+    padding: var(--wiki-space-2) var(--wiki-space-3) 0;
+  }
+
+  .inline-agent__transcript {
+    padding-inline: 0;
+  }
+
+  .inline-agent__welcome {
+    padding: var(--wiki-space-5);
+  }
+
+  .inline-agent__welcome-intro {
+    align-items: flex-start;
+  }
+
+  .inline-agent__welcome-mark {
+    width: var(--wiki-space-10);
+    height: var(--wiki-space-10);
+  }
+
+  .inline-agent__welcome h2 {
+    font-size: 1.5rem;
+  }
+
+  .inline-agent__welcome-copy {
+    margin-block: var(--wiki-space-4);
+  }
+
+  .inline-agent__composer {
+    padding: var(--wiki-space-2) var(--wiki-space-3) max(var(--wiki-space-2), env(safe-area-inset-bottom));
+  }
+
+  .inline-agent__page-context {
+    margin-inline: var(--wiki-space-1);
+  }
+
+  .inline-agent__page-context span,
+  .inline-agent__notice span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .inline-agent__approval-jump {
+    inset-block-end: var(--wiki-space-3);
+    inset-inline: var(--wiki-space-6);
+  }
 }
+
+@media (max-width: 380px) {
+  .inline-agent__connection {
+    max-width: var(--wiki-space-10);
+    padding-inline: var(--wiki-space-2) !important;
+    font-size: 0;
+  }
+
+  .inline-agent__connection-dot {
+    margin: 0;
+  }
+
+  .inline-agent__welcome-intro {
+    display: block;
+  }
+
+  .inline-agent__welcome-mark {
+    margin-bottom: var(--wiki-space-3);
+  }
+
+  .inline-agent__page-context,
+  .inline-agent__notice {
+    display: none;
+  }
+}
+
 @media (max-height: 500px) {
-  .inline-agent__card { height: 100dvh; max-height: none; min-height: 0; }
-  .inline-agent__body { overflow-y: auto; padding: .5rem .75rem 0; }
-  .inline-agent__composer { padding: .5rem .75rem; }
-  .inline-agent__composer :deep(.v-input__details), .inline-agent__notice { display: none; }
-  .inline-agent__welcome { padding-block: 1.25rem; }
+  .inline-agent__card {
+    height: 100dvh;
+    min-height: 0;
+    max-height: none;
+  }
+
+  .inline-agent__body {
+    padding-block-start: var(--wiki-space-1);
+  }
+
+  .inline-agent__composer {
+    padding-block: var(--wiki-space-1);
+  }
+
+  .inline-agent__page-context,
+  .inline-agent__notice {
+    display: none;
+  }
+
+  .inline-agent__welcome {
+    padding-block: var(--wiki-space-4);
+  }
 }
+
 @media (forced-colors: active) {
-  .inline-agent__card { border: 1px solid CanvasText; }
+  .inline-agent__card,
+  .inline-agent__welcome,
+  .inline-agent__side {
+    border: 1px solid CanvasText;
+  }
+
+  .inline-agent__scrim {
+    background: Canvas;
+    opacity: .72;
+  }
+
+  .inline-agent__toolbar::after,
+  .inline-agent__welcome::before,
+  .inline-agent__connection-dot,
+  .inline-agent__loading-mark {
+    background: Highlight;
+  }
 }
+
 @media (prefers-reduced-motion: reduce) {
-  .inline-agent__transcript { scroll-behavior: auto; }
+  .inline-agent__transcript {
+    scroll-behavior: auto;
+  }
+
+  .inline-agent__connection-dot,
+  .inline-agent__loading-mark {
+    animation: none;
+  }
 }
 </style>

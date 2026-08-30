@@ -1,55 +1,134 @@
 <template>
-  <section class="skill-panel" :class="{ 'skill-panel--standalone': !embedded }">
-    <div class="skill-panel__header">
-      <div class="skill-panel__heading">
-        <span class="skill-panel__icon"><v-icon size="22">mdi-book-open-variant-outline</v-icon></span>
+  <section class="skill-governance" :class="{ 'skill-governance--standalone': !embedded }" aria-labelledby="skill-governance-title">
+    <header class="skill-governance__header">
+      <div class="skill-governance__heading">
+        <span class="skill-governance__mark" aria-hidden="true"><v-icon size="22">mdi-shield-book-outline</v-icon></span>
         <div>
-          <div class="skill-panel__eyebrow">Curated expertise</div>
-          <h2>{{ embedded ? 'Approved skills' : 'Agent skills' }}</h2>
-          <p>Map page-native guidance, approve exact revisions, and choose who receives each skill.</p>
+          <div class="skill-eyebrow">Organization policy</div>
+          <h2 id="skill-governance-title">{{ embedded ? 'Approved skill library' : 'Organization skill governance' }}</h2>
+          <p>Publish page-native expertise, approve exact revisions, and govern who can use it.</p>
         </div>
       </div>
-      <v-btn color="primary" prepend-icon="mdi-plus" :disabled="loading || Boolean(actionBusyId)" @click="openCreate">Map skill</v-btn>
-    </div>
+      <div class="skill-governance__header-actions">
+        <v-chip v-if="loaded" size="small" variant="outlined" prepend-icon="mdi-domain">{{ enabledSkillCount }} enabled</v-chip>
+        <v-btn color="primary" prepend-icon="mdi-plus" :disabled="loading || Boolean(actionBusyId)" @click="openCreate">Map organization skill</v-btn>
+      </div>
+    </header>
 
-    <div class="skill-panel__body">
-      <v-alert class="mb-4" type="info" variant="tonal" density="compact">Skills add group-scoped instructions and tool guidance; they never bypass page, write, browser, approval, or deployment permissions.</v-alert>
-      <v-alert v-if="error" class="mb-4" type="error" variant="tonal" closable @click:close="error = ''">{{ error }} <v-btn variant="text" size="small" @click="reload">Retry</v-btn></v-alert>
-      <v-progress-linear v-if="loading" indeterminate aria-label="Loading skills" />
-      <div v-else-if="skills.length" class="skill-grid">
-        <article v-for="skill in skills" :key="skill.id" class="skill-card">
-          <div class="skill-card__top">
-            <span class="skill-card__mark"><v-icon size="22">mdi-puzzle-outline</v-icon></span>
-            <div class="skill-card__identity">
-              <div><h3>{{ skill.name }}</h3><v-chip :color="skill.status === 'enabled' ? 'success' : undefined" size="x-small" variant="tonal">{{ skill.status === 'enabled' ? 'Enabled' : 'Revoked' }}</v-chip></div>
+    <div class="skill-governance__body">
+      <v-alert class="skill-boundary" type="info" variant="tonal" density="compact" icon="mdi-shield-lock-outline">
+        Organization skills provide approved instructions and tool guidance. They never bypass page, write, browser, approval, or deployment permissions.
+      </v-alert>
+      <v-alert v-if="error" class="skill-error" type="error" variant="tonal" closable @click:close="error = ''">
+        {{ error }}
+        <template #append><v-btn variant="text" size="small" @click="reload">Retry</v-btn></template>
+      </v-alert>
+
+      <div class="skill-inventory-toolbar" role="search" aria-label="Search organization skills">
+        <v-text-field
+          v-model="search"
+          class="skill-inventory-toolbar__search"
+          label="Search approved skills"
+          placeholder="Name, page path, revision, or group"
+          prepend-inner-icon="mdi-magnify"
+          clearable
+          hide-details
+          density="comfortable"
+        />
+        <v-select
+          v-model="stateFilter"
+          class="skill-inventory-toolbar__filter"
+          :items="stateFilters"
+          item-title="title"
+          item-value="value"
+          label="Policy state"
+          hide-details
+          density="comfortable"
+        />
+      </div>
+
+      <div v-if="loaded" class="skill-inventory-summary" aria-live="polite">
+        <span><strong>{{ filteredSkills.length }}</strong> of {{ skills.length }} organization skills</span>
+        <span class="skill-inventory-summary__legend"><v-icon size="16">mdi-check-decagram-outline</v-icon> Exact approved revisions</span>
+      </div>
+
+      <div v-if="loading && !loaded" class="skill-loading" aria-label="Loading organization skills" aria-busy="true">
+        <v-skeleton-loader v-for="index in 3" :key="index" type="list-item-avatar-three-line" />
+      </div>
+      <v-progress-linear v-else-if="loading" indeterminate aria-label="Refreshing organization skills" />
+
+      <div v-if="loaded && filteredSkills.length" class="skill-inventory">
+        <article v-for="skill in filteredSkills" :key="skill.id" class="skill-record" :aria-busy="actionBusyId.endsWith(skill.id)">
+          <div class="skill-record__top">
+            <span class="skill-record__mark" aria-hidden="true"><v-icon size="21">mdi-file-certificate-outline</v-icon></span>
+            <div class="skill-record__identity">
+              <div class="skill-record__title-line">
+                <h3>{{ skill.name }}</h3>
+                <v-chip :color="skill.status === 'enabled' ? 'success' : undefined" size="x-small" variant="tonal" :prepend-icon="skill.status === 'enabled' ? 'mdi-check-circle-outline' : 'mdi-pause-circle-outline'">
+                  {{ skill.status === 'enabled' ? 'Enabled by policy' : 'Disabled by policy' }}
+                </v-chip>
+              </div>
               <code :title="skill.rootPath">{{ skill.rootPath }}</code>
             </div>
-            <v-menu>
-              <template #activator="{ props: menuProps }"><v-btn v-bind="menuProps" icon="mdi-dots-horizontal" variant="text" density="comfortable" :aria-label="`Actions for ${skill.name}`" /></template>
+            <v-menu location="bottom end">
+              <template #activator="{ props: menuProps }">
+                <v-btn v-bind="menuProps" icon="mdi-dots-horizontal" variant="text" density="comfortable" :aria-label="`Policy actions for ${skill.name}`" />
+              </template>
               <v-list density="comfortable">
-                <v-list-item prepend-icon="mdi-file-eye-outline" title="Review revision" :disabled="Boolean(actionBusyId)" @click="openPreview(skill.id)" />
-                <v-list-item prepend-icon="mdi-account-multiple-outline" title="Edit access" :disabled="Boolean(actionBusyId)" @click="openAccess(skill)" />
-                <v-list-item v-if="skill.status === 'enabled'" prepend-icon="mdi-cancel" title="Revoke skill" base-color="warning" :disabled="Boolean(actionBusyId)" @click="setEnabled(skill.id, false)" />
-                <v-list-item v-else-if="skill.currentVersionId" prepend-icon="mdi-check-circle-outline" title="Enable skill" base-color="success" :disabled="Boolean(actionBusyId)" @click="setEnabled(skill.id, true)" />
+                <v-list-subheader>Organization policy</v-list-subheader>
+                <v-list-item prepend-icon="mdi-file-eye-outline" title="Review approved source" :disabled="Boolean(actionBusyId)" @click="openPreview(skill.id)" />
+                <v-list-item prepend-icon="mdi-account-multiple-outline" title="Edit audience" :disabled="Boolean(actionBusyId)" @click="openAccess(skill)" />
+                <v-divider />
+                <v-list-item v-if="skill.status === 'enabled'" prepend-icon="mdi-pause-circle-outline" title="Disable for organization" base-color="warning" :disabled="Boolean(actionBusyId)" @click="setEnabled(skill.id, false)" />
+                <v-list-item v-else-if="skill.currentVersionId" prepend-icon="mdi-check-circle-outline" title="Enable for organization" base-color="success" :disabled="Boolean(actionBusyId)" @click="setEnabled(skill.id, true)" />
               </v-list>
             </v-menu>
           </div>
-          <div class="skill-card__state">
-            <span :class="['skill-state', skill.drifted ? 'skill-state--warning' : skill.currentVersionId ? 'skill-state--success' : '']"><v-icon size="15">{{ skill.drifted ? 'mdi-alert-circle' : skill.currentVersionId ? 'mdi-check-circle' : 'mdi-clock-outline' }}</v-icon>{{ skill.drifted ? 'Source changed; approved revision remains active' : skill.currentVersionId ? 'Revision approved' : 'Awaiting approval' }}</span>
+          <v-progress-linear v-if="actionBusyId.endsWith(skill.id)" indeterminate height="2" aria-label="Updating organization skill" />
+
+          <div class="skill-record__trust" :class="{ 'skill-record__trust--warning': skill.drifted || !skill.currentVersionId }">
+            <v-icon size="17">{{ skill.drifted ? 'mdi-source-branch-sync' : skill.currentVersionId ? 'mdi-check-decagram-outline' : 'mdi-clock-outline' }}</v-icon>
+            <span>
+              <strong>{{ skill.drifted ? 'Source drift detected' : skill.currentVersionId ? 'Approved source' : 'Approval required' }}</strong>
+              <small>{{ skill.drifted ? 'The last approved revision remains active until a new review.' : skill.currentVersionId ? 'Only the immutable reviewed revision is available.' : 'This skill cannot be enabled before review.' }}</small>
+            </span>
           </div>
-          <dl class="skill-card__meta">
-            <div><dt>Revision</dt><dd><code :title="skill.approvedSourceRevision ?? 'Not approved'">{{ skill.approvedSourceRevision ?? 'Not approved' }}</code></dd></div>
-            <div><dt>Available to</dt><dd :title="skill.exposureMode === 'all_agent_users' ? 'Everyone' : groupNames(skill.groupIds)">{{ skill.exposureMode === 'all_agent_users' ? 'Everyone' : groupNames(skill.groupIds) }}</dd></div>
+
+          <dl class="skill-record__metadata">
+            <div>
+              <dt>Provenance</dt>
+              <dd><code :title="skill.approvedSourceRevision ?? 'Not approved'">{{ skill.approvedSourceRevision ?? 'Not approved' }}</code></dd>
+            </div>
+            <div>
+              <dt>Audience scope</dt>
+              <dd :title="skill.exposureMode === 'all_agent_users' ? 'All Agent users' : groupNames(skill.groupIds)">{{ skill.exposureMode === 'all_agent_users' ? 'All Agent users' : groupNames(skill.groupIds) }}</dd>
+            </div>
+            <div>
+              <dt>Effective state</dt>
+              <dd>{{ skill.status === 'enabled' && skill.currentVersionId ? 'Available' : 'Unavailable' }}</dd>
+            </div>
           </dl>
-          <button type="button" class="skill-card__review" @click="openPreview(skill.id)">Review exact revision <v-icon size="17">mdi-arrow-right</v-icon></button>
+
+          <button type="button" class="skill-record__review" :disabled="Boolean(actionBusyId)" @click="openPreview(skill.id)">
+            <span><v-icon size="17">mdi-code-tags</v-icon> Details & exact source</span>
+            <v-icon size="17">mdi-arrow-right</v-icon>
+          </button>
         </article>
+      </div>
+
+      <div v-else-if="loaded && skills.length" class="skill-empty skill-empty--search">
+        <span><v-icon size="30">mdi-text-search</v-icon></span>
+        <h3>No organization skills match</h3>
+        <p>Try another name, page path, revision, group, or policy state.</p>
+        <v-btn variant="tonal" prepend-icon="mdi-filter-remove-outline" @click="clearFilters">Clear filters</v-btn>
       </div>
 
       <div v-else-if="loaded" class="skill-empty">
         <span><v-icon size="34">mdi-book-plus-outline</v-icon></span>
-        <h3>Turn trusted pages into Agent skills</h3>
-        <p>Map a page tree, review its immutable revision, then make that expertise available to the right audience.</p>
-        <v-btn color="primary" prepend-icon="mdi-plus" @click="openCreate">Map skill</v-btn>
+        <div class="skill-eyebrow">Organization library</div>
+        <h3>Publish the first trusted skill</h3>
+        <p>Map a page tree, review its immutable source, then make that expertise available to the right audience.</p>
+        <v-btn color="primary" prepend-icon="mdi-plus" @click="openCreate">Map organization skill</v-btn>
       </div>
     </div>
   </section>
@@ -58,7 +137,7 @@
     <v-card class="skill-dialog">
       <div class="skill-dialog__header">
         <span><v-icon size="23">mdi-book-plus-outline</v-icon></span>
-        <div><div class="skill-panel__eyebrow">New knowledge mapping</div><h2>Map a page-native skill</h2><p>Point the Agent at one trusted page tree and define its audience.</p></div>
+        <div><div class="skill-eyebrow">Organization policy</div><h2>Map a page-native skill</h2><p>Choose one trusted page tree, then define who receives the approved revision.</p></div>
         <v-spacer />
         <v-btn icon="mdi-close" variant="text" aria-label="Close skill editor" @click="createOpen = false" />
       </div>
@@ -73,34 +152,34 @@
             <div class="skill-form-grid">
               <v-text-field v-model.number="create.rootPageId" label="Root page ID" type="number" min="1" required />
               <v-text-field v-model="create.assetFolderId" label="Asset folder ID (optional)" type="number" min="1" />
-              <v-text-field class="skill-form-grid__wide" v-model="create.rootPath" label="Root page path" placeholder="handbook/research" hint="The path must identify the selected root page tree." persistent-hint required />
+              <v-text-field v-model="create.rootPath" class="skill-form-grid__wide" label="Root page path" placeholder="handbook/research" hint="The path must identify the selected root page tree." persistent-hint required />
             </div>
           </section>
           <section class="skill-form-section">
-            <div class="skill-form-section__heading"><span><v-icon size="19">mdi-account-multiple-outline</v-icon></span><div><h3>Audience</h3><p>Skills complement—never replace—each user’s Wiki permissions.</p></div></div>
+            <div class="skill-form-section__heading"><span><v-icon size="19">mdi-account-multiple-outline</v-icon></span><div><h3>Audience policy</h3><p>Skills complement—never replace—each user’s Wiki permissions.</p></div></div>
             <v-select v-model="create.exposureMode" :items="exposureModes" item-title="title" item-value="value" label="Available to" />
             <v-autocomplete v-if="create.exposureMode === 'groups'" v-model="create.groupIds" :items="groups" item-title="name" item-value="id" label="Wiki groups" hint="Select at least one group." persistent-hint multiple chips closable-chips />
           </section>
         </v-form>
       </v-card-text>
-      <v-card-actions class="skill-dialog__actions"><v-alert v-if="createError" class="mr-3" type="error" variant="tonal" density="compact">{{ createError }}</v-alert><v-spacer /><v-btn @click="createOpen = false">Cancel</v-btn><v-btn color="primary" prepend-icon="mdi-check" form="skill-create-form" type="submit" :disabled="!createValid || Boolean(actionBusyId)" :loading="actionBusyId === 'create'">Map skill</v-btn></v-card-actions>
+      <v-card-actions class="skill-dialog__actions"><v-alert v-if="createError" class="skill-dialog__error" type="error" variant="tonal" density="compact">{{ createError }}</v-alert><v-spacer /><v-btn @click="createOpen = false">Cancel</v-btn><v-btn color="primary" prepend-icon="mdi-check" form="skill-create-form" type="submit" :disabled="!createValid || Boolean(actionBusyId)" :loading="actionBusyId === 'create'">Map skill</v-btn></v-card-actions>
     </v-card>
   </v-dialog>
 
-  <v-dialog v-model="accessOpen" max-width="40rem" scrollable>
+  <v-dialog v-model="accessOpen" max-width="40rem" scrollable :fullscreen="smAndDown">
     <v-card class="skill-dialog">
-      <div class="skill-dialog__header"><span><v-icon size="23">mdi-account-multiple-outline</v-icon></span><div><h2>{{ policySkill ? `Access for ${policySkill.name}` : 'Skill access' }}</h2><p>Control who receives this approved expertise.</p></div></div>
-      <v-card-text class="skill-dialog__body"><v-alert v-if="accessError" class="mb-3" type="error" variant="tonal" density="compact">{{ accessError }}</v-alert><v-select v-model="policy.exposureMode" :items="exposureModes" label="Available to" /><v-autocomplete v-if="policy.exposureMode === 'groups'" v-model="policy.groupIds" :items="groups" item-title="name" item-value="id" label="Wiki groups" multiple chips closable-chips hint="Users receive this skill through any selected group." persistent-hint /></v-card-text>
-      <v-card-actions class="skill-dialog__actions"><v-spacer /><v-btn @click="accessOpen = false">Cancel</v-btn><v-btn color="primary" :loading="actionBusyId === 'access'" :disabled="Boolean(actionBusyId) || (policy.exposureMode === 'groups' && policy.groupIds.length === 0)" @click="saveAccess">Save access</v-btn></v-card-actions>
+      <div class="skill-dialog__header"><span><v-icon size="23">mdi-account-multiple-outline</v-icon></span><div><div class="skill-eyebrow">Audience policy</div><h2>{{ policySkill ? `Access for ${policySkill.name}` : 'Skill access' }}</h2><p>Control who receives this organization-approved expertise.</p></div><v-spacer /><v-btn icon="mdi-close" variant="text" aria-label="Close audience editor" @click="accessOpen = false" /></div>
+      <v-card-text class="skill-dialog__body"><v-alert v-if="accessError" class="skill-error" type="error" variant="tonal" density="compact">{{ accessError }}</v-alert><v-select v-model="policy.exposureMode" :items="exposureModes" item-title="title" item-value="value" label="Available to" /><v-autocomplete v-if="policy.exposureMode === 'groups'" v-model="policy.groupIds" :items="groups" item-title="name" item-value="id" label="Wiki groups" multiple chips closable-chips hint="Users receive this skill through any selected group." persistent-hint /></v-card-text>
+      <v-card-actions class="skill-dialog__actions"><v-spacer /><v-btn @click="accessOpen = false">Cancel</v-btn><v-btn color="primary" :loading="actionBusyId === 'access'" :disabled="Boolean(actionBusyId) || (policy.exposureMode === 'groups' && policy.groupIds.length === 0)" @click="saveAccess">Save audience policy</v-btn></v-card-actions>
     </v-card>
   </v-dialog>
 
   <v-dialog v-model="previewOpen" max-width="70rem" scrollable :fullscreen="smAndDown">
     <v-card v-if="preview" class="skill-dialog skill-review">
-      <div class="skill-dialog__header"><span><v-icon size="23">mdi-file-eye-outline</v-icon></span><div><div class="skill-panel__eyebrow">Immutable revision</div><h2>Review {{ preview.name }}</h2><p>Approve only the exact source revision shown below.</p></div><v-spacer /><v-btn icon="mdi-close" variant="text" aria-label="Close skill review" @click="previewOpen = false" /></div>
+      <div class="skill-dialog__header"><span><v-icon size="23">mdi-file-eye-outline</v-icon></span><div><div class="skill-eyebrow">Immutable organization source</div><h2>Review {{ preview.name }}</h2><p>Approve only the exact candidate revision shown below.</p></div><v-spacer /><v-btn icon="mdi-close" variant="text" aria-label="Close skill review" @click="previewOpen = false" /></div>
       <v-card-text class="skill-dialog__body">
-        <v-alert v-if="previewError" class="mb-4" type="error" variant="tonal" density="compact">{{ previewError }}</v-alert>
-        <v-alert v-if="preview.previousSkillMarkdown === null" class="mb-4" type="info" variant="tonal">This is the first approved revision.</v-alert>
+        <v-alert v-if="previewError" class="skill-error" type="error" variant="tonal" density="compact">{{ previewError }}</v-alert>
+        <v-alert v-if="preview.previousSkillMarkdown === null" class="skill-boundary" type="info" variant="tonal">This is the first candidate revision. No previously approved source exists.</v-alert>
         <dl class="review-metadata">
           <div><dt>Content hash</dt><dd><code :title="preview.contentHash">{{ preview.contentHash }}</code></dd></div>
           <div><dt>Source revision</dt><dd><code :title="preview.sourceRevision">{{ preview.sourceRevision }}</code></dd></div>
@@ -120,7 +199,7 @@
           <pre class="source-view" tabindex="0">{{ preview.previousSkillMarkdown }}</pre>
         </template>
       </v-card-text>
-      <v-card-actions class="skill-dialog__actions"><v-btn color="error" variant="text" :loading="actionBusyId === 'reject'" :disabled="Boolean(actionBusyId)" @click="review(false)">Reject revision</v-btn><v-spacer /><v-btn @click="previewOpen = false">Cancel</v-btn><v-btn color="primary" prepend-icon="mdi-check-decagram-outline" :loading="actionBusyId === 'approve'" :disabled="Boolean(actionBusyId)" @click="review(true)">Approve exact revision</v-btn></v-card-actions>
+      <v-card-actions class="skill-dialog__actions skill-dialog__actions--review"><v-btn color="error" variant="text" prepend-icon="mdi-close-octagon-outline" :loading="actionBusyId === 'reject'" :disabled="Boolean(actionBusyId)" @click="review(false)">Reject candidate</v-btn><v-spacer /><v-btn @click="previewOpen = false">Cancel</v-btn><v-btn color="primary" prepend-icon="mdi-check-decagram-outline" :loading="actionBusyId === 'approve'" :disabled="Boolean(actionBusyId)" @click="review(true)">Approve exact revision</v-btn></v-card-actions>
     </v-card>
   </v-dialog>
 </template>
@@ -167,6 +246,8 @@ type Preview = z.infer<typeof PreviewSchema>
 const skills = ref<Skill[]>([])
 const groups = ref<z.infer<typeof GroupSchema>[]>([])
 const preview = ref<Preview | null>(null)
+const search = ref('')
+const stateFilter = ref<'all' | 'enabled' | 'disabled' | 'review'>('all')
 const loading = ref(false)
 const loaded = ref(false)
 const actionBusyId = ref('')
@@ -203,6 +284,12 @@ const reviewLines = computed(() => {
 const exposureModes = [
   { title: 'Everyone (default)', value: 'all_agent_users' },
   { title: 'Selected Wiki groups', value: 'groups' }
+]
+const stateFilters = [
+  { title: 'All policy states', value: 'all' },
+  { title: 'Enabled', value: 'enabled' },
+  { title: 'Disabled', value: 'disabled' },
+  { title: 'Needs review', value: 'review' }
 ]
 const createNameValid = computed(() => /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(create.name.trim()))
 const createValid = computed(() => createNameValid.value && create.rootPageId > 0 && Boolean(create.rootPath.trim()) && (create.exposureMode !== 'groups' || create.groupIds.length > 0))
@@ -253,6 +340,25 @@ const createSkill = async (): Promise<void> => {
   finally { actionBusyId.value = '' }
 }
 const groupNames = (groupIds: readonly number[]): string => groupIds.map(id => groups.value.find(group => group.id === id)?.name ?? `Group ${id}`).join(', ')
+const enabledSkillCount = computed(() => skills.value.filter(skill => skill.status === 'enabled').length)
+const filteredSkills = computed(() => {
+  const query = search.value.trim().toLocaleLowerCase()
+  return skills.value
+    .filter(skill => {
+      if (stateFilter.value === 'enabled' && skill.status !== 'enabled') return false
+      if (stateFilter.value === 'disabled' && skill.status !== 'disabled') return false
+      if (stateFilter.value === 'review' && !skill.drifted && skill.currentVersionId) return false
+      if (!query) return true
+      const audience = skill.exposureMode === 'all_agent_users' ? 'all agent users everyone' : groupNames(skill.groupIds)
+      return [skill.name, skill.rootPath, skill.approvedSourceRevision ?? '', skill.liveSourceRevision, audience]
+        .some(value => value.toLocaleLowerCase().includes(query))
+    })
+    .sort((left, right) => left.name.localeCompare(right.name))
+})
+const clearFilters = (): void => {
+  search.value = ''
+  stateFilter.value = 'all'
+}
 const openAccess = (skill: Skill): void => { accessError.value = ''; policySkill.value = skill; policy.exposureMode = skill.exposureMode; policy.groupIds = [...skill.groupIds]; accessOpen.value = true }
 const saveAccess = async (): Promise<void> => {
   const skill = policySkill.value
@@ -268,7 +374,10 @@ const openPreview = async (skillId: string): Promise<void> => {
   if (actionBusyId.value) return
   actionBusyId.value = `preview:${skillId}`; previewError.value = ''
   try { preview.value = PreviewSchema.parse(await request(`/_api/agents/admin/skills/${skillId}/preview`)); previewOpen.value = true }
-  catch (requestError: unknown) { previewError.value = requestError instanceof Error ? requestError.message : 'Unable to preview skill' }
+  catch (requestError: unknown) {
+    previewError.value = requestError instanceof Error ? requestError.message : 'Unable to preview skill'
+    error.value = previewError.value
+  }
   finally { actionBusyId.value = '' }
 }
 const review = async (approved: boolean): Promise<void> => {
@@ -292,122 +401,212 @@ onMounted(reload)
 </script>
 
 <style scoped>
-.skill-panel {
+.skill-governance {
   overflow: hidden;
-  border: 1px solid rgba(var(--v-border-color), .12);
-  border-radius: 1.1rem;
-  background: rgb(var(--v-theme-surface));
-  box-shadow: 0 .7rem 2rem rgba(20, 28, 50, .04);
+  border: 1px solid var(--wiki-surface-border);
+  border-radius: var(--wiki-panel-radius);
+  background: var(--wiki-surface-raised);
+  color: rgb(var(--v-theme-on-surface));
+  box-shadow: var(--wiki-shadow-sm), var(--wiki-shadow-inset);
 }
 
-.skill-panel--standalone { max-width: 72rem; margin: 0 auto; }
+.skill-governance--standalone {
+  max-width: 76rem;
+  margin-inline: auto;
+}
 
-.skill-panel__header {
+.skill-governance__header {
   display: flex;
-  min-height: 6.25rem;
+  min-height: calc(var(--wiki-control-height) + var(--wiki-space-12));
   align-items: center;
   justify-content: space-between;
-  gap: 1.5rem;
-  padding: 1.35rem 1.5rem;
-  border-bottom: 1px solid rgba(var(--v-border-color), .1);
+  gap: var(--wiki-space-5);
+  padding: var(--wiki-space-5) var(--wiki-space-6);
+  border-bottom: 1px solid var(--wiki-surface-border);
+  background:
+    linear-gradient(115deg, color-mix(in srgb, var(--wiki-accent-warm) 7%, transparent), transparent 48%),
+    var(--wiki-surface-raised);
 }
 
-.skill-panel__heading {
+.skill-governance__heading {
   display: flex;
   min-width: 0;
   align-items: center;
-  gap: .9rem;
+  gap: var(--wiki-space-3);
 }
 
-.skill-panel__icon,
-.skill-card__mark,
+.skill-governance__mark,
+.skill-record__mark,
 .skill-empty > span,
 .skill-dialog__header > span,
 .skill-form-section__heading > span {
   display: grid;
   flex: 0 0 auto;
   place-items: center;
-  border-radius: .8rem;
-  background: rgba(var(--v-theme-primary), .1);
-  color: rgb(var(--v-theme-primary));
+  border: 1px solid color-mix(in srgb, var(--wiki-accent-warm) 20%, var(--wiki-surface-border));
+  border-radius: var(--wiki-control-radius);
+  background: color-mix(in srgb, var(--wiki-accent-warm) 9%, var(--wiki-surface-raised));
+  color: var(--wiki-accent-warm);
+  box-shadow: var(--wiki-shadow-inset);
 }
 
-.skill-panel__icon { width: 2.85rem; height: 2.85rem; }
+.skill-governance__mark {
+  width: var(--wiki-control-height);
+  height: var(--wiki-control-height);
+}
 
-.skill-panel__eyebrow {
-  color: rgb(var(--v-theme-primary));
-  font-size: .68rem;
-  font-weight: 780;
-  letter-spacing: .13em;
+.skill-eyebrow {
+  color: var(--wiki-accent-warm);
+  font-size: var(--wiki-label-size);
+  font-weight: var(--wiki-label-weight);
+  letter-spacing: .11em;
   text-transform: uppercase;
 }
 
-.skill-panel__header h2 {
-  margin: .12rem 0 .15rem;
+.skill-governance__header h2 {
+  margin: var(--wiki-space-1) 0;
+  color: rgb(var(--v-theme-on-surface));
+  font-family: var(--wiki-font-heading);
   font-size: 1.2rem;
-  font-weight: 720;
+  font-weight: 740;
   letter-spacing: -.025em;
+  line-height: var(--wiki-leading-heading);
 }
 
-.skill-panel__header p,
+.skill-governance__header p,
 .skill-dialog__header p {
   margin: 0;
-  color: rgba(var(--v-theme-on-surface), .62);
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 66%, transparent);
   font-size: .78rem;
+  line-height: 1.5;
 }
 
-.skill-panel__body { padding: 1.5rem; }
+.skill-governance__header-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--wiki-space-2);
+}
 
-.skill-grid {
+.skill-governance__body {
+  padding: var(--wiki-space-5);
+}
+
+.skill-boundary,
+.skill-error {
+  margin-bottom: var(--wiki-space-4);
+  border: 1px solid var(--wiki-surface-border);
+}
+
+.skill-inventory-toolbar {
   display: grid;
-  gap: .85rem;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 20rem), 1fr));
+  grid-template-columns: minmax(0, 1fr) minmax(12rem, .32fr);
+  gap: var(--wiki-space-3);
+  align-items: center;
+  padding: var(--wiki-space-3);
+  border: 1px solid var(--wiki-surface-border);
+  border-radius: var(--wiki-control-radius);
+  background: var(--wiki-surface-sunken);
+  box-shadow: var(--wiki-shadow-inset);
 }
 
-.skill-card {
+.skill-inventory-toolbar :deep(.v-field) {
+  border-radius: var(--wiki-control-radius);
+  background: var(--wiki-surface-raised);
+}
+
+.skill-inventory-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--wiki-space-3);
+  padding: var(--wiki-space-3) var(--wiki-space-1);
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 64%, transparent);
+  font-size: .75rem;
+}
+
+.skill-inventory-summary strong {
+  color: rgb(var(--v-theme-on-surface));
+  font-variant-numeric: tabular-nums;
+}
+
+.skill-inventory-summary__legend {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--wiki-space-1);
+  color: color-mix(in srgb, rgb(var(--v-theme-success)) 82%, rgb(var(--v-theme-on-surface)));
+}
+
+.skill-loading {
+  display: grid;
+  gap: var(--wiki-space-3);
+  margin-top: var(--wiki-space-4);
+}
+
+.skill-loading > * {
+  border: 1px solid var(--wiki-surface-border);
+  border-radius: var(--wiki-panel-radius);
+  background: var(--wiki-surface-raised);
+}
+
+.skill-inventory {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 28rem), 1fr));
+  gap: var(--wiki-space-3);
+}
+
+.skill-record {
   display: flex;
   min-width: 0;
   overflow: hidden;
   flex-direction: column;
-  padding: 1.05rem;
-  border: 1px solid rgba(var(--v-border-color), .12);
-  border-radius: 1rem;
-  background:
-    radial-gradient(circle at 100% 0, rgba(var(--v-theme-primary), .055), transparent 11rem),
-    rgba(var(--v-theme-on-surface), .014);
-  transition: border-color .18s ease, box-shadow .18s ease, transform .18s ease;
+  border: 1px solid var(--wiki-surface-border);
+  border-radius: var(--wiki-panel-radius);
+  background: var(--wiki-surface-raised);
+  box-shadow: var(--wiki-shadow-xs), var(--wiki-shadow-inset);
+  transition:
+    border-color var(--wiki-motion-normal) var(--wiki-motion-ease),
+    box-shadow var(--wiki-motion-normal) var(--wiki-motion-ease),
+    transform var(--wiki-motion-normal) var(--wiki-motion-ease-out);
 }
 
-.skill-card:hover {
-  border-color: rgba(var(--v-theme-primary), .23);
-  box-shadow: 0 .8rem 2rem rgba(20, 28, 50, .065);
-  transform: translateY(-.1rem);
+.skill-record:hover,
+.skill-record:focus-within {
+  border-color: var(--wiki-surface-border-strong);
+  box-shadow: var(--wiki-shadow-sm), var(--wiki-shadow-inset);
+  transform: translateY(calc(var(--wiki-space-1) * -.25));
 }
 
-.skill-card__top {
+.skill-record__top {
   display: flex;
   align-items: flex-start;
-  gap: .7rem;
+  gap: var(--wiki-space-3);
+  padding: var(--wiki-space-4);
 }
 
-.skill-card__mark {
-  width: 2.65rem;
-  height: 2.65rem;
-  background: linear-gradient(145deg, rgba(var(--v-theme-primary), .16), rgba(var(--v-theme-primary), .08));
+.skill-record__mark {
+  width: calc(var(--wiki-control-height) - var(--wiki-space-1));
+  height: calc(var(--wiki-control-height) - var(--wiki-space-1));
 }
 
-.skill-card__identity { min-width: 0; flex: 1 1 auto; }
+.skill-record__identity {
+  min-width: 0;
+  flex: 1 1 auto;
+}
 
-.skill-card__identity > div {
+.skill-record__title-line {
   display: flex;
   min-width: 0;
   align-items: center;
-  gap: .45rem;
+  flex-wrap: wrap;
+  gap: var(--wiki-space-2);
 }
 
-.skill-card__identity h3 {
+.skill-record__identity h3 {
   overflow: hidden;
-  margin: .1rem 0 .2rem;
+  margin: 0;
+  color: rgb(var(--v-theme-on-surface));
+  font-family: var(--wiki-font-heading);
   font-size: .95rem;
   font-weight: 720;
   letter-spacing: -.015em;
@@ -415,225 +614,362 @@ onMounted(reload)
   white-space: nowrap;
 }
 
-.skill-card__identity > code {
+.skill-record__identity > code {
   display: block;
   overflow: hidden;
   max-width: 100%;
-  color: rgba(var(--v-theme-on-surface), .58);
-  font-size: .68rem;
+  margin-top: var(--wiki-space-1);
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 58%, transparent);
+  font-family: var(--wiki-font-mono);
+  font-size: var(--wiki-label-size);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.skill-card__state {
+.skill-record__trust {
   display: flex;
-  margin: .9rem 0 .65rem;
+  align-items: flex-start;
+  gap: var(--wiki-space-2);
+  margin-inline: var(--wiki-space-4);
+  padding: var(--wiki-space-3);
+  border-inline-start: var(--wiki-space-1) solid rgb(var(--v-theme-success));
+  border-radius: var(--wiki-radius-xs);
+  background: color-mix(in srgb, rgb(var(--v-theme-success)) 8%, var(--wiki-surface-sunken));
+  color: color-mix(in srgb, rgb(var(--v-theme-success)) 78%, rgb(var(--v-theme-on-surface)));
 }
 
-.skill-state {
-  display: inline-flex;
-  align-items: center;
-  gap: .3rem;
-  padding: .28rem .48rem;
-  border-radius: 999px;
-  background: rgba(var(--v-theme-on-surface), .06);
-  color: rgba(var(--v-theme-on-surface), .62);
-  font-size: .64rem;
-  font-weight: 680;
+.skill-record__trust--warning {
+  border-inline-start-color: rgb(var(--v-theme-warning));
+  background: color-mix(in srgb, rgb(var(--v-theme-warning)) 9%, var(--wiki-surface-sunken));
+  color: color-mix(in srgb, rgb(var(--v-theme-warning)) 76%, rgb(var(--v-theme-on-surface)));
 }
 
-.skill-state--success { background: rgba(var(--v-theme-success), .09); color: rgb(var(--v-theme-success)); }
-.skill-state--warning { background: rgba(var(--v-theme-warning), .11); color: rgb(var(--v-theme-warning)); }
-
-.skill-card__meta {
+.skill-record__trust > span {
   display: grid;
-  gap: .45rem;
-  margin: 0;
-  padding: .75rem;
-  border: 1px solid rgba(var(--v-border-color), .085);
-  border-radius: .75rem;
-  background: rgba(var(--v-theme-surface), .65);
+  min-width: 0;
+  gap: var(--wiki-space-1);
 }
 
-.skill-card__meta > div {
-  display: grid;
-  align-items: baseline;
-  gap: .65rem;
-  grid-template-columns: 5.2rem minmax(0, 1fr);
-}
-
-.skill-card__meta dt {
-  color: rgba(var(--v-theme-on-surface), .58);
-  font-size: .64rem;
+.skill-record__trust strong {
+  color: rgb(var(--v-theme-on-surface));
+  font-size: .75rem;
   font-weight: 700;
+}
+
+.skill-record__trust small {
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 66%, transparent);
+  font-size: var(--wiki-label-size);
+  line-height: 1.45;
+}
+
+.skill-record__metadata {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: var(--wiki-space-4) 0 0;
+  border-block: 1px solid var(--wiki-surface-border);
+  background: var(--wiki-surface-sunken);
+}
+
+.skill-record__metadata > div {
+  min-width: 0;
+  padding: var(--wiki-space-3);
+}
+
+.skill-record__metadata > div + div {
+  border-inline-start: 1px solid var(--wiki-surface-border);
+}
+
+.skill-record__metadata dt,
+.review-metadata dt {
+  margin-bottom: var(--wiki-space-1);
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 58%, transparent);
+  font-size: var(--wiki-label-size);
+  font-weight: var(--wiki-label-weight);
   letter-spacing: .06em;
   text-transform: uppercase;
 }
 
-.skill-card__meta dd {
+.skill-record__metadata dd,
+.review-metadata dd {
   overflow: hidden;
   margin: 0;
-  font-size: .7rem;
+  color: rgb(var(--v-theme-on-surface));
+  font-size: .72rem;
   font-weight: 620;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.skill-card__review {
+.skill-record__review {
   display: flex;
-  width: calc(100% + 2.1rem);
+  width: 100%;
+  min-height: var(--wiki-control-height);
   align-items: center;
   justify-content: space-between;
-  margin: .95rem -1.05rem -1.05rem;
-  padding: .7rem 1.05rem;
+  gap: var(--wiki-space-3);
+  padding: var(--wiki-space-2) var(--wiki-space-4);
   border: 0;
-  border-top: 1px solid rgba(var(--v-border-color), .085);
   background: transparent;
-  color: rgb(var(--v-theme-primary));
+  color: var(--wiki-accent-warm);
   cursor: pointer;
-  font-size: .7rem;
+  font: inherit;
+  font-size: .72rem;
   font-weight: 680;
-  text-align: left;
+  text-align: start;
 }
-.skill-card__review:hover { background: rgba(var(--v-theme-primary), .045); }
-.skill-card__review:focus-visible {
-  outline: .15rem solid rgba(var(--v-theme-primary), .42);
-  outline-offset: -.2rem;
+
+.skill-record__review > span {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--wiki-space-2);
+}
+
+.skill-record__review:hover {
+  background: color-mix(in srgb, var(--wiki-accent-warm) 6%, transparent);
+}
+
+.skill-record__review:focus-visible {
+  outline: none;
+  box-shadow: inset var(--wiki-focus-ring);
+}
+
+.skill-record__review:disabled {
+  cursor: not-allowed;
+  opacity: .48;
 }
 
 .skill-empty {
   display: grid;
-  min-height: 22rem;
+  min-height: 20rem;
   place-items: center;
   align-content: center;
-  padding: 3rem 1.5rem;
+  padding: var(--wiki-space-12) var(--wiki-space-6);
   text-align: center;
 }
 
-.skill-empty > span {
-  width: 4.5rem;
-  height: 4.5rem;
-  margin-bottom: 1rem;
-  border-radius: 1.35rem;
-  background: linear-gradient(145deg, rgba(var(--v-theme-primary), .15), rgba(var(--v-theme-primary), .08));
+.skill-empty--search {
+  min-height: 15rem;
 }
 
-.skill-empty h3 { margin: 0 0 .35rem; font-size: 1.05rem; font-weight: 720; }
-.skill-empty p { max-width: 32rem; margin: 0 0 1.15rem; color: rgba(var(--v-theme-on-surface), .6); font-size: .78rem; line-height: 1.55; }
+.skill-empty > span {
+  width: calc(var(--wiki-control-height) + var(--wiki-space-6));
+  height: calc(var(--wiki-control-height) + var(--wiki-space-6));
+  margin-bottom: var(--wiki-space-4);
+  border-radius: var(--wiki-panel-radius);
+}
+
+.skill-empty h3 {
+  margin: var(--wiki-space-1) 0;
+  font-family: var(--wiki-font-heading);
+  font-size: 1.05rem;
+  font-weight: 720;
+}
+
+.skill-empty p {
+  max-width: 32rem;
+  margin: var(--wiki-space-1) 0 var(--wiki-space-4);
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 64%, transparent);
+  font-size: .78rem;
+  line-height: 1.55;
+}
 
 .skill-dialog {
   overflow: hidden;
-  border-radius: 1.15rem !important;
-  background: rgb(var(--v-theme-surface)) !important;
+  border: 1px solid var(--wiki-surface-border);
+  border-radius: var(--wiki-panel-radius) !important;
+  background: var(--wiki-surface-raised) !important;
+  color: rgb(var(--v-theme-on-surface));
+  box-shadow: var(--wiki-shadow-lg), var(--wiki-shadow-inset) !important;
 }
 
 .skill-dialog__header {
   display: flex;
-  min-height: 5.8rem;
+  min-height: calc(var(--wiki-control-height) + var(--wiki-space-10));
   align-items: center;
-  gap: .8rem;
-  padding: 1.05rem 1.2rem;
-  border-bottom: 1px solid rgba(var(--v-border-color), .1);
+  gap: var(--wiki-space-3);
+  padding: var(--wiki-space-4) var(--wiki-space-5);
+  border-bottom: 1px solid var(--wiki-surface-border);
   background:
-    radial-gradient(circle at 88% 0, rgba(var(--v-theme-primary), .08), transparent 15rem),
-    rgb(var(--v-theme-surface));
+    linear-gradient(110deg, color-mix(in srgb, var(--wiki-accent-warm) 7%, transparent), transparent 55%),
+    var(--wiki-surface-raised);
 }
 
-.skill-dialog__header > span { width: 2.8rem; height: 2.8rem; }
-.skill-dialog__header h2 { margin: .1rem 0 .12rem; font-size: 1.1rem; font-weight: 730; letter-spacing: -.025em; }
-.skill-dialog__body { padding: 1.4rem !important; }
-.skill-dialog__actions { min-height: 4.3rem; padding: .65rem 1rem !important; border-top: 1px solid rgba(var(--v-border-color), .1); }
+.skill-dialog__header > span {
+  width: var(--wiki-control-height);
+  height: var(--wiki-control-height);
+}
+
+.skill-dialog__header > div {
+  min-width: 0;
+}
+
+.skill-dialog__header h2 {
+  margin: var(--wiki-space-1) 0;
+  font-family: var(--wiki-font-heading);
+  font-size: 1.1rem;
+  font-weight: 730;
+  letter-spacing: -.025em;
+}
+
+.skill-dialog__body {
+  padding: var(--wiki-space-5) !important;
+}
+
+.skill-dialog__actions {
+  min-height: calc(var(--wiki-control-height) + var(--wiki-space-4));
+  gap: var(--wiki-space-2);
+  padding: var(--wiki-space-3) var(--wiki-space-4) !important;
+  border-top: 1px solid var(--wiki-surface-border);
+  background: var(--wiki-surface-sunken);
+}
+
+.skill-dialog__error {
+  min-width: min(22rem, 100%);
+}
 
 .skill-form-section + .skill-form-section {
-  margin-top: 1rem;
-  padding-top: 1rem;
-  border-top: 1px solid rgba(var(--v-border-color), .09);
+  margin-top: var(--wiki-space-4);
+  padding-top: var(--wiki-space-4);
+  border-top: 1px solid var(--wiki-surface-border);
 }
 
 .skill-form-section__heading {
   display: flex;
   align-items: flex-start;
-  gap: .65rem;
-  margin-bottom: .9rem;
+  gap: var(--wiki-space-3);
+  margin-bottom: var(--wiki-space-4);
 }
 
-.skill-form-section__heading > span { width: 2.2rem; height: 2.2rem; }
-.skill-form-section__heading h3 { margin: 0; font-size: .86rem; font-weight: 700; }
-.skill-form-section__heading p { margin: .1rem 0 0; color: rgba(var(--v-theme-on-surface), .58); font-size: .69rem; }
+.skill-form-section__heading > span {
+  width: calc(var(--wiki-control-height) - var(--wiki-space-2));
+  height: calc(var(--wiki-control-height) - var(--wiki-space-2));
+}
 
-.skill-form-grid { display: grid; gap: 0 1rem; grid-template-columns: repeat(2, minmax(0, 1fr)); }
-.skill-form-grid__wide { grid-column: 1 / -1; }
-.review-diff { overflow: auto; border: 1px solid rgba(var(--v-border-color), .12); border-radius: .8rem; }
-.review-diff__row { display: grid; min-width: 42rem; grid-template-columns: 1fr 1fr; }
-.review-diff__row code { overflow-wrap: anywhere; padding: .35rem .55rem; border-bottom: 1px solid rgba(var(--v-border-color), .07); font-size: .75rem; white-space: pre-wrap; }
-.review-diff__row--added code:first-child, .review-diff__row--removed code:last-child { background: rgba(var(--v-theme-error), .09); }
-.review-diff__row--added code:last-child, .review-diff__row--removed code:first-child { background: rgba(var(--v-theme-success), .09); }
-.review-diff__row--changed code { background: rgba(var(--v-theme-warning), .08); }
+.skill-form-section__heading h3 {
+  margin: 0;
+  font-size: .86rem;
+  font-weight: 700;
+}
+
+.skill-form-section__heading p {
+  margin: var(--wiki-space-1) 0 0;
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 62%, transparent);
+  font-size: .7rem;
+}
+
+.skill-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 var(--wiki-space-4);
+}
+
+.skill-form-grid__wide {
+  grid-column: 1 / -1;
+}
 
 .review-metadata {
   display: grid;
-  gap: .55rem;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  margin: 0 0 1.5rem;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--wiki-space-2);
+  margin: 0 0 var(--wiki-space-6);
 }
 
 .review-metadata > div {
   min-width: 0;
-  padding: .75rem;
-  border: 1px solid rgba(var(--v-border-color), .09);
-  border-radius: .75rem;
-  background: rgba(var(--v-theme-on-surface), .018);
+  padding: var(--wiki-space-3);
+  border: 1px solid var(--wiki-surface-border);
+  border-radius: var(--wiki-control-radius);
+  background: var(--wiki-surface-sunken);
+  box-shadow: var(--wiki-shadow-inset);
 }
 
-.review-metadata dt {
-  margin-bottom: .15rem;
-  color: rgba(var(--v-theme-on-surface), .56);
-  font-size: .63rem;
-  font-weight: 700;
-  letter-spacing: .06em;
-  text-transform: uppercase;
+.review-diff {
+  overflow: auto;
+  border: 1px solid var(--wiki-surface-border);
+  border-radius: var(--wiki-control-radius);
+  background: var(--wiki-surface-sunken);
 }
 
-.review-metadata dd {
-  overflow: hidden;
-  margin: 0;
-  font-size: .72rem;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.review-diff__row {
+  display: grid;
+  min-width: 42rem;
+  grid-template-columns: 1fr 1fr;
+}
+
+.review-diff__row code {
+  overflow-wrap: anywhere;
+  padding: var(--wiki-space-2) var(--wiki-space-3);
+  border-bottom: 1px solid var(--wiki-surface-border);
+  font-family: var(--wiki-font-mono);
+  font-size: .75rem;
+  white-space: pre-wrap;
+}
+
+.review-diff__row code + code {
+  border-inline-start: 1px solid var(--wiki-surface-border);
+}
+
+.review-diff__row--added code:first-child,
+.review-diff__row--removed code:last-child {
+  background: color-mix(in srgb, rgb(var(--v-theme-error)) 10%, transparent);
+}
+
+.review-diff__row--added code:last-child,
+.review-diff__row--removed code:first-child {
+  background: color-mix(in srgb, rgb(var(--v-theme-success)) 10%, transparent);
+}
+
+.review-diff__row--changed code {
+  background: color-mix(in srgb, rgb(var(--v-theme-warning)) 9%, transparent);
 }
 
 .source-heading {
   display: flex;
   align-items: flex-end;
   justify-content: space-between;
-  gap: 1rem;
-  margin: 1.25rem 0 .55rem;
+  gap: var(--wiki-space-4);
+  margin: var(--wiki-space-5) 0 var(--wiki-space-2);
 }
 
 .source-heading span {
-  color: rgb(var(--v-theme-primary));
-  font-size: .61rem;
-  font-weight: 740;
+  color: var(--wiki-accent-warm);
+  font-size: var(--wiki-label-size);
+  font-weight: var(--wiki-label-weight);
   letter-spacing: .08em;
   text-transform: uppercase;
 }
 
-.source-heading h3 { margin: .05rem 0 0; font-size: .95rem; }
+.source-heading h3 {
+  margin: var(--wiki-space-1) 0 0;
+  font-size: .95rem;
+}
 
 .source-view {
   max-height: 25rem;
   overflow: auto;
   margin: 0;
-  padding: 1rem;
-  border: 1px solid rgba(var(--v-border-color), .12);
-  border-radius: .8rem;
-  background: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 4%, rgb(var(--v-theme-surface)));
-  font-size: .72rem;
-  line-height: 1.55;
+  padding: var(--wiki-space-4);
+  border: 1px solid var(--wiki-surface-border);
+  border-radius: var(--wiki-control-radius);
+  background: var(--wiki-surface-sunken);
+  color: rgb(var(--v-theme-on-surface));
+  font-family: var(--wiki-font-mono);
+  font-size: .75rem;
+  line-height: 1.6;
   white-space: pre-wrap;
+  scrollbar-color: var(--wiki-surface-border-strong) transparent;
 }
 
-code { overflow-wrap: anywhere; }
+.source-view:focus-visible {
+  outline: none;
+  border-color: var(--wiki-focus-color);
+  box-shadow: var(--wiki-focus-ring);
+}
+
+code {
+  overflow-wrap: anywhere;
+  font-family: var(--wiki-font-mono);
+}
 
 :global(.skill-dialog .v-messages) {
   opacity: 1 !important;
@@ -641,25 +977,130 @@ code { overflow-wrap: anywhere; }
 
 :global(.skill-dialog .v-field-label),
 :global(.skill-dialog .v-messages__message) {
-  color: rgba(var(--v-theme-on-surface), .78) !important;
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 78%, transparent) !important;
   opacity: 1 !important;
 }
 
-@media (max-width: 700px) {
-  .skill-panel__header { align-items: flex-start; flex-direction: column; }
-  .skill-panel__header > .v-btn { width: 100%; }
+@media (max-width: 760px) {
+  .skill-governance__header {
+    align-items: flex-start;
+    flex-direction: column;
+    padding: var(--wiki-space-4);
+  }
+
+  .skill-governance__header-actions {
+    width: 100%;
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .skill-governance__body {
+    padding: var(--wiki-space-4);
+  }
+
+  .skill-inventory-toolbar,
   .skill-form-grid,
-  .review-metadata { grid-template-columns: 1fr; }
-  .skill-form-grid__wide { grid-column: auto; }
-  .skill-dialog { border-radius: 0 !important; }
-  .skill-dialog__header p { display: none; }
-  .skill-dialog__actions { overflow-x: auto; }
+  .review-metadata {
+    grid-template-columns: 1fr;
+  }
+
+  .skill-form-grid__wide {
+    grid-column: auto;
+  }
+
+  .skill-record__metadata {
+    grid-template-columns: 1fr;
+  }
+
+  .skill-record__metadata > div + div {
+    border-block-start: 1px solid var(--wiki-surface-border);
+    border-inline-start: 0;
+  }
+
+  .skill-inventory-summary {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .skill-dialog {
+    border: 0;
+    border-radius: 0 !important;
+  }
+
+  .skill-dialog__header p {
+    display: none;
+  }
+
+  .skill-dialog__actions {
+    align-items: stretch;
+    flex-wrap: wrap;
+  }
+
+  .skill-dialog__actions--review > .v-btn {
+    flex: 1 1 auto;
+  }
+
+  .skill-dialog__error {
+    flex: 1 1 100%;
+  }
+}
+
+@media (max-width: 480px) {
+  .skill-governance__heading,
+  .skill-dialog__header {
+    align-items: flex-start;
+  }
+
+  .skill-governance__mark,
+  .skill-dialog__header > span {
+    width: calc(var(--wiki-control-height) - var(--wiki-space-1));
+    height: calc(var(--wiki-control-height) - var(--wiki-space-1));
+  }
+
+  .skill-record__top {
+    padding: var(--wiki-space-3);
+  }
+
+  .skill-record__trust {
+    margin-inline: var(--wiki-space-3);
+  }
+
+  .skill-dialog__actions > .v-btn {
+    flex: 1 1 100%;
+  }
+}
+
+@media (forced-colors: active) {
+  .skill-governance,
+  .skill-record,
+  .skill-inventory-toolbar,
+  .skill-dialog,
+  .review-diff,
+  .source-view {
+    border: 1px solid CanvasText;
+    box-shadow: none;
+  }
+
+  .skill-record__trust {
+    border-inline-start-color: Highlight;
+  }
+
+  .skill-record__review:focus-visible,
+  .source-view:focus-visible {
+    outline: 2px solid Highlight;
+    outline-offset: 2px;
+    box-shadow: none;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after {
-    transition-duration: .01ms !important;
-    animation-duration: .01ms !important;
+  .skill-record {
+    transition: none;
+  }
+
+  .skill-record:hover,
+  .skill-record:focus-within {
+    transform: none;
   }
 }
 </style>
